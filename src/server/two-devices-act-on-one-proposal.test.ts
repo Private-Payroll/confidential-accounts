@@ -25,6 +25,7 @@
  * every write after that goes through a route.
  */
 import { describe, it, expect, beforeAll, afterAll, beforeEach } from 'vitest';
+import { drawCompanyLabel } from 'midnight-identity/profile/company-label';
 import { importTheServer, useOnlyTheseSettings } from '../testing/server-under-test.js';
 import { mkdtempSync } from 'node:fs';
 import { tmpdir } from 'node:os';
@@ -119,7 +120,7 @@ const seeded = await (async () => {
       { name: 'Ada', role: 'admin', userId: USERS.ada },
       { name: 'Blake', role: 'approver', userId: USERS.blake },
       { name: 'Cleo', role: 'approver' },
-    ], threshold);
+    ], threshold, undefined, drawCompanyLabel());
     const viewingKey = created.viewingKey;
     const account = created.account.id;
     for (const s of accounts.open(account, viewingKey).signers) leaves.set(`${account} ${s.id}`, s.leafCommitment as Hex);

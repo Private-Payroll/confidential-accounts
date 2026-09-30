@@ -1,8 +1,10 @@
 import { readKeyringRelease, readRelease } from 'midnight-identity/profile/unlock';
 import type { HeldScope, ReleaseFailure, WalletIndexer } from 'midnight-identity/profile/unlock';
+import type { AccountAddress, CompanyLabel } from 'midnight-identity/profile/company-label';
 import { toHex, randomBytes } from '../../../src/core/crypto.js';
 import {
-  KEYRING_AND_COMPANY_PURPOSE, KEYRING_PURPOSE, UNLOCK_PURPOSE, UNLOCK_WINDOW_MS, keyringAsk, unlockAsk,
+  KEYRING_AND_COMPANY_PURPOSE, KEYRING_AND_NEW_COMPANY_PURPOSE, KEYRING_PURPOSE, UNLOCK_PURPOSE, UNLOCK_WINDOW_MS,
+  keyringAsk, unlockAsk,
 } from '../../../src/core/wallet-unlock.js';
 import { askWallet, type Openable, type WalletDialog } from './wallet-sign-in.js';
 
@@ -55,8 +57,10 @@ export class UnlockRefused extends Error {
 }
 
 export interface UnlockAsked {
-  /** From `POST /api/accounts/:id/unlock`. **Never from anything a caller sent.** */
-  readonly company: string;
+  /** The company's label, from `POST /api/accounts/:id/unlock`. **Never from anything a caller sent.** */
+  readonly company: CompanyLabel;
+  /** The account that carries it, from the same answer, or null when there is none yet. */
+  readonly account: AccountAddress | null;
   /** This page's own origin, as the browser knows it. Not a value we were sent. */
   readonly atOrigin: string;
   /** The requester's own words about itself. Untrusted by the wallet, shown as text. */
@@ -112,6 +116,7 @@ export async function askWalletToUnlockAndWhereItReads(
     nonce,
     expiresAt: now() + UNLOCK_WINDOW_MS,
     company: ask.company,
+    account: ask.account,
   }), dialog);
 
   /*
@@ -126,6 +131,7 @@ export async function askWalletToUnlockAndWhereItReads(
     atOrigin: ask.atOrigin,
     expectingNonce: nonce,
     forCompany: ask.company,
+    forAccount: ask.account,
   });
   if (!read.ok) throw new UnlockRefused(read.code, read.says);
   return {
@@ -141,8 +147,13 @@ export interface KeyringAsked {
   readonly person: string;
   /** From this tab's own sign-in answer, or null when this tab does not know it. */
   readonly signedInAs: string | null;
-  /** From `POST /api/accounts/:id/unlock` when a company's key is wanted too, else null. */
-  readonly company: string | null;
+  /**
+   * The label of a company whose key is wanted too, from `POST /api/accounts/:id/unlock`;
+   * `'new'` when this page is starting a company and the wallet is to draw its label; else null.
+   */
+  readonly company: CompanyLabel | 'new' | null;
+  /** The account that carries that label, from the same answer, or null. */
+  readonly account: AccountAddress | null;
   readonly atOrigin: string;
   readonly name: string;
   readonly rdns: string;
@@ -163,23 +174,32 @@ export async function askWalletForKeys(
   companyKey: Uint8Array | null;
   /** Public: the key the person sits on this company's vault committee with. */
   committeeKey: { tag: string; value: string } | null;
+  /** The company the keys are for: the one asked about, or the one the wallet drew. */
+  company: CompanyLabel | null;
 }> {
   const now = ask.now ?? (() => Date.now());
   const nonce = ask.nonce ?? toHex(randomBytes(16));
   const answer = await askWallet(view, walletOrigin, keyringAsk({
     name: ask.name,
     rdns: ask.rdns,
-    purpose: ask.company === null ? KEYRING_PURPOSE : KEYRING_AND_COMPANY_PURPOSE,
+    purpose: ask.company === null ? KEYRING_PURPOSE
+      : ask.company === 'new' ? KEYRING_AND_NEW_COMPANY_PURPOSE : KEYRING_AND_COMPANY_PURPOSE,
     nonce,
     expiresAt: now() + UNLOCK_WINDOW_MS,
     person: ask.person,
     signedInAs: ask.signedInAs,
-    company: ask.company,
+    company: ask.company === 'new' ? null : ask.company,
+    account: ask.company === 'new' ? null : ask.account,
+    drawLabel: ask.company === 'new',
   }), dialog);
   const { atOrigin, person, signedInAs, company } = ask;
   const checked = readKeyringRelease(answer, {
-    atOrigin, expectingNonce: nonce, person, signedInAs, forCompany: company,
+    atOrigin, expectingNonce: nonce, person, signedInAs,
+    forCompany: company === 'new' ? 'drawn' : company,
+    forAccount: company === 'new' ? null : ask.account,
   });
-  if (checked.ok) return { key: checked.key, companyKey: checked.companyKey, committeeKey: checked.committeeKey };
+  if (checked.ok) {
+    return { key: checked.key, companyKey: checked.companyKey, committeeKey: checked.committeeKey, company: checked.company };
+  }
   throw new UnlockRefused(checked.code, checked.says);
 }

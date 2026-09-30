@@ -1,4 +1,6 @@
 import { nanoid } from 'nanoid';
+import { readCompanyLabel } from 'midnight-identity/profile/company-label';
+import type { CompanyLabel } from 'midnight-identity/profile/company-label';
 import {
   newSigningKeypair, newWrappingKeypair, newSymmetricKey, newProposalSalt, newBlinding,
   seal, unseal, wrapKey, unwrapKey, verify, commit, canonical, parseCanonical,
@@ -132,6 +134,36 @@ const firstStaying = <T>(staying: readonly T[]): T => {
 export interface SignerSpec { name: string; role: Role; userId?: string | null; }
 
 /** Vault keys that are not signed with the giver's own roster signing key. */
+/**
+ * **A COMPANY'S LABEL IS ONE COMPANY'S, AND A SECOND COMPANY IS NOT CREATED
+ * WITH IT.** Nothing on the chain stops two accounts carrying one label, and a
+ * company created with another's would derive that company's keys in every
+ * signer's wallet. This service refuses a label it has already recorded for any
+ * company, before anything is deployed. What protects a person against a
+ * service that does not refuse is their wallet, which reads the label off the
+ * account itself and shows the label and the account together.
+ */
+export class CompanyLabelTaken extends Error {
+  constructor(afterTheDeploy = false) {
+    super('This company\'s label is already in use, so it was not created again. '
+      + (afterTheDeploy
+        ? 'An empty account was put on the chain for it; it holds nothing and will not be used. '
+        : 'Nothing was put on the chain. ')
+      + 'If you pressed Create twice, your company was created the first time: open it from your companies. '
+      + 'If not, start again, and your wallet will make up a new label.');
+    this.name = 'CompanyLabelTaken';
+  }
+}
+
+/** A label that is not one, refused before anything is created. */
+export class NotACompanyLabel extends Error {
+  constructor() {
+    super('what was given as the company\'s label is not one: co_ and sixty-four lower-case characters, '
+      + 'made up by the founding signer\'s wallet. Nothing was created and nothing was deployed.');
+    this.name = 'NotACompanyLabel';
+  }
+}
+
 export class VaultKeysNotYours extends Error {
   constructor() {
     super('these vault keys were not set up from your own seat on this company, so they are not kept. Open the '
@@ -647,6 +679,12 @@ export function sealAccount(
      */
     addressSource: account.addressSource ?? null,
     /*
+     * **AND SO DOES THE COMPANY'S LABEL.** Every signer's keys for this company
+     * are derived from it; a record that dropped it on write-back would be a
+     * company no wallet could open again.
+     */
+    companyLabel: account.companyLabel ?? null,
+    /*
      * **AND SO DOES THE LEDGER THAT WROTE IT, FOR THE SAME REASON AGAIN.**
      *
      * Dropped on write-back it reads as *not known*, which is safe but is a
@@ -723,6 +761,7 @@ export function openAccount(rec: SealedAccount, viewingKey: Hex): Account {
     /* Public, never sealed, and carried so `sealAccount` can write it back. */
     contractAddress: rec.contractAddress ?? null,
     addressSource: rec.addressSource ?? null,
+    companyLabel: rec.companyLabel ?? null,
     /* Public, never sealed, and carried so `sealAccount` can write it back. */
     wiring: rec.wiring ?? null,
   };
@@ -844,10 +883,25 @@ export class AccountService {
     signerSpecs: SignerSpec[],
     threshold: number,
     recoveryThreshold?: number,
+    /**
+     * The label the founding signer's wallet drew for this company. The
+     * product's own route always passes one; a company created without one is
+     * a record no wallet can open, and no chain will deploy it.
+     */
+    companyLabel?: CompanyLabel | null,
   ): Promise<CreatedAccount> {
     if (threshold < 1 || threshold > signerSpecs.length) {
       throw new Error(`threshold ${threshold} is not valid for ${signerSpecs.length} signers`);
     }
+    /*
+     * **THE LABEL IS READ, AND REFUSED IF ANY COMPANY HAS IT, BEFORE ANYTHING
+     * ELSE HAPPENS.** Nothing is sealed or deployed for a company whose label
+     * is not one or is another company's.
+     */
+    const label = companyLabel === undefined || companyLabel === null ? null : readCompanyLabel(companyLabel);
+    if (companyLabel !== undefined && companyLabel !== null && label === null) throw new NotACompanyLabel();
+    const taken = (): boolean => label !== null && this.store.listAccounts().some((a) => a.companyLabel === label);
+    if (taken()) throw new CompanyLabelTaken();
 
     const viewingKey = newSymmetricKey();
     const signers: Signer[] = [];
@@ -956,6 +1010,7 @@ export class AccountService {
     await this.ledger.open(account.id, {
       signerLeaves: leaves,
       threshold,
+      companyLabel: label,
       assetBlinding: blinding.assetBlinding,
       sealedState: this.sealState(initialState, blinding, viewingKey, GENESIS_KEY_EPOCH),
     });
@@ -963,9 +1018,9 @@ export class AccountService {
     /*
      * THE ADDRESS IS ASKED FOR ONCE, HERE, AND WRITTEN DOWN.
      *
-     * It is the company's identity to a wallet: the key that opens this
-     * company's records is derived from it, on any client, for as long as the
-     * company exists. So it is read from the ledger that assigned it — never
+     * It is where a wallet reads the company's label back from before it gives
+     * or signs anything, and where every chain action goes; no key is derived
+     * from it. So it is read from the ledger that assigned it — never
      * minted on this side — and copied onto the durable record immediately,
      * because the simulated ledger holds its whole world in memory and would
      * answer differently after a restart.
@@ -988,6 +1043,7 @@ export class AccountService {
       ...account,
       contractAddress: assigned?.value ?? null,
       addressSource: assigned?.source ?? null,
+      companyLabel: label,
       /*
        * **THE LEDGER THAT OPENED THIS COMPANY SAYS SO ITSELF.**
        *
@@ -999,6 +1055,14 @@ export class AccountService {
       wiring: this.ledger.wiring,
     };
 
+    /*
+     * **AND ONCE MORE, BECAUSE THE DEPLOY WAS AWAITED.** Two creations with one
+     * label can both pass the check at the top before either is written; the
+     * second to arrive here is refused rather than recorded, so this service
+     * never holds two companies with one label. The account deployed for it is
+     * left on the chain holding nothing, and no record here names it.
+     */
+    if (taken()) throw new CompanyLabelTaken(true);
     this.store.putAccount(sealAccount(onChain, viewingKey, []));
     return { account: onChain, viewingKey, secrets };
   }

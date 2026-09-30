@@ -26,6 +26,7 @@ import { committeeKeyFor, committeeSigningKeyFor } from './committee-key.js';
 import type { KeyringRequest } from './request.js';
 import { emptyProfile, grantTo, originsFor, recordRelease, releasesOf } from './model.js';
 import { WALLET_ACCOUNTS } from '../../../../apps/wallet/src/accounts/subwallets.js';
+import type { AccountAddress, CompanyLabel } from './company-label.js';
 
 /**
  * **THE WALLET RELEASES A KEY, AND THE FIVE THINGS THAT MAKE THAT SAFE.**
@@ -34,12 +35,13 @@ import { WALLET_ACCOUNTS } from '../../../../apps/wallet/src/accounts/subwallets
  * from the requesting ORIGIN. The origin is the one thing the wallet can trust,
  * so using it felt safe — **and a hostname is a deployment detail**, so anything
  * sealed under a key derived from ours can only ever be opened at ours.
- * The key is now derived from **the company's own account contract address**,
- * and the origin keeps deciding who may be handed something.
+ * The key is now derived from **the company's label**, which its founding
+ * signer's wallet drew and its account carries, and the origin keeps deciding
+ * who may be handed something.
  *
  * The five rules this file checks, in their own order:
  *
- *   1. the address goes in AT FULL WIDTH, as its own bytes;
+ *   1. the label goes in AT FULL WIDTH, as its own text;
  *   2. the SAME COMPANY FROM TWO DIFFERENT HOSTS gets the same key;
  *   3. two companies never get the same one, and a rebuilt wallet agrees;
  *   4. it is never a money key;
@@ -62,12 +64,15 @@ const A = 'https://payroll-a.example';
 const B = 'https://payroll-b.example';
 
 /**
- * **TWO COMPANIES, WRITTEN THE WAY THE CHAIN WRITES THEM.** Both came out of
- * `sampleContractAddress()`; the shape is pinned against the SDK below rather
- * than described.
+ * **TWO COMPANIES, BY THEIR LABELS, AND THE ACCOUNT THE FIRST ONE'S LABEL SITS
+ * ON.** The account address came out of `sampleContractAddress()`; the labels
+ * are written the one way `company-label.ts` writes one.
  */
-const CO_A = 'dbe119a304f8e7ea882353435c1d536cf2faf4298236a9aae77670e750af65c8';
-const CO_B = '54ef954a25aefff8e1675af10a852ef29d5de5c63a51b64b978bf7bd0eaeca4e';
+const ACCOUNT_A = 'dbe119a304f8e7ea882353435c1d536cf2faf4298236a9aae77670e750af65c8' as AccountAddress;
+const CO_A = 'co_7a1e2b3c4d5e6f708192a3b4c5d6e7f8091a2b3c4d5e6f708192a3b4c5d6e7f8' as CompanyLabel;
+const CO_B = 'co_54ef954a25aefff8e1675af10a852ef29d5de5c63a51b64b978bf7bd0eaeca4e' as CompanyLabel;
+/** A label for any address the SDK samples. */
+const labelOf = (address: string): CompanyLabel => `co_${address}` as CompanyLabel;
 
 const identity = identityFromWords(TEST_MNEMONIC);
 const hex = (b: Uint8Array): string => Buffer.from(b).toString('hex');
@@ -116,7 +121,7 @@ const codeOf = (run: () => unknown): string => {
 
 const AUTHORITY_PATH = "m/44'/2400'/1'/0/0";
 const AUTHORITY_SALT = new TextEncoder().encode('midnight-identity/authority/v1');
-const UNLOCK_SALT = new TextEncoder().encode('midnight-identity/unlock/v2');
+const UNLOCK_SALT = new TextEncoder().encode('midnight-identity/unlock/v3');
 const independentRoot = HDKey.fromMasterSeed(seedFromWords(TEST_MNEMONIC))
   .derive(AUTHORITY_PATH).privateKey!;
 const independentAuthority = (purpose: string, index: number): Uint8Array =>
@@ -194,6 +199,10 @@ describe('§4 — AN UNLOCK IS ITS OWN KIND, AND NAMES EXACTLY ONE THING', () =>
     expect(codeOf(() => parseAsk(
       { ...disclosure(), kind: 'sign-in', wants: undefined, company: CO_A }, A, NOW)))
       .toBe('company-on-a-sign-in');
+    /* And the company's account, on its own, the same way. RED WHEN: `account` is ignored on these kinds. */
+    expect(codeOf(() => parseAsk(disclosure({ account: ACCOUNT_A }), A, NOW))).toBe('company-on-a-disclosure');
+    expect(codeOf(() => parseAsk(
+      { ...disclosure(), kind: 'sign-in', wants: undefined, account: ACCOUNT_A }, A, NOW))).toBe('company-on-a-sign-in');
   });
 
   it('THE THIRD KIND WAS ADDED, NOT SUBSTITUTED: the first two are where they were', () => {
@@ -206,131 +215,81 @@ describe('§4 — AN UNLOCK IS ITS OWN KIND, AND NAMES EXACTLY ONE THING', () =>
 });
 
 describe('§2 — THE COMPANY IS CLAIMED, SO ITS SHAPE IS WHAT CAN BE CHECKED', () => {
-  it('IS THE SHAPE THE SDK ITSELF PRODUCES — measured, not described', () => {
+  it('A COMPANY IS NAMED BY ITS LABEL, AND AN ACCOUNT\'S ADDRESS IS REFUSED WHERE A LABEL IS ASKED', () => {
     /*
-     * `ContractAddress` is declared as a bare `string` (`ledger-v9.d.ts:33`),
-     * so the type says nothing about the shape and the only way to know it is
-     * to run the thing. `sampleContractAddress()` is the chain's own
-     * serialiser and `encodeContractAddress` is what Compact's
-     * `ContractAddress` is built from (`:475`, `:549`).
+     * **THE ONE MISTAKE THE SPELLING EXISTS TO CATCH.** Until the label, a
+     * company was named by its account's address, and every caller that still
+     * does must be refused at the door rather than have a key derived for a
+     * string that names nothing.
+     * RED WHEN: the parser's label check accepts a bare sixty-four hex address.
      */
     for (let i = 0; i < 20; i += 1) {
-      const sampled = sampleContractAddress();
-      expect(sampled, 'the SDK produced an address this wallet would refuse')
-        .toMatch(/^[0-9a-f]{64}$/u);
-      expect(encodeContractAddress(sampled)).toHaveLength(32);
+      const address = sampleContractAddress();
+      expect(codeOf(() => parseAsk(unlock({ company: address }), A, NOW)), address).toBe('not-a-company-label');
     }
-    expect(dummyContractAddress()).toMatch(/^[0-9a-f]{64}$/u);
-    /* And ours are the SDK's own output, round-tripping to thirty-two bytes. */
-    for (const company of [CO_A, CO_B]) {
-      expect(encodeContractAddress(company)).toHaveLength(32);
-    }
+    expect(codeOf(() => parseAsk(unlock({ company: ACCOUNT_A }), A, NOW))).toBe('not-a-company-label');
+    expect(codeOf(() => parseAsk(unlock({ company: dummyContractAddress() }), A, NOW))).toBe('not-a-company-label');
+    /* And the address is carried in a field of its own, where a label is refused. */
+    expect((parseAsk(unlock({ account: ACCOUNT_A.toUpperCase() }), A, NOW) as UnlockRequest).account).toBe(ACCOUNT_A);
+    /* RED WHEN: the account reader accepts a label. */
+    expect(codeOf(() => parseAsk(unlock({ account: CO_B }), A, NOW))).toBe('not-an-account-address');
+    expect(encodeContractAddress(ACCOUNT_A)).toHaveLength(32);
   });
 
-  it('THE UPPERCASE SPELLING DECODES IN THE SDK AND IS FOLDED HERE, NOT REFUSED', () => {
-    /*
-     * **THIS REPLACES THE TEST THAT ASSERTED THE OPPOSITE, AND THE ENTRY SAYS
-     * SO.** The old rule refused every spelling but the canonical one, which was
-     * stricter than Midnight itself: the SDK's own validator accepts
-     * `[0-9A-Fa-f]` (`@midnight-ntwrk/midnight-js-utils/dist/index.mjs:576`)
-     * and rejects only a `0x` prefix (`:986`, `:991`). So an address every
-     * Midnight tool calls valid arrived here and was refused.
-     *
-     * **The danger it was guarding against is unchanged and is still closed** —
-     * two spellings of one company must never be two keys. Folding closes it as
-     * completely as refusing did, because case-folding hex is one-to-one on
-     * addresses, and unlike refusing it accepts what the chain emits. The test
-     * below is the pin.
-     */
-    expect(encodeContractAddress(CO_A.toUpperCase())).toHaveLength(32);
-    const parsed = parseAsk(unlock({ company: CO_A.toUpperCase() }), A, NOW) as UnlockRequest;
-    /* **Parsed, and CANONICAL from the door inward** — the screen, the record
-     * and the derivation are each handed one spelling rather than folding for
-     * themselves and one of them one day forgetting to. */
-    expect(parsed.company).toBe(CO_A);
-  });
-
-  it('TWO SPELLINGS OF ONE COMPANY PRODUCE IDENTICAL BYTES', () => {
-    /*
-     * **THE PIN THE FOLD EXISTS FOR.** A company whose records open
-     * under one spelling and not the other has lost them, which is that defect with
-     * a smaller radius — so the assertion is not that both spellings are
-     * accepted, it is that both give the SAME KEY.
-     *
-     * Mixed case is in here on purpose: the SDK's pattern is `[0-9A-Fa-f]` per
-     * BYTE PAIR, so `Db` and `dB` are both addresses to it.
-     */
-    const mixed = [...CO_A].map((c, i) => (i % 2 === 0 ? c.toUpperCase() : c)).join('');
-    expect(mixed).not.toBe(CO_A);
-    expect(mixed.toLowerCase()).toBe(CO_A);
-
-    const canonical = keyFor(CO_A);
-    for (const spelling of [CO_A.toUpperCase(), mixed]) {
-      expect(keyFor(spelling), spelling).toBe(canonical);
-      /* And through the parser as well as through the module's own door. */
-      expect(hex(unlockKeyFor(identity, askAt(B, spelling))), `${spelling} from B`)
-        .toBe(canonical);
-    }
-    /*
-     * **AND THROUGH `unlock.ts`'s OWN DOOR, WHICH THE PARSER NEVER TOUCHED.**
-     * The two tests above both go through `parseAsk`, which folds first — so
-     * they would pass with no fold in `unlock.ts` at all. A caller that
-     * assembled an `UnlockRequest` by hand meets only this one, and it is the
-     * one the derivation is actually behind.
-     */
-    for (const spelling of [CO_A.toUpperCase(), mixed]) {
+  it('A LABEL HAS ONE SPELLING: UPPER CASE IS REFUSED, NOT FOLDED', () => {
+    /* A label is ours, not the chain's, so there is no second spelling to
+     * accept. Folding one would make two spellings one company; refusing makes
+     * the second spelling nothing at all.
+     * RED WHEN: the reader folds case. */
+    for (const spelling of [CO_A.toUpperCase(), `CO_${CO_A.slice(3)}`, `co_${CO_A.slice(3).toUpperCase()}`]) {
+      expect(codeOf(() => parseAsk(unlock({ company: spelling }), A, NOW)), spelling).toBe('not-a-company-label');
       const forged = { ...askAt(A), company: spelling } as UnlockRequest;
-      expect(hex(unlockKeyFor(identity, forged)), `${spelling} hand-built`).toBe(canonical);
+      expect(() => unlockKeyFor(identity, forged), `${spelling} hand-built`).toThrow(UnlockError);
     }
-    /* It is still the independent walk's number, so the fold did not move it. */
-    expect(canonical).toBe(hex(independentUnlockKey(CO_A)));
-    /* And two DIFFERENT companies are still two different keys after folding. */
-    expect(keyFor(CO_B.toUpperCase())).not.toBe(canonical);
-  });
-
-  it('A `0x` PREFIX IS STILL REFUSED, AS THE SDK ITSELF REFUSES IT', () => {
-    /*
-     * `assertIsContractAddress` throws *"Unexpected '0x' prefix in contract
-     * address"* (`@midnight-ntwrk/midnight-js-utils/dist/index.mjs:986`,
-     * `:991`). Here it needs no clause of its own: the shape is sixty-four
-     * characters exactly, so a prefixed address is sixty-six.
-     */
-    for (const bad of [`0x${CO_A}`, `0x${CO_A}`.toUpperCase(), `0X${CO_A}`]) {
-      expect(codeOf(() => parseAsk(unlock({ company: bad }), A, NOW)), bad)
-        .toBe('not-a-company-address');
-    }
+    expect((parseAsk(unlock(), A, NOW) as UnlockRequest).company).toBe(CO_A);
   });
 
   it('A MALFORMED IDENTIFIER IS A REQUEST THAT DOES NOT KNOW WHAT IT IS ASKING FOR', () => {
     for (const bad of [
-      undefined, null, 42, '', 'payroll-a', CO_A.slice(0, 63), `${CO_A}0`, `0x${CO_A}`,
-      CO_A.replace('d', 'g'), ` ${CO_A}`, `${CO_A} `,
-      /* `CO_A.toUpperCase()` was in this list and is now a VALID
-       * spelling, pinned two tests above. Everything else it refused, it still
-       * refuses: a `g` is not hex in any case, and neither is a space. */
-      CO_A.toUpperCase().replace('D', 'G'), CO_A.toUpperCase().slice(0, 63),
+      undefined, null, 42, '', 'payroll-a', CO_A.slice(0, 66), `${CO_A}0`, `0x${ACCOUNT_A}`,
+      CO_A.replace('a', 'g'), ` ${CO_A}`, `${CO_A} `, `co_${'0'.repeat(64)}`, `co-${CO_A.slice(3)}`,
     ]) {
       expect(codeOf(() => parseAsk(unlock({ company: bad }), A, NOW)), String(bad))
-        .toBe('not-a-company-address');
+        .toBe('not-a-company-label');
     }
     /* And an unlock that names no company at all is the same refusal. */
     const { company, ...withoutCompany } = unlock();
     expect(company).toBe(CO_A);
-    expect(codeOf(() => parseAsk(withoutCompany, A, NOW))).toBe('not-a-company-address');
+    expect(codeOf(() => parseAsk(withoutCompany, A, NOW))).toBe('not-a-company-label');
   });
 
   it('AND `unlock.ts` HAS ITS OWN DOOR, so a hand-built ask meets it too', () => {
     /* The same argument made for the origin: `request.ts` is one door and a
-     * caller that assembled an `UnlockRequest` itself never went through it. */
-    for (const bad of [
-      '', 'payroll-a', CO_A.slice(0, 63), `0x${CO_A}`,
-      /* The uppercase spelling is no longer bad; a non-hex character
-       * in any case still is. */
-      CO_A.toUpperCase().replace('D', 'G'),
-    ]) {
+     * caller that assembled an `UnlockRequest` itself never went through it.
+     * RED WHEN: `unlock.ts` trusts the ask's `company` without reading it. */
+    for (const bad of ['', 'payroll-a', CO_A.slice(0, 66), ACCOUNT_A, CO_A.toUpperCase(), `co_${'0'.repeat(64)}`]) {
       const forged = { ...askAt(A), company: bad } as UnlockRequest;
       expect(() => unlockKeyFor(identity, forged), bad).toThrow(UnlockError);
     }
+  });
+
+  it('THE ACCOUNT IS NEVER AN INGREDIENT: the same label with any account, or none, is the same key', () => {
+    /* RED WHEN: the account reaches the derivation. */
+    const none = keyFor(CO_A);
+    expect(hex(unlockKeyFor(identity, askAt(A, CO_A, { account: ACCOUNT_A })))).toBe(none);
+    expect(hex(unlockKeyFor(identity, askAt(A, CO_A, { account: sampleContractAddress() })))).toBe(none);
+    expect(none).toBe(hex(independentUnlockKey(CO_A)));
+  });
+
+  it('NO KEY IS DERIVED FROM AN ADDRESS ANY MORE: the label\'s key is not what the old derivation gave its account', () => {
+    /* RED WHEN: the label's `co_` is stripped before the key is derived, so a label written over an
+     * account's address gives that address's key. The salt itself is held by the fixed vectors above. */
+    const oldFromAddress = hkdf(sha256, independentAuthority('unlock', 0),
+      new TextEncoder().encode('midnight-identity/unlock/v2'), new TextEncoder().encode(ACCOUNT_A), 32);
+    const newSaltAddress = hkdf(sha256, independentAuthority('unlock', 0), UNLOCK_SALT, new TextEncoder().encode(ACCOUNT_A), 32);
+    const labelOnThatAccount = labelOf(ACCOUNT_A);
+    expect(keyFor(labelOnThatAccount)).not.toBe(hex(oldFromAddress));
+    expect(keyFor(labelOnThatAccount)).not.toBe(hex(newSaltAddress));
   });
 });
 
@@ -417,7 +376,7 @@ describe('RULE 2 — THE SAME COMPANY FROM TWO DIFFERENT HOSTS GETS THE SAME KEY
   it('THE EXPORT, EXPRESSED AS CODE: two hosts, one company, identical bytes', () => {
     /*
      * **THIS IS THE WHOLE PURPOSE.** Anything sealed under a key
-     * derived from our address can only ever be opened at our address, so the
+     * derived from our host can only ever be opened at our host, so the
      * copy a customer takes to another client does not open and the defect reopens
      * by the mechanism meant to serve it.
      *
@@ -455,26 +414,22 @@ describe('RULE 2 — THE SAME COMPANY FROM TWO DIFFERENT HOSTS GETS THE SAME KEY
   it('matches the independent walk, and the recorded bytes for three companies', () => {
     /*
      * **THESE VECTORS ARE REPLACED RATHER THAN ADDING TO THEM, AND THAT IS
-     * DELIBERATE, DECLARED AND ARGUED.** `Purposes.Unlock`
-     * has no obligation to old bytes TODAY and will never be free again,
-     * because payroll's half is unbuilt and **not one byte anywhere has been
-     * sealed under an older key.** The four purposes older than `Unlock` are
-     * untouched and their vectors in `derivation.portability.test.ts` are
-     * byte-identical.
+     * DELIBERATE, DECLARED AND ARGUED.** The key moved from a company's account
+     * address to its label, and every company that existed under the address
+     * is discarded: nothing is kept derivable for them. The four purposes older
+     * than `Unlock` are untouched and their vectors in
+     * `derivation.portability.test.ts` are byte-identical.
      *
      * Every number below was produced by the INDEPENDENT walk above and is
      * checked against both it and `unlock.ts`, so it is not this repository's
      * code agreeing with itself.
      */
     const VECTORS: Readonly<Record<string, string>> = {
-      'dbe119a304f8e7ea882353435c1d536cf2faf4298236a9aae77670e750af65c8':
-        '7a9ac85d4b33d2cca39b5b15a8ff1e2b88a0e891ef452f78562b415db33460b7',
-      '54ef954a25aefff8e1675af10a852ef29d5de5c63a51b64b978bf7bd0eaeca4e':
-        'd1aa99d5be6d5e49e391a705e4253323051cfa92a5f67e2c407909a6465bd71e',
-      /* The all-zero address is a correctly-shaped one — `dummyContractAddress()`
-       * returns it — so it gets a key like any other rather than a special case. */
-      '0000000000000000000000000000000000000000000000000000000000000000':
-        '331df3aa0e33c47e7ec698469935ae0ec00244ca65213f4c96f6b7eaf9c41b57',
+      [CO_A]: 'f213b0ee0326c1c1b54e2024dc4c3e643d3d5808881d42fc488792574b7c76be',
+      [CO_B]: 'd53f45bb2d57f00cbd8d6e0e4da208d97fe3dcfb7d65dabedf7acab6b6a6b4ad',
+      /* The smallest label there is: thirty-one zero bytes and a one. The
+       * all-zero one is refused (the account refuses it), below. */
+      [`co_${'0'.repeat(63)}1`]: '599cbb8fd6a9bc1b576c4c25f6556ef91d6542104df03a72e8bf7efd19cb1f0e',
     };
     let checked = 0;
     for (const [company, expected] of Object.entries(VECTORS)) {
@@ -485,15 +440,22 @@ describe('RULE 2 — THE SAME COMPANY FROM TWO DIFFERENT HOSTS GETS THE SAME KEY
     expect(checked).toBe(3);
   });
 
-  it('THE SALT SAYS `v2`, and the old bytes for the same string are not these', () => {
-    /* The domain moved with the ingredient. A round that changed what goes in
-     * and left `v1` on the tin would have two different derivations sharing one
-     * domain — and this is the only moment the string is free to move. */
-    const v1 = hkdf(
-      sha256, independentAuthority('unlock', 0),
-      new TextEncoder().encode('midnight-identity/unlock/v1'),
-      new TextEncoder().encode(CO_A), 32);
-    expect(hex(v1)).not.toBe(keyFor(CO_A));
+  it('THE SALT SAYS `v3`, and the old bytes for the same string are not these', () => {
+    /* The domain moved with the ingredient, so no derivation of a label shares
+     * a domain with the derivation of an address or an origin.
+     * RED WHEN: the salt is left at `v2` or `v1`. */
+    for (const old of ['midnight-identity/unlock/v1', 'midnight-identity/unlock/v2']) {
+      const before = hkdf(
+        sha256, independentAuthority('unlock', 0),
+        new TextEncoder().encode(old),
+        new TextEncoder().encode(CO_A), 32);
+      expect(hex(before), old).not.toBe(keyFor(CO_A));
+    }
+  });
+
+  it('THE ALL-ZERO LABEL IS NO COMPANY: it is refused, as the account refuses it', () => {
+    /* RED WHEN: the reader lets thirty-two zero bytes through. */
+    expect(codeOf(() => parseAsk(unlock({ company: `co_${'0'.repeat(64)}` }), A, NOW))).toBe('not-a-company-label');
   });
 });
 
@@ -501,26 +463,26 @@ describe('RULE 3 — TWO COMPANIES NEVER GET THE SAME KEY, AT FULL WIDTH', () =>
   it('five hundred companies give five hundred different keys', () => {
     const seen = new Set<string>();
     for (let i = 0; i < 500; i += 1) {
-      seen.add(keyFor(sha256(new TextEncoder().encode(`company-${i}`))
-        .reduce((s, b) => s + b.toString(16).padStart(2, '0'), '')));
+      seen.add(keyFor(labelOf(sha256(new TextEncoder().encode(`company-${i}`))
+        .reduce((s, b) => s + b.toString(16).padStart(2, '0'), ''))));
     }
     expect(seen.size).toBe(500);
   });
 
-  it('A TRUNCATED ADDRESS IS NOT THE ADDRESS: two that share sixty-three characters', () => {
+  it('A TRUNCATED LABEL IS NOT THE LABEL: two that share all but their last character', () => {
     /*
      * **THE MUTATION THIS KILLS IS `company.slice(0, n)`.** The finding stands
      * and applies here unchanged: a selector narrower than the thing it selects
      * can be ground, and that round ground a pair onto one 31-bit index in
-     * 2,855,179,063 tries on one unoptimised core. **The address goes in whole.**
+     * 2,855,179,063 tries on one unoptimised core. **The label goes in whole.**
      *
      * These two differ in the LAST character only, so any truncation shorter
      * than the whole thing makes them one company.
      */
     const first = CO_A;
-    const second = `${CO_A.slice(0, 63)}${CO_A.endsWith('8') ? '9' : '8'}`;
+    const second = `${CO_A.slice(0, 66)}${CO_A.endsWith('8') ? '9' : '8'}`;
     expect(first).not.toBe(second);
-    expect(first.slice(0, 63)).toBe(second.slice(0, 63));
+    expect(first.slice(0, 66)).toBe(second.slice(0, 66));
     expect(keyFor(first)).not.toBe(keyFor(second));
   });
 
@@ -528,8 +490,9 @@ describe('RULE 3 — TWO COMPANIES NEVER GET THE SAME KEY, AT FULL WIDTH', () =>
     /* **THE MUTATION THIS KILLS IS ANY XOR- OR ADD-FOLD OF THE TWO HALVES.**
      * `X||Y` and `Y||X` fold to the same value under every commutative fold and
      * are plainly two different companies. No grinding required to find them. */
+    const body = CO_A.slice(3);
     const first = CO_A;
-    const second = `${CO_A.slice(32)}${CO_A.slice(0, 32)}`;
+    const second = labelOf(`${body.slice(32)}${body.slice(0, 32)}`);
     expect(first).not.toBe(second);
     expect([...first].sort().join('')).toBe([...second].sort().join(''));
     expect(keyFor(first)).not.toBe(keyFor(second));
@@ -542,7 +505,7 @@ describe('RULE 3 — TWO COMPANIES NEVER GET THE SAME KEY, AT FULL WIDTH', () =>
      * `Purposes.Seat`, and `authority(purpose, index)`
      * selects with a NUMBER below 2^31. **Reaching a seat from a 256-bit
      * address means squeezing it into 31 bits**, and the search below finds two
-     * ordinary company addresses that land on one index by walking a few
+     * ordinary company labels that land on one index by walking a few
      * thousand of them.
      *
      * A measurement of the targeted version at full width — a NAMED victim's index
@@ -555,7 +518,7 @@ describe('RULE 3 — TWO COMPANIES NEVER GET THE SAME KEY, AT FULL WIDTH', () =>
       return ((digest[0]! << 24) | (digest[1]! << 16) | (digest[2]! << 8) | digest[3]!)
         >>> 1;
     };
-    const addressOf = (i: number): string => hex(sha256(new TextEncoder().encode(`co-${i}`)));
+    const addressOf = (i: number): string => labelOf(hex(sha256(new TextEncoder().encode(`co-${i}`))));
     const at = new Map<number, string>();
     let collision: readonly [string, string] | null = null;
     for (let i = 0; i < 400_000 && collision === null; i += 1) {
@@ -625,7 +588,7 @@ describe('RULE 4 — IT IS NEVER A MONEY KEY', () => {
     }
 
     for (const company of [
-      CO_A, CO_B, dummyContractAddress(), sampleContractAddress(), sampleContractAddress(),
+      CO_A, CO_B, labelOf(sampleContractAddress()), labelOf(sampleContractAddress()), labelOf(sampleContractAddress()),
     ]) {
       const released = unlockKeyFor(identity, askAt(A, company));
       expect(released).toHaveLength(32);
@@ -643,7 +606,7 @@ describe('RULE 4 — IT IS NEVER A MONEY KEY', () => {
     /* The parent is in that set, at `unlock/0`. **A released key must not be
      * it**: releasing the parent would hand one company the key to every one. */
     expect(authority.has(hex(identity.authority(Purposes.Unlock, 0)))).toBe(true);
-    for (const company of [CO_A, CO_B, dummyContractAddress()]) {
+    for (const company of [CO_A, CO_B, labelOf(sampleContractAddress())]) {
       expect(authority.has(keyFor(company)), company).toBe(false);
     }
   });
@@ -669,7 +632,7 @@ describe('RULE 5 — THE REMEMBERED LIST IS NEVER AN INPUT', () => {
       recipient: { origin: B, name: 'Payroll B', rdns: 'example.payroll-b' },
       company: CO_A,
     }, NOW);
-    expect(originsFor(withHistory, CO_A)).toEqual([B]);
+    expect(originsFor(withHistory, CO_A, null)).toEqual([B]);
     /* The list exists, says something, and cannot reach the key: there is no
      * argument for it and `unlock.ts` imports nothing from `model.ts`. */
     const code = readFileSync(
@@ -698,8 +661,8 @@ describe('RULE 5 — THE REMEMBERED LIST IS NEVER AN INPUT', () => {
     const used = [CO_A, CO_B].reduce((profile, company) => recordRelease(profile, {
       at: NOW, nonce: 'n', recipient: { origin: A, name: 'A', rdns: 'a' }, company,
     }, NOW), emptyProfile(NOW));
-    expect(originsFor(used, CO_A)).toEqual([A]);
-    expect(originsFor(emptyProfile(NOW), CO_A)).toEqual([]);
+    expect(originsFor(used, CO_A, null)).toEqual([A]);
+    expect(originsFor(emptyProfile(NOW), CO_A, null)).toEqual([]);
     for (const company of [CO_A, CO_B]) {
       expect(keyFor(company)).toBe(hex(independentUnlockKey(company)));
     }
@@ -714,20 +677,32 @@ describe('RULE 5 — THE REMEMBERED LIST IS NEVER AN INPUT', () => {
         profile, { at: NOW, nonce: 'n', recipient: { origin, name: 'n', rdns: 'r' }, company },
         NOW);
     }
-    expect(originsFor(profile, CO_A)).toEqual([A, B]);
-    expect(originsFor(profile, CO_B)).toEqual([B]);
-    expect(originsFor(profile, dummyContractAddress())).toEqual([]);
+    expect(originsFor(profile, CO_A, null)).toEqual([A, B]);
+    expect(originsFor(profile, CO_B, null)).toEqual([B]);
+    expect(originsFor(profile, labelOf(dummyContractAddress()), null)).toEqual([]);
+  });
+
+  it('IT COMPARES THE LABEL AND THE ACCOUNT TOGETHER: the same label on another account is a company it has never seen', () => {
+    /* RED WHEN: `originsFor` compares the label alone. */
+    const OTHER = sampleContractAddress() as AccountAddress;
+    const profile = recordRelease(emptyProfile(NOW), {
+      at: NOW, nonce: 'n', recipient: { origin: A, name: 'n', rdns: 'r' }, company: CO_A, account: ACCOUNT_A,
+    }, NOW);
+    expect(originsFor(profile, CO_A, ACCOUNT_A)).toEqual([A]);
+    expect(originsFor(profile, CO_A, OTHER)).toEqual([]);
+    expect(originsFor(profile, CO_A, null)).toEqual([]);
   });
 });
 
 describe('THE MESSAGE THAT CROSSES, AND THE READER ON THE OTHER SIDE', () => {
   const ask = askAt(A);
-  const expecting = { atOrigin: A, expectingNonce: 'n1', forCompany: CO_A };
+  const expecting = { atOrigin: A, expectingNonce: 'n1', forCompany: CO_A, forAccount: null };
 
   it('carries the key, the company, the nonce and the observed origin, and nothing else', () => {
     const released = releaseFor(identity, ask, NOW);
     expect(Object.keys(released).sort())
-      .toEqual(['at', 'company', 'key', 'nonce', 'origin', 'schema']);
+      .toEqual(['account', 'at', 'company', 'key', 'nonce', 'origin', 'schema']);
+    expect(released.account).toBeNull();
     expect(released.schema).toBe(RELEASE_SCHEMA);
     expect(released.origin).toBe(A);
     expect(released.company).toBe(CO_A);
@@ -762,6 +737,19 @@ describe('THE MESSAGE THAT CROSSES, AND THE READER ON THE OTHER SIDE', () => {
 
     const stale = readRelease(released, { ...expecting, expectingNonce: 'another' });
     expect(!stale.ok && stale.code).toBe('nonce-mismatch');
+
+    /* **THE PAIR.** A key for the right label said to be about another account
+     * answers a question nobody asked. RED WHEN: the reader ignores `account`. */
+    const onA = releaseFor(identity, askAt(A, CO_A, { account: ACCOUNT_A }), NOW);
+    expect(onA.account).toBe(ACCOUNT_A);
+    expect(readRelease(onA, { ...expecting, forAccount: ACCOUNT_A }).ok).toBe(true);
+    const otherAccount = readRelease(onA, { ...expecting, forAccount: sampleContractAddress() as AccountAddress });
+    expect(!otherAccount.ok && otherAccount.code).toBe('company-mismatch');
+    const noAccount = readRelease(onA, expecting);
+    expect(!noAccount.ok && noAccount.code).toBe('company-mismatch');
+    /* An upper-case echo of the label is not the label. */
+    const shouted = readRelease({ ...released, company: CO_A.toUpperCase() }, expecting);
+    expect(!shouted.ok && shouted.code).toBe('company-mismatch');
   });
 
   it('CARRIES THE INDEXER THE WALLET READS THE CHAIN THROUGH WHEN IT IS GIVEN ONE, AND THE READER HANDS IT BACK', () => {
@@ -769,7 +757,7 @@ describe('THE MESSAGE THAT CROSSES, AND THE READER ON THE OTHER SIDE', () => {
     const released = releaseFor(identity, ask, NOW, indexer);
     /* Public addresses, beside the key. RED WHEN they are dropped or renamed. */
     expect(Object.keys(released).sort())
-      .toEqual(['at', 'company', 'indexer', 'key', 'nonce', 'origin', 'schema']);
+      .toEqual(['account', 'at', 'company', 'indexer', 'key', 'nonce', 'origin', 'schema']);
     const read = readRelease(released, expecting);
     expect(read.ok && read.indexer).toEqual(indexer);
     /* The key is the same key whether or not an indexer went with it. */
@@ -840,8 +828,8 @@ describe('WHAT IS WRITTEN DOWN, AND WHAT MUST NOT BE', () => {
     expect(stored).not.toContain(hex(sha256(fromBase64Url(released.key))));
     /* And the first eight characters would be enough to be a leak. */
     expect(stored).not.toContain(released.key.slice(0, 8));
-    /* The COMPANY is in there, and that is not a leak: it is a public address
-     * on a chain, and it is the thing the warning is computed from. */
+    /* The COMPANY is in there, and that is not a leak: its label is public on
+     * its account, and it is the thing the warning is computed from. */
     expect(stored).toContain(CO_A);
   });
 
@@ -858,7 +846,7 @@ describe('WHAT IS WRITTEN DOWN, AND WHAT MUST NOT BE', () => {
     const old = { ...emptyProfile(NOW) } as { releases?: unknown };
     delete old.releases;
     expect(releasesOf(old as Parameters<typeof releasesOf>[0])).toEqual([]);
-    expect(originsFor(old as Parameters<typeof releasesOf>[0], CO_A)).toEqual([]);
+    expect(originsFor(old as Parameters<typeof releasesOf>[0], CO_A, null)).toEqual([]);
   });
 });
 
@@ -896,12 +884,29 @@ describe('THE KEYRING ASK IS ITS OWN KIND, AND ITS FIELDS BELONG TO IT ALONE', (
     expect(ask.person).toBe(PERSON);
     expect(ask.signedInAs).toBe(SIGNED_IN);
     expect(ask.company).toBeNull();
+    expect(ask.account).toBeNull();
+    expect(ask.drawLabel).toBe(false);
     expect(keyringAt(A, { signedInAs: undefined }).signedInAs).toBeNull();
   });
 
-  it('A COMPANY IN ANY SPELLING IS FOLDED, AND A MALFORMED ONE IS REFUSED BY NAME', () => {
-    expect(keyringAt(A, { company: CO_A.toUpperCase() }).company).toBe(CO_A);
-    expect(codeOf(() => keyringAt(A, { company: `0x${CO_A.slice(2)}` }))).toBe('not-a-company-address');
+  it('A COMPANY IS A LABEL IN ITS ONE SPELLING, AND AN ADDRESS OR ANY OTHER SPELLING IS REFUSED BY NAME', () => {
+    /* RED WHEN: the keyring kind reads its company with anything but the label reader. */
+    expect(keyringAt(A, { company: CO_A }).company).toBe(CO_A);
+    expect(codeOf(() => keyringAt(A, { company: CO_A.toUpperCase() }))).toBe('not-a-company-label');
+    expect(codeOf(() => keyringAt(A, { company: ACCOUNT_A }))).toBe('not-a-company-label');
+    expect(keyringAt(A, { company: CO_A, account: ACCOUNT_A }).account).toBe(ACCOUNT_A);
+    expect(codeOf(() => keyringAt(A, { company: CO_A, account: CO_B }))).toBe('not-an-account-address');
+    /* An account with no company is a question with no subject. */
+    expect(codeOf(() => keyringAt(A, { account: ACCOUNT_A }))).toBe('malformed-field');
+  });
+
+  it('AN ASK TO START A COMPANY NAMES NO COMPANY AND NO ACCOUNT, AND SAYS YES OR NO', () => {
+    /* RED WHEN: a page can ask for a drawn label and name the label it wants in the same breath. */
+    expect(keyringAt(A, { drawLabel: true }).drawLabel).toBe(true);
+    expect(codeOf(() => keyringAt(A, { drawLabel: true, company: CO_A }))).toBe('malformed-field');
+    expect(codeOf(() => keyringAt(A, { drawLabel: true, company: CO_A, account: ACCOUNT_A }))).toBe('malformed-field');
+    expect(codeOf(() => keyringAt(A, { drawLabel: 'yes' }))).toBe('malformed-field');
+    expect(codeOf(() => parseAsk(unlock({ drawLabel: true }), A, NOW))).toBe('keyring-fields-on-another-kind');
   });
 
   it('a person the wallet cannot use, or an address that is not one, is refused by name', () => {
@@ -1002,7 +1007,7 @@ describe('THE KEYRING RELEASE: THE GATE IS INSIDE IT, AND THE READER TAKES ITS O
   it('a wallet holding the signed-in address gives the keyring key and nothing else', () => {
     const released = keyringReleaseFor(identity, keyringAt(A), NOW, holdsSignedIn);
     expect(Object.keys(released).sort()).toEqual(
-      ['at', 'committeeKey', 'company', 'companyKey', 'key', 'nonce', 'origin', 'person', 'schema', 'signedInAs']);
+      ['account', 'at', 'committeeKey', 'company', 'companyKey', 'key', 'nonce', 'origin', 'person', 'schema', 'signedInAs']);
     expect(released.committeeKey).toBeNull();
     expect(released.schema).toBe(KEYRING_RELEASE_SCHEMA);
     expect(released.origin).toBe(A);
@@ -1046,12 +1051,49 @@ describe('THE KEYRING RELEASE: THE GATE IS INSIDE IT, AND THE READER TAKES ITS O
     expect(JSON.stringify(released)).not.toContain(signing);
   });
 
+  it('ASKED TO START A COMPANY, THE WALLET DRAWS THE LABEL ITSELF AND ANSWERS WITH IT AND ITS KEYS', () => {
+    /* RED WHEN: the label comes from anywhere but the wallet's own draw, or the
+     * keys in the answer are not that label's. */
+    const drawn = labelOf(sampleContractAddress());
+    let draws = 0;
+    const released = keyringReleaseFor(identity, keyringAt(A, { drawLabel: true }), NOW, holdsSignedIn,
+      () => { draws += 1; return drawn; });
+    expect(draws).toBe(1);
+    expect(released.company).toBe(drawn);
+    expect(released.account).toBeNull();
+    expect(hex(fromBase64Url(released.companyKey!))).toBe(hex(independentUnlockKey(drawn)));
+    expect(released.committeeKey).toEqual(committeeKeyFor(identity, drawn));
+    /* The real draw: two asks, two labels, each a label. */
+    const one = keyringReleaseFor(identity, keyringAt(A, { drawLabel: true }), NOW, holdsSignedIn).company!;
+    const two = keyringReleaseFor(identity, keyringAt(A, { drawLabel: true }), NOW, holdsSignedIn).company!;
+    expect(one).toMatch(/^co_[0-9a-f]{64}$/u);
+    expect(one).not.toBe(two);
+    /* And a hand-built ask that asks for both is refused before anything is drawn. */
+    const both = { ...keyringAt(A, { drawLabel: true }), company: CO_A } as KeyringRequest;
+    expect(codeOf(() => keyringReleaseFor(identity, both, NOW, holdsSignedIn, () => { draws += 1; return drawn; })))
+      .toBe('company-not-usable');
+    expect(draws).toBe(1);
+    /* The page reads which label was drawn, and only a label. */
+    const read = readKeyringRelease(released, {
+      atOrigin: A, expectingNonce: 'k1', person: PERSON, signedInAs: SIGNED_IN, forCompany: 'drawn', forAccount: null,
+    });
+    expect(read.ok && read.company).toBe(drawn);
+    const notALabel = readKeyringRelease({ ...released, company: ACCOUNT_A }, {
+      atOrigin: A, expectingNonce: 'k1', person: PERSON, signedInAs: SIGNED_IN, forCompany: 'drawn', forAccount: null,
+    });
+    expect(notALabel.ok ? 'accepted' : notALabel.code).toBe('company-mismatch');
+    const none = readKeyringRelease({ ...released, company: null, companyKey: null, committeeKey: null }, {
+      atOrigin: A, expectingNonce: 'k1', person: PERSON, signedInAs: SIGNED_IN, forCompany: 'drawn', forAccount: null,
+    });
+    expect(none.ok ? 'accepted' : none.code).toBe('company-mismatch');
+  });
+
   it('THE READER REFUSES AN ANSWER TO ANY OTHER QUESTION', () => {
     const expecting: {
       atOrigin: string; expectingNonce: string; person: string;
-      signedInAs: string | null; forCompany: string | null;
+      signedInAs: string | null; forCompany: CompanyLabel | null; forAccount: AccountAddress | null;
     } = {
-      atOrigin: A, expectingNonce: 'k1', person: PERSON, signedInAs: SIGNED_IN, forCompany: null,
+      atOrigin: A, expectingNonce: 'k1', person: PERSON, signedInAs: SIGNED_IN, forCompany: null, forAccount: null,
     };
     const released = keyringReleaseFor(identity, keyringAt(A), NOW, holdsSignedIn);
     const read = readKeyringRelease(released, expecting);
@@ -1082,7 +1124,7 @@ describe('THE KEYRING RELEASE: THE GATE IS INSIDE IT, AND THE READER TAKES ITS O
     const forB = keyringReleaseFor(identity, keyringAt(A, { company: CO_B }), NOW, holdsSignedIn);
     const r = readKeyringRelease(forB, withCompany);
     expect(r.ok ? 'accepted' : r.code).toBe('company-mismatch');
-    const forA = keyringReleaseFor(identity, keyringAt(A, { company: CO_A.toUpperCase() }), NOW, holdsSignedIn);
+    const forA = keyringReleaseFor(identity, keyringAt(A, { company: CO_A }), NOW, holdsSignedIn);
     const good = readKeyringRelease(forA, withCompany);
     expect(good.ok).toBe(true);
     if (good.ok) {
@@ -1099,16 +1141,21 @@ describe('THE KEYRING RELEASE: THE GATE IS INSIDE IT, AND THE READER TAKES ITS O
       .toBe('unusable-key');
     expect(refused({ company: CO_A, companyKey: forA.companyKey, committeeKey: { tag: 'schnorr', value: 'ab' } }, withCompany))
       .toBe('unusable-key');
+    /* The account, too: asked about a label on one account, answered for another. */
+    const onA = keyringReleaseFor(identity, keyringAt(A, { company: CO_A, account: ACCOUNT_A }), NOW, holdsSignedIn);
+    expect(readKeyringRelease(onA, { ...withCompany, forAccount: ACCOUNT_A }).ok).toBe(true);
+    const r2 = readKeyringRelease(onA, withCompany);
+    expect(r2.ok ? 'accepted' : r2.code).toBe('company-mismatch');
   });
 
   it('A COMPANY-KEY RELEASE IS NOT A KEYRING RELEASE, AND THE REVERSE', () => {
     const company = releaseFor(identity, askAt(A), NOW);
     const r = readKeyringRelease(company, {
-      atOrigin: A, expectingNonce: 'n1', person: PERSON, signedInAs: null, forCompany: null,
+      atOrigin: A, expectingNonce: 'n1', person: PERSON, signedInAs: null, forCompany: null, forAccount: null,
     });
     expect(r.ok ? 'accepted' : r.code).toBe('not-a-release');
     const keyring = keyringReleaseFor(identity, keyringAt(A), NOW, holdsSignedIn);
-    const back = readRelease(keyring, { atOrigin: A, expectingNonce: 'k1', forCompany: CO_A });
+    const back = readRelease(keyring, { atOrigin: A, expectingNonce: 'k1', forCompany: CO_A, forAccount: null });
     expect(back.ok ? 'accepted' : back.code).toBe('not-a-release');
   });
 });

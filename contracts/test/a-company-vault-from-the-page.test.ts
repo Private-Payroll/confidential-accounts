@@ -40,6 +40,7 @@ import { identityFromWords, newWords } from 'midnight-identity';
 import { parseAsk } from 'midnight-identity/profile/request';
 import { unlockKeyFor } from 'midnight-identity/profile/unlock';
 import { committeeKeyFor } from 'midnight-identity/profile/committee-key';
+import { drawCompanyLabel, readAccountAddress, type CompanyLabel } from 'midnight-identity/profile/company-label';
 import * as vaultModule from '../managed-vault/contract/index.js';
 import { MemoryStore } from '../../src/core/store.js';
 import { AccountService, openAccount, sealAccount } from '../../src/core/account.js';
@@ -85,10 +86,10 @@ const hex = (b: Uint8Array): string => Buffer.from(b).toString('hex');
 const asRuntime = (state: { serialize(): Uint8Array }) => (runtime as any).ContractState.deserialize(state.serialize());
 const vaultLedgerOf = (state: { serialize(): Uint8Array }) => (vaultModule as any).ledger(asRuntime(state).data);
 
-const releasedCompanyKey = (words: string, company: string): Uint8Array => {
+const releasedCompanyKey = (words: string, company: CompanyLabel, account: string): Uint8Array => {
   const ask = parseAsk(unlockAsk({
     name: 'Confidential Accounts', rdns: 'social.lemonade.confidential-accounts', purpose: UNLOCK_PURPOSE,
-    nonce: 'derivation-has-no-conversation', expiresAt: UNLOCK_WINDOW_MS, company,
+    nonce: 'derivation-has-no-conversation', expiresAt: UNLOCK_WINDOW_MS, company, account: readAccountAddress(account),
   }), 'https://payroll.example', 0);
   if (ask.kind !== 'unlock') throw new Error('not an unlock');
   return unlockKeyFor(identityFromWords(words), ask);
@@ -178,6 +179,8 @@ describe.skipIf(!KEYS_ON_DISK)('A COMPANY VAULT, FROM THE SIGNER\'S DEVICE [need
   let store: MemoryStore;
   let viewingKey: Hex;
   let company: Hex;
+  /* The label the company's keys are derived from, drawn once as the founding signer's wallet draws it. */
+  let label: CompanyLabel;
   let words: string;
   let me: DeviceSigner;
   let signing: ReturnType<typeof newSigningKeypair>;
@@ -250,18 +253,19 @@ describe.skipIf(!KEYS_ON_DISK)('A COMPANY VAULT, FROM THE SIGNER\'S DEVICE [need
       L.Intent.new(new Date(Date.now() + 600_000)).addDeploy(accountDeploy)));
     if (!seeded.ok) throw new Error(`the company account was not deployed: ${seeded.error}`);
     company = String(accountDeploy.address).toLowerCase() as Hex;
+    label = drawCompanyLabel();
     companyThreshold = 1;
     words = newWords().join(' ');
     signing = newSigningKeypair();
     wrapping = newWrappingKeypair();
-    me = { signerId: 'ada', wrappingSecret: wrapping.secret, companyKey: releasedCompanyKey(words, company) };
+    me = { signerId: 'ada', wrappingSecret: wrapping.secret, companyKey: releasedCompanyKey(words, label, company) };
     sent = [];
     temporaryKeys = new Map();
     dropHandover = false;
     /* A company of one, with its roster sealed under a viewing key the page holds, as the product keeps it. */
     viewingKey = toHex(new Uint8Array(32).fill(0x5e));
     store.putAccount(sealAccount({
-      id: ACCOUNT_ID, createdAt: new Date().toISOString(), name: 'Northwind',
+      id: ACCOUNT_ID, createdAt: new Date().toISOString(), name: 'Northwind', companyLabel: label,
       signers: [{
         id: 'ada', userId: 'ada', name: 'Ada', status: 'active', role: 'admin', leafCommitment: null,
         signingPublicKey: signing.publicKey, wrappingPublicKey: wrapping.publicKey,
@@ -419,7 +423,7 @@ describe.skipIf(!KEYS_ON_DISK)('A COMPANY VAULT, FROM THE SIGNER\'S DEVICE [need
     body: {
       viewingKey,
       ...signVaultKeys(ACCOUNT_ID, 'ada', {
-        committeeKey: committeeKeyFor(identityFromWords(words), company), recordsKey: recordsReaderOf(me.companyKey).publicKey,
+        committeeKey: committeeKeyFor(identityFromWords(words), label), recordsKey: recordsReaderOf(me.companyKey).publicKey,
       }, signing.secret),
     },
   });
@@ -437,7 +441,7 @@ describe.skipIf(!KEYS_ON_DISK)('A COMPANY VAULT, FROM THE SIGNER\'S DEVICE [need
   const answered: string[] = [];
 
   it('NO COMMITTEE, NO DEPLOY: a vault is refused until every signer\'s wallet has given its committee key', async () => {
-    const doors = { ...pacing, account: company, service: service(), builder: builder(), keys };
+    const doors = { ...pacing, account: readAccountAddress(company)!, service: service(), builder: builder(), keys };
     await expect(createCompanyVault(doors)).rejects.toThrow(/committee that must hold the vault's rules is not complete/);
     expect(chain.applied).toEqual([]);
     /* And the route itself refuses a deploy sent without asking. */
@@ -449,11 +453,11 @@ describe.skipIf(!KEYS_ON_DISK)('A COMPANY VAULT, FROM THE SIGNER\'S DEVICE [need
 
   it('CREATED, HANDED OVER, POOLED AND FUNDED - AND NOTHING IS REPORTED DONE UNTIL THE CHAIN SAYS SO', async () => {
     await giveKeys();
-    const committee = committeeKeyFor(identityFromWords(words), company);
+    const committee = committeeKeyFor(identityFromWords(words), label);
 
     /* ---- the handover is lost on its way: FAILED, the vault named, nothing reported created ---- */
     dropHandover = true;
-    const doors = { ...pacing, account: company, service: service(), builder: builder(), keys };
+    const doors = { ...pacing, account: readAccountAddress(company)!, service: service(), builder: builder(), keys };
     const lost = await createCompanyVault(doors).catch((e) => e);
     expect(lost, String(lost?.message)).toBeInstanceOf(VaultHandoverOwed);
     const vault = (lost as VaultHandoverOwed).vault;
@@ -511,7 +515,7 @@ describe.skipIf(!KEYS_ON_DISK)('A COMPANY VAULT, FROM THE SIGNER\'S DEVICE [need
     /* ---- NO MONEY GOES IN WHILE THE ACCOUNT IS STILL THE TEMPORARY KEY'S, AND THE WALLET IS NOT ASKED ---- */
     shown = [];
     await expect(depositIntoCompanyVault({
-      ...poolDoors, company, builder: builder(), pay: wallet, inFlight: inFlightInMemory(),
+      ...poolDoors, company: label, account: readAccountAddress(company)!, builder: builder(), pay: wallet, inFlight: inFlightInMemory(),
     }, vault, { token: GBP, value: 1n })).rejects.toThrow(/account is still held by the temporary key/);
     expect(shown).toEqual([]);
     expect(chain.applied).toHaveLength(2);
@@ -524,7 +528,7 @@ describe.skipIf(!KEYS_ON_DISK)('A COMPANY VAULT, FROM THE SIGNER\'S DEVICE [need
     /* The page's own check, against the key the wallet itself derives. */
     const roster = openAccount(store.getAccount(ACCOUNT_ID)!, viewingKey);
     expect(whyNotHandOver(before, committee, roster, { signerId: 'ada' })).toBeNull();
-    expect(whyNotHandOver(before, committeeKeyFor(identityFromWords(newWords().join(' ')), company), roster, { signerId: 'ada' }))
+    expect(whyNotHandOver(before, committeeKeyFor(identityFromWords(newWords().join(' ')), label), roster, { signerId: 'ada' }))
       .toMatch(/roster does not carry the key your wallet gives/);
     expect(before.everySignerNeeded).toMatch(/only signer/);
     expect(before.handover).toMatchObject({ possible: true, why: null });
@@ -560,7 +564,7 @@ describe.skipIf(!KEYS_ON_DISK)('A COMPANY VAULT, FROM THE SIGNER\'S DEVICE [need
     /* ---- the deposit ---- */
     shown = [];
     const deposited = await depositIntoCompanyVault({
-      ...poolDoors, company, builder: builder(), pay: wallet, inFlight: inFlightInMemory(),
+      ...poolDoors, company: label, account: readAccountAddress(company)!, builder: builder(), pay: wallet, inFlight: inFlightInMemory(),
     }, vault, { token: GBP, value: 1_000n });
     expect(chain.applied.map((a) => a.ok)).toEqual([true, true, true, true]);
 
@@ -594,7 +598,7 @@ describe.skipIf(!KEYS_ON_DISK)('A COMPANY VAULT, FROM THE SIGNER\'S DEVICE [need
     const built = await builder(false).deploy(company);
     const deploy = L.Transaction.deserialize('signature', 'pre-proof', 'pre-binding', bytesFromBase64(built.tx)) as any;
     const temporary = signingKeyFromBip340(Buffer.from(built.temporaryKey.value, 'hex'));
-    const to = { committee: [committeeKeyFor(identityFromWords(words), company)], threshold: 1 };
+    const to = { committee: [committeeKeyFor(identityFromWords(words), label)], threshold: 1 };
     let update = committeeReplacement(L as never, { vault: built.vault, counter: 0n, to }) as any;
     update = update.addSignature(0n, L.signData(temporary, update.dataToSign));
     const intent = [...deploy.intents.values()][0];

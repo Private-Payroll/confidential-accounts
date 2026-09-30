@@ -1,4 +1,5 @@
 import { describe, it, expect } from 'vitest';
+import { drawCompanyLabel } from 'midnight-identity/profile/company-label';
 import { mkdtempSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
@@ -131,7 +132,7 @@ const aRunAt = (vault: Hex) => ({
  * never entered.
  */
 async function openAccountAt3(h: ReturnType<typeof harness>) {
-  return h.accounts.create('Acme', THREE, 3);
+  return h.accounts.create('Acme', THREE, 3, undefined, drawCompanyLabel());
 }
 
 /**

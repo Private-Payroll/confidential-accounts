@@ -15,12 +15,11 @@
  * chain alone, whether the copy is the company's, and which seats are held by
  * somebody who is no longer on the company.
  *
- * **HOW A COMPANY ACCOUNT COMES TO BE HELD BY ITS COMMITTEE.** A contract's
- * address is a hash of what it is deployed with, its authority included, and a
- * signer's committee key is worked out from the company's address. No account
- * can therefore be deployed already holding keys that are derived from its own
- * address. The account is deployed with this service's temporary key and handed
- * to the committee afterwards, exactly as a vault is: the temporary key signs
+ * **HOW A COMPANY ACCOUNT COMES TO BE HELD BY ITS COMMITTEE.** A signer's
+ * committee key is worked out from the company's label, which exists before the
+ * account does. Today the account is still deployed with this service's
+ * temporary key and handed to the committee afterwards, exactly as a vault is:
+ * the temporary key signs
  * that one change, and nothing is paid into any of the company's vaults until
  * the chain shows the committee holding the account.
  *

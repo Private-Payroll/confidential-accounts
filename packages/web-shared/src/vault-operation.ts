@@ -54,6 +54,7 @@ import { PaymentJournalInStore } from '../../../src/midnight/vault-journal.js';
 import type { PrivatePaymentOnTheWire, PrivatePaymentOrderOnTheWire } from '../../../src/midnight/private-payment-wire.js';
 import type { EventOnTheWire, NoteOnTheWire } from './vault-builder.js';
 import type { NonceSecretReader } from '../../../src/midnight/company-nonce-secret.js';
+import type { AccountAddress, CompanyLabel, VaultAddress } from 'midnight-identity/profile/company-label';
 import {
   depositCoinOnThisDevice, startVaultNonceSecretOnThisDevice,
   type DeviceRecords, type DeviceSigner,
@@ -178,7 +179,11 @@ async function until<T>(
 }
 
 export interface CreateVaultDoors extends Pacing {
-  readonly account: Hex;
+  /**
+   * The address of the company's account, which the new vault is pinned to. Its
+   * own type: a company's label, or another vault's address, does not build here.
+   */
+  readonly account: AccountAddress;
   readonly service: VaultService;
   readonly builder: VaultBuilderClient;
   readonly keys: TemporaryKeys;
@@ -320,9 +325,11 @@ export async function openCompanyVaultPool(doors: PoolDoors, vault: Hex): Promis
 export const LEDGER_PARAMETERS_HEADER = 'midnight:ledger-parameters[v8]:';
 
 export interface DepositDoors extends PoolDoors {
-  readonly company: Hex;
+  /** The company's label, and the account that carries it: the wallet reads one off the other before it pays. */
+  readonly company: CompanyLabel;
+  readonly account: AccountAddress;
   readonly builder: VaultBuilderClient;
-  readonly pay: (ask: { company: Hex; vault: Hex; transaction: string }) =>
+  readonly pay: (ask: { company: CompanyLabel; account: AccountAddress; vault: VaultAddress; transaction: string }) =>
     Promise<{ transaction: string; leaves: readonly unknown[] }>;
   /** Where this device keeps a deposit it has sent until the chain holds it or it can no longer land. */
   readonly inFlight: DepositsInFlight;
@@ -711,7 +718,7 @@ export async function depositIntoCompanyVault(
   doors.progress?.('asking your wallet');
   let paid: { transaction: string; leaves: readonly unknown[] };
   try {
-    paid = await doors.pay({ company: doors.company, vault, transaction: built.tx });
+    paid = await doors.pay({ company: doors.company, account: doors.account, vault: vault as VaultAddress, transaction: built.tx });
   } catch (e) {
     await letGo(doors, vault, claim);
     throw e;
@@ -766,7 +773,8 @@ export class PublicDepositNotYetSeen extends Error {
 export interface PublicDepositDoors extends Pacing {
   readonly service: VaultService;
   readonly builder: VaultBuilderClient;
-  readonly company: Hex;
+  readonly company: CompanyLabel;
+  readonly account: AccountAddress;
   readonly pay: DepositDoors['pay'];
   /** The time now, in milliseconds. */
   readonly clock?: () => number;
@@ -829,7 +837,7 @@ export async function depositPubliclyIntoCompanyVault(
     vault, token: money.token, amount: money.value.toString(), state: view.state, parameters,
   });
   doors.progress?.('asking your wallet');
-  const paid = await doors.pay({ company: doors.company, vault, transaction: built.tx });
+  const paid = await doors.pay({ company: doors.company, account: doors.account, vault: vault as VaultAddress, transaction: built.tx });
   /*
    * **WHAT THE WALLET SAYS LEFT IT MUST BE WHAT WAS ASKED.** The wallet reads the
    * amount from the transaction, not from this page; an answer naming anything

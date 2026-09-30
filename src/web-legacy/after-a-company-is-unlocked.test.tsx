@@ -43,6 +43,12 @@ import { keyringAsk, KEYRING_PURPOSE } from '../core/wallet-unlock.js';
 import type { Openable } from 'vaults-web-shared/wallet-sign-in.js';
 import * as keyring from 'vaults-web-shared/keyring.js';
 
+/** The value, or a failure that says one was missing: an index that finds nothing is a broken test, not a value to carry on with. */
+function present<T>(value: T | undefined): T {
+  if (value === undefined) throw new Error('expected a value here, and there was none');
+  return value;
+}
+
 const US = 'https://payroll.example';
 const WALLET = 'https://wallet.example';
 /** The address the server says the sign-in was for, in a shape the wallet's parser accepts. */
@@ -94,7 +100,7 @@ const anotherWallet = () => new WalletAtTheOtherEnd(identityFromWords(newWords()
 /** The keyring key the wallet above gives this person, worked out the wallet's way. */
 const keyringHex = () => toHex(keyringKeyFor(identity, parseAsk(keyringAsk({
   name: 'n', rdns: 'r', purpose: KEYRING_PURPOSE, nonce: 'n', expiresAt: Date.now() + 60_000,
-  person: PERSON, signedInAs: null, company: null,
+  person: PERSON, signedInAs: null, company: null, account: null,
 }), US, Date.now()) as KeyringRequest));
 
 /** Key material this person sealed for a seat before its leaf was published, and has not promoted. */
@@ -743,20 +749,22 @@ describe('A PERSON\'S FIRST KEYS ARE SAVED ONLY FROM THE TAB THAT SIGNED THEM IN
 });
 
 describe('the companies that pay you are kept with you, sealed, and shown to nobody else', () => {
-  const ACME = 'ab'.repeat(32);
-  const BEFORE_UNLOCK = 'cd'.repeat(32);
+  /* A company that pays this person, by its label. */
+  const ACME = `co_${'ab'.repeat(32)}`;
+  const BEFORE_UNLOCK = `co_${'cd'.repeat(32)}`;
   afterEach(() => { localStorage.clear(); });
 
   it('A COMPANY ADDED ONCE THE SAVED KEYS ARE OPEN IS SAVED INSIDE THEM, BESIDE WHAT WAS THERE', async () => {
     const { sent } = aDeployment({ keyBundle: 'another-company' });
     await signInAndOpenKeys();
-    await keyring.rememberCompanyThatPaysYou('0x' + ACME.toUpperCase());
+    /* Surrounding space is dropped; the label itself has one spelling. */
+    await keyring.rememberCompanyThatPaysYou(`  ${ACME} `);
     const writes = sent('PUT /api/me/keys');
     /* RED WHEN the list is not saved with the person. */
     expect(writes).toHaveLength(1);
-    /* RED WHEN the address crosses the wire where the service can read it. */
-    expect(JSON.stringify(writes[0].body)).not.toContain(ACME);
-    const inside = JSON.parse(unseal(writes[0].body.keyBundle, keyringHex()));
+    /* RED WHEN the label crosses the wire where the service can read it. */
+    expect(JSON.stringify(present(writes[0]).body)).not.toContain(ACME);
+    const inside = JSON.parse(unseal(present(writes[0]).body.keyBundle, keyringHex()));
     expect(inside.paidBy).toEqual([ACME]);
     /* RED WHEN saving the list drops a company's keys. */
     expect(Object.keys(inside.accounts)).toEqual(['acc_other']);
@@ -779,7 +787,7 @@ describe('the companies that pay you are kept with you, sealed, and shown to nob
     const writes = sent('PUT /api/me/keys');
     /* RED WHEN what this browser held is never moved into the saved keys. */
     expect(writes).toHaveLength(1);
-    expect(JSON.parse(unseal(writes[0].body.keyBundle, keyringHex())).paidBy).toEqual([BEFORE_UNLOCK]);
+    expect(JSON.parse(unseal(present(writes[0]).body.keyBundle, keyringHex())).paidBy).toEqual([BEFORE_UNLOCK]);
     expect(localStorage.length).toBe(0);
     expect(keyring.companiesThatPayYou()).toEqual([BEFORE_UNLOCK]);
   });
@@ -813,18 +821,19 @@ describe('the companies that pay you are kept with you, sealed, and shown to nob
 
   it('THE LIST AN OLDER PAGE KEPT HERE FOR NOBODY IS READ ONCE INTO THE SAVED KEYS, AND LEFT WHERE IT WAS', async () => {
     const { sent } = aDeployment({ keyBundle: 'another-company' });
-    localStorage.setItem('payslip-companies', JSON.stringify([ACME, 'not an address']));
+    /* An account's address in it names a company that is gone, and is not taken. RED WHEN it is. */
+    localStorage.setItem('payslip-companies', JSON.stringify([ACME, 'not an address', 'ab'.repeat(32)]));
     await signInAndOpenKeys();
     await keyring.bringCompaniesThatPayYouAcross();
     const writes = sent('PUT /api/me/keys');
     /* RED WHEN the older list is no longer read, and its owner must add each company again. */
     expect(writes).toHaveLength(1);
-    expect(JSON.parse(unseal(writes[0].body.keyBundle, keyringHex())).paidBy).toEqual([ACME]);
+    expect(JSON.parse(unseal(present(writes[0]).body.keyBundle, keyringHex())).paidBy).toEqual([ACME]);
     expect(keyring.companiesThatPayYou()).toEqual([ACME]);
     /* RED WHEN it is emptied or changed: nothing is deleted. */
-    expect(localStorage.getItem('payslip-companies')).toBe(JSON.stringify([ACME, 'not an address']));
+    expect(localStorage.getItem('payslip-companies')).toBe(JSON.stringify([ACME, 'not an address', 'ab'.repeat(32)]));
     /* RED WHEN it is read again: once taken, the next unlock here reads nothing from it, whatever it holds. */
-    const LATER = 'ef'.repeat(32);
+    const LATER = `co_${'ef'.repeat(32)}`;
     localStorage.setItem('payslip-companies', JSON.stringify([LATER]));
     await keyring.signInWithWallet(WALLET, undefined, new WalletAtTheOtherEnd());
     await keyring.openKeysWithWallet(WALLET, new WalletAtTheOtherEnd(), US);
@@ -856,7 +865,7 @@ describe('the companies that pay you are kept with you, sealed, and shown to nob
     /* RED WHEN the unlocked face drops the companies that pay you. */
     const paying = container.querySelectorAll('[data-employer]');
     expect(paying).toHaveLength(1);
-    expect(paying[0].textContent).toContain('A company that pays you');
+    expect(present(paying[0]).textContent).toContain('A company that pays you');
     expect(container.textContent).toContain('Globex');
     /* Nothing to unlock once the keys are open. */
     expect(container.querySelector('[data-unlock-employers]')).toBeNull();

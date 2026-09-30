@@ -22,10 +22,13 @@ const entry = (id: string, pair: { publicKey: Hex; secret: Hex }, key: number, s
 const roster = { id: 'acc_1', signers: [entry('ada', ADA, 1), entry('bo', BO, 2)] } as unknown as Account;
 const ME = { signerId: 'ada' };
 const VAULT = 'ab'.repeat(32);
+/* The company's account, and the label it carries. */
 const COMPANY = 'c0'.repeat(32);
+const LABEL = `co_${'c1'.repeat(32)}`;
 
 const view = (over: Partial<CommitteeChangeView> = {}): CommitteeChangeView => ({
   company: COMPANY,
+  label: LABEL,
   to: { committee: [k(1), k(2)], threshold: 2 },
   why: null,
   contracts: [
@@ -117,7 +120,7 @@ describe('THE FLOW', () => {
     const log: unknown[] = [];
     await signCommitteeChangeOnDevice(doors({}, log), ME);
     expect(log[0]).toEqual({
-      company: COMPANY, to: { committee: [k(1), k(2)], threshold: 2 },
+      company: LABEL, account: COMPANY, to: { committee: [k(1), k(2)], threshold: 2 },
       contracts: [{ contract: 'account', address: COMPANY, counter: '1', now: { committee: [k(1)], threshold: 1 } }],
     });
     expect(log[1]).toEqual({

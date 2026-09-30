@@ -33,6 +33,7 @@ import { StaticProofServerContainer } from '@midnight-ntwrk/testkit-js';
 
 import { FileStore } from '../src/core/store-file.js';
 import { AccountService } from '../src/core/account.js';
+import { drawCompanyLabel } from 'midnight-identity/profile/company-label';
 import { ContractBook } from '../src/wiring/account-contract.js';
 import { startProduct } from '../src/wiring/product.js';
 import { deploymentWriteCapability } from '../src/wiring/write-capability-for-deployment.js';
@@ -247,7 +248,13 @@ async function main() {
 
   const accounts = new AccountService(store, ledger, startup.wiring.commitments);
   const began = Date.now();
-  const created = await accounts.create(COMPANY_NAME, FOUNDING_SIGNERS, THRESHOLD);
+  /*
+   * THE COMPANY'S LABEL. This script holds the founding signers' material, so it
+   * draws the label as the founding signer's wallet would, with the wallet's own
+   * draw. Every signer's wallet derives this company's keys from the label it
+   * reads back off the account.
+   */
+  const created = await accounts.create(COMPANY_NAME, FOUNDING_SIGNERS, THRESHOLD, undefined, drawCompanyLabel());
   good(`created in ${((Date.now() - began) / 1000).toFixed(1)}s`);
 
   /* ---------------------------------------------------------------- 6 */
@@ -279,7 +286,7 @@ async function main() {
   line(`  the company's record:              ${DATA}`);
   line();
   line('  KEEP BOTH FILES. The contract address exists nowhere else, and the');
-  line('  founder\'s signing material is in the record and is not recoverable.');
+  line('  founding signer\'s signing material is in the record and is not recoverable.');
 
   /*
    * **THE TIDYING UP IS OUTSIDE THE PART THAT CAN REPORT A FAILURE.** A wallet

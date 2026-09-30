@@ -1,4 +1,5 @@
 import { describe, it, expect } from 'vitest';
+import type { AccountAddress, CompanyLabel, VaultAddress } from 'midnight-identity/profile/company-label';
 import { parseAsk } from 'midnight-identity/profile/request';
 import type { BalanceRequest } from 'midnight-identity/profile/request';
 import { balancedAnswerFor } from 'midnight-identity/profile/balance';
@@ -9,8 +10,10 @@ import type { Openable, WalletWindow } from './wallet-sign-in.js';
 /* The page's side of a balance ask: what it sends, and what it believes. */
 const WALLET = 'https://wallet.example';
 const US = 'https://payroll.example';
-const CO = 'dbe119a304f8e7ea882353435c1d536cf2faf4298236a9aae77670e750af65c8';
-const VAULT = '54ef954a25aefff8e1675af10a852ef29d5de5c63a51b64b978bf7bd0eaeca4e';
+/* The company's label, the account that carries it, and one of its vaults. */
+const CO = 'co_1f2e3d4c5b6a79880a1b2c3d4e5f60718293a4b5c6d7e8f90a1b2c3d4e5f6071' as CompanyLabel;
+const ACCOUNT = 'dbe119a304f8e7ea882353435c1d536cf2faf4298236a9aae77670e750af65c8' as AccountAddress;
+const VAULT = '54ef954a25aefff8e1675af10a852ef29d5de5c63a51b64b978bf7bd0eaeca4e' as VaultAddress;
 
 const walletAnswering = (answer: (ask: unknown) => unknown): { view: Openable; asked: unknown[] } => {
   const asked: unknown[] = [];
@@ -33,12 +36,12 @@ const walletAnswering = (answer: (ask: unknown) => unknown): { view: Openable; a
   } as unknown as Openable;
   return { view, asked };
 };
-const input = { company: CO, vault: VAULT, transaction: 'AAECAw==', atOrigin: US, name: 'Us', rdns: 'example.us', nonce: 'n1', now: () => 1_000 };
+const input = { company: CO, account: ACCOUNT, vault: VAULT, transaction: 'AAECAw==', atOrigin: US, name: 'Us', rdns: 'example.us', nonce: 'n1', now: () => 1_000 };
 
 describe('ASKING THE PERSON\'S WALLET TO PAY', () => {
   it('sends a balance ask with no amount in it, which the wallet\'s own parser accepts', () => {
     const wire = balanceAsk({ ...input, purpose: 'p', expiresAt: 2_000 });
-    expect(Object.keys(wire).sort()).toEqual(['company', 'expiresAt', 'kind', 'nonce', 'progress', 'purpose', 'requester', 'schema', 'transaction', 'vault']);
+    expect(Object.keys(wire).sort()).toEqual(['account', 'company', 'expiresAt', 'kind', 'nonce', 'progress', 'purpose', 'requester', 'schema', 'transaction', 'vault']);
     const parsed = parseAsk(wire, US, 1_000) as BalanceRequest;
     expect(parsed.kind).toBe('balance');
     expect(parsed.transaction).toBe('AAECAw==');

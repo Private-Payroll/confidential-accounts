@@ -1,4 +1,5 @@
 import { x25519 } from '@noble/curves/ed25519.js';
+import { readCompanyLabel } from 'midnight-identity/profile/company-label';
 import {
   fromHex, toHex, unwrapKey, unseal, parseCanonical, type Hex, type Sealed,
 } from './crypto.js';
@@ -30,12 +31,12 @@ export interface SealedPayslip {
    */
   wiring: WiringName | null;
   /**
-   * **THE COMPANY ADDRESS THE PAYEE'S KEY WAS WORKED OUT FROM.** A payee's
-   * payslip key is derived from the key their wallet gives for one company
-   * address, so this is the address to name to the wallet to open this slip.
-   * A company that later moves to a new address keeps every earlier slip
-   * openable, because each one still names the address it was sealed under.
-   * `null` for a slip sealed to a key that was not derived from any address.
+   * **THE LABEL OF THE COMPANY THE PAYEE'S KEY WAS WORKED OUT FROM.** A payee's
+   * payslip key is derived from the key their wallet gives for one company,
+   * named by its label, so this is the label to name to the wallet to open this
+   * slip. A company keeps its label when its account is replaced, so every
+   * earlier slip stays openable. `null` for a slip sealed to a key that was not
+   * derived from any company's.
    */
   issuedBy: string | null;
   wrapped: { ephemeral: Hex } & Sealed;
@@ -57,15 +58,19 @@ export interface SealedPayslip {
  * circuits, and tests the value the account records for that leaf. A receipt
  * holding anybody else's secrets, or a slip naming another amount or token,
  * builds a leaf that was never recorded. `company` is the address the record
- * is read at: the company's address when the leg was first raised, as the
- * service wrote it. Neither secret leaves this device, and neither lets its
- * holder record or make a payment.
+ * is read at: the company's account's address when the leg was first raised,
+ * as the service wrote it. `label` is the company's label, which says which
+ * company that account belongs to. Neither secret leaves this device, and
+ * neither lets its holder record or make a payment.
  */
 export interface PaymentReceipt {
   runId: string;
   nonce: Hex;
   blinding: Hex;
+  /** The address of the account the payment is recorded at. Never a label. */
   company: string | null;
+  /** The company's label, or `null` when the receipt names none. Never an address. */
+  label: string | null;
   /**
    * The end of the last window this payment can be made in, in seconds since
    * the Unix epoch, or `null` when the receipt does not say. Past it, a payment
@@ -83,8 +88,9 @@ export interface PayslipContents {
   period: string;
   paidTo?: unknown;
   /**
-   * The company address the slip names, sealed with it. Absent from a slip
-   * sealed before it was written inside.
+   * The label of the company the slip names, sealed with it: the company the
+   * payee's key was worked out from. Absent from a slip sealed before it was
+   * written inside.
    */
   issuedBy?: string | null;
 }
@@ -160,6 +166,14 @@ export const NO_LEAF = '0'.repeat(64);
 export const NO_COMPANY = '0'.repeat(64);
 
 /**
+ * What a receipt carries in place of a company's label when the company has
+ * none: the same length as a label, so a receipt naming no label is not told
+ * apart by its length from one that names one. It is not a label - the reader
+ * refuses thirty-two zero bytes - so it reads back as none.
+ */
+export const NO_LABEL = `co_${'0'.repeat(64)}`;
+
+/**
  * How many digits a receipt's window end is written in: every value up to the
  * year 5000 and beyond, padded, so every receipt is the same length whatever
  * its window.
@@ -194,6 +208,8 @@ export function openReceipt(
     const blinding = typeof r.blinding === 'string' ? r.blinding.toLowerCase() : '';
     const named = typeof r.company === 'string' ? r.company.toLowerCase() : null;
     const company = named === NO_COMPANY ? null : named;
+    /* A label that is not one - the stand-in among them - reads as none. */
+    const label = readCompanyLabel((r as { label?: unknown }).label);
     if (r.runId !== runId || !HEX32.test(nonce) || !HEX32.test(blinding)) return null;
     /* The stand-in a slip carries until its leg is raised: it names no payment. */
     if (nonce === NO_LEAF || blinding === NO_LEAF) return null;
@@ -201,7 +217,7 @@ export function openReceipt(
     const written = (r as { until?: unknown }).until;
     const until = typeof written === 'string' && UNTIL.test(written) && /[1-9]/u.test(written)
       ? Number(written) : null;
-    return { runId, nonce, blinding, company, until };
+    return { runId, nonce, blinding, company, label, until };
   } catch {
     return null;
   }

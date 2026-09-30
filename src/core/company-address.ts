@@ -1,4 +1,6 @@
 import type { DataStore } from './store.js';
+import { readAccountAddress, readCompanyLabel } from 'midnight-identity/profile/company-label';
+import type { AccountAddress, CompanyLabel } from 'midnight-identity/profile/company-label';
 
 /**
  * **WHICH COMPANY A PERSON MAY ASK THEIR WALLET TO OPEN — AND THE ANSWER COMES
@@ -16,8 +18,10 @@ import type { DataStore } from './store.js';
  * **THIS SIDE MUST NOT MAKE THAT WORSE.** The one claimed value in the whole
  * protocol is claimed by the PAGE, and the page is ours. So the page is not
  * allowed to choose it either: the account is one the session is already a
- * member of, and the address is looked up from what the ledger assigned. **A
- * caller that names its own company is not served.**
+ * member of, and its label and account are looked up from that company's own
+ * record - the label written once when the founding signer's wallet drew it,
+ * the account as the ledger assigned it. **A caller that names its own company
+ * is not served.**
  *
  * `../../docs/scope-payroll-identity.md` §9 states the rule this implements,
  * and states why it is not a nicety: `Purposes.Seat` is keyed by a company
@@ -44,9 +48,6 @@ import type { DataStore } from './store.js';
  * strength of an argument it was given is one refactor away from being called
  * from somewhere with no middleware in front of it.
  */
-
-/** Sixty-four hex characters — what a Midnight contract address is. */
-const COMPANY_ADDRESS = /^[0-9a-fA-F]{64}$/u;
 
 /**
  * **THE ONE DELIBERATE WAY PAST THE PROVENANCE REFUSAL, AND IT IS NOT A
@@ -76,6 +77,8 @@ const inDevelopment = (): boolean =>
 export type CompanyFailure =
   /** Not a member, or no such account. **The same answer for both.** */
   | 'company-not-yours'
+  /** A real company of yours created without a label, so no wallet can derive its keys. */
+  | 'company-has-no-label'
   /** A real company of yours that has no contract, so it has no address. */
   | 'company-not-on-a-chain'
   /**
@@ -97,15 +100,37 @@ export class NoCompanyAddress extends Error {
 }
 
 /**
- * THE COMPANY THIS SESSION MAY OPEN, NAMED BY ITS OWN ADDRESS ON THE CHAIN.
+ * **A COMPANY AS A WALLET IS ASKED ABOUT IT: ITS LABEL, AND THE ACCOUNT THAT
+ * CARRIES THE LABEL WHEN A CHAIN HAS ASSIGNED ONE.** The label is what every
+ * signer's wallet derives the company's keys from. The account is where the
+ * wallet reads the label back from before it gives or signs anything, and
+ * `null` when the company has no account a chain assigned.
+ */
+export interface CompanyNamed {
+  readonly label: CompanyLabel;
+  readonly account: AccountAddress | null;
+}
+
+/** The account's address, when a chain assigned it (or, in development, when it was simulated), else null. */
+const chainAccountOf = (rec: { contractAddress?: string | null; addressSource?: string | null }): AccountAddress | null => {
+  const account = readAccountAddress(rec.contractAddress);
+  if (account === null) return null;
+  return rec.addressSource === 'chain' || inDevelopment() ? account : null;
+};
+
+/**
+ * THE COMPANY THIS SESSION MAY OPEN: ITS LABEL, AND ITS ACCOUNT WHEN A CHAIN
+ * ASSIGNED ONE.
  *
- * Returns the canonical lower-case spelling, because that is what the wallet
- * derives from and what `readRelease` compares. Both sides fold before they
- * compare, so that two spellings of one company can never become two keys.
+ * **A COMPANY IS UNLOCKABLE WHEN IT HAS A LABEL.** Its keys are derived from
+ * the label, so they exist before the company has an account and do not depend
+ * on where one is. **Every chain action needs a chain-assigned address as well,
+ * and asks for it separately** (`accountForChain`), so no key is ever derived
+ * from an address and no contract is ever reached through a label.
  */
 export function companyForSession(
   store: DataStore, userId: string, accountId: string,
-): string {
+): CompanyNamed {
   const rec = store.getAccount(accountId);
   /*
    * ONE ANSWER FOR MISSING AND FOR NOT-YOURS, which is `member`'s rule and the
@@ -115,68 +140,61 @@ export function companyForSession(
   if (!rec || !rec.memberUserIds.includes(userId)) {
     throw new NoCompanyAddress('company-not-yours', 'account not found');
   }
-  const address = rec.contractAddress;
-  if (typeof address !== 'string' || !COMPANY_ADDRESS.test(address)) {
+  const label = readCompanyLabel(rec.companyLabel);
+  if (label === null) {
     /*
-     * **A REAL COMPANY WITH NO CONTRACT, AND THE HONEST ANSWER IS NO.**
-     *
-     * A wallet derives this company's key from its address; a company with no
-     * address has no such key, and substituting anything at all — our own
-     * account id, a hash of the name, a value minted here — would be minting
-     * the identifier the design chose the chain's for precisely so we could
-     * not. So the person is told what is missing.
+     * **A REAL COMPANY WITH NO LABEL, AND THE HONEST ANSWER IS NO.** Every key
+     * a signer holds for a company is derived from its label, which the
+     * founding signer's wallet drew when the company was created. Substituting
+     * anything - the account's address, our own account id, a value made up
+     * here - would be this service choosing which keys a wallet derives.
      */
     throw new NoCompanyAddress(
-      'company-not-on-a-chain',
-      'this company is not on a chain yet, so it has no address — and the key that opens '
-      + 'its records is derived from that address. Nothing can be unlocked with a wallet '
-      + 'until the company has been deployed.');
+      'company-has-no-label',
+      'this company was created without a label, so there is nothing a wallet can derive its keys from. '
+      + 'Companies are created with the label the founding signer\'s wallet makes up; this one cannot be '
+      + 'opened with a wallet.');
   }
-  /*
-   * **AND AN ADDRESS NO CHAIN EVER ASSIGNED IS REFUSED TOO.**
-   *
-   * The check above tests the SHAPE, and `SimulatedLedger` mints that shape on
-   * purpose — thirty-two random bytes spelled exactly as a contract address is
-   * spelled. So the shape check passes for a company that has never been near a
-   * chain, and the refusal above, which is correct and well argued, could never
-   * once fire. The record now carries where its address came from, written by
-   * the ledger that assigned it, and this is the line that reads it.
-   *
-   * **ABSENT IS NOT `'chain'`.** Every company created before the source field
-   * existed has no source recorded and there is no way to establish one after
-   * the fact. Reading absence as a chain's would wave through exactly the
-   * records nothing can vouch for.
-   *
-   * **WHAT IS AT STAKE IS NOT THIS CALL.** A key derived from an invented
-   * number is not wrong today — it is all test data and no company has ever
-   * been deployed. It is wrong on the day one IS: either the real address
-   * replaces the invented one and everything sealed under the old one stops
-   * opening, or the invented one is kept for ever and the company's identity is
-   * a number our own server made up, which is exactly what taking the identity
-   * from the chain was chosen to avoid.
-   */
-  if (rec.addressSource !== 'chain' && !inDevelopment()) {
-    throw new NoCompanyAddress(
-      'company-address-not-from-a-chain',
-      'this company has an address, but no chain gave it one — it was made up by this '
-      + 'server while the company was being set up. The key that opens its records is '
-      + 'derived from that address, so anything sealed under it would stop opening on the '
-      + 'day the company is really deployed. Nothing will be unlocked with a wallet until '
-      + 'then.');
-  }
-  return address.toLowerCase();
+  return { label, account: chainAccountOf(rec) };
 }
 
 /**
- * **THE SAME ADDRESS, FOR SOMEBODY WHO IS NOT A MEMBER YET.** `docs/NEXT.md`
+ * **THE ACCOUNT'S ADDRESS FOR A CHAIN ACTION, AND ONLY ONE A CHAIN ASSIGNED.**
+ *
+ * A label locates no contract, so every action that reaches the chain asks for
+ * the account's address here and is refused, by name, when the company has
+ * none a chain assigned. The two refusals keep their own codes: *nothing is
+ * there*, and *something is there and this server made it up* - only the
+ * second is a thing a developer may deliberately work past.
+ */
+export function accountForChain(store: DataStore, accountId: string): AccountAddress {
+  const rec = store.getAccount(accountId);
+  if (!rec) throw new NoCompanyAddress('company-not-yours', 'account not found');
+  const account = readAccountAddress(rec.contractAddress);
+  if (account === null) {
+    throw new NoCompanyAddress(
+      'company-not-on-a-chain',
+      'this company is not on a chain yet, so it has no account to act on. Nothing was done.');
+  }
+  if (rec.addressSource !== 'chain' && !inDevelopment()) {
+    throw new NoCompanyAddress(
+      'company-address-not-from-a-chain',
+      'this company has an address, but no chain gave it one - it was made up by this server while the '
+      + 'company was being set up. Nothing was done on the chain.');
+  }
+  return account;
+}
+
+/**
+ * **THE SAME COMPANY, FOR SOMEBODY WHO IS NOT A MEMBER YET.**
  *
  * ── WHY AN INVITEE NEEDS IT AT ALL ────────────────────────────────────────
  *
  * The key that opens an employee's payslips is `payslipKeypairFrom(companyKey)`
- * and **the wallet derives that company key from the company's own contract
- * address**. So an invitee accepting an offer has to name the company to their
- * wallet — and `companyForSession` above cannot serve them, because the whole
- * point of an invitation is that they are not on the account.
+ * and **the wallet derives that company key from the company's label**. So an
+ * invitee accepting an offer has to name the company to their wallet — and
+ * `companyForSession` above cannot serve them, because the whole point of an
+ * invitation is that they are not on the account.
  *
  * **THE ANSWER IS NOT A SECOND KEY PATH.** It would be the wrong thing anyway:
  * a payslip key that an invitee derives one way and a member derives another
@@ -188,28 +206,26 @@ export function companyForSession(
  * database holds only `sha256(token)`, so **the only party who can open it is
  * whoever holds the link, and we cannot.** Nothing new is published.
  *
- * And what travels is not a secret in the first place: **a contract address is
- * public on a chain by construction.** It is a selector, not a capability — the
- * wallet still refuses to release anything until a person approves it, on the
- * wallet's own screen, against the origin the BROWSER reported. Knowing which
- * company to ask about buys an interceptor nothing they could not read off the
- * chain.
+ * And what travels is not a secret in the first place: **the label is public on
+ * the company's account, and the account's address is on the chain.** They are
+ * selectors, not capabilities — the wallet still reads the label off the account
+ * itself and refuses to release anything until a person approves it, on the
+ * wallet's own screen, against the origin the BROWSER reported.
  *
- * ── AND THE PROVENANCE GATE IS THE SAME GATE ──────────────────────────────
- *
- * `null` rather than a throw, because an invitation must still be raisable for
- * a company that is not deployed — that is every company today. What must NOT
- * happen is an invitee sealing real payslip keys under an address our own
- * server made up, so the provenance rule is exactly `companyForSession`'s and
- * the refusal reaches the invitee's screen instead of the hiring form.
+ * `null` rather than a throw for a company with no label, because an
+ * invitation must still be raisable; the refusal reaches the invitee's screen
+ * instead of the hiring form.
  */
-export function companyAddressForOffer(
+export function companyForOffer(
   store: DataStore, accountId: string,
-): string | null {
+): CompanyNamed | null {
   const rec = store.getAccount(accountId);
   if (!rec) return null;
-  const address = rec.contractAddress;
-  if (typeof address !== 'string' || !COMPANY_ADDRESS.test(address)) return null;
-  if (rec.addressSource !== 'chain' && !inDevelopment()) return null;
-  return address.toLowerCase();
+  const label = readCompanyLabel(rec.companyLabel);
+  if (label === null) return null;
+  return { label, account: chainAccountOf(rec) };
 }
+
+/** The label alone, for the records that name the company a payslip key was worked out from. */
+export const companyLabelOfRecord = (store: DataStore, accountId: string): CompanyLabel | null =>
+  companyForOffer(store, accountId)?.label ?? null;

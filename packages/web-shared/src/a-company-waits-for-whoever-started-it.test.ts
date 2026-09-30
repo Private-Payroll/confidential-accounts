@@ -71,7 +71,7 @@ class WalletAtTheOtherEnd implements Openable {
 /** The keyring key the wallet above gives `person`. */
 const keyringHexFor = (person: string) => toHex(keyringKeyFor(identity, parseAsk(keyringAsk({
   name: 'n', rdns: 'r', purpose: KEYRING_PURPOSE, nonce: 'n', expiresAt: Date.now() + 60_000,
-  person, signedInAs: null, company: null,
+  person, signedInAs: null, company: null, account: null,
 }), US, Date.now()) as KeyringRequest));
 
 const A_COMPANY = { name: 'Acme Ltd', signers: [{ name: 'Priya', role: 'admin' as const }], threshold: 1 };

@@ -24,6 +24,7 @@
  * which the two answers come apart.
  */
 import { describe, it, expect } from 'vitest';
+import { drawCompanyLabel } from 'midnight-identity/profile/company-label';
 import { mkdtempSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
@@ -33,6 +34,12 @@ import type { Ledger } from './ledger.js';
 import { AccountService } from './account.js';
 import { newSigningKeypair, newWrappingKeypair } from './crypto.js';
 import type { Hex } from './crypto.js';
+
+/** The value, or a failure that says one was missing: an index that finds nothing is a broken test, not a value to carry on with. */
+function present<T>(value: T | undefined): T {
+  if (value === undefined) throw new Error('expected a value here, and there was none');
+  return value;
+}
 
 function harness() {
   const store = new FileStore(join(mkdtempSync(join(tmpdir(), 'mn-seat-')), 'db.json'));
@@ -48,7 +55,7 @@ function harness() {
 const aCompany = async (h: ReturnType<typeof harness>) => h.accounts.create('Northwind', [
   { name: 'Ada', role: 'admin', userId: 'usr_ada' },
   { name: 'Blake', role: 'viewer', userId: 'usr_blake' },
-], 1);
+], 1, undefined, drawCompanyLabel());
 
 describe('a person acts as their own seat and as no other', () => {
   /*
@@ -61,9 +68,9 @@ describe('a person acts as their own seat and as no other', () => {
     const c = await aCompany(h);
     const [ada, blake] = c.account.signers;
 
-    expect(h.accounts.seatOf(c.account.id, c.viewingKey, 'usr_ada')).toBe(ada.id);
-    expect(h.accounts.seatOf(c.account.id, c.viewingKey, 'usr_blake')).toBe(blake.id);
-    expect(blake.id).not.toBe(ada.id);
+    expect(h.accounts.seatOf(c.account.id, c.viewingKey, 'usr_ada')).toBe(present(ada).id);
+    expect(h.accounts.seatOf(c.account.id, c.viewingKey, 'usr_blake')).toBe(present(blake).id);
+    expect(present(blake).id).not.toBe(present(ada).id);
   });
 
   /*
@@ -109,8 +116,8 @@ describe('a person acts as their own seat and as no other', () => {
     const here = h.accounts.seatOf(first.account.id, first.viewingKey, 'usr_ada');
     const there = h.accounts.seatOf(second.account.id, second.viewingKey, 'usr_ada');
 
-    expect(here).toBe(first.account.signers[0].id);
-    expect(there).toBe(second.account.signers[0].id);
+    expect(here).toBe(present(first.account.signers[0]).id);
+    expect(there).toBe(present(second.account.signers[0]).id);
     expect(here).not.toBe(there);
   });
 
@@ -151,7 +158,7 @@ describe('a person acts as their own seat and as no other', () => {
 
     /* And the active ones still resolve, so the refusal is not blanket. */
     expect(h.accounts.seatOf(c.account.id, c.viewingKey, 'usr_ada'))
-      .toBe(c.account.signers[0].id);
+      .toBe(present(c.account.signers[0]).id);
   });
 
   /*

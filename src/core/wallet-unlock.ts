@@ -1,4 +1,5 @@
 import { REQUEST_SCHEMA } from 'midnight-identity/profile/request';
+import type { AccountAddress, CompanyLabel } from 'midnight-identity/profile/company-label';
 
 /**
  * **ASKING THE WALLET FOR THE KEY THAT OPENS A COMPANY — this side's half.**
@@ -59,12 +60,15 @@ export interface UnlockAsk {
   readonly purpose: string;
   readonly nonce: string;
   readonly expiresAt: number;
-  readonly company: string;
+  /** The company's label. */
+  readonly company: CompanyLabel;
+  /** The account that carries it; absent for a company with no account yet. */
+  readonly account?: AccountAddress;
 }
 
 export const unlockAsk = (parts: {
   name: string; rdns: string; purpose: string;
-  nonce: string; expiresAt: number; company: string;
+  nonce: string; expiresAt: number; company: CompanyLabel; account: AccountAddress | null;
 }): UnlockAsk => Object.freeze({
   schema: REQUEST_SCHEMA,
   kind: UNLOCK_KIND,
@@ -73,6 +77,7 @@ export const unlockAsk = (parts: {
   nonce: parts.nonce,
   expiresAt: parts.expiresAt,
   company: parts.company,
+  ...(parts.account !== null ? { account: parts.account } : {}),
 });
 
 /**
@@ -108,7 +113,12 @@ export const UNLOCK_WINDOW_MS = 5 * 60_000;
  *     browser holding several wallets it cannot come from one other than the
  *     wallet the person signed in with. Null when this tab does not know it.
  *   · **`company`**, when present, asks for that company's key in the same answer,
- *     so the two are known to come from one wallet.
+ *     so the two are known to come from one wallet. It is the company's label,
+ *     and **`account`** beside it is the account that carries the label, which
+ *     the wallet reads for itself before it gives anything.
+ *   · **`drawLabel`** asks the wallet to start a company: it draws the new
+ *     company's label itself and answers with it and the founding signer's keys
+ *     for it. Never together with `company`.
  */
 export const KEYRING_KIND = 'keyring' as const;
 
@@ -121,12 +131,15 @@ export interface KeyringAsk {
   readonly expiresAt: number;
   readonly person: string;
   readonly signedInAs?: string;
-  readonly company?: string;
+  readonly company?: CompanyLabel;
+  readonly account?: AccountAddress;
+  readonly drawLabel?: true;
 }
 
 export const keyringAsk = (parts: {
   name: string; rdns: string; purpose: string; nonce: string; expiresAt: number;
-  person: string; signedInAs: string | null; company: string | null;
+  person: string; signedInAs: string | null; company: CompanyLabel | null;
+  account: AccountAddress | null; drawLabel?: boolean;
 }): KeyringAsk => Object.freeze({
   schema: REQUEST_SCHEMA,
   kind: KEYRING_KIND,
@@ -139,6 +152,8 @@ export const keyringAsk = (parts: {
    * say that this page does not know which address it signed in as. */
   ...(parts.signedInAs !== null ? { signedInAs: parts.signedInAs } : {}),
   ...(parts.company !== null ? { company: parts.company } : {}),
+  ...(parts.account !== null ? { account: parts.account } : {}),
+  ...(parts.drawLabel === true ? { drawLabel: true as const } : {}),
 });
 
 /** What the person is being asked for, beside what the wallet itself says it gives. */
@@ -152,3 +167,13 @@ export const KEYRING_AND_COMPANY_PURPOSE =
   'So this page can open the keys saved for you here and work out your payslip key for this '
   + 'company, on this device. Neither is sent to our servers, and both are forgotten when you '
   + 'close the tab.';
+
+/**
+ * And when the page is starting a company with this person as its founding
+ * signer. The label is public and is sent on: it is what the company's account
+ * is created with, and what every other signer's wallet works its keys out from.
+ */
+export const KEYRING_AND_NEW_COMPANY_PURPOSE =
+  'So this page can open your saved keys and start a new company with you as its founding signer. Your '
+  + 'wallet makes up its label, which goes to our servers. The key your saved keys open with does not, and is '
+  + 'forgotten when you close the tab. Your signing keys for the company are made on our servers.';

@@ -16,6 +16,7 @@
  * different period, are not a repeat and pass without being asked anything.
  */
 import { describe, it, expect } from 'vitest';
+import { drawCompanyLabel } from 'midnight-identity/profile/company-label';
 import { mkdtempSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
@@ -34,7 +35,7 @@ function harness() {
 
 async function aCompany() {
   const h = harness();
-  const created = await h.accounts.create('Northwind Ltd', [{ name: 'Ada', role: 'admin' }], 1);
+  const created = await h.accounts.create('Northwind Ltd', [{ name: 'Ada', role: 'admin' }], 1, undefined, drawCompanyLabel());
   return { ...h, account: created.account.id, viewingKey: created.viewingKey };
 }
 

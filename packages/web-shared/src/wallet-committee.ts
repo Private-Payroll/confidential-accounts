@@ -13,6 +13,7 @@
  */
 import { REQUEST_SCHEMA } from 'midnight-identity/profile/request';
 import { readCommitteeSignatures, type CommitteeSeatSignature } from 'midnight-identity/profile/committee-sign';
+import type { AccountAddress, CompanyLabel } from 'midnight-identity/profile/company-label';
 import { toHex, randomBytes } from '../../../src/core/crypto.js';
 import { askWallet, type Openable, type WalletDialog } from './wallet-sign-in.js';
 
@@ -34,7 +35,9 @@ type Key = { tag: string; value: string };
 type CommitteeValue = { committee: readonly Key[]; threshold: number };
 
 export interface CommitteeAsked {
-  readonly company: string;
+  /** The company's label, and the account that carries it: the wallet reads one off the other. */
+  readonly company: CompanyLabel;
+  readonly account: AccountAddress;
   readonly to: CommitteeValue;
   readonly contracts: ReadonlyArray<{ contract: 'account' | 'vault'; address: string; counter: string; now: CommitteeValue }>;
   readonly atOrigin: string;
@@ -52,7 +55,7 @@ const keysOf = (c: CommitteeValue) => ({
 /** The ask on the wire. No bytes to sign travel: the wallet builds the change from these. */
 export const committeeAsk = (parts: {
   name: string; rdns: string; purpose: string; nonce: string; expiresAt: number;
-  company: string; to: CommitteeValue; contracts: CommitteeAsked['contracts'];
+  company: CompanyLabel; account: AccountAddress; to: CommitteeValue; contracts: CommitteeAsked['contracts'];
 }) => Object.freeze({
   schema: REQUEST_SCHEMA,
   kind: 'committee' as const,
@@ -61,6 +64,7 @@ export const committeeAsk = (parts: {
   nonce: parts.nonce,
   expiresAt: parts.expiresAt,
   company: parts.company,
+  account: parts.account,
   to: keysOf(parts.to),
   contracts: parts.contracts.map((c) => ({ contract: c.contract, address: c.address, counter: c.counter, now: keysOf(c.now) })),
 });
@@ -72,10 +76,11 @@ export async function askWalletToSignCommittee(
   const nonce = ask.nonce ?? toHex(randomBytes(16));
   const answer = await askWallet(view, walletOrigin, committeeAsk({
     name: ask.name, rdns: ask.rdns, purpose: COMMITTEE_PURPOSE, nonce, expiresAt: now() + COMMITTEE_WINDOW_MS,
-    company: ask.company, to: ask.to, contracts: ask.contracts,
+    company: ask.company, account: ask.account, to: ask.to, contracts: ask.contracts,
   }), dialog);
   const read = readCommitteeSignatures(answer, {
-    atOrigin: ask.atOrigin, expectingNonce: nonce, company: ask.company, to: keysOf(ask.to), contracts: ask.contracts,
+    atOrigin: ask.atOrigin, expectingNonce: nonce, company: ask.company, account: ask.account,
+    to: keysOf(ask.to), contracts: ask.contracts,
   });
   if (!read.ok) {
     const refused = read as Extract<typeof read, { ok: false }>;

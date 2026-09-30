@@ -1,4 +1,6 @@
 import { describe, expect, it } from 'vitest';
+import { drawCompanyLabel } from 'midnight-identity/profile/company-label';
+import type { CompanyLabel } from 'midnight-identity/profile/company-label';
 import { mkdtempSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
@@ -20,6 +22,12 @@ import type { DataStore } from './store.js';
 import type { Hex } from './crypto.js';
 import type { PayeeAddress } from '../midnight/payee-address.js';
 import { registryWithTestPrivateForms } from '../testing/assets.js';
+
+/** The value, or a failure that says one was missing: an index that finds nothing is a broken test, not a value to carry on with. */
+function present<T>(value: T | undefined): T {
+  if (value === undefined) throw new Error('expected a value here, and there was none');
+  return value;
+}
 
 /**
  * **THE INVITEE'S OWN DEVICE SEALS, SO A TEST HAS TO SEAL TOO.**
@@ -74,6 +82,9 @@ const handedOver = (
  */
 
 const ORIGIN = 'https://payroll.example';
+/* Two companies, by their labels. */
+const A1 = `co_${'a1'.repeat(32)}` as CompanyLabel;
+const B2 = `co_${'b2'.repeat(32)}` as CompanyLabel;
 const ELSEWHERE = 'https://payroll.self-hosted.example';
 
 const world = () => {
@@ -175,8 +186,8 @@ describe('§1 — THE DERIVATION IS A PURE FUNCTION OF A WALLET AND A COMPANY', 
      * that does not.
      */
     const words = newWords();
-    expect(payslipKeypairForWallet(words, 'a1'.repeat(32), ORIGIN).secret)
-      .toBe(payslipKeypairForWallet(words, 'a1'.repeat(32), ORIGIN).secret);
+    expect(payslipKeypairForWallet(words, A1, ORIGIN).secret)
+      .toBe(payslipKeypairForWallet(words, A1, ORIGIN).secret);
   });
 
   it('THE HOST IS NOT AN INGREDIENT — a self-hosted client derives the same key', () => {
@@ -188,17 +199,17 @@ describe('§1 — THE DERIVATION IS A PURE FUNCTION OF A WALLET AND A COMPANY', 
      * very mechanism meant to serve it.
      */
     const words = newWords();
-    expect(payslipKeypairForWallet(words, 'a1'.repeat(32), ELSEWHERE).secret)
-      .toBe(payslipKeypairForWallet(words, 'a1'.repeat(32), ORIGIN).secret);
+    expect(payslipKeypairForWallet(words, A1, ELSEWHERE).secret)
+      .toBe(payslipKeypairForWallet(words, A1, ORIGIN).secret);
   });
 
   it('TWO COMPANIES NEVER SHARE A KEY, and neither do two people', () => {
     const mine = newWords();
     const theirs = newWords();
-    const here = payslipKeypairForWallet(mine, 'a1'.repeat(32), ORIGIN).secret;
+    const here = payslipKeypairForWallet(mine, A1, ORIGIN).secret;
 
-    expect(payslipKeypairForWallet(mine, 'b2'.repeat(32), ORIGIN).secret).not.toBe(here);
-    expect(payslipKeypairForWallet(theirs, 'a1'.repeat(32), ORIGIN).secret).not.toBe(here);
+    expect(payslipKeypairForWallet(mine, B2, ORIGIN).secret).not.toBe(here);
+    expect(payslipKeypairForWallet(theirs, A1, ORIGIN).secret).not.toBe(here);
   });
 
   it('THE PAYSLIP KEY IS NOT THE KEY IT IS DERIVED FROM', () => {
@@ -353,7 +364,7 @@ describe('§1 — THE DERIVATION IS A PURE FUNCTION OF A WALLET AND A COMPANY', 
  * literal was taken from Identity's table rather than from a run here.
  */
 
-const VECTOR_COMPANY = 'a1'.repeat(32);
+const VECTOR_COMPANY = A1;
 
 /**
  * **THE ASK, BUILT EXACTLY AS `payslip-key.ts:38-55` BUILDS IT.**
@@ -388,6 +399,7 @@ const vectorAsk = () => {
       nonce: 'derivation-has-no-conversation',
       expiresAt: 0 + UNLOCK_WINDOW_MS,
       company: VECTOR_COMPANY,
+      account: null,
     }),
     ORIGIN,
     0);
@@ -481,7 +493,7 @@ describe('§1b — A FIXED MNEMONIC AND A FIXED COMPANY GIVE A FIXED KEY, RECORD
      * anything else in this file red.**
      */
     expect(toHex(unlockKeyFor(identityFromWords(TEST_MNEMONIC), vectorAsk())))
-      .toBe('52e6860cd079019ac3fbdcfc30c806bb99643ecace4202e060aa42fb43aba482');
+      .toBe('8121bc057e62184b9b17c30762852238adde50b82e1b8d80575b0e8138150d9a');
   });
 
   it('§1b.3 — THE PAYSLIP KEYPAIR: the key an employee\'s payslip actually opens with', () => {
@@ -493,42 +505,19 @@ describe('§1b — A FIXED MNEMONIC AND A FIXED COMPANY GIVE A FIXED KEY, RECORD
      * the change came from `midnight-identity`.
      */
     expect(payslipKeypairForWallet(TEST_MNEMONIC, VECTOR_COMPANY, ORIGIN)).toEqual({
-      secret: '6ea2e0b5513f0eebbb40d2036327316736ce11153d187cb828a822f1a2072c37',
-      publicKey: '4af82790626f053a71d120ff00dcc1a8c83aeff2cb9efd85104eb9493e87e776',
+      secret: '8b70829cae12141365172f3c5f63ed1d856dce4dddad310b85c5b1fc85f90ad9',
+      publicKey: 'faeba932d18a75a2d41bfad90795378e5e9c0112607768d1586680f479d4980e',
     });
 
     /*
-     * **THE SAME LITERAL FROM THE OTHER SPELLING OF THE SAME COMPANY.** It is
-     * this block's own thesis applied to the case fold: the fold that makes
-     * two spellings of one company one key is pinned by
-     * `packages/identity/src/profile/unlock.test.ts:253` — **and since the
-     * merge this suite DOES run that file**: `vitest.config.ts:108` collects
-     * `packages/identity/src/**` alongside `src/**`, and the comment above
-     * that line says why. **This line is still worth carrying**, because that
-     * one pins the fold inside the library and this one pins the KEY a payslip
-     * is opened with, which is the thing a company loses. `VECTOR_COMPANY` is
-     * already lower-case, so **no literal above moves when the fold goes.**
-     * This line is what dies instead.
-     *
-     * ── AND EXACTLY WHEN IT DIES, MEASURED RATHER THAN ASSUMED ───────────
-     *
-     * **THE FOLD IS DOUBLED, WHICH ONLY MEASUREMENT SHOWED.** It happens twice
-     * on this path: `parseAsk` folds the company as it freezes the ask
-     * (`packages/identity/src/profile/request.ts:826`), and `companyOf` folds
-     * again inside `unlockKeyFor` (`unlock.ts:299`). Against deliberately
-     * broken copies outside this repository: **removing EITHER one alone
-     * leaves this line GREEN; removing BOTH turns it RED.** So what this
-     * assertion buys is not a guard on one line — it is a guard on the
-     * PROPERTY surviving, and it is the only thing in payroll that would
-     * notice the property going.
-     *
-     * It matters because payroll's folding is not uniform: `keyring.ts` and
-     * `Join.tsx` both take a company that `company-address.ts` has already
-     * folded, but `payroll.ts:1473` reads `contractAddress` raw from the store
-     * and passes it unfolded at `:1485`.
+     * **A LABEL HAS ONE SPELLING, SO THE OTHER ONE OPENS NOTHING.** Where a
+     * company was named by its account's address, an upper-case spelling was
+     * folded to the same key; a label is refused in any other case, so no
+     * payslip is ever sealed under a key a second spelling would also derive.
+     * RED WHEN: a reader of labels folds case.
      */
-    expect(payslipKeypairForWallet(TEST_MNEMONIC, VECTOR_COMPANY.toUpperCase(), ORIGIN).secret)
-      .toBe('6ea2e0b5513f0eebbb40d2036327316736ce11153d187cb828a822f1a2072c37');
+    expect(() => payslipKeypairForWallet(TEST_MNEMONIC, VECTOR_COMPANY.toUpperCase() as CompanyLabel, ORIGIN))
+      .toThrow();
 
     /*
      * **AND FROM THE OTHER SPELLING OF THE SAME WALLET.** `payslipKeypairForWallet` takes
@@ -547,7 +536,7 @@ describe('§1b — A FIXED MNEMONIC AND A FIXED COMPANY GIVE A FIXED KEY, RECORD
      * one** — which is why it is a line and not a section.
      */
     expect(payslipKeypairForWallet(TEST_MNEMONIC.split(' '), VECTOR_COMPANY, ORIGIN).secret)
-      .toBe('6ea2e0b5513f0eebbb40d2036327316736ce11153d187cb828a822f1a2072c37');
+      .toBe('8b70829cae12141365172f3c5f63ed1d856dce4dddad310b85c5b1fc85f90ad9');
   });
 
   it('§1b.4 — THE TWO RECORDED VALUES MEET: literal in, literal out, no live recompute', () => {
@@ -576,10 +565,10 @@ describe('§1b — A FIXED MNEMONIC AND A FIXED COMPANY GIVE A FIXED KEY, RECORD
      * the two literals would then disagree here.
      */
     expect(payslipKeypairFrom(
-      fromHex('52e6860cd079019ac3fbdcfc30c806bb99643ecace4202e060aa42fb43aba482'),
+      fromHex('8121bc057e62184b9b17c30762852238adde50b82e1b8d80575b0e8138150d9a'),
     )).toEqual({
-      secret: '6ea2e0b5513f0eebbb40d2036327316736ce11153d187cb828a822f1a2072c37',
-      publicKey: '4af82790626f053a71d120ff00dcc1a8c83aeff2cb9efd85104eb9493e87e776',
+      secret: '8b70829cae12141365172f3c5f63ed1d856dce4dddad310b85c5b1fc85f90ad9',
+      publicKey: 'faeba932d18a75a2d41bfad90795378e5e9c0112607768d1586680f479d4980e',
     });
 
     /*
@@ -600,7 +589,7 @@ describe('§1b — A FIXED MNEMONIC AND A FIXED COMPANY GIVE A FIXED KEY, RECORD
 describe('§2 — NOBODY WRITES THE SECRET DOWN, INCLUDING US', () => {
   it('THE SEED DERIVES THE KEY AND NO LONGER INVENTS ONE', async () => {
     const h = world();
-    const { account, viewingKey } = await h.accounts.create('Acme', SIGNERS, 1);
+    const { account, viewingKey } = await h.accounts.create('Acme', SIGNERS, 1, undefined, drawCompanyLabel());
     const { secret } = h.payroll.hireDirect(account.id, {
       name: 'Dana', email: 'd@a.co', title: 'Eng', asset: 'GBP', baseAmount: 100_00n,
     }, viewingKey);
@@ -614,17 +603,17 @@ describe('§2 — NOBODY WRITES THE SECRET DOWN, INCLUDING US', () => {
     expect(secret.words).toBeDefined();
     expect(secret.wrappingSecret).toBe(
       payslipKeypairForWallet(
-        secret.words!, h.store.getAccount(account.id)!.contractAddress!, ORIGIN).secret);
+        secret.words!, h.store.getAccount(account.id)!.companyLabel! as CompanyLabel, ORIGIN).secret);
   });
 
   it('THE SECRET IS IN NO STORED RECORD ANYWHERE — not the roster, not the run', async () => {
     const h = world();
-    const { account, viewingKey } = await h.accounts.create('Acme', SIGNERS, 1);
+    const { account, viewingKey } = await h.accounts.create('Acme', SIGNERS, 1, undefined, drawCompanyLabel());
     const { employee, secret } = h.payroll.hireDirect(account.id, {
       name: 'Dana', email: 'd@a.co', title: 'Eng', asset: 'GBP', baseAmount: 100_00n,
     }, viewingKey);
     const derived = payslipKeypairForWallet(
-      secret.words!, h.store.getAccount(account.id)!.contractAddress!, ORIGIN);
+      secret.words!, h.store.getAccount(account.id)!.companyLabel! as CompanyLabel, ORIGIN);
     await h.payroll.createRunFromRoster(account.id, '2026-07', viewingKey);
 
     /*
@@ -660,14 +649,14 @@ describe('§2 — NOBODY WRITES THE SECRET DOWN, INCLUDING US', () => {
 
   it('THE COMPANY HOLDS ONLY THE PUBLIC HALF', async () => {
     const h = world();
-    const { account, viewingKey } = await h.accounts.create('Acme', SIGNERS, 1);
+    const { account, viewingKey } = await h.accounts.create('Acme', SIGNERS, 1, undefined, drawCompanyLabel());
     const { employee, secret } = h.payroll.hireDirect(account.id, {
       name: 'Dana', email: 'd@a.co', title: 'Eng', asset: 'GBP', baseAmount: 100_00n,
     }, viewingKey);
 
     const onRoster = h.payroll.person(employee.id, viewingKey)!;
     const derived = payslipKeypairForWallet(
-      secret.words!, h.store.getAccount(account.id)!.contractAddress!, ORIGIN);
+      secret.words!, h.store.getAccount(account.id)!.companyLabel! as CompanyLabel, ORIGIN);
     expect(onRoster.wrappingPublicKey).toBe(derived.publicKey);
     expect(JSON.stringify(onRoster)).not.toContain(derived.secret);
   });
@@ -713,7 +702,7 @@ describe('§2 — NOBODY WRITES THE SECRET DOWN, INCLUDING US', () => {
      * what this file can hold without one.
      */
     const h = world();
-    const { account, viewingKey } = await h.accounts.create('Acme', SIGNERS, 1);
+    const { account, viewingKey } = await h.accounts.create('Acme', SIGNERS, 1, undefined, drawCompanyLabel());
     const hired = [
       { name: 'Dana', email: 'dana@a.co', title: 'Eng',     asset: 'GBP', baseAmount: 9400_00n },
       { name: 'Eli',  email: 'eli@a.co',  title: 'Finance', asset: 'GBP', baseAmount: 7100_00n },
@@ -742,7 +731,7 @@ describe('§2 — NOBODY WRITES THE SECRET DOWN, INCLUDING US', () => {
     const raw = JSON.stringify(hired);
     for (const e of hired) expect(e.secret.words).toHaveLength(24);
     for (const e of hired) expect(raw).toContain(asArray(e));
-    expect(asPhrase(hired[0])).toMatch(/\b(?:[a-z]{3,8} ){11,}[a-z]{3,8}\b/);
+    expect(asPhrase(present(hired[0]))).toMatch(/\b(?:[a-z]{3,8} ){11,}[a-z]{3,8}\b/);
 
     const employees = seededEmployeesForHttp(hired);
     const body = JSON.stringify(employees);
@@ -755,7 +744,7 @@ describe('§2 — NOBODY WRITES THE SECRET DOWN, INCLUDING US', () => {
      * was measured. Now an addition has to be read and re-approved rather than
      * merely typed.
      */
-    expect(Object.keys(employees[0]).sort())
+    expect(Object.keys(present(employees[0])).sort())
       .toEqual(['employeeId', 'name', 'title', 'wrappingSecret']);
     for (const e of employees) {
       expect(e).not.toHaveProperty('words');
@@ -780,14 +769,14 @@ describe('§2 — NOBODY WRITES THE SECRET DOWN, INCLUDING US', () => {
      * visible in the type rather than in a comment.
      */
     const h = world();
-    const { account, viewingKey } = await h.accounts.create('Acme', SIGNERS, 1);
+    const { account, viewingKey } = await h.accounts.create('Acme', SIGNERS, 1, undefined, drawCompanyLabel());
     const { secrets } = await h.payroll.createRun(account.id, '2026-07', [
       { name: 'Vendor', asset: 'GBP', amount: 50_00n },
     ], viewingKey);
 
     expect(secrets).toHaveLength(1);
-    expect(secrets[0].wrappingSecret).toMatch(/^[0-9a-f]{64}$/);
-    expect(secrets[0].words).toBeUndefined();
+    expect(present(secrets[0]).wrappingSecret).toMatch(/^[0-9a-f]{64}$/);
+    expect(present(secrets[0]).words).toBeUndefined();
   });
 });
 
@@ -802,7 +791,7 @@ describe('§3 — THE KEY OPENS THIS PERSON\'S PAYSLIP AND NOTHING ELSE OPENS IT
        * thing holding it: a wrap to any key but the payee's dies here.
        */
       const h = world();
-      const { account, viewingKey, secrets } = await h.accounts.create('Acme', SIGNERS, 1);
+      const { account, viewingKey, secrets } = await h.accounts.create('Acme', SIGNERS, 1, undefined, drawCompanyLabel());
       const { employee } = h.payroll.hireDirect(account.id, {
         name: 'Dana', email: 'd@a.co', title: 'Eng', asset: 'GBP', baseAmount: 100_00n,
       }, viewingKey);
@@ -810,7 +799,7 @@ describe('§3 — THE KEY OPENS THIS PERSON\'S PAYSLIP AND NOTHING ELSE OPENS IT
 
       expect(() => h.payroll.employeeView(run.id, employee.id, viewingKey))
         .toThrow(/that key cannot open this payslip/);
-      expect(() => h.payroll.employeeView(run.id, employee.id, secrets[0].wrappingSecret))
+      expect(() => h.payroll.employeeView(run.id, employee.id, present(secrets[0]).wrappingSecret))
         .toThrow(/that key cannot open this payslip/);
     });
 
@@ -823,7 +812,7 @@ describe('§3 — THE KEY OPENS THIS PERSON\'S PAYSLIP AND NOTHING ELSE OPENS IT
      * somebody's payslip opens with the wrong one.
      */
     const h = world();
-    const { account, viewingKey } = await h.accounts.create('Acme', SIGNERS, 1);
+    const { account, viewingKey } = await h.accounts.create('Acme', SIGNERS, 1, undefined, drawCompanyLabel());
     const dana = h.payroll.hireDirect(account.id, {
       name: 'Dana', email: 'd@a.co', title: 'Eng', asset: 'GBP', baseAmount: 100_00n,
     }, viewingKey);
@@ -861,13 +850,13 @@ describe('§3 — THE KEY OPENS THIS PERSON\'S PAYSLIP AND NOTHING ELSE OPENS IT
      * that person has ever had.
      */
     const h = world();
-    const { account, viewingKey } = await h.accounts.create('Acme', SIGNERS, 1);
+    const { account, viewingKey } = await h.accounts.create('Acme', SIGNERS, 1, undefined, drawCompanyLabel());
     const { employee, secret } = h.payroll.hireDirect(account.id, {
       name: 'Dana', email: 'd@a.co', title: 'Eng', asset: 'GBP', baseAmount: 100_00n,
     }, viewingKey);
     const { run } = await h.payroll.createRunFromRoster(account.id, '2026-07', viewingKey);
 
-    const elsewhere = payslipKeypairForWallet(secret.words!, 'b2'.repeat(32), ORIGIN);
+    const elsewhere = payslipKeypairForWallet(secret.words!, B2, ORIGIN);
     expect(() => h.payroll.employeeView(run.id, employee.id, elsewhere.secret))
       .toThrow(/that key cannot open this payslip/);
   });
@@ -881,7 +870,7 @@ describe('§3 — THE KEY OPENS THIS PERSON\'S PAYSLIP AND NOTHING ELSE OPENS IT
      * somebody and can seal nothing to them.
      */
     const h = world();
-    const { account, viewingKey } = await h.accounts.create('Acme', SIGNERS, 1);
+    const { account, viewingKey } = await h.accounts.create('Acme', SIGNERS, 1, undefined, drawCompanyLabel());
     const { employee } = h.payroll.invite(account.id, {
       name: 'Dana', email: 'd@a.co', title: 'Eng', asset: 'GBP', baseAmount: 100_00n,
     }, viewingKey, 'usr_ada');
@@ -909,8 +898,8 @@ describe('§4 — A NEW DEVICE OPENS PAYSLIPS ISSUED BEFORE IT EXISTED', () => {
        * when their laptop is gone.
        */
       const h = world();
-      const { account, viewingKey } = await h.accounts.create('Acme', SIGNERS, 1);
-      const company = h.store.getAccount(account.id)!.contractAddress!;
+      const { account, viewingKey } = await h.accounts.create('Acme', SIGNERS, 1, undefined, drawCompanyLabel());
+      const company = h.store.getAccount(account.id)!.companyLabel! as CompanyLabel;
 
       const words = TEST_MNEMONIC;
       const deviceOne = payslipKeypairForWallet(words, company, ORIGIN);
@@ -931,9 +920,9 @@ describe('§4 — A NEW DEVICE OPENS PAYSLIPS ISSUED BEFORE IT EXISTED', () => {
       /*
        * DEVICE TWO. A laptop that did not exist when that payslip was sealed,
        * holding nothing: no keyring, no bundle, no backup, no copy of
-       * `deviceOne`. It is handed the words and the company's own address —
-       * which is public, and which `companyForSession` would give it — and it
-       * works the key out.
+       * `deviceOne`. It is handed the words and the company's label — which is
+       * public, and which `companyForSession` would give it — and it works the
+       * key out.
        */
       const secondDevice = payslipKeypairForWallet(words, company, ELSEWHERE);
 
@@ -950,8 +939,8 @@ describe('§4 — A NEW DEVICE OPENS PAYSLIPS ISSUED BEFORE IT EXISTED', () => {
      * had stopped checking anything at all.
      */
     const h = world();
-    const { account, viewingKey } = await h.accounts.create('Acme', SIGNERS, 1);
-    const company = h.store.getAccount(account.id)!.contractAddress!;
+    const { account, viewingKey } = await h.accounts.create('Acme', SIGNERS, 1, undefined, drawCompanyLabel());
+    const company = h.store.getAccount(account.id)!.companyLabel! as CompanyLabel;
 
     const { employee, sentTo } = h.payroll.invite(account.id, {
       name: 'Dana', email: 'd@a.co', title: 'Eng', asset: 'GBP', baseAmount: 6_200_00n,

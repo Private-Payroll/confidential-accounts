@@ -1,4 +1,5 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import type { AccountAddress, CompanyLabel } from 'midnight-identity/profile/company-label';
 import { readFileSync } from 'node:fs';
 import { TEST_MNEMONIC } from '@midnight-ntwrk/testkit-js';
 import { identityFromWords } from 'midnight-identity';
@@ -11,9 +12,11 @@ import {
 import { seal, toHex, unseal } from './crypto.js';
 import { MemoryStore } from './store.js';
 import { SimulatedLedger, SimulatedCommitments } from './ledger.js';
-import { AccountService, openAccount, sealAccount } from './account.js';
-import { NoCompanyAddress, companyForSession } from './company-address.js';
-import { KEYRING_PURPOSE, UNLOCK_PURPOSE, keyringAsk, unlockAsk } from './wallet-unlock.js';
+import { AccountService, CompanyLabelTaken, NotACompanyLabel, openAccount, sealAccount } from './account.js';
+import { NoCompanyAddress, accountForChain, companyForSession } from './company-address.js';
+import {
+  KEYRING_AND_COMPANY_PURPOSE, KEYRING_AND_NEW_COMPANY_PURPOSE, KEYRING_PURPOSE, UNLOCK_PURPOSE, keyringAsk, unlockAsk,
+} from './wallet-unlock.js';
 import {
   askWalletForKeys, askWalletToUnlock, askWalletToUnlockAndWhereItReads, UnlockRefused,
 } from 'vaults-web-shared/wallet-unlock.js';
@@ -58,8 +61,10 @@ const WALLET = 'https://wallet.example';
 const THEM = 'https://other-payroll.example';
 
 /** Two companies, in the spelling the chain's own serialisation produces. */
-const ACME = 'a1'.repeat(32);
-const OTHER = 'b2'.repeat(32);
+/* Two companies, by their labels, and the account the first one's label sits on. */
+const ACME = `co_${'a1'.repeat(32)}` as CompanyLabel;
+const OTHER = `co_${'b2'.repeat(32)}` as CompanyLabel;
+const ACME_ACCOUNT = 'a2'.repeat(32) as AccountAddress;
 
 const NAME = 'Confidential Accounts';
 /** The address a sign-in answer names, in the shape the wallet's parser accepts. */
@@ -127,9 +132,10 @@ const asUnlock = (ask: Ask): UnlockRequest => {
 const honestly = (who = identity) => (ask: Ask) => releaseFor(who, asUnlock(ask), AT);
 
 const unlock = (
-  view: Openable, opts: { company?: string; atOrigin?: string } = {},
+  view: Openable, opts: { company?: CompanyLabel; atOrigin?: string } = {},
 ): Promise<Uint8Array> => askWalletToUnlock(view, WALLET, {
   company: opts.company ?? ACME,
+  account: ACME_ACCOUNT,
   atOrigin: opts.atOrigin ?? US,
   name: NAME,
   rdns: RDNS,
@@ -163,7 +169,7 @@ describe('THE WALLET SAYS WHERE IT READS THE CHAIN, BESIDE THE KEY', () => {
   it('THE PAGE GETS BACK THE SAME KEY AND THE INDEXER THE WALLET NAMED, OR NONE', async () => {
     const indexer = { indexerUri: 'https://indexer.example/graphql', indexerWsUri: 'wss://indexer.example/graphql/ws' };
     const ask = {
-      company: ACME, atOrigin: US, name: NAME, rdns: RDNS, now: () => AT, nonce: 'nonce-one',
+      company: ACME, account: ACME_ACCOUNT, atOrigin: US, name: NAME, rdns: RDNS, now: () => AT, nonce: 'nonce-one',
     };
     const naming = new WalletAtTheOtherEnd((a: Ask) => releaseFor(identity, asUnlock(a), AT, indexer));
     const both = await askWalletToUnlockAndWhereItReads(naming, WALLET, ask);
@@ -218,7 +224,7 @@ describe('§1 — THE BUNDLE OPENS WITH A KEY THE WALLET RELEASED', () => {
       new WalletAtTheOtherEnd(honestly(rebuilt), ELSEWHERE),
       WALLET,
       {
-        company: ACME, atOrigin: ELSEWHERE, name: NAME, rdns: RDNS,
+        company: ACME, account: ACME_ACCOUNT, atOrigin: ELSEWHERE, name: NAME, rdns: RDNS,
         now: () => AT + 86_400_000, nonce: 'a-different-nonce',
       });
 
@@ -241,7 +247,7 @@ describe('§1 — THE BUNDLE OPENS WITH A KEY THE WALLET RELEASED', () => {
       const key = await unlock(new WalletAtTheOtherEnd(honestly()));
       const ask = parseAsk(unlockAsk({
         name: NAME, rdns: RDNS, purpose: UNLOCK_PURPOSE,
-        nonce: 'nonce-one', expiresAt: AT + 60_000, company: ACME,
+        nonce: 'nonce-one', expiresAt: AT + 60_000, company: ACME, account: ACME_ACCOUNT,
       }), US, AT);
       expect(toHex(key)).toBe(toHex(unlockKeyFor(identity, asUnlock(ask))));
     });
@@ -300,9 +306,9 @@ describe('§2 — THE COMPANY COMES FROM THE SESSION, NEVER FROM THE REQUEST', (
       store, ledger, accounts: new AccountService(store, ledger, SimulatedCommitments) };
   };
 
-  it('THE ADDRESS IS THE LEDGER\'S OWN, NOT ONE MINTED ON THIS SIDE', async () => {
+  it('THE ADDRESS IS THE LEDGER\'S OWN, NOT ONE MINTED ON THIS SIDE, AND THE LABEL IS THE ONE IT WAS CREATED WITH', async () => {
     const { store, ledger, accounts } = world();
-    const made = await accounts.create('Acme', [{ name: 'Ada', role: 'admin', userId: 'usr_1' }], 1);
+    const made = await accounts.create('Acme', [{ name: 'Ada', role: 'admin', userId: 'usr_1' }], 1, undefined, ACME);
 
     /*
      * Asserted against the ledger rather than against a shape. A value that
@@ -314,8 +320,54 @@ describe('§2 — THE COMPANY COMES FROM THE SESSION, NEVER FROM THE REQUEST', (
      * the ledger's own and was not minted on this side. */
     expect(made.account.contractAddress).toBe((await ledger.address(made.account.id))?.value);
     expect(made.account.contractAddress).toMatch(/^[0-9a-f]{64}$/);
+    /* RED WHEN: the sign-in names the company by anything but the label it was created with. */
     expect(companyForSession(store, 'usr_1', made.account.id))
-      .toBe(made.account.contractAddress);
+      .toEqual({ label: ACME, account: made.account.contractAddress });
+    expect(made.account.companyLabel).toBe(ACME);
+  });
+
+  it('A LABEL ANOTHER COMPANY HAS IS REFUSED BEFORE ANYTHING IS CREATED, AND SO IS ONE THAT IS NOT A LABEL', async () => {
+    /*
+     * Nothing on the chain stops two accounts carrying one label, so this
+     * service refuses the second. RED WHEN: a second company is created with a
+     * recorded label, or an address is taken for a label.
+     */
+    const { store, ledger, accounts } = world();
+    await accounts.create('Acme', [{ name: 'Ada', role: 'admin', userId: 'usr_1' }], 1, undefined, ACME);
+    const before = store.listAccounts().length;
+    /* RED WHEN the label is checked only after the deploy: an account would be deployed for the copy. */
+    const deployed = vi.spyOn(ledger, 'open');
+    await expect(accounts.create('Copycat', [{ name: 'Eve', role: 'admin', userId: 'usr_2' }], 1, undefined, ACME))
+      .rejects.toBeInstanceOf(CompanyLabelTaken);
+    await expect(accounts.create('Wrong', [{ name: 'Eve', role: 'admin', userId: 'usr_2' }], 1, undefined,
+      ACME_ACCOUNT as unknown as CompanyLabel)).rejects.toBeInstanceOf(NotACompanyLabel);
+    expect(store.listAccounts().length).toBe(before);
+    expect(deployed).not.toHaveBeenCalled();
+  });
+
+  it('TWO CREATIONS WITH ONE LABEL AT ONCE: ONE COMPANY IS RECORDED, AND THE OTHER IS REFUSED', async () => {
+    /* Both pass the first check before either is written. RED WHEN the label is not checked again after the deploy. */
+    const { store, accounts } = world();
+    const both = await Promise.allSettled([
+      accounts.create('Acme', [{ name: 'Ada', role: 'admin', userId: 'usr_1' }], 1, undefined, ACME),
+      accounts.create('Copycat', [{ name: 'Eve', role: 'admin', userId: 'usr_2' }], 1, undefined, ACME),
+    ]);
+    expect(both.map((r) => r.status).sort()).toEqual(['fulfilled', 'rejected']);
+    expect((both.find((r) => r.status === 'rejected') as PromiseRejectedResult).reason).toBeInstanceOf(CompanyLabelTaken);
+    expect(store.listAccounts().filter((a) => a.companyLabel === ACME)).toHaveLength(1);
+  });
+
+  it('A COMPANY WITH NO LABEL CANNOT BE OPENED WITH A WALLET, AND NOTHING IS SUBSTITUTED FOR ONE', async () => {
+    /* RED WHEN: the answer falls back to the address, or anything else, for a company with no label. */
+    const { store, accounts } = world();
+    const made = await accounts.create('Acme', [{ name: 'Ada', role: 'admin', userId: 'usr_1' }], 1);
+    try {
+      companyForSession(store, 'usr_1', made.account.id);
+      throw new Error('should have refused');
+    } catch (e) {
+      expect(e).toBeInstanceOf(NoCompanyAddress);
+      expect((e as NoCompanyAddress).code).toBe('company-has-no-label');
+    }
   });
 
   it('SOMEBODY ELSE\'S COMPANY IS NOT FOUND, AND SO IS A COMPANY THAT DOES NOT EXIST',
@@ -339,15 +391,20 @@ describe('§2 — THE COMPANY COMES FROM THE SESSION, NEVER FROM THE REQUEST', (
         .not.toContain(made.account.contractAddress);
     });
 
-  it('A COMPANY WITH NO ADDRESS REFUSES BY NAME RATHER THAN SUBSTITUTING ONE', async () => {
+  it('A COMPANY WITH A LABEL AND NO ADDRESS IS UNLOCKABLE, AND EVERY CHAIN ACTION IS REFUSED BY NAME', async () => {
+    /*
+     * The gate at sign-in: a company is unlockable when it has a label, because
+     * its keys come from the label. A chain action needs an account a chain
+     * assigned, and asks for it separately.
+     * RED WHEN: unlocking needs an address, or a chain action goes ahead without one.
+     */
     const { store, accounts } = world();
-    const made = await accounts.create('Acme', [{ name: 'Ada', role: 'admin', userId: 'usr_1' }], 1);
-    /* A company created before this field existed, or on a ledger with no
-     * contract for it. */
+    const made = await accounts.create('Acme', [{ name: 'Ada', role: 'admin', userId: 'usr_1' }], 1, undefined, ACME);
     store.putAccount({ ...store.getAccount(made.account.id)!, contractAddress: null });
 
+    expect(companyForSession(store, 'usr_1', made.account.id)).toEqual({ label: ACME, account: null });
     try {
-      companyForSession(store, 'usr_1', made.account.id);
+      accountForChain(store, made.account.id);
       throw new Error('should have refused');
     } catch (e) {
       expect(e).toBeInstanceOf(NoCompanyAddress);
@@ -372,12 +429,14 @@ describe('§2 — THE COMPANY COMES FROM THE SESSION, NEVER FROM THE REQUEST', (
      * line writes nothing at all — which is the mutation this is for.
      */
     const known = 'de'.repeat(32);
-    store.putAccount({ ...store.getAccount(made.account.id)!, contractAddress: known });
+    store.putAccount({ ...store.getAccount(made.account.id)!, contractAddress: known, companyLabel: OTHER });
     const rec = store.getAccount(made.account.id)!;
 
     const round = sealAccount(
       openAccount(rec, made.viewingKey), made.viewingKey, rec.pendingSigners, rec.keyEpoch);
     expect(round.contractAddress).toBe(known);
+    /* RED WHEN: the label is dropped on the way round - every signer's keys are derived from it. */
+    expect(round.companyLabel).toBe(OTHER);
   });
 });
 
@@ -437,7 +496,7 @@ describe('§3 — AND THE SAME THING PROVED BY WATCHING, NOT BY READING', () => 
   it('THE SERVER IS NEVER HANDED THE RELEASED KEY, in any spelling', async () => {
     const ask = parseAsk(keyringAsk({
       name: NAME, rdns: RDNS, purpose: KEYRING_PURPOSE,
-      nonce: 'n', expiresAt: AT + 60_000, person: 'usr_1', signedInAs: SIGNED_IN, company: null,
+      nonce: 'n', expiresAt: AT + 60_000, person: 'usr_1', signedInAs: SIGNED_IN, company: null, account: null,
     }), US, AT) as KeyringRequest;
     const releasedHex = toHex(keyringKeyFor(identity, ask));
 
@@ -503,11 +562,12 @@ describe('§4 - THE KEYS SAVED FOR A PERSON OPEN WITH THE KEY THEIR WALLET GIVES
     (ask: Ask) => (ask.kind === 'keyring' ? keyringReleaseFor(who, ask, AT, holds) : { schema: 'x' });
   const askForKeys = (
     view: Openable,
-    opts: { person?: string; signedInAs?: string | null; company?: string | null; atOrigin?: string } = {},
+    opts: { person?: string; signedInAs?: string | null; company?: CompanyLabel | null; atOrigin?: string } = {},
   ) => askWalletForKeys(view, WALLET, {
     person: opts.person ?? 'usr_1',
     signedInAs: opts.signedInAs === undefined ? SIGNED_IN : opts.signedInAs,
     company: opts.company ?? null,
+    account: opts.company ? ACME_ACCOUNT : null,
     atOrigin: opts.atOrigin ?? US,
     name: NAME, rdns: RDNS, now: () => AT, nonce: 'nonce-keys',
   });
@@ -548,7 +608,7 @@ describe('§4 - THE KEYS SAVED FOR A PERSON OPEN WITH THE KEY THEIR WALLET GIVES
     const first = await askForKeys(new WalletAtTheOtherEnd(keysFor()));
     const second = await askWalletForKeys(
       new WalletAtTheOtherEnd(keysFor(identityFromWords(TEST_MNEMONIC)), ELSEWHERE), WALLET, {
-        person: 'usr_1', signedInAs: SIGNED_IN, company: null, atOrigin: ELSEWHERE,
+        person: 'usr_1', signedInAs: SIGNED_IN, company: null, account: null, atOrigin: ELSEWHERE,
         name: NAME, rdns: RDNS, now: () => AT + 86_400_000, nonce: 'another',
       });
     expect(toHex(second.key)).toBe(toHex(first.key));
@@ -559,7 +619,7 @@ describe('§4 - THE KEYS SAVED FOR A PERSON OPEN WITH THE KEY THEIR WALLET GIVES
   it('A WALLET THAT DOES NOT HOLD THE SIGNED-IN ADDRESS GIVES NOTHING', () => {
     const ask = parseAsk(keyringAsk({
       name: NAME, rdns: RDNS, purpose: KEYRING_PURPOSE, nonce: 'n', expiresAt: AT + 60_000,
-      person: 'usr_1', signedInAs: SIGNED_IN, company: null,
+      person: 'usr_1', signedInAs: SIGNED_IN, company: null, account: null,
     }), US, AT) as KeyringRequest;
     expect(() => keyringReleaseFor(identity, ask, AT, () => false)).toThrow(/none of this wallet's accounts/u);
   });
@@ -593,7 +653,7 @@ describe('§5 - A PAYSLIP KEY IS WORKED OUT ONLY FROM THIS COMPANY\'S KEY, FROM 
   const journey = async (keysAnsweredBy: typeof identity) => {
     const personKey = toHex(keyringKeyFor(identity, parseAsk(keyringAsk({
       name: NAME, rdns: RDNS, purpose: KEYRING_PURPOSE, nonce: 'n', expiresAt: AT + 60_000,
-      person: 'usr_1', signedInAs: SIGNED_IN, company: null,
+      person: 'usr_1', signedInAs: SIGNED_IN, company: null, account: null,
     }), US, AT) as KeyringRequest));
     let keyringAsks = 0;
     const view = new WalletAtTheOtherEnd((a) => {
@@ -610,7 +670,7 @@ describe('§5 - A PAYSLIP KEY IS WORKED OUT ONLY FROM THIS COMPANY\'S KEY, FROM 
       'POST /api/auth/wallet/challenge': { nonce: 's', handle: 'h', expiresAt: new Date(AT + 60_000).toISOString() },
       'POST /api/auth/wallet': { address: SIGNED_IN, created: true, user: { id: 'usr_1', email: null, name: '' } },
       'GET /api/me/keys': { keyBundle: seal(A_KEYRING, personKey), version: 3 },
-      'POST /api/accounts/acc_1/unlock': { company: ACME },
+      'POST /api/accounts/acc_1/unlock': { company: ACME, account: ACME_ACCOUNT },
       'POST /api/accounts/acc_1/payee-challenge': { nonce: 'p', handle: 'ph', expiresAt: new Date(AT + 60_000).toISOString() },
       'PUT /api/me/keys': { version: 4 },
     };
@@ -637,10 +697,10 @@ describe('§5 - A PAYSLIP KEY IS WORKED OUT ONLY FROM THIS COMPANY\'S KEY, FROM 
 
   it('THE KEY HANDED BACK IS THE COMPANY\'S OWN KEY FROM THIS WALLET, NOT THE KEY THE SAVED KEYS OPEN WITH', async () => {
     const { keyring, view, personKey, asks } = await journey(identity);
-    const { companyKey, companyAddress, disclosure } = await keyring.payslipKeyAndPayeeAddress('acc_1', WALLET, view, US);
-    expect(companyAddress).toBe(ACME);
+    const { companyKey, companyLabel, disclosure } = await keyring.payslipKeyAndPayeeAddress('acc_1', WALLET, view, US);
+    expect(companyLabel).toBe(ACME);
     const expected = toHex(unlockKeyFor(identity, asUnlock(parseAsk(unlockAsk({
-      name: NAME, rdns: RDNS, purpose: UNLOCK_PURPOSE, nonce: 'n', expiresAt: AT + 60_000, company: ACME,
+      name: NAME, rdns: RDNS, purpose: UNLOCK_PURPOSE, nonce: 'n', expiresAt: AT + 60_000, company: ACME, account: null,
     }), US, AT))));
     expect(companyKey).toBe(expected);
     expect(companyKey).not.toBe(personKey);
@@ -649,8 +709,8 @@ describe('§5 - A PAYSLIP KEY IS WORKED OUT ONLY FROM THIS COMPANY\'S KEY, FROM 
     /* And a second time asks the wallet for no key, only for where to pay. */
     const again = await keyring.payslipKeyAndPayeeAddress('acc_1', WALLET, view, US);
     expect(asks()).toBe(2);
-    /* RED WHEN the company address the key came from is not handed back, first time or after. */
-    expect(again.companyAddress).toBe(ACME);
+    /* RED WHEN the label of the company the key came from is not handed back, first time or after. */
+    expect(again.companyLabel).toBe(ACME);
   });
 
   it('A SIGNER WHO MAKES THEMSELVES PAYABLE HAS THEIR COMPANY ON THEIR OWN LIST, ONCE THE SERVICE TOOK IT', async () => {
@@ -696,5 +756,20 @@ describe('§5 - A PAYSLIP KEY IS WORKED OUT ONLY FROM THIS COMPANY\'S KEY, FROM 
       .rejects.toThrow('gave a different key from the one this tab opened your saved keys with');
     expect(keyring.companyKeyReleasedFor('acc_1')).toBeNull();
     expect(keyring.canOpenCompanies()).toBe(true);
+  });
+});
+
+describe('every sentence this page asks a wallet with is one the wallet takes', () => {
+  it('EACH PURPOSE PARSES AS PART OF ITS ASK', () => {
+    /* RED WHEN a purpose outgrows what the wallet reads: the wallet then refuses the ask and nothing opens. */
+    const at = 1_756_000_000_000;
+    for (const purpose of [UNLOCK_PURPOSE, KEYRING_PURPOSE, KEYRING_AND_COMPANY_PURPOSE, KEYRING_AND_NEW_COMPANY_PURPOSE]) {
+      const ask = keyringAsk({
+        name: 'Confidential Accounts', rdns: 'social.lemonade.confidential-accounts', purpose,
+        nonce: 'n'.repeat(16), expiresAt: at + 60_000, person: 'usr_1', signedInAs: null,
+        company: null, account: null, drawLabel: purpose === KEYRING_AND_NEW_COMPANY_PURPOSE,
+      });
+      expect(() => parseAsk(ask, 'https://payroll.example', at), purpose).not.toThrow();
+    }
   });
 });

@@ -4,6 +4,8 @@ import { schnorr, secp256k1 } from '@noble/curves/secp256k1.js';
 import type { SignatureVerifyingKey, SigningKey } from '@midnightntwrk/ledger-v9';
 import { Purposes } from '../keys/derivation.js';
 import type { Identity } from '../keys/derivation.js';
+import { readCompanyLabel } from './company-label.js';
+import type { CompanyLabel } from './company-label.js';
 
 /**
  * THE KEY A PERSON SITS ON ONE COMPANY'S VAULT COMMITTEE WITH.
@@ -14,8 +16,9 @@ import type { Identity } from '../keys/derivation.js';
  * company signer contributes one key, and this file is where that key comes
  * from.
  *
- * **A PURE FUNCTION OF THE WORDS AND THE COMPANY'S ADDRESS.** A person who has
- * lost every device and kept their words derives the same key again. A person
+ * **A PURE FUNCTION OF THE WORDS AND THE COMPANY'S LABEL** (`company-label.ts`),
+ * which the company's account carries on the chain. A person who has lost
+ * every device and kept their words derives the same key again. A person
  * who has lost their words cannot, and nothing can give it back: the remaining
  * signers replace them. In a company with one signer there are no remaining
  * signers, so a lost set of words is a vault whose rules can never change again.
@@ -40,13 +43,13 @@ import type { Identity } from '../keys/derivation.js';
  */
 
 /* The domain of this expansion. The day it changes, every company's committee
- * changes with it, which is a replacement on every vault and never a patch. */
-const COMMITTEE_SALT = new TextEncoder().encode('midnight-identity/vault-committee/v1');
+ * changes with it, which is a replacement on every vault and never a patch.
+ * `v2` expands a company's label; `v1` expanded its account's address, and no
+ * key of that kind is derived any more. */
+const COMMITTEE_SALT = new TextEncoder().encode('midnight-identity/vault-committee/v2');
 
 /** One parent, one job. */
 const COMMITTEE_PARENT_INDEX = 0;
-
-const COMPANY_ADDRESS = /^[0-9a-f]{64}$/u;
 
 const toHex = (b: Uint8Array): string => Array.from(b, (x) => x.toString(16).padStart(2, '0')).join('');
 const fromHex = (h: string): Uint8Array => Uint8Array.from(h.match(/../gu) ?? [], (x) => Number.parseInt(x, 16));
@@ -66,25 +69,25 @@ export class CommitteeKeyError extends Error {
   }
 }
 
-const companyOf = (company: string): string => {
-  const folded = typeof company === 'string' ? company.toLowerCase() : '';
-  if (!COMPANY_ADDRESS.test(folded)) {
+const labelOf = (company: CompanyLabel): string => {
+  const label = readCompanyLabel(company);
+  if (label === null) {
     throw new CommitteeKeyError(
-      'a committee key belongs to one company, named by its own sixty-four character address '
-      + 'on the chain, and what was given is not one. No key was derived.');
+      'a committee key belongs to one company, named by its label, and what was given is not '
+      + 'one. An account\'s address is not a label. No key was derived.');
   }
-  return folded;
+  return label;
 };
 
 /**
  * THE SECRET HALF. **Used inside the wallet only**, to sign a maintenance update
  * a person has approved on its own screen.
  */
-export function committeeSigningKeyFor(identity: Identity, company: string): SigningKey {
-  const address = companyOf(company);
+export function committeeSigningKeyFor(identity: Identity, company: CompanyLabel): SigningKey {
+  const label = labelOf(company);
   const parent = identity.authority(Purposes.Maintenance, COMMITTEE_PARENT_INDEX);
   for (let attempt = 0; attempt < TRIES; attempt += 1) {
-    const info = new TextEncoder().encode(attempt === 0 ? address : `${address}/${attempt}`);
+    const info = new TextEncoder().encode(attempt === 0 ? label : `${label}/${attempt}`);
     const bytes = hkdf(sha256, parent, COMMITTEE_SALT, info, 32);
     if (secp256k1.utils.isValidSecretKey(bytes)) {
       return { tag: 'schnorr', value: toHex(bytes) } as SigningKey;
@@ -96,7 +99,7 @@ export function committeeSigningKeyFor(identity: Identity, company: string): Sig
 }
 
 /** THE PUBLIC HALF, which is what a vault's committee lists. */
-export function committeeKeyFor(identity: Identity, company: string): SignatureVerifyingKey {
+export function committeeKeyFor(identity: Identity, company: CompanyLabel): SignatureVerifyingKey {
   const secret = fromHex(committeeSigningKeyFor(identity, company).value);
   return Object.freeze({ tag: 'schnorr', value: toHex(schnorr.getPublicKey(secret)) }) as SignatureVerifyingKey;
 }

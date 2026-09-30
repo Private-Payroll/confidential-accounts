@@ -1010,7 +1010,10 @@ export function companyVaultRoutes(deps: CompanyVaultDeps): express.Router {
               : { possible: true, why: null }
           : { possible: false, why: accountRow?.why ?? 'the chain could not be asked who holds this company\'s account.' };
     res.json({
-      company: company === null ? null : { address: company.address, threshold: company.threshold, signerCount: account.signerCount },
+      company: company === null ? null : {
+        address: company.address, label: account.companyLabel ?? null,
+        threshold: company.threshold, signerCount: account.signerCount,
+      },
       committee,
       why,
       everySignerNeeded: company === null ? null : everySignerNeeded(account.signerCount, company.threshold),
@@ -1132,12 +1135,17 @@ export function companyVaultRoutes(deps: CompanyVaultDeps): express.Router {
     const account = accountOf(req);
     const { company, committee, why } = await committeeNow(account);
     if (company === null || committee === null) {
-      res.json({ company: company?.address ?? null, to: null, why: why ?? 'this company has no committee yet.', contracts: [], notChangeable: [] });
+      res.json({
+        company: company?.address ?? null, label: account.companyLabel ?? null,
+        to: null, why: why ?? 'this company has no committee yet.', contracts: [], notChangeable: [],
+      });
       return;
     }
     const { owed, notChangeable } = contractsOwingAChange(await companyContracts(account, company.address), committee);
     res.json({
       company: company.address,
+      /* The company's label, from the same record as the address: what the signer's wallet derives its key from. */
+      label: account.companyLabel ?? null,
       to: committee,
       why: null,
       contracts: owed.map((c) => ({

@@ -1,4 +1,5 @@
 import { describe, expect, it, beforeEach } from 'vitest';
+import { drawCompanyLabel } from 'midnight-identity/profile/company-label';
 import { MemoryStore } from '../core/store.js';
 import { AccountService, openAccount, sealAccount, approvalMessage } from '../core/account.js';
 import { PluginService } from '../core/plugins.js';
@@ -11,6 +12,12 @@ import {
   countProvenance, decideList, provenanceOf, refuseSelectionOver,
 } from '../core/provenance.js';
 import { wiring } from './selection.js';
+
+/** The value, or a failure that says one was missing: an index that finds nothing is a broken test, not a value to carry on with. */
+function present<T>(value: T | undefined): T {
+  if (value === undefined) throw new Error('expected a value here, and there was none');
+  return value;
+}
 
 /**
  * **A LEDGER MAY NOT BE SELECTED OVER RECORDS THAT DO NOT SAY WHO WROTE THEM.**
@@ -183,7 +190,7 @@ describe('what the running product writes', () => {
      * decided before any viewing key is supplied, so a marker that lives
      * inside the envelope is a marker the decision cannot read.
      */
-    const made = await w.accounts.create('Acme', SIGNERS, 2);
+    const made = await w.accounts.create('Acme', SIGNERS, 2, undefined, drawCompanyLabel());
     expect(w.store.getAccount(made.account.id)!.wiring).toBe(w.ledger.wiring);
   });
 
@@ -201,7 +208,7 @@ describe('what the running product writes', () => {
      * compared against what that path last wrote: comparing two values the
      * same line produced agrees just as happily when the line writes nothing.
      */
-    const made = await w.accounts.create('Acme', SIGNERS, 2);
+    const made = await w.accounts.create('Acme', SIGNERS, 2, undefined, drawCompanyLabel());
     const stored = w.store.getAccount(made.account.id)!;
     w.store.putAccount({ ...stored, wiring: 'chain' });
 
@@ -221,7 +228,7 @@ describe('what the running product writes', () => {
      * becoming a different run. So reading a company's marker in a run's place
      * would vouch for payslips on the strength of when the company was opened.
      */
-    const made = await w.accounts.create('Acme', SIGNERS, 2);
+    const made = await w.accounts.create('Acme', SIGNERS, 2, undefined, drawCompanyLabel());
     w.payroll.hireDirect(made.account.id, {
       name: 'Dana', email: 'd@a.co', title: 'Eng', asset: 'GBP', baseAmount: 100_00n,
     }, made.viewingKey);
@@ -247,7 +254,7 @@ describe('what the running product writes', () => {
      * or when an unmarked write adds an entry, which would turn a silence into
      * a claim.
      */
-    const made = await w.accounts.create('Acme', SIGNERS, 2);
+    const made = await w.accounts.create('Acme', SIGNERS, 2, undefined, drawCompanyLabel());
     expect(w.store.snapshot().writtenBy).toEqual([w.ledger.wiring]);
 
     w.store.putAccount({ ...w.store.getAccount(made.account.id)!, id: 'acc_older', wiring: null });
@@ -276,7 +283,7 @@ describe('the refusal a selection meets', () => {
      * this refuses on it.
      */
     const w = world();
-    const made = await w.accounts.create('Acme', SIGNERS, 2);
+    const made = await w.accounts.create('Acme', SIGNERS, 2, undefined, drawCompanyLabel());
     w.payroll.hireDirect(made.account.id, {
       name: 'Dana', email: 'd@a.co', title: 'Eng', asset: 'GBP', baseAmount: 100_00n,
     }, made.viewingKey);
@@ -301,7 +308,7 @@ describe('the refusal a selection meets', () => {
      * RED WHEN: `refuseSelectionOver` stops firing on unrecorded records.
      */
     const w = world();
-    const made = await w.accounts.create('Acme', SIGNERS, 2);
+    const made = await w.accounts.create('Acme', SIGNERS, 2, undefined, drawCompanyLabel());
     w.store.putAccount({ ...w.store.getAccount(made.account.id)!, wiring: null });
 
     const counts = countProvenance(w.store.listAccounts());
@@ -318,7 +325,7 @@ describe('the refusal a selection meets', () => {
      * carrying the markers the rule reads.
      */
     const w = world();
-    const made = await w.accounts.create('Acme', SIGNERS, 2);
+    const made = await w.accounts.create('Acme', SIGNERS, 2, undefined, drawCompanyLabel());
     w.payroll.hireDirect(made.account.id, {
       name: 'Dana', email: 'd@a.co', title: 'Eng', asset: 'GBP', baseAmount: 100_00n,
     }, made.viewingKey);
@@ -361,7 +368,7 @@ describe('the marker follows the ledger, not a literal in the write path', () =>
   it('A COMPANY OPENED BY A LEDGER CALLING ITSELF A CHAIN IS MARKED AS A CHAIN\'S', async () => {
     // RED WHEN: `create` writes the word 'simulated' rather than asking the ledger.
     const w = worldClaiming('chain');
-    const made = await w.accounts.create('Acme', SIGNERS, 2);
+    const made = await w.accounts.create('Acme', SIGNERS, 2, undefined, drawCompanyLabel());
     expect(w.store.getAccount(made.account.id)!.wiring).toBe('chain');
     expect(w.store.snapshot().writtenBy).toEqual(['chain']);
   });
@@ -370,7 +377,7 @@ describe('the marker follows the ledger, not a literal in the write path', () =>
     // RED WHEN: `putRun` writes a literal, or reads the selection rather than the
     // ledger the service was actually handed.
     const w = worldClaiming('chain');
-    const made = await w.accounts.create('Acme', SIGNERS, 2);
+    const made = await w.accounts.create('Acme', SIGNERS, 2, undefined, drawCompanyLabel());
     w.payroll.hireDirect(made.account.id, {
       name: 'Dana', email: 'd@a.co', title: 'Eng', asset: 'GBP', baseAmount: 100_00n,
     }, made.viewingKey);
@@ -396,14 +403,14 @@ describe('a record that says nothing goes on saying nothing', () => {
      * what it said before the audit. Watched red on exactly that.
      */
     const w = world();
-    const { account, viewingKey, secrets } = await w.accounts.create('Acme', SIGNERS, 2);
+    const { account, viewingKey, secrets } = await w.accounts.create('Acme', SIGNERS, 2, undefined, drawCompanyLabel());
     const raised = await w.accounts.propose({
       accountId: account.id, viewingKey, kind: 'transfer', summary: 'x',
       payload: { entries: [{
         id: 'e1', kind: 'transfer', asset: 'GBP', amount: 10_00n,
         counterparty: 'y', memo: '', at: '',
       }] },
-      proposedBy: secrets[0].signerId,
+      proposedBy: present(secrets[0]).signerId,
     });
     expect(w.store.getProposal(raised.id)!.wiring).toBe(w.ledger.wiring);
 
@@ -411,8 +418,8 @@ describe('a record that says nothing goes on saying nothing', () => {
     w.store.putProposal({ ...w.store.getProposal(raised.id)!, wiring: null });
 
     await w.accounts.approve(
-      raised.id, secrets[0].signerId,
-      sign(approvalMessage(raised), secrets[0].signingSecret), viewingKey,
+      raised.id, present(secrets[0]).signerId,
+      sign(approvalMessage(raised), present(secrets[0]).signingSecret), viewingKey,
     );
 
     expect(w.store.getProposal(raised.id)!.approvalCount).toBe(1);
@@ -436,14 +443,14 @@ describe('a record that says nothing goes on saying nothing', () => {
      * before any viewing key exists.
      */
     const w = world();
-    const { account, viewingKey, secrets } = await w.accounts.create('Acme', SIGNERS, 2);
+    const { account, viewingKey, secrets } = await w.accounts.create('Acme', SIGNERS, 2, undefined, drawCompanyLabel());
     const raised = await w.accounts.propose({
       accountId: account.id, viewingKey, kind: 'transfer', summary: 'x',
       payload: { entries: [{
         id: 'e1', kind: 'transfer', asset: 'GBP', amount: 10_00n,
         counterparty: 'y', memo: '', at: '',
       }] },
-      proposedBy: secrets[0].signerId,
+      proposedBy: present(secrets[0]).signerId,
     });
     /*
      * **THE GOVERNANCE ROUND IS APPROVED FIRST, AND THAT STEP IS THE ASSERTION.**
@@ -457,8 +464,8 @@ describe('a record that says nothing goes on saying nothing', () => {
      * defect removed at once, which is how it was found.
      */
     await w.accounts.approve(
-      raised.id, secrets[0].signerId,
-      sign(approvalMessage(raised), secrets[0].signingSecret), viewingKey,
+      raised.id, present(secrets[0]).signerId,
+      sign(approvalMessage(raised), present(secrets[0]).signingSecret), viewingKey,
     );
 
     const stored = w.store.getProposal(raised.id)!;
@@ -491,7 +498,7 @@ describe('a record that says nothing goes on saying nothing', () => {
      * state the same way and for the same reason.
      */
     const w = world();
-    const made = await w.accounts.create('Acme', SIGNERS, 2);
+    const made = await w.accounts.create('Acme', SIGNERS, 2, undefined, drawCompanyLabel());
     w.payroll.hireDirect(made.account.id, {
       name: 'Dana', email: 'd@a.co', title: 'Eng', asset: 'GBP', baseAmount: 100_00n,
     }, made.viewingKey);
@@ -519,14 +526,14 @@ describe('a record that says nothing goes on saying nothing', () => {
      * recovered by anything afterwards.
      */
     const w = world();
-    const { account, viewingKey, secrets } = await w.accounts.create('Acme', SIGNERS, 2);
+    const { account, viewingKey, secrets } = await w.accounts.create('Acme', SIGNERS, 2, undefined, drawCompanyLabel());
     await w.accounts.propose({
       accountId: account.id, viewingKey, kind: 'transfer', summary: 'x',
       payload: { entries: [{
         id: 'e1', kind: 'transfer', asset: 'GBP', amount: 10_00n,
         counterparty: 'y', memo: '', at: '',
       }] },
-      proposedBy: secrets[0].signerId,
+      proposedBy: present(secrets[0]).signerId,
     });
     w.payroll.hireDirect(account.id, {
       name: 'Dana', email: 'd@a.co', title: 'Eng', asset: 'GBP', baseAmount: 100_00n,
@@ -556,14 +563,14 @@ describe('a record that says nothing goes on saying nothing', () => {
      * either way.
      */
     const w = world();
-    const { account, viewingKey, secrets } = await w.accounts.create('Acme', SIGNERS, 2);
+    const { account, viewingKey, secrets } = await w.accounts.create('Acme', SIGNERS, 2, undefined, drawCompanyLabel());
     const raised = await w.accounts.propose({
       accountId: account.id, viewingKey, kind: 'transfer', summary: 'x',
       payload: { entries: [{
         id: 'e1', kind: 'transfer', asset: 'GBP', amount: 10_00n,
         counterparty: 'y', memo: '', at: '',
       }] },
-      proposedBy: secrets[0].signerId,
+      proposedBy: present(secrets[0]).signerId,
     });
     /* A record from the other ledger, as a store carried across a change holds it. */
     w.store.putProposal({ ...w.store.getProposal(raised.id)!, wiring: 'chain' });
@@ -584,7 +591,7 @@ describe('the other doors a belief comes through', () => {
      */
     const w = world();
     const plugins = new PluginService(w.store, w.accounts);
-    const made = await w.accounts.create('Acme', SIGNERS, 2);
+    const made = await w.accounts.create('Acme', SIGNERS, 2, undefined, drawCompanyLabel());
     w.payroll.hireDirect(made.account.id, {
       name: 'Dana', email: 'd@a.co', title: 'Eng', asset: 'GBP', baseAmount: 100_00n,
     }, made.viewingKey);
@@ -592,7 +599,7 @@ describe('the other doors a belief comes through', () => {
 
     const install = plugins.install({
       accountId: made.account.id, pluginId: 'moneygram-payout',
-      scopes: ['runs:read'], allowance: null, installedBy: made.secrets[0].signerId,
+      scopes: ['runs:read'], allowance: null, installedBy: present(made.secrets[0]).signerId,
     });
     expect(plugins.readRuns(install.token).map(r => r.provenance)).toEqual([w.ledger.wiring]);
 
@@ -611,7 +618,7 @@ describe('the other doors a belief comes through', () => {
      * a date. This is the strongest belief this product creates in anybody.
      */
     const w = world();
-    const made = await w.accounts.create('Acme', SIGNERS, 2);
+    const made = await w.accounts.create('Acme', SIGNERS, 2, undefined, drawCompanyLabel());
     const hired = w.payroll.hireDirect(made.account.id, {
       name: 'Dana', email: 'd@a.co', title: 'Eng', asset: 'GBP', baseAmount: 100_00n,
     }, made.viewingKey);

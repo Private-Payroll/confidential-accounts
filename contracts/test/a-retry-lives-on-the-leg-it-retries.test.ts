@@ -25,6 +25,7 @@
  * live - with the values the product wrote down.
  */
 import { describe, it, expect, vi, afterEach } from 'vitest';
+import { drawCompanyLabel } from 'midnight-identity/profile/company-label';
 import { mkdtempSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
@@ -101,7 +102,7 @@ const deviceCarrying = (
 /** A company paying three people, whose one leg the PRODUCT has raised. */
 async function aRaisedLeg() {
   const { store, accounts, payroll } = services();
-  const created = await accounts.create('Northwind Ltd', [{ name: 'Ada', role: 'admin' }], 1);
+  const created = await accounts.create('Northwind Ltd', [{ name: 'Ada', role: 'admin' }], 1, undefined, drawCompanyLabel());
   const viewingKey = created.viewingKey;
   for (let i = 0; i < 3; i++) {
     payroll.hireDirect(created.account.id, {
@@ -279,7 +280,7 @@ describe('a retry lives on the leg it retries', () => {
 
   it('refuses a retry on a leg that has not been raised', async () => {
     const { accounts, payroll } = services();
-    const created = await accounts.create('Northwind Ltd', [{ name: 'Ada', role: 'admin' }], 1);
+    const created = await accounts.create('Northwind Ltd', [{ name: 'Ada', role: 'admin' }], 1, undefined, drawCompanyLabel());
     payroll.hireDirect(created.account.id, {
       name: 'Payee 0', email: 'p0@a.co', title: 'Eng', asset: 'GBP', baseAmount: 100_00n,
     }, created.viewingKey);
@@ -328,7 +329,7 @@ describe('a retry lives on the leg it retries', () => {
 
   it('refuses a retry on a leg this company\'s own policy stopped', async () => {
     const { store, accounts, payroll } = services();
-    const created = await accounts.create('Northwind Ltd', [{ name: 'Ada', role: 'admin' }], 1);
+    const created = await accounts.create('Northwind Ltd', [{ name: 'Ada', role: 'admin' }], 1, undefined, drawCompanyLabel());
     const vk = created.viewingKey;
     for (let i = 0; i < 2; i++) {
       payroll.hireDirect(created.account.id, {

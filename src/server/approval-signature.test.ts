@@ -22,6 +22,7 @@
  * is a status and a body, and neither has a type.
  */
 import { describe, it, expect, beforeAll, afterAll } from 'vitest';
+import { drawCompanyLabel } from 'midnight-identity/profile/company-label';
 import { importTheServer, useOnlyTheseSettings } from '../testing/server-under-test.js';
 import { mkdtempSync } from 'node:fs';
 import { tmpdir } from 'node:os';
@@ -30,6 +31,12 @@ import type { Server } from 'node:http';
 import { sign } from '../core/crypto.js';
 import { approvalMessage, REFUSED_APPROVALS_KEPT } from '../core/account.js';
 import { signInWithAWallet } from '../testing/wallet-session.js';
+
+/** The value, or a failure that says one was missing: an index that finds nothing is a broken test, not a value to carry on with. */
+function present<T>(value: T | undefined): T {
+  if (value === undefined) throw new Error('expected a value here, and there was none');
+  return value;
+}
 
 /* The same boot as `server.test.ts`, and for the same reasons — the notes at
  * the top of that file carry the argument for each of these four lines. */
@@ -158,7 +165,7 @@ const aCompanyWithAnOpenRound = async () => {
 
   const made = await call('POST', '/api/accounts', {
     token,
-    body: {
+    body: { companyLabel: drawCompanyLabel(),
       name: 'Acme',
       signers: [
         { name: 'Ada', role: 'admin' },
@@ -200,7 +207,7 @@ const aCompanyWithAnOpenRound = async () => {
         viewingKey,
         vault: reuseVault ?? nth.toString(16).padStart(2, '0').repeat(32),
         newThreshold: 2,
-        proposedBy: secrets[0].signerId,
+        proposedBy: present(secrets[0]).signerId,
       },
     });
     expect(proposed.status, JSON.stringify(proposed.body)).toBe(200);
@@ -238,9 +245,9 @@ describe('approving a proposal', () => {
     const sent = await call('POST', `/api/proposals/${c.open.id}/approve`, {
       token: c.token,
       body: {
-        signerId: c.secrets[0].signerId,
-        signature: sign(approvalMessage(c.open), c.secrets[0].signingSecret),
-        signingSecret: c.secrets[0].signingSecret,
+        signerId: present(c.secrets[0]).signerId,
+        signature: sign(approvalMessage(c.open), present(c.secrets[0]).signingSecret),
+        signingSecret: present(c.secrets[0]).signingSecret,
         viewingKey: c.viewingKey,
       },
     });
@@ -264,8 +271,8 @@ describe('approving a proposal', () => {
     const sent = await call('POST', `/api/proposals/${c.open.id}/approve`, {
       token: c.token,
       body: {
-        signerId: c.secrets[0].signerId,
-        signature: sign(approvalMessage(c.open), c.secrets[0].signingSecret),
+        signerId: present(c.secrets[0]).signerId,
+        signature: sign(approvalMessage(c.open), present(c.secrets[0]).signingSecret),
         somethingElse: 'x',
         viewingKey: c.viewingKey,
       },
@@ -296,8 +303,8 @@ describe('approving a proposal', () => {
     const wrong = await call('POST', `/api/proposals/${c.open.id}/approve`, {
       token: c.token,
       body: {
-        signerId: c.secrets[0].signerId,
-        signature: sign(approvalMessage(c.other), c.secrets[0].signingSecret),
+        signerId: present(c.secrets[0]).signerId,
+        signature: sign(approvalMessage(c.other), present(c.secrets[0]).signingSecret),
         viewingKey: c.viewingKey,
       },
     });
@@ -314,8 +321,8 @@ describe('approving a proposal', () => {
     const right = await call('POST', `/api/proposals/${c.open.id}/approve`, {
       token: c.token,
       body: {
-        signerId: c.secrets[0].signerId,
-        signature: sign(approvalMessage(c.open), c.secrets[0].signingSecret),
+        signerId: present(c.secrets[0]).signerId,
+        signature: sign(approvalMessage(c.open), present(c.secrets[0]).signingSecret),
         viewingKey: c.viewingKey,
       },
     });
@@ -330,8 +337,8 @@ describe('approving a proposal', () => {
     const sent = await call('POST', `/api/proposals/${c.open.id}/approve`, {
       token: c.token,
       body: {
-        signerId: c.secrets[1].signerId,
-        signature: sign(approvalMessage(c.open), c.secrets[2].signingSecret),
+        signerId: present(c.secrets[1]).signerId,
+        signature: sign(approvalMessage(c.open), present(c.secrets[2]).signingSecret),
         viewingKey: c.viewingKey,
       },
     });
@@ -375,8 +382,8 @@ describe('approving a proposal', () => {
     const replayed = await call('POST', `/api/proposals/${second.id}/approve`, {
       token: c.token,
       body: {
-        signerId: c.secrets[0].signerId,
-        signature: sign(approvalMessage(first), c.secrets[0].signingSecret),
+        signerId: present(c.secrets[0]).signerId,
+        signature: sign(approvalMessage(first), present(c.secrets[0]).signingSecret),
         viewingKey: c.viewingKey,
       },
     });
@@ -392,8 +399,8 @@ describe('approving a proposal', () => {
     const proper = await call('POST', `/api/proposals/${second.id}/approve`, {
       token: c.token,
       body: {
-        signerId: c.secrets[0].signerId,
-        signature: sign(approvalMessage(second), c.secrets[0].signingSecret),
+        signerId: present(c.secrets[0]).signerId,
+        signature: sign(approvalMessage(second), present(c.secrets[0]).signingSecret),
         viewingKey: c.viewingKey,
       },
     });
@@ -430,17 +437,17 @@ describe('approving a proposal', () => {
     expect(second.chainId).not.toBe(first.chainId);
 
     /* The consent, genuinely given, to the FIRST round. Now it is on the record. */
-    const bytes = sign(approvalMessage(first), c.secrets[0].signingSecret);
+    const bytes = sign(approvalMessage(first), present(c.secrets[0]).signingSecret);
     const given = await call('POST', `/api/proposals/${first.id}/approve`, {
       token: c.token,
-      body: { signerId: c.secrets[0].signerId, signature: bytes, viewingKey: c.viewingKey },
+      body: { signerId: present(c.secrets[0]).signerId, signature: bytes, viewingKey: c.viewingKey },
     });
     expect(given.status, JSON.stringify(given.body)).toBe(200);
 
     /* The same bytes, at the other round. Refused — and now SAID to be a replay. */
     const replayed = await call('POST', `/api/proposals/${second.id}/approve`, {
       token: c.token,
-      body: { signerId: c.secrets[0].signerId, signature: bytes, viewingKey: c.viewingKey },
+      body: { signerId: present(c.secrets[0]).signerId, signature: bytes, viewingKey: c.viewingKey },
     });
     expect(replayed.status).toBe(400);
     expect(replayed.body.error).toMatch(/does not match the registered signing key/i);
@@ -457,15 +464,15 @@ describe('approving a proposal', () => {
     const later = await call('POST', `/api/proposals/${second.id}/approve`, {
       token: c.token,
       body: {
-        signerId: c.secrets[1].signerId,
-        signature: sign(approvalMessage(second), c.secrets[1].signingSecret),
+        signerId: present(c.secrets[1]).signerId,
+        signature: sign(approvalMessage(second), present(c.secrets[1]).signingSecret),
         viewingKey: c.viewingKey,
       },
     });
     expect(later.status, JSON.stringify(later.body)).toBe(200);
     expect(later.body.refusedApprovals.count).toBe(1);
     expect(later.body.refusedApprovals.recent).toHaveLength(1);
-    expect(later.body.refusedApprovals.recent[0].signerId).toBe(c.secrets[0].signerId);
+    expect(later.body.refusedApprovals.recent[0].signerId).toBe(present(c.secrets[0]).signerId);
     expect(later.body.refusedApprovals.recent[0].replayOf).toBe(first.chainId);
 
     /*
@@ -477,8 +484,8 @@ describe('approving a proposal', () => {
     const firstAgain = await call('POST', `/api/proposals/${first.id}/approve`, {
       token: c.token,
       body: {
-        signerId: c.secrets[1].signerId,
-        signature: sign(approvalMessage(first), c.secrets[1].signingSecret),
+        signerId: present(c.secrets[1]).signerId,
+        signature: sign(approvalMessage(first), present(c.secrets[1]).signingSecret),
         viewingKey: c.viewingKey,
       },
     });
@@ -499,8 +506,8 @@ describe('approving a proposal', () => {
       token: c.token,
       body: {
         /* Cleo's key in Blake's seat: the digest is right, the hand is not. */
-        signerId: c.secrets[1].signerId,
-        signature: sign(approvalMessage(c.open), c.secrets[2].signingSecret),
+        signerId: present(c.secrets[1]).signerId,
+        signature: sign(approvalMessage(c.open), present(c.secrets[2]).signingSecret),
         viewingKey: c.viewingKey,
       },
     });
@@ -510,14 +517,14 @@ describe('approving a proposal', () => {
     const after = await call('POST', `/api/proposals/${c.open.id}/approve`, {
       token: c.token,
       body: {
-        signerId: c.secrets[0].signerId,
-        signature: sign(approvalMessage(c.open), c.secrets[0].signingSecret),
+        signerId: present(c.secrets[0]).signerId,
+        signature: sign(approvalMessage(c.open), present(c.secrets[0]).signingSecret),
         viewingKey: c.viewingKey,
       },
     });
     expect(after.status, JSON.stringify(after.body)).toBe(200);
     expect(after.body.refusedApprovals.count).toBe(1);
-    expect(after.body.refusedApprovals.recent[0].signerId).toBe(c.secrets[1].signerId);
+    expect(after.body.refusedApprovals.recent[0].signerId).toBe(present(c.secrets[1]).signerId);
     expect(after.body.refusedApprovals.recent[0].replayOf).toBeUndefined();
   });
 
@@ -545,10 +552,10 @@ describe('approving a proposal', () => {
     expect(second.chainId).not.toBe(first.chainId);
 
     /* Seat 0's genuine consent to `first`. These bytes are now standing on the record. */
-    const bytes = sign(approvalMessage(first), c.secrets[0].signingSecret);
+    const bytes = sign(approvalMessage(first), present(c.secrets[0]).signingSecret);
     const given = await call('POST', `/api/proposals/${first.id}/approve`, {
       token: c.token,
-      body: { signerId: c.secrets[0].signerId, signature: bytes, viewingKey: c.viewingKey },
+      body: { signerId: present(c.secrets[0]).signerId, signature: bytes, viewingKey: c.viewingKey },
     });
     expect(given.status, JSON.stringify(given.body)).toBe(200);
 
@@ -558,11 +565,11 @@ describe('approving a proposal', () => {
      * signature by a seat that has approved nothing, so it is refused, it is
      * recorded, and `replayOf` is correctly absent on every one of them.
      */
-    const junk = sign(approvalMessage(first), c.secrets[2].signingSecret);
+    const junk = sign(approvalMessage(first), present(c.secrets[2]).signingSecret);
     for (let i = 0; i < REFUSED_APPROVALS_KEPT; i++) {
       const burnt = await call('POST', `/api/proposals/${second.id}/approve`, {
         token: c.token,
-        body: { signerId: c.secrets[2].signerId, signature: junk, viewingKey: c.viewingKey },
+        body: { signerId: present(c.secrets[2]).signerId, signature: junk, viewingKey: c.viewingKey },
       });
       expect(burnt.status, `attempt ${i}: ${JSON.stringify(burnt.body)}`).toBe(400);
       expect(burnt.body.error).not.toMatch(/it is a replay/i);
@@ -575,7 +582,7 @@ describe('approving a proposal', () => {
      */
     const replayed = await call('POST', `/api/proposals/${second.id}/approve`, {
       token: c.token,
-      body: { signerId: c.secrets[0].signerId, signature: bytes, viewingKey: c.viewingKey },
+      body: { signerId: present(c.secrets[0]).signerId, signature: bytes, viewingKey: c.viewingKey },
     });
     expect(replayed.status).toBe(400);
     expect(replayed.body.error).toMatch(/it is a replay/i);
@@ -592,8 +599,8 @@ describe('approving a proposal', () => {
     const later = await call('POST', `/api/proposals/${second.id}/approve`, {
       token: c.token,
       body: {
-        signerId: c.secrets[1].signerId,
-        signature: sign(approvalMessage(second), c.secrets[1].signingSecret),
+        signerId: present(c.secrets[1]).signerId,
+        signature: sign(approvalMessage(second), present(c.secrets[1]).signingSecret),
         viewingKey: c.viewingKey,
       },
     });

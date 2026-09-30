@@ -34,6 +34,7 @@ import {
 import { identityFromWords, newWords } from 'midnight-identity';
 import { parseAsk } from 'midnight-identity/profile/request';
 import { unlockKeyFor } from 'midnight-identity/profile/unlock';
+import { drawCompanyLabel, readAccountAddress } from 'midnight-identity/profile/company-label';
 import {
   Contract as Vault, ledger as vaultLedger, pureCircuits as vaultCircuits,
 } from '../managed-vault/contract/index.js';
@@ -82,14 +83,18 @@ const NO_INDEX_YET = 0n;
 const RECORDS: readonly WireRecord[] = ['pool', 'deposit-journal', 'payment-journal', 'nonce-secret'];
 
 /** The key a person's wallet releases for the company, from their words alone, through the wallet's own code. */
-const releasedCompanyKey = (words: string, company: string): Uint8Array => {
+/** The company's label, drawn once, as its founding signer's wallet draws it. */
+const LABEL = drawCompanyLabel();
+
+const releasedCompanyKey = (words: string, account: string): Uint8Array => {
   const ask = parseAsk(unlockAsk({
     name: 'Confidential Accounts',
     rdns: 'social.lemonade.confidential-accounts',
     purpose: UNLOCK_PURPOSE,
     nonce: 'derivation-has-no-conversation',
     expiresAt: 0 + UNLOCK_WINDOW_MS,
-    company,
+    company: LABEL,
+    account: readAccountAddress(account),
   }), 'https://payroll.example', 0);
   if (ask.kind !== 'unlock') throw new Error(`built a ${ask.kind}, not an unlock`);
   return unlockKeyFor(identityFromWords(words), ask);

@@ -20,7 +20,6 @@
  *      told why it cannot be saved there, and the company waits for them in
  *      this browser until they sign in again, when it is saved.
  */
-import React from 'react';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { cleanup, fireEvent, render, waitFor } from '@testing-library/react';
 import { TEST_MNEMONIC } from '@midnight-ntwrk/testkit-js';
@@ -37,7 +36,8 @@ const US = 'https://payroll.example';
 const WALLET = 'https://wallet.example';
 const SIGNED_IN = 'mn_addr_test1qqqqqqqqqqqqqqqqqqqq';
 const PERSON = 'usr_1';
-const ACME = 'ab'.repeat(32);
+/* A company that pays this person, by its label. */
+const ACME = `co_${'ab'.repeat(32)}`;
 const identity = identityFromWords(TEST_MNEMONIC);
 
 /** A wallet that gives the keyring key from its own words, and only for an address it holds. */
@@ -86,7 +86,7 @@ const keyring = await import('vaults-web-shared/keyring.js');
 /** The keyring key the wallet above gives this person. */
 const keyringHex = () => toHex(keyringKeyFor(identity, parseAsk(keyringAsk({
   name: 'n', rdns: 'r', purpose: KEYRING_PURPOSE, nonce: 'n', expiresAt: Date.now() + 60_000,
-  person: PERSON, signedInAs: null, company: null,
+  person: PERSON, signedInAs: null, company: null, account: null,
 }), US, Date.now()) as KeyringRequest));
 
 /** A company this person signs for, sealed; its name cannot be read until the keys open. */
@@ -240,7 +240,7 @@ describe('the page keeps the companies that pay you where they are found again',
   it('THE ACCEPTED SCREEN\'S LINK TO YOUR PAYSLIPS IS FOLLOWED IN THIS TAB, AND A NEW-TAB CLICK IS LEFT TO THE BROWSER', async () => {
     const { Accepted } = await import('./Join.js');
     const follow = vi.fn();
-    const { container } = render(<Accepted company="Acme Ltd" companyAddress={ACME} onOpenPayslips={follow} />);
+    const { container } = render(<Accepted company="Acme Ltd" companyLabel={ACME} onOpenPayslips={follow} />);
     const link = container.querySelector('[data-open-payslips]') as HTMLAnchorElement;
     expect(link.getAttribute('href')).toBe('/payslips');
     /* RED WHEN the link loads the page again: the tab forgets who it signed in and cannot save first keys. */

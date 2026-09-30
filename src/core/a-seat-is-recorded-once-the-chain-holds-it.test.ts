@@ -7,6 +7,7 @@
  * when the test says so; the wait between reads is shortened.
  */
 import { describe, it, expect, beforeEach } from 'vitest';
+import { drawCompanyLabel } from 'midnight-identity/profile/company-label';
 import { mkdtempSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
@@ -43,7 +44,7 @@ beforeEach(async () => {
   landAtOnce = true;
   const store = new FileStore(join(mkdtempSync(join(tmpdir(), 'mn-seat-seen-')), 'db.json'));
   accounts = new AccountService(store, ledger, MidnightCommitments, undefined, undefined, { everyMs: 1, attempts: 3 });
-  const created = await accounts.create('Seen', [{ name: 'Ada', role: 'admin', userId: 'usr_ada' }], 1);
+  const created = await accounts.create('Seen', [{ name: 'Ada', role: 'admin', userId: 'usr_ada' }], 1, undefined, drawCompanyLabel());
   company = created.account.id;
   viewingKey = created.viewingKey;
   ada = { signerId: created.secrets[0]!.signerId, leaf: created.account.signers[0]!.leafCommitment as Hex };

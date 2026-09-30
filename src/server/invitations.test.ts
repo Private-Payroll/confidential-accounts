@@ -16,6 +16,7 @@
  * the test that has to die.
  */
 import { describe, it, expect, beforeAll, afterAll, vi } from 'vitest';
+import { drawCompanyLabel } from 'midnight-identity/profile/company-label';
 import { importTheServer, useOnlyTheseSettings } from '../testing/server-under-test.js';
 import { mkdtempSync } from 'node:fs';
 import { tmpdir } from 'node:os';
@@ -198,7 +199,7 @@ const withACompany = async () => {
   const admin = await register('Ada');
   const made = await call('POST', '/api/accounts', {
     token: admin.token,
-    body: { name: 'Acme', signers: [{ name: 'Ada', role: 'admin' }], threshold: 1 },
+    body: { companyLabel: drawCompanyLabel(), name: 'Acme', signers: [{ name: 'Ada', role: 'admin' }], threshold: 1 },
   });
   expect(made.status, JSON.stringify(made.body)).toBe(200);
   return {
@@ -277,10 +278,11 @@ describe('§1 — the link is produced once and is unreachable afterwards', () =
     expect(offer.body.company).toBe('Acme');
     expect(offer.body.title).toBe('Engineer');
 
-    /* §0 — and it names the company by its address on the chain and carries the
-     * inbox key, because without those an invitee cannot derive a payslip key
-     * or seal anything. */
-    expect(offer.body.companyAddress).toMatch(/^[0-9a-f]{64}$/u);
+    /* §0 — and it names the company by its label, and by the account on the chain
+     * that carries it, and carries the inbox key, because without those an
+     * invitee cannot derive a payslip key or seal anything. */
+    expect(offer.body.companyLabel).toMatch(/^co_[0-9a-f]{64}$/u);
+    expect(offer.body.companyAccount).toMatch(/^[0-9a-f]{64}$/u);
     expect(offer.body.inboxPublicKey).toMatch(/^[0-9a-f]{64}$/u);
 
     const guessed = await call('GET', '/api/invites/inv_not-a-real-token/offer');

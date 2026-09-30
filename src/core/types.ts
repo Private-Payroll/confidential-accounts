@@ -1,3 +1,4 @@
+import type { CompanyLabel } from 'midnight-identity/profile/company-label';
 import type { Hex, Sealed } from './crypto.js';
 import type { PayoutSeed, PayRecord } from '../midnight/run-keys.js';
 import type { Payee } from '../midnight/payee-address.js';
@@ -298,13 +299,22 @@ export interface Account {
    * the clear, where `threshold` and `signerCount` are and for the same reason.
    * It appears on this type only because `sealAccount` builds the stored record
    * from an opened `Account`: a readable field with no home here is written
-   * once at creation and silently dropped by the next `save()`. **The key that
-   * opens this company's keyring is derived from this string**, so losing it is
-   * losing the data — the same loss, with a smaller radius.
+   * once at creation and silently dropped by the next `save()`. It is where the
+   * company's account is, for every chain action; the company's keys are
+   * derived from `companyLabel` beside it.
    *
    * Null while the company is not on a chain — see `Ledger.address`.
    */
   contractAddress?: string | null;
+  /**
+   * **THE COMPANY'S LABEL** (`co_` and sixty-four hex characters): what every
+   * signer's wallet derives this company's keys from, drawn by the founding
+   * signer's wallet before the account existed, and written into the account
+   * by its constructor. Public, never sealed, written once and never over, and
+   * carried here for the reason `contractAddress` is. Null on a company created
+   * without one, which no wallet can open.
+   */
+  companyLabel?: CompanyLabel | null;
   /**
    * WHERE `contractAddress` CAME FROM.
    *
@@ -437,10 +447,10 @@ export interface SealedAccount {
    * CHOOSE.** `docs/scope-payroll-identity.md` §9.
    *
    * Sixty-four lower-case hex characters, or null while this company has no
-   * contract. The wallet derives the key that opens this company's records from
-   * it and from nothing else, which is what makes a copy of the data openable
-   * on another client, on another host, after a recovery — and it is why the
-   * value is written from what the ledger reports rather than minted here.
+   * contract, and every chain action reaches the company's account through it.
+   * The wallet derives the keys that open this company's records from
+   * `companyLabel` below, not from this; the value here is written from what
+   * the ledger reports rather than minted here.
    *
    * **IT IS DURABLE ON PURPOSE.** `SimulatedLedger` holds its whole world in
    * memory and forgets it on restart; a key derived from something that forgets
@@ -451,6 +461,14 @@ export interface SealedAccount {
    * Optional because every account created before it was recorded has none.
    */
   contractAddress?: string | null;
+  /**
+   * **THE COMPANY'S LABEL**, from which every signer's wallet derives this
+   * company's keys. Drawn by the founding signer's wallet, taken at creation,
+   * refused if any company already has it, written once and never over. Public
+   * - the account carries it on the chain - and so never sealed. Absent on a
+   * company created without one: such a company cannot be opened with a wallet.
+   */
+  companyLabel?: CompanyLabel | null;
   /**
    * **WHETHER A CHAIN ASSIGNED THAT ADDRESS, OR THIS PROCESS INVENTED IT.**
    *
@@ -826,11 +844,11 @@ export interface RosterEmployee {
   /** Null until the employee's own device generates one and sends the public half. */
   wrappingPublicKey: Hex | null;
   /**
-   * **THE COMPANY ADDRESS THAT KEY WAS WORKED OUT FROM.** The payee's device
-   * derives their payslip key from the key their wallet gives for one company
-   * address, and says which address in what it hands over. Every payslip sealed
-   * to them carries it, so a company that moves to a new address leaves each
-   * earlier slip openable under the address it was sealed for. Absent on a
+   * **THE LABEL OF THE COMPANY THAT KEY WAS WORKED OUT FROM.** The payee's
+   * device derives their payslip key from the key their wallet gives for one
+   * company, named by its label, and says which in what it hands over. Every
+   * payslip sealed to them carries it, so each slip stays openable for as long
+   * as the company keeps its label, whatever account it has. Absent on a
    * record admitted before this was recorded.
    */
   payslipKeyFrom?: string | null;
@@ -1159,10 +1177,10 @@ export interface PayrollRun {
     wrapped: { ephemeral: Hex } & Sealed;
     slip: Sealed;
     /**
-     * The company address the payee's key was worked out from, so the payee's
-     * wallet can be asked for that address rather than whatever the company's
-     * address is today. Absent on a slip sealed before this was recorded, and
-     * `null` on one sealed to a key no address produced.
+     * The label of the company the payee's key was worked out from, so the
+     * payee's wallet can be asked for that company. Absent on a slip sealed
+     * before this was recorded, and `null` on one sealed to a key no company
+     * produced.
      */
     issuedBy?: string | null;
     /**
@@ -1173,7 +1191,8 @@ export interface PayrollRun {
     /**
      * **WHAT THIS PAYEE'S PAYMENT IS RECORDED AGAINST, SEALED TO THEM.** The
      * payee's own payout leaf, the value the account records when that leaf is
-     * paid, and the company address the run was raised at, sealed the way the
+     * paid, the address of the company's account the run was raised at and the
+     * company's label, sealed the way the
      * slip is and wrapped to the same key, so the store holds it as ciphertext.
      * Until the payee's leg is raised it is a stand-in of the same length that
      * names no payment. Absent on every slip of a run drawn up before receipts
@@ -1373,7 +1392,7 @@ export interface RunPayout {
    */
   epoch: number;
   /**
-   * The company's address when this leg was raised: where its payments are
+   * The address of the company's account when this leg was raised: where its payments are
    * recorded, and so where its payees' receipts send them to ask. Kept per leg
    * because a company can move between one leg and the next, and a receipt
    * that named the later address would have its payee read a record their

@@ -13,6 +13,7 @@
  */
 import { PROGRESS_SCHEMA, REQUEST_SCHEMA } from 'midnight-identity/profile/request';
 import { readBalancedAnswer, type LeavesTheWallet } from 'midnight-identity/profile/balance';
+import type { AccountAddress, CompanyLabel, VaultAddress } from 'midnight-identity/profile/company-label';
 import { toHex, randomBytes } from '../../../src/core/crypto.js';
 import { askWallet, type Openable, type WalletDialog } from './wallet-sign-in.js';
 
@@ -36,8 +37,10 @@ export class WalletDidNotPay extends Error {
 }
 
 export interface BalanceAsked {
-  readonly company: string;
-  readonly vault: string;
+  /** The company's label, and the account that carries it: the wallet reads one off the other. */
+  readonly company: CompanyLabel;
+  readonly account: AccountAddress;
+  readonly vault: VaultAddress;
   /** Base64 of the proven, unbound transaction. */
   readonly transaction: string;
   readonly atOrigin: string;
@@ -55,7 +58,7 @@ export interface BalanceAsked {
  */
 export const balanceAsk = (parts: {
   name: string; rdns: string; purpose: string; nonce: string; expiresAt: number;
-  company: string; vault: string; transaction: string;
+  company: CompanyLabel; account: AccountAddress; vault: VaultAddress; transaction: string;
 }) => Object.freeze({
   schema: REQUEST_SCHEMA,
   kind: 'balance' as const,
@@ -65,6 +68,7 @@ export const balanceAsk = (parts: {
   expiresAt: parts.expiresAt,
   progress: PROGRESS_SCHEMA,
   company: parts.company,
+  account: parts.account,
   vault: parts.vault,
   transaction: parts.transaction,
 });
@@ -81,11 +85,12 @@ export async function askWalletToPay(
     nonce,
     expiresAt: now() + BALANCE_WINDOW_MS,
     company: ask.company,
+    account: ask.account,
     vault: ask.vault,
     transaction: ask.transaction,
   }), dialog);
   const read = readBalancedAnswer(answer, {
-    atOrigin: ask.atOrigin, expectingNonce: nonce, company: ask.company, vault: ask.vault,
+    atOrigin: ask.atOrigin, expectingNonce: nonce, company: ask.company, account: ask.account, vault: ask.vault,
   });
   if (!read.ok) throw new WalletDidNotPay(read.code, read.says);
   return { transaction: read.transaction, leaves: read.leaves };

@@ -1,4 +1,5 @@
 import { describe, expect, it, vi } from 'vitest';
+import { drawCompanyLabel } from 'midnight-identity/profile/company-label';
 import { TEST_MNEMONIC } from '@midnight-ntwrk/testkit-js';
 import { signatureVerifyingKey } from '@midnightntwrk/ledger-v9';
 import { identityFromWords } from 'midnight-identity';
@@ -585,9 +586,9 @@ describe('§3 — ONE WALLET MAY CREATE AND BELONG TO AS MANY COMPANIES AS IT LI
     async () => {
       const { store, accounts, person } = await aWalletPerson();
       const first = await accounts.create(
-        'Northwind', [{ name: 'Ada', role: 'admin', userId: person.user.id }], 1);
+        'Northwind', [{ name: 'Ada', role: 'admin', userId: person.user.id }], 1, undefined, drawCompanyLabel());
       const second = await accounts.create(
-        'Eastgate', [{ name: 'Ada', role: 'admin', userId: person.user.id }], 1);
+        'Eastgate', [{ name: 'Ada', role: 'admin', userId: person.user.id }], 1, undefined, drawCompanyLabel());
 
       expect(second.account.id).not.toBe(first.account.id);
       /* Both, on the same person, seen from the side that holds both. */
@@ -599,7 +600,7 @@ describe('§3 — ONE WALLET MAY CREATE AND BELONG TO AS MANY COMPANIES AS IT LI
     const { store, accounts, person } = await aWalletPerson();
     for (const name of ['Northwind', 'Eastgate', 'Southgate']) {
       // eslint-disable-next-line no-await-in-loop
-      await accounts.create(name, [{ name: 'Ada', role: 'admin', userId: person.user.id }], 1);
+      await accounts.create(name, [{ name: 'Ada', role: 'admin', userId: person.user.id }], 1, undefined, drawCompanyLabel());
     }
     expect(store.accountsForUser(person.user.id)).toHaveLength(3);
   });
@@ -616,9 +617,9 @@ describe('§3 — ONE WALLET MAY CREATE AND BELONG TO AS MANY COMPANIES AS IT LI
        */
       const { store, accounts, person } = await aWalletPerson();
       const mine = await accounts.create(
-        'Northwind', [{ name: 'Ada', role: 'admin', userId: person.user.id }], 1);
+        'Northwind', [{ name: 'Ada', role: 'admin', userId: person.user.id }], 1, undefined, drawCompanyLabel());
       const theirs = await accounts.create(
-        'Eastgate', [{ name: 'Rae', role: 'admin', userId: null }], 1);
+        'Eastgate', [{ name: 'Rae', role: 'admin', userId: null }], 1, undefined, drawCompanyLabel());
 
       const invite = accounts.inviteSigner(
         theirs.account.id, 'Ada', 'ada@northwind.co', 'approver');

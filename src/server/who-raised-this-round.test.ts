@@ -31,6 +31,7 @@
  * one route where copying the other two would have had nothing to copy.
  */
 import { describe, it, expect, beforeAll, afterAll } from 'vitest';
+import { drawCompanyLabel } from 'midnight-identity/profile/company-label';
 import { importTheServer, useOnlyTheseSettings } from '../testing/server-under-test.js';
 import { mkdtempSync } from 'node:fs';
 import { tmpdir } from 'node:os';
@@ -140,7 +141,7 @@ const signedIn = async (slot: number): Promise<string> => {
 const aCompany = async (token: string) => {
   const made = await call('POST', '/api/accounts', {
     token,
-    body: {
+    body: { companyLabel: drawCompanyLabel(),
       name: 'Northwind',
       signers: [
         { name: 'Ada', role: 'admin' },

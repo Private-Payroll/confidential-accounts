@@ -33,6 +33,8 @@ import { unshieldedAddressFor } from '../chain/unshielded.js';
 import { rememberSignIn, walletSignedInTo } from '../lib/signed-in-here.js';
 import { Approve } from './approve.js';
 import { INDEXER_HTTP_URL, INDEXER_WS_URL } from '../config.js';
+import type { AccountAddress, CompanyLabel } from 'midnight-identity/profile/company-label';
+import type { LabelReader } from './company-on-chain.js';
 
 /**
  * **THE SCREEN THAT GIVES SOMETHING AWAY RATHER THAN SAYING SOMETHING.**
@@ -60,8 +62,17 @@ const identity = identityFromWords(TEST_MNEMONIC);
 const SECRET = secretFromWords(TEST_MNEMONIC);
 const ORIGIN = 'https://payroll-a.example';
 const OTHER = 'https://payroll-b.example';
-const CO_A = 'dbe119a304f8e7ea882353435c1d536cf2faf4298236a9aae77670e750af65c8';
-const CO_B = '54ef954a25aefff8e1675af10a852ef29d5de5c63a51b64b978bf7bd0eaeca4e';
+/* Two companies by their labels, and the accounts that carry them on the chain. */
+const CO_A = 'co_7a1e2b3c4d5e6f708192a3b4c5d6e7f8091a2b3c4d5e6f708192a3b4c5d6e7f8' as CompanyLabel;
+const CO_B = 'co_54ef954a25aefff8e1675af10a852ef29d5de5c63a51b64b978bf7bd0eaeca4e' as CompanyLabel;
+const ACCOUNT_A = 'dbe119a304f8e7ea882353435c1d536cf2faf4298236a9aae77670e750af65c8' as AccountAddress;
+const ACCOUNT_B = '0b1c2d3e4f5061728394a5b6c7d8e9f00b1c2d3e4f5061728394a5b6c7d8e9f0' as AccountAddress;
+const accountOf = (company: unknown): AccountAddress | undefined =>
+  company === CO_A ? ACCOUNT_A : company === CO_B ? ACCOUNT_B : undefined;
+/* The chain, as this wallet reads it: each account carries its own company's label. */
+const chain: LabelReader = async (account) =>
+  account === ACCOUNT_A ? { of: 'carries', label: CO_A }
+    : account === ACCOUNT_B ? { of: 'carries', label: CO_B } : { of: 'no-account' };
 
 let port: WatchedPort;
 beforeEach(() => { port = watchedStore(); });
@@ -74,6 +85,8 @@ const unlock = (over: Record<string, unknown> = {}): Record<string, unknown> => 
   requester: { name: 'Payroll A', rdns: 'example.payroll-a' },
   purpose: 'So we can show you your payslips.',
   company: CO_A,
+  /* The account that carries whichever company the ask names, unless the test names one itself. */
+  account: accountOf('company' in over ? over['company'] : CO_A),
   nonce: 'n1',
   expiresAt: NOW + 600_000,
   ...over,
@@ -99,7 +112,7 @@ const open = (data: unknown = unlock(), origin = ORIGIN): Opened => {
     removeEventListener: () => { /* torn down by cleanup */ },
   };
   render(
-    <Approve identity={identity} secret={SECRET} port={port} view={view} now={() => NOW} />);
+    <Approve identity={identity} secret={SECRET} port={port} view={view} now={() => NOW} readLabel={chain} />);
   for (const h of handlers) {
     h({ source: opener, origin, data } as unknown as MessageEvent);
   }
@@ -329,7 +342,7 @@ describe('§4 — THE SCREEN IS WRITTEN IN WHAT WAS OBSERVED, NOT IN WHAT WAS CL
     await saying('Who is asking');
     const claim = sizeOf('[data-requester-name]');
     expect(sizeOf('[data-observed-origin]')).toBeGreaterThanOrEqual(claim);
-    expect(sizeOf('[data-company]')).toBeGreaterThanOrEqual(claim);
+    expect(sizeOf('[data-company-fingerprint]')).toBeGreaterThanOrEqual(claim);
     /* And the largest thing on the page is a fact rather than a claim. */
     expect(sizeOf('[data-headline]')).toBeGreaterThan(claim);
   });
@@ -341,10 +354,11 @@ describe('§4 — THE SCREEN IS WRITTEN IN WHAT WAS OBSERVED, NOT IN WHAT WAS CL
       await someone();
       open();
       await saying('Who is asking');
-      expect(document.querySelector('[data-company]')?.textContent).toBe(CO_A);
+      expect(document.querySelector('[data-company-label]')?.textContent).toBe(CO_A);
+      expect(document.querySelector('[data-company-account]')?.textContent).toBe(ACCOUNT_A);
       expect(document.querySelector('[data-observed-origin]')?.textContent).toBe(ORIGIN);
       expect(document.body.textContent)
-        .toContain('This wallet cannot check that those two belong together');
+        .toContain('This wallet cannot check that the company belongs to the page asking');
     });
 
   it('THE COMPANY IS ALSO SHOWN AS SOMETHING A PERSON COULD READ DOWN A PHONE',
@@ -360,16 +374,18 @@ describe('§4 — THE SCREEN IS WRITTEN IN WHAT WAS OBSERVED, NOT IN WHAT WAS CL
       open();
       await saying('Who is asking');
       const shown = document.querySelector('[data-company-fingerprint]')?.textContent ?? '';
-      expect(shown).toBe(companyFingerprint(CO_A));
-      expect(shown).toBe('P5DN-KZ3N-G1RX-1QDF-WZZB');
-      /* The full address is still on the screen: the fingerprint stands for it
-       * and does not replace the fact. */
-      expect(document.querySelector('[data-company]')?.textContent).toBe(CO_A);
-      /* **AND IT IS BIGGER THAN THE THING IT STANDS FOR**, because it is what a
+      /* RED WHEN: the fingerprint is of anything but the label and the account together. */
+      expect(shown).toBe(companyFingerprint(CO_A, ACCOUNT_A));
+      expect(shown).toBe('R4MM-514E-E550-1PKT-X0W3');
+      /* The label and the account are still on the screen: the fingerprint
+       * stands for them and does not replace the facts. */
+      expect(document.querySelector('[data-company-label]')?.textContent).toBe(CO_A);
+      expect(document.querySelector('[data-company-account]')?.textContent).toBe(ACCOUNT_A);
+      /* **AND IT IS BIGGER THAN THE THINGS IT STANDS FOR**, because it is what a
        * person is actually being asked to compare. */
       expect(sizeOf('[data-company-fingerprint]'))
-        .toBeGreaterThan(sizeOf('[data-company]'));
-      expect(document.body.textContent).toContain('Compare all of it, not the ends');
+        .toBeGreaterThan(sizeOf('[data-company-label]'));
+      expect(document.body.textContent).toContain('check that every character matches, not only the ends');
     });
 
   it('A DIFFERENT COMPANY SHOWS A DIFFERENT FINGERPRINT, AND ONE THAT IS NOT NEARBY',
@@ -380,8 +396,42 @@ describe('§4 — THE SCREEN IS WRITTEN IN WHAT WAS OBSERVED, NOT IN WHAT WAS CL
       open(unlock({ company: CO_B }));
       await saying('Who is asking');
       const shown = document.querySelector('[data-company-fingerprint]')?.textContent ?? '';
-      expect(shown).toBe(companyFingerprint(CO_B));
-      expect(shown).not.toBe(companyFingerprint(CO_A));
+      expect(shown).toBe(companyFingerprint(CO_B, ACCOUNT_B));
+      expect(shown).not.toBe(companyFingerprint(CO_A, ACCOUNT_A));
+    });
+
+  it('A LABEL ON AN ACCOUNT THAT DOES NOT CARRY IT GIVES NOTHING, AND SHOWS NO FINGERPRINT',
+    async () => {
+      /*
+       * **THE WAY ONE COMPANY WEARS ANOTHER'S FACE.** A page names company A's
+       * label and an account that carries somebody else's. The wallet has read
+       * the account itself and says so, and the button stays shut.
+       * RED WHEN: the unlock screen gives a key before the account is found to carry the label.
+       */
+      await someone();
+      const channel = open(unlock({ company: CO_A, account: ACCOUNT_B }));
+      await saying('Who is asking');
+      await settled(5);
+      expect(document.querySelector('[data-company-check="another-company"]')).not.toBeNull();
+      expect(document.querySelector('[data-company-fingerprint]')).toBeNull();
+      const give = document.querySelector<HTMLButtonElement>('[data-unlock]')!;
+      expect(give.disabled).toBe(true);
+      fireEvent.click(give);
+      await settled(5);
+      expect(channel.sent.filter((m) => (m.message as { schema?: string }).schema === 'midnight-identity/unlock-release/v1')).toEqual([]);
+    });
+
+  it('AN UNLOCK THAT NAMES NO ACCOUNT GIVES NOTHING: there is nothing to check the label against',
+    async () => {
+      /* RED WHEN: a page can skip the check by leaving the account out. */
+      await someone();
+      const { account: _gone, ...noAccount } = unlock();
+      open(noAccount);
+      await saying('Who is asking');
+      await settled(5);
+      expect(document.querySelector('[data-company-check="no-account-yet"]')).not.toBeNull();
+      expect(document.querySelector('[data-company-fingerprint]')).toBeNull();
+      expect(document.querySelector<HTMLButtonElement>('[data-unlock]')!.disabled).toBe(true);
     });
 
   it('THE FINGERPRINT IS ON THE WARNING AND IN THE SENTENCE AFTERWARDS TOO',
@@ -397,17 +447,17 @@ describe('§4 — THE SCREEN IS WRITTEN IN WHAT WAS OBSERVED, NOT IN WHAT WAS CL
       /* THE SENTENCE AFTERWARDS: the fingerprint is IN the sentence and the
        * sixty-four characters are on a line of their own beneath it. */
       expect(document.querySelector('[data-given-fingerprint]')?.textContent)
-        .toBe(companyFingerprint(CO_A));
+        .toBe(companyFingerprint(CO_A, ACCOUNT_A));
       const sentence = document.querySelector('.lede')?.textContent ?? '';
-      expect(sentence).toContain(companyFingerprint(CO_A));
-      expect(sentence).not.toContain(CO_A);
+      expect(sentence).toContain(companyFingerprint(CO_A, ACCOUNT_A));
+      expect(sentence).not.toContain(ACCOUNT_A);
       cleanup();
 
       /* THE WARNING. */
       open(unlock({ nonce: 'n2' }), OTHER);
       await saying('Who is asking');
       expect(document.querySelector('[data-warning-fingerprint]')?.textContent)
-        .toBe(companyFingerprint(CO_A));
+        .toBe(companyFingerprint(CO_A, ACCOUNT_A));
     });
 
   it('THE FINGERPRINT IS NEVER AN INPUT TO THE KEY, WHATEVER THE SCREEN SHOWS',
@@ -427,7 +477,7 @@ describe('§4 — THE SCREEN IS WRITTEN IN WHAT WAS OBSERVED, NOT IN WHAT WAS CL
       expect(hex(fromBase64Url(release.key))).toBe(keyFor(CO_A));
       /* And the fingerprint is on no wire: it is a rendering, and the other
        * side computes its own from the address it already has. */
-      expect(JSON.stringify(release)).not.toContain(companyFingerprint(CO_A));
+      expect(JSON.stringify(release)).not.toContain(companyFingerprint(CO_A, ACCOUNT_A));
       expect(release.company).toBe(CO_A);
     });
 
@@ -701,7 +751,7 @@ describe('WHAT CROSSES BACK, AND WHICH KEY IT IS', () => {
       const answer = sent[sent.length - 1]!;
       expect(answer.target).toBe(ORIGIN);
       const read = readRelease(answer.message, {
-        atOrigin: ORIGIN, expectingNonce: 'n1', forCompany: CO_A,
+        atOrigin: ORIGIN, expectingNonce: 'n1', forCompany: CO_A, forAccount: ACCOUNT_A,
       });
       expect(read.ok).toBe(true);
       expect(read.ok && hex(read.key)).toBe(keyFor(CO_A));
@@ -778,7 +828,7 @@ describe('§3 — WHAT IS RECORDED, AND WHAT MUST NOT BE', () => {
       expect(releases[0]!.company).toBe(CO_A);
       expect(releases[0]!.at).toBe(NOW);
       expect(releases[0]!.nonce).toBe('n1');
-      expect(originsFor(opened.profile, CO_A)).toEqual([ORIGIN]);
+      expect(originsFor(opened.profile, CO_A, ACCOUNT_A)).toEqual([ORIGIN]);
     });
 
   it('AND IT IS NOT WRITTEN AS A DISCLOSURE THAT SENT NOTHING', async () => {
@@ -1076,12 +1126,12 @@ describe('THE KEYS SAVED FOR YOU AT A SITE - given only by the wallet that signe
   it('WITH A COMPANY: the company is shown, the answer carries the same company key an ordinary unlock gives, and the wallet remembers where it went',
     async () => {
       await someone();
-      const channel = open(keyring({ signedInAs: mine(), company: CO_A }));
+      const channel = open(keyring({ signedInAs: mine(), company: CO_A, account: ACCOUNT_A }));
       await saying('Who is asking');
       await settle();
       expect(document.querySelector('[data-company-fingerprint]')?.textContent)
-        .toBe(companyFingerprint(CO_A));
-      expect(document.querySelector('[data-company]')?.textContent).toBe(CO_A);
+        .toBe(companyFingerprint(CO_A, ACCOUNT_A));
+      expect(document.querySelector('[data-company-label]')?.textContent).toBe(CO_A);
 
       const pressed = await press(channel);
       const release = channel.sent[1]!.message as KeyringRelease;
@@ -1099,15 +1149,36 @@ describe('THE KEYS SAVED FOR YOU AT A SITE - given only by the wallet that signe
       expect(releases[0]!.company).toBe(CO_A);
       expect(releases[0]!.recipient.origin).toBe(ORIGIN);
       expect(releases[0]!.nonce).toBe('k1');
-      expect(originsFor(opened.profile, CO_A)).toEqual([ORIGIN]);
+      expect(originsFor(opened.profile, CO_A, ACCOUNT_A)).toEqual([ORIGIN]);
     });
+
+  it('STARTING A COMPANY: the wallet draws the label itself, and answers with it and its keys', async () => {
+    /*
+     * RED WHEN: the screen offers a fingerprint for a company that has no
+     * account, the answer carries no label or one the wallet did not draw, or
+     * the company key in it is not that label's.
+     */
+    await someone();
+    const channel = open(keyring({ signedInAs: mine(), drawLabel: true }));
+    await saying('Who is asking');
+    await settle();
+    expect(document.querySelector('[data-new-company]')).not.toBeNull();
+    expect(document.querySelector('[data-company-fingerprint]')).toBeNull();
+    await press(channel);
+    const release = channel.sent[1]!.message as KeyringRelease;
+    expect(release.company).toMatch(/^co_[0-9a-f]{64}$/u);
+    expect(release.account).toBeNull();
+    const ordinary = releaseFor(
+      identity, parseAsk(unlock({ company: release.company, account: undefined, nonce: 'k1' }), ORIGIN, NOW) as UnlockRequest, NOW);
+    expect(release.companyKey).toBe(ordinary.key);
+  });
 
   it('a keyring answer is never written down as a disclosure or a sign-in', async () => {
     const ids = await someone();
     expect(ids.length).toBeGreaterThan(0);
 
     /* With a company, where something IS written - the positive control. */
-    const pressed = await press(open(keyring({ signedInAs: mine(), company: CO_A })));
+    const pressed = await press(open(keyring({ signedInAs: mine(), company: CO_A, account: ACCOUNT_A })));
     await remembered(pressed);
     const opened = await load(port, identity);
     if (opened.of !== 'profile') throw new Error('the sealed profile did not open');

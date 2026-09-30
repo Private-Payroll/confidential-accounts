@@ -5,6 +5,8 @@ import {
 } from '../../../src/core/payslip-open.js';
 import type { WrappingKeypair } from '../../../src/core/crypto.js';
 import type { WalletIndexer } from 'midnight-identity/profile/unlock';
+import { readAccountAddress, readCompanyLabel } from 'midnight-identity/profile/company-label';
+import type { AccountAddress, CompanyLabel } from 'midnight-identity/profile/company-label';
 import type { ChainReader, PayslipPayment } from './payslip-worker-client.js';
 import { assets, ledgerTokenOf, type AssetRegistry } from '../../../src/core/assets.js';
 import { paidPublicly } from './public-payment.js';
@@ -63,23 +65,24 @@ export interface MyPayslips {
    */
   unopened: number;
   /**
-   * Slips that opened but name a company address other than the one this key
-   * was worked out from. The key was handed to that one company only, so a
-   * slip naming another was put there by a company this person never accepted,
-   * and it is not shown.
+   * Slips that opened but name a company other than the one this key was
+   * worked out from. The key was handed to that one company only, so a slip
+   * naming another was put there by a company this person never accepted, and
+   * it is not shown.
    */
   refused: number;
 }
 
 /**
- * @param from the company address `keys` was worked out from, or `null` for a
- *   key no address produced. Only slips that name exactly that are asked for,
- *   and only those are shown.
+ * @param from the label of the company `keys` was worked out from, or `null`
+ *   for a key no company produced. Only slips that name exactly that are asked
+ *   for, and only those are shown.
  */
 export async function fetchMyPayslips(
   keys: WrappingKeypair, from: string | null, fetcher: Fetch = fetch,
 ): Promise<MyPayslips> {
-  const address = from === null ? null : from.toLowerCase();
+  const address = from === null ? null : readCompanyLabel(from);
+  if (from !== null && address === null) throw new Error('that is not a company\'s label, so no payslips were asked for.');
   const proof = await readJson(
     await fetcher('/api/payslips/proof', signedIn({ publicKey: keys.publicKey })),
     'asking for your payslips');
@@ -116,7 +119,8 @@ export async function fetchMyPayslips(
  * that. The value looked for is built on this device from the address the
  * payee's own wallet confirmed, the slip's token and amount, and the payee's
  * own nonce and blinding; which contract is read is the one the receipt names,
- * and only when it is an address this page opened for that company.
+ * and only when it is an account this page's wallet read the company's label
+ * off, and the receipt names that same label.
  * `'paid'` only when the account's public set of completed payments was
  * read and holds this payment; `'not-yet'` only when it was read, does not
  * hold it, and the window this payment can still be made in has not closed;
@@ -196,22 +200,19 @@ const paymentOf = (s: OpenedPayslip, registry: AssetRegistry): PayslipPayment | 
  * back as something that is not an answer. It is what lets a page say why its
  * rows cannot tell, rather than only that they cannot.
  *
- * **ONLY A CONTRACT THIS PAGE OPENED FOR THAT COMPANY IS READ.** A receipt is
- * sealed by the service, so the contract it names is the service's word. So a
- * receipt is asked about only when the contract it names is one of
- * `openedFor`: the addresses whose key the payee's wallet gave and whose slips
- * this page then fetched and opened. A receipt alone therefore cannot send this
- * page to a contract the service deployed for itself. What this does not stop:
- * the addresses a company's payslips were sealed under are also the service's
- * answer, so a service that names its own contract there, and whose payee
- * approves that address in their wallet, has it opened too. A company that
- * moved has in that set its address now and every address its slips were
- * sealed under, so a payment recorded at one of those still reads. Any other
- * receipt reads "cannot tell", and that is not a failure to read.
+ * **ONLY AN ACCOUNT THE PAYEE'S WALLET READ THE COMPANY'S LABEL OFF IS
+ * READ.** A receipt is sealed by the service, so the contract it names is the
+ * service's word. So a receipt is asked about only when the contract it names
+ * is one of `openedFor` - the accounts the payee's wallet read the company's
+ * label off, itself, before it gave the key these slips opened with - and the
+ * label the receipt names is the label the slip was opened for. A receipt alone
+ * therefore cannot send this page to a contract the service deployed for
+ * itself, nor to another company's account. Any other receipt reads "cannot
+ * tell", and that is not a failure to read.
  *
- * @param openedFor the company addresses this page opened. Left out, it is the
- *   addresses the slips themselves were opened at, which is never wider: a slip
- *   reaches this page only from the address it was fetched for.
+ * @param openedFor the accounts the payee's wallet read the company's label
+ *   off. Left out, nothing is read: a slip names a label, and a label locates
+ *   no contract.
  */
 export async function readTheChain(
   slips: OpenedPayslip[], reader: ChainReader | null, indexer: WalletIndexer | null,
@@ -224,13 +225,17 @@ export async function readTheChain(
 ): Promise<{ chain: Map<string, OnTheChain>; couldNotRead: boolean }> {
   const out = new Map<string, OnTheChain>();
   let couldNotRead = false;
-  const opened = openedAddresses(openedFor ?? slips.map(s => s.issuedBy));
+  const opened = openedAddresses(openedFor ?? []);
   const byCompany = new Map<string, { slip: OpenedPayslip; payment: PayslipPayment }[]>();
   for (const s of slips) {
     if (!s.receipt) continue;
     const company = s.receipt.company;
-    /* A contract this page did not open for the company is never read, whatever else is known. */
-    if (company === null || !opened.has(company)) { out.set(s.runId, 'cannot-tell'); continue; }
+    /* A contract this page did not open for the company is never read, whatever else is known,
+     * and nor is one the receipt says belongs to a company other than the one the slip names. */
+    if (company === null || !opened.has(company)
+      || s.receipt.label === null || s.receipt.label !== (s.issuedBy ?? null)) {
+      out.set(s.runId, 'cannot-tell'); continue;
+    }
     if (reader === null || indexer === null) { couldNotRead = true; out.set(s.runId, 'cannot-tell'); continue; }
     /* An address the wallet did not confirm is never asked about: nothing read for it could be "not yet". */
     const payment = confirmedSafely(confirmed, s) ? paymentOf(s, registry) : null;
@@ -256,11 +261,11 @@ export async function readTheChain(
   return { chain: out, couldNotRead };
 }
 
-/** Company addresses as a receipt names them: lower case, no `0x`, and nothing that is not one. */
+/** Account addresses as a receipt names them: lower case, and nothing that is not one. */
 const openedAddresses = (list: Iterable<string | null>): Set<string> => {
   const out = new Set<string>();
   for (const a of list) {
-    const tidy = typeof a === 'string' ? tidyCompanyAddress(a) : null;
+    const tidy = readAccountAddress(a);
     if (tidy !== null) out.add(tidy);
   }
   return out;
@@ -270,13 +275,26 @@ const confirmedSafely = (confirmed: (slip: OpenedPayslip) => boolean, s: OpenedP
   try { return confirmed(s) === true; } catch { return false; }
 };
 
-/** Every address a company's payslips were sealed under, asked by any one of them. */
-export async function payslipAddressesFor(company: string, fetcher: Fetch = fetch): Promise<string[]> {
+/**
+ * Every company label a company's payslips name, asked by any one of them, each
+ * with the account the service says carries it. The account is the service's
+ * word, and the payee's wallet reads the label back off it before it gives
+ * anything; one that does not carry the label is refused there.
+ */
+export async function payslipAddressesFor(
+  company: string, fetcher: Fetch = fetch,
+): Promise<Array<{ label: CompanyLabel; account: AccountAddress | null }>> {
   const r = await fetcher(
     `/api/payslips/addresses?company=${encodeURIComponent(company)}`,
     asThisPage());
-  const body = await readJson(r, 'asking which addresses a company has had');
-  return Array.isArray(body.addresses) ? body.addresses : [];
+  const body = await readJson(r, 'asking which companies a company\'s payslips name');
+  const out: Array<{ label: CompanyLabel; account: AccountAddress | null }> = [];
+  for (const c of Array.isArray(body.companies) ? body.companies : []) {
+    const label = readCompanyLabel(c?.label);
+    if (label === null) continue;
+    out.push({ label, account: readAccountAddress(c?.account) });
+  }
+  return out;
 }
 
 /* ------------------------------------------------------------------ */
@@ -284,25 +302,24 @@ export async function payslipAddressesFor(company: string, fetcher: Fetch = fetc
 /* ------------------------------------------------------------------ */
 
 /**
- * **A LIST OF COMPANY ADDRESSES, AND NOTHING ELSE, KEPT FOR ONE SIGNED-IN
+ * **A LIST OF COMPANY LABELS, AND NOTHING ELSE, KEPT FOR ONE SIGNED-IN
  * PERSON.** The list that follows a person to every device is inside their own
- * saved keys (`keyring.ts`). This one holds, in this browser only, an address
+ * saved keys (`keyring.ts`). This one holds, in this browser only, a label
  * that could not be saved there yet, until it can be. It is keyed by the
  * person, so somebody else signing in in this browser is never shown it.
- * Contract addresses are public, and nothing here opens anything.
+ * Labels are public on the companies' accounts, and nothing here opens
+ * anything. A list written when companies were named by their accounts'
+ * addresses holds no labels, and reads as empty: those companies are gone.
  */
 const REMEMBERED = 'payslip-companies-of:';
-const COMPANY_ADDRESS = /^[0-9a-f]{64}$/u;
 
-export const tidyCompanyAddress = (text: string): string | null => {
-  const t = text.trim().toLowerCase().replace(/^0x/u, '');
-  return COMPANY_ADDRESS.test(t) ? t : null;
-};
+/** A company's label as somebody pasted it: surrounding space dropped, and nothing else changed. */
+export const tidyCompanyLabel = (text: string): CompanyLabel | null => readCompanyLabel(text.trim());
 
-/** Only well-formed company addresses, each once. */
-export const onlyCompanyAddresses = (list: unknown): string[] =>
+/** Only well-formed company labels, each once. */
+export const onlyCompanyLabels = (list: unknown): CompanyLabel[] =>
   Array.isArray(list)
-    ? [...new Set(list.filter((a): a is string => typeof a === 'string' && COMPANY_ADDRESS.test(a)))]
+    ? [...new Set(list.map((a) => readCompanyLabel(a)).filter((a): a is CompanyLabel => a !== null))]
     : [];
 
 export function rememberedCompanies(
@@ -310,17 +327,17 @@ export function rememberedCompanies(
 ): string[] {
   try {
     const raw = storage?.getItem(REMEMBERED + person);
-    return onlyCompanyAddresses(raw ? JSON.parse(raw) : []);
+    return onlyCompanyLabels(raw ? JSON.parse(raw) : []);
   } catch {
     return [];
   }
 }
 
 export function rememberCompany(
-  person: string, address: string,
+  person: string, label: string,
   storage: Pick<Storage, 'getItem' | 'setItem'> | null = safeStorage(),
 ): string[] {
-  const tidy = tidyCompanyAddress(address);
+  const tidy = tidyCompanyLabel(label);
   const list = rememberedCompanies(person, storage);
   if (tidy === null || list.includes(tidy)) return list;
   const next = [...list, tidy];
@@ -351,7 +368,7 @@ export function olderListNotYetTaken(
   try {
     if (storage === null || (storage.getItem(OLDER_LIST_TAKEN) ?? null) !== null) return [];
     const raw = storage.getItem(OLDER_LIST);
-    return onlyCompanyAddresses(raw ? JSON.parse(raw) : []);
+    return onlyCompanyLabels(raw ? JSON.parse(raw) : []);
   } catch {
     return [];
   }

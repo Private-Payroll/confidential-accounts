@@ -1,4 +1,5 @@
 import { describe, it, expect } from 'vitest';
+import { drawCompanyLabel } from 'midnight-identity/profile/company-label';
 import { mkdtempSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
@@ -9,6 +10,12 @@ import { AccountService, openAccount, sealAccount, approvalMessage } from './acc
 import { sign, newSigningKeypair, newWrappingKeypair } from './crypto.js';
 import type { Account } from './types.js';
 import { newSeatInvitation, proveSeatKeys } from './seat-invite-proof.js';
+
+/** The value, or a failure that says one was missing: an index that finds nothing is a broken test, not a value to carry on with. */
+function present<T>(value: T | undefined): T {
+  if (value === undefined) throw new Error('expected a value here, and there was none');
+  return value;
+}
 /** What the invited person's device sends beside its keys: the proof its link let it make. */
 const provenBy = (
   viewingKey: string, invite: { accountId: string; name?: string; role?: string },
@@ -135,7 +142,7 @@ const entry = (amount: bigint) => ({
  * makes, because a stale helper name is read as a true description of it.
  */
 async function openAccountAt2of3(h: ReturnType<typeof harness>) {
-  return h.accounts.create('Acme', THREE, 2);
+  return h.accounts.create('Acme', THREE, 2, undefined, drawCompanyLabel());
 }
 
 describe('a small payment is still a payment', () => {
@@ -145,12 +152,12 @@ describe('a small payment is still a payment', () => {
 
     const p = await h.accounts.propose({
       accountId: account.id, viewingKey, kind: 'transfer',
-      summary: 'one penny', payload: entry(1n), proposedBy: secrets[0].signerId,
+      summary: 'one penny', payload: entry(1n), proposedBy: present(secrets[0]).signerId,
     });
     expect(p.status).toBe('open');
 
     const one = await h.accounts.approve(
-      p.id, secrets[0].signerId, sign(approvalMessage(p), secrets[0].signingSecret), viewingKey);
+      p.id, present(secrets[0]).signerId, sign(approvalMessage(p), present(secrets[0]).signingSecret), viewingKey);
     /*
      * The old rule made this `approved`. There is no amount that does that any
      * more, and the outcome names the ledger's two numbers rather than a
@@ -160,7 +167,7 @@ describe('a small payment is still a payment', () => {
     expect(one.approvalRound).toEqual({ state: 'short', approvals: 1, threshold: 2 });
 
     const two = await h.accounts.approve(
-      p.id, secrets[1].signerId, sign(approvalMessage(p), secrets[1].signingSecret), viewingKey);
+      p.id, present(secrets[1]).signerId, sign(approvalMessage(p), present(secrets[1]).signingSecret), viewingKey);
     expect(two.status).toBe('approved');
     expect(two.approvalRound).toEqual({ state: 'satisfied', approvals: 2, threshold: 2 });
   });
@@ -188,10 +195,10 @@ describe('a small payment is still a payment', () => {
 
     const p = await h.accounts.propose({
       accountId: account.id, viewingKey, kind: 'transfer',
-      summary: 'a modest sum', payload: entry(50_00n), proposedBy: secrets[0].signerId,
+      summary: 'a modest sum', payload: entry(50_00n), proposedBy: present(secrets[0]).signerId,
     });
     const one = await h.accounts.approve(
-      p.id, secrets[0].signerId, sign(approvalMessage(p), secrets[0].signingSecret), viewingKey);
+      p.id, present(secrets[0]).signerId, sign(approvalMessage(p), present(secrets[0]).signingSecret), viewingKey);
 
     expect(one.status).toBe('open');
     expect(one.approvalRound).toEqual({ state: 'short', approvals: 1, threshold: 2 });
@@ -201,7 +208,7 @@ describe('a small payment is still a payment', () => {
      * our record's one, which is the half a lowered copy would have skipped.
      */
     const two = await h.accounts.approve(
-      p.id, secrets[1].signerId, sign(approvalMessage(p), secrets[1].signingSecret), viewingKey);
+      p.id, present(secrets[1]).signerId, sign(approvalMessage(p), present(secrets[1]).signingSecret), viewingKey);
     expect(two.status).toBe('approved');
     expect(two.approvalRound).toEqual({ state: 'satisfied', approvals: 2, threshold: 2 });
   });
@@ -213,12 +220,12 @@ describe('"we do not know" is not "not enough approvals"', () => {
     const { account, viewingKey, secrets } = await openAccountAt2of3(h);
     const p = await h.accounts.propose({
       accountId: account.id, viewingKey, kind: 'transfer',
-      summary: 'payroll', payload: entry(1_000_00n), proposedBy: secrets[0].signerId,
+      summary: 'payroll', payload: entry(1_000_00n), proposedBy: present(secrets[0]).signerId,
     });
     await h.accounts.approve(
-      p.id, secrets[0].signerId, sign(approvalMessage(p), secrets[0].signingSecret), viewingKey);
+      p.id, present(secrets[0]).signerId, sign(approvalMessage(p), present(secrets[0]).signingSecret), viewingKey);
     const last = await h.accounts.approve(
-      p.id, secrets[1].signerId, sign(approvalMessage(p), secrets[1].signingSecret), viewingKey);
+      p.id, present(secrets[1]).signerId, sign(approvalMessage(p), present(secrets[1]).signingSecret), viewingKey);
     return { viewingKey, proposal: last };
   }
 
@@ -271,10 +278,10 @@ describe('"we do not know" is not "not enough approvals"', () => {
     const { account, viewingKey, secrets } = await openAccountAt2of3(h);
     const p = await h.accounts.propose({
       accountId: account.id, viewingKey, kind: 'transfer',
-      summary: 'payroll', payload: entry(1_000_00n), proposedBy: secrets[0].signerId,
+      summary: 'payroll', payload: entry(1_000_00n), proposedBy: present(secrets[0]).signerId,
     });
     const one = await h.accounts.approve(
-      p.id, secrets[0].signerId, sign(approvalMessage(p), secrets[0].signingSecret), viewingKey);
+      p.id, present(secrets[0]).signerId, sign(approvalMessage(p), present(secrets[0]).signingSecret), viewingKey);
 
     expect(one.approvalRound).toEqual({ state: 'short', approvals: 1, threshold: 2 });
     expect(one.approvalRound).not.toHaveProperty('why');
@@ -344,10 +351,10 @@ describe('a burnt approval survives a throw between the chain and the record', (
     const { account, viewingKey, secrets } = await openAccountAt2of3(h);
     const p = await h.accounts.propose({
       accountId: account.id, viewingKey, kind: 'transfer',
-      summary: 'payroll', payload: entry(1_000_00n), proposedBy: secrets[0].signerId,
+      summary: 'payroll', payload: entry(1_000_00n), proposedBy: present(secrets[0]).signerId,
     });
     await h.accounts.approve(
-      p.id, secrets[0].signerId, sign(approvalMessage(p), secrets[0].signingSecret), viewingKey);
+      p.id, present(secrets[0]).signerId, sign(approvalMessage(p), present(secrets[0]).signingSecret), viewingKey);
     return { account, viewingKey, secrets, p };
   }
 
@@ -368,11 +375,11 @@ describe('a burnt approval survives a throw between the chain and the record', (
 
     n.down = true;
     await expect(h.accounts.approve(
-      p.id, secrets[1].signerId, sign(approvalMessage(p), secrets[1].signingSecret), viewingKey,
+      p.id, present(secrets[1]).signerId, sign(approvalMessage(p), present(secrets[1]).signingSecret), viewingKey,
     )).rejects.toThrow(/the node is unreachable/);
 
     const rec = stored(h, account, viewingKey, p.id);
-    expect(rec.approvals.map(a => a.signerId)).toEqual([secrets[0].signerId, secrets[1].signerId]);
+    expect(rec.approvals.map(a => a.signerId)).toEqual([present(secrets[0]).signerId, present(secrets[1]).signerId]);
     /* The standing is what was lost, and it is honest about not knowing it. */
     expect(rec.status).toBe('open');
   });
@@ -398,12 +405,12 @@ describe('a burnt approval survives a throw between the chain and the record', (
 
     n.down = true;
     await expect(h.accounts.approve(
-      p.id, secrets[1].signerId, sign(approvalMessage(p), secrets[1].signingSecret), viewingKey,
+      p.id, present(secrets[1]).signerId, sign(approvalMessage(p), present(secrets[1]).signingSecret), viewingKey,
     )).rejects.toThrow(/the node is unreachable/);
 
     n.down = false;
     await expect(h.accounts.approve(
-      p.id, secrets[1].signerId, sign(approvalMessage(p), secrets[1].signingSecret), viewingKey,
+      p.id, present(secrets[1]).signerId, sign(approvalMessage(p), present(secrets[1]).signingSecret), viewingKey,
     )).rejects.toThrow(/^already approved$/);
 
     const rec = stored(h, account, viewingKey, p.id);
@@ -434,16 +441,16 @@ describe('a burnt approval survives a throw between the chain and the record', (
 
     n.down = true;
     await expect(h.accounts.approve(
-      p.id, secrets[1].signerId, sign(approvalMessage(p), secrets[1].signingSecret), viewingKey,
+      p.id, present(secrets[1]).signerId, sign(approvalMessage(p), present(secrets[1]).signingSecret), viewingKey,
     )).rejects.toThrow(/the node is unreachable/);
     await expect(h.accounts.approve(
-      p.id, secrets[1].signerId, sign(approvalMessage(p), secrets[1].signingSecret), viewingKey,
+      p.id, present(secrets[1]).signerId, sign(approvalMessage(p), present(secrets[1]).signingSecret), viewingKey,
     )).rejects.toThrow(/the node is unreachable/);
 
     /* Still recoverable once the node returns — the round is not wedged. */
     n.down = false;
     await expect(h.accounts.approve(
-      p.id, secrets[1].signerId, sign(approvalMessage(p), secrets[1].signingSecret), viewingKey,
+      p.id, present(secrets[1]).signerId, sign(approvalMessage(p), present(secrets[1]).signingSecret), viewingKey,
     )).rejects.toThrow(/^already approved$/);
     expect(stored(h, account, viewingKey, p.id).status).toBe('approved');
   });
@@ -465,14 +472,14 @@ describe('a burnt approval survives a throw between the chain and the record', (
     const { viewingKey, secrets, p, account } = await oneApprovalIn(h);
 
     await h.accounts.approve(
-      p.id, secrets[1].signerId, sign(approvalMessage(p), secrets[1].signingSecret), viewingKey);
+      p.id, present(secrets[1]).signerId, sign(approvalMessage(p), present(secrets[1]).signingSecret), viewingKey);
     expect(stored(h, account, viewingKey, p.id).status).toBe('approved');
 
     /* One read per approval and not one more. Two approvals have happened. */
     expect(n.reads).toBe(2);
 
     await expect(h.accounts.approve(
-      p.id, secrets[1].signerId, sign(approvalMessage(p), secrets[1].signingSecret), viewingKey,
+      p.id, present(secrets[1]).signerId, sign(approvalMessage(p), present(secrets[1]).signingSecret), viewingKey,
     )).rejects.toThrow(/^already approved$/);
     expect(n.reads).toBe(2);
   });
@@ -490,11 +497,11 @@ describe('a burnt approval survives a throw between the chain and the record', (
 
     n.down = true;
     await expect(h.accounts.approve(
-      p.id, secrets[2].signerId, sign(approvalMessage(p), secrets[2].signingSecret), viewingKey,
+      p.id, present(secrets[2]).signerId, sign(approvalMessage(p), present(secrets[2]).signingSecret), viewingKey,
     )).rejects.toThrow(/the node is unreachable/);
 
     const rec = stored(h, account, viewingKey, p.id);
-    expect(rec.approvals.map(a => a.signerId)).toEqual([secrets[0].signerId, secrets[2].signerId]);
+    expect(rec.approvals.map(a => a.signerId)).toEqual([present(secrets[0]).signerId, present(secrets[2]).signerId]);
     expect(rec.status).toBe('open');
   });
 });
@@ -563,17 +570,17 @@ describe('the record is written before the chain call, so a lost round is never 
      * and `listProposals` below is empty again.
      */
     const h = proposeThrowing(false);
-    const { account, viewingKey, secrets } = await h.accounts.create('Acme', THREE, 2);
+    const { account, viewingKey, secrets } = await h.accounts.create('Acme', THREE, 2, undefined, drawCompanyLabel());
 
     await expect(h.accounts.proposeVaultThresholdChange(
-      account.id, viewingKey, 'a1'.repeat(32), 2, secrets[0].signerId,
+      account.id, viewingKey, 'a1'.repeat(32), 2, present(secrets[0]).signerId,
     )).rejects.toThrow(/did not answer/);
 
     const kept = h.accounts.listProposals(account.id, viewingKey);
     expect(kept).toHaveLength(1);
-    expect(kept[0].status).toBe('open');
+    expect(present(kept[0]).status).toBe('open');
     /* The half that keeps it honest: listed, and NOT claimed to be on chain. */
-    expect(kept[0].raisedAt).toBeUndefined();
+    expect(present(kept[0]).raisedAt).toBeUndefined();
     expect((await h.accounts.ledgerStatus(account.id))!.openProposals).toEqual([]);
   });
 
@@ -585,13 +592,13 @@ describe('the record is written before the chain call, so a lost round is never 
      * holds it.**
      */
     const h = proposeThrowing(false);
-    const { account, viewingKey, secrets } = await h.accounts.create('Acme', THREE, 2);
+    const { account, viewingKey, secrets } = await h.accounts.create('Acme', THREE, 2, undefined, drawCompanyLabel());
     await expect(h.accounts.proposeVaultThresholdChange(
-      account.id, viewingKey, 'a1'.repeat(32), 2, secrets[0].signerId,
+      account.id, viewingKey, 'a1'.repeat(32), 2, present(secrets[0]).signerId,
     )).rejects.toThrow(/did not answer/);
 
     const [stranded] = h.accounts.listProposals(account.id, viewingKey);
-    const gone = await h.accounts.cancel(stranded.id, viewingKey, secrets[0].signerId);
+    const gone = await h.accounts.cancel(present(stranded).id, viewingKey, present(secrets[0]).signerId);
     expect(gone.status).toBe('cancelled');
   });
 
@@ -608,19 +615,19 @@ describe('the record is written before the chain call, so a lost round is never 
      * that can be done with one.
      */
     const h = proposeThrowing(true);
-    const { account, viewingKey, secrets } = await h.accounts.create('Acme', THREE, 2);
+    const { account, viewingKey, secrets } = await h.accounts.create('Acme', THREE, 2, undefined, drawCompanyLabel());
     await expect(h.accounts.proposeVaultThresholdChange(
-      account.id, viewingKey, 'a1'.repeat(32), 2, secrets[0].signerId,
+      account.id, viewingKey, 'a1'.repeat(32), 2, present(secrets[0]).signerId,
     )).rejects.toThrow(/did not answer/);
 
     const [live] = h.accounts.listProposals(account.id, viewingKey);
-    expect(live.raisedAt).toBeUndefined();
+    expect(present(live).raisedAt).toBeUndefined();
     expect((await h.accounts.ledgerStatus(account.id))!.openProposals)
-      .toEqual([expect.objectContaining({ id: live.chainId })]);
+      .toEqual([expect.objectContaining({ id: present(live).chainId })]);
 
     const approved = await h.accounts.approve(
-      live.id, secrets[0].signerId,
-      sign(approvalMessage(live), secrets[0].signingSecret), viewingKey);
+      present(live).id, present(secrets[0]).signerId,
+      sign(approvalMessage(present(live)), present(secrets[0]).signingSecret), viewingKey);
     expect(approved.raisedAt).toBeTruthy();
     expect(approved.approvals).toHaveLength(1);
   });
@@ -666,28 +673,28 @@ describe('the record is written before the chain call, so a lost round is never 
       },
     }) as Ledger;
     const accounts = new AccountService(store, ledger, SimulatedCommitments);
-    const { account, viewingKey, secrets } = await accounts.create('Acme', THREE, 2);
+    const { account, viewingKey, secrets } = await accounts.create('Acme', THREE, 2, undefined, drawCompanyLabel());
 
     /* A round that IS on chain and whose confirmation this record never got. */
     await expect(accounts.proposeVaultThresholdChange(
-      account.id, viewingKey, 'a1'.repeat(32), 2, secrets[0].signerId,
+      account.id, viewingKey, 'a1'.repeat(32), 2, present(secrets[0]).signerId,
     )).rejects.toThrow(/did not answer/);
     const [live] = accounts.listProposals(account.id, viewingKey);
-    expect(live.raisedAt).toBeUndefined();
+    expect(present(live).raisedAt).toBeUndefined();
     expect((await inner.status(account.id))!.openProposals)
-      .toEqual([expect.objectContaining({ id: live.chainId })]);
+      .toEqual([expect.objectContaining({ id: present(live).chainId })]);
 
     /* Now the ledger will not say. The cancel must refuse, and change nothing. */
     silent = true;
-    await expect(accounts.cancel(live.id, viewingKey, secrets[0].signerId))
+    await expect(accounts.cancel(present(live).id, viewingKey, present(secrets[0]).signerId))
       .rejects.toThrow(/ledger did not answer/);
-    const after = accounts.listProposals(account.id, viewingKey).find(p => p.id === live.id)!;
+    const after = accounts.listProposals(account.id, viewingKey).find(p => p.id === present(live).id)!;
     expect(after.status).toBe('open');
 
     /* And when it answers again, the same call goes through — so the refusal is
      * about the silence and not about the record. */
     silent = false;
-    const gone = await accounts.cancel(live.id, viewingKey, secrets[0].signerId);
+    const gone = await accounts.cancel(present(live).id, viewingKey, present(secrets[0]).signerId);
     expect(gone.status).toBe('cancelled');
     expect((await inner.status(account.id))!.openProposals).toEqual([]);
   });
@@ -729,15 +736,15 @@ describe('the record is written before the chain call, so a lost round is never 
       },
     }) as Ledger;
     const accounts = new AccountService(store, ledger, SimulatedCommitments);
-    const { account, viewingKey, secrets } = await accounts.create('Acme', THREE, 2);
+    const { account, viewingKey, secrets } = await accounts.create('Acme', THREE, 2, undefined, drawCompanyLabel());
     const VAULT = 'a1'.repeat(32);
 
     const real = await accounts.proposeVaultThresholdChange(
-      account.id, viewingKey, VAULT, 2, secrets[0].signerId);
+      account.id, viewingKey, VAULT, 2, present(secrets[0]).signerId);
     for (const i of [0, 1]) {
       await accounts.approve(
-        real.id, secrets[i].signerId,
-        sign(approvalMessage(real), secrets[i].signingSecret), viewingKey);
+        real.id, present(secrets[i]).signerId,
+        sign(approvalMessage(real), present(secrets[i]).signingSecret), viewingKey);
     }
     expect(accounts.listProposals(account.id, viewingKey)
       .find(p => p.id === real.id)!.status).toBe('approved');
@@ -745,7 +752,7 @@ describe('the record is written before the chain call, so a lost round is never 
     /* The same change again, into a chain that will not take it. */
     refuse = true;
     await expect(accounts.proposeVaultThresholdChange(
-      account.id, viewingKey, VAULT, 2, secrets[0].signerId,
+      account.id, viewingKey, VAULT, 2, present(secrets[0]).signerId,
     )).rejects.toThrow(/did not answer/);
     refuse = false;
 
@@ -797,7 +804,7 @@ describe('the record is written before the chain call, so a lost round is never 
       },
     }) as Ledger;
     const accounts = new AccountService(store, ledger, SimulatedCommitments);
-    const { account, viewingKey, secrets } = await accounts.create('Acme', THREE, 2);
+    const { account, viewingKey, secrets } = await accounts.create('Acme', THREE, 2, undefined, drawCompanyLabel());
 
     /* A fourth seat, invited and accepted but not yet granted: the subject. */
     const invite = accounts.inviteSigner(account.id, 'Dara', 'dara@acme.co', 'approver');
@@ -808,11 +815,11 @@ describe('the record is written before the chain call, so a lost round is never 
     expect(pending.status).toBe('pending');
 
     const real = await accounts.proposeSigner(
-      account.id, viewingKey, pending.id, secrets[0].signerId);
+      account.id, viewingKey, pending.id, present(secrets[0]).signerId);
     for (const i of [0, 1]) {
       await accounts.approve(
-        real.id, secrets[i].signerId,
-        sign(approvalMessage(real), secrets[i].signingSecret), viewingKey);
+        real.id, present(secrets[i]).signerId,
+        sign(approvalMessage(real), present(secrets[i]).signingSecret), viewingKey);
     }
     expect(accounts.listProposals(account.id, viewingKey)
       .find(p => p.id === real.id)!.status).toBe('approved');
@@ -820,7 +827,7 @@ describe('the record is written before the chain call, so a lost round is never 
     /* The same addition again, into a chain that will not take it. */
     refuse = true;
     await expect(accounts.proposeSigner(
-      account.id, viewingKey, pending.id, secrets[0].signerId,
+      account.id, viewingKey, pending.id, present(secrets[0]).signerId,
     )).rejects.toThrow(/did not answer/);
     refuse = false;
 
@@ -842,13 +849,13 @@ describe('the record is written before the chain call, so a lost round is never 
      * confirmed anything, and `raisedAt` would be a field nothing ever sets.
      */
     const h = proposeThrowing(false);
-    const { account, viewingKey, secrets } = await h.accounts.create('Acme', THREE, 2);
+    const { account, viewingKey, secrets } = await h.accounts.create('Acme', THREE, 2, undefined, drawCompanyLabel());
     await expect(h.accounts.proposeVaultThresholdChange(
-      account.id, viewingKey, 'a1'.repeat(32), 2, secrets[0].signerId,
+      account.id, viewingKey, 'a1'.repeat(32), 2, present(secrets[0]).signerId,
     )).rejects.toThrow(/did not answer/);
 
     const fine = await h.accounts.proposeVaultThresholdChange(
-      account.id, viewingKey, 'b2'.repeat(32), 2, secrets[0].signerId);
+      account.id, viewingKey, 'b2'.repeat(32), 2, present(secrets[0]).signerId);
     expect(fine.raisedAt).toBeTruthy();
     expect(fine.txRef).toBeTruthy();
     expect((await h.accounts.ledgerStatus(account.id))!.openProposals)

@@ -83,6 +83,7 @@ import { assetIdBytes, NO_ASSET } from '../core/assets.js';
 import { MidnightCommitments } from './commitments.js';
 import type { Sealed, Hex } from '../core/crypto.js';
 import { toHex, fromHex, randomBytes } from '../core/crypto.js';
+import { companyLabelBytes, readCompanyLabel } from 'midnight-identity/profile/company-label';
 import type { NetworkName } from './network.js';
 import { arityFrom, assertArity } from './circuit-arity.js';
 import { withRetry, sleep, type RetryOptions } from './retry.js';
@@ -661,6 +662,22 @@ export class MidnightLedger implements Ledger {
      * contract and a spent fee. `C335` / board `4b` is the seating screen that
      * makes the rest real; until it exists, this says so out loud.
      */
+    /*
+     * **THE COMPANY'S LABEL, AND AN OPENING WITHOUT ONE IS REFUSED HERE RATHER
+     * THAN DEPLOYED.** The constructor writes it into the account, and every
+     * signer's wallet derives this company's keys from it and reads it back off
+     * the account before it gives or signs anything. It is drawn by the founding
+     * signer's wallet, so there is nothing here to draw one with: an account
+     * deployed with any other value would be a company no wallet could open.
+     */
+    const label = opening.companyLabel === undefined || opening.companyLabel === null
+      ? null : readCompanyLabel(opening.companyLabel);
+    if (label === null) {
+      throw new Error(
+        `cannot open "${accountId}": no company label was given, or what was given is not one. A company's `
+          + 'account is created with the label its founding signer\'s wallet made up for it, and nothing '
+          + 'here makes one up instead. Nothing was deployed and nothing was spent.');
+    }
     /* `T-200`: the contract's own refusal, reached before a deploy and a fee
      * rather than after — and an unusable founding seat is not recoverable at
      * all, for the reason `:400-406` above already writes out. */
@@ -668,10 +685,10 @@ export class MidnightLedger implements Ledger {
     if (opening.signerLeaves.length > 1) {
       throw new Error(
         `cannot open "${accountId}": the opening names ${opening.signerLeaves.length} founding ` +
-          'signers and this path can seat exactly one. The constructor creates the founder\'s ' +
-          'seat; every seat after it is `amendSigner`, which requires an existing signer to ' +
+          'signers and this path can seat exactly one. The constructor creates the founding ' +
+          'signer\'s seat; every seat after it is `amendSigner`, which requires an existing signer to ' +
           'call it AND, since the constructor stopped taking a threshold, an approved proposal ' +
-          'behind it — so the rest are proposed, approved and seated by the founder from their ' +
+          'behind it — so the rest are proposed, approved and seated by the founding signer from their ' +
           'own device, and there is no screen for that yet. Open with the founding signer alone.',
       );
     }
@@ -838,11 +855,10 @@ export class MidnightLedger implements Ledger {
          * refusal that reads it.
          *
          * THE SECOND ARGUMENT IS THE COMPANY'S LABEL, which the account keeps
-         * in `signerRoles` from the moment it exists. It is 32 fresh random
-         * bytes here until the label is drawn, spelled and carried to the
-         * company's signers by the step that owns it.
+         * in `signerRoles` from the moment it exists: its thirty-two bytes, as
+         * the founding signer's wallet drew them.
          */
-        args: [fromHex(foundingLeaf), randomBytes(32)],
+        args: [fromHex(foundingLeaf), companyLabelBytes(label)],
         maintenanceAuthority: this.deployment!.maintenanceAuthority,
       }),
       this.deployment.retry,

@@ -10,7 +10,8 @@ import type { WriteCapability } from '../wiring/write-capability.js';
 import { deploymentWriteCapability } from '../wiring/write-capability-for-deployment.js';
 import { handedInFundedParties } from '../wiring/handed-in-wallets.js';
 import { handedInWiring } from '../wiring/handed-in.js';
-import { AccountService } from '../core/account.js';
+import { AccountService, CompanyLabelTaken, NotACompanyLabel } from '../core/account.js';
+import { readCompanyLabel } from 'midnight-identity/profile/company-label';
 import { PayrollService, RecordingInviteDelivery, canonicalPeriod } from '../core/payroll.js';
 import { PluginService } from '../core/plugins.js';
 import { IdentityService, TooManyAttempts, StaleKeyBundle } from '../core/identity.js';
@@ -445,7 +446,7 @@ const identity = new IdentityService(store, sessions);
  *
  * **THAT IS AN OUTAGE AND NOT A LOSS, WHICH IS WHY IT WAS NOT CHANGED HERE.**
  * Nothing becomes unreachable: the key that opens a company is made by the
- * person's own wallet from their seed and the company's address, so setting the
+ * person's own wallet from their seed and the company's label, so setting the
  * name and restarting restores every account exactly as it was. **Whether a
  * server with no way in should refuse to boot the way a missing `DATABASE_URL`
  * does is a decision, not a tidy-up**, and it is reported in
@@ -1146,6 +1147,13 @@ app.post('/api/accounts', authed, wrap(async (req, res) => {
       role: z.enum(['admin', 'approver', 'initiator', 'viewer']),
     })).min(1),
     threshold: z.number().int().min(1),
+    /*
+     * **THE COMPANY'S LABEL, AS THE FOUNDING SIGNER'S WALLET DREW IT.** Every
+     * signer's keys for this company are derived from it, so this service takes
+     * it and never makes one up. Required: a company created without one is a
+     * company no wallet could open.
+     */
+    companyLabel: z.string(),
   }).parse(req.body);
   /*
    * **NOTHING IS REFUSED HERE FOR BEING A SECOND COMPANY.** `C155`, `C131`,
@@ -1166,7 +1174,21 @@ app.post('/api/accounts', authed, wrap(async (req, res) => {
    * exist with no members and even its author could not open it.
    */
   const signers = body.signers.map((s, i) => ({ ...s, userId: i === 0 ? req.userId! : null }));
-  res.json(await accounts.create(body.name, signers, body.threshold));
+  const label = readCompanyLabel(body.companyLabel);
+  if (label === null) {
+    res.status(400).json({ error: new NotACompanyLabel().message, code: 'not-a-company-label' });
+    return;
+  }
+  try {
+    res.json(await accounts.create(body.name, signers, body.threshold, undefined, label));
+  } catch (e) {
+    /* **A LABEL ANOTHER COMPANY HAS IS REFUSED, AND NOTHING IS DEPLOYED FOR IT.** */
+    if (e instanceof CompanyLabelTaken) {
+      res.status(409).json({ error: e.message, code: 'company-label-taken' });
+      return;
+    }
+    throw e;
+  }
 }));
 
 // Scoped to the caller. This is the list endpoint, not a directory of the estate.
@@ -1390,11 +1412,13 @@ app.post('/api/accounts/:id/vault-threshold', authed, member, wrap(async (req, r
 /**
  * **WHICH COMPANY THIS SESSION MAY ASK A WALLET TO OPEN.**
  *
- * The page needs the company's own address to put in an unlock, because that is
- * what the wallet derives the key from. **It is not allowed to choose it**, and
+ * The page needs the company's label to put in an unlock, because that is what
+ * the wallet derives the key from, and the account that carries it, because
+ * that is where the wallet reads it back from. **It is not allowed to choose
+ * either**, and
  * this route is the whole of that rule on the wire: the account comes from the
  * path and goes through `member` like every other account-scoped route, and the
- * address is looked up from what the ledger assigned.
+ * label and the account are looked up from that company's own record.
  *
  * **NOTHING IS READ OUT OF THE BODY, AND THE BODY IS WHERE A CLAIM WOULD GO.**
  * There is no `z.object(...).parse(req.body)` here and no reference to
@@ -1408,15 +1432,17 @@ app.post('/api/accounts/:id/vault-threshold', authed, member, wrap(async (req, r
  * — a body — actually exists, so refusing to read one is demonstrable rather
  * than theoretical.
  *
- * **NO KEY PASSES THROUGH HERE.** What comes back is a public chain address.
- * The key is released by the wallet to the browser and this server never sees
- * it — `wallet-unlock.test.ts` holds that to a transport that records every
- * byte this side is ever handed.
+ * **NO KEY PASSES THROUGH HERE.** What comes back is the company's label and
+ * its account's address, both public: the label is what the wallet derives the
+ * company's keys from, and the account is where the wallet reads the label back
+ * from, itself, before it gives anything. The key is released by the wallet to
+ * the browser and this server never sees it — `wallet-unlock.test.ts` holds
+ * that to a transport that records every byte this side is ever handed.
  */
 app.post('/api/accounts/:id/unlock', authed, member, wrap(async (req, res) => {
   try {
-    const company = companyForSession(store, req.userId!, String(req.params.id));
-    res.json({ company });
+    const { label, account } = companyForSession(store, req.userId!, String(req.params.id));
+    res.json({ company: label, account });
   } catch (e) {
     if (e instanceof NoCompanyAddress) {
       /* Not-yours is the same 404 `member` gives, for the same reason. */
@@ -2078,10 +2104,10 @@ app.post('/api/payslips', currentPayslipPage, authed, wrap(async (req, res) => {
   const b = z.object({
     publicKey: payslipKey,
     answer: z.string().regex(/^[0-9a-fA-F]{64}$/u, 'the answer is the value that was sealed to you'),
-    /* The company address this key was worked out from, or null for a key no address
-     * produced. Only slips naming exactly that are sent. */
+    /* The label of the company this key was worked out from, or null for a key no
+     * company produced. Only slips naming exactly that are sent. */
     from: z.union([
-      z.string().regex(/^[0-9a-fA-F]{64}$/u, 'That is not a company address. It is 64 characters of 0-9 and a-f'),
+      z.string().regex(/^co_[0-9a-f]{64}$/u, 'That is not a company label. It is co_ and 64 characters of 0-9 and a-f'),
       z.null(),
     ]),
   }).parse(req.body);
@@ -2104,16 +2130,17 @@ app.post('/api/payslips', currentPayslipPage, authed, wrap(async (req, res) => {
  */
 
 /*
- * **EVERY ADDRESS A COMPANY'S PAYSLIPS NAME, FROM ANY ONE OF THEM.** A payee
- * who knows only a company's address today still reaches slips sealed under an
- * address it had before. Contract addresses are public on a chain, and this
- * answers with nothing else, to a signed-in person only.
+ * **EVERY COMPANY LABEL A COMPANY'S PAYSLIPS NAME, FROM ANY ONE OF THEM, EACH
+ * WITH THE ACCOUNT THAT CARRIES IT.** A payee who knows a company by its label
+ * reaches every slip sealed for it, and their wallet is told which account to
+ * read the label back from. Labels and account addresses are public on the
+ * chain, and this answers with nothing else, to a signed-in person only.
  */
 app.get('/api/payslips/addresses', currentPayslipPage, authed, wrap(async (req, res) => {
   if (!await payslipsMetered(req, res)) return;
-  const company = z.string().regex(/^[0-9a-fA-F]{64}$/u, 'a company address is 32 bytes of hex')
+  const company = z.string().regex(/^co_[0-9a-f]{64}$/u, 'a company is named by its label: co_ and 64 lower-case hex')
     .parse(String(req.query.company ?? ''));
-  res.json({ addresses: payroll.payslipAddressesOf(company) });
+  res.json({ companies: payroll.payslipAddressesOf(company) });
 }));
 
 /*

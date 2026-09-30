@@ -12,6 +12,7 @@
  * them and only them.
  */
 import { describe, it, expect, vi, afterEach } from 'vitest';
+import { drawCompanyLabel } from 'midnight-identity/profile/company-label';
 import { mkdtempSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
@@ -70,11 +71,12 @@ describe('a payment made by a retry reads as paid on its payee\'s page', () => {
     const accounts = new AccountService(store, ledger, MidnightCommitments, registry, aVaultHolding());
     const payroll = new PayrollService(store, accounts, new SimulatedProofSystem(), registry);
 
-    const created = await accounts.create('Northwind Ltd', [{ name: 'Ada', role: 'admin' }], 1);
+    const created = await accounts.create('Northwind Ltd', [{ name: 'Ada', role: 'admin' }], 1, undefined, drawCompanyLabel());
     const viewingKey = created.viewingKey;
     const rec = accounts.require(created.account.id);
     store.putAccount({ ...rec, addressSource: 'chain' } as typeof rec);
     const company = (rec.contractAddress as string).toLowerCase();
+    const label = rec.companyLabel!;
     const people = [0, 1, 2].map(i => payroll.hireDirect(created.account.id, {
       name: `Payee ${i}`, email: `p${i}@a.co`, title: 'Eng', asset: 'GBP', baseAmount: 100_00n,
     }, viewingKey));
@@ -169,11 +171,11 @@ describe('a payment made by a retry reads as paid on its payee\'s page', () => {
     const late = [] as string[];
     for (const p of people) {
       const [sealed] = payroll.payslipsFor(
-        (store.getEmployee(p.employee.id)!.wrappingPublicKey as string), company);
+        (store.getEmployee(p.employee.id)!.wrappingPublicKey as string), label);
       const opened = openPayslip(sealed!, p.secret.wrappingSecret);
       expect(opened.receipt).not.toBeNull();
-      answers.push((await paymentsOnTheChain([opened], onThisDevice, INDEXER, confirmed, NOW, registry)).get(run.id)!);
-      late.push((await paymentsOnTheChain([opened], onThisDevice, INDEXER, confirmed, Number(CLOSES) + 60, registry))
+      answers.push((await paymentsOnTheChain([opened], onThisDevice, INDEXER, confirmed, NOW, registry, [company])).get(run.id)!);
+      late.push((await paymentsOnTheChain([opened], onThisDevice, INDEXER, confirmed, Number(CLOSES) + 60, registry, [company]))
         .get(run.id)!);
     }
     /*
@@ -192,9 +194,9 @@ describe('a payment made by a retry reads as paid on its payee\'s page', () => {
      */
     expect(late).toEqual(['paid', 'paid', 'cannot-tell']);
     const person1 = openPayslip(payroll.payslipsFor(
-      store.getEmployee(people[1]!.employee.id)!.wrappingPublicKey as string, company)[0]!, people[1]!.secret.wrappingSecret);
+      store.getEmployee(people[1]!.employee.id)!.wrappingPublicKey as string, label)[0]!, people[1]!.secret.wrappingSecret);
     const person2 = openPayslip(payroll.payslipsFor(
-      store.getEmployee(people[2]!.employee.id)!.wrappingPublicKey as string, company)[0]!, people[2]!.secret.wrappingSecret);
+      store.getEmployee(people[2]!.employee.id)!.wrappingPublicKey as string, label)[0]!, people[2]!.secret.wrappingSecret);
     /* RED WHEN a retry does not extend the window of the people it names, and only theirs. */
     expect(person1.receipt!.until).toBe(Number(RETRY_CLOSES));
     expect(person2.receipt!.until).toBe(Number(CLOSES));

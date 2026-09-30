@@ -2,6 +2,7 @@ import { afterEach, describe, expect, it, vi } from 'vitest';
 import type { OpenedPayslip } from '../core/payslip-open.js';
 import type { MyPayslips } from 'vaults-web-shared/my-payslips.js';
 import { HELD_ADDRESS_SLOTS, heldAddressDigest } from 'midnight-identity/profile/unlock';
+import { readAccountAddress, readCompanyLabel } from 'midnight-identity/profile/company-label';
 import { payeeFor } from '../testing/payees.js';
 import { ledgerTokenOf } from '../core/assets.js';
 
@@ -15,7 +16,10 @@ import { ledgerTokenOf } from '../core/assets.js';
  * loads the modules afresh, because the page keeps the reader it started.
  */
 const INDEXER = { indexerUri: 'https://indexer.example/graphql', indexerWsUri: 'wss://indexer.example/graphql/ws' };
+/* The company's account, the label it carries, and the pair as the page opens it. */
 const ACME = 'ab'.repeat(32);
+const LABEL = readCompanyLabel('co_' + 'a1'.repeat(32))!;
+const CO = { label: LABEL, account: readAccountAddress(ACME) };
 const PAID = '01'.repeat(32);
 const UNPAID = '02'.repeat(32);
 const NOW = 1_800_000_000;
@@ -49,7 +53,7 @@ const answering = (held: string[]): Behaviour => (w) => {
 
 /** Where Dana is paid, and her wallet's digest of it under the page's nonce, among filler. */
 const DANA = payeeFor('0d'.repeat(32), 'undeployed').bech32;
-const SCOPE = { nonce: 'the-page-nonce', origin: 'https://payroll.example', company: 'ab'.repeat(32) };
+const SCOPE = { nonce: 'the-page-nonce', origin: 'https://payroll.example', company: LABEL };
 const HELD = {
   scope: SCOPE,
   digests: [heldAddressDigest(SCOPE, DANA)!,
@@ -59,9 +63,9 @@ const confirmedAll = () => true;
 
 /** A slip whose receipt carries `nonce`; the stand-in worker reads a payment by its nonce. */
 const slip = (runId: string, nonce: string, until = NOW + 3_600): OpenedPayslip => ({
-  runId, period: runId, status: 'proposed', settledAt: null, wiring: 'chain', issuedBy: ACME,
+  runId, period: runId, status: 'proposed', settledAt: null, wiring: 'chain', issuedBy: LABEL,
   payslip: { employeeId: 'emp_1', name: 'Dana', asset: 'TESTUSD', amount: 1n, period: runId, paidTo: DANA },
-  receipt: { runId, nonce, blinding: '09'.repeat(32), company: ACME, until },
+  receipt: { runId, nonce, blinding: '09'.repeat(32), company: ACME, label: LABEL, until },
 });
 const paymentFor = (nonce: string) => ({
   paidTo: DANA, token: ledgerTokenOf('TESTUSD', 'shielded'), amount: '1', nonce, blinding: '09'.repeat(32),
@@ -93,7 +97,7 @@ describe('the page reads whether each slip was paid through the indexer its wall
     FakeWorker.behave = answering([PAID]);
     const { page } = await fresh();
     const key = new Uint8Array(32).fill(7);
-    const opened = await page.openAndRead([ACME], async () => ({ key, indexer: INDEXER, held: HELD }),
+    const opened = await page.openAndRead([CO], async () => ({ key, indexer: INDEXER, held: HELD }),
       service([slip('run_a', PAID), slip('run_b', UNPAID)]));
     /*
      * RED WHEN the page drops the indexer the wallet named, or reads with
@@ -111,7 +115,7 @@ describe('the page reads whether each slip was paid through the indexer its wall
   it('A WALLET THAT NAMES NO INDEXER STARTS NO READER, AND EVERY ROW SAYS IT CANNOT TELL', async () => {
     FakeWorker.behave = answering([PAID]);
     const { page } = await fresh();
-    const opened = await page.openAndRead([ACME], async () => ({ key: new Uint8Array(32), indexer: null, held: HELD }),
+    const opened = await page.openAndRead([CO], async () => ({ key: new Uint8Array(32), indexer: null, held: HELD }),
       service([slip('run_a', PAID)]));
     expect(FakeWorker.made).toHaveLength(0);
     expect(opened.words.get('run_a')).toEqual({ paid: 'Cannot tell', onChain: 'Not known' });
@@ -126,7 +130,7 @@ describe('the page reads whether each slip was paid through the indexer its wall
       /* A list that does not hold Dana's address under this nonce. */
       async () => ({ key: new Uint8Array(32), indexer: INDEXER, held: { ...HELD, scope: { ...SCOPE, nonce: 'another-nonce' } } }),
     ]) {
-      const opened = await page.openAndRead([ACME], release, service([slip('run_a', PAID), slip('run_b', UNPAID)]));
+      const opened = await page.openAndRead([CO], release, service([slip('run_a', PAID), slip('run_b', UNPAID)]));
       /* RED WHEN an address the wallet did not confirm is asked about: run_b would read "Not yet". */
       expect(opened.words.get('run_a')).toEqual({ paid: 'Cannot tell', onChain: 'Not known' });
       expect(opened.words.get('run_b')).toEqual({ paid: 'Cannot tell', onChain: 'Not known' });
@@ -139,10 +143,10 @@ describe('the page reads whether each slip was paid through the indexer its wall
     const reader = { recorded: async (_i: unknown, _c: string, m: unknown[]) => m.map(() => false) };
     vi.useFakeTimers({ toFake: ['Date'] });
     vi.setSystemTime((NOW - 1) * 1000);
-    expect((await payslips.paymentsOnTheChain([slip('run_a', UNPAID, NOW)], reader, INDEXER, confirmedAll)).get('run_a')).toBe('not-yet');
+    expect((await payslips.paymentsOnTheChain([slip('run_a', UNPAID, NOW)], reader, INDEXER, confirmedAll, undefined, undefined, [ACME])).get('run_a')).toBe('not-yet');
     /* RED WHEN the page's default clock is not this device's clock in seconds. */
     vi.setSystemTime(NOW * 1000);
-    expect((await payslips.paymentsOnTheChain([slip('run_a', UNPAID, NOW)], reader, INDEXER, confirmedAll)).get('run_a')).toBe('cannot-tell');
+    expect((await payslips.paymentsOnTheChain([slip('run_a', UNPAID, NOW)], reader, INDEXER, confirmedAll, undefined, undefined, [ACME])).get('run_a')).toBe('cannot-tell');
   });
 });
 
@@ -161,7 +165,7 @@ describe('the page reads only a contract it opened for that company', () => {
     /* The rogue contract does record this payment: a service that deployed it recorded the leaf there. */
     FakeWorker.behave = answering([PAID]);
     const { page } = await fresh();
-    const opened = await page.openAndRead([ACME], async () => ({ key: new Uint8Array(32), indexer: INDEXER, held: HELD }),
+    const opened = await page.openAndRead([CO], async () => ({ key: new Uint8Array(32), indexer: INDEXER, held: HELD }),
       service([namingContract('run_rogue', PAID, ROGUE), slip('run_a', PAID)]));
     /* RED WHEN the contract a receipt names is read without being one the page opened: "Recorded as paid". */
     expect(opened.words.get('run_rogue')).toEqual({ paid: 'Cannot tell', onChain: 'Not known' });
@@ -172,7 +176,7 @@ describe('the page reads only a contract it opened for that company', () => {
       { id: 1, indexer: INDEXER, company: ACME, payments: [paymentFor(PAID)] }]);
   });
 
-  it('LEFT TO ITS DEFAULT, THE READ STILL NEVER ASKS ABOUT A CONTRACT NO SLIP WAS OPENED AT', async () => {
+  it('LEFT TO ITS DEFAULT, THE READ ASKS ABOUT NO CONTRACT: A LABEL LOCATES NONE', async () => {
     const { payslips } = await fresh();
     const asked: string[] = [];
     const reader = {
@@ -180,37 +184,61 @@ describe('the page reads only a contract it opened for that company', () => {
     };
     const chain = await payslips.paymentsOnTheChain(
       [namingContract('run_rogue', PAID, ROGUE), slip('run_a', PAID)], reader, INDEXER, confirmedAll);
-    /* RED WHEN the default takes in the contracts receipts name rather than the addresses slips were opened at. */
+    /* RED WHEN the default takes in the contracts receipts name, or anything the page did not open. */
     expect(chain.get('run_rogue')).toBe('cannot-tell');
+    expect(chain.get('run_a')).toBe('cannot-tell');
+    expect(asked).toEqual([]);
+    /* Given the account the wallet read the label off, that one is read and the rogue still is not. */
+    const given = await payslips.paymentsOnTheChain(
+      [namingContract('run_rogue', PAID, ROGUE), slip('run_a', PAID)], reader, INDEXER, confirmedAll, undefined, undefined, [ACME]);
+    expect(given.get('run_rogue')).toBe('cannot-tell');
+    expect(given.get('run_a')).toBe('paid');
+    expect(asked).toEqual([ACME]);
+  });
+
+  it('A RECEIPT THAT NAMES ANOTHER COMPANY\'S LABEL, OR NONE, READS "CANNOT TELL" AT AN ACCOUNT THE PAGE DID OPEN', async () => {
+    const { payslips } = await fresh();
+    const asked: string[] = [];
+    const reader = {
+      recorded: async (_i: unknown, company: string, m: unknown[]) => { asked.push(company); return m.map(() => true); },
+    };
+    const theirs = { ...slip('run_theirs', PAID), receipt: { ...slip('run_theirs', PAID).receipt!, label: 'co_' + 'b1'.repeat(32) } };
+    const none = { ...slip('run_none', PAID), receipt: { ...slip('run_none', PAID).receipt!, label: null } };
+    const chain = await payslips.paymentsOnTheChain(
+      [theirs, none, slip('run_a', PAID)] as never, reader, INDEXER, confirmedAll, undefined, undefined, [ACME]);
+    /* RED WHEN the receipt's label is not compared with the label the slip was opened for. */
+    expect(chain.get('run_theirs')).toBe('cannot-tell');
+    expect(chain.get('run_none')).toBe('cannot-tell');
     expect(chain.get('run_a')).toBe('paid');
     expect(asked).toEqual([ACME]);
   });
 
-  it('A COMPANY THAT MOVED READS ITS NEW CONTRACT, BECAUSE THE PAGE OPENED THAT ADDRESS TOO', async () => {
+  it('A COMPANY THAT MOVED READS ITS NEW CONTRACT, WHEN THE WALLET READ THE LABEL OFF THAT ACCOUNT TOO', async () => {
     FakeWorker.behave = answering([PAID]);
     const { page } = await fresh();
     const release = async () => ({ key: new Uint8Array(32), indexer: INDEXER, held: HELD });
-    /* The slip was sealed under the old address; its leg was raised after the move. */
+    /* The slip names the company's label; its leg was raised after the move. */
     const theSlip = namingContract('run_after_move', PAID, MOVED);
-    const byAddress = async (_k: unknown, address: string) =>
-      ({ opened: address === ACME ? [theSlip] : [], sealed: [], unopened: 0, refused: 0 });
-    const opened = await page.openAndRead([ACME, MOVED], release, byAddress);
+    let fetched = 0;
+    const byLabel = async () => ({ opened: fetched++ === 0 ? [theSlip] : [], sealed: [], unopened: 0, refused: 0 });
+    const opened = await page.openAndRead([CO, { label: LABEL, account: readAccountAddress(MOVED) }], release, byLabel);
     /* RED WHEN a moved company's payslips read "cannot tell" for a payment it really recorded. */
     expect(opened.words.get('run_after_move')).toEqual({ paid: 'Recorded as paid', onChain: 'Yes' });
   });
 
-  it('AN ADDRESS THE WALLET WOULD NOT OPEN IS NOT ONE THE PAGE OPENED', async () => {
+  it('AN ACCOUNT THE WALLET WOULD NOT OPEN IS NOT ONE THE PAGE OPENED', async () => {
     FakeWorker.behave = answering([PAID]);
     const { page } = await fresh();
-    const release = async (address: string) => {
-      if (address === MOVED) throw new Error('the person declined');
+    /* A wallet refuses an account that does not carry the label; here, the person declines. */
+    const release = async (company: { account: string | null }) => {
+      if (company.account === MOVED) throw new Error('the person declined');
       return { key: new Uint8Array(32), indexer: INDEXER, held: HELD };
     };
     const theSlip = namingContract('run_after_move', PAID, MOVED);
-    const byAddress = async (_k: unknown, address: string) =>
-      ({ opened: address === ACME ? [theSlip] : [], sealed: [], unopened: 0, refused: 0 });
-    const opened = await page.openAndRead([ACME, MOVED], release, byAddress);
-    /* RED WHEN an address is counted as opened before its key was given and its slips fetched. */
+    let fetched = 0;
+    const byLabel = async () => ({ opened: fetched++ === 0 ? [theSlip] : [], sealed: [], unopened: 0, refused: 0 });
+    const opened = await page.openAndRead([CO, { label: LABEL, account: readAccountAddress(MOVED) }], release, byLabel);
+    /* RED WHEN an account is counted as opened before its key was given and its slips fetched. */
     expect(opened.words.get('run_after_move')).toEqual({ paid: 'Cannot tell', onChain: 'Not known' });
   });
 });

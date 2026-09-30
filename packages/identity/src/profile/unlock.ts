@@ -8,6 +8,8 @@ import { fromBase64Url, toBase64Url } from '../passkey/bytes.js';
 import type { KeyringRequest, UnlockRequest } from './request.js';
 import { usableOrigin, whyNotUsable } from './origin.js';
 import { heldAddressList, readHeldAddressList } from './held-address.js';
+import { drawCompanyLabel, readAccountAddress, readCompanyLabel } from './company-label.js';
+import type { AccountAddress, CompanyLabel } from './company-label.js';
 
 export { HELD_ADDRESS_SLOTS, heldAddressDigest, listHolds } from './held-address.js';
 export type { HeldScope } from './held-address.js';
@@ -36,10 +38,14 @@ export type { HeldScope } from './held-address.js';
  * somewhere else and does not open. That defect, reopened by the mechanism meant to
  * serve it.
  *
- * **SO THE KEY IS DERIVED FROM THE COMPANY'S ACCOUNT CONTRACT ADDRESS.**
- * Chain-assigned, stable for as long as the company exists, not ours to mint
- * and not ours to rename, and it outlives us — which is the entire point of
- * choosing it.
+ * **SO THE KEY IS DERIVED FROM THE COMPANY'S LABEL** (`company-label.ts`):
+ * thirty-two random bytes the founding signer's wallet drew before the company
+ * had an account, written into that account by its constructor and kept by
+ * every later account of the same company. Stable for as long as the company
+ * exists, not ours to rename, readable off the chain, and it outlives us —
+ * which is the entire point of choosing it. **It was the account's contract
+ * address until the company needed keys before it had an account**; the
+ * address still locates the account, and the screen shows the two together.
  *
  * **THE ORIGIN STILL DECIDES WHO MAY BE HANDED SOMETHING.** It is still
  * observed, still refused when it is not a plain `https://` serialisation, and
@@ -50,7 +56,7 @@ export type { HeldScope } from './held-address.js';
  * ══ THE COST, SAID OUT LOUD ═══════════════════════════════════════════════
  *
  * **THE COMPANY IDENTIFIER IS THE ONE CLAIMED VALUE IN THIS WHOLE PROTOCOL.**
- * The origin comes from the browser; the company address comes from the
+ * The origin comes from the browser; the company's label comes from the
  * request, because there is nowhere else it could come from. That is a genuine
  * loss of the property this was built around, and it was accepted knowingly on
  * 23 Aug for a stated reason: deriving
@@ -71,9 +77,8 @@ export type { HeldScope } from './held-address.js';
  * **1. AT FULL WIDTH, AS ITS OWN BYTES.** The finding stands and applies here
  * unchanged: **a selector narrower than the thing it selects can be ground.**
  * That round ground two origins onto one 31-bit index in 2,855,179,063 tries on
- * one core. So the address goes into the expansion
- * WHOLE — all sixty-four characters, not folded, not truncated, not hashed into
- * an index.
+ * one core. So the label goes into the expansion
+ * WHOLE — all of it, not truncated, not hashed into an index.
  *
  * **2. THE SAME COMPANY REACHED FROM TWO DIFFERENT HOSTS GETS THE SAME KEY.**
  * This is the whole purpose of the change: it is the export, expressed as code.
@@ -114,9 +119,9 @@ export type { HeldScope } from './held-address.js';
  * survive the change of ingredient:
  *
  * `authority(purpose, index)` selects with a NUMBER below 2^31. Squeezing any
- * identifier — an origin then, a contract address now — into 31 bits is a
+ * identifier — an origin then, a company's label now — into 31 bits is a
  * selector that can be ground, and rule 3 is that two companies never share a
- * key. A 64-hex address is 256 bits; 31 of them is not the address.
+ * key. A label is 256 bits; 31 of them is not the label.
  *
  * **AND SEAT IS MEANT TO BE GIVEN AWAY.** *"One per company, so no two
  * employers see the same key."* A key that is handed to a company must never be
@@ -124,39 +129,14 @@ export type { HeldScope } from './held-address.js';
  * derive every other employer's. So the parent is a purpose with exactly one
  * job, which never leaves this wallet: only its per-company children do.
  *
- * ══ THE ADDRESS GOES IN AS ITS OWN BYTES, IN ONE SPELLING ═════════════════
+ * ══ THE LABEL GOES IN AS ITS OWN TEXT, IN ITS ONE SPELLING ═════════════════
  *
- * **MEASURED, NOT ASSERTED.** `encodeContractAddress` in
- * `@midnightntwrk/ledger-v9` (`ledger-v9.d.ts:475`) takes a `ContractAddress`,
- * which the same file declares as a bare `string` (`:33`). Running it settles
- * what the string is: `sampleContractAddress()` returns **sixty-four LOWERCASE
- * hex characters**, and `encodeContractAddress` of one returns **thirty-two
- * bytes**. It also ACCEPTS the uppercase spelling of the same address, because
- * the hex decoder underneath is case-insensitive — **so the SDK would let one
- * company arrive as two different strings.**
- *
- * **EVERY SPELLING BUT THE CANONICAL ONE WAS REFUSED. THIS FOLDS INSTEAD.**
- * Refusing was stricter than Midnight itself: the SDK's own validator
- * accepts `[0-9A-Fa-f]` and rejects only a `0x` prefix
- * (`@midnight-ntwrk/midnight-js-utils/dist/index.mjs:576`, `:986`, `:991`), so
- * an address every Midnight tool calls valid arrived here and was refused, and
- * the person was told their company is not a company.
- *
- * **The danger the strictness was for is real and folding prevents it BETTER.**
- * Two spellings of one company must never be two keys: a company whose records
- * open under one spelling and not the other has lost them, which is that defect with
- * a smaller radius. `payload.ts`'s NFC normalisation is right there and would be
- * wrong here for a reason that does not apply to hex — normalising TEXT is a
- * many-to-one map over things that merely look alike, and a key that must be
- * found again for ever cannot come from one of those. **Case-folding hex is
- * one-to-one on addresses**: sixty-four hex characters have exactly one
- * lower-case spelling, two different addresses can never fold together, and the
- * fold is the same on every client for ever. It removes the danger completely
- * AND accepts what the chain's own tools emit.
- *
- * **`request.ts` FOLDS AT THE DOOR AND THIS MODULE FOLDS AT ITS OWN**, for the
- * reason there is a second origin check: a caller that assembled an ask by hand
- * never went through the parser.
+ * A label has exactly one spelling: `co_` and sixty-four lower-case hex
+ * characters. **It is not folded, because there is nothing to fold**: an
+ * upper-case label is not a label, and `company-label.ts` refuses it rather
+ * than turning it into one, so two spellings of one company can never become
+ * two keys. A contract address arriving where a label is asked is refused by
+ * its shape, with its own sentence.
  *
  * ══ WHAT IS NOT SIGNED, AND THAT IS DELIBERATE ════════════════════════════
  *
@@ -175,13 +155,13 @@ export type { HeldScope } from './held-address.js';
  * one looks like.
  */
 
-/* The domain this expansion lives in. **`v2`, and this is the only moment
- * it will ever be free to change.** `v1` expanded an ORIGIN; this expands a
- * COMPANY. Not one byte anywhere has been sealed under a `v1` key — payroll's
- * half is unbuilt — so the string moves once, now, rather than two derivations
- * of different things sharing one domain. The day it changes again is the day
- * every company's data stops opening, so it is a migration and never a patch. */
-const UNLOCK_SALT = new TextEncoder().encode('midnight-identity/unlock/v2');
+/* The domain this expansion lives in. `v1` expanded an ORIGIN, `v2` a
+ * company's account ADDRESS, and `v3` expands a company's LABEL. Each moved so
+ * that two derivations of different things never share one domain: no key
+ * derived here can equal one derived from an address. The day it changes again
+ * is the day every company's data stops opening, so it is a migration and
+ * never a patch. */
+const UNLOCK_SALT = new TextEncoder().encode('midnight-identity/unlock/v3');
 
 /** One parent, one job. There is no second index and nothing chooses one. */
 const UNLOCK_PARENT_INDEX = 0;
@@ -201,7 +181,7 @@ const KEY_BYTES = 32;
  */
 declare const releasedBrand: unique symbol;
 
-/** 32 bytes that open ONE company's records. Never an address, never on a chain. */
+/** 32 bytes that open ONE company's records. Never a label, never an address, never on a chain. */
 export type ReleasedKey = Uint8Array & { readonly [releasedBrand]: true };
 
 export const RELEASE_SCHEMA = 'midnight-identity/unlock-release/v1';
@@ -209,7 +189,7 @@ export const RELEASE_SCHEMA = 'midnight-identity/unlock-release/v1';
 export type UnlockFailure =
   /** The origin is not a plain ASCII `https://` serialisation. */
   | 'origin-not-usable'
-  /** The company is not a plain, complete, correctly-shaped address. */
+  /** The company is not named by a label, or its account by an address. */
   | 'company-not-usable'
   /** The person a keyring ask names is not an identifier this wallet can use. */
   | 'person-not-usable'
@@ -244,27 +224,6 @@ export class UnlockError extends Error {
  * path is not part of an origin.
  */
 
-/**
- * **WHAT A MIDNIGHT CONTRACT ADDRESS LOOKS LIKE, MEASURED FROM THE SDK.**
- *
- * Sixty-four hex characters — the serialisation `sampleContractAddress()`
- * produces and `encodeContractAddress` turns into thirty-two bytes
- * (`@midnightntwrk/ledger-v9`, `ledger-v9.d.ts:475`, `:549`). Complete and
- * plain.
- *
- * **ANY SPELLING IN, ONE SPELLING ON.** Midnight's own validator
- * accepts `[0-9A-Fa-f]`, so this does; `companyOf` lower-cases before anything
- * reads the value, so the derivation only ever sees the canonical form.
- *
- * **A `0x` PREFIX IS REFUSED AND NEEDS NO CLAUSE OF ITS OWN**: this is
- * sixty-four characters exactly, so `0x` plus an address is sixty-six, and `0x`
- * plus sixty-two hex characters is not hex. The SDK refuses it explicitly —
- * `assertIsContractAddress`,
- * `@midnight-ntwrk/midnight-js-utils/dist/index.mjs:986` — and this refuses it
- * by shape.
- */
-const COMPANY_ADDRESS = /^[0-9a-fA-F]{64}$/u;
-
 const originOf = (ask: { readonly requester: { readonly origin: string } }): string => {
   const origin = ask.requester.origin;
   if (!usableOrigin(origin)) {
@@ -285,27 +244,37 @@ const originOf = (ask: { readonly requester: { readonly origin: string } }): str
  * the parse; this is the module's own door, for the same reason there is one
  * for the origin — a caller that assembled an ask by hand meets it too.
  */
-const companyOf = (ask: UnlockRequest): string => {
-  const company = ask.company;
-  if (typeof company !== 'string' || !COMPANY_ADDRESS.test(company)) {
+const companyOf = (ask: { readonly company: CompanyLabel }): CompanyLabel => {
+  const label = readCompanyLabel(ask.company);
+  if (label === null) {
     throw new UnlockError(
       'company-not-usable',
       'this asks for the key to a company this wallet cannot make sense of. A company is '
-      + 'named by its own address on the chain, and that is not one. Nothing has been given.');
+      + 'named by its label, and that is not one. Nothing has been given.');
   }
-  /*
-   * **THE FOLD, AND IT IS THE LAST THING THAT HAPPENS BEFORE THE DERIVATION.**
-   * Every spelling of one company yields the same bytes because every
-   * spelling reaches `hkdf` as the same string. Move this below the caller and
-   * two spellings become two keys again, which is the whole thing being
-   * prevented.
-   */
-  return company.toLowerCase();
+  return label;
+};
+
+/**
+ * THE ACCOUNT THE ASK SAYS CARRIES THE LABEL, or `null` for a company that has
+ * no account yet. Never an ingredient: it is echoed so the requester can check
+ * the answer is about the account it asked about, and the screen shows it.
+ */
+const accountOf = (ask: { readonly account?: AccountAddress | null }): AccountAddress | null => {
+  if (ask.account === undefined || ask.account === null) return null;
+  const account = readAccountAddress(ask.account);
+  if (account === null) {
+    throw new UnlockError(
+      'company-not-usable',
+      'this names the company\'s account by something that is not an address. Nothing has been given.');
+  }
+  return account;
 };
 
 /**
  * THE KEY FOR ONE COMPANY. A pure function of the person's seed and the
- * COMPANY'S OWN ADDRESS, and of nothing else.
+ * COMPANY'S LABEL, and of nothing else. The account's address is not an
+ * ingredient.
  *
  * **THE ORIGIN IS CHECKED HERE AND IS NOT AN INGREDIENT.** It gates: a request
  * whose origin this wallet could not observe gets no key at all. It does not
@@ -320,8 +289,8 @@ export function unlockKeyFor(identity: Identity, ask: UnlockRequest): ReleasedKe
   originOf(ask);
   const company = companyOf(ask);
   const parent = identity.authority(Purposes.Unlock, UNLOCK_PARENT_INDEX);
-  /* The address's own bytes, at full width. Not folded, not truncated, not
-   * hashed into an index — the header says why each of those would be wrong. */
+  /* The label's own text, at full width. Not truncated and not hashed into an
+   * index — the header says why each of those would be wrong. */
   const info = new TextEncoder().encode(company);
   return hkdf(sha256, parent, UNLOCK_SALT, info, KEY_BYTES) as ReleasedKey;
 }
@@ -338,8 +307,10 @@ export interface UnlockRelease {
   readonly schema: typeof RELEASE_SCHEMA;
   /** OBSERVED. A convenience for the requester, never an authority. */
   readonly origin: string;
-  /** The company this key opens. Echoed back, and never read as authority. */
-  readonly company: string;
+  /** The label of the company this key opens. Echoed back, and never read as authority. */
+  readonly company: CompanyLabel;
+  /** The account the ask named as carrying that label, or null. Echoed back, never an ingredient. */
+  readonly account: AccountAddress | null;
   /** The nonce the requester chose, so it can tie this to its own request. */
   readonly nonce: string;
   /** The wallet's clock, in ms. */
@@ -388,6 +359,7 @@ export function releaseFor(
     schema: RELEASE_SCHEMA,
     origin: originOf(ask),
     company: companyOf(ask),
+    account: accountOf(ask),
     nonce: ask.nonce,
     at,
     key: toBase64Url(unlockKeyFor(identity, ask)),
@@ -456,7 +428,9 @@ export function readRelease(
   expecting: {
     readonly atOrigin: string;
     readonly expectingNonce: string;
-    readonly forCompany: string;
+    readonly forCompany: CompanyLabel;
+    /** The account it named as carrying that label, or null when it named none. */
+    readonly forAccount: AccountAddress | null;
   },
 ): ReleaseRead {
   const body = message as UnlockRelease | null;
@@ -471,10 +445,12 @@ export function readRelease(
         + `${expecting.atOrigin}. It is refused.`,
     };
   }
-  /* Both sides folded before they are compared. The wallet echoes the
-   * canonical spelling, and a requester that asked in another one must not have
-   * its own key refused for a difference that is not a difference. */
-  if (String(body.company).toLowerCase() !== expecting.forCompany.toLowerCase()) {
+  /* A label has one spelling, so it is compared exactly; the account is read
+   * back through its own reader, which folds it, and compared to the one asked
+   * about. A key for the right label said to be about another account is still
+   * refused: the person approved the pair. */
+  const account = body.account === undefined || body.account === null ? null : readAccountAddress(body.account);
+  if (readCompanyLabel(body.company) !== expecting.forCompany || account !== expecting.forAccount) {
     return {
       ok: false,
       code: 'company-mismatch',
@@ -620,7 +596,14 @@ export interface KeyringRelease {
   /** Echoed back, never read as authority. */
   readonly person: string;
   readonly signedInAs: string | null;
-  readonly company: string | null;
+  /**
+   * The label of the company whose keys are in this answer, or null when none
+   * was asked about. **When the ask was to start a company, this is the label
+   * this wallet drew for it**, and the requester learns it from here.
+   */
+  readonly company: CompanyLabel | null;
+  /** The account the ask named as carrying that label, or null. Echoed back, never an ingredient. */
+  readonly account: AccountAddress | null;
   readonly nonce: string;
   readonly at: number;
   /** Base64url of the 32-byte keyring key. **Do not log this. Do not store it.** */
@@ -643,10 +626,17 @@ export interface KeyringRelease {
  * can be sent**: the screen's disabled button is not the only thing standing
  * between a second wallet in the browser and a key the page would seal a
  * person's first keys under.
+ *
+ * **WHEN THE ASK IS TO START A COMPANY, THE LABEL IS DRAWN HERE**, at the
+ * press, by this wallet: the page asked for a new company and did not choose
+ * its name, so neither the page nor the service behind it can choose which
+ * company's keys come back. `draw` is replaceable only so a test can know the
+ * label in advance.
  */
 export function keyringReleaseFor(
   identity: Identity, ask: KeyringRequest, at: number,
   holds: (address: string) => boolean,
+  draw: () => CompanyLabel = drawCompanyLabel,
 ): KeyringRelease {
   const origin = originOf(ask);
   if (ask.signedInAs !== null && !holds(ask.signedInAs)) {
@@ -658,7 +648,15 @@ export function keyringReleaseFor(
       + 'ever be opened with this one. Nothing has been given.');
   }
   const key = keyringKeyFor(identity, ask);
-  const companyKey = ask.company === null
+  if (ask.drawLabel && ask.company !== null) {
+    throw new UnlockError(
+      'company-not-usable',
+      'this asks this wallet both to start a new company and for the keys of one that exists. '
+      + 'Nothing has been given.');
+  }
+  const company: CompanyLabel | null = ask.drawLabel ? draw() : (ask.company === null ? null : companyOf(ask as { company: CompanyLabel }));
+  const account = company === null || ask.drawLabel ? null : accountOf(ask);
+  const companyKey = company === null
     ? null
     : toBase64Url(unlockKeyFor(identity, {
       schema: ask.schema,
@@ -667,19 +665,21 @@ export function keyringReleaseFor(
       purpose: ask.purpose,
       nonce: ask.nonce,
       expiresAt: ask.expiresAt,
-      company: ask.company,
+      company,
+      account,
     }));
   return Object.freeze({
     schema: KEYRING_RELEASE_SCHEMA,
     origin,
     person: personOf(ask),
     signedInAs: ask.signedInAs,
-    company: ask.company === null ? null : ask.company.toLowerCase(),
+    company,
+    account,
     nonce: ask.nonce,
     at,
     key: toBase64Url(key),
     companyKey,
-    committeeKey: ask.company === null ? null : committeeKeyFor(identity, ask.company),
+    committeeKey: company === null ? null : committeeKeyFor(identity, company),
   });
 }
 
@@ -690,6 +690,8 @@ export type KeyringRead =
     readonly companyKey: Uint8Array | null;
     /** Public, and present exactly when a company key is. */
     readonly committeeKey: SignatureVerifyingKey | null;
+    /** The company the keys are for: the one asked about, or the one the wallet drew. */
+    readonly company: CompanyLabel | null;
     readonly at: number;
   }
   | { readonly ok: false; readonly code: ReleaseFailure | 'person-mismatch'; readonly says: string };
@@ -724,7 +726,14 @@ export function readKeyringRelease(
     readonly expectingNonce: string;
     readonly person: string;
     readonly signedInAs: string | null;
-    readonly forCompany: string | null;
+    /**
+     * The company the page asked about, or null for none, or `'drawn'` when
+     * it asked the wallet to start one - then any label is accepted, and the
+     * read says which one the wallet drew.
+     */
+    readonly forCompany: CompanyLabel | null | 'drawn';
+    /** The account the page named as carrying that label, or null. */
+    readonly forAccount: AccountAddress | null;
   },
 ): KeyringRead {
   const body = message as KeyringRelease | null;
@@ -747,10 +756,12 @@ export function readKeyringRelease(
         + 'from the one that was asked about. It is refused rather than used.',
     };
   }
-  const wanted = expecting.forCompany === null ? null : expecting.forCompany.toLowerCase();
-  const given = body.company === null || body.company === undefined
-    ? null : String(body.company).toLowerCase();
-  if (given !== wanted) {
+  const given = body.company === null || body.company === undefined ? null : readCompanyLabel(body.company);
+  const givenAccount = body.account === null || body.account === undefined ? null : readAccountAddress(body.account);
+  const wanted = expecting.forCompany === 'drawn' ? given : expecting.forCompany;
+  if (given !== wanted || (expecting.forCompany === 'drawn' && given === null)
+    || (body.company !== null && body.company !== undefined && given === null)
+    || givenAccount !== (expecting.forCompany === 'drawn' ? null : expecting.forAccount)) {
     return {
       ok: false,
       code: 'company-mismatch',
@@ -811,5 +822,5 @@ export function readKeyringRelease(
   if (typeof body.at !== 'number' || !Number.isSafeInteger(body.at)) {
     return { ok: false, code: 'not-a-release', says: 'that is not a released key.' };
   }
-  return { ok: true, key, companyKey, committeeKey, at: body.at };
+  return { ok: true, key, companyKey, committeeKey, company: wanted, at: body.at };
 }

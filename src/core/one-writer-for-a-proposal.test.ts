@@ -16,6 +16,7 @@
  * timing is.
  */
 import { describe, it, expect } from 'vitest';
+import { drawCompanyLabel } from 'midnight-identity/profile/company-label';
 import { mkdtempSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
@@ -81,7 +82,7 @@ async function aCompany(opts: { threshold: number }) {
   const payroll = new PayrollService(store, accounts, new SimulatedProofSystem(), registry);
   const created = await accounts.create('Northwind Ltd', [
     { name: 'Ada', role: 'admin' }, { name: 'Blake', role: 'approver' }, { name: 'Cleo', role: 'approver' },
-  ], opts.threshold);
+  ], opts.threshold, undefined, drawCompanyLabel());
   const viewingKey = created.viewingKey;
   const account = created.account.id;
   for (let i = 0; i < 3; i++) {

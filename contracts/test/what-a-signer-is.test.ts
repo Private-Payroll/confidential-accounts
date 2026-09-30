@@ -67,6 +67,7 @@
  * two derivations.
  */
 import { describe, it, expect } from 'vitest';
+import { drawCompanyLabel } from 'midnight-identity/profile/company-label';
 import { AccountSimulator, leafOfDevice, privateStateFor, change } from './simulator.js';
 import { pureCircuits } from '../managed/contract/index.js';
 import { MidnightCommitments } from '../../src/midnight/commitments.js';
@@ -190,7 +191,7 @@ describe('what a signer’s public identity is', () => {
      * is under test here — the derivation the writer chose is. */
     const accounts = new AccountService(
       store, new SimulatedLedger(MidnightCommitments), MidnightCommitments);
-    const created = await accounts.create('Northwind', [{ name: 'Ada', role: 'admin' }], 1);
+    const created = await accounts.create('Northwind', [{ name: 'Ada', role: 'admin' }], 1, undefined, drawCompanyLabel());
 
     const founder = created.account.signers[0];
     expect(founder.leafCommitment).toBeTruthy();

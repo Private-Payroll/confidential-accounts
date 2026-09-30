@@ -32,6 +32,7 @@
  * `depositFromSource`; neither the sources nor the vault's steps change for it.
  */
 import type { Hex } from '../../../src/core/crypto.js';
+import type { AccountAddress, CompanyLabel, VaultAddress } from 'midnight-identity/profile/company-label';
 import { assets, ledgerFormOf, ledgerTokenOf, type AssetId, type AssetRegistry } from '../../../src/core/assets.js';
 import type { DepositMoney } from '../../../src/midnight/deposit-nonce.js';
 import {
@@ -40,8 +41,10 @@ import {
 
 /** What the vault's deposit step hands a source to pay in: the proven deposit, and nothing else of it. */
 export interface DepositAsk {
-  readonly company: Hex;
-  readonly vault: Hex;
+  /** The company's label, and the account that carries it: the wallet reads one off the other before it pays. */
+  readonly company: CompanyLabel;
+  readonly account: AccountAddress;
+  readonly vault: VaultAddress;
   /** The proven deposit, base64. */
   readonly transaction: string;
 }
@@ -97,7 +100,7 @@ export function privateTokenFromTheWallet(
       }
       return { token: ledgerTokenOf(code, 'shielded', registry) as Hex, value };
     },
-    payIn: ({ company, vault, transaction }) => pay({ company, vault, transaction }),
+    payIn: ({ company, account, vault, transaction }) => pay({ company, account, vault, transaction }),
   };
 }
 
@@ -121,7 +124,7 @@ export function publicTokenFromTheWallet(
       }
       return { token: ledgerTokenOf(code, 'unshielded', registry) as Hex, value };
     },
-    payIn: ({ company, vault, transaction }) => pay({ company, vault, transaction }),
+    payIn: ({ company, account, vault, transaction }) => pay({ company, account, vault, transaction }),
   };
 }
 

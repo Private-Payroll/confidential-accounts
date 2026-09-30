@@ -173,7 +173,7 @@ export const Purposes = {
    * An application that a person has signed in to can ask this wallet to
    * release a key that opens the data that application holds FOR THAT PERSON.
    * The key that crosses is not this one: it is an HKDF expansion of this one
-   * under the COMPANY'S OWN ACCOUNT CONTRACT ADDRESS (`packages/identity/src/profile/unlock.ts`).
+   * under the COMPANY'S LABEL (`packages/identity/src/profile/unlock.ts`).
    * This purpose is the parent, and nothing anywhere hands the parent to
    * anybody.
    *
@@ -282,7 +282,7 @@ export const Purposes = {
    * A vault's maintenance authority is a committee of signature keys, one per
    * company signer, and a maintenance update is valid only with enough of their
    * signatures. The key a person sits on that committee with is an expansion of
-   * this parent under the company's address (`profile/committee-key.ts`), so it
+   * this parent under the company's label (`profile/committee-key.ts`), so it
    * differs per company and links nobody across companies.
    *
    * **ONLY ITS PUBLIC HALF EVER LEAVES THE WALLET.** A key that can sign

@@ -1,4 +1,5 @@
 import { describe, it, expect } from 'vitest';
+import { drawCompanyLabel } from 'midnight-identity/profile/company-label';
 import { mkdtempSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
@@ -75,7 +76,7 @@ async function harness(opts: { registry?: AssetRegistry; reader?: VaultHoldings 
     ? new AccountService(store, ledger, SimulatedCommitments, registry)
     : new AccountService(store, ledger, SimulatedCommitments, registry, opts.reader);
   const created = await accounts.create(
-    'Northwind Ltd', [{ name: 'Ada', role: 'admin' }, { name: 'Blake', role: 'approver' }], 1);
+    'Northwind Ltd', [{ name: 'Ada', role: 'admin' }, { name: 'Blake', role: 'approver' }], 1, undefined, drawCompanyLabel());
   const viewingKey = created.viewingKey;
   const by = created.secrets[0]!.signerId;
   const account = created.account.id;

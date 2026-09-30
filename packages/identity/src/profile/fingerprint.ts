@@ -1,4 +1,6 @@
 import { sha256 } from '@noble/hashes/sha2.js';
+import { readAccountAddress, readCompanyLabel } from './company-label.js';
+import type { AccountAddress, CompanyLabel } from './company-label.js';
 
 /**
  * **SOMETHING A PERSON CAN ACTUALLY COMPARE, STANDING IN FOR AN ADDRESS THEY
@@ -10,10 +12,21 @@ import { sha256 } from '@noble/hashes/sha2.js';
  * is the one no person can — and it is worst at the FIRST release for a
  * company, which is the release that decides every release after it.
  *
- * This is a RENDERING of that address and nothing more. It is derived from the
- * address alone, so any client computes the same one; it can be put in an
+ * This is a RENDERING of the company and nothing more: **of its label and the
+ * address of the account that carries the label, together.** Any client
+ * computes the same one from the same two values; it can be put in an
  * invitation, an email from an employer, or read down a phone line; and it is
- * the same for that company for ever, on every device and in every wallet.
+ * the same for that pair for ever, on every device and in every wallet.
+ *
+ * **WHY BOTH, AND NOT THE LABEL ALONE.** Every key is derived from the label
+ * (`company-label.ts`), and nothing on the chain stops a second account being
+ * deployed carrying a label somebody learned from the first. A fingerprint of
+ * the label alone would let that second company wear the first one's face on
+ * every screen, and a person who belongs to both could be led to pay into the
+ * wrong one. **An account's address is unique on the chain, so the pair is
+ * too**: the same label on another account renders a different fingerprint.
+ * The wallet reads the label off the account itself before it shows one.
+ * A company that has no account yet has no fingerprint, and its screens say so.
  *
  * ══ WHY THIS IS NOT TWO DIGITS, WHICH IS WHAT PAIRING SHOWS ═══════════════
  *
@@ -28,8 +41,8 @@ import { sha256 } from '@noble/hashes/sha2.js';
  * digits is ten thousand tries, which is the same kind of nothing.*
  *
  * **THERE IS NO COMMITMENT PROTOCOL AVAILABLE IN THIS CASE AND THERE CANNOT
- * BE.** Nobody is interacting. An attacker picks their own contract address
- * freely and computes this function offline, as many times as they like, long
+ * BE.** Nobody is interacting. An attacker picks their own label and deploys
+ * their own contract freely and computes this function offline, as many times as they like, long
  * before anybody sees anything. That is vanity-address grinding and it is
  * ordinary practice. **So the only thing standing between a person and a
  * company that has been ground to look like another company is the WIDTH of
@@ -73,7 +86,7 @@ import { sha256 } from '@noble/hashes/sha2.js';
  *
  * ══ AND IT IS NEVER A KEY INPUT ═══════════════════════════════════════════
  *
- * `unlock.ts` derives from the address's own bytes at full width and imports
+ * `unlock.ts` derives from the label's own text at full width and imports
  * nothing from this file. **A fingerprint that reached the derivation would be
  * a 100-bit selector for a 256-bit thing**, which is a rejected design
  * wearing a new hat — and `unlock.test.ts` pins the released bytes against an
@@ -84,7 +97,8 @@ import { sha256 } from '@noble/hashes/sha2.js';
  * Scope 4's invitation carries a company name by a path that is not the asking
  * page, and a name is what a person actually recognises. **It does not replace
  * this.** A name can be wrong — learned from a stale invitation, or shared by
- * two companies — and a fingerprint cannot, because it IS the address. So a
+ * two companies — and a fingerprint cannot, because it IS the label and the
+ * account together. So a
  * name belongs ABOVE this as the thing a person recognises, with this beneath
  * it as the thing that settles it, in exactly the relation the ask screen
  * already uses for a claim and the fact that checks it.
@@ -103,9 +117,11 @@ const SYMBOLS = 20;
 const GROUP = 4;
 
 /** Its own domain, so this string can never collide with another use of the
- * same address under a different label. `v1`, and it may never change: a
+ * same values under a different label. `v1` rendered an account's address
+ * alone; `v2` renders a company's label and its account's address together, so
+ * no `v2` code can equal a `v1` one. From here it may never change: a
  * fingerprint that moved would be a company nobody could confirm twice. */
-const COMPANY_LABEL = 'midnight-identity/company-fingerprint/v1/';
+const COMPANY_DOMAIN = 'midnight-identity/company-fingerprint/v2/';
 
 /**
  * **THE SECOND SUBJECT, AND IT IS A SECOND LABEL RATHER THAN A SECOND
@@ -128,10 +144,6 @@ const COMPANY_LABEL = 'midnight-identity/company-fingerprint/v1/';
  * agreement: `SYMBOLS` is read once, in `render`.
  */
 const RECEIVING_ADDRESS_LABEL = 'midnight-identity/receiving-address-fingerprint/v1/';
-
-/** The one spelling — folded, not refused, and folded here too so the
- * two spellings of one company render one fingerprint. */
-const COMPANY_ADDRESS = /^[0-9a-fA-F]{64}$/u;
 
 /**
  * **WHAT A RECEIVING ADDRESS HAS TO LOOK LIKE BEFORE IT IS RENDERED, AND WHY
@@ -218,20 +230,27 @@ export function tidyFingerprint(typed: string): string | null {
 }
 
 /**
- * THE FINGERPRINT OF ONE COMPANY. A pure function of its address and nothing
- * else — no clock, no storage, no wallet, no device.
+ * THE FINGERPRINT OF ONE COMPANY. A pure function of its label and the
+ * address of the account that carries it, and nothing else — no clock, no
+ * storage, no wallet, no device.
  *
- * The input is the address in either spelling; the output is the same either
- * way. **The separators are part of it**, because it is compared by eye and
- * never typed into anything.
+ * The account may arrive in either case; the output is the same either way.
+ * **There is no form of this that takes the label alone.** **The separators
+ * are part of it**, because it is compared by eye and never typed into
+ * anything.
  */
-export function companyFingerprint(company: string): string {
-  if (typeof company !== 'string' || !COMPANY_ADDRESS.test(company)) {
-    throw new FingerprintError(
-      'a company fingerprint is computed from a company\'s own address, and that is not '
-      + 'one.');
+export function companyFingerprint(company: CompanyLabel, account: AccountAddress): string {
+  const label = readCompanyLabel(company);
+  if (label === null) {
+    throw new FingerprintError('a company fingerprint is computed from a company\'s label, and that is not one.');
   }
-  return render(COMPANY_LABEL, company.toLowerCase());
+  const at = readAccountAddress(account);
+  if (at === null) {
+    throw new FingerprintError(
+      'a company fingerprint covers the company\'s label and the address of its account together, '
+      + 'and what was given as the account is not an address.');
+  }
+  return render(COMPANY_DOMAIN, `${label}/${at}`);
 }
 
 /**

@@ -1,4 +1,3 @@
-import React from 'react';
 import { describe, expect, it } from 'vitest';
 import { renderToStaticMarkup } from 'react-dom/server';
 import type { OpenedPayslip } from '../core/payslip-open.js';
@@ -13,8 +12,12 @@ import { PAID_MEANS, PayslipTable, wordsForSlips } from './YourPay.js';
  * not be read. The table is rendered as the page renders it, from the words the
  * page works out, and each row is read back as text.
  */
+/* Each company's account, and the label it carries. */
 const ACME = 'ab'.repeat(32);
 const ELSEWHERE = 'cd'.repeat(32);
+const LABEL_OF: Record<string, string> = { [ACME]: 'co_' + 'a1'.repeat(32), [ELSEWHERE]: 'co_' + 'c1'.repeat(32) };
+/** The accounts Dana's wallet read those labels off. */
+const OPENED = [ACME, ELSEWHERE];
 const value = (n: number) => n.toString(16).padStart(64, '0');
 
 const NOW = 1_800_000_000;
@@ -27,9 +30,9 @@ const NOT_MINE = 'mn_shield-addr_test1notmine';
 const slip = (
   runId: string, period: string, company: string, nonce: string, until: number | null = NOW + 60, paidTo = MINE,
 ): OpenedPayslip => ({
-  runId, period, status: 'proposed', settledAt: null, wiring: 'chain', issuedBy: company,
+  runId, period, status: 'proposed', settledAt: null, wiring: 'chain', issuedBy: LABEL_OF[company]!,
   payslip: { employeeId: 'emp_1', name: 'Dana', asset: 'TESTUSD', amount: 5_000_000n, period, paidTo },
-  receipt: { runId, nonce, blinding: value(9), company, until },
+  receipt: { runId, nonce, blinding: value(9), company, label: LABEL_OF[company]!, until },
 });
 
 /** Dana's wallet confirmed `MINE` and nothing else. */
@@ -66,7 +69,7 @@ describe('the payslips table says, row by row, whether each was paid', () => {
       /* The same, and not recorded. */
       slip('run_apr', '2026-04', ACME, value(5), NOW + 60, NOT_MINE),
     ];
-    const html = renderToStaticMarkup(<PayslipTable slips={slips} words={await wordsForSlips(slips, record, INDEXER, confirmed, NOW)} />);
+    const html = renderToStaticMarkup(<PayslipTable slips={slips} words={await wordsForSlips(slips, record, INDEXER, confirmed, NOW, OPENED)} />);
     /*
      * RED WHEN the page shows the run's own facts where the company's record
      * answered - every row then reads that the page cannot tell yet - or when
@@ -85,7 +88,7 @@ describe('the payslips table says, row by row, whether each was paid', () => {
 
   it('THE SENTENCE UNDER THE TABLE IS THE ONE RULED, WORD FOR WORD', async () => {
     const slips = [slip('run_sep', '2026-09', ACME, value(7))];
-    const html = renderToStaticMarkup(<PayslipTable slips={slips} words={await wordsForSlips(slips, record, INDEXER, confirmed, NOW)} />);
+    const html = renderToStaticMarkup(<PayslipTable slips={slips} words={await wordsForSlips(slips, record, INDEXER, confirmed, NOW, OPENED)} />);
     /* RED WHEN one word of it changes. */
     expect(PAID_MEANS).toBe('Paid means the company\'s account records your payment as made. '
       + 'Check that the amount reached your wallet\'s private balance.');
@@ -98,7 +101,7 @@ describe('the payslips table says, row by row, whether each was paid', () => {
     asked.length = 0;
     const draft: OpenedPayslip = { ...slip('run_oct', '2026-10', ACME, value(7)), status: 'draft', receipt: null };
     const html = renderToStaticMarkup(
-      <PayslipTable slips={[draft]} words={await wordsForSlips([draft], record, INDEXER, confirmed, NOW)} />);
+      <PayslipTable slips={[draft]} words={await wordsForSlips([draft], record, INDEXER, confirmed, NOW, OPENED)} />);
     expect(paidCells(html, 'run_oct')).toEqual(['Not sent for approval yet', 'No']);
     expect(asked).toEqual([]);
   });

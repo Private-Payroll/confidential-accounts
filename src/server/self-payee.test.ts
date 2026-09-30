@@ -19,6 +19,7 @@
  * back in and this is the test that dies.
  */
 import { describe, it, expect, beforeAll, afterAll } from 'vitest';
+import { drawCompanyLabel } from 'midnight-identity/profile/company-label';
 import { importTheServer, useOnlyTheseSettings } from '../testing/server-under-test.js';
 import { mkdtempSync } from 'node:fs';
 import { tmpdir } from 'node:os';
@@ -148,7 +149,7 @@ const withACompany = async () => {
     { slot: ++n, origin: ORIGIN, network: NETWORK });
   const made = await call('POST', '/api/accounts', {
     token,
-    body: { name: 'Acme', signers: [{ name: 'Ada', role: 'admin' }], threshold: 1 },
+    body: { companyLabel: drawCompanyLabel(), name: 'Acme', signers: [{ name: 'Ada', role: 'admin' }], threshold: 1 },
   });
   expect(made.status, JSON.stringify(made.body)).toBe(200);
   return {

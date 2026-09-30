@@ -12,6 +12,7 @@
  *   - nobody on the roster is left out of a run without the record saying so
  */
 import { describe, it, expect, vi, afterEach } from 'vitest';
+import { drawCompanyLabel } from 'midnight-identity/profile/company-label';
 import { mkdtempSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
@@ -42,7 +43,7 @@ async function aCompany(people = 3) {
   const ledger = new SimulatedLedger(MidnightCommitments);
   const accounts = new AccountService(store, ledger, MidnightCommitments, registry, aVaultHolding());
   const payroll = new PayrollService(store, accounts, new SimulatedProofSystem(), registry);
-  const created = await accounts.create('Northwind Ltd', [{ name: 'Ada', role: 'admin' }], 1);
+  const created = await accounts.create('Northwind Ltd', [{ name: 'Ada', role: 'admin' }], 1, undefined, drawCompanyLabel());
   const account = created.account.id;
   let viewingKey = created.viewingKey;
   const hired: RosterEmployee[] = [];

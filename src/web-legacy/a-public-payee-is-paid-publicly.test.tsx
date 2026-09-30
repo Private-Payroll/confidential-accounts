@@ -196,14 +196,14 @@ describe('A PUBLIC PAYMENT ON THE PAYSLIPS PAGE', () => {
     const asked: unknown[] = [];
     const reader = { recorded: async (_i: unknown, _c: string, payments: unknown[]) => { asked.push(...payments); return payments.map(() => false); } };
     const slip = (runId: string, paidTo: string) => ({
-      runId, issuedBy: 'c0'.repeat(32), status: 'settled', wiring: 'chain',
+      runId, issuedBy: 'co_' + 'c1'.repeat(32), status: 'settled', wiring: 'chain',
       payslip: { paidTo, asset: 'TESTUSD', amount: 100n },
-      receipt: { company: 'c0'.repeat(32), nonce: '01'.repeat(32), blinding: '02'.repeat(32), until: Math.floor(Date.now() / 1000) + 3_600 },
+      receipt: { company: 'c0'.repeat(32), label: 'co_' + 'c1'.repeat(32), nonce: '01'.repeat(32), blinding: '02'.repeat(32), until: Math.floor(Date.now() / 1000) + 3_600 },
     });
     /* The wallet is taken as confirming both addresses, so nothing but the address's own kind can keep the public one out. */
     const chain = await paymentsOnTheChain(
       [slip('run_pub', PUBLIC.bech32), slip('run_priv', PRIVATE.bech32)] as never,
-      reader as never, { indexer: 'x' } as never, () => true);
+      reader as never, { indexer: 'x' } as never, () => true, undefined, undefined, ['c0'.repeat(32)]);
     /* RED WHEN: a public payment is asked about as if it were private - it would read "not yet" for a payment that was made.
      * TESTUSD has no public form, so there is no public value to ask with; a public payment in money that has one
      * is asked about in its own form (`a-public-payment-reads-as-the-chain-says.test.ts`). */

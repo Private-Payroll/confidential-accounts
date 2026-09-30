@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import { useState } from 'react';
 import { LedgerMark } from './ledger-mark.js';
 import * as keyring from 'vaults-web-shared/keyring.js';
 
@@ -102,7 +102,7 @@ export function AccountPicker({
   awaitingSetup: string | null;
   onDemo: () => void;
   /**
-   * The companies that pay this person, by contract address: from their saved
+   * The companies that pay this person, by their labels: from their saved
    * keys once those are open here, and from what this browser holds for them.
    */
   employers?: string[];
@@ -155,7 +155,7 @@ export function AccountPicker({
         <div className="acctnew" data-add-employer>
           <input value={adding} onChange={e => setAdding(e.target.value)}
             onKeyDown={e => { if (e.key === 'Enter' && !busy && adding.trim() !== '') { onAddEmployer(adding.trim()); setAdding(''); } }}
-            placeholder="Add a company's address" />
+            placeholder="Add a company's label" />
           <button type="button" disabled={busy || adding.trim() === ''}
             onClick={() => { onAddEmployer(adding.trim()); setAdding(''); }}>Add</button>
         </div>

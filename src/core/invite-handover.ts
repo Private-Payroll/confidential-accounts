@@ -1,3 +1,4 @@
+import { readCompanyLabel } from 'midnight-identity/profile/company-label';
 import type { Hex, Sealed } from './crypto.js';
 import { sealToInbox, openFromInbox } from './sealed-records.js';
 
@@ -79,9 +80,9 @@ export interface InviteHandover {
    */
   readonly confirmation: string | null;
   /**
-   * The company address the payee's device worked their payslip key out from.
-   * Absent from a handover sealed before it was carried, which reads as not
-   * known rather than as any particular address.
+   * The label of the company the payee's device worked their payslip key out
+   * from. Absent from a handover sealed before it was carried, which reads as
+   * not known rather than as any particular company.
    */
   readonly keyFrom?: string | null;
 }
@@ -170,18 +171,19 @@ export function openHandover(
 }
 
 /**
- * **THE ADDRESS A PAYSLIP KEY CAME FROM, OR NOTHING.** A company address is 32
- * bytes of hex. Anything else in this field is refused rather than stored,
- * because a payslip that names a wrong address is one its payee is sent to
- * the wrong place to open.
+ * **THE COMPANY A PAYSLIP KEY CAME FROM, BY ITS LABEL, OR NOTHING.** Anything
+ * else in this field - an account's address among it - is refused rather than
+ * stored, because a payslip that names a wrong company is one its payee is sent
+ * to the wrong place to open.
  */
 function keyFromOf(value: unknown): string | null {
   if (value === undefined || value === null) return null;
-  if (typeof value !== 'string' || !/^[0-9a-fA-F]{64}$/u.test(value)) {
+  const label = readCompanyLabel(value);
+  if (label === null) {
     throw new Error(
-      'this handover names the company address its payslip key came from, and what it '
-      + 'names is not a company address. It is refused rather than stored, because every '
-      + 'payslip sealed to this person would send them to that address to open it.');
+      'this handover names the company its payslip key came from, and what it names is not a '
+      + 'company\'s label. It is refused rather than stored, because every payslip sealed to this '
+      + 'person would send them to that company to open it.');
   }
-  return value.toLowerCase();
+  return label;
 }

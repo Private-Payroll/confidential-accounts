@@ -1,4 +1,5 @@
 import { describe, expect, it, beforeEach } from 'vitest';
+import { drawCompanyLabel } from 'midnight-identity/profile/company-label';
 import { mkdtempSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
@@ -95,7 +96,7 @@ describe('the door, the refusal, and the record', () => {
   beforeEach(() => { h = harness(); });
 
   const company = async () => {
-    const made = await h.accounts.create('Acme', SIGNERS, 2);
+    const made = await h.accounts.create('Acme', SIGNERS, 2, undefined, drawCompanyLabel());
     return made;
   };
 

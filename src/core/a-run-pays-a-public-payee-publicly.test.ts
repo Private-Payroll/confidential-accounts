@@ -14,6 +14,7 @@
  * own state machine.
  */
 import { describe, it, expect } from 'vitest';
+import { drawCompanyLabel } from 'midnight-identity/profile/company-label';
 import { copyFileSync, mkdtempSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
@@ -78,7 +79,7 @@ const aCompany = async (opts: { held?: Record<LedgerForm, bigint>; nightBothWays
     id: 'usr_founder', email: 'founder@acme.example', name: 'founder', keyBundle: null,
     keyBundleVersion: 0, identityPublicKey: null, walletKey: null, createdAt: '2026-09-25T00:00:00.000Z',
   } as unknown as User);
-  const created = await s.accounts.create('Acme', [{ name: 'Ada', role: 'admin', userId: 'usr_founder' }], 1);
+  const created = await s.accounts.create('Acme', [{ name: 'Ada', role: 'admin', userId: 'usr_founder' }], 1, undefined, drawCompanyLabel());
   const viewingKey = created.viewingKey;
   const account = created.account.id;
   const by = created.secrets[0]!.signerId;

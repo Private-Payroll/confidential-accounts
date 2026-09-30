@@ -7,7 +7,8 @@ import {
   CommitteeSignError, committeeChangeShown, committeeSignaturesFor,
 } from 'midnight-identity/profile/committee-sign';
 import type { CommitteeChangeShown, CommitteeSigningLedger } from 'midnight-identity/profile/committee-sign';
-import { companyFingerprint } from 'midnight-identity/profile/fingerprint';
+import { CompanyOnChain, accountCarriesTheLabel, liveLabelReader, useCompanyCheck } from './company-on-chain.js';
+import type { LabelReader } from './company-on-chain.js';
 import { Button, Section } from 'vaults-ui';
 import { StatusAlert } from '../components/status.js';
 import { hrefOf } from '../routes.js';
@@ -23,6 +24,12 @@ import type { Consent } from '../framing.js';
  * before and after, and every contract the change is signed for. The press
  * signs exactly that change and nothing else; the wallet builds what it signs
  * from what is on this screen.
+ *
+ * **AND IT SIGNS NOTHING UNTIL IT HAS READ THE COMPANY'S ACCOUNT ITSELF** and
+ * found the label the page names on the account the page names
+ * (`company-on-chain.tsx`): the key it signs with is derived from that label,
+ * and the fingerprint the person compares covers the label and the account
+ * together.
  */
 
 /** The live ledger, loaded when the screen is. */
@@ -39,7 +46,7 @@ const keyText = (k: CommitteeKeyOnTheWire): string => `${k.value.slice(0, 12)}â€
 
 export function ApproveCommittee({
   request, identity, channel, consent, whoIsAsking, onDecline,
-  ledger = liveCommitteeLedger, now = Date.now,
+  ledger = liveCommitteeLedger, now = Date.now, readLabel = liveLabelReader,
 }: {
   readonly request: CommitteeRequest;
   readonly identity: Identity;
@@ -49,8 +56,11 @@ export function ApproveCommittee({
   readonly onDecline: () => void;
   readonly ledger?: () => Promise<CommitteeSigningLedger>;
   readonly now?: () => number;
+  readonly readLabel?: LabelReader;
 }): ReactNode {
   const [stage, setStage] = useState<Stage>({ of: 'reading' });
+  const check = useCompanyCheck(request.company, request.account, readLabel);
+  const onChain = accountCarriesTheLabel(check, request.company);
 
   useEffect(() => {
     let alive = true;
@@ -68,7 +78,7 @@ export function ApproveCommittee({
   }, [identity, request, ledger]);
 
   const sign = useCallback((): void => {
-    if (stage.of !== 'ready' || channel === null) return;
+    if (stage.of !== 'ready' || channel === null || !onChain) return;
     try {
       const at = now();
       channel.answer(committeeSignaturesFor(stage.ledger, identity, request, at));
@@ -76,7 +86,7 @@ export function ApproveCommittee({
     } catch (e) {
       setStage({ of: 'refused', says: e instanceof Error ? `${e.message}` : 'Nothing has been signed.' });
     }
-  }, [stage, channel, identity, request, now]);
+  }, [stage, channel, identity, request, now, onChain]);
 
   const isMine = (k: CommitteeKeyOnTheWire, shown: CommitteeChangeShown): boolean => k.value === shown.mine.value;
   const keyList = (keys: readonly CommitteeKeyOnTheWire[], shown: CommitteeChangeShown, attr: string) => (
@@ -153,8 +163,7 @@ export function ApproveCommittee({
         </Section>
       ))}
       <Section list={false} box={false} aria-label="The company, as the page names it" title="The company, as the page names it" description="This wallet signs with the key it holds for this company and no other.">
-        <p className="m-0 font-mono tracking-wide text-foreground text-xl" data-company-fingerprint>{companyFingerprint(request.company)}</p>
-        <p className="m-0 font-mono break-all text-sm text-muted-foreground" data-company>{request.company}</p>
+        <CompanyOnChain label={request.company} account={request.account} check={check} doing="signed" />
         <p className="m-0 text-sm text-muted-foreground">
           This wallet cannot tell who each key belongs to. Check the new list with the other signers before you sign.
           Whoever holds enough of its keys can change the rules the company account and every vault follow.
@@ -166,7 +175,7 @@ export function ApproveCommittee({
           size="lg"
           type="button"
           variant="default" onClick={sign} data-approve data-sign-committee
-          disabled={!consent.ok || stage.of !== 'ready' || channel === null}
+          disabled={!consent.ok || stage.of !== 'ready' || channel === null || !onChain}
         >
           Sign this change
         </Button>

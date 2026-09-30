@@ -40,6 +40,10 @@
       "types": "./lib/profile/inbox.d.ts",
       "default": "./lib/profile/inbox.js"
     },
+    "./profile/company-label": {
+      "types": "./lib/profile/company-label.d.ts",
+      "default": "./lib/profile/company-label.js"
+    },
     "./profile/fingerprint": {
       "types": "./lib/profile/fingerprint.d.ts",
       "default": "./lib/profile/fingerprint.js"

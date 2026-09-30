@@ -15,6 +15,7 @@ import { registryWithTestPrivateForms, aVaultHolding } from '../testing/assets.j
 import { sealHandover } from '../core/invite-handover.js';
 import { payslipKeypairForWallet } from '../core/payslip-key.js';
 import { newWords } from 'midnight-identity';
+import { drawCompanyLabel } from 'midnight-identity/profile/company-label';
 import type { User } from '../core/types.js';
 
 /**
@@ -93,18 +94,18 @@ describe('no route that does not take the viewing key returns a salt or a path',
       store, new SimulatedLedger(MidnightCommitments), MidnightCommitments, registry, aVaultHolding());
     const invites = new RecordingInviteDelivery();
     const payroll = new PayrollService(store, accounts, new SimulatedProofSystem(), registry, 'undeployed', invites);
-    const created = await accounts.create('Acme', [{ name: 'Ada', role: 'admin' as const }], 1);
+    const created = await accounts.create('Acme', [{ name: 'Ada', role: 'admin' as const }], 1, undefined, drawCompanyLabel());
     const rec = accounts.require(created.account.id);
     store.putAccount({ ...rec, addressSource: 'chain' } as typeof rec);
-    const address = (rec.contractAddress as string).toLowerCase();
+    const label = rec.companyLabel!;
     const { sentTo, employee } = payroll.invite(created.account.id, {
       name: 'Dana', email: 'dana@acme.example', title: 'Engineer', asset: 'GBP', baseAmount: 100_00n,
     }, created.viewingKey, 'usr_ada');
     store.putUser({ id: 'usr_1', email: 'dana@acme.example', name: 'Dana', keyBundle: null, keyBundleVersion: 0,
       walletKey: null, createdAt: '2026-09-25T00:00:00.000Z' } as User);
     payroll.acceptInvite(invites.tokenFor(sentTo!), sealHandover({
-      wrappingPublicKey: payslipKeypairForWallet(newWords(), address, 'https://payroll.example').publicKey,
-      address: payeeFor('0d'.repeat(32), 'undeployed').bech32, confirmation: null, keyFrom: address,
+      wrappingPublicKey: payslipKeypairForWallet(newWords(), label, 'https://payroll.example').publicKey,
+      address: payeeFor('0d'.repeat(32), 'undeployed').bech32, confirmation: null, keyFrom: label,
     }, accounts.require(created.account.id).inboxPublicKey), 'usr_1');
     payroll.admit(employee.id, created.viewingKey, 'usr_ada');
     const { run } = await payroll.createRunFromRoster(created.account.id, '2026-08', created.viewingKey);

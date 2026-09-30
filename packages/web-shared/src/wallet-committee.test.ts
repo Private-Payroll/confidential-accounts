@@ -1,4 +1,5 @@
 import { describe, it, expect } from 'vitest';
+import type { AccountAddress, CompanyLabel } from 'midnight-identity/profile/company-label';
 import * as L from '@midnightntwrk/ledger-v9';
 import { TEST_MNEMONIC } from '@midnight-ntwrk/testkit-js';
 import { identityFromWords } from 'midnight-identity';
@@ -12,7 +13,9 @@ import type { Openable, WalletWindow } from './wallet-sign-in.js';
 /* The page's side of a committee change: what it sends, and what it believes of the answer. */
 const WALLET = 'https://wallet.example';
 const US = 'https://payroll.example';
-const CO = 'dbe119a304f8e7ea882353435c1d536cf2faf4298236a9aae77670e750af65c8';
+/* The company's label, the account that carries it, and one of its vaults. */
+const CO = 'co_1f2e3d4c5b6a79880a1b2c3d4e5f60718293a4b5c6d7e8f90a1b2c3d4e5f6071' as CompanyLabel;
+const ACCOUNT = 'dbe119a304f8e7ea882353435c1d536cf2faf4298236a9aae77670e750af65c8' as AccountAddress;
 const VAULT = '54ef954a25aefff8e1675af10a852ef29d5de5c63a51b64b978bf7bd0eaeca4e';
 const identity = identityFromWords(TEST_MNEMONIC);
 const mine = committeeKeyFor(identity, CO);
@@ -41,14 +44,14 @@ const walletAnswering = (answer: (ask: unknown) => unknown): { view: Openable; a
 };
 const to = { committee: [mine, other].sort((a, b) => (a.value < b.value ? -1 : 1)), threshold: 2 };
 const contracts = [{ contract: 'vault' as const, address: VAULT, counter: '2', now: { committee: [mine], threshold: 1 } }];
-const input = { company: CO, to, contracts, atOrigin: US, name: 'Us', rdns: 'example.us', nonce: 'n1', now: () => 1_000 };
+const input = { company: CO, account: ACCOUNT, to, contracts, atOrigin: US, name: 'Us', rdns: 'example.us', nonce: 'n1', now: () => 1_000 };
 /** The wallet's own parser and signer, answering the ask as it arrives. */
 const honestly = (ask: unknown) => committeeSignaturesFor(L as never, identity, parseAsk(ask, US, 1_000) as CommitteeRequest, 1_000);
 
 describe('ASKING THE PERSON\'S WALLET TO SIGN A COMMITTEE CHANGE', () => {
   it('sends an ask with no bytes to sign in it, which the wallet\'s own parser accepts', () => {
     const wire = committeeAsk({ ...input, purpose: 'p', expiresAt: 2_000 });
-    expect(Object.keys(wire).sort()).toEqual(['company', 'contracts', 'expiresAt', 'kind', 'nonce', 'purpose', 'requester', 'schema', 'to']);
+    expect(Object.keys(wire).sort()).toEqual(['account', 'company', 'contracts', 'expiresAt', 'kind', 'nonce', 'purpose', 'requester', 'schema', 'to']);
     expect((parseAsk(wire, US, 1_000) as CommitteeRequest).kind).toBe('committee');
   });
 

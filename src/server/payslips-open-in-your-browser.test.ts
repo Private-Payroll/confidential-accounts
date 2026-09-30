@@ -5,6 +5,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import type { Server } from 'node:http';
 import { newWords } from 'midnight-identity';
+import { drawCompanyLabel } from 'midnight-identity/profile/company-label';
 import type { User } from '../core/types.js';
 
 /**
@@ -50,16 +51,17 @@ const seeded = await (async () => {
   const payroll = new PayrollService(
     store, accounts, new SimulatedProofSystem(), undefined, 'undeployed', invites);
   const { account, viewingKey } = await accounts.create(
-    'Acme', [{ name: 'Ada', role: 'admin' as const }], 1);
+    'Acme', [{ name: 'Ada', role: 'admin' as const }], 1, undefined, drawCompanyLabel());
   const rec = accounts.require(account.id);
   store.putAccount({ ...rec, addressSource: 'chain' } as typeof rec);
   const address = (rec.contractAddress as string).toLowerCase();
+  const label = rec.companyLabel!;
   const hire = (who: string, byte: string) => {
     const email = `${who.toLowerCase()}@acme.example`;
     const { sentTo, employee } = payroll.invite(account.id, {
       name: who, email, title: 'Engineer', asset: 'TESTUSD', baseAmount: 5_000_000_000n,
     }, viewingKey, 'usr_ada');
-    const keys = payslipKeypairForWallet(newWords(), address, ORIGIN);
+    const keys = payslipKeypairForWallet(newWords(), label, ORIGIN);
     const userId = 'usr_' + who.toLowerCase();
     store.putUser({
       id: userId, email, name: who, keyBundle: null, keyBundleVersion: 0, walletKey: null,
@@ -67,7 +69,7 @@ const seeded = await (async () => {
     } as User);
     payroll.acceptInvite(invites.tokenFor(sentTo!), sealHandover({
       wrappingPublicKey: keys.publicKey, address: payeeFor(byte.repeat(32), 'undeployed').bech32,
-      confirmation: null, keyFrom: address,
+      confirmation: null, keyFrom: label,
     }, rec.inboxPublicKey), userId);
     payroll.admit(employee.id, viewingKey, 'usr_ada');
     return { ...keys, employeeId: employee.id };
@@ -75,7 +77,7 @@ const seeded = await (async () => {
   const dana = hire('Dana', 'a1');
   const eli = hire('Eli', 'b2');
   const { run } = await payroll.createRunFromRoster(account.id, '2026-08', viewingKey);
-  return { dana, eli, address, runId: run.id, accountId: account.id };
+  return { dana, eli, address, label, runId: run.id, accountId: account.id };
 })();
 
 const { handInWiring } = await import('../wiring/handed-in.js');
@@ -126,7 +128,7 @@ const post = async (path: string, body: unknown, how: Parameters<typeof asked>[0
 const get = (path: string, how: Parameters<typeof asked>[0] = {}) => fetch(base + path, { headers: asked(how) });
 
 const proveAndFetch = async (
-  keys: { secret: string; publicKey: string }, from: string | null = seeded.address,
+  keys: { secret: string; publicKey: string }, from: string | null = seeded.label,
 ) => {
   const proof = await post('/api/payslips/proof', { publicKey: keys.publicKey });
   expect(proof.status).toBe(200);
@@ -145,7 +147,7 @@ describe('a payee\'s own payslips, over the wire', () => {
     expect(opened.payslip.amount).toBe(5_000_000_000n);
     expect(opened.payslip.asset).toBe('TESTUSD');
     expect(opened.runId).toBe(seeded.runId);
-    expect(opened.issuedBy).toBe(seeded.address);
+    expect(opened.issuedBy).toBe(seeded.label);
     /*
      * The run's own facts come back as the store holds them. RED WHEN the
      * route reports a run as settled, or as written by a chain, that is not.
@@ -169,28 +171,28 @@ describe('a payee\'s own payslips, over the wire', () => {
     expect(() => unwrapKey(proof.body.sealed, seeded.eli.secret)).toThrow();
     /* RED WHEN the list route skips the proof. */
     const guessed = await post('/api/payslips', {
-      publicKey: seeded.dana.publicKey, answer: '00'.repeat(32), from: seeded.address,
+      publicKey: seeded.dana.publicKey, answer: '00'.repeat(32), from: seeded.label,
     });
     expect(guessed.status).toBe(403);
     expect(guessed.body).not.toBeInstanceOf(Array);
     /* And a proof for one key does not answer for another. */
     const mine = await post('/api/payslips/proof', { publicKey: seeded.eli.publicKey });
     const answer = answerPayslipProof(mine.body.sealed, seeded.eli.secret);
-    const crossed = await post('/api/payslips', { publicKey: seeded.dana.publicKey, answer, from: seeded.address });
+    const crossed = await post('/api/payslips', { publicKey: seeded.dana.publicKey, answer, from: seeded.label });
     expect(crossed.status).toBe(403);
   });
 
   it('A PROOF IS SPENT ONCE', async () => {
     const proof = await post('/api/payslips/proof', { publicKey: seeded.dana.publicKey });
     const answer = answerPayslipProof(proof.body.sealed, seeded.dana.secret);
-    const from = seeded.address;
+    const from = seeded.label;
     expect((await post('/api/payslips', { publicKey: seeded.dana.publicKey, answer, from })).status).toBe(200);
     /* RED WHEN the value is not consumed. */
     expect((await post('/api/payslips', { publicKey: seeded.dana.publicKey, answer, from })).status).toBe(403);
   });
 
   it('ASKING ABOUT A KEY NOBODY HOLDS ANSWERS THE SAME WAY, AND LISTS NOTHING', async () => {
-    const stranger = payslipKeypairForWallet(newWords(), seeded.address, ORIGIN);
+    const stranger = payslipKeypairForWallet(newWords(), seeded.label, ORIGIN);
     const proof = await post('/api/payslips/proof', { publicKey: stranger.publicKey });
     const known = await post('/api/payslips/proof', { publicKey: seeded.dana.publicKey });
     expect(proof.status).toBe(200);
@@ -215,19 +217,23 @@ describe('a payee\'s own payslips, over the wire', () => {
     expect(JSON.parse(text).code).toBe('payslips-open-in-your-browser');
   });
 
-  it('EVERY ADDRESS A COMPANY\'S SLIPS NAME, ASKED BY ITS ADDRESS', async () => {
-    const r = await get(`/api/payslips/addresses?company=${seeded.address}`);
+  it('A COMPANY\'S LABEL, ASKED BY ITS LABEL, WITH THE ACCOUNT THAT CARRIES IT', async () => {
+    const r = await get(`/api/payslips/addresses?company=${seeded.label}`);
     expect(r.status).toBe(200);
-    expect((await r.json()).addresses).toEqual([seeded.address]);
+    expect((await r.json()).companies).toEqual([{ label: seeded.label, account: seeded.address }]);
     expect((await get('/api/payslips/addresses?company=nope')).status).toBe(400);
+    /* RED WHEN an account's address is taken for a company's label. */
+    expect((await get(`/api/payslips/addresses?company=${seeded.address}`)).status).toBe(400);
   });
 
-  it('ONLY SLIPS NAMING THE ADDRESS THE KEY CAME FROM ARE SENT, AND THE ADDRESS MUST BE SAID', async () => {
-    /* RED WHEN the list is sent whatever company address the asker names. */
-    expect((await proveAndFetch(seeded.dana, 'ef'.repeat(32))).body).toEqual([]);
-    /* A key no address produced is sent only slips that name none; Dana's name one. */
+  it('ONLY SLIPS NAMING THE LABEL THE KEY CAME FROM ARE SENT, AND THE LABEL MUST BE SAID', async () => {
+    /* RED WHEN the list is sent whatever company label the asker names. */
+    expect((await proveAndFetch(seeded.dana, 'co_' + 'ef'.repeat(32))).body).toEqual([]);
+    /* RED WHEN an account's address is taken where the label belongs. */
+    expect((await proveAndFetch(seeded.dana, seeded.address)).status).toBe(400);
+    /* A key no label produced is sent only slips that name none; Dana's name one. */
     expect((await proveAndFetch(seeded.dana, null)).body).toEqual([]);
-    /* RED WHEN the route answers a request that does not say which address the key came from. */
+    /* RED WHEN the route answers a request that does not say which label the key came from. */
     const proof = await post('/api/payslips/proof', { publicKey: seeded.dana.publicKey });
     const answer = answerPayslipProof(proof.body.sealed, seeded.dana.secret);
     expect((await post('/api/payslips', { publicKey: seeded.dana.publicKey, answer })).status).toBe(400);
@@ -242,13 +248,13 @@ describe('a payee\'s own payslips, over the wire', () => {
     const made = await post('/api/payslips/proof', { publicKey: seeded.dana.publicKey });
     const answer = answerPayslipProof(made.body.sealed, seeded.dana.secret);
     const list = await post('/api/payslips',
-      { publicKey: seeded.dana.publicKey, answer, from: seeded.address }, { signedIn: false });
+      { publicKey: seeded.dana.publicKey, answer, from: seeded.label }, { signedIn: false });
     expect(list.status).toBe(401);
     expect(list.body).not.toBeInstanceOf(Array);
     /* RED WHEN `authed` is taken off the addresses route. */
-    const addresses = await get(`/api/payslips/addresses?company=${seeded.address}`, { signedIn: false });
+    const addresses = await get(`/api/payslips/addresses?company=${seeded.label}`, { signedIn: false });
     expect(addresses.status).toBe(401);
-    expect(await addresses.json()).not.toHaveProperty('addresses');
+    expect(await addresses.json()).not.toHaveProperty('companies');
   });
 
   it('A PAGE OLDER THAN THESE ROUTES IS TOLD, WORD FOR WORD, TO RELOAD', async () => {
@@ -261,15 +267,15 @@ describe('a payee\'s own payslips, over the wire', () => {
     }
     expect(PAGE_OUT_OF_DATE).toBe('This page is out of date. Reload it and open your payslips again.');
     const list = await post('/api/payslips',
-      { publicKey: seeded.dana.publicKey, answer: '00'.repeat(32), from: seeded.address }, { signedIn: false, page: null });
+      { publicKey: seeded.dana.publicKey, answer: '00'.repeat(32), from: seeded.label }, { signedIn: false, page: null });
     expect(list.body.error).toBe(PAGE_OUT_OF_DATE);
-    const addresses = await get(`/api/payslips/addresses?company=${seeded.address}`, { page: null });
+    const addresses = await get(`/api/payslips/addresses?company=${seeded.label}`, { page: null });
     expect((await addresses.json()).error).toBe(PAGE_OUT_OF_DATE);
   });
 
   it('THE ROUTE THAT RELAYED A COMPANY\'S COMPLETED PAYMENTS ANSWERS NOTHING', async () => {
     /* RED WHEN it is put back: it answered 200 with `{ known, movements }`. */
-    const r = await get(`/api/payslips/paid?company=${seeded.address}`);
+    const r = await get(`/api/payslips/paid?company=${seeded.label}`);
     expect(r.status).toBe(404);
     expect(await r.text()).not.toContain('movements');
   });
@@ -287,7 +293,7 @@ describe('a payee\'s own payslips, over the wire', () => {
       let calls = 0;
       while (status !== 429 && calls < 200) {
         calls += 1;
-        status = (await get(`/api/payslips/addresses?company=${seeded.address}`)).status;
+        status = (await get(`/api/payslips/addresses?company=${seeded.label}`)).status;
       }
       /* RED WHEN the routes are not metered: two hundred answers and no refusal. */
       expect(status).toBe(429);

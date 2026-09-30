@@ -169,7 +169,7 @@ describe('WHO CAN CHANGE THIS COMPANY\'S RULES, ON THE SETTINGS SCREEN', () => {
 
 describe('A COMMITTEE CHANGE, SIGNED FROM THE SETTINGS SCREEN', () => {
   const owed = {
-    company: 'c0'.repeat(32), to: { committee: [k(1), k(2)], threshold: 2 }, why: null, notChangeable: [],
+    company: 'c0'.repeat(32), label: 'co_' + 'c1'.repeat(32), to: { committee: [k(1), k(2)], threshold: 2 }, why: null, notChangeable: [],
     contracts: [{ contract: 'vault', address: 'ab'.repeat(32), counter: '1', now: { committee: [k(1)], threshold: 1 }, signedSeats: [], required: 1 }],
   };
   const offered = answer({ change: { possible: true, why: '1 contract is still held by a committee that is not the company\'s as it stands now.' } });
@@ -205,6 +205,22 @@ describe('A COMMITTEE CHANGE, SIGNED FROM THE SETTINGS SCREEN', () => {
     expect(JSON.parse(sentBodies[0]!)).toEqual({ to: owed.to, signatures: [{ address: 'ab'.repeat(32), counter: '1', seat: 0, signature: k(0xee) }] });
     expect(calls).toContain('POST /api/accounts/acc_1/committee-change/signatures');
     expect(await screen.findByText(/1 change was signed by enough of the signers and sent/)).toBeTruthy();
+  });
+
+  it('A CHANGE WHOSE COMPANY THE SERVICE DID NOT NAME BY ITS LABEL IS REFUSED, WITHOUT OPENING THE WALLET', async () => {
+    const asked: unknown[] = [];
+    for (const unnamed of [{ ...owed, label: null }, { ...owed, label: 'c1'.repeat(32) }, { ...owed, company: 'co_' + 'c1'.repeat(32) }]) {
+      const api = async (path: string) => (path.endsWith('/committee-change') ? unnamed : offered);
+      render(<MaintenancePanel account={account} me={ME} api={api} walletKey={async () => k(1)} roster={async () => account}
+        signInWallet={async (ask) => { asked.push(ask); throw new Error('not asked'); }} />);
+      await act(async () => { await Promise.resolve(); await Promise.resolve(); });
+      await act(async () => { fireEvent.click(document.querySelector('[data-change-authority]')!); });
+      await act(async () => { await Promise.resolve(); await Promise.resolve(); await Promise.resolve(); });
+      /* RED WHEN a wallet is asked to sign for a company named by anything but its label and the account carrying it. */
+      expect(await screen.findByText(/did not say which company this is in a way a wallet can check/)).toBeTruthy();
+      cleanup();
+    }
+    expect(asked).toEqual([]);
   });
 
   it('TELLS A PERSON WITH NOTHING TO SIGN SO, AS NEWS AND NOT AS A FAILURE, WITHOUT OPENING THEIR WALLET', async () => {

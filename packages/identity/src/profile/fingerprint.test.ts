@@ -14,22 +14,28 @@ import { NETWORK } from '../wallet/network.js';
 import { parseAsk } from './request.js';
 import type { UnlockRequest } from './request.js';
 import { unlockKeyFor } from './unlock.js';
+import type { AccountAddress, CompanyLabel } from './company-label.js';
 
 /**
  * **THE THING A PERSON IS ASKED TO COMPARE.**
  *
  * The screen tells somebody *"if you do not recognise the company, do not give
- * the key"* and then shows them sixty-four characters of hex. This file pins
- * the four properties that make a fingerprint worth putting there instead:
+ * the key"*. This file pins the properties that make a fingerprint worth
+ * putting there:
  *
- *   it is a pure function of the address, so ANY CLIENT computes the same one;
- *   two addresses that differ by one character do not share one;
+ *   it is a pure function of the company's label AND its account's address, so
+ *   ANY CLIENT computes the same one, and there is no form that takes the label
+ *   alone;
+ *   the same label on another account renders another fingerprint;
+ *   two values that differ by one character do not share one;
  *   it is wide enough that grinding a match is not worth doing;
  *   **and it is NEVER an input to the key.**
  */
 
-const CO_A = 'dbe119a304f8e7ea882353435c1d536cf2faf4298236a9aae77670e750af65c8';
-const CO_B = '54ef954a25aefff8e1675af10a852ef29d5de5c63a51b64b978bf7bd0eaeca4e';
+const ADDRESS_A = 'dbe119a304f8e7ea882353435c1d536cf2faf4298236a9aae77670e750af65c8' as AccountAddress;
+const ADDRESS_B = '54ef954a25aefff8e1675af10a852ef29d5de5c63a51b64b978bf7bd0eaeca4e' as AccountAddress;
+const CO_A = `co_${'1'.repeat(8)}${ADDRESS_A.slice(8)}` as CompanyLabel;
+const CO_B = `co_${'2'.repeat(8)}${ADDRESS_B.slice(8)}` as CompanyLabel;
 const A = 'https://payroll-a.example';
 const NOW = 1_755_000_000_000;
 const identity = identityFromWords(TEST_MNEMONIC);
@@ -45,25 +51,26 @@ const askFor = (company: string): UnlockRequest => parseAsk({
 }, A, NOW) as UnlockRequest;
 
 const hex = (b: Uint8Array): string => Buffer.from(b).toString('hex');
+const labelOf = (address: string): CompanyLabel => `co_${address}` as CompanyLabel;
 
-describe('IT IS A RENDERING OF THE ADDRESS AND OF NOTHING ELSE', () => {
-  it('TWO CLIENTS COMPUTE THE SAME FINGERPRINT FROM THE SAME ADDRESS', () => {
+describe('IT IS A RENDERING OF THE LABEL AND THE ACCOUNT TOGETHER, AND OF NOTHING ELSE', () => {
+  it('TWO CLIENTS COMPUTE THE SAME FINGERPRINT FROM THE SAME PAIR', () => {
     /*
      * **THIS IS THE PROPERTY THE WHOLE THING RESTS ON.** A person is told the
      * fingerprint out of band — in an invitation, in an email from their
      * employer, over the phone — and compares it against what a wallet shows.
      * That only works if the two were computed by different code and agree.
      *
-     * So the second computation here is an INDEPENDENT walk: the label, the
+     * So the second computation here is an INDEPENDENT walk: the domain, the
      * hash and the alphabet written out directly rather than imported from the
-     * module, in the same discipline `unlock.test.ts` uses for the key. If
-     * `fingerprint.ts` changed its label, its alphabet or its width, this
-     * disagrees.
+     * module, in the same discipline `unlock.test.ts` uses for the key.
+     * RED WHEN: the domain, the order or separator of label and account, the
+     * alphabet or the width changes.
      */
     const ALPHABET = '0123456789ABCDEFGHJKMNPQRSTVWXYZ';
-    const independent = (company: string): string => {
+    const independent = (label: string, account: string): string => {
       const digest = sha256(new TextEncoder()
-        .encode(`midnight-identity/company-fingerprint/v1/${company.toLowerCase()}`));
+        .encode(`midnight-identity/company-fingerprint/v2/${label}/${account.toLowerCase()}`));
       let bits = 0n;
       for (let i = 0; i < 13; i += 1) bits = (bits << 8n) | BigInt(digest[i] as number);
       bits >>= 4n;
@@ -77,72 +84,80 @@ describe('IT IS A RENDERING OF THE ADDRESS AND OF NOTHING ELSE', () => {
 
     let checked = 0;
     for (let i = 0; i < 50; i += 1) {
-      const address = sampleContractAddress();
-      expect(companyFingerprint(address), address).toBe(independent(address));
+      const label = labelOf(sampleContractAddress());
+      const account = sampleContractAddress() as AccountAddress;
+      expect(companyFingerprint(label, account), label).toBe(independent(label, account));
       checked += 1;
     }
     expect(checked).toBe(50);
 
     /* And the recorded values for the two companies the screens are tested
      * with, so a change to any part of this is a diff somebody has to explain. */
-    expect(companyFingerprint(CO_A)).toBe('P5DN-KZ3N-G1RX-1QDF-WZZB');
-    expect(companyFingerprint(CO_B)).toBe('6JTP-4CKK-CPH3-X443-S5QA');
+    expect(companyFingerprint(CO_A, ADDRESS_A)).toBe('1RMG-DWB5-QF84-YXAS-X3T1');
+    expect(companyFingerprint(CO_B, ADDRESS_B)).toBe('NJTE-0KNH-Q1WT-8GAE-5PPS');
   });
 
-  it('TWO ADDRESSES DIFFERING IN ONE CHARACTER DO NOT SHARE ONE', () => {
+  it('THE SAME LABEL ON ANOTHER ACCOUNT IS ANOTHER FINGERPRINT, SO ONE COMPANY CANNOT WEAR ANOTHER\'S', () => {
+    /* RED WHEN: the account is left out of what is rendered. */
+    expect(companyFingerprint(CO_A, ADDRESS_B)).not.toBe(companyFingerprint(CO_A, ADDRESS_A));
+    /* RED WHEN: the label is left out of what is rendered. */
+    expect(companyFingerprint(CO_B, ADDRESS_A)).not.toBe(companyFingerprint(CO_A, ADDRESS_A));
+  });
+
+  it('TWO LABELS, OR TWO ACCOUNTS, DIFFERING IN ONE CHARACTER DO NOT SHARE ONE', () => {
     /* The point of showing it at all. Sixty-four positions, sixteen digits: a
-     * near-miss address must not render a near-miss fingerprint, it must render
+     * near-miss value must not render a near-miss fingerprint, it must render
      * an unrelated one. */
-    const seen = new Set<string>([companyFingerprint(CO_A)]);
+    const seen = new Set<string>([companyFingerprint(CO_A, ADDRESS_A)]);
     let checked = 0;
     for (let at = 0; at < 64; at += 1) {
       for (const digit of '0123456789abcdef') {
-        if (CO_A[at] === digit) continue;
-        const near = `${CO_A.slice(0, at)}${digit}${CO_A.slice(at + 1)}`;
-        const print = companyFingerprint(near);
-        expect(seen.has(print), `${near} collided`).toBe(false);
-        seen.add(print);
-        checked += 1;
+        if (ADDRESS_A[at] === digit) continue;
+        const near = `${ADDRESS_A.slice(0, at)}${digit}${ADDRESS_A.slice(at + 1)}`;
+        for (const print of [companyFingerprint(CO_A, near as AccountAddress), companyFingerprint(labelOf(near), ADDRESS_A)]) {
+          expect(seen.has(print), `${near} collided`).toBe(false);
+          seen.add(print);
+          checked += 1;
+        }
       }
     }
-    expect(checked).toBe(64 * 15);
-    expect(seen.size).toBe(64 * 15 + 1);
+    expect(checked).toBe(2 * 64 * 15);
+    expect(seen.size).toBe(2 * 64 * 15 + 1);
   });
 
-  it('IS THE SAME FOR BOTH SPELLINGS OF ONE COMPANY', () => {
-    /* The fold reaches here too, so a person told the fingerprint of
-     * `DBE1…` and shown a wallet that was asked with `dbe1…` sees one string. */
-    const mixed = [...CO_A].map((c, i) => (i % 2 === 0 ? c.toUpperCase() : c)).join('');
-    expect(companyFingerprint(CO_A.toUpperCase())).toBe(companyFingerprint(CO_A));
-    expect(companyFingerprint(mixed)).toBe(companyFingerprint(CO_A));
+  it('IS THE SAME FOR BOTH SPELLINGS OF ONE ACCOUNT, AND A LABEL HAS ONLY ONE', () => {
+    expect(companyFingerprint(CO_A, ADDRESS_A.toUpperCase() as AccountAddress)).toBe(companyFingerprint(CO_A, ADDRESS_A));
+    /* RED WHEN: the label is folded rather than refused. */
+    expect(() => companyFingerprint(CO_A.toUpperCase() as CompanyLabel, ADDRESS_A)).toThrow(FingerprintError);
   });
 
   it('IS TWENTY SYMBOLS OF A THIRTY-TWO SYMBOL ALPHABET — ONE HUNDRED BITS', () => {
     /*
      * **THE WIDTH IS THE WHOLE SECURITY ARGUMENT AND IT IS PINNED, NOT LEFT TO
-     * TASTE.** Trouble is what a number chosen for looking friendly costs: pairing
-     * shows two digits, and two digits are safe there ONLY because the protocol
-     * commits before it reveals. **There is no commitment available here** — an
-     * attacker picks their own contract address and computes this offline as
-     * many times as they like — so the only thing between a person and a ground
-     * lookalike is how wide this is. `fingerprint.ts` carries the arithmetic.
+     * TASTE.** Pairing shows two digits, and two digits are safe there ONLY
+     * because the protocol commits before it reveals. **There is no commitment
+     * available here** — an attacker picks their own label and deploys their
+     * own account, and computes this offline as many times as they like — so
+     * the only thing between a person and a ground lookalike is how wide this
+     * is. `fingerprint.ts` carries the arithmetic.
      */
-    const print = companyFingerprint(CO_A);
+    const print = companyFingerprint(CO_A, ADDRESS_A);
     expect(print).toMatch(/^[0-9A-HJKMNP-TV-Z]{4}(-[0-9A-HJKMNP-TV-Z]{4}){4}$/u);
     expect(print.replace(/-/gu, '')).toHaveLength(20);
-    /* No `I`, `L`, `O` or `U` anywhere, over a wide sample: Crockford's
-     * alphabet is chosen so nothing reads as one/ell, zero/oh, or as a word. */
     for (let i = 0; i < 200; i += 1) {
-      expect(companyFingerprint(sampleContractAddress())).not.toMatch(/[ILOU]/u);
+      expect(companyFingerprint(labelOf(sampleContractAddress()), sampleContractAddress() as AccountAddress)).not.toMatch(/[ILOU]/u);
     }
   });
 
-  it('refuses anything that is not an address, rather than rendering it', () => {
-    /* A fingerprint of a string that is not an address is a thing a person
-     * would compare and believe. */
-    for (const bad of ['', 'payroll-a', CO_A.slice(0, 63), `${CO_A}0`, `0x${CO_A}`,
-      CO_A.replace('d', 'g')]) {
-      expect(() => companyFingerprint(bad), bad).toThrow(FingerprintError);
+  it('refuses a label where the account belongs and an address where the label belongs, rather than rendering either', () => {
+    /* A fingerprint of a string that is not what it stands for is a thing a
+     * person would compare and believe.
+     * RED WHEN: either reader accepts the other's shape, or anything malformed. */
+    for (const bad of ['', 'payroll-a', ADDRESS_A, CO_A.slice(0, 66), `${CO_A}0`, `0x${ADDRESS_A}`]) {
+      expect(() => companyFingerprint(bad as CompanyLabel, ADDRESS_A), bad).toThrow(FingerprintError);
+    }
+    for (const bad of ['', CO_A, ADDRESS_A.slice(0, 63), `${ADDRESS_A}0`, `0x${ADDRESS_A}`, ADDRESS_A.replace('d', 'g')]) {
+      expect(() => companyFingerprint(CO_A, bad as AccountAddress), bad).toThrow(FingerprintError);
     }
   });
 });
@@ -164,12 +179,12 @@ describe('AND IT IS NEVER AN INPUT TO THE KEY', () => {
   });
 
   it('and the released bytes are unchanged by any of this', () => {
-    /* The vectors, from `unlock.test.ts`, asserted here as well: if the
-     * fingerprint ever reached the derivation these move. */
+    /* The keys for these two labels, recorded from an independent walk of
+     * the derivation: if the fingerprint ever reached the derivation these move. */
     expect(hex(unlockKeyFor(identity, askFor(CO_A))))
-      .toBe('7a9ac85d4b33d2cca39b5b15a8ff1e2b88a0e891ef452f78562b415db33460b7');
+      .toBe('347b798eae3ae0772f06e919328963fbd56fac95fb3062eb8d6c3880e6d408c9');
     expect(hex(unlockKeyFor(identity, askFor(CO_B))))
-      .toBe('d1aa99d5be6d5e49e391a705e4253323051cfa92a5f67e2c407909a6465bd71e');
+      .toBe('c681c227b3601a75ac543579ee6eb50708e6ae777009c4ff028ce9475e629a6e');
   });
 });
 
@@ -267,8 +282,8 @@ describe('§2 — THE CODE FOR A RECEIVING ADDRESS', () => {
     expect(addressFingerprint(address))
       .toMatch(/^[0-9A-HJKMNP-TV-Z]{4}(-[0-9A-HJKMNP-TV-Z]{4}){4}$/u);
     expect(addressFingerprint(address).replace(/-/gu, '')).toHaveLength(20);
-    const bothWays = `${CO_A}${CO_A}`;
-    expect(addressFingerprint(bothWays)).not.toBe(companyFingerprint(CO_A));
+    const bothWays = `${CO_A}/${ADDRESS_A}`;
+    expect(addressFingerprint(bothWays)).not.toBe(companyFingerprint(CO_A, ADDRESS_A));
   });
 
   it('refuses anything that is not an address, rather than rendering it', () => {

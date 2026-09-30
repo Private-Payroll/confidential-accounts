@@ -16,6 +16,7 @@
  * about arithmetic this product does not perform.
  */
 import { describe, it, expect } from 'vitest';
+import { drawCompanyLabel } from 'midnight-identity/profile/company-label';
 import { mkdtempSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
@@ -57,7 +58,7 @@ const services = () => {
 /** A company, its payroll, and nothing raised yet. */
 async function aPayroll(people: Array<{ asset: string; amount: bigint }>) {
   const { accounts, payroll } = services();
-  const created = await accounts.create('Northwind Ltd', [{ name: 'Ada', role: 'admin' }], 1);
+  const created = await accounts.create('Northwind Ltd', [{ name: 'Ada', role: 'admin' }], 1, undefined, drawCompanyLabel());
   people.forEach((p, i) => {
     payroll.hireDirect(created.account.id, {
       name: `Payee ${i}`, email: `p${i}@a.co`, title: 'Eng', asset: p.asset, baseAmount: p.amount,

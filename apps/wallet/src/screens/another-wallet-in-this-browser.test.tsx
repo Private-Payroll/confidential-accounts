@@ -15,6 +15,8 @@
  * both what was sent and what was left in the store.
  */
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
+import type { AccountAddress, CompanyLabel } from 'midnight-identity/profile/company-label';
+import type { LabelReader } from './company-on-chain.js';
 import { cleanup, fireEvent, render, screen } from '../testing/render.js';
 import { Buffer as PolyfillBuffer } from 'buffer/';
 import { IDBFactory } from 'fake-indexeddb';
@@ -38,7 +40,11 @@ import { Approve } from './approve.js';
 
 const NOW = 1_755_000_000_000;
 const ORIGIN = 'https://payroll-a.example';
-const COMPANY = 'dbe119a304f8e7ea882353435c1d536cf2faf4298236a9aae77670e750af65c8';
+/* The company's label, and the account that carries it on the chain. */
+const COMPANY = 'co_1f2e3d4c5b6a79880a1b2c3d4e5f60718293a4b5c6d7e8f90a1b2c3d4e5f6071' as CompanyLabel;
+const ACCOUNT = 'dbe119a304f8e7ea882353435c1d536cf2faf4298236a9aae77670e750af65c8' as AccountAddress;
+/* The chain, as this wallet reads it: the account carries the company's label. */
+const carries: LabelReader = async () => ({ of: 'carries', label: COMPANY });
 
 let port: WatchedPort;
 beforeEach(() => {
@@ -71,7 +77,7 @@ const ask = (kind: 'sign-in' | 'unlock') => ({
   purpose: 'We need to know it is you.',
   nonce: `n-${kind}`,
   expiresAt: NOW + 600_000,
-  ...(kind === 'unlock' ? { company: COMPANY } : {}),
+  ...(kind === 'unlock' ? { company: COMPANY, account: ACCOUNT } : {}),
 });
 
 type Wallet = Awaited<ReturnType<typeof twoWallets>>['first'];
@@ -87,7 +93,7 @@ async function asked(wallet: Wallet, kind: 'sign-in' | 'unlock') {
     addEventListener: (_t, h) => { handlers.push(h); },
     removeEventListener: () => { /* torn down by cleanup */ },
   };
-  render(<Approve identity={wallet.identity} secret={wallet.secret} port={port} view={view} now={() => NOW} />);
+  render(<Approve readLabel={carries} identity={wallet.identity} secret={wallet.secret} port={port} view={view} now={() => NOW} />);
   for (const h of handlers) {
     h({ source: opener, origin: ORIGIN, data: ask(kind) } as unknown as MessageEvent);
   }

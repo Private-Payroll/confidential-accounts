@@ -19,6 +19,8 @@
  * wallet again**, because keeping it in storage would put it where any script
  * on the page can read it.
  */
+import { readAccountAddress, readCompanyLabel } from 'midnight-identity/profile/company-label';
+import type { AccountAddress, CompanyLabel, VaultAddress } from 'midnight-identity/profile/company-label';
 import { seal, sign, toHex, unseal, unwrapKey, type Hex, type Sealed } from '../../../src/core/crypto.js';
 import {
   askWalletToSignIn, openWalletDialog, type Openable, type WalletDialog,
@@ -37,8 +39,8 @@ import { openAccount as openSealedAccount, approvalMessage } from '../../../src/
 import { clobberRefusal, seatToPromote } from './seat-repair.js';
 import type { Account, SealedAccount } from '../../../src/core/types.js';
 import {
-  forgetRememberedCompanies, markOlderListTaken, olderListNotYetTaken, onlyCompanyAddresses,
-  rememberCompany, rememberedCompanies, tidyCompanyAddress,
+  forgetRememberedCompanies, markOlderListTaken, olderListNotYetTaken, onlyCompanyLabels,
+  rememberCompany, rememberedCompanies, tidyCompanyLabel,
 } from './my-payslips.js';
 
 export interface AccountKeys {
@@ -260,8 +262,10 @@ let walletAddress: string | null = null;
 let releasedCompanyKey: {
   accountId: string;
   key: Hex;
-  /** The company address the wallet was asked about, which is what a payslip key from `key` names. */
-  address: string;
+  /** The company's label the wallet was asked about, which is what a payslip key from `key` names. */
+  label: CompanyLabel;
+  /** The account the wallet read that label off, or null when the company has none yet. */
+  account: AccountAddress | null;
   /** Public. Given in the same answer as the company key, so it is that wallet's. */
   committeeKey: { tag: string; value: string } | null;
 } | null = null;
@@ -885,8 +889,13 @@ export async function openKeysWithWallet(
 async function openKeysOnceOpen(
   walletOrigin: string, view: Openable, atOrigin: string,
   dialog: WalletDialog,
-  company: { accountId: string; address: string } | null,
-): Promise<void> {
+  /**
+   * The company whose keys are wanted too: its label and the account that
+   * carries it, as the service's record gives them; `'new'` when this tab is
+   * starting a company and the wallet is to draw its label; or null.
+   */
+  company: { accountId: string; label: CompanyLabel; account: AccountAddress | null } | 'new' | null,
+): Promise<{ drawn: CompanyLabel | null }> {
   const who = me;
   if (who === null) throw new Error('not signed in');
   /* **THE ADDRESS THIS TAB SIGNED IN AS, FROM THE SERVER'S OWN ANSWER TO THAT
@@ -896,7 +905,8 @@ async function openKeysOnceOpen(
   const released = await askWalletForKeys(view, walletOrigin, {
     person: who.id,
     signedInAs,
-    company: company?.address ?? null,
+    company: company === 'new' ? 'new' : company?.label ?? null,
+    account: company === 'new' || company === null ? null : company.account,
     atOrigin,
     name: US_TO_A_WALLET.name,
     rdns: US_TO_A_WALLET.rdns,
@@ -914,14 +924,14 @@ async function openKeysOnceOpen(
      */
     if (key !== encKey) throw new SavedKeysDidNotOpen(NOT_THE_SAME_WALLET);
     if (signedInAs !== null) keyCheckedAgainstSignIn = true;
-    if (company !== null && released.companyKey !== null) {
+    if (company !== null && company !== 'new' && released.companyKey !== null) {
       /* **RECORDED WITH THE COMPANY IT BELONGS TO**, and only here: this answer's
        * keyring key has just matched the one this tab's saved keys are open with,
        * so its company key came from that same wallet. A payslip key can only
        * ever be derived from it, for THIS company. */
       releasedCompanyKey = {
-        accountId: company.accountId, key: toHex(released.companyKey), address: company.address,
-        committeeKey: released.committeeKey,
+        accountId: company.accountId, key: toHex(released.companyKey), label: company.label,
+        account: company.account, committeeKey: released.committeeKey,
       };
     }
   } else {
@@ -944,6 +954,25 @@ async function openKeysOnceOpen(
     /* A company key given beside keys opened for the first time here has
      * nothing to be checked against, so it is not kept. */
   }
+  return { drawn: company === 'new' ? released.company : null };
+}
+
+/**
+ * **THE COMPANY AS THE SERVICE'S RECORD NAMES IT, FOR THE WALLET**: its label,
+ * and the account that carries the label when it has one. From `POST
+ * /api/accounts/:id/unlock`, which sends no body: there is nothing this page
+ * could tell the service about which company it is that the service should
+ * believe. Refused by name when the answer is not a label and an address.
+ */
+async function companyNamedFor(accountId: string): Promise<{ accountId: string; label: CompanyLabel; account: AccountAddress | null }> {
+  const answer = await api(`/api/accounts/${accountId}/unlock`, { method: 'POST' });
+  const label = readCompanyLabel(answer?.company);
+  const account = answer?.account === null || answer?.account === undefined ? null : readAccountAddress(answer.account);
+  if (label === null || (answer?.account !== null && answer?.account !== undefined && account === null)) {
+    throw new Error('the service did not name this company in a way your wallet can check - its label, and the '
+      + 'account that carries it - so your wallet was not asked.');
+  }
+  return { accountId, label, account };
 }
 
 /**
@@ -965,7 +994,7 @@ export async function payslipKeyAndPayeeAddress(
   view: Openable = walletInThisPage(window),
   atOrigin: string = window.location.origin,
 ): Promise<{
-  companyKey: Hex; companyAddress: string; disclosure: { handle: string; nonce: string; response: unknown };
+  companyKey: Hex; companyLabel: CompanyLabel; disclosure: { handle: string; nonce: string; response: unknown };
 }> {
   if (!sessionLive) throw new Error('not signed in');
   /* OPENED IN THE CLICK, and carried through both asks. */
@@ -982,18 +1011,15 @@ export async function payslipKeyAndPayeeAddress(
         throw new Error('your saved keys are not open in this tab, so the key for this company '
           + 'cannot be checked against them. Open the company with your wallet and try again.');
       }
-      /* THE COMPANY COMES FROM THE SIGN-IN. This is a POST that sends no body:
-       * there is nothing this page could tell the server about which company it is
-       * that the server should believe. */
-      const { company } = await api(`/api/accounts/${accountId}/unlock`, { method: 'POST' });
-      await openKeysOnceOpen(walletOrigin, view, atOrigin, dialog, { accountId, address: company });
+      /* THE COMPANY COMES FROM THE SIGN-IN, by `companyNamedFor`. */
+      await openKeysOnceOpen(walletOrigin, view, atOrigin, dialog, await companyNamedFor(accountId));
       companyKey = companyKeyReleasedFor(accountId);
       if (companyKey === null) throw new Error('your wallet did not give a key for this company.');
     }
-    const companyAddress = releasedCompanyKey?.accountId === accountId ? releasedCompanyKey.address : null;
-    if (companyAddress === null) throw new Error('your wallet did not give a key for this company.');
+    const companyLabel = releasedCompanyKey?.accountId === accountId ? releasedCompanyKey.label : null;
+    if (companyLabel === null) throw new Error('your wallet did not give a key for this company.');
     const disclosure = await payeeDisclosureFromWallet(accountId, walletOrigin, view, dialog);
-    return { companyKey, companyAddress, disclosure };
+    return { companyKey, companyLabel, disclosure };
   } catch (e) {
     putAway(dialog);
     throw e;
@@ -1007,8 +1033,8 @@ export async function payslipKeyAndPayeeAddress(
  * **A SIGNER MADE PAYABLE BY THEIR OWN COMPANY, AND THAT COMPANY PUT ON THEIR
  * OWN LIST OF COMPANIES THAT PAY THEM.** The key and the address come from the
  * wallet as `payslipKeyAndPayeeAddress` gets them; `send` hands them to the
- * service; once it has taken them, the company address the payslip key was
- * worked out from is saved with this person, as an invitation's is.
+ * service; once it has taken them, the label of the company the payslip key
+ * was worked out from is saved with this person, as an invitation's is.
  */
 export async function payYourselfHere(
   accountId: string, walletOrigin: string,
@@ -1016,10 +1042,10 @@ export async function payYourselfHere(
   view: Openable = walletInThisPage(window),
   atOrigin: string = window.location.origin,
 ): Promise<void> {
-  const { companyKey, companyAddress, disclosure } = await payslipKeyAndPayeeAddress(
+  const { companyKey, companyLabel, disclosure } = await payslipKeyAndPayeeAddress(
     accountId, walletOrigin, view, atOrigin);
   await send(companyKey, disclosure);
-  await rememberCompanyThatPaysYou(companyAddress);
+  await rememberCompanyThatPaysYou(companyLabel);
 }
 
 /**
@@ -1033,9 +1059,22 @@ export async function companyKeysForVaults(
   accountId: string, walletOrigin: string,
   view: Openable = walletInThisPage(window),
   atOrigin: string = window.location.origin,
-): Promise<{ companyKey: Hex; committeeKey: { tag: string; value: string }; company: Hex }> {
+): Promise<{
+  companyKey: Hex; committeeKey: { tag: string; value: string };
+  /** The company's label, which the keys are derived from. */
+  company: CompanyLabel;
+  /**
+   * The account that carries it: the contract a new vault is pinned to and a
+   * deposit is checked against. Its own field, and never the label.
+   */
+  account: AccountAddress;
+}> {
   if (!sessionLive) throw new Error('not signed in');
-  const { company } = await api(`/api/accounts/${accountId}/unlock`, { method: 'POST' });
+  const company = await companyNamedFor(accountId);
+  /* Everything done with these keys reaches the company's account on the chain, so a company with none gets no keys here. */
+  if (company.account === null) {
+    throw new Error('this company has no account on the chain yet, so nothing about its vaults can be done here.');
+  }
   let companyKey = companyKeyReleasedFor(accountId);
   let committeeKey = committeeKeyReleasedFor(accountId);
   if (companyKey === null || committeeKey === null) {
@@ -1045,7 +1084,7 @@ export async function companyKeysForVaults(
     }
     const dialog = openTheWallet(view, walletOrigin);
     try {
-      await openKeysOnceOpen(walletOrigin, view, atOrigin, dialog, { accountId, address: company });
+      await openKeysOnceOpen(walletOrigin, view, atOrigin, dialog, company);
     } catch (e) {
       putAway(dialog);
       throw e;
@@ -1058,7 +1097,7 @@ export async function companyKeysForVaults(
   if (companyKey === null || committeeKey === null) {
     throw new Error('your wallet did not give this company\'s keys, so nothing about its vaults can be done here.');
   }
-  return { companyKey, committeeKey, company: company as Hex };
+  return { companyKey, committeeKey, company: company.label, account: company.account };
 }
 
 /**
@@ -1067,7 +1106,7 @@ export async function companyKeysForVaults(
  */
 export async function payIntoAVaultFromTheWallet(
   walletOrigin: string,
-  ask: { company: string; vault: string; transaction: string },
+  ask: { company: CompanyLabel; account: AccountAddress; vault: VaultAddress; transaction: string },
   view: Openable = walletInThisPage(window),
   atOrigin: string = window.location.origin,
   already?: WalletDialog,
@@ -1093,7 +1132,7 @@ export async function payIntoAVaultFromTheWallet(
  */
 export async function signCommitteeChangeFromTheWallet(
   walletOrigin: string,
-  ask: Pick<CommitteeAsked, 'company' | 'to' | 'contracts'>,
+  ask: Pick<CommitteeAsked, 'company' | 'account' | 'to' | 'contracts'>,
   view: Openable = walletInThisPage(window),
   atOrigin: string = window.location.origin,
   already?: WalletDialog,
@@ -1251,7 +1290,7 @@ export async function rememberAccount(accountId: string, keys: AccountKeys) {
  */
 export function companiesThatPayYou(storage?: Pick<Storage, 'getItem'> | null): string[] {
   if (me === null) return [];
-  const saved = encKey === null ? [] : onlyCompanyAddresses(keyring.paidBy ?? []);
+  const saved = encKey === null ? [] : onlyCompanyLabels(keyring.paidBy ?? []);
   return [...new Set([...saved, ...rememberedCompanies(me.id, storage)])];
 }
 
@@ -1260,7 +1299,7 @@ export function companiesThatPayYou(storage?: Pick<Storage, 'getItem'> | null): 
  * this tab has them open. Before they are open, into this browser's list for
  * this person, which is moved into the saved keys the next time they are
  * opened here, and says so there if it cannot be. Refuses anything that is not
- * a company address.
+ * a company's label.
  *
  * **ONCE THE SAVED KEYS ARE OPEN, A REFUSED SAVE IS SAID, NEVER KEPT IN THIS
  * BROWSER INSTEAD.** A person whose first keys cannot be saved from this tab is
@@ -1268,17 +1307,17 @@ export function companiesThatPayYou(storage?: Pick<Storage, 'getItem'> | null): 
  * browser with nothing on screen to say so.
  */
 export async function rememberCompanyThatPaysYou(
-  address: string, storage?: Pick<Storage, 'getItem' | 'setItem'> | null,
+  label: string, storage?: Pick<Storage, 'getItem' | 'setItem'> | null,
 ): Promise<void> {
   const who = me;
   if (who === null) throw new Error('not signed in');
-  const tidy = tidyCompanyAddress(address);
+  const tidy = tidyCompanyLabel(label);
   if (tidy === null) {
-    throw new Error('That is not a company address. It is 64 characters of 0-9 and a-f; the company '
+    throw new Error('That is not a company\'s label. It is co_ and 64 characters of 0-9 and a-f; the company '
       + 'that pays you can tell you theirs.');
   }
   if (encKey !== null) {
-    const held = onlyCompanyAddresses(keyring.paidBy ?? []);
+    const held = onlyCompanyLabels(keyring.paidBy ?? []);
     if (held.includes(tidy)) return;
     await putBundle({ ...keyring, paidBy: [...held, tidy] });
     return;
@@ -1295,7 +1334,8 @@ export async function rememberCompanyThatPaysYou(
  * **AND THE LIST AN OLDER PAYSLIPS PAGE KEPT HERE FOR NOBODY IN PARTICULAR**,
  * read once: into the saved keys of the first person whose saved keys take it,
  * and then marked as taken so it is not read again. It is left where it is and
- * not emptied. It holds company addresses and nothing else, and anybody using
+ * not emptied. What that page kept were companies' account addresses, which
+ * name no company any more, so only a label in it is taken - and anybody using
  * this browser could already read it.
  */
 export async function bringCompaniesThatPayYouAcross(
@@ -1306,7 +1346,7 @@ export async function bringCompaniesThatPayYouAcross(
   const here = rememberedCompanies(who.id, storage);
   const older = olderListNotYetTaken(storage);
   if (here.length === 0 && older.length === 0) return;
-  const held = onlyCompanyAddresses(keyring.paidBy ?? []);
+  const held = onlyCompanyLabels(keyring.paidBy ?? []);
   const next = [...new Set([...held, ...here, ...older])];
   if (next.length > held.length) await putBundle({ ...keyring, paidBy: next });
   if (me !== who) return;
@@ -1535,13 +1575,17 @@ export const companyAwaitingSetup = (): string | null => (startedByTheSignedIn(p
  *
  * ── THE ORDER, WHICH IS THE WHOLE OF IT ───────────────────────────────────
  *
- *   1. **The keys saved for this person are opened**, with the key their wallet
- *      gives for them on this site - unless this tab has them open already, in
- *      which case the wallet is not asked at all. **Keys that do not open are
- *      refused here, before anything is created**, so a company is never made
- *      whose keys could not be saved beside them.
- *   2. **The company is brought into being**, and the ledger assigns whatever it
- *      assigns. Nothing about saving the founder's keys waits on it.
+ *   1. **The wallet is asked, and it makes up the new company's label.** In
+ *      the same answer it gives the key the keys saved for this person here are
+ *      sealed under, and those keys are opened with it - or, when this tab has
+ *      them open already, the key is checked against the one it holds. **Keys
+ *      that do not open are refused here, before anything is created**, so a
+ *      company is never made whose keys could not be saved beside them. The
+ *      label is the wallet's: this page asks for a new company and does not
+ *      choose which, so neither it nor the service behind it can.
+ *   2. **The company is brought into being with that label**, and the ledger
+ *      assigns whatever it assigns. Nothing about saving the founding signer's
+ *      keys waits on it.
  *   3. **The founder's own secrets are saved beside everything already saved**,
  *      under the same key. From here a second device, or a recovery, opens them.
  *
@@ -1578,16 +1622,19 @@ export async function createCompanyWithWallet(
   }
 
   /*
-   * **THE WINDOW OPENS IN THE PRESS**, when there is a wallet to ask. A tab that
-   * already holds this person's key asks nobody.
+   * **THE WINDOW OPENS IN THE PRESS, EVERY TIME.** The new company's label is
+   * the wallet's to draw, so a tab that already holds this person's key asks
+   * the wallet too - and the key in its answer must be the one this tab holds.
    */
-  const dialog = encKey === null ? openTheWallet(view, walletOrigin) : null;
+  const alreadyOpen = encKey !== null;
+  const dialog = openTheWallet(view, walletOrigin);
   try {
-    if (dialog !== null) await openKeysOnceOpen(walletOrigin, view, atOrigin, dialog, null);
-    /* **A TAB THAT ALREADY HOLDS THE KEY READS WHAT IS SAVED NOW**, so keys saved
+    const { drawn } = await openKeysOnceOpen(walletOrigin, view, atOrigin, dialog, 'new');
+    if (drawn === null) throw new Error('Your wallet did not make up a label for the new company, so nothing was created. Update your wallet and try again.');
+    /* **A TAB THAT ALREADY HELD THE KEY READS WHAT IS SAVED NOW**, so keys saved
      * since - or keys that no longer open with this key - are known before a
      * company exists rather than after. */
-    else await reopenSavedKeys();
+    if (alreadyOpen) await reopenSavedKeys();
     /* Asked before anything is created, so a refusal costs nothing. */
     if (savedKeys !== 'some' && !keyCheckedAgainstSignIn) throw new FirstKeysNeedTheSignIn(FIRST_KEYS_NEED_THE_SIGN_IN);
 
@@ -1597,7 +1644,7 @@ export async function createCompanyWithWallet(
      */
     const created = await api('/api/accounts', {
       method: 'POST',
-      body: JSON.stringify({ name: spec.name, signers: spec.signers, threshold: spec.threshold }),
+      body: JSON.stringify({ name: spec.name, signers: spec.signers, threshold: spec.threshold, companyLabel: drawn }),
     });
 
     const accountId = String(created.account.id);
@@ -1636,10 +1683,10 @@ export async function createCompanyWithWallet(
     pendingCompany = null;
     return { accountId };
   } catch (e) {
-    if (dialog !== null) putAway(dialog);
+    putAway(dialog);
     throw e;
   } finally {
-    if (dialog !== null) doneWaiting();
+    doneWaiting();
   }
 }
 

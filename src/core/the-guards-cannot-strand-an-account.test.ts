@@ -1,4 +1,5 @@
 import { describe, it, expect } from 'vitest';
+import { drawCompanyLabel } from 'midnight-identity/profile/company-label';
 import { mkdtempSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
@@ -7,6 +8,12 @@ import { SimulatedLedger, SimulatedCommitments } from './ledger.js';
 import type { Ledger, LedgerStatus } from './ledger.js';
 import { AccountService, openAccount, sealAccount } from './account.js';
 import type { Account } from './types.js';
+
+/** The value, or a failure that says one was missing: an index that finds nothing is a broken test, not a value to carry on with. */
+function present<T>(value: T | undefined): T {
+  if (value === undefined) throw new Error('expected a value here, and there was none');
+  return value;
+}
 
 /**
  * **THE GUARDS AGAINST STRANDING AN ACCOUNT STOP TRUSTING OUR OWN NUMBER,
@@ -120,7 +127,7 @@ describe('the bar and the seats are the ledger\'s, and our copy cannot move eith
      * refusal quoting only "3" will be read against a screen rendering our 2.
      */
     const h = harness();
-    const c = await h.accounts.create('Northwind Ltd', THREE, 3);
+    const c = await h.accounts.create('Northwind Ltd', THREE, 3, undefined, drawCompanyLabel());
     editAccount(h, c.account.id, c.viewingKey, a => { a.policy.threshold = 2; });
 
     /*
@@ -132,7 +139,7 @@ describe('the bar and the seats are the ledger\'s, and our copy cannot move eith
      * mutation's own death is easier to read this way.
      */
     const attempt = h.accounts.proposeRemoval(
-      c.account.id, c.viewingKey, c.secrets[2].signerId, c.secrets[0].signerId);
+      c.account.id, c.viewingKey, present(c.secrets[2]).signerId, present(c.secrets[0]).signerId);
     await expect(attempt).rejects.toThrow(/would leave 2 signers against a threshold of 3/);
 
     const err = await attempt.catch((e: Error) => e) as Error;
@@ -155,10 +162,10 @@ describe('the bar and the seats are the ledger\'s, and our copy cannot move eith
      * here, and the smaller of the two counts is the one that decides.
      */
     const h = harness();
-    const c = await h.accounts.create('Northwind Ltd', THREE, 3);
+    const c = await h.accounts.create('Northwind Ltd', THREE, 3, undefined, drawCompanyLabel());
     editAccount(h, c.account.id, c.viewingKey, a => { a.policy.threshold = 2; });
 
-    const attempt = h.accounts.rotate(c.account.id, c.viewingKey, [c.secrets[2].signerId]);
+    const attempt = h.accounts.rotate(c.account.id, c.viewingKey, [present(c.secrets[2]).signerId]);
     await expect(attempt).rejects.toThrow(/would leave 2 active of a threshold of 3/);
 
     const err = await attempt.catch((e: Error) => e) as Error;
@@ -181,13 +188,13 @@ describe('the bar and the seats are the ledger\'s, and our copy cannot move eith
      * account whose threshold exceeds its seats can never reach it again.
      */
     const h = harness();
-    const c = await h.accounts.create('Northwind Ltd', THREE, 2);
+    const c = await h.accounts.create('Northwind Ltd', THREE, 2, undefined, drawCompanyLabel());
     editAccount(h, c.account.id, c.viewingKey, a => {
-      a.signers.push({ ...a.signers[0], id: 'sgn_ghost', name: 'A seat the tree does not hold' });
+      a.signers.push({ ...present(a.signers[0]), id: 'sgn_ghost', name: 'A seat the tree does not hold' });
     });
 
     const attempt = h.accounts.proposeThresholdChange(
-      c.account.id, c.viewingKey, 4, c.secrets[0].signerId);
+      c.account.id, c.viewingKey, 4, present(c.secrets[0]).signerId);
     await expect(attempt).rejects.toThrow(/cannot exceed the 3 signers the ledger holds seats for/);
 
     const err = await attempt.catch((e: Error) => e) as Error;
@@ -208,11 +215,11 @@ describe('the bar and the seats are the ledger\'s, and our copy cannot move eith
      * the company is entitled to raise, blocked by a number we alone hold.
      */
     const h = harness();
-    const c = await h.accounts.create('Northwind Ltd', THREE, 3);
+    const c = await h.accounts.create('Northwind Ltd', THREE, 3, undefined, drawCompanyLabel());
     editAccount(h, c.account.id, c.viewingKey, a => { a.policy.threshold = 2; });
 
     const p = await h.accounts.proposeThresholdChange(
-      c.account.id, c.viewingKey, 2, c.secrets[0].signerId);
+      c.account.id, c.viewingKey, 2, present(c.secrets[0]).signerId);
 
     expect(p.kind).toBe('set-threshold');
     expect(p.status).toBe('open');
@@ -226,14 +233,14 @@ describe('the bar and the seats are the ledger\'s, and our copy cannot move eith
      * One account, all three sites, nothing bent and nothing edited.
      */
     const h = harness();
-    const c = await h.accounts.create('Northwind Ltd', THREE, 2);
+    const c = await h.accounts.create('Northwind Ltd', THREE, 2, undefined, drawCompanyLabel());
 
     const removal = await h.accounts.proposeRemoval(
-      c.account.id, c.viewingKey, c.secrets[2].signerId, c.secrets[0].signerId);
+      c.account.id, c.viewingKey, present(c.secrets[2]).signerId, present(c.secrets[0]).signerId);
     expect(removal.status).toBe('open');
 
     const raise = await h.accounts.proposeThresholdChange(
-      c.account.id, c.viewingKey, 3, c.secrets[0].signerId);
+      c.account.id, c.viewingKey, 3, present(c.secrets[0]).signerId);
     expect(raise.kind).toBe('set-threshold');
 
     const rotated = await h.accounts.rotate(c.account.id, c.viewingKey);
@@ -257,10 +264,10 @@ describe('a guard that cannot read the chain refuses, and says which silence it 
       if (broken) throw new Error('indexer unreachable');
       return real;
     });
-    const c = await h.accounts.create('Northwind Ltd', THREE, 2);
+    const c = await h.accounts.create('Northwind Ltd', THREE, 2, undefined, drawCompanyLabel());
 
     const attempt = h.accounts.proposeRemoval(
-      c.account.id, c.viewingKey, c.secrets[2].signerId, c.secrets[0].signerId);
+      c.account.id, c.viewingKey, present(c.secrets[2]).signerId, present(c.secrets[0]).signerId);
     await expect(attempt).rejects.toThrow(/refusing to remove Cleo as a signer/);
 
     const err = await attempt.catch((e: Error) => e) as Error;
@@ -283,9 +290,9 @@ describe('a guard that cannot read the chain refuses, and says which silence it 
      */
     let broken = true;
     const h = harness(real => (broken ? null : real));
-    const c = await h.accounts.create('Northwind Ltd', THREE, 2);
+    const c = await h.accounts.create('Northwind Ltd', THREE, 2, undefined, drawCompanyLabel());
 
-    const attempt = h.accounts.rotate(c.account.id, c.viewingKey, [c.secrets[2].signerId]);
+    const attempt = h.accounts.rotate(c.account.id, c.viewingKey, [present(c.secrets[2]).signerId]);
     await expect(attempt)
       .rejects.toThrow(/refusing to change the locks on this account without 1 of its signers/);
 
@@ -316,7 +323,7 @@ describe('a guard that cannot read the chain refuses, and says which silence it 
      * because "guard" means the operation that removes somebody.
      */
     const h = harness(() => { throw new Error('indexer unreachable'); });
-    const c = await h.accounts.create('Northwind Ltd', THREE, 2);
+    const c = await h.accounts.create('Northwind Ltd', THREE, 2, undefined, drawCompanyLabel());
 
     const rotated = await h.accounts.rotate(c.account.id, c.viewingKey);
 
@@ -341,10 +348,10 @@ describe('a guard that cannot read the chain refuses, and says which silence it 
     let broken = true;
     const h = harness(real =>
       broken && real ? { ...real, threshold: undefined as unknown as number } : real);
-    const c = await h.accounts.create('Northwind Ltd', THREE, 2);
+    const c = await h.accounts.create('Northwind Ltd', THREE, 2, undefined, drawCompanyLabel());
 
     const attempt = h.accounts.proposeThresholdChange(
-      c.account.id, c.viewingKey, 3, c.secrets[0].signerId);
+      c.account.id, c.viewingKey, 3, present(c.secrets[0]).signerId);
     await expect(attempt)
       .rejects.toThrow(/refusing to open a round to change this account's threshold to 3/);
 

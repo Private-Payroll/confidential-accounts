@@ -90,8 +90,10 @@ const aDeploy = () => ({
   }] }]]),
 });
 
+/** The company's label, which its signers' wallets derive their committee keys from. */
+const LABEL = 'co_' + 'c1'.repeat(32);
 const account = (over: Partial<SealedAccount> = {}): SealedAccount => ({
-  id: 'acc_1', createdAt: '', keyEpoch: 0, threshold: 2, signerCount: 2, memberUserIds: ['ada', 'bo'],
+  id: 'acc_1', createdAt: '', keyEpoch: 0, threshold: 2, signerCount: 2, memberUserIds: ['ada', 'bo'], companyLabel: LABEL,
   pendingSigners: [], wrappedKeys: [], inboxPublicKey: '', ...over,
 } as unknown as SealedAccount);
 
@@ -552,7 +554,8 @@ describe('THE COMPANY ACCOUNT STANDS BEHIND EVERY VAULT', () => {
     serviceKey = key(9);
     const r = await call('/api/accounts/acc_1/authority', 'ada');
     expect(r.status).toBe(200);
-    expect(r.body.company).toEqual({ address: hex(0xc0), threshold: 2, signerCount: 2 });
+    /* RED WHEN the label is left out: a signer's wallet would have nothing to derive its committee key from. */
+    expect(r.body.company).toEqual({ address: hex(0xc0), label: LABEL, threshold: 2, signerCount: 2 });
     const [acct, vault] = r.body.contracts;
     expect(acct).toMatchObject({ contract: 'account', heldByTheCompany: false, shape: 'one-key', changes: '0', seatsOutsideTheCommittee: 1 });
     expect(vault).toMatchObject({ contract: 'vault', heldByTheCompany: false, threshold: 2, seatsOutsideTheCommittee: 1 });
@@ -956,7 +959,7 @@ describe('A COMMITTEE CHANGED AFTER A SIGNER JOINS OR LEAVES', () => {
     expect(r.status).toBe(200);
     /* RED WHEN: the account is left out - every vault pays out on it, so its committee must change too. */
     expect(r.body).toEqual({
-      company: hex(0xc0), to, why: null, notChangeable: [],
+      company: hex(0xc0), label: LABEL, to, why: null, notChangeable: [],
       contracts: [
         { contract: 'account', address: hex(0xc0), counter: '1', now: { committee: [key(1)], threshold: 1 }, signedSeats: [], required: 1 },
         { contract: 'vault', address: VAULT, counter: '1', now: { committee: [key(1)], threshold: 1 }, signedSeats: [], required: 1 },
