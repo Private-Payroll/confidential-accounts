@@ -173,7 +173,12 @@ const levelsOf = (leaves: Hex[], amounts: bigint[]): SumNode[][] => {
       `this run has ${leaves.length} payees and ${amounts.length} amounts; every payee is paid one amount`);
   }
   amounts.forEach((a, i) => {
-    if (a < 0n || a > MAX_SUM) throw new Error(`payee ${i + 1}'s amount is outside what a run can carry`);
+    if (a < 0n) {
+      throw new Error(`payee ${i + 1}'s amount is below zero, and a payment is never negative; correct the amount`);
+    }
+    if (a > MAX_SUM) {
+      throw new Error(`payee ${i + 1}'s amount is larger than any payment can be; check the amount and its units`);
+    }
   });
   const levels: SumNode[][] = [leaves.map((leaf, i) => ({
     node: pureCircuits.sumLeafNode(fromHex(leaf), at(amounts, i, 'amount')),
@@ -187,7 +192,7 @@ const levelsOf = (leaves: Hex[], amounts: bigint[]): SumNode[][] => {
       const right = below[j + 1] ?? EMPTY;
       const sum = left.sum + right.sum;
       /* Refused here as the contract refuses it: a sum past 128 bits cannot be cast back. */
-      if (sum > MAX_SUM) throw new Error('this run pays more in total than a run can carry');
+      if (sum > MAX_SUM) throw new Error("this run's total is larger than any run can carry; check the amounts and their units");
       above.push({ node: pureCircuits.sumInnerNode(left.node, left.sum, right.node, right.sum), sum });
     }
     levels.push(above);

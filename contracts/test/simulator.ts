@@ -901,6 +901,35 @@ export class AccountSimulator {
     return this.run('cancel', (c) => this.contract.impureCircuits.cancel(c, proposal));
   }
 
+  /** Holds an open run, as the acting device: it is neither charged nor paid until released. */
+  holdRun(proposal: Uint8Array) {
+    return this.run('holdRun', (c) => this.contract.impureCircuits.holdRun(c, proposal));
+  }
+
+  /** Releases a held run: at once for the signer who held it, otherwise one agreement more. */
+  releaseHold(proposal: Uint8Array) {
+    return this.run('releaseHold', (c) => this.contract.impureCircuits.releaseHold(c, proposal));
+  }
+
+  /** Replaces `oldLeaf` with `newLeaf` in its slot under an approved proposal over `reseatPayload`. */
+  reseatSigner(oldLeaf: Uint8Array, newLeaf: Uint8Array, proposal: Uint8Array) {
+    return this.run('reseatSigner',
+      (c) => this.contract.impureCircuits.reseatSigner(c, oldLeaf, newLeaf, proposal));
+  }
+
+  /** Sets the approvals a policy change needs, under an approved proposal over `setPolicyBarPayload`. */
+  setPolicyBar(newBar: bigint, proposal: Uint8Array) {
+    return this.run('setPolicyBar',
+      (c) => this.contract.impureCircuits.setPolicyBar(c, newBar, proposal));
+  }
+
+  /** A run's hold as the chain holds it: who placed it, and how far its release has got. */
+  runHoldOf(proposal: Uint8Array): { placedBy: Uint8Array; releaseNeeded: bigint; releaseApprovals: bigint } | undefined {
+    return this.ledger.proposalHolds.member(proposal)
+      ? this.ledger.proposalHolds.lookup(proposal).runHold
+      : undefined;
+  }
+
   /**
    * A device about to raise or recognise the change `c`.
    *

@@ -113,8 +113,34 @@ export {
  */
 export type PreparedStep =
   | { kind: 'propose'; payloadHash: Hex; change: StateChange; vault: Hex }
-  | { kind: 'approve'; proposalId: Hex }
+  /**
+   * `opening` is what a run's id opens to. A seat given rights needs it to show
+   * the run's vault is one it may approve on; a seat with every right on every
+   * vault, and every governance proposal, needs none.
+   */
+  | { kind: 'approve'; proposalId: Hex; opening?: RunOpeningHex }
   | { kind: 'cancel'; proposalId: Hex }
+  /**
+   * **A RUN HELD BY A SIGNER WHO MAY HOLD RUNS ON ITS VAULT.** It is neither
+   * charged nor paid until the hold is released. `opening` as for `approve`.
+   */
+  | { kind: 'holdRun'; proposalId: Hex; opening?: RunOpeningHex }
+  /**
+   * **A HELD RUN RELEASED**: at once by the signer who held it, otherwise one
+   * agreement more towards the approvals the run needs. Any seated signer may.
+   */
+  | { kind: 'releaseHold'; proposalId: Hex }
+  /**
+   * **ONE SEATED LEAF REPLACED BY ANOTHER IN ITS SLOT**, under an approved proposal
+   * over `reseatPayload(oldLeaf, newLeaf)`. How a signer's rights change, and
+   * the chain counts it as a removal.
+   */
+  | { kind: 'reseatSigner'; oldLeaf: Hex; newLeaf: Hex; proposalId: Hex }
+  /**
+   * **THE APPROVALS A POLICY CHANGE NEEDS**, set under an approved proposal over
+   * `setPolicyBarPayload(newBar)` at the bar that stands today.
+   */
+  | { kind: 'setPolicyBar'; newBar: number; proposalId: Hex }
   | { kind: 'addSigner'; leaf: Hex; proposalId: Hex | null }
   | { kind: 'removeSigner'; removedLeaf: Hex; proposalId: Hex }
   | { kind: 'setThreshold'; newThreshold: number; proposalId: Hex }
@@ -472,7 +498,18 @@ export const CIRCUIT_FOR_STEP: Record<PreparedStep['kind'], string> = {
   sealPayKey: 'sealPayKey',
   setPolicy: 'setPolicy',
   clearRun: 'clearRun',
+  holdRun: 'holdRun',
+  releaseHold: 'releaseHold',
+  reseatSigner: 'reseatSigner',
+  setPolicyBar: 'setPolicyBar',
 };
+
+/** What a run's id opens to, as a device holds it: the payload, the vault and the salt. */
+export interface RunOpeningHex {
+  payload: Hex;
+  vault: Hex;
+  salt: Hex;
+}
 
 export class MidnightLedger implements Ledger {
   /** Everything this class writes goes to a chain, or it does not get written. */
@@ -1287,8 +1324,52 @@ export class MidnightLedger implements Ledger {
    * of the scheme. The contract rejects the duplicate, and a local check that
    * looked authoritative would be a lie about what we can know.
    */
-  async approve(accountId: string, proposalId: Hex, by: SignerRef): Promise<TxRef> {
-    const call = await this.prepare(accountId, { kind: 'approve', proposalId });
+  async approve(accountId: string, proposalId: Hex, by: SignerRef, opening?: RunOpeningHex): Promise<TxRef> {
+    const call = await this.prepare(accountId, { kind: 'approve', proposalId, opening });
+    return this.txRef(await this.buildCall(call.address, call.circuit, call.args, call.privateStateId), by);
+  }
+
+  /**
+   * **HOLDS A RUN.** Only a signer whose seat lets them hold runs on the run's
+   * vault; a seat given rights hands `opening` to show which vault that is.
+   * The run is neither charged nor paid until the hold is released.
+   *
+   * **NEVER RUN AGAINST A NODE.** It type-checks against the generated ABI and
+   * its contract half is tested in the simulator; no further claim is made.
+   */
+  async holdRun(accountId: string, proposalId: Hex, by: SignerRef, opening?: RunOpeningHex): Promise<TxRef> {
+    const call = await this.prepare(accountId, { kind: 'holdRun', proposalId, opening });
+    return this.txRef(await this.buildCall(call.address, call.circuit, call.args, call.privateStateId), by);
+  }
+
+  /**
+   * **RELEASES A HELD RUN**, or adds this signer's agreement to releasing it.
+   * Never run against a node, as above.
+   */
+  async releaseHold(accountId: string, proposalId: Hex, by: SignerRef): Promise<TxRef> {
+    const call = await this.prepare(accountId, { kind: 'releaseHold', proposalId });
+    return this.txRef(await this.buildCall(call.address, call.circuit, call.args, call.privateStateId), by);
+  }
+
+  /**
+   * **REPLACES ONE SEATED LEAF WITH ANOTHER IN ITS SLOT**, which is how a
+   * signer's rights change. The chain counts it as a removal, so every
+   * governance proposal raised before it must be raised again. Never run
+   * against a node, as above.
+   */
+  async reseatSigner(
+    accountId: string, oldLeaf: Hex, newLeaf: Hex, proposalId: Hex, by: SignerRef,
+  ): Promise<TxRef> {
+    const call = await this.prepare(accountId, { kind: 'reseatSigner', oldLeaf, newLeaf, proposalId });
+    return this.txRef(await this.buildCall(call.address, call.circuit, call.args, call.privateStateId), by);
+  }
+
+  /**
+   * **SETS THE APPROVALS A POLICY CHANGE NEEDS**, under a round approved at the
+   * bar that stands today. Never run against a node, as above.
+   */
+  async setPolicyBar(accountId: string, newBar: number, proposalId: Hex, by: SignerRef): Promise<TxRef> {
+    const call = await this.prepare(accountId, { kind: 'setPolicyBar', newBar, proposalId });
     return this.txRef(await this.buildCall(call.address, call.circuit, call.args, call.privateStateId), by);
   }
 
@@ -1663,6 +1744,7 @@ export class MidnightLedger implements Ledger {
 
       case 'approve': {
         await this.requireOpen(address, step.proposalId, 'approve');
+        if (step.opening) await this.stageOpening(accountId, step.proposalId, step.opening);
         /*
          * Deliberately no check for "have I already approved". It cannot be
          * done: the nullifier is H(domain, address, proposal, secretKey) and
@@ -1679,6 +1761,41 @@ export class MidnightLedger implements Ledger {
         await this.requireOpen(address, step.proposalId, 'cancel');
         return {
           address, privateStateId, circuit, args: [fromHex(step.proposalId)],
+        };
+      }
+
+      case 'holdRun': {
+        await this.requireOpen(address, step.proposalId, 'hold this run');
+        if (step.opening) await this.stageOpening(accountId, step.proposalId, step.opening);
+        return {
+          address, privateStateId, circuit, args: [fromHex(step.proposalId)],
+        };
+      }
+
+      case 'releaseHold': {
+        await this.requireOpen(address, step.proposalId, 'release the hold on this run');
+        return {
+          address, privateStateId, circuit, args: [fromHex(step.proposalId)],
+        };
+      }
+
+      case 'reseatSigner': {
+        await this.requireApproved(address, step.proposalId, "change a signer's seat");
+        await this.refuseUnusableLeaf(step.newLeaf, 'the signer leaf being seated');
+        return {
+          address, privateStateId, circuit,
+          args: [fromHex(step.oldLeaf), fromHex(step.newLeaf), fromHex(step.proposalId)],
+        };
+      }
+
+      case 'setPolicyBar': {
+        await this.requireApproved(address, step.proposalId, 'change the approvals a policy change needs');
+        if (!Number.isInteger(step.newBar) || step.newBar < 1) {
+          throw new Error('a policy change needs at least one approval, and a whole number of them');
+        }
+        return {
+          address, privateStateId, circuit,
+          args: [BigInt(step.newBar), fromHex(step.proposalId)],
         };
       }
 
@@ -1954,7 +2071,7 @@ export class MidnightLedger implements Ledger {
         `${what} is thirty-two zero bytes. Supply a signer leaf that is neither thirty-two `
         + 'zero bytes nor the vacancy marker. The contract refuses this value — it answers '
         + '"that is not a usable signer leaf", in its constructor for a founding leaf and in '
-        + '`amendSigner` for a leaf being seated — because thirty-two zero bytes is what an '
+        + '`amendSigner` or `reseatSigner` for a leaf being seated — because thirty-two zero bytes is what an '
         + 'empty slot reads as, so a seat holding it is a seat nothing can ever prove.');
     }
     const { pureCircuits } = await import('../../contracts/managed/contract/index.js');
@@ -1963,7 +2080,7 @@ export class MidnightLedger implements Ledger {
         `${what} is the vacancy marker itself. Supply a signer leaf that is neither `
         + 'thirty-two zero bytes nor the vacancy marker. The contract refuses this value — it '
         + 'answers "that is not a usable signer leaf", in its constructor for a founding leaf '
-        + 'and in `amendSigner` for a leaf being seated — because the tree uses the marker to '
+        + 'and in `amendSigner` or `reseatSigner` for a leaf being seated — because the tree uses the marker to '
         + 'mean THIS SLOT IS EMPTY, so seating it makes a slot that is simultaneously taken '
         + 'and free.');
     }
@@ -2247,6 +2364,24 @@ export class MidnightLedger implements Ledger {
    * Writes the named values into this account's private state on this device,
    * beside what is already there, for a call whose witnesses read them.
    */
+  /** Stages what one run's id opens to, beside any this device already holds. */
+  private async stageOpening(accountId: string, proposalId: Hex, opening: RunOpeningHex): Promise<void> {
+    const providers = await this.providers();
+    const address = await this.requireDeployed(accountId);
+    providers.privateStateProvider.setContractAddress(address);
+    const key = privateStateKey(this.cfg.privateStateId, accountId);
+    const existing: AccountPrivateState | null = await providers.privateStateProvider.get(key);
+    if (!existing) throw new Error(missingPrivateState(accountId, address));
+    await this.stageFor(accountId, {
+      runOpenings: {
+        ...(existing.runOpenings ?? {}),
+        [proposalId.replace(/^0x/, '').toLowerCase()]: {
+          payload: fromHex(opening.payload), vault: fromHex(opening.vault), salt: fromHex(opening.salt),
+        },
+      },
+    });
+  }
+
   private async stageFor(accountId: string, values: Partial<AccountPrivateState>): Promise<void> {
     const providers = await this.providers();
     const address = await this.requireDeployed(accountId);

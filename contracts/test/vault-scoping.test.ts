@@ -248,14 +248,12 @@ describe('a threshold per vault', () => {
 });
 
 describe('the reserved signer scope', () => {
-  it('every signer is seated with the all-vaults sentinel, and nothing branches on it', async () => {
+  it('a signer seated without rights is seated with the all-vaults sentinel', async () => {
     /*
-     * The field exists so the leaf's SHAPE is settled while that is free.
-     * Changing it later would mean removing and re-seating every signer on a
-     * live account — the one operation that must never be forced.
-     *
-     * This test pins that the sentinel is what seating uses. When per-vault
-     * scopes become real, this test is what says so out loud.
+     * The sentinel means every right on every vault, and it is what every seat
+     * the product makes today carries. A seat with rights carries the hash of
+     * its rights record instead; `rights-live-in-each-signers-leaf.test.ts`
+     * covers those.
      */
     const sim = await liveAccount();
     expect(hex(A.scope)).toBe(hex(pureCircuits.allVaults()));
@@ -264,120 +262,43 @@ describe('the reserved signer scope', () => {
   });
 
   /**
-   * **THE INERTNESS, CHECKED RATHER THAN CLAIMED.** §3.7 of
-   * `docs/scope-the-vault-system.md`.
+   * **THE SCOPE IS READ ONCE, FEEDS THE LEAF, AND DECIDES RIGHTS FOR RUNS ONLY.**
    *
-   * The test above is named *"and nothing branches on it"* and its body asserts
-   * only the first half of that sentence. **A name that promises more than the
-   * body checks is worse than no test**: it is what a reviewer greps for, finds,
-   * and moves on from. This is the missing half, and the review that asked for
-   * it called it the cheapest test in that document.
-   *
-   * **WHY IT CANNOT BE A SIMULATION.** Inertness is the absence of a branch. A
-   * simulator can show that today's calls behave the same whatever the scope
-   * is — which is what would be true anyway while every signer carries the same
-   * sentinel. The property is about the SOURCE: `signerScope()` is read, put
-   * into the leaf, and never compared with anything. So the source is what is
-   * read.
-   *
-   * **WHAT BREAKS IF IT EVER DOES BRANCH, AND IT IS NOT A STYLE POINT.** Every
-   * signer on a live account is seated with `allVaults()`. A circuit that
-   * started comparing a scope against a vault would refuse those signers at the
-   * only moment the refusal matters — the account's own governance — and the
-   * repair is to re-seat every signer, which
-   * `ConfidentialAccount.compact:625-629` names as *"the one operation on a
-   * live account holding money that must never be forced"*. The whole point of
-   * reserving the field was that turning it on later costs no migration; a
-   * branch added by accident spends that.
-   *
-   * The check is deliberately narrow: `signerScope()` may appear as an argument
-   * to `signerLeaf(...)` and in the witness declaration, and nowhere else. It
-   * is not a ban on the identifier — a widened check that also matched comments
-   * would fail the day somebody explained the rule.
+   * A seat's scope is `allVaults()`, every right on every vault, or the hash of
+   * a rights record. It is compared with anything only inside `grants`, and
+   * `grants` is asked only when a signer raises, approves or holds a RUN. A
+   * governance proposal is never checked against it: if it were, a set of
+   * rights that left fewer approvers than the threshold would leave the company
+   * unable to pass the re-seat that repairs it. The behaviour is pinned through
+   * the compiled circuits in `rights-live-in-each-signers-leaf.test.ts`; this
+   * reads the source, so a new reader of the scope is noticed where it appears.
    */
-  it('no circuit BRANCHES on signerScope — it only ever feeds the leaf', () => {
+  it('the scope is read once, into the leaf, and compared only where a run asks for a right', () => {
     const source = readFileSync(
       new URL('../src/ConfidentialAccount.compact', import.meta.url), 'utf8');
-
-    /*
-     * Comments stripped first. The contract explains this reservation at
-     * length, and a check that read prose as code would be a check nobody could
-     * keep green while documenting the thing it protects.
-     */
+    /* Comments stripped first, so prose explaining the rule is not read as code. */
     const code = source
       .replace(/\/\*[\s\S]*?\*\//g, ' ')
       .replace(/\/\/[^\n]*/g, ' ');
 
-    const lines = code.split('\n')
-      .map((line, i) => ({ line, at: i + 1 }))
-      .filter(({ line }) => line.includes('signerScope'));
-
-    /*
-     * ONE call site and one declaration, and the COUNT is asserted: a SECOND
-     * call site appearing is exactly the event this test exists to notice, and
-     * a check that only looked at the lines it found would pass for a new one
-     * that happened to be shaped right.
-     *
-     * **IT SAID THREE AND IT SAYS TWO, AND THAT IS A TIGHTENING. DO NOT PUT
-     * THE THREE BACK**, and the deleted site is the reason.
-     *
-     * The third reader was the CONSTRUCTOR, which derived the DEPLOYING
-     * PROCESS'S OWN SEAT from `localSecretKey()`, `signerBlinding()` and
-     * `signerScope()` and seated the leaf it built. On the only deploy path
-     * that ever existed those secrets were `seededBytes(1)` and
-     * `seededBytes(401)` — a published formula in a repository that is going
-     * public — so every account this project deployed carried a signer ANY
-     * READER COULD BE, holding one permanent approval toward every threshold,
-     * including every `recordPayment` that moves a vault's money. It was
-     * deleted and the founding leaf now ARRIVES as a public argument;
-     * `ConfidentialAccount.compact:1443-1481` is that decision written where
-     * the line used to be.
-     *
-     * So a `signerScope()` reader reappearing outside `signerLeaf(...)` is no
-     * longer only the branching question below — it is a circuit deriving a
-     * seat again, which is the hole that deletion closed. This count going
-     * back UP is a regression to refuse, not a stale pin to re-point.
-     */
-    expect(lines.map(l => l.at)).toHaveLength(2);
-
-    /*
-     * **AND THE OCCURRENCES, NOT ONLY THE LINES**, which the comment above
-     * used to claim without the body checking it.
-     *
-     * `lines` is a per-LINE filter, so a SECOND reader written onto line 246
-     * beside the first raises no count — and the shape check below tests the
-     * whole line against `signerLeaf(...signerScope()...)`, which a line
-     * holding two statements still satisfies. The paragraph above claims a
-     * second reader is noticed. **This is the line that makes that claim
-     * true**, and without it the comment described a stricter check than the
-     * body performed.
-     *
-     * One file over, `scripts/disclose-scan.test.ts` carries the same lesson
-     * pointing the other way: it counts SITES rather than lines because
-     * `grep -c` counts lines and misses four sites written on one.
-     */
+    /* RED WHEN a second reader of the witness appears: the declaration and the seat's one read. */
     expect(code.match(/signerScope/g) ?? []).toHaveLength(2);
+    expect(code).toMatch(/witness signerScope\(\)\s*:\s*Bytes<32>;/);
+    expect(code).toContain('const scope = signerScope();');
+    /* RED WHEN the seat proves membership of a leaf built from anything but the scope it read. */
+    expect(code).toContain('const leaf = signerLeaf(signerPublicKey(sk), signerBlinding(), scope);');
 
-    for (const { line, at } of lines) {
-      const ok =
-        /^\s*witness signerScope\(\)\s*:\s*Bytes<32>;\s*$/.test(line)
-        || /signerLeaf\([^;]*signerScope\(\)[^;]*\)/.test(line);
-      expect(ok, `ConfidentialAccount.compact:${at} reads signerScope() somewhere other than `
-        + `signerLeaf(...):\n  ${line.trim()}\n`
-        + 'The scope is RESERVED AND INERT. Every signer on a live account is seated with '
-        + 'allVaults(), so a circuit that branches on the scope refuses all of them, and the '
-        + 'repair is to re-seat every signer on an account holding money — the one operation '
-        + 'the contract itself says must never be forced. If per-vault scopes are being turned '
-        + 'on deliberately, this test is where that decision gets written down.').toBe(true);
-    }
+    /* RED WHEN a seat with every right stops being granted everything without a record. */
+    expect(code).toMatch(/return scope == allVaults\(\) \|\|/);
 
-    /*
-     * And no comparison of the value anywhere, in any spelling. `signerLeaf`'s
-     * argument list cannot contain one, so this is belt and braces against a
-     * future line that satisfies the shape above and also compares.
-     */
-    expect(code).not.toMatch(/signerScope\(\)\s*(==|!=|<|>)/);
-    expect(code).not.toMatch(/(==|!=|<|>)\s*signerScope\(\)/);
+    /* The three places a right is asked for: raising a run, approving a run, holding a run. */
+    const asks = code.match(/grants\(caller\.scope, [012],/g) ?? [];
+    /* RED WHEN a fourth circuit starts asking for a right, which must be a run's and said here. */
+    expect(asks).toEqual(['grants(caller.scope, 0,', 'grants(caller.scope, 1,', 'grants(caller.scope, 2,']);
+    /* RED WHEN the approve right is asked outside the branch a run's window opens. */
+    expect(code).toMatch(/if \(runWindow\.member\(id\)\) \{\s*const opened = runOpening\(id\);\s*assert\(grants\(caller\.scope, 1,/);
+    /* RED WHEN the raise right is asked outside `propose`'s run branch. */
+    expect(code).toMatch(/if \(disclose\(isRun\)\) \{[^}]*assert\(grants\(caller\.scope, 0,/);
   });
 
   it('a signer whose scope differs has a DIFFERENT leaf, and is not on the account', async () => {

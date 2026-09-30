@@ -68,6 +68,6 @@ describe("a policy's values are the contract's", () => {
       .toThrow(/exactly 4 bands/);
     expect(() => refuseAnUnusablePolicy({ ...POLICY, terms: { ...POLICY.terms, periodLength: 0n } }))
       .toThrow(/at least one second/);
-    expect(() => refuseAnUnusablePolicy({ ...POLICY, blinding: new Uint8Array(31) })).toThrow(/32 bytes/);
+    expect(() => refuseAnUnusablePolicy({ ...POLICY, blinding: new Uint8Array(31) })).toThrow(/this device's copy of the spending policy is damaged/);
   });
 });

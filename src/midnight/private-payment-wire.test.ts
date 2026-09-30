@@ -26,13 +26,15 @@ describe('A PAYEE\'S PATH ON THE WIRE', () => {
     expect(pathToWire(tree.pathFor(0))).not.toEqual(pathToWire(tree.pathFor(1)));
   });
 
-  it('REFUSES A PATH THAT IS NOT BYTE STRINGS, OR CARRIES MORE THAN ONE PATH', () => {
+  it('REFUSES A PATH THAT IS NOT BYTE STRINGS, OR HAS MORE OR FEWER VALUES THAN ONE PATH', () => {
     const wire = pathToWire(treeOf(1).pathFor(0));
-    /* RED WHEN: the trailing-values check is removed - a longer list would be read as its first path. */
-    expect(() => pathFromWire([...wire, ...wire])).toThrow(/more than one path/);
-    expect(() => pathFromWire([...wire.slice(0, -1), 'zz'])).toThrow(/not a list of byte strings/);
-    expect(() => pathFromWire('00' as never)).toThrow(/not a list of byte strings/);
-    expect(() => pathFromWire(wire.slice(0, 3))).toThrow();
+    /* RED WHEN: the length check only refuses a short list - a longer one would be read as its first path. */
+    expect(() => pathFromWire([...wire, ...wire]))
+      .toThrow(/the payment details this device received are damaged \(the path has 96 values where a path has 48\), so nothing was sent/);
+    expect(() => pathFromWire([...wire.slice(0, -1), 'zz'])).toThrow(/damaged \(the path is not a list of byte strings\)/);
+    expect(() => pathFromWire('00' as never)).toThrow(/damaged \(the path is not a list of byte strings\)/);
+    /* RED WHEN: the length check only refuses a long list. */
+    expect(() => pathFromWire(wire.slice(0, 3))).toThrow(/the path has 3 values where a path has 48/);
   });
 });
 

@@ -214,12 +214,15 @@ describe('the real artifacts, read end to end', () => {
 
   it('the WITNESS closure runs through helpers — without it no circuit checks its caller', async () => {
     // Not one of the account's provable circuits reads localSecretKey itself:
-    // all three signer witnesses are read inside `_requireSigner_0`, which
-    // seven circuits call. A direct-only scan reports that nothing on this
-    // contract checks who is calling it.
+    // the signer witnesses are read inside `_seat_0`, which every circuit that
+    // checks its caller reaches, and the rights witnesses inside `_grants_0`.
+    // A direct-only scan reports that nothing on this contract checks who is
+    // calling it.
     const account = await readContract(ROOT, ARTIFACTS[0]);
     const approve = account.circuits.find((c) => c.name === 'approve');
-    expect(approve?.witnesses.map((w) => w.witness).sort()).toEqual(['localSecretKey', 'signerBlinding', 'signerPath', 'signerScope']);
+    expect(approve?.witnesses.map((w) => w.witness).sort()).toEqual([
+      'localSecretKey', 'runOpening', 'signerBlinding', 'signerPath', 'signerRights', 'signerScope',
+    ]);
     expect(approve?.witnesses.every((w) => w.via.length > 0)).toBe(true);
     // And the three cross-contract callees read no witness at all, by design.
     for (const name of ['recordPaymentFromVault', 'retireVault', 'closeExpiredRun']) {
@@ -261,7 +264,7 @@ describe('the real artifacts, read end to end', () => {
     const account = await readContract(ROOT, ARTIFACTS[0]);
     const approve = account.circuits.find((c) => c.name === 'approve');
     const signers = approve?.reads.find((r) => r.field === 'signers');
-    expect(signers?.via).toEqual(['_requireSigner_0']);
+    expect(signers?.via).toEqual(['_seat_0']);
   });
 
   it('an assert carries its MESSAGE, not the first string in its expression', async () => {

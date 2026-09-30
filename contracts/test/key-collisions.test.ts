@@ -53,7 +53,8 @@ const SIGNER_ROLES_WRITES = [
   'periodKey',
   'charged',
 ];
-const PROPOSAL_HOLDS_WRITES = ['removalCountKey()', 'removalCountKey()', 'id'];
+/* `propose` writes each proposal's hold; `holdRun` and `releaseHold` rewrite a run's, under the same id. */
+const PROPOSAL_HOLDS_WRITES = ['removalCountKey()', 'removalCountKey()', 'id', 'id', 'id', 'id'];
 
 /** The first argument of every `<map>.insert(`, read to the comma at its own depth. */
 const insertsInto = (map: string): string[] => {
@@ -97,6 +98,21 @@ describe('every insert into the two shared maps is one this file knows', () => {
     expect(insertsInto('proposalHolds')).toEqual(PROPOSAL_HOLDS_WRITES);
     /* The id `propose` writes under is the commitment `proposalIdOf` computes, nothing a caller hands in. */
     expect(SRC).toContain('const id = disclose(proposalIdOf(payload, disclose(vault), salt));');
+    /* RED WHEN a hold or its release writes under a key that is not an open run's own id, read from the ledger first. */
+    expect(bodyOf('holdRun')).toContain('const hold = holdOf(id);');
+    expect(bodyOf('releaseHold')).toContain('const hold = holdOf(id);');
+  });
+
+  it('approvals: an approval and an agreement to release a hold are nullifiers under different tags', () => {
+    const tag = (name: string) => {
+      const at = SRC.indexOf(`circuit ${name}(`);
+      return SRC.slice(at, SRC.indexOf('\n}\n', at)).match(/pad\(32, "([^"]+)"\)/)![1];
+    };
+    /* RED WHEN the two share a tag: one signer's approval of a run would then count as their release of its hold, or the reverse. */
+    expect(tag('releaseNullifier')).not.toBe(tag('approvalNullifier'));
+    /* And both are written the same way: a nullifier computed in the circuit, never a caller's value. */
+    expect(SRC.match(/approvals\.insert\(/g)).toHaveLength(2);
+    expect(SRC.match(/approvals\.insert\(nul\);/g)).toHaveLength(2);
   });
 });
 

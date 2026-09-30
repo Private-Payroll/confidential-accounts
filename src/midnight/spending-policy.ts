@@ -34,7 +34,9 @@ export const refuseAnUnusablePolicy = (policy: PolicyOpening): void => {
   if (policy.terms.periodLength <= 0n) {
     throw new Error('a spending policy needs periods of at least one second, or no run could ever fit inside one');
   }
-  if (policy.blinding.length !== 32) throw new Error("a spending policy's blinding is 32 bytes");
+  if (policy.blinding.length !== 32) {
+    throw new Error("this device's copy of the spending policy is damaged; get the current policy again from a signer who holds it");
+  }
 };
 
 /** What the chain stores for a policy: its terms committed under its blinding. */

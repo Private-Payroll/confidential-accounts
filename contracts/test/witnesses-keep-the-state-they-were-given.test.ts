@@ -125,7 +125,8 @@ describe('the private half hands back the state it was given', () => {
       'a witness has been added or removed and the check was not told how to call it, so it '
       + 'has been walking past it',
     ).toEqual(declared);
-    expect(declared).toHaveLength(13);
+    /* Fifteen: the signer's rights record and what a run's id opens to joined the thirteen. */
+    expect(declared).toHaveLength(15);
   });
 
   /**

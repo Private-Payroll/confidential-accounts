@@ -283,6 +283,13 @@ because proposals are already independent: each carries its own count, so
 "how many does THIS one need" is a question about one entry rather than a
 global the whole account shares.
 
+ONE KEY HERE IS NOT A VAULT. `policyBarKey()` holds the approvals a change to
+a spending policy needs, and only `setPolicyBar` writes it, at the bar that
+stands today. `setVaultThreshold` refuses it, so signers at the account's bar
+cannot lower the bar for policy changes by calling it a vault (what they can
+still do by changing who is seated is under `setPolicyBar`). No removal leaves
+fewer signers than it, so it can always be met and changed again.
+
 ### `vaults`
 
 WHICH VAULTS ARE THIS COMPANY'S.
@@ -558,8 +565,13 @@ and, under one fixed key, how many signers the account has removed.
   on their device from their secret key, the account and the proposal id. Only
   the proposer can withdraw a governance proposal.
 - `removals`: how many signers the account had removed when it was raised.
-- `runHold`: a hold on a run with what releases it. Written empty; no circuit
-  reads it yet.
+- `runHold`: a hold on a run and what releases it. Empty until a signer who
+  may hold runs on the run's vault holds it with `holdRun`. `placedBy` is then
+  the holder's key, a hash of their secret key, the account and the run, so it
+  names nobody; `releaseNeeded` is the run's bar when it was raised, and
+  `releaseApprovals` counts the signers who agreed to release it. Once
+  released, `placedBy` is `releasedMark()`, and the run can never be held
+  again. A held run is neither charged nor paid (`requireApprovedForVault`).
 
 `closeProposal` removes the hold with the proposal, and `holdOf` refuses a
 proposal that has none: it could never be carried out.
@@ -602,17 +614,26 @@ reasoning about the maintenance authority, not about this declaration.
 
 ONE SHARED MAP OF 32-BYTE ENTRIES, `Map<Bytes<32>, Bytes<32>>`, and every key
 in it is derived inside a circuit under its own tag. It is the one map for
-everything of that shape: a vault's policy and a period's total will sit here
-too, beside the pay-record key sealed to each signer.
+everything of that shape. **DESPITE ITS NAME IT HOLDS NO SIGNER'S RIGHTS AND IS
+NOT KEYED BY ANY SIGNER'S LEAF**: reading a map by leaf would put the leaf in
+the transcript of every approval, and name the signer behind it. What a signer
+may do lives in their own leaf (`signerScope`, below).
 
-WHAT IT HOLDS TODAY:
+ITS TENANTS:
 
 - the company's LABEL, under `companyLabelKey()`, written by the constructor;
 - the account's COMMITMENT to its pay-record key, under `payKeyCommitmentKey()`,
   written once by `sealPayKey` under an approved proposal;
 - each signer's SEALED COPY of that key, four entries under
   `payKeyWrapKeyOf(account, secretKey, 0..3)`, written by that signer through
-  `sealPayKey`.
+  `sealPayKey`;
+- each vault's SPENDING POLICY per currency, a commitment under
+  `policyKeyOf(vault, assetKey)`, and the marker that a vault is under a
+  policy, under `policyOnKeyOf(vault)`, both written by `setPolicy`;
+- each period's RUNNING TOTAL, a commitment under `periodKeyOf(policyKey,
+  commitment, period)`, and the record that a run's tree was charged, under
+  `chargedKeyOf(periodKey, root)`, both written by `clearRun`;
+- and, reserved, a later anchor entry under `anchorKey()`.
 
 EVERY WRITER IS A BOUNDARY. A circuit that took its map key from its caller
 could overwrite another writer's entries - a signer's sealed copy, the
@@ -632,10 +653,9 @@ under its own tag is an anchor for a company that deployed with this
 contract's constructor; it proves nothing about an account somebody built by
 other means.
 
-WHAT `signerScope` IS, BY CONTRAST. The witness below carries a per-signer
-restriction as a private value inside the signer's own leaf, which nothing
-branches on. The rights a signer holds are a separate, public subject, not
-built yet.
+WHAT `signerScope` IS, BY CONTRAST. The witness below carries what a signer
+may do as a private value inside their own leaf. Nothing about it is written
+here or anywhere else on chain.
 
 ## Witnesses
 
@@ -680,23 +700,56 @@ so the blindings had to be collected into the sealed roster, where they
 should never be. Slots do not re-seat anybody, so this value is back
 where it belongs: on one device, held by one person, and nowhere else.
 
-### `signerScope`
+### `signerScope`, `signerRights` and `runOpening`
 
-WHICH VAULTS THIS SIGNER MAY ACT ON. Reserved, not yet enforced.
+WHAT THIS SIGNER MAY DO, AS THEIR OWN LEAF COMMITS TO IT.
 
-Nothing reads this to make a decision today. Every signer is seated with
-`allVaults()` and no circuit branches on it. It exists because it is part of
-the SIGNER'S LEAF, and a leaf's shape cannot be changed later without
-removing and re-seating every signer on the account — the one operation on a
-live account holding money that must never be forced.
+`signerScope()` is the leaf's third part. `allVaults()` means every right on
+every vault, and every seat the product makes today carries it. Any other
+scope is `rightsScopeOf(rights)`, the hash of a rights record under its own
+tag: may raise runs, may approve runs, may hold runs, and either every vault or
+up to four named ones. `signerRights()` hands the record over on the signer's
+device; the circuit checks its hash against the scope, so a device cannot claim
+more than its leaf commits to.
 
-Deciding its shape now costs 32 bytes inside a commitment. Deciding it later
-costs a migration of the one thing that must never go wrong.
+WHERE IT IS CHECKED, AND WHERE IT IS NOT. `grants` is asked in three places:
+`propose` for a run (the raise right, on the vault the run names), `approve`
+for a run (the approve right, on the run's vault) and `holdRun` (the hold
+right). **A governance proposal is never checked against a right**, to raise
+or to approve: if it were, a set of rights that left fewer approvers than the
+threshold would leave the company unable to pass the re-seat that repairs it,
+and nothing could ever change again. `releaseHold` asks no right either, so a
+hold can always be released. There is no right to stop a run: any signer may
+withdraw a run before its window, as before.
 
-When per-vault signer sets are actually wanted, this becomes a commitment to
-the set of vaults the signer may act on, the seating circuits start issuing
-real values, and one assert is added. Signers seated before that carry the
-all-vaults sentinel and keep working, so nothing migrates.
+WHICH VAULT A RUN NAMES is inside its id, a commitment under its salt. To
+approve or hold a run, a seat with rights hands over what the id opens to
+(`runOpening`: the payload, the vault and the salt), and the circuit checks
+that it rebuilds the id. Every seat is asked; a seat with `allVaults()` answers
+with an empty opening and an empty rights record, which are never read, and the
+transcript of an approval is the same whichever kind of seat gave it.
+
+WHY FOUR NAMED VAULTS AND NOT A TREE. A tree of up to sixteen vaults, with a
+path per approval, was built and measured: `approve` 68,269 rows and `propose`
+87,275, both `k=17`. Four named vaults hashed into the record measure
+`approve` 34,783 and `propose` 53,802, both `k=16`. A signer who acts on more
+than four vaults is given every vault.
+
+A CHANGE OF RIGHTS IS A RE-SEAT (`reseatSigner`): the old leaf is replaced by
+a new one in the same slot, and it counts as a removal, because the new leaf
+may be another person's. A seat that is not a signer, such as a limited seat
+that may only read, is given no leaf at all, so it can neither raise nor
+approve.
+
+WHAT THE CHAIN CANNOT KEEP. Rights are private, so no circuit can count how
+many signers may approve a vault's runs. A seat, removal, change of rights or
+change of a bar that left a vault fewer such signers than its runs need would
+leave that vault unable to pay until governance, which needs no right,
+re-seats someone. The count a signer's device is to make before approving such
+a change is written (`src/core/vault-approvers.ts`) and is NOT YET CALLED by any
+approval: today nothing refuses such a change, on chain or on a device. A public
+count per vault would publish how many signers act on each vault, and is not
+built.
 
 ### `assetId`
 
@@ -1252,9 +1305,13 @@ the marker a company-wide decision names, which `setVaultThreshold` refuses.
 
 ## Internal checks
 
-### `requireSigner`
+### `requireSigner`, `seat` and `grants`
 
-Proves the caller is one of the N without revealing which one.
+Proves the caller is one of the N without revealing which one. `seat` does the
+proof and returns the caller's secret key and the scope their leaf commits to;
+`requireSigner` is `seat` for a circuit that needs only the key. `grants`
+answers whether that scope allows one right on one vault, and is asked only for
+runs (`signerScope`, under Witnesses).
 
 Only the computed root is disclosed. Disclosing the leaf, or asserting on a
 Set instead, would name the signer and give away exactly what this contract
@@ -1378,6 +1435,12 @@ what keeps the map holding only deliberate exceptions rather than a row per
 vault that mostly repeats the same number.
 
 ### `requireApprovedForVault`
+
+A RUN'S APPROVAL CHECK, WHICH ALSO REFUSES A HELD RUN. Its bar is the higher of
+the run's bar when it was raised, which already holds the approvals its total
+needs, and its vault's threshold today, plus one for every removal since. It
+takes no `required` of its own: that term could never raise the bar above what
+`propose` wrote into the hold, so it was removed.
 
 TWO ENTRY POINTS, AND THE SPLIT IS PAID FOR IN PROVING TIME.
 
@@ -1986,6 +2049,17 @@ removal circuits assert it), its path gives its slot, the slot is stamped
 vacant, the threshold must be at least one and no more than the signers left,
 and the removal is counted.
 
+### `reseatSigner`
+
+Replaces one seated leaf with another in the same slot, under one approved
+proposal over `reseatPayload(oldLeaf, newLeaf)`: how a signer's rights change.
+It counts as a removal, like every circuit that unseats a leaf, so a
+governance proposal raised before it must be raised again and a run raised
+before it needs one approval more. The signer count does not change, so no
+threshold can be left unreachable by it. What it publishes is what a removal
+and a seat publish, in one transaction: an observer learns that one leaf
+replaced another in that slot, not which rights either carries.
+
 ### `setThreshold`
 
 Changes M in M of N.
@@ -2376,7 +2450,9 @@ pins it.
 
 ### `approve`
 
-Approves one proposal.
+Approves one proposal. A run also needs the approver's right to approve on
+its vault (`signerScope`, above); a governance proposal needs a seat and
+nothing more.
 
 The observer sees that proposal's count rise by one and a nullifier appear.
 They cannot tell which signer it was, and they cannot forge a second approval
@@ -2386,6 +2462,20 @@ from the same signer because the nullifier is already burned.
 one". That is the visible half of it: a signer approving the March payroll
 and a signer approving a vendor invoice are two independent acts, in either
 order, and neither is invalidated by the other settling.
+
+### `holdRun` and `releaseHold`
+
+A SIGNER WHO MAY HOLD RUNS ON A RUN'S VAULT CAN STOP IT BEING CHARGED OR PAID,
+inside its window as well as before it, which withdrawing cannot. The hold is
+written into the run's `Hold` (`proposalHolds`), under the holder's key.
+
+A HOLD COMES WITH ITS RELEASE, so one signer cannot hold every run for ever:
+the holder releases it alone, or as many signers as the run needed when it was
+raised agree, plus one for every signer removed since, each once (an agreement
+is a nullifier under its own tag, beside the approvals). Releasing needs a seat
+and no right. A run is held at most once: a released run cannot be held
+again, so a signer who disagrees with the release stops the run before its
+window or the company re-seats the holder.
 
 ### `cancel`
 
@@ -2785,7 +2875,9 @@ whole of what this circuit will and will not refuse is written out here,
 because the missing check is the first thing a reader reaches for.
 
 WHAT IT REFUSES: a threshold of zero, below, which would authorise anything
-at that key for ever. WHAT IT DOES NOT: anything about the key itself. Any
+at that key for ever; the company-wide marker; and `policyBarKey()`, the key
+of the approvals a policy change needs, which `setPolicyBar` alone sets, at the
+bar that stands today. WHAT IT DOES NOT: anything else about the key. Any
 32 bytes can be seated at any non-zero number, including bytes no vault will
 ever present and including the sentinel this contract uses to mean "no
 vault". A row, once seated, has no way out — nothing in this file removes
@@ -2925,3 +3017,19 @@ declared it no longer runs, which `thresholdFor` would hand straight back
 if that address were ever adopted again. **THE STALE ROW SURVIVES.** It is
 not fixed here because a removal is a decision about what re-adoption
 should mean.
+
+### `setPolicyBar`
+
+Sets the approvals a change to a spending policy needs, under `policyBarKey()`
+in `thresholds`. The proposal needs the higher of the account's threshold and
+the bar that stands today, so the bar is changed only through this circuit and
+only at itself; `setVaultThreshold` cannot reach it. It refuses zero, and more
+than the signers, and no removal leaves fewer signers than it, so a policy
+change can always be approved and the bar can always be changed again.
+
+WHAT IT DOES NOT HOLD. Seating, removing and re-seating signers need only the
+account's threshold. So signers at that threshold can seat, or re-seat, leaves
+they control until they hold as many seats as the bar, and then change the bar
+or any policy. The bar stands above the account's threshold only against
+signers who will not change who is seated; the same is true of a spending band
+that needs more approvals than the account's threshold.

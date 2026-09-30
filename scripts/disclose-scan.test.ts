@@ -328,7 +328,35 @@ describe('the real sources', () => {
     //     of one vault and token in one period can be grouped; which vault is
     //     already public, which token is not. The total, the root, the salt, the
     //     token and the policy's terms are absent.
-    expect(sites(account)).toBe(129);
+    // AND 129 -> 148: RIGHTS IN EACH SIGNER'S LEAF, A HOLD AND ITS RELEASE, THE
+    // RE-SEAT, AND THE POLICY BAR ON ITS OWN. Twenty-one sites in, two out, read
+    // off `scanSourceFile` on the account before and after.
+    //   OUT, 2: `recordPaymentFromVault` and `clearRun` no longer pass `required`
+    //     to the approval check, which never needed it: the run's hold already
+    //     carries it. The same values reach the same comparisons.
+    //   `propose` `vault` into the raise right: a comparison with the caller's
+    //     private rights record, inside the proof. The same branch already
+    //     discloses `vault`, and the check touches no ledger. Nothing new. A seat
+    //     with rights and a seat with every right produce the same transcript.
+    //   `setVaultThreshold` `vault` against `policyBarKey()`: a comparison; the
+    //     transaction writes `vault` into `thresholds` in the clear anyway.
+    //   `holdRun`, 2: the run's id, public in every call on it, and the
+    //     holder's key, written into the run's hold: a hash of the holder's
+    //     secret key, the account and the run, so it links to no leaf, no
+    //     approval and no other run. What an observer learns is that the run is
+    //     held, which its failed payments would show anyway.
+    //   `releaseHold`, 3: the run's id, whether the caller is the holder (the
+    //     branch taken), and an agreement's nullifier under its own tag, which
+    //     links to nothing but itself. How many signers agreed is public, as an
+    //     approval count is.
+    //   `reseatSigner`, 9: the proposal, the old and new leaves, the slot and
+    //     the path's root: what a removal and a seat publish, but IN ONE
+    //     TRANSACTION, so an observer learns that one leaf replaced another in
+    //     the same slot. Which rights either leaf carries is not published; that
+    //     a seat changed is.
+    //   `setPolicyBar`, 5: the proposal and the new bar, which `thresholds`
+    //     holds in the clear, as `setVaultThreshold` publishes a vault's.
+    expect(sites(account)).toBe(148);
     expect(sites(vault)).toBe(48);
   });
 
@@ -341,14 +369,15 @@ describe('the real sources', () => {
     }
   });
 
-  it('`requireSigner` discloses the signer root, and TEN circuits inherit it', () => {
-    // A DISCLOSES column for any of those ten that omits it says the circuit
+  it('`seat` discloses the signer root, and FOURTEEN circuits inherit it', () => {
+    // A DISCLOSES column for any of those fourteen that omits it says the circuit
     // reveals nothing when it reveals the root of the signer tree.
     const account = scanSourceFile(ROOT, 'contracts/src/ConfidentialAccount.compact');
-    expect(own(account, 'requireSigner')).toHaveLength(1);
-    const inheritors = account.filter((c) => c.exported && c.discloses.some((d) => d.via.includes('requireSigner')));
+    expect(own(account, 'seat')).toHaveLength(1);
+    const inheritors = account.filter((c) => c.exported && c.discloses.some((d) => d.via.includes('seat')));
     expect(inheritors.map((c) => c.name).sort()).toEqual(
-      ['adopt', 'amendSigner', 'approve', 'cancel', 'propose', 'removeSignerAndSetThreshold', 'sealPayKey', 'setPolicy', 'setThreshold', 'setVaultThreshold'],
+      ['adopt', 'amendSigner', 'approve', 'cancel', 'holdRun', 'propose', 'releaseHold', 'removeSignerAndSetThreshold',
+        'reseatSigner', 'sealPayKey', 'setPolicy', 'setPolicyBar', 'setThreshold', 'setVaultThreshold'],
     );
   });
 
@@ -417,20 +446,20 @@ describe('the real sources', () => {
       return found[0].line;
     };
 
-    // THE ACCOUNT. `requireSigner` is the circuit seven exported circuits
-    // inherit their signer-root disclosure from, which is why it is the one
-    // read here.
+    // THE ACCOUNT. `seat` is the circuit every exported circuit that checks its
+    // caller inherits its signer-root disclosure from, which is why it is the
+    // one read here.
     const ACCOUNT = 'contracts/src/ConfidentialAccount.compact';
-    const rsLine = discloseLineIn(ACCOUNT, 'circuit requireSigner(');
-    const rs = own(scanSourceFile(ROOT, ACCOUNT), 'requireSigner');
+    const rsLine = discloseLineIn(ACCOUNT, 'circuit seat(');
+    const rs = own(scanSourceFile(ROOT, ACCOUNT), 'seat');
     expect(rs).toHaveLength(1);
     expect(rs[0].line,
-      'the scanner reports a different line for `requireSigner`\'s disclose than the file has '
+      'the scanner reports a different line for `seat`\'s disclose than the file has '
       + 'it on. An off-by-one here moves every generated `file:line` citation and nothing else '
       + 'in this repository refuses it — the citation check only asks whether the file is long '
       + 'enough to have the line.').toBe(rsLine);
     expect(rs[0].text,
-      'the scanner reports the wrong expression for `requireSigner`\'s disclose. Dropping or '
+      'the scanner reports the wrong expression for `seat`\'s disclose. Dropping or '
       + 'adding one character here is the defect this test was written for, and it changes what '
       + 'a published privacy document says a circuit reveals.').toBe('root');
 

@@ -614,7 +614,31 @@ const SCHEMES: Entry[] = [
   },
   {
     circuit: 'policyBarKey',
-    contractOnly: 'the key in the per-vault thresholds for the approvals a policy change needs; setPolicy reads it, spending-policy.ts off pureCircuits.',
+    contractOnly: 'the key in the per-vault thresholds for the approvals a policy change needs; setPolicy and setPolicyBar read it, spending-policy.ts off pureCircuits.',
+  },
+  {
+    circuit: 'rightsScopeOf',
+    contractOnly: 'a rights record as a leaf\'s scope; witnesses.ts scopeOfRights calls this circuit off pureCircuits, and every run the seat raises, approves or holds recomputes it inside the proof.',
+  },
+  {
+    circuit: 'coversVault',
+    contractOnly: 'whether a rights record covers a vault; only the proof reads it, and the rights test calls it off pureCircuits.',
+  },
+  {
+    circuit: 'reseatPayload',
+    contractOnly: 'what signers approve to replace one leaf with another; reseatSigner recomputes it, and nothing on the client derives it yet.',
+  },
+  {
+    circuit: 'setPolicyBarPayload',
+    contractOnly: 'what signers approve to set the approvals a policy change needs; setPolicyBar recomputes it, and nothing on the client derives it yet.',
+  },
+  {
+    circuit: 'holderKeyOf',
+    contractOnly: 'the key a hold is placed under, from the holder\'s secret key; only holdRun and releaseHold derive it, inside the proof.',
+  },
+  {
+    circuit: 'releasedMark',
+    contractOnly: 'what a released hold is marked with; releaseHold writes it and holdRun and the receipt step compare against it.',
   },
 ];
 
@@ -861,11 +885,12 @@ describe('one definition: the contract and the client agree', () => {
       + 'that reads the circuit, declare it as one in SCHEME_MEMBERS and say so.',
     ).toEqual([
       'adoptVaultPayload', 'anchorKey', 'bandApprovals', 'chargedKeyOf', 'chargedMark', 'clearedMark',
-      'companyLabelKey', 'companyWide', 'companyWideDetailsOf',
+      'companyLabelKey', 'companyWide', 'companyWideDetailsOf', 'coversVault', 'holderKeyOf',
       'paidMovementOf', 'paidOnceOf', 'payKeyCommitmentKey', 'payKeyCommitmentOf', 'payKeyPayload',
       'payKeyWrapKeyOf', 'paymentReceiptTag', 'periodBlindingOf', 'periodKeyOf', 'periodTotalOf',
       'policyBarKey', 'policyCommitmentOf', 'policyKeyOf', 'policyOnKeyOf', 'policyOnMark',
-      'removalCountKey', 'removeAndSetThresholdPayload', 'retireVaultPayload', 'setPolicyPayload', 'slotOf',
+      'releasedMark', 'removalCountKey', 'removeAndSetThresholdPayload', 'reseatPayload', 'retireVaultPayload',
+      'rightsScopeOf', 'setPolicyBarPayload', 'setPolicyPayload', 'slotOf',
       'sumInnerNode', 'sumLeafNode', 'sumRootOf', 'vacantSlot', 'withdrawKeyOf', 'withdrawSecretOf',
     ]);
   });
