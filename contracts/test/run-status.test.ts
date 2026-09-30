@@ -406,11 +406,12 @@ describe('a run reports its progress from the chain', () => {
    * disclaimer, it instructs an operator to raise a fresh payroll for payees
    * taken from a leaf list that may belong to a different run.
    *
-   * Nothing on chain refuses that. The account's paid-once guard is keyed on
-   * the payout LEAF, which is what makes retrying a run safe — the same leaf
-   * twice is refused. Leaves from ANOTHER run are values it has never seen, so
-   * it accepts every one of them, and the money goes to recipients this
-   * month's payroll never approved.
+   * Nothing on chain refuses that for people this month has not paid. The
+   * account refuses the same leaf twice, which is what makes retrying a run
+   * safe, and the same person paid twice for one month; leaves from ANOTHER run
+   * that pay other people are values it has never seen, so it accepts every one
+   * of them, and the money goes to recipients this month's payroll never
+   * approved.
    *
    * RED WHEN the disclaimer is dropped from the stranded branch.
    */

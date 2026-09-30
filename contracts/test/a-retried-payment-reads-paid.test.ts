@@ -81,7 +81,7 @@ describe('a payment made by a retry reads as paid on its payee\'s page', () => {
     const { run } = await payroll.createRunFromRoster(created.account.id, '2026-08', viewingKey);
     const inputs = await payroll.runMaterialInputs(run.id, viewingKey);
     const material = await runMaterialFor({
-      accountId: inputs.accountId, runId: inputs.runId, seeds: inputs.seeds, facts: inputs.facts,
+      accountId: inputs.accountId, runId: inputs.runId, seeds: inputs.seeds, facts: inputs.facts, pay: inputs.pay,
       opensAt: OPENS, closesAt: CLOSES, vault: toHex(PAYROLL_VAULT), detailsOf: vaultDetails,
     });
     const by = created.secrets[0]!.signerId;
@@ -100,7 +100,7 @@ describe('a payment made by a retry reads as paid on its payee\'s page', () => {
     const legId = fromHex(proposal.chainId);
     await sim.as(legDevice).approve(legId);
     const rebuild = (await payroll.payoutRebuildOf(run.id, viewingKey))!;
-    const whole = buildRun(rebuild.seeds, rebuild.identity, rebuild.facts, vaultDetails);
+    const whole = buildRun(rebuild.seeds, rebuild.identity, rebuild.facts, vaultDetails, rebuild.pay);
     const first = whole.payeeArgs(0);
     await sim.as(legDevice).recordPayment({
       proposal: legId, vault: PAYROLL_VAULT, root: fromHex(material.run.root),
@@ -136,7 +136,8 @@ describe('a payment made by a retry reads as paid on its payee\'s page', () => {
 
     /* The account's completed payments, read off the contract's own state, relayed whole. */
     const onChain = paidMovementsIn(sim.ledger);
-    expect(onChain).toHaveLength(2);
+    /* Two payments, and the account records two values for each: the leaf and the person and month. */
+    expect(onChain).toHaveLength(4);
     /* The contract state as an indexer hands it back: a `ContractState` whose `data` is the ledger. */
     const state = sim.contractStateForCall;
     /*

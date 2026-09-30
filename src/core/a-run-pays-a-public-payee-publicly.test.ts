@@ -29,7 +29,7 @@ import { unshieldedPayeeFor } from '../testing/payees.js';
 import { sealHandover } from './invite-handover.js';
 import { FileStore } from './store-file.js';
 import { StaticAssetRegistry, type AssetRegistry, type LedgerForm } from './assets.js';
-import { newWrappingKeypair, toHex, type Hex } from './crypto.js';
+import { newWrappingKeypair, toHex } from './crypto.js';
 import type { VaultHoldings } from './vault-holdings.js';
 import type { DetailsOfKind } from '../midnight/payout-tree.js';
 import type { User } from './types.js';
@@ -86,7 +86,7 @@ const aCompany = async (opts: { held?: Record<LedgerForm, bigint>; nightBothWays
   const materialFor = async (p: PayrollService, runId: string, asset?: string, detailsOf: DetailsOfKind = vaultDetails) => {
     const i = await p.runMaterialInputs(runId, viewingKey, asset as never);
     return runMaterialFor({
-      accountId: i.accountId, runId: i.runId, seeds: i.seeds, facts: i.facts,
+      accountId: i.accountId, runId: i.runId, seeds: i.seeds, facts: i.facts, pay: i.pay,
       opensAt: OPENS, closesAt: CLOSES, vault: VAULT, detailsOf,
       ...(i.epoch !== undefined ? { epoch: i.epoch } : {}),
     });

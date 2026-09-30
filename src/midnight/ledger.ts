@@ -85,6 +85,7 @@ import { arityFrom, assertArity } from './circuit-arity.js';
 import { withRetry, sleep, type RetryOptions } from './retry.js';
 import { isDeferredCircuit, deferredCircuitError } from './deferral.js';
 import { refuseACallWithoutItsPrivateState } from './governed-call.js';
+import { payRecordNonceOf, type PayRecord } from './run-keys.js';
 import type { MaintenanceAuthorityChoice } from './partial-contract.js';
 import { paysNoFees } from './fee-seat.js';
 import {
@@ -142,7 +143,16 @@ export type PreparedStep =
    * What was paid is in `movements`, permanently, and that is the only honest
    * source. See `run-status.ts`.
    */
-  | { kind: 'closeExpiredRun'; proposalId: Hex };
+  | { kind: 'closeExpiredRun'; proposalId: Hex }
+  /**
+   * **THE CALLING SIGNER'S OWN COPY OF THE PAY-RECORD KEY, SEALED ON CHAIN.**
+   * `wrap` is the four 32-byte entries `sealPayKeyTo` makes. The first copy
+   * any signer seals also writes the account's commitment to the key, which
+   * needs `proposalId`: a governance round over `payKeyPayloadOf(commitment)`,
+   * approved. Every later copy names the commitment already there, and the
+   * proposal is not read.
+   */
+  | { kind: 'sealPayKey'; wrap: Hex[]; commitment: Hex; proposalId: Hex | null };
 
 /**
  * A circuit call, checked and staged, not yet built.
@@ -436,6 +446,7 @@ export const CIRCUIT_FOR_STEP: Record<PreparedStep['kind'], string> = {
   setThreshold: 'setThreshold',
   setVaultThreshold: 'setVaultThreshold',
   closeExpiredRun: 'closeExpiredRun',
+  sealPayKey: 'sealPayKey',
 };
 
 export class MidnightLedger implements Ledger {
@@ -973,6 +984,52 @@ export class MidnightLedger implements Ledger {
   }
 
   /**
+   * **WHICH OF THESE NONCES THE ACCOUNT HAS RECORDED A PAYMENT FOR.** The same
+   * read as `paidAmong`, testing the contract's own `paidOnceOf` of each nonce.
+   */
+  async paidOnceAmong(accountId: string, nonces: Hex[]): Promise<PaymentsAmong | null> {
+    const movements = await this.movementsOf(accountId);
+    if (!movements) return null;
+    const { pureCircuits } = await import('../../contracts/managed/contract/index.js');
+    return {
+      known: true,
+      paid: nonces.filter((nonce) => movements.member(pureCircuits.paidOnceOf(fromHex(nonce)))),
+    };
+  }
+
+  /**
+   * **WHAT THE APPROVING DEVICE CAN SAY ABOUT EACH PERSON ON A RUN, FROM ONE
+   * READ OF THE ACCOUNT AND THE PAY-RECORD KEY**: which occurrences of their
+   * kind of pay for their month the chain has recorded as paid. One read of the
+   * whole state, then membership tests on the device; nothing tested leaves it.
+   * Null when the account is not on this ledger. See `alreadyPaidOf`.
+   */
+  async alreadyPaid(
+    accountId: string, key: Hex, asked: readonly PaidFor[], upTo = OCCURRENCES_ASKED,
+  ): Promise<AlreadyPaid[] | null> {
+    const movements = await this.movementsOf(accountId);
+    if (!movements) return null;
+    const { pureCircuits } = await import('../../contracts/managed/contract/index.js');
+    return alreadyPaidOf(
+      (nonce) => Boolean(movements.member(pureCircuits.paidOnceOf(fromHex(nonce)))), key, asked, upTo);
+  }
+
+  /** The account's `movements` set, decoded, or null when it is not on this ledger. */
+  private async movementsOf(accountId: string): Promise<{ member(v: Uint8Array): boolean } | null> {
+    const address = await this.addressOf(accountId);
+    if (!address) return null;
+    const { ledger: readLedger } = await import('../../contracts/managed/contract/index.js');
+    const providers = await this.providers();
+    const state = await providers.publicDataProvider.queryContractState(address as any);
+    if (!state) return null;
+    const movements = (readLedger(state.data) as any)?.movements;
+    if (movements == null || typeof movements.member !== 'function') {
+      throw new UndecodedLedgerField('movements', 'set');
+    }
+    return movements;
+  }
+
+  /**
    * Opens a round. The chain gets a commitment to the payload, never the
    * payload — `propose(payloadHash)` commits it again under `proposalSalt`, so
    * even the digest is blinded on chain.
@@ -1262,6 +1319,70 @@ export class MidnightLedger implements Ledger {
     const call = await this.prepare(
       accountId, { kind: 'setThreshold', newThreshold, proposalId });
     return this.txRef(await this.buildCall(call.address, call.circuit, call.args, call.privateStateId), by);
+  }
+
+  /**
+   * **SEALS THE PAY-RECORD KEY TO THE CALLING SIGNER, ON CHAIN.** Each signer
+   * seals their own copy, once, under entries derived from their own secret
+   * key, so no signer can write another's. The first copy also writes the
+   * account's commitment to the key, under an approved round; see the step.
+   *
+   * **NEVER RUN AGAINST A NODE.** It type-checks against the generated ABI and
+   * its contract half is tested in the simulator; no further claim is made.
+   */
+  async sealPayKey(
+    accountId: string, wrap: Hex[], commitment: Hex, proposalId: Hex | null, by: SignerRef,
+  ): Promise<TxRef> {
+    const call = await this.prepare(accountId, { kind: 'sealPayKey', wrap, commitment, proposalId });
+    return this.txRef(await this.buildCall(call.address, call.circuit, call.args, call.privateStateId), by);
+  }
+
+  /**
+   * **THE ACCOUNT'S COMMITMENT TO ITS PAY-RECORD KEY**, or null when none has
+   * been written yet. Read from the account's shared map under the key the
+   * contract derives for it.
+   */
+  async payKeyCommitment(accountId: string): Promise<Hex | null> {
+    const address = await this.addressOf(accountId);
+    if (!address) return null;
+    return this.payKeyCommitmentAt(address);
+  }
+
+  private async payKeyCommitmentAt(address: string): Promise<Hex | null> {
+    const { ledger: readLedger, pureCircuits } = await import('../../contracts/managed/contract/index.js');
+    const providers = await this.providers();
+    const state = await providers.publicDataProvider.queryContractState(address as any);
+    if (!state) throw new Error('the contract has no state on chain');
+    const roles = (readLedger(state.data) as any)?.signerRoles;
+    if (roles == null || typeof roles.member !== 'function') {
+      throw new UndecodedLedgerField('signerRoles', 'map');
+    }
+    const at = pureCircuits.payKeyCommitmentKey();
+    return roles.member(at) ? toHex(roles.lookup(at)) : null;
+  }
+
+  /**
+   * **ONE SIGNER'S SEALED COPY OF THE PAY-RECORD KEY**, as the four entries the
+   * account holds under keys derived from that signer's secret key and this
+   * account, or null when they have not sealed one. `secretKey` never leaves
+   * the device: the keys are worked out here and only looked up.
+   */
+  async sealedPayKeyOf(accountId: string, secretKey: Hex): Promise<Hex[] | null> {
+    const address = await this.addressOf(accountId);
+    if (!address) return null;
+    const { ledger: readLedger, pureCircuits } = await import('../../contracts/managed/contract/index.js');
+    const providers = await this.providers();
+    const state = await providers.publicDataProvider.queryContractState(address as any);
+    if (!state) return null;
+    const roles = (readLedger(state.data) as any)?.signerRoles;
+    if (roles == null || typeof roles.member !== 'function') {
+      throw new UndecodedLedgerField('signerRoles', 'map');
+    }
+    const self = fromHex(String(address).replace(/^0x/, ''));
+    if (self.length !== 32) throw new Error(`this account's address is not 32 bytes: ${address}`);
+    const keys = [0n, 1n, 2n, 3n].map(i => pureCircuits.payKeyWrapKeyOf(self, fromHex(secretKey), i));
+    if (!roles.member(keys[0])) return null;
+    return keys.map(k => toHex(roles.lookup(k)));
   }
 
   /**
@@ -1609,6 +1730,37 @@ export class MidnightLedger implements Ledger {
           address, privateStateId, circuit,
           args: [
             fromHex(step.vault), BigInt(step.newThreshold), fromHex(step.proposalId),
+          ],
+        };
+      }
+
+      case 'sealPayKey': {
+        if (step.wrap.length !== 4 || step.wrap.some(p => fromHex(p).length !== 32)) {
+          throw new Error('a sealed pay-record key is four 32-byte entries');
+        }
+        const committed = await this.payKeyCommitmentAt(address);
+        if (committed === null) {
+          /*
+           * **NEVER FIRST-COME.** The first copy writes the commitment every
+           * later device checks its key against, so it is written only under a
+           * round every approving signer named it in.
+           */
+          if (!step.proposalId) {
+            throw new Error(
+              'nobody has confirmed this company\'s pay-record key on chain yet. Raise a proposal '
+              + 'that names it, get it approved, then seal your copy again with that proposal.');
+          }
+          await this.requireApproved(address, step.proposalId, 'commit this company to its pay-record key');
+        } else if (committed.toLowerCase() !== step.commitment.toLowerCase()) {
+          throw new Error(
+            'the pay-record key on this device is not the one this company confirmed on chain, so it '
+            + 'cannot be sealed. Reopen the company\'s key from its sealed records and try again.');
+        }
+        return {
+          address, privateStateId, circuit,
+          args: [
+            step.wrap.map(p => fromHex(p)), fromHex(step.commitment),
+            fromHex(step.proposalId ?? '00'.repeat(32)),
           ],
         };
       }
@@ -3927,3 +4079,71 @@ export function compareVerifierKeys(
       'and this says nothing about one.',
   };
 }
+
+/** One person on a run, as the approving device asks about them: everything but the occurrence. */
+export type PaidFor = Omit<PayRecord, 'occurrence'> & { occurrence?: number };
+
+/** What the chain has recorded as paid for one person's kind of pay for one month. */
+export interface AlreadyPaid {
+  person: string;
+  month: string;
+  kind: string;
+  /** Every occurrence the chain records as paid, lowest first. Empty when none is. */
+  paid: number[];
+  /** The occurrence the run pays this person as, when the caller said. */
+  occurrence?: number;
+  /** True when the chain already records the occurrence this run would pay. */
+  refused: boolean;
+}
+
+/**
+ * How many occurrences the device asks about for each person: the first
+ * payment and seven numbered extras. A person paid more extras than that for
+ * one month reads as paid for the ones asked about.
+ */
+export const OCCURRENCES_ASKED = 8;
+
+/**
+ * **THE APPROVING DEVICE'S CHECK, AS A PURE FUNCTION OF THE CHAIN'S ANSWER.**
+ * For each person, which occurrences of their kind of pay for their month the
+ * account records as paid, and whether the occurrence this run pays them as is
+ * one of them. `has` answers for one nonce whether the account holds its
+ * `paidOnceOf`; the chain cannot tell a run that paid a person from one whose
+ * payment was recorded without being made, so a `paid` occurrence means
+ * recorded on chain as paid, and nothing more.
+ */
+export const alreadyPaidOf = (
+  has: (nonce: Hex) => boolean, key: Hex, asked: readonly PaidFor[], upTo = OCCURRENCES_ASKED,
+): AlreadyPaid[] =>
+  asked.map((p) => {
+    const limit = Math.max(upTo, (p.occurrence ?? 0) + 1);
+    const paid: number[] = [];
+    for (let occurrence = 0; occurrence < limit; occurrence++) {
+      if (has(payRecordNonceOf(key, { person: p.person, month: p.month, kind: p.kind, occurrence }))) {
+        paid.push(occurrence);
+      }
+    }
+    return {
+      person: p.person, month: p.month, kind: p.kind, paid,
+      ...(p.occurrence === undefined ? {} : { occurrence: p.occurrence }),
+      refused: p.occurrence !== undefined && paid.includes(p.occurrence),
+    };
+  });
+
+/**
+ * **THE WORDS FOR ONE PERSON'S CHECK**, or null when the chain records nothing
+ * for them. Never more than the chain can say: recorded on chain as paid.
+ */
+export const alreadyPaidSentence = (a: AlreadyPaid, name: string): string | null => {
+  if (a.paid.length === 0) return null;
+  const one = (o: number) => (o === 0 ? 'the regular payment' : `extra ${o}`);
+  const which = a.paid.map(one).join(' and ');
+  const [year, month] = a.month.split('-').map(Number);
+  const named = year && month
+    ? new Date(Date.UTC(year, month - 1, 1)).toLocaleString('en-GB', { month: 'long', year: 'numeric', timeZone: 'UTC' })
+    : a.month;
+  return `${name}: ${a.kind} for ${named} is recorded on chain as paid (${which}).`
+    + (a.refused && a.occurrence !== undefined
+      ? ` This run pays ${one(a.occurrence)} again. The chain will refuse that one payment.`
+      : '');
+};

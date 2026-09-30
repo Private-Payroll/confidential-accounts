@@ -57,6 +57,7 @@ const aTransaction = (): Hex => {
 };
 import { changeCoinOf } from '../../src/midnight/vault-coins.js';
 import { toHex, fromHex, type Hex } from '../../src/core/crypto.js';
+import { payFor } from '../../src/testing/payees.js';
 
 const NOW = 1_800_000_000;
 const FROM = BigInt(NOW - 3_600);
@@ -172,7 +173,7 @@ describe('a vault driven by the client\'s own note pool', () => {
   const approvedRun = async (payroll: PaymentFacts[], c: Change, runId: string) => {
     const seeds: PayoutSeed[] = [{ epoch: 0, seed: toHex(bytes(0x77)) }];
     const identity: RunIdentity = { accountId: 'acct-v74', runId, epoch: 0 };
-    const run = buildRun(seeds, identity, payroll, vaultDetails);
+    const run = buildRun(seeds, identity, payroll, vaultDetails, payFor(payroll));
     await sim.as(carrying(sim, A, c)).proposeRun({
       root: fromHex(run.tree.root), payees: run.tree.payees,
       from: FROM, until: UNTIL, vault: vaultBytes(),

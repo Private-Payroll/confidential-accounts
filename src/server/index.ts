@@ -1446,6 +1446,8 @@ app.post('/api/accounts/:id/payroll', authed, member, wrap(async (req, res) => {
     repeats: z.object({
       runIds: z.array(z.string()),
       reason: z.string(),
+      /* Who this run pays a second time for the month, as a numbered extra, by roster entry. */
+      extra: z.array(z.string()).optional(),
     }).optional(),
   }).parse(req.body);
   const me = b.repeats ? identity.user(req.userId!) : undefined;
@@ -1551,6 +1553,7 @@ app.post('/api/runs/:id/propose', authed, ownsRun, wrap(async (req, res) => {
     runId: inputs.runId,
     seeds: inputs.seeds,
     facts: inputs.facts,
+    pay: inputs.pay,
     opensAt: BigInt(b.opensAt),
     closesAt: BigInt(b.closesAt),
     vault: b.vault,
@@ -1946,7 +1949,7 @@ app.post('/api/runs/:id/private-payments', authed, ownsRun, wrap(async (req, res
       });
       return;
     }
-    const whole = buildRun(rebuilt.seeds, rebuilt.identity, rebuilt.facts, await vaultDetailsOf());
+    const whole = buildRun(rebuilt.seeds, rebuilt.identity, rebuilt.facts, await vaultDetailsOf(), rebuilt.pay);
     const paidAmongThem = await ledger.paidAmong(run.accountId, retry.leaves);
     const assembledRetry = assemblePrivatePayments({
       order: retry.order, leaves: retry.leaves, window: retry.window, idFrom: retry.idFrom,
@@ -1970,7 +1973,7 @@ app.post('/api/runs/:id/private-payments', authed, ownsRun, wrap(async (req, res
     });
     return;
   }
-  const built = buildRun(rebuild.seeds, rebuild.identity, rebuild.facts, await vaultDetailsOf());
+  const built = buildRun(rebuild.seeds, rebuild.identity, rebuild.facts, await vaultDetailsOf(), rebuild.pay);
   const among = await ledger.paidAmong(run.accountId, material.leaves);
   const assembled = assemblePrivatePayments({
     order, leaves: material.leaves, window: material.window, idFrom: material.proposal.idFrom,
@@ -2249,6 +2252,12 @@ app.post('/api/accounts/:id/runs', authed, member, wrap(async (req, res) => {
       runIds: z.array(z.string()),
       reason: z.string(),
       chainPayments: z.number().int().nonnegative().optional(),
+      /*
+       * **WHO THIS RUN PAYS A SECOND TIME FOR THE MONTH, AS A NUMBERED EXTRA**,
+       * by roster entry, with the repeat's reason. Everybody else is paid as the
+       * first payment for the month, which the chain refuses for anybody paid.
+       */
+      extra: z.array(z.string()).optional(),
     }).optional(),
   }).parse(req.body);
   const me = identity.user(req.userId!);
@@ -2265,6 +2274,7 @@ app.post('/api/accounts/:id/runs', authed, member, wrap(async (req, res) => {
     b.repeats && {
       runIds: b.repeats.runIds, reason: b.repeats.reason, by: me.name.trim() || me.id,
       ...(b.repeats.chainPayments === undefined ? {} : { chainPayments: b.repeats.chainPayments }),
+      ...(b.repeats.extra === undefined ? {} : { extra: b.repeats.extra }),
     }));
 }));
 

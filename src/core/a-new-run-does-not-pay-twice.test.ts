@@ -26,6 +26,7 @@ import { PayrollService } from './payroll.js';
 import { SimulatedLedger, SimulatedProofSystem, type Ledger } from './ledger.js';
 import { MidnightCommitments } from '../midnight/commitments.js';
 import { runMaterialFor } from '../midnight/run-material.js';
+import { payRecordNonceOf } from '../midnight/run-keys.js';
 import { vaultDetails } from '../testing/vault-details.js';
 import { registryWithTestPrivateForms, aVaultHolding } from '../testing/assets.js';
 import { FileStore } from './store-file.js';
@@ -46,10 +47,14 @@ const OCTOBER = '2026-10';
  */
 const aChain = () => {
   const inner = new SimulatedLedger(MidnightCommitments);
+  /*
+   * `paid` is the leaves the chain records as paid and `paidOnce` the nonces:
+   * the account records two values for each payment, and its count is of both.
+   */
   const control: {
-    paid: Set<string> | null; cannotSay: boolean; raises: number; landThenThrow: boolean;
+    paid: Set<string> | null; paidOnce: Set<string>; cannotSay: boolean; raises: number; landThenThrow: boolean;
     status: 'answers' | 'throws' | 'null';
-  } = { paid: null, cannotSay: false, raises: 0, landThenThrow: false, status: 'answers' };
+  } = { paid: null, paidOnce: new Set(), cannotSay: false, raises: 0, landThenThrow: false, status: 'answers' };
   const ledger = new Proxy(inner, {
     get(target, prop) {
       const value = (target as any)[prop];
@@ -58,7 +63,7 @@ const aChain = () => {
           if (control.status === 'throws') throw new Error('the indexer did not answer');
           if (control.status === 'null') return null;
           const s = await inner.status(id);
-          return s && control.paid ? { ...s, movementCount: control.paid.size } : s;
+          return s && control.paid ? { ...s, movementCount: control.paid.size + control.paidOnce.size } : s;
         };
       }
       if (prop === 'paidAmong') {
@@ -67,6 +72,13 @@ const aChain = () => {
           : control.paid
             ? { known: true, paid: leaves.filter(l => control.paid!.has(l.toLowerCase())) }
             : inner.paidAmong(id, leaves);
+      }
+      if (prop === 'paidOnceAmong') {
+        return async (id: string, nonces: Hex[]) => control.cannotSay
+          ? { known: false, paid: [] }
+          : control.paid
+            ? { known: true, paid: nonces.filter(n => control.paidOnce.has(n.toLowerCase())) }
+            : inner.paidOnceAmong(id, nonces);
       }
       if (prop === 'proposeRun') {
         return async (...args: unknown[]) => {
@@ -83,6 +95,13 @@ const aChain = () => {
   }) as unknown as Ledger;
   return { inner, ledger, control };
 };
+
+/**
+ * **THE CONFIRMATION A RUN DRAWN OVER SOME OF THE ROSTER NEEDS**: everybody the
+ * run does not pay, named, with who decided it and why.
+ */
+const leftOutOf = (employeeIds: string[]) =>
+  ({ employeeIds, by: 'Ada', reason: 'paid on a run of their own this month' });
 
 /** The services over one records file and one chain. */
 const servicesOver = (chain: ReturnType<typeof aChain>, file: string) => {
@@ -114,7 +133,7 @@ async function aCompany(people = 3) {
   const materialFor = async (p: PayrollService, runId: string, opensAt = OPENS, closesAt = CLOSES) => {
     const i = await p.runMaterialInputs(runId, viewingKey);
     return runMaterialFor({
-      accountId: i.accountId, runId: i.runId, seeds: i.seeds, facts: i.facts,
+      accountId: i.accountId, runId: i.runId, seeds: i.seeds, facts: i.facts, pay: i.pay,
       opensAt, closesAt, vault: PAYROLL_VAULT, detailsOf: vaultDetails,
       ...(i.epoch !== undefined ? { epoch: i.epoch } : {}),
     });
@@ -197,15 +216,18 @@ describe('a service whose records have lost the earlier run', () => {
       await c.payroll.proposeRun(run.id, c.viewingKey, c.by, first);
       /* The round paid everybody and was closed: nothing is open on chain any more. */
       c.chain.control.paid = new Set(first.leaves.map(l => l.toLowerCase()));
+      const key = await c.accounts.payRecordKeyOf(c.account, c.viewingKey);
+      c.chain.control.paidOnce = new Set(first.records.map(r => payRecordNonceOf(key, r).toLowerCase()));
       const round = (await c.chain.inner.status(c.account))!.openProposals[0]!.id;
       (c.chain.inner as unknown as { accounts: Map<string, { openProposals: Map<Hex, unknown> }> })
         .accounts.get(c.account)!.openProposals.delete(round);
       expect(await c.openRounds()).toBe(0);
 
       const restored = before();
-      /* RED WHEN nothing compares the chain's payments with the leaves the records know. */
+      /* RED WHEN nothing compares the chain's payments with the leaves and nonces the records
+         know, or when the count is halved: three payments are six records, and every one is unknown. */
       await expect(restored.payroll.createRunFromRoster(c.account, SEPTEMBER, c.viewingKey))
-        .rejects.toThrow(/the chain holds 3 payments/);
+        .rejects.toThrow(/the chain holds 6 unexplained payment entries/);
       expect(await c.openRounds()).toBe(0);
 
       /* The control: the records that DO hold the run account for all three. */
@@ -359,10 +381,12 @@ describe('the same person under two roster entries', () => {
 
   it('is not paid again by a second run for the month that holds the other entry', async () => {
     const c = await aCompany(3);
-    const a = await c.payroll.createRunFromRoster(c.account, SEPTEMBER, c.viewingKey, [c.hired[0]!.id]);
+    const a = await c.payroll.createRunFromRoster(c.account, SEPTEMBER, c.viewingKey, [c.hired[0]!.id],
+      leftOutOf([c.hired[1]!.id, c.hired[2]!.id]));
     /* The second entry is paid where the first is, before its run is drawn, so its payslip agrees. */
     moveAddress(c, c.hired[2]!, c.hired[0]!);
-    const b = await c.payroll.createRunFromRoster(c.account, SEPTEMBER, c.viewingKey, [c.hired[2]!.id]);
+    const b = await c.payroll.createRunFromRoster(c.account, SEPTEMBER, c.viewingKey, [c.hired[2]!.id],
+      leftOutOf([c.hired[0]!.id, c.hired[1]!.id]));
     await c.raise(c.payroll, a.run.id);
     /* RED WHEN the raise matches people by their roster entry and not by where they are paid. */
     await expect(c.raise(c.payroll, b.run.id)).rejects.toThrow(
@@ -374,10 +398,12 @@ describe('the same person under two roster entries', () => {
 describe('the address an earlier run pays', () => {
   it('is the one on its payslips, not the roster\'s as it is now', async () => {
     const c = await aCompany(3);
-    const a = await c.payroll.createRunFromRoster(c.account, SEPTEMBER, c.viewingKey, [c.hired[0]!.id]);
+    const a = await c.payroll.createRunFromRoster(c.account, SEPTEMBER, c.viewingKey, [c.hired[0]!.id],
+      leftOutOf([c.hired[1]!.id, c.hired[2]!.id]));
     /* A second entry paid where the first is, drawn onto its own run for the same month. */
     moveAddress(c, c.hired[2]!, c.hired[0]!);
-    const b = await c.payroll.createRunFromRoster(c.account, SEPTEMBER, c.viewingKey, [c.hired[2]!.id]);
+    const b = await c.payroll.createRunFromRoster(c.account, SEPTEMBER, c.viewingKey, [c.hired[2]!.id],
+      leftOutOf([c.hired[0]!.id, c.hired[1]!.id]));
     await c.raise(c.payroll, a.run.id);
     /* Then the first entry moves on, after its run paid it at the old address. */
     moveAddress(c, c.hired[0]!, c.hired[1]!);
@@ -392,7 +418,8 @@ describe('the roster address and the payslip address', () => {
   it('refuses the raise, by name, when the roster address is not the one on the payslip', async () => {
     const c = await aCompany(3);
     const { run } = await c.payroll.createRunFromRoster(
-      c.account, SEPTEMBER, c.viewingKey, [c.hired[0]!.id, c.hired[1]!.id]);
+      c.account, SEPTEMBER, c.viewingKey, [c.hired[0]!.id, c.hired[1]!.id],
+      leftOutOf([c.hired[2]!.id]));
     moveAddress(c, c.hired[1]!, c.hired[2]!);
     /* RED WHEN the raise pays the roster's address without comparing it with the payslip's. */
     await expect(c.raise(c.payroll, run.id)).rejects.toThrow(/Payee 1/);
@@ -434,7 +461,7 @@ describe('what is not refused', () => {
     const oct = await c.payroll.createRunFromRoster(c.account, OCTOBER, c.viewingKey, undefined, undefined,
       { runIds: [], reason: 'a payment made outside this product', by: 'Ada', chainPayments: 1 });
     c.chain.control.paid = new Set(['0x' + 'cd'.repeat(32), '0x' + 'ef'.repeat(32)]);
-    await expect(c.raise(c.payroll, oct.run.id)).rejects.toThrow(/the chain holds 2 payments/);
+    await expect(c.raise(c.payroll, oct.run.id)).rejects.toThrow(/the chain holds 2 unexplained payment entries/);
     /* RED WHEN a leg that pays its own recorded payments again is refused over something it cannot pay twice. */
     await c.raise(c.payroll, run.id);
     expect(await c.openRounds()).toBe(1);

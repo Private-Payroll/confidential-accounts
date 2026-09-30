@@ -437,8 +437,15 @@ export function runOf(
   if (facts.amount.toString() !== record.amount) {
     throw new Error(`the payment built pays ${facts.amount} and the record says ${record.amount}; nothing was built`);
   }
+  /*
+   * **ONE PAYMENT, RECORDED BY THE ACCOUNT AS ITSELF.** Its nonce is derived
+   * from the record's own seed and its own id, so the same record always builds
+   * the same payment, and the account refuses it a second time.
+   */
+  const month = new Date(Number(record.opensAt) * 1000).toISOString().slice(0, 7);
   const run = buildRun(
-    [{ epoch: 0, seed: record.seed }], { accountId, runId: record.runId, epoch: 0 }, [facts], detailsOf);
+    [{ epoch: 0, seed: record.seed }], { accountId, runId: record.runId, epoch: 0 }, [facts], detailsOf,
+    { key: record.seed, records: [{ person: record.runId, month, kind: 'transfer', occurrence: 0 }] });
   return { run, args: run.payeeArgs(0), opensAt: BigInt(record.opensAt), closesAt: BigInt(record.closesAt) };
 }
 

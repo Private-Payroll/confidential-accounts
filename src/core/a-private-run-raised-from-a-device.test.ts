@@ -74,7 +74,7 @@ async function aCompany(publicHeld = 0n, opts: { alsoEur?: true } = {}) {
   const material = async () => {
     const i = await payroll.runMaterialInputs(runId, viewingKey);
     return runMaterialFor({
-      accountId: i.accountId, runId: i.runId, seeds: i.seeds, facts: i.facts,
+      accountId: i.accountId, runId: i.runId, seeds: i.seeds, facts: i.facts, pay: i.pay,
       opensAt: BigInt(now() - 60), closesAt: BigInt(now() + 3_600), vault: VAULT, detailsOf: vaultDetails,
     });
   };

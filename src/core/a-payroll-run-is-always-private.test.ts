@@ -23,6 +23,7 @@ import { payeeOf, recipientOf, type Payee } from '../midnight/payee-address.js';
 import { acceptedCodes } from 'vaults-web-shared/accepted-address.js';
 import type { PayoutSeed, RunIdentity } from '../midnight/run-keys.js';
 import type { User } from './types.js';
+import { payFor } from '../testing/payees.js';
 
 /**
  * **A PERSON CAN BE RECORDED AS A PUBLIC PAYEE, AND A PAYROLL RUN PAYS THEM
@@ -123,7 +124,7 @@ describe('the door, the refusal, and the record', () => {
       signIn(h.store, sentTo, 'usr_vendor'));
 
     const admitted = h.payroll.admit(
-      h.store.listEmployees(account.id)[0].id, viewingKey, 'usr_admin');
+      h.store.listEmployees(account.id)[0]!.id, viewingKey, 'usr_admin');
 
     expect(admitted.status).toBe('active');
     expect(admitted.address!.kind).toBe('unshielded');
@@ -228,7 +229,7 @@ describe('the door, the refusal, and the record', () => {
     const { run } = await h.payroll.createRunFromRoster(account.id, '2026-08', viewingKey);
     const facts = h.payroll.paymentFactsFor(run.id, viewingKey);
     expect(facts).toHaveLength(1);
-    expect(facts[0].payee.kind).toBe('shielded');
+    expect(facts[0]!.payee.kind).toBe('shielded');
 
     /* And the same function, called directly, hands the payee back rather than
      * merely permitting it — which is what lets the caller's own type narrow. */
@@ -491,7 +492,7 @@ describe('the door, the refusal, and the record', () => {
     /* And it is still payable: the refusal above does not catch a record from
      * before the refusal existed. */
     const { run } = await h.payroll.createRunFromRoster(account.id, '2026-08', viewingKey);
-    expect(h.payroll.paymentFactsFor(run.id, viewingKey)[0].payee.bech32).toBe(OLD_SHIELDED);
+    expect(h.payroll.paymentFactsFor(run.id, viewingKey)[0]!.payee.bech32).toBe(OLD_SHIELDED);
   });
 
   /* ──────────────────────────────────────────────────────────────────────
@@ -545,7 +546,7 @@ describe('the door, the refusal, and the record', () => {
       token, handedOver(h, token, { address: vendor, confirmation: code }),
       signIn(h.store, sentTo, 'usr_vendor'));
 
-    const employeeId = h.store.listEmployees(account.id)[0].id;
+    const employeeId = h.store.listEmployees(account.id)[0]!.id;
 
     /* The admin's machine, from ciphertext, with no key on our side. */
     const seen = acceptedCodes(h.payroll.handoverBlob(employeeId), account.id, viewingKey);
@@ -575,7 +576,7 @@ describe('the door, the refusal, and the record', () => {
       signIn(h.store, sentTo, 'usr_vendor'));
 
     expect(() => h.payroll.admit(
-      h.store.listEmployees(account.id)[0].id, viewingKey, 'usr_admin'))
+      h.store.listEmployees(account.id)[0]!.id, viewingKey, 'usr_admin'))
       .toThrow(/is not the code of the address that arrived/);
   });
 
@@ -674,15 +675,15 @@ describe('the door, the refusal, and the record', () => {
     const seeds: PayoutSeed[] = [{ epoch: 0, seed: '77'.repeat(32) }];
     const identity: RunIdentity = { accountId: 'acct_1', runId: 'run_s12', epoch: 0 };
 
-    const run = buildRun(seeds, identity, facts, vaultDetails);
+    const run = buildRun(seeds, identity, facts, vaultDetails, payFor(facts));
     const args = run.payeeArgs(0);
 
     expect(recipientOf(args.payee)).toBe(bytes);
     expect(args.details).toBe(toHex(vaultDetails.unshielded(
-      fromHex(recipientOf(vendor)), fromHex(facts[0].token), facts[0].amount,
+      fromHex(recipientOf(vendor)), fromHex(facts[0]!.token), facts[0]!.amount,
       fromHex(args.blinding))));
     expect(args.details).not.toBe(toHex(vaultDetails.shielded(
-      fromHex(bytes), fromHex(facts[0].token), facts[0].amount, fromHex(args.blinding))));
+      fromHex(bytes), fromHex(facts[0]!.token), facts[0]!.amount, fromHex(args.blinding))));
   });
 
   it('§6 AND THE ADDRESS ON THE ROSTER IS THE ONE THAT DECIDES', async () => {
@@ -719,7 +720,7 @@ describe('the door, the refusal, and the record', () => {
     const run = buildRun(
       [{ epoch: 0, seed: '77'.repeat(32) }],
       { accountId: t.accountId, runId: t.id, epoch: 0 },
-      [facts], vaultDetails);
+      [facts], vaultDetails, payFor([facts]));
     expect(run.facts).toHaveLength(1);
     expect(run.payeeArgs(0).payee.kind).toBe('unshielded');
   });

@@ -373,6 +373,12 @@ function harness(chain: {
   stateGoneAfterCall?: boolean;
   /** Omit to simulate a device that holds no private state for this account. */
   privateState?: Record<string, unknown> | null;
+  /** The account's shared map, as [key, value] pairs of hex. Empty by default. */
+  signerRoles?: Array<[Hex, Hex]>;
+  /** The values `movements` holds, for membership tests. Its size stays `movementCount`'s. */
+  movementValues?: Hex[];
+  /** The address the account is found at. `addr_1` by default. */
+  address?: string;
 },
 /**
  * **THE DEPLOYMENT BAG, AND IT IS A SEPARATE ARGUMENT BECAUSE IT IS A SEPARATE
@@ -460,6 +466,7 @@ deployment?: ConstructorParameters<typeof MidnightLedger>[6]) {
     approve: record('approve'),
     cancel: record('cancel'),
     closeExpiredRun: record('closeExpiredRun'),
+    sealPayKey: record('sealPayKey'),
   };
   /*
    * THE FAKE MUST NOT OUTLIVE THE CONTRACT IT FAKES.
@@ -600,7 +607,14 @@ deployment?: ConstructorParameters<typeof MidnightLedger>[6]) {
              * accessor, which is the reader handing over less than it declares.
              */
             signerLeaves: chain.signerCount === null ? undefined : { size: () => chain.signerCount ?? 3n },
-            movements: chain.movementCount === null ? undefined : { size: () => chain.movementCount ?? 0n },
+            movements: chain.movementCount === null ? undefined : {
+              size: () => chain.movementCount ?? 0n,
+              member: (v: Uint8Array) => (chain.movementValues ?? []).includes(toHex(v) as Hex),
+            },
+            signerRoles: {
+              member: (k: Uint8Array) => (chain.signerRoles ?? []).some(([key]) => key === toHex(k)),
+              lookup: (k: Uint8Array) => fromHex((chain.signerRoles ?? []).find(([key]) => key === toHex(k))![1]),
+            },
             retiredAt: chain.retiredVaults === null ? undefined : (chain.retiredVaults ?? []).map(([v, t]) => [fromHex(v), t]),
           },
         };
@@ -643,7 +657,7 @@ deployment?: ConstructorParameters<typeof MidnightLedger>[6]) {
     CFG,
     sponsor,
     blobs,
-    async () => 'addr_1',
+    async () => chain.address ?? 'addr_1',
     providers as any,
     /* compiled — nothing in this file calls a circuit through it. */ {},
     deployment,
@@ -3624,5 +3638,69 @@ describe('S74/T-357: the CHOSEN half — the deploy front door refuses a repeate
     expect(() => requireMaintenanceAuthority(
       { kind: 'committee', committee: [], threshold: 1 } as never,
     )).toThrow(/at least one verifying key/);
+  });
+});
+
+describe('the pay-record key on chain, and what the approving device can read', () => {
+  const COMMIT = toHex(pureCircuits.payKeyCommitmentOf(new Uint8Array(32).fill(0x3c))) as Hex;
+  const WRAP = [1, 2, 3, 4].map(n => ('0' + n).repeat(32) as Hex);
+  const at = toHex(pureCircuits.payKeyCommitmentKey()) as Hex;
+
+  it('refuses to seal the first copy without an approved round, before anything is built', async () => {
+    const { ledger, calls } = harness({});
+    /* RED WHEN the first copy can be sealed with no round: the commitment would be first-come. */
+    await expect(ledger.prepare('acct', { kind: 'sealPayKey', wrap: WRAP, commitment: COMMIT, proposalId: null }))
+      .rejects.toThrow(/nobody has confirmed this company's pay-record key on chain yet/);
+    await expect(ledger.prepare('acct', { kind: 'sealPayKey', wrap: WRAP, commitment: COMMIT, proposalId: PROPOSAL_ID }))
+      .resolves.toBeDefined();
+    const short = harness({ approvals: 1n, threshold: 2n });
+    await expect(short.ledger.prepare('acct', { kind: 'sealPayKey', wrap: WRAP, commitment: COMMIT, proposalId: PROPOSAL_ID }))
+      .rejects.toThrow(/1 of 2 approvals/);
+    expect([...calls, ...short.calls]).toHaveLength(0);
+  });
+
+  it('refuses a later copy of a key the account did not commit to, and a copy of the wrong shape', async () => {
+    const { ledger } = harness({ signerRoles: [[at, toHex(new Uint8Array(32).fill(9)) as Hex]] });
+    /* RED WHEN a later copy is not compared with the commitment on chain before a fee is paid. */
+    await expect(ledger.prepare('acct', { kind: 'sealPayKey', wrap: WRAP, commitment: COMMIT, proposalId: null }))
+      .rejects.toThrow(/not the one this company confirmed on chain/);
+    await expect(ledger.prepare('acct', { kind: 'sealPayKey', wrap: WRAP.slice(0, 3), commitment: COMMIT, proposalId: null }))
+      .rejects.toThrow(/four 32-byte entries/);
+  });
+
+  it('hands the circuit the four parts, the commitment and a zero proposal for a later copy', async () => {
+    const { ledger, calls } = harness({ signerRoles: [[at, COMMIT]] });
+    await ledger.sealPayKey('acct', WRAP, COMMIT, null, BY);
+    expect(calls).toHaveLength(1);
+    expect(calls[0]!.circuit).toBe('sealPayKey');
+    expect((calls[0]!.args[0] as Uint8Array[]).map(toHex)).toEqual(WRAP);
+    expect(toHex(calls[0]!.args[1] as Uint8Array)).toBe(COMMIT);
+    expect(toHex(calls[0]!.args[2] as Uint8Array)).toBe('00'.repeat(32));
+    expect(await ledger.payKeyCommitment('acct')).toBe(COMMIT);
+  });
+
+  it('finds one signer\'s sealed copy under the entries the contract derives from their key and this account', async () => {
+    const address = 'ab'.repeat(32);
+    const sk = new Uint8Array(32).fill(7);
+    const keys = [0n, 1n, 2n, 3n].map(i => toHex(pureCircuits.payKeyWrapKeyOf(fromHex(address), sk, i)) as Hex);
+    const { ledger } = harness({ address, signerRoles: keys.map((k, i) => [k, WRAP[i]!] as [Hex, Hex]) });
+    /* RED WHEN the entries are looked up under any derivation but the contract's own. */
+    expect(await ledger.sealedPayKeyOf('acct', toHex(sk) as Hex)).toEqual(WRAP);
+    expect(await ledger.sealedPayKeyOf('acct', toHex(new Uint8Array(32).fill(8)) as Hex)).toBeNull();
+  });
+
+  it('reads which nonces the account records as paid, and the device\'s check from them', async () => {
+    const key = '3c'.repeat(32) as Hex;
+    const { payRecordNonceOf } = await import('./run-keys.js');
+    const r = { person: 'emp_ada', month: '2026-09', kind: 'salary', occurrence: 0 };
+    const paid = payRecordNonceOf(key, r);
+    const { ledger } = harness({ movementValues: [toHex(pureCircuits.paidOnceOf(fromHex(paid))) as Hex] });
+    const other = payRecordNonceOf(key, { ...r, person: 'emp_bo' });
+    /* RED WHEN the read tests anything but the contract's own `paidOnceOf` of each nonce. */
+    expect(await ledger.paidOnceAmong('acct', [paid, other])).toEqual({ known: true, paid: [paid] });
+    const [ada, bo] = (await ledger.alreadyPaid('acct', key, [{ ...r, occurrence: 0 }, { ...r, person: 'emp_bo' }]))!;
+    expect(ada!.paid).toEqual([0]);
+    expect(ada!.refused).toBe(true);
+    expect(bo!.paid).toEqual([]);
   });
 });

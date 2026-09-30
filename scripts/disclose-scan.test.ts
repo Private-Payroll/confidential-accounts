@@ -57,9 +57,9 @@ describe('TRAP 1 and 2 — comments are stripped BEFORE anything else', () => {
 describe('TRAP 3 — `constructor` is not the keyword `circuit`', () => {
   it('attributes a constructor disclosure rather than dropping it', () => {
     // TWO real sites live in constructors: `:1590` in the account and `:263` in
-    // the vault. It was four until `S35d` deleted the constructor's threshold
-    // argument (`C340` + `C343`) and with it both of that argument's
-    // disclosures — its assert and its assignment.
+    // the vault. It was four until the constructor's threshold argument was
+    // removed, and with it both of that argument's disclosures — its assert
+    // and its assignment.
     const src = 'constructor(a: Bytes<32>) {\n  account = disclose(a);\n}\n';
     expect(own(scanSource(src), 'constructor')).toHaveLength(1);
   });
@@ -277,10 +277,31 @@ describe('the real sources', () => {
     // run's vault is public from the moment it is raised, not from its first
     // payment, including for a run that is cancelled and never paid.
     // `contracts/test/transcript.test.ts` pins it.
+
+    // AND IT MOVED ON 30 Sep AGAIN, 82 -> 95: THE CHAIN RECORDS WHO WAS PAID FOR
+    // WHICH MONTH. Thirteen sites in, none out, read off `scanSourceFile`.
+    //   `recordPayment` `paidOnceOf(nonce)`: NEW, and ruled. Written into
+    //     `movements` beside the leaf's value, one per payment. A hash of the
+    //     nonce, which is an HKDF output of the company's pay-record key and the
+    //     person, month, kind and occurrence: without the key it names nobody
+    //     and links no two payments, and every payment writes exactly two values,
+    //     so the count says nothing new. With the key - every signer, and every
+    //     signer who has left - whether a named person was paid for a month can
+    //     be tested against the public set; the founder accepted that on 29 Sep.
+    //   `sealPayKey` `proposal` and the proposal-id comparison: what every
+    //     governance circuit publishes. Nothing new.
+    //   `sealPayKey` `commitment`, x2: NEW once, written into `signerRoles`: a
+    //     hash of a 32-byte random key, which says nothing about the key; the
+    //     second is a comparison with the stored value. Nothing new there.
+    //   `sealPayKey` the four entry keys and the four parts: NEW. The keys are
+    //     hashes of the caller's secret key and the account under their own tag,
+    //     so they link to no leaf, no approval and no other account; the parts
+    //     are x25519/AES-GCM ciphertext. What an observer learns is that one
+    //     signer sealed a copy at that moment, and how many copies exist.
     const account = scanSourceFile(ROOT, 'contracts/src/ConfidentialAccount.compact');
     const vault = scanSourceFile(ROOT, 'contracts/src/Vault.compact');
     const sites = (cs: typeof account) => cs.reduce((n, c) => n + c.discloses.filter((d) => d.via.length === 0).length, 0);
-    expect(sites(account)).toBe(82);
+    expect(sites(account)).toBe(95);
     expect(sites(vault)).toBe(48);
   });
 
@@ -293,14 +314,14 @@ describe('the real sources', () => {
     }
   });
 
-  it('`requireSigner` discloses the signer root, and EIGHT circuits inherit it', () => {
-    // A DISCLOSES column for any of those eight that omits it says the circuit
+  it('`requireSigner` discloses the signer root, and NINE circuits inherit it', () => {
+    // A DISCLOSES column for any of those nine that omits it says the circuit
     // reveals nothing when it reveals the root of the signer tree.
     const account = scanSourceFile(ROOT, 'contracts/src/ConfidentialAccount.compact');
     expect(own(account, 'requireSigner')).toHaveLength(1);
     const inheritors = account.filter((c) => c.exported && c.discloses.some((d) => d.via.includes('requireSigner')));
     expect(inheritors.map((c) => c.name).sort()).toEqual(
-      ['adopt', 'amendSigner', 'approve', 'cancel', 'propose', 'removeSignerAndSetThreshold', 'setThreshold', 'setVaultThreshold'],
+      ['adopt', 'amendSigner', 'approve', 'cancel', 'propose', 'removeSignerAndSetThreshold', 'sealPayKey', 'setThreshold', 'setVaultThreshold'],
     );
   });
 

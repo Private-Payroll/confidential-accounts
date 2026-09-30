@@ -81,6 +81,7 @@ import { vaultDetails } from '../../src/testing/vault-details.js';
 import { payeeAddressFromKeys, type Payee } from '../../src/midnight/payee-address.js';
 import { assemblePrivatePayments } from '../../src/midnight/private-payment-wire.js';
 import { witnessesOver } from '../../src/midnight/vault-notes.js';
+import { payFor } from '../../src/testing/payees.js';
 
 /** Deposits or payments on their way, kept for the length of one test, sealed as the page keeps them. */
 const keptOnThisDevice = <T,>(kind: 'deposit' | 'payment'): KeptOnThisDevice<T> =>
@@ -494,7 +495,9 @@ describe.skipIf(!KEYS_ON_DISK)('A VAULT\'S COMMITTEE CHANGES WITH THE COMPANY\'S
     const payee = paying?.payee
       ?? payeeAddressFromKeys({ coinPublicKey: payeeKeys.coinPublicKey as Hex, encryptionPublicKey: payeeKeys.encryptionPublicKey as Hex }, NET);
     const facts = [{ payee, token: paying?.token ?? TOKEN, amount }];
-    const run = buildRun([{ epoch: 0, seed: toHex(new Uint8Array(randomBytes(32))) }], { accountId: ACCOUNT_ID, runId: 'run_1', epoch: 0 }, facts, vaultDetails);
+    const run = buildRun([{ epoch: 0, seed: toHex(new Uint8Array(randomBytes(32))) }], { accountId: ACCOUNT_ID, runId: 'run_1', epoch: 0 }, facts, vaultDetails,
+      /* A different person on every run, so the account records each as its own payment. */
+      payFor(facts, { people: [`person-${toHex(new Uint8Array(randomBytes(8)))}`] }));
     const now = BigInt(Math.floor(Date.now() / 1000));
     const window = { from: now - 600n, until: now + 3_600n };
     const c = change(0n, 41);

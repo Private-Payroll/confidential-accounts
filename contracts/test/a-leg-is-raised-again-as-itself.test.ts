@@ -40,6 +40,7 @@ import { registryWithTestPrivateForms, aVaultHolding } from '../../src/testing/a
 import { FileStore } from '../../src/core/store-file.js';
 import { toHex, unseal, parseCanonical, sign, type Hex, type Sealed } from '../../src/core/crypto.js';
 import { approvalMessage } from '../../src/core/account.js';
+import { payFor } from '../../src/testing/payees.js';
 
 const VAULT = toHex(new Uint8Array(32).fill(0xa1));
 const NOW = Math.floor(Date.now() / 1000);
@@ -105,7 +106,7 @@ async function aDraftedRun(people = 2) {
   const materialFor = async (runId: string, closesAt = CLOSES) => {
     const i = await s.payroll.runMaterialInputs(runId, viewingKey);
     return runMaterialFor({
-      accountId: i.accountId, runId: i.runId, seeds: i.seeds, facts: i.facts,
+      accountId: i.accountId, runId: i.runId, seeds: i.seeds, facts: i.facts, pay: i.pay,
       opensAt: OPENS, closesAt, vault: VAULT, detailsOf: vaultDetails,
     });
   };
@@ -194,7 +195,7 @@ describe('a raise that threw after the network had it', () => {
       const inputs = await r.payroll.runMaterialInputs(r.run.id, r.viewingKey);
       const reordered = await runMaterialFor({
         accountId: inputs.accountId, runId: inputs.runId, seeds: inputs.seeds,
-        facts: [...inputs.facts].reverse(), opensAt: OPENS, closesAt: CLOSES, vault: VAULT,
+        facts: [...inputs.facts].reverse(), pay: payFor([...inputs.facts].reverse()), opensAt: OPENS, closesAt: CLOSES, vault: VAULT,
         detailsOf: vaultDetails, epoch: inputs.epoch,
       });
       /* RED WHEN a raise again is not compared with the round already written down. */
@@ -252,7 +253,7 @@ describe('a raise that threw after the network had it', () => {
     const inputs = await r.payroll.runMaterialInputs(r.run.id, rotated.viewingKey);
     expect(inputs.seeds).toHaveLength(2);
     const again = await runMaterialFor({
-      accountId: inputs.accountId, runId: inputs.runId, seeds: inputs.seeds, facts: inputs.facts,
+      accountId: inputs.accountId, runId: inputs.runId, seeds: inputs.seeds, facts: inputs.facts, pay: inputs.pay,
       opensAt: OPENS, closesAt: CLOSES, vault: VAULT, detailsOf: vaultDetails, epoch: inputs.epoch,
     });
     /* RED WHEN material for a raise again is built under the current seed generation. */

@@ -33,6 +33,7 @@ import { recipientOf } from '../../src/midnight/payee-address.js';
 import type { PayoutSeed, RunIdentity } from '../../src/midnight/run-keys.js';
 import { changeCoinOf } from '../../src/midnight/vault-coins.js';
 import { toHex, fromHex } from '../../src/core/crypto.js';
+import { payFor } from '../../src/testing/payees.js';
 
 /*
  * THE CLOCK AND THE RUN'S WINDOW.
@@ -381,7 +382,7 @@ describe('a vault pays one payee of an approved run', () => {
     ];
 
     /* --- A's machine --- */
-    const byA = buildRun(seeds, identity, payroll, vaultDetails);
+    const byA = buildRun(seeds, identity, payroll, vaultDetails, payFor(payroll));
     const c = govChange(63);
     const vaultBytes = vaultAddrBytes();
     const payload = pureCircuits.runPayload(
@@ -420,7 +421,7 @@ describe('a vault pays one payee of an approved run', () => {
     /* --- A's laptop dies here. Nothing of A's crosses to B. --- */
 
     /* --- B's machine: the same account seeds, the same run identity --- */
-    const byB = buildRun(seeds, identity, payroll, vaultDetails);
+    const byB = buildRun(seeds, identity, payroll, vaultDetails, payFor(payroll));
     expect(byB.tree.root).toBe(byA.tree.root);
 
     await pay(byB, 1);
@@ -444,7 +445,7 @@ describe('a vault pays one payee of an approved run', () => {
       { payee: payeeFor(BOB, 'undeployed'), token: toHex(GBP), amount: 200n },
     ];
 
-    const byA = buildRun(seeds, identity, payroll, vaultDetails);
+    const byA = buildRun(seeds, identity, payroll, vaultDetails, payFor(payroll));
     const c = govChange(64);
     const vaultBytes = vaultAddrBytes();
     const payload = pureCircuits.runPayload(
@@ -467,7 +468,7 @@ describe('a vault pays one payee of an approved run', () => {
 
     /* B rebuilds and, not knowing what landed, retries BOTH people. */
     const retry = buildRetryRun(
-      buildRun(seeds, identity, payroll, vaultDetails), [0, 1]);
+      buildRun(seeds, identity, payroll, vaultDetails, payFor(payroll)), [0, 1]);
     const r0 = retry.payeeArgs(0);
     const retryPayload = pureCircuits.runPayload(
       fromHex(retry.tree.root), retry.tree.payees, WIN_FROM, WIN_UNTIL);

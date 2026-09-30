@@ -1,5 +1,5 @@
 import type { Hex, Sealed } from './crypto.js';
-import type { PayoutSeed } from '../midnight/run-keys.js';
+import type { PayoutSeed, PayRecord } from '../midnight/run-keys.js';
 import type { Payee } from '../midnight/payee-address.js';
 import type { PaymentFacts } from '../midnight/payout-tree.js';
 import type { SkipRegister } from '../midnight/run-skips.js';
@@ -563,6 +563,21 @@ export interface StateBlinding {
    * difference is that nothing on chain is keyed by it.
    */
   payoutSeeds: PayoutSeed[];
+  /**
+   * **THE KEY EVERY PAYMENT'S NONCE IS DERIVED FROM, WITH WHO IS PAID AND FOR
+   * WHICH MONTH.** The account records a value made from each nonce and
+   * refuses a second, so this key is what lets the chain say who was paid for
+   * which month.
+   *
+   * **GENERATED ONCE AND NEVER REGENERATED**, not even by a rotation: a key
+   * that changed when a signer left would give a month already paid a new
+   * nonce, and the second payment would pass. A signer who leaves can still
+   * test whether a named person was paid for a month; that is accepted.
+   *
+   * Absent only on an account created before it existed, which cannot draw a
+   * run until it has one.
+   */
+  payRecordKey?: Hex;
 }
 
 export type ProposalKind =
@@ -1251,13 +1266,16 @@ export interface RunSkip {
    * **TWO STATES, NAMED SEPARATELY AND NEVER MERGED.** "outstanding" that
    * covers two different situations is how an operator stops looking.
    *
-   *   `them`  they have handed nothing over — the invitation is with them
-   *   `us`    their drop box is full and an admin has not admitted them
+   *   `them`        they have handed nothing over — the invitation is with them
+   *   `us`          their drop box is full and an admin has not admitted them
+   *   `not chosen`  they are on the roster and could be paid, and whoever drew
+   *                 the run named other people instead
    *
    * **The second is ours to fix and the first is not**, so collapsing them
-   * turns a queue an admin can clear into a queue an admin waits on.
+   * turns a queue an admin can clear into a queue an admin waits on. The third
+   * is a choice, and it is recorded with who made it and why like the others.
    */
-  waiting: 'them' | 'us';
+  waiting: 'them' | 'us' | 'not chosen';
 }
 
 /**
@@ -1324,6 +1342,14 @@ export interface RunPayout {
    * signers approved does not change afterwards, so neither does this.
    */
   facts: PaymentFacts[];
+  /**
+   * **WHAT EACH PAYMENT OF THIS LEG IS FOR**, in the leaves' order: the person,
+   * the month, the kind of pay and the occurrence. Each payee's nonce was
+   * derived from it, so a rebuild reads it from here and never works it out
+   * again from a roster that may have moved. Absent only on a leg raised
+   * before it was kept.
+   */
+  records?: PayRecord[];
   /**
    * The identifier this leg's per-payee secrets were derived from.
    *
@@ -1625,11 +1651,11 @@ export interface RunPayout {
 /**
  * **A RUN THAT WAS DRAWN UP KNOWING IT REPEATS ANOTHER, AND ON WHOSE SAY-SO.**
  *
- * Two runs for one period that pay the same people the same amounts are,
- * to the account, two unrelated sets of payments: each run derives its own
- * per-payee secrets, so nothing on chain ties one to the other and both can
- * be paid. That is right for a deliberate second payment and it is a double
- * payroll for somebody who only meant to try again. **So a repeat is refused
+ * Two runs for one period that pay the same people the same amounts are two
+ * rounds over the same payments: the account refuses the second payment to
+ * each person for the month, unless the run names them as a numbered extra.
+ * That is right for a deliberate second payment, and for somebody who only
+ * meant to try again it is a round of approvals and a fee for nothing. **So a repeat is refused
  * unless somebody names the runs it repeats and says why, and this is what
  * they said.** It is read again when the run is raised, so a repeat that was
  * never confirmed cannot be raised by a different route.
@@ -1648,6 +1674,14 @@ export interface RunRepeatRecord {
    * means none.
    */
   chainPayments?: number;
+  /**
+   * **THE PEOPLE THIS RUN PAYS A SECOND TIME FOR ITS MONTH, AS A NUMBERED
+   * EXTRA**, each with the occurrence they are paid as: 1 for the first extra,
+   * 2 for the next. Everybody else on the run is paid as the first payment for
+   * the month, which the account refuses if it has already recorded one.
+   * Absent when the run pays nobody an extra.
+   */
+  extra?: Record<string, number>;
 }
 
 export interface PayrollRun {

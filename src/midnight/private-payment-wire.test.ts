@@ -4,6 +4,7 @@ import { assemblePrivatePayments, pathFromWire, pathToWire } from './private-pay
 import { payeeFor, unshieldedPayeeFor } from '../testing/payees.js';
 import { vaultDetails } from '../testing/vault-details.js';
 import type { Hex } from '../core/crypto.js';
+import { payFor } from '../testing/payees.js';
 
 /*
  * A payee's merkle path crosses from the service to the device's builder as the
@@ -42,7 +43,7 @@ describe('ONE APPROVED LEG\'S PAYMENTS, AS THE SERVICE HANDS THEM TO A DEVICE', 
     { payee: payeeFor('a1'.repeat(32), NET), token: TOKEN, amount: 250n },
     { payee: payeeFor('a2'.repeat(32), NET), token: TOKEN, amount: 90n },
   ];
-  const built = buildRun(seeds, identity, facts, vaultDetails);
+  const built = buildRun(seeds, identity, facts, vaultDetails, payFor(facts));
   const window = { from: 100n, until: 200n };
   /* A stand-in for the contract's identity: a function of exactly the values it folds, so any change shows. */
   const idFrom = (leaves: Hex[], w: { from: bigint; until: bigint }) =>
@@ -84,7 +85,7 @@ describe('ONE APPROVED LEG\'S PAYMENTS, AS THE SERVICE HANDS THEM TO A DEVICE', 
 
   it('REFUSES A REBUILD WHOSE LEAVES, ROOT, COUNT OR IDENTITY ARE NOT WHAT THE SIGNERS APPROVED', () => {
     const refused = /not the ones its signers approved/;
-    const other = buildRun(seeds, { ...identity, runId: 'run_2' }, facts, vaultDetails);
+    const other = buildRun(seeds, { ...identity, runId: 'run_2' }, facts, vaultDetails, payFor(facts));
     /* RED WHEN: any one of the four comparisons is dropped. */
     expect(assemblePrivatePayments(input({ leaves: other.tree.leaves }))).toEqual({ refusal: expect.stringMatching(refused) });
     expect(assemblePrivatePayments(input({ leaves: built.tree.leaves.slice(0, 1) }))).toEqual({ refusal: expect.stringMatching(refused) });
@@ -113,7 +114,7 @@ describe('ONE APPROVED LEG\'S PAYMENTS, AS THE SERVICE HANDS THEM TO A DEVICE', 
 
   it('HANDS OVER EACH PAYMENT IN THE FORM ITS PAYEE\'S ADDRESS IS, AGAINST THE LEAF BUILT FOR THAT FORM', () => {
     const publicFacts = [facts[0]!, { payee: unshieldedPayeeFor('c3'.repeat(32), NET), token: TOKEN, amount: 90n }];
-    const mixed = buildRun(seeds, identity, publicFacts, vaultDetails);
+    const mixed = buildRun(seeds, identity, publicFacts, vaultDetails, payFor(publicFacts));
     const out = assemblePrivatePayments(input({
       built: mixed, facts: publicFacts, leaves: mixed.tree.leaves,
       order: { ...input().order, root: mixed.tree.root, proposal: idFrom(mixed.tree.leaves, window) },
@@ -126,7 +127,7 @@ describe('ONE APPROVED LEG\'S PAYMENTS, AS THE SERVICE HANDS THEM TO A DEVICE', 
     ]);
     /* RED WHEN: the public payee's leaf is built by the private details circuit, which the public payout cannot pay. */
     const asPrivate = buildRun(seeds, identity,
-      [facts[0]!, { payee: payeeFor('c3'.repeat(32), NET), token: TOKEN, amount: 90n }], vaultDetails);
+      [facts[0]!, { payee: payeeFor('c3'.repeat(32), NET), token: TOKEN, amount: 90n }], vaultDetails, payFor([facts[0]!, { payee: payeeFor('c3'.repeat(32), NET), token: TOKEN, amount: 90n }]));
     expect(out.order.payments[1]!.leaf).toBe(mixed.payeeArgs(1).leaf);
     expect(out.order.payments[1]!.leaf).not.toBe(asPrivate.payeeArgs(1).leaf);
   });

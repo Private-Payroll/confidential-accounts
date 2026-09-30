@@ -700,6 +700,15 @@ export interface Ledger {
   paidAmong(accountId: string, leaves: Hex[]): Promise<PaymentsAmong | null>;
 
   /**
+   * **WHICH OF THESE NONCES THE ACCOUNT HAS RECORDED A PAYMENT FOR**, answered
+   * by the ledger, in the shape `paidAmong` answers in. A nonce stands for one
+   * person, month, kind of pay and occurrence, and the account records a value
+   * made from it beside each payment's leaf. Null when the account is not on
+   * this ledger. **A read, never an authorisation**, for `paidAmong`'s reason.
+   */
+  paidOnceAmong(accountId: string, nonces: Hex[]): Promise<PaymentsAmong | null>;
+
+  /**
    * **WHETHER THE ACCOUNT'S SIGNER SET HOLDS THIS LEAF NOW**, read from the
    * chain, or null when the account is not there to ask. A seat a signer's
    * device sends is written on the record only once this says yes, because the
@@ -1453,6 +1462,13 @@ export class SimulatedLedger implements Ledger {
    * a choice made in one place, and this method does not pretend to be it.
    */
   async paidAmong(accountId: string, _leaves: Hex[]): Promise<PaymentsAmong | null> {
+    const a = this.accounts.get(accountId);
+    if (!a) return null;
+    return { known: false, paid: [] };
+  }
+
+  /** This class records no payments, so it answers that it does not know; see `paidAmong`. */
+  async paidOnceAmong(accountId: string, _nonces: Hex[]): Promise<PaymentsAmong | null> {
     const a = this.accounts.get(accountId);
     if (!a) return null;
     return { known: false, paid: [] };
