@@ -48,6 +48,7 @@ import { registryWithTestPrivateForms, aVaultHolding } from '../../src/testing/a
 import { FileStore } from '../../src/core/store-file.js';
 import { assetIdBytes } from '../../src/core/assets.js';
 import { fromHex, toHex, unseal, parseCanonical, type Hex } from '../../src/core/crypto.js';
+import { payFor } from '../../src/testing/payees.js';
 
 /** A vault is any 32 bytes as far as the account is concerned; it never dereferences one. */
 const PAYROLL_VAULT = new Uint8Array(32).fill(0xa1);
@@ -123,7 +124,7 @@ async function aRunTheProductRaised(payees = 1) {
     accountId: inputs.accountId,
     runId: inputs.runId,
     seeds: inputs.seeds,
-    facts: inputs.facts,
+    facts: inputs.facts, pay: inputs.pay,
     opensAt: OPENS,
     closesAt: CLOSES,
     vault: toHex(PAYROLL_VAULT),
@@ -156,7 +157,7 @@ async function rebuiltFromTheRecord(
 ) {
   const rebuild = await payroll.payoutRebuildOf(runId, viewingKey, asset);
   if (!rebuild) throw new Error('this leg has no payout material on record');
-  return buildRun(rebuild.seeds, rebuild.identity, rebuild.facts, vaultDetails);
+  return buildRun(rebuild.seeds, rebuild.identity, rebuild.facts, vaultDetails, rebuild.pay);
 }
 
 /**
@@ -296,7 +297,7 @@ describe('a payroll run the PRODUCT raised is one a VAULT can pay', () => {
     const inputs = await payroll.runMaterialInputs(run.id, created.viewingKey);
     const material = await runMaterialFor({
       accountId: inputs.accountId, runId: inputs.runId, seeds: inputs.seeds,
-      facts: inputs.facts, opensAt: OPENS, closesAt: CLOSES, vault: toHex(PAYROLL_VAULT),
+      facts: inputs.facts, pay: inputs.pay, opensAt: OPENS, closesAt: CLOSES, vault: toHex(PAYROLL_VAULT),
     });
     const asARun = toHex(pureCircuits.proposalIdOf(
       pureCircuits.runPayload(
@@ -352,11 +353,12 @@ describe('a payroll run the PRODUCT raised is one a VAULT can pay', () => {
     const { payroll, created, run } = await aCompanyWithAPayroll(1);
     const inputs = await payroll.runMaterialInputs(run.id, created.viewingKey);
     /* A tree over three payees for a payroll that pays one. The three leaves are
-     * distinct even from one repeated fact, because each payee's nonce is
-     * derived from their INDEX. */
+     * distinct even from one repeated fact, because each payee's blinding is
+     * derived from their INDEX and each is named as a different person. */
+    const three = [inputs.facts[0]!, inputs.facts[0]!, inputs.facts[0]!];
     const material = await runMaterialFor({
       accountId: inputs.accountId, runId: inputs.runId, seeds: inputs.seeds,
-      facts: [inputs.facts[0]!, inputs.facts[0]!, inputs.facts[0]!],
+      facts: three, pay: payFor(three),
       opensAt: OPENS, closesAt: CLOSES, vault: toHex(PAYROLL_VAULT),
     });
 
@@ -376,7 +378,7 @@ describe('a payroll run the PRODUCT raised is one a VAULT can pay', () => {
     const inputs = await payroll.runMaterialInputs(run.id, created.viewingKey);
     const material = await runMaterialFor({
       accountId: inputs.accountId, runId: inputs.runId, seeds: inputs.seeds,
-      facts: inputs.facts, opensAt: OPENS, closesAt: CLOSES,
+      facts: inputs.facts, pay: inputs.pay, opensAt: OPENS, closesAt: CLOSES,
       vault: MidnightCommitments.noVault(),
     });
 

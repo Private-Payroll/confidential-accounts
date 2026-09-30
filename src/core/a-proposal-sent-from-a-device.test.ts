@@ -61,7 +61,7 @@ async function aCompany(opts: { door?: 'none' } = {}) {
   const materialFor = async (runId: string) => {
     const i = await payroll.runMaterialInputs(runId, viewingKey);
     return runMaterialFor({
-      accountId: i.accountId, runId: i.runId, seeds: i.seeds, facts: i.facts,
+      accountId: i.accountId, runId: i.runId, seeds: i.seeds, facts: i.facts, pay: i.pay,
       opensAt: window.opensAt, closesAt: window.closesAt, vault: VAULT, detailsOf: vaultDetails,
       ...(i.epoch !== undefined ? { epoch: i.epoch } : {}),
     });

@@ -280,9 +280,10 @@ describe('one pending employee does not refuse the whole run', () => {
    * ── 10. THE EMPTY RUN ─────────────────────────────────────────────────────
    */
   it('REFUSES WHEN CONFIRMING THE SKIPS WOULD LEAVE NOBODY TO PAY', async () => {
-    const { account, viewingKey, nina, otto } = await company();
+    const { account, viewingKey, ada, ben, nina, otto } = await company();
+    /* Ada and Ben are active and not chosen, so they are named as left out too. */
     await expect(h.payroll.createRunFromRoster(
-      account.id, '2026-07', viewingKey, [nina.id, otto.id], ack([nina.id, otto.id])))
+      account.id, '2026-07', viewingKey, [nina.id, otto.id], ack([nina.id, otto.id, ada.id, ben.id])))
       .rejects.toThrow(/there is nobody left to pay/);
   });
 

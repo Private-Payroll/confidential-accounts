@@ -7,16 +7,17 @@
  * that moment nothing on this machine knows whether the round is open. What the
  * person gets is an error, and what a person holding an error does is try again.
  *
- * **THE ACCOUNT RECORDS A COMPLETED PAYMENT BY ITS LEAF AND BY NOTHING ELSE.**
- * A payee's leaf is derived from the run's identifier, so a second attempt
- * carrying a NEW identifier derives a leaf the account has never seen: it is a
- * different payment, it is refused by nothing, and both settle. Fifty people are
- * paid twice and the vault is short. That is measured here first, before
- * anything is held to anything, because a guard whose failure nobody has watched
- * is a guard nobody can trust.
+ * **THE ACCOUNT RECORDS A COMPLETED PAYMENT BY ITS LEAF, AND BY THE PERSON AND
+ * MONTH ITS NONCE STANDS FOR.** A payee's leaf is derived from the run's
+ * identifier, so a second attempt carrying a NEW identifier derives a leaf the
+ * account has never seen - but its nonce is the same, because a nonce is the
+ * person, the month, the kind of pay and the occurrence, and the account refuses
+ * the second payment by that. Measured here first, both halves, because a guard
+ * whose failure nobody has watched is a guard nobody can trust.
  *
- * **SO EVERY WAY BACK IN HAS TO REUSE THE IDENTIFIER THE LEG WAS RAISED UNDER,
- * OR BE REFUSED.** There are four ways in and this file walks all four:
+ * **AND EVERY WAY BACK IN STILL REUSES THE IDENTIFIER THE LEG WAS RAISED UNDER,
+ * OR IS REFUSED**, because a second round over paid people collects approvals
+ * and a fee for payments the chain will refuse. There are four ways in and this file walks all four:
  *
  *   - drawing the payroll up again from the roster
  *   - drawing it up again through the ad hoc door
@@ -48,6 +49,7 @@ import {
 import { MidnightCommitments } from '../../src/midnight/commitments.js';
 import { buildRun } from '../../src/midnight/payout-tree.js';
 import { runMaterialFor, retryMaterialFor } from '../../src/midnight/run-material.js';
+import { payRecordNonceOf } from '../../src/midnight/run-keys.js';
 import { vaultDetails } from '../../src/testing/vault-details.js';
 import { registryWithTestPrivateForms, aVaultHolding } from '../../src/testing/assets.js';
 import { FileStore } from '../../src/core/store-file.js';
@@ -127,7 +129,7 @@ async function aCompanyWithADraftedRun(people: number) {
   const materialFor = async (runId: string, vk: Hex = viewingKey) => {
     const i = await s.payroll.runMaterialInputs(runId, vk);
     return runMaterialFor({
-      accountId: i.accountId, runId: i.runId, seeds: i.seeds, facts: i.facts,
+      accountId: i.accountId, runId: i.runId, seeds: i.seeds, facts: i.facts, pay: i.pay,
       opensAt: OPENS, closesAt: CLOSES, vault: toHex(PAYROLL_VAULT), detailsOf: vaultDetails,
       ...(i.epoch !== undefined ? { epoch: i.epoch } : {}),
     });
@@ -152,15 +154,15 @@ async function aRaiseThatThrewAfterTheNetworkHadIt(people = 3) {
 }
 
 describe('the hazard: a run identifier is what tells two payments apart', () => {
-  it('the same people, amounts and account under a minted identifier are DIFFERENT payments, '
-    + 'and the paid-once record cannot connect them', async () => {
+  it('the same people, amounts and account under a minted identifier are different LEAVES '
+    + 'and THE SAME NONCES, so the record of who was paid for the month connects them', async () => {
     const r = await aRaiseThatThrewAfterTheNetworkHadIt(3);
     const recorded = (await r.payroll.payoutRebuildOf(r.run.id, r.viewingKey))!;
 
     /* Everything held equal except the identifier - the same facts object, window and vault. */
     const minted = await runMaterialFor({
       accountId: recorded.identity.accountId, runId: 'run_startedagainbyhand:GBP',
-      seeds: recorded.seeds, facts: recorded.facts, epoch: recorded.identity.epoch,
+      seeds: recorded.seeds, facts: recorded.facts, pay: recorded.pay, epoch: recorded.identity.epoch,
       opensAt: OPENS, closesAt: CLOSES, vault: toHex(PAYROLL_VAULT), detailsOf: vaultDetails,
     });
 
@@ -169,11 +171,22 @@ describe('the hazard: a run identifier is what tells two payments apart', () => 
     expect(r.first.leaves).toHaveLength(3);
     expect(minted.leaves).toHaveLength(r.first.leaves.length);
     for (let i = 0; i < r.first.leaves.length; i++) {
-      /* RED WHEN a run's per-payee secrets stop depending on its identifier, which is
-         what makes a second attempt under a new one a second set of payments that the
-         account records separately and refuses neither of. */
+      /* RED WHEN a run's blindings stop depending on its identifier: the leaves are then
+         the same and the rest of this file would not tell the two records apart. */
       expect(minted.leaves[i]).not.toBe(r.first.leaves[i]);
     }
+    expect(minted.records).toEqual(recorded.pay.records);
+    /* RED WHEN the nonce starts depending on the run's identifier again: a second attempt
+       would then be a payment the account records separately and refuses nothing of. Read
+       off the two builds' own payee arguments, not recomputed from the records. */
+    const asRecorded = buildRun(recorded.seeds, recorded.identity, recorded.facts, vaultDetails, recorded.pay);
+    const asMinted = buildRun(recorded.seeds, { ...recorded.identity, runId: 'run_startedagainbyhand:GBP' },
+      recorded.facts, vaultDetails, recorded.pay);
+    for (let i = 0; i < 3; i++) {
+      expect(asMinted.payeeArgs(i).nonce).toBe(asRecorded.payeeArgs(i).nonce);
+      expect(asMinted.payeeArgs(i).nonce).toBe(payRecordNonceOf(recorded.pay.key, recorded.pay.records[i]!));
+    }
+    expect(new Set(recorded.pay.records.map(x => payRecordNonceOf(recorded.pay.key, x))).size).toBe(3);
   });
 });
 
@@ -291,7 +304,7 @@ describe('every way a person can start a failed run again', () => {
 
       const mintedLeg = await runMaterialFor({
         accountId: foreign.accountId, runId: foreign.runId, seeds: rebuild.seeds,
-        facts: rebuild.facts, epoch: foreign.epoch, opensAt: OPENS, closesAt: CLOSES,
+        facts: rebuild.facts, pay: rebuild.pay, epoch: foreign.epoch, opensAt: OPENS, closesAt: CLOSES,
         vault: toHex(PAYROLL_VAULT), detailsOf: vaultDetails,
       });
       /* The control: this is not a relabelling of the same payments. */
@@ -315,7 +328,7 @@ describe('every way a person can start a failed run again', () => {
 
 describe('against the compiled circuits: what the chain refuses, and what it does not', () => {
   it('refuses a second payment to a person the leg already paid, BECAUSE the bytes are the same - '
-    + 'and does not refuse one derived under a minted identifier', async () => {
+    + 'and a minted identifier\'s new leaf still carries the person and month it pays', async () => {
     const r = await aCompanyWithADraftedRun(3);
     const first = await r.materialFor(r.run.id);
     const leg = await r.payroll.proposeRun(r.run.id, r.viewingKey, r.by, first);
@@ -339,7 +352,7 @@ describe('against the compiled circuits: what the chain refuses, and what it doe
     const rotated = await r.accounts.rotate(r.account, r.viewingKey);
     const rebuild = (await r.payroll.payoutRebuildOf(r.run.id, rotated.viewingKey))!;
     /* Rebuilt from the record the way a paying device rebuilds it, on another machine. */
-    const whole = buildRun(rebuild.seeds, rebuild.identity, rebuild.facts, vaultDetails);
+    const whole = buildRun(rebuild.seeds, rebuild.identity, rebuild.facts, vaultDetails, rebuild.pay);
     const payUnderTheLeg = (at: number) => {
       const args = whole.payeeArgs(at);
       return sim.as(legDevice).recordPayment({
@@ -361,16 +374,21 @@ describe('against the compiled circuits: what the chain refuses, and what it doe
     await expect(payUnderTheLeg(0)).rejects.toThrow(/already been made/i);
 
     /* AND THE OTHER HALF, SO NEITHER IS TAKEN ON TRUST: the same person, the same amount,
-       derived under a minted identifier, is a movement the account has never seen - so
-       nothing above refuses it, and that is why the product must. */
+       derived under a minted identifier, is a leaf the account has never seen. */
     const minted = await runMaterialFor({
       accountId: rebuild.identity.accountId, runId: 'run_startedagainbyhand:GBP',
-      seeds: rebuild.seeds, facts: rebuild.facts, epoch: rebuild.identity.epoch,
+      seeds: rebuild.seeds, facts: rebuild.facts, pay: rebuild.pay, epoch: rebuild.identity.epoch,
       opensAt: OPENS, closesAt: CLOSES, vault: toHex(PAYROLL_VAULT), detailsOf: vaultDetails,
     });
     /* RED WHEN a minted identifier derives the leaf the leg already paid, which would make
        every refusal in this file unnecessary. */
     expect(sim.ledger.movements.member(
       pureCircuits.paidMovementOf(fromHex(minted.leaves[0]!)))).toBe(false);
+    /* ...and a person and month it has: the account holds the nonce's record, which is what
+       refuses a payment under the minted leaf (nobody-is-paid-twice-for-one-month.test.ts pays
+       one and watches it refused). RED WHEN `recordPayment` stops recording the nonce, or the
+       minted material derives another nonce for the same person. */
+    expect(sim.ledger.movements.member(
+      pureCircuits.paidOnceOf(fromHex(payRecordNonceOf(rebuild.pay.key, minted.records[0]!))))).toBe(true);
   });
 });

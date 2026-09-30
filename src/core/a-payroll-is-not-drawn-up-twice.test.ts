@@ -2,11 +2,12 @@
  * **A RUN THAT PAYS THE SAME PEOPLE THE SAME AMOUNTS FOR THE SAME PERIOD AS
  * ANOTHER IS REFUSED UNLESS SOMEBODY NAMES WHAT IT REPEATS AND SAYS WHY.**
  *
- * Every run derives its own payment secrets from its own id, so two runs over
- * the same people are, to the account, two unrelated sets of payments, and both
- * can be paid. For a bonus that is right. For a person whose first run failed
- * and who does not know whether it reached the chain, it is everybody paid
- * twice. So the door refuses a repeat by default, names the runs it repeats and
+ * The account refuses a second payment to one person for one month, so two
+ * runs over the same people cannot both pay them - but the second collects its
+ * approvals and its fee before the chain refuses it, and somebody on the roster
+ * twice is two people to the chain. For a bonus a second run is right, as a
+ * numbered extra. For a person whose first run failed and who does not know
+ * whether it reached the chain, it is a round for nothing. So the door refuses a repeat by default, names the runs it repeats and
  * the ways to try again that pay nobody twice, and lets a person through only by
  * naming that same set of runs back, with a reason, under their own name - which
  * is written onto the run, inside its sealed envelope.

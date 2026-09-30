@@ -13,12 +13,20 @@ import CompactStandardLibrary;
  *
  * It holds no money and can neither receive nor send any. A vault calls
  * `recordPayment` to ask whether one payee of an approved run may be paid, and
- * the account records that payee as paid, so no payee leaf is paid twice.
+ * the account records two values: one for the payee's leaf, so no leaf is paid
+ * twice, and one for the person, month, kind and occurrence the payee's nonce
+ * was derived from, so nobody is paid twice for one month at another amount,
+ * address or form. A real second payment is a later occurrence.
+ *
+ * The key those nonces are derived from is kept in `signerRoles`, sealed to
+ * each signer by that signer, beside one commitment to it written under an
+ * approved proposal.
  *
  * It refuses a signer-only call from anyone else, a second approval from one
  * signer, a proposal short of its threshold, a payment outside its run's
- * window or not in its run, a payee leaf already paid, and any change that
- * leaves fewer signers than the account threshold.
+ * window or not in its run, a payee leaf already paid, a person already paid
+ * for that month, kind and occurrence, and any change that leaves fewer
+ * signers than the account threshold.
  *
  * A signer being removed can do nothing against the company. A proposal needs
  * the higher of the threshold when it was raised and the threshold now, so a
@@ -43,7 +51,8 @@ export ledger openProposals: Map<Bytes<32>, Bytes<32>>;
 // How many approvals each open proposal has. Public.
 export ledger approvalCounts: Map<Bytes<32>, Uint<64>>;
 
-// One marker per payee ever paid, in any run. Nothing removes from it.
+// Two markers per payment, in any run: its payee leaf, and the person and month it pays.
+// Nothing removes from it.
 export ledger movements: Set<Bytes<32>>;
 
 // M in M of N, for the account and for every vault without its own. Public.
@@ -291,6 +300,40 @@ export circuit withdrawSecretOf(sk: Bytes<32>, account: Bytes<32>, proposal: Byt
 export circuit withdrawKeyOf(secret: Bytes<32>): Bytes<32> {
   return persistentHash<Vector<2, Bytes<32>>>([
     pad(32, "midnight-accounts:withdraw:"), secret
+  ]);
+}
+
+// The record that a person was paid for one month, kind and occurrence, which the nonce
+// was derived from. Keyed on the nonce alone, so it holds whatever the amount, address or form.
+export circuit paidOnceOf(nonce: Bytes<32>): Bytes<32> {
+  return persistentHash<Vector<2, Bytes<32>>>([
+    pad(32, "midnight-accounts:paid-once:"), nonce]);
+}
+
+// Where the account's commitment to its pay-record key sits in `signerRoles`.
+export circuit payKeyCommitmentKey(): Bytes<32> {
+  return persistentHash<Bytes<32>>(pad(32, "midnight-accounts:roles:pay-key"));
+}
+
+// Where one of the four parts of a signer's sealed copy of the pay-record key sits in
+// `signerRoles`: derived from their secret key and the account, so only they can write it.
+export circuit payKeyWrapKeyOf(account: Bytes<32>, sk: Bytes<32>, part: Uint<8>): Bytes<32> {
+  return persistentHash<Vector<4, Bytes<32>>>([
+    pad(32, "midnight-accounts:roles:wrap:"), account, sk, part as Field as Bytes<32>
+  ]);
+}
+
+// What every device checks the pay-record key it unsealed against.
+export circuit payKeyCommitmentOf(key: Bytes<32>): Bytes<32> {
+  return persistentHash<Vector<2, Bytes<32>>>([
+    pad(32, "midnight-accounts:paykey-commit:"), key
+  ]);
+}
+
+// What signers approve to commit the account to its pay-record key.
+export circuit payKeyPayload(commitment: Bytes<32>): Bytes<32> {
+  return persistentHash<Vector<2, Bytes<32>>>([
+    pad(32, "midnight-accounts:pay-key:"), commitment
   ]);
 }
 
@@ -681,7 +724,49 @@ export circuit recordPayment(
   assert(!movements.member(movement), "that payment has already been made");
   movements.insert(movement);
 
+  // And once for the person, month, kind and occurrence the nonce stands for, at any
+  // amount, address or form. A real second payment is raised as a later occurrence.
+  const once = disclose(paidOnceOf(nonce));
+  assert(!movements.member(once),
+         "a payment is already recorded for this person, kind of pay and month. Pay a real second payment as a numbered extra");
+  movements.insert(once);
+
   return change;
+}
+
+// Seals the pay-record key to the calling signer: four parts under keys only they can derive.
+// The first call also writes the account's commitment to the key, under an approved proposal;
+// every later call must name the same commitment. Each signer seals their own copy, once.
+export circuit sealPayKey(
+  wrap: Vector<4, Bytes<32>>,
+  commitment: Bytes<32>,
+  proposal: Bytes<32>,
+): [] {
+  const sk = requireSigner();
+  const account = kernel.self().bytes;
+
+  if (!signerRoles.member(payKeyCommitmentKey())) {
+    // Never first-come: the commitment is what every signer's approval named.
+    const id = disclose(proposal);
+    requireApproved(id);
+    assert(
+      disclose(proposalIdOf(payKeyPayload(commitment), noVault(), proposalSalt()) == proposal),
+      "that proposal is not for this pay-record key"
+    );
+    assert(commitment != default<Bytes<32>>, "that is not a usable pay-record key");
+    signerRoles.insert(payKeyCommitmentKey(), disclose(commitment));
+    closeProposal(id);
+  } else {
+    assert(signerRoles.lookup(payKeyCommitmentKey()) == disclose(commitment),
+           "that is not the pay-record key this company confirmed. Reopen your copy of the company's key and try again");
+  }
+
+  const first = disclose(payKeyWrapKeyOf(account, sk, 0));
+  assert(!signerRoles.member(first), "you have already sealed the pay-record key to yourself");
+  signerRoles.insert(first, disclose(wrap[0]));
+  signerRoles.insert(disclose(payKeyWrapKeyOf(account, sk, 1)), disclose(wrap[1]));
+  signerRoles.insert(disclose(payKeyWrapKeyOf(account, sk, 2)), disclose(wrap[2]));
+  signerRoles.insert(disclose(payKeyWrapKeyOf(account, sk, 3)), disclose(wrap[3]));
 }
 
 // Sets one vault's threshold under an approved proposal. Refuses zero; the vault need not be adopted.

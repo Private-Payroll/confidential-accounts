@@ -9,7 +9,6 @@
  * The fetch shim below implements the same routes as src/server/index.ts so
  * App.tsx does not know which mode it is running in.
  */
-import React from 'react';
 import { createRoot } from 'react-dom/client';
 import App from '../web-legacy/App.js';
 import '../web-legacy/styles.css';
@@ -38,7 +37,6 @@ import { decideList, type Marked } from '../core/provenance.js';
 import { assets as assetRegistry, parseAmount } from '../core/assets.js';
 import { noVaultHoldingsReader } from '../core/vault-holdings.js';
 import { IdentityService, StaleKeyBundle } from '../core/identity.js';
-import { MemoryChallengeStore } from '../core/challenges.js';
 import { MemorySessionStore } from '../core/sessions.js';
 
 const store = new MemoryStore();
@@ -124,9 +122,9 @@ const plugins = new PluginService(store, accounts);
  * revocation that runs, reports success and ends nothing.
  */
 const sessions = new MemorySessionStore();
-/* `PI4a`: recovery is deleted, so this no longer takes a challenge store. The
- * import stays because `MemoryChallengeStore` is what a wallet sign-in nonce
- * uses, and this build is where that is owed next — see the entry. */
+/* `PI4a`: recovery is deleted, so this no longer takes a challenge store, and
+ * nothing in this build imports one: a wallet sign-in nonce, which would, is
+ * owed here next. */
 /* `PI4b`: the limiter is no longer a constructor argument — what it guarded was
  * `login`, and there is no login. **The import went with it**, because the one
  * thing in this build that took a limiter was this line: a wallet sign-in
@@ -182,12 +180,6 @@ const listed = <T extends Marked>(rows: readonly T[]): Response => {
     );
 };
 
-/**
- * There is no network here, so there is no address to count against. `ip: null`
- * says that rather than inventing one — the per-email limit still applies, and
- * a per-IP limit in a single tab would be counting this tab against itself.
- */
-const LOCAL = { ip: null, userAgent: 'this browser' };
 
 /** The bearer token as sent, or ''. */
 function bearer(init?: RequestInit): string {
@@ -229,6 +221,12 @@ async function route(url: URL, init?: RequestInit): Promise<Response> {
   const method = (init?.method ?? 'GET').toUpperCase();
   const body = init?.body ? JSON.parse(String(init.body)) : {};
   const seg = p.split('/').filter(Boolean); // ['api', ...]
+  /** One segment of the address, or a refusal: a route that reads a segment was matched on the ones before it. */
+  const part = (i: number): string => {
+    const v = seg[i];
+    if (v === undefined) throw new Error('that address names nothing to act on');
+    return v;
+  };
 
   if (p === '/api/health') return ok({ ok: true, ledger: ledger.describe(), proofs: proofs.describe() });
 
@@ -252,7 +250,7 @@ async function route(url: URL, init?: RequestInit): Promise<Response> {
   if (p === '/api/me/sessions/others/revoke' && method === 'POST')
     return ok({ ended: await identity.signOutEverywhere((await caller(init)), bearer(init)) });
   if (seg[1] === 'me' && seg[2] === 'sessions' && seg[4] === 'revoke' && method === 'POST') {
-    const ended = await identity.endSession((await caller(init)), seg[3]);
+    const ended = await identity.endSession((await caller(init)), part(3));
     return ended ? ok({ ok: true }) : bad('no such session', 404);
   }
   if (p === '/api/me/keys' && method === 'PUT') {
@@ -338,7 +336,7 @@ async function route(url: URL, init?: RequestInit): Promise<Response> {
     }));
 
   if (seg[1] === 'installations' && seg[3] === 'status' && method === 'POST')
-    return ok(plugins.setStatus(seg[2], body.status));
+    return ok(plugins.setStatus(part(2), body.status));
 
   if (p === '/api/public') {
   /*
@@ -482,10 +480,10 @@ async function route(url: URL, init?: RequestInit): Promise<Response> {
   if (seg[1] === 'invites' && seg[3] === 'accept-signer' && method === 'POST')
     // No `body.blinding`. M-106: an invitee's blinding factor never leaves
     // their device, so there is no parameter here to receive one.
-    return ok(accounts.acceptSignerInvite(seg[2], (await caller(init)), body.signingPublicKey,
+    return ok(accounts.acceptSignerInvite(part(2), (await caller(init)), body.signingPublicKey,
       body.wrappingPublicKey, body.leafCommitment, body.seatProof));
   if (seg[1] === 'invites' && seg[3] === 'offer' && method === 'GET')
-    return ok(payroll.offerFor(seg[2]));
+    return ok(payroll.offerFor(part(2)));
 
   if (seg[1] === 'invites' && seg[3] === 'accept-employee' && method === 'POST') {
     /*
@@ -540,7 +538,7 @@ async function route(url: URL, init?: RequestInit): Promise<Response> {
      * same thing, and the gate is what stops it becoming an enumerator later.
      */
     const who = await caller(init);
-    accounts.requireMember(seg[2], who);
+    accounts.requireMember(part(2), who);
     return bad(
       'adding yourself to payroll needs your wallet to hand over your receiving address, '
       + 'and that is checked where the record is written. This build has no server to '
@@ -548,11 +546,11 @@ async function route(url: URL, init?: RequestInit): Promise<Response> {
   }
 
   if (seg[1] === 'employees' && seg[3] === 'admit' && method === 'POST')
-    return ok(payroll.admit(seg[2], body.viewingKey, await ownsPerson(seg[2], init)));
+    return ok(payroll.admit(part(2), body.viewingKey, await ownsPerson(part(2), init)));
 
   if (seg[1] === 'people' && seg[3] === 'status' && method === 'POST') {
-    await ownsPerson(seg[2], init);
-    return ok(payroll.setStatus(seg[2], body.status, body.viewingKey));
+    await ownsPerson(part(2), init);
+    return ok(payroll.setStatus(part(2), body.status, body.viewingKey));
   }
 
   // /api/proposals/:id/approve
@@ -571,7 +569,7 @@ async function route(url: URL, init?: RequestInit): Promise<Response> {
         'this endpoint does not accept a signing secret. An approval is a signature '
         + 'made on the signer\'s device over the proposal digest. Send `signature`.');
     }
-    return ok(await accounts.approve(seg[2], body.signerId, body.signature, body.viewingKey));
+    return ok(await accounts.approve(part(2), body.signerId, body.signature, body.viewingKey));
   }
 
   // /api/runs/:id/...
@@ -601,6 +599,7 @@ async function route(url: URL, init?: RequestInit): Promise<Response> {
         runId: inputs.runId,
         seeds: inputs.seeds,
         facts: inputs.facts,
+        pay: inputs.pay,
         opensAt: BigInt(String(body.opensAt)),
         closesAt: BigInt(String(body.closesAt)),
         vault: String(body.vault) as Hex,
@@ -679,7 +678,7 @@ async function route(url: URL, init?: RequestInit): Promise<Response> {
 
   // /api/attestations/:id/verify
   if (seg[1] === 'attestations' && seg[3] === 'verify')
-    return ok({ valid: await payroll.verifyAttestation(seg[2]) });
+    return ok({ valid: await payroll.verifyAttestation(part(2)) });
 
   return bad(`no route for ${method} ${p}`);
 }

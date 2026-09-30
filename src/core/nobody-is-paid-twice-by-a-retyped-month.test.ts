@@ -45,7 +45,7 @@ import { runMaterialFor } from '../midnight/run-material.js';
 import { vaultDetails } from '../testing/vault-details.js';
 import { registryWithTestPrivateForms, aVaultHolding } from '../testing/assets.js';
 import { FileStore } from './store-file.js';
-import { toHex, type Hex } from './crypto.js';
+import { toHex } from './crypto.js';
 
 const PAYROLL_VAULT = new Uint8Array(32).fill(0xa1);
 const NOW = 1_800_000_000;
@@ -73,7 +73,7 @@ async function aCompany(people: number) {
   const materialFor = async (runId: string) => {
     const i = await payroll.runMaterialInputs(runId, viewingKey);
     return runMaterialFor({
-      accountId: i.accountId, runId: i.runId, seeds: i.seeds, facts: i.facts,
+      accountId: i.accountId, runId: i.runId, seeds: i.seeds, facts: i.facts, pay: i.pay,
       opensAt: OPENS, closesAt: CLOSES, vault: toHex(PAYROLL_VAULT), detailsOf: vaultDetails,
       ...(i.epoch !== undefined ? { epoch: i.epoch } : {}),
     });
@@ -240,7 +240,7 @@ describe('the raise: a run over people a live round already pays is refused', ()
 
     /* RED WHEN the raise-time refusal selects the runs it compares against by
        the typing. Without it this second run is raised, both rounds stand over
-       the same three people, and nothing on chain refuses either payment. */
+       the same three people, and the chain refuses each second payment only after both rounds' approvals and fees. */
     await expect(c.raise(moved.run.id))
       .rejects.toThrow(new RegExp(`run ${august.run.id} has already been raised`));
     /* RED WHEN the refusal leaves a second round open anyway. */
@@ -261,36 +261,21 @@ describe('the raise: a run over people a live round already pays is refused', ()
     expect(await c.openRounds()).toBe(1);
   });
 
-  it('a stored period that names no month still matches itself', async () => {
+  it('a stored period that names no month is never raised: the chain could not record the month it pays', async () => {
     const c = await aCompany(3);
     const first = await c.payroll.createRunFromRoster(c.account, AUGUST, c.viewingKey);
     const second = await c.payroll.createRunFromRoster(c.account, '2026-09', c.viewingKey);
-    /* Two runs a store holds under a period this product would not accept now. */
+    /* A run a store holds under a period this product would not accept now. */
     c.store.putRun({ ...c.store.getRun(first.run.id)!, period: 'Q3' });
-    c.store.putRun({ ...c.store.getRun(second.run.id)!, period: 'Q3' });
-    await c.raise(first.run.id);
 
-    /* RED WHEN a period that cannot be read as a month stops matching an equal
-       one, which would let two records already in a store be raised over the
-       same people without a word. */
-    await expect(c.raise(second.run.id))
-      .rejects.toThrow(new RegExp(`run ${first.run.id} has already been raised`));
+    /* RED WHEN a run is raised under a period that names no month: each payee's nonce is
+       the month it pays, and one derived from a typing would let a second payment for the
+       same month through. */
+    await expect(c.raise(first.run.id)).rejects.toThrow(/"Q3" does not name a pay period/);
+    expect(await c.openRounds()).toBe(0);
+    /* The control: a run for a month is raised. */
+    await c.raise(second.run.id);
     expect(await c.openRounds()).toBe(1);
-  });
-
-  it('and two stored periods that name no month are not each other', async () => {
-    const c = await aCompany(3);
-    const one = await c.payroll.createRunFromRoster(c.account, AUGUST, c.viewingKey);
-    const other = await c.payroll.createRunFromRoster(c.account, '2026-09', c.viewingKey);
-    c.store.putRun({ ...c.store.getRun(one.run.id)!, period: 'Q3' });
-    c.store.putRun({ ...c.store.getRun(other.run.id)!, period: 'Q4' });
-    await c.raise(one.run.id);
-
-    /* RED WHEN a period that cannot be read as a month is treated as matching
-       every other one that cannot either. That refuses nothing this product can
-       pay for, and a guard that refuses ordinary payroll gets turned off. */
-    await c.raise(other.run.id);
-    expect(await c.openRounds()).toBe(2);
   });
 });
 

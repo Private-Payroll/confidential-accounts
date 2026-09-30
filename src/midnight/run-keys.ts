@@ -43,12 +43,31 @@
  * can mean here — the same limit `rotate` documents for the state itself.
  *
  * ------------------------------------------------------------------------
+ * THE NONCE COMES FROM SOMETHING ELSE: WHO IS PAID, FOR WHICH MONTH
+ *
+ * A payee's BLINDING comes from the run, as above. Their NONCE does not: it is
+ * derived from the account's PAY-RECORD KEY and four values - the person, the
+ * month, the kind of pay and which payment of that kind this is. The account
+ * records a value made from the nonce with every payment and refuses a second
+ * one, so the same person cannot be paid twice for one month, at another
+ * amount, another address or in the other form, by this run or any other.
+ *
+ * The pay-record key is not a payout seed. Seeds are appended at every signer
+ * removal, and a nonce derived from the seed in force would change at a removal
+ * and let a month already paid be paid again. The pay-record key is kept for
+ * the life of the account; a signer who leaves can still test whether a named
+ * person was paid for a month, and that is accepted.
+ *
+ * A real second payment for the same person and month is a later OCCURRENCE:
+ * 1, 2 and so on, raised with its reason and approved like any run.
+ *
+ * ------------------------------------------------------------------------
  * WHAT AN ATTACKER GETS FROM A PAID PAYEE
  *
- * Nothing, and this is worth stating because a payment PUBLISHES its payee's
- * nonce. Every nonce is an HKDF output; knowing forty of them says nothing
- * about the forty-first, and nothing about the run key that produced them.
- * The disclosure V-43 permits stays a disclosure of one spent secret.
+ * Nothing about anybody else. A payment does not publish its nonce - the
+ * account records a hash of it - and each payee is handed their own. Every
+ * nonce is an HKDF output of the pay-record key; knowing forty of them says
+ * nothing about the forty-first, and nothing about the key that produced them.
  *
  * HKDF rather than hashing values together by hand, matching
  * `core/sealed-records.ts`: a hand-rolled construction is the kind of thing
@@ -56,7 +75,8 @@
  */
 import { hkdf } from '@noble/hashes/hkdf.js';
 import { sha256 } from '@noble/hashes/sha2.js';
-import { toHex, fromHex, utf8, type Hex } from '../core/crypto.js';
+import { toHex, fromHex, utf8, wrapKey, unwrapKey, type Hex } from '../core/crypto.js';
+import { pureCircuits } from '../../contracts/managed/contract/index.js';
 
 /**
  * One generation of an account's payout seed.
@@ -127,44 +147,157 @@ export const runKeyOf = (seed: Hex, id: RunIdentity): Hex =>
 export interface PayeeSecrets {
   /** Blinds the payment's details — who, what token, how much. */
   blinding: Hex;
-  /** The per-payee secret a claim must know. V-43. */
+  /** The per-payee secret a claim must know, and what the account's record of the person and month is made from. V-43. */
   nonce: Hex;
 }
 
 /**
- * The secrets for the payee at `index`.
+ * The blinding for the payee at `index` of a run.
  *
- * The index is the SALT and the role is the INFO, so the two secrets for one
- * payee are independent of each other and of every other payee's. A payment
- * does not publish its nonce, but each payee is handed their own nonce and
- * blinding to find their payment, so no payee's secrets may say anything about
- * another's.
+ * The index is the SALT and the role is the INFO, so no payee's blinding says
+ * anything about another's. Each payee is handed their own blinding to find
+ * their payment.
  */
-export const payeeSecretsOf = (runKey: Hex, index: number): PayeeSecrets => {
+export const payeeBlindingOf = (runKey: Hex, index: number): Hex => {
   if (!Number.isInteger(index) || index < 0) {
     throw new Error(`a payee index is a non-negative integer; got ${index}`);
   }
-  const of = (role: string) =>
-    toHex(hkdf(sha256, fromHex(runKey), utf8(String(index)), utf8(`payee-${role}`), 32));
-  return { blinding: of('blinding'), nonce: of('nonce') };
+  return toHex(hkdf(sha256, fromHex(runKey), utf8(String(index)), utf8('payee-blinding'), 32));
+};
+
+/**
+ * WHAT ONE PAYMENT IS FOR: the person, the month, the kind of pay, and which
+ * payment of that kind for that person and month it is.
+ */
+export interface PayRecord {
+  /** The person, by their entry on the company's roster. */
+  person: string;
+  /** The month, written `YYYY-MM`. Any other spelling is refused, never read. */
+  month: string;
+  /** What the pay is. */
+  kind: string;
+  /** 0 for the first payment; a numbered extra is 1, 2 and so on. */
+  occurrence: number;
+}
+
+/** The account's pay-record key and what each payee of one run is paid for, in tree order. */
+export interface PayRecords {
+  key: Hex;
+  records: PayRecord[];
+}
+
+const MONTH = /^\d{4}-(0[1-9]|1[0-2])$/;
+
+/**
+ * **THE NONCE FOR ONE PAYMENT, FROM THE PAY-RECORD KEY AND WHAT IT IS FOR.**
+ *
+ * The same person, month, kind and occurrence always give the same nonce, on
+ * any signer's device, and the account refuses a second payment carrying it.
+ * **A month in any spelling but `YYYY-MM` is refused**, because `2026-9` and
+ * `2026-09` would give two nonces for one month, and the second payment would
+ * pass.
+ */
+export const payRecordNonceOf = (key: Hex, record: PayRecord): Hex => {
+  if (!record.person.trim()) throw new Error('a payment names the person it pays');
+  if (!MONTH.test(record.month)) {
+    throw new Error(`"${record.month}" is not a month written YYYY-MM, so the payment cannot be recorded against it`);
+  }
+  if (!record.kind.trim()) throw new Error('a payment names the kind of pay it is');
+  if (!Number.isInteger(record.occurrence) || record.occurrence < 0) {
+    throw new Error(`a payment's occurrence is 0 or a later whole number; got ${record.occurrence}`);
+  }
+  if (fromHex(key).length !== 32) throw new Error('the pay-record key is 32 bytes');
+  const info = JSON.stringify([record.person, record.month, record.kind, record.occurrence]);
+  return toHex(hkdf(sha256, fromHex(key), utf8('pay-record'), utf8(info), 32));
 };
 
 /**
  * Every payee's secrets for a run, in tree order.
  *
  * The whole point of this file in one call: hand it the seed the run was raised
- * under and its identity, and get back exactly what the builder had — on any
- * admin's machine, a month later, with the original laptop at the bottom of a
- * river.
+ * under, its identity, the pay-record key and what each payee is paid for, and
+ * get back exactly what the builder had — on any admin's machine, a month
+ * later, with the original laptop at the bottom of a river.
  */
 export const runSecrets = (
   seeds: PayoutSeed[],
   id: RunIdentity,
-  payees: number,
+  pay: PayRecords,
 ): PayeeSecrets[] => {
-  if (!Number.isInteger(payees) || payees < 1) {
-    throw new Error(`a run has at least one payee; got ${payees}`);
+  if (pay.records.length < 1) {
+    throw new Error('a run has at least one payee; got 0');
   }
   const key = runKeyOf(payoutSeedAt(seeds, id.epoch).seed, id);
-  return Array.from({ length: payees }, (_, i) => payeeSecretsOf(key, i));
+  return pay.records.map((record, i) => ({
+    blinding: payeeBlindingOf(key, i),
+    nonce: payRecordNonceOf(pay.key, record),
+  }));
+};
+
+/* ------------------------------------------------------------------------
+ * THE PAY-RECORD KEY ON CHAIN: ONE COMMITMENT, AND A COPY SEALED TO EACH SIGNER
+ * ------------------------------------------------------------------------ */
+
+/**
+ * **WHAT EVERY DEVICE CHECKS THE PAY-RECORD KEY IT UNSEALED AGAINST.** The
+ * contract's own `payKeyCommitmentOf`, never derived a second way. The account
+ * holds one, written under an approved proposal, so a copy sealed with the
+ * wrong key is found out on the first device that opens it.
+ */
+export const payKeyCommitmentOf = (key: Hex): Hex =>
+  toHex(pureCircuits.payKeyCommitmentOf(fromHex(key)));
+
+/** What signers approve to commit the account to its pay-record key. The contract's own `payKeyPayload`. */
+export const payKeyPayloadOf = (commitment: Hex): Hex =>
+  toHex(pureCircuits.payKeyPayload(fromHex(commitment)));
+
+/** How many 32-byte entries a sealed copy of the key takes on chain. */
+export const PAY_KEY_WRAP_PARTS = 4;
+
+/**
+ * **THE PAY-RECORD KEY SEALED TO ONE SIGNER, AS THE FOUR 32-BYTE ENTRIES THE
+ * ACCOUNT STORES.** The same sealing a viewing key reaches a signer with: a
+ * fresh x25519 key agreed with the signer's wrapping key, and AES-GCM over the
+ * key. That is 124 bytes - the 32-byte ephemeral key, the 12-byte IV and 80
+ * bytes of ciphertext and tag - written as 128 with four zero bytes at the end.
+ */
+export const sealPayKeyTo = (key: Hex, wrappingPublicKey: Hex): Hex[] => {
+  if (fromHex(key).length !== 32) throw new Error('the pay-record key is 32 bytes');
+  const w = wrapKey(key.toLowerCase(), wrappingPublicKey);
+  const packed = new Uint8Array(32 * PAY_KEY_WRAP_PARTS);
+  const parts = [fromHex(w.ephemeral), fromHex(w.iv), fromHex(w.body)];
+  if (parts[0]!.length !== 32 || parts[1]!.length !== 12 || parts[2]!.length !== 80) {
+    throw new Error('the sealed pay-record key is not the 124 bytes the account stores');
+  }
+  packed.set(parts[0]!, 0);
+  packed.set(parts[1]!, 32);
+  packed.set(parts[2]!, 44);
+  return Array.from({ length: PAY_KEY_WRAP_PARTS }, (_, i) => toHex(packed.slice(32 * i, 32 * (i + 1))));
+};
+
+/**
+ * **A SIGNER'S OWN SEALED COPY, OPENED AND CHECKED AGAINST THE ACCOUNT'S
+ * COMMITMENT.** Refuses a copy that does not open with this signer's wrapping
+ * secret, and a key that opens but is not the one the account committed to -
+ * a key derived from it would give nonces that match nothing on chain, and the
+ * account would not refuse a second payment made under them.
+ */
+export const openSealedPayKey = (parts: Hex[], wrappingSecret: Hex, commitment: Hex): Hex => {
+  if (parts.length !== PAY_KEY_WRAP_PARTS || parts.some(p => fromHex(p).length !== 32)) {
+    throw new Error('a sealed pay-record key is four 32-byte entries');
+  }
+  const packed = new Uint8Array(32 * PAY_KEY_WRAP_PARTS);
+  parts.forEach((p, i) => packed.set(fromHex(p), 32 * i));
+  const key = unwrapKey({
+    ephemeral: toHex(packed.slice(0, 32)),
+    iv: toHex(packed.slice(32, 44)),
+    tag: '',
+    body: toHex(packed.slice(44, 124)),
+  }, wrappingSecret);
+  if (payKeyCommitmentOf(key).toLowerCase() !== commitment.toLowerCase()) {
+    throw new Error(
+      'your copy of the company\'s pay-record key on chain does not open to the key this company '
+      + 'confirmed, so it cannot be used. Use the key from the company\'s sealed records instead.');
+  }
+  return key;
 };

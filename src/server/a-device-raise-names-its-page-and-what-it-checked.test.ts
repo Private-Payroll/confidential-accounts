@@ -123,7 +123,7 @@ const seeded = await (async () => {
     if (writtenDown) {
       const inputs = await payroll.runMaterialInputs(run.id, viewingKey);
       const material = await runMaterialFor({
-        accountId: inputs.accountId, runId: inputs.runId, seeds: inputs.seeds, facts: inputs.facts,
+        accountId: inputs.accountId, runId: inputs.runId, seeds: inputs.seeds, facts: inputs.facts, pay: inputs.pay,
         opensAt: BigInt(WINDOW.opensAt), closesAt: BigInt(WINDOW.closesAt), vault: VAULT, detailsOf: vaultDetails,
       });
       const proposal = await payroll.proposeRun(run.id, viewingKey, created.secrets[0]!.signerId, material, undefined, { onDevice: true });

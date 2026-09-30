@@ -27,6 +27,7 @@ const CIRCUITS: PayslipCircuits = { details: vaultDetails, leafOf: payoutLeafOf,
 const CONFIRMED = () => true;
 import { paidWords } from '../web-legacy/YourPay.js';
 import type { User } from './types.js';
+import { payFor } from '../testing/payees.js';
 
 /**
  * **EACH PAYSLIP SAYS WHETHER IT WAS PAID - "RECORDED AS PAID", "NOT YET" OR
@@ -113,7 +114,7 @@ const raise = async (h: H, c: C, period: string): Promise<{ runId: string; mater
 const raiseLeg = async (h: H, c: C, runId: string, asset?: 'GBP' | 'EUR'): Promise<RunMaterial> => {
   const inputs = await h.payroll.runMaterialInputs(runId, c.viewingKey, asset);
   const material = await runMaterialFor({
-    accountId: inputs.accountId, runId: inputs.runId, seeds: inputs.seeds, facts: inputs.facts,
+    accountId: inputs.accountId, runId: inputs.runId, seeds: inputs.seeds, facts: inputs.facts, pay: inputs.pay,
     opensAt: BigInt(NOW), closesAt: BigInt(CLOSES), vault: VAULT, detailsOf: vaultDetails,
   });
   await h.payroll.proposeRun(runId, c.viewingKey, c.by, material, asset);
@@ -654,7 +655,7 @@ describe('a leg is raised only with its payments in its people\'s order', () => 
     const { run } = await h.payroll.createRunFromRoster(c.accountId, '2026-08', c.viewingKey);
     const inputs = await h.payroll.runMaterialInputs(run.id, c.viewingKey);
     const reversed = await runMaterialFor({
-      accountId: inputs.accountId, runId: inputs.runId, seeds: inputs.seeds, facts: [...inputs.facts].reverse(),
+      accountId: inputs.accountId, runId: inputs.runId, seeds: inputs.seeds, facts: [...inputs.facts].reverse(), pay: payFor([...inputs.facts].reverse()),
       opensAt: BigInt(NOW), closesAt: BigInt(CLOSES), vault: VAULT, detailsOf: vaultDetails,
     });
     const before = JSON.stringify(h.store.getRun(run.id));
@@ -797,6 +798,7 @@ describe('the device builds the value it looks for from what the payee holds, an
     const dana = hire(h, c, 'Dana');
     const { runId } = await raise(h, c, '2026-08');
     const seeds = await h.accounts.payoutSeedsOf(c.accountId, c.viewingKey);
+    const payKey = await h.accounts.payRecordKeyOf(c.accountId, c.viewingKey);
     const LATER = BigInt(CLOSES + 86_400);
     const run = h.payroll.requireRun(runId, c.viewingKey);
     const leg = run.payout!.GBP!;
@@ -805,7 +807,7 @@ describe('the device builds the value it looks for from what the payee holds, an
       proposedBy: c.by, at: '2026-09-25T00:00:00.000Z',
     } as NonNullable<typeof leg.retries>[number]];
     const untilOf = () => {
-      const again = { ...run, payslips: (h.payroll as any).withReceipts(run, seeds) };
+      const again = { ...run, payslips: (h.payroll as any).withReceipts(run, seeds, payKey) };
       (h.payroll as unknown as { putRun: (r: typeof again, k: Hex) => void }).putRun(again, c.viewingKey);
       return openPayslip(h.payroll.payslipsFor(dana.keys.publicKey, c.address)[0]!, dana.keys.secret).receipt!.until;
     };

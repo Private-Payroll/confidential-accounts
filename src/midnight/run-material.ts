@@ -47,9 +47,12 @@
  * downstream is handed the number and looks it up by name.
  */
 import {
-  buildRun, buildRetryRun, rootOfLeaves, paidMovementOfLeaf, type PaymentFacts, type DetailsOfKind,
+  buildRun, buildRetryRun, rootOfLeaves, paidMovementOfLeaf, payoutLeafOf,
+  type PaymentFacts, type DetailsOfKind, type PayoutLeafInput,
 } from './payout-tree.js';
-import { currentPayoutSeed, type PayoutSeed, type RunIdentity } from './run-keys.js';
+import {
+  currentPayoutSeed, type PayoutSeed, type RunIdentity, type PayRecord, type PayRecords,
+} from './run-keys.js';
 import { vaultDetailsOf } from './vault-details.js';
 import type { RunProposal } from '../core/ledger.js';
 import type { Hex } from '../core/crypto.js';
@@ -101,6 +104,25 @@ export interface RunMaterial {
    * different leaves for an approval that has already been given.
    */
   readonly facts: PaymentFacts[];
+  /**
+   * **WHAT EACH PAYMENT IS FOR** - the person, the month, the kind of pay and
+   * the occurrence - in the same order as the facts. Each payee's nonce is
+   * derived from it, and the account refuses a second payment carrying one it
+   * has recorded. The door that raises the run does not take this list's word:
+   * it derives each nonce from the run's own people, month and kind and checks
+   * `payments` against it.
+   */
+  readonly records: PayRecord[];
+  /**
+   * **EACH LEAF'S TWO HALVES**: the payment's details and its nonce, in tree
+   * order. Travelling with the material so the door that raises it can check
+   * each nonce is the one its record derives and each leaf is made from it -
+   * a record that SAYS one month over a leaf that pays another would otherwise
+   * pass. Never written down: the nonce is a secret like the seeds.
+   */
+  readonly payments: PayoutLeafInput[];
+  /** The contract's own `payoutLeaf`, travelling with the material for the reason `rootOf` does. */
+  readonly leafOf: (payment: PayoutLeafInput) => Hex;
   /** Everything needed to derive these leaves again, on another machine. */
   readonly identity: RunIdentity;
   /**
@@ -136,12 +158,15 @@ export interface RunMaterial {
  * @param detailsOf  the vault's own pair of details circuits. Defaulted to the
  *   compiled vault this build was made against, and injectable so a test can
  *   drive a different one — never reimplemented.
+ * @param pay        the account's pay-record key and what each payment is for,
+ *   in the same order as the facts
  */
 export const runMaterialFor = async (args: {
   accountId: string;
   runId: string;
   seeds: PayoutSeed[];
   facts: PaymentFacts[];
+  pay: PayRecords;
   opensAt: bigint;
   closesAt: bigint;
   vault: Hex;
@@ -182,7 +207,7 @@ export const runMaterialFor = async (args: {
   };
 
   const built = buildRun(
-    args.seeds, identity, args.facts, args.detailsOf ?? await vaultDetailsOf());
+    args.seeds, identity, args.facts, args.detailsOf ?? await vaultDetailsOf(), args.pay);
 
   /*
    * **ALL THREE OFF THE SAME TREE, IN ONE EXPRESSION.** This is what the brand
@@ -198,6 +223,9 @@ export const runMaterialFor = async (args: {
     },
     leaves: built.tree.leaves,
     facts: args.facts,
+    records: built.records,
+    payments: built.payments,
+    leafOf: payoutLeafOf,
     identity,
     rootOf: rootOfLeaves,
     movementOf: paidMovementOfLeaf,
@@ -261,6 +289,7 @@ export const retryMaterialFor = async (args: {
     identity: RunIdentity;
     facts: PaymentFacts[];
     seeds: PayoutSeed[];
+    pay: PayRecords;
   };
   indices: number[];
   opensAt: bigint;
@@ -270,7 +299,7 @@ export const retryMaterialFor = async (args: {
 }): Promise<RetryMaterial> => {
   const whole = buildRun(
     args.rebuild.seeds, args.rebuild.identity, args.rebuild.facts,
-    args.detailsOf ?? await vaultDetailsOf());
+    args.detailsOf ?? await vaultDetailsOf(), args.rebuild.pay);
   const retry = buildRetryRun(whole, args.indices);
   return {
     run: {

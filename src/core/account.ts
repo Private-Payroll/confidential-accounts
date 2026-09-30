@@ -17,7 +17,7 @@ import {
   sealRecord, openRecord, inboxPublicKey, sealToInbox, openFromInbox,
 } from './sealed-records.js';
 import type {
-  Ledger, CommitmentScheme, StateView,
+  Ledger, CommitmentScheme,
   StateChange, SignerRef, LedgerStatus, SealedStateAt, RunProposal, PaymentsAmong,
 } from './ledger.js';
 import {
@@ -121,6 +121,13 @@ export interface RaiseHalf {
 }
 
 const hexOfBytes = (b: Uint8Array): Hex => Array.from(b, (x) => x.toString(16).padStart(2, '0')).join('');
+
+/** The first signer a removal leaves seated, who acts for it when nobody else is named. */
+const firstStaying = <T>(staying: readonly T[]): T => {
+  const first = staying[0];
+  if (first === undefined) throw new Error('this removal leaves nobody seated to act for it');
+  return first;
+};
 
 export interface SignerSpec { name: string; role: Role; userId?: string | null; }
 
@@ -939,6 +946,12 @@ export class AccountService {
        * approved run stays payable across a signer leaving.
        */
       payoutSeeds: [{ epoch: GENESIS_KEY_EPOCH, seed: newBlinding() }],
+      /*
+       * The key every payment's nonce is derived from, with who is paid and for
+       * which month. Generated once, here, and carried unchanged through every
+       * rotation, so a month already paid keeps its nonce when a signer leaves.
+       */
+      payRecordKey: newBlinding(),
     };
     await this.ledger.open(account.id, {
       signerLeaves: leaves,
@@ -1979,7 +1992,7 @@ export class AccountService {
       accountId,
       plan.leaf,
       this.approvedFor(accountId, viewingKey, this.commitments.signerRemovePayload(plan.leaf)).chainId,
-      this.refFor(account, by ?? plan.staying[0].id),
+      this.refFor(account, by ?? firstStaying(plan.staying).id),
     );
 
     /*
@@ -2356,7 +2369,7 @@ export class AccountService {
           'exactly one. Split it into one proposal per asset — they can reference the same run.',
       );
     }
-    return named[0];
+    return named[0] ?? fallback;
   }
 
   /**
@@ -3979,6 +3992,19 @@ export class AccountService {
    * the first time they leave this class, so: nothing may put one in a response
    * body, a log line or an error message.
    */
+  async payRecordKeyOf(accountId: string, viewingKey: Hex): Promise<Hex> {
+    const { blinding } = await this.readSealed(
+      accountId, viewingKey, this.require(accountId).keyEpoch);
+    if (!blinding.payRecordKey) {
+      throw new Error(
+        'this company was set up before payments were recorded by person and month, so it cannot draw a '
+        + 'payroll run. Setting the company up again fixes that, but the new setup has no record of what '
+        + 'this one has already paid: before you set it up again, finish this month\'s pay from the runs '
+        + 'already raised and note who has been paid.');
+    }
+    return blinding.payRecordKey;
+  }
+
   async payoutSeedsOf(accountId: string, viewingKey: Hex): Promise<PayoutSeed[]> {
     const { blinding } = await this.readSealed(
       accountId, viewingKey, this.require(accountId).keyEpoch);
@@ -4245,10 +4271,12 @@ export class AccountService {
      * reachable callers were the ones left out of the description of the
      * hazard.** `grantAccess` is the only one with two entry points.
      */
-    return found.sort((a, b) =>
+    const best = found.sort((a, b) =>
       (a.status === 'approved' ? 0 : 1) - (b.status === 'approved' ? 0 : 1)
       || (a.raisedAt ? 0 : 1) - (b.raisedAt ? 0 : 1)
       || b.createdAt.localeCompare(a.createdAt))[0];
+    if (!best) throw new Error('no proposal on this account authorises that change');
+    return best;
   }
 
   requireProposal(id: string, viewingKey: Hex): Proposal {
@@ -4649,6 +4677,10 @@ export class AccountService {
    */
   paidAmong(accountId: string, leaves: Hex[]): Promise<PaymentsAmong | null> {
     return this.ledger.paidAmong(accountId, leaves);
+  }
+
+  paidOnceAmong(accountId: string, nonces: Hex[]): Promise<PaymentsAmong | null> {
+    return this.ledger.paidOnceAmong(accountId, nonces);
   }
 
   /**

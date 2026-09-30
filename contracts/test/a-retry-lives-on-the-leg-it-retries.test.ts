@@ -111,7 +111,7 @@ async function aRaisedLeg() {
   const { run } = await payroll.createRunFromRoster(created.account.id, '2026-08', viewingKey);
   const inputs = await payroll.runMaterialInputs(run.id, viewingKey);
   const material = await runMaterialFor({
-    accountId: inputs.accountId, runId: inputs.runId, seeds: inputs.seeds, facts: inputs.facts,
+    accountId: inputs.accountId, runId: inputs.runId, seeds: inputs.seeds, facts: inputs.facts, pay: inputs.pay,
     opensAt: OPENS, closesAt: CLOSES, vault: toHex(PAYROLL_VAULT), detailsOf: vaultDetails,
   });
   const by = created.secrets[0]!.signerId;
@@ -175,7 +175,7 @@ describe('a retry lives on the leg it retries', () => {
 
       /* The leg pays person 0, from a rebuild of what the product wrote down. */
       const rebuild = (await r.payroll.payoutRebuildOf(r.run.id, r.viewingKey))!;
-      const whole = buildRun(rebuild.seeds, rebuild.identity, rebuild.facts, vaultDetails);
+      const whole = buildRun(rebuild.seeds, rebuild.identity, rebuild.facts, vaultDetails, rebuild.pay);
       const first = whole.payeeArgs(0);
       await sim.as(legDevice).recordPayment({
         proposal: legId, vault: PAYROLL_VAULT, root: fromHex(r.material.run.root),
@@ -342,7 +342,7 @@ describe('a retry lives on the leg it retries', () => {
     const { run } = await payroll.createRunFromRoster(created.account.id, '2026-08', vk);
     const inputs = await payroll.runMaterialInputs(run.id, vk);
     const material = await runMaterialFor({
-      accountId: inputs.accountId, runId: inputs.runId, seeds: inputs.seeds, facts: inputs.facts,
+      accountId: inputs.accountId, runId: inputs.runId, seeds: inputs.seeds, facts: inputs.facts, pay: inputs.pay,
       opensAt: OPENS, closesAt: CLOSES, vault: toHex(PAYROLL_VAULT), detailsOf: vaultDetails,
     });
     const by = created.secrets[0]!.signerId;

@@ -174,20 +174,21 @@ describe('the deferral list: S25\'s decision, stated where a diff will show it',
     }
   });
 
-  it('the two lists name eleven circuits between them, none twice', () => {
+  it('the two lists name twelve circuits between them, none twice', () => {
     // Fifteen before the S11 merges (addSigner+removeSigner → amendSigner,
     // propose+proposeRun → propose), thirteen after them, eleven once S23 shed
     // credit and attestSolvency, ten since `C292`/`S26` removed `execute` with
-    // the account's balance ledger, and ELEVEN since removing a signer and
-    // setting the threshold became one circuit.
+    // the account's balance ledger, eleven since removing a signer and
+    // setting the threshold became one circuit, and TWELVE since each signer
+    // seals the key the record of who was paid for which month is made with.
     
     // "No overlap" is what this used to claim, and while DEFERRED_CIRCUITS is
     // empty that claim cannot fail, so it is not made. What IS checked is that
     // the concatenation has no duplicate — which can fail — and that
     // assertKnownCircuitSet accepts the set it was built from.
     const all = [...DEPLOYED_CIRCUITS, ...DEFERRED_CIRCUITS];
-    expect(all).toHaveLength(11);
-    expect(new Set(all).size).toBe(11);
+    expect(all).toHaveLength(12);
+    expect(new Set(all).size).toBe(12);
     expect(() => assertKnownCircuitSet(all)).not.toThrow();
   });
 
@@ -224,7 +225,7 @@ describe('the deferral list: S25\'s decision, stated where a diff will show it',
         .map((f) => f.replace(/\.verifier$/, '')),
     )].sort();
 
-    expect(keyed).toHaveLength(11);
+    expect(keyed).toHaveLength(12);
     expect([...DEPLOYED_CIRCUITS]).toEqual(keyed);
     expect(() => assertKnownCircuitSet(keyed)).not.toThrow();
   });

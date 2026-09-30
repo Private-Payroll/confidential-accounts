@@ -3,6 +3,7 @@ import {
   type Payee, type PayeeAddress, type UnshieldedPayeeAddress,
 } from '../midnight/payee-address.js';
 import { toHex, type Hex } from '../core/crypto.js';
+import type { PayRecord, PayRecords } from '../midnight/run-keys.js';
 
 /**
  * A payee, for tests, from the coin-key bytes a test already has.
@@ -87,3 +88,25 @@ export const privatePayee = (p: Payee | null | undefined): PayeeAddress => {
   }
   return p;
 };
+
+/** A pay-record key for tests that are not about whose key it is. */
+export const TEST_PAY_KEY: Hex = '5a'.repeat(32);
+
+/**
+ * **WHAT EACH PAYMENT OF A TEST RUN IS FOR**: a different person at each
+ * position, the same month and kind, the first payment of each. One definition,
+ * so a test that builds a run by hand says what it pays for the way the product
+ * does rather than inventing a shape of its own.
+ */
+export const payFor = (
+  payments: readonly unknown[],
+  opts: { month?: string; kind?: string; key?: Hex; people?: readonly string[]; occurrence?: number } = {},
+): PayRecords => ({
+  key: opts.key ?? TEST_PAY_KEY,
+  records: payments.map((_, i): PayRecord => ({
+    person: opts.people?.[i] ?? `person-${i}`,
+    month: opts.month ?? '2026-09',
+    kind: opts.kind ?? 'salary',
+    occurrence: opts.occurrence ?? 0,
+  })),
+});

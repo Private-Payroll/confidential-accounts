@@ -347,6 +347,10 @@ export class ChainLedger implements Ledger {
     return this.inner.paidAmong(accountId, leaves);
   }
 
+  paidOnceAmong(accountId: string, nonces: Hex[]): Promise<PaymentsAmong | null> {
+    return this.inner.paidOnceAmong(accountId, nonces);
+  }
+
   fetch(accountId: string, keyEpoch: number): Promise<LedgerRecord | null> {
     return this.inner.fetch(accountId, keyEpoch);
   }

@@ -123,7 +123,7 @@ const aCompany = async (name: string, legWindowOpen = false) => {
   const inputs = await payroll.runMaterialInputs(run.id, viewingKey);
   const window = legWindowOpen ? WINDOW : LEG_WINDOW;
   const material = await runMaterialFor({
-    accountId: inputs.accountId, runId: inputs.runId, seeds: inputs.seeds, facts: inputs.facts,
+    accountId: inputs.accountId, runId: inputs.runId, seeds: inputs.seeds, facts: inputs.facts, pay: inputs.pay,
     opensAt: BigInt(window.opensAt), closesAt: BigInt(window.closesAt), vault: VAULT, detailsOf: vaultDetails,
   });
   const seat = created.secrets[0]!;
@@ -196,7 +196,7 @@ const overAnotherRun = await (async () => {
     roster.map((e) => ({ name: e.name, asset: e.asset, amount: e.baseAmount + 1n })), c.viewingKey, roster);
   const inputs = await payroll.runMaterialInputs(run.id, c.viewingKey);
   const other = await payroll.proposeRun(run.id, c.viewingKey, c.seat.signerId, await runMaterialFor({
-    accountId: inputs.accountId, runId: inputs.runId, seeds: inputs.seeds, facts: inputs.facts,
+    accountId: inputs.accountId, runId: inputs.runId, seeds: inputs.seeds, facts: inputs.facts, pay: inputs.pay,
     opensAt: BigInt(WINDOW.opensAt), closesAt: BigInt(WINDOW.closesAt), vault: VAULT, detailsOf: vaultDetails,
   }));
   if (!other.raisedAt) throw new Error('the second run did not reach the chain');
@@ -278,7 +278,7 @@ describe('1. AN APPROVED PRIVATE RETRY IS PAID, AND ONLY ITS PEOPLE ARE PAID', (
     expect(r.body.payments.map((p: any) => p.leaf)).toEqual([c.legLeaves[1], c.legLeaves[2]]);
     /* RED WHEN: a payment's path is the leg's tree's, not the retry's - the vault then finds it is not in the approved round. */
     const rebuild = (await payroll.payoutRebuildOf(c.runId, c.viewingKey))!;
-    const retryTree = buildRetryRun(buildRun(rebuild.seeds, rebuild.identity, rebuild.facts, vaultDetails), [1, 2]);
+    const retryTree = buildRetryRun(buildRun(rebuild.seeds, rebuild.identity, rebuild.facts, vaultDetails, rebuild.pay), [1, 2]);
     expect(r.body.payments.map((p: any) => p.path)).toEqual([0, 1].map((i) => pathToWire(retryTree.payeeArgs(i).path)));
     expect(retryTree.tree.root).toBe(written.root);
 

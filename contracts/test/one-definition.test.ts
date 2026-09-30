@@ -248,7 +248,7 @@ const SCHEMES: Entry[] = [
      * was the MIDNIGHT spelling — there was none, so `AccountService` used the
      * simulated one on both wirings and named its governance rounds with a
      * hash the contract has never computed. `propose` takes the payload hash
-     * as an opaque argument, so the round was raised, approved and paid for,
+     * as an opaque argument, so the proposal was raised, approved and paid for,
      * and `amendSigner` refused at the end.
      *
      * So this entry now carries BOTH halves, and they are separate assertions:
@@ -486,6 +486,35 @@ const SCHEMES: Entry[] = [
     contractOnly:
       'the fixed key the account keeps its removal count under in proposalHolds. Read only ' +
       'inside the contract; the client has no reason to compute it.',
+  },  {
+    circuit: 'paidOnceOf',
+    contractOnly:
+      'the value the account records for the person and month a nonce stands for. The client ' +
+      'calls it off pureCircuits (payout-tree.ts, ledger.ts) and never derives it a second way.',
+  },
+  {
+    circuit: 'payKeyCommitmentKey',
+    contractOnly:
+      'where the account keeps its commitment to the pay-record key in signerRoles, derived ' +
+      'inside the contract and never taken from a caller. ledger.ts reads it off pureCircuits.',
+  },
+  {
+    circuit: 'payKeyWrapKeyOf',
+    contractOnly:
+      'where one signer\'s sealed copy of the pay-record key sits, from their own secret key; ' +
+      'sealPayKey derives it inside the proof and ledger.ts calls this circuit to find it.',
+  },
+  {
+    circuit: 'payKeyCommitmentOf',
+    contractOnly:
+      'the commitment every device checks its unsealed key against; run-keys.ts calls this ' +
+      'circuit off pureCircuits and has no TypeScript copy.',
+  },
+  {
+    circuit: 'payKeyPayload',
+    contractOnly:
+      'what signers approve to commit the account to its pay-record key; run-keys.ts calls this ' +
+      'circuit off pureCircuits to raise the proposal, and sealPayKey recomputes it inside the proof.',
   },
 ];
 
@@ -731,7 +760,8 @@ describe('one definition: the contract and the client agree', () => {
       + 'governance payloads are — do not write a second derivation. If it is a passthrough '
       + 'that reads the circuit, declare it as one in SCHEME_MEMBERS and say so.',
     ).toEqual([
-      'adoptVaultPayload', 'companyLabelKey', 'companyWide', 'paidMovementOf',
+      'adoptVaultPayload', 'companyLabelKey', 'companyWide', 'paidMovementOf', 'paidOnceOf',
+      'payKeyCommitmentKey', 'payKeyCommitmentOf', 'payKeyPayload', 'payKeyWrapKeyOf',
       'removalCountKey', 'removeAndSetThresholdPayload', 'retireVaultPayload', 'slotOf',
       'vacantSlot', 'withdrawKeyOf', 'withdrawSecretOf',
     ]);

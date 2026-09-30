@@ -182,24 +182,25 @@ AND THE ENTRY IS NOT CLOSED BY ANYTHING IN THIS FILE. It is said in full
 because the plausible wrong answer is easy to reach.
 
 `paidMovementOf` has no blinding and neither does `payoutLeaf`; both are
-`persistentHash`. AND THE WHOLE PREIMAGE IS PUBLIC: `recordPayment` takes
-`details` and `nonce` as ARGUMENTS, cross-contract arguments must be
-disclosed — that circuit says so about its own `salt` — and the vault passes
-both through `disclose`. So anyone reading the transaction that inserted an
-entry can recompute the entry from its parts. `payoutLeaf` states it in its
-own words: *"what a completed payment publishes is that payee's own spent
-secret."* The nonce is load-bearing for a DIFFERENT property — it stops a
-watcher claiming an UNPAID payee's leaf off a merkle sibling — and it hides
-nothing about a payee already paid.
+`persistentHash`. BUT THE PREIMAGE IS NOT IN THE TRANSACTION. `recordPayment`
+takes `details` and `nonce` as ARGUMENTS of a cross-contract call, and the
+vault's `disclose` only permits them to reach that call: a call's arguments
+travel inside a hiding commitment with fresh randomness (the runtime's
+`createCommCommData`), and the ledger's record of a call carries no argument
+field. What the transaction publishes is the account's transcript - the
+values it records. This paragraph said the whole preimage was public; that
+was corrected when the record of who was paid for which month was added. The
+nonce is load-bearing for a further property - it stops a watcher claiming an
+UNPAID payee's leaf off a merkle sibling.
 
 WHAT HIDES THE PAYEE, THE ASSET AND THE AMOUNT IS ONE LINE IN THE OTHER
 CONTRACT: `payoutDetails` in `Vault.compact` commits to the recipient, the
 token and the amount UNDER A BLINDING, and `unshieldedPayoutDetails` is the
 same with a domain tag. `details` is the only closed layer, and a blinding is
-what closes it. Replace that commitment with a hash and every settlement
-discloses who was paid, in what, and how much — the rest of the preimage is
-already on chain, and the recipient set and the token set are both small
-enough to enumerate. Nothing in THIS file would notice, and no test covers
+what closes it. Replace that commitment with a hash and anyone who learns a
+payment's other half - the payee, who holds a receipt - could confirm guesses
+about it, because the recipient set and the token set are both small enough to
+enumerate. Nothing in THIS file would notice, and no test covers
 what a settlement publishes.
 
 AND IT IS A VALUE ALREADY COMPUTED RATHER THAN A SECOND SCHEME. A key holder
@@ -208,6 +209,46 @@ it — which catches an operator dropping a line from the audit trail, the
 thing the chained digest existed to prevent. That works because the blob
 holds the leaves and `paidMovementOf` is exported: the client recomputes the
 contract's own circuit rather than a copy of it.
+
+AND A SECOND MARKER PER PAYMENT: WHO WAS PAID FOR WHICH MONTH.
+
+Every payment now records two values: `paidMovementOf(leaf)`, as above, and
+`paidOnceOf(nonce)`. The nonce is derived on the signers' devices from the
+company's pay-record key and four values - the person, the month, the kind of
+pay and the occurrence - so the second value is the same for every payment to
+one person for one month, whatever its amount, address, form or vault. The
+account refuses a payment whose second value it already holds. That is what
+makes the chain the record of who was paid for which month.
+
+BOTH, AND NEVER THE SECOND ALONE. The leaf's value is what the payslip page
+rebuilds to ask whether a payment landed, and what the retry check and the
+records-against-chain count read. A check on the nonce alone would read a
+receipt carrying somebody else's paid nonce as paid, so the leaf's value is
+kept.
+
+WHAT THE SECOND VALUE DOES NOT PROVE. The contract cannot tell that a nonce
+was derived honestly from the person and month it claims: a raiser who
+derives from another occurrence, or a made-up person, is not stopped here.
+What stops that today is the service: it builds every run's material itself
+from the run, and refuses material whose declared records, nonces and leaves
+do not match the run (`src/core/payroll.ts`). No approving device recomputes a
+nonce yet. And the chain cannot know that two roster entries are one
+human.
+
+SO THE COUNT IS TWO PER PAYMENT, and a reader comparing it with payments
+counts the two kinds apart. Halving it is wrong and fails open.
+
+WHAT IT COVERS. Payments raised as a payroll run, for the company whose account
+this is. A payment made outside a payroll run is recorded under a key and a
+person of its own, so it is not in this record; nor is a payment another
+account of the same company made.
+
+WHAT IT PUBLISHES. Nothing to anybody without the pay-record key: the value is
+a hash of an HKDF output. With the key - every signer, and every signer who
+has left, because the key is kept - whether a named person was paid for a
+month can be tested against the set, and the value's place in an account's
+transcript names the transaction that paid them. Both are the cost of a key that is
+kept for the life of the account.
 
 ### `threshold`
 
@@ -423,12 +464,14 @@ new vaults, every note moved, every signer re-seated and every payee's key
 material re-issued. So these four are declared NOW, empty, for features that
 are designed LATER.
 
-THREE OF THE FOUR ARE DECLARATIONS AND NOTHING ELSE, AND THAT IS THE POINT.
-`proposalHolds`, `successor` and `signerRoles` have no circuit in this file
-and must not be given one until the feature itself is designed. Storage is
-permanent and circuits are not, so a circuit written now for an unspecified
-feature spends deploy bytes on a guess. `retiredAt` is the exception because
-its feature IS specified, and it has a circuit.
+ONE OF THE FOUR IS A DECLARATION AND NOTHING ELSE, AND THAT IS THE POINT.
+`successor` has no circuit in this file and must not be given one until its
+feature is designed. Storage is permanent and circuits are not, so a circuit
+written now for an unspecified feature spends deploy bytes on a guess. The
+other three have been given their features: `retiredAt` its retirement log,
+`proposalHolds` the hold every proposal carries, and `signerRoles` the
+company's label and the pay-record key. The fourteen fields are kept and the
+reserved ones reused; there is no fifteenth.
 
 WHY ALL FOUR ARE ON CHAIN, AND IT IS ONE TEST: anything meant to STOP
 something cannot live on our server, because our server is not in the path —
@@ -502,21 +545,38 @@ disclosure cost went unstated.
 
 ### `proposalHolds`
 
-A HOLD ON A PROPOSAL. RESERVED. DECLARED ONLY — no circuit reads or writes it.
+WHAT EACH OPEN PROPOSAL CARRIES FROM THE MOMENT IT IS RAISED UNTIL IT CLOSES,
+and, under one fixed key, how many signers the account has removed.
 
-The feature this is for does not exist and is not designed here: a way for
-some party to stop an approved proposal settling. It is on chain because it
-STOPS something, and anything that stops something cannot live on our server,
-which is not in the path between a signer and this contract.
+`Map<Bytes<32>, Hold>`. A `Hold` is written in full by `propose`:
 
-`Map<Bytes<32>, Uint<64>>` — keyed by proposal id like everything else that
-concerns a proposal, with a number rather than a flag so that *how many holds*
-or *until when* is expressible without a second field. Hot, so it is its own
-slot rather than a member of a proposal record.
+- `needed`: the approvals the proposal needed when it was raised - the vault's
+  threshold for a run, the account's for a governance proposal. A proposal
+  needs the HIGHER of this and the threshold now, so lowering a threshold never
+  releases approvals already given.
+- `withdrawKey`: a hash of the proposer's withdraw secret, which is worked out
+  on their device from their secret key, the account and the proposal id. Only
+  the proposer can withdraw a governance proposal.
+- `removals`: how many signers the account had removed when it was raised.
+- `runHold`: a hold on a run with what releases it. Written empty; no circuit
+  reads it yet.
 
-DO NOT WRITE ITS CIRCUIT AS A CONVENIENCE. A hold that stops a payment is a
-money-safety decision of its own; the field is here so that decision has
-somewhere to land.
+`closeProposal` removes the hold with the proposal, and `holdOf` refuses a
+proposal that has none: it could never be carried out.
+
+THE REMOVAL COUNT LIVES HERE TOO, under `removalCountKey()`, a padded string
+no proposal id can equal (ids are `persistentCommit` outputs). The
+constructor writes it at zero and every circuit that unseats a leaf adds one.
+A governance proposal raised before the latest removal is refused, and a run
+raised before a removal needs one approval more for every removal since
+(`requireApprovedForVault`), so an approval a removed signer gave cannot carry
+a run on its own. It is one per removal, not one in all: one more in all would
+let a single remaining signer pay a run two removed signers approved.
+
+ONE FIELD, ONE VALUE SHAPE. A hold is written with every member from its first
+write, because a later member added to the struct would make every hold
+already written fail to decode, stranding every open proposal. Companies are
+created fresh before launch, so the shape may still change until then.
 
 ### `successor`
 
@@ -540,25 +600,42 @@ reasoning about the maintenance authority, not about this declaration.
 
 ### `signerRoles`
 
-WHAT EACH SIGNER MAY DO. RESERVED. DECLARED ONLY — no circuit reads or writes
-it.
+ONE SHARED MAP OF 32-BYTE ENTRIES, `Map<Bytes<32>, Bytes<32>>`, and every key
+in it is derived inside a circuit under its own tag. It is the one map for
+everything of that shape: a vault's policy and a period's total will sit here
+too, beside the pay-record key sealed to each signer.
 
-Every signer is equal today. The `signerScope` witness below already carries
-the idea of a per-signer restriction — which VAULTS a signer may act on —
-and it is deliberately a private value inside the signer's own leaf, which
-nothing branches on. This field is the OTHER half of the same subject and it
-is a different one: a public, governed permission the contract can read on a
-path, rather than a private scope baked into a seat. It is on chain because
-permissions STOP things, and our server is not in the path.
+WHAT IT HOLDS TODAY:
 
-`Map<Bytes<32>, Uint<64>>` — keyed by the SIGNER LEAF, which is what this
-contract already knows a signer by and which identifies nobody off chain, with
-a number so permissions can be a bit set rather than one field per right.
-Cold: it would be written by governance and read on the paths a signer acts.
+- the company's LABEL, under `companyLabelKey()`, written by the constructor;
+- the account's COMMITMENT to its pay-record key, under `payKeyCommitmentKey()`,
+  written once by `sealPayKey` under an approved proposal;
+- each signer's SEALED COPY of that key, four entries under
+  `payKeyWrapKeyOf(account, secretKey, 0..3)`, written by that signer through
+  `sealPayKey`.
 
-DO NOT DESIGN IT HERE. Which rights exist, and whether a role can be reduced
-below what a threshold assumes, are the questions, and they belong with the
-feature rather than with the layout.
+EVERY WRITER IS A BOUNDARY. A circuit that took its map key from its caller
+could overwrite another writer's entries - a signer's sealed copy, the
+commitment, or, later, a vault's policy or a period's total. So every writer
+derives its key inside itself, under a tag no other writer uses, and
+the repository's own edge list names the one circuit writer there is, so a
+second one is noticed. That the tags never collide is a convention of this
+file, not a check.
+
+ONE VALUE SHAPE. A reader that decodes the whole map with one value type
+fails on the first entry of another shape, so nothing but 32-byte values is
+ever written here - which is why a 124-byte sealed key is four entries.
+
+THE LABEL BINDS HONEST DEPLOYERS ONLY. The constructor is not proved: the chain
+accepts a deploy's initial state and keys as the deployer built them. A label
+under its own tag is an anchor for a company that deployed with this
+contract's constructor; it proves nothing about an account somebody built by
+other means.
+
+WHAT `signerScope` IS, BY CONTRAST. The witness below carries a per-signer
+restriction as a private value inside the signer's own leaf, which nothing
+branches on. The rights a signer holds are a separate, public subject, not
+built yet.
 
 ## Witnesses
 
@@ -1155,6 +1232,24 @@ nobody) may use it. The guard-rail test pins this.
 Written out rather than looped, because Compact has no mutable locals. A
 loop would unroll to exactly this, so nothing is lost but the shape.
 
+### `paidOnceOf`, `payKeyCommitmentKey`, `payKeyWrapKeyOf`, `payKeyCommitmentOf`, `payKeyPayload`
+
+The record of who was paid for which month, and where its key sits:
+`paidOnceOf(nonce)` is the value `recordPayment` records for the person and
+month a nonce stands for; `payKeyCommitmentKey()` and
+`payKeyWrapKeyOf(account, secretKey, part)` are where the commitment and each
+signer's sealed copy sit in `signerRoles`; `payKeyCommitmentOf(key)` is what
+every device checks its key against; `payKeyPayload(commitment)` is what
+signers approve to write the commitment. Each is a `persistentHash` under its
+own padded tag, exported so the client calls the contract's own circuit.
+
+### `companyLabelKey`, `removalCountKey`, `withdrawSecretOf`, `withdrawKeyOf`, `removeAndSetThresholdPayload`, `companyWide`
+
+Where the label sits in `signerRoles`; the fixed key the removal count sits
+under in `proposalHolds`; a proposer's withdraw secret and the key stored for
+it; what signers approve to remove a signer and set the threshold at once; and
+the marker a company-wide decision names, which `setVaultThreshold` refuses.
+
 ## Internal checks
 
 ### `requireSigner`
@@ -1266,6 +1361,13 @@ The account's own threshold, for everything that concerns no vault.
 Every governance circuit lands here. It is `requireApprovedForVault` with the
 lookup that cannot matter removed — see the note above.
 
+WHAT IT READS FROM THE HOLD. It needs the higher of the bar the proposal was
+raised at (`Hold.needed`) and the account's threshold now, so a threshold
+lowered after a proposal was raised releases nothing already given. And it
+refuses a governance proposal raised before the latest removal - `a signer has
+been removed since this was raised; raise it again` - because an approval the
+removed signer gave would otherwise still count.
+
 ### `thresholdFor`
 
 How many approvals THIS proposal needs.
@@ -1338,6 +1440,18 @@ nothing; on the seated road what they gather is the seated number. So the
 full-threshold requirement bounds the seating and bounds nothing after it. The seated end's bar is whatever number the row was seated at.
 
 SO THE HONEST WORD FOR THE GUARANTEE IS THAT, AND NOT "BY CONSTRUCTION".
+
+AND UNDER THE RECORD OF WHO WAS PAID FOR WHICH MONTH THAT ROAD REACHES FURTHER.
+A record written without a payment used to burn a payee LEAF. It now also
+records the PERSON AND MONTH its nonce stands for, so a correct approval screen
+then says that person was paid for that month, and occurrence 0 is used up.
+Nobody's money is lost; a person can be left unpaid until a numbered extra pays
+them. Every signer holds the pay-record key, so on the seated road one signer
+can do this for any person and month.
+
+WHAT IT READS FROM THE HOLD. It needs the higher of the run's bar when it was
+raised and the vault's threshold now, PLUS ONE FOR EVERY SIGNER REMOVED SINCE
+IT WAS RAISED: each removed signer's approval may be among those counted.
 
 So governance uses `requireApproved`, which reads the account threshold
 directly; only `recordPayment` — the one circuit that genuinely concerns a
@@ -1542,9 +1656,11 @@ AND THERE IS NO COUNTER TO INCREMENT. `signerCount` is gone;
 `signerLeaves.size()` is the same number and it is read on chain, so the
 `signerLeaves.insert` above IS the count going to one.
 
-THE FOUR RESERVED FIELDS ARE NOT INITIALISED HERE EITHER, and three of them
-are not written anywhere in this file at all. That is the point of them —
-see their declarations.
+TWO OF THE RESERVED FIELDS ARE WRITTEN HERE: the company's label into
+`signerRoles`, refused when it is zero, and the removal count of zero into
+`proposalHolds`. `successor` is not written anywhere in this file, and
+`retiredAt` only by `retireVault` - see their declarations. The label binds
+honest deployers only; see `signerRoles`.
 
 ## Governing the signers
 
@@ -1858,6 +1974,17 @@ happen silently. It is the same check that made the rejected `revoked`-Set
 design impossible, working correctly: there the value it would have forced
 us to declare was WHICH SIGNER was acting. Here it is which of two seating
 routes was used, which the resulting tree shows anyway.
+
+### `removeSignerAndSetThreshold`
+
+Removing a signer and setting the threshold, under ONE approved proposal
+(`removeAndSetThresholdPayload`). Two proposals in sequence left a window in
+which the account stood at a threshold its new signer set could not meet, or
+at one lower than intended. It repeats `amendSigner`'s removal: the leaf must
+be SEATED (`signerLeaves.member`, never the vacancy marker or a stranger - both
+removal circuits assert it), its path gives its slot, the slot is stamped
+vacant, the threshold must be at least one and no more than the signers left,
+and the removal is counted.
 
 ### `setThreshold`
 
@@ -2234,6 +2361,19 @@ identity rather than in an access check that cannot be written.
 `noVault()` for anything that concerns no vault: governance, and the
 account's own internal ledger.
 
+### What `propose` writes into the hold, and what it makes public
+
+`propose` writes the proposal's `Hold` beside it: the bar it was raised at, the
+proposer's withdraw key (from the device, witness `withdrawKey(id)`), and the
+removal count now. See `proposalHolds`.
+
+A RUN'S VAULT IS PUBLIC FROM THE MOMENT IT IS RAISED. To record the bar a run
+was raised at, `propose` reads `thresholds` by the run's vault, and that read
+pushes the vault into the public transcript. Before, a run's vault became
+public only at its first payment. Now it is public at the raise, including for
+a run that is cancelled and never paid. `contracts/test/transcript.test.ts`
+pins it.
+
 ### `approve`
 
 Approves one proposal.
@@ -2260,6 +2400,11 @@ actionable, and so its slot in the public map goes away.
 The nullifiers of anyone who already approved stay burned. That is correct
 and costs nothing: this proposal is dead, and a re-proposal takes a fresh
 salt and is therefore a different id with different nullifiers.
+
+WHO MAY WITHDRAW WHAT. A run may be withdrawn by any signer before its window
+opens, as before. A governance proposal may be withdrawn only by the signer
+who raised it: `withdrawKeyOf(withdrawSecret(id))` must equal the key its hold
+carries. So a signer being removed cannot withdraw their own removal.
 
 #### `cancel`, at `assert(runWindow.member(id) ? blockTimeLt( …`
 
@@ -2467,8 +2612,10 @@ of its arguments because its only caller is a contract, and a contract on
 Midnight cannot see who called it and cannot read another contract's state.
 
 WHAT DETECTS IT: the vault's `payments` counter counts ACTUAL payouts and
-`movements` counts COMPLETIONS. Under normal operation they agree; after a
-burn they diverge, and the divergence is readable off chain by anyone, with
+`movements` counts COMPLETIONS, two values for each: one for its leaf and one
+for the person and month. Under normal operation `movements` is twice the
+payouts; after a burn they diverge. A reader that halves `movements` fails
+open, so the two kinds are counted apart, and the divergence is readable off chain by anyone, with
 no new circuit. **Nothing in the product reads them against each other
 today**, which is a fact about today and not a mechanism.
 
@@ -2541,6 +2688,18 @@ outstanding" — on chain, so no status column of ours can disagree with it.
 `movements` is a set of independent inserts and commutes, so this line is
 not a contention point.
 
+#### `recordPayment`, at `const once = disclose(paidOnceOf(nonce));`
+
+3b. AND ONCE FOR THE PERSON AND MONTH, AT ANY AMOUNT, ADDRESS OR FORM.
+
+The nonce is derived from the person, the month, the kind of pay and the
+occurrence, so this value is the same for every payment to one person for one
+month and kind. It is refused if the account holds it and recorded if not. It
+comes AFTER the leaf's check on purpose: an identical payment tried again is
+still refused as *that payment has already been made*, which is the sentence
+the retry paths rely on. A real second payment is raised as a later
+occurrence - a numbered extra - and passes. See `movements`.
+
 #### `recordPayment`, at `return change;`
 
 4. NOTHING HAPPENS AT THE END, AND THAT IS THE DESIGN.
@@ -2560,6 +2719,51 @@ The `payees` count stays in the payload and stays bound into the id even
 though nothing counts down against it. It is what tells a client how many
 leaves a run has, and dropping it would let a run be approved for one size
 and reported at another.
+
+## The record of who was paid for which month
+
+### `sealPayKey`
+
+THE PAY-RECORD KEY, SEALED TO EACH SIGNER ON CHAIN, SO IT SURVIVES WITH THE
+ACCOUNT AND THE CHAIN ALONE. The key lives in the
+account's sealed state beside the payout seeds, where every signer can read it;
+this circuit puts a copy on chain that each signer can open with their own
+wrapping key, and one commitment every device checks the key it opened against.
+
+ITS OWN CIRCUIT, NEVER INSIDE `amendSigner`. Written inside the seat, bound
+into the seat's approval, `amendSigner` measured k=17, past the parameters this
+repository carries. As its own circuit it is k=16.
+
+EACH SIGNER WRITES ONLY THEIR OWN COPY. The four entries are keyed on
+`payKeyWrapKeyOf(account, secretKey, part)`, derived inside the circuit from
+the caller's own secret key, so no caller can name another signer's entries.
+Keying on the secret key rather than the leaf also means the sealing
+transaction names no leaf. A second copy from the same signer is refused: a
+copy that no longer opens is a key lost.
+
+THE COMMITMENT IS NEVER FIRST-COME. The first call writes it, and only under an
+approved governance proposal over `payKeyPayload(commitment)`; the proposal
+is closed with it. A commitment written by whichever signer came first could be
+to a key only they hold, and every honest device's check would then fail.
+Every later call must name the commitment already written. A zero commitment is
+refused.
+
+KEPT WHEN A SIGNER LEAVES, NOT RE-KEYED. A new key would
+give every month already paid a new nonce and let it be paid again. A removed
+signer keeps their copy and can still test whether a named person was paid
+for a month; that is accepted.
+
+WHAT THE CHAIN CANNOT CHECK. A copy is ciphertext to the chain. That it opens
+to the committed key is checked by the device that opens it
+(`openSealedPayKey`), not here.
+
+### What the approving device can say
+
+From one read of the account's state and the key, for each person on a run:
+which occurrences of their kind of pay for their month the chain records as
+paid (`alreadyPaidOf`, `src/midnight/ledger.ts`). The chain cannot tell a paid
+run from one whose payment was recorded without being made, so its words never
+claim more than *recorded on chain as paid*. No screen shows it yet.
 
 ## Vaults
 

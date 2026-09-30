@@ -60,7 +60,7 @@
  */
 
 /**
- * The eleven circuits the deployment carries — every circuit the contract has.
+ * The twelve circuits the deployment carries — every circuit the contract has.
  * Eleven fit one deploy: 29,618 bytes written of the 32,497 ceiling, measured
  * unproven and unbalanced with the ledger's own cost function.
  *
@@ -83,6 +83,7 @@ export const DEPLOYED_CIRCUITS = [
   'recordPayment',
   'removeSignerAndSetThreshold',
   'retireVault',
+  'sealPayKey',
   'setThreshold',
   'setVaultThreshold',
 ] as const;
@@ -114,7 +115,7 @@ export const isDeferredCircuit = (name: string): boolean => DEFERRED.has(name);
 export const isDeployedCircuit = (name: string): boolean => DEPLOYED.has(name);
 
 /**
- * Refuses a contract whose circuit list is not exactly these eleven.
+ * Refuses a contract whose circuit list is not exactly these twelve.
  *
  * Called by the deploy path with the names the COMPILED contract actually
  * exports, before anything is pruned. If the contract ever gains a twelfth

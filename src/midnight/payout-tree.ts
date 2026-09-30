@@ -32,7 +32,7 @@ import {
   recipientOf, type Payee, type PayeeAddress, type PayeeKind,
 } from './payee-address.js';
 import {
-  runSecrets, type PayoutSeed, type RunIdentity, type PayeeSecrets,
+  runSecrets, type PayoutSeed, type RunIdentity, type PayeeSecrets, type PayRecord, type PayRecords,
 } from './run-keys.js';
 
 /** The depth the contract is compiled for. Changing one without the other is a payroll that cannot settle. */
@@ -43,6 +43,13 @@ const aligned = (b: Uint8Array) => ({ value: BYTES32.toValue(b), alignment: BYTE
 
 /** What the contract takes, and what the chain stores. `Bytes<32>`, always. */
 const ROOT_WIDTH = 32;
+
+/** The element at `i`, or a refusal naming what was missing. Every index here was checked before it is read. */
+const at = <T>(xs: readonly T[], i: number, what: string): T => {
+  const x = xs[i];
+  if (x === undefined) throw new Error(`there is no ${what} at position ${i}`);
+  return x;
+};
 
 /**
  * THE ROOT AS THIRTY-TWO BYTES, AND IT IS NOT ALWAYS THIRTY-TWO WITHOUT THIS.
@@ -85,7 +92,7 @@ const ROOT_WIDTH = 32;
  * something to quietly cut down to size.
  */
 const rootBytesOf = (root: { value: readonly Uint8Array[] }): Uint8Array => {
-  const encoded = new Uint8Array(root.value[0]);
+  const encoded = new Uint8Array(at(root.value, 0, 'root value'));
   if (encoded.length > ROOT_WIDTH) {
     throw new Error(
       `the payout tree hashed to ${encoded.length} bytes; a run's root is ${ROOT_WIDTH}`);
@@ -123,16 +130,18 @@ export interface PayoutLeafInput {
    * as made without making it. None of those four is published by a payment: the
    * vault hands them to the account inside a call whose arguments travel under
    * a commitment with fresh randomness, and what the account's circuit makes
-   * public is the proposal, the vault, the window and the recorded value. So a
+   * public is the proposal, the vault, the window and the two recorded values. So a
    * watcher learns no leaf, no path and no nonce from a landed payment, and
    * cannot mark anybody else paid. This nonce is one of the things a claim must
    * know that a watcher does not, and the salt, held only under the company's
    * viewing key, is another. (Read from the compiled circuits and the ledger's
    * call format; not yet from the bytes of a landed transaction.)
    *
-   * **It must be fresh and unguessable per payee.** Deriving it from the
-   * payee's identity, or reusing one across a run, reopens exactly the hole it
-   * closes.
+   * **It must be unguessable, and it is the same for one person, month, kind
+   * and occurrence however often a run is drawn.** It is derived from the
+   * account's pay-record key, which nobody outside the company holds, and the
+   * account records a value made from it with every payment and refuses a
+   * second one. Two payees of one run with the same nonce are refused below.
    */
   nonce: Hex;
 }
@@ -166,6 +175,13 @@ export interface PayoutTree {
  */
 export const payoutLeafOf = (p: PayoutLeafInput): Hex =>
   toHex(pureCircuits.payoutLeaf(fromHex(p.details), fromHex(p.nonce)));
+
+/**
+ * **THE VALUE THE ACCOUNT RECORDS FOR THE PERSON AND MONTH A NONCE STANDS FOR.**
+ * The contract's own `paidOnceOf`, called and never derived a second way.
+ */
+export const paidOnceOfNonce = (nonce: Hex): Hex =>
+  toHex(pureCircuits.paidOnceOf(fromHex(nonce)));
 
 /**
  * **THE VALUE THE ACCOUNT RECORDS WHEN THIS LEAF IS PAID.** The contract's own
@@ -249,6 +265,26 @@ export const buildPayoutTree = (payments: PayoutLeafInput[]): PayoutTree => {
     seen.set(leaf, i);
   });
 
+  /*
+   * **TWO PAYEES WITH THE SAME NONCE IS ONE PERSON PAID TWICE FOR ONE MONTH,
+   * OR ONE PAYEE WHO NEVER GETS PAID.** The account refuses the second payment
+   * whose nonce it has already recorded, whatever its amount or address, so a
+   * run listing one person twice for one month - or a payment and its
+   * correction both as the first - would be approved and then half refused on
+   * chain, late and silently. Refused here, before anybody signs anything.
+   */
+  const nonces = new Map<string, number>();
+  payments.forEach((p, i) => {
+    const key = p.nonce.toLowerCase();
+    const first = nonces.get(key);
+    if (first !== undefined) {
+      throw new Error(
+        `payees ${first + 1} and ${i + 1} on this run are the same person, paid for the same month. ` +
+        'Remove one of them. If both payments are meant, pay the second as a numbered extra');
+    }
+    nonces.set(key, i);
+  });
+
   let tree = new StateBoundedMerkleTree(PAYOUT_TREE_DEPTH);
   leaves.forEach((leaf, i) => { tree = tree.update(BigInt(i), aligned(fromHex(leaf))); });
   const hashed = tree.rehash();
@@ -271,7 +307,7 @@ export const buildPayoutTree = (payments: PayoutLeafInput[]): PayoutTree => {
     leaves,
     indexOf: (leaf) => leaves.indexOf(leaf),
     pathFor: (index) => {
-      const raw = hashed.pathForLeaf(BigInt(index), aligned(fromHex(leaves[index])));
+      const raw = hashed.pathForLeaf(BigInt(index), aligned(fromHex(at(leaves, index, 'payee'))));
       if (!raw) throw new Error(`no path for payee ${index}`);
       return pathType.fromValue(raw.value);
     },
@@ -346,6 +382,8 @@ export interface PayrollRun {
   tree: PayoutTree;
   identity: RunIdentity;
   facts: PaymentFacts[];
+  /** What each payee is paid for, in tree order: the person, the month, the kind and the occurrence. */
+  records: PayRecord[];
   secrets: PayeeSecrets[];
   payments: PayoutLeafInput[];
   /** Everything needed to pay payee `i`, assembled once and not by the caller. */
@@ -393,6 +431,7 @@ const assemble = (
   tree: PayoutTree,
   identity: RunIdentity,
   facts: PaymentFacts[],
+  records: PayRecord[],
   secrets: PayeeSecrets[],
   payments: PayoutLeafInput[],
   originalIndices: number[],
@@ -400,6 +439,7 @@ const assemble = (
   tree,
   identity,
   facts,
+  records,
   secrets,
   payments,
   originalIndices,
@@ -409,12 +449,12 @@ const assemble = (
     }
     return {
       index,
-      originalIndex: originalIndices[index],
-      ...facts[index],
-      blinding: secrets[index].blinding,
-      nonce: secrets[index].nonce,
-      details: payments[index].details,
-      leaf: tree.leaves[index],
+      originalIndex: at(originalIndices, index, 'payee'),
+      ...at(facts, index, 'payee'),
+      blinding: at(secrets, index, 'payee').blinding,
+      nonce: at(secrets, index, 'payee').nonce,
+      details: at(payments, index, 'payee').details,
+      leaf: at(tree.leaves, index, 'payee'),
       path: tree.pathFor(index),
     };
   },
@@ -432,7 +472,8 @@ const assemble = (
  *
  * WHAT MUST MATCH FOR A REBUILD TO WORK, stated plainly because a mismatch is
  * silent until payday: the seed at `identity.epoch`, the account id, the run
- * id, and the payroll **in the same order**. Order is part of the run — two
+ * id, the pay-record key and what each payee is paid for, and the payroll **in
+ * the same order**. Order is part of the run — two
  * runs with the same people in a different order are different roots, which is
  * correct, because they are different runs (see `buildPayoutTree`).
  */
@@ -451,8 +492,20 @@ export const buildRun = (
    * door, against a real signature, for money that cannot come back.
    */
   detailsOf: DetailsOfKind,
+  /**
+   * **THE ACCOUNT'S PAY-RECORD KEY AND WHAT EACH PAYEE IS PAID FOR.** Each
+   * payee's nonce is derived from them, so the account refuses a second payment
+   * to one person for one month, kind and occurrence. One record per payment,
+   * in the same order.
+   */
+  pay: PayRecords,
 ): PayrollRun => {
-  const secrets = runSecrets(seeds, identity, facts.length);
+  if (pay.records.length !== facts.length) {
+    throw new Error(
+      `this run has ${facts.length} payments and says what ${pay.records.length} of them are for; ` +
+      'every payment names the person, the month and the kind of pay it is');
+  }
+  const secrets = runSecrets(seeds, identity, pay);
 
   /*
    * **THE DERIVATION AND THE RECIPIENT BYTES COME FROM THE SAME PAYEE, IN THE
@@ -464,12 +517,12 @@ export const buildRun = (
    */
   const payments: PayoutLeafInput[] = facts.map((f, i) => ({
     details: toHex(detailsOf[f.payee.kind](
-      fromHex(recipientOf(f.payee)), fromHex(f.token), f.amount, fromHex(secrets[i].blinding))),
-    nonce: secrets[i].nonce,
+      fromHex(recipientOf(f.payee)), fromHex(f.token), f.amount, fromHex(at(secrets, i, 'payee').blinding))),
+    nonce: at(secrets, i, 'payee').nonce,
   }));
 
   return assemble(
-    buildPayoutTree(payments), identity, facts, secrets, payments,
+    buildPayoutTree(payments), identity, facts, pay.records, secrets, payments,
     facts.map((_, i) => i));
 };
 
@@ -479,7 +532,7 @@ export const buildRun = (
  * Wifi dies at payee 40 of 50. This builds the run that pays the other ten.
  *
  * **IT REUSES THE ORIGINAL SECRETS, AND THAT IS THE ENTIRE POINT.** A payment's
- * paid-once record on chain is its leaf, so a person who appears in the
+ * records on chain are its leaf and its nonce, so a person who appears in the
  * original run and in this one cannot be paid twice — whichever transaction
  * lands first wins and the other is refused. Deriving fresh secrets for the
  * retry would produce DIFFERENT leaves, which are different payments, which
@@ -505,12 +558,13 @@ export const buildRetryRun = (original: PayrollRun, indices: number[]): PayrollR
     seen.add(i);
   }
 
-  const payments = indices.map((i) => original.payments[i]);
+  const payments = indices.map((i) => at(original.payments, i, 'payee'));
   return assemble(
     buildPayoutTree(payments),
     original.identity,
-    indices.map((i) => original.facts[i]),
-    indices.map((i) => original.secrets[i]),
+    indices.map((i) => at(original.facts, i, 'payee')),
+    indices.map((i) => at(original.records, i, 'payee')),
+    indices.map((i) => at(original.secrets, i, 'payee')),
     payments,
     indices,
   );

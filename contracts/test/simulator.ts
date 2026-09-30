@@ -627,6 +627,35 @@ export class AccountSimulator {
     return this.ledger.signerRoles.lookup(pureCircuits.companyLabelKey());
   }
 
+  /**
+   * Seals the pay-record key to the calling signer. The first call also writes
+   * the account's commitment to the key, under the approved round `proposal`.
+   */
+  sealPayKey(wrap: Uint8Array[], commitment: Uint8Array, proposal: Uint8Array = ZERO_32) {
+    return this.run('sealPayKey',
+      (c) => this.contract.impureCircuits.sealPayKey(c, wrap, commitment, proposal));
+  }
+
+  /** The account's commitment to its pay-record key, as the chain holds it, or undefined. */
+  payKeyCommitment(): Uint8Array | undefined {
+    const at = pureCircuits.payKeyCommitmentKey();
+    return this.ledger.signerRoles.member(at) ? this.ledger.signerRoles.lookup(at) : undefined;
+  }
+
+  /** The four entries of one signer's sealed copy, as the chain holds them, or undefined. */
+  sealedPayKeyOf(state: AccountPrivateState): Uint8Array[] | undefined {
+    const self = Uint8Array.from(
+      this.address.replace(/^0x/, '').match(/../g)!.map((b) => parseInt(b, 16)));
+    const keys = [0n, 1n, 2n, 3n].map((i) => pureCircuits.payKeyWrapKeyOf(self, state.secretKey, i));
+    if (!this.ledger.signerRoles.member(keys[0]!)) return undefined;
+    return keys.map((k) => this.ledger.signerRoles.lookup(k));
+  }
+
+  /** How many entries the account's shared map holds. */
+  signerRolesSize(): bigint {
+    return this.ledger.signerRoles.size();
+  }
+
   /** Changes M in M of N, through an approved round. */
   setThreshold(newThreshold: bigint, proposal: Uint8Array) {
     return this.run('setThreshold',
