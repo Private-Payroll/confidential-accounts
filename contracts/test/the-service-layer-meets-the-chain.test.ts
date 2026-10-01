@@ -77,7 +77,7 @@ import {
 } from '../../src/core/ledger.js';
 import { MidnightCommitments } from '../../src/midnight/commitments.js';
 import { FileStore } from '../../src/core/store-file.js';
-import { assetIdBytes, MAX_CHANGE_AMOUNT, sumChangeAmount } from '../../src/core/assets.js';
+import { assetIdBytes, MAX_CHANGE_AMOUNT, NIGHT, sumChangeAmount } from '../../src/core/assets.js';
 import {
   fromHex, toHex, unseal, parseCanonical, newBlinding, randomBytes,
   PROPOSAL_SALT_BYTES, type Hex,
@@ -127,7 +127,7 @@ async function aRoundTheProductRaised() {
     summary: 'one salary',
     payload: {
       entries: [{
-        id: 'e1', kind: 'transfer', asset: 'GBP', amount: 10_00n,
+        id: 'e1', kind: 'transfer', asset: NIGHT, amount: 10_00n,
         counterparty: 'a supplier', memo: '', at: '',
       }],
     },
@@ -342,8 +342,8 @@ describe('the service layer meets the chain', () => {
      * sha256, so 32 bytes for any input (`src/core/account.ts:1993-1995`). */
     expect(fromHex(change.batchDigest)).toHaveLength(32);
 
-    /* `assetKeyOf` argument 1 — zero-padded to `ASSET_ID_BYTES`
-     * (`src/core/assets.ts`), which is what the change's asset code becomes. */
+    /* `assetKeyOf` argument 1: the 32 bytes of the change's token
+     * (`ASSET_ID_BYTES`, `src/core/assets.ts`). */
     expect(assetIdBytes(change.asset)).toHaveLength(32);
 
     /* `proposalIdOf` argument 1 — `commit(canonical({...}), '')`, sha256. */

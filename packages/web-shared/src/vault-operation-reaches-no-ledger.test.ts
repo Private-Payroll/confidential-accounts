@@ -7,8 +7,8 @@
  * loads the ledger, so whatever it judges is asked of the vault worker, which
  * does carry it.
  *
- * `no-wasm-in-the-page.test.ts` builds the whole page and lists the modules
- * that arrived; it says WHAT arrived, not by which import. This file names the
+ * A build of a whole page lists the modules that arrived; it says WHAT
+ * arrived, not by which import. This file names the
  * one route by which it arrived before: any import, static, re-exported or
  * dynamic, from `vault-operation.ts` or anything it imports, that reaches the
  * note index. An `import type` is erased and is not followed.

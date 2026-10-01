@@ -41,6 +41,7 @@ import type { StateChange } from '../core/ledger.js';
 import type { Hex } from '../core/crypto.js';
 import { fromHex } from '../core/crypto.js';
 
+import { TEST_TOKEN } from '../testing/assets.js';
 const CFG: MidnightConfig = {
   indexerUrl: 'http://indexer', indexerWsUrl: 'ws://indexer', proverUrl: 'http://prover',
   nodeUrl: 'http://node',
@@ -49,10 +50,10 @@ const CFG: MidnightConfig = {
   privateStateId: 'confidential-accounts-preview',
 };
 
-const ASSET = 'GBP';
+const ASSET = TEST_TOKEN;
 
 /** Two accounts, two contracts. The whole point is that there are two. */
-const ADDRESSES: Record<string, string> = {
+const ADDRESSES: Readonly<Record<string, string>> & { readonly alpha: string; readonly beta: string } = {
   alpha: 'addr_alpha',
   beta: 'addr_beta',
 };

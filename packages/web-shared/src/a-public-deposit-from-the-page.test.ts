@@ -31,12 +31,15 @@ const ACCOUNT = 'c0'.repeat(32) as AccountAddress;
 const LABEL = `co_${'c1'.repeat(32)}` as CompanyLabel;
 const PRIVATE_TOKEN = '5e'.repeat(32);
 const PUBLIC_TOKEN = 'cd'.repeat(32);
-const BOTH_PRIVATE = '6e'.repeat(32);
-const BOTH_PUBLIC = 'de'.repeat(32);
+/* A token with both forms is one token: the ledger names its notes and its public balance alike. */
+const BOTH_TOKEN = '6e'.repeat(32);
+const BOTH_PRIVATE = BOTH_TOKEN;
+const BOTH_PUBLIC = BOTH_TOKEN;
 const PARAMS = btoa('midnight:ledger-parameters[v8]:stand-in');
 
-const asset = (code: string, shielded: string | null, unshielded: string | null): Asset => ({
-  code, name: code, kind: 'token', decimals: 0, chain: 'midnight',
+/** A row for a token, named `symbol`, in the forms given: each form is the token itself or absent. */
+const asset = (symbol: string, shielded: string | null, unshielded: string | null): Asset => ({
+  code: (shielded ?? unshielded)!, symbol, name: symbol, decimals: 0,
   ledger: { shielded, unshielded } as Asset['ledger'], enabled: true, sortOrder: 1,
 });
 const REGISTRY = new StaticAssetRegistry([
@@ -95,7 +98,7 @@ describe('A PUBLIC DEPOSIT FROM THE PAGE', () => {
     const { log, doors, inFlight } = setUp();
     const asked: unknown[] = [];
     const source = publicTokenFromTheWallet(async (ask) => { asked.push(ask); log.push('wallet'); return paid('40')(ask); }, REGISTRY);
-    const done = await depositFromSource(doors, VAULT, source, { code: 'PUB', value: 40n });
+    const done = await depositFromSource(doors, VAULT, source, { code: PUBLIC_TOKEN, value: 40n });
     /* RED WHEN: the public source goes down the private step, is built with another token, amount or vault, or is sent anywhere but the public route. */
     expect(log).toEqual(['chain', `built ab ${PUBLIC_TOKEN.slice(0, 2)} 40 true`, 'wallet', `sent PROVEN+public-coins ${PUBLIC_TOKEN.slice(0, 2)} 40`]);
     expect(done).toEqual({ txRef: 'r1', transactionHash: 'h1', token: PUBLIC_TOKEN, value: 40n });
@@ -105,25 +108,25 @@ describe('A PUBLIC DEPOSIT FROM THE PAGE', () => {
     expect(inFlight.size).toBe(0);
   });
 
-  it('AN ASSET WITH BOTH FORMS GOES IN PUBLICLY AS ITS PUBLIC TOKEN, AND PRIVATELY AS ITS PRIVATE ONE', async () => {
+  it('AN ASSET WITH BOTH FORMS GOES IN PUBLICLY OR PRIVATELY, AS ASKED, AS ITS ONE TOKEN', async () => {
     const pub = setUp();
-    await depositFromSource(pub.doors, VAULT, publicTokenFromTheWallet(paid('7', BOTH_PUBLIC), REGISTRY), { code: 'BOTH', value: 7n });
+    await depositFromSource(pub.doors, VAULT, publicTokenFromTheWallet(paid('7', BOTH_PUBLIC), REGISTRY), { code: BOTH_TOKEN, value: 7n });
     /* RED WHEN: the public source takes the asset's private token. */
     expect(pub.log).toContain(`built ab ${BOTH_PUBLIC.slice(0, 2)} 7 true`);
-    expect(publicTokenFromTheWallet(paid('7'), REGISTRY).money({ code: 'BOTH', value: 7n })).toEqual({ token: BOTH_PUBLIC, value: 7n });
-    expect(privateTokenFromTheWallet(paid('7'), REGISTRY).money({ code: 'BOTH', value: 7n })).toEqual({ token: BOTH_PRIVATE, value: 7n });
+    expect(publicTokenFromTheWallet(paid('7'), REGISTRY).money({ code: BOTH_TOKEN, value: 7n })).toEqual({ token: BOTH_PUBLIC, value: 7n });
+    expect(privateTokenFromTheWallet(paid('7'), REGISTRY).money({ code: BOTH_TOKEN, value: 7n })).toEqual({ token: BOTH_PRIVATE, value: 7n });
   });
 
   it('AN ASSET WITH NO PUBLIC FORM, OR AN AMOUNT OF NOTHING, IS REFUSED BEFORE ANYTHING IS BUILT OR ASKED', async () => {
     for (const [why, brought] of [
-      ['an asset with no public form', { code: 'PRV', value: 40n }],
-      ['an amount of nothing', { code: 'PUB', value: 0n }],
+      ['an asset with no public form', { code: PRIVATE_TOKEN, value: 40n }],
+      ['an amount of nothing', { code: PUBLIC_TOKEN, value: 0n }],
     ] as const) {
       const { log, doors } = setUp();
       const source = publicTokenFromTheWallet(async (ask) => { log.push('wallet'); return paid('40')(ask); }, REGISTRY);
       const e = await depositFromSource(doors, VAULT, source, brought).catch((x: Error) => x);
       /* RED WHEN: the source's own check is gone, and the registry's refusal, worded for a payment, reaches the screen. */
-      expect((e as Error).message, why).toMatch(brought.value === 0n ? /^an amount of nothing is not a deposit/ : /^PRV has no public form on Midnight, so it cannot go into a vault from your wallet's public balance\. Nothing was built or sent\. Put it in privately instead\.$/);
+      expect((e as Error).message, why).toMatch(brought.value === 0n ? /^an amount of nothing is not a deposit/ : /^PRV cannot be put into a vault publicly\. Nothing was sent\. Put it in privately instead\.$/);
       expect((e as Error).message, why).not.toMatch(/pa(id|y)(ment| out)/i);
       expect(log, why).toEqual([]);
     }
@@ -138,12 +141,12 @@ describe('A PUBLIC DEPOSIT FROM THE PAGE', () => {
       const { log, doors } = setUp(over as never);
       const source = publicTokenFromTheWallet(async (ask) => { log.push('wallet'); return paid('40')(ask); }, REGISTRY);
       /* RED WHEN: the vault's state is asked after the wallet, or the step builds for a vault that takes no money. */
-      await expect(depositFromSource(doors, VAULT, source, { code: 'PUB', value: 40n }), why).rejects.toThrow(says);
+      await expect(depositFromSource(doors, VAULT, source, { code: PUBLIC_TOKEN, value: 40n }), why).rejects.toThrow(says);
       expect(log.filter((l) => l !== 'chain'), why).toEqual([]);
     }
     const { log, doors } = setUp();
     const withoutTheRoute = { ...doors, service: { ...doors.service, depositPublicly: undefined } };
-    await expect(depositFromSource(withoutTheRoute, VAULT, publicTokenFromTheWallet(paid('40'), REGISTRY), { code: 'PUB', value: 40n }))
+    await expect(depositFromSource(withoutTheRoute, VAULT, publicTokenFromTheWallet(paid('40'), REGISTRY), { code: PUBLIC_TOKEN, value: 40n }))
       .rejects.toThrow(/cannot send a public deposit/);
     expect(log).toEqual([]);
   });
@@ -159,7 +162,7 @@ describe('A PUBLIC DEPOSIT FROM THE PAGE', () => {
       const { log, doors } = setUp();
       const source = publicTokenFromTheWallet(async (ask) => ({ transaction: `${ask.transaction}+coins`, leaves }), REGISTRY);
       /* RED WHEN: the page sends whatever the wallet finished without reading what the wallet says left it. */
-      await expect(depositFromSource(doors, VAULT, source, { code: 'PUB', value: 40n }), why)
+      await expect(depositFromSource(doors, VAULT, source, { code: PUBLIC_TOKEN, value: 40n }), why)
         .rejects.toThrow(/^your wallet prepared a payment for something other than this public deposit, so this page did not send it and no money moved\. You can put money in again now\.$/);
       expect(log.some((l) => l.startsWith('sent')), why).toBe(false);
     }
@@ -167,10 +170,10 @@ describe('A PUBLIC DEPOSIT FROM THE PAGE', () => {
 
   it('A SEND THE SERVICE REFUSED SAYS NO MONEY MOVED; A SEND THAT MAY HAVE GONE SAYS DO NOT PUT IT IN AGAIN', async () => {
     const refused = setUp({ send: async () => { throw Object.assign(new Error('not exactly this. Nothing was sent.'), { nothingWasSent: true }); } });
-    await expect(depositFromSource(refused.doors, VAULT, publicTokenFromTheWallet(paid('40'), REGISTRY), { code: 'PUB', value: 40n }))
+    await expect(depositFromSource(refused.doors, VAULT, publicTokenFromTheWallet(paid('40'), REGISTRY), { code: PUBLIC_TOKEN, value: 40n }))
       .rejects.toThrow(/^the public deposit was not sent, so no money has moved yet\. Your wallet already signed it, and until .+ anyone can still send it\. If they do, the money goes into this vault and nowhere else\. Do not put the same money in again before .+, or the vault may receive it twice\. The service said: not exactly this\. Nothing was sent\.$/);
     const lost = setUp({ send: async () => { throw new Error('the connection closed'); } });
-    const e = await depositFromSource({ ...lost.doors, clock: () => 1_000 }, VAULT, publicTokenFromTheWallet(paid('40'), REGISTRY), { code: 'PUB', value: 40n })
+    const e = await depositFromSource({ ...lost.doors, clock: () => 1_000 }, VAULT, publicTokenFromTheWallet(paid('40'), REGISTRY), { code: PUBLIC_TOKEN, value: 40n })
       .catch((x: Error) => x);
     /* RED WHEN: the time before which nobody should put the money in again is shorter than the deposit can live. */
     expect((e as PublicDepositNotYetSeen).until).toBe(1_000 + DEPOSIT_TIME_TO_LIVE_MS);
@@ -184,7 +187,7 @@ describe('A PUBLIC DEPOSIT FROM THE PAGE', () => {
   it('THE PRIVATE SOURCE STILL ENDS IN THE PRIVATE STEP, AND NEVER IN THE PUBLIC ONE', async () => {
     const { log, doors } = setUp();
     /* The private step's first own asks are to the pool; a stand-in that refuses them shows it was taken. */
-    await depositFromSource(doors, VAULT, privateTokenFromTheWallet(paid('40'), REGISTRY), { code: 'PRV', value: 40n }).catch(() => null);
+    await depositFromSource(doors, VAULT, privateTokenFromTheWallet(paid('40'), REGISTRY), { code: PRIVATE_TOKEN, value: 40n }).catch(() => null);
     /* RED WHEN: the dispatcher sends a private source down the public step. */
     expect(log.some((l) => l.startsWith('built ab'))).toBe(false);
     expect(log.some((l) => l.startsWith('sent PROVEN'))).toBe(false);
@@ -258,14 +261,14 @@ describe('THE PAGE ASKS THE SERVICE FOR A PUBLIC DEPOSIT ON ITS OWN ROUTE', () =
 describe('THE WAY AN ASSET GOES IN, AS THE PAGE CHOOSES IT', () => {
   it('AN ASSET WITH BOTH FORMS GOES IN THE WAY ASKED; AN ASSET WITH ONE GOES IN ONLY THAT WAY, AND SAYS WHY THE OTHER IS CLOSED', () => {
     /* RED WHEN: the page's choice sends an asset another way than the one asked, while that way is open. */
-    expect(depositKindFor('BOTH', 'private', REGISTRY)).toEqual({ goesIn: 'private', whyNot: { private: null, public: null } });
-    expect(depositKindFor('BOTH', 'public', REGISTRY)).toEqual({ goesIn: 'public', whyNot: { private: null, public: null } });
+    expect(depositKindFor(BOTH_TOKEN, 'private', REGISTRY)).toEqual({ goesIn: 'private', whyNot: { private: null, public: null } });
+    expect(depositKindFor(BOTH_TOKEN, 'public', REGISTRY)).toEqual({ goesIn: 'public', whyNot: { private: null, public: null } });
     /* RED WHEN: an asset with only a public form is put in privately, or a private-only one publicly, or the reason is lost. */
-    const onlyPublic = depositKindFor('PUB', 'private', REGISTRY);
+    const onlyPublic = depositKindFor(PUBLIC_TOKEN, 'private', REGISTRY);
     expect(onlyPublic.goesIn).toBe('public');
     expect(onlyPublic.whyNot.private).toMatch(/^PUB has no private form on Midnight/);
     expect(onlyPublic.whyNot.public).toBeNull();
-    const onlyPrivate = depositKindFor('PRV', 'public', REGISTRY);
+    const onlyPrivate = depositKindFor(PRIVATE_TOKEN, 'public', REGISTRY);
     expect(onlyPrivate.goesIn).toBe('private');
     expect(onlyPrivate.whyNot.public).toMatch(/^PRV has no public form on Midnight/);
   });
@@ -274,7 +277,7 @@ describe('THE WAY AN ASSET GOES IN, AS THE PAGE CHOOSES IT', () => {
     /* RED WHEN: choosing "Privately" builds the public source, or the reverse. */
     expect(sourceFor('private', paid('1'), REGISTRY).endsIn).toBe('private-deposit');
     expect(sourceFor('public', paid('1'), REGISTRY).endsIn).toBe('public-deposit');
-    expect(sourceFor('public', paid('1'), REGISTRY).money({ code: 'BOTH', value: 1n }).token).toBe(BOTH_PUBLIC);
-    expect(sourceFor('private', paid('1'), REGISTRY).money({ code: 'BOTH', value: 1n }).token).toBe(BOTH_PRIVATE);
+    expect(sourceFor('public', paid('1'), REGISTRY).money({ code: BOTH_TOKEN, value: 1n }).token).toBe(BOTH_PUBLIC);
+    expect(sourceFor('private', paid('1'), REGISTRY).money({ code: BOTH_TOKEN, value: 1n }).token).toBe(BOTH_PRIVATE);
   });
 });

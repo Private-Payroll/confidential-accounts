@@ -27,6 +27,8 @@ import { sign, toHex, type Hex } from './crypto.js';
 import { assetIdBytes } from './assets.js';
 import { saysNothingWasSent } from './jobs.js';
 
+import { TEST_TOKEN } from '../testing/assets.js';
+import { runLegOf } from './payroll.js';
 const VAULT = toHex(new Uint8Array(32).fill(0xa1));
 const now = () => Math.floor(Date.now() / 1000);
 
@@ -53,7 +55,7 @@ async function aCompany(opts: { door?: 'none' } = {}) {
   const viewingKey = created.viewingKey;
   for (let i = 0; i < 3; i++) {
     payroll.hireDirect(created.account.id, {
-      name: `Payee ${i}`, email: `p${i}@a.co`, title: 'Eng', asset: 'GBP', baseAmount: 100_00n,
+      name: `Payee ${i}`, email: `p${i}@a.co`, title: 'Eng', asset: TEST_TOKEN, baseAmount: 100_00n,
     }, viewingKey);
   }
   const account = created.account.id;
@@ -81,7 +83,7 @@ async function aCompany(opts: { door?: 'none' } = {}) {
   const theRaiseLands = (order: NonNullable<Awaited<ReturnType<typeof payroll.raiseOrderOf>>>): Send =>
     async (accountId) => {
       const change: StateChange = {
-        asset: 'GBP', amount: BigInt(order.half.changeAmount), batchDigest: order.half.changeBatchDigest,
+        asset: TEST_TOKEN, amount: BigInt(order.half.changeAmount), batchDigest: order.half.changeBatchDigest,
         salt: order.half.proposalSalt,
       };
       const r = await ledger.proposeRun(accountId, order.run, change, by());
@@ -109,7 +111,7 @@ describe('A PAYROLL PROPOSAL RAISED FROM A DEVICE', () => {
     expect(round.raisedAt).toBeUndefined();
     expect(round.status).toBe('open');
     /* RED WHEN: the leg is not pointed at the proposal - a second press then writes a second round over the same people. */
-    expect(c.payroll.requireRun(c.runId, c.viewingKey).proposalIds.GBP).toBe(round.id);
+    expect(c.payroll.requireRun(c.runId, c.viewingKey).proposalIds[runLegOf(TEST_TOKEN, 'shielded')]).toBe(round.id);
     await expect(c.raiseOnDevice()).rejects.toThrow(/already proposed/u);
   });
 
@@ -117,7 +119,7 @@ describe('A PAYROLL PROPOSAL RAISED FROM A DEVICE', () => {
     const c = await aCompany();
     const round = await c.raiseOnDevice();
     const order = (await c.payroll.raiseOrderOf(c.runId, c.viewingKey))!;
-    const payout = c.payroll.requireRun(c.runId, c.viewingKey).payout!.GBP!;
+    const payout = c.payroll.requireRun(c.runId, c.viewingKey).payout![runLegOf(TEST_TOKEN, 'shielded')]!;
     expect(order.proposalId).toBe(round.id);
     expect(order.chainId).toBe(round.chainId);
     expect(order.run).toEqual({
@@ -130,7 +132,7 @@ describe('A PAYROLL PROPOSAL RAISED FROM A DEVICE', () => {
       order.half.proposalSalt, order.run.vault)).toBe(round.chainId);
     /* RED WHEN: the change is not the leg's own - three people at one hundred pounds each - or names another asset. */
     expect(order.half.changeAmount).toBe('30000');
-    expect(order.half.assetId).toBe(toHex(assetIdBytes('GBP')));
+    expect(order.half.assetId).toBe(toHex(assetIdBytes(TEST_TOKEN)));
     /* RED WHEN: the account's half carries a blinding of the wrong width, or none. */
     expect(order.half.assetBlinding).toMatch(/^[0-9a-f]{64}$/u);
     expect(order.half.changeBatchDigest).toMatch(/^[0-9a-f]{64}$/u);
@@ -220,7 +222,7 @@ describe('A PAYROLL PROPOSAL RAISED FROM A DEVICE', () => {
      */
     const onChain = (await c.ledger.status(c.account))!.openProposals.find((p) => p.id === round.chainId)!;
     expect(onChain.change).toBe(MidnightCommitments.changeCommitment(
-      MidnightCommitments.assetKey('GBP', order.half.assetBlinding), BigInt(order.half.changeAmount),
+      MidnightCommitments.assetKey(TEST_TOKEN, order.half.assetBlinding), BigInt(order.half.changeAmount),
       order.half.changeBatchDigest, order.half.proposalSalt));
     const after = await c.accounts.refreshStanding(round.id, c.viewingKey);
     /* RED WHEN: the read does not write down what the chain shows - the page then waits for ever. */

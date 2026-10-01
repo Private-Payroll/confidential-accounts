@@ -7,22 +7,22 @@ import {
 } from './governed-call-on-device.js';
 import { deviceVaultHoldings, type PoolNote } from './device-vault-holdings.js';
 import { paymentsFitNotes } from './vault-builder.js';
-import { registryWithTestPrivateForms, testPrivateToken } from '../../../src/testing/assets.js';
+import { registryWithTestPrivateForms, TEST_TOKEN } from '../../../src/testing/assets.js';
 import type { Hex } from '../../../src/core/crypto.js';
-import { SEED_ASSETS, StaticAssetRegistry } from '../../../src/core/assets.js';
 import { DEVICE_RAISE_VERSION, paymentsCheckedDigest } from '../../../src/core/device-raise.js';
 import { opensAs } from '../../../src/testing/sealed-records.js';
 
 /* The page's side, over a service and a worker that write down what they were asked, in order. */
 const material = { signingSecret: '11'.repeat(32), blinding: '22'.repeat(32), scope: '33'.repeat(32) };
 /* The vault's private money, as this device's pool records it and the chain holds it. */
-const TOKEN = testPrivateToken('GBP') as Hex;
+/* A token with both forms, which the fixture registry holds beside the product's own: what each leg here pays. */
+const TOKEN = TEST_TOKEN as Hex;
 const note = (n: number, value: bigint): PoolNote => ({
   nonce: n.toString(16).padStart(64, '0') as Hex, token: TOKEN, value, createdIn: 'ee'.repeat(32) as Hex,
 });
 const committed = (n: PoolNote) => `c${n.nonce.slice(1)}`;
 const LEG: LegPaymentsOnTheWire = {
-  asset: 'GBP', payments: [0, 1, 2].map(() => ({ kind: 'shielded', token: TOKEN, amount: '10000' })),
+  asset: TOKEN, payments: [0, 1, 2].map(() => ({ kind: 'shielded', token: TOKEN, amount: '10000' })),
 };
 const PLENTY = [note(1, 1_000_000n)];
 /* The digest of LEG's payments, as the service computes it over what it raises or sends. */
@@ -125,19 +125,19 @@ const aDevice = (over: Partial<GovernedCallService> & {
 describe('RAISING A LEG FROM THIS DEVICE', () => {
   it('writes the proposal down first, reads the chain, builds with this signer\'s material, sends, and waits until the chain holds it', async () => {
     const d = aDevice({ standings: [round({ txRef: 't1' }), round({ txRef: 't1', raisedAt: 'now' })] });
-    const done = await raiseRunOnDevice(d.doors, { runId: 'run_1', viewingKey: 'vk', asset: 'GBP', vault: '99'.repeat(32), opensAt: '1', closesAt: '2' });
+    const done = await raiseRunOnDevice(d.doors, { runId: 'run_1', viewingKey: 'vk', asset: TOKEN, vault: '99'.repeat(32), opensAt: '1', closesAt: '2' });
     expect(done.raisedAt).toBe('now');
     /* RED WHEN: the order changes - above all, a build or a send before the proposal is written down. */
     expect(d.log).toEqual([
       'stage checking-the-vault',
-      'leg-payments run_1 {"viewingKey":"vk","asset":"GBP"}',
+      `leg-payments run_1 {"viewingKey":"vk","asset":"${TOKEN}"}`,
       `vault read ${'99'.repeat(32)}`, `vault read ${'99'.repeat(32)}`,
       'stage writing-down',
-      `raise run_1 {"viewingKey":"vk","vault":"${'99'.repeat(32)}","opensAt":"1","closesAt":"2","asset":"GBP","onDevice":true,`
+      `raise run_1 {"viewingKey":"vk","vault":"${'99'.repeat(32)}","opensAt":"1","closesAt":"2","asset":"${TOKEN}","onDevice":true,`
         + `"version":${DEVICE_RAISE_VERSION},"checked":"${CHECKED}"}`,
       /* RED WHEN: the vault is not checked again right before the send, after the proposal is written down. */
       'stage checking-the-vault',
-      'leg-payments run_1 {"viewingKey":"vk","asset":"GBP"}',
+      `leg-payments run_1 {"viewingKey":"vk","asset":"${TOKEN}"}`,
       `vault read ${'99'.repeat(32)}`, `vault read ${'99'.repeat(32)}`,
       'stage reading-the-chain', 'state acc_1',
       'stage building', `build propose for ${'ac'.repeat(32)} on AS`,
@@ -160,10 +160,10 @@ describe('RAISING A LEG FROM THIS DEVICE', () => {
       .rejects.toThrow('you are not a signer');
     expect(d.log.filter((l) => l.startsWith('send'))).toEqual([]);
     const again = aDevice({ standings: [round({ raisedAt: 'now' })] });
-    await sendRaiseFromDevice(again.doors, { runId: 'run_1', viewingKey: 'vk', asset: 'GBP' });
+    await sendRaiseFromDevice(again.doors, { runId: 'run_1', viewingKey: 'vk', asset: TOKEN });
     /* RED WHEN: sending again asks for anything but the proposal already written down and what its vault can pay. */
     expect(again.log.filter((l) => !l.startsWith('stage'))).toEqual([
-      'order run_1', 'leg-payments run_1 {"viewingKey":"vk","asset":"GBP"}',
+      'order run_1', `leg-payments run_1 {"viewingKey":"vk","asset":"${TOKEN}"}`,
       `vault read ${'99'.repeat(32)}`, `vault read ${'99'.repeat(32)}`,
       'state acc_1', `build propose for ${'ac'.repeat(32)} on AS`,
       `send-raise run_1 TX-propose ${DEVICE_RAISE_VERSION} ${CHECKED}`, 'standing prp_1',
@@ -258,7 +258,7 @@ describe('APPROVING FROM THIS DEVICE', () => {
 });
 
 describe('THE VAULT\'S PRIVATE MONEY IS ASKED ON THIS DEVICE BEFORE THE COMPANY IS ASKED TO WRITE A RAISE DOWN', () => {
-  const RAISE = { runId: 'run_1', viewingKey: 'vk', asset: 'GBP', vault: '99'.repeat(32), opensAt: '1', closesAt: '2' };
+  const RAISE = { runId: 'run_1', viewingKey: 'vk', asset: TOKEN, vault: '99'.repeat(32), opensAt: '1', closesAt: '2' };
   const serviceCalls = (log: string[]) => log.filter((l) => /^(raise|order|send|state|approve|standing) /u.test(l));
 
   it('1. A RUN THE POOL CANNOT PAY IS REFUSED HERE, AND THE COMPANY IS NEVER ASKED TO RAISE IT', async () => {
@@ -275,7 +275,7 @@ describe('THE VAULT\'S PRIVATE MONEY IS ASKED ON THIS DEVICE BEFORE THE COMPANY 
     /* Enough in total, and no single note can make the second payment: a question about notes, not a sum. */
     const split = aDevice({
       pool: [note(1, 20_000n), note(2, 10_000n)],
-      legPayments: async () => ({ asset: 'GBP', payments: [0, 1].map(() => ({ kind: 'shielded', token: TOKEN, amount: '15000' })) }),
+      legPayments: async () => ({ asset: TOKEN, payments: [0, 1].map(() => ({ kind: 'shielded', token: TOKEN, amount: '15000' })) }),
     });
     const unfit = await raiseRunOnDevice(split.doors, RAISE).catch((e) => e);
     /* RED WHEN: the notes are not walked payment by payment - the run is raised and stops halfway on payday. */
@@ -304,48 +304,56 @@ describe('THE VAULT\'S PRIVATE MONEY IS ASKED ON THIS DEVICE BEFORE THE COMPANY 
       standings: [round({ raisedAt: 'now' })],
       legPayments: async (runId, body) => {
         asked.push(`${runId} ${JSON.stringify(body)}`);
-        return { asset: 'NIGHT', payments: [{ kind: 'unshielded', token: '0'.repeat(64), amount: '5' }] };
+        return { asset: '0'.repeat(64), payments: [{ kind: 'unshielded', token: '0'.repeat(64), amount: '5' }] };
       },
       raiseRun: async () => ({ proposal: round(), order: orderPaying([{ kind: 'unshielded', token: '0'.repeat(64), amount: '5' }]) }),
     });
     /* RED WHEN: this device asks itself about public money it cannot read - every run with a public payee is then refused here. */
-    expect((await raiseRunOnDevice(d.doors, { ...RAISE, asset: 'NIGHT' })).raisedAt).toBe('now');
+    expect((await raiseRunOnDevice(d.doors, { ...RAISE, asset: '0'.repeat(64) })).raisedAt).toBe('now');
     expect(d.log.filter((l) => l.startsWith('vault read'))).toEqual([]);
     /* RED WHEN: the device check is skipped outright, before the write-down or before the send. */
-    expect(asked).toEqual(Array(2).fill('run_1 {"viewingKey":"vk","asset":"NIGHT"}'));
+    expect(asked).toEqual(Array(2).fill(`run_1 {"viewingKey":"vk","asset":"${'0'.repeat(64)}"}`));
     expect(d.log[0]).toBe('stage checking-the-vault');
   });
 
   it('THE PRIVATE HALF OF A RUN THAT ALSO PAYS PUBLICLY IS STILL ASKED HERE', async () => {
+    /* A run paying TOKEN both ways is two legs side by side; raising its private leg names the token and the form. */
+    const asked: string[] = [];
     const mixed = aDevice({
       pool: [note(1, 5_000n)],
-      legPayments: async () => ({ asset: 'GBP', payments: [
-        { kind: 'shielded', token: TOKEN, amount: '10000' },
-        { kind: 'unshielded', token: 'ab'.repeat(32), amount: '5' },
-      ] }),
+      legPayments: async (runId, body) => {
+        asked.push(`${runId} ${JSON.stringify(body)}`);
+        return { asset: TOKEN, form: 'shielded', payments: [{ kind: 'shielded', token: TOKEN, amount: '10000' }] };
+      },
     });
-    /* GBP given a public token too, so one payment on the leg can be public. */
-    const both = new StaticAssetRegistry(SEED_ASSETS.map((a) => (a.code === 'GBP'
-      ? { ...a, ledger: { shielded: TOKEN, unshielded: 'ab'.repeat(32) } } : a)));
-    const refused = await raiseRunOnDevice({ ...mixed.doors, assets: both }, RAISE).catch((e) => e);
+    const refused = await raiseRunOnDevice(mixed.doors, { ...RAISE, form: 'shielded' }).catch((e) => e);
     /* RED WHEN: a leg with any public payment skips the device check - its private half is then checked nowhere. */
     expect(refused?.why).toBe('short');
     expect(refused?.form).toBe('shielded');
     expect(serviceCalls(mixed.log)).toEqual([]);
+    /* RED WHEN the form is not sent beside the token, so the company cannot tell which of the run's two legs is raised. */
+    expect(asked).toEqual([`run_1 {"viewingKey":"vk","asset":"${TOKEN}","form":"shielded"}`]);
   });
 
   it('WHAT THE COMPANY SAYS THE LEG PAYS IS CHECKED FOR BEING THIS LEG, AND FOR A SHAPE THIS DEVICE CAN READ', async () => {
-    for (const [why, answer] of [
+    for (const [why, answer, says] of [
       /* A leg the device could pass on its own terms, so only the asset being another's refuses it. */
-      ['another asset\'s leg', { asset: 'NIGHT', payments: [{ kind: 'unshielded', token: '0'.repeat(64), amount: '5' }] }],
-      ['a kind that is neither private nor public', { asset: 'GBP', payments: [{ kind: 'Shielded', token: TOKEN, amount: '10000' }] }],
-      ['an amount that is not a whole number', { asset: 'GBP', payments: [{ kind: 'shielded', token: TOKEN, amount: '1e4' }] }],
+      ['another asset\'s leg', { asset: '0'.repeat(64), payments: [{ kind: 'unshielded', token: '0'.repeat(64), amount: '5' }] }, /Nothing was sent for approval and no fee was spent\.$/u],
+      ['a kind that is neither private nor public', { asset: TOKEN, payments: [{ kind: 'Shielded', token: TOKEN, amount: '10000' }] }, /Nothing was raised and no fee was spent/u],
+      ['an amount that is not a whole number', { asset: TOKEN, payments: [{ kind: 'shielded', token: TOKEN, amount: '1e4' }] }, /Nothing was raised and no fee was spent/u],
     ] as const) {
       const d = aDevice({ legPayments: async () => answer as LegPaymentsOnTheWire });
       /* RED WHEN: the device checks payments other than the leg being raised, or skips one it cannot read. */
-      await expect(raiseRunOnDevice(d.doors, RAISE), why).rejects.toThrow(/Nothing was raised and no fee was spent/u);
+      await expect(raiseRunOnDevice(d.doors, RAISE), why).rejects.toThrow(says);
       expect(serviceCalls(d.log), why).toEqual([]);
     }
+    /* RED WHEN the private leg of a run is checked with the public leg's payments, or the refusal names a token rather than its symbol. */
+    const otherForm = aDevice({ legPayments: async () => ({ asset: TOKEN, form: 'unshielded', payments: [{ kind: 'unshielded', token: TOKEN, amount: '5' }] }) });
+    const refused = await raiseRunOnDevice(otherForm.doors, { ...RAISE, form: 'shielded' }).catch((e) => e);
+    /* RED WHEN the refusal stops saying in plain words which payments came back, which were asked for, and that nothing was sent or spent (ruled copy fix, 1 Oct). */
+    expect(String(refused?.message)).toBe('The service returned the public tPAY payments when the private tPAY payments were asked for. '
+      + 'Nothing was sent for approval and no fee was spent.');
+    expect(serviceCalls(otherForm.log)).toEqual([]);
   });
 
   it('A FAILURE TO ASK IS NOT SAID AS MONEY SHORT', async () => {
@@ -398,26 +406,26 @@ describe('THE VAULT\'S PRIVATE MONEY IS ASKED ON THIS DEVICE BEFORE THE COMPANY 
       calls.push(`${init?.method ?? 'GET'} ${path} ${init?.body ?? ''}`);
       return LEG;
     });
-    await service.legPayments('r 1', { viewingKey: 'vk', asset: 'GBP' });
+    await service.legPayments('r 1', { viewingKey: 'vk', asset: TOKEN });
     /* RED WHEN: the key travels in an address, or the run id is not escaped. */
-    expect(calls).toEqual(['POST /api/runs/r%201/leg-payments {"viewingKey":"vk","asset":"GBP"}']);
+    expect(calls).toEqual([`POST /api/runs/r%201/leg-payments {"viewingKey":"vk","asset":"${TOKEN}"}`]);
   });
 });
 
 describe('EVERY SEND IS CHECKED AGAINST THE VAULT ON THIS DEVICE FIRST, AND SAYS WHICH PAGE CHECKED WHAT', () => {
-  const RAISE = { runId: 'run_1', viewingKey: 'vk', asset: 'GBP', vault: '99'.repeat(32), opensAt: '1', closesAt: '2' };
+  const RAISE = { runId: 'run_1', viewingKey: 'vk', asset: TOKEN, vault: '99'.repeat(32), opensAt: '1', closesAt: '2' };
   const builtOrSent = (log: string[]) => log.filter((l) => /^(state|build|send-raise) /u.test(l));
 
   it('4. A SEND AGAIN OF A WRITTEN-DOWN PROPOSAL CHECKS THE VAULT FIRST, AND A VAULT THAT CAN NO LONGER PAY IS REFUSED BEFORE ANYTHING IS BUILT OR SENT', async () => {
     const d = aDevice({ pool: [note(1, 29_999n)] });
-    const refused = await sendRaiseFromDevice(d.doors, { runId: 'run_1', viewingKey: 'vk', asset: 'GBP' }).catch((e) => e);
+    const refused = await sendRaiseFromDevice(d.doors, { runId: 'run_1', viewingKey: 'vk', asset: TOKEN }).catch((e) => e);
     /* RED WHEN: a send again goes out on the check made when the proposal was written down, days before. */
     expect(refused?.name).toBe('VaultCannotPayThisProposal');
     expect(refused?.why).toBe('short');
     expect(String(refused?.message)).toMatch(/Nothing was raised and no fee was spent\./u);
     expect(builtOrSent(d.log)).toEqual([]);
     /* The vault asked about is the one the written-down proposal names, and it is asked before the chain is read. */
-    expect(d.log.filter((l) => !l.startsWith('stage')).slice(0, 2)).toEqual(['order run_1', 'leg-payments run_1 {"viewingKey":"vk","asset":"GBP"}']);
+    expect(d.log.filter((l) => !l.startsWith('stage')).slice(0, 2)).toEqual(['order run_1', `leg-payments run_1 {"viewingKey":"vk","asset":"${TOKEN}"}`]);
     expect(d.log).toContain(`vault read ${ORDER.order.run.vault}`);
     expect(d.log).toContain('stage checking-the-vault');
   });
@@ -432,12 +440,8 @@ describe('EVERY SEND IS CHECKED AGAINST THE VAULT ON THIS DEVICE FIRST, AND SAYS
   });
 
   it('4c. THE SEND NAMES THIS PAGE\'S VERSION AND THE DIGEST OF EXACTLY WHAT THIS CHECK WAS HANDED', async () => {
-    /* A private payment and a public one, so the kind of each is part of what is digested at this call site. */
-    const other: LegPaymentsOnTheWire = { asset: 'GBP', payments: [
-      { kind: 'shielded', token: TOKEN, amount: '12345' }, { kind: 'unshielded', token: 'ab'.repeat(32), amount: '5' },
-    ] };
-    const both = new StaticAssetRegistry(SEED_ASSETS.map((a) => (a.code === 'GBP'
-      ? { ...a, ledger: { shielded: TOKEN, unshielded: 'ab'.repeat(32) } } : a)));
+    /* A public leg of the same token and amount as a private one, so the kind is part of what is digested at this call site. */
+    const other: LegPaymentsOnTheWire = { asset: TOKEN, form: 'unshielded', payments: [{ kind: 'unshielded', token: TOKEN, amount: '12345' }] };
     const bodies: Array<{ version: number; checked: string }> = [];
     const d = aDevice({
       standings: [round({ raisedAt: 'now' })],
@@ -445,17 +449,18 @@ describe('EVERY SEND IS CHECKED AGAINST THE VAULT ON THIS DEVICE FIRST, AND SAYS
       raiseOrder: async () => orderPaying(other.payments),
       sendRaise: async (_r, body) => { bodies.push(body); return round({ txRef: 't1' }); },
     });
-    await sendRaiseFromDevice({ ...d.doors, assets: both }, { runId: 'run_1', viewingKey: 'vk', asset: 'GBP' });
+    await sendRaiseFromDevice(d.doors, { runId: 'run_1', viewingKey: 'vk', asset: TOKEN, form: 'unshielded' });
     /* RED WHEN: the send carries no version, a stale one, or a digest of anything but the payments this check was handed - kind included. */
     expect(bodies).toHaveLength(1);
     expect(bodies[0]!.version).toBe(DEVICE_RAISE_VERSION);
-    expect(bodies[0]!.checked).toBe(paymentsCheckedDigest([{ kind: 'shielded', token: TOKEN, amount: '12345' }, { kind: 'unshielded', token: 'ab'.repeat(32), amount: '5' }]));
+    expect(bodies[0]!.checked).toBe(paymentsCheckedDigest([{ kind: 'unshielded', token: TOKEN, amount: '12345' }]));
+    expect(bodies[0]!.checked).not.toBe(paymentsCheckedDigest([{ kind: 'shielded', token: TOKEN, amount: '12345' }]));
     expect(bodies[0]!.checked).not.toBe(CHECKED);
   });
 });
 
 describe('A STOPPED RUN IS RETRIED FROM THIS DEVICE, WITH THE VAULT CHECKED FOR EXACTLY THE RETRY', () => {
-  const RETRY = { runId: 'run_1', viewingKey: 'vk', asset: 'GBP', indices: [1, 2], vault: '99'.repeat(32), opensAt: '1', closesAt: '2' };
+  const RETRY = { runId: 'run_1', viewingKey: 'vk', asset: TOKEN, indices: [1, 2], vault: '99'.repeat(32), opensAt: '1', closesAt: '2' };
   /* The digest of the retry's two payments, which is not the digest of the leg's three. */
   const RETRY_CHECKED = paymentsCheckedDigest(LEG.payments.slice(1));
   const serviceCalls = (log: string[]) => log.filter((l) => /^(retry|retry-order|send-retry|state|build|standing) /u.test(l));
@@ -468,14 +473,14 @@ describe('A STOPPED RUN IS RETRIED FROM THIS DEVICE, WITH THE VAULT CHECKED FOR 
     /* RED WHEN: the order changes - above all, a retry written down or sent before the vault is checked for it on this device. */
     expect(d.log).toEqual([
       'stage checking-the-vault',
-      'retry-payments run_1 {"viewingKey":"vk","asset":"GBP","indices":[1,2]}',
+      `retry-payments run_1 {"viewingKey":"vk","asset":"${TOKEN}","indices":[1,2]}`,
       `vault read ${'99'.repeat(32)}`, `vault read ${'99'.repeat(32)}`,
       'stage writing-down',
-      `retry run_1 {"viewingKey":"vk","asset":"GBP","indices":[1,2],"vault":"${'99'.repeat(32)}","opensAt":"1","closesAt":"2",`
+      `retry run_1 {"viewingKey":"vk","asset":"${TOKEN}","indices":[1,2],"vault":"${'99'.repeat(32)}","opensAt":"1","closesAt":"2",`
         + `"onDevice":true,"version":${DEVICE_RAISE_VERSION},"checked":"${RETRY_CHECKED}"}`,
       /* RED WHEN: the send rides on the check made before the retry was written down. */
       'stage checking-the-vault',
-      'retry-payments run_1 {"viewingKey":"vk","asset":"GBP","indices":[1,2]}',
+      `retry-payments run_1 {"viewingKey":"vk","asset":"${TOKEN}","indices":[1,2]}`,
       `vault read ${'99'.repeat(32)}`, `vault read ${'99'.repeat(32)}`,
       'stage reading-the-chain', 'state acc_1',
       'stage building', `build propose for ${'ac'.repeat(32)} on AS`,
@@ -508,10 +513,10 @@ describe('A STOPPED RUN IS RETRIED FROM THIS DEVICE, WITH THE VAULT CHECKED FOR 
 
   it('A RETRY SENT AGAIN IS CHECKED AGAINST THE VAULT FOR THE PEOPLE IT WAS WRITTEN DOWN WITH', async () => {
     const d = aDevice({ standings: [round({ id: 'prp_r', raisedAt: 'now' })] });
-    await sendRetryFromDevice(d.doors, { runId: 'run_1', viewingKey: 'vk', asset: 'GBP', proposalId: 'prp_r' });
+    await sendRetryFromDevice(d.doors, { runId: 'run_1', viewingKey: 'vk', asset: TOKEN, proposalId: 'prp_r' });
     /* RED WHEN: sending a retry again checks anything but the people the written-down retry pays. */
     expect(d.log.filter((l) => !l.startsWith('stage') && !l.startsWith('vault read'))).toEqual([
-      'retry-order run_1 prp_r', 'retry-payments run_1 {"viewingKey":"vk","asset":"GBP","indices":[1,2]}',
+      'retry-order run_1 prp_r', `retry-payments run_1 {"viewingKey":"vk","asset":"${TOKEN}","indices":[1,2]}`,
       'state acc_1', `build propose for ${'ac'.repeat(32)} on AS`,
       `send-retry run_1 prp_r TX-propose ${DEVICE_RAISE_VERSION} ${RETRY_CHECKED}`, 'standing prp_r',
     ]);

@@ -46,7 +46,7 @@ const { handInWiring } = await import('../wiring/handed-in.js');
 const { FileStore } = await import('../core/store-file.js');
 const { walletKeyOf } = await import('../core/store.js');
 const { AccountService } = await import('../core/account.js');
-const { PayrollService } = await import('../core/payroll.js');
+const { PayrollService, runLegOf } = await import('../core/payroll.js');
 const { SEED_ASSETS, assets: productAssets } = await import('../core/assets.js');
 const { runMaterialFor, retryMaterialFor } = await import('../midnight/run-material.js');
 const { vaultDetails } = await import('../testing/vault-details.js');
@@ -226,7 +226,7 @@ const retryBody = (c: Company, more: Record<string, unknown>) =>
 /** The retries written down on the company's own record of the run, as the store now holds it. */
 const retriesOf = (c: Company) => {
   const fresh = new PayrollService(new FileStore(process.env.DATA_PATH!), accounts, new SimulatedProofSystem(), productAssets);
-  return fresh.requireRun(c.runId, c.viewingKey as Hex).payout![PRIVATE.code]!.retries ?? [];
+  return fresh.requireRun(c.runId, c.viewingKey as Hex).payout![runLegOf(PRIVATE.code, 'shielded')]!.retries ?? [];
 };
 
 describe('A PRIVATE RETRY FROM A DEVICE IS WRITTEN DOWN AND SENT; ONE FROM ANYWHERE ELSE IS REFUSED', () => {
@@ -358,7 +358,7 @@ describe('A PRIVATE RETRY FROM A DEVICE IS WRITTEN DOWN AND SENT; ONE FROM ANYWH
     expect(sent).toEqual([]);
     expect(ok.body.order.indices).toEqual(UNPAID);
     const leg = new PayrollService(new FileStore(process.env.DATA_PATH!), accounts, new SimulatedProofSystem(), productAssets)
-      .requireRun(c.runId, c.viewingKey as Hex).payout![PRIVATE.code]!;
+      .requireRun(c.runId, c.viewingKey as Hex).payout![runLegOf(PRIVATE.code, 'shielded')]!;
     /* RED WHEN: the retry's material is built under another identity or generation - its people then have new leaves, and both rounds pay them. */
     const rebuilt = await retryMaterialFor({
       rebuild: (await payroll.payoutRebuildOf(c.runId, c.viewingKey as Hex))!, indices: UNPAID,

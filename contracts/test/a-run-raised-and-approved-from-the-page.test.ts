@@ -23,7 +23,7 @@
  */
 import { describe, it, expect, beforeEach } from 'vitest';
 import { randomBytes } from 'node:crypto';
-import { existsSync, readFileSync } from 'node:fs';
+import { readFileSync } from 'node:fs';
 import * as L from '@midnightntwrk/ledger-v9';
 import * as runtime from '@midnight-ntwrk/compact-runtime';
 import { CompiledContract } from '@midnight-ntwrk/compact-js';
@@ -38,6 +38,7 @@ import { answerVaultAsk } from 'vaults-web-shared/vault-worker-entry.js';
 import { vaultBuilderOver, type AccountCallChainOnTheWire, type VaultAnswer } from 'vaults-web-shared/vault-worker-client.js';
 import type { GovernedCallOrder, OpenedRound, SignerMaterial } from 'vaults-web-shared/governed-call-builder.js';
 import { refusalForProven } from '../../src/wiring/proven-submission.js';
+import { keysOnDisk } from './keys-on-disk.js';
 
 const NET = 'undeployed';
 const hex = (b: Uint8Array): string => Buffer.from(b).toString('hex');
@@ -71,12 +72,11 @@ class Chain {
  * by name where they are absent, and the job that builds the keys runs this
  * file by name.
  */
-const KEYS_ON_DISK = ['propose', 'approve'].every((c) => existsSync(new URL(`../managed/keys/${c}.verifier`, import.meta.url)));
+/* Every circuit of the account and of the vault has its verifier key on disk, and each is the key this build compiled. */
+const KEYS = keysOnDisk();
+const KEYS_ON_DISK = KEYS.ok;
 if (!KEYS_ON_DISK) {
-  console.log(
-    '  NOT CHECKED HERE: the account\'s verifier keys are not on disk, so a run was not raised and approved'
-    + ' from a device. `npm run compact` builds them.',
-  );
+  console.log(`  NOT CHECKED HERE: a run was not raised and approved from a device, because ${KEYS.why}`);
 }
 
 describe.skipIf(!KEYS_ON_DISK)('A PAYROLL RUN RAISED AND APPROVED FROM THE SIGNER\'S OWN DEVICE [needs contracts/managed/keys; `npm run compact` builds them]', () => {

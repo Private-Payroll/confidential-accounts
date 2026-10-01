@@ -25,9 +25,6 @@ import { PAGE_OUT_OF_DATE, PAYSLIP_PAGE_HEADER, PAYSLIP_PAGE_VERSION } from '../
  * service therefore sees which signed-in person asks about which company
  * address; it does not write that down.
  */
-/** An address that opens this application, kept so links to it still arrive. */
-export const YOUR_PAY_PATH = '/payslips';
-
 export type Fetch = (input: string, init?: RequestInit) => Promise<Response>;
 
 /** What every payslip request carries: the sign-in cookie, to this origin only, and the page's name. */
@@ -44,7 +41,7 @@ const asThisPage = (init: RequestInit = {}): RequestInit => ({
 const signedIn = (body: unknown): RequestInit => asThisPage({ method: 'POST', body: JSON.stringify(body) });
 
 /** Thrown when the service says this page is older than it. Never caught as one address's failure. */
-export class PageOutOfDate extends Error {
+class PageOutOfDate extends Error {
   constructor() { super(PAGE_OUT_OF_DATE); this.name = 'PageOutOfDate'; }
 }
 
@@ -55,7 +52,7 @@ const readJson = async (r: Response, doing: string): Promise<any> => {
   return body;
 };
 
-export interface MyPayslips {
+interface MyPayslips {
   opened: OpenedPayslip[];
   /** What the service sent, still sealed. */
   sealed: SealedPayslip[];
@@ -130,7 +127,7 @@ export async function fetchMyPayslips(
  * never known. Nothing that failed is ever reported as not paid, and nothing
  * here asks this application's service.
  */
-export type OnTheChain = 'paid' | 'not-yet' | 'cannot-tell';
+type OnTheChain = 'paid' | 'not-yet' | 'cannot-tell';
 
 /**
  * **ASKS, FOR EACH SLIP THAT CARRIES A RECEIPT, WHETHER ITS PAYMENT IS IN THE
@@ -214,7 +211,7 @@ const paymentOf = (s: OpenedPayslip, registry: AssetRegistry): PayslipPayment | 
  *   off. Left out, nothing is read: a slip names a label, and a label locates
  *   no contract.
  */
-export async function readTheChain(
+async function readTheChain(
   slips: OpenedPayslip[], reader: ChainReader | null, indexer: WalletIndexer | null,
   /** Whether the payee's own wallet confirmed it holds the address this slip was paid to. */
   confirmed: (slip: OpenedPayslip) => boolean,

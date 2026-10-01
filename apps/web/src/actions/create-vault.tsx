@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useState } from 'react';
 import { Alert, AlertDescription, AlertTitle, Button, ConfirmInYourAccount, useText } from 'vaults-ui';
 import {
-  CREATING, createVault, finishHandingOver, giveYourVaultKeys, openYourKeys, OWED, READY, readOwedVaults, readVaultReadiness,
+  CREATING, createVault, finishHandingOver, giveYourVaultKeys, openYourKeys, OWED, READY, readOwedVaults, readVaultReadiness, STARTING,
   type Creating, type OwedVault, type Readiness, type VaultCreated,
 } from '../adapters/create-vault.js';
 import { HANDOVER, readHandover } from '../adapters/handover-state.js';
@@ -10,9 +10,9 @@ import { ActRefused } from '../act-refused.js';
 import { useSession } from '../session.js';
 import { STEP, type StepProps } from '../setup/step-ids.js';
 
-/** What the person is being asked to confirm, if anything: creating a vault, or finishing the handover of the one named. */
-const ASKING = { create: 'create', finish: 'finish' } as const;
-type Asking = { of: typeof ASKING.create } | { of: typeof ASKING.finish; vault: string };
+/** What the person is being asked to confirm, if anything: creating a vault, finishing the handover of the one named, or finishing setting it up. */
+const ASKING = { create: 'create', finish: 'finish', start: 'start' } as const;
+type Asking = { of: typeof ASKING.create } | { of: typeof ASKING.finish | typeof ASKING.start; vault: string };
 
 /**
  * CREATE A VAULT: built and proved on this device, sent, and handed to the
@@ -29,6 +29,15 @@ type Asking = { of: typeof ASKING.create } | { of: typeof ASKING.finish; vault: 
  * created with, Finish is shown disabled, with why. With `finishing`, the
  * component opens asking to finish handing over that vault, once it is read
  * as one this device can finish.
+ *
+ * Once the signers hold it, the vault is set up: it is added to the company's
+ * account, its private records are made and its secret set, and each signer
+ * is given a sealed copy. Each step is said as it happens. A step that waits
+ * for other signers' approvals is named with how many it has and needs, and
+ * says the other signers cannot approve it in this app yet; a set up that
+ * stopped is said as that. Finish setting it up is offered only while that
+ * result is on screen, where it carries the same vault on; until the set up
+ * is done, this app puts no money into the vault.
  */
 export function CreateVault({ leadTo, onChanged, finishing }: StepProps & { finishing?: string }) {
   const t = useText();
@@ -104,6 +113,12 @@ export function CreateVault({ leadTo, onChanged, finishing }: StepProps & { fini
     [CREATING.waitingForChain]: t('createVault.stage.waitingForChain'),
     [CREATING.handingOver]: t('createVault.stage.handingOver'),
     [CREATING.waitingForHandover]: t('createVault.stage.waitingForHandover'),
+    [CREATING.adopting]: t('createVault.stage.adopting'),
+    [CREATING.openingThePool]: t('createVault.stage.openingThePool'),
+    [CREATING.readingTheSecretBack]: t('createVault.stage.readingTheSecretBack'),
+    [CREATING.settingTheSecret]: t('createVault.stage.settingTheSecret'),
+    [CREATING.writingTheCopies]: t('createVault.stage.writingTheCopies'),
+    [CREATING.waitingForApprovals]: t('createVault.stage.waitingForApprovals'),
     [CREATING.done]: t('createVault.stage.done'),
   };
 
@@ -138,7 +153,7 @@ export function CreateVault({ leadTo, onChanged, finishing }: StepProps & { fini
         </div>
       ) : (
         <ConfirmInYourAccount
-          summary={asking.of === ASKING.create ? t('createVault.confirm') : t('createVault.confirmFinish')}
+          summary={asking.of === ASKING.create ? t('createVault.confirm') : asking.of === ASKING.start ? t('createVault.confirmStart') : t('createVault.confirmFinish')}
           busy={busy}
           onCancel={() => setAsking(null)}
           onConfirm={() => { void act(asking); }}
@@ -154,6 +169,18 @@ export function CreateVault({ leadTo, onChanged, finishing }: StepProps & { fini
       {result?.of === OWED.here ? <p className="text-sm" data-result={result.of}>{t('createVault.owed.now')}</p> : null}
       {result?.of === OWED.elsewhere ? <p className="text-sm" data-result={result.of}>{t('createVault.owed.elsewhere')}</p> : null}
       {result?.of === OWED.rosterDisagrees ? <p className="text-sm" data-result={result.of}>{t('createVault.owed.rosterDisagrees')}</p> : null}
+      {result?.of === STARTING.awaiting || result?.of === STARTING.owed ? (
+        <div className="flex flex-col gap-2" data-result={result.of} data-round={result.of === STARTING.awaiting ? result.round : undefined}>
+          <p className="text-sm" data-says>
+            {result.of === STARTING.owed ? t('createVault.startOwed')
+              : result.round === 'adoption' ? t('createVault.awaiting.adoption', { approvals: result.approvals, needed: result.needed })
+              : t('createVault.awaiting.firstSecret', { approvals: result.approvals, needed: result.needed })}
+          </p>
+          <div>
+            <Button variant="outline" disabled={busy || asking !== null} onClick={() => setAsking({ of: ASKING.start, vault: result.vault })} data-action="finish-start">{t('createVault.finishStart')}</Button>
+          </div>
+        </div>
+      ) : null}
       {gave === ACTED.done ? <p className="text-sm" data-gave-keys>{t('setup.handOver.done.giveKeys')}</p> : null}
       {gave === null || gave === ACTED.done ? null : <ActRefused why={gave} />}
       {opening === null ? null : <ActRefused why={opening} />}

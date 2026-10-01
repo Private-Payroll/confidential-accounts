@@ -97,7 +97,7 @@ export class IdentityService {
    * here. **It could not serve a wallet account and it had no client at all.**
    * It was keyed by `getUserByEmail`, which refuses an absent email by design,
    * and gated on `identityPublicKey` — and a wallet account is created with
-   * both of those `null`. Nothing in `src/web` or `src/standalone` ever
+   * both of those `null`. No browser application ever
    * called the three routes it sat behind.
    *
    * **A person who has lost access rebuilds their wallet from its twenty-four

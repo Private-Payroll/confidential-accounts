@@ -24,7 +24,7 @@ import type { PrivatePaymentOrderOnTheWire } from '../../../src/midnight/private
 type Api = (path: string, init?: RequestInit) => Promise<any>;
 
 /** A refusal from the service keeps the service's own mark of whether anything was sent. */
-const marked = async <T>(call: () => Promise<T>): Promise<T> => {
+export const marked = async <T>(call: () => Promise<T>): Promise<T> => {
   try {
     return await call();
   } catch (e) {

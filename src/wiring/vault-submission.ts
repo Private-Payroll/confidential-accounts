@@ -18,9 +18,15 @@
  *      or one call to its public deposit, of exactly the token and amount the
  *      page asked for, paid from the depositor's own public money;
  *   4. **a private payment out of that vault**: the vault's `payout` and the
- *      company account's `recordPayment` it asks, and nothing else, spending one
- *      coin the vault owns into one person's coin and at most one coin back to
- *      the vault, balanced in its own money so the fee payer adds only DUST.
+ *      company account's `recordPaymentFromVault` it asks, and nothing else,
+ *      spending one coin the vault owns into one person's coin and at most one
+ *      coin back to the vault, balanced in its own money so the fee payer adds
+ *      only DUST;
+ *   5. **the vault's start**: the company account's adoption round raised,
+ *      approved and carried out, the first secret run raised and approved, each
+ *      one call to the account that moves nothing; the secret set, which is the
+ *      vault's `setNonceSecret` and the account's `approveVaultChange` and
+ *      nothing else; and each sealed copy written, one call to the vault.
  *
  * And the one rule that decides whether any money may go in at all:
  * **the vault's maintenance authority, read from the chain, must be the
@@ -112,7 +118,18 @@ export interface VaultStartingLedger {
   readonly notes: bigint;
   readonly unshieldedTokens: bigint;
   readonly payments: bigint;
-  readonly spendingCaps: bigint;
+  /** The secret's commitment, as hex: thirty-two zero bytes until the first approved secret run. */
+  readonly nonceCommitment: string;
+  readonly splitJournal: bigint;
+  readonly secretCopies: bigint;
+  /** Entries across the seven reserved maps, which no circuit writes. */
+  readonly reserved: bigint;
+  /**
+   * Whether the vault takes money: its account has approved a secret and every
+   * signer's sealed copy of that secret is on the chain. The vault refuses money
+   * until then, so a door that offered it would only fail later, with money booked.
+   */
+  readonly started: boolean;
 }
 
 /** The vault's compiled ledger, reduced to what a new vault must hold. */
@@ -121,13 +138,28 @@ export const startingLedgerFrom = (l: {
   readonly notes: { size(): bigint };
   readonly unshieldedTokens: { size(): bigint };
   readonly payments: bigint;
-  readonly spendingCaps: { size(): bigint };
-}): VaultStartingLedger => ({
+  readonly nonceCommitment: Uint8Array;
+  readonly splitJournal: { size(): bigint };
+  readonly secretCopies: { size(): bigint; member(key: Uint8Array): boolean; lookup(key: Uint8Array): Uint8Array };
+  readonly reserved0: { size(): bigint };
+  readonly reserved1: { size(): bigint };
+  readonly reserved2: { size(): bigint };
+  readonly reserved3: { size(): bigint };
+  readonly reserved4: { size(): bigint };
+  readonly reserved5: { size(): bigint };
+  readonly reserved6: { size(): bigint };
+}, copiesWrittenKey: Uint8Array): VaultStartingLedger => ({
   account: Array.from(l.account.bytes, (b) => b.toString(16).padStart(2, '0')).join(''),
   notes: l.notes.size(),
   unshieldedTokens: l.unshieldedTokens.size(),
   payments: l.payments,
-  spendingCaps: l.spendingCaps.size(),
+  nonceCommitment: Array.from(l.nonceCommitment, (b) => b.toString(16).padStart(2, '0')).join(''),
+  splitJournal: l.splitJournal.size(),
+  secretCopies: l.secretCopies.size(),
+  reserved: [l.reserved0, l.reserved1, l.reserved2, l.reserved3, l.reserved4, l.reserved5, l.reserved6]
+    .reduce((n, m) => n + m.size(), 0n),
+  started: l.nonceCommitment.some((b) => b !== 0) && l.secretCopies.member(copiesWrittenKey)
+    && sameBytes(l.secretCopies.lookup(copiesWrittenKey), l.nonceCommitment),
 });
 
 /**
@@ -213,10 +245,23 @@ export function readVaultDeploy(tx: unknown, expect: VaultDeployExpectations): D
         + 'never pay out of it. Nothing was sent.',
     };
   }
-  if (start.notes !== 0n || start.unshieldedTokens !== 0n || start.payments !== 0n || start.spendingCaps !== 0n) {
+  if (start.notes !== 0n || start.unshieldedTokens !== 0n || start.payments !== 0n) {
     return {
-      refusal: `this is not ${what}: it starts with records a new vault does not have - notes, public tokens, `
-        + 'payments or spending limits already written - so its pool could never match it. Nothing was sent.',
+      refusal: `this is not ${what}: it starts with records a new vault does not have - notes, public tokens `
+        + 'or payments already written - so its pool could never match it. Nothing was sent.',
+    };
+  }
+  /*
+   * A vault takes money only once it has a secret, and it gets one only from a
+   * run the account approved. A deploy that wrote a commitment, a sealed copy, a
+   * split or a reserved entry into its own starting state would skip that.
+   */
+  if (!/^0{64}$/u.test(start.nonceCommitment) || start.splitJournal !== 0n || start.secretCopies !== 0n
+    || start.reserved !== 0n) {
+    return {
+      refusal: `this is not ${what}: it starts with a secret, a sealed copy, a split or a reserved entry already `
+        + 'written, which only the company\'s approved runs may write, so it could take money nobody approved. '
+        + 'Nothing was sent.',
     };
   }
   return { vault: bare(deploy.address) };
@@ -664,7 +709,7 @@ export function refusalForPayout(tx: unknown, expect: PayoutExpectations): strin
   }
   /*
    * **EXACTLY THE TWO CALLS A PAYOUT IS, AND NO THIRD.** The vault's `payout`
-   * and the account's `recordPayment` it asks. The account is this company's:
+   * and the account's `recordPaymentFromVault` it asks. The account is this company's:
    * a vault pinned elsewhere would be asking some other company's approvals.
    */
   const called: string[] = [];
@@ -675,7 +720,7 @@ export function refusalForPayout(tx: unknown, expect: PayoutExpectations): strin
     }
     called.push(`${bare(call.address)}/${nameOf(call.entryPoint)}`);
   }
-  const wanted = [`${bare(expect.account)}/recordPayment`, `${bare(expect.vault)}/payout`];
+  const wanted = [`${bare(expect.account)}/recordPaymentFromVault`, `${bare(expect.vault)}/payout`];
   if (called.length !== 2 || [...called].sort().join() !== [...wanted].sort().join()) {
     return `this is not ${what}: it must call this vault's payout and this company's approval of it, and `
       + 'nothing else. Nothing was sent.';
@@ -742,6 +787,89 @@ export function refusalForPayout(tx: unknown, expect: PayoutExpectations): strin
   return null;
 }
 
+/* ------------------------------------------------- 6. a vault's start */
+
+/** The calls one transaction makes, each as `address/circuit`, or a refusal when it is not calls that move nothing. */
+const callsMovingNothing = (tx: unknown, what: string): { calls: string[] } | { refusal: string } => {
+  const t = tx as TxShape | null;
+  if (!(t?.intents instanceof Map) || t.intents.size !== 1) {
+    return { refusal: `this is not ${what}: it must carry exactly one set of actions. Nothing was sent.` };
+  }
+  if (!emptyOffer(t.guaranteedOffer, ['inputs', 'outputs', 'transients'])
+    || (t.fallibleOffer !== undefined && t.fallibleOffer !== null
+      && (!(t.fallibleOffer instanceof Map) || [...t.fallibleOffer.values()].some(
+        (o) => !emptyOffer(o, ['inputs', 'outputs', 'transients']))))) {
+    return { refusal: `this is not ${what}: it moves coins, and starting a vault moves none. Nothing was sent.` };
+  }
+  const intent = [...t.intents.values()][0] as IntentShape | null;
+  if (!intent || !emptyOffer(intent.guaranteedUnshieldedOffer, ['inputs', 'outputs'])
+    || !emptyOffer(intent.fallibleUnshieldedOffer, ['inputs', 'outputs'])
+    || !emptyOffer(intent.dustActions, ['spends', 'registrations'])) {
+    return { refusal: `this is not ${what}: it moves coins, and starting a vault moves none. Nothing was sent.` };
+  }
+  if (!Array.isArray(intent.actions)) return { refusal: `this is not ${what}: it could not be read. Nothing was sent.` };
+  const calls: string[] = [];
+  for (const action of intent.actions) {
+    const call = action as { address?: unknown; entryPoint?: unknown } | null;
+    if (!call || call.entryPoint === undefined || call.address === undefined) {
+      return { refusal: `this is not ${what}: it does something other than call a contract. Nothing was sent.` };
+    }
+    calls.push(`${bare(call.address)}/${nameOf(call.entryPoint)}`);
+  }
+  return { calls };
+};
+
+/** The account's circuits a vault's start calls on its own, each moving nothing. */
+export type StartAccountCall = 'propose' | 'approve' | 'adopt';
+
+/**
+ * **ONE CALL TO THIS COMPANY'S ACCOUNT THAT A VAULT'S START MAKES, AND NOTHING
+ * ELSE**: raising or approving the adoption round or the first secret run, or
+ * carrying out the adoption. Which proposal it is, the account itself decides
+ * inside the call, from what the signer's device proved.
+ */
+export function refusalForStartAccountCall(
+  tx: unknown, expect: { readonly account: string; readonly circuit: StartAccountCall },
+): string | null {
+  const what = 'a step of this vault\'s start on the company\'s account';
+  const read = callsMovingNothing(tx, what);
+  if ('refusal' in read) return read.refusal;
+  if (read.calls.length !== 1 || read.calls[0] !== `${bare(expect.account)}/${expect.circuit}`) {
+    return `this is not ${what}: it must make exactly one '${expect.circuit}' call to this company's account, and `
+      + 'nothing else. Nothing was sent.';
+  }
+  return null;
+}
+
+/**
+ * **THE VAULT'S SECRET SET, AND NOTHING ELSE**: the vault's `setNonceSecret` and
+ * the account's `approveVaultChange` it asks. The account is this company's, so
+ * the secret is set only on this company's approval.
+ */
+export function refusalForSetNonceSecret(tx: unknown, expect: { readonly vault: string; readonly account: string }): string | null {
+  const what = 'this vault\'s secret being set';
+  const read = callsMovingNothing(tx, what);
+  if ('refusal' in read) return read.refusal;
+  const wanted = [`${bare(expect.account)}/approveVaultChange`, `${bare(expect.vault)}/setNonceSecret`];
+  if (read.calls.length !== 2 || [...read.calls].sort().join() !== [...wanted].sort().join()) {
+    return `this is not ${what}: it must set this vault's secret and ask this company's approval of it, and nothing `
+      + 'else. Nothing was sent.';
+  }
+  return null;
+}
+
+/** **ONE SEALED COPY WRITTEN INTO THIS VAULT, AND NOTHING ELSE.** */
+export function refusalForSecretCopy(tx: unknown, expect: { readonly vault: string }): string | null {
+  const what = 'a sealed copy of this vault\'s secret being written';
+  const read = callsMovingNothing(tx, what);
+  if ('refusal' in read) return read.refusal;
+  if (read.calls.length !== 1 || read.calls[0] !== `${bare(expect.vault)}/writeSecretCopy`) {
+    return `this is not ${what}: it must make exactly one 'writeSecretCopy' call to this vault, and nothing else. `
+      + 'Nothing was sent.';
+  }
+  return null;
+}
+
 /* ------------------------------------------------- 5. a public payment out */
 
 interface UnshieldedOfferShape { readonly inputs?: unknown; readonly outputs?: unknown }
@@ -779,7 +907,7 @@ export function refusalForPublicPayout(tx: unknown, expect: PayoutExpectations):
     }
     called.push(`${bare(call.address)}/${nameOf(call.entryPoint)}`);
   }
-  const wanted = [`${bare(expect.account)}/recordPayment`, `${bare(expect.vault)}/payoutUnshielded`];
+  const wanted = [`${bare(expect.account)}/recordPaymentFromVault`, `${bare(expect.vault)}/payoutUnshielded`];
   if (called.length !== 2 || [...called].sort().join() !== [...wanted].sort().join()) {
     return `this is not ${what}: it must call this vault's public payout and this company's approval of it, and `
       + 'nothing else. Nothing was sent.';
@@ -876,6 +1004,12 @@ export interface FundingFacts {
    * state could not be read as a vault's.
    */
   readonly pinnedAccount: string | null;
+  /**
+   * Whether the vault's ledger shows it started: a secret its account approved,
+   * with every signer's sealed copy of it on the chain. `false` when it does not,
+   * and when its state could not be read.
+   */
+  readonly started: boolean;
   /** Who holds the rules of the account that vault pays out on. */
   readonly account: AuthorityRead;
   /** The reading of that account's circuits against this build's. */
@@ -918,6 +1052,12 @@ export interface FundingRefusal {
   readonly heldByOthers: boolean;
   /** Set when the thing in the way is the account rather than the vault. */
   readonly accountNotReady?: 'not-handed-over' | 'not-vouched' | 'unknown';
+  /**
+   * Set when the vault is the company's in every other way and its start is
+   * what is missing: adopted by the account, its first secret approved and every
+   * sealed copy written. Creating the vault again from the device finishes it.
+   */
+  readonly notStarted?: true;
 }
 
 const holdsOneOf = (authority: OnChainAuthority, held: readonly CommitteeKey[]): boolean => {
@@ -1108,7 +1248,9 @@ export function whyTheHistoryDoesNotVouch(steps: readonly ContractHistoryStep[],
  *      the chain's own history vouching for every change;
  *   3. the vault runs this build's circuits, byte for byte;
  *   4. the vault is pinned to the company's own account;
- *   5. all of 1 to 3 again, of that account.
+ *   5. the vault is started: its account adopted it and approved a secret,
+ *      and every signer's sealed copy of that secret is on the chain;
+ *   6. all of 1 to 3 again, of that account.
  *
  * The order is the order a person can act on: who holds it, then how often it
  * changed, then what it runs, then which account it answers to, then the same
@@ -1119,14 +1261,22 @@ export function refusalToPutMoneyIn(facts: FundingFacts): FundingRefusal | null 
 }
 
 /**
- * **THE FIRST FOUR CONDITIONS, ABOUT THE VAULT ALONE.**
- *
- * Separate because one caller asks a narrower question and says so: whether the
- * COMMITTEE HOLDS THIS VAULT is what a device's handover waits on, and it is
- * answered without the account. It is never the question a door carrying money
- * asks, and every such door calls `refusalToPutMoneyIn` instead.
+ * **THE FIRST FIVE CONDITIONS, ABOUT THE VAULT ALONE.** It is never the question
+ * a door carrying money asks, and every such door calls `refusalToPutMoneyIn`.
  */
 export function asFarAsTheVault(facts: FundingFacts): FundingRefusal | null {
+  return committeeHoldsTheVault(facts) ?? notStartedRefusal(facts);
+}
+
+/**
+ * **THE FIRST FOUR: THE COMPANY'S COMMITTEE HOLDS THIS VAULT, CHANGED AS IT
+ * SHOULD BE, RUNNING THIS BUILD'S CIRCUITS AND PINNED TO THIS COMPANY'S
+ * ACCOUNT.** Separate because one caller asks exactly this and says so: a
+ * device's handover waits on it, and the vault's start is raised only once it
+ * is true. Whether the vault is started is the fifth question, and the start
+ * itself is what answers it, so a handover never waits on it.
+ */
+export function committeeHoldsTheVault(facts: FundingFacts): FundingRefusal | null {
   const vaultRules = `the rules of vault '${facts.label}'`;
   const held = facts.committee === null
     ? structuralRefusal(facts.vault, facts.heldHere, 'the maintenance rules', facts.label, facts.what)
@@ -1155,8 +1305,19 @@ export function asFarAsTheVault(facts: FundingFacts): FundingRefusal | null {
       heldByOthers: false,
     };
   }
-
   return null;
+}
+
+/** The fifth: the vault is started. */
+function notStartedRefusal(facts: FundingFacts): FundingRefusal | null {
+  if (facts.started) return null;
+  return {
+    why: `${facts.what}: the company's account has not yet adopted it and approved its first secret, with every `
+      + 'signer\'s sealed copy of that secret on the chain, and the vault itself takes no money until then. '
+      + 'Nothing was sent.',
+    heldByOthers: false,
+    notStarted: true,
+  };
 }
 
 /**

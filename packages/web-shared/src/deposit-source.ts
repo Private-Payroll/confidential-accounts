@@ -94,9 +94,9 @@ export function privateTokenFromTheWallet(
   return {
     endsIn: 'private-deposit',
     money: ({ code, value }) => {
-      if (ledgerFormOf(registry.require(code), 'shielded').of !== 'token') {
-        throw new Error(`${code} has no private form on Midnight, so it cannot go into a vault from your wallet's `
-          + 'private balance. Nothing was chosen or sent. Choose an asset that can be held privately.');
+      const asset = registry.require(code);
+      if (ledgerFormOf(asset, 'shielded').of !== 'token') {
+        throw new Error(`${asset.symbol} cannot be put into a vault privately. Nothing was sent. Choose a token that can be held privately.`);
       }
       return { token: ledgerTokenOf(code, 'shielded', registry) as Hex, value };
     },
@@ -118,9 +118,9 @@ export function publicTokenFromTheWallet(
   return {
     endsIn: 'public-deposit',
     money: ({ code, value }) => {
-      if (ledgerFormOf(registry.require(code), 'unshielded').of !== 'token') {
-        throw new Error(`${code} has no public form on Midnight, so it cannot go into a vault from your wallet's `
-          + 'public balance. Nothing was built or sent. Put it in privately instead.');
+      const asset = registry.require(code);
+      if (ledgerFormOf(asset, 'unshielded').of !== 'token') {
+        throw new Error(`${asset.symbol} cannot be put into a vault publicly. Nothing was sent. Put it in privately instead.`);
       }
       return { token: ledgerTokenOf(code, 'unshielded', registry) as Hex, value };
     },
@@ -129,7 +129,7 @@ export function publicTokenFromTheWallet(
 }
 
 /** How money goes into a vault from the signer's wallet: privately, as a private token, or publicly, as a public one. */
-export type DepositKind = 'private' | 'public';
+type DepositKind = 'private' | 'public';
 
 /**
  * **HOW AN ASSET GOES IN, GIVEN THE WAY A PERSON ASKED FOR.** An asset with only

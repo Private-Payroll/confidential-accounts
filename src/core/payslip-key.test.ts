@@ -12,7 +12,6 @@ import { FileStore } from './store-file.js';
 import { SimulatedLedger, SimulatedProofSystem, SimulatedCommitments } from './ledger.js';
 import { AccountService } from './account.js';
 import { PayrollService, RecordingInviteDelivery } from './payroll.js';
-import { seededEmployeesForHttp } from './demo.js';
 import { payeeAddressFromKeys } from '../midnight/payee-address.js';
 import { fromHex, newWrappingKeypair, toHex } from './crypto.js';
 import { payslipKeypairForWallet, payslipKeypairFrom } from './payslip-key.js';
@@ -23,6 +22,7 @@ import type { Hex } from './crypto.js';
 import type { PayeeAddress } from '../midnight/payee-address.js';
 import { registryWithTestPrivateForms } from '../testing/assets.js';
 
+import { TEST_TOKEN } from '../testing/assets.js';
 /** The value, or a failure that says one was missing: an index that finds nothing is a broken test, not a value to carry on with. */
 function present<T>(value: T | undefined): T {
   if (value === undefined) throw new Error('expected a value here, and there was none');
@@ -591,7 +591,7 @@ describe('§2 — NOBODY WRITES THE SECRET DOWN, INCLUDING US', () => {
     const h = world();
     const { account, viewingKey } = await h.accounts.create('Acme', SIGNERS, 1, undefined, drawCompanyLabel());
     const { secret } = h.payroll.hireDirect(account.id, {
-      name: 'Dana', email: 'd@a.co', title: 'Eng', asset: 'GBP', baseAmount: 100_00n,
+      name: 'Dana', email: 'd@a.co', title: 'Eng', asset: TEST_TOKEN, baseAmount: 100_00n,
     }, viewingKey);
 
     /*
@@ -610,7 +610,7 @@ describe('§2 — NOBODY WRITES THE SECRET DOWN, INCLUDING US', () => {
     const h = world();
     const { account, viewingKey } = await h.accounts.create('Acme', SIGNERS, 1, undefined, drawCompanyLabel());
     const { employee, secret } = h.payroll.hireDirect(account.id, {
-      name: 'Dana', email: 'd@a.co', title: 'Eng', asset: 'GBP', baseAmount: 100_00n,
+      name: 'Dana', email: 'd@a.co', title: 'Eng', asset: TEST_TOKEN, baseAmount: 100_00n,
     }, viewingKey);
     const derived = payslipKeypairForWallet(
       secret.words!, h.store.getAccount(account.id)!.companyLabel! as CompanyLabel, ORIGIN);
@@ -651,7 +651,7 @@ describe('§2 — NOBODY WRITES THE SECRET DOWN, INCLUDING US', () => {
     const h = world();
     const { account, viewingKey } = await h.accounts.create('Acme', SIGNERS, 1, undefined, drawCompanyLabel());
     const { employee, secret } = h.payroll.hireDirect(account.id, {
-      name: 'Dana', email: 'd@a.co', title: 'Eng', asset: 'GBP', baseAmount: 100_00n,
+      name: 'Dana', email: 'd@a.co', title: 'Eng', asset: TEST_TOKEN, baseAmount: 100_00n,
     }, viewingKey);
 
     const onRoster = h.payroll.person(employee.id, viewingKey)!;
@@ -659,105 +659,6 @@ describe('§2 — NOBODY WRITES THE SECRET DOWN, INCLUDING US', () => {
       secret.words!, h.store.getAccount(account.id)!.companyLabel! as CompanyLabel, ORIGIN);
     expect(onRoster.wrappingPublicKey).toBe(derived.publicKey);
     expect(JSON.stringify(onRoster)).not.toContain(derived.secret);
-  });
-
-  /*
-   * ──────────────────────────────────────────────────────────────────────────
-   * **THIS TEST DRIVES THE PROJECTION DIRECTLY, NOT `seedDemo`.**
-   *
-   * The assertion is about a property OF the projection `seedDemo` returns,
-   * and `seedDemo` refuses as its first statement, so a test that reached the
-   * projection through it could not run at all. The projection was extracted
-   * into a callable of its own and that is what is driven below.
-   *
-   * **AND THE RULE IS UNCHANGED RATHER THAN LOWERED.**
-   * `seededEmployeesForHttp` is the same four fields, listed and not
-   * spread, from the same inputs; nothing about what crosses the wire moved.
-   * What moved is that the rule can be asserted without seeding a company that
-   * cannot be seeded — and the input below is a REAL `hireDirect` payload with
-   * real words in it, not a hand-built object, so a new secret appearing on
-   * `EmployeeSecret` is still caught by this test rather than by nobody.
-   * ──────────────────────────────────────────────────────────────────────────
-   */
-  it('THE SEED\'S HTTP PAYLOAD CARRIES NO MNEMONIC — a wallet is not a wrapping secret', async () => {
-    /*
-     * **THE SIZE OF THE SECRET IS THE WHOLE POINT.** `/api/demo/seed` already
-     * hands back every signer's secrets, which is what makes the demo walkable
-     * alone. A wrapping secret opens payslips; **a mnemonic is a whole wallet,
-     * that person's money keys included.** `seededEmployeesForHttp` lists the
-     * fields it returns instead of spreading them, so a new secret on
-     * `EmployeeSecret` cannot leave THROUGH THIS PROJECTION without somebody
-     * typing a line.
-     *
-     * **AND THAT IS ONE OF THE TWO ROUTES THAT RETURN AN `EmployeeSecret` TO
-     * THE WIRE.**
-     * `POST /api/accounts/:id/payroll` returns `payroll.createRun`'s result
-     * WHOLE — `{ run, secrets: EmployeeSecret[] }` — with no projection between
-     * the interface and `res.json`. Nothing leaks there today, because the ad
-     * hoc branch that mints a secret sets three fields and `words` is absent by
-     * construction; **but a field added to `EmployeeSecret` leaves by that route
-     * on the next deploy with nobody typing anything.** The property holds
-     * because nobody has written the code that would break it. Guarding that
-     * route needs a projection it does not have; the two assertions below are
-     * what this file can hold without one.
-     */
-    const h = world();
-    const { account, viewingKey } = await h.accounts.create('Acme', SIGNERS, 1, undefined, drawCompanyLabel());
-    const hired = [
-      { name: 'Dana', email: 'dana@a.co', title: 'Eng',     asset: 'GBP', baseAmount: 9400_00n },
-      { name: 'Eli',  email: 'eli@a.co',  title: 'Finance', asset: 'GBP', baseAmount: 7100_00n },
-    ].map(spec => h.payroll.hireDirect(account.id, spec, viewingKey));
-
-    /*
-     * **POSITIVE CONTROLS BEFORE THE ABSENCE**, because an absence test over a
-     * payload that never held the secret passes perfectly, and because the
-     * probe has to be the shape the secret would really arrive in.
-     *
-     * **AND THE FIRST ONE CAUGHT A PROBE THAT COULD NOT FIRE, WHICH IS WHY IT
-     * IS HERE.** The assertion this test carried until now was
-     * `expect(body).not.toMatch(/\b(?:[a-z]{3,8} ){11,}[a-z]{3,8}\b/)` — a
-     * space-separated phrase. **`words` is a string ARRAY**, so a `...e.secret`
-     * would put `"words":["dove","radar",…]` into the body and that regex would
-     * not match one character of it. The rule was held by
-     * `not.toHaveProperty('words')` alone; the phrase probe was decorative and
-     * had been quoted as evidence. The control below is what says so: it fails
-     * if the probe cannot find the secret when the secret IS there.
-     *
-     * The phrase form is kept as well, because a future field that joins the
-     * words is the other way this leaves — and both forms are now controlled.
-     */
-    const asArray = (e: { secret: { words?: string[] } }) => JSON.stringify(e.secret.words);
-    const asPhrase = (e: { secret: { words?: string[] } }) => e.secret.words!.join(' ');
-    const raw = JSON.stringify(hired);
-    for (const e of hired) expect(e.secret.words).toHaveLength(24);
-    for (const e of hired) expect(raw).toContain(asArray(e));
-    expect(asPhrase(present(hired[0]))).toMatch(/\b(?:[a-z]{3,8} ){11,}[a-z]{3,8}\b/);
-
-    const employees = seededEmployeesForHttp(hired);
-    const body = JSON.stringify(employees);
-
-    expect(employees.length).toBe(hired.length);
-    /*
-     * **THE FIELD LIST ITSELF, ASSERTED.** Without this the "somebody has to
-     * type a line" half of the rule is watched by nothing: adding a fifth field
-     * to the LISTED projection leaves every other assertion here green, which
-     * was measured. Now an addition has to be read and re-approved rather than
-     * merely typed.
-     */
-    expect(Object.keys(present(employees[0])).sort())
-      .toEqual(['employeeId', 'name', 'title', 'wrappingSecret']);
-    for (const e of employees) {
-      expect(e).not.toHaveProperty('words');
-      /* And a wrapping secret really did come through — the SHAPE of one, which
-       * is all this line checks; §4 below is what proves one opens a payslip. */
-      expect(e.wrappingSecret).toMatch(/^[0-9a-f]{64}$/);
-    }
-    /* Neither form of the mnemonic is anywhere in the payload. */
-    for (const e of hired) {
-      expect(body).not.toContain(asArray(e));
-      expect(body).not.toContain(asPhrase(e));
-    }
-    expect(body).not.toMatch(/\b(?:[a-z]{3,8} ){11,}[a-z]{3,8}\b/);
   });
 
   it('AN AD HOC PAYEE STILL GETS A MINTED KEY, AND THE TYPE SAYS SO', async () => {
@@ -771,7 +672,7 @@ describe('§2 — NOBODY WRITES THE SECRET DOWN, INCLUDING US', () => {
     const h = world();
     const { account, viewingKey } = await h.accounts.create('Acme', SIGNERS, 1, undefined, drawCompanyLabel());
     const { secrets } = await h.payroll.createRun(account.id, '2026-07', [
-      { name: 'Vendor', asset: 'GBP', amount: 50_00n },
+      { name: 'Vendor', asset: TEST_TOKEN, amount: 50_00n },
     ], viewingKey);
 
     expect(secrets).toHaveLength(1);
@@ -793,7 +694,7 @@ describe('§3 — THE KEY OPENS THIS PERSON\'S PAYSLIP AND NOTHING ELSE OPENS IT
       const h = world();
       const { account, viewingKey, secrets } = await h.accounts.create('Acme', SIGNERS, 1, undefined, drawCompanyLabel());
       const { employee } = h.payroll.hireDirect(account.id, {
-        name: 'Dana', email: 'd@a.co', title: 'Eng', asset: 'GBP', baseAmount: 100_00n,
+        name: 'Dana', email: 'd@a.co', title: 'Eng', asset: TEST_TOKEN, baseAmount: 100_00n,
       }, viewingKey);
       const { run } = await h.payroll.createRunFromRoster(account.id, '2026-07', viewingKey);
 
@@ -814,10 +715,10 @@ describe('§3 — THE KEY OPENS THIS PERSON\'S PAYSLIP AND NOTHING ELSE OPENS IT
     const h = world();
     const { account, viewingKey } = await h.accounts.create('Acme', SIGNERS, 1, undefined, drawCompanyLabel());
     const dana = h.payroll.hireDirect(account.id, {
-      name: 'Dana', email: 'd@a.co', title: 'Eng', asset: 'GBP', baseAmount: 100_00n,
+      name: 'Dana', email: 'd@a.co', title: 'Eng', asset: TEST_TOKEN, baseAmount: 100_00n,
     }, viewingKey);
     const sam = h.payroll.hireDirect(account.id, {
-      name: 'Sam', email: 's@a.co', title: 'Design', asset: 'GBP', baseAmount: 200_00n,
+      name: 'Sam', email: 's@a.co', title: 'Design', asset: TEST_TOKEN, baseAmount: 200_00n,
     }, viewingKey);
     const { run } = await h.payroll.createRunFromRoster(account.id, '2026-07', viewingKey);
 
@@ -852,7 +753,7 @@ describe('§3 — THE KEY OPENS THIS PERSON\'S PAYSLIP AND NOTHING ELSE OPENS IT
     const h = world();
     const { account, viewingKey } = await h.accounts.create('Acme', SIGNERS, 1, undefined, drawCompanyLabel());
     const { employee, secret } = h.payroll.hireDirect(account.id, {
-      name: 'Dana', email: 'd@a.co', title: 'Eng', asset: 'GBP', baseAmount: 100_00n,
+      name: 'Dana', email: 'd@a.co', title: 'Eng', asset: TEST_TOKEN, baseAmount: 100_00n,
     }, viewingKey);
     const { run } = await h.payroll.createRunFromRoster(account.id, '2026-07', viewingKey);
 
@@ -872,7 +773,7 @@ describe('§3 — THE KEY OPENS THIS PERSON\'S PAYSLIP AND NOTHING ELSE OPENS IT
     const h = world();
     const { account, viewingKey } = await h.accounts.create('Acme', SIGNERS, 1, undefined, drawCompanyLabel());
     const { employee } = h.payroll.invite(account.id, {
-      name: 'Dana', email: 'd@a.co', title: 'Eng', asset: 'GBP', baseAmount: 100_00n,
+      name: 'Dana', email: 'd@a.co', title: 'Eng', asset: TEST_TOKEN, baseAmount: 100_00n,
     }, viewingKey, 'usr_ada');
 
     const onRoster = h.payroll.person(employee.id, viewingKey)!;
@@ -905,7 +806,7 @@ describe('§4 — A NEW DEVICE OPENS PAYSLIPS ISSUED BEFORE IT EXISTED', () => {
       const deviceOne = payslipKeypairForWallet(words, company, ORIGIN);
 
       const { employee, sentTo } = h.payroll.invite(account.id, {
-        name: 'Dana', email: 'd@a.co', title: 'Eng', asset: 'GBP', baseAmount: 6_200_00n,
+        name: 'Dana', email: 'd@a.co', title: 'Eng', asset: TEST_TOKEN, baseAmount: 6_200_00n,
       }, viewingKey, 'usr_ada');
       const dana = signIn(h.store, 'd@a.co');
       h.payroll.acceptInvite(h.invites.tokenFor(sentTo), handedOver(h, h.invites.tokenFor(sentTo), {
@@ -943,7 +844,7 @@ describe('§4 — A NEW DEVICE OPENS PAYSLIPS ISSUED BEFORE IT EXISTED', () => {
     const company = h.store.getAccount(account.id)!.companyLabel! as CompanyLabel;
 
     const { employee, sentTo } = h.payroll.invite(account.id, {
-      name: 'Dana', email: 'd@a.co', title: 'Eng', asset: 'GBP', baseAmount: 6_200_00n,
+      name: 'Dana', email: 'd@a.co', title: 'Eng', asset: TEST_TOKEN, baseAmount: 6_200_00n,
     }, viewingKey, 'usr_ada');
     h.payroll.acceptInvite(h.invites.tokenFor(sentTo), handedOver(h, h.invites.tokenFor(sentTo), {
       wrappingPublicKey: payslipKeypairForWallet(TEST_MNEMONIC, company, ORIGIN).publicKey,

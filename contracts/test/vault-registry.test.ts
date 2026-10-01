@@ -9,7 +9,7 @@
  * whose id was computed with that vault inside it, and only a seated signer can
  * raise one. What a stranger's vault can do is exist, and be paid into. Every
  * vault that has ever PAID is already on chain by name, because `payout`
- * discloses `kernel.self().bytes` to `recordPayment`. So the chain records
+ * discloses `kernel.self().bytes` to `recordPaymentFromVault`. So the chain records
  * every vault except the one that most needs recording: one that has been
  * funded and has never paid.
  *
@@ -35,13 +35,13 @@ import {
 import {
   Contract as Vault, ledger as vaultLedger, pureCircuits as vaultCircuits,
 } from '../managed-vault/contract/index.js';
-import { pureCircuits } from '../managed/contract/index.js';
+import { pureCircuits, ledger as accountLedger } from '../managed/contract/index.js';
 import {
-  AccountSimulator, privateStateFor, change, type Change, payoutTreeOf,
+  AccountSimulator, privateStateFor, change, type Change, payoutTreeOf, vaultRunOf,
 } from './simulator.js';
+import { carryTheAccount, startTheVault } from './start-a-vault.js';
 import { type PayoutLeafInput } from '../../src/midnight/payout-tree.js';
 import { toHex, fromHex } from '../../src/core/crypto.js';
-import { itPaysOutOfTodaysVault } from './until-the-vault-pays-with-a-receipt.js';
 
 const VAULT_NOW = 1_800_000_000;
 const WIN_FROM = BigInt(VAULT_NOW - 3_600);
@@ -53,7 +53,7 @@ const bytes = (n: number) => new Uint8Array(32).fill(n);
 const A = privateStateFor(1);
 const B = privateStateFor(2);
 const C = privateStateFor(3);
-const GBP = bytes(0x9b);
+const TOKEN_BYTES = bytes(0x9b);
 const ALICE = bytes(0x0a);
 
 /** A vault address that is not a deployed vault. The account never dereferences one. */
@@ -65,6 +65,7 @@ interface VaultPrivate {
 
 const vaultWitnesses = {
   noteToSpend: (ctx: { privateState: VaultPrivate }) => [ctx.privateState, ctx.privateState.coin],
+  nonceSecret: (ctx: { privateState: { secret?: Uint8Array } }) => [ctx.privateState, ctx.privateState.secret ?? new Uint8Array(32).fill(0x51)],
 };
 
 const govChange = (seed: number): Change => change(0n, seed);
@@ -93,7 +94,7 @@ describe('an account keeps a register of its own vaults', () => {
 
     vault = new Vault<VaultPrivate>(vaultWitnesses as never);
     vaultAddr = sampleContractAddress() as never as string;
-    priv = { coin: { nonce: bytes(0x77), color: GBP, value: 1_000n, mt_index: 0n } };
+    priv = { coin: { nonce: bytes(0x77), color: TOKEN_BYTES, value: 1_000n, mt_index: 0n } };
     const init = await vault.initialState(
       createConstructorContext({} as VaultPrivate, BLOCK),
       { bytes: Uint8Array.from(Buffer.from(String(sim.address), 'hex')) } as never);
@@ -122,7 +123,7 @@ describe('an account keeps a register of its own vaults', () => {
 
   /** Puts one note in the vault, so a retirement has something to refuse over. */
   const fund = async () => {
-    const coin = { nonce: bytes(0x77), color: GBP, value: 1_000n };
+    const coin = { nonce: bytes(0x77), color: TOKEN_BYTES, value: 1_000n };
     const dep = await vault.impureCircuits.deposit(ctx('deposit'), coin);
     vaultState = dep.context.callContext.currentQueryContext.state;
   };
@@ -295,6 +296,18 @@ describe('an account keeps a register of its own vaults', () => {
     expect(sim.ledger.thresholds.member(vaultBytes())).toBe(true);
   });
 
+  /** A vault takes no money until the account has adopted it and approved its first secret. */
+  const startHere = () => startTheVault({
+      sim, vault: Uint8Array.from(Buffer.from(String(vaultAddr), 'hex')), approvers: [A, B], now: VAULT_NOW,
+      call: async (circuit, ...a) => {
+        const r: any = await (vault.impureCircuits as any)[circuit](createCircuitContext(
+          circuit as never, vaultAddr as never, BLOCK, vaultState, {} as never,
+          provider() as never, undefined, undefined, VAULT_NOW, BLOCK), ...a);
+        vaultState = r.context.callContext.currentQueryContext.state;
+        carryTheAccount(sim, r.context);
+      },
+    });
+
   it('THE ONE THAT MATTERS: refuses to retire a vault that still holds notes', async () => {
     /*
      * Retiring a vault holding money is the same shape as stranding an
@@ -305,6 +318,7 @@ describe('an account keeps a register of its own vaults', () => {
      */
     const c1 = govChange(92);
     await sim.as(carrying(sim, A, c1)).adopt(vaultBytes(), await adoptionRound(vaultBytes(), c1));
+    await startHere();
     await fund();
     expect(vaultLedger(vaultState as never).notes.size()).toBe(1n);
 
@@ -353,7 +367,7 @@ describe('an account keeps a register of its own vaults', () => {
     expect(sim.adopted(vaultBytes())).toBe(true);
   });
 
-  itPaysOutOfTodaysVault('A RETIRED VAULT CAN STILL PAY, and that is the decision rather than an oversight',
+  it('A RETIRED VAULT CAN STILL PAY, and that is the decision rather than an oversight',
     async () => {
     /*
      * Nothing on the spend path consults `vaults`, deliberately. The list
@@ -363,11 +377,14 @@ describe('an account keeps a register of its own vaults', () => {
      * error — into money that cannot be moved. Retirement means the product
      * stops OFFERING the vault, and nothing more.
      *
-     * If a later change adds a membership check to `recordPayment`, this test
-     * is the one that will say so.
+     * The account's payment step takes a vault it adopted now or before it was
+     * retired. If a later change narrows that to the vaults it holds today, this
+     * test is the one that will say so.
      */
     const c1 = govChange(99);
     await sim.as(carrying(sim, A, c1)).adopt(vaultBytes(), await adoptionRound(vaultBytes(), c1));
+    /* Started while it is the company's: a retired vault can be given no secret. */
+    await startHere();
     const c2 = govChange(100);
     await retire(await retirementRound(vaultBytes(), c2), c2);
     expect(sim.adopted(vaultBytes())).toBe(false);
@@ -376,10 +393,10 @@ describe('an account keeps a register of its own vaults', () => {
     await fund();
     const c3 = govChange(101);
     const leaves: PayoutLeafInput[] = [{
-      details: toHex(vaultCircuits.payoutDetails(ALICE, GBP, 250n, bytes(0x40))),
+      details: toHex(vaultCircuits.payoutDetails(ALICE, TOKEN_BYTES, 250n, bytes(0x40))),
       nonce: toHex(bytes(0xc1)),
     }];
-    const tree = payoutTreeOf(leaves);
+    const tree = payoutTreeOf(leaves, [250n], TOKEN_BYTES);
     const payload = pureCircuits.runPayload(
       fromHex(tree.root), tree.payees, WIN_FROM, WIN_UNTIL, 0n);
     await sim.as(carrying(sim, A, c3)).proposeRun({
@@ -389,12 +406,19 @@ describe('an account keeps a register of its own vaults', () => {
     await sim.as(carrying(sim, A, c3)).approve(id);
     await sim.as(carrying(sim, B, c3)).approve(id);
 
+    /* RED WHEN the account's payment step refuses a vault it has retired. */
     const paid = await vault.impureCircuits.payout(
       ctx('payout'),
-      id, fromHex(tree.root), tree.payees, WIN_FROM, WIN_UNTIL, c3.salt,
-      ALICE, GBP, 250n, bytes(0x40), bytes(0xc1), tree.pathFor(0) as never);
+      vaultRunOf({
+        proposal: id, vault: vaultBytes(), tree, i: 0,
+        opensAt: WIN_FROM, closesAt: WIN_UNTIL, salt: c3.salt, nonce: bytes(0xc1),
+      }),
+      ALICE, TOKEN_BYTES, 250n, bytes(0x40));
 
     expect(vaultLedger(
       paid.context.callContext.currentQueryContext.state as never).payments).toBe(1n);
+    /* And the account recorded it. */
+    expect(accountLedger((paid.context as any).queryContexts[sim.address as never].state)
+      .movements.member(pureCircuits.paidOnceOf(bytes(0xc1)))).toBe(true);
   });
 });

@@ -176,10 +176,10 @@ describe('the circuits that read no witness', () => {
    * reads no witness is the failure this whole row is about: it is handed a key
    * it does not read, it succeeds, and it lands on the write-back.
    *
-   * Both of the circuits named here are real ones on this contract that read no
+   * Every circuit named here is a real one on this contract that reads no
    * witness today, which is why they are the example.
    */
-  it.each(['recordPaymentFromVault', 'retireVault', 'closeExpiredRun'])(
+  it.each(['approveVaultChange', 'recordPaymentFromVault', 'retireVault', 'closeExpiredRun'])(
     'reports it when %s falls off the client\'s set while still reading nothing',
     async (dropped) => {
       const model = await account();
@@ -196,12 +196,12 @@ describe('the circuits that read no witness', () => {
 
   /**
    * **AND THE SCOPE ITSELF, WATCHED.** This is the case that was missing while
-   * the comparison narrowed to the driven circuits: two of the contract's
+   * the comparison narrowed to the driven circuits: three of the contract's
    * circuits are outside that narrowing, so a set that forgot them agreed with
    * the contract anyway. Narrowed to `driven()` this returns nothing; widened
-   * to what an interface carries it reports both.
+   * to what an interface carries it reports all three.
    */
-  it('a comparison scoped to the driven circuits cannot see the two nobody drives', async () => {
+  it('a comparison scoped to the driven circuits cannot see the three nobody drives', async () => {
     const model = await account();
     const readsNone = model.circuits.filter((c) => c.witnesses.length === 0).map((c) => c.name);
     const asItWasBefore = new Set(['closeExpiredRun']);
@@ -209,7 +209,7 @@ describe('the circuits that read no witness', () => {
     expect(disagreement(readsNone, driven(), asItWasBefore))
       .toEqual({ treatedAsNeedingState: [], treatedAsNeedingNone: [] });
     expect(disagreement(readsNone, judged(), asItWasBefore))
-      .toEqual({ treatedAsNeedingState: ['recordPaymentFromVault', 'retireVault'], treatedAsNeedingNone: [] });
+      .toEqual({ treatedAsNeedingState: ['approveVaultChange', 'recordPaymentFromVault', 'retireVault'], treatedAsNeedingNone: [] });
   });
 
   /** **THE LOUD DIRECTION, WATCHED.** A circuit that reads a witness on the list. */
@@ -228,7 +228,7 @@ describe('the circuits that read no witness', () => {
 
     expect(disagreement(readsNone, judged(), new Set()))
       .toEqual({
-        treatedAsNeedingState: ['closeExpiredRun', 'recordPaymentFromVault', 'retireVault'],
+        treatedAsNeedingState: ['approveVaultChange', 'closeExpiredRun', 'recordPaymentFromVault', 'retireVault'],
         treatedAsNeedingNone: [],
       });
   });

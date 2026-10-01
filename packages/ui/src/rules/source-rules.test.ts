@@ -124,7 +124,7 @@ describe('the one way into shared code', () => {
   /* RED WHEN: an amount, public or private, is made outside the adapters, by the name, through a namespace or taken apart from one, where its decimals would be typed rather than read from the token's record, or its visibility said by a screen; or the adapters, or a key of the file's own object that happens to share the name, are refused. */
   it('names every amount made outside the adapters', () => {
     const screen = src('apps/web/src/screens/x.tsx', "import { publicAmount, privateAmount } from 'vaults-ui'; const a = publicAmount(1n, 2, 'NIGHT'); const b = kit.privateAmount; const c = { publicAmount: 1 }; kit['publicAmount']; const { privateAmount: m } = kit;");
-    const adapter = src('apps/web/src/adapters/x.ts', "import { publicAmount } from 'vaults-ui'; export const a = publicAmount(1n, asset.decimals, asset.code);");
+    const adapter = src('apps/web/src/adapters/x.ts', "import { publicAmount } from 'vaults-ui'; export const a = publicAmount(1n, asset.decimals, asset.symbol);");
     expect(whats(amountsMadeOutsideTheAdapters([screen, adapter], '/repo', LAYER))).toEqual(['publicAmount', 'privateAmount', 'publicAmount', 'privateAmount', 'publicAmount', 'privateAmount']);
     expect(amountsMadeOutsideTheAdapters([screen], '/repo', LAYER).map((b) => b.line)).toEqual([1, 1, 1, 1, 1, 1]);
     expect(whats(amountsMadeOutsideTheAdapters([adapter], '/repo', null))).toEqual(['publicAmount', 'publicAmount']);
@@ -414,13 +414,13 @@ describe('state variants', () => {
 });
 
 describe('wording', () => {
-  const codes = new Set(['USDC', 'NIGHT']);
+  const codes = new Set(['tUSD', 'NIGHT']);
 
   /* RED WHEN: a word held in a variable, given to any prop, or put on a screen any other way is let through: the rule lists what it allows, not what it refuses. */
   it('names every string with a letter that stands anywhere not named as a position', () => {
     const f = src('apps/web/src/x.tsx', `const label = 'Send';
       const a = <input value="Send now" title="Hello" aria-label={'Close'} />;
-      const b = <div>Pay now {'Cancel'} {ok ? 'Yes' : t('kit.no')} {\`Sent \${n}\`} USDC {' '} {'—'} 42</div>;
+      const b = <div>Pay now {'Cancel'} {ok ? 'Yes' : t('kit.no')} {\`Sent \${n}\`} tUSD {' '} {'—'} 42</div>;
       const c = { label: 'Save' }; const d = ['First', 'Second']; function e() { return 'Done'; }
       throw new Error('Could not send');
       createElement('p', null, 'Payroll is coming'); const g = <ComingSoon explanation="Export arrives in May" />;`);
@@ -452,7 +452,7 @@ describe('wording', () => {
         const Comp = asChild ? Slot.Root : 'span';
         if (variant === 'ghost') throw new Error(\`a badge is not \${variant}\`);
         switch (size) { case 'large': break; }
-        return <Comp className={cn('inline-flex text-sm', variant)} data-slot="badge" type="button" dir="ltr">{t('kit.badge.label')} USDC</Comp>;
+        return <Comp className={cn('inline-flex text-sm', variant)} data-slot="badge" type="button" dir="ltr">{t('kit.badge.label')} tUSD</Comp>;
       }
       createElement('section', { variant: 'quiet' });
       new Intl.DateTimeFormat(tag, { dateStyle: 'medium' });
@@ -507,7 +507,7 @@ describe('wording', () => {
   it('names every English sentence in a module', () => {
     const f = src('shared.ts', `export const a = 'The vault has no signers.';
       throw new Error(\`Could not reach \${x}\`);
-      const k = 'kit.public.label'; const c = 'USDC'; const w = 'word'; const i = 'Content-Type';
+      const k = 'kit.public.label'; const c = 'tUSD'; const w = 'word'; const i = 'Content-Type';
       // A comment is not code`);
     const lower = src('lower.ts', "throw new Error('a vault is pinned to its company'); const two = 'two words';");
     expect(whats(englishSentences([f]))).toEqual(['The vault has no signers.', 'Could not reach  ']);
@@ -537,7 +537,7 @@ describe('amounts', () => {
     const helper = src('packages/ui/src/format/token-amount.ts', "new Intl.NumberFormat(tag).format(amount); (amount % unit).toString();");
     const other = src('apps/web/src/x.tsx', `import { formatTokenAmount } from 'vaults-ui/format/token-amount';
       String(amount); amount.toString(); Number(amount); formatNumber(Number(amount), 'en');
-      parseFloat(a); parseInt(a, 10); Number.parseInt(a); \`\${amount} USDC\`; '' + amount; +amount; JSON.stringify({ amount });
+      parseFloat(a); parseInt(a, 10); Number.parseInt(a); \`\${amount} tUSD\`; '' + amount; +amount; JSON.stringify({ amount });
       new Intl.NumberFormat('en').format(5n); (5n).toLocaleString(); n.toFixed(2); n.toPrecision(3);
       const c = new Intl['NumberFormat']('en'); const { NumberFormat } = Intl; new String(amount); n.toExponential(1);
       xs.map(String); [amount].join(''); ''.concat(amount); globalThis.String(amount); encodeURIComponent(amount);

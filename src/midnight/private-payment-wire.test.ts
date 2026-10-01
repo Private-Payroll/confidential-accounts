@@ -47,14 +47,15 @@ describe('ONE APPROVED LEG\'S PAYMENTS, AS THE SERVICE HANDS THEM TO A DEVICE', 
     { payee: payeeFor('a1'.repeat(32), NET), token: TOKEN, amount: 250n },
     { payee: payeeFor('a2'.repeat(32), NET), token: TOKEN, amount: 90n },
   ];
-  const built = buildRun(seeds, identity, facts, vaultDetails, payFor(facts), 'GBP');
+  const built = buildRun(seeds, identity, facts, vaultDetails, payFor(facts), TOKEN);
   const window = { from: 100n, until: 200n };
   /* A stand-in for the contract's identity: a function of exactly the values it folds, so any change shows. */
   const idFrom = (leaves: Hex[], w: { from: bigint; until: bigint }) =>
     `id:${leaves.join('')}:${w.from}:${w.until}` as Hex;
   const input = (over: Record<string, unknown> = {}) => ({
     order: {
-      asset: 'TESTUSD', vault: 'fa'.repeat(32) as Hex, proposal: idFrom(built.tree.leaves, window),
+      asset: TOKEN as string, form: 'shielded' as 'shielded' | 'unshielded',
+      vault: 'fa'.repeat(32) as Hex, proposal: idFrom(built.tree.leaves, window),
       salt: '5a'.repeat(32) as Hex, root: built.tree.root, payees: built.tree.payees, opensAt: 100n, closesAt: 200n,
     },
     leaves: built.tree.leaves, window, idFrom, built, facts,
@@ -66,9 +67,11 @@ describe('ONE APPROVED LEG\'S PAYMENTS, AS THE SERVICE HANDS THEM TO A DEVICE', 
     const out = assemblePrivatePayments(input());
     if ('refusal' in out) throw new Error(out.refusal);
     expect(out.order).toMatchObject({
-      asset: 'TESTUSD', vault: 'fa'.repeat(32), salt: '5a'.repeat(32), root: built.tree.root,
+      asset: TOKEN, form: 'shielded', vault: 'fa'.repeat(32), salt: '5a'.repeat(32), root: built.tree.root,
       payees: '2', opensAt: '100', closesAt: '200',
     });
+    /* RED WHEN the order names its token to a screen by the token itself. */
+    expect(out.order.symbol).not.toContain(TOKEN);
     expect(out.order.payments).toHaveLength(2);
     for (const i of [0, 1]) {
       const args = built.payeeArgs(i);
@@ -89,7 +92,7 @@ describe('ONE APPROVED LEG\'S PAYMENTS, AS THE SERVICE HANDS THEM TO A DEVICE', 
 
   it('REFUSES A REBUILD WHOSE LEAVES, ROOT, COUNT OR IDENTITY ARE NOT WHAT THE SIGNERS APPROVED', () => {
     const refused = /not the ones its signers approved/;
-    const other = buildRun(seeds, { ...identity, runId: 'run_2' }, facts, vaultDetails, payFor(facts), 'GBP');
+    const other = buildRun(seeds, { ...identity, runId: 'run_2' }, facts, vaultDetails, payFor(facts), TOKEN);
     /* RED WHEN: any one of the four comparisons is dropped. */
     expect(assemblePrivatePayments(input({ leaves: other.tree.leaves }))).toEqual({ refusal: expect.stringMatching(refused) });
     expect(assemblePrivatePayments(input({ leaves: built.tree.leaves.slice(0, 1) }))).toEqual({ refusal: expect.stringMatching(refused) });
@@ -119,22 +122,37 @@ describe('ONE APPROVED LEG\'S PAYMENTS, AS THE SERVICE HANDS THEM TO A DEVICE', 
   });
 
   it('HANDS OVER EACH PAYMENT IN THE FORM ITS PAYEE\'S ADDRESS IS, AGAINST THE LEAF BUILT FOR THAT FORM', () => {
-    const publicFacts = [facts[0]!, { payee: unshieldedPayeeFor('c3'.repeat(32), NET), token: TOKEN, amount: 90n }];
-    const mixed = buildRun(seeds, identity, publicFacts, vaultDetails, payFor(publicFacts), 'GBP');
-    const out = assemblePrivatePayments(input({
-      built: mixed, facts: publicFacts, leaves: mixed.tree.leaves,
-      order: { ...input().order, root: mixed.tree.root, proposal: idFrom(mixed.tree.leaves, window) },
-    }));
+    const publicFacts = [
+      { payee: unshieldedPayeeFor('c4'.repeat(32), NET), token: TOKEN, amount: 250n },
+      { payee: unshieldedPayeeFor('c3'.repeat(32), NET), token: TOKEN, amount: 90n },
+    ];
+    const publicly = buildRun(seeds, identity, publicFacts, vaultDetails, payFor(publicFacts), TOKEN);
+    const publicInput = input({
+      built: publicly, facts: publicFacts, leaves: publicly.tree.leaves,
+      order: { ...input().order, form: 'unshielded', root: publicly.tree.root, proposal: idFrom(publicly.tree.leaves, window) },
+    });
+    const out = assemblePrivatePayments(publicInput);
     if ('refusal' in out) throw new Error(out.refusal);
     /* RED WHEN: a payment's kind is taken from anywhere but its own payee - a public payee would be handed to the
      * private payout, or a private one to the public payout. */
+    expect(out.order.form).toBe('unshielded');
     expect(out.order.payments.map((p) => [p.kind, p.payee])).toEqual([
-      ['shielded', publicFacts[0]!.payee.bech32], ['unshielded', publicFacts[1]!.payee.bech32],
+      ['unshielded', publicFacts[0]!.payee.bech32], ['unshielded', publicFacts[1]!.payee.bech32],
     ]);
     /* RED WHEN: the public payee's leaf is built by the private details circuit, which the public payout cannot pay. */
     const asPrivate = buildRun(seeds, identity,
-      [facts[0]!, { payee: payeeFor('c3'.repeat(32), NET), token: TOKEN, amount: 90n }], vaultDetails, payFor([facts[0]!, { payee: payeeFor('c3'.repeat(32), NET), token: TOKEN, amount: 90n }]), 'GBP');
-    expect(out.order.payments[1]!.leaf).toBe(mixed.payeeArgs(1).leaf);
+      [facts[0]!, { payee: payeeFor('c3'.repeat(32), NET), token: TOKEN, amount: 90n }], vaultDetails, payFor([facts[0]!, { payee: payeeFor('c3'.repeat(32), NET), token: TOKEN, amount: 90n }]), TOKEN);
+    expect(out.order.payments[1]!.leaf).toBe(publicly.payeeArgs(1).leaf);
     expect(out.order.payments[1]!.leaf).not.toBe(asPrivate.payeeArgs(1).leaf);
+    /* RED WHEN: a leg's payments are handed over in a form other than the leg's own. */
+    expect(assemblePrivatePayments({ ...publicInput, order: { ...publicInput.order, form: 'shielded' } }))
+      .toEqual({ refusal: expect.stringMatching(/one leg pays one token in one form/) });
+  });
+
+  it('A RUN MIXING PRIVATE AND PUBLIC PAYEES IS NEVER BUILT, SO NO MIXED LEG CAN BE HANDED OVER', () => {
+    const mixedFacts = [facts[0]!, { payee: unshieldedPayeeFor('c3'.repeat(32), NET), token: TOKEN, amount: 90n }];
+    /* RED WHEN: buildRun lets one run hold both forms. */
+    expect(() => buildRun(seeds, identity, mixedFacts, vaultDetails, payFor(mixedFacts), TOKEN))
+      .toThrow(/^This run has both private and public payments \(payment 1 is private, payment 2 is public\)\./);
   });
 });

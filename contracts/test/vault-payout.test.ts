@@ -23,8 +23,14 @@ import {
 import { Contract as Vault, ledger as vaultLedger } from '../managed-vault/contract/index.js';
 import { pureCircuits as vaultCircuits } from '../managed-vault/contract/index.js';
 import { pureCircuits, ledger as accountLedger } from '../managed/contract/index.js';
-import { AccountSimulator, privateStateFor, change, type Change, payoutTreeOf } from './simulator.js';
-import { buildRun, buildRetryRun, type PayoutLeafInput, type PaymentFacts } from '../../src/midnight/payout-tree.js';
+import {
+  AccountSimulator, privateStateFor, change, type Change, payoutTreeOf, vaultRunOf, tokenBytes,
+  NOT_IN_THE_APPROVED_RUN,
+} from './simulator.js';
+import { carryTheAccount, startTheVault } from './start-a-vault.js';
+import {
+  buildRun, buildRetryRun, type PayoutLeafInput, type PaymentFacts, type PayoutTree, type PayeeArgs,
+} from '../../src/midnight/payout-tree.js';
 import { payeeFor } from '../../src/testing/payees.js';
 import { vaultDetails } from '../../src/testing/vault-details.js';
 import { recipientOf } from '../../src/midnight/payee-address.js';
@@ -32,7 +38,7 @@ import type { PayoutSeed, RunIdentity } from '../../src/midnight/run-keys.js';
 import { changeCoinOf } from '../../src/midnight/vault-coins.js';
 import { toHex, fromHex } from '../../src/core/crypto.js';
 import { payFor } from '../../src/testing/payees.js';
-import { itPaysOutOfTodaysVault } from './until-the-vault-pays-with-a-receipt.js';
+import { TEST_TOKEN } from '../../src/testing/assets.js';
 
 /*
  * THE CLOCK AND THE RUN'S WINDOW.
@@ -53,7 +59,12 @@ const hex = (b: Uint8Array) => Buffer.from(b).toString('hex');
 
 const A = privateStateFor(1);
 const B = privateStateFor(2);
-const GBP = bytes(0x9b);                      // a token type; the vault never interprets one
+/*
+ * A token type; the vault never interprets one. It is the run's asset, because the
+ * account checks the token a payment sends against the asset the run's root commits to,
+ * and a run built by the product commits to the token itself.
+ */
+const TOKEN_BYTES = tokenBytes(TEST_TOKEN);
 const ALICE = bytes(0x0a);                    // a payee's shielded public key
 const BOB = bytes(0x0b);
 
@@ -92,6 +103,7 @@ const heldBy = (
  */
 const vaultWitnesses = {
   noteToSpend: (ctx: { privateState: VaultPrivate }) => [ctx.privateState, ctx.privateState.coin],
+  nonceSecret: (ctx: { privateState: { secret?: Uint8Array } }) => [ctx.privateState, ctx.privateState.secret ?? new Uint8Array(32).fill(0x51)],
 };
 
 const govChange = (seed: number): Change => change(0n, seed);
@@ -129,9 +141,20 @@ describe('a vault pays one payee of an approved run', () => {
       createConstructorContext({} as VaultPrivate, BLOCK),
       { bytes: Uint8Array.from(Buffer.from(String(sim.address), 'hex')) } as never);
     vaultState = init.currentContractState;
+    /* A vault takes no money until the account has adopted it and approved its first secret. */
+    await startTheVault({
+      sim, vault: Uint8Array.from(Buffer.from(String(vaultAddr), 'hex')), approvers: [A, B], now: VAULT_NOW,
+      call: async (circuit, ...a) => {
+        const r: any = await (vault.impureCircuits as any)[circuit](createCircuitContext(
+          circuit as never, vaultAddr as never, BLOCK, vaultState, {} as never,
+          provider() as never, undefined, undefined, VAULT_NOW, BLOCK), ...a);
+        vaultState = r.context.callContext.currentQueryContext.state;
+        carryTheAccount(sim, r.context);
+      },
+    });
 
-    /* A coin arrives. 1,000 of GBP, which the vault records as a commitment. */
-    const coin = { nonce: bytes(0x77), color: GBP, value: 1_000n };
+    /* A coin arrives. 1,000 of the token, which the vault records as a commitment. */
+    const coin = { nonce: bytes(0x77), color: TOKEN_BYTES, value: 1_000n };
     priv = { coin: { ...coin, mt_index: 0n } };
     const dep = await vault.impureCircuits.deposit(
       createCircuitContext<VaultPrivate>('deposit', vaultAddr as never, BLOCK, vaultState, priv),
@@ -142,10 +165,10 @@ describe('a vault pays one payee of an approved run', () => {
   /** Raises and approves a run, and returns what a payer needs. */
   const approvedRun = async (payments: Array<{ to: Uint8Array; amount: bigint; nonce: number }>, c: Change) => {
     const leaves: PayoutLeafInput[] = payments.map((p, i) => ({
-      details: toHex(vaultCircuits.payoutDetails(p.to, GBP, p.amount, bytes(0x40 + i))),
+      details: toHex(vaultCircuits.payoutDetails(p.to, TOKEN_BYTES, p.amount, bytes(0x40 + i))),
       nonce: toHex(bytes(p.nonce)),
     }));
-    const tree = payoutTreeOf(leaves);
+    const tree = payoutTreeOf(leaves, payments.map((p) => p.amount), TOKEN_BYTES);
     const payload = pureCircuits.runPayload(
       fromHex(tree.root), tree.payees, WIN_FROM, WIN_UNTIL, 0n);
     const vaultBytes = Uint8Array.from(Buffer.from(vaultAddr, 'hex'));
@@ -158,14 +181,28 @@ describe('a vault pays one payee of an approved run', () => {
     return { tree, id, leaves };
   };
 
-  itPaysOutOfTodaysVault('THE WHOLE THING: approved, claimed and paid in one call', async () => {
+  /** The run payee `i` of an approved run hands the account, with that payee's nonce. */
+  const runOf = (run: { tree: PayoutTree; id: Uint8Array }, c: Change, nonce: number, i: number) =>
+    vaultRunOf({
+      proposal: run.id, vault: vaultAddrBytes(), tree: run.tree, i,
+      opensAt: WIN_FROM, closesAt: WIN_UNTIL, salt: c.salt, nonce: bytes(nonce),
+    });
+
+  /** The same for a payee of a run the product built, read from its own arguments. */
+  const payeeRunOf = (id: Uint8Array, tree: PayoutTree, c: Change, a: PayeeArgs) =>
+    vaultRunOf({
+      proposal: id, vault: vaultAddrBytes(), tree, i: a.originalIndex,
+      opensAt: WIN_FROM, closesAt: WIN_UNTIL, salt: c.salt, nonce: a.nonce,
+    });
+
+  it('THE WHOLE THING: approved, claimed and paid in one call', async () => {
     const c = govChange(31);
     const run = await approvedRun([{ to: ALICE, amount: 250n, nonce: 0xc1 }], c);
 
     const r = await vault.impureCircuits.payout(
       payoutContext(),
-      run.id, fromHex(run.tree.root), run.tree.payees, WIN_FROM, WIN_UNTIL, c.salt,
-      ALICE, GBP, 250n, bytes(0x40), bytes(0xc1), run.tree.pathFor(0) as never);
+      runOf(run, c, 0xc1, 0),
+      ALICE, TOKEN_BYTES, 250n, bytes(0x40));
 
     // The vault paid once…
     const after = vaultLedger(r.context.callContext.currentQueryContext.state as never);
@@ -187,41 +224,43 @@ describe('a vault pays one payee of an approved run', () => {
     expect(acct.openProposals.member(run.id)).toBe(true);
   });
 
-  itPaysOutOfTodaysVault('refuses to pay somebody the signers did not approve', async () => {
+  it('refuses to pay somebody the signers did not approve', async () => {
     const c = govChange(32);
     const run = await approvedRun([{ to: ALICE, amount: 250n, nonce: 0xc2 }], c);
 
     /* Same run, same amount, different payee. The leaf no longer matches. */
+    /* RED WHEN the account records a payee the run did not approve, or refuses this one for another reason. */
     await expect(vault.impureCircuits.payout(
       payoutContext(),
-      run.id, fromHex(run.tree.root), run.tree.payees, WIN_FROM, WIN_UNTIL, c.salt,
-      BOB, GBP, 250n, bytes(0x40), bytes(0xc2), run.tree.pathFor(0) as never))
-      .rejects.toThrow(/not for this payee|not in the approved run/i);
+      runOf(run, c, 0xc2, 0),
+      BOB, TOKEN_BYTES, 250n, bytes(0x40)))
+      .rejects.toThrow(NOT_IN_THE_APPROVED_RUN);
   });
 
-  itPaysOutOfTodaysVault('refuses to pay a different AMOUNT than the one approved', async () => {
+  it('refuses to pay a different AMOUNT than the one approved', async () => {
     const c = govChange(33);
     const run = await approvedRun([{ to: ALICE, amount: 250n, nonce: 0xc3 }], c);
 
+    /* RED WHEN the account records an amount the run did not approve, or refuses this one for another reason. */
     await expect(vault.impureCircuits.payout(
       payoutContext(),
-      run.id, fromHex(run.tree.root), run.tree.payees, WIN_FROM, WIN_UNTIL, c.salt,
-      ALICE, GBP, 900n, bytes(0x40), bytes(0xc3), run.tree.pathFor(0) as never))
-      .rejects.toThrow(/not for this payee|not in the approved run/i);
+      runOf(run, c, 0xc3, 0),
+      ALICE, TOKEN_BYTES, 900n, bytes(0x40)))
+      .rejects.toThrow(NOT_IN_THE_APPROVED_RUN);
   });
 
-  itPaysOutOfTodaysVault('refuses to pay more than it holds', async () => {
+  it('refuses to pay more than it holds', async () => {
     const c = govChange(34);
     const run = await approvedRun([{ to: ALICE, amount: 5_000n, nonce: 0xc4 }], c);
 
     await expect(vault.impureCircuits.payout(
       payoutContext(),
-      run.id, fromHex(run.tree.root), run.tree.payees, WIN_FROM, WIN_UNTIL, c.salt,
-      ALICE, GBP, 5_000n, bytes(0x40), bytes(0xc4), run.tree.pathFor(0) as never))
+      runOf(run, c, 0xc4, 0),
+      ALICE, TOKEN_BYTES, 5_000n, bytes(0x40)))
       .rejects.toThrow(/does not hold enough/i);
   });
 
-  itPaysOutOfTodaysVault('refuses a note the witness invented, however well-formed', async () => {
+  it('refuses a note the witness invented, however well-formed', async () => {
     /*
      * A witness is UNTRUSTED INPUT by the language's own warning. The vault's
      * only tie between the private coin and the public record is the
@@ -233,12 +272,12 @@ describe('a vault pays one payee of an approved run', () => {
 
     await expect(vault.impureCircuits.payout(
       payoutContext(),
-      run.id, fromHex(run.tree.root), run.tree.payees, WIN_FROM, WIN_UNTIL, c.salt,
-      ALICE, GBP, 100n, bytes(0x40), bytes(0xc5), run.tree.pathFor(0) as never))
+      runOf(run, c, 0xc5, 0),
+      ALICE, TOKEN_BYTES, 100n, bytes(0x40)))
       .rejects.toThrow(/not in this vault.s pool/i);
   });
 
-  itPaysOutOfTodaysVault('KEEPS THE CHANGE, and commits to it — the silent way to lose money', async () => {
+  it('KEEPS THE CHANGE, and commits to it — the silent way to lose money', async () => {
     /*
      * `sendShielded` hands the change back and the contract must manage it. A
      * vault that dropped it would lose the difference between what it held and
@@ -253,8 +292,8 @@ describe('a vault pays one payee of an approved run', () => {
 
     const r = await vault.impureCircuits.payout(
       payoutContext(),
-      run.id, fromHex(run.tree.root), run.tree.payees, WIN_FROM, WIN_UNTIL, c.salt,
-      ALICE, GBP, 250n, bytes(0x40), bytes(0xc6), run.tree.pathFor(0) as never);
+      runOf(run, c, 0xc6, 0),
+      ALICE, TOKEN_BYTES, 250n, bytes(0x40));
 
     const pool = vaultLedger(r.context.callContext.currentQueryContext.state as never).notes;
 
@@ -271,14 +310,14 @@ describe('a vault pays one payee of an approved run', () => {
     const back = changeCoinOf(r.context.callContext.currentZswapLocalState, toHex(vaultAddrBytes()));
     expect(back).toBeDefined();
     expect(back!.value).toBe(750n);
-    expect(back!.token).toBe(toHex(GBP));
+    expect(back!.token).toBe(toHex(TOKEN_BYTES));
 
     expect(pool.member(heldBy(
       vaultAddrBytes(),
-      { nonce: fromHex(back!.nonce), color: GBP, value: back!.value }))).toBe(true);
+      { nonce: fromHex(back!.nonce), color: TOKEN_BYTES, value: back!.value }))).toBe(true);
   });
 
-  itPaysOutOfTodaysVault('a SECOND payment spends the change, which is the proof the derivation is right', async () => {
+  it('a SECOND payment spends the change, which is the proof the derivation is right', async () => {
     /*
      * The test above says the client can reconstruct the change coin. This one
      * says the reconstruction actually spends: pay twice from one deposit,
@@ -295,8 +334,8 @@ describe('a vault pays one payee of an approved run', () => {
 
     const first = await vault.impureCircuits.payout(
       payoutContext(),
-      run.id, fromHex(run.tree.root), run.tree.payees, WIN_FROM, WIN_UNTIL, c.salt,
-      ALICE, GBP, 100n, bytes(0x40), bytes(0xd1), run.tree.pathFor(0) as never);
+      runOf(run, c, 0xd1, 0),
+      ALICE, TOKEN_BYTES, 100n, bytes(0x40));
     vaultState = first.context.callContext.currentQueryContext.state;
 
     /*
@@ -304,21 +343,21 @@ describe('a vault pays one payee of an approved run', () => {
      * handed back, and carry it forward as what the vault now holds.
      */
     const back = changeCoinOf(first.context.callContext.currentZswapLocalState, toHex(vaultAddrBytes()));
-    expect(back).toEqual({ nonce: back!.nonce, token: toHex(GBP), value: 900n });
+    expect(back).toEqual({ nonce: back!.nonce, token: toHex(TOKEN_BYTES), value: 900n });
     priv = {
       coin: { nonce: fromHex(back!.nonce), color: fromHex(back!.token), value: back!.value, mt_index: 0n },
     };
 
     const second = await vault.impureCircuits.payout(
       payoutContext(),
-      run.id, fromHex(run.tree.root), run.tree.payees, WIN_FROM, WIN_UNTIL, c.salt,
-      BOB, GBP, 200n, bytes(0x41), bytes(0xd2), run.tree.pathFor(1) as never);
+      runOf(run, c, 0xd2, 1),
+      BOB, TOKEN_BYTES, 200n, bytes(0x41));
 
     expect(vaultLedger(second.context.callContext.currentQueryContext.state as never).payments)
       .toBe(2n);
   });
 
-  itPaysOutOfTodaysVault('REFUSES TO SPEND THE SAME NOTE TWICE, which is the pool\'s whole safety property', async () => {
+  it('REFUSES TO SPEND THE SAME NOTE TWICE, which is the pool\'s whole safety property', async () => {
     /*
      * The pool had no test for this for a long time — found by a mutation that
      * deleted `notes.remove(spent)` and was not caught by the test named for
@@ -343,8 +382,8 @@ describe('a vault pays one payee of an approved run', () => {
 
     const first = await vault.impureCircuits.payout(
       payoutContext(),
-      run.id, fromHex(run.tree.root), run.tree.payees, WIN_FROM, WIN_UNTIL, c.salt,
-      ALICE, GBP, 100n, bytes(0x40), bytes(0xe1), run.tree.pathFor(0) as never);
+      runOf(run, c, 0xe1, 0),
+      ALICE, TOKEN_BYTES, 100n, bytes(0x40));
     vaultState = first.context.callContext.currentQueryContext.state;
 
     /*
@@ -353,15 +392,15 @@ describe('a vault pays one payee of an approved run', () => {
      */
     await expect(vault.impureCircuits.payout(
       payoutContext(),
-      run.id, fromHex(run.tree.root), run.tree.payees, WIN_FROM, WIN_UNTIL, c.salt,
-      BOB, GBP, 200n, bytes(0x41), bytes(0xe2), run.tree.pathFor(1) as never))
+      runOf(run, c, 0xe2, 1),
+      BOB, TOKEN_BYTES, 200n, bytes(0x41)))
       .rejects.toThrow(/not in this vault/i);
 
     // And the payment count did not move, so nothing half-happened.
     expect(vaultLedger(vaultState as never).payments).toBe(1n);
   });
 
-  itPaysOutOfTodaysVault('END TO END: a run built from the ACCOUNT\'S SEED pays, and a second admin finishes it',
+  it('END TO END: a run built from the ACCOUNT\'S SEED pays, and a second admin finishes it',
     async () => {
     /*
      * The proof that the derivation is not merely self-consistent: the leaves
@@ -375,13 +414,13 @@ describe('a vault pays one payee of an approved run', () => {
     const seeds: PayoutSeed[] = [{ epoch: 0, seed: toHex(bytes(0x5e)) }];
     const identity: RunIdentity = { accountId: 'acct-e2e', runId: 'payroll-2026-09', epoch: 0 };
     const payroll: PaymentFacts[] = [
-      { payee: payeeFor(ALICE, 'undeployed'), token: toHex(GBP), amount: 100n },
-      { payee: payeeFor(BOB, 'undeployed'), token: toHex(GBP), amount: 200n },
-      { payee: payeeFor(bytes(0x0c), 'undeployed'), token: toHex(GBP), amount: 300n },
+      { payee: payeeFor(ALICE, 'undeployed'), token: toHex(TOKEN_BYTES), amount: 100n },
+      { payee: payeeFor(BOB, 'undeployed'), token: toHex(TOKEN_BYTES), amount: 200n },
+      { payee: payeeFor(bytes(0x0c), 'undeployed'), token: toHex(TOKEN_BYTES), amount: 300n },
     ];
 
     /* --- A's machine --- */
-    const byA = buildRun(seeds, identity, payroll, vaultDetails, payFor(payroll), 'GBP');
+    const byA = buildRun(seeds, identity, payroll, vaultDetails, payFor(payroll), TEST_TOKEN);
     const c = govChange(63);
     const vaultBytes = vaultAddrBytes();
     const payload = pureCircuits.runPayload(
@@ -397,9 +436,9 @@ describe('a vault pays one payee of an approved run', () => {
       const a = run.payeeArgs(i);
       const r = await vault.impureCircuits.payout(
         payoutContext(),
-        id, fromHex(run.tree.root), run.tree.payees, WIN_FROM, WIN_UNTIL, c.salt,
+        payeeRunOf(id, run.tree, c, a),
         fromHex(recipientOf(a.payee)), fromHex(a.token), a.amount,
-        fromHex(a.blinding), fromHex(a.nonce), a.path as never);
+        fromHex(a.blinding));
       vaultState = r.context.callContext.currentQueryContext.state;
       /* And the account's own write, which a chain would commit with it. */
       sim.adoptFromCall(r.context);
@@ -420,7 +459,7 @@ describe('a vault pays one payee of an approved run', () => {
     /* --- A's laptop dies here. Nothing of A's crosses to B. --- */
 
     /* --- B's machine: the same account seeds, the same run identity --- */
-    const byB = buildRun(seeds, identity, payroll, vaultDetails, payFor(payroll), 'GBP');
+    const byB = buildRun(seeds, identity, payroll, vaultDetails, payFor(payroll), TEST_TOKEN);
     expect(byB.tree.root).toBe(byA.tree.root);
 
     await pay(byB, 1);
@@ -431,7 +470,7 @@ describe('a vault pays one payee of an approved run', () => {
     expect(vaultLedger(vaultState as never).payments).toBe(3n);
   });
 
-  itPaysOutOfTodaysVault('a rebuilt RETRY run cannot pay somebody the original already paid', async () => {
+  it('a rebuilt RETRY run cannot pay somebody the original already paid', async () => {
     /*
      * The two fixes meeting. B rebuilds the run, retries the stragglers — and
      * the person A already paid is refused, because a retry reuses the original
@@ -440,11 +479,11 @@ describe('a vault pays one payee of an approved run', () => {
     const seeds: PayoutSeed[] = [{ epoch: 0, seed: toHex(bytes(0x5f)) }];
     const identity: RunIdentity = { accountId: 'acct-retry', runId: 'payroll-2026-10', epoch: 0 };
     const payroll: PaymentFacts[] = [
-      { payee: payeeFor(ALICE, 'undeployed'), token: toHex(GBP), amount: 100n },
-      { payee: payeeFor(BOB, 'undeployed'), token: toHex(GBP), amount: 200n },
+      { payee: payeeFor(ALICE, 'undeployed'), token: toHex(TOKEN_BYTES), amount: 100n },
+      { payee: payeeFor(BOB, 'undeployed'), token: toHex(TOKEN_BYTES), amount: 200n },
     ];
 
-    const byA = buildRun(seeds, identity, payroll, vaultDetails, payFor(payroll), 'GBP');
+    const byA = buildRun(seeds, identity, payroll, vaultDetails, payFor(payroll), TEST_TOKEN);
     const c = govChange(64);
     const vaultBytes = vaultAddrBytes();
     const payload = pureCircuits.runPayload(
@@ -459,15 +498,15 @@ describe('a vault pays one payee of an approved run', () => {
     const a0 = byA.payeeArgs(0);
     const first = await vault.impureCircuits.payout(
       payoutContext(),
-      id, fromHex(byA.tree.root), byA.tree.payees, WIN_FROM, WIN_UNTIL, c.salt,
+      payeeRunOf(id, byA.tree, c, a0),
       fromHex(recipientOf(a0.payee)), fromHex(a0.token), a0.amount,
-      fromHex(a0.blinding), fromHex(a0.nonce), a0.path as never);
+      fromHex(a0.blinding));
     vaultState = first.context.callContext.currentQueryContext.state;
     sim.adoptFromCall(first.context);
 
     /* B rebuilds and, not knowing what landed, retries BOTH people. */
     const retry = buildRetryRun(
-      buildRun(seeds, identity, payroll, vaultDetails, payFor(payroll), 'GBP'), [0, 1]);
+      buildRun(seeds, identity, payroll, vaultDetails, payFor(payroll), TEST_TOKEN), [0, 1]);
     const r0 = retry.payeeArgs(0);
     const retryPayload = pureCircuits.runPayload(
       fromHex(retry.tree.root), retry.tree.payees, WIN_FROM, WIN_UNTIL, 0n);
@@ -481,13 +520,13 @@ describe('a vault pays one payee of an approved run', () => {
 
     await expect(vault.impureCircuits.payout(
       payoutContext(),
-      retryId, fromHex(retry.tree.root), retry.tree.payees, WIN_FROM, WIN_UNTIL, c2.salt,
+      payeeRunOf(retryId, retry.tree, c2, r0),
       fromHex(recipientOf(r0.payee)), fromHex(r0.token), r0.amount,
-      fromHex(r0.blinding), fromHex(r0.nonce), r0.path as never))
+      fromHex(r0.blinding)))
       .rejects.toThrow(/already been made/i);
   });
 
-  itPaysOutOfTodaysVault('counts its payments, which is the one number an auditor can check with no key', async () => {
+  it('counts its payments, which is the one number an auditor can check with no key', async () => {
     const c = govChange(37);
     const run = await approvedRun([
       { to: ALICE, amount: 100n, nonce: 0xc7 },
@@ -496,13 +535,13 @@ describe('a vault pays one payee of an approved run', () => {
 
     const first = await vault.impureCircuits.payout(
       payoutContext(),
-      run.id, fromHex(run.tree.root), run.tree.payees, WIN_FROM, WIN_UNTIL, c.salt,
-      ALICE, GBP, 100n, bytes(0x40), bytes(0xc7), run.tree.pathFor(0) as never);
+      runOf(run, c, 0xc7, 0),
+      ALICE, TOKEN_BYTES, 100n, bytes(0x40));
     vaultState = first.context.callContext.currentQueryContext.state;
     expect(vaultLedger(vaultState as never).payments).toBe(1n);
   });
 
-  itPaysOutOfTodaysVault('refuses a note of the WRONG TOKEN with a message that says so', async () => {
+  it('refuses a note of the WRONG TOKEN with a message that says so', async () => {
     /*
      * The commitment check would refuse this too — a commitment covers the
      * coin's colour — so this pins WHICH refusal fires. An error saying "the
@@ -516,9 +555,20 @@ describe('a vault pays one payee of an approved run', () => {
 
     await expect(vault.impureCircuits.payout(
       payoutContext(),
-      run.id, fromHex(run.tree.root), run.tree.payees, WIN_FROM, WIN_UNTIL, c.salt,
-      ALICE, GBP, 100n, bytes(0x40), bytes(0xc9), run.tree.pathFor(0) as never))
+      runOf(run, c, 0xc9, 0),
+      ALICE, TOKEN_BYTES, 100n, bytes(0x40)))
       .rejects.toThrow(/not a note of the token being paid/i);
+  });
+
+  it("A PAYMENT'S DETAILS COMMIT TO THE AMOUNT: the same payee at another amount is another leaf", () => {
+    /*
+     * The account binds the amount a second way, through the run's sum tree, so a
+     * payment at another amount is refused even by details that left it out. This
+     * pins the details on their own, so neither binding quietly stands in for the other.
+     */
+    /* RED WHEN a payment's details stop covering the amount. */
+    expect(hex(vaultCircuits.payoutDetails(ALICE, TOKEN_BYTES, 250n, bytes(0x40))))
+      .not.toBe(hex(vaultCircuits.payoutDetails(ALICE, TOKEN_BYTES, 900n, bytes(0x40))));
   });
 
   it('two vaults holding the SAME coin publish different bytes', async () => {
@@ -530,7 +580,7 @@ describe('a vault pays one payee of an approved run', () => {
      * spent — so two vaults holding the same amount would publish identical
      * bytes and a watcher could read balances off the chain by comparison.
      */
-    const coin = { nonce: bytes(0x77), color: GBP, value: 1_000n };
+    const coin = { nonce: bytes(0x77), color: TOKEN_BYTES, value: 1_000n };
     const one = Uint8Array.from(Buffer.from(sampleContractAddress() as never as string, 'hex'));
     const other = Uint8Array.from(Buffer.from(sampleContractAddress() as never as string, 'hex'));
     expect(hex(one)).not.toBe(hex(other));
@@ -560,13 +610,13 @@ describe('a vault pays one payee of an approved run', () => {
     const pool = vaultLedger(vaultState as never).notes;
     expect(pool.size()).toBe(1n);
     expect(pool.member(heldBy(
-      vaultAddrBytes(), { nonce: bytes(0x77), color: GBP, value: 1_000n }))).toBe(true);
+      vaultAddrBytes(), { nonce: bytes(0x77), color: TOKEN_BYTES, value: 1_000n }))).toBe(true);
   });
 
   it('two notes of the same token sit in the pool side by side', async () => {
     /* The case one-note-per-token could not express, and the whole point of a
      * pool: a second deposit is another note, not a merge and not a conflict. */
-    const second = { nonce: bytes(0x88), color: GBP, value: 500n };
+    const second = { nonce: bytes(0x88), color: TOKEN_BYTES, value: 500n };
     const dep = await vault.impureCircuits.deposit(
       createCircuitContext<VaultPrivate>('deposit', vaultAddr as never, BLOCK, vaultState, priv),
       second);

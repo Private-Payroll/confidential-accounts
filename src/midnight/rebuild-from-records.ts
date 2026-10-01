@@ -16,11 +16,14 @@
  *      deposited is tried under every epoch of the vault's nonce secret. That
  *      is every slot any deposit to this vault can have used, however many
  *      attempts were abandoned or refused, so the walk has no gap to guess.
- *   2. Everything a found note became: for each amount the company paid,
- *      the change a payment of that amount left (its nonce follows from the
- *      spent note's, its value is the rest) and the piece a split of that
- *      amount made. Found notes are walked the same way until nothing new is
- *      found.
+ *   2. Everything a found note became, under each of the vault's nonce
+ *      secrets: a note the vault's split journal names was split, and the
+ *      journal's entry, unmasked with the secret, is the piece's amount, so
+ *      both notes the split kept are named exactly. Any other note may have
+ *      paid one of the amounts the company paid, and the change that payment
+ *      left is tried for each (its nonce follows from the secret and the
+ *      spent note's nullifier, its value is the rest). Found notes are walked
+ *      the same way until nothing new is found.
  *
  * **ASK THE CONTRACT, NOT THE LEDGER'S GENERAL CODE.** Each candidate is one
  * commitment. The vault's own compiled contract computes the same value the
@@ -35,8 +38,8 @@
  *
  * **WHAT IT CANNOT FIND, SAID RATHER THAN HIDDEN.** An amount the records do
  * not hold to the base unit names nothing, and so does a deposit somebody else
- * made, a split of an amount that is not a payment, a deposit made with a
- * nonce that was not derived, and a deposit derived from a key that is not one
+ * made, a coin made under a nonce secret the record does not hold, a deposit
+ * made with a nonce that was not derived, and a deposit derived from a key that is not one
  * of the vault's epochs (the operator tools derive theirs from their own seed
  * file). Each of those leaves a commitment in the vault's
  * note set that nothing explains, and the rebuild reports it as unexplained.
@@ -44,7 +47,11 @@
 import type { Hex } from '../core/crypto.js';
 import { toHex, fromHex } from '../core/crypto.js';
 import type { VaultCoin } from './vault-coins.js';
-import { changeNotesOf, sentNonceOf } from './vault-recovery.js';
+import { changeNotesOf, splitPiecesOf } from './vault-recovery.js';
+import {
+  NonceSecretNeeded, nonceCircuitsFrom, secretsOfTheVault, spentNullifierOf, splitPieceAmountOf,
+  type VaultNonceCircuits, type VaultNonceSecrets,
+} from './vault-coin-nonces.js';
 import { depositNonceAt, lastDepositSlot, type DepositNonceKey } from './deposit-nonce.js';
 
 /** What the company recorded, per token, in the token's base units. */
@@ -59,7 +66,7 @@ export interface CompanyRecords {
 export interface RecordsWalk {
   /** Every coin found, spent or not, in the order found. */
   readonly coins: readonly VaultCoin[];
-  /** How many of them are deposits, changes and split pieces. */
+  /** How many of them are deposits, notes that stayed (a payment's change, a split's remainder) and split pieces. */
   readonly found: { readonly deposits: number; readonly changes: number; readonly pieces: number };
   /** Candidate coins put to the history. */
   readonly checks: number;
@@ -77,7 +84,10 @@ export interface RecordsWalk {
 export const compiledOutputCommitment = async (): Promise<(coin: VaultCoin, vault: Hex) => string> => {
   const { Contract } = await import('../../contracts/managed-vault/contract/index.js');
   /* The one witness the contract requires, which a commitment never reaches. */
-  const spendsNothing = { noteToSpend: () => { throw new Error('a rebuild computes commitments and spends nothing'); } };
+  const spendsNothing = {
+    noteToSpend: () => { throw new Error('a rebuild computes commitments and spends nothing'); },
+    nonceSecret: () => { throw new Error('a rebuild computes commitments and reads no nonce secret'); },
+  };
   const contract = new Contract(spendsNothing as never) as unknown as {
     _coinCommitment_0?: (
       coin: { nonce: Uint8Array; color: Uint8Array; value: bigint },
@@ -118,6 +128,17 @@ export const walkCompanyRecords = async (input: {
   readonly everCreated: ReadonlySet<string>;
   /** The ledger's commitment of one coin owned by the vault. */
   readonly commitmentOf: (coin: VaultCoin, vault: Hex) => Promise<string> | string;
+  /**
+   * **THE VAULT'S NONCE SECRETS**, every one the company's record holds, oldest
+   * first, with the commitment the vault holds now. Every change and split piece
+   * the vault made takes its nonce from one of them, so a walk of records that
+   * name any payment is refused without them.
+   */
+  readonly nonceSecrets?: VaultNonceSecrets;
+  /** The vault's split journal as the chain holds it: masked amount by spent note's nullifier, hex. Required with the secrets. */
+  readonly splitJournal?: ReadonlyMap<string, string>;
+  /** The vault contract's pure circuits; the compiled contract's own when not given. */
+  readonly circuits?: Partial<VaultNonceCircuits>;
 }): Promise<RecordsWalk> => {
   /*
    * A token is written one way, 64 lower-case hex characters, as the pool writes
@@ -142,6 +163,30 @@ export const walkCompanyRecords = async (input: {
   const paidByToken = new Map<string, bigint[]>();
   for (const p of distinct(input.records.paid, (x) => `${x.token}:${x.amount}`)) {
     paidByToken.set(p.token, [...(paidByToken.get(p.token) ?? []), p.amount]);
+  }
+
+  /*
+   * **WHAT NAMES A COIN THE VAULT MADE, CHECKED BEFORE ANYTHING IS WALKED.** The
+   * secrets must include the one the vault holds now, and the split journal
+   * must have been read: a journal not read is not a vault that never split.
+   */
+  let naming: { circuits: VaultNonceCircuits; secrets: readonly Hex[]; journal: Map<string, string> } | undefined;
+  if (input.nonceSecrets !== undefined) {
+    const circuits = nonceCircuitsFrom(input.circuits
+      ?? (await import('../../contracts/managed-vault/contract/index.js')).pureCircuits as unknown as VaultNonceCircuits);
+    if (input.splitJournal === undefined) {
+      throw new NonceSecretNeeded(
+        'the vault\'s split journal was not given. A split\'s pieces are named from it, and a journal '
+        + 'not read is not a vault that never split: read it from the chain, where an empty one is a vault with no split.');
+    }
+    naming = {
+      circuits,
+      secrets: secretsOfTheVault(circuits, input.vault, input.nonceSecrets),
+      journal: new Map([...input.splitJournal].map(([k, v]) => [k.toLowerCase().replace(/^0x/u, ''), v.toLowerCase().replace(/^0x/u, '')])),
+    };
+  } else if (paidByToken.size > 0) {
+    throw new NonceSecretNeeded(
+      'the company\'s records name payments, and the change each one left is named only with the vault\'s nonce secret.');
   }
 
   let checks = 0;
@@ -185,22 +230,34 @@ export const walkCompanyRecords = async (input: {
   const slots = { walked: last, lastFound };
 
   /*
-   * **A CHANGE'S NONCE, AND A PIECE'S, DEPEND ONLY ON THE NOTE THEY CAME FROM**,
-   * so each is worked out once per note, and only one change and one piece can
-   * exist per note: once one is found, the other amounts are not tried.
+   * **EVERY COIN MADE FROM A NOTE DEPENDS ONLY ON THE NOTE, THE SECRET AND WHAT
+   * LEFT IT.** A note is spent once, so once anything made from it is found
+   * nothing else is tried for it. A note the split journal names was split:
+   * the entry gives the piece exactly, and the note that stays is named first,
+   * then the piece. Any other note is tried against each amount paid in its
+   * token, the change worked out once per secret.
    */
-  for (let i = 0; i < coins.length; i += 1) {
+  for (let i = 0; naming !== undefined && i < coins.length; i += 1) {
     const note = coins[i]!;
-    const amounts = paidByToken.get(note.token) ?? [];
-    for (const change of changeNotesOf(note, amounts)) {
-      if (byNonce.has(change.nonce)) break;
-      if (await made(change)) keep(change, 'changes');
-    }
-    const pieceNonce = toHex(sentNonceOf(fromHex(note.nonce)));
-    for (const amount of amounts) {
-      if (amount >= note.value || byNonce.has(pieceNonce)) continue;
-      const piece = { nonce: pieceNonce, token: note.token, value: amount };
-      if (await made(piece)) keep(piece, 'pieces');
+    const nullifier = spentNullifierOf(naming.circuits, input.vault, note);
+    const masked = naming.journal.get(nullifier);
+    for (const secret of naming.secrets) {
+      const under = { circuits: naming.circuits, vault: input.vault, secret };
+      if (masked !== undefined) {
+        const amount = splitPieceAmountOf(naming.circuits, secret, nullifier, masked, note.value);
+        if (amount === undefined) continue;
+        const [piece, rest] = splitPiecesOf(note, amount, under);
+        const keptRest = !byNonce.has(rest.nonce) && await made(rest) && keep(rest, 'changes');
+        const keptPiece = !byNonce.has(piece.nonce) && await made(piece) && keep(piece, 'pieces');
+        if (keptRest || keptPiece) break;
+        continue;
+      }
+      let found = false;
+      for (const change of changeNotesOf(note, paidByToken.get(note.token) ?? [], under)) {
+        if (byNonce.has(change.nonce)) break;
+        if (await made(change)) { found = keep(change, 'changes'); break; }
+      }
+      if (found) break;
     }
   }
 

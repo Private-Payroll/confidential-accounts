@@ -86,7 +86,7 @@ describe('where each page is started', () => {
       ['WALLET_ORIGIN', 'http://localhost:5180'],
     ]);
     expect(plan.starts[0].command).toEqual(
-      ['node_modules/.bin/vite', '--host', 'localhost', '--port', '5173', '--strictPort']);
+      ['node_modules/.bin/vite', '--config', 'apps/web/vite.config.ts', '--host', 'localhost', '--port', '5173', '--strictPort']);
     expect(plan.starts[1].command).toEqual(
       ['npm', 'run', 'wallet', '--', '--host', 'localhost', '--port', '5180', '--strictPort']);
   });
@@ -132,46 +132,41 @@ describe('where each page is started', () => {
 describe('which application is served on the application\'s origin', () => {
   /*
    * RED WHEN: an unset or empty setting serves anything but the application in
-   * `src/web-legacy` - every command that does not set it would change what it serves.
+   * `apps/web`.
    */
-  it('serves the application in src/web-legacy when nothing chooses', () => {
-    expect(applicationPageFrom({})).toEqual({ page: 'legacy' });
-    expect(applicationPageFrom({ [PAGE_SETTING]: '' })).toEqual({ page: 'legacy' });
+  it('serves the application in apps/web when nothing chooses', () => {
+    expect(applicationPageFrom({})).toEqual({ page: 'web' });
+    expect(applicationPageFrom({ [PAGE_SETTING]: '' })).toEqual({ page: 'web' });
     expect(PAGE_SETTING).toBe('PAYROLL_PAGE');
   });
 
-  /* RED WHEN: a value naming neither application is taken as one, or silently as the default. */
-  it('serves the new application when chosen, and refuses a value that names neither', () => {
+  /* RED WHEN: a value naming no application is taken as one, or silently as the default -
+   * the application that was deleted among them. */
+  it('serves the application when chosen, and refuses a value that names none', () => {
     expect(applicationPageFrom({ PAYROLL_PAGE: 'web' })).toEqual({ page: 'web' });
-    expect(applicationPageFrom({ PAYROLL_PAGE: 'legacy' })).toEqual({ page: 'legacy' });
-    for (const v of ['v2', 'WEB', 'toString', 'constructor', '__proto__']) {
+    for (const v of ['legacy', 'v2', 'WEB', 'toString', 'constructor', '__proto__']) {
       const r = applicationPageFrom({ PAYROLL_PAGE: v });
-      expect(r, v).toEqual({ refusal: expect.stringMatching(/which names no application. It is one of legacy, web/) });
+      expect(r, v).toEqual({ refusal: expect.stringMatching(/which names no application. It is one of web, or unset/) });
     }
   });
 
   /*
-   * RED WHEN: the new application is started on any origin but the application's,
-   * with any configuration but its own, or unpinned; or choosing it moves the
-   * wallet. And the default start is not byte for byte what it was.
+   * RED WHEN: the application is started on any origin but the application's,
+   * with any configuration but its own, or unpinned; or the default start is
+   * not the same start as choosing it.
    */
-  it('starts the new application on the same origin, with its own configuration, and the wallet unchanged', () => {
-    const legacy = pageStartsFor(devSettings());
-    const byDefault = pageStartsFor(devSettings(), 'legacy');
+  it('starts the application on the application\'s origin, with its own configuration, and the wallet beside it', () => {
+    const byDefault = pageStartsFor(devSettings());
     const web = pageStartsFor(devSettings(), 'web');
-    if (!('starts' in legacy) || !('starts' in web) || !('starts' in byDefault)) throw new Error('refused');
-    expect(byDefault).toEqual(legacy);
-    expect(legacy.starts[0]).toEqual({
-      label: 'the payroll application', setting: 'APP_ORIGIN', origin: 'http://localhost:5173',
-      command: ['node_modules/.bin/vite', '--host', 'localhost', '--port', '5173', '--strictPort'],
-    });
+    if (!('starts' in web) || !('starts' in byDefault)) throw new Error('refused');
+    expect(byDefault).toEqual(web);
     expect(web.starts[0]).toEqual({
-      label: 'the new payroll application', setting: 'APP_ORIGIN', origin: 'http://localhost:5173',
+      label: 'the payroll application', setting: 'APP_ORIGIN', origin: 'http://localhost:5173',
       command: ['node_modules/.bin/vite', '--config', 'apps/web/vite.config.ts', '--host', 'localhost', '--port', '5173', '--strictPort'],
     });
-    expect(web.starts[1]).toEqual(legacy.starts[1]);
+    expect(web.starts[1]!.setting).toBe('WALLET_ORIGIN');
     expect(existsSync(join(ROOT, 'apps/web/vite.config.ts'))).toBe(true);
-    expect(Object.keys(APPLICATION_PAGES)).toEqual(['legacy', 'web']);
+    expect(Object.keys(APPLICATION_PAGES)).toEqual(['web']);
   });
 
   /*
@@ -185,7 +180,7 @@ describe('which application is served on the application\'s origin', () => {
     expect(text).toMatch(/const chosen = applicationPageFrom\(process\.env\);\s*if \('refusal' in chosen\) throw new Error\(chosen\.refusal\);/);
     expect(text).toMatch(/const plan = pageStartsFor\(posture, chosen\.page\);/);
     expect(text).not.toMatch(/process\.argv/);
-    /* And the read-only command is untouched by it: it serves the application in src/web-legacy. */
+    /* And the read-only command reads no choice at all: it serves the default. */
     expect(code('scripts/serve.ts')).toMatch(/const plan = pageStartsFor\(process\.env\);/);
   });
 });
@@ -271,14 +266,13 @@ describe('both commands start the product the same way', () => {
   });
 });
 
-describe('both applications pass the same list of paths on to the service', () => {
+describe('the application passes the one list of paths on to the service', () => {
   /*
-   * RED WHEN: either application's page configuration passes on a list that
-   * differs from the one list - a path added, dropped or sent elsewhere - so the
-   * two would reach the service differently from one origin. A copy identical to
-   * the list stays green; it is a difference that this refuses.
+   * RED WHEN: the application's page configuration passes on a list that
+   * differs from the one list - a path added, dropped or sent elsewhere. A copy
+   * identical to the list stays green; it is a difference that this refuses.
    */
-  it.each(['vite.config.ts', 'apps/web/vite.config.ts'])('%s passes on exactly the one list', async (config) => {
+  it.each(['apps/web/vite.config.ts'])('%s passes on exactly the one list', async (config) => {
     const { default: loaded } = await import(/* @vite-ignore */ join(ROOT, config));
     expect(loaded.server?.proxy).toEqual(SERVICE_PROXY);
     expect(Object.keys(SERVICE_PROXY).sort()).toEqual(['/api', '/artefacts/vault']);

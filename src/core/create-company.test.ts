@@ -564,8 +564,8 @@ describe('§3 - NO PASSWORD, ANYWHERE ON THIS JOURNEY', () => {
      * written, a password path existed alongside this one and the point was
      * that this journey did not touch it. There is no other path now — so what
      * this still catches is a REGRESSION that puts auth material back on the
-     * wire, and the claim that none exists anywhere is made by
-     * `src/web-legacy/no-password-in-the-bundle.test.ts`, which builds the app.
+     * wire. The claim that none exists anywhere was made by a build of the
+     * earlier application, which went with it.
      */
     const server = aServer();
     const { view, keyring } = await signedInWith(server);
@@ -591,8 +591,8 @@ describe('§3 - NO PASSWORD, ANYWHERE ON THIS JOURNEY', () => {
      * file would now pass this. **Widening it to the file would be a different
      * test with the same name**: this one says the CREATION PATH has nowhere to
      * put a password, which stays worth saying the day somebody adds a fallback
-     * to one here — and `no-password-in-the-bundle.test.ts` makes the
-     * whole-file claim against the built output, where it belongs.
+     * to one here. The whole-file claim against built output belongs to a
+     * build check, and no build of `apps/web` makes it yet.
      */
     const src = readFileSync(new URL('../../packages/web-shared/src/keyring.ts', import.meta.url), 'utf8');
     const opens = src.indexOf('/* ---------------- bringing a company into being');

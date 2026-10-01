@@ -33,6 +33,13 @@ import {
   type CreatingTransaction, type NoteEvents, type ServedEvent,
 } from './note-index.js';
 
+/** The item at a place in a list; an item that is not there fails the test here rather than being read through. */
+const itemAt = <T,>(xs: readonly T[], i: number): T => {
+  const x = xs[i];
+  if (x === undefined) throw new Error(`expected an item at place ${i}, and the list holds ${xs.length}`);
+  return x;
+};
+
 /*
  * **THE VAULT'S GENERATED MODULE, FAKED DOWN TO ITS READER AND NOTHING ELSE.**
  *
@@ -76,7 +83,6 @@ vi.doMock('../../contracts/managed-vault/contract/index.js', () => ({
 const GBP = 'aa'.repeat(32);
 /** The token the product launches with, and it is UNSHIELDED by definition. */
 const NIGHT = '99'.repeat(32);
-const SEED = '5e'.repeat(32);
 /*
  * A REAL 32-BYTE CONTRACT ADDRESS, because `C198`'s reconciliation decodes it:
  * the note blinding is a function of the vault's own address
@@ -139,11 +145,17 @@ const seededIndex = (i: number) => 40n + BigInt(i) * 3n;
 let eventsInUse: NoteEvents = { eventsOf: async () => { throw new Error('no harness built'); } };
 const EVENTS: NoteEvents = { eventsOf: (tx) => eventsInUse.eventsOf(tx) };
 
+/** The vault's current nonce secret, as a signer's device opens it from the company's record. */
+const SECRET = '51'.repeat(32);
+/** Sixteen levels, each distinct, so a step dropped, reordered or rewritten reads differently. */
+const PATH = Array.from({ length: 16 }, (_, d) => ({ sibling: 1_000n + BigInt(d), siblingSum: BigInt(d * 7), goesLeft: d % 3 === 0 }));
+
 const payment = (amount: bigint): VaultPayment => ({
   proposal: '11'.repeat(32), root: '22'.repeat(32), payees: 3n,
   opensAt: 1_800_000_000n, closesAt: 1_800_604_800n, salt: '33'.repeat(32),
   payee: PAYEE, token: GBP, amount,
-  blinding: '55'.repeat(32), nonce: '66'.repeat(32), path: {},
+  blinding: '55'.repeat(32), nonce: '66'.repeat(32),
+  runVault: VAULT, required: 2n, asset: GBP, path: PATH,
 });
 
 function harness(opts: {
@@ -330,6 +342,8 @@ function harness(opts: {
   const produced: Array<{ coin: { nonce: string; token: string; value: bigint }; hash: string; index: bigint }> = [];
   const eventReads: CreatingTransaction[] = [];
   const spentCoins: any[] = [];
+  /** Every nonce secret the fake's payout was handed, as hex, in order. */
+  const secretsRead: string[] = [];
   let payouts = 0;
   eventsInUse = {
     eventsOf: async (tx) => {
@@ -587,53 +601,51 @@ function harness(opts: {
         return { public: { txId: 'tx_dep_public' } };
       },
       /*
-       * `payoutUnshielded` — the same TWELVE arguments as `payout`, and the
+       * `payoutUnshielded`: the same FIVE arguments as `payout`, and the
        * arity guard reads them off the vault's own contract-info.json, so this
        * count is the compiler's rather than this file's.
        *
-       *   0 proposal  1 root      2 payees    3 opensAt  4 closesAt
-       *   5 salt      6 recipient 7 token     8 amount
-       *   9 blinding  10 nonce    11 path
+       *   0 run  1 recipient  2 token  3 amount  4 blinding
        *
        * **It calls NO WITNESS and returns NO Zswap local state**, because the
        * circuit has neither. A fake that handed back a change coin here would
        * hide the thing being tested.
        */
       payoutUnshielded: async (...raw: unknown[]) => {
-        const args = dispatch('payoutUnshielded', 12)(...raw);
+        const args = dispatch('payoutUnshielded', 5)(...raw);
         calls.push({ circuit: 'payoutUnshielded', args, ctx: raw[0] });
         if (opts.throws) throw new Error(opts.throws);
         return { public: { txId: 'tx_pay_public' } };
       },
       payout: async (...raw: unknown[]) => {
-        const args = dispatch('payout', 12)(...raw);
+        const args = dispatch('payout', 5)(...raw);
         calls.push({ circuit: 'payout', args, ctx: raw[0] });
         anotherWriter();
         if (opts.throws) throw new Error(opts.throws);
         if (opts.asksForANote !== false) {
           /*
-           * Index 8 is the amount. It has now been 8, then 9, then 8 again —
-           * moved by `payslipKey` arriving (V-75) and by it being deleted
-           * (V-77) — and each move failed as a Uint8Array coerced into an
-           * error message as `170,170,170,...`, which names nothing.
+           * Index 3 is the amount. It has moved before, and each move failed
+           * as a Uint8Array coerced into an error message as
+           * `170,170,170,...`, which names nothing.
            *
            * Positional arguments into a fake contract are the one place this
            * repo cannot lean on the compiler, so the list is written out
            * beside the index that reads it, and updated with it.
            *
-           *   0 proposal  1 root      2 payees    3 opensAt  4 closesAt
-           *   5 salt      6 recipient 7 token     8 amount
-           *   9 blinding  10 nonce    11 path
+           *   0 run  1 recipient  2 token  3 amount  4 blinding
            *
-           * TWELVE, and nothing after them. The encryption mapping is NOT an
+           * FIVE, and nothing after them. The encryption mapping is NOT an
            * argument: it travels in the transaction context that arrives
-           * BEFORE these, and `dispatch` above has already stripped it. The
-           * previous version of this comment said the opposite and was the
-           * reason V-82 survived.
+           * BEFORE these, and `dispatch` above has already stripped it.
+           *
+           * The secret is asked for first, as the circuit asks for it before
+           * it asks for a note.
            */
-          const [, coin] = witnesses.noteToSpend({}, Buffer.from(GBP, 'hex'), args[8] as bigint);
+          const [, secret] = witnesses.nonceSecret({ privateState: undefined });
+          secretsRead.push(toHex(secret as Uint8Array));
+          const [, coin] = witnesses.noteToSpend({}, Buffer.from(GBP, 'hex'), args[3] as bigint);
           spentCoins.push(coin);
-          return payoutResult(coin, args[8] as bigint, toHex(args[6] as Uint8Array));
+          return payoutResult(coin, args[3] as bigint, toHex(args[1] as Uint8Array));
         }
         return { public: { txId: 'tx_pay' } };
       },
@@ -789,7 +801,7 @@ function harness(opts: {
   };
 
   return {
-    ledger, calls, saves, creates, scopes, eventReads, spentCoins, journalled, depositsJournalled,
+    ledger, calls, saves, creates, scopes, eventReads, spentCoins, secretsRead, journalled, depositsJournalled,
     current: () => stored, witnessesUsed: () => witnesses,
   };
 }
@@ -805,11 +817,11 @@ describe('V-74: the vault client', () => {
     const { ledger, calls, current } = harness({ notes: [] });
     await ledger.deposit(VAULT, { token: GBP, value: 500n }, BY);
 
-    expect(calls[0].circuit).toBe('deposit');
-    expect(calls[0].args).toHaveLength(1);
+    expect(itemAt(calls, 0).circuit).toBe('deposit');
+    expect(itemAt(calls, 0).args).toHaveLength(1);
     expect(balanceOf(current(), GBP)).toBe(500n);
     /* Where its index is to be read from, off the finalised result, and no index. */
-    expect(current().notes[0].createdIn).toBe(DEP_TX);
+    expect(itemAt(current().notes, 0).createdIn).toBe(DEP_TX);
     expect(current().notes[0]).not.toHaveProperty('index');
   });
 
@@ -827,7 +839,7 @@ describe('V-74: the vault client', () => {
     /* RED WHEN the ordinary path stops recording the transaction the call reported. */
     expect(out.recordedFrom).toBe('the call');
     expect(out.createdIn).toBe(DEP_TX);
-    expect(current().notes[0].createdIn).toBe(DEP_TX);
+    expect(itemAt(current().notes, 0).createdIn).toBe(DEP_TX);
     /* RED WHEN a deposit reads the chain it did not need to read, which is a network call per deposit. */
     expect(eventReads).toEqual([]);
     /* RED WHEN the note is written by more than one save, which would be a fourth writer of this pool. */
@@ -845,7 +857,7 @@ describe('V-74: the vault client', () => {
      */
     expect(out.recordedFrom).toBe('the chain');
     expect(out.createdIn).toBe(DEP_TX);
-    expect(current().notes[0].createdIn).toBe(DEP_TX);
+    expect(itemAt(current().notes, 0).createdIn).toBe(DEP_TX);
     /* RED WHEN the chain is asked by a name it was never given: the pool holds the hash, the call reported the identifier. */
     expect(eventReads).toEqual([{ identifier: DEP_ID }]);
     /* RED WHEN the repair becomes a second write, which is what makes it a fourth writer of an unlocked pool. */
@@ -865,7 +877,7 @@ describe('V-74: the vault client', () => {
      */
     expect(out.recordedFrom).toBe('nowhere');
     expect(saves).toHaveLength(1);
-    expect(current().notes[0].value).toBe(500n);
+    expect(itemAt(current().notes, 0).value).toBe(500n);
     /* RED WHEN a note is written with no creating transaction and nothing says so. */
     expect(out.stranded).toContain('no source of the chain');
     expect(current().notes[0]).not.toHaveProperty('createdIn');
@@ -923,7 +935,7 @@ describe('V-74: the vault client', () => {
     expect(out.stranded).toMatch(/did not create this note|not for a contract|different contract/);
     /* RED WHEN the note is lost because the check threw instead of answering. */
     expect(saves).toHaveLength(1);
-    expect(current().notes[0].value).toBe(500n);
+    expect(itemAt(current().notes, 0).value).toBe(500n);
   });
 
   /**
@@ -993,7 +1005,7 @@ describe('V-74: the vault client', () => {
     expect(out.stranded).toBe('the indexer will not take this question');
     /* RED WHEN a final answer loses the note, which is what throwing here does. */
     expect(saves).toHaveLength(1);
-    expect(current().notes[0].value).toBe(500n);
+    expect(itemAt(current().notes, 0).value).toBe(500n);
     expect(current().notes[0]).not.toHaveProperty('createdIn');
   });
 
@@ -1030,7 +1042,7 @@ describe('V-74: the vault client', () => {
     expect(out.permanent).toBeUndefined();
     /* RED WHEN the note is lost because the refusal threw instead of answering. */
     expect(saves).toHaveLength(1);
-    expect(current().notes[0].value).toBe(500n);
+    expect(itemAt(current().notes, 0).value).toBe(500n);
   });
 
   it('says so when the call names the transaction NEITHER way', async () => {
@@ -1069,7 +1081,7 @@ describe('V-74: the vault client', () => {
      * measured here against the product's own refusal rather than asserted in
      * a comment.
      */
-    const stranded = current().notes[0];
+    const stranded = itemAt(current().notes, 0);
     await expect(indexForSpend(VAULT as `${string}`, stranded, eventsInUse)).rejects
       .toThrow(/does not record which transaction created it/);
   });
@@ -1081,29 +1093,29 @@ describe('V-74: the vault client', () => {
      * next payment that needs it is refused after its round has been paid for.
      */
     const { ledger, current, eventReads } = harness({ notes: [{ nonce: '01'.repeat(32), value: 1_000n }], payoutResult: 'no-hash' });
-    const r = await ledger.payout(VAULT, payment(200n), BY, EVENTS);
+    const r = await ledger.payout(VAULT, payment(200n), BY, EVENTS, SECRET);
     if (r.kind !== 'shielded') throw new Error('a shielded payee was paid through another door');
     expect(r.change).toEqual({ createdIn: payHash(1), recordedFrom: 'the chain' });
     expect(eventReads).toContainEqual({ identifier: payId(1) });
     expect(current().notes).toEqual([{ nonce: 'ab'.repeat(32), token: GBP, value: 800n, createdIn: payHash(1) }]);
     /* And the note it recorded is one the next payment can spend: its index is read from that transaction. */
-    await expect(ledger.payout(VAULT, payment(700n), BY, EVENTS)).resolves.toMatchObject({ kind: 'shielded', spentNote: 'ab'.repeat(32) });
+    await expect(ledger.payout(VAULT, payment(700n), BY, EVENTS, SECRET)).resolves.toMatchObject({ kind: 'shielded', spentNote: 'ab'.repeat(32) });
   });
 
   it('A CHANGE NOTE NOTHING CAN NAME IS STILL KEPT, AND THE PAYMENT SAYS IT CANNOT BE SPENT YET', async () => {
     /* RED WHEN: the payment answers as though its change were spendable, or throws and loses the change from the pool. */
     const { ledger, current } = harness({ notes: [{ nonce: '01'.repeat(32), value: 1_000n }], payoutResult: 'nothing-to-go-on' });
-    const r = await ledger.payout(VAULT, payment(200n), BY, EVENTS);
+    const r = await ledger.payout(VAULT, payment(200n), BY, EVENTS, SECRET);
     if (r.kind !== 'shielded') throw new Error('a shielded payee was paid through another door');
     expect(r.change?.recordedFrom).toBe('nowhere');
     expect(r.change?.stranded).toMatch(/neither a transaction hash nor an identifier/);
     expect(current().notes).toEqual([{ nonce: 'ab'.repeat(32), token: GBP, value: 800n }]);
-    await expect(ledger.payout(VAULT, payment(700n), BY, EVENTS)).rejects.toThrow(/does not record which transaction created it/);
+    await expect(ledger.payout(VAULT, payment(700n), BY, EVENTS, SECRET)).rejects.toThrow(/does not record which transaction created it/);
   });
 
   it('a payment that spends its note exactly says nothing about a change it did not make', async () => {
     const { ledger } = harness({ notes: [{ nonce: '01'.repeat(32), value: 200n }] });
-    const r = await ledger.payout(VAULT, payment(200n), BY, EVENTS);
+    const r = await ledger.payout(VAULT, payment(200n), BY, EVENTS, SECRET);
     expect(r).not.toHaveProperty('change');
   });
 
@@ -1117,7 +1129,7 @@ describe('V-74: the vault client', () => {
     const { ledger, current } = harness({
       notes: [{ nonce: '01'.repeat(32), value: 1_000n }, { nonce: '02'.repeat(32), value: 300n }],
     });
-    const r = await ledger.payout(VAULT, payment(200n), BY, EVENTS);
+    const r = await ledger.payout(VAULT, payment(200n), BY, EVENTS, SECRET);
 
     /*
      * **THE KIND IS ESTABLISHED BEFORE THE NOTE IS READ.**
@@ -1149,19 +1161,21 @@ describe('V-74: the vault client', () => {
    */
   it('ENCRYPTS THE PAYMENT TO THE SAME PAYEE IT PAYS, from one value', async () => {
     const { ledger, calls } = harness();
-    await ledger.payout(VAULT, payment(200n), BY, EVENTS);
+    await ledger.payout(VAULT, payment(200n), BY, EVENTS, SECRET);
 
     const call = calls.find(c => c.circuit === 'payout')!;
-    /* 6 is the recipient — the coin key, the only half the circuit sees. */
-    const recipient = toHex(call.args[6] as Uint8Array);
+    /* 1 is the recipient: the coin key, the only half the circuit sees. */
+    const recipient = toHex(call.args[1] as Uint8Array);
     /*
      * And the mapping is on the CONTEXT, which is what midnight-js reads. The
-     * circuit's own arguments end at eleven; a thirteenth argument is the V-82
+     * circuit's own arguments end at the fifth; a sixth argument is the V-82
      * defect and `dispatch` now refuses it.
      */
-    expect(call.args).toHaveLength(12);
+    /* RED WHEN the private payment hands its circuit any argument beyond the run, the payee, the token, the amount and the blinding. */
+    expect(call.args).toHaveLength(5);
     const mappings = [...(call.ctx as any).getAdditionalMappings().entries()];
 
+    /* RED WHEN the coin key leaves the recipient position of the five. */
     expect(recipient).toBe(PAYEE.coinPublicKey);
     expect(mappings).toHaveLength(1);
     expect(mappings[0][0]).toBe(recipient);
@@ -1177,17 +1191,19 @@ describe('V-74: the vault client', () => {
   it('REFUSES A CALL WITH THE WRONG NUMBER OF ARGUMENTS, before anything is built', async () => {
     /*
      * The guard `ledger.ts` has had since M-38 and this client did not — which
-     * is exactly how an options object became a thirteenth argument to a circuit
-     * that declares twelve. It reads the VAULT's own compiled ABI, so it moves
+     * is exactly how an options object became an extra argument to a circuit
+     * that declares fewer. It reads the VAULT's own compiled ABI, so it moves
      * when the contract does.
      */
     const { ledger, calls } = harness();
+    /* RED WHEN the arity guard stops reading the vault's own compiled count before a call is built. */
     await expect((ledger as any).call(VAULT, 'payout', [1, 2, 3]))
-      .rejects.toThrow(/circuit "payout" takes 12 argument\(s\), got 3/);
+      .rejects.toThrow(/circuit "payout" takes 5 argument\(s\), got 3/);
     expect(calls).toHaveLength(0);
 
-    await expect((ledger as any).call(VAULT, 'payout', new Array(13).fill(0)))
-      .rejects.toThrow(/takes 12 argument\(s\), got 13/);
+    /* RED WHEN an argument beyond the circuit's five is let through. */
+    await expect((ledger as any).call(VAULT, 'payout', new Array(6).fill(0)))
+      .rejects.toThrow(/takes 5 argument\(s\), got 6/);
   });
 
   it('REFUSES A PAYEE WHOSE ADDRESS IS FOR ANOTHER NETWORK, which nothing downstream would', async () => {
@@ -1199,7 +1215,7 @@ describe('V-74: the vault client', () => {
      */
     const { ledger, calls } = harness();
     const elsewhere = { ...payment(100n), payee: payeeFor(new Uint8Array(32).fill(0x44), 'stagenet') };
-    await expect(ledger.payout(VAULT, elsewhere, BY, EVENTS))
+    await expect(ledger.payout(VAULT, elsewhere, BY, EVENTS, SECRET))
       .rejects.toThrow(/for stagenet and this vault is on preview/);
     expect(calls).toHaveLength(0);
   });
@@ -1223,7 +1239,7 @@ describe('V-74: the vault client', () => {
     const { ledger, calls } = harness({
       notes: [{ nonce: '01'.repeat(32), value: 60n }, { nonce: '02'.repeat(32), value: 60n }],
     });
-    await expect(ledger.payout(VAULT, payment(100n), BY, EVENTS))
+    await expect(ledger.payout(VAULT, payment(100n), BY, EVENTS, SECRET))
       .rejects.toThrow(/no single note covers 100/i);
     expect(calls).toEqual([]);
   });
@@ -1235,7 +1251,7 @@ describe('V-74: the vault client', () => {
      * until somebody replays it from the chain.
      */
     const { ledger, saves, current } = harness({ throws: 'node said no' });
-    await expect(ledger.payout(VAULT, payment(100n), BY, EVENTS)).rejects.toThrow(/node said no/);
+    await expect(ledger.payout(VAULT, payment(100n), BY, EVENTS, SECRET)).rejects.toThrow(/node said no/);
     expect(saves).toEqual([]);
     expect(balanceOf(current(), GBP)).toBe(1_000n);
   });
@@ -1248,7 +1264,7 @@ describe('V-74: the vault client', () => {
      * quietly loses track of its own money.
      */
     const { ledger, saves } = harness({ asksForANote: false });
-    await expect(ledger.payout(VAULT, payment(100n), BY, EVENTS))
+    await expect(ledger.payout(VAULT, payment(100n), BY, EVENTS, SECRET))
       .rejects.toThrow(/paid without asking for a note|rebuild it from the chain/i);
     expect(saves).toEqual([]);
   });
@@ -1259,8 +1275,8 @@ describe('V-74: the vault client', () => {
      * already appeared once in this repo, in the first vault test helper.
      */
     const { ledger, current } = harness();
-    await ledger.payout(VAULT, payment(100n), BY, EVENTS);
-    await ledger.payout(VAULT, payment(200n), BY, EVENTS);
+    await ledger.payout(VAULT, payment(100n), BY, EVENTS, SECRET);
+    await ledger.payout(VAULT, payment(200n), BY, EVENTS, SECRET);
     expect(balanceOf(current(), GBP)).toBe(700n);
     expect(current().notes).toHaveLength(1);
   });
@@ -1607,7 +1623,7 @@ describe('a private payment spends against the index the chain reports at that m
     const { ledger, spentCoins, eventReads } = harness({
       notes: [{ nonce: '01'.repeat(32), value: 60n }, { nonce: '02'.repeat(32), value: 1_000n }],
     });
-    await ledger.payout(VAULT, payment(200n), BY, EVENTS);
+    await ledger.payout(VAULT, payment(200n), BY, EVENTS, SECRET);
 
     /* The note of 1,000 is the second seeded note, filed by the chain at 43. */
     expect(eventReads).toEqual([{ hash: SEEDED_TX }]);
@@ -1618,7 +1634,7 @@ describe('a private payment spends against the index the chain reports at that m
 
   it('never writes that index into the pool: the next spend reads it again', async () => {
     const { ledger, saves } = harness();
-    await ledger.payout(VAULT, payment(100n), BY, EVENTS);
+    await ledger.payout(VAULT, payment(100n), BY, EVENTS, SECRET);
     for (const saved of saves) {
       for (const n of saved.notes) expect(n).not.toHaveProperty('index');
     }
@@ -1626,8 +1642,8 @@ describe('a private payment spends against the index the chain reports at that m
 
   it('spends the change of the last payment by reading ITS transaction', async () => {
     const { ledger, spentCoins, eventReads } = harness();
-    await ledger.payout(VAULT, payment(100n), BY, EVENTS);
-    await ledger.payout(VAULT, payment(200n), BY, EVENTS);
+    await ledger.payout(VAULT, payment(100n), BY, EVENTS, SECRET);
+    await ledger.payout(VAULT, payment(200n), BY, EVENTS, SECRET);
     expect(eventReads).toEqual([{ hash: SEEDED_TX }, { hash: payHash(1) }]);
     expect(spentCoins[1].value).toBe(900n);
     expect(spentCoins[1].mt_index).toBe(91n);
@@ -1635,15 +1651,15 @@ describe('a private payment spends against the index the chain reports at that m
 
   it('REFUSES before a fee when the chain cannot be read, and moves nothing', async () => {
     const { ledger, calls, saves } = harness({ events: 'unreadable' });
-    await expect(ledger.payout(VAULT, payment(100n), BY, EVENTS)).rejects.toThrow(NoteIndexUnreadable);
+    await expect(ledger.payout(VAULT, payment(100n), BY, EVENTS, SECRET)).rejects.toThrow(NoteIndexUnreadable);
     expect(calls).toEqual([]);
     expect(saves).toEqual([]);
   });
 
   it('spends at the index the chain gives now, whatever index the pool held', async () => {
     const { ledger, spentCoins, current } = harness({ events: 'moved' });
-    current().notes[0] = { ...current().notes[0], index: seededIndex(0) };
-    await ledger.payout(VAULT, payment(100n), BY, EVENTS);
+    current().notes[0] = { ...itemAt(current().notes, 0), index: seededIndex(0) };
+    await ledger.payout(VAULT, payment(100n), BY, EVENTS, SECRET);
     expect(spentCoins[0].mt_index).toBe(seededIndex(0) + 1n);
   });
 
@@ -1653,11 +1669,11 @@ describe('a private payment spends against the index the chain reports at that m
     eventsInUse = {
       eventsOf: async (tx) => {
         const answer = await reading.eventsOf(tx);
-        current().notes[0] = { ...current().notes[0], value: 1_200n };
+        current().notes[0] = { ...itemAt(current().notes, 0), value: 1_200n };
         return answer;
       },
     };
-    await expect(ledger.payout(VAULT, payment(200n), BY, EVENTS)).rejects.toThrow(/changed or left the pool/);
+    await expect(ledger.payout(VAULT, payment(200n), BY, EVENTS, SECRET)).rejects.toThrow(/changed or left the pool/);
     expect(calls).toEqual([]);
     expect(spentCoins).toEqual([]);
     expect(saves).toEqual([]);
@@ -1665,7 +1681,7 @@ describe('a private payment spends against the index the chain reports at that m
 
   it('REFUSES before a fee a note that does not record which transaction created it, and names the way out', async () => {
     const { ledger, calls, saves } = harness({ noCreatingTransaction: true });
-    await expect(ledger.payout(VAULT, payment(100n), BY, EVENTS)).rejects.toThrow(/recordCreatingTransaction/);
+    await expect(ledger.payout(VAULT, payment(100n), BY, EVENTS, SECRET)).rejects.toThrow(/recordCreatingTransaction/);
     expect(calls).toEqual([]);
     expect(saves).toEqual([]);
   });
@@ -1684,7 +1700,7 @@ describe('a private payment spends against the index the chain reports at that m
         return reading.eventsOf(tx);
       },
     };
-    await expect(ledger.payout(VAULT, payment(200n), BY, EVENTS)).rejects.toThrow(/has not been read for this call/);
+    await expect(ledger.payout(VAULT, payment(200n), BY, EVENTS, SECRET)).rejects.toThrow(/has not been read for this call/);
     expect(spentCoins).toEqual([]);
     expect(saves).toEqual([]);
   });
@@ -1693,15 +1709,15 @@ describe('a private payment spends against the index the chain reports at that m
     const { ledger, saves, current } = harness({
       notes: [{ nonce: '01'.repeat(32), value: 60n }, { nonce: '02'.repeat(32), value: 1_000n }],
     });
-    current().notes[0] = { ...current().notes[0], index: 5n };
-    await ledger.payout(VAULT, payment(200n), BY, EVENTS);
+    current().notes[0] = { ...itemAt(current().notes, 0), index: 5n };
+    await ledger.payout(VAULT, payment(200n), BY, EVENTS, SECRET);
     expect(saves).toHaveLength(1);
-    for (const n of saves[0].notes) expect(n).not.toHaveProperty('index');
+    for (const n of itemAt(saves, 0).notes) expect(n).not.toHaveProperty('index');
   });
 
   it('a public payment reads no events at all', async () => {
     const { ledger, eventReads } = harness({ poolThrows: true });
-    await ledger.payout(VAULT, { ...payment(200n), payee: PUBLIC_PAYEE, token: NIGHT }, BY, EVENTS);
+    await ledger.payout(VAULT, { ...payment(200n), payee: PUBLIC_PAYEE, token: NIGHT }, BY, EVENTS, SECRET);
     expect(eventReads).toEqual([]);
   });
 });
@@ -1732,7 +1748,7 @@ describe('a write to the pool is applied to what the pool holds NOW', () => {
 
   it('RECORDS the change of a payment when another process wrote the pool while it proved, and keeps what that process wrote', async () => {
     const { ledger, current, saves } = harness({ anotherWriterAddsDuringTheCall: OTHER });
-    await ledger.payout(VAULT, payment(200n), BY, EVENTS);
+    await ledger.payout(VAULT, payment(200n), BY, EVENTS, SECRET);
 
     /*
      * RED WHEN: `advancePool` stops retrying, or stops re-reading the pool
@@ -1796,7 +1812,7 @@ describe('a write to the pool is applied to what the pool holds NOW', () => {
      * second reading made the general point; this is the specific fix.
      */
     await expect(
-      ledger.payout(VAULT, payment(200n), BY, EVENTS),
+      ledger.payout(VAULT, payment(200n), BY, EVENTS, SECRET),
       'RED WHEN: the payment does not survive a lost race at all, which is the whole of it: the money has moved and the pool does not record it',
     ).resolves.toMatchObject({ kind: 'shielded' });
     expect(
@@ -1815,14 +1831,14 @@ describe('a write to the pool is applied to what the pool holds NOW', () => {
      * the money is on chain and no record names it, and the operator has to know
      * they are in it.
      */
-    await expect(ledger.payout(VAULT, payment(200n), BY, EVENTS))
+    await expect(ledger.payout(VAULT, payment(200n), BY, EVENTS, SECRET))
       .rejects.toThrow(/the money has already moved on chain/);
     expect(saves, 'RED WHEN: a write reports failure and lands anyway').toHaveLength(0);
   });
 
   it('names the recovery, and names nothing a public reader cannot open', async () => {
     const { ledger } = harness({ poolRaceLostTimes: 99 });
-    const why = await ledger.payout(VAULT, payment(200n), BY, EVENTS).catch((e: Error) => e.message);
+    const why = await ledger.payout(VAULT, payment(200n), BY, EVENTS, SECRET).catch((e: Error) => e.message);
     /*
      * **`reconcileVaultPool` AND NOT AN ALTERNATION.** A second reading pointed out that
      * `/reconcileVaultPool|replayVault/` would accept `replayVault`, which needs a
@@ -1865,7 +1881,7 @@ describe('a write to the pool is applied to what the pool holds NOW', () => {
        */
       poolBecomesDuringTheCall: [{ nonce: '0f'.repeat(32), value: 42n }],
     });
-    const why = await ledger.payout(VAULT, payment(200n), BY, EVENTS)
+    const why = await ledger.payout(VAULT, payment(200n), BY, EVENTS, SECRET)
       .then(() => 'IT DID NOT REFUSE', (e: Error) => e.message);
 
     /*
@@ -1985,7 +2001,7 @@ describe('a write to the pool is applied to what the pool holds NOW', () => {
 
   it('and with nobody else writing, both still advance the pool', async () => {
     const paid = harness({});
-    await paid.ledger.payout(VAULT, payment(200n), BY, EVENTS);
+    await paid.ledger.payout(VAULT, payment(200n), BY, EVENTS, SECRET);
     expect(paid.saves).toHaveLength(1);
     const deposited = harness({ notes: [] });
     await deposited.ledger.deposit(VAULT, { token: GBP, value: 500n }, BY);
@@ -1994,15 +2010,15 @@ describe('a write to the pool is applied to what the pool holds NOW', () => {
 
   it('seals only the notes, never the version a load read', async () => {
     const { ledger, saves } = harness({});
-    await ledger.payout(VAULT, payment(200n), BY, EVENTS);
-    expect(Object.keys(saves[0])).toEqual(['notes']);
+    await ledger.payout(VAULT, payment(200n), BY, EVENTS, SECRET);
+    expect(Object.keys(itemAt(saves, 0))).toEqual(['notes']);
   });
 });
 
 describe('C239: the pool advances by the coin the call reported', () => {
   it('records the change coin\'s OWN nonce, which no derivation here produced', async () => {
     const { ledger, current } = harness({ notes: [{ nonce: '01'.repeat(32), value: 1_000n }] });
-    await ledger.payout(VAULT, payment(250n), BY, EVENTS);
+    await ledger.payout(VAULT, payment(250n), BY, EVENTS, SECRET);
 
     const change = current().notes.find(n => n.value === 750n)!;
     expect(change).toBeDefined();
@@ -2022,7 +2038,7 @@ describe('C239: the pool advances by the coin the call reported', () => {
       const { ledger, saves } = harness({
         notes: [{ nonce: '01'.repeat(32), value: 1_000n }], reads: 'absent',
       });
-      await expect(ledger.payout(VAULT, payment(250n), BY, EVENTS))
+      await expect(ledger.payout(VAULT, payment(250n), BY, EVENTS, SECRET))
         .rejects.toThrow(/no readable "outputs"/);
       expect(saves).toEqual([]);
     });
@@ -2032,7 +2048,7 @@ describe('C239: the pool advances by the coin the call reported', () => {
       const { ledger, saves } = harness({
         notes: [{ nonce: '01'.repeat(32), value: 1_000n }], reads: 'none',
       });
-      await expect(ledger.payout(VAULT, payment(250n), BY, EVENTS))
+      await expect(ledger.payout(VAULT, payment(250n), BY, EVENTS, SECRET))
         .rejects.toThrow(/no coin coming back to it/);
       expect(saves).toEqual([]);
     });
@@ -2041,7 +2057,7 @@ describe('C239: the pool advances by the coin the call reported', () => {
     const { ledger, saves } = harness({
       notes: [{ nonce: '01'.repeat(32), value: 1_000n }], reads: 'wrong-value',
     });
-    await expect(ledger.payout(VAULT, payment(250n), BY, EVENTS))
+    await expect(ledger.payout(VAULT, payment(250n), BY, EVENTS, SECRET))
       .rejects.toThrow(/two claims about the same money/);
     expect(saves).toEqual([]);
   });
@@ -2104,7 +2120,7 @@ describe('T-38: an affordability check refuses on EITHER refusal', () => {
     expect(failed).toBeInstanceOf(VaultCannotAfford);
     expect((failed as VaultCannotAfford).why).toBe('notes-do-not-cover');
     expect(failed?.message).toMatch(/does not record which transaction created it/);
-    await expect(ledger.payout(VAULT, payment(250n), BY, EVENTS)).rejects.toThrow(/does not record which transaction created it/);
+    await expect(ledger.payout(VAULT, payment(250n), BY, EVENTS, SECRET)).rejects.toThrow(/does not record which transaction created it/);
   });
 
   it('AFFORDS AND PAYS a run out of a larger recorded note when the smallest covering note records no transaction, and leaves that note in the pool', async () => {
@@ -2123,7 +2139,7 @@ describe('T-38: an affordability check refuses on EITHER refusal', () => {
       ledger.affordable(VAULT, run(100n)),
       'RED WHEN: the affordability walk refuses a vault that can pay, because it chose a note the payment cannot spend',
     ).resolves.toBeUndefined();
-    await ledger.payout(VAULT, payment(100n), BY, EVENTS);
+    await ledger.payout(VAULT, payment(100n), BY, EVENTS, SECRET);
     expect(spentCoins.map((c) => c.value), 'RED WHEN: the payment spends a different note from the one the walk chose').toEqual([5_000n]);
     expect(eventReads, 'the index is read from the transaction the spent note records').toEqual([{ hash: SEEDED_TX }]);
     expect(journalled.map((j) => j.spent.value), 'the attempt journalled is the note actually spent').toEqual([5_000n]);
@@ -2135,7 +2151,7 @@ describe('T-38: an affordability check refuses on EITHER refusal', () => {
     expect(after.map((n) => n.value).sort((a, b) => Number(a - b))).toEqual([150n, 4_900n]);
     /* And a payment only the unrecorded note could make is refused before anything is called, naming it. */
     const again = harness({ notes: [{ nonce: '01'.repeat(32), value: 150n }], noCreatingTransaction: true });
-    await expect(again.ledger.payout(VAULT, payment(100n), BY, EVENTS)).rejects.toThrow(/One note does: 0101.*\(150\)/);
+    await expect(again.ledger.payout(VAULT, payment(100n), BY, EVENTS, SECRET)).rejects.toThrow(/One note does: 0101.*\(150\)/);
     expect(again.calls).toEqual([]);
   });
 
@@ -2270,17 +2286,17 @@ describe('S6k: public money needs no pool', () => {
 describe('C246: which door a payment leaves by', () => {
   it('a SHIELDED payee goes through `payout`, with the encryption mapping', async () => {
     const { ledger, calls, scopes } = harness();
-    const paid = await ledger.payout(VAULT, payment(200n), BY, EVENTS);
+    const paid = await ledger.payout(VAULT, payment(200n), BY, EVENTS, SECRET);
 
     expect(paid.kind).toBe('shielded');
     expect(calls.map(c => c.circuit)).toEqual(['payout']);
-    expect([...scopes[0].mappings.entries()]).toHaveLength(1);
+    expect([...itemAt(scopes, 0).mappings.entries()]).toHaveLength(1);
   });
 
   it('an UNSHIELDED payee goes through `payoutUnshielded`, with NO mapping', async () => {
     const { ledger, calls, scopes } = harness({ poolThrows: true });
     const paid = await ledger.payout(
-      VAULT, { ...payment(200n), payee: PUBLIC_PAYEE, token: NIGHT }, BY, EVENTS);
+      VAULT, { ...payment(200n), payee: PUBLIC_PAYEE, token: NIGHT }, BY, EVENTS, SECRET);
 
     expect(paid.kind).toBe('unshielded');
     expect(calls.map(c => c.circuit)).toEqual(['payoutUnshielded']);
@@ -2291,8 +2307,8 @@ describe('C246: which door a payment leaves by', () => {
      * it by looking. A mapping here would be a key nobody reads, attached to a
      * payment that is already visible.
      */
-    expect([...scopes[0].mappings.entries()]).toHaveLength(0);
-    expect(scopes[0].scopeName).toBe('vault:payoutUnshielded');
+    expect([...itemAt(scopes, 0).mappings.entries()]).toHaveLength(0);
+    expect(itemAt(scopes, 0).scopeName).toBe('vault:payoutUnshielded');
   });
 
   it('hands the public circuit the payee\'s USER ADDRESS, in the recipient position', async () => {
@@ -2300,9 +2316,11 @@ describe('C246: which door a payment leaves by', () => {
     await ledger.payout(VAULT, { ...payment(200n), payee: PUBLIC_PAYEE, token: NIGHT }, BY);
 
     const call = calls.find(c => c.circuit === 'payoutUnshielded')!;
-    expect(call.args).toHaveLength(12);
-    /* 6 is the recipient. See the argument list beside the fake's payout. */
-    expect(toHex(call.args[6] as Uint8Array)).toBe(PUBLIC_PAYEE.userAddress);
+    /* RED WHEN the public payment hands its circuit any argument beyond the five. */
+    expect(call.args).toHaveLength(5);
+    /* 1 is the recipient. See the argument list beside the fake's payout. */
+    /* RED WHEN the user address leaves the recipient position of the public circuit's five. */
+    expect(toHex(call.args[1] as Uint8Array)).toBe(PUBLIC_PAYEE.userAddress);
   });
 
   it('REFUSES A PUBLIC PAYEE ON ANOTHER NETWORK, which nothing downstream would', async () => {
@@ -2480,27 +2498,27 @@ describe('a private payment journals its attempt before the call', () => {
     const { ledger, journalled, calls, spentCoins } = harness({
       notes: [{ nonce: '01'.repeat(32), value: 60n }, { nonce: '02'.repeat(32), value: 1_000n }],
     });
-    await ledger.payout(VAULT, payment(200n), BY, EVENTS);
+    await ledger.payout(VAULT, payment(200n), BY, EVENTS, SECRET);
 
     expect(journalled).toHaveLength(1);
     expect(
-      journalled[0].callsMadeSoFar,
+      itemAt(journalled, 0).callsMadeSoFar,
       'RED WHEN: the journal write is moved below the call -- an attempt recorded after the money moved is not on disk when the process stops in between, which is the only moment this record exists for',
     ).toBe(0);
     expect(calls.map((c) => c.circuit)).toEqual(['payout']);
 
     /* What a rebuild needs to name the change note without inverting anything. */
-    expect(journalled[0].spent).toEqual({ nonce: '02'.repeat(32), token: GBP, value: 1_000n });
-    expect(journalled[0].amount).toBe(200n);
+    expect(itemAt(journalled, 0).spent).toEqual({ nonce: '02'.repeat(32), token: GBP, value: 1_000n });
+    expect(itemAt(journalled, 0).amount).toBe(200n);
     expect(
-      journalled[0].spent.nonce,
+      itemAt(journalled, 0).spent.nonce,
       'RED WHEN: the note journalled is not the note the contract then spent, so the change note the rebuild derives belongs to no payment',
     ).toBe(toHex(spentCoins[0].nonce));
   });
 
   it('REFUSES a private payment by name when the ledger has nowhere to write the attempt, and calls nothing', async () => {
     const { ledger, calls, saves } = harness({ journal: 'none' });
-    await expect(ledger.payout(VAULT, payment(100n), BY, EVENTS))
+    await expect(ledger.payout(VAULT, payment(100n), BY, EVENTS, SECRET))
       .rejects.toThrow(/nowhere to write it/);
     expect(calls, 'RED WHEN: a payment proceeds unjournalled, which reopens the window silently').toEqual([]);
     expect(saves).toHaveLength(0);
@@ -2508,7 +2526,7 @@ describe('a private payment journals its attempt before the call', () => {
 
   it('a journal that cannot be written STOPS the payment with nothing spent', async () => {
     const { ledger, calls, saves } = harness({ journal: 'refuses' });
-    await expect(ledger.payout(VAULT, payment(100n), BY, EVENTS))
+    await expect(ledger.payout(VAULT, payment(100n), BY, EVENTS, SECRET))
       .rejects.toThrow(/journal cannot be written/);
     expect(calls, 'RED WHEN: the journal refusal arrives after the call, which moves the loss rather than removing it').toEqual([]);
     expect(saves).toHaveLength(0);
@@ -2523,13 +2541,13 @@ describe('a private payment journals its attempt before the call', () => {
 
   it('one line per payment, each naming the note THAT payment spent', async () => {
     const { ledger, journalled, spentCoins } = harness();
-    await ledger.payout(VAULT, payment(100n), BY, EVENTS);
-    await ledger.payout(VAULT, payment(200n), BY, EVENTS);
+    await ledger.payout(VAULT, payment(100n), BY, EVENTS, SECRET);
+    await ledger.payout(VAULT, payment(200n), BY, EVENTS, SECRET);
     expect(journalled).toHaveLength(2);
     expect(journalled.map((j) => j.spent.nonce)).toEqual(spentCoins.map((c: any) => toHex(c.nonce)));
     expect(journalled.map((j) => j.amount)).toEqual([100n, 200n]);
     /* The second spends the first's change, so its journalled value is what was kept. */
-    expect(journalled[1].spent.value).toBe(900n);
+    expect(itemAt(journalled, 1).spent.value).toBe(900n);
   });
 });
 
@@ -2548,24 +2566,24 @@ describe('a private deposit journals its coin before the call', () => {
     await ledger.deposit(VAULT, MONEY, BY);
     expect(depositsJournalled).toHaveLength(1);
     expect(
-      depositsJournalled[0].callsMadeSoFar,
+      itemAt(depositsJournalled, 0).callsMadeSoFar,
       'RED WHEN: the deposit\'s line is written after the call -- a nonce recorded after the money moved is not on disk when the process stops in between, which is the only moment this record exists for',
     ).toBe(0);
-    expect(depositsJournalled[0].savesMadeSoFar).toBe(0);
-    expect(depositsJournalled[0].slot, 'RED WHEN: the first slot is not the one after everything the chain has made for this vault').toBe(1);
+    expect(itemAt(depositsJournalled, 0).savesMadeSoFar).toBe(0);
+    expect(itemAt(depositsJournalled, 0).slot, 'RED WHEN: the first slot is not the one after everything the chain has made for this vault').toBe(1);
     expect(calls.map((c) => c.circuit)).toEqual(['deposit']);
     expect(
-      depositsJournalled[0].coin,
+      itemAt(depositsJournalled, 0).coin,
       'RED WHEN: the line is not the coin the call creates -- a different nonce or value names a note the chain never held, and the real one stays unnameable',
     ).toEqual(COIN);
-    expect(Number.isNaN(Date.parse(depositsJournalled[0].attemptedAt))).toBe(false);
+    expect(Number.isNaN(Date.parse(itemAt(depositsJournalled, 0).attemptedAt))).toBe(false);
     expect(current().notes.map((n) => n.nonce)).toEqual([COIN.nonce]);
   });
 
   it('CALLS THE CONTRACT WITH THE COIN THE CLAIM RETURNED, and with no nonce of its own', async () => {
     const { ledger, calls, current } = harness({ notes: [], depositNonces: ['5a'.repeat(32)] });
     await ledger.deposit(VAULT, MONEY, BY);
-    const made: any = calls[0].args[0];
+    const made: any = itemAt(calls, 0).args[0];
     expect(
       toHex(made.nonce),
       'RED WHEN: the deposit is made under any nonce but the one its claim filed -- a note whose line names another coin can only be named by luck',
@@ -2592,7 +2610,7 @@ describe('a private deposit journals its coin before the call', () => {
       'RED WHEN: the slot claimed is not the lowest one whose coin was never made',
     ).toEqual([2]);
     expect(
-      toHex((calls[0].args[0] as any).nonce),
+      toHex((itemAt(calls, 0).args[0] as any).nonce),
       'RED WHEN: the history is not read, or only the notes held NOW are, so a spent coin is attempted a second time',
     ).toBe('78'.repeat(32));
     expect(calls).toHaveLength(1);
@@ -2683,7 +2701,7 @@ describe('a private deposit journals its coin before the call', () => {
 
   it('a PRIVATE PAYMENT needs no deposit journal, and a deposit needs no payment journal', async () => {
     const paying = harness({ depositJournal: 'none' });
-    await expect(paying.ledger.payout(VAULT, payment(100n), BY, EVENTS)).resolves.toBeDefined();
+    await expect(paying.ledger.payout(VAULT, payment(100n), BY, EVENTS, SECRET)).resolves.toBeDefined();
     const depositing = harness({ notes: [], journal: 'none' });
     await expect(depositing.ledger.deposit(VAULT, MONEY, BY)).resolves.toBeDefined();
     expect(depositing.depositsJournalled).toHaveLength(1);
@@ -2719,7 +2737,7 @@ const STORE_DB = process.env.TEST_DATABASE_URL;
      */
     const own = postgres(url, { onnotice: () => {} });
     const [me] = await own`SELECT current_database() AS db`;
-    if (me.db !== OWN_DB) throw new Error(`refusing to run: connected to ${me.db}, not ${OWN_DB}`);
+    if (me?.db !== OWN_DB) throw new Error(`refusing to run: connected to ${me?.db}, not ${OWN_DB}`);
     await own`DROP TABLE IF EXISTS vault_sealed_records`;
     await own.unsafe(readFileSync('db/migrations/0002_vault_sealed_records.sql', 'utf8'));
     await own.end({ timeout: 2 });
@@ -2755,7 +2773,7 @@ const STORE_DB = process.env.TEST_DATABASE_URL;
 
       await h.ledger.openPool(VAULT);
       await h.ledger.deposit(VAULT, { token: GBP, value: 500n }, BY, eventsInUse);
-      const paid = await h.ledger.payout(VAULT, payment(200n), BY, EVENTS);
+      const paid = await h.ledger.payout(VAULT, payment(200n), BY, EVENTS, SECRET);
       if (paid.kind !== 'shielded') throw new Error('a private payee was paid through another door');
       expect(paid.spentNote).toBe(DERIVED);
 
@@ -2795,5 +2813,94 @@ const STORE_DB = process.env.TEST_DATABASE_URL;
       await one.end({ timeout: 2 });
       await other.end({ timeout: 2 });
     }
+  });
+});
+
+/*
+ * **THE APPROVED RUN, THE PAYEE'S PATH AND THE VAULT'S SECRET REACH THE CIRCUIT
+ * AS THE CONTRACT TAKES THEM.**
+ *
+ * Both payment circuits take the run as one value, and the account rebuilds
+ * the proposal and the run's root from it. A field dropped or swapped here is a
+ * payment the account refuses after a proof and a fee; a secret not handed over
+ * is a private payment that cannot be proved at all.
+ */
+describe('the run, the path and the secret, as the vault circuits take them', () => {
+  const expectedRun = () => ({
+    proposal: Buffer.from('11'.repeat(32), 'hex'), runVault: Buffer.from(VAULT, 'hex'),
+    root: Buffer.from('22'.repeat(32), 'hex'), payees: 3n,
+    opensAt: 1_800_000_000n, closesAt: 1_800_604_800n, required: 2n,
+    salt: Buffer.from('33'.repeat(32), 'hex'), nonce: Buffer.from('66'.repeat(32), 'hex'),
+    asset: Buffer.from(GBP, 'hex'), path: PATH,
+  });
+  const asPlain = (run: any) => Object.fromEntries(Object.entries(run).map(([k, v]) =>
+    [k, v instanceof Uint8Array ? toHex(v) : v]));
+
+  it('a private payment hands the circuit the whole run, the payee, and the vault\'s current secret', async () => {
+    const { ledger, calls, secretsRead } = harness();
+    await ledger.payout(VAULT, payment(200n), BY, EVENTS, SECRET);
+    const call = calls.find((c) => c.circuit === 'payout')!;
+    /* RED WHEN a field of the run is dropped, renamed, swapped with another, or a step of the path is lost or rewritten. */
+    expect(asPlain(call.args[0])).toEqual(asPlain(expectedRun()));
+    /* RED WHEN the recipient, token, amount or blinding moves, or is taken from somewhere other than the payment. */
+    expect([toHex(call.args[1] as Uint8Array), toHex(call.args[2] as Uint8Array), call.args[3], toHex(call.args[4] as Uint8Array)])
+      .toEqual([PAYEE.coinPublicKey, GBP, 200n, '55'.repeat(32)]);
+    /* RED WHEN the secret the caller supplied is not the one the circuit is handed. */
+    expect(secretsRead).toEqual([SECRET]);
+  });
+
+  it('a public payment hands its circuit the same run, and never reads a secret', async () => {
+    const { ledger, calls, secretsRead } = harness({ poolThrows: true });
+    await ledger.payout(VAULT, { ...payment(200n), payee: PUBLIC_PAYEE, token: NIGHT }, BY);
+    const call = calls.find((c) => c.circuit === 'payoutUnshielded')!;
+    /* RED WHEN the public payment builds its run differently from the private one. */
+    expect(asPlain(call.args[0])).toEqual(asPlain(expectedRun()));
+    /* RED WHEN the token, amount or blinding moves on the public path. */
+    expect([toHex(call.args[2] as Uint8Array), call.args[3], toHex(call.args[4] as Uint8Array)])
+      .toEqual([NIGHT, 200n, '55'.repeat(32)]);
+    expect(secretsRead).toEqual([]);
+  });
+
+  it('REFUSES a private payment given no nonce secret, before a note is chosen or anything is written down', async () => {
+    const { ledger, calls, saves, journalled } = harness();
+    /* RED WHEN a private payment goes ahead, or reaches the journal, without the vault's secret. */
+    await expect(ledger.payout(VAULT, payment(200n), BY, EVENTS))
+      .rejects.toThrow(/none was given\. Nothing is proved or paid\. Open the company\x27s nonce secret/);
+    expect(calls).toEqual([]);
+    expect(saves).toEqual([]);
+    expect(journalled).toEqual([]);
+  });
+
+  it('REFUSES a secret that is not 32 bytes, or is all zeros, before anything is written down', async () => {
+    for (const bad of ['51'.repeat(31), '00'.repeat(32), 'zz'.repeat(32)]) {
+      const { ledger, calls, journalled } = harness();
+      /* RED WHEN a secret of the wrong shape is passed through to the circuit. */
+      await expect(ledger.payout(VAULT, payment(200n), BY, EVENTS, bad as never), bad)
+        .rejects.toThrow(/not a 32-byte secret/);
+      expect(calls).toEqual([]);
+      expect(journalled).toEqual([]);
+    }
+  });
+
+  it('REFUSES a path that is not sixteen steps, on either kind of payment, before anything is called', async () => {
+    for (const p of [
+      { ...payment(200n), path: PATH.slice(1) },
+      { ...payment(200n), payee: PUBLIC_PAYEE, token: NIGHT, path: [...PATH, PATH[0]!] },
+    ]) {
+      const { ledger, calls, journalled } = harness({ poolThrows: p.payee === PUBLIC_PAYEE });
+      /* RED WHEN a path of the wrong length is handed to either circuit. */
+      await expect(ledger.payout(VAULT, p, BY, EVENTS, SECRET)).rejects.toThrow(/path in the run's sum tree has 16 steps/);
+      expect(calls).toEqual([]);
+      expect(journalled).toEqual([]);
+    }
+  });
+
+  it('REFUSES a step that is not a node, a sum and a side', async () => {
+    const { ledger, calls } = harness();
+    const broken = PATH.map((step, d) => (d === 5 ? { ...step, siblingSum: 7 as never } : step));
+    /* RED WHEN a step of the wrong shape is passed through to the circuit. */
+    await expect(ledger.payout(VAULT, { ...payment(200n), path: broken }, BY, EVENTS, SECRET))
+      .rejects.toThrow(/step 5 of this payee's path is not a node, a sum and a side/);
+    expect(calls).toEqual([]);
   });
 });

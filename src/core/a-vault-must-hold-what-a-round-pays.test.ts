@@ -8,15 +8,17 @@ import { FileStore } from './store-file.js';
 import { SimulatedLedger, SimulatedCommitments, type Ledger } from './ledger.js';
 import { AccountService } from './account.js';
 import {
-  SEED_ASSETS, StaticAssetRegistry, assetIdBytes, assets as productAssets,
+  SEED_ASSETS, StaticAssetRegistry, assets as productAssets,
   type AssetRegistry, type LedgerForm,
 } from './assets.js';
-import { toHex, type Hex } from './crypto.js';
+import { type Hex } from './crypto.js';
 import {
   VaultCannotPayThisProposal, type FitAnswer, type HoldingAnswer, type VaultHoldings,
 } from './vault-holdings.js';
-import { registryWithTestPrivateForms, testPrivateToken } from '../testing/assets.js';
+import { registryWithTestPrivateForms, TEST_TOKEN_ROW } from '../testing/assets.js';
 
+import { TEST_TOKEN } from '../testing/assets.js';
+import { NIGHT } from './assets.js';
 /**
  * **A PROPOSAL THAT MOVES MONEY IS RAISED ONLY WHEN ITS VAULT HOLDS WHAT IT PAYS,
  * AS THE CHAIN SAYS NOW, AND A REFUSAL COSTS NOTHING.**
@@ -96,7 +98,7 @@ async function harness(opts: { registry?: AssetRegistry; reader?: VaultHoldings 
   return { accounts, raised, recorded, raise, viewingKey, by, account };
 }
 
-const GBP_PRIVATE = testPrivateToken('GBP');
+const GBP_PRIVATE = TEST_TOKEN;  /* the fixture token, which is its own token in either form */
 
 const refusal = (p: Promise<unknown>) => p.then(
   () => { throw new Error('the proposal was raised'); },
@@ -106,16 +108,16 @@ describe('§1 a vault that does not hold enough is refused at raise, before a fe
   it('REFUSES a proposal when the vault holds less than it pays, naming the asset, the form, what is held and what was asked', async () => {
     const vault = aVault({ [`shielded:${GBP_PRIVATE}`]: 30_00n });
     const h = await harness({ reader: vault.reader });
-    const failed = await refusal(h.raise('GBP', [
+    const failed = await refusal(h.raise(TEST_TOKEN, [
       { kind: 'shielded', token: GBP_PRIVATE, amount: 25_00n },
       { kind: 'shielded', token: GBP_PRIVATE, amount: 10_00n },
     ]));
     /* RED WHEN the check is removed, or compares one payment rather than what the proposal asks in all. */
     expect(failed).toBeInstanceOf(VaultCannotPayThisProposal);
     expect(failed.message).toMatch(
-      /the vault holds 30\.00 GBP privately and this proposal asks it to pay 35\.00\. Deposit at least 5\.00 GBP into the vault privately, through the vault's own deposit, then raise the proposal again/);
+      /the vault holds 30\.00 tPAY privately and this proposal asks it to pay 35\.00\. Deposit at least 5\.00 tPAY into the vault privately, through the vault's own deposit, then raise the proposal again/);
     expect(failed.message).toMatch(/Nothing was raised and no fee was spent\./);
-    expect([failed.asset, failed.form, failed.held, failed.asked, failed.why]).toEqual(['GBP', 'shielded', 30_00n, 35_00n, 'short']);
+    expect([failed.asset, failed.form, failed.held, failed.asked, failed.why]).toEqual([TEST_TOKEN, 'shielded', 30_00n, 35_00n, 'short']);
     /* RED WHEN the refusal comes after the chain is called, which is where the fee is. */
     expect(h.raised.count).toBe(0);
     /* RED WHEN the record is written before the refusal. */
@@ -130,8 +132,8 @@ describe('§1 a vault that does not hold enough is refused at raise, before a fe
   it('REFUSES a proposal when the vault holds none of it', async () => {
     const vault = aVault({});
     const h = await harness({ reader: vault.reader });
-    const failed = await refusal(h.raise('GBP', [{ kind: 'shielded', token: GBP_PRIVATE, amount: 1n }]));
-    expect(failed.message).toMatch(/the vault holds 0\.00 GBP privately and this proposal asks it to pay 0\.01/);
+    const failed = await refusal(h.raise(TEST_TOKEN, [{ kind: 'shielded', token: GBP_PRIVATE, amount: 1n }]));
+    expect(failed.message).toMatch(/the vault holds 0\.00 tPAY privately and this proposal asks it to pay 0\.01/);
     expect(h.raised.count).toBe(0);
     expect(h.recorded()).toHaveLength(0);
   });
@@ -139,7 +141,7 @@ describe('§1 a vault that does not hold enough is refused at raise, before a fe
   it('RAISES a proposal when the vault holds exactly what it pays, so a payable round is never stopped', async () => {
     const vault = aVault({ [`shielded:${GBP_PRIVATE}`]: 35_00n });
     const h = await harness({ reader: vault.reader });
-    const p = await h.raise('GBP', [
+    const p = await h.raise(TEST_TOKEN, [
       { kind: 'shielded', token: GBP_PRIVATE, amount: 25_00n },
       { kind: 'shielded', token: GBP_PRIVATE, amount: 10_00n },
     ]);
@@ -153,8 +155,8 @@ describe('§1 a vault that does not hold enough is refused at raise, before a fe
   it('REFUSES when the chain does not answer, says to try again, and never reads that as holding nothing or enough', async () => {
     const vault = aVault(async () => ({ of: 'unreadable', why: 'the indexer did not answer' }));
     const h = await harness({ reader: vault.reader });
-    const failed = await refusal(h.raise('GBP', [{ kind: 'shielded', token: GBP_PRIVATE, amount: 5n }]));
-    expect(failed.message).toMatch(/what the vault holds of GBP privately could not be read from the chain \(the indexer did not answer\)/);
+    const failed = await refusal(h.raise(TEST_TOKEN, [{ kind: 'shielded', token: GBP_PRIVATE, amount: 5n }]));
+    expect(failed.message).toMatch(/what the vault holds of tPAY privately could not be read from the chain \(the indexer did not answer\)/);
     expect(failed.message).toMatch(/If the chain was slow to answer, try again/);
     /* RED WHEN it tells a reader that retrying fixes a reader that cannot decode what it was given. */
     expect(failed.message).toMatch(/If the same reason keeps coming back, read it.*none of those is a reason to deposit more/s);
@@ -166,7 +168,7 @@ describe('§1 a vault that does not hold enough is refused at raise, before a fe
   it('REFUSES a record the chain contradicts, and does NOT say to try again, which would never help', async () => {
     const vault = aVault(async () => ({ of: 'contradicted', why: '1 of 2 notes are not on chain' }));
     const h = await harness({ reader: vault.reader });
-    const failed = await refusal(h.raise('GBP', [{ kind: 'shielded', token: GBP_PRIVATE, amount: 5n }]));
+    const failed = await refusal(h.raise(TEST_TOKEN, [{ kind: 'shielded', token: GBP_PRIVATE, amount: 5n }]));
     /* RED WHEN a contradiction is reported as the chain not answering. */
     expect(failed.why).toBe('contradicted');
     expect(failed.message).toMatch(/record of the vault's private notes disagrees with the chain \(1 of 2 notes are not on chain\)/);
@@ -182,7 +184,7 @@ describe('§1 a vault that does not hold enough is refused at raise, before a fe
       async () => ({ of: 'held', amount: -1n }) as HoldingAnswer,
     ]) {
       const h = await harness({ reader: aVault(holds).reader });
-      const failed = await refusal(h.raise('GBP', [{ kind: 'shielded', token: GBP_PRIVATE, amount: 5n }]));
+      const failed = await refusal(h.raise(TEST_TOKEN, [{ kind: 'shielded', token: GBP_PRIVATE, amount: 5n }]));
       expect(failed.why).toBe('failed');
       expect(failed.message).not.toMatch(/try again/i);
       expect(h.raised.count).toBe(0);
@@ -194,10 +196,10 @@ describe('§1 a vault that does not hold enough is refused at raise, before a fe
       { [`shielded:${GBP_PRIVATE}`]: 120n },
       async () => ({ of: 'does-not-fit', why: 'no single note covers 100: the largest is 60' }));
     const h = await harness({ reader: vault.reader });
-    const failed = await refusal(h.raise('GBP', [{ kind: 'shielded', token: GBP_PRIVATE, amount: 100n }]));
+    const failed = await refusal(h.raise(TEST_TOKEN, [{ kind: 'shielded', token: GBP_PRIVATE, amount: 100n }]));
     /* RED WHEN a total is taken as the answer for private money. */
     expect(failed.why).toBe('does-not-fit');
-    expect(failed.message).toMatch(/holds enough GBP in total, but its notes cannot make each payment in turn \(no single note covers 100: the largest is 60\)\. /);
+    expect(failed.message).toMatch(/holds enough tPAY in total, but its notes cannot make each payment in turn \(no single note covers 100: the largest is 60\)\. /);
     /* RED WHEN the advice says one covering deposit is enough, which it is not for two payments. */
     expect(failed.message).toMatch(/every payment the present notes cannot cover needs a note of its own\. Deposit those through the vault's own deposit/);
     expect(failed.message).not.toMatch(/\.\./);
@@ -209,11 +211,11 @@ describe('§1 a vault that does not hold enough is refused at raise, before a fe
   it('asks whether the payments fit only once every total is covered, and with every payment', async () => {
     const short = aVault({ [`shielded:${GBP_PRIVATE}`]: 1n });
     const h = await harness({ reader: short.reader });
-    await refusal(h.raise('GBP', [{ kind: 'shielded', token: GBP_PRIVATE, amount: 5n }]));
+    await refusal(h.raise(TEST_TOKEN, [{ kind: 'shielded', token: GBP_PRIVATE, amount: 5n }]));
     expect(short.fitsAsked).toEqual([]);
     const enough = aVault({ [`shielded:${GBP_PRIVATE}`]: 10n });
     const h2 = await harness({ reader: enough.reader });
-    await h2.raise('GBP', [
+    await h2.raise(TEST_TOKEN, [
       { kind: 'shielded', token: GBP_PRIVATE, amount: 5n }, { kind: 'shielded', token: GBP_PRIVATE, amount: 5n }]);
     /* RED WHEN the fit is never asked, or asked about part of the proposal. */
     expect(enough.fitsAsked).toEqual([{ vault: VAULT, payments: 2 }]);
@@ -222,7 +224,7 @@ describe('§1 a vault that does not hold enough is refused at raise, before a fe
 
   it('REFUSES every money round in a service that was given no reader, and says that is what is missing', async () => {
     const h = await harness({ reader: 'none' });
-    const failed = await refusal(h.raise('GBP', [{ kind: 'shielded', token: GBP_PRIVATE, amount: 5n }]));
+    const failed = await refusal(h.raise(TEST_TOKEN, [{ kind: 'shielded', token: GBP_PRIVATE, amount: 5n }]));
     expect(failed.message).toMatch(/this service cannot read what a vault holds/);
     expect(failed.message).toMatch(/given the chain's reader of vault balances/);
     expect(failed.message).not.toMatch(/try again/i);
@@ -232,14 +234,17 @@ describe('§1 a vault that does not hold enough is refused at raise, before a fe
 });
 
 describe('§2 a payment that names its money differently from the asset\'s row is refused before the vault is asked', () => {
-  it('REFUSES a payment that names GBP by the account\'s name for it, which is the name a vault never holds', async () => {
+  it('REFUSES a payment that names the asset by its old placeholder name, which is a token a vault never holds', async () => {
     const vault = aVault({ [`shielded:${GBP_PRIVATE}`]: 1n << 64n });
     const h = await harness({ reader: vault.reader });
-    const accountName = toHex(assetIdBytes('GBP'));
-    const failed = await refusal(h.raise('GBP', [{ kind: 'shielded', token: accountName, amount: 5n }]));
+    /* The bytes the account once named an asset by: its code, padded. No vault holds a token of that name. */
+    const placeholder = Buffer.from('GBP', 'ascii').toString('hex').padEnd(64, '0');
+    const failed = await refusal(h.raise(TEST_TOKEN, [{ kind: 'shielded', token: placeholder, amount: 5n }]));
     /* RED WHEN the token is not compared with the row, so the vault is asked about a name it never holds. */
-    expect(failed.message).toContain(`names its money as ${accountName}`);
-    expect(failed.message).toContain(`GBP paid privately is ${GBP_PRIVATE} on the ledger`);
+    expect(failed.message).toContain('names its money as a different token from tPAY');
+    /* RED WHEN the refusal prints a token to a person rather than the symbol. */
+    expect(failed.message).not.toContain(placeholder);
+    expect(failed.message).not.toContain(GBP_PRIVATE);
     expect(vault.reads).toHaveLength(0);
     expect(h.raised.count).toBe(0);
     expect(h.recorded()).toHaveLength(0);
@@ -248,7 +253,7 @@ describe('§2 a payment that names its money differently from the asset\'s row i
   it('REFUSES a proposal in an asset with no form of the payee\'s kind, from the product\'s own registry', async () => {
     const vault = aVault({});
     const h = await harness({ registry: productAssets, reader: vault.reader });
-    const failed = await refusal(h.raise('NIGHT', [{ kind: 'shielded', token: '00'.repeat(32), amount: 5n }]));
+    const failed = await refusal(h.raise(NIGHT, [{ kind: 'shielded', token: '00'.repeat(32), amount: 5n }]));
     expect(failed.message).toMatch(/NIGHT has no private form on Midnight/);
     expect(failed.form).toBe('shielded');
     expect(vault.reads).toHaveLength(0);
@@ -260,49 +265,58 @@ describe('§2 a payment that names its money differently from the asset\'s row i
     const h = await harness({ reader: vault.reader });
     const short = await refusal(h.accounts.proposeRun({
       accountId: h.account, viewingKey: h.viewingKey, summary: 'a proposal',
-      payload: { entries: [{ id: 'e', kind: 'payroll', asset: 'GBP', amount: 5n, counterparty: 'x', memo: '', at: '' }] },
-      asset: 'GBP', run: aRun(2n),
+      payload: { entries: [{ id: 'e', kind: 'payroll', asset: TEST_TOKEN, amount: 5n, counterparty: 'x', memo: '', at: '' }] },
+      asset: TEST_TOKEN, run: aRun(2n),
       payments: [{ payee: { kind: 'shielded' }, token: GBP_PRIVATE, amount: 5n }],
       proposedBy: h.by,
     }));
     expect(short.message).toMatch(/raised over 2 payments and 1 were handed in/);
-    const wrongTotal = await refusal(h.raise('GBP',
+    const wrongTotal = await refusal(h.raise(TEST_TOKEN,
       [{ kind: 'shielded', token: GBP_PRIVATE, amount: 5n }], [6n]));
-    expect(wrongTotal.message).toMatch(/payments add up to 0\.05 GBP and the signers would approve 0\.06 GBP/);
+    expect(wrongTotal.message).toMatch(/payments add up to 0\.05 tPAY and the signers would approve 0\.06 tPAY/);
     expect(vault.reads).toHaveLength(0);
     expect(h.raised.count).toBe(0);
   });
 });
 
-describe('§3 an asset in both forms is asked about in each form separately', () => {
-  const BOTH = 'a1'.repeat(32);
-  const BOTH_PUBLIC = 'b2'.repeat(32);
-  const both = new StaticAssetRegistry([
-    ...SEED_ASSETS,
-    { code: 'ZQ1', name: 'both forms', kind: 'token', decimals: 0, chain: 'midnight',
-      ledger: { shielded: BOTH, unshielded: BOTH_PUBLIC }, enabled: true, sortOrder: 99 },
-  ]);
+describe('§3 a token in both forms is asked about in the form a proposal pays, and a proposal pays one form', () => {
+  /* One token, both forms: the ledger names its notes and its balance by the same token type. */
+  const BOTH = TEST_TOKEN_ROW.code;
+  const both = new StaticAssetRegistry([...SEED_ASSETS, TEST_TOKEN_ROW]);
 
-  it('REFUSES naming the one form that is short, and raises when both are covered', async () => {
-    const short = aVault({ [`shielded:${BOTH}`]: 7n, [`unshielded:${BOTH_PUBLIC}`]: 2n });
+  it('REFUSES a proposal mixing the two forms of one token, before the vault is asked', async () => {
+    const vault = aVault({ [`shielded:${BOTH}`]: 1n << 64n, [`unshielded:${BOTH}`]: 1n << 64n });
+    const h = await harness({ registry: both, reader: vault.reader });
+    const failed = await refusal(h.raise(BOTH, [
+      { kind: 'shielded', token: BOTH, amount: 4n },
+      { kind: 'unshielded', token: BOTH, amount: 3n },
+    ]));
+    /* RED WHEN a proposal mixing forms is let through: one run pays one token in one form. */
+    expect(failed.message).toMatch(/mixes private and public payments\. One run pays one token in one form/);
+    expect(vault.reads).toHaveLength(0);
+    expect(h.raised.count).toBe(0);
+  });
+
+  it('REFUSES naming the form that is short, asked in that form only, and raises when it is covered', async () => {
+    /* Plenty held privately, little publicly: a public proposal is short whatever the notes hold. */
+    const short = aVault({ [`shielded:${BOTH}`]: 100n, [`unshielded:${BOTH}`]: 2n });
     const h = await harness({ registry: both, reader: short.reader });
     const payments = [
-      { kind: 'shielded' as const, token: BOTH, amount: 4n },
-      { kind: 'unshielded' as const, token: BOTH_PUBLIC, amount: 3n },
-      { kind: 'shielded' as const, token: BOTH, amount: 3n },
+      { kind: 'unshielded' as const, token: BOTH, amount: 2n },
+      { kind: 'unshielded' as const, token: BOTH, amount: 1n },
     ];
-    const failed = await refusal(h.raise('ZQ1', payments));
-    /* RED WHEN the two forms are summed together, which would call 9 held against 10 asked a shortfall in neither. */
-    expect(failed.message).toMatch(/holds 2 ZQ1 publicly and this proposal asks it to pay 3/);
+    const failed = await refusal(h.raise(BOTH, payments));
+    /* RED WHEN the two forms are summed together, which would call a public shortfall covered by private notes. */
+    expect(failed.message).toMatch(/holds 0\.02 tPAY publicly and this proposal asks it to pay 0\.03/);
     expect(failed.form).toBe('unshielded');
+    expect(short.reads.map(r => r.form)).toEqual(['unshielded']);
     expect(h.raised.count).toBe(0);
 
-    const enough = aVault({ [`shielded:${BOTH}`]: 7n, [`unshielded:${BOTH_PUBLIC}`]: 3n });
+    const enough = aVault({ [`shielded:${BOTH}`]: 0n, [`unshielded:${BOTH}`]: 3n });
     const h2 = await harness({ registry: both, reader: enough.reader });
-    await h2.raise('ZQ1', payments);
+    await h2.raise(BOTH, payments);
     expect(h2.raised.count).toBe(1);
-    expect(enough.reads.map(r => `${r.form}:${r.token}`).sort())
-      .toEqual([`shielded:${BOTH}`, `unshielded:${BOTH_PUBLIC}`]);
+    expect(enough.reads.map(r => `${r.form}:${r.token}`)).toEqual([`unshielded:${BOTH}`]);
   });
 });
 

@@ -28,9 +28,9 @@ let deployShape = false;
 let circuitKeys: (c: string) => Uint8Array;
 /* The account the vault's ledger names on the chain now. */
 let pinnedNow: string;
-const CIRCUITS = ['deposit', 'depositUnshielded', 'forgetUnshielded', 'payout', 'payoutUnshielded', 'retire', 'splitNote'];
+const CIRCUITS = ['deposit', 'depositUnshielded', 'forgetUnshielded', 'payout', 'payoutUnshielded', 'retire', 'setNonceSecret', 'splitNote', 'writeSecretCopy'];
 /* The company account: its own circuits, its own authority, and its own verifying keys, apart from the vault's. */
-const ACCOUNT_CIRCUITS = ['approve', 'propose', 'recordPayment'];
+const ACCOUNT_CIRCUITS = ['approve', 'propose', 'recordPaymentFromVault'];
 const ACCOUNTS = new Set([hex(0xc0), hex(0xc1)]);
 let accountAuthority: unknown;
 let accountKeys: (c: string) => Uint8Array;
@@ -44,6 +44,10 @@ let acc1Threshold = 2;
 let acc1VaultThresholds: Array<{ vault: string; threshold: number }> = [];
 let handoverShape: unknown;
 let payoutShape: unknown;
+/* What a step of a vault's start reads as, and the vault's secret and start as its ledger shows them. */
+let startShape: unknown;
+let secretNow: string;
+let startedNow: boolean;
 let payoutState: CompanyVaultDeps['chain']['payoutState'];
 let eventsOf: CompanyVaultDeps['chain']['eventsOf'];
 let createdBy: CompanyVaultDeps['chain']['createdBy'];
@@ -117,6 +121,9 @@ beforeEach(async () => {
   acc1VaultThresholds = [];
   handoverShape = {};
   payoutShape = {};
+  startShape = {};
+  secretNow = '00'.repeat(32);
+  startedNow = true;
   asked = [];
   payoutState = async (vault, account) => {
     asked.push(`state of ${vault.slice(0, 2)} and ${account.slice(0, 2)}`);
@@ -177,7 +184,7 @@ beforeEach(async () => {
       serialize: (s) => (s as { serialize(): Uint8Array }).serialize(),
       notesOf: () => [hex(0x5a)],
       get ledgerIsThisBuilds() { return ledgerIsThisBuilds; },
-      startingLedgerOf: () => ({ account: pinnedNow, notes: 0n, unshieldedTokens: 0n, payments: 0n, spendingCaps: 0n }),
+      startingLedgerOf: () => ({ account: pinnedNow, notes: 0n, unshieldedTokens: 0n, payments: 0n, nonceCommitment: secretNow, splitJournal: 0n, secretCopies: 0n, reserved: 0n, started: startedNow }),
       everCreated: async () => new Set(),
       get payoutState() { return payoutState; },
       get eventsOf() { return eventsOf; },
@@ -193,7 +200,7 @@ beforeEach(async () => {
       get temporaryKey() { return serviceKey; },
     },
     readers: {
-      proven: async (b) => (b[0] === 0xee ? handoverShape : b[0] === 0xdd ? payoutShape : deployShape ? aDeploy() : {}),
+      proven: async (b) => (b[0] === 0xee ? handoverShape : b[0] === 0xdd ? payoutShape : b[0] === 0xcc ? startShape : deployShape ? aDeploy() : {}),
       finished: async () => ({}),
     },
     get committeeChange() { return assembleDep; },
@@ -483,8 +490,8 @@ describe('THE COMPANY ACCOUNT STANDS BEHIND EVERY VAULT', () => {
     accountAuthority = { committee: [key(1), key(2)], threshold: 2, counter: 2n };
     expect((await deposit()).body.error).toMatch(/changed 2 times/);
     accountAuthority = { committee: [key(1), key(2)], threshold: 2, counter: 1n };
-    accountKeys = (c) => (c === 'recordPayment' ? new TextEncoder().encode('vk:drain') : vkOf(c));
-    expect((await deposit()).body.error).toMatch(/'recordPayment' circuit is not the one this service's build compiled/);
+    accountKeys = (c) => (c === 'recordPaymentFromVault' ? new TextEncoder().encode('vk:drain') : vkOf(c));
+    expect((await deposit()).body.error).toMatch(/'recordPaymentFromVault' circuit is not the one this service's build compiled/);
     /* An account as deployed but running circuits this build did not compile is an alarm, not a step not yet taken. */
     serviceKey = key(9);
     accountAuthority = { committee: [key(9)], threshold: 1, counter: 0n };
@@ -697,7 +704,7 @@ describe('A PRIVATE PAYMENT OUT OF A VAULT', () => {
   const PAYOUT_TX = Buffer.from([0xdd, 1]).toString('base64');
   /* A payment with the shape the fee payer reads: one of the vault's coins to one person, asking acc_1's account. */
   const aPayout = (account = hex(0xc0), vault = VAULT) => ({
-    intents: new Map([[1, { actions: [{ address: account, entryPoint: 'recordPayment' }, { address: vault, entryPoint: 'payout' }] }]]),
+    intents: new Map([[1, { actions: [{ address: account, entryPoint: 'recordPaymentFromVault' }, { address: vault, entryPoint: 'payout' }] }]]),
     guaranteedOffer: { inputs: [{ contractAddress: vault }], outputs: [{}], transients: [] },
     imbalances: () => new Map(),
   });
@@ -1189,5 +1196,99 @@ describe('A PUBLIC DEPOSIT\'S ROUTE', () => {
     store.putCompanyVault({ accountId: 'acc_2', vault: VAULT, deployedAt: '', deployRef: 'r', intended: { committee: [], threshold: 1 } });
     expect((await publicDeposit()).status).toBe(404);
     expect(sent).toEqual([]);
+  });
+});
+
+describe('A VAULT\'S START', () => {
+  /* One call, as the ledger names its parts, to `address`'s `circuit`. */
+  const oneCall = (address: string, ...circuits: string[]) => ({
+    intents: new Map([[1, { actions: circuits.map((c) => ({ address, entryPoint: new TextEncoder().encode(c) })) }]]),
+  });
+  const START = Buffer.from([0xcc]).toString('base64');
+  const at = (route: string) => `/api/accounts/acc_1/vaults/${VAULT}/start/${route}`;
+  const checked = () => {
+    sendVault = async (_a, what, _arr, bytes, check, read) => {
+      const refusal = await check(await read(bytes));
+      if (refusal !== null) throw new NothingWasSent(refusal);
+      sent.push(what);
+      return { ref: 'r', at: 'now', transactionHash: null };
+    };
+  };
+  const heldVault = async () => {
+    await give('ada', 1); await give('bo', 2);
+    authority = { committee: [key(1), key(2)], threshold: 2, counter: 1n };
+    store.putCompanyVault({ accountId: 'acc_1', vault: VAULT, deployedAt: '', deployRef: 'r', intended: { committee: [], threshold: 2 } });
+    startedNow = false;
+    checked();
+  };
+
+  it('IS SENT ONLY FOR A VAULT THIS COMPANY\'S COMMITTEE HOLDS, READ FROM THE CHAIN NOW', async () => {
+    await heldVault();
+    authority = { committee: [key(9)], threshold: 1, counter: 0n };
+    startShape = oneCall(hex(0xc0), 'adopt');
+    const r = await call(at('account'), 'ada', 'POST', { tx: START, step: 'adoption', call: 'adopt' });
+    /* RED WHEN: a step of a start is paid for on a vault its temporary key still holds. */
+    expect(r).toMatchObject({ status: 409, body: { nothingWasSent: true } });
+    expect(sent).toEqual([]);
+  });
+
+  it('SENDS EACH STEP ONCE: A SECOND COPY WHILE THE FIRST MAY STILL LAND IS REFUSED, AN APPROVAL ONCE PER PERSON', async () => {
+    await heldVault();
+    startShape = oneCall(hex(0xc0), 'adopt');
+    expect((await call(at('account'), 'ada', 'POST', { tx: START, step: 'adoption', call: 'adopt' })).status).toBe(200);
+    /* RED WHEN: the same step is sent twice, and the second fee is paid for a refusal. */
+    expect(await call(at('account'), 'bo', 'POST', { tx: START, step: 'adoption', call: 'adopt' }))
+      .toMatchObject({ status: 409, body: { nothingWasSent: true } });
+    startShape = oneCall(hex(0xc0), 'approve');
+    expect((await call(at('account'), 'ada', 'POST', { tx: START, step: 'adoption', call: 'approve' })).status).toBe(200);
+    /* Another signer's approval of the same round is theirs to send. */
+    expect((await call(at('account'), 'bo', 'POST', { tx: START, step: 'adoption', call: 'approve' })).status).toBe(200);
+    expect(await call(at('account'), 'bo', 'POST', { tx: START, step: 'adoption', call: 'approve' }))
+      .toMatchObject({ status: 409, body: { nothingWasSent: true } });
+    expect(sent).toEqual(['adopting this vault', 'approving the adoption of this vault', 'approving the adoption of this vault']);
+  });
+
+  it('REFUSES A TRANSACTION THAT IS NOT WHAT THE ROUTE SAYS, AND A REFUSAL FREES THE STEP FOR ANOTHER TRY', async () => {
+    await heldVault();
+    /* RED WHEN: the route pays for another circuit, or a call on another account, than the step it was sent as. */
+    startShape = oneCall(hex(0xc0), 'adopt');
+    expect(await call(at('account'), 'ada', 'POST', { tx: START, step: 'adoption', call: 'propose' }))
+      .toMatchObject({ status: 422, body: { nothingWasSent: true } });
+    startShape = oneCall(hex(0xc1), 'propose');
+    expect(await call(at('account'), 'ada', 'POST', { tx: START, step: 'adoption', call: 'propose' }))
+      .toMatchObject({ status: 422, body: { nothingWasSent: true } });
+    startShape = oneCall(hex(0xc0), 'propose');
+    expect((await call(at('account'), 'ada', 'POST', { tx: START, step: 'adoption', call: 'propose' })).status).toBe(200);
+    expect((await call(at('account'), 'ada', 'POST', { tx: START, step: 'secret-run', call: 'adopt' })).status).toBe(400);
+    expect(sent).toEqual(['raising the adoption of this vault']);
+  });
+
+  it('SETS A FIRST SECRET ONLY WHILE THE VAULT HOLDS NONE, AND WRITES A COPY ONLY WHILE ONE IS STILL OWED', async () => {
+    await heldVault();
+    startShape = oneCall(hex(0xc0), 'approveVaultChange');
+    (startShape as { intents: Map<number, { actions: unknown[] }> }).intents.get(1)!.actions.push({ address: VAULT, entryPoint: 'setNonceSecret' });
+    secretNow = '5e'.repeat(32);
+    /* RED WHEN: a first secret is sent for a vault that holds one already. */
+    expect((await call(at('secret'), 'ada', 'POST', { tx: START })).body.error).toMatch(/already holds a secret/);
+    secretNow = '00'.repeat(32);
+    expect((await call(at('secret'), 'ada', 'POST', { tx: START })).status).toBe(200);
+    startShape = oneCall(VAULT, 'writeSecretCopy');
+    expect((await call(at('copy'), 'ada', 'POST', { tx: START, place: 0 })).status).toBe(200);
+    expect((await call(at('copy'), 'ada', 'POST', { tx: START, place: 0 })).status).toBe(409);
+    expect((await call(at('copy'), 'ada', 'POST', { tx: START, place: 1 })).status).toBe(200);
+    startedNow = true;
+    /* RED WHEN: a copy is paid for once every copy is written. */
+    expect((await call(at('copy'), 'ada', 'POST', { tx: START, place: 2 })).body.error).toMatch(/already written/);
+    expect(sent).toEqual(['setting this vault\'s first secret', 'writing a sealed copy of this vault\'s secret', 'writing a sealed copy of this vault\'s secret']);
+  });
+
+  it('A VAULT HELD BY THE COMMITTEE AND NOT STARTED IS SAID AS ITS START OWED, AND TAKES NO DEPOSIT', async () => {
+    await heldVault();
+    const view = await call(`/api/accounts/acc_1/vaults/${VAULT}/chain`, 'ada');
+    /* RED WHEN: a vault not started is read as not held, so its handover would be sent again. */
+    expect(view.body).toMatchObject({ heldByCommittee: true, started: false, fundable: false });
+    expect((await call('/api/accounts/acc_1/vaults', 'ada')).body.rows).toEqual([expect.objectContaining({ vault: VAULT, state: 'start-owed' })]);
+    expect(await call(`/api/accounts/acc_1/vaults/${VAULT}/deposit`, 'ada', 'POST', { tx: 'AAAA' }))
+      .toMatchObject({ status: 409, body: { nothingWasSent: true } });
   });
 });

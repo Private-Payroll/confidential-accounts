@@ -29,8 +29,9 @@ const PRIVATE_TOKEN = '5e'.repeat(32);
 const OTHER_TOKEN = '7a'.repeat(32);
 const PARAMS = btoa('midnight:ledger-parameters[v8]:stand-in');
 
-const asset = (code: string, shielded: string | null): Asset => ({
-  code, name: code, kind: 'token', decimals: 0, chain: 'midnight',
+/** A row for a token, named `symbol`: private only where `shielded` is its token, else public only, as the token `cd..`. */
+const asset = (symbol: string, shielded: string | null): Asset => ({
+  code: shielded ?? 'cd'.repeat(32), symbol, name: symbol, decimals: 0,
   ledger: { shielded, unshielded: shielded === null ? 'cd'.repeat(32) : null } as Asset['ledger'], enabled: true, sortOrder: 1,
 });
 const PRIVATE = asset('PRV', PRIVATE_TOKEN);
@@ -65,7 +66,7 @@ const setUp = async () => {
   const refuse = async () => { throw new Error('a deposit never asks this'); };
   const builder: VaultBuilderClient = {
     deploy: refuse, handover: refuse, chooseNote: refuse, paymentsFit: refuse, afterPayment: refuse,
-    confirmPayment: refuse, creatingTransaction: async (i) => creatingTransactionOfNote(i), payout: refuse, payoutPublicly: refuse, governedCall: refuse,
+    confirmPayment: refuse, startStanding: refuse, setNonceSecret: refuse, writeSecretCopy: refuse, creatingTransaction: async (i) => creatingTransactionOfNote(i), payout: refuse, payoutPublicly: refuse, governedCall: refuse,
     commitments: async (i) => ({ output: `out:${i.coin.nonce}`, held: held(i.coin) }),
     deposit: async (i) => { lastBuilt = i.coin; log.push(`built ${i.coin.token.slice(0, 2)} ${i.coin.value}`); return { tx: 'PROVEN' }; },
   } as VaultBuilderClient;
@@ -90,7 +91,7 @@ describe('A DEPOSIT FROM A SOURCE', () => {
     const { log, doors } = await setUp();
     const asked: unknown[] = [];
     const source = privateTokenFromTheWallet(async (ask) => { asked.push(ask); log.push('wallet'); return { transaction: `${ask.transaction}+coins`, leaves: [] }; }, REGISTRY);
-    const done = await depositFromSource(doors, VAULT, source, { code: 'PRV', value: 40n });
+    const done = await depositFromSource(doors, VAULT, source, { code: PRIVATE_TOKEN, value: 40n });
     /* RED WHEN: the vault is given another token than the asset's private one, or another amount. */
     expect(done.note.token).toBe(PRIVATE_TOKEN);
     expect(done.note.value).toBe(40n);
@@ -110,15 +111,15 @@ describe('A DEPOSIT FROM A SOURCE', () => {
 
   it('AN ASSET THE SOURCE CANNOT BRING, OR AN AMOUNT OF NOTHING, IS REFUSED BEFORE ANYTHING IS CHOSEN, FILED, BUILT OR ASKED', async () => {
     for (const [why, brought] of [
-      ['an asset with no private form', { code: 'PUB', value: 40n }],
-      ['an amount of nothing', { code: 'PRV', value: 0n }],
+      ['an asset with no private form', { code: PUBLIC_ONLY.code, value: 40n }],
+      ['an amount of nothing', { code: PRIVATE_TOKEN, value: 0n }],
     ] as const) {
       const { log, doors, records } = await setUp();
       const source = privateTokenFromTheWallet(async () => { log.push('wallet'); return { transaction: 'T', leaves: [] }; }, REGISTRY);
       /* RED WHEN: the source's refusal or the amount is asked after the vault's step has chosen and filed a coin. */
       const e = await depositFromSource(doors, VAULT, source, brought).catch((x: Error) => x);
       /* RED WHEN: the source's own check is gone, and the asset registry's refusal, worded for a payment, reaches the screen. */
-      expect((e as Error).message, why).toMatch(brought.value === 0n ? /^an amount of nothing is not a deposit/ : /cannot go into a vault from your wallet's private balance/);
+      expect((e as Error).message, why).toMatch(brought.value === 0n ? /^an amount of nothing is not a deposit/ : /^PUB cannot be put into a vault privately\. Nothing was sent\. Choose a token that can be held privately\.$/);
       expect((e as Error).message, why).not.toMatch(/pa(id|y)(ment| out)/i);
       expect(log, why).toEqual([]);
       expect(await records('deposit-journal').get(VAULT), why).toBeNull();
@@ -137,7 +138,7 @@ describe('A DEPOSIT FROM A SOURCE', () => {
       payIn: async (ask): Promise<PaidIn> => { asked.push(ask); return { transaction: `${ask.transaction}+from-elsewhere`, leaves: [] }; },
     };
     const { log, doors } = await setUp();
-    const done = await depositFromSource(doors, VAULT, elsewhere, { code: 'PRV', value: 21n });
+    const done = await depositFromSource(doors, VAULT, elsewhere, { code: PRIVATE_TOKEN, value: 21n });
     /* RED WHEN: the step takes its token or amount from anywhere but the source's `money`, or sends anything but what its `payIn` answered. */
     expect({ token: done.note.token, value: done.note.value }).toEqual({ token: OTHER_TOKEN, value: 42n });
     expect(log).toEqual([`built ${OTHER_TOKEN.slice(0, 2)} 42`, 'sent PROVEN+from-elsewhere']);
@@ -145,7 +146,7 @@ describe('A DEPOSIT FROM A SOURCE', () => {
     /* And the page's source, beside it, is as it was. */
     const again = await setUp();
     const page = privateTokenFromTheWallet(async (ask) => ({ transaction: `${ask.transaction}+coins`, leaves: [] }), REGISTRY);
-    const mine = await depositFromSource(again.doors, VAULT, page, { code: 'PRV', value: 21n });
+    const mine = await depositFromSource(again.doors, VAULT, page, { code: PRIVATE_TOKEN, value: 21n });
     expect({ token: mine.note.token, value: mine.note.value }).toEqual({ token: PRIVATE_TOKEN, value: 21n });
   });
 
@@ -158,7 +159,7 @@ describe('A DEPOSIT FROM A SOURCE', () => {
       payIn: async () => { log.push('paid'); return { transaction: 'T', leaves: [] }; },
     } as unknown as DepositSource;
     /* RED WHEN: a source is sent down the private step whatever step it says it ends in. */
-    await expect(depositFromSource(doors, VAULT, unknown, { code: 'PRV', value: 1n })).rejects.toThrow(/cannot make this kind of deposit/);
+    await expect(depositFromSource(doors, VAULT, unknown, { code: PRIVATE_TOKEN, value: 1n })).rejects.toThrow(/cannot make this kind of deposit/);
     expect(asked).toBe(false);
     expect(log).toEqual([]);
     expect(await records('deposit-journal').get(VAULT)).toBeNull();

@@ -26,7 +26,7 @@ import { theVaultBuilder } from './vault-builder.js';
  * agree both ways. Nothing it reads leaves this device; the vault's address
  * goes out to ask the chain.
  *
- * Each amount is made with `privateAmount`, from the decimals and code of the
+ * Each amount is made with `privateAmount`, from the decimals and symbol of the
  * asset whose private token it is, so a screen never holds a number it could
  * show as money. None of the reader's words are handed on.
  */
@@ -34,7 +34,7 @@ import { theVaultBuilder } from './vault-builder.js';
 /** The pool's record, and the form private money takes on the ledger: the shared code's names, passed and never shown. */
 const LEDGER = { pool: 'pool', shielded: 'shielded' } as const;
 
-/** What a vault holds privately, as a screen shows it: one amount for each currency it holds any of, in the registry's order. */
+/** What a vault holds privately, as a screen shows it: one amount for each token it holds any of, in the registry's order. */
 export interface VaultPrivateMoney {
   readonly amounts: readonly PrivateAmount[];
 }
@@ -45,7 +45,7 @@ export interface VaultPrivateMoney {
  * else is signed in, this device holds no keys for the company, its pool
  * could not be opened, the chain could not be asked, the pool and the chain
  * disagree, or two assets name the same private token. Null is never shown
- * as nothing held. A currency it holds none of is not listed.
+ * as nothing held. A token it holds none of is not listed.
  */
 export async function readVaultPrivateMoney(
   personId: string, companyId: string, vault: string, registry: AssetRegistry = assets,
@@ -77,7 +77,7 @@ export async function readVaultPrivateMoney(
       tokens.add(token.toLowerCase());
       const held = await holdings.held(vault, LEDGER.shielded, token);
       if (held.of !== 'held') return null;
-      if (held.amount > 0n) amounts.push(privateAmount(held.amount, asset.decimals, asset.code));
+      if (held.amount > 0n) amounts.push(privateAmount(held.amount, asset.decimals, asset.symbol));
     }
     return { amounts };
   } catch {

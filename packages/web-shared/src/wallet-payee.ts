@@ -33,8 +33,8 @@ import { askWallet, type Openable, type WalletDialog } from './wallet-sign-in.js
  *
  * `src/core/wallet-payee-ask.ts` imports one constant;
  * `src/core/wallet-payee.ts` is the half that reaches `ledger-v9` and no browser
- * application may import it. `no-wasm-in-the-page.test.ts` catches it for
- * anything the legacy page reaches.
+ * application may import it. `apps/web/src/app-rules.test.ts` catches it for
+ * anything the application's adapters reach.
  */
 
 export interface PayeeAsked {

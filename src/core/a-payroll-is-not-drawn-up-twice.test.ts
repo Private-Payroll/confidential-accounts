@@ -25,11 +25,13 @@ import { SimulatedLedger, SimulatedProofSystem, SimulatedCommitments } from './l
 import { AccountService } from './account.js';
 import { PayrollService } from './payroll.js';
 
+import { TEST_TOKEN, registryWithTestPrivateForms } from '../testing/assets.js';
 function harness() {
   const store = new FileStore(join(mkdtempSync(join(tmpdir(), 'mn-repeat-')), 'db.json'));
+  const registry = registryWithTestPrivateForms();
   const accounts = new AccountService(
-    store, new SimulatedLedger(SimulatedCommitments), SimulatedCommitments);
-  const payroll = new PayrollService(store, accounts, new SimulatedProofSystem());
+    store, new SimulatedLedger(SimulatedCommitments), SimulatedCommitments, registry);
+  const payroll = new PayrollService(store, accounts, new SimulatedProofSystem(), registry);
   return { store, accounts, payroll };
 }
 
@@ -40,8 +42,8 @@ async function aCompany() {
 }
 
 const TWO = [
-  { name: 'Bea', asset: 'GBP', amount: 250_00n },
-  { name: 'Cal', asset: 'GBP', amount: 300_00n },
+  { name: 'Bea', asset: TEST_TOKEN, amount: 250_00n },
+  { name: 'Cal', asset: TEST_TOKEN, amount: 300_00n },
 ];
 
 describe('the ad hoc run door refuses a repeat', () => {
@@ -138,7 +140,7 @@ describe('the roster door', () => {
   it('is not shut out of a period by an ad hoc run over the same names, which can never be raised', async () => {
     const c = await aCompany();
     c.payroll.hireDirect(c.account, {
-      name: 'Bea', email: 'bea@a.co', title: 'Eng', asset: 'GBP', baseAmount: 250_00n,
+      name: 'Bea', email: 'bea@a.co', title: 'Eng', asset: TEST_TOKEN, baseAmount: 250_00n,
     }, c.viewingKey);
     await c.payroll.createRun(c.account, '2026-09', [TWO[0]!], c.viewingKey);
     /* RED WHEN the roster's own draw is refused as a repeat of a run nobody can raise. */

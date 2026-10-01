@@ -16,7 +16,7 @@
  * signer; **the screen does not yet say the first of the three any differently
  * from any other failure.**
  */
-import { assets as theAssets, type AssetId, type AssetRegistry } from '../../../src/core/assets.js';
+import { assets as theAssets, symbolOf, type AssetId, type AssetRegistry, type LedgerForm } from '../../../src/core/assets.js';
 import { refuseWhatTheVaultCannotPay, type PaymentAsked, type VaultHoldings } from '../../../src/core/vault-holdings.js';
 import {
   DEVICE_RAISE_VERSION, WRITTEN_DOWN_IS_NOT_WHAT_IS_CHECKED, paymentsCheckedDigest, type PaymentChecked,
@@ -66,29 +66,31 @@ export interface RoundOnThePage {
  */
 export interface LegPaymentsOnTheWire {
   readonly asset: string;
+  /** The form the leg pays in: privately from notes, or publicly from the vault's balance. */
+  readonly form?: LedgerForm;
   readonly payments: ReadonlyArray<PaymentChecked<string, string>>;
 }
 
 /** What this module asks of the company's service. */
 export interface GovernedCallService {
-  legPayments(runId: string, body: { viewingKey: string; asset?: string }): Promise<LegPaymentsOnTheWire>;
+  legPayments(runId: string, body: { viewingKey: string; asset?: string; form?: LedgerForm }): Promise<LegPaymentsOnTheWire>;
   raiseRun(runId: string, body: {
-    viewingKey: string; asset?: string; vault: string; opensAt: string; closesAt: string; onDevice: true;
+    viewingKey: string; asset?: string; form?: LedgerForm; vault: string; opensAt: string; closesAt: string; onDevice: true;
     version: typeof DEVICE_RAISE_VERSION; checked: string;
   }): Promise<{ proposal: RoundOnThePage; order: RaiseOrderOnTheWire | null }>;
-  raiseOrder(runId: string, body: { viewingKey: string; asset?: string }): Promise<RaiseOrderOnTheWire>;
+  raiseOrder(runId: string, body: { viewingKey: string; asset?: string; form?: LedgerForm }): Promise<RaiseOrderOnTheWire>;
   sendRaise(runId: string, body: {
-    viewingKey: string; asset?: string; tx: string; version: typeof DEVICE_RAISE_VERSION; checked: string;
+    viewingKey: string; asset?: string; form?: LedgerForm; tx: string; version: typeof DEVICE_RAISE_VERSION; checked: string;
   }): Promise<RoundOnThePage>;
   /** What a retry of some of one leg's people will ask its vault to pay, in the shape `legPayments` answers. */
-  retryPayments(runId: string, body: { viewingKey: string; asset?: string; indices: number[] }): Promise<LegPaymentsOnTheWire>;
+  retryPayments(runId: string, body: { viewingKey: string; asset?: string; form?: LedgerForm; indices: number[] }): Promise<LegPaymentsOnTheWire>;
   raiseRetry(runId: string, body: {
-    viewingKey: string; asset?: string; indices: number[]; vault: string; opensAt: string; closesAt: string; onDevice: true;
+    viewingKey: string; asset?: string; form?: LedgerForm; indices: number[]; vault: string; opensAt: string; closesAt: string; onDevice: true;
     version: typeof DEVICE_RAISE_VERSION; checked: string;
   }): Promise<{ proposal: RoundOnThePage; order: RetryOrderOnTheWire | null }>;
-  retryOrder(runId: string, body: { viewingKey: string; asset?: string; proposalId: string }): Promise<RetryOrderOnTheWire>;
+  retryOrder(runId: string, body: { viewingKey: string; asset?: string; form?: LedgerForm; proposalId: string }): Promise<RetryOrderOnTheWire>;
   sendRetry(runId: string, body: {
-    viewingKey: string; asset?: string; proposalId: string; tx: string; version: typeof DEVICE_RAISE_VERSION; checked: string;
+    viewingKey: string; asset?: string; form?: LedgerForm; proposalId: string; tx: string; version: typeof DEVICE_RAISE_VERSION; checked: string;
   }): Promise<RoundOnThePage>;
   callState(accountId: string): Promise<AccountCallChainOnTheWire & { readonly account: string }>;
   approve(proposalId: string, body: { signerId: string; signature: string; viewingKey: string; tx: string }): Promise<RoundOnThePage>;
@@ -114,7 +116,7 @@ export interface GovernanceRoundOnTheWire {
   readonly order: { readonly proposalId: string; readonly chainId: string; readonly order: RaiseGovernanceOrder } | null;
 }
 
-export type GovernedStage = 'checking-the-vault' | 'writing-down' | 'reading-the-chain' | 'building' | 'sending' | 'waiting-for-the-chain';
+type GovernedStage = 'checking-the-vault' | 'writing-down' | 'reading-the-chain' | 'building' | 'sending' | 'waiting-for-the-chain';
 
 export interface GovernedCallDoors {
   readonly service: GovernedCallService;
@@ -347,13 +349,13 @@ const waitFor = async (
 export async function sendRaiseFromDevice(
   doors: RaiseDoors,
   input: {
-    runId: string; viewingKey: string; asset?: string; order?: RaiseOrderOnTheWire;
+    runId: string; viewingKey: string; asset?: string; form?: LedgerForm; order?: RaiseOrderOnTheWire;
     /** What the person chose, when this device is raising the leg now: the order must describe exactly that. */
     chosen?: { vault: string; opensAt: string; closesAt: string };
   },
 ): Promise<RoundOnThePage> {
   const { service } = doors;
-  const asked = input.asset === undefined ? {} : { asset: input.asset };
+  const asked = legAsked(input);
   const order = input.order ?? await service.raiseOrder(input.runId, { viewingKey: input.viewingKey, ...asked });
   refuseAnOrderThatIsNotThisRaise(order, input.chosen);
   doors.progress?.('checking-the-vault');
@@ -393,6 +395,16 @@ export interface RaiseDoors extends GovernedCallDoors {
 const DIGITS = /^[0-9]+$/u;
 
 /**
+ * **WHICH LEG A CALL NAMES**: its token, and its form where the run pays that
+ * token both privately and publicly, as two legs side by side. Either is left
+ * out where the run leaves no doubt, and nothing else is sent.
+ */
+const legAsked = (input: { asset?: string; form?: LedgerForm }): { asset?: string; form?: LedgerForm } => ({
+  ...(input.asset === undefined ? {} : { asset: input.asset }),
+  ...(input.form === undefined ? {} : { form: input.form }),
+});
+
+/**
  * **WHETHER THE VAULT CAN PAY THIS LEG'S PRIVATE PAYMENTS, ASKED HERE BEFORE THE
  * SERVICE IS ASKED TO WRITE ANYTHING DOWN.** The vault's notes are opened on
  * this device and nowhere else, so this is the one place the question can be
@@ -403,11 +415,9 @@ const DIGITS = /^[0-9]+$/u;
  */
 async function refuseALegTheVaultCannotPay(
   doors: RaiseDoors,
-  input: { runId: string; viewingKey: string; asset?: string; vault: string; order?: RaiseOrderOnTheWire },
+  input: { runId: string; viewingKey: string; asset?: string; form?: LedgerForm; vault: string; order?: RaiseOrderOnTheWire },
 ): Promise<string> {
-  const leg = await doors.service.legPayments(input.runId, {
-    viewingKey: input.viewingKey, ...(input.asset === undefined ? {} : { asset: input.asset }),
-  });
+  const leg = await doors.service.legPayments(input.runId, { viewingKey: input.viewingKey, ...legAsked(input) });
   return refusePaymentsTheVaultCannotPay(doors, leg, input);
 }
 
@@ -423,11 +433,15 @@ async function refuseALegTheVaultCannotPay(
  * service compares what it writes down with the digest this returns.
  */
 async function refusePaymentsTheVaultCannotPay(
-  doors: RaiseDoors, leg: LegPaymentsOnTheWire, input: { asset?: string; vault: string; order?: RaiseOrderOnTheWire },
+  doors: RaiseDoors, leg: LegPaymentsOnTheWire, input: { asset?: string; form?: LedgerForm; vault: string; order?: RaiseOrderOnTheWire },
 ): Promise<string> {
-  if (input.asset !== undefined && leg.asset !== input.asset) {
-    throw new Error(`the company answered for its ${leg.asset} payments when ${input.asset} is being raised. `
-      + 'Nothing was raised and no fee was spent.');
+  if ((input.asset !== undefined && leg.asset !== input.asset)
+    || (input.form !== undefined && leg.form !== undefined && leg.form !== input.form)) {
+    const registry = doors.assets ?? theAssets;
+    const named = (asset: string, form: LedgerForm | undefined) =>
+      `${form === undefined ? '' : `${form === 'shielded' ? 'private' : 'public'} `}${symbolOf(asset, registry)}`;
+    throw new Error(`The service returned the ${named(leg.asset, leg.form)} payments when the `
+      + `${named(input.asset ?? leg.asset, input.form)} payments were asked for. Nothing was sent for approval and no fee was spent.`);
   }
   const payments = leg.payments.map((p, at): PaymentAsked => {
     const kind = p.kind;
@@ -470,14 +484,14 @@ async function refusePaymentsTheVaultCannotPay(
  */
 export async function raiseRunOnDevice(
   doors: RaiseDoors,
-  input: { runId: string; viewingKey: string; asset?: string; vault: string; opensAt: string; closesAt: string },
+  input: { runId: string; viewingKey: string; asset?: string; form?: LedgerForm; vault: string; opensAt: string; closesAt: string },
 ): Promise<RoundOnThePage> {
   doors.progress?.('checking-the-vault');
   const checked = await refuseALegTheVaultCannotPay(doors, input);
   doors.progress?.('writing-down');
   const raised = await doors.service.raiseRun(input.runId, {
     viewingKey: input.viewingKey, vault: input.vault, opensAt: input.opensAt, closesAt: input.closesAt,
-    ...(input.asset === undefined ? {} : { asset: input.asset }), onDevice: true,
+    ...legAsked(input), onDevice: true,
     version: DEVICE_RAISE_VERSION, checked,
   });
   /* A proposal the chain already holds - one raised before and seen since - has nothing to send. */
@@ -485,7 +499,7 @@ export async function raiseRunOnDevice(
   return sendRaiseFromDevice(doors, {
     runId: input.runId, viewingKey: input.viewingKey, order: raised.order,
     chosen: { vault: input.vault, opensAt: input.opensAt, closesAt: input.closesAt },
-    ...(input.asset === undefined ? {} : { asset: input.asset }),
+    ...legAsked(input),
   });
 }
 
@@ -531,7 +545,7 @@ covered: ReadonlyArray<number> = []): number[] {
 }
 
 /** A retry written onto a leg, as the page reads it off the run. */
-export interface RetryOnTheLeg {
+interface RetryOnTheLeg {
   readonly originalIndices: ReadonlyArray<number>;
   readonly opensAt: bigint | string | number;
   readonly closesAt: bigint | string | number;
@@ -541,7 +555,7 @@ export interface RetryOnTheLeg {
 }
 
 /** The parts of a round the page reads to decide what may be done with it. */
-export interface RoundStanding {
+interface RoundStanding {
   readonly id: string;
   readonly status: string;
   readonly raisedAt?: string;
@@ -599,7 +613,7 @@ const seconds = (s: bigint | string | number): bigint => BigInt(String(s));
  * window has closed is none of these. A retry whose round this page cannot
  * find is left out: nothing here can say what would send it.
  */
-export interface PendingRetry {
+interface PendingRetry {
   readonly kind: 'untold' | 'unsent' | 'sent-unseen';
   readonly retry: RetryOnTheLeg;
   readonly round?: RoundStanding;
@@ -662,12 +676,12 @@ const refuseAnOrderThatIsNotThisRetry = (order: RetryOrderOnTheWire, indices: Re
 export async function sendRetryFromDevice(
   doors: RaiseDoors,
   input: {
-    runId: string; viewingKey: string; asset?: string; proposalId: string; order?: RetryOrderOnTheWire;
+    runId: string; viewingKey: string; asset?: string; form?: LedgerForm; proposalId: string; order?: RetryOrderOnTheWire;
     chosen?: { indices: ReadonlyArray<number>; vault: string; opensAt: string; closesAt: string };
   },
 ): Promise<RoundOnThePage> {
   const { service } = doors;
-  const asked = input.asset === undefined ? {} : { asset: input.asset };
+  const asked = legAsked(input);
   const order = input.order ?? await service.retryOrder(input.runId, {
     viewingKey: input.viewingKey, ...asked, proposalId: input.proposalId,
   });
@@ -696,11 +710,11 @@ export async function sendRetryFromDevice(
 export async function raiseRetryOnDevice(
   doors: RaiseDoors,
   input: {
-    runId: string; viewingKey: string; asset?: string; indices: ReadonlyArray<number>;
+    runId: string; viewingKey: string; asset?: string; form?: LedgerForm; indices: ReadonlyArray<number>;
     vault: string; opensAt: string; closesAt: string;
   },
 ): Promise<RoundOnThePage> {
-  const asked = input.asset === undefined ? {} : { asset: input.asset };
+  const asked = legAsked(input);
   const indices = [...input.indices];
   doors.progress?.('checking-the-vault');
   const checked = await refusePaymentsTheVaultCannotPay(doors, await doors.service.retryPayments(input.runId, {
@@ -814,7 +828,7 @@ export const governedCallServiceFor = (api: Api): GovernedCallService => {
 /* ── A SEAT AND A THRESHOLD CHANGE, CARRIED OUT FROM THIS DEVICE ─────────────── */
 
 /** Where a round that changes who may approve stands after this device has done what it can. */
-export type GovernedOutcome =
+type GovernedOutcome =
   | { readonly state: 'done' }
   | { readonly state: 'waiting-for-approvals'; readonly round: RoundOnThePage };
 

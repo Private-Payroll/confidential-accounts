@@ -61,7 +61,7 @@ import { applyNetworkId, theNetwork } from '../src/midnight/network.js';
 import { payeeOf, shortPayee } from '../src/midnight/payee-address.js';
 import { privateStateKey } from '../src/midnight/ledger.js';
 import { transferOf, transferFacts, privacyOf } from '../src/core/movement.js';
-import { assets, assetIdBytes, formatAmount } from '../src/core/assets.js';
+import { assets, assetIdBytes, formatAmount, NIGHT as NIGHT_TOKEN } from '../src/core/assets.js';
 import { fromHex, toHex, type Hex } from '../src/core/crypto.js';
 import type { SignerRef } from '../src/core/ledger.js';
 import { explainNodeError } from './node-errors.js';
@@ -75,7 +75,7 @@ import { assertColoursAgree } from './transfer-from-vault.js';
 import {
   amountFromText, referenceFromText, assertPublicPayee, assertVaultCanPayPublicly, assertVaultIsMarriedTo,
   blockSecondsOf, newPayoutRecord, payoutRecordFromText, assertNotAlreadyPaid, assertRecordIsThisPayment,
-  finishedRecordFile, finishedRecordPrefix, runOf, vaultPaymentOf,
+  finishedRecordFile, finishedRecordPrefix, runOf, vaultPaymentOf, RUN_REQUIRES,
   asksOf, batchDigestOf, approvalsNeeded, publicMovementOf, drive, refusalBeforePayment,
   type PayoutRecord,
 } from './pay-from-vault-rules.js';
@@ -96,7 +96,8 @@ const PRIVATE_STATE_PASSWORD = process.env.MIDNIGHT_PRIVATE_STATE_PASSWORD || 'C
 /** The account every test door on this machine deploys and runs against. */
 const ACCOUNT_ID = 'default';
 const PRIVATE_STATE_KEY = privateStateKey(PRIVATE_STATE_ID, ACCOUNT_ID);
-const ASSET = 'NIGHT';
+/** The asset this door pays in: NIGHT, named by its ledger token. */
+const ASSET: string = NIGHT_TOKEN;
 
 const VAULT_NAME = (process.env.VAULT_NAME ?? '').trim();
 const PAY_TO = (process.env.PAY_TO ?? '').trim();
@@ -257,7 +258,7 @@ async function main(): Promise<number> {
   const reference = referenceFromText(PAY_REFERENCE);
   const asset = assets.require(ASSET);
   good(`paying ${shortPayee(payee)}, a public address on ${NETWORK}`);
-  good(`${amount.toLocaleString()} of ${ASSET} in its smallest unit (${formatAmount(amount, asset)} ${ASSET})`);
+  good(`${amount.toLocaleString()} of ${asset.symbol} in its smallest unit (${formatAmount(amount, asset)} ${asset.symbol})`);
   note('A PUBLIC PAYMENT PUTS THE ADDRESS AND THE AMOUNT ON A RECORD ANYONE CAN READ.');
   const transfer = transferOf({
     accountId: `vault:${VAULT_NAME}`, payee, asset: ASSET, amount, privacy: privacyOf(payee), reference,
@@ -309,7 +310,7 @@ async function main(): Promise<number> {
   const built = runOf(record, facts, await vaultDetailsOf(), ACCOUNT_ID);
   const vaultBytes = fromHex(vaultAddress as Hex);
   const proposalId = accountCircuits.proposalIdOf(
-    accountCircuits.runPayload(fromHex(built.run.tree.root), built.run.tree.payees, built.opensAt, built.closesAt, 0n),
+    accountCircuits.runPayload(fromHex(built.run.tree.root), built.run.tree.payees, built.opensAt, built.closesAt, RUN_REQUIRES),
     vaultBytes, fromHex(record.salt));
   const movement = accountCircuits.paidMovementOf(fromHex(built.args.leaf));
   note(`the window: ${new Date(Number(built.opensAt) * 1000).toISOString()} to ${new Date(Number(built.closesAt) * 1000).toISOString()}`);
@@ -496,7 +497,7 @@ async function main(): Promise<number> {
     propose: async () => {
       await becomeSigner('A');
       const res = await account.callTx.propose(
-        ZERO_32, fromHex(built.run.tree.root), built.run.tree.payees, built.opensAt, built.closesAt, true, vaultBytes);
+        ZERO_32, fromHex(built.run.tree.root), built.run.tree.payees, built.opensAt, built.closesAt, RUN_REQUIRES, true, vaultBytes);
       return `as signer A, transaction ${String(res?.public?.txId ?? '(no id in the answer)')}`;
     },
     approve: async (who) => {
@@ -507,7 +508,7 @@ async function main(): Promise<number> {
       return `transaction ${String(res?.public?.txId ?? '(no id in the answer)')}`;
     },
     pay: async () => {
-      const paid = await vaultLedger.payout(vaultAddress!, vaultPaymentOf(record, built, toHex(proposalId) as Hex), BY);
+      const paid = await vaultLedger.payout(vaultAddress!, vaultPaymentOf(record, built, toHex(proposalId) as Hex, vaultAddress! as Hex), BY);
       try {
         const fin: any = await withTimeout('the finalized payment', 120_000, publicDataProvider.watchForTxData(paid.ref));
         note(`fee paid ${String(fin?.fees?.paidFees ?? '(not in the answer)')}, block ${String(fin?.blockHeight ?? '?')}, status ${String(fin?.status ?? '?')}`);

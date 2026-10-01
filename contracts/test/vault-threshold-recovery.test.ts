@@ -41,10 +41,10 @@ import {
 import { Contract as Vault, ledger as vaultLedger } from '../managed-vault/contract/index.js';
 import { pureCircuits as vaultCircuits } from '../managed-vault/contract/index.js';
 import { pureCircuits, ledger as accountLedger } from '../managed/contract/index.js';
-import { AccountSimulator, privateStateFor, change, type Change, payoutTreeOf } from './simulator.js';
+import { AccountSimulator, privateStateFor, change, type Change, payoutTreeOf, vaultRunOf } from './simulator.js';
+import { carryTheAccount, startTheVault } from './start-a-vault.js';
 import { type PayoutLeafInput } from '../../src/midnight/payout-tree.js';
 import { toHex, fromHex } from '../../src/core/crypto.js';
-import { itPaysOutOfTodaysVault } from './until-the-vault-pays-with-a-receipt.js';
 
 /* The clock and the run's window, pinned for the reason the simulator's own
  * comment gives: nothing here measures real time. */
@@ -57,7 +57,7 @@ const bytes = (n: number) => new Uint8Array(32).fill(n);
 
 const A = privateStateFor(1);
 const B = privateStateFor(2);
-const GBP = bytes(0x9b);
+const TOKEN_BYTES = bytes(0x9b);
 const ALICE = bytes(0x0a);
 
 const NO_VAULT = pureCircuits.noVault();
@@ -69,6 +69,7 @@ interface VaultPrivate {
 /** The owner's device: which note to spend. One note here, so selection is trivial. */
 const vaultWitnesses = {
   noteToSpend: (ctx: { privateState: VaultPrivate }) => [ctx.privateState, ctx.privateState.coin],
+  nonceSecret: (ctx: { privateState: { secret?: Uint8Array } }) => [ctx.privateState, ctx.privateState.secret ?? new Uint8Array(32).fill(0x51)],
 };
 
 const govChange = (seed: number): Change => change(0n, seed);
@@ -108,8 +109,19 @@ describe('a vault whose threshold nobody can meet is recovered, and pays', () =>
       createConstructorContext({} as VaultPrivate, BLOCK),
       { bytes: Uint8Array.from(Buffer.from(String(sim.address), 'hex')) } as never);
     vaultState = init.currentContractState;
+    /* A vault takes no money until the account has adopted it and approved its first secret. */
+    await startTheVault({
+      sim, vault: Uint8Array.from(Buffer.from(String(vaultAddr), 'hex')), approvers: [A, B], now: VAULT_NOW,
+      call: async (circuit, ...a) => {
+        const r: any = await (vault.impureCircuits as any)[circuit](createCircuitContext(
+          circuit as never, vaultAddr as never, BLOCK, vaultState, {} as never,
+          provider() as never, undefined, undefined, VAULT_NOW, BLOCK), ...a);
+        vaultState = r.context.callContext.currentQueryContext.state;
+        carryTheAccount(sim, r.context);
+      },
+    });
 
-    const coin = { nonce: bytes(0x77), color: GBP, value: 1_000n };
+    const coin = { nonce: bytes(0x77), color: TOKEN_BYTES, value: 1_000n };
     priv = { coin: { ...coin, mt_index: 0n } };
     const dep = await vault.impureCircuits.deposit(
       createCircuitContext<VaultPrivate>('deposit', vaultAddr as never, BLOCK, vaultState, priv),
@@ -148,10 +160,10 @@ describe('a vault whose threshold nobody can meet is recovered, and pays', () =>
   /** Raises and approves a one-payee run for this vault, and returns what a payer needs. */
   const approvedRun = async (to: Uint8Array, amount: bigint, nonce: number, c: Change) => {
     const leaves: PayoutLeafInput[] = [{
-      details: toHex(vaultCircuits.payoutDetails(to, GBP, amount, bytes(0x40))),
+      details: toHex(vaultCircuits.payoutDetails(to, TOKEN_BYTES, amount, bytes(0x40))),
       nonce: toHex(bytes(nonce)),
     }];
-    const tree = payoutTreeOf(leaves);
+    const tree = payoutTreeOf(leaves, [amount], TOKEN_BYTES);
     const payload = pureCircuits.runPayload(
       fromHex(tree.root), tree.payees, WIN_FROM, WIN_UNTIL, 0n);
     await sim.as(carrying(sim, A, c)).proposeRun({
@@ -163,7 +175,7 @@ describe('a vault whose threshold nobody can meet is recovered, and pays', () =>
     return { tree, id };
   };
 
-  itPaysOutOfTodaysVault('THE FOUR STEPS: raised above the seats, refused with its reason, lowered by a governed round, raised again and paid',
+  it('THE FOUR STEPS: raised above the seats, refused with its reason, lowered by a governed round, raised again and paid',
     async () => {
     /* --- 1. RAISE IT ABOVE THE SEATS ---------------------------------------
      *
@@ -198,8 +210,11 @@ describe('a vault whose threshold nobody can meet is recovered, and pays', () =>
     const leaf = fromHex(run.tree.leaves[0]);
     const pay = () => vault.impureCircuits.payout(
       payoutContext(),
-      run.id, fromHex(run.tree.root), run.tree.payees, WIN_FROM, WIN_UNTIL, c.salt,
-      ALICE, GBP, 250n, bytes(0x40), bytes(0xc1), run.tree.pathFor(0) as never);
+      vaultRunOf({
+        proposal: run.id, vault: vaultAddrBytes(), tree: run.tree, i: 0,
+        opensAt: WIN_FROM, closesAt: WIN_UNTIL, salt: c.salt, nonce: bytes(0xc1),
+      }),
+      ALICE, TOKEN_BYTES, 250n, bytes(0x40));
 
     /*
      * THE REASON, NOT MERELY A THROW. A test that passed because something else
@@ -245,8 +260,11 @@ describe('a vault whose threshold nobody can meet is recovered, and pays', () =>
     expect(rerun.tree.leaves[0]).toBe(run.tree.leaves[0]);
     const r = await vault.impureCircuits.payout(
       payoutContext(),
-      rerun.id, fromHex(rerun.tree.root), rerun.tree.payees, WIN_FROM, WIN_UNTIL, again.salt,
-      ALICE, GBP, 250n, bytes(0x40), bytes(0xc1), rerun.tree.pathFor(0) as never);
+      vaultRunOf({
+        proposal: rerun.id, vault: vaultAddrBytes(), tree: rerun.tree, i: 0,
+        opensAt: WIN_FROM, closesAt: WIN_UNTIL, salt: again.salt, nonce: bytes(0xc1),
+      }),
+      ALICE, TOKEN_BYTES, 250n, bytes(0x40));
     vaultState = r.context.callContext.currentQueryContext.state;
 
     expect(vaultLedger(vaultState as never).payments).toBe(1n);

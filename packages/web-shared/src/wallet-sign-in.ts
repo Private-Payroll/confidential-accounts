@@ -28,7 +28,7 @@ import { signInAsk } from '../../../src/core/wallet-sign-in-ask.js';
  * the wallet SDK, so it reaches `ledger-v9`, so the page was loading ten
  * megabytes of WebAssembly to build a small JSON object. The ask now lives in
  * `src/core/wallet-sign-in-ask.ts`, which imports one constant and nothing else.
- * `no-wasm-in-the-page.test.ts` is what keeps it that way.
+ * `apps/web/src/app-rules.test.ts` holds the application's page to that.
  *
  * **THE ONE JUDGEMENT IT DOES MAKE IS THE ORIGIN**, and only in the narrow
  * sense of refusing to listen to anybody else. `MessageEvent.origin` is filled

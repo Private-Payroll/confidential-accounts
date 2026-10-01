@@ -30,18 +30,21 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 
 import { AccountService } from '../../src/core/account.js';
-import { PayrollService } from '../../src/core/payroll.js';
+import { PayrollService, runLegOf } from '../../src/core/payroll.js';
 import {
   SimulatedLedger, SimulatedProofSystem, type StateChange,
 } from '../../src/core/ledger.js';
 import { MidnightCommitments } from '../../src/midnight/commitments.js';
 import { runMaterialFor, retryMaterialFor } from '../../src/midnight/run-material.js';
 import { vaultDetails } from '../../src/testing/vault-details.js';
-import { registryWithTestPrivateForms, aVaultHolding } from '../../src/testing/assets.js';
+import { registryWithTestPrivateForms, aVaultHolding, TEST_TOKEN } from '../../src/testing/assets.js';
 import { FileStore } from '../../src/core/store-file.js';
 import { toHex, unseal, parseCanonical, sign, type Hex, type Sealed } from '../../src/core/crypto.js';
 import { approvalMessage } from '../../src/core/account.js';
 import { payFor } from '../../src/testing/payees.js';
+
+/** The one leg every run here pays: the fixture token, privately. */
+const LEG = runLegOf(TEST_TOKEN, 'shielded');
 
 const VAULT = toHex(new Uint8Array(32).fill(0xa1));
 const NOW = Math.floor(Date.now() / 1000);
@@ -100,7 +103,7 @@ async function aDraftedRun(people = 2) {
   const viewingKey = created.viewingKey;
   for (let i = 0; i < people; i++) {
     s.payroll.hireDirect(created.account.id, {
-      name: `Payee ${i}`, email: `p${i}@a.co`, title: 'Eng', asset: 'GBP', baseAmount: 100_00n,
+      name: `Payee ${i}`, email: `p${i}@a.co`, title: 'Eng', asset: TEST_TOKEN, baseAmount: 100_00n,
     }, viewingKey);
   }
   const { run } = await s.payroll.createRunFromRoster(created.account.id, '2026-10', viewingKey);
@@ -158,7 +161,7 @@ describe('a raise that threw after the network had it', () => {
     expect(r.control.raises).toBe(1);
     const run = r.payroll.requireRun(r.run.id, r.viewingKey);
     /* RED WHEN the run is not told which round its leg is. */
-    expect(run.proposalIds.GBP).toBe(written!.id);
+    expect(run.proposalIds[LEG]).toBe(written!.id);
     expect(run.status).toBe('proposed');
   });
 
@@ -185,7 +188,7 @@ describe('a raise that threw after the network had it', () => {
       r.control.fault = 'land-then-throw';
       await expect(r.payroll.proposeRun(r.run.id, r.viewingKey, r.by, await r.materialFor(r.run.id)))
         .rejects.toThrow();
-      const before = r.payroll.requireRun(r.run.id, r.viewingKey).payout!.GBP!;
+      const before = r.payroll.requireRun(r.run.id, r.viewingKey).payout![LEG]!;
 
       const later = await r.materialFor(r.run.id, CLOSES + 3_600n);
       /* RED WHEN the refusal does not say which window and vault the earlier round took. */
@@ -204,7 +207,7 @@ describe('a raise that threw after the network had it', () => {
       await expect(r.payroll.proposeRun(r.run.id, r.viewingKey, r.by, reordered))
         .rejects.toThrow(/over a different payout root, window or vault/);
       /* RED WHEN the refused request overwrites what the earlier attempt was over. */
-      expect(r.payroll.requireRun(r.run.id, r.viewingKey).payout!.GBP!).toEqual(before);
+      expect(r.payroll.requireRun(r.run.id, r.viewingKey).payout![LEG]!).toEqual(before);
       expect(r.roundsOf(r.run.id)).toHaveLength(1);
       expect(await r.openRounds()).toBe(1);
     });
@@ -225,7 +228,7 @@ describe('a raise that threw after the network had it', () => {
       r.run.id, r.viewingKey, r.by, await r.materialFor(r.run.id));
     expect(again.id).toBe(written!.id);
     expect(r.control.raises).toBe(1);
-    expect(r.payroll.requireRun(r.run.id, r.viewingKey).proposalIds.GBP).toBe(written!.id);
+    expect(r.payroll.requireRun(r.run.id, r.viewingKey).proposalIds[LEG]).toBe(written!.id);
   });
 
   it('is raised again from what it was raised over, after the roster has moved on', async () => {
@@ -344,9 +347,9 @@ describe('a raise that threw after the network had it', () => {
         accountId: r.account, viewingKey: r.viewingKey, summary: 'Payroll 2026-10, 1 recipients',
         /* Entries that add up to the payments, or the raise is refused before anything is written down. */
         payload: { runId: r.run.id, entries: material.facts.map((f, i) => ({
-          id: `ent_${i}`, kind: 'payroll', asset: 'GBP', amount: f.amount,
+          id: `ent_${i}`, kind: 'payroll', asset: TEST_TOKEN, amount: f.amount,
           counterparty: `person ${i}`, memo: '', at: '',
-        })) }, asset: 'GBP', run: material.run,
+        })) }, asset: TEST_TOKEN, run: material.run,
         payments: material.facts, proposedBy: r.by,
       }).catch(() => undefined);
     }
@@ -376,7 +379,7 @@ describe('a raise that threw after the network had it', () => {
     /* RED WHEN a retry raised again mints a second round. */
     expect(again.id).toBe(written[0]!.id);
     expect(await r.openRounds()).toBe(2);
-    const retries = r.payroll.requireRun(r.run.id, r.viewingKey).payout!.GBP!.retries!;
+    const retries = r.payroll.requireRun(r.run.id, r.viewingKey).payout![LEG]!.retries!;
     /* RED WHEN a retry raised again is written onto the leg a second time. */
     expect(retries).toHaveLength(1);
     expect(retries[0]!.proposalId).toBe(written[0]!.id);
@@ -387,7 +390,7 @@ describe('a run is not raised over people another run for the period was raised 
   it('refuses the second of two drafts over overlapping people once the first is raised', async () => {
     const r = await aDraftedRun(2);
     r.payroll.hireDirect(r.account, {
-      name: 'Payee 2', email: 'p2@a.co', title: 'Eng', asset: 'GBP', baseAmount: 100_00n,
+      name: 'Payee 2', email: 'p2@a.co', title: 'Eng', asset: TEST_TOKEN, baseAmount: 100_00n,
     }, r.viewingKey);
     /* A second draft over the whole roster, which now has one more person. */
     const wider = await r.payroll.createRunFromRoster(r.account, '2026-10', r.viewingKey);
@@ -408,7 +411,7 @@ describe('a run is not raised over people another run for the period was raised 
   it('refuses a retry on a withdrawn run once another run has been raised over its people', async () => {
     const r = await aDraftedRun(2);
     r.payroll.hireDirect(r.account, {
-      name: 'Payee 2', email: 'p2@a.co', title: 'Eng', asset: 'GBP', baseAmount: 100_00n,
+      name: 'Payee 2', email: 'p2@a.co', title: 'Eng', asset: TEST_TOKEN, baseAmount: 100_00n,
     }, r.viewingKey);
     const wider = await r.payroll.createRunFromRoster(r.account, '2026-10', r.viewingKey);
     const raised = await r.payroll.proposeRun(r.run.id, r.viewingKey, r.by, await r.materialFor(r.run.id));

@@ -13,6 +13,7 @@ import { handedInWiring } from '../wiring/handed-in.js';
 import { AccountService, CompanyLabelTaken, NotACompanyLabel } from '../core/account.js';
 import { readCompanyLabel } from 'midnight-identity/profile/company-label';
 import { PayrollService, RecordingInviteDelivery, canonicalPeriod } from '../core/payroll.js';
+import { runLegOf, type RunLegChoice } from '../core/payroll.js';
 import { PluginService } from '../core/plugins.js';
 import { IdentityService, TooManyAttempts, StaleKeyBundle } from '../core/identity.js';
 import {
@@ -21,8 +22,8 @@ import {
 import { NoCompanyAddress, companyForSession } from '../core/company-address.js';
 import { MemoryChallengeStore } from '../core/challenges.js';
 /* `X8` — the server half of taking a receiving address from a wallet. It
- * reaches the wallet SDK, which is why no browser application (`src/web-legacy`,
- * `apps/web`, or the shared code in `packages/web-shared`) may. */
+ * reaches the wallet SDK, which is why no browser application (`apps/web`, or
+ * the shared code in `packages/web-shared`) may. */
 import { WalletPayeeError, payeeFromWallet } from '../core/wallet-payee.js';
 import {
   MemorySessionStore, PostgresSessionStore, type SessionStore,
@@ -30,7 +31,6 @@ import {
 import {
   MemoryRateLimiter, PostgresRateLimiter, type RateLimiter,
 } from '../core/rate-limit.js';
-import { seedDemo } from '../core/demo.js';
 import {
   countProvenance, decideList, refuseSelectionOver, refuseSelectionOverHistory,
   type ListVerdict, type Marked,
@@ -121,13 +121,14 @@ const NETWORK = theNetwork();
 /**
  * How an amount crosses the HTTP boundary.
  *
- * A DECIMAL STRING PLUS AN ASSET CODE, never a JSON number, and both halves of
- * that are load-bearing.
+ * A DECIMAL STRING PLUS THE ASSET'S TOKEN, never a JSON number, and both halves
+ * of that are load-bearing.
  *
  * A JSON number cannot carry these values. Amounts are integers in the asset's
- * smallest unit, so one ether is 10^18 — past `Number.MAX_SAFE_INTEGER`, and
- * `JSON.parse` would round it silently on the way in. It is also the wrong
- * thing to ask a person for: nobody types 500000 meaning five thousand pounds.
+ * smallest unit, so one whole unit of an 18-decimal token is 10^18, past
+ * `Number.MAX_SAFE_INTEGER`, and `JSON.parse` would round it silently on the
+ * way in. It is also the wrong thing to ask a person for: nobody types
+ * 5000000000 meaning five thousand tUSD.
  *
  * So the wire carries what a human wrote — `"5000.00"` — and the registry's
  * decimals turn it into an integer HERE, at the edge, once. `parseAmount`
@@ -135,7 +136,23 @@ const NETWORK = theNetwork();
  * the asset has, so a request that would have been rounded is a 400 with a
  * sentence rather than a payslip that is quietly wrong.
  */
-const assetCode = z.string().min(1).max(32);
+const assetCode = z.string().regex(/^[0-9a-f]{64}$/u, 'an asset is its ledger token: 64 lower-case hex characters');
+
+/*
+ * **WHICH LEG OF A RUN A REQUEST IS ABOUT: A TOKEN, AND THE FORM WHERE THE RUN
+ * PAYS THAT TOKEN IN BOTH.** One run pays one token in one form, so a payroll
+ * with private and public payees has two legs, each its own approval round.
+ * Both are optional where the run has one leg; a form on its own names nothing.
+ */
+const legForm = z.enum(['shielded', 'unshielded']);
+
+const legChoiceOf = (b: { asset?: string; form?: 'shielded' | 'unshielded' }): RunLegChoice | undefined => {
+  if (b.form !== undefined && b.asset === undefined) {
+    throw new Error('a form names a leg only beside the token it is a form of. Send the token as well.');
+  }
+  if (b.asset === undefined) return undefined;
+  return b.form === undefined ? b.asset : runLegOf(b.asset, b.form);
+};
 
 const money = (asset: string, amount: string): bigint =>
   parseAmount(amount, assetRegistry.require(asset));
@@ -1509,7 +1526,7 @@ app.post('/api/runs/:id/propose', authed, ownsRun, wrap(async (req, res) => {
     viewingKey: z.string(),
     // Optional, and only needed by a run that settles in more than one asset —
     // each is its own approval round.
-    asset: assetCode.optional(),
+    asset: assetCode.optional(), form: legForm.optional(),
     /*
      * **THE VAULT THAT WILL PAY THIS LEG.** A contract address — `Bytes<32>` in
      * the contract's signature — as sixty-four lower-case hexadecimal
@@ -1573,7 +1590,7 @@ app.post('/api/runs/:id/propose', authed, ownsRun, wrap(async (req, res) => {
    * anything this product holds.
    */
   const inputs = await payroll.runMaterialInputs(
-    String(req.params.id), b.viewingKey, b.asset);
+    String(req.params.id), b.viewingKey, legChoiceOf(b));
   const material = await runMaterialFor({
     accountId: inputs.accountId,
     runId: inputs.runId,
@@ -1594,7 +1611,7 @@ app.post('/api/runs/:id/propose', authed, ownsRun, wrap(async (req, res) => {
    * proposal is written down. A leg that is already proposed is refused as
    * that first, because raising again cannot change it.
    */
-  if (b.onDevice) payroll.refuseRaisingAProposedLeg(String(req.params.id), b.viewingKey, b.asset);
+  if (b.onDevice) payroll.refuseRaisingAProposedLeg(String(req.params.id), b.viewingKey, legChoiceOf(b));
   if (b.onDevice && paymentsCheckedDigest(material.facts.map(paymentChecked)) !== b.checked) {
     throw new Error(RAISE_IS_NOT_WHAT_WAS_CHECKED);
   }
@@ -1607,12 +1624,12 @@ app.post('/api/runs/:id/propose', authed, ownsRun, wrap(async (req, res) => {
   const proposal = await payroll.proposeRun(
     String(req.params.id), b.viewingKey,
     accounts.seatOf(inputs.accountId, b.viewingKey as Hex, req.userId!),
-    material, b.asset, b.onDevice ? { onDevice: true } : undefined);
+    material, legChoiceOf(b), b.onDevice ? { onDevice: true } : undefined);
   if (!b.onDevice) {
     res.json(proposal);
     return;
   }
-  res.json({ proposal, order: raiseOrderOnTheWire(await payroll.raiseOrderOf(String(req.params.id), b.viewingKey, b.asset)) });
+  res.json({ proposal, order: raiseOrderOnTheWire(await payroll.raiseOrderOf(String(req.params.id), b.viewingKey, legChoiceOf(b))) });
 }));
 
 /** What a device builds a written-down proposal from, every value a string; `null` when there is nothing to send. */
@@ -1640,8 +1657,8 @@ const raiseOrderOnTheWire = (o: Awaited<ReturnType<typeof payroll.raiseOrderOf>>
  * off the proposal's own sealed payload. The viewing key travels in the body.
  */
 app.post('/api/runs/:id/raise-order', authed, ownsRun, wrap(async (req, res) => {
-  const b = z.object({ viewingKey: z.string(), asset: assetCode.optional() }).strict().parse(req.body ?? {});
-  const order = raiseOrderOnTheWire(await payroll.raiseOrderOf(String(req.params.id), b.viewingKey, b.asset));
+  const b = z.object({ viewingKey: z.string(), asset: assetCode.optional(), form: legForm.optional() }).strict().parse(req.body ?? {});
+  const order = raiseOrderOnTheWire(await payroll.raiseOrderOf(String(req.params.id), b.viewingKey, legChoiceOf(b)));
   if (order === null) {
     res.status(409).json({ error: 'this run has no proposal written down that is waiting to be sent to the chain.' });
     return;
@@ -1657,11 +1674,28 @@ app.post('/api/runs/:id/raise-order', authed, ownsRun, wrap(async (req, res) => 
  * body.
  */
 app.post('/api/runs/:id/leg-payments', authed, ownsRun, wrap(async (req, res) => {
-  const b = z.object({ viewingKey: z.string(), asset: assetCode.optional() }).strict().parse(req.body ?? {});
-  const asked = await payroll.legPaymentsAsked(String(req.params.id), b.viewingKey as Hex, b.asset);
+  const b = z.object({ viewingKey: z.string(), asset: assetCode.optional(), form: legForm.optional() }).strict().parse(req.body ?? {});
+  const asked = await payroll.legPaymentsAsked(String(req.params.id), b.viewingKey as Hex, legChoiceOf(b));
   res.json({
     asset: asked.asset,
+    form: asked.form,
+    leg: asked.leg,
     payments: paymentsOnTheWire(asked.payments),
+  });
+}));
+
+/*
+ * **THE LEGS OF A RUN, SIDE BY SIDE.** One run pays one token in one form, so a
+ * payroll with private and public payees is two legs, each raised and approved
+ * on its own. Each leg names its token, its form, the symbol a screen shows,
+ * who is on it by roster entry, its total and the proposal it was raised as.
+ */
+app.post('/api/runs/:id/legs', authed, ownsRun, wrap(async (req, res) => {
+  const b = z.object({ viewingKey: z.string() }).strict().parse(req.body ?? {});
+  res.json({
+    legs: payroll.legsOf(String(req.params.id), b.viewingKey as Hex).map(l => ({
+      ...l, total: l.total.toString(),
+    })),
   });
 }));
 
@@ -1673,7 +1707,7 @@ app.post('/api/runs/:id/leg-payments', authed, ownsRun, wrap(async (req, res) =>
  */
 app.post('/api/runs/:id/raise-send', authed, ownsRun, async (req, res) => {
   const b = z.object({
-    viewingKey: z.string(), asset: assetCode.optional(), tx: z.string().min(1).max(1_000_000),
+    viewingKey: z.string(), asset: assetCode.optional(), form: legForm.optional(), tx: z.string().min(1).max(1_000_000),
     /* Which page checked the vault right before this send, and the digest of what it checked. */
     version: z.unknown().optional(),
     checked: z.string().optional(),
@@ -1697,7 +1731,7 @@ app.post('/api/runs/:id/raise-send', authed, ownsRun, async (req, res) => {
     try {
       const run = payroll.requireRun(String(req.params.id), b.data.viewingKey);
       by = accounts.seatOf(run.accountId, b.data.viewingKey as Hex, req.userId!);
-      order = await payroll.raiseOrderOf(String(req.params.id), b.data.viewingKey, b.data.asset);
+      order = await payroll.raiseOrderOf(String(req.params.id), b.data.viewingKey, legChoiceOf(b.data));
     } catch (e: any) {
       if (saysNothingWasSent(e)) throw e;
       throw new NothingWasSent(`${String(e?.message ?? e).replace(/\.\s*$/u, '')}. Nothing was sent.`);
@@ -1728,7 +1762,7 @@ app.post('/api/runs/:id/raise-send', authed, ownsRun, async (req, res) => {
 app.post('/api/runs/:id/retry', authed, ownsRun, wrap(async (req, res) => {
   const b = z.object({
     viewingKey: z.string(),
-    asset: assetCode.optional(),
+    asset: assetCode.optional(), form: legForm.optional(),
     indices: z.array(z.number().int().min(0)).min(1),
     vault: z.string(),
     opensAt: z.string().regex(/^[0-9]+$/, 'a window bound is whole seconds since the Unix epoch'),
@@ -1753,7 +1787,7 @@ app.post('/api/runs/:id/retry', authed, ownsRun, wrap(async (req, res) => {
     throw new Error(RAISE_NAMES_NOTHING_CHECKED);
   }
 
-  const rebuild = await payroll.payoutRebuildOf(String(req.params.id), b.viewingKey, b.asset);
+  const rebuild = await payroll.payoutRebuildOf(String(req.params.id), b.viewingKey, legChoiceOf(b));
   if (!rebuild) {
     throw new Error(
       'this leg of the run has not been raised, so there is nobody on it to retry. Raise the leg '
@@ -1771,7 +1805,7 @@ app.post('/api/runs/:id/retry', authed, ownsRun, wrap(async (req, res) => {
    * the people this retry pays, in the retry's own order.
    */
   if (b.onDevice) {
-    const asked = payroll.retryPaymentsAsked(String(req.params.id), b.viewingKey as Hex, material.originalIndices, b.asset);
+    const asked = payroll.retryPaymentsAsked(String(req.params.id), b.viewingKey as Hex, material.originalIndices, legChoiceOf(b));
     if (paymentsCheckedDigest(asked.payments) !== b.checked) {
       throw new Error(RAISE_IS_NOT_WHAT_WAS_CHECKED);
     }
@@ -1782,7 +1816,7 @@ app.post('/api/runs/:id/retry', authed, ownsRun, wrap(async (req, res) => {
      * complete. It is handed back to be sent, with the window and vault it was
      * written down with, or refused if the person chose others.
      */
-    const unsent = payroll.unsentRetryOf(String(req.params.id), b.viewingKey as Hex, material.originalIndices, b.asset);
+    const unsent = payroll.unsentRetryOf(String(req.params.id), b.viewingKey as Hex, material.originalIndices, legChoiceOf(b));
     if (unsent) {
       if (unsent.vault.toLowerCase() !== b.vault.toLowerCase()
           || unsent.opensAt !== BigInt(b.opensAt) || unsent.closesAt !== BigInt(b.closesAt)) {
@@ -1793,7 +1827,7 @@ app.post('/api/runs/:id/retry', authed, ownsRun, wrap(async (req, res) => {
       }
       res.json({
         proposal: accounts.requireProposal(unsent.proposalId, b.viewingKey as Hex),
-        order: retryOrderOnTheWire(await payroll.retryRaiseOrderOf(String(req.params.id), b.viewingKey, unsent.proposalId, b.asset)),
+        order: retryOrderOnTheWire(await payroll.retryRaiseOrderOf(String(req.params.id), b.viewingKey, unsent.proposalId, legChoiceOf(b))),
       });
       return;
     }
@@ -1801,14 +1835,14 @@ app.post('/api/runs/:id/retry', authed, ownsRun, wrap(async (req, res) => {
   const proposal = await payroll.proposeRetry(
     String(req.params.id), b.viewingKey,
     accounts.seatOf(rebuild.identity.accountId, b.viewingKey as Hex, req.userId!),
-    material, b.asset, b.onDevice ? { onDevice: true } : undefined);
+    material, legChoiceOf(b), b.onDevice ? { onDevice: true } : undefined);
   if (!b.onDevice) {
     res.json(proposal);
     return;
   }
   res.json({
     proposal,
-    order: retryOrderOnTheWire(await payroll.retryRaiseOrderOf(String(req.params.id), b.viewingKey, proposal.id, b.asset)),
+    order: retryOrderOnTheWire(await payroll.retryRaiseOrderOf(String(req.params.id), b.viewingKey, proposal.id, legChoiceOf(b))),
   });
 }));
 
@@ -1827,11 +1861,13 @@ const retryOrderOnTheWire = (o: Awaited<ReturnType<typeof payroll.retryRaiseOrde
  */
 app.post('/api/runs/:id/retry-payments', authed, ownsRun, wrap(async (req, res) => {
   const b = z.object({
-    viewingKey: z.string(), asset: assetCode.optional(), indices: z.array(z.number().int().min(0)).min(1),
+    viewingKey: z.string(), asset: assetCode.optional(), form: legForm.optional(), indices: z.array(z.number().int().min(0)).min(1),
   }).strict().parse(req.body ?? {});
-  const asked = payroll.retryPaymentsAsked(String(req.params.id), b.viewingKey as Hex, b.indices, b.asset);
+  const asked = payroll.retryPaymentsAsked(String(req.params.id), b.viewingKey as Hex, b.indices, legChoiceOf(b));
   res.json({
     asset: asked.asset,
+    form: asked.form,
+    leg: asked.leg,
     payments: paymentsOnTheWire(asked.payments),
   });
 }));
@@ -1842,9 +1878,9 @@ app.post('/api/runs/:id/retry-payments', authed, ownsRun, wrap(async (req, res) 
  * it. Found by its proposal among this leg's own retries.
  */
 app.post('/api/runs/:id/retry-order', authed, ownsRun, wrap(async (req, res) => {
-  const b = z.object({ viewingKey: z.string(), asset: assetCode.optional(), proposalId: z.string().min(1) })
+  const b = z.object({ viewingKey: z.string(), asset: assetCode.optional(), form: legForm.optional(), proposalId: z.string().min(1) })
     .strict().parse(req.body ?? {});
-  const order = retryOrderOnTheWire(await payroll.retryRaiseOrderOf(String(req.params.id), b.viewingKey, b.proposalId, b.asset));
+  const order = retryOrderOnTheWire(await payroll.retryRaiseOrderOf(String(req.params.id), b.viewingKey, b.proposalId, legChoiceOf(b)));
   if (order === null) {
     res.status(409).json({ error: 'this run has no retry written down as that proposal waiting to be sent: it has been sent already, or withdrawn. Reload the run to see who is still unpaid.' });
     return;
@@ -1859,7 +1895,7 @@ app.post('/api/runs/:id/retry-order', authed, ownsRun, wrap(async (req, res) => 
  */
 app.post('/api/runs/:id/retry-send', authed, ownsRun, async (req, res) => {
   const b = z.object({
-    viewingKey: z.string(), asset: assetCode.optional(), proposalId: z.string().min(1), tx: z.string().min(1).max(1_000_000),
+    viewingKey: z.string(), asset: assetCode.optional(), form: legForm.optional(), proposalId: z.string().min(1), tx: z.string().min(1).max(1_000_000),
     version: z.unknown().optional(),
     checked: z.string().optional(),
   }).strict().safeParse(req.body ?? {});
@@ -1876,7 +1912,7 @@ app.post('/api/runs/:id/retry-send', authed, ownsRun, async (req, res) => {
     try {
       const run = payroll.requireRun(String(req.params.id), b.data.viewingKey);
       by = accounts.seatOf(run.accountId, b.data.viewingKey as Hex, req.userId!);
-      order = await payroll.retryRaiseOrderOf(String(req.params.id), b.data.viewingKey, b.data.proposalId, b.data.asset);
+      order = await payroll.retryRaiseOrderOf(String(req.params.id), b.data.viewingKey, b.data.proposalId, legChoiceOf(b.data));
     } catch (e: any) {
       if (saysNothingWasSent(e)) throw e;
       throw new NothingWasSent(`${String(e?.message ?? e).replace(/\.\s*$/u, '')}. Nothing was sent.`);
@@ -1923,7 +1959,7 @@ app.post('/api/runs/:id/payments', authed, ownsRun, wrap(async (req, res) => {
     viewingKey: z.string(),
     /* One approval per settlement asset, so one payment view per settlement
      * asset. Only a run that settles in more than one needs to say which. */
-    asset: assetCode.optional(),
+    asset: assetCode.optional(), form: legForm.optional(),
   }).parse(req.body ?? {});
   const run = payroll.requireRun(String(req.params.id), b.viewingKey);
   /*
@@ -1935,7 +1971,7 @@ app.post('/api/runs/:id/payments', authed, ownsRun, wrap(async (req, res) => {
    * which is how the one genuine case is missed later.
    */
   const material = payroll.payoutMaterialOf(
-    run.id, b.viewingKey, { asset: b.asset, rootOf: rootOfPayments });
+    run.id, b.viewingKey, { leg: legChoiceOf(b), rootOf: rootOfPayments });
   const among = material ? await ledger.paidAmong(run.accountId, material.leaves) : null;
   res.json(runPayments(material, among));
 }));
@@ -1963,12 +1999,12 @@ app.post('/api/runs/:id/payments', authed, ownsRun, wrap(async (req, res) => {
  */
 app.post('/api/runs/:id/private-payments', authed, ownsRun, wrap(async (req, res) => {
   const b = z.object({
-    viewingKey: z.string(), asset: assetCode.optional(), proposalId: z.string().min(1).optional(),
+    viewingKey: z.string(), asset: assetCode.optional(), form: legForm.optional(), proposalId: z.string().min(1).optional(),
   }).parse(req.body ?? {});
   const run = payroll.requireRun(String(req.params.id), b.viewingKey);
   if (b.proposalId !== undefined) {
-    const retry = payroll.retryPaymentOrderOf(run.id, b.viewingKey as Hex, b.proposalId, b.asset, rootOfPayments);
-    const rebuilt = await payroll.payoutRebuildOf(run.id, b.viewingKey, b.asset);
+    const retry = payroll.retryPaymentOrderOf(run.id, b.viewingKey as Hex, b.proposalId, legChoiceOf(b), rootOfPayments);
+    const rebuilt = await payroll.payoutRebuildOf(run.id, b.viewingKey, legChoiceOf(b));
     if (retry === null || rebuilt === null) {
       res.status(409).json({
         error: 'this run has no retry on the chain raised as that proposal, so there is nothing a vault can pay '
@@ -1991,9 +2027,9 @@ app.post('/api/runs/:id/private-payments', authed, ownsRun, wrap(async (req, res
     res.json(assembledRetry.order);
     return;
   }
-  const order = payroll.privatePaymentOrderOf(run.id, b.viewingKey, b.asset);
-  const material = payroll.payoutMaterialOf(run.id, b.viewingKey, { asset: b.asset, rootOf: rootOfPayments });
-  const rebuild = await payroll.payoutRebuildOf(run.id, b.viewingKey, b.asset);
+  const order = payroll.privatePaymentOrderOf(run.id, b.viewingKey, legChoiceOf(b));
+  const material = payroll.payoutMaterialOf(run.id, b.viewingKey, { leg: legChoiceOf(b), rootOf: rootOfPayments });
+  const rebuild = await payroll.payoutRebuildOf(run.id, b.viewingKey, legChoiceOf(b));
   if (order === null || material === null || rebuild === null || material.proposal === undefined) {
     res.status(409).json({
       error: 'this run has no round on the chain a vault can pay yet. It is paid once it has been raised and '
@@ -2985,15 +3021,6 @@ app.get('/api/public', wrap(async (_req, res) => {
      * tell a company with none from a company being withheld. */
     withheldAccounts: withheld.length,
   });
-}));
-
-/* ------------------------- demo seed ------------------------- */
-
-// Seeds a demo company owned by the caller. It no longer resets the store: with
-// real tenants on the deployment, one person clicking "demo" must not wipe
-// everybody else's data.
-app.post('/api/demo/seed', authed, wrap(async (req, res) => {
-  res.json(await seedDemo(accounts, payroll, req.userId!));
 }));
 
 /**

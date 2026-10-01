@@ -54,6 +54,8 @@ import {
   buildPayoutTree, rootOfLeaves, type PayoutLeafInput, type PayoutTree,
 } from '../../src/midnight/payout-tree.js';
 import { toHex } from '../../src/core/crypto.js';
+import { assetIdBytes } from '../../src/core/assets.js';
+import { OTHER_TEST_TOKEN, TEST_TOKEN } from '../../src/testing/assets.js';
 
 /**
  * Thirty-two zero bytes.
@@ -93,35 +95,36 @@ export const leafOfDevice = (state: AccountPrivateState): Uint8Array =>
   pureCircuits.signerLeaf(
     pureCircuits.signerPublicKey(state.secretKey), state.blinding, state.scope);
 
-/** The ASCII asset code, padded to 32 bytes, the way `core/assets.ts` does it. */
-export const assetBytes = (code: string): Uint8Array => {
-  const out = new Uint8Array(32);
-  for (let i = 0; i < code.length; i++) out[i] = code.charCodeAt(i);
-  return out;
-};
+/**
+ * A token's 32 bytes, from the 64 lower-case hex characters the ledger and
+ * `core/assets.ts` write it in. Anything else is refused, as `assetIdBytes`
+ * refuses it.
+ */
+export const tokenBytes = (token: string): Uint8Array => assetIdBytes(token);
 
-/** The default asset for tests that are not about assets. Two decimals. */
-export const GBP = assetBytes('GBP');
-export const USDC = assetBytes('USDC');
+/** The default token for tests that are not about tokens: the fixture token with both forms. Two decimals. */
+export const TEST_TOKEN_BYTES = tokenBytes(TEST_TOKEN);
+/** A second fixture token, for a test that needs two. */
+export const OTHER_TEST_TOKEN_BYTES = tokenBytes(OTHER_TEST_TOKEN);
 
 /** What each payee of a test run is paid, unless the test names amounts. */
 export const TEST_AMOUNT = 100n;
 
 /**
  * A run's sum tree over `payments`, through the product's own builder: at
- * `amounts` (each `TEST_AMOUNT` unless named), in `asset` (GBP unless named).
+ * `amounts` (each `TEST_AMOUNT` unless named), in `asset` (the fixture token unless named).
  */
 export const payoutTreeOf = (
   payments: PayoutLeafInput[],
   amounts: bigint[] = payments.map(() => TEST_AMOUNT),
-  asset: Uint8Array = GBP,
+  asset: Uint8Array = TEST_TOKEN_BYTES,
 ): PayoutTree => buildPayoutTree(payments, amounts, toHex(asset));
 
 /** The root over `leaves` at `amounts` in `asset`, with `payoutTreeOf`'s defaults. */
 export const rootOfTestLeaves = (
   leaves: string[],
   amounts: bigint[] = leaves.map(() => TEST_AMOUNT),
-  asset: Uint8Array = GBP,
+  asset: Uint8Array = TEST_TOKEN_BYTES,
 ): string => rootOfLeaves(leaves, amounts, toHex(asset));
 
 /** What a payment of payee `i` hands the account beside its leaf: the amount, the token and the path. */
@@ -130,6 +133,45 @@ export const sumArgsOf = (tree: PayoutTree, i: number) => ({
   asset: Uint8Array.from(Buffer.from(tree.asset, 'hex')),
   path: tree.pathFor(i),
 });
+
+/**
+ * The run a vault hands its account when it pays payee `i` of `tree`, or makes a
+ * change under it: the approved proposal, the vault the run names, the root, the
+ * payee count, the window, the bar, the salt, and the payee's own nonce, asset and
+ * path. The amount is not here: the vault passes the amount it actually sends.
+ */
+export const vaultRunOf = (a: {
+  proposal: Uint8Array;
+  vault: Uint8Array;
+  tree: PayoutTree;
+  i: number;
+  opensAt: bigint;
+  closesAt: bigint;
+  salt: Uint8Array;
+  nonce: Uint8Array | string;
+  required?: bigint;
+}) => ({
+  proposal: a.proposal,
+  runVault: a.vault,
+  root: Uint8Array.from(Buffer.from(a.tree.root, 'hex')),
+  payees: a.tree.payees,
+  opensAt: a.opensAt,
+  closesAt: a.closesAt,
+  required: a.required ?? 0n,
+  salt: a.salt,
+  nonce: typeof a.nonce === 'string' ? Uint8Array.from(Buffer.from(a.nonce, 'hex')) : a.nonce,
+  asset: Uint8Array.from(Buffer.from(a.tree.asset, 'hex')),
+  path: a.tree.pathFor(a.i),
+});
+
+/**
+ * What the account says when a vault asks it to record a payment that is not a
+ * leaf of the approved run: another payee, another amount, another token, the
+ * other kind of money, or another run's path. Asserted whole, so a refusal for
+ * any other reason does not pass for this one.
+ */
+export const NOT_IN_THE_APPROVED_RUN =
+  'that payee is not in the approved run, at that amount and in that currency, from that vault';
 
 /*
  * `view(balance, seed)` STOOD HERE.
@@ -159,7 +201,7 @@ export const sumArgsOf = (tree: PayoutTree, i: number) => ({
 export const privateStateFor = (
   seed: number,
   viewSeed = 0,
-  asset: Uint8Array = GBP,
+  asset: Uint8Array = TEST_TOKEN_BYTES,
 ): AccountPrivateState => ({
   secretKey: bytes(seed),
   blinding: bytes(seed + 400),
@@ -203,7 +245,7 @@ export interface Change {
   salt: Uint8Array;
 }
 
-export const change = (amount: bigint, seed = 9, asset: Uint8Array = GBP): Change => ({
+export const change = (amount: bigint, seed = 9, asset: Uint8Array = TEST_TOKEN_BYTES): Change => ({
   asset,
   amount,
   batch: bytes(seed + 600),
@@ -747,6 +789,34 @@ export class AccountSimulator {
         c, args.proposal, args.vault, args.payingVault ?? args.vault, args.root, args.payees,
         args.from, args.until, args.required ?? 0n, args.salt, args.details, args.nonce,
         args.amount, args.asset, args.path as never));
+  }
+
+  /**
+   * What a vault calls to have ONE CHANGE that moves no money approved - its nonce
+   * secret, or a split of one note - with its receipt for a change. Every argument,
+   * as `recordPaymentFromVault` takes them; the leaf carries no amount, so no
+   * `amount` is passed. **The receipt is not minted here**, as above.
+   */
+  approveVaultChange(args: {
+    proposal: Uint8Array;
+    vault: Uint8Array;
+    payingVault?: Uint8Array;
+    root: Uint8Array;
+    payees: bigint;
+    from: bigint;
+    until: bigint;
+    required?: bigint;
+    salt: Uint8Array;
+    details: Uint8Array;
+    nonce: Uint8Array;
+    asset: Uint8Array;
+    path: unknown;
+  }) {
+    return this.run('approveVaultChange',
+      (c) => this.contract.impureCircuits.approveVaultChange(
+        c, args.proposal, args.vault, args.payingVault ?? args.vault, args.root, args.payees,
+        args.from, args.until, args.required ?? 0n, args.salt, args.details, args.nonce,
+        args.asset, args.path as never));
   }
 
   /**

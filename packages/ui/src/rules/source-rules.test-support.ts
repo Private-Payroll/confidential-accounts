@@ -1045,6 +1045,7 @@ export const CODES: Readonly<Record<string, string>> = {
   'apps/web/src/adapters/create-vault.ts#CREATING': 'where creating a vault has got to, one of a fixed set a screen turns into its own phrase',
   'apps/web/src/adapters/create-vault.ts#STAGE': 'the shared operation\'s own words for its stages, compared and never shown, each to the one a screen says',
   'apps/web/src/adapters/create-vault.ts#READY': 'whether a vault can be created now, one of a fixed set a screen turns into its own phrase',
+  'apps/web/src/adapters/create-vault.ts#STARTING': 'a vault held by its committee whose start is not finished or waits on approvals, one of a fixed set a screen turns into its own phrase',
   'apps/web/src/adapters/create-vault.ts#OWED': 'a vault sent and not yet held by its committee, one of a fixed set a screen turns into its own phrase',
   'apps/web/src/adapters/create-vault.ts#SERVICE': 'the service\'s addresses, sent and never shown',
   'apps/web/src/adapters/vault-rows.ts#SERVICE': 'the service\'s address for a company\'s vaults, sent and never shown',
@@ -1147,8 +1148,8 @@ export const WORDING_POSITIONS: Readonly<Record<string, Position>> = {
       return false;
     },
   },
-  'asset code': {
-    why: 'the code of an asset from the asset registry, written the same in every language',
+  'asset symbol': {
+    why: 'the symbol of an asset from the asset registry, written the same in every language',
     allows: (_n, _up, r, text) => r.codes.has(text),
   },
 };
@@ -1175,7 +1176,7 @@ function stringsOf(s: Source, codes: ReadonlySet<string>): { text: string; at: n
     const text = raw.trim();
     if (!hasLetter(text)) continue;
     /* Text between tags stands in no position; only an asset's code may be written there as it is. */
-    out.push({ text, at: node.start, position: node.type === 'JSXText' ? (codes.has(text) ? 'asset code' : null) : positionOf(node, up, r, text) });
+    out.push({ text, at: node.start, position: node.type === 'JSXText' ? (codes.has(text) ? 'asset symbol' : null) : positionOf(node, up, r, text) });
   }
   return out;
 }
@@ -1183,11 +1184,11 @@ function stringsOf(s: Source, codes: ReadonlySet<string>): { text: string; at: n
 /**
  * RULE: no wording outside the language files. Every string with a letter in
  * it, in every file given, is a breach unless it stands in a position named in
- * `WORDING_POSITIONS`; JSX text always is, but for an asset's code. A
+ * `WORDING_POSITIONS`; JSX text always is, but for an asset's symbol. A
  * stylesheet or page is read too: text in a page, an attribute not named in
  * `ATTRIBUTES` however its value is written (in either quotes or none), and a
  * stylesheet's `content`.
- * `codes` are the codes of the assets.
+ * `codes` are the symbols of the assets.
  */
 export function wordingInCode(files: readonly Source[], codes: ReadonlySet<string>): Breach[] {
   const out: Breach[] = [];

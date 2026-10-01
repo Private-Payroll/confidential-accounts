@@ -5,8 +5,8 @@ import { REQUEST_SCHEMA } from 'midnight-identity/profile/request';
  * It was going to be a string literal here, on the grounds that importing the
  * registry to reach one word is the kind of weight the page must not carry —
  * but `attributes.ts` imports `definition.ts` and nothing else, so it costs
- * the page nothing, and `no-wasm-in-the-page.test.ts` is what proves that
- * rather than this comment. **One spelling, owned by the side that owns the
+ * the page nothing, and `apps/web/src/app-rules.test.ts` is what holds the
+ * page to that rather than this comment. **One spelling, owned by the side that owns the
  * vocabulary**, so a rename there is a typecheck failure here rather than a
  * request that quietly asks for nothing. This import is one of two
  * cross-repository edges; the other is the export that makes it reachable.
@@ -54,9 +54,9 @@ import { PUBLIC_RECEIVING_ADDRESS, RECEIVING_ADDRESS } from 'midnight-identity/p
  *
  * It imports one constant. The thing that VERIFIES what comes
  * back is `wallet-payee.ts` beside it, which reaches the wallet SDK and must
- * never be imported by a browser application (`src/web-legacy`, `apps/web`, or
- * the shared code in `packages/web-shared`); `no-wasm-in-the-page.test.ts` is what
- * keeps that true rather than a convention.
+ * never be imported by a browser application (`apps/web`, or the shared code in
+ * `packages/web-shared`); `apps/web/src/app-rules.test.ts` is what keeps that
+ * true rather than a convention.
  */
 
 /** What the wallet is opened with. `midnight-identity/profile/request`. */

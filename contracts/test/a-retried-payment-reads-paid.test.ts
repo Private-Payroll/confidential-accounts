@@ -26,7 +26,7 @@ import { buildRun, buildRetryRun } from '../../src/midnight/payout-tree.js';
 import { runMaterialFor, retryMaterialFor } from '../../src/midnight/run-material.js';
 import { paidMovementsIn, UndecodedLedgerField } from '../../src/midnight/ledger.js';
 import { vaultDetails } from '../../src/testing/vault-details.js';
-import { registryWithTestPrivateForms, aVaultHolding } from '../../src/testing/assets.js';
+import { registryWithTestPrivateForms, aVaultHolding, TEST_TOKEN } from '../../src/testing/assets.js';
 import { FileStore } from '../../src/core/store-file.js';
 import { assetIdBytes } from '../../src/core/assets.js';
 import { openPayslip } from '../../src/core/payslip-open.js';
@@ -78,7 +78,7 @@ describe('a payment made by a retry reads as paid on its payee\'s page', () => {
     const company = (rec.contractAddress as string).toLowerCase();
     const label = rec.companyLabel!;
     const people = [0, 1, 2].map(i => payroll.hireDirect(created.account.id, {
-      name: `Payee ${i}`, email: `p${i}@a.co`, title: 'Eng', asset: 'GBP', baseAmount: 100_00n,
+      name: `Payee ${i}`, email: `p${i}@a.co`, title: 'Eng', asset: TEST_TOKEN, baseAmount: 100_00n,
     }, viewingKey));
     const { run } = await payroll.createRunFromRoster(created.account.id, '2026-08', viewingKey);
     const inputs = await payroll.runMaterialInputs(run.id, viewingKey);

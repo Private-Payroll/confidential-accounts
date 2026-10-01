@@ -13,6 +13,7 @@ import {
 } from '../core/provenance.js';
 import { wiring } from './selection.js';
 
+import { TEST_TOKEN, registryWithTestPrivateForms } from '../testing/assets.js';
 /** The value, or a failure that says one was missing: an index that finds nothing is a broken test, not a value to carry on with. */
 function present<T>(value: T | undefined): T {
   if (value === undefined) throw new Error('expected a value here, and there was none');
@@ -98,9 +99,10 @@ const world = () => {
   const chosen = { name: 'simulated' as const, commitments: SimulatedCommitments };
   const store = new MemoryStore();
   const ledger: Ledger = new SimulatedLedger(chosen.commitments);
-  const accounts = new AccountService(store, ledger, chosen.commitments);
+  const registry = registryWithTestPrivateForms();
+  const accounts = new AccountService(store, ledger, chosen.commitments, registry);
   const payroll = new PayrollService(
-    store, accounts, new SimulatedProofSystem(), undefined, NETWORK,
+    store, accounts, new SimulatedProofSystem(), registry, NETWORK,
     new RecordingInviteDelivery(),
   );
   return { chosen, store, ledger, accounts, payroll };
@@ -230,7 +232,7 @@ describe('what the running product writes', () => {
      */
     const made = await w.accounts.create('Acme', SIGNERS, 2, undefined, drawCompanyLabel());
     w.payroll.hireDirect(made.account.id, {
-      name: 'Dana', email: 'd@a.co', title: 'Eng', asset: 'GBP', baseAmount: 100_00n,
+      name: 'Dana', email: 'd@a.co', title: 'Eng', asset: TEST_TOKEN, baseAmount: 100_00n,
     }, made.viewingKey);
 
     /*
@@ -285,7 +287,7 @@ describe('the refusal a selection meets', () => {
     const w = world();
     const made = await w.accounts.create('Acme', SIGNERS, 2, undefined, drawCompanyLabel());
     w.payroll.hireDirect(made.account.id, {
-      name: 'Dana', email: 'd@a.co', title: 'Eng', asset: 'GBP', baseAmount: 100_00n,
+      name: 'Dana', email: 'd@a.co', title: 'Eng', asset: TEST_TOKEN, baseAmount: 100_00n,
     }, made.viewingKey);
     await w.payroll.createRunFromRoster(made.account.id, '2026-08', made.viewingKey);
 
@@ -327,7 +329,7 @@ describe('the refusal a selection meets', () => {
     const w = world();
     const made = await w.accounts.create('Acme', SIGNERS, 2, undefined, drawCompanyLabel());
     w.payroll.hireDirect(made.account.id, {
-      name: 'Dana', email: 'd@a.co', title: 'Eng', asset: 'GBP', baseAmount: 100_00n,
+      name: 'Dana', email: 'd@a.co', title: 'Eng', asset: TEST_TOKEN, baseAmount: 100_00n,
     }, made.viewingKey);
     const { run } = await w.payroll.createRunFromRoster(made.account.id, '2026-08', made.viewingKey);
 
@@ -357,9 +359,10 @@ describe('the marker follows the ledger, not a literal in the write path', () =>
     /* The double again, and the proxy changes the word it reports and nothing else. */
     const store = new MemoryStore();
     const ledger = claiming(new SimulatedLedger(SimulatedCommitments), word);
-    const accounts = new AccountService(store, ledger, SimulatedCommitments);
+    const registry = registryWithTestPrivateForms();
+    const accounts = new AccountService(store, ledger, SimulatedCommitments, registry);
     const payroll = new PayrollService(
-      store, accounts, new SimulatedProofSystem(), undefined, NETWORK,
+      store, accounts, new SimulatedProofSystem(), registry, NETWORK,
       new RecordingInviteDelivery(),
     );
     return { store, accounts, payroll };
@@ -379,7 +382,7 @@ describe('the marker follows the ledger, not a literal in the write path', () =>
     const w = worldClaiming('chain');
     const made = await w.accounts.create('Acme', SIGNERS, 2, undefined, drawCompanyLabel());
     w.payroll.hireDirect(made.account.id, {
-      name: 'Dana', email: 'd@a.co', title: 'Eng', asset: 'GBP', baseAmount: 100_00n,
+      name: 'Dana', email: 'd@a.co', title: 'Eng', asset: TEST_TOKEN, baseAmount: 100_00n,
     }, made.viewingKey);
     const { run } = await w.payroll.createRunFromRoster(made.account.id, '2026-08', made.viewingKey);
     expect(w.store.getRun(run.id)!.wiring).toBe('chain');
@@ -407,7 +410,7 @@ describe('a record that says nothing goes on saying nothing', () => {
     const raised = await w.accounts.propose({
       accountId: account.id, viewingKey, kind: 'transfer', summary: 'x',
       payload: { entries: [{
-        id: 'e1', kind: 'transfer', asset: 'GBP', amount: 10_00n,
+        id: 'e1', kind: 'transfer', asset: TEST_TOKEN, amount: 10_00n,
         counterparty: 'y', memo: '', at: '',
       }] },
       proposedBy: present(secrets[0]).signerId,
@@ -447,7 +450,7 @@ describe('a record that says nothing goes on saying nothing', () => {
     const raised = await w.accounts.propose({
       accountId: account.id, viewingKey, kind: 'transfer', summary: 'x',
       payload: { entries: [{
-        id: 'e1', kind: 'transfer', asset: 'GBP', amount: 10_00n,
+        id: 'e1', kind: 'transfer', asset: TEST_TOKEN, amount: 10_00n,
         counterparty: 'y', memo: '', at: '',
       }] },
       proposedBy: present(secrets[0]).signerId,
@@ -500,7 +503,7 @@ describe('a record that says nothing goes on saying nothing', () => {
     const w = world();
     const made = await w.accounts.create('Acme', SIGNERS, 2, undefined, drawCompanyLabel());
     w.payroll.hireDirect(made.account.id, {
-      name: 'Dana', email: 'd@a.co', title: 'Eng', asset: 'GBP', baseAmount: 100_00n,
+      name: 'Dana', email: 'd@a.co', title: 'Eng', asset: TEST_TOKEN, baseAmount: 100_00n,
     }, made.viewingKey);
     const { run } = await w.payroll.createRunFromRoster(made.account.id, '2026-08', made.viewingKey);
 
@@ -530,13 +533,13 @@ describe('a record that says nothing goes on saying nothing', () => {
     await w.accounts.propose({
       accountId: account.id, viewingKey, kind: 'transfer', summary: 'x',
       payload: { entries: [{
-        id: 'e1', kind: 'transfer', asset: 'GBP', amount: 10_00n,
+        id: 'e1', kind: 'transfer', asset: TEST_TOKEN, amount: 10_00n,
         counterparty: 'y', memo: '', at: '',
       }] },
       proposedBy: present(secrets[0]).signerId,
     });
     w.payroll.hireDirect(account.id, {
-      name: 'Dana', email: 'd@a.co', title: 'Eng', asset: 'GBP', baseAmount: 100_00n,
+      name: 'Dana', email: 'd@a.co', title: 'Eng', asset: TEST_TOKEN, baseAmount: 100_00n,
     }, viewingKey);
     await w.payroll.createRunFromRoster(account.id, '2026-08', viewingKey);
 
@@ -567,7 +570,7 @@ describe('a record that says nothing goes on saying nothing', () => {
     const raised = await w.accounts.propose({
       accountId: account.id, viewingKey, kind: 'transfer', summary: 'x',
       payload: { entries: [{
-        id: 'e1', kind: 'transfer', asset: 'GBP', amount: 10_00n,
+        id: 'e1', kind: 'transfer', asset: TEST_TOKEN, amount: 10_00n,
         counterparty: 'y', memo: '', at: '',
       }] },
       proposedBy: present(secrets[0]).signerId,
@@ -593,7 +596,7 @@ describe('the other doors a belief comes through', () => {
     const plugins = new PluginService(w.store, w.accounts);
     const made = await w.accounts.create('Acme', SIGNERS, 2, undefined, drawCompanyLabel());
     w.payroll.hireDirect(made.account.id, {
-      name: 'Dana', email: 'd@a.co', title: 'Eng', asset: 'GBP', baseAmount: 100_00n,
+      name: 'Dana', email: 'd@a.co', title: 'Eng', asset: TEST_TOKEN, baseAmount: 100_00n,
     }, made.viewingKey);
     const { run } = await w.payroll.createRunFromRoster(made.account.id, '2026-08', made.viewingKey);
 
@@ -620,7 +623,7 @@ describe('the other doors a belief comes through', () => {
     const w = world();
     const made = await w.accounts.create('Acme', SIGNERS, 2, undefined, drawCompanyLabel());
     const hired = w.payroll.hireDirect(made.account.id, {
-      name: 'Dana', email: 'd@a.co', title: 'Eng', asset: 'GBP', baseAmount: 100_00n,
+      name: 'Dana', email: 'd@a.co', title: 'Eng', asset: TEST_TOKEN, baseAmount: 100_00n,
     }, made.viewingKey);
     const { run } = await w.payroll.createRunFromRoster(made.account.id, '2026-08', made.viewingKey);
 

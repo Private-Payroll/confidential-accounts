@@ -146,7 +146,15 @@ const KIND_SAYS: Readonly<Record<ProposalRow['kind'], (t: ReturnType<typeof useT
 export function ProposalWhat({ row }: { row: ProposalRow }) {
   const t = useText();
   const month = useMonth();
-  if (row.pays !== null) return <>{t('proposals.kind.payRun', { month: month(row.pays.period), currency: row.pays.currency })}</>;
+  if (row.pays !== null) {
+    const { period, symbol, paid } = row.pays;
+    if (symbol === null) {
+      const at = { month: month(period) };
+      return <>{paid === PAID.privately ? t('proposals.kind.payRunPrivatelyUnknownToken', at) : paid === PAID.publicly ? t('proposals.kind.payRunPubliclyUnknownToken', at) : t('proposals.kind.payRunUnknownToken', at)}</>;
+    }
+    const said = { month: month(period), token: symbol };
+    return <>{paid === PAID.privately ? t('proposals.kind.payRunPrivately', said) : paid === PAID.publicly ? t('proposals.kind.payRunPublicly', said) : t('proposals.kind.payRun', said)}</>;
+  }
   const says = KIND_SAYS[row.kind] as ((x: typeof t) => string) | undefined;
   return <>{says === undefined ? t('proposals.kind.other') : says(t)}</>;
 }
@@ -188,7 +196,7 @@ export function RunStatus({ run }: { run: RunRow }) {
  */
 export const paymentKindOf = (run: RunRow): AmountKind => (run.status === 'settled' ? AMOUNT_KIND.paid : AMOUNT_KIND.toBePaid);
 
-/** A run's money, one currency to a line and each split by how it is paid, never added into one figure. */
+/** A run's money, one token to a line and each split by how it is paid, never added into one figure. */
 export function RunMoney({ run }: { run: RunRow }) {
   const t = useText();
   return (
@@ -234,9 +242,9 @@ export function useVaultMoney(company: string, vault: string, asked = 0): VaultM
 }
 
 /**
- * A VAULT'S MONEY ON ITS TILE: each currency it holds on a line of its own,
+ * A VAULT'S MONEY ON ITS TILE: each token it holds on a line of its own,
  * with its Private or Public pill, never added together. A side being read is
- * a bar; a side that could not be read says so; a currency the registry does
+ * a bar; a side that could not be read says so; a token the registry does
  * not know is counted.
  */
 function VaultMoneyLines({ money }: { money: VaultMoney }) {
@@ -249,13 +257,13 @@ function VaultMoneyLines({ money }: { money: VaultMoney }) {
       {priv === MONEY.reading ? <AmountLoading /> : null}
       {priv === MONEY.unreadable ? <span className="text-muted-foreground" data-unreadable="private">{t('vaults.privateMoney.unreadable')}</span> : null}
       {typeof priv === 'string' ? null : priv.amounts.map((a) => (
-        <span key={a.code} className="flex flex-wrap items-center gap-1.5" data-held={a.code} data-visibility="private"><Amount value={a} kind={AMOUNT_KIND.held} /><PrivatePill /></span>
+        <span key={a.symbol} className="flex flex-wrap items-center gap-1.5" data-held={a.symbol} data-visibility="private"><Amount value={a} kind={AMOUNT_KIND.held} /><PrivatePill /></span>
       ))}
       {pub === MONEY.reading ? <AmountLoading /> : null}
       {pub === MONEY.unreadable ? <span className="text-muted-foreground" data-unreadable="public">{t('vaults.publicMoney.unreadable')}</span> : null}
       {typeof pub === 'string' ? null : (
         <>
-          {pub.amounts.map((a) => <span key={a.code} data-held={a.code} data-visibility="public"><Amount value={a} kind={AMOUNT_KIND.held} /></span>)}
+          {pub.amounts.map((a) => <span key={a.symbol} data-held={a.symbol} data-visibility="public"><Amount value={a} kind={AMOUNT_KIND.held} /></span>)}
           {pub.unrecognised === 0 ? null : <span data-unrecognised={pub.unrecognised}>{t('vault.publicMoney.unrecognised', { count: pub.unrecognised })}</span>}
         </>
       )}
@@ -267,7 +275,7 @@ function VaultMoneyLines({ money }: { money: VaultMoney }) {
 /**
  * A VAULT'S TILE, the kit's stat tile, linking to the vault's page: its name,
  * with the Pending pill when it waits on something, where it stands when it
- * does not, when it was created, and each currency it holds on a line with
+ * does not, when it was created, and each token it holds on a line with
  * its Private or Public pill. No change badge is shown: nothing here has an
  * amount to compare with.
  */

@@ -116,13 +116,14 @@ import { testTokenFile } from './mint-test-token.js';
 import {
   amountFromText, referenceFromText, assertVaultIsMarriedTo,
   blockSecondsOf, newPayoutRecord, payoutRecordFromText, assertNotAlreadyPaid, assertRecordIsThisPayment,
-  finishedRecordFile, finishedRecordPrefix, runOf, vaultPaymentOf,
+  finishedRecordFile, finishedRecordPrefix, runOf, vaultPaymentOf, RUN_REQUIRES,
   asksOf, batchDigestOf, approvalsNeeded, publicMovementOf, drive, refusalBeforePayment,
   type PayoutRecord,
 } from './pay-from-vault-rules.js';
 import {
   assertPrivatePayee, assertVaultCanPayPrivately, theAssetPaidPrivately,
   checkTheColourWasMinted, assertANoteCanBeSpent, linesAboutNotesPassedOver,
+  vaultNonceSecretFile, vaultNonceSecretOf,
 } from './pay-privately-rules.js';
 
 /* ------------------------------------------------------------------ */
@@ -329,9 +330,11 @@ async function main(): Promise<number> {
    */
   const asset = theAssetPaidPrivately(assets);
   const ASSET = asset.code;
+  /* What this run prints for the asset: its symbol, never the token. */
+  const SYMBOL = asset.symbol;
   payeePaid = payee.bech32;
   good(`paying ${shortPayee(payee)}, a private address on ${NETWORK}`);
-  good(`${amount.toLocaleString()} of ${ASSET} in its smallest unit (${formatAmount(amount, asset)} ${ASSET})`);
+  good(`${amount.toLocaleString()} of ${SYMBOL} in its smallest unit (${formatAmount(amount, asset)} ${SYMBOL})`);
   note('NOTHING ABOUT THIS PAYMENT GOES ON A PUBLIC RECORD: not the payee, not the amount and');
   note('not the asset. What is in the clear is this vault\x27s address, that a payment circuit');
   note('was called on it, when, and for what fee.');
@@ -389,7 +392,7 @@ async function main(): Promise<number> {
   const built = runOf(record, facts, await vaultDetailsOf(), ACCOUNT_ID);
   const vaultBytes = fromHex(vaultAddress as Hex);
   const proposalId = accountCircuits.proposalIdOf(
-    accountCircuits.runPayload(fromHex(built.run.tree.root), built.run.tree.payees, built.opensAt, built.closesAt, 0n),
+    accountCircuits.runPayload(fromHex(built.run.tree.root), built.run.tree.payees, built.opensAt, built.closesAt, RUN_REQUIRES),
     vaultBytes, fromHex(record.salt));
   const movement = accountCircuits.paidMovementOf(fromHex(built.args.leaf));
   note(`the window: ${new Date(Number(built.opensAt) * 1000).toISOString()} to ${new Date(Number(built.closesAt) * 1000).toISOString()}`);
@@ -436,6 +439,18 @@ async function main(): Promise<number> {
   good(`opening the pool as "${chosen.id}" — its public half is the one the signers file publishes`);
   const pool = new SealedNotePool(
     store, { signerId: chosen.id, wrappingSecret: chosen.wrappingSecret }, async () => poolSigners);
+
+  /*
+   * **THE VAULT'S NONCE SECRET, OPENED BEFORE ANY FEE.** Every coin a private
+   * payment makes takes its nonce from it, and the vault refuses a payment made
+   * under any other, so it is opened here from the company's record, as the
+   * signer this machine holds, or the run stops now by name.
+   */
+  const nonceSecretFile = vaultNonceSecretFile(STATE_DIR, NETWORK, VAULT_NAME);
+  const nonceSecret = vaultNonceSecretOf(
+    (await new FileSealedPoolStore(nonceSecretFile, entry.contractAddress).get(entry.contractAddress)) ?? null,
+    nonceSecretFile.replace(ROOT + '/', ''), entry.contractAddress, chosen);
+  good(`the vault's nonce secret is open, from the company's record, as "${chosen.id}"`);
 
   /*
    * **THE ATTEMPT JOURNAL, OPENED HERE SO IT CANNOT FAIL AFTER THE MONEY HAS
@@ -594,14 +609,14 @@ async function main(): Promise<number> {
    */
   const inThePool = await pool.load(vaultAddress!);
   note(`the pool holds ${inThePool.notes.length} note(s) for this vault`);
-  const spendable = assertANoteCanBeSpent(inThePool.notes, facts.token, amount, ASSET);
+  const spendable = assertANoteCanBeSpent(inThePool.notes, facts.token, amount, SYMBOL);
   good('one of them is this colour, large enough, and records the transaction that created it');
-  for (const line of linesAboutNotesPassedOver(spendable, ASSET)) warn(line);
+  for (const line of linesAboutNotesPassedOver(spendable, SYMBOL)) warn(line);
 
   let before: bigint | null = null;
   try {
     before = await vaultLedger.balance(vaultAddress!, facts.token);
-    good(`the vault holds ${before.toLocaleString()} of ${ASSET} in notes the chain agrees with`);
+    good(`the vault holds ${before.toLocaleString()} of ${SYMBOL} in notes the chain agrees with`);
   } catch (e: any) {
     warn(`what this vault holds privately could not be read before paying: ${String(e?.message ?? e).split('\n')[0]}`);
   }
@@ -621,7 +636,7 @@ async function main(): Promise<number> {
     propose: async () => {
       await becomeSigner('A');
       const res = await account.callTx.propose(
-        ZERO_32, fromHex(built.run.tree.root), built.run.tree.payees, built.opensAt, built.closesAt, true, vaultBytes);
+        ZERO_32, fromHex(built.run.tree.root), built.run.tree.payees, built.opensAt, built.closesAt, RUN_REQUIRES, true, vaultBytes);
       return `as signer A, transaction ${String(res?.public?.txId ?? '(no id in the answer)')}`;
     },
     approve: async (who) => {
@@ -640,7 +655,7 @@ async function main(): Promise<number> {
        * number that was true once.
        */
       const paid = await vaultLedger.payout(
-        vaultAddress!, vaultPaymentOf(record, built, toHex(proposalId) as Hex), BY, events);
+        vaultAddress!, vaultPaymentOf(record, built, toHex(proposalId) as Hex, vaultAddress! as Hex), BY, events, nonceSecret);
       try {
         const fin: any = await withTimeout('the finalized payment', 120_000, publicDataProvider.watchForTxData(paid.ref));
         note(`fee paid ${String(fin?.fees?.paidFees ?? '(not in the answer)')}, block ${String(fin?.blockHeight ?? '?')}, status ${String(fin?.status ?? '?')}`);
@@ -683,8 +698,8 @@ async function main(): Promise<number> {
   say();
   say('  \x1b[1mWHAT THE CHAIN SAYS NOW\x1b[0m');
   say(`    the account has recorded this payment    ${final.paid ? 'YES' : 'NO'}`);
-  say(`    the vault's ${ASSET} before this run       ${before === null ? '(not read)' : before.toLocaleString()}`);
-  say(`    the vault's ${ASSET} now                   ${after === null ? '(not read)' : after.toLocaleString()}`);
+  say(`    the vault's ${SYMBOL} before this run       ${before === null ? '(not read)' : before.toLocaleString()}`);
+  say(`    the vault's ${SYMBOL} now                   ${after === null ? '(not read)' : after.toLocaleString()}`);
   const moved = publicMovementOf(before, after, amount);
   say(`    what those two numbers say               ${moved}`);
   say(`    notes in the pool now                    ${left === null ? '(not read)' : left}`);

@@ -3,7 +3,7 @@
  *
  *
  * `Signer.leafCommitment` is written once — at creation (`account.ts:666`) or
- * handed over by an invitee's device (`src/web-legacy/App.tsx:2202`) — and the blinding
+ * handed over by an invitee's device — and the blinding
  * that made it never arrives (decision 0003; `AccountService.acceptSignerInvite`
  * has no parameter for one and `PendingSignerPayload` has the matching hole).
  * Seating publishes the STORED value: `grantAccess` passes
@@ -162,7 +162,7 @@ const half = (k: Hex): string => `${k.slice(0, 16)}…`;
  * Decision 0004.
  *
  * There were two writers — `AccountService.create` and the invite path in
- * `src/web-legacy/App.tsx` — each spelling the derivation out, and a third spelling in
+ * the earlier application's screens — each spelling the derivation out, and a third spelling in
  * this file to check them with. Three copies of the rule that decides who may
  * approve a payment. The first two ended up disagreeing with the contract, and
  * **two copies of a signer rule had cost this product the same way before**;
@@ -323,8 +323,8 @@ declare const seatedHere: unique symbol;
  *
  * ── WHY A TYPE AND NOT A TEST ────────────────────────────────────────────
  *
- * A money-safety refusal was put in `src/web-legacy/App.tsx`, no test file in this
- * repository imports that file, and what stood in for a test was a
+ * A money-safety refusal was put in the earlier application's screens, no test file in this
+ * repository imported them, and what stood in for a test was a
  * comment-stripped source pin over its text. **A source pin cannot see
  * semantics**: the first version was defeated three ways with the text intact —
  * kept verbatim inside an arrow nothing calls, wrapped in a condition never
@@ -333,7 +333,7 @@ declare const seatedHere: unique symbol;
  *
  * **AND THE FOURTH TURNED UP WITHOUT ANYONE LOOKING FOR IT.** The pin asserts
  * that `openAccount` calls the check exactly once. `loadDemo`
- * (`src/web-legacy/App.tsx`) built a `Session` straight from `/api/demo/seed` and
+ * (in the earlier application's screens) built a `Session` straight from a demo seeding route and
  * never went near `openAccount`, so a second door to a session existed with the
  * pin green. Counting call sites in one function cannot see a second function.
  *

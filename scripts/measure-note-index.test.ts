@@ -102,7 +102,7 @@ describe('the instrument that rules C244 can return every verdict it declares', 
  * a defect and does not is worse than the absence of one.
  *
  * This is the assertion that covers it, and it is a source-level one for the
- * reason `no-wasm-in-the-page` and `one-wiring-point` are: **an array nobody
+ * reason `one-wiring-point` is: **an array nobody
  * writes to is not visible to a typechecker or to a unit test of the function
  * that reads it.** Driving `stageThree` would need the indexer stubbed, which is
  * the better test and is not this one.

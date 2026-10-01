@@ -230,8 +230,8 @@ export async function refuseWhatTheVaultCannotPay(
     if (answer.of === 'no-such-form') throw cannot(answer.why, 'no-such-form', form);
     if (payment.token !== answer.token) {
       throw cannot(
-        `payment ${at + 1} on this proposal names its money as ${payment.token}, and ${asset.code} `
-        + `paid ${inForm(form)} is ${answer.token} on the ledger. A vault pays out of the token a `
+        `payment ${at + 1} on this proposal names its money as a different token from ${asset.symbol}, `
+        + `which is the token this proposal pays ${inForm(form)}. A vault pays out of the token a `
         + 'payment names, so this proposal would be approved and then refused by the vault. Its '
         + "payments have to be drawn up again from the asset's row. A proposal already raised under "
         + 'the other name cannot be paid either, and it can be withdrawn until its window opens.',
@@ -245,25 +245,35 @@ export async function refuseWhatTheVaultCannotPay(
     const prior = asks.get(key);
     asks.set(key, { form, token: payment.token, amount: (prior?.amount ?? 0n) + payment.amount });
   }
+  /*
+   * **ONE PROPOSAL PAYS ONE TOKEN IN ONE FORM.** A payroll with private and
+   * public payees is raised as two proposals side by side, each approved on
+   * its own, so a proposal asking for both is not one this product builds.
+   */
+  if (new Set([...asks.values()].map(a => a.form)).size > 1) {
+    throw cannot(
+      'this proposal mixes private and public payments. One run pays one token in one form: raise the '
+      + 'private payees and the public payees as two runs, each approved on its own.', 'not-the-proposal');
+  }
   if (sum !== proposal.total) {
     throw cannot(
-      `this proposal's payments add up to ${formatAmount(sum, asset)} ${asset.code} and the signers `
-      + `would approve ${formatAmount(proposal.total, asset)} ${asset.code}.`, 'not-the-proposal');
+      `this proposal's payments add up to ${formatAmount(sum, asset)} ${asset.symbol} and the signers `
+      + `would approve ${formatAmount(proposal.total, asset)} ${asset.symbol}.`, 'not-the-proposal');
   }
 
   const read = new Set(readFor);
   for (const { form, token, amount } of asks.values()) {
     if (!read.has(form)) continue;
-    const what = `of ${asset.code} ${inForm(form)}`;
+    const what = `of ${asset.symbol} ${inForm(form)}`;
     const answer = await ask(() => reader.held(vault, form, token), what, form, amount);
     if (answer?.of !== 'held' || typeof answer.amount !== 'bigint' || answer.amount < 0n) {
       throw notAnAnswer(answer, what, form, amount);
     }
     if (answer.amount < amount) {
       throw cannot(
-        `the vault holds ${formatAmount(answer.amount, asset)} ${asset.code} ${inForm(form)} and this `
+        `the vault holds ${formatAmount(answer.amount, asset)} ${asset.symbol} ${inForm(form)} and this `
         + `proposal asks it to pay ${formatAmount(amount, asset)}. Deposit at least `
-        + `${formatAmount(amount - answer.amount, asset)} ${asset.code} into the vault ${inForm(form)}, `
+        + `${formatAmount(amount - answer.amount, asset)} ${asset.symbol} into the vault ${inForm(form)}, `
         + `${DEPOSIT}, then raise the proposal again.`, 'short', form, answer.amount, amount);
     }
   }
@@ -271,14 +281,14 @@ export async function refuseWhatTheVaultCannotPay(
   const asked = proposal.payments.filter(p => read.has(p.payee.kind));
   if (asked.length === 0) return;
   const askedSum = asked.reduce((a, p) => a + p.amount, 0n);
-  const what = `of ${asset.code}`;
+  const what = `of ${asset.symbol}`;
   const fit = await ask(() => reader.fits(vault, asked), what, null, askedSum);
   if (fit?.of === 'fits') return;
   if (fit?.of === 'does-not-fit') {
     const privately = asked.some(p => p.payee.kind === 'shielded');
     const reason = String(fit.why).replace(/[.\s]+$/, '');
     throw cannot(privately
-      ? `the vault holds enough ${asset.code} in total, but its notes cannot make each payment in turn `
+      ? `the vault holds enough ${asset.symbol} in total, but its notes cannot make each payment in turn `
         + `(${reason}). A private payment is made from one note at least its size, and paying does not `
         + 'combine notes, so every payment the present notes cannot cover needs a note of its own. '
         + `Deposit those ${DEPOSIT}, then raise the proposal again.`

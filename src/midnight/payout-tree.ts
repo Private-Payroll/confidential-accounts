@@ -31,7 +31,7 @@
  */
 import { pureCircuits } from '../../contracts/managed/contract/index.js';
 import { toHex, fromHex, type Hex } from '../core/crypto.js';
-import { assetIdHex, type AssetId } from '../core/assets.js';
+import { assetIdHex, NO_ASSET, symbolOf, type AssetId, type LedgerForm } from '../core/assets.js';
 import {
   recipientOf, type Payee, type PayeeAddress, type PayeeKind,
 } from './payee-address.js';
@@ -112,7 +112,7 @@ export interface PayoutTree {
   leaves: Hex[];
   /** What each leaf pays, in tree order. */
   amounts: bigint[];
-  /** The asset the run pays in, as the account names it: what its root commits to. */
+  /** The token the run pays in: what its root commits to, and what the vault hands the account when it pays. */
   asset: Hex;
   /** The sum of `amounts`: what the root binds the run to pay at most. */
   total: bigint;
@@ -242,19 +242,63 @@ export const sumTreeOfLeaves = (
 };
 
 /**
- * THE ASSET A RUN'S ROOT COMMITS TO, AS THE ACCOUNT NAMES IT: the asset's code,
- * padded, which is what the account's asset key and a proposal's change are
- * made from, and so what a spending policy is looked up by. Not a ledger token:
- * one asset can be paid in two forms, each its own token, in one run.
+ * **THE ASSET A RUN'S ROOT COMMITS TO IS THE TOKEN ITSELF.** It is exactly what
+ * the vault hands the account when it pays: the spent coin's colour for a
+ * private payment, the token it sends for a public one. Both forms of a token
+ * are the same 32 bytes, so it is also what the account's asset key and a
+ * proposal's change are made from, and what a spending policy is looked up by.
  */
 export const runAssetOf = (asset: AssetId): Hex => assetIdHex(asset) as Hex;
 
+/** The word a person reads for a form of money. */
+const formWord = (form: LedgerForm): string => (form === 'shielded' ? 'private' : 'public');
+
+/**
+ * **ONE RUN PAYS ONE TOKEN, IN ONE FORM, AND A RUN THAT WOULD NOT IS REFUSED
+ * BEFORE ANYTHING IS BUILT.**
+ *
+ * A run's root commits to one token, and the vault pays each payment out of
+ * the token its leaf names, in the form its payee is paid in. A payment in a
+ * different token from the run's is a leaf the account refuses once the money
+ * has moved; a run mixing private and public payees is approved as one round
+ * over two kinds of money. A payroll with both kinds of payee is raised as two
+ * runs side by side, each approved on its own. Refused here, by naming what
+ * differs, before anybody signs anything.
+ */
+export const refuseAMixedRun = (
+  facts: readonly Pick<PaymentFacts, 'payee' | 'token'>[], asset: AssetId,
+): void => {
+  if (asset === NO_ASSET) {
+    throw new Error('a run has to name the token it pays in, and this one names no asset. Nothing was built.');
+  }
+  runAssetOf(asset);
+  const forms = [...new Set(facts.map((f) => f.payee.kind))];
+  if (forms.length > 1) {
+    const first = facts.findIndex((f) => f.payee.kind !== facts[0]!.payee.kind);
+    throw new Error(
+      `This run has both private and public payments (payment 1 is ${formWord(facts[0]!.payee.kind)}, `
+      + `payment ${first + 1} is ${formWord(facts[first]!.payee.kind)}). A run pays one token, one way. `
+      + 'Create one run for the private payments and one for the public payments. Each is approved on its own. '
+      + 'Nothing was created.');
+  }
+  const other = facts.findIndex((f) => f.token.toLowerCase() !== asset);
+  if (other >= 0) {
+    throw new Error(
+      `Payment ${other + 1} is in ${symbolOf(facts[other]!.token.toLowerCase())} and this run pays `
+      + `${symbolOf(asset)}. A run pays one token. Create a separate run for `
+      + `${symbolOf(facts[other]!.token.toLowerCase())}. Nothing was created.`);
+  }
+};
+
 /**
  * The root of a run's leaves at the amounts its payments name, in the run's
- * asset: `rootOfLeaves` over what a run's records already hold.
+ * token: `rootOfLeaves` over what a run's records already hold. Refuses a set
+ * of payments that mixes tokens or forms, as `buildRun` does.
  */
-export const rootOfPayments = (leaves: Hex[], facts: readonly { amount: bigint }[], asset: AssetId): Hex =>
-  rootOfLeaves(leaves, facts.map((f) => f.amount), runAssetOf(asset));
+export const rootOfPayments = (leaves: Hex[], facts: readonly PaymentFacts[], asset: AssetId): Hex => {
+  refuseAMixedRun(facts, asset);
+  return rootOfLeaves(leaves, facts.map((f) => f.amount), runAssetOf(asset));
+};
 
 /**
  * Builds the run's tree.
@@ -358,15 +402,13 @@ export const buildPayoutTree = (payments: PayoutLeafInput[], amounts: bigint[], 
  */
 export interface PaymentFacts {
   /**
-   * **AND THE KIND OF MONEY LIVES HERE, PER PAYEE, BECAUSE THAT IS WHERE IT
+   * **AND THE KIND OF MONEY IS READ OFF THE PAYEE, BECAUSE THAT IS WHERE IT
    * ACTUALLY LIVES.**
    *
-   * `S6j` established the property from the contract's side: the kind is
-   * committed into each LEAF and nothing at the account learns about it, so
-   * **one approved run can hold both kinds side by side, payee by payee.** A
-   * run-level choice would have been a client inventing a constraint the chain
-   * does not have — and worse, a client that could apply the wrong one to
-   * everybody at once.
+   * The kind is committed into each LEAF, and the payee's address decides it.
+   * **One run pays one token in one form**: `buildRun` refuses payments of
+   * more than one kind, so a payroll with both kinds of payee is two runs,
+   * raised side by side and each approved on its own.
    *
    * `Payee` is a discriminated union whose tag comes out of the same decode as
    * the 32 bytes that go to the circuit, so there is no field here that could
@@ -381,10 +423,9 @@ export interface PaymentFacts {
  * **A RUN'S PAYMENTS WHERE EVERY PAYEE IS PRIVATE, SAID IN THE TYPE RATHER THAN
  * IN A COMMENT.**
  *
- * `PaymentFacts` carries either kind, because the vault holds both and one
- * approved run can mix them. A payroll run's payments are `PaymentFacts`, each
- * payee in the form its address is; this narrower type is for a caller whose
- * payments must all be private.
+ * `PaymentFacts` carries either kind, because the vault holds both. A run's
+ * payments are all of one kind, the form its payees' addresses are; this
+ * narrower type is for a caller whose payments must all be private.
  */
 export type ShieldedPaymentFacts = PaymentFacts & { payee: PayeeAddress };
 
@@ -398,7 +439,7 @@ export interface PayeeArgs extends PaymentFacts {
   details: Hex;
   leaf: Hex;
   path: SumStep[];
-  /** The run's asset as the account names it, which its root commits to. Not the ledger token. */
+  /** The run's token, which its root commits to and every payment on it moves. */
   asset: Hex;
 }
 
@@ -525,9 +566,10 @@ export const buildRun = (
    * in the same order.
    */
   pay: PayRecords,
-  /** The asset the run pays in, as the account names it. Every payment is a form of it. */
+  /** The token the run pays in. Every payment on it moves this token, in one form. */
   asset: AssetId,
 ): PayrollRun => {
+  refuseAMixedRun(facts, asset);
   if (pay.records.length !== facts.length) {
     throw new Error(
       `this run has ${facts.length} payments and says what ${pay.records.length} of them are for; ` +
@@ -593,6 +635,7 @@ export const buildRetryRun = (original: PayrollRun, indices: number[]): PayrollR
     seen.add(i);
   }
 
+  refuseAMixedRun(indices.map((i) => at(original.facts, i, 'payee')), original.tree.asset);
   const payments = indices.map((i) => at(original.payments, i, 'payee'));
   return assemble(
     original.tree,

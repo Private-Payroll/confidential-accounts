@@ -16,11 +16,16 @@ import {
  * because the contract changed is a control that has noticed the contract
  * changed, which is its job.
  *
- *   the contract this build compiled   5 slots   cell,map,map,cell,map
+ *   the contract this build compiled  14 slots   cell,map,map,cell,map,cell,map x8
  *   a vault deployed 28 Aug            3 slots   cell,map,cell
  *   a vault deployed 29 Aug            4 slots   cell,map,map,cell
  *   a vault deployed  9 Sep            5 slots   cell,map,map,cell,map
  */
+const THIS_BUILD = [
+  'cell', 'map', 'map', 'cell', 'map', 'cell', 'map', 'map', 'map', 'map', 'map', 'map', 'map', 'map',
+] as const;
+const THIS_BUILDS_FIELDS = ['account', 'notes', 'unshieldedTokens', 'payments', 'reserved0', 'nonceCommitment', 'splitJournal', 'secretCopies', 'reserved1', 'reserved2', 'reserved3', 'reserved4', 'reserved5', 'reserved6'];
+
 const MEASURED_ON_CHAIN = {
   deployedAug28: ['cell', 'map', 'cell'],
   deployedAug29: ['cell', 'map', 'map', 'cell'],
@@ -106,7 +111,7 @@ describe('§1 two shapes, compared, with nothing else in the room', () => {
      * oversight - and so that the day it becomes detectable, this is where the
      * claim gets corrected.
      */
-    const swapped = [FIVE.slots[4]!, FIVE.slots[1]!];
+    const swapped = [FIVE.slots[4]!, FIVE.slots[1]!] as const;
     const permuted = shape(FIVE.slots[0]!, swapped[0], FIVE.slots[2]!, FIVE.slots[3]!, swapped[1]);
     expect(permuted.slots).not.toEqual(['cell', 'map', 'map', 'cell', 'map'].map((x, i) => (i === 1 ? 'SWAPPED' : x)));
     expect(compareLedgerShape(FIVE, permuted, NAMES)).toEqual({ of: 'matches' });
@@ -153,12 +158,15 @@ const stateOfSlots = (canonical: readonly unknown[] | undefined, take: readonly 
 };
 
 describe('§2 the shape of a state, read off the state', () => {
-  it('this build\x27s contract states its own shape, and it is the 9 Sep vault\x27s', async () => {
+  it('this build\x27s contract states its own shape, fourteen fields, which no vault on the chain has', async () => {
     const { shape: compiled, fields } = await compiledVaultLedgerShape();
     /* RED WHEN the canonical shape is transcribed from a table instead of produced by the contract. */
-    expect(compiled.slots).toEqual([...MEASURED_ON_CHAIN.deployedSep9]);
+    expect(compiled.slots).toEqual([...THIS_BUILD]);
     /* RED WHEN the field names are not read off the contract, in declaration order. */
-    expect(fields).toEqual(['account', 'notes', 'unshieldedTokens', 'payments', 'spendingCaps']);
+    expect(fields).toEqual(THIS_BUILDS_FIELDS);
+    for (const name of ['deployedAug28', 'deployedAug29', 'deployedSep9'] as const) {
+      expect(compiled.slots, name).not.toEqual([...MEASURED_ON_CHAIN[name]]);
+    }
   });
 
   it('reads back the three shapes measured on chain, from states built out of those same slots', async () => {
@@ -169,7 +177,7 @@ describe('§2 the shape of a state, read off the state', () => {
       expect(shapeOfDeployedState(stateOfSlots(canonical, SLOTS_OF[name])).slots, name)
         .toEqual([...MEASURED_ON_CHAIN[name]]);
     }
-    expect(compiled.slots).toEqual([...MEASURED_ON_CHAIN.deployedSep9]);
+    expect(compiled.slots).toEqual([...THIS_BUILD]);
   });
 
   it('THE COMPILED READER\x27S FIELD NAMES ARE NOT EVIDENCE, and that is why this exists', async () => {
@@ -177,12 +185,12 @@ describe('§2 the shape of a state, read off the state', () => {
     const canonical = (await realCanonicalState()).state.asArray();
     const threeFields = stateOfSlots(canonical, SLOTS_OF.deployedAug28);
     /*
-     * RED WHEN the reader stops answering with all five names on a three-field
-     * vault. That would mean a name-based check had become possible, and the
-     * argument for this whole module would have changed.
+     * RED WHEN the reader stops answering with all fourteen names on a
+     * three-field vault. That would mean a name-based check had become
+     * possible, and the argument for this whole module would have changed.
      */
     expect(Object.keys((ledger as (d: unknown) => object)(threeFields.data)))
-      .toEqual(['account', 'notes', 'unshieldedTokens', 'payments', 'spendingCaps']);
+      .toEqual(THIS_BUILDS_FIELDS);
     /* RED WHEN a field past the end of a short ledger stops throwing, silently answering instead. */
     expect(() => (ledger as (d: unknown) => { payments: unknown })(threeFields.data).payments)
       .toThrow(/index out of bounds/);
@@ -221,6 +229,13 @@ describe('§3 the gate every deposit and every payout passes through', () => {
     /* RED WHEN the gate lets a vault a field short through, which is the whole defect. */
     await expect(assertVaultLedgerIsThisBuilds(stateOfSlots(canonical, SLOTS_OF.deployedAug29)))
       .rejects.toThrow(VaultLedgerShapeMismatch);
+  });
+
+  it('REFUSES THE 9 SEP VAULT\x27S SHAPE, TODAY\x27S VAULT, so no vault of the old shape is ever funded or paid out of', async () => {
+    const canonical = (await realCanonicalState()).state.asArray();
+    /* RED WHEN a vault deployed from the old build, five fields and no secret, is let through. */
+    await expect(assertVaultLedgerIsThisBuilds(stateOfSlots(canonical, SLOTS_OF.deployedSep9)))
+      .rejects.toThrow('holds 5 ledger fields and the vault contract this build compiled has 14');
   });
 
   it('refuses the 28 Aug vault\x27s shape', async () => {
@@ -288,7 +303,7 @@ describe('\u00a74 the compiled-shape memo does not remember a rejection', () => 
        * `compiledShape = null` exists for, and the one nothing had.
        */
       const second = await fresh.compiledVaultLedgerShape();
-      expect(second.fields).toEqual(['account', 'notes', 'unshieldedTokens', 'payments', 'spendingCaps']);
+      expect(second.fields).toEqual(THIS_BUILDS_FIELDS);
       expect(builds).toBe(2);
     } finally {
       vi.doUnmock(THE_CONTRACT);

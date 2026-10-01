@@ -59,7 +59,7 @@ describe('who may touch a vault\'s records', () => {
 describe('the vault\'s pinned account, read from the chain', () => {
   it('IS THE ACCOUNT THE VAULT\'S OWN CONSTRUCTOR PINNED, read through its own ledger', async () => {
     const { Contract } = await import('../../contracts/managed-vault/contract/index.js');
-    const vault = new Contract({ noteToSpend: () => { throw new Error('unused'); } } as never);
+    const vault = new Contract({ noteToSpend: () => { throw new Error('unused'); }, nonceSecret: () => { throw new Error('unused'); } } as never);
     const init = await (vault as any).initialState(createConstructorContext({}, '0'.repeat(64)), { bytes: fromHex(COMPANY) });
     const address = sampleContractAddress();
     const read = vaultAccountFromTheIndexer({

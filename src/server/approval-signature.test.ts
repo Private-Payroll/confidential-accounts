@@ -120,8 +120,8 @@ const call = async (
 /**
  * A COMPANY WITH TWO PROPOSALS ON IT, ONE OF WHICH IS THE OPEN ROUND.
  *
- * **THIS BUILT ITSELF THROUGH `POST /api/demo/seed` UNTIL `S28`. `C303`,
- * `T-63`.** `C292` deleted the account balance; `S26` made `seedDemo` throw
+ * **THIS BUILT ITSELF THROUGH A DEMO SEEDING ROUTE UNTIL `S28`. `C303`,
+ * `T-63`.** `C292` deleted the account balance; `S26` made the seeding throw
  * because the demo funded the company by depositing into it. Nothing in this
  * file was about the demo — all four tests below died at
  * `expect(seeded.status).toBe(200)`, before their first assertion, and the only

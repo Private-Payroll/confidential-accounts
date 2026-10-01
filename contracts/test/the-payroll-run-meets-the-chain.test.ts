@@ -45,7 +45,7 @@ import { MidnightCommitments } from '../../src/midnight/commitments.js';
 import { buildRun } from '../../src/midnight/payout-tree.js';
 import { runMaterialFor } from '../../src/midnight/run-material.js';
 import { vaultDetails } from '../../src/testing/vault-details.js';
-import { registryWithTestPrivateForms, aVaultHolding } from '../../src/testing/assets.js';
+import { registryWithTestPrivateForms, aVaultHolding, TEST_TOKEN } from '../../src/testing/assets.js';
 import { FileStore } from '../../src/core/store-file.js';
 import { assetIdBytes } from '../../src/core/assets.js';
 import { fromHex, toHex, unseal, parseCanonical, type Hex } from '../../src/core/crypto.js';
@@ -92,7 +92,7 @@ async function aCompanyWithAPayroll(payees = 1) {
 
   for (let i = 0; i < payees; i++) {
     payroll.hireDirect(created.account.id, {
-      name: `Payee ${i}`, email: `p${i}@a.co`, title: 'Eng', asset: 'GBP', baseAmount: 100_00n,
+      name: `Payee ${i}`, email: `p${i}@a.co`, title: 'Eng', asset: TEST_TOKEN, baseAmount: 100_00n,
     }, viewingKey);
   }
   const { run } = await payroll.createRunFromRoster(created.account.id, '2026-08', viewingKey);
@@ -343,6 +343,10 @@ describe('a payroll run the PRODUCT raised is one a VAULT can pay', () => {
     await expect(payroll.proposeRun(
       run.id, created.viewingKey, created.secrets[0]!.signerId, null))
       .rejects.toThrow(/cannot be proposed without its payout material/);
+    /* RED WHEN the refusal says what a run without its material costs with a dash, or stops saying it would be approved and paid for and could never be paid (ruled copy fix, 1 Oct). */
+    await expect(payroll.proposeRun(
+      run.id, created.viewingKey, created.secrets[0]!.signerId, null))
+      .rejects.toThrow(/one no vault can ever match\. It would be approved and paid for, and could never be paid\. Build the material/);
   });
 
   /**
@@ -366,7 +370,11 @@ describe('a payroll run the PRODUCT raised is one a VAULT can pay', () => {
 
     await expect(payroll.proposeRun(
       run.id, created.viewingKey, created.secrets[0]!.signerId, material))
-      .rejects.toThrow(/pays 1 people in GBP and the run material names 3/);
+      .rejects.toThrow(/pays 1 people in the private tPAY leg and the run material names 3/);
+    /* RED WHEN the refusal joins its two ideas with a dash rather than saying them as two sentences (ruled copy fix, 1 Oct). */
+    await expect(payroll.proposeRun(
+      run.id, created.viewingKey, created.secrets[0]!.signerId, material))
+      .rejects.toThrow(/made never to finish\. A count that disagrees with the roster would do one of the two\.$/);
   });
 
   /**

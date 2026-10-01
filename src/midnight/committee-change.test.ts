@@ -238,7 +238,7 @@ describe('A CONTRACT CHANGED MORE THAN ONCE IS VOUCHED FOR ONLY BY ITS WHOLE HIS
   });
 
   const facts = (over: Partial<FundingFacts> = {}): FundingFacts => ({
-    label: 'v', what: 'no money goes into this vault', vault: now, vaultCircuits: null, pinnedAccount: B, companyAccount: B,
+    label: 'v', what: 'no money goes into this vault', vault: now, vaultCircuits: null, pinnedAccount: B, started: true, companyAccount: B,
     committee: { committee: sorted(1, 2), threshold: 1 }, heldHere: [], account: r([1, 2], 1, 1n), accountCircuits: null, ...over,
   });
 

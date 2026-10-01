@@ -22,8 +22,11 @@ import type { WireRecord } from '../../../src/midnight/sealed-record-wire.js';
 import { newWrappingKeypair } from '../../../src/core/crypto.js';
 import { answerVaultAsk, creatingTransactionOfNote } from './vault-worker-entry.js';
 import * as vaultModule from '../../../contracts/managed-vault/contract/index.js';
-import { openNonceSecrets, recordsKeypairFrom, currentDepositNonceKey } from '../../../src/midnight/company-nonce-secret.js';
+import { openNonceSecrets, recordsKeypairFrom, currentDepositNonceKey, startNonceSecret } from '../../../src/midnight/company-nonce-secret.js';
+import { recordsReaderOf } from './deposit-on-device.js';
 import { depositNonceAt, DepositCoinAlreadyMade } from '../../../src/midnight/deposit-nonce.js';
+import { sealSecretCopy } from '../../../src/midnight/sealed-secret-copy.js';
+import { toHex } from '../../../src/core/crypto.js';
 
 /**
  * Deposits or payments in flight, kept for the length of one test in the clear, one per vault, each changed only
@@ -76,9 +79,31 @@ const builder = (log: string[]): VaultBuilderClient => ({
     log.push(`build public payout of ${i.payment.amount} to ${i.payment.payee} at ${i.chain.blockHash}`);
     return { tx: 'U' };
   },
-  /* No vault operation raises or approves a round. */
+  /* No step of a start is raised here: the stand-in chain shows every one already done. */
   governedCall: async () => { throw new Error('a vault operation asked for a governed call'); },
+  startStanding: async (i) => ({
+    standing: {
+      adopted: true,
+      adoption: { proposal: 'a1'.repeat(32), payload: 'a2'.repeat(32), named: 'a3'.repeat(32), salt: 'a4'.repeat(32), open: false, approvals: 0, needed: 1, stale: false },
+      ...(i.secret === undefined ? {} : { secret: { set: true, another: false, rootIsThisRuns: true, run: null, written: [true], started: true } }),
+    },
+    ...(i.secret === undefined ? {} : { run: { copies: [{ reader: '40'.repeat(32), parts: [], path: [] }] } as never }),
+  }),
+  setNonceSecret: async () => { throw new Error('a start set a secret the chain already holds'); },
+  writeSecretCopy: async () => { throw new Error('a start wrote a copy the chain already holds'); },
 });
+/** What creating a vault is handed to start it: this signer, their records and their own three. */
+const startDoors = () => {
+  const wrapping = newWrappingKeypair();
+  const s = new Map<WireRecord, MemorySealedPoolStore>();
+  return {
+    me: { signerId: 'ada', wrappingSecret: wrapping.secret, companyKey: new Uint8Array(32).fill(4) },
+    myRecordsKey: recordsKeypairFrom(new Uint8Array(32).fill(4)).publicKey,
+    records: (r: WireRecord) => s.get(r) ?? s.set(r, new MemorySealedPoolStore()).get(r)!,
+    signers: async () => [{ id: 'ada', wrappingPublicKey: wrapping.publicKey }],
+    material: { signingSecret: '11'.repeat(32), blinding: '22'.repeat(32), scope: '33'.repeat(32) },
+  };
+};
 const memoryKeys = (log: string[]) => {
   const held = new Map<string, { tag: string; value: string }>();
   const keys: TemporaryKeys = {
@@ -139,16 +164,20 @@ describe('CREATING A VAULT', () => {
   it('keeps the temporary key BEFORE the deploy is sent, and forgets it only once the chain says the committee holds the vault', async () => {
     const log: string[] = [];
     const { keys, held: kept } = memoryKeys(log);
-    const done = await createCompanyVault({ ...pacing, account: ACCOUNT, service: serviceFrom([oneKey, held], log), builder: builder(log), keys });
-    expect(done).toEqual({ vault: VAULT, state: 'held-by-committee' });
-    expect(log).toEqual(['build deploy', 'key kept', 'sent deploy', 'build handover at 0', 'sent handover', 'key forgotten']);
+    const done = await createCompanyVault({ ...pacing, ...startDoors(), account: ACCOUNT, service: serviceFrom([oneKey, held], log), builder: builder(log), keys });
+    /* RED WHEN: the press ends before the chain shows the vault started. */
+    expect(done).toEqual({ vault: VAULT, state: 'started' });
+    /* RED WHEN: a step of the start the chain already shows is sent again. */
+    expect(log).toEqual(['build deploy', 'key kept', 'sent deploy', 'build handover at 0', 'sent handover', 'key forgotten',
+      /* The start reads both contracts at one block, before the adoption and again with the secret read back. */
+      'read the block', 'read the block']);
     expect(kept.size).toBe(0);
   });
 
   it('NO COMMITTEE, NOTHING BUILT', async () => {
     const log: string[] = [];
     const service = serviceFrom([], log, { keys: async () => ({ committee: null, why: 'not everybody has given a key.', readers: [] }) });
-    await expect(createCompanyVault({ ...pacing, account: ACCOUNT, service, builder: builder(log), keys: memoryKeys(log).keys }))
+    await expect(createCompanyVault({ ...pacing, ...startDoors(), account: ACCOUNT, service, builder: builder(log), keys: memoryKeys(log).keys }))
       .rejects.toThrow('not everybody has given a key.');
     expect(log).toEqual([]);
   });
@@ -157,7 +186,7 @@ describe('CREATING A VAULT', () => {
     const log: string[] = [];
     const { keys, held: kept } = memoryKeys(log);
     const service = serviceFrom([], log, { deploy: async () => { throw new Error('the node did not answer'); } });
-    const e = await createCompanyVault({ ...pacing, account: ACCOUNT, service, builder: builder(log), keys }).catch((x) => x);
+    const e = await createCompanyVault({ ...pacing, ...startDoors(), account: ACCOUNT, service, builder: builder(log), keys }).catch((x) => x);
     expect(e).toBeInstanceOf(VaultHandoverOwed);
     expect(e.vault).toBe(VAULT);
     expect(kept.has(VAULT)).toBe(true);
@@ -169,19 +198,19 @@ describe('CREATING A VAULT', () => {
     const service = serviceFrom([], log, {
       deploy: async () => { throw Object.assign(new Error('refused. Nothing was sent.'), { nothingWasSent: true }); },
     });
-    await expect(createCompanyVault({ ...pacing, account: ACCOUNT, service, builder: builder(log), keys })).rejects.toThrow('refused. Nothing was sent.');
+    await expect(createCompanyVault({ ...pacing, ...startDoors(), account: ACCOUNT, service, builder: builder(log), keys })).rejects.toThrow('refused. Nothing was sent.');
     expect(kept.size).toBe(0);
   });
 
   it('A HANDOVER THAT DOES NOT SHOW, OR A VAULT THAT NEVER APPEARS, IS NEVER REPORTED CREATED', async () => {
     const log: string[] = [];
     const neverHeld = await createCompanyVault({
-      ...pacing, account: ACCOUNT, service: serviceFrom([oneKey], log), builder: builder(log), keys: memoryKeys(log).keys,
+      ...pacing, ...startDoors(), account: ACCOUNT, service: serviceFrom([oneKey], log), builder: builder(log), keys: memoryKeys(log).keys,
     }).catch((x) => x);
     expect(neverHeld).toBeInstanceOf(VaultHandoverOwed);
     expect(log.filter((l) => l === 'sent handover')).toHaveLength(3);
     const absent = await createCompanyVault({
-      ...pacing, account: ACCOUNT, service: serviceFrom([view({ onChain: false })], []), builder: builder([]), keys: memoryKeys([]).keys,
+      ...pacing, ...startDoors(), account: ACCOUNT, service: serviceFrom([view({ onChain: false })], []), builder: builder([]), keys: memoryKeys([]).keys,
     }).catch((x) => x);
     expect(absent).toBeInstanceOf(VaultHandoverOwed);
     expect(absent.message).toMatch(/has not shown the vault yet/);
@@ -195,7 +224,7 @@ describe('CREATING A VAULT', () => {
       const service = serviceFrom([], log, {
         chain: async () => { if (n++ < reads) return oneKey; throw new Error('the indexer did not answer'); },
       });
-      const e = await createCompanyVault({ ...pacing, account: ACCOUNT, service, builder: builder(log), keys: memoryKeys(log).keys }).catch((x) => x);
+      const e = await createCompanyVault({ ...pacing, ...startDoors(), account: ACCOUNT, service, builder: builder(log), keys: memoryKeys(log).keys }).catch((x) => x);
       expect(e, name).toBeInstanceOf(VaultHandoverOwed);
       expect(e.vault, name).toBe(VAULT);
       expect(e.message, name).toMatch(/the chain could not be read \(the indexer did not answer\)/);
@@ -205,24 +234,105 @@ describe('CREATING A VAULT', () => {
   it('A RESUME WITHOUT THE TEMPORARY KEY ON THIS DEVICE STOPS, AND SAYS ONLY THE DEPLOYING DEVICE CAN FINISH', async () => {
     const log: string[] = [];
     const e = await createCompanyVault({
-      ...pacing, account: ACCOUNT, service: serviceFrom([oneKey], log), builder: builder(log), keys: memoryKeys(log).keys,
+      ...pacing, ...startDoors(), account: ACCOUNT, service: serviceFrom([oneKey], log), builder: builder(log), keys: memoryKeys(log).keys,
     }, VAULT).catch((x) => x);
     expect(e).toBeInstanceOf(VaultHandoverOwed);
     expect(e.message).toMatch(/only the device that deployed it/);
     expect(log).toEqual([]);
   });
 
-  it('a resume for a vault the committee already holds finishes without building anything', async () => {
+  it('a resume for a vault the committee already holds and the chain shows started finishes without building anything', async () => {
     const log: string[] = [];
-    await expect(createCompanyVault({ ...pacing, account: ACCOUNT, service: serviceFrom([held], log), builder: builder(log), keys: memoryKeys(log).keys }, VAULT))
-      .resolves.toEqual({ vault: VAULT, state: 'held-by-committee' });
-    expect(log).toEqual(['key forgotten']);
+    await expect(createCompanyVault({ ...pacing, ...startDoors(), account: ACCOUNT, service: serviceFrom([held], log), builder: builder(log), keys: memoryKeys(log).keys }, VAULT))
+      .resolves.toEqual({ vault: VAULT, state: 'started' });
+    expect(log).toEqual(['key forgotten', 'read the block', 'read the block']);
+  });
+
+  /* RED WHEN: a start goes on with a signer the vault's filed secret is not wrapped to - their sealed copy would be missing. */
+  it('a start stops, naming the vault, when a signer cannot open the filed secret', async () => {
+    const log: string[] = [];
+    const service = serviceFrom([held], log, { keys: async () => ({ committee, why: null, readers: ['5c'.repeat(32)] }) });
+    const doors = startDoors();
+    await doors.records('nonce-secret').put(VAULT, startNonceSecret(VAULT, [recordsReaderOf(doors.me.companyKey)]));
+    const e = await createCompanyVault({ ...pacing, ...doors, account: ACCOUNT, service, builder: builder(log), keys: memoryKeys(log).keys }, VAULT)
+      .catch((x) => x);
+    expect(e.name).toBe('VaultStartOwed');
+    expect(e.vault).toBe(VAULT);
+    expect(e.message).toMatch(/1 signer\(s\) cannot open the vault's filed secret/);
+  });
+
+  /*
+   * The sealed copies a vault keeps are sealed to the records keys the service lists. Before this device raises or
+   * approves the run that sets the first secret, its own key must be on that list and its own copy must open.
+   */
+  describe('THIS SIGNER\'S OWN COPY IS CHECKED BEFORE THE FIRST SECRET RUN IS RAISED OR APPROVED', () => {
+    const unset = (copies: Array<{ reader: string; parts: string[]; path: never[] }>) => (log: string[]): VaultBuilderClient => ({
+      ...builder(log),
+      governedCall: async () => { log.push('built a governed call'); throw new Error('stand-in: nothing is proved here'); },
+      startStanding: async (i) => ({
+        standing: {
+          adopted: true,
+          adoption: { proposal: 'a1'.repeat(32), payload: 'a2'.repeat(32), named: 'a3'.repeat(32), salt: 'a4'.repeat(32), open: false, approvals: 0, needed: 1, stale: false },
+          ...(i.secret === undefined ? {} : {
+            secret: {
+              set: false, another: false, rootIsThisRuns: true, run: null, written: [false], started: false,
+              raise: { proposal: 'b1'.repeat(32), payload: 'b2'.repeat(32), named: 'b3'.repeat(32), salt: 'b4'.repeat(32), opensAt: '1', closesAt: '2' },
+            },
+          }),
+        },
+        ...(i.secret === undefined ? {} : { run: { root: 'b5'.repeat(32), payees: '1', asset: 'b6'.repeat(32), copies } as never }),
+      }),
+    });
+    const press = async (readers: (mine: string) => string[], copiesOf: (mine: string, secret: string) => Array<{ reader: string; parts: string[]; path: never[] }>) => {
+      const log: string[] = [];
+      const doors = startDoors();
+      const mine = recordsKeypairFrom(doors.me.companyKey);
+      await doors.records('nonce-secret').put(VAULT, startNonceSecret(VAULT, [recordsReaderOf(doors.me.companyKey), { publicKey: another }]));
+      const secret = openNonceSecrets((await doors.records('nonce-secret').get(VAULT))!, VAULT, mine).secrets[0]!;
+      const service = serviceFrom([held], log, { keys: async () => ({ committee, why: null, readers: readers(mine.publicKey) }) });
+      const e = await createCompanyVault({
+        ...pacing, ...doors, account: ACCOUNT, service, builder: unset(copiesOf(mine.publicKey, secret))(log), keys: memoryKeys(log).keys,
+      }, VAULT).catch((x) => x);
+      return { e, log };
+    };
+    /* Another signer the company's record of the secret is wrapped to. */
+    const another = recordsKeypairFrom(new Uint8Array(32).fill(9)).publicKey;
+    const sealed = (vault: string, secret: string, reader: string) =>
+      sealSecretCopy({ vault, secret, reader }).map((p) => toHex(p));
+
+    /* RED WHEN the press stops checking that the service's list of records keys holds this device's own. */
+    it('a service list without this signer\'s own records key is refused by name, and nothing is raised', async () => {
+      const { e, log } = await press(() => [another], (mine, secret) => [{ reader: mine, parts: sealed(VAULT, secret, mine), path: [] }]);
+      expect(e.name).toBe('VaultStartOwed');
+      expect(e.vault).toBe(VAULT);
+      expect(e.message).toMatch(/does not have the key your own recovery words give/);
+      expect(log).not.toContain('built a governed call');
+    });
+
+    /* RED WHEN the press stops checking that this signer's copy in the run opens with this signer's own records key. */
+    it('a run whose copy for this signer does not open with this signer\'s own key is refused by name, and nothing is raised', async () => {
+      const otherVault = 'cd'.repeat(32);
+      const { e, log } = await press((mine) => [mine], (mine, secret) => [{ reader: mine, parts: sealed(otherVault, secret, mine), path: [] }]);
+      expect(e.name).toBe('VaultStartOwed');
+      expect(e.message).toMatch(/would keep for you does not open with the key your own recovery words give/);
+      expect(log).not.toContain('built a governed call');
+      const none = await press((mine) => [mine], () => [{ reader: '5c'.repeat(32), parts: [], path: [] }]);
+      expect(none.e.message).toMatch(/would keep for you does not open/);
+      expect(none.log).not.toContain('built a governed call');
+    });
+
+    it('a run whose copy for this signer opens with this signer\'s own key goes on to raise the run', async () => {
+      const { e, log } = await press((mine) => [mine], (mine, secret) => [{ reader: mine, parts: sealed(VAULT, secret, mine), path: [] }]);
+      expect(log).toContain('built a governed call');
+      expect(e.name).toBe('VaultStartOwed');
+      expect(e.message).toMatch(/raising its first secret could not be built/);
+    });
   });
 
   it('a vault held by some other committee is not handed over', async () => {
     const log: string[] = [];
     const other = view({ authority: { committee: [], threshold: 2, counter: '3', shape: 'committee' }, heldByCommittee: false, why: 'held by others.' });
-    await expect(createCompanyVault({ ...pacing, account: ACCOUNT, service: serviceFrom([other], log), builder: builder(log), keys: memoryKeys(log).keys }, VAULT))
+    await expect(createCompanyVault({ ...pacing, ...startDoors(), account: ACCOUNT, service: serviceFrom([other], log), builder: builder(log), keys: memoryKeys(log).keys }, VAULT))
       .rejects.toThrow(/held by others/);
     expect(log).toEqual([]);
   });
@@ -938,8 +1048,8 @@ describe('A PRIVATE PAYMENT OUT', () => {
     return {
       payment,
       order: {
-        asset: 'TESTUSD', vault: VAULT, proposal: '0f'.repeat(32), salt: '5a'.repeat(32), root: '9a'.repeat(32),
-        payees: '1', opensAt: '1799999000', closesAt: '1800009000', payments: [payment], ...over,
+        asset: TOKEN, form: 'shielded', symbol: 'tUSD', vault: VAULT, proposal: '0f'.repeat(32), salt: '5a'.repeat(32),
+        root: '9a'.repeat(32), payees: '1', opensAt: '1799999000', closesAt: '1800009000', payments: [payment], ...over,
       },
     };
   };
@@ -951,6 +1061,8 @@ describe('A PRIVATE PAYMENT OUT', () => {
     const records = (r: WireRecord) => s.get(r) ?? s.set(r, new MemorySealedPoolStore()).get(r)!;
     await new SealedNotePool(records('pool'), { signerId: 'ada', wrappingSecret: wrapping.secret }, signers)
       .create(VAULT, { notes: [note as never] });
+    /* The vault's nonce secret, filed when it was started: a payment out is made with it. */
+    await records('nonce-secret').put(VAULT, startNonceSecret(VAULT, [recordsReaderOf(me.companyKey)]));
     const held = view({ heldByCommittee: true, fundable: true, notes: chainNotes });
     const kept = new Map<string, Kept<PaymentInFlight>>();
     const inFlight: PaymentsInFlight = inFlightInMemory<PaymentInFlight>(kept);
@@ -977,11 +1089,14 @@ describe('A PRIVATE PAYMENT OUT', () => {
      * or the change is saved under anything but this payment's hash. */
     const t = await setUp();
     let journalledBeforeBuild = -1;
+    let builtWith = '';
     const b = t.doors(landsWhenSent());
     const build = b.builder.payout;
-    b.builder.payout = async (i) => { journalledBeforeBuild = (await t.journal()).length; return build(i); };
+    b.builder.payout = async (i) => { journalledBeforeBuild = (await t.journal()).length; builtWith = i.secret; return build(i); };
     const done = await payPrivatelyFromCompanyVault(b, order());
     expect(journalledBeforeBuild).toBe(1);
+    /* RED WHEN: the payment is built with anything but the vault's secret as the company's filed record holds it. */
+    expect(builtWith).toBe(openNonceSecrets((await b.records('nonce-secret').get(VAULT))!, VAULT, recordsKeypairFrom(me.companyKey)).secrets[0]);
     expect(t.log).toEqual([
       'choose', 'read events of 0e', 'read the block', 'build payout spending 01 with 1 event(s) at B1', 'read events of dd',
     ]);
@@ -1377,8 +1492,8 @@ describe('A PUBLIC PAYMENT OUT', () => {
     return {
       payment,
       order: {
-        asset: 'NIGHT', vault: VAULT, proposal: '0f'.repeat(32), salt: '5a'.repeat(32), root: '9a'.repeat(32),
-        payees: '1', opensAt: '1799999000', closesAt: '1800009000', payments: [payment],
+        asset: TOKEN, form: 'unshielded', symbol: 'NIGHT', vault: VAULT, proposal: '0f'.repeat(32), salt: '5a'.repeat(32),
+        root: '9a'.repeat(32), payees: '1', opensAt: '1799999000', closesAt: '1800009000', payments: [payment],
       } as PrivatePaymentOrderOnTheWire,
     };
   };

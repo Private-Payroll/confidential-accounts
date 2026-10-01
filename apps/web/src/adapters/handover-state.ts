@@ -4,8 +4,7 @@ import { keyringFor } from './keyring-person.js';
 /*
  * WHERE A COMPANY STANDS ON BEING HELD BY ITS COMMITTEE, READ FROM THE
  * SERVICE'S ACCOUNT OF WHAT THE CHAIN SAYS (`GET /api/accounts/:id/authority`
- * and, when a change is owed, `/committee-change`), the same two reads
- * `src/web-legacy/MaintenancePanel.tsx` makes.
+ * and, when a change is owed, `/committee-change`).
  *
  * The service explains itself in sentences, which are never handed on; the
  * state is read from the answer's shape alone, into one of a fixed set a

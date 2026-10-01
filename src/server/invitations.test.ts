@@ -32,6 +32,7 @@ import { canonical } from '../core/crypto.js';
 import { addressOfSlot, signInWithAWallet } from '../testing/wallet-session.js';
 import type { User } from '../core/types.js';
 
+import { TEST_SETTLEMENT_ASSET } from '../core/assets.js';
 const DATA_PATH = join(mkdtempSync(join(tmpdir(), 'mn-invitations-')), 'db.json');
 useOnlyTheseSettings({
   ALLOW_SIMULATED_COMPANY_ADDRESS: '1',
@@ -218,7 +219,7 @@ const invite = async (
     token: c.admin.token,
     body: {
       name: 'Dana Ellis', email, title: 'Engineer',
-      asset: 'TESTUSD', salary: '5500.00', viewingKey: c.viewingKey,
+      asset: TEST_SETTLEMENT_ASSET, salary: '5500.00', viewingKey: c.viewingKey,
     },
   });
   expect(raised.status, JSON.stringify(raised.body)).toBe(200);

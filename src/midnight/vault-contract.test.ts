@@ -53,7 +53,7 @@ import { StateValue, ChargedState } from '@midnight-ntwrk/compact-runtime';
  * circuit, and the witnesses it is handed throw if anything calls one.
  */
 let CANONICAL: unknown[] = [];
-const ALL_SLOTS: readonly number[] = [0, 1, 2, 3, 4];
+const ALL_SLOTS: readonly number[] = Array.from({ length: 14 }, (_, i) => i);
 
 beforeAll(async () => {
   const { Contract } = await import('../../contracts/managed-vault/contract/index.js');
@@ -712,7 +712,7 @@ describe('the vault\'s find', () => {
    * **THE VAULT ON THIS PROJECT'S REGISTRY THAT PASSES EVERY OTHER CHECK.**
    *
    * A vault deployed on 29 Aug carries four ledger fields; the contract this
-   * build compiled declares five. Its circuits are the right seven and its
+   * build compiled declares fourteen. Its circuits are the right seven and its
    * verifier keys compare equal - measured against the live chain - so the two
    * checks above pass it, and a client reading the fifth field off it reads
    * past the end of its ledger. Here it is with the same circuits and the same
@@ -726,7 +726,7 @@ describe('the vault\'s find', () => {
     /* RED WHEN the find resolves a vault this build cannot read, which is the defect this file is about. */
     expect(failure).not.toBeNull();
     expect(failure!.message).toMatch(/holds 4 ledger fields/);
-    expect(failure!.message).toMatch(/compiled has 5/);
+    expect(failure!.message).toMatch(/compiled has 14/);
     /* RED WHEN a refusal on the money path does not say whether money moved. */
     expect(failure!.message).toMatch(/Nothing was proved, submitted or spent\./);
     /* RED WHEN the address is printed. */

@@ -39,7 +39,7 @@
  * **A bar that crawls to ninety and sits there is a lie told to somebody waiting
  * on their own money**, and it is worse than no bar at all.
  */
-import { JobClient, webPort, type Port } from '../../../src/core/jobs-worker.js';
+import { JobClient, type Port } from '../../../src/core/jobs-worker.js';
 import type { Job, JobState } from '../../../src/core/jobs.js';
 import type { FetchProgress } from './key-material.js';
 
@@ -62,7 +62,7 @@ export type ProofStage =
   | { readonly name: 'done' }
   | { readonly name: 'stopped'; readonly reason: string };
 
-export interface ProofStatus {
+interface ProofStatus {
   readonly jobId: string;
   readonly accountId: string;
   readonly stage: ProofStage;
@@ -71,7 +71,7 @@ export interface ProofStatus {
 }
 
 /** Everything the page is currently waiting on, oldest first. */
-export type ProofStatusList = readonly ProofStatus[];
+type ProofStatusList = readonly ProofStatus[];
 
 /**
  * What the worker sends that is not part of the job protocol.
@@ -275,13 +275,13 @@ export class ProvingSession {
 }
 
 /**
- * Starts the proving worker and connects to it.
+ * What the proving worker is started with.
  *
- * **CONFIGURATION TRAVELS IN THE WORKER'S NAME, NOT IN A MESSAGE, AND THAT IS
- * THE POINT OF THIS FUNCTION.** A module worker whose top-level `await` is
- * still pending drops what is posted to it, and this worker's first act is to
- * load a WebAssembly prover - so a configuration message sent at construction
- * would be the message most likely to be lost. `name` is set before the worker
+ * **CONFIGURATION TRAVELS IN THE WORKER'S NAME, NOT IN A MESSAGE.** A module
+ * worker whose top-level `await` is still pending drops what is posted to it,
+ * and this worker's first act is to load a WebAssembly prover - so a
+ * configuration message sent at construction would be the message most likely
+ * to be lost. `name` is set before the worker
  * exists and is readable from inside it with no round trip at all.
  */
 export interface ProvingWorkerConfig {
@@ -290,17 +290,6 @@ export interface ProvingWorkerConfig {
   /** Which IndexedDB database holds the jobs. */
   dbName?: string;
 }
-
-export interface WorkerLike {
-  postMessage(message: unknown): void;
-  addEventListener(type: 'message', listener: (event: { data: unknown }) => void): void;
-  terminate?(): void;
-}
-
-export const connectProvingWorker = (
-  worker: WorkerLike,
-  options: Omit<ProvingSessionOptions, 'port'> = {},
-): ProvingSession => new ProvingSession({ ...options, port: webPort(worker) });
 
 /** The `name` a worker is started under, and the shape it reads back. */
 export const workerNameFor = (config: ProvingWorkerConfig): string =>

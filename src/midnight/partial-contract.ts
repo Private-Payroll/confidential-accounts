@@ -431,6 +431,14 @@ export interface CreationInsertPrimitives {
   };
 }
 
+/** The ledger's operation version for a compiled verifier key file, read from its header, or null for any other file. */
+export function operationVersionOfKeyFile(vk: Uint8Array): 'v3' | 'v4' | null {
+  const header = (tag: string) => new TextDecoder().decode(vk.slice(0, tag.length)) === tag;
+  if (header('midnight:verifier-key[v6]:')) return 'v3';
+  if (header('midnight:verifier-key[v7]:')) return 'v4';
+  return null;
+}
+
 /**
  * BUILDS THE SECOND STEP: ONE MAINTENANCE UPDATE THAT ONLY INSERTS.
  *
@@ -475,17 +483,22 @@ export function buildCreationInsert(
         'should have. It is not an account this product created; nothing was built.',
     );
   }
-  const HEADER = 'midnight:verifier-key[v6]:';
+  /*
+   * Each key is inserted under the version its own file's header names, so the
+   * insert can never wrap a key as another version than the one it was
+   * compiled as: `[v6]` is the ledger's `v3` slot and `[v7]` its `v4` slot. A
+   * file with any other header is refused before anything is built.
+   */
   const updates = wanted.map((name) => {
     const vk = args.keys.get(name)!;
-    const head = new TextDecoder().decode(vk.slice(0, HEADER.length));
-    if (head !== HEADER) {
+    const version = operationVersionOfKeyFile(vk);
+    if (version === null) {
       throw new Error(
-        `the key handed in for ${name} is not a compiled verifier key of the version this product ` +
-          'builds. Rebuild the keys; nothing was built.',
+        `the key handed in for ${name} is not a compiled verifier key of a version the ledger takes. ` +
+          'Rebuild the keys; nothing was built.',
       );
     }
-    return new P.VerifierKeyInsert(name, new P.ContractOperationVersionedVerifierKey('v3', vk));
+    return new P.VerifierKeyInsert(name, new P.ContractOperationVersionedVerifierKey(version, vk));
   });
   return {
     update: new P.MaintenanceUpdate(args.address, updates, args.counter),

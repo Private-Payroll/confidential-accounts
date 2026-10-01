@@ -42,7 +42,7 @@
  *
  *   - every amount is a bigint in the asset's smallest unit, and every figure
  *     printed below says which asset it is in. `250000` is a number; `250000
- *     GBP minor units` is an amount
+ *     tUSD minor units` is an amount
  *   - there is no single `stateCommitment` to watch. M-125 made it one per
  *     asset, keyed by a blinded asset key; `C292` then took the balances
  *     themselves, so there is no commitment left for this script to watch at
@@ -947,12 +947,12 @@ const CALL_TIMEOUT_MS = Number(process.env.MIDNIGHT_CALL_TIMEOUT_MS || 3 * 60_00
    * How every amount in this report is written.
    *
    * MINOR UNITS AND THE ASSET, always, because "250000" is a number and not an
-   * amount: it is £2,500.00, or a quarter of a USDC, or a rounding error in
-   * ether, and a report a person reads to decide whether something worked must
+   * amount: it is a quarter of a tUSD, or a rounding error in NIGHT, and a
+   * report a person reads to decide whether something worked must
    * not leave that open. The human figure comes along for the ride.
    */
   const minor = (v: bigint) =>
-    `${v} ${ASSET.code} minor units (${formatAmount(v, ASSET)} ${ASSET.code})`;
+    `${v} ${ASSET.symbol} minor units (${formatAmount(v, ASSET)} ${ASSET.symbol})`;
 
   /**
    * The key an asset's changes are committed under, on this account.
@@ -971,7 +971,7 @@ const CALL_TIMEOUT_MS = Number(process.env.MIDNIGHT_CALL_TIMEOUT_MS || 3 * 60_00
   const keyFor = (asset: AssetId) =>
     pureCircuits.assetKeyOf(assetIdBytes(asset), accountView.assetBlinding);
 
-  good(`view file read — ${ASSET.code} (${ASSET.name}), and the account's asset blinding`);
+  good(`view file read: ${ASSET.symbol} (${ASSET.name}), and the account's asset blinding`);
   note(`  changes on this asset commit under ${hex(keyFor(ASSET.code)).slice(0, 24)}…`);
 
 
@@ -1837,7 +1837,7 @@ const CALL_TIMEOUT_MS = Number(process.env.MIDNIGHT_CALL_TIMEOUT_MS || 3 * 60_00
 
     await becomeSigner(signerA, 'A');
     await callCircuit('propose (add signer B)',
-      () => found.callTx.propose(addBPayload, ZERO_32, 0n, 0n, 0n, false, pureCircuits.noVault()),
+      () => found.callTx.propose(addBPayload, ZERO_32, 0n, 0n, 0n, 0n, false, pureCircuits.noVault()),
       async () => isOpen(await readState(), addBId));
 
     await becomeSigner(signerA, 'A');
@@ -2033,7 +2033,7 @@ const CALL_TIMEOUT_MS = Number(process.env.MIDNIGHT_CALL_TIMEOUT_MS || 3 * 60_00
     note(`the add-signer proposal is ${hex(addId).slice(0, 24)}…`);
 
     await becomeSigner(signerA, 'A');
-    await callCircuit('propose (add signer C)', () => found.callTx.propose(addPayload, ZERO_32, 0n, 0n, 0n, false, pureCircuits.noVault()),
+    await callCircuit('propose (add signer C)', () => found.callTx.propose(addPayload, ZERO_32, 0n, 0n, 0n, 0n, false, pureCircuits.noVault()),
       async () => isOpen(await readState(), addId));
 
     await becomeSigner(signerA, 'A');
@@ -2140,7 +2140,7 @@ const CALL_TIMEOUT_MS = Number(process.env.MIDNIGHT_CALL_TIMEOUT_MS || 3 * 60_00
   note(`proposing to pay ${minor(PAYING)} — proposal ${hex(proposalId).slice(0, 24)}…`);
 
   await becomeSigner(signerA, 'A');
-  await callCircuit('propose', () => found.callTx.propose(payloadHash, ZERO_32, 0n, 0n, 0n, false, pureCircuits.noVault()),
+  await callCircuit('propose', () => found.callTx.propose(payloadHash, ZERO_32, 0n, 0n, 0n, 0n, false, pureCircuits.noVault()),
     async () => isOpen(await readState(), proposalId));
 
   await becomeSigner(signerA, 'A');
@@ -2431,7 +2431,7 @@ const CALL_TIMEOUT_MS = Number(process.env.MIDNIGHT_CALL_TIMEOUT_MS || 3 * 60_00
   // the payment round that has just settled.
   pendingChange = { asset: ASSET.code, amount: 0n, batch: seededBytes(902), salt: jobSalt };
   await becomeSigner(signerA, 'A');
-  await callCircuit('propose (for the job run)', () => found.callTx.propose(jobPayload, ZERO_32, 0n, 0n, 0n, false, pureCircuits.noVault()),
+  await callCircuit('propose (for the job run)', () => found.callTx.propose(jobPayload, ZERO_32, 0n, 0n, 0n, 0n, false, pureCircuits.noVault()),
     async () => isOpen(await readState(), jobProposalId));
 
   const approvalsBefore = approvalsFor(await readState(), jobProposalId);

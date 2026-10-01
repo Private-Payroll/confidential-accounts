@@ -582,6 +582,18 @@ export const balanceOf = (state: VaultNotes, token: Hex): bigint =>
  * with a sentence rather than proceeding on a fabricated one. Nothing here can
  * lose money; everything here refuses to guess.
  */
+/**
+ * The vault's second witness, for the calls that need the vault's nonce secret
+ * (a split, and nothing else this client builds yet). A call built without the
+ * secret opened refuses here rather than answering with a value the contract
+ * would refuse anyway.
+ */
+export const noSecretHere = () => (): never => {
+  throw new Error(
+    'this vault call needs the vault\'s nonce secret, and this call was built without it. Nothing '
+    + 'was proved or sent. A split, or a change to the secret, is built where the secret is opened.');
+};
+
 export const witnessesWithoutAPool = () => ({
   noteToSpend: (_ctx: unknown, _token: Uint8Array, amount: bigint): never => {
     throw new Error(
@@ -591,6 +603,7 @@ export const witnessesWithoutAPool = () => ({
       + 'substituted: a note handed over here would be one this path never established the '
       + 'vault holds.');
   },
+  nonceSecret: noSecretHere(),
 });
 
 export const witnessesOver = (get: () => VaultNotes, pending: { spending?: Hex }) => ({
@@ -638,4 +651,5 @@ export const witnessesOver = (get: () => VaultNotes, pending: { spending?: Hex }
    * blinding is not, because a value the device chooses is a value the device
    * can choose wrongly, and a wrongly blinded note cannot be spent again.
    */
+  nonceSecret: noSecretHere(),
 });

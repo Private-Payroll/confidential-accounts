@@ -17,7 +17,7 @@ import {
   OPENS_BEFORE_NOW, STAYS_OPEN_FOR, drive, refusalBeforePayment, payoutRecordFromText, assertNotAlreadyPaid,
   finishedRecordFile, finishedRecordPrefix, type ChainFacts, type DoorActions, type PaymentAsk, type PayoutRecord,
 } from './pay-from-vault-rules.js';
-import { assets, ledgerTokenOf } from '../src/core/assets.js';
+import { assets, ledgerTokenOf, NIGHT as NIGHT_ASSET, TEST_SETTLEMENT_ASSET } from '../src/core/assets.js';
 import { transferOf, transferFacts, privacyOf } from '../src/core/movement.js';
 import { refuseWhatTheVaultCannotPay, VaultCannotPayThisProposal } from '../src/core/vault-holdings.js';
 import { chainVaultHoldings } from '../src/midnight/vault-holdings.js';
@@ -30,7 +30,9 @@ import type { VaultEntry } from '../src/midnight/vault-record.js';
 
 const VAULT: Hex = 'c4'.repeat(32);
 const ACCOUNT: Hex = 'a1'.repeat(32);
-const NIGHT = ledgerTokenOf('NIGHT', 'unshielded') as Hex;
+const NIGHT = ledgerTokenOf(NIGHT_ASSET, 'unshielded') as Hex;
+/** The test dollar, named by its token as every asset is. */
+const TUSD = TEST_SETTLEMENT_ASSET as Hex;
 const NOW = 1_789_150_000n;
 const PAYEE = unshieldedPayeeFor('5e'.repeat(32), 'stagenet');
 const VAULT_ARTEFACTS = new URL('../contracts/managed-vault', import.meta.url).pathname;
@@ -51,7 +53,7 @@ const record = (over: Partial<PaymentAsk> = {}): PayoutRecord =>
   newPayoutRecord(ask(over), fresh, NOW, '2026-09-11T12:00:00.000Z');
 
 const factsFor = (amount: bigint) => transferFacts(transferOf({
-  accountId: 'vault:payroll-test-3', payee: PAYEE, asset: 'NIGHT', amount,
+  accountId: 'vault:payroll-test-3', payee: PAYEE, asset: NIGHT, amount,
   privacy: privacyOf(PAYEE), reference: 'first payout', createdBy: 'a test', employees: [],
 }));
 
@@ -163,7 +165,7 @@ describe('§4 the record written before the first fee', () => {
 describe('§5 the run and the payment built from the record', () => {
   it('builds the same root, leaf and secrets every time the same record is read', async () => {
     const details = await vaultDetailsOf();
-    const r = record({ asset: 'NIGHT', token: NIGHT });
+    const r = record({ asset: NIGHT, token: NIGHT });
     const a = runOf(r, factsFor(10n), details, 'default');
     const b = runOf(JSON.parse(JSON.stringify(r)), factsFor(10n), details, 'default');
     expect(a.run.tree.root).toBe(b.run.tree.root);
@@ -176,7 +178,7 @@ describe('§5 the run and the payment built from the record', () => {
   });
 
   it('commits the leaf to the PUBLIC payment: the recipient, NIGHT, the amount, under the vault\'s unshielded details', async () => {
-    const built = runOf(record({ asset: 'NIGHT', token: NIGHT }), factsFor(10n), await vaultDetailsOf(), 'default');
+    const built = runOf(record({ asset: NIGHT, token: NIGHT }), factsFor(10n), await vaultDetailsOf(), 'default');
     const expected = toHex(vaultCircuits.unshieldedPayoutDetails(
       fromHex(PAYEE.userAddress), fromHex(NIGHT), 10n, fromHex(built.args.blinding)));
     expect(built.args.details).toBe(expected);
@@ -186,18 +188,26 @@ describe('§5 the run and the payment built from the record', () => {
 
   it('REFUSES to build a run from a record that names no asset, because the root commits to one', async () => {
     /* RED WHEN the run is built without the asset its root commits to. */
-    expect(() => runOf(record(), factsFor(10n), {} as never, 'default')).toThrow(/written before records kept their currency/);
+    expect(() => runOf(record(), factsFor(10n), {} as never, 'default')).toThrow(/written before records kept their asset/);
+    /* RED WHEN a record naming its asset by a word rather than its token is built as a run under the token: another root, another payment. */
+    expect(() => runOf(record({ asset: 'NIGHT', token: NIGHT }), factsFor(10n), {} as never, 'default'))
+      .toThrow(/names its asset as "NIGHT", which is not a ledger token/);
   });
 
   it('REFUSES to build a run whose payment disagrees with the record\'s amount', async () => {
-    expect(() => runOf(record({ asset: 'NIGHT', token: NIGHT }), factsFor(11n), {} as never, 'default')).toThrow(/pays 11 and the record says 10/);
+    expect(() => runOf(record({ asset: NIGHT, token: NIGHT }), factsFor(11n), {} as never, 'default')).toThrow(/pays 11 and the record says 10/);
   });
 
   it('hands the vault every argument from the run and the record, and none from anywhere else', async () => {
-    const r = record({ asset: 'NIGHT', token: NIGHT });
+    const r = record({ asset: NIGHT, token: NIGHT });
     const built = runOf(r, factsFor(10n), await vaultDetailsOf(), 'default');
-    const p = vaultPaymentOf(r, built, 'd7'.repeat(32) as Hex);
+    const p = vaultPaymentOf(r, built, 'd7'.repeat(32) as Hex, VAULT);
     expect(p.proposal).toBe('d7'.repeat(32));
+    /* RED WHEN the vault is handed a run other than the one proposed: another vault, another approval count, or another asset than the root's. */
+    expect(p.runVault).toBe(VAULT);
+    expect(p.required).toBe(0n);
+    expect(p.asset).toBe(built.run.tree.asset);
+    expect(p.asset).toBe(NIGHT);
     expect(p.root).toBe(built.run.tree.root);
     expect(p.payees).toBe(1n);
     expect(p.opensAt).toBe(NOW - 600n);
@@ -224,20 +234,20 @@ describe('§6 the vault is asked whether it holds the money, before any fee, thr
     {}, refusingPool, VAULT_ARTEFACTS);
 
   it('asks for one payment of the payment\'s own token and amount, as the account service asks', () => {
-    const asks = asksOf(VAULT, assets.require('NIGHT'), factsFor(10n));
+    const asks = asksOf(VAULT, assets.require(NIGHT), factsFor(10n));
     expect(asks).toEqual({
-      vault: VAULT, asset: assets.require('NIGHT'), total: 10n, payees: 1n,
+      vault: VAULT, asset: assets.require(NIGHT), total: 10n, payees: 1n,
       payments: [{ payee: { kind: 'unshielded' }, token: NIGHT, amount: 10n }],
     });
   });
 
   it('PASSES when the chain says the vault holds the amount, reading the public balance and never the pool', async () => {
-    const asks = asksOf(VAULT, assets.require('NIGHT'), factsFor(10n));
+    const asks = asksOf(VAULT, assets.require(NIGHT), factsFor(10n));
     await expect(refuseWhatTheVaultCannotPay(chainVaultHoldings(vaultHolding([[NIGHT, 10n]])), asks)).resolves.toBeUndefined();
   });
 
   it('REFUSES before any fee when the chain says the vault holds less', async () => {
-    const asks = asksOf(VAULT, assets.require('NIGHT'), factsFor(10n));
+    const asks = asksOf(VAULT, assets.require(NIGHT), factsFor(10n));
     await expect(refuseWhatTheVaultCannotPay(chainVaultHoldings(vaultHolding([[NIGHT, 9n]])), asks))
       .rejects.toThrow(VaultCannotPayThisProposal);
     await expect(refuseWhatTheVaultCannotPay(chainVaultHoldings(vaultHolding([])), asks))
@@ -464,11 +474,10 @@ describe('§11 a record cut short, and a payment already made', () => {
    * that was wrong.
    */
   it('A DIFFERENT ASSET IS A DIFFERENT PAYMENT, not a repeat of the last one', () => {
-    const TESTUSD_TOKEN = 'ab'.repeat(32);
-    const done = record({ asset: 'TESTUSD', token: TESTUSD_TOKEN });
+    const done = record({ asset: TUSD, token: TUSD });
     /* RED WHEN the asset is not compared: the same address, amount and
      * reference in a DIFFERENT asset is refused as already paid. */
-    expect(() => assertNotAlreadyPaid([done], ask({ asset: 'NIGHT', token: 'cd'.repeat(32) }), NOW))
+    expect(() => assertNotAlreadyPaid([done], ask({ asset: NIGHT, token: NIGHT }), NOW))
       .not.toThrow();
     /*
      * **AND THE LEDGER TOKEN IS DELIBERATELY NOT COMPARED HERE.**
@@ -481,13 +490,21 @@ describe('§11 a record cut short, and a payment already made', () => {
      * what decides whether a record may be RESUMED, which is
      * `assertRecordIsThisPayment`'s question and not this one.
      */
-    expect(() => assertNotAlreadyPaid([done], ask({ asset: 'TESTUSD', token: 'cd'.repeat(32) }), NOW))
+    expect(() => assertNotAlreadyPaid([done], ask({ asset: TUSD, token: 'cd'.repeat(32) }), NOW))
       .toThrow(/already paid/);
+    /*
+     * RED WHEN a re-mint lets the same payment through. An asset is its token,
+     * so a fresh mint is a new asset; a record naming the token the mint
+     * replaced names one the registry no longer knows, and is not compared.
+     */
+    const beforeTheMint = record({ asset: 'ab'.repeat(32), token: 'ab'.repeat(32) });
+    expect(() => assertNotAlreadyPaid([beforeTheMint], ask({ asset: TUSD, token: TUSD }), NOW))
+      .toThrow(/a token a fresh mint has since replaced/);
     /* RED WHEN the same asset stops being caught, which is what this refusal is
      * for: the second copy of a door that stopped after the first had paid. */
-    expect(() => assertNotAlreadyPaid([done], ask({ asset: 'TESTUSD', token: TESTUSD_TOKEN }), NOW))
+    expect(() => assertNotAlreadyPaid([done], ask({ asset: TUSD, token: TUSD }), NOW))
       .toThrow(/already paid/);
-    expect(() => assertNotAlreadyPaid([done], ask({ asset: 'TESTUSD', token: TESTUSD_TOKEN }), NOW))
+    expect(() => assertNotAlreadyPaid([done], ask({ asset: TUSD, token: TUSD }), NOW))
       .toThrow(/the same address, amount, asset and reference/);
   });
 
@@ -500,13 +517,13 @@ describe('§11 a record cut short, and a payment already made', () => {
      * refusing too rarely is somebody paid twice.
      */
     const old = record();
-    expect(() => assertNotAlreadyPaid([old], ask({ asset: 'TESTUSD', token: 'ab'.repeat(32) }), NOW))
+    expect(() => assertNotAlreadyPaid([old], ask({ asset: TUSD, token: TUSD }), NOW))
       .toThrow(/already paid/);
-    const now = record({ asset: 'TESTUSD', token: 'ab'.repeat(32) });
+    const now = record({ asset: TUSD, token: TUSD });
     expect(() => assertNotAlreadyPaid([now], ask(), NOW)).toThrow(/already paid/);
     /* RED WHEN a record naming one asset matches an ask naming another, which
      * is the defect this widening was for. */
-    expect(() => assertNotAlreadyPaid([now], ask({ asset: 'NIGHT' }), NOW)).not.toThrow();
+    expect(() => assertNotAlreadyPaid([now], ask({ asset: NIGHT }), NOW)).not.toThrow();
   });
 
   it('AND THE REFUSAL NAMES ONLY THE FIELDS IT ACTUALLY COMPARED', () => {
@@ -519,7 +536,7 @@ describe('§11 a record cut short, and a payment already made', () => {
      */
     const legacy = record();
     let said = '';
-    try { assertNotAlreadyPaid([legacy], ask({ asset: 'TESTUSD' }), NOW); } catch (e) { said = String((e as Error).message); }
+    try { assertNotAlreadyPaid([legacy], ask({ asset: TUSD }), NOW); } catch (e) { said = String((e as Error).message); }
     /* RED WHEN it claims the asset matched a record that names none. */
     expect(said).not.toContain('amount, asset and reference');
     expect(said).toContain('amount and reference');
@@ -528,8 +545,8 @@ describe('§11 a record cut short, and a payment already made', () => {
     expect(said).toMatch(/written before the asset was kept with it/);
 
     let both = '';
-    const known = record({ asset: 'TESTUSD', token: 'ab'.repeat(32) });
-    try { assertNotAlreadyPaid([known], ask({ asset: 'TESTUSD' }), NOW); } catch (e) { both = String((e as Error).message); }
+    const known = record({ asset: TUSD, token: TUSD });
+    try { assertNotAlreadyPaid([known], ask({ asset: TUSD }), NOW); } catch (e) { both = String((e as Error).message); }
     /* RED WHEN a comparison that DID happen is not named, which is the other
      * half: the sentence has to track what was done. */
     expect(both).toContain('amount, asset and reference');
@@ -560,10 +577,9 @@ describe('§12 where a finished record goes, and that the check against paying i
 
 describe('a record is finished in the money it was approved for, or not at all', () => {
   const NIGHT = '00'.repeat(32);
-  const OTHER = 'ab'.repeat(32);
   const askFor = (over: Record<string, unknown> = {}) => ({
     network: 'stagenet', vault: 'payroll-test', payTo: 'mn_shield-addr_stagenet1qq', amount: 5n,
-    reference: 'september', asset: 'TESTUSD', token: OTHER, ...over,
+    reference: 'september', asset: TUSD as string, token: TUSD as string, ...over,
   });
   const recordFor = (ask: ReturnType<typeof askFor>) =>
     newPayoutRecord(ask, (() => { let n = 0; return () => (n++ === 0 ? '11' : '22').repeat(32) as Hex; })(),
@@ -572,8 +588,8 @@ describe('a record is finished in the money it was approved for, or not at all',
   it('WRITES the asset and the token into the record', () => {
     const r = recordFor(askFor());
     /* RED WHEN the record stops naming what it was approved for, which is what the comparison reads. */
-    expect(r.asset).toBe('TESTUSD');
-    expect(r.token).toBe(OTHER);
+    expect(r.asset).toBe(TUSD);
+    expect(r.token).toBe(TUSD);
   });
 
   it('writes NEITHER when the ask names neither, so a caller that has none is unchanged', () => {
@@ -594,8 +610,9 @@ describe('a record is finished in the money it was approved for, or not at all',
      */
     expect(() => assertRecordIsThisPayment(record, askFor({ token: NIGHT })))
       .toThrow('the ledger token this settles in');
-    expect(() => assertRecordIsThisPayment(record, askFor({ asset: 'NIGHT', token: NIGHT })))
-      .toThrow('asset (recorded TESTUSD, asked NIGHT)');
+    /* RED WHEN the refusal names a token rather than its symbol. */
+    expect(() => assertRecordIsThisPayment(record, askFor({ asset: NIGHT, token: NIGHT })))
+      .toThrow('asset (recorded tUSD, asked NIGHT)');
   });
 
   it('REFUSES a record that names NEITHER on a door whose asset can change between runs', () => {

@@ -13,10 +13,10 @@
  * real and both named classes existed, and the line count was not close:
  *
  *   - `src/server/index.ts` constructed the ledger and the proof system;
- *   - `src/standalone/main.tsx` constructed the same two again, its own copy;
+ *   - a browser-only build constructed the same two again, its own copy;
  *   - `src/core/account.ts` took the commitment scheme from a DEFAULT parameter,
  *     which the server accepted by passing only two arguments;
- *   - `src/web-legacy/App.tsx` imported a commitment scheme at module scope and
+ *   - the earlier application imported a commitment scheme at module scope and
  *     computed an invited signer's leaf from it, with no argument to change.
  *
  * Four files, and the fourth was not a wiring decision at all. Changing the

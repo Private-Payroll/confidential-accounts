@@ -9,8 +9,9 @@ import type { Ledger } from './ledger.js';
 import { AccountService, openAccount, approvalMessage } from './account.js';
 import { sign } from './crypto.js';
 import type { Hex } from './crypto.js';
-import { registryWithTestPrivateForms, aVaultHolding, testPrivateToken } from '../testing/assets.js';
+import { registryWithTestPrivateForms, aVaultHolding } from '../testing/assets.js';
 
+import { TEST_TOKEN } from '../testing/assets.js';
 /** The `i`th of `xs`, refusing an index the list does not have. */
 const at = <T>(xs: readonly T[], i: number): T => {
   const x = xs[i];
@@ -85,7 +86,7 @@ function harness() {
 
 const entry = (amount: bigint) => ({
   entries: [{
-    id: 'e1', kind: 'transfer', asset: 'GBP', amount,
+    id: 'e1', kind: 'transfer', asset: TEST_TOKEN, amount,
     counterparty: 'a supplier', memo: '', at: '',
   }],
 });
@@ -114,7 +115,7 @@ let runNonce = 0;
 
 /** The one payment such a run makes, in the token the test registry gives GBP paid privately. */
 const onePayment = (amount: bigint) =>
-  [{ payee: { kind: 'shielded' as const }, token: testPrivateToken('GBP'), amount }];
+  [{ payee: { kind: 'shielded' as const }, token: TEST_TOKEN, amount }];
 
 const aRunAt = (vault: Hex) => ({
   root: ((runNonce = (runNonce % 254) + 1)).toString(16).padStart(2, '0').repeat(32),
@@ -473,7 +474,7 @@ describe('a governance round is judged by the ACCOUNT\'s threshold, never a vaul
     const opened = openAccount(h.accounts.require(account.id), viewingKey);
     const refs = opened.signers.map(s => ({ signerId: s.id, leaf: s.leafCommitment! }));
     const change = {
-      asset: 'GBP', amount: 0n, batchDigest: 'cd'.repeat(32), salt: 'ef'.repeat(32),
+      asset: TEST_TOKEN, amount: 0n, batchDigest: 'cd'.repeat(32), salt: 'ef'.repeat(32),
     };
     const raised = await h.ledger.proposeRun(account.id, aRunAt(vault), change, at(refs, 0));
     return { id: raised.proposalId, refs };
@@ -489,7 +490,7 @@ describe('a governance round is judged by the ACCOUNT\'s threshold, never a vaul
     const opened = openAccount(h.accounts.require(account.id), viewingKey);
     const refs = opened.signers.map(s => ({ signerId: s.id, leaf: s.leafCommitment! }));
     const change = {
-      asset: 'GBP', amount: 0n, batchDigest: 'cd'.repeat(32), salt: 'ef'.repeat(32),
+      asset: TEST_TOKEN, amount: 0n, batchDigest: 'cd'.repeat(32), salt: 'ef'.repeat(32),
     };
     const noVault = SimulatedCommitments.noVault();
     await h.ledger.propose(account.id, payloadHash, change, at(refs, 0), noVault);
@@ -700,7 +701,7 @@ describe('a governance round is judged by the ACCOUNT\'s threshold, never a vaul
     await expect(h.ledger.propose(
       account.id,
       SimulatedCommitments.signerThresholdPayload(2),
-      { asset: 'GBP', amount: 0n, batchDigest: 'cd'.repeat(32), salt: 'ef'.repeat(32) },
+      { asset: TEST_TOKEN, amount: 0n, batchDigest: 'cd'.repeat(32), salt: 'ef'.repeat(32) },
       at(refs, 0),
       FAST,
     )).rejects.toThrow(/governance round cannot name a vault/);

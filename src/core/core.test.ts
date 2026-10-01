@@ -34,6 +34,8 @@ import type { Hex } from './crypto.js';
 import type { PayeeAddress } from '../midnight/payee-address.js';
 import { newSeatInvitation, proveSeatKeys } from './seat-invite-proof.js';
 
+import { TEST_TOKEN, OTHER_TEST_TOKEN, testToken } from '../testing/assets.js';
+import { TEST_SETTLEMENT_ASSET } from './assets.js';
 /** The value, or a failure that says one was missing: an index that finds nothing is a broken test, not a value to carry on with. */
 function present<T>(value: T | undefined): T {
   if (value === undefined) throw new Error('expected a value here, and there was none');
@@ -100,7 +102,7 @@ function harness() {
    */
   const invites = new RecordingInviteDelivery();
   const payroll = new PayrollService(store, accounts, proofs, registry, 'undeployed', invites);
-  const plugins = new PluginService(store, accounts);
+  const plugins = new PluginService(store, accounts, registry);
   // In-memory sessions: the same class the standalone build uses, so these
   // tests exercise a real implementation rather than a stub. The Postgres one
   // is held to the identical contract in sessions.test.ts.
@@ -240,7 +242,7 @@ describe('account layer', () => {
     const { account, viewingKey, secrets } = await h.accounts.create('Acme', THREE_SIGNERS, 2, undefined, drawCompanyLabel());
     const p = await h.accounts.propose({
       accountId: account.id, viewingKey, kind: 'transfer', summary: 'x',
-      payload: { entries: [{ id: 'e1', kind: 'transfer', asset: 'GBP', amount: 10_00n, counterparty: 'y', memo: '', at: '' }] },
+      payload: { entries: [{ id: 'e1', kind: 'transfer', asset: TEST_TOKEN, amount: 10_00n, counterparty: 'y', memo: '', at: '' }] },
       proposedBy: present(secrets[0]).signerId,
     });
     // Blake's id, Cleo's key.
@@ -261,19 +263,20 @@ describe('account layer', () => {
      */
     editAccount(h, account.id, viewingKey, a => {
       a.policy.limitsByRole = {
-        approver: { GBP: { perTransaction: 1_000_00n, perPeriod: null, periodDays: 30 } },
+        approver: { [TEST_TOKEN]: { perTransaction: 1_000_00n, perPeriod: null, periodDays: 30 } },
       };
     });
 
     const p = await h.accounts.propose({
       accountId: account.id, viewingKey, kind: 'transfer', summary: 'over limit',
-      payload: { entries: [{ id: 'e1', kind: 'transfer', asset: 'GBP', amount: 5_000_00n, counterparty: 'y', memo: '', at: '' }] },
+      payload: { entries: [{ id: 'e1', kind: 'transfer', asset: TEST_TOKEN, amount: 5_000_00n, counterparty: 'y', memo: '', at: '' }] },
       proposedBy: present(secrets[1]).signerId, // Blake, an approver
     });
     expect(p.status).toBe('blocked');
     // The refusal names the asset, because a ceiling that does not is a number
     // about a different question.
-    expect(p.blockedReason).toMatch(/per-transaction GBP limit/);
+    /* RED WHEN the refusal names the token by its hex rather than the symbol a person reads. */
+    expect(p.blockedReason).toMatch(/per-transaction tPAY limit/);
   });
 });
 
@@ -286,9 +289,9 @@ describe('payroll and disclosure', () => {
     // Every figure is an integer in the asset's smallest unit, so £6,200.00 is
     // `6_200_00n`. There is no float anywhere in this system.
     const { run, secrets: emp } = await h.payroll.createRun(created.account.id, '2026-07', [
-      { name: 'Dana', asset: 'GBP', amount: 6_200_00n },
-      { name: 'Eli', asset: 'GBP', amount: 4_800_00n },
-      { name: 'Fern', asset: 'GBP', amount: 9_000_00n },
+      { name: 'Dana', asset: TEST_TOKEN, amount: 6_200_00n },
+      { name: 'Eli', asset: TEST_TOKEN, amount: 4_800_00n },
+      { name: 'Fern', asset: TEST_TOKEN, amount: 9_000_00n },
     ], created.viewingKey);
     return { ...created, run, emp };
   }
@@ -297,7 +300,7 @@ describe('payroll and disclosure', () => {
     const s = await setup();
     const dana = h.payroll.employeeView(s.run.id, present(s.emp[0]).employeeId, present(s.emp[0]).wrappingSecret);
     expect((dana.payslip as any).amount).toBe(6_200_00n);
-    expect((dana.payslip as any).asset).toBe('GBP');
+    expect((dana.payslip as any).asset).toBe(TEST_TOKEN);
     expect((dana.payslip as any).name).toBe('Dana');
 
     // Eli's key against Dana's payslip.
@@ -335,8 +338,8 @@ describe('payroll and disclosure', () => {
      * Exchange rates were ruled out of the product, and two fields required to
      * be equal is one field and a bug waiting to be written.
      */
-    h.payroll.hireDirect(account.id, { name: 'Dana Whitfield', email: 'dana@acme.co', title: 'Engineer', asset: 'GBP', baseAmount: 6_200_00n }, viewingKey);
-    h.payroll.hireDirect(account.id, { name: 'Sam Ortega', email: 'sam@acme.co', title: 'Designer', asset: 'GBP', baseAmount: 4_800_00n }, viewingKey);
+    h.payroll.hireDirect(account.id, { name: 'Dana Whitfield', email: 'dana@acme.co', title: 'Engineer', asset: TEST_TOKEN, baseAmount: 6_200_00n }, viewingKey);
+    h.payroll.hireDirect(account.id, { name: 'Sam Ortega', email: 'sam@acme.co', title: 'Designer', asset: TEST_TOKEN, baseAmount: 4_800_00n }, viewingKey);
 
     const whatWeHold = readableStore((h.store as any).data.employees);
 
@@ -348,13 +351,13 @@ describe('payroll and disclosure', () => {
     /*
      * Nor WHICH CURRENCY anybody is paid in. Asserted as a shape rather than a
      * substring: an asset code is three characters and a nanoid is drawn from a
-     * 64-character alphabet, so `not.toContain('GBP')` would fire at random on
+     * 64-character alphabet, so `not.toContain(TEST_TOKEN)` would fire at random on
      * correct code. There is no field on the stored record through which an
      * asset could be written in the clear, which is the property, and `asset`
      * is not among them.
      */
     const sealedPerson = present(h.store.listEmployees(account.id)[0]);
-    expect(Object.values(sealedPerson).some(v => v === 'GBP')).toBe(false);
+    expect(Object.values(sealedPerson).some(v => v === TEST_TOKEN)).toBe(false);
 
     // And the same for invites, which used to carry a duplicate copy.
     expect(readableStore((h.store as any).data.invites)).not.toContain('620000');
@@ -363,7 +366,7 @@ describe('payroll and disclosure', () => {
     // The roster still reads correctly for someone who holds the key.
     const roster = h.payroll.listPeople(account.id, viewingKey); // sorted by name
     expect(roster.map(e => e.baseAmount)).toEqual([6_200_00n, 4_800_00n]);
-    expect(roster.map(e => e.asset)).toEqual(['GBP', 'GBP']);
+    expect(roster.map(e => e.asset)).toEqual([TEST_TOKEN, TEST_TOKEN]);
   });
 
   /*
@@ -382,7 +385,7 @@ describe('payroll and disclosure', () => {
   it('refuses to attest solvency at all, because there is no balance to attest to', async () => {
     const s = await setup();
     await expect(
-      h.payroll.attestSolvency(s.account.id, s.viewingKey, 'GBP', 50_000_00n),
+      h.payroll.attestSolvency(s.account.id, s.viewingKey, TEST_TOKEN, 50_000_00n),
     ).rejects.toThrow(/holds no balance/);
   });
 
@@ -404,7 +407,7 @@ describe('payroll and disclosure', () => {
    */
   it('will not attest a run that has not settled, because nothing can settle one', async () => {
     const s = await setup();
-    await expect(h.payroll.attestPayrollTotal(s.run.id, s.viewingKey, 'GBP'))
+    await expect(h.payroll.attestPayrollTotal(s.run.id, s.viewingKey, TEST_TOKEN))
       .rejects.toThrow(/no run in this product can be anything else/);
 
     const src = readFileSync(new URL('./payroll.ts', import.meta.url), 'utf8');
@@ -422,7 +425,7 @@ describe('roster', () => {
   it('keeps an employee key stable across runs so old payslips stay readable', async () => {
     const { account, viewingKey } = await h.accounts.create('Acme', THREE_SIGNERS, 2, undefined, drawCompanyLabel());
     const { secret } = h.payroll.hireDirect(account.id, {
-      name: 'Dana', email: 'dana@acme.co', title: 'Engineer', asset: 'GBP', baseAmount: 6_200_00n,
+      name: 'Dana', email: 'dana@acme.co', title: 'Engineer', asset: TEST_TOKEN, baseAmount: 6_200_00n,
     }, viewingKey);
 
     const june = await h.payroll.createRunFromRoster(account.id, '2026-06', viewingKey);
@@ -437,8 +440,8 @@ describe('roster', () => {
 
   it('excludes leavers from a run', async () => {
     const { account, viewingKey } = await h.accounts.create('Acme', THREE_SIGNERS, 2, undefined, drawCompanyLabel());
-    h.payroll.hireDirect(account.id, { name: 'Stay', email: 's@a.co', title: 'Eng', asset: 'GBP', baseAmount: 100_00n }, viewingKey);
-    const { employee } = h.payroll.hireDirect(account.id, { name: 'Go', email: 'g@a.co', title: 'Eng', asset: 'GBP', baseAmount: 200_00n }, viewingKey);
+    h.payroll.hireDirect(account.id, { name: 'Stay', email: 's@a.co', title: 'Eng', asset: TEST_TOKEN, baseAmount: 100_00n }, viewingKey);
+    const { employee } = h.payroll.hireDirect(account.id, { name: 'Go', email: 'g@a.co', title: 'Eng', asset: TEST_TOKEN, baseAmount: 200_00n }, viewingKey);
     h.payroll.setStatus(employee.id, 'leaver', viewingKey);
     const { run } = await h.payroll.createRunFromRoster(account.id, '2026-07', viewingKey);
     expect(run.employees.map(e => e.name)).toEqual(['Stay']);
@@ -450,12 +453,12 @@ describe('roster', () => {
      * the whole map is what makes the leaver's absence a fact about every asset
      * rather than about one of them.
      */
-    expect(run.totals).toEqual({ GBP: 100_00n });
+    expect(run.totals).toEqual({ [TEST_TOKEN]: 100_00n });
   });
 
   it('refuses a duplicate period', async () => {
     const { account, viewingKey } = await h.accounts.create('Acme', THREE_SIGNERS, 2, undefined, drawCompanyLabel());
-    h.payroll.hireDirect(account.id, { name: 'Dana', email: 'd@a.co', title: 'Eng', asset: 'GBP', baseAmount: 100_00n }, viewingKey);
+    h.payroll.hireDirect(account.id, { name: 'Dana', email: 'd@a.co', title: 'Eng', asset: TEST_TOKEN, baseAmount: 100_00n }, viewingKey);
     const first = await h.payroll.createRunFromRoster(account.id, '2026-07', viewingKey);
     h.store.putRun({ ...h.store.getRun(first.run.id)!, status: 'proposed' });
     await expect(h.payroll.createRunFromRoster(account.id, '2026-07', viewingKey)).rejects.toThrow(/already exists/);
@@ -501,7 +504,7 @@ describe('onboarding', () => {
 
     const p = await h.accounts.propose({
       accountId: account.id, viewingKey, kind: 'transfer', summary: 'x',
-      payload: { entries: [{ id: 'e1', kind: 'transfer', asset: 'GBP', amount: 10_00n, counterparty: 'y', memo: '', at: '' }] },
+      payload: { entries: [{ id: 'e1', kind: 'transfer', asset: TEST_TOKEN, amount: 10_00n, counterparty: 'y', memo: '', at: '' }] },
       proposedBy: present(secrets[0]).signerId,
     });
     /*
@@ -529,7 +532,7 @@ describe('onboarding', () => {
   it('an invited employee holds no key until their own device sends one', async () => {
     const { account, viewingKey } = await h.accounts.create('Acme', THREE_SIGNERS, 2, undefined, drawCompanyLabel());
     const { employee, sentTo } = h.payroll.invite(account.id, {
-      name: 'Dana', email: 'd@acme.co', title: 'Engineer', asset: 'GBP', baseAmount: 6_200_00n,
+      name: 'Dana', email: 'd@acme.co', title: 'Engineer', asset: TEST_TOKEN, baseAmount: 6_200_00n,
     }, viewingKey, 'usr_operator');
     expect(employee.status).toBe('pending');
     expect(employee.wrappingPublicKey).toBeNull();
@@ -587,7 +590,7 @@ describe('onboarding', () => {
      */
     const { account, viewingKey } = await h.accounts.create('Acme', THREE_SIGNERS, 2, undefined, drawCompanyLabel());
     const { employee, sentTo } = h.payroll.invite(account.id, {
-      name: 'Dana', email: 'd@a.co', title: 'Eng', asset: 'GBP', baseAmount: 100_00n,
+      name: 'Dana', email: 'd@a.co', title: 'Eng', asset: TEST_TOKEN, baseAmount: 100_00n,
     }, viewingKey, 'usr_operator');
 
     const real = payeeAddressFromKeys(
@@ -650,7 +653,7 @@ describe('onboarding', () => {
 
     /* The founder invites themselves, through the ordinary employee flow. */
     const { employee, sentTo } = h.payroll.invite(account.id, {
-      name: 'Founder', email: 'founder@acme.co', title: 'CEO', asset: 'GBP', baseAmount: 500_00n,
+      name: 'Founder', email: 'founder@acme.co', title: 'CEO', asset: TEST_TOKEN, baseAmount: 500_00n,
     }, viewingKey, founder);
     h.payroll.acceptInvite(h.invites.tokenFor(sentTo), handedOver(h, h.invites.tokenFor(sentTo), {
       wrappingPublicKey: newWrappingKeypair().publicKey,
@@ -665,7 +668,7 @@ describe('onboarding', () => {
 
     /* And an ordinary hire is not marked as one. */
     const other = h.payroll.invite(account.id, {
-      name: 'Dana', email: 'dana@acme.co', title: 'Eng', asset: 'GBP', baseAmount: 100_00n,
+      name: 'Dana', email: 'dana@acme.co', title: 'Eng', asset: TEST_TOKEN, baseAmount: 100_00n,
     }, viewingKey, founder);
     h.payroll.acceptInvite(h.invites.tokenFor(other.sentTo), handedOver(h, h.invites.tokenFor(other.sentTo), {
       wrappingPublicKey: newWrappingKeypair().publicKey,
@@ -695,16 +698,16 @@ describe('onboarding', () => {
     const b = await h.accounts.create('Other', THREE_SIGNERS, 2, undefined, drawCompanyLabel());
 
     expect(() => h.payroll.invite(a.account.id, {
-      name: 'Dana', email: 'd@a.co', title: 'Eng', asset: 'GBP', baseAmount: 100_00n,
+      name: 'Dana', email: 'd@a.co', title: 'Eng', asset: TEST_TOKEN, baseAmount: 100_00n,
     }, b.viewingKey, 'usr_operator')).toThrow();
     expect(h.payroll.listPeople(a.account.id, a.viewingKey)).toHaveLength(0);
 
     h.payroll.invite(a.account.id, {
-      name: 'Real', email: 'r@a.co', title: 'Eng', asset: 'GBP', baseAmount: 100_00n,
+      name: 'Real', email: 'r@a.co', title: 'Eng', asset: TEST_TOKEN, baseAmount: 100_00n,
     }, a.viewingKey, 'usr_operator');
     const rotated = await h.accounts.rotate(a.account.id, a.viewingKey);
     expect(() => h.payroll.invite(a.account.id, {
-      name: 'Late', email: 'l@a.co', title: 'Eng', asset: 'GBP', baseAmount: 100_00n,
+      name: 'Late', email: 'l@a.co', title: 'Eng', asset: TEST_TOKEN, baseAmount: 100_00n,
     }, a.viewingKey, 'usr_operator')).toThrow();
     expect(h.payroll.listPeople(a.account.id, rotated.viewingKey)).toHaveLength(1);
   });
@@ -723,7 +726,7 @@ describe('onboarding', () => {
     const { account, viewingKey } = await h.accounts.create('Acme', THREE_SIGNERS, 2, undefined, drawCompanyLabel());
     const { sentTo } = h.payroll.invite(account.id, {
       name: 'Dana Patel', email: 'dana@acme.co', title: 'Engineer',
-      asset: 'GBP', baseAmount: 6_200_00n, startDate: '2026-09-01',
+      asset: TEST_TOKEN, baseAmount: 6_200_00n, startDate: '2026-09-01',
     }, viewingKey, 'usr_operator');
 
     const token = h.invites.tokenFor(sentTo);
@@ -733,7 +736,7 @@ describe('onboarding', () => {
     expect(offer.name).toBe('Dana Patel');
     expect(offer.title).toBe('Engineer');
     expect(offer.baseAmount).toBe(6_200_00n);
-    expect(offer.asset).toBe('GBP');
+    expect(offer.asset).toBe(TEST_TOKEN);
     expect(offer.startDate).toBe('2026-09-01');
   });
 
@@ -747,7 +750,7 @@ describe('onboarding', () => {
     const { account, viewingKey } = await h.accounts.create('Acme', THREE_SIGNERS, 2, undefined, drawCompanyLabel());
     const { sentTo } = h.payroll.invite(account.id, {
       name: 'Dana Patel', email: 'dana@acme.co', title: 'Engineer',
-      asset: 'GBP', baseAmount: 6_200_00n,
+      asset: TEST_TOKEN, baseAmount: 6_200_00n,
     }, viewingKey, 'usr_operator');
     const token = h.invites.tokenFor(sentTo);
 
@@ -789,7 +792,7 @@ describe('onboarding', () => {
      */
     const { account, viewingKey } = await h.accounts.create('Acme', THREE_SIGNERS, 2, undefined, drawCompanyLabel());
     const { employee, sentTo } = h.payroll.invite(account.id, {
-      name: 'Dana', email: 'dana@acme.co', title: 'Eng', asset: 'GBP', baseAmount: 100_00n,
+      name: 'Dana', email: 'dana@acme.co', title: 'Eng', asset: TEST_TOKEN, baseAmount: 100_00n,
     }, viewingKey, 'usr_operator');
     const token = h.invites.tokenFor(sentTo);
 
@@ -820,7 +823,7 @@ describe('onboarding', () => {
      */
     const { account, viewingKey } = await h.accounts.create('Acme', THREE_SIGNERS, 2, undefined, drawCompanyLabel());
     h.payroll.invite(account.id, {
-      name: 'Dana', email: 'dana@acme.co', title: 'Eng', asset: 'GBP', baseAmount: 100_00n,
+      name: 'Dana', email: 'dana@acme.co', title: 'Eng', asset: TEST_TOKEN, baseAmount: 100_00n,
     }, viewingKey, 'usr_operator');
     const stored = h.store.listInvites(account.id).find(i => i.kind === 'employee')!;
     expect(stored.token).toMatch(/^[0-9a-f]{64}$/);
@@ -840,7 +843,7 @@ describe('onboarding', () => {
      */
     const { account, viewingKey } = await h.accounts.create('Acme', THREE_SIGNERS, 2, undefined, drawCompanyLabel());
     const { employee, sentTo } = h.payroll.invite(account.id, {
-      name: 'Dana', email: 'dana@acme.co', title: 'Eng', asset: 'GBP', baseAmount: 100_00n,
+      name: 'Dana', email: 'dana@acme.co', title: 'Eng', asset: TEST_TOKEN, baseAmount: 100_00n,
     }, viewingKey, 'usr_operator');
     const token = h.invites.tokenFor(sentTo);
     expect(h.payroll.offerFor(token).name).toBe('Dana');
@@ -893,7 +896,7 @@ describe('onboarding', () => {
      */
     const { account, viewingKey } = await h.accounts.create('Acme', THREE_SIGNERS, 2, undefined, drawCompanyLabel());
     const { employee, sentTo } = h.payroll.invite(account.id, {
-      name: 'Dana', email: 'dana@acme.co', title: 'Eng', asset: 'GBP', baseAmount: 100_00n,
+      name: 'Dana', email: 'dana@acme.co', title: 'Eng', asset: TEST_TOKEN, baseAmount: 100_00n,
     }, viewingKey, 'usr_operator');
     const token = h.invites.tokenFor(sentTo);
     expect(JSON.stringify(h.invites.sent)).toContain(token);
@@ -917,7 +920,7 @@ describe('onboarding', () => {
      */
     const { account, viewingKey } = await h.accounts.create('Acme', THREE_SIGNERS, 2, undefined, drawCompanyLabel());
     const out = h.payroll.invite(account.id, {
-      name: 'Dana', email: 'dana@acme.co', title: 'Eng', asset: 'GBP', baseAmount: 100_00n,
+      name: 'Dana', email: 'dana@acme.co', title: 'Eng', asset: TEST_TOKEN, baseAmount: 100_00n,
     }, viewingKey, 'usr_operator');
 
     expect(out.sentTo).toBe('dana@acme.co');
@@ -968,7 +971,7 @@ describe('onboarding', () => {
       ...h.accounts.require(account.id), memberUserIds: [solo],
     });
     const me = h.payroll.addSelfAsPayee(account.id, solo, {
-      name: 'Me', email: 'me@a.co', title: 'Founder', asset: 'GBP', baseAmount: 100_00n,
+      name: 'Me', email: 'me@a.co', title: 'Founder', asset: TEST_TOKEN, baseAmount: 100_00n,
     }, viewingKey, {
       wrappingPublicKey: newWrappingKeypair().publicKey,
       address: payeeAddressFromKeys(
@@ -1000,7 +1003,7 @@ describe('onboarding', () => {
       ...h.accounts.require(account.id), memberUserIds: [op, 'usr_second'],
     });
     const { employee, sentTo } = h.payroll.invite(account.id, {
-      name: 'Dana', email: 'dana@acme.co', title: 'Eng', asset: 'GBP', baseAmount: 100_00n,
+      name: 'Dana', email: 'dana@acme.co', title: 'Eng', asset: TEST_TOKEN, baseAmount: 100_00n,
     }, viewingKey, op);
 
     h.payroll.acceptInvite(h.invites.tokenFor(sentTo), handedOver(h, h.invites.tokenFor(sentTo), {
@@ -1036,7 +1039,7 @@ describe('onboarding', () => {
       ...h.accounts.require(account.id), memberUserIds: ['usr_operator', 'usr_second'],
     });
     const { employee, sentTo } = h.payroll.invite(account.id, {
-      name: 'Dana', email: 'dana@acme.co', title: 'Eng', asset: 'GBP', baseAmount: 100_00n,
+      name: 'Dana', email: 'dana@acme.co', title: 'Eng', asset: TEST_TOKEN, baseAmount: 100_00n,
     }, viewingKey, 'usr_operator');
     const dana = signIn(h, sentTo);
     h.payroll.acceptInvite(h.invites.tokenFor(sentTo), handedOver(h, h.invites.tokenFor(sentTo), {
@@ -1073,7 +1076,7 @@ describe('onboarding', () => {
 
     const ghost = (name: string, coin: string) => {
       const { employee, sentTo } = h.payroll.invite(account.id, {
-        name, email: 'op@acme.co', title: 'Eng', asset: 'GBP', baseAmount: 9_000_00n,
+        name, email: 'op@acme.co', title: 'Eng', asset: TEST_TOKEN, baseAmount: 9_000_00n,
       }, viewingKey, op);
       h.payroll.acceptInvite(h.invites.tokenFor(sentTo), handedOver(h, h.invites.tokenFor(sentTo), {
         wrappingPublicKey: newWrappingKeypair().publicKey,
@@ -1125,7 +1128,7 @@ describe('onboarding', () => {
       ...h.accounts.require(account.id), memberUserIds: [op, 'usr_second'],
     });
     const { employee, sentTo } = h.payroll.invite(account.id, {
-      name: 'Dana', email: 'dana@acme.co', title: 'Eng', asset: 'GBP', baseAmount: 100_00n,
+      name: 'Dana', email: 'dana@acme.co', title: 'Eng', asset: TEST_TOKEN, baseAmount: 100_00n,
     }, viewingKey, op);
     /* The operator redeems Dana's invite as themselves. */
     h.payroll.acceptInvite(h.invites.tokenFor(sentTo), handedOver(h, h.invites.tokenFor(sentTo), {
@@ -1161,7 +1164,7 @@ describe('onboarding', () => {
 
     const me = h.payroll.addSelfAsPayee(account.id, solo, {
       /* The email here is IGNORED — it comes off the caller's sign-in. */
-      name: 'Me', email: 'somebody-else@a.co', title: 'Founder', asset: 'GBP', baseAmount: 100_00n,
+      name: 'Me', email: 'somebody-else@a.co', title: 'Founder', asset: TEST_TOKEN, baseAmount: 100_00n,
     }, viewingKey, {
       wrappingPublicKey: newWrappingKeypair().publicKey,
       address: payeeAddressFromKeys(
@@ -1187,7 +1190,7 @@ describe('onboarding', () => {
     (h.store as any).putAccount({
       ...h.accounts.require(account.id), memberUserIds: [solo],
     });
-    const spec = { name: 'Me', email: 'x@x.co', title: 'Founder', asset: 'GBP', baseAmount: 100_00n };
+    const spec = { name: 'Me', email: 'x@x.co', title: 'Founder', asset: TEST_TOKEN, baseAmount: 100_00n };
     const hand = () => ({
       wrappingPublicKey: newWrappingKeypair().publicKey,
       address: payeeAddressFromKeys(
@@ -1208,7 +1211,7 @@ describe('onboarding', () => {
      */
     const { account, viewingKey } = await h.accounts.create('Acme', THREE_SIGNERS, 2, undefined, drawCompanyLabel());
     const { employee, sentTo } = h.payroll.invite(account.id, {
-      name: 'Dana', email: 'dana@a.co', title: 'Eng', asset: 'GBP', baseAmount: 100_00n,
+      name: 'Dana', email: 'dana@a.co', title: 'Eng', asset: TEST_TOKEN, baseAmount: 100_00n,
     }, viewingKey, 'usr_admin');
     const token = h.invites.tokenFor(sentTo);
     h.payroll.acceptInvite(token, handedOver(h, token, {
@@ -1233,7 +1236,7 @@ describe('onboarding', () => {
      */
     const { account, viewingKey } = await h.accounts.create('Acme', THREE_SIGNERS, 2, undefined, drawCompanyLabel());
     const first = h.payroll.invite(account.id, {
-      name: 'Dana', email: 'dana@a.co', title: 'Eng', asset: 'GBP', baseAmount: 100_00n,
+      name: 'Dana', email: 'dana@a.co', title: 'Eng', asset: TEST_TOKEN, baseAmount: 100_00n,
     }, viewingKey, 'usr_admin');
     const dana = signIn(h, 'dana@a.co');
     const hand = (b: string) => ({
@@ -1246,7 +1249,7 @@ describe('onboarding', () => {
 
     /* The same person invited a second time, and they redeem it. */
     const again = h.payroll.invite(account.id, {
-      name: 'Dana', email: 'dana@a.co', title: 'Eng', asset: 'GBP', baseAmount: 900_00n,
+      name: 'Dana', email: 'dana@a.co', title: 'Eng', asset: TEST_TOKEN, baseAmount: 900_00n,
     }, viewingKey, 'usr_admin');
     const token = h.invites.tokenFor(again.sentTo);
     h.payroll.acceptInvite(token, handedOver(h, token, hand('32')), dana);
@@ -1270,7 +1273,7 @@ describe('onboarding', () => {
       ...h.accounts.require(account.id), memberUserIds: ['usr_solo'],
     });
     expect(() => h.payroll.addSelfAsPayee(account.id, 'usr_stranger', {
-      name: 'Nope', email: 'n@a.co', title: 'Eng', asset: 'GBP', baseAmount: 100_00n,
+      name: 'Nope', email: 'n@a.co', title: 'Eng', asset: TEST_TOKEN, baseAmount: 100_00n,
     }, viewingKey, {
       wrappingPublicKey: newWrappingKeypair().publicKey,
       address: payeeAddressFromKeys(
@@ -1286,7 +1289,7 @@ describe('onboarding', () => {
      */
     const { account, viewingKey } = await h.accounts.create('Acme', THREE_SIGNERS, 2, undefined, drawCompanyLabel());
     const { employee, sentTo } = h.payroll.invite(account.id, {
-      name: 'Dana', email: 'd@a.co', title: 'Eng', asset: 'GBP', baseAmount: 100_00n,
+      name: 'Dana', email: 'd@a.co', title: 'Eng', asset: TEST_TOKEN, baseAmount: 100_00n,
     }, viewingKey);   // no creator recorded — an invite from before this existed
     h.payroll.acceptInvite(h.invites.tokenFor(sentTo), handedOver(h, h.invites.tokenFor(sentTo), {
       wrappingPublicKey: newWrappingKeypair().publicKey,
@@ -1313,13 +1316,13 @@ describe('onboarding', () => {
      */
     const { account, viewingKey } = await h.accounts.create('Acme', THREE_SIGNERS, 2, undefined, drawCompanyLabel());
     const { employee, sentTo } = h.payroll.invite(account.id, {
-      name: 'Dana', email: 'd@a.co', title: 'Eng', asset: 'GBP', baseAmount: 100_00n,
+      name: 'Dana', email: 'd@a.co', title: 'Eng', asset: TEST_TOKEN, baseAmount: 100_00n,
     }, viewingKey);   // the shape the deployed code writes: no `createdBy`
     const token = h.invites.tokenFor(sentTo);
 
     /* Somebody else on the same payroll, admitted normally. */
     const other = h.payroll.invite(account.id, {
-      name: 'Rae', email: 'rae@a.co', title: 'Eng', asset: 'GBP', baseAmount: 200_00n,
+      name: 'Rae', email: 'rae@a.co', title: 'Eng', asset: TEST_TOKEN, baseAmount: 200_00n,
     }, viewingKey, 'usr_admin');
     h.payroll.acceptInvite(h.invites.tokenFor(other.sentTo), handedOver(h, h.invites.tokenFor(other.sentTo), {
       wrappingPublicKey: newWrappingKeypair().publicKey,
@@ -1367,7 +1370,7 @@ describe('onboarding', () => {
       ...h.accounts.require(account.id), memberUserIds: ['usr_admin', 'usr_second'],
     });
     const { employee, sentTo } = h.payroll.invite(account.id, {
-      name: 'Dana', email: 'd@a.co', title: 'Eng', asset: 'GBP', baseAmount: 100_00n,
+      name: 'Dana', email: 'd@a.co', title: 'Eng', asset: TEST_TOKEN, baseAmount: 100_00n,
     }, viewingKey, 'usr_admin');
     const dana = signIn(h, sentTo);
     h.payroll.acceptInvite(h.invites.tokenFor(sentTo), handedOver(h, h.invites.tokenFor(sentTo), {
@@ -1396,7 +1399,7 @@ describe('onboarding', () => {
      */
     const { account, viewingKey } = await h.accounts.create('Acme', THREE_SIGNERS, 2, undefined, drawCompanyLabel());
     const { employee, secret } = h.payroll.hireDirect(account.id, {
-      name: 'Dana', email: 'd@a.co', title: 'Eng', asset: 'GBP', baseAmount: 100_00n,
+      name: 'Dana', email: 'd@a.co', title: 'Eng', asset: TEST_TOKEN, baseAmount: 100_00n,
     }, viewingKey);
     const { run } = await h.payroll.createRunFromRoster(account.id, '2026-07', viewingKey);
 
@@ -1423,7 +1426,7 @@ describe('onboarding', () => {
      */
     const { account, viewingKey } = await h.accounts.create('Acme', THREE_SIGNERS, 2, undefined, drawCompanyLabel());
     const { employee, sentTo } = h.payroll.invite(account.id, {
-      name: 'Mid Onboarding', email: 'm@a.co', title: 'Eng', asset: 'GBP', baseAmount: 100_00n,
+      name: 'Mid Onboarding', email: 'm@a.co', title: 'Eng', asset: TEST_TOKEN, baseAmount: 100_00n,
     }, viewingKey, 'usr_operator');
 
     const wk = newWrappingKeypair();
@@ -1453,7 +1456,7 @@ describe('onboarding', () => {
      */
     const { account, viewingKey } = await h.accounts.create('Acme', THREE_SIGNERS, 2, undefined, drawCompanyLabel());
     const { employee, sentTo } = h.payroll.invite(account.id, {
-      name: 'Dana', email: 'd@a.co', title: 'Eng', asset: 'GBP', baseAmount: 100_00n,
+      name: 'Dana', email: 'd@a.co', title: 'Eng', asset: TEST_TOKEN, baseAmount: 100_00n,
     }, viewingKey, 'usr_operator');
 
     h.payroll.acceptInvite(h.invites.tokenFor(sentTo), handedOver(h, h.invites.tokenFor(sentTo), {
@@ -1476,7 +1479,7 @@ describe('onboarding', () => {
      */
     const { account, viewingKey } = await h.accounts.create('Acme', THREE_SIGNERS, 2, undefined, drawCompanyLabel());
     const { employee } = h.payroll.hireDirect(account.id, {
-      name: 'Dana', email: 'd@a.co', title: 'Eng', asset: 'GBP', baseAmount: 100_00n,
+      name: 'Dana', email: 'd@a.co', title: 'Eng', asset: TEST_TOKEN, baseAmount: 100_00n,
     }, viewingKey);
     const { run } = await h.payroll.createRunFromRoster(account.id, '2026-07', viewingKey);
 
@@ -1496,10 +1499,10 @@ describe('onboarding', () => {
      */
     const { account, viewingKey } = await h.accounts.create('Acme', THREE_SIGNERS, 2, undefined, drawCompanyLabel());
     const theirs = h.payroll.invite(account.id, {
-      name: 'Not Started', email: 'a@a.co', title: 'Eng', asset: 'GBP', baseAmount: 100_00n,
+      name: 'Not Started', email: 'a@a.co', title: 'Eng', asset: TEST_TOKEN, baseAmount: 100_00n,
     }, viewingKey, 'usr_operator');
     const ours = h.payroll.invite(account.id, {
-      name: 'Handed Over', email: 'b@a.co', title: 'Eng', asset: 'GBP', baseAmount: 200_00n,
+      name: 'Handed Over', email: 'b@a.co', title: 'Eng', asset: TEST_TOKEN, baseAmount: 200_00n,
     }, viewingKey, 'usr_operator');
     void theirs;
     h.payroll.acceptInvite(h.invites.tokenFor(ours.sentTo), handedOver(h, h.invites.tokenFor(ours.sentTo), {
@@ -1515,10 +1518,10 @@ describe('onboarding', () => {
   it('BUILDS THE CHAIN PAYMENTS FROM THE ROSTER, with nowhere to type an address', async () => {
     const { account, viewingKey } = await h.accounts.create('Acme', THREE_SIGNERS, 2, undefined, drawCompanyLabel());
     const a = h.payroll.hireDirect(account.id, {
-      name: 'Dana', email: 'd@a.co', title: 'Eng', asset: 'GBP', baseAmount: 100_00n,
+      name: 'Dana', email: 'd@a.co', title: 'Eng', asset: TEST_TOKEN, baseAmount: 100_00n,
     }, viewingKey);
     const b = h.payroll.hireDirect(account.id, {
-      name: 'Sam', email: 's@a.co', title: 'Eng', asset: 'GBP', baseAmount: 200_00n,
+      name: 'Sam', email: 's@a.co', title: 'Eng', asset: TEST_TOKEN, baseAmount: 200_00n,
     }, viewingKey);
 
     const { run } = await h.payroll.createRunFromRoster(account.id, '2026-07', viewingKey);
@@ -1560,7 +1563,7 @@ describe('onboarding', () => {
   it('A ROSTER ADDRESS SEALED WITHOUT A KIND COMES BACK WITH ONE', async () => {
     const { account, viewingKey } = await h.accounts.create('Acme', THREE_SIGNERS, 2, undefined, drawCompanyLabel());
     const a = h.payroll.hireDirect(account.id, {
-      name: 'Dana', email: 'd@a.co', title: 'Eng', asset: 'GBP', baseAmount: 100_00n,
+      name: 'Dana', email: 'd@a.co', title: 'Eng', asset: TEST_TOKEN, baseAmount: 100_00n,
     }, viewingKey);
 
     const person = h.payroll.person(a.employee.id, viewingKey)!;
@@ -1596,7 +1599,7 @@ describe('onboarding', () => {
   it('REFUSES TO PAY SOMEBODY WHO CANNOT REACH IT — and it names them', async () => {
     const { account, viewingKey } = await h.accounts.create('Acme', THREE_SIGNERS, 2, undefined, drawCompanyLabel());
     h.payroll.hireDirect(account.id, {
-      name: 'Dana', email: 'd@a.co', title: 'Eng', asset: 'GBP', baseAmount: 100_00n,
+      name: 'Dana', email: 'd@a.co', title: 'Eng', asset: TEST_TOKEN, baseAmount: 100_00n,
     }, viewingKey);
     const { run } = await h.payroll.createRunFromRoster(account.id, '2026-07', viewingKey);
 
@@ -1605,7 +1608,7 @@ describe('onboarding', () => {
      * no address they put there themselves. A payslip is not a payment.
      */
     const adHoc = await h.payroll.createRun(
-      account.id, '2026-08', [{ name: 'Contractor', asset: 'GBP', amount: 50_00n }], viewingKey);
+      account.id, '2026-08', [{ name: 'Contractor', asset: TEST_TOKEN, amount: 50_00n }], viewingKey);
     expect(() => h.payroll.paymentFactsFor(adHoc.run.id, viewingKey))
       .toThrow(/Contractor is not on the roster/);
 
@@ -1615,8 +1618,8 @@ describe('onboarding', () => {
 
   it('blocks payroll while anyone is still pending, and names them', async () => {
     const { account, viewingKey } = await h.accounts.create('Acme', THREE_SIGNERS, 2, undefined, drawCompanyLabel());
-    h.payroll.hireDirect(account.id, { name: 'Ready', email: 'r@a.co', title: 'Eng', asset: 'GBP', baseAmount: 100_00n }, viewingKey);
-    h.payroll.invite(account.id, { name: 'Not Ready', email: 'n@a.co', title: 'Eng', asset: 'GBP', baseAmount: 200_00n }, viewingKey);
+    h.payroll.hireDirect(account.id, { name: 'Ready', email: 'r@a.co', title: 'Eng', asset: TEST_TOKEN, baseAmount: 100_00n }, viewingKey);
+    h.payroll.invite(account.id, { name: 'Not Ready', email: 'n@a.co', title: 'Eng', asset: TEST_TOKEN, baseAmount: 200_00n }, viewingKey);
 
     await expect(h.payroll.createRunFromRoster(account.id, '2026-07', viewingKey))
       .rejects.toThrow(/Not Ready/);
@@ -1647,7 +1650,7 @@ describe('plug-ins', () => {
       scopes: ['state:read', 'proposal:create'], allowance: null, installedBy: present(c.secrets[0]).signerId,
     });
     await expect(h.plugins.propose(ins.token, c.viewingKey, {
-      summary: 'Deploy to lending', asset: 'GBP', amount: 10_00n, recipient: 'Pool',
+      summary: 'Deploy to lending', asset: TEST_TOKEN, amount: 10_00n, recipient: 'Pool',
     })).rejects.toThrow(/no spending allowance/);
   });
 
@@ -1665,11 +1668,11 @@ describe('plug-ins', () => {
        * things to revoke. The ceiling is looked up by the asset being spent, so
        * there is no pairing left to get wrong.
        */
-      allowance: { limits: { GBP: { perProposal: 5_000_00n, perPeriod: 8_000_00n } }, periodDays: 30 },
+      allowance: { limits: { [TEST_TOKEN]: { perProposal: 5_000_00n, perPeriod: 8_000_00n } }, periodDays: 30 },
       installedBy: present(c.secrets[0]).signerId,
     });
     const go = (amount: bigint) => h.plugins.propose(ins.token, c.viewingKey, {
-      summary: 'Deploy', asset: 'GBP', amount, recipient: 'Pool',
+      summary: 'Deploy', asset: TEST_TOKEN, amount, recipient: 'Pool',
     });
 
     await expect(go(9_000_00n)).rejects.toThrow(/per-proposal allowance/);
@@ -1692,17 +1695,18 @@ describe('plug-ins', () => {
     const ins = h.plugins.install({
       accountId: c.account.id, pluginId: 'treasury-yield',
       scopes: ['state:read', 'proposal:create'],
-      allowance: { limits: { GBP: { perProposal: 5_000_00n, perPeriod: 8_000_00n } }, periodDays: 30 },
+      allowance: { limits: { [TEST_TOKEN]: { perProposal: 5_000_00n, perPeriod: 8_000_00n } }, periodDays: 30 },
       installedBy: present(c.secrets[0]).signerId,
     });
     await expect(h.plugins.propose(ins.token, c.viewingKey, {
-      summary: 'Deploy', asset: 'USDC', amount: 1n, recipient: 'Pool',
-    })).rejects.toThrow(/no USDC allowance\. It may spend GBP and nothing else/);
+      summary: 'Deploy', asset: OTHER_TEST_TOKEN, amount: 1n, recipient: 'Pool',
+    /* RED WHEN the refusal names tokens by their hex rather than the symbols a person reads. */
+    })).rejects.toThrow(/no tOTH allowance\. It may spend tPAY and nothing else/);
 
     // Refused, and recorded — a refusal is the more interesting audit line.
     const refused = h.plugins.events(c.account.id).filter(e => !e.allowed);
     expect(refused).toHaveLength(1);
-    expect(present(refused[0]).asset).toBe('USDC');
+    expect(present(refused[0]).asset).toBe(OTHER_TEST_TOKEN);
     expect(present(refused[0]).amount).toBe(1n);
   });
 
@@ -1717,9 +1721,10 @@ describe('plug-ins', () => {
     expect(() => h.plugins.install({
       accountId: c.account.id, pluginId: 'treasury-yield',
       scopes: ['state:read', 'proposal:create'],
-      allowance: { limits: { XYZ: { perProposal: 1n, perPeriod: 1n } }, periodDays: 30 },
+      allowance: { limits: { [testToken('never registered')]: { perProposal: 1n, perPeriod: 1n } }, periodDays: 30 },
       installedBy: present(c.secrets[0]).signerId,
-    })).toThrow(/unknown asset "XYZ"/);
+    /* RED WHEN an allowance in a token the registry does not hold is accepted. */
+    })).toThrow(`no asset in the registry is the token "${testToken('never registered')}"`);
   });
 
   it('stops working the moment it is suspended', async () => {
@@ -2177,7 +2182,7 @@ describe('the approval round, as the chain enforces it', () => {
   beforeEach(() => { h = harness(); });
 
   const transfer = (amount: bigint) => ({
-    entries: [{ id: 'e1', kind: 'transfer', asset: 'GBP', amount, counterparty: 'y', memo: '', at: '' }],
+    entries: [{ id: 'e1', kind: 'transfer', asset: TEST_TOKEN, amount, counterparty: 'y', memo: '', at: '' }],
   });
 
   async function funded(threshold = 2) {
@@ -2311,7 +2316,7 @@ describe('the approval round, as the chain enforces it', () => {
        */
       const asItWas = {
         commitments: [{ accountId: 'a', commitment: '00', updatedAt: 't' }],
-        settlements: [{ ref: 'r', accountId: 'a', asset: 'GBP', amount: 12_000_00n,
+        settlements: [{ ref: 'r', accountId: 'a', asset: TEST_TOKEN, amount: 12_000_00n,
           memo: 'Payroll 2026-06, 8 recipients', at: 't' }],
       };
       expect(moneyIn(asItWas)).toEqual([
@@ -2332,7 +2337,7 @@ describe('the approval round, as the chain enforces it', () => {
        */
       const formatted = {
         commitments: [{ accountId: 'a', commitment: '00', updatedAt: 't' }],
-        settlements: [{ ref: 'r', currency: 'GBP', paid: 1200000, at: 't' }],
+        settlements: [{ ref: 'r', currency: TEST_TOKEN, paid: 1200000, at: 't' }],
       };
       expect(moneyIn(formatted)).toEqual(['.settlements[0].paid: a number, under the key "paid"']);
 
@@ -2365,7 +2370,7 @@ describe('the approval round, as the chain enforces it', () => {
       expect(present(view.proposals[0]).approvalCount).toBe(1);
       expect(h.accounts.changeOf(
         h.accounts.requireProposal(p.id, c.viewingKey), c.viewingKey))
-        .toEqual({ asset: 'GBP', amount: 12_000_00n });
+        .toEqual({ asset: TEST_TOKEN, amount: 12_000_00n });
 
       expect(moneyIn(view)).toEqual([]);
       /*
@@ -2459,7 +2464,7 @@ describe('the approval round, as the chain enforces it', () => {
      */
     const c = await funded();
     editAccount(h, c.account.id, c.viewingKey, a => {
-      a.policy.limitsByRole.approver = { GBP: { perTransaction: 100_00n, perPeriod: 100_00n, periodDays: 30 } };
+      a.policy.limitsByRole.approver = { [TEST_TOKEN]: { perTransaction: 100_00n, perPeriod: 100_00n, periodDays: 30 } };
     });
 
     const blocked = await h.accounts.propose({
@@ -2515,7 +2520,7 @@ describe('granting access puts the signer in the on-chain set', () => {
     const p = await h.accounts.propose({
       accountId: c.account.id, viewingKey: c.viewingKey, kind: 'transfer',
       summary: 'supplier',
-      payload: { entries: [{ id: 'e1', kind: 'transfer', asset: 'GBP', amount: 1_000_00n, counterparty: 'y', memo: '', at: '' }] },
+      payload: { entries: [{ id: 'e1', kind: 'transfer', asset: TEST_TOKEN, amount: 1_000_00n, counterparty: 'y', memo: '', at: '' }] },
       proposedBy: blake.id,
     });
     const approved = await h.accounts.approve(p.id, blake.id, sign(approvalMessage(p), sk.secret), c.viewingKey);
@@ -2693,7 +2698,7 @@ describe('what a RUN leaves in the store', () => {
      */
     const h2 = harness();
     const { account, viewingKey } = await h2.accounts.create('Acme', THREE_SIGNERS, 2, undefined, drawCompanyLabel());
-    h2.payroll.hireDirect(account.id, { name: 'Dana Whitfield', email: 'd@a.co', title: 'Eng', asset: 'GBP', baseAmount: 6_200_00n }, viewingKey);
+    h2.payroll.hireDirect(account.id, { name: 'Dana Whitfield', email: 'd@a.co', title: 'Eng', asset: TEST_TOKEN, baseAmount: 6_200_00n }, viewingKey);
     await h2.payroll.createRunFromRoster(account.id, '2026-07', viewingKey);
 
     const runs = readableStore((h2.store as any).data.runs);
@@ -2708,11 +2713,11 @@ describe('what a RUN leaves in the store', () => {
      *
      * Asserted as a shape rather than a substring: an asset code is three
      * characters and a nanoid is drawn from a 64-character alphabet, so
-     * `not.toContain('GBP')` would fire at random on correct code.
+     * `not.toContain(TEST_TOKEN)` would fire at random on correct code.
      */
     const stored = present(h2.store.listRuns(account.id)[0]);
-    expect(Object.values(stored).some(v => v === 'GBP')).toBe(false);
-    expect(h2.payroll.requireRun(present(stored).id, viewingKey).totals).toEqual({ GBP: 6_200_00n });
+    expect(Object.values(stored).some(v => v === TEST_TOKEN)).toBe(false);
+    expect(h2.payroll.requireRun(present(stored).id, viewingKey).totals).toEqual({ [TEST_TOKEN]: 6_200_00n });
   });
 });
 
@@ -2733,7 +2738,7 @@ describe('what the proposals table leaves in the store', () => {
       summary: 'Pay Wilkinson Legal 12000 for the Q3 retainer',
       payload: {
         to: 'Wilkinson Legal',
-        entries: [{ id: 'e1', kind: 'transfer', asset: 'GBP', amount: 12_000_00n, counterparty: 'Wilkinson Legal', memo: '', at: '' }],
+        entries: [{ id: 'e1', kind: 'transfer', asset: TEST_TOKEN, amount: 12_000_00n, counterparty: 'Wilkinson Legal', memo: '', at: '' }],
       },
       proposedBy: present(c.secrets[0]).signerId,
     });
@@ -2746,7 +2751,7 @@ describe('what the proposals table leaves in the store', () => {
     expect(stored).not.toContain('12000');
     expect(stored).not.toContain(present(c.secrets[0]).signerId);
     // Nor the asset: there is no readable field on the record that carries one.
-    expect(Object.values(h2.store.getProposal(p.id)!).some(v => v === 'GBP')).toBe(false);
+    expect(Object.values(h2.store.getProposal(p.id)!).some(v => v === TEST_TOKEN)).toBe(false);
 
     // A count is fine — the chain publishes one too. WHOSE is the leak.
     expect(h2.store.getProposal(p.id)!.approvalCount).toBe(1);
@@ -2759,7 +2764,7 @@ describe('what the proposals table leaves in the store', () => {
      * that impossible to write.
      */
     expect(h2.accounts.changeOf(h2.accounts.requireProposal(p.id, c.viewingKey), c.viewingKey))
-      .toEqual({ asset: 'GBP', amount: 12_000_00n });
+      .toEqual({ asset: TEST_TOKEN, amount: 12_000_00n });
   });
 });
 
@@ -2789,7 +2794,7 @@ describe('what the ACCOUNTS table leaves in the store', () => {
       // Both are keyed by asset: a ceiling is a number in one
       // currency and nothing else.
       a.policy.limitsByRole = {
-        approver: { GBP: { perTransaction: 250_000_00n, perPeriod: null, periodDays: 30 } },
+        approver: { [TEST_TOKEN]: { perTransaction: 250_000_00n, perPeriod: null, periodDays: 30 } },
       };
     });
 
@@ -2831,7 +2836,7 @@ describe('what the ACCOUNTS table leaves in the store', () => {
     // And a key holder still reads all of it.
     const open = h.accounts.open(c.account.id, c.viewingKey);
     expect(open.name).toBe('Northwind Ltd');
-    expect(open.policy.limitsByRole.approver?.GBP?.perTransaction).toBe(250_000_00n);
+    expect(open.policy.limitsByRole.approver?.[TEST_TOKEN]?.perTransaction).toBe(250_000_00n);
     expect(open.recovery.threshold).toBe(2);
   });
 
@@ -3009,7 +3014,7 @@ describe('what the ACCOUNTS table leaves in the store', () => {
      */
     const p = await h.accounts.propose({
       accountId: c.account.id, viewingKey: c.viewingKey, kind: 'transfer',
-      summary: 'Pay Wilkinson Legal', payload: {}, asset: 'GBP',
+      summary: 'Pay Wilkinson Legal', payload: {}, asset: TEST_TOKEN,
       proposedBy: present(c.secrets[0]).signerId,
     });
     const stored = h.store.getProposal(p.id)!;
@@ -3068,12 +3073,12 @@ describe('changing the locks', () => {
     const blake = { id: signIn(h, 'blake@acme.co', 'Blake Ruiz') };
     const c = await h.accounts.create('Northwind Ltd', THREE_SIGNERS, 2, undefined, drawCompanyLabel());
     h.payroll.hireDirect(c.account.id,
-      { name: 'Dana Whitfield', email: 'dana@acme.co', title: 'Engineer', asset: 'GBP', baseAmount: 6_200_00n }, c.viewingKey);
+      { name: 'Dana Whitfield', email: 'dana@acme.co', title: 'Engineer', asset: TEST_TOKEN, baseAmount: 6_200_00n }, c.viewingKey);
     const { run } = await h.payroll.createRunFromRoster(c.account.id, '2026-07', c.viewingKey);
     const p = await h.accounts.propose({
       accountId: c.account.id, viewingKey: c.viewingKey, kind: 'transfer',
       summary: 'Pay Wilkinson Legal',
-      payload: { entries: [{ id: 'e1', kind: 'transfer', asset: 'GBP', amount: 9_000_00n, counterparty: 'y', memo: '', at: '' }] },
+      payload: { entries: [{ id: 'e1', kind: 'transfer', asset: TEST_TOKEN, amount: 9_000_00n, counterparty: 'y', memo: '', at: '' }] },
       proposedBy: present(c.secrets[0]).signerId,
     });
 
@@ -3112,7 +3117,7 @@ describe('changing the locks', () => {
     expect(h.payroll.listPeople(c.account.id, next).map(e => e.baseAmount)).toEqual([6_200_00n]);
     // `total` USED TO BE ONE NUMBER, replaced by a subtotal per
     // asset, because one figure across mixed currencies means nothing.
-    expect(h.payroll.requireRun(run.id, next).totals).toEqual({ GBP: 6_200_00n });
+    expect(h.payroll.requireRun(run.id, next).totals).toEqual({ [TEST_TOKEN]: 6_200_00n });
     expect(h.accounts.requireProposal(p.id, next).summary).toContain('Wilkinson');
     expect(await h.accounts.readState(c.account.id, next)).toEqual(before);
 
@@ -3187,7 +3192,7 @@ describe('changing the locks', () => {
     const { h, c } = await loaded();
     const r1 = await h.accounts.rotate(c.account.id, c.viewingKey);
     h.payroll.hireDirect(c.account.id,
-      { name: 'Sam Ortega', email: 'sam@acme.co', title: 'Designer', asset: 'GBP', baseAmount: 4_800_00n }, r1.viewingKey);
+      { name: 'Sam Ortega', email: 'sam@acme.co', title: 'Designer', asset: TEST_TOKEN, baseAmount: 4_800_00n }, r1.viewingKey);
     expect(h.store.listEmployees(c.account.id).map(e => e.keyEpoch)).toEqual([1, 1]);
 
     const r2 = await h.accounts.rotate(c.account.id, r1.viewingKey);
@@ -3252,7 +3257,7 @@ describe('removing a signer', () => {
     // refuses them — without anyone having said which signer they are.
     await expect(h.accounts.propose({
       accountId: c.account.id, viewingKey: out.viewingKey, kind: 'transfer',
-      summary: 'after removal', payload: { entries: [] }, asset: 'GBP',
+      summary: 'after removal', payload: { entries: [] }, asset: TEST_TOKEN,
       proposedBy: present(cleo).signerId,
     })).rejects.toThrow(/not a signer/);
   });
@@ -3511,7 +3516,7 @@ describe('removing a signer', () => {
 
     const raised = await h.accounts.propose({
       accountId: c.account.id, viewingKey: c.viewingKey, kind: 'transfer',
-      summary: "Cleo's round", payload: { entries: [] }, asset: 'GBP',
+      summary: "Cleo's round", payload: { entries: [] }, asset: TEST_TOKEN,
       proposedBy: present(cleo).signerId,
     });
 
@@ -3781,11 +3786,12 @@ describe('several assets in one account', () => {
       accountId: c.account.id, viewingKey: c.viewingKey, kind: 'transfer',
       summary: 'two currencies at once',
       payload: { entries: [
-        { id: 'e1', kind: 'transfer', asset: 'GBP', amount: 1_000_00n, counterparty: 'y', memo: '', at: '' },
-        { id: 'e2', kind: 'transfer', asset: 'USDC', amount: 1_000000n, counterparty: 'z', memo: '', at: '' },
+        { id: 'e1', kind: 'transfer', asset: TEST_TOKEN, amount: 1_000_00n, counterparty: 'y', memo: '', at: '' },
+        { id: 'e2', kind: 'transfer', asset: TEST_SETTLEMENT_ASSET, amount: 1_000000n, counterparty: 'z', memo: '', at: '' },
       ] },
       proposedBy: present(c.secrets[0]).signerId,
-    })).rejects.toThrow(/moves 2 assets \(GBP, USDC\), and a round settles exactly one/);
+    /* RED WHEN a proposal mixing two tokens is written, or the refusal names them by hex. */
+    })).rejects.toThrow(/moves 2 tokens \(tPAY, tUSD\), and a round settles exactly one/);
     // Nothing was opened on chain, so nothing has to be cancelled.
     expect((await h.accounts.ledgerStatus(c.account.id))!.openProposals).toEqual([]);
   });
@@ -3875,7 +3881,7 @@ describe('what a run can tell anybody about who has been paid', () => {
   const aRun = async () => {
     const created = await h.accounts.create('Acme', THREE_SIGNERS, 2, undefined, drawCompanyLabel());
     const { run } = await h.payroll.createRun(created.account.id, '2026-07', [
-      { name: 'Dana', asset: 'GBP', amount: 6_200_00n },
+      { name: 'Dana', asset: TEST_TOKEN, amount: 6_200_00n },
     ], created.viewingKey);
     return { ...created, run };
   };

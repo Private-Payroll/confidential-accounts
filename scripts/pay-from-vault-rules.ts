@@ -18,7 +18,7 @@
  */
 import { createHash } from 'node:crypto';
 
-import type { Asset } from '../src/core/assets.js';
+import { assets as productAssets, isAssetId, symbolOf, type Asset, type AssetRegistry } from '../src/core/assets.js';
 import type { Hex } from '../src/core/crypto.js';
 import type { ProposalAsks } from '../src/core/vault-holdings.js';
 import type { VaultEntry } from '../src/midnight/vault-record.js';
@@ -271,12 +271,22 @@ export function payoutRecordFromText(text: string, where: string): PayoutRecord 
  * person may change, and they change it by minting** - so a payment made in the
  * old colour and asked again in the new one is the same payment to the same
  * person for the same amount under the same reference, and comparing tokens
- * here would wave it through. The asset CODE is what says two payments are the
- * same payment; the token is what says a proposal may be finished.
+ * here would wave it through.
+ *
+ * **AN ASSET IS ITS LEDGER TOKEN, SO A FRESH MINT IS A NEW ONE.** The asset is
+ * compared only where both sides name a token this registry knows. A record
+ * naming a token a fresh mint has since replaced, or naming its asset the way
+ * records did before assets were named by their token, is not compared and
+ * still matches, for the same reason a record naming none does: refusing too
+ * often costs a changed reference, refusing too rarely pays somebody twice.
  */
-export function assertNotAlreadyPaid(finished: readonly PayoutRecord[], ask: PaymentAsk, nowSeconds: bigint): void {
+export function assertNotAlreadyPaid(
+  finished: readonly PayoutRecord[], ask: PaymentAsk, nowSeconds: bigint, registry: AssetRegistry = productAssets,
+): void {
+  const known = (asset: string | undefined): boolean =>
+    asset !== undefined && isAssetId(asset) && registry.find(asset) !== null;
   const agrees = (recorded: string | undefined, asked: string | undefined): boolean =>
-    recorded === undefined || asked === undefined || recorded === asked;
+    !(known(recorded) && known(asked)) || recorded === asked;
   const same = finished.find((r) => r.network === ask.network && r.vault === ask.vault && r.payTo === ask.payTo
     && r.amount === ask.amount.toString() && r.reference === ask.reference
     && agrees(r.asset, ask.asset)
@@ -290,13 +300,18 @@ export function assertNotAlreadyPaid(finished: readonly PayoutRecord[], ask: Pay
    * refusal gives is to change a payroll reference; it has to be honest about
    * what it is advising them round.
    */
-  const theAssetWasCompared = same.asset !== undefined && ask.asset !== undefined;
+  const theAssetWasCompared = known(same.asset) && known(ask.asset);
+  const whyNotCompared = same.asset === undefined || ask.asset === undefined
+    ? 'That record was written before the asset was kept with it, so which asset it settled in is not '
+      + 'recorded and has not been compared. '
+    : 'That record names its asset in a way this door no longer knows (written before assets were named '
+      + 'by their ledger token, or in a token a fresh mint has since replaced), so which asset it settled '
+      + 'in has not been compared. ';
   throw new Error(
     `this exact payment (the same address, amount${theAssetWasCompared ? ', asset' : ''} and reference `
     + `out of this vault) was already paid by a run recorded ${same.createdAt}, and nothing was proposed, `
     + `approved or paid by this run. `
-    + (theAssetWasCompared ? '' : 'That record was written before the asset was kept with it, so which '
-      + 'asset it settled in is not recorded and has not been compared. ')
+    + (theAssetWasCompared ? '' : whyNotCompared)
     + 'If it is meant to be paid a second time, give it a different reference.');
 }
 
@@ -393,7 +408,8 @@ export function assertRecordIsThisPayment(
    * every record that predates this.
    */
   if (record.asset !== undefined && ask.asset !== undefined && record.asset !== ask.asset) {
-    differs.push(`asset (recorded ${record.asset}, asked ${ask.asset})`);
+    const named = (asset: string): string => (isAssetId(asset) ? symbolOf(asset) : asset);
+    differs.push(`asset (recorded ${named(record.asset)}, asked ${named(ask.asset)})`);
   }
   if (record.token !== undefined && ask.token !== undefined && record.token !== ask.token) {
     differs.push('the ledger token this settles in, which is what the approved leaf commits to');
@@ -445,8 +461,20 @@ export function runOf(
   const month = new Date(Number(record.opensAt) * 1000).toISOString().slice(0, 7);
   if (record.asset === undefined) {
     throw new Error(
-      'this payment record was written before records kept their currency, so it cannot be finished. ' +
+      'this payment record was written before records kept their asset, so it cannot be finished. ' +
         'Nothing was proposed or paid. Once its payment window has closed, move it aside and run the door again.');
+  }
+  if (!isAssetId(record.asset)) {
+    /*
+     * A record written before assets were named by their ledger token names a
+     * word, and the run it was approved as committed to that word: rebuilt
+     * under the token it is another root, so it is refused rather than
+     * finished as a different payment.
+     */
+    throw new Error(
+      `this payment record names its asset as "${record.asset}", which is not a ledger token: it was written `
+        + 'before assets were named by their token, so it cannot be finished. Nothing was proposed or paid. '
+        + 'Once its payment window has closed, move it aside and run the door again.');
   }
   const run = buildRun(
     [{ epoch: 0, seed: record.seed }], { accountId, runId: record.runId, epoch: 0 }, [facts], detailsOf,
@@ -455,17 +483,30 @@ export function runOf(
   return { run, args: run.payeeArgs(0), opensAt: BigInt(record.opensAt), closesAt: BigInt(record.closesAt) };
 }
 
-/** What the vault is handed to make the payment. Every field from the run and the record. */
+/**
+ * The approvals a run raised by these doors asks for: none of its own, so the
+ * account's and the vault's thresholds decide. The proposal id is computed with
+ * it, and the run is proposed with it.
+ */
+export const RUN_REQUIRES = 0n;
+
+/**
+ * What the vault is handed to make the payment. Every field from the run, the
+ * record and the vault the run was raised for.
+ */
 export function vaultPaymentOf(
-  record: PayoutRecord, built: ReturnType<typeof runOf>, proposalId: Hex,
+  record: PayoutRecord, built: ReturnType<typeof runOf>, proposalId: Hex, runVault: Hex,
 ): VaultPayment {
   const { run, args, opensAt, closesAt } = built;
   return {
     proposal: proposalId,
+    runVault,
     root: run.tree.root,
     payees: run.tree.payees,
     opensAt,
     closesAt,
+    required: RUN_REQUIRES,
+    asset: run.tree.asset as Hex,
     salt: record.salt,
     payee: args.payee,
     token: args.token,

@@ -6,7 +6,7 @@ import { formatDate, formatNumber } from './intl.js';
 const BIG = 12_345_678_901_234_567_890_123n;
 const NNBSP = ' ';
 /** The figure of `units` of a token with `decimals`, written in `tag`. */
-const fmt = (units: bigint, decimals: number, tag: string) => formatTokenAmount(privateAmount(units, decimals, 'USDC'), tag);
+const fmt = (units: bigint, decimals: number, tag: string) => formatTokenAmount(privateAmount(units, decimals, 'tUSD'), tag);
 
 describe('a token amount is written out exactly, in the language', () => {
   /*
@@ -65,24 +65,33 @@ describe('a token amount is written out exactly, in the language', () => {
   it('refuses what is not an exact amount, from either maker', () => {
     for (const make of [publicAmount, privateAmount]) {
       // @ts-expect-error a token amount is a bigint, never a number
-      expect(() => make(1500000, 6, 'USDC')).toThrow(/bigint of the token's smallest unit, and this is a number/);
-      expect(() => make(-1n, 6, 'USDC')).toThrow(/never below zero/);
-      expect(() => make(1n, -1, 'USDC')).toThrow(/whole number from 0 up/);
-      expect(() => make(1n, 1.5, 'USDC')).toThrow(/whole number from 0 up/);
-      expect(() => make(1n, 2, '')).toThrow(/carries its token's code/);
+      expect(() => make(1500000, 6, 'tUSD')).toThrow(/bigint of the token's smallest unit, and this is a number/);
+      expect(() => make(-1n, 6, 'tUSD')).toThrow(/never below zero/);
+      expect(() => make(1n, -1, 'tUSD')).toThrow(/whole number from 0 up/);
+      expect(() => make(1n, 1.5, 'tUSD')).toThrow(/whole number from 0 up/);
+      expect(() => make(1n, 2, '')).toThrow(/carries its token's symbol/);
+    }
+  });
+
+  /* RED WHEN: either maker takes the token itself (64 hex characters) where its symbol goes, so a screen would print the token to a person. */
+  it('refuses the token itself where its symbol goes, from either maker', () => {
+    for (const make of [publicAmount, privateAmount]) {
+      expect(() => make(1n, 6, 'ab'.repeat(32))).toThrow(/this is the token itself, which no screen shows/);
+      expect(() => make(1n, 6, 'AB'.repeat(32))).toThrow(/this is the token itself/);
+      expect(make(1n, 6, 'NIGHT').symbol).toBe('NIGHT');
     }
   });
 });
 
 describe('a token amount is an object that becomes text only through the formatter', () => {
-  const a = privateAmount(12_345n, 2, 'USDC');
-  const p = publicAmount(12_345n, 2, 'USDC');
+  const a = privateAmount(12_345n, 2, 'tUSD');
+  const p = publicAmount(12_345n, 2, 'tUSD');
 
   /* RED WHEN: an amount is a primitive again, so React would write it as its digits; or a constructor can be called from outside. */
-  it('is an object, made only by its maker, whose code is readable and whose units are not', () => {
+  it('is an object, made only by its maker, whose symbol is readable and whose units are not', () => {
     for (const x of [a, p]) {
       expect(typeof x).toBe('object');
-      expect(x.code).toBe('USDC');
+      expect(x.symbol).toBe('tUSD');
       expect(Object.keys(x)).toEqual([]);
       expect(Object.getOwnPropertyNames(x)).toEqual([]);
       expect(Object.isFrozen(x)).toBe(true);
@@ -90,9 +99,9 @@ describe('a token amount is an object that becomes text only through the formatt
     expect(a).toBeInstanceOf(PrivateAmount);
     expect(p).toBeInstanceOf(PublicAmount);
     // @ts-expect-error the constructor is not how an amount is made
-    expect(() => new PrivateAmount(Symbol(), 1n, 0, 'USDC')).toThrow(/made by publicAmount or privateAmount, and by nothing else/);
+    expect(() => new PrivateAmount(Symbol(), 1n, 0, 'tUSD')).toThrow(/made by publicAmount or privateAmount, and by nothing else/);
     // @ts-expect-error nor this one
-    expect(() => new PublicAmount(Symbol(), 1n, 0, 'USDC')).toThrow(/made by publicAmount or privateAmount, and by nothing else/);
+    expect(() => new PublicAmount(Symbol(), 1n, 0, 'tUSD')).toThrow(/made by publicAmount or privateAmount, and by nothing else/);
   });
 
   /* RED WHEN: any way of turning an amount into text or a number, outside the formatter, writes its figure instead of refusing. */
@@ -113,7 +122,7 @@ describe('a token amount is an object that becomes text only through the formatt
     expect(formatTokenAmount(a, 'en')).toBe('123.45');
     expect(formatTokenAmount(p, 'en')).toBe('123.45');
     expect(() => formatTokenAmount(12_345n as unknown as TokenAmount, 'en')).toThrow(/made by publicAmount or privateAmount, and this is a value of type bigint/);
-    expect(() => formatTokenAmount({ code: 'USDC' } as unknown as TokenAmount, 'en')).toThrow(/made by publicAmount or privateAmount, and this is a value of type object/);
+    expect(() => formatTokenAmount({ symbol: 'tUSD' } as unknown as TokenAmount, 'en')).toThrow(/made by publicAmount or privateAmount, and this is a value of type object/);
   });
 });
 
@@ -123,7 +132,7 @@ describe('an amount carries whether anyone can look it up', () => {
     expect(visibilityOf(publicAmount(1n, 0, 'NIGHT'))).toBe('public');
     expect(visibilityOf(privateAmount(1n, 0, 'NIGHT'))).toBe('private');
     expect(() => visibilityOf(1n as unknown as TokenAmount)).toThrow(/made by publicAmount or privateAmount/);
-    expect(() => visibilityOf({ code: 'NIGHT' } as unknown as TokenAmount)).toThrow(/made by publicAmount or privateAmount/);
+    expect(() => visibilityOf({ symbol: 'NIGHT' } as unknown as TokenAmount)).toThrow(/made by publicAmount or privateAmount/);
   });
 
   /*
@@ -134,8 +143,8 @@ describe('an amount carries whether anyone can look it up', () => {
    * expectation instead.
    */
   it('is a different type for each, so one is never taken for the other', () => {
-    const a = privateAmount(1n, 0, 'USDC');
-    const p = publicAmount(1n, 0, 'USDC');
+    const a = privateAmount(1n, 0, 'tUSD');
+    const p = publicAmount(1n, 0, 'tUSD');
     const takesPrivate = (x: PrivateAmount) => visibilityOf(x);
     const takesPublic = (x: PublicAmount) => visibilityOf(x);
     // @ts-expect-error a public amount is not a private one

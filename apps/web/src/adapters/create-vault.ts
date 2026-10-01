@@ -1,9 +1,13 @@
 import type { SealedAccount } from '../../../../src/core/types.js';
 import { rosterVaultKeys } from '../../../../src/core/vault-keys.js';
 import { whyNotTheCommittee } from 'vaults-web-shared/handover-check.js';
-import { api, canOpenCompanies, openAccount, openKeysWithWallet, viewingKeyFor } from 'vaults-web-shared/keyring.js';
-import { createCompanyVault, VaultHandoverOwed, type VaultStage } from 'vaults-web-shared/vault-operation.js';
-import { browserTemporaryKeys, vaultServiceFor } from 'vaults-web-shared/vault-page-doors.js';
+import { api, canOpenCompanies, currentUser, openAccount, openKeysWithWallet, viewingKeyFor } from 'vaults-web-shared/keyring.js';
+import { createCompanyVault, VaultHandoverOwed, VaultStartOwed, type VaultStage } from 'vaults-web-shared/vault-operation.js';
+import {
+  browserTemporaryKeys, deviceRecordsFor, deviceSignerFrom, marked, rosterOf, vaultServiceFor,
+} from 'vaults-web-shared/vault-page-doors.js';
+import { recordsKeypairFrom } from '../../../../src/midnight/company-nonce-secret.js';
+import { fromHex, type Hex } from '../../../../src/core/crypto.js';
 import type { VaultService } from 'vaults-web-shared/vault-operation.js';
 import { Fault, FAULT } from '../faults.js';
 import { companyRoute } from './handover-state.js';
@@ -15,29 +19,41 @@ import { theVaultBuilder } from './vault-builder.js';
 import { handoverOwed, readVaultRows } from './vault-rows.js';
 
 /*
- * CREATING A COMPANY'S VAULT, OVER THE SAME SHARED OPERATION
- * `src/web-legacy/VaultPanel.tsx` RUNS, IN ITS ORDER.
+ * CREATING A COMPANY'S VAULT, OVER THE SHARED OPERATION, IN ITS ORDER.
  *
  * `createCompanyVault` is where the order lives: the committee is checked,
  * the vault is built and proved on this device with a key made here, that key
  * is kept in this browser before anything is sent, the vault is sent, and it
  * is handed to the company's committee as soon as the chain has it. The
- * operation ends only when the chain says the committee holds the vault. This
- * file brings it the keys this person's account gives for the company, the
- * company's vault routes checked against the roster this device opens, the
- * part of the page that builds vault transactions, and this browser's store
- * for the temporary key; and it turns the answer into a fixed state or
- * reason. It keeps nothing, and decides nothing the operation does not.
+ * operation then starts the vault - adopted by the company's account, its pool
+ * and nonce secret filed and read back, its first secret set, every signer's
+ * sealed copy written - and ends only when the chain shows it started, or
+ * names the proposal that waits for other signers' approvals. This file brings it
+ * the keys this person's account gives for the company, this signer's own
+ * three and records, the company's vault routes checked against the roster
+ * this device opens, the part of the page that builds vault transactions, and
+ * this browser's store for the temporary key; and it turns the answer into a
+ * fixed state or reason. It keeps nothing, and decides nothing the operation
+ * does not.
  *
- * A VAULT SENT AND NOT YET HANDED OVER IS SAID AS THAT, WITH ITS ADDRESS. The
- * service takes no money into it until the chain says the committee holds
- * it, and `finishHandingOver` picks the operation up where it stopped.
+ * A VAULT SENT AND NOT YET HANDED OVER, OR HANDED OVER AND NOT YET STARTED, IS
+ * SAID AS THAT, WITH ITS ADDRESS. The vault takes no money until it is started,
+ * and `finishHandingOver` picks the operation up where it stopped.
  */
 
-/** Where creating a vault has got to, as the operation reports it, each said on the screen in its own words. */
+/**
+ * Where creating a vault has got to, as the operation reports it, each said on
+ * the screen in its own words: the vault built, sent and handed over, then
+ * started, which is the company's account adopting it, its private records
+ * opened and read back, its secret set and a sealed copy written for each
+ * signer, waiting for other signers' approvals wherever a round needs them.
+ */
 export const CREATING = {
   checking: 'checking', building: 'building', sending: 'sending', waitingForChain: 'waiting-for-chain',
-  handingOver: 'handing-over', waitingForHandover: 'waiting-for-handover', done: 'done',
+  handingOver: 'handing-over', waitingForHandover: 'waiting-for-handover',
+  adopting: 'adopting', openingThePool: 'opening-the-pool', readingTheSecretBack: 'reading-the-secret-back',
+  settingTheSecret: 'setting-the-secret', writingTheCopies: 'writing-the-copies', waitingForApprovals: 'waiting-for-approvals',
+  done: 'done',
 } as const;
 export type Creating = (typeof CREATING)[keyof typeof CREATING];
 
@@ -49,14 +65,27 @@ const STAGE: Partial<Record<VaultStage, Creating>> = {
   'waiting for the chain': CREATING.waitingForChain,
   'handing the vault to the committee': CREATING.handingOver,
   'waiting for the handover': CREATING.waitingForHandover,
+  'adopting the vault': CREATING.adopting,
+  'opening the pool': CREATING.openingThePool,
+  'reading the secret back': CREATING.readingTheSecretBack,
+  'setting the secret': CREATING.settingTheSecret,
+  'writing the sealed copies': CREATING.writingTheCopies,
+  'waiting for approvals': CREATING.waitingForApprovals,
   done: CREATING.done,
 };
 
-/** What creating a vault, or finishing handing one over, came to. */
+/** What creating a vault, or finishing handing one over, came to. `done` is a vault started. */
 export type VaultCreated =
   | { of: typeof ACTED.done; vault: string }
   | { of: typeof OWED.here | typeof OWED.elsewhere | typeof OWED.rosterDisagrees; vault: string }
+  /** Handed to the committee and not started: creating it again carries on. */
+  | { of: typeof STARTING.owed; vault: string }
+  /** One round of its start waits for other signers' approvals: which, and how many it has and needs. */
+  | { of: typeof STARTING.awaiting; vault: string; round: 'adoption' | 'first-secret'; approvals: number; needed: number }
   | { of: typeof ACTED.refused; why: ActRefusal };
+
+/** A vault handed to the committee whose start is not finished, or waits on other signers. */
+export const STARTING = { owed: 'start-owed', awaiting: 'awaiting-approvals' } as const;
 
 /**
  * A VAULT SENT AND NOT YET HELD BY THE COMMITTEE: this app puts no money into
@@ -87,7 +116,23 @@ export type Ready = (typeof READY)[keyof typeof READY];
 export type Readiness = { of: Ready } | { of: typeof ACTED.refused; why: ActRefusal };
 
 /** The service's addresses and the words of its answers, compared and never shown. */
-const SERVICE = { vaultKeys: '/vault-keys', authority: '/authority', vaults: '/vaults', slash: '/', chain: '/chain' } as const;
+const SERVICE = {
+  vaultKeys: '/vault-keys', authority: '/authority', vaults: '/vaults', slash: '/', chain: '/chain',
+  startAccount: '/start/account', startSecret: '/start/secret', startCopy: '/start/copy', post: 'POST',
+} as const;
+
+/** The company's routes a vault's start is sent through, beside the vault routes the page already calls. */
+const withTheStart = (companyId: string, service: VaultService): VaultService => {
+  const at = (vault: string, route: string) => companyRoute(companyId, SERVICE.vaults + SERVICE.slash + vault + route);
+  /* A refusal keeps the service's own mark of whether anything was sent, as the page's other vault routes do. */
+  const post = (path: string, body: unknown) => marked(() => api(path, { method: SERVICE.post, body: JSON.stringify(body) }));
+  return {
+    ...service,
+    startAccountCall: (vault, body) => post(at(vault, SERVICE.startAccount), body),
+    startSecret: (vault, tx) => post(at(vault, SERVICE.startSecret), { tx }),
+    startCopy: (vault, tx, place) => post(at(vault, SERVICE.startCopy), { tx, place }),
+  };
+};
 
 type Opened = { sealed: SealedAccount; keys: NonNullable<Awaited<ReturnType<typeof keysOnTheWayIn>>>; roster: () => Promise<NonNullable<ReturnType<typeof openAccount>>> };
 
@@ -169,13 +214,24 @@ async function run(personId: string, companyId: string, onStage: (stage: Creatin
     const o = await opened(personId, companyId, true);
     if (typeof o === 'string') return { of: ACTED.refused, why: o === LOCKED ? ACT_REFUSAL.didNotFinish : o };
     const released = await giveTheVaultKeys(companyId, o.keys, viewingKeyFor(o.sealed));
-    service = vaultServiceFor(api, companyId, o.roster);
+    service = withTheStart(companyId, vaultServiceFor(api, companyId, o.roster));
+    /* This signer's own pool, journals and records, over the records route, believing only the signers on the roster opened here. */
+    const roster = rosterOf(await o.roster());
     const done = await createCompanyVault({
       ...pacing(onStage), account: released.account, service,
       builder: await theVaultBuilder(), keys: browserTemporaryKeys(),
+      me: deviceSignerFrom({ signerId: o.keys.signerId, wrappingSecret: o.keys.wrappingSecret }, released.companyKey),
+      myRecordsKey: recordsKeypairFrom(fromHex(released.companyKey)).publicKey as Hex,
+      signers: roster.signers,
+      records: deviceRecordsFor(o.keys.signingSecret, roster.filers, () => currentUser()?.id ?? null),
+      material: { signingSecret: o.keys.signingSecret, blinding: o.keys.blinding, scope: (o.keys as { scope?: Hex }).scope },
     }, resume as Parameters<typeof createCompanyVault>[1]);
+    if (done.state === 'awaiting-approvals') {
+      return { of: STARTING.awaiting, vault: done.vault, ...done.awaiting };
+    }
     return { of: ACTED.done, vault: done.vault };
   } catch (e) {
+    if (e instanceof VaultStartOwed) return { of: STARTING.owed, vault: e.vault };
     if (e instanceof VaultHandoverOwed) {
       if (service !== null && await rosterRefusedItsCommittee(companyId, e.vault, service)) return { of: OWED.rosterDisagrees, vault: e.vault };
       /* Only the key it was created with can hand it over, and it is kept only in the browser that created it. */

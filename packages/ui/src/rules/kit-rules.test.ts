@@ -18,7 +18,7 @@ const read = (p: string): Source => ({ path: p, text: readFileSync(ROOT + p, 'ut
 const CODE = filesUnder(ROOT, 'packages/ui/src', isShippingCode).map(read);
 const STYLES = read('packages/ui/src/styles.css');
 const ENGLISH = JSON.parse(readFileSync(ROOT + 'apps/web/src/locales/en.json', 'utf8')) as Record<string, string>;
-const ASSET_CODES = new Set(SEED_ASSETS.map((a) => a.code));
+const ASSET_CODES = new Set(SEED_ASSETS.map((a) => a.symbol));
 
 describe('the kit is read', () => {
   /* RED WHEN: the walk reads nothing, so every rule below passes over an empty list. */

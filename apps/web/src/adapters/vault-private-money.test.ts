@@ -57,13 +57,15 @@ vi.mock('./vault-builder.js', () => ({
 }));
 
 const commitmentOf = (nonce: string) => `h${VAULT.slice(0, 2)}${nonce.slice(2)}`;
-const asset = (code: string, decimals: number, shielded: string | null): Asset => ({
-  code, name: code, kind: 'token', decimals, chain: 'midnight', ledger: { shielded, unshielded: null }, enabled: true, sortOrder: code.length,
-} as unknown as Asset);
+/** A row for a token: private where `shielded` is given (its token), else a public-only token named by `publicToken`. */
+const asset = (symbol: string, decimals: number, shielded: string | null, publicToken = '00'.repeat(32)): Asset => ({
+  code: shielded ?? publicToken, symbol, name: symbol, decimals,
+  ledger: { shielded, unshielded: shielded === null ? publicToken : null }, enabled: true, sortOrder: symbol.length,
+});
 const registryOf = (list: Asset[]): AssetRegistry => ({
   all: () => list, enabled: () => list, find: (c) => list.find((a) => a.code === c) ?? null, require: (c) => list.find((a) => a.code === c)!,
 });
-const REGISTRY = registryOf([asset('TDUST', 6, TOKEN), asset('OTHER', 2, OTHER_TOKEN), asset('GBP', 2, null)]);
+const REGISTRY = registryOf([asset('TDUST', 6, TOKEN), asset('OTHER', 2, OTHER_TOKEN), asset('NIGHT', 6, null)]);
 
 /** The service's records route: a filing is kept as it arrived, and the newest is handed back. */
 const stubRecords = () => vi.stubGlobal('fetch', async (path: string, init: { method: string; body?: string }) => {
@@ -105,16 +107,16 @@ beforeEach(() => {
 afterEach(() => { vi.unstubAllGlobals(); });
 
 describe('a vault\'s private money, read on this device', () => {
-  /* RED WHEN: the notes of one token are not summed, a note of another token is counted, an amount is made with another asset's decimals or code, is not private, the amounts are not in the registry's order, or a currency it holds none of is listed. */
+  /* RED WHEN: the notes of one token are not summed, a note of another token is counted, an amount is made with another asset's decimals or symbol, or with the token where its symbol goes, is not private, the amounts are not in the registry's order, or a currency it holds none of is listed. */
   it('sums the notes of each private token, as private amounts of that asset, and lists only what it holds', async () => {
     await filePool(NOTES);
     const { readVaultPrivateMoney } = await load();
     /* The kit's own module as the adapter reached it, after the reset. */
     const { formatTokenAmount, visibilityOf } = await import('vaults-ui/format/token-amount');
     const answer = await readVaultPrivateMoney('u1', 'c1', VAULT, REGISTRY);
-    expect(answer?.amounts.map((a) => [a.code, visibilityOf(a), formatTokenAmount(a, 'en')])).toEqual([['TDUST', 'private', '1.5'], ['OTHER', 'private', '123.45']]);
-    const without = await readVaultPrivateMoney('u1', 'c1', VAULT, registryOf([asset('TDUST', 6, TOKEN), asset('GBP', 2, null), asset('NONE', 2, 'c8'.repeat(32))]));
-    expect(without?.amounts.map((a) => a.code)).toEqual(['TDUST']);
+    expect(answer?.amounts.map((a) => [a.symbol, visibilityOf(a), formatTokenAmount(a, 'en')])).toEqual([['TDUST', 'private', '1.5'], ['OTHER', 'private', '123.45']]);
+    const without = await readVaultPrivateMoney('u1', 'c1', VAULT, registryOf([asset('TDUST', 6, TOKEN), asset('NIGHT', 6, null), asset('NONE', 2, 'c8'.repeat(32))]));
+    expect(without?.amounts.map((a) => a.symbol)).toEqual(['TDUST']);
   });
 
   /* RED WHEN: the chain is not asked for the vault named, through the company's own vault route. */

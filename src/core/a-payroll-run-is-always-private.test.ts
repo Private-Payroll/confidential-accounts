@@ -11,7 +11,7 @@ import { PayrollService, RecordingInviteDelivery } from './payroll.js';
 import { sealHandover } from './invite-handover.js';
 import { openRecord, sealRecord } from './sealed-records.js';
 import { newWrappingKeypair, toHex, fromHex, type Hex } from './crypto.js';
-import { assets, privateForm } from './assets.js';
+import { assets, NO_ASSET, privateForm, symbolOf } from './assets.js';
 import {
   entryKindOf, payrollPayee, privacyOf, transferFacts, transferOf,
 } from './movement.js';
@@ -26,6 +26,8 @@ import type { PayoutSeed, RunIdentity } from '../midnight/run-keys.js';
 import type { User } from './types.js';
 import { payFor } from '../testing/payees.js';
 
+import { TEST_TOKEN } from '../testing/assets.js';
+import { TEST_SETTLEMENT_ASSET, NIGHT } from './assets.js';
 /**
  * **A PERSON CAN BE RECORDED AS A PUBLIC PAYEE, AND A PAYROLL RUN PAYS THEM
  * PUBLICLY.**
@@ -116,7 +118,7 @@ describe('the door, the refusal, and the record', () => {
 
     const { sentTo } = h.payroll.invite(account.id, {
       name: 'Bright Supplies', email: 'pay@bright.example', title: 'Vendor',
-      asset: 'NIGHT', baseAmount: 1_000_000n,
+      asset: NIGHT, baseAmount: 1_000_000n,
     }, viewingKey, 'usr_operator');
     const token = h.invites.tokenFor(sentTo!);
 
@@ -160,7 +162,7 @@ describe('the door, the refusal, and the record', () => {
     const own = unshieldedPayeeFor('d4'.repeat(32), NETWORK);
     const entry = h.payroll.addSelfAsPayee(account.id, me, {
       name: 'Acme operating account', email: null, title: 'Company',
-      asset: 'NIGHT', baseAmount: 1n,
+      asset: NIGHT, baseAmount: 1n,
     }, viewingKey, { wrappingPublicKey: newWrappingKeypair().publicKey, address: own });
 
     expect(entry.status).toBe('active');
@@ -180,7 +182,7 @@ describe('the door, the refusal, and the record', () => {
     });
     const entry = h.payroll.addSelfAsPayee(account.id, me, {
       name: 'Robin', email: null, title: 'Contractor',
-      asset: 'NIGHT', baseAmount: 500_000n,
+      asset: NIGHT, baseAmount: 500_000n,
     }, viewingKey, {
       wrappingPublicKey: newWrappingKeypair().publicKey,
       address: unshieldedPayeeFor('e5'.repeat(32), NETWORK),
@@ -209,7 +211,7 @@ describe('the door, the refusal, and the record', () => {
      */
     const { account, viewingKey } = await company();
     const a = h.payroll.hireDirect(account.id, {
-      name: 'Dana', email: 'd@a.co', title: 'Eng', asset: 'GBP', baseAmount: 100_00n,
+      name: 'Dana', email: 'd@a.co', title: 'Eng', asset: TEST_TOKEN, baseAmount: 100_00n,
     }, viewingKey);
     const { run } = await h.payroll.createRunFromRoster(account.id, '2026-08', viewingKey);
 
@@ -222,10 +224,28 @@ describe('the door, the refusal, and the record', () => {
       .toThrow(/Dana's address on the roster has changed since this run was drawn/);
   });
 
+  it('§2 AND ON A RUN THAT KEPT NO ADDRESS, A PAYEE WHOSE ADDRESS IS NOW OF THE OTHER KIND IS REFUSED IN PLAIN WORDS', async () => {
+    /* A run drawn before its people's addresses were kept beside them: only the form is left to compare. */
+    const { account, viewingKey } = await company();
+    const a = h.payroll.hireDirect(account.id, {
+      name: 'Dana', email: 'd@a.co', title: 'Eng', asset: TEST_TOKEN, baseAmount: 100_00n,
+    }, viewingKey);
+    const { run } = await h.payroll.createRunFromRoster(account.id, '2026-08', viewingKey);
+    (h.payroll as any).putRun({ ...run, employees: run.employees.map(e => ({ ...e, paidTo: undefined })) }, viewingKey);
+    const person = h.payroll.person(a.employee.id, viewingKey)!;
+    (h.payroll as any).putPerson(
+      { ...person, address: unshieldedPayeeFor('f6'.repeat(32), NETWORK) }, viewingKey);
+
+    /* RED WHEN the refusal stops saying, in the app's words, what changed, that nothing was sent or spent, and what to do (ruled copy fix, 1 Oct). */
+    expect(() => h.payroll.paymentFactsFor(run.id, viewingKey)).toThrow(new RegExp('^Dana is on this run to be paid privately, '
+      + 'but their payment address is now a public one\\. Nothing was sent for approval and no fee was spent\\. '
+      + 'Create the run again so Dana is paid the way their address allows\\.$'));
+  });
+
   it('§2 A PRIVATE PAYEE PASSES THROUGH UNCHANGED', async () => {
     const { account, viewingKey } = await company();
     h.payroll.hireDirect(account.id, {
-      name: 'Dana', email: 'd@a.co', title: 'Eng', asset: 'GBP', baseAmount: 100_00n,
+      name: 'Dana', email: 'd@a.co', title: 'Eng', asset: TEST_TOKEN, baseAmount: 100_00n,
     }, viewingKey);
     const { run } = await h.payroll.createRunFromRoster(account.id, '2026-08', viewingKey);
     const facts = h.payroll.paymentFactsFor(run.id, viewingKey);
@@ -267,7 +287,7 @@ describe('the door, the refusal, and the record', () => {
   const publicTransfer = () => transferOf({
     accountId: 'acct_1',
     payee: unshieldedPayeeFor('c3'.repeat(32), NETWORK),
-    asset: 'NIGHT',
+    asset: NIGHT,
     amount: 250_000n,
     privacy: 'public',
     reference: 'Bright Supplies, August',
@@ -295,7 +315,7 @@ describe('the door, the refusal, and the record', () => {
   it('§3 A TRANSFER NEVER APPEARS IN PAYROLL HISTORY', async () => {
     const { account, viewingKey } = await company();
     h.payroll.hireDirect(account.id, {
-      name: 'Dana', email: 'd@a.co', title: 'Eng', asset: 'GBP', baseAmount: 100_00n,
+      name: 'Dana', email: 'd@a.co', title: 'Eng', asset: TEST_TOKEN, baseAmount: 100_00n,
     }, viewingKey);
     await h.payroll.createRunFromRoster(account.id, '2026-08', viewingKey);
     publicTransfer();
@@ -317,7 +337,7 @@ describe('the door, the refusal, and the record', () => {
     expect(() => transferOf({
       accountId: 'acct_1',
       payee: unshieldedPayeeFor('c3'.repeat(32), NETWORK),
-      asset: 'NIGHT', amount: 1n, privacy: 'private',
+      asset: NIGHT, amount: 1n, privacy: 'private',
       reference: 'r', createdBy: 'usr_founder', employees: [],
     })).toThrow(/set to private and the address is a public one/);
   });
@@ -332,9 +352,9 @@ describe('the door, the refusal, and the record', () => {
     expect(() => transferOf({
       accountId: 'acct_1',
       payee: payeeFor('a1'.repeat(32), NETWORK),
-      asset: 'NIGHT', amount: 1n, privacy: 'private',
+      asset: NIGHT, amount: 1n, privacy: 'private',
       reference: 'r', createdBy: 'usr_founder', employees: [],
-    })).toThrow(/NIGHT can only be sent publicly today/);
+    })).toThrow(/NIGHT can only be paid publicly\. Anyone can read the recipient's address and the amount\./);
   });
 
   it('§3 WHETHER AN ASSET HAS A PRIVATE FORM IS A FUNCTION, AND IT ANSWERS FOR EVERY ASSET', () => {
@@ -349,9 +369,11 @@ describe('the door, the refusal, and the record', () => {
     for (const asset of assets.all()) {
       const form = privateForm(asset);
       /* RED WHEN the answer stops following the row it is read off. */
-      expect(form.of, asset.code).toBe(asset.ledger.shielded === null ? 'not-yet' : 'available');
+      expect(form.of, asset.symbol).toBe(asset.ledger.shielded === null ? 'not-yet' : 'available');
       if (form.of === 'not-yet') {
-        expect(form.why).toContain(asset.code);
+        /* RED WHEN the reason names the token by its hex rather than the symbol a person reads. */
+        expect(form.why).toContain(asset.symbol);
+        expect(form.why).not.toContain(asset.code);
         expect(form.why).not.toContain('—');
         expect(form.why).not.toMatch(/shielded|unshielded|token|wrap/i);
       }
@@ -362,7 +384,7 @@ describe('the door, the refusal, and the record', () => {
      * payment the settlement cannot make - the thing the privacy rule is about.
      */
     expect(assets.all().filter(a => privateForm(a).of === 'available').map(a => a.code))
-      .toEqual(['TESTUSD']);
+      .toEqual([TEST_SETTLEMENT_ASSET]);
     /*
      * **AND THE ANSWER IS THE ROW'S, NOT A NAME'S.** Every asset above has the
      * same answer whether it is read off the row or off a list naming the one
@@ -377,11 +399,10 @@ describe('the door, the refusal, and the record', () => {
       expect(privateForm(gained).of, `${asset.code} with a private token`).toBe('available');
       expect(privateForm(lost).of, `${asset.code} without one`).toBe('not-yet');
     }
-    expect(privateForm(assets.require('NIGHT'))).toEqual({
+    expect(privateForm(assets.require(NIGHT))).toEqual({
       of: 'not-yet',
-      why: "NIGHT can only be sent publicly today, which puts the recipient's address and "
-        + 'the amount on a record anyone can read. There is no private form of NIGHT yet. '
-        + 'This choice turns on when there is.',
+      /* RED WHEN the reason beside a public-only token stops saying, in plain words, that anyone can read who is paid and how much (ruled copy fix, 1 Oct). */
+      why: "NIGHT can only be paid publicly. Anyone can read the recipient's address and the amount.",
     });
     /* **AND IT SAYS WHAT THE AVAILABLE SIDE COSTS.** A reason that only says
      * private is coming leaves a customer reading public as the ordinary
@@ -393,6 +414,8 @@ describe('the door, the refusal, and the record', () => {
         expect(form.why).not.toMatch(/being built|will open later|coming soon/i);
       }
     }
+    /* RED WHEN a token the registry does not know, or the marker that is no token, is named to a person in other words than the app's own (ruled copy fix, 1 Oct). */
+    expect([symbolOf(NO_ASSET), symbolOf('ef'.repeat(32)), symbolOf(NIGHT)]).toEqual(['a token this app does not know', 'a token this app does not know', 'NIGHT']);
   });
 
   it('§3 A PUBLIC TRANSFER TO SOMEBODY ON THE ROSTER IS REFUSED, WHICH IS THE OTHER HALF OF THE RULE', () => {
@@ -407,7 +430,7 @@ describe('the door, the refusal, and the record', () => {
      */
     const employee = unshieldedPayeeFor('c3'.repeat(32), NETWORK);
     expect(() => transferOf({
-      accountId: 'acct_1', payee: employee, asset: 'NIGHT', amount: 1n,
+      accountId: 'acct_1', payee: employee, asset: NIGHT, amount: 1n,
       privacy: 'public', reference: 'August bonus', createdBy: 'usr_founder',
       employees: [employee],
     })).toThrow(/^this address is on the payroll roster\. Pay them through payroll instead\.$/);
@@ -416,7 +439,7 @@ describe('the door, the refusal, and the record', () => {
      * because that is the company's own money going where it chose. */
     expect(transferOf({
       accountId: 'acct_1', payee: unshieldedPayeeFor('99'.repeat(32), NETWORK),
-      asset: 'NIGHT', amount: 1n, privacy: 'public', reference: 'Vendor',
+      asset: NIGHT, amount: 1n, privacy: 'public', reference: 'Vendor',
       createdBy: 'usr_founder', employees: [employee],
     }).privacy).toBe('public');
   });
@@ -438,7 +461,7 @@ describe('the door, the refusal, and the record', () => {
      */
     const made = transferOf({
       accountId: 'acct_1', payee: unshieldedPayeeFor('99'.repeat(32), NETWORK),
-      asset: 'NIGHT', amount: 1n, privacy: 'public', reference: 'Vendor',
+      asset: NIGHT, amount: 1n, privacy: 'public', reference: 'Vendor',
       createdBy: 'usr_founder', employees: [],
       // @ts-expect-error a transfer cannot be minted already naming an approval round
       proposalId: 'prop_someone_elses',
@@ -466,7 +489,7 @@ describe('the door, the refusal, and the record', () => {
      */
     const { account, viewingKey } = await company();
     const a = h.payroll.hireDirect(account.id, {
-      name: 'Dana', email: 'd@a.co', title: 'Eng', asset: 'GBP', baseAmount: 100_00n,
+      name: 'Dana', email: 'd@a.co', title: 'Eng', asset: TEST_TOKEN, baseAmount: 100_00n,
     }, viewingKey);
 
     const raw = h.store.getEmployee(a.employee.id)!;
@@ -540,7 +563,7 @@ describe('the door, the refusal, and the record', () => {
 
     const { sentTo } = h.payroll.invite(account.id, {
       name: 'Bright Supplies', email: 'pay@bright.example', title: 'Vendor',
-      asset: 'NIGHT', baseAmount: 1_000_000n,
+      asset: NIGHT, baseAmount: 1_000_000n,
     }, viewingKey, 'usr_operator');
     const token = h.invites.tokenFor(sentTo!);
     h.payroll.acceptInvite(
@@ -564,7 +587,7 @@ describe('the door, the refusal, and the record', () => {
 
     const { sentTo } = h.payroll.invite(account.id, {
       name: 'Bright Supplies', email: 'pay@bright.example', title: 'Vendor',
-      asset: 'NIGHT', baseAmount: 1_000_000n,
+      asset: NIGHT, baseAmount: 1_000_000n,
     }, viewingKey, 'usr_operator');
     const token = h.invites.tokenFor(sentTo!);
     h.payroll.acceptInvite(
@@ -609,12 +632,12 @@ describe('the door, the refusal, and the record', () => {
 
     h.payroll.addSelfAsPayee(account.id, me, {
       name: 'The Founder', email: null, title: 'Founder',
-      asset: 'GBP', baseAmount: 5_000_00n,
+      asset: TEST_TOKEN, baseAmount: 5_000_00n,
     }, viewingKey, { wrappingPublicKey, address: payeeFor('a1'.repeat(32), NETWORK) });
 
     expect(() => h.payroll.addSelfAsPayee(account.id, me, {
       name: 'Acme operating account', email: null, title: 'Company',
-      asset: 'NIGHT', baseAmount: 1n,
+      asset: NIGHT, baseAmount: 1n,
     }, viewingKey, {
       wrappingPublicKey, address: unshieldedPayeeFor('d4'.repeat(32), NETWORK),
     })).toThrow(/is already payable on this account/);
@@ -638,7 +661,7 @@ describe('the door, the refusal, and the record', () => {
      */
     const { account, viewingKey } = await company();
     const a = h.payroll.hireDirect(account.id, {
-      name: 'Dana', email: 'd@a.co', title: 'Eng', asset: 'GBP', baseAmount: 100_00n,
+      name: 'Dana', email: 'd@a.co', title: 'Eng', asset: TEST_TOKEN, baseAmount: 100_00n,
     }, viewingKey);
     const before = h.payroll.person(a.employee.id, viewingKey)!.address!.bech32;
 
@@ -670,13 +693,13 @@ describe('the door, the refusal, and the record', () => {
     const vendor = unshieldedPayeeFor(bytes, NETWORK);
     const facts: PaymentFacts[] = [{
       payee: vendor,
-      token: '00'.repeat(32),
+      token: NIGHT,
       amount: 250_000n,
     }];
     const seeds: PayoutSeed[] = [{ epoch: 0, seed: '77'.repeat(32) }];
     const identity: RunIdentity = { accountId: 'acct_1', runId: 'run_s12', epoch: 0 };
 
-    const run = buildRun(seeds, identity, facts, vaultDetails, payFor(facts), 'GBP');
+    const run = buildRun(seeds, identity, facts, vaultDetails, payFor(facts), NIGHT);
     const args = run.payeeArgs(0);
 
     expect(recipientOf(args.payee)).toBe(bytes);
@@ -698,7 +721,7 @@ describe('the door, the refusal, and the record', () => {
     const own = unshieldedPayeeFor('d4'.repeat(32), NETWORK);
     const entry = h.payroll.addSelfAsPayee(account.id, me, {
       name: 'Acme operating account', email: null, title: 'Company',
-      asset: 'NIGHT', baseAmount: 1n,
+      asset: NIGHT, baseAmount: 1n,
     }, viewingKey, { wrappingPublicKey: newWrappingKeypair().publicKey, address: own });
 
     const stored = h.payroll.person(entry.id, viewingKey)!.address!;
@@ -721,7 +744,7 @@ describe('the door, the refusal, and the record', () => {
     const run = buildRun(
       [{ epoch: 0, seed: '77'.repeat(32) }],
       { accountId: t.accountId, runId: t.id, epoch: 0 },
-      [facts], vaultDetails, payFor([facts]), 'GBP');
+      [facts], vaultDetails, payFor([facts]), t.asset);
     expect(run.facts).toHaveLength(1);
     expect(run.payeeArgs(0).payee.kind).toBe('unshielded');
   });

@@ -16,6 +16,13 @@
  * in `contracts/fixtures/a-vault-on-stagenet/state.json`, with `Buffer` taken
  * away for the length of the ask. Only the prover is stood in: it is reached
  * only once the circuit has run.
+ *
+ * That vault is of the old shape, five fields and no secret, and this build's
+ * vault takes no money until its account has approved a secret. So its state
+ * is carried into this build's fourteen fields as an approved secret run and
+ * its written sealed copies would leave it: its own account, notes, public
+ * tokens and count, a secret's commitment, the mark the last copy leaves, and
+ * this build's empty fields otherwise.
  */
 import { describe, it, expect } from 'vitest';
 import { createRequire } from 'node:module';
@@ -31,7 +38,29 @@ import onStagenet from '../../../contracts/fixtures/a-vault-on-stagenet/state.js
 const NET = onStagenet.network;
 const VAULT = onStagenet.vault;
 const COIN = { nonce: '3a'.repeat(31) + '07', token: '1d'.repeat(32), value: '5100000' };
-const { state, parameters } = onStagenet;
+const { parameters } = onStagenet;
+
+/** The stagenet vault's state in this build's shape, started: what the deposit circuit reads. */
+const startedState = async (): Promise<string> => {
+  const Rt = runtime as any;
+  const onChain = Rt.ContractState.deserialize(Buffer.from(onStagenet.state, 'base64'));
+  const theirs = onChain.data.state.asArray();
+  const nothingCallsThese = new Proxy({}, { get: () => () => { throw new Error('a constructor calls no witness'); } });
+  const built = await new (vaultModule as any).Contract(nothingCallsThese).initialState(
+    { initialPrivateState: {}, initialZswapLocalState: { coinPublicKey: new Uint8Array(32) } }, { bytes: new Uint8Array(32) });
+  const ours = built.currentContractState.data.state.asArray();
+  const commitment = Rt.StateValue.newCell({ value: [new Uint8Array(32).fill(0x51)], alignment: ours[5].asCell().alignment });
+  let fields = Rt.StateValue.newArray();
+  const bytes32 = new Rt.CompactTypeBytes(32);
+  const aligned = (b: Uint8Array) => ({ value: bytes32.toValue(b), alignment: bytes32.alignment() });
+  /* And the mark the last sealed copy leaves, without which the vault still takes no money. */
+  const written = Rt.StateValue.newMap(ours[7].asMap().insert(
+    aligned((vaultModule as any).pureCircuits.copiesWrittenKey()), Rt.StateValue.newCell(aligned(new Uint8Array(32).fill(0x51)))));
+  for (let i = 0; i < ours.length; i++) fields = fields.arrayPush(i < 4 ? theirs[i] : i === 5 ? commitment : i === 7 ? written : ours[i]);
+  onChain.data = new Rt.ChargedState(fields);
+  return Buffer.from(onChain.serialize()).toString('base64');
+};
+const state = await startedState();
 const proved: Array<string | undefined> = [];
 
 const deps = (): WorkerDeps => ({
@@ -40,7 +69,7 @@ const deps = (): WorkerDeps => ({
   runtimeState: (runtime as any).ContractState,
   contracts: contracts as any,
   compiled: CompiledContract.make('Vault', (vaultModule as any).Contract).pipe(
-    CompiledContract.withWitnesses({ noteToSpend: () => { throw new Error('a deposit spends no note'); } } as never)),
+    CompiledContract.withWitnesses({ noteToSpend: () => { throw new Error('a deposit spends no note'); }, nonceSecret: () => { throw new Error('a deposit spends no note'); } } as never)),
   zkConfig: new NodeZkConfigProvider(new URL('../../../contracts/managed-vault', import.meta.url).pathname),
   prove: async (_unproven: unknown, circuit?: string) => { proved.push(circuit); return { serialize: () => new Uint8Array([7]) }; },
 } as unknown as WorkerDeps);

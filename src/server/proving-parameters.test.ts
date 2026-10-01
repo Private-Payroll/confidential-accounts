@@ -62,7 +62,7 @@ describe('THE SIZE EACH SERVED CIRCUIT NEEDS IS READ FROM THE CIRCUIT', () => {
     const labels = circuits.map((c) => c.label);
     expect(labels).toContain('deposit (vault)');
     expect(labels).toContain('depositUnshielded (vault)');
-    expect(labels).toContain('recordPayment (company account)');
+    expect(labels).toContain('recordPaymentFromVault (company account)');
     expect(labels).toContain('shielded output (network)');
     const sizes: Record<string, number> = { deposit: 15, depositUnshielded: 9, output: 14 };
     for (const c of circuits) {

@@ -4,7 +4,7 @@ import { AMOUNT_KINDS, PublicPill, type AmountKind } from 'vaults-ui/components/
 import { Skeleton } from 'vaults-ui/components/skeleton';
 
 export interface AmountProps {
-  /** The amount, made by `publicAmount` or `privateAmount`: its units, its token's decimals and code, and whether anyone can look it up. */
+  /** The amount, made by `publicAmount` or `privateAmount`: its units, its token's decimals and symbol, and whether anyone can look it up. */
   value: TokenAmount;
   /** Whether it is a payment made, a payment to be made or a balance, which says what the Public pill explains. Required on every amount, private ones too. */
   kind: AmountKind;
@@ -19,21 +19,21 @@ function checkedKind(kind: AmountKind): AmountKind {
 }
 
 /**
- * THE FIGURE AND THE CODE, WITHOUT THE PILL, for the balance, which puts the
+ * THE FIGURE AND THE SYMBOL, WITHOUT THE PILL, for the balance, which puts the
  * pill in the line's label instead. Not re-exported by the kit, and the kit's
  * own check refuses it anywhere but here and in the balance: a public amount
  * shown through it anywhere else would have no pill.
  */
 export function AmountFigure({ value }: { value: TokenAmount }) {
   const language = useLanguage();
-  return <span dir="ltr">{formatTokenAmount(value, language)}{' '}{value.code}</span>;
+  return <span dir="ltr">{formatTokenAmount(value, language)}{' '}{value.symbol}</span>;
 }
 
 /**
  * THE ONE WAY AN AMOUNT REACHES A SCREEN, WITH THE BALANCE. Exact, in the
- * person's language, with its code, and with the `Public` pill when anyone can
+ * person's language, with its symbol, and with the `Public` pill when anyone can
  * look it up, which is read from the amount itself and never passed in. The
- * figures and the code are always written left to right, whatever the
+ * figures and the symbol are always written left to right, whatever the
  * language's direction.
  *
  * IT TAKES NO CLASS FROM A SCREEN: a class on the element that holds the pill
@@ -51,7 +51,7 @@ export function Amount({ value, kind }: AmountProps) {
 }
 
 /**
- * THE FIGURE ALONE, WITHOUT ITS CODE OR THE PUBLIC PILL: for a table whose own
+ * THE FIGURE ALONE, WITHOUT ITS SYMBOL OR THE PUBLIC PILL: for a table whose own
  * columns name the asset and say, with `AmountState`, whether it is private or
  * public, so neither is said twice on a row. Exact, in the person's language,
  * written left to right.

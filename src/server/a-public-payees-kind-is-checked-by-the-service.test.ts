@@ -25,6 +25,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import type { Server } from 'node:http';
 
+import { NIGHT } from '../core/assets.js';
 useOnlyTheseSettings({
   ALLOW_SIMULATED_COMPANY_ADDRESS: '1',
   ALLOW_MEMORY_SESSIONS: '1',
@@ -84,7 +85,7 @@ Object.assign(ledger, {
       root: o.run.root, payees: BigInt(o.run.payees), opensAt: BigInt(o.run.opensAt),
       closesAt: BigInt(o.run.closesAt), vault: o.run.vault,
     }, {
-      asset: 'NIGHT', amount: BigInt(o.half.changeAmount), batchDigest: o.half.changeBatchDigest,
+      asset: NIGHT, amount: BigInt(o.half.changeAmount), batchDigest: o.half.changeBatchDigest,
       salt: o.half.proposalSalt,
     }, { signerId: built.signer, leaf: leaves.get(`${accountId} ${built.signer}`)! });
     return { ref: `tx_${r.proposalId.slice(0, 8)}`, at: r.at };
@@ -115,7 +116,7 @@ const aCompanyPayingPublicly = async (name: string, raised: boolean) => {
   const account = created.account.id;
   for (const s of accounts.open(account, viewingKey).signers) leaves.set(`${account} ${s.id}`, s.leafCommitment as Hex);
   payroll.addSelfAsPayee(account, USER, {
-    name: `${name} contractor`, email: null, title: 'Contractor', asset: 'NIGHT', baseAmount: 500_000n,
+    name: `${name} contractor`, email: null, title: 'Contractor', asset: NIGHT, baseAmount: 500_000n,
   }, viewingKey, { wrappingPublicKey: newWrappingKeypair().publicKey, address: unshieldedPayeeFor('e5'.repeat(32), NETWORK) });
   const { run } = await payroll.createRunFromRoster(account, '2026-09', viewingKey);
   const signer = created.secrets[0]!.signerId;

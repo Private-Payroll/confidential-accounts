@@ -2,15 +2,21 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { newSigningKeypair, type Hex } from '../../../../src/core/crypto.js';
 import { signVaultKeys } from '../../../../src/core/vault-keys.js';
+import { MemorySealedPoolStore } from '../../../../src/midnight/vault-pool.js';
+import { recordsKeypairFrom } from '../../../../src/midnight/company-nonce-secret.js';
+import { fromHex } from '../../../../src/core/crypto.js';
 
 /*
  * CREATING A VAULT THROUGH THE ADAPTER, WITH THE SHARED OPERATION RUNNING AS
  * IT IS. The keyring, the service, this browser's store for the temporary key
  * and the part of the page that builds vault transactions are stood in for;
  * `createCompanyVault` and the company's vault routes, with their checks
- * against the roster, are the shared code's own.
+ * against the roster, are the shared code's own. The vault's start is stood in
+ * for as the chain would show it: each step the page sends moves it on.
  */
 const K = (n: number) => ({ tag: 'schnorr', value: n.toString(16).padStart(2, '0').repeat(32) });
+/* This signer's records key, as their released company key gives it: the key their copy of a vault's secret is sealed to. */
+const MY_RECORDS_KEY = recordsKeypairFrom(fromHex('11'.repeat(32))).publicKey as Hex;
 const SIGNER = newSigningKeypair();
 const COMPANY = 'c0'.repeat(32);
 const VAULT = 'ab'.repeat(32);
@@ -22,6 +28,9 @@ const kr = vi.hoisted(() => ({
   kept: new Map<string, unknown>(),
   canOpen: true,
   keysFail: null as Error | null,
+  /* Where the vault's start stands on the stand-in chain, and the approvals each round needs. */
+  start: { adopted: false, open: false, approvals: 0, set: false, run: false, runApprovals: 0, written: false, needed: 1 },
+  records: new Map<string, unknown>(),
 }));
 vi.mock('vaults-web-shared/keyring.js', async (real) => ({
   ...(await real<typeof import('vaults-web-shared/keyring.js')>()),
@@ -46,12 +55,18 @@ vi.mock('vaults-web-shared/keyring.js', async (real) => ({
     const a = kr.answers[`${method} ${path}`] ?? kr.answers[path];
     if (a === undefined) throw new Error(`no answer for ${method} ${path}`);
     if (a instanceof Error) throw a;
+    if (typeof a === 'function') return a(opts?.body === undefined ? undefined : JSON.parse(String(opts.body)));
     return Array.isArray(a) ? (a.length > 1 ? a.shift() : a[0]) : a;
   },
 }));
 vi.mock('vaults-web-shared/vault-page-doors.js', async (real) => ({
   ...(await real<typeof import('vaults-web-shared/vault-page-doors.js')>()),
   giveVaultKeys: async () => { kr.log.push('keys given'); },
+  /* The company's records, kept here for the length of one test. */
+  deviceRecordsFor: () => (record: string) => {
+    if (!kr.records.has(record)) kr.records.set(record, new MemorySealedPoolStore());
+    return kr.records.get(record);
+  },
   browserTemporaryKeys: () => ({
     put: async (vault: string, key: unknown) => { kr.log.push(`key kept ${vault}`); kr.kept.set(vault, key); },
     get: async (vault: string) => kr.kept.get(vault) ?? null,
@@ -62,6 +77,36 @@ vi.mock('vaults-web-shared/vault-worker-client.js', () => ({
   startVaultBuilder: async () => ({
     deploy: async (account: string) => { kr.log.push(`built for ${account}`); return { vault: VAULT, temporaryKey: K(0x77), tx: 'deploy-tx' }; },
     handover: async (input: { vault: string; counter: bigint; to: unknown }) => { kr.log.push(`handover built ${input.vault} ${input.counter}`); return { tx: 'handover-tx' }; },
+    startStanding: async (input: { secret?: string; window?: unknown }) => {
+      const st = kr.start;
+      /* This signer's own copy, sealed as the vault worker seals it, so the press finds a copy its own key opens. */
+      const { sealSecretCopy } = await import('../../../../src/midnight/sealed-secret-copy.js');
+      const { recordsKeypairFrom: keysOf } = await import('../../../../src/midnight/company-nonce-secret.js');
+      const { fromHex: bytes, toHex: hexOf } = await import('../../../../src/core/crypto.js');
+      const reader = keysOf(bytes('11'.repeat(32))).publicKey;
+      const parts = input.secret === undefined ? [] : sealSecretCopy({ vault: VAULT, secret: input.secret as Hex, reader: reader as Hex }).map((p) => hexOf(p));
+      const round = { proposal: 'a1'.repeat(32), payload: 'a2'.repeat(32), named: 'a3'.repeat(32), salt: 'a4'.repeat(32), stale: false };
+      const run = { proposal: 'b1'.repeat(32), payload: 'b2'.repeat(32), named: VAULT, salt: 'b4'.repeat(32), opensAt: '1', closesAt: '9', inWindow: true };
+      return {
+        standing: {
+          adopted: st.adopted,
+          adoption: { ...round, open: st.open, approvals: st.approvals, needed: st.needed },
+          ...(input.secret === undefined ? {} : {
+            secret: {
+              set: st.set, another: false, rootIsThisRuns: st.set, written: [st.written], started: st.set && st.written,
+              run: st.run ? { ...run, open: true, approvals: st.runApprovals, needed: st.needed, stale: false } : null,
+              ...(input.window === undefined ? {} : { raise: { ...run, opensAt: '1', closesAt: '9' } }),
+            },
+          }),
+        },
+        ...(input.secret === undefined ? {} : {
+          run: { vault: VAULT, root: 'c1'.repeat(32), payees: '1', asset: 'c2'.repeat(32), copies: [{ reader, parts, path: [] }] },
+        }),
+      };
+    },
+    governedCall: async (input: { order: { circuit: string } }) => { kr.log.push(`account ${input.order.circuit} proved`); return { tx: 'call-tx' }; },
+    setNonceSecret: async () => { kr.log.push('secret proved'); return { tx: 'secret-tx' }; },
+    writeSecretCopy: async (input: { place: number }) => { kr.log.push(`copy ${input.place} proved`); return { tx: 'copy-tx' }; },
   }),
 }));
 
@@ -69,7 +114,7 @@ const ROUTE = (r = '') => `/api/accounts/c1${r}`;
 /** A roster naming signer `s1` with committee key `mine`. */
 const rosterWith = (mine: { tag: string; value: string } | null) => ({ id: 'c1', signers: [{
   id: 's1', userId: 'u1', name: 'Priya', status: 'active', signingPublicKey: SIGNER.publicKey, wrappingPublicKey: 'ee'.repeat(32),
-  ...(mine === null ? {} : { vaultKeys: signVaultKeys('c1', 's1', { committeeKey: mine, recordsKey: K(0x40).value as Hex }, SIGNER.secret) }),
+  ...(mine === null ? {} : { vaultKeys: signVaultKeys('c1', 's1', { committeeKey: mine, recordsKey: MY_RECORDS_KEY }, SIGNER.secret) }),
 }] });
 const COMMITTEE = { committee: [K(1)], threshold: 1 };
 const ONE_KEY = { committee: [K(0x77)], threshold: 1, counter: '1', shape: 'one-key' };
@@ -80,13 +125,36 @@ async function load() {
   vi.stubEnv('VITE_WALLET_ORIGIN', 'http://wallet.localhost:5180');
   return import('./create-vault.js');
 }
+/** The service's start routes over the stand-in chain: each step it is sent moves the start on. */
+const startRoutes = () => {
+  kr.answers[`GET ${ROUTE(`/vaults/${VAULT}/payout-state`)}`] = {
+    vault: VAULT, account: COMPANY, blockHash: 'b', vaultState: 'v', zswapState: 'z', parameters: 'p', accountState: 'a',
+  };
+  kr.answers[`POST ${ROUTE(`/vaults/${VAULT}/start/account`)}`] = (body: { step: string; call: string }) => {
+    const st = kr.start;
+    if (body.step === 'adoption') {
+      if (body.call === 'propose') st.open = true;
+      if (body.call === 'approve') st.approvals += 1;
+      if (body.call === 'adopt') st.adopted = true;
+    } else {
+      if (body.call === 'propose') st.run = true;
+      if (body.call === 'approve') st.runApprovals += 1;
+    }
+    return { txRef: `${body.step} ${body.call}` };
+  };
+  kr.answers[`POST ${ROUTE(`/vaults/${VAULT}/start/secret`)}`] = () => { kr.start.set = true; return { txRef: 'secret' }; };
+  kr.answers[`POST ${ROUTE(`/vaults/${VAULT}/start/copy`)}`] = () => { kr.start.written = true; return { txRef: 'copy' }; };
+};
 beforeEach(() => {
   kr.log = []; kr.answers = {}; kr.kept = new Map(); kr.canOpen = true; kr.keysFail = null;
+  kr.start = { adopted: false, open: false, approvals: 0, set: false, run: false, runApprovals: 0, written: false, needed: 1 };
+  kr.records = new Map();
+  startRoutes();
   kr.keys = { signerId: 's1', signingSecret: 'aa', wrappingSecret: 'bb', blinding: 'cc' };
   kr.roster = rosterWith(K(1));
   kr.answers[ROUTE()] = { id: 'c1' };
   kr.answers[`PUT ${ROUTE('/vault-keys')}`] = { given: true };
-  kr.answers[`GET ${ROUTE('/vault-keys')}`] = { committee: COMMITTEE, why: null, readers: [K(0x40).value] };
+  kr.answers[`GET ${ROUTE('/vault-keys')}`] = { committee: COMMITTEE, why: null, readers: [MY_RECORDS_KEY] };
 });
 afterEach(() => { vi.unstubAllEnvs(); });
 
@@ -95,9 +163,10 @@ describe('creating a vault', () => {
    * RED WHEN: the vault is not built for the company's address the account
    * gave; its temporary key is not kept before the vault is sent; the handover
    * is not built against the counter the chain reports; the operation ends
-   * before the chain says the signers hold it; or its stages are not told.
+   * before the chain says the signers hold it and the vault is started; or its
+   * stages are not told.
    */
-  it('runs the shared operation in its order, and ends only when the signers hold the vault', async () => {
+  it('runs the shared operation in its order, and ends only when the signers hold the vault and it is started', async () => {
     const m = await load();
     kr.answers[`POST ${ROUTE('/vaults')}`] = { vault: VAULT, txRef: 'r1', state: 'handover-owed' };
     kr.answers[`GET ${ROUTE(`/vaults/${VAULT}/chain`)}`] = [onChain(false), onChain(true)];
@@ -105,13 +174,29 @@ describe('creating a vault', () => {
     const stages: string[] = [];
     expect(await m.createVault('u1', 'c1', (s) => stages.push(s))).toEqual({ of: 'done', vault: VAULT });
     /* Every step but the reads of the company's record and its committee, in the order it was taken. */
-    expect(kr.log.filter((l) => !l.startsWith('GET /api/accounts/c1') || l.includes('/chain'))).toEqual([
+    expect(kr.log.filter((l) => !l.startsWith('GET /api/accounts/c1') || l.endsWith('/chain'))
+      .filter((l, i, all) => !(l.endsWith('/chain') && all[i - 1]?.endsWith('/chain')))).toEqual([
       'account asked', 'keys given',
       `built for ${COMPANY}`, `key kept ${VAULT}`, `POST ${ROUTE('/vaults')}`,
       `GET ${ROUTE(`/vaults/${VAULT}/chain`)}`, `handover built ${VAULT} 1`, `POST ${ROUTE(`/vaults/${VAULT}/handover`)}`,
       `GET ${ROUTE(`/vaults/${VAULT}/chain`)}`, `key forgotten ${VAULT}`,
+      /* The start, each step sent only once the stand-in chain showed the one before. */
+      'account propose proved', `POST ${ROUTE(`/vaults/${VAULT}/start/account`)}`,
+      'account approve proved', `POST ${ROUTE(`/vaults/${VAULT}/start/account`)}`,
+      'account adopt proved', `POST ${ROUTE(`/vaults/${VAULT}/start/account`)}`,
+      `GET ${ROUTE(`/vaults/${VAULT}/chain`)}`,
+      'account propose proved', `POST ${ROUTE(`/vaults/${VAULT}/start/account`)}`,
+      'account approve proved', `POST ${ROUTE(`/vaults/${VAULT}/start/account`)}`,
+      'secret proved', `POST ${ROUTE(`/vaults/${VAULT}/start/secret`)}`,
+      'copy 0 proved', `POST ${ROUTE(`/vaults/${VAULT}/start/copy`)}`,
     ]);
-    expect(stages).toEqual(['checking', 'building', 'sending', 'waiting-for-chain', 'handing-over', 'waiting-for-handover', 'done']);
+    /* The pool and the secret were filed before the secret run was raised from it. */
+    expect(kr.records.has('pool') && kr.records.has('nonce-secret')).toBe(true);
+    /* RED WHEN a stage is said out of the operation's order, or a stage of the start is not said at all. */
+    expect(stages).toEqual([
+      'checking', 'building', 'sending', 'waiting-for-chain', 'handing-over', 'waiting-for-handover',
+      'adopting', 'opening-the-pool', 'reading-the-secret-back', 'setting-the-secret', 'writing-the-copies', 'done',
+    ]);
   });
 
   /* RED WHEN: a vault the service refused before sending anything is said as anything but nothing sent, or its temporary key is kept. */
@@ -153,6 +238,38 @@ describe('creating a vault', () => {
     kr.keys = null;
     expect(await m.createVault('u1', 'c1', () => {})).toEqual({ of: 'refused', why: 'no-keys-here' });
     expect(kr.log.filter((l) => l.startsWith('built') || l.startsWith('key kept') || l.startsWith(`POST ${ROUTE('/vaults')}`))).toEqual([]);
+  });
+});
+
+describe('a vault whose start is not finished', () => {
+  /* RED WHEN: a round waiting on other signers is said as done, or as a failure, or without what it waits for. */
+  it('says which round waits for other signers, with its approvals, and creating it again carries on', async () => {
+    const m = await load();
+    kr.kept.set(VAULT, K(0x77));
+    kr.answers[`GET ${ROUTE(`/vaults/${VAULT}/chain`)}`] = onChain(true);
+    kr.start.needed = 2;
+    const stages: string[] = [];
+    expect(await m.finishHandingOver('u1', 'c1', VAULT, (s) => { stages.push(s); })).toEqual({
+      of: 'awaiting-approvals', vault: VAULT, round: 'adoption', proposal: 'a1'.repeat(32), approvals: 1, needed: 2,
+    });
+    /* RED WHEN a stage of the start is not passed on to the screen, so a person waits on a step nothing names. */
+    expect(stages).toEqual(expect.arrayContaining(['adopting', 'waiting-for-approvals']));
+    /* Another signer approves; pressing again carries the adoption out and goes on to the secret, which waits too. */
+    kr.start.approvals = 2;
+    kr.log = [];
+    stages.length = 0;
+    expect(await m.finishHandingOver('u1', 'c1', VAULT, (s) => { stages.push(s); })).toMatchObject({ of: 'awaiting-approvals', round: 'first-secret', approvals: 1, needed: 2 });
+    /* RED WHEN the secret's own steps are not passed on: opening the pool, reading the secret back, setting it. */
+    expect(stages).toEqual(expect.arrayContaining(['opening-the-pool', 'reading-the-secret-back', 'waiting-for-approvals']));
+    expect(kr.log.filter((l) => l.endsWith('proved'))).toEqual(['account adopt proved', 'account propose proved', 'account approve proved']);
+  });
+
+  /* RED WHEN: a start the service refused is said as done, or without the vault it is for. */
+  it('names the vault whose start did not finish', async () => {
+    const m = await load();
+    kr.answers[`GET ${ROUTE(`/vaults/${VAULT}/chain`)}`] = onChain(true);
+    kr.answers[`POST ${ROUTE(`/vaults/${VAULT}/start/account`)}`] = new Error('the chain could not be asked. Nothing was sent.');
+    expect(await m.finishHandingOver('u1', 'c1', VAULT, () => {})).toEqual({ of: 'start-owed', vault: VAULT });
   });
 });
 

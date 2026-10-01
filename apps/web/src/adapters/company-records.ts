@@ -40,7 +40,7 @@ export { OPENED, READ, type Read };
  * runs, and is missing when the runs could not be read. Nothing the service or the shared code says in words is
  * handed on: a screen is handed codes, and says them in its own phrases.
  *
- * EVERY AMOUNT IS MADE HERE, from its currency's record in the registry, and
+ * EVERY AMOUNT IS MADE HERE, from its token's record in the registry, and
  * marked by how it is paid: private only to an address written the way a
  * private address is, public otherwise. Where how it is paid is not known, it
  * is marked public and said as not known, so a screen never calls private
@@ -77,14 +77,24 @@ export interface ProposalRow {
   needed: number | null;
   /** When it was raised, as the service wrote it. */
   raisedAt: string;
-  /** For a payment of a run: the run and the currency it pays. */
-  pays: { run: string; period: string; currency: string } | null;
+  /** For a payment of a run: the run, the token it pays and that token's symbol, and whether the proposal pays privately or publicly. */
+  pays: RunPays | null;
 }
 
-/** One currency of a run: what it pays privately and what publicly, never added together. */
+/**
+ * What a payroll round pays: one token, in one form. `symbol` is what a
+ * person is shown, and is null for a token the registry does not name; `paid`
+ * is not known for a round written before a run paid one form.
+ */
+export interface RunPays { run: string; period: string; asset: string; symbol: string | null; paid: Paid }
+
+/** One token of a run: what it pays privately and what publicly, never added together. */
 export interface RunCurrency {
+  /** The token, compared and never shown. */
   code: string;
-  /** Paid privately: null when nobody in the run is paid this currency privately. */
+  /** What a person is shown for the token. */
+  symbol: string;
+  /** Paid privately: null when nobody in the run is paid this token privately. */
   privately: TokenAmount | null;
   /** Paid publicly, or where how is not known: null when nobody is. */
   publicly: TokenAmount | null;
@@ -93,8 +103,13 @@ export interface RunCurrency {
 /** A person in a run, and what the run pays them. */
 export interface RunPayee { id: string; name: string; amount: TokenAmount | null; paid: Paid }
 
-/** A leg of a run, paid in one currency from one vault. */
-export interface RunLeg { code: string; vault: string; payees: number }
+/**
+ * A leg of a run, paid in one token, in one form, from one vault. `code` is
+ * the leg as the record keys it and `asset` its token, both compared and never
+ * shown; `symbol` is what a person is shown, null for a token the registry
+ * does not name.
+ */
+export interface RunLeg { code: string; asset: string; symbol: string | null; paid: Paid; vault: string; payees: number }
 
 /** A payroll run, as the runs list and its own page show it. */
 export interface RunRow {
@@ -107,7 +122,7 @@ export interface RunRow {
   payees: readonly RunPayee[];
   currencies: readonly RunCurrency[];
   legs: readonly RunLeg[];
-  /** How many of its amounts are in a currency the registry does not name: counted, never shown as a figure. */
+  /** How many of its amounts are in a token the registry does not name: counted, never shown as a figure. */
   unrecognised: number;
 }
 
@@ -121,7 +136,7 @@ export interface PersonRow {
   name: string;
   title: string;
   standing: PersonStanding;
-  /** Their pay each run, marked by how it is paid; null when their currency is not in the registry. */
+  /** Their pay each run, marked by how it is paid; null when their token is not in the registry. */
   pay: TokenAmount | null;
   paid: Paid;
   /** When they started, as the service wrote it. */
@@ -194,11 +209,23 @@ export function paidTo(address: string | undefined): Paid {
   return PRIVATE_ADDRESS.test(address.trim().toLowerCase()) ? PAID.privately : PAID.notKnown;
 }
 
-/** An amount of `code`, marked by how it is paid; null when the registry does not name the currency. */
+/** An amount of the token `code`, marked by how it is paid and shown with its symbol; null when the registry does not name the token. */
 function amountOf(units: bigint, code: string, paid: Paid, registry: AssetRegistry): TokenAmount | null {
   const asset = registry.find(code);
   if (asset === null) return null;
-  return paid === PAID.privately ? privateAmount(units, asset.decimals, asset.code) : publicAmount(units, asset.decimals, asset.code);
+  return paid === PAID.privately ? privateAmount(units, asset.decimals, asset.symbol) : publicAmount(units, asset.decimals, asset.symbol);
+}
+
+/**
+ * A leg as the record keys it, `<token>:<form>`: its token and how it pays.
+ * A leg keyed by its token alone was written before a run paid one form, so
+ * how it pays is not known.
+ */
+function legOf(key: string): { asset: string; paid: Paid } {
+  const at = key.indexOf(':');
+  if (at < 0) return { asset: key, paid: PAID.notKnown };
+  const form = key.slice(at + 1);
+  return { asset: key.slice(0, at), paid: form === 'shielded' ? PAID.privately : form === 'unshielded' ? PAID.publicly : PAID.notKnown };
 }
 
 /** A run as this device reads it: the service's plain fields and its sealed ones, opened, the marker the record carries kept. */
@@ -213,7 +240,7 @@ function openProposal(rec: SealedProposal, viewingKey: Hex): Proposal {
   return { ...openRecord<Omit<Proposal, 'id' | 'accountId' | 'status' | 'createdAt' | 'executedAt' | 'digest' | 'txRef' | 'chainId'>>(SERVICE.proposalsRecord, rec.accountId, sealed, viewingKey), ...open } as Proposal;
 }
 
-/** A run for a screen: its people and amounts, each currency split by how it is paid. */
+/** A run for a screen: its people and amounts, each token split by how it is paid. */
 export function runRow(run: PayrollRun, registry: AssetRegistry = assets): RunRow {
   let unrecognised = 0;
   const payees: RunPayee[] = [];
@@ -230,26 +257,36 @@ export function runRow(run: PayrollRun, registry: AssetRegistry = assets): RunRo
   }
   const currencies: RunCurrency[] = [...sums].map(([code, s]) => ({
     code,
+    symbol: registry.require(code).symbol,
     privately: s.anyPrivately ? amountOf(s.privately, code, PAID.privately, registry) : null,
     publicly: s.anyPublicly ? amountOf(s.publicly, code, PAID.publicly, registry) : null,
   }));
   /* A leg's payees are counted by its leaves, one a payee. */
-  const legs: RunLeg[] = Object.entries(run.payout ?? {}).map(([code, leg]) => ({ code, vault: leg.vault, payees: (leg.leaves ?? []).length }));
+  const legs: RunLeg[] = Object.entries(run.payout ?? {}).map(([code, leg]) => {
+    const { asset, paid } = legOf(code);
+    return { code, asset, symbol: registry.find(asset)?.symbol ?? null, paid, vault: leg.vault, payees: (leg.leaves ?? []).length };
+  });
   return { id: run.id, period: run.period, status: run.status, settledAt: run.settledAt ?? null, payees, currencies, legs, unrecognised };
 }
 
+/** What a run's round for the leg `leg` pays, as a screen names it. */
+function paysOf(run: PayrollRun, leg: string, registry: AssetRegistry): RunPays {
+  const { asset, paid } = legOf(leg);
+  return { run: run.id, period: run.period, asset, symbol: registry.find(asset)?.symbol ?? null, paid };
+}
+
 /** A proposal for a screen. */
-function proposalRow(p: Proposal, signers: readonly SignerRow[], runs: readonly PayrollRun[]): ProposalRow {
+function proposalRow(p: Proposal, signers: readonly SignerRow[], runs: readonly PayrollRun[], registry: AssetRegistry = assets): ProposalRow {
   const round = p.approvalRound;
   const run = runs.find((r) => Object.values(r.proposalIds ?? {}).includes(p.id));
-  const currency = run === undefined ? undefined : Object.entries(run.proposalIds).find(([, id]) => id === p.id)?.[0];
+  const leg = run === undefined ? undefined : Object.entries(run.proposalIds).find(([, id]) => id === p.id)?.[0];
   return {
     id: p.id, kind: p.kind, status: p.status,
     raisedBy: signers.find((s) => s.id === p.proposedBy)?.name ?? null,
     approvals: (p.approvals ?? []).length,
     needed: round !== undefined && round.state !== 'unknown' ? round.threshold : null,
     raisedAt: p.createdAt,
-    pays: run === undefined || currency === undefined ? null : { run: run.id, period: run.period, currency },
+    pays: run === undefined || leg === undefined ? null : paysOf(run, leg, registry),
   };
 }
 

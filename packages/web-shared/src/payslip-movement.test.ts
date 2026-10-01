@@ -24,7 +24,7 @@ const facts = [1, 2, 3].map((i) => ({
 
 describe('what the payee\'s device looks for is what the account records', () => {
   it('EVERY PAYEE\'S VALUE, BUILT FROM WHAT THAT PAYEE HOLDS, IS THE VALUE OF THEIR OWN LEAF', async () => {
-    const run = buildRun(seeds, identity, facts, vaultDetails, payFor(facts), 'GBP');
+    const run = buildRun(seeds, identity, facts, vaultDetails, payFor(facts), TOKEN);
     /* The worker's own loader: the vault's and the account's compiled contracts, loaded side by side. */
     const circuits = await contractCircuits();
     facts.forEach((f, i) => {
@@ -42,7 +42,7 @@ describe('what the payee\'s device looks for is what the account records', () =>
   });
 
   it('A COLLEAGUE\'S SECRETS, OR ANOTHER ADDRESS, BUILD A VALUE THAT IS NOBODY\'S', async () => {
-    const run = buildRun(seeds, identity, facts, vaultDetails, payFor(facts), 'GBP');
+    const run = buildRun(seeds, identity, facts, vaultDetails, payFor(facts), TOKEN);
     const circuits = await contractCircuits();
     const all = new Set(run.tree.leaves.map(paidMovementOfLeaf));
     const eli = run.payeeArgs(1);
@@ -54,7 +54,7 @@ describe('what the payee\'s device looks for is what the account records', () =>
 
   it('A MAINNET ADDRESS, WHICH NAMES NO NETWORK, BUILDS THE SAME VALUE AS ITS OWN LEAF', async () => {
     const onMainnet = [{ ...facts[0]!, payee: payeeFor(toHex(new Uint8Array(32).fill(1)), 'mainnet') }];
-    const run = buildRun(seeds, identity, onMainnet, vaultDetails, payFor(onMainnet), 'GBP');
+    const run = buildRun(seeds, identity, onMainnet, vaultDetails, payFor(onMainnet), TOKEN);
     const args = run.payeeArgs(0);
     /*
      * A CONTROL, NOT A GUARD: the platform's parse answers a symbol for a mainnet
@@ -70,16 +70,21 @@ describe('what the payee\'s device looks for is what the account records', () =>
   });
 
   it('A PUBLIC PAYEE\'S VALUE, BUILT FROM WHAT THEY HOLD, IS THE VALUE OF THEIR OWN PUBLIC LEAF', async () => {
-    /* A run paying one person publicly and one privately, from the SAME thirty-two bytes. */
+    /*
+     * One person paid publicly and one privately, from the SAME thirty-two
+     * bytes. One run pays one form, so they are two runs side by side, as a
+     * payroll with both kinds of payee is raised.
+     */
     const bytes = toHex(new Uint8Array(32).fill(9));
     const mixed = [
       { payee: unshieldedPayeeFor(bytes, 'undeployed'), token: TOKEN, amount: 4_000n },
       { payee: payeeFor(bytes, 'undeployed'), token: TOKEN, amount: 4_000n },
     ];
-    const run = buildRun(seeds, identity, mixed, vaultDetails, payFor(mixed), 'GBP');
     const circuits = await contractCircuits();
-    mixed.forEach((f, i) => {
-      const args = run.payeeArgs(i);
+    mixed.forEach((f) => {
+      const alone = [f];
+      const run = buildRun(seeds, { ...identity, runId: `run_1:${f.payee.kind}` }, alone, vaultDetails, payFor(alone), TOKEN);
+      const args = run.payeeArgs(0);
       /*
        * RED WHEN the device builds every value with the shielded details
        * circuit, or reads the kind from anything but the address: the public
@@ -87,7 +92,7 @@ describe('what the payee\'s device looks for is what the account records', () =>
        */
       expect(movementOfPayslip(circuits, {
         paidTo: f.payee.bech32, token: TOKEN, amount: f.amount.toString(), nonce: args.nonce, blinding: args.blinding,
-      }), f.payee.kind).toBe(paidMovementOfLeaf(run.tree.leaves[i]!));
+      }), f.payee.kind).toBe(paidMovementOfLeaf(run.tree.leaves[0]!));
     });
   });
 

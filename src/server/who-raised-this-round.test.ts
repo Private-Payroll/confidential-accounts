@@ -42,6 +42,7 @@ import { signatureVerifyingKey } from '@midnightntwrk/ledger-v9';
 import { identityFromWords } from 'midnight-identity';
 import { addressOfVerifyingKey, mint } from 'midnight-identity/profile/disclosure';
 
+import { TEST_SETTLEMENT_ASSET } from '../core/assets.js';
 useOnlyTheseSettings({
   ALLOW_SIMULATED_COMPANY_ADDRESS: '1',
   ALLOW_MEMORY_SESSIONS: '1',
@@ -184,7 +185,7 @@ describe('a caller cannot choose which seat raises a round, or which ceiling jud
         body: {
           pluginId: 'treasury-yield',
           scopes: ['state:read', 'proposal:create'],
-          allowance: { periodDays: 30, limits: { GBP: { perProposal: '5000', perPeriod: '8000' } } },
+          allowance: { periodDays: 30, limits: { [TEST_SETTLEMENT_ASSET]: { perProposal: '5000', perPeriod: '8000' } } },
           viewingKey,
           /* Named, and it must not be believed - see the case below. */
           installedBy: notMine.id,
@@ -197,7 +198,7 @@ describe('a caller cannot choose which seat raises a round, or which ceiling jud
           token: installed.body.token,
           viewingKey,
           summary: 'Deploy to lending',
-          asset: 'GBP',
+          asset: TEST_SETTLEMENT_ASSET,
           amount: '10',
           recipient: 'Pool',
           /* The attack, in the shape it would actually arrive in. */
@@ -296,7 +297,7 @@ describe('a caller cannot choose which seat raises a round, or which ceiling jud
       token,
       body: {
         period: '2026-07', viewingKey,
-        employees: [{ name: 'Nina', asset: 'GBP', amount: '1000' }],
+        employees: [{ name: 'Nina', asset: TEST_SETTLEMENT_ASSET, amount: '1000' }],
       },
     });
     /* If a run cannot be created here the case has nothing to drive, and a
@@ -352,17 +353,14 @@ describe('a caller cannot choose which seat raises a round, or which ceiling jud
  * it is the ordinary one.
  *
  * **SO THE ABSENCE IS PINNED AS AN ABSENCE.** A field a caller can put a seat
- * in must not exist on either build, and that is a property of the source
+ * in must not exist on the server, and that is a property of the source
  * rather than of any one request. It is a weaker kind of evidence than a
  * behavioural case and it is the kind available here, which is said plainly
  * rather than dressed up: a walk cannot tell you the right seat was used, only
  * that no wrong one can arrive.
- *
- * **BOTH BUILDS, BECAUSE THEY ARE TWO IMPLEMENTATIONS OF ONE API** and this is
- * exactly the sort of field on which they drift.
  */
-describe('no door on either build has anywhere to put somebody else\'s seat', () => {
-  const SURFACES = ['src/server/index.ts', 'src/standalone/main.tsx'];
+describe('no door on the server has anywhere to put somebody else\'s seat', () => {
+  const SURFACES = ['src/server/index.ts'];
   /* Who is acting. Every one of these selects a ceiling, not just a name. */
   const CLAIMS = ['proposedBy', 'installedBy'];
 
@@ -405,9 +403,9 @@ describe('no door on either build has anywhere to put somebody else\'s seat', ()
    * the request body whole, so the seat rode in without appearing anywhere in
    * the file.
    *
-   * RED WHEN: either build goes back to spreading a request into a call.
+   * RED WHEN: the server goes back to spreading a request into a call.
    */
-  it('neither build hands a whole request body to a service', async () => {
+  it('the server hands no whole request body to a service', async () => {
     const { readFileSync } = await import('node:fs');
     for (const surface of SURFACES) {
       const text = code(readFileSync(surface, 'utf8'));

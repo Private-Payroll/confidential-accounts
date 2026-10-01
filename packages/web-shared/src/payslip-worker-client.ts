@@ -71,7 +71,7 @@ export function readerOver(worker: WorkerLike): ChainReader {
 }
 
 /** How long a read may take before the page says it cannot tell. */
-export const READ_WAIT_MS = 60_000;
+const READ_WAIT_MS = 60_000;
 
 /**
  * The reader this page uses, started the first time it is asked for and kept.

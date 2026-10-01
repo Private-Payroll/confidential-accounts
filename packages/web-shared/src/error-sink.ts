@@ -30,8 +30,9 @@
  * below is a build-time constant. `import.meta.env.DEV` is replaced by `false`
  * in a production build, so the whole of `install` becomes unreachable and the
  * bundler removes it — **a production build does not contain this code at
- * all**, which is a stronger claim than "it does not run", and it is the claim
- * `sink-not-in-production.test.ts` builds the app to check. The second half of
+ * all**, which is a stronger claim than "it does not run"; the build check that
+ * held it went with the earlier application, and no build of `apps/web` checks
+ * it yet. The second half of
  * the guard is the `C140` shape: the relaxation is declared in the `dev` script
  * in `package.json` and nowhere a person types.
  *
@@ -67,9 +68,7 @@ export const SINK_PATH = '/api/dev/web-console';
 /** One thing the browser said. */
 export type SinkEntry = {
   /**
-   * `error`, `rejection`, `console.error`, `console.warn`, `fetch` — or
-   * `shown`, which is `C159`: an error the application CAUGHT and rendered
-   * onto a screen for a person to read. See `recordShownError` below.
+   * `error`, `rejection`, `console.error`, `console.warn` or `fetch`.
    */
   readonly level: string;
   readonly message: string;
@@ -148,44 +147,6 @@ const asText = (value: unknown): string => {
 };
 
 /**
- * **THE ONE CLASS OF FAILURE THE SINK COULD NOT SEE, AND `C159` IS ITS ROW.**
- * `docs/NEXT.md` `X11` §5.
- *
- * The four things installed below are all failures **nobody was handling**:
- * uncaught errors, unhandled rejections, `console` calls, failed fetches. On
- * the first walk after `X10`, the failure the founder actually hit reached
- * neither report — **the application CAUGHT it and rendered it onto the
- * screen**, which is the correct thing to do with an error a person needs to
- * read, and none of the four saw it. So the one class of failure that by
- * definition reaches a human was the one class no artefact kept.
- *
- * This is the seam that closes it. `shown-error.ts` is the single function
- * every screen turns an error into a sentence with, and it calls this — **so
- * showing a person what went wrong and keeping it are one act rather than two
- * habits.**
- *
- * ── IT IS A HOOK AND NOT A SECOND QUEUE ──────────────────────────────────
- *
- * A shown error goes into the SAME queue, with the same redaction, the same
- * batching and the same post as everything else, because a second path to disk
- * is a second thing that can be armed differently, redact differently, or fail
- * differently. **Before `installErrorSink` runs, and in a production build
- * where it never runs, this is a no-op** — which is the honest behaviour: the
- * sink is a development instrument and `sink-not-in-production.test.ts` is what
- * holds that.
- */
-let recorder: ((level: string, message: unknown, stack?: unknown) => void) | null = null;
-
-/** Called by `shown-error.ts`. Never by a screen directly. */
-export const recordShownError = (message: string, stack?: string): void => {
-  /* Rule 3: recording may never change what the app does. */
-  try { recorder?.('shown', message, stack); } catch { /* nothing the page can do */ }
-};
-
-/** For a test that drives the sink without a window. */
-export const forgetSinkForTest = (): void => { recorder = null; };
-
-/**
  * Installs the sink on a window and returns nothing anybody needs.
  *
  * `post` is injectable so the tests can read exactly what would have crossed
@@ -238,14 +199,6 @@ export const installErrorSink = (
       if (!scheduled) { scheduled = true; w.setTimeout(flush, FLUSH_AFTER_MS); }
     } catch { /* rule 3: recording may never change what the app does */ }
   };
-
-  /*
-   * **THE SHOWN-ERROR SEAM IS POINTED AT THE SAME `record`.**
-   * Registered here rather than exported from the closure so that a page which
-   * never installed a sink has a `recordShownError` that does nothing at all,
-   * rather than one that throws into a screen already showing a failure.
-   */
-  recorder = record;
 
   /*
    * ---- uncaught errors, and nothing suppressed ----

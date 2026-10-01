@@ -18,6 +18,8 @@ import { newWords } from 'midnight-identity';
 import { drawCompanyLabel } from 'midnight-identity/profile/company-label';
 import type { User } from '../core/types.js';
 
+import { runLegOf } from '../core/payroll.js';
+import { TEST_TOKEN } from '../testing/assets.js';
 /**
  * **THE RUN'S SALT IS THE ONE THING STANDING BETWEEN A PAYEE WHO HOLDS THEIR OWN
  * NONCE AND BLINDING AND RECORDING THEMSELVES PAID, AND NOTHING THAT DOES NOT
@@ -99,7 +101,7 @@ describe('no route that does not take the viewing key returns a salt or a path',
     store.putAccount({ ...rec, addressSource: 'chain' } as typeof rec);
     const label = rec.companyLabel!;
     const { sentTo, employee } = payroll.invite(created.account.id, {
-      name: 'Dana', email: 'dana@acme.example', title: 'Engineer', asset: 'GBP', baseAmount: 100_00n,
+      name: 'Dana', email: 'dana@acme.example', title: 'Engineer', asset: TEST_TOKEN, baseAmount: 100_00n,
     }, created.viewingKey, 'usr_ada');
     store.putUser({ id: 'usr_1', email: 'dana@acme.example', name: 'Dana', keyBundle: null, keyBundleVersion: 0,
       walletKey: null, createdAt: '2026-09-25T00:00:00.000Z' } as User);
@@ -115,7 +117,7 @@ describe('no route that does not take the viewing key returns a salt or a path',
       opensAt: 1_800_000_000n, closesAt: 1_800_086_400n, vault: toHex(new Uint8Array(32).fill(0xa1)), detailsOf: vaultDetails,
     });
     await payroll.proposeRun(run.id, created.viewingKey, created.secrets[0]!.signerId, material);
-    const proposalId = payroll.requireRun(run.id, created.viewingKey).proposalIds.GBP!;
+    const proposalId = payroll.requireRun(run.id, created.viewingKey).proposalIds[runLegOf(TEST_TOKEN, 'shielded')]!;
     const wrong = toHex(new Uint8Array(32).fill(0x55));
     /* The control: with the key, both answer. */
     expect(accounts.runSaltOf(proposalId, created.viewingKey)).toMatch(/^[0-9a-f]{64}$/u);

@@ -12,7 +12,10 @@ import {
   decideWhetherToWrite, assertNoSignerWouldLoseAccess,
   assertThePoolHasNotMovedSinceTheRebuild, linesForAnOperator,
   notesNeedingATransaction, whatTheRebuildWrites, whereTheRecordsAre, settlementsNotYetRecorded,
+  nonceSecretsForTheRebuild, splitJournalFromTheChain,
 } from './reconcile-vault-pool-rules.js';
+import { newWrappingKeypair } from '../src/core/crypto.js';
+import { openNonceSecrets, rotateNonceSecret, startNonceSecret } from '../src/midnight/company-nonce-secret.js';
 import { NoteDescribedTwice, type PoolRecovery } from '../src/midnight/vault-recovery.js';
 import type { Note } from '../src/midnight/vault-notes.js';
 import type { Hex } from '../src/core/crypto.js';
@@ -712,5 +715,65 @@ describe('a contradiction is printed with the file each record is', () => {
       'RED WHEN: a coin named from the company\'s own records is printed as a line of a journal file it never came from',
     ).toEqual(['the company\'s own records (the chain holds this one): the amounts the company recorded depositing and paying, with its deposit key']);
     expect(refused.message, 'every description is named with whether the chain holds it').toMatch(/version 4 of the pool says it is 1 of aaaaaaaaaaaaaaaa… \(the chain holds this one\); version 6 of the pool says it is 1 of aaaaaaaaaaaaaaaa…; the payment journal says it is 2/);
+  });
+});
+
+/*
+ * The change a payment left and the pieces a split kept are named only with the vault's nonce secret, and a
+ * split's amount only from the journal the chain holds. The door hands both to the rebuild, refuses by name when
+ * the record is missing, and says on its screen how many calls' coins went unnamed for want of the secret.
+ */
+describe('the nonce secret and the split journal a rebuild is handed', () => {
+  const VAULT = '3c'.repeat(32);
+  const COMMITMENT = '7d'.repeat(32);
+  const ada = newWrappingKeypair();
+  const bo = newWrappingKeypair();
+  const record = startNonceSecret(VAULT, [{ publicKey: ada.publicKey }, { publicKey: bo.publicKey }]);
+
+  it('a vault with a secret set and no record on this machine is refused, naming where the record goes', () => {
+    /* RED WHEN a missing record is passed over and the rebuild runs naming no change and no split piece. */
+    expect(() => nonceSecretsForTheRebuild({
+      sealed: null, where: '.midnight/stagenet-vault-nonce-secret-main.json', vault: VAULT, signer: { wrappingSecret: ada.secret }, commitment: COMMITMENT,
+    })).toThrow(/has no nonce secret on this machine: \.midnight\/stagenet-vault-nonce-secret-main\.json does not exist.*Nothing was written/su);
+  });
+
+  it('hands over every secret the record holds, oldest first, with the commitment the chain holds', () => {
+    const rotated = rotateNonceSecret(record, VAULT, ada, { remaining: [{ publicKey: ada.publicKey }], leaving: [{ publicKey: bo.publicKey }] });
+    const all = openNonceSecrets(rotated, VAULT, ada).secrets;
+    const given = nonceSecretsForTheRebuild({
+      sealed: rotated, where: 'the record', vault: VAULT, signer: { wrappingSecret: ada.secret }, commitment: COMMITMENT.toUpperCase(),
+    });
+    /* RED WHEN only the newest secret is handed over: coins made under an earlier epoch's secret go unnamed. */
+    expect(given).toEqual({ secrets: all, commitment: COMMITMENT });
+    expect(all).toHaveLength(2);
+  });
+
+  it('a vault whose commitment is zero has had no secret set, so nothing is needed and nothing is refused', () => {
+    /* RED WHEN a vault never started is refused for want of a record no coin of it was made under. */
+    expect(nonceSecretsForTheRebuild({
+      sealed: null, where: 'the record', vault: VAULT, signer: { wrappingSecret: ada.secret }, commitment: '00'.repeat(32),
+    })).toBeNull();
+  });
+
+  it('a record not wrapped to the signer this machine holds is refused', () => {
+    expect(() => nonceSecretsForTheRebuild({
+      sealed: record, where: 'the record', vault: VAULT, signer: { wrappingSecret: newWrappingKeypair().secret }, commitment: COMMITMENT,
+    })).toThrow(/no copy is wrapped to this signer/);
+  });
+
+  it('the split journal is read whole, as hex', () => {
+    const journal = splitJournalFromTheChain([[new Uint8Array(32).fill(1), new Uint8Array(32).fill(2)], [new Uint8Array(32).fill(3), new Uint8Array(32).fill(4)]]);
+    /* RED WHEN an entry of the chain's journal is dropped or written in another spelling. */
+    expect([...journal]).toEqual([['01'.repeat(32), '02'.repeat(32)], ['03'.repeat(32), '04'.repeat(32)]]);
+  });
+
+  it('the screen says how many calls\' coins went unnamed for want of the secret, and what resolves it', () => {
+    const lines = linesForAnOperator(recovery({ unnamedWithoutTheSecret: [3, 7] })).join('\n');
+    /* RED WHEN the screen stops printing the calls a rebuild without the secret could not name. */
+    expect(lines).toMatch(/calls whose new coins were not named, for want of the secret\s+2/u);
+    expect(lines).toMatch(/BECAUSE THE VAULT'S NONCE SECRET WAS NOT GIVEN/u);
+    expect(lines).toMatch(/put the company's nonce-secret record for this vault on this machine/u);
+    expect(lines).toMatch(/history proposed:\s+3, 7/u);
+    expect(linesForAnOperator(recovery({})).join('\n')).not.toMatch(/NONCE SECRET/u);
   });
 });
