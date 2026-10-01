@@ -10,8 +10,8 @@ import { AccountSimulator, change, payoutTreeOf, sumArgsOf, type privateStateFor
 import { fromHex, toHex } from '../../src/core/crypto.js';
 import { copiesTreeOf } from '../../src/midnight/sealed-copies-tree.js';
 
-/** The secret a started test vault holds, unless a test names another. */
-export const TEST_VAULT_SECRET = new Uint8Array(32).fill(0x51);
+/** The secret a started test vault holds, unless a test names another: thirty-one bytes and a zero, as every secret is. */
+export const TEST_VAULT_SECRET = (() => { const b = new Uint8Array(32).fill(0x51); b[31] = 0; return b; })();
 
 const ZERO = new Uint8Array(32);
 
@@ -54,7 +54,7 @@ export async function startTheVault(args: {
     required: 0n, salt: c.salt, nonce: fromHex(leaves[0]!.nonce), ...sumArgsOf(tree, 0),
   };
   delete (run as { amount?: unknown }).amount;
-  await call('setNonceSecret', run, ZERO, commitment, copies.root, copies.count);
+  await call('setNonceSecret', run, ZERO, commitment, copies.root, copies.count, copies.edge, secret, ZERO);
   await call('writeSecretCopy', commitment, copy.reader, copy.parts, copies.paths[0]);
   return { commitment };
 }

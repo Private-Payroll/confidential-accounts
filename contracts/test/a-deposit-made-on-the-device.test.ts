@@ -39,7 +39,7 @@ import {
   Contract as Vault, ledger as vaultLedger, pureCircuits as vaultCircuits,
 } from '../managed-vault/contract/index.js';
 import { pureCircuits } from '../managed/contract/index.js';
-import { carryTheAccount, startTheVault } from './start-a-vault.js';
+import { carryTheAccount, startTheVault, TEST_VAULT_SECRET } from './start-a-vault.js';
 import { AccountSimulator, privateStateFor, change, type Change, payoutTreeOf, vaultRunOf } from './simulator.js';
 import { type PayoutLeafInput } from '../../src/midnight/payout-tree.js';
 import { changeCoinOf } from '../../src/midnight/vault-coins.js';
@@ -111,7 +111,7 @@ const vaultWitnesses = {
       nonce: fromHex(n.nonce), color: fromHex(n.token), value: n.value, mt_index: n.index ?? NO_INDEX_YET,
     }];
   },
-  nonceSecret: (ctx: { privateState: { secret?: Uint8Array } }) => [ctx.privateState, ctx.privateState.secret ?? new Uint8Array(32).fill(0x51)],
+  nonceSecret: (ctx: { privateState: { secret?: Uint8Array } }) => [ctx.privateState, ctx.privateState.secret ?? TEST_VAULT_SECRET],
 };
 
 describe('a deposit whose record is made on the device', () => {
@@ -343,7 +343,7 @@ describe('a deposit whose record is made on the device', () => {
     await sim.as(sim.applying(B, c)).approve(id);
     const run = vaultRunOf({ proposal: id, vault: vaultBytes, tree, i: 0, opensAt: WIN_FROM, closesAt: WIN_UNTIL, salt: c.salt, nonce: bytes(seed) });
     for (const [circuit, args] of [
-      ['setNonceSecret', [run, previous, commitment, copies.root, copies.count]],
+      ['setNonceSecret', [run, previous, commitment, copies.root, copies.count, copies.edge, next, vaultSecret ?? TEST_VAULT_SECRET]],
       ['writeSecretCopy', [commitment, copy.reader, copy.parts, copies.paths[0]]],
     ] as const) {
       const r: any = await (vault.impureCircuits as any)[circuit](ctx(circuit), ...args);

@@ -51,7 +51,7 @@ interface VaultPrivate {
 
 const vaultWitnesses = {
   noteToSpend: (ctx: { privateState: VaultPrivate }) => [ctx.privateState, ctx.privateState.coin],
-  nonceSecret: (ctx: { privateState: { secret?: Uint8Array } }) => [ctx.privateState, ctx.privateState.secret ?? new Uint8Array(32).fill(0x51)],
+  nonceSecret: (ctx: { privateState: { secret?: Uint8Array } }) => [ctx.privateState, ctx.privateState.secret ?? TEST_VAULT_SECRET],
 };
 
 const carrying = (sim: AccountSimulator, d: ReturnType<typeof privateStateFor>, c: Change) =>

@@ -43,6 +43,7 @@ const tagOf = (name: string): string => {
 /* Every key expression the contract inserts under, per map. Read off the source below, never assumed. */
 const SIGNER_ROLES_WRITES = [
   'companyLabelKey()',
+  'usedKey',
   'payKeyCommitmentKey()',
   'first',
   'disclose(payKeyWrapKeyOf(account, sk, 1))',
@@ -120,7 +121,7 @@ describe('the derivations are separated by their tags', () => {
   const DERIVATIONS = [
     'companyLabelKey', 'payKeyCommitmentKey', 'payKeyWrapKeyOf', 'anchorKey',
     'removalCountKey', 'proposalIdOf',
-    'policyKeyOf', 'policyOnKeyOf', 'periodKeyOf', 'chargedKeyOf',
+    'policyKeyOf', 'policyOnKeyOf', 'periodKeyOf', 'chargedKeyOf', 'changesUsedKeyOf',
   ];
 
   it("every derivation has its own tag, and the anchor's is reserved as ruled", () => {
@@ -144,6 +145,8 @@ describe('the derivations are separated by their tags', () => {
     expect(bodyOf('policyOnKeyOf')).toMatch(/persistentHash<Vector<2, Bytes<32>>>\(\[\s*pad\(32, "midnight-accounts:roles:pol-on:"\), vault/);
     expect(bodyOf('periodKeyOf')).toMatch(/persistentHash<Vector<4, Bytes<32>>>\(\[\s*pad\(32, "midnight-accounts:roles:period:"\), policyKey, commitment,/);
     expect(bodyOf('chargedKeyOf')).toMatch(/persistentHash<Vector<3, Bytes<32>>>\(\[\s*pad\(32, "midnight-accounts:roles:charged:"\), periodKey, root/);
+    /* RED WHEN the count of a run's used changes stops hashing its own tag first, with the run's id. */
+    expect(bodyOf('changesUsedKeyOf')).toMatch(/persistentHash<Vector<2, Bytes<32>>>\(\[\s*pad\(32, "midnight-accounts:roles:used:"\), proposal/);
     /* The removal count's key is the padded tag itself, which no hash is expected to produce. */
     expect(bodyOf('removalCountKey')).toMatch(/return pad\(32, "midnight-accounts:removal-count"\);/);
   });
@@ -172,6 +175,7 @@ describe('and computed for real inputs, every key differs', () => {
         }
       }
     }
+    for (const id of [bytes(0xf0), bytes(0xf1)]) keys.push(pureCircuits.changesUsedKeyOf(id));
     /* RED WHEN any two derivations produce the same key. */
     expect(new Set(keys.map(hex)).size).toBe(keys.length);
   });

@@ -100,7 +100,7 @@ export type VaultAsk =
   }
   | {
     id: number; network: string; ask: 'set-nonce-secret'; vault: string; account: string; run: SecretRunOnTheWire;
-    proposal: string; opensAt: string; closesAt: string; chain: PayoutChainOnTheWire;
+    secret: string; proposal: string; opensAt: string; closesAt: string; chain: PayoutChainOnTheWire;
   }
   | {
     id: number; network: string; ask: 'write-secret-copy'; vault: string; run: SecretRunOnTheWire; place: number;
@@ -202,7 +202,7 @@ export interface VaultBuilderClient {
   }): Promise<{ standing: StartStandingOnTheWire; run?: SecretRunOnTheWire }>;
   /** The vault's first secret set under its approved run, built against one block's view of both contracts. */
   setNonceSecret(input: {
-    vault: string; account: string; run: SecretRunOnTheWire; proposal: string; opensAt: string; closesAt: string;
+    vault: string; account: string; run: SecretRunOnTheWire; secret: string; proposal: string; opensAt: string; closesAt: string;
     chain: PayoutChainOnTheWire;
   }): Promise<{ tx: string }>;
   /** One sealed copy of the run's secret written into the vault, by its place in the approved tree. */

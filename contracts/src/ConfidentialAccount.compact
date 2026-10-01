@@ -674,6 +674,11 @@ export circuit companyWideDetailsOf(details: Bytes<32>, vault: Bytes<32>): Bytes
   ]);
 }
 
+// Where `signerRoles` keeps how many of one run's changes its vaults have used.
+export circuit changesUsedKeyOf(proposal: Bytes<32>): Bytes<32> {
+  return persistentHash<Vector<2, Bytes<32>>>([pad(32, "midnight-accounts:roles:used:"), proposal]);
+}
+
 // Where the account's removal count sits in `proposalHolds`. No proposal id can equal it.
 export circuit removalCountKey(): Bytes<32> {
   return pad(32, "midnight-accounts:removal-count");
@@ -1266,7 +1271,9 @@ export circuit recordPaymentFromVault(
 // paid. Only a vault this account has adopted, and only with that vault's own receipt for a
 // change in the same transaction; a vault whose own bar is stricter than the company's is never
 // changed on the company's run. The leaf carries no amount. The vault itself refuses a change
-// approved twice: each is bound to the one secret or the one note it changes.
+// approved twice: each is bound to the one secret or the one note it changes. A run whose every
+// leaf is a change closes when its vaults have used the last of them, rather than at the end of
+// its window.
 export circuit approveVaultChange(
   proposal: Bytes<32>,
   runVault: Bytes<32>,
@@ -1318,6 +1325,16 @@ export circuit approveVaultChange(
   const leaf = payoutLeaf(companyRun ? companyWideDetailsOf(details, vault) : details, nonce);
   assert(sumPathRoot(leaf, 0, path, asset) == root,
          "that change is not in the approved run, for that vault");
+
+  // Counted, and the run closed once as many changes are used as it has leaves.
+  const usedKey = disclose(changesUsedKeyOf(id));
+  const used = (signerRoles.member(usedKey) ? degradeToTransient(signerRoles.lookup(usedKey)) : 0 as Field) + 1;
+  if (used == (disclose(payees) as Field)) {
+    signerRoles.remove(usedKey);
+    closeProposal(id);
+  } else {
+    signerRoles.insert(usedKey, upgradeFromTransient(used));
+  }
 
   return kernel.self();
 }

@@ -18,7 +18,8 @@ import { recordsKeypairFrom } from './company-nonce-secret.js';
 
 const circuits = { vault: V as never, account: P as never };
 const VAULT = 'ab'.repeat(32);
-const SECRET = '5e'.repeat(32);
+/* Thirty-one bytes and a zero, the only shape a vault's secret takes. */
+const SECRET = '5e'.repeat(31) + '00';
 const A = recordsKeypairFrom(new Uint8Array(32).fill(1));
 const B = recordsKeypairFrom(new Uint8Array(32).fill(2));
 const key = (b: Uint8Array) => toHex(b);
@@ -60,7 +61,16 @@ describe('A VAULT\'S START', () => {
       expect(openSecretCopy({ vault: VAULT, parts: copy.parts.map(fromHex), reader: r })).toBe(SECRET);
     }
     /* RED WHEN: another secret makes the same run - its identity would say nothing about which secret was approved. */
-    expect(firstSecretRunOf(circuits, { vault: VAULT, secret: '5f'.repeat(32), readers: [A.publicKey] }).salt).not.toBe(run.salt);
+    expect(firstSecretRunOf(circuits, { vault: VAULT, secret: '5f'.repeat(31) + '00', readers: [A.publicKey] }).salt).not.toBe(run.salt);
+  });
+
+  it('CARRIES THE EDGE THE VAULT CHECKS, and refuses a secret the vault would refuse, before anything is built', () => {
+    /* RED WHEN the run's edge is not the path to the first place past its copies: the vault would refuse the run. */
+    expect(V.emptyFrom(fromHex(run.copiesRoot), run.count, run.edge as never)).toBe(true);
+    expect(V.emptyFrom(fromHex(run.copiesRoot), run.count - 1n, run.edge as never)).toBe(false);
+    /* RED WHEN a secret whose last byte is not zero is made into a run: the vault would refuse it after the approvals. */
+    expect(() => firstSecretRunOf(circuits, { vault: VAULT, secret: '5e'.repeat(32), readers: [A.publicKey] }))
+      .toThrow(/ends in a zero byte/);
   });
 
   it('READS AN ADOPTION NOT RAISED, RAISED AND SHORT OF APPROVALS, MADE STALE BY A REMOVAL, AND CARRIED OUT', () => {

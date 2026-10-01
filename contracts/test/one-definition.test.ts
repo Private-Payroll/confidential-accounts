@@ -534,6 +534,12 @@ const SCHEMES: Entry[] = [
       'receives tokenType of it and the changed vault inside the proof; no client derives the token.',
   },
   {
+    circuit: 'changesUsedKeyOf',
+    contractOnly:
+      'the key the account counts a run\'s used changes under in signerRoles, read and written only ' +
+      'inside approveVaultChange; the client has no reason to compute it.',
+  },
+  {
     circuit: 'companyWideDetailsOf',
     contractOnly:
       'binds a company-wide run\'s leaf to the vault paying it; the account computes it inside ' +
@@ -895,7 +901,7 @@ describe('one definition: the contract and the client agree', () => {
       + 'governance payloads are — do not write a second derivation. If it is a passthrough '
       + 'that reads the circuit, declare it as one in SCHEME_MEMBERS and say so.',
     ).toEqual([
-      'adoptVaultPayload', 'anchorKey', 'bandApprovals', 'changeReceiptTag', 'chargedKeyOf', 'chargedMark', 'clearedMark',
+      'adoptVaultPayload', 'anchorKey', 'bandApprovals', 'changeReceiptTag', 'changesUsedKeyOf', 'chargedKeyOf', 'chargedMark', 'clearedMark',
       'companyLabelKey', 'companyWide', 'companyWideDetailsOf', 'coversVault', 'holderKeyOf',
       'paidMovementOf', 'paidOnceOf', 'payKeyCommitmentKey', 'payKeyCommitmentOf', 'payKeyPayload',
       'payKeyWrapKeyOf', 'paymentReceiptTag', 'periodBlindingOf', 'periodKeyOf', 'periodTotalOf',
@@ -1042,8 +1048,8 @@ describe('A VAULT\'S START IS MADE BY THE CONTRACTS\' OWN FUNCTIONS, NOT A SECON
 
   it('the first secret run\'s one leaf is the vault\'s own secret-run details, in the account\'s own leaf and tree', () => {
     const run = firstSecretRunOf({ vault: vaultCircuits as never, account: pureCircuits as never },
-      { vault: VAULT_HEX, secret: '5e'.repeat(32), readers: ['40'.repeat(32)] });
-    const commitment = vaultCircuits.secretCommitmentOf(fromHex(VAULT_HEX), fromHex('5e'.repeat(32)));
+      { vault: VAULT_HEX, secret: '5e'.repeat(31) + '00', readers: ['40'.repeat(32)] });
+    const commitment = vaultCircuits.secretCommitmentOf(fromHex(VAULT_HEX), fromHex('5e'.repeat(31) + '00'));
     expect(run.commitment).toBe(toHex(commitment));
     /* RED WHEN: the run approves details the vault's setNonceSecret does not ask the account for. */
     expect(run.details).toBe(toHex(vaultCircuits.secretRunDetails(

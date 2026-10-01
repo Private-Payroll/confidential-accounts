@@ -13,10 +13,10 @@
  * ------------------------------------------------------------------------
  * **ONE SECRET PER EPOCH, WRAPPED TO EVERY SIGNER.**
  *
- * The secret is thirty-two random bytes made once, when the vault's record of
- * it is started, and it belongs to nobody in particular. It is wrapped to each
- * signer separately, the way a vault's note pool is, so any one of them opens
- * it and nobody's departure takes it away.
+ * The secret is thirty-one random bytes and a zero, made once, when the vault's
+ * record of it is started, and it belongs to nobody in particular. It is
+ * wrapped to each signer separately, the way a vault's note pool is, so any one
+ * of them opens it and nobody's departure takes it away.
  *
  * **WRAPPED TO A KEY EACH SIGNER DERIVES, NOT TO THE KEY THE POOL USES.** A
  * signer's pool key is random and kept in their saved keys, which live on this
@@ -156,9 +156,14 @@ const publicKeyOf = (r: NonceSecretReader): Hex => {
 
 const sealKeyOf = (secret: Hex): Hex => toHex(hkdf(sha256, fromHex(secret), SEAL_SALT, new Uint8Array(0), KEY_BYTES));
 
+/*
+ * Thirty-one random bytes and a zero: the vault takes a secret only in this shape, one field
+ * element exactly, so a later secret can carry it, sealed, on the chain.
+ */
 const newSecret = (): Hex => {
   for (;;) {
     const s = randomBytes(KEY_BYTES);
+    s[KEY_BYTES - 1] = 0;
     if (!s.every((b) => b === 0)) return toHex(s);
   }
 };
