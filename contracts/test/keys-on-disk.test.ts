@@ -4,6 +4,9 @@ import { copyFileSync, existsSync, mkdtempSync, readdirSync, rmSync, writeFileSy
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { ACCOUNT_KEYS, VAULT_KEYS, keysOnDisk, type ContractKeys } from './keys-on-disk.js';
+import { Contract as AccountContract } from '../managed/contract/index.js';
+import { Contract as VaultContract } from '../managed-vault/contract/index.js';
+import { witnesses as accountWitnesses } from '../src/witnesses.js';
 
 /*
  * THE GATE EVERY KEY-GATED TEST STANDS BEHIND, ASKED OF KEYS WRITTEN HERE, in
@@ -77,9 +80,21 @@ describe('whether the keys on disk are the keys this build compiled', () => {
   });
 
   it('asks every circuit the account deploys and every circuit of the vault', () => {
+    /*
+     * Against the circuits each compiled module declares it can prove, which a
+     * build with keys and a build without them both carry. Its `expectedVk` is
+     * filled only when keys are built, so it cannot say which circuits there
+     * are; a module that pins no key at all is the gate's own refusal, tested above.
+     */
+    const neverCalled = (): never => { throw new Error('this test builds no call, so no witness is asked'); };
+    const account = new AccountContract(accountWitnesses);
+    const vault = new VaultContract({ noteToSpend: neverCalled, nonceSecret: neverCalled });
     /* RED WHEN either contract's gate leaves a circuit out, so a build missing that circuit's key passes. */
-    expect([...ACCOUNT_KEYS.circuits].sort()).toEqual(Object.keys(ACCOUNT_KEYS.expectedVk).sort());
-    expect([...VAULT_KEYS.circuits].sort()).toEqual(Object.keys(VAULT_KEYS.expectedVk).sort());
+    expect([...ACCOUNT_KEYS.circuits].sort()).toEqual(Object.keys(account.provableCircuits).sort());
+    expect([...VAULT_KEYS.circuits].sort()).toEqual(Object.keys(vault.provableCircuits).sort());
+    /* RED WHEN a gate's list of circuits is empty, so the comparison above would hold over nothing. */
+    expect(ACCOUNT_KEYS.circuits.length).toBeGreaterThan(0);
+    expect(VAULT_KEYS.circuits.length).toBeGreaterThan(0);
   });
 });
 
