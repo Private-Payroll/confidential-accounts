@@ -13,7 +13,9 @@
  * The tree has ten levels, as deep as the account's own tree of signers, so it
  * holds one copy for every signer the account can seat. Places past the last
  * copy hold zero, which no copy's leaf can equal, so nothing can be written
- * there.
+ * there; the run is set with the path to the first of them (`edge`), which
+ * shows the vault every place from the count on is empty, so no copy sits past
+ * the count and none can be left unwritten when the count reaches zero.
  *
  * The leaf and node functions are the vault's own (`copyLeafOf`,
  * `copyNodeOf`), run here exactly as the circuit runs them, so a root built
@@ -46,6 +48,12 @@ export interface CopiesTree {
   readonly count: bigint;
   /** Each copy's path, in the order the copies were given. */
   readonly paths: readonly (readonly CopyStep[])[];
+  /**
+   * The path to the first place past the last copy, which the vault checks is empty with
+   * everything to its right. A tree with every place full has no such place, and the vault
+   * reads no edge for it; this is then the path to place 0, which it does not check.
+   */
+  readonly edge: readonly CopyStep[];
 }
 
 /** The vault's own functions this tree is built from. */
@@ -91,7 +99,7 @@ export function copiesTreeOf(
     }
     levels.push(here);
   }
-  const paths = copies.map((_, index) => {
+  const pathTo = (index: number): CopyStep[] => {
     const path: CopyStep[] = [];
     let at = index;
     for (let l = 0; l < COPIES_TREE_DEPTH; l++) {
@@ -101,7 +109,9 @@ export function copiesTreeOf(
       at >>= 1;
     }
     return path;
-  });
+  };
+  const paths = copies.map((_, index) => pathTo(index));
   const root = circuits.copiesRootOf(levels[0]![0]!, paths[0]!);
-  return { root, count: BigInt(copies.length), paths };
+  const edge = pathTo(copies.length < MOST_COPIES ? copies.length : 0);
+  return { root, count: BigInt(copies.length), paths, edge };
 }

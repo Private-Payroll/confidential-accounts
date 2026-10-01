@@ -119,6 +119,8 @@ export interface SecretRun {
   readonly copies: readonly SecretCopyToWrite[];
   readonly copiesRoot: Hex;
   readonly count: bigint;
+  /** The path to the first place past the last copy, which shows the vault no copy sits beyond the count. */
+  readonly edge: readonly CopyStep[];
   readonly details: Hex;
   readonly nonce: Hex;
   readonly salt: Hex;
@@ -145,6 +147,10 @@ export function firstSecretRunOf(
   if (typeof input.secret !== 'string' || !HEX32.test(input.secret)) {
     throw new Error('a vault\x27s secret is thirty-two bytes, and this is not one. Nothing was built.');
   }
+  if (!input.secret.toLowerCase().endsWith('00')) {
+    throw new Error('a vault\x27s secret ends in a zero byte, so a later secret can carry it. This one does not, so '
+      + 'nothing was built. Make the company\x27s record of the secret again before starting the vault.');
+  }
   const readers = [...new Set(input.readers.map((r) => String(r).toLowerCase()))].sort();
   if (readers.length === 0 || readers.some((r) => !HEX32.test(r))) {
     throw new Error('a secret is sealed to every signer\x27s records key, and none was given that is one. Nothing was built.');
@@ -168,6 +174,7 @@ export function firstSecretRunOf(
     copies: sealed.map((c, i) => ({ reader: c.reader, parts: c.parts.map(toHex), path: tree.paths[i]! })),
     copiesRoot: toHex(tree.root),
     count: tree.count,
+    edge: tree.edge,
     details: toHex(details),
     nonce: toHex(nonce),
     salt: toHex(salt),

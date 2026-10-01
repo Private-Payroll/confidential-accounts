@@ -121,6 +121,7 @@ export type WorkerDeps = Omit<VaultBuilderDeps, 'network'> & { vault: any; accou
 /** The first secret run, as it crosses to the page. */
 const secretRunToWire = (r: SecretRun): SecretRunOnTheWire => ({
   vault: r.vault, previous: r.previous, commitment: r.commitment, copiesRoot: r.copiesRoot, count: r.count.toString(),
+  edge: r.edge.map((s) => ({ sibling: s.sibling.toString(), goesLeft: s.goesLeft })),
   details: r.details, nonce: r.nonce, salt: r.salt, asset: r.asset, root: r.root, payees: r.payees.toString(),
   path: r.path.map((s) => ({ sibling: s.sibling.toString(), siblingSum: s.siblingSum.toString(), goesLeft: s.goesLeft })),
   copies: r.copies.map((c) => ({
@@ -353,7 +354,7 @@ export const answerVaultAsk = async (
     }
     case 'set-nonce-secret': {
       const built = await buildSetNonceSecret(withNetwork, {
-        vault: ask.vault, account: ask.account, run: ask.run, proposal: ask.proposal, opensAt: ask.opensAt, closesAt: ask.closesAt,
+        vault: ask.vault, account: ask.account, run: ask.run, secret: ask.secret, proposal: ask.proposal, opensAt: ask.opensAt, closesAt: ask.closesAt,
         chain: {
           blockHash: ask.chain.blockHash,
           vaultState: fromBase64(ask.chain.vaultState),

@@ -44,7 +44,7 @@ import { pureCircuits, ledger as accountLedger } from '../managed/contract/index
 import {
   AccountSimulator, privateStateFor, change, type Change, payoutTreeOf, vaultRunOf, NOT_IN_THE_APPROVED_RUN,
 } from './simulator.js';
-import { carryTheAccount, startTheVault } from './start-a-vault.js';
+import { carryTheAccount, startTheVault, TEST_VAULT_SECRET } from './start-a-vault.js';
 import { type PayoutLeafInput, type PayoutTree } from '../../src/midnight/payout-tree.js';
 import { toHex, fromHex } from '../../src/core/crypto.js';
 
@@ -70,7 +70,7 @@ const BOB = bytes(0x0b);
 interface VaultPrivate { coin: { nonce: Uint8Array; color: Uint8Array; value: bigint; mt_index: bigint } }
 const vaultWitnesses = {
   noteToSpend: (ctx: { privateState: VaultPrivate }) => [ctx.privateState, ctx.privateState.coin],
-  nonceSecret: (ctx: { privateState: { secret?: Uint8Array } }) => [ctx.privateState, ctx.privateState.secret ?? new Uint8Array(32).fill(0x51)],
+  nonceSecret: (ctx: { privateState: { secret?: Uint8Array } }) => [ctx.privateState, ctx.privateState.secret ?? TEST_VAULT_SECRET],
 };
 
 const govChange = (seed: number): Change => change(0n, seed);

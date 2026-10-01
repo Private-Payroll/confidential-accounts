@@ -126,21 +126,38 @@ describe('an approved change to a vault records no payment', () => {
     expect([...fx.claimedShieldedSpends]).toEqual([]);
   });
 
-  it('the same approval is accepted again by the account, which keeps no record of it: the vault refuses the repeat', async () => {
+  it('A RUN OF CHANGES CLOSES WHEN ITS LAST CHANGE IS USED, not at the end of its window, and records no payment', async () => {
     const sim = await live();
     await sim.adoptVault(PAYROLL, [A, B]);
     const leaves = oneChange(7);
     const c = change(0n, 71);
     const run = await approvedChanges(sim, PAYROLL, leaves, c);
     await sim.as(sim.applying(A, c)).approveVaultChange(ask(run, leaves, PAYROLL, c, 0));
-    /*
-     * Stated rather than hidden: the account records nothing, so it cannot refuse a
-     * repeat. Each change's leaf names the one secret it replaces or the one note it
-     * splits, and the vault refuses both a second time (`a-new-vault.test.ts`).
-     * RED WHEN the step starts recording something, which this test must then follow.
-     */
-    await expect(sim.as(sim.applying(A, c)).approveVaultChange(ask(run, leaves, PAYROLL, c, 0))).resolves.toBeDefined();
+    /* RED WHEN a run of one change is left open once that change is used. */
+    expect(sim.ledger.openProposals.member(run.id)).toBe(false);
+    expect(sim.ledger.runWindow.member(run.id)).toBe(false);
+    /* RED WHEN the same approval is taken again once its run is closed. */
+    await expect(sim.as(sim.applying(A, c)).approveVaultChange(ask(run, leaves, PAYROLL, c, 0)))
+      .rejects.toThrow(/there is no open proposal with that id/);
     expect(sim.ledger.movements.size()).toBe(0n);
+  });
+
+  it('A RUN OF TWO CHANGES STAYS OPEN AFTER THE FIRST, and closes after the second', async () => {
+    const sim = await live();
+    await sim.adoptVault(PAYROLL, [A, B]);
+    const leaves = [...oneChange(8), ...oneChange(9)];
+    const c = change(0n, 72);
+    const run = await approvedChanges(sim, PAYROLL, leaves, c);
+    await sim.as(sim.applying(A, c)).approveVaultChange(ask(run, leaves, PAYROLL, c, 0));
+    /* RED WHEN a run closes before every one of its changes is used: the second could never be made. */
+    expect(sim.ledger.openProposals.member(run.id)).toBe(true);
+    /* RED WHEN the first change is not counted. */
+    expect(sim.ledger.signerRoles.lookup(pureCircuits.changesUsedKeyOf(run.id))[0]).toBe(1);
+    await sim.as(sim.applying(A, c)).approveVaultChange(ask(run, leaves, PAYROLL, c, 1));
+    /* RED WHEN the run is not closed once the count reaches its leaves. */
+    expect(sim.ledger.openProposals.member(run.id)).toBe(false);
+    /* RED WHEN the count of changes used is left behind once the run closes. */
+    expect(sim.ledger.signerRoles.member(pureCircuits.changesUsedKeyOf(run.id))).toBe(false);
   });
 });
 
@@ -314,10 +331,10 @@ describe('a company-wide change: each vault its own leaf, never a stricter vault
     await sim.adoptVault(PAYROLL, [A, B]);
     await sim.adoptVault(TREASURY, [A, B], 393);
     const { args, c } = await companyChange(sim, PAYROLL, 16);
-    await expect(sim.as(sim.applying(A, c)).approveVaultChange(args)).resolves.toBeDefined();
     /* RED WHEN the account stops binding a company-wide leaf to the vault it changes. */
     await expect(sim.as(sim.applying(A, c)).approveVaultChange({ ...args, payingVault: TREASURY }))
       .rejects.toThrow(/that change is not in the approved run/);
+    await expect(sim.as(sim.applying(A, c)).approveVaultChange(args)).resolves.toBeDefined();
     expect(sim.ledger.movements.size()).toBe(0n);
   });
 

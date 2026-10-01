@@ -45,8 +45,10 @@ const ZERO = new Uint8Array(32);
 
 const TOKEN_BYTES = bytes(0x9b);
 const ALICE = bytes(0x0a);
-const SECRET = bytes(0x51);
-const NEXT_SECRET = bytes(0x52);
+/** A nonce secret: thirty-one bytes and a zero, the only shape the vault takes. */
+const secretOf = (n: number) => { const b = bytes(n); b[31] = 0; return b; };
+const SECRET = secretOf(0x51);
+const NEXT_SECRET = secretOf(0x52);
 
 interface Coin { nonce: Uint8Array; color: Uint8Array; value: bigint }
 interface VaultPrivate { coin: Coin & { mt_index: bigint }; secret: Uint8Array }
@@ -60,8 +62,32 @@ const witnesses = {
 interface Copy { reader: Uint8Array; parts: Uint8Array[] }
 const copyFor = (n: number): Copy => ({ reader: bytes(0x30 + n), parts: [1, 2, 3, 4].map((p) => bytes(n * 8 + p)) });
 
-/** The approved tree of copies: its root, how many copies, and each copy's path. */
+/** The approved tree of copies: its root, how many copies, each copy's path, and the edge past the last. */
 const treeOf = (commitment: Uint8Array, copies: Copy[]) => copiesTreeOf(V as never, commitment, copies);
+
+/** An edge for a call refused before its tree is read. */
+const NO_EDGE = Array.from({ length: 10 }, () => ({ sibling: 0n, goesLeft: true }));
+
+/**
+ * The path to any place of the tree over `copies`, worked out here from the vault's own leaf and node, for an edge
+ * at a place the product would not build one: past a count the run did not approve.
+ */
+const pathAt = (commitment: Uint8Array, copies: Copy[], place: number) => {
+  const empty: bigint[] = [0n];
+  for (let l = 0; l < 10; l++) empty.push(V.copyNodeOf(empty[l]!, empty[l]!));
+  let level: bigint[] = copies.map((c) => V.copyLeafOf(commitment, c.reader, c.parts));
+  const path: { sibling: bigint; goesLeft: boolean }[] = [];
+  let at = place;
+  for (let l = 0; l < 10; l++) {
+    const beside = at ^ 1;
+    path.push({ sibling: beside < level.length ? level[beside]! : empty[l]!, goesLeft: (at & 1) === 0 });
+    const up: bigint[] = [];
+    for (let i = 0; i < level.length; i += 2) up.push(V.copyNodeOf(level[i]!, i + 1 < level.length ? level[i + 1]! : empty[l]!));
+    level = up;
+    at >>= 1;
+  }
+  return path;
+};
 
 /** The secret run's leaf for a tree of copies. */
 const secretLeaf = (vault: Uint8Array, previous: Uint8Array, commitment: Uint8Array, tree: { root: Uint8Array; count: bigint }, nonce: number) =>
@@ -88,6 +114,19 @@ class World {
       { bytes: fromHex(String(w.sim.address)) } as never);
     w.state = init.currentContractState;
     if (adopt) await w.sim.adoptVault(w.self, devices);
+    return w;
+  }
+
+  /** A second vault of the same company: the same account, its own address and state. */
+  static async beside(other: World, adopt = true, approvers = [A, B]): Promise<World> {
+    const w = new World();
+    w.sim = other.sim;
+    w.addr = String(sampleContractAddress());
+    const init = await w.vault.initialState(
+      createConstructorContext({} as VaultPrivate, BLOCK),
+      { bytes: fromHex(String(w.sim.address)) } as never);
+    w.state = init.currentContractState;
+    if (adopt) await w.sim.adoptVault(w.self, approvers, 380 + Number(BigInt('0x' + w.addr.slice(0, 4)) % 100n));
     return w;
   }
 
@@ -126,11 +165,13 @@ class World {
   }
 
   /** The vault's first or next secret, through an approved secret run, and every copy written. */
-  async setSecret(secret: Uint8Array, copies: Copy[] = [copyFor(1)], seed = 401, previous = this.ledger.nonceCommitment) {
+  async setSecret(secret: Uint8Array, copies: Copy[] = [copyFor(1)], seed = 401, previous = this.ledger.nonceCommitment,
+    earlier: Uint8Array = this.priv.secret) {
     const commitment = V.secretCommitmentOf(this.self, secret);
     const tree = treeOf(commitment, copies);
     const run = await this.approved(secretLeaf(this.self, previous, commitment, tree, seed % 256), [0n], seed);
-    await this.call('setNonceSecret', run.runOf(0), previous, commitment, tree.root, tree.count);
+    await this.call('setNonceSecret', run.runOf(0), previous, commitment, tree.root, tree.count, tree.edge, secret,
+      previous.every((b) => b === 0) ? ZERO : earlier);
     for (let i = 0; i < copies.length; i++) {
       await this.call('writeSecretCopy', commitment, copies[i]!.reader, copies[i]!.parts, tree.paths[i]);
     }
@@ -205,7 +246,7 @@ describe('the nonce secret: approved, chained, never zero or repeated, and recor
     const commitment = V.secretCommitmentOf(w.self, SECRET);
     const tree = treeOf(commitment, [copyFor(1)]);
     const run = await w.approved(secretLeaf(w.self, ZERO, commitment, tree, 9), [0n], 409);
-    await w.call('setNonceSecret', run.runOf(0), ZERO, commitment, tree.root, tree.count);
+    await w.call('setNonceSecret', run.runOf(0), ZERO, commitment, tree.root, tree.count, tree.edge, SECRET, ZERO);
     const L: any = await import('@midnight-ntwrk/midnight-js-protocol/ledger');
     const changeColour = L.rawTokenType(V.changeReceiptTag(), w.addr);
     const payColour = L.rawTokenType(V.paymentReceiptTag(), w.addr);
@@ -222,18 +263,18 @@ describe('the nonce secret: approved, chained, never zero or repeated, and recor
     /* RED WHEN a zero commitment is accepted, which would leave the vault with no secret. */
     const zeroLeaf = [{ details: toHex(V.secretRunDetails(w.self, commitment, ZERO, bytes(1), 1n)), nonce: toHex(bytes(3)) }];
     const zr = await w.approved(zeroLeaf, [0n], 403);
-    await expect(w.call('setNonceSecret', zr.runOf(0), commitment, ZERO, bytes(1), 1n))
+    await expect(w.call('setNonceSecret', zr.runOf(0), commitment, ZERO, bytes(1), 1n, NO_EDGE, SECRET, SECRET))
       .rejects.toThrow(/a secret's commitment of zero/);
     /* RED WHEN the commitment it already has is accepted again. */
     const sameLeaf = [{ details: toHex(V.secretRunDetails(w.self, commitment, commitment, bytes(1), 1n)), nonce: toHex(bytes(4)) }];
     const sr = await w.approved(sameLeaf, [0n], 404);
-    await expect(w.call('setNonceSecret', sr.runOf(0), commitment, commitment, bytes(1), 1n))
+    await expect(w.call('setNonceSecret', sr.runOf(0), commitment, commitment, bytes(1), 1n, NO_EDGE, SECRET, SECRET))
       .rejects.toThrow(/that is the secret this vault already has/);
     /* RED WHEN a run naming a secret the vault no longer holds can roll it back. */
     const other = V.secretCommitmentOf(w.self, NEXT_SECRET);
     const staleLeaf = [{ details: toHex(V.secretRunDetails(w.self, other, bytes(7), bytes(1), 1n)), nonce: toHex(bytes(5)) }];
     const st = await w.approved(staleLeaf, [0n], 405);
-    await expect(w.call('setNonceSecret', st.runOf(0), other, bytes(7), bytes(1), 1n))
+    await expect(w.call('setNonceSecret', st.runOf(0), other, bytes(7), bytes(1), 1n, NO_EDGE, SECRET, SECRET))
       .rejects.toThrow(/replaces a secret this vault no longer holds/);
   });
 
@@ -241,25 +282,25 @@ describe('the nonce secret: approved, chained, never zero or repeated, and recor
     const w = await World.make();
     const { commitment, tree, run } = await w.setSecret(SECRET);
     /* RED WHEN the commitment is not chained to the one it replaces. */
-    await expect(w.call('setNonceSecret', run.runOf(0), ZERO, commitment, tree.root, tree.count))
+    await expect(w.call('setNonceSecret', run.runOf(0), ZERO, commitment, tree.root, tree.count, tree.edge, SECRET, ZERO))
       .rejects.toThrow(/replaces a secret this vault no longer holds/);
   });
 
   it('REFUSES a secret with no sealed copy, more copies than the tree holds, and one whose run did not approve this commitment', async () => {
     const w = await World.make();
     const commitment = V.secretCommitmentOf(w.self, SECRET);
-    const root = treeOf(commitment, [copyFor(1)]).root;
+    const { root, edge } = treeOf(commitment, [copyFor(1)]);
     const none = await w.approved(secretLeaf(w.self, ZERO, commitment, { root, count: 0n }, 6), [0n], 406);
     /* RED WHEN a secret nobody can open is accepted: a count of zero would open the vault with no copy written. */
-    await expect(w.call('setNonceSecret', none.runOf(0), ZERO, commitment, root, 0n))
+    await expect(w.call('setNonceSecret', none.runOf(0), ZERO, commitment, root, 0n, NO_EDGE, SECRET, ZERO))
       .rejects.toThrow(/a secret with no sealed copy/);
     const many = await w.approved(secretLeaf(w.self, ZERO, commitment, { root, count: 1025n }, 7), [0n], 407);
     /* RED WHEN a count past the tree's 1024 places is accepted: the vault could never be opened to money. */
-    await expect(w.call('setNonceSecret', many.runOf(0), ZERO, commitment, root, 1025n))
+    await expect(w.call('setNonceSecret', many.runOf(0), ZERO, commitment, root, 1025n, NO_EDGE, SECRET, ZERO))
       .rejects.toThrow(/holds at most 1024/);
     const one = await w.approved(secretLeaf(w.self, ZERO, commitment, { root, count: 1n }, 8), [0n], 408);
     /* RED WHEN the run's leaf stops binding the commitment: another one, on the same approval. */
-    await expect(w.call('setNonceSecret', one.runOf(0), ZERO, V.secretCommitmentOf(w.self, NEXT_SECRET), root, 1n))
+    await expect(w.call('setNonceSecret', one.runOf(0), ZERO, V.secretCommitmentOf(w.self, NEXT_SECRET), root, 1n, edge, NEXT_SECRET, ZERO))
       .rejects.toThrow(/that change is not in the approved run/);
   });
 
@@ -270,16 +311,20 @@ describe('the nonce secret: approved, chained, never zero or repeated, and recor
     const run = await w.approved(secretLeaf(w.self, ZERO, commitment, tree, 12), [0n], 412);
     const other = V.secretCommitmentOf(w.self, NEXT_SECRET);
     /* RED WHEN the leaf stops binding the commitment: anyone could set a secret only they know, on the signers' approval. */
-    await expect(w.call('setNonceSecret', run.runOf(0), ZERO, other, tree.root, tree.count))
+    await expect(w.call('setNonceSecret', run.runOf(0), ZERO, other, tree.root, tree.count, tree.edge, NEXT_SECRET, ZERO))
       .rejects.toThrow(/that change is not in the approved run/);
     /* RED WHEN the leaf stops binding the root: anyone could swap in copies the signers never approved. */
-    await expect(w.call('setNonceSecret', run.runOf(0), ZERO, commitment, treeOf(commitment, [copyFor(3)]).root, tree.count))
+    const swapped = treeOf(commitment, [copyFor(3), copyFor(4)]);
+    await expect(w.call('setNonceSecret', run.runOf(0), ZERO, commitment, swapped.root, swapped.count, swapped.edge, SECRET, ZERO))
       .rejects.toThrow(/that change is not in the approved run/);
-    /* RED WHEN the leaf stops binding the count: a count of one would open the vault with one of two copies written. */
-    await expect(w.call('setNonceSecret', run.runOf(0), ZERO, commitment, tree.root, 1n))
+    /*
+     * RED WHEN the leaf stops binding the count. A smaller count is refused before the leaf is read (the tree shows a
+     * copy past it), so the swap here is a larger one: three for two, which shows nothing past place three.
+     */
+    await expect(w.call('setNonceSecret', run.runOf(0), ZERO, commitment, tree.root, 3n, pathAt(commitment, [copyFor(1), copyFor(2)], 3), SECRET, ZERO))
       .rejects.toThrow(/that change is not in the approved run/);
     /* The control: the approved commitment, root and count are accepted. */
-    await w.call('setNonceSecret', run.runOf(0), ZERO, commitment, tree.root, tree.count);
+    await w.call('setNonceSecret', run.runOf(0), ZERO, commitment, tree.root, tree.count, tree.edge, SECRET, ZERO);
     expect(w.ledger.nonceCommitment).toEqual(commitment);
   });
 
@@ -290,7 +335,8 @@ describe('the nonce secret: approved, chained, never zero or repeated, and recor
     const again = treeOf(first.commitment, [copyFor(3)]);
     const run = await w.approved(secretLeaf(w.self, w.ledger.nonceCommitment, first.commitment, again, 13), [0n], 442);
     /* RED WHEN an earlier secret can be set again: the run that replaced it could then be replayed, and its copies rewritten. */
-    await expect(w.call('setNonceSecret', run.runOf(0), w.ledger.nonceCommitment, first.commitment, again.root, again.count))
+    await expect(w.call('setNonceSecret', run.runOf(0), w.ledger.nonceCommitment, first.commitment, again.root, again.count,
+      again.edge, SECRET, NEXT_SECRET))
       .rejects.toThrow(/a secret is never set twice/);
   });
 
@@ -301,7 +347,7 @@ describe('the nonce secret: approved, chained, never zero or repeated, and recor
     const run = await w.approved(secretLeaf(w.self, ZERO, commitment, tree, 8), [0n], 408, [A, B]);
     /* The bar is the vault's: the account's own threshold is three here, and two approved. */
     /* RED WHEN the secret is set on fewer approvals than a payment from this vault needs. */
-    await expect(w.call('setNonceSecret', run.runOf(0), ZERO, commitment, tree.root, tree.count))
+    await expect(w.call('setNonceSecret', run.runOf(0), ZERO, commitment, tree.root, tree.count, tree.edge, SECRET, ZERO))
       .rejects.toThrow(/not enough approvals yet/);
   });
 });
@@ -313,7 +359,7 @@ describe('the sealed copies: one approved root, each copy written on its own, an
     const commitment = V.secretCommitmentOf(w.self, SECRET);
     const tree = treeOf(commitment, copies);
     const run = await w.approved(secretLeaf(w.self, ZERO, commitment, tree, seed % 256), [0n], seed);
-    await w.call('setNonceSecret', run.runOf(0), ZERO, commitment, tree.root, tree.count);
+    await w.call('setNonceSecret', run.runOf(0), ZERO, commitment, tree.root, tree.count, tree.edge, SECRET, ZERO);
     return { w, commitment, tree };
   };
   const left = (w: World, commitment: Uint8Array) => w.ledger.secretCopies.lookup(V.copiesLeftKeyOf(commitment));
@@ -382,9 +428,10 @@ describe('the sealed copies: one approved root, each copy written on its own, an
     await expect(w.call('deposit', { nonce: bytes(0x61), color: TOKEN_BYTES, value: 10n }))
       .rejects.toThrow(/not every signer's sealed copy/);
     await w.call('writeSecretCopy', commitment, copies[1]!.reader, copies[1]!.parts, tree.paths[1]);
-    /* RED WHEN a finished tree takes another copy. */
+    /* RED WHEN a finished tree takes another copy: every place is written once, and none past the count holds one. */
     await expect(w.call('writeSecretCopy', commitment, copies[1]!.reader, copies[1]!.parts, tree.paths[1]))
-      .rejects.toThrow(/every sealed copy of that secret is already written/);
+      .rejects.toThrow(/that sealed copy is already written/);
+    expect(left(w, commitment)).toEqual(ZERO);
   });
 
   it('A BAD ENTRY BLOCKS ONLY ITSELF: copies are written in any order, and one listed twice for a reader holds up nobody', async () => {
@@ -630,11 +677,20 @@ describe('splitting a note: approved like any other change, its amount kept on c
     await expect(w.call('splitNote', await splitRun(300n, 5, NOTE), TOKEN_BYTES, 300n)).rejects.toThrow(/that change is not in the approved run/);
   });
 
-  it('REFUSES the same approved split twice: the note is gone', async () => {
+  it('REFUSES the same approved split twice: its run is closed, and the note is gone before any journal is read', async () => {
     const run = await splitRun(300n, 6);
     await w.call('splitNote', run, TOKEN_BYTES, 300n);
-    /* RED WHEN a spent note's split can be made again. */
-    await expect(w.call('splitNote', run, TOKEN_BYTES, 300n)).rejects.toThrow(/not in this vault's pool/);
+    const spent = w.nullifierOf(NOTE);
+    const journal = w.ledger.splitJournal.lookup(spent);
+    /* RED WHEN a run of one change stays open once its change is used. */
+    await expect(w.call('splitNote', run, TOKEN_BYTES, 300n)).rejects.toThrow(/there is no open proposal with that id/);
+    /*
+     * A second run approving the same split. RED WHEN a spent note's split can be made again: the note is out of the
+     * pool, so the split is refused before it reaches the journal, and the first piece's amount is kept. The ledger
+     * makes no coin twice and takes no nullifier twice, so this is the only way back to a split of one note.
+     */
+    await expect(w.call('splitNote', await splitRun(300n, 7), TOKEN_BYTES, 300n)).rejects.toThrow(/not in this vault's pool/);
+    expect(w.ledger.splitJournal.lookup(spent)).toEqual(journal);
   });
 
   it('REFUSES a note of another token, and a note the device invents, however well-formed', async () => {
@@ -694,5 +750,347 @@ describe('paying in public money: through the same receipt step', () => {
     /* RED WHEN public money takes a private payment's details. */
     await expect(w.call('payoutUnshielded', run.runOf(0), ALICE, TOKEN_BYTES, 250n, bytes(0x40)))
       .rejects.toThrow(/that payee is not in the approved run/);
+  });
+});
+
+/* ------------------------------------------------------------------ */
+
+/** What the vault keeps for the secret a later one replaced. */
+const keptEarlier = (w: World, commitment: Uint8Array): Uint8Array => w.ledger.secretCopies.lookup(V.earlierSecretKeyOf(commitment));
+
+describe('every earlier secret travels with the newest, so a signer seated later names every note', () => {
+  const THIRD_SECRET = secretOf(0x53);
+  const NOTE: Coin = { nonce: bytes(0x71), color: TOKEN_BYTES, value: 1_000n };
+
+  it('THE HEADLINE: a signer given only the newest secret opens the one before it and names a note made under it', async () => {
+    const w = await World.make();
+    await w.setSecret(SECRET);
+    await w.deposit(NOTE);
+    /* A note the vault makes under the first secret: a split's two pieces. */
+    const spent = w.nullifierOf(NOTE);
+    const run = await w.approved([{ details: toHex(V.splitDetails(w.self, spent, TOKEN_BYTES, 300n)), nonce: toHex(bytes(0x72)) }], [0n], 820);
+    await w.call('splitNote', run.runOf(0), TOKEN_BYTES, 300n);
+    /* The company changes its secret; the new copy goes to a signer seated since, who never held the first. */
+    const next = await w.setSecret(NEXT_SECRET, [copyFor(9)], 821);
+    /* That signer has the newest secret and the chain, and nothing else. */
+    const earlier = V.earlierSecretOf(keptEarlier(w, next.commitment), NEXT_SECRET);
+    /* RED WHEN the secret replaced is not kept, or not under the new secret's mask, or under another key. */
+    expect(hex(earlier)).toBe(hex(SECRET));
+    /* RED WHEN what is opened is not the secret the vault's notes were made under: the piece is named from it and found in the pool. */
+    const piece: Coin = { nonce: V.freshNonceOf(V.splitNonceTag(), earlier, spent), color: TOKEN_BYTES, value: 300n };
+    expect(w.notes()).toContain(hex(w.held(piece)));
+  });
+
+  it('walks back through every secret: from the third to the second to the first', async () => {
+    const w = await World.make();
+    await w.setSecret(SECRET);
+    const second = await w.setSecret(NEXT_SECRET, [copyFor(2)], 822);
+    const third = await w.setSecret(THIRD_SECRET, [copyFor(3)], 823);
+    const back1 = V.earlierSecretOf(keptEarlier(w, third.commitment), THIRD_SECRET);
+    /* RED WHEN each secret does not carry the one it replaced. */
+    expect(hex(back1)).toBe(hex(NEXT_SECRET));
+    expect(V.secretCommitmentOf(w.self, back1)).toEqual(second.commitment);
+    expect(hex(V.earlierSecretOf(keptEarlier(w, second.commitment), back1))).toBe(hex(SECRET));
+  });
+
+  it('a first secret carries nothing, and a signer who left, holding only earlier secrets, opens nothing newer', async () => {
+    const w = await World.make();
+    const first = await w.setSecret(SECRET);
+    /* RED WHEN a first secret writes a link to a secret that never was. */
+    expect(w.ledger.secretCopies.member(V.earlierSecretKeyOf(first.commitment))).toBe(false);
+    const next = await w.setSecret(NEXT_SECRET, [copyFor(9)], 824);
+    /* RED WHEN the mask is the earlier secret's, which a signer who left still holds. */
+    expect(hex(V.earlierSecretOf(keptEarlier(w, next.commitment), SECRET))).not.toBe(hex(NEXT_SECRET));
+    expect(hex(V.earlierSecretOf(keptEarlier(w, next.commitment), SECRET))).not.toBe(hex(SECRET));
+  });
+
+  it('REFUSES a caller who does not hold the secret the run sets, or the one it replaces: no later signer is left a key that opens nothing', async () => {
+    const w = await World.make();
+    await w.setSecret(SECRET);
+    const previous = w.ledger.nonceCommitment;
+    const commitment = V.secretCommitmentOf(w.self, NEXT_SECRET);
+    const tree = treeOf(commitment, [copyFor(2)]);
+    const run = await w.approved(secretLeaf(w.self, previous, commitment, tree, 0x25), [0n], 825);
+    /* RED WHEN the secret set is not checked against the commitment the run approved: a removed signer holding the run could set it. */
+    await expect(w.call('setNonceSecret', run.runOf(0), previous, commitment, tree.root, tree.count, tree.edge, THIRD_SECRET, SECRET))
+      .rejects.toThrow(/does not hold the secret that run sets/);
+    /* RED WHEN the earlier secret carried is not checked against the one replaced: the link would open nothing. */
+    await expect(w.call('setNonceSecret', run.runOf(0), previous, commitment, tree.root, tree.count, tree.edge, NEXT_SECRET, THIRD_SECRET))
+      .rejects.toThrow(/does not carry the last secret this vault took money under/);
+    expect(w.ledger.nonceCommitment).toEqual(previous);
+    /* The control. */
+    await w.call('setNonceSecret', run.runOf(0), previous, commitment, tree.root, tree.count, tree.edge, NEXT_SECRET, SECRET);
+    expect(w.ledger.nonceCommitment).toEqual(commitment);
+  });
+
+  it('A SECRET WHOSE COPIES NEVER ALL REACHED THE CHAIN IS REPLACED WITHOUT BEING HELD, and the next carries the last secret that took money', async () => {
+    const w = await World.make();
+    await w.setSecret(SECRET);
+    await w.deposit(NOTE);
+    const opened = w.ledger.nonceCommitment;
+    /* A rotation is approved and set, and every device that held the new secret is lost before its copies are all in. */
+    const lost = V.secretCommitmentOf(w.self, NEXT_SECRET);
+    const lostTree = treeOf(lost, [copyFor(2), copyFor(3)]);
+    const run = await w.approved(secretLeaf(w.self, opened, lost, lostTree, 0x27), [0n], 827);
+    await w.call('setNonceSecret', run.runOf(0), opened, lost, lostTree.root, lostTree.count, lostTree.edge, NEXT_SECRET, SECRET);
+    await w.call('writeSecretCopy', lost, copyFor(2).reader, copyFor(2).parts, lostTree.paths[0]);
+    await expect(w.call('deposit', { nonce: bytes(0x7b), color: TOKEN_BYTES, value: 1n })).rejects.toThrow(/not every signer's sealed copy/);
+    /* The signers who stay hold the first secret, not the lost one. */
+    const commitment = V.secretCommitmentOf(w.self, THIRD_SECRET);
+    const tree = treeOf(commitment, [copyFor(4)]);
+    const again = await w.approved(secretLeaf(w.self, lost, commitment, tree, 0x28), [0n], 828);
+    /* RED WHEN the carried secret is not the last one that took money: a lost secret would freeze every note made before it. */
+    await expect(w.call('setNonceSecret', again.runOf(0), lost, commitment, tree.root, tree.count, tree.edge, THIRD_SECRET, NEXT_SECRET))
+      .rejects.toThrow(/does not carry the last secret this vault took money under/);
+    await w.call('setNonceSecret', again.runOf(0), lost, commitment, tree.root, tree.count, tree.edge, THIRD_SECRET, SECRET);
+    await w.call('writeSecretCopy', commitment, copyFor(4).reader, copyFor(4).parts, tree.paths[0]);
+    w.priv = { ...w.priv, secret: THIRD_SECRET };
+    /* RED WHEN the link skips to the lost secret: the newest opens the one the notes were made under. */
+    expect(hex(V.earlierSecretOf(keptEarlier(w, commitment), THIRD_SECRET))).toBe(hex(SECRET));
+    expect(w.notes()).toContain(hex(w.held(NOTE)));
+    /* And the vault takes money again under the new secret. */
+    await w.deposit({ nonce: bytes(0x7c), color: TOKEN_BYTES, value: 1n });
+  });
+
+  it('A COUNT LARGER THAN THE COPIES never opens the vault, and the next secret run replaces it', async () => {
+    const w = await World.make();
+    await w.setSecret(SECRET);
+    const opened = w.ledger.nonceCommitment;
+    const over = V.secretCommitmentOf(w.self, NEXT_SECRET);
+    const copies = [copyFor(2), copyFor(3)];
+    const tree = treeOf(over, copies);
+    /* Approved at three for a tree of two: nothing past place three, so the edge holds, and place two can never be written. */
+    const run = await w.approved(secretLeaf(w.self, opened, over, { root: tree.root, count: 3n }, 0x29), [0n], 829);
+    await w.call('setNonceSecret', run.runOf(0), opened, over, tree.root, 3n, pathAt(over, copies, 3), NEXT_SECRET, SECRET);
+    for (let i = 0; i < 2; i++) await w.call('writeSecretCopy', over, copies[i]!.reader, copies[i]!.parts, tree.paths[i]);
+    /* RED WHEN a count above the copies opens the vault: it stays shut, failing closed. */
+    await expect(w.call('deposit', { nonce: bytes(0x7d), color: TOKEN_BYTES, value: 1n })).rejects.toThrow(/not every signer's sealed copy/);
+    await w.setSecret(THIRD_SECRET, [copyFor(4)], 830, over, SECRET);
+    await w.deposit({ nonce: bytes(0x7e), color: TOKEN_BYTES, value: 1n });
+    expect(hex(V.earlierSecretOf(keptEarlier(w, w.ledger.nonceCommitment), THIRD_SECRET))).toBe(hex(SECRET));
+  });
+
+  it('REFUSES a secret whose last byte is not zero: it could not be carried by the next', async () => {
+    const w = await World.make();
+    const whole = bytes(0x54);
+    const commitment = V.secretCommitmentOf(w.self, whole);
+    const tree = treeOf(commitment, [copyFor(1)]);
+    const run = await w.approved(secretLeaf(w.self, ZERO, commitment, tree, 0x26), [0n], 826);
+    /* RED WHEN a secret of thirty-two bytes is taken: a later secret would carry it with its last byte lost. */
+    await expect(w.call('setNonceSecret', run.runOf(0), ZERO, commitment, tree.root, tree.count, tree.edge, whole, ZERO))
+      .rejects.toThrow(/ends in a zero byte/);
+    expect(V.isNonceSecretShape(SECRET)).toBe(true);
+    expect(V.isNonceSecretShape(whole)).toBe(false);
+  });
+});
+
+describe('the count of copies: under a lasting key, tied to the tree, and kept after every copy is written', () => {
+  /** A tree over `leaves` placed as given, zero where nothing is: its root, and the path to any place. */
+  const sparse = (leaves: bigint[]) => {
+    const empty: bigint[] = [0n];
+    for (let l = 0; l < 10; l++) empty.push(V.copyNodeOf(empty[l]!, empty[l]!));
+    const levels: bigint[][] = [leaves];
+    for (let l = 0; l < 10; l++) {
+      const below = levels[l]!;
+      const up: bigint[] = [];
+      for (let i = 0; i < below.length; i += 2) up.push(V.copyNodeOf(below[i]!, i + 1 < below.length ? below[i + 1]! : empty[l]!));
+      levels.push(up);
+    }
+    const path = (place: number) => Array.from({ length: 10 }, (_, l) => {
+      const at = place >> l;
+      const beside = at ^ 1;
+      return { sibling: beside < levels[l]!.length ? levels[l]![beside]! : empty[l]!, goesLeft: (at & 1) === 0 };
+    });
+    return { root: V.copiesRootOf(leaves[0]!, path(0)), path };
+  };
+
+  it('THE COUNT\'S KEY IS A LASTING HASH: the tagged persistent hash of the commitment', async () => {
+    const R: any = await import('@midnight-ntwrk/compact-runtime');
+    const commitment = V.secretCommitmentOf(bytes(1), SECRET);
+    const tag = new Uint8Array(32);
+    tag.set(new TextEncoder().encode('midnight-vault:copies-left:'));
+    const lasting = R.persistentHash(new R.CompactTypeVector(2, new R.CompactTypeBytes(32)), [tag, commitment]);
+    /* RED WHEN the key goes back to a light hash, which a fork may change between a secret run and its last copy. */
+    expect(hex(V.copiesLeftKeyOf(commitment))).toBe(hex(lasting));
+  });
+
+  it('REFUSES A COUNT SMALLER THAN THE COPIES THE TREE HOLDS: no vault opens with a copy missing', async () => {
+    const w = await World.make();
+    const commitment = V.secretCommitmentOf(w.self, SECRET);
+    const copies = [copyFor(1), copyFor(2), copyFor(3)];
+    const tree = treeOf(commitment, copies);
+    const run = await w.approved(secretLeaf(w.self, ZERO, commitment, { root: tree.root, count: 2n }, 0x30), [0n], 830);
+    /* RED WHEN the edge's own place is not checked empty: the third copy sits at place two. */
+    await expect(w.call('setNonceSecret', run.runOf(0), ZERO, commitment, tree.root, 2n, pathAt(commitment, copies, 2), SECRET, ZERO))
+      .rejects.toThrow(/holds a copy past its count/);
+    /* RED WHEN the edge is not tied to the count: the path to place three shows nothing about place two. */
+    await expect(w.call('setNonceSecret', run.runOf(0), ZERO, commitment, tree.root, 2n, pathAt(commitment, copies, 3), SECRET, ZERO))
+      .rejects.toThrow(/holds a copy past its count/);
+    expect(w.ledger.nonceCommitment).toEqual(ZERO);
+  });
+
+  it('REFUSES A COPY HIDDEN FURTHER RIGHT: every subtree to the right of the edge must be empty', async () => {
+    const w = await World.make();
+    const commitment = V.secretCommitmentOf(w.self, SECRET);
+    const leaf = (n: number) => V.copyLeafOf(commitment, copyFor(n).reader, copyFor(n).parts);
+    /* Copies at places zero and one, and a third at place five, which a count of two would leave unwritten. */
+    const tree = sparse([leaf(1), leaf(2), 0n, 0n, 0n, leaf(3)]);
+    const run = await w.approved(secretLeaf(w.self, ZERO, commitment, { root: tree.root, count: 2n }, 0x31), [0n], 831);
+    /* RED WHEN a sibling to the right of the edge is not checked empty. */
+    await expect(w.call('setNonceSecret', run.runOf(0), ZERO, commitment, tree.root, 2n, tree.path(2), SECRET, ZERO))
+      .rejects.toThrow(/holds a copy past its count/);
+    /* The control: the same shape with nothing at place five is taken. */
+    const clean = sparse([leaf(1), leaf(2)]);
+    const ok = await w.approved(secretLeaf(w.self, ZERO, commitment, { root: clean.root, count: 2n }, 0x32), [0n], 832);
+    await w.call('setNonceSecret', ok.runOf(0), ZERO, commitment, clean.root, 2n, clean.path(2), SECRET, ZERO);
+    expect(w.ledger.nonceCommitment).toEqual(commitment);
+  });
+
+  it('A FULL TREE NEEDS NO EDGE: 1024 copies are set with no place past them', async () => {
+    const w = await World.make();
+    const commitment = V.secretCommitmentOf(w.self, SECRET);
+    const copies = Array.from({ length: 1024 }, (_, i) => ({ reader: bytes(i % 256), parts: [bytes(1), bytes(2), bytes(3), bytes(i >> 8)] }));
+    const tree = treeOf(commitment, copies);
+    const run = await w.approved(secretLeaf(w.self, ZERO, commitment, tree, 0x33), [0n], 833);
+    /* RED WHEN a full tree is asked for an edge it cannot have. */
+    await w.call('setNonceSecret', run.runOf(0), ZERO, commitment, tree.root, 1024n, tree.edge, SECRET, ZERO);
+    expect(w.ledger.nonceCommitment).toEqual(commitment);
+  });
+
+  it('THE ORIGINAL COUNT STAYS READABLE once every copy is written, while the count left runs to zero', async () => {
+    const w = await World.make();
+    const { commitment } = await w.setSecret(SECRET, [copyFor(1), copyFor(2), copyFor(3)], 834);
+    /* RED WHEN the count approved is not kept, or is run down with the copies. */
+    expect(w.ledger.secretCopies.lookup(V.copiesCountKeyOf(commitment))[0]).toBe(3);
+    expect(w.ledger.secretCopies.lookup(V.copiesLeftKeyOf(commitment))).toEqual(ZERO);
+  });
+});
+
+describe('a finished secret run is closed, and the company-wide secret change is safe for every vault', () => {
+  it('A FINISHED SECRET RUN IS CLOSED, not left open to the end of its window', async () => {
+    const w = await World.make();
+    const { run } = await w.setSecret(SECRET);
+    /* RED WHEN the run stays open once its one change is used. */
+    expect(w.sim.ledger.openProposals.member(run.id)).toBe(false);
+    expect(w.sim.ledger.runWindow.member(run.id)).toBe(false);
+  });
+
+  /** One company-wide secret run over `vaults`, one leaf each bound to its vault, approved by `approvers`. */
+  const companyWide = async (vaults: World[], secrets: Uint8Array[], seed: number, approvers = [A, B]) => {
+    const sets = vaults.map((v, i) => {
+      const commitment = V.secretCommitmentOf(v.self, secrets[i]!);
+      const tree = treeOf(commitment, [copyFor(i + 1)]);
+      return { commitment, tree, previous: v.ledger.nonceCommitment };
+    });
+    const leaves = vaults.map((v, i) => ({
+      details: toHex(P.companyWideDetailsOf(V.secretRunDetails(v.self, sets[i]!.previous, sets[i]!.commitment, sets[i]!.tree.root, sets[i]!.tree.count), v.self)),
+      nonce: toHex(bytes((seed + i) % 256)),
+    }));
+    const run = await vaults[0]!.approved(leaves, vaults.map(() => 0n), seed, approvers, P.companyWide());
+    return { run, sets };
+  };
+  const setOn = (v: World, run: Awaited<ReturnType<typeof companyWide>>, i: number, secret: Uint8Array, earlier = ZERO) => {
+    const s = run.sets[i]!;
+    return v.call('setNonceSecret', run.run.runOf(i), s.previous, s.commitment, s.tree.root, s.tree.count, s.tree.edge, secret, earlier);
+  };
+
+  it('ONE APPROVAL SETS EVERY VAULT\'S SECRET: one leaf per vault, each computed by that vault, and the run closes after the last', async () => {
+    const w1 = await World.make();
+    const w2 = await World.beside(w1);
+    const run = await companyWide([w1, w2], [SECRET, NEXT_SECRET], 840);
+    await setOn(w1, run, 0, SECRET);
+    /* RED WHEN a company-wide run closes at its first vault: the second could never be set. */
+    expect(w1.sim.ledger.openProposals.member(run.run.id)).toBe(true);
+    /*
+     * The account counts changes, not which leaf: a leaf used again would close the run early. RED WHEN the vault
+     * stops refusing its own leaf a second time - its chain to the secret it replaces and its never-twice check both
+     * gone - and the replay counts, shutting the second vault out.
+     */
+    await expect(setOn(w1, run, 0, SECRET)).rejects.toThrow(/replaces a secret this vault no longer holds/);
+    expect(w1.sim.ledger.openProposals.member(run.run.id)).toBe(true);
+    await setOn(w2, run, 1, NEXT_SECRET);
+    expect(w1.ledger.nonceCommitment).toEqual(run.sets[0]!.commitment);
+    expect(w2.ledger.nonceCommitment).toEqual(run.sets[1]!.commitment);
+    /* RED WHEN the run is left open once every vault's change is used. */
+    expect(w1.sim.ledger.openProposals.member(run.run.id)).toBe(false);
+  });
+
+  it('A VAULT CANNOT USE ANOTHER VAULT\'S LEAF, even on a first secret where both replace nothing', async () => {
+    const w1 = await World.make();
+    const w2 = await World.beside(w1);
+    const commitment = V.secretCommitmentOf(w2.self, NEXT_SECRET);
+    const tree = treeOf(commitment, [copyFor(2)]);
+    const set = (run: { runOf: (i: number) => unknown }) =>
+      w2.call('setNonceSecret', run.runOf(0), ZERO, commitment, tree.root, tree.count, tree.edge, NEXT_SECRET, ZERO);
+    /* The second vault's own change, bound by the account to the first vault. */
+    const boundToTheOther = await w1.approved([{
+      details: toHex(P.companyWideDetailsOf(V.secretRunDetails(w2.self, ZERO, commitment, tree.root, tree.count), w1.self)),
+      nonce: toHex(bytes(0x41)),
+    }], [0n], 841, [A, B], P.companyWide());
+    /* RED WHEN the account stops binding a company-wide leaf to the vault asking for it. */
+    await expect(set(boundToTheOther)).rejects.toThrow(/that change is not in the approved run/);
+    /* The first vault's change, bound by the account to the second: the vault puts itself in what it asks for. */
+    const madeForTheOther = await w1.approved([{
+      details: toHex(P.companyWideDetailsOf(V.secretRunDetails(w1.self, ZERO, commitment, tree.root, tree.count), w2.self)),
+      nonce: toHex(bytes(0x42)),
+    }], [0n], 842, [A, B], P.companyWide());
+    /* RED WHEN the secret run's details stop binding the vault they are for. */
+    await expect(set(madeForTheOther)).rejects.toThrow(/that change is not in the approved run/);
+    expect(w2.ledger.nonceCommitment).toEqual(ZERO);
+  });
+
+  it('A VAULT STRICTER THAN THE COMPANY REFUSES THE COMPANY-WIDE CHANGE, and takes one of its own at its own bar', async () => {
+    const w1 = await World.make([A, B, C], 2n);
+    const w2 = await World.beside(w1);
+    /* The second vault's own bar is three of three, above the company's two. */
+    const tc = change(0n, 842);
+    const bar = P.setVaultThresholdPayload(w2.self, 3n);
+    await w1.sim.as(w1.sim.applying(A, tc)).propose(bar);
+    const bid = w1.sim.proposalId(bar, tc.salt);
+    await w1.sim.as(A).approve(bid);
+    await w1.sim.as(B).approve(bid);
+    await w1.sim.as(w1.sim.applying(A, tc)).setVaultThreshold(w2.self, 3n, bid);
+    const run = await companyWide([w1, w2], [SECRET, NEXT_SECRET], 843);
+    await setOn(w1, run, 0, SECRET);
+    /* RED WHEN the account stops comparing the vault's own bar with the company's on a company-wide change. */
+    await expect(setOn(w2, run, 1, NEXT_SECRET)).rejects.toThrow(/change it through a run of its own/);
+    expect(w2.ledger.nonceCommitment).toEqual(ZERO);
+    /* Its own run, at its own bar, sets it. */
+    const commitment = V.secretCommitmentOf(w2.self, NEXT_SECRET);
+    const tree = treeOf(commitment, [copyFor(2)]);
+    const own = await w2.approved(secretLeaf(w2.self, ZERO, commitment, tree, 0x2c), [0n], 844, [A, B, C]);
+    await w2.call('setNonceSecret', own.runOf(0), ZERO, commitment, tree.root, tree.count, tree.edge, NEXT_SECRET, ZERO);
+    expect(w2.ledger.nonceCommitment).toEqual(commitment);
+  });
+
+  it('A CONTRACT THE COMPANY NEVER ADOPTED gets no secret from a company-wide run, even on a leaf bound to it', async () => {
+    const w1 = await World.make();
+    const stranger = await World.beside(w1, false);
+    const run = await companyWide([w1, stranger], [SECRET, NEXT_SECRET], 845);
+    /* RED WHEN the account takes a change receipt from a contract it does not hold. */
+    await expect(setOn(stranger, run, 1, NEXT_SECRET)).rejects.toThrow(/not a vault this company holds/);
+    expect(stranger.ledger.nonceCommitment).toEqual(ZERO);
+  });
+
+  it('A SECRET RUN\'S LEAF IS NEVER SPENT THROUGH A PAYMENT STEP, and its material without the secret sets nothing', async () => {
+    const w = await World.make();
+    await w.setSecret(SECRET);
+    await w.deposit({ nonce: bytes(0x7a), color: TOKEN_BYTES, value: 1_000n });
+    const previous = w.ledger.nonceCommitment;
+    const commitment = V.secretCommitmentOf(w.self, NEXT_SECRET);
+    const tree = treeOf(commitment, [copyFor(2)]);
+    const run = await w.approved(secretLeaf(w.self, previous, commitment, tree, 0x2e), [0n], 846);
+    /* RED WHEN the payment step takes a leaf whose details are not a payment's: the run's material alone would mark it paid. */
+    await expect(w.call('payoutUnshielded', run.runOf(0), ALICE, TOKEN_BYTES, 1n, bytes(0x40)))
+      .rejects.toThrow(/that payee is not in the approved run/);
+    await expect(w.call('payout', run.runOf(0), ALICE, TOKEN_BYTES, 1n, bytes(0x40)))
+      .rejects.toThrow(/that payee is not in the approved run/);
+    expect(paidRecord(w).length).toBe(0);
+    /* RED WHEN a holder of the run who does not hold the new secret can set it: a removed signer keeps the material, not the secret. */
+    await expect(w.call('setNonceSecret', run.runOf(0), previous, commitment, tree.root, tree.count, tree.edge, secretOf(0x66), SECRET))
+      .rejects.toThrow(/does not hold the secret that run sets/);
+    /* The run is still open for the signers who stay. */
+    await w.call('setNonceSecret', run.runOf(0), previous, commitment, tree.root, tree.count, tree.edge, NEXT_SECRET, SECRET);
+    expect(w.ledger.nonceCommitment).toEqual(commitment);
   });
 });

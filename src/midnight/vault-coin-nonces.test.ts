@@ -35,7 +35,7 @@ const TOKEN = bytes(0x9b);
 const ALICE = bytes(0x0a);
 const BOB = bytes(0x0b);
 const OLD = toHex(TEST_VAULT_SECRET);
-const NEW = toHex(bytes(0x62));
+const NEW = toHex(Uint8Array.from(bytes(0x62), (b, i) => (i === 31 ? 0 : b)));
 const WRONG = toHex(bytes(0x73));
 
 interface VaultPrivate { notes: Note[] }
@@ -100,7 +100,7 @@ describe('naming the coins a vault made, with the secret each was made under', (
     const copy = { reader: bytes(0x32), parts: [5, 6, 7, 8].map((p) => bytes(p)) };
     const copies = copiesTreeOf(V as never, commitment, [copy]);
     const run = await approved(V.secretRunDetails(vaultBytes, previous, commitment, copies.root, copies.count), 0n, seed);
-    await call('setNonceSecret', run, previous, commitment, copies.root, copies.count);
+    await call('setNonceSecret', run, previous, commitment, copies.root, copies.count, copies.edge, fromHex(next), fromHex(secretNow));
     await call('writeSecretCopy', commitment, copy.reader, copy.parts, copies.paths[0]);
     secretNow = next;
   };

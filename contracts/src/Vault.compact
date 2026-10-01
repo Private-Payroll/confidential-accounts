@@ -21,9 +21,16 @@ import CompactStandardLibrary;
  * It refuses a note it does not hold, a note of the wrong token or too small, a
  * payment of nothing, a public payment it cannot cover, a deposit of nothing,
  * any deposit before its first secret, a secret that is zero, repeated or does
- * not follow the one it replaces, a sealed copy the secret run did not approve,
- * and, in its own `retire`, retirement while it still holds either kind of
- * money.
+ * not follow the one it replaces, a secret set by a caller who does not hold it
+ * or, once the vault has taken money, the last secret it took money under, a
+ * secret whose last byte is not zero, a tree of copies holding a copy past its
+ * count, a sealed copy the secret run did not approve, and, in its own
+ * `retire`, retirement while it still holds either kind of money.
+ *
+ * Each new secret carries the last secret the vault took money under, sealed
+ * under itself, so a signer given only the newest secret can open every earlier
+ * secret that took money and name every note the vault still holds, while a
+ * signer who left, holding only earlier secrets, opens nothing newer.
  *
  * Why each piece is shaped this way: docs/design/the-vault-contract.md
  */
@@ -296,7 +303,8 @@ export circuit copyKeyOf(commitment: Bytes<32>, reader: Bytes<32>, place: Uint<6
     commitment, reader, place as Field as Bytes<32>, part as Field as Bytes<32>]);
 }
 
-// Where the mark of the secret whose copies are all written sits.
+// Where the vault marks the last secret whose copies were all written while it was current:
+// the last secret it opened to money under.
 export circuit copiesWrittenKey(): Bytes<32> { return pad(32, "midnight-vault:copies-written"); }
 
 // Where the approved root of a secret's copies sits.
@@ -304,11 +312,64 @@ export circuit copiesRootKeyOf(commitment: Bytes<32>): Bytes<32> {
   return persistentHash<Vector<2, Bytes<32>>>([pad(32, "midnight-vault:copies-root:"), commitment]);
 }
 
-// Where the number of a secret's copies still to be written sits. A light hash: it names a
-// place in this vault's own map and protects nothing.
+// Where the number of a secret's copies still to be written sits.
 export circuit copiesLeftKeyOf(commitment: Bytes<32>): Bytes<32> {
-  return upgradeFromTransient(transientHash<Vector<2, Field>>([
-    degradeToTransient(pad(32, "midnight-vault:copies-left:")), degradeToTransient(commitment)]));
+  return persistentHash<Vector<2, Bytes<32>>>([pad(32, "midnight-vault:copies-left:"), commitment]);
+}
+
+// Where the number of copies a secret run approved sits. Written once and never changed, so the
+// chain shows how many copies a secret has after every one of them is written.
+export circuit copiesCountKeyOf(commitment: Bytes<32>): Bytes<32> {
+  return persistentHash<Vector<2, Bytes<32>>>([pad(32, "midnight-vault:copies-count:"), commitment]);
+}
+
+// The walk up the tree of copies from the first place past the count: the node so far, the
+// empty subtree at this level, and whether every subtree to the right so far is empty.
+struct EdgeWalk {
+  node: Field;
+  empty: Field;
+  clear: Boolean;
+}
+
+// Whether every place from `count` on is empty in the tree whose root is `copies`: `edge` leads
+// from an empty place at `count` to that root, and every subtree to its right is empty. Then no
+// copy sits past the count, so a count smaller than the copies the tree holds cannot open the
+// vault with a copy missing. A tree of every place full needs no edge.
+export circuit emptyFrom(copies: Bytes<32>, count: Uint<64>, edge: Vector<10, CopyStep>): Boolean {
+  const walk = fold((w: EdgeWalk, step: CopyStep): EdgeWalk => EdgeWalk {
+      node: step.goesLeft ? copyNodeOf(w.node, step.sibling) : copyNodeOf(step.sibling, w.node),
+      empty: copyNodeOf(w.empty, w.empty),
+      clear: w.clear && (!step.goesLeft || step.sibling == w.empty),
+    }, EdgeWalk { node: 0 as Field, empty: 0 as Field, clear: true }, edge);
+  return count == mostCopies() ||
+    (walk.clear && copyIndexOf(edge) == count && upgradeFromTransient(walk.node) == copies);
+}
+
+// Whether a secret has the shape every nonce secret takes: its last byte zero, so it is one
+// field element exactly and a later secret can carry it.
+export circuit isNonceSecretShape(secret: Bytes<32>): Boolean {
+  return upgradeFromTransient(degradeToTransient(secret)) == secret;
+}
+
+// Where the secret a later one carries is kept, sealed under the later one.
+export circuit earlierSecretKeyOf(commitment: Bytes<32>): Bytes<32> {
+  return persistentHash<Vector<2, Bytes<32>>>([pad(32, "midnight-vault:earlier-secret:"), commitment]);
+}
+
+// The mask a secret puts over the one it replaces. Only a holder of the later secret can lift it.
+export circuit earlierMaskOf(secret: Bytes<32>): Bytes<32> {
+  return persistentHash<Vector<2, Bytes<32>>>([pad(32, "midnight-vault:earlier-mask:"), secret]);
+}
+
+// The earlier secret as the vault keeps it: added to the later secret's mask, as field elements,
+// and kept as all thirty-two bytes of the sum, which can need more than thirty-one.
+export circuit sealedEarlierOf(earlier: Bytes<32>, secret: Bytes<32>): Bytes<32> {
+  return (degradeToTransient(earlier) + degradeToTransient(earlierMaskOf(secret))) as Bytes<32>;
+}
+
+// The earlier secret from what the vault keeps and the later secret.
+export circuit earlierSecretOf(kept: Bytes<32>, secret: Bytes<32>): Bytes<32> {
+  return upgradeFromTransient((kept as Field) - degradeToTransient(earlierMaskOf(secret)));
 }
 
 // The mask on a split's amount: it needs the secret and the note, so only the company can lift it.
@@ -535,8 +596,9 @@ export circuit splitNote(run: Run, token: Bytes<32>, amount: Uint<128>): [] {
   const spent = disclose(noteNullifierOf(self, unqualified));
   mintReceipt(changeReceiptTag(), changeReceiptKey(), askForChange(run, splitDetails(self, spent, token, amount)));
   spendHeldAs(coin, spent);
-  // Keyed by the nullifier, which the ledger accepts once, so no later split overwrites it.
-  assert(!splitJournal.member(spent), "a split of that note is already recorded");
+  // Keyed by the nullifier. The ledger accepts a nullifier once and never makes the same coin
+  // twice, so the note is gone from the pool before any second split of it, and no split
+  // overwrites another.
   splitJournal.insert(spent, disclose(maskedAmountOf(amount, splitMaskOf(s, spent))));
 
   keepCoin(ShieldedCoinInfo {
@@ -550,31 +612,61 @@ export circuit splitNote(run: Run, token: Bytes<32>, amount: Uint<128>): [] {
 
 // Sets the vault's nonce secret under an approved run, replacing exactly the one named. The
 // run approves the root of a tree holding every signer's sealed copy, and how many copies it
-// holds; `writeSecretCopy` then writes each one on its own.
+// holds; `edge` shows no copy sits past that count, and `writeSecretCopy` then writes each copy
+// on its own. The caller holds the new secret and the last secret that took money, which is
+// kept sealed under the new one, so a signer given only the newest secret opens every earlier
+// one that matters. A secret whose copies never all reached the chain took no money, so it is
+// replaced without being held, and the one it carried is carried on.
 export circuit setNonceSecret(
   run: Run,
   previous: Bytes<32>,
   commitment: Bytes<32>,
   copies: Bytes<32>,
   count: Uint<64>,
+  edge: Vector<10, CopyStep>,
+  secret: Bytes<32>,
+  earlier: Bytes<32>,
 ): [] {
   const next = disclose(commitment);
+  const before = disclose(previous);
   assert(!(next == default<Bytes<32>>), "a secret's commitment of zero would leave the vault with no secret");
-  assert(!(next == disclose(previous)), "that is the secret this vault already has");
-  assert(nonceCommitment == disclose(previous), "that run replaces a secret this vault no longer holds");
+  assert(!(next == before), "that is the secret this vault already has");
+  assert(nonceCommitment == before, "that run replaces a secret this vault no longer holds");
   assert(!(disclose(count) == 0), "a secret with no sealed copy can be opened by nobody");
   assert(!(mostCopies() < disclose(count)), "the tree of copies holds at most 1024, one for each signer the account can seat");
+  assert(disclose(emptyFrom(copies, count, edge)),
+    "that tree of copies holds a copy past its count, or does not show where its copies end. Make the secret run again from the copies, so its tree, count and edge agree");
+  const self = kernel.self();
+  assert(disclose(secretCommitmentOf(self.bytes, secret) == next),
+    "this device does not hold the secret that run sets, so it cannot set it. Send it from a device that has opened the company's record holding that secret");
+  assert(disclose(isNonceSecretShape(secret)),
+    "a vault's secret ends in a zero byte, so a later secret can carry it, and this one does not. Make a new secret and have the signers approve a new secret run for it");
   const rootKey = disclose(copiesRootKeyOf(next));
   assert(!secretCopies.member(rootKey), "that secret was this vault's before, and a secret is never set twice");
-  const self = kernel.self();
-  const acct = askForChange(run, secretRunDetails(self.bytes, disclose(previous), next, disclose(copies), disclose(count)));
+  const acct = askForChange(run, secretRunDetails(self.bytes, before, next, disclose(copies), disclose(count)));
   // Worked out here, in the run every vault starts with, and kept for every later receipt.
   secretCopies.insert(paymentReceiptKey(), tokenType(paymentReceiptTag(), self));
   secretCopies.insert(changeReceiptKey(), mintUnshieldedToken(changeReceiptTag(), 1, left<ContractAddress, UserAddress>(acct)));
   // A commitment never repeats, so this root is written once. No money moves until every copy is.
   secretCopies.insert(rootKey, disclose(copies));
+  secretCopies.insert(disclose(copiesCountKeyOf(next)), upgradeFromTransient(disclose(count) as Field));
   secretCopies.insert(disclose(copiesLeftKeyOf(next)), upgradeFromTransient(disclose(count) as Field));
-  secretCopies.insert(copiesWrittenKey(), default<Bytes<32>>);
+  // The mark stays on the last secret that opened, and this one is not it, so no money moves
+  // until every copy of this one is written.
+  if (!secretCopies.member(copiesWrittenKey())) {
+    secretCopies.insert(copiesWrittenKey(), default<Bytes<32>>);
+  }
+  // The secret this one carries: the last one the vault took money under. That is the one it
+  // replaces if that one opened, or else the one before it that did; no coin is made under a
+  // secret that never opened, so passing over it loses nothing.
+  const carried = secretCopies.lookup(copiesWrittenKey());
+  // Kept sealed under this one, so whoever opens this one opens it too. Proved here against its
+  // commitment, so no caller can leave a later signer a key that opens nothing.
+  if (!(carried == default<Bytes<32>>)) {
+    assert(disclose(secretCommitmentOf(self.bytes, earlier) == carried),
+      "this run does not carry the last secret this vault took money under, so it cannot replace it. Build it on a device that holds that secret and passes it as the earlier one");
+    secretCopies.insert(disclose(earlierSecretKeyOf(next)), disclose(sealedEarlierOf(earlier, secret)));
+  }
   nonceCommitment = next;
 }
 
@@ -591,9 +683,10 @@ export circuit writeSecretCopy(
   assert(secretCopies.member(rootKey), "there is no approved list of sealed copies for that secret");
   assert(secretCopies.lookup(rootKey) == copiesRootOf(copyLeafOf(commitment, reader, parts), path),
     "that sealed copy is not one the signers approved for that secret");
+  // Every place past the count is empty and no copy's leaf is, so each copy written sits below
+  // the count and once each: the count left never runs below zero.
   const leftKey = disclose(copiesLeftKeyOf(commitment));
   const remaining = degradeToTransient(secretCopies.lookup(leftKey));
-  assert(!(remaining == (0 as Field)), "every sealed copy of that secret is already written");
   const place = disclose(copyIndexOf(path));
   const first = disclose(copyKeyOf(commitment, reader, place, 0));
   assert(!secretCopies.member(first), "that sealed copy is already written");

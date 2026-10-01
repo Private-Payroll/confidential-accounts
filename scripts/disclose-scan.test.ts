@@ -386,8 +386,23 @@ describe('the real sources', () => {
     // `writeSecretCopy` discloses the copy's place in the tree, read from its
     // path, where it disclosed the list's next link before. The count and the
     // place are the calls' own arguments, and public.
-    expect(sites(account)).toBe(160);
-    expect(sites(vault)).toBe(104);
+    // THE ACCOUNT, 160 -> 162: `approveVaultChange` closes a run whose every
+    // leaf is a change once the last is used, so it discloses the key it counts
+    // the used changes under, made from the run's id, and the run's number of
+    // leaves, compared with that count. Both are already public: the id is the
+    // call's own argument and the number of leaves is part of the run's id.
+    expect(sites(account)).toBe(162);
+    // THE VAULT, 104 -> 110, all in `setNonceSecret`. The commitment it replaces
+    // is disclosed once and reused (three sites become one, -2). New (+8): the
+    // answer to whether the tree shows nothing past its count; whether the
+    // caller's secret is the one the run sets; whether that secret ends in a
+    // zero byte; the key the approved count is kept under and the count written
+    // there; whether the caller's earlier secret is the one replaced; and the
+    // key and value the earlier secret is kept under. The three answers are
+    // yes-or-no checks a refusal publishes anyway; the count and the keys are
+    // already public. The value is the earlier secret added to a mask only the
+    // new secret makes, so what is published opens nothing without that secret.
+    expect(sites(vault)).toBe(110);
   });
 
   it('every site is attributed — nothing floats outside a body', () => {

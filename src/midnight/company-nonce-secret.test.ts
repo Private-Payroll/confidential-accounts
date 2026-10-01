@@ -69,6 +69,16 @@ describe('a vault\'s nonce secret', () => {
     expect(() => startNonceSecret(VAULT, []), 'RED WHEN: a secret wrapped to nobody is written').toThrow(/wrapped to nobody/);
   });
 
+  it('IS THIRTY-ONE RANDOM BYTES AND A ZERO, the only shape a vault takes, at the start and at every rotation', () => {
+    for (let i = 0; i < 8; i++) {
+      const started = openNonceSecrets(startNonceSecret(VAULT, [reader(A)]), VAULT, A).secrets;
+      /* RED WHEN a new secret's last byte is left random: the vault refuses it, and a later secret could not carry it. */
+      expect(started[0]!.slice(-2)).toBe('00');
+      const rotated = openNonceSecrets(rotateNonceSecret(startNonceSecret(VAULT, [reader(A), reader(B)]), VAULT, A, { remaining: [reader(A)], leaving: [reader(B)] }), VAULT, A).secrets;
+      expect(rotated[rotated.length - 1]!.slice(-2)).toBe('00');
+    }
+  });
+
   it('OPENS ONLY AS THE VAULT AND VERSION IT WAS SEALED AS, and refuses a record put together from two', () => {
     const rec = startNonceSecret(VAULT, [reader(A)]);
     expect(() => openNonceSecrets(rec, 'cd'.repeat(32), A), 'RED WHEN: one vault\'s secret is opened as another\'s').toThrow(/different vault/);

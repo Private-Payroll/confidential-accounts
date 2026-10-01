@@ -672,6 +672,7 @@ export interface SecretRunOnTheWire {
   readonly commitment: string;
   readonly copiesRoot: string;
   readonly count: string;
+  readonly edge: ReadonlyArray<{ readonly sibling: string; readonly goesLeft: boolean }>;
   readonly details: string;
   readonly nonce: string;
   readonly salt: string;
@@ -708,6 +709,8 @@ export async function buildSetNonceSecret(
     readonly vault: string;
     readonly account: string;
     readonly run: SecretRunOnTheWire;
+    /** The secret the run sets, which the vault takes only from a device that holds it. */
+    readonly secret: string;
     readonly proposal: string;
     readonly opensAt: string;
     readonly closesAt: string;
@@ -717,6 +720,9 @@ export async function buildSetNonceSecret(
   const vault = String(input.vault).toLowerCase();
   const account = String(input.account).toLowerCase();
   const r = input.run;
+  if (!Array.isArray(r?.edge) || r.edge.length !== 10) {
+    throw new Error('this secret run does not show where its copies end, so nothing was built. Read the vault\'s start again to get a complete run.');
+  }
   if (!HEX64.test(vault) || !HEX64.test(account) || String(r?.vault).toLowerCase() !== vault) {
     throw new Error('this secret is not for this vault and this company\'s account, so nothing was built.');
   }
@@ -742,6 +748,9 @@ export async function buildSetNonceSecret(
     args: [
       run, hex32Of('previous secret', r.previous), hex32Of('commitment', r.commitment),
       hex32Of('root of copies', r.copiesRoot), digitsOf('number of copies', r.count),
+      r.edge.map((s) => ({ sibling: digitsOf('path', s.sibling), goesLeft: s.goesLeft === true })),
+      /* A first secret replaces none, so there is no earlier secret to carry. */
+      hex32Of('secret', input.secret), new Uint8Array(32),
     ],
   }, keys.encryptionPublicKey, {
     blockHash,

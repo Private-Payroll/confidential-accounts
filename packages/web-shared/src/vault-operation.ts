@@ -536,7 +536,7 @@ async function startCompanyVault(doors: CreateVaultDoors, vault: Hex): Promise<V
         return { vault, state: 'awaiting-approvals', awaiting: { round: 'first-secret', proposal: found.proposal as Hex, approvals: found.approvals, needed: found.needed } };
       }
       const { tx } = await buildOrOwe(vault, 'setting its first secret', () => doors.builder.setNonceSecret({
-        vault, account: at.chain.account, run, proposal: found!.proposal, opensAt: found!.opensAt, closesAt: found!.closesAt,
+        vault, account: at.chain.account, run, secret: secret.secret, proposal: found!.proposal, opensAt: found!.opensAt, closesAt: found!.closesAt,
         chain: {
           blockHash: at.chain.blockHash, vaultState: at.chain.vaultState, zswapState: at.chain.zswapState,
           parameters: at.chain.parameters, accountState: at.chain.accountState,

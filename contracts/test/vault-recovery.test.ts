@@ -103,7 +103,7 @@ const vaultWitnesses = {
       nonce: fromHex(n.nonce), color: fromHex(n.token), value: n.value, mt_index: n.index,
     }];
   },
-  nonceSecret: (ctx: { privateState: { secret?: Uint8Array } }) => [ctx.privateState, ctx.privateState.secret ?? new Uint8Array(32).fill(0x51)],
+  nonceSecret: (ctx: { privateState: { secret?: Uint8Array } }) => [ctx.privateState, ctx.privateState.secret ?? TEST_VAULT_SECRET],
 };
 
 /**
