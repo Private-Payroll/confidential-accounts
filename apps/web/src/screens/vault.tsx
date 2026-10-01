@@ -10,7 +10,7 @@ import { isPending, PendingPill, useStandingSays } from '../records/vault-pendin
 import type { CompanyRecords } from '../adapters/company-records.js';
 import { PAGE } from '../pages.js';
 import { PageLink, useCurrentPage } from '../router.js';
-import { MONEY, ReadOf, UnbuiltAction, useDay, useMonth, useVaultMoney, WithRecords, type VaultMoney } from '../records/parts.js';
+import { MONEY, PaidWords, ReadOf, UnbuiltAction, useDay, useMonth, useVaultMoney, WithRecords, type VaultMoney } from '../records/parts.js';
 
 /**
  * A VAULT'S OWN PAGE: its name, with the Pending pill when it waits on
@@ -75,8 +75,8 @@ interface HeldRow { id: string; amount: PrivateAmount | PublicAmount; private: b
 /** What the vault holds, a row an asset and state: those held privately first, each side in the order read. */
 function heldRows(money: VaultMoney): HeldRow[] {
   return [
-    ...(typeof money.private === 'string' ? [] : money.private.amounts.map((a) => ({ id: a.code + HELD.private, amount: a, private: true }))),
-    ...(typeof money.public === 'string' ? [] : money.public.amounts.map((a) => ({ id: a.code + HELD.public, amount: a, private: false }))),
+    ...(typeof money.private === 'string' ? [] : money.private.amounts.map((a) => ({ id: a.symbol + HELD.private, amount: a, private: true }))),
+    ...(typeof money.public === 'string' ? [] : money.public.amounts.map((a) => ({ id: a.symbol + HELD.public, amount: a, private: false }))),
   ];
 }
 
@@ -125,7 +125,7 @@ function MoneyHeld({ company, vault }: { company: string; vault: string }) {
     return () => clearInterval(timer);
   }, []);
   const columns: DataTableColumn<HeldRow>[] = [
-    { id: HELD.asset, header: t('vault.money.asset'), cell: (r) => <span className="font-medium">{r.amount.code}</span>, size: COLUMN_SIZE.wide },
+    { id: HELD.asset, header: t('vault.money.asset'), cell: (r) => <span className="font-medium">{r.amount.symbol}</span>, size: COLUMN_SIZE.wide },
     { id: HELD.amount, header: t('vault.money.balance'), cell: (r) => <AmountFigureOnly value={r.amount} />, centred: true },
     { id: HELD.state, header: t('vault.money.state'), cell: (r) => <AmountState value={r.amount} kind={AMOUNT_KIND.held} />, centred: true },
     {
@@ -192,7 +192,8 @@ function Payouts({ records, vault }: { records: CompanyRecords; vault: string })
             {legs.map(({ run, leg }, i) => (
               <SectionRow key={i} data-payout={run.id}>
                 <PageLink to={PAGE.run} params={{ run: run.id }} className="font-medium underline-offset-4 hover:underline">{month(run.period)}</PageLink>
-                <span>{leg.code}</span>
+                <span>{leg.symbol ?? t('records.unrecognisedOne')}</span>
+                <span className="text-muted-foreground"><PaidWords paid={leg.paid} /></span>
                 <span className="text-muted-foreground">{t('payroll.people', { count: leg.payees })}</span>
               </SectionRow>
             ))}

@@ -41,10 +41,12 @@ import * as ocrt from '@midnightntwrk/onchain-runtime-v4';
 import { Contract as Vault, ledger as vaultLedger } from '../managed-vault/contract/index.js';
 import { pureCircuits as vaultCircuits } from '../managed-vault/contract/index.js';
 import { pureCircuits, ledger as accountLedger } from '../managed/contract/index.js';
-import { AccountSimulator, privateStateFor, change, type Change, payoutTreeOf } from './simulator.js';
-import { type PayoutLeafInput } from '../../src/midnight/payout-tree.js';
+import {
+  AccountSimulator, privateStateFor, change, type Change, payoutTreeOf, vaultRunOf, NOT_IN_THE_APPROVED_RUN,
+} from './simulator.js';
+import { carryTheAccount, startTheVault } from './start-a-vault.js';
+import { type PayoutLeafInput, type PayoutTree } from '../../src/midnight/payout-tree.js';
 import { toHex, fromHex } from '../../src/core/crypto.js';
-import { itPaysOutOfTodaysVault } from './until-the-vault-pays-with-a-receipt.js';
 
 const VAULT_NOW = 1_800_000_000;
 const WIN_FROM = BigInt(VAULT_NOW - 3_600);
@@ -68,6 +70,7 @@ const BOB = bytes(0x0b);
 interface VaultPrivate { coin: { nonce: Uint8Array; color: Uint8Array; value: bigint; mt_index: bigint } }
 const vaultWitnesses = {
   noteToSpend: (ctx: { privateState: VaultPrivate }) => [ctx.privateState, ctx.privateState.coin],
+  nonceSecret: (ctx: { privateState: { secret?: Uint8Array } }) => [ctx.privateState, ctx.privateState.secret ?? new Uint8Array(32).fill(0x51)],
 };
 
 const govChange = (seed: number): Change => change(0n, seed);
@@ -117,6 +120,17 @@ describe('a vault holds public money as well as private', () => {
       createConstructorContext({} as VaultPrivate, BLOCK),
       { bytes: Uint8Array.from(Buffer.from(String(sim.address), 'hex')) } as never);
     vaultState = init.currentContractState;
+    /* A vault takes no money until the account has adopted it and approved its first secret. */
+    await startTheVault({
+      sim, vault: Uint8Array.from(Buffer.from(String(vaultAddr), 'hex')), approvers: [A, B], now: VAULT_NOW,
+      call: async (circuit, ...a) => {
+        const r: any = await (vault.impureCircuits as any)[circuit](createCircuitContext(
+          circuit as never, vaultAddr as never, BLOCK, vaultState as never, {} as never,
+          provider() as never, undefined, undefined, VAULT_NOW, BLOCK), ...a);
+        vaultState = r.context.callContext.currentQueryContext.state;
+        carryTheAccount(sim, r.context);
+      },
+    });
   });
 
   /** Raises and approves a run whose leaves are built for the kind named. */
@@ -131,7 +145,8 @@ describe('a vault holds public money as well as private', () => {
       details: toHex(detailsOf(p.to, NIGHT, p.amount, bytes(0x40 + i))),
       nonce: toHex(bytes(p.nonce)),
     }));
-    const tree = payoutTreeOf(leaves);
+    /* The run's root commits to the token it pays in, which the vault hands the account. */
+    const tree = payoutTreeOf(leaves, payments.map((p) => p.amount), NIGHT);
     const payload = pureCircuits.runPayload(fromHex(tree.root), tree.payees, WIN_FROM, WIN_UNTIL, 0n);
     const vaultBytes = Uint8Array.from(Buffer.from(vaultAddr, 'hex'));
     await sim.as(carrying(sim, A, c)).proposeRun({
@@ -143,13 +158,18 @@ describe('a vault holds public money as well as private', () => {
     return { tree, id };
   };
 
+  /** The run the first payee of an approved run hands the account, with that payee's nonce. */
+  const runOf = (tree: PayoutTree, id: Uint8Array, salt: Uint8Array, nonce: number) => vaultRunOf({
+    proposal: id, vault: Uint8Array.from(Buffer.from(vaultAddr, 'hex')), tree, i: 0,
+    opensAt: WIN_FROM, closesAt: WIN_UNTIL, salt, nonce: bytes(nonce),
+  });
+
   const pay = (
-    state: unknown, run: { tree: { root: string; payees: bigint; pathFor: (i: number) => unknown } },
+    state: unknown, run: { tree: PayoutTree },
     id: Uint8Array, salt: Uint8Array, to: Uint8Array, amount: bigint, blind: number, nonce: number,
   ) => vault.impureCircuits.payoutUnshielded(
     ctxFor('payoutUnshielded', state),
-    id, fromHex(run.tree.root), run.tree.payees, WIN_FROM, WIN_UNTIL, salt,
-    to, NIGHT, amount, bytes(blind), bytes(nonce), run.tree.pathFor(0) as never);
+    runOf(run.tree, id, salt, nonce), to, NIGHT, amount, bytes(blind));
 
   /* ---------------------------------------------------------------- deposit */
 
@@ -181,7 +201,7 @@ describe('a vault holds public money as well as private', () => {
 
   /* ----------------------------------------------------------------- payout */
 
-  itPaysOutOfTodaysVault('THE WHOLE THING IN PUBLIC MONEY: approved, claimed and paid in one call', async () => {
+  it('THE WHOLE THING IN PUBLIC MONEY: approved, claimed and paid in one call', async () => {
     const c = govChange(71);
     adopt(await vault.impureCircuits.depositUnshielded(
       ctxFor('depositUnshielded', chainSays()), NIGHT, 500n) as never);
@@ -212,10 +232,20 @@ describe('a vault holds public money as well as private', () => {
       context: { callContext: { currentQueryContext: { effects: {
         claimedUnshieldedSpends: Map<[{ raw: string }, { tag: string; address: string }], bigint> } } } }
     }).context.callContext.currentQueryContext.effects.claimedUnshieldedSpends];
-    expect(spends).toHaveLength(1);
-    expect(spends[0][0][1].tag).toBe('user');
-    expect(spends[0][0][1].address).toBe(hex(ALICE));
-    expect(spends[0][1]).toBe(250n);
+    /*
+     * Two spends are claimed: the payment, and one unit of the vault's payment
+     * receipt to the account, which is what lets the account record it at all.
+     */
+    const ofNight = spends.filter(([[token]]) => token.raw === hex(NIGHT));
+    /* RED WHEN the payment is claimed twice, or not at all. */
+    expect(ofNight).toHaveLength(1);
+    /* RED WHEN the money goes to a contract rather than the person. */
+    expect(ofNight[0]![0][1].tag).toBe('user');
+    expect(ofNight[0]![0][1].address).toBe(hex(ALICE));
+    expect(ofNight[0]![1]).toBe(250n);
+    const others = spends.filter(([[token]]) => token.raw !== hex(NIGHT));
+    /* RED WHEN anything but one receipt goes to the account beside the payment. */
+    expect(others.map(([[, to], v]) => [to.tag, to.address, v])).toEqual([['contract', String(sim.address), 1n]]);
 
     /* The vault counted it… */
     expect(vaultLedger(r.context.callContext.currentQueryContext.state as never).payments).toBe(1n);
@@ -225,7 +255,7 @@ describe('a vault holds public money as well as private', () => {
       pureCircuits.paidMovementOf(fromHex(run.tree.leaves[0])))).toBe(true);
   });
 
-  itPaysOutOfTodaysVault('THE ONE THAT LOSES THE MONEY: an approval for a SHIELDED payment cannot be paid in public money', async () => {
+  it('THE ONE THAT LOSES THE MONEY: an approval for a SHIELDED payment cannot be paid in public money', async () => {
     const c = govChange(72);
     adopt(await vault.impureCircuits.depositUnshielded(
       ctxFor('depositUnshielded', chainSays()), NIGHT, 500n) as never);
@@ -242,11 +272,12 @@ describe('a vault holds public money as well as private', () => {
      */
     const run = await approvedRun('shielded', [{ to: ALICE, amount: 250n, nonce: 0xc2 }], c);
 
+    /* RED WHEN a leaf approved for private money settles in public money, or this is refused for another reason. */
     await expect(pay(chainSays([[NIGHT, 500n]]), run, run.id, c.salt, ALICE, 250n, 0x40, 0xc2))
-      .rejects.toThrow(/not for this payee|not in the approved run/i);
+      .rejects.toThrow(NOT_IN_THE_APPROVED_RUN);
   });
 
-  itPaysOutOfTodaysVault('and the reverse: an approval for a PUBLIC payment is not a shielded one either', async () => {
+  it('and the reverse: an approval for a PUBLIC payment is not a shielded one either', async () => {
     const c = govChange(73);
     const run = await approvedRun('unshielded', [{ to: ALICE, amount: 250n, nonce: 0xc3 }], c);
 
@@ -255,35 +286,37 @@ describe('a vault holds public money as well as private', () => {
     adopt(await vault.impureCircuits.deposit(
       ctxFor('deposit', chainSays()), coin) as never);
 
+    /* RED WHEN a leaf approved for public money settles in private money, or this is refused for another reason. */
     await expect(vault.impureCircuits.payout(
       ctxFor('payout', chainSays()),
-      run.id, fromHex(run.tree.root), run.tree.payees, WIN_FROM, WIN_UNTIL, c.salt,
-      ALICE, NIGHT, 250n, bytes(0x40), bytes(0xc3), run.tree.pathFor(0) as never))
-      .rejects.toThrow(/not for this payee|not in the approved run/i);
+      runOf(run.tree, run.id, c.salt, 0xc3), ALICE, NIGHT, 250n, bytes(0x40)))
+      .rejects.toThrow(NOT_IN_THE_APPROVED_RUN);
   });
 
-  itPaysOutOfTodaysVault('refuses to pay a different AMOUNT of public money than the one approved', async () => {
+  it('refuses to pay a different AMOUNT of public money than the one approved', async () => {
     const c = govChange(77);
     adopt(await vault.impureCircuits.depositUnshielded(
       ctxFor('depositUnshielded', chainSays()), NIGHT, 500n) as never);
     const run = await approvedRun('unshielded', [{ to: ALICE, amount: 250n, nonce: 0xc7 }], c);
 
     /* The signers approved 250. Same payee, same token, same everything else. */
+    /* RED WHEN the account records an amount the run did not approve, or refuses this one for another reason. */
     await expect(pay(chainSays([[NIGHT, 500n]]), run, run.id, c.salt, ALICE, 400n, 0x40, 0xc7))
-      .rejects.toThrow(/not for this payee|not in the approved run/i);
+      .rejects.toThrow(NOT_IN_THE_APPROVED_RUN);
   });
 
-  itPaysOutOfTodaysVault('refuses to pay public money to somebody the signers did not approve', async () => {
+  it('refuses to pay public money to somebody the signers did not approve', async () => {
     const c = govChange(74);
     adopt(await vault.impureCircuits.depositUnshielded(
       ctxFor('depositUnshielded', chainSays()), NIGHT, 500n) as never);
     const run = await approvedRun('unshielded', [{ to: ALICE, amount: 250n, nonce: 0xc4 }], c);
 
+    /* RED WHEN the account records a payee the run did not approve, or refuses this one for another reason. */
     await expect(pay(chainSays([[NIGHT, 500n]]), run, run.id, c.salt, BOB, 250n, 0x40, 0xc4))
-      .rejects.toThrow(/not for this payee|not in the approved run/i);
+      .rejects.toThrow(NOT_IN_THE_APPROVED_RUN);
   });
 
-  itPaysOutOfTodaysVault('refuses to pay more public money than the chain says it holds', async () => {
+  it('refuses to pay more public money than the chain says it holds', async () => {
     const c = govChange(75);
     adopt(await vault.impureCircuits.depositUnshielded(
       ctxFor('depositUnshielded', chainSays()), NIGHT, 100n) as never);
@@ -293,7 +326,7 @@ describe('a vault holds public money as well as private', () => {
       .rejects.toThrow(/does not hold enough of that token/i);
   });
 
-  itPaysOutOfTodaysVault('pays a payee once, ever', async () => {
+  it('pays a payee once, ever', async () => {
     const c = govChange(76);
     adopt(await vault.impureCircuits.depositUnshielded(
       ctxFor('depositUnshielded', chainSays()), NIGHT, 500n) as never);
@@ -307,6 +340,17 @@ describe('a vault holds public money as well as private', () => {
 
     await expect(pay(chainSays([[NIGHT, 250n]]), run, run.id, c.salt, ALICE, 250n, 0x40, 0xc6))
       .rejects.toThrow(/already been made/i);
+  });
+
+  it("A PUBLIC PAYMENT'S DETAILS COMMIT TO THE AMOUNT: the same payee at another amount is another leaf", () => {
+    /*
+     * The account binds the amount a second way, through the run's sum tree, so a
+     * payment at another amount is refused even by details that left it out. This
+     * pins the details on their own, so neither binding quietly stands in for the other.
+     */
+    /* RED WHEN a payment's details stop covering the amount. */
+    expect(hex(vaultCircuits.unshieldedPayoutDetails(ALICE, NIGHT, 250n, bytes(0x40))))
+      .not.toBe(hex(vaultCircuits.unshieldedPayoutDetails(ALICE, NIGHT, 900n, bytes(0x40))));
   });
 
   /* ------------------------------------------------------- retire and forget */

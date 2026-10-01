@@ -12,15 +12,19 @@
  * origin and sends nothing anywhere.
  */
 import {
-  buildCommitteeHandover, buildDeposit, buildPayout, buildPublicDeposit, buildPublicPayout, buildVaultDeploy, chooseNoteForPayment, confirmPayment, paymentsFitNotes,
-  poolAfterPayment,
-  type VaultBuilderDeps,
+  buildCommitteeHandover, buildDeposit, buildPayout, buildPublicDeposit, buildPublicPayout, buildSetNonceSecret, buildVaultDeploy,
+  buildWriteSecretCopy, chooseNoteForPayment, confirmPayment, paymentsFitNotes, poolAfterPayment,
+  type SecretRunOnTheWire, type VaultBuilderDeps,
 } from './vault-builder.js';
+import {
+  firstSecretRunOf, startStandingOf, type AccountLedgerForAStart, type AccountStartPure, type SecretRun,
+  type StartStanding, type VaultLedgerForAStart, type VaultStartPure,
+} from '../../../src/midnight/vault-start.js';
 import { buildGovernedCall, type GovernedCallDeps } from './governed-call-builder.js';
 import { circuitOf, httpKeyMaterialSource, IndexedDbArtefactCache, type ArtefactSource } from './key-material.js';
 import { ACCOUNT_CIRCUITS_SERVED_TO_A_DEVICE } from '../../../src/midnight/vault-contract.js';
 import { zkConfigOver, byCircuitName } from './zk-config.js';
-import type { CreatingTransactionAnswer, VaultAsk, VaultAnswer } from './vault-worker-client.js';
+import type { CreatingTransactionAnswer, StartStandingOnTheWire, VaultAsk, VaultAnswer } from './vault-worker-client.js';
 import type { EventOnTheWire } from './vault-builder.js';
 import { establishCreatingTransaction, NoteIndexRefused, type ServedEvent } from '../../../src/midnight/note-index.js';
 import type { Hex } from '../../../src/core/crypto.js';
@@ -106,8 +110,39 @@ export const creatingTransactionOfNote = (input: {
   }
 };
 
-/** What this worker builds with: the vault's builder, and the account's two circuits beside it. */
-export type WorkerDeps = Omit<VaultBuilderDeps, 'network'> & { vault: any } & Omit<GovernedCallDeps, 'random'>;
+/**
+ * What this worker builds with: the vault's builder, and the account's circuits
+ * beside it, with the account's compiled ledger reader, which a vault's start
+ * reads the account's rounds with.
+ */
+export type WorkerDeps = Omit<VaultBuilderDeps, 'network'> & { vault: any; accountLedger: (data: unknown) => unknown }
+  & Omit<GovernedCallDeps, 'random'>;
+
+/** The first secret run, as it crosses to the page. */
+const secretRunToWire = (r: SecretRun): SecretRunOnTheWire => ({
+  vault: r.vault, previous: r.previous, commitment: r.commitment, copiesRoot: r.copiesRoot, count: r.count.toString(),
+  details: r.details, nonce: r.nonce, salt: r.salt, asset: r.asset, root: r.root, payees: r.payees.toString(),
+  path: r.path.map((s) => ({ sibling: s.sibling.toString(), siblingSum: s.siblingSum.toString(), goesLeft: s.goesLeft })),
+  copies: r.copies.map((c) => ({
+    reader: c.reader, parts: [...c.parts], path: c.path.map((s) => ({ sibling: s.sibling.toString(), goesLeft: s.goesLeft })),
+  })),
+});
+
+/** Where a vault's start stands, as it crosses to the page. */
+const standingToWire = (s: StartStanding): StartStandingOnTheWire => {
+  if (s.secret === undefined) return { adopted: s.adopted, adoption: s.adoption };
+  const { run, raise, written, ...rest } = s.secret;
+  return {
+    adopted: s.adopted,
+    adoption: s.adoption,
+    secret: {
+      ...rest,
+      run: run === null ? null : { ...run, opensAt: run.opensAt.toString(), closesAt: run.closesAt.toString() },
+      ...(raise === undefined ? {} : { raise: { ...raise, opensAt: raise.opensAt.toString(), closesAt: raise.closesAt.toString() } }),
+      written: [...written],
+    },
+  };
+};
 
 /** Everything heavy, loaded the first time it is needed and kept. */
 const loadDeps = (scope: any) => {
@@ -142,6 +177,7 @@ const loadDeps = (scope: any) => {
         CompiledContract.withWitnesses({
           /* No transaction built here spends a note, so nothing may ask for one. */
           noteToSpend: () => { throw new Error('a vault transaction built on this device spends no note.'); },
+          nonceSecret: () => { throw new Error('a vault transaction built on this device reads no nonce secret.'); },
         }),
       );
       return {
@@ -163,6 +199,7 @@ const loadDeps = (scope: any) => {
           CompiledContract.withWitnesses((accountWitnesses as any).witnesses)),
         accountZkConfig: zkConfig,
         accountPure: (account as any).pureCircuits,
+        accountLedger: (account as any).ledger,
         prove: async (unproven: any, circuit?: string) =>
           (await (prover as any).proveTx(unproven, circuit === undefined ? undefined : { circuitId: circuit })) as { serialize(): Uint8Array },
       };
@@ -254,7 +291,7 @@ export const answerVaultAsk = async (
     case 'payout': {
       const built = await buildPayout(withNetwork, {
         vault: ask.vault, account: ask.account, order: ask.order, payment: ask.payment,
-        note: ask.note, events: ask.events,
+        note: ask.note, events: ask.events, secret: ask.secret,
         chain: {
           blockHash: ask.chain.blockHash,
           vaultState: fromBase64(ask.chain.vaultState),
@@ -288,6 +325,52 @@ export const answerVaultAsk = async (
       });
       return { id: ask.id, ok: true, ask: 'governed-call', tx: toBase64(built.proven) };
     }
+    case 'start-standing': {
+      /*
+       * **HOW FAR A VAULT'S START HAS GOT, READ HERE FROM BOTH CONTRACTS AS ONE
+       * BLOCK SAW THEM.** With the secret the page opened from the company's
+       * record, the first secret run is made here too, with the contracts' own
+       * functions, and handed back for the steps the page then asks for.
+       */
+      const circuits = { vault: d.vault.pureCircuits as VaultStartPure, account: d.accountPure as unknown as AccountStartPure };
+      const run = ask.secret === undefined
+        ? undefined
+        : firstSecretRunOf(circuits, { vault: ask.vault, secret: ask.secret, readers: ask.readers ?? [] });
+      const ledgerOf = (b64: string, read: (data: unknown) => unknown) =>
+        read((d.runtimeState.deserialize(fromBase64(b64)) as { data: unknown }).data);
+      const standing = startStandingOf(circuits, {
+        vault: ask.vault,
+        account: ledgerOf(ask.accountState, d.accountLedger) as AccountLedgerForAStart,
+        vaultLedger: ledgerOf(ask.vaultState, d.vault.ledger) as VaultLedgerForAStart,
+        ...(run === undefined ? {} : { run }),
+        now: BigInt(ask.now),
+        ...(ask.window === undefined ? {} : { window: { opensAt: BigInt(ask.window.opensAt), closesAt: BigInt(ask.window.closesAt) } }),
+      });
+      return {
+        id: ask.id, ok: true, ask: 'start-standing', standing: standingToWire(standing),
+        ...(run === undefined ? {} : { run: secretRunToWire(run) }),
+      };
+    }
+    case 'set-nonce-secret': {
+      const built = await buildSetNonceSecret(withNetwork, {
+        vault: ask.vault, account: ask.account, run: ask.run, proposal: ask.proposal, opensAt: ask.opensAt, closesAt: ask.closesAt,
+        chain: {
+          blockHash: ask.chain.blockHash,
+          vaultState: fromBase64(ask.chain.vaultState),
+          zswapState: fromBase64(ask.chain.zswapState),
+          parameters: fromBase64(ask.chain.parameters),
+          accountState: fromBase64(ask.chain.accountState),
+        },
+      });
+      return { id: ask.id, ok: true, ask: 'set-nonce-secret', tx: toBase64(built.proven) };
+    }
+    case 'write-secret-copy': {
+      const built = await buildWriteSecretCopy(withNetwork, {
+        vault: ask.vault, run: ask.run, place: ask.place, state: fromBase64(ask.state),
+        parameters: typeof ask.parameters === 'string' ? fromBase64(ask.parameters) : new Uint8Array(0),
+      });
+      return { id: ask.id, ok: true, ask: 'write-secret-copy', tx: toBase64(built.proven) };
+    }
     case 'commitments': {
       /* The two commitments a coin has: as an output the ledger records, and as the note the vault holds. */
       const [{ compiledOutputCommitment }, { commitmentForNote }] = await Promise.all([
@@ -314,7 +397,7 @@ export const answerVaultAsk = async (
  * the contract runtime's own failure arrives as "Error executing circuit
  * 'deposit'" with the reason that matters kept only underneath it.
  */
-export const startVaultWorker = (scope: any, deps: () => Promise<WorkerDeps> = loadDeps(scope)): void => {
+const startVaultWorker = (scope: any, deps: () => Promise<WorkerDeps> = loadDeps(scope)): void => {
   scope.addEventListener('message', (event: MessageEvent) => {
     const ask = event.data as VaultAsk;
     if (typeof ask !== 'object' || ask === null || typeof ask.id !== 'number') return;

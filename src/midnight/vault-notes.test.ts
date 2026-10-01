@@ -20,7 +20,7 @@
  * implementation exists to disagree with it. The equality those tests asserted
  * cannot be false any more: there are no longer two derivations to compare.
  *
- * The contract-side property they became is in `contracts/test/vault-split.test.ts`
+ * The contract-side property they became is in `contracts/test/the-new-vault.test.ts`
  * and in `vault-payout.test.ts`'s "two vaults holding the SAME coin publish
  * different bytes", which now plays what its name says because a blinding is a
  * function of the vault's address.
@@ -37,6 +37,13 @@ import {
 import type { ChainReadIndex } from './note-index.js';
 import { changeNonceOf } from './vault-recovery.js';
 import { toHex, fromHex, type Hex } from '../core/crypto.js';
+
+/** The item at a place in a list; an item that is not there fails the test here rather than being read through. */
+const itemAt = <T,>(xs: readonly T[], i: number): T => {
+  const x = xs[i];
+  if (x === undefined) throw new Error(`expected an item at place ${i}, and the list holds ${xs.length}`);
+  return x;
+};
 
 /**
  * The change coin a payment handed back, as `changeCoinOf` reads it off the
@@ -283,8 +290,8 @@ describe('V-74: carrying the pool forward', () => {
     const spent = note(1, 1_000n);
     const read = changeOf(spent, 400n);
     const s = afterPayment(pool([spent]), spent.nonce, 400n, read, TX_A);
-    expect(s.notes[0].nonce).toBe(read.nonce);
-    expect(s.notes[0].nonce).not.toBe(toHex(changeNonceOf(fromHex(spent.nonce))));
+    expect(itemAt(s.notes, 0).nonce).toBe(read.nonce);
+    expect(itemAt(s.notes, 0).nonce).not.toBe(toHex(changeNonceOf(fromHex(spent.nonce))));
   });
 
   it('C239: REFUSES when the read and the arithmetic disagree, in both directions', () => {
@@ -319,14 +326,14 @@ describe('V-74: carrying the pool forward', () => {
      */
     const spent = note(1, 1_000n);
     const s = afterPayment(pool([spent]), spent.nonce, 400n, changeOf(spent, 400n));
-    expect(s.notes[0].index).toBeUndefined();
+    expect(itemAt(s.notes, 0).index).toBeUndefined();
     expect(s.notes[0]).not.toHaveProperty('createdIn');
   });
 
   it('records WHERE the change note\'s index is to be read, and never an index', () => {
     const spent = note(1, 1_000n, GBP, 5n);
     const s = afterPayment(pool([spent]), spent.nonce, 400n, changeOf(spent, 400n), TX_B);
-    expect(s.notes[0].createdIn).toBe(TX_B);
+    expect(itemAt(s.notes, 0).createdIn).toBe(TX_B);
     expect(s.notes[0]).not.toHaveProperty('index');
   });
 
@@ -380,7 +387,7 @@ describe('an index is set on one note of a copy, and only as the chain reported 
 
   it('replaces an earlier index with the chain\'s current answer', () => {
     const s = withIndexRead(pool([note(1, 100n, GBP, 3n)]), note(1, 0n).nonce, readFromChain(9n));
-    expect(s.notes[0].index).toBe(9n);
+    expect(itemAt(s.notes, 0).index).toBe(9n);
   });
 
   it('refuses a note the pool does not hold', () => {
@@ -391,7 +398,7 @@ describe('an index is set on one note of a copy, and only as the chain reported 
   it('does not accept a plain number: the type is the pin', () => {
     // @ts-expect-error a bigint that did not come from noteIndexFrom is not an index
     const s = withIndexRead(pool([note(1, 100n)]), note(1, 0n).nonce, 616n);
-    expect(s.notes[0].index).toBe(616n);
+    expect(itemAt(s.notes, 0).index).toBe(616n);
   });
 });
 
@@ -433,15 +440,18 @@ describe('V-74: the witnesses the contract actually calls', () => {
       .toThrow(/NOTHING HERE MAY SUBSTITUTE A NUMBER/);
   });
 
-  it('DECLARES ONE WITNESS, because the blinding is no longer the device\'s to choose', () => {
+  it('DECLARES THE TWO WITNESSES THE VAULT ASKS FOR, and no blinding, which is not the device\'s to choose', () => {
     /*
      * Two more used to be here — `noteBlinding` and `nextBlinding` — and
      * a client that still offered them would be offering the contract
      * something it does not ask for, which is how a rule survives in two
-     * places after only one of them was changed.
+     * places after only one of them was changed. The vault's secret is the
+     * second witness the vault declares; this pool has none to give.
      */
     const w = witnessesOver(() => pool([note(1, 1n)]), {});
-    expect(Object.keys(w)).toEqual(['noteToSpend']);
+    expect(Object.keys(w)).toEqual(['noteToSpend', 'nonceSecret']);
+    /* RED WHEN the pool answers for a secret it does not hold. */
+    expect(() => (w as unknown as { nonceSecret: (c: unknown) => unknown }).nonceSecret({})).toThrow();
   });
 });
 

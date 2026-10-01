@@ -119,10 +119,9 @@ src/core/      isomorphic. runs identically on a server and in a browser
   payroll.ts   roster, runs, per-employee sealed payslips
   plugins.ts   capability tokens. propose-never-execute
 src/server/    Express. auth and membership gates on every route
-src/web-legacy/ React client. today's screens
+apps/web/      the web application. React, its source under src/
 packages/web-shared/ browser code both web applications share. holds the keys the page keeps from the server
 src/midnight/  Midnight adapters, behind the boundary
-src/standalone/ single-file build. the whole product, no server
 packages/identity/ the key library. its own manifest, its own SECURITY.md
 apps/wallet/   the wallet application. React, its source under src/
 scripts/       the build, the checks, and the tools that measure them
@@ -134,7 +133,6 @@ scripts/       the build, the checks, and the tools that measure them
 ```bash
 npm install
 npm run dev          # the app on :5173, its server on :8787, the wallet on :5180
-npm run standalone   # one self-contained html file
 ```
 
 `npm run dev` is the one command that starts the product. The server it starts is read-only: it holds
@@ -187,8 +185,8 @@ Not style preferences. Breaking one turns this into a normal SaaS app that menti
 - **The server never holds anything that decrypts.** No viewing keys, no signer secrets, and no
   password to hold: a wallet signs in, and the key that unseals a person's keyring is made on their
   own device.
-- **`core/` stays isomorphic.** No `node:*`, no `Buffer`. The standalone build is the test that it
-  still is.
+- **`core/` stays isomorphic.** No `node:*`, no `Buffer`. `scripts/browser-graph.ts` checks the files
+  of it the web app reaches.
 - **Midnight stays behind `Ledger` and `ProofSystem`.** Nothing above the boundary knows which
   implementation is running.
 - **A plug-in can propose. A plug-in can never execute.** And it never receives the viewing key.

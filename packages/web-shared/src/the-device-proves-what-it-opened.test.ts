@@ -103,7 +103,7 @@ const OTHER = 'ee'.repeat(32);
 const SAYS: Record<string, string> = {
   'proposal identity': 'proposal', salt: 'proposal', vault: 'proposal', leaf: 'person being given access',
   threshold: 'number of approvals required', run: 'payroll run', 'run vault': 'account this run pays from',
-  asset: 'currency', amount: 'amount', 'payments digest': 'list of payments',
+  asset: 'token', amount: 'amount', 'payments digest': 'list of payments',
 };
 const noHalf = (o: OpenedRound): OpenedRound => { const { half: _h, ...r } = o; return r; };
 

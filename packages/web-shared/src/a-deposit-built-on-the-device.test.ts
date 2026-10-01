@@ -37,7 +37,6 @@
  */
 import { describe, it, expect, beforeAll } from 'vitest';
 import type { AccountAddress, CompanyLabel } from 'midnight-identity/profile/company-label';
-import { existsSync } from 'node:fs';
 import * as L from '@midnightntwrk/ledger-v9';
 import * as runtime from '@midnight-ntwrk/compact-runtime';
 import { CompiledContract } from '@midnight-ntwrk/compact-js';
@@ -60,6 +59,7 @@ import { depositFromSource, privateTokenFromTheWallet } from './deposit-source.j
 import * as ShieldedV1 from '@midnightntwrk/wallet-sdk-shielded/v1';
 import { chooseCoin } from '@midnightntwrk/wallet-sdk-capabilities';
 import { Either } from 'effect';
+import { keysOnDisk } from '../../../contracts/test/keys-on-disk.js';
 
 /** The value, or a failure that says one was missing: an index that finds nothing is a broken test, not a value to carry on with. */
 function present<T>(value: T | undefined): T {
@@ -88,12 +88,11 @@ const LANDED_IN = '7e'.repeat(32);
  * skipped there by name, and the job that builds the keys runs this file by name.
  * Derived from this file's own location, not the working directory.
  */
-const KEYS_ON_DISK = existsSync(new URL('../../../contracts/managed-vault/keys/deposit.verifier', import.meta.url));
+/* Every circuit of the account and of the vault has its verifier key on disk, and each is the key this build compiled. */
+const KEYS = keysOnDisk();
+const KEYS_ON_DISK = KEYS.ok;
 if (!KEYS_ON_DISK) {
-  console.log(
-    '  NOT CHECKED HERE: the vault\'s verifier keys are not on disk, so a deposit was not built on the'
-    + ' device and searched for what it sends. `npm run compact:vault -- --full` builds them.',
-  );
+  console.log(`  NOT CHECKED HERE: a deposit was not built on the device and searched for what it sends, because ${KEYS.why}`);
 }
 
 /** Every string and byte array inside a value, however deep, whatever holds it. */
@@ -232,7 +231,7 @@ const aWalletHolding = (network: string) => {
 describe.skipIf(!KEYS_ON_DISK)('A DEPOSIT FROM THE PAGE, BUILT ON THE DEVICE [needs contracts/managed-vault/keys; `npm run compact:vault -- --full` builds them]', () => {
   const zk = new NodeZkConfigProvider(new URL('../../../contracts/managed-vault', import.meta.url).pathname);
   const compiled = CompiledContract.make('Vault', (vaultModule as any).Contract).pipe(
-    CompiledContract.withWitnesses({ noteToSpend: () => { throw new Error('a deposit spends no note'); } } as never));
+    CompiledContract.withWitnesses({ noteToSpend: () => { throw new Error('a deposit spends no note'); }, nonceSecret: () => { throw new Error('a deposit spends no note'); } } as never));
   const PROVEN = new Uint8Array(96).map((_, i) => (i * 37 + 11) & 0xff);
   /* Parameters the chain could hold that are not the ledger's starting ones: one field of them changed. */
   const STARTING = L.LedgerParameters.initialParameters().serialize();
@@ -265,7 +264,23 @@ describe.skipIf(!KEYS_ON_DISK)('A DEPOSIT FROM THE PAGE, BUILT ON THE DEVICE [ne
     const built = await buildVaultDeploy({ ...deps(), prove: async (tx: any) => tx }, { account: ACCOUNT });
     vault = built.vault as Hex;
     const deploy = L.Transaction.deserialize('signature', 'pre-proof', 'pre-binding', built.proven) as any;
-    state = Buffer.from(deploy.intents.values().next().value.actions[0].initialState.serialize()).toString('base64');
+    /*
+     * The vault as its account leaves it once it has adopted the vault and
+     * approved its first secret, every sealed copy written. A vault fresh from its
+     * deploy takes no money (`src/wiring/vault-submission.test.ts` pins that).
+     */
+    const deployed: any = L.ContractState.deserialize(deploy.intents.values().next().value.actions[0].initialState.serialize());
+    const fields = deployed.data.state.asArray();
+    const commitment = (L as any).StateValue.newCell({ value: [new Uint8Array(32).fill(0x51)], alignment: fields[5].asCell().alignment });
+    let next = (L as any).StateValue.newArray();
+    /* And the mark the last sealed copy leaves, without which the vault still takes no money. */
+    const bytes32 = new (runtime as any).CompactTypeBytes(32);
+    const aligned = (b: Uint8Array) => ({ value: bytes32.toValue(b), alignment: bytes32.alignment() });
+    const written = (L as any).StateValue.newMap((fields[7] as any).asMap().insert(
+      aligned((vaultModule as any).pureCircuits.copiesWrittenKey()), (L as any).StateValue.newCell(aligned(new Uint8Array(32).fill(0x51)))));
+    fields.forEach((f: unknown, i: number) => { next = next.arrayPush(i === 5 ? commitment : i === 7 ? written : f); });
+    deployed.data = new (L as any).ChargedState(next);
+    state = Buffer.from(deployed.serialize()).toString('base64');
   });
 
   it('SENDS THE SERVICE ONLY THE DEPOSIT THE WALLET FINISHED, WHICH SHOWS NO TOKEN OR AMOUNT, AND NOTHING SENT ANYWHERE CARRIES THE NONCE, ITS SECRET OR ANY PART OF THE UNPROVEN TRANSACTION', async () => {
@@ -358,12 +373,12 @@ describe.skipIf(!KEYS_ON_DISK)('A DEPOSIT FROM THE PAGE, BUILT ON THE DEVICE [ne
         finished.push(paid.serialize());
         return { transaction: Buffer.from(finished[0]!).toString('base64'), leaves: [] };
     }, new StaticAssetRegistry([{
-      code: 'DEP', name: 'DEP', kind: 'token', decimals: 0, chain: 'midnight', enabled: true, sortOrder: 1,
+      code: TOKEN, symbol: 'DEP', name: 'DEP', decimals: 0, enabled: true, sortOrder: 1,
       ledger: { shielded: TOKEN, unshielded: null } as never,
     }]));
     const done = await depositFromSource({
       ...doors, company: LABEL, account: ACCOUNT, builder: watched, inFlight: inFlightOver(inFlightRecords, wrapping.secret),
-    }, vault, source, { code: 'DEP', value: VALUE });
+    }, vault, source, { code: TOKEN, value: VALUE });
 
     /* ---- the deposit happened, and what the service was sent is what the wallet finished ---- */
     expect(done.note.value).toBe(VALUE);

@@ -32,6 +32,8 @@ import { FileStore } from './store-file.js';
 import { sign, toHex, type Hex } from './crypto.js';
 import { saysNothingWasSent } from './jobs.js';
 
+import { TEST_TOKEN } from '../testing/assets.js';
+import { runLegOf } from './payroll.js';
 const VAULT = toHex(new Uint8Array(32).fill(0xa1));
 const now = () => Math.floor(Date.now() / 1000);
 const encode = (s: string) => new TextEncoder().encode(s);
@@ -87,7 +89,7 @@ async function aCompany(opts: { threshold: number }) {
   const account = created.account.id;
   for (let i = 0; i < 3; i++) {
     payroll.hireDirect(account, {
-      name: `Payee ${i}`, email: `p${i}@a.co`, title: 'Eng', asset: 'GBP', baseAmount: 100_00n,
+      name: `Payee ${i}`, email: `p${i}@a.co`, title: 'Eng', asset: TEST_TOKEN, baseAmount: 100_00n,
     }, viewingKey);
   }
   const seats = created.secrets;
@@ -116,7 +118,7 @@ async function aCompany(opts: { threshold: number }) {
         if (circuit === 'approve') return ledger.approve(accountId, chainId, by(who));
         const order = (await payroll.raiseOrderOf(runId, viewingKey))!;
         const change: StateChange = {
-          asset: 'GBP', amount: BigInt(order.half.changeAmount), batchDigest: order.half.changeBatchDigest,
+          asset: TEST_TOKEN, amount: BigInt(order.half.changeAmount), batchDigest: order.half.changeBatchDigest,
           salt: order.half.proposalSalt,
         };
         const r = await ledger.proposeRun(accountId, order.run, change, by(who));
@@ -698,7 +700,7 @@ describe('A WITHDRAWN LEG', () => {
     const second = await c.raiseOnDevice();
     expect(second.id).not.toBe(first.id);
     expect(second.chainId).not.toBe(first.chainId);
-    expect(c.payroll.requireRun(c.runId, c.viewingKey).proposalIds.GBP).toBe(second.id);
+    expect(c.payroll.requireRun(c.runId, c.viewingKey).proposalIds[runLegOf(TEST_TOKEN, 'shielded')]).toBe(second.id);
     /* RED WHEN: the release is wider than a withdrawal - a leg whose proposal stands is raised a second time. */
     await expect(c.raiseOnDevice()).rejects.toThrow(/already proposed/u);
     /* And what the device builds now is the new proposal, not the withdrawn one. */
@@ -749,7 +751,7 @@ describe('A WITHDRAWN LEG', () => {
     check.open();
     const retry = await retrying;
     expect(retry.raisedAt).toBeDefined();
-    expect(c.payroll.requireRun(c.runId, c.viewingKey).payout!.GBP!.retries!.map((r) => r.proposalId)).toEqual([retry.id]);
+    expect(c.payroll.requireRun(c.runId, c.viewingKey).payout![runLegOf(TEST_TOKEN, 'shielded')]!.retries!.map((r) => r.proposalId)).toEqual([retry.id]);
     await expect(c.raiseOnDevice()).rejects.toThrow(/a retry on it is still live/u);
   });
 
@@ -785,6 +787,6 @@ describe('A WITHDRAWN LEG', () => {
     await expect(c.raiseOnDevice()).rejects.toThrow(/a retry on it is still live/u);
     await c.accounts.cancel(retry.id, c.viewingKey);
     const again = await c.raiseOnDevice();
-    expect(c.payroll.requireRun(c.runId, c.viewingKey).proposalIds.GBP).toBe(again.id);
+    expect(c.payroll.requireRun(c.runId, c.viewingKey).proposalIds[runLegOf(TEST_TOKEN, 'shielded')]).toBe(again.id);
   });
 });

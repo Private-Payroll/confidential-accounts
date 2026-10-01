@@ -10,8 +10,7 @@
  * ------------------------------------------------------------------------
  * WHAT THIS DELIBERATELY DOES NOT DO: RESOLVE THE ACCOUNT
  *
- * `payout` is to call the account's `recordPaymentFromVault` (the vault contract still
- * calls the step's older form until the vault round rebuilds it), and every offline test in this
+ * `payout` calls the account's `recordPaymentFromVault`, and every offline test in this
  * repo builds that call by hand with a `ContractStateProvider` so the runtime
  * can read the callee. **The client needs none of it.** midnight-js supplies
  * the provider itself, on every call, unconditionally: both call sites in
@@ -35,6 +34,7 @@ import { fromHex, toHex } from '../core/crypto.js';
 import type { MidnightConfig, FeeSponsor } from './ledger.js';
 import { paysNoFees } from './fee-seat.js';
 import type { SignerRef, TxRef } from '../core/ledger.js';
+import type { SumStep } from './payout-tree.js';
 import {
   witnessesOver, witnessesWithoutAPool, afterDeposit, afterPayment, noteToSpend, paymentsFit,
   withIndexRead,
@@ -98,9 +98,115 @@ export interface VaultPayment {
   amount: bigint;
   blinding: Hex;
   nonce: Hex;
-  /** The payee's merkle path, in the shape the circuit takes. */
-  path: unknown;
+  /**
+   * The vault the approved run names: this vault for its own run, or the
+   * company-wide name for a run any adopted vault may pay. The account
+   * recomputes the proposal from it, so it is the run's value, never the payer's.
+   */
+  runVault: Hex;
+  /** The approvals the run was raised with. Part of what the proposal commits to. */
+  required: bigint;
+  /** The asset the run's root commits to, exactly as the run was built with it. */
+  asset: Hex;
+  /**
+   * The payee's path in the run's sum tree, leaf to root: one step per level,
+   * each the node beside it, that node's sum and which side the payee is on.
+   * The account rebuilds the root from it with this payment's amount and token.
+   */
+  path: readonly SumStep[];
 }
+
+/**
+ * **ONE PAYMENT OUT OF AN APPROVED RUN, BEHIND ONE CALL, WHOEVER MAKES IT.**
+ *
+ * Everything the payment needs arrives as arguments: the approved run's own
+ * values and this payee's leaf and path (`VaultPayment`), where the chain's
+ * events are read, and, for private money, the vault's current nonce secret.
+ * Nothing is read from the device that built the run. So a signer's own device
+ * and a separate service that proves on the company's behalf call exactly this,
+ * with the same run, and neither can pay what the other could not.
+ *
+ * Every payee of a run is one call and one transaction; a batch is these calls
+ * in turn, each retried on its own.
+ */
+export interface PaysFromAVault {
+  payout(
+    vaultAddress: string,
+    p: VaultPayment,
+    by: SignerRef,
+    events?: NoteEvents,
+    nonceSecret?: Hex,
+  ): Promise<VaultPaid>;
+}
+
+/** How many levels a payee's path has: the circuit takes exactly this many steps. */
+const RUN_PATH_STEPS = 16;
+
+/**
+ * **THE RUN, IN THE SHAPE BOTH PAYMENT CIRCUITS TAKE IT.**
+ *
+ * One builder for both kinds, so the private and the public payment cannot
+ * hand the account two different readings of one approved run. A path of the
+ * wrong length, or a step that is not a node, a sum and a side, is refused here
+ * by name before anything is proved: the account would refuse it too, but only
+ * after a proof and a fee.
+ */
+export const runArgOf = (p: VaultPayment) => {
+  const path = p.path as readonly unknown[];
+  if (!Array.isArray(path) || path.length !== RUN_PATH_STEPS) {
+    throw new Error(
+      `a payee's path in the run's sum tree has ${RUN_PATH_STEPS} steps, and this payment's has `
+      + `${Array.isArray(path) ? path.length : 'none'}. Nothing is proved or paid. Pay with the `
+      + 'path the run itself gives for this payee.');
+  }
+  return {
+    proposal: fromHex(p.proposal),
+    runVault: fromHex(p.runVault),
+    root: fromHex(p.root),
+    payees: p.payees,
+    opensAt: p.opensAt,
+    closesAt: p.closesAt,
+    required: p.required,
+    salt: fromHex(p.salt),
+    nonce: fromHex(p.nonce),
+    asset: fromHex(p.asset),
+    path: path.map((step, level) => {
+      const s = step as Partial<SumStep> | null;
+      if (s === null || typeof s !== 'object' || typeof s.sibling !== 'bigint'
+        || typeof s.siblingSum !== 'bigint' || typeof s.goesLeft !== 'boolean') {
+        throw new Error(
+          `step ${level} of this payee's path is not a node, a sum and a side. Nothing is proved or `
+          + 'paid. Pay with the path the run itself gives for this payee.');
+      }
+      return { sibling: s.sibling, siblingSum: s.siblingSum, goesLeft: s.goesLeft };
+    }),
+  };
+};
+
+/**
+ * **THE VAULT'S CURRENT NONCE SECRET, CHECKED FOR SHAPE AND NOTHING MORE.**
+ *
+ * Every coin a private payment makes takes its nonce from this secret and the
+ * spent note, so the payment cannot be proved without it, and the vault checks
+ * it against the commitment it holds. It is supplied by whoever pays: the
+ * company's nonce-secret record, opened by a signer, holds it. Absent, of the
+ * wrong length, or all zeros, the payment stops here before a note is chosen or
+ * anything written down.
+ */
+const nonceSecretFor = (secret: Hex | undefined): Uint8Array => {
+  if (secret === undefined) {
+    throw new Error(
+      'a private payment makes its coins under the vault\x27s current nonce secret, and none was '
+      + 'given. Nothing is proved or paid. Open the company\x27s nonce secret for this vault and '
+      + 'pay again with it.');
+  }
+  if (!/^[0-9a-f]{64}$/u.test(secret) || /^0+$/u.test(secret)) {
+    throw new Error(
+      'the nonce secret given for this payment is not a 32-byte secret. Nothing is proved or paid. '
+      + 'Open the company\x27s nonce secret for this vault and pay again with it.');
+  }
+  return fromHex(secret);
+};
 
 /**
  * **WHAT A SETTLED PAYMENT HANDS BACK, AND THE TWO KINDS DO NOT HAND BACK THE
@@ -246,8 +352,8 @@ export interface NotePool {
  *
  * A payment spends one note and the chain keeps its change as a commitment,
  * which discloses nothing. The change note's nonce follows from the spent
- * note's and its colour is the spent note's colour, so a rebuild can derive
- * both. **Its value is the spent note's value minus this payment's amount, and
+ * note and the vault's nonce secret, and its colour is the spent note's colour,
+ * so a rebuild holding the secret can derive both. **Its value is the spent note's value minus this payment's amount, and
  * the amount exists nowhere but in this process until the pool is written** --
  * which happens AFTER the call. A process that stops in between leaves the
  * vault holding money it cannot name, and a commitment cannot be inverted to
@@ -561,7 +667,7 @@ export class VaultAlreadyHoldsNotes extends Error {
   }
 }
 
-export class VaultLedger {
+export class VaultLedger implements PaysFromAVault {
   constructor(
     private cfg: MidnightConfig,
     private sponsor: FeeSponsor,
@@ -785,6 +891,11 @@ export class VaultLedger {
      * spend reads it again.
      */
     readIndex?: { note: Note; index: ChainReadIndex },
+    /**
+     * The vault's current nonce secret, for a call whose circuit asks for it.
+     * Without one the witness refuses by name rather than answering.
+     */
+    secret?: Uint8Array,
   ): Promise<{ result: any; notes: VaultNotes; spent?: Hex; readAt: PoolVersion }> {
     const loaded = await this.pool.load(address);
     if (readIndex) {
@@ -821,9 +932,14 @@ export class VaultLedger {
      * actually take" — and a client that assumed which note was spent would
      * drift from the chain on the first payment where the assumption was wrong.
      */
+    const over = witnessesOver(() => notes, pending);
     const result = await this.submit(
       address, planCall(circuit, args, encryptionKeys),
-      witnessesOver(() => notes, pending));
+      secret === undefined ? over : {
+        ...over,
+        /* Hands the secret over and leaves the private state as it found it. */
+        nonceSecret: (ctx: { privateState?: unknown }) => [ctx?.privateState, Uint8Array.from(secret)],
+      });
 
     return { result, notes, spent: pending.spending, readAt: loaded.readAt };
   }
@@ -1583,6 +1699,14 @@ export class VaultLedger {
      * Not given, a private payment stops before anything is proved.
      */
     events?: NoteEvents,
+    /**
+     * **THE VAULT'S CURRENT NONCE SECRET, FOR A PRIVATE PAYMENT.** The payee's
+     * coin and the change both take their nonces from it, and the vault refuses
+     * any secret but the one it holds a commitment to. Required for a private
+     * payment and refused by name when absent; a public payment makes no coin
+     * and never reads it.
+     */
+    nonceSecret?: Hex,
   ): Promise<VaultPaid> {
     /*
      * THE PAYEE'S ADDRESS AND THIS DEPLOYMENT MUST BE ON THE SAME NETWORK.
@@ -1610,14 +1734,14 @@ export class VaultLedger {
     if (payee.kind === 'unshielded') {
       return this.payPublicly(vaultAddress, p, payee.userAddress, by);
     }
-    return this.payPrivately(vaultAddress, p, payee, by, events);
+    return this.payPrivately(vaultAddress, p, payee, by, events, nonceSecret);
   }
 
   /**
    * **A PAYMENT IN PUBLIC MONEY. NO POOL, NO NOTE, NO CHANGE, NO RECOVERY.**
    *
    *
-   * The whole of it, beside the same twelve arguments `payout` takes:
+   * The whole of it, beside the same five arguments `payout` takes:
    *
    *   · **no `pool.load`** — there is nothing local to check the payment
    *     against, and nothing local that a crash could leave disagreeing with
@@ -1637,9 +1761,8 @@ export class VaultLedger {
    *
    * **WHAT IS NOT ABSENT IS THE RULEBOOK.** The account's approval, `V-64`'s
    * paid-once record, `V-67`'s window and the run's root are checked by exactly
-   * the same account call the shielded circuit makes (`recordPaymentFromVault` once
-   * the vault contract is rebuilt against it), from inside
-   * `payoutUnshielded`. That is the argument for this whole path: **it drops
+   * the same account call the shielded circuit makes, `recordPaymentFromVault`,
+   * from inside `payoutUnshielded`, over the same run built by `runArgOf`. That is the argument for this whole path: **it drops
    * the entire note model and keeps the entire rulebook.**
    *
    * **AND THE SUFFICIENCY CHECK IS THE LEDGER'S, NOT OURS.** There is no
@@ -1657,7 +1780,7 @@ export class VaultLedger {
     vaultAddress: string, p: VaultPayment, userAddress: Hex, by: SignerRef,
   ): Promise<VaultPaid> {
     const { result } = await this.callWithoutPool(vaultAddress, 'payoutUnshielded', [
-      fromHex(p.proposal), fromHex(p.root), p.payees, p.opensAt, p.closesAt, fromHex(p.salt),
+      runArgOf(p),
       /*
        * THE RECIPIENT IS THE PAYEE'S `userAddress` AND NOTHING ELSE CAN REACH
        * THIS POSITION.
@@ -1667,8 +1790,7 @@ export class VaultLedger {
        * arrive here came off a payee whose bech32 decoded as an `addr`. A
        * `coinPublicKey` is not in scope in this method at all.
        */
-      fromHex(userAddress), fromHex(p.token), p.amount,
-      fromHex(p.blinding), fromHex(p.nonce), p.path,
+      fromHex(userAddress), fromHex(p.token), p.amount, fromHex(p.blinding),
     ]);
     return { ...this.txRef(result, by), kind: 'unshielded' };
   }
@@ -1676,7 +1798,7 @@ export class VaultLedger {
   /** A payment in private money — the path this client has always had. */
   private async payPrivately(
     vaultAddress: string, p: VaultPayment, payee: PayeeAddress, by: SignerRef,
-    events?: NoteEvents,
+    events?: NoteEvents, nonceSecret?: Hex,
   ): Promise<VaultPaid> {
     if (events === undefined) {
       throw new Error(
@@ -1685,6 +1807,9 @@ export class VaultLedger {
         + 'the chain\x27s events was given, so nothing is proved or paid. Pass the indexer\x27s '
         + 'events to payout and pay again.');
     }
+    /* Both before the pool is read or anything is written down. */
+    const secret = nonceSecretFor(nonceSecret);
+    const run = runArgOf(p);
     const current = await this.pool.load(vaultAddress);
     /* Throws with what the pool actually holds, and names merging if that is
      * the problem. See `noteToSpend`. */
@@ -1702,7 +1827,7 @@ export class VaultLedger {
      * MAY NOT MOVE BELOW THE CALL.** The note `call` spends is `chosen` or
      * nothing: every other note reaches the witness without an index and is
      * refused by name. So this is the moment the whole of the change note is
-     * known -- the nonce and colour follow from `chosen`, and the value is
+     * known -- the nonce and colour follow from `chosen` and the vault's secret, and the value is
      * `chosen.value - p.amount` -- and the last moment before the process can
      * stop with the chain holding it. A journal that throws stops the payment
      * with nothing spent; the same throw one statement later would be a loss.
@@ -1714,15 +1839,13 @@ export class VaultLedger {
     });
 
     const { result, spent } = await this.call(vaultAddress, 'payout', [
-      fromHex(p.proposal), fromHex(p.root), p.payees, p.opensAt, p.closesAt, fromHex(p.salt),
-      fromHex(payee.coinPublicKey), fromHex(p.token), p.amount,
-      fromHex(p.blinding), fromHex(p.nonce), p.path,
+      run, fromHex(payee.coinPublicKey), fromHex(p.token), p.amount, fromHex(p.blinding),
       /*
        * BOTH HALVES OUT OF ONE VALUE, in one expression, so no call site can
        * pair one payee's coin key with another's reading key. That pairing was
        * the silent half of C7 and it no longer has anywhere to go wrong.
        */
-    ], { [payee.coinPublicKey]: payee.encryptionPublicKey }, { note: chosen, index });
+    ], { [payee.coinPublicKey]: payee.encryptionPublicKey }, { note: chosen, index }, secret);
 
     if (!spent) {
       /*

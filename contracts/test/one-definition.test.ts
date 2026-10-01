@@ -57,6 +57,9 @@ import { MidnightCommitments } from '../../src/midnight/commitments.js';
 import { SimulatedCommitments } from '../../src/core/ledger.js';
 import { toHex, fromHex } from '../../src/core/crypto.js';
 import { payoutLeafOf, sumTreeOfLeaves } from '../../src/midnight/payout-tree.js';
+import { adoptionRoundOf, firstSecretRunOf, secretRunProposalOf } from '../../src/midnight/vault-start.js';
+import { pureCircuits as vaultCircuits } from '../managed-vault/contract/index.js';
+import { TEST_TOKEN } from '../../src/testing/assets.js';
 
 const bytes = (n: number): Uint8Array => Uint8Array.from({ length: 32 }, (_, i) => (i + n) & 0xff);
 const hex = (b: Uint8Array) => toHex(b);
@@ -73,8 +76,9 @@ const PAYLOAD = bytes(8);
 const ASSET_KEY = bytes(9);
 /* A run's payout-tree root. */
 const ROOT = bytes(10);
-/* 'GBP', zero padded — the encoding `core/assets.ts` owns. */
-const GBP = Uint8Array.from({ length: 32 }, (_, i) => 'GBP'.charCodeAt(i) || 0);
+/* A token, as the 64 hex characters `core/assets.ts` names it by, and its 32 bytes. */
+const TOKEN = TEST_TOKEN;
+const TOKEN_BYTES = Uint8Array.from(Buffer.from(TOKEN, 'hex'));
 
 /**
  * Every exported pure circuit, and what the TypeScript side does about it.
@@ -128,8 +132,8 @@ const SCHEMES: Entry[] = [
      */
     circuit: 'assetKeyOf',
     mirrored: () => ({
-      fromContract: hex(pureCircuits.assetKeyOf(GBP, BLINDING)),
-      fromClient: MidnightCommitments.assetKey('GBP', hex(BLINDING)),
+      fromContract: hex(pureCircuits.assetKeyOf(TOKEN_BYTES, BLINDING)),
+      fromClient: MidnightCommitments.assetKey(TOKEN, hex(BLINDING)),
     }),
   },
   /*
@@ -219,7 +223,7 @@ const SCHEMES: Entry[] = [
      *
      *
      * It said the client *holds the result rather than recomputing it*. It did
-     * not hold it: `src/core/account.ts` and `src/web-legacy/App.tsx` passed an
+     * not hold it: `src/core/account.ts` and the earlier application passed an
      * ed25519 public key into `signerLeaf`, which is a SECOND ANSWER to what a
      * signer's public identity is, and the entry that was supposed to make a
      * second copy impossible to leave unchecked had a note saying there wasn't
@@ -408,28 +412,29 @@ const SCHEMES: Entry[] = [
   },
   {
     /*
-     * **NO CLIENT COPY, AND THAT WAS CHECKED RATHER THAN INHERITED:** `grep`
-     * of `src/` returns no `adoptVaultPayload` outside `scripts/` and the
-     * contract's own tests, and `src/core/account.ts` raises no adopt round.
-     * So this stays `contractOnly` — a mirror for a caller that does not exist
-     * would be a definition invented to fill a table, which is the rule at
-     * `src/midnight/commitments.ts:58-67`.
+     * **THE PRODUCT NOW RAISES AN ADOPT ROUND, AND STILL WITH NO CLIENT COPY.**
+     * A vault's creation adopts it from the founding signer's device: the payload is
+     * made in the vault worker by this circuit itself (`adoptionRoundOf` in
+     * `src/midnight/vault-start.ts`, and `governancePayloadOf` in the device's
+     * call builder, both handed the contract's own `pureCircuits`), and the
+     * round is never written down by the account service, so no
+     * `CommitmentScheme` member derives it on either side. The check that
+     * replaces a mirror is below: the product's adoption round, made by the
+     * product's own function, is the circuit's payload under no vault.
      *
-     * **THE DAY AN ADOPT ROUND IS BUILT IT NEEDS THE SAME TREATMENT, AND THE
-     * PATTERN IS IN THIS FILE RATHER THAN IN A SENTENCE:** add the method to
-     * `CommitmentScheme`, implement it in `MidnightCommitments` as one line
-     * that calls this circuit, keep the simulated side separate, and turn this
-     * entry into a `mirrored` one like the four above. A second derivation in
-     * TypeScript would let a company approve one vault's adoption on their
-     * screens and adopt another on chain.
+     * **THE DAY THE ACCOUNT SERVICE WRITES AN ADOPT ROUND DOWN, IT NEEDS THE
+     * SAME TREATMENT AS THE FOUR ABOVE:** add the method to `CommitmentScheme`,
+     * implement it in `MidnightCommitments` as one line that calls this
+     * circuit, keep the simulated side separate, and turn this entry into a
+     * `mirrored` one.
      */
     circuit: 'adoptVaultPayload',
     contractOnly:
-      'NO METHOD ON EITHER SCHEME DERIVES THIS, and that is now read rather than grepped: ' +
-      'the reverse ratchet below maps every member of both CommitmentScheme objects to a ' +
-      'circuit, and nothing maps here. No product caller raises an adopt round. The day one ' +
-      'is built, mirror it the way the four governance payloads above are mirrored — and the ' +
-      'ratchet will refuse until you do.',
+      'NO METHOD ON EITHER SCHEME DERIVES THIS, and that is read rather than grepped: the ' +
+      'reverse ratchet below maps every member of both CommitmentScheme objects to a circuit, ' +
+      'and nothing maps here. The product raises its adopt round from the device with this ' +
+      'circuit itself, never through a scheme; the day the account service writes one down, ' +
+      'mirror it the way the four governance payloads above are mirrored.',
   },
   {
     /*
@@ -521,6 +526,12 @@ const SCHEMES: Entry[] = [
     contractOnly:
       'the tag a vault mints its payment receipt under. The account receives tokenType of it ' +
       'and the paying vault inside the proof; no client derives the token.',
+  },
+  {
+    circuit: 'changeReceiptTag',
+    contractOnly:
+      'the tag a vault mints its receipt for a change that moves no money under. The account ' +
+      'receives tokenType of it and the changed vault inside the proof; no client derives the token.',
   },
   {
     circuit: 'companyWideDetailsOf',
@@ -884,7 +895,7 @@ describe('one definition: the contract and the client agree', () => {
       + 'governance payloads are — do not write a second derivation. If it is a passthrough '
       + 'that reads the circuit, declare it as one in SCHEME_MEMBERS and say so.',
     ).toEqual([
-      'adoptVaultPayload', 'anchorKey', 'bandApprovals', 'chargedKeyOf', 'chargedMark', 'clearedMark',
+      'adoptVaultPayload', 'anchorKey', 'bandApprovals', 'changeReceiptTag', 'chargedKeyOf', 'chargedMark', 'clearedMark',
       'companyLabelKey', 'companyWide', 'companyWideDetailsOf', 'coversVault', 'holderKeyOf',
       'paidMovementOf', 'paidOnceOf', 'payKeyCommitmentKey', 'payKeyCommitmentOf', 'payKeyPayload',
       'payKeyWrapKeyOf', 'paymentReceiptTag', 'periodBlindingOf', 'periodKeyOf', 'periodTotalOf',
@@ -1016,5 +1027,30 @@ describe('one definition: the contract and the client agree', () => {
     expect(SimulatedCommitments.vaultThresholdPayload(hex(VAULT), 2))
       .not.toBe(hex(pureCircuits.setVaultThresholdPayload(VAULT, 2n)));
     void fromHex;
+  });
+});
+
+describe('A VAULT\'S START IS MADE BY THE CONTRACTS\' OWN FUNCTIONS, NOT A SECOND COPY OF THEM', () => {
+  const VAULT_HEX = 'ab'.repeat(32);
+  it('the adoption round the product raises is the circuit\'s adoption payload, under no vault, with its salt', () => {
+    const round = adoptionRoundOf(pureCircuits as never, VAULT_HEX);
+    /* RED WHEN: the adoption round is made by anything but the contract's own payload - one vault approved, another adopted. */
+    expect(round.payload).toBe(toHex(pureCircuits.adoptVaultPayload(fromHex(VAULT_HEX))));
+    expect(round.proposal).toBe(toHex(pureCircuits.proposalIdOf(
+      pureCircuits.adoptVaultPayload(fromHex(VAULT_HEX)), pureCircuits.noVault(), fromHex(round.salt))));
+  });
+
+  it('the first secret run\'s one leaf is the vault\'s own secret-run details, in the account\'s own leaf and tree', () => {
+    const run = firstSecretRunOf({ vault: vaultCircuits as never, account: pureCircuits as never },
+      { vault: VAULT_HEX, secret: '5e'.repeat(32), readers: ['40'.repeat(32)] });
+    const commitment = vaultCircuits.secretCommitmentOf(fromHex(VAULT_HEX), fromHex('5e'.repeat(32)));
+    expect(run.commitment).toBe(toHex(commitment));
+    /* RED WHEN: the run approves details the vault's setNonceSecret does not ask the account for. */
+    expect(run.details).toBe(toHex(vaultCircuits.secretRunDetails(
+      fromHex(VAULT_HEX), new Uint8Array(32), commitment, fromHex(run.copiesRoot), run.count)));
+    const leaf = payoutLeafOf({ details: run.details, nonce: run.nonce });
+    expect(toHex(pureCircuits.sumPathRoot(fromHex(leaf), 0n, run.path as never, fromHex(run.asset)))).toBe(run.root);
+    expect(secretRunProposalOf(pureCircuits as never, run, { opensAt: 1n, closesAt: 2n })).toBe(toHex(pureCircuits.proposalIdOf(
+      pureCircuits.runPayload(fromHex(run.root), 1n, 1n, 2n, 0n), fromHex(VAULT_HEX), fromHex(run.salt))));
   });
 });

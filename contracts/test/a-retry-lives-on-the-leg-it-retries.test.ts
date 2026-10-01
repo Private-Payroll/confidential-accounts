@@ -33,7 +33,7 @@ import { join } from 'node:path';
 import { AccountSimulator, privateStateFor } from './simulator.js';
 import { pureCircuits } from '../managed/contract/index.js';
 import { AccountService, openAccount, sealAccount } from '../../src/core/account.js';
-import { PayrollService } from '../../src/core/payroll.js';
+import { PayrollService, runLegOf } from '../../src/core/payroll.js';
 import {
   SimulatedLedger, SimulatedProofSystem, type StateChange,
 } from '../../src/core/ledger.js';
@@ -42,10 +42,13 @@ import { buildRun, buildRetryRun } from '../../src/midnight/payout-tree.js';
 import { runMaterialFor, retryMaterialFor } from '../../src/midnight/run-material.js';
 import { runStatus } from '../../src/midnight/run-status.js';
 import { vaultDetails } from '../../src/testing/vault-details.js';
-import { registryWithTestPrivateForms, aVaultHolding } from '../../src/testing/assets.js';
+import { registryWithTestPrivateForms, aVaultHolding, TEST_TOKEN } from '../../src/testing/assets.js';
 import { FileStore } from '../../src/core/store-file.js';
 import { assetIdBytes } from '../../src/core/assets.js';
 import { fromHex, toHex, unseal, parseCanonical, type Hex, type Sealed } from '../../src/core/crypto.js';
+
+/** The one leg every run here pays: the fixture token, privately. */
+const LEG = runLegOf(TEST_TOKEN, 'shielded');
 
 const PAYROLL_VAULT = new Uint8Array(32).fill(0xa1);
 
@@ -106,7 +109,7 @@ async function aRaisedLeg() {
   const viewingKey = created.viewingKey;
   for (let i = 0; i < 3; i++) {
     payroll.hireDirect(created.account.id, {
-      name: `Payee ${i}`, email: `p${i}@a.co`, title: 'Eng', asset: 'GBP', baseAmount: 100_00n,
+      name: `Payee ${i}`, email: `p${i}@a.co`, title: 'Eng', asset: TEST_TOKEN, baseAmount: 100_00n,
     }, viewingKey);
   }
   const { run } = await payroll.createRunFromRoster(created.account.id, '2026-08', viewingKey);
@@ -142,17 +145,17 @@ describe('a retry lives on the leg it retries', () => {
 
     const after = r.payroll.requireRun(r.run.id, r.viewingKey);
     /* RED WHEN the door writes the retry into the leg's own slot instead of beside it. */
-    expect(after.payout!.GBP!.root).toBe(before.payout!.GBP!.root);
-    expect(after.payout!.GBP!.leaves).toEqual(before.payout!.GBP!.leaves);
+    expect(after.payout![LEG]!.root).toBe(before.payout![LEG]!.root);
+    expect(after.payout![LEG]!.leaves).toEqual(before.payout![LEG]!.leaves);
     /* RED WHEN the retry's proposal replaces the leg's own in the per-leg map. */
-    expect(after.proposalIds.GBP).toBe(r.proposal.id);
+    expect(after.proposalIds[LEG]).toBe(r.proposal.id);
     /* RED WHEN the retry is not written down, or its proposal is not recorded against it. */
-    expect(after.payout!.GBP!.retries).toEqual([expect.objectContaining({
+    expect(after.payout![LEG]!.retries).toEqual([expect.objectContaining({
       originalIndices: [0, 2], root: retry.run.root, payees: 3n,
       opensAt: RETRY_OPENS, closesAt: RETRY_CLOSES, proposalId: raised.id,
     })]);
     /* RED WHEN a retry is raised over a tree of its own rather than the leg's, and a policy would charge it again. */
-    expect(retry.run.root).toBe(before.payout!.GBP!.root);
+    expect(retry.run.root).toBe(before.payout![LEG]!.root);
     /* RED WHEN a run cannot be found by the round its retry was raised as. */
     expect(r.store.getRun(r.run.id)!.proposalIds).toContain(raised.id);
     /* RED WHEN the retry is written outside the sealed envelope, where the store can read it. */
@@ -230,7 +233,7 @@ describe('a retry lives on the leg it retries', () => {
       const rebuild = (await r.payroll.payoutRebuildOf(r.run.id, r.viewingKey))!;
 
       const minted = await retryMaterialFor({
-        rebuild: { ...rebuild, identity: { ...rebuild.identity, runId: 'run_mintedafresh:GBP' } },
+        rebuild: { ...rebuild, identity: { ...rebuild.identity, runId: `run_mintedafresh:${LEG}` } },
         indices: [0, 2], opensAt: RETRY_OPENS, closesAt: RETRY_CLOSES,
         vault: toHex(PAYROLL_VAULT), detailsOf: vaultDetails,
       });
@@ -238,7 +241,7 @@ describe('a retry lives on the leg it retries', () => {
       expect(minted.leaves[0]).not.toBe(r.material.leaves[0]);
       /* RED WHEN the door stops comparing the material's identity with the leg's. */
       await expect(r.payroll.proposeRetry(r.run.id, r.viewingKey, r.by, minted))
-        .rejects.toThrow(/was built under run run_mintedafresh:GBP/);
+        .rejects.toThrow(new RegExp(`was built under run run_mintedafresh:${LEG}`));
 
       const otherGeneration = await retryMaterialFor({
         rebuild: { ...rebuild, identity: { ...rebuild.identity, epoch: rebuild.identity.epoch + 1 },
@@ -253,7 +256,7 @@ describe('a retry lives on the leg it retries', () => {
         .rejects.toThrow(/at seed generation 1 .* at generation 0/);
 
       /* And nothing was written onto the leg by either refusal. */
-      expect(r.payroll.requireRun(r.run.id, r.viewingKey).payout!.GBP!.retries).toBeUndefined();
+      expect(r.payroll.requireRun(r.run.id, r.viewingKey).payout![LEG]!.retries).toBeUndefined();
     });
 
   it('refuses leaves that are not the leg\'s own for the people named, whatever the material claims',
@@ -282,7 +285,7 @@ describe('a retry lives on the leg it retries', () => {
     const { accounts, payroll } = services();
     const created = await accounts.create('Northwind Ltd', [{ name: 'Ada', role: 'admin' }], 1, undefined, drawCompanyLabel());
     payroll.hireDirect(created.account.id, {
-      name: 'Payee 0', email: 'p0@a.co', title: 'Eng', asset: 'GBP', baseAmount: 100_00n,
+      name: 'Payee 0', email: 'p0@a.co', title: 'Eng', asset: TEST_TOKEN, baseAmount: 100_00n,
     }, created.viewingKey);
     const { run } = await payroll.createRunFromRoster(
       created.account.id, '2026-08', created.viewingKey);
@@ -333,13 +336,13 @@ describe('a retry lives on the leg it retries', () => {
     const vk = created.viewingKey;
     for (let i = 0; i < 2; i++) {
       payroll.hireDirect(created.account.id, {
-        name: `Payee ${i}`, email: `p${i}@a.co`, title: 'Eng', asset: 'GBP', baseAmount: 100_00n,
+        name: `Payee ${i}`, email: `p${i}@a.co`, title: 'Eng', asset: TEST_TOKEN, baseAmount: 100_00n,
       }, vk);
     }
     const rec = accounts.require(created.account.id);
     const account = openAccount(rec, vk);
     account.policy.limitsByRole = {
-      admin: { GBP: { perTransaction: 150_00n, perPeriod: null, periodDays: 30 } },
+      admin: { [TEST_TOKEN]: { perTransaction: 150_00n, perPeriod: null, periodDays: 30 } },
     };
     store.putAccount(sealAccount(account, vk, rec.pendingSigners, rec.keyEpoch));
 

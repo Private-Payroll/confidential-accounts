@@ -356,8 +356,38 @@ describe('the real sources', () => {
     //     a seat changed is.
     //   `setPolicyBar`, 5: the proposal and the new bar, which `thresholds`
     //     holds in the clear, as `setVaultThreshold` publishes a vault's.
-    expect(sites(account)).toBe(148);
-    expect(sites(vault)).toBe(48);
+    // AND 148 -> 160: `approveVaultChange`, twelve sites, all of them the run
+    // it checks. The proposal, the run's vault and the paying vault; the run's
+    // root, payees, window, bar and salt, put back together into the proposal's
+    // id and compared with it; and the window's two ends against the block's
+    // time. They are the sites `recordPaymentFromVault` has for the same run.
+    // The leaf, its nonce and its path are compared with the root inside the
+    // proof and are not disclosed, so which change was approved is not published.
+    // THE VAULT, 48 -> 93: rebuilt for a fresh deploy. The run every vault
+    // change carries is now one struct, and `askForChange` (13) and `payout`
+    // disclose each of its parts as they go into the account's check, as the
+    // old twelve arguments did. New: `setNonceSecret` (8), the commitment, the
+    // one it replaces and the root of the sealed copies, all written or compared
+    // in the clear by design; `writeSecretCopy` (10), each copy's key and parts,
+    // which are stored in the clear and are sealed; `splitNote` (7), the spent
+    // note's nullifier, which the ledger publishes anyway, the amount masked by
+    // the vault's secret, and the coin's token and values as they go to the two
+    // new coins, which the ledger hides. And four more, 93 -> 97: each new
+    // coin's nonce, made from the vault's secret, as it goes into the coin the
+    // ledger commits to. The nonce is never published; the secret is in it so
+    // that the public nullifier alone does not give the nonce away. And three,
+    // 97 -> 100, in `writeSecretCopy`: the list's last link, compared with zero,
+    // and the commitment it closes, compared with the current one and written
+    // under the key that opens the vault to money. Both are the call's own
+    // arguments and already public. And 100 -> 104, when the sealed copies
+    // became a tree: `setNonceSecret` discloses the approved count of copies,
+    // where it is checked against zero and against the tree's 1024 places,
+    // bound into the run's leaf and written as the number still to write; and
+    // `writeSecretCopy` discloses the copy's place in the tree, read from its
+    // path, where it disclosed the list's next link before. The count and the
+    // place are the calls' own arguments, and public.
+    expect(sites(account)).toBe(160);
+    expect(sites(vault)).toBe(104);
   });
 
   it('every site is attributed — nothing floats outside a body', () => {

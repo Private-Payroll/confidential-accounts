@@ -4,7 +4,7 @@
  *
  * ── WHY THIS IS NOT STILL A CLOSURE INSIDE A SCREEN ──────────────────────
  *
- * It was. `src/web-legacy/App.tsx` has no test file, so the whole of `C329`'s
+ * It was. The screen it lived in had no test file, so the whole of `C329`'s
  * premise — **that the material is durable before the leaf is published** —
  * lived in the order of two lines nothing could execute, and the leaf that path
  * writes was the second of `C328`'s two wrong writers with no guard of any

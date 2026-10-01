@@ -20,6 +20,11 @@ import type { Payee, PayeeAddress } from '../src/midnight/payee-address.js';
 import type { VaultEntry } from '../src/midnight/vault-record.js';
 import { choosingANoteToSpend, type Note } from '../src/midnight/vault-notes.js';
 import type { Hex } from '../src/core/crypto.js';
+import { x25519 } from '@noble/curves/ed25519.js';
+import { fromHex, toHex } from '../src/core/crypto.js';
+import type { SealedPool } from '../src/midnight/vault-pool.js';
+import { openNonceSecrets } from '../src/midnight/company-nonce-secret.js';
+import { join } from 'node:path';
 
 /* ------------------------------------------------------------------ *
  * who is paid, and out of which vault
@@ -64,7 +69,7 @@ export function assertVaultCanPayPrivately(entry: VaultEntry): void {
  * prompts, and the next one will matter.
  *
  * It refuses on none and on more than one rather than picking. Picking the
- * first of two would settle somebody's pay in whichever currency sorts lower.
+ * first of two would settle somebody's pay in whichever token sorts lower.
  */
 export function theAssetPaidPrivately(registry: AssetRegistry): Asset {
   const payable = registry.enabled().filter(a => ledgerFormOf(a, 'shielded').of === 'token');
@@ -76,9 +81,9 @@ export function theAssetPaidPrivately(registry: AssetRegistry): Asset {
       + 'a token; nothing is substituted.');
   }
   throw new Error(
-    `${payable.length} assets have a private form (${payable.map(a => a.code).join(', ')}), so `
+    `${payable.length} assets have a private form (${payable.map(a => a.symbol).join(', ')}), so `
     + 'which one this payment settles in is a decision and this door will not make it. A door '
-    + 'that picked would settle somebody\x27s pay in whichever currency happened to sort first.');
+    + 'that picked would settle somebody\x27s pay in whichever token happened to sort first.');
 }
 
 /**
@@ -212,4 +217,39 @@ export function assertANoteCanBeSpent(
     + 'nothing is lost. Record the transaction that paid it in against the note, then run this '
     + `again. The note${verdict.nonces.length === 1 ? '' : 's'} this is about: `
     + `${verdict.nonces.join(', ')}. Nothing was proposed, approved or paid.`);
+}
+
+/* ------------------------------------------------------------------ *
+ * the vault's nonce secret, which every private payment needs
+ * ------------------------------------------------------------------ */
+
+/** Where this machine keeps the company's nonce-secret record for one vault, per network and per vault name. */
+export const vaultNonceSecretFile = (stateDir: string, network: string, name: string): string =>
+  join(stateDir, `${network}-vault-nonce-secret-${name}.json`);
+
+/**
+ * **THE VAULT'S CURRENT NONCE SECRET, OPENED FROM THE COMPANY'S RECORD, OR A
+ * REFUSAL THAT SAYS WHY.**
+ *
+ * A private payment makes its coins under the vault's current nonce secret,
+ * and the vault refuses any other. The company's nonce-secret record holds it,
+ * wrapped to each signer; this opens it with the key of the signer this machine
+ * holds and hands back the newest secret. A record that is missing, filed for
+ * another vault, or not wrapped to this signer is refused by name before any
+ * fee, rather than discovered by the vault after the approvals.
+ */
+export function vaultNonceSecretOf(
+  sealed: SealedPool | null, where: string, vault: string, signer: { readonly wrappingSecret: Hex },
+): Hex {
+  if (sealed === null) {
+    throw new Error(
+      `this vault has no nonce secret on this machine: ${where} does not exist. A private payment `
+      + 'makes its coins under the vault\x27s current nonce secret, which the company\x27s nonce-secret '
+      + 'record holds, and without it no private payment can be built. Nothing was proposed or paid. '
+      + 'Put the company\x27s nonce-secret record for this vault there and run the door again.');
+  }
+  const opened = openNonceSecrets(sealed, vault, {
+    secret: signer.wrappingSecret, publicKey: toHex(x25519.getPublicKey(fromHex(signer.wrappingSecret))),
+  });
+  return opened.secrets[opened.secrets.length - 1] as Hex;
 }

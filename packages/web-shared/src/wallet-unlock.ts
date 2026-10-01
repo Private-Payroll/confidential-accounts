@@ -89,7 +89,7 @@ export async function askWalletToUnlock(
  * they were taken under - this page's own nonce, its own origin and the company
  * it asked about. Tested with `listHolds`.
  */
-export interface HeldAddresses {
+interface HeldAddresses {
   readonly scope: HeldScope;
   readonly digests: readonly string[];
 }

@@ -12,7 +12,9 @@ import { SEED_ASSETS, StaticAssetRegistry } from '../../../../src/core/assets.js
  */
 const VK = '11'.repeat(32) as Hex;
 const OTHER_VK = '22'.repeat(32) as Hex;
-const NIGHT = SEED_ASSETS.find((a) => a.code === 'NIGHT')!;
+const NIGHT = SEED_ASSETS.find((a) => a.symbol === 'NIGHT')!;
+/** The public leg of a run paying NIGHT, as the record keys it. */
+const NIGHT_PUBLICLY = `${NIGHT.code}:unshielded`;
 const PRIVATE_ADDRESS = 'mn_shield-addr_preview1qqqq';
 const PUBLIC_ADDRESS = 'mn_addr_preview1qqqq';
 const kr = vi.hoisted(() => ({
@@ -45,7 +47,7 @@ vi.mock('vaults-web-shared/keyring.js', async (real) => ({
 const ROUTE = (r = '') => `/api/accounts/c1${r}`;
 const sealedRun = (id: string, period: string, status: string, employees: unknown[], extra: Record<string, unknown> = {}, key = VK) => ({
   id, accountId: 'c1', period, status, payslips: [], keyEpoch: 1, proposalIds: ['p1'],
-  sealed: sealRecord('payroll', 'c1', { employees, totals: {}, proposalIds: { NIGHT: 'p1' } }, key), ...extra,
+  sealed: sealRecord('payroll', 'c1', { employees, totals: {}, proposalIds: { [NIGHT_PUBLICLY]: 'p1' } }, key), ...extra,
 });
 const sealedProposal = (id: string, status: string, secrets: Record<string, unknown>) => ({
   id, accountId: 'c1', status, createdAt: '2026-09-20T10:00:00.000Z', digest: 'dd', chainId: 'cc', approvalCount: 99, keyEpoch: 1,
@@ -56,24 +58,24 @@ function everything() {
   kr.answers[ROUTE()] = { id: 'c1', threshold: 2, signerCount: 2, wrappedKeys: [] };
   kr.answers[ROUTE('/runs')] = [
     sealedRun('r1', '2026-10', 'draft', [
-      { id: 'e1', name: 'Ana', asset: 'NIGHT', amount: 5_000_000n, paidTo: PRIVATE_ADDRESS },
-      { id: 'e2', name: 'Bo', asset: 'NIGHT', amount: 2_000_000n, paidTo: PUBLIC_ADDRESS },
-      { id: 'e3', name: 'Cy', asset: 'NIGHT', amount: 1_000_000n },
-      { id: 'e4', name: 'Di', asset: 'ZZZ', amount: 7n, paidTo: PRIVATE_ADDRESS },
-      { id: 'e5', name: 'Ed', asset: 'NIGHT', amount: 500_000n, paidTo: 'not an address' },
-    ], { payout: { NIGHT: { vault: 'ab'.repeat(32), payees: 3n, leaves: ['01', '02', '03'] } } }),
-    sealedRun('r0', '2026-09', 'settled', [{ id: 'e1', name: 'Ana', asset: 'NIGHT', amount: 5n, paidTo: PRIVATE_ADDRESS }], { settledAt: '2026-09-30T12:00:00.000Z' }),
+      { id: 'e1', name: 'Ana', asset: NIGHT.code, amount: 5_000_000n, paidTo: PRIVATE_ADDRESS },
+      { id: 'e2', name: 'Bo', asset: NIGHT.code, amount: 2_000_000n, paidTo: PUBLIC_ADDRESS },
+      { id: 'e3', name: 'Cy', asset: NIGHT.code, amount: 1_000_000n },
+      { id: 'e4', name: 'Di', asset: 'f0'.repeat(32), amount: 7n, paidTo: PRIVATE_ADDRESS },
+      { id: 'e5', name: 'Ed', asset: NIGHT.code, amount: 500_000n, paidTo: 'not an address' },
+    ], { payout: { [NIGHT_PUBLICLY]: { vault: 'ab'.repeat(32), payees: 3n, leaves: ['01', '02', '03'] } } }),
+    sealedRun('r0', '2026-09', 'settled', [{ id: 'e1', name: 'Ana', asset: NIGHT.code, amount: 5n, paidTo: PRIVATE_ADDRESS }], { settledAt: '2026-09-30T12:00:00.000Z' }),
   ];
   kr.answers[ROUTE('/proposals')] = [
     sealedProposal('p1', 'open', { approvalRound: { state: 'short', approvals: 1, threshold: 2 } }),
     sealedProposal('p2', 'executed', { kind: 'add-signer', proposedBy: 'gone' }),
   ];
   kr.answers[ROUTE(`/people?viewingKey=${VK}`)] = [
-    { id: 'e1', name: 'Ana', title: 'Engineer', asset: 'NIGHT', baseAmount: 5_000_000n, startDate: '2026-01-01', status: 'active', address: { kind: 'shielded' }, handedOver: false },
-    { id: 'e2', name: 'Bo', title: 'Designer', asset: 'NIGHT', baseAmount: 2_000_000n, startDate: '2026-02-01', status: 'active', address: { kind: 'unshielded' }, handedOver: false },
-    { id: 'e5', name: 'Eve', title: 'Writer', asset: 'NIGHT', baseAmount: 1n, startDate: '2026-03-01', status: 'pending', address: null, handedOver: true },
-    { id: 'e6', name: 'Fay', title: 'Writer', asset: 'NIGHT', baseAmount: 1n, startDate: '2026-03-01', status: 'pending', address: null, handedOver: false },
-    { id: 'e7', name: 'Gus', title: 'Writer', asset: 'NIGHT', baseAmount: 1n, startDate: '2026-03-01', status: 'leaver', address: { kind: 'shielded' } },
+    { id: 'e1', name: 'Ana', title: 'Engineer', asset: NIGHT.code, baseAmount: 5_000_000n, startDate: '2026-01-01', status: 'active', address: { kind: 'shielded' }, handedOver: false },
+    { id: 'e2', name: 'Bo', title: 'Designer', asset: NIGHT.code, baseAmount: 2_000_000n, startDate: '2026-02-01', status: 'active', address: { kind: 'unshielded' }, handedOver: false },
+    { id: 'e5', name: 'Eve', title: 'Writer', asset: NIGHT.code, baseAmount: 1n, startDate: '2026-03-01', status: 'pending', address: null, handedOver: true },
+    { id: 'e6', name: 'Fay', title: 'Writer', asset: NIGHT.code, baseAmount: 1n, startDate: '2026-03-01', status: 'pending', address: null, handedOver: false },
+    { id: 'e7', name: 'Gus', title: 'Writer', asset: NIGHT.code, baseAmount: 1n, startDate: '2026-03-01', status: 'leaver', address: { kind: 'shielded' } },
   ];
   kr.answers[ROUTE('/vaults')] = { rows: [
     { vault: 'ab'.repeat(32), deployedAt: '2026-09-01T00:00:00.000Z', state: 'held-by-committee', why: 'a sentence the service wrote' },
@@ -196,7 +198,7 @@ describe('each read, on its own', () => {
    * RED WHEN: anything the service or a record wrote in words (a proposal's
    * summary, a vault's why) reaches a screen, or a code is handed on that is
    * not one of its set. Every string handed on is an id, a date, a name a
-   * person gave, a currency's code, or a code from a fixed set.
+   * person gave, a token or its symbol, or a code from a fixed set.
    */
   it('hands on codes, ids, dates and names, never the service\'s words', async () => {
     const { readCompany } = await load();
@@ -216,7 +218,7 @@ describe('amounts, marked by how they are paid', () => {
    * private (a screen would then promise more privacy than the payment
    * delivers), or one not known is said to be paid publicly; a run's private and
    * public money are added into one figure; decimals are not the token's
-   * record; or a currency the registry does not name is shown as a figure
+   * record; or a token the registry does not name is shown as a figure
    * instead of counted.
    */
   it('marks each run amount by the address it is paid to, and never adds private and public together', async () => {
@@ -228,12 +230,14 @@ describe('amounts, marked by how they are paid', () => {
     expect(next!.payees.map((p) => [p.name, p.paid, p.amount === null ? null : visibilityOf(p.amount)])).toEqual([
       ['Ana', 'privately', 'private'], ['Bo', 'publicly', 'public'], ['Cy', 'not-known', 'public'], ['Di', 'privately', null], ['Ed', 'not-known', 'public'],
     ]);
-    const night = next!.currencies.find((x) => x.code === 'NIGHT')!;
+    const night = next!.currencies.find((x) => x.symbol === 'NIGHT')!;
     expect([visibilityOf(night.privately!), formatTokenAmount(night.privately!, 'en')]).toEqual(['private', '5']);
     expect([visibilityOf(night.publicly!), formatTokenAmount(night.publicly!, 'en')]).toEqual(['public', '3.5']);
-    expect(next!.currencies.map((x) => x.code)).toEqual(['NIGHT']);
+    expect(next!.currencies.map((x) => [x.code, x.symbol])).toEqual([[NIGHT.code, 'NIGHT']]);
     expect(next!.unrecognised).toBe(1);
-    expect(next!.legs).toEqual([{ code: 'NIGHT', vault: 'ab'.repeat(32), payees: 3 }]);
+    /* RED WHEN a leg is named to a screen by its token rather than its symbol, or is not said to pay the form its key names. */
+    /* RED WHEN a leg's token is not the token its key names, so a run's page would hang one token's approvals on another. */
+    expect(next!.legs).toEqual([{ code: NIGHT_PUBLICLY, asset: NIGHT.code, symbol: 'NIGHT', paid: 'publicly', vault: 'ab'.repeat(32), payees: 3 }]);
     expect([paid!.status, paid!.settledAt]).toEqual(['settled', '2026-09-30T12:00:00.000Z']);
     expect(paid!.currencies[0]!.publicly).toBeNull();
   });
@@ -252,8 +256,8 @@ describe('amounts, marked by how they are paid', () => {
   /* RED WHEN: decimals are written in the adapter instead of read from the registry it is given. */
   it('reads decimals from the registry', async () => {
     const { runRow } = await load();
-    const registry = new StaticAssetRegistry([...SEED_ASSETS.filter((a) => a.code !== 'NIGHT'), { ...NIGHT, decimals: 2 }]);
-    const row = runRow({ id: 'r', period: '2026-10', status: 'draft', employees: [{ id: 'e', name: 'A', asset: 'NIGHT', amount: 150n, paidTo: PRIVATE_ADDRESS }] } as never, registry);
+    const registry = new StaticAssetRegistry([...SEED_ASSETS.filter((a) => a.symbol !== 'NIGHT'), { ...NIGHT, decimals: 2 }]);
+    const row = runRow({ id: 'r', period: '2026-10', status: 'draft', employees: [{ id: 'e', name: 'A', asset: NIGHT.code, amount: 150n, paidTo: PRIVATE_ADDRESS }] } as never, registry);
     expect(formatTokenAmount(row.currencies[0]!.privately!, 'en')).toBe('1.5');
   });
 });
@@ -263,7 +267,7 @@ describe('proposals, vaults and invitations', () => {
    * RED WHEN: how many must approve is guessed when the record does not say
    * (the company's count is not a vault's), the approvals are the service's
    * outer count instead of the opened record's, a payment of a run is not tied
-   * to its run and currency, or a proposal raised by a seat the record no
+   * to its run, token and form, or a proposal raised by a seat the record no
    * longer names is put on somebody else.
    */
   it('reads each proposal from its opened record', async () => {
@@ -271,7 +275,8 @@ describe('proposals, vaults and invitations', () => {
     const c = await readCompany('u1', 'c1');
     if (c.of !== 'open' || c.proposals.of !== 'read') throw new Error('not read');
     expect(c.proposals.value.map((p) => [p.id, p.kind, p.status, p.raisedBy, p.approvals, p.needed, p.pays])).toEqual([
-      ['p1', 'payroll', 'open', 'Sam', 1, 2, { run: 'r1', period: '2026-10', currency: 'NIGHT' }],
+      /* RED WHEN a payroll round is not tied to the token and the form its leg pays, or names its token to a screen by anything but its symbol. */
+      ['p1', 'payroll', 'open', 'Sam', 1, 2, { run: 'r1', period: '2026-10', asset: NIGHT.code, symbol: 'NIGHT', paid: 'publicly' }],
       ['p2', 'add-signer', 'executed', null, 1, null, null],
     ]);
   });

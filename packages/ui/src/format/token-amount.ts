@@ -3,7 +3,7 @@
  *
  * An amount is an object, never a bare number: it carries the exact count of
  * the token's smallest unit as a `bigint`, how many decimals the token has, and
- * the token's code. A JavaScript number cannot hold every amount a token can
+ * the token's symbol (`NIGHT`, `tUSD`), never the token itself. A JavaScript number cannot hold every amount a token can
  * have, and one that loses a digit shows a person a balance they do not have.
  *
  * AND IT CARRIES WHETHER ANYONE CAN LOOK IT UP. A public amount and a private
@@ -20,18 +20,18 @@
  * with no decimals and no Public pill. Turning one into text or a number any
  * other way (`String(amount)`, a template, `+amount`, `Number(amount)`,
  * `JSON.stringify`, a number formatter) throws, and the count of units is not a
- * property anything outside this file can read. Its code is readable, because
- * a code is not an amount.
+ * property anything outside this file can read. Its symbol is readable, because
+ * a symbol is not an amount.
  *
  * The whole part is formatted as a `bigint` by `Intl.NumberFormat`, so it is
  * exact and grouped the way the language groups (`1,23,45,678` in `en-IN`,
  * `1234` in `es`). The decimal separator is the language's own, and the
  * fraction is written in the language's digits up to its last digit that is
- * not zero: `4 NIGHT`, `1.5 TESTUSD`, never `4.000000`. Only zeros after the
+ * not zero: `4 NIGHT`, `1.5 tUSD`, never `4.000000`. Only zeros after the
  * last significant digit are left off, so nothing is rounded and no digit
  * that changes the amount is dropped.
  *
- * How many decimals a token has, and its code, are the caller's to say, from
+ * How many decimals a token has, and its symbol, are the caller's to say, from
  * the token's own record; nothing here knows any token.
  */
 
@@ -42,8 +42,8 @@ const MADE_HERE = Symbol();
 export type Visibility = 'private' | 'public';
 
 /* Assigned in the classes' static blocks, the one place that can reach their private fields, so only this file can make an amount or read its units, decimals and visibility. */
-let makePublic: (units: bigint, decimals: number, code: string) => PublicAmount;
-let makePrivate: (units: bigint, decimals: number, code: string) => PrivateAmount;
+let makePublic: (units: bigint, decimals: number, symbol: string) => PublicAmount;
+let makePrivate: (units: bigint, decimals: number, symbol: string) => PrivateAmount;
 let unitsOf: (amount: HeldAmount) => bigint;
 let decimalsOf: (amount: HeldAmount) => number;
 let isPublic: (amount: HeldAmount) => boolean;
@@ -53,23 +53,23 @@ let isPrivate: (amount: HeldAmount) => boolean;
 abstract class HeldAmount {
   readonly #units: bigint;
   readonly #decimals: number;
-  readonly #code: string;
+  readonly #symbol: string;
 
   static {
     unitsOf = (amount) => amount.#units;
     decimalsOf = (amount) => amount.#decimals;
   }
 
-  protected constructor(made: symbol, units: bigint, decimals: number, code: string) {
+  protected constructor(made: symbol, units: bigint, decimals: number, symbol: string) {
     if (made !== MADE_HERE) throw new TypeError('a token amount is made by publicAmount or privateAmount, and by nothing else');
     this.#units = units;
     this.#decimals = decimals;
-    this.#code = code;
+    this.#symbol = symbol;
   }
 
-  /** The token's code, written the same in every language. */
-  get code(): string {
-    return this.#code;
+  /** The token's symbol, such as `NIGHT`, written the same in every language. Never the token itself. */
+  get symbol(): string {
+    return this.#symbol;
   }
 
   [Symbol.toPrimitive](): never {
@@ -91,13 +91,13 @@ export class PublicAmount extends HeldAmount {
   readonly #public = true;
 
   static {
-    makePublic = (units, decimals, code) => new PublicAmount(MADE_HERE, units, decimals, code);
+    makePublic = (units, decimals, symbol) => new PublicAmount(MADE_HERE, units, decimals, symbol);
     isPublic = (amount) => #public in amount;
   }
 
   /** Not called directly: `publicAmount` makes one. */
-  private constructor(made: symbol, units: bigint, decimals: number, code: string) {
-    super(made, units, decimals, code);
+  private constructor(made: symbol, units: bigint, decimals: number, symbol: string) {
+    super(made, units, decimals, symbol);
     Object.freeze(this);
   }
 }
@@ -108,13 +108,13 @@ export class PrivateAmount extends HeldAmount {
   readonly #private = true;
 
   static {
-    makePrivate = (units, decimals, code) => new PrivateAmount(MADE_HERE, units, decimals, code);
+    makePrivate = (units, decimals, symbol) => new PrivateAmount(MADE_HERE, units, decimals, symbol);
     isPrivate = (amount) => #private in amount;
   }
 
   /** Not called directly: `privateAmount` makes one. */
-  private constructor(made: symbol, units: bigint, decimals: number, code: string) {
-    super(made, units, decimals, code);
+  private constructor(made: symbol, units: bigint, decimals: number, symbol: string) {
+    super(made, units, decimals, symbol);
     Object.freeze(this);
   }
 }
@@ -122,8 +122,8 @@ export class PrivateAmount extends HeldAmount {
 /** Either kind of amount. A place that shows only one kind takes that kind's type instead. */
 export type TokenAmount = PublicAmount | PrivateAmount;
 
-/** What every maker checks: an exact count, whole decimals from 0 up, and a code. */
-function checked(units: bigint, decimals: number, code: string): void {
+/** What every maker checks: an exact count, whole decimals from 0 up, and a symbol. */
+function checked(units: bigint, decimals: number, symbol: string): void {
   if (typeof units !== 'bigint') {
     throw new TypeError(`a token amount is a bigint of the token's smallest unit, and this is a ${typeof units}`);
   }
@@ -131,23 +131,25 @@ function checked(units: bigint, decimals: number, code: string): void {
   if (!Number.isSafeInteger(decimals) || decimals < 0) {
     throw new RangeError(`a token's decimals are a whole number from 0 up, and this is ${String(decimals)}`);
   }
-  if (typeof code !== 'string' || code === '') throw new TypeError('a token amount carries its token\'s code');
+  if (typeof symbol !== 'string' || symbol === '') throw new TypeError('a token amount carries its token\'s symbol');
+  /* A token is 64 hex characters; a person is shown its symbol, so a token passed where the symbol goes is refused rather than printed. */
+  if (/^[0-9a-f]{64}$/i.test(symbol)) throw new TypeError('a token amount carries its token\'s symbol, and this is the token itself, which no screen shows');
 }
 
 /**
  * AN AMOUNT ANYONE CAN LOOK UP: the count of the token's smallest unit, and the
- * token's decimals and code from its own record. Made by whoever knows the
+ * token's decimals and symbol from its own record. Made by whoever knows the
  * money is public, such as the reader of a vault's public holdings.
  */
-export function publicAmount(units: bigint, decimals: number, code: string): PublicAmount {
-  checked(units, decimals, code);
-  return makePublic(units, decimals, code);
+export function publicAmount(units: bigint, decimals: number, symbol: string): PublicAmount {
+  checked(units, decimals, symbol);
+  return makePublic(units, decimals, symbol);
 }
 
 /** AN AMOUNT ONLY ITS HOLDER, AND THOSE THEY SHARE IT WITH, CAN READ, made the same way by whoever knows the money is private. */
-export function privateAmount(units: bigint, decimals: number, code: string): PrivateAmount {
-  checked(units, decimals, code);
-  return makePrivate(units, decimals, code);
+export function privateAmount(units: bigint, decimals: number, symbol: string): PrivateAmount {
+  checked(units, decimals, symbol);
+  return makePrivate(units, decimals, symbol);
 }
 
 /** Whether anyone can look `amount` up, read from how it was made. Refuses anything not made here. */
@@ -169,7 +171,7 @@ function partsOf(tag: string): { decimal: string; digits: readonly string[] } {
   return { decimal, digits };
 }
 
-/** The figure of an amount, without its code, in the language `tag` names. Used by the amount component (`Amount`, the balance through `AmountFigure`, and `AmountFigureOnly` beside `AmountState`), and by nothing else a screen reaches. */
+/** The figure of an amount, without its symbol, in the language `tag` names. Used by the amount component (`Amount`, the balance through `AmountFigure`, and `AmountFigureOnly` beside `AmountState`), and by nothing else a screen reaches. */
 export function formatTokenAmount(amount: TokenAmount, tag: string): string {
   if (!(amount instanceof HeldAmount)) {
     throw new TypeError(`a token amount is made by publicAmount or privateAmount, and this is a value of type ${typeof amount}`);

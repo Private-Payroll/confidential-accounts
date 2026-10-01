@@ -21,13 +21,19 @@
  * balances, so nothing here shows a wallet paying for a coin or a fee payer
  * paying a fee; nothing reaches a real network, a real indexer, a browser or a
  * wallet screen. The company's account is deployed here as the service
- * deploys one - under its temporary key, carrying this build's circuits - but
- * with no starting state, because creating a company from the screen is the
- * existing path and what follows it is what this watches: the account handed
- * to the committee, and no money going in until it is.
+ * deploys one - under its temporary key, carrying this build's circuits, with
+ * the state its own constructor writes for its founding signer, as creating a
+ * company seats one - because creating a company from the screen is the
+ * existing path and what follows it is what this watches: the vault created and
+ * started from the founding signer's device, the account handed to the committee, and
+ * no money going in until both are.
+ *
+ * Every call a device builds reaches the service unproven here, so the
+ * service's reader below takes an unproven transaction as itself where a proven
+ * one would be read.
  */
 import { describe, it, expect, beforeEach, afterEach } from 'vitest';
-import { existsSync, readFileSync } from 'node:fs';
+import { readFileSync } from 'node:fs';
 import { createHash } from 'node:crypto';
 import express from 'express';
 import type { AddressInfo } from 'node:net';
@@ -42,6 +48,13 @@ import { unlockKeyFor } from 'midnight-identity/profile/unlock';
 import { committeeKeyFor } from 'midnight-identity/profile/committee-key';
 import { drawCompanyLabel, readAccountAddress, type CompanyLabel } from 'midnight-identity/profile/company-label';
 import * as vaultModule from '../managed-vault/contract/index.js';
+import * as accountModule from '../managed/contract/index.js';
+import { witnesses, type AccountPrivateState } from '../src/witnesses.js';
+import { privateStateFor, leafOfDevice } from './simulator.js';
+import { companyLabelBytes } from 'midnight-identity/profile/company-label';
+import { recordsKeypairFrom } from '../../src/midnight/company-nonce-secret.js';
+import { openSecretCopy, secretCopyOnTheChain } from '../../src/midnight/sealed-secret-copy.js';
+import { ACCOUNT_CIRCUITS_SERVED_TO_A_DEVICE } from '../../src/midnight/vault-contract.js';
 import { MemoryStore } from '../../src/core/store.js';
 import { AccountService, openAccount, sealAccount } from '../../src/core/account.js';
 import { MidnightCommitments } from '../../src/midnight/commitments.js';
@@ -72,6 +85,7 @@ import { whyNotHandOver } from 'vaults-web-shared/handover-check.js';
 import { readProvenTransaction } from '../../src/wiring/proven-submission.js';
 import { startingLedgerFrom } from '../../src/wiring/vault-submission.js';
 import { signingKeyFromBip340 } from '@midnightntwrk/ledger-v9';
+import { keysOnDisk } from './keys-on-disk.js';
 
 /** Deposits or payments on their way, kept for the length of one test, sealed as the page keeps them. */
 const keptOnThisDevice = <T,>(kind: 'deposit' | 'payment'): KeptOnThisDevice<T> =>
@@ -81,7 +95,7 @@ const inFlightInMemory = (): DepositsInFlight => keptOnThisDevice<DepositInFligh
 const NET = 'undeployed';
 const RECORDS: readonly WireRecord[] = ['pool', 'deposit-journal', 'payment-journal', 'nonce-secret'];
 const ACCOUNT_ID = 'acc_vaulted';
-const GBP = 'a7'.repeat(32);
+const TOKEN_HEX = 'a7'.repeat(32);
 const hex = (b: Uint8Array): string => Buffer.from(b).toString('hex');
 const asRuntime = (state: { serialize(): Uint8Array }) => (runtime as any).ContractState.deserialize(state.serialize());
 const vaultLedgerOf = (state: { serialize(): Uint8Array }) => (vaultModule as any).ledger(asRuntime(state).data);
@@ -161,17 +175,14 @@ const accountKeys = accountVerifierKeysIn(fileURLToPath(new URL('../..', import.
  *
  * Derived from this file's own location, not the working directory.
  */
-const KEYS_ON_DISK = existsSync(new URL('../managed-vault/keys/deposit.verifier', import.meta.url))
-  && existsSync(new URL('../managed/keys/recordPaymentFromVault.verifier', import.meta.url));
+/* Every circuit of the account and of the vault has its verifier key on disk, and each is the key this build compiled. */
+const KEYS = keysOnDisk();
+const KEYS_ON_DISK = KEYS.ok;
 if (!KEYS_ON_DISK) {
-  console.log(
-    '  NOT CHECKED HERE: the vault\'s verifier keys are not on disk, so a company vault was not'
-    + ' created, handed over, pooled and funded through the routes the page calls.'
-    + ' `npm run compact:vault -- --full` builds them.',
-  );
+  console.log(`  NOT CHECKED HERE: a company vault was not created, handed over, pooled and funded through the routes the page calls, because ${KEYS.why}`);
 }
 
-describe.skipIf(!KEYS_ON_DISK)('A COMPANY VAULT, FROM THE SIGNER\'S DEVICE [needs contracts/managed-vault/keys; `npm run compact:vault -- --full` builds them]', () => {
+describe.skipIf(!KEYS_ON_DISK)('A COMPANY VAULT, FROM THE SIGNER\'S DEVICE [needs contracts/managed-vault/keys and contracts/managed/keys; `npm run compact` then `npm run compact:vault -- --full` build them]', () => {
   let chain: Chain;
   let depositor: AWalletThatPaysPrivately;
   let server: ReturnType<express.Express['listen']>;
@@ -190,10 +201,21 @@ describe.skipIf(!KEYS_ON_DISK)('A COMPANY VAULT, FROM THE SIGNER\'S DEVICE [need
   let dropHandover: boolean;
   let serverStores: Map<WireRecord, MemorySealedPoolStore>;
   let companyThreshold: number;
+  /* The founding signer's own three, as their keyring holds them: what the account's rounds are proved with. */
+  let founder: AccountPrivateState;
 
   const zk = new NodeZkConfigProvider(new URL('../managed-vault', import.meta.url).pathname);
+  const accountZk = new NodeZkConfigProvider(new URL('../managed', import.meta.url).pathname);
+  /* The vault's keys with the account's served beside them by circuit name, as the worker routes them. */
+  const both = new (class extends NodeZkConfigProvider<string> {
+    override getZKIR(c: string) { return ACCOUNT_CIRCUITS_SERVED_TO_A_DEVICE.includes(c) ? accountZk.getZKIR(c) : super.getZKIR(c); }
+    override getProverKey(c: string) { return ACCOUNT_CIRCUITS_SERVED_TO_A_DEVICE.includes(c) ? accountZk.getProverKey(c) : super.getProverKey(c); }
+    override getVerifierKey(c: string) { return ACCOUNT_CIRCUITS_SERVED_TO_A_DEVICE.includes(c) ? accountZk.getVerifierKey(c) : super.getVerifierKey(c); }
+  })(new URL('../managed-vault', import.meta.url).pathname);
+  const accountCompiled = CompiledContract.make('ConfidentialAccount', (accountModule as any).Contract).pipe(
+    CompiledContract.withWitnesses(witnesses as never));
   const compiled = CompiledContract.make('Vault', (vaultModule as any).Contract).pipe(
-    CompiledContract.withWitnesses({ noteToSpend: () => { throw new Error('nothing here spends'); } } as any),
+    CompiledContract.withWitnesses({ noteToSpend: () => { throw new Error('nothing here spends'); }, nonceSecret: () => { throw new Error('nothing here spends'); } } as any),
   );
   /*
    * NO PROOF IS MADE. A deploy and a handover call no circuit, so the ledger's own
@@ -212,7 +234,10 @@ describe.skipIf(!KEYS_ON_DISK)('A COMPANY VAULT, FROM THE SIGNER\'S DEVICE [need
   const builder = (proves = true) => {
     const deps = async () => ({
       ledger: L, vault: vaultModule, runtimeState: (runtime as any).ContractState, contracts: contracts as any,
-      compiled, zkConfig: zk,
+      compiled, zkConfig: both,
+      /* The company account beside the vault, as the worker loads it: its compiled contract, its functions and its ledger. */
+      accountCompiled, accountZkConfig: accountZk, accountPure: (accountModule as any).pureCircuits,
+      accountLedger: (accountModule as any).ledger,
       prove: async (unproven: any, circuit?: string) =>
         (proves && circuit === undefined ? unproven.prove(neverAsked, (L as any).CostModel.initialCostModel()) : unproven),
     });
@@ -226,20 +251,45 @@ describe.skipIf(!KEYS_ON_DISK)('A COMPANY VAULT, FROM THE SIGNER\'S DEVICE [need
       },
     }, NET);
   };
-  /* The service's own reader for a deploy and a handover; a deposit arrives unproven (above). */
+  /*
+   * The service's own reader for a deploy and a handover; every circuit's call arrives unproven (above), read as
+   * itself. Only bytes that ARE a pre-proof transaction are read that way: anything else is refused exactly as the
+   * service's own reader refuses it. Each call read as unproven is written down by its entry points, so a test can
+   * say which calls arrived unproven and that nothing else did.
+   */
+  let readAsUnproven: string[] = [];
+  const entryPointsOf = (tx: any): string => [...tx.intents.values()]
+    .flatMap((i: any) => i.actions.map((a: any) => (a.entryPoint === undefined ? 'no call'
+      : a.entryPoint instanceof Uint8Array ? new TextDecoder().decode(a.entryPoint) : String(a.entryPoint))))
+    .join('+');
   const readers = {
-    proven: readProvenTransaction,
+    proven: async (b: Uint8Array) => {
+      try { return await readProvenTransaction(b); } catch (refused) {
+        let unproven: any;
+        try { unproven = L.Transaction.deserialize('signature', 'pre-proof', 'pre-binding', b); } catch { throw refused; }
+        readAsUnproven.push(entryPointsOf(unproven));
+        return unproven;
+      }
+    },
     finished: async (b: Uint8Array) => L.Transaction.deserialize('signature', 'pre-proof', 'binding', b),
   };
 
   beforeEach(async () => {
+    readAsUnproven = [];
     chain = new Chain();
     /* The depositor's wallet holds its own private coins before anything else is on the chain. */
     depositor = aWalletThatPaysPrivately(NET);
-    chain.seed(depositor.seedTransaction(GBP, [100_000n, 100_000n, 100_000n, 100_000n]));
+    chain.seed(depositor.seedTransaction(TOKEN_HEX, [100_000n, 100_000n, 100_000n, 100_000n]));
     store = new MemoryStore();
-    /* The company account, deployed as the service deploys one: its temporary key, this build's circuits. */
-    const accountState = new L.ContractState();
+    founder = privateStateFor(1);
+    label = drawCompanyLabel();
+    /*
+     * The company account, deployed as the service deploys one: its temporary key, this build's circuits, and the
+     * state its own constructor writes, seating its founding signer under the company's label.
+     */
+    const init = await new (accountModule as any).Contract(witnesses).initialState(
+      runtime.createConstructorContext(founder, '0'.repeat(64)), leafOfDevice(founder), companyLabelBytes(label));
+    const accountState = L.ContractState.deserialize(init.currentContractState.serialize());
     accountState.maintenanceAuthority = new L.ContractMaintenanceAuthority(
       [L.signatureVerifyingKey(TEMPORARY_ACCOUNT_KEY)], 1, 0n);
     /* Read here from the build's files, apart from the service's own reader, so the service is checked against them. */
@@ -253,7 +303,6 @@ describe.skipIf(!KEYS_ON_DISK)('A COMPANY VAULT, FROM THE SIGNER\'S DEVICE [need
       L.Intent.new(new Date(Date.now() + 600_000)).addDeploy(accountDeploy)));
     if (!seeded.ok) throw new Error(`the company account was not deployed: ${seeded.error}`);
     company = String(accountDeploy.address).toLowerCase() as Hex;
-    label = drawCompanyLabel();
     companyThreshold = 1;
     words = newWords().join(' ');
     signing = newSigningKeypair();
@@ -290,7 +339,7 @@ describe.skipIf(!KEYS_ON_DISK)('A COMPANY VAULT, FROM THE SIGNER\'S DEVICE [need
       contractState: async (v) => chain.contract(v),
       serialize: (s) => (s as { serialize(): Uint8Array }).serialize(),
       notesOf: (s) => [...vaultLedgerOf(s as never).notes].map((c: Uint8Array) => hex(c) as Hex),
-      startingLedgerOf: (s) => startingLedgerFrom(vaultLedgerOf(s as never)),
+      startingLedgerOf: (s) => startingLedgerFrom(vaultLedgerOf(s as never), (vaultModule as any).pureCircuits.copiesWrittenKey()),
       everCreated: async (v) => chain.everCreated.get(v.toLowerCase()) ?? new Set(),
       /* One moment of this chain; a deposit reads the ledger parameters from it. */
       payoutState: async (v, account) => {
@@ -345,7 +394,7 @@ describe.skipIf(!KEYS_ON_DISK)('A COMPANY VAULT, FROM THE SIGNER\'S DEVICE [need
       company: async () => ({ address: company, threshold: companyThreshold, vaultThresholds: [] }),
       ledger, chain: vaultChain,
       verifierKeys: async () => new Map(await Promise.all(
-        ['deposit', 'depositUnshielded', 'forgetUnshielded', 'payout', 'payoutUnshielded', 'retire', 'splitNote']
+        ['deposit', 'depositUnshielded', 'forgetUnshielded', 'payout', 'payoutUnshielded', 'retire', 'setNonceSecret', 'splitNote', 'writeSecretCopy']
           .map(async (c) => [c, await zk.getVerifierKey(c) as unknown as Uint8Array] as const))),
       account: {
         circuits: DEPLOYED_CIRCUITS,
@@ -400,6 +449,9 @@ describe.skipIf(!KEYS_ON_DISK)('A COMPANY VAULT, FROM THE SIGNER\'S DEVICE [need
     },
     payout: () => { throw new Error('this watch makes no payment out'); },
     payoutPublicly: () => { throw new Error('this watch makes no payment out'); },
+    startAccountCall: (vault, body) => http(`/api/accounts/${ACCOUNT_ID}/vaults/${vault}/start/account`, { method: 'POST', body }, as),
+    startSecret: (vault, tx) => http(`/api/accounts/${ACCOUNT_ID}/vaults/${vault}/start/secret`, { method: 'POST', body: { tx } }, as),
+    startCopy: (vault, tx, place) => http(`/api/accounts/${ACCOUNT_ID}/vaults/${vault}/start/copy`, { method: 'POST', body: { tx, place } }, as),
   });
   const keys: TemporaryKeys = {
     put: async (v, k) => { temporaryKeys.set(v, k); },
@@ -418,6 +470,13 @@ describe.skipIf(!KEYS_ON_DISK)('A COMPANY VAULT, FROM THE SIGNER\'S DEVICE [need
   const records = (secret = signing.secret) => (record: WireRecord) =>
     new HttpSealedPoolStore(record, wireAs('ada'), secret, async () => new Set([signing.publicKey]));
   const signers = async () => [{ id: 'ada', wrappingPublicKey: wrapping.publicKey }];
+  /** The founding signer's three, as their keyring hands them to the page. */
+  const material = () => ({ signingSecret: hex(founder.secretKey), blinding: hex(founder.blinding), scope: hex(founder.scope) });
+  /** Everything the page hands the press that creates a vault. */
+  const createDoors = () => ({
+    ...pacing, account: readAccountAddress(company)!, service: service(), builder: builder(), keys,
+    me, myRecordsKey: recordsReaderOf(me.companyKey).publicKey, signers, records: records(), material: material(),
+  });
   const giveKeys = () => http(`/api/accounts/${ACCOUNT_ID}/vault-keys`, {
     method: 'PUT',
     body: {
@@ -441,7 +500,7 @@ describe.skipIf(!KEYS_ON_DISK)('A COMPANY VAULT, FROM THE SIGNER\'S DEVICE [need
   const answered: string[] = [];
 
   it('NO COMMITTEE, NO DEPLOY: a vault is refused until every signer\'s wallet has given its committee key', async () => {
-    const doors = { ...pacing, account: readAccountAddress(company)!, service: service(), builder: builder(), keys };
+    const doors = createDoors();
     await expect(createCompanyVault(doors)).rejects.toThrow(/committee that must hold the vault's rules is not complete/);
     expect(chain.applied).toEqual([]);
     /* And the route itself refuses a deploy sent without asking. */
@@ -457,7 +516,7 @@ describe.skipIf(!KEYS_ON_DISK)('A COMPANY VAULT, FROM THE SIGNER\'S DEVICE [need
 
     /* ---- the handover is lost on its way: FAILED, the vault named, nothing reported created ---- */
     dropHandover = true;
-    const doors = { ...pacing, account: readAccountAddress(company)!, service: service(), builder: builder(), keys };
+    const doors = createDoors();
     const lost = await createCompanyVault(doors).catch((e) => e);
     expect(lost, String(lost?.message)).toBeInstanceOf(VaultHandoverOwed);
     const vault = (lost as VaultHandoverOwed).vault;
@@ -476,20 +535,55 @@ describe.skipIf(!KEYS_ON_DISK)('A COMPANY VAULT, FROM THE SIGNER\'S DEVICE [need
     /* ---- no money goes in while the committee does not hold it: read from the chain ---- */
     await expect(openCompanyVaultPool({ ...pacing, service: service(), me, myRecordsKey: recordsReaderOf(me.companyKey).publicKey, signers, records: records() }, vault))
       .rejects.toThrow(/not held by the company's committee/);
-    const early = await builder().deposit({
-      vault, coin: { nonce: 'c1'.repeat(32), token: GBP, value: '5' },
+    /* The vault itself takes no money before it is started, so no deposit can even be built for it.
+     * RED WHEN: a vault fresh from its deploy takes money. */
+    await expect(builder().deposit({
+      vault, coin: { nonce: 'c1'.repeat(32), token: TOKEN_HEX, value: '5' },
       state: (await http(`/api/accounts/${ACCOUNT_ID}/vaults/${vault}/chain`)).state,
       parameters: base64FromBytes(chain.state.parameters.serialize()),
-    });
+    })).rejects.toThrow(/takes no money yet/);
+    /*
+     * And the route reads the chain before it reads what it was sent: the deposit is refused, nothing sent, whatever
+     * the transaction. A deposit cannot be built here, so the one sent is a bound transaction that does nothing.
+     * RED WHEN: the deposit route reads what it was sent before it reads who holds the vault on the chain.
+     */
+    const anything = base64FromBytes((L.Transaction.fromParts(NET, undefined, undefined, L.Intent.new(new Date(Date.now() + 600_000))) as any).bind().serialize());
     await expect(http(`/api/accounts/${ACCOUNT_ID}/vaults/${vault}/deposit`, {
-      method: 'POST', body: { tx: base64FromBytes((L.Transaction.deserialize('signature', 'pre-proof', 'pre-binding', bytesFromBase64(early.tx)) as any).bind().serialize()) },
+      method: 'POST', body: { tx: anything },
     })).rejects.toMatchObject({ status: 409, nothingWasSent: true });
     expect(chain.applied).toHaveLength(1);
 
-    /* ---- running it again finishes the handover, against the counter the chain holds ---- */
+    /* ---- running it again finishes the handover, against the counter the chain holds, and starts the vault ---- */
     dropHandover = false;
-    await expect(createCompanyVault(doors, vault)).resolves.toEqual({ vault, state: 'held-by-committee' });
-    expect(chain.applied.map((a) => a.ok)).toEqual([true, true]);
+    /* RED WHEN: the press ends before the chain shows the vault adopted, its secret set and every copy written. */
+    await expect(createCompanyVault(doors, vault)).resolves.toEqual({ vault, state: 'started' });
+    /*
+     * The deploy from the first press; then the handover, then the start, each sent only once the chain showed the
+     * one before: the adoption raised, approved and carried out; the first secret run raised and approved; the secret
+     * set; the founding signer's sealed copy written. Nine, and every one applied.
+     */
+    expect(chain.applied.map((a) => a.ok)).toEqual([true, true, true, true, true, true, true, true, true]);
+    const startedAt = chain.applied.length;
+    /* RED WHEN the deploy or the handover reaches the service unproven, or a call of the start is read as something else. */
+    expect(readAsUnproven).toEqual(['propose', 'approve', 'adopt', 'propose', 'approve', 'setNonceSecret+approveVaultChange', 'writeSecretCopy']);
+    /* RED WHEN: the press ends without the company's account adopting the vault. */
+    expect((accountModule as any).ledger(asRuntime(chain.contract(company)).data).vaults.member(Buffer.from(vault, 'hex'))).toBe(true);
+    const startedLedger = vaultLedgerOf(chain.contract(vault));
+    /* RED WHEN: the press ends with a vault that does not take money: no secret, or a sealed copy missing. */
+    expect(startingLedgerFrom(startedLedger, (vaultModule as any).pureCircuits.copiesWrittenKey()).started).toBe(true);
+    /* RED WHEN: the secret set is not the one the company's records hold, or the founding signer's copy does not open from their words. */
+    const filed = (await import('../../src/midnight/company-nonce-secret.js')).openNonceSecrets(
+      (await serverStores.get('nonce-secret')!.get(vault))!, vault, recordsKeypairFrom(me.companyKey));
+    expect(hex(startedLedger.nonceCommitment)).toBe(hex((vaultModule as any).pureCircuits.secretCommitmentOf(
+      Buffer.from(vault, 'hex'), Buffer.from(filed.secrets[0]!, 'hex'))));
+    const fromWords = recordsKeypairFrom(releasedCompanyKey(words, label, company));
+    const onChainCopy = secretCopyOnTheChain(startedLedger.secretCopies,
+      (c, r, place, part) => (vaultModule as any).pureCircuits.copyKeyOf(c, r, place, part),
+      { commitment: hex(startedLedger.nonceCommitment), reader: fromWords.publicKey, count: 1n });
+    expect(openSecretCopy({ vault, parts: onChainCopy!, reader: fromWords })).toBe(filed.secrets[0]);
+    /* RED WHEN: a press for a vault already started sends anything at all. */
+    await expect(createCompanyVault(doors, vault)).resolves.toEqual({ vault, state: 'started' });
+    expect(chain.applied).toHaveLength(startedAt);
     const held = chain.contract(vault).maintenanceAuthority;
     expect(held.committee.map((k: { value: string }) => k.value)).toEqual([committee.value]);
     expect(held.threshold).toBe(1);
@@ -516,9 +610,9 @@ describe.skipIf(!KEYS_ON_DISK)('A COMPANY VAULT, FROM THE SIGNER\'S DEVICE [need
     shown = [];
     await expect(depositIntoCompanyVault({
       ...poolDoors, company: label, account: readAccountAddress(company)!, builder: builder(), pay: wallet, inFlight: inFlightInMemory(),
-    }, vault, { token: GBP, value: 1n })).rejects.toThrow(/account is still held by the temporary key/);
+    }, vault, { token: TOKEN_HEX, value: 1n })).rejects.toThrow(/account is still held by the temporary key/);
     expect(shown).toEqual([]);
-    expect(chain.applied).toHaveLength(2);
+    expect(chain.applied).toHaveLength(startedAt);
     const before = await http(`/api/accounts/${ACCOUNT_ID}/authority`);
     expect(before.contracts[0]).toMatchObject({ contract: 'account', address: company, heldByTheCompany: false, shape: 'one-key', changes: '0' });
     expect(before.contracts[1]).toMatchObject({ contract: 'vault', address: vault, heldByTheCompany: true, changes: '1' });
@@ -537,13 +631,13 @@ describe.skipIf(!KEYS_ON_DISK)('A COMPANY VAULT, FROM THE SIGNER\'S DEVICE [need
     companyThreshold = 0;
     await expect(http(`/api/accounts/${ACCOUNT_ID}/authority/handover`, { method: 'POST', body: {} }))
       .rejects.toMatchObject({ status: 409, nothingWasSent: true, message: expect.stringMatching(/threshold is 0/) });
-    expect(chain.applied).toHaveLength(2);
+    expect(chain.applied).toHaveLength(startedAt);
     expect(chain.contract(company).maintenanceAuthority.counter).toBe(0n);
     companyThreshold = 1;
 
     /* ---- the account handed to the committee, by the service's temporary key, read back from the chain ---- */
     await http(`/api/accounts/${ACCOUNT_ID}/authority/handover`, { method: 'POST', body: { committee: before.committee } });
-    expect(chain.applied.map((a) => a.ok)).toEqual([true, true, true]);
+    expect(chain.applied.map((a) => a.ok)).toEqual(Array(startedAt + 1).fill(true));
     const accountHeld = chain.contract(company).maintenanceAuthority;
     expect(accountHeld.committee.map((k: { value: string }) => k.value)).toEqual([committee.value]);
     expect(accountHeld.threshold).toBe(1);
@@ -556,7 +650,7 @@ describe.skipIf(!KEYS_ON_DISK)('A COMPANY VAULT, FROM THE SIGNER\'S DEVICE [need
     /* And once is all: the temporary key cannot change the account again through this route. */
     await expect(http(`/api/accounts/${ACCOUNT_ID}/authority/handover`, { method: 'POST', body: { committee: before.committee } }))
       .rejects.toMatchObject({ status: 409, nothingWasSent: true });
-    expect(chain.applied).toHaveLength(3);
+    expect(chain.applied).toHaveLength(startedAt + 1);
     expect(sent.some((b) => b.includes(TEMPORARY_ACCOUNT_KEY.value))).toBe(false);
     expect(answered.length).toBeGreaterThan(5);
     expect(answered.some((b) => b.includes(TEMPORARY_ACCOUNT_KEY.value))).toBe(false);
@@ -565,24 +659,27 @@ describe.skipIf(!KEYS_ON_DISK)('A COMPANY VAULT, FROM THE SIGNER\'S DEVICE [need
     shown = [];
     const deposited = await depositIntoCompanyVault({
       ...poolDoors, company: label, account: readAccountAddress(company)!, builder: builder(), pay: wallet, inFlight: inFlightInMemory(),
-    }, vault, { token: GBP, value: 1_000n });
-    expect(chain.applied.map((a) => a.ok)).toEqual([true, true, true, true]);
+    }, vault, { token: TOKEN_HEX, value: 1_000n });
+    expect(chain.applied.map((a) => a.ok)).toEqual(Array(startedAt + 2).fill(true));
+    const depositAt = startedAt + 1;
+    /* The deposit arrives finished by the wallet, through the other reader. RED WHEN anything after the start is read as unproven. */
+    expect(readAsUnproven).toHaveLength(7);
 
-    expect(shown).toEqual([[{ token: GBP, amount: '1000', kind: 'shielded' }]]);
+    expect(shown).toEqual([[{ token: TOKEN_HEX, amount: '1000', kind: 'shielded' }]]);
     const notes = [...vaultLedgerOf(chain.contract(vault)).notes].map((c: Uint8Array) => hex(c));
     expect(notes).toHaveLength(1);
     /* An unproven transaction has no hash, so the service names none; the note is recorded under the transaction the
      * vault's history holds its output in, found through the service's own route by the output's commitment. */
-    expect(chain.applied[3]!.hash).toMatch(/^unproven:/);
+    expect(chain.applied[depositAt]!.hash).toMatch(/^unproven:/);
     expect(deposited.transactionHash).toBeNull();
     /* RED WHEN: the page does not look the deposit up by its output - the note is then recorded without its transaction. */
     expect(deposited.note.createdIn, 'the deposit is recorded without its creating transaction')
-      .toBe(createHash('sha256').update(chain.applied[3]!.hash.slice('unproven:'.length)).digest('hex'));
+      .toBe(createHash('sha256').update(chain.applied[depositAt]!.hash.slice('unproven:'.length)).digest('hex'));
     expect(deposited.notYetSpendable).toBeUndefined();
     const pool = new SealedNotePool(records()('pool'), { signerId: 'ada', wrappingSecret: wrapping.secret }, signers);
     const loaded = await pool.load(vault);
     expect(loaded.notes).toEqual([deposited.note]);
-    expect(notes[0]).toBe((await builder().commitments({ vault, coin: { nonce: deposited.note.nonce, token: GBP, value: '1000' } })).held);
+    expect(notes[0]).toBe((await builder().commitments({ vault, coin: { nonce: deposited.note.nonce, token: TOKEN_HEX, value: '1000' } })).held);
     expect(loaded.notes[0]!.value).toBe(1_000n);
 
     /* ---- nothing the service received carried a key a wallet or this device keeps ---- */
@@ -594,7 +691,7 @@ describe.skipIf(!KEYS_ON_DISK)('A COMPANY VAULT, FROM THE SIGNER\'S DEVICE [need
     }
   });
 
-  it('THE LEDGER\'S OWN RULES THIS RESTS ON: a deploy and its handover cannot share a transaction, and a deposit is open to anyone', async () => {
+  it('THE LEDGER\'S OWN RULES THIS RESTS ON: a deploy and its handover cannot share a transaction, and the vault itself takes no deposit until its account approves a secret', async () => {
     const built = await builder(false).deploy(company);
     const deploy = L.Transaction.deserialize('signature', 'pre-proof', 'pre-binding', bytesFromBase64(built.tx)) as any;
     const temporary = signingKeyFromBip340(Buffer.from(built.temporaryKey.value, 'hex'));
@@ -606,12 +703,16 @@ describe.skipIf(!KEYS_ON_DISK)('A COMPANY VAULT, FROM THE SIGNER\'S DEVICE [need
       L.Intent.new(new Date(Date.now() + 600_000)).addDeploy(intent.actions[0]).addMaintenanceUpdate(update));
     expect(() => chain.apply(both)).toThrow(/non-existant contract/i);
     expect(chain.apply(deploy).ok).toBe(true);
-    /* The residue: before its handover, the vault takes a deposit from anybody at all. */
-    const stranger = await builder().deposit({
-      vault: built.vault, coin: { nonce: 'd2'.repeat(32), token: GBP, value: '7' }, state: base64FromBytes(chain.contract(built.vault).serialize()),
+    /*
+     * The residue the old vault left: before its handover it took a deposit from
+     * anybody at all. This vault refuses one until its account has adopted it and
+     * approved its first secret, so a stranger's deposit is refused in the circuit.
+     * RED WHEN a vault fresh from its deploy takes money.
+     */
+    await expect(builder().deposit({
+      vault: built.vault, coin: { nonce: 'd2'.repeat(32), token: TOKEN_HEX, value: '7' }, state: base64FromBytes(chain.contract(built.vault).serialize()),
       parameters: base64FromBytes(chain.state.parameters.serialize()),
-    });
-    expect(chain.apply(L.Transaction.deserialize('signature', 'pre-proof', 'pre-binding', bytesFromBase64(stranger.tx))).ok).toBe(true);
-    expect([...vaultLedgerOf(chain.contract(built.vault)).notes]).toHaveLength(1);
+    })).rejects.toThrow(/takes no money yet/);
+    expect([...vaultLedgerOf(chain.contract(built.vault)).notes]).toHaveLength(0);
   });
 });

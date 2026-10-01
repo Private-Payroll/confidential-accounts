@@ -8,6 +8,7 @@ import { newWords } from 'midnight-identity';
 import { drawCompanyLabel } from 'midnight-identity/profile/company-label';
 import type { User } from '../core/types.js';
 
+import { TEST_SETTLEMENT_ASSET } from '../core/assets.js';
 /**
  * **A PAYEE'S PAYSLIPS OVER THE WIRE: TO A SIGNED-IN HOLDER OF THE KEY, AS
  * CIPHERTEXT, AND NO ROUTE TAKES THE KEY.**
@@ -36,7 +37,6 @@ const { sealHandover } = await import('../core/invite-handover.js');
 const { openPayslip, answerPayslipProof, NOT_YOUR_PAYSLIP } = await import('../core/payslip-open.js');
 const { unwrapKey } = await import('../core/crypto.js');
 const { payeeFor } = await import('../testing/payees.js');
-const { paymentWords } = await import('../web-legacy/YourPay.js');
 const { aVaultHolding } = await import('../testing/assets.js');
 const { signInWithAWallet } = await import('../testing/wallet-session.js');
 const { theNetwork } = await import('../midnight/network.js');
@@ -59,7 +59,7 @@ const seeded = await (async () => {
   const hire = (who: string, byte: string) => {
     const email = `${who.toLowerCase()}@acme.example`;
     const { sentTo, employee } = payroll.invite(account.id, {
-      name: who, email, title: 'Engineer', asset: 'TESTUSD', baseAmount: 5_000_000_000n,
+      name: who, email, title: 'Engineer', asset: TEST_SETTLEMENT_ASSET, baseAmount: 5_000_000_000n,
     }, viewingKey, 'usr_ada');
     const keys = payslipKeypairForWallet(newWords(), label, ORIGIN);
     const userId = 'usr_' + who.toLowerCase();
@@ -145,7 +145,7 @@ describe('a payee\'s own payslips, over the wire', () => {
     const opened = openPayslip(got.body[0], seeded.dana.secret);
     expect(opened.payslip.name).toBe('Dana');
     expect(opened.payslip.amount).toBe(5_000_000_000n);
-    expect(opened.payslip.asset).toBe('TESTUSD');
+    expect(opened.payslip.asset).toBe(TEST_SETTLEMENT_ASSET);
     expect(opened.runId).toBe(seeded.runId);
     expect(opened.issuedBy).toBe(seeded.label);
     /*
@@ -157,7 +157,6 @@ describe('a payee\'s own payslips, over the wire', () => {
     expect(opened.status).toBe('draft');
     expect(opened.settledAt).toBe(stored.settledAt ?? null);
     expect(opened.wiring).toBe(stored.wiring ?? null);
-    expect(paymentWords(opened)).toEqual({ paid: 'Not sent for approval yet', onChain: 'No' });
     expect(() => openPayslip(got.body[0], seeded.eli.secret)).toThrow(NOT_YOUR_PAYSLIP);
     /* Sealed on the wire: no name, no amount. */
     const wire = JSON.stringify(got.body);

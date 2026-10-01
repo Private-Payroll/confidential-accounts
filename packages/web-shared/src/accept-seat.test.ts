@@ -9,7 +9,7 @@
  * `S33` built the detector for that state; this path is one of its factories.
  *
  * **AND UNTIL `S34` NOTHING COULD EXECUTE IT.** No test file in this repository
- * imports `src/web-legacy/App.tsx`. What stood in for rule 11 there was a
+ * imported the screen it lived in. What stood in for rule 11 there was a
  * comment-stripped source pin, and `S34`'s test-coverage pass measured what that
  * bought: restoring `C328`'s ed25519 writer at that very line left 187 tests
  * green. The sequence moved out of the screen so a real test could drive it.
@@ -26,6 +26,13 @@ import { ownLeafReading, storedSignerLeaf } from '../../../src/core/signer-leaf.
 import { newSigningKeypair, newWrappingKeypair, newBlinding, type Hex } from '../../../src/core/crypto.js';
 import { acceptSeatOnThisDevice, type NewSeatKeys, type SeatDoors } from './accept-seat.js';
 import type { PendingSeat } from './keyring.js';
+
+/** The item at a place in a list; an item that is not there fails the test here rather than being read through. */
+const itemAt = <T,>(xs: readonly T[], i: number): T => {
+  const x = xs[i];
+  if (x === undefined) throw new Error(`expected an item at place ${i}, and the list holds ${xs.length}`);
+  return x;
+};
 
 const ACCOUNT = 'acc_northwind';
 
@@ -85,8 +92,8 @@ describe('C329 — a leaf cannot reach a roster before its key material is durab
       .rejects.toThrow(/version conflict/);
     expect(d.sealed).toHaveLength(1);
     expect(d.published).toHaveLength(1);
-    expect(d.sealed[0].blinding).toBe(KEYS.blinding);
-    expect(d.sealed[0].signingSecret).toBe(KEYS.signingSecret);
+    expect(itemAt(d.sealed, 0).blinding).toBe(KEYS.blinding);
+    expect(itemAt(d.sealed, 0).signingSecret).toBe(KEYS.signingSecret);
   });
 
   it('SEALS THE MATERIAL THE PUBLISHED LEAF WAS MADE FROM, not merely some material', async () => {
@@ -95,9 +102,9 @@ describe('C329 — a leaf cannot reach a roster before its key material is durab
      * prevent. So the two are tied together by the check that reads them. */
     const d = doorsThat();
     await acceptSeatOnThisDevice(ACCOUNT, SimulatedCommitments, d.doors);
-    const stored = d.published[0].leafCommitment as Hex;
+    const stored = itemAt(d.published, 0).leafCommitment as Hex;
     const reading = ownLeafReading(
-      { id: 'sgn_new', leafCommitment: stored }, d.sealed[0], SimulatedCommitments);
+      { id: 'sgn_new', leafCommitment: stored }, itemAt(d.sealed, 0), SimulatedCommitments);
     expect(reading.verdict).toBe('agrees');
   });
 });
@@ -106,7 +113,7 @@ describe('C328 — the leaf this path publishes', () => {
   it('is the one definition every writer shares, not a second spelling', async () => {
     const d = doorsThat();
     await acceptSeatOnThisDevice(ACCOUNT, SimulatedCommitments, d.doors);
-    expect(d.published[0].leafCommitment).toBe(
+    expect(itemAt(d.published, 0).leafCommitment).toBe(
       storedSignerLeaf(
         { signingSecret: KEYS.signingSecret, blinding: KEYS.blinding,
           scope: SimulatedCommitments.allVaults() },
@@ -135,10 +142,10 @@ describe('C328 — the leaf this path publishes', () => {
 
     const theOldWay = SimulatedCommitments.signerLeaf(
       sk.publicKey, blinding, SimulatedCommitments.allVaults());
-    expect(d.published[0].leafCommitment).not.toBe(theOldWay);
+    expect(itemAt(d.published, 0).leafCommitment).not.toBe(theOldWay);
     /* And the seat the old writer made is one this device would refuse. */
     expect(ownLeafReading(
-      { id: 'sgn_new', leafCommitment: theOldWay }, d.sealed[0], SimulatedCommitments).verdict)
+      { id: 'sgn_new', leafCommitment: theOldWay }, itemAt(d.sealed, 0), SimulatedCommitments).verdict)
       .toBe('disagrees');
   });
 
@@ -148,11 +155,11 @@ describe('C328 — the leaf this path publishes', () => {
      * one. */
     const d = doorsThat();
     await acceptSeatOnThisDevice(ACCOUNT, SimulatedCommitments, d.doors);
-    expect(Object.keys(d.published[0]).sort())
+    expect(Object.keys(itemAt(d.published, 0)).sort())
       .toEqual(['leafCommitment', 'signingPublicKey', 'wrappingPublicKey']);
-    expect(JSON.stringify(d.published[0])).not.toContain(KEYS.blinding);
-    expect(JSON.stringify(d.published[0])).not.toContain(KEYS.signingSecret);
-    expect(JSON.stringify(d.published[0])).not.toContain(KEYS.wrappingSecret);
+    expect(JSON.stringify(itemAt(d.published, 0))).not.toContain(KEYS.blinding);
+    expect(JSON.stringify(itemAt(d.published, 0))).not.toContain(KEYS.signingSecret);
+    expect(JSON.stringify(itemAt(d.published, 0))).not.toContain(KEYS.wrappingSecret);
   });
 
   it('carries the scope the leaf was made under into the material that must reproduce it', async () => {
@@ -161,8 +168,8 @@ describe('C328 — the leaf this path publishes', () => {
      * on its own device. */
     const d = doorsThat();
     await acceptSeatOnThisDevice(ACCOUNT, SimulatedCommitments, d.doors);
-    expect(d.sealed[0].scope).toBe(SimulatedCommitments.allVaults());
-    expect(d.sealed[0].accountId).toBe(ACCOUNT);
+    expect(itemAt(d.sealed, 0).scope).toBe(SimulatedCommitments.allVaults());
+    expect(itemAt(d.sealed, 0).accountId).toBe(ACCOUNT);
     expect(d.promoted[0]).toEqual([KEYS.signingPublicKey, 'sgn_new']);
   });
 });

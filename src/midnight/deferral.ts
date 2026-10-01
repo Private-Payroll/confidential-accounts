@@ -85,6 +85,7 @@ export const DEPLOYED_CIRCUITS = [
   'adopt',
   'amendSigner',
   'approve',
+  'approveVaultChange',
   'cancel',
   'clearRun',
   'closeExpiredRun',
@@ -153,12 +154,14 @@ export const FIRST_STEP_CIRCUITS = [
  * THE SECOND STEP: THE CIRCUITS ONE MAINTENANCE UPDATE INSERTS, straight after
  * the deploy, signed by the maintenance authority the deploy installed. It only
  * inserts: it never removes a key and never replaces the authority. Measured the
- * same way: 21,485 bytes written for the ten keys, 67.1% of the ceiling. The
+ * same way: 23,630 bytes written for the eleven keys, 73.9% of the ceiling. The
+ * step that approves a change to a vault, `approveVaultChange`, the
  * spending policy's circuits, `setPolicy`, `setPolicyBar` and `clearRun`, the
  * hold and its release, and the re-seat that changes a signer's rights are here
  * with the other circuits that move money or depend on a vault.
  */
 export const SECOND_STEP_CIRCUITS = [
+  'approveVaultChange',
   'clearRun',
   'holdRun',
   'recordPaymentFromVault',

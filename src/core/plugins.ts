@@ -2,7 +2,7 @@ import { nanoid } from 'nanoid';
 import { decideList } from './provenance.js';
 import type { Hex } from './crypto.js';
 import type { AssetId } from './assets.js';
-import { assets as defaultAssets, formatAmount, sumAmounts } from './assets.js';
+import { assets as defaultAssets, formatAmount, sumAmounts, symbolOf } from './assets.js';
 import type { DataStore } from './store.js';
 import type { AccountService } from './account.js';
 import type { PluginManifest, Installation, PluginEvent, Scope, ShieldedEntry } from './types.js';
@@ -154,7 +154,7 @@ export class PluginService {
         this.assets.require(asset);
         const l = args.allowance.limits[asset]!;
         if (typeof l.perProposal !== 'bigint' || typeof l.perPeriod !== 'bigint') {
-          throw new Error(`the ${asset} allowance must be bigints in that asset's smallest unit`);
+          throw new Error(`the ${this.assets.require(asset).symbol} allowance must be bigints in that token's smallest unit`);
         }
       }
     }
@@ -326,10 +326,10 @@ export class PluginService {
     const limit = install.allowance.limits[args.asset];
     if (!limit) {
       const granted = Object.keys(install.allowance.limits).sort();
-      this.log(install, 'propose', `blocked: no ${args.asset} allowance`, false, args.asset, args.amount);
+      this.log(install, 'propose', `blocked: no ${registered.symbol} allowance`, false, args.asset, args.amount);
       throw new Error(
-        `this plug-in has no ${args.asset} allowance. It may spend ` +
-          `${granted.join(', ')} and nothing else.`,
+        `this plug-in has no ${registered.symbol} allowance. It may spend ` +
+          `${granted.map(g => symbolOf(g, this.assets)).join(', ')} and nothing else.`,
       );
     }
     if (typeof args.amount !== 'bigint') {
@@ -339,22 +339,22 @@ export class PluginService {
 
     if (args.amount > limit.perProposal) {
       this.log(install, 'propose',
-        `blocked: ${formatAmount(args.amount, registered)} ${args.asset} exceeds the ` +
+        `blocked: ${formatAmount(args.amount, registered)} ${registered.symbol} exceeds the ` +
         `per-proposal allowance of ${formatAmount(limit.perProposal, registered)}`,
         false, args.asset, args.amount);
       throw new Error(
         `exceeds this plug-in's per-proposal allowance of ` +
-        `${formatAmount(limit.perProposal, registered)} ${args.asset}`,
+        `${formatAmount(limit.perProposal, registered)} ${registered.symbol}`,
       );
     }
 
     const spent = this.spentInPeriod(install, args.asset);
     if (spent + args.amount > limit.perPeriod) {
       this.log(install, 'propose',
-        `blocked: would exceed the ${args.asset} period allowance ` +
+        `blocked: would exceed the ${registered.symbol} period allowance ` +
         `(${formatAmount(spent, registered)} already proposed)`,
         false, args.asset, args.amount);
-      throw new Error(`exceeds this plug-in's ${args.asset} allowance for the period`);
+      throw new Error(`exceeds this plug-in's ${registered.symbol} allowance for the period`);
     }
 
     const entries: ShieldedEntry[] = [{

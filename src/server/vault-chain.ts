@@ -68,7 +68,7 @@ export async function vaultChainFromTheIndexer(indexer: { url: string; wsUrl: st
     startingLedgerOf: (state) => {
       const ledger = readLedger(asRuntime(state).data);
       if (!(ledger.account.bytes instanceof Uint8Array) || ledger.account.bytes.length !== 32) throw new Error('not a vault\'s state');
-      return startingLedgerFrom(ledger);
+      return startingLedgerFrom(ledger, (vault as unknown as { pureCircuits: { copiesWrittenKey(): Uint8Array } }).pureCircuits.copiesWrittenKey());
     },
     everCreated: (address) => history.everCreated(address),
     /* Each step's state read by the same reader the indexer's own client reads a contract's state with. */

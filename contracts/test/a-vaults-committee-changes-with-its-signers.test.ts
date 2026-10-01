@@ -21,11 +21,11 @@
  * screen. The company's committee threshold is what the service's `company`
  * door reports, set here directly; seating a signer on the account contract
  * and changing its approval threshold is the existing path and is not run
- * here, so the payroll run below is approved by the founder alone.
+ * here, so the payroll run below is approved by the founding signer alone.
  */
-import { describe, expect, beforeEach, afterEach } from 'vitest';
+import { describe, it, expect, beforeEach, afterEach } from 'vitest';
 import { createHash, randomBytes } from 'node:crypto';
-import { existsSync, readFileSync } from 'node:fs';
+import { readFileSync } from 'node:fs';
 import express from 'express';
 import type { AddressInfo } from 'node:net';
 import * as L from '@midnightntwrk/ledger-v9';
@@ -83,7 +83,8 @@ import { payeeAddressFromKeys, type Payee } from '../../src/midnight/payee-addre
 import { assemblePrivatePayments } from '../../src/midnight/private-payment-wire.js';
 import { witnessesOver } from '../../src/midnight/vault-notes.js';
 import { payFor } from '../../src/testing/payees.js';
-import { itPaysOutOfTodaysVault } from './until-the-vault-pays-with-a-receipt.js';
+import { ACCOUNT_CIRCUITS_SERVED_TO_A_DEVICE } from '../../src/midnight/vault-contract.js';
+import { keysOnDisk } from './keys-on-disk.js';
 
 /** Deposits or payments on their way, kept for the length of one test, sealed as the page keeps them. */
 const keptOnThisDevice = <T,>(kind: 'deposit' | 'payment'): KeptOnThisDevice<T> =>
@@ -180,14 +181,11 @@ const TEMPORARY = { kind: 'single-key', signingKey: TEMPORARY_ACCOUNT_KEY, tempo
  * EACH PRODUCES.** The general checks compile without them, so this is skipped
  * there by name, and the job that builds the keys runs this file by name.
  */
-const KEYS_ON_DISK = ['deposit', 'payout', 'payoutUnshielded'].every((c) => existsSync(new URL(`../managed-vault/keys/${c}.verifier`, import.meta.url)))
-  && ['propose', 'approve', 'recordPaymentFromVault'].every((c) => existsSync(new URL(`../managed/keys/${c}.verifier`, import.meta.url)));
+/* Every circuit of the account and of the vault has its verifier key on disk, and each is the key this build compiled. */
+const KEYS = keysOnDisk();
+const KEYS_ON_DISK = KEYS.ok;
 if (!KEYS_ON_DISK) {
-  console.log(
-    '  NOT CHECKED HERE: the vault\'s and the account\'s verifier keys are not on disk, so a company\'s committee'
-    + ' was not changed with its signers and no payment was made out of its vault afterwards.'
-    + ' `npm run compact:vault -- --full` and `npm run compact` build them.',
-  );
+  console.log(`  NOT CHECKED HERE: a company\'s committee was not changed with its signers and no payment was made out of its vault afterwards, because ${KEYS.why}`);
 }
 
 describe.skipIf(!KEYS_ON_DISK)('A VAULT\'S COMMITTEE CHANGES WITH THE COMPANY\'S SIGNERS, AND PAYMENTS CARRY ON [needs contracts/managed-vault/keys and contracts/managed/keys; `npm run compact` then `npm run compact:vault -- --full` build them]', () => {
@@ -212,6 +210,12 @@ describe.skipIf(!KEYS_ON_DISK)('A VAULT\'S COMMITTEE CHANGES WITH THE COMPANY\'S
 
   const vaultZk = new NodeZkConfigProvider(new URL('../managed-vault', import.meta.url).pathname);
   const accountZk = new NodeZkConfigProvider(new URL('../managed', import.meta.url).pathname);
+  /* The vault's keys with the account's served beside them by circuit name, as the worker routes them. */
+  const both = new (class extends NodeZkConfigProvider<string> {
+    override getZKIR(c: string) { return ACCOUNT_CIRCUITS_SERVED_TO_A_DEVICE.includes(c) ? accountZk.getZKIR(c) : super.getZKIR(c); }
+    override getProverKey(c: string) { return ACCOUNT_CIRCUITS_SERVED_TO_A_DEVICE.includes(c) ? accountZk.getProverKey(c) : super.getProverKey(c); }
+    override getVerifierKey(c: string) { return ACCOUNT_CIRCUITS_SERVED_TO_A_DEVICE.includes(c) ? accountZk.getVerifierKey(c) : super.getVerifierKey(c); }
+  })(new URL('../managed-vault', import.meta.url).pathname);
   const vaultCompiled = (w: unknown) => CompiledContract.make('Vault', (vaultModule as any).Contract).pipe(
     CompiledContract.withWitnesses(w as never));
   const accountCompiled = CompiledContract.make('ConfidentialAccount', (accountModule as any).Contract).pipe(
@@ -225,9 +229,12 @@ describe.skipIf(!KEYS_ON_DISK)('A VAULT\'S COMMITTEE CHANGES WITH THE COMPANY\'S
   const builder = () => {
     const deps = async () => ({
       ledger: L, vault: vaultModule, runtimeState: (runtime as any).ContractState, contracts: contracts as any,
-      compiled: vaultCompiled({ noteToSpend: () => { throw new Error('nothing here spends'); } }),
+      compiled: vaultCompiled({ noteToSpend: () => { throw new Error('nothing here spends'); }, nonceSecret: () => { throw new Error('nothing here spends'); } }),
       compiledWith: (w: ReturnType<typeof witnessesOver>) => vaultCompiled(w),
-      zkConfig: vaultZk,
+      zkConfig: both,
+      /* The company account beside the vault, as the worker loads it: its compiled contract, its functions and its ledger. */
+      accountCompiled, accountZkConfig: accountZk, accountPure: (accountModule as any).pureCircuits,
+      accountLedger: (accountModule as any).ledger,
       prove: async (unproven: any, circuit?: string) =>
         (circuit === undefined ? unproven.prove(neverAsked, (L as any).CostModel.initialCostModel()) : unproven),
     });
@@ -325,7 +332,7 @@ describe.skipIf(!KEYS_ON_DISK)('A VAULT\'S COMMITTEE CHANGES WITH THE COMPANY\'S
       contractState: async (v) => chain.contract(v),
       serialize: (s) => (s as { serialize(): Uint8Array }).serialize(),
       notesOf: (s) => [...vaultLedgerOf(s as never).notes].map((c: Uint8Array) => hex(c) as Hex),
-      startingLedgerOf: (s) => startingLedgerFrom(vaultLedgerOf(s as never)),
+      startingLedgerOf: (s) => startingLedgerFrom(vaultLedgerOf(s as never), (vaultModule as any).pureCircuits.copiesWrittenKey()),
       everCreated: async (v) => chain.everCreated.get(v.toLowerCase()) ?? new Set(),
       /* One moment of this chain: both contracts and the commitment tree as it stands. */
       payoutState: async (vault, account) => {
@@ -396,7 +403,7 @@ describe.skipIf(!KEYS_ON_DISK)('A VAULT\'S COMMITTEE CHANGES WITH THE COMPANY\'S
       company: async () => ({ address: company, threshold: companyThreshold, vaultThresholds: [] }),
       ledger: watched, chain: vaultChain,
       verifierKeys: async () => new Map(await Promise.all(
-        ['deposit', 'depositUnshielded', 'forgetUnshielded', 'payout', 'payoutUnshielded', 'retire', 'splitNote']
+        ['deposit', 'depositUnshielded', 'forgetUnshielded', 'payout', 'payoutUnshielded', 'retire', 'setNonceSecret', 'splitNote', 'writeSecretCopy']
           .map(async (c) => [c, await vaultZk.getVerifierKey(c) as unknown as Uint8Array] as const))),
       account: {
         circuits: DEPLOYED_CIRCUITS,
@@ -449,6 +456,9 @@ describe.skipIf(!KEYS_ON_DISK)('A VAULT\'S COMMITTEE CHANGES WITH THE COMPANY\'S
     },
     payout: (vault, tx) => http(`${at}/vaults/${vault}/payout`, { method: 'POST', body: { tx } }),
     payoutPublicly: (vault, tx) => http(`${at}/vaults/${vault}/public-payout`, { method: 'POST', body: { tx } }),
+    startAccountCall: (vault, body) => http(`${at}/vaults/${vault}/start/account`, { method: 'POST', body }),
+    startSecret: (vault, tx) => http(`${at}/vaults/${vault}/start/secret`, { method: 'POST', body: { tx } }),
+    startCopy: (vault, tx, place) => http(`${at}/vaults/${vault}/start/copy`, { method: 'POST', body: { tx, place } }),
   };
   const keys: TemporaryKeys = {
     put: async (v, k) => { temporaryKeys.set(v, k); },
@@ -485,8 +495,14 @@ describe.skipIf(!KEYS_ON_DISK)('A VAULT\'S COMMITTEE CHANGES WITH THE COMPANY\'S
         }, signing.secret),
       },
     });
-    const { vault } = await createCompanyVault({ ...pacing, account: readAccountAddress(company)!, service, builder: builder(), keys });
     const poolDoors = { ...pacing, service, me, myRecordsKey: recordsReaderOf(me.companyKey).publicKey, signers, records };
+    /* Created and started by the founding signer's own press: deployed, handed over, adopted, pooled, its secret set and every copy written. */
+    const created = await createCompanyVault({
+      ...poolDoors, account: readAccountAddress(company)!, builder: builder(), keys,
+      material: { signingSecret: hex(founder.secretKey), blinding: hex(founder.blinding), scope: hex(founder.scope) },
+    });
+    if (created.state !== 'started') throw new Error(`the vault was not started: ${JSON.stringify(created)}`);
+    const { vault } = created;
     await openCompanyVaultPool(poolDoors, vault);
     const authority = await http(`${at}/authority`);
     await http(`${at}/authority/handover`, { method: 'POST', body: { committee: authority.committee } });
@@ -499,25 +515,28 @@ describe.skipIf(!KEYS_ON_DISK)('A VAULT\'S COMMITTEE CHANGES WITH THE COMPANY\'S
     const payeeKeys = L.ZswapSecretKeys.fromSeed(new Uint8Array(randomBytes(32)));
     const payee = paying?.payee
       ?? payeeAddressFromKeys({ coinPublicKey: payeeKeys.coinPublicKey as Hex, encryptionPublicKey: payeeKeys.encryptionPublicKey as Hex }, NET);
-    const facts = [{ payee, token: paying?.token ?? TOKEN, amount }];
+    /* The run pays the token it moves: its root commits to the token the vault hands the account. */
+    const token = paying?.token ?? TOKEN;
+    const facts = [{ payee, token, amount }];
     const run = buildRun([{ epoch: 0, seed: toHex(new Uint8Array(randomBytes(32))) }], { accountId: ACCOUNT_ID, runId: 'run_1', epoch: 0 }, facts, vaultDetails,
       /* A different person on every run, so the account records each as its own payment. */
-      payFor(facts, { people: [`person-${toHex(new Uint8Array(randomBytes(8)))}`] }), 'GBP');
+      payFor(facts, { people: [`person-${toHex(new Uint8Array(randomBytes(8)))}`] }), token);
     const now = BigInt(Math.floor(Date.now() / 1000));
     const window = { from: now - 600n, until: now + 3_600n };
     const c = change(0n, 41);
     const idFrom = (leaves: Hex[], w: { from: bigint; until: bigint }) => toHex(accountCircuits.proposalIdOf(
-      accountCircuits.runPayload(fromHex(rootOfTestLeaves(leaves, leaves.map(() => amount))), BigInt(leaves.length), w.from, w.until, 0n), fromHex(vault), c.salt));
+      accountCircuits.runPayload(fromHex(rootOfTestLeaves(leaves, leaves.map(() => amount), fromHex(token))), BigInt(leaves.length), w.from, w.until, 0n), fromHex(vault), c.salt));
     const id = idFrom(run.tree.leaves, window);
     const staged = { ...founder, assetId: c.asset, changeAmount: c.amount, changeBatchDigest: c.batch, proposalSalt: c.salt };
-    await callAccount('propose', [ZERO_32, fromHex(run.tree.root), run.tree.payees, window.from, window.until, true, fromHex(vault)], staged);
+    /* No approvals beyond the vault's bar: `required` is nothing. */
+    await callAccount('propose', [ZERO_32, fromHex(run.tree.root), run.tree.payees, window.from, window.until, 0n, true, fromHex(vault)], staged);
     await callAccount('approve', [fromHex(id)], founder);
     const paidNow = () => new Set(run.tree.leaves.filter((leaf) =>
       accountLedgerOf(chain.contract(company)).movements.member(accountCircuits.paidMovementOf(fromHex(leaf)))));
     const order = () => {
       const out = assemblePrivatePayments({
         order: {
-          asset: 'TESTUSD', vault, proposal: id, salt: toHex(c.salt), root: run.tree.root,
+          asset: token, form: payee.kind, vault, proposal: id, salt: toHex(c.salt), root: run.tree.root,
           payees: run.tree.payees, opensAt: window.from, closesAt: window.until,
         },
         leaves: run.tree.leaves, window, idFrom, built: run, facts, paid: paidNow(),
@@ -626,7 +645,7 @@ describe.skipIf(!KEYS_ON_DISK)('A VAULT\'S COMMITTEE CHANGES WITH THE COMPANY\'S
     return payPrivatelyFromCompanyVault(payDoors(), { order, payment: order.payments[0]! });
   };
 
-  itPaysOutOfTodaysVault('A SIGNER JOINS: EVERY PAYMENT STOPS UNTIL THE COMMITTEE CHANGES, THE FOUNDER SIGNS IT IN THEIR WALLET, AND PAYMENTS CARRY ON', async () => {
+  it('A SIGNER JOINS: EVERY PAYMENT STOPS UNTIL THE COMMITTEE CHANGES, THE FOUNDING SIGNER SIGNS IT IN THEIR WALLET, AND PAYMENTS CARRY ON', async () => {
     asked = [];
     const { vault } = await aFundedVault();
     await pay(vault, 100n);
@@ -676,7 +695,7 @@ describe.skipIf(!KEYS_ON_DISK)('A VAULT\'S COMMITTEE CHANGES WITH THE COMPANY\'S
     expect(L.verifySignature(committeeKeyOf('ada') as never, updateFor(vault, sortedKeys('ada'), 1, 1n).dataToSign, sig as never)).toBe(false);
   });
 
-  itPaysOutOfTodaysVault('A SIGNER WHO LEAVES LOSES EVERY SEAT: TWO SIGNERS SIGN ON THEIR OWN, AND THE ONE WHO LEFT CAN SIGN NOTHING AFTERWARDS', async () => {
+  it('A SIGNER WHO LEAVES LOSES EVERY SEAT: TWO SIGNERS SIGN ON THEIR OWN, AND THE ONE WHO LEFT CAN SIGN NOTHING AFTERWARDS', async () => {
     const { vault } = await aFundedVault();
     await seat('bo');
     await seat('cy');

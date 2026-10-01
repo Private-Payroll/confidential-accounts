@@ -4,7 +4,7 @@ import { fileURLToPath } from 'node:url';
 import { NETWORKS, NETWORK as THE_NETWORK_THIS_BUILD_IS_ON } from 'midnight-identity/network';
 
 import {
-  SEED_ASSETS, StaticAssetRegistry, assets as productAssets,
+  NIGHT, SEED_ASSETS, StaticAssetRegistry, assets as productAssets,
   TEST_SETTLEMENT_ASSET, TEST_SETTLEMENT_MINTED_ON,
   aTestAssetMayExistOn, aTestAssetMayExistOnAKindOf, testAssetsFor, isATestAsset,
   refuseATestAssetOffItsNetwork,
@@ -147,8 +147,8 @@ describe('§1 which networks a test asset may exist on, asked for every one of t
 
 describe('§2 a registry carrying the row off its network does not build at all', () => {
   const theRow: Asset = {
-    code: TEST_SETTLEMENT_ASSET, name: 'Test Dollar', kind: 'token', decimals: 6,
-    chain: 'midnight', ledger: { shielded: 'ab'.repeat(32), unshielded: null },
+    code: TEST_SETTLEMENT_ASSET, symbol: 'tUSD', name: 'Test Dollar', decimals: 6,
+    ledger: { shielded: TEST_SETTLEMENT_ASSET, unshielded: null },
     enabled: true, sortOrder: 90,
   };
 
@@ -161,8 +161,9 @@ describe('§2 a registry carrying the row off its network does not build at all'
        * into a server's own list, or read out of a record; the seed is one way
        * in and this is the only way to a registry.
        */
+      /* The refusal names the asset by the symbol a person reads, never by its token. */
       expect(() => refuseATestAssetOffItsNetwork([theRow], network), network).toThrow(
-        `${TEST_SETTLEMENT_ASSET} is a test asset`);
+        'tUSD is a test asset');
       expect(() => refuseATestAssetOffItsNetwork([theRow], network), network)
         .toThrow(/pays real people nothing at all/);
       /* RED WHEN the refusal offers a way to permit it, which is the thing that must not exist. */
@@ -210,8 +211,9 @@ describe('§2 a registry carrying the row off its network does not build at all'
     expect(registrySource).not.toMatch(/refuseATestAssetOffItsNetwork\(assets, (?!THE_NETWORK)/);
     /* And an ordinary registry still builds on this build's own network. */
     expect(() => new StaticAssetRegistry([...SEED_ASSETS])).not.toThrow();
-    expect(() => new StaticAssetRegistry([theRow, { ...theRow, code: 'ZZQ' }]))
-      .toThrow(/name the same private token/);
+    /* RED WHEN the constructor stops refusing two rows that are one token. */
+    expect(() => new StaticAssetRegistry([theRow, { ...theRow, symbol: 'ZZQ' }]))
+      .toThrow(/tUSD and ZZQ are the same token/);
   });
 });
 
@@ -375,11 +377,13 @@ describe('§4 what the row says about itself, and what it must not say', () => {
     expect(own).not.toContain(['packages', 'identity', 'lib'].join('/'));
   });
 
-  it('is six decimals, a token, and on midnight, which is the path a real one will take', () => {
+  it('is six decimals, a ledger token, and on midnight, which is the path a real one will take', () => {
     /* RED WHEN the row stops exercising the same parsing and printing path a real stablecoin will. */
     expect(row.decimals).toBe(6);
-    expect(row.kind).toBe('token');
-    expect(row.chain).toBe('midnight');
+    /* RED WHEN the row is identified by anything but its token, or shows anything but its symbol. */
+    expect(row.code).toMatch(/^[0-9a-f]{64}$/);
+    expect(row.ledger.shielded).toBe(row.code);
+    expect(row.symbol).toBe('tUSD');
   });
 
   it('is the only asset a private payment can be made in, and NIGHT is still not one', () => {
@@ -387,6 +391,6 @@ describe('§4 what the row says about itself, and what it must not say', () => {
     expect(productAssets.all().filter(a => privateForm(a).of === 'available').map(a => a.code))
       .toEqual([TEST_SETTLEMENT_ASSET]);
     /* RED WHEN NIGHT is given a private form. There is no private NIGHT on this platform. */
-    expect(productAssets.require('NIGHT').ledger.shielded).toBeNull();
+    expect(productAssets.require(NIGHT).ledger.shielded).toBeNull();
   });
 });

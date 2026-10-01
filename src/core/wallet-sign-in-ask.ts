@@ -22,13 +22,14 @@ import { REQUEST_SCHEMA } from 'midnight-identity/profile/request';
  *
  * ── THE RULE THIS FILE EXISTS TO KEEP ─────────────────────────────────────
  *
- * **NO BROWSER APPLICATION (`src/web-legacy`, `apps/web`, OR THE SHARED CODE IN
+ * **NO BROWSER APPLICATION (`apps/web`, OR THE SHARED CODE IN
  * `packages/web-shared`) IMPORTS `wallet-identity.ts`.** It is not a style
- * preference and it is not enforced by a linter: `no-wasm-in-the-page.test.ts`
- * builds the real application through the real configuration and fails if a
- * `.wasm` asset comes out of it. That is the only kind of check that can see
- * this, because the defect it guards is invisible to every test that runs in
- * Node — including all of the ones that were green while the page was blank.
+ * preference. It was held by a check that built the earlier application through
+ * its real configuration and failed if a `.wasm` asset came out of it, the only
+ * kind of check that can see this, because the defect is invisible to every
+ * test that runs in Node. That check went with that application. For
+ * `apps/web` the walk in `apps/web/src/app-rules.test.ts` reads what the page
+ * reaches instead, which is a weaker claim than a build.
  *
  * ── IT IS THE SHAPE `wallet-unlock.ts` ALREADY HAD ────────────────────────
  *

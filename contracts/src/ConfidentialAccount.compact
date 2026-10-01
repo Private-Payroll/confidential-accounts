@@ -660,6 +660,12 @@ export circuit paymentReceiptTag(): Bytes<32> {
   return pad(32, "midnight-accounts:receipt:pay");
 }
 
+// The tag a vault mints its receipt for a change that moves no money under: a token of its
+// own, so a payment's receipt can never stand for a change and the other way round.
+export circuit changeReceiptTag(): Bytes<32> {
+  return pad(32, "midnight-accounts:receipt:change");
+}
+
 // A company-wide run's leaf details, bound to the vault paying it, so no vault can
 // spend another vault's leaf.
 export circuit companyWideDetailsOf(details: Bytes<32>, vault: Bytes<32>): Bytes<32> {
@@ -1251,6 +1257,67 @@ export circuit recordPaymentFromVault(
   assert(!movements.member(once),
          "a payment is already recorded for this person, kind of pay and month. Pay a real second payment as a numbered extra");
   movements.insert(once);
+
+  return kernel.self();
+}
+
+// Approves one change to a vault that moves no money - its nonce secret, a split of its notes -
+// against an approved run, at the bar a payment from that vault needs, and records nothing as
+// paid. Only a vault this account has adopted, and only with that vault's own receipt for a
+// change in the same transaction; a vault whose own bar is stricter than the company's is never
+// changed on the company's run. The leaf carries no amount. The vault itself refuses a change
+// approved twice: each is bound to the one secret or the one note it changes.
+export circuit approveVaultChange(
+  proposal: Bytes<32>,
+  runVault: Bytes<32>,
+  payingVault: Bytes<32>,
+  root: Bytes<32>,
+  payees: Uint<64>,
+  opensAt: Uint<64>,
+  closesAt: Uint<64>,
+  required: Uint<64>,
+  salt: Bytes<32>,
+  details: Bytes<32>,
+  nonce: Bytes<32>,
+  asset: Bytes<32>,
+  path: Vector<16, SumStep>,
+): ContractAddress {
+  const id = disclose(proposal);
+  const named = disclose(runVault);
+  const vault = disclose(payingVault);
+
+  assert(named != noVault(), "a governance proposal changes no vault");
+
+  // Only a vault this account holds now: a retired vault holds no money and needs no change.
+  assert(vaults.member(vault),
+         "that contract is not a vault this company holds, so no change to it can be approved");
+
+  const companyRun = named == companyWide();
+  if (!companyRun) {
+    assert(vault == named, "that run is for another vault");
+  } else {
+    assert(!(thresholds.member(vault) && threshold < thresholds.lookup(vault)),
+           "that vault needs more approvals than the company's threshold; change it through a run of its own");
+  }
+
+  // The vault's receipt for a change. With no mint behind it the transaction fails.
+  receiveUnshielded(tokenType(changeReceiptTag(), ContractAddress { bytes: vault }), 1);
+
+  assert(
+    disclose(proposalIdOf(
+      runPayload(disclose(root), disclose(payees), disclose(opensAt), disclose(closesAt), disclose(required)),
+      named, disclose(salt)) == id),
+    "that is not this run, or you were not given it");
+
+  assert(blockTimeGte(disclose(opensAt)), "that run has not started yet, so it can change nothing");
+  assert(blockTimeLt(disclose(closesAt)), "the window for this run has closed");
+
+  requireApprovedForVault(id, named);
+
+  // The change must be a leaf of the approved run, carrying no amount.
+  const leaf = payoutLeaf(companyRun ? companyWideDetailsOf(details, vault) : details, nonce);
+  assert(sumPathRoot(leaf, 0, path, asset) == root,
+         "that change is not in the approved run, for that vault");
 
   return kernel.self();
 }

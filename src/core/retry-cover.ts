@@ -17,6 +17,7 @@
  * pay, nor offer people it would refuse, for every round the page can open.
  */
 import type { StateChange } from './ledger.js';
+import type { LedgerForm } from './assets.js';
 import { parseCanonical, unseal, type Hex, type Sealed } from './crypto.js';
 
 /** A round still able to reach the chain: neither withdrawn nor stopped by the company's own policy. */
@@ -40,14 +41,17 @@ export function payrollRoundOf<S extends string>(
   },
   viewingKey: Hex,
 ): {
-  id: string; runId: string; asset: StateChange['asset']; status: S; raisedAt?: string; chainId: Hex; retry?: number[];
+  id: string; runId: string; asset: StateChange['asset']; form?: LedgerForm; status: S; raisedAt?: string;
+  chainId: Hex; retry?: number[];
 } | null {
   if (p.kind !== 'payroll') return null;
-  const payload = parseCanonical<{ runId?: unknown; retry?: unknown; __change: StateChange }>(
+  const payload = parseCanonical<{ runId?: unknown; form?: unknown; retry?: unknown; __change: StateChange }>(
     unseal(p.sealedPayload, viewingKey));
   if (typeof payload.runId !== 'string') return null;
   return {
     id: p.id, runId: payload.runId, asset: payload.__change.asset, status: p.status,
+    /* The form of the leg the proposal is for: one run pays one token in one form. */
+    ...(payload.form === 'shielded' || payload.form === 'unshielded' ? { form: payload.form } : {}),
     ...(p.raisedAt ? { raisedAt: p.raisedAt } : {}), chainId: p.chainId,
     ...(Array.isArray(payload.retry) ? { retry: payload.retry as number[] } : {}),
   };

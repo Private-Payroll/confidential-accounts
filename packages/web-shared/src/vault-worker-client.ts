@@ -6,7 +6,30 @@
 import type { Committee } from '../../../src/midnight/vault-committee.js';
 import type { PrivatePaymentOnTheWire, PrivatePaymentOrderOnTheWire } from '../../../src/midnight/private-payment-wire.js';
 import type { PaymentsFitAnswer } from '../../../src/midnight/vault-notes.js';
-import type { EventOnTheWire, NoteOnTheWire, PaymentConfirmation } from './vault-builder.js';
+import type { EventOnTheWire, NoteOnTheWire, PaymentConfirmation, SecretRunOnTheWire } from './vault-builder.js';
+import type { RoundMadeOf, RoundStanding } from '../../../src/midnight/vault-start.js';
+
+export type { SecretRunOnTheWire } from './vault-builder.js';
+
+/**
+ * **HOW FAR A VAULT'S START HAS GOT**, as the worker read it off the account's
+ * and the vault's ledgers at one block: adopted or not, where the adoption round
+ * stands, and, once the company's record of the secret has been read, where the
+ * first secret run, the secret and each sealed copy stand.
+ */
+export interface StartStandingOnTheWire {
+  readonly adopted: boolean;
+  readonly adoption: RoundStanding & RoundMadeOf;
+  readonly secret?: {
+    readonly set: boolean;
+    readonly another: boolean;
+    readonly rootIsThisRuns: boolean;
+    readonly run: (RoundStanding & RoundMadeOf & { readonly opensAt: string; readonly closesAt: string; readonly inWindow: boolean }) | null;
+    readonly raise?: RoundMadeOf & { readonly proposal: string; readonly opensAt: string; readonly closesAt: string };
+    readonly written: readonly boolean[];
+    readonly started: boolean;
+  };
+}
 import type { GovernedCallOrder, OpenedRound, SignerMaterial } from './governed-call-builder.js';
 
 export interface SigningKeyOnTheWire { readonly tag: string; readonly value: string }
@@ -62,6 +85,26 @@ export type VaultAsk =
   | {
     id: number; network: string; ask: 'payout'; vault: string; account: string; order: OrderOnTheWire;
     payment: PrivatePaymentOnTheWire; note: NoteOnTheWire; events: readonly EventOnTheWire[]; chain: PayoutChainOnTheWire;
+    /** The vault's current nonce secret, opened on this device, for this one payment. */
+    secret: string;
+  }
+  /*
+   * **A VAULT'S START.** The secret, when given, is the one the page opened from
+   * the company's filed record, handed to the worker on the same device so the
+   * first secret run is made with the contracts' own functions; it keeps none.
+   */
+  | {
+    id: number; network: string; ask: 'start-standing'; vault: string; account: string;
+    accountState: string; vaultState: string; secret?: string; readers?: readonly string[]; now: string;
+    window?: { opensAt: string; closesAt: string };
+  }
+  | {
+    id: number; network: string; ask: 'set-nonce-secret'; vault: string; account: string; run: SecretRunOnTheWire;
+    proposal: string; opensAt: string; closesAt: string; chain: PayoutChainOnTheWire;
+  }
+  | {
+    id: number; network: string; ask: 'write-secret-copy'; vault: string; run: SecretRunOnTheWire; place: number;
+    state: string; parameters: string;
   }
   | {
     id: number; network: string; ask: 'payout-publicly'; vault: string; account: string; order: OrderOnTheWire;
@@ -93,6 +136,9 @@ export type VaultAnswer =
   | Answered<'payout', { tx: string; spent: string; change: NoteOnTheWire | null }>
   | Answered<'payout-publicly', { tx: string }>
   | Answered<'governed-call', { tx: string }>
+  | Answered<'start-standing', { standing: StartStandingOnTheWire; run?: SecretRunOnTheWire }>
+  | Answered<'set-nonce-secret', { tx: string }>
+  | Answered<'write-secret-copy', { tx: string }>
   | { id: number; ok: false; error: string };
 
 type Without<T> = T extends unknown ? Omit<T, 'id' | 'network'> : never;
@@ -130,6 +176,8 @@ export interface VaultBuilderClient {
   payout(input: {
     vault: string; account: string; order: OrderOnTheWire; payment: PrivatePaymentOnTheWire;
     note: NoteOnTheWire; events: readonly EventOnTheWire[]; chain: PayoutChainOnTheWire;
+    /** The vault's current nonce secret, opened on this device. */
+    secret: string;
   }): Promise<{ tx: string; spent: string; change: NoteOnTheWire | null }>;
   /** A public payment out of the vault, built and proved: no note, no change. */
   payoutPublicly(input: {
@@ -141,6 +189,24 @@ export interface VaultBuilderClient {
     /** What this device opened from the company's sealed records, which the call is checked against and proved with. */
     opened: OpenedRound;
   }): Promise<{ tx: string }>;
+  /**
+   * Where a vault's start stands, read off both contracts' states at one block
+   * (base64), and with `secret` the first secret run made from it. `now` is
+   * this device's clock in seconds, as digits.
+   */
+  startStanding(input: {
+    vault: string; account: string; accountState: string; vaultState: string;
+    secret?: string; readers?: readonly string[]; now: string;
+    /** A window to make the first secret run's identity with, for a raise about to be built. */
+    window?: { opensAt: string; closesAt: string };
+  }): Promise<{ standing: StartStandingOnTheWire; run?: SecretRunOnTheWire }>;
+  /** The vault's first secret set under its approved run, built against one block's view of both contracts. */
+  setNonceSecret(input: {
+    vault: string; account: string; run: SecretRunOnTheWire; proposal: string; opensAt: string; closesAt: string;
+    chain: PayoutChainOnTheWire;
+  }): Promise<{ tx: string }>;
+  /** One sealed copy of the run's secret written into the vault, by its place in the approved tree. */
+  writeSecretCopy(input: { vault: string; run: SecretRunOnTheWire; place: number; state: string; parameters: string }): Promise<{ tx: string }>;
 }
 
 interface WorkerLike {
@@ -202,6 +268,12 @@ export function vaultBuilderOver(worker: WorkerLike, network: string): VaultBuil
     },
     payoutPublicly: async (input) => ({ tx: (await ask({ ask: 'payout-publicly', ...input })).tx }),
     governedCall: async (input) => ({ tx: (await ask({ ask: 'governed-call', ...input })).tx }),
+    startStanding: async (input) => {
+      const a = await ask({ ask: 'start-standing', ...input });
+      return { standing: a.standing, ...(a.run === undefined ? {} : { run: a.run }) };
+    },
+    setNonceSecret: async (input) => ({ tx: (await ask({ ask: 'set-nonce-secret', ...input })).tx }),
+    writeSecretCopy: async (input) => ({ tx: (await ask({ ask: 'write-secret-copy', ...input })).tx }),
   };
 }
 

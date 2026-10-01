@@ -52,17 +52,17 @@
  * believed; nothing here believes one.
  *
  * ------------------------------------------------------------------------
- * WHY THE DERIVATIONS ARE COPIED FROM THE GENERATED CODE RATHER THAN THE
- * DOCUMENTED `evolveNonce`, and this is the whole reason `V-47` exists: they are
- * different functions with almost the same name.
+ * HOW A NEW COIN IS NAMED: WITH THE VAULT'S NONCE SECRET.
  *
- *     evolveNonce   hash([ "midnight:kernel:nonce_evolve",   index, nonce ])
- *     the change    hash([ "midnight:kernel:nonce_evolve/2",        nonce ])
- *
- * A circuit built on the first compiled, read plausibly, and produced the wrong
- * value. **So these derivations are trustworthy only because a test SPENDS what
- * they reconstruct** — see `contracts/test/vault-recovery.test.ts`. A recovery
- * path nobody has run does not exist.
+ * Every coin a payment or a split makes takes its nonce from a tag, the vault's
+ * nonce secret current at the time, and the nullifier of the note spent. So
+ * the replay names a payee coin, a change, a split's piece and its remainder
+ * only when it is given the vault's secrets,
+ * and with a rotated vault it proposes one candidate per secret: the chain
+ * holds the one the vault made. **These derivations are trustworthy only
+ * because a test SPENDS what they reconstruct** -- see
+ * `contracts/test/vault-recovery.test.ts`. A recovery path nobody has run does
+ * not exist.
  */
 import {
   transientHash, degradeToTransient, upgradeFromTransient,
@@ -70,27 +70,22 @@ import {
 } from '@midnight-ntwrk/compact-runtime';
 import { toHex, fromHex, type Hex } from '../core/crypto.js';
 import type { VaultCoin } from './vault-coins.js';
+import {
+  NonceSecretNeeded, nonceCircuitsFrom, secretsOfTheVault, spentNullifierOf, madeCoinNonce, splitPieceAmountOf,
+  type VaultNonceCircuits, type VaultNonceSecrets,
+} from './vault-coin-nonces.js';
 
 /**
- * THREE DERIVATIONS, ALL BUT ONE UNDOCUMENTED, AND NO TWO OF THEM THE SAME.
- * Transcribed from the compiled contract, because the documentation describes
- * only the first and it is the one that is never used here:
+ * **THE LEDGER KERNEL'S OWN NONCE EVOLUTION, WHICH THE VAULT NO LONGER USES FOR
+ * ANY COIN IT MAKES.** Transcribed from the compiled kernel:
  *
- *     evolveNonce(i, n)   hash([ "midnight:kernel:nonce_evolve",   i, n ])
  *     the SENT coin       hash([ "midnight:kernel:nonce_evolve",      n ])
  *     the CHANGE coin     hash([ "midnight:kernel:nonce_evolve/2",    n ])
  *
- * The middle one shares the documented domain and drops the index; the last
- * uses a domain that appears in no document we have. Any of the three read as
- * "the obvious one" from a distance, which is exactly how `V-47` happened.
- *
- * **"SENT" RATHER THAN "THE PAYEE'S", SINCE `S6d`.** `sendShielded` does not
- * know or care who the recipient is: `payout` sends to a person and `splitNote`
- * sends to `kernel.self()`, and both take the same derivation for the coin that
- * leaves and the same one for the coin that stays. Calling the first "the
- * payee's" was true of the only caller that existed when it was written and is
- * not a property of the function. `contracts/test/vault-recovery.test.ts` pins
- * both halves of a split against the coins the call actually produced.
+ * The vault now takes every new coin's nonce from its own nonce secret and the
+ * spent note's nullifier, so a coin worked out this
+ * way is not a coin the vault made. Nothing in this file names a coin with
+ * these; they remain only so a check can show that a coin was NOT made this way.
  */
 const DOMAIN = (text: string) => convertBytesToUint(
   52435875175126190479447740508185965837690552500527637822603658699938581184512n,
@@ -104,79 +99,88 @@ const SENT_DOMAIN = () => DOMAIN('midnight:kernel:nonce_evolve');
 
 const FIELD_PAIR = new CompactTypeVector(2, CompactTypeField);
 
-/**
- * The nonce the coin that STAYS carries — a payout's change, a split's
- * remainder — given the nonce it was sent from.
- *
- * `vault-notes.ts` needs this rather than the coin itself in one place: the
- * pool's entry for a payment's change is written from the spent note's nonce.
- * For reading back a call that already happened, **prefer the coin the call
- * itself produced** (`changeCoinOf` in `vault-coins.ts`, which reads the
- * transaction's own Zswap local state). This is for when that reading was lost,
- * which is what a crash in `C199`'s window destroys.
- */
+/** The kernel's change evolution of a nonce. Not how the vault makes any coin: see above. */
 export const changeNonceOf = (spentNonce: Uint8Array): Uint8Array =>
   upgradeFromTransient(transientHash(
     FIELD_PAIR, [CHANGE_DOMAIN(), degradeToTransient(spentNonce)]));
 
-/**
- * **THE NOTE THAT STAYS AFTER `amount` LEAVES `spent`, OR NOTHING WHEN THE
- * NOTE IS SPENT EXACTLY.** `payout` inserts a change coin only
- * `if (result.change.is_some)`, so a note proposed for an exact spend would be
- * one the chain does not have -- the divergence that makes a pool unspendable.
- *
- * ONE function, because three places in `replayVault` need it -- a payout, a
- * split's remainder and a journalled attempt -- and three spellings of
- * `value - amount` beside three spellings of the nonce derivation is a second
- * implementation of the rule the money depends on, which is the failure this
- * project has paid for most often.
- */
-export const changeNoteOf = (spent: VaultCoin, amount: bigint): VaultCoin | undefined =>
-  changeNotesOf(spent, [amount])[0];
-
-/**
- * **EVERY NOTE THAT COULD STAY AFTER ONE OF `amounts` LEAVES `spent`**, in the
- * order given, leaving out the amounts that would spend it exactly or more.
- * The same rule as `changeNoteOf`, with the nonce worked out once for all of
- * them: it depends only on the spent note.
- */
-export const changeNotesOf = (spent: VaultCoin, amounts: readonly bigint[]): VaultCoin[] => {
-  const leaving = amounts.filter((amount) => amount < spent.value);
-  if (leaving.length === 0) return [];
-  const nonce = toHex(changeNonceOf(fromHex(spent.nonce)));
-  return leaving.map((amount) => ({ nonce, token: spent.token, value: spent.value - amount }));
-};
-
-/**
- * The nonce the coin that LEAVES carries — a payout's payee coin, a split's
- * requested piece — given the nonce it was sent from.
- *
- * Factored out of `paidCoinOf` by `S6d` because a split needs the same
- * derivation with a different token and value, and two copies of a rule the
- * money depends on is `M-104`.
- */
+/** The kernel's sent-coin evolution of a nonce. Not how the vault makes any coin: see above. */
 export const sentNonceOf = (spentNonce: Uint8Array): Uint8Array =>
   upgradeFromTransient(transientHash(
     FIELD_PAIR, [SENT_DOMAIN(), degradeToTransient(spentNonce)]));
 
 /**
- * The coin a PAYEE received, derived from the coin it was paid out of.
+ * **WHAT NAMES A COIN THE VAULT MADE FROM A NOTE IT SPENT**: the vault's own
+ * address (part of the spent note's nullifier), one of its nonce secrets, and
+ * the contract's pure circuits that use them.
+ */
+export interface MadeUnder {
+  readonly circuits: VaultNonceCircuits;
+  readonly vault: Hex;
+  /** The nonce secret the vault held when the call was made. */
+  readonly secret: Hex;
+}
+
+/**
+ * **THE NOTE THAT STAYS AFTER `amount` LEAVES `spent`, OR NOTHING WHEN THE
+ * NOTE IS SPENT EXACTLY.** `payout` keeps a change coin only when there is
+ * change, so a note proposed for an exact spend would be one the chain does not
+ * have -- the divergence that makes a pool unspendable.
+ *
+ * ONE function, because several places need it -- a payout, a journalled
+ * attempt, a walk of the company's records -- and several spellings of
+ * `value - amount` beside several spellings of the nonce derivation is a second
+ * implementation of the rule the money depends on.
+ */
+export const changeNoteOf = (spent: VaultCoin, amount: bigint, under: MadeUnder): VaultCoin | undefined =>
+  changeNotesOf(spent, [amount], under)[0];
+
+/**
+ * **EVERY NOTE THAT COULD STAY AFTER ONE OF `amounts` LEAVES `spent`**, in the
+ * order given, leaving out the amounts that would spend it exactly or more.
+ * The same rule as `changeNoteOf`, with the nonce worked out once for all of
+ * them: it depends only on the spent note and the secret.
+ */
+export const changeNotesOf = (spent: VaultCoin, amounts: readonly bigint[], under: MadeUnder): VaultCoin[] => {
+  const leaving = amounts.filter((amount) => amount < spent.value);
+  if (leaving.length === 0) return [];
+  const nullifier = spentNullifierOf(under.circuits, under.vault, spent);
+  const nonce = madeCoinNonce(under.circuits, 'change', under.secret, nullifier);
+  return leaving.map((amount) => ({ nonce, token: spent.token, value: spent.value - amount }));
+};
+
+/**
+ * **THE TWO NOTES A SPLIT OF `amount` OUT OF `spent` KEPT**: the piece asked
+ * for, then the remainder. The vault refuses a split that leaves nothing, so
+ * this does too.
+ */
+export const splitPiecesOf = (spent: VaultCoin, amount: bigint, under: MadeUnder): [VaultCoin, VaultCoin] => {
+  if (amount <= 0n || amount >= spent.value) {
+    throw new Error(
+      `a split of ${amount} out of a note holding ${spent.value} is one the vault refuses, so it names no coin`);
+  }
+  const nullifier = spentNullifierOf(under.circuits, under.vault, spent);
+  return [
+    { nonce: madeCoinNonce(under.circuits, 'split', under.secret, nullifier), token: spent.token, value: amount },
+    { nonce: madeCoinNonce(under.circuits, 'rest', under.secret, nullifier), token: spent.token, value: spent.value - amount },
+  ];
+};
+
+/**
+ * The coin a PAYEE received, worked out from the note it was paid out of.
  *
  * **This is what makes a lost payslip survivable.** A shielded payment tells
- * the payee nothing unless the coin ciphertext reached them — so if that
- * delivery is lost, or was built with the wrong encryption key, the payer can
- * derive the coin again from their own history rather than the money being
- * gone. See `B4` and `C7` in `docs/how-money-can-be-lost.md`.
+ * the payee nothing unless the coin's details reached them, so if that
+ * delivery is lost the payer can work the coin out again from their own
+ * history, and mark the payment as paid, rather than the money being gone.
  *
- * The `spentNonce` is the note the payment was made out of, BEFORE it was paid.
+ * `spent` is the note the payment was made out of, BEFORE it was paid.
  */
-export const paidCoinOf = (
-  spentNonce: Hex, token: Hex, amount: bigint,
-): VaultCoin => ({
-  nonce: toHex(sentNonceOf(fromHex(spentNonce))),
-  token,
-  value: amount,
-});
+export const paidCoinOf = (spent: VaultCoin, amount: bigint, under: MadeUnder): VaultCoin => {
+  const { token } = spent;
+  const nonce = madeCoinNonce(under.circuits, 'payee', under.secret, spentNullifierOf(under.circuits, under.vault, spent));
+  return { nonce, token, value: amount };
+};
 
 /* ------------------------------------------------------------------ *
  * the pool
@@ -308,6 +312,21 @@ export interface PoolRecovery {
    * payer needs to re-serve somebody who lost their payslip (`B4`).
    */
   paid: VaultCoin[];
+  /**
+   * **PAYMENTS WHOSE PAYEE COIN THE CHAIN COULD NOT TIE TO ONE SECRET.** A vault
+   * that has held several secrets made each payee coin under one of them; the
+   * one is known when the payment's change is on chain, or was spent by a later
+   * event, under it. A payment that spent its note exactly, under a rotated
+   * vault, leaves nothing the note set can settle, so every candidate is listed,
+   * one per secret, and exactly one of them is the coin.
+   */
+  paidUnsettled?: Array<{ event: number; candidates: VaultCoin[] }>;
+  /**
+   * **EVENTS WHOSE NEW COINS WERE NOT WORKED OUT, BECAUSE NO NONCE SECRET WAS
+   * GIVEN.** The money those coins hold is on chain and is reported as
+   * unexplained; giving the vault's nonce secrets names it.
+   */
+  unnamedWithoutTheSecret?: number[];
 }
 
 export interface PoolRecoveryInput {
@@ -325,8 +344,21 @@ export interface PoolRecoveryInput {
    * property and it is why a payroll does not stall behind one stuck payment.
    */
   history: readonly VaultEvent[];
-  /** The vault contract's `heldCommitmentOf` and `noteBlindingOf`. */
-  circuits: VaultNoteCircuits;
+  /**
+   * The vault contract's `heldCommitmentOf` and `noteBlindingOf`, and, to name
+   * the coins payments and splits made, the nonce circuits listed beside
+   * `VaultNonceCircuits`: the generated `pureCircuits` carry all of them.
+   */
+  circuits: VaultNoteCircuits & Partial<VaultNonceCircuits>;
+  /**
+   * **THE VAULT'S NONCE SECRETS, WHICH EVERY COIN A PAYMENT OR A SPLIT MADE IS
+   * NAMED WITH.** Every secret the company's record holds, oldest first, and the
+   * commitment the vault holds now; refused by `NonceSecretNotTheVaults` when
+   * none of them is the vault's. Without them only whole coins the history
+   * carries are proposed, and every event that made a new coin is listed in
+   * `unnamedWithoutTheSecret`.
+   */
+  nonceSecrets?: VaultNonceSecrets;
   /**
    * Where the chain filed each note, by commitment, if the caller has read it.
    *
@@ -353,6 +385,22 @@ export interface PoolRecoveryInput {
 export const replayVault = (input: PoolRecoveryInput): PoolRecovery => {
   const { vault, circuits } = input;
   const commitmentOf = (coin: VaultCoin): Hex => commitmentForNote(circuits, vault, coin);
+
+  /*
+   * **THE SECRETS ARE CHECKED BEFORE ANY EVENT IS READ.** A record none of whose
+   * secrets is the vault's own is refused here, by name, rather than naming
+   * nothing and reporting the vault's money as unexplained.
+   */
+  const naming = input.nonceSecrets === undefined ? undefined : (() => {
+    const nc = nonceCircuitsFrom(circuits);
+    return { circuits: nc, secrets: secretsOfTheVault(nc, vault, input.nonceSecrets) };
+  })();
+  const under = (secret: Hex): MadeUnder => ({ circuits: naming!.circuits, vault, secret });
+  const unnamedWithoutTheSecret: number[] = [];
+  /** Each payout's payee coin and change, one of each per secret, in the secrets' order. */
+  const payouts: Array<{ event: number; payee: VaultCoin[]; change: Array<VaultCoin | undefined> }> = [];
+  /** Every nonce an event spent, so a change spent by a later event settles which secret made it. */
+  const spentByAnEvent = new Set<Hex>();
 
   /**
    * Every note the history says has EVER existed, by commitment.
@@ -403,6 +451,7 @@ export const replayVault = (input: PoolRecoveryInput): PoolRecovery => {
         'The history is wrong, and no note derived past this point is real.');
     }
     live.delete(nonce);
+    spentByAnEvent.add(nonce);
     return note;
   };
 
@@ -422,13 +471,16 @@ export const replayVault = (input: PoolRecoveryInput): PoolRecovery => {
 
     if (e.kind === 'payout') {
       const note = spend(e.spent, e.amount, i, 'pays');
-      paid.push(paidCoinOf(e.spent, note.token, e.amount));
+      if (!naming) { unnamedWithoutTheSecret.push(i); return; }
       /*
-       * NO CHANGE COIN WHEN THE NOTE IS SPENT EXACTLY -- `changeNoteOf` answers
-       * nothing, and nothing is proposed. See its note.
+       * ONE CANDIDATE PER SECRET, AND THE CHAIN CHOOSES. A candidate made under a
+       * secret the vault did not hold at the time has a commitment the chain
+       * does not hold. NO CHANGE COIN WHEN THE NOTE IS SPENT EXACTLY --
+       * `changeNoteOf` answers nothing, and nothing is proposed.
        */
-      const kept = changeNoteOf(note, e.amount);
-      if (kept) remember(kept);
+      const change = naming.secrets.map((s) => changeNoteOf(note, e.amount, under(s)));
+      for (const kept of change) if (kept) remember(kept);
+      payouts.push({ event: i, payee: naming.secrets.map((s) => paidCoinOf(note, e.amount, under(s))), change });
       return;
     }
 
@@ -452,8 +504,12 @@ export const replayVault = (input: PoolRecoveryInput): PoolRecovery => {
           `holds ${e.spent.value}. The contract refuses that, so this attempt cannot have landed ` +
           'and the journal line is wrong. Nothing is derived past this point.');
       }
-      const kept = changeNoteOf(e.spent, e.amount);
-      if (kept) propose(kept);
+      if (e.amount === e.spent.value) return;
+      if (!naming) { unnamedWithoutTheSecret.push(i); return; }
+      for (const s of naming.secrets) {
+        const kept = changeNoteOf(e.spent, e.amount, under(s));
+        if (kept) propose(kept);
+      }
       return;
     }
 
@@ -469,11 +525,12 @@ export const replayVault = (input: PoolRecoveryInput): PoolRecovery => {
         `event ${i} splits ${e.amount} out of a note holding ${note.value}. A split has to ` +
         'leave something behind, so the contract refuses this and it cannot have happened.');
     }
-    remember({
-      nonce: toHex(sentNonceOf(fromHex(e.spent))), token: note.token, value: e.amount,
-    });
-    /* The contract asserted `amount < value` just above, so the remainder is never absent. */
-    remember(changeNoteOf(note, e.amount)!);
+    if (!naming) { unnamedWithoutTheSecret.push(i); return; }
+    for (const s of naming.secrets) {
+      const [piece, rest] = splitPiecesOf(note, e.amount, under(s));
+      remember(piece);
+      remember(rest);
+    }
   });
 
   /* What the pool believed, by commitment, so "did the pool know" is a lookup. */
@@ -502,7 +559,20 @@ export const replayVault = (input: PoolRecoveryInput): PoolRecovery => {
   const explained = new Set<Hex>(held.map((n) => n.commitment));
   const unexplained = input.chain.filter((c) => !explained.has(c));
 
-  return { held, recovered, stale, unexplained, paid };
+  /*
+   * **WHICH SECRET MADE EACH PAYEE COIN.** With one secret, that one. With
+   * several, the one whose change the chain holds or a later event spent; with
+   * none of those, every candidate is reported and none is chosen.
+   */
+  const paidUnsettled: Array<{ event: number; candidates: VaultCoin[] }> = [];
+  for (const p of payouts) {
+    const settledBy = p.payee.length === 1 ? [0] : p.change.flatMap((c, j) =>
+      c !== undefined && (onChain.has(commitmentOf(c)) || spentByAnEvent.has(c.nonce)) ? [j] : []);
+    if (settledBy.length === 1) paid.push(p.payee[settledBy[0]!]!);
+    else paidUnsettled.push({ event: p.event, candidates: p.payee });
+  }
+
+  return { held, recovered, stale, unexplained, paid, paidUnsettled, unnamedWithoutTheSecret };
 };
 
 /**
@@ -695,8 +765,20 @@ export const reconcileVaultPool = (input: {
    * decides which of them the vault still holds.
    */
   named?: readonly VaultCoin[];
-  circuits: VaultNoteCircuits;
+  circuits: VaultNoteCircuits & Partial<VaultNonceCircuits>;
   indexOf?: (commitment: Hex) => bigint | undefined;
+  /**
+   * The vault's nonce secrets: what names the change a journalled payment left
+   * and the two notes a split kept. See `replayVault`.
+   */
+  nonceSecrets?: VaultNonceSecrets;
+  /**
+   * **THE VAULT'S SPLIT JOURNAL AS THE CHAIN HOLDS IT**, masked amount by the
+   * spent note's nullifier, hex. Every split writes one entry, so with the
+   * nonce secrets every note any record names that was later split names both
+   * of its pieces, with the piece's amount, and no record of ours is needed.
+   */
+  splitJournal?: ReadonlyMap<Hex, Hex>;
 }): ReconciledPool => {
   const named = input.named ?? [];
   const journalled = (input.attempted?.deposits.length ?? 0) + (input.attempted?.payments.length ?? 0);
@@ -786,6 +868,59 @@ export const reconcileVaultPool = (input: {
     });
   }
   /*
+   * **THE PIECES OF EVERY SPLIT, FROM THE VAULT'S OWN SPLIT JOURNAL.** A split
+   * that landed with its pool write lost leaves two notes no record names, but
+   * the journal holds the piece's amount under the spent note's nullifier, and
+   * the secret lifts its mask. Every note any record names, and every change a
+   * journalled payment would have left, is looked up; each piece found is looked
+   * up in turn, since a piece can itself have been split. A piece is proposed
+   * like any filed note, and the chain decides.
+   */
+  const journal = input.splitJournal;
+  if (journal !== undefined && journal.size > 0 && input.nonceSecrets === undefined) {
+    throw new NonceSecretNeeded(
+      `the vault's split journal holds ${journal.size} split(s), and their pieces can be named only with the vault's nonce secret.`);
+  }
+  if (journal !== undefined && journal.size > 0 && input.nonceSecrets !== undefined) {
+    const nc = nonceCircuitsFrom(input.circuits);
+    const secrets = secretsOfTheVault(nc, input.vault, input.nonceSecrets);
+    const byNullifier = new Map<Hex, Hex>([...journal].map(([k, v]) => [k.toLowerCase().replace(/^0x/u, ''), v.toLowerCase().replace(/^0x/u, '')]));
+    const looked = new Set<Hex>();
+    const toLook: VaultCoin[] = [
+      ...everFiled.values(),
+      ...attempted.payments.map((a) => a.spent),
+      ...attempted.payments.flatMap((a) => secrets.flatMap((secret) => {
+        if (a.amount <= 0n || a.amount >= a.spent.value) return [];
+        const kept = changeNoteOf(a.spent, a.amount, { circuits: nc, vault: input.vault, secret });
+        return kept ? [kept] : [];
+      })),
+    ];
+    while (toLook.length > 0) {
+      const note = toLook.pop()!;
+      const key = `${note.nonce}:${note.token}:${note.value}`;
+      if (looked.has(key)) continue;
+      looked.add(key);
+      const nullifier = spentNullifierOf(nc, input.vault, note);
+      const masked = byNullifier.get(nullifier);
+      if (masked === undefined) continue;
+      for (const secret of secrets) {
+        const amount = splitPieceAmountOf(nc, secret, nullifier, masked, note.value);
+        if (amount === undefined) continue;
+        for (const piece of splitPiecesOf(note, amount, { circuits: nc, vault: input.vault, secret })) {
+          const filed = everFiled.get(piece.nonce);
+          const same = filed !== undefined && filed.token === piece.token && filed.value === piece.value;
+          if (!same && (filed === undefined
+            || (onChain.has(commitmentForNote(input.circuits, input.vault, piece))
+              && !onChain.has(commitmentForNote(input.circuits, input.vault, filed))))) {
+            everFiled.set(piece.nonce, piece);
+          }
+          toLook.push(piece);
+        }
+      }
+    }
+  }
+
+  /*
    * One event per distinct attempt. The same payment journalled twice -- a door
    * run again after a stop -- is one proposal, not a contradiction; two attempts
    * of different amounts against one note are two proposals, and `replayVault`
@@ -820,6 +955,7 @@ export const reconcileVaultPool = (input: {
     ],
     circuits: input.circuits,
     ...(input.indexOf === undefined ? {} : { indexOf: input.indexOf }),
+    ...(input.nonceSecrets === undefined ? {} : { nonceSecrets: input.nonceSecrets }),
   });
   return { ...rebuilt, settled };
 };
@@ -833,4 +969,7 @@ export const reconcileVaultPool = (input: {
 export const describeRecovery = (r: PoolRecovery): string =>
   `${r.held.length} note(s) held, ${r.recovered.length} recovered that the pool did not know ` +
   `about, ${r.stale.length} the pool held that the chain does not, ` +
-  `${r.unexplained.length} commitment(s) nothing in the history explains`;
+  `${r.unexplained.length} commitment(s) nothing in the history explains` +
+  ((r.unnamedWithoutTheSecret?.length ?? 0) > 0
+    ? `, and ${r.unnamedWithoutTheSecret!.length} event(s) whose new coins were not named because the vault's nonce secret was not given`
+    : '');

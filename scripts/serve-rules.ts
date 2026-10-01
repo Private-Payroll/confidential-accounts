@@ -24,12 +24,9 @@
  *
  * -- ONE APPLICATION ORIGIN, AND WHICH APPLICATION IS ON IT ----------------
  *
- * Two applications can be served on the application's origin: the one in
- * `src/web-legacy`, and the new one being built in `apps/web`. One is served at a
- * time, on the same origin, so the server and the wallet see the same address
- * whichever it is and neither needs to know there are two. Which one is a
- * setting read here, never an argument, and when nothing sets it the
- * application in `src/web-legacy` is served exactly as before.
+ * The application in `apps/web` is served on the application's origin. Which
+ * application is a setting read here, never an argument, so a later one can be
+ * added beside it; when nothing sets it, `apps/web` is served.
  */
 
 /**
@@ -67,12 +64,10 @@ export const PAGE_SETTING = 'PAYROLL_PAGE';
 
 /**
  * The applications that can be served on `APP_ORIGIN`, and the arguments that
- * point the page server at each one's own configuration. `src/web-legacy`'s is the
- * default configuration file, so it needs none.
+ * point the page server at each one's own configuration.
  */
 export const APPLICATION_PAGES = {
-  legacy: { label: 'the payroll application', config: [] as readonly string[] },
-  web: { label: 'the new payroll application', config: ['--config', 'apps/web/vite.config.ts'] as readonly string[] },
+  web: { label: 'the payroll application', config: ['--config', 'apps/web/vite.config.ts'] as readonly string[] },
 } as const;
 
 export type ApplicationPage = keyof typeof APPLICATION_PAGES;
@@ -80,18 +75,17 @@ export type ApplicationPage = keyof typeof APPLICATION_PAGES;
 /**
  * Which application to serve, read from the setting, or why it cannot be.
  *
- * **UNSET MEANS `src/web-legacy`**, so every command that does not set it serves what
- * it always served. A value that names neither application is refused rather
- * than taken as the default, because a person who set it meant something.
+ * **UNSET MEANS `apps/web`.** A value that names no application is refused
+ * rather than taken as the default, because a person who set it meant something.
  */
 export function applicationPageFrom(settings: Record<string, string | undefined>):
   { page: ApplicationPage } | { refusal: string } {
   const value = settings[PAGE_SETTING];
-  if (value === undefined || value === '') return { page: 'legacy' };
+  if (value === undefined || value === '') return { page: 'web' };
   if (Object.hasOwn(APPLICATION_PAGES, value)) return { page: value as ApplicationPage };
   return {
     refusal: `${PAGE_SETTING} is "${value}", which names no application. It is one of `
-      + `${Object.keys(APPLICATION_PAGES).join(', ')}, or unset for the application in src/web-legacy`,
+      + `${Object.keys(APPLICATION_PAGES).join(', ')}, or unset for the application in apps/web`,
   };
 }
 
@@ -148,7 +142,7 @@ export function servableOrigin(setting: string, value: string | undefined):
  * for the server, once for the page - so they must agree, or the page opens a
  * wallet where nothing is listening.
  */
-export function pageStartsFor(settings: Record<string, string | undefined>, page: ApplicationPage = 'legacy'):
+export function pageStartsFor(settings: Record<string, string | undefined>, page: ApplicationPage = 'web'):
   { starts: PageStart[] } | { refusals: string[] } {
   const refusals: string[] = [];
   const app = servableOrigin('APP_ORIGIN', settings.APP_ORIGIN);

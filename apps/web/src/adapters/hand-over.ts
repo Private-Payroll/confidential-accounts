@@ -15,8 +15,7 @@ import { Fault, FAULT } from '../faults.js';
 import { giveTheVaultKeys } from './vault-keys.js';
 
 /*
- * HANDING A COMPANY TO ITS COMMITTEE, OVER THE SAME SHARED STEPS
- * `src/web-legacy/MaintenancePanel.tsx` TAKES, IN ITS ORDER.
+ * HANDING A COMPANY TO ITS COMMITTEE, OVER THE SHARED STEPS, IN THEIR ORDER.
  *
  * 1. EVERY SIGNER GIVES THEIR VAULT KEYS. The committee is one key per
  *    signer, each from that signer's own account, written into their own

@@ -29,6 +29,7 @@ import { FileStore } from './store-file.js';
 import { toHex } from './crypto.js';
 import type { RosterEmployee } from './types.js';
 
+import { TEST_TOKEN } from '../testing/assets.js';
 const PAYROLL_VAULT = toHex(new Uint8Array(32).fill(0xa1));
 const NOW = Math.floor(Date.now() / 1000);
 const OPENS = BigInt(NOW - 3_600);
@@ -49,7 +50,7 @@ async function aCompany(people = 3) {
   const hired: RosterEmployee[] = [];
   for (let i = 0; i < people; i++) {
     hired.push(payroll.hireDirect(account, {
-      name: `Payee ${i}`, email: `p${i}@a.co`, title: 'Eng', asset: 'GBP', baseAmount: 100_00n,
+      name: `Payee ${i}`, email: `p${i}@a.co`, title: 'Eng', asset: TEST_TOKEN, baseAmount: 100_00n,
     }, viewingKey).employee);
   }
   const by = created.secrets[0]!.signerId;
@@ -195,7 +196,7 @@ describe('a numbered extra: a real second payment for a month', () => {
   it('is refused without a confirmed repeat, and for somebody the run does not pay', async () => {
     const c = await aCompany(2);
     /* RED WHEN an extra is accepted on a run that repeats nothing: it is only ever a second payment. */
-    await expect(c.payroll.createRun(c.account, SEPTEMBER, [{ name: 'Payee 0', asset: 'GBP', amount: 100n }],
+    await expect(c.payroll.createRun(c.account, SEPTEMBER, [{ name: 'Payee 0', asset: TEST_TOKEN, amount: 100n }],
       c.viewingKey, undefined, undefined, { runIds: [], reason: 'x', by: 'Ada', extra: ['emp_nobody'] }))
       .rejects.toThrow(/numbered extra is a second payment for 2026-09, and this run repeats no run/);
     const first = await c.payroll.createRunFromRoster(c.account, SEPTEMBER, c.viewingKey);

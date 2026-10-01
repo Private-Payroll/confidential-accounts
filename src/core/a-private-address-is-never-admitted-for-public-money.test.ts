@@ -9,11 +9,11 @@ import { PayrollService, RecordingInviteDelivery } from './payroll.js';
 import { SimulatedLedger } from './ledger.js';
 import { SimulatedProofSystem } from './ledger.js';
 import { MidnightCommitments } from '../midnight/commitments.js';
-import { registryWithTestPrivateForms, testPrivateToken } from '../testing/assets.js';
+import { registryWithTestPrivateForms, TEST_TOKEN } from '../testing/assets.js';
 import { payeeFor, unshieldedPayeeFor } from '../testing/payees.js';
 import { sealHandover } from './invite-handover.js';
 import { FileStore } from './store-file.js';
-import { StaticAssetRegistry, type AssetRegistry } from './assets.js';
+import { NIGHT, TEST_SETTLEMENT_ASSET, type AssetRegistry } from './assets.js';
 import { newWrappingKeypair } from './crypto.js';
 import type { User } from './types.js';
 
@@ -30,16 +30,12 @@ const NETWORK = 'undeployed' as const;
 const PRIVATE = payeeFor('d1'.repeat(32), NETWORK);
 const PUBLIC = unshieldedPayeeFor('e5'.repeat(32), NETWORK);
 
-const registryWith = (nightBothWays = false): AssetRegistry => {
-  const base = registryWithTestPrivateForms();
-  if (!nightBothWays) return base;
-  return new StaticAssetRegistry(base.all().map(a => (a.code === 'NIGHT'
-    ? { ...a, ledger: { ...a.ledger, shielded: testPrivateToken('NIGHT') } } : a)));
-};
+/* The product's rows, and a fixture token with both forms, which no seed row has. */
+const registryWith = (): AssetRegistry => registryWithTestPrivateForms();
 
-const aCompany = async (nightBothWays = false) => {
+const aCompany = async () => {
   const store = new FileStore(join(mkdtempSync(join(tmpdir(), 'mn-s197-')), 'db.json'));
-  const registry = registryWith(nightBothWays);
+  const registry = registryWith();
   const invites = new RecordingInviteDelivery();
   const accounts = new AccountService(store, new SimulatedLedger(MidnightCommitments), MidnightCommitments, registry);
   const payroll = new PayrollService(store, accounts, new SimulatedProofSystem(), registry, NETWORK, invites);
@@ -76,7 +72,7 @@ const inviteAndHandOver = (c: Awaited<ReturnType<typeof aCompany>>, asset: strin
 describe('an address of a kind the money has no form for is never admitted', () => {
   it('NIGHT, A PRIVATE ADDRESS: REFUSED AND PUT BACK, AND A PUBLIC ONE THEN ADMITTED', async () => {
     const c = await aCompany();
-    const { handOver, robin } = inviteAndHandOver(c, 'NIGHT');
+    const { handOver, robin } = inviteAndHandOver(c, NIGHT);
     /* RED WHEN admit takes a private address for NIGHT: it is written to the roster and refused only at the raise. */
     expect(handOver(PRIVATE.bech32)).toThrow(/^not admitted\. NIGHT can only be paid to a public address, and the address that arrived is a private one\./u);
     expect(robin().status).toBe('pending');
@@ -88,9 +84,9 @@ describe('an address of a kind the money has no form for is never admitted', () 
 
   it('MONEY WITH NO PUBLIC FORM, A PUBLIC ADDRESS: REFUSED THE SAME WAY', async () => {
     const c = await aCompany();
-    const { handOver, robin } = inviteAndHandOver(c, 'USDC');
-    /* RED WHEN admit takes a public address for money that can only be paid privately. */
-    expect(handOver(PUBLIC.bech32)).toThrow(/^not admitted\. USDC can only be paid to a private address, and the address that arrived is a public one\./u);
+    const { handOver, robin } = inviteAndHandOver(c, TEST_SETTLEMENT_ASSET);
+    /* RED WHEN admit takes a public address for money that can only be paid privately, or names it by its token. */
+    expect(handOver(PUBLIC.bech32)).toThrow(/^not admitted\. tUSD can only be paid to a private address, and the address that arrived is a public one\./u);
     expect(robin().status).toBe('pending');
     expect(handOver(PRIVATE.bech32)().status).toBe('active');
   });
@@ -101,7 +97,7 @@ describe('an address of a kind the money has no form for is never admitted', () 
     const invites = () => c.store.listInvites(c.account).length;
     const before = [entries(), invites()];
     expect(() => c.payroll.addSelfAsPayee(c.account, 'usr_founder', {
-      name: 'Ada', email: null, title: 'Founder', asset: 'NIGHT', baseAmount: 500_000n,
+      name: 'Ada', email: null, title: 'Founder', asset: NIGHT, baseAmount: 500_000n,
     }, c.viewingKey, { wrappingPublicKey: newWrappingKeypair().publicKey, address: PRIVATE }))
       .toThrow(/^NIGHT can only be paid to a public address, and the address that arrived is a private one\./u);
     /* RED WHEN the refusal is left to `admit`: an entry and an invitation are then made for an address that is refused. */
@@ -109,8 +105,8 @@ describe('an address of a kind the money has no form for is never admitted', () 
   });
 
   it('MONEY WITH BOTH FORMS TAKES EITHER ADDRESS', async () => {
-    const c = await aCompany(true);
-    const { handOver } = inviteAndHandOver(c, 'NIGHT');
+    const c = await aCompany();
+    const { handOver } = inviteAndHandOver(c, TEST_TOKEN);
     /* RED WHEN a private address is refused for any money that can be paid publicly, rather than only for money with no private form. */
     expect(handOver(PRIVATE.bech32)().address?.kind).toBe('shielded');
   });

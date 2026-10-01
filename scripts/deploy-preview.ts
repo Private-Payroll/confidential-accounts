@@ -47,7 +47,7 @@ import { witnesses, type AccountPrivateState } from '../contracts/src/witnesses.
 import { applyNetworkId, theNetwork, ENDPOINTS } from '../src/midnight/network.js';
 import type { AccountOpening } from '../src/core/ledger.js';
 import { toHex as toHexBytes, randomBytes } from '../src/core/crypto.js';
-import { assets, type AssetId } from '../src/core/assets.js';
+import { assets, NIGHT, type AssetId } from '../src/core/assets.js';
 import { explainNodeError, NODE_ERROR_CODES } from './node-errors.js';
 import { installDustWallet, saveDustState, waitForDustCatchUp } from './dust-wallet.js';
 import { floorKnownAbsent } from './dust-fee-floor.js';
@@ -182,11 +182,12 @@ const THRESHOLD = 1n;
  * decimal place and no meaning, so there is deliberately no default further
  * down the line.
  *
- * Resolved through the registry at startup rather than trusted, so an unknown
- * code fails here in a second instead of inside a proof after four minutes of
- * wallet sync.
+ * Named by its ledger token, 64 hex characters, as every asset is; NIGHT when
+ * not given. Resolved through the registry at startup rather than trusted, so
+ * an unknown token fails here in a second instead of inside a proof after four
+ * minutes of wallet sync.
  */
-const RUN_ASSET: AssetId = (process.env.ACCOUNT_ASSET || 'GBP').toUpperCase();
+const RUN_ASSET: AssetId = (process.env.ACCOUNT_ASSET || NIGHT).trim().toLowerCase();
 
 /**
  * Encrypts the private state store at rest.
@@ -547,19 +548,19 @@ async function main() {
    * `require` answers for every asset the registry has ever known, enabled or
    * not, and it must: an account holding a since-retired asset has to stay able
    * to name it. That is the wrong question at a DEPLOY, which is choosing what
-   * an account will hold from now on. With `ACCOUNT_ASSET=ETH` this wrote a
-   * view file naming a disabled asset and announced it as the one the run would
+   * an account will hold from now on. With a disabled asset's token in
+   * `ACCOUNT_ASSET` this wrote a view file naming a disabled asset and announced it as the one the run would
    * move.
    */
   if (!runAsset.enabled) {
     throw new Error(
-      `${runAsset.code} (${runAsset.name}) is not enabled in the asset registry, so a fresh ` +
+      `${runAsset.symbol} (${runAsset.name}) is not enabled in the asset registry, so a fresh ` +
         'account should not be opened in it. Enable it in src/core/assets.ts, or set ' +
-        `ACCOUNT_ASSET to one of: ${assets.enabled().map(a => a.code).join(', ')}.`,
+        `ACCOUNT_ASSET to the token of one of: ${assets.enabled().map(a => `${a.symbol} (${a.code})`).join(', ')}.`,
     );
   }
   good(
-    `the run script will move ${runAsset.code} (${runAsset.name}), ` +
+    `the run script will move ${runAsset.symbol} (${runAsset.name}), ` +
       `${runAsset.decimals} decimal places — amounts are integers in its smallest unit`,
   );
 
@@ -1467,7 +1468,7 @@ async function main() {
       savedAt: new Date().toISOString(),
     }, null, 2),
   );
-  good(`opening view written — ${runAsset.code}`);
+  good(`opening view written: ${runAsset.symbol}`);
   note('  it holds the account\'s asset blinding, which exists nowhere else on disk');
   good(`address written to ${OUT_FILE.replace(ROOT + '/', '')}`);
 
@@ -1577,7 +1578,7 @@ async function main() {
   console.log();
   console.log('\x1b[32m\x1b[1m  The contract is live on ' + NETWORK + '.\x1b[0m');
   console.log(`  Proved against ${proofServerImage} (/version: ${proofServerVersion}).`);
-  console.log(`  Next: NOT a ${runAsset.code} deposit — the account keeps no books of its own`);
+  console.log(`  Next: NOT a ${runAsset.symbol} deposit; the account keeps no books of its own`);
   console.log(`  (C292), so there is no balance on chain to credit and no circuit that could`);
   console.log(`  settle one. What this account CAN do is govern itself and its`);
   console.log(`  vaults: propose → approve → amendSigner / setThreshold / adopt /`);

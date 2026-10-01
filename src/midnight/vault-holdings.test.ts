@@ -11,8 +11,8 @@ import { commitmentForNote } from './vault-recovery.js';
 import { AccountService } from '../core/account.js';
 import { SimulatedLedger, SimulatedCommitments, type Ledger } from '../core/ledger.js';
 import { FileStore } from '../core/store-file.js';
-import { assets as productAssets, ledgerTokenOf, type AssetRegistry } from '../core/assets.js';
-import { registryWithTestPrivateForms, testPrivateToken } from '../testing/assets.js';
+import { assets as productAssets, ledgerTokenOf, NIGHT as NIGHT_ASSET, type AssetRegistry } from '../core/assets.js';
+import { registryWithTestPrivateForms, TEST_TOKEN } from '../testing/assets.js';
 import { VaultCannotPayThisProposal } from '../core/vault-holdings.js';
 import type { Hex } from '../core/crypto.js';
 import type { Note } from './vault-notes.js';
@@ -53,9 +53,9 @@ vi.doMock('../../contracts/managed-vault/contract/index.js', () => ({
  */
 
 const VAULT: Hex = 'e3'.repeat(32);
-const NIGHT = ledgerTokenOf('NIGHT', 'unshielded');
-/* GBP's private token in the test registry, so a proposal in it can be raised against these notes. */
-const COLOUR = testPrivateToken('GBP') as Hex;
+const NIGHT = ledgerTokenOf(NIGHT_ASSET, 'unshielded');
+/* The fixture token, private form, in the test registry, so a proposal in it can be raised against these notes. */
+const COLOUR = TEST_TOKEN as Hex;
 
 /* Each records the transaction that created it, which is what a payment reads its place in the tree from. */
 const note = (nonce: string, value: bigint): Note => ({
@@ -190,7 +190,7 @@ describe('§2 a proposal raised against the chain\'s answer, through the vault c
 
   it('REFUSES NIGHT paid publicly, from the product registry, when the chain says the vault holds less', async () => {
     const h = harness({ publicRows: [[NIGHT, 9_999_999n]] }, productAssets);
-    const failed = await raise(h, 'NIGHT', 'unshielded', NIGHT, [10_000_000n])
+    const failed = await raise(h, NIGHT_ASSET, 'unshielded', NIGHT, [10_000_000n])
       .then(() => null, (e: unknown) => e as VaultCannotPayThisProposal);
     expect(failed).toBeInstanceOf(VaultCannotPayThisProposal);
     expect(failed!.message).toMatch(/holds 9\.999999 NIGHT publicly and this proposal asks it to pay 10\.000000/);
@@ -199,13 +199,13 @@ describe('§2 a proposal raised against the chain\'s answer, through the vault c
 
   it('RAISES NIGHT paid publicly when the chain says the vault holds it', async () => {
     const h = harness({ publicRows: [[NIGHT, 10_000_000n]] }, productAssets);
-    await raise(h, 'NIGHT', 'unshielded', NIGHT, [10_000_000n]);
+    await raise(h, NIGHT_ASSET, 'unshielded', NIGHT, [10_000_000n]);
     expect(h.raised.count).toBe(1);
   });
 
   it('REFUSES when the chain has published nothing for the vault, and says to try again', async () => {
     const h = harness({ publicRows: 'unreadable' }, productAssets);
-    await expect(raise(h, 'NIGHT', 'unshielded', NIGHT, [1n])).rejects.toThrow(/what the vault holds of NIGHT publicly could not be read from the chain.*If the chain was slow to answer, try again/s);
+    await expect(raise(h, NIGHT_ASSET, 'unshielded', NIGHT, [1n])).rejects.toThrow(/what the vault holds of NIGHT publicly could not be read from the chain.*If the chain was slow to answer, try again/s);
     expect(h.raised.count).toBe(0);
   });
 
@@ -213,20 +213,20 @@ describe('§2 a proposal raised against the chain\'s answer, through the vault c
     const twoSixties = [note('01', 60n), note('02', 60n)];
     const h = harness({ pool: twoSixties, chainNotes: twoSixties }, registryWithTestPrivateForms());
     /* RED WHEN the private question is answered by `balance` alone. */
-    await expect(raise(h, 'GBP', 'shielded', COLOUR, [100n]))
-      .rejects.toThrow(/holds enough GBP in total, but its notes cannot make each payment in turn \(payment 1 of 1 cannot be made out of this vault: no single note covers 100: the largest is 60 and the pool holds 120 across 2 notes\)\. A private/);
+    await expect(raise(h, TEST_TOKEN, 'shielded', COLOUR, [100n]))
+      .rejects.toThrow(/holds enough tPAY in total, but its notes cannot make each payment in turn \(payment 1 of 1 cannot be made out of this vault: no single note covers 100: the largest is 60 and the pool holds 120 across 2 notes\)\. A private/);
     /* RED WHEN the reason passes on advice to merge notes, which no vault can do. */
-    await expect(raise(harness({ pool: twoSixties, chainNotes: twoSixties }, registryWithTestPrivateForms()), 'GBP', 'shielded', COLOUR, [100n]))
+    await expect(raise(harness({ pool: twoSixties, chainNotes: twoSixties }, registryWithTestPrivateForms()), TEST_TOKEN, 'shielded', COLOUR, [100n]))
       .rejects.not.toThrow(/Merge/);
     expect(h.raised.count).toBe(0);
     const h2 = harness({ pool: twoSixties, chainNotes: twoSixties }, registryWithTestPrivateForms());
-    await raise(h2, 'GBP', 'shielded', COLOUR, [60n, 60n]);
+    await raise(h2, TEST_TOKEN, 'shielded', COLOUR, [60n, 60n]);
     expect(h2.raised.count).toBe(1);
   });
 
   it('REFUSES a private proposal against a pool the chain contradicts, and does not say to try again', async () => {
     const h = harness({ pool: [note('01', 60n), note('02', 60n)], chainNotes: [note('01', 60n)] }, registryWithTestPrivateForms());
-    const failed = await raise(h, 'GBP', 'shielded', COLOUR, [10n]).then(() => null, (e: unknown) => e as VaultCannotPayThisProposal);
+    const failed = await raise(h, TEST_TOKEN, 'shielded', COLOUR, [10n]).then(() => null, (e: unknown) => e as VaultCannotPayThisProposal);
     expect(failed!.why).toBe('contradicted');
     expect(failed!.message).not.toMatch(/try again/i);
     expect(h.raised.count).toBe(0);

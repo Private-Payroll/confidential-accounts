@@ -67,6 +67,7 @@ import { theNetwork } from '../src/midnight/network.js';
 import { payeeOf, shortPayee, type Payee } from '../src/midnight/payee-address.js';
 import { transferOf, transferFacts, entryKindOf, privacyOf } from '../src/core/movement.js';
 import type { Hex } from '../src/core/crypto.js';
+import { NIGHT } from '../src/core/assets.js';
 import { explainNodeError } from './node-errors.js';
 import { serialiseWholeDetailed, describeDropped } from './error-report.js';
 import { createScreen, phaseClock, describeError } from './deploy-report.js';
@@ -84,7 +85,10 @@ const TRANSFER_AMOUNT = (process.env.TRANSFER_AMOUNT ?? '').trim();
 const TRANSFER_REFERENCE = (process.env.TRANSFER_REFERENCE ?? '').trim();
 
 /** The asset. One, today, and the door says so rather than offering a choice. */
-const ASSET = 'NIGHT';
+/** The asset this door moves: NIGHT, named by its ledger token, as every asset is. */
+const ASSET: string = NIGHT;
+/** What this door prints for it. */
+const SYMBOL = 'NIGHT';
 
 /**
  * **THIS INSTRUMENT HOLDS NO PAYROLL ROSTER, AND THE CHECK THAT NEEDS ONE IS
@@ -289,7 +293,7 @@ async function main() {
   note('  choose it for its own money, and an employee is never asked to.');
 
   const amount = transferAmountFromText(TRANSFER_AMOUNT);
-  good(`${amount.toLocaleString()} of ${ASSET}, in ${ASSET}'s smallest unit`);
+  good(`${amount.toLocaleString()} of ${SYMBOL}, in ${SYMBOL}'s smallest unit`);
 
   if (!TRANSFER_REFERENCE) {
     throw new Error(

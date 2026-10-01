@@ -68,10 +68,12 @@
  * different questions and are not asked here.
  */
 import { describe, it, expect } from 'vitest';
-import { mkdtempSync, existsSync } from 'node:fs';
+import { mkdtempSync } from 'node:fs';
+import { keysOnDisk, ACCOUNT_KEYS } from '../../contracts/test/keys-on-disk.js';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 
+import { TEST_TOKEN, registryWithTestPrivateForms } from '../testing/assets.js';
 /** The compiled artefacts: the generated contract, the keys and the ABI. */
 const MANAGED = join(process.cwd(), 'contracts', 'managed');
 
@@ -345,7 +347,7 @@ async function aSignersDevice(opts: { fileTheDeviceRecord?: boolean } = {}) {
     compiled,
   );
 
-  const service = new AccountService(store, midnight, MidnightCommitments);
+  const service = new AccountService(store, midnight, MidnightCommitments, registryWithTestPrivateForms());
 
   /** Raises a governance round the way a customer's request does. */
   const raiseARound = () => service.propose({
@@ -355,7 +357,7 @@ async function aSignersDevice(opts: { fileTheDeviceRecord?: boolean } = {}) {
     summary: 'one salary',
     payload: {
       entries: [{
-        id: 'e1', kind: 'transfer', asset: 'GBP', amount: 10_00n,
+        id: 'e1', kind: 'transfer', asset: TEST_TOKEN, amount: 10_00n,
         counterparty: 'a supplier', memo: '', at: '',
       }],
     },
@@ -416,12 +418,13 @@ const because = async (run: () => Promise<unknown>): Promise<string> => {
 // DERIVED FROM THIS FILE'S OWN LOCATION, NOT FROM THE WORKING DIRECTORY. Read
 // relatively, a run started from anywhere but the root answers "no keys" and
 // skips in silence, which is the failure this arrangement exists to prevent.
-const KEYS_ON_DISK = existsSync(new URL('../../contracts/managed/keys/adopt.verifier', import.meta.url));
+const KEYS = keysOnDisk([ACCOUNT_KEYS]);
+const KEYS_ON_DISK = KEYS.ok;
 if (!KEYS_ON_DISK) {
   console.log(
-    '  NOT CHECKED HERE: the verifier keys a governed call is built against are not on disk,'
-    + ' so the assertions that drive one into the compiled contract did not run.'
-    + ' `npm run compact` builds them.',
+    '  NOT CHECKED HERE: the verifier keys a governed call is built against are not on disk as this build'
+    + ' compiled them, so the assertions that drive one into the compiled contract did not run: '
+    + KEYS.why,
   );
 }
 

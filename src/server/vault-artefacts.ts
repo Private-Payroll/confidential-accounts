@@ -15,23 +15,23 @@ import { genuineParameterFiles, publishedByMidnight, type PublishedDigest } from
  * any name that is not one of these files: nothing outside the folders named
  * here can be reached, whatever is asked for.
  *
- * **A PAYMENT OUT ALSO PROVES ONE OF THE COMPANY ACCOUNT'S CIRCUITS.** The
- * vault's `payout` asks the account's `recordPayment` inside the same
- * transaction, and that call is proved beside the vault's own, so its three
- * files are served too.
- *
- * **AND A SIGNER'S DEVICE PROVES TWO MORE OF THE ACCOUNT'S: RAISING A PROPOSAL AND
- * APPROVING ONE.** Both open with the signer check and so can only be proved
- * where the signer's secret is. Those three circuits, and no other of the
- * account's, are served.
+ * **THE COMPANY ACCOUNT'S CIRCUITS A DEVICE PROVES ARE SERVED TOO**
+ * (`ACCOUNT_CIRCUITS_SERVED_TO_A_DEVICE`). A vault's payment out asks the
+ * account's `recordPaymentFromVault`, and a change that moves no money asks its
+ * `approveVaultChange`, inside the same transaction, so each is proved beside
+ * the vault's own. And a signer's device proves the rounds it raises, approves
+ * and carries out (`propose`, `approve`, `amendSigner`, `setThreshold`,
+ * `adopt`), which open with the signer check and so can only be proved where
+ * the signer's secret is. Those circuits, and no other of the account's, are
+ * served.
  *
  *   /artefacts/vault/keys/<circuit>.prover|verifier
  *   /artefacts/vault/zkir/<circuit>.bzkir
  *   /artefacts/vault/params/bls_midnight_2p<k>   (only when it is the file Midnight publishes)
  *   /artefacts/vault/builtin/zswap/9/keys/<output|spend|sign>.prover|verifier
  *   /artefacts/vault/builtin/zswap/9/zkir/<output|spend|sign>.bzkir
- *   /artefacts/vault/account/keys/<recordPayment|propose|approve>.prover|verifier
- *   /artefacts/vault/account/zkir/<recordPayment|propose|approve>.bzkir
+ *   /artefacts/vault/account/keys/<an account circuit a device proves>.prover|verifier
+ *   /artefacts/vault/account/zkir/<an account circuit a device proves>.bzkir
  */
 export const VAULT_ARTEFACT_PATH = '/artefacts/vault';
 

@@ -28,11 +28,12 @@ import {
   Contract as Vault, ledger as vaultLedger, pureCircuits as vaultCircuits,
 } from '../managed-vault/contract/index.js';
 import { pureCircuits } from '../managed/contract/index.js';
-import { AccountSimulator, privateStateFor, change, type Change, payoutTreeOf } from './simulator.js';
+import { AccountSimulator, privateStateFor, change, type Change, payoutTreeOf, vaultRunOf } from './simulator.js';
+import { carryTheAccount, startTheVault, TEST_VAULT_SECRET } from './start-a-vault.js';
 import { type PayoutLeafInput } from '../../src/midnight/payout-tree.js';
 import { changeCoinOf } from '../../src/midnight/vault-coins.js';
 import {
-  reconcileVaultPool, commitmentForNote, changeNonceOf, describeRecovery,
+  reconcileVaultPool, commitmentForNote, changeNoteOf, describeRecovery,
 } from '../../src/midnight/vault-recovery.js';
 import { smallestNoteCovering, type Note } from '../../src/midnight/vault-notes.js';
 import {
@@ -51,7 +52,6 @@ import {
 import { walkCompanyRecords, type CompanyRecords } from '../../src/midnight/rebuild-from-records.js';
 import { UNLOCK_PURPOSE, UNLOCK_WINDOW_MS, unlockAsk } from '../../src/core/wallet-unlock.js';
 import { toHex, fromHex, newWrappingKeypair, randomBytes, type Hex } from '../../src/core/crypto.js';
-import { itPaysOutOfTodaysVault } from './until-the-vault-pays-with-a-receipt.js';
 
 const VAULT_NOW = 1_800_000_000;
 const WIN_FROM = BigInt(VAULT_NOW - 3_600);
@@ -60,7 +60,7 @@ const BLOCK = '0'.repeat(64);
 const bytes = (n: number) => new Uint8Array(32).fill(n);
 const A = privateStateFor(1);
 const B = privateStateFor(2);
-const GBP = bytes(0x9b);
+const TOKEN_BYTES = bytes(0x9b);
 const ALICE = bytes(0x0a);
 const BOB = bytes(0x0b);
 const CAROL = bytes(0x0c);
@@ -99,6 +99,7 @@ const vaultWitnesses = {
       nonce: fromHex(n.nonce), color: fromHex(n.token), value: n.value, mt_index: n.index ?? NO_INDEX_YET,
     }];
   },
+  nonceSecret: (ctx: { privateState: { secret?: Uint8Array } }) => [ctx.privateState, ctx.privateState.secret ?? new Uint8Array(32).fill(0x51)],
 };
 
 describe('a vault whose every record of ours is gone', () => {
@@ -124,6 +125,15 @@ describe('a vault whose every record of ours is gone', () => {
   const charged = () => (vaultState?.constructor?.name === 'ContractState' ? vaultState.data : vaultState);
   const chainNotes = (): Hex[] => [...vaultLedger(charged() as never).notes].map((c: Uint8Array) => toHex(c));
   const held = (coin: { nonce: Hex; token: Hex; value: bigint }) => commitmentForNote(vaultCircuits, vaultAddr, coin);
+  /*
+   * The vault's nonce secret as the company holds it, with the commitment the chain
+   * holds now: every change a payment made takes its nonce from it. This vault was
+   * started under `TEST_VAULT_SECRET` and never rotated.
+   */
+  const nonceSecrets = () => ({ secrets: [toHex(TEST_VAULT_SECRET)], commitment: toHex(vaultLedger(charged() as never).nonceCommitment) });
+  /** The vault's split journal as the chain holds it. */
+  const splitJournal = () => new Map<string, string>(
+    [...vaultLedger(charged() as never).splitJournal].map(([k, v]: [Uint8Array, Uint8Array]) => [toHex(k), toHex(v)]));
 
   const logCall = (r: { context: { callContext: { currentZswapLocalState: unknown } } }) => {
     const hash = (chainLog.length + 1).toString(16).padStart(64, '0') as Hex;
@@ -163,10 +173,10 @@ describe('a vault whose every record of ours is gone', () => {
 
   const approvedRun = async (payments: Array<{ to: Uint8Array; amount: bigint; nonce: number }>, c: Change) => {
     const leaves: PayoutLeafInput[] = payments.map((p, i) => ({
-      details: toHex(vaultCircuits.payoutDetails(p.to, GBP, p.amount, bytes(0x40 + i))),
+      details: toHex(vaultCircuits.payoutDetails(p.to, TOKEN_BYTES, p.amount, bytes(0x40 + i))),
       nonce: toHex(bytes(p.nonce)),
     }));
-    const tree = payoutTreeOf(leaves);
+    const tree = payoutTreeOf(leaves, payments.map((p) => p.amount), TOKEN_BYTES);
     const payload = pureCircuits.runPayload(fromHex(tree.root), tree.payees, WIN_FROM, WIN_UNTIL, 0n);
     const vaultBytes = fromHex(vaultAddr);
     await sim.as(sim.applying(A, c)).proposeRun({
@@ -182,8 +192,12 @@ describe('a vault whose every record of ours is gone', () => {
     const c = change(0n, seed);
     const run = await approvedRun([{ to, amount, nonce: seed }], c);
     const r = await vault.impureCircuits.payout(
-      ctx('payout'), run.id, fromHex(run.tree.root), run.tree.payees, WIN_FROM, WIN_UNTIL,
-      c.salt, to, GBP, amount, bytes(0x40), bytes(seed), run.tree.pathFor(0) as never);
+      ctx('payout'),
+      vaultRunOf({
+        proposal: run.id, vault: fromHex(vaultAddr), tree: run.tree, i: 0,
+        opensAt: WIN_FROM, closesAt: WIN_UNTIL, salt: c.salt, nonce: bytes(seed),
+      }),
+      to, TOKEN_BYTES, amount, bytes(0x40));
     vaultState = r.context.callContext.currentQueryContext.state;
     logCall(r);
     return r;
@@ -199,6 +213,17 @@ describe('a vault whose every record of ours is gone', () => {
       createConstructorContext({} as VaultPrivate, BLOCK),
       { bytes: fromHex(company) } as never);
     vaultState = init.currentContractState;
+    /* A vault takes no money until the account has adopted it and approved its first secret. */
+    await startTheVault({
+      sim, vault: Uint8Array.from(Buffer.from(String(vaultAddr), 'hex')), approvers: [A, B], now: VAULT_NOW,
+      call: async (circuit, ...a) => {
+        const r: any = await (vault.impureCircuits as any)[circuit](createCircuitContext(
+          circuit as never, vaultAddr as never, BLOCK, vaultState, {} as never,
+          provider() as never, undefined, undefined, VAULT_NOW, BLOCK), ...a);
+        vaultState = r.context.callContext.currentQueryContext.state;
+        carryTheAccount(sim, r.context);
+      },
+    });
     priv = { notes: [] };
     chainLog = [];
   });
@@ -230,7 +255,7 @@ describe('a vault whose every record of ours is gone', () => {
     const deposit = async (value: bigint, opts: { abandon?: boolean; slot: number }) => {
       const createdBefore = await vaultOutputHistoryFrom(theChain()).everCreated(vaultAddr);
       const { coin, slot } = await claimNewDepositCoin({
-        vault: vaultAddr, money: { token: toHex(GBP), value }, journal: depositJournal,
+        vault: vaultAddr, money: { token: toHex(TOKEN_BYTES), value }, journal: depositJournal,
         nonceAt: (m, s) => depositJournal.nonceAt(vaultAddr, m, s), everCreated: createdBefore,
         outputCommitmentOf: (c) => vaultNoteCommitment(c, vaultAddr),
         heldNow: (c) => chainNotes().includes(held(c)),
@@ -250,7 +275,7 @@ describe('a vault whose every record of ours is gone', () => {
 
     /* A payment, the way the product makes one: journal the attempt, call, record the change. */
     const payFromThePool = async (to: Uint8Array, amount: bigint, seed: number) => {
-      const spent = smallestNoteCovering(priv.notes, toHex(GBP), amount)!;
+      const spent = smallestNoteCovering(priv.notes, toHex(TOKEN_BYTES), amount)!;
       await paymentJournal.record(vaultAddr, {
         spent: { nonce: spent.nonce, token: spent.token, value: spent.value }, amount, attemptedAt: new Date().toISOString(),
       });
@@ -266,7 +291,7 @@ describe('a vault whose every record of ours is gone', () => {
     return { stores, opener, deposit, payFromThePool };
   };
 
-  itPaysOutOfTodaysVault('THE POOL DELETED, THE VAULT REBUILT FROM THE COMPANY\'S SEED AND ITS OWN RECORDS, AND A NOTE THAT COMES BACK SPENT', async () => {
+  it('THE POOL DELETED, THE VAULT REBUILT FROM THE COMPANY\'S SEED AND ITS OWN RECORDS, AND A NOTE THAT COMES BACK SPENT', async () => {
     const work = await aCompanyAtWork(depositNonceKeyFor(releasedCompanyKey(WORDS, company), vaultAddr));
 
     const first = await work.deposit(1_000n, { slot: 1 });
@@ -287,10 +312,10 @@ describe('a vault whose every record of ours is gone', () => {
 
     /* What the company's books say. Nothing else below comes from this test's past. */
     const records: CompanyRecords = {
-      deposited: [{ token: toHex(GBP), value: 1_000n }, { token: toHex(GBP), value: 400n }, { token: toHex(GBP), value: 1_000n }],
+      deposited: [{ token: toHex(TOKEN_BYTES), value: 1_000n }, { token: toHex(TOKEN_BYTES), value: 400n }, { token: toHex(TOKEN_BYTES), value: 1_000n }],
       paid: [
-        { token: toHex(GBP), amount: 250n }, { token: toHex(GBP), amount: 700n },
-        { token: toHex(GBP), amount: 100n }, { token: toHex(GBP), amount: 1_000n },
+        { token: toHex(TOKEN_BYTES), amount: 250n }, { token: toHex(TOKEN_BYTES), amount: 700n },
+        { token: toHex(TOKEN_BYTES), amount: 100n }, { token: toHex(TOKEN_BYTES), amount: 1_000n },
       ],
     };
 
@@ -314,6 +339,7 @@ describe('a vault whose every record of ours is gone', () => {
     const everCreated = await vaultOutputHistoryFrom(theChain()).everCreated(vaultAddr);
     const walk = await walkCompanyRecords({
       vault: vaultAddr, keys: [key], records, everCreated, commitmentOf: vaultNoteCommitment,
+      nonceSecrets: nonceSecrets(), splitJournal: splitJournal(),
     });
     expect(
       walk.found,
@@ -344,7 +370,8 @@ describe('a vault whose every record of ours is gone', () => {
     expect(vaultLedger(charged() as never).payments, 'RED WHEN: the rebuilt note does not spend').toBe(paymentsBefore + 1n);
     const kept = changeCoinOf(r.context.callContext.currentZswapLocalState, vaultAddr)!;
     expect(kept.value, 'RED WHEN: a note other than the rebuilt change was spent').toBe(10n);
-    expect(kept.nonce).toBe(toHex(changeNonceOf(fromHex(recoveredChange.nonce))));
+    /* RED WHEN the change a payment made is worked out with anything but the vault's secret and the spent note */
+    expect(kept.nonce).toBe(changeNoteOf(recoveredChange, 40n, { circuits: vaultCircuits, vault: vaultAddr, secret: toHex(TEST_VAULT_SECRET) })!.nonce);
     expect(chainNotes(), 'RED WHEN: the rebuilt note is still in the vault after it was spent')
       .not.toContain(held(recoveredChange));
   });
@@ -353,7 +380,7 @@ describe('a vault whose every record of ours is gone', () => {
     const work = await aCompanyAtWork(depositNonceKeyFor(releasedCompanyKey(WORDS, company), vaultAddr));
     await work.deposit(1_234n, { slot: 1 });
     const everCreated = await vaultOutputHistoryFrom(theChain()).everCreated(vaultAddr);
-    const exact: CompanyRecords = { deposited: [{ token: toHex(GBP), value: 1_234n }], paid: [] };
+    const exact: CompanyRecords = { deposited: [{ token: toHex(TOKEN_BYTES), value: 1_234n }], paid: [] };
 
     const stranger = await walkCompanyRecords({
       vault: vaultAddr, keys: [depositNonceKeyFor(releasedCompanyKey(SOMEBODY_ELSE, company), vaultAddr)],
@@ -363,12 +390,12 @@ describe('a vault whose every record of ours is gone', () => {
 
     const rounded = await walkCompanyRecords({
       vault: vaultAddr, keys: [depositNonceKeyFor(releasedCompanyKey(WORDS, company), vaultAddr)],
-      records: { deposited: [{ token: toHex(GBP), value: 1_230n }], paid: [] }, everCreated, commitmentOf: vaultNoteCommitment,
+      records: { deposited: [{ token: toHex(TOKEN_BYTES), value: 1_230n }], paid: [] }, everCreated, commitmentOf: vaultNoteCommitment,
     });
     expect(rounded.coins, 'RED WHEN: an amount that is not the one deposited names a coin').toEqual([]);
     const said = reconcileVaultPool({
       vault: vaultAddr, chain: chainNotes(), versions: [], named: rounded.coins,
-      attempted: { deposits: [{ nonce: toHex(bytes(1)), token: toHex(GBP), value: 1n }], payments: [] },
+      attempted: { deposits: [{ nonce: toHex(bytes(1)), token: toHex(TOKEN_BYTES), value: 1n }], payments: [] },
       circuits: vaultCircuits,
     });
     expect(said.unexplained, 'RED WHEN: a note nothing names is dropped silently instead of reported').toHaveLength(1);
@@ -377,7 +404,7 @@ describe('a vault whose every record of ours is gone', () => {
 
   it('A NOTE MADE WITH A RANDOM NONCE IS NAMED BY ITS JOURNAL AND BY NOTHING ELSE, and is left exactly as it is', async () => {
     const work = await aCompanyAtWork(depositNonceKeyFor(releasedCompanyKey(WORDS, company), vaultAddr));
-    const legacy = { nonce: toHex(randomBytes(32)), token: toHex(GBP), value: 900n };
+    const legacy = { nonce: toHex(randomBytes(32)), token: toHex(TOKEN_BYTES), value: 900n };
     const r = await vault.impureCircuits.deposit(ctx('deposit'), {
       nonce: fromHex(legacy.nonce), color: fromHex(legacy.token), value: legacy.value,
     });
@@ -388,7 +415,7 @@ describe('a vault whose every record of ours is gone', () => {
     const everCreated = await vaultOutputHistoryFrom(theChain()).everCreated(vaultAddr);
     const walk = await walkCompanyRecords({
       vault: vaultAddr, keys: [depositNonceKeyFor(releasedCompanyKey(WORDS, company), vaultAddr)],
-      records: { deposited: [{ token: toHex(GBP), value: 900n }], paid: [] }, everCreated, commitmentOf: vaultNoteCommitment,
+      records: { deposited: [{ token: toHex(TOKEN_BYTES), value: 900n }], paid: [] }, everCreated, commitmentOf: vaultNoteCommitment,
     });
     const fromRecords = reconcileVaultPool({ vault: vaultAddr, chain: chainNotes(), versions: [], named: walk.coins, circuits: vaultCircuits });
     expect(fromRecords.held, 'the derived deposit is named').toHaveLength(1);

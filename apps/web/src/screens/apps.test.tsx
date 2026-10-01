@@ -10,15 +10,17 @@ import { LANGUAGES } from '../languages.js';
 import { Apps } from './apps.js';
 
 /*
- * THE APPS PAGE, AGAINST THE CATALOGUE IT IS TAKEN FROM: the legacy app's
- * catalogue and its category names, read from the legacy app's own files, so
- * a name, summary or category that drifts from them turns this red.
+ * THE APPS PAGE, AGAINST THE CATALOGUE IT IS TAKEN FROM: the catalogue in the
+ * product's own code and the category names the earlier application gave it,
+ * so a name, summary or category that drifts from them turns this red.
  */
 const HERE = dirname(fileURLToPath(import.meta.url));
 const EN = JSON.parse(readFileSync(resolve(HERE, '../locales/en.json'), 'utf8')) as Record<string, string>;
-/** The legacy app's names for its categories, read from its source. */
-const LABELS = Object.fromEntries([...readFileSync(resolve(HERE, '../../../../src/web-legacy/App.tsx'), 'utf8')
-  .match(/const CATEGORY_LABEL[^{]*\{([^}]*)\}/)![1]!.matchAll(/(\w+):\s*'([^']*)'/g)].map((m) => [m[1]!, m[2]!]));
+/** The category names, as the earlier application named them. */
+const LABELS: Record<string, string> = {
+  offramp: 'Payouts and offramp', treasury: 'Treasury', interop: 'Interoperability',
+  compliance: 'Compliance', accounting: 'Accounting', identity: 'Identity',
+};
 
 const draw = () => render(<KitProvider languages={LANGUAGES} pick="en"><Apps /></KitProvider>).container;
 const text = (e: Element | null) => e?.textContent ?? null;

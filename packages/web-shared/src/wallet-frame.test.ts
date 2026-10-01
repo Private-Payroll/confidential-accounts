@@ -90,7 +90,7 @@ describe('the wallet in this page', () => {
 
 describe('the application itself', () => {
   it('is FRAMED BY NOBODY: the page that holds a wallet must be the top of the tab', async () => {
-    const config = (await import('../../../vite.config.ts')).default as {
+    const config = (await import('../../../apps/web/vite.config.ts')).default as {
       server?: { headers?: Record<string, string> }; preview?: { headers?: Record<string, string> };
     };
     for (const headers of [config.server?.headers, config.preview?.headers]) {

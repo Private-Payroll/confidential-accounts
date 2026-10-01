@@ -16,7 +16,7 @@
  * refused".
  */
 import { describe, it, expect, beforeEach } from 'vitest';
-import { AccountSimulator, privateStateFor, change, type Change, payoutTreeOf, rootOfTestLeaves, TEST_AMOUNT, GBP } from './simulator.js';
+import { AccountSimulator, privateStateFor, change, type Change, payoutTreeOf, rootOfTestLeaves, TEST_AMOUNT, TEST_TOKEN_BYTES } from './simulator.js';
 import { pureCircuits } from '../managed/contract/index.js';
 import { payoutLeafOf, sumTreeOfLeaves, type PayoutLeafInput } from '../../src/midnight/payout-tree.js';
 import {
@@ -78,13 +78,13 @@ const pay = (sim: AccountSimulator, vault: Uint8Array, run: Awaited<ReturnType<t
     proposal: run.id, vault, root: fromHex(run.root), payees: BigInt(run.leaves.length),
     from: OPENS, until: CLOSES, salt: run.c.salt,
     details: fromHex(payments[i]!.details), nonce: fromHex(payments[i]!.nonce),
-    amount: TEST_AMOUNT, asset: GBP, path,
+    amount: TEST_AMOUNT, asset: TEST_TOKEN_BYTES, path,
   });
 };
 
 /* A path over raw leaves, from the product's own sum tree, for runs `buildPayoutTree` refuses. */
 const pathFor = (leaves: Hex[], i: number) =>
-  sumTreeOfLeaves(leaves, leaves.map(() => TEST_AMOUNT), toHex(GBP)).pathFor(i);
+  sumTreeOfLeaves(leaves, leaves.map(() => TEST_AMOUNT), toHex(TEST_TOKEN_BYTES)).pathFor(i);
 
 const paidOnce = (sim: AccountSimulator, r: PayRecord) =>
   sim.ledger.movements.member(pureCircuits.paidOnceOf(fromHex(nonceOf(r))));

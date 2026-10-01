@@ -193,11 +193,14 @@ describe('the real artifacts, read end to end', () => {
       'thresholds', 'vaults', 'runWindow', 'signerLeaves', 'retiredAt', 'proposalHolds',
       'successor', 'signerRoles',
     ]);
-    // DECLARATION ORDER. `spendingCaps` is reserved: the constructor's emitted
-    // `initialState` writes it, and no circuit reads or writes it yet, so it
-    // appears here and in the constructor list below and nowhere else.
+    // DECLARATION ORDER. The seven `reserved` maps are reserved: the
+    // constructor's emitted `initialState` writes them, and no circuit reads or
+    // writes them, so they appear here and in the constructor list below and
+    // nowhere else.
     expect(vault.fields.map((f) => f.name)).toEqual([
-      'account', 'notes', 'unshieldedTokens', 'payments', 'spendingCaps',
+      'account', 'notes', 'unshieldedTokens', 'payments', 'reserved0', 'nonceCommitment',
+      'splitJournal', 'secretCopies', 'reserved1', 'reserved2', 'reserved3', 'reserved4',
+      'reserved5', 'reserved6',
     ]);
   });
 
@@ -207,8 +210,9 @@ describe('the real artifacts, read end to end', () => {
     expect(payout).toBeDefined();
     expect(payout?.writes.map((w) => w.field).sort()).toEqual(['notes', 'payments']);
     // `account` is the contract reference it settles against. It is READ and
-    // never written, and the kernel writes are recorded as kernel writes.
-    expect(payout?.reads.map((r) => r.field).sort()).toEqual(['account', 'notes']);
+    // never written, and the kernel writes are recorded as kernel writes. The
+    // secret's commitment and the stored receipt token are read too.
+    expect(payout?.reads.map((r) => r.field).sort()).toEqual(['account', 'nonceCommitment', 'notes', 'secretCopies']);
     expect(payout?.kernel.some((k) => k.kind === 'writes')).toBe(true);
   });
 
@@ -224,16 +228,19 @@ describe('the real artifacts, read end to end', () => {
       'localSecretKey', 'runOpening', 'signerBlinding', 'signerPath', 'signerRights', 'signerScope',
     ]);
     expect(approve?.witnesses.every((w) => w.via.length > 0)).toBe(true);
-    // And the three cross-contract callees read no witness at all, by design.
-    for (const name of ['recordPaymentFromVault', 'retireVault', 'closeExpiredRun']) {
+    // And the cross-contract callees read no witness at all, by design.
+    for (const name of ['approveVaultChange', 'recordPaymentFromVault', 'retireVault', 'closeExpiredRun']) {
       expect(account.circuits.find((c) => c.name === name)?.witnesses).toEqual([]);
     }
   });
 
-  it('the CROSS-CONTRACT calls are the three the vault really makes', async () => {
+  it('the CROSS-CONTRACT calls are the five the vault really makes', async () => {
     const vault = await readContract(ROOT, ARTIFACTS[1]);
     const calls = vault.circuits.flatMap((c) => c.calls.map((x) => `${c.name} → ${x.circuit}`)).sort();
-    expect(calls).toEqual(['payout → recordPayment', 'payoutUnshielded → recordPayment', 'retire → retireVault']);
+    expect(calls).toEqual([
+      'payout → recordPaymentFromVault', 'payoutUnshielded → recordPaymentFromVault', 'retire → retireVault',
+      'setNonceSecret → approveVaultChange', 'splitNote → approveVaultChange',
+    ]);
     const account = await readContract(ROOT, ARTIFACTS[0]);
     expect(account.circuits.flatMap((c) => c.calls)).toEqual([]);
   });
@@ -246,7 +253,8 @@ describe('the real artifacts, read end to end', () => {
     const vault = await readContract(ROOT, ARTIFACTS[1]);
     expect(vault.ctor).not.toBeNull();
     expect(vault.ctor?.writes.map((w) => w.field).sort()).toEqual([
-      'account', 'notes', 'payments', 'spendingCaps', 'unshieldedTokens',
+      'account', 'nonceCommitment', 'notes', 'payments', 'reserved0', 'reserved1', 'reserved2',
+      'reserved3', 'reserved4', 'reserved5', 'reserved6', 'secretCopies', 'splitJournal', 'unshieldedTokens',
     ]);
     // And no CIRCUIT writes `account`, which is the property C286 is about.
     expect(vault.circuits.filter((c) => c.writes.some((w) => w.field === 'account'))).toEqual([]);
@@ -286,9 +294,13 @@ describe('the real artifacts, read end to end', () => {
     const vault = await readContract(ROOT, ARTIFACTS[1]);
     expect(account.circuits.reduce((n, c) => n + c.asserts.length, 0)).toBeGreaterThan(20);
     expect(vault.circuits.reduce((n, c) => n + c.asserts.length, 0)).toBeGreaterThan(5);
-    // And `C285` on sight: the vault's `deposit` has NO assert while its
-    // unshielded sibling carries one. That is the column earning its place.
-    expect(vault.circuits.find((c) => c.name === 'deposit')?.asserts).toEqual([]);
+    // And the column earning its place: the vault's `deposit` once had NO
+    // assert (`C285`). It now has three, two of them reached through a helper.
+    expect(vault.circuits.find((c) => c.name === 'deposit')?.asserts.map((a) => a.message)).toEqual([
+      'a deposit of nothing is not a deposit',
+      'this vault takes no money yet: the company\'s account has not adopted it and approved its first nonce secret',
+      'this vault takes no money yet: not every signer\'s sealed copy of its secret is on the chain',
+    ]);
     expect(vault.circuits.find((c) => c.name === 'depositUnshielded')?.asserts.length).toBeGreaterThan(0);
   });
 

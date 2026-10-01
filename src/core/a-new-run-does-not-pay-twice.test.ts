@@ -34,6 +34,7 @@ import { FileStore } from './store-file.js';
 import { sign, toHex, type Hex } from './crypto.js';
 import type { RosterEmployee } from './types.js';
 
+import { TEST_TOKEN } from '../testing/assets.js';
 const PAYROLL_VAULT = toHex(new Uint8Array(32).fill(0xa1));
 const NOW = Math.floor(Date.now() / 1000);
 const OPENS = BigInt(NOW - 3_600);
@@ -124,7 +125,7 @@ async function aCompany(people = 3) {
   const hired: RosterEmployee[] = [];
   for (let i = 0; i < people; i++) {
     hired.push(s.payroll.hireDirect(account, {
-      name: `Payee ${i}`, email: `p${i}@a.co`, title: 'Eng', asset: 'GBP', baseAmount: 100_00n,
+      name: `Payee ${i}`, email: `p${i}@a.co`, title: 'Eng', asset: TEST_TOKEN, baseAmount: 100_00n,
     }, viewingKey).employee);
   }
   const by = created.secrets[0]!.signerId;

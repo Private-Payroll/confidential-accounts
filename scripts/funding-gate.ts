@@ -2,7 +2,7 @@ import { existsSync, readFileSync } from 'node:fs';
 import { authorityFileIn } from '../src/midnight/authority-file.js';
 import { vaultAuthorityFile } from '../src/midnight/vault-record.js';
 import { readContractAuthority, type ContractStateReader } from '../src/midnight/ledger.js';
-import { circuitsRefusal, refusalToPutMoneyIn } from '../src/wiring/vault-submission.js';
+import { circuitsRefusal, refusalToPutMoneyIn, startingLedgerFrom } from '../src/wiring/vault-submission.js';
 import type { CommitteeKey } from '../src/midnight/vault-committee.js';
 import { DEPLOYED_CIRCUITS } from '../src/midnight/deferral.js';
 import { NotAVaultsState, vaultAccountFromTheIndexer } from '../src/server/vault-records-authority.js';
@@ -137,12 +137,31 @@ export async function refusalToFund(input: {
     pinnedAccount = null;
   }
 
+  /*
+   * **WHETHER THE VAULT IS STARTED, READ BY THE VAULT'S OWN COMPILED LEDGER.**
+   * A secret its account approved, with every signer's sealed copy of it on the
+   * chain; the vault refuses money until then. A state that cannot be read so is
+   * not started.
+   */
+  let started = false;
+  try {
+    const vaultModule = await import('../contracts/managed-vault/contract/index.js') as never as {
+      ledger(data: unknown): Parameters<typeof startingLedgerFrom>[0];
+      pureCircuits: { copiesWrittenKey(): Uint8Array };
+    };
+    const state = await stateOf(input.vault) as { data?: unknown } | null;
+    if (state !== null) started = startingLedgerFrom(vaultModule.ledger(state.data), vaultModule.pureCircuits.copiesWrittenKey()).started;
+  } catch {
+    started = false;
+  }
+
   return refusalToPutMoneyIn({
     label: input.vaultName,
     what,
     vault,
     vaultCircuits: circuitsRefusal(await stateOf(input.vault), vaultKeys, what),
     pinnedAccount,
+    started,
     companyAccount: input.account,
     account,
     accountCircuits: circuitsRefusal(

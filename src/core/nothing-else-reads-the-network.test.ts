@@ -326,7 +326,7 @@ describe('§1 one reader of the environment, and the scan that notices a second'
      * these was outside every claim in this file until it was named.
      */
     const reached = [...THE_REPOSITORY.keys()];
-    for (const outpost of ['vitest.config.ts', 'vite.config.ts']) {
+    for (const outpost of ['vitest.config.ts', 'vite.probe.config.ts']) {
       expect(reached, outpost).toContain(outpost);
     }
     expect(reached.some(f => f.startsWith(`browser-proving${sep}`))).toBe(true);

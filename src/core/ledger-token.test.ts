@@ -1,31 +1,31 @@
 import { describe, expect, it } from 'vitest';
 import { nativeToken } from '@midnight-ntwrk/midnight-js-protocol/ledger';
 
-import { assetIdBytes, assets, ledgerTokenOf } from './assets.js';
+import { assetIdBytes, assets, ledgerTokenOf, NIGHT, TEST_SETTLEMENT_ASSET } from './assets.js';
 import { toHex } from './crypto.js';
 import { transferFacts, transferOf } from './movement.js';
 import { payeeFor, unshieldedPayeeFor } from '../testing/payees.js';
 
 /**
- * **THE TOKEN A PAYMENT MOVES IS THE LEDGER'S, AND THE NAME AN ACCOUNT GIVES AN
- * ASSET IS UNCHANGED.**
+ * **THE TOKEN A PAYMENT MOVES IS THE LEDGER'S, AND AN ASSET IS THAT TOKEN.**
  *
  * A vault holds NIGHT as the ledger's own token type, because that is the only
  * NIGHT a wallet can fund a deposit with. A payment out of a vault is checked
  * against the token it commits to. So the two must be one value, and the value
- * must be the ledger's: the account's name for an asset is padded ASCII and a
- * vault never holds a balance under it.
+ * must be the ledger's; and the account names an asset by the same value, so a
+ * run's root, a spending policy's key and the payment the vault makes all name
+ * one token.
  *
  * Every expected value below is read from somewhere other than the code under
- * test: the ledger's token type from the ledger itself, the account's name for
- * NIGHT from the characters of the word, and the test settlement asset's colour
- * from a mint that produced it on a public test network, written down here.
+ * test: the ledger's token type from the ledger itself, and the test settlement
+ * asset's colour from a mint that produced it on a public test network,
+ * written down here.
  */
 
 const NETWORK = 'undeployed' as const;
 const LEDGER_NIGHT = (nativeToken() as unknown as { raw: string }).raw;
 
-/** `NIGHT` as ASCII, zero padded to 32 bytes, computed without `assetIdBytes`. */
+/** `NIGHT` as ASCII, zero padded to 32 bytes: the placeholder name an account once gave it. */
 const NIGHT_AS_ASCII = Buffer.from('NIGHT', 'ascii').toString('hex').padEnd(64, '0');
 
 /**
@@ -45,13 +45,13 @@ const NIGHT_AS_ASCII = Buffer.from('NIGHT', 'ascii').toString('hex').padEnd(64, 
  */
 const WHAT_THE_LEDGER_CALLS_IT: Readonly<Record<string, string>> = Object.freeze({
   'NIGHT unshielded': LEDGER_NIGHT,
-  'TESTUSD shielded': 'abda184485c6abbbe4440d65b99ef88e0f79f61ec19af52a5bb0d91b4a824679',  // not-a-secret: the colour a mint produced on a public test network, published by the chain itself and readable by anyone
+  'tUSD shielded': 'abda184485c6abbbe4440d65b99ef88e0f79f61ec19af52a5bb0d91b4a824679',  // not-a-secret: the colour a mint produced on a public test network, published by the chain itself and readable by anyone
 });
 
 const publicNightTransfer = (amount = 10n) => transferOf({
   accountId: 'acct_1',
   payee: unshieldedPayeeFor('c3'.repeat(32), NETWORK),
-  asset: 'NIGHT',
+  asset: NIGHT,
   amount,
   privacy: 'public',
   reference: 'the company paying its own account',
@@ -63,7 +63,9 @@ const publicNightTransfer = (amount = 10n) => transferOf({
 describe('the token a payment out of a vault moves', () => {
   it('NIGHT paid publicly is the ledger\'s own NIGHT, read from the ledger', () => {
     expect(LEDGER_NIGHT).toMatch(/^[0-9a-f]{64}$/);
-    expect(ledgerTokenOf('NIGHT', 'unshielded')).toBe(LEDGER_NIGHT);
+    /* RED WHEN NIGHT's identity in the registry is not the ledger's own NIGHT. */
+    expect(NIGHT).toBe(LEDGER_NIGHT);
+    expect(ledgerTokenOf(NIGHT, 'unshielded')).toBe(LEDGER_NIGHT);
   });
 
   it('a public NIGHT transfer commits to the token a deposit puts into a vault', () => {
@@ -72,28 +74,33 @@ describe('the token a payment out of a vault moves', () => {
     expect(facts.amount).toBe(10n);
   });
 
-  it('the account\'s own name for NIGHT is untouched, and it is a different value', () => {
+  it('the account\'s own name for NIGHT is the ledger\'s token, the same value the payment moves', () => {
     /*
-     * The account's balance key is built over these bytes. If a fix for the
-     * payment's token were made by repointing them, every balance would move to
-     * a new key; this goes red first.
+     * By design: an asset is identified by its ledger token
+     * everywhere. The account's asset key, a run's root and a spending policy
+     * are built over these bytes, and the vault hands the account the token it
+     * moves, so they must be the token itself and never a padded name.
      */
-    expect(toHex(assetIdBytes('NIGHT'))).toBe(NIGHT_AS_ASCII);
-    expect(NIGHT_AS_ASCII).not.toBe(LEDGER_NIGHT);
+    /* RED WHEN the account's name for an asset is anything but its ledger token, such as padded ASCII. */
+    expect(toHex(assetIdBytes(NIGHT))).toBe(LEDGER_NIGHT);
+    expect(transferFacts(publicNightTransfer()).token).toBe(toHex(assetIdBytes(NIGHT)));
+    /* RED WHEN the placeholder name is accepted as an asset at all. */
+    expect(() => assetIdBytes('NIGHT')).toThrow(/is not an asset/);
     expect(transferFacts(publicNightTransfer()).token).not.toBe(NIGHT_AS_ASCII);
   });
 
   it('refuses private NIGHT by name and says which asset CAN be paid privately instead', () => {
-    expect(() => ledgerTokenOf('NIGHT', 'shielded')).toThrow(/NIGHT has no private form on Midnight/);
-    expect(() => ledgerTokenOf('NIGHT', 'shielded')).toThrow(/It has a public form only\./);
+    expect(() => ledgerTokenOf(NIGHT, 'shielded')).toThrow(/NIGHT has no private form on Midnight/);
+    expect(() => ledgerTokenOf(NIGHT, 'shielded')).toThrow(/It has a public form only\./);
     /*
      * RED WHEN the refusal stops naming a way through. Until a test settlement
      * asset existed there was none to name and the sentence was "No asset has a
      * private form yet"; there is one now, and a refusal that still said the
      * old sentence would be sending somebody away from a payment they can make.
      */
-    expect(() => ledgerTokenOf('NIGHT', 'shielded'))
-      .toThrow(/Assets that have a private form: TESTUSD\./);
+    /* RED WHEN the refusal names a token by its hex rather than its symbol. */
+    expect(() => ledgerTokenOf(NIGHT, 'shielded'))
+      .toThrow(/Assets that have a private form: tUSD\./);
   });
 
   it('refuses every other asset in the product registry, in both forms, rather than inventing a token', () => {
@@ -109,13 +116,13 @@ describe('the token a payment out of a vault moves', () => {
         let value: string | undefined;
         try { value = ledgerTokenOf(asset.code, form); } catch (e) { message = String((e as Error).message); }
         if (row === null) {
-          expect(value, `${asset.code} ${form} must not be given a token`).toBeUndefined();
-          expect(message).toContain(asset.code);
+          expect(value, `${asset.symbol} ${form} must not be given a token`).toBeUndefined();
+          expect(message).toContain(asset.symbol);
           expect(message).toMatch(form === 'shielded'
-            ? /Assets that have a private form: TESTUSD\./
+            ? /Assets that have a private form: tUSD\./
             : /Assets that have a public form: NIGHT\./);
         } else {
-          const key = `${asset.code} ${form}`;
+          const key = `${asset.symbol} ${form}`;
           /*
            * RED WHEN a row gains a token nothing outside this file has
            * accounted for. The table is the second copy; a row with no entry in
@@ -130,27 +137,26 @@ describe('the token a payment out of a vault moves', () => {
       }
     }
     /*
-     * RED WHEN a third row gains a ledger form. Exactly two rows in this
-     * registry state a token: NIGHT publicly, and the test settlement asset
-     * privately. Everything else states null in both forms.
+     * RED WHEN a third row appears. Exactly two rows are in this registry, each a
+     * real token: NIGHT publicly, and the test settlement asset privately.
      */
-    expect(assets.all().filter(a => a.code !== 'NIGHT' && a.code !== 'TESTUSD').every(a =>
-      a.ledger.shielded === null && a.ledger.unshielded === null)).toBe(true);
-    expect(assets.require('TESTUSD').ledger.unshielded).toBeNull();
+    expect(assets.all().map(a => a.symbol)).toEqual(['NIGHT', 'tUSD']);
+    expect(assets.require(TEST_SETTLEMENT_ASSET).ledger.unshielded).toBeNull();
   });
 
-  it('a public transfer in an asset no vault can hold is refused when its payment is built', () => {
-    const gbp = transferOf({
+  it('a public transfer in an asset no vault can hold publicly is refused when its payment is built', () => {
+    const tusd = transferOf({
       accountId: 'acct_1',
       payee: unshieldedPayeeFor('c3'.repeat(32), NETWORK),
-      asset: 'GBP',
+      asset: TEST_SETTLEMENT_ASSET,
       amount: 100n,
       privacy: 'public',
       reference: 'a supplier',
       createdBy: 'usr_founder',
       employees: [],
     });
-    expect(() => transferFacts(gbp)).toThrow(/GBP has no form on Midnight, private or public/);
+    /* RED WHEN a token with no public form is given one for a public payment. */
+    expect(() => transferFacts(tusd)).toThrow(/tUSD has no public form on Midnight/);
   });
 
   it('the payee\'s own kind picks the token, so a record naming a private address gets none', () => {
@@ -167,12 +173,12 @@ describe('the token a payment out of a vault moves', () => {
     expect(() => transferOf({
       accountId: 'acct_1',
       payee: payeeFor(new Uint8Array(32).fill(0x44), NETWORK),
-      asset: 'NIGHT',
+      asset: NIGHT,
       amount: 100n,
       privacy: 'private',
       reference: 'a supplier',
       createdBy: 'usr_founder',
       employees: [],
-    })).toThrow(/no private form of NIGHT/);
+    })).toThrow(/^NIGHT can only be paid publicly\. Anyone can read the recipient's address and the amount\.$/);
   });
 });

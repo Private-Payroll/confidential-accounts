@@ -9,8 +9,8 @@
  *
  * ── WHY THIS ONE READS THE SOURCE, WHERE ITS NEIGHBOURS BUILD ────────────
  *
- * `no-password-in-the-bundle.test.ts` and `no-wasm-in-the-page.test.ts` both
- * argue, at length and correctly, that reading the source is a WEAKER claim than
+ * The checks that built the earlier application's page both
+ * argued, at length and correctly, that reading the source is a WEAKER claim than
  * asking the bundler — a grep says the text is not in one tree, not that the
  * browser never downloads it. **That argument does not transfer here, and the
  * reason is worth stating rather than assuming.** Their claim is about what ends
@@ -49,6 +49,13 @@ import { join, relative } from 'node:path';
  */
 import { MidnightCommitments } from '../midnight/commitments.js';
 import { wiring, observerView } from './selection.js';
+
+/** The item at a place in a list; an item that is not there fails the test here rather than being read through. */
+const itemAt = <T,>(xs: readonly T[], i: number): T => {
+  const x = xs[i];
+  if (x === undefined) throw new Error(`expected an item at place ${i}, and the list holds ${xs.length}`);
+  return x;
+};
 
 const SRC = fileURLToPath(new URL('..', import.meta.url));
 /* The browser code both web applications share is a package of its own, and ships like `src/`. */
@@ -281,7 +288,7 @@ describe('one wiring point', () => {
 
     /* The line the guard exists to find is READ, not blanked. */
     expect(seen.split('\n')[5]).toContain('new SimulatedLedger(');
-    expect(NAMES.test(seen.split('\n')[5])).toBe(true);
+    expect(NAMES.test(itemAt(seen.split('\n'), 5))).toBe(true);
 
     /*
      * And `blank`'s promise still holds: same number of lines, same columns, so
@@ -351,7 +358,7 @@ describe('one wiring point', () => {
         '  const other = <p>and "closed</p>;'],
     ];
     for (const plant of cascades) {
-      const middle = stripped(plant.join('\n')).split('\n')[1];
+      const middle = itemAt(stripped(plant.join('\n')).split('\n'), 1);
       expect(NAMES.test(middle), `a stray delimiter blinded the line after: ${plant[0]}`).toBe(true);
     }
 
@@ -382,13 +389,12 @@ describe('one wiring point', () => {
      * **THE SAME CLAIM ON THE REAL TREE, WHICH IS WHERE IT WENT WRONG.**
      * A line carrying no quote character at all and not opening a comment is
      * code; the fraction of those a file keeps is how much of it the search can
-     * see. **MEASURED 4 Sep, before and after: `web/Auth.tsx` .718 → .982,
-     * `web/App.tsx` .798 → .955, `web/Join.tsx` .827 → .986.** The floor is set
-     * at .90 — below every file today and above all three as they were, so this
-     * case goes red on the tree if the cascade comes back, without pinning a
-     * symbol somebody may rename.
+     * see. The floor is set at .90. The three files read here score 1.000 today,
+     * and with a quote allowed to run across lines they score .210, .862 and
+     * .847, so this case goes red on the tree if the cascade comes back, without
+     * pinning a symbol somebody may rename.
      */
-    for (const rel of ['web-legacy/App.tsx', 'web-legacy/Join.tsx', 'web-legacy/Auth.tsx']) {
+    for (const rel of ['core/assets.ts', 'core/sessions.ts', 'db/migrate.ts']) {
       const text = readFileSync(join(SRC, rel), 'utf8');
       const raw = text.split('\n');
       const seenLines = stripped(text).split('\n');
@@ -505,13 +511,7 @@ describe('one wiring point', () => {
   it('the selector does not import these named modules, and the build is what covers the '
     + 'rest', () => {
     /*
-     * **THIS IS THE CHEAP HALF OF A GUARD THAT ALREADY EXISTS AND COSTS THREE
-     * MINUTES.** `src/web-legacy/no-wasm-in-the-page.test.ts` builds the page and
-     * reports what went into it, which is the account of the graph worth
-     * having. It is also the slowest thing in this suite, and the mistake it
-     * catches is a one-line import.
-     *
-     * **THE FAILURE: `src/web-legacy/main.tsx` IMPORTS THIS MODULE.** Anything that
+     * **THE FAILURE: A BROWSER PAGE IMPORTS THIS MODULE.** Anything that
      * builds a chain ledger reaches a sealed-state store on a filesystem, so an
      * import of it here puts `node:fs` in a browser bundle - which does not
      * build - and the contract's whole runtime into the page. A dynamic import
@@ -526,12 +526,7 @@ describe('one wiring point', () => {
      * a dynamic `await import()`, a re-export, or a reach into
      * `../midnight/ledger.js` by some other path** - each of those puts a ledger
      * in the page just as effectively.
-     *
-     * Those are covered, and covered better, by
-     * `src/web-legacy/no-wasm-in-the-page.test.ts`, which builds the page and asserts
-     * its WebAssembly list exactly - every route above reaches
-     * `@midnightntwrk/ledger-v9` and that case names it. **This one is the cheap
-     * end: it catches the mistake somebody actually makes, in milliseconds
+     * **It catches the mistake somebody actually makes, in milliseconds
      * rather than in a build.**
      */
     const found = specifiers(readFileSync(join(SRC, 'wiring/selection.ts'), 'utf8'));

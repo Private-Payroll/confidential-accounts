@@ -293,10 +293,29 @@ function loadRegistry(): VaultRegistry {
  * the run
  * ------------------------------------------------------------------ */
 
+
+/**
+ * **A VAULT IS CREATED AND STARTED FROM A SIGNER'S DEVICE, AND THIS TOOL DOES
+ * NEITHER.** A vault takes no money until the company's account has adopted it,
+ * its first nonce secret is set under a run its signers approved, and every
+ * signer's sealed copy of that secret is on the chain. Adopting it and approving
+ * that run are proved with a signer's own keys, and each sealed copy is made from
+ * the secret only a signer's device opens, so an operator tool can start none of
+ * it, and a vault it made would hold money nobody could ever pay out. So this
+ * refuses before anything is read, deployed, written or spent, and names the one
+ * path that creates a vault: the company's own page.
+ */
+const CREATE_IT_FROM_THE_PAGE =
+  'A company\'s vault is created from a signer\'s device: press Create vault on the company\'s vaults page. '
+  + 'That one press deploys the vault, hands it to the company\'s committee, has the company\'s account adopt it, '
+  + 'files its note pool and nonce secret, sets its first secret and writes every signer\'s sealed copy, each step '
+  + 'only once the chain shows the one before. This tool cannot adopt a vault or seal a signer\'s copy, and a vault '
+  + 'it made would never take money. Nothing was read, deployed, written or spent.';
 async function main() {
   say('────────────────────────────────────────────────────────────');
   say(`  Creating a vault on ${NETWORK}`);
   say('────────────────────────────────────────────────────────────');
+  throw new Error(CREATE_IT_FROM_THE_PAGE);
 
   if (!existsSync(STATE_DIR)) mkdirSync(STATE_DIR, { recursive: true });
 
@@ -389,6 +408,9 @@ async function main() {
           'the vault constructor asked for a note to spend. It has no such call — this is a ' +
           'deploy, the pool is empty by definition, and answering would commit the vault to a ' +
           'note nobody holds.');
+      },
+      nonceSecret: () => {
+        throw new Error('the vault constructor asked for the nonce secret. It has no such call - this is a deploy.');
       },
     } as any),
     CompiledContract.withCompiledFileAssets(VAULT_ARTEFACTS as never),

@@ -24,6 +24,7 @@ import { signatureVerifyingKey } from '@midnightntwrk/ledger-v9';
 import { identityFromWords } from 'midnight-identity';
 import { addressOfVerifyingKey, mint } from 'midnight-identity/profile/disclosure';
 
+import { TEST_SETTLEMENT_ASSET } from '../core/assets.js';
 useOnlyTheseSettings({
   ALLOW_SIMULATED_COMPANY_ADDRESS: '1',
   ALLOW_MEMORY_SESSIONS: '1',
@@ -116,7 +117,7 @@ const aCompany = async (token: string) => {
   return { accountId: made.body.account.id as string, viewingKey: made.body.viewingKey as string };
 };
 
-const PEOPLE = [{ name: 'Nina', asset: 'GBP', amount: '1000' }];
+const PEOPLE = [{ name: 'Nina', asset: TEST_SETTLEMENT_ASSET, amount: '1000' }];
 
 describe('a repeated ad hoc run, over the wire', () => {
   it('is refused, then recorded under the signed-in caller when confirmed, whatever name the body carries',

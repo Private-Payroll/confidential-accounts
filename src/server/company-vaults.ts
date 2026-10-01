@@ -16,6 +16,10 @@
  *   GET  /api/accounts/:id/vaults                       the company's vaults, and who holds each on chain
  *   POST /api/accounts/:id/vaults                       a vault deployed with a temporary key
  *   POST /api/accounts/:id/vaults/:vault/handover       that vault handed to the company's committee
+ *   POST /api/accounts/:id/vaults/:vault/start/account  a step of its start on the account: the adoption round or the
+ *                                                       first secret run raised or approved, or the adoption carried out
+ *   POST /api/accounts/:id/vaults/:vault/start/secret   its first secret set under the approved run
+ *   POST /api/accounts/:id/vaults/:vault/start/copy     one signer's sealed copy of that secret written
  *   GET  /api/accounts/:id/vaults/:vault/chain          what the chain holds for one vault
  *   POST /api/accounts/:id/vaults/:vault/deposit        a deposit the depositor's wallet has paid for
  *   POST /api/accounts/:id/vaults/:vault/public-deposit a public deposit the depositor's wallet has paid for
@@ -52,8 +56,8 @@ import { authorityView, everySignerNeeded, type ContractAuthorityView, type Seat
 import { contractsOwingAChange } from '../midnight/committee-change.js';
 import type { CollectedCommitteeSignatures } from '../core/store.js';
 import {
-  circuitsRefusal, asFarAsTheVault, readVaultDeploy, refusalForCommitteeChange, refusalForDeposit, refusalForHandover, refusalForPayout,
-  refusalForPublicDeposit, refusalForPublicPayout,
+  circuitsRefusal, committeeHoldsTheVault, readVaultDeploy, refusalForCommitteeChange, refusalForDeposit, refusalForHandover, refusalForPayout,
+  refusalForPublicDeposit, refusalForPublicPayout, refusalForSecretCopy, refusalForSetNonceSecret, refusalForStartAccountCall,
   refusalToPutMoneyIn, whyTheHistoryDoesNotVouch, type ContractHistoryStep, type FundingFacts, type VaultStartingLedger,
 } from '../wiring/vault-submission.js';
 
@@ -228,9 +232,11 @@ export type AccountNotReady = 'not-handed-over' | 'not-vouched' | 'unknown';
 
 export function vaultState(
   read: AuthorityRead,
-  refused: { heldByOthers: boolean; accountNotReady?: AccountNotReady } | null,
+  refused: { heldByOthers: boolean; accountNotReady?: AccountNotReady; notStarted?: true } | null,
 ): string {
   if (refused === null) return 'held-by-committee';
+  /* Held by the committee in every other way, and not yet adopted with its first secret: creating it again finishes it. */
+  if (refused.notStarted === true) return 'start-owed';
   /* An account still exactly as deployed is a step somebody has not taken yet; any other refusal about the
    * account - other keys, more than one change, circuits this build did not compile - is an alarm. */
   if (refused.accountNotReady === 'not-handed-over') return 'account-not-handed-over';
@@ -367,7 +373,7 @@ export function companyVaultRoutes(deps: CompanyVaultDeps): express.Router {
     what = 'no money goes into this vault',
     /* The narrower question a device's handover waits on: the vault alone, never a door carrying money. */
     asFar: typeof refusalToPutMoneyIn = refusalToPutMoneyIn,
-  ): Promise<{ why: string; heldByOthers: boolean; accountNotReady?: AccountNotReady; vaultRead: AuthorityRead } | null> => {
+  ): Promise<{ why: string; heldByOthers: boolean; accountNotReady?: AccountNotReady; notStarted?: true; vaultRead: AuthorityRead } | null> => {
     let now = state;
     let vaultRead = read;
     if (now === undefined) {
@@ -387,8 +393,11 @@ export function companyVaultRoutes(deps: CompanyVaultDeps): express.Router {
       }
     }
     let pinned: string | null;
+    let started = false;
     try {
-      pinned = deps.chain.startingLedgerOf(now).account;
+      const start = deps.chain.startingLedgerOf(now);
+      pinned = start.account;
+      started = start.started;
     } catch {
       pinned = null;
     }
@@ -401,6 +410,7 @@ export function companyVaultRoutes(deps: CompanyVaultDeps): express.Router {
       vault: vaultRead,
       vaultCircuits: circuitsRefusal(now, vaultKeys, 'this vault is not funded'),
       pinnedAccount: pinned,
+      started,
       companyAccount: companyAddress,
       committee,
       heldHere: deps.account.temporaryKey === undefined ? [] : [deps.account.temporaryKey],
@@ -489,7 +499,7 @@ export function companyVaultRoutes(deps: CompanyVaultDeps): express.Router {
     const accountFacts = company === null || committee === null ? undefined : await accountFactsOf(company.address);
     for (const v of deps.store.listCompanyVaults(account.id)) {
       const read = await authorityOf(v.vault);
-      const refused: { why: string; heldByOthers: boolean; accountNotReady?: AccountNotReady; vaultRead?: AuthorityRead } | null =
+      const refused: { why: string; heldByOthers: boolean; accountNotReady?: AccountNotReady; notStarted?: true; vaultRead?: AuthorityRead } | null =
         company === null || committee === null
           ? { why: why ?? 'this company has no committee yet.', heldByOthers: true }
           : await whyNotFunded(v.vault, read, committee, company.address, undefined, accountFacts);
@@ -593,7 +603,7 @@ export function companyVaultRoutes(deps: CompanyVaultDeps): express.Router {
     const refusal = company === null || committee === null
       ? why
       : (await whyNotFunded(
-        record.vault, read, committee, company.address, state, undefined, either, asFarAsTheVault))?.why ?? null;
+        record.vault, read, committee, company.address, state, undefined, either, committeeHoldsTheVault))?.why ?? null;
     const notFundable = refusal !== null || company === null || committee === null
       ? null
       : (await whyNotFunded(record.vault, read, committee, company.address, state, undefined, either))?.why ?? null;
@@ -602,6 +612,11 @@ export function companyVaultRoutes(deps: CompanyVaultDeps): express.Router {
      * said beside them. A signer's device compares its own record of the notes
      * with them, and does so only when they were.
      */
+    /* Whether the vault is started: adopted, its first secret approved and every sealed copy written. */
+    let started = false;
+    try {
+      started = deps.chain.startingLedgerOf(state).started;
+    } catch { /* a state that is not a vault's is not started, and the gate above already says why */ }
     let notesFromThisBuild = false;
     let notesWhy: string | undefined;
     if (deps.chain.ledgerIsThisBuilds === undefined) {
@@ -654,6 +669,7 @@ export function companyVaultRoutes(deps: CompanyVaultDeps): express.Router {
         : null,
       committee,
       heldByCommittee: refusal === null,
+      started,
       fundable: refusal === null && notFundable === null,
       why: refusal ?? notFundable,
     });
@@ -725,6 +741,138 @@ export function companyVaultRoutes(deps: CompanyVaultDeps): express.Router {
       }));
     if (sent === null) return;
     res.json({ txRef: sent.ref, transactionHash: sent.transactionHash });
+  });
+
+  /* ---- a vault's start ---- */
+
+  /*
+   * **A VAULT IS STARTED FROM THE DEVICE THAT CREATED IT, AND THIS SERVICE PAYS
+   * ONLY THE FEE.** The company's account adopts it, the first secret run is
+   * raised and approved, the secret is set and each signer's sealed copy is
+   * written; every one of those is built and proved on a signer's device, and
+   * read here before it is paid for. Only for a vault this company's committee
+   * holds, read from the chain now. None moves money, and none lets money in
+   * on its own: the deposit door still asks the whole gate.
+   *
+   * **NOTHING IS SENT TWICE.** A step sent and not yet shown by the chain is
+   * held here, by the vault, the step and, for an approval, the person, for as
+   * long as it could still land; only a refusal that says nothing was sent
+   * frees it. In this process only: the chain's own refusals stand behind it.
+   */
+  const startSent = new Map<string, number>();
+  const startStillPending = (key: string): boolean => {
+    const at = startSent.get(key);
+    return at !== undefined && now().getTime() - at < HANDOVER_LIFETIME_MS;
+  };
+
+  /** The vault, its company and its committee, for a vault this company's committee holds now; or the refusal, sent. */
+  const startable = async (req: express.Request, res: express.Response) => {
+    const record = theVault(req, res);
+    if (record === null) return null;
+    const account = accountOf(req);
+    const { company, committee, why } = await committeeNow(account);
+    if (company === null || committee === null) {
+      res.status(409).json({ nothingWasSent: true, error: `${why} Nothing was sent.` });
+      return null;
+    }
+    const refused = await whyNotFunded(record.vault, await authorityOf(record.vault), committee, company.address,
+      undefined, undefined, 'this vault is not started from here', committeeHoldsTheVault);
+    if (refused !== null) {
+      res.status(409).json({ nothingWasSent: true, error: refused.why });
+      return null;
+    }
+    return { record, account, company };
+  };
+
+  /** Sends one step once, holding it until it could no longer land, and answers with the reference. */
+  const sendStep = async (
+    res: express.Response, key: string, accountId: string, what: string, bytes: Uint8Array,
+    check: (tx: unknown) => string | null,
+  ) => {
+    if (startStillPending(key)) {
+      res.status(409).json({
+        nothingWasSent: true,
+        error: `${what} was sent and the chain has not shown it yet, and a second copy would be refused after its fee `
+          + 'was paid. Nothing was sent; wait for the first, then create the vault again to carry on.',
+      });
+      return;
+    }
+    startSent.set(key, now().getTime());
+    const sent = await send(res, accountId, what, 'proven-moving-nothing', bytes, check);
+    if (sent === null) {
+      if (res.statusCode !== 502) startSent.delete(key);
+      return;
+    }
+    res.json({ txRef: sent.ref, transactionHash: sent.transactionHash });
+  };
+
+  r.post('/api/accounts/:id/vaults/:vault/start/account', ...guard, async (req, res) => {
+    const body = z.object({
+      tx: z.string().min(1).max(VAULT_TX_LIMIT),
+      step: z.enum(['adoption', 'secret-run']),
+      call: z.enum(['propose', 'approve', 'adopt']),
+    }).strict().safeParse(req.body);
+    if (!body.success || (body.data.step === 'secret-run' && body.data.call === 'adopt')) {
+      res.status(400).json({ nothingWasSent: true, error: 'this is not a step of a vault\'s start on the company\'s account. Nothing was sent.' });
+      return;
+    }
+    const at = await startable(req, res);
+    if (at === null) return;
+    const { step, call } = body.data;
+    /* Raising and carrying out happen once per vault; an approval once per person. */
+    const key = `${at.record.vault}:${step}:${call}${call === 'approve' ? `:${personOf(req)}` : ''}`;
+    const what = step === 'adoption'
+      ? (call === 'propose' ? 'raising the adoption of this vault' : call === 'approve' ? 'approving the adoption of this vault'
+        : 'adopting this vault')
+      : (call === 'propose' ? 'raising this vault\'s first secret' : 'approving this vault\'s first secret');
+    await sendStep(res, key, at.account.id, what, new Uint8Array(Buffer.from(body.data.tx, 'base64')),
+      (tx) => refusalForStartAccountCall(tx, { account: at.company.address, circuit: call }));
+  });
+
+  r.post('/api/accounts/:id/vaults/:vault/start/secret', ...guard, async (req, res) => {
+    const bytes = txFrom(req, res);
+    if (bytes === null) return;
+    const at = await startable(req, res);
+    if (at === null) return;
+    /* A first secret, and only while the vault holds none: the chain read now, never a record kept here. */
+    let held: string | null = null;
+    try {
+      held = deps.chain.startingLedgerOf(await deps.chain.contractState(at.record.vault)).nonceCommitment;
+    } catch (e) {
+      res.status(503).json({ nothingWasSent: true, error: `the chain could not be read for this vault (${(e as Error)?.message ?? e}). Nothing was sent.` });
+      return;
+    }
+    if (!/^0+$/u.test(held)) {
+      res.status(409).json({ nothingWasSent: true, error: 'this vault already holds a secret, so a first one is not set again. Nothing was sent.' });
+      return;
+    }
+    await sendStep(res, `${at.record.vault}:secret`, at.account.id, 'setting this vault\'s first secret', bytes,
+      (tx) => refusalForSetNonceSecret(tx, { vault: at.record.vault, account: at.company.address }));
+  });
+
+  r.post('/api/accounts/:id/vaults/:vault/start/copy', ...guard, async (req, res) => {
+    const body = z.object({ tx: z.string().min(1).max(VAULT_TX_LIMIT), place: z.number().int().min(0).max(1023) }).strict()
+      .safeParse(req.body);
+    if (!body.success) {
+      res.status(400).json({ nothingWasSent: true, error: 'this is not one sealed copy of a vault\'s secret, by its place. Nothing was sent.' });
+      return;
+    }
+    const at = await startable(req, res);
+    if (at === null) return;
+    let started: boolean;
+    try {
+      started = deps.chain.startingLedgerOf(await deps.chain.contractState(at.record.vault)).started;
+    } catch (e) {
+      res.status(503).json({ nothingWasSent: true, error: `the chain could not be read for this vault (${(e as Error)?.message ?? e}). Nothing was sent.` });
+      return;
+    }
+    if (started) {
+      res.status(409).json({ nothingWasSent: true, error: 'every sealed copy of this vault\'s secret is already written. Nothing was sent.' });
+      return;
+    }
+    await sendStep(res, `${at.record.vault}:copy:${body.data.place}`, at.account.id,
+      'writing a sealed copy of this vault\'s secret', new Uint8Array(Buffer.from(body.data.tx, 'base64')),
+      (tx) => refusalForSecretCopy(tx, { vault: at.record.vault }));
   });
 
   /* ---- a private payment out ---- */

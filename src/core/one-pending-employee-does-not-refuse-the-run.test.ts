@@ -44,6 +44,7 @@ import type { Hex } from './crypto.js';
 import type { PayeeAddress } from '../midnight/payee-address.js';
 import { registryWithTestPrivateForms } from '../testing/assets.js';
 
+import { TEST_TOKEN } from '../testing/assets.js';
 const THREE_SIGNERS = [
   { name: 'Ada', role: 'admin' as const },
   { name: 'Blake', role: 'approver' as const },
@@ -54,7 +55,7 @@ function harness() {
   const store = new FileStore(join(mkdtempSync(join(tmpdir(), 'mn-s101-')), 'db.json'));
   const ledger = new SimulatedLedger(SimulatedCommitments);
   const proofs = new SimulatedProofSystem();
-  const accounts = new AccountService(store, ledger, SimulatedCommitments);
+  const accounts = new AccountService(store, ledger, SimulatedCommitments, registryWithTestPrivateForms());
   const invites = new RecordingInviteDelivery();
   /* GBP given a private token of its own, so a person can be hired in it. */
   const payroll = new PayrollService(
@@ -92,18 +93,18 @@ describe('one pending employee does not refuse the whole run', () => {
   const company = async () => {
     const { account, viewingKey } = await h.accounts.create('Acme', THREE_SIGNERS, 2, undefined, drawCompanyLabel());
     const ada = h.payroll.hireDirect(account.id, {
-      name: 'Ada Paid', email: 'ada@a.co', title: 'Eng', asset: 'GBP', baseAmount: 100_00n,
+      name: 'Ada Paid', email: 'ada@a.co', title: 'Eng', asset: TEST_TOKEN, baseAmount: 100_00n,
     }, viewingKey).employee;
     const ben = h.payroll.hireDirect(account.id, {
-      name: 'Ben Paid', email: 'ben@a.co', title: 'Eng', asset: 'GBP', baseAmount: 200_00n,
+      name: 'Ben Paid', email: 'ben@a.co', title: 'Eng', asset: TEST_TOKEN, baseAmount: 200_00n,
     }, viewingKey).employee;
     /* WAITING ON THEM: invited, nothing handed over, drop box empty. */
     const nina = h.payroll.invite(account.id, {
-      name: 'Nina Nothing', email: 'nina@a.co', title: 'Eng', asset: 'GBP', baseAmount: 300_00n,
+      name: 'Nina Nothing', email: 'nina@a.co', title: 'Eng', asset: TEST_TOKEN, baseAmount: 300_00n,
     }, viewingKey, 'usr_operator').employee;
     /* WAITING ON US: handed over, drop box full, nobody has admitted them. */
     const otto = h.payroll.invite(account.id, {
-      name: 'Otto Over', email: 'otto@a.co', title: 'Eng', asset: 'GBP', baseAmount: 400_00n,
+      name: 'Otto Over', email: 'otto@a.co', title: 'Eng', asset: TEST_TOKEN, baseAmount: 400_00n,
     }, viewingKey, 'usr_operator').employee;
     const token = h.invites.tokenFor('otto@a.co');
     h.payroll.acceptInvite(token, handedOver(h, token, {

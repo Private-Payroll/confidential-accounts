@@ -3,9 +3,10 @@ import * as L from '@midnightntwrk/ledger-v9';
 import { mkdtempSync, mkdirSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
+import * as runtime from '@midnight-ntwrk/compact-runtime';
 import { createConstructorContext } from '@midnight-ntwrk/compact-runtime';
 import { keysThisMachineHolds, refusalToFund, thisBuildsVerifierKeys } from './funding-gate.js';
-import { circuitsRefusal, refusalToPutMoneyIn, type FundingFacts } from '../src/wiring/vault-submission.js';
+import { circuitsRefusal, refusalToPutMoneyIn, startingLedgerFrom, type FundingFacts } from '../src/wiring/vault-submission.js';
 import type { Committee } from '../src/midnight/vault-committee.js';
 import { readContractAuthority } from '../src/midnight/ledger.js';
 import { VAULT_CIRCUITS } from '../src/midnight/vault-contract.js';
@@ -86,11 +87,31 @@ const BUILT = {
  * given. Every row reads the pin through the vault's own compiled ledger,
  * because that is the only reader the operator door has.
  */
-const { Contract: VaultContract, ledger: vaultLedger } = await import('../contracts/managed-vault/contract/index.js');
+const { Contract: VaultContract, ledger: vaultLedger, pureCircuits: vaultCircuits } = await import('../contracts/managed-vault/contract/index.js');
+/**
+ * Started, as the vault is once its account has approved a secret and every
+ * signer's sealed copy of it is written: a commitment in place, and the mark
+ * the last copy leaves. The door refuses a vault that is not
+ * (`src/wiring/vault-submission.test.ts`).
+ */
+const started = (data: any): unknown => {
+  const Rt = runtime as any;
+  const bytes32 = new Rt.CompactTypeBytes(32);
+  const aligned = (b: Uint8Array) => ({ value: bytes32.toValue(b), alignment: bytes32.alignment() });
+  const commitment = new Uint8Array(32).fill(0x51);
+  const fields = data.state.asArray();
+  let next = Rt.StateValue.newArray();
+  fields.forEach((f: any, i: number) => {
+    next = next.arrayPush(i === 5 ? Rt.StateValue.newCell(aligned(commitment))
+      : i === 7 ? Rt.StateValue.newMap(f.asMap().insert(aligned((vaultCircuits as any).copiesWrittenKey()), Rt.StateValue.newCell(aligned(commitment))))
+        : f);
+  });
+  return new Rt.ChargedState(next);
+};
 const vaultPinnedTo = async (account: string): Promise<unknown> => {
-  const vault = new VaultContract({ noteToSpend: () => { throw new Error('unused'); } } as never);
+  const vault = new VaultContract({ noteToSpend: () => { throw new Error('unused'); }, nonceSecret: () => { throw new Error('unused'); } } as never);
   const init = await (vault as any).initialState(createConstructorContext({}, '0'.repeat(64)), { bytes: fromHex(account as never) });
-  return init.currentContractState.data as unknown;
+  return started(init.currentContractState.data);
 };
 const PINNED_HERE = await vaultPinnedTo(ACCOUNT);
 const PINNED_ELSEWHERE = await vaultPinnedTo('ef'.repeat(32));
@@ -133,6 +154,12 @@ const serviceAsks = async (
     vault: await readContractAuthority(read, VAULT),
     vaultCircuits: circuitsRefusal(vaultState, await BUILT.vault(), 'this vault is not funded'),
     pinnedAccount: pinned,
+    started: (() => {
+      try {
+        return startingLedgerFrom((vaultLedger as never as (d: unknown) => never)((vaultState as { data?: unknown } | null)?.data),
+          (vaultCircuits as any).copiesWrittenKey()).started;
+      } catch { return false; }
+    })(),
     companyAccount: ACCOUNT,
     account: await readContractAuthority(read, ACCOUNT),
     accountCircuits: circuitsRefusal(await stateOf(ACCOUNT), await BUILT.account(),
@@ -235,6 +262,15 @@ describe('ONE GATE, AND BOTH DOORS ASK IT', () => {
     const notAVault = { vaultData: {} };
     expect(await operatorAsks(at, notAVault)).toMatch(/cannot be read as a vault's/);
     expect(await serviceAsks(at, THE_COMMITTEE, notAVault)).toMatch(/cannot be read as a vault's/);
+  });
+
+  it('BOTH REFUSE a vault that is not started: no secret approved, or one whose sealed copies are not all written', async () => {
+    const at = { [VAULT]: HANDED_OVER, [ACCOUNT]: HANDED_OVER };
+    const vault = new VaultContract({ noteToSpend: () => { throw new Error('unused'); }, nonceSecret: () => { throw new Error('unused'); } } as never);
+    const fresh = { vaultData: (await (vault as any).initialState(createConstructorContext({}, '0'.repeat(64)), { bytes: fromHex(ACCOUNT as never) })).currentContractState.data };
+    /* RED WHEN: a door offers a deposit the vault will refuse in its circuit, after the money was booked. */
+    expect(await operatorAsks(at, fresh)).toMatch(/has not yet adopted it and approved its first secret/);
+    expect(await serviceAsks(at, THE_COMMITTEE, fresh)).toMatch(/has not yet adopted it and approved its first secret/);
   });
 
   /*

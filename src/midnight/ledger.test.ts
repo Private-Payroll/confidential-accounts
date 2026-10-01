@@ -32,7 +32,7 @@
  * was reachable offline: the only thing needed was a stand-in for `callTx` that
  * records what it was called with.
  */
-import { existsSync } from 'node:fs';
+import { keysOnDisk, ACCOUNT_KEYS } from '../../contracts/test/keys-on-disk.js';
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 import { MidnightLedger, type MidnightConfig, type FeeSponsor, type SealedStateStore } from './ledger.js';
 /*
@@ -58,6 +58,7 @@ import { arityFrom } from './circuit-arity.js';
  */
 import { pureCircuits } from '../../contracts/managed/contract/index.js';
 
+import { TEST_TOKEN } from '../testing/assets.js';
 const CFG: MidnightConfig = {
   indexerUrl: 'http://indexer', indexerWsUrl: 'ws://indexer', proverUrl: 'http://prover',
   nodeUrl: 'http://node',
@@ -94,7 +95,7 @@ const PAYLOAD_HASH = 'cc'.repeat(32) as Hex;
  * private state and in the view the caller passes. A test that let the two
  * differ would be testing a device that cannot find its own money.
  */
-const ASSET = 'GBP';
+const ASSET = TEST_TOKEN;
 const ASSET_BLINDING = '44'.repeat(32) as Hex;
 
 /*
@@ -3339,7 +3340,8 @@ describe('S74/T-360: what ledger 9 actually accepts, measured rather than read o
 // relatively, a run started from anywhere but the root answers "no keys" and
 // skips the block below in silence, which is the failure this whole arrangement
 // is trying not to have.
-const KEYS_ON_DISK = existsSync(new URL('../../contracts/managed/keys/adopt.verifier', import.meta.url));
+const KEYS = keysOnDisk([ACCOUNT_KEYS]);
+const KEYS_ON_DISK = KEYS.ok;
 if (!KEYS_ON_DISK) {
   // Printed where the runner is attached to a terminal, and NOT where it is
   // not: a reporter writing to a file drops console output entirely. So this
@@ -3350,7 +3352,7 @@ if (!KEYS_ON_DISK) {
   // existing.
   console.log(
     '  NOT CHECKED HERE: the verifier keys a deployed entry point is read back against are not on\n' +
-    '  disk, so the four assertions that compare them did not run. `npm run compact` builds them.',
+    `  disk as this build compiled them, so the four assertions that compare them did not run: ${KEYS.why}`,
   );
 }
 
@@ -3785,28 +3787,28 @@ describe('a spending policy, set and charged through the client', () => {
   it('setPolicy: the vault, the commitment and the proposal, in the slots the contract names, with the token staged', async () => {
     const { ledger, staged } = harness({});
     const commitment = 'c3'.repeat(32) as Hex;
-    const call = await ledger.prepare('acct', { kind: 'setPolicy', vault: VAULT, asset: 'GBP', commitment, proposalId: PROPOSAL_ID });
+    const call = await ledger.prepare('acct', { kind: 'setPolicy', vault: VAULT, asset: TEST_TOKEN, commitment, proposalId: PROPOSAL_ID });
     expect(call.circuit).toBe('setPolicy');
     const slots = await slotsOf('setPolicy');
     /* RED WHEN two arguments are swapped, or one is missing. */
     expect(slots).toEqual(['vault', 'commitment', 'proposal']);
     expect([argHex(call.args[0]), argHex(call.args[1]), argHex(call.args[2])]).toEqual([VAULT, commitment, PROPOSAL_ID]);
     /* RED WHEN the token the policy is for is not staged: the circuit derives the policy's key from it. */
-    expect(staged.at(-1)?.value.assetId).toEqual(assetIdBytes('GBP'));
+    expect(staged.at(-1)?.value.assetId).toEqual(assetIdBytes(TEST_TOKEN));
   });
 
   it('setPolicy: refused before the fee when the proposal is not yet approved', async () => {
     const { ledger } = harness({ approvals: 1n, threshold: 2n });
     /* RED WHEN the client stops asking whether the proposal is approved. */
     await expect(ledger.prepare('acct', {
-      kind: 'setPolicy', vault: VAULT, asset: 'GBP', commitment: 'c3'.repeat(32) as Hex, proposalId: PROPOSAL_ID,
+      kind: 'setPolicy', vault: VAULT, asset: TEST_TOKEN, commitment: 'c3'.repeat(32) as Hex, proposalId: PROPOSAL_ID,
     })).rejects.toThrow(/that proposal has 1 of 2 approvals/);
   });
 
   it("clearRun: the run's parts, its tree and its period in the slots the contract names, and the policy staged", async () => {
     const { ledger, staged } = harness({});
     const step = {
-      kind: 'clearRun' as const, proposalId: PROPOSAL_ID, run: RUN, salt: CHANGE.salt, asset: 'GBP',
+      kind: 'clearRun' as const, proposalId: PROPOSAL_ID, run: RUN, salt: CHANGE.salt, asset: TEST_TOKEN,
       top: 77n, total: 4_321n, period: 0n, policy: POLICY, spent: 1_234n,
     };
     const call = await ledger.prepare('acct', step);
@@ -3822,7 +3824,7 @@ describe('a spending policy, set and charged through the client', () => {
     expect([at('top'), at('total'), at('period')]).toEqual([77n, 4_321n, 0n]);
     expect(call.args).toHaveLength(slots.length);
     /* RED WHEN the policy's opening, what the period has been charged, or the token is not staged. */
-    expect(staged.at(-1)?.value).toMatchObject({ policy: POLICY, periodSpent: 1_234n, assetId: assetIdBytes('GBP') });
+    expect(staged.at(-1)?.value).toMatchObject({ policy: POLICY, periodSpent: 1_234n, assetId: assetIdBytes(TEST_TOKEN) });
   });
 
   it("clearRun: refused before anything is staged when the run's window leaves the period named", async () => {
@@ -3831,17 +3833,17 @@ describe('a spending policy, set and charged through the client', () => {
     /* RED WHEN the client stops comparing the window with the period before a fee. */
     await expect(ledger.prepare('acct', {
       kind: 'clearRun', proposalId: PROPOSAL_ID, run: { ...RUN, closesAt: 1_801_592_001n }, salt: CHANGE.salt,
-      asset: 'GBP', top: 1n, total: 1n, period: 0n, policy: POLICY, spent: 0n,
+      asset: TEST_TOKEN, top: 1n, total: 1n, period: 0n, policy: POLICY, spent: 0n,
     })).rejects.toThrow(/does not lie inside the period 2027-01-03 to 2027-02-02/);
     /* RED WHEN the client stops comparing the window's start with the period's. */
     await expect(ledger.prepare('acct', {
       kind: 'clearRun', proposalId: PROPOSAL_ID, run: { ...RUN, opensAt: 1_798_999_999n }, salt: CHANGE.salt,
-      asset: 'GBP', top: 1n, total: 1n, period: 0n, policy: POLICY, spent: 0n,
+      asset: TEST_TOKEN, top: 1n, total: 1n, period: 0n, policy: POLICY, spent: 0n,
     })).rejects.toThrow(/does not lie inside the period/);
     /* RED WHEN the client reads a later period's start as the first period's: this window lies in period 0. */
     await expect(ledger.prepare('acct', {
       kind: 'clearRun', proposalId: PROPOSAL_ID, run: RUN, salt: CHANGE.salt,
-      asset: 'GBP', top: 1n, total: 1n, period: 1n, policy: POLICY, spent: 0n,
+      asset: TEST_TOKEN, top: 1n, total: 1n, period: 1n, policy: POLICY, spent: 0n,
     })).rejects.toThrow(/does not lie inside the period 2027-02-02 to 2027-03-04/);
     expect(staged.length).toBe(before);
   });

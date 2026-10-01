@@ -20,8 +20,8 @@ import { paymentsFit, paymentsFitAnswer, type Note } from '../../../src/midnight
 import { toHex, type Hex } from '../../../src/core/crypto.js';
 import { refuseWhatTheVaultCannotPay, type HoldingAnswer, type VaultCannotPayThisProposal } from '../../../src/core/vault-holdings.js';
 import { paymentChecked, paymentsCheckedDigest, paymentsOnTheWire } from '../../../src/core/device-raise.js';
-import { registryWithTestPrivateForms, testPrivateToken } from '../../../src/testing/assets.js';
-import { deviceVaultHoldings, type ChainNotesView, type DeviceHoldingsDoors, type PoolNote } from './device-vault-holdings.js';
+import { OTHER_TEST_TOKEN, registryWithTestPrivateForms, TEST_TOKEN } from '../../../src/testing/assets.js';
+import { deviceVaultHoldings, type ChainNotesView, type DeviceHoldingsDoors } from './device-vault-holdings.js';
 import { paymentsFitNotes } from './vault-builder.js';
 import { answerVaultAsk } from './vault-worker-entry.js';
 import { vaultBuilderOver } from './vault-worker-client.js';
@@ -50,9 +50,10 @@ vi.doMock('../../../contracts/managed-vault/contract/index.js', () => ({
 }));
 
 const VAULT = 'a7'.repeat(32) as Hex;
-const GBP = testPrivateToken('GBP') as Hex;
-const EUR = testPrivateToken('EUR') as Hex;
-const coin = (n: number, value: bigint, token: Hex = GBP) =>
+/* Two tokens the fixture registry holds, each with both forms. */
+const PAY = TEST_TOKEN as Hex;
+const OTHER = OTHER_TEST_TOKEN as Hex;
+const coin = (n: number, value: bigint, token: Hex = PAY) =>
   ({ nonce: n.toString(16).padStart(64, '0') as Hex, token, value });
 const heldOf = (c: { nonce: Hex; token: Hex; value: bigint }) => commitmentForNote(vaultCircuits as never, VAULT, c);
 
@@ -95,11 +96,11 @@ const theDevice = (
 });
 
 const answerOf = (a: HoldingAnswer) => (a.of === 'held' ? `held ${a.amount}` : a.of);
-const assetGBP = registryWithTestPrivateForms().require('GBP' as never);
+const assetPAY = registryWithTestPrivateForms().require(PAY);
 const refusalOf = async (reader: ReturnType<typeof theService>, amount: bigint) =>
   refuseWhatTheVaultCannotPay(reader, {
-    vault: VAULT, asset: assetGBP, total: amount, payees: 1n,
-    payments: [{ payee: { kind: 'shielded' }, token: GBP, amount }],
+    vault: VAULT, asset: assetPAY, total: amount, payees: 1n,
+    payments: [{ payee: { kind: 'shielded' }, token: PAY, amount }],
   }, ['shielded']).then(() => 'pays', (e: VaultCannotPayThisProposal) => e.why);
 
 describe('1. THE DEVICE AND THE SERVICE GIVE THE SAME ANSWER ON THE SAME RECORD AND CHAIN', () => {
@@ -118,8 +119,8 @@ describe('1. THE DEVICE AND THE SERVICE GIVE THE SAME ANSWER ON THE SAME RECORD 
   ];
   for (const [why, pool, chain, expected] of cases) {
     it(why, async () => {
-      const service = await theService(pool, chain).held(VAULT, 'shielded', GBP);
-      const device = await theDevice(pool, chain).held(VAULT, 'shielded', GBP);
+      const service = await theService(pool, chain).held(VAULT, 'shielded', PAY);
+      const device = await theDevice(pool, chain).held(VAULT, 'shielded', PAY);
       /* RED WHEN: either side classifies the drift differently - a copy of the comparison has come back, or it was changed on one side. */
       expect(answerOf(device), 'device').toBe(expected);
       expect(answerOf(service), 'service').toBe(expected);
@@ -169,11 +170,11 @@ describe('2. A SHORTFALL IS "DOES NOT FIT" BY ITS TYPE, WHATEVER ITS WORDS', () 
 
   it('the walk answers a real shortfall with its type, and the refusal a payment gives keeps its words', () => {
     const answer = paymentsFitAnswer({ notes: pool.map((c) => ({ ...c, index: 0n, createdIn: 'ee'.repeat(32) as Hex })) },
-      [{ token: GBP, amount: 100n }]);
+      [{ token: PAY, amount: 100n }]);
     expect(answer).toMatchObject({ of: 'does-not-fit', payment: 1, payments: 1 });
     /* RED WHEN: the payment path's own sentence changes while this answer is read - the two are written by one function. */
     expect(() => paymentsFit({ notes: pool.map((c) => ({ ...c, index: 0n, createdIn: 'ee'.repeat(32) as Hex })) },
-      [{ token: GBP, amount: 100n }])).toThrow((answer as { why: string }).why);
+      [{ token: PAY, amount: 100n }])).toThrow((answer as { why: string }).why);
   });
 
   it('the device reads the answer, not the sentence', async () => {
@@ -181,10 +182,10 @@ describe('2. A SHORTFALL IS "DOES NOT FIT" BY ITS TYPE, WHATEVER ITS WORDS', () 
       paymentsFit: async () => ({ of: 'does-not-fit', payment: 1, payments: 1, why: 'the notes are each smaller than the payment' }),
     });
     /* RED WHEN: "does not fit" is recognised by the words it opens with - these words open with nothing it knew. */
-    expect(await reworded.fits(VAULT, [{ payee: { kind: 'shielded' }, token: GBP, amount: 100n }]))
+    expect(await reworded.fits(VAULT, [{ payee: { kind: 'shielded' }, token: PAY, amount: 100n }]))
       .toEqual({ of: 'does-not-fit', why: 'the notes are each smaller than the payment' });
     /* And a real one, through the real walk. */
-    const real = await theDevice(pool, pool).fits(VAULT, [{ payee: { kind: 'shielded' }, token: GBP, amount: 100n }]);
+    const real = await theDevice(pool, pool).fits(VAULT, [{ payee: { kind: 'shielded' }, token: PAY, amount: 100n }]);
     expect(real.of).toBe('does-not-fit');
     /* RED WHEN: the advice to merge reaches a screen - no vault can merge its notes. */
     expect((real as { why: string }).why).toMatch(/^payment 1 of 1 cannot be made out of this vault: no single note covers 100/u);
@@ -195,16 +196,16 @@ describe('2. A SHORTFALL IS "DOES NOT FIT" BY ITS TYPE, WHATEVER ITS WORDS', () 
     const thrown = new Error('payment 1 of 1 cannot be made out of this vault: the background thread did not start');
     const device = theDevice(pool, pool, { paymentsFit: async () => { throw thrown; } });
     /* RED WHEN: a thrown error whose words look like a shortfall is read as one. */
-    await expect(device.fits(VAULT, [{ payee: { kind: 'shielded' }, token: GBP, amount: 10n }])).rejects.toBe(thrown);
+    await expect(device.fits(VAULT, [{ payee: { kind: 'shielded' }, token: PAY, amount: 10n }])).rejects.toBe(thrown);
     const nonsense = theDevice(pool, pool, { paymentsFit: async () => ({ of: 'maybe' }) as never });
     /* RED WHEN: an answer that is neither is read as either. */
-    await expect(nonsense.fits(VAULT, [{ payee: { kind: 'shielded' }, token: GBP, amount: 10n }])).rejects.toThrow(/did not finish on this device\. Reload the page and try again/u);
+    await expect(nonsense.fits(VAULT, [{ payee: { kind: 'shielded' }, token: PAY, amount: 10n }])).rejects.toThrow(/did not finish on this device\. Reload the page and try again/u);
   });
 });
 
 /* ── 3. the device refuses what the service will not raise ───────────────── */
 
-const LEG = { asset: 'GBP', payments: [0, 1].map(() => ({ kind: 'shielded', token: GBP as string, amount: '100' })) };
+const LEG = { asset: PAY, payments: [0, 1].map(() => ({ kind: 'shielded', token: PAY as string, amount: '100' })) };
 const RUN = { root: '88'.repeat(32), payees: '2', opensAt: '1', closesAt: '2', vault: VAULT as string };
 const HALF = { assetId: '44'.repeat(32), assetBlinding: '55'.repeat(32), proposalSalt: '66'.repeat(32), changeAmount: '1', changeBatchDigest: '77'.repeat(32) };
 const ORDER: RaiseOrderOnTheWire = {
@@ -239,7 +240,7 @@ const aSender = (order: RaiseOrderOnTheWire) => {
 describe('3. THE DEVICE REFUSES A LEG WHOSE PAYMENTS ARE NOT WHAT THE SERVICE WILL RAISE', () => {
   it('builds and sends when the proposal written down pays what was checked', async () => {
     const s = aSender(ORDER);
-    await sendRaiseFromDevice(s.doors, { runId: 'run_1', viewingKey: 'vk', asset: 'GBP' });
+    await sendRaiseFromDevice(s.doors, { runId: 'run_1', viewingKey: 'vk', asset: PAY });
     expect(s.log).toEqual(['leg-payments', 'call-state', 'build', 'send']);
   });
 
@@ -251,7 +252,7 @@ describe('3. THE DEVICE REFUSES A LEG WHOSE PAYMENTS ARE NOT WHAT THE SERVICE WI
     it(`refuses a raise before anything is built or sent: ${why}`, async () => {
       const s = aSender(order);
       /* RED WHEN: the device checks the list it was handed against itself and builds a proposal that pays something else. */
-      await expect(sendRaiseFromDevice(s.doors, { runId: 'run_1', viewingKey: 'vk', asset: 'GBP' }))
+      await expect(sendRaiseFromDevice(s.doors, { runId: 'run_1', viewingKey: 'vk', asset: PAY }))
         .rejects.toThrow(/not the payments in the proposal written down for it, so this device did not build it\. Nothing was sent\. Reload the page/u);
       expect(s.log).toEqual(['leg-payments']);
     });
@@ -260,38 +261,38 @@ describe('3. THE DEVICE REFUSES A LEG WHOSE PAYMENTS ARE NOT WHAT THE SERVICE WI
   it('checks the count of payees against the proposal written down, not against the list', async () => {
     const s = aSender({ ...ORDER, order: { ...ORDER.order, run: { ...RUN, payees: '3' } } });
     /* RED WHEN: the count the signers approve is taken from the same list it is compared with. */
-    await expect(sendRaiseFromDevice(s.doors, { runId: 'run_1', viewingKey: 'vk', asset: 'GBP' }))
+    await expect(sendRaiseFromDevice(s.doors, { runId: 'run_1', viewingKey: 'vk', asset: PAY }))
       .rejects.toThrow(/raised over 3 payments and 2 were handed in/u);
     expect(s.log).toEqual(['leg-payments']);
     const unread = aSender({ ...ORDER, order: { ...ORDER.order, run: { ...RUN, payees: 'two' } } });
-    await expect(sendRaiseFromDevice(unread.doors, { runId: 'run_1', viewingKey: 'vk', asset: 'GBP' }))
+    await expect(sendRaiseFromDevice(unread.doors, { runId: 'run_1', viewingKey: 'vk', asset: PAY }))
       .rejects.toThrow(/does not say how many people it pays/u);
   });
 
   it('refuses a retry the same way', async () => {
     const order = { ...ORDER, paymentsChecked: paymentsCheckedDigest(LEG.payments.slice(1)) };
     const s = aSender(order);
-    await expect(sendRetryFromDevice(s.doors, { runId: 'run_1', viewingKey: 'vk', asset: 'GBP', proposalId: 'prp_1' }))
+    await expect(sendRetryFromDevice(s.doors, { runId: 'run_1', viewingKey: 'vk', asset: PAY, proposalId: 'prp_1' }))
       .rejects.toThrow(/not the payments in the proposal written down/u);
     expect(s.log).toEqual(['retry-payments']);
     const good = aSender({ ...ORDER, indices: [0, 1] } as RetryOrderOnTheWire);
-    await sendRetryFromDevice(good.doors, { runId: 'run_1', viewingKey: 'vk', asset: 'GBP', proposalId: 'prp_1' });
+    await sendRetryFromDevice(good.doors, { runId: 'run_1', viewingKey: 'vk', asset: PAY, proposalId: 'prp_1' });
     expect(good.log).toEqual(['retry-payments', 'call-state', 'build', 'send']);
   });
 });
 
 describe('4. THE PAYMENTS A DIGEST COVERS ARE WRITTEN IN ONE PLACE', () => {
   it('builds, sends and digests one shape', () => {
-    const fact = { payee: { kind: 'shielded' as const, address: 'someone' }, token: GBP, amount: 100n };
+    const fact = { payee: { kind: 'shielded' as const, address: 'someone' }, token: PAY, amount: 100n };
     const checked = paymentChecked(fact);
     /* RED WHEN: anything but the kind, the token and the amount is carried - above all who is paid. */
-    expect(checked).toEqual({ kind: 'shielded', token: GBP, amount: 100n });
-    expect(paymentsOnTheWire([checked])).toEqual([{ kind: 'shielded', token: GBP, amount: '100' }]);
+    expect(checked).toEqual({ kind: 'shielded', token: PAY, amount: 100n });
+    expect(paymentsOnTheWire([checked])).toEqual([{ kind: 'shielded', token: PAY, amount: '100' }]);
     /* RED WHEN: what the service holds and what it hands to a device digest apart. */
     expect(paymentsCheckedDigest([checked])).toBe(paymentsCheckedDigest(paymentsOnTheWire([checked])));
     /* A list is not a payment: if this line compiles, the shape has been loosened. */
     // @ts-expect-error a payment is its kind, token and amount by name, never a list of three
-    expect(() => paymentsCheckedDigest([['shielded', GBP, '100']])).toThrow();
+    expect(() => paymentsCheckedDigest([['shielded', PAY, '100']])).toThrow();
   });
 
   it('no file outside the one that defines it spells the three fields out again', () => {
@@ -323,8 +324,8 @@ describe('8. THE BACKGROUND THREAD\'S "payments-fit" STEP AND THE DEVICE READER\
     const ask = (payments: Array<{ token: string; amount: string }>) =>
       answerVaultAsk(async () => ({}) as never, { id: 7, network: 'preview', ask: 'payments-fit', notes: [wire(coin(1, 60n))], payments } as never);
     /* RED WHEN: the step stops answering, or answers a shortfall as an error the page must read the words of. */
-    expect(await ask([{ token: GBP, amount: '60' }])).toEqual({ id: 7, ok: true, ask: 'payments-fit', answer: { of: 'fits' } });
-    expect(await ask([{ token: GBP, amount: '61' }])).toMatchObject({ id: 7, ok: true, answer: { of: 'does-not-fit', payment: 1 } });
+    expect(await ask([{ token: PAY, amount: '60' }])).toEqual({ id: 7, ok: true, ask: 'payments-fit', answer: { of: 'fits' } });
+    expect(await ask([{ token: PAY, amount: '61' }])).toMatchObject({ id: 7, ok: true, answer: { of: 'does-not-fit', payment: 1 } });
     /* RED WHEN: a payment it cannot read is answered as a shortfall rather than refused. */
     await expect(ask([{ token: 'not hex', amount: '1' }])).rejects.toThrow(/notes were not walked/u);
 
@@ -337,15 +338,15 @@ describe('8. THE BACKGROUND THREAD\'S "payments-fit" STEP AND THE DEVICE READER\
           (e: Error) => listeners.forEach((l) => l({ data: { id: (m as { id: number }).id, ok: false, error: e.message } })));
       },
     }, 'preview');
-    expect(await client.paymentsFit({ notes: [wire(coin(1, 60n))], payments: [{ token: GBP, amount: '61' }] }))
+    expect(await client.paymentsFit({ notes: [wire(coin(1, 60n))], payments: [{ token: PAY, amount: '61' }] }))
       .toMatchObject({ of: 'does-not-fit', payment: 1, payments: 1 });
   });
 
-  const one = [coin(1, 600n), coin(2, 50n, EUR)];
+  const one = [coin(1, 600n), coin(2, 50n, OTHER)];
   it('reads only the token asked about, out of a record the chain agrees with in full', async () => {
     /* RED WHEN: another token's notes are summed into this one's balance. */
-    expect(await theDevice(one, one).held(VAULT, 'shielded', GBP.toUpperCase())).toEqual({ of: 'held', amount: 600n });
-    expect(await theDevice(one, one).held(VAULT, 'shielded', EUR)).toEqual({ of: 'held', amount: 50n });
+    expect(await theDevice(one, one).held(VAULT, 'shielded', PAY.toUpperCase())).toEqual({ of: 'held', amount: 600n });
+    expect(await theDevice(one, one).held(VAULT, 'shielded', OTHER)).toEqual({ of: 'held', amount: 50n });
   });
 
   for (const [why, view, expected] of [
@@ -360,7 +361,7 @@ describe('8. THE BACKGROUND THREAD\'S "payments-fit" STEP AND THE DEVICE READER\
     it(`is unreadable, never a balance: ${why}`, async () => {
       const device = theDevice([], [], { chain: async () => view as never });
       /* RED WHEN: this branch reads as an empty vault - a balance of zero, or a comparison against nothing. */
-      const held = await device.held(VAULT, 'shielded', GBP);
+      const held = await device.held(VAULT, 'shielded', PAY);
       expect(held.of).toBe('unreadable');
       expect((held as { why: string }).why).toMatch(expected);
     });
@@ -368,8 +369,8 @@ describe('8. THE BACKGROUND THREAD\'S "payments-fit" STEP AND THE DEVICE READER\
 
   it('says which way the counts differ', async () => {
     const A = coin(1, 600n);
-    const more = await theDevice([A], [A, coin(2, 1n)]).held(VAULT, 'shielded', GBP);
-    const twice = await theDevice([A, A], [A]).held(VAULT, 'shielded', GBP);
+    const more = await theDevice([A], [A, coin(2, 1n)]).held(VAULT, 'shielded', PAY);
+    const twice = await theDevice([A, A], [A]).held(VAULT, 'shielded', PAY);
     /* RED WHEN: a record counting one note twice is told it is missing money that reached the vault. */
     expect((more as { why: string }).why).toMatch(/money reached the vault that the record does not show$/u);
     expect((twice as { why: string }).why).toMatch(/the record counts one note the chain holds more than once$/u);
@@ -378,19 +379,19 @@ describe('8. THE BACKGROUND THREAD\'S "payments-fit" STEP AND THE DEVICE READER\
   it('a chain that throws is unreadable, with its reason', async () => {
     const device = theDevice(one, 'unreadable');
     /* RED WHEN: a failed read escapes as an exception or reads as a disagreement. */
-    expect(await device.held(VAULT, 'shielded', GBP)).toEqual({
+    expect(await device.held(VAULT, 'shielded', PAY)).toEqual({
       of: 'unreadable', why: 'the chain could not be asked what this vault holds: the chain could not be read for this vault: no state',
     });
   });
 
   it('leaves public money to the service, on both questions', async () => {
     const device = theDevice(one, one);
-    expect((await device.held(VAULT, 'unshielded', GBP)).of).toBe('unreadable');
+    expect((await device.held(VAULT, 'unshielded', PAY)).of).toBe('unreadable');
     /* RED WHEN: a run with a public payee is walked through the notes, which know nothing of public money. */
-    expect((await device.fits(VAULT, [{ payee: { kind: 'unshielded' }, token: GBP, amount: 1n }])).of).toBe('unreadable');
+    expect((await device.fits(VAULT, [{ payee: { kind: 'unshielded' }, token: PAY, amount: 1n }])).of).toBe('unreadable');
     /* RED WHEN: a run that pays both ways has its public payment walked through the notes. */
     expect((await device.fits(VAULT, [
-      { payee: { kind: 'shielded' }, token: GBP, amount: 1n }, { payee: { kind: 'unshielded' }, token: GBP, amount: 1n },
+      { payee: { kind: 'shielded' }, token: PAY, amount: 1n }, { payee: { kind: 'unshielded' }, token: PAY, amount: 1n },
     ])).of).toBe('unreadable');
   });
 });

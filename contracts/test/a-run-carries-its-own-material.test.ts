@@ -22,7 +22,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 
 import { AccountService } from '../../src/core/account.js';
-import { PayrollService } from '../../src/core/payroll.js';
+import { PayrollService, runLegOf } from '../../src/core/payroll.js';
 import { SimulatedLedger, SimulatedProofSystem } from '../../src/core/ledger.js';
 import { MidnightCommitments } from '../../src/midnight/commitments.js';
 import { buildRun, rootOfPayments } from '../../src/midnight/payout-tree.js';
@@ -30,10 +30,14 @@ import { runMaterialFor } from '../../src/midnight/run-material.js';
 import { currentPayoutSeed } from '../../src/midnight/run-keys.js';
 import { runPayments } from '../../src/midnight/run-status.js';
 import { vaultDetails } from '../../src/testing/vault-details.js';
-import { registryWithTestPrivateForms, aVaultHolding } from '../../src/testing/assets.js';
+import { registryWithTestPrivateForms, aVaultHolding, OTHER_TEST_TOKEN, TEST_TOKEN } from '../../src/testing/assets.js';
 import { FileStore } from '../../src/core/store-file.js';
 import { toHex, type Hex } from '../../src/core/crypto.js';
 import { assemblePrivatePayments, pathFromWire } from '../../src/midnight/private-payment-wire.js';
+/** The one leg every run here pays: the fixture token, privately. */
+const LEG = runLegOf(TEST_TOKEN, 'shielded');
+/** The other token's leg, for a run that pays two tokens. */
+const OTHER_LEG = runLegOf(OTHER_TEST_TOKEN, 'shielded');
 
 const PAYROLL_VAULT = toHex(new Uint8Array(32).fill(0xa1));
 
@@ -107,7 +111,7 @@ describe('a run carries what it takes to rebuild it', () => {
    */
   it('rebuilds the same root after a rotation, and a different one from the current seed',
     async () => {
-      const { accounts, payroll, created, run } = await aPayroll([{ asset: 'GBP', amount: 100_00n }]);
+      const { accounts, payroll, created, run } = await aPayroll([{ asset: TEST_TOKEN, amount: 100_00n }]);
       const { material } = await raise(
         payroll, run.id, created.viewingKey, created.secrets[0]!.signerId);
 
@@ -130,14 +134,14 @@ describe('a run carries what it takes to rebuild it', () => {
         rebuild.seeds,
         { ...stored, epoch: currentPayoutSeed(rebuild.seeds).epoch },
         rebuild.facts,
-        vaultDetails, rebuild.pay, 'GBP',
+        vaultDetails, rebuild.pay, TEST_TOKEN,
       );
       expect(currentPayoutSeed(rebuild.seeds).epoch).not.toBe(stored.epoch);
       expect(fromCurrent.tree.root).not.toBe(material.run.root);
     });
 
   /**
-   * **A PAYROLL THAT SETTLES IN TWO CURRENCIES IS TWO RUNS, AND THEY MUST NOT
+   * **A PAYROLL THAT SETTLES IN TWO TOKENS IS TWO RUNS, AND THEY MUST NOT
    * SHARE THEIR PAYEES' SECRETS.**
    *
    * Each leg is its own approval over its own tree. If the two derived their
@@ -151,17 +155,17 @@ describe('a run carries what it takes to rebuild it', () => {
    */
   it('gives each settlement leg its own identity and its own leaves', async () => {
     const { payroll, created, run } = await aPayroll([
-      { asset: 'GBP', amount: 100_00n },
-      { asset: 'USDC', amount: 250_000000n },
+      { asset: TEST_TOKEN, amount: 100_00n },
+      { asset: OTHER_TEST_TOKEN, amount: 250_000000n },
     ]);
     const vk = created.viewingKey;
     const signer = created.secrets[0]!.signerId;
 
-    const gbp = await raise(payroll, run.id, vk, signer, { asset: 'GBP' });
-    const usdc = await raise(payroll, run.id, vk, signer, { asset: 'USDC' });
+    const gbp = await raise(payroll, run.id, vk, signer, { asset: TEST_TOKEN });
+    const usdc = await raise(payroll, run.id, vk, signer, { asset: OTHER_TEST_TOKEN });
 
-    const gbpRebuild = (await payroll.payoutRebuildOf(run.id, vk, 'GBP'))!;
-    const usdcRebuild = (await payroll.payoutRebuildOf(run.id, vk, 'USDC'))!;
+    const gbpRebuild = (await payroll.payoutRebuildOf(run.id, vk, TEST_TOKEN))!;
+    const usdcRebuild = (await payroll.payoutRebuildOf(run.id, vk, OTHER_TEST_TOKEN))!;
     expect(gbpRebuild.identity.runId).not.toBe(usdcRebuild.identity.runId);
 
     /*
@@ -173,9 +177,9 @@ describe('a run carries what it takes to rebuild it', () => {
      * nonce is PUBLISHED by the payment that spends it.
      */
     const gbpSecrets = buildRun(
-      gbpRebuild.seeds, gbpRebuild.identity, gbpRebuild.facts, vaultDetails, gbpRebuild.pay, 'GBP').payeeArgs(0);
+      gbpRebuild.seeds, gbpRebuild.identity, gbpRebuild.facts, vaultDetails, gbpRebuild.pay, TEST_TOKEN).payeeArgs(0);
     const usdcSecrets = buildRun(
-      usdcRebuild.seeds, usdcRebuild.identity, usdcRebuild.facts, vaultDetails, usdcRebuild.pay, 'GBP').payeeArgs(0);
+      usdcRebuild.seeds, usdcRebuild.identity, usdcRebuild.facts, vaultDetails, usdcRebuild.pay, usdcRebuild.asset).payeeArgs(0);
     expect(gbpSecrets.nonce).not.toBe(usdcSecrets.nonce);
     expect(gbpSecrets.blinding).not.toBe(usdcSecrets.blinding);
 
@@ -184,9 +188,9 @@ describe('a run carries what it takes to rebuild it', () => {
     expect(gbp.material.leaves).toHaveLength(1);
     expect(usdc.material.leaves).toHaveLength(1);
     expect(gbp.material.leaves[0]).not.toBe(usdc.material.leaves[0]);
-    expect(payroll.payoutMaterialOf(run.id, vk, { asset: 'GBP' })!.leaves)
+    expect(payroll.payoutMaterialOf(run.id, vk, { leg: TEST_TOKEN })!.leaves)
       .toEqual(gbp.material.leaves);
-    expect(payroll.payoutMaterialOf(run.id, vk, { asset: 'USDC' })!.leaves)
+    expect(payroll.payoutMaterialOf(run.id, vk, { leg: OTHER_TEST_TOKEN })!.leaves)
       .toEqual(usdc.material.leaves);
   });
 
@@ -202,8 +206,8 @@ describe('a run carries what it takes to rebuild it', () => {
    */
   it('refuses to report on a two-leg run without being told which leg', async () => {
     const { payroll, created, run } = await aPayroll([
-      { asset: 'GBP', amount: 100_00n },
-      { asset: 'USDC', amount: 250_000000n },
+      { asset: TEST_TOKEN, amount: 100_00n },
+      { asset: OTHER_TEST_TOKEN, amount: 250_000000n },
     ]);
     const vk = created.viewingKey;
     const signer = created.secrets[0]!.signerId;
@@ -212,15 +216,15 @@ describe('a run carries what it takes to rebuild it', () => {
      * than a refusal for want of an argument that would not have helped. */
     expect(payroll.payoutMaterialOf(run.id, vk)).toBeNull();
 
-    await raise(payroll, run.id, vk, signer, { asset: 'GBP' });
+    await raise(payroll, run.id, vk, signer, { asset: TEST_TOKEN });
     /* One leg raised: no ambiguity, so no argument needed. */
     expect(payroll.payoutMaterialOf(run.id, vk)!.leaves).toHaveLength(1);
 
-    await raise(payroll, run.id, vk, signer, { asset: 'USDC' });
+    await raise(payroll, run.id, vk, signer, { asset: OTHER_TEST_TOKEN });
     expect(() => payroll.payoutMaterialOf(run.id, vk))
-      .toThrow(/payout material for 2 assets \(GBP, USDC\)/);
+      .toThrow(/payout material for 2 legs \(private tPAY, private tOTH\)/);
     await expect(payroll.payoutRebuildOf(run.id, vk))
-      .rejects.toThrow(/payout material for 2 assets \(GBP, USDC\)/);
+      .rejects.toThrow(/payout material for 2 legs \(private tPAY, private tOTH\)/);
   });
 
   /**
@@ -238,7 +242,7 @@ describe('a run carries what it takes to rebuild it', () => {
    * here and give the rule two homes.
    */
   it('refuses a vault that is not 32 bytes, at the door rather than at a route', async () => {
-    const { payroll, created, run } = await aPayroll([{ asset: 'GBP', amount: 100_00n }]);
+    const { payroll, created, run } = await aPayroll([{ asset: TEST_TOKEN, amount: 100_00n }]);
     await expect(raise(payroll, run.id, created.viewingKey, created.secrets[0]!.signerId, {
       vault: 'a1'.repeat(31) + 'a' as Hex,
     })).rejects.toThrow(/a vault address is 32 bytes as 64 lower-case hex characters/);
@@ -258,7 +262,7 @@ describe('a run carries what it takes to rebuild it', () => {
    * rather than moments.
    */
   it('refuses a run whose window has already closed', async () => {
-    const { payroll, created, run } = await aPayroll([{ asset: 'GBP', amount: 100_00n }]);
+    const { payroll, created, run } = await aPayroll([{ asset: TEST_TOKEN, amount: 100_00n }]);
     const past = BigInt(Math.floor(Date.now() / 1000) - 60);
     await expect(raise(payroll, run.id, created.viewingKey, created.secrets[0]!.signerId, {
       opensAt: past - 3_600n, closesAt: past,
@@ -281,7 +285,7 @@ describe('a run carries what it takes to rebuild it', () => {
    * payroll, not a fabricated one.
    */
   it('proves a payment view is about this run, and refuses one that is not', async () => {
-    const a = await aPayroll([{ asset: 'GBP', amount: 100_00n }]);
+    const a = await aPayroll([{ asset: TEST_TOKEN, amount: 100_00n }]);
     await raise(a.payroll, a.run.id, a.created.viewingKey, a.created.secrets[0]!.signerId);
     const mine = a.payroll.payoutMaterialOf(
       a.run.id, a.created.viewingKey, { rootOf: rootOfPayments })!;
@@ -292,7 +296,7 @@ describe('a run carries what it takes to rebuild it', () => {
     if (answer.answered) expect(answer.status.verified).toBe(true);
 
     /* A second company's run, with the same number of people in it. */
-    const b = await aPayroll([{ asset: 'GBP', amount: 100_00n }]);
+    const b = await aPayroll([{ asset: TEST_TOKEN, amount: 100_00n }]);
     await raise(b.payroll, b.run.id, b.created.viewingKey, b.created.secrets[0]!.signerId);
     const theirs = b.payroll.payoutMaterialOf(
       b.run.id, b.created.viewingKey, { rootOf: rootOfPayments })!;
@@ -320,8 +324,8 @@ describe('a run carries what it takes to rebuild it', () => {
    */
   it('rebuilds an approved leg after a payee on it is marked a leaver', async () => {
     const { payroll, created, run } = await aPayroll([
-      { asset: 'GBP', amount: 100_00n },
-      { asset: 'GBP', amount: 200_00n },
+      { asset: TEST_TOKEN, amount: 100_00n },
+      { asset: TEST_TOKEN, amount: 200_00n },
     ]);
     const vk = created.viewingKey;
     const { material } = await raise(payroll, run.id, vk, created.secrets[0]!.signerId);
@@ -353,25 +357,25 @@ describe('a run carries what it takes to rebuild it', () => {
    */
   it('keeps both legs\' proposal ids when they are raised at the same time', async () => {
     const { payroll, created, run } = await aPayroll([
-      { asset: 'GBP', amount: 100_00n },
-      { asset: 'USDC', amount: 250_000000n },
+      { asset: TEST_TOKEN, amount: 100_00n },
+      { asset: OTHER_TEST_TOKEN, amount: 250_000000n },
     ]);
     const vk = created.viewingKey;
     const signer = created.secrets[0]!.signerId;
 
     const [gbp, usdc] = await Promise.all([
-      raise(payroll, run.id, vk, signer, { asset: 'GBP' }),
-      raise(payroll, run.id, vk, signer, { asset: 'USDC' }),
+      raise(payroll, run.id, vk, signer, { asset: TEST_TOKEN }),
+      raise(payroll, run.id, vk, signer, { asset: OTHER_TEST_TOKEN }),
     ]);
 
     const after = payroll.requireRun(run.id, vk);
-    expect(after.proposalIds.GBP).toBe(gbp.proposal.id);
-    expect(after.proposalIds.USDC).toBe(usdc.proposal.id);
-    expect(Object.keys(after.payout ?? {}).sort()).toEqual(['GBP', 'USDC']);
+    expect(after.proposalIds[LEG]).toBe(gbp.proposal.id);
+    expect(after.proposalIds[OTHER_LEG]).toBe(usdc.proposal.id);
+    expect(Object.keys(after.payout ?? {}).sort()).toEqual([LEG, OTHER_LEG].sort());
 
     /* And neither leg can now be raised a second time. */
-    await expect(raise(payroll, run.id, vk, signer, { asset: 'GBP' }))
-      .rejects.toThrow(/the GBP leg of this run is already proposed/);
+    await expect(raise(payroll, run.id, vk, signer, { asset: TEST_TOKEN }))
+      .rejects.toThrow(/the private tPAY leg of this run is already proposed/);
   });
 
   /**
@@ -388,7 +392,7 @@ describe('a run carries what it takes to rebuild it', () => {
    * propose door. There are three and each has its own case below.
    */
   it('refuses material whose leaves do not account for its own payees', async () => {
-    const { payroll, created, run } = await aPayroll([{ asset: 'GBP', amount: 100_00n }]);
+    const { payroll, created, run } = await aPayroll([{ asset: TEST_TOKEN, amount: 100_00n }]);
     const inputs = await payroll.runMaterialInputs(run.id, created.viewingKey);
     const honest = await runMaterialFor({
       accountId: inputs.accountId, runId: inputs.runId, seeds: inputs.seeds,
@@ -413,11 +417,11 @@ describe('a run carries what it takes to rebuild it', () => {
       .rejects.toThrow(/payout root is not the root over its own leaves/);
 
     const fromAnotherRun = {
-      ...honest, identity: { ...honest.identity, runId: 'run_somebody_else:GBP' },
+      ...honest, identity: { ...honest.identity, runId: `run_somebody_else:${LEG}` },
     } as unknown as typeof honest;
     await expect(payroll.proposeRun(
       run.id, created.viewingKey, created.secrets[0]!.signerId, fromAnotherRun))
-      .rejects.toThrow(/was built for run run_somebody_else:GBP and is being raised for/);
+      .rejects.toThrow(new RegExp(`was built for run run_somebody_else:${LEG} and is being raised for`));
 
     const fromAnotherAccount = {
       ...honest, identity: { ...honest.identity, accountId: 'acct_someone_else' },
@@ -451,7 +455,7 @@ describe('a run carries what it takes to rebuild it', () => {
    */
   it('hands a device the approved round of a raised leg, and nothing for a leg not raised', async () => {
     const { payroll, accounts, created, run } = await aPayroll([
-      { asset: 'GBP', amount: 100_00n }, { asset: 'GBP', amount: 42_00n },
+      { asset: TEST_TOKEN, amount: 100_00n }, { asset: TEST_TOKEN, amount: 42_00n },
     ]);
     const vk = created.viewingKey;
     expect(payroll.privatePaymentOrderOf(run.id, vk)).toBeNull();
@@ -459,7 +463,7 @@ describe('a run carries what it takes to rebuild it', () => {
 
     const order = payroll.privatePaymentOrderOf(run.id, vk)!;
     expect(order).toMatchObject({
-      asset: 'GBP', vault: PAYROLL_VAULT, proposal: proposal.chainId, root: material.run.root,
+      asset: TEST_TOKEN, vault: PAYROLL_VAULT, proposal: proposal.chainId, root: material.run.root,
       payees: 2n, opensAt: OPENS, closesAt: CLOSES,
     });
     /* The salt is the one the run's identity was folded with: the id rebuilds from it and nothing else. */
@@ -491,7 +495,7 @@ describe('a run carries what it takes to rebuild it', () => {
   });
 
   it('answers null for a leg with no material, rather than an empty run', async () => {
-    const { payroll, created, run } = await aPayroll([{ asset: 'GBP', amount: 100_00n }]);
+    const { payroll, created, run } = await aPayroll([{ asset: TEST_TOKEN, amount: 100_00n }]);
     expect(payroll.payoutMaterialOf(run.id, created.viewingKey)).toBeNull();
     expect(await payroll.payoutRebuildOf(run.id, created.viewingKey)).toBeNull();
     const answer = runPayments(

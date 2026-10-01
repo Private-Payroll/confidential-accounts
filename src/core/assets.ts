@@ -1,21 +1,27 @@
 /**
  * The asset registry, and the only place that knows how many decimal places a
- * currency has. D10 and D11 in docs/scope-v1-data-model.md.
+ * token has. D10 and D11 in docs/scope-v1-data-model.md.
+ *
+ * **AN ASSET IS ITS LEDGER TOKEN.** Vaults only ever hold real tokens, so every
+ * asset is identified by the 32-byte token type the ledger gives it: the same
+ * value for its private notes and its public balance. Runs, run roots,
+ * spending policies, the server, the device and the payment builders all name
+ * an asset by that token, and a screen shows its symbol or name.
  *
  * TWO RULES, and everything here follows from them.
  *
- * 1. **Every amount is an integer in the asset's smallest unit.** $5,000.00 is
- *    `500000n`, one ether is `1000000000000000000n`. There is no float anywhere
+ * 1. **Every amount is an integer in the asset's smallest unit.** 5,000 tUSD is
+ *    `5000000000n`, at six decimal places. There is no float anywhere
  *    in this system and there must never be one: `0.1 + 0.2` is not `0.3`, so
  *    payroll totals drift by pennies and the drift gets blamed on us — and,
  *    worse, a JavaScript number cannot hold 18 significant digits at all, so an
- *    ETH amount does not round, it silently loses value.
+ *    amount in a token with 18 decimals does not round, it silently loses value.
  *
  * 2. **Nothing about an asset is secret.** There is nothing confidential about
- *    the existence of the euro, so this table is plaintext, and adding a
- *    currency is a row rather than a release. What IS confidential is the
+ *    the existence of a token, so this table is plaintext, and adding a
+ *    token is a row rather than a release. What IS confidential is the
  *    pairing of an asset with an account, which is why the on-chain map is keyed
- *    by `assetKeyOf(assetId, accountBlinding)` and never by a code.
+ *    by `assetKeyOf(assetId, accountBlinding)` and never by the token itself.
  *
  * The registry lives in code here, in `SEED_ASSETS` below. No database table
  * holds it yet; one that is added is seeded from that list, so there stays one
@@ -25,38 +31,49 @@
 import { NETWORK as THE_NETWORK_THIS_BUILD_IS_ON } from 'midnight-identity/network';
 import { isNetworkId, networkRecord, type NetworkKind } from './networks.js';
 
-/** An asset's code. `GBP`, `USDC`, `NIGHT`. Uppercase, ASCII, no spaces. */
+/**
+ * **AN ASSET'S IDENTITY: ITS LEDGER TOKEN, AS 64 LOWER-CASE HEX CHARACTERS.**
+ *
+ * The raw token type the ledger gives the money. It is the same 32 bytes for a
+ * token's private notes and for its public balance, so one token is one
+ * identity in both forms. It is what a run's root commits to, what a spending
+ * policy is keyed by, and what a vault hands the account when it pays.
+ */
 export type AssetId = string;
 
+/** Whether a value is an asset identity: 64 lower-case hex characters. */
+export const isAssetId = (value: unknown): value is AssetId =>
+  typeof value === 'string' && /^[0-9a-f]{64}$/.test(value);
+
 export interface Asset {
+  /**
+   * **THE TOKEN.** 64 lower-case hex characters, the asset's identity
+   * everywhere. The field keeps its name; what it holds is the ledger's token.
+   */
   code: AssetId;
+  /** What a screen shows for this token, such as `NIGHT` or `tUSD`. Never the token itself. */
+  symbol: string;
   name: string;
-  kind: 'fiat' | 'token';
   /**
    * How many of the smallest unit make one whole unit, as a power of ten.
    *
    * The only number in this system that converts between what a human types and
    * what everything else stores. It is on the asset and nowhere else, because a
    * second copy is how `500000` comes to mean five thousand dollars in one
-   * place and half a USDC in another.
+   * place and half a token in another.
    */
   decimals: number;
-  /** Null for fiat, which does not live on a chain. */
-  chain: string | null;
   /**
-   * **WHAT THE LEDGER CALLS THIS ASSET, IN EACH FORM IT CAN TAKE ON MIDNIGHT.**
+   * **WHICH FORMS THIS TOKEN TAKES ON MIDNIGHT.**
    *
    * Money on Midnight is held in one of two forms, privately in notes or
-   * publicly in a contract's balance, and each form names its money by a token
-   * type of its own. This is the one place an asset is paired with those token
-   * types. Every payment this product builds reads its token from here, and so
-   * does every question it asks about what a vault holds of an asset, so the two
-   * are the same spelling of the same money.
+   * publicly in a contract's balance. The ledger names both by the same token
+   * type, so each form here is either `code` itself or `null`.
    *
-   * `null` is a statement and not a gap: this asset has no such form, so no
-   * vault can hold it that way and no payment in it can be made that way. An
-   * asset may have both forms, one, or neither, and an asset gains a form by
-   * this row gaining a token, with no function anywhere learning its name.
+   * `null` is a statement and not a gap: this token has no such form, so no
+   * vault can hold it that way and no payment in it can be made that way. A
+   * token has both forms or one, and a row stating a form that differs from
+   * `code`, or stating neither, is refused when the registry is built.
    */
   ledger: LedgerIdentity;
   /**
@@ -73,8 +90,9 @@ export interface Asset {
 export type LedgerForm = 'shielded' | 'unshielded';
 
 /**
- * An asset's token type in each form, as the 64 lower-case hex characters the
- * ledger's own token types carry, or `null` where the asset has no such form.
+ * An asset's token in each form, as the 64 lower-case hex characters the
+ * ledger's own token types carry (the asset's `code`), or `null` where the
+ * asset has no such form.
  */
 export interface LedgerIdentity {
   readonly shielded: string | null;
@@ -89,13 +107,33 @@ export interface LedgerIdentity {
  * second definition: `ledger-token.test.ts` reads `nativeToken().raw` from the
  * ledger itself and fails the day the two differ.
  */
+export const NIGHT: AssetId = '0000000000000000000000000000000000000000000000000000000000000000';
+
 const NIGHT_ON_THE_LEDGER: LedgerIdentity = Object.freeze({
   shielded: null,
-  unshielded: '0000000000000000000000000000000000000000000000000000000000000000',
+  unshielded: NIGHT,
 });
 
-/** No form on Midnight at all: money that lives on another chain, or on none. */
-const NOT_ON_MIDNIGHT: LedgerIdentity = Object.freeze({ shielded: null, unshielded: null });
+/**
+ * The asset a governance round moves, which is none: the bytes of `NONE`,
+ * zero padded, which is no ledger token.
+ *
+ * `addSigner`, `removeSigner` and `setThreshold` are approval rounds that move
+ * no money — but they still go through `propose`, and `propose` commits to
+ * `changeCommitmentOf(assetKey, amount, batch, salt)`, which needs an asset.
+ * Passing a real one would be a lie in the ledger a client could read as "this
+ * round concerns this token", and picking "whatever the account holds first" would
+ * fail on an account that holds nothing, which every account does at the moment
+ * it seats its second signer.
+ *
+ * So there is a reserved value that means no asset. It derives a perfectly valid
+ * key and **that key can never appear in `assetBalances`**, because the only
+ * circuits that write to the map are `credit` and `execute`, and no governance
+ * circuit calls either. Deliberately NOT in the registry: it has no decimals,
+ * nothing may be denominated in it, `require` refuses it like any other
+ * unknown token, and a registry row carrying it is refused.
+ */
+export const NO_ASSET: AssetId = '4e4f4e4500000000000000000000000000000000000000000000000000000000';
 
 /* ------------------------------------------------------------------ *
  * the test settlement asset, and the networks it may exist on
@@ -105,7 +143,7 @@ const NOT_ON_MIDNIGHT: LedgerIdentity = Object.freeze({ shielded: null, unshield
  * **THE ONLY ASSET IN THIS REGISTRY THAT CAN BE PAID PRIVATELY, AND IT IS
  * WORTHLESS ON PURPOSE.**
  *
- * A company denominates pay in a currency and settles in a stablecoin. NIGHT
+ * A company pays in a token its vault holds. NIGHT
  * cannot be the settlement asset: `nativeToken()` is unshielded by definition,
  * so there is no private NIGHT and there never will be. A private payment
  * spends a shielded note, and a shielded note on Midnight is a MINTED token. So
@@ -121,8 +159,6 @@ const NOT_ON_MIDNIGHT: LedgerIdentity = Object.freeze({ shielded: null, unshield
  * minted an unshielded token of this asset and no circuit could send one, so
  * `unshielded` is `null` - a statement, not a gap.
  */
-export const TEST_SETTLEMENT_ASSET: AssetId = 'TESTUSD';
-
 /**
  * **THE COLOUR, AND IT IS A REAL ONE ON A REAL CHAIN.**
  *
@@ -140,6 +176,9 @@ export const TEST_SETTLEMENT_ASSET: AssetId = 'TESTUSD';
  * that does not exist.
  */
 const TEST_SETTLEMENT_COLOUR = 'abda184485c6abbbe4440d65b99ef88e0f79f61ec19af52a5bb0d91b4a824679';  // not-a-secret: the colour a mint produced on a public test network, published by the chain itself and readable by anyone; this is the asset's own identity and there is no other way to name it
+
+/** The test settlement token's identity: its colour, which is its token type. */
+export const TEST_SETTLEMENT_ASSET: AssetId = TEST_SETTLEMENT_COLOUR;
 
 /**
  * **WHERE THE MONEY THIS COLOUR NAMES ACTUALLY IS, AND IT IS A CLOSED LIST.**
@@ -213,7 +252,7 @@ export const aTestAssetMayExistOn = (network: string): boolean =>
 export const aTestAssetMayExistOnAKindOf = (kind: NetworkKind, network: string): boolean =>
   kind === 'test' && TEST_SETTLEMENT_MINTED_ON.includes(network);
 
-/** Whether a code names an asset that exists only so the private path can be walked. */
+/** Whether a token is one that exists only so the private path can be walked. */
 export const isATestAsset = (code: AssetId): boolean => code === TEST_SETTLEMENT_ASSET;
 
 /**
@@ -227,36 +266,29 @@ export function testAssetsFor(network: string): readonly Asset[] {
   if (!aTestAssetMayExistOn(network)) return [];
   return [{
     code: TEST_SETTLEMENT_ASSET,
+    symbol: 'tUSD',
     name: 'Test Dollar',
-    kind: 'token',
     decimals: 6,
-    chain: 'midnight',
-    ledger: Object.freeze({ shielded: TEST_SETTLEMENT_COLOUR, unshielded: null }),
+    ledger: Object.freeze({ shielded: TEST_SETTLEMENT_ASSET, unshielded: null }),
     enabled: true,
     sortOrder: 90,
   }];
 }
 
 /**
- * The registry every build runs on.
+ * The registry every build runs on: the tokens a vault can actually hold.
  *
- * ETH is present and DISABLED on purpose. It is the asset that proves the
- * integer decision was necessary rather than tidy — 18 decimals do not fit in a
- * JavaScript number — so it belongs in the table and in the tests from the
- * first day, whether or not anybody is paid in it yet.
+ * **ONLY REAL LEDGER TOKENS.** Every row is a token the ledger knows, in the
+ * forms it actually takes. Money that has no token on Midnight is not a row,
+ * because no vault can hold it and no payment in it can be made.
  *
  * **THE TEST SETTLEMENT ASSET IS APPENDED BY THE NETWORK AND NOT BY HAND.** On
- * any network it may not exist on, `testAssetsFor` returns nothing and the code
+ * any network it may not exist on, `testAssetsFor` returns nothing and its token
  * resolves to no asset at all - `require` refuses it exactly as it refuses a
- * code nobody has ever written.
+ * token nobody has ever written down.
  */
 export const SEED_ASSETS: readonly Asset[] = Object.freeze([
-  { code: 'GBP', name: 'Pound Sterling', kind: 'fiat', decimals: 2, chain: null, ledger: NOT_ON_MIDNIGHT, enabled: true, sortOrder: 10 },
-  { code: 'USD', name: 'US Dollar', kind: 'fiat', decimals: 2, chain: null, ledger: NOT_ON_MIDNIGHT, enabled: true, sortOrder: 20 },
-  { code: 'EUR', name: 'Euro', kind: 'fiat', decimals: 2, chain: null, ledger: NOT_ON_MIDNIGHT, enabled: true, sortOrder: 30 },
-  { code: 'USDC', name: 'USD Coin', kind: 'token', decimals: 6, chain: 'ethereum', ledger: NOT_ON_MIDNIGHT, enabled: true, sortOrder: 40 },
-  { code: 'NIGHT', name: 'Night', kind: 'token', decimals: 6, chain: 'midnight', ledger: NIGHT_ON_THE_LEDGER, enabled: true, sortOrder: 50 },
-  { code: 'ETH', name: 'Ether', kind: 'token', decimals: 18, chain: 'ethereum', ledger: NOT_ON_MIDNIGHT, enabled: false, sortOrder: 60 },
+  { code: NIGHT, symbol: 'NIGHT', name: 'Night', decimals: 6, ledger: NIGHT_ON_THE_LEDGER, enabled: true, sortOrder: 50 },
   ...testAssetsFor(THE_NETWORK_THIS_BUILD_IS_ON),
 ] as const);
 
@@ -290,17 +322,15 @@ export type PrivateForm =
  *
  * **NIGHT IS STILL NO, AND IT ALWAYS WILL BE** — `nativeToken()` is an
  * `UnshieldedTokenType`, so there is no private NIGHT and no converter changes
- * that. The assets that sit on another chain or on none at all are no for the
- * other reason: there is no note of them here at all.
+ * that.
  *
- * **THE CONVERTER IS STILL WHAT CHANGES THE REST**, for all of them by the same
- * mechanism: it takes a public deposit and mints a wrapped shielded token
- * against it. Nothing in `src/` reaches a converter and none is deployed.
+ * **THE CONVERTER IS STILL WHAT CHANGES THE REST**: it takes a public deposit
+ * and mints a wrapped shielded token against it. Nothing in `src/` reaches a
+ * converter and none is deployed.
  *
- * **THREE ANSWERS AND NOT SIX.** One is read off the row; the other two are
- * read off `chain`. Neither is a table of asset codes, because a table is the
- * hardcoded list this exists to replace and it would go on saying no for an
- * asset that had gained a form.
+ * **TWO ANSWERS, BOTH READ OFF THE ROW.** Neither is a table of tokens,
+ * because a table is the hardcoded list this exists to replace and it would go
+ * on saying no for a token that had gained a form.
  */
 export function privateForm(asset: Asset): PrivateForm {
   /*
@@ -324,18 +354,9 @@ export function privateForm(asset: Asset): PrivateForm {
    * were both here and both are commitments: no converter is deployed and
    * nothing in `src/` reaches one.
    */
-  if (asset.chain === 'midnight') {
-    return {
-      of: 'not-yet',
-      why: `${asset.code} can only be sent publicly today, which puts the recipient's `
-        + 'address and the amount on a record anyone can read. '
-        + `There is no private form of ${asset.code} yet. This choice turns on when there is.`,
-    };
-  }
   return {
     of: 'not-yet',
-    why: `${asset.code} cannot be sent privately. `
-      + `Only money held on Midnight can be, and ${asset.code} is not.`,
+    why: `${asset.symbol} can only be paid publicly. Anyone can read the recipient's address and the amount.`,
   };
 }
 
@@ -374,12 +395,21 @@ export class StaticAssetRegistry implements AssetRegistry {
     const a = this.find(code);
     if (!a) {
       throw new Error(
-        `unknown asset "${code}". Assets come from the registry, and an amount without one ` +
-          'has no decimal place — so there is no safe default to fall back to.',
+        `no asset in the registry is the token "${code}". Assets come from the registry, and an ` +
+          'amount without one has no decimal place, so there is no safe default to fall back to.',
       );
     }
     return a;
   }
+}
+
+/**
+ * **WHAT A PERSON IS SHOWN FOR A TOKEN: ITS SYMBOL, NEVER THE TOKEN ITSELF.**
+ * A token the registry does not know, and the marker that is no token, are
+ * named as such rather than printed.
+ */
+export function symbolOf(code: AssetId, registry: AssetRegistry = assets): string {
+  return (code === NO_ASSET ? null : registry.find(code)?.symbol) ?? 'a token this app does not know';
 }
 
 /** The registry every caller gets unless it is handed another one. */
@@ -390,60 +420,51 @@ export const assets: AssetRegistry = new StaticAssetRegistry();
  * ------------------------------------------------------------------ */
 
 /**
- * How an asset code reaches the contract: 32 bytes, ASCII, zero padded.
+ * How an asset reaches the contract: the 32 bytes of its token.
  *
  * ONE DEFINITION, here, because both halves of `assetKeyOf` depend on the bytes
- * being identical — the device that credits dollars and the device that spends
- * them derive the same map key or the account holds its money twice under two
- * names. There is no Compact copy of this to drift from: `assetId` is a witness,
- * so the encoding is entirely ours and the contract only ever sees the result.
+ * being identical, and because a run's root commits to the same 32 bytes the
+ * vault hands the account when it pays: the spent coin's colour for a private
+ * payment, the token sent for a public one. Both forms of a token are one value,
+ * so a spending policy keyed by it covers both.
  *
- * Refuses anything that would not round-trip. A code with a NUL in it, or one
- * longer than 32 bytes, would collide with another after padding — and a
- * collision here means two currencies sharing one balance.
+ * Refuses anything that is not 64 lower-case hex characters, because any other
+ * spelling of a token is money nobody holds.
  */
 export const ASSET_ID_BYTES = 32;
 
-/**
- * The asset a governance round moves, which is none.
- *
- * `addSigner`, `removeSigner` and `setThreshold` are approval rounds that move
- * no money — but they still go through `propose`, and `propose` commits to
- * `changeCommitmentOf(assetKey, amount, batch, salt)`, which needs an asset.
- * Passing a real one would be a lie in the ledger a client could read as "this
- * round concerns dollars", and picking "whatever the account holds first" would
- * fail on an account that holds nothing, which every account does at the moment
- * it seats its second signer.
- *
- * So there is a reserved code that means no asset. It derives a perfectly valid
- * key and **that key can never appear in `assetBalances`**, because the only
- * circuits that write to the map are `credit` and `execute`, and no governance
- * circuit calls either. Deliberately NOT in the registry: it has no decimals,
- * nothing may be denominated in it, and `require` refuses it like any other
- * unknown code.
- */
-export const NO_ASSET: AssetId = 'NONE';
 
-export function assetIdBytes(code: AssetId): Uint8Array {
-  if (!/^[A-Z0-9]{1,32}$/.test(code)) {
+export function assetIdBytes(id: AssetId): Uint8Array {
+  if (!isAssetId(id)) {
     throw new Error(
-      `"${code}" is not a usable asset code. Codes are 1 to 32 uppercase letters or digits, ` +
-        'because they are zero padded to 32 bytes before they reach the circuit and anything ' +
-        'else could collide with another code once padded.',
+      `"${String(id)}" is not an asset. An asset is its ledger token, written as 64 lower-case hex ` +
+        'characters, and any other spelling of a token is money nobody holds.',
     );
   }
   const out = new Uint8Array(ASSET_ID_BYTES);
-  for (let i = 0; i < code.length; i++) out[i] = code.charCodeAt(i);
+  for (let i = 0; i < ASSET_ID_BYTES; i++) out[i] = parseInt(id.slice(2 * i, 2 * i + 2), 16);
   return out;
 }
 
 /**
- * The account's name for an asset, as hex: what a payroll run's root commits to
- * beside its total, and so what a vault's spending policy is looked up by. The
- * same bytes as `assetIdBytes`, never a ledger token.
+ * An asset as hex: its token. What a payroll run's root commits to beside its
+ * total, and so what a vault's spending policy is looked up by. Refuses what
+ * `assetIdBytes` refuses.
  */
-export function assetIdHex(code: AssetId): string {
-  return Array.from(assetIdBytes(code), (b) => b.toString(16).padStart(2, '0')).join('');
+export function assetIdHex(id: AssetId): string {
+  assetIdBytes(id);
+  return id;
+}
+
+/**
+ * **REFUSES THE MARKER THAT IS NO TOKEN AS THE ASSET OF A PAYMENT.** A round
+ * that pays somebody names the token it pays in; `NO_ASSET` names none.
+ */
+export function refuseNoAssetAsPayment(id: AssetId): void {
+  if (id === NO_ASSET) {
+    throw new Error(
+      'a payment has to name the token it pays in, and this one names no asset. Nothing was built.');
+  }
 }
 
 /* ------------------------------------------------------------------ *
@@ -451,41 +472,67 @@ export function assetIdHex(code: AssetId): string {
  * ------------------------------------------------------------------ */
 
 /**
- * **A REGISTRY IN WHICH TWO ASSETS SHARE A TOKEN, OR A TOKEN IS MISSPELT, IS
- * REFUSED WHEN IT IS BUILT.**
+ * **A REGISTRY IN WHICH A ROW IS NOT A TOKEN, TWO ROWS ARE ONE TOKEN, OR A
+ * FORM NAMES ANOTHER TOKEN, IS REFUSED WHEN IT IS BUILT.**
  *
- * Two assets naming one token in the same form would be two names for one
- * balance: a vault holding that money would read as holding both, and a
- * payment in either would draw on the other's. A token that is not 64
- * lower-case hex characters is a spelling, and a vault asked about a spelling
- * answers that it holds none. Both are mistakes in a row, and a row is where
- * they are caught.
+ * An asset is its token, so its `code` is 64 lower-case hex characters and
+ * each form it has is that same token: the ledger names a token's private
+ * notes and its public balance by one token type. A form naming a different
+ * token would be a payment that commits to one token and moves another. Two
+ * rows with one token would be two names for one balance. A row with no form
+ * at all is money no vault can hold. A row with no symbol has nothing a screen
+ * can show. Each is a mistake in a row, and a row is where it is caught.
  */
 function refuseAnAmbiguousLedgerIdentity(rows: readonly Asset[]): void {
-  const seen = new Map<string, AssetId>();
+  const seen = new Map<string, string>();
   for (const row of rows) {
+    const label = typeof row?.symbol === 'string' && row.symbol.trim() !== '' ? row.symbol : String(row?.code);
+    if (!isAssetId(row?.code)) {
+      throw new Error(
+        `${label}'s token is not 64 lower-case hex characters. An asset is its ledger token, `
+        + 'compared byte for byte, so any other spelling of it is money nobody holds.');
+    }
+    if (row.code === NO_ASSET) {
+      throw new Error(`${label} is the marker for no asset, which is no token and cannot be a row.`);
+    }
+    if (typeof row.symbol !== 'string' || row.symbol.trim() === '') {
+      throw new Error(`the token ${row.code} has no symbol, so a screen would have nothing to call it.`);
+    }
     const identity = (row as { ledger?: unknown }).ledger as Partial<LedgerIdentity> | undefined;
     if (identity === null || typeof identity !== 'object') {
       throw new Error(
-        `${row.code} does not say what the ledger calls it. Every asset states a token for each `
-        + 'form, or null where it has no such form, so that no payment has to guess.');
+        `${label} does not say what the ledger calls it. Every asset states its token for each `
+        + 'form it has, or null where it has no such form, so that no payment has to guess.');
     }
+    let forms = 0;
     for (const form of ['shielded', 'unshielded'] as const) {
       const token = identity[form];
       if (token === null) continue;
       if (typeof token !== 'string' || !/^[0-9a-f]{64}$/.test(token)) {
         throw new Error(
-          `${row.code}'s ${formWord(form)} token is not 64 lower-case hex characters. A token is `
+          `${label}'s ${formWord(form)} token is not 64 lower-case hex characters. A token is `
           + 'compared byte for byte, so any other spelling of it is money nobody holds.');
       }
-      const other = seen.get(`${form}:${token}`);
-      if (other !== undefined) {
+      if (token !== row.code) {
         throw new Error(
-          `${other} and ${row.code} name the same ${formWord(form)} token. They would be two `
-          + 'names for one balance, so a vault holding either would read as holding both.');
+          `${label}'s ${formWord(form)} form names a different token from the asset itself. The ledger `
+          + 'names both forms of a token by the same token type, so a payment committing to one '
+          + 'would move the other.');
       }
-      seen.set(`${form}:${token}`, row.code);
+      forms += 1;
     }
+    if (forms === 0) {
+      throw new Error(
+        `${label} has no form on Midnight, private or public, so no vault can hold it. Only a token `
+        + 'a vault can hold is an asset.');
+    }
+    const other = seen.get(row.code);
+    if (other !== undefined) {
+      throw new Error(
+        `${other} and ${label} are the same token. They would be two names for one balance, so a `
+        + 'vault holding either would read as holding both.');
+    }
+    seen.set(row.code, label);
   }
 }
 
@@ -506,7 +553,7 @@ function refuseAnAmbiguousLedgerIdentity(rows: readonly Asset[]): void {
  */
 export function refuseATestAssetOffItsNetwork(rows: readonly Asset[], network: string): void {
   if (aTestAssetMayExistOn(network)) return;
-  const found = rows.filter(r => isATestAsset(r?.code)).map(r => r.code);
+  const found = rows.filter(r => isATestAsset(r?.code)).map(r => r.symbol ?? r.code);
   if (found.length === 0) return;
   throw new Error(
     `${found.join(', ')} ${found.length === 1 ? 'is a test asset' : 'are test assets'} and this `
@@ -529,15 +576,10 @@ function formWord(form: LedgerForm): string {
 /**
  * **WHAT THE LEDGER CALLS AN ASSET IN ONE FORM, OR THAT IT HAS NO SUCH FORM.**
  *
- * Two different values answer "which money is this", and they must never be
- * mistaken for each other:
- *
- *   - `assetIdBytes` is how an ACCOUNT names an asset. The key its balance map
- *     is derived from is built over those bytes, so they can never change, and
- *     they are padded ASCII so that no two codes can collide.
- *   - the ledger's token type is how a VAULT holds money, and it is what a
- *     payment out of a vault names: the vault uses the one token a payment
- *     gives it both to ask whether it holds enough and to send.
+ * An asset IS its token, so the account's name for it (`assetIdBytes`), the
+ * root a run commits to, and the token a vault pays out of are one value. What
+ * this answers is whether the token takes the form a payee is paid in: a vault
+ * can only pay a private payee from notes and a public one from its balance.
  *
  * **READ OFF THE ASSET'S OWN ROW.** No asset is named in this function, so a
  * new asset, or a new form of an old one, is a change to a row and to nothing
@@ -556,15 +598,15 @@ export function ledgerFormOf(asset: Asset, form: LedgerForm): LedgerAnswer {
   if (typeof token === 'string') return { of: 'token', token };
   if (token !== null) {
     throw new Error(
-      `${asset.code} does not say whether it has a ${formWord(form)} form, so no payment in it `
+      `${asset.symbol} does not say whether it has a ${formWord(form)} form, so no payment in it `
       + 'can name its money. Its row states a token or null for each form.');
   }
   const other: LedgerForm = form === 'shielded' ? 'unshielded' : 'shielded';
   const why = typeof identity?.[other] === 'string'
-    ? `${asset.code} has no ${formWord(form)} form on Midnight, so no vault can hold it `
+    ? `${asset.symbol} has no ${formWord(form)} form on Midnight, so no vault can hold it `
       + `${formWord(form)}ly and no ${formWord(form)} payment in it can be made. It has a `
       + `${formWord(other)} form only.`
-    : `${asset.code} has no form on Midnight, private or public, so no vault can hold it and no `
+    : `${asset.symbol} has no form on Midnight, private or public, so no vault can hold it and no `
       + 'payment in it can be made out of one.';
   return { of: 'no-such-form', why };
 }
@@ -585,7 +627,7 @@ export function ledgerTokenOf(
   if (answer.of === 'token') return answer.token;
   const payable = registry.enabled()
     .filter(a => ledgerFormOf(a, form).of === 'token')
-    .map(a => a.code);
+    .map(a => a.symbol);
   throw new Error(
     `${answer.why} ${payable.length === 0
       ? `No asset has a ${formWord(form)} form yet.`
@@ -622,7 +664,7 @@ export function parseAmount(text: string, asset: Asset): bigint {
   const [whole, fraction = ''] = trimmed.split('.');
   if (fraction.length > asset.decimals) {
     throw new Error(
-      `${asset.code} has ${asset.decimals} decimal ${asset.decimals === 1 ? 'place' : 'places'}, ` +
+      `${asset.symbol} has ${asset.decimals} decimal ${asset.decimals === 1 ? 'place' : 'places'}, ` +
         `and "${text}" has ${fraction.length}. Rounding somebody's pay without being asked is ` +
         'not something this will do quietly.',
     );
@@ -634,7 +676,7 @@ export function parseAmount(text: string, asset: Asset): bigint {
  * Turns an integer in the smallest unit back into something a person reads.
  *
  * Always shows every decimal place the asset has, including trailing zeros:
- * `500000` in GBP is `5000.00` and not `5000`. Money with a variable number of
+ * `5000000000` in tUSD is `5000.000000` and not `5000`. Money with a variable number of
  * decimal places in a column is how a person misreads a figure by a factor of
  * ten, and this is the display path for payslips.
  */
@@ -651,7 +693,7 @@ export function formatAmount(value: bigint, asset: Asset): string {
  *
  * There is deliberately no function here that adds amounts of different assets,
  * and there must not be one. "A run has a subtotal per asset, never one total" —
- * a single number across mixed currencies is a number that means nothing, and
+ * a single number across mixed tokens is a number that means nothing, and
  * the moment a helper exists to produce one, something will display it.
  */
 export const sumAmounts = (xs: readonly bigint[]): bigint => xs.reduce((a, b) => a + b, 0n);
@@ -741,7 +783,7 @@ export const sumChangeAmount = (xs: readonly bigint[], what: string): bigint => 
 /**
  * Subtotals per asset, which is what a mixed run actually has.
  *
- * Returned sorted by code so two runs over the same lines produce the same
+ * Returned sorted by token so two runs over the same lines produce the same
  * object — anything that gets sealed or digested has to be deterministic.
  */
 export function subtotals(

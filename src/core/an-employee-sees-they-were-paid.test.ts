@@ -18,6 +18,8 @@ import { registryWithTestPrivateForms, aVaultHolding } from '../testing/assets.j
 import type { AssetRegistry } from './assets.js';
 import type { User } from './types.js';
 
+import { TEST_TOKEN, OTHER_TEST_TOKEN } from '../testing/assets.js';
+import { TEST_SETTLEMENT_ASSET } from './assets.js';
 /** The value, or a failure that says one was missing: an index that finds nothing is a broken test, not a value to carry on with. */
 function present<T>(value: T | undefined): T {
   if (value === undefined) throw new Error('expected a value here, and there was none');
@@ -73,7 +75,7 @@ const hire = (
 ) => {
   const email = `${who.toLowerCase()}@acme.example`;
   const { sentTo, employee } = h.payroll.invite(c.accountId, {
-    name: who, email, title: 'Engineer', asset: 'GBP', baseAmount: amount,
+    name: who, email, title: 'Engineer', asset: TEST_TOKEN, baseAmount: amount,
   }, c.viewingKey, 'usr_ada');
   const token = h.invites.tokenFor(sentTo!);
   const keys = payslipKeypairForWallet(words, keyFrom, ORIGIN);
@@ -109,7 +111,7 @@ describe('an employee sees each payment made to them, and nobody else\'s', () =>
       const opened = openPayslip(s, dana.keys.secret);
       expect(opened.payslip.name).toBe('Dana');
       expect(opened.payslip.amount).toBe(6_200_00n);
-      expect(opened.payslip.asset).toBe('GBP');
+      expect(opened.payslip.asset).toBe(TEST_TOKEN);
       expect(opened.payslip.period).toBe(s.period);
       expect(opened.issuedBy).toBe(c.label);
       /* And a colleague's key opens none of them. */
@@ -157,7 +159,7 @@ describe('an employee sees each payment made to them, and nobody else\'s', () =>
   it('A PAYEE PAID WITHOUT BEING ON THE ROSTER FINDS THEIR SLIP WITH THE KEY THEY WERE HANDED', async () => {
     const c = await company(h);
     const { run, secrets } = await h.payroll.createRun(c.accountId, '2026-08', [
-      { name: 'Kit', asset: 'GBP', amount: 1_00n },
+      { name: 'Kit', asset: TEST_TOKEN, amount: 1_00n },
     ], c.viewingKey);
     const [kit] = secrets;
     const found = h.payroll.payslipsFor(payslipPublicKeyOf(present(kit).wrappingSecret));
@@ -214,7 +216,7 @@ describe('a payslip still opens after its company moves to a new address', () =>
     keyFrom: CompanyLabel | undefined, byte: string) => {
     const email = `${who.toLowerCase()}@acme.example`;
     const { sentTo, employee } = h.payroll.invite(c.accountId, {
-      name: who, email, title: 'Engineer', asset: 'GBP', baseAmount: 1_00n,
+      name: who, email, title: 'Engineer', asset: TEST_TOKEN, baseAmount: 1_00n,
     }, c.viewingKey, 'usr_ada');
     const keys = payslipKeypairForWallet(words, keyFrom ?? c.label, ORIGIN);
     h.payroll.acceptInvite(h.invites.tokenFor(sentTo!), sealHandover({
@@ -285,27 +287,31 @@ describe('a payslip still opens after its company moves to a new address', () =>
 
 describe('a payee in an asset that cannot be paid on Midnight is refused at hiring', () => {
   it('REFUSED AT THE INVITATION AND AT SELF-PAYEE, NAMING WHY; TAKEN IN AN ASSET THAT CAN BE PAID', async () => {
-    /* The product's own registry, where GBP has no form on Midnight. */
+    /*
+     * The product's own registry, which holds only tokens a vault can hold. A
+     * token it does not hold (here the test fixture tokens, which only a test
+     * registry carries) is money no vault of this product can pay.
+     */
     const h = harness(productAssets);
     const c = await company(h);
-    /* RED WHEN the refusal is removed: the invitation is made in GBP. */
+    /* RED WHEN the refusal is removed: the invitation is made in a token no vault here can hold. */
     expect(() => h.payroll.invite(c.accountId, {
-      name: 'Dana', email: 'dana@acme.example', title: 'Engineer', asset: 'GBP', baseAmount: 1n,
-    }, c.viewingKey, 'usr_ada')).toThrow(/nobody can be hired in GBP\. GBP has no form on Midnight/);
+      name: 'Dana', email: 'dana@acme.example', title: 'Engineer', asset: TEST_TOKEN, baseAmount: 1n,
+    }, c.viewingKey, 'usr_ada')).toThrow(`no asset in the registry is the token "${TEST_TOKEN}"`);
     expect(h.store.listEmployees(c.accountId)).toHaveLength(0);
 
     const me = signIn(h, 'ada@acme.example');
     (h.store as any).putAccount({ ...h.accounts.require(c.accountId), memberUserIds: [me] });
     expect(() => h.payroll.addSelfAsPayee(c.accountId, me, {
-      name: 'Ada', email: null, title: 'Founder', asset: 'USD', baseAmount: 1n,
+      name: 'Ada', email: null, title: 'Founder', asset: OTHER_TEST_TOKEN, baseAmount: 1n,
     }, c.viewingKey, {
       wrappingPublicKey: 'ab'.repeat(32), address: payeeFor('a1'.repeat(32), 'undeployed'),
-    })).toThrow(/nobody can be hired in USD/);
+    })).toThrow(`no asset in the registry is the token "${OTHER_TEST_TOKEN}"`);
     expect(h.store.listEmployees(c.accountId)).toHaveLength(0);
 
     /* The test token has a private form and is taken. */
     expect(() => h.payroll.invite(c.accountId, {
-      name: 'Eli', email: 'eli@acme.example', title: 'Engineer', asset: 'TESTUSD', baseAmount: 1n,
+      name: 'Eli', email: 'eli@acme.example', title: 'Engineer', asset: TEST_SETTLEMENT_ASSET, baseAmount: 1n,
     }, c.viewingKey, 'usr_ada')).not.toThrow();
   });
 });

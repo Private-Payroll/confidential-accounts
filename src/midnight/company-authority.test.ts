@@ -33,6 +33,7 @@ const moneyIn = (
   },
   vaultCircuits: null,
   pinnedAccount: 'acc',
+  started: true,
   companyAccount: 'acc',
   account: accountRead,
   accountCircuits: circuits,

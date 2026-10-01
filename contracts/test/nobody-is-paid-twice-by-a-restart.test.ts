@@ -43,7 +43,7 @@ import { join } from 'node:path';
 import { AccountSimulator, privateStateFor } from './simulator.js';
 import { pureCircuits } from '../managed/contract/index.js';
 import { AccountService } from '../../src/core/account.js';
-import { PayrollService } from '../../src/core/payroll.js';
+import { PayrollService, runLegOf } from '../../src/core/payroll.js';
 import {
   SimulatedLedger, SimulatedProofSystem, type StateChange,
 } from '../../src/core/ledger.js';
@@ -52,10 +52,13 @@ import { buildRun } from '../../src/midnight/payout-tree.js';
 import { runMaterialFor, retryMaterialFor } from '../../src/midnight/run-material.js';
 import { payRecordNonceOf } from '../../src/midnight/run-keys.js';
 import { vaultDetails } from '../../src/testing/vault-details.js';
-import { registryWithTestPrivateForms, aVaultHolding } from '../../src/testing/assets.js';
+import { registryWithTestPrivateForms, aVaultHolding, TEST_TOKEN } from '../../src/testing/assets.js';
 import { FileStore } from '../../src/core/store-file.js';
 import { assetIdBytes } from '../../src/core/assets.js';
 import { fromHex, toHex, unseal, parseCanonical, type Hex, type Sealed } from '../../src/core/crypto.js';
+
+/** The one leg every run here pays: the fixture token, privately. */
+const LEG = runLegOf(TEST_TOKEN, 'shielded');
 
 const PAYROLL_VAULT = new Uint8Array(32).fill(0xa1);
 
@@ -119,7 +122,7 @@ async function aCompanyWithADraftedRun(people: number) {
   const viewingKey = created.viewingKey;
   for (let i = 0; i < people; i++) {
     s.payroll.hireDirect(created.account.id, {
-      name: `Payee ${i}`, email: `p${i}@a.co`, title: 'Eng', asset: 'GBP', baseAmount: 100_00n,
+      name: `Payee ${i}`, email: `p${i}@a.co`, title: 'Eng', asset: TEST_TOKEN, baseAmount: 100_00n,
     }, viewingKey);
   }
   const account = created.account.id;
@@ -162,7 +165,7 @@ describe('the hazard: a run identifier is what tells two payments apart', () => 
 
     /* Everything held equal except the identifier - the same facts object, window and vault. */
     const minted = await runMaterialFor({
-      accountId: recorded.identity.accountId, runId: 'run_startedagainbyhand:GBP',
+      accountId: recorded.identity.accountId, runId: `run_startedagainbyhand:${LEG}`,
       seeds: recorded.seeds, facts: recorded.facts, pay: recorded.pay, asset: recorded.asset, epoch: recorded.identity.epoch,
       opensAt: OPENS, closesAt: CLOSES, vault: toHex(PAYROLL_VAULT), detailsOf: vaultDetails,
     });
@@ -181,7 +184,7 @@ describe('the hazard: a run identifier is what tells two payments apart', () => 
        would then be a payment the account records separately and refuses nothing of. Read
        off the two builds' own payee arguments, not recomputed from the records. */
     const asRecorded = buildRun(recorded.seeds, recorded.identity, recorded.facts, vaultDetails, recorded.pay, recorded.asset);
-    const asMinted = buildRun(recorded.seeds, { ...recorded.identity, runId: 'run_startedagainbyhand:GBP' },
+    const asMinted = buildRun(recorded.seeds, { ...recorded.identity, runId: `run_startedagainbyhand:${LEG}` },
       recorded.facts, vaultDetails, recorded.pay, recorded.asset);
     for (let i = 0; i < 3; i++) {
       expect(asMinted.payeeArgs(i).nonce).toBe(asRecorded.payeeArgs(i).nonce);
@@ -301,7 +304,7 @@ describe('every way a person can start a failed run again', () => {
     async () => {
       const r = await aRaiseThatThrewAfterTheNetworkHadIt();
       const rebuild = (await r.payroll.payoutRebuildOf(r.run.id, r.viewingKey))!;
-      const foreign = { ...rebuild.identity, runId: 'run_startedagainbyhand:GBP' };
+      const foreign = { ...rebuild.identity, runId: `run_startedagainbyhand:${LEG}` };
 
       const mintedLeg = await runMaterialFor({
         accountId: foreign.accountId, runId: foreign.runId, seeds: rebuild.seeds,
@@ -312,7 +315,7 @@ describe('every way a person can start a failed run again', () => {
       expect(mintedLeg.leaves[0]).not.toBe(r.first.leaves[0]);
       /* RED WHEN the raise door stops comparing the material's identity with the leg's own. */
       await expect(r.payroll.proposeRun(r.run.id, r.viewingKey, r.by, mintedLeg))
-        .rejects.toThrow(/run_startedagainbyhand:GBP/);
+        .rejects.toThrow(new RegExp(`run_startedagainbyhand:${LEG}`));
 
       await r.payroll.proposeRun(r.run.id, r.viewingKey, r.by, await r.materialFor(r.run.id));
       const mintedRetry = await retryMaterialFor({
@@ -323,7 +326,7 @@ describe('every way a person can start a failed run again', () => {
       expect(mintedRetry.leaves[0]).not.toBe(r.first.leaves[1]);
       /* RED WHEN the retry door stops comparing them. */
       await expect(r.payroll.proposeRetry(r.run.id, r.viewingKey, r.by, mintedRetry))
-        .rejects.toThrow(/run_startedagainbyhand:GBP/);
+        .rejects.toThrow(new RegExp(`run_startedagainbyhand:${LEG}`));
     });
 });
 
@@ -378,7 +381,7 @@ describe('against the compiled circuits: what the chain refuses, and what it doe
     /* AND THE OTHER HALF, SO NEITHER IS TAKEN ON TRUST: the same person, the same amount,
        derived under a minted identifier, is a leaf the account has never seen. */
     const minted = await runMaterialFor({
-      accountId: rebuild.identity.accountId, runId: 'run_startedagainbyhand:GBP',
+      accountId: rebuild.identity.accountId, runId: `run_startedagainbyhand:${LEG}`,
       seeds: rebuild.seeds, facts: rebuild.facts, pay: rebuild.pay, asset: rebuild.asset, epoch: rebuild.identity.epoch,
       opensAt: OPENS, closesAt: CLOSES, vault: toHex(PAYROLL_VAULT), detailsOf: vaultDetails,
     });

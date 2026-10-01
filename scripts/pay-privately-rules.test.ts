@@ -3,7 +3,10 @@ import { describe, it, expect } from 'vitest';
 import {
   assertPrivatePayee, assertVaultCanPayPrivately, theAssetPaidPrivately,
   checkTheColourWasMinted, whetherANoteCanBeSpent, assertANoteCanBeSpent, linesAboutNotesPassedOver,
+  vaultNonceSecretOf,
 } from './pay-privately-rules.js';
+import { newWrappingKeypair } from '../src/core/crypto.js';
+import { openNonceSecrets, rotateNonceSecret, startNonceSecret } from '../src/midnight/company-nonce-secret.js';
 import { noteToSpend, paymentsFit } from '../src/midnight/vault-notes.js';
 import type { Hex } from '../src/core/crypto.js';
 import { StaticAssetRegistry, assets as productAssets, type Asset } from '../src/core/assets.js';
@@ -72,23 +75,26 @@ describe('who may be paid, and out of what', () => {
 });
 
 describe('which asset a private payment moves, and it is not asked for', () => {
-  const row = (over: Partial<Asset>): Asset => ({
-    code: 'ZZA', name: 'a', kind: 'token', decimals: 6, chain: 'midnight',
-    ledger: { shielded: null, unshielded: null }, enabled: true, sortOrder: 1, ...over,
+  const THIRD_COLOUR = 'ef'.repeat(32);
+  /** A row for the token `code`, called `symbol`, in the forms given: each form is the token itself. */
+  const row = (symbol: string, code: string, forms: ReadonlyArray<'shielded' | 'unshielded'>, over: Partial<Asset> = {}): Asset => ({
+    code, symbol, name: symbol, decimals: 6,
+    ledger: { shielded: forms.includes('shielded') ? code : null, unshielded: forms.includes('unshielded') ? code : null },
+    enabled: true, sortOrder: 1, ...over,
   });
 
   it('takes the one enabled asset that has a private form', () => {
     const registry = new StaticAssetRegistry([
-      row({ code: 'ZZA', ledger: { shielded: COLOUR, unshielded: null } }),
-      row({ code: 'ZZB', ledger: { shielded: null, unshielded: OTHER_COLOUR } }),
-      row({ code: 'ZZC', ledger: { shielded: null, unshielded: null } }),
+      row('ZZA', COLOUR, ['shielded']),
+      row('ZZB', OTHER_COLOUR, ['unshielded']),
+      row('ZZC', THIRD_COLOUR, ['unshielded']),
     ]);
     /* RED WHEN it picks by anything but the row's own private token. */
-    expect(theAssetPaidPrivately(registry).code).toBe('ZZA');
+    expect(theAssetPaidPrivately(registry).symbol).toBe('ZZA');
   });
 
   it('REFUSES when none has one, rather than substituting anything', () => {
-    const registry = new StaticAssetRegistry([row({ code: 'ZZC' })]);
+    const registry = new StaticAssetRegistry([row('ZZC', THIRD_COLOUR, ['unshielded'])]);
     /* RED WHEN a registry with no private asset yields something anyway. */
     expect(() => theAssetPaidPrivately(registry)).toThrow('no asset in this registry has a private form');
     expect(() => theAssetPaidPrivately(registry)).toThrow(/nothing is substituted/);
@@ -96,11 +102,11 @@ describe('which asset a private payment moves, and it is not asked for', () => {
 
   it('REFUSES when more than one has one, and will not pick', () => {
     const registry = new StaticAssetRegistry([
-      row({ code: 'ZZA', ledger: { shielded: COLOUR, unshielded: null } }),
-      row({ code: 'ZZB', ledger: { shielded: OTHER_COLOUR, unshielded: null } }),
+      row('ZZA', COLOUR, ['shielded']),
+      row('ZZB', OTHER_COLOUR, ['shielded']),
     ]);
     /*
-     * RED WHEN it picks the first of two. Which currency somebody's pay settles
+     * RED WHEN it picks the first of two. Which token somebody's pay settles
      * in is a decision, and picking would make it by sort order.
      */
     expect(() => theAssetPaidPrivately(registry)).toThrow('2 assets have a private form');
@@ -109,11 +115,11 @@ describe('which asset a private payment moves, and it is not asked for', () => {
 
   it('PASSES OVER a disabled asset that has one, because a disabled asset cannot be chosen', () => {
     const registry = new StaticAssetRegistry([
-      row({ code: 'ZZA', enabled: false, ledger: { shielded: COLOUR, unshielded: null } }),
-      row({ code: 'ZZB', ledger: { shielded: OTHER_COLOUR, unshielded: null } }),
+      row('ZZA', COLOUR, ['shielded'], { enabled: false }),
+      row('ZZB', OTHER_COLOUR, ['shielded']),
     ]);
     /* RED WHEN a disabled row is settled in, which is an asset the product says may not be used. */
-    expect(theAssetPaidPrivately(registry).code).toBe('ZZB');
+    expect(theAssetPaidPrivately(registry).symbol).toBe('ZZB');
   });
 
   it('answers for the product registry as it stands, so this door has an asset at all', () => {
@@ -166,7 +172,7 @@ describe('whether a note can be spent at all, asked before the first fee', () =>
     const notes = [note({ createdIn: 'ef'.repeat(32) as Note['createdIn'] })];
     /* RED WHEN a perfectly spendable note is refused, which refuses every private payment. */
     expect(whetherANoteCanBeSpent(notes, COLOUR, 1_000n)).toMatchObject({ of: 'spendable', passedOver: [] });
-    expect(() => assertANoteCanBeSpent(notes, COLOUR, 1_000n, 'TESTUSD')).not.toThrow();
+    expect(() => assertANoteCanBeSpent(notes, COLOUR, 1_000n, 'tUSD')).not.toThrow();
   });
 
   it('NOTES ARE NOT MERGED: two that add up to enough are not enough', () => {
@@ -179,10 +185,10 @@ describe('whether a note can be spent at all, asked before the first fee', () =>
      * note; a check that summed them would pass a payment the circuit refuses.
      */
     expect(whetherANoteCanBeSpent(notes, COLOUR, 1_000n)).toEqual({ of: 'nothing-big-enough' });
-    expect(() => assertANoteCanBeSpent(notes, COLOUR, 1_000n, 'TESTUSD'))
+    expect(() => assertANoteCanBeSpent(notes, COLOUR, 1_000n, 'tUSD'))
       .toThrow(/made out of ONE note/);
     /* RED WHEN the refusal stops saying what to do about it. */
-    expect(() => assertANoteCanBeSpent(notes, COLOUR, 1_000n, 'TESTUSD'))
+    expect(() => assertANoteCanBeSpent(notes, COLOUR, 1_000n, 'tUSD'))
       .toThrow(/deposit large enough, or pay a smaller amount/);
   });
 
@@ -202,13 +208,13 @@ describe('whether a note can be spent at all, asked before the first fee', () =>
      */
     expect(verdict.of).toBe('stranded');
     expect(verdict.of === 'stranded' && verdict.nonces).toEqual(['0a'.repeat(32)]);
-    expect(() => assertANoteCanBeSpent(notes, COLOUR, 1_000n, 'TESTUSD'))
+    expect(() => assertANoteCanBeSpent(notes, COLOUR, 1_000n, 'tUSD'))
       .toThrow(/does not record which transaction created it/);
     /* RED WHEN the refusal implies the money is gone. It is on chain and it is the vault's. */
-    expect(() => assertANoteCanBeSpent(notes, COLOUR, 1_000n, 'TESTUSD'))
+    expect(() => assertANoteCanBeSpent(notes, COLOUR, 1_000n, 'tUSD'))
       .toThrow(/nothing is lost/);
     /* RED WHEN the note it is about is not named, leaving a person to guess which one to repair. */
-    expect(() => assertANoteCanBeSpent(notes, COLOUR, 1_000n, 'TESTUSD'))
+    expect(() => assertANoteCanBeSpent(notes, COLOUR, 1_000n, 'tUSD'))
       .toThrow('0a'.repeat(32));
   });
 
@@ -224,16 +230,16 @@ describe('whether a note can be spent at all, asked before the first fee', () =>
      */
     expect(whetherANoteCanBeSpent(notes, COLOUR, 1_000n))
       .toEqual({ of: 'spendable', nonce: '0b'.repeat(32), passedOver: ['0a'.repeat(32)] });
-    const lines = linesAboutNotesPassedOver(whetherANoteCanBeSpent(notes, COLOUR, 1_000n), 'TESTUSD');
+    const lines = linesAboutNotesPassedOver(whetherANoteCanBeSpent(notes, COLOUR, 1_000n), 'tUSD');
     /* RED WHEN the door goes quiet about money on chain that a payment cannot reach. */
     expect(lines, 'RED WHEN: the door says nothing about a note the payment passed over').toHaveLength(2);
-    expect(lines[0]).toMatch(/1 other note of TESTUSD large enough for this payment is the vault's and on chain, and a payment cannot spend it yet/);
+    expect(lines[0]).toMatch(/1 other note of tUSD large enough for this payment is the vault's and on chain, and a payment cannot spend it yet/);
     expect(lines[0], 'RED WHEN: the line names nothing a person can do').toMatch(/What resolves it: record the transaction that paid it in against the note, or rebuild the pool/);
     expect(lines.slice(1)).toEqual([`  ${'0a'.repeat(32)}`]);
-    expect(linesAboutNotesPassedOver({ of: 'spendable', nonce: 'x', passedOver: [] }, 'TESTUSD')).toEqual([]);
-    expect(linesAboutNotesPassedOver({ of: 'nothing-big-enough' }, 'TESTUSD')).toEqual([]);
-    expect(linesAboutNotesPassedOver({ of: 'spendable', nonce: 'x', passedOver: ['a', 'b'] }, 'TESTUSD')[0])
-      .toMatch(/^2 other notes of TESTUSD .* are the vault's and on chain, and a payment cannot spend them yet: no transaction that created them is recorded\. This payment does not use them\. .*paid each one in/);
+    expect(linesAboutNotesPassedOver({ of: 'spendable', nonce: 'x', passedOver: [] }, 'tUSD')).toEqual([]);
+    expect(linesAboutNotesPassedOver({ of: 'nothing-big-enough' }, 'tUSD')).toEqual([]);
+    expect(linesAboutNotesPassedOver({ of: 'spendable', nonce: 'x', passedOver: ['a', 'b'] }, 'tUSD')[0])
+      .toMatch(/^2 other notes of tUSD .* are the vault's and on chain, and a payment cannot spend them yet: no transaction that created them is recorded\. This payment does not use them\. .*paid each one in/);
   });
 
   it('THE CHECK BEFORE THE FIRST FEE AND THE PAYMENT CHOOSE THE SAME NOTE, for the pool the pre-flight used to pass and the spend refused', () => {
@@ -280,5 +286,35 @@ describe('whether a note can be spent at all, asked before the first fee', () =>
     /* RED WHEN the comparison becomes strictly greater, refusing an exact payment the vault can make. */
     expect(whetherANoteCanBeSpent(notes, COLOUR, 1_000n)).toMatchObject({ of: 'spendable' });
     expect(whetherANoteCanBeSpent(notes, COLOUR, 1_001n)).toEqual({ of: 'nothing-big-enough' });
+  });
+});
+
+describe('the vault\'s nonce secret, which every private payment makes its coins under', () => {
+  const VAULT_ADDRESS = 'ab'.repeat(32);
+  const ada = newWrappingKeypair();
+  const bo = newWrappingKeypair();
+  const record = startNonceSecret(VAULT_ADDRESS, [{ publicKey: ada.publicKey }, { publicKey: bo.publicKey }]);
+
+  it('opens the company\'s record as the signer this machine holds, and hands back its newest secret', () => {
+    const secret = vaultNonceSecretOf(record, 'the record', VAULT_ADDRESS, { wrappingSecret: ada.secret });
+    /* RED WHEN the payment is handed anything but the secret the company's record holds now. */
+    expect(secret).toBe(openNonceSecrets(record, VAULT_ADDRESS, ada).secrets[0]);
+    const rotated = rotateNonceSecret(record, VAULT_ADDRESS, ada, { remaining: [{ publicKey: ada.publicKey }], leaving: [{ publicKey: bo.publicKey }] });
+    const newest = openNonceSecrets(rotated, VAULT_ADDRESS, ada).secrets;
+    /* RED WHEN an earlier epoch's secret is handed over after a rotation: the vault refuses coins made under it. */
+    expect(newest).toHaveLength(2);
+    expect(vaultNonceSecretOf(rotated, 'the record', VAULT_ADDRESS, { wrappingSecret: ada.secret })).toBe(newest[1]);
+  });
+
+  it('REFUSES by name, before any fee, when there is no record, it is another vault\'s, or it is not wrapped to this signer', () => {
+    /* RED WHEN a missing record is passed over and the payment is built without the secret. */
+    expect(() => vaultNonceSecretOf(null, '.midnight/stagenet-vault-nonce-secret-payroll.json', VAULT_ADDRESS, { wrappingSecret: ada.secret }))
+      .toThrow(/this vault has no nonce secret on this machine: \.midnight\/stagenet-vault-nonce-secret-payroll\.json does not exist/);
+    /* RED WHEN a record filed for another vault is opened for this one. */
+    expect(() => vaultNonceSecretOf(record, 'the record', 'cd'.repeat(32), { wrappingSecret: ada.secret }))
+      .toThrow(/filed for a different vault/);
+    /* RED WHEN a signer with no copy is handed a secret anyway. */
+    expect(() => vaultNonceSecretOf(record, 'the record', VAULT_ADDRESS, { wrappingSecret: newWrappingKeypair().secret }))
+      .toThrow(/no copy is wrapped to this signer/);
   });
 });

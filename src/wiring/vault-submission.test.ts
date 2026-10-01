@@ -1,5 +1,5 @@
 import { describe, it, expect, beforeAll } from 'vitest';
-import { existsSync } from 'node:fs';
+import { keysOnDisk, VAULT_KEYS } from '../../contracts/test/keys-on-disk.js';
 import * as L from '@midnightntwrk/ledger-v9';
 import * as runtime from '@midnight-ntwrk/compact-runtime';
 import { CompiledContract } from '@midnight-ntwrk/compact-js';
@@ -14,6 +14,7 @@ import type { AuthorityRead, OnChainAuthority } from '../midnight/ledger.js';
 import {
   circuitsRefusal, refusalToPutMoneyIn, readVaultDeploy, refusalForDeposit, refusalForHandover,
   refusalForPayout, refusalForPublicPayout, startingLedgerFrom, type VaultStartingLedger,
+  committeeHoldsTheVault, refusalForSecretCopy, refusalForSetNonceSecret, refusalForStartAccountCall,
 } from './vault-submission.js';
 
 /*
@@ -23,21 +24,21 @@ import {
  */
 const NET = 'undeployed';
 const ACCOUNT = 'c0'.repeat(32);
-const hex = (b: Uint8Array) => Buffer.from(b).toString('hex');
 const zk = new NodeZkConfigProvider(new URL('../../contracts/managed-vault', import.meta.url).pathname);
 const deps: VaultBuilderDeps = {
   ledger: L,
   runtimeState: (runtime as any).ContractState,
   contracts: contracts as any,
   compiled: CompiledContract.make('Vault', (vaultModule as any).Contract).pipe(
-    CompiledContract.withWitnesses({ noteToSpend: () => { throw new Error('no'); } } as never)),
+    CompiledContract.withWitnesses({ noteToSpend: () => { throw new Error('no'); }, nonceSecret: () => { throw new Error('no'); } } as never)),
   zkConfig: zk,
   prove: async (tx: any) => tx,
   network: NET,
 };
 const readDeploy = (b: Uint8Array) => L.Transaction.deserialize('signature', 'pre-proof', 'pre-binding', b) as any;
 const startingLedgerOf = (state: any): VaultStartingLedger =>
-  startingLedgerFrom((vaultModule as any).ledger((runtime as any).ContractState.deserialize(state.serialize()).data));
+  startingLedgerFrom((vaultModule as any).ledger((runtime as any).ContractState.deserialize(state.serialize()).data),
+    (vaultModule as any).pureCircuits.copiesWrittenKey());
 const vk = (n: number) => L.signatureVerifyingKey(L.signingKeyFromBip340(new Uint8Array(32).fill(n)));
 const committee: Committee = { committee: [vk(1), vk(2)].sort((a, b) => (a.value < b.value ? -1 : 1)), threshold: 2 };
 
@@ -51,12 +52,13 @@ const committee: Committee = { committee: [vk(1), vk(2)].sort((a, b) => (a.value
  * relatively, a run started anywhere but the root would answer "no keys" and
  * skip in silence.
  */
-const KEYS_ON_DISK = existsSync(new URL('../../contracts/managed-vault/keys/deposit.verifier', import.meta.url));
+const KEYS = keysOnDisk([VAULT_KEYS]);
+const KEYS_ON_DISK = KEYS.ok;
 if (!KEYS_ON_DISK) {
   console.log(
-    '  NOT CHECKED HERE: the vault\'s verifier keys are not on disk, so what the fee payer'
-    + ' will pay for on a vault was not read off real transactions.'
-    + ' `npm run compact:vault -- --full` builds them.',
+    '  NOT CHECKED HERE: the vault\'s verifier keys are not on disk as this build compiled them, so what'
+    + ' the fee payer will pay for on a vault was not read off real transactions: '
+    + KEYS.why,
   );
 }
 
@@ -94,11 +96,20 @@ describe.skipIf(!KEYS_ON_DISK)('what the fee payer pays for on a vault [needs co
     it('REFUSES A VAULT THAT STARTS WITH ANYTHING WRITTEN BESIDES ITS ACCOUNT', () => {
       const d = deploy.intents.values().next().value.actions[0];
       /* What the device's builder writes, read through the vault's own ledger: nothing besides the account. */
-      expect(startingLedgerOf(d.initialState)).toEqual({ account: ACCOUNT, notes: 0n, unshieldedTokens: 0n, payments: 0n, spendingCaps: 0n });
-      for (const written of [{ notes: 1n }, { unshieldedTokens: 1n }, { payments: 1n }, { spendingCaps: 1n }]) {
+      expect(startingLedgerOf(d.initialState)).toEqual({
+        account: ACCOUNT, notes: 0n, unshieldedTokens: 0n, payments: 0n,
+        nonceCommitment: '00'.repeat(32), splitJournal: 0n, secretCopies: 0n, reserved: 0n, started: false,
+      });
+      for (const written of [{ notes: 1n }, { unshieldedTokens: 1n }, { payments: 1n }]) {
         const withIt = (s: unknown) => ({ ...startingLedgerOf(s), ...written });
         expect(refusalOf(readVaultDeploy(deploy, { ...expectations(), startingLedgerOf: withIt })), JSON.stringify(written, (_k, v) => String(v)))
           .toMatch(/starts with records a new vault does not have/);
+      }
+      /* RED WHEN a deploy that wrote its own secret, a copy, a split or a reserved entry is read as a new vault: it would take money before the account approved anything. */
+      for (const written of [{ nonceCommitment: '00'.repeat(31) + '01' }, { splitJournal: 1n }, { secretCopies: 1n }, { reserved: 1n }]) {
+        const withIt = (s: unknown) => ({ ...startingLedgerOf(s), ...written });
+        expect(refusalOf(readVaultDeploy(deploy, { ...expectations(), startingLedgerOf: withIt })), JSON.stringify(written, (_k, v) => String(v)))
+          .toMatch(/only the company's approved runs may write/);
       }
       expect(refusalOf(readVaultDeploy(deploy, { ...expectations(), startingLedgerOf: (s) => ({ ...startingLedgerOf(s), account: 'c0' }) })))
         .toMatch(/not a vault's/);
@@ -108,7 +119,7 @@ describe.skipIf(!KEYS_ON_DISK)('what the fee payer pays for on a vault [needs co
 
     it('REFUSES A CIRCUIT THIS BUILD DID NOT COMPILE, AND NAMES IT', () => {
       const swapped = new Map(verifierKeys);
-      const k = new Uint8Array(swapped.get('payout')!); k[k.length - 1] ^= 1;
+      const k = new Uint8Array(swapped.get('payout')!); k[k.length - 1] = (k[k.length - 1] ?? 0) ^ 1;
       swapped.set('payout', k);
       expect(refusalOf(readVaultDeploy(deploy, { ...expectations(), verifierKeys: swapped })))
         .toMatch(/its 'payout' circuit is not the one this service's build compiled/);
@@ -196,9 +207,36 @@ describe.skipIf(!KEYS_ON_DISK)('what the fee payer pays for on a vault [needs co
   });
 
   describe('A DEPOSIT INTO THE VAULT', () => {
+    /** The deployed vault's state as an approved secret run leaves it: a commitment in place and every sealed copy written. */
+    const started = (deployed: any) => {
+      const copy: any = L.ContractState.deserialize(deployed.serialize());
+      const fields = copy.data.state.asArray();
+      const commitment = (L as any).StateValue.newCell({
+        value: [new Uint8Array(32).fill(0x51)], alignment: fields[5].asCell().alignment,
+      });
+      let next = (L as any).StateValue.newArray();
+      /* And the mark the last sealed copy leaves, without which the vault still takes no money. */
+      const bytes32 = new (runtime as any).CompactTypeBytes(32);
+      const aligned = (b: Uint8Array) => ({ value: bytes32.toValue(b), alignment: bytes32.alignment() });
+      const written = (L as any).StateValue.newMap((fields[7] as any).asMap().insert(
+        aligned((vaultModule as any).pureCircuits.copiesWrittenKey()), (L as any).StateValue.newCell(aligned(new Uint8Array(32).fill(0x51)))));
+      fields.forEach((f: unknown, i: number) => { next = next.arrayPush(i === 5 ? commitment : i === 7 ? written : f); });
+      copy.data = new (L as any).ChargedState(next);
+      return copy;
+    };
+
+    it('IS REFUSED BY THE VAULT ITSELF WHILE IT HAS NO SECRET, before anything is built or sent', async () => {
+      const vaultState = (deploy.intents.values().next().value.actions[0]).initialState;
+      /* RED WHEN a vault fresh from its deploy, which no account has adopted, takes a deposit. */
+      await expect(buildDeposit(deps, {
+        vault, coin: { nonce: 'c1'.repeat(32), token: 'ab'.repeat(32), value: 5n }, state: vaultState.serialize(),
+        parameters: L.LedgerParameters.initialParameters().serialize(),
+      })).rejects.toThrow(/takes no money yet/);
+    });
+
     it('IS NOT SENT BEFORE THE WALLET HAS BALANCED IT, BECAUSE IT THEN STATES ITS TOKEN AND AMOUNT; AND IT CALLS ONLY THIS VAULT\'S DEPOSIT', async () => {
       const state = new L.ContractState();
-      const vaultState = (deploy.intents.values().next().value.actions[0]).initialState;
+      const vaultState = started((deploy.intents.values().next().value.actions[0]).initialState);
       const built = await buildDeposit(deps, {
         vault, coin: { nonce: 'c1'.repeat(32), token: 'ab'.repeat(32), value: 5n }, state: vaultState.serialize(),
         /* A fresh chain's parameters: this file reads the transaction's shape, not what it costs. */
@@ -279,9 +317,48 @@ describe.skipIf(!KEYS_ON_DISK)('what the fee payer pays for on a vault [needs co
       vaultRead: AuthorityRead, to: Committee | null, over: Record<string, unknown> = {},
     ): string | null => refusalToPutMoneyIn({
       label: 'v', what: 'no money goes in', vault: vaultRead, vaultCircuits: null,
-      pinnedAccount: 'acc', companyAccount: 'acc', account: ok, accountCircuits: null,
+      pinnedAccount: 'acc', started: true, companyAccount: 'acc', account: ok, accountCircuits: null,
       committee: to, heldHere: [], ...over,
     })?.why ?? null;
+
+    it('NOT INTO A VAULT THAT IS NOT STARTED: no secret approved, or a secret whose sealed copies are not all on the chain', () => {
+      /* RED WHEN the gate offers a deposit the vault will refuse in its circuit, after the money was booked. */
+      expect(gate(read({}), committee, { started: false })).toMatch(/has not yet adopted it and approved its first secret/);
+      expect(gate(read({}), committee, { started: false })).toMatch(/Nothing was sent\./);
+      expect(gate(read({}), committee)).toBeNull();
+    });
+
+    it('A VAULT NOT YET STARTED IS STILL HELD BY THE COMMITTEE: its handover is not sent again, and its start is what is owed', () => {
+      const facts = {
+        label: 'v', what: 'no money goes in', vault: read({}), vaultCircuits: null,
+        pinnedAccount: 'acc', started: false, companyAccount: 'acc', account: ok, accountCircuits: null,
+        committee, heldHere: [],
+      };
+      /* RED WHEN: the question a handover waits on folds in the start - a handed-over vault is then handed over again and refused. */
+      expect(committeeHoldsTheVault(facts)).toBeNull();
+      /* RED WHEN: a vault not started is not named as one whose start is owed. */
+      expect(refusalToPutMoneyIn(facts)).toMatchObject({ notStarted: true, heldByOthers: false });
+    });
+
+    it('READS A VAULT AS STARTED ONLY WHEN ITS LAST SEALED COPY CLOSED THE CURRENT SECRET\'S LIST', () => {
+      const key = (vaultModule as any).pureCircuits.copiesWrittenKey() as Uint8Array;
+      const zero = (n: number) => ({ size: () => BigInt(n) });
+      const ledgerWith = (commitment: Uint8Array, written: Uint8Array | undefined) => ({
+        account: { bytes: new Uint8Array(32).fill(1) }, notes: zero(0), unshieldedTokens: zero(0), payments: 0n,
+        nonceCommitment: commitment, splitJournal: zero(0),
+        secretCopies: { size: () => 1n, member: (k: Uint8Array) => written !== undefined && Buffer.compare(Buffer.from(k), Buffer.from(key)) === 0, lookup: () => written! },
+        reserved0: zero(0), reserved1: zero(0), reserved2: zero(0), reserved3: zero(0), reserved4: zero(0), reserved5: zero(0), reserved6: zero(0),
+      });
+      const c = new Uint8Array(32).fill(0x51);
+      /* RED WHEN a vault with a secret but copies still to write is read as started. */
+      expect(startingLedgerFrom(ledgerWith(c, new Uint8Array(32)), key).started).toBe(false);
+      expect(startingLedgerFrom(ledgerWith(c, undefined), key).started).toBe(false);
+      /* RED WHEN a list finished for an earlier secret counts for this one. */
+      expect(startingLedgerFrom(ledgerWith(c, new Uint8Array(32).fill(0x52)), key).started).toBe(false);
+      /* RED WHEN a vault with no secret at all is read as started. */
+      expect(startingLedgerFrom(ledgerWith(new Uint8Array(32), new Uint8Array(32)), key).started).toBe(false);
+      expect(startingLedgerFrom(ledgerWith(c, c), key).started).toBe(true);
+    });
 
     it('only when the chain holds exactly the company\'s committee', () => {
       expect(gate(read({}), committee)).toBeNull();
@@ -296,7 +373,7 @@ describe.skipIf(!KEYS_ON_DISK)('what the fee payer pays for on a vault [needs co
       const d = deploy.intents.values().next().value.actions[0];
       expect(circuitsRefusal(d.initialState, verifierKeys, 'no')).toBeNull();
       const swapped = new Map(verifierKeys);
-      const k = new Uint8Array(swapped.get('payout')!); k[0] ^= 1;
+      const k = new Uint8Array(swapped.get('payout')!); k[0] = (k[0] ?? 0) ^ 1;
       swapped.set('payout', k);
       expect(circuitsRefusal(d.initialState, swapped, 'this vault is not funded')).toMatch(/^this vault is not funded: its 'payout' circuit/);
       const fewer = { operations: () => d.initialState.operations().slice(1), operation: (n: string) => d.initialState.operation(n) };
@@ -348,7 +425,7 @@ describe('A PRIVATE PAYMENT OUT OF THE VAULT', () => {
   };
   const payout = (over: Shape = {}) => {
     const actions = over.actions ?? [
-      { address: ACCOUNT, entryPoint: 'recordPayment' },
+      { address: ACCOUNT, entryPoint: 'recordPaymentFromVault' },
       { address: VAULT, entryPoint: new TextEncoder().encode('payout') },
     ];
     const intent = { actions, ...(over.intentExtra ?? {}) };
@@ -380,13 +457,13 @@ describe('A PRIVATE PAYMENT OUT OF THE VAULT', () => {
     /* RED WHEN: the call set is not compared exactly. */
     const refuse = /must call this vault's payout and this company's approval of it/;
     expect(refusalForPayout(payout({ actions: [{ address: VAULT, entryPoint: 'payout' }] }), expect_)).toMatch(refuse);
-    expect(refusalForPayout(payout({ actions: [{ address: OTHER, entryPoint: 'recordPayment' }, { address: VAULT, entryPoint: 'payout' }] }), expect_)).toMatch(refuse);
-    expect(refusalForPayout(payout({ actions: [{ address: ACCOUNT, entryPoint: 'recordPayment' }, { address: OTHER, entryPoint: 'payout' }] }), expect_)).toMatch(refuse);
-    expect(refusalForPayout(payout({ actions: [{ address: ACCOUNT, entryPoint: 'recordPayment' }, { address: VAULT, entryPoint: 'splitNote' }] }), expect_)).toMatch(refuse);
+    expect(refusalForPayout(payout({ actions: [{ address: OTHER, entryPoint: 'recordPaymentFromVault' }, { address: VAULT, entryPoint: 'payout' }] }), expect_)).toMatch(refuse);
+    expect(refusalForPayout(payout({ actions: [{ address: ACCOUNT, entryPoint: 'recordPaymentFromVault' }, { address: OTHER, entryPoint: 'payout' }] }), expect_)).toMatch(refuse);
+    expect(refusalForPayout(payout({ actions: [{ address: ACCOUNT, entryPoint: 'recordPaymentFromVault' }, { address: VAULT, entryPoint: 'splitNote' }] }), expect_)).toMatch(refuse);
     expect(refusalForPayout(payout({ actions: [
-      { address: ACCOUNT, entryPoint: 'recordPayment' }, { address: VAULT, entryPoint: 'payout' }, { address: VAULT, entryPoint: 'payout' },
+      { address: ACCOUNT, entryPoint: 'recordPaymentFromVault' }, { address: VAULT, entryPoint: 'payout' }, { address: VAULT, entryPoint: 'payout' },
     ] }), expect_)).toMatch(refuse);
-    expect(refusalForPayout(payout({ actions: [{ address: ACCOUNT, entryPoint: 'recordPayment' }, { address: VAULT, initialState: {} }] }), expect_))
+    expect(refusalForPayout(payout({ actions: [{ address: ACCOUNT, entryPoint: 'recordPaymentFromVault' }, { address: VAULT, initialState: {} }] }), expect_))
       .toMatch(/something other than call the vault and the account/);
     expect(refusalForPayout(payout({ intents: 2 }), expect_)).toMatch(/exactly one set of actions/);
     expect(refusalForPayout({ intents: new Map() }, expect_)).toMatch(/exactly one set of actions/);
@@ -449,7 +526,7 @@ describe('A PUBLIC PAYMENT OUT OF THE VAULT', () => {
   const payout = (over: Shape = {}) => ({
     intents: new Map([[1, {
       actions: over.actions ?? [
-        { address: ACCOUNT, entryPoint: 'recordPayment' },
+        { address: ACCOUNT, entryPoint: 'recordPaymentFromVault' },
         { address: VAULT, entryPoint: new TextEncoder().encode('payoutUnshielded') },
       ],
       guaranteedUnshieldedOffer: { inputs: [], outputs: [{ owner: 'c3'.repeat(32), type: 'a8'.repeat(32), value: 250n }], signatures: [] },
@@ -470,9 +547,9 @@ describe('A PUBLIC PAYMENT OUT OF THE VAULT', () => {
   it('REFUSES ANY CALL BUT THE VAULT\'S PUBLIC PAYOUT AND THIS COMPANY\'S APPROVAL OF IT', () => {
     const refuse = /must call this vault's public payout and this company's approval of it/;
     /* RED WHEN: the call set is not compared exactly, or the private payout is taken for the public one. */
-    expect(refusalForPublicPayout(payout({ actions: [{ address: ACCOUNT, entryPoint: 'recordPayment' }, { address: VAULT, entryPoint: 'payout' }] }), expect_)).toMatch(refuse);
-    expect(refusalForPublicPayout(payout({ actions: [{ address: OTHER, entryPoint: 'recordPayment' }, { address: VAULT, entryPoint: 'payoutUnshielded' }] }), expect_)).toMatch(refuse);
-    expect(refusalForPublicPayout(payout({ actions: [{ address: ACCOUNT, entryPoint: 'recordPayment' }, { address: OTHER, entryPoint: 'payoutUnshielded' }] }), expect_)).toMatch(refuse);
+    expect(refusalForPublicPayout(payout({ actions: [{ address: ACCOUNT, entryPoint: 'recordPaymentFromVault' }, { address: VAULT, entryPoint: 'payout' }] }), expect_)).toMatch(refuse);
+    expect(refusalForPublicPayout(payout({ actions: [{ address: OTHER, entryPoint: 'recordPaymentFromVault' }, { address: VAULT, entryPoint: 'payoutUnshielded' }] }), expect_)).toMatch(refuse);
+    expect(refusalForPublicPayout(payout({ actions: [{ address: ACCOUNT, entryPoint: 'recordPaymentFromVault' }, { address: OTHER, entryPoint: 'payoutUnshielded' }] }), expect_)).toMatch(refuse);
     expect(refusalForPublicPayout(payout({ actions: [{ address: VAULT, entryPoint: 'payoutUnshielded' }] }), expect_)).toMatch(refuse);
   });
 
@@ -500,5 +577,53 @@ describe('A PUBLIC PAYMENT OUT OF THE VAULT', () => {
     expect(refusalForPublicPayout(payout({
       imbalances: (segment) => new Map(segment === 1 ? [[{ tag: 'unshielded' }, -999n]] : [[{ tag: 'dust' }, -5n]]),
     }), expect_)).toMatch(/does not balance in its own money/);
+  });
+});
+
+/**
+ * **A VAULT'S START, AS THE FEE PAYER READS IT.** Shaped objects with the
+ * ledger's own field names; the same readers over the calls the device's own
+ * builder made, applied by the ledger's own state machine, are
+ * `contracts/test/a-company-vault-from-the-page.test.ts`.
+ */
+describe('A VAULT\'S START', () => {
+  const VAULT = 'ab'.repeat(32);
+  const OTHER = 'ee'.repeat(32);
+  const tx = (actions: unknown[], over: Record<string, unknown> = {}, intentExtra: Record<string, unknown> = {}) => ({
+    intents: new Map([[1, { actions, ...intentExtra }]]), ...over,
+  });
+  const call = (address: string, entryPoint: string) => ({ address, entryPoint: new TextEncoder().encode(entryPoint) });
+
+  it('pays for one call to this company\'s account that moves nothing, and nothing else', () => {
+    for (const circuit of ['propose', 'approve', 'adopt'] as const) {
+      expect(refusalForStartAccountCall(tx([call(ACCOUNT, circuit)]), { account: ACCOUNT, circuit })).toBeNull();
+    }
+    const refuse = /Nothing was sent\./;
+    /* RED WHEN: a step of a start is paid for on another account, or as another circuit than the route's. */
+    expect(refusalForStartAccountCall(tx([call(OTHER, 'adopt')]), { account: ACCOUNT, circuit: 'adopt' })).toMatch(refuse);
+    expect(refusalForStartAccountCall(tx([call(ACCOUNT, 'retireVault')]), { account: ACCOUNT, circuit: 'adopt' })).toMatch(refuse);
+    expect(refusalForStartAccountCall(tx([call(ACCOUNT, 'adopt'), call(ACCOUNT, 'approve')]), { account: ACCOUNT, circuit: 'adopt' })).toMatch(refuse);
+    /* RED WHEN: a step of a start that moves coins is paid for. */
+    expect(refusalForStartAccountCall(tx([call(ACCOUNT, 'adopt')], { guaranteedOffer: { inputs: [{}], outputs: [], transients: [] } }),
+      { account: ACCOUNT, circuit: 'adopt' })).toMatch(/moves coins/);
+    expect(refusalForStartAccountCall(tx([call(ACCOUNT, 'adopt')], {}, { guaranteedUnshieldedOffer: { inputs: [], outputs: [{}] } }),
+      { account: ACCOUNT, circuit: 'adopt' })).toMatch(/moves coins/);
+  });
+
+  it('pays for the secret set only as this vault\'s setNonceSecret and this company\'s approval of it', () => {
+    const both = [call(ACCOUNT, 'approveVaultChange'), call(VAULT, 'setNonceSecret')];
+    expect(refusalForSetNonceSecret(tx(both), { vault: VAULT, account: ACCOUNT })).toBeNull();
+    /* RED WHEN: a secret is set on another account's approval, on another vault, or with a third call beside it. */
+    expect(refusalForSetNonceSecret(tx(both), { vault: VAULT, account: OTHER })).toMatch(/Nothing was sent/);
+    expect(refusalForSetNonceSecret(tx(both), { vault: OTHER, account: ACCOUNT })).toMatch(/Nothing was sent/);
+    expect(refusalForSetNonceSecret(tx([...both, call(VAULT, 'payout')]), { vault: VAULT, account: ACCOUNT })).toMatch(/Nothing was sent/);
+    expect(refusalForSetNonceSecret(tx([call(VAULT, 'setNonceSecret')]), { vault: VAULT, account: ACCOUNT })).toMatch(/Nothing was sent/);
+  });
+
+  it('pays for one sealed copy written into this vault, and nothing else', () => {
+    expect(refusalForSecretCopy(tx([call(VAULT, 'writeSecretCopy')]), { vault: VAULT })).toBeNull();
+    /* RED WHEN: a copy written into another vault, or another call under this route, is paid for. */
+    expect(refusalForSecretCopy(tx([call(OTHER, 'writeSecretCopy')]), { vault: VAULT })).toMatch(/Nothing was sent/);
+    expect(refusalForSecretCopy(tx([call(VAULT, 'deposit')]), { vault: VAULT })).toMatch(/Nothing was sent/);
   });
 });

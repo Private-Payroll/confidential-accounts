@@ -31,6 +31,11 @@ import { theTransactionTheseEventsAreFrom } from '../src/midnight/note-index.js'
 import type { Note } from '../src/midnight/vault-notes.js';
 import type { CreatingTransactionFound } from '../src/midnight/note-index.js';
 import type { Hex } from '../src/core/crypto.js';
+import { fromHex, toHex } from '../src/core/crypto.js';
+import { x25519 } from '@noble/curves/ed25519.js';
+import type { SealedPool } from '../src/midnight/vault-pool.js';
+import { openNonceSecrets } from '../src/midnight/company-nonce-secret.js';
+import type { VaultNonceSecrets } from '../src/midnight/vault-coin-nonces.js';
 
 /** What the door may do, having looked at what the rebuild came back with. */
 export type RebuildDecision =
@@ -435,6 +440,9 @@ export const linesForAnOperator = (
     ...(settled.length > 0
       ? [`notes described two ways, settled by the chain         ${settled.length}`]
       : []),
+    ...((r.unnamedWithoutTheSecret?.length ?? 0) > 0
+      ? [`calls whose new coins were not named, for want of the secret  ${r.unnamedWithoutTheSecret!.length}`]
+      : []),
   ];
   /*
    * **EVERY LIST IS BOUNDED THE SAME WAY, AND THIS ONE WAS NOT.** `recovered` was
@@ -524,6 +532,20 @@ export const linesForAnOperator = (
     lines.push('one would be proposed, approved, paid for and then refused inside the circuit:');
     lines.push(...bounded(r.stale.filter((n) => !settledNonces.has(n.nonce)), aNote));
   }
+  /*
+   * **A CALL WHOSE NEW COINS WERE NOT NAMED IS SAID, NOT LEFT OUT.** A payment's
+   * change and a split's pieces take their nonces from the vault's nonce secret,
+   * so a rebuild run without it names none of them, and the money they hold would
+   * otherwise read as notes nothing explains.
+   */
+  if ((r.unnamedWithoutTheSecret?.length ?? 0) > 0) {
+    lines.push('', 'SOME CALLS MADE COINS THIS REBUILD DID NOT NAME, BECAUSE THE VAULT\x27S NONCE SECRET WAS NOT GIVEN.');
+    lines.push('The change a payment left and the pieces a split kept take their nonces from that secret,');
+    lines.push('so without it they are counted among the notes nothing here explains. What resolves it:');
+    lines.push('put the company\x27s nonce-secret record for this vault on this machine and run this again.');
+    lines.push(`The calls, by their place in the history proposed:  ${r.unnamedWithoutTheSecret!.slice(0, 8).join(', ')}`
+      + (r.unnamedWithoutTheSecret!.length > 8 ? ` … and ${r.unnamedWithoutTheSecret!.length - 8} more` : ''));
+  }
   if (r.unexplained.length > 0) {
     lines.push('', 'THE VAULT HOLDS MONEY THIS MACHINE CANNOT NAME, AND A REBUILD CANNOT FIX IT.');
     lines.push('A commitment discloses nothing and cannot be inverted, so these are notes whose');
@@ -560,3 +582,47 @@ export const whereTheRecordsAre = (
         + ' and its numbered versions';
   return `${nameTheRecord(d.record)}${d.onChain ? ' (the chain holds this one)' : ''}: ${where}`;
 });
+
+/**
+ * **THE VAULT'S NONCE SECRETS FOR A REBUILD, FROM THE COMPANY'S NONCE-SECRET
+ * RECORD, OR A REFUSAL THAT NAMES THE RECORD.**
+ *
+ * The change a payment left and the pieces a split kept take their nonces from
+ * the vault's nonce secret, so a rebuild without it names none of them. The
+ * record is opened as the payment door opens it, with the key of the signer this
+ * machine holds, and every secret it holds is handed back, oldest first, with the
+ * commitment the vault holds now. A vault whose commitment is zero has never had
+ * a secret set, so it has made no coin under one and nothing is needed; any other
+ * vault without the record is refused by name rather than rebuilt naming nothing.
+ */
+export const nonceSecretsForTheRebuild = (input: {
+  readonly sealed: SealedPool | null;
+  /** Where the record is looked for, as a person would find it. */
+  readonly where: string;
+  readonly vault: string;
+  readonly signer: { readonly wrappingSecret: Hex };
+  /** The vault's nonce commitment as the chain holds it, hex. */
+  readonly commitment: Hex;
+}): VaultNonceSecrets | null => {
+  const commitment = String(input.commitment).toLowerCase().replace(/^0x/u, '');
+  if (/^0{64}$/u.test(commitment)) return null;
+  if (input.sealed === null) {
+    throw new Error(
+      `this vault has no nonce secret on this machine: ${input.where} does not exist. The change its payments `
+      + 'left and the pieces its splits kept are named only with the vault\x27s nonce secret, which the company\x27s '
+      + 'nonce-secret record holds, so a rebuild without it would name none of them. Nothing was written. '
+      + 'Put the company\x27s nonce-secret record for this vault there and run this again.');
+  }
+  const opened = openNonceSecrets(input.sealed, input.vault, {
+    secret: input.signer.wrappingSecret, publicKey: toHex(x25519.getPublicKey(fromHex(input.signer.wrappingSecret))),
+  });
+  return { secrets: [...opened.secrets] as Hex[], commitment: commitment as Hex };
+};
+
+/**
+ * **THE VAULT'S SPLIT JOURNAL AS THE CHAIN HOLDS IT**, masked amount by the
+ * spent note's nullifier, both as hex. Read whole: a journal not read is not a
+ * vault that never split.
+ */
+export const splitJournalFromTheChain = (journal: Iterable<[Uint8Array, Uint8Array]>): Map<Hex, Hex> =>
+  new Map([...journal].map(([k, v]) => [toHex(k) as Hex, toHex(v) as Hex]));

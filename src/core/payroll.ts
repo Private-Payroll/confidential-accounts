@@ -26,8 +26,9 @@ import { NO_COMPANY, NO_LABEL, NO_LEAF, untilText, type SealedPayslip } from './
  * which is what keeps this from quietly becoming load bearing.
  */
 const SEED_WALLET_ORIGIN = 'https://payroll.example';
-import type { AssetId } from './assets.js';
-import { assets as defaultAssets, subtotals, formatAmount, ledgerTokenOf, ledgerFormOf } from './assets.js';
+import type { AssetId, AssetRegistry, LedgerForm } from './assets.js';
+import { assets as defaultAssets, subtotals, formatAmount, ledgerTokenOf, ledgerFormOf, symbolOf } from './assets.js';
+import type { RunLeg } from './types.js';
 import type { Employee, PayrollRun, SealedRun, ShieldedEntry, Attestation, RosterEmployee, SealedEmployee, Invite, User, RunSkip, RunSkips, RunRetry, RunRepeatRecord, RunPayout, Proposal } from './types.js';
 import { sealRecord, openRecord, sealToInbox, openFromInbox } from './sealed-records.js';
 import {
@@ -357,8 +358,79 @@ function sealReceipt(
   return { wrapped: wrapKey(key, publicKey), sealed };
 }
 
-const legEmployees = (run: PayrollRun, leg: AssetId): Employee[] =>
-  run.employees.filter(e => e.asset === leg);
+/**
+ * **ONE LEG OF A RUN IS ONE TOKEN IN ONE FORM.**
+ *
+ * One run pays one ledger token, in one form: privately from the vault's notes
+ * or publicly from its balance. A payroll whose payees include both private and
+ * public addresses is raised as two legs, one per form, side by side, each its
+ * own approval round over its own tree. A leg is written `<token>:<form>`.
+ */
+export const runLegOf = (asset: AssetId, form: LedgerForm): RunLeg => `${asset}:${form}`;
+
+/** Whether a value names a leg, as against naming only a token. */
+export const isRunLeg = (value: string): value is RunLeg =>
+  /^[0-9a-f]{64}:(shielded|unshielded)$/.test(value);
+
+/** The token a leg pays. */
+export const assetOfLeg = (leg: RunLeg): AssetId => leg.slice(0, leg.indexOf(':'));
+
+/** The form a leg pays in. */
+export const formOfLeg = (leg: RunLeg): LedgerForm =>
+  (leg.slice(leg.indexOf(':') + 1) === 'unshielded' ? 'unshielded' : 'shielded');
+
+/** What an answer about one leg carries: its token, its form and the leg itself. */
+const legFieldsOf = (leg: RunLeg): { asset: AssetId; form: LedgerForm; leg: RunLeg } =>
+  ({ asset: assetOfLeg(leg), form: formOfLeg(leg), leg });
+
+/** A leg as a person reads it: the form and the token's symbol, never the token. */
+export const legName = (leg: RunLeg, registry: AssetRegistry = defaultAssets): string =>
+  `${formOfLeg(leg) === 'shielded' ? 'private' : 'public'} ${symbolOf(assetOfLeg(leg), registry)}`;
+
+/**
+ * **WHICH LEG A CALLER MEANS: A LEG, A TOKEN, OR NOTHING.** A token on its own
+ * is enough where the run pays it in one form only; nothing at all is enough
+ * where the run has one leg.
+ */
+export type RunLegChoice = RunLeg | AssetId;
+
+/** The form a person on a run is paid in: their address's kind when the run was drawn. */
+const formOfEmployee = (e: Employee): LedgerForm => e.form ?? 'shielded';
+
+const legOfEmployee = (e: Employee): RunLeg => runLegOf(e.asset, formOfEmployee(e));
+
+/** Every leg a run pays, sorted, so two reads of one run list them in one order. */
+export const legsOfRun = (run: PayrollRun): RunLeg[] =>
+  [...new Set(run.employees.map(legOfEmployee))].sort();
+
+const legEmployees = (run: PayrollRun, leg: RunLeg): Employee[] =>
+  run.employees.filter(e => legOfEmployee(e) === leg);
+
+/** The leg a payroll round written down here is for. */
+const legOfRound = (r: { asset: AssetId; form?: LedgerForm }): RunLeg => runLegOf(r.asset, r.form ?? 'shielded');
+
+/**
+ * Resolves a choice among the legs given, or refuses naming them. `null` where
+ * a choice was made and none of the legs is it.
+ */
+const chooseLeg = (
+  legs: readonly RunLeg[], which: RunLegChoice | undefined, _what: string, registry: AssetRegistry,
+): RunLeg | null => {
+  if (which === undefined) {
+    if (legs.length === 1) return legs[0]!;
+    const names = legs.map(l => legName(l, registry));
+    throw new Error(
+      `This run has ${legs.length === 2 ? 'two' : legs.length} sets of payments: `
+      + `${names.slice(0, -1).join(', ')} and ${names[names.length - 1]}. `
+      + 'Each is approved on its own. Choose which to send for approval.');
+  }
+  if (isRunLeg(which)) return legs.includes(which) ? which : null;
+  const ofToken = legs.filter(l => assetOfLeg(l) === which);
+  if (ofToken.length <= 1) return ofToken[0] ?? null;
+  throw new Error(
+    `This run pays ${symbolOf(which, registry)} both privately and publicly. Each is approved on its own. `
+    + 'Say whether you mean the private or the public payments.');
+};
 
 /**
  * **WHAT EACH PERSON ON ONE LEG IS PAID FOR, IN THE LEG'S ORDER**: the person
@@ -391,7 +463,7 @@ const payRecordsOf = (run: PayrollRun, people: Employee[]): PayRecord[] =>
  * The value is stored with the leg rather than recomputed on demand, so that
  * changing this rule cannot strand a run that is already approved.
  */
-const runIdForLeg = (run: PayrollRun, leg: AssetId): string => `${run.id}:${leg}`;
+const runIdForLeg = (run: PayrollRun, leg: RunLeg): string => `${run.id}:${leg}`;
 
 /**
  * **WHICH LEG OF A RUN IS BEING ACTED ON, RESOLVED IN ONE PLACE.**
@@ -416,30 +488,26 @@ const runIdForLeg = (run: PayrollRun, leg: AssetId): string => `${run.id}:${leg}
  *
  * `null` where there is nothing to report on at all.
  */
-const raisedLegOf = (run: PayrollRun, asset: AssetId | undefined): AssetId | null => {
+const raisedLegOf = (
+  run: PayrollRun, which: RunLegChoice | undefined, registry: AssetRegistry = defaultAssets,
+): RunLeg | null => {
   const raised = Object.keys(run.payout ?? {}).sort();
   if (raised.length === 0) return null;
-  const leg = asset ?? (raised.length === 1 ? raised[0] : undefined);
-  if (!leg) {
+  if (which === undefined && raised.length > 1) {
     throw new Error(
-      `this run has payout material for ${raised.length} assets (${raised.join(', ')}) and a ` +
-        'payment view is about one of them. Name which asset — each is its own approval round ' +
+      `this run has payout material for ${raised.length} legs (${raised.map(l => legName(l, registry)).join(', ')}) and a ` +
+        'payment view is about one of them. Name which leg: each is its own approval round ' +
         'over its own set of payees, and an answer about one says nothing about the other.',
     );
   }
-  return raised.includes(leg) ? leg : null;
+  return chooseLeg(raised, which, 'has payout material for', registry);
 };
 
-const legOf = (run: PayrollRun, asset: AssetId | undefined): AssetId => {
-  const legs = Object.keys(run.totals).sort();
-  const leg = asset ?? (legs.length === 1 ? legs[0] : undefined);
-  if (!leg) {
-    throw new Error(
-      `this run settles in ${legs.length} assets (${legs.join(', ')}) and a round moves one. ` +
-        'Name which asset — each is its own approval round.',
-    );
+const legOf = (run: PayrollRun, which: RunLegChoice | undefined, registry: AssetRegistry = defaultAssets): RunLeg => {
+  const leg = chooseLeg(legsOfRun(run), which, 'pays', registry);
+  if (leg === null) {
+    throw new Error(`this run pays nobody in ${isRunLeg(which!) ? legName(which!, registry) : symbolOf(which!, registry)}`);
   }
-  if (!legs.includes(leg)) throw new Error(`this run pays nobody in ${leg}`);
   return leg;
 };
 import type { AccountService, RaiseHalf } from './account.js';
@@ -579,7 +647,7 @@ export class PayrollService {
    */
   private readonly raisingMonth = new Map<string, { runId: string; legs: number }>();
 
-  private holdTheLeg(run: PayrollRun, leg: AssetId): () => void {
+  private holdTheLeg(run: PayrollRun, leg: RunLeg): () => void {
     const month = `${run.accountId} ${canonicalOrAsWritten(run.period)}`;
     const other = this.raisingMonth.get(month);
     if (other && other.runId !== run.id) {
@@ -591,7 +659,7 @@ export class PayrollService {
     const key = `${run.id} ${leg}`;
     if (this.raising.has(key)) {
       throw new Error(
-        `the ${leg} leg of run ${run.id} is being raised right now by another request, so it was not raised `
+        `the ${legName(leg, this.assets)} leg of run ${run.id} is being raised right now by another request, so it was not raised `
         + 'again. Nothing was raised. Once that raise has answered, the run says where the leg stands.');
     }
     this.raising.add(key);
@@ -1794,9 +1862,9 @@ export class PayrollService {
    * Seeding and tests only. Generates the employee's key server side, which is
    * exactly what `invite()` exists to avoid.
    *
-   * **IT SAID "not reachable from the API" AND THAT WAS FALSE.** `POST
-   * /api/demo/seed` is authenticated and nothing more, and `seedDemo` calls
-   * this eight times. So the product can mint roster entries that are `active`,
+   * **IT ONCE SAID "not reachable from the API" AND THAT WAS FALSE** while a
+   * seeding route called it; that route is gone. Whatever calls it can mint
+   * roster entries that are `active`,
    * carry a well-formed address, and pass every check in `paymentFactsFor` —
    * while **nobody on earth holds the spending key for them.** The only thing
    * between that and lost money today is that the server still runs
@@ -1829,7 +1897,7 @@ export class PayrollService {
     if (ledgerFormOf(paidIn, address.kind).of === 'token' || ledgerFormOf(paidIn, other).of !== 'token') {
       return null;
     }
-    return `${paidIn.code} can only be paid to a ${address.kind === 'shielded' ? 'public' : 'private'} `
+    return `${paidIn.symbol} can only be paid to a ${address.kind === 'shielded' ? 'public' : 'private'} `
       + `address, and the address that arrived is a ${address.kind === 'shielded' ? 'private' : 'public'} one. `
       + 'Nothing has been paid.';
   }
@@ -1840,7 +1908,7 @@ export class PayrollService {
     const publicly = ledgerFormOf(asset, 'unshielded');
     if (privately.of !== 'token' && publicly.of !== 'token') {
       throw new Error(
-        `nobody can be hired in ${asset.code}. ${privately.why} Choose a currency that can be paid `
+        `nobody can be hired in ${asset.symbol}. ${privately.why} Choose a token that can be paid `
         + 'out here.');
     }
   }
@@ -2486,10 +2554,10 @@ export class PayrollService {
      * what a caller checking that everybody on the payroll can be paid wants and
      * is NOT what a caller building a run's material wants.
      */
-    asset?: AssetId,
+    which?: RunLegChoice,
   ): PaymentFacts[] {
     const run = this.requireRun(runId, viewingKey);
-    const people = asset === undefined ? run.employees : legEmployees(run, asset);
+    const people = which === undefined ? run.employees : legEmployees(run, legOf(run, which, this.assets));
     return people.map((e) => {
       const person = this.person(e.id, viewingKey);
       if (!person) {
@@ -2531,10 +2599,48 @@ export class PayrollService {
           + `Check the change with ${person.name}, then draw the run again. If a round of this run was `
           + 'raised before, withdraw it first.');
       }
+      /*
+       * **A PERSON IS PAID IN THE FORM THEIR LEG IS.** The leg was settled by
+       * their address when the run was drawn; an address of the other kind now
+       * would put them in a run of the other form.
+       */
+      if (payee.kind !== formOfEmployee(e)) {
+        throw new Error(
+          `${person.name} is on this run to be paid ${formOfEmployee(e) === 'shielded' ? 'privately' : 'publicly'}, `
+          + `but their payment address is now a ${payee.kind === 'shielded' ? 'private' : 'public'} one. `
+          + `Nothing was sent for approval and no fee was spent. Create the run again so ${person.name} is paid the way their address allows.`);
+      }
       return {
         payee,
         token: ledgerTokenOf(e.asset, payee.kind, this.assets),
         amount: e.amount,
+      };
+    });
+  }
+
+  /**
+   * **THE LEGS OF A RUN, SIDE BY SIDE: ONE PER TOKEN AND FORM.**
+   *
+   * One run pays one ledger token in one form. A payroll whose payees include
+   * both private and public addresses is two legs, each its own approval round
+   * over its own payees, and this is how they are raised and shown: side by
+   * side, every person on exactly one of them. Each leg names its token, its
+   * form, the symbol a screen shows, who is on it, its total and the proposal
+   * it has been raised as, if any.
+   */
+  legsOf(runId: string, viewingKey: Hex): Array<{
+    leg: RunLeg; asset: AssetId; form: LedgerForm; symbol: string;
+    people: string[]; total: bigint; proposalId: string | null;
+  }> {
+    const run = this.requireRun(runId, viewingKey);
+    return legsOfRun(run).map(leg => {
+      const people = legEmployees(run, leg);
+      return {
+        ...legFieldsOf(leg),
+        symbol: symbolOf(assetOfLeg(leg), this.assets),
+        people: people.map(e => e.id),
+        total: people.reduce((sum, e) => sum + e.amount, 0n),
+        proposalId: run.proposalIds[leg] ?? null,
       };
     });
   }
@@ -2716,9 +2822,18 @@ export class PayrollService {
        * payslip is how the payee checks it.
        */
       const paidTo = addressOf(spec, existing);
+      /*
+       * **THE FORM THIS PERSON IS PAID IN, SETTLED BY THEIR ADDRESS.** It
+       * decides which leg they are on: one run pays one token in one form, so
+       * a payroll with private and public payees is two legs side by side.
+       * Somebody with no address yet is put in the token's private form where
+       * it has one.
+       */
+      const form: LedgerForm = existing?.address?.kind
+        ?? (ledgerFormOf(this.assets.require(spec.asset), 'shielded').of === 'token' ? 'shielded' : 'unshielded');
       employees.push({
         id, name: spec.name, wrappingPublicKey: publicKey,
-        asset: spec.asset, amount: spec.amount,
+        asset: spec.asset, amount: spec.amount, form,
         ...(paidTo ? { paidTo } : {}),
       });
 
@@ -2829,13 +2944,13 @@ export class PayrollService {
    * by accident.
    */
   async proposeRun(
-    runId: string, viewingKey: Hex, proposedBy: string, payable: RunMaterial | null, asset?: AssetId,
+    runId: string, viewingKey: Hex, proposedBy: string, payable: RunMaterial | null, which?: RunLegChoice,
     how?: { onDevice: true },
   ) {
     const run = this.requireRun(runId, viewingKey);
-    const release = this.holdTheLeg(run, legOf(run, asset));
+    const release = this.holdTheLeg(run, legOf(run, which, this.assets));
     try {
-      return await this.raiseTheLeg(runId, viewingKey, proposedBy, payable, asset, how);
+      return await this.raiseTheLeg(runId, viewingKey, proposedBy, payable, which, how);
     } finally {
       release();
     }
@@ -2865,7 +2980,7 @@ export class PayrollService {
      * door most needs and least can check.
      */
     payable: RunMaterial | null,
-    asset?: AssetId,
+    which?: RunLegChoice,
     /**
      * **THE SIGNER'S DEVICE SENDS THE PROPOSAL.** Everything below happens
      * exactly as it does otherwise - the material and the proposal are written down - and
@@ -2876,7 +2991,7 @@ export class PayrollService {
     const run = this.requireRun(runId, viewingKey);
     if (run.status !== 'draft' && run.status !== 'proposed') throw new Error(`run is ${run.status}`);
 
-    const leg = legOf(run, asset);
+    const leg = legOf(run, which, this.assets);
     this.refuseALegThatIsProposed(run, leg, viewingKey);
 
     const paid = legEmployees(run, leg);
@@ -2918,19 +3033,19 @@ export class PayrollService {
      */
     if (!payable) {
       throw new Error(
-        `the ${leg} leg of run ${run.id} cannot be proposed without its payout material: the ` +
+        `the ${legName(leg, this.assets)} leg of run ${run.id} cannot be proposed without its payout material: the ` +
           'merkle root over this leg\'s blinded payee leaves, the window it may be paid in, ' +
           'and the vault that will pay it. Those three are what a vault is presented with, and ' +
-          'a round raised without them is one no vault can ever match — approved, paid for, ' +
-          'and unpayable. Build the material for this leg first and raise the run with it.',
+          'a round raised without them is one no vault can ever match. It would be approved and paid for, ' +
+          'and could never be paid. Build the material for this leg first and raise the run with it.',
       );
     }
     if (payable.run.payees !== BigInt(paid.length)) {
       throw new Error(
-        `this run pays ${paid.length} people in ${leg} and the run material names ` +
+        `this run pays ${paid.length} people in the ${legName(leg, this.assets)} leg and the run material names ` +
           `${payable.run.payees}. The payee count is bound into the payload the signers ` +
-          'approve, so a run cannot be declared finished early or made never to finish — and a ' +
-          'count that disagrees with the roster is one of the two.',
+          'approve, so a run cannot be declared finished early or made never to finish. A ' +
+          'count that disagrees with the roster would do one of the two.',
       );
     }
     /*
@@ -2963,7 +3078,7 @@ export class PayrollService {
      * computed a second way here would build a check that agrees with itself and
      * with nothing the chain will do.
      */
-    if (payable.rootOf(payable.leaves, payable.facts, leg) !== payable.run.root) {
+    if (payable.rootOf(payable.leaves, payable.facts, assetOfLeg(leg)) !== payable.run.root) {
       throw new Error(
         'this run material\'s payout root is not the root over its own leaves, so the run the ' +
           'signers would approve is not the run these payees are in. Every payment against it ' +
@@ -3044,7 +3159,7 @@ export class PayrollService {
           || payable.run.closesAt !== earlierMaterial.closesAt
           || payable.run.vault !== earlierMaterial.vault)) {
       throw new Error(
-        `the ${leg} leg of run ${run.id} was raised before, may be on chain, and was raised with `
+        `the ${legName(leg, this.assets)} leg of run ${run.id} was raised before, may be on chain, and was raised with `
         + `the window ${earlierMaterial.opensAt} to ${earlierMaterial.closesAt} at vault `
         + `${earlierMaterial.vault}. Raising it again is raising that same round, so it takes `
         + 'that window and that vault; a different one would be a second round over the same '
@@ -3053,7 +3168,7 @@ export class PayrollService {
         + 'window opens - and raise it after.');
     }
     if (again !== undefined) {
-      this.accounts.refuseRaisingADifferentRound(run.accountId, again, viewingKey, payable.run, leg);
+      this.accounts.refuseRaisingADifferentRound(run.accountId, again, viewingKey, payable.run, assetOfLeg(leg));
     }
 
     /*
@@ -3096,7 +3211,7 @@ export class PayrollService {
     });
     if (madeElsewise) {
       throw new Error(
-        `the payments prepared for the ${leg} leg are not this run's payments to its people for `
+        `the payments prepared for the ${legName(leg, this.assets)} leg are not this run's payments to its people for `
         + `${run.period}, so the chain could not tell them from another month's or from a second `
         + 'payment nobody confirmed. Prepare this leg\'s payments again from the run and send them. '
         + 'Nothing was changed.');
@@ -3156,8 +3271,8 @@ export class PayrollService {
        * string.
        */
       summary: `Payroll ${run.period}, ${paid.length} recipients`,
-      payload: { runId: run.id, entries },
-      asset: leg,
+      payload: { runId: run.id, form: formOfLeg(leg), entries },
+      asset: assetOfLeg(leg),
       run: payable.run,
       payments: payable.facts,
       proposedBy,
@@ -3187,7 +3302,7 @@ export class PayrollService {
    * payment is not that position's person's, and writes nothing.
    */
   private refuseMaterialOutOfOrder(
-    run: PayrollRun, leg: AssetId, people: Employee[], payable: RunMaterial, viewingKey: Hex,
+    run: PayrollRun, leg: RunLeg, people: Employee[], payable: RunMaterial, viewingKey: Hex,
   ): void {
     type Paying = Pick<PaymentFacts, 'payee' | 'token' | 'amount'>;
     const same = (a: Paying | undefined, b: Paying | undefined): boolean =>
@@ -3206,7 +3321,7 @@ export class PayrollService {
       if (fact !== undefined && fact.amount === e.amount
         && (same(fact, roster?.[i]) || same(fact, recorded?.[i]))) return;
       throw new Error(
-        `the payments prepared for the ${leg} leg do not match the people on this run: the one at `
+        `the payments prepared for the ${legName(leg, this.assets)} leg do not match the people on this run: the one at `
         + `position ${i + 1} is not ${e.name}'s as the run has them now or as the leg first `
         + 'recorded them. Each person is told about the payment at their own position, so these '
         + 'would tell somebody about another person\'s. Prepare this leg\'s payments again from '
@@ -3267,7 +3382,7 @@ export class PayrollService {
      * Absent when every leg is already written.
      */
     raising?: {
-      leg: AssetId; leaves: Hex[]; closesAt: bigint; company: string | null; identity: RunIdentity;
+      leg: RunLeg; leaves: Hex[]; closesAt: bigint; company: string | null; identity: RunIdentity;
       records: PayRecord[];
     },
   ): PayrollRun['payslips'] {
@@ -3275,8 +3390,8 @@ export class PayrollService {
     /* The company's label, which every receipt carries beside the account it is read at. */
     const label = companyLabelOfRecord(this.store, run.accountId);
     const paidAt = new Map<string, { nonce: Hex; blinding: Hex; company: string | null; until: bigint }>();
-    const legs = new Set<AssetId>([
-      ...(raising ? [raising.leg] : []), ...(Object.keys(run.payout ?? {}) as AssetId[])]);
+    const legs = new Set<RunLeg>([
+      ...(raising ? [raising.leg] : []), ...(Object.keys(run.payout ?? {}) as RunLeg[])]);
     for (const asset of legs) {
       const recorded = run.payout?.[asset];
       const mine = raising?.leg === asset;
@@ -3353,13 +3468,13 @@ export class PayrollService {
    * cannot both find the same people free. See `refuseARetryOverPeopleCovered`.
    */
   async proposeRetry(
-    runId: string, viewingKey: Hex, proposedBy: string, payable: RetryMaterial | null, asset?: AssetId,
+    runId: string, viewingKey: Hex, proposedBy: string, payable: RetryMaterial | null, which?: RunLegChoice,
     how?: { onDevice: true },
   ) {
     const run = this.requireRun(runId, viewingKey);
-    const release = this.holdTheLeg(run, legOf(run, asset));
+    const release = this.holdTheLeg(run, legOf(run, which, this.assets));
     try {
-      return await this.raiseARetry(runId, viewingKey, proposedBy, payable, asset, how);
+      return await this.raiseARetry(runId, viewingKey, proposedBy, payable, which, how);
     } finally {
       release();
     }
@@ -3374,7 +3489,7 @@ export class PayrollService {
      * material is.
      */
     payable: RetryMaterial | null,
-    asset?: AssetId,
+    which?: RunLegChoice,
     /**
      * **THE SIGNER'S DEVICE SENDS THE RETRY**, exactly as it sends a leg: the
      * retry and its proposal are written down as they otherwise are, nothing is
@@ -3384,11 +3499,11 @@ export class PayrollService {
     how?: { onDevice: true },
   ) {
     const run = this.requireRun(runId, viewingKey);
-    const leg = legOf(run, asset);
+    const leg = legOf(run, which, this.assets);
     const recorded = run.payout?.[leg];
     if (!recorded || !run.proposalIds[leg]) {
       throw new Error(
-        `the ${leg} leg of run ${run.id} has not been raised, so there is nobody on it to retry: a `
+        `the ${legName(leg, this.assets)} leg of run ${run.id} has not been raised, so there is nobody on it to retry: a `
         + 'retry pays people an approved round did not reach, and this leg has no round yet. '
         + 'Raise the leg first.');
     }
@@ -3404,7 +3519,7 @@ export class PayrollService {
     const legRound = this.accounts.requireProposal(run.proposalIds[leg]!, viewingKey);
     if (!legRound.raisedAt) {
       throw new Error(
-        `the ${leg} leg of run ${run.id} ${legRound.status === 'blocked'
+        `the ${legName(leg, this.assets)} leg of run ${run.id} ${legRound.status === 'blocked'
           ? 'was stopped by this company\'s own policy'
           : 'has no round the chain has been seen to hold'}, so there is no round on it to retry. A `
         + 'retry is judged against the same rules as any round, and splitting a payroll that never '
@@ -3412,7 +3527,7 @@ export class PayrollService {
     }
     if (!payable) {
       throw new Error(
-        `a retry on the ${leg} leg of run ${run.id} cannot be raised without its payout material: `
+        `a retry on the ${legName(leg, this.assets)} leg of run ${run.id} cannot be raised without its payout material: `
         + 'the merkle root over the leaves of the people it pays, the window it may be paid in, '
         + 'and the vault that will pay it.');
     }
@@ -3434,7 +3549,7 @@ export class PayrollService {
     for (const i of indices) {
       if (!Number.isInteger(i) || i < 0 || i >= recorded.leaves.length) {
         throw new Error(
-          `the ${leg} leg of run ${run.id} pays ${recorded.leaves.length} people; there is no `
+          `the ${legName(leg, this.assets)} leg of run ${run.id} pays ${recorded.leaves.length} people; there is no `
           + `person ${i} on it to retry`);
       }
       if (seen.has(i)) throw new Error(`person ${i} is named twice on this retry`);
@@ -3459,7 +3574,7 @@ export class PayrollService {
         `a retry is raised over the leg's own tree, which pays ${recorded.leaves.length} people, and `
         + `this retry's material binds ${payable.run.payees}. The count is part of what the signers approve.`);
     }
-    if (payable.rootOf(recorded.leaves, recorded.facts, leg) !== payable.run.root) {
+    if (payable.rootOf(recorded.leaves, recorded.facts, assetOfLeg(leg)) !== payable.run.root) {
       throw new Error(
         'this retry\'s payout root is not the root over its leg\'s own leaves, so what the signers '
         + 'would approve is not the proposal these people are in. Every payment against it would be '
@@ -3474,7 +3589,7 @@ export class PayrollService {
     const people = legEmployees(run, leg);
     if (people.length !== recorded.leaves.length) {
       throw new Error(
-        `the ${leg} leg of run ${run.id} lists ${people.length} people and was raised over `
+        `the ${legName(leg, this.assets)} leg of run ${run.id} lists ${people.length} people and was raised over `
         + `${recorded.leaves.length} leaves, so which person each leaf belongs to cannot be said.`);
     }
 
@@ -3501,17 +3616,17 @@ export class PayrollService {
      */
     const confirmed = new Set((recorded.retries ?? []).map(r => r.proposalId).filter(Boolean));
     const earlier = this.accounts.payrollRoundsOf(run.accountId, viewingKey).filter(r =>
-      r.runId === run.id && r.asset === leg && r.retry !== undefined && isLiveRound(r)
+      r.runId === run.id && legOfRound(r) === leg && r.retry !== undefined && isLiveRound(r)
       && !confirmed.has(r.id) && sameList(r.retry, indices));
     if (earlier.length > 1) {
       throw new Error(
-        `this retry on the ${leg} leg of run ${run.id} is written down as ${earlier.length} rounds `
+        `this retry on the ${legName(leg, this.assets)} leg of run ${run.id} is written down as ${earlier.length} rounds `
         + `that may be on chain (${earlier.map(r => r.id).join(', ')}). Cancel all but one of them `
         + '(cancelling asks the chain first) before raising it again.');
     }
     const again = earlier[0]?.id;
     if (again !== undefined) {
-      this.accounts.refuseRaisingADifferentRound(run.accountId, again, viewingKey, payable.run, leg);
+      this.accounts.refuseRaisingADifferentRound(run.accountId, again, viewingKey, payable.run, assetOfLeg(leg));
     }
     await this.refuseARetryOverPeopleCovered(run, leg, legRound, indices, payable.leaves, again, viewingKey);
     /*
@@ -3528,7 +3643,7 @@ export class PayrollService {
     const payKey = await this.accounts.payRecordKeyOf(run.accountId, viewingKey);
     const beforeRaising = this.requireRun(runId, viewingKey);
     const leg0 = beforeRaising.payout?.[leg];
-    if (!leg0) throw new Error(`the ${leg} leg of run ${run.id} has lost its payout material`);
+    if (!leg0) throw new Error(`the ${legName(leg, this.assets)} leg of run ${run.id} has lost its payout material`);
     if (!(leg0.retries ?? []).some(r => r.proposalId === undefined && isThisRetry(r, payable))) {
       const retry: RunRetry = {
         originalIndices: [...indices],
@@ -3550,8 +3665,8 @@ export class PayrollService {
       viewingKey,
       /* Headcount and period, never amounts and never the asset - as a leg's own. */
       summary: `Payroll ${run.period}, retry for ${indices.length} recipients`,
-      payload: { runId: run.id, entries, retry: [...indices] },
-      asset: leg,
+      payload: { runId: run.id, form: formOfLeg(leg), entries, retry: [...indices] },
+      asset: assetOfLeg(leg),
       run: payable.run,
       /* The leg's own payments for the people this retries, in the order it names them. */
       payments: indices.map(i => recorded.facts[i]!),
@@ -3619,7 +3734,7 @@ export class PayrollService {
    * this run's refuses the retry rather than being read as nobody.
    */
   private async refuseARetryOverPeopleCovered(
-    run: PayrollRun, leg: AssetId, legRound: Proposal, indices: readonly number[], leaves: readonly Hex[],
+    run: PayrollRun, leg: RunLeg, legRound: Proposal, indices: readonly number[], leaves: readonly Hex[],
     again: string | undefined, viewingKey: Hex,
   ): Promise<void> {
     const recorded = run.payout![leg]!;
@@ -3644,7 +3759,7 @@ export class PayrollService {
 
     if (!stopped(legRound) && nowInSeconds < recorded.closesAt) {
       throw new Error(
-        `the ${leg} leg of run ${run.id} can still pay everybody on it until ${when(recorded.closesAt)}, when its `
+        `the ${legName(leg, this.assets)} leg of run ${run.id} can still pay everybody on it until ${when(recorded.closesAt)}, when its `
         + 'window closes. A retry now would be a second round over the same people. Retry whoever it has not paid '
         + 'once its window has closed. Nothing was written down.');
     }
@@ -3657,7 +3772,7 @@ export class PayrollService {
       if (shared.length === 0) continue;
       const until = when(r.closesAt);
       throw new Error(
-        `${people(shared)} ${isAre(shared)} already on retry ${r.proposalId} of the ${leg} leg of run ${run.id}, `
+        `${people(shared)} ${isAre(shared)} already on retry ${r.proposalId} of the ${legName(leg, this.assets)} leg of run ${run.id}, `
         + (round.raisedAt
           ? `which can still pay them until ${until}. Retry them once its window has closed.`
           : round.txRef
@@ -3670,12 +3785,12 @@ export class PayrollService {
 
     /* Clause 3, as `untoldRetryRounds` decides it, which is what the page reads too. */
     const legRounds = this.accounts.payrollRoundsOf(run.accountId, viewingKey)
-      .filter((r) => r.runId === run.id && r.asset === leg);
+      .filter((r) => r.runId === run.id && legOfRound(r) === leg);
     for (const { round: r, people: onIt, closesAt } of untoldRetryRounds(recorded.retries ?? [], legRounds, nowInSeconds, again)) {
       const shared = onIt.filter((i) => named.has(i));
       if (shared.length === 0) continue;
       throw new Error(
-        `${people(shared)} ${isAre(shared)} on retry ${r.id} of the ${leg} leg of run ${run.id}, whose raise did not `
+        `${people(shared)} ${isAre(shared)} on retry ${r.id} of the ${legName(leg, this.assets)} leg of run ${run.id}, whose raise did not `
         + 'answer and which may be on chain. Retry exactly '
         + `${people(onIt)} again with its window and vault to send it as itself`
         + (closesAt !== undefined ? `, or retry them once its window closes at ${when(closesAt)}.` : '.')
@@ -3818,7 +3933,7 @@ export class PayrollService {
    * one address are two payments to one payee, whether they sit in one leg or
    * in two; asked of every pair with somebody in the leg being raised.
    */
-  private refusePayingOnePayeeTwice(run: PayrollRun, leg: AssetId, viewingKey: Hex): void {
+  private refusePayingOnePayeeTwice(run: PayrollRun, leg: RunLeg, viewingKey: Hex): void {
     const inLeg = new Set(legEmployees(run, leg).map(e => e.id));
     const twice = paidTwiceOnOneRun(this.paying(run, viewingKey, 'now').people)
       .filter(([a, b]) => inLeg.has(a.id) || inLeg.has(b.id));
@@ -4023,20 +4138,20 @@ export class PayrollService {
    * withdrawn nor stopped, the two could both pay somebody; that retry is
    * withdrawn first.
    */
-  private refuseALegThatIsProposed(run: PayrollRun, leg: AssetId, viewingKey: Hex): void {
+  private refuseALegThatIsProposed(run: PayrollRun, leg: RunLeg, viewingKey: Hex): void {
     const pointed = run.proposalIds[leg];
     if (!pointed) return;
     const standing = this.accounts.requireProposal(pointed, viewingKey).status;
     if (standing !== 'cancelled') {
       throw new Error(
-        `the ${leg} leg of this run is already proposed, as ${pointed}, which is ${standing}. A leg is raised `
+        `the ${legName(leg, this.assets)} leg of this run is already proposed, as ${pointed}, which is ${standing}. A leg is raised `
         + 'again only once that proposal is withdrawn - withdrawing asks the chain - and then as a new proposal.');
     }
     const retries = this.accounts.payrollRoundsOf(run.accountId, viewingKey).filter(r =>
-      r.runId === run.id && r.asset === leg && r.retry !== undefined && isLiveRound(r));
+      r.runId === run.id && legOfRound(r) === leg && r.retry !== undefined && isLiveRound(r));
     if (retries.length > 0) {
       throw new Error(
-        `the ${leg} leg of run ${run.id} was withdrawn, and a retry on it is still live `
+        `the ${legName(leg, this.assets)} leg of run ${run.id} was withdrawn, and a retry on it is still live `
         + `(${retries.map(r => r.id).join(', ')}). Raising the leg again would raise all of its people while `
         + 'that retry can still pay some of them. Withdraw the retry first - withdrawing asks the chain - '
         + 'and raise the leg again after.');
@@ -4054,12 +4169,12 @@ export class PayrollService {
    * CHAIN AND THAT THE RUN WAS NEVER TOLD ABOUT.** More than one is refused
    * rather than chosen between.
    */
-  private earlierRoundOfLeg(run: PayrollRun, leg: AssetId, viewingKey: Hex): string | undefined {
+  private earlierRoundOfLeg(run: PayrollRun, leg: RunLeg, viewingKey: Hex): string | undefined {
     const rounds = this.accounts.payrollRoundsOf(run.accountId, viewingKey).filter(r =>
-      r.runId === run.id && r.asset === leg && r.retry === undefined && isLiveRound(r));
+      r.runId === run.id && legOfRound(r) === leg && r.retry === undefined && isLiveRound(r));
     if (rounds.length > 1) {
       throw new Error(
-        `the ${leg} leg of run ${run.id} is written down as ${rounds.length} rounds that may be on `
+        `the ${legName(leg, this.assets)} leg of run ${run.id} is written down as ${rounds.length} rounds that may be on `
         + `chain (${rounds.map(r => r.id).join(', ')}), and a leg is raised as one. Cancel all but `
         + 'one of them (cancelling asks the chain first) before raising this leg again.');
     }
@@ -4255,7 +4370,7 @@ export class PayrollService {
       );
     }
     const total = run.totals[asset];
-    if (total === undefined) throw new Error(`this run pays nobody in ${asset}`);
+    if (total === undefined) throw new Error(`this run pays nobody in ${symbolOf(asset, this.assets)}`);
     const registered = this.assets.require(asset);
 
     const paid = run.employees.filter(e => e.asset === asset);
@@ -4285,7 +4400,7 @@ export class PayrollService {
       accountId: run.accountId,
       circuit: 'payroll-total',
       statement:
-        `Total ${asset} payroll for ${run.period} was ${formatAmount(total, registered)} ` +
+        `Total ${registered.symbol} payroll for ${run.period} was ${formatAmount(total, registered)} ` +
         `across ${paid.length} recipients. No individual amount is disclosed.`,
       publicInputs,
       proof,
@@ -4322,7 +4437,7 @@ export class PayrollService {
   ): Promise<Attestation> {
     this.assets.require(asset);
     throw new Error(
-      `account ${accountId} cannot attest solvency in ${asset}: this account holds no balance ` +
+      `account ${accountId} cannot attest solvency in ${symbolOf(asset, this.assets)}: this account holds no balance ` +
         'at all. It is an authority over a vault, not a holder of money, so there is ' +
         'nothing here to prove a threshold against. Proving what a VAULT holds is a different ' +
         'statement and is not built.',
@@ -4434,7 +4549,7 @@ export class PayrollService {
    * in a response, a log or an error.
    */
   async runMaterialInputs(
-    runId: string, viewingKey: Hex, asset?: AssetId,
+    runId: string, viewingKey: Hex, which?: RunLegChoice,
   ): Promise<{
     accountId: string;
     /** The identifier this leg's payee secrets are derived from. */
@@ -4453,11 +4568,15 @@ export class PayrollService {
      * chain, so raising it again builds the same leaves. Absent means current.
      */
     epoch?: number;
-    /** The leg's asset, which the run's root commits to. */
+    /** The leg's token, which the run's root commits to. */
     asset: AssetId;
+    /** The form the leg pays in. */
+    form: LedgerForm;
+    /** The leg itself: its token and its form. */
+    leg: RunLeg;
   }> {
     const run = this.requireRun(runId, viewingKey);
-    const leg = legOf(run, asset);
+    const leg = legOf(run, which, this.assets);
     /*
      * **A LEG ALREADY RAISED ONCE IS RAISED AGAIN FROM WHAT IT WAS RAISED OVER.**
      * Its round may be on chain. The roster may have moved since - a salary
@@ -4491,7 +4610,7 @@ export class PayrollService {
           records: recorded.records ?? payRecordsOf(run, people),
         },
         epoch: recorded.epoch,
-        asset: leg,
+        ...legFieldsOf(leg),
       };
     }
     return {
@@ -4503,7 +4622,7 @@ export class PayrollService {
         key: await this.accounts.payRecordKeyOf(run.accountId, viewingKey),
         records: payRecordsOf(run, legEmployees(run, leg)),
       },
-      asset: leg,
+      ...legFieldsOf(leg),
     };
   }
 
@@ -4518,12 +4637,12 @@ export class PayrollService {
    * gathered with. A private payment can only be checked where the vault's pool
    * is opened, which is the device, and this is what the device needs to ask.
    */
-  async legPaymentsAsked(runId: string, viewingKey: Hex, asset?: AssetId): Promise<{
-    asset: AssetId;
+  async legPaymentsAsked(runId: string, viewingKey: Hex, which?: RunLegChoice): Promise<{
+    asset: AssetId; form: LedgerForm; leg: RunLeg;
     payments: Array<PaymentChecked<'shielded' | 'unshielded', bigint>>;
   }> {
     const run = this.requireRun(runId, viewingKey);
-    const leg = legOf(run, asset);
+    const leg = legOf(run, which, this.assets);
     /*
      * **A LEG WITH A PROPOSAL WRITTEN DOWN ASKS FOR WHAT WAS WRITTEN DOWN.** A
      * proposal is sent as it was written, so the device checks the payments that
@@ -4533,7 +4652,7 @@ export class PayrollService {
     const facts = this.writtenDownFactsOf(run, leg, viewingKey)
       ?? (await this.runMaterialInputs(runId, viewingKey, leg)).facts;
     return {
-      asset: leg,
+      ...legFieldsOf(leg),
       payments: facts.map(paymentChecked),
     };
   }
@@ -4544,13 +4663,13 @@ export class PayrollService {
    * a leg that cannot be raised at all is told so, rather than told something
    * about the raise that raising again would not change.
    */
-  refuseRaisingAProposedLeg(runId: string, viewingKey: Hex, asset?: AssetId): void {
+  refuseRaisingAProposedLeg(runId: string, viewingKey: Hex, which?: RunLegChoice): void {
     const run = this.requireRun(runId, viewingKey);
-    this.refuseALegThatIsProposed(run, legOf(run, asset), viewingKey);
+    this.refuseALegThatIsProposed(run, legOf(run, which, this.assets), viewingKey);
   }
 
   /** The payments of the proposal this leg is written down as, unless it has none or it was withdrawn. */
-  private writtenDownFactsOf(run: PayrollRun, leg: AssetId, viewingKey: Hex): PaymentFacts[] | undefined {
+  private writtenDownFactsOf(run: PayrollRun, leg: RunLeg, viewingKey: Hex): PaymentFacts[] | undefined {
     const pointed = run.proposalIds[leg];
     const payout = run.payout?.[leg];
     if (!pointed || !payout) return undefined;
@@ -4609,18 +4728,22 @@ export class PayrollService {
    * `null` for a leg with no material, exactly as the leaves are.
    */
   async payoutRebuildOf(
-    runId: string, viewingKey: Hex, asset?: AssetId,
+    runId: string, viewingKey: Hex, which?: RunLegChoice,
   ): Promise<{
     identity: { accountId: string; runId: string; epoch: number };
     facts: PaymentFacts[];
     seeds: PayoutSeed[];
     /** The pay-record key and what each payment of the leg is for, as the leg recorded it. */
     pay: PayRecords;
-    /** The leg's asset, which its root commits to. */
+    /** The leg's token, which its root commits to. */
     asset: AssetId;
+    /** The form the leg pays in. */
+    form: LedgerForm;
+    /** The leg itself: its token and its form. */
+    leg: RunLeg;
   } | null> {
     const run = this.requireRun(runId, viewingKey);
-    const leg = raisedLegOf(run, asset);
+    const leg = raisedLegOf(run, which, this.assets);
     const payout = leg ? run.payout?.[leg] : undefined;
     if (!payout || !leg) return null;
     return {
@@ -4631,7 +4754,7 @@ export class PayrollService {
         key: await this.accounts.payRecordKeyOf(run.accountId, viewingKey),
         records: payout.records ?? payRecordsOf(run, legEmployees(run, leg)),
       },
-      asset: leg,
+      ...legFieldsOf(leg),
     };
   }
 
@@ -4658,7 +4781,7 @@ export class PayrollService {
    * confirmed on chain; the account refuses one that is not open or that a
    * device has already sent, with its own sentence.
    */
-  async raiseOrderOf(runId: string, viewingKey: Hex, asset?: AssetId): Promise<{
+  async raiseOrderOf(runId: string, viewingKey: Hex, which?: RunLegChoice): Promise<{
     proposalId: string;
     chainId: Hex;
     run: { root: Hex; payees: bigint; opensAt: bigint; closesAt: bigint; vault: Hex; required?: bigint };
@@ -4667,7 +4790,7 @@ export class PayrollService {
     paymentsChecked: string;
   } | null> {
     const run = this.requireRun(runId, viewingKey);
-    const leg = raisedLegOf(run, asset);
+    const leg = raisedLegOf(run, which, this.assets);
     const payout = leg ? run.payout?.[leg] : undefined;
     const proposalId = leg ? run.proposalIds[leg] : undefined;
     if (!leg || !payout || !proposalId) return null;
@@ -4696,25 +4819,25 @@ export class PayrollService {
    * It says nothing about whether a retry naming these people may be raised;
    * the retry itself asks that, every time.
    */
-  retryPaymentsAsked(runId: string, viewingKey: Hex, indices: readonly number[], asset?: AssetId): {
-    asset: AssetId;
+  retryPaymentsAsked(runId: string, viewingKey: Hex, indices: readonly number[], which?: RunLegChoice): {
+    asset: AssetId; form: LedgerForm; leg: RunLeg;
     payments: Array<PaymentChecked<'shielded' | 'unshielded', bigint>>;
   } {
     const run = this.requireRun(runId, viewingKey);
-    const leg = legOf(run, asset);
+    const leg = legOf(run, which, this.assets);
     const recorded = run.payout?.[leg];
     if (!recorded) {
       throw new Error(
-        `the ${leg} leg of run ${run.id} has not been raised, so there is nobody on it to retry. `
+        `the ${legName(leg, this.assets)} leg of run ${run.id} has not been raised, so there is nobody on it to retry. `
         + 'Raise the leg first.');
     }
     return {
-      asset: leg,
+      ...legFieldsOf(leg),
       payments: indices.map(i => {
         const f = Number.isInteger(i) ? recorded.facts[i] : undefined;
         if (!f) {
           throw new Error(
-            `this run pays ${recorded.facts.length} people in ${leg}, so there is no person #${Number(i) + 1} on it to `
+            `this run pays ${recorded.facts.length} people in the ${legName(leg, this.assets)} leg, so there is no person #${Number(i) + 1} on it to `
             + 'retry. Reload the run and choose again.');
         }
         return paymentChecked(f);
@@ -4732,11 +4855,11 @@ export class PayrollService {
    * can never pay anybody, so sending it would only spend a fee, and the people
    * on it may be retried with a window of their own.
    */
-  unsentRetryOf(runId: string, viewingKey: Hex, indices: number[], asset?: AssetId): {
+  unsentRetryOf(runId: string, viewingKey: Hex, indices: number[], which?: RunLegChoice): {
     proposalId: string; opensAt: bigint; closesAt: bigint; vault: Hex;
   } | null {
     const run = this.requireRun(runId, viewingKey);
-    const leg = raisedLegOf(run, asset);
+    const leg = raisedLegOf(run, which, this.assets);
     const nowInSeconds = BigInt(Math.floor(Date.now() / 1000));
     for (const r of (leg ? run.payout?.[leg]?.retries : undefined) ?? []) {
       if (r.proposalId === undefined || !sameList(r.originalIndices, indices)) continue;
@@ -4760,7 +4883,7 @@ export class PayrollService {
    * `null` when this leg has no retry written down as that proposal, or the
    * chain already holds it.
    */
-  async retryRaiseOrderOf(runId: string, viewingKey: Hex, proposalId: string, asset?: AssetId): Promise<{
+  async retryRaiseOrderOf(runId: string, viewingKey: Hex, proposalId: string, which?: RunLegChoice): Promise<{
     proposalId: string;
     chainId: Hex;
     run: { root: Hex; payees: bigint; opensAt: bigint; closesAt: bigint; vault: Hex; required?: bigint };
@@ -4770,7 +4893,7 @@ export class PayrollService {
     paymentsChecked: string;
   } | null> {
     const run = this.requireRun(runId, viewingKey);
-    const leg = raisedLegOf(run, asset);
+    const leg = raisedLegOf(run, which, this.assets);
     const payout = leg ? run.payout?.[leg] : undefined;
     const retry = payout?.retries?.find(r => r.proposalId === proposalId);
     if (!leg || !payout || !retry) return null;
@@ -4789,19 +4912,19 @@ export class PayrollService {
     };
   }
 
-  privatePaymentOrderOf(runId: string, viewingKey: Hex, asset?: AssetId): {
-    asset: AssetId; vault: Hex; proposal: Hex; salt: Hex;
+  privatePaymentOrderOf(runId: string, viewingKey: Hex, which?: RunLegChoice): {
+    asset: AssetId; form: LedgerForm; leg: RunLeg; vault: Hex; proposal: Hex; salt: Hex;
     root: Hex; payees: bigint; opensAt: bigint; closesAt: bigint;
   } | null {
     const run = this.requireRun(runId, viewingKey);
-    const leg = raisedLegOf(run, asset);
+    const leg = raisedLegOf(run, which, this.assets);
     const payout = leg ? run.payout?.[leg] : undefined;
     const proposalId = leg ? run.proposalIds[leg] : undefined;
     if (!leg || !payout || !proposalId) return null;
     const raised = this.accounts.requireProposal(proposalId, viewingKey);
     if (!raised.raisedAt) return null;
     return {
-      asset: leg,
+      ...legFieldsOf(leg),
       vault: payout.vault,
       proposal: raised.chainId,
       salt: this.accounts.runSaltOf(proposalId, viewingKey),
@@ -4830,12 +4953,12 @@ export class PayrollService {
    * present. Approval is not asked here; the vault asks the account.
    */
   retryPaymentOrderOf(
-    runId: string, viewingKey: Hex, proposalId: string, asset: AssetId | undefined,
+    runId: string, viewingKey: Hex, proposalId: string, which: RunLegChoice | undefined,
     /** The payout tree's own root function, passed in for the reason `payoutMaterialOf` gives. */
     rootOf: (leaves: Hex[], facts: readonly PaymentFacts[], asset: AssetId) => Hex,
   ): {
     order: {
-      asset: AssetId; vault: Hex; proposal: Hex; salt: Hex;
+      asset: AssetId; form: LedgerForm; leg: RunLeg; vault: Hex; proposal: Hex; salt: Hex;
       root: Hex; payees: bigint; opensAt: bigint; closesAt: bigint;
     };
     indices: number[];
@@ -4844,7 +4967,7 @@ export class PayrollService {
     idFrom: (leaves: Hex[], w: { from: bigint; until: bigint }) => Hex;
   } | null {
     const run = this.requireRun(runId, viewingKey);
-    const leg = raisedLegOf(run, asset);
+    const leg = raisedLegOf(run, which, this.assets);
     const payout = leg ? run.payout?.[leg] : undefined;
     const retry = payout?.retries?.find((r) => r.proposalId === proposalId);
     if (!leg || !payout || !retry) return null;
@@ -4852,7 +4975,7 @@ export class PayrollService {
     if (!raised.raisedAt) return null;
     return {
       order: {
-        asset: leg,
+        ...legFieldsOf(leg),
         vault: retry.vault,
         proposal: raised.chainId,
         salt: this.accounts.runSaltOf(proposalId, viewingKey),
@@ -4866,7 +4989,7 @@ export class PayrollService {
       leaves: [...payout.leaves],
       window: { from: retry.opensAt, until: retry.closesAt },
       idFrom: (leaves, w) => this.accounts.runProposalIdFrom(proposalId, viewingKey, {
-        root: rootOf(leaves, payout.facts, leg), payees: BigInt(leaves.length), opensAt: w.from, closesAt: w.until,
+        root: rootOf(leaves, payout.facts, assetOfLeg(leg)), payees: BigInt(leaves.length), opensAt: w.from, closesAt: w.until,
       }),
     };
   }
@@ -4894,8 +5017,8 @@ export class PayrollService {
   payoutMaterialOf(
     runId: string, viewingKey: Hex,
     opts: {
-      /** Which settlement leg. Required when the run settles in more than one. */
-      asset?: AssetId;
+      /** Which leg, or which token where the run pays it in one form. Required when the run has more than one leg. */
+      leg?: RunLegChoice;
       /**
        * **THE PAYOUT TREE'S OWN ROOT FUNCTION, PASSED IN AND NEVER
        * REIMPLEMENTED.**
@@ -4914,7 +5037,7 @@ export class PayrollService {
     /* Read for the refusal it carries: a run nobody may open is not a run whose
      * payments this caller may be told about. */
     const run = this.requireRun(runId, viewingKey);
-    const leg = raisedLegOf(run, opts.asset);
+    const leg = raisedLegOf(run, opts.leg, this.assets);
     const payout = leg ? run.payout?.[leg] : undefined;
     if (!payout || !leg) return null;
 
@@ -4944,7 +5067,7 @@ export class PayrollService {
         proposal = {
           id: raised.chainId,
           idFrom: (leaves, w) => this.accounts.runProposalIdFrom(proposalId, viewingKey, {
-            root: rootOf(leaves, payout.facts, leg),
+            root: rootOf(leaves, payout.facts, assetOfLeg(leg)),
             payees: BigInt(leaves.length),
             opensAt: w.from,
             closesAt: w.until,
@@ -5096,7 +5219,7 @@ const isThisRetry = (r: RunRetry, m: RetryMaterial): boolean =>
   && r.vault === m.run.vault;
 
 /** Every proposal a leg's retries were raised as, so a run can be found by any of its rounds. */
-const retryProposalIdsOf = (payout: Record<AssetId, RunPayout> | undefined): string[] =>
+const retryProposalIdsOf = (payout: Record<RunLeg, RunPayout> | undefined): string[] =>
   Object.values(payout ?? {}).flatMap(p =>
     (p.retries ?? []).map(r => r.proposalId).filter((id): id is string => id !== undefined));
 

@@ -34,6 +34,7 @@ import { RECEIVING_ADDRESS } from 'midnight-identity/profile/attributes';
 import { newWrappingKeypair } from '../core/crypto.js';
 import { payeeFor } from '../testing/payees.js';
 
+import { TEST_SETTLEMENT_ASSET } from '../core/assets.js';
 /* The same declarations `unlock-company.test.ts` makes, and for the same
  * reasons: a simulated ledger, sessions in memory, no port served, and the
  * live connection string emptied rather than deleted. */
@@ -183,7 +184,7 @@ const asked = async (token: string, accountId: string) => {
 };
 
 const payload = (extra: Record<string, unknown>, viewingKey: string) => ({
-  name: 'The Founder', title: 'Founder', asset: 'TESTUSD', salary: '5500.00',
+  name: 'The Founder', title: 'Founder', asset: TEST_SETTLEMENT_ASSET, salary: '5500.00',
   viewingKey,
   wrappingPublicKey: newWrappingKeypair().publicKey,
   ...extra,

@@ -39,7 +39,7 @@ const { handInWiring } = await import('../wiring/handed-in.js');
 const { FileStore } = await import('../core/store-file.js');
 const { walletKeyOf } = await import('../core/store.js');
 const { AccountService, approvalMessage } = await import('../core/account.js');
-const { PayrollService } = await import('../core/payroll.js');
+const { PayrollService, runLegOf } = await import('../core/payroll.js');
 const { SEED_ASSETS, assets: productAssets } = await import('../core/assets.js');
 const { runMaterialFor, retryMaterialFor } = await import('../midnight/run-material.js');
 const { buildRun, buildRetryRun } = await import('../midnight/payout-tree.js');
@@ -132,7 +132,7 @@ const aCompany = async (name: string, legWindowOpen = false) => {
   const leg = await payroll.proposeRun(run.id, viewingKey, seat.signerId, material);
   if (!leg.raisedAt) throw new Error(`the ${name} leg did not reach the chain`);
   afterTheLegsWindow();
-  const legLeaves = payroll.requireRun(run.id, viewingKey).payout![PRIVATE.code]!.leaves as Hex[];
+  const legLeaves = payroll.requireRun(run.id, viewingKey).payout![runLegOf(PRIVATE.code, 'shielded')]!.leaves as Hex[];
   return { account, viewingKey, runId: run.id, seat, leg, legLeaves };
 };
 type Company = Awaited<ReturnType<typeof aCompany>>;
@@ -251,7 +251,7 @@ const deviceRetry = async (c: Company, indices: number[], window: { opensAt: str
 /** The retries written down on the run, as the store now holds it, and every retry round written for it. */
 const retriesOf = (c: Company) => {
   const fresh = new PayrollService(new FileStore(process.env.DATA_PATH!), accounts, new SimulatedProofSystem(), productAssets);
-  return fresh.requireRun(c.runId, c.viewingKey).payout![PRIVATE.code]!.retries ?? [];
+  return fresh.requireRun(c.runId, c.viewingKey).payout![runLegOf(PRIVATE.code, 'shielded')]!.retries ?? [];
 };
 const retryRoundsOf = (c: Company) =>
   new AccountService(new FileStore(process.env.DATA_PATH!), ledger, MidnightCommitments, productAssets)

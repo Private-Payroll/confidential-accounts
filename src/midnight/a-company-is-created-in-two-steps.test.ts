@@ -61,9 +61,9 @@ describe('the two steps, as lists', () => {
     expect(FIRST_STEP_CIRCUITS as readonly string[]).not.toContain('recordPaymentFromVault');
   });
 
-  it('the second step inserts the rest, the payment step among them', () => {
+  it('the second step inserts the rest, the payment step and the vault change step among them', () => {
     expect([...SECOND_STEP_CIRCUITS]).toEqual([
-      'clearRun', 'holdRun', 'recordPaymentFromVault', 'releaseHold', 'reseatSigner', 'retireVault',
+      'approveVaultChange', 'clearRun', 'holdRun', 'recordPaymentFromVault', 'releaseHold', 'reseatSigner', 'retireVault',
       'sealPayKey', 'setPolicy', 'setPolicyBar', 'setVaultThreshold',
     ]);
   });
@@ -142,12 +142,25 @@ describe('the second step, as built', () => {
     })).toThrow(/does not carry approve/);
   });
 
-  it('refuses a key that is not a compiled verifier key of the version this product builds', () => {
+  it('inserts each key under the version its own file names: [v6] as v3, [v7] as v4', () => {
     const P = recording();
     const keys = keysFor(SECOND_STEP_CIRCUITS);
     keys.set('sealPayKey', new TextEncoder().encode('midnight:verifier-key[v7]:xx'));
+    const { update } = buildCreationInsert(P, { address: ADDRESS, counter: 0n, onChain: [...FIRST_STEP_CIRCUITS], keys });
+    /* RED WHEN the insert wraps every key as v3 whatever its header says: a key built as [v7] would be inserted as the
+     * wrong version after the deploy had already spent its fee. */
+    expect((update as any).updates.map((x: any) => [x.operation, x.vk.version]))
+      .toEqual(SECOND_STEP_CIRCUITS.map((n) => [n, n === 'sealPayKey' ? 'v4' : 'v3']));
+  });
+
+  it('refuses a key whose file names no version the ledger takes, before anything is built', () => {
+    const P = recording();
+    const keys = keysFor(SECOND_STEP_CIRCUITS);
+    keys.set('sealPayKey', new TextEncoder().encode('midnight:verifier-key[v5]:xx'));
+    /* RED WHEN a key with any other header is inserted under a guessed version. */
     expect(() => buildCreationInsert(P, { address: ADDRESS, counter: 0n, onChain: [...FIRST_STEP_CIRCUITS], keys }))
       .toThrow(/key handed in for sealPayKey is not a compiled verifier key/);
+    expect(P.built).toEqual([]);
   });
 });
 

@@ -63,6 +63,8 @@ const EN = JSON.parse(readFileSync(`${SRC}/locales/en.json`, 'utf8')) as Record<
 const LANGUAGES = languagesFrom({ './locales/en.json': EN });
 const VAULT = 'ab'.repeat(32);
 
+/** The token a run's fixture pays: compared by the screens, and never shown. */
+const NIGHT_TOKEN = '00'.repeat(32);
 const NIGHT = (units: bigint, how: 'private' | 'public') => (how === 'private' ? privateAmount(units, 6, 'NIGHT') : publicAmount(units, 6, 'NIGHT'));
 const RUN: RunRow = {
   id: 'r1', period: '2026-10', status: 'proposed', settledAt: null,
@@ -71,14 +73,14 @@ const RUN: RunRow = {
     { id: 'e2', name: 'Bo', amount: NIGHT(2_000_000n, 'public'), paid: 'publicly' },
     { id: 'e3', name: 'Cy', amount: NIGHT(1_000_000n, 'public'), paid: 'not-known' },
   ],
-  currencies: [{ code: 'NIGHT', privately: NIGHT(5_000_000n, 'private'), publicly: NIGHT(2_000_000n, 'public') }],
-  legs: [{ code: 'NIGHT', vault: VAULT, payees: 2 }], unrecognised: 0,
+  currencies: [{ code: NIGHT_TOKEN, symbol: 'NIGHT', privately: NIGHT(5_000_000n, 'private'), publicly: NIGHT(2_000_000n, 'public') }],
+  legs: [{ code: `${NIGHT_TOKEN}:shielded`, asset: NIGHT_TOKEN, symbol: 'NIGHT', paid: 'privately', vault: VAULT, payees: 2 }], unrecognised: 0,
 };
 /* Paid out of another vault, so a vault's payouts are told apart from every run's. */
-const PAID_RUN: RunRow = { ...RUN, id: 'r0', period: '2026-09', status: 'settled', settledAt: '2026-09-30T12:00:00.000Z', legs: [{ code: 'NIGHT', vault: 'cd'.repeat(32), payees: 2 }] };
+const PAID_RUN: RunRow = { ...RUN, id: 'r0', period: '2026-09', status: 'settled', settledAt: '2026-09-30T12:00:00.000Z', legs: [{ code: `${NIGHT_TOKEN}:shielded`, asset: NIGHT_TOKEN, symbol: 'NIGHT', paid: 'privately', vault: 'cd'.repeat(32), payees: 2 }] };
 const PROPOSALS: ProposalRow[] = [
   { id: 'p9', kind: 'something new' as ProposalRow['kind'], status: 'open', raisedBy: 'Sam', approvals: 0, needed: null, raisedAt: '2026-09-19T00:00:00.000Z', pays: null },
-  { id: 'p1', kind: 'payroll', status: 'open', raisedBy: 'Sam', approvals: 1, needed: 2, raisedAt: '2026-09-21T00:00:00.000Z', pays: { run: 'r1', period: '2026-10', currency: 'NIGHT' } },
+  { id: 'p1', kind: 'payroll', status: 'open', raisedBy: 'Sam', approvals: 1, needed: 2, raisedAt: '2026-09-21T00:00:00.000Z', pays: { run: 'r1', period: '2026-10', asset: NIGHT_TOKEN, symbol: 'NIGHT', paid: 'privately' } },
   { id: 'p2', kind: 'add-signer', status: 'executed', raisedBy: null, approvals: 2, needed: null, raisedAt: '2026-09-20T00:00:00.000Z', pays: null },
 ];
 const PEOPLE: PersonRow[] = [
@@ -408,7 +410,8 @@ describe('proposals', () => {
     expect(q(c, '[data-row=p2] td [data-slot=data-table-value]')?.textContent).toBe(EN['proposals.kind.addSigner']);
     await act(async () => { fireEvent.mouseDown(q(c, '[data-filter=all]')!, { button: 0 }); });
     expect(q(c, '[data-row=p1] [data-approvals]')?.textContent).toBe('1 of 2');
-    expect(q(c, '[data-row=p1] td [data-slot=data-table-value]')?.textContent).toBe('Pay the October 2026 run in NIGHT');
+    /* RED WHEN a private payment proposal is not said as the private payments of its run. */
+    expect(q(c, '[data-row=p1] td [data-slot=data-table-value]')?.textContent).toBe('Pay the private payments of the October 2026 run in NIGHT');
     await act(async () => { fireEvent.click(q(c, '[data-row=p1] td:last-child')!); });
     const panel = document.querySelector('[data-proposal-panel=p1]') as HTMLElement;
     expect(all(panel, '[data-soon]').map((e) => [e.dataset.action, e.hasAttribute('disabled')])).toEqual([['approve', true], ['decline', true]]);
@@ -421,7 +424,7 @@ describe('payroll and a run', () => {
   it('lists the runs, their money on a line each for private and public, and a paid run\'s day', async () => {
     const c = await draw('payroll');
     expect(all(c, '[data-screen=payroll] [data-slot=data-table] tbody tr').map((e) => e.dataset.row)).toEqual(['r1', 'r0']);
-    const money = q(c, '[data-row=r1] [data-currency=NIGHT]')!;
+    const money = q(c, `[data-row=r1] [data-currency="${NIGHT_TOKEN}"]`)!;
     expect(all(money, '[data-slot=amount]').map((a) => a.dataset.visibility)).toEqual(['private', 'public']);
     expect(q(money, '[data-slot=amount][data-visibility=private] [data-slot=public-pill]')).toBeNull();
     expect(q(money, '[data-slot=amount][data-visibility=public]')!.textContent).toContain(EN['kit.public.label']);
@@ -459,7 +462,17 @@ describe('payroll and a run', () => {
   it('shows a run\'s currencies, approvals, public payees and who is paid how', async () => {
     const c = await draw('run', { run: 'r1' });
     expect(q(c, '[data-public-payees]')?.textContent).toBe(EN['run.publicPayees_one']!.replace('{count}', '1'));
-    expect(q(c, '[data-currency=NIGHT] [data-approvals]')?.textContent).toBe('1 of 2');
+    expect(q(c, `[data-currency="${NIGHT_TOKEN}"] [data-approvals]`)?.textContent).toBe('1 of 2');
+    /* RED WHEN a token paid both privately and publicly is shown as one round, so the private round's approvals are said of the public payments too. */
+    expect(all(c, `[data-currency="${NIGHT_TOKEN}"] [data-round]`).map((w) => [w.dataset.round, q(w, '[data-approvals]')?.textContent ?? null, q(w, '[data-not-sent]') !== null])).toEqual([
+      ['privately', '1 of 2', false], ['publicly', null, true],
+    ]);
+    /* RED WHEN a way of paying is shown apart from its label and its amount, or its label is left out. */
+    expect(all(c, `[data-currency="${NIGHT_TOKEN}"] [data-round]`).map((w) => [q(w, '[data-form-label]')?.textContent ?? null, q(w, '[data-slot=amount]')?.dataset.visibility ?? null])).toEqual([
+      [EN['payroll.runTotal.privately'], 'private'], [EN['payroll.runTotal.publicly'], 'public'],
+    ]);
+    /* RED WHEN a token paid both ways does not say its private and public payments are approved separately. */
+    expect(q(c, `[data-currency="${NIGHT_TOKEN}"] [data-paid-both-ways]`)?.textContent).toBe(EN['run.paidBothWays']!.replace('{token}', 'NIGHT'));
     expect(all(c, '[data-payee]').map((p) => [p.dataset.payee, q(p, '[data-paid]')!.dataset.paid, q(p, '[data-slot=amount]')!.dataset.visibility])).toEqual([
       ['e1', 'privately', 'private'], ['e2', 'publicly', 'public'], ['e3', 'not-known', 'public'],
     ]);
@@ -468,6 +481,60 @@ describe('payroll and a run', () => {
     cleanup();
     const none = await draw('run', { run: 'nope' });
     expect(q(none, '[data-no-run]')).not.toBeNull();
+  });
+
+  /* The private and public payments of one token, and how a run's page tells them apart. */
+  const rowsOf = (c: ParentNode) => all(c, `[data-currency="${NIGHT_TOKEN}"] [data-round]`)
+    .map((w) => [w.dataset.round, q(w, '[data-approvals]')?.textContent ?? null, q(w, '[data-not-sent]') !== null]);
+  const legacy = (paid: 'not-known' | 'publicly'): ProposalRow => ({ ...PROPOSALS[1]!, id: `p-${paid}`, pays: { run: 'r1', period: '2026-10', asset: NIGHT_TOKEN, symbol: 'NIGHT', paid } });
+
+  /* RED WHEN a proposal whose form is not known is said of the private or the public payments of a token paid both ways, or of neither when the token is paid one way. */
+  it('puts a proposal whose form is not known on a token\'s one way, and on a line of its own when it is paid both ways', async () => {
+    state.company = records({ proposals: { of: 'read', value: [legacy('not-known')] } });
+    const both = await draw('run', { run: 'r1' });
+    expect(rowsOf(both)).toEqual([['privately', null, true], ['publicly', null, true], ['not-known', '1 of 2', false]]);
+    cleanup();
+    const privateOnly: RunRow = { ...RUN, payees: [RUN.payees[0]!], currencies: [{ ...RUN.currencies[0]!, publicly: null }] };
+    state.company = records({ runs: { of: 'read', value: [privateOnly] }, proposals: { of: 'read', value: [legacy('not-known')] } });
+    const one = await draw('run', { run: 'r1' });
+    expect(rowsOf(one)).toEqual([['privately', '1 of 2', false]]);
+    expect(q(one, '[data-paid-both-ways]')).toBeNull();
+  });
+
+  /* RED WHEN a run's approval lines follow only its people's addresses, so a public leg raised for a run whose amounts read private is not shown. */
+  it('shows a line for each leg a run was raised with, as well as for each way its people are paid', async () => {
+    const privateOnly: RunRow = {
+      ...RUN, payees: [RUN.payees[0]!], currencies: [{ ...RUN.currencies[0]!, publicly: null }],
+      legs: [...RUN.legs, { code: `${NIGHT_TOKEN}:unshielded`, asset: NIGHT_TOKEN, symbol: 'NIGHT', paid: 'publicly', vault: VAULT, payees: 1 }],
+    };
+    state.company = records({ runs: { of: 'read', value: [privateOnly] }, proposals: { of: 'read', value: [PROPOSALS[1]!, legacy('publicly')] } });
+    const c = await draw('run', { run: 'r1' });
+    expect(rowsOf(c)).toEqual([['privately', '1 of 2', false], ['publicly', '1 of 2', false]]);
+    /* The public leg has no amount read from the people's addresses, and none is made up for it. */
+    expect(q(c, '[data-round=publicly] [data-slot=amount]')).toBeNull();
+  });
+
+  /* RED WHEN who a run pays is listed in any order but the private payments together, then the public ones, then those not known. */
+  it('lists who a run pays with each way of paying together', async () => {
+    const mixed: RunRow = { ...RUN, payees: [RUN.payees[2]!, RUN.payees[1]!, RUN.payees[0]!, { ...RUN.payees[0]!, id: 'e4', name: 'Dee' }] };
+    state.company = records({ runs: { of: 'read', value: [mixed] } });
+    const c = await draw('run', { run: 'r1' });
+    expect(all(c, '[data-payee]').map((p) => [p.dataset.payee, q(p, '[data-paid]')!.dataset.paid])).toEqual([
+      ['e1', 'privately'], ['e4', 'privately'], ['e2', 'publicly'], ['e3', 'not-known'],
+    ]);
+  });
+
+  /* RED WHEN a payment proposal in a token this app does not know is not said as the private or the public payments it is, or a public one does not say anyone can see who is paid and how much. */
+  it('says which payments of a run a proposal pays, in a token this app knows or not', async () => {
+    const pays = (paid: 'privately' | 'publicly', symbol: string | null): ProposalRow => ({ ...PROPOSALS[1]!, id: `p-${paid}-${symbol ?? 'none'}`, pays: { run: 'r1', period: '2026-10', asset: NIGHT_TOKEN, symbol, paid } });
+    const rows = [pays('publicly', 'NIGHT'), pays('privately', null), pays('publicly', null)];
+    state.company = records({ proposals: { of: 'read', value: rows } });
+    const c = await draw('proposals');
+    expect(rows.map((r) => q(c, `[data-row="${r.id}"] td [data-slot=data-table-value]`)?.textContent)).toEqual([
+      'Pay the public payments of the October 2026 run in NIGHT. Anyone can see who is paid and how much.',
+      'Pay the private payments of the October 2026 run in a token this app does not know',
+      'Pay the public payments of the October 2026 run in a token this app does not know. Anyone can see who is paid and how much.',
+    ]);
   });
 });
 
@@ -770,6 +837,11 @@ describe('vaults and a vault', () => {
   it('lists the runs that pay out of the vault, and a tile opens the vault\'s page', async () => {
     const c = await draw('vault', { vault: VAULT });
     expect(all(c, '[data-part=payouts] [data-payout]').map((e) => e.dataset.payout)).toEqual(['r1']);
+    /* RED WHEN a payout names its leg by the token rather than its symbol, or does not say how it pays. */
+    const row = q(c, '[data-part=payouts] [data-payout=r1]')!;
+    expect(row.textContent).toContain('NIGHT');
+    expect(row.textContent).not.toContain(NIGHT_TOKEN);
+    expect(q(row, '[data-paid]')?.dataset.paid).toBe('privately');
     cleanup();
     const tiles = await draw('vaults');
     expect((q(tiles, `[data-vault="${VAULT}"]`) as HTMLAnchorElement).getAttribute('href')).toBe(`/vaults/${VAULT}`);
@@ -840,9 +912,14 @@ describe('people, payroll, proposals, a run and invitations, drawn from the kit'
   /* RED WHEN: a run's currency is not a kit section with its approvals and Approve at the end of its title, or who is paid is not the kit's section of rows. */
   it('draws a run\'s currencies and who it pays in the kit\'s sections', async () => {
     const c = await draw('run', { run: 'r1' });
-    const night = q(c, '[data-part=currencies] [data-slot=section][data-currency=NIGHT]')!;
+    const night = q(c, `[data-part=currencies] [data-slot=section][data-currency="${NIGHT_TOKEN}"]`)!;
+    /* RED WHEN the section is titled with the token rather than its symbol. */
     expect(q(night, '[data-slot=section-header] h2')!.textContent).toBe('NIGHT');
-    expect(q(night, '[data-slot=section-actions] button[data-action=approve]')!.hasAttribute('disabled')).toBe(true);
+    /* RED WHEN one Approve covers both ways a token is paid, rather than one on each way's own line. */
+    expect(q(night, '[data-slot=section-actions] [data-action=approve]')).toBeNull();
+    expect(all(night, '[data-round]').map((r) => [r.dataset.round, all(r, 'button[data-action=approve]').map((b) => b.hasAttribute('disabled'))])).toEqual([
+      ['privately', [true]], ['publicly', [true]],
+    ]);
     expect(q(night, '[data-approvals]')!.textContent).toBe('1 of 2');
     const payees = q(c, '[data-slot=section][data-part=payees]')!;
     expect(q(payees, '[data-slot=section-header] h2')!.textContent).toBe(EN['run.whoIsPaid']);

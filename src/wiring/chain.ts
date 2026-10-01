@@ -13,7 +13,7 @@
  * and a page that loads that runtime does not start at all. So this file exists
  * so that the selector can name a chain implementation set without CONTAINING
  * one: nothing here may ever be imported by a module the page also loads.
- * `src/web-legacy/no-wasm-in-the-page.test.ts` is what notices if that changes.
+ * `src/wiring/one-wiring-point.test.ts` refuses the selector importing this file.
  *
  * ── WHAT THIS SET CAN AND CANNOT DO TODAY, STATED RATHER THAN DISCOVERED ─
  *

@@ -56,12 +56,12 @@ const VISITOR: Viewer = { signedIn: false, view: VIEWS.employee, signs: false };
 /** A company whose records opened, with one of each record, so what a page draws from them is drawn too. */
 const OPEN: Company = {
   of: 'open', id: 'c-1', name: 'Northwind', signers: [{ id: 's1', name: 'Priya' }], approvalsNeeded: 1,
-  proposals: { of: 'read', value: [{ id: 'p1', kind: 'payroll', status: 'open', raisedBy: 'Sam', approvals: 0, needed: 1, raisedAt: '2026-09-21T00:00:00.000Z', pays: { run: 'x1', period: '2026-10', currency: 'NIGHT' } }] },
+  proposals: { of: 'read', value: [{ id: 'p1', kind: 'payroll', status: 'open', raisedBy: 'Sam', approvals: 0, needed: 1, raisedAt: '2026-09-21T00:00:00.000Z', pays: { run: 'x1', period: '2026-10', asset: '00'.repeat(32), symbol: 'NIGHT', paid: 'privately' } }] },
   runs: { of: 'read', value: [{
     id: 'x1', period: '2026-10', status: 'proposed', settledAt: null,
     payees: [{ id: 'e1', name: 'Ana', amount: privateAmount(5n, 6, 'NIGHT'), paid: 'privately' }, { id: 'e2', name: 'Bo', amount: publicAmount(2n, 6, 'NIGHT'), paid: 'publicly' }],
-    currencies: [{ code: 'NIGHT', privately: privateAmount(5n, 6, 'NIGHT'), publicly: publicAmount(2n, 6, 'NIGHT') }],
-    legs: [{ code: 'NIGHT', vault: 'x1', payees: 2 }], unrecognised: 0,
+    currencies: [{ code: '00'.repeat(32), symbol: 'NIGHT', privately: privateAmount(5n, 6, 'NIGHT'), publicly: publicAmount(2n, 6, 'NIGHT') }],
+    legs: [{ code: `${'00'.repeat(32)}:shielded`, asset: '00'.repeat(32), symbol: 'NIGHT', paid: 'privately', vault: 'x1', payees: 2 }], unrecognised: 0,
   }] },
   people: { of: 'read', value: [{ id: 'e1', name: 'Ana', title: 'Engineer', standing: 'active', pay: privateAmount(5n, 6, 'NIGHT'), paid: 'privately', startedAt: '2026-01-01' }] },
   vaults: { of: 'read', value: [{ vault: 'x1', createdAt: '2026-09-01T00:00:00.000Z', standing: 'held-by-committee' }] },

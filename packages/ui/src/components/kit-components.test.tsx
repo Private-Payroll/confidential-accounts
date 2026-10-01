@@ -28,9 +28,9 @@ const inKit = (ui: React.ReactNode, pick = 'en') => render(<KitProvider language
 describe('an amount', () => {
   /* RED WHEN: the figure loses a digit, is not written left to right, or a private amount carries the Public pill. */
   it('is exact, left to right, and private with no pill', () => {
-    const { container } = inKit(<Amount value={privateAmount(12_345_678_901_234_567_890n, 6, 'USDC')} kind="payment" />);
+    const { container } = inKit(<Amount value={privateAmount(12_345_678_901_234_567_890n, 6, 'tUSD')} kind="payment" />);
     const figure = container.querySelector('[data-slot=amount] > span[dir=ltr]');
-    expect(figure?.textContent).toBe('12,345,678,901,234.56789 USDC');
+    expect(figure?.textContent).toBe('12,345,678,901,234.56789 tUSD');
     expect(container.querySelector('[data-slot=public-pill]')).toBeNull();
   });
 
@@ -66,8 +66,8 @@ describe('an amount', () => {
 
   /* RED WHEN: the language is not the one shown, so every language gets English grouping. */
   it('is written in the language shown', () => {
-    const { container } = inKit(<Amount value={privateAmount(1_234_500n, 2, 'EUR')} kind="payment" />, 'de');
-    expect(container.querySelector('span[dir=ltr]')?.textContent).toBe('12.345 EUR');
+    const { container } = inKit(<Amount value={privateAmount(1_234_500n, 2, 'tUSD')} kind="payment" />, 'de');
+    expect(container.querySelector('span[dir=ltr]')?.textContent).toBe('12.345 tUSD');
   });
 
   /* RED WHEN: a bare bigint or a number can be shown as an amount, an amount can be told its visibility, or an amount, private or public, can be shown without saying whether it is a payment or a balance. */
@@ -78,11 +78,11 @@ describe('an amount', () => {
     // @ts-expect-error nor a number
     expect(() => inKit(<Amount value={1} kind="payment" />)).toThrow(/made by publicAmount or privateAmount, and this is a value of type number/);
     // @ts-expect-error whether an amount is public is read from it, and is never passed in
-    inKit(<Amount value={privateAmount(1n, 0, 'USDC')} visibility="public" kind="payment" />);
+    inKit(<Amount value={privateAmount(1n, 0, 'tUSD')} visibility="public" kind="payment" />);
     // @ts-expect-error whether it is a payment or a balance is required, so the pill never guesses what public means
-    expect(() => inKit(<Amount value={publicAmount(1n, 0, 'USDC')} />)).toThrow(/a payment, a payment to be made or a balance, and this one is undefined/);
+    expect(() => inKit(<Amount value={publicAmount(1n, 0, 'tUSD')} />)).toThrow(/a payment, a payment to be made or a balance, and this one is undefined/);
     // @ts-expect-error and on a private amount too
-    expect(() => inKit(<Amount value={privateAmount(1n, 0, 'USDC')} />)).toThrow(/a payment, a payment to be made or a balance, and this one is undefined/);
+    expect(() => inKit(<Amount value={privateAmount(1n, 0, 'tUSD')} />)).toThrow(/a payment, a payment to be made or a balance, and this one is undefined/);
     vi.restoreAllMocks();
   });
 
@@ -93,14 +93,14 @@ describe('an amount', () => {
    */
   it('takes no class from a screen', () => {
     // @ts-expect-error an amount takes no class
-    inKit(<Amount value={privateAmount(1n, 0, 'USDC')} kind="payment" className="x" />);
+    inKit(<Amount value={privateAmount(1n, 0, 'tUSD')} kind="payment" className="x" />);
     // @ts-expect-error nor does a balance
-    inKit(<Balance private={privateAmount(1n, 0, 'USDC')} public={publicAmount(1n, 0, 'USDC')} className="x" />);
+    inKit(<Balance private={privateAmount(1n, 0, 'tUSD')} public={publicAmount(1n, 0, 'tUSD')} className="x" />);
   });
 
   /* RED WHEN: a value told it is public, or dressed as one, is shown as public: the pill is written only for an amount made public. */
   it('is public only when made public', () => {
-    const { container } = inKit(<Amount value={privateAmount(1n, 0, 'USDC')} {...{ visibility: 'public' }} kind="payment" />);
+    const { container } = inKit(<Amount value={privateAmount(1n, 0, 'tUSD')} {...{ visibility: 'public' }} kind="payment" />);
     expect(container.querySelector('[data-slot=public-pill]')).toBeNull();
     expect(container.querySelector('[data-slot=amount]')?.getAttribute('data-visibility')).toBe('private');
   });
@@ -115,7 +115,7 @@ describe('an amount anywhere but in Amount', () => {
    */
   it('cannot reach the page', () => {
     vi.spyOn(console, 'error').mockImplementation(() => {});
-    const amount = privateAmount(12_345_678_901_234_567_890n, 6, 'USDC');
+    const amount = privateAmount(12_345_678_901_234_567_890n, 6, 'tUSD');
     // @ts-expect-error an amount is not something React can show
     expect(() => inKit(<span>{amount}</span>)).toThrow(/Objects are not valid as a React child/);
     // @ts-expect-error nor inside a list of children
@@ -129,8 +129,8 @@ describe('an amount anywhere but in Amount', () => {
 });
 
 describe('an amount in a table that says its asset and state in columns of their own', () => {
-  /* RED WHEN: the figure alone loses a digit, repeats the token's code, carries a pill, or is not written left to right. */
-  it('writes the figure alone, exact, with no code and no pill', () => {
+  /* RED WHEN: the figure alone loses a digit, repeats the token's symbol, carries a pill, or is not written left to right. */
+  it('writes the figure alone, exact, with no symbol and no pill', () => {
     const { container } = inKit(<AmountFigureOnly value={publicAmount(120_123_100n, 5, 'NIGHT')} />);
     const figure = container.querySelector('[data-slot=amount-figure]')!;
     expect(figure.textContent).toBe('1,201.231');
@@ -178,9 +178,9 @@ describe('a balance', () => {
    * once as a label and once as the pill.
    */
   it('shows private and public on two lines, never a total, and says Public once', () => {
-    const { container } = inKit(<Balance private={privateAmount(150n, 2, 'USDC')} public={publicAmount(25n, 2, 'USDC')} />);
+    const { container } = inKit(<Balance private={privateAmount(150n, 2, 'tUSD')} public={publicAmount(25n, 2, 'tUSD')} />);
     const lines = [...container.querySelectorAll('dd')];
-    expect(lines.map((d) => [d.querySelector('[data-visibility]')?.getAttribute('data-visibility') ?? d.getAttribute('data-visibility'), d.querySelector('span[dir=ltr]')?.textContent])).toEqual([['private', '1.5 USDC'], ['public', '0.25 USDC']]);
+    expect(lines.map((d) => [d.querySelector('[data-visibility]')?.getAttribute('data-visibility') ?? d.getAttribute('data-visibility'), d.querySelector('span[dir=ltr]')?.textContent])).toEqual([['private', '1.5 tUSD'], ['public', '0.25 tUSD']]);
     expect(container.textContent).not.toContain('1.75');
     const labels = [...container.querySelectorAll('dt')];
     expect(labels[0]?.textContent).toBe(EN['kit.balance.private']);
@@ -195,7 +195,7 @@ describe('a balance', () => {
    * payment's, who received it.
    */
   it('explains its public line as a balance, not as a payment', async () => {
-    const { container } = inKit(<Balance private={privateAmount(1n, 0, 'USDC')} public={publicAmount(2n, 0, 'USDC')} />);
+    const { container } = inKit(<Balance private={privateAmount(1n, 0, 'tUSD')} public={publicAmount(2n, 0, 'tUSD')} />);
     await act(async () => { fireEvent.click(container.querySelector('[data-slot=public-pill]') as HTMLElement); });
     expect(EN['kit.public.explanation.balance']).not.toBe(EN['kit.public.explanation.payment']);
     expect(screen.queryAllByText(EN['kit.public.explanation.balance']!).length).toBeGreaterThan(0);
@@ -209,8 +209,8 @@ describe('a balance', () => {
    */
   it('takes a private amount on its private side and a public one on its public side, and no total', () => {
     vi.spyOn(console, 'error').mockImplementation(() => {});
-    const held: PrivateAmount = privateAmount(1n, 0, 'USDC');
-    const shown: PublicAmount = publicAmount(2n, 0, 'USDC');
+    const held: PrivateAmount = privateAmount(1n, 0, 'tUSD');
+    const shown: PublicAmount = publicAmount(2n, 0, 'tUSD');
     // @ts-expect-error the two sides swapped do not typecheck
     expect(() => inKit(<Balance private={shown} public={held} />)).toThrow(/private amount on its private side and a public amount on its public side/);
     expect(() => inKit(<Balance private={held} public={held as unknown as PublicAmount} />)).toThrow(/public amount on its public side/);

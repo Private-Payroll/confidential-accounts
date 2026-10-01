@@ -20,7 +20,7 @@ const { SimulatedLedger, SimulatedProofSystem } = await import('../core/ledger.j
 const { MidnightCommitments } = await import('../midnight/commitments.js');
 const { FileStore } = await import('../core/store-file.js');
 const { AccountService } = await import('../core/account.js');
-const { PayrollService } = await import('../core/payroll.js');
+const { PayrollService, runLegOf } = await import('../core/payroll.js');
 const { SEED_ASSETS, assets: productAssets } = await import('../core/assets.js');
 const { runMaterialFor, retryMaterialFor } = await import('../midnight/run-material.js');
 const { vaultDetails } = await import('../testing/vault-details.js');
@@ -81,7 +81,7 @@ const aRetry = async (c: Company, indices: number[], w: { opensAt: number; close
     rebuild: (await payroll.payoutRebuildOf(c.runId, c.viewingKey))!, indices,
     opensAt: BigInt(w.opensAt), closesAt: BigInt(w.closesAt), vault: VAULT, detailsOf: vaultDetails,
   }));
-const retriesOf = (c: Company) => payroll.requireRun(c.runId, c.viewingKey).payout![PRIVATE.code]!.retries ?? [];
+const retriesOf = (c: Company) => payroll.requireRun(c.runId, c.viewingKey).payout![runLegOf(PRIVATE.code, 'shielded')]!.retries ?? [];
 const retryRoundsOf = (c: Company) =>
   accounts.payrollRoundsOf(c.account, c.viewingKey).filter((r) => r.retry !== undefined);
 

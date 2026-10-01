@@ -26,7 +26,7 @@ import { join } from 'node:path';
 import { AccountService } from '../core/account.js';
 import { SimulatedLedger, SimulatedCommitments, type Ledger } from '../core/ledger.js';
 import { FileStore } from '../core/store-file.js';
-import { assets as productAssets, ledgerTokenOf } from '../core/assets.js';
+import { assets as productAssets, ledgerTokenOf, NIGHT as NIGHT_ASSET } from '../core/assets.js';
 import { VaultCannotPayThisProposal } from '../core/vault-holdings.js';
 import type { Deployment } from './deployment.js';
 import type { Hex } from '../core/crypto.js';
@@ -67,7 +67,7 @@ const { chainVaultHoldingsFor, vaultConfigFor } = await import('./chain.js');
 const { holdingsFor } = await import('./product.js');
 
 const VAULT: Hex = 'e3'.repeat(32);
-const NIGHT = ledgerTokenOf('NIGHT', 'unshielded');
+const NIGHT = ledgerTokenOf(NIGHT_ASSET, 'unshielded');
 
 const DEPLOYMENT: Deployment = {
   network: 'stagenet',
@@ -110,9 +110,9 @@ const raiseNight = async (h: ReturnType<typeof serviceWith>, amount: bigint) => 
     accountId: created.account.id, viewingKey: created.viewingKey,
     summary: 'paying from the vault',
     payload: { entries: [{
-      id: 'e0', kind: 'transfer', asset: 'NIGHT', amount, counterparty: 'payee 0', memo: '', at: '',
+      id: 'e0', kind: 'transfer', asset: NIGHT_ASSET, amount, counterparty: 'payee 0', memo: '', at: '',
     }] },
-    asset: 'NIGHT',
+    asset: NIGHT_ASSET,
     run: {
       root: 'd1'.repeat(32), payees: 1n,
       opensAt: 1_900_000_000n, closesAt: 1_900_086_400n, vault: VAULT,
@@ -297,13 +297,5 @@ describe('§2 the choice of reader is a function, and both services pass what it
     expect(args[4]).toBe('holdings');
     expect(withoutComments(readFileSync('src/server/index.ts', 'utf8')))
       .toMatch(/const holdings = holdingsFor\(startup\);/);
-  });
-
-  it('the standalone build passes the refusing reader BY NAME, because it can reach no chain', () => {
-    /* RED WHEN the argument is dropped. It is the same behaviour as the default
-     * and that is the point: a decision nobody wrote down is one nobody finds. */
-    const args = accountServiceArgs('src/standalone/main.tsx');
-    expect(args).toHaveLength(5);
-    expect(args[4]).toBe('noVaultHoldingsReader');
   });
 });

@@ -83,7 +83,10 @@ import {
   decideWhetherToWrite, assertNoSignerWouldLoseAccess,
   assertThePoolHasNotMovedSinceTheRebuild, linesForAnOperator,
   notesNeedingATransaction, whatTheRebuildWrites, whereTheRecordsAre, settlementsNotYetRecorded,
+  nonceSecretsForTheRebuild, splitJournalFromTheChain,
 } from './reconcile-vault-pool-rules.js';
+import { vaultNonceSecretFile } from './pay-privately-rules.js';
+import type { VaultNonceSecrets } from '../src/midnight/vault-coin-nonces.js';
 
 const ROOT = process.cwd();
 const STATE_DIR = join(ROOT, '.midnight');
@@ -229,6 +232,16 @@ async function main(): Promise<number> {
   note(`indexer ${endpoints.indexerUrl}`);
   const providers = indexerPublicDataProvider(endpoints.indexerUrl, endpoints.indexerWsUrl);
   let chain: Hex[];
+  /*
+   * **THE NONCE SECRET AND THE SPLIT JOURNAL, BESIDE THE NOTE SET.** The change a
+   * payment left and the pieces a split kept are named only with the vault's
+   * nonce secret, and a split's amount only from the journal the chain holds, so
+   * both are read here and handed to the rebuild. A vault with a secret set and
+   * no record of it on this machine is refused by name rather than rebuilt naming
+   * none of those coins.
+   */
+  let nonceCommitment: Hex;
+  let splitJournal: Map<Hex, Hex>;
   try {
     const state: any = await providers.queryContractState(entry.contractAddress);
     if (!state) {
@@ -257,6 +270,14 @@ async function main(): Promise<number> {
         + 'over is not an empty one, and nothing is written from the difference.');
     }
     chain = [...parsed.notes].map((c: Uint8Array) => Buffer.from(c).toString('hex') as Hex);
+    if (!(parsed.nonceCommitment instanceof Uint8Array) || parsed.splitJournal == null
+      || typeof parsed.splitJournal[Symbol.iterator] !== 'function') {
+      throw new NotUsable(
+        'the vault’s state decoded without a readable nonce commitment or split journal. A journal the reader '
+        + 'did not hand over is not an empty one, and nothing is written from the difference.');
+    }
+    splitJournal = splitJournalFromTheChain(parsed.splitJournal);
+    nonceCommitment = Buffer.from(parsed.nonceCommitment).toString('hex') as Hex;
   } catch (cause) {
     if (cause instanceof NotUsable) throw cause;
     throw new NotUsable(
@@ -264,6 +285,17 @@ async function main(): Promise<number> {
       + 'Nothing is written. This says nothing about the money: it is the read that failed.');
   }
   good(`the chain holds ${chain.length} note(s) for this vault`);
+  const nonceSecretFile = vaultNonceSecretFile(STATE_DIR, network, vaultName);
+  const nonceSecrets: VaultNonceSecrets | null = nonceSecretsForTheRebuild({
+    sealed: (await new FileSealedPoolStore(nonceSecretFile, entry.contractAddress).get(entry.contractAddress)) ?? null,
+    where: nonceSecretFile.replace(ROOT + '/', ''),
+    vault: entry.contractAddress,
+    signer: chosen,
+    commitment: nonceCommitment,
+  });
+  if (nonceSecrets === null) note('the vault has never had a nonce secret set, so it has made no coin under one');
+  else good(`the company's nonce-secret record opened: ${nonceSecrets.secrets.length} secret(s)`);
+  note(`the vault's split journal holds ${splitJournal.size} split(s)`);
 
   step('4 of 5  The rebuild, and the transaction that created each note it would write');
   const { pureCircuits } = await import('../contracts/managed-vault/contract/index.js');
@@ -275,6 +307,8 @@ async function main(): Promise<number> {
       versions,
       attempted,
       circuits: pureCircuits as never,
+      ...(nonceSecrets === null ? {} : { nonceSecrets }),
+      splitJournal,
     });
   } catch (cause) {
     if (!(cause instanceof NoteDescribedTwice)) throw cause;

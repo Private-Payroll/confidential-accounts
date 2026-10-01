@@ -11,6 +11,7 @@ import { sign, newSigningKeypair, newWrappingKeypair } from './crypto.js';
 import type { Account } from './types.js';
 import { newSeatInvitation, proveSeatKeys } from './seat-invite-proof.js';
 
+import { TEST_TOKEN, registryWithTestPrivateForms } from '../testing/assets.js';
 /** The value, or a failure that says one was missing: an index that finds nothing is a broken test, not a value to carry on with. */
 function present<T>(value: T | undefined): T {
   if (value === undefined) throw new Error('expected a value here, and there was none');
@@ -67,7 +68,7 @@ const provenBy = (
  *
  * **THE HONEST COST OF THAT, STATED RATHER THAN LEFT TO BE FOUND:** the outcome
  * is recorded correctly and nothing downstream is yet obliged to act on it.
- * `src/web-legacy/App.tsx` renders `p.approvals.length` against
+ * The earlier application rendered `p.approvals.length` against
  * `account.policy.threshold` — the two numbers removed from the decision — so a
  * company looking at a screen during a chain outage is still shown "1 of 2" and
  * an enabled Approve button. **That failure stands today at the screen layer,
@@ -109,7 +110,7 @@ function harness(bend?: (inner: Ledger, accountId: string) => Promise<LedgerStat
         },
       }) as Ledger)
     : inner;
-  const accounts = new AccountService(store, ledger, SimulatedCommitments);
+  const accounts = new AccountService(store, ledger, SimulatedCommitments, registryWithTestPrivateForms());
   return { store, accounts };
 }
 
@@ -128,7 +129,7 @@ function editAccount(
 
 const entry = (amount: bigint) => ({
   entries: [{
-    id: 'e1', kind: 'transfer', asset: 'GBP', amount,
+    id: 'e1', kind: 'transfer', asset: TEST_TOKEN, amount,
     counterparty: 'a supplier', memo: '', at: '',
   }],
 });
@@ -558,7 +559,7 @@ describe('the record is written before the chain call, so a lost round is never 
         return typeof v === 'function' ? v.bind(target) : v;
       },
     }) as Ledger;
-    return { store, accounts: new AccountService(store, ledger, SimulatedCommitments) };
+    return { store, accounts: new AccountService(store, ledger, SimulatedCommitments, registryWithTestPrivateForms()) };
   }
 
   it('keeps the proposal when the chain call throws, and says the chain has not confirmed it', async () => {
@@ -672,7 +673,7 @@ describe('the record is written before the chain call, so a lost round is never 
         return typeof v === 'function' ? v.bind(target) : v;
       },
     }) as Ledger;
-    const accounts = new AccountService(store, ledger, SimulatedCommitments);
+    const accounts = new AccountService(store, ledger, SimulatedCommitments, registryWithTestPrivateForms());
     const { account, viewingKey, secrets } = await accounts.create('Acme', THREE, 2, undefined, drawCompanyLabel());
 
     /* A round that IS on chain and whose confirmation this record never got. */
@@ -735,7 +736,7 @@ describe('the record is written before the chain call, so a lost round is never 
         return typeof v === 'function' ? v.bind(target) : v;
       },
     }) as Ledger;
-    const accounts = new AccountService(store, ledger, SimulatedCommitments);
+    const accounts = new AccountService(store, ledger, SimulatedCommitments, registryWithTestPrivateForms());
     const { account, viewingKey, secrets } = await accounts.create('Acme', THREE, 2, undefined, drawCompanyLabel());
     const VAULT = 'a1'.repeat(32);
 
@@ -803,7 +804,7 @@ describe('the record is written before the chain call, so a lost round is never 
         return typeof v === 'function' ? v.bind(target) : v;
       },
     }) as Ledger;
-    const accounts = new AccountService(store, ledger, SimulatedCommitments);
+    const accounts = new AccountService(store, ledger, SimulatedCommitments, registryWithTestPrivateForms());
     const { account, viewingKey, secrets } = await accounts.create('Acme', THREE, 2, undefined, drawCompanyLabel());
 
     /* A fourth seat, invited and accepted but not yet granted: the subject. */

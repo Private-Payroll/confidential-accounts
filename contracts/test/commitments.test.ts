@@ -1,6 +1,7 @@
 import { describe, it, expect, beforeAll } from 'vitest';
 import { readFileSync } from 'node:fs';
-import { AccountSimulator, privateStateFor, change, GBP } from './simulator.js';
+import { AccountSimulator, privateStateFor, change, TEST_TOKEN_BYTES, tokenBytes } from './simulator.js';
+import { TEST_TOKEN, testToken } from '../../src/testing/assets.js';
 import { pureCircuits } from '../managed/contract/index.js';
 import { MidnightCommitments } from '../../src/midnight/commitments.js';
 import { SimulatedCommitments } from '../../src/core/ledger.js';
@@ -91,11 +92,11 @@ describe('commitment schemes agree with the contract', () => {
      * commitment one signer approves is not the one another recomputes, and an
      * approval of a run is an approval of nothing.
      *
-     * The client encodes the asset code and the contract never sees the string,
+     * The client hands over the token as hex and the contract sees only its bytes,
      * so this is the only place the two encodings meet.
      */
-    const fromContract = sim.assetKeyOf(ada, GBP);
-    const fromClient = MidnightCommitments.assetKey('GBP', toHex(ada.assetBlinding));
+    const fromContract = sim.assetKeyOf(ada, TEST_TOKEN_BYTES);
+    const fromClient = MidnightCommitments.assetKey(TEST_TOKEN, toHex(ada.assetBlinding));
     expect(fromClient).toBe(toHex(fromContract));
   });
 
@@ -239,8 +240,8 @@ describe('what a commitment names, which no mirror can check', () => {
    * this.
    */
   const b = (n: number): Uint8Array => Uint8Array.from({ length: 32 }, (_, i) => (i + n) & 0xff);
-  const asset = (code: string): Uint8Array =>
-    Uint8Array.from({ length: 32 }, (_, i) => code.charCodeAt(i) || 0);
+  /** A token's 32 bytes, from its 64 hex characters. */
+  const asset = (token: string): Uint8Array => tokenBytes(token);
 
   it('the asset key BINDS THE ACCOUNT BLINDING, so two companies holding one asset do not share a key', () => {
     /*
@@ -251,7 +252,7 @@ describe('what a commitment names, which no mirror can check', () => {
      * by the plain code would give EVERY ACCOUNT HOLDING EUROS THE SAME KEY, so
      * accounts could be grouped by the currencies they share — in the
      * contract's words, *"without breaking a single commitment"*. Blinded per
-     * account, an observer holding the list of every asset code in the world can
+     * account, an observer holding the list of every token in the world can
      * test none of them. The contract adds that this is *"still true of a
      * change commitment even though there is no map any more"*.
      *
@@ -264,36 +265,36 @@ describe('what a commitment names, which no mirror can check', () => {
      * circuit that has stopped reading its blinding argument produces one value
      * for all of them and fails on the very first pair.
      */
-    const POUNDS = asset('GBP');
+    const ONE_TOKEN = asset(testToken('one token'));
     const keys = [b(10), b(60), b(110), b(160)].map(
-      blinding => toHex(pureCircuits.assetKeyOf(POUNDS, blinding)),
+      blinding => toHex(pureCircuits.assetKeyOf(ONE_TOKEN, blinding)),
     );
     expect(new Set(keys).size).toBe(keys.length);
 
     // Named singly as well as by the set, so a failure says which rule broke
     // rather than only that a count was wrong.
-    expect(toHex(pureCircuits.assetKeyOf(POUNDS, b(10))))
-      .not.toBe(toHex(pureCircuits.assetKeyOf(POUNDS, b(60))));
+    expect(toHex(pureCircuits.assetKeyOf(ONE_TOKEN, b(10))))
+      .not.toBe(toHex(pureCircuits.assetKeyOf(ONE_TOKEN, b(60))));
   });
 
-  it('the asset key names the ASSET, so one account\'s two currencies do not share a key', () => {
+  it('the asset key names the ASSET, so one account\'s two tokens do not share a key', () => {
     /*
      * The other half of the same rule. One blinding, four assets, four keys —
-     * without which an account's pounds and its dollars would key the same and a
+     * without which an account's two tokens would key the same and a
      * change commitment could not tell them apart.
      *
-     * NOT a claim that this is what refuses a dollar payment against a pound
-     * approval. Nothing opens the commitment any more; the separator inside
+     * NOT a claim that this is what refuses a payment in one token against an
+     * approval in another. Nothing opens the commitment any more; the separator inside
      * `payoutDetails` is the enforcer.
      */
     const blinding = b(10);
-    const keys = ['GBP', 'USD', 'EUR', 'JPY'].map(
-      code => toHex(pureCircuits.assetKeyOf(asset(code), blinding)),
+    const keys = ['first', 'second', 'third', 'fourth'].map(
+      label => toHex(pureCircuits.assetKeyOf(asset(testToken(label)), blinding)),
     );
     expect(new Set(keys).size).toBe(keys.length);
   });
 
-  it('the approved change NAMES ITS ASSET, so two changes alike but for the currency are two commitments', () => {
+  it('the approved change NAMES ITS ASSET, so two changes alike but for the token are two commitments', () => {
     /*
      * THE RULE: what the signers approved includes WHICH asset moves.
      *
@@ -412,15 +413,16 @@ describe('what a commitment names, which no mirror can check', () => {
    */
   describe('AND IT READS THEM IN THE RIGHT ORDER — the fixed vectors', () => {
     /*
-     * Distinct on purpose, and that is the whole design of the input. `GBP`
-     * pads with zero bytes and `b(1)` does not, so asset and blinding cannot
+     * Distinct on purpose, and that is the whole design of the input. The token
+     * ends in zero bytes and `b(1)` does not, so asset and blinding cannot
      * collide; `b(2)`, `b(3)` and `b(4)` are three different 32-byte runs, so
      * no two of the change commitment's `Bytes<32>` arguments are equal. **An
      * input in which two same-typed arguments happen to be equal is an input a
      * swap survives**, which is how a vector test can be written and prove
      * nothing.
      */
-    const ASSET = asset('GBP');
+    /* A token whose 32 bytes are the ones these vectors were pinned with: three bytes, then zeros. */
+    const ASSET = asset('474250' + '00'.repeat(29));
     const BLINDING = b(1);
     const KEY = b(2), BATCH = b(3), SALT = b(4);
     /*

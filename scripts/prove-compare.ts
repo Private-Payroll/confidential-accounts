@@ -46,7 +46,7 @@ import { ZswapChainState, LedgerParameters } from '@midnight-ntwrk/midnight-js-p
 import { Contract, pureCircuits } from '../contracts/managed/contract/index.js';
 import { witnesses, type AccountPrivateState } from '../contracts/src/witnesses.js';
 import { applyNetworkId, theNetwork, ENDPOINTS } from '../src/midnight/network.js';
-import { assetIdBytes } from '../src/core/assets.js';
+import { assetIdBytes, NIGHT } from '../src/core/assets.js';
 import { isDeployedCircuit } from '../src/midnight/deferral.js';
 import {
   previewSignersFile, readOrCreatePreviewSigners, signerBytes,
@@ -120,7 +120,8 @@ const PREVIEW_SIGNERS = readOrCreatePreviewSigners(STATE_DIR, NETWORK, ACCOUNT_I
  * satisfy — and nothing here is proved today in any case; see the refusal in
  * `main`.
  */
-const ASSET = 'GBP';
+/* An asset is its ledger token: NIGHT's, here. */
+const ASSET = NIGHT;
 
 /**
  * Signer A's private state, identical to what the deploy used.

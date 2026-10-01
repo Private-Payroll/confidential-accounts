@@ -29,6 +29,7 @@ import { Contract, pureCircuits } from '../managed/contract/index.js';
 import { witnesses } from '../src/witnesses.js';
 import { buildPayoutTree, type PayoutLeafInput } from '../../src/midnight/payout-tree.js';
 import { fromHex, toHex } from '../../src/core/crypto.js';
+import { keysOnDisk } from './keys-on-disk.js';
 
 const A = privateStateFor(1);
 const B = privateStateFor(2);
@@ -92,8 +93,16 @@ const unshielded = (m: Map<any, bigint>) =>
 const STAND_IN_KEY = existsSync(KEYS)
   ? readdirSync(KEYS).find((f) => f.endsWith('.verifier'))
   : undefined;
+/* Every circuit of the account and of the vault has its verifier key on disk, and each is the key this build compiled. */
+const ON_DISK = keysOnDisk();
+if (!ON_DISK.ok) {
+  console.log(`  NOT CHECKED HERE: a direct call was not built as the real transaction, because ${ON_DISK.why}`);
+}
 
-describe.skipIf(!STAND_IN_KEY)("a direct call, built as the real transaction, leaves the vault's receipt unbalanced [needs contracts/managed/keys; `npm run compact` builds them]", () => {
+/* Both: every key on disk and pinned, and the stand-in key the transaction is signed with. */
+const BUILDS_HERE = ON_DISK.ok && STAND_IN_KEY !== undefined;
+
+describe.skipIf(!BUILDS_HERE)("a direct call, built as the real transaction, leaves the vault's receipt unbalanced [needs every verifier key in contracts/managed/keys and contracts/managed-vault/keys, pinned by its module, and the stand-in signing key; `npm run compact` then `npm run compact:vault -- --full` build the keys]", () => {
   /*
    * The transaction is built by the SDK's own `createUnprovenCallTxFromInitialStates`
    * against this contract's compiled circuit, exactly as a caller holding every
@@ -468,7 +477,7 @@ describe('the account moves no money of its own', () => {
    */
   const MONEY = /\b(receiveUnshielded|sendUnshielded|mintUnshieldedToken|receiveShielded|sendShielded|sendImmediateShielded|mintShieldedToken|mergeCoin|mergeCoinImmediate|createZswapInput|createZswapOutput|kernel\.(?:mint\w*|claim\w*|inc\w*))\b/g;
 
-  it('only recordPaymentFromVault touches money, and only to receive one receipt', () => {
+  it('only the two vault steps touch money, and each only to receive one receipt', () => {
     const src = readFileSync(CONTRACT_SOURCE, 'utf8');
     /* Every top-level block that runs: each circuit, and the constructor. */
     const starts = [...src.matchAll(/^(?:export )?(?:circuit (\w+)\s*\(|(constructor)\s*\()/gm)];
@@ -479,15 +488,17 @@ describe('the account moves no money of its own', () => {
       if (hits.length) touched[(m[1] ?? m[2])!] = hits;
     });
     /* RED WHEN any circuit, or the constructor, gains a line that moves money. */
-    expect(touched).toEqual({ recordPaymentFromVault: ['receiveUnshielded'] });
+    expect(touched).toEqual({
+      recordPaymentFromVault: ['receiveUnshielded'], approveVaultChange: ['receiveUnshielded'],
+    });
     /* The scan saw every circuit and the constructor, not a truncated file. */
     expect(starts.length).toBeGreaterThan(40);
   });
 
-  it('and the compiled contract agrees: one receive helper, called once', () => {
+  it('and the compiled contract agrees: one receive helper, called once by each', () => {
     const js = readFileSync(join(import.meta.dirname, '..', 'managed', 'contract', 'index.js'), 'utf8');
     /* RED WHEN the compiled contract gains a send, a mint or a second receive. */
     expect(js.match(/this\._(receiveUnshielded|sendUnshielded|mintUnshieldedToken|receiveShielded|sendShielded|mintShieldedToken)_\d+\(/g))
-      .toEqual(['this._receiveUnshielded_0(']);
+      .toEqual(['this._receiveUnshielded_0(', 'this._receiveUnshielded_0(']);
   });
 });

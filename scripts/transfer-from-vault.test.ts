@@ -36,10 +36,9 @@ import {
   payeeAddressFromKeys, unshieldedPayeeAddressFromKeys,
 } from '../src/midnight/payee-address.js';
 import { VAULT_CIRCUITS } from '../src/midnight/vault-contract.js';
-import { assetIdBytes } from '../src/core/assets.js';
+import { NIGHT } from '../src/core/assets.js';
 import { transferFacts, transferOf } from '../src/core/movement.js';
 import { nativeToken } from '@midnight-ntwrk/midnight-js-protocol/ledger';
-import { toHex } from '../src/core/crypto.js';
 import type { VaultEntry } from '../src/midnight/vault-record.js';
 
 const NETWORK = 'stagenet' as never;
@@ -127,7 +126,7 @@ describe('V-168 — the colour a payment moves against the colour a vault holds'
     const transfer = transferOf({
       accountId: 'vault:payroll-test',
       payee: PUBLIC_ADDRESS,
-      asset: 'NIGHT',
+      asset: NIGHT,
       amount: 10n,
       privacy: 'public',
       reference: 'test-payment-1',
@@ -163,7 +162,8 @@ describe('V-168 — the colour a payment moves against the colour a vault holds'
   it('refuses two that disagree, and says the money is not at risk', () => {
     let message = '';
     try {
-      assertColoursAgree(toHex(assetIdBytes('NIGHT')), '00'.repeat(32));
+      /* Two colours that are not one token: a payment's and a vault's that disagree. */
+      assertColoursAgree('ab'.repeat(32), '00'.repeat(32));
     } catch (e: any) { message = String(e?.message); }
     expect(message).toMatch(/REFUSED BY THE VAULT/);
     expect(message).toMatch(/NOTHING IS AT RISK AND NOTHING IS LOST/);

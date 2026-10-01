@@ -13,6 +13,7 @@ import { payeeFor } from '../testing/payees.js';
 import { registryWithTestPrivateForms, aVaultHolding } from '../testing/assets.js';
 import type { User } from './types.js';
 
+import { TEST_TOKEN } from '../testing/assets.js';
 /**
  * **THE FIRST MONEY PATH THIS PRODUCT HAS EVER HAD, WALKED END TO END.**
  * `docs/NEXT.md` X7 §2.
@@ -117,7 +118,7 @@ describe('a founder pays themselves — the first end-to-end money path', () => 
 
     const me = h.payroll.addSelfAsPayee(account.id, founder, {
       name: 'The Founder', email: 'ignored — read off the sign-in', title: 'Founder',
-      asset: 'GBP', baseAmount: 5_500_00n,
+      asset: TEST_TOKEN, baseAmount: 5_500_00n,
     }, viewingKey, {
       wrappingPublicKey: wallet.publicKey,
       address: payeeFor('a1'.repeat(32), 'undeployed'),
@@ -136,7 +137,7 @@ describe('a founder pays themselves — the first end-to-end money path', () => 
     const slip = mine.payslip as { name: string; amount: bigint; asset: string; period: string };
     expect(slip.name).toBe('The Founder');
     expect(slip.amount).toBe(5_500_00n);
-    expect(slip.asset).toBe('GBP');
+    expect(slip.asset).toBe(TEST_TOKEN);
     expect(slip.period).toBe('2026-08');
 
     /*
@@ -202,7 +203,7 @@ describe('a founder pays themselves — the first end-to-end money path', () => 
       /* Nothing on this route says anything about an email, and the service
        * reads the caller's own — which is `null`, because nothing ever asked
        * them for one. */
-      name: 'The Founder', email: null, title: 'Founder', asset: 'GBP', baseAmount: 5_500_00n,
+      name: 'The Founder', email: null, title: 'Founder', asset: TEST_TOKEN, baseAmount: 5_500_00n,
     }, viewingKey, {
       wrappingPublicKey: wallet.publicKey,
       address: payeeFor('b2'.repeat(32), 'undeployed'),
@@ -235,7 +236,7 @@ describe('a founder pays themselves — the first end-to-end money path', () => 
     const { account, viewingKey, company: addr, words, walletOnly } = await walletFounder();
     const spec = {
       name: 'The Founder', email: null, title: 'Founder',
-      asset: 'GBP', baseAmount: 5_500_00n,
+      asset: TEST_TOKEN, baseAmount: 5_500_00n,
     };
     const hand = (b: string) => ({
       wrappingPublicKey: payslipKeypairForWallet(words, addr, ORIGIN).publicKey,
@@ -269,7 +270,7 @@ describe('a founder pays themselves — the first end-to-end money path', () => 
       memberUserIds: [first.walletOnly, second],
     });
     const spec = (name: string) => ({
-      name, email: null, title: 'Founder', asset: 'GBP', baseAmount: 100_00n,
+      name, email: null, title: 'Founder', asset: TEST_TOKEN, baseAmount: 100_00n,
     });
     const hand = (b: string) => ({
       wrappingPublicKey: payslipKeypairForWallet(words, addr, ORIGIN).publicKey,
@@ -292,7 +293,7 @@ describe('a founder pays themselves — the first end-to-end money path', () => 
      */
     const { account, viewingKey, company: addr, words, walletOnly } = await walletFounder();
     const me = h.payroll.addSelfAsPayee(account.id, walletOnly, {
-      name: 'The Founder', email: '', title: 'Founder', asset: 'GBP', baseAmount: 100_00n,
+      name: 'The Founder', email: '', title: 'Founder', asset: TEST_TOKEN, baseAmount: 100_00n,
     }, viewingKey, {
       wrappingPublicKey: payslipKeypairForWallet(words, addr, ORIGIN).publicKey,
       address: payeeFor('b4'.repeat(32), 'undeployed'),
@@ -303,10 +304,10 @@ describe('a founder pays themselves — the first end-to-end money path', () => 
     /* AND THE OTHER DOOR REFUSES ONE BY NAME. An invitation is addressed to
      * somebody, and neither a blank nor a null names anybody. */
     expect(() => h.payroll.invite(account.id, {
-      name: 'Nobody', email: '', title: 'Eng', asset: 'GBP', baseAmount: 100_00n,
+      name: 'Nobody', email: '', title: 'Eng', asset: TEST_TOKEN, baseAmount: 100_00n,
     }, viewingKey, walletOnly)).toThrow(/names nobody/);
     expect(() => h.payroll.invite(account.id, {
-      name: 'Nobody', email: null, title: 'Eng', asset: 'GBP', baseAmount: 100_00n,
+      name: 'Nobody', email: null, title: 'Eng', asset: TEST_TOKEN, baseAmount: 100_00n,
     }, viewingKey, walletOnly)).toThrow(/names nobody/);
   });
 });

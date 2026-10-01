@@ -8,10 +8,8 @@ import { SERVICE_PROXY } from '../../scripts/serve-rules.js';
 /**
  * THE NEW PAYROLL APPLICATION.
  *
- * It is served on the same origin as the application in `src/web-legacy`, one at a
- * time, so the service's sign-in, its cookie and the wallet's framing all see
- * the address they already know. What differs is the folder served and, until
- * a screen needs them, the plugins.
+ * It is served on the application's origin, so the service's sign-in, its
+ * cookie and the wallet's framing all see the address they already know.
  *
  * Tailwind's plugin is the one plugin that changes what the page is built
  * from: the kit's stylesheet is Tailwind, and without it the build stops on
@@ -64,7 +62,10 @@ export const SERVED_FROM = [
 // without its stylesheet rising by the same 1,648 bytes, when the page began to hear the wallet say it is still
 // reading or proving, to say which of the two went quiet or that the ask ran out of time, and to tell the wallet it
 // can hear that (`wallet-sign-in.ts`, `wallet-balance.ts`).
-export const FIRST_DOWNLOAD_BUDGET = 676_000;
+// 678,000: the test's own measure rose from 675,456 to 677,456 on a Linux machine on 1 Oct, when creating a vault
+// began to carry on past the handover (adopting the vault, setting its first secret, writing every signer's copy,
+// waiting on approvals) and every amount on a page began to be named by its token's symbol.
+export const FIRST_DOWNLOAD_BUDGET = 678_000;
 
 /**
  * THE WORKERS THIS APPLICATION STARTS, by their entry's path from this folder,

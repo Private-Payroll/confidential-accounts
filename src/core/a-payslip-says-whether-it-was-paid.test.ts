@@ -26,10 +26,11 @@ import type { ChainReader } from 'vaults-web-shared/payslip-worker-client.js';
 const CIRCUITS: PayslipCircuits = { details: vaultDetails, leafOf: payoutLeafOf, movementOf: paidMovementOfLeaf };
 /** Every slip's address taken as confirmed by the payee's wallet; what an unconfirmed one reads is pinned elsewhere. */
 const CONFIRMED = () => true;
-import { paidWords } from '../web-legacy/YourPay.js';
 import type { User } from './types.js';
 import { payFor } from '../testing/payees.js';
 
+import { runLegOf } from './payroll.js';
+import { TEST_TOKEN, OTHER_TEST_TOKEN } from '../testing/assets.js';
 /**
  * **EACH PAYSLIP SAYS WHETHER IT WAS PAID - "RECORDED AS PAID", "NOT YET" OR
  * "CANNOT TELL" - FROM WHAT THE PAYEE'S OWN DEVICE READ, AND ONLY ITS PAYEE CAN
@@ -82,7 +83,7 @@ type C = Awaited<ReturnType<typeof company>>;
 
 let people = 0;
 /** Invited, accepted with whatever public key the handover carries, and admitted. */
-const hireWithKey = (h: H, c: C, who: string, publicKey: Hex, keyFrom: string, asset = 'GBP') => {
+const hireWithKey = (h: H, c: C, who: string, publicKey: Hex, keyFrom: string, asset = TEST_TOKEN) => {
   people += 1;
   const email = `${who.toLowerCase()}${people}@acme.example`;
   const { sentTo, employee } = h.payroll.invite(c.accountId, {
@@ -101,7 +102,7 @@ const hireWithKey = (h: H, c: C, who: string, publicKey: Hex, keyFrom: string, a
   h.payroll.admit(employee.id, c.viewingKey, 'usr_ada');
   return employee.id;
 };
-const hire = (h: H, c: C, who: string, asset = 'GBP') => {
+const hire = (h: H, c: C, who: string, asset = TEST_TOKEN) => {
   const keys = payslipKeypairForWallet(newWords(), c.label, ORIGIN);
   return { id: hireWithKey(h, c, who, keys.publicKey, c.label, asset), keys };
 };
@@ -113,7 +114,7 @@ const raise = async (h: H, c: C, period: string): Promise<{ runId: string; mater
 };
 
 /** One leg of a run already drawn up, raised with real material. */
-const raiseLeg = async (h: H, c: C, runId: string, asset?: 'GBP' | 'EUR'): Promise<RunMaterial> => {
+const raiseLeg = async (h: H, c: C, runId: string, asset?: string): Promise<RunMaterial> => {
   const inputs = await h.payroll.runMaterialInputs(runId, c.viewingKey, asset);
   const material = await runMaterialFor({
     accountId: inputs.accountId, runId: inputs.runId, seeds: inputs.seeds, facts: inputs.facts, pay: inputs.pay, asset: inputs.asset,
@@ -211,13 +212,6 @@ describe('each payslip says whether it was paid, from the chain', () => {
      * not hold.
      */
     expect(await shown(fetcher, eli.keys, c)).toEqual({ '2026-08': 'not-yet' });
-    /* A rehearsal moved no money, whatever a list says. RED WHEN the chain's word overrides it. */
-    expect(paidWords({ status: 'settled', settledAt: null, wiring: 'simulated' }, 'paid').paid)
-      .toBe('No: a rehearsal, nothing was sent');
-    expect(paidWords({ status: 'proposed', settledAt: null, wiring: 'chain' }, 'paid'))
-      .toEqual({ paid: 'Recorded as paid', onChain: 'Yes' });
-    expect(paidWords({ status: 'proposed', settledAt: null, wiring: 'chain' }, 'not-yet'))
-      .toEqual({ paid: 'Not yet', onChain: 'Not yet' });
   });
 
   it('A CHAIN THAT COULD NOT BE READ READS "CANNOT TELL", NEVER "NOT YET"', async () => {
@@ -249,9 +243,6 @@ describe('each payslip says whether it was paid, from the chain', () => {
     expect((await paymentsOnTheChain(mine.opened, null, INDEXER, CONFIRMED, NOW, REGISTRY, [c.address])).get(mine.opened[0]!.runId))
       .toBe('cannot-tell');
     expect(fetcher.reads).toEqual([]);
-    /* RED WHEN "cannot tell" is put on the screen in the words for "not yet". */
-    expect(paidWords({ status: 'proposed', settledAt: null, wiring: 'chain' }, 'cannot-tell'))
-      .toEqual({ paid: 'Cannot tell', onChain: 'Not known' });
   });
 
   it('A RECEIPT THAT NAMES NO COMPANY ADDRESS READS "CANNOT TELL"', async () => {
@@ -272,13 +263,13 @@ describe('each payslip says whether it was paid, from the chain', () => {
   it('RAISING ONE LEG KEEPS THE OTHER LEG\'S RECEIPTS, AND SHOWS THE STORE NOTHING ABOUT WHO SHARES A LEG', async () => {
     const h = harness();
     const c = await company(h);
-    const staff = [hire(h, c, 'Ann', 'GBP'), hire(h, c, 'Ben', 'EUR'), hire(h, c, 'Cat', 'GBP'), hire(h, c, 'Dev', 'EUR')];
+    const staff = [hire(h, c, 'Ann', TEST_TOKEN), hire(h, c, 'Ben', OTHER_TEST_TOKEN), hire(h, c, 'Cat', TEST_TOKEN), hire(h, c, 'Dev', OTHER_TEST_TOKEN)];
     const { run } = await h.payroll.createRunFromRoster(c.accountId, '2026-08', c.viewingKey);
     const stored = () => h.store.getRun(run.id)!.payslips.map(p => JSON.stringify(p.receipt).length);
     const draft = stored();
-    const eur = await raiseLeg(h, c, run.id, 'EUR');
+    const eur = await raiseLeg(h, c, run.id, OTHER_TEST_TOKEN);
     const afterEur = stored();
-    const pounds = await raiseLeg(h, c, run.id, 'GBP');
+    const pounds = await raiseLeg(h, c, run.id, TEST_TOKEN);
     /*
      * RED WHEN raising a leg writes receipts onto that leg's slips alone: the
      * store would then see which people share an asset. Every slip carries a
@@ -298,13 +289,13 @@ describe('each payslip says whether it was paid, from the chain', () => {
   it('A COMPANY THAT MOVES BETWEEN TWO LEGS SENDS EACH LEG\'S PAYEES TO THE RECORD IT WAS RAISED AT', async () => {
     const h = harness();
     const c = await company(h);
-    const ben = hire(h, c, 'Ben', 'EUR');
-    const cat = hire(h, c, 'Cat', 'GBP');
+    const ben = hire(h, c, 'Ben', OTHER_TEST_TOKEN);
+    const cat = hire(h, c, 'Cat', TEST_TOKEN);
     const { run } = await h.payroll.createRunFromRoster(c.accountId, '2026-08', c.viewingKey);
-    await raiseLeg(h, c, run.id, 'EUR');
+    await raiseLeg(h, c, run.id, OTHER_TEST_TOKEN);
     const moved = 'cd'.repeat(32);
     h.store.putAccount({ ...h.accounts.require(c.accountId), contractAddress: moved });
-    await raiseLeg(h, c, run.id, 'GBP');
+    await raiseLeg(h, c, run.id, TEST_TOKEN);
     const receiptOf = (who: typeof ben) =>
       openPayslip(h.payroll.payslipsFor(who.keys.publicKey, c.label)[0]!, who.keys.secret).receipt!;
     /* Both legs name the one label, which a company keeps wherever its account is. */
@@ -766,7 +757,7 @@ describe('the device builds the value it looks for from what the payee holds, an
     /* RED WHEN the amount is left out of what the device builds: a slip saying more reads paid. */
     expect(await read({ ...slip!, payslip: { ...slip!.payslip, amount: slip!.payslip.amount + 1n } })).toBe('not-yet');
     /* RED WHEN the token is left out: a slip naming another asset reads paid. */
-    expect(await read({ ...slip!, payslip: { ...slip!.payslip, asset: 'EUR' } })).toBe('not-yet');
+    expect(await read({ ...slip!, payslip: { ...slip!.payslip, asset: OTHER_TEST_TOKEN } })).toBe('not-yet');
   });
 
   it('A SLIP WHOSE ADDRESS THE WALLET DID NOT CONFIRM READS "CANNOT TELL" AND ASKS NOTHING', async () => {
@@ -801,7 +792,7 @@ describe('the device builds the value it looks for from what the payee holds, an
     /* RED WHEN a field is added to the receipt, or the old leaf and value come back. */
     expect(Object.keys(JSON.parse(text)).sort()).toEqual(['blinding', 'company', 'label', 'nonce', 'runId', 'until']);
     /* RED WHEN the run's salt reaches the receipt. */
-    const proposalId = h.payroll.requireRun(aug, c.viewingKey).proposalIds.GBP!;
+    const proposalId = h.payroll.requireRun(aug, c.viewingKey).proposalIds[runLegOf(TEST_TOKEN, 'shielded')]!;
     const salt = h.accounts.runSaltOf(proposalId, c.viewingKey);
     expect(text.toLowerCase()).not.toContain(salt.toLowerCase());
     expect(receiptText(h, eli, c.label).toLowerCase()).not.toContain(salt.toLowerCase());
@@ -816,7 +807,7 @@ describe('the device builds the value it looks for from what the payee holds, an
     const payKey = await h.accounts.payRecordKeyOf(c.accountId, c.viewingKey);
     const LATER = BigInt(CLOSES + 86_400);
     const run = h.payroll.requireRun(runId, c.viewingKey);
-    const leg = run.payout!.GBP!;
+    const leg = run.payout![runLegOf(TEST_TOKEN, 'shielded')]!;
     leg.retries = [{
       originalIndices: [0], root: leg.root, payees: 1n, opensAt: BigInt(NOW), closesAt: LATER, vault: VAULT,
       proposedBy: c.by, at: '2026-09-25T00:00:00.000Z',

@@ -272,6 +272,25 @@ export { hex as hexOfBytes };
 
 /* ------------------------------------------------------------ a payment out */
 
+/**
+ * **THE RUN A PAYMENT IS MADE UNDER, AS THE VAULT HANDS IT TO THE ACCOUNT.** The
+ * account checks the payee's leaf against the run's root in the token the vault
+ * actually sends, so the run's asset is that token here. A round that carries
+ * no bar of its own needs none beyond its vault's.
+ */
+const runOf = (
+  order: Omit<PrivatePaymentOrderOnTheWire, 'payments'>, payment: PrivatePaymentOnTheWire,
+) => {
+  const required = (order as { required?: unknown }).required;
+  return {
+    proposal: fromHex(order.proposal), runVault: fromHex(order.vault.toLowerCase()), root: fromHex(order.root),
+    payees: BigInt(order.payees), opensAt: BigInt(order.opensAt), closesAt: BigInt(order.closesAt),
+    required: typeof required === 'string' && DIGITS.test(required) ? BigInt(required) : 0n,
+    salt: fromHex(order.salt), nonce: fromHex(payment.nonce), asset: fromHex(payment.token),
+    path: pathFromWire(payment.path),
+  };
+};
+
 /** A note the pool holds, as it crosses from the page. */
 export interface NoteOnTheWire {
   readonly nonce: string;
@@ -445,11 +464,9 @@ export async function buildPublicPayout(
     initialZswapChainState: L.ZswapChainState.deserialize(input.chain.zswapState),
     ledgerParameters: L.LedgerParameters.deserialize(input.chain.parameters),
     args: [
-      fromHex(order.proposal), fromHex(order.root), BigInt(order.payees),
-      BigInt(order.opensAt), BigInt(order.closesAt), fromHex(order.salt),
+      runOf(order, payment),
       /* The payee's public address in the recipient position, and nothing that could be a coin key. */
-      fromHex(payee.userAddress), fromHex(payment.token), amount,
-      fromHex(payment.blinding), fromHex(payment.nonce), pathFromWire(payment.path),
+      fromHex(payee.userAddress), fromHex(payment.token), amount, fromHex(payment.blinding),
     ],
   }, keys.encryptionPublicKey, {
     blockHash,
@@ -540,6 +557,12 @@ export async function buildPayout(
     readonly note: NoteOnTheWire;
     readonly events: readonly EventOnTheWire[];
     readonly chain: PayoutChain;
+    /**
+     * The vault's current nonce secret, opened on this device from the
+     * company's record of it: the vault names the payee's coin and the change
+     * with it, and checks it against the commitment it holds.
+     */
+    readonly secret: string;
   },
 ): Promise<{ proven: Uint8Array; spent: string; change: NoteOnTheWire | null }> {
   const vault = input.vault.toLowerCase();
@@ -560,6 +583,10 @@ export async function buildPayout(
   /* A payment the leg names as public is never built through the private payout, whatever its address reads as. */
   if (payment.kind !== 'shielded') {
     throw new Error('this payment is not a private one, so it is not built as one. Nothing was built.');
+  }
+  if (typeof input.secret !== 'string' || !HEX64.test(input.secret)) {
+    throw new Error('this device has not opened the vault\'s nonce secret, which a private payment out is made with, '
+      + 'so nothing was built.');
   }
   const payee = payeeAddress(payment.payee, deps.network as NetworkName);
   const amount = BigInt(payment.amount);
@@ -586,7 +613,12 @@ export async function buildPayout(
   /* ONE NOTE, WITH THE INDEX JUST READ: the witness can hand the circuit this note or refuse. */
   const notes = withIndexRead({ notes: [chosen] }, chosen.nonce, index);
   const pending: { spending?: Hex } = {};
-  const compiled = deps.compiledWith(witnessesOver(() => notes, pending));
+  const secret = fromHex(input.secret);
+  const compiled = deps.compiledWith({
+    ...witnessesOver(() => notes, pending),
+    /* The vault's secret, for this one call; the vault refuses one that is not the secret it holds. */
+    nonceSecret: (ctx: unknown) => [ctx, secret],
+  } as ReturnType<typeof witnessesOver>);
 
   const L = deps.ledger;
   const accountState = deps.runtimeState.deserialize(input.chain.accountState);
@@ -601,10 +633,8 @@ export async function buildPayout(
     initialZswapChainState: L.ZswapChainState.deserialize(input.chain.zswapState),
     ledgerParameters: L.LedgerParameters.deserialize(input.chain.parameters),
     args: [
-      fromHex(order.proposal), fromHex(order.root), BigInt(order.payees),
-      BigInt(order.opensAt), BigInt(order.closesAt), fromHex(order.salt),
-      fromHex(payee.coinPublicKey), fromHex(payment.token), amount,
-      fromHex(payment.blinding), fromHex(payment.nonce), pathFromWire(payment.path),
+      runOf(order, payment),
+      fromHex(payee.coinPublicKey), fromHex(payment.token), amount, fromHex(payment.blinding),
     ],
     /* The payee's wallet reads the payment with this key; it came out of the same decode as the coin key. */
     additionalCoinEncPublicKeyMappings: new Map([[payee.coinPublicKey, payee.encryptionPublicKey]]),
@@ -626,4 +656,147 @@ export async function buildPayout(
     spent: chosen.nonce,
     change: kept === undefined ? null : { nonce: kept.nonce, token: kept.token, value: kept.value.toString() },
   };
+}
+
+/* ------------------------------------------------------------ starting a vault */
+
+/**
+ * **THE FIRST SECRET RUN AS IT CROSSES BETWEEN THE PAGE AND THIS WORKER**: every
+ * number as decimal digits and every value as hex. It is made in this worker
+ * from the secret the page opened (`vault-start.ts`), and the page hands it back
+ * unchanged for each step it builds.
+ */
+export interface SecretRunOnTheWire {
+  readonly vault: string;
+  readonly previous: string;
+  readonly commitment: string;
+  readonly copiesRoot: string;
+  readonly count: string;
+  readonly details: string;
+  readonly nonce: string;
+  readonly salt: string;
+  readonly asset: string;
+  readonly root: string;
+  readonly payees: string;
+  readonly path: ReadonlyArray<{ readonly sibling: string; readonly siblingSum: string; readonly goesLeft: boolean }>;
+  readonly copies: ReadonlyArray<{
+    readonly reader: string;
+    readonly parts: readonly string[];
+    readonly path: ReadonlyArray<{ readonly sibling: string; readonly goesLeft: boolean }>;
+  }>;
+}
+
+const digitsOf = (what: string, d: unknown): bigint => {
+  if (typeof d !== 'string' || !DIGITS.test(d)) throw new Error(`the secret run's ${what} is not a whole number, so nothing was built.`);
+  return BigInt(d);
+};
+const hex32Of = (what: string, h: unknown): Uint8Array => {
+  if (typeof h !== 'string' || !HEX64.test(h)) throw new Error(`the secret run's ${what} is not thirty-two bytes, so nothing was built.`);
+  return fromHex(h);
+};
+
+/**
+ * **THE VAULT'S FIRST NONCE SECRET SET, UNDER THE RUN ITS SIGNERS APPROVED.** The
+ * vault asks the account's `approveVaultChange` inside the same call, against
+ * the account's state as the same block saw it, and the account refuses unless
+ * the run is open, approved at the vault's bar, and holds this change as its one
+ * leaf. No coin moves; the vault mints the account one change receipt.
+ */
+export async function buildSetNonceSecret(
+  deps: VaultBuilderDeps,
+  input: {
+    readonly vault: string;
+    readonly account: string;
+    readonly run: SecretRunOnTheWire;
+    readonly proposal: string;
+    readonly opensAt: string;
+    readonly closesAt: string;
+    readonly chain: PayoutChain;
+  },
+): Promise<{ proven: Uint8Array }> {
+  const vault = String(input.vault).toLowerCase();
+  const account = String(input.account).toLowerCase();
+  const r = input.run;
+  if (!HEX64.test(vault) || !HEX64.test(account) || String(r?.vault).toLowerCase() !== vault) {
+    throw new Error('this secret is not for this vault and this company\'s account, so nothing was built.');
+  }
+  const run = {
+    proposal: hex32Of('identity', input.proposal), runVault: fromHex(vault), root: hex32Of('root', r.root),
+    payees: digitsOf('number of leaves', r.payees), opensAt: digitsOf('opening', input.opensAt),
+    closesAt: digitsOf('close', input.closesAt), required: 0n, salt: hex32Of('salt', r.salt),
+    nonce: hex32Of('nonce', r.nonce), asset: hex32Of('asset', r.asset),
+    path: r.path.map((s) => ({ sibling: digitsOf('path', s.sibling), siblingSum: digitsOf('path', s.siblingSum), goesLeft: s.goesLeft === true })),
+  };
+  const L = deps.ledger;
+  const accountState = deps.runtimeState.deserialize(input.chain.accountState);
+  const blockHash = input.chain.blockHash;
+  const keys = throwawayKeys(deps);
+  const built = await deps.contracts.createUnprovenCallTxFromInitialStates(deps.zkConfig, {
+    compiledContract: deps.compiled,
+    circuitId: 'setNonceSecret',
+    contractAddress: vault,
+    coinPublicKey: keys.coinPublicKey,
+    initialContractState: deps.runtimeState.deserialize(input.chain.vaultState),
+    initialZswapChainState: L.ZswapChainState.deserialize(input.chain.zswapState),
+    ledgerParameters: L.LedgerParameters.deserialize(input.chain.parameters),
+    args: [
+      run, hex32Of('previous secret', r.previous), hex32Of('commitment', r.commitment),
+      hex32Of('root of copies', r.copiesRoot), digitsOf('number of copies', r.count),
+    ],
+  }, keys.encryptionPublicKey, {
+    blockHash,
+    publicDataProvider: {
+      queryContractState: async (address: unknown, at?: { blockHash?: string }) =>
+        (String(address).toLowerCase() === account && at?.blockHash === blockHash ? accountState : null),
+    },
+  });
+  const proven = await deps.prove(built.private.unprovenTx, 'setNonceSecret');
+  return { proven: proven.serialize() };
+}
+
+/**
+ * **ONE SIGNER'S SEALED COPY OF THE SECRET, WRITTEN INTO THE VAULT** against the
+ * root of copies its signers approved. Anyone may write one; only a copy under
+ * that root is taken, and each place in the tree once.
+ */
+export async function buildWriteSecretCopy(
+  deps: VaultBuilderDeps,
+  input: {
+    readonly vault: string;
+    readonly run: SecretRunOnTheWire;
+    /** Which copy of the run, by its place in the tree. */
+    readonly place: number;
+    readonly state: Uint8Array;
+    readonly parameters: Uint8Array;
+  },
+): Promise<{ proven: Uint8Array }> {
+  const vault = String(input.vault).toLowerCase();
+  const copy = input.run?.copies?.[input.place];
+  if (!HEX64.test(vault) || String(input.run?.vault).toLowerCase() !== vault || copy === undefined) {
+    throw new Error('this sealed copy is not one of this vault\'s secret run, so nothing was built.');
+  }
+  if (!Array.isArray(copy.parts) || copy.parts.length !== 4) {
+    throw new Error('a sealed copy is four parts, and this is not, so nothing was built.');
+  }
+  if (!(input.parameters instanceof Uint8Array) || input.parameters.length === 0) {
+    throw new Error('the chain\'s current ledger parameters were not handed over, so nothing was built or sent.');
+  }
+  const L = deps.ledger;
+  const keys = throwawayKeys(deps);
+  const built = await deps.contracts.createUnprovenCallTxFromInitialStates(deps.zkConfig, {
+    compiledContract: deps.compiled,
+    circuitId: 'writeSecretCopy',
+    contractAddress: vault,
+    coinPublicKey: keys.coinPublicKey,
+    initialContractState: deps.runtimeState.deserialize(input.state),
+    initialZswapChainState: new L.ZswapChainState(),
+    ledgerParameters: L.LedgerParameters.deserialize(input.parameters),
+    args: [
+      hex32Of('commitment', input.run.commitment), hex32Of('reader key', copy.reader),
+      copy.parts.map((p) => hex32Of('sealed copy', p)),
+      copy.path.map((s) => ({ sibling: digitsOf('path', s.sibling), goesLeft: s.goesLeft === true })),
+    ],
+  }, keys.encryptionPublicKey);
+  const proven = await deps.prove(built.private.unprovenTx, 'writeSecretCopy');
+  return { proven: proven.serialize() };
 }

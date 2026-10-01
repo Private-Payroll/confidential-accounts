@@ -39,7 +39,7 @@ const read = (p: string): Source => ({ path: p, text: readFileSync(ROOT + p, 'ut
 const OWN = filesUnder(ROOT, 'apps/web/src', isShippingCode).map(read);
 const CONFIG = read('apps/web/vite.config.ts');
 const STYLE = filesUnder(ROOT, 'apps/web', (p) => /\.(css|html)$/.test(p) && !p.includes('/dist/')).map(read);
-const CODES = new Set(SEED_ASSETS.map((a) => a.code));
+const CODES = new Set(SEED_ASSETS.map((a) => a.symbol));
 const LOCALES = 'apps/web/src/locales';
 const languageFiles = () => readdirSync(ROOT + LOCALES).filter((n) => n.endsWith('.json')).sort();
 const messagesOf = (name: string) => JSON.parse(readFileSync(`${ROOT}${LOCALES}/${name}`, 'utf8')) as Record<string, string>;

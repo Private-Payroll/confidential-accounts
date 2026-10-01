@@ -6,7 +6,7 @@ import type { PaymentFacts } from '../midnight/payout-tree.js';
 import type { SkipRegister } from '../midnight/run-skips.js';
 
 export type { PayoutSeed };
-import type { AssetId } from './assets.js';
+import type { AssetId, LedgerForm } from './assets.js';
 import type { AddressSource } from './ledger.js';
 import type { WiringName } from './provenance.js';
 
@@ -1147,6 +1147,15 @@ export interface PluginEvent {
   at: string;
 }
 
+/**
+ * **ONE LEG OF A PAYROLL RUN: ONE LEDGER TOKEN, IN ONE FORM**, written
+ * `<token>:<form>`. One run pays one token in one form, so a payroll whose
+ * payees include both private and public addresses is two legs, raised side by
+ * side and each approved on its own. Built and read by the leg helpers in
+ * `payroll.ts`.
+ */
+export type RunLeg = string;
+
 export interface Employee {
   id: string;
   name: string;
@@ -1155,6 +1164,12 @@ export interface Employee {
   /** What actually moves for this person on this run, and in what. */
   asset: AssetId;
   amount: bigint;
+  /**
+   * The form this person is paid in, settled by their address when the run
+   * was drawn: which leg of the run they are on. Absent on a run drawn before
+   * it was kept, where it is read as private.
+   */
+  form?: LedgerForm;
   /**
    * Where this person is paid, as their payslip on this run names it. Absent
    * for somebody with no roster entry, and on a run drawn before it was kept.
@@ -1201,12 +1216,12 @@ export interface PayrollRun {
     receipt?: { wrapped: { ephemeral: Hex } & Sealed; sealed: Sealed };
   }>;
   /**
-   * A SUBTOTAL PER ASSET, never one total, and that is a correctness change
+   * A SUBTOTAL PER TOKEN, never one total, and that is a correctness change
    * rather than a presentation one.
    *
    * `total: number` was the sum of every line on the run. Across mixed
-   * currencies that is a number with no unit — adding 5,000 GBP to 5,000 USDC
-   * and displaying 10,000 is not an approximation, it is meaningless, and the
+   * tokens that is a number with no unit: adding 5,000 of one token to 5,000
+   * of another and displaying 10,000 is not an approximation, it is meaningless, and the
    * sufficiency check that used it ("does the account hold enough") would pass
    * or fail for reasons unrelated to whether it does.
    *
@@ -1216,15 +1231,13 @@ export interface PayrollRun {
   totals: Record<AssetId, bigint>;
   status: 'draft' | 'proposed' | 'settled';
   /**
-   * One proposal per settlement asset, because a proposal's change commitment
-   * names ONE asset key and `execute`, which moved one balance per round, was
-   * what made that a settlement rule. It was deleted, so nothing on chain opens
-   * the change commitment and nothing refuses a mixed round at that layer; the
-   * refusal that is left is the application's, in `AccountService.oneAssetOf`.
-   * A single-currency run has one entry, which is every run today; a run paying
-   * in dollars and pounds has two.
+   * One proposal per leg: one token in one form. A proposal's change
+   * commitment names ONE asset key, and one run pays one token in one form, so
+   * a payroll paying private and public payees has two entries, one per form,
+   * each its own approval round. `AccountService.oneAssetOf` refuses a mixed
+   * token and `buildRun` a mixed form.
    */
-  proposalIds: Record<AssetId, string>;
+  proposalIds: Record<RunLeg, string>;
   /**
    * **WHAT EACH LEG OF THIS RUN WAS RAISED AGAINST, KEPT SO IT CAN BE PAID AND
    * REPORTED ON.**
@@ -1233,15 +1246,15 @@ export interface PayrollRun {
    * before the product could build any — which is why every reader handles the
    * absence rather than assuming a shape.
    *
-   * **PER SETTLEMENT ASSET, NOT PER RUN, AND THAT IS NOT A DETAIL.** A root, a
-   * leaf count, a window and a vault are properties of ONE APPROVAL, and a run
-   * that pays some people in pounds and some in dollars is two approvals over
+   * **PER LEG, NOT PER RUN, AND THAT IS NOT A DETAIL.** A root, a leaf
+   * count, a window and a vault are properties of ONE APPROVAL, and a payroll
+   * that pays some people privately and some publicly is two approvals over
    * two trees. Held per run, the second leg would overwrite the first, and a
    * payment view built from what survived would report every payee of that leg
    * paid and call the run complete while nobody in the other leg had their
    * money.
    */
-  payout?: Record<AssetId, RunPayout>;
+  payout?: Record<RunLeg, RunPayout>;
   /**
    * **WHO THIS RUN LEFT OUT ON PURPOSE, AND ON WHOSE SAY-SO.**
    *

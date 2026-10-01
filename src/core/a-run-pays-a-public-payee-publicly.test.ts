@@ -20,16 +20,16 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 
 import { AccountService } from './account.js';
-import { PayrollService, RecordingInviteDelivery } from './payroll.js';
+import { PayrollService, RecordingInviteDelivery, runLegOf } from './payroll.js';
 import { SimulatedLedger, SimulatedProofSystem } from './ledger.js';
 import { MidnightCommitments } from '../midnight/commitments.js';
 import { runMaterialFor } from '../midnight/run-material.js';
 import { vaultDetails } from '../testing/vault-details.js';
-import { registryWithTestPrivateForms, testPrivateToken } from '../testing/assets.js';
+import { registryWithTestPrivateForms, TEST_TOKEN } from '../testing/assets.js';
 import { unshieldedPayeeFor } from '../testing/payees.js';
 import { sealHandover } from './invite-handover.js';
 import { FileStore } from './store-file.js';
-import { StaticAssetRegistry, type AssetRegistry, type LedgerForm } from './assets.js';
+import { NIGHT, type AssetRegistry, type LedgerForm } from './assets.js';
 import { newWrappingKeypair, toHex } from './crypto.js';
 import type { VaultHoldings } from './vault-holdings.js';
 import type { DetailsOfKind } from '../midnight/payout-tree.js';
@@ -43,13 +43,8 @@ const CLOSES = BigInt(NOW + 3_600);
 const SEPTEMBER = '2026-09';
 const ROBIN = unshieldedPayeeFor('e5'.repeat(32), NETWORK);
 
-/** The product's rows with the test private forms, and, when asked, NIGHT given a private form as well. */
-const registryWith = (nightBothWays = false): AssetRegistry => {
-  const base = registryWithTestPrivateForms();
-  if (!nightBothWays) return base;
-  return new StaticAssetRegistry(base.all().map(a => (a.code === 'NIGHT'
-    ? { ...a, ledger: { ...a.ledger, shielded: testPrivateToken('NIGHT') } } : a)));
-};
+/** The product's rows, and the fixture tokens with both forms. */
+const registryWith = (): AssetRegistry => registryWithTestPrivateForms();
 
 /** A vault holding this much in each form, and a record of every question it was asked. */
 const aVaultHoldingEach = (held: Record<LedgerForm, bigint>) => {
@@ -61,12 +56,12 @@ const aVaultHoldingEach = (held: Record<LedgerForm, bigint>) => {
   return { holdings, reads };
 };
 
-const aCompany = async (opts: { held?: Record<LedgerForm, bigint>; nightBothWays?: boolean } = {}) => {
+const aCompany = async (opts: { held?: Record<LedgerForm, bigint> } = {}) => {
   const dir = mkdtempSync(join(tmpdir(), 'mn-s204-'));
   const file = join(dir, 'db.json');
   const ledger = new SimulatedLedger(MidnightCommitments);
   const vault = aVaultHoldingEach(opts.held ?? { shielded: 1n << 100n, unshielded: 1n << 100n });
-  const registry = registryWith(opts.nightBothWays);
+  const registry = registryWith();
   const invites = new RecordingInviteDelivery();
   const servicesOver = (f: string) => {
     const store = new FileStore(f);
@@ -104,10 +99,10 @@ const aCompany = async (opts: { held?: Record<LedgerForm, bigint>; nightBothWays
   return { ...s, ledger, vault, invites, viewingKey, account, by, openRounds, materialFor, snapshot };
 };
 
-/** Robin, hired through the ordinary invitation in NIGHT, handing over a public address from their own device. */
-const hireRobin = (c: Awaited<ReturnType<typeof aCompany>>, baseAmount = 500_000n) => {
+/** Robin, hired through the ordinary invitation (in NIGHT unless said), handing over a public address from their own device. */
+const hireRobin = (c: Awaited<ReturnType<typeof aCompany>>, baseAmount = 500_000n, asset: string = NIGHT) => {
   const { sentTo } = c.payroll.invite(c.account, {
-    name: 'Robin', email: 'robin@acme.example', title: 'Contractor', asset: 'NIGHT', baseAmount,
+    name: 'Robin', email: 'robin@acme.example', title: 'Contractor', asset, baseAmount,
   }, c.viewingKey, 'usr_founder');
   const token = c.invites.tokenFor(sentTo!);
   c.store.putUser({
@@ -123,14 +118,14 @@ const hireRobin = (c: Awaited<ReturnType<typeof aCompany>>, baseAmount = 500_000
   return c.payroll.admit(pending.id, c.viewingKey, 'usr_founder');
 };
 
-const NIGHT_PUBLIC = (r: AssetRegistry) => r.require('NIGHT').ledger.unshielded!;
+const NIGHT_PUBLIC = (r: AssetRegistry) => r.require(NIGHT).ledger.unshielded!;
 
 describe('1. A PUBLIC PAYEE IS HIRED, DRAWN ONTO A RUN AND RAISED TO BE PAID PUBLICLY', () => {
   it('through the ordinary invitation, with the leaf built by the vault\'s public details circuit', async () => {
     const c = await aCompany();
     const robin = hireRobin(c);
     /* RED WHEN: hiring refuses a public address, or a public asset. */
-    expect([robin.status, robin.address?.kind, robin.asset]).toEqual(['active', 'unshielded', 'NIGHT']);
+    expect([robin.status, robin.address?.kind, robin.asset]).toEqual(['active', 'unshielded', NIGHT]);
 
     /* RED WHEN: the draw refuses Robin because the address is public. */
     const { run } = await c.payroll.createRunFromRoster(c.account, SEPTEMBER, c.viewingKey);
@@ -159,36 +154,63 @@ describe('2. A PRIVATE PAYEE ON THE SAME RUN IS STILL PAID PRIVATELY', () => {
     const c = await aCompany();
     hireRobin(c);
     c.payroll.hireDirect(c.account, {
-      name: 'Dana', email: 'dana@acme.example', title: 'Eng', asset: 'GBP', baseAmount: 100_00n,
+      name: 'Dana', email: 'dana@acme.example', title: 'Eng', asset: TEST_TOKEN, baseAmount: 100_00n,
     }, c.viewingKey);
     const { run } = await c.payroll.createRunFromRoster(c.account, SEPTEMBER, c.viewingKey);
     const kinds = async (asset: string) => (await c.payroll.runMaterialInputs(run.id, c.viewingKey, asset as never)).facts
       .map(f => [f.payee.kind, f.token]);
     /* RED WHEN: a private payee is built as public because somebody else on the run is. */
-    expect(await kinds('GBP')).toEqual([['shielded', registryWith().require('GBP').ledger.shielded]]);
-    expect(await kinds('NIGHT')).toEqual([['unshielded', NIGHT_PUBLIC(registryWith())]]);
+    expect(await kinds(TEST_TOKEN)).toEqual([['shielded', registryWith().require(TEST_TOKEN).ledger.shielded]]);
+    expect(await kinds(NIGHT)).toEqual([['unshielded', NIGHT_PUBLIC(registryWith())]]);
   });
 
-  it('and beside a public payee in ONE leg, when one asset has both forms, each in its own form and token', async () => {
-    const c = await aCompany({ nightBothWays: true });
-    hireRobin(c);
-    c.payroll.hireDirect(c.account, {
-      name: 'Dana', email: 'dana@acme.example', title: 'Eng', asset: 'NIGHT', baseAmount: 300_000n,
-    }, c.viewingKey);
+  it('A PAYROLL WITH BOTH KINDS OF PAYEE IN ONE TOKEN IS TWO RUNS SIDE BY SIDE, EVERY PERSON ON EXACTLY ONE, EACH RAISED ON ITS OWN', async () => {
+    /* One token with both forms: Robin hands over a public address, Dana and Eve are paid privately. */
+    const c = await aCompany();
+    hireRobin(c, 500_000n, TEST_TOKEN);
+    for (const name of ['Dana', 'Eve']) {
+      c.payroll.hireDirect(c.account, {
+        name, email: `${name.toLowerCase()}@acme.example`, title: 'Eng', asset: TEST_TOKEN, baseAmount: 300_000n,
+      }, c.viewingKey);
+    }
     const { run } = await c.payroll.createRunFromRoster(c.account, SEPTEMBER, c.viewingKey);
-    /* One asset, so one leg and one approval. */
-    expect(Object.keys(run.totals)).toEqual(['NIGHT']);
-    const registry = registryWith(true);
-    const facts = (await c.payroll.runMaterialInputs(run.id, c.viewingKey)).facts;
-    /* RED WHEN: one leg's payees are all given one form - one of the two is then paid the other way. */
-    expect(facts.map(f => [f.payee.kind, f.token]).sort()).toEqual([
-      ['shielded', registry.require('NIGHT').ledger.shielded],
-      ['unshielded', registry.require('NIGHT').ledger.unshielded],
-    ].sort());
-    await c.payroll.proposeRun(run.id, c.viewingKey, c.by, await c.materialFor(c.payroll, run.id));
-    /* RED WHEN: a mixed leg is asked about only one of the vault's two kinds of money. */
-    expect(c.vault.reads.map(r => r.form).sort()).toEqual(['shielded', 'unshielded']);
-    expect(await c.openRounds()).toBe(1);
+    const privately = runLegOf(TEST_TOKEN, 'shielded');
+    const publicly = runLegOf(TEST_TOKEN, 'unshielded');
+
+    /* RED WHEN: a payroll with both kinds of payee is drawn as one run, which would mix forms in one approval. */
+    const legs = c.payroll.legsOf(run.id, c.viewingKey);
+    expect(legs.map(l => [l.leg, l.form, l.symbol, l.total])).toEqual([
+      [privately, 'shielded', 'tPAY', 600_000n],
+      [publicly, 'unshielded', 'tPAY', 500_000n],
+    ].sort((a, b) => String(a[0]).localeCompare(String(b[0]))));
+    /* RED WHEN: somebody is on both runs, or on neither - paid twice, or never. */
+    const onALeg = legs.flatMap(l => l.people);
+    expect(onALeg.slice().sort()).toEqual(run.employees.map(e => e.id).sort());
+    expect(new Set(onALeg).size).toBe(run.employees.length);
+    const robinId = run.employees.find(e => e.name === 'Robin')!.id;
+    expect(legs.find(l => l.leg === publicly)!.people).toEqual([robinId]);
+
+    /* RED WHEN: a raise that does not say which run is let through and picks one. */
+    await expect(c.payroll.runMaterialInputs(run.id, c.viewingKey))
+      .rejects.toThrow(/^This run has two sets of payments: private tPAY and public tPAY\. Each is approved on its own\. Choose which to send for approval\.$/);
+    await expect(c.payroll.runMaterialInputs(run.id, c.viewingKey, TEST_TOKEN))
+      .rejects.toThrow(/^This run pays tPAY both privately and publicly\. Each is approved on its own\. Say whether you mean the private or the public payments\.$/);
+
+    /* Each run's payments are all of its own form, in the token. */
+    const kinds = async (leg: string) => (await c.payroll.runMaterialInputs(run.id, c.viewingKey, leg)).facts
+      .map(f => [f.payee.kind, f.token]);
+    expect(await kinds(privately)).toEqual([['shielded', TEST_TOKEN], ['shielded', TEST_TOKEN]]);
+    expect(await kinds(publicly)).toEqual([['unshielded', TEST_TOKEN]]);
+
+    /* Each is raised on its own, asking the vault about its own form only, and each is its own approval round. */
+    await c.payroll.proposeRun(run.id, c.viewingKey, c.by, await c.materialFor(c.payroll, run.id, publicly), publicly);
+    expect(c.vault.reads.map(r => r.form)).toEqual(['unshielded']);
+    await c.payroll.proposeRun(run.id, c.viewingKey, c.by, await c.materialFor(c.payroll, run.id, privately), privately);
+    expect(c.vault.reads.map(r => r.form)).toEqual(['unshielded', 'shielded']);
+    expect(await c.openRounds()).toBe(2);
+    const proposed = c.payroll.requireRun(run.id, c.viewingKey).proposalIds;
+    expect(Object.keys(proposed).sort()).toEqual([privately, publicly].sort());
+    expect(proposed[privately]).not.toBe(proposed[publicly]);
   });
 });
 

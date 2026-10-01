@@ -38,7 +38,8 @@ import {
   Contract as Vault, ledger as vaultLedger, pureCircuits as vaultCircuits,
 } from '../managed-vault/contract/index.js';
 import { pureCircuits } from '../managed/contract/index.js';
-import { AccountSimulator, privateStateFor, change, type Change, payoutTreeOf } from './simulator.js';
+import { AccountSimulator, privateStateFor, change, type Change, payoutTreeOf, vaultRunOf } from './simulator.js';
+import { carryTheAccount, startTheVault, TEST_VAULT_SECRET } from './start-a-vault.js';
 import { buildPayoutTree, type PayoutLeafInput } from '../../src/midnight/payout-tree.js';
 import { changeCoinOf, paidCoinTo } from '../../src/midnight/vault-coins.js';
 import {
@@ -54,7 +55,6 @@ import {
 } from '../../src/midnight/note-index.js';
 import { notesNeedingATransaction, whatTheRebuildWrites } from '../../scripts/reconcile-vault-pool-rules.js';
 import { toHex, fromHex, type Hex } from '../../src/core/crypto.js';
-import { itPaysOutOfTodaysVault } from './until-the-vault-pays-with-a-receipt.js';
 
 /*
  * THE CLOCK AND THE RUN'S WINDOW. Payments assert they fall inside the
@@ -70,7 +70,7 @@ const bytes = (n: number) => new Uint8Array(32).fill(n);
 
 const A = privateStateFor(1);
 const B = privateStateFor(2);
-const GBP = bytes(0x9b);
+const TOKEN_BYTES = bytes(0x9b);
 const ALICE = bytes(0x0a);
 const BOB = bytes(0x0b);
 const CAROL = bytes(0x0c);
@@ -103,6 +103,7 @@ const vaultWitnesses = {
       nonce: fromHex(n.nonce), color: fromHex(n.token), value: n.value, mt_index: n.index,
     }];
   },
+  nonceSecret: (ctx: { privateState: { secret?: Uint8Array } }) => [ctx.privateState, ctx.privateState.secret ?? new Uint8Array(32).fill(0x51)],
 };
 
 /**
@@ -131,8 +132,8 @@ describe('a vault whose pool is gone, and the chain that still knows', () => {
   /* TWO notes, of one token. A vault holding two notes of a token is the normal
    * case, not a mess to tidy — `Vault.compact`'s own words, and the whole of
    * what the function this replaces could not model. */
-  const FIRST = { nonce: toHex(bytes(0x77)), token: toHex(GBP), value: 1_000n };
-  const SECOND = { nonce: toHex(bytes(0x88)), token: toHex(GBP), value: 400n };
+  const FIRST = { nonce: toHex(bytes(0x77)), token: toHex(TOKEN_BYTES), value: 1_000n };
+  const SECOND = { nonce: toHex(bytes(0x88)), token: toHex(TOKEN_BYTES), value: 400n };
 
   const provider = () => ({
     getContractState: async (_b: string, address: unknown) =>
@@ -213,6 +214,17 @@ describe('a vault whose pool is gone, and the chain that still knows', () => {
       createConstructorContext({} as VaultPrivate, BLOCK),
       { bytes: Uint8Array.from(Buffer.from(String(sim.address), 'hex')) } as never);
     vaultState = init.currentContractState;
+    /* A vault takes no money until the account has adopted it and approved its first secret. */
+    await startTheVault({
+      sim, vault: Uint8Array.from(Buffer.from(String(vaultAddr), 'hex')), approvers: [A, B], now: VAULT_NOW,
+      call: async (circuit, ...a) => {
+        const r: any = await (vault.impureCircuits as any)[circuit](createCircuitContext(
+          circuit as never, vaultAddr as never, BLOCK, vaultState, {} as never,
+          provider() as never, undefined, undefined, VAULT_NOW, BLOCK), ...a);
+        vaultState = r.context.callContext.currentQueryContext.state;
+        carryTheAccount(sim, r.context);
+      },
+    });
 
     priv = { notes: [] };
     chainLog = [];
@@ -226,10 +238,10 @@ describe('a vault whose pool is gone, and the chain that still knows', () => {
     payments: Array<{ to: Uint8Array; amount: bigint; nonce: number }>, c: Change,
   ) => {
     const leaves: PayoutLeafInput[] = payments.map((p, i) => ({
-      details: toHex(vaultCircuits.payoutDetails(p.to, GBP, p.amount, bytes(0x40 + i))),
+      details: toHex(vaultCircuits.payoutDetails(p.to, TOKEN_BYTES, p.amount, bytes(0x40 + i))),
       nonce: toHex(bytes(p.nonce)),
     }));
-    const tree = payoutTreeOf(leaves);
+    const tree = payoutTreeOf(leaves, payments.map((p) => p.amount), TOKEN_BYTES);
     const payload = pureCircuits.runPayload(
       fromHex(tree.root), tree.payees, WIN_FROM, WIN_UNTIL, 0n);
     const vaultBytes = Uint8Array.from(Buffer.from(vaultAddr, 'hex'));
@@ -242,18 +254,61 @@ describe('a vault whose pool is gone, and the chain that still knows', () => {
     return { tree, id };
   };
 
+  /**
+   * Splits `amount` off the note the device's pool offers for it, under a run the
+   * signers approved for exactly that note and that piece. Returns the call.
+   */
+  const splitOff = async (amount: bigint, seed: number) => {
+    const n = smallestNoteCovering(priv.notes, toHex(TOKEN_BYTES), amount)!;
+    const vaultBytes = Uint8Array.from(Buffer.from(vaultAddr, 'hex'));
+    const spent = vaultCircuits.noteNullifierOf(vaultBytes, { nonce: fromHex(n.nonce), color: fromHex(n.token), value: n.value });
+    const leaves: PayoutLeafInput[] = [{
+      details: toHex(vaultCircuits.splitDetails(vaultBytes, spent, TOKEN_BYTES, amount)), nonce: toHex(bytes(seed)),
+    }];
+    const c = change(0n, seed);
+    const tree = payoutTreeOf(leaves, [0n], TOKEN_BYTES);
+    await sim.as(carrying(sim, A, c)).proposeRun({
+      root: fromHex(tree.root), payees: tree.payees, from: WIN_FROM, until: WIN_UNTIL, vault: vaultBytes });
+    const id = sim.proposalId(pureCircuits.runPayload(fromHex(tree.root), tree.payees, WIN_FROM, WIN_UNTIL, 0n), c.salt, vaultBytes);
+    await sim.as(carrying(sim, A, c)).approve(id);
+    await sim.as(carrying(sim, B, c)).approve(id);
+    const r = await vault.impureCircuits.splitNote(ctx('splitNote'), vaultRunOf({
+      proposal: id, vault: vaultBytes, tree, i: 0, opensAt: WIN_FROM, closesAt: WIN_UNTIL, salt: c.salt, nonce: bytes(seed),
+    }), TOKEN_BYTES, amount);
+    vaultState = r.context.callContext.currentQueryContext.state;
+    carryTheAccount(sim, r.context);
+    return r;
+  };
+
   /** One payee of an approved run. Returns the call, and does NOT touch the pool. */
   const pay = async (
     run: { tree: ReturnType<typeof buildPayoutTree>; id: Uint8Array }, c: Change,
     i: number, to: Uint8Array, amount: bigint, nonce: number,
   ) => {
     const r = await vault.impureCircuits.payout(
-      ctx('payout'), run.id, fromHex(run.tree.root), run.tree.payees, WIN_FROM, WIN_UNTIL,
-      c.salt, to, GBP, amount, bytes(0x40 + i), bytes(nonce), run.tree.pathFor(i) as never);
+      ctx('payout'),
+      vaultRunOf({
+        proposal: run.id, vault: Uint8Array.from(Buffer.from(vaultAddr, 'hex')), tree: run.tree, i,
+        opensAt: WIN_FROM, closesAt: WIN_UNTIL, salt: c.salt, nonce: bytes(nonce),
+      }),
+      to, TOKEN_BYTES, amount, bytes(0x40 + i));
     vaultState = r.context.callContext.currentQueryContext.state;
     logCall(r);
     return r;
   };
+
+  /*
+   * **THE VAULT'S NONCE SECRET, AS A DEVICE SUPPLIES IT**: every secret the
+   * company's record holds, and the commitment the vault holds now. This vault
+   * was started under `TEST_VAULT_SECRET` and every payment and split below was
+   * made under it.
+   */
+  const nonceSecrets = () => ({
+    secrets: [toHex(TEST_VAULT_SECRET)],
+    commitment: toHex(vaultLedger(vaultState as never).nonceCommitment),
+  });
+  /** What names a coin this vault made from a note it spent. */
+  const under = () => ({ circuits: vaultCircuits, vault: vaultAddr as Hex, secret: toHex(TEST_VAULT_SECRET) });
 
   const recover = (history: VaultEvent[], pool: readonly Note[]) => replayVault({
     vault: vaultAddr as Hex,
@@ -261,6 +316,7 @@ describe('a vault whose pool is gone, and the chain that still knows', () => {
     pool,
     history,
     circuits: vaultCircuits,
+    nonceSecrets: nonceSecrets(),
   });
 
   /** The history that produced the two notes every test starts from. */
@@ -273,7 +329,7 @@ describe('a vault whose pool is gone, and the chain that still knows', () => {
    * deposit
    * ---------------------------------------------------------------- */
 
-  itPaysOutOfTodaysVault('WINDOW TWO, DEPOSIT: the chain took the note, the pool never learned — and it SPENDS', async () => {
+  it('WINDOW TWO, DEPOSIT: the chain took the note, the pool never learned — and it SPENDS', async () => {
     /*
      * The deposit landed and the process died before `pool.save`. The pool knows
      * about the first note only. This is the second window at the deposit site,
@@ -315,7 +371,7 @@ describe('a vault whose pool is gone, and the chain that still knows', () => {
        * vault cannot spend** — that is the pool claiming more than the chain
        * will honour, which is every later payment refused.
        */
-      const NEVER_LANDED = { nonce: toHex(bytes(0x99)), token: toHex(GBP), value: 5_000n };
+      const NEVER_LANDED = { nonce: toHex(bytes(0x99)), token: toHex(TOKEN_BYTES), value: 5_000n };
       const r = recover([...OPENING, { kind: 'deposit', coin: NEVER_LANDED }],
         asNotes([FIRST, SECOND]));
 
@@ -351,6 +407,7 @@ describe('a vault whose pool is gone, and the chain that still knows', () => {
       chain: chainNotes(),
       versions,
       circuits: vaultCircuits,
+      nonceSecrets: nonceSecrets(),
     });
 
   it('AGREES when the newest filed version is what the chain holds', () => {
@@ -367,7 +424,7 @@ describe('a vault whose pool is gone, and the chain that still knows', () => {
     expect(r.unexplained).toHaveLength(0);
   });
 
-  itPaysOutOfTodaysVault('RECOVERS a note a later write dropped while the chain still held it — AND IT SPENDS', async () => {
+  it('RECOVERS a note a later write dropped while the chain still held it — AND IT SPENDS', async () => {
     /*
      * The overwrite. Until the change below each write replaced the last, so a write
      * built on a stale copy erased whatever came in between and there was nothing
@@ -423,7 +480,7 @@ describe('a vault whose pool is gone, and the chain that still knows', () => {
     expect(shuffled.recovered.map((n) => n.nonce), 'RED WHEN: the newest filed version is chosen by list position rather than by its number').toEqual([SECOND.nonce]);
   });
 
-  itPaysOutOfTodaysVault('does NOT resurrect a note from an old version that the chain no longer holds', async () => {
+  it('does NOT resurrect a note from an old version that the chain no longer holds', async () => {
     /*
      * The other half of keeping every version, and the dangerous one. A note that
      * was spent is in every version filed before the spend. Proposing it is right;
@@ -466,7 +523,7 @@ describe('a vault whose pool is gone, and the chain that still knows', () => {
     ).toThrow(/no filed versions/);
   });
 
-  itPaysOutOfTodaysVault('SETTLES two versions that describe one nonce differently BY THE CHAIN, writes the coin the chain holds once, and that note SPENDS through the product\'s path', async () => {
+  it('SETTLES two versions that describe one nonce differently BY THE CHAIN, writes the coin the chain holds once, and that note SPENDS through the product\'s path', async () => {
     /*
      * Two records of what a nonce is worth cannot both be true, and choosing one
      * by any rule of this machine's would be inventing money. The chain is not
@@ -558,7 +615,7 @@ describe('a vault whose pool is gone, and the chain that still knows', () => {
     expect(e.message).not.toMatch(/\bmove (version|the)\b/);
   });
 
-  itPaysOutOfTodaysVault('a nonce the chain holds NONE of the descriptions of is settled as no money, both records are kept, and the rebuild goes on', async () => {
+  it('a nonce the chain holds NONE of the descriptions of is settled as no money, both records are kept, and the rebuild goes on', async () => {
     /* SECOND is spent, so the chain holds neither 400 nor 999 under its nonce. */
     const c = change(0n, 95);
     const run = await approvedRun([{ to: ALICE, amount: 400n, nonce: 0xfe }], c);
@@ -583,7 +640,7 @@ describe('a vault whose pool is gone, and the chain that still knows', () => {
     expect(r.unexplained).toHaveLength(0);
   });
 
-  itPaysOutOfTodaysVault('A SETTLEMENT A VERSION WROTE DOWN OUTLIVES THE COIN: once the chain holds none of the descriptions, the recorded answer is reported, and nothing proposed changes', async () => {
+  it('A SETTLEMENT A VERSION WROTE DOWN OUTLIVES THE COIN: once the chain holds none of the descriptions, the recorded answer is reported, and nothing proposed changes', async () => {
     const versions = [
       { version: 1, notes: asNotes([FIRST, { ...SECOND, value: 999n }]) },
       { version: 2, notes: asNotes([FIRST, SECOND]) },
@@ -658,13 +715,14 @@ describe('a vault whose pool is gone, and the chain that still knows', () => {
     }]);
 
     /* A payment line whose spent note is set aside is still an attempt: its change is proposed from the line. */
-    const c1 = changeNoteOf({ ...SECOND, value: 999n }, 10n)!;
+    const c1 = changeNoteOf({ ...SECOND, value: 999n }, 10n, under())!;
     const withChange = reconcileVaultPool({
       vault: vaultAddr as Hex,
       chain: [...chainNotes(), held(c1)],
       versions: [{ version: 3, notes: asNotes([FIRST, SECOND]) }],
       attempted: { deposits: [], payments: [{ spent: { ...SECOND, value: 999n }, amount: 10n }] },
       circuits: vaultCircuits,
+      nonceSecrets: nonceSecrets(),
     });
     expect(
       withChange.held.map((n) => n.value),
@@ -697,9 +755,10 @@ describe('a vault whose pool is gone, and the chain that still knows', () => {
     versions,
     attempted: { deposits: attempted.deposits ?? [], payments: attempted.payments ?? [] },
     circuits: vaultCircuits,
+    nonceSecrets: nonceSecrets(),
   });
 
-  itPaysOutOfTodaysVault('CASE C: a payment\'s change note the versions cannot name IS named from the journal, and it SPENDS',
+  it('CASE C: a payment\'s change note the versions cannot name IS named from the journal, and it SPENDS',
     async () => {
       const c = change(0n, 81);
       const run = await approvedRun([{ to: ALICE, amount: 250n, nonce: 0xf1 }], c);
@@ -750,7 +809,7 @@ describe('a vault whose pool is gone, and the chain that still knows', () => {
     expect(r.unexplained).toHaveLength(0);
   });
 
-  itPaysOutOfTodaysVault('TWO attempts against one note, the first never landed: both are proposed and the chain keeps one', async () => {
+  it('TWO attempts against one note, the first never landed: both are proposed and the chain keeps one', async () => {
     /*
      * The door was run, stopped before the chain saw it, and run again for a
      * different amount. Both lines are in the journal. A `payout` event would
@@ -773,7 +832,7 @@ describe('a vault whose pool is gone, and the chain that still knows', () => {
     expect(r.unexplained).toHaveLength(0);
   });
 
-  itPaysOutOfTodaysVault('a journalled DEPOSIT whose pool write was lost is recovered from the deposit journal, and SPENDS', async () => {
+  it('a journalled DEPOSIT whose pool write was lost is recovered from the deposit journal, and SPENDS', async () => {
     /* The deposit of SECOND landed; the only filed version predates it. */
     const r = rebuildWith([{ version: 1, notes: asNotes([FIRST]) }], { deposits: [SECOND] });
     expect(
@@ -787,7 +846,7 @@ describe('a vault whose pool is gone, and the chain that still knows', () => {
     expect(vaultLedger(vaultState as never).payments).toBe(1n);
   });
 
-  itPaysOutOfTodaysVault('a journalled attempt is named even when NO version filed the note it spent', async () => {
+  it('a journalled attempt is named even when NO version filed the note it spent', async () => {
     /* The pool file was restored from before SECOND arrived; the journal carries SECOND whole. */
     const c = change(0n, 85);
     const run = await approvedRun([{ to: ALICE, amount: 250n, nonce: 0xf5 }], c);
@@ -801,7 +860,7 @@ describe('a vault whose pool is gone, and the chain that still knows', () => {
     expect(r.recovered.map((n) => n.value)).toEqual([150n]);
   });
 
-  itPaysOutOfTodaysVault('an attempt that spent the note EXACTLY proposes nothing, and the same line twice is one line', async () => {
+  it('an attempt that spent the note EXACTLY proposes nothing, and the same line twice is one line', async () => {
     const c = change(0n, 86);
     const run = await approvedRun([{ to: CAROL, amount: 400n, nonce: 0xf6 }], c);
     await pay(run, c, 0, CAROL, 400n, 0xf6);           // SECOND, exactly: no change
@@ -813,10 +872,10 @@ describe('a vault whose pool is gone, and the chain that still knows', () => {
     expect(r.unexplained).toHaveLength(0);
     /* The chain would refuse a zero-value note anyway, so the derivation is pinned directly too. */
     expect(
-      changeNoteOf(SECOND, 400n),
+      changeNoteOf(SECOND, 400n, under()),
       'RED WHEN: an exact spend derives a change note of zero, which the contract never inserts',
     ).toBeUndefined();
-    expect(changeNoteOf(SECOND, 399n)?.value).toBe(1n);
+    expect(changeNoteOf(SECOND, 399n, under())?.value).toBe(1n);
   });
 
   it('REFUSES a journal line the contract could not have taken, rather than deriving past it', () => {
@@ -836,7 +895,7 @@ describe('a vault whose pool is gone, and the chain that still knows', () => {
       'RED WHEN: a journal that disagrees with the pool about what a note is worth is preferred over the chain',
     ).toEqual([1_000n, 400n]);
     /* A line naming a note nothing filed is not refused: its change has a commitment the chain does not hold. */
-    const stranger = { nonce: toHex(bytes(0x01)), token: toHex(GBP), value: 5_000n };
+    const stranger = { nonce: toHex(bytes(0x01)), token: toHex(TOKEN_BYTES), value: 5_000n };
     const r = rebuildWith([{ version: 1, notes: asNotes([FIRST, SECOND]) }], { payments: [{ spent: stranger, amount: 1n }] });
     expect(r.held.map((n) => n.nonce).sort()).toEqual([FIRST.nonce, SECOND.nonce].sort());
     expect(r.recovered).toHaveLength(0);
@@ -863,7 +922,7 @@ describe('a vault whose pool is gone, and the chain that still knows', () => {
      * attempt against a note would decide what its change nonce is worth for
      * every later line -- see the poisoning case below.
      */
-    const kept = changeNoteOf(SECOND, 100n)!;
+    const kept = changeNoteOf(SECOND, 100n, under())!;
     expect(
       () => recover([
         ...OPENING,
@@ -874,7 +933,7 @@ describe('a vault whose pool is gone, and the chain that still knows', () => {
     ).toThrow(/never held/);
   });
 
-  itPaysOutOfTodaysVault('A STALE LINE CANNOT POISON A LATER ONE: two attempts of different amounts against one note, then a spend of its change, and the real change note is recovered', async () => {
+  it('A STALE LINE CANNOT POISON A LATER ONE: two attempts of different amounts against one note, then a spend of its change, and the real change note is recovered', async () => {
     /*
      * The ordinary sequence after a lost pool write, found by the audit of this
      * mechanism before any door ran it. Payee 1 is paid 100 out of SECOND; the
@@ -891,7 +950,7 @@ describe('a vault whose pool is gone, and the chain that still knows', () => {
     const c1 = change(0n, 87);
     const run1 = await approvedRun([{ to: ALICE, amount: 100n, nonce: 0xf7 }], c1);
     await pay(run1, c1, 0, ALICE, 100n, 0xf7);        // spends SECOND (400), change N = 300
-    const N = changeNoteOf(SECOND, 100n)!;
+    const N = changeNoteOf(SECOND, 100n, under())!;
     priv = { notes: asNotes([FIRST, N]) };
     const c2 = change(0n, 88);
     const run2 = await approvedRun([{ to: BOB, amount: 250n, nonce: 0xf8 }], c2);
@@ -954,13 +1013,13 @@ describe('a vault whose pool is gone, and the chain that still knows', () => {
 
   /** What `payPrivately` does with a pool before its call: choose, then read the index from the chain. */
   const theProductChooses = async (notes: readonly Note[], amount: bigint) => {
-    paymentsFit({ notes: [...notes] }, [{ token: toHex(GBP), amount }]);
-    const chosen = noteToSpend([...notes], toHex(GBP), amount);
+    paymentsFit({ notes: [...notes] }, [{ token: toHex(TOKEN_BYTES), amount }]);
+    const chosen = noteToSpend([...notes], toHex(TOKEN_BYTES), amount);
     const index = await indexForSpend(vaultAddr as Hex, chosen, theChain().events);
     return { chosen, index };
   };
 
-  itPaysOutOfTodaysVault('THROUGH THE REBUILD, CASE C: the change note named from the journal is given its creating transaction by the chain, passes the pre-flight, reads its index at the spend, and SPENDS',
+  it('THROUGH THE REBUILD, CASE C: the change note named from the journal is given its creating transaction by the chain, passes the pre-flight, reads its index at the spend, and SPENDS',
     async () => {
       const c = change(0n, 91);
       const run = await approvedRun([{ to: ALICE, amount: 250n, nonce: 0xfa }], c);
@@ -975,7 +1034,7 @@ describe('a vault whose pool is gone, and the chain that still knows', () => {
       const rebuilt = rebuildWith(versions, { payments: [{ spent: SECOND, amount: 250n }] });
       const unasked = whatTheRebuildWrites({ versions, held: rebuilt.held, alsoDropStaleNotes: true, found: [] });
       const recoveredNonce = unasked.notes.find((n) => n.value === 150n)!.nonce;
-      const withoutAsking = choosingANoteToSpend(unasked.notes, toHex(GBP), 120n);
+      const withoutAsking = choosingANoteToSpend(unasked.notes, toHex(TOKEN_BYTES), 120n);
       expect(
         withoutAsking.of === 'chosen' && [withoutAsking.note.value, withoutAsking.passedOver.map((n) => n.nonce)],
         'the note a rebuild recovers without asking the chain is one the product cannot spend: it pays out of the 1,000 and names the 150 as passed over',
@@ -1020,7 +1079,7 @@ describe('a vault whose pool is gone, and the chain that still knows', () => {
       ).toBe(30n);
     });
 
-  itPaysOutOfTodaysVault('THROUGH THE REBUILD, A LOST DEPOSIT: the note named from the deposit journal is given the deposit\'s transaction, and SPENDS', async () => {
+  it('THROUGH THE REBUILD, A LOST DEPOSIT: the note named from the deposit journal is given the deposit\'s transaction, and SPENDS', async () => {
     const versions = [{ version: 1, notes: [{ ...FIRST, createdIn: chainLog[0]!.hash }] }];  // SECOND's write was lost
     const { asked, written } = await throughTheRebuild(versions, { deposits: [SECOND] });
     expect(
@@ -1037,7 +1096,7 @@ describe('a vault whose pool is gone, and the chain that still knows', () => {
     expect(vaultLedger(vaultState as never).payments).toBe(1n);
   });
 
-  itPaysOutOfTodaysVault('THROUGH THE REBUILD, A CHAIN THAT CANNOT SAY: the recovered note is still written, reported as not spendable yet, and the product refuses it before its money moves', async () => {
+  it('THROUGH THE REBUILD, A CHAIN THAT CANNOT SAY: the recovered note is still written, reported as not spendable yet, and the product refuses it before its money moves', async () => {
     const c = change(0n, 94);
     const run = await approvedRun([{ to: ALICE, amount: 250n, nonce: 0xfd }], c);
     await pay(run, c, 0, ALICE, 250n, 0xfd);
@@ -1065,13 +1124,13 @@ describe('a vault whose pool is gone, and the chain that still knows', () => {
      */
     const { written: dropped } = await throughTheRebuild(versions, { payments: [{ spent: SECOND, amount: 250n }] }, lagging, true);
     const stuck = dropped.notes.find((n) => n.value === 150n)!;
-    const choice = choosingANoteToSpend(dropped.notes, toHex(GBP), 120n);
+    const choice = choosingANoteToSpend(dropped.notes, toHex(TOKEN_BYTES), 120n);
     expect(
       choice.of === 'chosen' && [choice.note.value, choice.passedOver.map((n) => n.nonce)],
       'RED WHEN: a transaction nothing established is recorded, or the note that records none is chosen and refused at the spend',
     ).toEqual([1_000n, [stuck.nonce]]);
     expect(
-      choosingANoteToSpend([stuck], toHex(GBP), 120n),
+      choosingANoteToSpend([stuck], toHex(TOKEN_BYTES), 120n),
       'RED WHEN: a vault whose only covering note records no transaction is told to pay in more money, or is told it can pay',
     ).toEqual({ of: 'stranded', notes: [stuck] });
     await expect(theProductChooses([stuck], 120n)).rejects.toThrow(/does not record which transaction created it/);
@@ -1081,7 +1140,7 @@ describe('a vault whose pool is gone, and the chain that still knows', () => {
    * payout
    * ---------------------------------------------------------------- */
 
-  itPaysOutOfTodaysVault('WINDOW TWO, PAYOUT: the change is on chain, the pool still holds the spent note — and it SPENDS',
+  it('WINDOW TWO, PAYOUT: the change is on chain, the pool still holds the spent note — and it SPENDS',
     async () => {
       /*
        * **THE WORST OF THE WINDOWS.** The payment
@@ -1127,7 +1186,7 @@ describe('a vault whose pool is gone, and the chain that still knows', () => {
       expect(after).toHaveLength(2);
     });
 
-  itPaysOutOfTodaysVault('WINDOW ONE, PAYOUT: recorded but never landed, so the note the pool spent is still the vault\'s',
+  it('WINDOW ONE, PAYOUT: recorded but never landed, so the note the pool spent is still the vault\'s',
     async () => {
       /*
        * The mirror image, and the reason the replay proposes every note that has
@@ -1152,7 +1211,7 @@ describe('a vault whose pool is gone, and the chain that still knows', () => {
       expect(vaultLedger(vaultState as never).payments).toBe(1n);
     });
 
-  itPaysOutOfTodaysVault('a note spent EXACTLY leaves no change, and the replay does not invent one', async () => {
+  it('a note spent EXACTLY leaves no change, and the replay does not invent one', async () => {
     /*
      * `payout` inserts the change only `if (result.change.is_some)`. A pool
      * entry for a zero note would be a note the chain does not have, which is
@@ -1177,7 +1236,7 @@ describe('a vault whose pool is gone, and the chain that still knows', () => {
    * presplit
    * ---------------------------------------------------------------- */
 
-  itPaysOutOfTodaysVault('WINDOW TWO, PRESPLIT: BOTH halves are recovered, and one of them SPENDS', async () => {
+  it('WINDOW TWO, PRESPLIT: BOTH halves are recovered, and one of them SPENDS', async () => {
     /*
      * `splitNote` removes one note and inserts two, so a crash after it leaves
      * the pool short by two notes and holding a third the chain has dropped.
@@ -1189,8 +1248,7 @@ describe('a vault whose pool is gone, and the chain that still knows', () => {
      * Comparing them against each other would prove nothing; the assertion
      * that matters is the payment at the end.
      */
-    const r0 = await vault.impureCircuits.splitNote(ctx('splitNote'), GBP, 300n);
-    vaultState = r0.context.callContext.currentQueryContext.state;   // splits SECOND (400)
+    await splitOff(300n, 0x5a);   // splits SECOND (400)
 
     const r = recover(
       [...OPENING, { kind: 'split', spent: SECOND.nonce, amount: 300n }],
@@ -1224,7 +1282,7 @@ describe('a vault whose pool is gone, and the chain that still knows', () => {
    * what the pool buys, and what is not recoverable at all
    * ---------------------------------------------------------------- */
 
-  itPaysOutOfTodaysVault('payments against DIFFERENT notes need no order between them', async () => {
+  it('payments against DIFFERENT notes need no order between them', async () => {
     /*
      * The property the old shape could not have. It required every payment in
      * order because each coin followed from the one before; a pool has no such
@@ -1270,7 +1328,7 @@ describe('a vault whose pool is gone, and the chain that still knows', () => {
      * note in its place: a wrong note is refused at payment time and looks like
      * a broken vault rather than a missing record.
      */
-    const OUTSIDER = { nonce: toHex(bytes(0x5e)), token: toHex(GBP), value: 700n };
+    const OUTSIDER = { nonce: toHex(bytes(0x5e)), token: toHex(TOKEN_BYTES), value: 700n };
     await deposit(OUTSIDER);
 
     const r = recover(OPENING, asNotes([FIRST, SECOND]));
@@ -1282,7 +1340,7 @@ describe('a vault whose pool is gone, and the chain that still knows', () => {
     expect(chainNotes()).toContain(held(OUTSIDER));
   });
 
-  itPaysOutOfTodaysVault('A PAYEE WHO LOST THEIR PAYSLIP CAN BE SERVED AGAIN, from the payer\'s history alone',
+  it('A PAYEE WHO LOST THEIR PAYSLIP CAN BE SERVED AGAIN, from the payer\'s history alone',
     async () => {
       /*
        * The backstop for a payslip that never arrived: a payment built with
@@ -1325,8 +1383,9 @@ describe('a vault whose pool is gone, and the chain that still knows', () => {
       history: [{ kind: 'deposit', coin: FIRST },
         { kind: 'payout', spent: FIRST.nonce, amount: 1n }],
       circuits: vaultCircuits,
+      nonceSecrets: nonceSecrets(),
     });
-    const leaving = paidCoinOf(FIRST.nonce, toHex(GBP), 1n).nonce;
+    const leaving = paidCoinOf(FIRST, 1n, under()).nonce;
     expect(r.paid[0].nonce).toBe(leaving);
     expect(leaving).not.toBe(FIRST.nonce);
     /* The staying coin is not on chain here, so it is not in `held` — which is
@@ -1336,7 +1395,7 @@ describe('a vault whose pool is gone, and the chain that still knows', () => {
 
   it('refuses a history that cannot be true rather than deriving from it', () => {
     const run = (history: VaultEvent[]) => () => replayVault({
-      vault: vaultAddr as Hex, chain: chainNotes(), pool: [], history, circuits: vaultCircuits,
+      vault: vaultAddr as Hex, chain: chainNotes(), pool: [], history, circuits: vaultCircuits, nonceSecrets: nonceSecrets(),
     });
 
     /* A note the vault has never held. With one chained coin this could not be

@@ -102,7 +102,7 @@ import {
 import { witnessesOver, type Note } from '../src/midnight/vault-notes.js';
 import { witnesses, type AccountPrivateState, NO_VAULT } from '../contracts/src/witnesses.js';
 import {
-  AccountSimulator, privateStateFor, change, GBP, ZERO_32,
+  AccountSimulator, privateStateFor, change, TEST_TOKEN_BYTES, ZERO_32,
 } from '../contracts/test/simulator.js';
 import { buildPayoutTree, type PayoutLeafInput } from '../src/midnight/payout-tree.js';
 import { applyNetworkId, theNetwork } from '../src/midnight/network.js';
@@ -477,10 +477,10 @@ async function main() {
 
   const runChange = change(0n, 31);
   const leaves: PayoutLeafInput[] = [{
-    details: toHex(vaultCircuits.payoutDetails(ALICE, GBP, 250n, fill(0x40))),
+    details: toHex(vaultCircuits.payoutDetails(ALICE, TEST_TOKEN_BYTES, 250n, fill(0x40))),
     nonce: toHex(fill(0xc1)),
   }];
-  const tree = buildPayoutTree(leaves, [250n], toHex(GBP));
+  const tree = buildPayoutTree(leaves, [250n], toHex(TEST_TOKEN_BYTES));
   const runPayload = pureCircuits.runPayload(fromHex(tree.root), tree.payees, LIVE_FROM, LIVE_UNTIL, 0n);
 
   const runProposer = sim.applying(ada, runChange);
@@ -764,7 +764,7 @@ async function measureVault(
   /* ------------------------------------------------------ value arriving */
   line();
   line(`  ${bold('Value arriving — no account, no approval, nothing across the boundary')}`);
-  const NOTE = { nonce: fill(0x77), color: GBP, value: 1_000n };
+  const NOTE = { nonce: fill(0x77), color: TEST_TOKEN_BYTES, value: 1_000n };
   const deposited = await measure(
     'deposit', 'a coin arrives and the vault records its commitment; needs no account',
     vaultOpts('deposit', [NOTE], vault.address, vaultState), vaultZk);
@@ -796,7 +796,7 @@ async function measureVault(
    * only has to have the shape of a hash, and it is visibly not a real one.
    */
   pool.notes = [{
-    nonce: toHex(NOTE.nonce), token: toHex(GBP), value: NOTE.value, index: filedAt ?? 0n,
+    nonce: toHex(NOTE.nonce), token: toHex(TEST_TOKEN_BYTES), value: NOTE.value, index: filedAt ?? 0n,
     createdIn: '0'.repeat(64) as Hex,
   }];
   if (filedAt === undefined) {
@@ -809,17 +809,17 @@ async function measureVault(
   line(`  ${bold('Maintenance — one note into two, still with no account')}`);
   await measure(
     'splitNote', 'divides a note the vault holds; a payment\x27s shape with no payee',
-    vaultOpts('splitNote', [GBP, 400n], vault.address, vaultState), vaultZk);
+    vaultOpts('splitNote', [TEST_TOKEN_BYTES, 400n], vault.address, vaultState), vaultZk);
 
   /* -------------------------------------------------------------- payment */
   line();
   line(`  ${bold('THE ONE THAT MATTERS: a payment — both contracts, one intent')}`);
   const vaultBytes = fromHex(vault.address);
   const leaves: PayoutLeafInput[] = [{
-    details: toHex(vaultCircuits.payoutDetails(ALICE, GBP, 250n, fill(0x40))),
+    details: toHex(vaultCircuits.payoutDetails(ALICE, TEST_TOKEN_BYTES, 250n, fill(0x40))),
     nonce: toHex(fill(0xc1)),
   }];
-  const tree = buildPayoutTree(leaves, [250n], toHex(GBP));
+  const tree = buildPayoutTree(leaves, [250n], toHex(TEST_TOKEN_BYTES));
   const runChange = change(0n, 31);
   const runPayload = pureCircuits.runPayload(
     fromHex(tree.root), tree.payees, LIVE_FROM, LIVE_UNTIL, 0n);
@@ -835,7 +835,7 @@ async function measureVault(
     'the vault pays one payee AND calls the account\x27s recordPayment, in one intent',
     vaultOpts('payout', [
       runId, fromHex(tree.root), tree.payees, LIVE_FROM, LIVE_UNTIL, runChange.salt,
-      ALICE, GBP, 250n, fill(0x40), fill(0xc1), tree.pathFor(0),
+      ALICE, TEST_TOKEN_BYTES, 250n, fill(0x40), fill(0xc1), tree.pathFor(0),
     ], vault.address, vaultState), vaultZk, crossContract);
 
   /* ------------------------------------------------------------ retiring */

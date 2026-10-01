@@ -16,6 +16,7 @@
  * of the company who presents its viewing key.
  */
 import { fromHex, toHex, type Hex } from '../core/crypto.js';
+import { symbolOf } from '../core/assets.js';
 import { PAYOUT_TREE_DEPTH, type PaymentFacts, type PayrollRun, type SumStep } from './payout-tree.js';
 import type { RunWindow } from './run-status.js';
 
@@ -45,9 +46,14 @@ export interface PrivatePaymentOnTheWire {
 
 /** What a vault is handed for one approved leg, and every person in it. */
 export interface PrivatePaymentOrderOnTheWire {
+  /** The token the leg pays: what its root commits to and every payment on it moves. */
   readonly asset: string;
+  /** The form the leg pays in. One leg pays one token in one form. */
+  readonly form: 'shielded' | 'unshielded';
+  /** What a screen shows for the token. Never the token itself. */
+  readonly symbol: string;
   readonly vault: Hex;
-  /** The round's identity, as the chain opened it. */
+  /** The proposal's identity, as the chain opened it. */
   readonly proposal: Hex;
   readonly salt: Hex;
   readonly root: Hex;
@@ -125,7 +131,8 @@ export const pathFromWire = (hex: readonly string[]): SumStep[] => {
  */
 export function assemblePrivatePayments(input: {
   readonly order: {
-    readonly asset: string; readonly vault: Hex; readonly proposal: Hex; readonly salt: Hex;
+    readonly asset: string; readonly form: 'shielded' | 'unshielded';
+    readonly vault: Hex; readonly proposal: Hex; readonly salt: Hex;
     readonly root: Hex; readonly payees: bigint; readonly opensAt: bigint; readonly closesAt: bigint;
   };
   /** The leaves recorded when the leg was raised, in tree order. A retry is raised over the same tree. */
@@ -167,6 +174,20 @@ export function assemblePrivatePayments(input: {
    * private one; the device decodes the address again and refuses one whose
    * kind disagrees with this.
    */
+  /*
+   * **EVERY PAYMENT IS THE LEG'S TOKEN, IN THE LEG'S FORM.** A payment in
+   * another token or another form is one this proposal's root does not commit to,
+   * so nothing is offered to pay.
+   */
+  const mixed = input.facts.some((fact, i) =>
+    fact.payee.kind !== order.form || built.payeeArgs(i).token.toLowerCase() !== order.asset);
+  if (mixed) {
+    return {
+      refusal: `a payment on this leg is not ${symbolOf(order.asset)} paid `
+        + `${order.form === 'shielded' ? 'privately' : 'publicly'}, and one leg pays one token in one form, `
+        + 'so nothing is offered to pay. Nothing was sent.',
+    };
+  }
   const payments = input.facts.map((fact, i): PrivatePaymentOnTheWire => {
     const args = built.payeeArgs(i);
     return {
@@ -185,6 +206,8 @@ export function assemblePrivatePayments(input: {
   return {
     order: {
       asset: order.asset,
+      form: order.form,
+      symbol: symbolOf(order.asset),
       vault: order.vault,
       proposal: order.proposal,
       salt: order.salt,

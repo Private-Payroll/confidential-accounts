@@ -12,8 +12,8 @@ import type {
   ShieldedState, StateBlinding, ShieldedEntry, Invite,
   ApprovalOutcome, ApprovalUnknown, PayoutSeed,
 } from './types.js';
-import type { AssetId } from './assets.js';
-import { assets as defaultAssets, assetIdBytes, NO_ASSET, sumChangeAmount } from './assets.js';
+import type { AssetId, AssetRegistry, LedgerForm } from './assets.js';
+import { assets as defaultAssets, assetIdBytes, NO_ASSET, sumChangeAmount, symbolOf } from './assets.js';
 import { NothingWasSent, saysNothingWasSent } from './jobs.js';
 import {
   sealRecord, openRecord, inboxPublicKey, sealToInbox, openFromInbox,
@@ -529,6 +529,8 @@ export function evaluatePolicy(
   amount: bigint,
   proposerRole: Role,
   chain: ChainApprovals,
+  /** The registry the limit's token is named from in a refusal. */
+  registry: AssetRegistry = defaultAssets,
 ): PolicyVerdict {
   const p = account.policy;
   const limit = p.limitsByRole[proposerRole]?.[asset];
@@ -565,7 +567,7 @@ export function evaluatePolicy(
        */
       reason:
         `this company's own policy, applied by this service and not by the chain: ` +
-        `${amount} exceeds the per-transaction ${asset} limit for role "${proposerRole}" ` +
+        `${amount} exceeds the per-transaction ${symbolOf(asset, registry)} limit for role "${proposerRole}" ` +
         `(${limit.perTransaction}). The proposal was not relayed to the ledger.`,
       /*
        * A blocked proposal is never submitted, so there is no round on chain to
@@ -2429,8 +2431,8 @@ export class AccountService {
     if (named.length === 0) return fallback;
     if (named.length > 1) {
       throw new Error(
-        `this proposal moves ${named.length} assets (${named.join(', ')}), and a round settles ` +
-          'exactly one. Split it into one proposal per asset — they can reference the same run.',
+        `this proposal moves ${named.length} tokens (${named.map(n => symbolOf(n, this.assets)).join(', ')}), and a round settles ` +
+          'exactly one. Split it into one proposal per token: they can reference the same run.',
       );
     }
     return named[0] ?? fallback;
@@ -2701,7 +2703,7 @@ export class AccountService {
      */
     const verdict = evaluatePolicy(
       account, asset, change.amount, proposer.role,
-      { state: 'unknown', why: 'not-yet-proposed' },
+      { state: 'unknown', why: 'not-yet-proposed' }, this.assets,
     );
 
     const proposal: Proposal = {
@@ -2957,7 +2959,7 @@ export class AccountService {
 
     const verdict = evaluatePolicy(
       account, asset, change.amount, proposer.role,
-      { state: 'unknown', why: 'not-yet-proposed' },
+      { state: 'unknown', why: 'not-yet-proposed' }, this.assets,
     );
 
     const chainId = this.runChainIdOf(args.run, change.salt);
@@ -3876,7 +3878,7 @@ export class AccountService {
      * ever.
      */
     if (!proposerRole) throw new ProposerRoleGone(proposal.proposedBy);
-    return evaluatePolicy(account, asset, amount, proposerRole, chain);
+    return evaluatePolicy(account, asset, amount, proposerRole, chain, this.assets);
   }
 
   /*
@@ -5001,7 +5003,7 @@ export class ProposerRoleGone extends Error {
  * same hazard deliberately on its own side — `approvalNullifier` folds
  * `kernel.self()` (`compact:903-914`) — and this value does not. **What stops
  * it today is that the reference client mints a fresh signing key per seat
- * (`src/web-legacy/App.tsx:2321`), which is a habit of one client and not a rule of
+ * (the earlier application did), which is a habit of one client and not a rule of
  * the system.**
  *
  * **THE VERSION TAG IS NOT DECORATION.** A signature made under the old
@@ -5097,8 +5099,10 @@ export interface PayrollRound {
   id: string;
   /** The run this proposal was raised for. */
   runId: string;
-  /** The settlement asset of the leg it is for. */
+  /** The token of the leg it is for. */
   asset: AssetId;
+  /** The form of the leg it is for. Absent on a round written down before it was kept, read as private. */
+  form?: LedgerForm;
   status: Proposal['status'];
   /** Set once the chain has been seen to hold it. Absent is not confirmed, never not raised. */
   raisedAt?: string;

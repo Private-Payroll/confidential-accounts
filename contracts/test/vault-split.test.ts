@@ -27,10 +27,10 @@ import {
   Contract as Vault, ledger as vaultLedger, pureCircuits as vaultCircuits,
 } from '../managed-vault/contract/index.js';
 import { pureCircuits } from '../managed/contract/index.js';
-import { AccountSimulator, privateStateFor, change, type Change, payoutTreeOf } from './simulator.js';
+import { AccountSimulator, privateStateFor, change, type Change, payoutTreeOf, vaultRunOf } from './simulator.js';
+import { carryTheAccount, startTheVault, TEST_VAULT_SECRET } from './start-a-vault.js';
 import { type PayoutLeafInput } from '../../src/midnight/payout-tree.js';
 import { toHex, fromHex } from '../../src/core/crypto.js';
-import { itPaysOutOfTodaysVault } from './until-the-vault-pays-with-a-receipt.js';
 
 const VAULT_NOW = 1_800_000_000;
 const WIN_FROM = BigInt(VAULT_NOW - 3_600);
@@ -42,8 +42,7 @@ const hex = (b: Uint8Array) => Buffer.from(b).toString('hex');
 
 const A = privateStateFor(1);
 const B = privateStateFor(2);
-const GBP = bytes(0x9b);
-const USD = bytes(0x7d);
+const TOKEN_BYTES = bytes(0x9b);
 const ALICE = bytes(0x0a);
 
 interface VaultPrivate {
@@ -52,6 +51,7 @@ interface VaultPrivate {
 
 const vaultWitnesses = {
   noteToSpend: (ctx: { privateState: VaultPrivate }) => [ctx.privateState, ctx.privateState.coin],
+  nonceSecret: (ctx: { privateState: { secret?: Uint8Array } }) => [ctx.privateState, ctx.privateState.secret ?? new Uint8Array(32).fill(0x51)],
 };
 
 const carrying = (sim: AccountSimulator, d: ReturnType<typeof privateStateFor>, c: Change) =>
@@ -118,46 +118,67 @@ describe('a vault splits one of its own notes', () => {
       createConstructorContext({} as VaultPrivate, BLOCK),
       { bytes: Uint8Array.from(Buffer.from(String(sim.address), 'hex')) } as never);
     vaultState = init.currentContractState;
+    /* A vault takes no money until the account has adopted it and approved its first secret. */
+    await startTheVault({
+      sim, vault: vaultBytes(), approvers: [A, B], now: VAULT_NOW,
+      call: async (circuit, ...a) => {
+        const r: any = await (vault.impureCircuits as any)[circuit](ctx(circuit), ...a);
+        vaultState = r.context.callContext.currentQueryContext.state;
+        carryTheAccount(sim, r.context);
+      },
+    });
 
     /* One note of 1,000. The pool starts at one and the whole point is to make it two. */
-    const coin = { nonce: bytes(0x77), color: GBP, value: 1_000n };
+    const coin = { nonce: bytes(0x77), color: TOKEN_BYTES, value: 1_000n };
     priv = { coin: { ...coin, mt_index: 0n } };
     const dep = await vault.impureCircuits.deposit(ctx('deposit'), coin);
     vaultState = dep.context.callContext.currentQueryContext.state;
   });
 
-  /** Splits `amount` off the note the witness is currently offering. */
-  const split = async (token: Uint8Array, amount: bigint) => {
-    const r = await vault.impureCircuits.splitNote(ctx('splitNote'), token, amount);
-    vaultState = r.context.callContext.currentQueryContext.state;
-    return r;
+  /** A run of `leaves` at `amounts`, naming this vault, approved by both signers. */
+  const approved = async (leaves: PayoutLeafInput[], amounts: bigint[], seed: number) => {
+    const c: Change = change(0n, seed);
+    const tree = payoutTreeOf(leaves, amounts, TOKEN_BYTES);
+    const payload = pureCircuits.runPayload(
+      fromHex(tree.root), tree.payees, WIN_FROM, WIN_UNTIL, 0n);
+    await sim.as(carrying(sim, A, c)).proposeRun({
+      root: fromHex(tree.root), payees: tree.payees,
+      from: WIN_FROM, until: WIN_UNTIL, vault: vaultBytes() });
+    const id = sim.proposalId(payload, c.salt, vaultBytes());
+    await sim.as(carrying(sim, A, c)).approve(id);
+    await sim.as(carrying(sim, B, c)).approve(id);
+    return (i: number) => vaultRunOf({
+      proposal: id, vault: vaultBytes(), tree, i,
+      opensAt: WIN_FROM, closesAt: WIN_UNTIL, salt: c.salt, nonce: fromHex(leaves[i]!.nonce),
+    });
   };
 
-  it('turns ONE note into TWO, and both are notes the chain says this vault holds', async () => {
-    expect(pool().size()).toBe(1n);
+  /**
+   * Splits `amount` off the note the witness is currently offering, under a run
+   * the signers approved for exactly that note and that piece.
+   */
+  const split = async (token: Uint8Array, amount: bigint, seed: number) => {
+    const spent = vaultCircuits.noteNullifierOf(vaultBytes(), {
+      nonce: priv.coin.nonce, color: priv.coin.color, value: priv.coin.value,
+    });
+    const runOf = await approved([{
+      details: toHex(vaultCircuits.splitDetails(vaultBytes(), spent, token, amount)),
+      nonce: toHex(bytes(seed)),
+    }], [0n], seed);
+    const r = await vault.impureCircuits.splitNote(ctx('splitNote'), runOf(0), token, amount);
+    vaultState = r.context.callContext.currentQueryContext.state;
+    carryTheAccount(sim, r.context);
+    return { r, spent };
+  };
 
-    const r = await split(GBP, 300n);
+  /*
+   * A split needs an approved run, at the vault's own threshold, and records its
+   * amount masked by the vault's secret; those refusals are pinned with the rest
+   * of the vault's in `the-new-vault.test.ts`. This file pins that what a split
+   * makes can be moved again.
+   */
 
-    /*
-     * The count is the property under test: one in, two out, so any deficit
-     * can be closed exactly by repeating this. A four-way split would move the
-     * count in threes and could never land on sixteen from twelve.
-     */
-    expect(pool().size()).toBe(2n);
-
-    const back = coinsBackTo(r.context.callContext.currentZswapLocalState, toHex(vaultBytes()));
-    expect(back).toHaveLength(2);
-    expect(back.map((c) => c.value).sort((x, y) => Number(x - y))).toEqual([300n, 700n]);
-
-    /* Both halves are in the pool, under the contract's own derived blindings. */
-    for (const c of back) expect(pool().member(heldBy(vaultBytes(), c))).toBe(true);
-
-    /* And the note that went in is gone, so it cannot be offered twice. */
-    expect(pool().member(heldBy(
-      vaultBytes(), { nonce: bytes(0x77), color: GBP, value: 1_000n }))).toBe(false);
-  });
-
-  itPaysOutOfTodaysVault('THE ONE THAT MATTERS: a half of a split really SPENDS', async () => {
+  it('THE ONE THAT MATTERS: a half of a split really SPENDS', async () => {
     /*
      * A commitment the vault cannot reproduce is money that is visibly on chain
      * and permanently stuck, and nothing about a split LOOKS wrong when that
@@ -168,117 +189,58 @@ describe('a vault splits one of its own notes', () => {
      * If `noteBlindingOf` and the commitment written by `splitNote` disagreed
      * by one byte, this fails at "that note is not in this vault's pool".
      */
-    const r = await split(GBP, 300n);
+    const { r, spent } = await split(TOKEN_BYTES, 300n, 0xb1);
     const back = coinsBackTo(r.context.callContext.currentZswapLocalState, toHex(vaultBytes()));
     const piece = back.find((c) => c.value === 300n)!;
     expect(piece).toBeDefined();
+    /* RED WHEN the piece's nonce is not the one worked out from the secret and the spent note. */
+    expect(hex(piece.nonce)).toBe(hex(vaultCircuits.freshNonceOf(vaultCircuits.splitNonceTag(), TEST_VAULT_SECRET, spent)));
 
     /* The device now holds the 300 half and offers it to a payment. */
     priv = { coin: { ...piece, mt_index: 0n } };
 
-    const c = change(0n, 71);
-    const leaves: PayoutLeafInput[] = [{
-      details: toHex(vaultCircuits.payoutDetails(ALICE, GBP, 250n, bytes(0x40))),
+    const runOf = await approved([{
+      details: toHex(vaultCircuits.payoutDetails(ALICE, TOKEN_BYTES, 250n, bytes(0x40))),
       nonce: toHex(bytes(0xc1)),
-    }];
-    const tree = payoutTreeOf(leaves);
-    const payload = pureCircuits.runPayload(
-      fromHex(tree.root), tree.payees, WIN_FROM, WIN_UNTIL, 0n);
-    await sim.as(carrying(sim, A, c)).proposeRun({
-      root: fromHex(tree.root), payees: tree.payees,
-      from: WIN_FROM, until: WIN_UNTIL, vault: vaultBytes() });
-    const id = sim.proposalId(payload, c.salt, vaultBytes());
-    await sim.as(carrying(sim, A, c)).approve(id);
-    await sim.as(carrying(sim, B, c)).approve(id);
+    }], [250n], 71);
 
-    const paid = await vault.impureCircuits.payout(
-      ctx('payout'),
-      id, fromHex(tree.root), tree.payees, WIN_FROM, WIN_UNTIL, c.salt,
-      ALICE, GBP, 250n, bytes(0x40), bytes(0xc1), tree.pathFor(0) as never);
+    /* RED WHEN the split's piece is committed so that the vault cannot spend it: refused as not in the pool. */
+    const paid = await vault.impureCircuits.payout(ctx('payout'), runOf(0), ALICE, TOKEN_BYTES, 250n, bytes(0x40));
+    vaultState = paid.context.callContext.currentQueryContext.state;
+    carryTheAccount(sim, paid.context);
 
-    const after = vaultLedger(
-      paid.context.callContext.currentQueryContext.state as never);
+    const after = vaultLedger(vaultState as never);
     expect(after.payments).toBe(1n);
+    /* RED WHEN the payment out of the piece is not recorded by the account. */
+    expect(sim.ledger.movements.member(pureCircuits.paidOnceOf(bytes(0xc1)))).toBe(true);
     /* Two before, the 300 spent, its 50 of change back: two again. */
     expect(after.notes.size()).toBe(2n);
+    /* RED WHEN the piece's change is not kept where the vault can find it: worked out from the secret and the piece's own nullifier. */
+    const pieceSpent = vaultCircuits.noteNullifierOf(vaultBytes(), piece);
+    const changeCoin = {
+      nonce: vaultCircuits.freshNonceOf(vaultCircuits.changeNonceTag(), TEST_VAULT_SECRET, pieceSpent), color: TOKEN_BYTES, value: 50n,
+    };
+    expect(after.notes.member(heldBy(vaultBytes(), changeCoin))).toBe(true);
   });
 
-  it('REFUSES TO SPLIT A NOTE INTO THE WHOLE OF ITSELF', async () => {
-    /*
-     * A split of everything produces no remainder, so the vault would come out
-     * of it holding the same one note it went in with, having paid a fee — and
-     * the "no remainder" branch is the one that would silently drop the larger
-     * half if it were written as an `if` rather than an assert.
-     */
-    await expect(split(GBP, 1_000n)).rejects.toThrow(/leave something behind/i);
-    await expect(split(GBP, 1_001n)).rejects.toThrow(/leave something behind/i);
-    expect(pool().size()).toBe(1n);
-  });
-
-  it('refuses to split a note of a DIFFERENT TOKEN from the one asked for', async () => {
-    /* The membership check would refuse it too; this pins which refusal fires,
-     * for the reason `payout`'s twin test gives. */
-    priv = { coin: { ...priv.coin, color: USD } };
-    await expect(split(GBP, 100n)).rejects.toThrow(/not a note of the token being split/i);
-  });
-
-  it('refuses a note the witness invented for a split, however well-formed', async () => {
-    /*
-     * A witness is untrusted input by the language's own warning. Without the
-     * membership check the device could offer any coin at all and the vault
-     * would spend a note it does not hold — or, worse, one it holds under a
-     * different value.
-     */
-    priv = { coin: { nonce: bytes(0x5f), color: GBP, value: 4_000n, mt_index: 0n } };
-    await expect(split(GBP, 100n)).rejects.toThrow(/not one this vault holds/i);
-  });
-
-  it('IS NOT A PAYMENT, and does not touch the counter an auditor reads', async () => {
-    /*
-     * `payments` is the one number anybody can check with no key at all.
-     * Housekeeping inflating it would quietly change what it means.
-     */
-    expect(vaultLedger(vaultState as never).payments).toBe(0n);
-    await split(GBP, 300n);
-    expect(vaultLedger(vaultState as never).payments).toBe(0n);
-  });
-
-  it('splits again, so a pool can be restored one note at a time', async () => {
-    /* Twelve to sixteen is four of these. The point of a +1 shape is that any
-     * deficit can be closed exactly. */
-    const r = await split(GBP, 300n);
+  it('THE OTHER HALF SPENDS TOO: the rest a split leaves is paid out in full, leaving the piece', async () => {
+    const { r, spent } = await split(TOKEN_BYTES, 300n, 0xb2);
     const back = coinsBackTo(r.context.callContext.currentZswapLocalState, toHex(vaultBytes()));
-    priv = { coin: { ...back.find((c) => c.value === 700n)!, mt_index: 0n } };
+    const rest = back.find((c) => c.value === 700n)!;
+    /* RED WHEN the rest's nonce is not the one worked out from the secret and the spent note. */
+    expect(hex(rest.nonce)).toBe(hex(vaultCircuits.freshNonceOf(vaultCircuits.restNonceTag(), TEST_VAULT_SECRET, spent)));
+    priv = { coin: { ...rest, mt_index: 0n } };
 
-    await split(GBP, 200n);
-    expect(pool().size()).toBe(3n);
-  });
+    const runOf = await approved([{
+      details: toHex(vaultCircuits.payoutDetails(ALICE, TOKEN_BYTES, 700n, bytes(0x41))),
+      nonce: toHex(bytes(0xc2)),
+    }], [700n], 72);
+    /* RED WHEN the rest is committed so that the vault cannot spend it. */
+    const paid = await vault.impureCircuits.payout(ctx('payout'), runOf(0), ALICE, TOKEN_BYTES, 700n, bytes(0x41));
+    vaultState = paid.context.callContext.currentQueryContext.state;
 
-  it('the blinding is a function of the coin AND of the vault, not of either alone', () => {
-    /*
-     * Two vaults that ever held the same coin must not publish the same bytes —
-     * the same argument that puts the account's address inside
-     * `approvalNullifier`, one contract along. And two different coins in one
-     * vault must not either.
-     */
-    const coin = { nonce: bytes(0x77), color: GBP, value: 1_000n };
-    const other = Uint8Array.from(
-      Buffer.from(sampleContractAddress() as never as string, 'hex'));
-
-    expect(hex(vaultCircuits.noteBlindingOf(vaultBytes(), coin)))
-      .not.toBe(hex(vaultCircuits.noteBlindingOf(other, coin)));
-    expect(hex(vaultCircuits.noteBlindingOf(vaultBytes(), coin)))
-      .not.toBe(hex(vaultCircuits.noteBlindingOf(
-        vaultBytes(), { ...coin, value: 999n })));
-    expect(hex(vaultCircuits.noteBlindingOf(vaultBytes(), coin)))
-      .not.toBe(hex(vaultCircuits.noteBlindingOf(
-        vaultBytes(), { ...coin, nonce: bytes(0x78) })));
-    expect(hex(vaultCircuits.noteBlindingOf(vaultBytes(), coin)))
-      .not.toBe(hex(vaultCircuits.noteBlindingOf(
-        vaultBytes(), { ...coin, color: USD })));
-
-    /* And it is deterministic, which is the whole of why nothing is stored. */
-    expect(hex(vaultCircuits.noteBlindingOf(vaultBytes(), coin)))
-      .toBe(hex(vaultCircuits.noteBlindingOf(vaultBytes(), { ...coin })));
+    /* Spent exactly, so no change: only the piece is left. */
+    expect(vaultLedger(vaultState as never).payments).toBe(1n);
+    expect([...pool()].map(hex)).toEqual([hex(heldBy(vaultBytes(), { nonce: back.find((c) => c.value === 300n)!.nonce, color: TOKEN_BYTES, value: 300n }))]);
   });
 });

@@ -32,6 +32,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import type { Server } from 'node:http';
 
+import { TEST_TOKEN } from '../testing/assets.js';
 useOnlyTheseSettings({
   ALLOW_SIMULATED_COMPANY_ADDRESS: '1',
   ALLOW_MEMORY_SESSIONS: '1',
@@ -93,7 +94,7 @@ Object.assign(ledger, {
         root: o.run.root, payees: BigInt(o.run.payees), opensAt: BigInt(o.run.opensAt),
         closesAt: BigInt(o.run.closesAt), vault: o.run.vault,
       }, {
-        asset: 'GBP', amount: BigInt(o.half.changeAmount), batchDigest: o.half.changeBatchDigest,
+        asset: TEST_TOKEN, amount: BigInt(o.half.changeAmount), batchDigest: o.half.changeBatchDigest,
         salt: o.half.proposalSalt,
       }, by);
       return { ref: `tx_${r.proposalId.slice(0, 8)}`, at: r.at };
@@ -126,7 +127,7 @@ const seeded = await (async () => {
     for (const s of accounts.open(account, viewingKey).signers) leaves.set(`${account} ${s.id}`, s.leafCommitment as Hex);
     for (let i = 0; i < 3; i++) {
       payroll.hireDirect(account, {
-        name: `${name} payee ${i}`, email: `p${i}@${name.toLowerCase()}.example`, title: 'Eng', asset: 'GBP',
+        name: `${name} payee ${i}`, email: `p${i}@${name.toLowerCase()}.example`, title: 'Eng', asset: TEST_TOKEN,
         baseAmount: 100_00n,
       }, viewingKey);
     }
@@ -279,8 +280,8 @@ describe('TWO DEVICES, ONE PROPOSAL, THE SERVED ROUTES', () => {
     door = async (_c, land) => { await gate.opened; return land(); };
     const one = aDevice('ada', c, c.ada.signerId);
     const two = aDevice('ada', c, c.ada.signerId);
-    const first = settle(device.sendRaiseFromDevice(one.doors, { runId: c.runId, viewingKey: c.viewingKey, asset: 'GBP' }));
-    const second = settle(device.sendRaiseFromDevice(two.doors, { runId: c.runId, viewingKey: c.viewingKey, asset: 'GBP' }));
+    const first = settle(device.sendRaiseFromDevice(one.doors, { runId: c.runId, viewingKey: c.viewingKey, asset: TEST_TOKEN }));
+    const second = settle(device.sendRaiseFromDevice(two.doors, { runId: c.runId, viewingKey: c.viewingKey, asset: TEST_TOKEN }));
     await until(() => sent.length >= 2 || (sent.length === 1 && (first.done || second.done)));
     gate.open();
     await until(() => first.done && second.done);

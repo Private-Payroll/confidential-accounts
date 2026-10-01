@@ -33,7 +33,6 @@
  * provider bundle's is: so that the type checker and anything merely reading
  * this module do not instantiate a WebAssembly binary.
  *
- * `no-wasm-in-the-page.test.ts` is what notices if that is ever forgotten, and
  * `public-data.test.ts` is where the measurement above is kept so that it is a
  * fact somebody watched rather than a paragraph.
  */

@@ -1,5 +1,3 @@
-import { PUBLIC_PAYMENT_SAYS } from '../../../src/core/movement.js';
-
 /**
  * **WHETHER AN ADDRESS IS PAID PUBLICLY, READ OFF THE ADDRESS ITSELF.**
  *
@@ -26,13 +24,6 @@ export function paidPublicly(address: string | null | undefined): boolean {
   return type === 'mn_addr' || type.startsWith('mn_addr_');
 }
 
-/** Whether a person on the roster is set up to be paid publicly. */
-export const setUpPublicly = (person: { readonly address?: { readonly bech32?: string } | null }): boolean =>
-  paidPublicly(person.address?.bech32);
-
 /** Whether a run pays anybody on it publicly, by the address each payslip names. */
 export const runPaysAnyonePublicly = (run: { readonly employees: ReadonlyArray<{ readonly paidTo?: string }> }): boolean =>
   run.employees.some(e => paidPublicly(e.paidTo));
-
-/** The sentence the page shows wherever a person is set up, or a run pays anybody, publicly. */
-export const PUBLIC_PAYMENT = PUBLIC_PAYMENT_SAYS;

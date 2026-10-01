@@ -5,7 +5,7 @@ import { join, relative } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
 import {
-  SEED_ASSETS, StaticAssetRegistry, assets as productAssets, ledgerFormOf, ledgerTokenOf,
+  NIGHT, SEED_ASSETS, StaticAssetRegistry, assets as productAssets, ledgerFormOf, ledgerTokenOf,
   type Asset, type LedgerForm,
 } from './assets.js';
 
@@ -13,10 +13,11 @@ import {
  * **AN ASSET'S LEDGER IDENTITY IS NAMED IN ONE PLACE, THE ASSET'S OWN ROW, AND
  * NOTHING ELSE TURNS AN ASSET INTO A LEDGER TOKEN.**
  *
- * §1 is the shape: any row, in any of the four shapes an asset can have, is
+ * §1 is the shape: any row, in any of the three shapes a token can have, is
  * answered from the row, so a new asset is a new row. §2 is the registry
- * refusing a row that would make two names for one balance. §3 is the census:
- * it reads the source and fails the day a second place appears.
+ * refusing a row that would make two names for one balance, a form naming
+ * another token, or a token no vault can hold. §3 is the census: it reads the
+ * source and fails the day a second place appears.
  */
 
 const FORMS: readonly LedgerForm[] = ['shielded', 'unshielded'];
@@ -24,18 +25,19 @@ const tokenFor = (label: string) => createHash('sha256').update(label).digest('h
 
 describe('§1 every shape an asset can have is answered from its row', () => {
   /*
-   * Rows invented here, with codes no function has ever seen and tokens nobody
-   * wrote down. A lookup that knew any asset by name would answer one of them
-   * wrongly; the product's registry is not touched.
+   * Rows invented here, with tokens nobody wrote down and symbols no function
+   * has ever seen. A lookup that knew any asset by name would answer one of
+   * them wrongly; the product's registry is not touched.
    */
-  const shapes = ['both', 'private only', 'public only', 'neither'] as const;
+  const shapes = ['both', 'private only', 'public only'] as const;
   const rows: Asset[] = Array.from({ length: 24 }, (_, i) => {
-    const shape = shapes[i % 4]!;
+    const shape = shapes[i % 3]!;
+    const code = tokenFor(`row ${i}`);
     return {
-      code: `ZX${i}Q`, name: `invented ${i}`, kind: 'token', decimals: i % 7, chain: 'midnight',
+      code, symbol: `ZX${i}Q`, name: `invented ${i}`, decimals: i % 7,
       ledger: {
-        shielded: shape === 'both' || shape === 'private only' ? tokenFor(`row ${i} shielded`) : null,
-        unshielded: shape === 'both' || shape === 'public only' ? tokenFor(`row ${i} unshielded`) : null,
+        shielded: shape === 'both' || shape === 'private only' ? code : null,
+        unshielded: shape === 'both' || shape === 'public only' ? code : null,
       },
       enabled: i % 5 !== 0, sortOrder: i,
     };
@@ -48,8 +50,8 @@ describe('§1 every shape an asset can have is answered from its row', () => {
         const answer = ledgerFormOf(registry.require(row.code), form);
         if (row.ledger[form] === null) {
           /* RED WHEN a form with no token is given a stand-in. */
-          expect(answer.of, `${row.code} ${form}`).toBe('no-such-form');
-          expect(() => ledgerTokenOf(row.code, form, registry)).toThrow(row.code);
+          expect(answer.of, `${row.symbol} ${form}`).toBe('no-such-form');
+          expect(() => ledgerTokenOf(row.code, form, registry)).toThrow(row.symbol);
         } else {
           /* RED WHEN the answer is not read off the row: another row's, another form's, or a constant. */
           expect(answer).toEqual({ of: 'token', token: row.ledger[form] });
@@ -62,33 +64,32 @@ describe('§1 every shape an asset can have is answered from its row', () => {
   it('says what the missing form\'s asset CAN do, from its row and not from its name', () => {
     const privateOnly = rows.find(r => r.ledger.shielded && !r.ledger.unshielded)!;
     const publicOnly = rows.find(r => !r.ledger.shielded && r.ledger.unshielded)!;
-    const neither = rows.find(r => !r.ledger.shielded && !r.ledger.unshielded)!;
+    /* RED WHEN the refusal names the token by its hex rather than its symbol. */
     expect(() => ledgerTokenOf(privateOnly.code, 'unshielded', registry))
-      .toThrow(`${privateOnly.code} has no public form on Midnight`);
+      .toThrow(`${privateOnly.symbol} has no public form on Midnight`);
     expect(() => ledgerTokenOf(privateOnly.code, 'unshielded', registry))
       .toThrow(/It has a private form only\./);
     expect(() => ledgerTokenOf(publicOnly.code, 'shielded', registry))
       .toThrow(/It has a public form only\./);
-    expect(() => ledgerTokenOf(neither.code, 'shielded', registry))
-      .toThrow(`${neither.code} has no form on Midnight, private or public`);
   });
 
   it('names, in a refusal, exactly the enabled assets that can be paid in that form', () => {
-    const neither = rows.find(r => !r.ledger.shielded && !r.ledger.unshielded)!;
-    const payablePrivately = rows.filter(r => r.enabled && r.ledger.shielded).map(r => r.code);
+    const publicOnly = rows.find(r => !r.ledger.shielded && r.ledger.unshielded)!;
+    const payablePrivately = rows.filter(r => r.enabled && r.ledger.shielded).map(r => r.symbol);
     expect(payablePrivately.length).toBeGreaterThan(1);
-    expect(() => ledgerTokenOf(neither.code, 'shielded', registry))
+    /* RED WHEN the list is not exactly the enabled rows with that form, by symbol. */
+    expect(() => ledgerTokenOf(publicOnly.code, 'shielded', registry))
       .toThrow(`Assets that have a private form: ${payablePrivately.join(', ')}.`);
   });
 
   it('the product registry says only what it knows: NIGHT publicly, one test asset privately', () => {
     const withAForm = productAssets.all().flatMap(a => FORMS
-      .filter(f => ledgerFormOf(a, f).of === 'token').map(f => `${a.code} ${f}`));
+      .filter(f => ledgerFormOf(a, f).of === 'token').map(f => `${a.symbol} ${f}`));
     /*
-     * RED WHEN a row gains a form it has not got, or loses one it has. Two rows
-     * in this registry state a token and the rest state null in both forms.
+     * RED WHEN a row gains a form it has not got, or loses one it has, or a row
+     * that is no token returns. Two rows are in this registry, each with one form.
      */
-    expect(withAForm).toEqual(['NIGHT unshielded', 'TESTUSD shielded']);
+    expect(withAForm).toEqual(['NIGHT unshielded', 'tUSD shielded']);
   });
 
   it('NIGHT STILL HAS NO PRIVATE FORM, and nothing about a test asset changes that', () => {
@@ -99,8 +100,8 @@ describe('§1 every shape an asset can have is answered from its row', () => {
      * from the list above because the list is about what the registry says and
      * this is about what the platform is.
      */
-    expect(productAssets.require('NIGHT').ledger.shielded).toBeNull();
-    expect(() => ledgerTokenOf('NIGHT', 'shielded'))
+    expect(productAssets.require(NIGHT).ledger.shielded).toBeNull();
+    expect(() => ledgerTokenOf(NIGHT, 'shielded'))
       .toThrow('NIGHT has no private form on Midnight');
   });
 
@@ -124,23 +125,44 @@ describe('§1 every shape an asset can have is answered from its row', () => {
 });
 
 describe('§2 a registry that would give one balance two names is refused when it is built', () => {
+  const A = tokenFor('row A');
   const base = (over: Partial<Asset>): Asset => ({
-    code: 'ZZA', name: 'a', kind: 'token', decimals: 0, chain: 'midnight',
-    ledger: { shielded: null, unshielded: null }, enabled: true, sortOrder: 1, ...over,
+    code: A, symbol: 'ZZA', name: 'a', decimals: 0,
+    ledger: { shielded: A, unshielded: null }, enabled: true, sortOrder: 1, ...over,
   });
 
-  it('REFUSES two assets naming the same token in the same form', () => {
+  it('REFUSES two assets that are the same token, in either form', () => {
     const t = tokenFor('shared');
     /* RED WHEN duplicate tokens are not looked for. */
     expect(() => new StaticAssetRegistry([
-      base({ code: 'ZZA', ledger: { shielded: t, unshielded: null } }),
-      base({ code: 'ZZB', ledger: { shielded: t, unshielded: null } }),
-    ])).toThrow('ZZA and ZZB name the same private token');
-    /* The same bytes in the other form are a different token type on the ledger, and are allowed. */
+      base({ code: t, symbol: 'ZZA', ledger: { shielded: t, unshielded: null } }),
+      base({ code: t, symbol: 'ZZB', ledger: { shielded: t, unshielded: null } }),
+    ])).toThrow('ZZA and ZZB are the same token');
+    /*
+     * RED WHEN two rows may name one token in its two forms. The ledger names a
+     * token's private notes and its public balance by one token type, so these
+     * would be two names for one balance.
+     */
     expect(() => new StaticAssetRegistry([
-      base({ code: 'ZZA', ledger: { shielded: t, unshielded: null } }),
-      base({ code: 'ZZB', ledger: { shielded: null, unshielded: t } }),
-    ])).not.toThrow();
+      base({ code: t, symbol: 'ZZA', ledger: { shielded: t, unshielded: null } }),
+      base({ code: t, symbol: 'ZZB', ledger: { shielded: null, unshielded: t } }),
+    ])).toThrow('ZZA and ZZB are the same token');
+  });
+
+  it('REFUSES a form that names a token other than the asset itself', () => {
+    /* RED WHEN a row may commit to one token and move another. */
+    expect(() => new StaticAssetRegistry([base({ ledger: { shielded: A, unshielded: tokenFor('other') } })]))
+      .toThrow("ZZA's public form names a different token from the asset itself");
+  });
+
+  it('REFUSES a token with no form at all, and the marker for no asset', async () => {
+    const { NO_ASSET } = await import('./assets.js');
+    /* RED WHEN a row no vault can hold is accepted as an asset. */
+    expect(() => new StaticAssetRegistry([base({ ledger: { shielded: null, unshielded: null } })]))
+      .toThrow('ZZA has no form on Midnight, private or public');
+    /* RED WHEN the marker that is no token is accepted as a row. */
+    expect(() => new StaticAssetRegistry([base({ code: NO_ASSET, ledger: { shielded: NO_ASSET, unshielded: null } })]))
+      .toThrow('ZZA is the marker for no asset');
   });
 
   it.each([
@@ -148,8 +170,11 @@ describe('§2 a registry that would give one balance two names is refused when i
     ['a 0x prefix', '0x' + 'ab'.repeat(31)],
     ['too short', 'ab'.repeat(31)],
     ['not hex', 'zz'.repeat(32)],
+    ['a code', 'GBP'],
   ])('REFUSES a token spelt with %s', (_why, token) => {
     /* RED WHEN a spelling is accepted, which is money a vault asked about by that spelling never holds. */
+    expect(() => new StaticAssetRegistry([base({ code: token, ledger: { shielded: token, unshielded: null } })]))
+      .toThrow('not 64 lower-case hex characters');
     expect(() => new StaticAssetRegistry([base({ ledger: { shielded: token, unshielded: null } })]))
       .toThrow('not 64 lower-case hex characters');
   });
@@ -233,16 +258,6 @@ function matchingClose(code: string, open: number): number {
   }
   return -1;
 }
-
-const topLevelOf = (body: string): string => {
-  let out = ''; let depth = 0;
-  for (const ch of body) {
-    if (OPENERS[ch]) { depth++; out += ' '; continue; }
-    if (CLOSERS[ch]) { depth--; out += ' '; continue; }
-    out += depth === 0 ? ch : ' ';
-  }
-  return out;
-};
 
 const lineAt = (code: string, at: number) => code.slice(0, at).split('\n').length;
 
@@ -357,7 +372,6 @@ const NOT_AN_ASSET_BECOMING_A_TOKEN: Record<string, { count: number; why: string
   'src/core/store.ts inviteKeyOf(token)': { count: 1, why: 'an invitation kept under its old key, moved to its stored key' },
   'src/core/plugins.ts \' \' + nanoid(24)': { count: 1, why: 'a plug-in\'s capability, minted at random' },
   'src/testing/assets.ts token': { count: 1, why: 'a record of which token a test vault was asked about' },
-  'src/web-legacy/Join.tsx token': { count: 1, why: 'an invitation\'s token handed to the screen that accepts it' },
 
   'src/midnight/vault-coins.ts token': { count: 1, why: 'the colour read off a coin in the ledger\'s own state' },
   'src/midnight/public-balance.ts token': { count: 1, why: 'the colour read off a contract\'s balance in the ledger\'s own state, to say how much of it the contract holds' },
@@ -367,7 +381,7 @@ const NOT_AN_ASSET_BECOMING_A_TOKEN: Record<string, { count: number; why: string
   'src/server/company-vaults.ts z.string().regex(HEX64)': { count: 1, why: 'a request schema, which describes a body and makes nothing' },
   'scripts/deposit-to-vault.ts colour': { count: 1, why: 'the colour read off the coin that arrived in the wallet, handed to the deposit; the journal line is written from the same coin inside the ledger' },
   'scripts/fund-vault.ts colour': { count: 1, why: 'the ledger\'s own native token, read from the ledger at run time' },
-  'scripts/measure-call-cost.ts toHex(GBP)': { count: 1, why: 'a colour a measurement mints for itself, never a payment' },
+  'scripts/measure-call-cost.ts toHex(TEST_TOKEN_BYTES)': { count: 1, why: 'a colour a measurement mints for itself, never a payment' },
   'src/midnight/vault-journal.ts token': { count: 1, why: 'the colour read off a journal line this reader has already checked is a coin, carried into the coin proposed to the chain' },
   'packages/web-shared/src/device-vault-holdings.ts p.token as Hex': { count: 1, why: 'the token the service already read off the asset\'s row for this payment, carried into the question the worker is asked' },
   'packages/web-shared/src/governed-call-on-device.ts String(p.token)': { count: 1, why: 'the token the service already read off the asset\'s row for this payment, carried into the check the device runs' },

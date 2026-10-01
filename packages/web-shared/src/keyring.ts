@@ -80,7 +80,7 @@ export interface AccountKeys {
 export type SavedAccountKeys = Omit<AccountKeys, 'scope'> & { scope?: unknown };
 
 /** Key material this device holds for a company, saved before scopes were recorded. */
-export class SeatSavedBeforeScopes extends Error {
+class SeatSavedBeforeScopes extends Error {
   constructor(readonly accountId: string) {
     super(
       'the keys saved for you for this company were written before vault scopes were recorded, so they ' +
@@ -100,7 +100,7 @@ const SCOPE = /^[0-9a-fA-F]{64}$/u;
  * scope, or a scope that is not thirty-two bytes, is refused; nothing is
  * filled in.
  */
-export function keysToActWith(accountId: string, saved: SavedAccountKeys | undefined | null): AccountKeys | null {
+function keysToActWith(accountId: string, saved: SavedAccountKeys | undefined | null): AccountKeys | null {
   if (!saved) return null;
   if (typeof saved.scope !== 'string' || !SCOPE.test(saved.scope)) throw new SeatSavedBeforeScopes(accountId);
   return { ...saved, scope: saved.scope };
@@ -299,13 +299,6 @@ let savedKeys: 'none' | 'some' | null = null;
  */
 let keyCheckedAgainstSignIn = false;
 /**
- * **WHETHER THE SIGN-IN THAT MADE THIS TAB WAS THIS ADDRESS'S FIRST HERE.**
- *
- * The server says so on the sign-in answer. A reload does not carry it, so a
- * resumed session answers false rather than guessing.
- */
-let firstSignInHere = false;
-/**
  * **WHY THIS TAB LAST FORGOT ITS SESSION, WHEN A SERVER ANSWER MADE IT.**
  *
  * A `401` means the server holds no session for this browser's cookie. A `409`
@@ -352,8 +345,6 @@ export const isSignedIn = () => sessionLive && me !== null;
  * asks which key opened it.
  */
 export const canOpenCompanies = () => encKey !== null;
-/** True only straight after a sign-in the server reported as this address's first here. */
-export const signedInForTheFirstTimeHere = () => firstSignInHere;
 
 /**
  * **WHY A COMPANY THIS PERSON IS ON CANNOT BE OPENED FROM THIS TAB**, in a few
@@ -364,7 +355,7 @@ export const signedInForTheFirstTimeHere = () => firstSignInHere;
  * device can save keys after this one looked, and a tab can be holding keys it
  * has not managed to save, so nothing here claims what no device can do.
  */
-export function lockedCompanyReason(accountId: string): string {
+function lockedCompanyReason(accountId: string): string {
   try {
     keysFor(accountId);
   } catch (e) {
@@ -379,7 +370,7 @@ export function lockedCompanyReason(accountId: string): string {
   return 'your wallet has not opened the keys saved for you in this tab yet';
 }
 
-export function lockedCompanyRefusal(accountId: string): string {
+function lockedCompanyRefusal(accountId: string): string {
   if (anythingSavedFor(accountId)) {
     return `${lockedCompanyReason(accountId)}: you may not have been given access to it yet.`;
   }
@@ -564,7 +555,7 @@ export const api = async (path: string, opts?: RequestInit) => {
  * from four different places on three different screens, and a callback
  * threaded through all of them is a callback one of them forgets.
  */
-export type WalletWaiting = (dialog: WalletDialog | null) => void;
+type WalletWaiting = (dialog: WalletDialog | null) => void;
 
 const watching = new Set<WalletWaiting>();
 
@@ -706,8 +697,8 @@ async function finishWalletSignIn(
  * A screen that signs the person in with its own code, over the same routes,
  * hands over the service's answer to `POST /api/auth/wallet` exactly as it
  * came back. What this module keeps from it is what it keeps from its own
- * sign-in, by the same lines: who signed in, the address the service says the
- * sign-in was for, and whether the service created the person just now. The address only gates: the wallet gives the key a
+ * sign-in, by the same lines: who signed in and the address the service says
+ * the sign-in was for. The address only gates: the wallet gives the key a
  * person's first keys are saved under only when one of its own accounts has
  * that address, so an address the wallet does not hold saves nothing.
  *
@@ -719,7 +710,7 @@ export function signedInByAnotherScreen(answer: unknown): Me {
   if (typeof a.user?.id !== 'string' || typeof a.user.name !== 'string' || typeof a.address !== 'string' || a.address === '') {
     throw new Error('the sign-in answer handed over names no person or no address, so this tab did not take it.');
   }
-  return takeTheSignIn(a as { user: Me; address: string; created?: unknown });
+  return takeTheSignIn(a as { user: Me; address: string });
 }
 
 /** What this tab keeps from a sign-in the service answered, however this tab asked for it. */
@@ -728,7 +719,6 @@ function takeTheSignIn(r: any): Me {
    * one: the server set the sign-in as a cookie this page cannot read. */
   sessionLive = true;
   walletAddress = r.address;
-  firstSignInHere = r.created === true;
   savedKeys = null;
   keyCheckedAgainstSignIn = false;
   /* A sign-in releases nothing. The unlock is what does. */
@@ -777,7 +767,6 @@ export async function resumeSession(carried: SignInCarried | null = null): Promi
   try {
     const r = await api('/api/me');
     sessionLive = true;
-    firstSignInHere = false;
     me = r.user as Me;
     if (carried !== null && carried.personId === me.id && typeof carried.address === 'string' && carried.address !== '') {
       walletAddress = carried.address;
@@ -1193,7 +1182,7 @@ export async function reopenSavedKeys(): Promise<void> {
  */
 export function forgetLocally() {
   sessionLive = false; encKey = null; keyring = { accounts: {} }; me = null; walletAddress = null;
-  releasedCompanyKey = null; savedKeys = null; firstSignInHere = false; keyCheckedAgainstSignIn = false;
+  releasedCompanyKey = null; savedKeys = null; keyCheckedAgainstSignIn = false;
   /*
    * **AND THE FOUNDER'S UNSEALED SECRETS.**
    *
@@ -1276,7 +1265,7 @@ export async function signOutEverywhereElse() {
 /* ---------------- the keyring ---------------- */
 
 /** Adds an account's secrets and pushes the resealed bundle. */
-export async function rememberAccount(accountId: string, keys: AccountKeys) {
+async function rememberAccount(accountId: string, keys: AccountKeys) {
   if (!encKey) throw new Error('not signed in');
   refuseToClobber(accountId, keys);
   await putBundle({ ...keyring, accounts: { ...keyring.accounts, [accountId]: keys } });
@@ -1306,7 +1295,7 @@ export function companiesThatPayYou(storage?: Pick<Storage, 'getItem'> | null): 
  * told to sign in again in it; keeping the company here instead left it in one
  * browser with nothing on screen to say so.
  */
-export async function rememberCompanyThatPaysYou(
+async function rememberCompanyThatPaysYou(
   label: string, storage?: Pick<Storage, 'getItem' | 'setItem'> | null,
 ): Promise<void> {
   const who = me;

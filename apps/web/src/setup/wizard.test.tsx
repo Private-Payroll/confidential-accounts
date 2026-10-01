@@ -534,6 +534,60 @@ describe('creating a vault: one component, on the step and on the Vaults page', 
     expect(Object.values(HANDOVER).length).toBe(12);
   });
 
+  /*
+   * RED WHEN: a set up waiting for other signers' approvals is said as done, as
+   * a failure, or without its round and how many approvals it has and needs; a
+   * set up that stopped is not said as that; or finishing it does anything but
+   * carry that same vault on, after the account confirms.
+   */
+  it('says a set up waiting for approvals, or one that stopped, and finishes setting up that vault', async () => {
+    const said = (key: string, approvals: number, needed: number) =>
+      EN[key]!.replace('{approvals}', String(approvals)).replace('{needed}', String(needed));
+    const { container } = await draw(<CreateVault leadTo={() => {}} onChanged={() => {}} />, sessionWith({ company: 'c-1' }));
+    for (const [result, says] of [
+      [{ of: 'awaiting-approvals', vault: 'v-4', round: 'adoption', approvals: 1, needed: 2 }, said('createVault.awaiting.adoption', 1, 2)],
+      [{ of: 'awaiting-approvals', vault: 'v-4', round: 'first-secret', approvals: 2, needed: 3 }, said('createVault.awaiting.firstSecret', 2, 3)],
+      [{ of: 'start-owed', vault: 'v-4' }, EN['createVault.startOwed']],
+    ] as const) {
+      state.vaultCreated = result as never;
+      state.acted.length = 0;
+      await act(async () => { fireEvent.click(q(container, '[data-action=create-vault-now]')!); await settle(); });
+      await act(async () => { fireEvent.click([...container.querySelectorAll('button')].find((b) => b.textContent === EN['kit.confirm.confirm'])!); await settle(); });
+      expect(q(container, '[data-result] [data-says]')!.textContent, result.of).toBe(says);
+      /* RED WHEN the words promise what is not built: other signers approving from their own accounts, finishing it from here after a reload, or name it adopting. */
+      expect(says, result.of).not.toMatch(/own accounts|from here|adopt/iu);
+      if (result.of === 'awaiting-approvals') expect(says).toContain('Your other signers cannot approve this in the app yet.');
+      expect(q(container, '[data-created]'), result.of).toBeNull();
+      await act(async () => { fireEvent.click(q(container, '[data-action=finish-start]')!); await settle(); });
+      expect(q(container, '[data-slot=confirm-in-your-account]')!.textContent).toContain(EN['createVault.confirmStart']);
+      await act(async () => { fireEvent.click([...container.querySelectorAll('button')].find((b) => b.textContent === EN['kit.confirm.confirm'])!); await settle(); });
+      expect(state.acted).toEqual([JSON.stringify(['create-vault', 'u1', 'c-1']), JSON.stringify(['finish-vault', 'u1', 'c-1', 'v-4'])]);
+    }
+  });
+
+  /* RED WHEN: a stage of the vault's set up is not said while it happens, or is said in words other than its own. */
+  it('says each stage of setting the vault up while it happens', async () => {
+    const { createVault } = await import('../adapters/create-vault.js');
+    const STAGES = [
+      ['adopting', 'createVault.stage.adopting'], ['opening-the-pool', 'createVault.stage.openingThePool'],
+      ['reading-the-secret-back', 'createVault.stage.readingTheSecretBack'], ['setting-the-secret', 'createVault.stage.settingTheSecret'],
+      ['writing-the-copies', 'createVault.stage.writingTheCopies'], ['waiting-for-approvals', 'createVault.stage.waitingForApprovals'],
+    ] as const;
+    const { container } = await draw(<CreateVault leadTo={() => {}} onChanged={() => {}} />, sessionWith({ company: 'c-1' }));
+    for (const [stage, key] of STAGES) {
+      let release: () => void = () => {};
+      vi.mocked(createVault).mockImplementationOnce(async (_p, _c, onStage) => {
+        onStage(stage);
+        await new Promise<void>((r) => { release = r; });
+        return state.vaultCreated as never;
+      });
+      await act(async () => { fireEvent.click(q(container, '[data-action=create-vault-now]')!); await settle(); });
+      await act(async () => { fireEvent.click([...container.querySelectorAll('button')].find((b) => b.textContent === EN['kit.confirm.confirm'])!); await settle(); });
+      expect(q(container, `[data-stage=${stage}]`)?.textContent, stage).toBe(EN[key]);
+      await act(async () => { release(); await settle(); });
+    }
+  });
+
   /* RED WHEN: a vault sent and not handed over is not named, with its number, or finishing it sends another vault rather than handing that one over; or Finish is offered on a device that does not hold the vault's key, or hidden there rather than disabled with why. */
   it('names a vault not handed over yet, and finishes handing that one over', async () => {
     state.owed = [{ vault: 'v-2', number: 2, here: true }, { vault: 'v-9', number: 3, here: false }];
@@ -558,6 +612,11 @@ describe('creating a vault: one component, on the step and on the Vaults page', 
     await act(async () => { fireEvent.click(q(held.container, '[data-action=finish-handover]')!); await settle(); });
     await act(async () => { fireEvent.click([...held.container.querySelectorAll('button')].find((b) => b.textContent === EN['kit.confirm.confirm'])!); await settle(); });
     expect(q(held.container, '[data-created]')!.textContent).toBe(EN['createVault.done']);
+    /* RED WHEN the vault's words say money goes in once the signers hold it, before it is set up, or call it done without saying it is set up. */
+    expect([held.container.querySelector('[data-action=create-vault] > p')?.textContent, q(held.container, '[data-created]')!.textContent]).toEqual([
+      expect.stringContaining('Until your signers hold it and it is set up, this app puts no money into it.'),
+      'The vault is created and set up, and your signers hold it.',
+    ]);
   });
 });
 

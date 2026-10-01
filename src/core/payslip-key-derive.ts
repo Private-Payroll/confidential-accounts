@@ -19,7 +19,7 @@ import { toHex, utf8, type WrappingKeypair } from './crypto.js';
  * asset back into the page's module graph. **That is a failure this project has
  * already had**: a blank page in every real browser, from one small function
  * imported across a file that had the wallet SDK behind it. Measured, not
- * feared: `no-wasm-in-the-page.test.ts` went red the moment the import was
+ * feared: the earlier application's page check went red the moment the import was
  * added and green again on this split.
  *
  * **ONE DERIVATION, STILL.** Nothing was copied. `payslip-key.ts` imports this

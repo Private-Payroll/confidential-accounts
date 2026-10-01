@@ -393,8 +393,9 @@ describe('WHAT A LEG PAYS IS HANDED ONLY TO A MEMBER, FOR A RUN OF THEIR OWN, IN
     const c = seeded.raised;
     const r = await post(`/api/runs/${c.runId}/leg-payments`, { viewingKey: c.viewingKey });
     expect(r.status, JSON.stringify(r.body)).toBe(200);
-    /* RED WHEN: the answer gains a field - above all who is paid - or loses one a device checks. */
-    expect(Object.keys(r.body).sort()).toEqual(['asset', 'payments']);
+    /* RED WHEN: the answer gains a field - above all who is paid - or loses one a device checks. The leg's
+     * token and form name the leg, which one run pays in one form, and nobody on it. */
+    expect(Object.keys(r.body).sort()).toEqual(['asset', 'form', 'leg', 'payments']);
     expect(r.body.payments).toHaveLength(3);
     for (const p of r.body.payments) {
       expect(Object.keys(p).sort()).toEqual(['amount', 'kind', 'token']);

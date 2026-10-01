@@ -95,10 +95,12 @@ fi
 # the experimental proof-server build; it does not say which header Stagenet's
 # node accepts, and that question is open with the Foundation.
 #
-# So: default off, one environment variable to turn on, and the choice recorded
-# next to the build rather than remembered.
-#
-#   COMPACT_ZKIR_V3=1 ./scripts/compile-contract.sh --full
+# THIS PRODUCT IS DESIGNED AND BUILT UNDER ZKIR VERSION 2, and the keys every
+# creation and every deployment uses are built without the flag. Do not set
+# COMPACT_ZKIR_V3 for a build anything is created or deployed from: a company
+# created from keys of another version is a deploy that spends its fee before
+# the version is ever looked at. The variable is read below only so that a
+# version-3 build can be measured beside the real one, into a folder of its own.
 #
 # It only affects a full build. `--skip-zk` does not run zkir at all, which is
 # why the quick compile can go ahead before the question is answered.
@@ -109,10 +111,9 @@ fi
 
 if [ "${1:-}" = "--full" ]; then
   if [ ${#ZKIR_FLAG[@]} -gt 0 ]; then
-    echo "compiling with proving keys, ZKIR v3 ($("$COMPACTC" --version))"
+    echo "compiling with proving keys, ZKIR v3 ($("$COMPACTC" --version)): for measuring only, never for creating or deploying"
   else
     echo "compiling with proving keys, default ZKIR ($("$COMPACTC" --version))"
-    echo "  set COMPACT_ZKIR_V3=1 if Stagenet needs v3 — see BACKLOG M-54"
   fi
   # Same idiom as compile-vault.sh, for the same reason. This line has run
   # many times without failing and the reason it survives is NOT established —

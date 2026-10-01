@@ -20,9 +20,10 @@ import { join } from 'node:path';
 import { beforeEach, describe, expect, it } from 'vitest';
 
 import {
-  AccountSimulator, change, privateStateFor, payoutTreeOf, sumArgsOf, GBP, USDC, type Change,
+  AccountSimulator, change, privateStateFor, payoutTreeOf, sumArgsOf, TEST_TOKEN_BYTES, OTHER_TEST_TOKEN_BYTES, type Change,
 } from './simulator.js';
 import { pureCircuits } from '../managed/contract/index.js';
+import { pureCircuits as vaultCircuits } from '../managed-vault/contract/index.js';
 import type { PolicyOpening } from '../src/witnesses.js';
 import {
   rootOfLeaves, sumTreeOfLeaves, type PayoutLeafInput, type PayoutTree, type SumStep,
@@ -80,7 +81,7 @@ const live = async (devices = [A, B, C], threshold = 2n) => {
 /** Sets `vault`'s policy for `asset` under a round raised by A and approved by `approvers`. */
 const setPolicyOn = async (
   sim: AccountSimulator, vault: Uint8Array, policy: PolicyOpening, seed: number,
-  asset: Uint8Array = GBP, approvers = [A, B],
+  asset: Uint8Array = TEST_TOKEN_BYTES, approvers = [A, B],
 ) => {
   const c = change(0n, seed, asset);
   const commitment = pureCircuits.policyCommitmentOf(policy);
@@ -99,10 +100,10 @@ interface Run {
 /** Raises a run of `amounts` naming `vault`, and approves it by `approvers`. */
 const raise = async (
   sim: AccountSimulator, vault: Uint8Array, amounts: bigint[], seed: number,
-  opts: { required?: bigint; from?: bigint; until?: bigint; asset?: Uint8Array; approvers?: typeof A[] } = {},
+  opts: { required?: bigint; from?: bigint; until?: bigint; asset?: Uint8Array; approvers?: typeof A[]; payments?: PayoutLeafInput[] } = {},
 ): Promise<Run> => {
-  const { required = 2n, from = OPENS, until = CLOSES, asset = GBP, approvers = [A, B] } = opts;
-  const payments = amounts.map((_, i) => ({ details: toHex(bytes(seed + i)), nonce: toHex(bytes(seed + 60 + i)) }));
+  const { required = 2n, from = OPENS, until = CLOSES, asset = TEST_TOKEN_BYTES, approvers = [A, B] } = opts;
+  const payments = opts.payments ?? amounts.map((_, i) => ({ details: toHex(bytes(seed + i)), nonce: toHex(bytes(seed + 60 + i)) }));
   const tree = payoutTreeOf(payments, amounts, asset);
   const c = change(0n, seed, asset);
   await sim.as(sim.applying(A, c)).proposeRun({
@@ -167,7 +168,7 @@ describe('the sum tree: a root binds what its run can pay in total', () => {
     await expect(pay(sim, run, 0, { amount: 301n }))
       .rejects.toThrow(/that payee is not in the approved run, at that amount and in that currency, from that vault/);
     /* RED WHEN the root stops hashing the token. */
-    await expect(pay(sim, run, 0, { asset: USDC }))
+    await expect(pay(sim, run, 0, { asset: OTHER_TEST_TOKEN_BYTES }))
       .rejects.toThrow(/that payee is not in the approved run, at that amount and in that currency, from that vault/);
     await pay(sim, run, 0);
     await pay(sim, run, 1);
@@ -191,14 +192,14 @@ describe('the sum tree: a root binds what its run can pay in total', () => {
       top = pureCircuits.sumInnerNode(top, 200n, 0n, 0n);
       above.push({ sibling: 0n, siblingSum: 0n, goesLeft: true });
     }
-    const root = pureCircuits.sumRootOf(top, 200n, GBP);
+    const root = pureCircuits.sumRootOf(top, 200n, TEST_TOKEN_BYTES);
     const c = change(0n, 41);
     await sim.as(sim.applying(A, c)).proposeRun({ root, payees: 2n, from: OPENS, until: CLOSES, vault: PAYROLL });
     const id = sim.proposalId(pureCircuits.runPayload(root, 2n, OPENS, CLOSES, 0n), c.salt, PAYROLL);
     for (const a of [A, B]) await sim.as(sim.applying(a, c)).approve(id);
     const claim = (i: number, path: SumStep[]) => sim.as(sim.applying(A, c)).recordPaymentFromVault({
       proposal: id, vault: PAYROLL, root, payees: 2n, from: OPENS, until: CLOSES, salt: c.salt,
-      details: fromHex(payments[i]!.details), nonce: fromHex(payments[i]!.nonce), amount: 200n, asset: GBP, path,
+      details: fromHex(payments[i]!.details), nonce: fromHex(payments[i]!.nonce), amount: 200n, asset: TEST_TOKEN_BYTES, path,
     });
 
     await claim(0, [{ sibling: n1, siblingSum: 0n, goesLeft: true }, ...above]);
@@ -235,13 +236,13 @@ describe('the sum tree: a root binds what its run can pay in total', () => {
     const tree = payoutTreeOf(payments, amounts);
     /* RED WHEN the tree builder and the contract compute a node differently. */
     for (let i = 0; i < amounts.length; i++) {
-      expect(toHex(pureCircuits.sumPathRoot(fromHex(tree.leaves[i]!), amounts[i]!, tree.pathFor(i) as never, GBP)))
+      expect(toHex(pureCircuits.sumPathRoot(fromHex(tree.leaves[i]!), amounts[i]!, tree.pathFor(i) as never, TEST_TOKEN_BYTES)))
         .toBe(tree.root);
     }
     expect(tree.total).toBe(15n);
-    expect(rootOfLeaves(tree.leaves, amounts, toHex(GBP))).toBe(tree.root);
+    expect(rootOfLeaves(tree.leaves, amounts, toHex(TEST_TOKEN_BYTES))).toBe(tree.root);
     /* RED WHEN the root stops committing the run's asset. */
-    expect(sumTreeOfLeaves(tree.leaves, amounts, toHex(USDC)).root).not.toBe(tree.root);
+    expect(sumTreeOfLeaves(tree.leaves, amounts, toHex(OTHER_TEST_TOKEN_BYTES)).root).not.toBe(tree.root);
   });
 });
 
@@ -255,7 +256,7 @@ describe("setPolicy: a vault's policy for one token, under governance and the po
     const set = await setPolicyOn(sim, PAYROLL, POLICY, 501);
     await set.apply();
     /* RED WHEN the key is derived from anything but the vault and the token's blinded key. */
-    expect(sim.roleEntry(policyKeyOf(PAYROLL, GBP))).toEqual(set.commitment);
+    expect(sim.roleEntry(policyKeyOf(PAYROLL, TEST_TOKEN_BYTES))).toEqual(set.commitment);
     /* RED WHEN the marker is not written, or under another key. */
     expect(sim.roleEntry(pureCircuits.policyOnKeyOf(PAYROLL))).toEqual(pureCircuits.policyOnMark());
     expect(sim.roleEntry(pureCircuits.policyOnKeyOf(TREASURY))).toBeUndefined();
@@ -275,20 +276,20 @@ describe("setPolicy: a vault's policy for one token, under governance and the po
     await expect(set.apply()).rejects.toThrow(/needs the approvals the company set for policy changes/);
     await sim.as(C).approve(set.id);
     await set.apply();
-    expect(sim.roleEntry(policyKeyOf(PAYROLL, GBP))).toEqual(set.commitment);
+    expect(sim.roleEntry(policyKeyOf(PAYROLL, TEST_TOKEN_BYTES))).toEqual(set.commitment);
   });
 
   it('refuses one signer, a round for another policy, and the company-wide vault', async () => {
-    const lone = await setPolicyOn(sim, PAYROLL, POLICY, 504, GBP, [A]);
-    /* RED WHEN setPolicy stops requiring the round to be approved. */
+    const lone = await setPolicyOn(sim, PAYROLL, POLICY, 504, TEST_TOKEN_BYTES, [A]);
+    /* RED WHEN setPolicy stops requiring the proposal to be approved. */
     await expect(lone.apply()).rejects.toThrow(/not enough approvals yet/);
 
     const set = await setPolicyOn(sim, PAYROLL, POLICY, 505);
     const other = pureCircuits.policyCommitmentOf({ ...POLICY, blinding: bytes(901) });
-    /* RED WHEN the round's payload stops binding the commitment written. */
+    /* RED WHEN the proposal's payload stops binding the commitment written. */
     await expect(sim.as(sim.applying(A, change(0n, 505))).setPolicy(PAYROLL, other, set.id))
       .rejects.toThrow(/that proposal is for a different policy, vault or currency/);
-    /* RED WHEN the round's payload stops binding the vault. */
+    /* RED WHEN the proposal's payload stops binding the vault. */
     await expect(sim.as(sim.applying(A, change(0n, 505))).setPolicy(TREASURY, set.commitment, set.id))
       .rejects.toThrow(/that proposal is for a different policy, vault or currency/);
 
@@ -308,7 +309,7 @@ describe("setPolicy: a vault's policy for one token, under governance and the po
   it('refuses an empty policy', async () => {
     const c = change(0n, 509);
     const empty = new Uint8Array(32);
-    const payload = pureCircuits.setPolicyPayload(PAYROLL, assetKeyOf(GBP), empty);
+    const payload = pureCircuits.setPolicyPayload(PAYROLL, assetKeyOf(TEST_TOKEN_BYTES), empty);
     await sim.as(sim.applying(A, c)).propose(payload);
     const id = sim.proposalId(payload, c.salt);
     for (const a of [A, B]) await sim.as(a).approve(id);
@@ -343,7 +344,7 @@ describe('clearRun: an approved run charged to its period once, inside its windo
     const run = await raise(sim, PAYROLL, [600n, 400n], 20, { required: 2n });
     await clear(sim, run);
     /* RED WHEN the period's total is stored under another key, blinding or amount. */
-    expect(sim.roleEntry(periodKeyOf(PAYROLL, GBP, POLICY))).toEqual(periodTotalOf(POLICY, 1_000n));
+    expect(sim.roleEntry(periodKeyOf(PAYROLL, TEST_TOKEN_BYTES, POLICY))).toEqual(periodTotalOf(POLICY, 1_000n));
     /* RED WHEN clearing stops writing the cleared mark over the run's change. */
     expect(sim.openChange(run.id)).toEqual(pureCircuits.clearedMark());
     /* RED WHEN a run can be charged twice. */
@@ -354,7 +355,7 @@ describe('clearRun: an approved run charged to its period once, inside its windo
     const run = await raise(sim, PAYROLL, [1_000n], 21, { approvers: [A] });
     /* RED WHEN clearRun stops asking for the run's approvals. */
     await expect(clear(sim, run)).rejects.toThrow(/not enough approvals yet/);
-    expect(sim.roleEntry(periodKeyOf(PAYROLL, GBP, POLICY))).toBeUndefined();
+    expect(sim.roleEntry(periodKeyOf(PAYROLL, TEST_TOKEN_BYTES, POLICY))).toBeUndefined();
   });
 
   it('a run is charged only inside its window: never before it opens, so a run that can still be withdrawn is never charged', async () => {
@@ -366,7 +367,7 @@ describe('clearRun: an approved run charged to its period once, inside its windo
     const late = await raise(sim, PAYROLL, [100n], 23, { from: OPENS - 7_200n, until: OPENS - 3_600n });
     /* RED WHEN clearRun charges a run whose window has closed. */
     await expect(clear(sim, late)).rejects.toThrow(/payment window for this run has closed/);
-    expect(sim.roleEntry(periodKeyOf(PAYROLL, GBP, POLICY))).toBeUndefined();
+    expect(sim.roleEntry(periodKeyOf(PAYROLL, TEST_TOKEN_BYTES, POLICY))).toBeUndefined();
   });
 
   it("refuses a total or a token other than the ones the run's root commits to", async () => {
@@ -374,11 +375,11 @@ describe('clearRun: an approved run charged to its period once, inside its windo
     /* RED WHEN clearRun stops checking the total against the root. */
     await expect(clear(sim, run, { total: 499n })).rejects.toThrow(/total or currency is not the one the signers approved for this run/);
     /* RED WHEN the token the policy is looked up by is not the token in the root. */
-    await expect(clear(sim, run, { asset: USDC })).rejects.toThrow(/total or currency is not the one the signers approved for this run/);
+    await expect(clear(sim, run, { asset: OTHER_TEST_TOKEN_BYTES })).rejects.toThrow(/total or currency is not the one the signers approved for this run/);
   });
 
   it("A VAULT UNDER A POLICY REFUSES A TOKEN ITS POLICY DOES NOT NAME", async () => {
-    const run = await raise(sim, PAYROLL, [500n], 25, { asset: USDC });
+    const run = await raise(sim, PAYROLL, [500n], 25, { asset: OTHER_TEST_TOKEN_BYTES });
     /* RED WHEN clearRun stops requiring a policy for the run's own token. */
     await expect(clear(sim, run)).rejects.toThrow(/no spending policy for the currency this run pays in/);
     /* RED WHEN the receipt step pays a vault under a policy without a charge. */
@@ -424,7 +425,44 @@ describe('clearRun: an approved run charged to its period once, inside its windo
     const third = await raise(sim, PAYROLL, [500n], 34);
     /* Another signer opens the same total: its blinding comes from the policy and the period. */
     await clear(sim, third, { spent: 1_000n, device: B });
-    expect(sim.roleEntry(periodKeyOf(PAYROLL, GBP, POLICY))).toEqual(periodTotalOf(POLICY, 1_500n));
+    expect(sim.roleEntry(periodKeyOf(PAYROLL, TEST_TOKEN_BYTES, POLICY))).toEqual(periodTotalOf(POLICY, 1_500n));
+  });
+
+  /*
+   * ONE POLICY PER TOKEN, SHARED BY ITS TWO FORMS (as designed): a
+   * token's private notes and its public balance are one token to the ledger,
+   * so the policy's key, its limit and the period's spend are one for both. The
+   * contract does not tell the forms apart when it charges a run: it charges the
+   * run's total to the token's one entry, whatever form its leaves pay in. So a
+   * private run and a public run of the token are charged to the same period,
+   * and whichever would take it past the limit is refused. The leaves are made
+   * from the vault's private or public payment details only so that each run
+   * here is one a vault could pay; the charge does not read them.
+   */
+  it("EACH FORM'S RUN IS HELD TO THE TOKEN'S ONE LIMIT, AND THE PERIOD'S SPEND IS SHARED BY BOTH FORMS", async () => {
+    const PERSON = bytes(77);
+    const privately = (amount: bigint, seed: number): PayoutLeafInput[] =>
+      [{ details: toHex(vaultCircuits.payoutDetails(PERSON, TEST_TOKEN_BYTES, amount, bytes(seed))), nonce: toHex(bytes(seed + 1)) }];
+    const publicly = (amount: bigint, seed: number): PayoutLeafInput[] =>
+      [{ details: toHex(vaultCircuits.unshieldedPayoutDetails(PERSON, TEST_TOKEN_BYTES, amount, bytes(seed))), nonce: toHex(bytes(seed + 1)) }];
+    /* RED WHEN either form escapes the limit: a run of one form alone past it is refused. */
+    const tooMuchPublicly = await raise(sim, PAYROLL, [1_600n], 40, { required: 3n, approvers: [A, B, C], payments: publicly(1_600n, 700) });
+    await expect(clear(sim, tooMuchPublicly)).rejects.toThrow(/past its limit for the period/);
+    const tooMuchPrivately = await raise(sim, PAYROLL, [1_600n], 41, { required: 3n, approvers: [A, B, C], payments: privately(1_600n, 702) });
+    await expect(clear(sim, tooMuchPrivately)).rejects.toThrow(/past its limit for the period/);
+    /* A private run of 1,000 is charged to the period. */
+    const privateRun = await raise(sim, PAYROLL, [1_000n], 42, { payments: privately(1_000n, 704) });
+    await clear(sim, privateRun);
+    /* RED WHEN the public run is charged to a period of its own: 600 more publicly would then pass. */
+    const publicRun = await raise(sim, PAYROLL, [600n], 43, { payments: publicly(600n, 706) });
+    await expect(clear(sim, publicRun, { spent: 1_000n })).rejects.toThrow(/past its limit for the period/);
+    /* RED WHEN a public run is not charged at all, or not on the token's one entry: 500 more takes it to the limit, exactly. */
+    const withinIt = await raise(sim, PAYROLL, [500n], 44, { payments: publicly(500n, 708) });
+    await clear(sim, withinIt, { spent: 1_000n });
+    expect(sim.roleEntry(periodKeyOf(PAYROLL, TEST_TOKEN_BYTES, POLICY))).toEqual(periodTotalOf(POLICY, 1_500n));
+    /* And with the limit reached, a private run of the token is refused too. */
+    const onePrivately = await raise(sim, PAYROLL, [1n], 45, { payments: privately(1n, 710) });
+    await expect(clear(sim, onePrivately, { spent: 1_500n })).rejects.toThrow(/past its limit for the period/);
   });
 
   it("refuses a device that says the period has been charged less than it has", async () => {
@@ -444,7 +482,7 @@ describe('clearRun: an approved run charged to its period once, inside its windo
     const retry = await raiseAgain(sim, run, 38);
     /* RED WHEN the charge stops being kept per tree and period: the retry would take the period to 2,000. */
     await clear(sim, retry, { spent: 1_000n });
-    expect(sim.roleEntry(periodKeyOf(PAYROLL, GBP, POLICY))).toEqual(periodTotalOf(POLICY, 1_000n));
+    expect(sim.roleEntry(periodKeyOf(PAYROLL, TEST_TOKEN_BYTES, POLICY))).toEqual(periodTotalOf(POLICY, 1_000n));
     expect(sim.openChange(retry.id)).toEqual(pureCircuits.clearedMark());
     /* The payee the first round paid is not paid again through the retry; the other is. */
     await expect(pay(sim, retry, 0)).rejects.toThrow(/already been made/);
@@ -470,7 +508,7 @@ describe('clearRun: an approved run charged to its period once, inside its windo
     const retry: Run = { tree, id, c, payments, required: 2n, from: OPENS, until: CLOSES, vault: PAYROLL };
     /* A new tree is a new charge: the period goes from 1,000 to 1,400, which only tightens the limit. RED WHEN clearRun stops adding a new tree's total to its period. */
     await clear(sim, retry, { spent: 1_000n });
-    expect(sim.roleEntry(periodKeyOf(PAYROLL, GBP, POLICY))).toEqual(periodTotalOf(POLICY, 1_400n));
+    expect(sim.roleEntry(periodKeyOf(PAYROLL, TEST_TOKEN_BYTES, POLICY))).toEqual(periodTotalOf(POLICY, 1_400n));
     /* The payee the run already paid is not in the retry's tree at all. RED WHEN the receipt step stops walking the payee's path to the root. */
     await expect(pay(sim, retry, 0, { details: fromHex(run.payments[0]!.details), nonce: fromHex(run.payments[0]!.nonce) }))
       .rejects.toThrow(/that payee is not in the approved run/);
@@ -487,14 +525,14 @@ describe('clearRun: an approved run charged to its period once, inside its windo
     const again = await raise(sim, PAYROLL, [1_000n], 41);
     /* RED WHEN the period's key stops including the policy's commitment: the old total would be read. */
     await clear(sim, again, { policy: next });
-    expect(sim.roleEntry(periodKeyOf(PAYROLL, GBP, next))).toEqual(periodTotalOf(next, 1_000n));
-    expect(sim.roleEntry(periodKeyOf(PAYROLL, GBP, POLICY))).toEqual(periodTotalOf(POLICY, 1_000n));
+    expect(sim.roleEntry(periodKeyOf(PAYROLL, TEST_TOKEN_BYTES, next))).toEqual(periodTotalOf(next, 1_000n));
+    expect(sim.roleEntry(periodKeyOf(PAYROLL, TEST_TOKEN_BYTES, POLICY))).toEqual(periodTotalOf(POLICY, 1_000n));
   });
 
   it("REFUSES ARGUMENTS THAT DO NOT REBUILD THE RUN: a cheap tree cannot clear a big run", async () => {
     const run = await raise(sim, PAYROLL, [1_400n], 43);
     const cheap = payoutTreeOf(
-      [{ details: toHex(bytes(700)), nonce: toHex(bytes(701)) }], [10n], GBP);
+      [{ details: toHex(bytes(700)), nonce: toHex(bytes(701)) }], [10n], TEST_TOKEN_BYTES);
     const state = { ...sim.applying(A, run.c), policy: POLICY, periodSpent: 0n };
     /* RED WHEN clearRun stops rebuilding the run's id from what it is given. */
     await expect(sim.as(state).clearRun({
@@ -502,7 +540,7 @@ describe('clearRun: an approved run charged to its period once, inside its windo
       from: run.from, until: run.until, required: run.required, salt: run.c.salt,
       top: cheap.top, total: cheap.total, period: 0n,
     })).rejects.toThrow(/that is not this run, or you were not given it/);
-    expect(sim.roleEntry(periodKeyOf(PAYROLL, GBP, POLICY))).toBeUndefined();
+    expect(sim.roleEntry(periodKeyOf(PAYROLL, TEST_TOKEN_BYTES, POLICY))).toBeUndefined();
     expect(sim.openChange(run.id)).not.toEqual(pureCircuits.clearedMark());
   });
 
@@ -516,10 +554,10 @@ describe('clearRun: an approved run charged to its period once, inside its windo
     const later = await raise(sim, PAYROLL, [1_000n], 45, { from: next + 4n * BigInt(DAY), until: next + 6n * BigInt(DAY) });
     /* RED WHEN the period's key leaves out the period: period 0's total would be read here. */
     await clear(sim, later, { period: 1n });
-    expect(sim.roleEntry(periodKeyOf(PAYROLL, GBP, POLICY, 1n))).toEqual(periodTotalOf(POLICY, 1_000n, 1n));
+    expect(sim.roleEntry(periodKeyOf(PAYROLL, TEST_TOKEN_BYTES, POLICY, 1n))).toEqual(periodTotalOf(POLICY, 1_000n, 1n));
     /* RED WHEN the period's blinding leaves out the period. */
-    expect(sim.roleEntry(periodKeyOf(PAYROLL, GBP, POLICY, 1n))).not.toEqual(periodTotalOf(POLICY, 1_000n, 0n));
-    expect(sim.roleEntry(periodKeyOf(PAYROLL, GBP, POLICY))).toEqual(periodTotalOf(POLICY, 1_000n));
+    expect(sim.roleEntry(periodKeyOf(PAYROLL, TEST_TOKEN_BYTES, POLICY, 1n))).not.toEqual(periodTotalOf(POLICY, 1_000n, 0n));
+    expect(sim.roleEntry(periodKeyOf(PAYROLL, TEST_TOKEN_BYTES, POLICY))).toEqual(periodTotalOf(POLICY, 1_000n));
   });
 
   it("refuses an opening that is not the vault's policy", async () => {
@@ -620,7 +658,7 @@ describe('what setting a policy and charging a run publish', () => {
     t.assertNotVacuous();
     /* RED WHEN setPolicy stops writing any of these where the chain can read them. */
     t.assertPublishes({
-      "the policy's key": policyKeyOf(PAYROLL, GBP),
+      "the policy's key": policyKeyOf(PAYROLL, TEST_TOKEN_BYTES),
       "the policy's commitment": set.commitment,
       "the marker's key": pureCircuits.policyOnKeyOf(PAYROLL),
     });
@@ -631,8 +669,8 @@ describe('what setting a policy and charging a run publish', () => {
      */
     t.assertAbsent({
       'the vault': PAYROLL,
-      'the token': GBP,
-      "the token's blinded key": assetKeyOf(GBP),
+      'the token': TEST_TOKEN_BYTES,
+      "the token's blinded key": assetKeyOf(TEST_TOKEN_BYTES),
       "the policy's blinding": PRIVATE_POLICY.blinding,
       'the period limit': PRIVATE_POLICY.terms.periodLimit,
       'the first ceiling': PRIVATE_POLICY.terms.bands[0]!.ceiling,
@@ -648,12 +686,12 @@ describe('what setting a policy and charging a run publish', () => {
     const t = tape.last;
     tape.stop();
     t.assertNotVacuous();
-    const periodKey = periodKeyOf(PAYROLL, GBP, PRIVATE_POLICY);
+    const periodKey = periodKeyOf(PAYROLL, TEST_TOKEN_BYTES, PRIVATE_POLICY);
     /* RED WHEN clearRun stops writing any of these where the chain can read them. */
     t.assertPublishes({
       'the run': run.id,
       'the vault': PAYROLL,
-      "the policy's key": policyKeyOf(PAYROLL, GBP),
+      "the policy's key": policyKeyOf(PAYROLL, TEST_TOKEN_BYTES),
       "the period's key": periodKey,
       "the period's new total, committed": periodTotalOf(PRIVATE_POLICY, TOTAL),
       'the record that this tree was charged': pureCircuits.chargedKeyOf(periodKey, fromHex(run.tree.root)),
@@ -664,8 +702,8 @@ describe('what setting a policy and charging a run publish', () => {
       "the run's total": TOTAL,
       "the run's root": fromHex(run.tree.root),
       "the run's salt": run.c.salt,
-      'the token': GBP,
-      "the token's blinded key": assetKeyOf(GBP),
+      'the token': TEST_TOKEN_BYTES,
+      "the token's blinded key": assetKeyOf(TEST_TOKEN_BYTES),
       "the policy's blinding": PRIVATE_POLICY.blinding,
       'the period limit': PRIVATE_POLICY.terms.periodLimit,
       "the payee's leaf": fromHex(run.tree.leaves[0]!),

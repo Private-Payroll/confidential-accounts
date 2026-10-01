@@ -83,7 +83,7 @@ describe('which vaults can take private money', () => {
   });
 
   it('refuses a record carrying no circuits at all', () => {
-    expect(() => assertVaultTakesPrivateMoney(entryWith([]))).toThrow(/missing 7 of the vault/);
+    expect(() => assertVaultTakesPrivateMoney(entryWith([]))).toThrow(/missing 9 of the vault/);
   });
 
   it('does NOT claim the checks afterwards would agree, because they would refuse', () => {

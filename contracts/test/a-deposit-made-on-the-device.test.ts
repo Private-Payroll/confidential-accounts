@@ -39,12 +39,14 @@ import {
   Contract as Vault, ledger as vaultLedger, pureCircuits as vaultCircuits,
 } from '../managed-vault/contract/index.js';
 import { pureCircuits } from '../managed/contract/index.js';
-import { AccountSimulator, privateStateFor, change, type Change, payoutTreeOf } from './simulator.js';
+import { carryTheAccount, startTheVault } from './start-a-vault.js';
+import { AccountSimulator, privateStateFor, change, type Change, payoutTreeOf, vaultRunOf } from './simulator.js';
 import { type PayoutLeafInput } from '../../src/midnight/payout-tree.js';
 import { changeCoinOf } from '../../src/midnight/vault-coins.js';
 import {
-  reconcileVaultPool, commitmentForNote, changeNonceOf, describeRecovery,
+  reconcileVaultPool, commitmentForNote, changeNoteOf, describeRecovery,
 } from '../../src/midnight/vault-recovery.js';
+import { copiesTreeOf } from '../../src/midnight/sealed-copies-tree.js';
 import { smallestNoteCovering, type Note } from '../../src/midnight/vault-notes.js';
 import { type NoteEvents, type ServedEvent, type VaultTransactions } from '../../src/midnight/note-index.js';
 import {
@@ -68,7 +70,6 @@ import { UNLOCK_PURPOSE, UNLOCK_WINDOW_MS, unlockAsk } from '../../src/core/wall
 import {
   toHex, fromHex, newWrappingKeypair, newSigningKeypair, type Hex,
 } from '../../src/core/crypto.js';
-import { itPaysOutOfTodaysVault } from './until-the-vault-pays-with-a-receipt.js';
 
 const VAULT_NOW = 1_800_000_000;
 const WIN_FROM = BigInt(VAULT_NOW - 3_600);
@@ -77,7 +78,7 @@ const BLOCK = '0'.repeat(64);
 const bytes = (n: number) => new Uint8Array(32).fill(n);
 const A = privateStateFor(1);
 const B = privateStateFor(2);
-const GBP = bytes(0x9b);
+const TOKEN_BYTES = bytes(0x9b);
 const PAYEE = bytes(0x0a);
 const NO_INDEX_YET = 0n;
 const RECORDS: readonly WireRecord[] = ['pool', 'deposit-journal', 'payment-journal', 'nonce-secret'];
@@ -100,7 +101,7 @@ const releasedCompanyKey = (words: string, account: string): Uint8Array => {
   return unlockKeyFor(identityFromWords(words), ask);
 };
 
-interface VaultPrivate { notes: Note[] }
+interface VaultPrivate { notes: Note[]; secret?: Uint8Array }
 
 const vaultWitnesses = {
   noteToSpend: (ctx: { privateState: VaultPrivate }, token: Uint8Array, amount: bigint) => {
@@ -110,6 +111,7 @@ const vaultWitnesses = {
       nonce: fromHex(n.nonce), color: fromHex(n.token), value: n.value, mt_index: n.index ?? NO_INDEX_YET,
     }];
   },
+  nonceSecret: (ctx: { privateState: { secret?: Uint8Array } }) => [ctx.privateState, ctx.privateState.secret ?? new Uint8Array(32).fill(0x51)],
 };
 
 describe('a deposit whose record is made on the device', () => {
@@ -127,13 +129,15 @@ describe('a deposit whose record is made on the device', () => {
   /** Every request body any device sent, exactly as sent. */
   let sent: string[];
   let bodyReadBeforeSignIn: boolean;
+  /** The vault's nonce secret the device hands the vault, once the company's own record holds it. */
+  let vaultSecret: Uint8Array | undefined;
 
   const provider = () => ({
     getContractState: async (_b: string, address: unknown) =>
       String(address) === String(sim.address) ? (sim.contractStateForCall as never) : undefined,
   });
   const ctx = (circuit: string) => createCircuitContext<VaultPrivate>(
-    circuit, vaultAddr as never, BLOCK, vaultState, priv,
+    circuit, vaultAddr as never, BLOCK, vaultState, vaultSecret === undefined ? priv : { ...priv, secret: vaultSecret },
     provider() as never, undefined, undefined, VAULT_NOW, BLOCK);
   const charged = () => (vaultState?.constructor?.name === 'ContractState' ? vaultState.data : vaultState);
   const chainNotes = (): Hex[] => [...vaultLedger(charged() as never).notes].map((c: Uint8Array) => toHex(c));
@@ -162,8 +166,8 @@ describe('a deposit whose record is made on the device', () => {
   });
 
   const approvedRun = async (to: Uint8Array, amount: bigint, seed: number, c: Change) => {
-    const leaves: PayoutLeafInput[] = [{ details: toHex(vaultCircuits.payoutDetails(to, GBP, amount, bytes(0x40))), nonce: toHex(bytes(seed)) }];
-    const tree = payoutTreeOf(leaves);
+    const leaves: PayoutLeafInput[] = [{ details: toHex(vaultCircuits.payoutDetails(to, TOKEN_BYTES, amount, bytes(0x40))), nonce: toHex(bytes(seed)) }];
+    const tree = payoutTreeOf(leaves, [amount], TOKEN_BYTES);
     const payload = pureCircuits.runPayload(fromHex(tree.root), tree.payees, WIN_FROM, WIN_UNTIL, 0n);
     const vaultBytes = fromHex(vaultAddr);
     await sim.as(sim.applying(A, c)).proposeRun({ root: fromHex(tree.root), payees: tree.payees, from: WIN_FROM, until: WIN_UNTIL, vault: vaultBytes });
@@ -176,8 +180,12 @@ describe('a deposit whose record is made on the device', () => {
     const c = change(0n, seed);
     const run = await approvedRun(PAYEE, amount, seed, c);
     const r = await vault.impureCircuits.payout(
-      ctx('payout'), run.id, fromHex(run.tree.root), run.tree.payees, WIN_FROM, WIN_UNTIL,
-      c.salt, PAYEE, GBP, amount, bytes(0x40), bytes(seed), run.tree.pathFor(0) as never);
+      ctx('payout'),
+      vaultRunOf({
+        proposal: run.id, vault: fromHex(vaultAddr), tree: run.tree, i: 0,
+        opensAt: WIN_FROM, closesAt: WIN_UNTIL, salt: c.salt, nonce: bytes(seed),
+      }),
+      PAYEE, TOKEN_BYTES, amount, bytes(0x40));
     vaultState = r.context.callContext.currentQueryContext.state;
     logCall(r);
     return r;
@@ -230,9 +238,19 @@ describe('a deposit whose record is made on the device', () => {
     const init = await vault.initialState(createConstructorContext({} as VaultPrivate, BLOCK), { bytes: fromHex(company) } as never);
     vaultState = init.currentContractState;
     priv = { notes: [] };
+    /* A vault takes no money until the account has adopted it and approved its first secret. */
+    await startTheVault({
+      sim, vault: fromHex(vaultAddr), approvers: [A, B], now: VAULT_NOW,
+      call: async (circuit, ...a) => {
+        const r: any = await (vault.impureCircuits as any)[circuit](ctx(circuit), ...a);
+        vaultState = r.context.callContext.currentQueryContext.state;
+        carryTheAccount(sim, r.context);
+      },
+    });
     chainLog = [];
     sent = [];
     bodyReadBeforeSignIn = false;
+    vaultSecret = undefined;
     ada = personNamed('ada'); bo = personNamed('bo'); carol = personNamed('carol');
     members = ['ada', 'bo'];
     poolReaders = ['ada', 'bo'];
@@ -279,7 +297,7 @@ describe('a deposit whose record is made on the device', () => {
     const deposit = async (value: bigint, opts: { abandon?: boolean } = {}) => {
       const everCreated = await vaultOutputHistoryFrom(theChain()).everCreated(vaultAddr);
       const { coin, epoch } = await depositCoinOnThisDevice({
-        vault: vaultAddr, money: { token: toHex(GBP), value }, me: p.device,
+        vault: vaultAddr, money: { token: toHex(TOKEN_BYTES), value }, me: p.device,
         signers: async () => poolSigners(), records,
         chain: { everCreated, outputCommitmentOf: outputCommitment, heldNow: (c) => chainNotes().includes(held(c)) },
       });
@@ -292,7 +310,7 @@ describe('a deposit whose record is made on the device', () => {
       return { coin, epoch };
     };
     const payOut = async (amount: bigint, seed: number) => {
-      const spent = smallestNoteCovering(priv.notes, toHex(GBP), amount)!;
+      const spent = smallestNoteCovering(priv.notes, toHex(TOKEN_BYTES), amount)!;
       await payments.record(vaultAddr, { spent: { nonce: spent.nonce, token: spent.token, value: spent.value }, amount, attemptedAt: 'now' });
       const r = await pay(amount, seed);
       const kept = changeCoinOf(r.context.callContext.currentZswapLocalState, vaultAddr);
@@ -300,6 +318,39 @@ describe('a deposit whose record is made on the device', () => {
       return { spent, kept };
     };
     return { pool, deposit, payOut, records };
+  };
+
+  /*
+   * **THE VAULT'S OWN SECRET IS THE COMPANY'S.** The vault was started under a test
+   * secret before the company's record existed; a secret run approved by the
+   * account sets it to the secret the record holds now, before any money moves
+   * out, so every coin a payment makes is one the record can name.
+   */
+  const setTheVaultSecretTo = async (next: Uint8Array, seed: number) => {
+    const vaultBytes = fromHex(vaultAddr);
+    const previous = vaultLedger(charged() as never).nonceCommitment;
+    const commitment = vaultCircuits.secretCommitmentOf(vaultBytes, next);
+    const copy = { reader: bytes(0x32), parts: [5, 6, 7, 8].map((n) => bytes(n)) };
+    const copies = copiesTreeOf(vaultCircuits as never, commitment, [copy]);
+    const leaves: PayoutLeafInput[] = [{
+      details: toHex(vaultCircuits.secretRunDetails(vaultBytes, previous, commitment, copies.root, copies.count)), nonce: toHex(bytes(seed)),
+    }];
+    const tree = payoutTreeOf(leaves, [0n], TOKEN_BYTES);
+    const c = change(0n, seed);
+    await sim.as(sim.applying(A, c)).proposeRun({ root: fromHex(tree.root), payees: tree.payees, from: WIN_FROM, until: WIN_UNTIL, vault: vaultBytes });
+    const id = sim.proposalId(pureCircuits.runPayload(fromHex(tree.root), tree.payees, WIN_FROM, WIN_UNTIL, 0n), c.salt, vaultBytes);
+    await sim.as(sim.applying(A, c)).approve(id);
+    await sim.as(sim.applying(B, c)).approve(id);
+    const run = vaultRunOf({ proposal: id, vault: vaultBytes, tree, i: 0, opensAt: WIN_FROM, closesAt: WIN_UNTIL, salt: c.salt, nonce: bytes(seed) });
+    for (const [circuit, args] of [
+      ['setNonceSecret', [run, previous, commitment, copies.root, copies.count]],
+      ['writeSecretCopy', [commitment, copy.reader, copy.parts, copies.paths[0]]],
+    ] as const) {
+      const r: any = await (vault.impureCircuits as any)[circuit](ctx(circuit), ...args);
+      vaultState = r.context.callContext.currentQueryContext.state;
+      carryTheAccount(sim, r.context);
+    }
+    vaultSecret = next;
   };
 
   const rebuildAs = async (p: Person, filedSecrets: readonly FiledPoolVersion[], records: CompanyRecords) => {
@@ -310,14 +361,20 @@ describe('a deposit whose record is made on the device', () => {
     const walk = await walkCompanyRecords({
       vault: vaultAddr, keys: depositNonceKeysOf(opened), records, everCreated,
       commitmentOf: await compiledOutputCommitment(),
+      /* The secrets the signer's own record holds, and the vault's split journal and commitment as the chain holds them. */
+      nonceSecrets: { secrets: opened.secrets, commitment: toHex(vaultLedger(charged() as never).nonceCommitment) },
+      splitJournal: new Map([...vaultLedger(charged() as never).splitJournal].map(([k, v]: [Uint8Array, Uint8Array]) => [toHex(k), toHex(v)])),
     });
     const rebuilt = reconcileVaultPool({ vault: vaultAddr, chain: chainNotes(), versions: [], named: walk.coins, circuits: vaultCircuits });
     return { opened, walk, rebuilt, ms: performance.now() - started };
   };
 
-  itPaysOutOfTodaysVault('A DEPOSIT\'S RECORD MADE ON THE DEVICE, FILED THROUGH THE MOUNTED ROUTE, AND THE VAULT REBUILT BY A SIGNER WHO DEPOSITED NOTHING, WITH A NOTE THAT COMES BACK SPENT', async () => {
+  it('A DEPOSIT\'S RECORD MADE ON THE DEVICE, FILED THROUGH THE MOUNTED ROUTE, AND THE VAULT REBUILT BY A SIGNER WHO DEPOSITED NOTHING, WITH A NOTE THAT COMES BACK SPENT', async () => {
     const adas = deviceOf(ada);
     await startVaultNonceSecretOnThisDevice(vaultAddr, ada.device, [recordsReaderOf(bo.device.companyKey)], adas.records, new Set(chainNotes()));
+    const companysSecret = openNewestNonceSecrets(await serverStores.get('nonce-secret')!.versions(vaultAddr), vaultAddr,
+      recordsKeypairFrom(ada.device.companyKey)).secrets[0]!;
+    await setTheVaultSecretTo(fromHex(companysSecret), 0x93);
     await adas.pool.create(vaultAddr, { notes: [] });
 
     const first = await adas.deposit(1_000n);
@@ -363,8 +420,8 @@ describe('a deposit whose record is made on the device', () => {
 
     /* ------------- THE COMPANY'S BOOKS, AND THE FILED NONCE SECRET ------------- */
     const books: CompanyRecords = {
-      deposited: [1_000n, 400n, 1_000n, 600n].map((value) => ({ token: toHex(GBP), value })),
-      paid: [250n, 700n, 100n].map((amount) => ({ token: toHex(GBP), amount })),
+      deposited: [1_000n, 400n, 1_000n, 600n].map((value) => ({ token: toHex(TOKEN_BYTES), value })),
+      paid: [250n, 700n, 100n].map((amount) => ({ token: toHex(TOKEN_BYTES), amount })),
     };
     const filedSecrets = await serverStores.get('nonce-secret')!.versions(vaultAddr);
     expect(filedSecrets.map((v) => v.version)).toEqual([1, 2, 3]);
@@ -392,7 +449,8 @@ describe('a deposit whose record is made on the device', () => {
     expect(vaultLedger(charged() as never).payments, 'RED WHEN: the rebuilt note does not spend').toBe(paymentsBefore + 1n);
     const left = changeCoinOf(r.context.callContext.currentZswapLocalState, vaultAddr)!;
     expect(left.value, 'RED WHEN: a note other than the rebuilt change was spent').toBe(10n);
-    expect(left.nonce).toBe(toHex(changeNonceOf(fromHex(rebuiltChange.nonce))));
+    /* RED WHEN the change a payment made is worked out with anything but the vault's secret and the spent note */
+    expect(left.nonce).toBe(changeNoteOf(rebuiltChange, 40n, { circuits: vaultCircuits, vault: vaultAddr, secret: toHex(vaultSecret!) })!.nonce);
     expect(chainNotes(), 'RED WHEN: the rebuilt note is still in the vault after it was spent').not.toContain(held(rebuiltChange));
 
     /* ------------- BO, WHO LEFT, KEEPS WHAT HE HAD AND NOTHING MADE AFTER ------------- */

@@ -158,7 +158,7 @@ describe('EVERY BROWSER BUILD IN THIS REPOSITORY', () => {
   it.each(BROWSER_BUILDS.map((b) => b.name))('%s REACHES NO STATIC IMPORT OF A NODE BUILT-IN', (name) => {
     /* RED WHEN: any file a page or worker of this build reaches imports a Node built-in as a value.
      * Measured: `src/midnight/vault-committee.ts` importing its two authority functions from
-     * `./ledger.js` again turns `payroll` and `standalone` red, through `ledger.ts` to `circuit-arity.ts`. */
+     * `./ledger.js` again turned the builds of the earlier application red, through `ledger.ts` to `circuit-arity.ts`. */
     const found = byName(name).staticNode.map((n) => `${n.specifier} in ${n.chain.join(' -> ')}`);
     expect(found).toEqual([]);
   });
@@ -179,20 +179,20 @@ describe('EVERY BROWSER BUILD IN THIS REPOSITORY', () => {
     expect(reaching).toEqual([]);
   });
 
-  it('THE PAYROLL PAGE IS WALKED THROUGH EVERY WORKER IT STARTS AND INTO THE VAULT BUILDER', () => {
+  it('THE APPLICATION\'S PAGE IS WALKED THROUGH EVERY WORKER IT STARTS AND INTO THE VAULT BUILDER', () => {
     /* A walk that stopped at the page would pass the refusal above for the wrong reason.
      * RED WHEN: workers stop being followed - the worker entries vanish from `entries` and the vault
      * builder and its committee rule vanish from `files`. */
-    const g = byName('payroll');
+    const g = byName('web');
     expect(g.entries).toEqual([
-      'src/web-legacy/main.tsx', 'packages/web-shared/src/proving-worker-entry.ts', 'packages/web-shared/src/vault-worker-entry.ts', 'packages/web-shared/src/payslip-worker-entry.ts',
+      'apps/web/src/main.ts', 'packages/web-shared/src/vault-worker-entry.ts',
       /* The vault worker starts one of its own for each proof of a private deposit (29 Sep). */
       'packages/web-shared/src/vault-proof-worker-entry.ts',
     ]);
     expect(g.files).toEqual(expect.arrayContaining(['packages/web-shared/src/vault-builder.ts', 'src/midnight/vault-committee.ts', 'src/midnight/authority-replacement.ts']));
     /* RED WHEN: `midnight-identity`, linked into `node_modules` from this repository, stops being followed -
      * the page is served its built `lib/` files and they would go unexamined. */
-    expect(g.files).toEqual(expect.arrayContaining(['packages/identity/lib/profile/fingerprint.js', 'packages/identity/lib/wallet/network.js']));
+    expect(g.files).toEqual(expect.arrayContaining(['packages/identity/lib/profile/company-label.js', 'packages/identity/lib/wallet/network.js']));
   });
 
   it('THE ONLY DYNAMIC NODE IMPORTS ARE THE TWO BEHIND THE DISK-BACKED KEY SOURCE', () => {
@@ -201,7 +201,7 @@ describe('EVERY BROWSER BUILD IN THIS REPOSITORY', () => {
      * RED WHEN: a new dynamic import of a Node built-in enters a browser graph, or these two move. */
     /* The new app joined these two when it started the shared vault worker to create a vault (29 Sep): the same
      * worker entry, so the same two lines behind the same disk-backed source, which nothing in a browser calls. */
-    for (const name of ['payroll', 'standalone', 'web']) {
+    for (const name of ['web']) {
       expect(byName(name).dynamicNode.map((n) => `${n.file} ${n.specifier}`)).toEqual([
         'src/midnight/wasm-proving.ts node:fs/promises',
         'src/midnight/wasm-proving.ts node:path',
@@ -244,17 +244,16 @@ describe('EVERY BROWSER BUILD IN THIS REPOSITORY', () => {
    * turns the test below red until its entry is taken out, so this list cannot outlive what it describes.
    */
   const LEFT_UNSCANNED: Record<string, string> = {
-    standalone: 'it is only ever built into one file, never served by the development server, so there is no pre-scan to reload after',
     wallet: 'its configuration is the wallet\'s own and names no worker; the page reload this guards against is open there',
     'proving-probe': 'a measurement page served only to measure proving, where a reload loses nothing',
   };
 
   it('EVERY BUILD WHOSE PAGES START A WORKER IS HELD TO ITS PRE-SCAN, OR LISTED WITH WHY IT IS NOT', () => {
     /* RED WHEN: a build listed as left unscanned starts no worker any more - its entry would be excusing nothing.
-     * And the payroll page must still be seen to start workers, or the test below would be pinning nothing. */
+     * And the application's page must still be seen to start workers, or the test below would be pinning nothing. */
     const names = withWorkers().map((b) => b.name);
     expect(Object.keys(LEFT_UNSCANNED).filter((n) => !names.includes(n))).toEqual([]);
-    expect(names).toContain('payroll');
+    expect(names).toContain('web');
   });
 
   it.each(BROWSER_BUILDS.map((b) => b.name))('%s: THE DEVELOPMENT SERVER PRE-SCANS EVERY PAGE AND EVERY WORKER IT STARTS', async (name) => {

@@ -48,6 +48,7 @@ import { registryWithTestPrivateForms, aVaultHolding } from '../testing/assets.j
 import { FileStore } from './store-file.js';
 import { toHex } from './crypto.js';
 
+import { TEST_TOKEN } from '../testing/assets.js';
 const PAYROLL_VAULT = new Uint8Array(32).fill(0xa1);
 const NOW = 1_800_000_000;
 const OPENS = BigInt(NOW - 3_600);
@@ -65,7 +66,7 @@ async function aCompany(people: number) {
   const viewingKey = created.viewingKey;
   for (let i = 0; i < people; i++) {
     payroll.hireDirect(created.account.id, {
-      name: `Payee ${i}`, email: `p${i}@a.co`, title: 'Eng', asset: 'GBP', baseAmount: 100_00n,
+      name: `Payee ${i}`, email: `p${i}@a.co`, title: 'Eng', asset: TEST_TOKEN, baseAmount: 100_00n,
     }, viewingKey);
   }
   const account = created.account.id;
@@ -319,21 +320,18 @@ describe('and the control: normal payroll is not what this refuses', () => {
   });
 });
 
-describe('both builds hand the period to the same reader', () => {
+describe('the served routes hand the period to the same reader', () => {
   /*
    * **A TEXT CHECK, SAID PLAINLY AS ONE.** The served routes are exercised over
-   * the wire elsewhere; the browser-only build has no exported handler and
-   * nothing in this repository evaluates its entry point, so what it passes to
-   * the service cannot be reached by running it. What is checked here is that
-   * neither door hands the service a period it has not read, and it cannot see
-   * a door that reads it and then passes something else.
+   * the wire elsewhere. What is checked here is that no route hands the service
+   * a period it has not read, and it cannot see a route that reads it and then
+   * passes something else.
    */
   const sourceOf = (path: string) =>
     readFileSync(fileURLToPath(new URL(path, import.meta.url)), 'utf8');
 
-  it('the served routes and the browser-only build both read the month first', () => {
+  it('the served routes read the month first', () => {
     const served = sourceOf('../server/index.ts');
-    const alone = sourceOf('../standalone/main.tsx');
     /*
      * Every mention of the period the request carried, and what stands
      * immediately in front of it. RED WHEN a door reads one of them somewhere
@@ -344,16 +342,12 @@ describe('both builds hand the period to the same reader', () => {
       [...src.matchAll(new RegExp(`.{0,32}${field.replace('.', '\\.')}`, 'g'))]
         .map(m => m[0]).filter(m => !m.includes('canonicalPeriod('));
     expect(unread(served, 'b.period')).toEqual([]);
-    expect(unread(alone, 'body.period')).toEqual([]);
     /* RED WHEN a door stops reading it at all, so that nothing above has
        anything to be true about: a door that never mentions the field passes
        the check above for the wrong reason. */
     expect(served.match(/canonicalPeriod\(/g)).toHaveLength(2);
-    expect(alone.match(/canonicalPeriod\(/g)).toHaveLength(1);
-    /* RED WHEN a door grows a second copy of the rule instead of calling the
+    /* RED WHEN a route grows a second copy of the rule instead of calling the
        one the service enforces. */
-    for (const src of [served, alone]) {
-      expect(src).toMatch(/canonicalPeriod[^\n]*from '\.\.\/core\/payroll\.js'/);
-    }
+    expect(served).toMatch(/canonicalPeriod[^\n]*from '\.\.\/core\/payroll\.js'/);
   });
 });
