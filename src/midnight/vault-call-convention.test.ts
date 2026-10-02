@@ -76,9 +76,9 @@ describe('the mapping travels on the transaction context — against the real SD
 });
 
 describe('arity, against the vault\'s own compiled ABI', () => {
-  it('payout declares five arguments, the run among them, and deposit one', () => {
+  it('payout declares six arguments, the run and its further note among them, and deposit one', () => {
     forgetArities();
-    expect(arityFrom(VAULT_ARTEFACTS)('payout')).toBe(5);
+    expect(arityFrom(VAULT_ARTEFACTS)('payout')).toBe(6);
     /*
      * ONE SINCE S6a, and this line is the guard that would catch a client still
      * passing a blinding. `deposit` took the blinding as a second argument and
@@ -93,15 +93,15 @@ describe('arity, against the vault\'s own compiled ABI', () => {
   });
 
   /* THE DEFECT ITSELF. An options object appended to the arguments is one more. */
-  it('REFUSES A SIXTH ARGUMENT, and the twelve the old payout took: this is V-82 in one line', () => {
-    expect(() => assertArity(arityFrom(VAULT_ARTEFACTS), 'payout', 6))
-      .toThrow(/circuit "payout" takes 5 argument\(s\), got 6/);
+  it('REFUSES A SEVENTH ARGUMENT, and the twelve the old payout took: this is V-82 in one line', () => {
+    expect(() => assertArity(arityFrom(VAULT_ARTEFACTS), 'payout', 7))
+      .toThrow(/circuit "payout" takes 6 argument\(s\), got 7/);
     expect(() => assertArity(arityFrom(VAULT_ARTEFACTS), 'payout', 12))
-      .toThrow(/circuit "payout" takes 5 argument\(s\), got 12/);
+      .toThrow(/circuit "payout" takes 6 argument\(s\), got 12/);
   });
 
-  it('accepts five', () => {
-    expect(() => assertArity(arityFrom(VAULT_ARTEFACTS), 'payout', 5)).not.toThrow();
+  it('accepts six', () => {
+    expect(() => assertArity(arityFrom(VAULT_ARTEFACTS), 'payout', 6)).not.toThrow();
   });
 
   it('reads the VAULT\'s ABI and not the account\'s, which declares different circuits', () => {
@@ -112,7 +112,7 @@ describe('arity, against the vault\'s own compiled ABI', () => {
      * off a config that happens to name the account's.
      */
     expect(arityFrom(ACCOUNT_ARTEFACTS)('payout')).toBeNull();
-    expect(arityFrom(VAULT_ARTEFACTS)('payout')).toBe(5);
+    expect(arityFrom(VAULT_ARTEFACTS)('payout')).toBe(6);
   });
 
   it('says nothing rather than guessing about a circuit it cannot find', () => {

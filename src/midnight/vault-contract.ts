@@ -136,9 +136,11 @@ export type {
  * which is the compiler's own answer and not a transcription of the source.
  */
 export const VAULT_CIRCUITS = [
+  'batchPayout',
   'deposit',
   'depositUnshielded',
   'forgetUnshielded',
+  'mergeNotes',
   'payout',
   'payoutUnshielded',
   'retire',
@@ -152,12 +154,13 @@ export type VaultCircuit = (typeof VAULT_CIRCUITS)[number];
 /**
  * **THE ACCOUNT'S CIRCUITS A VAULT'S OWN CIRCUITS CALL**, and so the only ones
  * of the account's a device proves beside a vault's: `payout` and
- * `payoutUnshielded` ask `recordPaymentFromVault`, and `splitNote` and
+ * `payoutUnshielded` ask `recordPaymentFromVault`, `batchPayout` asks
+ * `recordBatchFromVault`, and `splitNote` and
  * `setNonceSecret` ask `approveVaultChange`, inside the same transaction. No
  * vault circuit shares a name with one of these, which is what lets a prover be
  * pointed at the account's material by the circuit's name alone.
  */
-export const ACCOUNT_CIRCUITS_A_VAULT_CALLS: readonly string[] = Object.freeze(['approveVaultChange', 'recordPaymentFromVault']);
+export const ACCOUNT_CIRCUITS_A_VAULT_CALLS: readonly string[] = Object.freeze(['approveVaultChange', 'recordBatchFromVault', 'recordPaymentFromVault']);
 
 /**
  * **THE ACCOUNT'S CIRCUITS A SIGNER'S OWN DEVICE BUILDS AND PROVES**: raising a

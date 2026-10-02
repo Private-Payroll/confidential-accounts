@@ -28,7 +28,7 @@ let deployShape = false;
 let circuitKeys: (c: string) => Uint8Array;
 /* The account the vault's ledger names on the chain now. */
 let pinnedNow: string;
-const CIRCUITS = ['deposit', 'depositUnshielded', 'forgetUnshielded', 'payout', 'payoutUnshielded', 'retire', 'setNonceSecret', 'splitNote', 'writeSecretCopy'];
+const CIRCUITS = ['batchPayout', 'deposit', 'depositUnshielded', 'forgetUnshielded', 'mergeNotes', 'payout', 'payoutUnshielded', 'retire', 'setNonceSecret', 'splitNote', 'writeSecretCopy'];
 /* The company account: its own circuits, its own authority, and its own verifying keys, apart from the vault's. */
 const ACCOUNT_CIRCUITS = ['approve', 'propose', 'recordPaymentFromVault'];
 const ACCOUNTS = new Set([hex(0xc0), hex(0xc1)]);

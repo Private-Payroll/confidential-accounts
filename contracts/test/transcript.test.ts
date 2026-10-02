@@ -36,6 +36,7 @@ import { type PayoutLeafInput } from '../../src/midnight/payout-tree.js';
 import { toHex, fromHex, newWrappingKeypair } from '../../src/core/crypto.js';
 import { payKeyCommitmentOf, payKeyPayloadOf, sealPayKeyTo } from '../../src/midnight/run-keys.js';
 import { Transcript, encodeUint, asHex } from './transcript.js';
+import { noFurtherNote } from '../../src/midnight/vault-step-notes.js';
 
 /* §7 constructs its own vault, so the fixture pieces §3 uses are shared. */
 
@@ -247,7 +248,7 @@ describe('§3 — the three privacy priorities, over a real cross-contract payou
         proposal: run.id, vault: run.vaultBytes, tree: run.tree, i: 0,
         opensAt: WIN_FROM, closesAt: WIN_UNTIL, salt: c.salt, nonce: bytes(0xc1),
       }),
-      ALICE, TOKEN_BYTES, TO_ALICE, bytes(0x40));
+      ALICE, TOKEN_BYTES, TO_ALICE, bytes(0x40), noFurtherNote());
     return { run, transcript: Transcript.of(r.context) };
   };
 
@@ -789,7 +790,7 @@ describe('§7 — the tape keeps the whole call tree, not the entry circuit', ()
         proposal: id, vault: vaultBytes, tree, i: 0,
         opensAt: WIN_FROM, closesAt: WIN_UNTIL, salt: c.salt, nonce: bytes(0xc1),
       }),
-      ALICE, TOKEN_BYTES, TO_ALICE, bytes(0x40));
+      ALICE, TOKEN_BYTES, TO_ALICE, bytes(0x40), noFurtherNote());
 
     const t = tape.last;
     tape.stop();

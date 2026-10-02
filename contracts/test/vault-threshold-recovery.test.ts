@@ -52,6 +52,7 @@ import { AccountSimulator, privateStateFor, change, type Change, payoutTreeOf, v
 import { carryTheAccount, startTheVault, TEST_VAULT_SECRET } from './start-a-vault.js';
 import { type PayoutLeafInput } from '../../src/midnight/payout-tree.js';
 import { toHex, fromHex } from '../../src/core/crypto.js';
+import { noFurtherNote } from '../../src/midnight/vault-step-notes.js';
 
 /* The clock and the run's window, pinned for the reason the simulator's own
  * comment gives: nothing here measures real time. */
@@ -236,7 +237,7 @@ describe('a vault whose threshold nobody can meet is recovered, and pays', () =>
         proposal: run.id, vault: vaultAddrBytes(), tree: run.tree, i: 0,
         opensAt: WIN_FROM, closesAt: WIN_UNTIL, salt: c.salt, nonce: bytes(0xc1),
       }),
-      ALICE, TOKEN_BYTES, 250n, bytes(0x40));
+      ALICE, TOKEN_BYTES, 250n, bytes(0x40), noFurtherNote());
 
     /*
      * THE REASON, NOT MERELY A THROW. A test that passed because something else
@@ -287,7 +288,7 @@ describe('a vault whose threshold nobody can meet is recovered, and pays', () =>
         proposal: rerun.id, vault: vaultAddrBytes(), tree: rerun.tree, i: 0,
         opensAt: WIN_FROM, closesAt: WIN_UNTIL, salt: again.salt, nonce: bytes(0xc1),
       }),
-      ALICE, TOKEN_BYTES, 250n, bytes(0x40));
+      ALICE, TOKEN_BYTES, 250n, bytes(0x40), noFurtherNote());
     vaultState = r.context.callContext.currentQueryContext.state;
 
     expect(vaultLedger(vaultState as never).payments).toBe(1n);
@@ -553,6 +554,25 @@ describe("a vault's own threshold guards who is seated", () => {
     await sim.adoptVault(STRANGER, [A, B], 393);
     await setVault(sim, STRANGER, 3n, 143, [A, B]);
     expect(bar(sim)).toBe(3n);
+  });
+
+  it('A THRESHOLD SET BEFORE ITS VAULT IS ADOPTED WRITES THE BAR, SO LOWERING THE THRESHOLD LATER LEAVES THE VAULT GUARDED', async () => {
+    const sim = await AccountSimulator.liveAccount([A, B, C], 3n);
+    sim.at(VAULT_NOW);
+    const LATER = new Uint8Array(32).fill(0xa4);
+    /* At the account's threshold of three, which stands in for an unset bar, three set a vault's threshold before adoption. */
+    await setVault(sim, LATER, 3n, 151, [A, B, C]);
+    const lower = govChange(152);
+    const lid = await round(sim, pureCircuits.setThresholdPayload(2n), lower, [A, B, C]);
+    await sim.as(carrying(sim, A, lower)).setThreshold(2n, lid);
+    await sim.adoptVault(LATER, [A, B], 394);
+    const seat = govChange(153);
+    const sid = await round(sim, pureCircuits.signerAddPayload(sim.leafOf(D)), seat, [A, B]);
+    /* RED WHEN a threshold set on bytes not yet adopted does not write the bar: two of three would seat a
+     * fourth leaf they hold and reach the three that vault needs. */
+    await expect(sim.as(carrying(sim, A, seat)).addSigner(sim.leafOf(D), sid))
+      .rejects.toThrow(/seating, removing or re-seating a signer needs as many approvals as a policy change needs/);
+    expect(sim.ledger.signerLeaves.size()).toBe(3n);
   });
 
   it('A VAULT AT THE THRESHOLD WRITES THE BAR, SO LOWERING THE THRESHOLD LATER LEAVES IT GUARDED', async () => {

@@ -83,7 +83,7 @@ import { payeeAddressFromKeys, type Payee } from '../../src/midnight/payee-addre
 import { assemblePrivatePayments } from '../../src/midnight/private-payment-wire.js';
 import { witnessesOver } from '../../src/midnight/vault-notes.js';
 import { payFor } from '../../src/testing/payees.js';
-import { ACCOUNT_CIRCUITS_SERVED_TO_A_DEVICE } from '../../src/midnight/vault-contract.js';
+import { ACCOUNT_CIRCUITS_SERVED_TO_A_DEVICE, VAULT_CIRCUITS } from '../../src/midnight/vault-contract.js';
 import { keysOnDisk } from './keys-on-disk.js';
 
 /** Deposits or payments on their way, kept for the length of one test, sealed as the page keeps them. */
@@ -403,7 +403,7 @@ describe.skipIf(!KEYS_ON_DISK)('A VAULT\'S COMMITTEE CHANGES WITH THE COMPANY\'S
       company: async () => ({ address: company, threshold: companyThreshold, vaultThresholds: [] }),
       ledger: watched, chain: vaultChain,
       verifierKeys: async () => new Map(await Promise.all(
-        ['deposit', 'depositUnshielded', 'forgetUnshielded', 'payout', 'payoutUnshielded', 'retire', 'setNonceSecret', 'splitNote', 'writeSecretCopy']
+        [...VAULT_CIRCUITS]
           .map(async (c) => [c, await vaultZk.getVerifierKey(c) as unknown as Uint8Array] as const))),
       account: {
         circuits: DEPLOYED_CIRCUITS,

@@ -229,16 +229,16 @@ describe('the real artifacts, read end to end', () => {
     ]);
     expect(approve?.witnesses.every((w) => w.via.length > 0)).toBe(true);
     // And the cross-contract callees read no witness at all, by design.
-    for (const name of ['approveVaultChange', 'recordPaymentFromVault', 'retireVault', 'closeExpiredRun']) {
+    for (const name of ['approveVaultChange', 'recordBatchFromVault', 'recordPaymentFromVault', 'retireVault', 'closeExpiredRun']) {
       expect(account.circuits.find((c) => c.name === name)?.witnesses).toEqual([]);
     }
   });
 
-  it('the CROSS-CONTRACT calls are the five the vault really makes', async () => {
+  it('the CROSS-CONTRACT calls are the six the vault really makes', async () => {
     const vault = await readContract(ROOT, ARTIFACTS[1]);
     const calls = vault.circuits.flatMap((c) => c.calls.map((x) => `${c.name} → ${x.circuit}`)).sort();
     expect(calls).toEqual([
-      'payout → recordPaymentFromVault', 'payoutUnshielded → recordPaymentFromVault', 'retire → retireVault',
+      'batchPayout → recordBatchFromVault', 'payout → recordPaymentFromVault', 'payoutUnshielded → recordPaymentFromVault', 'retire → retireVault',
       'setNonceSecret → approveVaultChange', 'splitNote → approveVaultChange',
     ]);
     const account = await readContract(ROOT, ARTIFACTS[0]);

@@ -63,6 +63,7 @@ import { toHex, fromHex, type Hex } from '../../src/core/crypto.js';
 import { payFor } from '../../src/testing/payees.js';
 import { OTHER_TEST_TOKEN, TEST_TOKEN } from '../../src/testing/assets.js';
 import { NIGHT as NIGHT_TOKEN } from '../../src/core/assets.js';
+import { noFurtherNote } from '../../src/midnight/vault-step-notes.js';
 
 const NOW = 1_800_000_000;
 const FROM = BigInt(NOW - 3_600);
@@ -225,7 +226,7 @@ describe('a vault driven by the client\'s own note pool', () => {
     void before;
     const r = await vault.impureCircuits.payout(
       ctx('payout'), runOf(run, id, c, i),
-      fromHex(recipientOf(a.payee)), fromHex(a.token), a.amount, fromHex(a.blinding));
+      fromHex(recipientOf(a.payee)), fromHex(a.token), a.amount, fromHex(a.blinding), noFurtherNote());
     vaultState = r.context.callContext.currentQueryContext.state;
     sim.adoptFromCall(r.context);
     /*
@@ -489,7 +490,7 @@ describe('a vault driven by the client\'s own note pool', () => {
     const a = priv.run.payeeArgs(0);
     /* RED WHEN the vault pays out a coin whose colour is not the token the approved leaf and root commit to. */
     await expect(vault.impureCircuits.payout(
-      ctx('payout'), runOf(priv.run, priv.id, c, 0), fromHex(recipientOf(a.payee)), OTHER, a.amount, fromHex(a.blinding)))
+      ctx('payout'), runOf(priv.run, priv.id, c, 0), fromHex(recipientOf(a.payee)), OTHER, a.amount, fromHex(a.blinding), noFurtherNote()))
       .rejects.toThrow(NOT_IN_THE_APPROVED_RUN);
 
     const cp = change(0n, 121);

@@ -23,6 +23,7 @@ import { replayVault, reconcileVaultPool } from './vault-recovery.js';
 import { NonceSecretNotTheVaults } from './vault-coin-nonces.js';
 import { smallestNoteCovering, type Note } from './vault-notes.js';
 import { toHex, fromHex, type Hex } from '../core/crypto.js';
+import { noFurtherNote } from './vault-step-notes.js';
 
 const NOW = 1_800_000_000;
 const FROM = BigInt(NOW - 3_600);
@@ -83,7 +84,7 @@ describe('naming the coins a vault made, with the secret each was made under', (
   };
   const pay = async (to: Uint8Array, amount: bigint, seed: number) => {
     const run = await approved(V.payoutDetails(to, TOKEN, amount, bytes(0x40)), amount, seed);
-    return call('payout', run, to, TOKEN, amount, bytes(0x40));
+    return call('payout', run, to, TOKEN, amount, bytes(0x40), noFurtherNote());
   };
   const split = async (amount: bigint, seed: number) => {
     const n = smallestNoteCovering(priv.notes, toHex(TOKEN), amount)!;

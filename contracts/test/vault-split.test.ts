@@ -31,6 +31,7 @@ import { AccountSimulator, privateStateFor, change, type Change, payoutTreeOf, v
 import { carryTheAccount, startTheVault, TEST_VAULT_SECRET } from './start-a-vault.js';
 import { type PayoutLeafInput } from '../../src/midnight/payout-tree.js';
 import { toHex, fromHex } from '../../src/core/crypto.js';
+import { noFurtherNote } from '../../src/midnight/vault-step-notes.js';
 
 const VAULT_NOW = 1_800_000_000;
 const WIN_FROM = BigInt(VAULT_NOW - 3_600);
@@ -205,7 +206,7 @@ describe('a vault splits one of its own notes', () => {
     }], [250n], 71);
 
     /* RED WHEN the split's piece is committed so that the vault cannot spend it: refused as not in the pool. */
-    const paid = await vault.impureCircuits.payout(ctx('payout'), runOf(0), ALICE, TOKEN_BYTES, 250n, bytes(0x40));
+    const paid = await vault.impureCircuits.payout(ctx('payout'), runOf(0), ALICE, TOKEN_BYTES, 250n, bytes(0x40), noFurtherNote());
     vaultState = paid.context.callContext.currentQueryContext.state;
     carryTheAccount(sim, paid.context);
 
@@ -236,7 +237,7 @@ describe('a vault splits one of its own notes', () => {
       nonce: toHex(bytes(0xc2)),
     }], [700n], 72);
     /* RED WHEN the rest is committed so that the vault cannot spend it. */
-    const paid = await vault.impureCircuits.payout(ctx('payout'), runOf(0), ALICE, TOKEN_BYTES, 700n, bytes(0x41));
+    const paid = await vault.impureCircuits.payout(ctx('payout'), runOf(0), ALICE, TOKEN_BYTES, 700n, bytes(0x41), noFurtherNote());
     vaultState = paid.context.callContext.currentQueryContext.state;
 
     /* Spent exactly, so no change: only the piece is left. */

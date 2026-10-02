@@ -487,12 +487,17 @@ describe('the account moves no money of its own', () => {
       const hits = [...body.matchAll(MONEY)].map((h) => h[1]!);
       if (hits.length) touched[(m[1] ?? m[2])!] = hits;
     });
-    /* RED WHEN any circuit, or the constructor, gains a line that moves money. */
+    /* RED WHEN any circuit, or the constructor, gains a line that moves money. The two payment
+       steps, one payee and a batch, receive their receipt in the checks they share. */
     expect(touched).toEqual({
-      recordPaymentFromVault: ['receiveUnshielded'], approveVaultChange: ['receiveUnshielded'],
+      requirePayable: ['receiveUnshielded'], approveVaultChange: ['receiveUnshielded'],
     });
     /* The scan saw every circuit and the constructor, not a truncated file. */
     expect(starts.length).toBeGreaterThan(40);
+    /* RED WHEN any circuit but the two payment steps reaches the shared checks, and with them the receive. */
+    const callers = starts.filter((m, i) => /\brequirePayable\(/.test(src.slice(m.index!, starts[i + 1]?.index ?? src.length))
+      && m[1] !== 'requirePayable').map((m) => m[1]);
+    expect(callers.sort()).toEqual(['recordBatchFromVault', 'recordPaymentFromVault']);
   });
 
   it('and the compiled contract agrees: one receive helper, called once by each', () => {

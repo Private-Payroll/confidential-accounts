@@ -618,7 +618,7 @@ function harness(opts: {
         return { public: { txId: 'tx_pay_public' } };
       },
       payout: async (...raw: unknown[]) => {
-        const args = dispatch('payout', 5)(...raw);
+        const args = dispatch('payout', 6)(...raw);
         calls.push({ circuit: 'payout', args, ctx: raw[0] });
         anotherWriter();
         if (opts.throws) throw new Error(opts.throws);
@@ -1168,11 +1168,13 @@ describe('V-74: the vault client', () => {
     const recipient = toHex(call.args[1] as Uint8Array);
     /*
      * And the mapping is on the CONTEXT, which is what midnight-js reads. The
-     * circuit's own arguments end at the fifth; a sixth argument is the V-82
-     * defect and `dispatch` now refuses it.
+     * circuit's own arguments end at the sixth, the further note; a seventh
+     * argument is the V-82 defect and `dispatch` now refuses it.
      */
-    /* RED WHEN the private payment hands its circuit any argument beyond the run, the payee, the token, the amount and the blinding. */
-    expect(call.args).toHaveLength(5);
+    /* RED WHEN the private payment hands its circuit any argument beyond the run, the payee, the token, the amount, the blinding and the further note. */
+    expect(call.args).toHaveLength(6);
+    /* RED WHEN the client offers the payment a second note: it spends only the note it chose. */
+    expect((call.args[5] as Array<{ value: bigint }>).map((n) => n.value)).toEqual([0n]);
     const mappings = [...(call.ctx as any).getAdditionalMappings().entries()];
 
     /* RED WHEN the coin key leaves the recipient position of the five. */
@@ -1198,12 +1200,12 @@ describe('V-74: the vault client', () => {
     const { ledger, calls } = harness();
     /* RED WHEN the arity guard stops reading the vault's own compiled count before a call is built. */
     await expect((ledger as any).call(VAULT, 'payout', [1, 2, 3]))
-      .rejects.toThrow(/circuit "payout" takes 5 argument\(s\), got 3/);
+      .rejects.toThrow(/circuit "payout" takes 6 argument\(s\), got 3/);
     expect(calls).toHaveLength(0);
 
-    /* RED WHEN an argument beyond the circuit's five is let through. */
-    await expect((ledger as any).call(VAULT, 'payout', new Array(6).fill(0)))
-      .rejects.toThrow(/takes 5 argument\(s\), got 6/);
+    /* RED WHEN an argument beyond the circuit's six is let through. */
+    await expect((ledger as any).call(VAULT, 'payout', new Array(7).fill(0)))
+      .rejects.toThrow(/takes 6 argument\(s\), got 7/);
   });
 
   it('REFUSES A PAYEE WHOSE ADDRESS IS FOR ANOTHER NETWORK, which nothing downstream would', async () => {

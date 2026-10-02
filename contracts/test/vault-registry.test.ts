@@ -42,6 +42,7 @@ import {
 import { carryTheAccount, startTheVault, TEST_VAULT_SECRET } from './start-a-vault.js';
 import { type PayoutLeafInput } from '../../src/midnight/payout-tree.js';
 import { toHex, fromHex } from '../../src/core/crypto.js';
+import { noFurtherNote } from '../../src/midnight/vault-step-notes.js';
 
 const VAULT_NOW = 1_800_000_000;
 const WIN_FROM = BigInt(VAULT_NOW - 3_600);
@@ -413,7 +414,7 @@ describe('an account keeps a register of its own vaults', () => {
         proposal: id, vault: vaultBytes(), tree, i: 0,
         opensAt: WIN_FROM, closesAt: WIN_UNTIL, salt: c3.salt, nonce: bytes(0xc1),
       }),
-      ALICE, TOKEN_BYTES, 250n, bytes(0x40));
+      ALICE, TOKEN_BYTES, 250n, bytes(0x40), noFurtherNote());
 
     expect(vaultLedger(
       paid.context.callContext.currentQueryContext.state as never).payments).toBe(1n);

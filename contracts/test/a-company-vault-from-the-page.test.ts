@@ -54,7 +54,7 @@ import { privateStateFor, leafOfDevice } from './simulator.js';
 import { companyLabelBytes } from 'midnight-identity/profile/company-label';
 import { recordsKeypairFrom } from '../../src/midnight/company-nonce-secret.js';
 import { openSecretCopy, secretCopyOnTheChain } from '../../src/midnight/sealed-secret-copy.js';
-import { ACCOUNT_CIRCUITS_SERVED_TO_A_DEVICE } from '../../src/midnight/vault-contract.js';
+import { ACCOUNT_CIRCUITS_SERVED_TO_A_DEVICE, VAULT_CIRCUITS } from '../../src/midnight/vault-contract.js';
 import { MemoryStore } from '../../src/core/store.js';
 import { AccountService, openAccount, sealAccount } from '../../src/core/account.js';
 import { MidnightCommitments } from '../../src/midnight/commitments.js';
@@ -394,7 +394,7 @@ describe.skipIf(!KEYS_ON_DISK)('A COMPANY VAULT, FROM THE SIGNER\'S DEVICE [need
       company: async () => ({ address: company, threshold: companyThreshold, vaultThresholds: [] }),
       ledger, chain: vaultChain,
       verifierKeys: async () => new Map(await Promise.all(
-        ['deposit', 'depositUnshielded', 'forgetUnshielded', 'payout', 'payoutUnshielded', 'retire', 'setNonceSecret', 'splitNote', 'writeSecretCopy']
+        [...VAULT_CIRCUITS]
           .map(async (c) => [c, await zk.getVerifierKey(c) as unknown as Uint8Array] as const))),
       account: {
         circuits: DEPLOYED_CIRCUITS,

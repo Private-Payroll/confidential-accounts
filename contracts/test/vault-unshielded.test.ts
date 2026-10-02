@@ -47,6 +47,7 @@ import {
 import { carryTheAccount, startTheVault, TEST_VAULT_SECRET } from './start-a-vault.js';
 import { type PayoutLeafInput, type PayoutTree } from '../../src/midnight/payout-tree.js';
 import { toHex, fromHex } from '../../src/core/crypto.js';
+import { noFurtherNote } from '../../src/midnight/vault-step-notes.js';
 
 const VAULT_NOW = 1_800_000_000;
 const WIN_FROM = BigInt(VAULT_NOW - 3_600);
@@ -289,7 +290,7 @@ describe('a vault holds public money as well as private', () => {
     /* RED WHEN a leaf approved for public money settles in private money, or this is refused for another reason. */
     await expect(vault.impureCircuits.payout(
       ctxFor('payout', chainSays()),
-      runOf(run.tree, run.id, c.salt, 0xc3), ALICE, NIGHT, 250n, bytes(0x40)))
+      runOf(run.tree, run.id, c.salt, 0xc3), ALICE, NIGHT, 250n, bytes(0x40), noFurtherNote()))
       .rejects.toThrow(NOT_IN_THE_APPROVED_RUN);
   });
 

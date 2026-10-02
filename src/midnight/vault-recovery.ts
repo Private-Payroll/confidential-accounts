@@ -54,9 +54,10 @@
  * ------------------------------------------------------------------------
  * HOW A NEW COIN IS NAMED: WITH THE VAULT'S NONCE SECRET.
  *
- * Every coin a payment or a split makes takes its nonce from a tag, the vault's
- * nonce secret current at the time, and the nullifier of the note spent. So
- * the replay names a payee coin, a change, a split's piece and its remainder
+ * Every coin a payment, a batch, a split or a merge makes takes its nonce from
+ * a tag, the vault's nonce secret current at the time, and the nullifier of the
+ * note spent, the first of them when a step spent several. So the replay names
+ * a payee coin, a change, a split's piece and its remainder, and a merged note,
  * only when it is given the vault's secrets,
  * and with a rotated vault it proposes one candidate per secret: the chain
  * holds the one the vault made. **These derivations are trustworthy only
@@ -182,6 +183,37 @@ export const paidCoinOf = (spent: VaultCoin, amount: bigint, under: MadeUnder): 
   return { nonce, token, value: amount };
 };
 
+/**
+ * **THE CHANGE OF A STEP THAT SPENT SEVERAL NOTES**: what all of them held,
+ * `held`, less what it paid, keyed by the FIRST note's nullifier as every coin
+ * the step made is. Nothing when it spent them exactly.
+ */
+export const changeAfterSpending = (first: VaultCoin, held: bigint, paid: bigint, under: MadeUnder): VaultCoin | undefined => {
+  if (paid >= held) return undefined;
+  const nonce = madeCoinNonce(under.circuits, 'change', under.secret, spentNullifierOf(under.circuits, under.vault, first));
+  return { nonce, token: first.token, value: held - paid };
+};
+
+/** The coin place `place` of a batch paid, from the batch's first note. */
+export const batchPaidCoinOf = (first: VaultCoin, place: 0 | 1 | 2 | 3, amount: bigint, under: MadeUnder): VaultCoin => ({
+  nonce: madeCoinNonce(under.circuits, `batch-${place}`, under.secret, spentNullifierOf(under.circuits, under.vault, first)),
+  token: first.token,
+  value: amount,
+});
+
+/** **THE ONE NOTE A MERGE KEPT**: worth what every note it merged held, keyed by the first of them. */
+export const mergedNoteOf = (spent: readonly VaultCoin[], under: MadeUnder): VaultCoin => {
+  const first = spent[0];
+  if (first === undefined || spent.length < 2) {
+    throw new Error('a merge takes at least two notes, so a merge of fewer kept no note');
+  }
+  return {
+    nonce: madeCoinNonce(under.circuits, 'merge', under.secret, spentNullifierOf(under.circuits, under.vault, first)),
+    token: first.token,
+    value: spent.reduce((t, n) => t + n.value, 0n),
+  };
+};
+
 /* ------------------------------------------------------------------ *
  * the pool
  * ------------------------------------------------------------------ */
@@ -237,8 +269,19 @@ export const commitmentForNote = (
 export type VaultEvent =
   /** Money arriving. The coin is the depositor's own record of what they sent. */
   | { kind: 'deposit'; coin: VaultCoin }
-  /** One payee of an approved run. `spent` is the nonce of the note paid from. */
-  | { kind: 'payout'; spent: Hex; amount: bigint }
+  /**
+   * One payee of an approved run. `spent` is the nonce of the note paid from,
+   * the one offered first; `further`, the notes it also drew on, in place order.
+   */
+  | { kind: 'payout'; spent: Hex; amount: bigint; further?: readonly Hex[] }
+  /**
+   * A batch of up to four payees, paid as one step. `spent`: the nonces of the
+   * notes it drew on, in place order, the first first. `amounts`: what each of
+   * its four places paid, in place order, nothing for an unused place.
+   */
+  | { kind: 'batch'; spent: readonly Hex[]; amounts: readonly bigint[] }
+  /** Housekeeping: two to four notes into one, kept. `spent`: their nonces, in place order. */
+  | { kind: 'merge'; spent: readonly Hex[] }
   /** Housekeeping: one note into two, both kept. `amount` is the piece asked for. */
   | { kind: 'split'; spent: Hex; amount: bigint }
   /**
@@ -455,6 +498,29 @@ export const replayVault = (input: PoolRecoveryInput): PoolRecovery => {
     return note;
   };
 
+  /**
+   * Every note a step spent, in place order, looked up before any is retired, so
+   * a step naming one note twice or a note never held stops the replay whole.
+   */
+  const spendAll = (nonces: readonly Hex[], at: number, what: string): VaultCoin[] => {
+    if (nonces.length === 0) throw new Error(`event ${at} ${what} from no note at all, which no step does`);
+    if (new Set(nonces).size !== nonces.length) {
+      throw new Error(`event ${at} ${what} from one note twice, which the vault refuses, so it cannot have happened.`);
+    }
+    const notes = nonces.map((nonce) => {
+      const note = live.get(nonce);
+      if (!note) {
+        throw new Error(
+          `event ${at} ${what} from note ${nonce}, which this vault's history has never held ` +
+          '(or has already spent). No note derived past this point is real, so nothing is derived.');
+      }
+      return note;
+    });
+    for (const nonce of nonces) { live.delete(nonce); spentByAnEvent.add(nonce); }
+    return notes;
+  };
+  const holding = (notes: readonly VaultCoin[]): bigint => notes.reduce((t, n) => t + n.value, 0n);
+
   input.history.forEach((e, i) => {
     if (e.kind === 'deposit') {
       if (e.coin.value <= 0n) throw new Error(`event ${i} deposits ${e.coin.value}, which is not a deposit`);
@@ -466,6 +532,50 @@ export const replayVault = (input: PoolRecoveryInput): PoolRecovery => {
       /* A deposit adds ONE note. It merges with nothing — the vault holding two
        * notes of a token is the normal case, not a mess to tidy. */
       remember(e.coin);
+      return;
+    }
+
+    if (e.kind === 'payout' && (e.further?.length ?? 0) > 0) {
+      const notes = spendAll([e.spent, ...e.further!], i, 'pays');
+      const first = notes[0]!;
+      if (e.amount <= 0n) throw new Error(`event ${i} moves ${e.amount}, which is not a payment`);
+      if (e.amount > holding(notes)) {
+        throw new Error(`event ${i} pays ${e.amount} from notes holding ${holding(notes)}. The history is wrong, and no note derived past this point is real.`);
+      }
+      if (!naming) { unnamedWithoutTheSecret.push(i); return; }
+      const change = naming.secrets.map((s) => changeAfterSpending(first, holding(notes), e.amount, under(s)));
+      for (const kept of change) if (kept) remember(kept);
+      payouts.push({ event: i, payee: naming.secrets.map((s) => paidCoinOf(first, e.amount, under(s))), change });
+      return;
+    }
+
+    if (e.kind === 'batch') {
+      const notes = spendAll(e.spent, i, 'pays a batch');
+      const first = notes[0]!;
+      if (e.amounts.length !== 4 || e.amounts.some((a) => a < 0n)) {
+        throw new Error(`event ${i} is a batch with ${e.amounts.length} places; a batch has four, each an amount of zero or more`);
+      }
+      const total = e.amounts.reduce((t, a) => t + a, 0n);
+      if (total === 0n) throw new Error(`event ${i} is a batch that pays nobody, which the vault refuses`);
+      if (total > holding(notes)) {
+        throw new Error(`event ${i} pays a batch of ${total} from notes holding ${holding(notes)}. The history is wrong, and no note derived past this point is real.`);
+      }
+      if (!naming) { unnamedWithoutTheSecret.push(i); return; }
+      const change = naming.secrets.map((s) => changeAfterSpending(first, holding(notes), total, under(s)));
+      for (const kept of change) if (kept) remember(kept);
+      e.amounts.forEach((amount, place) => {
+        if (amount === 0n) return;
+        payouts.push({ event: i, payee: naming.secrets.map((s) => batchPaidCoinOf(first, place as 0 | 1 | 2 | 3, amount, under(s))), change });
+      });
+      return;
+    }
+
+    if (e.kind === 'merge') {
+      if (e.spent.length < 2) throw new Error(`event ${i} merges ${e.spent.length} note(s), and a merge takes at least two`);
+      const notes = spendAll(e.spent, i, 'merges');
+      if (!naming) { unnamedWithoutTheSecret.push(i); return; }
+      /* One candidate per secret, as for every coin a step made; the chain holds the one the vault made. */
+      for (const s of naming.secrets) remember(mergedNoteOf(notes, under(s)));
       return;
     }
 

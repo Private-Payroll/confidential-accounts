@@ -75,7 +75,7 @@ export type PrivateStateAnswer = string | null;
  *
  * Taken from the contract and nowhere else: a circuit is on this list only if
  * it, and everything it calls, reads none of the nine witnesses. None of the
- * four opens with a signer check.
+ * five opens with a signer check.
  *
  *   `closeExpiredRun`  the contract leaves it open to anybody on purpose, so
  *                      that a round nobody closed can still be closed by
@@ -86,6 +86,8 @@ export type PrivateStateAnswer = string | null;
  *   `retireVault`      reads ledger state and writes ledger state.
  *   `approveVaultChange` entered from the vault, as `recordPaymentFromVault` is,
  *                      and reads ledger state only.
+ *   `recordBatchFromVault` entered from the vault for a batch, as
+ *                      `recordPaymentFromVault` is for one payee.
  *
  * **AND THE LIST IS THE CONTRACT'S, NOT THE CALL BUILDER'S, WHICH IS A WIDER
  * THING THAN IT USED TO BE.** While this was consulted only by the account
@@ -98,7 +100,7 @@ export type PrivateStateAnswer = string | null;
  * claiming a signer check it does not open with.
  */
 export const CIRCUITS_THAT_READ_NO_WITNESS: ReadonlySet<string> =
-  new Set(['approveVaultChange', 'closeExpiredRun', 'recordPaymentFromVault', 'retireVault']);
+  new Set(['approveVaultChange', 'closeExpiredRun', 'recordBatchFromVault', 'recordPaymentFromVault', 'retireVault']);
 
 /**
  * Why this call may not be built, or `null` when it may.
