@@ -159,6 +159,24 @@ describe('an approved change to a vault records no payment', () => {
     /* RED WHEN the count of changes used is left behind once the run closes. */
     expect(sim.ledger.signerRoles.member(pureCircuits.changesUsedKeyOf(run.id))).toBe(false);
   });
+
+  it('A RUN OF CHANGES CANNOT BE HELD ONCE ONE OF ITS CHANGES IS APPLIED, and its next change is still made', async () => {
+    const sim = await live();
+    await sim.adoptVault(PAYROLL, [A, B]);
+    const leaves = [...oneChange(10), ...oneChange(11), ...oneChange(12)];
+    const c = change(0n, 73);
+    const run = await approvedChanges(sim, PAYROLL, leaves, c);
+    await sim.as(sim.applying(A, c)).approveVaultChange(ask(run, leaves, PAYROLL, c, 0));
+    /* RED WHEN the change step stops marking its run as paid from: B's hold below would be placed. */
+    expect(hex(sim.runHoldOf(run.id)!.placedBy)).toBe(hex(pureCircuits.paidFromMark()));
+    /* RED WHEN the mark is read as a hold: the second change would be refused. */
+    await sim.as(sim.applying(A, c)).approveVaultChange(ask(run, leaves, PAYROLL, c, 1));
+    /* RED WHEN holdRun's paid-from refusal goes: it is then refused for another reason. */
+    await expect(sim.as(sim.applying(B, c)).holdRun(run.id))
+      .rejects.toThrow(/a payment or a change from that run has already been made, so it can no longer be held/);
+    await sim.as(sim.applying(A, c)).approveVaultChange(ask(run, leaves, PAYROLL, c, 2));
+    expect(sim.ledger.openProposals.member(run.id)).toBe(false);
+  });
 });
 
 describe('who a change can be approved for, and at what bar', () => {

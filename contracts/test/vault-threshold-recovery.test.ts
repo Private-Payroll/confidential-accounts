@@ -8,20 +8,27 @@
  *
  * Four steps, in order, each asserted:
  *
- *   1. raise a vault's threshold ABOVE the seats the account holds
+ *   1. leave a vault's threshold ABOVE the seats the account holds. It cannot
+ *      be SET there: the contract refuses a vault threshold above the signers
+ *      seated, and one above the approvals a policy change needs raises that
+ *      number, which every removal then keeps the seats at or above. The one
+ *      way there is the signers at that number choosing to lower it, then a
+ *      removal.
  *   2. prove a payment out of that vault is refused, AND assert the reason
- *   3. lower it by a governed round at the ACCOUNT's threshold
+ *   3. lower it by a governed round at the higher of the ACCOUNT's threshold
+ *      and the approvals a policy change needs
  *   4. the run raised under the higher bar is STILL refused, because a run
  *      needs the higher of its bar when raised and the bar now; the same
  *      payment raised again after the lowering pays
  *
  * WHY IT IS REACHABLE AT ALL, which is the whole mechanism in one line:
- * `setVaultThreshold` (`ConfidentialAccount.compact:2699`) is judged by
- * `requireApproved` (`:1407`), which reads the ACCOUNT's `threshold` directly
- * and can never pick up a vault's own number — governance proposals name
- * `noVault()`, and no vault address can equal it. So the vault's bar governs
- * spending out of the vault and nothing else; it has no say in the round that
- * moves it.
+ * lowering a vault's threshold needs the higher of the account's `threshold`
+ * and the approvals a policy change needs, and neither can exceed the seats -
+ * every circuit that sets either refuses more than the signers seated, and
+ * every removal refuses to leave fewer. A vault's own number never enters the
+ * round that moves it: governance proposals name `noVault()`, and no vault
+ * address can equal it. Seats are not live keys: a seat whose key is lost
+ * still counts, and that is not this file's subject.
  *
  * OFFLINE, AGAINST THE REAL COMPILED CONTRACTS, exactly as
  * `vault-payout.test.ts` is: `createCircuitContext` takes a
@@ -137,23 +144,28 @@ describe('a vault whose threshold nobody can meet is recovered, and pays', () =>
    * step 3 of the recovery is only meaningful if the round is real, and a
    * helper that shortcut it would be testing a path no signer has.
    */
-  const governedRound = async (payloadHash: Uint8Array, c: Change) => {
+  const governedRound = async (
+    payloadHash: Uint8Array, c: Change, by: ReturnType<typeof privateStateFor>[] = [A, B],
+  ) => {
     await sim.as(carrying(sim, A, c)).propose(payloadHash, NO_VAULT);
     const id = sim.proposalId(payloadHash, c.salt, NO_VAULT);
-    await sim.as(carrying(sim, A, c)).approve(id);
-    await sim.as(carrying(sim, B, c)).approve(id);
+    for (const who of by) await sim.as(carrying(sim, who, c)).approve(id);
     return id;
   };
 
-  /** Sets this vault's own threshold through a governed round, and asserts it landed. */
-  const setVaultThresholdTo = async (n: bigint, c: Change) => {
+  /**
+   * Sets this vault's own threshold through a governed round of two, and asserts what the
+   * contract then holds: the vault's threshold, and, separately, the approvals a policy change
+   * needs, which a vault threshold above it raises and nothing here lowers.
+   */
+  const setVaultThresholdTo = async (n: bigint, c: Change, barAfter: bigint) => {
     const payloadHash = pureCircuits.setVaultThresholdPayload(vaultAddrBytes(), n);
     const id = await governedRound(payloadHash, c);
-    /* Exactly the ACCOUNT's threshold, and no more — this is the number that
-     * makes the recovery reachable, so it is asserted rather than assumed. */
-    expect(sim.approvalsFor(id)).toBe(sim.ledger.threshold);
     await sim.as(carrying(sim, A, c)).setVaultThreshold(vaultAddrBytes(), n, id);
+    /* RED WHEN the circuit stops writing the vault's threshold, or writes another number. */
     expect(sim.ledger.thresholds.lookup(vaultAddrBytes())).toBe(n);
+    /* RED WHEN the circuit stops writing the bar a vault threshold raises, or lowers it. */
+    expect(sim.ledger.thresholds.lookup(pureCircuits.policyBarKey())).toBe(barAfter);
     return id;
   };
 
@@ -177,18 +189,28 @@ describe('a vault whose threshold nobody can meet is recovered, and pays', () =>
 
   it('THE FOUR STEPS: raised above the seats, refused with its reason, lowered by a governed round, raised again and paid',
     async () => {
-    /* --- 1. RAISE IT ABOVE THE SEATS ---------------------------------------
+    /* --- 1. LEAVE IT ABOVE THE SEATS ---------------------------------------
      *
-     * Three, on an account holding two seats. The contract accepts it and says
-     * why it does not bound this the way `setThreshold` bounds the account's
-     * own number (`:2166-2171`): a vault has no bootstrap window to reopen, and
-     * an unmeetable vault threshold is recoverable rather than dangerous.
-     *
-     * This line IS that claim being taken at its word, so the rest of the test
-     * is what turns "recoverable" into something that has been seen to happen.
+     * Three, on an account holding two seats, by the only road there is: a
+     * third seat, the vault set to three by all three (which raises the
+     * approvals a policy change needs to three), that number lowered to two by
+     * all three, and the third seat removed by two.
      */
+    const C = privateStateFor(3);
+    const seat = govChange(70);
+    const sid = await governedRound(pureCircuits.signerAddPayload(sim.leafOf(C)), seat);
+    await sim.as(carrying(sim, A, seat)).addSigner(sim.leafOf(C), sid);
     const raising = govChange(71);
-    await setVaultThresholdTo(3n, raising);
+    const rid = await governedRound(
+      pureCircuits.setVaultThresholdPayload(vaultAddrBytes(), 3n), raising, [A, B, C]);
+    await sim.as(carrying(sim, A, raising)).setVaultThreshold(vaultAddrBytes(), 3n, rid);
+    expect(sim.ledger.thresholds.lookup(pureCircuits.policyBarKey())).toBe(3n);
+    const lowerBar = govChange(75);
+    const bid = await governedRound(pureCircuits.setPolicyBarPayload(2n), lowerBar, [A, B, C]);
+    await sim.as(carrying(sim, A, lowerBar)).setPolicyBar(2n, bid);
+    const out = govChange(76);
+    const oid = await governedRound(pureCircuits.removeSignerPayload(sim.leafOf(C)), out);
+    await sim.as(carrying(sim, A, out)).removeSigner(sim.leafOf(C), oid);
     expect(sim.ledger.thresholds.lookup(vaultAddrBytes()))
       .toBeGreaterThan(sim.ledger.signerLeaves.size());
 
@@ -231,16 +253,17 @@ describe('a vault whose threshold nobody can meet is recovered, and pays', () =>
     expect(sim.ledger.movements.member(pureCircuits.paidMovementOf(leaf))).toBe(false);
     expect(sim.isOpen(run.id)).toBe(true);
 
-    /* --- 3. LOWER IT BY A GOVERNED ROUND, AT THE ACCOUNT'S THRESHOLD --------
+    /* --- 3. LOWER IT BY A GOVERNED ROUND, AT THE SEAT BAR -------------------
      *
-     * The round that undoes it needs TWO approvals — the account's number —
+     * The round that undoes it needs TWO approvals — the higher of the
+     * account's number and the approvals a policy change needs, both two —
      * while the vault it concerns demands three. That asymmetry is the
      * recovery. `setVaultThresholdTo` asserts the count it settled at, and the
      * proposal names `noVault()`, which is what keeps the vault's own bar out
      * of the decision.
      */
     const lowering = govChange(73);
-    await setVaultThresholdTo(2n, lowering);
+    await setVaultThresholdTo(2n, lowering, 2n);
     expect(sim.ledger.thresholds.lookup(vaultAddrBytes())).toBe(2n);
 
     /* --- 4. RAISE IT AGAIN, AND PAY ----------------------------------------
@@ -272,33 +295,34 @@ describe('a vault whose threshold nobody can meet is recovered, and pays', () =>
     expect(acct.movements.member(pureCircuits.paidMovementOf(leaf))).toBe(true);
   });
 
-  it('THE CHAIN DOES NOT BOUND A VAULT THRESHOLD BY THE SEAT COUNT — the refusal that does is OURS',
+  it('THE CHAIN REFUSES A VAULT THRESHOLD ABOVE THE SIGNERS SEATED, as ours does',
     async () => {
     /*
-     * WHICH OF THE TWO REFUSALS IS WHICH, pinned so a later round cannot delete
-     * one believing the other covers it.
+     * BOTH REFUSALS NOW, pinned so a later round cannot delete one believing
+     * the other covers it.
      *
-     *   THE CHAIN     accepts any non-zero vault threshold, seats or no seats.
-     *                 `setVaultThreshold` (`:2172-2188`) asserts only that the
-     *                 number is not zero. This test is that half.
+     *   THE CHAIN     `setVaultThreshold` refuses a number above the signers
+     *                 seated, as `setPolicy` refuses such a band: a vault
+     *                 threshold above the approvals a policy change needs
+     *                 raises that number, and it must stay reachable.
      *
-     *   OURS          `src/core/account.ts:1291` refuses a vault threshold
-     *                 above the seat count before a proposal is even raised,
-     *                 and its message says whose rule it is. That half is
-     *                 pinned by `src/core/a-vault-s-own-threshold.test.ts`,
-     *                 "refuses a threshold above the seats the LEDGER holds,
-     *                 and says the refusal is ours".
-     *
-     * Neither is redundant. Ours stops a company reaching the unspendable state
-     * by accident; it is NOT what makes the recovery possible, and removing it
-     * would not make anything below fail. The recovery is possible because of
-     * `requireApproved` in the circuit above, which is a different line in a
-     * different repository layer.
+     *   OURS          `src/core/account.ts` refuses a vault threshold above
+     *                 the seat count before a proposal is even raised. That
+     *                 half is pinned by `src/core/a-vault-s-own-threshold.test.ts`.
      */
     const nine = govChange(74);
-    await setVaultThresholdTo(9n, nine);
-    expect(sim.ledger.thresholds.lookup(vaultAddrBytes())).toBe(9n);
+    const id = await governedRound(pureCircuits.setVaultThresholdPayload(vaultAddrBytes(), 9n), nine);
+    /* RED WHEN the circuit stops refusing a vault threshold above the signers seated. */
+    await expect(sim.as(carrying(sim, A, nine)).setVaultThreshold(vaultAddrBytes(), 9n, id))
+      .rejects.toThrow(/a vault cannot need more approvals than the company has signers/);
+    expect(sim.ledger.thresholds.member(vaultAddrBytes())).toBe(false);
+    /* At exactly the signers seated it is accepted, and the bar is written at it. */
+    const two = govChange(77);
+    await setVaultThresholdTo(2n, two, 2n);
     expect(sim.ledger.signerLeaves.size()).toBe(2n);
+    /* Lowered below the bar, the vault's number falls and the bar does not, so the helper's two
+     * checks tell them apart. */
+    await setVaultThresholdTo(1n, govChange(78), 2n);
   });
 });
 
@@ -333,11 +357,13 @@ describe('the account\'s own threshold is always reachable, so no vault is stran
     return sim;
   };
 
-  const governedRound = async (sim: AccountSimulator, payloadHash: Uint8Array, c: Change) => {
+  const governedRound = async (
+    sim: AccountSimulator, payloadHash: Uint8Array, c: Change,
+    by: ReturnType<typeof privateStateFor>[] = [A, B],
+  ) => {
     await sim.as(carrying(sim, A, c)).propose(payloadHash, NO_VAULT);
     const id = sim.proposalId(payloadHash, c.salt, NO_VAULT);
-    await sim.as(carrying(sim, A, c)).approve(id);
-    await sim.as(carrying(sim, B, c)).approve(id);
+    for (const who of by) await sim.as(carrying(sim, who, c)).approve(id);
     return id;
   };
 
@@ -369,34 +395,18 @@ describe('the account\'s own threshold is always reachable, so no vault is stran
     expect(sim.ledger.threshold).toBe(2n);
   });
 
-  it('BUT A VAULT HAS NO SUCH FLOOR: the seats can fall below a bar that was legal when it was set',
+  it('AND A VAULT HAS THE SAME FLOOR: no removal leaves fewer seats than a vault threshold it raised the bar to',
     async () => {
     /*
-     * THE ASYMMETRY, RUN RATHER THAN REASONED, because reasoning about it got
-     * the example wrong the first time.
-     *
-     * `removeSigner`'s floor protects the ACCOUNT's threshold and knows nothing
-     * about the `thresholds` map — there is no vault equivalent of it, and
-     * there is no client refusal on this route either: `src/core/account.ts:1291`
-     * guards a threshold being RAISED above the seats, not the seats falling
-     * below a threshold. So a vault can be made unspendable without anybody
-     * setting an unmeetable number, by a sequence of acts each of which is
-     * legal and each of which the product would allow.
-     *
-     * Four signers at 2 of 4, a vault at 4 — meetable the day it is set. Two
-     * removals later, each leaving the account able to approve, the bar is
-     * above the seats and no rule was broken.
-     *
-     * IT IS NOT NEW MONEY RISK, and the last two lines are why: the same
-     * governed round the recovery uses gets straight back out of it. That is
-     * the point of asserting it here rather than only naming it.
+     * Four signers at 2 of 4, a vault at 4. Setting it raised the approvals a
+     * policy change needs to four, so every change of who is seated needs four
+     * and no removal may leave fewer than four seats. Until a vault threshold
+     * raised that number, two removals at two approvals each left the vault
+     * above the seats with nothing refusing anything.
      */
     const C = privateStateFor(3);
     const D = privateStateFor(4);
     const sim = await AccountSimulator.liveAccount([A, B], 2n);
-    /* B was seated by a round too, the bootstrap window being shut; C
-     * and D are seated here because this walk needs their seeds and its own
-     * `governedRound`, which is the same three steps `liveAccount` runs. */
     sim.at(VAULT_NOW);
     for (const [who, seed] of [[C, 77], [D, 78]] as const) {
       const c = govChange(seed);
@@ -406,30 +416,156 @@ describe('the account\'s own threshold is always reachable, so no vault is stran
     expect(sim.ledger.signerLeaves.size()).toBe(4n);
 
     const VAULT = new Uint8Array(32).fill(0xa1);
+    await sim.adoptVault(VAULT, [A, B]);
     const raising = govChange(79);
-    const rid = await governedRound(sim, pureCircuits.setVaultThresholdPayload(VAULT, 4n), raising);
+    const rid = await governedRound(sim, pureCircuits.setVaultThresholdPayload(VAULT, 4n), raising, [A, B, C, D]);
     await sim.as(carrying(sim, A, raising)).setVaultThreshold(VAULT, 4n, rid);
-    // Legal, and meetable: four seats, a bar of four.
-    expect(sim.ledger.thresholds.lookup(VAULT)).toBe(sim.ledger.signerLeaves.size());
 
-    /* Two removals, each of which the account's own floor permits. */
-    for (const [who, seed] of [[C, 80], [D, 81]] as const) {
-      const c = govChange(seed);
-      const leaf = sim.leafOf(who);
-      const id = await governedRound(sim, pureCircuits.removeSignerPayload(leaf), c);
-      await sim.as(carrying(sim, A, c)).removeSigner(leaf, id);
-    }
-
-    // The account is fine. The vault is unspendable, and nothing refused anything.
-    expect(sim.ledger.signerLeaves.size()).toBe(2n);
+    /* With every signer approving, neither removal may leave three seats against a vault of four. */
+    const leaf = sim.leafOf(C);
+    const one = govChange(80);
+    const id1 = await governedRound(sim, pureCircuits.removeSignerPayload(leaf), one, [A, B, C, D]);
+    /* RED WHEN a vault threshold no longer raises the bar: the removal then passes at the account's own floor. */
+    await expect(sim.as(carrying(sim, A, one)).removeSigner(leaf, id1))
+      .rejects.toThrow(/that would leave fewer signers than a policy change needs/);
+    const both = govChange(81);
+    const id2 = await governedRound(
+      sim, pureCircuits.removeAndSetThresholdPayload(leaf, 2n), both, [A, B, C, D]);
+    /* RED WHEN the combined removal stops checking the bar after the seat leaves. */
+    await expect(sim.as(carrying(sim, A, both)).removeSignerAndSetThreshold(leaf, 2n, id2))
+      .rejects.toThrow(/that would leave fewer signers than a policy change needs/);
+    expect(sim.ledger.signerLeaves.size()).toBe(4n);
     expect(sim.ledger.thresholds.lookup(VAULT)).toBe(4n);
-    expect(sim.ledger.thresholds.lookup(VAULT)).toBeGreaterThan(sim.ledger.signerLeaves.size());
+  });
+});
 
-    /* And the recovery gets out of it, at the account's threshold, as always. */
-    const lowering = govChange(82);
-    const lid = await governedRound(sim, pureCircuits.setVaultThresholdPayload(VAULT, 2n), lowering);
-    expect(sim.approvalsFor(lid)).toBe(sim.ledger.threshold);
-    await sim.as(carrying(sim, A, lowering)).setVaultThreshold(VAULT, 2n, lid);
+/*
+ * A VAULT'S OWN THRESHOLD GUARDS WHO IS SEATED, BY THE SAME STEP A POLICY'S
+ * HIGHEST BAND DOES. Setting one above the approvals a policy change needs
+ * raises that number to it; a lower later one never lowers it; raising one
+ * past it, or lowering a vault's threshold, needs that many approvals. So
+ * signers short of a vault's threshold can neither seat their way to it nor
+ * loosen it.
+ */
+describe("a vault's own threshold guards who is seated", () => {
+  const C = privateStateFor(3);
+  const D = privateStateFor(4);
+  const VAULT = new Uint8Array(32).fill(0xa1);
+  const OTHER = new Uint8Array(32).fill(0xa2);
+  type Who = ReturnType<typeof privateStateFor>;
+
+  const live = async (threshold: bigint) => {
+    const sim = await AccountSimulator.liveAccount([A, B, C], threshold);
+    sim.at(VAULT_NOW);
+    await sim.adoptVault(VAULT, [A, B, C].slice(0, Number(threshold)));
+    await sim.adoptVault(OTHER, [A, B, C].slice(0, Number(threshold)), 392);
+    return sim;
+  };
+  const round = async (sim: AccountSimulator, payloadHash: Uint8Array, c: Change, by: Who[]) => {
+    await sim.as(carrying(sim, A, c)).propose(payloadHash, NO_VAULT);
+    const id = sim.proposalId(payloadHash, c.salt, NO_VAULT);
+    for (const who of by) await sim.as(carrying(sim, who, c)).approve(id);
+    return id;
+  };
+  const setVault = async (sim: AccountSimulator, vault: Uint8Array, n: bigint, seed: number, by: Who[]) => {
+    const c = govChange(seed);
+    const id = await round(sim, pureCircuits.setVaultThresholdPayload(vault, n), c, by);
+    return sim.as(carrying(sim, A, c)).setVaultThreshold(vault, n, id);
+  };
+  const bar = (sim: AccountSimulator) => sim.ledger.thresholds.member(pureCircuits.policyBarKey())
+    ? sim.ledger.thresholds.lookup(pureCircuits.policyBarKey()) : undefined;
+
+  it('SIGNERS AT THE SEAT BAR CANNOT SEAT, RE-SEAT OR REMOVE THEIR WAY TO A STRICTER VAULT', async () => {
+    const sim = await live(2n);
+    await setVault(sim, VAULT, 3n, 101, [A, B, C]);
+    const seat = govChange(102);
+    const sid = await round(sim, pureCircuits.signerAddPayload(sim.leafOf(D)), seat, [A, B]);
+    /* RED WHEN a vault threshold above the bar does not raise it: two of three seat a fourth leaf they hold. */
+    await expect(sim.as(carrying(sim, A, seat)).addSigner(sim.leafOf(D), sid))
+      .rejects.toThrow(/seating, removing or re-seating a signer needs as many approvals as a policy change needs/);
+    const swap = govChange(103);
+    const wid = await round(sim, pureCircuits.reseatPayload(sim.leafOf(C), sim.leafOf(D)), swap, [A, B]);
+    await expect(sim.as(carrying(sim, A, swap)).reseatSigner(sim.leafOf(C), sim.leafOf(D), wid))
+      .rejects.toThrow(/seating, removing or re-seating a signer needs as many approvals as a policy change needs/);
+    const out = govChange(104);
+    const oid = await round(sim, pureCircuits.removeSignerPayload(sim.leafOf(C)), out, [A, B]);
+    /* RED WHEN the removal's seat bar is the account's threshold alone: two of three remove the third. */
+    await expect(sim.as(carrying(sim, A, out)).removeSigner(sim.leafOf(C), oid))
+      .rejects.toThrow(/seating, removing or re-seating a signer needs as many approvals as a policy change needs/);
+    expect(sim.ledger.signerLeaves.size()).toBe(3n);
+  });
+
+  it('a vault threshold above the bar raises it, and a lower later one never lowers it', async () => {
+    const sim = await live(2n);
+    expect(bar(sim)).toBeUndefined();
+    await setVault(sim, VAULT, 3n, 111, [A, B, C]);
+    /* RED WHEN setVaultThreshold does not write the bar. */
+    expect(bar(sim)).toBe(3n);
+    await setVault(sim, OTHER, 2n, 112, [A, B]);
+    /* RED WHEN the bar is written even below it: a lower vault threshold would lower it. */
+    expect(bar(sim)).toBe(3n);
+    expect(sim.ledger.thresholds.lookup(OTHER)).toBe(2n);
+  });
+
+  it('RAISING A VAULT PAST THE BAR, OR LOWERING ONE, NEEDS THE BAR', async () => {
+    const sim = await AccountSimulator.liveAccount([A, B, C, D], 2n);
+    sim.at(VAULT_NOW);
+    await sim.adoptVault(VAULT, [A, B]);
+    await sim.adoptVault(OTHER, [A, B], 392);
+    /* At a seat bar of two, two of four raise a vault to three, and so the bar to three. */
+    await setVault(sim, VAULT, 3n, 121, [A, B]);
+    expect(bar(sim)).toBe(3n);
+    /* RED WHEN raising past the bar needs only the account's threshold: two would make it four. */
+    await expect(setVault(sim, OTHER, 4n, 122, [A, B]))
+      .rejects.toThrow(/raising a vault's threshold past the approvals a policy change needs, or lowering a vault's threshold, needs that many approvals/);
+    expect(bar(sim)).toBe(3n);
+    /* RED WHEN lowering a vault's threshold needs only the account's threshold. */
+    await expect(setVault(sim, VAULT, 2n, 123, [A, B]))
+      .rejects.toThrow(/raising a vault's threshold past the approvals a policy change needs, or lowering a vault's threshold, needs that many approvals/);
+    expect(sim.ledger.thresholds.lookup(VAULT)).toBe(3n);
+    /* A vault with none of its own reads the account's threshold, so setting it below that lowers it too.
+     * RED WHEN an unset vault is read as needing nothing: two would set it to one under a bar of three. */
+    await expect(setVault(sim, OTHER, 1n, 124, [A, B]))
+      .rejects.toThrow(/raising a vault's threshold past the approvals a policy change needs, or lowering a vault's threshold, needs that many approvals/);
+    expect(sim.ledger.thresholds.member(OTHER)).toBe(false);
+    /* Up to the bar, the account's threshold is enough, as before. */
+    await setVault(sim, OTHER, 3n, 125, [A, B]);
+    expect(sim.ledger.thresholds.lookup(OTHER)).toBe(3n);
+    /* Lowered at the bar, the vault's number falls and the bar stays. */
+    await setVault(sim, VAULT, 2n, 126, [A, B, C]);
     expect(sim.ledger.thresholds.lookup(VAULT)).toBe(2n);
+    expect(bar(sim)).toBe(3n);
+  });
+
+  it('BYTES THE COMPANY DOES NOT HOLD AS A VAULT NEVER RAISE THE BAR, but may carry a threshold at or below it', async () => {
+    const sim = await live(2n);
+    const STRANGER = new Uint8Array(32).fill(0xa3);
+    /* RED WHEN setVaultThreshold lets bytes no vault holds raise the bar: three of three would raise it to three. */
+    await expect(setVault(sim, STRANGER, 3n, 141, [A, B, C]))
+      .rejects.toThrow(/that is not a vault this company holds, so its threshold cannot exceed the approvals a policy change needs/);
+    expect(bar(sim)).toBeUndefined();
+    expect(sim.ledger.thresholds.member(STRANGER)).toBe(false);
+    /* At the bar a threshold is still set before adoption. RED WHEN the refusal also catches a
+     * threshold at or below the bar, which a vault set up before it is adopted needs. */
+    await setVault(sim, STRANGER, 2n, 142, [A, B]);
+    expect(sim.ledger.thresholds.lookup(STRANGER)).toBe(2n);
+    /* Once adopted, the same raise passes and raises the bar. */
+    await sim.adoptVault(STRANGER, [A, B], 393);
+    await setVault(sim, STRANGER, 3n, 143, [A, B]);
+    expect(bar(sim)).toBe(3n);
+  });
+
+  it('A VAULT AT THE THRESHOLD WRITES THE BAR, SO LOWERING THE THRESHOLD LATER LEAVES IT GUARDED', async () => {
+    const sim = await live(3n);
+    await setVault(sim, VAULT, 3n, 131, [A, B, C]);
+    /* RED WHEN the bar is written only above the threshold standing in for it. */
+    expect(bar(sim)).toBe(3n);
+    const lower = govChange(132);
+    const lid = await round(sim, pureCircuits.setThresholdPayload(2n), lower, [A, B, C]);
+    await sim.as(carrying(sim, A, lower)).setThreshold(2n, lid);
+    const seat = govChange(133);
+    const sid = await round(sim, pureCircuits.signerAddPayload(sim.leafOf(D)), seat, [A, B]);
+    await expect(sim.as(carrying(sim, A, seat)).addSigner(sim.leafOf(D), sid))
+      .rejects.toThrow(/seating, removing or re-seating a signer needs as many approvals as a policy change needs/);
   });
 });

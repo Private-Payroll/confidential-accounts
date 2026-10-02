@@ -682,12 +682,35 @@ describe("a policy's highest band is a bar for changing who is seated, and a cha
     /* At a threshold of one, so a band of two lies between the threshold and the bar a policy raised. */
     sim = await live([A, B, C], 1n);
     await (await setPolicyOn(sim, PAYROLL, withMost(1n, 3, 915), 707)).apply();
-    /* RED WHEN setPolicy writes its highest band whether or not it is above the bar. */
-    expect(bar()).toBeUndefined();
+    /* With no bar stored, a band at the threshold standing in for it is written as the bar.
+     * RED WHEN an unset bar is read as the threshold when a policy raises it: nothing is written. */
+    expect(bar()).toBe(1n);
     await (await setPolicyOn(sim, PAYROLL, POLICY, 708)).apply();
     await (await setPolicyOn(sim, PAYROLL, withMost(2n, 3, 916), 709, TEST_TOKEN_BYTES, [A, B, C])).apply();
     /* RED WHEN setPolicy compares its highest band with the account's threshold rather than the bar. */
     expect(bar()).toBe(3n);
+  });
+
+  it('A BAND AT THE THRESHOLD IS WRITTEN AS THE BAR, SO LOWERING THE THRESHOLD LATER LEAVES IT GUARDED', async () => {
+    /* At a threshold of three, so the band of three is not above the threshold standing in for the bar. */
+    const raiseIt = await raiseGov(pureCircuits.setThresholdPayload(3n), 720, [A, B]);
+    await sim.as(sim.applying(A, raiseIt.c)).setThreshold(3n, raiseIt.id);
+    await (await setPolicyOn(sim, PAYROLL, POLICY, 721, TEST_TOKEN_BYTES, [A, B, C])).apply();
+    /* RED WHEN setPolicy writes its highest band only above the threshold standing in for an unset bar. */
+    expect(bar()).toBe(3n);
+    const lower = await raiseGov(pureCircuits.setThresholdPayload(2n), 722, [A, B, C]);
+    await sim.as(sim.applying(A, lower.c)).setThreshold(2n, lower.id);
+    const { id, c } = await raiseGov(pureCircuits.reseatPayload(sim.leafOf(C), sim.leafOf(E)), 723);
+    await expect(sim.as(sim.applying(A, c)).reseatSigner(sim.leafOf(C), sim.leafOf(E), id))
+      .rejects.toThrow(/needs as many approvals as a policy change needs/);
+  });
+
+  it('REFUSES A POLICY ON A VAULT THE COMPANY HAS NOT ADOPTED, and the bar does not move', async () => {
+    const STRANGER = bytes(0xc3);
+    const set = await setPolicyOn(sim, STRANGER, POLICY, 724);
+    /* RED WHEN setPolicy accepts a vault never adopted: its highest band would raise the bar for every change of who is seated. */
+    await expect(set.apply()).rejects.toThrow(/that is not a vault this company holds; adopt the vault first/);
+    expect(bar()).toBeUndefined();
   });
 
   it('refuses a band needing more approvals than the company has signers', async () => {
@@ -766,14 +789,16 @@ describe('what setting a policy and charging a run publish', () => {
       "the policy's key": policyKeyOf(PAYROLL, TEST_TOKEN_BYTES),
       "the policy's commitment": set.commitment,
       "the marker's key": pureCircuits.policyOnKeyOf(PAYROLL),
+      /* RED WHEN setPolicy stops checking the vault is one the company holds, which reads it. */
+      'the vault': PAYROLL,
     });
     /*
      * RED WHEN the token, the token's key, the policy's terms or its blinding reach the transcript.
-     * The vault itself is not published either, only keys hashed from it; a vault's address is
-     * public, so an observer who hashes it can still tell which vault is under a policy.
+     * The vault is published: the check that it is one the company holds reads it. Its address
+     * was public already, and the keys hashed from it always told an observer which vault is
+     * under a policy.
      */
     t.assertAbsent({
-      'the vault': PAYROLL,
       'the token': TEST_TOKEN_BYTES,
       "the token's blinded key": assetKeyOf(TEST_TOKEN_BYTES),
       "the policy's blinding": PRIVATE_POLICY.blinding,

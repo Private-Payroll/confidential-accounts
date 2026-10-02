@@ -77,7 +77,7 @@ import type {
 } from '../core/ledger.js';
 import type { AssetId } from '../core/assets.js';
 import type { AccountPrivateState } from '../../contracts/src/witnesses.js';
-import { periodWindowOf, policyCommitmentOf, type PolicyOpening } from './spending-policy.js';
+import { periodWindowOf, policyCommitmentOf, policyBarKey, type PolicyOpening } from './spending-policy.js';
 import { viewDigestOf } from '../core/ledger.js';
 import { assetIdBytes, NO_ASSET } from '../core/assets.js';
 import { MidnightCommitments } from './commitments.js';
@@ -1798,7 +1798,7 @@ export class MidnightLedger implements Ledger {
       }
 
       case 'reseatSigner': {
-        await this.requireApproved(address, step.proposalId, "change a signer's seat");
+        await this.requireSeatBar(address, step.proposalId, "change a signer's seat");
         await this.refuseUnusableLeaf(step.newLeaf, 'the signer leaf being seated');
         return {
           address, privateStateId, circuit,
@@ -1807,9 +1807,19 @@ export class MidnightLedger implements Ledger {
       }
 
       case 'setPolicyBar': {
-        await this.requireApproved(address, step.proposalId, 'change the approvals a policy change needs');
+        await this.requireSeatBar(address, step.proposalId, 'change the approvals a policy change needs');
         if (!Number.isInteger(step.newBar) || step.newBar < 1) {
           throw new Error('a policy change needs at least one approval, and a whole number of them');
+        }
+        {
+          const now = await this.readContractState(address);
+          if (!now) throw new Error('the contract has no state on chain');
+          if (BigInt(step.newBar) > now.signerCount) {
+            throw new Error(
+              `a policy change cannot need ${step.newBar} approvals when the company has ${now.signerCount} signers; ` +
+                'seat more signers first, or choose a smaller number.',
+            );
+          }
         }
         return {
           address, privateStateId, circuit,
@@ -1834,7 +1844,7 @@ export class MidnightLedger implements Ledger {
                 'Propose the signer, reach the threshold, then add them. M-37.',
             );
           }
-          await this.requireApproved(address, step.proposalId, 'add a signer');
+          await this.requireSeatBar(address, step.proposalId, 'add a signer');
         }
         /*
          * THREE ARGUMENTS, and the third was missing until M-128's port was
@@ -1931,14 +1941,48 @@ export class MidnightLedger implements Ledger {
          * anywhere in either language: *"a vault threshold of zero would
          * authorise anything"* (`:2777`).
          *
-         * **NO SIGNER-COUNT BOUND**, unlike `setThreshold` above, and the
-         * omission is the circuit's (`:2758-2762`): a vault has no bootstrap
-         * window for an over-high threshold to reopen. The application refuses
-         * to RAISE such a round — `AccountService.proposeVaultThresholdChange`
-         * — and that refusal is ours and is labelled as ours.
+         * **THE SIGNER-COUNT BOUND IS THE CIRCUIT'S**, as `setThreshold`'s is
+         * above: the circuit refuses a vault threshold above the signers
+         * seated, and the block below mirrors it. The application also refuses
+         * to RAISE such a round — `AccountService.proposeVaultThresholdChange`.
          */
         if (!Number.isInteger(step.newThreshold) || step.newThreshold < 1) {
           throw new Error('a vault threshold of zero would authorise anything');
+        }
+        /*
+         * The circuit's two further rules, mirrored so a round the chain would
+         * refuse is refused here before a fee is paid: no more than the signers
+         * seated, and as many approvals as a change of who is seated when the
+         * new number is above the approvals a policy change needs (it raises
+         * that number to it) or below what the vault needs today.
+         */
+        {
+          const now = await this.readContractState(address);
+          if (!now) throw new Error('the contract has no state on chain');
+          if (step.vault === toHex((await import('../../contracts/managed/contract/index.js')).pureCircuits.companyWide())) {
+            throw new Error("the company-wide decision always takes the account's threshold, so it has no vault threshold.");
+          }
+          if (step.vault === policyBarKey()) {
+            throw new Error('that is not a vault; to change the approvals a policy change needs, raise that change instead.');
+          }
+          if (BigInt(step.newThreshold) > now.signerCount) {
+            throw new Error(
+              `a vault cannot need ${step.newThreshold} approvals when the company has ${now.signerCount} signers; ` +
+                'seat more signers first, or choose a smaller number.',
+            );
+          }
+          const barNow = seatBarParts(now).policyBar;
+          if (BigInt(step.newThreshold) > barNow && !(await this.readGovernance(address)).holdsVault(step.vault)) {
+            throw new Error(
+              `that is not a vault this company holds, so its threshold cannot exceed ${barNow}, the approvals ` +
+                'a policy change needs; adopt the vault first, or choose a smaller number.',
+            );
+          }
+          const own = now.vaultThresholds.find(v => v.vault === step.vault);
+          const today = own ? own.threshold : Number(now.threshold);
+          if (step.newThreshold > Number(seatBarParts(now).policyBar) || step.newThreshold < today) {
+            await this.requireSeatBar(address, step.proposalId, "change a vault's threshold");
+          }
         }
         return {
           address, privateStateId, circuit,
@@ -1949,8 +1993,11 @@ export class MidnightLedger implements Ledger {
       }
 
       case 'setPolicy': {
-        await this.requireApproved(address, step.proposalId, "set this vault's spending policy");
+        await this.requireSeatBar(address, step.proposalId, "set this vault's spending policy");
         if (step.vault === MidnightCommitments.noVault()) throw new Error('a spending policy is set on a vault');
+        if (!(await this.readGovernance(address)).holdsVault(step.vault)) {
+          throw new Error('that is not a vault this company holds; adopt the vault first, then set its policy.');
+        }
         await this.stageFor(accountId, { assetId: assetIdBytes(step.asset), policy: step.policy });
         return {
           address, privateStateId, circuit,
@@ -2015,11 +2062,19 @@ export class MidnightLedger implements Ledger {
       case 'removeSigner': {
         const before = await this.readContractState(address);
         if (!before) throw new Error('the contract has no state on chain');
-        await this.requireApproved(address, step.proposalId, 'remove a signer');
+        await this.requireSeatBar(address, step.proposalId, 'remove a signer');
         if (before.signerCount - 1n < before.threshold) {
           throw new Error(
             `that would leave ${before.signerCount - 1n} signers against a threshold of ` +
               `${before.threshold}, and the account could never approve anything again.`,
+          );
+        }
+        /* The circuit's second floor: never fewer signers than a policy change needs. */
+        const { policyBar } = seatBarParts(before);
+        if (before.signerCount - 1n < policyBar) {
+          throw new Error(
+            `that would leave ${before.signerCount - 1n} signers when a policy change needs ${policyBar}; ` +
+              'seat another signer first, or lower the approvals policy changes need.',
           );
         }
         /*
@@ -2147,10 +2202,87 @@ export class MidnightLedger implements Ledger {
    */
   private async requireApproved(address: string, proposalId: Hex, what: string): Promise<void> {
     const { approvals, threshold } = await this.requireOpen(address, proposalId, what);
-    if (approvals < threshold) {
+    /* The circuit's own reading: the proposal's bar when it was raised, and no signer removed
+     * or re-seated since, before the higher of that bar and the threshold today. */
+    const gov = await this.readGovernance(address);
+    const hold = gov.holdOf(proposalId);
+    if (!hold) {
       throw new Error(
-        `cannot ${what}: that proposal has ${approvals} of ${threshold} approvals. ` +
+        `cannot ${what}: that proposal has no record of the approvals it needs, so it can never be ` +
+          'carried out. Raise it again.',
+      );
+    }
+    if (hold.removals !== gov.removalsSoFar) {
+      throw new Error(
+        `cannot ${what}: ${gov.removalsSoFar - hold.removals} signer removal(s) or re-seat(s) since ` +
+          'this was raised, and the contract refuses it for that. Raise it again.',
+      );
+    }
+    const needed = hold.needed > BigInt(threshold) ? hold.needed : BigInt(threshold);
+    if (BigInt(approvals) < needed) {
+      throw new Error(
+        `cannot ${what}: that proposal has ${approvals} of ${needed} approvals. ` +
           'The contract would reject it.',
+      );
+    }
+  }
+
+  /**
+   * What the governance circuits read besides the counts: whether some bytes are a vault the
+   * company holds (adopted and not retired), a proposal's bar and removal count when it was
+   * raised, and the removal count now. Each through a guard, as every other read here.
+   */
+  private async readGovernance(address: string): Promise<{
+    holdsVault(vault: Hex): boolean;
+    holdOf(proposalId: Hex): { needed: bigint; removals: bigint } | undefined;
+    removalsSoFar: bigint;
+  }> {
+    const { ledger: readLedger, pureCircuits } = await import('../../contracts/managed/contract/index.js');
+    const providers = await this.providers();
+    const state = await providers.publicDataProvider.queryContractState(address as any);
+    if (!state) throw new Error('the contract has no state on chain');
+    const parsed: any = readLedger(state.data);
+    /* The contract's own set of adopted vault addresses, read by address. It is not the device's
+     * record of vaults by name, which only `vault-record.ts` reads. */
+    const adopted = parsed?.[ADOPTED_SET];
+    if (adopted == null || typeof adopted.member !== 'function') throw new UndecodedLedgerField(ADOPTED_SET, 'set');
+    const holds = parsed?.proposalHolds;
+    if (holds == null || typeof holds.member !== 'function' || typeof holds.lookup !== 'function') {
+      throw new UndecodedLedgerField('proposalHolds', 'map');
+    }
+    const countKey = pureCircuits.removalCountKey();
+    if (!holds.member(countKey)) throw new UndecodedLedgerField('proposalHolds', 'map');
+    return {
+      holdsVault: (vault) => Boolean(adopted.member(fromHex(vault))),
+      holdOf: (id) => {
+        const key = fromHex(id);
+        if (!holds.member(key)) return undefined;
+        const h = holds.lookup(key);
+        return { needed: BigInt(h.needed), removals: BigInt(h.removals) };
+      },
+      removalsSoFar: BigInt(holds.lookup(countKey).removals),
+    };
+  }
+
+  /**
+   * Open AND at the higher of the threshold and the approvals a policy change
+   * needs: the number the circuits that change who is seated, and those that
+   * change a policy or that number, ask for. A device that compared with the
+   * threshold alone would let through, and charge a fee for, a call the chain
+   * then refuses.
+   */
+  private async requireSeatBar(address: string, proposalId: Hex, what: string): Promise<void> {
+    /* The circuits ask `requireApproved`'s questions first: the bar when raised, no removal since. */
+    await this.requireApproved(address, proposalId, what);
+    const { approvals } = await this.requireOpen(address, proposalId, what);
+    const now = await this.readContractState(address);
+    if (!now) throw new Error('the contract has no state on chain');
+    const { bar, policyBar } = seatBarParts(now);
+    if (BigInt(approvals) < bar) {
+      throw new Error(
+        `cannot ${what}: that proposal has ${approvals} of ${bar} approvals. ` +
+          `It needs as many as a policy change needs (${policyBar}) and at least the threshold ` +
+          `(${now.threshold}). The contract would reject it.`,
       );
     }
   }
@@ -2874,6 +3006,9 @@ export function paidMovementsIn(parsed: any): Hex[] {
  * iterator, and `lookup` is how a count is fetched for one proposal.
  */
 type CountedMap = Iterable<[Uint8Array, bigint]> & { lookup(key: Uint8Array): bigint };
+
+/** The account contract's ledger field holding the addresses of the vaults it adopted. */
+const ADOPTED_SET = 'vaults';
 
 const mapField = <T>(parsed: any, field: string): Iterable<T> => {
   const m = parsed?.[field];
@@ -4426,3 +4561,18 @@ export const alreadyPaidSentence = (a: AlreadyPaid, name: string): string | null
       ? ` This run pays ${one(a.occurrence)} again. The chain will refuse that one payment.`
       : '');
 };
+
+/**
+ * The approvals a change of who is seated, a policy change, or a change to the
+ * number a policy change needs, asks for: the higher of the threshold and that
+ * number, which reads as the threshold while none is stored.
+ */
+export function seatBarParts(state: {
+  threshold: bigint;
+  vaultThresholds: Array<{ vault: Hex; threshold: number }>;
+}): { bar: bigint; policyBar: bigint } {
+  const key = policyBarKey();
+  const stored = state.vaultThresholds.find(v => v.vault === key);
+  const policyBar = stored ? BigInt(stored.threshold) : state.threshold;
+  return { bar: policyBar > state.threshold ? policyBar : state.threshold, policyBar };
+}

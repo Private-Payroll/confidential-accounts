@@ -398,7 +398,14 @@ describe('the real sources', () => {
     // the approvals a policy change needs today and, when it is, writes that band
     // as the new bar, which every change of who is seated must then reach. Both
     // are public by design.
-    expect(sites(account)).toBe(164);
+    // 164 -> 161, the same values published from fewer sites: `setVaultThreshold`
+    // discloses the vault and the new number once each where it disclosed the
+    // vault three times and the number once (6 -> 4), and `setPolicy` discloses
+    // its highest band once, which a shared step compares with the stored bar and
+    // writes, where it disclosed the comparison and the band apart (2 -> 1).
+    // The new refusals and the bar a vault threshold raises read only values
+    // already disclosed and the ledger's own.
+    expect(sites(account)).toBe(161);
     // THE VAULT, 104 -> 110, all in `setNonceSecret`. The commitment it replaces
     // is disclosed once and reused (three sites become one, -2). New (+8): the
     // answer to whether the tree shows nothing past its count; whether the

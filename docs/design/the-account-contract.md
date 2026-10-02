@@ -284,11 +284,11 @@ because proposals are already independent: each carries its own count, so
 global the whole account shares.
 
 ONE KEY HERE IS NOT A VAULT. `policyBarKey()` holds the approvals a change to
-a spending policy needs. `setPolicyBar` sets it, at the bar that stands today,
-and `setPolicy` raises it to a policy's highest band. `setVaultThreshold`
-refuses it, so signers at the account's bar cannot lower the bar for policy
-changes by calling it a vault, and every change of who is seated needs it (see
-`setPolicyBar`). No removal leaves fewer signers than it, so it can be met and
+a spending policy needs. `setPolicyBar` sets it, at the bar that stands today;
+`setPolicy` raises it to a policy's highest band, and `setVaultThreshold` to a
+vault threshold above it. `setVaultThreshold` refuses it as a vault, so signers
+at the account's bar cannot lower the bar for policy changes by calling it a
+vault, and every change of who is seated needs it (see `setPolicyBar`). No removal leaves fewer signers than it, so it can be met and
 changed again while every seated signer can still approve; at a bar of every
 signer, one lost key leaves it unreachable for good.
 
@@ -573,7 +573,7 @@ and, under one fixed key, how many signers the account has removed.
   names nobody; `releaseNeeded` is the run's bar when it was raised, and
   `releaseApprovals` counts the signers who agreed to release it. Once
   released, `placedBy` is `releasedMark()`, and the run can never be held
-  again. Once a payment from the run has landed, `placedBy` is
+  again. Once a payment or a change from the run has landed, `placedBy` is
   `paidFromMark()`, and the run can never be held either.
   `releaseRemovals` is the removal count when the agreements counted so far
   were given; a removal since sets the count back to nothing. A held run is
@@ -1498,8 +1498,8 @@ WHAT THAT SENTENCE MUST NOT BE STRETCHED INTO. It does not mean that
 `noVault()` is never a key in `thresholds`, nor that
 `thresholdFor(noVault())` is the account threshold by construction. IT IS
 NOT, AND NOTHING IN THIS CONTRACT MAKES IT SO. `setVaultThreshold` seats
-whatever 32 bytes it is handed; its only guard refuses a threshold of zero,
-never a key. `noVault()` is 32 bytes like any other and can be seated at any
+whatever 32 bytes it is handed; its guards refuse a number of zero or above
+the signers seated, and two keys, never any other key. `noVault()` is 32 bytes like any other and can be seated at any
 number a governed round chooses, and once seated it cannot be removed —
 there is no `remove` on that map anywhere in this file.
 
@@ -2515,8 +2515,10 @@ written into the run's `Hold` (`proposalHolds`), under the holder's key.
 A HOLD COMES WITH ITS RELEASE, so one signer cannot hold every run for ever:
 the holder releases it alone, or as many signers as the run needed when it was
 raised agree, each once (an agreement is a nullifier under its own tag, beside
-the approvals), but never more than the signers seated, so the signers left can
-always release it. ONLY AGREEMENTS GIVEN SINCE THE LATEST REMOVAL COUNT: each
+the approvals), but never more than the signers seated. Undoing a stop needs
+the same approvals the run itself needed, so when a run needs every signer, a
+holder who is still seated keeps it held until they release it or the run's
+window closes; the holder can always release their own hold. ONLY AGREEMENTS GIVEN SINCE THE LATEST REMOVAL COUNT: each
 removal or re-seat sets the count back to nothing, and every signer may agree
 once more, because the nullifier carries the removal count. So a removed
 signer's agreement is never among those counted, and a signer who re-seats
@@ -2527,8 +2529,8 @@ window or the company re-seats the holder.
 
 A HOLD NEVER STRANDS A RUN. A run cannot be held once it has been charged to a
 period (`clearRun` marks it cleared) or once any payment from it has landed:
-the payment step marks the run's hold as paid from, and `holdRun` refuses
-either. So a hold never leaves a partly paid run with its remaining payees
+the payment step, and the step that approves a change to a vault, mark the
+run's hold as paid from, and `holdRun` refuses either. So a hold never leaves a partly paid run with its remaining payees
 stuck, and a held run is never charged: on a vault with a policy, a run held
 and then raised again is charged once, when the new run is cleared. The cost is
 that a run being paid, or charged and about to be paid, cannot be stopped by a
@@ -2922,23 +2924,49 @@ Gives one vault its own approval threshold, or changes it.
 Governance, so it needs the account's own threshold behind it — the same
 machinery as `setThreshold`, applied to one vault instead of the account.
 
-NOT BOUNDED BY THE SIGNER COUNT the way `setThreshold` is. That check exists
-because an account-wide threshold above the number of signers reopens the
-bootstrap window, and a vault has no bootstrap window: a vault threshold
-nobody can meet makes that vault unspendable, which is recoverable by
-lowering it, rather than dangerous.
+A VAULT'S THRESHOLD IS GUARDED AS A POLICY'S HIGHEST BAND IS. One above the
+approvals a policy change needs (`policyBarKey()`) raises that number to it,
+so every change of who is seated, every policy change and every change to that
+number needs at least it from then on, and no removal leaves fewer signers than
+it. Otherwise signers at the bar could seat leaves they hold until they reached
+a stricter vault's threshold. The number is written whenever the one stored is
+lower, or none is stored and the account's threshold stands in for it, so
+lowering the account's threshold later leaves the vault guarded. A lower later
+vault threshold never lowers it; `setPolicyBar` at the bar can.
 
-AND IT DOES NOT CHECK THAT `vault` IS A VAULT. That is deliberate and the
+RAISING A VAULT PAST THAT NUMBER, OR LOWERING A VAULT'S THRESHOLD, NEEDS IT.
+Below or at it, raising a vault needs the account's threshold, as before. A
+vault with no threshold of its own reads the account's, so setting one below
+that is lowering it. Signers short of the bar can neither raise the bar
+through a vault nor loosen a vault it guards.
+
+BOUNDED BY THE SIGNER COUNT, as `setThreshold` is and as `setPolicy` bounds a
+band: a vault threshold above the seats would raise the bar above them. A vault
+can still end above the seats, if the signers at the bar lower the bar below
+it and a removal follows; lowering the vault then needs the higher of the
+account's threshold and the bar, and neither can exceed the seats. Seats are
+not live keys: at a vault threshold of every signer, the bar is every signer,
+and one lost key leaves the vault, every change of who is seated and every
+policy change unreachable, as a bar of every signer does.
+
+BYTES THE COMPANY DOES NOT HOLD AS A VAULT NEVER RAISE THE BAR. A threshold
+above the approvals a policy change needs is refused unless `vault` is in
+`vaults` (adopted and not retired), as `setPolicy` refuses a policy there. At or
+below that number any bytes may carry a threshold, so one can be set before its
+vault is adopted.
+
+AND OTHERWISE IT DOES NOT CHECK THAT `vault` IS A VAULT. That is deliberate and the
 whole of what this circuit will and will not refuse is written out here,
 because the missing check is the first thing a reader reaches for.
 
 WHAT IT REFUSES: a threshold of zero, below, which would authorise anything
 at that key for ever; the company-wide marker; and `policyBarKey()`, the key
 of the approvals a policy change needs, which `setPolicyBar` alone sets, at the
-bar that stands today. WHAT IT DOES NOT: anything else about the key. Any
-32 bytes can be seated at any non-zero number, including bytes no vault will
-ever present and including the sentinel this contract uses to mean "no
-vault". A row, once seated, has no way out — nothing in this file removes
+bar that stands today; more than the signers seated; and, above the approvals
+a policy change needs, bytes that are not a vault the company holds. WHAT IT
+DOES NOT: anything else about the key. Any 32 bytes can be seated at any
+non-zero number up to that bar, including bytes no vault will ever present
+and including the sentinel this contract uses to mean "no vault". A row, once seated, has no way out — nothing in this file removes
 from this map — so the number can be moved afterwards but the exception
 cannot be given up, and a vault that gets its own bar stops inheriting the
 account's for ever.
@@ -2951,8 +2979,9 @@ nothing — so the guard would name the one case a reader thinks of and leave
 the class it belongs to untouched, which reads as protection and is not.
 
 WHAT THE SEATED ROW THEN COSTS, AND IT IS NOT NOTHING. Seating any key at
-all needs a proposal carried at the account's own full threshold, so the
-road starts where the account is already held. But two things follow, and both
+all needs a proposal carried at the account's own full threshold, and one
+past the bar or below what the key needs today needs the bar, so the road
+starts where the account is already held. But two things follow, and both
 are written out because the reassuring reading of them is wrong.
 
 FIRST, THE KEY CAN BE PRESENTED. The one reader of this map takes its key
@@ -3095,9 +3124,11 @@ seats as the bar, and then change the bar or any policy. With no bar set, the
 account's threshold rules, as before.
 
 A POLICY RAISES IT TO ITS HIGHEST BAND. `setPolicy` opens the policy it is
-given, checks it against the commitment approved, refuses a band that needs
-more approvals than the company has signers, and, when its highest band is
-above this bar, writes that band as the bar. So a band above the account's
+given, checks it against the commitment approved, refuses a vault the company
+does not hold (adopted and not retired), so a policy that governs nothing never
+raises the bar, refuses a band that needs more approvals than the company has
+signers, and, when the bar stored is below its highest band or none is stored,
+writes that band as the bar. So a band above the account's
 threshold is protected exactly as the bar is: a change of who is seated, and a
 change to any policy, needs at least that many. The bar is never lowered by a
 policy with lower bands; `setPolicyBar` can lower it, but only at the bar that
@@ -3106,7 +3137,7 @@ to. The number is public: a reader learns the bar, and so, when a policy raised
 it, that policy's highest band, though not which vault, which token, or any
 ceiling, limit or period.
 
-WHAT IT STILL DOES NOT HOLD. A vault's own threshold (`setVaultThreshold`) is
-set at the account's threshold and is not part of this bar, so a vault bar
-above the account's threshold protects that vault's runs only against signers
-who will not change it or seat new leaves.
+A VAULT'S THRESHOLD RAISES IT THE SAME WAY (see `setVaultThreshold`). A run
+raised needing more than its vault's threshold and its band is not guarded by
+this bar: the signers at the bar could raise the same run again needing only
+those, so its extra approvals guard nothing the bar does not.

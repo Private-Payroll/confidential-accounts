@@ -807,6 +807,30 @@ circuit requireSeatBar(proposal: Bytes<32>): [] {
     "seating, removing or re-seating a signer needs as many approvals as a policy change needs, and at least the threshold; ask more signers to approve it");
 }
 
+// Raises the approvals a policy change needs to `most` when the stored number is lower, or when
+// none is stored and so the threshold stands in for it: lowering the threshold later then never
+// leaves `most` above what a change of who is seated needs. Never lowers it.
+circuit raiseBarTo(most: Uint<64>): [] {
+  const stored = thresholds.member(policyBarKey()) ? thresholds.lookup(policyBarKey()) : 0;
+  if (stored < most) {
+    thresholds.insert(policyBarKey(), most);
+  }
+}
+
+// Marks a run's hold once a payment or a change from it has landed, after which it can never be
+// held. A released hold keeps its own mark, which already refuses a second hold.
+circuit markPaidFrom(proposal: Bytes<32>): [] {
+  const hold = holdOf(proposal);
+  if (hold.runHold.placedBy == default<Bytes<32>>) {
+    proposalHolds.insert(proposal, Hold {
+      needed: hold.needed,
+      withdrawKey: hold.withdrawKey,
+      removals: hold.removals,
+      runHold: RunHold { placedBy: paidFromMark(), releaseNeeded: 0, releaseApprovals: 0, releaseRemovals: 0 },
+    });
+  }
+}
+
 // Refuses a held run, or one short of the higher of its bar when raised and the vault's today,
 // plus one for every signer removed since it was raised. Its bar when raised already holds the
 // approvals its total needs. Returns its change.
@@ -1152,7 +1176,7 @@ export circuit holdRun(proposal: Bytes<32>): [] {
   assert(openProposals.lookup(id) != clearedMark(),
     "that run has already been charged to its period, so it can no longer be held; a run can be held only before it is charged or paid");
   assert(hold.runHold.placedBy != paidFromMark(),
-    "a payment from that run has already been made, so it can no longer be held; a run can be held only before it is charged or paid");
+    "a payment or a change from that run has already been made, so it can no longer be held; a run can be held only before it is charged, paid or changed");
   assert(hold.runHold.placedBy == default<Bytes<32>>,
     "that run was held and released, and a run is held only once; any signer may still cancel it before its payment window opens");
 
@@ -1283,15 +1307,7 @@ export circuit recordPaymentFromVault(
   const change = requireApprovedForVault(id, forRun);
 
   // A payment from this run is landing, so from now on it can never be held.
-  const hold = holdOf(id);
-  if (hold.runHold.placedBy == default<Bytes<32>>) {
-    proposalHolds.insert(id, Hold {
-      needed: hold.needed,
-      withdrawKey: hold.withdrawKey,
-      removals: hold.removals,
-      runHold: RunHold { placedBy: paidFromMark(), releaseNeeded: 0, releaseApprovals: 0, releaseRemovals: 0 },
-    });
-  }
+  markPaidFrom(id);
 
   // A vault under a spending policy pays only its own runs, each charged to its period first.
   if (signerRoles.member(disclose(policyOnKeyOf(payer)))) {
@@ -1377,6 +1393,9 @@ export circuit approveVaultChange(
 
   requireApprovedForVault(id, named);
 
+  // A change from this run is landing, so from now on it can never be held.
+  markPaidFrom(id);
+
   // The change must be a leaf of the approved run, carrying no amount.
   const leaf = payoutLeaf(companyRun ? companyWideDetailsOf(details, vault) : details, nonce);
   assert(sumPathRoot(leaf, 0, path, asset) == root,
@@ -1430,7 +1449,11 @@ export circuit sealPayKey(
   signerRoles.insert(disclose(payKeyWrapKeyOf(account, sk, 3)), disclose(wrap[3]));
 }
 
-// Sets one vault's threshold under an approved proposal. Refuses zero; the vault need not be adopted.
+// Sets one vault's threshold under an approved proposal. Refuses zero, or more than the
+// signers; the vault need not be adopted, but bytes it does not hold never raise the bar. A vault's threshold is guarded as a policy's highest
+// band is: one above the approvals a policy change needs raises that number to it, so a change
+// of who is seated needs at least it too, and raising it past that number or lowering a vault's
+// threshold needs that many approvals.
 export circuit setVaultThreshold(
   vault: Bytes<32>,
   newThreshold: Uint<64>,
@@ -1444,11 +1467,26 @@ export circuit setVaultThreshold(
     "that proposal does not authorise this vault threshold");
   requireApproved(id);
 
-  assert(!(newThreshold == 0), "a vault threshold of zero would authorise anything");
-  assert(disclose(vault) != companyWide(), "the company-wide decision always takes the account's threshold");
-  assert(disclose(vault) != policyBarKey(),
+  const forVault = disclose(vault);
+  const wanted = disclose(newThreshold);
+  assert(!(wanted == 0), "a vault threshold of zero would authorise anything");
+  assert(forVault != companyWide(), "the company-wide decision always takes the account's threshold");
+  assert(forVault != policyBarKey(),
     "that is not a vault; to change the approvals a policy change needs, raise that change instead");
-  thresholds.insert(disclose(vault), disclose(newThreshold));
+  assert(!(signerLeaves.size() < wanted),
+    "a vault cannot need more approvals than the company has signers, or nothing from it could be approved; seat more signers first, or choose a smaller number");
+  // Bytes the company does not hold as a vault never raise the bar. At or below it they may carry
+  // a threshold, so one can be set before its vault is adopted.
+  assert(vaults.member(forVault) || !(thresholdFor(policyBarKey()) < wanted),
+    "that is not a vault this company holds, so its threshold cannot exceed the approvals a policy change needs; adopt the vault first, or choose a smaller number");
+  // Past the bar, or below what the vault needs today: as many approvals as a change of who is
+  // seated, so signers short of that bar can neither raise it nor loosen a vault it guards.
+  if (thresholdFor(policyBarKey()) < wanted || wanted < thresholdFor(forVault)) {
+    assert(!(approvalCounts.lookup(id) < higher(threshold, thresholdFor(policyBarKey()))),
+      "raising a vault's threshold past the approvals a policy change needs, or lowering a vault's threshold, needs that many approvals and at least the threshold; ask more signers to approve it");
+  }
+  raiseBarTo(wanted);
+  thresholds.insert(forVault, wanted);
   closeProposal(id);
 }
 
@@ -1508,8 +1546,9 @@ export circuit setPolicyBar(newBar: Uint<64>, proposal: Bytes<32>): [] {
 // Sets one vault's spending policy for one currency under an approved proposal: the policy's
 // commitment under a key derived here from the vault and the currency, and the marker that the
 // vault is under a policy. It needs the higher of the account's bar and the bar the company
-// set for policy changes. It opens the policy, refuses a band needing more approvals than the
-// company has signers, and raises the approvals a policy change needs to its highest band.
+// set for policy changes. Only on a vault the company holds. It opens the policy, refuses a band
+// needing more approvals than the company has signers, and raises the approvals a policy change
+// needs to its highest band.
 export circuit setPolicy(
   vault: Bytes<32>,
   commitment: Bytes<32>,
@@ -1531,6 +1570,9 @@ export circuit setPolicy(
   assert(forVault != companyWide(), "a policy is set on one vault, not on the company; name the vault it is for");
   assert(forVault != policyBarKey(),
     "that is not a vault; name the vault the policy is for");
+  // Only a vault the company holds, so a policy that governs nothing never raises the bar.
+  assert(vaults.member(forVault),
+    "that is not a vault this company holds; adopt the vault first, then set its policy");
   assert(commitment != default<Bytes<32>>, "that policy is empty; set its bands, limit and periods, then raise it again");
   // The policy itself, so the most any of its bands needs is known here.
   const policy = policyOpening();
@@ -1541,9 +1583,7 @@ export circuit setPolicy(
   assert(!(signerLeaves.size() < most),
     "a band of that policy needs more approvals than the company has signers, so no run in it could be paid; seat more signers first, or lower that band");
   // A policy change, and so any change of who is seated, needs at least its highest band from now on.
-  if (disclose(thresholdFor(policyBarKey()) < most)) {
-    thresholds.insert(policyBarKey(), disclose(most));
-  }
+  raiseBarTo(disclose(most));
 
   signerRoles.insert(disclose(policyKeyOf(forVault, assetKey)), disclose(commitment));
   signerRoles.insert(disclose(policyOnKeyOf(forVault)), policyOnMark());
