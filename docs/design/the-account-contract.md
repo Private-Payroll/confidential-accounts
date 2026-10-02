@@ -284,11 +284,13 @@ because proposals are already independent: each carries its own count, so
 global the whole account shares.
 
 ONE KEY HERE IS NOT A VAULT. `policyBarKey()` holds the approvals a change to
-a spending policy needs, and only `setPolicyBar` writes it, at the bar that
-stands today. `setVaultThreshold` refuses it, so signers at the account's bar
-cannot lower the bar for policy changes by calling it a vault (what they can
-still do by changing who is seated is under `setPolicyBar`). No removal leaves
-fewer signers than it, so it can always be met and changed again.
+a spending policy needs. `setPolicyBar` sets it, at the bar that stands today,
+and `setPolicy` raises it to a policy's highest band. `setVaultThreshold`
+refuses it, so signers at the account's bar cannot lower the bar for policy
+changes by calling it a vault, and every change of who is seated needs it (see
+`setPolicyBar`). No removal leaves fewer signers than it, so it can be met and
+changed again while every seated signer can still approve; at a bar of every
+signer, one lost key leaves it unreachable for good.
 
 ### `vaults`
 
@@ -571,7 +573,11 @@ and, under one fixed key, how many signers the account has removed.
   names nobody; `releaseNeeded` is the run's bar when it was raised, and
   `releaseApprovals` counts the signers who agreed to release it. Once
   released, `placedBy` is `releasedMark()`, and the run can never be held
-  again. A held run is neither charged nor paid (`requireApprovedForVault`).
+  again. Once a payment from the run has landed, `placedBy` is
+  `paidFromMark()`, and the run can never be held either.
+  `releaseRemovals` is the removal count when the agreements counted so far
+  were given; a removal since sets the count back to nothing. A held run is
+  neither charged nor paid (`requireApprovedForVault`).
 
 `closeProposal` removes the hold with the proposal, and `holdOf` refuses a
 proposal that has none: it could never be carried out.
@@ -750,6 +756,16 @@ approve or hold a run, a seat with rights hands over what the id opens to
 that it rebuilds the id. Every seat is asked; a seat with `allVaults()` answers
 with an empty opening and an empty rights record, which are never read, and the
 transcript of an approval is the same whichever kind of seat gave it.
+
+COMPANY-WIDE RUNS ARE NOT A VAULT A RECORD CAN NAME. A company-wide run may be
+paid by any adopted vault without a stricter bar or a spending policy, so a
+record naming `companyWide()` in one of its four places would read as one place
+and act as nearly all of them. `coversVault` treats such a place as naming
+nothing: only a record for every vault covers company-wide runs. The device
+refuses to build such a record at all (`rightsRecordOf`), and says to give the
+signer every vault or name the vaults themselves. The contract narrows rather
+than refuses because it never sees a record when it is seated: the leaf commits
+to its hash, and the record is opened only when a run asks for a right.
 
 WHY FOUR NAMED VAULTS AND NOT A TREE. A tree of up to sixteen vaults, with a
 path per approval, was built and measured: `approve` 68,269 rows and `propose`
@@ -2069,7 +2085,9 @@ at one lower than intended. It repeats `amendSigner`'s removal: the leaf must
 be SEATED (`signerLeaves.member`, never the vacancy marker or a stranger - both
 removal circuits assert it), its path gives its slot, the slot is stamped
 vacant, the threshold must be at least one and no more than the signers left,
-and the removal is counted.
+and the removal is counted. Like every change of who is seated, it needs the
+higher of the account's threshold and the approvals a policy change needs (see
+`setPolicyBar`), read before the new threshold is written.
 
 ### `reseatSigner`
 
@@ -2078,9 +2096,12 @@ proposal over `reseatPayload(oldLeaf, newLeaf)`: how a signer's rights change.
 It counts as a removal, like every circuit that unseats a leaf, so a
 governance proposal raised before it must be raised again and a run raised
 before it needs one approval more. The signer count does not change, so no
-threshold can be left unreachable by it. What it publishes is what a removal
-and a seat publish, in one transaction: an observer learns that one leaf
-replaced another in that slot, not which rights either carries.
+threshold can be left unreachable by it. It needs the higher of the account's
+threshold and the approvals a policy change needs, not the threshold alone (see
+`setPolicyBar`), because a re-seat is the quietest way to put a leaf one controls
+in another signer's place. What it publishes is what a removal and a seat
+publish, in one transaction: an observer learns that one leaf replaced another
+in that slot, not which rights either carries.
 
 ### `setThreshold`
 
@@ -2493,11 +2514,26 @@ written into the run's `Hold` (`proposalHolds`), under the holder's key.
 
 A HOLD COMES WITH ITS RELEASE, so one signer cannot hold every run for ever:
 the holder releases it alone, or as many signers as the run needed when it was
-raised agree, plus one for every signer removed since, each once (an agreement
-is a nullifier under its own tag, beside the approvals). Releasing needs a seat
-and no right. A run is held at most once: a released run cannot be held
+raised agree, each once (an agreement is a nullifier under its own tag, beside
+the approvals), but never more than the signers seated, so the signers left can
+always release it. ONLY AGREEMENTS GIVEN SINCE THE LATEST REMOVAL COUNT: each
+removal or re-seat sets the count back to nothing, and every signer may agree
+once more, because the nullifier carries the removal count. So a removed
+signer's agreement is never among those counted, and a signer who re-seats
+themself under a new key does not gain a second agreement. Releasing needs a
+seat and no right. A run is held at most once: a released run cannot be held
 again, so a signer who disagrees with the release stops the run before its
 window or the company re-seats the holder.
+
+A HOLD NEVER STRANDS A RUN. A run cannot be held once it has been charged to a
+period (`clearRun` marks it cleared) or once any payment from it has landed:
+the payment step marks the run's hold as paid from, and `holdRun` refuses
+either. So a hold never leaves a partly paid run with its remaining payees
+stuck, and a held run is never charged: on a vault with a policy, a run held
+and then raised again is charged once, when the new run is cleared. The cost is
+that a run being paid, or charged and about to be paid, cannot be stopped by a
+hold; it closes when its window ends. A run whose every leaf is a change, not a
+payment, is not marked by `approveVaultChange`.
 
 ### `cancel`
 
@@ -3047,11 +3083,30 @@ in `thresholds`. The proposal needs the higher of the account's threshold and
 the bar that stands today, so the bar is changed only through this circuit and
 only at itself; `setVaultThreshold` cannot reach it. It refuses zero, and more
 than the signers, and no removal leaves fewer signers than it, so a policy
-change can always be approved and the bar can always be changed again.
+change can be approved and the bar changed again while enough seated signers
+can still approve. A bar of every signer, set here or raised by a policy whose
+highest band needs every signer, makes every change of who is seated and every
+policy change unanimous: one lost key then leaves all of them unreachable.
 
-WHAT IT DOES NOT HOLD. Seating, removing and re-seating signers need only the
-account's threshold. So signers at that threshold can seat, or re-seat, leaves
-they control until they hold as many seats as the bar, and then change the bar
-or any policy. The bar stands above the account's threshold only against
-signers who will not change who is seated; the same is true of a spending band
-that needs more approvals than the account's threshold.
+SEATING, REMOVING AND RE-SEATING NEED IT TOO: the higher of the account's
+threshold and this bar (`requireSeatBar`). Otherwise signers at the account's
+threshold could seat, or re-seat, leaves they control until they held as many
+seats as the bar, and then change the bar or any policy. With no bar set, the
+account's threshold rules, as before.
+
+A POLICY RAISES IT TO ITS HIGHEST BAND. `setPolicy` opens the policy it is
+given, checks it against the commitment approved, refuses a band that needs
+more approvals than the company has signers, and, when its highest band is
+above this bar, writes that band as the bar. So a band above the account's
+threshold is protected exactly as the bar is: a change of who is seated, and a
+change to any policy, needs at least that many. The bar is never lowered by a
+policy with lower bands; `setPolicyBar` can lower it, but only at the bar that
+stands, so only signers who could already approve a run in that band can choose
+to. The number is public: a reader learns the bar, and so, when a policy raised
+it, that policy's highest band, though not which vault, which token, or any
+ceiling, limit or period.
+
+WHAT IT STILL DOES NOT HOLD. A vault's own threshold (`setVaultThreshold`) is
+set at the account's threshold and is not part of this bar, so a vault bar
+above the account's threshold protects that vault's runs only against signers
+who will not change it or seat new leaves.

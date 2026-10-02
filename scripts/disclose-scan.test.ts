@@ -317,10 +317,13 @@ describe('the real sources', () => {
     //   `recordPaymentFromVault` `required`, x2, and the marker's key: the first
     //     two only reach the id comparison and the approval comparison; the key
     //     is a hash of the paying vault, which the call names anyway.
-    //   `setPolicy`, 6: the proposal it closes, the policy's key (a hash of the
+    //   `setPolicy`, 8: the proposal it closes, the policy's key (a hash of the
     //     vault and the token's BLINDED key, so it does not name the token), the
-    //     policy's commitment (hiding), and the marker's key (a hash of the vault).
-    //     The vault itself, the token and the terms are absent.
+    //     policy's commitment (hiding), the marker's key (a hash of the vault),
+    //     whether the policy's highest band is above the approvals a policy change
+    //     needs today, and, when it is, that highest band, written into
+    //     `thresholds` in the clear as the new bar. Both are public; the vault
+    //     itself, the token, the ceilings, the limit and the periods are absent.
     //   `clearRun`, 22: the run, its vault, its window (block-time checks, as the
     //     payment step's), the policy's key, the period's key, the period's new
     //     total as a commitment, the record that the run's tree was charged, and
@@ -391,7 +394,11 @@ describe('the real sources', () => {
     // the used changes under, made from the run's id, and the run's number of
     // leaves, compared with that count. Both are already public: the id is the
     // call's own argument and the number of leaves is part of the run's id.
-    expect(sites(account)).toBe(162);
+    // 162 -> 164: `setPolicy` discloses whether the policy's highest band is above
+    // the approvals a policy change needs today and, when it is, writes that band
+    // as the new bar, which every change of who is seated must then reach. Both
+    // are public by design.
+    expect(sites(account)).toBe(164);
     // THE VAULT, 104 -> 110, all in `setNonceSecret`. The commitment it replaces
     // is disclosed once and reused (three sites become one, -2). New (+8): the
     // answer to whether the tree shows nothing past its count; whether the

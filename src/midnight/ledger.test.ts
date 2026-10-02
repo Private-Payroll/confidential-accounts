@@ -47,6 +47,7 @@ import type { Sealed, Hex } from '../core/crypto.js';
 import { fromHex, toHex } from '../core/crypto.js';
 import { assetIdBytes } from '../core/assets.js';
 import { arityFrom } from './circuit-arity.js';
+import { policyCommitmentOf } from './spending-policy.js';
 /*
  * The generated contract, imported for real and handed back to the ledger by
  * the mock below. Only the STATE READER is faked; the commitment circuits are
@@ -3784,10 +3785,10 @@ describe('a spending policy, set and charged through the client', () => {
       .map((a) => a.name);
   };
 
-  it('setPolicy: the vault, the commitment and the proposal, in the slots the contract names, with the token staged', async () => {
+  it('setPolicy: the vault, the commitment and the proposal, in the slots the contract names, with the token and the policy staged', async () => {
     const { ledger, staged } = harness({});
-    const commitment = 'c3'.repeat(32) as Hex;
-    const call = await ledger.prepare('acct', { kind: 'setPolicy', vault: VAULT, asset: TEST_TOKEN, commitment, proposalId: PROPOSAL_ID });
+    const commitment = policyCommitmentOf(POLICY);
+    const call = await ledger.prepare('acct', { kind: 'setPolicy', vault: VAULT, asset: TEST_TOKEN, policy: POLICY, proposalId: PROPOSAL_ID });
     expect(call.circuit).toBe('setPolicy');
     const slots = await slotsOf('setPolicy');
     /* RED WHEN two arguments are swapped, or one is missing. */
@@ -3795,13 +3796,15 @@ describe('a spending policy, set and charged through the client', () => {
     expect([argHex(call.args[0]), argHex(call.args[1]), argHex(call.args[2])]).toEqual([VAULT, commitment, PROPOSAL_ID]);
     /* RED WHEN the token the policy is for is not staged: the circuit derives the policy's key from it. */
     expect(staged.at(-1)?.value.assetId).toEqual(assetIdBytes(TEST_TOKEN));
+    /* RED WHEN the policy is not staged: the circuit opens it to learn its highest band. */
+    expect(staged.at(-1)?.value.policy).toEqual(POLICY);
   });
 
   it('setPolicy: refused before the fee when the proposal is not yet approved', async () => {
     const { ledger } = harness({ approvals: 1n, threshold: 2n });
     /* RED WHEN the client stops asking whether the proposal is approved. */
     await expect(ledger.prepare('acct', {
-      kind: 'setPolicy', vault: VAULT, asset: TEST_TOKEN, commitment: 'c3'.repeat(32) as Hex, proposalId: PROPOSAL_ID,
+      kind: 'setPolicy', vault: VAULT, asset: TEST_TOKEN, policy: POLICY, proposalId: PROPOSAL_ID,
     })).rejects.toThrow(/that proposal has 1 of 2 approvals/);
   });
 

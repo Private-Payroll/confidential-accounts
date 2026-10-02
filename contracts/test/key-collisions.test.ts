@@ -54,8 +54,11 @@ const SIGNER_ROLES_WRITES = [
   'periodKey',
   'charged',
 ];
-/* `propose` writes each proposal's hold; `holdRun` and `releaseHold` rewrite a run's, under the same id. */
-const PROPOSAL_HOLDS_WRITES = ['removalCountKey()', 'removalCountKey()', 'id', 'id', 'id', 'id'];
+/*
+ * `propose` writes each proposal's hold; `holdRun`, `releaseHold` and the receipt step (which marks
+ * a run paid from) rewrite a run's, under the same id.
+ */
+const PROPOSAL_HOLDS_WRITES = ['removalCountKey()', 'removalCountKey()', 'id', 'id', 'id', 'id', 'id'];
 
 /** The first argument of every `<map>.insert(`, read to the comma at its own depth. */
 const insertsInto = (map: string): string[] => {
