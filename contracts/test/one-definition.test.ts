@@ -631,7 +631,7 @@ const SCHEMES: Entry[] = [
   },
   {
     circuit: 'policyBarKey',
-    contractOnly: 'the key in the per-vault thresholds for the approvals a policy change needs; setPolicy and setPolicyBar read it, spending-policy.ts off pureCircuits.',
+    contractOnly: 'the key in the per-vault thresholds for the approvals a policy change needs; setPolicyBar writes it, setPolicy raises it to a policy\'s highest band, every change of who is seated and both removals read it, setVaultThreshold refuses it, spending-policy.ts off pureCircuits.',
   },
   {
     circuit: 'rightsScopeOf',
@@ -656,6 +656,10 @@ const SCHEMES: Entry[] = [
   {
     circuit: 'releasedMark',
     contractOnly: 'what a released hold is marked with; releaseHold writes it and holdRun and the receipt step compare against it.',
+  },
+  {
+    circuit: 'paidFromMark',
+    contractOnly: 'what a run\'s hold is marked with once a payment from it lands; the receipt step writes it and holdRun refuses on it.',
   },
 ];
 
@@ -903,7 +907,7 @@ describe('one definition: the contract and the client agree', () => {
     ).toEqual([
       'adoptVaultPayload', 'anchorKey', 'bandApprovals', 'changeReceiptTag', 'changesUsedKeyOf', 'chargedKeyOf', 'chargedMark', 'clearedMark',
       'companyLabelKey', 'companyWide', 'companyWideDetailsOf', 'coversVault', 'holderKeyOf',
-      'paidMovementOf', 'paidOnceOf', 'payKeyCommitmentKey', 'payKeyCommitmentOf', 'payKeyPayload',
+      'paidFromMark', 'paidMovementOf', 'paidOnceOf', 'payKeyCommitmentKey', 'payKeyCommitmentOf', 'payKeyPayload',
       'payKeyWrapKeyOf', 'paymentReceiptTag', 'periodBlindingOf', 'periodKeyOf', 'periodTotalOf',
       'policyBarKey', 'policyCommitmentOf', 'policyKeyOf', 'policyOnKeyOf', 'policyOnMark',
       'releasedMark', 'removalCountKey', 'removeAndSetThresholdPayload', 'reseatPayload', 'retireVaultPayload',

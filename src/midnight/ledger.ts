@@ -77,7 +77,7 @@ import type {
 } from '../core/ledger.js';
 import type { AssetId } from '../core/assets.js';
 import type { AccountPrivateState } from '../../contracts/src/witnesses.js';
-import { periodWindowOf, type PolicyOpening } from './spending-policy.js';
+import { periodWindowOf, policyCommitmentOf, type PolicyOpening } from './spending-policy.js';
 import { viewDigestOf } from '../core/ledger.js';
 import { assetIdBytes, NO_ASSET } from '../core/assets.js';
 import { MidnightCommitments } from './commitments.js';
@@ -190,9 +190,10 @@ export type PreparedStep =
    * **ONE VAULT'S SPENDING POLICY FOR ONE TOKEN, SET UNDER AN APPROVED ROUND.**
    * The chain derives where the policy sits from the vault and the token's
    * blinded key, so `asset` is staged as the token the policy is for, beside the
-   * salt the proposal was raised with.
+   * salt the proposal was raised with. The policy itself is staged too: the chain
+   * opens it to learn its highest band, and never publishes the policy.
    */
-  | { kind: 'setPolicy'; vault: Hex; asset: AssetId; commitment: Hex; proposalId: Hex }
+  | { kind: 'setPolicy'; vault: Hex; asset: AssetId; policy: PolicyOpening; proposalId: Hex }
   /**
    * **AN APPROVED RUN CHARGED TO ITS VAULT'S PERIOD, ONCE, INSIDE ITS WINDOW.**
    * Everything that identifies the run is an argument; the policy's opening,
@@ -1482,12 +1483,13 @@ export class MidnightLedger implements Ledger {
    * over `setPolicyPayloadOf(vault, asset key, commitment)` that is approved at
    * the higher of the account's bar and the bar the company set for policy
    * changes. From then on the vault pays only runs charged to its periods, and
-   * refuses a token it has no policy for.
+   * refuses a token it has no policy for; a policy change, and any change of who
+   * is seated, needs at least the approvals of the policy's highest band.
    */
   async setPolicy(
-    accountId: string, vault: Hex, asset: AssetId, commitment: Hex, proposalId: Hex, by: SignerRef,
+    accountId: string, vault: Hex, asset: AssetId, policy: PolicyOpening, proposalId: Hex, by: SignerRef,
   ): Promise<TxRef> {
-    const call = await this.prepare(accountId, { kind: 'setPolicy', vault, asset, commitment, proposalId });
+    const call = await this.prepare(accountId, { kind: 'setPolicy', vault, asset, policy, proposalId });
     return this.txRef(await this.buildCall(call.address, call.circuit, call.args, call.privateStateId), by);
   }
 
@@ -1949,10 +1951,10 @@ export class MidnightLedger implements Ledger {
       case 'setPolicy': {
         await this.requireApproved(address, step.proposalId, "set this vault's spending policy");
         if (step.vault === MidnightCommitments.noVault()) throw new Error('a spending policy is set on a vault');
-        await this.stageFor(accountId, { assetId: assetIdBytes(step.asset) });
+        await this.stageFor(accountId, { assetId: assetIdBytes(step.asset), policy: step.policy });
         return {
           address, privateStateId, circuit,
-          args: [fromHex(step.vault), fromHex(step.commitment), fromHex(step.proposalId)],
+          args: [fromHex(step.vault), fromHex(policyCommitmentOf(step.policy)), fromHex(step.proposalId)],
         };
       }
 

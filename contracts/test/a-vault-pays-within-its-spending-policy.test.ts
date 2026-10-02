@@ -89,7 +89,8 @@ const setPolicyOn = async (
   await sim.as(sim.applying(A, c)).propose(payload);
   const id = sim.proposalId(payload, c.salt);
   for (const a of approvers) await sim.as(a).approve(id);
-  return { apply: () => sim.as(sim.applying(A, c)).setPolicy(vault, commitment, id), commitment, id };
+  /* The device that carries it out holds the policy, which the chain opens for its highest band. */
+  return { apply: () => sim.as({ ...sim.applying(A, c), policy }).setPolicy(vault, commitment, id), commitment, id };
 };
 
 interface Run {
@@ -521,7 +522,8 @@ describe('clearRun: an approved run charged to its period once, inside its windo
     const run = await raise(sim, PAYROLL, [1_000n], 40);
     await clear(sim, run);
     const next: PolicyOpening = { ...POLICY, blinding: bytes(902) };
-    await (await setPolicyOn(sim, PAYROLL, next, 511)).apply();
+    /* All three: the first policy's highest band raised the approvals a policy change needs to three. */
+    await (await setPolicyOn(sim, PAYROLL, next, 511, TEST_TOKEN_BYTES, [A, B, C])).apply();
     const again = await raise(sim, PAYROLL, [1_000n], 41);
     /* RED WHEN the period's key stops including the policy's commitment: the old total would be read. */
     await clear(sim, again, { policy: next });
@@ -633,6 +635,109 @@ describe("the receipt step with a policy: only a cleared run of the vault's own,
 });
 
 /* ------------------------------------------------------------------ */
+
+describe("a policy's highest band is a bar for changing who is seated, and a charged run is never held", () => {
+  let sim: AccountSimulator;
+  beforeEach(async () => { sim = await live(); });
+  const E = privateStateFor(9);
+  const bar = () => sim.ledger.thresholds.member(pureCircuits.policyBarKey())
+    ? sim.ledger.thresholds.lookup(pureCircuits.policyBarKey()) : undefined;
+  /** POLICY with `most` approvals in band `at` and one in every other band. */
+  const withMost = (most: bigint, at: number, blinding: number): PolicyOpening => ({
+    ...POLICY,
+    terms: { ...POLICY.terms, bands: POLICY.terms.bands.map((b, i) => ({ ...b, approvals: i === at ? most : 1n })) },
+    blinding: bytes(blinding),
+  });
+  /** Raises a governance change from A over `payload`, approved by `approvers`. */
+  const raiseGov = async (payload: Uint8Array, seed: number, approvers = [A, B]) => {
+    const c = change(0n, seed);
+    await sim.as(sim.applying(A, c)).propose(payload);
+    const id = sim.proposalId(payload, c.salt);
+    for (const a of approvers) await sim.as(a).approve(id);
+    return { id, c };
+  };
+
+  it("SETTING A POLICY RAISES THE APPROVALS A POLICY CHANGE NEEDS, AND SO ANY CHANGE OF WHO IS SEATED, TO ITS HIGHEST BAND", async () => {
+    expect(bar()).toBeUndefined();
+    await (await setPolicyOn(sim, PAYROLL, POLICY, 701)).apply();
+    /* RED WHEN setPolicy stops raising the bar to its highest band. */
+    expect(bar()).toBe(3n);
+    /* A and B, at the account threshold of two, re-seat C's leaf as one they hold: it would give them the band of three. */
+    const { id, c } = await raiseGov(pureCircuits.reseatPayload(sim.leafOf(C), sim.leafOf(E)), 702);
+    const apply = () => sim.as(sim.applying(A, c)).reseatSigner(sim.leafOf(C), sim.leafOf(E), id);
+    await expect(apply()).rejects.toThrow(/needs as many approvals as a policy change needs/);
+    await sim.as(C).approve(id);
+    await apply();
+  });
+
+  for (const at of [0, 1, 2]) {
+    it(`THE HIGHEST BAND RAISES THE BAR WHEREVER IT SITS: in band ${at}`, async () => {
+      await (await setPolicyOn(sim, PAYROLL, withMost(3n, at, 910 + at), 703 + at)).apply();
+      /* RED WHEN setPolicy reads one band rather than the highest of the four. */
+      expect(bar()).toBe(3n);
+    });
+  }
+
+  it('a policy whose bands are all within the bar leaves it, and a later lower policy never lowers it', async () => {
+    /* At a threshold of one, so a band of two lies between the threshold and the bar a policy raised. */
+    sim = await live([A, B, C], 1n);
+    await (await setPolicyOn(sim, PAYROLL, withMost(1n, 3, 915), 707)).apply();
+    /* RED WHEN setPolicy writes its highest band whether or not it is above the bar. */
+    expect(bar()).toBeUndefined();
+    await (await setPolicyOn(sim, PAYROLL, POLICY, 708)).apply();
+    await (await setPolicyOn(sim, PAYROLL, withMost(2n, 3, 916), 709, TEST_TOKEN_BYTES, [A, B, C])).apply();
+    /* RED WHEN setPolicy compares its highest band with the account's threshold rather than the bar. */
+    expect(bar()).toBe(3n);
+  });
+
+  it('refuses a band needing more approvals than the company has signers', async () => {
+    const set = await setPolicyOn(sim, PAYROLL, withMost(4n, 3, 917), 710);
+    /* RED WHEN setPolicy stops comparing its highest band with the signers. */
+    await expect(set.apply()).rejects.toThrow(/a band of that policy needs more approvals than the company has signers/);
+    expect(bar()).toBeUndefined();
+  });
+
+  it('refuses a device that does not hold the policy the signers approved', async () => {
+    const set = await setPolicyOn(sim, PAYROLL, POLICY, 711);
+    const c = change(0n, 711);
+    /* RED WHEN setPolicy stops checking the opening against the commitment approved. */
+    await expect(sim.as({ ...sim.applying(A, c), policy: withMost(1n, 3, 918) }).setPolicy(PAYROLL, set.commitment, set.id))
+      .rejects.toThrow(/this device does not hold the policy the signers approved/);
+  });
+
+  it('NO REMOVAL LEAVES FEWER SIGNERS THAN THE HIGHEST BAND', async () => {
+    await (await setPolicyOn(sim, PAYROLL, POLICY, 712)).apply();
+    const one = await raiseGov(pureCircuits.removeSignerPayload(sim.leafOf(C)), 713, [A, B, C]);
+    /* RED WHEN setPolicy stops raising the bar: two signers would be left for a band of three. */
+    await expect(sim.as(sim.applying(A, one.c)).removeSigner(sim.leafOf(C), one.id))
+      .rejects.toThrow(/that would leave fewer signers than a policy change needs/);
+  });
+
+  it('A RUN CHARGED TO ITS PERIOD CANNOT BE HELD', async () => {
+    await (await setPolicyOn(sim, PAYROLL, POLICY, 714)).apply();
+    const run = await raise(sim, PAYROLL, [1_000n], 70);
+    await clear(sim, run);
+    /* RED WHEN holdRun stops refusing a run already charged: it would stay charged with nothing paid. */
+    await expect(sim.as(C).holdRun(run.id)).rejects.toThrow(/that run has already been charged to its period, so it can no longer be held/);
+    await pay(sim, run, 0);
+  });
+
+  it('a held run is never charged, so raised again it is charged once', async () => {
+    await (await setPolicyOn(sim, PAYROLL, POLICY, 715)).apply();
+    const run = await raise(sim, PAYROLL, [1_000n], 72);
+    await sim.as(C).holdRun(run.id);
+    /* RED WHEN clearRun stops refusing a held run (a guard older than this file's other holds). */
+    await expect(clear(sim, run)).rejects.toThrow(/a signer has held that run, so it cannot be charged or paid/);
+    expect(sim.roleEntry(periodKeyOf(PAYROLL, TEST_TOKEN_BYTES, POLICY))).toBeUndefined();
+    /* Its window passes, it closes, and the same tree is raised again in a later window of the same period. */
+    sim.at(Number(CLOSES) + 3_600);
+    sim.closeExpiredRun(run.id);
+    const from = CLOSES + 3_000n;
+    const again = await raise(sim, PAYROLL, [1_000n], 72, { from, until: from + 7_200n, payments: run.payments });
+    await clear(sim, again);
+    expect(sim.roleEntry(periodKeyOf(PAYROLL, TEST_TOKEN_BYTES, POLICY))).toEqual(periodTotalOf(POLICY, 1_000n));
+  });
+});
 
 describe('what setting a policy and charging a run publish', () => {
   /* Numbers no other field of these calls holds, so a hit names one of them. */

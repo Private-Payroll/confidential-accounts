@@ -196,7 +196,13 @@ export interface RunOpening {
 /** How many vaults a rights record can name. */
 export const RIGHTS_VAULT_PLACES = 4;
 
-/** Refuses a rights record the contract could not hold; returns it with its vaults padded to four. */
+/** What a company-wide run names in place of a vault. */
+const COMPANY_WIDE: Uint8Array = pureCircuits.companyWide();
+
+/**
+ * Refuses a rights record the contract could not hold, or one naming company-wide runs as a
+ * vault; returns it with its vaults padded to four.
+ */
 export const rightsRecordOf = (rights: SignerRights): SignerRights => {
   if (rights.vaults.length > RIGHTS_VAULT_PLACES) {
     throw new Error(
@@ -205,6 +211,13 @@ export const rightsRecordOf = (rights: SignerRights): SignerRights => {
   }
   for (const v of rights.vaults) {
     if (v.length !== 32) throw new Error('a vault in a signer\'s rights must be a 32-byte address');
+    // A company-wide run may be paid by nearly every vault, so naming it would read as one place
+    // and act as almost all of them; the contract treats such a place as naming nothing.
+    if (v.every((byte, i) => byte === COMPANY_WIDE[i])) {
+      throw new Error(
+        'a signer\'s rights cannot name company-wide runs as if they were one vault, because nearly ' +
+          'every vault may pay them; give this signer every vault, or name the vaults themselves');
+    }
   }
   const vaults = [...rights.vaults];
   while (vaults.length < RIGHTS_VAULT_PLACES) vaults.push(new Uint8Array(32));
@@ -412,13 +425,13 @@ export const witnesses = {
 
   /* ---------------- charging a run to its period ---------------- */
 
-  /** The opening of the policy the run is charged against. Refuses a device that holds none. */
+  /** The opening of the policy being set, or the one a run is charged against. Refuses a device that holds none. */
   policyOpening: ({ privateState }: WitnessContext<Ledger, AccountPrivateState>):
     [AccountPrivateState, PolicyOpening] => {
     if (!privateState.policy) {
       throw new Error(
-        'this device holds no opening of the vault\'s spending policy, so it cannot charge a run to ' +
-          'its period. Ask a signer who holds the policy to charge the run.');
+        'this device holds no opening of the vault\'s spending policy, so it can neither set that policy ' +
+          'nor charge a run to its period. Open the policy on this device, or ask a signer who holds it.');
     }
     return [same(privateState), privateState.policy];
   },

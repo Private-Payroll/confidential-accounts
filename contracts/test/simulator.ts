@@ -994,7 +994,9 @@ export class AccountSimulator {
   }
 
   /** A run's hold as the chain holds it: who placed it, and how far its release has got. */
-  runHoldOf(proposal: Uint8Array): { placedBy: Uint8Array; releaseNeeded: bigint; releaseApprovals: bigint } | undefined {
+  runHoldOf(proposal: Uint8Array): {
+    placedBy: Uint8Array; releaseNeeded: bigint; releaseApprovals: bigint; releaseRemovals: bigint;
+  } | undefined {
     return this.ledger.proposalHolds.member(proposal)
       ? this.ledger.proposalHolds.lookup(proposal).runHold
       : undefined;

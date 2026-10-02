@@ -59,8 +59,11 @@ import CompactStandardLibrary;
  * more, so no change of rights can leave the company unable to change them back. There is no
  * right to stop a run: any signer may withdraw one before its window. A held run is neither
  * charged nor paid until its hold is released, by the signer who placed it or by as many
- * signers as the run needs, and a run is held at most once. Changing a signer's rights is a
- * re-seat, and a re-seat counts as a removal.
+ * signers seated now as the run needs, never more than are seated. A run is held at most once,
+ * and never once it has been charged to a period or a payment from it has landed. Changing a
+ * signer's rights is a re-seat, and a re-seat counts as a removal. Seating, removing and
+ * re-seating a signer need the higher of the account threshold and the approvals a policy
+ * change needs, and setting a policy raises those to its highest band.
  *
  * Why each piece is shaped this way: docs/design/the-account-contract.md
  */
@@ -106,11 +109,14 @@ export ledger signerLeaves: Set<Bytes<32>>;
 export ledger retiredAt: Map<Bytes<32>, Uint<64>>;
 
 // A hold placed on a run, and what releases it. Empty until a signer holds the run.
-// `placedBy` is the holder's key, or `releasedMark()` once the hold is released.
+// `placedBy` is the holder's key, `releasedMark()` once the hold is released, or
+// `paidFromMark()` once a payment from the run has landed. `releaseApprovals` counts the
+// agreements given since the removal count was `releaseRemovals`.
 struct RunHold {
   placedBy: Bytes<32>;
   releaseNeeded: Uint<64>;
   releaseApprovals: Uint<64>;
+  releaseRemovals: Uint<64>;
 }
 
 // What a proposal carries from the moment it is raised until it closes.
@@ -273,10 +279,11 @@ circuit approvalNullifier(sk: Bytes<32>, proposal: Bytes<32>): Bytes<32> {
   ]);
 }
 
-// One signer's agreement to release one held run. Its own tag, so it is never an approval.
-circuit releaseNullifier(sk: Bytes<32>, proposal: Bytes<32>): Bytes<32> {
-  return persistentHash<Vector<4, Bytes<32>>>([
-    pad(32, "midnight-accounts:release:"), kernel.self().bytes, proposal, sk
+// One signer's agreement to release one held run, given while the removal count is `removals`.
+// Its own tag, so it is never an approval.
+circuit releaseNullifier(sk: Bytes<32>, proposal: Bytes<32>, removals: Uint<64>): Bytes<32> {
+  return persistentHash<Vector<5, Bytes<32>>>([
+    pad(32, "midnight-accounts:release:"), kernel.self().bytes, proposal, sk, removals as Field as Bytes<32>
   ]);
 }
 
@@ -314,11 +321,13 @@ export circuit rightsScopeOf(rights: Rights): Bytes<32> {
 }
 
 // Whether a rights record covers one vault: every vault, or one of the four it names. Zero
-// bytes name no vault, so an unused place covers nothing.
+// bytes name no vault, so an unused place covers nothing. A company-wide run may be paid by
+// nearly every vault, so only a record for every vault covers it, and a place naming it
+// covers nothing.
 export circuit coversVault(rights: Rights, vault: Bytes<32>): Boolean {
-  return vault != default<Bytes<32>> && (rights.everyVault ||
+  return vault != default<Bytes<32>> && (rights.everyVault || (vault != companyWide() && (
     rights.vaults[0] == vault || rights.vaults[1] == vault ||
-    rights.vaults[2] == vault || rights.vaults[3] == vault);
+    rights.vaults[2] == vault || rights.vaults[3] == vault)));
 }
 
 // What signers approve to replace one seated leaf with another, which is how rights change.
@@ -346,6 +355,12 @@ export circuit holderKeyOf(sk: Bytes<32>, account: Bytes<32>, proposal: Bytes<32
 // What a released hold is marked with. No holder's key can equal it.
 export circuit releasedMark(): Bytes<32> {
   return pad(32, "midnight-accounts:hold-released");
+}
+
+// What a run's hold is marked with once a payment from it has landed, after which it can never
+// be held. No holder's key can equal it.
+export circuit paidFromMark(): Bytes<32> {
+  return pad(32, "midnight-accounts:run-paid-from");
 }
 
 // The vault a governance proposal names: a hash no vault address can equal.
@@ -740,7 +755,8 @@ circuit grants(scope: Bytes<32>, right: Uint<8>, vault: Bytes<32>, vaultIsTheRun
 
 // Whether a run's hold stops it: placed, and not yet released.
 circuit isHeld(runHold: RunHold): Boolean {
-  return runHold.placedBy != default<Bytes<32>> && runHold.placedBy != releasedMark();
+  return runHold.placedBy != default<Bytes<32>> && runHold.placedBy != releasedMark() &&
+    runHold.placedBy != paidFromMark();
 }
 
 // Closes one proposal: its entry, its count, its hold and its window, if it has one.
@@ -781,6 +797,14 @@ circuit holdOf(proposal: Bytes<32>): Hold {
 // A vault's own threshold if it has one, otherwise the account's.
 circuit thresholdFor(vault: Bytes<32>): Uint<64> {
   return thresholds.member(vault) ? thresholds.lookup(vault) : threshold;
+}
+
+// Refuses a change of who is seated short of the higher of the account's threshold and the
+// approvals a policy change needs, which setting a policy raises to its highest band. Otherwise
+// signers short of that bar could seat leaves they hold until they reach it.
+circuit requireSeatBar(proposal: Bytes<32>): [] {
+  assert(!(approvalCounts.lookup(proposal) < higher(threshold, thresholdFor(policyBarKey()))),
+    "seating, removing or re-seating a signer needs as many approvals as a policy change needs, and at least the threshold; ask more signers to approve it");
 }
 
 // Refuses a held run, or one short of the higher of its bar when raised and the vault's today,
@@ -852,6 +876,7 @@ export circuit amendSigner(
 
   const id = disclose(proposal);
   requireApproved(id);
+  requireSeatBar(id);
   assert(
     disclose(proposalIdOf(removeSignerPayload(removedLeaf), noVault(), proposalSalt()) == proposal),
     "that proposal is not for this removal"
@@ -893,6 +918,7 @@ export circuit amendSigner(
   if (!(signerLeaves.size() < threshold)) {
     const id = disclose(proposal);
     requireApproved(id);
+    requireSeatBar(id);
     assert(
       disclose(proposalIdOf(signerAddPayload(newSignerLeaf), noVault(), proposalSalt()) == proposal),
       "that proposal is not for this signer"
@@ -942,6 +968,8 @@ export circuit removeSignerAndSetThreshold(
 
   const id = disclose(proposal);
   requireApproved(id);
+  // At the bar before the new threshold is written.
+  requireSeatBar(id);
   assert(
     disclose(proposalIdOf(
       removeAndSetThresholdPayload(removedLeaf, newThreshold), noVault(), proposalSalt()) == proposal),
@@ -980,6 +1008,7 @@ export circuit reseatSigner(oldLeaf: Bytes<32>, newLeaf: Bytes<32>, proposal: By
 
   const id = disclose(proposal);
   requireApproved(id);
+  requireSeatBar(id);
   assert(
     disclose(proposalIdOf(reseatPayload(oldLeaf, newLeaf), noVault(), proposalSalt()) == proposal),
     "that proposal is not for this change of seat"
@@ -1105,7 +1134,9 @@ export circuit closeExpiredRun(proposal: Bytes<32>): [] {
 }
 
 // Holds an open run, by a signer who may hold runs on its vault: it is neither charged nor paid
-// until the hold is released. A run is held at most once.
+// until the hold is released. A run is held at most once, and only before it is charged to a
+// period and before any payment from it lands, so a hold never strands a partly paid run or
+// leaves a charge behind it.
 export circuit holdRun(proposal: Bytes<32>): [] {
   const caller = seat();
   const id = disclose(proposal);
@@ -1118,6 +1149,10 @@ export circuit holdRun(proposal: Bytes<32>): [] {
 
   const hold = holdOf(id);
   assert(!isHeld(hold.runHold), "that run is already held");
+  assert(openProposals.lookup(id) != clearedMark(),
+    "that run has already been charged to its period, so it can no longer be held; a run can be held only before it is charged or paid");
+  assert(hold.runHold.placedBy != paidFromMark(),
+    "a payment from that run has already been made, so it can no longer be held; a run can be held only before it is charged or paid");
   assert(hold.runHold.placedBy == default<Bytes<32>>,
     "that run was held and released, and a run is held only once; any signer may still cancel it before its payment window opens");
 
@@ -1130,13 +1165,16 @@ export circuit holdRun(proposal: Bytes<32>): [] {
       placedBy: disclose(holderKeyOf(caller.sk, kernel.self().bytes, id)),
       releaseNeeded: hold.needed,
       releaseApprovals: 0,
+      releaseRemovals: removalsSoFar(),
     },
   });
 }
 
 // Releases a held run: at once by the signer who held it, otherwise once as many signers agree
-// as the run needed when it was raised, plus one for every signer removed since. Needs a seat
-// and no right, so a hold can always be released.
+// as the run needed when it was raised, never more than are seated. Only agreements given since
+// the latest removal count, so a removed signer's agreement is never among them and a re-seat
+// makes no fresh agreement count twice. Needs a seat and no right, so a hold can always be
+// released.
 export circuit releaseHold(proposal: Bytes<32>): [] {
   const sk = requireSigner();
   const id = disclose(proposal);
@@ -1153,15 +1191,21 @@ export circuit releaseHold(proposal: Bytes<32>): [] {
         placedBy: releasedMark(),
         releaseNeeded: hold.runHold.releaseNeeded,
         releaseApprovals: hold.runHold.releaseApprovals,
+        releaseRemovals: hold.runHold.releaseRemovals,
       },
     });
   } else {
-    const nul = disclose(releaseNullifier(sk, id));
+    // Agreements given before the latest removal no longer count: the signer who gave one may
+    // be gone, and each signer may agree again, once, after every removal.
+    const removals = removalsSoFar();
+    const nul = disclose(releaseNullifier(sk, id, removals));
     assert(!approvals.member(nul), "you have already agreed to release this hold");
     approvals.insert(nul);
-    const agreed = (hold.runHold.releaseApprovals + 1) as Uint<64>;
-    // Each removed signer's agreement may be among those given, so one more is needed for each.
-    const needed = (hold.runHold.releaseNeeded + (removalsSoFar() - hold.removals)) as Uint<64>;
+    const counted = hold.runHold.releaseRemovals == removals ? hold.runHold.releaseApprovals : 0;
+    const agreed = (counted + 1) as Uint<64>;
+    // The run's bar, but never more than the signers seated, so the signers left can release it.
+    const seated = signerLeaves.size();
+    const needed = seated < hold.runHold.releaseNeeded ? seated : hold.runHold.releaseNeeded;
     proposalHolds.insert(id, Hold {
       needed: hold.needed,
       withdrawKey: hold.withdrawKey,
@@ -1170,6 +1214,7 @@ export circuit releaseHold(proposal: Bytes<32>): [] {
         placedBy: agreed < needed ? hold.runHold.placedBy : releasedMark(),
         releaseNeeded: hold.runHold.releaseNeeded,
         releaseApprovals: agreed,
+        releaseRemovals: removals,
       },
     });
   }
@@ -1236,6 +1281,17 @@ export circuit recordPaymentFromVault(
   // Not held, and with the run's approvals: the higher of its bar when raised, which holds the
   // approvals its total needs, and the vault's today, plus one for every signer removed since.
   const change = requireApprovedForVault(id, forRun);
+
+  // A payment from this run is landing, so from now on it can never be held.
+  const hold = holdOf(id);
+  if (hold.runHold.placedBy == default<Bytes<32>>) {
+    proposalHolds.insert(id, Hold {
+      needed: hold.needed,
+      withdrawKey: hold.withdrawKey,
+      removals: hold.removals,
+      runHold: RunHold { placedBy: paidFromMark(), releaseNeeded: 0, releaseApprovals: 0, releaseRemovals: 0 },
+    });
+  }
 
   // A vault under a spending policy pays only its own runs, each charged to its period first.
   if (signerRoles.member(disclose(policyOnKeyOf(payer)))) {
@@ -1452,7 +1508,8 @@ export circuit setPolicyBar(newBar: Uint<64>, proposal: Bytes<32>): [] {
 // Sets one vault's spending policy for one currency under an approved proposal: the policy's
 // commitment under a key derived here from the vault and the currency, and the marker that the
 // vault is under a policy. It needs the higher of the account's bar and the bar the company
-// set for policy changes.
+// set for policy changes. It opens the policy, refuses a band needing more approvals than the
+// company has signers, and raises the approvals a policy change needs to its highest band.
 export circuit setPolicy(
   vault: Bytes<32>,
   commitment: Bytes<32>,
@@ -1475,6 +1532,18 @@ export circuit setPolicy(
   assert(forVault != policyBarKey(),
     "that is not a vault; name the vault the policy is for");
   assert(commitment != default<Bytes<32>>, "that policy is empty; set its bands, limit and periods, then raise it again");
+  // The policy itself, so the most any of its bands needs is known here.
+  const policy = policyOpening();
+  assert(policyCommitmentOf(policy) == commitment,
+    "this device does not hold the policy the signers approved; open that policy on this device and try again");
+  const bands = policy.terms.bands;
+  const most = higher(higher(bands[0].approvals, bands[1].approvals), higher(bands[2].approvals, bands[3].approvals));
+  assert(!(signerLeaves.size() < most),
+    "a band of that policy needs more approvals than the company has signers, so no run in it could be paid; seat more signers first, or lower that band");
+  // A policy change, and so any change of who is seated, needs at least its highest band from now on.
+  if (disclose(thresholdFor(policyBarKey()) < most)) {
+    thresholds.insert(policyBarKey(), disclose(most));
+  }
 
   signerRoles.insert(disclose(policyKeyOf(forVault, assetKey)), disclose(commitment));
   signerRoles.insert(disclose(policyOnKeyOf(forVault)), policyOnMark());
