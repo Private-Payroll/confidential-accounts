@@ -491,6 +491,12 @@ const SCHEMES: Entry[] = [
     contractOnly:
       'the fixed key the account keeps its removal count under in proposalHolds. Read only ' +
       'inside the contract; the client has no reason to compute it.',
+  },
+  {
+    circuit: 'batchLeafOf',
+    contractOnly:
+      'the leaf a batch of up to four payees makes in a run\'s sum tree, under its own tag. ' +
+      'Whoever builds a run over batches calls this circuit off pureCircuits; no TypeScript copy exists.',
   },  {
     circuit: 'paidOnceOf',
     contractOnly:
@@ -905,7 +911,7 @@ describe('one definition: the contract and the client agree', () => {
       + 'governance payloads are — do not write a second derivation. If it is a passthrough '
       + 'that reads the circuit, declare it as one in SCHEME_MEMBERS and say so.',
     ).toEqual([
-      'adoptVaultPayload', 'anchorKey', 'bandApprovals', 'changeReceiptTag', 'changesUsedKeyOf', 'chargedKeyOf', 'chargedMark', 'clearedMark',
+      'adoptVaultPayload', 'anchorKey', 'bandApprovals', 'batchLeafOf', 'changeReceiptTag', 'changesUsedKeyOf', 'chargedKeyOf', 'chargedMark', 'clearedMark',
       'companyLabelKey', 'companyWide', 'companyWideDetailsOf', 'coversVault', 'holderKeyOf',
       'paidFromMark', 'paidMovementOf', 'paidOnceOf', 'payKeyCommitmentKey', 'payKeyCommitmentOf', 'payKeyPayload',
       'payKeyWrapKeyOf', 'paymentReceiptTag', 'periodBlindingOf', 'periodKeyOf', 'periodTotalOf',

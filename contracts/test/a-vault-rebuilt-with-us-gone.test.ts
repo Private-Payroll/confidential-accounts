@@ -52,6 +52,7 @@ import {
 import { walkCompanyRecords, type CompanyRecords } from '../../src/midnight/rebuild-from-records.js';
 import { UNLOCK_PURPOSE, UNLOCK_WINDOW_MS, unlockAsk } from '../../src/core/wallet-unlock.js';
 import { toHex, fromHex, newWrappingKeypair, randomBytes, type Hex } from '../../src/core/crypto.js';
+import { noFurtherNote } from '../../src/midnight/vault-step-notes.js';
 
 const VAULT_NOW = 1_800_000_000;
 const WIN_FROM = BigInt(VAULT_NOW - 3_600);
@@ -197,7 +198,7 @@ describe('a vault whose every record of ours is gone', () => {
         proposal: run.id, vault: fromHex(vaultAddr), tree: run.tree, i: 0,
         opensAt: WIN_FROM, closesAt: WIN_UNTIL, salt: c.salt, nonce: bytes(seed),
       }),
-      to, TOKEN_BYTES, amount, bytes(0x40));
+      to, TOKEN_BYTES, amount, bytes(0x40), noFurtherNote());
     vaultState = r.context.callContext.currentQueryContext.state;
     logCall(r);
     return r;

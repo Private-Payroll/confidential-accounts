@@ -54,6 +54,7 @@ import {
   noVaultOutputHistory, claimNewDepositCoin,
   type DepositMoney, type VaultOutputHistory,
 } from './deposit-nonce.js';
+import { noFurtherNote } from './vault-step-notes.js';
 
 /** One payment, exactly as `PayrollRun.payeeArgs` hands it over. */
 export interface VaultPayment {
@@ -1840,6 +1841,8 @@ export class VaultLedger implements PaysFromAVault {
 
     const { result, spent } = await this.call(vaultAddress, 'payout', [
       run, fromHex(payee.coinPublicKey), fromHex(p.token), p.amount, fromHex(p.blinding),
+      /* The one note chosen above and no other: the further place the payment takes is left unused. */
+      noFurtherNote(),
       /*
        * BOTH HALVES OUT OF ONE VALUE, in one expression, so no call site can
        * pair one payee's coin key with another's reading key. That pairing was

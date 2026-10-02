@@ -104,7 +104,7 @@ import { unshieldedPayeeFor } from '../../src/testing/payees.js';
 import { assemblePrivatePayments } from '../../src/midnight/private-payment-wire.js';
 import { witnessesOver } from '../../src/midnight/vault-notes.js';
 import { payFor } from '../../src/testing/payees.js';
-import { ACCOUNT_CIRCUITS_SERVED_TO_A_DEVICE } from '../../src/midnight/vault-contract.js';
+import { ACCOUNT_CIRCUITS_SERVED_TO_A_DEVICE, VAULT_CIRCUITS } from '../../src/midnight/vault-contract.js';
 import { keysOnDisk } from './keys-on-disk.js';
 import { PayrollService, RecordingInviteDelivery, runLegOf } from '../../src/core/payroll.js';
 import { SimulatedLedger, SimulatedProofSystem } from '../../src/core/ledger.js';
@@ -415,7 +415,7 @@ describe.skipIf(!KEYS_ON_DISK)('A PRIVATE PAYMENT OUT OF A COMPANY VAULT, FROM T
       company: async () => ({ address: company, threshold: 1, vaultThresholds: [] }),
       ledger: watched, chain: vaultChain,
       verifierKeys: async () => new Map(await Promise.all(
-        ['deposit', 'depositUnshielded', 'forgetUnshielded', 'payout', 'payoutUnshielded', 'retire', 'setNonceSecret', 'splitNote', 'writeSecretCopy']
+        [...VAULT_CIRCUITS]
           .map(async (c) => [c, await vaultZk.getVerifierKey(c) as unknown as Uint8Array] as const))),
       account: {
         circuits: DEPLOYED_CIRCUITS,

@@ -2,8 +2,8 @@
  * **THE NONCE OF EVERY COIN THE VAULT MAKES, WORKED OUT ON A DEVICE THAT HOLDS
  * THE VAULT'S NONCE SECRET.**
  *
- * The vault never takes a nonce from its caller. Each coin a payment or a split
- * makes takes `freshNonceOf(tag, secret, spent)`: a tag for the kind of coin, the
+ * The vault never takes a nonce from its caller. Each coin a payment, a batch,
+ * a split or a merge makes takes `freshNonceOf(tag, secret, spent)`: a tag for the kind of coin, the
  * vault's nonce secret current when the call was made, and the nullifier of the
  * note the call spent. So naming such a coin again, after a lost device or a
  * stop between a payment and the pool write, needs three things: the spent
@@ -13,6 +13,11 @@
  *   change       freshNonceOf(changeNonceTag, secret, spent)   what the note held less the amount
  *   split piece  freshNonceOf(splitNonceTag,  secret, spent)   the amount the split journal records
  *   remainder    freshNonceOf(restNonceTag,   secret, spent)   what the note held less the piece
+ *   batch place  freshNonceOf(batchPayeeNonceTag(i), secret, spent)   the amount place i paid
+ *   merged note  freshNonceOf(mergeNonceTag,  secret, spent)   what every note it merged held
+ *
+ * A step that spends several notes keys every coin it makes by the FIRST
+ * note's nullifier, and its change is what all of them held less what it paid.
  *
  * **EVERY DERIVATION HERE IS THE VAULT CONTRACT'S OWN PURE CIRCUIT**, handed in
  * by the caller, never a second copy of it: a coin derived a shade differently
@@ -44,6 +49,9 @@ export interface VaultNonceCircuits {
   secretCommitmentOf(vault: Uint8Array, secret: Uint8Array): Uint8Array;
   splitMaskOf(secret: Uint8Array, spent: Uint8Array): Uint8Array;
   unmaskedAmountOf(masked: Uint8Array, mask: Uint8Array): bigint;
+  /** Needed only to name the coins a batch or a merge made; a vault built before those steps has neither. */
+  batchPayeeNonceTag?(place: bigint): Uint8Array;
+  mergeNonceTag?(): Uint8Array;
 }
 
 /**
@@ -56,8 +64,8 @@ export interface VaultNonceSecrets {
   readonly commitment: Hex;
 }
 
-/** The kinds of coin a vault makes from a note it spends. */
-export type MadeCoin = 'payee' | 'change' | 'split' | 'rest';
+/** The kinds of coin a vault makes from the notes it spends. */
+export type MadeCoin = 'payee' | 'change' | 'split' | 'rest' | 'merge' | 'batch-0' | 'batch-1' | 'batch-2' | 'batch-3';
 
 const HEX32 = /^[0-9a-f]{64}$/u;
 const MOST_A_COIN_HOLDS = (1n << 128n) - 1n;
@@ -70,8 +78,8 @@ const MOST_A_COIN_HOLDS = (1n << 128n) - 1n;
 export class NonceSecretNotTheVaults extends Error {
   constructor(readonly vault: Hex, readonly tried: number) {
     super(
-      `none of the ${tried} nonce secret(s) given is the one vault ${vault} holds now, so no coin a `
-      + 'payment or a split made is named from them and nothing is derived. The record they came from '
+      `none of the ${tried} nonce secret(s) given is the one vault ${vault} holds now, so no coin the `
+      + 'vault made is named from them and nothing is derived. The record they came from '
       + 'is older than the vault\'s current secret, or it belongs to another vault. Open the newest '
       + 'version of the company\'s nonce-secret record for this vault and run this again; the money '
       + 'is on chain and stays where it is.');
@@ -86,7 +94,7 @@ export class NonceSecretNotTheVaults extends Error {
 export class NonceSecretNeeded extends Error {
   constructor(what: string) {
     super(
-      `${what} Every coin a payment or a split makes takes its nonce from the vault's nonce secret and `
+      `${what} Every coin the vault makes takes its nonce from the vault's nonce secret and `
       + 'the spent note, so nothing is derived without it. Open the company\'s nonce-secret record '
       + 'for this vault and give its secrets, with the vault\'s commitment as the chain holds it.');
     this.name = 'NonceSecretNeeded';
@@ -145,8 +153,19 @@ export const spentNullifierOf = (circuits: VaultNonceCircuits, vault: Hex, spent
 export const madeCoinNonce = (circuits: VaultNonceCircuits, kind: MadeCoin, secret: Hex, spent: Hex): Hex => {
   const tag = kind === 'payee' ? circuits.payeeNonceTag()
     : kind === 'change' ? circuits.changeNonceTag()
-      : kind === 'split' ? circuits.splitNonceTag() : circuits.restNonceTag();
+      : kind === 'split' ? circuits.splitNonceTag()
+        : kind === 'rest' ? circuits.restNonceTag()
+          : kind === 'merge' ? stepTag(circuits.mergeNonceTag, 'mergeNonceTag')()
+            : stepTag(circuits.batchPayeeNonceTag, 'batchPayeeNonceTag')(BigInt(kind.slice('batch-'.length)));
   return toHex(circuits.freshNonceOf(tag, fromHex(secret), fromHex(spent)));
+};
+
+/** A tag circuit a batch or a merge needs, or a refusal naming it: never a coin named under the wrong tag. */
+const stepTag = <F extends (...a: never[]) => Uint8Array>(f: F | undefined, name: string): F => {
+  if (typeof f !== 'function') {
+    throw new NonceSecretNeeded(`the vault contract's circuits were given without ${name}, so the coins a batch or a merge made cannot be named.`);
+  }
+  return f;
 };
 
 /**

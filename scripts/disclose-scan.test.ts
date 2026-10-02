@@ -405,7 +405,14 @@ describe('the real sources', () => {
     // writes, where it disclosed the comparison and the band apart (2 -> 1).
     // The new refusals and the bar a vault threshold raises read only values
     // already disclosed and the ledger's own.
-    expect(sites(account)).toBe(161);
+    // 161 -> 168, the batch's receipt: `recordBatchFromVault` discloses the
+    // run's id, its vault and the paying vault, as a single payment does (3),
+    // and whether its total is zero, which a refusal publishes anyway (1); for
+    // each place, `markBatchPayee` discloses whether it pays anyone, which the
+    // ruled-public batch size already shows, and the same two marks a single
+    // payment writes (3). The checks both payment steps share moved into one
+    // circuit with the same sites, so a single payment's count is unchanged.
+    expect(sites(account)).toBe(168);
     // THE VAULT, 104 -> 110, all in `setNonceSecret`. The commitment it replaces
     // is disclosed once and reused (three sites become one, -2). New (+8): the
     // answer to whether the tree shows nothing past its count; whether the
@@ -416,7 +423,17 @@ describe('the real sources', () => {
     // yes-or-no checks a refusal publishes anyway; the count and the keys are
     // already public. The value is the earlier secret added to a mask only the
     // new secret makes, so what is published opens nothing without that secret.
-    expect(sites(vault)).toBe(110);
+    // 110 -> 137, payments from several notes, the batch and the merge. `payout`
+    // keeps its 23, the token and what its notes hold standing where the one
+    // note's colour and value stood. A further note: whether its place is used
+    // (+1), which the number of spends in the transaction shows anyway. A batch's
+    // place: whether it pays, and the new coin's nonce, token, amount and payee,
+    // which go into its shielded output as a single payment's do (+5). The batch:
+    // the run's fields and its places for the account, whether its total is zero,
+    // what its notes hold, and the change coin's nonce and token (+17). The merge:
+    // whether a second note is offered, and the kept coin's nonce, token and value
+    // (+4). Every value given to a coin is inside its commitment, never published.
+    expect(sites(vault)).toBe(137);
   });
 
   it('every site is attributed — nothing floats outside a body', () => {

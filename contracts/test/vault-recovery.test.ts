@@ -55,6 +55,7 @@ import {
 } from '../../src/midnight/note-index.js';
 import { notesNeedingATransaction, whatTheRebuildWrites } from '../../scripts/reconcile-vault-pool-rules.js';
 import { toHex, fromHex, type Hex } from '../../src/core/crypto.js';
+import { noFurtherNote } from '../../src/midnight/vault-step-notes.js';
 
 /*
  * THE CLOCK AND THE RUN'S WINDOW. Payments assert they fall inside the
@@ -291,7 +292,7 @@ describe('a vault whose pool is gone, and the chain that still knows', () => {
         proposal: run.id, vault: Uint8Array.from(Buffer.from(vaultAddr, 'hex')), tree: run.tree, i,
         opensAt: WIN_FROM, closesAt: WIN_UNTIL, salt: c.salt, nonce: bytes(nonce),
       }),
-      to, TOKEN_BYTES, amount, bytes(0x40 + i));
+      to, TOKEN_BYTES, amount, bytes(0x40 + i), noFurtherNote());
     vaultState = r.context.callContext.currentQueryContext.state;
     logCall(r);
     return r;

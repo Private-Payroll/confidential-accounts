@@ -39,6 +39,7 @@ import { changeCoinOf } from '../../src/midnight/vault-coins.js';
 import { toHex, fromHex } from '../../src/core/crypto.js';
 import { payFor } from '../../src/testing/payees.js';
 import { TEST_TOKEN } from '../../src/testing/assets.js';
+import { noFurtherNote } from '../../src/midnight/vault-step-notes.js';
 
 /*
  * THE CLOCK AND THE RUN'S WINDOW.
@@ -202,7 +203,7 @@ describe('a vault pays one payee of an approved run', () => {
     const r = await vault.impureCircuits.payout(
       payoutContext(),
       runOf(run, c, 0xc1, 0),
-      ALICE, TOKEN_BYTES, 250n, bytes(0x40));
+      ALICE, TOKEN_BYTES, 250n, bytes(0x40), noFurtherNote());
 
     // The vault paid once…
     const after = vaultLedger(r.context.callContext.currentQueryContext.state as never);
@@ -233,7 +234,7 @@ describe('a vault pays one payee of an approved run', () => {
     await expect(vault.impureCircuits.payout(
       payoutContext(),
       runOf(run, c, 0xc2, 0),
-      BOB, TOKEN_BYTES, 250n, bytes(0x40)))
+      BOB, TOKEN_BYTES, 250n, bytes(0x40), noFurtherNote()))
       .rejects.toThrow(NOT_IN_THE_APPROVED_RUN);
   });
 
@@ -245,7 +246,7 @@ describe('a vault pays one payee of an approved run', () => {
     await expect(vault.impureCircuits.payout(
       payoutContext(),
       runOf(run, c, 0xc3, 0),
-      ALICE, TOKEN_BYTES, 900n, bytes(0x40)))
+      ALICE, TOKEN_BYTES, 900n, bytes(0x40), noFurtherNote()))
       .rejects.toThrow(NOT_IN_THE_APPROVED_RUN);
   });
 
@@ -256,8 +257,8 @@ describe('a vault pays one payee of an approved run', () => {
     await expect(vault.impureCircuits.payout(
       payoutContext(),
       runOf(run, c, 0xc4, 0),
-      ALICE, TOKEN_BYTES, 5_000n, bytes(0x40)))
-      .rejects.toThrow(/does not hold enough/i);
+      ALICE, TOKEN_BYTES, 5_000n, bytes(0x40), noFurtherNote()))
+      .rejects.toThrow(/do not hold enough/i);
   });
 
   it('refuses a note the witness invented, however well-formed', async () => {
@@ -273,7 +274,7 @@ describe('a vault pays one payee of an approved run', () => {
     await expect(vault.impureCircuits.payout(
       payoutContext(),
       runOf(run, c, 0xc5, 0),
-      ALICE, TOKEN_BYTES, 100n, bytes(0x40)))
+      ALICE, TOKEN_BYTES, 100n, bytes(0x40), noFurtherNote()))
       .rejects.toThrow(/not in this vault.s pool/i);
   });
 
@@ -293,7 +294,7 @@ describe('a vault pays one payee of an approved run', () => {
     const r = await vault.impureCircuits.payout(
       payoutContext(),
       runOf(run, c, 0xc6, 0),
-      ALICE, TOKEN_BYTES, 250n, bytes(0x40));
+      ALICE, TOKEN_BYTES, 250n, bytes(0x40), noFurtherNote());
 
     const pool = vaultLedger(r.context.callContext.currentQueryContext.state as never).notes;
 
@@ -335,7 +336,7 @@ describe('a vault pays one payee of an approved run', () => {
     const first = await vault.impureCircuits.payout(
       payoutContext(),
       runOf(run, c, 0xd1, 0),
-      ALICE, TOKEN_BYTES, 100n, bytes(0x40));
+      ALICE, TOKEN_BYTES, 100n, bytes(0x40), noFurtherNote());
     vaultState = first.context.callContext.currentQueryContext.state;
 
     /*
@@ -351,7 +352,7 @@ describe('a vault pays one payee of an approved run', () => {
     const second = await vault.impureCircuits.payout(
       payoutContext(),
       runOf(run, c, 0xd2, 1),
-      BOB, TOKEN_BYTES, 200n, bytes(0x41));
+      BOB, TOKEN_BYTES, 200n, bytes(0x41), noFurtherNote());
 
     expect(vaultLedger(second.context.callContext.currentQueryContext.state as never).payments)
       .toBe(2n);
@@ -383,7 +384,7 @@ describe('a vault pays one payee of an approved run', () => {
     const first = await vault.impureCircuits.payout(
       payoutContext(),
       runOf(run, c, 0xe1, 0),
-      ALICE, TOKEN_BYTES, 100n, bytes(0x40));
+      ALICE, TOKEN_BYTES, 100n, bytes(0x40), noFurtherNote());
     vaultState = first.context.callContext.currentQueryContext.state;
 
     /*
@@ -393,7 +394,7 @@ describe('a vault pays one payee of an approved run', () => {
     await expect(vault.impureCircuits.payout(
       payoutContext(),
       runOf(run, c, 0xe2, 1),
-      BOB, TOKEN_BYTES, 200n, bytes(0x41)))
+      BOB, TOKEN_BYTES, 200n, bytes(0x41), noFurtherNote()))
       .rejects.toThrow(/not in this vault/i);
 
     // And the payment count did not move, so nothing half-happened.
@@ -438,7 +439,7 @@ describe('a vault pays one payee of an approved run', () => {
         payoutContext(),
         payeeRunOf(id, run.tree, c, a),
         fromHex(recipientOf(a.payee)), fromHex(a.token), a.amount,
-        fromHex(a.blinding));
+        fromHex(a.blinding), noFurtherNote());
       vaultState = r.context.callContext.currentQueryContext.state;
       /* And the account's own write, which a chain would commit with it. */
       sim.adoptFromCall(r.context);
@@ -500,7 +501,7 @@ describe('a vault pays one payee of an approved run', () => {
       payoutContext(),
       payeeRunOf(id, byA.tree, c, a0),
       fromHex(recipientOf(a0.payee)), fromHex(a0.token), a0.amount,
-      fromHex(a0.blinding));
+      fromHex(a0.blinding), noFurtherNote());
     vaultState = first.context.callContext.currentQueryContext.state;
     sim.adoptFromCall(first.context);
 
@@ -522,7 +523,7 @@ describe('a vault pays one payee of an approved run', () => {
       payoutContext(),
       payeeRunOf(retryId, retry.tree, c2, r0),
       fromHex(recipientOf(r0.payee)), fromHex(r0.token), r0.amount,
-      fromHex(r0.blinding)))
+      fromHex(r0.blinding), noFurtherNote()))
       .rejects.toThrow(/already been made/i);
   });
 
@@ -536,7 +537,7 @@ describe('a vault pays one payee of an approved run', () => {
     const first = await vault.impureCircuits.payout(
       payoutContext(),
       runOf(run, c, 0xc7, 0),
-      ALICE, TOKEN_BYTES, 100n, bytes(0x40));
+      ALICE, TOKEN_BYTES, 100n, bytes(0x40), noFurtherNote());
     vaultState = first.context.callContext.currentQueryContext.state;
     expect(vaultLedger(vaultState as never).payments).toBe(1n);
   });
@@ -556,7 +557,7 @@ describe('a vault pays one payee of an approved run', () => {
     await expect(vault.impureCircuits.payout(
       payoutContext(),
       runOf(run, c, 0xc9, 0),
-      ALICE, TOKEN_BYTES, 100n, bytes(0x40)))
+      ALICE, TOKEN_BYTES, 100n, bytes(0x40), noFurtherNote()))
       .rejects.toThrow(/not a note of the token being paid/i);
   });
 

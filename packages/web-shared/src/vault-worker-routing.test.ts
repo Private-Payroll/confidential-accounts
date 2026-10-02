@@ -46,16 +46,16 @@ describe('WHERE A PAYMENT OUT\'S PROVING MATERIAL IS FETCHED FROM', () => {
   });
 
   it('NO VAULT CIRCUIT SHARES A NAME WITH AN ACCOUNT CIRCUIT SERVED TO A DEVICE, which is what routing by name rests on', () => {
-    /* RED WHEN: the served list is not exactly these seven, or a vault circuit is named like one of them. */
+    /* RED WHEN: the served list is not exactly these eight, or a vault circuit is named like one of them. */
     /* A vault's creation adopts it on the account from the device that made it. */
     expect(ACCOUNT_CIRCUITS_A_DEVICE_GOVERNS).toEqual(['propose', 'approve', 'amendSigner', 'setThreshold', 'adopt']);
-    expect([...ACCOUNT_CIRCUITS_SERVED_TO_A_DEVICE].sort()).toEqual(['adopt', 'amendSigner', 'approve', 'approveVaultChange', 'propose', 'recordPaymentFromVault', 'setThreshold']);
+    expect([...ACCOUNT_CIRCUITS_SERVED_TO_A_DEVICE].sort()).toEqual(['adopt', 'amendSigner', 'approve', 'approveVaultChange', 'propose', 'recordBatchFromVault', 'recordPaymentFromVault', 'setThreshold']);
     expect((VAULT_CIRCUITS as readonly string[]).filter((c) => ACCOUNT_CIRCUITS_SERVED_TO_A_DEVICE.includes(c))).toEqual([]);
   });
 
   it('NO VAULT CIRCUIT SHARES A NAME WITH AN ACCOUNT CIRCUIT A VAULT CALLS, which is what routing by name rests on', () => {
     /* RED WHEN: a vault circuit is named like one of these - its proof would then be made with the account's key. */
-    expect(ACCOUNT_CIRCUITS_A_VAULT_CALLS).toEqual(['approveVaultChange', 'recordPaymentFromVault']);
+    expect(ACCOUNT_CIRCUITS_A_VAULT_CALLS).toEqual(['approveVaultChange', 'recordBatchFromVault', 'recordPaymentFromVault']);
     expect((VAULT_CIRCUITS as readonly string[]).filter((c) => ACCOUNT_CIRCUITS_A_VAULT_CALLS.includes(c))).toEqual([]);
   });
 });

@@ -1244,34 +1244,23 @@ export circuit releaseHold(proposal: Bytes<32>): [] {
   }
 }
 
-// Records one payee of an approved run as paid, against the paying vault's receipt: one unit
-// of `tokenType(paymentReceiptTag(), payingVault)`, minted by that vault to this account in
-// the same transaction. Returns this account's address, which the vault mints to.
-// A run names one vault, which must pay it; a company-wide run may be paid by any vault
-// ever adopted whose own bar is not stricter than the company's and that has no spending
-// policy. A vault with a spending policy pays only its own runs, and only once each is
-// charged to its period. The amount and token are the ones the payee's path in the run's
-// sum tree carries, so what a run pays is at most the total its root commits to.
-export circuit recordPaymentFromVault(
-  proposal: Bytes<32>,
-  runVault: Bytes<32>,
-  payingVault: Bytes<32>,
+// Every check a payment from a run passes before its payees are looked at, for a single payee
+// and a batch alike: not a governance proposal; a vault this account adopted, now or before it was
+// retired; the run's own vault, or a company-wide run and a vault whose bar is not stricter; the
+// vault's receipt; the run's id from its salt; its window; its approvals and no hold; then the
+// run is marked paid from, and a vault under a spending policy pays only its own runs, each
+// charged to its period first. Returns whether the run is company-wide.
+circuit requirePayable(
+  id: Bytes<32>,
+  forRun: Bytes<32>,
+  payer: Bytes<32>,
   root: Bytes<32>,
   payees: Uint<64>,
   opensAt: Uint<64>,
   closesAt: Uint<64>,
   required: Uint<64>,
   salt: Bytes<32>,
-  details: Bytes<32>,
-  nonce: Bytes<32>,
-  amount: Uint<128>,
-  asset: Bytes<32>,
-  path: Vector<16, SumStep>,
-): ContractAddress {
-  const id = disclose(proposal);
-  const forRun = disclose(runVault);
-  const payer = disclose(payingVault);
-
+): Boolean {
   // A governance proposal names no vault, so nothing can ever be paid against it.
   assert(forRun != noVault(), "a governance proposal pays nobody");
 
@@ -1317,6 +1306,38 @@ export circuit recordPaymentFromVault(
            "that vault has a spending policy, so each run is charged to its period before it pays; charge this run to its period, then pay it");
   }
 
+  return companyRun;
+}
+
+// Records one payee of an approved run as paid, against the paying vault's receipt: one unit
+// of `tokenType(paymentReceiptTag(), payingVault)`, minted by that vault to this account in
+// the same transaction. Returns this account's address, which the vault mints to.
+// A run names one vault, which must pay it; a company-wide run may be paid by any vault
+// ever adopted whose own bar is not stricter than the company's and that has no spending
+// policy. A vault with a spending policy pays only its own runs, and only once each is
+// charged to its period. The amount and token are the ones the payee's path in the run's
+// sum tree carries, so what a run pays is at most the total its root commits to.
+export circuit recordPaymentFromVault(
+  proposal: Bytes<32>,
+  runVault: Bytes<32>,
+  payingVault: Bytes<32>,
+  root: Bytes<32>,
+  payees: Uint<64>,
+  opensAt: Uint<64>,
+  closesAt: Uint<64>,
+  required: Uint<64>,
+  salt: Bytes<32>,
+  details: Bytes<32>,
+  nonce: Bytes<32>,
+  amount: Uint<128>,
+  asset: Bytes<32>,
+  path: Vector<16, SumStep>,
+): ContractAddress {
+  const id = disclose(proposal);
+  const forRun = disclose(runVault);
+  const payer = disclose(payingVault);
+  const companyRun = requirePayable(id, forRun, payer, root, payees, opensAt, closesAt, required, salt);
+
   // The payee must be a leaf of the approved run, at the amount and in the token its path
   // carries to the root; a company-wide leaf names its vault.
   const leaf = payoutLeaf(companyRun ? companyWideDetailsOf(details, payer) : details, nonce);
@@ -1335,6 +1356,92 @@ export circuit recordPaymentFromVault(
          "a payment is already recorded for this person, kind of pay and month. Pay a real second payment as a numbered extra");
   movements.insert(once);
 
+  return kernel.self();
+}
+
+// One place in a batch as the paying vault sends it: whether it pays anyone, the payee's blinded
+// details and nonce, and the amount. An unused place carries nothing.
+struct BatchSlot {
+  live: Boolean;
+  details: Bytes<32>;
+  nonce: Bytes<32>;
+  amount: Uint<128>;
+}
+
+struct BatchLeafPreimage {
+  tag: Field;
+  leaves: Vector<4, Bytes<32>>;
+  amounts: Vector<4, Uint<128>>;
+}
+
+// A batch's leaf in a run's sum tree: its four places' payee leaves and amounts, in place order,
+// an unused place as zero and nothing. Under a tag of its own, and a different hash from a payee's
+// leaf, so no batch leaf can stand for a payee's leaf or the other way round.
+export circuit batchLeafOf(leaves: Vector<4, Bytes<32>>, amounts: Vector<4, Uint<128>>): Bytes<32> {
+  return transientHash<BatchLeafPreimage>(
+    BatchLeafPreimage { tag: 19 as Field, leaves: leaves, amounts: amounts }) as Bytes<32>;
+}
+
+// One place's payee leaf, the same leaf a single payment to that payee would have, or zero for
+// an unused place. A live place at nothing is refused, and an unused place carries no amount.
+circuit batchPayeeLeaf(slot: BatchSlot, companyRun: Boolean, payer: Bytes<32>): Bytes<32> {
+  assert(slot.live ? !(slot.amount == 0) : slot.amount == 0,
+    "a batch place either pays someone something or is unused and pays nothing");
+  return slot.live
+    ? payoutLeaf(companyRun ? companyWideDetailsOf(slot.details, payer) : slot.details, slot.nonce)
+    : default<Bytes<32>>;
+}
+
+// Records one place's payee as paid, by both marks a single payment writes, so nobody is paid
+// twice in a batch, alone, or once in each.
+circuit markBatchPayee(slot: BatchSlot, leaf: Bytes<32>): [] {
+  if (disclose(slot.live)) {
+    const movement = disclose(paidMovementOf(leaf));
+    assert(!movements.member(movement), "that payment has already been made");
+    movements.insert(movement);
+    const once = disclose(paidOnceOf(slot.nonce));
+    assert(!movements.member(once),
+           "a payment is already recorded for this person, kind of pay and month. Pay a real second payment as a numbered extra");
+    movements.insert(once);
+  }
+}
+
+// Records a batch of up to four payees of an approved run as paid, against one receipt from the
+// paying vault, under every check a single payment passes. The run approved the batch as one leaf
+// at its total, so its places are paid together or not at all. Returns this account's address,
+// which the vault mints to.
+export circuit recordBatchFromVault(
+  proposal: Bytes<32>,
+  runVault: Bytes<32>,
+  payingVault: Bytes<32>,
+  root: Bytes<32>,
+  payees: Uint<64>,
+  opensAt: Uint<64>,
+  closesAt: Uint<64>,
+  required: Uint<64>,
+  salt: Bytes<32>,
+  slots: Vector<4, BatchSlot>,
+  asset: Bytes<32>,
+  path: Vector<16, SumStep>,
+): ContractAddress {
+  const id = disclose(proposal);
+  const forRun = disclose(runVault);
+  const payer = disclose(payingVault);
+  const companyRun = requirePayable(id, forRun, payer, root, payees, opensAt, closesAt, required, salt);
+
+  // The batch must be a leaf of the approved run, at the total its places pay and in the token its
+  // path carries to the root; a company-wide run's places name the paying vault.
+  const leaves = map((s: BatchSlot): Bytes<32> => batchPayeeLeaf(s, companyRun, payer), slots);
+  const amounts = map((s: BatchSlot): Uint<128> => s.amount, slots);
+  const total = (amounts[0] + amounts[1] + amounts[2] + amounts[3]) as Uint<128>;
+  assert(!(disclose(total) == 0), "a batch with no place that pays records no payment");
+  assert(sumPathRoot(batchLeafOf(leaves, amounts), total, path, asset) == root,
+         "that batch is not in the approved run, with those payees at those amounts and in that token, from that vault");
+
+  markBatchPayee(slots[0], leaves[0]);
+  markBatchPayee(slots[1], leaves[1]);
+  markBatchPayee(slots[2], leaves[2]);
+  markBatchPayee(slots[3], leaves[3]);
   return kernel.self();
 }
 

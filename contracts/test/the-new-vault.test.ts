@@ -29,6 +29,7 @@ import {
 import { type PayoutLeafInput } from '../../src/midnight/payout-tree.js';
 import { fromHex, toHex } from '../../src/core/crypto.js';
 import { copiesTreeOf } from '../../src/midnight/sealed-copies-tree.js';
+import { noFurtherNote } from '../../src/midnight/vault-step-notes.js';
 
 const A = privateStateFor(1);
 const B = privateStateFor(2);
@@ -508,7 +509,7 @@ describe('paying: through the account\'s receipt step, with every new coin\'s no
 
   it('THE HEADLINE: pays the payee, keeps the change, records the payment once and counts it once', async () => {
     const run = await w.approved([payee(250n, 0xc1)], [250n], 501);
-    await w.call('payout', run.runOf(0), ALICE, TOKEN_BYTES, 250n, bytes(0x40));
+    await w.call('payout', run.runOf(0), ALICE, TOKEN_BYTES, 250n, bytes(0x40), noFurtherNote());
     /* RED WHEN the payment is not recorded by the account. */
     expect(w.sim.ledger.movements.member(P.paidOnceOf(bytes(0xc1)))).toBe(true);
     /* RED WHEN a payment stops adding one to the counter. */
@@ -523,22 +524,23 @@ describe('paying: through the account\'s receipt step, with every new coin\'s no
 
   it('THE PAYEE\'S COIN carries the nonce worked out from the spent note, and no argument can choose it', async () => {
     const run = await w.approved([payee(250n, 0xc2)], [250n], 502);
-    await w.call('payout', run.runOf(0), ALICE, TOKEN_BYTES, 250n, bytes(0x40));
+    await w.call('payout', run.runOf(0), ALICE, TOKEN_BYTES, 250n, bytes(0x40), noFurtherNote());
     const spent = w.nullifierOf(NOTE);
     const expected = V.coinCommitmentOf(
       { nonce: V.freshNonceOf(V.payeeNonceTag(), SECRET, spent), color: TOKEN_BYTES, value: 250n }, ALICE, true);
     /* RED WHEN the payee's nonce is derived any other way. */
     expect(claimed(w)).toContain(hex(expected));
-    /* RED WHEN the circuit grows an argument a caller could put a nonce in: the run's nonce is the payee's leaf's. */
+    /* RED WHEN the circuit grows an argument a caller could put a nonce in: the run's nonce is the payee's leaf's,
+       and the one argument past the payee's carries held notes, which the vault checks against its pool. */
     const info = JSON.parse(readFileSync(join(import.meta.dirname, '..', 'managed-vault', 'compiler', 'contract-info.json'), 'utf8'));
     expect(info.circuits.find((c: any) => c.name === 'payout').arguments.map((a: any) => a.name))
-      .toEqual(['run', 'recipient', 'token', 'amount', 'blinding']);
+      .toEqual(['run', 'recipient', 'token', 'amount', 'blinding', 'more']);
   });
 
   it('A CHANGE COIN\'S VALUE IS NOT FOUND FROM WHAT THE CHAIN SHOWS, and is found with the secret', async () => {
     const before = new Set(w.notes());
     const run = await w.approved([payee(250n, 0xc3)], [250n], 503);
-    await w.call('payout', run.runOf(0), ALICE, TOKEN_BYTES, 250n, bytes(0x40));
+    await w.call('payout', run.runOf(0), ALICE, TOKEN_BYTES, 250n, bytes(0x40), noFurtherNote());
     /* What anybody reads: the nullifier the call spends, the note it adds, the vault's address and the token. */
     const nfs: Uint8Array[] = [...w.lastFx.claimedNullifiers].map((x: any) => (typeof x === 'string' ? fromHex(x) : x));
     const added = w.notes().filter((n) => !before.has(n));
@@ -576,7 +578,7 @@ describe('paying: through the account\'s receipt step, with every new coin\'s no
     const run = await w.approved([payee(250n, 0xc4)], [250n], 504);
     w.priv = { ...w.priv, secret: NEXT_SECRET };
     /* RED WHEN payout makes its coins under whatever secret the device offers. */
-    await expect(w.call('payout', run.runOf(0), ALICE, TOKEN_BYTES, 250n, bytes(0x40)))
+    await expect(w.call('payout', run.runOf(0), ALICE, TOKEN_BYTES, 250n, bytes(0x40), noFurtherNote()))
       .rejects.toThrow(/that is not this vault's current nonce secret/);
     expect(w.ledger.payments).toBe(0n);
   });
@@ -584,24 +586,24 @@ describe('paying: through the account\'s receipt step, with every new coin\'s no
   it('REFUSES a payment of nothing, a note of another token, a note too small, and a note it does not hold', async () => {
     const zero = await w.approved([payee(0n, 0xc3)], [0n], 503);
     /* RED WHEN a payment of nothing records a person paid. */
-    await expect(w.call('payout', zero.runOf(0), ALICE, TOKEN_BYTES, 0n, bytes(0x40))).rejects.toThrow(/a payment of nothing/);
+    await expect(w.call('payout', zero.runOf(0), ALICE, TOKEN_BYTES, 0n, bytes(0x40), noFurtherNote())).rejects.toThrow(/a payment of nothing/);
     const big = await w.approved([payee(5_000n, 0xc4)], [5_000n], 504);
     /* RED WHEN a note smaller than the payment is spent. */
-    await expect(w.call('payout', big.runOf(0), ALICE, TOKEN_BYTES, 5_000n, bytes(0x40))).rejects.toThrow(/does not hold enough/);
+    await expect(w.call('payout', big.runOf(0), ALICE, TOKEN_BYTES, 5_000n, bytes(0x40), noFurtherNote())).rejects.toThrow(/do not hold enough/);
     const other = bytes(0x42);
     const run = await w.approved([{ details: toHex(V.payoutDetails(ALICE, other, 10n, bytes(0x40))), nonce: toHex(bytes(0xc5)) }], [10n], 505);
     /* RED WHEN a note of another token pays. */
-    await expect(w.call('payout', run.runOf(0), ALICE, other, 10n, bytes(0x40))).rejects.toThrow(/not a note of the token being paid/);
+    await expect(w.call('payout', run.runOf(0), ALICE, other, 10n, bytes(0x40), noFurtherNote())).rejects.toThrow(/not a note of the token being paid/);
     const ok = await w.approved([payee(250n, 0xc6)], [250n], 506);
     w.priv = { ...w.priv, coin: { nonce: bytes(0x01), color: TOKEN_BYTES, value: 1_000n, mt_index: 0n } };
     /* RED WHEN a note outside the pool pays. */
-    await expect(w.call('payout', ok.runOf(0), ALICE, TOKEN_BYTES, 250n, bytes(0x40))).rejects.toThrow(/not in this vault's pool/);
+    await expect(w.call('payout', ok.runOf(0), ALICE, TOKEN_BYTES, 250n, bytes(0x40), noFurtherNote())).rejects.toThrow(/not in this vault's pool/);
   });
 
   it('THE AMOUNT AND TOKEN THE ACCOUNT CHECKS are the ones the vault sends: a payee approved at 250 cannot be paid 300', async () => {
     const run = await w.approved([payee(250n, 0xc7)], [250n], 507);
     /* RED WHEN the vault hands the account an amount other than the one it sends. */
-    await expect(w.call('payout', run.runOf(0), ALICE, TOKEN_BYTES, 300n, bytes(0x40))).rejects.toThrow(/that payee is not in the approved run/);
+    await expect(w.call('payout', run.runOf(0), ALICE, TOKEN_BYTES, 300n, bytes(0x40), noFurtherNote())).rejects.toThrow(/that payee is not in the approved run/);
     expect(w.ledger.payments).toBe(0n);
   });
 
@@ -610,16 +612,16 @@ describe('paying: through the account\'s receipt step, with every new coin\'s no
     const split = [{ details: toHex(V.splitDetails(w.self, spent, TOKEN_BYTES, 250n)), nonce: toHex(bytes(0xc8)) }];
     const run = await w.approved(split, [250n], 508);
     /* RED WHEN a change's details can be read as a payment's. */
-    await expect(w.call('payout', run.runOf(0), ALICE, TOKEN_BYTES, 250n, bytes(0x40))).rejects.toThrow(/that payee is not in the approved run/);
+    await expect(w.call('payout', run.runOf(0), ALICE, TOKEN_BYTES, 250n, bytes(0x40), noFurtherNote())).rejects.toThrow(/that payee is not in the approved run/);
   });
 
   it('the same payee is paid once, whatever note is offered', async () => {
     const run = await w.approved([payee(250n, 0xc9)], [250n], 509);
-    await w.call('payout', run.runOf(0), ALICE, TOKEN_BYTES, 250n, bytes(0x40));
+    await w.call('payout', run.runOf(0), ALICE, TOKEN_BYTES, 250n, bytes(0x40), noFurtherNote());
     const spent = w.nullifierOf(NOTE);
     w.priv = { ...w.priv, coin: { nonce: V.freshNonceOf(V.changeNonceTag(), SECRET, spent), color: TOKEN_BYTES, value: 750n, mt_index: 0n } };
     /* RED WHEN the account stops refusing a payee already paid. */
-    await expect(w.call('payout', run.runOf(0), ALICE, TOKEN_BYTES, 250n, bytes(0x40))).rejects.toThrow(/already been made/);
+    await expect(w.call('payout', run.runOf(0), ALICE, TOKEN_BYTES, 250n, bytes(0x40), noFurtherNote())).rejects.toThrow(/already been made/);
     expect(w.ledger.payments).toBe(1n);
   });
 });
@@ -1083,7 +1085,7 @@ describe('a finished secret run is closed, and the company-wide secret change is
     /* RED WHEN the payment step takes a leaf whose details are not a payment's: the run's material alone would mark it paid. */
     await expect(w.call('payoutUnshielded', run.runOf(0), ALICE, TOKEN_BYTES, 1n, bytes(0x40)))
       .rejects.toThrow(/that payee is not in the approved run/);
-    await expect(w.call('payout', run.runOf(0), ALICE, TOKEN_BYTES, 1n, bytes(0x40)))
+    await expect(w.call('payout', run.runOf(0), ALICE, TOKEN_BYTES, 1n, bytes(0x40), noFurtherNote()))
       .rejects.toThrow(/that payee is not in the approved run/);
     expect(paidRecord(w).length).toBe(0);
     /* RED WHEN a holder of the run who does not hold the new secret can set it: a removed signer keeps the material, not the secret. */

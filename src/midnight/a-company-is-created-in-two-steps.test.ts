@@ -61,9 +61,10 @@ describe('the two steps, as lists', () => {
     expect(FIRST_STEP_CIRCUITS as readonly string[]).not.toContain('recordPaymentFromVault');
   });
 
-  it('the second step inserts the rest, the payment step and the vault change step among them', () => {
+  it('the second step inserts the rest, the payment steps and the vault change step among them', () => {
     expect([...SECOND_STEP_CIRCUITS]).toEqual([
-      'approveVaultChange', 'clearRun', 'holdRun', 'recordPaymentFromVault', 'releaseHold', 'reseatSigner', 'retireVault',
+      'approveVaultChange', 'clearRun', 'holdRun', 'recordBatchFromVault', 'recordPaymentFromVault', 'releaseHold',
+      'reseatSigner', 'retireVault',
       'sealPayKey', 'setPolicy', 'setPolicyBar', 'setVaultThreshold',
     ]);
   });

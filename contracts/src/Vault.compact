@@ -18,9 +18,14 @@ import CompactStandardLibrary;
  * company cannot name. Money is accepted only once the account has adopted the
  * vault and approved its first nonce secret.
  *
- * It refuses a note it does not hold, a note of the wrong token or too small, a
- * payment of nothing, a public payment it cannot cover, a deposit of nothing,
- * any deposit before its first secret, a secret that is zero, repeated or does
+ * A payment, or a batch of up to four payees approved together, may draw on
+ * several held notes of its token, and returns one coin of change; a merge
+ * combines held notes into one, needs no approval and sends nothing out.
+ *
+ * It refuses a note it does not hold, a note of the wrong token, notes that
+ * together hold too little, a payment of nothing, a merge of fewer than two
+ * notes, a public payment it cannot cover, a deposit of nothing, any deposit
+ * before its first secret, a secret that is zero, repeated or does
  * not follow the one it replaces, a secret set by a caller who does not hold it
  * or, once the vault has taken money, the last secret it took money under, a
  * secret whose last byte is not zero, a tree of copies holding a copy past its
@@ -40,6 +45,15 @@ struct SumStep {
   sibling: Field;
   siblingSum: Uint<128>;
   goesLeft: Boolean;
+}
+
+// One place in a batch, declared exactly as the account declares it: whether it pays anyone, the
+// payee's blinded details and nonce, and the amount. An unused place carries nothing.
+struct BatchSlot {
+  live: Boolean;
+  details: Bytes<32>;
+  nonce: Bytes<32>;
+  amount: Uint<128>;
 }
 
 // The account this vault answers to, and the only calls a vault may make to it.
@@ -75,6 +89,23 @@ contract Acct {
     salt: Bytes<32>,
     details: Bytes<32>,
     nonce: Bytes<32>,
+    asset: Bytes<32>,
+    path: Vector<16, SumStep>,
+  ): ContractAddress;
+
+  // Approves and records a batch of up to four payees of an approved run against one receipt, or
+  // fails the transaction.
+  circuit recordBatchFromVault(
+    proposal: Bytes<32>,
+    runVault: Bytes<32>,
+    payingVault: Bytes<32>,
+    root: Bytes<32>,
+    payees: Uint<64>,
+    opensAt: Uint<64>,
+    closesAt: Uint<64>,
+    required: Uint<64>,
+    salt: Bytes<32>,
+    slots: Vector<4, BatchSlot>,
     asset: Bytes<32>,
     path: Vector<16, SumStep>,
   ): ContractAddress;
@@ -119,7 +150,8 @@ export ledger notes: Set<Bytes<32>>;
 // Public tokens this vault may still hold: added on deposit, dropped by `forgetUnshielded`.
 export ledger unshieldedTokens: Set<Bytes<32>>;
 
-// How many payments this vault has made. Public. A split and a secret run add nothing.
+// How many payments this vault has made, a batch counting once. Public. A split, a merge and a
+// secret run add nothing.
 export ledger payments: Counter;
 
 // Reserved, as the six below are. No circuit reads or writes it. A vault has no spending
@@ -490,21 +522,69 @@ export circuit depositUnshielded(token: Bytes<32>, amount: Uint<128>): [] {
   unshieldedTokens.insert(disclose(token));
 }
 
-// Pays one payee of an approved run in private money. Payee, token and amount stay private.
+// A run's arguments for a batch, as the account checks them. A batch's own places carry what a
+// single payment's run carries for its one payee.
+struct BatchRun {
+  proposal: Bytes<32>;
+  runVault: Bytes<32>;
+  root: Bytes<32>;
+  payees: Uint<64>;
+  opensAt: Uint<64>;
+  closesAt: Uint<64>;
+  required: Uint<64>;
+  salt: Bytes<32>;
+  path: Vector<16, SumStep>;
+}
+
+// One place in a batch as the vault pays it: whether it pays anyone, and the payee, amount,
+// blinding and payee nonce the signers approved for it.
+struct Pay {
+  live: Boolean;
+  recipient: Bytes<32>;
+  amount: Uint<128>;
+  blinding: Bytes<32>;
+  nonce: Bytes<32>;
+}
+
+// The tag each place of a batch makes its payee's coin under, and the one a merge keeps its coin
+// under. Each differs from every other kind of coin's tag.
+export circuit batchPayeeNonceTag(place: Uint<8>): Bytes<32> {
+  return place == 0 ? pad(32, "midnight-vault:nonce:batch-0")
+    : place == 1 ? pad(32, "midnight-vault:nonce:batch-1")
+    : place == 2 ? pad(32, "midnight-vault:nonce:batch-2")
+    : pad(32, "midnight-vault:nonce:batch-3");
+}
+export circuit mergeNonceTag(): Bytes<32> { return pad(32, "midnight-vault:nonce:merge"); }
+
+// Spends one further note offered for a step and adds what it holds. A place holding nothing is
+// unused and spends nothing: no note the vault holds is worth nothing.
+circuit spendFurther(token: Bytes<32>, held: Uint<128>, coin: QualifiedShieldedCoinInfo): Uint<128> {
+  const live = disclose(!(coin.value == 0));
+  if (live) {
+    assert(coin.color == token, "every note a step spends is of the token it pays");
+    spendHeld(coin);
+  }
+  // Cast back to 128 bits, which refuses notes that together hold more than one coin can.
+  return (held + (live ? coin.value : 0)) as Uint<128>;
+}
+
+// Pays one payee of an approved run in private money. Payee, token and amount stay private. It
+// draws on the note `noteToSpend` offers and, when that is not enough, on one more held note of
+// the same token; one coin of the change goes back into the pool.
 export circuit payout(
   run: Run,
   recipient: Bytes<32>,
   token: Bytes<32>,
   amount: Uint<128>,
   blinding: Bytes<32>,
+  more: Vector<1, QualifiedShieldedCoinInfo>,
 ): [] {
   const s = currentSecret();
   assert(!(disclose(amount) == 0), "a payment of nothing records a person as paid with nobody paid");
 
-  // The note offered must be of this token, big enough, and in the pool.
+  // The notes offered must be of this token, together big enough, and in the pool.
   const coin = noteToSpend(token, amount);
   assert(coin.color == token, "that is not a note of the token being paid");
-  assert(!(coin.value < amount), "that note does not hold enough to make this payment");
 
   // The account refuses unless the run is approved for this vault, this payee is unpaid, and
   // the token and amount are the ones this call actually sends.
@@ -521,24 +601,118 @@ export circuit payout(
     disclose(payoutDetails(recipient, token, amount, blinding)),
     disclose(run.nonce),
     disclose(amount),
-    disclose(coin.color),
+    disclose(token),
     disclose(run.path));
   mintReceipt(paymentReceiptTag(), paymentReceiptKey(), acct);
 
+  // Every coin this payment makes is keyed by the first note's nullifier, which the ledger
+  // accepts once, so no two coins the vault makes ever share a nonce.
   const spent = spendHeld(coin);
+  const held = fold((h: Uint<128>, c: QualifiedShieldedCoinInfo): Uint<128> => spendFurther(token, h, c),
+    coin.value, more);
+  assert(!(held < amount), "the notes offered do not hold enough to make this payment");
   sendCoin(ShieldedCoinInfo {
-    nonce: disclose(freshNonceOf(payeeNonceTag(), s, spent)), color: disclose(coin.color), value: disclose(amount)
+    nonce: disclose(freshNonceOf(payeeNonceTag(), s, spent)), color: disclose(token), value: disclose(amount)
   }, disclose(recipient));
 
-  // Any change goes back into the pool as a new note, worked out here so none is left out.
-  // Whether there is change is public: a payment that spends its note exactly writes no note.
-  const change = disclose(coin.value) - disclose(amount);
+  // Any change goes back into the pool as one new note, worked out here so none is left out.
+  // Whether there is change is public: a payment that spends its notes exactly writes no note.
+  const change = disclose(held) - disclose(amount);
   if (!(change == 0)) {
     keepCoin(ShieldedCoinInfo {
-      nonce: disclose(freshNonceOf(changeNonceTag(), s, spent)), color: disclose(coin.color), value: change as Uint<128>
+      nonce: disclose(freshNonceOf(changeNonceTag(), s, spent)), color: disclose(token), value: change as Uint<128>
     });
   }
   payments.increment(1);
+}
+
+// One place as the account checks it: a live place at nothing is refused, and an unused place
+// carries no amount.
+circuit batchSlotOf(token: Bytes<32>, p: Pay): BatchSlot {
+  assert(!(p.live && p.amount == 0), "a payment of nothing records a person as paid with nobody paid");
+  return BatchSlot {
+    live: p.live,
+    details: payoutDetails(p.recipient, token, p.amount, p.blinding),
+    nonce: p.nonce,
+    amount: p.live ? p.amount : 0,
+  };
+}
+
+// Makes one place's payee coin, if the place pays anyone.
+circuit payPlace(s: Bytes<32>, spent: Bytes<32>, token: Bytes<32>, p: Pay, place: Uint<8>): [] {
+  if (disclose(p.live)) {
+    sendCoin(ShieldedCoinInfo {
+      nonce: disclose(freshNonceOf(batchPayeeNonceTag(place), s, spent)), color: disclose(token), value: disclose(p.amount)
+    }, disclose(p.recipient));
+  }
+}
+
+// Pays a batch of up to four payees of an approved run in private money, as one payment with
+// one receipt. The run approved the batch as a whole: which places pay, whom, how much, in which
+// token. It draws on up to three held notes of that token; one coin of the change goes back into
+// the pool. How many places pay is public; who and how much stay private.
+export circuit batchPayout(
+  run: BatchRun,
+  token: Bytes<32>,
+  pays: Vector<4, Pay>,
+  notes: Vector<3, QualifiedShieldedCoinInfo>,
+): [] {
+  const s = currentSecret();
+  const slots = map((p: Pay): BatchSlot => batchSlotOf(token, p), pays);
+  const total = (slots[0].amount + slots[1].amount + slots[2].amount + slots[3].amount) as Uint<128>;
+  assert(!(disclose(total) == 0), "a batch pays at least one person");
+
+  // The account refuses unless the run is approved for this vault, the batch is a leaf of it at
+  // this total and token, and nobody it pays has been paid.
+  const acct = account.recordBatchFromVault(
+    disclose(run.proposal),
+    disclose(run.runVault),
+    disclose(kernel.self().bytes),
+    disclose(run.root),
+    disclose(run.payees),
+    disclose(run.opensAt),
+    disclose(run.closesAt),
+    disclose(run.required),
+    disclose(run.salt),
+    disclose(slots),
+    disclose(token),
+    disclose(run.path));
+  mintReceipt(paymentReceiptTag(), paymentReceiptKey(), acct);
+
+  const first = notes[0];
+  assert(first.color == token, "that is not a note of the token being paid");
+  const spent = spendHeld(first);
+  const held = fold((h: Uint<128>, c: QualifiedShieldedCoinInfo): Uint<128> => spendFurther(token, h, c),
+    first.value, slice<2>(notes, 1));
+  assert(!(held < total), "the notes offered do not hold enough to make this payment");
+  payPlace(s, spent, token, pays[0], 0);
+  payPlace(s, spent, token, pays[1], 1);
+  payPlace(s, spent, token, pays[2], 2);
+  payPlace(s, spent, token, pays[3], 3);
+
+  const change = disclose(held) - disclose(total);
+  if (!(change == 0)) {
+    keepCoin(ShieldedCoinInfo {
+      nonce: disclose(freshNonceOf(changeNonceTag(), s, spent)), color: disclose(token), value: change as Uint<128>
+    });
+  }
+  payments.increment(1);
+}
+
+// Merges two to four held notes of one token into one note the vault keeps. No approval: it sends
+// nothing out of the vault, every note it spends is one the pool holds, and the one coin it makes
+// is the vault's own, worth exactly what they held, under a nonce only the vault's secret names.
+export circuit mergeNotes(token: Bytes<32>, notes: Vector<4, QualifiedShieldedCoinInfo>): [] {
+  const s = currentSecret();
+  const first = notes[0];
+  assert(first.color == token, "every note a step spends is of the token it pays");
+  assert(disclose(!(notes[1].value == 0)), "a merge takes at least two notes");
+  const spent = spendHeld(first);
+  const held = fold((h: Uint<128>, c: QualifiedShieldedCoinInfo): Uint<128> => spendFurther(token, h, c),
+    first.value, slice<3>(notes, 1));
+  keepCoin(ShieldedCoinInfo {
+    nonce: disclose(freshNonceOf(mergeNonceTag(), s, spent)), color: disclose(token), value: disclose(held)
+  });
 }
 
 // Pays one payee of an approved run in public money. The amount and recipient are public.

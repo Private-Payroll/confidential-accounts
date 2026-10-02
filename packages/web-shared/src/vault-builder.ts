@@ -40,6 +40,7 @@ import {
 import { payeeAddress, unshieldedPayeeAddress } from '../../../src/midnight/payee-address.js';
 import type { NetworkName } from '../../../src/midnight/network.js';
 import { pathFromWire, type PrivatePaymentOnTheWire, type PrivatePaymentOrderOnTheWire } from '../../../src/midnight/private-payment-wire.js';
+import { noFurtherNote } from '../../../src/midnight/vault-step-notes.js';
 
 export interface SigningKeyLike { readonly tag: string; readonly value: string }
 
@@ -635,6 +636,8 @@ export async function buildPayout(
     args: [
       runOf(order, payment),
       fromHex(payee.coinPublicKey), fromHex(payment.token), amount, fromHex(payment.blinding),
+      /* The one note chosen above and no other: the further place the payment takes is left unused. */
+      noFurtherNote(),
     ],
     /* The payee's wallet reads the payment with this key; it came out of the same decode as the coin key. */
     additionalCoinEncPublicKeyMappings: new Map([[payee.coinPublicKey, payee.encryptionPublicKey]]),
