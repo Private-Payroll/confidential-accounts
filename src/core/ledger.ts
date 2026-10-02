@@ -891,15 +891,12 @@ export interface Ledger {
    * let the contract refuse would be correct and useless: the refusal has to be
    * reachable before a fee is paid and before anybody signs.
    *
-   * **NOT BOUNDED BY THE SIGNER COUNT, and the omission is the contract's**
-   * (`:2693-2697`): a vault has no bootstrap window, so a vault threshold above
-   * the seats does not reopen one. What it does instead is make that vault
-   * unspendable until the threshold is lowered again, which is a governed round
-   * at the ACCOUNT's threshold and is therefore recoverable. **The refusal that
-   * stops an unmeetable one being raised at all is the application's and lives
-   * in `AccountService`, not here** — this interface stays one-to-one with the
-   * circuit, and a guard here that the Midnight implementation cannot have is
-   * two boundaries with different rules.
+   * **THE CONTRACT BOUNDS IT BY THE SIGNER COUNT**: a vault threshold above
+   * the seats is refused on chain, because one above the approvals a policy
+   * change needs raises that number to it, and lowering a vault's threshold or
+   * raising one past that number needs that many approvals. The Midnight
+   * implementation mirrors those refusals before a fee is paid. The application
+   * also refuses to raise an unmeetable one, in `AccountService`.
    */
   setVaultThreshold(
     accountId: string, vault: Hex, newThreshold: number, proposalId: Hex, by: SignerRef,

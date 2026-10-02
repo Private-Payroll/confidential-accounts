@@ -22,6 +22,7 @@ import { readFileSync } from 'node:fs';
 
 const A = privateStateFor(1);
 const B = privateStateFor(2);
+const C = privateStateFor(3);
 
 type Device = ReturnType<typeof privateStateFor>;
 
@@ -101,7 +102,15 @@ const approvedFor = async (
 
 describe('a threshold per vault', () => {
   let sim: AccountSimulator;
-  beforeEach(async () => { sim = await liveAccount(2n); });
+  /* Three seats at two of three: a vault threshold may not exceed the signers seated, so a vault
+   * at three needs a third seat to be set at all. */
+  beforeEach(async () => {
+    sim = await AccountSimulator.liveAccount([A, B, C], 2n);
+    sim.at(RUN_NOW);
+    /* Adopted first: a threshold above the bar is refused on bytes the company does not hold. */
+    await sim.adoptVault(PAYROLL, [A, B]);
+    await sim.adoptVault(TREASURY, [A, B], 392);
+  });
 
   it('a vault with no rule of its own inherits the account threshold', async () => {
     const c = govChange(21);
@@ -235,7 +244,8 @@ describe('a threshold per vault', () => {
     await sim.as(carrying(sim, B, g)).approve(gid);
     await sim.as(carrying(sim, A, g)).setVaultThreshold(PAYROLL, 3n, gid);
 
-    // A later governance action still needs two, not three.
+    // A later governance action still needs two, not three. A change of who is seated is the
+    // exception: PAYROLL's three raised the bar it needs (vault-threshold-recovery.test.ts).
     const g2 = govChange(27);
     const p2 = pureCircuits.setVaultThresholdPayload(TREASURY, 2n);
     await sim.as(carrying(sim, A, g2)).propose(p2, NO_VAULT);

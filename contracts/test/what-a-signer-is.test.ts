@@ -543,8 +543,10 @@ describe('an account is founded at one, and one is a rule', () => {
      * `amendSigner`'s free branch is dead code.
      */
     const sim = await AccountSimulator.create(DEPLOYING, leafOfDevice(FOUNDING));
+    /* The relationship first, so it is the assertion that answers: RED WHEN the constructor
+     * writes a threshold above the one seat it makes. The two numbers after it pin the state. */
+    expect(sim.ledger.threshold).toBeLessThanOrEqual(sim.ledger.signerLeaves.size());
     expect(sim.ledger.threshold).toBe(1n);
     expect(sim.ledger.signerLeaves.size()).toBe(1n);
-    expect(sim.ledger.threshold).toBeLessThanOrEqual(sim.ledger.signerLeaves.size());
   });
 });

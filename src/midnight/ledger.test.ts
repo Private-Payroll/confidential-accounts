@@ -47,7 +47,7 @@ import type { Sealed, Hex } from '../core/crypto.js';
 import { fromHex, toHex } from '../core/crypto.js';
 import { assetIdBytes } from '../core/assets.js';
 import { arityFrom } from './circuit-arity.js';
-import { policyCommitmentOf } from './spending-policy.js';
+import { policyCommitmentOf, policyBarKey } from './spending-policy.js';
 /*
  * The generated contract, imported for real and handed back to the ledger by
  * the mock below. Only the STATE READER is faked; the commitment circuits are
@@ -354,6 +354,12 @@ function harness(chain: {
   signerCount?: bigint | null;
   movementCount?: bigint | null;
   retiredVaults?: Array<[Hex, bigint]> | null;
+  /** The vaults the company holds. Omitted, every vault asked about is held. */
+  heldVaults?: Hex[];
+  /** Each proposal's bar and removal count when raised. Omitted, a bar of 0 at the removals now. */
+  holds?: Array<[Hex, { needed: bigint; removals: bigint }]>;
+  /** The account's removal count. 0 by default. */
+  removalsSoFar?: bigint;
   /*
    * `balanceAfterMove` STOOD HERE — what an asset's entry became once `execute`
    * landed, so a chain committing to a DIFFERENT balance could be simulated.
@@ -626,6 +632,15 @@ deployment?: ConstructorParameters<typeof MidnightLedger>[6]) {
               lookup: (k: Uint8Array) => fromHex((chain.signerRoles ?? []).find(([key]) => key === toHex(k))![1]),
             },
             retiredAt: chain.retiredVaults === null ? undefined : (chain.retiredVaults ?? []).map(([v, t]) => [fromHex(v), t]),
+            vaults: { member: (v: Uint8Array) => chain.heldVaults === undefined || chain.heldVaults.includes(toHex(v) as Hex) },
+            proposalHolds: {
+              member: () => true,
+              lookup: (k: Uint8Array) => {
+                if (toHex(k) === toHex(pureCircuits.removalCountKey())) return { needed: 0n, removals: chain.removalsSoFar ?? 0n };
+                const own = (chain.holds ?? []).find(([id]) => id === toHex(k));
+                return own ? own[1] : { needed: 0n, removals: chain.removalsSoFar ?? 0n };
+              },
+            },
           },
         };
       },
@@ -3806,6 +3821,104 @@ describe('a spending policy, set and charged through the client', () => {
     await expect(ledger.prepare('acct', {
       kind: 'setPolicy', vault: VAULT, asset: TEST_TOKEN, policy: POLICY, proposalId: PROPOSAL_ID,
     })).rejects.toThrow(/that proposal has 1 of 2 approvals/);
+  });
+
+  describe('a change of who is seated, a policy change and a change to its bar are checked at the bar, as the chain checks them', () => {
+    const LEAF = 'b1'.repeat(32) as Hex;
+    const OTHER_LEAF = 'b2'.repeat(32) as Hex;
+    const steps = [
+      { kind: 'reseatSigner' as const, oldLeaf: LEAF, newLeaf: OTHER_LEAF, proposalId: PROPOSAL_ID },
+      { kind: 'addSigner' as const, leaf: OTHER_LEAF, proposalId: PROPOSAL_ID },
+      { kind: 'removeSigner' as const, removedLeaf: LEAF, proposalId: PROPOSAL_ID },
+      { kind: 'setPolicyBar' as const, newBar: 2, proposalId: PROPOSAL_ID },
+      { kind: 'setPolicy' as const, vault: VAULT, asset: TEST_TOKEN, policy: POLICY, proposalId: PROPOSAL_ID },
+    ];
+    for (const step of steps) {
+      it(`${step.kind}: refused below a bar above the threshold, naming the number it needs, and built at it`, async () => {
+        const short = harness({ approvals: 2n, threshold: 2n, signerCount: 4n, vaultThresholds: [[policyBarKey(), 3n]] });
+        /* RED WHEN the device compares with the account threshold alone: two of a threshold of two would pass, and the chain refuse. */
+        await expect(short.ledger.prepare('acct', step)).rejects.toThrow(/that proposal has 2 of 3 approvals\. It needs as many as a policy change needs \(3\)/);
+        expect(short.calls).toHaveLength(0);
+        const met = harness({ approvals: 3n, threshold: 2n, signerCount: 4n, vaultThresholds: [[policyBarKey(), 3n]] });
+        /* At the bar it passes the check. A seat then looks for a vacated slot in a signer tree this
+         * fake chain does not hold, which is past what this test is about. */
+        const reached = await met.ledger.prepare('acct', step).then(() => 'built', (e: unknown) => String(e));
+        if (step.kind === 'addSigner') expect(reached).toMatch(/findPathForLeaf/);
+        else expect(reached).toBe('built');
+      });
+    }
+
+    it('removeSigner: refused when it would leave fewer signers than a policy change needs', async () => {
+      const { ledger, calls } = harness({ approvals: 3n, threshold: 2n, signerCount: 3n, vaultThresholds: [[policyBarKey(), 3n]] });
+      /* RED WHEN the device checks a removal against the threshold's floor alone, as the chain does not. */
+      await expect(ledger.prepare('acct', steps[2]!)).rejects.toThrow(/that would leave 2 signers when a policy change needs 3/);
+      expect(calls).toHaveLength(0);
+    });
+
+    it('setPolicy: refused before the fee on a vault the company does not hold', async () => {
+      const { ledger, calls } = harness({ heldVaults: [] });
+      /* RED WHEN the device stops reading the vaults before a policy: the chain refuses it after the fee. */
+      await expect(ledger.prepare('acct', steps[4]!)).rejects.toThrow(/that is not a vault this company holds; adopt the vault first/);
+      expect(calls).toHaveLength(0);
+      await expect(harness({ heldVaults: [VAULT] }).ledger.prepare('acct', steps[4]!)).resolves.toBeDefined();
+    });
+
+    it("a governance step is refused at its bar when raised, and when a signer was removed since", async () => {
+      const step = { kind: 'setThreshold' as const, newThreshold: 2, proposalId: PROPOSAL_ID };
+      const high = harness({ approvals: 2n, threshold: 2n, holds: [[PROPOSAL_ID, { needed: 3n, removals: 0n }]] });
+      /* RED WHEN the device compares with today's threshold alone: a proposal raised needing three passes at two. */
+      await expect(high.ledger.prepare('acct', step)).rejects.toThrow(/that proposal has 2 of 3 approvals/);
+      const stale = harness({ removalsSoFar: 1n, holds: [[PROPOSAL_ID, { needed: 0n, removals: 0n }]] });
+      /* RED WHEN the device ignores a removal since the proposal was raised, which the chain refuses. */
+      await expect(stale.ledger.prepare('acct', step)).rejects.toThrow(/1 signer removal\(s\) or re-seat\(s\) since this was raised/);
+      expect([...high.calls, ...stale.calls]).toHaveLength(0);
+      /* RED WHEN the steps checked at the seat bar skip those two questions, which their circuits ask first. */
+      const reseatStale = harness({ approvals: 3n, signerCount: 4n, removalsSoFar: 1n, holds: [[PROPOSAL_ID, { needed: 0n, removals: 0n }]] });
+      await expect(reseatStale.ledger.prepare('acct', steps[0]!)).rejects.toThrow(/1 signer removal\(s\) or re-seat\(s\) since this was raised/);
+    });
+
+    it('setPolicyBar: refused above the signers, naming both numbers', async () => {
+      const { ledger } = harness({ approvals: 3n, threshold: 2n, signerCount: 3n });
+      /* RED WHEN the device stops comparing the new bar with the signers, as the circuit does. */
+      await expect(ledger.prepare('acct', { kind: 'setPolicyBar', newBar: 4, proposalId: PROPOSAL_ID }))
+        .rejects.toThrow(/a policy change cannot need 4 approvals when the company has 3 signers/);
+    });
+
+    it('setVaultThreshold: refused on the company-wide marker, on the policy bar\'s key, and above the bar on bytes the company does not hold', async () => {
+      const set = (vault: Hex, n: number) => ({ kind: 'setVaultThreshold' as const, vault, newThreshold: n, proposalId: PROPOSAL_ID });
+      const at = (held: Hex[]) => harness({ approvals: 3n, threshold: 2n, signerCount: 4n, heldVaults: held, vaultThresholds: [[policyBarKey(), 3n]] }).ledger;
+      /* RED WHEN either key is let through to the chain, which refuses both. */
+      await expect(at([]).prepare('acct', set(toHex(pureCircuits.companyWide()) as Hex, 2))).rejects.toThrow(/the company-wide decision always takes the account's threshold/);
+      await expect(at([]).prepare('acct', set(policyBarKey(), 2))).rejects.toThrow(/that is not a vault; to change the approvals a policy change needs/);
+      /* RED WHEN bytes no vault holds may raise the bar on the device. */
+      await expect(at([]).prepare('acct', set(VAULT, 4))).rejects.toThrow(/that is not a vault this company holds, so its threshold cannot exceed 3/);
+      /* At the bar, or once held, it is built. */
+      await expect(at([]).prepare('acct', set(VAULT, 3))).resolves.toBeDefined();
+      await expect(at([VAULT]).prepare('acct', set(VAULT, 4))).resolves.toBeDefined();
+    });
+
+    it('with no bar stored, the threshold rules', async () => {
+      const { ledger } = harness({ approvals: 1n, threshold: 2n });
+      /* RED WHEN the bar is the stored number alone, read as zero while none is stored: one approval would pass. */
+      await expect(ledger.prepare('acct', steps[0]!)).rejects.toThrow(/that proposal has 1 of 2 approvals/);
+    });
+
+    it("setVaultThreshold: refused above the signers, past the bar, or lowering a vault, short of the bar; up to the bar at the threshold", async () => {
+      const at = (vt: Array<[Hex, bigint]>, approvals = 2n, signerCount = 4n) =>
+        harness({ approvals, threshold: 2n, signerCount, vaultThresholds: vt }).ledger;
+      const set = (n: number) => ({ kind: 'setVaultThreshold' as const, vault: VAULT, newThreshold: n, proposalId: PROPOSAL_ID });
+      /* RED WHEN the device stops comparing a vault threshold with the signers seated, as the circuit does. */
+      await expect(at([], 4n, 3n).prepare('acct', set(4))).rejects.toThrow(/a vault cannot need 4 approvals when the company has 3 signers/);
+      /* RED WHEN raising a vault past the bar is checked at the threshold alone. */
+      await expect(at([[policyBarKey(), 3n]]).prepare('acct', set(4))).rejects.toThrow(/that proposal has 2 of 3 approvals/);
+      /* RED WHEN lowering a vault is checked at the threshold alone. */
+      await expect(at([[policyBarKey(), 3n], [VAULT, 3n]]).prepare('acct', set(2))).rejects.toThrow(/that proposal has 2 of 3 approvals/);
+      /* RED WHEN an unset vault is not read at the account's threshold: setting it to one lowers it. */
+      await expect(at([[policyBarKey(), 3n]]).prepare('acct', set(1))).rejects.toThrow(/that proposal has 2 of 3 approvals/);
+      /* Up to the bar, and not below the vault, the threshold is enough. */
+      await expect(at([[policyBarKey(), 3n]]).prepare('acct', set(3))).resolves.toBeDefined();
+      await expect(at([[policyBarKey(), 3n], [VAULT, 3n]], 3n).prepare('acct', set(2))).resolves.toBeDefined();
+    });
   });
 
   it("clearRun: the run's parts, its tree and its period in the slots the contract names, and the policy staged", async () => {

@@ -593,7 +593,7 @@ describe('a hold never strands a run', () => {
     /* RED WHEN the receipt step stops marking the run as paid from: C could then hold the second payee. */
     expect(toHex(sim.runHoldOf(run.id)!.placedBy)).toBe(toHex(pureCircuits.paidFromMark()));
     /* RED WHEN `holdRun`'s paid-from refusal goes: it is then refused for the wrong reason, as held and released. */
-    await expect(sim.as(C).holdRun(run.id)).rejects.toThrow(/a payment from that run has already been made, so it can no longer be held/);
+    await expect(sim.as(C).holdRun(run.id)).rejects.toThrow(/a payment or a change from that run has already been made, so it can no longer be held/);
     /* RED WHEN the paid-from mark is read as a hold: the second payee would be refused. */
     await run.pay(1);
     await expect(sim.as(C).releaseHold(run.id)).rejects.toThrow(/that run is not held/);
@@ -626,6 +626,83 @@ describe('a hold never strands a run', () => {
     /* RED WHEN the release bar is not capped at the signers seated: the run stays held for ever. */
     expect(toHex(sim.runHoldOf(run.id)!.placedBy)).toBe(toHex(pureCircuits.releasedMark()));
   });
+});
+
+/*
+ * WHO RELEASES A HOLD, IN EVERY CASE. The holder alone, always, while seated. The others only
+ * once as many agree as the run needed when it was raised, capped at the signers seated, counting
+ * agreements given since the latest removal. So a run needing every signer, held by a signer who
+ * stays seated, stays held until they release it or its window closes.
+ */
+describe('who may release a hold, in every case', () => {
+  const DEVICES = [1, 2, 3, 4, 5].map((k) => privateStateFor(k));
+  const released = (sim: AccountSimulator, id: Uint8Array) =>
+    toHex(sim.runHoldOf(id)!.placedBy) === toHex(pureCircuits.releasedMark());
+  const CASES = [
+    { title: 'THE RELEASE TABLE: 2 signers, a run needing every signer (2), the holder seated', n: 2, bar: 2, removed: false },
+    { title: 'THE RELEASE TABLE: 2 signers, a run needing every signer (2), the holder removed', n: 2, bar: 2, removed: true },
+    { title: 'THE RELEASE TABLE: 2 signers, a run needing fewer than every signer (1), the holder seated', n: 2, bar: 1, removed: false },
+    { title: 'THE RELEASE TABLE: 2 signers, a run needing fewer than every signer (1), the holder removed', n: 2, bar: 1, removed: true },
+    { title: 'THE RELEASE TABLE: 3 signers, a run needing every signer (3), the holder seated', n: 3, bar: 3, removed: false },
+    { title: 'THE RELEASE TABLE: 3 signers, a run needing every signer (3), the holder removed', n: 3, bar: 3, removed: true },
+    { title: 'THE RELEASE TABLE: 3 signers, a run needing fewer than every signer (2), the holder seated', n: 3, bar: 2, removed: false },
+    { title: 'THE RELEASE TABLE: 3 signers, a run needing fewer than every signer (2), the holder removed', n: 3, bar: 2, removed: true },
+    { title: 'THE RELEASE TABLE: 5 signers, a run needing every signer (5), the holder seated', n: 5, bar: 5, removed: false },
+    { title: 'THE RELEASE TABLE: 5 signers, a run needing every signer (5), the holder removed', n: 5, bar: 5, removed: true },
+    { title: 'THE RELEASE TABLE: 5 signers, a run needing fewer than every signer (4), the holder seated', n: 5, bar: 4, removed: false },
+    { title: 'THE RELEASE TABLE: 5 signers, a run needing fewer than every signer (4), the holder removed', n: 5, bar: 4, removed: true },
+    { title: 'THE RELEASE TABLE: 5 signers, a run needing three (3), the holder seated', n: 5, bar: 3, removed: false },
+    { title: 'THE RELEASE TABLE: 5 signers, a run needing three (3), the holder removed', n: 5, bar: 3, removed: true },
+  ];
+
+  it('THE HOLDER ALONE RELEASES THEIR OWN HOLD, in every case of the table while seated', async () => {
+    let seed = 800;
+    for (const { n, bar, removed } of CASES) {
+      if (removed) continue;
+      const devices = DEVICES.slice(0, n);
+      const holder = devices[n - 1]!;
+      const sim = await live(devices, 1n);
+      const run = await raiseRun(sim, devices[0]!, PAYROLL, seed++, BigInt(bar));
+      await sim.as(holder).holdRun(run.id);
+      await sim.as(holder).releaseHold(run.id);
+      /* RED WHEN the holder's own release is taken away: the holder would be one agreement among the others. */
+      expect([n, bar, released(sim, run.id)]).toEqual([n, bar, true]);
+    }
+  });
+
+  let seed = 830;
+  for (const { title, n, bar, removed } of CASES) {
+    it(title, async () => {
+      const devices = DEVICES.slice(0, n);
+      const holder = devices[n - 1]!;
+      const others = devices.slice(0, n - 1);
+      const sim = await live(devices, 1n);
+      const run = await raiseRun(sim, devices[0]!, PAYROLL, seed++, BigInt(bar));
+      await sim.as(holder).holdRun(run.id);
+      if (removed) {
+        const c = change(0n, seed++);
+        const rid = await raiseGov(sim, devices[0]!, c, pureCircuits.removeSignerPayload(sim.leafOf(holder)));
+        await sim.as(devices[0]!).approve(rid);
+        await sim.as(sim.applying(devices[0]!, c)).removeSigner(sim.leafOf(holder), rid);
+      }
+      const needed = Math.min(bar, removed ? n - 1 : n);
+      const after: boolean[] = [];
+      for (const o of others) {
+        if (released(sim, run.id)) break;
+        await sim.as(o).releaseHold(run.id);
+        after.push(released(sim, run.id));
+      }
+      /* Released exactly when the others' agreements reach the run's bar capped at the signers
+       * seated, and not one agreement earlier; never by the others alone when the run needs every
+       * signer and its holder stays. RED WHEN the cap is dropped, when it is one below the signers
+       * seated, when a removal adds one to the agreements needed (capped or not: the run needing
+       * three of five, its holder removed), or when fewer than the bar release it. */
+      const expected = needed <= others.length
+        ? [...Array(needed - 1).fill(false), true]
+        : others.map(() => false);
+      expect(after).toEqual(expected);
+    });
+  }
 });
 
 describe('a seat without a leaf is not a signer', () => {

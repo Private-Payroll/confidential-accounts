@@ -58,7 +58,7 @@ const SIGNER_ROLES_WRITES = [
  * `propose` writes each proposal's hold; `holdRun`, `releaseHold` and the receipt step (which marks
  * a run paid from) rewrite a run's, under the same id.
  */
-const PROPOSAL_HOLDS_WRITES = ['removalCountKey()', 'removalCountKey()', 'id', 'id', 'id', 'id', 'id'];
+const PROPOSAL_HOLDS_WRITES = ['removalCountKey()', 'proposal', 'removalCountKey()', 'id', 'id', 'id', 'id'];
 
 /** The first argument of every `<map>.insert(`, read to the comma at its own depth. */
 const insertsInto = (map: string): string[] => {
@@ -105,6 +105,9 @@ describe('every insert into the two shared maps is one this file knows', () => {
     /* RED WHEN a hold or its release writes under a key that is not an open run's own id, read from the ledger first. */
     expect(bodyOf('holdRun')).toContain('const hold = holdOf(id);');
     expect(bodyOf('releaseHold')).toContain('const hold = holdOf(id);');
+    /* RED WHEN the paid-from mark writes under a key it did not first read as an open proposal's hold. */
+    const mark = SRC.slice(SRC.indexOf('circuit markPaidFrom('), SRC.indexOf('\n}\n', SRC.indexOf('circuit markPaidFrom(')));
+    expect(mark).toContain('const hold = holdOf(proposal);');
   });
 
   it('approvals: an approval and an agreement to release a hold are nullifiers under different tags', () => {
