@@ -229,9 +229,17 @@ describe('a deposit whose record is made on the device', () => {
     });
     return { status: r.status, body: await r.json().catch(() => ({})) };
   };
-  /* The roster's signing keys, as a device opens them from the company's sealed roster. */
-  const roster = async () => new Set([ada, bo, carol].map((p) => p.signing.publicKey));
-  const recordsOf = (p: Person) => (record: WireRecord) => new HttpSealedPoolStore(record, sendAs(p), p.signing.secret, roster);
+  /*
+   * Who filed a version, as a device judges it afresh for each read. The company's seat directory and the chain's
+   * seats are not what this file watches (the seat-directory tests and the company-vault test do), so the judge here
+   * stands in for them with the people's own filing keys: a version is believed when one of theirs signed it.
+   * NO SEAT LEAVES THE CHAIN HERE: a person taken off the roster below still counts as seated to this judge. With
+   * the real judge, a version filed by a seat the account no longer holds is refused until a seated device files it
+   * again (`the-vault-is-its-signers.test.ts` pins that), so the leaving below is the roster's, not the chain's.
+   */
+  const judge = async () => (filer: string | null) =>
+    (filer !== null && [ada, bo, carol].some((p) => p.signing.publicKey === filer) ? null : 'it is signed by nobody of this company');
+  const recordsOf = (p: Person) => (record: WireRecord) => new HttpSealedPoolStore(record, sendAs(p), p.signing.secret, judge);
 
   beforeEach(async () => {
     sim = await AccountSimulator.liveAccount([A, B], 2n);
@@ -277,8 +285,8 @@ describe('a deposit whose record is made on the device', () => {
         queryContractState: async (a) => (a === vaultAddr ? { data: charged() } : null),
       }),
       companies,
-      /* Each person files only under the key they gave, as the product binds it. */
-      filingKeyOf: (_company, person) => [ada, bo, carol].find((p) => p.name === person)?.signing.publicKey ?? null,
+      /* Each person files only under their own filing key, as the product's seat directory binds it. */
+      mayFileUnder: (_company, person, filer) => [ada, bo, carol].find((p) => p.name === person)?.signing.publicKey === filer,
     });
     /* The API's general parser, after the mount, as the product has it. */
     app.use(express.json({ limit: '1mb' }));

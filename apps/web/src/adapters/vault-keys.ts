@@ -1,7 +1,7 @@
-import type { Hex } from '../../../../src/core/crypto.js';
+import { signingPublicKeyOf, type Hex } from '../../../../src/core/crypto.js';
 import type { Account } from '../../../../src/core/types.js';
-import { api, companyKeysForVaults, recordsKeyFromTheWallet } from 'vaults-web-shared/keyring.js';
-import { giveVaultKeys } from 'vaults-web-shared/vault-page-doors.js';
+import { api, companyKeysForVaults, currentUser, recordsKeyFromTheWallet } from 'vaults-web-shared/keyring.js';
+import { fileOwnDirectoryEntry, giveVaultKeys } from 'vaults-web-shared/vault-page-doors.js';
 import { ACT_REFUSAL, ACTED, type ActRefusal } from './refusals.js';
 import { ACCOUNT_ORIGIN } from './session.js';
 import { theVaultBuilder } from './vault-builder.js';
@@ -13,6 +13,10 @@ import { theVaultBuilder } from './vault-builder.js';
  * signer's vault keys, signed with their own key, sent with the company's
  * viewing key. The service keeps the first set a signer gives, and takes the
  * account's statement again whenever it is given again, so it follows the seat.
+ * In the same press the account signs this signer's entry in the company's
+ * seat directory - their filing key, their records key and their seat - and it
+ * is filed once the account is held by its committee, unless the directory
+ * already holds exactly that entry.
  */
 
 /** What giving the keys hands back: the account's release, and its signed statement with who holds the company. */
@@ -42,11 +46,23 @@ export async function giveTheVaultKeys(
   const scope = signer.scope === undefined ? {} : { scope: signer.scope };
   const seat = (await (await theVaultBuilder()).ownSeat({ signingSecret: signer.signingSecret, blinding: signer.blinding, ...scope })).toLowerCase();
   if (seat !== named.toLowerCase()) return { of: ACTED.refused, why: ACT_REFUSAL.notYourSeat };
+  const person = currentUser()?.id ?? null;
+  if (person === null) return { of: ACTED.refused, why: ACT_REFUSAL.notSignedIn };
   const released = await companyKeysForVaults(companyId, ACCOUNT_ORIGIN);
-  const signed = await recordsKeyFromTheWallet(ACCOUNT_ORIGIN, { company: released.company, account: released.account, seat });
+  const signingKey = signingPublicKeyOf(signer.signingSecret).toLowerCase();
+  const signed = await recordsKeyFromTheWallet(ACCOUNT_ORIGIN, { company: released.company, account: released.account, seat, signingKey });
   await giveVaultKeys(api, companyId, {
     committeeKey: released.committeeKey, companyKey: released.companyKey, signingSecret: signer.signingSecret,
     signerId: signer.signerId, viewingKey, recordsKey: signed.statement,
   });
+  /*
+   * The answer was read against this filing key, so it carries the entry; a wallet that signed none is refused there.
+   * An entry is believed only once the account is held by the committee that lists this signer's key, so it is filed
+   * from the first press after that, as the wallet read who holds the account in this same press.
+   */
+  const mine = signed.committeeKey;
+  if (signed.seats.committee.some((k) => k.tag === mine.tag && k.value.toLowerCase() === mine.value.toLowerCase())) {
+    await fileOwnDirectoryEntry(api, companyId, person, released.company, { committeeKey: signed.committeeKey, entry: signed.entry! });
+  }
   return { of: ACTED.done, ...released, signed };
 }

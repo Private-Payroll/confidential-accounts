@@ -37,7 +37,7 @@ const VAULT = 'ab'.repeat(32);
 const kr = vi.hoisted(() => ({
   log: [] as string[],
   answers: {} as Record<string, unknown>,
-  keys: { signerId: 's1', signingSecret: 'aa', wrappingSecret: 'bb', blinding: 'cc' } as Record<string, string> | null,
+  keys: { signerId: 's1', signingSecret: 'aa'.repeat(32), wrappingSecret: 'bb', blinding: 'cc' } as Record<string, string> | null,
   roster: null as unknown,
   kept: new Map<string, unknown>(),
   canOpen: true,
@@ -73,20 +73,31 @@ vi.mock('vaults-web-shared/keyring.js', async (real) => ({
     return { companyKey: '11'.repeat(32), committeeKey: committeeOf(fromSecret(new Uint8Array(32).fill(1)), `co_${'c1'.repeat(32)}` as never), company: `co_${'c1'.repeat(32)}`, account: COMPANY };
   },
   /* The person's account signs their records key for the seat the page names, and says who holds the company. */
-  recordsKeyFromTheWallet: async (_origin: string, ask: { company: string; seat: string; vault?: string }) => {
+  recordsKeyFromTheWallet: async (_origin: string, ask: { company: string; seat: string; vault?: string; signingKey?: string }) => {
     kr.log.push(`records key signed for ${ask.seat.slice(0, 4)}${ask.vault === undefined ? '' : ` with vault ${ask.vault.slice(0, 4)}`}`);
     const { identityFromSecret: fromSecret } = await import('midnight-identity');
     const { committeeKeyFor: committeeOf } = await import('midnight-identity/profile/committee-key');
-    const { signRecordsKey: sign } = await import('midnight-identity/profile/records-key');
+    const { signRecordsKey: sign, signDirectoryEntry: signEntry } = await import('midnight-identity/profile/records-key');
     const me = fromSecret(new Uint8Array(32).fill(1));
     const committeeKey = committeeOf(me, ask.company as never);
     return {
       committeeKey, statement: sign(me, ask.company as never, new Uint8Array(32).fill(0x11), ask.seat),
+      /* The directory entry, signed in the same press when the page names its filing key. */
+      entry: ask.signingKey === undefined ? null : signEntry(me, ask.company as never, new Uint8Array(32).fill(0x11), ask.signingKey, ask.seat),
       seats: { committee: kr.accountHeld ? [committeeKey] : [{ tag: 'schnorr', value: '77'.repeat(32) }], threshold: 1, seats: [ask.seat] },
       vault: ask.vault === undefined || kr.vaultHeld === 'unread' ? null : {
         vault: ask.vault, account: 'c0'.repeat(32), threshold: 1,
         committee: kr.vaultHeld === 'company' ? [committeeKey] : [{ tag: 'schnorr', value: '77'.repeat(32) }],
       },
+    };
+  },
+  /* Who holds the company, as the wallet reads it with no press: the vault adopted once the stand-in chain says so. */
+  holdersFromTheWallet: async (_origin: string, ask: { company: string }) => {
+    const { identityFromSecret: fromSecret } = await import('midnight-identity');
+    const { committeeKeyFor: committeeOf } = await import('midnight-identity/profile/committee-key');
+    const committeeKey = committeeOf(fromSecret(new Uint8Array(32).fill(1)), ask.company as never);
+    return {
+      holders: { committee: [committeeKey], threshold: 1, seats: ['5a'.repeat(32)], approvals: 1, adoptedVaults: kr.start.adopted ? ['ab'.repeat(32)] : [] },
     };
   },
   api: async (path: string, opts?: RequestInit) => {
@@ -102,6 +113,8 @@ vi.mock('vaults-web-shared/keyring.js', async (real) => ({
 vi.mock('vaults-web-shared/vault-page-doors.js', async (real) => ({
   ...(await real<typeof import('vaults-web-shared/vault-page-doors.js')>()),
   giveVaultKeys: async () => { kr.log.push('keys given'); },
+  /* This signer's entry in the seat directory; whether it is filed is `vault-keys`' own test's. */
+  fileOwnDirectoryEntry: async () => 'filed',
   /* The company's records, kept here for the length of one test. */
   deviceRecordsFor: () => (record: string) => {
     if (!kr.records.has(record)) kr.records.set(record, new MemorySealedPoolStore());
@@ -147,6 +160,8 @@ vi.mock('vaults-web-shared/vault-worker-client.js', () => ({
     },
     governedCall: async (input: { order: { circuit: string } }) => { kr.log.push(`account ${input.order.circuit} proved`); return { tx: 'call-tx' }; },
     setNonceSecret: async () => { kr.log.push('secret proved'); return { tx: 'secret-tx' }; },
+    /* The stand-in vault holds the secret the company's records hold once it is set. */
+    secretIsTheVaults: async () => true,
     writeSecretCopy: async (input: { place: number }) => { kr.log.push(`copy ${input.place} proved`); return { tx: 'copy-tx' }; },
   }),
 }));
@@ -196,7 +211,7 @@ beforeEach(() => {
   kr.records = new Map();
   kr.ownSeat = SEAT;
   startRoutes();
-  kr.keys = { signerId: 's1', signingSecret: 'aa', wrappingSecret: 'bb', blinding: 'cc' };
+  kr.keys = { signerId: 's1', signingSecret: 'aa'.repeat(32), wrappingSecret: 'bb', blinding: 'cc' };
   kr.roster = rosterWith(MINE);
   kr.answers[ROUTE()] = { id: 'c1' };
   kr.answers[`PUT ${ROUTE('/vault-keys')}`] = { given: true };
@@ -236,6 +251,8 @@ describe('creating a vault', () => {
       `records key signed for 5a5a with vault ${VAULT.slice(0, 4)}`, `records key signed for 5a5a with vault ${VAULT.slice(0, 4)}`,
       'account propose proved', `POST ${ROUTE(`/vaults/${VAULT}/start/account`)}`,
       'account approve proved', `POST ${ROUTE(`/vaults/${VAULT}/start/account`)}`,
+      /* And afresh again right before the secret is set, so a signer who left during the approvals is caught. */
+      `records key signed for 5a5a with vault ${VAULT.slice(0, 4)}`,
       'secret proved', `POST ${ROUTE(`/vaults/${VAULT}/start/secret`)}`,
       'copy 0 proved', `POST ${ROUTE(`/vaults/${VAULT}/start/copy`)}`,
     ]);
@@ -261,15 +278,21 @@ describe('creating a vault', () => {
     expect(kr.log.filter((l) => l === 'account approve proved')).toHaveLength(2);
     /*
      * RED WHEN: who holds the company and this vault is not read afresh by the person's account for each check before
-     * the secret is approved - once when the keys are given, and once for each of the two checks of the secret's readers.
+     * the secret is approved - once when the keys are given, once for each of the two checks of the secret's readers, and
+     * once more right before the secret is set.
      */
     expect(kr.log.filter((l) => l.startsWith('records key signed'))).toEqual([
       'records key signed for 5a5a', `records key signed for 5a5a with vault ${VAULT.slice(0, 4)}`, `records key signed for 5a5a with vault ${VAULT.slice(0, 4)}`,
+      `records key signed for 5a5a with vault ${VAULT.slice(0, 4)}`,
     ]);
-    expect(kr.log.lastIndexOf(`records key signed for 5a5a with vault ${VAULT.slice(0, 4)}`)).toBeLessThan(kr.log.indexOf('account propose proved', kr.log.indexOf('account adopt proved')));
+    /* The two checks of the secret's readers come before its run is raised; the third, before the secret is set. */
+    const vaultReads = kr.log.flatMap((l, i) => (l === `records key signed for 5a5a with vault ${VAULT.slice(0, 4)}` ? [i] : []));
+    expect(vaultReads[1]).toBeLessThan(kr.log.indexOf('account propose proved', kr.log.indexOf('account adopt proved')));
+    expect(vaultReads[2]).toBeLessThan(kr.log.indexOf('secret proved'));
+    expect(vaultReads[2]).toBeGreaterThan(kr.log.lastIndexOf('account approve proved'));
     await m.finishHandingOver('u1', 'c1', VAULT, () => {});
     /* Started: nothing about the secret is approved, so only the keys are given again. */
-    expect(kr.log.filter((l) => l.startsWith('records key signed'))).toHaveLength(4);
+    expect(kr.log.filter((l) => l.startsWith('records key signed'))).toHaveLength(5);
   });
 
   /*
@@ -403,7 +426,7 @@ describe('giving your vault keys where a vault is created', () => {
     kr.keys = null;
     expect(await m.giveYourVaultKeys('u1', 'c1')).toEqual({ of: 'refused', why: 'no-keys-here' });
     expect(kr.log).not.toContain('keys given');
-    kr.keys = { signerId: 's1', signingSecret: 'aa', wrappingSecret: 'bb', blinding: 'cc' };
+    kr.keys = { signerId: 's1', signingSecret: 'aa'.repeat(32), wrappingSecret: 'bb', blinding: 'cc' };
     kr.keysFail = new Error('the account said no');
     expect((await m.giveYourVaultKeys('u1', 'c1')).of).toBe('refused');
     expect(kr.log).not.toContain('keys given');

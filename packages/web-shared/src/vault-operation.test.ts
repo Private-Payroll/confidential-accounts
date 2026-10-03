@@ -8,7 +8,7 @@ import {
   type TemporaryKeys, type VaultChainView, type VaultService, type DepositInFlight, type SecretReaderSources,
   type PaymentInFlight, type PaymentsInFlight,
   checkWhatThisBrowserSent, sayWhatTheCheckFound, DepositStartedElsewhere, PaymentStillInFlight, PaymentStartedElsewhere,
-  settlePaymentInFlight,
+  settlePaymentInFlight, VaultStartOwed,
 } from './vault-operation.js';
 import type { Kept, KeptOnThisDevice } from './in-flight-on-this-device.js';
 import { chooseNoteForPayment, confirmPayment, poolAfterPayment } from './vault-builder.js';
@@ -22,7 +22,7 @@ import type { WireRecord } from '../../../src/midnight/sealed-record-wire.js';
 import { newWrappingKeypair } from '../../../src/core/crypto.js';
 import { answerVaultAsk, creatingTransactionOfNote } from './vault-worker-entry.js';
 import * as vaultModule from '../../../contracts/managed-vault/contract/index.js';
-import { openNonceSecrets, recordsKeypairFrom, currentDepositNonceKey, startNonceSecret } from '../../../src/midnight/company-nonce-secret.js';
+import { openNonceSecrets, recordsKeypairFrom, currentDepositNonceKey, startNonceSecret, startNonceSecretAgain } from '../../../src/midnight/company-nonce-secret.js';
 import { recordsReaderOf } from './deposit-on-device.js';
 import { depositNonceAt, DepositCoinAlreadyMade } from '../../../src/midnight/deposit-nonce.js';
 import { sealSecretCopy } from '../../../src/midnight/sealed-secret-copy.js';
@@ -59,6 +59,16 @@ const ACCOUNT = 'c0'.repeat(32) as AccountAddress;
 const LABEL = `co_${'c1'.repeat(32)}` as CompanyLabel;
 const committee = { committee: [{ tag: 'schnorr', value: '11'.repeat(32) }], threshold: 1 };
 const pacing = { sleep: async () => {}, waitMs: 3, everyMs: 1 };
+/*
+ * The vault's company account as the signer's own wallet reads it: an account that has adopted the vault. A test about
+ * a vault that is not the company's hands its own.
+ */
+const walletReadsTheVault = {
+  account: 'c0'.repeat(32) as AccountAddress,
+  onChain: async (v: string) => ({
+    holders: { committee: [{ tag: 'schnorr', value: '11'.repeat(32) }], threshold: 1, seats: ['4a'.repeat(32)], approvals: 1, adoptedVaults: [v] },
+  }),
+};
 /* Stand-in ledger parameters: the header the ledger writes them under, and nothing a ledger could read. */
 const PARAMS = btoa('midnight:ledger-parameters[v8]:stand-in');
 const view = (over: Partial<VaultChainView>): VaultChainView => ({ vault: VAULT, onChain: true, committee, ...over });
@@ -120,6 +130,20 @@ const startDoors = () => {
   };
 };
 /** A start whose chain already shows the secret set, so the company's records already hold it too. */
+/** The newest secret a nonce-secret record holds, opened with `companyKey`. */
+const newestSecretIn = (rec: Parameters<typeof openNonceSecrets>[0], companyKey: Uint8Array): string => {
+  const opened = openNonceSecrets(rec, VAULT, recordsKeypairFrom(companyKey));
+  return opened.secrets[opened.secrets.length - 1]!;
+};
+/**
+ * The records as a device left them after filing a fresh secret it never set: version 1 is the one the vault holds,
+ * version 2 is newer and the vault does not hold it. Answers the vault's secret.
+ */
+const anUnsetNewerSecret = async (records: (r: WireRecord) => MemorySealedPoolStore | { get: (v: string) => Promise<unknown>; put: (v: string, p: never) => Promise<unknown> }, companyKey: Uint8Array): Promise<string> => {
+  const first = (await records('nonce-secret').get(VAULT)) as Parameters<typeof openNonceSecrets>[0];
+  await records('nonce-secret').put(VAULT, startNonceSecretAgain(first, VAULT, [recordsReaderOf(companyKey)]) as never);
+  return newestSecretIn(first, companyKey);
+};
 const filedAlready = async () => {
   const doors = startDoors();
   await doors.records('nonce-secret').put(VAULT, startNonceSecret(VAULT, [recordsReaderOf(doors.me.companyKey)]));
@@ -186,7 +210,7 @@ describe('CREATING A VAULT', () => {
     const log: string[] = [];
     const { keys, held: kept } = memoryKeys(log);
     const doors = await filedAlready();
-    const done = await createCompanyVault({ ...pacing, ...doors, account: ACCOUNT, service: serviceFrom([oneKey, held], log), builder: builder(log), keys });
+    const done = await createCompanyVault({ ...pacing, ...walletReadsTheVault, ...doors, account: ACCOUNT, service: serviceFrom([oneKey, held], log), builder: builder(log), keys });
     /* RED WHEN: the press ends before the chain shows the vault started. */
     expect(done).toEqual({ vault: VAULT, state: 'started' });
     /* RED WHEN: a step of the start the chain already shows is sent again. */
@@ -201,7 +225,7 @@ describe('CREATING A VAULT', () => {
     const log: string[] = [];
     const { keys, held: kept } = memoryKeys(log);
     const service = serviceFrom([held], log, { deploy: async () => { log.push('sent deploy'); return { vault: 'ef'.repeat(32), txRef: 'd' }; } });
-    const e = await createCompanyVault({ ...pacing, ...(await filedAlready()), account: ACCOUNT, service, builder: builder(log), keys }).catch((x) => x);
+    const e = await createCompanyVault({ ...pacing, ...walletReadsTheVault, ...(await filedAlready()), account: ACCOUNT, service, builder: builder(log), keys }).catch((x) => x);
     expect(e).toBeInstanceOf(VaultHandoverOwed);
     expect(e.vault).toBe(VAULT);
     expect(e.message).toMatch(/answered with another vault than the one this device sent/);
@@ -212,7 +236,7 @@ describe('CREATING A VAULT', () => {
   it('NO COMMITTEE, NOTHING BUILT', async () => {
     const log: string[] = [];
     const service = serviceFrom([], log, { keys: async () => ({ committee: null, why: 'not everybody has given a key.', readers: [] }) });
-    await expect(createCompanyVault({ ...pacing, ...startDoors(), account: ACCOUNT, service, builder: builder(log), keys: memoryKeys(log).keys }))
+    await expect(createCompanyVault({ ...pacing, ...walletReadsTheVault, ...startDoors(), account: ACCOUNT, service, builder: builder(log), keys: memoryKeys(log).keys }))
       .rejects.toThrow('not everybody has given a key.');
     expect(log).toEqual([]);
   });
@@ -221,7 +245,7 @@ describe('CREATING A VAULT', () => {
     const log: string[] = [];
     const { keys, held: kept } = memoryKeys(log);
     const service = serviceFrom([], log, { deploy: async () => { throw new Error('the node did not answer'); } });
-    const e = await createCompanyVault({ ...pacing, ...startDoors(), account: ACCOUNT, service, builder: builder(log), keys }).catch((x) => x);
+    const e = await createCompanyVault({ ...pacing, ...walletReadsTheVault, ...startDoors(), account: ACCOUNT, service, builder: builder(log), keys }).catch((x) => x);
     expect(e).toBeInstanceOf(VaultHandoverOwed);
     expect(e.vault).toBe(VAULT);
     expect(kept.has(VAULT)).toBe(true);
@@ -233,19 +257,19 @@ describe('CREATING A VAULT', () => {
     const service = serviceFrom([], log, {
       deploy: async () => { throw Object.assign(new Error('refused. Nothing was sent.'), { nothingWasSent: true }); },
     });
-    await expect(createCompanyVault({ ...pacing, ...startDoors(), account: ACCOUNT, service, builder: builder(log), keys })).rejects.toThrow('refused. Nothing was sent.');
+    await expect(createCompanyVault({ ...pacing, ...walletReadsTheVault, ...startDoors(), account: ACCOUNT, service, builder: builder(log), keys })).rejects.toThrow('refused. Nothing was sent.');
     expect(kept.size).toBe(0);
   });
 
   it('A HANDOVER THAT DOES NOT SHOW, OR A VAULT THAT NEVER APPEARS, IS NEVER REPORTED CREATED', async () => {
     const log: string[] = [];
     const neverHeld = await createCompanyVault({
-      ...pacing, ...startDoors(), account: ACCOUNT, service: serviceFrom([oneKey], log), builder: builder(log), keys: memoryKeys(log).keys,
+      ...pacing, ...walletReadsTheVault, ...startDoors(), account: ACCOUNT, service: serviceFrom([oneKey], log), builder: builder(log), keys: memoryKeys(log).keys,
     }).catch((x) => x);
     expect(neverHeld).toBeInstanceOf(VaultHandoverOwed);
     expect(log.filter((l) => l === 'sent handover')).toHaveLength(3);
     const absent = await createCompanyVault({
-      ...pacing, ...startDoors(), account: ACCOUNT, service: serviceFrom([view({ onChain: false })], []), builder: builder([]), keys: memoryKeys([]).keys,
+      ...pacing, ...walletReadsTheVault, ...startDoors(), account: ACCOUNT, service: serviceFrom([view({ onChain: false })], []), builder: builder([]), keys: memoryKeys([]).keys,
     }).catch((x) => x);
     expect(absent).toBeInstanceOf(VaultHandoverOwed);
     expect(absent.message).toMatch(/has not shown the vault yet/);
@@ -259,7 +283,7 @@ describe('CREATING A VAULT', () => {
       const service = serviceFrom([], log, {
         chain: async () => { if (n++ < reads) return oneKey; throw new Error('the indexer did not answer'); },
       });
-      const e = await createCompanyVault({ ...pacing, ...startDoors(), account: ACCOUNT, service, builder: builder(log), keys: memoryKeys(log).keys }).catch((x) => x);
+      const e = await createCompanyVault({ ...pacing, ...walletReadsTheVault, ...startDoors(), account: ACCOUNT, service, builder: builder(log), keys: memoryKeys(log).keys }).catch((x) => x);
       expect(e, name).toBeInstanceOf(VaultHandoverOwed);
       expect(e.vault, name).toBe(VAULT);
       expect(e.message, name).toMatch(/the chain could not be read \(the indexer did not answer\)/);
@@ -269,7 +293,7 @@ describe('CREATING A VAULT', () => {
   it('A RESUME WITHOUT THE TEMPORARY KEY ON THIS DEVICE STOPS, AND SAYS ONLY THE DEPLOYING DEVICE CAN FINISH', async () => {
     const log: string[] = [];
     const e = await createCompanyVault({
-      ...pacing, ...startDoors(), account: ACCOUNT, service: serviceFrom([oneKey], log), builder: builder(log), keys: memoryKeys(log).keys,
+      ...pacing, ...walletReadsTheVault, ...startDoors(), account: ACCOUNT, service: serviceFrom([oneKey], log), builder: builder(log), keys: memoryKeys(log).keys,
     }, VAULT).catch((x) => x);
     expect(e).toBeInstanceOf(VaultHandoverOwed);
     expect(e.message).toMatch(/only the device that deployed it/);
@@ -278,9 +302,34 @@ describe('CREATING A VAULT', () => {
 
   it('a resume for a vault the committee already holds and the chain shows started finishes without building anything', async () => {
     const log: string[] = [];
-    await expect(createCompanyVault({ ...pacing, ...(await filedAlready()), account: ACCOUNT, service: serviceFrom([held], log), builder: builder(log), keys: memoryKeys(log).keys }, VAULT))
+    await expect(createCompanyVault({ ...pacing, ...walletReadsTheVault, ...(await filedAlready()), account: ACCOUNT, service: serviceFrom([held], log), builder: builder(log), keys: memoryKeys(log).keys }, VAULT))
       .resolves.toEqual({ vault: VAULT, state: 'started' });
     expect(log).toEqual(['key forgotten', 'read the block', 'read the block']);
+  });
+
+  it('A START REFUSES TO GO ON PAST ITS ADOPTION WITH A VAULT THE ACCOUNT HAS NOT ADOPTED, AS THE SIGNER\'S OWN WALLET READS IT', async () => {
+    const log: string[] = [];
+    const doors = await filedAlready();
+    const before = await doors.records('nonce-secret').versions(VAULT);
+    const unadopted = { ...walletReadsTheVault, onChain: async (v: string) => ({ ...(await walletReadsTheVault.onChain(v)), holders: { ...(await walletReadsTheVault.onChain(v)).holders, adoptedVaults: [] } }) };
+    const e = await createCompanyVault({ ...pacing, ...unadopted, ...doors, account: ACCOUNT, service: serviceFrom([held], log), builder: builder(log), keys: memoryKeys(log).keys }, VAULT)
+      .catch((x: Error) => x);
+    /* RED WHEN: a start opens the pool or sets a secret for a vault the service's rows say was adopted and the account's own set does not hold. */
+    expect(e).toBeInstanceOf(VaultStartOwed);
+    expect((e as Error).message).toMatch(/not one your company's account has adopted/);
+    expect(await doors.records('nonce-secret').versions(VAULT)).toEqual(before);
+  });
+
+  it('THE CHAIN WINS IN A START: A NEWER SECRET THE VAULT NEVER TOOK IS PASSED OVER, AND THE ONE IT HOLDS IS FILED AGAIN AS THE NEWEST', async () => {
+    const log: string[] = [];
+    const doors = await filedAlready();
+    const theVaults = await anUnsetNewerSecret(doors.records, doors.me.companyKey);
+    const b = { ...builder(log), secretIsTheVaults: async (i: { secret: string }) => i.secret === theVaults };
+    await expect(createCompanyVault({ ...pacing, ...walletReadsTheVault, ...doors, account: ACCOUNT, service: serviceFrom([held], log), builder: b, keys: memoryKeys(log).keys }, VAULT))
+      .resolves.toEqual({ vault: VAULT, state: 'started' });
+    /* RED WHEN: a start ends with the records' newest secret one the vault does not hold, so every deposit and payment after it refuses. */
+    const newest = (await doors.records('nonce-secret').get(VAULT))!;
+    expect([newest.version, newestSecretIn(newest, doors.me.companyKey)]).toEqual([3, theVaults]);
   });
 
   /* RED WHEN: a start goes on with a signer the vault's filed secret is not wrapped to - their sealed copy would be missing. */
@@ -289,7 +338,7 @@ describe('CREATING A VAULT', () => {
     const service = serviceFrom([held], log, { keys: async () => ({ committee, why: null, readers: ['5c'.repeat(32)] }) });
     const doors = startDoors();
     await doors.records('nonce-secret').put(VAULT, startNonceSecret(VAULT, [recordsReaderOf(doors.me.companyKey)]));
-    const e = await createCompanyVault({ ...pacing, ...doors, account: ACCOUNT, service, builder: builder(log), keys: memoryKeys(log).keys }, VAULT)
+    const e = await createCompanyVault({ ...pacing, ...walletReadsTheVault, ...doors, account: ACCOUNT, service, builder: builder(log), keys: memoryKeys(log).keys }, VAULT)
       .catch((x) => x);
     expect(e.name).toBe('VaultStartOwed');
     expect(e.vault).toBe(VAULT);
@@ -333,7 +382,7 @@ describe('CREATING A VAULT', () => {
       const secret = openNonceSecrets((await doors.records('nonce-secret').get(VAULT))!, VAULT, mine).secrets[0]!;
       const service = serviceFrom([over.view ?? held], log, { keys: async () => ({ committee, why: null, readers: readers(mine.publicKey) }) });
       const e = await createCompanyVault({
-        ...pacing, ...doors, account: ACCOUNT, service, builder: unset(copiesOf(mine.publicKey, secret))(log), keys: memoryKeys(log).keys,
+        ...pacing, ...walletReadsTheVault, ...doors, account: ACCOUNT, service, builder: unset(copiesOf(mine.publicKey, secret))(log), keys: memoryKeys(log).keys,
         ...(over.secretReaders === undefined ? {} : { secretReaders: over.secretReaders }),
       }, VAULT).catch((x) => x);
       return { e, log };
@@ -417,7 +466,7 @@ describe('CREATING A VAULT', () => {
         const { secretReaders, heldByThem } = companyOfOne();
         const service = serviceFrom([heldByThem], log, { keys: async () => ({ committee, why: null, readers: readers(mine) }) });
         const e = await createCompanyVault({
-          ...pacing, ...doors, secretReaders, account: ACCOUNT, service, builder: unset([])(log), keys: memoryKeys(log).keys,
+          ...pacing, ...walletReadsTheVault, ...doors, secretReaders, account: ACCOUNT, service, builder: unset([])(log), keys: memoryKeys(log).keys,
         }, VAULT).catch((x) => x);
         return { e, log, filed: await doors.records('nonce-secret').get(VAULT) };
       };
@@ -445,7 +494,7 @@ describe('CREATING A VAULT', () => {
   it('a vault held by some other committee is not handed over', async () => {
     const log: string[] = [];
     const other = view({ authority: { committee: [], threshold: 2, counter: '3', shape: 'committee' }, heldByCommittee: false, why: 'held by others.' });
-    await expect(createCompanyVault({ ...pacing, ...startDoors(), account: ACCOUNT, service: serviceFrom([other], log), builder: builder(log), keys: memoryKeys(log).keys }, VAULT))
+    await expect(createCompanyVault({ ...pacing, ...walletReadsTheVault, ...startDoors(), account: ACCOUNT, service: serviceFrom([other], log), builder: builder(log), keys: memoryKeys(log).keys }, VAULT))
       .rejects.toThrow(/held by others/);
     expect(log).toEqual([]);
   });
@@ -459,7 +508,7 @@ describe('THE POOL AND A DEPOSIT', () => {
     return (r: WireRecord) => s.get(r) ?? s.set(r, new MemorySealedPoolStore()).get(r)!;
   };
   const poolDoors = (service: VaultService, records = stores()) => ({
-    ...pacing, service, me, myRecordsKey: 'ff'.repeat(32), records,
+    ...pacing, ...walletReadsTheVault, service, me, myRecordsKey: 'ff'.repeat(32), records,
     signers: async () => [{ id: 'ada', wrappingPublicKey: wrapping.publicKey }],
   });
 
@@ -468,6 +517,11 @@ describe('THE POOL AND A DEPOSIT', () => {
     const records = stores();
     const ready = view({ heldByCommittee: true, state: 'AAAA', notes: [], everCreated: [] });
     await expect(openCompanyVaultPool(poolDoors(serviceFrom([ready], []), records), VAULT, undefined as never)).rejects.toThrow();
+    expect(await records('nonce-secret').get(VAULT)).toBeNull();
+    /* RED WHEN: the pool is filed before the check, so the service's refusal of it speaks before the check's own words. */
+    const refused = async () => { throw new Error('the readers were refused'); };
+    await expect(openCompanyVaultPool(poolDoors(serviceFrom([ready], []), records), VAULT, refused)).rejects.toThrow(/the readers were refused/);
+    expect(await records('pool').get(VAULT)).toBeNull();
     expect(await records('nonce-secret').get(VAULT)).toBeNull();
     const seen: string[][] = [];
     await openCompanyVaultPool(poolDoors(serviceFrom([ready], [], { keys: async () => ({ committee, why: null, readers: ['5c'.repeat(32)] }) }), records), VAULT,
@@ -492,6 +546,22 @@ describe('THE POOL AND A DEPOSIT', () => {
       ...poolDoors(serviceFrom([stillOurs], log), records), company: LABEL, account: ACCOUNT, inFlight: inFlightInMemory(), builder: builder(log),
       pay: async () => { log.push('paid'); return { transaction: 'X', leaves: [] }; },
     }, VAULT, { token: 'ab'.repeat(32), value: 1n })).rejects.toThrow(/not held by the company's committee/);
+    expect(log).toEqual([]);
+    expect(await records('deposit-journal').get(VAULT)).toBeNull();
+  });
+
+  it('A DEPOSIT INTO A VAULT THE ACCOUNT HAS NOT ADOPTED, AS THE SIGNER\'S OWN WALLET READS IT, IS REFUSED BEFORE A COIN IS CHOSEN', async () => {
+    const log: string[] = [];
+    const records = stores();
+    const fundableView = view({ heldByCommittee: true, fundable: true, state: 'AAAA', notes: [], everCreated: [] });
+    await openCompanyVaultPool(poolDoors(serviceFrom([fundableView], log), records), VAULT, nothingToCheck);
+    const e = await depositIntoCompanyVault({
+      ...poolDoors(serviceFrom([fundableView], log), records), company: LABEL, account: ACCOUNT, inFlight: inFlightInMemory(), builder: builder(log),
+      onChain: async (v: string) => ({ ...(await walletReadsTheVault.onChain(v)), holders: { ...(await walletReadsTheVault.onChain(v)).holders, adoptedVaults: [] } }),
+      pay: async () => { log.push('paid'); return { transaction: 'X', leaves: [] }; },
+    }, VAULT, { token: 'ab'.repeat(32), value: 7n }).catch((x: Error) => x);
+    /* RED WHEN: money goes into a vault the service's rows name and the account never adopted. */
+    expect((e as Error).message).toMatch(/not one your company's account has adopted/);
     expect(log).toEqual([]);
     expect(await records('deposit-journal').get(VAULT)).toBeNull();
   });
@@ -722,7 +792,7 @@ describe('A DEPOSIT THAT DOES NOT FINISH', () => {
     const kept = new Map<string, Kept<DepositInFlight>>();
     let now = 1_000_000;
     const doors = {
-      ...pacing, service: t.service, me, myRecordsKey: 'ff'.repeat(32), records,
+      ...pacing, ...walletReadsTheVault, service: t.service, me, myRecordsKey: 'ff'.repeat(32), records,
       signers: async () => [{ id: 'ada', wrappingPublicKey: wrapping.publicKey }],
       company: LABEL, account: ACCOUNT, builder: t.b, inFlight: inFlightInMemory(kept), clock: () => now,
       pay: async (ask: { transaction: string }) => ({ transaction: `${ask.transaction}+coins`, leaves: [] }),
@@ -1042,7 +1112,7 @@ describe('WHAT THIS BROWSER LAST SENT, CHECKED ON ITS OWN, AND TWO TABS OR TWO B
     const browser = (kept = new Map<string, Kept<DepositInFlight>>()) => ({
       kept,
       doors: {
-        ...pacing, service, me, myRecordsKey: 'ff'.repeat(32), records, signers, company: LABEL, account: ACCOUNT, builder: b,
+        ...pacing, ...walletReadsTheVault, service, me, myRecordsKey: 'ff'.repeat(32), records, signers, company: LABEL, account: ACCOUNT, builder: b,
         inFlight: inFlightInMemory<DepositInFlight>(kept), payments: inFlightInMemory<PaymentInFlight>(),
         pay: async (ask: { transaction: string }) => {
           w.asked += 1;
@@ -1192,7 +1262,7 @@ describe('A PRIVATE PAYMENT OUT', () => {
     const kept = new Map<string, Kept<PaymentInFlight>>();
     const inFlight: PaymentsInFlight = inFlightInMemory<PaymentInFlight>(kept);
     const doors = (over: Partial<VaultService> = {}, views = [held]) => ({
-      ...pacing, now: () => NOW, me, myRecordsKey: 'ff'.repeat(32), records, signers,
+      ...pacing, ...walletReadsTheVault, now: () => NOW, me, myRecordsKey: 'ff'.repeat(32), records, signers,
       service: serviceFrom(views, log, over), builder: builder(log), inFlight,
     });
     const pool = () => new SealedNotePool(records('pool'), { signerId: 'ada', wrappingSecret: wrapping.secret }, signers);
@@ -1234,6 +1304,30 @@ describe('A PRIVATE PAYMENT OUT', () => {
     expect(lines[0]).toMatchObject({ spent: { nonce: NOTE.nonce, token: TOKEN, value: 500n }, amount: 200n });
   });
 
+  it('A PAYMENT OUT OF A VAULT THE ACCOUNT HAS NOT ADOPTED, AS THE SIGNER\'S OWN WALLET READS IT, IS REFUSED BEFORE ANYTHING IS WRITTEN DOWN', async () => {
+    const t = await setUp();
+    const b = { ...t.doors(landsWhenSent()), onChain: async (v: string) => ({ holders: { committee: [], threshold: 1, seats: [], approvals: 1, adoptedVaults: [] } }) };
+    const e = await payPrivatelyFromCompanyVault(b, order()).catch((x: Error) => x);
+    /* RED WHEN: a payment is made out of a vault the service named and the account never adopted. */
+    expect((e as Error).message).toMatch(/not one your company's account has adopted/);
+    expect(await t.journal()).toEqual([]);
+    expect(t.log.filter((l) => l.startsWith('build') || l === 'choose')).toEqual([]);
+  });
+
+  it('THE CHAIN WINS BEFORE A PAYMENT READS ITS SECRET: A NEWER ONE THE VAULT NEVER TOOK IS PASSED OVER FOR THE ONE IT HOLDS', async () => {
+    const t = await setUp();
+    const b = t.doors(landsWhenSent());
+    const theVaults = await anUnsetNewerSecret(b.records, me.companyKey);
+    b.builder.secretIsTheVaults = async (i) => i.secret === theVaults;
+    let builtWith = '';
+    const build = b.builder.payout;
+    b.builder.payout = async (i) => { builtWith = i.secret; return build(i); };
+    await payPrivatelyFromCompanyVault(b, order());
+    /* RED WHEN: a payment refuses, or builds, under the records' newest secret when the vault holds an earlier one. */
+    expect(builtWith).toBe(theVaults);
+    expect((await b.records('nonce-secret').get(VAULT))!.version).toBe(3);
+  });
+
   /* RED WHEN: a payment is written down or built under a secret the vault's commitment does not name. */
   it('A PAYMENT UNDER A SECRET THE VAULT DOES NOT HOLD IS REFUSED BEFORE ANYTHING IS WRITTEN DOWN OR BUILT', async () => {
     const t = await setUp();
@@ -1242,8 +1336,9 @@ describe('A PRIVATE PAYMENT OUT', () => {
     b.builder.secretIsTheVaults = async (i) => { asked.push(i.state); return false; };
     const e = await payPrivatelyFromCompanyVault(b, order()).catch((x: Error) => x);
     expect((e as Error).message).toMatch(/not the one the vault holds on the chain, so nothing was built from it\. Nothing was sent/);
-    /* Asked of the state the payment would be built against. */
-    expect(asked).toEqual(['V']);
+    /* Asked of the state the payment would be built against, by the step that makes the chain's secret the records' newest and by the payment's own check. */
+    expect(asked.length).toBeGreaterThan(0);
+    expect(new Set(asked)).toEqual(new Set(['V']));
     expect(await t.journal()).toEqual([]);
     expect(t.log.filter((l) => l.startsWith('build'))).toEqual([]);
   });
@@ -1639,12 +1734,23 @@ describe('A PUBLIC PAYMENT OUT', () => {
   const doorsFor = (log: string[], answers: Array<boolean | null>, over: Partial<VaultService> = {}) => {
     let i = 0;
     return {
-      ...pacing, now: () => NOW,
+      ...pacing, ...walletReadsTheVault, now: () => NOW,
       service: serviceFrom([view({ heldByCommittee: true, fundable: true })], log, over),
       builder: builder(log),
       paidYet: async () => { log.push('asked the account'); return answers[Math.min(i++, answers.length - 1)]!; },
     };
   };
+
+  it('A PUBLIC PAYMENT OUT OF A VAULT THE ACCOUNT HAS NOT ADOPTED, AS THE SIGNER\'S OWN WALLET READS IT, IS REFUSED BEFORE ANYTHING IS BUILT', async () => {
+    const log: string[] = [];
+    const d = {
+      ...doorsFor(log, [false]),
+      onChain: async (v: string) => ({ holders: { committee: [], threshold: 1, seats: [], approvals: 1, adoptedVaults: [] } }),
+    };
+    /* RED WHEN: public money is paid out of a vault the service named and the account never adopted. */
+    await expect(payPubliclyFromCompanyVault(d, order())).rejects.toThrow(/not one your company's account has adopted/);
+    expect(log.filter((l) => l.startsWith('build') || l.startsWith('sent'))).toEqual([]);
+  });
 
   it('BUILDS THE VAULT\'S PUBLIC PAYOUT, SENDS IT THROUGH THE PUBLIC DOOR, AND IS DONE WHEN THE ACCOUNT RECORDS IT', async () => {
     const log: string[] = [];
@@ -1667,7 +1773,7 @@ describe('A PUBLIC PAYMENT OUT', () => {
     /* RED WHEN: the private operation takes a payment the leg names as public - it would spend a note on a public payee's leaf. */
     const wrapping = newWrappingKeypair();
     await expect(payPrivatelyFromCompanyVault({
-      ...pacing, now: () => NOW, me: { signerId: 'ada', wrappingSecret: wrapping.secret, companyKey: new Uint8Array(32) },
+      ...pacing, ...walletReadsTheVault, now: () => NOW, me: { signerId: 'ada', wrappingSecret: wrapping.secret, companyKey: new Uint8Array(32) },
       myRecordsKey: 'ff'.repeat(32), records: () => new MemorySealedPoolStore(),
       signers: async () => [], service: serviceFrom([view({ heldByCommittee: true, fundable: true })], log), builder: builder(log),
       inFlight: inFlightInMemory<PaymentInFlight>(),
@@ -1769,7 +1875,7 @@ describe('THE VAULT\'S COMMITTEE AND ITS SECRET, FROM THE CHAIN', () => {
   ) => {
     const service = serviceFrom([served], log, { keys: async () => ({ committee, why: null, readers: [a.mine] }) });
     return createCompanyVault({
-      ...pacing, ...a, account: ACCOUNT, service, builder: chainBuilder(log, chain)(), keys: memoryKeys(log).keys,
+      ...pacing, ...walletReadsTheVault, ...a, account: ACCOUNT, service, builder: chainBuilder(log, chain)(), keys: memoryKeys(log).keys,
     }, VAULT).catch((x) => x);
   };
   const newest = async (a: ReturnType<typeof ada>) => {
@@ -1870,7 +1976,7 @@ describe('THE VAULT\'S COMMITTEE AND ITS SECRET, FROM THE CHAIN', () => {
         setNonceSecret: async () => { log.push('built set'); return { tx: 'S' }; },
       };
       const service = serviceFrom([heldByThem], log, { keys: async () => ({ committee, why: null, readers: [a.mine] }) });
-      const e = await createCompanyVault({ ...pacing, ...a, account: ACCOUNT, service, builder: approved, keys: memoryKeys(log).keys }, VAULT)
+      const e = await createCompanyVault({ ...pacing, ...walletReadsTheVault, ...a, account: ACCOUNT, service, builder: approved, keys: memoryKeys(log).keys }, VAULT)
         .catch((x) => x);
       expect(log).not.toContain('built set');
       expect(e.message).toMatch(/records no longer hold the secret this device was about to use, so its first secret was not sent/);
@@ -1947,7 +2053,7 @@ describe('THE VAULT\'S COMMITTEE AND ITS SECRET, FROM THE CHAIN', () => {
       const records = (r: WireRecord) => s.get(r) ?? s.set(r, new MemorySealedPoolStore()).get(r)!;
       const ready = view({ heldByCommittee: true, fundable: true, state: 'QUJD', notes: [], everCreated: [] });
       const doors = {
-        ...pacing, service: serviceFrom([ready], log), me, myRecordsKey: 'ff'.repeat(32), records,
+        ...pacing, ...walletReadsTheVault, service: serviceFrom([ready], log), me, myRecordsKey: 'ff'.repeat(32), records,
         signers: async () => [{ id: 'ada', wrappingPublicKey: wrapping.publicKey }],
       };
       await openCompanyVaultPool(doors, VAULT, nothingToCheck);
@@ -1958,10 +2064,33 @@ describe('THE VAULT\'S COMMITTEE AND ITS SECRET, FROM THE CHAIN', () => {
         pay: async () => { log.push('paid'); return { transaction: 'X', leaves: [] }; },
       }, VAULT, { token: 'ab'.repeat(32), value: 7n }).catch((x: Error) => x);
       expect((e as Error).message).toMatch(/not the one the vault holds on the chain.*Nothing is filed or deposited/);
-      /* Asked of the very state the deposit would be built against. */
-      expect(asked).toEqual(['QUJD']);
+      /* Asked of the very state the deposit would be built against, by the step that makes the chain's secret the records' newest and by the deposit's own check. */
+      expect(asked.length).toBeGreaterThan(0);
+      expect(new Set(asked)).toEqual(new Set(['QUJD']));
       expect(log.filter((l) => l.startsWith('build') || l === 'paid')).toEqual([]);
       expect(await records('deposit-journal').get(VAULT)).toBeNull();
+    });
+
+    it('THE CHAIN WINS BEFORE A DEPOSIT CHOOSES ITS COIN: A NEWER SECRET THE VAULT NEVER TOOK IS PASSED OVER FOR THE ONE IT HOLDS', async () => {
+      const log: string[] = [];
+      const s = new Map<WireRecord, MemorySealedPoolStore>();
+      const records = (r: WireRecord) => s.get(r) ?? s.set(r, new MemorySealedPoolStore()).get(r)!;
+      const ready = view({ heldByCommittee: true, fundable: true, state: 'QUJD', notes: [], everCreated: [] });
+      const doors = {
+        ...pacing, ...walletReadsTheVault, service: serviceFrom([ready], log), me, myRecordsKey: 'ff'.repeat(32), records,
+        signers: async () => [{ id: 'ada', wrappingPublicKey: wrapping.publicKey }],
+      };
+      await openCompanyVaultPool(doors, VAULT, nothingToCheck);
+      const theVaults = await anUnsetNewerSecret(records, me.companyKey);
+      await depositIntoCompanyVault({
+        ...doors, company: LABEL, account: ACCOUNT, inFlight: inFlightInMemory(),
+        builder: { ...builder(log), secretIsTheVaults: async (i) => i.secret === theVaults },
+        pay: async () => { log.push('paid'); return { transaction: 'X', leaves: [] }; },
+      }, VAULT, { token: 'ab'.repeat(32), value: 7n }).catch(() => undefined);
+      /* RED WHEN: a deposit refuses, or chooses its coin, under the records' newest secret when the vault holds an earlier one. */
+      expect(log.some((l) => l.startsWith('build deposit'))).toBe(true);
+      const newest = (await records('nonce-secret').get(VAULT))!;
+      expect([newest.version, newestSecretIn(newest, me.companyKey)]).toEqual([3, theVaults]);
     });
   });
 });

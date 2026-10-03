@@ -3,7 +3,7 @@ import { rosterVaultKeys } from '../../../../src/core/vault-keys.js';
 import { READER_REFUSAL, type ReaderRefusalCode } from '../../../../src/midnight/secret-readers.js';
 import { whyNotTheCommittee } from 'vaults-web-shared/handover-check.js';
 import {
-  api, canOpenCompanies, currentUser, openAccount, openKeysWithWallet, recordsKeyFromTheWallet, viewingKeyFor,
+  api, canOpenCompanies, currentUser, holdersFromTheWallet, openAccount, openKeysWithWallet, recordsKeyFromTheWallet, viewingKeyFor,
 } from 'vaults-web-shared/keyring.js';
 import type { VaultAddress } from 'midnight-identity/profile/company-label';
 import { createCompanyVault, VaultHandoverOwed, VaultStartOwed, type VaultStage } from 'vaults-web-shared/vault-operation.js';
@@ -18,6 +18,7 @@ import { companyRoute } from './handover-state.js';
 import { keyringFor, keysOnTheWayIn } from './keyring-person.js';
 import { ACT_REFUSAL, ACTED, refusalOf, type ActRefusal } from './refusals.js';
 import { ACCOUNT_ORIGIN } from './session.js';
+import { filingJudgeFor } from './filing-judge.js';
 import { giveTheVaultKeys } from './vault-keys.js';
 import { theVaultBuilder } from './vault-builder.js';
 import { handoverOwed, readVaultRows } from './vault-rows.js';
@@ -254,8 +255,13 @@ async function run(personId: string, companyId: string, onStage: (stage: Creatin
       me: deviceSignerFrom({ signerId: o.keys.signerId, wrappingSecret: o.keys.wrappingSecret }, released.companyKey),
       myRecordsKey: recordsKeypairFrom(fromHex(released.companyKey)).publicKey as Hex,
       signers: roster.signers,
-      records: deviceRecordsFor(o.keys.signingSecret, roster.filers, () => currentUser()?.id ?? null),
+      records: deviceRecordsFor(o.keys.signingSecret, filingJudgeFor(companyId, released.company, released.account, o.roster),
+        () => currentUser()?.id ?? null),
       material: { signingSecret: o.keys.signingSecret, blinding: o.keys.blinding, scope: (o.keys as { scope?: Hex }).scope },
+      /* The vault's company account as this person's own wallet reads it for each step, with no press. */
+      onChain: async () => ({
+        holders: (await holdersFromTheWallet(ACCOUNT_ORIGIN, { company: released.company, account: released.account })).holders,
+      }),
       secretReaders: {
         company: released.company, committeeKey: released.signed.committeeKey,
         /*

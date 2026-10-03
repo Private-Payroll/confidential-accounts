@@ -10,15 +10,16 @@
  *
  *   · **read** and **file**: the person is an active signer of that company
  *     (`memberUserIds`, the one list of signers this server can read);
- *   · **file** also carries a valid signature, checked before this is asked.
+ *   · **file** also carries a valid signature, checked before this is asked,
+ *     by the key the company's seat directory holds for the person filing, in
+ *     an entry their own wallet signed, with a role that may file it
+ *     (`filerSeatOf`).
  *
- * **WHICH SIGNING KEY IS A SIGNER'S IS NOT A QUESTION THIS SERVER CAN ANSWER.**
- * The company's roster, with each signer's signing key, is sealed under the
- * company's viewing key, and this server does not hold it. So the check that a
- * filing's key is on the roster is made where the roster opens: on the device
- * that reads the record (`HttpSealedPoolStore`, `trustFiledBy`). What this
- * server refuses is anybody who is not a signer of the vault's company, and
- * any filing that is not signed over exactly what it is.
+ * **WHAT A DEVICE BELIEVES IS ITS OWN CHECK.** This server refuses anybody who
+ * is not a signer of the vault's company and any filing not signed by their
+ * own seat's key; a device reading the record checks the same seat against
+ * the chain its own wallet read (`HttpSealedPoolStore`), because this server is
+ * not taken at its word.
  *
  * **EVERY OTHER ANSWER IS NO**, and a chain that cannot be read is not a no: it
  * is thrown, so the route says the decision could not be made rather than that
@@ -50,26 +51,26 @@ const HEX64 = /^[0-9a-f]{64}$/u;
 const fold = (h: string): string => h.trim().toLowerCase().replace(/^0x/u, '');
 
 /**
- * **THE ANSWER TO WHO MAY TOUCH WHICH VAULT'S RECORDS**, from the chain's pin and
- * this product's rosters.
+ * Whether the seat directory of `companyId` holds, for `person`, a seat whose
+ * filing key is `filer` and whose role may file `record` (`filerSeatOf`).
  */
-/**
- * The filing key a member files a company's records under (`FilingKeyOfAMember.filingKey`),
- * or null when they have given none.
- */
-export type FilingKeyOf = (companyId: string, person: string) => Hex | null;
+export type MayFileUnder = (companyId: string, person: string, filer: Hex, record: WireRecord) => boolean;
 
+/**
+ * **THE ANSWER TO WHO MAY TOUCH WHICH VAULT'S RECORDS**, from the chain's pin,
+ * this product's rosters and the company's seat directory.
+ */
 export const signersOfTheVaultsCompany = (deps: {
   readonly accountOf: VaultAccountReader;
   readonly companies: () => readonly CompanyRoster[];
   /**
-   * **WHO A FILING IS FROM, BOUND TO WHO SENT IT.** When given, a person may
-   * file only records signed with the one filing key they gave for that
-   * company, so a version on record is always attributable to the member who
-   * filed it, and no member files under a key they did not give.
+   * **WHO A FILING IS FROM, BOUND TO WHO SENT IT.** A person may file only
+   * records signed with the key their own seat's entry names, so a version on
+   * record is always attributable to the seat that filed it, and no member
+   * files under a key their own wallet did not sign for.
    */
-  readonly filingKeyOf?: FilingKeyOf;
-}): MayTouchVaultRecords => async (person: string, vault: string, _record: WireRecord, act, filer?: Hex) => {
+  readonly mayFileUnder: MayFileUnder;
+}): MayTouchVaultRecords => async (person: string, vault: string, record: WireRecord, act, filer?: Hex) => {
   if (typeof person !== 'string' || person.length === 0) return false;
   if (!HEX64.test(vault)) return false;
   if (act === 'file' && (typeof filer !== 'string' || !HEX64.test(filer))) return false;
@@ -95,9 +96,8 @@ export const signersOfTheVaultsCompany = (deps: {
   if (matches.length !== 1) return false;
   const company = matches[0]!;
   if (!company.memberUserIds.includes(person)) return false;
-  if (act !== 'file' || deps.filingKeyOf === undefined) return true;
-  const given = deps.filingKeyOf(company.id, person);
-  return typeof given === 'string' && fold(given) === fold(filer!);
+  if (act !== 'file') return true;
+  return deps.mayFileUnder(company.id, person, fold(filer!) as Hex, record);
 };
 
 /** A contract state the chain holds and the vault's ledger cannot read: not a vault. */
@@ -146,14 +146,14 @@ export const mountVaultRecords = (app: express.Express, deps: {
   readonly records: { of(record: WireRecord): SealedPoolStore };
   readonly accountOf: VaultAccountReader;
   readonly companies: () => readonly CompanyRoster[];
-  /** Required on the product's mount: every filing is bound to the key its filer gave. */
-  readonly filingKeyOf: FilingKeyOf;
+  /** Every filing is bound to the key the filer's own seat entry names. */
+  readonly mayFileUnder: MayFileUnder;
 }): void => {
   app.use('/api/vaults', deps.signedIn, express.json({ limit: VAULT_RECORD_BODY_LIMIT }));
   app.use(vaultRecordsRoutes({
     records: deps.records,
     mayTouch: signersOfTheVaultsCompany({
-      accountOf: deps.accountOf, companies: deps.companies, filingKeyOf: deps.filingKeyOf,
+      accountOf: deps.accountOf, companies: deps.companies, mayFileUnder: deps.mayFileUnder,
     }),
   }));
 };

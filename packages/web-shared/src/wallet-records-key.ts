@@ -18,7 +18,8 @@
  */
 import { REQUEST_SCHEMA } from 'midnight-identity/profile/request';
 import {
-  readRecordsKeyAnswer, type AccountSeats, type RecordsKeyStatement, type VaultHolders,
+  readHoldersAnswer, readRecordsKeyAnswer, type AccountHolders, type AccountSeats, type DirectoryEntryStatement,
+  type RecordsKeyStatement, type VaultHolders,
 } from 'midnight-identity/profile/records-key';
 import type { AccountAddress, CompanyLabel, VaultAddress } from 'midnight-identity/profile/company-label';
 import { toHex, randomBytes } from '../../../src/core/crypto.js';
@@ -45,6 +46,8 @@ export interface RecordsKeyAsked {
   readonly seat: string;
   /** The vault whose secret is about to be approved, when there is one: the wallet reads who holds it. */
   readonly vault?: VaultAddress;
+  /** This person's filing key, when their directory entry is to be signed in the same press. */
+  readonly signingKey?: string;
   readonly atOrigin: string;
   readonly name: string;
   readonly rdns: string;
@@ -55,7 +58,7 @@ export interface RecordsKeyAsked {
 /** The ask on the wire. */
 const recordsKeyAsk = (parts: {
   name: string; rdns: string; purpose: string; nonce: string; expiresAt: number;
-  company: CompanyLabel; account: AccountAddress; seat: string; vault?: VaultAddress;
+  company: CompanyLabel; account: AccountAddress; seat: string; vault?: VaultAddress; signingKey?: string;
 }) => Object.freeze({
   schema: REQUEST_SCHEMA,
   kind: 'records-key' as const,
@@ -67,6 +70,7 @@ const recordsKeyAsk = (parts: {
   account: parts.account,
   seat: parts.seat.toLowerCase(),
   ...(parts.vault === undefined ? {} : { vault: parts.vault.toLowerCase() }),
+  ...(parts.signingKey === undefined ? {} : { signingKey: parts.signingKey.toLowerCase() }),
 });
 
 /** What comes back, checked: the statement, the committee key it verifies against, and who holds the account. */
@@ -76,6 +80,8 @@ export interface RecordsKeySigned {
   readonly seats: AccountSeats;
   /** Who holds the vault asked about, as the wallet read it; null when no vault was asked about. */
   readonly vault: VaultHolders | null;
+  /** This person's directory entry, signed in the same press; null when no filing key was named. */
+  readonly entry: DirectoryEntryStatement | null;
 }
 
 export async function askWalletToSignRecordsKey(
@@ -86,14 +92,75 @@ export async function askWalletToSignRecordsKey(
   const answer = await askWallet(view, walletOrigin, recordsKeyAsk({
     name: ask.name, rdns: ask.rdns, purpose: RECORDS_KEY_PURPOSE, nonce, expiresAt: now() + RECORDS_KEY_WINDOW_MS,
     company: ask.company, account: ask.account, seat: ask.seat, ...(ask.vault === undefined ? {} : { vault: ask.vault }),
+    ...(ask.signingKey === undefined ? {} : { signingKey: ask.signingKey }),
   }), dialog);
   const read = readRecordsKeyAnswer(answer, {
     atOrigin: ask.atOrigin, expectingNonce: nonce, company: ask.company, account: ask.account, seat: ask.seat.toLowerCase(),
     ...(ask.vault === undefined ? {} : { vault: ask.vault.toLowerCase() }),
+    ...(ask.signingKey === undefined ? {} : { signingKey: ask.signingKey.toLowerCase() }),
   });
   if (!read.ok) {
     const refused = read as Extract<typeof read, { ok: false }>;
     throw new WalletDidNotSignRecordsKey(refused.code, refused.says);
   }
-  return { committeeKey: read.committeeKey, statement: read.statement, seats: read.seats, vault: read.vault };
+  return { committeeKey: read.committeeKey, statement: read.statement, seats: read.seats, vault: read.vault, entry: read.entry };
+}
+
+/* ------------------------------------------------------------------ who holds it, with no press */
+
+const HOLDERS_WINDOW_MS = 2 * 60_000;
+const HOLDERS_PURPOSE =
+  'So this page believes only what your company\'s signers filed: your wallet says who holds your company now, as it reads '
+  + 'the network. Nothing is signed and nothing private is shared.';
+
+class WalletDidNotSayWhoHolds extends Error {
+  constructor(readonly code: string, message: string) {
+    super(message);
+    this.name = 'WalletDidNotSayWhoHolds';
+  }
+}
+
+export interface HoldersAsked {
+  readonly company: CompanyLabel;
+  readonly account: AccountAddress;
+  readonly atOrigin: string;
+  readonly name: string;
+  readonly rdns: string;
+  readonly now?: () => number;
+  readonly nonce?: string;
+}
+
+/** What comes back, checked: who holds the account and what it has adopted. */
+export interface HoldersRead {
+  readonly holders: AccountHolders;
+}
+
+/**
+ * **WHO HOLDS THE COMPANY NOW, AS THE PERSON'S OWN WALLET READS THE CHAIN.**
+ * Answered with no press: nothing private is asked for and nothing is signed.
+ * Asked afresh for every read that believes a filing, and never kept.
+ */
+export async function askWalletWhoHolds(
+  view: Openable, walletOrigin: string, ask: HoldersAsked, dialog?: WalletDialog,
+): Promise<HoldersRead> {
+  const now = ask.now ?? (() => Date.now());
+  const nonce = ask.nonce ?? toHex(randomBytes(16));
+  const answer = await askWallet(view, walletOrigin, Object.freeze({
+    schema: REQUEST_SCHEMA,
+    kind: 'holders' as const,
+    requester: Object.freeze({ name: ask.name, rdns: ask.rdns }),
+    purpose: HOLDERS_PURPOSE,
+    nonce,
+    expiresAt: now() + HOLDERS_WINDOW_MS,
+    company: ask.company,
+    account: ask.account,
+  }), dialog);
+  const read = readHoldersAnswer(answer, {
+    atOrigin: ask.atOrigin, expectingNonce: nonce, company: ask.company, account: ask.account,
+  });
+  if (!read.ok) {
+    const refused = read as Extract<typeof read, { ok: false }>;
+    throw new WalletDidNotSayWhoHolds(refused.code, refused.says);
+  }
+  return { holders: read.holders };
 }

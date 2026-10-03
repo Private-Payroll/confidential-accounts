@@ -10,8 +10,9 @@ import type { VaultAddress } from 'midnight-identity/profile/company-label';
 import { ChargedState, ContractMaintenanceAuthority, ContractState, StateValue } from '@midnightntwrk/ledger-v9';
 import { schnorr } from '@noble/curves/secp256k1.js';
 import {
-  ROLES_FIELD, SIGNER_LEAVES_FIELD, VAULT_ACCOUNT_FIELD, accountCarries, labelInAccountState, labelOnAccount, seatsInAccountState,
-  vaultInState, vaultOnChain,
+  ACCOUNT_THRESHOLD_FIELD, ADOPTED_VAULTS_FIELD, ROLES_FIELD, SIGNER_LEAVES_FIELD, VAULT_ACCOUNT_FIELD,
+  accountCarries, fromIndexerAt, holdersInAccountState, holdersOnChain, labelInAccountState, labelOnAccount,
+  seatsInAccountState, vaultInState, vaultOnChain,
 } from './company-label-on-chain.js';
 
 /*
@@ -200,5 +201,50 @@ describe('MORE THAN ONE SEAT', () => {
     expect(listed).toHaveLength(2);
     expect([...seatsInAccountState(bytes).seats].sort()).toEqual(listed);
     expect(listed).toEqual([hexOf(leafOfDevice(privateStateFor(1))), hexOf(leafOfDevice(privateStateFor(2)))].sort());
+  });
+});
+
+describe('WHO HOLDS THE ACCOUNT, ITS OWN THRESHOLD AND THE VAULTS IT HAS ADOPTED', () => {
+  it('reads the account\'s threshold and its adopted vaults as the account\'s own decoder does', async () => {
+    const sim = await AccountSimulator.liveAccount([privateStateFor(1), privateStateFor(2)], 2n);
+    /* A vault address ending in a zero byte, which the state holds trimmed. */
+    const vaults = [Uint8Array.from({ length: 32 }, (_, i) => i + 1), Uint8Array.from({ length: 32 }, (_, i) => (i < 31 ? 0x40 + i : 0))];
+    for (const v of vaults) await sim.adoptVault(v, [privateStateFor(1), privateStateFor(2)], 391 + v[0]!);
+    const bytes = (sim.contractStateForCall as { serialize(): Uint8Array }).serialize();
+    const read = holdersInAccountState(bytes);
+    /* RED WHEN: the threshold is read from another field, or its trimmed little-endian bytes are read wrong. */
+    expect(read.approvals).toBe(Number(sim.ledger.threshold));
+    expect(read.approvals).toBe(2);
+    /* RED WHEN: the vaults are read from another field, or one is read with any other bytes. */
+    expect([...read.adoptedVaults].sort()).toEqual([...sim.ledger.vaults].map((v: Uint8Array) => hexOf(v)).sort());
+    expect(read.adoptedVaults).toContain(hexOf(vaults[1]!));
+    expect([ACCOUNT_THRESHOLD_FIELD, ADOPTED_VAULTS_FIELD]).toEqual([5, 7]);
+    /* And everything a seats read gives is in it, read in the same answer. */
+    expect(read.seats).toEqual(seatsInAccountState(bytes).seats);
+  });
+
+  it('a read for an account carrying another label is not an answer, and no account is not unreadable', async () => {
+    const state = hexOf(await deployedState(LABEL_BYTES));
+    expect((await holdersOnChain(ACCOUNT, companyLabelOf(LABEL_BYTES), async () => state)).of).toBe('read');
+    /* RED WHEN: the holders of another company's account are handed back for this label. */
+    expect((await holdersOnChain(ACCOUNT, companyLabelOf(TRAILING_ZEROS), async () => state)).of).toBe('other-label');
+    expect(await holdersOnChain(ACCOUNT, companyLabelOf(LABEL_BYTES), async () => null)).toEqual({ of: 'no-account' });
+  });
+});
+
+describe('THE INDEXER\'S ANSWERS, READ AS WHAT THEY ARE', () => {
+  const answering = (body: unknown) => (async () => new Response(JSON.stringify(body), { status: 200 })) as unknown as typeof fetch;
+  const withFetch = async <T,>(f: typeof fetch, run: () => Promise<T>): Promise<T> => {
+    const was = globalThis.fetch;
+    globalThis.fetch = f;
+    try { return await run(); } finally { globalThis.fetch = was; }
+  };
+
+  it('AN EMPTY STATE IS NO CONTRACT, NOT AN UNREADABLE ONE', async () => {
+    /* RED WHEN: an action that left no state is read as a state that will not read, so a screen says to wait where nothing is there. */
+    expect(await withFetch(answering({ data: { contract: { state: '' } } }), () => fromIndexerAt('https://indexer.example')('ab'.repeat(32) as AccountAddress))).toBeNull();
+    expect(await withFetch(answering({ data: { contract: { state: '' } } }), () => vaultOnChain('9a'.repeat(32) as VaultAddress, fromIndexerAt('https://indexer.example')))).toEqual({ of: 'no-vault' });
+    /* And a state that is not hex is still refused. */
+    await expect(withFetch(answering({ data: { contract: { state: 'zz' } } }), () => fromIndexerAt('https://indexer.example')('ab'.repeat(32) as AccountAddress))).rejects.toThrow(/not a state/);
   });
 });

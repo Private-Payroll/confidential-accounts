@@ -64,10 +64,14 @@ import {
   mountVaultRecords, openedOnFirstUse, vaultAccountFromTheIndexer, whyVaultRecordsCannotBeKept,
   type VaultAccountReader,
 } from './vault-records-authority.js';
-import { openVaultRecords, refuseVaultsTheOperatorToolsKeep } from '../db/vault-records.js';
+import { openCompanyRecords, openVaultRecords, refuseVaultsTheOperatorToolsKeep } from '../db/vault-records.js';
+import { companyRecordsRoutes, MemoryCompanyRecordStore } from './company-records-route.js';
 import { MemorySealedPoolStore, type SealedPoolStore } from '../midnight/vault-pool.js';
-import type { WireRecord } from '../midnight/sealed-record-wire.js';
+import type { CompanyRecordStore, WireRecord } from '../midnight/sealed-record-wire.js';
 import { companyVaultRoutes, type VaultChain } from './company-vaults.js';
+import { directoryOf, seatDirectoryRoutes } from './seat-directory-route.js';
+import { filerSeatOf } from '../midnight/seat-directory.js';
+import { readContractAuthority } from '../midnight/ledger.js';
 import { vaultArtefactPlaces, vaultArtefactRoutes } from './vault-artefacts.js';
 import { parameterSources, startProvingParameters } from './proving-parameters.js';
 import {
@@ -548,8 +552,36 @@ app.use(cors());
   mountVaultRecords(app, {
     signedIn: (req, res, next) => authed(req, res, next),
     records, accountOf, companies: () => store.listAccounts(),
-    filingKeyOf: (companyId, person) => store.getFilingKey(companyId, person)?.filingKey ?? null,
+    mayFileUnder: (companyId, person, filer, record) =>
+      typeof filerSeatOf(directoryOf(store, companyId), person, filer, record) !== 'string',
   });
+
+  /*
+   * A COMPANY'S OWN SEALED RECORDS, filed by its seats: kept as a vault's are, in the database when there is one,
+   * and opened at the first request for the same reason.
+   */
+  const companyRecords: CompanyRecordStore = sqlForRecords
+    ? (() => {
+      let opened: Promise<CompanyRecordStore> | null = null;
+      const db = () => {
+        if (opened === null) { opened = openCompanyRecords(sqlForRecords); opened.catch(() => { opened = null; }); }
+        return opened;
+      };
+      return {
+        get: async (c, k, i) => (await db()).get(c, k, i),
+        versions: async (c, k, i) => (await db()).versions(c, k, i),
+        at: async (c, k, i, v) => (await db()).at(c, k, i, v),
+        put: async (r) => (await db()).put(r),
+      };
+    })()
+    : new MemoryCompanyRecordStore();
+  app.use(companyRecordsRoutes({
+    signedIn: (req, res, next) => authed(req, res, next),
+    member: (req, res, next) => member(req, res, next),
+    records: companyRecords,
+    accountOf: (accountId) => store.getAccount(accountId),
+    directoryOf: (accountId) => directoryOf(store, accountId),
+  }));
 
   /*
    * A COMPANY'S VAULTS: created, handed to the company's committee and funded
@@ -564,6 +596,31 @@ app.use(cors());
     everCreated: async () => { throw new Error(startup.started ? 'unreachable' : startup.refusal); },
   };
   app.use(vaultArtefactRoutes(vaultArtefactPlaces(process.cwd(), process.env)));
+  const theChain = startup.started
+    ? await vaultChainFromTheIndexer({ url: startup.deployment.indexerUrl, wsUrl: startup.deployment.indexerWsUrl })
+    : refusingChain;
+  /*
+   * A COMPANY'S SEAT DIRECTORY: every filing served whole, each new one checked against this server's own read of
+   * the account on the chain - its committee, the seats it holds now and its approval threshold.
+   */
+  app.use(seatDirectoryRoutes({
+    signedIn: (req, res, next) => authed(req, res, next),
+    member: (req, res, next) => member(req, res, next),
+    store,
+    chain: async (accountId, seats) => {
+      const [address, status] = await Promise.all([ledger.address(accountId), ledger.status(accountId)]);
+      if (!address || !status) return null;
+      const read = await readContractAuthority((a) => theChain.contractState(a as Hex), address.value);
+      if (read.state === 'absent') return null;
+      if (read.state !== 'read') throw new Error(read.why);
+      const held: string[] = [];
+      for (const seat of seats) if ((await ledger.holdsSigner?.(accountId, seat as Hex)) === true) held.push(seat);
+      return {
+        seats: { committee: read.authority.committee.map((k) => ({ tag: k.tag, value: k.value.toLowerCase() })), threshold: read.authority.threshold, seats: held },
+        approvals: status.threshold,
+      };
+    },
+  }));
   app.use(companyVaultRoutes({
     signedIn: (req, res, next) => authed(req, res, next),
     member: (req, res, next) => member(req, res, next),
@@ -579,9 +636,7 @@ app.use(cors());
       };
     },
     ledger,
-    chain: startup.started
-      ? await vaultChainFromTheIndexer({ url: startup.deployment.indexerUrl, wsUrl: startup.deployment.indexerWsUrl })
-      : refusingChain,
+    chain: theChain,
     verifierKeys: vaultVerifierKeysIn(process.cwd()),
     /* A company account is handed to its committee with the temporary key this deployment recorded, and no
      * money goes into a vault until the chain shows the account held by the committee. */

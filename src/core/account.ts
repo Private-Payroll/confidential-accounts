@@ -183,7 +183,7 @@ export class RecordsKeyNotSignedForYourSeat extends VaultKeysNotYours {
   constructor() {
     super();
     this.message = 'your records key was not signed by your own wallet for the seat you hold on this company, so it is '
-      + 'not kept, and the one given before is. Open the company with your own wallet on this device and set up its '
+      + 'not kept; any records key given before stays as it was. Open the company with your own wallet on this device and set up its '
       + 'vaults again.';
     this.name = 'RecordsKeyNotSignedForYourSeat';
   }
@@ -810,6 +810,23 @@ function resealDropBox(
   return sealToInbox(
     { byUserId: box.byUserId ?? null, handover: sealToInbox(inner, nextInbox) },
     nextInbox);
+}
+
+/**
+ * **WHETHER A WALLET'S STATEMENT OVER A RECORDS KEY IS FOR THIS SIGNER'S SEAT**:
+ * signed by the committee key the signer gives, over the records key they give,
+ * for the seat the roster holds for them, under the company's label.
+ */
+function statementVerifiesForTheSeat(
+  rec: SealedAccount, account: Account, seat: Signer,
+  keys: { readonly committeeKey: { readonly tag: string; readonly value: string }; readonly recordsKey: Hex },
+  statement: Hex, signedSeat: Hex,
+): boolean {
+  const label = rec.companyLabel ?? account.companyLabel ?? null;
+  const ownSeat = typeof seat.leafCommitment === 'string' ? seat.leafCommitment.toLowerCase() : null;
+  return label !== null && ownSeat !== null && signedSeat.toLowerCase() === ownSeat
+    && recordsKeySignedBy(label, { tag: keys.committeeKey.tag, value: keys.committeeKey.value.toLowerCase() },
+      { recordsKey: keys.recordsKey.toLowerCase(), seat: signedSeat.toLowerCase(), signature: statement.toLowerCase() });
 }
 
 export class AccountService {
@@ -4217,9 +4234,11 @@ export class AccountService {
    * - this service is handed it on every request that needs it - can rewrite an
    * entry whole, its signing key included. Given once: the same keys again are
    * accepted, and different ones are refused, because every one of them is
-   * worked out again from the same wallet and the same seat. The member's filing
-   * key, which is their roster signing key, is kept beside it for the vault
-   * records' door.
+   * worked out again from the same wallet and the same seat. **A statement
+   * over the records key is kept only when it verifies**, on the first give as
+   * on every later one. Which key a member's filings are signed with is not
+   * kept here: it is in the company's seat directory, in an entry the member's
+   * own wallet signed.
    */
   giveVaultKeys(accountId: string, viewingKey: Hex, userId: string, given: SignedVaultKeys): 'given' | 'already-given' {
     const { rec, account } = this.load(accountId, viewingKey);
@@ -4245,24 +4264,25 @@ export class AccountService {
        * over its records key, for the seat the roster holds for this signer. One that does not is refused and the
        * one kept stays, so a bad give cannot leave every approval refusing until this signer signs again.
        */
-      const label = rec.companyLabel ?? account.companyLabel ?? null;
-      const ownSeat = typeof seat.leafCommitment === 'string' ? seat.leafCommitment.toLowerCase() : null;
-      if (label === null || ownSeat === null || signedSeat.toLowerCase() !== ownSeat
-        || !recordsKeySignedBy(label, { tag: seat.vaultKeys.committeeKey.tag, value: seat.vaultKeys.committeeKey.value.toLowerCase() },
-          { recordsKey: seat.vaultKeys.recordsKey.toLowerCase(), seat: signedSeat.toLowerCase(), signature: statement.toLowerCase() })) {
+      if (!statementVerifiesForTheSeat(rec, account, seat, seat.vaultKeys, statement, signedSeat)) {
         throw new RecordsKeyNotSignedForYourSeat();
       }
       seat.vaultKeys = { ...seat.vaultKeys, recordsKeyStatement: statement, recordsKeySeat: signedSeat };
       this.save(rec, account, viewingKey, rec.pendingSigners);
       return 'given';
     }
+    const statement = given.recordsKeyStatement ?? null;
+    const signedSeat = given.recordsKeySeat ?? null;
+    /* **AND ON THE FIRST GIVE THE SAME CHECK**: a statement that does not verify is refused, and nothing is kept. */
+    if (statement !== null && signedSeat !== null
+      && !statementVerifiesForTheSeat(rec, account, seat, given, statement, signedSeat)) {
+      throw new RecordsKeyNotSignedForYourSeat();
+    }
     seat.vaultKeys = {
       committeeKey: { ...given.committeeKey }, recordsKey: given.recordsKey, signature: given.signature,
-      ...(given.recordsKeyStatement && given.recordsKeySeat
-        ? { recordsKeyStatement: given.recordsKeyStatement, recordsKeySeat: given.recordsKeySeat } : {}),
+      ...(statement !== null && signedSeat !== null ? { recordsKeyStatement: statement, recordsKeySeat: signedSeat } : {}),
     };
     this.save(rec, account, viewingKey, rec.pendingSigners);
-    this.store.putFilingKey({ accountId, userId, filingKey: seat.signingPublicKey.toLowerCase() as Hex });
     return 'given';
   }
 

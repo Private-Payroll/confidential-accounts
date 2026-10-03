@@ -1736,19 +1736,6 @@ export interface PayrollRun {
 }
 
 /**
- * **THE FILING KEY ONE MEMBER FILES A VAULT'S SEALED RECORDS UNDER.** It is
- * their roster signing key, and it is kept here, outside the roster, so the
- * service can refuse a filing from a member signed with any other key without
- * opening the roster. It says nothing about any vault committee key: those are
- * kept in the sealed roster, and outside it only in an index with no names in it.
- */
-export interface FilingKeyOfAMember {
-  accountId: string;
-  userId: string;
-  filingKey: Hex;
-}
-
-/**
  * **A VAULT CREATED FROM THIS COMPANY'S PAGE.** A record that it was deployed
  * here and what committee it was to be handed to - never a record of who holds
  * it now. That is read from the chain every time it is asked.

@@ -30,10 +30,15 @@
  */
 import { sha256 } from '@noble/hashes/sha2.js';
 import { canonical, sign, signingPublicKeyOf, toHex, utf8, verify, type Hex } from '../core/crypto.js';
-import { whyThisIsNotASealedPool, type SealedPool, type SealedRecordKind } from './vault-pool.js';
+import { whyThisIsNotASealedPool, type SealedPool, type SealedRecordKind, type WrappedPoolKey } from './vault-pool.js';
+import type { Sealed } from '../core/crypto.js';
 
 export type WireRecord = SealedRecordKind;
 export const WIRE_RECORDS: readonly WireRecord[] = ['pool', 'deposit-journal', 'payment-journal', 'nonce-secret'];
+
+/** A company's own records, as the signed company-record store files them. */
+export const COMPANY_RECORD_KINDS = ['state', 'roster', 'policy', 'person', 'run', 'proposal', 'offer'] as const;
+export type CompanyRecordKind = (typeof COMPANY_RECORD_KINDS)[number];
 
 /** One filed version, as it crosses the wire. */
 export interface WireVersion {
@@ -189,3 +194,160 @@ export const verifiedFiler = (record: WireRecord, rec: SealedPool): Hex | null =
   const { filedBy: _signature, ...unsigned } = rec;
   return verify(filingMessage(record, unsigned), f.signature, f.publicKey) ? f.publicKey : null;
 };
+
+/* ------------------------------------------------------------------ *
+ * a company's own records
+ * ------------------------------------------------------------------ */
+
+/**
+ * **ONE VERSION OF ONE OF A COMPANY'S OWN RECORDS, AS IT IS FILED**: sealed on
+ * the device under a fresh key wrapped to each signer, exactly as a vault's
+ * records are, and signed by the seat that filed it over what it is - the
+ * company, the kind, the record's id, its version and the key epoch it is
+ * sealed under - and the bytes. The server reads nothing but those labels.
+ */
+export interface SealedCompanyRecord {
+  company: string;
+  kind: CompanyRecordKind;
+  id: string;
+  version: number;
+  /** The company key's epoch the record is sealed under. */
+  keyEpoch: number;
+  sealed: Sealed;
+  wrapped: WrappedPoolKey[];
+  filedBy?: { publicKey: Hex; signature: Hex };
+}
+
+const RECORD_ID = /^[A-Za-z0-9_-]{1,64}$/u;
+const COMPANY = /^[A-Za-z0-9_-]{1,64}$/u;
+
+export const assertCompanyRecordKind = (kind: unknown): CompanyRecordKind => {
+  if (typeof kind !== 'string' || !(COMPANY_RECORD_KINDS as readonly string[]).includes(kind)) {
+    throw new SealedRecordWireRefused(`${JSON.stringify(kind)} is not a record a company keeps`);
+  }
+  return kind as CompanyRecordKind;
+};
+
+export const assertCompanyRecordId = (id: unknown): string => {
+  if (typeof id !== 'string' || !RECORD_ID.test(id)) {
+    throw new SealedRecordWireRefused('the record is not named as 1 to 64 letters, digits, - or _');
+  }
+  return id;
+};
+
+/** Why `parsed` is not a sealed company record for this company, kind and id, or null when it is one. */
+export const whyThisIsNotACompanyRecord = (
+  parsed: unknown, expect: { readonly company: string; readonly kind: CompanyRecordKind; readonly id: string },
+): string | null => {
+  if (parsed === null || typeof parsed !== 'object') return 'it is not a record';
+  const r = parsed as Record<string, unknown>;
+  if (r.company !== expect.company || r.kind !== expect.kind || r.id !== expect.id) {
+    return 'it is a record for another company, kind or id than the one it is filed as';
+  }
+  if (!Number.isSafeInteger(r.version) || (r.version as number) < 1) return 'its version is not a whole number';
+  if (!Number.isSafeInteger(r.keyEpoch) || (r.keyEpoch as number) < 0) return 'it names no key epoch';
+  if (!Array.isArray(r.wrapped) || r.wrapped.length === 0) return 'it carries no wrapped keys, so nobody could open it';
+  if (r.sealed === null || typeof r.sealed !== 'object') return 'it carries no sealed payload';
+  if (r.filedBy !== undefined) {
+    const f = r.filedBy as Record<string, unknown> | null;
+    if (f === null || typeof f !== 'object' || typeof f.publicKey !== 'string' || !/^[0-9a-f]{64}$/u.test(f.publicKey)
+      || typeof f.signature !== 'string' || !/^[0-9a-f]{128}$/u.test(f.signature)) {
+      return 'it says who filed it in a form that is not a signing key and a signature';
+    }
+  }
+  return null;
+};
+
+const COMPANY_FILING_DOMAIN = 'confidential-accounts/company-filing/v1';
+
+/** The exact text a filer signs for a company record: everything but the signature. */
+export const companyFilingMessage = (rec: SealedCompanyRecord): string => {
+  const { filedBy: _signature, ...unsigned } = rec;
+  return canonical({ domain: COMPANY_FILING_DOMAIN, ...unsigned });
+};
+
+/** The record, signed by the seat filing it. The signing secret stays on the device. */
+export const signCompanyFiling = (rec: SealedCompanyRecord, signingSecret: Hex): SealedCompanyRecord => {
+  const { filedBy: _replaced, ...unsigned } = rec;
+  return {
+    ...unsigned,
+    filedBy: { publicKey: signingPublicKeyOf(signingSecret), signature: sign(companyFilingMessage(unsigned), signingSecret) },
+  };
+};
+
+/** The signing key that filed this company record, or `null` for none or one that does not cover exactly it. */
+export const verifiedCompanyFiler = (rec: SealedCompanyRecord): Hex | null => {
+  const f = rec.filedBy;
+  if (!f || typeof f.publicKey !== 'string' || typeof f.signature !== 'string') return null;
+  return verify(companyFilingMessage(rec), f.signature, f.publicKey) ? f.publicKey : null;
+};
+
+/** One filed company record version, as it crosses the wire. */
+export interface CompanyWireVersion {
+  readonly kind: CompanyRecordKind;
+  readonly id: string;
+  readonly version: number;
+  readonly digest: string;
+  readonly body: string;
+}
+
+export const toCompanyWire = (rec: SealedCompanyRecord): CompanyWireVersion => {
+  const body = JSON.stringify(rec);
+  return { kind: rec.kind, id: rec.id, version: rec.version, digest: digestOfBody(body), body };
+};
+
+/** A company record version that arrived, checked against what the receiver expects. */
+export const fromCompanyWire = (
+  message: unknown,
+  expect: { readonly company: string; readonly kind: CompanyRecordKind; readonly id: string; readonly version?: number },
+): { readonly wire: CompanyWireVersion; readonly sealed: SealedCompanyRecord } => {
+  if (message === null || typeof message !== 'object') throw new SealedRecordWireRefused('the message is not an object');
+  const m = message as Record<string, unknown>;
+  if (assertCompanyRecordKind(m.kind) !== expect.kind || assertCompanyRecordId(m.id) !== expect.id) {
+    throw new SealedRecordWireRefused('it says it is another record than the one expected');
+  }
+  const version = assertWireVersionNumber(m.version);
+  if (expect.version !== undefined && version !== expect.version) {
+    throw new SealedRecordWireRefused(`it says it is version ${version}, and version ${expect.version} was expected`);
+  }
+  if (typeof m.body !== 'string') throw new SealedRecordWireRefused('it carries no body');
+  if (typeof m.digest !== 'string' || m.digest !== digestOfBody(m.body)) {
+    throw new SealedRecordWireRefused('its body does not match the digest it carries');
+  }
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(m.body);
+  } catch {
+    throw new SealedRecordWireRefused('its body is not JSON');
+  }
+  if (JSON.stringify(parsed) !== m.body) {
+    throw new SealedRecordWireRefused('its body is not written the one way a record is written, so its digest is not the digest of what would be filed');
+  }
+  const why = whyThisIsNotACompanyRecord(parsed, expect);
+  if (why !== null) throw new SealedRecordWireRefused(why);
+  if ((parsed as SealedCompanyRecord).version !== version) {
+    throw new SealedRecordWireRefused('the version it says and the version inside it are not the same');
+  }
+  return { wire: { kind: expect.kind, id: expect.id, version, digest: m.digest, body: m.body }, sealed: parsed as SealedCompanyRecord };
+};
+
+const assertCompany = (company: string): string => {
+  if (!COMPANY.test(company)) throw new SealedRecordWireRefused('the company is not named as an account id');
+  return company;
+};
+
+/** The company record paths, spelled once. */
+export const companyWirePaths = {
+  newest: (company: string, kind: CompanyRecordKind, id: string) => `/api/accounts/${assertCompany(company)}/records/${kind}/${id}`,
+  versions: (company: string, kind: CompanyRecordKind, id: string) => `/api/accounts/${assertCompany(company)}/records/${kind}/${id}/versions`,
+  one: (company: string, kind: CompanyRecordKind, id: string, version: number) => `/api/accounts/${assertCompany(company)}/records/${kind}/${id}/${version}`,
+};
+
+/** What a store of company records keeps: every version of every record, in order, and nothing changed. */
+export interface CompanyRecordStore {
+  get(company: string, kind: CompanyRecordKind, id: string): Promise<SealedCompanyRecord | null>;
+  versions(company: string, kind: CompanyRecordKind, id: string): Promise<readonly SealedCompanyRecord[]>;
+  at(company: string, kind: CompanyRecordKind, id: string, version: number): Promise<SealedCompanyRecord | null>;
+  /** Files the next version, or throws `VaultPoolVersionAlreadyFiled` for a taken one and refuses a gap. */
+  put(rec: SealedCompanyRecord): Promise<void>;
+}

@@ -61,6 +61,8 @@ import { AccountService, openAccount, sealAccount } from '../../src/core/account
 import { MidnightCommitments } from '../../src/midnight/commitments.js';
 import { rosterVaultKeys, signVaultKeys } from '../../src/core/vault-keys.js';
 import { seatsInAccountState, vaultInState } from '../../apps/wallet/src/chain/company-label-on-chain.js';
+import { directoryChainOver, fileOwnEntry, judgeOver, mayFileUnderOver, walletReadsOver } from './the-chain-as-a-wallet-reads-it.js';
+import { seatDirectoryRoutes } from '../../src/server/seat-directory-route.js';
 import { ChainLedger } from '../../src/wiring/chain.js';
 import { companyVaultRoutes, type VaultChain } from '../../src/server/company-vaults.js';
 import { mountVaultRecords, vaultAccountFromTheIndexer } from '../../src/server/vault-records-authority.js';
@@ -318,7 +320,8 @@ describe.skipIf(!KEYS_ON_DISK)('A COMPANY VAULT, FROM THE SIGNER\'S DEVICE [need
     store.putAccount(sealAccount({
       id: ACCOUNT_ID, createdAt: new Date().toISOString(), name: 'Northwind', companyLabel: label,
       signers: [{
-        id: 'ada', userId: 'ada', name: 'Ada', status: 'active', role: 'admin', leafCommitment: null,
+        /* The founding signer's own seat, as the chain seats it: a records key is believed only for the seat held. */
+        id: 'ada', userId: 'ada', name: 'Ada', status: 'active', role: 'admin', leafCommitment: hex(leafOfDevice(founder)),
         signingPublicKey: signing.publicKey, wrappingPublicKey: wrapping.publicKey,
       }],
       policy: { threshold: 1, limitsByRole: {} }, recovery: { signerIds: ['ada'], threshold: 1 }, wrappedKeys: [],
@@ -390,6 +393,7 @@ describe.skipIf(!KEYS_ON_DISK)('A COMPANY VAULT, FROM THE SIGNER\'S DEVICE [need
       customer: { balanceOwnLegs: async () => { throw new Error('no company wallet is asked'); }, coinPublicKey: () => '', encryptionPublicKey: () => '', release: async () => {} },
       sponsor: payer, storagePassword: async () => 'x',
     } as never);
+    app.use(seatDirectoryRoutes({ signedIn, member, store, chain: directoryChainOver(() => chain.contract(company)) }));
     app.use(companyVaultRoutes({
       signedIn, member, store,
       giveVaultKeys: (id, vk, person, given) => accounts.giveVaultKeys(id, vk as Hex, person, given),
@@ -416,7 +420,7 @@ describe.skipIf(!KEYS_ON_DISK)('A COMPANY VAULT, FROM THE SIGNER\'S DEVICE [need
         queryContractState: async (a) => { const c = chain.contract(a); return c === null ? null : { data: asRuntime(c).data }; },
       }),
       companies: () => store.listAccounts().map((a) => ({ id: a.id, contractAddress: company, memberUserIds: a.memberUserIds })),
-      filingKeyOf: (id, person) => store.getFilingKey(id, person)?.filingKey ?? null,
+      mayFileUnder: mayFileUnderOver(store),
     });
     await new Promise<void>((resolve) => { server = app.listen(0, '127.0.0.1', () => resolve()); });
     base = `http://127.0.0.1:${(server.address() as AddressInfo).port}`;
@@ -469,8 +473,21 @@ describe.skipIf(!KEYS_ON_DISK)('A COMPANY VAULT, FROM THE SIGNER\'S DEVICE [need
     });
     return { status: r.status, body: await r.json().catch(() => ({})) };
   };
+  /* The page's own requests, as `api` makes them. */
+  const apiAs = (as = 'ada') => async (path: string, init?: RequestInit) =>
+    http(path, { method: String(init?.method ?? 'GET'), ...(init?.body === undefined ? {} : { body: JSON.parse(String(init.body)) }) }, as);
+  /* Who filed each version, judged afresh for every read: the directory read again and the account read off the chain. */
+  const judge = () => judgeOver({
+    api: apiAs(), accountId: ACCOUNT_ID, label, accountState: () => chain.contract(company),
+    roster: async () => openAccount(store.getAccount(ACCOUNT_ID)!, viewingKey),
+  });
   const records = (secret = signing.secret) => (record: WireRecord) =>
-    new HttpSealedPoolStore(record, wireAs('ada'), secret, async () => new Set([signing.publicKey]));
+    new HttpSealedPoolStore(record, wireAs('ada'), secret, judge());
+  /* The founding signer's own directory entry, signed by their wallet and filed from their device once the account is the committee's. */
+  const fileEntry = () => fileOwnEntry({
+    api: apiAs(), accountId: ACCOUNT_ID, person: 'ada', identity: identityFromWords(words), label,
+    companyKey: me.companyKey, signingKey: signing.publicKey, seat: hex(leafOfDevice(founder)),
+  });
   const signers = async () => [{ id: 'ada', wrappingPublicKey: wrapping.publicKey }];
   /** The founding signer's three, as their keyring hands them to the page. */
   const material = () => ({ signingSecret: hex(founder.secretKey), blinding: hex(founder.blinding), scope: hex(founder.scope) });
@@ -478,6 +495,7 @@ describe.skipIf(!KEYS_ON_DISK)('A COMPANY VAULT, FROM THE SIGNER\'S DEVICE [need
   const createDoors = () => ({
     ...pacing, account: readAccountAddress(company)!, service: service(), builder: builder(), keys,
     me, myRecordsKey: recordsReaderOf(me.companyKey).publicKey, signers, records: records(), material: material(),
+    onChain: walletReads,
     /* What the founding signer's wallet gave, and reads off the chain afresh for each check: who holds the account and the vault. */
     secretReaders: {
       company: label, committeeKey: committeeKeyFor(identityFromWords(words), label),
@@ -488,6 +506,8 @@ describe.skipIf(!KEYS_ON_DISK)('A COMPANY VAULT, FROM THE SIGNER\'S DEVICE [need
       roster: async () => rosterVaultKeys(openAccount(store.getAccount(ACCOUNT_ID)!, viewingKey)),
     },
   });
+  /* Who holds the company and which vaults it adopted, as the signer's own wallet reads them off the chain for each step. */
+  const walletReads = walletReadsOver(() => chain.contract(company));
   const giveKeys = () => http(`/api/accounts/${ACCOUNT_ID}/vault-keys`, {
     method: 'PUT',
     body: {
@@ -546,7 +566,7 @@ describe.skipIf(!KEYS_ON_DISK)('A COMPANY VAULT, FROM THE SIGNER\'S DEVICE [need
     expect(sent.some((b) => b.includes(temporaryKeys.get(vault)!.value))).toBe(false);
 
     /* ---- no money goes in while the committee does not hold it: read from the chain ---- */
-    await expect(openCompanyVaultPool({ ...pacing, service: service(), me, myRecordsKey: recordsReaderOf(me.companyKey).publicKey, signers, records: records() }, vault, async () => {}))
+    await expect(openCompanyVaultPool({ ...pacing, service: service(), account: readAccountAddress(company)!, onChain: walletReads, me, myRecordsKey: recordsReaderOf(me.companyKey).publicKey, signers, records: records() }, vault, async () => {}))
       .rejects.toThrow(/not held by the company's committee/);
     /* The vault itself takes no money before it is started, so no deposit can even be built for it.
      * RED WHEN: a vault fresh from its deploy takes money. */
@@ -576,12 +596,15 @@ describe.skipIf(!KEYS_ON_DISK)('A COMPANY VAULT, FROM THE SIGNER\'S DEVICE [need
      */
     const early = await createCompanyVault(doors, vault).catch((e) => e);
     expect(early, String(early?.message)).toBeInstanceOf(VaultStartOwed);
+    /* The keys its secret would be wrapped to are checked before anything is filed: the account is not the committee's yet. */
     expect(early.message).toMatch(/account is not held by its own committee yet/);
+    expect(early.stoppedAt).toBe('account-not-held');
+    expect(await serverStores.get('pool')!.get(vault)).toBeNull();
     const adoptedAt = chain.applied.length;
     /* The deploy, the handover, and the adoption raised, approved and carried out: no secret run was raised. */
     expect(chain.applied.map((a) => a.ok)).toEqual([true, true, true, true, true]);
     expect(readAsUnproven).toEqual(['propose', 'approve', 'adopt']);
-    const poolDoors = { ...pacing, service: service(), me, myRecordsKey: recordsReaderOf(me.companyKey).publicKey, signers, records: records() };
+    const poolDoors = { ...pacing, service: service(), account: readAccountAddress(company)!, onChain: walletReads, me, myRecordsKey: recordsReaderOf(me.companyKey).publicKey, signers, records: records() };
 
     /*
      * ---- NO MONEY GOES IN WHILE THE ACCOUNT IS STILL THE TEMPORARY KEY'S, AND THE WALLET IS NOT ASKED ----
@@ -636,6 +659,7 @@ describe.skipIf(!KEYS_ON_DISK)('A COMPANY VAULT, FROM THE SIGNER\'S DEVICE [need
 
     /* ---- with the account held by its committee, the wallet reads it again and the vault is started ---- */
     /* RED WHEN: the press ends before the chain shows the vault adopted, its secret set and every copy written. */
+    expect(await fileEntry()).toBe('filed');
     await expect(createCompanyVault(createDoors(), vault)).resolves.toEqual({ vault, state: 'started' });
     /*
      * The deploy from the first press; then the handover and the adoption, raised, approved and carried out; the

@@ -120,6 +120,25 @@ describe('A SIGNER\'S VAULT KEYS LIVE IN THEIR OWN ROSTER ENTRY', () => {
       /* Said as keys that are not this signer's, so the route answers it as it answers those. */
       expect(new RecordsKeyNotSignedForYourSeat()).toBeInstanceOf(VaultKeysNotYours);
     });
+
+    it('A STATEMENT GIVEN WITH THE FIRST SET OF KEYS IS CHECKED AS ONE GIVEN AGAIN IS: one that does not verify is refused and nothing is kept', () => {
+      const h = hers();
+      const other = identityFromSecret(new Uint8Array(32).fill(8));
+      for (const [why, bad] of [
+        /* RED WHEN: a first give keeps a statement that is no signature. */
+        ['not a signature over it', { signature: 'ab'.repeat(64), seat: h.seat }],
+        /* RED WHEN: a first give keeps a statement signed by another wallet. */
+        ['signed by another wallet', signRecordsKey(other, label, companyKey, h.seat)],
+        /* RED WHEN: a first give keeps a statement for a seat the roster does not hold for this signer. */
+        ['for another seat', signRecordsKey(me, label, companyKey, '8d'.repeat(32))],
+      ] as const) {
+        expect(() => accounts.giveVaultKeys(company, viewingKey, 'usr_ada', h.withIt(bad)), why).toThrow(RecordsKeyNotSignedForYourSeat);
+        expect(rosterVaultKeys(accounts.open(company, viewingKey)).find((r) => r.signerId === ada.signerId)!.keys, why).toBeNull();
+      }
+      /* And a first give whose statement does verify keeps it. */
+      expect(accounts.giveVaultKeys(company, viewingKey, 'usr_ada', h.withIt(h.statement))).toBe('given');
+      expect(kept().recordsKeyStatement).toBe(h.statement.signature);
+    });
   });
 
   it('NOBODY CAN PUT A KEY IN ANOTHER SIGNER\'S NAME: keys signed by any other seat are refused, and the roster is untouched', () => {
@@ -173,8 +192,7 @@ describe('THE SERVICE\'S STORE NO LONGER SAYS WHICH PERSON HOLDS WHICH COMMITTEE
     expect(store.getVaultKeyIndex(company)).toEqual(vaultKeyIndexOf(accounts.open(company, viewingKey)));
     expect(store.getVaultKeyIndex(company)!.signerCount).toBe(2);
     expect(store.getVaultKeyIndex(company)!.committeeKeys).toEqual([key(1)]);
-    /* A member's filing key, their roster signing key, is kept for the records' door beside it. */
-    expect(store.getFilingKey(company, 'usr_ada')!.filingKey)
-      .toBe(accounts.open(company, viewingKey).signers.find((s) => s.id === ada.signerId)!.signingPublicKey.toLowerCase());
+    /* RED WHEN: the service writes which key a member files under; that is the seat directory's, in an entry their own wallet signed. */
+    expect(store.directoryFilingsOf(company)).toEqual([]);
   });
 });

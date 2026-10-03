@@ -1,7 +1,8 @@
 import { sha256 } from '@noble/hashes/sha2.js';
 import { bytesToHex } from '@noble/hashes/utils.js';
 import { utf8 } from './crypto.js';
-import type { SealedAccount, SealedProposal, SealedRun, Attestation, SealedEmployee, Invite, Installation, PluginEvent, User, CompanyVault, FilingKeyOfAMember } from './types.js';
+import type { SealedAccount, SealedProposal, SealedRun, Attestation, SealedEmployee, Invite, Installation, PluginEvent, User, CompanyVault } from './types.js';
+import type { DirectoryFiling } from '../midnight/seat-directory.js';
 import type { CompanyVaultKeyIndex } from './vault-keys.js';
 import { provenanceOf, type Marked, type WiringName } from './provenance.js';
 
@@ -23,8 +24,14 @@ export interface Shape {
    * only record of whose each key is.
    */
   vaultKeyIndex: Record<string, CompanyVaultKeyIndex>;
-  /** Each member's filing key, keyed by `accountId:userId`. */
-  filingKeys: Record<string, FilingKeyOfAMember>;
+  /**
+   * **EACH COMPANY'S SEAT DIRECTORY, AS EVERY FILING THAT MADE IT**, keyed by
+   * account, versions in order. Plain text: public keys, seats and roles, and
+   * the person each seat's entry was filed by. Every entry is signed by its
+   * seat's own wallet and every change by a quorum (`seat-directory.ts`), so
+   * what is kept here is what a device checks, never what it takes on trust.
+   */
+  directories: Record<string, DirectoryFiling[]>;
   /**
    * The signatures collected so far for one committee change of one contract,
    * keyed by the contract's address. Each was made in its signer's own wallet
@@ -72,7 +79,7 @@ export interface CollectedCommitteeSignatures {
 
 export const emptyShape = (): Shape =>
   ({ accounts: {}, proposals: {}, runs: {}, attestations: {}, employees: {}, invites: {},
-    installations: {}, pluginEvents: {}, users: {}, writtenBy: [], companyVaults: {}, vaultKeyIndex: {}, filingKeys: {},
+    installations: {}, pluginEvents: {}, users: {}, writtenBy: [], companyVaults: {}, vaultKeyIndex: {}, directories: {},
     committeeSignatures: {} });
 
 /**
@@ -479,9 +486,19 @@ export class MemoryStore {
   }
   putVaultKeyIndex(k: CompanyVaultKeyIndex) { this.data.vaultKeyIndex[k.accountId] = k; this.flush(); }
   getVaultKeyIndex(accountId: string): CompanyVaultKeyIndex | null { return this.data.vaultKeyIndex[accountId] ?? null; }
-  putFilingKey(k: FilingKeyOfAMember) { this.data.filingKeys[`${k.accountId}:${k.userId}`] = k; this.flush(); }
-  getFilingKey(accountId: string, userId: string): FilingKeyOfAMember | null {
-    return this.data.filingKeys[`${accountId}:${userId}`] ?? null;
+  /** Every filing of a company's directory, in version order. */
+  directoryFilingsOf(accountId: string): readonly DirectoryFiling[] { return this.data.directories[accountId] ?? []; }
+  /**
+   * **FILES THE NEXT VERSION OF A COMPANY'S DIRECTORY, AND ONLY THE NEXT.** The
+   * version is claimed and written in one step, so two filings of one version
+   * cannot both land: the second answers false and nothing of it is kept.
+   */
+  fileDirectory(accountId: string, filing: DirectoryFiling): boolean {
+    const filed = this.data.directories[accountId] ?? [];
+    if (filing.version !== filed.length + 1) return false;
+    this.data.directories[accountId] = [...filed, filing];
+    this.flush();
+    return true;
   }
   putCommitteeSignatures(c: CollectedCommitteeSignatures) {
     this.data.committeeSignatures[c.address.toLowerCase()] = c; this.flush();

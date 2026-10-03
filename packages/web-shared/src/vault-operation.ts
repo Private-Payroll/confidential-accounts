@@ -77,13 +77,56 @@ import { NO_ASSET } from '../../../src/core/assets.js';
 import type { GovernedCallOrder, OpenedRound, SignerMaterial } from './governed-call-builder.js';
 import type { AccountAddress, CompanyLabel, VaultAddress } from 'midnight-identity/profile/company-label';
 import {
-  depositCoinOnThisDevice, startVaultNonceSecretAgainOnThisDevice, startVaultNonceSecretOnThisDevice,
-  type DeviceRecords, type DeviceSigner,
+  depositCoinOnThisDevice, fileTheChainsSecretAsTheNewest, startVaultNonceSecretAgainOnThisDevice,
+  startVaultNonceSecretOnThisDevice, type DeviceRecords, type DeviceSigner,
 } from './deposit-on-device.js';
 import type {
   CreatingTransactionAnswer, SecretRunOnTheWire, SigningKeyOnTheWire, StartStandingOnTheWire, VaultBuilderClient,
 } from './vault-worker-client.js';
 import type { Kept, KeptOnThisDevice } from './in-flight-on-this-device.js';
+import type { AccountHolders } from 'midnight-identity/profile/records-key';
+
+/**
+ * **A VAULT'S COMPANY ACCOUNT, AS THE SIGNER'S OWN WALLET READ IT OFF THE CHAIN
+ * FOR THIS STEP**: who holds the account and which vaults it has adopted.
+ * Asked afresh every time, with no press; never what the service reports.
+ */
+export interface VaultAsTheWalletRead {
+  readonly holders: AccountHolders;
+}
+
+/** Where a step reads its vault's company account from the person's own wallet. */
+interface VaultOnChainDoors {
+  readonly onChain: (vault: Hex) => Promise<VaultAsTheWalletRead>;
+}
+
+/** A vault that is not one its company's account adopted as the chain shows it. Nothing is set up, put in or paid from it. */
+export class VaultNotTheCompanys extends Error {
+  constructor(readonly vault: Hex, why: string) {
+    super(`${why} Nothing was sent.`);
+    this.name = 'VaultNotTheCompanys';
+  }
+}
+
+/**
+ * **THE VAULT IS ONE THE COMPANY'S ACCOUNT ADOPTED, AS THE CHAIN SHOWS IT, AND
+ * NEVER AS THE SERVICE SAYS.** Read by the signer's own wallet for this step:
+ * the vault is in the set of vaults the company's account itself has adopted.
+ * Answers who holds the account, as read, for the step to go on with.
+ */
+export async function theVaultAsItsSignersHoldIt(doors: VaultOnChainDoors, vault: Hex): Promise<AccountHolders> {
+  let read: VaultAsTheWalletRead;
+  try {
+    read = await doors.onChain(vault);
+  } catch (e) {
+    throw new VaultNotTheCompanys(vault, `your wallet could not say who holds this vault's company (${(e as Error)?.message ?? e}).`);
+  }
+  if (!read.holders.adoptedVaults.includes(String(vault).toLowerCase())) {
+    throw new VaultNotTheCompanys(vault, 'this vault is not one your company\'s account has adopted, as your own wallet read the '
+      + 'chain, so nothing is put into or paid from it.');
+  }
+  return read.holders;
+}
 
 /** What the service says the chain holds for one vault. */
 export interface VaultChainView {
@@ -510,6 +553,8 @@ async function startCompanyVault(doors: CreateVaultDoors, vault: Hex): Promise<V
   }
 
   /* ---- b. the pool and the nonce secret: made here, or read back and held to the chain ---- */
+  /* From here on the vault must be one the account itself has adopted, as the wallet reads it: never the service's row. */
+  await asTheWalletReadIt(doors, vault);
   const checked = (filedTo: readonly Hex[]) => everyReaderChecksOut(doors, vault, filedTo);
   let secret = await openCompanyVaultPool(doors, vault, checked);
   doors.progress?.('setting the secret');
@@ -596,6 +641,8 @@ async function startCompanyVault(doors: CreateVaultDoors, vault: Hex): Promise<V
         return { vault, state: 'awaiting-approvals', awaiting: { round: 'first-secret', proposal: found.proposal as Hex, approvals: found.approvals, needed: found.needed } };
       }
       await stillTheNewestFiled(doors, vault, secret, 'its first secret');
+      /* Read afresh right before the secret is set, not only before the run was raised: a signer may have left since. */
+      await everyReaderChecksOut(doors, vault, run.copies.map((c) => String(c.reader)));
       const { tx } = await buildOrOwe(vault, 'setting its first secret', () => doors.builder.setNonceSecret({
         vault, account: at.chain.account, run, secret: secret.secret, proposal: found!.proposal, opensAt: found!.opensAt, closesAt: found!.closesAt,
         chain: {
@@ -606,6 +653,11 @@ async function startCompanyVault(doors: CreateVaultDoors, vault: Hex): Promise<V
       await sent(vault, 'setting its first secret', () => startDoorsOf(doors, vault).secret(vault, tx));
       at = await untilTheChainShows(doors, vault, 'setting its first secret', (n) => n.standing.secret?.set === true, secret);
     }
+  }
+  /* The chain wins: the records' newest version is made the one whose secret the vault now holds. */
+  if (await theChainWins(doors, vault, at.chain.vaultState) === 'none-names-it') {
+    throw new VaultStartOwed(vault, 'the vault holds a secret that no version of the company\'s records you can open holds, '
+      + 'so no money can be put in or paid out with it. Nothing was sent.');
   }
   if (!at.standing.secret!.rootIsThisRuns) {
     throw new VaultStartOwed(vault, 'the sealed copies its signers approved are not the ones made from the company\'s '
@@ -697,6 +749,32 @@ async function everyReaderChecksOut(doors: CreateVaultDoors, vault: Hex, readers
   if (refused !== null) throw new VaultStartOwed(vault, refused.says, refused.code);
 }
 
+/**
+ * **THE CHAIN WINS** (`fileTheChainsSecretAsTheNewest`), over the vault's state
+ * as one block showed it: the records' newest nonce secret is made the one the
+ * vault's own commitment names. What follows still checks the secret it
+ * builds from against that commitment, so a vault no filed version names is
+ * refused there.
+ */
+async function theChainWins(
+  doors: PoolDoors & { readonly builder: Pick<VaultBuilderClient, 'secretIsTheVaults'> }, vault: Hex, state: string,
+): Promise<'the-newest' | 'filed-again' | 'none-names-it'> {
+  return fileTheChainsSecretAsTheNewest({
+    vault, me: doors.me, records: doors.records,
+    secretIsTheVaults: (secret) => doors.builder.secretIsTheVaults({ vault, state, secret }),
+  });
+}
+
+/** The start's own form of the check: a vault that fails it is a start not finished, naming why. */
+async function asTheWalletReadIt(doors: CreateVaultDoors, vault: Hex): Promise<AccountHolders> {
+  try {
+    return await theVaultAsItsSignersHoldIt(doors, vault);
+  } catch (e) {
+    const stoppedAt = e instanceof VaultNotTheCompanys ? READER_REFUSAL.walletReadNothing : undefined;
+    throw new VaultStartOwed(vault, (e as Error)?.message ?? String(e), stoppedAt);
+  }
+}
+
 /** Builds one of the vault's own start calls here, or says the start is not finished and nothing was sent. */
 async function buildOrOwe(vault: Hex, what: string, build: () => Promise<{ tx: string }>): Promise<{ tx: string }> {
   try {
@@ -711,6 +789,9 @@ export type { SecretRunOnTheWire, StartStandingOnTheWire };
 
 export interface PoolDoors extends Pacing {
   readonly service: VaultService;
+  /** The company's account and the vault, as the signer's own wallet reads them for each step. */
+  readonly account: AccountAddress;
+  readonly onChain: VaultOnChainDoors['onChain'];
   readonly me: DeviceSigner;
   /** This device's own records key, so it is not wrapped to twice. */
   readonly myRecordsKey: Hex;
@@ -823,6 +904,13 @@ export async function openCompanyVaultPool(
   const everCreated = new Set(view.everCreated ?? []);
   const pool = new SealedNotePool(doors.records('pool'),
     { signerId: doors.me.signerId, wrappingSecret: doors.me.wrappingSecret }, doors.signers);
+  /*
+   * The keys a new nonce secret would be wrapped to are checked before either half is filed: the service files
+   * nothing for an account its own committee does not hold, and that check says so in words a person can act on.
+   */
+  const secretOwed = await doors.records('nonce-secret').get(vault) === null;
+  const readers = secretOwed ? (await doors.service.keys()).readers : [];
+  if (secretOwed) await beforeFiling(readers);
   if (await doors.records('pool').get(vault) === null) {
     if ((view.notes ?? []).length > 0 || everCreated.size > 0) {
       throw new Error('the chain has already put money in this vault and it has no pool, so a new empty pool '
@@ -830,9 +918,7 @@ export async function openCompanyVaultPool(
     }
     await pool.create(vault, { notes: [] });
   }
-  if (await doors.records('nonce-secret').get(vault) === null) {
-    const { readers } = await doors.service.keys();
-    await beforeFiling(readers);
+  if (secretOwed) {
     const others: NonceSecretReader[] = readers
       .filter((k) => k.toLowerCase() !== doors.myRecordsKey.toLowerCase())
       .map((publicKey) => ({ publicKey }));
@@ -1193,6 +1279,8 @@ export async function depositIntoCompanyVault(
   if (view.fundable !== true) {
     throw new Error(view.why ?? 'this company\'s account is not held by its committee yet, so no money goes in.');
   }
+  /* The vault is one the company's account adopted, as this signer's own wallet reads the chain. */
+  await theVaultAsItsSignersHoldIt(doors, vault);
   /*
    * **AN EARLIER DEPOSIT FROM THIS DEVICE IS SETTLED FIRST.** Recorded if it has
    * landed, forgotten if it never can; while it still can, no coin is chosen
@@ -1218,6 +1306,8 @@ export async function depositIntoCompanyVault(
   const commitments = (coin: { nonce: Hex; token: Hex; value: bigint }) => doors.builder.commitments({
     vault, coin: { nonce: coin.nonce, token: coin.token, value: coin.value.toString() },
   });
+  /* The records' newest secret is the vault's own, filed again from an earlier version when it is not. */
+  await theChainWins(doors, vault, view.state);
   doors.progress?.('choosing the coin');
   const { coin } = await depositCoinOnThisDevice({
     vault, money, me: doors.me, signers: doors.signers, records: doors.records,
@@ -1304,6 +1394,7 @@ export interface PublicDepositDoors extends Pacing {
   readonly builder: VaultBuilderClient;
   readonly company: CompanyLabel;
   readonly account: AccountAddress;
+  readonly onChain: VaultOnChainDoors['onChain'];
   readonly pay: DepositDoors['pay'];
   /** The time now, in milliseconds. */
   readonly clock?: () => number;
@@ -1357,6 +1448,7 @@ export async function depositPubliclyIntoCompanyVault(
   if (view.fundable !== true) {
     throw new Error(view.why ?? 'this company\'s account is not held by its committee yet, so no money goes in.');
   }
+  await theVaultAsItsSignersHoldIt(doors, vault);
   const parameters = await chainParametersForADeposit(doors, vault);
   if (typeof doors.builder.publicDeposit !== 'function') {
     throw new Error('this page cannot build a public deposit, so nothing was built or sent. No money moved. Reload the page and try again; if it happens again, the service needs attention.');
@@ -1687,6 +1779,8 @@ export async function payPrivatelyFromCompanyVault(
     throw new Error('No payment can be made out of this vault yet, so none was prepared or recorded. Nothing was '
       + `sent.${view.why ? ` Reason: ${view.why}` : ''}`);
   }
+  /* The vault the service named is one the company's account adopted, as this signer's own wallet reads the chain. */
+  await theVaultAsItsSignersHoldIt(doors, vault);
   /*
    * **AN EARLIER PAYMENT FROM THIS BROWSER IS SETTLED FIRST.** Recorded if it
    * has landed, forgotten if it never can; while it still can, no note is
@@ -1734,6 +1828,7 @@ export async function payPrivatelyFromCompanyVault(
    * is not the secret it holds; a record this device cannot open stops the
    * payment before a line is written.
    */
+  await theChainWins(doors, vault, chain.vaultState);
   const { secret } = await readTheSecretBack(doors, vault);
   if (!(await doors.builder.secretIsTheVaults({ vault, state: chain.vaultState, secret }))) {
     throw new Error('the secret the company\'s records hold for this vault is not the one the vault holds on the chain, so '
@@ -1880,6 +1975,8 @@ export class PublicPaymentNotYetSeen extends Error {
 export interface PublicPayoutDoors extends Pacing {
   readonly service: VaultService;
   readonly builder: VaultBuilderClient;
+  readonly account: AccountAddress;
+  readonly onChain: VaultOnChainDoors['onChain'];
   readonly now?: () => Date;
   /**
    * Whether the company's account records this payment as made, asked again
@@ -1927,6 +2024,7 @@ export async function payPubliclyFromCompanyVault(
     throw new Error('No payment can be made out of this vault yet, so none was prepared or recorded. Nothing was '
       + `sent.${view.why ? ` Reason: ${view.why}` : ''}`);
   }
+  await theVaultAsItsSignersHoldIt(doors, vault);
   const chain = await doors.service.payoutState(vault);
   if (chain.vault.toLowerCase() !== vault) {
     throw new Error('the chain was read for a different vault, so nothing was built. Nothing was sent.');

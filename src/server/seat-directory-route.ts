@@ -1,0 +1,123 @@
+/**
+ * **A COMPANY'S SEAT DIRECTORY ON THE PRODUCT'S SERVER: SERVED WHOLE, AND
+ * FILED ONE CHECKED VERSION AT A TIME.**
+ *
+ * The directory says which key each seat files the company's records under
+ * (`seat-directory.ts`). This server keeps every filing that made it and
+ * serves them all, so a device replays and checks them itself rather than
+ * taking a table this server computed. Before it files one it makes the same
+ * checks a device makes, against its own read of the chain:
+ *
+ *   · **an entry** must be filed by the signed-in person it names, who is a
+ *     member of the company; signed by that seat's own wallet with a key the
+ *     account lists on its committee now; for a seat the account holds now;
+ *     and the first for that seat, that key and that person.
+ *   · **a change by a quorum** - a role, or a retirement with the last version
+ *     of each record the seat filed - must be signed against the account's
+ *     approval threshold as the chain holds it now, by that many seats the
+ *     account holds now.
+ *
+ * A company whose account is not held by its signers' committee is refused
+ * with words saying what resolves it. Nothing here opens a record or holds a
+ * key that could.
+ */
+import express from 'express';
+import type { CompanyLabel } from 'midnight-identity/profile/company-label';
+import type { SealedAccount } from '../core/types.js';
+import {
+  applyFiling, believedDirectory, DirectoryRefused, emptyDirectory,
+  type ChainHolders, type Directory, type DirectoryFiling,
+} from '../midnight/seat-directory.js';
+
+/** What the chain says of a company's account, read by this server: null when it has no contract this server can read. */
+export type DirectoryChainRead = (accountId: string, seats: readonly string[]) => Promise<ChainHolders | null>;
+
+/** What this route needs of the store. */
+export interface DirectoryStore {
+  getAccount(accountId: string): SealedAccount | null;
+  directoryFilingsOf(accountId: string): readonly DirectoryFiling[];
+  fileDirectory(accountId: string, filing: DirectoryFiling): boolean;
+}
+
+/**
+ * **THE DIRECTORY AS EVERY FILING THIS SERVER HOLDS MAKES IT**, replayed the
+ * way a device replays it: the one place this server reads a seat from, so
+ * the server's check S and a device's rest on the same reading.
+ */
+export const directoryOf = (store: DirectoryStore, accountId: string): Directory => {
+  const account = store.getAccount(accountId);
+  const label = account?.companyLabel ?? null;
+  if (label === null) return emptyDirectory(accountId);
+  return believedDirectory(accountId, store.directoryFilingsOf(accountId), label as CompanyLabel);
+};
+
+export const seatDirectoryRoutes = (deps: {
+  readonly signedIn: express.RequestHandler;
+  readonly member: express.RequestHandler;
+  readonly store: DirectoryStore;
+  readonly chain: DirectoryChainRead;
+}): express.Router => {
+  const router = express.Router();
+  const base = '/api/accounts/:id/directory';
+
+  router.get(base, deps.signedIn, deps.member, (req, res) => {
+    res.status(200).json({ filings: deps.store.directoryFilingsOf(String(req.params.id)) });
+  });
+
+  router.put(`${base}/:version`, deps.signedIn, deps.member, express.json({ limit: '64kb' }), async (req, res) => {
+    const accountId = String(req.params.id);
+    const person = (req as { userId?: unknown }).userId;
+    const account = deps.store.getAccount(accountId);
+    if (typeof person !== 'string' || account === null) {
+      res.status(404).json({ error: 'account not found' });
+      return;
+    }
+    const label = account.companyLabel ?? null;
+    if (label === null) {
+      res.status(409).json({
+        refused: 'no-label',
+        error: 'this company was made without a label, so no wallet can sign an entry for it. Create a new company.',
+      });
+      return;
+    }
+    const filing = req.body as DirectoryFiling;
+    const version = Number(req.params.version);
+    if (typeof filing !== 'object' || filing === null || filing.version !== version) {
+      res.status(400).json({ refused: 'not-a-change', error: 'the version in the path and the version filed are not the same.' });
+      return;
+    }
+    const dir = directoryOf(deps.store, accountId);
+    const candidates = [
+      ...dir.seats.map((x) => x.seat),
+      ...(filing.change?.kind === 'claim' && typeof filing.change.entry?.statement?.seat === 'string' ? [filing.change.entry.statement.seat] : []),
+    ];
+    let chain: ChainHolders | null;
+    try {
+      chain = await deps.chain(accountId, candidates);
+    } catch (e) {
+      res.status(503).json({ error: `whether this filing may be made could not be decided, because the chain could not be read: ${(e as Error)?.message ?? String(e)}` });
+      return;
+    }
+    if (chain === null) {
+      res.status(409).json({
+        refused: 'not-on-the-committee',
+        error: 'this company has no account on the chain this server can read, so no seat can be entered. Create a new company.',
+      });
+      return;
+    }
+    try {
+      applyFiling(dir, filing, { label: label as CompanyLabel, chain, who: { person, members: account.memberUserIds } });
+    } catch (e) {
+      if (!(e instanceof DirectoryRefused)) throw e;
+      res.status(e.code === 'not-the-next-version' ? 409 : 422).json({ refused: e.code, error: e.message });
+      return;
+    }
+    if (!deps.store.fileDirectory(accountId, filing)) {
+      res.status(409).json({ refused: 'not-the-next-version', error: 'another filing took that version first. Read the directory again.' });
+      return;
+    }
+    res.status(201).json({ filed: true, version });
+  });
+
+  return router;
+};

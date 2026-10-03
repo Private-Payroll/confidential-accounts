@@ -35,6 +35,7 @@ import { ApproveBalance } from './approve-balance.js';
 import { recordAsk, recordChannelState, recordedChannel } from '../lib/ask-record.js';
 import { ApproveCommittee } from './approve-committee.js';
 import { ApproveRecordsKey } from './approve-records-key.js';
+import { AnswerHolders } from './answer-holders.js';
 import type { Consent } from '../framing.js';
 
 /**
@@ -521,6 +522,9 @@ export function Approve({
     /* **NOR A RECORDS-KEY ASK**: it signs one statement and discloses nothing, and its one door is the press on
      * its own screen (`approve-records-key.tsx`). */
     if (request.kind === 'records-key') return;
+    /* **NOR A HOLDERS ASK**: it hands back public chain facts and signs nothing, and its one door is its own
+     * screen (`answer-holders.tsx`), which answers without a press. */
+    if (request.kind === 'holders') return;
     const disclosed: Sent[] = [];
     const declined: AttributeName[] = [];
     for (const row of rows) {
@@ -1209,6 +1213,10 @@ export function Approve({
         readLabel={readLabel}
       />
     );
+  }
+
+  if (request.kind === 'holders') {
+    return <AnswerHolders request={request} channel={channel} consent={consent} />;
   }
 
   if (request.kind === 'balance') {

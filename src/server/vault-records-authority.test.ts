@@ -21,7 +21,8 @@ const companies: CompanyRoster[] = [
   { id: 'acc_old', contractAddress: null, memberUserIds: ['eve'] },
 ];
 const pinnedTo = (account: string | null): VaultAccountReader => async (v) => (v === VAULT ? account : null);
-const may = (accountOf: VaultAccountReader, list = companies) => signersOfTheVaultsCompany({ accountOf, companies: () => list });
+/* Every filer's seat entry stands in as naming its key: whose key it is, is `vault-records-authority.filing.test.ts`'s. */
+const may = (accountOf: VaultAccountReader, list = companies) => signersOfTheVaultsCompany({ accountOf, companies: () => list, mayFileUnder: () => true });
 
 describe('who may touch a vault\'s records', () => {
   it('A SIGNER OF THE COMPANY THE VAULT IS PINNED TO MAY READ AND FILE, and nobody else may', async () => {

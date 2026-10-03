@@ -15,14 +15,13 @@
  *
  * **EVERY FILING IS SIGNED HERE**, with the signing key of the signer this
  * device acts for, which never leaves the device, and **EVERY RECORD READ HERE
- * IS BELIEVED ONLY IF A KEY THAT HAS BEEN ON THE COMPANY'S ROSTER SIGNED IT**:
- * the server checks that a filing is signed and that the person filing is a
- * signer now, and cannot tell whose key signed it, because the roster is
- * sealed. The device opens the roster, so the device makes that check
- * (`trustFiledBy`). **A key that has left the roster still counts for what it
- * signed**: a version a signer filed before leaving is the vault's record, and
- * refusing it would stop every remaining signer reading or writing the vault.
- * A signer who has left can no longer file, because the server refuses them.
+ * IS BELIEVED ONLY IF A SEAT THE COMPANY'S DIRECTORY NAMES SIGNED IT**, checked
+ * on this device against the chain as the person's own wallet read it for this
+ * read (`FilingJudge`, made fresh for every read by `seat-directory.ts`'s
+ * check S): an entry the seat's own wallet signed, for a seat the account holds
+ * now, whose role may file this record. A version signed by a seat that has
+ * left is refused unless a quorum's retirement names it, and the server's word
+ * is never what makes a version believed.
  */
 import {
   VaultPoolVersionAlreadyFiled, VaultRecordRefused, whyThisIsNotASealedPool,
@@ -32,6 +31,24 @@ import {
   assertWireVault, fromWire, signFiling, toWire, verifiedFiler, wirePaths, type WireRecord,
 } from '../../../src/midnight/sealed-record-wire.js';
 import type { Hex } from '../../../src/core/crypto.js';
+import { companyRecordKey, vaultRecordKey, type FiledKind } from '../../../src/midnight/seat-directory.js';
+import {
+  companyWirePaths, fromCompanyWire, signCompanyFiling, toCompanyWire, verifiedCompanyFiler,
+  type CompanyRecordKind, type SealedCompanyRecord,
+} from '../../../src/midnight/sealed-record-wire.js';
+
+/**
+ * **WHETHER ONE VERSION IS BELIEVED**: null when it is, or the reason it is not.
+ * `filer` is the key whose signature over exactly this version verifies, or null.
+ */
+export type FilingJudge = (filer: Hex | null, kind: FiledKind, recordKey: string, version: number) => string | null;
+
+/**
+ * **A JUDGE MADE FRESH FOR ONE READ**: the company's directory read again and
+ * the chain read again by the person's own wallet, so no read rests on what an
+ * earlier one saw.
+ */
+export type FreshJudge = () => Promise<FilingJudge>;
 
 /** How many times a write told its version is taken reads that version back before saying it is not confirmed. */
 export const READ_BACK_ATTEMPTS = 3;
@@ -53,8 +70,8 @@ export class HttpSealedPoolStore implements SealedPoolStore {
     private readonly send: WireSend,
     /** The signing secret of the signer this device files as. It is used here and sent nowhere. */
     private readonly signWith: Hex,
-    /** Every signing key that has been on the company's roster, including signers who have left. A record none of them signed is not believed. */
-    private readonly trustFiledBy: () => Promise<ReadonlySet<Hex>>,
+    /** Who this device believes filed a version, asked afresh for each read. */
+    private readonly judge: FreshJudge,
   ) {
     if (typeof signWith !== 'string' || !/^[0-9a-f]{64}$/u.test(signWith)) {
       throw new Error('a sealed record is filed signed, and this device was given no signing key to sign it with.');
@@ -75,23 +92,34 @@ export class HttpSealedPoolStore implements SealedPoolStore {
     const b = r.body as { record?: unknown; filed?: unknown } | null;
     if (b?.record !== this.record || !('filed' in (b ?? {}))) this.refuse('read', r.status, { error: 'the answer is not about this record' });
     if (b!.filed === null) return null;
-    return this.believed(fromWire(b!.filed, { vault, record: this.record }).sealed);
+    return this.believed(fromWire(b!.filed, { vault, record: this.record }).sealed, await this.judge());
   }
 
-  /** The record, if a signer on the roster filed it as this kind of record; refused otherwise. */
-  private async believed(rec: SealedPool): Promise<SealedPool> {
-    const filer = verifiedFiler(this.record, rec);
-    const trusted = await this.trustFiledBy();
-    if (filer === null || !trusted.has(filer)) {
-      throw new Error(
-        `version ${rec.version} of this vault's ${this.record} was not filed by a signer on this company's roster `
-        + `(${filer === null ? 'it carries no valid signature for this record' : 'it is signed by a key the roster does not hold'}). `
-        + 'It is not believed and nothing is built on it. That is not a record holding nothing.');
-    }
+  /** The record, if a seat this device believes filed it as this kind of record; refused otherwise. */
+  private believed(rec: SealedPool, judge: FilingJudge): SealedPool {
+    const why = judge(verifiedFiler(this.record, rec), this.record, vaultRecordKey(rec.vault, this.record), rec.version);
+    if (why !== null) throw new FilingNotBelieved(this.record, rec.version, why);
     return rec;
   }
 
+  /**
+   * **EVERY VERSION AS FILED, NOT CHECKED FOR WHO FILED IT.** For one use only:
+   * finding a version whose content the chain itself vouches for (a nonce
+   * secret whose commitment is the vault's), so a seated signer can file that
+   * content again under its own seat. Nothing read here is used before the
+   * chain has vouched for it.
+   */
+  async versionsAsFiled(vault: string): Promise<readonly FiledPoolVersion[]> {
+    return (await this.listed(vault)).map((f) => ({ version: f.wire.version, sealed: f.sealed }));
+  }
+
   async versions(vault: string): Promise<readonly FiledPoolVersion[]> {
+    const filed = await this.listed(vault);
+    const judge = await this.judge();
+    return filed.map((f) => ({ version: f.wire.version, sealed: this.believed(f.sealed, judge) }));
+  }
+
+  private async listed(vault: string) {
     assertWireVault(vault);
     const r = await this.send(wirePaths.versions(vault, this.record), { method: 'GET' });
     if (r.status !== 200) this.refuse('listed', r.status, r.body);
@@ -107,9 +135,7 @@ export class HttpSealedPoolStore implements SealedPoolStore {
         });
       }
     });
-    const out: FiledPoolVersion[] = [];
-    for (const f of filed) out.push({ version: f.wire.version, sealed: await this.believed(f.sealed) });
-    return out;
+    return filed;
   }
 
   async put(vault: string, rec: SealedPool): Promise<void> {
@@ -205,3 +231,75 @@ export const pageWireSend = (
   const body = await r.json().catch(() => ({}));
   return { status: r.status, body };
 };
+
+/** A version this device does not believe, by name, with the reason. Nothing is built on it. */
+export class FilingNotBelieved extends Error {
+  constructor(readonly record: string, readonly version: number, readonly why: string) {
+    super(`version ${version} of this ${record} is not believed, because ${why}. Nothing is built on it. `
+      + 'That is not a record holding nothing.');
+    this.name = 'FilingNotBelieved';
+  }
+}
+
+/**
+ * **A COMPANY'S OWN RECORDS, REACHED OVER HTTP**: filed signed by this
+ * device's seat, and read back believed only when a seat the directory names
+ * filed them, by the same fresh check as a vault's records.
+ */
+export class HttpCompanyRecordStore {
+  constructor(
+    private readonly company: string,
+    private readonly send: WireSend,
+    private readonly signWith: Hex,
+    private readonly judge: FreshJudge,
+  ) {
+    if (typeof signWith !== 'string' || !/^[0-9a-f]{64}$/u.test(signWith)) {
+      throw new Error('a company record is filed signed, and this device was given no signing key to sign it with.');
+    }
+  }
+
+  private believed(rec: SealedCompanyRecord, judge: FilingJudge): SealedCompanyRecord {
+    const why = judge(verifiedCompanyFiler(rec), rec.kind, companyRecordKey(rec.kind, rec.id), rec.version);
+    if (why !== null) throw new FilingNotBelieved(`company's ${rec.kind} record`, rec.version, why);
+    return rec;
+  }
+
+  async get(kind: CompanyRecordKind, id: string): Promise<SealedCompanyRecord | null> {
+    const r = await this.send(companyWirePaths.newest(this.company, kind, id), { method: 'GET' });
+    const b = r.body as { kind?: unknown; id?: unknown; filed?: unknown } | null;
+    if (r.status !== 200 || b?.kind !== kind || b?.id !== id || !('filed' in (b ?? {}))) {
+      throw new Error(`this company's ${kind} record could not be read (the server answered ${r.status}: ${said(r.body)}). That is not a record holding nothing.`);
+    }
+    if (b!.filed === null) return null;
+    return this.believed(fromCompanyWire(b!.filed, { company: this.company, kind, id }).sealed, await this.judge());
+  }
+
+  async versions(kind: CompanyRecordKind, id: string): Promise<readonly SealedCompanyRecord[]> {
+    const r = await this.send(companyWirePaths.versions(this.company, kind, id), { method: 'GET' });
+    const b = r.body as { versions?: unknown } | null;
+    if (r.status !== 200 || !Array.isArray(b?.versions)) {
+      throw new Error(`this company's ${kind} record could not be listed (the server answered ${r.status}: ${said(r.body)}).`);
+    }
+    const filed = (b!.versions as unknown[]).map((m) => fromCompanyWire(m, { company: this.company, kind, id }).sealed);
+    filed.forEach((f, i) => {
+      if (f.version !== i + 1) throw new Error(`the list names version ${f.version} where version ${i + 1} belongs, so it is not every version, in order.`);
+    });
+    const judge = await this.judge();
+    return filed.map((f) => this.believed(f, judge));
+  }
+
+  async put(rec: SealedCompanyRecord): Promise<void> {
+    if (rec.company !== this.company) throw new Error('that record is another company\'s, so nothing is filed.');
+    const wire = toCompanyWire(signCompanyFiling(rec, this.signWith));
+    let r: { status: number; body: unknown };
+    try {
+      r = await this.send(companyWirePaths.one(this.company, rec.kind, rec.id, rec.version), { method: 'PUT', body: JSON.stringify(wire) });
+    } catch (cause) {
+      throw new Error(`version ${rec.version} of this company's ${rec.kind} record was not confirmed filed. It may have been filed: read it again before deciding anything.`, { cause });
+    }
+    const b = r.body as Record<string, unknown> | null;
+    if (r.status === 201 && b?.filed === true && b.version === rec.version && b.digest === wire.digest) return;
+    if (r.status === 409 && b?.refused === 'version-already-filed') throw new VaultPoolVersionAlreadyFiled(rec.id, rec.version);
+    throw new Error(`version ${rec.version} of this company's ${rec.kind} record was refused and not filed (${r.status}: ${said(b)}).`);
+  }
+}
