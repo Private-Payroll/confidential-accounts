@@ -68,6 +68,10 @@
       "types": "./lib/profile/committee-key.d.ts",
       "default": "./lib/profile/committee-key.js"
     },
+    "./profile/records-key": {
+      "types": "./lib/profile/records-key.d.ts",
+      "default": "./lib/profile/records-key.js"
+    },
     "./profile/committee-sign": {
       "types": "./lib/profile/committee-sign.d.ts",
       "default": "./lib/profile/committee-sign.js"

@@ -460,7 +460,9 @@ export function companyVaultRoutes(deps: CompanyVaultDeps): express.Router {
       committeeKey: z.object({ tag: z.literal('schnorr'), value: z.string().regex(HEX64) }),
       recordsKey: z.string().regex(HEX64),
       signature: z.string().regex(/^[0-9a-f]{128}$/u),
-    }).strict().safeParse(req.body);
+      recordsKeyStatement: z.string().regex(/^[0-9a-f]{128}$/u).optional(),
+      recordsKeySeat: z.string().regex(HEX64).optional(),
+    }).strict().refine((b) => (b.recordsKeyStatement === undefined) === (b.recordsKeySeat === undefined)).safeParse(req.body);
     if (!body.success) {
       res.status(400).json({ error: 'these are not the two public keys, and your signature over them, that a signer gives for a company\'s vaults.' });
       return;

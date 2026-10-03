@@ -2,13 +2,25 @@ import { useCallback, useEffect, useState } from 'react';
 import { Alert, AlertDescription, AlertTitle, Button, ConfirmInYourAccount, useText } from 'vaults-ui';
 import {
   CREATING, createVault, finishHandingOver, giveYourVaultKeys, openYourKeys, OWED, READY, readOwedVaults, readVaultReadiness, STARTING,
-  type Creating, type OwedVault, type Readiness, type VaultCreated,
+  STOPPED, type Creating, type OwedVault, type Readiness, type StartStopped, type VaultCreated,
 } from '../adapters/create-vault.js';
 import { HANDOVER, readHandover } from '../adapters/handover-state.js';
 import { ACTED, type ActRefusal } from '../adapters/refusals.js';
 import { ActRefused } from '../act-refused.js';
 import { useSession } from '../session.js';
 import { STEP, type StepProps } from '../setup/step-ids.js';
+
+/** What resolves a set-up that stopped before its secret was approved, in the person's own words. */
+function useStoppedSays(): (stopped: StartStopped) => string {
+  const t = useText();
+  const says: Record<StartStopped, string> = {
+    [STOPPED.wallet]: t('createVault.stopped.wallet'),
+    [STOPPED.handOver]: t('createVault.stopped.handOver'),
+    [STOPPED.signers]: t('createVault.stopped.signers'),
+    [STOPPED.mismatch]: t('createVault.stopped.mismatch'),
+  };
+  return (stopped) => says[stopped];
+}
 
 /** What the person is being asked to confirm, if anything: creating a vault, finishing the handover of the one named, or finishing setting it up. */
 const ASKING = { create: 'create', finish: 'finish', start: 'start' } as const;
@@ -34,13 +46,17 @@ type Asking = { of: typeof ASKING.create } | { of: typeof ASKING.finish | typeof
  * account, its private records are made and its secret set, and each signer
  * is given a sealed copy. Each step is said as it happens. A step that waits
  * for other signers' approvals is named with how many it has and needs, and
- * says the other signers cannot approve it in this app yet; a set up that
- * stopped is said as that. Finish setting it up is offered only while that
- * result is on screen, where it carries the same vault on; until the set up
- * is done, this app puts no money into the vault.
+ * says each of them approves it from their own device; a set up that stopped
+ * is said as that, with what resolves it when it stopped at the check of who
+ * the vault's secret is sealed to. Finish setting it up is offered while that
+ * result is on screen, where it carries the same vault on, and with
+ * `starting` the component opens asking to carry that vault on, which any
+ * signer can do from their own device; until the set up is done, this app
+ * puts no money into the vault.
  */
-export function CreateVault({ leadTo, onChanged, finishing }: StepProps & { finishing?: string }) {
+export function CreateVault({ leadTo, onChanged, finishing, starting }: StepProps & { finishing?: string; starting?: string }) {
   const t = useText();
+  const stoppedSays = useStoppedSays();
   const { person, company } = useSession();
   const [ready, setReady] = useState<Readiness | null>(null);
   /* Each vault sent and not yet held by the signers, with its number among the company's vaults, as its tile names it. */
@@ -61,6 +77,10 @@ export function CreateVault({ leadTo, onChanged, finishing }: StepProps & { fini
     setOwed(o);
   }, [person.id, company]);
   useEffect(() => { void read(); }, [read]);
+  /* Asked to carry on setting up one vault, from this signer's own device: asked at once. */
+  useEffect(() => {
+    if (starting !== undefined) setAsking((a) => a ?? { of: ASKING.start, vault: starting });
+  }, [starting]);
   /* Asked to finish one vault: asked as soon as it is read as sent, not held, and finishable from this browser. */
   useEffect(() => {
     if (finishing !== undefined && owed.some((o) => o.vault === finishing && o.here)) setAsking((a) => a ?? { of: ASKING.finish, vault: finishing });
@@ -170,9 +190,12 @@ export function CreateVault({ leadTo, onChanged, finishing }: StepProps & { fini
       {result?.of === OWED.elsewhere ? <p className="text-sm" data-result={result.of}>{t('createVault.owed.elsewhere')}</p> : null}
       {result?.of === OWED.rosterDisagrees ? <p className="text-sm" data-result={result.of}>{t('createVault.owed.rosterDisagrees')}</p> : null}
       {result?.of === STARTING.awaiting || result?.of === STARTING.owed ? (
-        <div className="flex flex-col gap-2" data-result={result.of} data-round={result.of === STARTING.awaiting ? result.round : undefined}>
+        <div
+          className="flex flex-col gap-2" data-result={result.of} data-round={result.of === STARTING.awaiting ? result.round : undefined}
+          data-stopped={result.of === STARTING.owed ? result.stopped : undefined}
+        >
           <p className="text-sm" data-says>
-            {result.of === STARTING.owed ? t('createVault.startOwed')
+            {result.of === STARTING.owed ? (result.stopped === undefined ? t('createVault.startOwed') : stoppedSays(result.stopped))
               : result.round === 'adoption' ? t('createVault.awaiting.adoption', { approvals: result.approvals, needed: result.needed })
               : t('createVault.awaiting.firstSecret', { approvals: result.approvals, needed: result.needed })}
           </p>

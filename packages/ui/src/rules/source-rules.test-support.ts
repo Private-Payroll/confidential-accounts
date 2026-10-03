@@ -1046,6 +1046,7 @@ export const CODES: Readonly<Record<string, string>> = {
   'apps/web/src/adapters/create-vault.ts#STAGE': 'the shared operation\'s own words for its stages, compared and never shown, each to the one a screen says',
   'apps/web/src/adapters/create-vault.ts#READY': 'whether a vault can be created now, one of a fixed set a screen turns into its own phrase',
   'apps/web/src/adapters/create-vault.ts#STARTING': 'a vault held by its committee whose start is not finished or waits on approvals, one of a fixed set a screen turns into its own phrase',
+  'apps/web/src/adapters/create-vault.ts#STOPPED': 'what resolves a start that stopped before its secret was approved, one of a fixed set a screen turns into its own phrase',
   'apps/web/src/adapters/create-vault.ts#OWED': 'a vault sent and not yet held by its committee, one of a fixed set a screen turns into its own phrase',
   'apps/web/src/adapters/create-vault.ts#SERVICE': 'the service\'s addresses, sent and never shown',
   'apps/web/src/adapters/vault-rows.ts#SERVICE': 'the service\'s address for a company\'s vaults, sent and never shown',

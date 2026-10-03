@@ -68,6 +68,7 @@ const setUp = async () => {
     deploy: refuse, handover: refuse, chooseNote: refuse, paymentsFit: refuse, afterPayment: refuse,
     confirmPayment: refuse, startStanding: refuse, setNonceSecret: refuse, writeSecretCopy: refuse, creatingTransaction: async (i) => creatingTransactionOfNote(i), payout: refuse, payoutPublicly: refuse, governedCall: refuse,
     commitments: async (i) => ({ output: `out:${i.coin.nonce}`, held: held(i.coin) }),
+    ownSeat: refuse,
     deposit: async (i) => { lastBuilt = i.coin; log.push(`built ${i.coin.token.slice(0, 2)} ${i.coin.value}`); return { tx: 'PROVEN' }; },
   } as VaultBuilderClient;
   const kept = new Map<WireRecord, MemorySealedPoolStore>();

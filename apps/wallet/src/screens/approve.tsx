@@ -34,6 +34,7 @@ import { useConsent } from '../framing.js';
 import { ApproveBalance } from './approve-balance.js';
 import { recordAsk, recordChannelState, recordedChannel } from '../lib/ask-record.js';
 import { ApproveCommittee } from './approve-committee.js';
+import { ApproveRecordsKey } from './approve-records-key.js';
 import type { Consent } from '../framing.js';
 
 /**
@@ -517,6 +518,9 @@ export function Approve({
      * discloses nothing, and its one door is the press on its own screen
      * (`approve-committee.tsx`). */
     if (request.kind === 'committee') return;
+    /* **NOR A RECORDS-KEY ASK**: it signs one statement and discloses nothing, and its one door is the press on
+     * its own screen (`approve-records-key.tsx`). */
+    if (request.kind === 'records-key') return;
     const disclosed: Sent[] = [];
     const declined: AttributeName[] = [];
     for (const row of rows) {
@@ -1182,6 +1186,20 @@ export function Approve({
   if (request.kind === 'committee') {
     return (
       <ApproveCommittee
+        request={request}
+        identity={identity}
+        channel={channel}
+        consent={consent}
+        whoIsAsking={whoIsAsking}
+        onDecline={() => { channel?.refuse('declined'); setChannelState({ of: 'waiting' }); }}
+        readLabel={readLabel}
+      />
+    );
+  }
+
+  if (request.kind === 'records-key') {
+    return (
+      <ApproveRecordsKey
         request={request}
         identity={identity}
         channel={channel}

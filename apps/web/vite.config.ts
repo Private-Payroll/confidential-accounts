@@ -65,7 +65,12 @@ export const SERVED_FROM = [
 // 678,000: the test's own measure rose from 675,456 to 677,456 on a Linux machine on 1 Oct, when creating a vault
 // began to carry on past the handover (adopting the vault, setting its first secret, writing every signer's copy,
 // waiting on approvals) and every amount on a page began to be named by its token's symbol.
-export const FIRST_DOWNLOAD_BUDGET = 678_000;
+// 680,205: the test's own measure rose from 677,760 to 679,965 on a Linux machine on 3 Oct, by 2,205 bytes that are
+// all the English file's words: the same build with only `locales/en.json` put back as it was measures 677,760. The
+// words are what a vault's set-up that stopped says, the standing of a vault held and not set up, the two awaiting
+// texts, and a seat missing or not the signer's own. A screen's words load with every page until they can load with
+// the screen; the budget rose by exactly the measured rise.
+export const FIRST_DOWNLOAD_BUDGET = 680_205;
 
 /**
  * THE WORKERS THIS APPLICATION STARTS, by their entry's path from this folder,

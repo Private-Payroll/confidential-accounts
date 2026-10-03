@@ -229,6 +229,21 @@ describe('A SIGNER\'S VAULT KEYS', () => {
     expect(roster.get('acc_1:ada')!.recordsKey).toBe(hex(0x11));
   });
 
+  it('carry the wallet\'s statement over the records key to the roster, and refuse one of any other shape', async () => {
+    /* RED WHEN: the route drops the statement a signer's wallet signed, so no other device can check their key. */
+    expect((await give('ada', 1, { recordsKeyStatement: 'cd'.repeat(64), recordsKeySeat: 'ef'.repeat(32) })).status).toBe(201);
+    expect(roster.get('acc_1:ada')!.recordsKeyStatement).toBe('cd'.repeat(64));
+    /* RED WHEN: the route drops the seat the statement is signed for. */
+    expect(roster.get('acc_1:ada')!.recordsKeySeat).toBe('ef'.repeat(32));
+    /* RED WHEN: a statement that is not a signature's 64 bytes, or a seat that is not one, is taken. */
+    expect((await give('bo', 2, { recordsKeyStatement: 'cd'.repeat(32), recordsKeySeat: 'ef'.repeat(32) })).status).toBe(400);
+    expect((await give('bo', 2, { recordsKeyStatement: 'CD'.repeat(64), recordsKeySeat: 'ef'.repeat(32) })).status).toBe(400);
+    expect((await give('bo', 2, { recordsKeyStatement: 'cd'.repeat(64), recordsKeySeat: 'ef' })).status).toBe(400);
+    /* RED WHEN: a statement without the seat it is for, or a seat without a statement, is taken. */
+    expect((await give('bo', 2, { recordsKeyStatement: 'cd'.repeat(64) })).status).toBe(400);
+    expect((await give('bo', 2, { recordsKeySeat: 'ef'.repeat(32) })).status).toBe(400);
+  });
+
   it('A DIFFERENT SET FROM THE SAME PERSON IS REFUSED, AND THE FIRST IS KEPT', async () => {
     await give('ada', 1);
     const r = await give('ada', 2);

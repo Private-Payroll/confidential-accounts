@@ -31,6 +31,7 @@ export type { WalletDialog } from './wallet-sign-in.js';
 import { askWalletForKeys } from './wallet-unlock.js';
 import { askWalletToPay } from './wallet-balance.js';
 import { askWalletToSignCommittee, type CommitteeAsked } from './wallet-committee.js';
+import { askWalletToSignRecordsKey, type RecordsKeyAsked, type RecordsKeySigned } from './wallet-records-key.js';
 /* **THE WALLET IS SHOWN INSIDE THIS PAGE.** Every journey below defaults to it;
  * a test hands in a window of its own and drives the same conversation. */
 import { walletInThisPage } from './wallet-frame.js';
@@ -1130,6 +1131,33 @@ export async function signCommitteeChangeFromTheWallet(
   const dialog = openTheWallet(view, walletOrigin, already);
   try {
     return await askWalletToSignCommittee(view, walletOrigin, {
+      ...ask, atOrigin, name: US_TO_A_WALLET.name, rdns: US_TO_A_WALLET.rdns,
+    }, dialog);
+  } catch (e) {
+    if (!already) putAway(dialog);
+    throw e;
+  } finally {
+    doneWaiting();
+  }
+}
+
+/**
+ * **THIS PERSON'S RECORDS KEY FOR THEIR SEAT, SIGNED BY THEIR OWN WALLET, AND WHO
+ * HOLDS THE COMPANY'S ACCOUNT NOW AS THAT WALLET READ IT.** Asked right before a
+ * vault's secret is approved, so what it is checked against is read then.
+ * Opened in the press, like every wallet journey; see `wallet-records-key.ts`.
+ */
+export async function recordsKeyFromTheWallet(
+  walletOrigin: string,
+  ask: Pick<RecordsKeyAsked, 'company' | 'account' | 'seat'>,
+  view: Openable = walletInThisPage(window),
+  atOrigin: string = window.location.origin,
+  already?: WalletDialog,
+): Promise<RecordsKeySigned> {
+  if (!sessionLive) throw new Error('not signed in');
+  const dialog = openTheWallet(view, walletOrigin, already);
+  try {
+    return await askWalletToSignRecordsKey(view, walletOrigin, {
       ...ask, atOrigin, name: US_TO_A_WALLET.name, rdns: US_TO_A_WALLET.rdns,
     }, dialog);
   } catch (e) {

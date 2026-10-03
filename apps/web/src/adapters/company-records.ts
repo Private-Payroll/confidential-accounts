@@ -145,7 +145,7 @@ export interface PersonRow {
 
 /** Where a vault stands, one of a fixed set a screen says in its own words. */
 export const VAULT = {
-  held: 'held-by-committee', handoverOwed: 'handover-owed', notOnChain: 'not-on-chain-yet', notFundable: 'not-fundable',
+  held: 'held-by-committee', handoverOwed: 'handover-owed', startOwed: 'start-owed', notOnChain: 'not-on-chain-yet', notFundable: 'not-fundable',
   accountNotHandedOver: 'account-not-handed-over', accountNotFundable: 'account-not-fundable', heldByOtherKeys: 'held-by-other-keys', unknown: 'unknown',
 } as const;
 export type VaultStanding = (typeof VAULT)[keyof typeof VAULT];

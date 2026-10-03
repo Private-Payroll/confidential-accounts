@@ -98,20 +98,34 @@ export const privatePaymentsFor = (
   }),
 });
 
-/** Gives this signer's three public vault keys, once; the service keeps the first set. */
 /**
  * **THIS SIGNER'S TWO VAULT KEYS, SIGNED WITH THEIR OWN ROSTER SIGNING KEY AND
- * WRITTEN INTO THEIR OWN ENTRY IN THE SEALED ROSTER.** The signature is what lets
- * every other device accept them as this signer's, and what stops anybody else
- * putting a key in this signer's name. The filing key is the roster signing key
- * itself, so it is not sent.
+ * WRITTEN INTO THEIR OWN ENTRY IN THE SEALED ROSTER**, with their wallet's own
+ * statement over the records key beside them. The roster signature is what
+ * stops another member putting a key in this signer's name; the wallet's
+ * statement over the records key and the seat this signer holds, signed by
+ * the committee key the chain lists, is what every other device checks before
+ * it approves a copy of a vault's secret sealed to this signer. The filing key is the roster signing key itself, so it is not sent.
+ *
+ * Refused before anything is sent when the statement is not for the records
+ * key this device derives from the same release.
  */
 export const giveVaultKeys = (
   api: Api, accountId: string,
-  keys: { committeeKey: { tag: string; value: string }; companyKey: Hex; signingSecret: Hex; signerId: string; viewingKey: Hex },
+  keys: {
+    committeeKey: { tag: string; value: string }; companyKey: Hex; signingSecret: Hex; signerId: string; viewingKey: Hex;
+    /** The statement this signer's wallet signed for their records key and their seat. */
+    recordsKey: { readonly recordsKey: string; readonly seat: string; readonly signature: string };
+  },
 ): Promise<unknown> => {
+  const recordsKey = recordsKeypairFrom(fromHex(keys.companyKey)).publicKey;
+  if (keys.recordsKey.recordsKey.toLowerCase() !== recordsKey.toLowerCase()) {
+    return Promise.reject(new Error('your wallet signed a records key that is not the one your company key gives, so '
+      + 'your vault keys were not given. Open the company with your wallet again.'));
+  }
   const signed = signVaultKeys(accountId, keys.signerId, {
-    committeeKey: keys.committeeKey, recordsKey: recordsKeypairFrom(fromHex(keys.companyKey)).publicKey,
+    committeeKey: keys.committeeKey, recordsKey,
+    recordsKeyStatement: keys.recordsKey.signature as Hex, recordsKeySeat: keys.recordsKey.seat as Hex,
   }, keys.signingSecret);
   return api(`/api/accounts/${encodeURIComponent(accountId)}/vault-keys`, {
     method: 'PUT',

@@ -38,6 +38,7 @@ import { identityFromWords, newWords } from 'midnight-identity';
 import { committeeKeyFor, committeeSigningKeyFor } from 'midnight-identity/profile/committee-key';
 import { parseAsk } from 'midnight-identity/profile/request';
 import { unlockKeyFor } from 'midnight-identity/profile/unlock';
+import { signRecordsKey } from 'midnight-identity/profile/records-key';
 import { companyLabelOf, readAccountAddress } from 'midnight-identity/profile/company-label';
 import * as vaultModule from '../managed-vault/contract/index.js';
 import * as accountModule from '../managed/contract/index.js';
@@ -47,7 +48,8 @@ import { privateStateFor, leafOfDevice, change, ZERO_32, COMPANY_LABEL, rootOfTe
 import { MemoryStore } from '../../src/core/store.js';
 import { AccountService, sealAccount } from '../../src/core/account.js';
 import { MidnightCommitments } from '../../src/midnight/commitments.js';
-import { signVaultKeys, vaultKeyIndexOf } from '../../src/core/vault-keys.js';
+import { rosterVaultKeys, signVaultKeys, vaultKeyIndexOf } from '../../src/core/vault-keys.js';
+import { seatsInAccountState } from '../../apps/wallet/src/chain/company-label-on-chain.js';
 import { ChainLedger } from '../../src/wiring/chain.js';
 import { companyVaultRoutes, type VaultChain } from '../../src/server/company-vaults.js';
 import { mountVaultRecords, vaultAccountFromTheIndexer } from '../../src/server/vault-records-authority.js';
@@ -58,7 +60,7 @@ import { recordsReaderOf, type DeviceSigner } from 'vaults-web-shared/deposit-on
 import { answerVaultAsk } from 'vaults-web-shared/vault-worker-entry.js';
 import { vaultBuilderOver, type VaultAnswer } from 'vaults-web-shared/vault-worker-client.js';
 import {
-  createCompanyVault, depositIntoCompanyVault, openCompanyVaultPool, payPrivatelyFromCompanyVault,
+  createCompanyVault, depositIntoCompanyVault, openCompanyVaultPool, VaultStartOwed, payPrivatelyFromCompanyVault,
   type TemporaryKeys, type VaultService, type DepositInFlight, type DepositsInFlight, type PaymentInFlight,
 } from 'vaults-web-shared/vault-operation.js';
 import { inFlightInMemory as inFlightRecordsInMemory, sealedOnThisDevice, type KeptOnThisDevice } from 'vaults-web-shared/in-flight-on-this-device.js';
@@ -492,20 +494,32 @@ describe.skipIf(!KEYS_ON_DISK)('A VAULT\'S COMMITTEE CHANGES WITH THE COMPANY\'S
         viewingKey,
         ...signVaultKeys(ACCOUNT_ID, 'ada', {
           committeeKey: committeeKeyFor(identityFromWords(words), LABEL), recordsKey: recordsReaderOf(me.companyKey).publicKey,
+          ...((st) => ({ recordsKeyStatement: st.signature as Hex, recordsKeySeat: st.seat as Hex }))(
+            signRecordsKey(identityFromWords(words), LABEL, me.companyKey, hex(leafOfDevice(founder)))),
         }, signing.secret),
       },
     });
     const poolDoors = { ...pacing, service, me, myRecordsKey: recordsReaderOf(me.companyKey).publicKey, signers, records };
-    /* Created and started by the founding signer's own press: deployed, handed over, adopted, pooled, its secret set and every copy written. */
-    const created = await createCompanyVault({
+    /* The founding signer's press, with who holds the account as their wallet read it off the chain just then. */
+    const press = (resume?: Hex) => createCompanyVault({
       ...poolDoors, account: readAccountAddress(company)!, builder: builder(), keys,
       material: { signingSecret: hex(founder.secretKey), blinding: hex(founder.blinding), scope: hex(founder.scope) },
-    });
+      secretReaders: {
+        company: LABEL, committeeKey: committeeKeyFor(identityFromWords(words), LABEL),
+        seats: seatsInAccountState(chain.contract(company).serialize()),
+        roster: async () => rosterVaultKeys(openAccount(store.getAccount(ACCOUNT_ID)!, viewingKey)),
+      },
+    }, resume as never);
+    /* Deployed, handed over and adopted; its first secret waits for the account to be the committee's. */
+    const first = await press().catch((e: unknown) => e);
+    if (!(first instanceof VaultStartOwed)) throw new Error(`the vault's first secret was not held back: ${String((first as Error)?.message ?? JSON.stringify(first))}`);
+    const authority = await http(`${at}/authority`);
+    await http(`${at}/authority/handover`, { method: 'POST', body: { committee: authority.committee } });
+    /* Then started by the same press: its secret set and every copy written. */
+    const created = await press(first.vault);
     if (created.state !== 'started') throw new Error(`the vault was not started: ${JSON.stringify(created)}`);
     const { vault } = created;
     await openCompanyVaultPool(poolDoors, vault);
-    const authority = await http(`${at}/authority`);
-    await http(`${at}/authority/handover`, { method: 'POST', body: { committee: authority.committee } });
     const deposited = await depositIntoCompanyVault({ ...poolDoors, company: LABEL, account: readAccountAddress(company)!, builder: builder(), pay: wallet, inFlight: inFlightInMemory() }, vault, { token: TOKEN, value: 1_000n });
     return { vault, note: deposited.note };
   };

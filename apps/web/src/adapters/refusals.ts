@@ -10,7 +10,7 @@ export const ACT_REFUSAL = {
   signInAgain: 'sign-in-again', keysDidNotOpen: 'keys-did-not-open', keysWentBack: 'keys-went-back',
   declined: 'declined', expired: 'expired', noWindow: 'no-window', windowGone: 'window-gone', gaveUp: 'gave-up', silent: 'silent',
   noKeysHere: 'no-keys-here', rosterDisagrees: 'roster-disagrees', nothingToSign: 'nothing-to-sign', nothingSent: 'nothing-sent',
-  unreachable: 'unreachable', didNotFinish: 'did-not-finish',
+  unreachable: 'unreachable', didNotFinish: 'did-not-finish', noSeat: 'no-seat', notYourSeat: 'not-your-seat',
 } as const;
 
 export type ActRefusal = (typeof ACT_REFUSAL)[keyof typeof ACT_REFUSAL];

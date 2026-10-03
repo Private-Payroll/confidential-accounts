@@ -47,6 +47,7 @@ const BARE: Record<string, Record<string, unknown>> = {
   deposit: { vault: 'ab'.repeat(32), coin: { nonce: '00', token: '00', value: '1' }, state: '', parameters: '' },
   'public-deposit': { vault: 'ab'.repeat(32), token: '00', amount: '1', state: '', parameters: '' },
   commitments: { vault: 'ab'.repeat(32), coin: { nonce: '00', token: '00', value: '1' } },
+  'own-seat': { material: {} },
   'choose-note': { notes: [], token: '00', amount: '1' },
   'payments-fit': { notes: [], payments: [] },
   'after-payment': { notes: [], spent: '', amount: '1', change: null, createdIn: '' },

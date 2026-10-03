@@ -1,5 +1,6 @@
 import type { BalancedAnswer } from './balance.js';
 import type { CommitteeSignatures } from './committee-sign.js';
+import type { RecordsKeyAnswer } from './records-key.js';
 import { PROGRESS_SCHEMA, parseAsk } from './request.js';
 import type { Ask, RequestError } from './request.js';
 import type { DisclosureResponse } from './disclosure.js';
@@ -164,7 +165,8 @@ export function framingOf(view: ChannelWindow, embedder: string | null): Framing
  * a channel that would then have two rules to keep in step.
  */
 export type Answer =
-  | DisclosureResponse | UnlockRelease | KeyringRelease | SealedAcceptance | BalancedAnswer | CommitteeSignatures;
+  | DisclosureResponse | UnlockRelease | KeyringRelease | SealedAcceptance | BalancedAnswer | CommitteeSignatures
+  | RecordsKeyAnswer;
 
 /**
  * **WHY A PAYMENT THE PERSON APPROVED DID NOT HAPPEN, IN FOUR WORDS AND NO MORE.**

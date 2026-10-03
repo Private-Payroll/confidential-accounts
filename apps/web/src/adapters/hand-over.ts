@@ -71,7 +71,8 @@ export async function giveMyVaultKeys(personId: string, companyId: string): Prom
   try {
     const o = await opened(personId, companyId);
     if (typeof o === 'string') return refused(o);
-    await giveTheVaultKeys(companyId, o.keys, o.viewingKey);
+    const given = await giveTheVaultKeys(companyId, o.keys, o.viewingKey, o.roster);
+    if (given.of === ACTED.refused) return refused(given.why);
     return { of: ACTED.done };
   } catch (e) {
     return refused(refusalOf(e));

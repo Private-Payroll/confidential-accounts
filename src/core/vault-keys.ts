@@ -31,11 +31,20 @@ import type { Account, Signer } from './types.js';
 
 export type VaultKey = { readonly tag: string; readonly value: string };
 
-/** One signer's vault keys as the roster keeps them: the two public keys and that signer's signature over them. */
+/**
+ * One signer's vault keys as the roster keeps them: the two public keys and
+ * that signer's signature over them, and the signer's wallet's own signature
+ * by the committee key over the records key and the seat the signer holds
+ * (`recordsKeyStatement`, `recordsKeySeat`), which a device checks against the
+ * committee and the seats the chain lists.
+ */
 export interface SignedVaultKeys {
   readonly committeeKey: VaultKey;
   readonly recordsKey: Hex;
   readonly signature: Hex;
+  readonly recordsKeyStatement?: Hex | null;
+  /** The seat on the company's account the statement is signed for. */
+  readonly recordsKeySeat?: Hex | null;
 }
 
 /** What the service keeps about a company's vault keys, with nobody's name on any of it. */
@@ -56,11 +65,14 @@ export const vaultKeysMessage = (accountId: string, signerId: string, keys: { co
 
 /** Signs one's own vault keys with one's roster signing secret. */
 export const signVaultKeys = (
-  accountId: string, signerId: string, keys: { committeeKey: VaultKey; recordsKey: Hex }, signingSecret: Hex,
+  accountId: string, signerId: string,
+  keys: { committeeKey: VaultKey; recordsKey: Hex; recordsKeyStatement?: Hex | null; recordsKeySeat?: Hex | null }, signingSecret: Hex,
 ): SignedVaultKeys => ({
   committeeKey: { tag: fold(keys.committeeKey.tag), value: fold(keys.committeeKey.value) },
   recordsKey: fold(keys.recordsKey) as Hex,
   signature: sign(vaultKeysMessage(accountId, signerId, keys), signingSecret),
+  ...(keys.recordsKeyStatement && keys.recordsKeySeat
+    ? { recordsKeyStatement: fold(keys.recordsKeyStatement) as Hex, recordsKeySeat: fold(keys.recordsKeySeat) as Hex } : {}),
 });
 
 /** Whether a roster entry's vault keys are signed by that entry's own signing key. */
@@ -74,7 +86,13 @@ export interface RosterVaultKeys {
   readonly userId: string | null;
   readonly name: string;
   readonly filingKey: Hex;
-  readonly keys: { readonly committeeKey: VaultKey; readonly recordsKey: Hex } | null;
+  readonly keys: {
+    readonly committeeKey: VaultKey; readonly recordsKey: Hex;
+    /** The wallet's signature by the committee key over the records key and seat, or null where the entry carries none. */
+    readonly recordsKeyStatement: Hex | null;
+    /** The seat that statement is signed for, or null where the entry carries none. */
+    readonly recordsKeySeat: Hex | null;
+  } | null;
 }
 
 export function rosterVaultKeys(account: Pick<Account, 'id' | 'signers'>): RosterVaultKeys[] {
@@ -85,7 +103,9 @@ export function rosterVaultKeys(account: Pick<Account, 'id' | 'signers'>): Roste
     filingKey: fold(s.signingPublicKey) as Hex,
     keys: vaultKeysAreTheSigners(account.id, s)
       ? { committeeKey: { tag: fold(s.vaultKeys!.committeeKey.tag), value: fold(s.vaultKeys!.committeeKey.value) },
-          recordsKey: fold(s.vaultKeys!.recordsKey) as Hex }
+          recordsKey: fold(s.vaultKeys!.recordsKey) as Hex,
+          recordsKeyStatement: s.vaultKeys!.recordsKeyStatement && s.vaultKeys!.recordsKeySeat ? fold(s.vaultKeys!.recordsKeyStatement) as Hex : null,
+          recordsKeySeat: s.vaultKeys!.recordsKeyStatement && s.vaultKeys!.recordsKeySeat ? fold(s.vaultKeys!.recordsKeySeat) as Hex : null }
       : null,
   }));
 }

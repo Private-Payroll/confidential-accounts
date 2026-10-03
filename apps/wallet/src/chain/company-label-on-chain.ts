@@ -1,4 +1,5 @@
 import { ContractState } from '@midnightntwrk/ledger-v9';
+import type { AccountSeats } from 'midnight-identity/profile/records-key';
 import { COMPANY_LABEL_ENTRY, companyLabelOf, readAccountAddress } from 'midnight-identity/profile/company-label';
 import type { AccountAddress, CompanyLabel } from 'midnight-identity/profile/company-label';
 
@@ -25,9 +26,21 @@ import type { AccountAddress, CompanyLabel } from 'midnight-identity/profile/com
 /** Where the account's shared map of roles sits among the fields of its public state. */
 export const ROLES_FIELD = 13;
 
+/** Where the account's set of seated signers' leaves sits among the fields of its public state. */
+export const SIGNER_LEAVES_FIELD = 9;
+
+/**
+ * **WHO HOLDS THE ACCOUNT, AS THIS WALLET READ IT FROM THE CHAIN**: the keys of
+ * its maintenance committee and their threshold, and every seat the account
+ * holds now. Read in the same answer as the label, so they are of one block. A
+ * page checks every key a vault's secret is sealed to against this, and this is
+ * the one copy of it no service handed over.
+ */
+export type SeatsOnChain = AccountSeats;
+
 export type LabelOnAccount =
-  /** The account exists and carries this label. */
-  | { readonly of: 'carries'; readonly label: CompanyLabel }
+  /** The account exists and carries this label; `seats` is who holds it, read in the same answer. */
+  | { readonly of: 'carries'; readonly label: CompanyLabel; readonly seats?: SeatsOnChain }
   /** The indexer knows no contract at that address. */
   | { readonly of: 'no-account' }
   /** A contract is there and carries no label: not a company's account as this product deploys one. */
@@ -75,6 +88,29 @@ export function labelInAccountState(serialized: Uint8Array): CompanyLabel | null
   return null;
 }
 
+/**
+ * **WHO HOLDS AN ACCOUNT, FROM ITS SERIALISED STATE.** Throws when the bytes
+ * are not a contract's state laid out as a company's account is.
+ */
+export function seatsInAccountState(serialized: Uint8Array): SeatsOnChain {
+  const state = ContractState.deserialize(serialized);
+  const fields = state.data.state.asArray();
+  const leaves = fields === undefined || fields.length <= SIGNER_LEAVES_FIELD ? undefined : fields[SIGNER_LEAVES_FIELD]!.asMap();
+  if (leaves === undefined) throw new Error('that contract\'s state is not laid out as a company\'s account.');
+  const seats: string[] = [];
+  for (const key of leaves.keys()) {
+    const leaf = as32(key.value[0]);
+    if (leaf === null) throw new Error('that contract\'s state is not laid out as a company\'s account.');
+    seats.push(Array.from(leaf, (b) => b.toString(16).padStart(2, '0')).join(''));
+  }
+  const authority = state.maintenanceAuthority;
+  return Object.freeze({
+    committee: Object.freeze(authority.committee.map((k) => Object.freeze({ tag: String(k.tag), value: String(k.value).toLowerCase() }))),
+    threshold: authority.threshold,
+    seats: Object.freeze(seats),
+  });
+}
+
 /** What the read goes through: the indexer's own answer for one contract, as hex, or null. */
 export type ContractStateHex = (account: AccountAddress) => Promise<string | null>;
 
@@ -107,8 +143,9 @@ export async function labelOnAccount(account: AccountAddress, read: ContractStat
   }
   if (hex === null) return { of: 'no-account' };
   try {
-    const label = labelInAccountState(bytesOf(hex));
-    return label === null ? { of: 'no-label' } : { of: 'carries', label };
+    const bytes = bytesOf(hex);
+    const label = labelInAccountState(bytes);
+    return label === null ? { of: 'no-label' } : { of: 'carries', label, seats: seatsInAccountState(bytes) };
   } catch (e) {
     return { of: 'unreadable', why: e instanceof Error ? e.message : 'the state did not read.' };
   }

@@ -68,6 +68,8 @@ import type { PrivatePaymentOnTheWire, PrivatePaymentOrderOnTheWire } from '../.
 import type { EventOnTheWire, NoteOnTheWire } from './vault-builder.js';
 import { openNonceSecrets, recordsKeypairFrom, type NonceSecretReader } from '../../../src/midnight/company-nonce-secret.js';
 import { openSecretCopy, sealSecretCopy } from '../../../src/midnight/sealed-secret-copy.js';
+import { readerRefusalOf, type ReaderRefusalCode, type SeatsAsTheWalletRead } from '../../../src/midnight/secret-readers.js';
+import type { RosterVaultKeys } from '../../../src/core/vault-keys.js';
 import { fromHex, toHex } from '../../../src/core/crypto.js';
 import { NO_ASSET } from '../../../src/core/assets.js';
 import type { GovernedCallOrder, OpenedRound, SignerMaterial } from './governed-call-builder.js';
@@ -223,8 +225,24 @@ export interface CreateVaultDoors extends PoolDoors {
   readonly keys: TemporaryKeys;
   /** This signer's own three, from the keyring this device opened: the account's rounds are proved with them. */
   readonly material: SignerMaterial;
+  /** What every key the vault's secret is sealed to is checked against, before this device raises or approves it. */
+  readonly secretReaders: SecretReaderSources;
   /** The time now, in milliseconds. */
   readonly clock?: () => number;
+}
+
+/**
+ * **WHAT A SECRET'S READERS ARE CHECKED AGAINST**, none of it the service's
+ * word alone: the company's label and this signer's committee key and the
+ * account's holders as their own wallet gave and read them, and the roster this
+ * device opened, whose every records key carries its signer's wallet's
+ * signature.
+ */
+export interface SecretReaderSources {
+  readonly company: CompanyLabel;
+  readonly committeeKey: { readonly tag: string; readonly value: string };
+  readonly seats: SeatsAsTheWalletRead | null;
+  readonly roster: () => Promise<readonly RosterVaultKeys[]>;
 }
 
 /** Where the press ended: the vault started, or a round of its start waiting for other signers' approvals. */
@@ -246,10 +264,13 @@ export type VaultCreated =
  * shows. It holds nothing.
  */
 export class VaultStartOwed extends Error {
-  constructor(readonly vault: Hex, why: string) {
+  /** When the start stopped at the check of who its secret is sealed to: what kind of thing stopped it. */
+  readonly stoppedAt?: ReaderRefusalCode;
+  constructor(readonly vault: Hex, why: string, stoppedAt?: ReaderRefusalCode) {
     super(`Setting up this vault did not finish: ${why} `
       + 'This app puts no money into it until it is set up. Finish setting it up to carry on.');
     this.name = 'VaultStartOwed';
+    if (stoppedAt !== undefined) this.stoppedAt = stoppedAt;
   }
 }
 
@@ -477,7 +498,7 @@ async function startCompanyVault(doors: CreateVaultDoors, vault: Hex): Promise<V
   }
 
   /* ---- b. the pool and the nonce secret filed, and the secret read back ---- */
-  const secret = await openCompanyVaultPool(doors, vault);
+  const secret = await openCompanyVaultPool(doors, vault, (filedTo) => everyReaderChecksOut(doors, vault, filedTo));
   const { readers } = await doors.service.keys();
   const missing = readers.filter((r) => !secret.readers.some((k) => k.toLowerCase() === r.toLowerCase()));
   if (missing.length > 0) {
@@ -496,6 +517,7 @@ async function startCompanyVault(doors: CreateVaultDoors, vault: Hex): Promise<V
   }
   if (!at.standing.secret.set) {
     thisSignersCopyOpens(doors, vault, secret, run, readers);
+    await everyReaderChecksOut(doors, vault, run.copies.map((c) => String(c.reader)));
     let found = at.standing.secret.run;
     if (found === null || !found.inWindow) {
       const now = at.now;
@@ -604,6 +626,32 @@ function thisSignersCopyOpens(
   }
 }
 
+/**
+ * **EVERY KEY THE RUN SEALS A COPY TO, CHECKED BEFORE THIS DEVICE RAISES OR
+ * APPROVES IT** (`secret-readers.ts`): signed by its signer's own wallet with a
+ * key the chain lists on the company's committee, one per signer seated now,
+ * none missing and none extra, and the vault held by that committee. It runs
+ * twice: on the keys the service names, before a nonce secret is first filed
+ * and wrapped to them, and on the keys the run itself holds, before it is
+ * raised or approved, not a list beside it.
+ */
+async function everyReaderChecksOut(doors: CreateVaultDoors, vault: Hex, readers: readonly string[]): Promise<void> {
+  const sources = doors.secretReaders;
+  let view: VaultChainView;
+  let roster: readonly RosterVaultKeys[];
+  try {
+    [view, roster] = await Promise.all([doors.service.chain(vault), sources.roster()]);
+  } catch (e) {
+    throw new VaultStartOwed(vault, `who its secret is sealed to could not be checked (${(e as Error)?.message ?? e}). Nothing was approved.`);
+  }
+  const vaultCommittee = view.heldByCommittee === true && view.authority ? view.authority.committee : null;
+  const refused = readerRefusalOf({
+    company: sources.company, readers, roster, seats: sources.seats,
+    mine: sources.committeeKey, vaultCommittee,
+  });
+  if (refused !== null) throw new VaultStartOwed(vault, refused.says, refused.code);
+}
+
 /** Builds one of the vault's own start calls here, or says the start is not finished and nothing was sent. */
 async function buildOrOwe(vault: Hex, what: string, build: () => Promise<{ tx: string }>): Promise<{ tx: string }> {
   try {
@@ -653,9 +701,13 @@ async function readTheSecretBack(doors: Pick<PoolDoors, 'me' | 'records'>, vault
  * **THE VAULT'S NOTE POOL AND NONCE SECRET, FILED THROUGH THE COMPANY'S RECORDS
  * ROUTE**, and the secret read back and opened here. Only for a vault its
  * committee holds and the chain has never paid into. Each half is skipped when
- * it is already filed, so it can be run again.
+ * it is already filed, so it can be run again. `beforeFiling` is handed the
+ * keys a new nonce secret would be wrapped to, before anything is wrapped, and
+ * stops the filing by throwing.
  */
-export async function openCompanyVaultPool(doors: PoolDoors, vault: Hex): Promise<SecretReadBack> {
+export async function openCompanyVaultPool(
+  doors: PoolDoors, vault: Hex, beforeFiling?: (readers: readonly Hex[]) => Promise<void>,
+): Promise<SecretReadBack> {
   doors.progress?.('opening the pool');
   const view = await doors.service.chain(vault);
   if (!view.onChain || view.heldByCommittee !== true) {
@@ -673,6 +725,7 @@ export async function openCompanyVaultPool(doors: PoolDoors, vault: Hex): Promis
   }
   if (await doors.records('nonce-secret').get(vault) === null) {
     const { readers } = await doors.service.keys();
+    await beforeFiling?.(readers);
     const others: NonceSecretReader[] = readers
       .filter((k) => k.toLowerCase() !== doors.myRecordsKey.toLowerCase())
       .map((publicKey) => ({ publicKey }));

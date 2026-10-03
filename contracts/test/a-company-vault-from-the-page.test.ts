@@ -45,6 +45,7 @@ import { NodeZkConfigProvider } from '@midnight-ntwrk/midnight-js-node-zk-config
 import { identityFromWords, newWords } from 'midnight-identity';
 import { parseAsk } from 'midnight-identity/profile/request';
 import { unlockKeyFor } from 'midnight-identity/profile/unlock';
+import { signRecordsKey } from 'midnight-identity/profile/records-key';
 import { committeeKeyFor } from 'midnight-identity/profile/committee-key';
 import { drawCompanyLabel, readAccountAddress, type CompanyLabel } from 'midnight-identity/profile/company-label';
 import * as vaultModule from '../managed-vault/contract/index.js';
@@ -58,7 +59,8 @@ import { ACCOUNT_CIRCUITS_SERVED_TO_A_DEVICE, VAULT_CIRCUITS } from '../../src/m
 import { MemoryStore } from '../../src/core/store.js';
 import { AccountService, openAccount, sealAccount } from '../../src/core/account.js';
 import { MidnightCommitments } from '../../src/midnight/commitments.js';
-import { signVaultKeys } from '../../src/core/vault-keys.js';
+import { rosterVaultKeys, signVaultKeys } from '../../src/core/vault-keys.js';
+import { seatsInAccountState } from '../../apps/wallet/src/chain/company-label-on-chain.js';
 import { ChainLedger } from '../../src/wiring/chain.js';
 import { companyVaultRoutes, type VaultChain } from '../../src/server/company-vaults.js';
 import { mountVaultRecords, vaultAccountFromTheIndexer } from '../../src/server/vault-records-authority.js';
@@ -69,7 +71,7 @@ import { recordsReaderOf, type DeviceSigner } from 'vaults-web-shared/deposit-on
 import { answerVaultAsk } from 'vaults-web-shared/vault-worker-entry.js';
 import { vaultBuilderOver, type VaultAnswer } from 'vaults-web-shared/vault-worker-client.js';
 import {
-  createCompanyVault, depositIntoCompanyVault, openCompanyVaultPool, VaultHandoverOwed,
+  createCompanyVault, depositIntoCompanyVault, openCompanyVaultPool, VaultHandoverOwed, VaultStartOwed,
   type TemporaryKeys, type VaultService, type DepositInFlight, type DepositsInFlight,
 } from 'vaults-web-shared/vault-operation.js';
 import { inFlightInMemory as inFlightRecordsInMemory, sealedOnThisDevice, type KeptOnThisDevice } from 'vaults-web-shared/in-flight-on-this-device.js';
@@ -476,6 +478,12 @@ describe.skipIf(!KEYS_ON_DISK)('A COMPANY VAULT, FROM THE SIGNER\'S DEVICE [need
   const createDoors = () => ({
     ...pacing, account: readAccountAddress(company)!, service: service(), builder: builder(), keys,
     me, myRecordsKey: recordsReaderOf(me.companyKey).publicKey, signers, records: records(), material: material(),
+    /* What the founding signer's wallet gave and read when it released the company's keys: who holds the account now. */
+    secretReaders: {
+      company: label, committeeKey: committeeKeyFor(identityFromWords(words), label),
+      seats: seatsInAccountState(chain.contract(company).serialize()),
+      roster: async () => rosterVaultKeys(openAccount(store.getAccount(ACCOUNT_ID)!, viewingKey)),
+    },
   });
   const giveKeys = () => http(`/api/accounts/${ACCOUNT_ID}/vault-keys`, {
     method: 'PUT',
@@ -483,6 +491,8 @@ describe.skipIf(!KEYS_ON_DISK)('A COMPANY VAULT, FROM THE SIGNER\'S DEVICE [need
       viewingKey,
       ...signVaultKeys(ACCOUNT_ID, 'ada', {
         committeeKey: committeeKeyFor(identityFromWords(words), label), recordsKey: recordsReaderOf(me.companyKey).publicKey,
+        ...((st) => ({ recordsKeyStatement: st.signature as Hex, recordsKeySeat: st.seat as Hex }))(
+            signRecordsKey(identityFromWords(words), label, me.companyKey, hex(leafOfDevice(founder)))),
       }, signing.secret),
     },
   });
@@ -553,16 +563,83 @@ describe.skipIf(!KEYS_ON_DISK)('A COMPANY VAULT, FROM THE SIGNER\'S DEVICE [need
     })).rejects.toMatchObject({ status: 409, nothingWasSent: true });
     expect(chain.applied).toHaveLength(1);
 
-    /* ---- running it again finishes the handover, against the counter the chain holds, and starts the vault ---- */
+    /* ---- running it again finishes the handover and adopts the vault, and stops before its first secret ---- */
     dropHandover = false;
-    /* RED WHEN: the press ends before the chain shows the vault adopted, its secret set and every copy written. */
-    await expect(createCompanyVault(doors, vault)).resolves.toEqual({ vault, state: 'started' });
     /*
-     * The deploy from the first press; then the handover, then the start, each sent only once the chain showed the
-     * one before: the adoption raised, approved and carried out; the first secret run raised and approved; the secret
-     * set; the founding signer's sealed copy written. Nine, and every one applied.
+     * The wallet read who holds the account when it released the company's keys, and the service's temporary key
+     * still holds it. No key the secret is sealed to can be checked against a committee that does not hold the
+     * account, so nothing is raised or approved. RED WHEN: a vault's first secret is approved while the service's
+     * temporary key holds the company's account.
      */
-    expect(chain.applied.map((a) => a.ok)).toEqual([true, true, true, true, true, true, true, true, true]);
+    const early = await createCompanyVault(doors, vault).catch((e) => e);
+    expect(early, String(early?.message)).toBeInstanceOf(VaultStartOwed);
+    expect(early.message).toMatch(/account is not held by its own committee yet/);
+    const adoptedAt = chain.applied.length;
+    /* The deploy, the handover, and the adoption raised, approved and carried out: no secret run was raised. */
+    expect(chain.applied.map((a) => a.ok)).toEqual([true, true, true, true, true]);
+    expect(readAsUnproven).toEqual(['propose', 'approve', 'adopt']);
+    const poolDoors = { ...pacing, service: service(), me, myRecordsKey: recordsReaderOf(me.companyKey).publicKey, signers, records: records() };
+
+    /*
+     * ---- NO MONEY GOES IN WHILE THE ACCOUNT IS STILL THE TEMPORARY KEY'S, AND THE WALLET IS NOT ASKED ----
+     * A vault is no longer started before its account is the committee's, so the first thing the gate says now is
+     * that the vault is not started; the account's own refusal stands behind it.
+     */
+    shown = [];
+    await expect(depositIntoCompanyVault({
+      ...poolDoors, company: label, account: readAccountAddress(company)!, builder: builder(), pay: wallet, inFlight: inFlightInMemory(),
+    }, vault, { token: TOKEN_HEX, value: 1n })).rejects.toThrow(/has not yet adopted it and approved its first secret/);
+    expect(shown).toEqual([]);
+    expect(chain.applied).toHaveLength(adoptedAt);
+    const before = await http(`/api/accounts/${ACCOUNT_ID}/authority`);
+    expect(before.contracts[0]).toMatchObject({ contract: 'account', address: company, heldByTheCompany: false, shape: 'one-key', changes: '0' });
+    expect(before.contracts[1]).toMatchObject({ contract: 'vault', address: vault, heldByTheCompany: true, changes: '1' });
+    /* Whose each seat is, the service does not say: the page names it from the roster it opens. */
+    expect(before.contracts[1].seats).toEqual([{ key: committee, holder: null, thisService: false, onTheCompanysCommittee: true }]);
+    expect(before.contracts[0].seats).toEqual([expect.objectContaining({ thisService: true, onTheCompanysCommittee: false })]);
+    /* The page's own check, against the key the wallet itself derives. */
+    const roster = openAccount(store.getAccount(ACCOUNT_ID)!, viewingKey);
+    expect(whyNotHandOver(before, committee, roster, { signerId: 'ada' })).toBeNull();
+    expect(whyNotHandOver(before, committeeKeyFor(identityFromWords(newWords().join(' ')), label), roster, { signerId: 'ada' }))
+      .toMatch(/roster does not carry the key your wallet gives/);
+    expect(before.everySignerNeeded).toMatch(/only signer/);
+    expect(before.handover).toMatchObject({ possible: true, why: null });
+
+    /* ---- a committee at a threshold of nothing is refused before anything is signed or sent ---- */
+    companyThreshold = 0;
+    await expect(http(`/api/accounts/${ACCOUNT_ID}/authority/handover`, { method: 'POST', body: {} }))
+      .rejects.toMatchObject({ status: 409, nothingWasSent: true, message: expect.stringMatching(/threshold is 0/) });
+    expect(chain.applied).toHaveLength(adoptedAt);
+    expect(chain.contract(company).maintenanceAuthority.counter).toBe(0n);
+    companyThreshold = 1;
+
+    /* ---- the account handed to the committee, by the service's temporary key, read back from the chain ---- */
+    await http(`/api/accounts/${ACCOUNT_ID}/authority/handover`, { method: 'POST', body: { committee: before.committee } });
+    expect(chain.applied.map((a) => a.ok)).toEqual(Array(adoptedAt + 1).fill(true));
+    const accountHeld = chain.contract(company).maintenanceAuthority;
+    expect(accountHeld.committee.map((k: { value: string }) => k.value)).toEqual([committee.value]);
+    expect(accountHeld.threshold).toBe(1);
+    expect(accountHeld.counter).toBe(1n);
+    const after = await http(`/api/accounts/${ACCOUNT_ID}/authority`);
+    expect(after.contracts[0]).toMatchObject({ contract: 'account', heldByTheCompany: true, changes: '1', seatsOutsideTheCommittee: 0 });
+    expect(after.handover.possible).toBe(false);
+    /* And once is all: the temporary key cannot change the account again through this route. */
+    await expect(http(`/api/accounts/${ACCOUNT_ID}/authority/handover`, { method: 'POST', body: { committee: before.committee } }))
+      .rejects.toMatchObject({ status: 409, nothingWasSent: true });
+    expect(chain.applied).toHaveLength(adoptedAt + 1);
+    expect(sent.some((b) => b.includes(TEMPORARY_ACCOUNT_KEY.value))).toBe(false);
+    expect(answered.length).toBeGreaterThan(5);
+    expect(answered.some((b) => b.includes(TEMPORARY_ACCOUNT_KEY.value))).toBe(false);
+
+    /* ---- with the account held by its committee, the wallet reads it again and the vault is started ---- */
+    /* RED WHEN: the press ends before the chain shows the vault adopted, its secret set and every copy written. */
+    await expect(createCompanyVault(createDoors(), vault)).resolves.toEqual({ vault, state: 'started' });
+    /*
+     * The deploy from the first press; then the handover and the adoption, raised, approved and carried out; the
+     * account's own handover; then the first secret run raised and approved, the secret set and the founding
+     * signer's sealed copy written. Ten, and every one applied.
+     */
+    expect(chain.applied.map((a) => a.ok)).toEqual(Array(10).fill(true));
     const startedAt = chain.applied.length;
     /* RED WHEN the deploy or the handover reaches the service unproven, or a call of the start is read as something else. */
     expect(readAsUnproven).toEqual(['propose', 'approve', 'adopt', 'propose', 'approve', 'setNonceSecret+approveVaultChange', 'writeSecretCopy']);
@@ -589,12 +666,11 @@ describe.skipIf(!KEYS_ON_DISK)('A COMPANY VAULT, FROM THE SIGNER\'S DEVICE [need
     expect(held.threshold).toBe(1);
     expect(held.counter).toBe(1n);
     expect(temporaryKeys.has(vault)).toBe(false);
-    /* The committee holds the vault; the account it pays out on is still the service's temporary key's. */
+    /* The committee holds the vault and the account it pays out on. */
     expect((await http(`/api/accounts/${ACCOUNT_ID}/vaults`)).rows)
-      .toEqual([expect.objectContaining({ vault, state: 'account-not-handed-over' })]);
+      .toEqual([expect.objectContaining({ vault, state: 'held-by-committee', why: null })]);
 
     /* ---- the pool and the nonce secret, filed signed through the mounted route ---- */
-    const poolDoors = { ...pacing, service: service(), me, myRecordsKey: recordsReaderOf(me.companyKey).publicKey, signers, records: records() };
     await openCompanyVaultPool(poolDoors, vault);
     expect(await serverStores.get('pool')!.get(vault)).not.toBeNull();
     expect(await serverStores.get('nonce-secret')!.get(vault)).not.toBeNull();
@@ -606,62 +682,14 @@ describe.skipIf(!KEYS_ON_DISK)('A COMPANY VAULT, FROM THE SIGNER\'S DEVICE [need
       .save(vault, { notes: [] }, { vault, version: 1 })).rejects.toThrow(/403|not filed|could not be/);
     expect((await serverStores.get('pool')!.versions(vault)).length).toBe(1);
 
-    /* ---- NO MONEY GOES IN WHILE THE ACCOUNT IS STILL THE TEMPORARY KEY'S, AND THE WALLET IS NOT ASKED ---- */
-    shown = [];
-    await expect(depositIntoCompanyVault({
-      ...poolDoors, company: label, account: readAccountAddress(company)!, builder: builder(), pay: wallet, inFlight: inFlightInMemory(),
-    }, vault, { token: TOKEN_HEX, value: 1n })).rejects.toThrow(/account is still held by the temporary key/);
-    expect(shown).toEqual([]);
-    expect(chain.applied).toHaveLength(startedAt);
-    const before = await http(`/api/accounts/${ACCOUNT_ID}/authority`);
-    expect(before.contracts[0]).toMatchObject({ contract: 'account', address: company, heldByTheCompany: false, shape: 'one-key', changes: '0' });
-    expect(before.contracts[1]).toMatchObject({ contract: 'vault', address: vault, heldByTheCompany: true, changes: '1' });
-    /* Whose each seat is, the service does not say: the page names it from the roster it opens. */
-    expect(before.contracts[1].seats).toEqual([{ key: committee, holder: null, thisService: false, onTheCompanysCommittee: true }]);
-    expect(before.contracts[0].seats).toEqual([expect.objectContaining({ thisService: true, onTheCompanysCommittee: false })]);
-    /* The page's own check, against the key the wallet itself derives. */
-    const roster = openAccount(store.getAccount(ACCOUNT_ID)!, viewingKey);
-    expect(whyNotHandOver(before, committee, roster, { signerId: 'ada' })).toBeNull();
-    expect(whyNotHandOver(before, committeeKeyFor(identityFromWords(newWords().join(' ')), label), roster, { signerId: 'ada' }))
-      .toMatch(/roster does not carry the key your wallet gives/);
-    expect(before.everySignerNeeded).toMatch(/only signer/);
-    expect(before.handover).toMatchObject({ possible: true, why: null });
-
-    /* ---- a committee at a threshold of nothing is refused before anything is signed or sent ---- */
-    companyThreshold = 0;
-    await expect(http(`/api/accounts/${ACCOUNT_ID}/authority/handover`, { method: 'POST', body: {} }))
-      .rejects.toMatchObject({ status: 409, nothingWasSent: true, message: expect.stringMatching(/threshold is 0/) });
-    expect(chain.applied).toHaveLength(startedAt);
-    expect(chain.contract(company).maintenanceAuthority.counter).toBe(0n);
-    companyThreshold = 1;
-
-    /* ---- the account handed to the committee, by the service's temporary key, read back from the chain ---- */
-    await http(`/api/accounts/${ACCOUNT_ID}/authority/handover`, { method: 'POST', body: { committee: before.committee } });
-    expect(chain.applied.map((a) => a.ok)).toEqual(Array(startedAt + 1).fill(true));
-    const accountHeld = chain.contract(company).maintenanceAuthority;
-    expect(accountHeld.committee.map((k: { value: string }) => k.value)).toEqual([committee.value]);
-    expect(accountHeld.threshold).toBe(1);
-    expect(accountHeld.counter).toBe(1n);
-    const after = await http(`/api/accounts/${ACCOUNT_ID}/authority`);
-    expect(after.contracts[0]).toMatchObject({ contract: 'account', heldByTheCompany: true, changes: '1', seatsOutsideTheCommittee: 0 });
-    expect(after.handover.possible).toBe(false);
-    expect((await http(`/api/accounts/${ACCOUNT_ID}/vaults`)).rows)
-      .toEqual([expect.objectContaining({ vault, state: 'held-by-committee', why: null })]);
-    /* And once is all: the temporary key cannot change the account again through this route. */
-    await expect(http(`/api/accounts/${ACCOUNT_ID}/authority/handover`, { method: 'POST', body: { committee: before.committee } }))
-      .rejects.toMatchObject({ status: 409, nothingWasSent: true });
-    expect(chain.applied).toHaveLength(startedAt + 1);
-    expect(sent.some((b) => b.includes(TEMPORARY_ACCOUNT_KEY.value))).toBe(false);
-    expect(answered.length).toBeGreaterThan(5);
-    expect(answered.some((b) => b.includes(TEMPORARY_ACCOUNT_KEY.value))).toBe(false);
 
     /* ---- the deposit ---- */
     shown = [];
     const deposited = await depositIntoCompanyVault({
       ...poolDoors, company: label, account: readAccountAddress(company)!, builder: builder(), pay: wallet, inFlight: inFlightInMemory(),
     }, vault, { token: TOKEN_HEX, value: 1_000n });
-    expect(chain.applied.map((a) => a.ok)).toEqual(Array(startedAt + 2).fill(true));
-    const depositAt = startedAt + 1;
+    expect(chain.applied.map((a) => a.ok)).toEqual(Array(startedAt + 1).fill(true));
+    const depositAt = startedAt;
     /* The deposit arrives finished by the wallet, through the other reader. RED WHEN anything after the start is read as unproven. */
     expect(readAsUnproven).toHaveLength(7);
 
