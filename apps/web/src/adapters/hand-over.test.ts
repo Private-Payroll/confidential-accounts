@@ -17,7 +17,10 @@ const kr = vi.hoisted(() => ({
   roster: null as unknown, walletKey: null as unknown, signed: null as unknown, opened: 0, user: 'u1', seat: false,
   /** When set, what the shared check answers, in place of its own answer. */
   check: undefined as undefined | null | { code: string; why: string },
+  /* The seat this device's own key material makes, and every seat the account was asked to sign for. */
+  ownSeat: '5a'.repeat(32), walletAsked: [] as string[],
 }));
+vi.mock('./vault-builder.js', () => ({ theVaultBuilder: async () => ({ ownSeat: async () => kr.ownSeat }) }));
 vi.mock('vaults-web-shared/committee-change-on-device.js', async (real) => {
   const shared = await real<typeof import('vaults-web-shared/committee-change-on-device.js')>();
   return { ...shared, committeeChangeRefusal: (...a: Parameters<typeof shared.committeeChangeRefusal>) => (kr.check === undefined ? shared.committeeChangeRefusal(...a) : kr.check) };
@@ -36,6 +39,11 @@ vi.mock('vaults-web-shared/keyring.js', async (real) => ({
   viewingKeyFor: () => 'vk',
   openAccount: () => kr.roster,
   companyKeysForVaults: async () => ({ companyKey: '11'.repeat(32), committeeKey: kr.walletKey, company: 'co_' + 'a1'.repeat(32), account: 'a0'.repeat(32) }),
+  /* The account signs this person's records key for the seat the page names; what it signs is the identity library's to test. */
+  recordsKeyFromTheWallet: async (_origin: string, ask: { seat: string }) => (kr.walletAsked.push(ask.seat), {
+    committeeKey: kr.walletKey, statement: { recordsKey: '33'.repeat(32), seat: ask.seat, signature: '44'.repeat(64) },
+    seats: { committee: [kr.walletKey], threshold: 1, seats: [ask.seat] },
+  }),
   signCommitteeChangeFromTheWallet: async () => kr.signed,
   api: async (path: string, opts?: RequestInit) => {
     kr.calls.push({ path, method: String(opts?.method ?? 'GET'), body: opts?.body === undefined ? undefined : JSON.parse(String(opts.body)) });
@@ -52,7 +60,7 @@ vi.mock('vaults-web-shared/vault-page-doors.js', () => ({
 
 /** A roster naming signer `s1` with committee key `mine`, and the company's committee as the keys given. */
 const rosterWith = (mine: { tag: string; value: string }) => ({ id: 'c1', signers: [{
-  id: 's1', userId: 'u1', name: 'Priya', status: 'active', signingPublicKey: SIGNER.publicKey,
+  id: 's1', userId: 'u1', name: 'Priya', status: 'active', signingPublicKey: SIGNER.publicKey, leafCommitment: '5a'.repeat(32),
   vaultKeys: signVaultKeys('c1', 's1', { committeeKey: mine, recordsKey: K(0x40).value as Hex }, SIGNER.secret),
 }] });
 
@@ -68,7 +76,7 @@ const AUTHORITY = (over: Record<string, unknown> = {}) => ({
   handover: { possible: true, why: null }, change: { possible: false, why: 'x' }, ...over,
 });
 
-beforeEach(() => { kr.check = undefined; kr.seat = false; kr.user = 'u1'; kr.calls = []; kr.answers = {}; kr.keys = { signerId: 's1', signingSecret: 'aa', wrappingSecret: 'bb', blinding: 'cc' }; kr.opened = 0; kr.walletKey = K(1); kr.roster = null; kr.signed = null; });
+beforeEach(() => { kr.ownSeat = '5a'.repeat(32); kr.walletAsked = []; kr.check = undefined; kr.seat = false; kr.user = 'u1'; kr.calls = []; kr.answers = {}; kr.keys = { signerId: 's1', signingSecret: 'aa', wrappingSecret: 'bb', blinding: 'cc' }; kr.opened = 0; kr.walletKey = K(1); kr.roster = null; kr.signed = null; });
 afterEach(() => { vi.unstubAllEnvs(); });
 
 describe('where a company stands, from the shape of the service\'s answer', () => {
@@ -166,16 +174,47 @@ describe('handing it over', () => {
     const { acts } = await load();
     kr.keys = null; kr.seat = true;
     kr.answers['/api/accounts/c1'] = {};
+    /* The roster names this person's seat, which their account signs their records key for. */
+    kr.roster = rosterWith(K(1));
     expect(await acts.giveMyVaultKeys('u1', 'c1')).toEqual({ of: 'done' });
     expect(kr.seat).toBe(false);
+  });
+
+  /* RED WHEN: vault keys are given with no seat for the account to sign the records key for, or anything is sent then. */
+  it('gives no vault keys when the roster names no seat for this person', async () => {
+    const { acts } = await load();
+    kr.answers['/api/accounts/c1'] = {};
+    kr.roster = { ...rosterWith(K(1)), signers: rosterWith(K(1)).signers.map((x) => ({ ...x, leafCommitment: null })) };
+    expect(await acts.giveMyVaultKeys('u1', 'c1')).toEqual({ of: 'refused', why: 'no-seat' });
+    expect(kr.calls.filter((c) => c.path.startsWith('give'))).toEqual([]);
+    expect(kr.walletAsked).toEqual([]);
+  });
+
+  /* RED WHEN: the account is asked to sign for a seat the records name that this device's own key does not make. */
+  it('gives no vault keys, and asks the account to sign nothing, when the records name a seat this device\'s key does not make', async () => {
+    const { acts } = await load();
+    kr.answers['/api/accounts/c1'] = {};
+    kr.roster = rosterWith(K(1));
+    kr.ownSeat = '6b'.repeat(32);
+    expect(await acts.giveMyVaultKeys('u1', 'c1')).toEqual({ of: 'refused', why: 'not-your-seat' });
+    expect(kr.walletAsked).toEqual([]);
+    expect(kr.calls.filter((c) => c.path.startsWith('give'))).toEqual([]);
+    kr.ownSeat = '5a'.repeat(32);
+    expect(await acts.giveMyVaultKeys('u1', 'c1')).toEqual({ of: 'done' });
+    expect(kr.walletAsked).toEqual(['5a'.repeat(32)]);
   });
 
   /* RED WHEN: the vault keys given are not this person's own, from their own entry, with the key their account gives. */
   it('gives this person\'s own vault keys', async () => {
     const { acts } = await load();
     kr.answers['/api/accounts/c1'] = {};
+    kr.roster = rosterWith(K(1));
     expect(await acts.giveMyVaultKeys('u1', 'c1')).toEqual({ of: 'done' });
-    expect(kr.calls.at(-1)).toEqual({ path: 'give c1', method: 'PUT', body: { committeeKey: K(1), companyKey: '11'.repeat(32), signingSecret: 'aa', signerId: 's1', viewingKey: 'vk' } });
+    expect(kr.calls.at(-1)).toEqual({ path: 'give c1', method: 'PUT', body: {
+      committeeKey: K(1), companyKey: '11'.repeat(32), signingSecret: 'aa', signerId: 's1', viewingKey: 'vk',
+      /* RED WHEN: the keys are given without the account's statement for the seat this person holds. */
+      recordsKey: { recordsKey: '33'.repeat(32), seat: '5a'.repeat(32), signature: '44'.repeat(64) },
+    } });
   });
 });
 

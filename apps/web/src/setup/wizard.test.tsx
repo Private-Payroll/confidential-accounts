@@ -554,15 +554,44 @@ describe('creating a vault: one component, on the step and on the Vaults page', 
       await act(async () => { fireEvent.click(q(container, '[data-action=create-vault-now]')!); await settle(); });
       await act(async () => { fireEvent.click([...container.querySelectorAll('button')].find((b) => b.textContent === EN['kit.confirm.confirm'])!); await settle(); });
       expect(q(container, '[data-result] [data-says]')!.textContent, result.of).toBe(says);
-      /* RED WHEN the words promise what is not built: other signers approving from their own accounts, finishing it from here after a reload, or name it adopting. */
+      /* RED WHEN the words promise what is not built - finishing it from here after a reload - or name it adopting. */
       expect(says, result.of).not.toMatch(/own accounts|from here|adopt/iu);
-      if (result.of === 'awaiting-approvals') expect(says).toContain('Your other signers cannot approve this in the app yet.');
+      /* RED WHEN the words do not send the other signers to the approval that is built for them, on their own device. */
+      if (result.of === 'awaiting-approvals') expect(says).toContain('Each of your other signers approves it from their own device: they open this vault and press Finish setting it up');
       expect(q(container, '[data-created]'), result.of).toBeNull();
       await act(async () => { fireEvent.click(q(container, '[data-action=finish-start]')!); await settle(); });
       expect(q(container, '[data-slot=confirm-in-your-account]')!.textContent).toContain(EN['createVault.confirmStart']);
       await act(async () => { fireEvent.click([...container.querySelectorAll('button')].find((b) => b.textContent === EN['kit.confirm.confirm'])!); await settle(); });
       expect(state.acted).toEqual([JSON.stringify(['create-vault', 'u1', 'c-1']), JSON.stringify(['finish-vault', 'u1', 'c-1', 'v-4'])]);
     }
+  });
+
+  /*
+   * RED WHEN: a set up that stopped at the check of who its secret is sealed to is not said with what resolves it,
+   * or is said with another reason's words.
+   */
+  it('says what resolves a set up that stopped before its secret was approved', async () => {
+    const { container } = await draw(<CreateVault leadTo={() => {}} onChanged={() => {}} />, sessionWith({ company: 'c-1' }));
+    for (const [stopped, key] of [
+      ['wallet', 'createVault.stopped.wallet'], ['hand-over', 'createVault.stopped.handOver'],
+      ['signers', 'createVault.stopped.signers'], ['mismatch', 'createVault.stopped.mismatch'],
+    ] as const) {
+      state.vaultCreated = { of: 'start-owed', vault: 'v-5', stopped } as never;
+      await act(async () => { fireEvent.click(q(container, '[data-action=create-vault-now]')!); await settle(); });
+      await act(async () => { fireEvent.click([...container.querySelectorAll('button')].find((b) => b.textContent === EN['kit.confirm.confirm'])!); await settle(); });
+      expect(q(container, '[data-result]')!.dataset.stopped, stopped).toBe(stopped);
+      expect(q(container, '[data-result] [data-says]')!.textContent, stopped).toBe(EN[key]);
+    }
+  });
+
+  /* RED WHEN: asked to carry one vault's set up on, the component does not ask to confirm that, or carries another vault on. */
+  it('opened to carry a vault\'s set up on, asks to confirm that and carries that vault on', async () => {
+    const { container } = await draw(<CreateVault leadTo={() => {}} onChanged={() => {}} starting="v-6" />, sessionWith({ company: 'c-1' }));
+    await settle();
+    expect(q(container, '[data-slot=confirm-in-your-account]')!.textContent).toContain(EN['createVault.confirmStart']);
+    state.acted.length = 0;
+    await act(async () => { fireEvent.click([...container.querySelectorAll('button')].find((b) => b.textContent === EN['kit.confirm.confirm'])!); await settle(); });
+    expect(state.acted).toEqual([JSON.stringify(['finish-vault', 'u1', 'c-1', 'v-6'])]);
   });
 
   /* RED WHEN: a stage of the vault's set up is not said while it happens, or is said in words other than its own. */

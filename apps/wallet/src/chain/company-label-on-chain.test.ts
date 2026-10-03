@@ -5,7 +5,11 @@ import type { AccountAddress } from 'midnight-identity/profile/company-label';
 import { Contract, ledger, pureCircuits } from '../../../../contracts/managed/contract/index.js';
 import { witnesses } from '../../../../contracts/src/witnesses.js';
 import { leafOfDevice, privateStateFor } from '../../../../contracts/test/simulator.js';
-import { ROLES_FIELD, accountCarries, labelInAccountState, labelOnAccount } from './company-label-on-chain.js';
+import { ContractMaintenanceAuthority, ContractState } from '@midnightntwrk/ledger-v9';
+import { schnorr } from '@noble/curves/secp256k1.js';
+import {
+  ROLES_FIELD, SIGNER_LEAVES_FIELD, accountCarries, labelInAccountState, labelOnAccount, seatsInAccountState,
+} from './company-label-on-chain.js';
 
 /*
  * The label a company's account carries, read the way this wallet reads it:
@@ -55,7 +59,7 @@ describe('THE LABEL, READ OFF THE ACCOUNT', () => {
   it('A READ THAT FAILS IS NEVER AN ANSWER, AND NO ACCOUNT IS NOT A LABEL', async () => {
     const label = companyLabelOf(LABEL_BYTES);
     const state = hexOf(await deployedState(LABEL_BYTES));
-    expect(await labelOnAccount(ACCOUNT, async () => state)).toEqual({ of: 'carries', label });
+    expect(await labelOnAccount(ACCOUNT, async () => state)).toEqual({ of: 'carries', label, seats: seatsInAccountState(Buffer.from(state, 'hex')) });
     expect(accountCarries(await labelOnAccount(ACCOUNT, async () => state), label)).toBe(true);
     /* RED WHEN: a different label is taken as the one asked about. */
     expect(accountCarries(await labelOnAccount(ACCOUNT, async () => state), companyLabelOf(TRAILING_ZEROS))).toBe(false);
@@ -73,5 +77,44 @@ describe('THE LABEL, READ OFF THE ACCOUNT', () => {
     const notAnAccount = await labelOnAccount(label as unknown as AccountAddress, async (a) => { asked.push(a); return state; });
     expect(notAnAccount.of).toBe('unreadable');
     expect(asked).toEqual([]);
+  });
+});
+
+describe('WHO HOLDS THE ACCOUNT, READ OFF IT IN THE SAME ANSWER AS ITS LABEL', () => {
+  /* A committee key: the public half of a schnorr key, as the chain holds it. */
+  const key = (n: number): string => Buffer.from(schnorr.getPublicKey(new Uint8Array(32).fill(n))).toString('hex');
+  /* The deployed account's state, with a committee put on it the way a handover leaves one. */
+  const heldBy = async (keys: string[], threshold: number): Promise<Uint8Array> => {
+    const state = ContractState.deserialize(await deployedState(LABEL_BYTES));
+    state.maintenanceAuthority = new ContractMaintenanceAuthority(keys.map((value) => ({ tag: 'schnorr', value })) as never, threshold, 1n);
+    return state.serialize();
+  };
+
+  it('reads the committee and its threshold from the account\'s own maintenance authority', async () => {
+    const keys = [key(1), key(2)];
+    const seats = seatsInAccountState(await heldBy(keys, 2));
+    /* RED WHEN: the committee or the threshold is read from anywhere but the account's maintenance authority. */
+    expect(seats.committee).toEqual(keys.map((value) => ({ tag: 'schnorr', value })));
+    expect(seats.threshold).toBe(2);
+  });
+
+  it('reads every seat the account holds now, from the contract\'s own set of seated leaves', async () => {
+    const founder = privateStateFor(1);
+    const contract = new Contract(witnesses);
+    const { currentContractState } = await contract.initialState(
+      createConstructorContext(founder, '0'.repeat(64)), leafOfDevice(founder), LABEL_BYTES);
+    const leaves = ledger((currentContractState as unknown as { data: never }).data).signerLeaves;
+    /* RED WHEN: the field read is not the contract's set of seated leaves, or a seat is read with any other bytes. */
+    const seated = [...leaves].map((l: Uint8Array) => Buffer.from(l).toString('hex'));
+    expect(seated).toEqual([Buffer.from(leafOfDevice(founder)).toString('hex')]);
+    expect(seatsInAccountState(await heldBy([key(1)], 1)).seats).toEqual(seated);
+    expect(SIGNER_LEAVES_FIELD).toBe(9);
+  });
+
+  it('a read of the account carries who holds it, and a state laid out otherwise is no answer', async () => {
+    const state = Buffer.from(await heldBy([key(3)], 1)).toString('hex');
+    const read = await labelOnAccount(ACCOUNT, async () => state);
+    /* RED WHEN: the read that shows the label drops who holds the account. */
+    expect(read.of === 'carries' && read.seats?.committee).toEqual([{ tag: 'schnorr', value: key(3) }]);
   });
 });

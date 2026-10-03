@@ -161,9 +161,15 @@ export interface Signer {
   /**
    * The two public keys this signer gave for the company's vaults, signed with
    * this entry's own signing key. Absent until they give them. The roster is
-   * the only record of whose they are.
+   * the only record of whose they are. `recordsKeyStatement` is the signer's
+   * wallet's own signature, by the committee key, over the records key for
+   * this company and the seat `recordsKeySeat` they hold on its account; a
+   * device checks it itself, so it needs no other signature.
    */
-  vaultKeys?: { committeeKey: { tag: string; value: string }; recordsKey: Hex; signature: Hex } | null;
+  vaultKeys?: {
+    committeeKey: { tag: string; value: string }; recordsKey: Hex; signature: Hex;
+    recordsKeyStatement?: Hex | null; recordsKeySeat?: Hex | null;
+  } | null;
   /*
    * `blinding` USED TO BE HERE, AND IT WAS TAKEN BACK OUT. Read this before
    * putting anything like it back.

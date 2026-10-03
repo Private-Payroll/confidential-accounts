@@ -824,6 +824,29 @@ describe('vaults and a vault', () => {
     expect(q(quiet, '[data-pending]')).toBeNull();
   });
 
+  /*
+   * RED WHEN: a vault its signers hold and that is not set up is shown as held by them, is not marked pending, or
+   * its pill and its row do not open carrying its set up on in the panel - which any signer does from their own device.
+   */
+  it('marks a vault held and not set up as pending, says so, and opens carrying its set up on', async () => {
+    state.company = records({ vaults: { of: 'read', value: [vaultOf('start-owed')] } });
+    const c = await draw('vaults');
+    await settle();
+    const pill = q(c, `[data-slot=stat-tile][data-vault="${VAULT}"] [data-pending]`)!;
+    expect(pill.dataset.pending).toBe('start-owed');
+    expect(q(c, `[data-slot=stat-tile][data-vault="${VAULT}"]`)!.textContent).not.toContain(EN['vaults.standing.held']);
+    expect(all(c, '[data-part=vaults-pending] [data-pending-vault]').map((r) => r.textContent)).toEqual([
+      `Vault 1${EN['vaults.standing.startOwed']}${EN['createVault.finishStart']}`,
+    ]);
+    await act(async () => { fireEvent.click(pill); await new Promise((r) => setTimeout(r, 5)); });
+    expect(document.querySelector('[data-panel] [data-action=create-vault] [data-slot=confirm-in-your-account]')?.textContent).toContain(EN['createVault.confirmStart']);
+    cleanup();
+    const rows = await draw('vaults');
+    await settle();
+    await act(async () => { fireEvent.click(q(rows, `[data-pending-vault="${VAULT}"] [data-action=finish-start]`)!); await new Promise((r) => setTimeout(r, 5)); });
+    expect(document.querySelector('[data-panel] [data-action=create-vault] [data-slot=confirm-in-your-account]')?.textContent).toContain(EN['createVault.confirmStart']);
+  });
+
   /* RED WHEN: a standing phrase says as a fact about the vault that no money can go in, or the vault-created line's second sentence stops saying this app puts money in only once the company is handed over. */
   it('says only that this app puts no money in, and says the company account must be handed over too', () => {
     for (const k of ['notFundable', 'accountNotHandedOver', 'accountNotFundable', 'heldByOtherKeys']) {

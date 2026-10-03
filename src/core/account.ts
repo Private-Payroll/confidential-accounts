@@ -4215,10 +4215,23 @@ export class AccountService {
     if (seat.vaultKeys) {
       const same = seat.vaultKeys.committeeKey.value.toLowerCase() === given.committeeKey.value.toLowerCase()
         && seat.vaultKeys.recordsKey.toLowerCase() === given.recordsKey.toLowerCase();
-      if (same) return 'already-given';
-      throw new VaultKeysAlreadyGiven();
+      if (!same) throw new VaultKeysAlreadyGiven();
+      /* The same keys again, with the wallet's statement over the records key for the seat held now. */
+      const statement = given.recordsKeyStatement ?? null;
+      const signedSeat = given.recordsKeySeat ?? null;
+      if (statement === null || signedSeat === null
+        || (statement === (seat.vaultKeys.recordsKeyStatement ?? null) && signedSeat === (seat.vaultKeys.recordsKeySeat ?? null))) {
+        return 'already-given';
+      }
+      seat.vaultKeys = { ...seat.vaultKeys, recordsKeyStatement: statement, recordsKeySeat: signedSeat };
+      this.save(rec, account, viewingKey, rec.pendingSigners);
+      return 'given';
     }
-    seat.vaultKeys = { committeeKey: { ...given.committeeKey }, recordsKey: given.recordsKey, signature: given.signature };
+    seat.vaultKeys = {
+      committeeKey: { ...given.committeeKey }, recordsKey: given.recordsKey, signature: given.signature,
+      ...(given.recordsKeyStatement && given.recordsKeySeat
+        ? { recordsKeyStatement: given.recordsKeyStatement, recordsKeySeat: given.recordsKeySeat } : {}),
+    };
     this.save(rec, account, viewingKey, rec.pendingSigners);
     this.store.putFilingKey({ accountId, userId, filingKey: seat.signingPublicKey.toLowerCase() as Hex });
     return 'given';

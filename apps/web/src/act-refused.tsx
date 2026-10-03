@@ -23,6 +23,8 @@ export function ActRefused({ why }: { why: ActRefusal }) {
     [ACT_REFUSAL.nothingSent]: t('act.refused.nothingSent'),
     [ACT_REFUSAL.unreachable]: t('act.refused.unreachable'),
     [ACT_REFUSAL.didNotFinish]: t('act.refused.didNotFinish'),
+    [ACT_REFUSAL.noSeat]: t('act.refused.noSeat'),
+    [ACT_REFUSAL.notYourSeat]: t('act.refused.notYourSeat'),
   };
   return (
     <Alert data-refusal={why}>

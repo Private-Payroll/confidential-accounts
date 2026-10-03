@@ -1,5 +1,6 @@
 import type { SealedAccount } from '../../../../src/core/types.js';
 import { rosterVaultKeys } from '../../../../src/core/vault-keys.js';
+import { READER_REFUSAL, type ReaderRefusalCode } from '../../../../src/midnight/secret-readers.js';
 import { whyNotTheCommittee } from 'vaults-web-shared/handover-check.js';
 import { api, canOpenCompanies, currentUser, openAccount, openKeysWithWallet, viewingKeyFor } from 'vaults-web-shared/keyring.js';
 import { createCompanyVault, VaultHandoverOwed, VaultStartOwed, type VaultStage } from 'vaults-web-shared/vault-operation.js';
@@ -78,14 +79,38 @@ const STAGE: Partial<Record<VaultStage, Creating>> = {
 export type VaultCreated =
   | { of: typeof ACTED.done; vault: string }
   | { of: typeof OWED.here | typeof OWED.elsewhere | typeof OWED.rosterDisagrees; vault: string }
-  /** Handed to the committee and not started: creating it again carries on. */
-  | { of: typeof STARTING.owed; vault: string }
+  /**
+   * Handed to the committee and not started: creating it again carries on.
+   * `stopped` when it stopped at the check of who its secret is sealed to, and what resolves it.
+   */
+  | { of: typeof STARTING.owed; vault: string; stopped?: StartStopped }
   /** One round of its start waits for other signers' approvals: which, and how many it has and needs. */
   | { of: typeof STARTING.awaiting; vault: string; round: 'adoption' | 'first-secret'; approvals: number; needed: number }
   | { of: typeof ACTED.refused; why: ActRefusal };
 
 /** A vault handed to the committee whose start is not finished, or waits on other signers. */
 export const STARTING = { owed: 'start-owed', awaiting: 'awaiting-approvals' } as const;
+
+/**
+ * **WHAT RESOLVES A START THAT STOPPED BEFORE ITS SECRET WAS APPROVED**, said
+ * on the screen in its own words: the wallet reading the company again, the
+ * company handed to its signers, every signer set up for vaults, or nothing a
+ * person here can do because what the service sent did not check out.
+ */
+export const STOPPED = { wallet: 'wallet', handOver: 'hand-over', signers: 'signers', mismatch: 'mismatch' } as const;
+export type StartStopped = (typeof STOPPED)[keyof typeof STOPPED];
+const STOPPED_BY: Record<ReaderRefusalCode, StartStopped> = {
+  [READER_REFUSAL.walletReadNothing]: STOPPED.wallet,
+  [READER_REFUSAL.accountNotHeld]: STOPPED.handOver,
+  [READER_REFUSAL.vaultNotHeld]: STOPPED.handOver,
+  [READER_REFUSAL.committeeOutOfDate]: STOPPED.signers,
+  [READER_REFUSAL.keysNotGiven]: STOPPED.signers,
+  [READER_REFUSAL.notSigned]: STOPPED.mismatch,
+  [READER_REFUSAL.seatNotHeld]: STOPPED.signers,
+  [READER_REFUSAL.rosterNotTheChains]: STOPPED.mismatch,
+  [READER_REFUSAL.readerNotASigner]: STOPPED.mismatch,
+  [READER_REFUSAL.signerLeftOut]: STOPPED.mismatch,
+};
 
 /**
  * A VAULT SENT AND NOT YET HELD BY THE COMMITTEE: this app puts no money into
@@ -213,7 +238,8 @@ async function run(personId: string, companyId: string, onStage: (stage: Creatin
   try {
     const o = await opened(personId, companyId, true);
     if (typeof o === 'string') return { of: ACTED.refused, why: o === LOCKED ? ACT_REFUSAL.didNotFinish : o };
-    const released = await giveTheVaultKeys(companyId, o.keys, viewingKeyFor(o.sealed));
+    const released = await giveTheVaultKeys(companyId, o.keys, viewingKeyFor(o.sealed), o.roster);
+    if (released.of === ACTED.refused) return released;
     service = withTheStart(companyId, vaultServiceFor(api, companyId, o.roster));
     /* This signer's own pool, journals and records, over the records route, believing only the signers on the roster opened here. */
     const roster = rosterOf(await o.roster());
@@ -225,13 +251,20 @@ async function run(personId: string, companyId: string, onStage: (stage: Creatin
       signers: roster.signers,
       records: deviceRecordsFor(o.keys.signingSecret, roster.filers, () => currentUser()?.id ?? null),
       material: { signingSecret: o.keys.signingSecret, blinding: o.keys.blinding, scope: (o.keys as { scope?: Hex }).scope },
+      secretReaders: {
+        /* Who holds the company, as this signer's account read it off the chain just now, for this press. */
+        company: released.company, committeeKey: released.signed.committeeKey, seats: released.signed.seats,
+        roster: async () => rosterVaultKeys(await o.roster()),
+      },
     }, resume as Parameters<typeof createCompanyVault>[1]);
     if (done.state === 'awaiting-approvals') {
       return { of: STARTING.awaiting, vault: done.vault, ...done.awaiting };
     }
     return { of: ACTED.done, vault: done.vault };
   } catch (e) {
-    if (e instanceof VaultStartOwed) return { of: STARTING.owed, vault: e.vault };
+    if (e instanceof VaultStartOwed) {
+      return e.stoppedAt === undefined ? { of: STARTING.owed, vault: e.vault } : { of: STARTING.owed, vault: e.vault, stopped: STOPPED_BY[e.stoppedAt] };
+    }
     if (e instanceof VaultHandoverOwed) {
       if (service !== null && await rosterRefusedItsCommittee(companyId, e.vault, service)) return { of: OWED.rosterDisagrees, vault: e.vault };
       /* Only the key it was created with can hand it over, and it is kept only in the browser that created it. */
@@ -295,7 +328,11 @@ export async function openYourKeys(personId: string): Promise<{ of: typeof ACTED
 export const createVault = (personId: string, companyId: string, onStage: (stage: Creating) => void): Promise<VaultCreated> =>
   run(personId, companyId, onStage);
 
-/** FINISH HANDING OVER the vault `vault`, which this device sent and the committee does not hold yet. */
+/**
+ * FINISH HANDING OVER the vault `vault`, which this device sent and the committee does not hold yet, or CARRY ON
+ * SETTING UP one the committee holds and that is not started: from any signer's device, which approves its
+ * adoption and its first secret with this signer's own keys once every key that secret is sealed to checks out.
+ */
 export const finishHandingOver = (personId: string, companyId: string, vault: string, onStage: (stage: Creating) => void): Promise<VaultCreated> =>
   run(personId, companyId, onStage, vault);
 
@@ -308,7 +345,8 @@ export async function giveYourVaultKeys(personId: string, companyId: string): Pr
   try {
     const o = await opened(personId, companyId, true);
     if (typeof o === 'string') return { of: ACTED.refused, why: o === LOCKED ? ACT_REFUSAL.didNotFinish : o };
-    await giveTheVaultKeys(companyId, o.keys, viewingKeyFor(o.sealed));
+    const given = await giveTheVaultKeys(companyId, o.keys, viewingKeyFor(o.sealed), o.roster);
+    if (given.of === ACTED.refused) return given;
     return { of: ACTED.done };
   } catch (e) {
     return { of: ACTED.refused, why: refusalOf(e) };

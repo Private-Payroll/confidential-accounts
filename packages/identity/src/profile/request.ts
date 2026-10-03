@@ -175,7 +175,7 @@ export const PROGRESS_SCHEMA = 'midnight-identity/wallet-progress/v1';
  * than inserted, so the sentence a refusal already produced does not change
  * shape for the three kinds that were there before it.
  */
-export const ASK_KINDS = ['disclosure', 'sign-in', 'unlock', 'join', 'keyring', 'balance', 'committee'] as const;
+export const ASK_KINDS = ['disclosure', 'sign-in', 'unlock', 'join', 'keyring', 'balance', 'committee', 'records-key'] as const;
 export type AskKind = (typeof ASK_KINDS)[number];
 
 /** One thing an application is asking for. */
@@ -442,9 +442,37 @@ export interface CommitteeRequest extends Asking {
   readonly contracts: readonly CommitteeChangeOfAContract[];
 }
 
+/**
+ * ASKING THIS WALLET TO SIGN ONE SIGNER'S RECORDS KEY FOR THEIR SEAT ON A
+ * COMPANY'S ACCOUNT, AND TO SAY WHO HOLDS THAT ACCOUNT NOW.
+ *
+ * A vault's secret is sealed to each signer's records key, and every signer's
+ * device checks each of those keys before it approves the secret. What it
+ * checks is a statement this ask produces: the person's records key for the
+ * company, and the seat they hold on its account, signed with the committee
+ * key this wallet keeps for that company. The answer also carries who holds the
+ * account as this wallet read it from the chain itself: the committee, its
+ * threshold and every seat the account holds now.
+ *
+ * **THE SEAT IS THE PAGE'S WORD AND IS CHECKED, NOT TRUSTED.** It is worked
+ * out from key material the page holds and this wallet does not. The wallet
+ * signs it only when the account, read off the chain by this wallet, seats it
+ * now; a seat the account no longer holds is refused.
+ */
+export interface RecordsKeyRequest extends Asking {
+  readonly kind: 'records-key';
+  /** The company's label. It selects the keys. */
+  readonly company: CompanyLabel;
+  /** The account that carries the label. Claimed; read off the chain before anything is signed. */
+  readonly account: AccountAddress;
+  /** The seat this person holds on that account, as 64 lower-case hex characters. Claimed; read off the chain. */
+  readonly seat: string;
+}
+
 /** What an application may open this wallet with. */
 export type Ask =
-  | DisclosureRequest | SignInRequest | UnlockRequest | JoinRequest | KeyringRequest | BalanceRequest | CommitteeRequest;
+  | DisclosureRequest | SignInRequest | UnlockRequest | JoinRequest | KeyringRequest | BalanceRequest | CommitteeRequest
+  | RecordsKeyRequest;
 
 /**
  * THE KINDS THAT CARRY A LIST OF THINGS ASKED FOR.
@@ -518,7 +546,11 @@ export type RequestFailure =
   | 'not-a-committee-change'
   | 'attributes-on-a-committee-change'
   | 'inbox-key-on-a-committee-change'
-  | 'committee-fields-on-another-kind';
+  | 'committee-fields-on-another-kind'
+  | 'not-a-seat'
+  | 'attributes-on-a-records-key'
+  | 'inbox-key-on-a-records-key'
+  | 'records-key-fields-on-another-kind';
 
 export class RequestError extends Error {
   readonly code: RequestFailure;
@@ -943,6 +975,37 @@ function committeeChangeOf(body: Record<string, unknown>, asking: Asking): Commi
   });
 }
 
+const SEAT = /^[0-9a-f]{64}$/u;
+
+/** A records-key ask, read whole: a label, the account that carries it, and one seat. */
+function recordsKeyAskOf(body: Record<string, unknown>, asking: Asking): RecordsKeyRequest {
+  if ('wants' in body) {
+    throw new RequestError(
+      'attributes-on-a-records-key',
+      'this asks your wallet to sign your records key for your seat on a company\'s account, and it also carries a list '
+      + 'of details to hand over. Those are two different powers and this wallet will not approve them behind one '
+      + 'press, so the whole request is refused. Nothing has been shown to them and nothing has been signed.');
+  }
+  if ('inboxPublicKey' in body) {
+    throw new RequestError(
+      'inbox-key-on-a-records-key',
+      'this asks your wallet to sign your records key, and it also names a key to seal an answer to. The answer is '
+      + 'handed back to the page that asked, so the key is refused rather than ignored. Nothing has been shown to '
+      + 'them and nothing has been signed.');
+  }
+  const asks = 'this asks your wallet to sign your records key for a company';
+  const nothing = 'Nothing has been shown to them and nothing has been signed.';
+  const company = labelIn(body['company'], asks, nothing);
+  const account = accountIn(body['account'], asks, nothing);
+  const seat = body['seat'];
+  if (typeof seat !== 'string' || !SEAT.test(seat)) {
+    throw new RequestError(
+      'not-a-seat',
+      `${asks} and names your seat on its account by something that is not one (64 lower-case hex characters). ${nothing}`);
+  }
+  return Object.freeze({ ...asking, kind: 'records-key' as const, company, account, seat });
+}
+
 /**
  * THE ONLY DOOR AN ASK COMES THROUGH.
  *
@@ -1016,7 +1079,19 @@ export function parseAsk(raw: unknown, observedOrigin: string, now: number): Ask
       + 'Nothing has been shown to them.');
   }
 
+  /*
+   * **A SEAT BELONGS TO A RECORDS-KEY ASK AND TO NOTHING ELSE**, refused by
+   * presence on every other kind for the keyring fields' reason.
+   */
+  if (kind !== 'records-key' && 'seat' in body) {
+    throw new RequestError(
+      'records-key-fields-on-another-kind',
+      `this is a '${kind}' and it names a seat on a company's account. That belongs only to a request to sign your `
+      + 'records key for your seat, so it is refused rather than ignored. Nothing has been shown to them.');
+  }
+
   if (kind === 'committee') return committeeChangeOf(body, asking);
+  if (kind === 'records-key') return recordsKeyAskOf(body, asking);
 
   if (kind === 'balance') {
     if ('wants' in body) {

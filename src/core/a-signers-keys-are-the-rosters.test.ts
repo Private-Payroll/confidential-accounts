@@ -54,8 +54,33 @@ describe('A SIGNER\'S VAULT KEYS LIVE IN THEIR OWN ROSTER ENTRY', () => {
     expect(accounts.giveVaultKeys(company, viewingKey, 'usr_ada', signed(ada, 1))).toBe('already-given');
     const roster = rosterVaultKeys(accounts.open(company, viewingKey));
     /* RED WHEN: the keys are not written into the giver's own entry, or are read back as anybody's. */
-    expect(roster.find((r) => r.signerId === ada.signerId)!.keys).toEqual({ committeeKey: key(1), recordsKey: hex(0x11) });
+    expect(roster.find((r) => r.signerId === ada.signerId)!.keys).toEqual({ committeeKey: key(1), recordsKey: hex(0x11), recordsKeyStatement: null, recordsKeySeat: null });
     expect(roster.find((r) => r.signerId === bo.signerId)!.keys).toBeNull();
+  });
+
+  it('THE SAME KEYS GIVEN AGAIN WITH THE WALLET\'S STATEMENT OVER THE RECORDS KEY ADD IT, AND NOTHING ELSE CHANGES', () => {
+    accounts.giveVaultKeys(company, viewingKey, 'usr_ada', signed(ada, 1));
+    const statement = '5a'.repeat(64) as Hex;
+    const seat = '6b'.repeat(32) as Hex;
+    const withStatement = { ...signed(ada, 1), recordsKeyStatement: statement, recordsKeySeat: seat };
+    /* RED WHEN: a statement given with the same keys is dropped, or a set given once refuses it. */
+    expect(accounts.giveVaultKeys(company, viewingKey, 'usr_ada', withStatement)).toBe('given');
+    expect(rosterVaultKeys(accounts.open(company, viewingKey)).find((r) => r.signerId === ada.signerId)!.keys)
+      .toEqual({ committeeKey: key(1), recordsKey: hex(0x11), recordsKeyStatement: statement, recordsKeySeat: seat });
+    expect(accounts.giveVaultKeys(company, viewingKey, 'usr_ada', withStatement)).toBe('already-given');
+    /* RED WHEN: a statement for the seat held now, after a re-seat, does not replace the one kept. */
+    const reseated = { ...withStatement, recordsKeyStatement: '7c'.repeat(64) as Hex, recordsKeySeat: '8d'.repeat(32) as Hex };
+    expect(accounts.giveVaultKeys(company, viewingKey, 'usr_ada', reseated)).toBe('given');
+    expect(rosterVaultKeys(accounts.open(company, viewingKey)).find((r) => r.signerId === ada.signerId)!.keys!.recordsKeySeat)
+      .toBe('8d'.repeat(32));
+    expect(accounts.giveVaultKeys(company, viewingKey, 'usr_ada', withStatement)).toBe('given');
+    /* RED WHEN: a statement opens the door to different keys under the same seat. */
+    expect(() => accounts.giveVaultKeys(company, viewingKey, 'usr_ada', { ...signed(ada, 4), recordsKeyStatement: statement, recordsKeySeat: seat }))
+      .toThrow(VaultKeysAlreadyGiven);
+    /* RED WHEN: a set given again without a statement wipes the one already kept. */
+    expect(accounts.giveVaultKeys(company, viewingKey, 'usr_ada', signed(ada, 1))).toBe('already-given');
+    expect(rosterVaultKeys(accounts.open(company, viewingKey)).find((r) => r.signerId === ada.signerId)!.keys!.recordsKeyStatement)
+      .toBe(statement);
   });
 
   it('NOBODY CAN PUT A KEY IN ANOTHER SIGNER\'S NAME: keys signed by any other seat are refused, and the roster is untouched', () => {

@@ -65,6 +65,7 @@ export type VaultAsk =
   | { id: number; network: string; ask: 'deposit'; vault: string; coin: CoinOnTheWire; state: string; parameters: string }
   | { id: number; network: string; ask: 'public-deposit'; vault: string; token: string; amount: string; state: string; parameters: string }
   | { id: number; network: string; ask: 'commitments'; vault: string; coin: CoinOnTheWire }
+  | { id: number; network: string; ask: 'own-seat'; material: SignerMaterial }
   | { id: number; network: string; ask: 'choose-note'; notes: readonly NoteOnTheWire[]; token: string; amount: string }
   | {
     id: number; network: string; ask: 'payments-fit'; notes: readonly NoteOnTheWire[];
@@ -128,6 +129,7 @@ export type VaultAnswer =
   | Answered<'deposit', { tx: string }>
   | Answered<'public-deposit', { tx: string }>
   | Answered<'commitments', { output: string; held: string }>
+  | Answered<'own-seat', { seat: string }>
   | Answered<'choose-note', { note: NoteOnTheWire }>
   | Answered<'payments-fit', { answer: PaymentsFitAnswer }>
   | Answered<'after-payment', { notes: NoteOnTheWire[] }>
@@ -156,6 +158,11 @@ export interface VaultBuilderClient {
    */
   publicDeposit?(input: { vault: string; token: string; amount: string; state: string; parameters: string }): Promise<{ tx: string }>;
   commitments(input: { vault: string; coin: CoinOnTheWire }): Promise<{ output: string; held: string }>;
+  /**
+   * The seat this signer's own key material makes on the company's account: the
+   * leaf the account holds for them, worked out here and not taken from any record.
+   */
+  ownSeat(material: SignerMaterial): Promise<string>;
   chooseNote(input: { notes: readonly NoteOnTheWire[]; token: string; amount: string }): Promise<NoteOnTheWire>;
   /**
    * Whether the notes can make every payment in turn: `fits`, or `does-not-fit`
@@ -257,6 +264,7 @@ export function vaultBuilderOver(worker: WorkerLike, network: string): VaultBuil
       const a = await ask({ ask: 'commitments', ...input });
       return { output: a.output, held: a.held };
     },
+    ownSeat: async (material) => (await ask({ ask: 'own-seat', material })).seat,
     chooseNote: async (input) => (await ask({ ask: 'choose-note', ...input })).note,
     paymentsFit: async (input) => (await ask({ ask: 'payments-fit', ...input })).answer,
     afterPayment: async (input) => (await ask({ ask: 'after-payment', ...input })).notes,

@@ -18,12 +18,14 @@ import { HandOver } from '../actions/hand-over.js';
  */
 
 /** What a pending vault's pill does when pressed: finish handing the vault over, hand the company over, or nothing, and only say why. */
-const DOES = { finish: 'finish', handOver: 'hand-over', explain: 'explain' } as const;
+const DOES = { finish: 'finish', start: 'start', handOver: 'hand-over', explain: 'explain' } as const;
 type Does = (typeof DOES)[keyof typeof DOES];
 
 /** The standings a vault is pending in, each with what its pill does. Any other standing is not pending. */
 const PENDING: Partial<Record<VaultStanding, Does>> = {
   [VAULT.handoverOwed]: DOES.finish,
+  /* Held by the signers and not set up: any signer carries it on from their own device, approving what is theirs to approve. */
+  [VAULT.startOwed]: DOES.start,
   [VAULT.accountNotHandedOver]: DOES.handOver,
   [VAULT.notFundable]: DOES.explain,
   [VAULT.accountNotFundable]: DOES.explain,
@@ -39,6 +41,7 @@ export function useStandingSays(): (standing: VaultStanding) => string {
   const says: Record<VaultStanding, string> = {
     [VAULT.held]: t('vaults.standing.held'),
     [VAULT.handoverOwed]: t('vaults.standing.handoverOwed'),
+    [VAULT.startOwed]: t('vaults.standing.startOwed'),
     [VAULT.notOnChain]: t('vaults.standing.notOnChain'),
     [VAULT.notFundable]: t('vaults.standing.notFundable'),
     [VAULT.accountNotHandedOver]: t('vaults.standing.accountNotHandedOver'),
@@ -64,6 +67,7 @@ export function useVaultActions() {
   return {
     inPanel,
     finish: (vault: string): void => inPanel(t('createVault.finish'), (props) => <CreateVault {...props} finishing={vault} />),
+    start: (vault: string): void => inPanel(t('createVault.finishStart'), (props) => <CreateVault {...props} starting={vault} />),
     handOver: (): void => inPanel(t('setup.step.handOver.name'), (props) => <HandOver {...props} />),
   };
 }
@@ -71,6 +75,7 @@ export function useVaultActions() {
 /** What pressing a pending vault's pill, or its row's button, runs; null when it only says why. */
 function actionOf(does: Does, actions: ReturnType<typeof useVaultActions>, vault: string): (() => void) | null {
   if (does === DOES.finish) return () => actions.finish(vault);
+  if (does === DOES.start) return () => actions.start(vault);
   if (does === DOES.handOver) return actions.handOver;
   return null;
 }
@@ -126,7 +131,11 @@ export function VaultsPending({ rows }: { rows: readonly VaultRow[] }) {
           <SectionRow
             key={v.vault}
             data-pending-vault={v.vault}
-            actions={run === null ? undefined : <Button variant="outline" size="sm" onClick={run} data-action={does === DOES.finish ? 'finish-handover' : 'hand-over'}>{does === DOES.finish ? t('createVault.finish') : t('setup.handOver.button')}</Button>}
+            actions={run === null ? undefined : (
+              <Button variant="outline" size="sm" onClick={run} data-action={does === DOES.finish ? 'finish-handover' : does === DOES.start ? 'finish-start' : 'hand-over'}>
+                {does === DOES.finish ? t('createVault.finish') : does === DOES.start ? t('createVault.finishStart') : t('setup.handOver.button')}
+              </Button>
+            )}
           >
             <span className="font-medium">{t('vaults.tile.name', { number })}</span>
             <span className="text-muted-foreground">{says(v.standing)}</span>

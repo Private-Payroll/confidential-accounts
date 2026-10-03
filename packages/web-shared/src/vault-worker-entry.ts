@@ -372,6 +372,18 @@ export const answerVaultAsk = async (
       });
       return { id: ask.id, ok: true, ask: 'write-secret-copy', tx: toBase64(built.proven) };
     }
+    case 'own-seat': {
+      /* The one definition of a signer's leaf, the one every writer of a seat calls, over this signer's own material. */
+      const [{ storedSignerLeaf }, { MidnightCommitments }] = await Promise.all([
+        import('../../../src/core/signer-leaf.js'),
+        import('../../../src/midnight/commitments.js'),
+      ]);
+      const m = ask.material;
+      if (!/^[0-9a-f]{64}$/iu.test(m?.signingSecret ?? '') || !/^[0-9a-f]{64}$/iu.test(m?.blinding ?? '')) {
+        throw new Error('this device holds no usable key for its seat, so its seat cannot be worked out.');
+      }
+      return { id: ask.id, ok: true, ask: 'own-seat', seat: storedSignerLeaf(m, MidnightCommitments).toLowerCase() };
+    }
     case 'commitments': {
       /* The two commitments a coin has: as an output the ledger records, and as the note the vault holds. */
       const [{ compiledOutputCommitment }, { commitmentForNote }] = await Promise.all([
