@@ -28,7 +28,7 @@ import { parseCanonical, unseal, type Hex, type Sealed } from '../../../src/core
 import { openFromInbox, openRecord } from '../../../src/core/sealed-records.js';
 import { openAccount } from '../../../src/core/account.js';
 import { refuseASeatKeyNotFromTheInvitee, SeatKeyNotFromTheInvitee } from '../../../src/core/seat-invite-proof.js';
-import { assetIdBytes } from '../../../src/core/assets.js';
+import { assetIdBytes, NO_ASSET } from '../../../src/core/assets.js';
 import type { PendingSignerPayload, SealedAccount, SealedProposal } from '../../../src/core/types.js';
 import type { StateChange } from '../../../src/core/ledger.js';
 import { payrollRoundOf, sameList, untoldRetryRounds } from '../../../src/core/retry-cover.js';
@@ -204,6 +204,16 @@ export async function openTheRoundHere(
   if (!change || typeof change.salt !== 'string' || !HEX64.test(change.salt)) {
     throw new NotOpenedOnThisDevice('This proposal\'s record is incomplete, so this device cannot check it. Withdraw the '
       + 'proposal and raise it again.');
+  }
+  /*
+   * **A RUN THAT PAYS NOTHING IS A VAULT'S SET-UP STEP, NOT A PAYROLL RUN.** A vault's first secret is set by a run in no
+   * asset, and it is approved only from setting that vault up, where every key the secret is sealed to is checked
+   * first. One reached through this door would skip that check, so it is refused here.
+   */
+  if (envelope.kind === 'payroll' && String(change.asset).toLowerCase() === NO_ASSET) {
+    throw new NotOpenedOnThisDevice('This proposal pays nothing: it sets up one of the company\'s vaults, and it is '
+      + 'approved only from setting that vault up, where who it is sealed to is checked. Leave it unapproved here, and '
+      + 'open the vault to finish setting it up.');
   }
   let governance: GovernanceOnTheWire | undefined;
   if (envelope.kind === 'add-signer') {

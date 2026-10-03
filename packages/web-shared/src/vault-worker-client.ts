@@ -66,6 +66,7 @@ export type VaultAsk =
   | { id: number; network: string; ask: 'public-deposit'; vault: string; token: string; amount: string; state: string; parameters: string }
   | { id: number; network: string; ask: 'commitments'; vault: string; coin: CoinOnTheWire }
   | { id: number; network: string; ask: 'own-seat'; material: SignerMaterial }
+  | { id: number; network: string; ask: 'secret-is-the-vaults'; vault: string; state: string; secret: string }
   | { id: number; network: string; ask: 'choose-note'; notes: readonly NoteOnTheWire[]; token: string; amount: string }
   | {
     id: number; network: string; ask: 'payments-fit'; notes: readonly NoteOnTheWire[];
@@ -130,6 +131,7 @@ export type VaultAnswer =
   | Answered<'public-deposit', { tx: string }>
   | Answered<'commitments', { output: string; held: string }>
   | Answered<'own-seat', { seat: string }>
+  | Answered<'secret-is-the-vaults', { matches: boolean }>
   | Answered<'choose-note', { note: NoteOnTheWire }>
   | Answered<'payments-fit', { answer: PaymentsFitAnswer }>
   | Answered<'after-payment', { notes: NoteOnTheWire[] }>
@@ -163,6 +165,12 @@ export interface VaultBuilderClient {
    * leaf the account holds for them, worked out here and not taken from any record.
    */
   ownSeat(material: SignerMaterial): Promise<string>;
+  /**
+   * Whether `secret` is the one the vault's commitment names in `state` (base64
+   * of the vault's state): its commitment, worked out with the vault's own
+   * function, against the one the state holds.
+   */
+  secretIsTheVaults(input: { vault: string; state: string; secret: string }): Promise<boolean>;
   chooseNote(input: { notes: readonly NoteOnTheWire[]; token: string; amount: string }): Promise<NoteOnTheWire>;
   /**
    * Whether the notes can make every payment in turn: `fits`, or `does-not-fit`
@@ -265,6 +273,7 @@ export function vaultBuilderOver(worker: WorkerLike, network: string): VaultBuil
       return { output: a.output, held: a.held };
     },
     ownSeat: async (material) => (await ask({ ask: 'own-seat', material })).seat,
+    secretIsTheVaults: async (input) => (await ask({ ask: 'secret-is-the-vaults', ...input })).matches,
     chooseNote: async (input) => (await ask({ ask: 'choose-note', ...input })).note,
     paymentsFit: async (input) => (await ask({ ask: 'payments-fit', ...input })).answer,
     afterPayment: async (input) => (await ask({ ask: 'after-payment', ...input })).notes,

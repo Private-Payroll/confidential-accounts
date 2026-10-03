@@ -96,6 +96,23 @@ export interface AccountSeats {
   readonly seats: readonly string[];
 }
 
+/**
+ * **WHO HOLDS ONE OF THE COMPANY'S VAULTS, AS A WALLET READ IT OFF THE CHAIN
+ * ITSELF**: the keys of the vault's maintenance committee, their threshold,
+ * and the account the vault is pinned to, as the vault's own state names it.
+ * Read when a page is about to approve that vault's secret, so a device checks
+ * the vault against what the signer's own wallet read rather than what a
+ * service reported.
+ */
+export interface VaultHolders {
+  /** The vault read, 64 lower-case hex characters. */
+  readonly vault: string;
+  /** The account the vault is pinned to, 64 lower-case hex characters. */
+  readonly account: string;
+  readonly committee: readonly { readonly tag: string; readonly value: string }[];
+  readonly threshold: number;
+}
+
 /** The public half of the records key a company key opens, as the company's records are sealed to it. */
 export function recordsPublicKeyOf(companyKey: Uint8Array): string {
   if (!(companyKey instanceof Uint8Array) || companyKey.length !== KEY_BYTES || companyKey.every((b) => b === 0)) {
@@ -184,6 +201,8 @@ export interface RecordsKeyAnswer {
   readonly statement: RecordsKeyStatement;
   /** Who holds the account, as this wallet read it off the chain in the read that showed the label. */
   readonly seats: AccountSeats;
+  /** Who holds the vault the ask named, as this wallet read it off the chain. Present exactly when the ask named one. */
+  readonly vault?: VaultHolders;
 }
 
 /** Thrown before anything is signed. Nothing has been given. */
@@ -208,17 +227,31 @@ export function recordsKeyFor(identity: Identity, request: RecordsKeyRequest): s
   }
 }
 
+const frozenKeys = (keys: readonly { readonly tag: string; readonly value: string }[]) =>
+  Object.freeze(keys.map((k) => Object.freeze({ tag: k.tag, value: k.value.toLowerCase() })));
+
 /**
  * **THE ANSWER THE PERSON'S PRESS PRODUCES, AND THE SEAT CHECK IS INSIDE IT.**
  * `seats` is what this wallet read off the account itself; a seat the account
  * does not hold now is refused before anything is signed, so this wallet never
- * signs a seat for somebody who has left.
+ * signs a seat for somebody who has left. When the ask names a vault, `vault`
+ * is what this wallet read off that vault itself, and an ask is refused when
+ * this wallet has not read it, or when the vault is pinned to another account.
  */
 export function recordsKeyAnswerFor(
-  identity: Identity, request: RecordsKeyRequest, seats: AccountSeats, at: number,
+  identity: Identity, request: RecordsKeyRequest, seats: AccountSeats, at: number, vault?: VaultHolders,
 ): RecordsKeyAnswer {
   if (!usableOrigin(request.requester.origin)) {
     throw new RecordsKeyRefused('This wallet could not tell who asked, so nothing has been signed.');
+  }
+  if (request.vault !== undefined && (vault === undefined || vault.vault !== request.vault)) {
+    throw new RecordsKeyRefused(
+      'This wallet has not read the vault the page names from the network, so nothing has been signed. Open this again in a minute.');
+  }
+  if (request.vault !== undefined && vault !== undefined && vault.account !== request.account) {
+    throw new RecordsKeyRefused(
+      'The vault the page names belongs to a different company account from this one, as this wallet read it from the '
+      + 'network. Nothing has been signed.');
   }
   if (!seats.seats.includes(request.seat)) {
     throw new RecordsKeyRefused(
@@ -242,9 +275,12 @@ export function recordsKeyAnswerFor(
     committeeKey: committeeKeyFor(identity, request.company) as { tag: string; value: string },
     statement,
     seats: Object.freeze({
-      committee: Object.freeze(seats.committee.map((k) => Object.freeze({ tag: k.tag, value: k.value.toLowerCase() }))),
+      committee: frozenKeys(seats.committee),
       threshold: seats.threshold,
       seats: Object.freeze([...seats.seats]),
+    }),
+    ...(request.vault === undefined || vault === undefined ? {} : {
+      vault: Object.freeze({ vault: vault.vault, account: vault.account, committee: frozenKeys(vault.committee), threshold: vault.threshold }),
     }),
   });
 }
@@ -255,6 +291,8 @@ export type RecordsKeyRead =
     readonly committeeKey: { readonly tag: string; readonly value: string };
     readonly statement: RecordsKeyStatement;
     readonly seats: AccountSeats;
+    /** Who holds the vault the ask named, as the wallet read it; null when the ask named none. */
+    readonly vault: VaultHolders | null;
     readonly at: number;
   }
   | { readonly ok: false; readonly code: 'not-an-answer' | 'origin-mismatch' | 'nonce-mismatch' | 'other-company' | 'not-signed'; readonly says: string };
@@ -274,6 +312,21 @@ const readSeats = (value: unknown): AccountSeats | null => {
   return Object.freeze({ committee: Object.freeze(committee), threshold: v.threshold as number, seats: Object.freeze([...v.seats as string[]]) });
 };
 
+/** Who holds a vault, as an answer carries it, or null for a shape no wallet writes. */
+const readVaultHolders = (value: unknown): VaultHolders | null => {
+  const v = value as Partial<VaultHolders> | null;
+  if (typeof v !== 'object' || v === null || typeof v.vault !== 'string' || !HEX64.test(v.vault)
+    || typeof v.account !== 'string' || !HEX64.test(v.account) || !Array.isArray(v.committee)
+    || !Number.isSafeInteger(v.threshold) || (v.threshold as number) < 0) return null;
+  const committee: { tag: string; value: string }[] = [];
+  for (const k of v.committee) {
+    const key = readCommitteeKey(k);
+    if (key === null) return null;
+    committee.push({ tag: key.tag, value: key.value });
+  }
+  return Object.freeze({ vault: v.vault, account: v.account, committee: Object.freeze(committee), threshold: v.threshold as number });
+};
+
 /**
  * **THE PAGE'S SIDE OF A RECORDS-KEY ANSWER.** Every expectation is the page's
  * own: where it is, the nonce it chose, the company, the account and the seat
@@ -286,6 +339,8 @@ export function readRecordsKeyAnswer(
   expecting: {
     readonly atOrigin: string; readonly expectingNonce: string;
     readonly company: CompanyLabel; readonly account: AccountAddress; readonly seat: string;
+    /** The vault the ask named, when it named one: the answer must carry who holds exactly that vault. */
+    readonly vault?: string;
   },
 ): RecordsKeyRead {
   const body = message as Partial<RecordsKeyAnswer> | null;
@@ -304,6 +359,10 @@ export function readRecordsKeyAnswer(
   const committeeKey = readCommitteeKey(body.committeeKey);
   const statement = body.statement;
   const seats = readSeats(body.seats);
+  const vault = expecting.vault === undefined ? null : readVaultHolders(body.vault);
+  if (expecting.vault !== undefined && (vault === null || vault.vault !== expecting.vault)) {
+    return { ok: false, code: 'not-an-answer', says: 'that answer does not say who holds the vault that was asked about.' };
+  }
   if (committeeKey === null || seats === null || typeof body.at !== 'number' || !Number.isSafeInteger(body.at)
     || typeof statement !== 'object' || statement === null) {
     return { ok: false, code: 'not-an-answer', says: 'that is not a signed records key.' };
@@ -319,6 +378,7 @@ export function readRecordsKeyAnswer(
     committeeKey: { tag: committeeKey.tag, value: committeeKey.value },
     statement: Object.freeze({ recordsKey: statement.recordsKey, seat: statement.seat, signature: statement.signature }),
     seats,
+    vault,
     at: body.at,
   };
 }

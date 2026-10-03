@@ -1,5 +1,6 @@
 import { nanoid } from 'nanoid';
 import { readCompanyLabel } from 'midnight-identity/profile/company-label';
+import { recordsKeySignedBy } from 'midnight-identity/profile/records-key';
 import type { CompanyLabel } from 'midnight-identity/profile/company-label';
 import {
   newSigningKeypair, newWrappingKeypair, newSymmetricKey, newProposalSalt, newBlinding,
@@ -169,6 +170,22 @@ export class VaultKeysNotYours extends Error {
     super('these vault keys were not set up from your own seat on this company, so they are not kept. Open the '
       + 'company on this device again and set them up from Vaults.');
     this.name = 'VaultKeysNotYours';
+  }
+}
+
+/**
+ * A signer giving their records key again with a statement that does not
+ * verify: not signed by the committee key their entry already carries, or for a
+ * seat that is not the one the roster holds for them. The statement kept
+ * before is kept.
+ */
+export class RecordsKeyNotSignedForYourSeat extends VaultKeysNotYours {
+  constructor() {
+    super();
+    this.message = 'your records key was not signed by your own wallet for the seat you hold on this company, so it is '
+      + 'not kept, and the one given before is. Open the company with your own wallet on this device and set up its '
+      + 'vaults again.';
+    this.name = 'RecordsKeyNotSignedForYourSeat';
   }
 }
 
@@ -4222,6 +4239,18 @@ export class AccountService {
       if (statement === null || signedSeat === null
         || (statement === (seat.vaultKeys.recordsKeyStatement ?? null) && signedSeat === (seat.vaultKeys.recordsKeySeat ?? null))) {
         return 'already-given';
+      }
+      /*
+       * **A STATEMENT REPLACES THE ONE KEPT ONLY WHEN IT VERIFIES**: signed by the committee key this entry carries,
+       * over its records key, for the seat the roster holds for this signer. One that does not is refused and the
+       * one kept stays, so a bad give cannot leave every approval refusing until this signer signs again.
+       */
+      const label = rec.companyLabel ?? account.companyLabel ?? null;
+      const ownSeat = typeof seat.leafCommitment === 'string' ? seat.leafCommitment.toLowerCase() : null;
+      if (label === null || ownSeat === null || signedSeat.toLowerCase() !== ownSeat
+        || !recordsKeySignedBy(label, { tag: seat.vaultKeys.committeeKey.tag, value: seat.vaultKeys.committeeKey.value.toLowerCase() },
+          { recordsKey: seat.vaultKeys.recordsKey.toLowerCase(), seat: signedSeat.toLowerCase(), signature: statement.toLowerCase() })) {
+        throw new RecordsKeyNotSignedForYourSeat();
       }
       seat.vaultKeys = { ...seat.vaultKeys, recordsKeyStatement: statement, recordsKeySeat: signedSeat };
       this.save(rec, account, viewingKey, rec.pendingSigners);

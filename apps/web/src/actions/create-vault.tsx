@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useState } from 'react';
+import { useCallback, useEffect, useRef, useState } from 'react';
 import { Alert, AlertDescription, AlertTitle, Button, ConfirmInYourAccount, useText } from 'vaults-ui';
 import {
   CREATING, createVault, finishHandingOver, giveYourVaultKeys, openYourKeys, OWED, READY, readOwedVaults, readVaultReadiness, STARTING,
@@ -16,6 +16,7 @@ function useStoppedSays(): (stopped: StartStopped) => string {
   const says: Record<StartStopped, string> = {
     [STOPPED.wallet]: t('createVault.stopped.wallet'),
     [STOPPED.handOver]: t('createVault.stopped.handOver'),
+    [STOPPED.vault]: t('createVault.stopped.vault'),
     [STOPPED.signers]: t('createVault.stopped.signers'),
     [STOPPED.mismatch]: t('createVault.stopped.mismatch'),
   };
@@ -25,6 +26,46 @@ function useStoppedSays(): (stopped: StartStopped) => string {
 /** What the person is being asked to confirm, if anything: creating a vault, finishing the handover of the one named, or finishing setting it up. */
 const ASKING = { create: 'create', finish: 'finish', start: 'start' } as const;
 type Asking = { of: typeof ASKING.create } | { of: typeof ASKING.finish | typeof ASKING.start; vault: string };
+
+/**
+ * THE ONE ACTION THAT RESOLVES WHERE A SET-UP STOPPED. Waiting for approvals,
+ * or stopped for the wallet or the signers, it is to finish setting it up. The
+ * company not yet held by its signers leads to handing it over. The vault not
+ * held by the signers as they stand now is finished handing over from the
+ * device that holds its key; when it is waiting on another device nothing here
+ * resolves it, so nothing is offered; when it was handed over, it leads to the
+ * change the signers sign. Signers' keys that do not match offer nothing:
+ * pressing again would stop the same way.
+ */
+function StopResolvedBy({ result, owed, disabled, ask, leadTo }: {
+  result: Extract<VaultCreated, { of: typeof STARTING.owed | typeof STARTING.awaiting }>;
+  owed: OwedVault | undefined; disabled: boolean; ask: (a: Asking) => void; leadTo: StepProps['leadTo'];
+}) {
+  const t = useText();
+  const stopped = result.of === STARTING.owed ? result.stopped : undefined;
+  if (stopped === STOPPED.mismatch || (stopped === STOPPED.vault && owed !== undefined && !owed.here)) return null;
+  if (stopped === STOPPED.handOver || (stopped === STOPPED.vault && owed === undefined)) {
+    return (
+      <div>
+        <Button variant="outline" disabled={disabled} onClick={() => leadTo(STEP.handOver)} data-lead-to={STEP.handOver}>
+          {stopped === STOPPED.handOver ? t('createVault.goHandOver') : t('createVault.goSignChange')}
+        </Button>
+      </div>
+    );
+  }
+  if (stopped === STOPPED.vault) {
+    return (
+      <div>
+        <Button variant="outline" disabled={disabled} onClick={() => ask({ of: ASKING.finish, vault: result.vault })} data-action="finish-handover">{t('createVault.finish')}</Button>
+      </div>
+    );
+  }
+  return (
+    <div>
+      <Button variant="outline" disabled={disabled} onClick={() => ask({ of: ASKING.start, vault: result.vault })} data-action="finish-start">{t('createVault.finishStart')}</Button>
+    </div>
+  );
+}
 
 /**
  * CREATE A VAULT: built and proved on this device, sent, and handed to the
@@ -48,9 +89,9 @@ type Asking = { of: typeof ASKING.create } | { of: typeof ASKING.finish | typeof
  * for other signers' approvals is named with how many it has and needs, and
  * says each of them approves it from their own device; a set up that stopped
  * is said as that, with what resolves it when it stopped at the check of who
- * the vault's secret is sealed to. Finish setting it up is offered while that
- * result is on screen, where it carries the same vault on, and with
- * `starting` the component opens asking to carry that vault on, which any
+ * the vault's secret is sealed to, and offers the one action that resolves
+ * where it stopped (`StopResolvedBy`). With `starting` the component opens
+ * once, after the company is read, asking to carry that vault on, which any
  * signer can do from their own device; until the set up is done, this app
  * puts no money into the vault.
  */
@@ -77,10 +118,13 @@ export function CreateVault({ leadTo, onChanged, finishing, starting }: StepProp
     setOwed(o);
   }, [person.id, company]);
   useEffect(() => { void read(); }, [read]);
-  /* Asked to carry on setting up one vault, from this signer's own device: asked at once. */
+  /* Asked to carry on setting up one vault, from this signer's own device: asked once, once the company has been read. */
+  const askedToStart = useRef<string | null>(null);
   useEffect(() => {
-    if (starting !== undefined) setAsking((a) => a ?? { of: ASKING.start, vault: starting });
-  }, [starting]);
+    if (starting === undefined || ready === null || asking !== null || askedToStart.current === starting) return;
+    askedToStart.current = starting;
+    setAsking({ of: ASKING.start, vault: starting });
+  }, [starting, ready, asking]);
   /* Asked to finish one vault: asked as soon as it is read as sent, not held, and finishable from this browser. */
   useEffect(() => {
     if (finishing !== undefined && owed.some((o) => o.vault === finishing && o.here)) setAsking((a) => a ?? { of: ASKING.finish, vault: finishing });
@@ -180,6 +224,7 @@ export function CreateVault({ leadTo, onChanged, finishing, starting }: StepProp
         />
       )}
       {stage === null ? null : <p className="text-sm" role="status" data-stage={stage}>{STAGE_SAYS[stage]}</p>}
+      <div className="flex flex-col gap-4" role="status" data-outcome>
       {result?.of === ACTED.done ? (
         <p className="text-sm" data-created={result.vault}>
           {t('createVault.done')}
@@ -199,11 +244,13 @@ export function CreateVault({ leadTo, onChanged, finishing, starting }: StepProp
               : result.round === 'adoption' ? t('createVault.awaiting.adoption', { approvals: result.approvals, needed: result.needed })
               : t('createVault.awaiting.firstSecret', { approvals: result.approvals, needed: result.needed })}
           </p>
-          <div>
-            <Button variant="outline" disabled={busy || asking !== null} onClick={() => setAsking({ of: ASKING.start, vault: result.vault })} data-action="finish-start">{t('createVault.finishStart')}</Button>
-          </div>
+          <StopResolvedBy
+            result={result} owed={owed.find((o) => o.vault === result.vault)} disabled={busy || asking !== null}
+            ask={setAsking} leadTo={leadTo}
+          />
         </div>
       ) : null}
+      </div>
       {gave === ACTED.done ? <p className="text-sm" data-gave-keys>{t('setup.handOver.done.giveKeys')}</p> : null}
       {gave === null || gave === ACTED.done ? null : <ActRefused why={gave} />}
       {opening === null ? null : <ActRefused why={opening} />}

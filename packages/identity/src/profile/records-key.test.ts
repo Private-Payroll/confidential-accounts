@@ -161,4 +161,58 @@ describe('THE RECORDS-KEY ASK: SIGNED ONLY FOR A SEAT THE ACCOUNT HOLDS NOW, AND
     expect(code({ seats: { ...seats, seats: ['nope'] } })).toBe('not-an-answer');
     expect(code({ seats: { ...seats, committee: [{ tag: 'ecdsa', value: '11'.repeat(32) }] } })).toBe('not-an-answer');
   });
+
+  describe('WITH A VAULT NAMED', () => {
+    const VAULT = '9a'.repeat(32);
+    const held = { vault: VAULT, account: ACCOUNT as string, committee: seats.committee, threshold: 1 };
+
+    it('the ask names one vault by its address, never the account itself, and nothing else of a payment', () => {
+      expect(ask({ vault: VAULT.toUpperCase() }).vault).toBe(VAULT);
+      /* RED WHEN: a vault that is not an address, or the company's account named as its own vault, is taken. */
+      expect(() => ask({ vault: 'co_x' })).toThrow(/names one of its vaults by something that is not a vault's address/);
+      expect(() => ask({ vault: ACCOUNT })).toThrow(/names one of its vaults by something that is not a vault's address/);
+      /* RED WHEN: a transaction rides along on a records-key ask and is ignored. */
+      expect(() => ask({ vault: VAULT, transaction: 'AAAA' })).toThrow(/carries a transaction or names a vault/);
+      /* RED WHEN: a vault is let through on a kind that does not read it. */
+      expect(() => parseAsk({
+        schema: 'midnight-identity/disclosure-request/v1', kind: 'sign-in',
+        requester: { name: 'Payroll', rdns: 'example.payroll' }, purpose: 'Sign in.', nonce: 'n', expiresAt: NOW + 60_000, vault: VAULT,
+      }, PAGE, NOW)).toThrow(/carries a transaction or names a vault/);
+    });
+
+    it('the answer carries who holds the vault as the wallet read it, and the wallet signs nothing without that read', () => {
+      const answer = recordsKeyAnswerFor(me, ask({ vault: VAULT }), seats, NOW, held);
+      /* RED WHEN: the vault the wallet read does not travel with the answer, or travels changed. */
+      expect(answer.vault).toEqual(held);
+      /* RED WHEN: the wallet signs for a vault it did not read, or read another vault in its place. */
+      expect(() => recordsKeyAnswerFor(me, ask({ vault: VAULT }), seats, NOW)).toThrow(/has not read the vault the page names/);
+      expect(() => recordsKeyAnswerFor(me, ask({ vault: VAULT }), seats, NOW, { ...held, vault: '9b'.repeat(32) }))
+        .toThrow(/has not read the vault the page names/);
+      /* RED WHEN: the wallet signs while the vault it read is pinned to another company's account. */
+      expect(() => recordsKeyAnswerFor(me, ask({ vault: VAULT }), seats, NOW, { ...held, account: 'ad'.repeat(32) }))
+        .toThrow(/belongs to a different company account/);
+      /* An ask that names no vault is answered with none. */
+      expect('vault' in recordsKeyAnswerFor(me, ask(), seats, NOW, held)).toBe(false);
+    });
+
+    it('THE PAGE TAKES AN ANSWER ONLY WHEN IT SAYS WHO HOLDS THE VAULT IT ASKED ABOUT', () => {
+      const answer = recordsKeyAnswerFor(me, ask({ vault: VAULT }), seats, NOW, held);
+      const withVault = { ...expecting, vault: VAULT };
+      const read = readRecordsKeyAnswer(answer, withVault);
+      expect(read.ok && read.vault).toEqual(held);
+      const code = (over: Record<string, unknown>) => {
+        const r = readRecordsKeyAnswer({ ...answer, ...over }, withVault);
+        return r.ok ? 'accepted' : r.code;
+      };
+      /* RED WHEN: an answer about another vault, or about none, or in a shape no wallet writes, is taken. */
+      expect(code({ vault: { ...held, vault: '9b'.repeat(32) } })).toBe('not-an-answer');
+      expect(code({ vault: undefined })).toBe('not-an-answer');
+      expect(code({ vault: { ...held, account: 'nope' } })).toBe('not-an-answer');
+      expect(code({ vault: { ...held, committee: [{ tag: 'ecdsa', value: '11'.repeat(32) }] } })).toBe('not-an-answer');
+      expect(code({ vault: { ...held, threshold: -1 } })).toBe('not-an-answer');
+      /* A page that asked about no vault reads none, whatever the answer carries. */
+      const none = readRecordsKeyAnswer(answer, expecting);
+      expect(none.ok && none.vault).toBeNull();
+    });
+  });
 });

@@ -70,7 +70,12 @@ export const SERVED_FROM = [
 // words are what a vault's set-up that stopped says, the standing of a vault held and not set up, the two awaiting
 // texts, and a seat missing or not the signer's own. A screen's words load with every page until they can load with
 // the screen; the budget rose by exactly the measured rise.
-export const FIRST_DOWNLOAD_BUDGET = 680_205;
+// 680,479: the test's own measure rose from 679,965 to 680,479 on a Linux machine on 3 Oct, by 514 bytes that are all
+// the English file's words: the same build with only the three new phrases taken out of `locales/en.json` measures
+// 679,965. They are what a vault's set-up says when the vault is not held by the signers as they stand now, and the
+// two buttons that lead from a stopped set-up to handing the company over or to signing the change. The budget rose
+// by exactly the measured rise.
+export const FIRST_DOWNLOAD_BUDGET = 680_479;
 
 /**
  * THE WORKERS THIS APPLICATION STARTS, by their entry's path from this folder,

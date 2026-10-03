@@ -1149,7 +1149,7 @@ export async function signCommitteeChangeFromTheWallet(
  */
 export async function recordsKeyFromTheWallet(
   walletOrigin: string,
-  ask: Pick<RecordsKeyAsked, 'company' | 'account' | 'seat'>,
+  ask: Pick<RecordsKeyAsked, 'company' | 'account' | 'seat' | 'vault'>,
   view: Openable = walletInThisPage(window),
   atOrigin: string = window.location.origin,
   already?: WalletDialog,

@@ -60,7 +60,7 @@ import { MemoryStore } from '../../src/core/store.js';
 import { AccountService, openAccount, sealAccount } from '../../src/core/account.js';
 import { MidnightCommitments } from '../../src/midnight/commitments.js';
 import { rosterVaultKeys, signVaultKeys } from '../../src/core/vault-keys.js';
-import { seatsInAccountState } from '../../apps/wallet/src/chain/company-label-on-chain.js';
+import { seatsInAccountState, vaultInState } from '../../apps/wallet/src/chain/company-label-on-chain.js';
 import { ChainLedger } from '../../src/wiring/chain.js';
 import { companyVaultRoutes, type VaultChain } from '../../src/server/company-vaults.js';
 import { mountVaultRecords, vaultAccountFromTheIndexer } from '../../src/server/vault-records-authority.js';
@@ -478,10 +478,13 @@ describe.skipIf(!KEYS_ON_DISK)('A COMPANY VAULT, FROM THE SIGNER\'S DEVICE [need
   const createDoors = () => ({
     ...pacing, account: readAccountAddress(company)!, service: service(), builder: builder(), keys,
     me, myRecordsKey: recordsReaderOf(me.companyKey).publicKey, signers, records: records(), material: material(),
-    /* What the founding signer's wallet gave and read when it released the company's keys: who holds the account now. */
+    /* What the founding signer's wallet gave, and reads off the chain afresh for each check: who holds the account and the vault. */
     secretReaders: {
       company: label, committeeKey: committeeKeyFor(identityFromWords(words), label),
-      seats: seatsInAccountState(chain.contract(company).serialize()),
+      read: async (v: Hex) => ({
+        ...seatsInAccountState(chain.contract(company).serialize()),
+        vault: vaultInState(v as never, chain.contract(v).serialize()),
+      }),
       roster: async () => rosterVaultKeys(openAccount(store.getAccount(ACCOUNT_ID)!, viewingKey)),
     },
   });
@@ -543,7 +546,7 @@ describe.skipIf(!KEYS_ON_DISK)('A COMPANY VAULT, FROM THE SIGNER\'S DEVICE [need
     expect(sent.some((b) => b.includes(temporaryKeys.get(vault)!.value))).toBe(false);
 
     /* ---- no money goes in while the committee does not hold it: read from the chain ---- */
-    await expect(openCompanyVaultPool({ ...pacing, service: service(), me, myRecordsKey: recordsReaderOf(me.companyKey).publicKey, signers, records: records() }, vault))
+    await expect(openCompanyVaultPool({ ...pacing, service: service(), me, myRecordsKey: recordsReaderOf(me.companyKey).publicKey, signers, records: records() }, vault, async () => {}))
       .rejects.toThrow(/not held by the company's committee/);
     /* The vault itself takes no money before it is started, so no deposit can even be built for it.
      * RED WHEN: a vault fresh from its deploy takes money. */
@@ -671,10 +674,10 @@ describe.skipIf(!KEYS_ON_DISK)('A COMPANY VAULT, FROM THE SIGNER\'S DEVICE [need
       .toEqual([expect.objectContaining({ vault, state: 'held-by-committee', why: null })]);
 
     /* ---- the pool and the nonce secret, filed signed through the mounted route ---- */
-    await openCompanyVaultPool(poolDoors, vault);
+    await openCompanyVaultPool(poolDoors, vault, async () => {});
     expect(await serverStores.get('pool')!.get(vault)).not.toBeNull();
     expect(await serverStores.get('nonce-secret')!.get(vault)).not.toBeNull();
-    await openCompanyVaultPool(poolDoors, vault);
+    await openCompanyVaultPool(poolDoors, vault, async () => {});
     expect((await serverStores.get('pool')!.versions(vault)).length).toBe(1);
     /* A filing signed with a key its filer did not give is refused, whoever sends it. */
     const stranger = newSigningKeypair();

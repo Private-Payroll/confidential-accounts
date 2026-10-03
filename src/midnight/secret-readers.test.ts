@@ -34,14 +34,27 @@ const bo = signer(2, 'Bo');
 const cy = signer(3, 'Cy');
 const all = [ada, bo, cy];
 
+const VAULT = '9a'.repeat(32);
+const ACCOUNT = 'ac'.repeat(32);
+type Key = { tag: string; value: string };
+/* The vault, as the signer's own wallet read it off the vault: held by `committee` at `threshold`, pinned to the account. */
+const vaultHeldBy = (committee: readonly Key[], threshold = 2, over: Partial<{ vault: string; account: string }> = {}) =>
+  ({ vault: VAULT, account: ACCOUNT, committee, threshold, ...over });
+/* Who holds the account and the vault, as one wallet read them: the vault held by the account's own committee. */
+const seatsOf = (committee: readonly Key[], seats: readonly string[], threshold = 2) =>
+  ({ committee, threshold, seats, vault: vaultHeldBy(committee, threshold) });
+
 const good = (): SecretReadersToCheck => ({
   company: CO,
   readers: all.map((s) => s.statement.recordsKey),
   roster: all.map((s) => s.entry),
-  seats: { committee: all.map((s) => s.committeeKey), threshold: 2, seats: all.map((s) => s.seat) },
+  seats: seatsOf(all.map((s) => s.committeeKey), all.map((s) => s.seat)),
   mine: ada.committeeKey,
-  vaultCommittee: all.map((s) => s.committeeKey),
+  vault: VAULT,
+  account: ACCOUNT,
 });
+/* The account as read, with the vault read some other way. */
+const withVault = (vault: ReturnType<typeof vaultHeldBy> | null): SecretReadersToCheck => ({ ...good(), seats: { ...good().seats!, vault } });
 
 describe('A SECRET RUN\'S READERS, CHECKED BEFORE THIS DEVICE APPROVES IT', () => {
   it('passes a run sealed to exactly the seated signers, each key signed by their own wallet for their seat', () => {
@@ -92,16 +105,16 @@ describe('A SECRET RUN\'S READERS, CHECKED BEFORE THIS DEVICE APPROVES IT', () =
 
   it('A SEAT ON THE COMMITTEE IS NEVER ENOUGH: a signer who has left and still holds a seat is refused as a reader', () => {
     /* Cy has left: the account seats two, the committee nobody has changed still lists Cy. */
-    const seats = { committee: all.map((s) => s.committeeKey), threshold: 2, seats: [ada.seat, bo.seat] };
+    const seats = seatsOf(all.map((s) => s.committeeKey), [ada.seat, bo.seat]);
     /* RED WHEN: the committee is not held to one key per seat the account holds now. */
     expect(whyNotTheseReaders({ ...good(), seats, roster: [ada.entry, bo.entry] }))
       .toMatch(/committee on the chain has 3 keys and its account seats 2 signers/);
     /* The roster still lists Cy, the run seals to Cy, and the committee was brought down to two without Cy: Cy's key is not on it. */
-    const updated = { committee: [ada.committeeKey, bo.committeeKey], threshold: 2, seats: [ada.seat, bo.seat] };
-    expect(whyNotTheseReaders({ ...good(), seats: updated, vaultCommittee: updated.committee }))
+    const updated = seatsOf([ada.committeeKey, bo.committeeKey], [ada.seat, bo.seat]);
+    expect(whyNotTheseReaders({ ...good(), seats: updated }))
       .toMatch(/the seat Cy's wallet signed their records key for is not one the company's account holds now/);
     /* RED WHEN: the roster's count is not held to the chain's - one signer dropped from the roster, the run sealed to the rest. */
-    expect(whyNotTheseReaders({ ...good(), seats: updated, vaultCommittee: updated.committee, roster: [ada.entry], readers: [ada.statement.recordsKey] }))
+    expect(whyNotTheseReaders({ ...good(), seats: updated, roster: [ada.entry], readers: [ada.statement.recordsKey] }))
       .toMatch(/names 1 signer and its account on the chain seats 2/);
   });
 
@@ -112,7 +125,7 @@ describe('A SECRET RUN\'S READERS, CHECKED BEFORE THIS DEVICE APPROVES IT', () =
      * the new secret to Cy and not to Dee. Every count agrees.
      */
     const dee = signer(4, 'Dee');
-    const afterTheSwap = { committee: all.map((s) => s.committeeKey), threshold: 2, seats: [ada.seat, bo.seat, dee.seat] };
+    const afterTheSwap = seatsOf(all.map((s) => s.committeeKey), [ada.seat, bo.seat, dee.seat]);
     /* RED WHEN: the check counts seats and does not hold each statement's seat to the seats the account holds now. */
     expect(readerRefusalOf({ ...good(), seats: afterTheSwap })).toEqual({
       code: 'seat-not-held', says: expect.stringMatching(/the seat Cy's wallet signed their records key for is not one the company's account holds now/),
@@ -133,18 +146,48 @@ describe('A SECRET RUN\'S READERS, CHECKED BEFORE THIS DEVICE APPROVES IT', () =
   it('NOTHING IS ACCEPTED WHILE THE SERVICE\'S TEMPORARY KEY HOLDS THE ACCOUNT OR THE VAULT', () => {
     const temporary = { tag: 'schnorr', value: '77'.repeat(32) };
     /* RED WHEN: an account held by a key that is not on the company's committee is taken as the company's. */
-    expect(whyNotTheseReaders({ ...good(), seats: { committee: [temporary], threshold: 1, seats: all.map((s) => s.seat) } }))
+    expect(whyNotTheseReaders({ ...good(), seats: seatsOf([temporary], all.map((s) => s.seat), 1) }))
       .toMatch(/account is not held by its own committee yet/);
-    /* RED WHEN: a vault not yet handed over, or held by another committee, passes. */
-    expect(whyNotTheseReaders({ ...good(), vaultCommittee: null })).toMatch(/vault is not held by the same committee/);
-    expect(whyNotTheseReaders({ ...good(), vaultCommittee: [temporary] })).toMatch(/vault is not held by the same committee/);
-    expect(whyNotTheseReaders({ ...good(), vaultCommittee: [ada.committeeKey, bo.committeeKey, temporary] }))
+    /* RED WHEN: a vault the wallet read as still held by its temporary key, or by another committee, passes. */
+    expect(whyNotTheseReaders(withVault(vaultHeldBy([temporary], 1)))).toMatch(/vault is not held by the same committee/);
+    expect(whyNotTheseReaders(withVault(vaultHeldBy([ada.committeeKey, bo.committeeKey, temporary]))))
+      .toMatch(/vault is not held by the same committee/);
+    /* RED WHEN: a vault held by the account's keys but at another threshold - any one of them could change its rules - passes. */
+    expect(whyNotTheseReaders(withVault(vaultHeldBy(all.map((s) => s.committeeKey), 1)))).toMatch(/vault is not held by the same committee/);
+    /* RED WHEN: a vault whose committee lists one key twice is taken as the account's committee. */
+    expect(whyNotTheseReaders(withVault(vaultHeldBy([ada.committeeKey, ada.committeeKey, bo.committeeKey]))))
       .toMatch(/vault is not held by the same committee/);
     /* RED WHEN: a device whose wallet read nothing approves anyway. */
     expect(whyNotTheseReaders({ ...good(), seats: null })).toMatch(/wallet has not read who holds this company's account/);
     /* RED WHEN: a committee listing one key twice is counted as two signers. */
-    expect(whyNotTheseReaders({ ...good(), seats: { committee: [ada.committeeKey, ada.committeeKey, bo.committeeKey], threshold: 2, seats: all.map((s) => s.seat) } }))
+    expect(whyNotTheseReaders({ ...good(), seats: seatsOf([ada.committeeKey, ada.committeeKey, bo.committeeKey], all.map((s) => s.seat)) }))
       .toMatch(/lists one key twice/);
+  });
+
+  it('THE VAULT IS THE ONE THE SIGNER\'S OWN WALLET READ: none read, another vault read, or one pinned to another account, is refused', () => {
+    /* RED WHEN: the vault is taken as held with no read of it by the signer's wallet - from a service's report, say. */
+    expect(readerRefusalOf(withVault(null))?.code).toBe('wallet-read-nothing');
+    expect(readerRefusalOf({ ...good(), seats: { committee: good().seats!.committee, threshold: 2, seats: good().seats!.seats } })?.code)
+      .toBe('wallet-read-nothing');
+    /* RED WHEN: a read of some other vault, held as it should be, stands in for this one. */
+    expect(readerRefusalOf(withVault(vaultHeldBy(all.map((s) => s.committeeKey), 2, { vault: '9b'.repeat(32) })))?.code)
+      .toBe('wallet-read-nothing');
+    /* RED WHEN: a vault pinned to another company's account, held by these same keys, passes. */
+    expect(readerRefusalOf(withVault(vaultHeldBy(all.map((s) => s.committeeKey), 2, { account: 'ad'.repeat(32) }))))
+      .toEqual({ code: 'vault-not-the-companys', says: expect.stringMatching(/belongs to a different company account/) });
+    /* Spelled in capitals, it is the same vault and the same account. */
+    expect(readerRefusalOf({ ...withVault(vaultHeldBy(all.map((s) => s.committeeKey), 2, { vault: VAULT.toUpperCase() })), account: ACCOUNT.toUpperCase() }))
+      .toBeNull();
+  });
+
+  it('two seated signers giving one records key is refused', () => {
+    /* Bo's roster entry names Ada's records key, signed by Bo's own wallet: two signers, one key, so one copy for two people. */
+    const sameKey = { identity: bo.identity, companyKey: ada.companyKey };
+    const statement = signRecordsKey(sameKey.identity, CO, sameKey.companyKey, bo.seat);
+    const boTwin = { ...bo.entry, keys: { ...bo.entry.keys!, recordsKey: statement.recordsKey as never, recordsKeyStatement: statement.signature as never } };
+    /* RED WHEN: two entries with one records key count as two readers, so the run seals one copy fewer than there are signers. */
+    expect(readerRefusalOf({ ...good(), roster: [ada.entry, boTwin, cy.entry], readers: [ada.statement.recordsKey, cy.statement.recordsKey] }))
+      .toEqual({ code: 'roster-not-the-chains', says: expect.stringMatching(/two signers give the same records key/) });
   });
 
   it('two seated signers giving one wallet key is refused', () => {
@@ -158,14 +201,19 @@ describe('A SECRET RUN\'S READERS, CHECKED BEFORE THIS DEVICE APPROVES IT', () =
     /* RED WHEN: a refusal is filed under a kind whose remedy is not its own. */
     expect(code({})).toBeNull();
     expect(code({ seats: null })).toBe('wallet-read-nothing');
-    expect(code({ seats: { committee: [temporary], threshold: 1, seats: all.map((s) => s.seat) } })).toBe('account-not-held');
-    expect(code({ vaultCommittee: null })).toBe('vault-not-held');
-    expect(code({ seats: { committee: all.map((s) => s.committeeKey), threshold: 2, seats: [ada.seat, bo.seat] } })).toBe('committee-out-of-date');
+    expect(code({ seats: seatsOf([temporary], all.map((s) => s.seat), 1) })).toBe('account-not-held');
+    expect(code({ seats: { ...good().seats!, vault: vaultHeldBy([temporary], 1) } })).toBe('vault-not-held');
+    expect(code({ seats: { ...good().seats!, vault: vaultHeldBy(all.map((s) => s.committeeKey), 2, { account: 'ad'.repeat(32) }) } })).toBe('vault-not-the-companys');
+    expect(code({ seats: seatsOf(all.map((s) => s.committeeKey), [ada.seat, bo.seat]) })).toBe('committee-out-of-date');
     expect(code({ roster: [ada.entry, { ...bo.entry, keys: null }, cy.entry] })).toBe('keys-not-given');
     expect(code({ roster: [ada.entry, { ...bo.entry, keys: { ...bo.entry.keys!, recordsKeyStatement: null } }, cy.entry] })).toBe('keys-not-given');
     expect(code({ roster: [ada.entry, { ...bo.entry, keys: { ...bo.entry.keys!, recordsKeySeat: cy.seat as never } }, cy.entry] })).toBe('not-signed');
     expect(code({ seats: { ...good().seats!, seats: [ada.seat, leaf(0x77), cy.seat] } })).toBe('seat-not-held');
     expect(code({ readers: [ada.statement.recordsKey, bo.statement.recordsKey, recordsKeypairFrom(new Uint8Array(32).fill(0x60)).publicKey] })).toBe('reader-not-a-signer');
     expect(code({ readers: [ada.statement.recordsKey, bo.statement.recordsKey] })).toBe('signer-left-out');
+    /* The service's roster against the chain's seats: one signer twice, or the roster's count not the chain's. */
+    const twin = { ...cy.entry, keys: { ...bo.entry.keys!, recordsKeySeat: cy.seat as never, recordsKeyStatement: signRecordsKey(bo.identity, CO, bo.companyKey, cy.seat).signature as never } };
+    expect(code({ roster: [ada.entry, bo.entry, twin] })).toBe('roster-not-the-chains');
+    expect(code({ roster: [ada.entry, bo.entry], readers: [ada.statement.recordsKey, bo.statement.recordsKey] })).toBe('roster-not-the-chains');
   });
 });
