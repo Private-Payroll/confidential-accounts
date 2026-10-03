@@ -4,6 +4,10 @@ import { newSigningKeypair, newWrappingKeypair, type Hex } from '../../../../src
 import type { Asset, AssetRegistry } from '../../../../src/core/assets.js';
 import { SealedNotePool } from '../../../../src/midnight/vault-pool.js';
 import { HttpSealedPoolStore, pageWireSend } from 'vaults-web-shared/http-sealed-pool-store.js';
+import { identityFromSecret } from 'midnight-identity';
+import { committeeKeyFor } from 'midnight-identity/profile/committee-key';
+import { signDirectoryEntry, signRecordsKey } from 'midnight-identity/profile/records-key';
+import type { CompanyLabel } from 'midnight-identity/profile/company-label';
 
 /*
  * A VAULT'S PRIVATE MONEY THROUGH THE ADAPTER, WITH THE SHARED READER AND THE
@@ -12,7 +16,9 @@ import { HttpSealedPoolStore, pageWireSend } from 'vaults-web-shared/http-sealed
  * signer with `SealedNotePool`, filed signed through `HttpSealedPoolStore` to
  * a stand-in of the service's records route, and read back the same way, so
  * what is opened is opened with this signer's own secrets and believed only
- * when a signer on the roster filed it. `deviceVaultHoldings` compares it with
+ * when a seat the company's directory names filed it, checked against who
+ * holds the company as the person's own wallet reads it (stood in), with an
+ * entry signed by a real wallet's committee key. `deviceVaultHoldings` compares it with
  * the chain's notes as it does for the legacy page's payments.
  */
 const VAULT = 'ab'.repeat(32);
@@ -21,6 +27,10 @@ const OTHER_TOKEN = 'c2'.repeat(32);
 const SIGNING = newSigningKeypair();
 const WRAPPING = newWrappingKeypair();
 const kr = vi.hoisted(() => ({
+  /* The company's seat directory as the service serves it, and the seats the person's own wallet reads seated now. */
+  filings: [] as unknown[],
+  seated: [] as string[],
+  committee: [] as unknown[],
   signedIn: 'u1' as string | null,
   keys: null as Record<string, string> | null,
   roster: null as unknown,
@@ -38,9 +48,11 @@ vi.mock('vaults-web-shared/keyring.js', async (real) => ({
   pendingSeatsFor: () => [],
   keysFor: () => kr.keys,
   openAccount: () => kr.roster,
+  holdersFromTheWallet: async () => ({ holders: { committee: kr.committee, threshold: 1, seats: kr.seated, approvals: 1, adoptedVaults: [] }, vault: null }),
   api: async (path: string) => {
     kr.asked.push(path);
-    if (path === '/api/accounts/c1') return { id: 'c1' };
+    if (path === '/api/accounts/c1') return { id: 'c1', companyLabel: `co_${'c1'.repeat(32)}`, contractAddress: 'c0'.repeat(32) };
+    if (path === '/api/accounts/c1/directory') return { filings: kr.filings };
     if (path === `/api/accounts/c1/vaults/${VAULT}/chain`) {
       if (kr.view instanceof Error) throw kr.view;
       return kr.view;
@@ -79,9 +91,19 @@ const stubRecords = () => vi.stubGlobal('fetch', async (path: string, init: { me
   return body({ error: 'no such route' }, 404);
 });
 
+/* Priya's seat, and her entry in the directory, signed by her own wallet's committee key. */
+const LABEL = `co_${'c1'.repeat(32)}` as CompanyLabel;
+const SEAT = '5a'.repeat(32);
+const PRIYA = identityFromSecret(new Uint8Array(32).fill(1));
+const COMMITTEE_KEY = committeeKeyFor(PRIYA, LABEL) as { tag: string; value: string };
+const ENTRY = { person: 'u1', committeeKey: COMMITTEE_KEY, statement: signDirectoryEntry(PRIYA, LABEL, new Uint8Array(32).fill(0x11), SIGNING.publicKey, SEAT) };
+/* Her records key for her seat, as her wallet signed it in the same press: the roster carries it. */
+const ATTESTED = signRecordsKey(PRIYA, LABEL, new Uint8Array(32).fill(0x11), SEAT);
+const VAULT_KEYS = { committeeKey: COMMITTEE_KEY, recordsKey: ATTESTED.recordsKey, recordsKeySeat: SEAT, recordsKeyStatement: ATTESTED.signature };
+
 /** The pool filed by `filer` and wrapped to `to`, holding `notes`. */
 async function filePool(notes: Array<{ nonce: Hex; token: Hex; value: bigint }>, filer = SIGNING, to = WRAPPING.publicKey) {
-  const store = new HttpSealedPoolStore('pool', pageWireSend(() => 'u1'), filer.secret, async () => new Set([filer.publicKey]));
+  const store = new HttpSealedPoolStore('pool', pageWireSend(() => 'u1'), filer.secret, async () => () => null);
   await new SealedNotePool(store, { signerId: 's1', wrappingSecret: WRAPPING.secret }, async () => [{ id: 's1', wrappingPublicKey: to }]).create(VAULT, { notes });
 }
 
@@ -99,8 +121,11 @@ async function load() {
 }
 beforeEach(() => {
   kr.signedIn = 'u1'; kr.filed = null; kr.asked = [];
+  kr.filings = [{ company: 'c1', version: 1, change: { kind: 'claim', entry: ENTRY } }];
+  kr.seated = [SEAT];
+  kr.committee = [COMMITTEE_KEY];
   kr.keys = { signerId: 's1', signingSecret: SIGNING.secret, wrappingSecret: WRAPPING.secret, blinding: 'cc'.repeat(32) };
-  kr.roster = { id: 'c1', signers: [{ id: 's1', userId: 'u1', name: 'Priya', status: 'active', signingPublicKey: SIGNING.publicKey, wrappingPublicKey: WRAPPING.publicKey }] };
+  kr.roster = { id: 'c1', signers: [{ id: 's1', userId: 'u1', name: 'Priya', status: 'active', signingPublicKey: SIGNING.publicKey, wrappingPublicKey: WRAPPING.publicKey, vaultKeys: VAULT_KEYS }] };
   kr.view = chainHolding(NOTES);
   stubRecords();
 });
@@ -150,14 +175,18 @@ describe('a vault\'s private money, read on this device', () => {
     expect(await readVaultPrivateMoney('u1', 'c1', VAULT, REGISTRY)).toBeNull();
   });
 
-  /* RED WHEN: the pool is opened with anything but this signer's own wrapping secret, or a pool filed by a key the roster does not hold is believed. */
-  it('opens the pool only with this signer\'s own secrets, and believes only a signer on the roster', async () => {
+  /* RED WHEN: the pool is opened with anything but this signer's own wrapping secret, or a pool filed by a key no directory entry names, or by a seat no longer seated, is believed. */
+  it('opens the pool only with this signer\'s own secrets, and believes only a seat the directory names and the chain holds now', async () => {
     await filePool(NOTES);
     const { readVaultPrivateMoney } = await load();
     kr.keys = { ...kr.keys!, wrappingSecret: newWrappingKeypair().secret };
     expect(await readVaultPrivateMoney('u1', 'c1', VAULT, REGISTRY), 'another wrapping secret').toBeNull();
     kr.keys = { ...kr.keys!, wrappingSecret: WRAPPING.secret };
     expect(await readVaultPrivateMoney('u1', 'c1', VAULT, REGISTRY), 'the same pool, with this signer\'s own secret').not.toBeNull();
+    /* The same pool, once its filer's seat is no longer held, as the person's own wallet reads the chain afresh. */
+    kr.seated = [];
+    expect(await readVaultPrivateMoney('u1', 'c1', VAULT, REGISTRY), 'filed by a seat no longer seated').toBeNull();
+    kr.seated = [SEAT];
     kr.filed = null;
     await filePool(NOTES, newSigningKeypair());
     expect(await readVaultPrivateMoney('u1', 'c1', VAULT, REGISTRY), 'filed by a stranger').toBeNull();

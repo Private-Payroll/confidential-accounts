@@ -1,5 +1,5 @@
 import { ContractState } from '@midnightntwrk/ledger-v9';
-import type { AccountSeats, VaultHolders } from 'midnight-identity/profile/records-key';
+import type { AccountHolders, AccountSeats, VaultHolders } from 'midnight-identity/profile/records-key';
 import { COMPANY_LABEL_ENTRY, companyLabelOf, readAccountAddress, readVaultAddress } from 'midnight-identity/profile/company-label';
 import type { AccountAddress, CompanyLabel, VaultAddress } from 'midnight-identity/profile/company-label';
 
@@ -28,6 +28,12 @@ export const ROLES_FIELD = 13;
 
 /** Where the account's set of seated signers' leaves sits among the fields of its public state. */
 export const SIGNER_LEAVES_FIELD = 9;
+
+/** Where the account's own approval threshold sits among the fields of its public state. */
+export const ACCOUNT_THRESHOLD_FIELD = 5;
+
+/** Where the account's set of adopted vaults sits among the fields of its public state. */
+export const ADOPTED_VAULTS_FIELD = 7;
 
 /** Where a vault's public state names the account it is pinned to: written once, by its constructor. */
 export const VAULT_ACCOUNT_FIELD = 0;
@@ -117,6 +123,36 @@ export function seatsInAccountState(serialized: Uint8Array): SeatsOnChain {
   });
 }
 
+/**
+ * **WHO HOLDS AN ACCOUNT AND WHAT IT HAS ADOPTED, FROM ITS SERIALISED STATE**:
+ * everything `seatsInAccountState` reads, the account's own approval threshold
+ * (a number the state holds as little-endian bytes with trailing zeros
+ * dropped) and every vault in its set of adopted vaults. Throws when the bytes
+ * are not a contract's state laid out as a company's account is.
+ */
+export function holdersInAccountState(serialized: Uint8Array): AccountHolders {
+  const seats = seatsInAccountState(serialized);
+  const fields = ContractState.deserialize(serialized).data.state.asArray();
+  const notAnAccount = 'that contract\'s state is not laid out as a company\'s account.';
+  if (fields === undefined || fields.length <= ROLES_FIELD) throw new Error(notAnAccount);
+  const thresholdField = fields[ACCOUNT_THRESHOLD_FIELD]!;
+  const cell = thresholdField.asCell() as ReturnType<typeof thresholdField.asCell> | undefined;
+  const raw = cell === undefined || cell.value.length !== 1 ? null : cell.value[0];
+  if (!(raw instanceof Uint8Array) || raw.length > 8) throw new Error(notAnAccount);
+  let approvals = 0;
+  for (let i = raw.length - 1; i >= 0; i -= 1) approvals = approvals * 256 + raw[i]!;
+  if (!Number.isSafeInteger(approvals) || approvals < 1) throw new Error(notAnAccount);
+  const adopted = fields[ADOPTED_VAULTS_FIELD]!.asMap();
+  if (adopted === undefined) throw new Error(notAnAccount);
+  const vaults: string[] = [];
+  for (const key of adopted.keys()) {
+    const v = as32(key.value[0]);
+    if (v === null) throw new Error(notAnAccount);
+    vaults.push(Array.from(v, (b) => b.toString(16).padStart(2, '0')).join(''));
+  }
+  return Object.freeze({ ...seats, approvals, adoptedVaults: Object.freeze(vaults) });
+}
+
 const committeeOf = (state: ContractState): VaultHolders['committee'] =>
   Object.freeze(state.maintenanceAuthority.committee.map((k) => Object.freeze({ tag: String(k.tag), value: String(k.value).toLowerCase() })));
 
@@ -186,7 +222,8 @@ export const fromIndexerAt = (indexerUri: string): ContractStateHex => async (ac
   const body = await response.json() as { data?: { contract?: { state?: unknown } | null }; errors?: unknown };
   if (body.errors !== undefined) throw new Error('the indexer refused the read.');
   const state = body.data?.contract?.state;
-  if (state === undefined || state === null) return null;
+  /* An action that left no state is not a contract this read can say anything about: no contract, not unreadable. */
+  if (state === undefined || state === null || state === '') return null;
   if (typeof state !== 'string' || !/^([0-9a-fA-F]{2})+$/u.test(state)) throw new Error('the indexer answered with something that is not a state.');
   return state;
 };
@@ -213,3 +250,30 @@ export async function labelOnAccount(account: AccountAddress, read: ContractStat
 /** Whether what was read lets a screen give or sign anything for `label` on that account. */
 export const accountCarries = (read: LabelOnAccount, label: CompanyLabel): boolean =>
   read.of === 'carries' && read.label === label;
+
+export type HoldersOnChain =
+  /** The account exists and carries this label; who holds it and what it has adopted, read in the same answer. */
+  | { readonly of: 'read'; readonly holders: AccountHolders }
+  | { readonly of: 'no-account' }
+  /** A contract is there and does not carry this label: not this company's account. */
+  | { readonly of: 'other-label' }
+  | { readonly of: 'unreadable'; readonly why: string };
+
+/** Reads who holds the account at `account`, which must carry `label`. Never throws. */
+export async function holdersOnChain(account: AccountAddress, label: CompanyLabel, read: ContractStateHex): Promise<HoldersOnChain> {
+  if (readAccountAddress(account) === null) return { of: 'unreadable', why: 'that is not an account\'s address.' };
+  let hex: string | null;
+  try {
+    hex = await read(account);
+  } catch (e) {
+    return { of: 'unreadable', why: e instanceof Error ? e.message : 'the read did not come back.' };
+  }
+  if (hex === null) return { of: 'no-account' };
+  try {
+    const bytes = bytesOf(hex);
+    if (labelInAccountState(bytes) !== label) return { of: 'other-label' };
+    return { of: 'read', holders: holdersInAccountState(bytes) };
+  } catch (e) {
+    return { of: 'unreadable', why: e instanceof Error ? e.message : 'the state did not read.' };
+  }
+}

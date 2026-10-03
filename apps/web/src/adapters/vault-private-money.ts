@@ -9,6 +9,8 @@ import { wireOf } from 'vaults-web-shared/vault-operation.js';
 import { Fault, FAULT } from '../faults.js';
 import { companyRoute } from './handover-state.js';
 import { keyringFor, keysOnTheWayIn } from './keyring-person.js';
+import { filingJudgeFor } from './filing-judge.js';
+import type { AccountAddress, CompanyLabel } from 'midnight-identity/profile/company-label';
 import { theVaultBuilder } from './vault-builder.js';
 
 /*
@@ -20,10 +22,12 @@ import { theVaultBuilder } from './vault-builder.js';
  * reader is the shared one the legacy page's payments use
  * (`deviceVaultHoldings`), given the same doors: the vault's pool opened with
  * this signer's own secrets, the signers on the roster this device opened as
- * the ones whose filings are believed, the company's service asked what the
+ * the ones the pool is wrapped to, the company's service asked what the
  * chain holds for the vault, and each note's commitment worked out in the
- * page's vault worker. The notes are summed only when the pool and the chain
- * agree both ways. Nothing it reads leaves this device; the vault's address
+ * page's vault worker. The pool is believed only when a seat the company's
+ * directory names filed it, checked against a fresh read by the person's own
+ * wallet. The notes are summed only when the pool and the chain agree both
+ * ways. Nothing it reads leaves this device; the vault's address
  * goes out to ask the chain.
  *
  * Each amount is made with `privateAmount`, from the decimals and symbol of the
@@ -59,7 +63,12 @@ export async function readVaultPrivateMoney(
     if (account === null) return null;
     const builder = await theVaultBuilder();
     const roster = rosterOf(account);
-    const records = deviceRecordsFor(me.signingSecret, roster.filers, () => currentUser()?.id ?? null);
+    const label = sealed.companyLabel ?? null;
+    const address = sealed.contractAddress ?? null;
+    if (label === null || address === null) return null;
+    /* Believed only when a seat the directory names filed it, checked against a fresh read by this person's own wallet. */
+    const judge = filingJudgeFor(companyId, label as CompanyLabel, address as AccountAddress, async () => account);
+    const records = deviceRecordsFor(me.signingSecret, judge, () => currentUser()?.id ?? null);
     const pool = new SealedNotePool(records(LEDGER.pool), { signerId: me.signerId, wrappingSecret: me.wrappingSecret }, roster.signers);
     const holdings = deviceVaultHoldings({
       chain: (v) => vaultServiceFor(api, account.id, async () => account).chain(v),

@@ -88,12 +88,28 @@ const setUp = (over: { view?: Partial<VaultChainView>; send?: VaultService['depo
     myRecordsKey: 'ff'.repeat(32) as Hex,
     signers: async () => [{ id: 'ada', wrappingPublicKey: wrapping.publicKey }],
     company: LABEL, account: ACCOUNT, builder,
+    /* The wallet's read: the account has adopted the vault. */
+    onChain: async (v: string) => ({
+      holders: { committee: [], threshold: 1, seats: [], approvals: 1, adoptedVaults: [v] },
+    }),
     inFlight: sealedOnThisDevice<DepositInFlight>(inFlightInMemory(inFlight), { signerId: 'ada', wrappingSecret: wrapping.secret }, 'deposit') as DepositsInFlight,
   };
   return { log, doors, inFlight };
 };
 
 describe('A PUBLIC DEPOSIT FROM THE PAGE', () => {
+  it('A PUBLIC DEPOSIT INTO A VAULT THE ACCOUNT HAS NOT ADOPTED, AS THE SIGNER\'S OWN WALLET READS IT, IS REFUSED BEFORE ANYTHING IS BUILT', async () => {
+    const { log, doors } = setUp();
+    const unadopted = {
+      ...doors,
+      onChain: async (v: string) => ({ ...(await doors.onChain(v)), holders: { ...(await doors.onChain(v)).holders, adoptedVaults: [] } }),
+    };
+    const source = publicTokenFromTheWallet(async (ask) => { log.push('wallet'); return paid('40')(ask); }, REGISTRY);
+    /* RED WHEN: public money goes into a vault the service's rows name and the account never adopted. */
+    await expect(depositFromSource(unadopted, VAULT, source, { code: PUBLIC_TOKEN, value: 40n })).rejects.toThrow(/not one your company's account has adopted/);
+    expect(log.filter((l) => l !== 'chain')).toEqual([]);
+  });
+
   it('THE PUBLIC SOURCE ENDS IN THE VAULT\'S PUBLIC DEPOSIT: THE ASSET\'S PUBLIC TOKEN AND THE AMOUNT ASKED, BUILT, PAID BY THE WALLET AND SENT, AND NOTHING KEPT ON THIS DEVICE', async () => {
     const { log, doors, inFlight } = setUp();
     const asked: unknown[] = [];

@@ -365,6 +365,11 @@ describe.skipIf(!KEYS_ON_DISK)('A DEPOSIT FROM THE PAGE, BUILT ON THE DEVICE [ne
     const me = { signerId: 'ada', wrappingSecret: wrapping.secret, companyKey };
     const doors = {
       sleep: async () => {}, waitMs: 3, everyMs: 1, service, me, records,
+      /* The wallet's read: the account has adopted this vault. */
+      account: ACCOUNT,
+      onChain: async (v: string) => ({
+        holders: { committee: [], threshold: 1, seats: [], approvals: 1, adoptedVaults: [v] },
+      }),
       myRecordsKey: recordsKeypairFrom(companyKey).publicKey,
       signers: async () => [{ id: 'ada', wrappingPublicKey: wrapping.publicKey }],
     };

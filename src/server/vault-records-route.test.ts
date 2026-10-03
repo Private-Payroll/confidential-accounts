@@ -10,7 +10,10 @@ import express from 'express';
 import type { AddressInfo } from 'node:net';
 import { readFileSync } from 'node:fs';
 import { vaultRecordsRoutes, VAULT_RECORD_BODY_LIMIT, type MayTouchVaultRecords } from './vault-records-route.js';
-import { HttpSealedPoolStore, pageWireSend, type WireSend } from 'vaults-web-shared/http-sealed-pool-store.js';
+import {
+  FilingNotBelieved, HttpSealedPoolStore, pageWireSend, type FilingJudge, type FreshJudge, type WireSend,
+} from 'vaults-web-shared/http-sealed-pool-store.js';
+import { FILING_REFUSAL } from '../midnight/seat-directory.js';
 import {
   MemorySealedPoolStore, SealedNotePool, sealPool, VaultPoolVersionAlreadyFiled, VaultRecordRefused,
   type SealedPoolStore,
@@ -32,13 +35,23 @@ let loseNext = 0;
 let refuseNext: string | null = null;
 const asked: Array<{ person: string; vault: string; record: WireRecord; act: string; filer?: Hex }> = [];
 
-const mayTouch: MayTouchVaultRecords = async (person, vault, record, act, filer) => {
-  asked.push({ person, vault, record, act, ...(filer === undefined ? {} : { filer }) });
-  return person === 'ada' && vault === VAULT;
-};
 const ADA = newSigningKeypair();
 const BOB = newSigningKeypair();
-const roster = async (): Promise<ReadonlySet<Hex>> => new Set([ADA.publicKey]);
+/*
+ * Who may file, as the server answers it from the seat directory: the key Ada's own seat entry names, in her session.
+ * The directory's own answer is `seat-directory.test.ts`'s; here it is a table of one entry.
+ */
+const entryKeyOf: Record<string, Hex> = { ada: ADA.publicKey };
+const mayTouch: MayTouchVaultRecords = async (person, vault, record, act, filer) => {
+  asked.push({ person, vault, record, act, ...(filer === undefined ? {} : { filer }) });
+  return person === 'ada' && vault === VAULT && (act === 'read' || filer === entryKeyOf[person]);
+};
+/* What the device believes: Ada's seat, seated now; any other key is no entry. The device's own check is `seat-directory.ts`'s. */
+const judgeBelieving = (...keys: Hex[]): FreshJudge => async () => ((filer) => {
+  if (filer === null) return 'it carries no valid signature for this record';
+  return keys.includes(filer) ? null : FILING_REFUSAL['no-entry'];
+}) as FilingJudge;
+const roster = judgeBelieving(ADA.publicKey);
 const pageStore = (record: WireRecord, send: WireSend, key: Hex = ADA.secret) => new HttpSealedPoolStore(record, send, key, roster);
 
 beforeAll(async () => {
@@ -146,13 +159,16 @@ describe('a vault\'s sealed records, from the page to the server and back', () =
     expect((await stores.pool.versions(VAULT)).length).toBe(before);
   });
 
-  it('A RECORD SIGNED BY A KEY THE ROSTER DOES NOT HOLD IS FILED BY THE SERVER AND NOT BELIEVED BY THE DEVICE', async () => {
-    /* The server cannot open the roster, so it cannot tell whose key this is; the device can. */
+  it('A RECORD SIGNED BY A KEY THAT IS NOT THE FILER\'S OWN SEAT KEY IS REFUSED BY THE SERVER, AND NOT BELIEVED BY THE DEVICE', async () => {
+    /* The server reads the seat directory, so it can tell whose key this is: Ada's session, Bob's key. */
     const bobsDevice = pageStore('nonce-secret', sendAs('ada'), BOB.secret);
-    await bobsDevice.put(VAULT, sealPool(VAULT, { notes: [] }, await signers(), 1, 'nonce-secret'));
-    expect((await stores['nonce-secret'].versions(VAULT))).toHaveLength(1);
+    await expect(bobsDevice.put(VAULT, sealPool(VAULT, { notes: [] }, await signers(), 1, 'nonce-secret')),
+      'RED WHEN: the server files a record signed by a key that is not the signed-in person\'s own seat key').rejects.toThrow(/refused and not filed \(403/);
+    expect((await stores['nonce-secret'].versions(VAULT)), 'RED WHEN: anything of the refused filing is kept').toHaveLength(0);
+    /* And a store that holds one anyway - a server that lies - is not believed by the device. */
+    await stores['nonce-secret'].put(VAULT, signFiling('nonce-secret', sealPool(VAULT, { notes: [] }, await signers(), 1, 'nonce-secret'), BOB.secret));
     await expect(pageStore('nonce-secret', sendAs('ada')).get(VAULT),
-      'RED WHEN: a well-formed record from a key that is not a signer\'s is believed').rejects.toThrow(/signed by a key the roster does not hold/);
+      'RED WHEN: a well-formed record from a key no entry names is believed').rejects.toThrow(/no entry in the company's directory/);
     await expect(pageStore('nonce-secret', sendAs('ada')).versions(VAULT)).rejects.toThrow(/not believed/);
     const unsigned: WireSend = async () => ({ status: 200, body: { record: 'pool', filed: toWire('pool', sealPool(VAULT, { notes: [] }, await signers(), 1)) } });
     await expect(pageStore('pool', unsigned).get(VAULT), 'RED WHEN: an unsigned record a store hands back is believed')
@@ -171,7 +187,7 @@ describe('a vault\'s sealed records, from the page to the server and back', () =
       .rejects.toThrow(/carries no valid signature/);
   });
 
-  it('A VERSION FILED BY A SIGNER WHO HAS SINCE LEFT IS STILL THE VAULT\'S RECORD, and the others go on reading and writing', async () => {
+  it('A VERSION FILED BY A SIGNER WHO HAS SINCE LEFT IS REFUSED UNTIL A RETIREMENT NAMES IT, and is still listed as filed', async () => {
     const vault = 'ef'.repeat(32);
     const kept = new MemorySealedPoolStore();
     const direct: WireSend = async (path, init) => {
@@ -186,16 +202,21 @@ describe('a vault\'s sealed records, from the page to the server and back', () =
       await kept.put(vault, JSON.parse(w.body));
       return { status: 201, body: { filed: true, record: 'pool', version: w.version, digest: w.digest } };
     };
-    const everOnTheRoster = async () => new Set([ADA.publicKey, BOB.publicKey]);
-    const bos = new HttpSealedPoolStore('pool', direct, BOB.secret, everOnTheRoster);
-    const adas = new HttpSealedPoolStore('pool', direct, ADA.secret, everOnTheRoster);
+    const bothSeated = judgeBelieving(ADA.publicKey, BOB.publicKey);
+    /* Bo has left: his seat is not seated now and no quorum has retired him, so the device's check says so. */
+    const boLeft: FreshJudge = async () => ((filer) => (filer === ADA.publicKey ? null
+      : filer === BOB.publicKey ? FILING_REFUSAL['seat-not-seated'] : FILING_REFUSAL['no-entry'])) as FilingJudge;
+    const bos = new HttpSealedPoolStore('pool', direct, BOB.secret, bothSeated);
+    const adas = new HttpSealedPoolStore('pool', direct, ADA.secret, boLeft);
     const pool = (store: HttpSealedPoolStore) => new SealedNotePool(store, { signerId: 'ada', wrappingSecret: signer.secret }, signers);
     await pool(bos).create(vault, { notes: [] });
-    /* Bo has left: the server refuses him from here on, and the roster no longer lists him. */
-    const read = await pool(adas).load(vault);
-    await expect(pool(adas).save(vault, { notes: [] }, read.readAt),
-      'RED WHEN: one signer leaving stops every other signer reading and writing the vault\'s records').resolves.toBeUndefined();
-    expect((await adas.versions(vault)).map((v) => v.sealed.filedBy?.publicKey)).toEqual([BOB.publicKey, ADA.publicKey]);
+    /* RED WHEN: a version signed by a seat the account no longer holds is believed with no retirement naming it. */
+    const refused = await adas.get(vault).catch((e: unknown) => e);
+    expect(refused).toBeInstanceOf(FilingNotBelieved);
+    expect((refused as Error).message).toMatch(/no longer holds, and no retirement names it/);
+    /* What the chain can vouch for is filed again by a seated signer: `fileTheChainsSecretAsTheNewest` reads every version as filed. */
+    expect((await adas.versionsAsFiled(vault)).map((v) => v.sealed.filedBy?.publicKey), 'RED WHEN: the versions as filed are checked or dropped')
+      .toEqual([BOB.publicKey]);
   });
 
   it('A JOURNAL PAST A MEGABYTE IS STILL FILED: a fifty-person payroll passes that in under two years', async () => {

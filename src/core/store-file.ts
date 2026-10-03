@@ -30,7 +30,13 @@ import type { Shape } from './store.js';
  * whose would never leave the service. It is dropped here, on load, and the
  * next write leaves it out of the file.
  */
-const RETIRED_TABLES: readonly string[] = ['vaultKeys'];
+/*
+ * `filingKeys` held, per member, the key their vault filings were signed with,
+ * written by this service from the roster it opened. The seat directory, whose
+ * entries each seat's own wallet signs, holds that now, and the old table is
+ * dropped on load for the same reason.
+ */
+const RETIRED_TABLES: readonly string[] = ['vaultKeys', 'filingKeys'];
 
 export const withoutRetiredTables = <T extends object>(parsed: T): T => {
   const kept = { ...parsed } as Record<string, unknown>;

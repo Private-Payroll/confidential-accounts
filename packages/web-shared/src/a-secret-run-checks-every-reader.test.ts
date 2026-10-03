@@ -53,7 +53,12 @@ const press = async (o: {
   seats?: string[];
   /** The committee the signer's wallet reads holding the vault, when it is not the account's. The service always reports the account's. */
   vaultHeldBy?: { tag: string; value: string }[];
+  /** The run already raised and approved on the chain, so the press goes on to set the secret. */
+  approved?: boolean;
+  /** The seats the wallet reads on its nth read, counted from one, when they change during the press. */
+  seatsOnRead?: (n: number) => string[];
 }) => {
+  let reads = 0;
   const asked: string[] = [];
   const committee = [ada.committeeKey, bo.committeeKey];
   const view: VaultChainView = {
@@ -90,16 +95,24 @@ const press = async (o: {
         adopted: true,
         adoption: { proposal: 'a1'.repeat(32), payload: 'a2'.repeat(32), named: 'a3'.repeat(32), salt: 'a4'.repeat(32), open: false, approvals: 1, needed: 1, stale: false },
         ...(i.secret === undefined ? {} : { secret: {
-          set: false, another: false, rootIsThisRuns: true, run: null, written: [], started: false,
+          set: false, another: false, rootIsThisRuns: true, written: [], started: false,
+          run: o.approved === true ? {
+            proposal: 'b1'.repeat(32), payload: 'b2'.repeat(32), named: 'b3'.repeat(32), salt: 'b4'.repeat(32),
+            open: true, inWindow: true, approvals: 2, needed: 2, opensAt: '0', closesAt: '9',
+          } : null,
           raise: { proposal: 'b1'.repeat(32), payload: 'b2'.repeat(32), named: 'b3'.repeat(32), salt: 'b4'.repeat(32), opensAt: '0', closesAt: '9' },
         } }),
       },
       ...(i.secret === undefined ? {} : { run: { root: 'r', payees: '0', asset: '00'.repeat(32), copies: o.copies(await filedSecret()) } as never }),
     }),
     governedCall: async () => { asked.push('asked to raise or approve'); throw new Error('stop here'); },
+    setNonceSecret: async () => { asked.push('built the set'); throw new Error('stop here'); },
   } as unknown as VaultBuilderClient;
   const result = await createCompanyVault({
     ...pacing, account: ACCOUNT, service, builder,
+    onChain: async (v: string) => ({
+      holders: { committee: [], threshold: 1, seats: [], approvals: 1, adoptedVaults: [v] },
+    }),
     keys: { put: async () => {}, get: async () => null, forget: async () => {} },
     me, myRecordsKey: ada.recordsKey as never, records,
     signers: async () => [{ id: 'ada', wrappingPublicKey: wrapping.publicKey }],
@@ -108,7 +121,7 @@ const press = async (o: {
       company: CO, committeeKey: ada.committeeKey,
       /* Who holds the account and the vault, as Ada's own wallet read them for this check: the vault read off the vault itself. */
       read: async () => ({
-        committee, threshold: 2, seats: o.seats ?? [ada.seat, bo.seat],
+        committee, threshold: 2, seats: o.seatsOnRead?.(++reads) ?? o.seats ?? [ada.seat, bo.seat],
         vault: { vault: VAULT, account: ACCOUNT, committee: o.vaultHeldBy ?? committee, threshold: 2 },
       }),
       roster: async () => o.roster ?? [ada.entry, bo.entry],
@@ -192,5 +205,25 @@ describe('A SECRET RUN IS CHECKED, READER BY READER, BEFORE THIS DEVICE RAISES O
     const { result, asked } = await press({ readers: [ada.recordsKey, bo.recordsKey], copies: run(ada.recordsKey, bo.recordsKey), seats: [ada.seat] });
     expect(asked).toEqual([]);
     expect((result as Error).message).toMatch(/committee on the chain has 2 keys and its account seats 1 signer/);
+  });
+});
+
+describe('THE READERS ARE READ AGAIN RIGHT BEFORE THE SECRET IS SET, NOT ONLY BEFORE THE RUN WAS RAISED', () => {
+  it('an approved run whose readers still check out goes on to set the secret', async () => {
+    const { asked } = await press({ readers: [ada.recordsKey, bo.recordsKey], copies: run(ada.recordsKey, bo.recordsKey), approved: true });
+    /* The positive control: every read checked out, so the press built the set. */
+    expect(asked).toEqual(['built the set']);
+  });
+
+  it('A SIGNER WHO LEFT AFTER THE RUN WAS CHECKED IS CAUGHT BY THE READ RIGHT BEFORE THE SET, AND NOTHING IS SET', async () => {
+    const dee = 'de'.repeat(32);
+    const { result, asked } = await press({
+      readers: [ada.recordsKey, bo.recordsKey], copies: run(ada.recordsKey, bo.recordsKey), approved: true,
+      /* Bo is seated for the check before the secret is filed and the check of the run's copies; he has left by the next read. */
+      seatsOnRead: (n) => (n <= 2 ? [ada.seat, bo.seat] : [ada.seat, dee]),
+    });
+    /* RED WHEN: the check before the set is skipped, so a secret is set for a reader who has left. */
+    expect(asked).toEqual([]);
+    expect((result as { stoppedAt?: string }).stoppedAt).toBe('seat-not-held');
   });
 });

@@ -1,6 +1,6 @@
 // @vitest-environment jsdom
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import { newSigningKeypair, type Hex } from '../../../../src/core/crypto.js';
+import { newSigningKeypair, signingPublicKeyOf, type Hex } from '../../../../src/core/crypto.js';
 import { signVaultKeys } from '../../../../src/core/vault-keys.js';
 
 /*
@@ -13,12 +13,14 @@ const SIGNER = newSigningKeypair();
 const kr = vi.hoisted(() => ({
   calls: [] as { path: string; method: string; body: unknown }[],
   answers: {} as Record<string, unknown>,
-  keys: { signerId: 's1', signingSecret: 'aa', wrappingSecret: 'bb', blinding: 'cc' } as Record<string, string> | null,
+  keys: { signerId: 's1', signingSecret: 'aa'.repeat(32), wrappingSecret: 'bb', blinding: 'cc' } as Record<string, string> | null,
   roster: null as unknown, walletKey: null as unknown, signed: null as unknown, opened: 0, user: 'u1', seat: false,
   /** When set, what the shared check answers, in place of its own answer. */
   check: undefined as undefined | null | { code: string; why: string },
   /* The seat this device's own key material makes, and every seat the account was asked to sign for. */
   ownSeat: '5a'.repeat(32), walletAsked: [] as string[], released: 0,
+  /* Whether the account is held by the committee that lists this person's key, as the wallet read it. */
+  accountHeld: true,
 }));
 vi.mock('./vault-builder.js', () => ({ theVaultBuilder: async () => ({ ownSeat: async () => kr.ownSeat }) }));
 vi.mock('vaults-web-shared/committee-change-on-device.js', async (real) => {
@@ -35,7 +37,7 @@ vi.mock('vaults-web-shared/keyring.js', async (real) => ({
   reopenSavedKeys: async () => {},
   keysFor: () => kr.keys,
   pendingSeatsFor: () => (kr.seat ? [{ accountId: 'c1' }] : []),
-  finishPendingSeat: async () => { if (!kr.seat) return false; kr.seat = false; kr.keys = { signerId: 's1', signingSecret: 'aa', wrappingSecret: 'bb', blinding: 'cc' }; return true; },
+  finishPendingSeat: async () => { if (!kr.seat) return false; kr.seat = false; kr.keys = { signerId: 's1', signingSecret: 'aa'.repeat(32), wrappingSecret: 'bb', blinding: 'cc' }; return true; },
   viewingKeyFor: () => 'vk',
   openAccount: () => kr.roster,
   companyKeysForVaults: async () => {
@@ -43,9 +45,11 @@ vi.mock('vaults-web-shared/keyring.js', async (real) => ({
     return { companyKey: '11'.repeat(32), committeeKey: kr.walletKey, company: 'co_' + 'a1'.repeat(32), account: 'a0'.repeat(32) };
   },
   /* The account signs this person's records key for the seat the page names; what it signs is the identity library's to test. */
-  recordsKeyFromTheWallet: async (_origin: string, ask: { seat: string }) => (kr.walletAsked.push(ask.seat), {
+  recordsKeyFromTheWallet: async (_origin: string, ask: { seat: string; signingKey?: string }) => (kr.walletAsked.push(ask.seat), {
     committeeKey: kr.walletKey, statement: { recordsKey: '33'.repeat(32), seat: ask.seat, signature: '44'.repeat(64) },
-    seats: { committee: [kr.walletKey], threshold: 1, seats: [ask.seat] },
+    seats: { committee: kr.accountHeld ? [kr.walletKey] : [{ tag: 'schnorr', value: '77'.repeat(32) }], threshold: 1, seats: [ask.seat] },
+    /* The directory entry the same press signs, when the page names its filing key. */
+    entry: ask.signingKey === undefined ? null : { signingKey: ask.signingKey, wrappingKey: '33'.repeat(32), seat: ask.seat, signature: '55'.repeat(64) },
   }),
   signCommitteeChangeFromTheWallet: async () => kr.signed,
   api: async (path: string, opts?: RequestInit) => {
@@ -59,6 +63,10 @@ vi.mock('vaults-web-shared/keyring.js', async (real) => ({
 }));
 vi.mock('vaults-web-shared/vault-page-doors.js', () => ({
   giveVaultKeys: async (_api: unknown, id: string, keys: unknown) => { kr.calls.push({ path: `give ${id}`, method: 'PUT', body: keys }); },
+  fileOwnDirectoryEntry: async (_api: unknown, id: string, person: string, _label: unknown, signed: unknown) => {
+    kr.calls.push({ path: `entry ${id} ${person}`, method: 'PUT', body: signed });
+    return 'filed';
+  },
 }));
 
 /** A roster naming signer `s1` with committee key `mine`, and the company's committee as the keys given. */
@@ -79,7 +87,7 @@ const AUTHORITY = (over: Record<string, unknown> = {}) => ({
   handover: { possible: true, why: null }, change: { possible: false, why: 'x' }, ...over,
 });
 
-beforeEach(() => { kr.ownSeat = '5a'.repeat(32); kr.walletAsked = []; kr.released = 0; kr.check = undefined; kr.seat = false; kr.user = 'u1'; kr.calls = []; kr.answers = {}; kr.keys = { signerId: 's1', signingSecret: 'aa', wrappingSecret: 'bb', blinding: 'cc' }; kr.opened = 0; kr.walletKey = K(1); kr.roster = null; kr.signed = null; });
+beforeEach(() => { kr.accountHeld = true; kr.ownSeat = '5a'.repeat(32); kr.walletAsked = []; kr.released = 0; kr.check = undefined; kr.seat = false; kr.user = 'u1'; kr.calls = []; kr.answers = {}; kr.keys = { signerId: 's1', signingSecret: 'aa'.repeat(32), wrappingSecret: 'bb', blinding: 'cc' }; kr.opened = 0; kr.walletKey = K(1); kr.roster = null; kr.signed = null; });
 afterEach(() => { vi.unstubAllEnvs(); });
 
 describe('where a company stands, from the shape of the service\'s answer', () => {
@@ -217,11 +225,31 @@ describe('handing it over', () => {
     kr.answers['/api/accounts/c1'] = {};
     kr.roster = rosterWith(K(1));
     expect(await acts.giveMyVaultKeys('u1', 'c1')).toEqual({ of: 'done' });
-    expect(kr.calls.at(-1)).toEqual({ path: 'give c1', method: 'PUT', body: {
-      committeeKey: K(1), companyKey: '11'.repeat(32), signingSecret: 'aa', signerId: 's1', viewingKey: 'vk',
+    expect(kr.calls.at(-2)).toEqual({ path: 'give c1', method: 'PUT', body: {
+      committeeKey: K(1), companyKey: '11'.repeat(32), signingSecret: 'aa'.repeat(32), signerId: 's1', viewingKey: 'vk',
       /* RED WHEN: the keys are given without the account's statement for the seat this person holds. */
       recordsKey: { recordsKey: '33'.repeat(32), seat: '5a'.repeat(32), signature: '44'.repeat(64) },
     } });
+    /* RED WHEN: this person's directory entry, signed by their account in the same press for their own filing key, is not filed after the keys are given. */
+    expect(kr.calls.at(-1)).toEqual({ path: 'entry c1 u1', method: 'PUT', body: {
+      committeeKey: K(1),
+      entry: { signingKey: signingPublicKeyOf('aa'.repeat(32)), wrappingKey: '33'.repeat(32), seat: '5a'.repeat(32), signature: '55'.repeat(64) },
+    } });
+  });
+
+  it('gives the keys before the account is its committee\'s, and files the directory entry only from the press after', async () => {
+    const { acts } = await load();
+    kr.answers['/api/accounts/c1'] = {};
+    kr.roster = rosterWith(K(1));
+    kr.accountHeld = false;
+    expect(await acts.giveMyVaultKeys('u1', 'c1')).toEqual({ of: 'done' });
+    expect(kr.calls.filter((c) => c.path.startsWith('give'))).toHaveLength(1);
+    /* RED WHEN: an entry the server must refuse - its committee key is not on the account yet - is filed and stops the press. */
+    expect(kr.calls.filter((c) => c.path.startsWith('entry'))).toEqual([]);
+    kr.accountHeld = true;
+    expect(await acts.giveMyVaultKeys('u1', 'c1')).toEqual({ of: 'done' });
+    /* RED WHEN: once the account is held, the entry is still not filed. */
+    expect(kr.calls.filter((c) => c.path.startsWith('entry'))).toHaveLength(1);
   });
 });
 

@@ -50,6 +50,8 @@ import { AccountService, sealAccount } from '../../src/core/account.js';
 import { MidnightCommitments } from '../../src/midnight/commitments.js';
 import { rosterVaultKeys, signVaultKeys, vaultKeyIndexOf } from '../../src/core/vault-keys.js';
 import { seatsInAccountState, vaultInState } from '../../apps/wallet/src/chain/company-label-on-chain.js';
+import { directoryChainOver, fileOwnEntry, judgeOver, mayFileUnderOver, walletReadsOver } from './the-chain-as-a-wallet-reads-it.js';
+import { seatDirectoryRoutes } from '../../src/server/seat-directory-route.js';
 import { ChainLedger } from '../../src/wiring/chain.js';
 import { companyVaultRoutes, type VaultChain } from '../../src/server/company-vaults.js';
 import { mountVaultRecords, vaultAccountFromTheIndexer } from '../../src/server/vault-records-authority.js';
@@ -311,7 +313,8 @@ describe.skipIf(!KEYS_ON_DISK)('A VAULT\'S COMMITTEE CHANGES WITH THE COMPANY\'S
     store.putAccount(sealAccount({
       id: ACCOUNT_ID, createdAt: new Date().toISOString(), name: 'Northwind', companyLabel: LABEL,
       signers: [{
-        id: 'ada', userId: 'ada', name: 'Ada', status: 'active', role: 'admin', leafCommitment: null,
+        /* The founding signer's own seat, as the chain seats it: a records key is believed only for the seat held. */
+        id: 'ada', userId: 'ada', name: 'Ada', status: 'active', role: 'admin', leafCommitment: hex(leafOfDevice(founder)),
         signingPublicKey: signing.publicKey, wrappingPublicKey: wrapping.publicKey,
       }],
       policy: { threshold: 1, limitsByRole: {} }, recovery: { signerIds: ['ada'], threshold: 1 }, wrappedKeys: [],
@@ -399,6 +402,7 @@ describe.skipIf(!KEYS_ON_DISK)('A VAULT\'S COMMITTEE CHANGES WITH THE COMPANY\'S
         return ledger.sendVault(...args);
       },
     };
+    app.use(seatDirectoryRoutes({ signedIn, member, store, chain: directoryChainOver(() => chain.contract(company)) }));
     app.use(companyVaultRoutes({
       signedIn, member, store,
       giveVaultKeys: (id, vk, person, given) => accounts.giveVaultKeys(id, vk as Hex, person, given),
@@ -424,7 +428,7 @@ describe.skipIf(!KEYS_ON_DISK)('A VAULT\'S COMMITTEE CHANGES WITH THE COMPANY\'S
         queryContractState: async (a) => { const c = chain.contract(a); return c === null ? null : { data: asRuntime(c).data }; },
       }),
       companies: () => store.listAccounts().map((a) => ({ id: a.id, contractAddress: company, memberUserIds: a.memberUserIds })),
-      filingKeyOf: (id, person) => store.getFilingKey(id, person)?.filingKey ?? null,
+      mayFileUnder: mayFileUnderOver(store),
     });
     await new Promise<void>((resolve) => { server = app.listen(0, '127.0.0.1', () => resolve()); });
     base = `http://127.0.0.1:${(server.address() as AddressInfo).port}`;
@@ -476,8 +480,16 @@ describe.skipIf(!KEYS_ON_DISK)('A VAULT\'S COMMITTEE CHANGES WITH THE COMPANY\'S
     });
     return { status: r.status, body: await r.json().catch(() => ({})) };
   };
-  const records = (record: WireRecord) =>
-    new HttpSealedPoolStore(record, wire, signing.secret, async () => new Set([signing.publicKey]));
+  /* The page's own requests, as `api` makes them. */
+  const api = async (path: string, init?: RequestInit) =>
+    http(path, { method: String(init?.method ?? 'GET'), ...(init?.body === undefined ? {} : { body: JSON.parse(String(init.body)) }) });
+  /* Who filed each version, judged afresh for every read: the directory read again and the account read off the chain. */
+  const records = (record: WireRecord) => new HttpSealedPoolStore(record, wire, signing.secret, judgeOver({
+    api, accountId: ACCOUNT_ID, label: LABEL, accountState: () => chain.contract(company),
+    roster: async () => openAccount(store.getAccount(ACCOUNT_ID)!, viewingKey),
+  }));
+  /* Who holds the company and which vaults it adopted, as the signer's own wallet reads them off the chain for each step. */
+  const walletReads = walletReadsOver(() => chain.contract(company));
   const signers = async () => [{ id: 'ada', wrappingPublicKey: wrapping.publicKey }];
   const wallet = async (ask: { company: Hex; vault: Hex; transaction: string }) => {
     const asProven = { Transaction: { deserialize: (_s: string, _p: string, b: 'pre-binding', raw: Uint8Array) => L.Transaction.deserialize('signature', 'pre-proof', b, raw) } };
@@ -499,7 +511,10 @@ describe.skipIf(!KEYS_ON_DISK)('A VAULT\'S COMMITTEE CHANGES WITH THE COMPANY\'S
         }, signing.secret),
       },
     });
-    const poolDoors = { ...pacing, service, me, myRecordsKey: recordsReaderOf(me.companyKey).publicKey, signers, records };
+    const poolDoors = {
+      ...pacing, service, account: readAccountAddress(company)!, onChain: walletReads,
+      me, myRecordsKey: recordsReaderOf(me.companyKey).publicKey, signers, records,
+    };
     /* The founding signer's press, with who holds the account as their wallet read it off the chain just then. */
     const press = (resume?: Hex) => createCompanyVault({
       ...poolDoors, account: readAccountAddress(company)!, builder: builder(), keys,
@@ -518,6 +533,11 @@ describe.skipIf(!KEYS_ON_DISK)('A VAULT\'S COMMITTEE CHANGES WITH THE COMPANY\'S
     if (!(first instanceof VaultStartOwed)) throw new Error(`the vault's first secret was not held back: ${String((first as Error)?.message ?? JSON.stringify(first))}`);
     const authority = await http(`${at}/authority`);
     await http(`${at}/authority/handover`, { method: 'POST', body: { committee: authority.committee } });
+    /* The founding signer's own directory entry, filed from their device once the account is the committee's. */
+    await fileOwnEntry({
+      api, accountId: ACCOUNT_ID, person: 'ada', identity: identityFromWords(words), label: LABEL,
+      companyKey: me.companyKey, signingKey: signing.publicKey, seat: hex(leafOfDevice(founder)),
+    });
     /* Then started by the same press: its secret set and every copy written. */
     const created = await press(first.vault);
     if (created.state !== 'started') throw new Error(`the vault was not started: ${JSON.stringify(created)}`);
@@ -652,7 +672,7 @@ describe.skipIf(!KEYS_ON_DISK)('A VAULT\'S COMMITTEE CHANGES WITH THE COMPANY\'S
   /* One browser's place for a payment on its way, kept across every payment the test makes from it. */
   const paying = keptOnThisDevice<PaymentInFlight>('payment');
   const payDoors = () => ({
-    ...pacing, service, me, myRecordsKey: recordsReaderOf(me.companyKey).publicKey, signers, records, builder: builder(),
+    ...pacing, service, me, myRecordsKey: recordsReaderOf(me.companyKey).publicKey, signers, records, account: readAccountAddress(company)!, onChain: walletReads, builder: builder(),
     inFlight: paying,
   });
   /** One person paid out of the vault, by the page's own payment path. */

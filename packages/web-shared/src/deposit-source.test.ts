@@ -82,6 +82,10 @@ const setUp = async () => {
     myRecordsKey: 'ff'.repeat(32) as Hex,
     signers: async () => [{ id: 'ada', wrappingPublicKey: wrapping.publicKey }],
     company: LABEL, account: ACCOUNT, builder,
+    /* The wallet's read: the account has adopted the vault. */
+    onChain: async (v: string) => ({
+      holders: { committee: [], threshold: 1, seats: [], approvals: 1, adoptedVaults: [v] },
+    }),
     inFlight: sealedOnThisDevice<DepositInFlight>(inFlightInMemory(inFlight), { signerId: 'ada', wrappingSecret: wrapping.secret }, 'deposit') as DepositsInFlight,
   };
   await openCompanyVaultPool(doors, VAULT, async () => {});

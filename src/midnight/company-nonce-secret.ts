@@ -264,6 +264,26 @@ export const openNonceSecrets = (rec: SealedPool, vault: string, me: NonceSecret
 };
 
 /**
+ * **THE SAME SECRETS, FILED AGAIN AS A LATER VERSION**: what `rec` holds - its
+ * epoch, every secret and every signer it is wrapped to - sealed again under
+ * the version it will be filed as. For a version whose secret the vault's own
+ * commitment names, filed again by a signer who opened it so that the
+ * records' newest version is the chain's. Nothing in it changes but the
+ * version.
+ */
+export const refileNonceSecret = (
+  rec: SealedPool, vault: string, by: NonceSecretOpener, version: number,
+): SealedPool => {
+  const opened = openNonceSecrets(rec, vault, by);
+  if (!Number.isSafeInteger(version) || version <= opened.version) {
+    throw new Error('a version is filed again only as a later one. Nothing is written.');
+  }
+  return build(
+    { record: NONCE_SECRET_RECORD, vault: opened.vault, version, epoch: opened.epoch, secrets: opened.secrets },
+    opened.readers);
+};
+
+/**
  * **GIVES SIGNERS A COPY OF THE CURRENT EPOCH**, as the next version. Nothing
  * about the secret changes, and nobody who could open it loses their copy.
  */

@@ -40,9 +40,10 @@ import {
   claimNewDepositCoin, type DepositCoin, type DepositMoney,
 } from '../../../src/midnight/deposit-nonce.js';
 import {
-  currentDepositNonceKey, openNonceSecrets, recordsKeypairFrom, startNonceSecret, startNonceSecretAgain,
+  currentDepositNonceKey, openNonceSecrets, recordsKeypairFrom, refileNonceSecret, startNonceSecret, startNonceSecretAgain,
   type NonceSecretReader,
 } from '../../../src/midnight/company-nonce-secret.js';
+import type { FiledPoolVersion } from '../../../src/midnight/vault-pool.js';
 import type { WireRecord } from '../../../src/midnight/sealed-record-wire.js';
 
 /** The signer this device acts for, with what their device holds. */
@@ -108,6 +109,71 @@ export async function startVaultNonceSecretOnThisDevice(
   const made = startNonceSecret(vault, [recordsReaderOf(me.companyKey), ...others]);
   await store.put(vault, made);
   return made;
+}
+
+/** A store that can also list every version as filed, without the check of who filed it. */
+interface ListsAsFiled { versionsAsFiled(vault: string): Promise<readonly FiledPoolVersion[]> }
+
+/** What became of the records' newest nonce secret against the vault's own commitment. */
+type ChainsSecret =
+  /** The newest version this device believes holds the secret the vault's commitment names. */
+  | 'the-newest'
+  /** A filed version holding the vault's secret was filed again, as the newest, under this device's own seat. */
+  | 'filed-again'
+  /** No filed version this device can open holds the secret the vault's commitment names. */
+  | 'none-names-it';
+
+/**
+ * **THE CHAIN WINS: THE RECORDS' NEWEST NONCE SECRET IS MADE THE ONE THE
+ * VAULT'S OWN COMMITMENT NAMES.** When the newest version this device
+ * believes holds that secret, nothing is done. Otherwise every version is read
+ * as filed, newest first, opened with this signer's own records key, and the
+ * first whose secret the vault's commitment names is filed again as the newest
+ * version, unchanged but for its version, signed by this device's own seat. A
+ * version the chain does not vouch for is never filed again and nothing is
+ * built from it.
+ *
+ * This is also how a version filed by a signer who has since left is read
+ * again: its content is filed again only because the chain vouches for it.
+ */
+export async function fileTheChainsSecretAsTheNewest(input: {
+  readonly vault: Hex;
+  readonly me: DeviceSigner;
+  readonly records: DeviceRecords;
+  /** Whether `secret` is the one the vault's commitment names; never for a vault whose commitment is unset. */
+  readonly secretIsTheVaults: (secret: Hex) => Promise<boolean> | boolean;
+}): Promise<ChainsSecret> {
+  const store = input.records('nonce-secret');
+  const opener = recordsKeypairFrom(input.me.companyKey);
+  const newestSecretOf = (rec: SealedPool): Hex | null => {
+    try {
+      const opened = openNonceSecrets(rec, input.vault, opener);
+      return opened.secrets[opened.secrets.length - 1]! as Hex;
+    } catch {
+      return null;
+    }
+  };
+  let believed: SealedPool | null = null;
+  try {
+    believed = await store.get(input.vault);
+  } catch {
+    believed = null;
+  }
+  if (believed !== null) {
+    const s = newestSecretOf(believed);
+    if (s !== null && await input.secretIsTheVaults(s)) return 'the-newest';
+  }
+  const lister = store as SealedPoolStore & Partial<ListsAsFiled>;
+  const all = typeof lister.versionsAsFiled === 'function' ? await lister.versionsAsFiled(input.vault) : await store.versions(input.vault);
+  if (all.length === 0) return 'none-names-it';
+  const newestVersion = all[all.length - 1]!.version;
+  for (let i = all.length - 1; i >= 0; i -= 1) {
+    const s = newestSecretOf(all[i]!.sealed);
+    if (s === null || !(await input.secretIsTheVaults(s))) continue;
+    await store.put(input.vault, refileNonceSecret(all[i]!.sealed, input.vault, opener, newestVersion + 1));
+    return 'filed-again';
+  }
+  return 'none-names-it';
 }
 
 /**

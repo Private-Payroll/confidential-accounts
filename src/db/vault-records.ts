@@ -48,6 +48,9 @@ import {
   type FiledPoolVersion, type SealedPool, type SealedPoolStore,
 } from '../midnight/vault-pool.js';
 import { parseVaultRegistry, namesRecordedFor } from '../midnight/vault-record.js';
+import {
+  whyThisIsNotACompanyRecord, type CompanyRecordKind, type CompanyRecordStore, type SealedCompanyRecord,
+} from '../midnight/sealed-record-wire.js';
 
 /** The sealed records a vault has. */
 export type VaultRecord = 'pool' | 'deposit-journal' | 'payment-journal' | 'nonce-secret';
@@ -372,3 +375,103 @@ export class PostgresVaultRecords {
 export const openVaultRecords = (
   sql: RecordsSql, opts: { readonly refuseToCreate: RefuseToCreate },
 ): Promise<PostgresVaultRecords> => PostgresVaultRecords.open(sql, opts);
+
+/* ------------------------------------------------------------------ a company's own records */
+
+/**
+ * **THE PRODUCT'S STORE FOR A COMPANY'S OWN SEALED RECORDS**, kept as a vault's
+ * are: one row per version, the next version claimed in the statement that
+ * inserts it, committed durably, every row's digest checked on every read.
+ * Opened only by `openCompanyRecords`, which asks whether commits are durable
+ * first.
+ */
+export class PostgresCompanyRecords implements CompanyRecordStore {
+  private constructor(opened: symbol, private readonly sql: RecordsSql) {
+    if (opened !== OPENED_AFTER_THE_CHECK) {
+      throw new Error('the store of company records is opened with openCompanyRecords, which first asks the database whether its commits are durable.');
+    }
+  }
+
+  static async open(sql: RecordsSql): Promise<PostgresCompanyRecords> {
+    await assertCommitsAreDurable(sql);
+    return new PostgresCompanyRecords(OPENED_AFTER_THE_CHECK, sql);
+  }
+
+  private validated(expect: { company: string; kind: CompanyRecordKind; id: string }, row: { version: number; body: string; digest: Uint8Array }): SealedCompanyRecord {
+    const version = Number(row.version);
+    const refuse = (why: string) => new Error(
+      `version ${version} of this company's ${expect.kind} record is filed and could not be read: ${why}. This is not an empty record, and nothing is changed.`);
+    if (!Buffer.from(row.digest).equals(digestOf(row.body))) throw refuse('its body does not match the digest filed with it');
+    let parsed: unknown;
+    try { parsed = JSON.parse(row.body); } catch { throw refuse('its body is not JSON'); }
+    const why = whyThisIsNotACompanyRecord(parsed, expect);
+    if (why !== null) throw refuse(why);
+    if ((parsed as SealedCompanyRecord).version !== version) throw refuse('the version it is filed as is not the one inside it');
+    return parsed as SealedCompanyRecord;
+  }
+
+  async get(company: string, kind: CompanyRecordKind, id: string): Promise<SealedCompanyRecord | null> {
+    const rows = await this.sql<{ version: number; body: string; digest: Uint8Array }>`
+      SELECT version, body, digest FROM company_sealed_records
+      WHERE company = ${company} AND kind = ${kind} AND record_id = ${id}
+      ORDER BY version DESC LIMIT 1`;
+    return rows.length === 0 ? null : this.validated({ company, kind, id }, rows[0]!);
+  }
+
+  async at(company: string, kind: CompanyRecordKind, id: string, version: number): Promise<SealedCompanyRecord | null> {
+    const rows = await this.sql<{ version: number; body: string; digest: Uint8Array }>`
+      SELECT version, body, digest FROM company_sealed_records
+      WHERE company = ${company} AND kind = ${kind} AND record_id = ${id} AND version = ${version}`;
+    return rows.length === 0 ? null : this.validated({ company, kind, id }, rows[0]!);
+  }
+
+  async versions(company: string, kind: CompanyRecordKind, id: string): Promise<readonly SealedCompanyRecord[]> {
+    const rows = await this.sql<{ version: number; body: string; digest: Uint8Array }>`
+      SELECT version, body, digest FROM company_sealed_records
+      WHERE company = ${company} AND kind = ${kind} AND record_id = ${id}
+      ORDER BY version ASC`;
+    return rows.map((row) => this.validated({ company, kind, id }, row));
+  }
+
+  async put(rec: SealedCompanyRecord): Promise<void> {
+    const unusable = whyThisIsNotACompanyRecord(rec, rec);
+    if (unusable !== null) throw new VaultRecordRefused(`this is not a company's sealed record (${unusable}), so nothing is filed.`);
+    const body = JSON.stringify(rec);
+    try {
+      await this.sql.begin(async (tx: RecordsQuery) => {
+        await tx`SET LOCAL synchronous_commit TO on`;
+        const filed = await tx<{ version: number; commit_mode: string }>`
+          INSERT INTO company_sealed_records (company, kind, record_id, version, key_epoch, body, digest)
+          SELECT ${rec.company}, ${rec.kind}, ${rec.id}, ${rec.version}, ${rec.keyEpoch}, ${body}, ${digestOf(body)}
+          WHERE COALESCE((SELECT max(version) FROM company_sealed_records
+                          WHERE company = ${rec.company} AND kind = ${rec.kind} AND record_id = ${rec.id}), 0) = ${rec.version - 1}
+          RETURNING version, current_setting('synchronous_commit') AS commit_mode`;
+        if (filed.length === 1) {
+          if (filed[0]!.commit_mode !== 'on') {
+            throw new OwnRefusal(new Error(
+              `this write would have committed with synchronous_commit ${filed[0]!.commit_mode}, so its acknowledgement would not mean it is durable. It is rolled back and nothing is filed.`));
+          }
+          return;
+        }
+        const [newest] = await tx<{ v: number | null }>`
+          SELECT max(version) AS v FROM company_sealed_records
+          WHERE company = ${rec.company} AND kind = ${rec.kind} AND record_id = ${rec.id}`;
+        try {
+          assertTheNextVersion(rec.id, newest?.v === null || newest?.v === undefined ? null : Number(newest.v), rec.version);
+        } catch (refusal) {
+          throw new OwnRefusal(refusal as Error);
+        }
+        throw new OwnRefusal(new VaultPoolVersionAlreadyFiled(rec.id, rec.version));
+      });
+    } catch (cause) {
+      if (cause instanceof OwnRefusal) throw cause.error;
+      if ((cause as { code?: string })?.code === '23505') throw new VaultPoolVersionAlreadyFiled(rec.id, rec.version);
+      throw new Error(
+        `version ${rec.version} of this company's ${rec.kind} record was not confirmed filed (${(cause as Error)?.message ?? String(cause)}). `
+        + 'It may have been filed: read the record again before deciding anything.', { cause });
+    }
+  }
+}
+
+/** `PostgresCompanyRecords.open`, as a function. */
+export const openCompanyRecords = (sql: RecordsSql): Promise<PostgresCompanyRecords> => PostgresCompanyRecords.open(sql);

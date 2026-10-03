@@ -175,7 +175,7 @@ export const PROGRESS_SCHEMA = 'midnight-identity/wallet-progress/v1';
  * than inserted, so the sentence a refusal already produced does not change
  * shape for the three kinds that were there before it.
  */
-export const ASK_KINDS = ['disclosure', 'sign-in', 'unlock', 'join', 'keyring', 'balance', 'committee', 'records-key'] as const;
+export const ASK_KINDS = ['disclosure', 'sign-in', 'unlock', 'join', 'keyring', 'balance', 'committee', 'records-key', 'holders'] as const;
 export type AskKind = (typeof ASK_KINDS)[number];
 
 /** One thing an application is asking for. */
@@ -474,12 +474,38 @@ export interface RecordsKeyRequest extends Asking {
    * seats. Absent when no vault is being approved.
    */
   readonly vault?: VaultAddress;
+  /**
+   * The filing key this person's filings for the company are signed with, when
+   * the page also asks for their directory entry: the wallet signs the entry
+   * (this key, the records key it works out, and the seat) in the same press.
+   * Claimed: the wallet shows it and signs it, and cannot tell whose it is.
+   */
+  readonly signingKey?: string;
+}
+
+/**
+ * ASKING THIS WALLET WHO HOLDS A COMPANY'S ACCOUNT NOW, AS IT READS THE CHAIN
+ * ITSELF, AND NOTHING ELSE.
+ *
+ * The answer is public chain facts only - the account's committee and its
+ * threshold, the account's own approval threshold, every seat it holds and
+ * every vault it has adopted; and, when the ask names one vault, that vault's
+ * state at its deploy and at each update since. **Nothing private is handed
+ * over and nothing is signed, so it is answered without a press.** Every
+ * field but the label, the account and one vault is refused.
+ */
+export interface HoldersRequest extends Asking {
+  readonly kind: 'holders';
+  /** The company's label. Claimed; the account read must carry it. */
+  readonly company: CompanyLabel;
+  /** The account that carries the label. Claimed; read off the chain. */
+  readonly account: AccountAddress;
 }
 
 /** What an application may open this wallet with. */
 export type Ask =
   | DisclosureRequest | SignInRequest | UnlockRequest | JoinRequest | KeyringRequest | BalanceRequest | CommitteeRequest
-  | RecordsKeyRequest;
+  | RecordsKeyRequest | HoldersRequest;
 
 /**
  * THE KINDS THAT CARRY A LIST OF THINGS ASKED FOR.
@@ -557,7 +583,9 @@ export type RequestFailure =
   | 'not-a-seat'
   | 'attributes-on-a-records-key'
   | 'inbox-key-on-a-records-key'
-  | 'records-key-fields-on-another-kind';
+  | 'records-key-fields-on-another-kind'
+  /* A holders ask carries a label and an account, and nothing else. */
+  | 'more-than-holders';
 
 export class RequestError extends Error {
   readonly code: RequestFailure;
@@ -1010,14 +1038,46 @@ function recordsKeyAskOf(body: Record<string, unknown>, asking: Asking): Records
       'not-a-seat',
       `${asks} and names your seat on its account by something that is not one (64 lower-case hex characters). ${nothing}`);
   }
-  if (!('vault' in body)) return Object.freeze({ ...asking, kind: 'records-key' as const, company, account, seat });
+  let signingKey: string | undefined;
+  if ('signingKey' in body) {
+    const k = body['signingKey'];
+    if (typeof k !== 'string' || !SEAT.test(k)) {
+      throw new RequestError(
+        'malformed-field',
+        `${asks} and names the key your filings are signed with by something that is not one (64 lower-case hex characters). ${nothing}`);
+    }
+    signingKey = k;
+  }
+  const withKey = signingKey === undefined ? {} : { signingKey };
+  if (!('vault' in body)) return Object.freeze({ ...asking, kind: 'records-key' as const, company, account, seat, ...withKey });
   const vault = readVaultAddress(body['vault']);
   if (vault === null || String(vault) === String(account)) {
     throw new RequestError(
       'not-a-vault-address',
       `${asks} and names one of its vaults by something that is not a vault's address on the chain. ${nothing}`);
   }
-  return Object.freeze({ ...asking, kind: 'records-key' as const, company, account, seat, vault });
+  return Object.freeze({ ...asking, kind: 'records-key' as const, company, account, seat, vault, ...withKey });
+}
+
+/** Every field a holders ask may carry: the ones every ask carries, then its own three. */
+const HOLDERS_FIELDS: ReadonlySet<string> = new Set([
+  'schema', 'kind', 'requester', 'purpose', 'nonce', 'expiresAt', 'company', 'account',
+]);
+
+/** A holders ask, read whole: a label and the account that carries it. */
+function holdersAskOf(body: Record<string, unknown>, asking: Asking): HoldersRequest {
+  const asks = 'this asks your wallet who holds a company\'s account';
+  const nothing = 'Nothing has been shown to them.';
+  const extra = Object.keys(body).filter((k) => !HOLDERS_FIELDS.has(k));
+  if (extra.length > 0) {
+    throw new RequestError(
+      'more-than-holders',
+      `${asks}, which is answered without a press because it hands over only what the chain shows, and it also `
+      + `carries ${extra.map((k) => `'${k}'`).join(', ')}. Anything more than that is refused rather than ignored. ${nothing}`);
+  }
+  const company = labelIn(body['company'], asks, nothing);
+  const account = accountIn(body['account'], asks, nothing);
+  return Object.freeze({ ...asking, kind: 'holders' as const, company, account });
 }
 
 /**
@@ -1073,7 +1133,8 @@ export function parseAsk(raw: unknown, observedOrigin: string, now: number): Ask
    * requester that sent one and was answered with something else would be
    * entitled to believe the wallet had read it.
    */
-  if ((kind !== 'balance' && 'transaction' in body) || (kind !== 'balance' && kind !== 'records-key' && 'vault' in body)) {
+  if ((kind !== 'balance' && 'transaction' in body)
+    || (kind !== 'balance' && kind !== 'records-key' && 'vault' in body)) {
     throw new RequestError(
       'balance-fields-on-another-kind',
       `this is a '${kind}' and it carries a transaction or names a vault. A transaction belongs only to `
@@ -1098,15 +1159,16 @@ export function parseAsk(raw: unknown, observedOrigin: string, now: number): Ask
    * **A SEAT BELONGS TO A RECORDS-KEY ASK AND TO NOTHING ELSE**, refused by
    * presence on every other kind for the keyring fields' reason.
    */
-  if (kind !== 'records-key' && 'seat' in body) {
+  if (kind !== 'records-key' && ('seat' in body || 'signingKey' in body)) {
     throw new RequestError(
       'records-key-fields-on-another-kind',
-      `this is a '${kind}' and it names a seat on a company's account. That belongs only to a request to sign your `
-      + 'records key for your seat, so it is refused rather than ignored. Nothing has been shown to them.');
+      `this is a '${kind}' and it names a seat on a company's account or a filing key. Those belong only to a request `
+      + 'to sign your records key for your seat, so they are refused rather than ignored. Nothing has been shown to them.');
   }
 
   if (kind === 'committee') return committeeChangeOf(body, asking);
   if (kind === 'records-key') return recordsKeyAskOf(body, asking);
+  if (kind === 'holders') return holdersAskOf(body, asking);
 
   if (kind === 'balance') {
     if ('wants' in body) {

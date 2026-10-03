@@ -2,8 +2,11 @@ import { describe, expect, it } from 'vitest';
 import { NotAVaultsState, signersOfTheVaultsCompany, vaultAccountFromTheIndexer } from './vault-records-authority.js';
 
 /*
- * A filing is bound to the key its filer gave. Only that one question is asked
- * here; the rest of who may file is `vault-records-authority.test.ts`'s.
+ * A filing is bound to the key the filer's own seat entry names. Only that one
+ * question is asked here, with the directory's answer stood in by a table; the
+ * directory's own check is `seat-directory.test.ts`'s and the route's is
+ * `vault-records-route.test.ts`'s. The rest of who may file is
+ * `vault-records-authority.test.ts`'s.
  */
 const VAULT = 'ab'.repeat(32);
 const ACCOUNT = 'cd'.repeat(32);
@@ -12,15 +15,22 @@ const THEIRS = '22'.repeat(32);
 const companies = () => [{ id: 'acc_1', contractAddress: ACCOUNT, memberUserIds: ['ada', 'bo'] }];
 const accountOf = async () => ACCOUNT;
 
-describe('A FILING IS FROM THE KEY ITS FILER GAVE', () => {
+describe('A FILING IS FROM THE KEY ITS FILER\'S OWN SEAT ENTRY NAMES', () => {
   const given: Record<string, string> = { ada: MINE, bo: THEIRS };
+  const asked: unknown[] = [];
   const may = signersOfTheVaultsCompany({
-    accountOf, companies, filingKeyOf: (company, person) => (company === 'acc_1' ? given[person] ?? null : null),
+    accountOf, companies, mayFileUnder: (company, person, filer, record) => {
+      asked.push([company, person, filer, record]);
+      return company === 'acc_1' && given[person] === filer;
+    },
   });
 
-  it('files under the key the person gave, in any spelling', async () => {
+  it('files under the key the person\'s entry names, in any spelling, and asks about the company, the person, the key and the record', async () => {
+    asked.length = 0;
     expect(await may('ada', VAULT, 'pool', 'file', MINE)).toBe(true);
     expect(await may('ada', VAULT, 'pool', 'file', MINE.toUpperCase() as never)).toBe(true);
+    /* RED WHEN: the record kind is not handed on, so a role that may not file it is never asked about. */
+    expect(asked).toEqual([['acc_1', 'ada', MINE, 'pool'], ['acc_1', 'ada', MINE, 'pool']]);
   });
 
   it('REFUSES a filing signed with another member\'s key, or with a key nobody gave', async () => {
@@ -28,8 +38,8 @@ describe('A FILING IS FROM THE KEY ITS FILER GAVE', () => {
     expect(await may('ada', VAULT, 'nonce-secret', 'file', '33'.repeat(32))).toBe(false);
   });
 
-  it('REFUSES a member who has given no filing key at all, and still lets them read', async () => {
-    const none = signersOfTheVaultsCompany({ accountOf, companies, filingKeyOf: () => null });
+  it('REFUSES a member with no entry at all, and still lets them read', async () => {
+    const none = signersOfTheVaultsCompany({ accountOf, companies, mayFileUnder: () => false });
     expect(await none('ada', VAULT, 'pool', 'file', MINE)).toBe(false);
     expect(await none('ada', VAULT, 'pool', 'read')).toBe(true);
   });
@@ -73,12 +83,12 @@ describe('A CONTRACT THAT IS NOT A VAULT IS REFUSED, NOT LEFT UNDECIDED', () => 
     const notAVault = vaultAccountFromTheIndexer({ queryContractState: async () => ({ data: {} }) },
       () => { throw new Error('not this layout'); });
     await expect(notAVault(VAULT)).rejects.toBeInstanceOf(NotAVaultsState);
-    const may = signersOfTheVaultsCompany({ accountOf: notAVault, companies });
+    const may = signersOfTheVaultsCompany({ accountOf: notAVault, companies, mayFileUnder: () => true });
     expect(await may('ada', VAULT, 'pool', 'read')).toBe(false);
   });
 
   it('and a chain that fails for any other reason is still undecided', async () => {
-    const down = signersOfTheVaultsCompany({ accountOf: async () => { throw new Error('indexer down'); }, companies });
+    const down = signersOfTheVaultsCompany({ accountOf: async () => { throw new Error('indexer down'); }, companies, mayFileUnder: () => true });
     await expect(down('ada', VAULT, 'pool', 'read')).rejects.toThrow(/indexer down/);
   });
 });

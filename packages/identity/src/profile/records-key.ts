@@ -8,7 +8,7 @@ import { readAccountAddress, readCompanyLabel } from './company-label.js';
 import type { AccountAddress, CompanyLabel } from './company-label.js';
 import { unlockKeyFor } from './unlock.js';
 import { usableOrigin } from './origin.js';
-import type { RecordsKeyRequest, UnlockRequest } from './request.js';
+import type { HoldersRequest, RecordsKeyRequest, UnlockRequest } from './request.js';
 
 /**
  * **A SIGNER'S RECORDS KEY FOR ONE COMPANY AND THE SEAT THEY HOLD ON ITS
@@ -184,6 +184,95 @@ export function recordsKeySignedBy(
   }
 }
 
+/* ------------------------------------------------------------ the directory entry */
+
+/**
+ * **THE ENTRY A SIGNER HOLDS IN THEIR COMPANY'S SEAT DIRECTORY, SIGNED BY THIS
+ * WALLET WITH THE SAME COMMITTEE KEY, FOR THE SAME SEAT.**
+ *
+ * The company's server keeps a plain table of who files its records under
+ * which key. It is assumed to lie, so an entry in it is believed by a device
+ * only when the signer's own wallet signed it: the signing key the signer's
+ * filings are signed with, the wrapping key copies are sealed to (the records
+ * key above, worked out here from the same company key), and the seat the
+ * account holds for them now. A device checks the signature against the
+ * committee the account lists on the chain and the seat against the seats the
+ * account holds now, as it checks the records-key statement.
+ *
+ * **ITS OWN TAG**, so this statement is never the records-key statement and
+ * never a change to a contract's rules, and the reverse.
+ */
+export const DIRECTORY_ENTRY_STATEMENT_TAG = 'midnight-identity:directory-entry-statement:v1';
+
+/** What a signer's wallet signs for their directory entry, and the signature. */
+export interface DirectoryEntryStatement {
+  /** The signer's filing key: the ed25519 public key their filings are signed with, 64 lower-case hex characters. */
+  readonly signingKey: string;
+  /** The key copies are sealed to: their records key, 64 lower-case hex characters. */
+  readonly wrappingKey: string;
+  /** The seat the signer holds on the company's account, 64 lower-case hex characters. */
+  readonly seat: string;
+  /** The BIP-340 signature by the signer's committee key over the entry, 128 lower-case hex characters. */
+  readonly signature: string;
+}
+
+/**
+ * **THE BYTES SIGNED FOR AN ENTRY**, or `null` when any part is not one. The
+ * tag, a zero byte, the label as written, a zero byte, then the signing key's,
+ * the wrapping key's and the seat's thirty-two bytes each.
+ */
+export function directoryEntryStatementBytes(
+  company: CompanyLabel, signingKey: string, wrappingKey: string, seat: string,
+): Uint8Array | null {
+  const label = readCompanyLabel(company);
+  if (label === null || [signingKey, wrappingKey, seat].some((k) => typeof k !== 'string' || !HEX64.test(k))) return null;
+  const enc = new TextEncoder();
+  const tag = enc.encode(DIRECTORY_ENTRY_STATEMENT_TAG);
+  const name = enc.encode(label);
+  const parts = [fromHex(signingKey), fromHex(wrappingKey), fromHex(seat)];
+  const out = new Uint8Array(tag.length + 1 + name.length + 1 + KEY_BYTES * 3);
+  out.set(tag, 0);
+  out.set(name, tag.length + 1);
+  parts.forEach((part, i) => out.set(part, tag.length + 1 + name.length + 1 + KEY_BYTES * i));
+  return out;
+}
+
+/** **THE ENTRY, SIGNED. Used inside the wallet only**, at the press that signs the records key. */
+export function signDirectoryEntry(
+  identity: Identity, company: CompanyLabel, companyKey: Uint8Array, signingKey: string, seat: string,
+): DirectoryEntryStatement {
+  const wrappingKey = recordsPublicKeyOf(companyKey);
+  const message = directoryEntryStatementBytes(company, signingKey, wrappingKey, seat);
+  if (message === null) throw new Error('that is not a company\'s label, a filing key and a seat on its account, so no entry was signed.');
+  const secret = fromHex(committeeSigningKeyFor(identity, company).value);
+  try {
+    return Object.freeze({ signingKey, wrappingKey, seat, signature: toHex(schnorr.sign(message, secret)) });
+  } finally {
+    secret.fill(0);
+  }
+}
+
+/**
+ * **WHETHER A DIRECTORY ENTRY WAS SIGNED FOR THIS COMPANY BY THIS COMMITTEE
+ * KEY.** Never throws: anything that is not an entry, a schnorr committee key
+ * or a label is `false`.
+ */
+export function directoryEntrySignedBy(
+  company: CompanyLabel, committeeKey: { readonly tag: string; readonly value: string }, entry: DirectoryEntryStatement,
+): boolean {
+  if (typeof committeeKey !== 'object' || committeeKey === null || committeeKey.tag !== 'schnorr'
+    || typeof committeeKey.value !== 'string' || !HEX64.test(committeeKey.value)) return false;
+  if (typeof entry !== 'object' || entry === null || typeof entry.signature !== 'string'
+    || !HEX128.test(entry.signature)) return false;
+  const message = directoryEntryStatementBytes(company, entry.signingKey, entry.wrappingKey, entry.seat);
+  if (message === null) return false;
+  try {
+    return schnorr.verify(fromHex(entry.signature), message, fromHex(committeeKey.value));
+  } catch {
+    return false;
+  }
+}
+
 /* ------------------------------------------------------------------ the ask */
 
 /** What this wallet hands back for a records-key ask. Everything in it is public. */
@@ -203,6 +292,8 @@ export interface RecordsKeyAnswer {
   readonly seats: AccountSeats;
   /** Who holds the vault the ask named, as this wallet read it off the chain. Present exactly when the ask named one. */
   readonly vault?: VaultHolders;
+  /** This signer's directory entry, signed in the same press. Present exactly when the ask named a filing key. */
+  readonly entry?: DirectoryEntryStatement;
 }
 
 /** Thrown before anything is signed. Nothing has been given. */
@@ -260,8 +351,10 @@ export function recordsKeyAnswerFor(
   }
   const companyKey = unlockKeyFor(identity, { ...request, kind: 'unlock' } as unknown as UnlockRequest);
   let statement: RecordsKeyStatement;
+  let entry: DirectoryEntryStatement | undefined;
   try {
     statement = signRecordsKey(identity, request.company, companyKey, request.seat);
+    if (request.signingKey !== undefined) entry = signDirectoryEntry(identity, request.company, companyKey, request.signingKey, request.seat);
   } finally {
     companyKey.fill(0);
   }
@@ -282,6 +375,7 @@ export function recordsKeyAnswerFor(
     ...(request.vault === undefined || vault === undefined ? {} : {
       vault: Object.freeze({ vault: vault.vault, account: vault.account, committee: frozenKeys(vault.committee), threshold: vault.threshold }),
     }),
+    ...(entry === undefined ? {} : { entry }),
   });
 }
 
@@ -293,6 +387,8 @@ export type RecordsKeyRead =
     readonly seats: AccountSeats;
     /** Who holds the vault the ask named, as the wallet read it; null when the ask named none. */
     readonly vault: VaultHolders | null;
+    /** This signer's directory entry, signed in the same press; null when the ask named no filing key. */
+    readonly entry: DirectoryEntryStatement | null;
     readonly at: number;
   }
   | { readonly ok: false; readonly code: 'not-an-answer' | 'origin-mismatch' | 'nonce-mismatch' | 'other-company' | 'not-signed'; readonly says: string };
@@ -341,6 +437,8 @@ export function readRecordsKeyAnswer(
     readonly company: CompanyLabel; readonly account: AccountAddress; readonly seat: string;
     /** The vault the ask named, when it named one: the answer must carry who holds exactly that vault. */
     readonly vault?: string;
+    /** The filing key the ask named, when it named one: the answer must carry the entry signed for exactly it. */
+    readonly signingKey?: string;
   },
 ): RecordsKeyRead {
   const body = message as Partial<RecordsKeyAnswer> | null;
@@ -373,12 +471,123 @@ export function readRecordsKeyAnswer(
       says: 'this answer does not carry your records key signed by your wallet for this company and your seat. It is refused.',
     };
   }
+  let entry: DirectoryEntryStatement | null = null;
+  if (expecting.signingKey !== undefined) {
+    const e = body.entry;
+    if (typeof e !== 'object' || e === null || e.signingKey !== expecting.signingKey || e.seat !== expecting.seat
+      || e.wrappingKey !== statement.recordsKey || !directoryEntrySignedBy(expecting.company, committeeKey, e)) {
+      return {
+        ok: false, code: 'not-signed',
+        says: 'this answer does not carry your directory entry signed by your wallet for this company, your filing key and your seat. It is refused.',
+      };
+    }
+    entry = Object.freeze({ signingKey: e.signingKey, wrappingKey: e.wrappingKey, seat: e.seat, signature: e.signature });
+  }
   return {
     ok: true,
     committeeKey: { tag: committeeKey.tag, value: committeeKey.value },
     statement: Object.freeze({ recordsKey: statement.recordsKey, seat: statement.seat, signature: statement.signature }),
     seats,
     vault,
+    entry,
     at: body.at,
   };
+}
+
+/* ------------------------------------------------------------------ who holds it, with no press */
+
+/** The answer this wallet gives a holders ask. */
+export const HOLDERS_ANSWER_SCHEMA = 'midnight-identity/holders-answer/v1';
+
+/**
+ * **WHO HOLDS A COMPANY'S ACCOUNT, AS A WALLET READ IT OFF THE CHAIN ITSELF,
+ * WITH THE ACCOUNT'S OWN RULES BESIDE IT**: everything in `AccountSeats`, the
+ * number of approvals the account itself requires, and every vault it has
+ * adopted. Public chain facts only.
+ */
+export interface AccountHolders extends AccountSeats {
+  /** The approvals the account requires, as its own state holds it. */
+  readonly approvals: number;
+  /** Every vault the account has adopted and not retired, each 64 lower-case hex characters. */
+  readonly adoptedVaults: readonly string[];
+}
+
+/** What this wallet hands back for a holders ask. Everything in it is public, and nothing in it is signed. */
+export interface HoldersAnswer {
+  readonly schema: typeof HOLDERS_ANSWER_SCHEMA;
+  /** OBSERVED. A convenience for the requester, never an authority. */
+  readonly origin: string;
+  readonly company: CompanyLabel;
+  readonly account: AccountAddress;
+  readonly nonce: string;
+  readonly at: number;
+  readonly holders: AccountHolders;
+}
+
+/** Who holds an account, with its rules, as an answer carries it, or null for a shape no wallet writes. */
+const readHolders = (value: unknown): AccountHolders | null => {
+  const seats = readSeats(value);
+  const v = value as Partial<AccountHolders> | null;
+  if (seats === null || v === null || typeof v !== 'object' || !Number.isSafeInteger(v.approvals)
+    || (v.approvals as number) < 1 || !Array.isArray(v.adoptedVaults)) return null;
+  if (!v.adoptedVaults.every((x) => typeof x === 'string' && HEX64.test(x)) || new Set(v.adoptedVaults).size !== v.adoptedVaults.length) return null;
+  return Object.freeze({ ...seats, approvals: v.approvals as number, adoptedVaults: Object.freeze([...v.adoptedVaults as string[]]) });
+};
+
+/**
+ * **THE ANSWER TO A HOLDERS ASK.** Refused when this wallet could not tell who
+ * asked.
+ */
+export function holdersAnswerFor(request: HoldersRequest, holders: AccountHolders, at: number): HoldersAnswer {
+  if (!usableOrigin(request.requester.origin)) {
+    throw new RecordsKeyRefused('This wallet could not tell who asked, so nothing has been handed back.');
+  }
+  return Object.freeze({
+    schema: HOLDERS_ANSWER_SCHEMA,
+    origin: request.requester.origin,
+    company: request.company,
+    account: request.account,
+    nonce: request.nonce,
+    at,
+    holders: Object.freeze({
+      committee: frozenKeys(holders.committee), threshold: holders.threshold, seats: Object.freeze([...holders.seats]),
+      approvals: holders.approvals, adoptedVaults: Object.freeze([...holders.adoptedVaults]),
+    }),
+  });
+}
+
+export type HoldersRead =
+  | { readonly ok: true; readonly holders: AccountHolders; readonly at: number }
+  | { readonly ok: false; readonly code: 'not-an-answer' | 'origin-mismatch' | 'nonce-mismatch' | 'other-company'; readonly says: string };
+
+/**
+ * **THE PAGE'S SIDE OF A HOLDERS ANSWER.** Every expectation is the page's own:
+ * where it is, the nonce it chose, the company and the account it asked about. Nothing in it is signed: what it is worth is that it came from
+ * the person's own wallet over this page's own channel.
+ */
+export function readHoldersAnswer(
+  message: unknown,
+  expecting: {
+    readonly atOrigin: string; readonly expectingNonce: string;
+    readonly company: CompanyLabel; readonly account: AccountAddress;
+  },
+): HoldersRead {
+  const body = message as Partial<HoldersAnswer> | null;
+  if (typeof body !== 'object' || body === null || body.schema !== HOLDERS_ANSWER_SCHEMA) {
+    return { ok: false, code: 'not-an-answer', says: 'that is not an answer saying who holds the company.' };
+  }
+  if (body.origin !== expecting.atOrigin) {
+    return { ok: false, code: 'origin-mismatch', says: `this was read for ${String(body.origin)} and arrived at ${expecting.atOrigin}. It is refused.` };
+  }
+  if (body.nonce !== expecting.expectingNonce) {
+    return { ok: false, code: 'nonce-mismatch', says: 'this answers a different request from the one that was sent.' };
+  }
+  if (readCompanyLabel(body.company) !== expecting.company || readAccountAddress(body.account) !== expecting.account) {
+    return { ok: false, code: 'other-company', says: 'this says who holds a different company from the one asked about. It is refused.' };
+  }
+  const holders = readHolders(body.holders);
+  if (holders === null || typeof body.at !== 'number' || !Number.isSafeInteger(body.at)) {
+    return { ok: false, code: 'not-an-answer', says: 'that is not an answer saying who holds the company.' };
+  }
+  return { ok: true, holders, at: body.at };
 }

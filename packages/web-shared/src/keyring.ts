@@ -31,7 +31,9 @@ export type { WalletDialog } from './wallet-sign-in.js';
 import { askWalletForKeys } from './wallet-unlock.js';
 import { askWalletToPay } from './wallet-balance.js';
 import { askWalletToSignCommittee, type CommitteeAsked } from './wallet-committee.js';
-import { askWalletToSignRecordsKey, type RecordsKeyAsked, type RecordsKeySigned } from './wallet-records-key.js';
+import {
+  askWalletToSignRecordsKey, askWalletWhoHolds, type HoldersAsked, type HoldersRead, type RecordsKeyAsked, type RecordsKeySigned,
+} from './wallet-records-key.js';
 /* **THE WALLET IS SHOWN INSIDE THIS PAGE.** Every journey below defaults to it;
  * a test hands in a window of its own and drives the same conversation. */
 import { walletInThisPage } from './wallet-frame.js';
@@ -1149,7 +1151,7 @@ export async function signCommitteeChangeFromTheWallet(
  */
 export async function recordsKeyFromTheWallet(
   walletOrigin: string,
-  ask: Pick<RecordsKeyAsked, 'company' | 'account' | 'seat' | 'vault'>,
+  ask: Pick<RecordsKeyAsked, 'company' | 'account' | 'seat' | 'vault' | 'signingKey'>,
   view: Openable = walletInThisPage(window),
   atOrigin: string = window.location.origin,
   already?: WalletDialog,
@@ -1158,6 +1160,32 @@ export async function recordsKeyFromTheWallet(
   const dialog = openTheWallet(view, walletOrigin, already);
   try {
     return await askWalletToSignRecordsKey(view, walletOrigin, {
+      ...ask, atOrigin, name: US_TO_A_WALLET.name, rdns: US_TO_A_WALLET.rdns,
+    }, dialog);
+  } catch (e) {
+    if (!already) putAway(dialog);
+    throw e;
+  } finally {
+    doneWaiting();
+  }
+}
+
+/**
+ * **WHO HOLDS THE COMPANY NOW, AS THIS PERSON'S OWN WALLET READS THE CHAIN**, with
+ * no press. Asked afresh for every read that believes a filing; see
+ * `wallet-records-key.ts`.
+ */
+export async function holdersFromTheWallet(
+  walletOrigin: string,
+  ask: Pick<HoldersAsked, 'company' | 'account'>,
+  view: Openable = walletInThisPage(window),
+  atOrigin: string = window.location.origin,
+  already?: WalletDialog,
+): Promise<HoldersRead> {
+  if (!sessionLive) throw new Error('not signed in');
+  const dialog = openTheWallet(view, walletOrigin, already);
+  try {
+    return await askWalletWhoHolds(view, walletOrigin, {
       ...ask, atOrigin, name: US_TO_A_WALLET.name, rdns: US_TO_A_WALLET.rdns,
     }, dialog);
   } catch (e) {

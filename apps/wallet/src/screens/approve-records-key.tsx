@@ -141,6 +141,17 @@ export function ApproveRecordsKey({
         <p className="m-0 font-mono break-all text-sm" data-records-key>{recordsKey}</p>
         <p className="m-0 text-sm text-muted-foreground">Your seat, as the page names it</p>
         <p className="m-0 font-mono break-all text-sm" data-records-key-seat>{request.seat}</p>
+        {request.signingKey !== undefined && (
+          <>
+            <p className="m-0 text-sm text-foreground" data-directory-entry-signs>
+              In the same press, your entry in the company&rsquo;s list of who files its records: the key your filings
+              are signed with, as the page names it, with your records key and your seat. Other signers&rsquo; devices
+              believe a record you file only when this entry checks out against the company&rsquo;s account.
+            </p>
+            <p className="m-0 text-sm text-muted-foreground">The key your filings are signed with, as the page names it</p>
+            <p className="m-0 font-mono break-all text-sm" data-directory-entry-key>{request.signingKey}</p>
+          </>
+        )}
         {seats === null ? (check.of === 'checking' ? (
           <p className="m-0 text-sm text-muted-foreground" data-seat-checking>Checking the company&rsquo;s account on the network&hellip;</p>
         ) : (

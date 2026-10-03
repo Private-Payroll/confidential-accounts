@@ -68,6 +68,8 @@ import { AccountService, openAccount, sealAccount } from '../../src/core/account
 import { MidnightCommitments } from '../../src/midnight/commitments.js';
 import { rosterVaultKeys, signVaultKeys } from '../../src/core/vault-keys.js';
 import { seatsInAccountState, vaultInState } from '../../apps/wallet/src/chain/company-label-on-chain.js';
+import { directoryChainOver, fileOwnEntry, judgeOver, mayFileUnderOver, walletReadsOver } from './the-chain-as-a-wallet-reads-it.js';
+import { seatDirectoryRoutes } from '../../src/server/seat-directory-route.js';
 import { ChainLedger } from '../../src/wiring/chain.js';
 import { companyVaultRoutes, type VaultChain } from '../../src/server/company-vaults.js';
 import { mountVaultRecords, vaultAccountFromTheIndexer } from '../../src/server/vault-records-authority.js';
@@ -325,7 +327,8 @@ describe.skipIf(!KEYS_ON_DISK)('A PRIVATE PAYMENT OUT OF A COMPANY VAULT, FROM T
     store.putAccount(sealAccount({
       id: ACCOUNT_ID, createdAt: new Date().toISOString(), name: 'Northwind', companyLabel: LABEL,
       signers: [{
-        id: 'ada', userId: 'ada', name: 'Ada', status: 'active', role: 'admin', leafCommitment: null,
+        /* The founding signer's own seat, as the chain seats it: a records key is believed only for the seat held. */
+        id: 'ada', userId: 'ada', name: 'Ada', status: 'active', role: 'admin', leafCommitment: hex(leafOfDevice(founder)),
         signingPublicKey: signing.publicKey, wrappingPublicKey: wrapping.publicKey,
       }],
       policy: { threshold: 1, limitsByRole: {} }, recovery: { signerIds: ['ada'], threshold: 1 }, wrappedKeys: [],
@@ -411,6 +414,7 @@ describe.skipIf(!KEYS_ON_DISK)('A PRIVATE PAYMENT OUT OF A COMPANY VAULT, FROM T
         return ledger.sendVault(...args);
       },
     };
+    app.use(seatDirectoryRoutes({ signedIn, member, store, chain: directoryChainOver(() => chain.contract(company)) }));
     app.use(companyVaultRoutes({
       signedIn, member, store,
       giveVaultKeys: (id, vk, person, given) => accounts.giveVaultKeys(id, vk as Hex, person, given),
@@ -435,7 +439,7 @@ describe.skipIf(!KEYS_ON_DISK)('A PRIVATE PAYMENT OUT OF A COMPANY VAULT, FROM T
         queryContractState: async (a) => { const c = chain.contract(a); return c === null ? null : { data: asRuntime(c).data }; },
       }),
       companies: () => store.listAccounts().map((a) => ({ id: a.id, contractAddress: company, memberUserIds: a.memberUserIds })),
-      filingKeyOf: (id, person) => store.getFilingKey(id, person)?.filingKey ?? null,
+      mayFileUnder: mayFileUnderOver(store),
     });
     await new Promise<void>((resolve) => { server = app.listen(0, '127.0.0.1', () => resolve()); });
     base = `http://127.0.0.1:${(server.address() as AddressInfo).port}`;
@@ -488,8 +492,16 @@ describe.skipIf(!KEYS_ON_DISK)('A PRIVATE PAYMENT OUT OF A COMPANY VAULT, FROM T
     });
     return { status: r.status, body: await r.json().catch(() => ({})) };
   };
-  const records = (record: WireRecord) =>
-    new HttpSealedPoolStore(record, wire, signing.secret, async () => new Set([signing.publicKey]));
+  /* The page's own requests, as `api` makes them. */
+  const api = async (path: string, init?: RequestInit) =>
+    http(path, { method: String(init?.method ?? 'GET'), ...(init?.body === undefined ? {} : { body: JSON.parse(String(init.body)) }) });
+  /* Who filed each version, judged afresh for every read: the directory read again and the account read off the chain. */
+  const records = (record: WireRecord) => new HttpSealedPoolStore(record, wire, signing.secret, judgeOver({
+    api, accountId: ACCOUNT_ID, label: LABEL, accountState: () => chain.contract(company),
+    roster: async () => openAccount(store.getAccount(ACCOUNT_ID)!, viewingKey),
+  }));
+  /* Who holds the company and which vaults it adopted, as the signer's own wallet reads them off the chain for each step. */
+  const walletReads = walletReadsOver(() => chain.contract(company));
   const signers = async () => [{ id: 'ada', wrappingPublicKey: wrapping.publicKey }];
   const wallet = async (ask: { company: Hex; vault: Hex; transaction: string }) => {
     const asProven = { Transaction: { deserialize: (_s: string, _p: string, b: 'pre-binding', raw: Uint8Array) => L.Transaction.deserialize('signature', 'pre-proof', b, raw) } };
@@ -511,7 +523,10 @@ describe.skipIf(!KEYS_ON_DISK)('A PRIVATE PAYMENT OUT OF A COMPANY VAULT, FROM T
         }, signing.secret),
       },
     });
-    const poolDoors = { ...pacing, service, me, myRecordsKey: recordsReaderOf(me.companyKey).publicKey, signers, records };
+    const poolDoors = {
+      ...pacing, service, account: readAccountAddress(company)!, onChain: walletReads,
+      me, myRecordsKey: recordsReaderOf(me.companyKey).publicKey, signers, records,
+    };
     /* The founding signer's press, with who holds the account as their wallet read it off the chain just then. */
     const press = (resume?: Hex) => createCompanyVault({
       ...poolDoors, account: readAccountAddress(company)!, builder: builder(), keys,
@@ -530,6 +545,11 @@ describe.skipIf(!KEYS_ON_DISK)('A PRIVATE PAYMENT OUT OF A COMPANY VAULT, FROM T
     if (!(first instanceof VaultStartOwed)) throw new Error(`the vault's first secret was not held back: ${String((first as Error)?.message ?? JSON.stringify(first))}`);
     const authority = await http(`${at}/authority`);
     await http(`${at}/authority/handover`, { method: 'POST', body: { committee: authority.committee } });
+    /* The founding signer's own directory entry, filed from their device once the account is the committee's. */
+    await fileOwnEntry({
+      api, accountId: ACCOUNT_ID, person: 'ada', identity: identityFromWords(words), label: LABEL,
+      companyKey: me.companyKey, signingKey: signing.publicKey, seat: hex(leafOfDevice(founder)),
+    });
     /* Then started by the same press: its secret set and every copy written. */
     const created = await press(first.vault);
     if (created.state !== 'started') throw new Error(`the vault was not started: ${JSON.stringify(created)}`);
@@ -595,7 +615,7 @@ describe.skipIf(!KEYS_ON_DISK)('A PRIVATE PAYMENT OUT OF A COMPANY VAULT, FROM T
     expect(order.payments.map((p) => p.paid)).toEqual([false]);
     const before = chain.applied.length;
     const done = await payPrivatelyFromCompanyVault({
-      ...pacing, service, me, myRecordsKey: recordsReaderOf(me.companyKey).publicKey, signers, records, builder: builder(),
+      ...pacing, service, me, myRecordsKey: recordsReaderOf(me.companyKey).publicKey, signers, records, account: readAccountAddress(company)!, onChain: walletReads, builder: builder(),
       inFlight: paymentsInFlight(),
     }, { order, payment: order.payments[0]! });
 
@@ -641,7 +661,7 @@ describe.skipIf(!KEYS_ON_DISK)('A PRIVATE PAYMENT OUT OF A COMPANY VAULT, FROM T
   it('THE SAME PERSON IS NOT OFFERED TWICE, AND A SECOND PAYMENT BUILT ANYWAY IS REFUSED BY THE ACCOUNT', async () => {
     const { vault } = await aFundedVault();
     const run = await anApprovedRun(vault, 100n);
-    const doors = { ...pacing, service, me, myRecordsKey: recordsReaderOf(me.companyKey).publicKey, signers, records, builder: builder(), inFlight: paymentsInFlight() };
+    const doors = { ...pacing, service, me, myRecordsKey: recordsReaderOf(me.companyKey).publicKey, signers, records, account: readAccountAddress(company)!, onChain: walletReads, builder: builder(), inFlight: paymentsInFlight() };
     const first = run.order();
     await payPrivatelyFromCompanyVault(doors, { order: first, payment: first.payments[0]! });
     /* RED WHEN: `paid` is not read back from the account - the device would be offered the person again. */
@@ -671,7 +691,7 @@ describe.skipIf(!KEYS_ON_DISK)('A PRIVATE PAYMENT OUT OF A COMPANY VAULT, FROM T
     const forged = { ...order.payments[0]!, amount: '999' };
     const applied = chain.applied.length;
     await expect(payPrivatelyFromCompanyVault({
-      ...pacing, service, me, myRecordsKey: recordsReaderOf(me.companyKey).publicKey, signers, records, builder: builder(),
+      ...pacing, service, me, myRecordsKey: recordsReaderOf(me.companyKey).publicKey, signers, records, account: readAccountAddress(company)!, onChain: walletReads, builder: builder(),
       inFlight: paymentsInFlight(),
     }, { order, payment: forged })).rejects.toThrow();
     /* The account's own check stops it inside the call, before anything reaches the service. */
@@ -741,7 +761,7 @@ describe.skipIf(!KEYS_ON_DISK)('A PRIVATE PAYMENT OUT OF A COMPANY VAULT, FROM T
   };
   const USER = 'c3'.repeat(32);
   const publicDoors = (run: { leaf: Hex }) => ({
-    ...pacing, service, builder: builder(),
+    ...pacing, service, builder: builder(), account: readAccountAddress(company)!, onChain: walletReads,
     paidYet: async () => accountLedgerOf(chain.contract(company)).movements.member(accountCircuits.paidMovementOf(fromHex(run.leaf))),
   });
 
@@ -829,7 +849,7 @@ describe.skipIf(!KEYS_ON_DISK)('A PRIVATE PAYMENT OUT OF A COMPANY VAULT, FROM T
 
     const publicRun = await anApprovedRun(vault, 100n, { payee: unshieldedPayeeFor(USER, NET), token: PUBLIC_TOKEN });
     const pub = publicRun.order();
-    const privateDoors = { ...pacing, service, me, myRecordsKey: recordsReaderOf(me.companyKey).publicKey, signers, records, builder: builder(), inFlight: paymentsInFlight() };
+    const privateDoors = { ...pacing, service, me, myRecordsKey: recordsReaderOf(me.companyKey).publicKey, signers, records, account: readAccountAddress(company)!, onChain: walletReads, builder: builder(), inFlight: paymentsInFlight() };
     /* RED WHEN: the device's private builder takes a payment the leg names public, whatever the page asked. */
     const { payments: _q, ...pubRound } = pub;
     await expect(builder().payout({
@@ -983,7 +1003,7 @@ describe.skipIf(!KEYS_ON_DISK)('A PRIVATE PAYMENT OUT OF A COMPANY VAULT, FROM T
 
     const before = chain.applied.length;
     const privateDoors = () => ({
-      ...pacing, service, me, myRecordsKey: recordsReaderOf(me.companyKey).publicKey, signers, records, builder: builder(),
+      ...pacing, service, me, myRecordsKey: recordsReaderOf(me.companyKey).publicKey, signers, records, account: readAccountAddress(company)!, onChain: walletReads, builder: builder(),
       inFlight: paymentsInFlight(),
     });
     for (let i = 0; i < 2; i += 1) {
@@ -1045,7 +1065,7 @@ describe.skipIf(!KEYS_ON_DISK)('A PRIVATE PAYMENT OUT OF A COMPANY VAULT, FROM T
     const before = chain.applied.length;
     const notesBefore = [...vaultLedgerOf(chain.contract(vault)).notes].map((c: Uint8Array) => hex(c));
     const doors = {
-      ...pacing, service, me, myRecordsKey: recordsReaderOf(me.companyKey).publicKey, signers, records,
+      ...pacing, service, me, myRecordsKey: recordsReaderOf(me.companyKey).publicKey, signers, records, onChain: walletReads,
       company: LABEL, account: readAccountAddress(company)!, builder: builder(), inFlight: inFlightInMemory(),
     };
 
@@ -1086,7 +1106,7 @@ describe.skipIf(!KEYS_ON_DISK)('A PRIVATE PAYMENT OUT OF A COMPANY VAULT, FROM T
     const { vault } = await aFundedVault();
     const { pay } = await aPublicWallet([1_000n]);
     const doors = {
-      ...pacing, service, me, myRecordsKey: recordsReaderOf(me.companyKey).publicKey, signers, records,
+      ...pacing, service, me, myRecordsKey: recordsReaderOf(me.companyKey).publicKey, signers, records, onChain: walletReads,
       company: LABEL, account: readAccountAddress(company)!, builder: builder(), inFlight: inFlightInMemory(),
     };
     await depositFromSource(doors, vault, publicTokenFromTheWallet(pay, PUBLIC_REGISTRY), { code: PUBLIC_TOKEN, value: 1_000n });
@@ -1111,7 +1131,7 @@ describe.skipIf(!KEYS_ON_DISK)('A PRIVATE PAYMENT OUT OF A COMPANY VAULT, FROM T
     /* One coin for each deposit the wallet pays for below, since it forgets a coin once it has paid with it. */
     const { pay } = await aPublicWallet([1_000n, 1_000n, 1_000n, 1_000n]);
     const doors = {
-      ...pacing, service, me, myRecordsKey: recordsReaderOf(me.companyKey).publicKey, signers, records,
+      ...pacing, service, me, myRecordsKey: recordsReaderOf(me.companyKey).publicKey, signers, records, onChain: walletReads,
       company: LABEL, account: readAccountAddress(company)!, builder: builder(), inFlight: inFlightInMemory(),
     };
     const applied = chain.applied.length;
