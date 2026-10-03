@@ -1,4 +1,4 @@
-import { useCallback, useMemo, useState } from 'react';
+import { useCallback, useEffect, useMemo, useState } from 'react';
 import type { ReactNode } from 'react';
 import type { Identity } from 'midnight-identity/keys/derivation';
 import type { RecordsKeyRequest } from 'midnight-identity/profile/request';
@@ -6,6 +6,9 @@ import type { Channel } from 'midnight-identity/profile/channel';
 import { RecordsKeyRefused, recordsKeyAnswerFor, recordsKeyFor } from 'midnight-identity/profile/records-key';
 import { CompanyOnChain, accountCarriesTheLabel, liveLabelReader, useCompanyCheck } from './company-on-chain.js';
 import type { LabelReader } from './company-on-chain.js';
+import type { VaultAddress } from 'midnight-identity/profile/company-label';
+import { fromIndexerAt, vaultOnChain, type VaultOnChain } from '../chain/company-label-on-chain.js';
+import { INDEXER_HTTP_URL } from '../config.js';
 import { Button, Section } from 'vaults-ui';
 import { StatusAlert } from '../components/status.js';
 import { hrefOf } from '../routes.js';
@@ -28,16 +31,48 @@ import type { Consent } from '../framing.js';
  * committee, its threshold and every seat - which the page checks a vault's
  * secret against, and which no service handed over.
  *
+ * **WHEN THE PAGE NAMES ONE OF THE COMPANY'S VAULTS, THIS WALLET READS THAT
+ * VAULT TOO** (`vaultOnChain`): who holds it and which account it is pinned
+ * to, over the same connection, and the answer carries what it read. A page
+ * checks that the vault is held by the account's own committee against this
+ * read, never against what a service says. Nothing is signed until the vault
+ * is read, or when it is pinned to another account.
+ *
  * **THE STATEMENT CANNOT CHANGE ANY OF THE COMPANY'S RULES.** It names only
  * the company, the records key and the seat, under a tag of its own.
  */
 
 type Stage = { of: 'ready' } | { of: 'refused'; says: string } | { of: 'sent'; at: number };
 
+/** How this screen reads a vault. Replaceable so a test can answer. */
+export type VaultReader = (vault: VaultAddress) => Promise<VaultOnChain>;
+
+/** The chain, read through the indexer this wallet reads its own balance from. */
+export const liveVaultReader: VaultReader = (vault) => vaultOnChain(vault, fromIndexerAt(INDEXER_HTTP_URL));
+
+type VaultCheck = { readonly of: 'none' } | { readonly of: 'checking' } | VaultOnChain;
+
+/** Reads the vault the page names once per vault; with none named there is nothing to read. */
+function useVaultCheck(vault: VaultAddress | undefined, read: VaultReader): VaultCheck {
+  const [found, setFound] = useState<{ vault: VaultAddress; check: VaultOnChain } | null>(null);
+  useEffect(() => {
+    if (vault === undefined) return undefined;
+    let alive = true;
+    read(vault).then(
+      (check) => { if (alive) setFound({ vault, check }); },
+      () => { if (alive) setFound({ vault, check: { of: 'unreadable', why: 'the read did not come back.' } }); },
+    );
+    return () => { alive = false; };
+  }, [vault, read]);
+  if (vault === undefined) return { of: 'none' };
+  return found !== null && found.vault === vault ? found.check : { of: 'checking' };
+}
+
 const short = (hex: string): string => `${hex.slice(0, 12)}…${hex.slice(-8)}`;
 
 export function ApproveRecordsKey({
   request, identity, channel, consent, whoIsAsking, onDecline, now = Date.now, readLabel = liveLabelReader,
+  readVault = liveVaultReader,
 }: {
   readonly request: RecordsKeyRequest;
   readonly identity: Identity;
@@ -47,25 +82,30 @@ export function ApproveRecordsKey({
   readonly onDecline: () => void;
   readonly now?: () => number;
   readonly readLabel?: LabelReader;
+  readonly readVault?: VaultReader;
 }): ReactNode {
   const [stage, setStage] = useState<Stage>({ of: 'ready' });
   const check = useCompanyCheck(request.company, request.account, readLabel);
   const onChain = accountCarriesTheLabel(check, request.company);
   const seats = check.of === 'carries' ? check.seats ?? null : null;
   const seated = seats !== null && seats.seats.includes(request.seat);
+  const vaultCheck = useVaultCheck(request.vault, readVault);
+  const vaultRead = vaultCheck.of === 'read' ? vaultCheck.holders : null;
+  /* With no vault named there is none to read; with one named, it must be read and pinned to this account. */
+  const vaultOk = request.vault === undefined || (vaultRead !== null && vaultRead.account === request.account);
   /* The key the press signs, shown before it is pressed. */
   const recordsKey = useMemo(() => recordsKeyFor(identity, request), [identity, request]);
 
   const sign = useCallback((): void => {
-    if (!consent.ok || stage.of !== 'ready' || channel === null || !onChain || seats === null || !seated) return;
+    if (!consent.ok || stage.of !== 'ready' || channel === null || !onChain || seats === null || !seated || !vaultOk) return;
     try {
       const at = now();
-      channel.answer(recordsKeyAnswerFor(identity, request, seats, at));
+      channel.answer(recordsKeyAnswerFor(identity, request, seats, at, vaultRead ?? undefined));
       setStage({ of: 'sent', at });
     } catch (e) {
       setStage({ of: 'refused', says: e instanceof RecordsKeyRefused ? e.message : 'Nothing has been signed.' });
     }
-  }, [consent, stage, channel, onChain, seats, seated, now, identity, request]);
+  }, [consent, stage, channel, onChain, seats, seated, vaultOk, vaultRead, now, identity, request]);
 
   if (stage.of === 'sent') {
     return (
@@ -123,6 +163,24 @@ export function ApproveRecordsKey({
             {' '}Committee keys: {seats.committee.map((k) => short(k.value)).join(', ') || 'none'}.
           </p>
         )}
+        {request.vault !== undefined && (vaultCheck.of === 'checking' ? (
+          <p className="m-0 text-sm text-muted-foreground" data-vault-checking>Checking the vault on the network&hellip;</p>
+        ) : vaultRead === null ? (
+          <p className="m-0 text-sm" data-vault-unread>
+            This wallet could not read the vault the page names, so it will not sign. Open this again in a minute.
+          </p>
+        ) : vaultRead.account !== request.account ? (
+          <StatusAlert tone="danger" role={null} title="The vault belongs to another company">
+            <p className="m-0" data-vault-other-account>
+              The vault the page names is tied to a different company account from this one, as this wallet read it from
+              the network, so this wallet will not sign.
+            </p>
+          </StatusAlert>
+        ) : (
+          <p className="m-0 text-sm text-muted-foreground" data-vault-read>
+            {`The answer also says who holds the vault: ${vaultRead.committee.length} committee key${vaultRead.committee.length === 1 ? '' : 's'}, ${vaultRead.threshold} of which must sign a change to its rules.`}
+          </p>
+        ))}
       </Section>
       <Section list={false} box={false} aria-label="The company, as the page names it" title="The company, as the page names it" description="This wallet signs with the key it holds for this company and no other.">
         <CompanyOnChain label={request.company} account={request.account} check={check} doing="signed" />
@@ -131,7 +189,7 @@ export function ApproveRecordsKey({
       <div className="flex flex-wrap gap-2">
         <Button
           size="lg" type="button" variant="default" onClick={sign} data-approve data-sign-records-key
-          disabled={!consent.ok || stage.of !== 'ready' || channel === null || !onChain || !seated}
+          disabled={!consent.ok || stage.of !== 'ready' || channel === null || !onChain || !seated || !vaultOk}
         >
           Sign my records key
         </Button>

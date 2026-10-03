@@ -467,6 +467,13 @@ export interface RecordsKeyRequest extends Asking {
   readonly account: AccountAddress;
   /** The seat this person holds on that account, as 64 lower-case hex characters. Claimed; read off the chain. */
   readonly seat: string;
+  /**
+   * One of the company's vaults, when the page is about to approve that vault's
+   * secret. Claimed: the wallet reads who holds it, and which account it is
+   * pinned to, off the chain itself, and hands that back beside the account's
+   * seats. Absent when no vault is being approved.
+   */
+  readonly vault?: VaultAddress;
 }
 
 /** What an application may open this wallet with. */
@@ -1003,7 +1010,14 @@ function recordsKeyAskOf(body: Record<string, unknown>, asking: Asking): Records
       'not-a-seat',
       `${asks} and names your seat on its account by something that is not one (64 lower-case hex characters). ${nothing}`);
   }
-  return Object.freeze({ ...asking, kind: 'records-key' as const, company, account, seat });
+  if (!('vault' in body)) return Object.freeze({ ...asking, kind: 'records-key' as const, company, account, seat });
+  const vault = readVaultAddress(body['vault']);
+  if (vault === null || String(vault) === String(account)) {
+    throw new RequestError(
+      'not-a-vault-address',
+      `${asks} and names one of its vaults by something that is not a vault's address on the chain. ${nothing}`);
+  }
+  return Object.freeze({ ...asking, kind: 'records-key' as const, company, account, seat, vault });
 }
 
 /**
@@ -1053,17 +1067,18 @@ export function parseAsk(raw: unknown, observedOrigin: string, now: number): Ask
   }
 
   /*
-   * **A TRANSACTION AND A VAULT BELONG TO A BALANCE ASK AND TO NOTHING ELSE.**
+   * **A TRANSACTION BELONGS TO A BALANCE ASK AND TO NOTHING ELSE, AND A VAULT TO
+   * THAT AND TO A RECORDS-KEY ASK**, which reads who holds the vault it names.
    * Refused by presence on every other kind, for the keyring fields' reason: a
    * requester that sent one and was answered with something else would be
    * entitled to believe the wallet had read it.
    */
-  if (kind !== 'balance' && ('transaction' in body || 'vault' in body)) {
+  if ((kind !== 'balance' && 'transaction' in body) || (kind !== 'balance' && kind !== 'records-key' && 'vault' in body)) {
     throw new RequestError(
       'balance-fields-on-another-kind',
-      `this is a '${kind}' and it carries a transaction or names a vault. Those belong only to `
-      + 'a request to pay for a transaction, so they are refused rather than ignored. Nothing '
-      + 'has been shown to them.');
+      `this is a '${kind}' and it carries a transaction or names a vault. A transaction belongs only to `
+      + 'a request to pay for one, and a vault only to that or to a request to sign your records key, so '
+      + 'they are refused rather than ignored. Nothing has been shown to them.');
   }
 
   /*

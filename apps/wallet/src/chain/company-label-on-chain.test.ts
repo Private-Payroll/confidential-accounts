@@ -4,11 +4,14 @@ import { COMPANY_LABEL_ENTRY, companyLabelOf } from 'midnight-identity/profile/c
 import type { AccountAddress } from 'midnight-identity/profile/company-label';
 import { Contract, ledger, pureCircuits } from '../../../../contracts/managed/contract/index.js';
 import { witnesses } from '../../../../contracts/src/witnesses.js';
-import { leafOfDevice, privateStateFor } from '../../../../contracts/test/simulator.js';
-import { ContractMaintenanceAuthority, ContractState } from '@midnightntwrk/ledger-v9';
+import { AccountSimulator, leafOfDevice, privateStateFor } from '../../../../contracts/test/simulator.js';
+import { Contract as VaultContract, ledger as vaultLedger } from '../../../../contracts/managed-vault/contract/index.js';
+import type { VaultAddress } from 'midnight-identity/profile/company-label';
+import { ChargedState, ContractMaintenanceAuthority, ContractState, StateValue } from '@midnightntwrk/ledger-v9';
 import { schnorr } from '@noble/curves/secp256k1.js';
 import {
-  ROLES_FIELD, SIGNER_LEAVES_FIELD, accountCarries, labelInAccountState, labelOnAccount, seatsInAccountState,
+  ROLES_FIELD, SIGNER_LEAVES_FIELD, VAULT_ACCOUNT_FIELD, accountCarries, labelInAccountState, labelOnAccount, seatsInAccountState,
+  vaultInState, vaultOnChain,
 } from './company-label-on-chain.js';
 
 /*
@@ -116,5 +119,86 @@ describe('WHO HOLDS THE ACCOUNT, READ OFF IT IN THE SAME ANSWER AS ITS LABEL', (
     const read = await labelOnAccount(ACCOUNT, async () => state);
     /* RED WHEN: the read that shows the label drops who holds the account. */
     expect(read.of === 'carries' && read.seats?.committee).toEqual([{ tag: 'schnorr', value: key(3) }]);
+  });
+});
+
+describe('WHO HOLDS A VAULT, READ OFF THE VAULT ITSELF', () => {
+  const VAULT = '9a'.repeat(32) as VaultAddress;
+  /* The vault's constructor calls no witness; the contract still asks that both exist. */
+  const noWitnesses = { noteToSpend: () => { throw new Error('none'); }, nonceSecret: () => { throw new Error('none'); } };
+  const key = (n: number): string => Buffer.from(schnorr.getPublicKey(new Uint8Array(32).fill(n))).toString('hex');
+  /* The state the real compiled vault's constructor produces for this account, with a committee put on it as a handover leaves one. */
+  const vaultState = async (account: string, keys: string[] | null, threshold = 1): Promise<Uint8Array> => {
+    const { currentContractState } = await new VaultContract(noWitnesses as never).initialState(
+      createConstructorContext({} as never, '0'.repeat(64)), { bytes: Buffer.from(account, 'hex') } as never);
+    const bytes = (currentContractState as { serialize(): Uint8Array }).serialize();
+    if (keys === null) return bytes;
+    const state = ContractState.deserialize(bytes);
+    state.maintenanceAuthority = new ContractMaintenanceAuthority(keys.map((value) => ({ tag: 'schnorr', value })) as never, threshold, 1n);
+    return state.serialize();
+  };
+
+  it('reads the account the vault is pinned to, as the vault\'s own decoder does, and who holds it', async () => {
+    const bytes = await vaultState(ACCOUNT, [key(1), key(2)], 2);
+    const bytesZero = await vaultState('00'.repeat(32), null);
+    const read = vaultInState(VAULT, bytes);
+    /* RED WHEN: the field read is not the one the vault's constructor writes its account into, or its bytes are read wrong. */
+    const { currentContractState } = await new VaultContract(noWitnesses as never).initialState(
+      createConstructorContext({} as never, '0'.repeat(64)), { bytes: Buffer.from(ACCOUNT, 'hex') } as never);
+    expect(hexOf(vaultLedger((currentContractState as unknown as { data: never }).data).account.bytes)).toBe(ACCOUNT);
+    expect(read.account).toBe(ACCOUNT);
+    expect(VAULT_ACCOUNT_FIELD).toBe(0);
+    /* RED WHEN: the committee or the threshold is read from anywhere but the vault's own maintenance authority. */
+    expect(read.committee).toEqual([key(1), key(2)].map((value) => ({ tag: 'schnorr', value })));
+    expect(read.threshold).toBe(2);
+    expect(read.vault).toBe(VAULT);
+    /* RED WHEN: a vault pinned to no account - its account all zeros - is read as pinned to one. */
+    expect(() => vaultInState(VAULT, bytesZero)).toThrow(/not laid out as a company's vault/);
+    /* An account whose address ends in zero bytes is read back whole. */
+    const trailing = `${'5d'.repeat(30)}0000`;
+    expect(vaultInState(VAULT, await vaultState(trailing, null)).account).toBe(trailing);
+  });
+
+  it('a vault still held by the key it was deployed with reads as that, and an account read as a vault is no answer', async () => {
+    const deployedWith = vaultInState(VAULT, await vaultState(ACCOUNT, [key(7)], 1));
+    /* RED WHEN: the temporary key's committee is read as anything but its one key. */
+    expect(deployedWith.committee).toEqual([{ tag: 'schnorr', value: key(7) }]);
+    expect(deployedWith.threshold).toBe(1);
+    /* RED WHEN: a company's account, read as if it were a vault, is taken as one. */
+    const account = await deployedState(LABEL_BYTES);
+    expect(() => vaultInState(VAULT, account)).toThrow(/not laid out as a company's vault/);
+    /* RED WHEN: a contract laid out otherwise - one field more than a vault has, its first still an address - is read as a vault. */
+    const longer = ContractState.deserialize(await vaultState(ACCOUNT, [key(1)]));
+    let fields = (StateValue as any).newArray();
+    for (const f of longer.data.state.asArray()!) fields = fields.arrayPush(f);
+    longer.data = new ChargedState(fields.arrayPush((StateValue as any).newNull()));
+    expect(() => vaultInState(VAULT, longer.serialize())).toThrow(/not laid out as a company's vault/);
+  });
+
+  it('A READ THAT FAILS IS NEVER AN ANSWER: no vault, an unreadable answer, and an account in a vault\'s place', async () => {
+    const good = hexOf(await vaultState(ACCOUNT, [key(1)]));
+    expect(await vaultOnChain(VAULT, async () => good)).toEqual({ of: 'read', holders: vaultInState(VAULT, Buffer.from(good, 'hex')) });
+    /* RED WHEN: an empty, failed or garbled read lets a screen sign. */
+    expect(await vaultOnChain(VAULT, async () => null)).toEqual({ of: 'no-vault' });
+    expect((await vaultOnChain(VAULT, async () => { throw new Error('offline'); })).of).toBe('unreadable');
+    expect((await vaultOnChain(VAULT, async () => 'abcd')).of).toBe('unreadable');
+    /* RED WHEN: a company's account, read in a vault's place, is read as a vault. */
+    expect((await vaultOnChain(VAULT, async () => hexOf(await deployedState(LABEL_BYTES)))).of).toBe('unreadable');
+    /* And something that is not an address is never read at all. */
+    const asked: string[] = [];
+    expect((await vaultOnChain('co_x' as VaultAddress, async (a) => { asked.push(a); return good; })).of).toBe('unreadable');
+    expect(asked).toEqual([]);
+  });
+});
+
+describe('MORE THAN ONE SEAT', () => {
+  it('reads every seat of an account that seats two signers, as the account\'s own decoder lists them', async () => {
+    const sim = await AccountSimulator.liveAccount([privateStateFor(1), privateStateFor(2)], 2n);
+    const bytes = (sim.contractStateForCall as { serialize(): Uint8Array }).serialize();
+    const listed = [...sim.ledger.signerLeaves].map((l: Uint8Array) => hexOf(l)).sort();
+    /* RED WHEN: only the first seat is read, or a seat is read with any other bytes. */
+    expect(listed).toHaveLength(2);
+    expect([...seatsInAccountState(bytes).seats].sort()).toEqual(listed);
+    expect(listed).toEqual([hexOf(leafOfDevice(privateStateFor(1))), hexOf(leafOfDevice(privateStateFor(2)))].sort());
   });
 });

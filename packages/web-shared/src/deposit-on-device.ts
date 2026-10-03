@@ -21,18 +21,26 @@
  *
  * Starting a vault's nonce secret is done here as well: the secret is made on
  * the device and filed only as a sealed record wrapped to the signers, and
- * only for a vault the chain has made nothing for.
+ * only for a vault the chain has made nothing for. The record filed is handed
+ * back, so the device that made the secret builds on the secret it made and
+ * never on one read back.
+ *
+ * **A SECRET READ BACK IS CHECKED AGAINST THE VAULT BEFORE A COIN IS CHOSEN
+ * UNDER IT.** The server keeps the records, and whoever holds the company's
+ * viewing key can file a record wrapped to every signer around a secret of its
+ * own. The vault holds a commitment to its secret on the chain, so a deposit
+ * is refused unless the secret opened here is the one that commitment names.
  */
 import type { Hex } from '../../../src/core/crypto.js';
 import {
-  SealedNotePool, type PoolSigner, type SealedPoolStore,
+  SealedNotePool, type PoolSigner, type SealedPool, type SealedPoolStore,
 } from '../../../src/midnight/vault-pool.js';
 import { DepositJournalInStore } from '../../../src/midnight/vault-journal.js';
 import {
   claimNewDepositCoin, type DepositCoin, type DepositMoney,
 } from '../../../src/midnight/deposit-nonce.js';
 import {
-  currentDepositNonceKey, openNonceSecrets, recordsKeypairFrom, startNonceSecret,
+  currentDepositNonceKey, openNonceSecrets, recordsKeypairFrom, startNonceSecret, startNonceSecretAgain,
   type NonceSecretReader,
 } from '../../../src/midnight/company-nonce-secret.js';
 import type { WireRecord } from '../../../src/midnight/sealed-record-wire.js';
@@ -56,6 +64,11 @@ export interface VaultAsRead {
   readonly everCreated: ReadonlySet<string>;
   /** The ledger's commitment of a coin owned by the vault. */
   readonly outputCommitmentOf: (coin: DepositCoin) => Promise<string> | string;
+  /**
+   * Whether `secret` is the one the vault's commitment on the chain names, in
+   * the same state the deposit is built against.
+   */
+  readonly secretIsTheVaults: (secret: Hex) => Promise<boolean> | boolean;
   /** Whether the vault holds this coin now. */
   readonly heldNow: (coin: DepositCoin) => Promise<boolean> | boolean;
 }
@@ -72,7 +85,7 @@ export async function startVaultNonceSecretOnThisDevice(
   vault: Hex, me: DeviceSigner, others: readonly NonceSecretReader[], records: DeviceRecords,
   /** Every coin the chain has ever created for the vault, as read now. */
   everCreated: ReadonlySet<string>,
-): Promise<void> {
+): Promise<SealedPool> {
   const store = records('nonce-secret');
   if (await store.get(vault)) {
     throw new Error(
@@ -92,7 +105,36 @@ export async function startVaultNonceSecretOnThisDevice(
       + 'file that copy again. A vault funded before nonce secrets existed has none, and cannot take a '
       + 'private deposit from this device: deposit into a new vault instead.');
   }
-  await store.put(vault, startNonceSecret(vault, [recordsReaderOf(me.companyKey), ...others]));
+  const made = startNonceSecret(vault, [recordsReaderOf(me.companyKey), ...others]);
+  await store.put(vault, made);
+  return made;
+}
+
+/**
+ * **A FRESH FIRST SECRET IN PLACE OF ONE NOTHING VOUCHES FOR**, made here and
+ * filed as the next version after `filed`, wrapped to every signer given (this
+ * one included), and handed back. Only for a vault the chain has made nothing
+ * for, whose first secret the chain has not taken and that no open secret run
+ * commits to; the caller has read the chain and says so. Refused when the
+ * newest version filed is no longer `filed`: somebody filed another since, and
+ * the press is made again.
+ */
+export async function startVaultNonceSecretAgainOnThisDevice(
+  vault: Hex, me: DeviceSigner, others: readonly NonceSecretReader[], records: DeviceRecords,
+  everCreated: ReadonlySet<string>, filed: SealedPool,
+): Promise<SealedPool> {
+  if (everCreated.size > 0) {
+    throw new Error(
+      'the chain has already made coins for this vault, so its secret is not replaced. Nothing is written.');
+  }
+  const store = records('nonce-secret');
+  const newest = await store.get(vault);
+  if (newest === null || newest.version !== filed.version) {
+    throw new Error('another secret was filed for this vault while this one was being checked. Nothing is written; try again.');
+  }
+  const made = startNonceSecretAgain(filed, vault, [recordsReaderOf(me.companyKey), ...others]);
+  await store.put(vault, made);
+  return made;
 }
 
 /**
@@ -124,6 +166,11 @@ export async function depositCoinOnThisDevice(input: {
       + 'again. Nothing is filed or deposited. Start the vault\x27s nonce secret first.');
   }
   const secrets = openNonceSecrets(newest, vault, opener);
+  if (!(await input.chain.secretIsTheVaults(secrets.secrets[secrets.secrets.length - 1]! as Hex))) {
+    throw new Error(
+      'the secret the company\x27s records hold for this vault is not the one the vault holds on the chain, so a '
+      + 'deposit made under it could be traced by whoever made it. Nothing is filed or deposited; contact support.');
+  }
   const journal = new DepositJournalInStore(
     input.records('deposit-journal'), vault, { id: me.signerId, wrappingSecret: me.wrappingSecret },
     input.signers, currentDepositNonceKey(secrets));

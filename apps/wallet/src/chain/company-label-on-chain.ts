@@ -1,7 +1,7 @@
 import { ContractState } from '@midnightntwrk/ledger-v9';
-import type { AccountSeats } from 'midnight-identity/profile/records-key';
-import { COMPANY_LABEL_ENTRY, companyLabelOf, readAccountAddress } from 'midnight-identity/profile/company-label';
-import type { AccountAddress, CompanyLabel } from 'midnight-identity/profile/company-label';
+import type { AccountSeats, VaultHolders } from 'midnight-identity/profile/records-key';
+import { COMPANY_LABEL_ENTRY, companyLabelOf, readAccountAddress, readVaultAddress } from 'midnight-identity/profile/company-label';
+import type { AccountAddress, CompanyLabel, VaultAddress } from 'midnight-identity/profile/company-label';
 
 /**
  * **THE WALLET READS A COMPANY'S LABEL OFF ITS ACCOUNT ITSELF.**
@@ -28,6 +28,12 @@ export const ROLES_FIELD = 13;
 
 /** Where the account's set of seated signers' leaves sits among the fields of its public state. */
 export const SIGNER_LEAVES_FIELD = 9;
+
+/** Where a vault's public state names the account it is pinned to: written once, by its constructor. */
+export const VAULT_ACCOUNT_FIELD = 0;
+
+/** How many fields a vault's public state has, as this product deploys one. */
+export const VAULT_FIELDS = 14;
 
 /**
  * **WHO HOLDS THE ACCOUNT, AS THIS WALLET READ IT FROM THE CHAIN**: the keys of
@@ -109,6 +115,59 @@ export function seatsInAccountState(serialized: Uint8Array): SeatsOnChain {
     threshold: authority.threshold,
     seats: Object.freeze(seats),
   });
+}
+
+const committeeOf = (state: ContractState): VaultHolders['committee'] =>
+  Object.freeze(state.maintenanceAuthority.committee.map((k) => Object.freeze({ tag: String(k.tag), value: String(k.value).toLowerCase() })));
+
+/**
+ * **WHO HOLDS A VAULT, AND WHICH ACCOUNT IT IS PINNED TO, FROM ITS SERIALISED
+ * STATE.** The committee and threshold are the vault's own maintenance
+ * authority, read exactly as an account's are; the account is the one its
+ * constructor wrote. Throws when the bytes are not a contract's state laid out
+ * as a vault is.
+ */
+export function vaultInState(vault: VaultAddress, serialized: Uint8Array): VaultHolders {
+  const state = ContractState.deserialize(serialized);
+  const fields = state.data.state.asArray();
+  const notAVault = 'that contract\'s state is not laid out as a company\'s vault.';
+  if (fields === undefined || fields.length !== VAULT_FIELDS) throw new Error(notAVault);
+  const field = fields[VAULT_ACCOUNT_FIELD]!;
+  const cell = field.asCell() as ReturnType<typeof field.asCell> | undefined;
+  /* The account is a reference to a contract: one thirty-two byte address, which is all the cell holds. */
+  const account = cell === undefined || cell.value.length !== 1 ? null : as32(cell.value[0]);
+  if (account === null || account.every((b) => b === 0)) throw new Error(notAVault);
+  return Object.freeze({
+    vault: String(vault),
+    account: Array.from(account, (b) => b.toString(16).padStart(2, '0')).join(''),
+    committee: committeeOf(state),
+    threshold: state.maintenanceAuthority.threshold,
+  });
+}
+
+export type VaultOnChain =
+  /** The vault exists; who holds it and the account it is pinned to, as read. */
+  | { readonly of: 'read'; readonly holders: VaultHolders }
+  /** The indexer knows no contract at that address. */
+  | { readonly of: 'no-vault' }
+  /** The read did not come back, or came back as something that is not a vault's state. */
+  | { readonly of: 'unreadable'; readonly why: string };
+
+/** Reads who holds the vault at `vault`. Never throws: a failed read is `unreadable`. */
+export async function vaultOnChain(vault: VaultAddress, read: ContractStateHex): Promise<VaultOnChain> {
+  if (readVaultAddress(vault) === null) return { of: 'unreadable', why: 'that is not a vault\'s address.' };
+  let hex: string | null;
+  try {
+    hex = await read(vault as unknown as AccountAddress);
+  } catch (e) {
+    return { of: 'unreadable', why: e instanceof Error ? e.message : 'the read did not come back.' };
+  }
+  if (hex === null) return { of: 'no-vault' };
+  try {
+    return { of: 'read', holders: vaultInState(vault, bytesOf(hex)) };
+  } catch (e) {
+    return { of: 'unreadable', why: e instanceof Error ? e.message : 'the state did not read.' };
+  }
 }
 
 /** What the read goes through: the indexer's own answer for one contract, as hex, or null. */

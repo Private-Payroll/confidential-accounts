@@ -5,11 +5,12 @@
  */
 import { describe, it, expect } from 'vitest';
 import {
-  depositCoinOnThisDevice, startVaultNonceSecretOnThisDevice, recordsReaderOf, type DeviceSigner, type DeviceRecords,
+  depositCoinOnThisDevice, startVaultNonceSecretAgainOnThisDevice, startVaultNonceSecretOnThisDevice, recordsReaderOf,
+  type DeviceSigner, type DeviceRecords,
 } from './deposit-on-device.js';
 import { MemorySealedPoolStore, SealedNotePool, type PoolSigner } from '../../../src/midnight/vault-pool.js';
 import {
-  openNonceSecrets, recordsKeypairFrom, rotateNonceSecret, currentDepositNonceKey,
+  openNonceSecrets, recordsKeypairFrom, rotateNonceSecret, currentDepositNonceKey, startNonceSecret, startNonceSecretAgain,
 } from '../../../src/midnight/company-nonce-secret.js';
 import { depositNonceAt, DepositCoinAlreadyMade } from '../../../src/midnight/deposit-nonce.js';
 import { newWrappingKeypair, type Hex } from '../../../src/core/crypto.js';
@@ -28,7 +29,7 @@ const storesFor = (): { records: DeviceRecords; kept: Map<WireRecord, MemorySeal
   const kept = new Map<WireRecord, MemorySealedPoolStore>();
   return { kept, records: (r) => kept.get(r) ?? kept.set(r, new MemorySealedPoolStore()).get(r)! };
 };
-const nothingMade = { everCreated: new Set<string>(), outputCommitmentOf: () => 'none', heldNow: () => false };
+const nothingMade = { everCreated: new Set<string>(), outputCommitmentOf: () => 'none', heldNow: () => false, secretIsTheVaults: () => true };
 
 describe('a deposit\'s coin, chosen on the device', () => {
   it('IS DERIVED FROM THE VAULT\'S CURRENT EPOCH AT THE FIRST FREE SLOT, by any signer, and filed as a sealed line', async () => {
@@ -79,5 +80,57 @@ describe('a deposit\'s coin, chosen on the device', () => {
     expect(await records('nonce-secret').versions(VAULT)).toEqual([]);
     await startVaultNonceSecretOnThisDevice(VAULT, ada.me, [], records, new Set());
     await expect(startVaultNonceSecretOnThisDevice(VAULT, ada.me, [], records, new Set())).rejects.toThrow(/already has a nonce secret/);
+  });
+
+  it('HANDS BACK THE RECORD IT MADE, so the device that made the secret builds on that and not on what is read back', async () => {
+    const ada = person('ada', 1);
+    const { records } = storesFor();
+    const made = await startVaultNonceSecretOnThisDevice(VAULT, ada.me, [], records, new Set());
+    /* RED WHEN: what is handed back is not the record filed. */
+    expect(made).toEqual(await records('nonce-secret').get(VAULT));
+  });
+
+  it('A FRESH FIRST SECRET IS FILED AS THE NEXT VERSION, ONLY OVER THE VERSION READ, AND NEVER FOR A VAULT WITH MONEY', async () => {
+    const ada = person('ada', 1); const bo = person('bo', 2);
+    const { records } = storesFor();
+    const first = await startVaultNonceSecretOnThisDevice(VAULT, ada.me, [recordsReaderOf(bo.me.companyKey)], records, new Set());
+    const opened = (r: Awaited<typeof first>, who = ada) => openNonceSecrets(r, VAULT, recordsKeypairFrom(who.me.companyKey));
+    /* RED WHEN: a vault the chain has made coins for has its secret replaced, and its deposits lose their names. */
+    await expect(startVaultNonceSecretAgainOnThisDevice(VAULT, bo.me, [recordsReaderOf(ada.me.companyKey)], records, new Set(['made']), first))
+      .rejects.toThrow(/already made coins for this vault/);
+    const again = await startVaultNonceSecretAgainOnThisDevice(VAULT, bo.me, [recordsReaderOf(ada.me.companyKey)], records, new Set(), first);
+    /* RED WHEN: the fresh secret is the one before, or is not the newest version, or is not one epoch, or misses a signer. */
+    expect(again.version).toBe(2);
+    expect(await records('nonce-secret').get(VAULT)).toEqual(again);
+    expect(opened(again).secrets).toHaveLength(1);
+    expect(opened(again).secrets[0]).not.toBe(opened(first).secrets[0]);
+    expect(opened(again, bo).secrets).toEqual(opened(again).secrets);
+    /* RED WHEN: a fresh secret is anything but newly random - worked out from the vault or the record before, say. */
+    const twice = [0, 1].map(() => opened(startNonceSecretAgain(first, VAULT, [recordsReaderOf(ada.me.companyKey)])).secrets[0]);
+    expect(twice[0]).not.toBe(twice[1]);
+    /* RED WHEN: a fresh secret is filed over a version the device did not read - somebody filed another since. */
+    await expect(startVaultNonceSecretAgainOnThisDevice(VAULT, bo.me, [], records, new Set(), first))
+      .rejects.toThrow(/another secret was filed for this vault/);
+    expect((await records('nonce-secret').versions(VAULT))).toHaveLength(2);
+    /* RED WHEN: a record of another vault is taken as the one a fresh secret follows. */
+    const other = storesFor();
+    const elsewhere = await startVaultNonceSecretOnThisDevice('cd'.repeat(32) as Hex, ada.me, [], other.records, new Set());
+    await other.records('nonce-secret').put(VAULT, startNonceSecret(VAULT, [recordsReaderOf(ada.me.companyKey)]));
+    await expect(startVaultNonceSecretAgainOnThisDevice(VAULT, ada.me, [], other.records, new Set(), { ...elsewhere, version: 1 }))
+      .rejects.toThrow(/is not this vault's, so nothing is written/);
+  });
+
+  it('REFUSES A DEPOSIT UNDER A SECRET THE VAULT DOES NOT HOLD, before a coin is chosen or a line is filed', async () => {
+    const ada = person('ada', 1);
+    const { records, kept } = storesFor();
+    await startVaultNonceSecretOnThisDevice(VAULT, ada.me, [], records, new Set());
+    const asked: string[] = [];
+    /* RED WHEN: a deposit is made under the secret the records hold without asking whether the vault holds it. */
+    await expect(depositCoinOnThisDevice({
+      vault: VAULT, money: { token: TOKEN, value: 9n }, me: ada.me, signers: async () => [ada.who], records,
+      chain: { ...nothingMade, secretIsTheVaults: (secret) => { asked.push(secret); return false; } },
+    })).rejects.toThrow(/not the one the vault holds on the chain/);
+    expect(asked).toEqual(openNonceSecrets((await records('nonce-secret').get(VAULT))!, VAULT, recordsKeypairFrom(ada.me.companyKey)).secrets);
+    expect(kept.get('deposit-journal')?.versions(VAULT) === undefined || (await kept.get('deposit-journal')!.versions(VAULT)).length === 0).toBe(true);
   });
 });

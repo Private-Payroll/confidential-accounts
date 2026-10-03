@@ -9,6 +9,7 @@
  * about them taken on trust. The one value the device takes from the service,
  * the account's asset blinding, is pinned as exactly that.
  */
+import { NO_ASSET } from '../../../src/core/assets.js';
 import { describe, it, expect } from 'vitest';
 import { drawCompanyLabel } from 'midnight-identity/profile/company-label';
 import { createHash } from 'node:crypto';
@@ -275,6 +276,9 @@ describe('THE PAGE READS THE COMPANY\'S OWN RECORDS WITH THE VIEWING KEY', () =>
     ['a record another company wrote, in this company\'s list', 'prp_x', [aRecord('prp_x', {}, 'acc_other')],
       /hold no proposal by that name/u],
     ['a record nobody wrote', 'prp_nobody', [], /hold no proposal by that name/u],
+    /* RED WHEN: a run in no asset - the step that sets a vault's secret - is opened here, skipping the check of who it is sealed to. */
+    ['a vault\'s set-up step, written down as a payroll run', 'prp_x', [aRecord('prp_x', { asset: NO_ASSET })],
+      /pays nothing: it sets up one of the company's vaults, and it is approved only from setting that vault up/u],
   ] as Array<[string, string, ReturnType<typeof sealedProposalFor>[], RegExp]>)(
     'is not built from: %s', async (_what, id, extra, says) => {
       const refused = await openTheRoundHere(honest(extra), company, id, viewingKey, false).catch((e) => e);
@@ -283,6 +287,12 @@ describe('THE PAGE READS THE COMPANY\'S OWN RECORDS WITH THE VIEWING KEY', () =>
       expect(refused.message).toMatch(says);
       expect(refused.message).toMatch(/Nothing was built or sent\.$/u);
     });
+
+  it('a payroll run in a real asset is opened as one: only the run in no asset is refused', async () => {
+    /* RED WHEN: the refusal of a vault's set-up step catches every payroll run. */
+    const opened = await openTheRoundHere(honest([aRecord('prp_pay', { asset: '44'.repeat(32) })]), company, 'prp_pay', viewingKey, false);
+    expect(opened.chainId).toBe('cc'.repeat(32));
+  });
 
   it('is not built from a record this company\'s key does not open, or when the page cannot read the records at all', async () => {
     await expect(openTheRoundHere(honest(), company, seatRound.id, 'ab'.repeat(32), false))

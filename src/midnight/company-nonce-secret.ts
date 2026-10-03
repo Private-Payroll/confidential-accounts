@@ -194,6 +194,26 @@ export const startNonceSecret = (vault: string, readers: readonly NonceSecretRea
     readers.map(publicKeyOf));
 
 /**
+ * **A FRESH FIRST SECRET, FILED AS THE NEXT VERSION OF A RECORD NOBODY CAN
+ * VOUCH FOR**: epoch 1 again, a new secret, wrapped to every signer given. For
+ * a vault whose first secret the chain has never taken and that no open secret
+ * run commits to, so the secret filed before it has made no coin and binds the
+ * vault to nothing. Nothing of the record before is opened or carried: a
+ * secret this device did not make and cannot check against the chain is not
+ * one to keep.
+ */
+export const startNonceSecretAgain = (
+  filed: SealedPool, vault: string, readers: readonly NonceSecretReader[],
+): SealedPool => {
+  const expected = vaultOf(vault);
+  if (filed?.vault !== expected || !Number.isSafeInteger(filed.version) || filed.version < 1) {
+    throw new Error('the record a fresh secret would follow is not this vault\x27s, so nothing is written.');
+  }
+  return build({ record: NONCE_SECRET_RECORD, vault: expected, version: filed.version + 1, epoch: 1, secrets: [newSecret()] },
+    readers.map(publicKeyOf));
+};
+
+/**
  * **OPENS A RECORD WITH ONE SIGNER'S RECORDS KEY**, and checks that it is what
  * it says it is: the vault asked for, the version it is filed as, one secret per
  * epoch, and the newest secret the one the copy carried.

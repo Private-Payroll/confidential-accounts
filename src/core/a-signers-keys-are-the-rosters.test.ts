@@ -7,14 +7,17 @@
  * account service over a store file, with the simulated ledger under it.
  */
 import { describe, it, expect, beforeEach } from 'vitest';
-import { drawCompanyLabel } from 'midnight-identity/profile/company-label';
+import { drawCompanyLabel, type CompanyLabel } from 'midnight-identity/profile/company-label';
+import { identityFromSecret } from 'midnight-identity';
+import { committeeKeyFor } from 'midnight-identity/profile/committee-key';
+import { signRecordsKey } from 'midnight-identity/profile/records-key';
 import { mkdtempSync, readFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { SimulatedLedger } from './ledger.js';
 import { MidnightCommitments } from '../midnight/commitments.js';
 import { FileStore } from './store-file.js';
-import { AccountService, NoSeatToGiveKeysFor, VaultKeysAlreadyGiven, VaultKeysNotYours } from './account.js';
+import { AccountService, NoSeatToGiveKeysFor, RecordsKeyNotSignedForYourSeat, VaultKeysAlreadyGiven, VaultKeysNotYours } from './account.js';
 import { newSigningKeypair } from './crypto.js';
 import { rosterVaultKeys, signVaultKeys, vaultKeyIndexOf } from './vault-keys.js';
 import type { Hex } from './crypto.js';
@@ -29,16 +32,18 @@ let company: string;
 let viewingKey: Hex;
 let ada: { signerId: string; signingSecret: Hex };
 let bo: { signerId: string; signingSecret: Hex };
+let label: CompanyLabel;
 
 beforeEach(async () => {
   path = join(mkdtempSync(join(tmpdir(), 'mn-roster-keys-')), 'db.json');
   store = new FileStore(path);
   accounts = new AccountService(store, new SimulatedLedger(MidnightCommitments), MidnightCommitments);
+  label = drawCompanyLabel();
   const created = await accounts.create('Rostered', [
     /* Names with a space in them: no account id or key can contain one, so "not in the index" cannot pass by chance. */
     { name: 'Ada Lovelace', role: 'admin', userId: 'usr_ada' },
     { name: 'Bo Diddley', role: 'approver', userId: 'usr_bo' },
-  ], 2, undefined, drawCompanyLabel());
+  ], 2, undefined, label);
   company = created.account.id;
   viewingKey = created.viewingKey;
   ada = created.secrets[0]!;
@@ -58,29 +63,63 @@ describe('A SIGNER\'S VAULT KEYS LIVE IN THEIR OWN ROSTER ENTRY', () => {
     expect(roster.find((r) => r.signerId === bo.signerId)!.keys).toBeNull();
   });
 
-  it('THE SAME KEYS GIVEN AGAIN WITH THE WALLET\'S STATEMENT OVER THE RECORDS KEY ADD IT, AND NOTHING ELSE CHANGES', () => {
-    accounts.giveVaultKeys(company, viewingKey, 'usr_ada', signed(ada, 1));
-    const statement = '5a'.repeat(64) as Hex;
-    const seat = '6b'.repeat(32) as Hex;
-    const withStatement = { ...signed(ada, 1), recordsKeyStatement: statement, recordsKeySeat: seat };
-    /* RED WHEN: a statement given with the same keys is dropped, or a set given once refuses it. */
-    expect(accounts.giveVaultKeys(company, viewingKey, 'usr_ada', withStatement)).toBe('given');
-    expect(rosterVaultKeys(accounts.open(company, viewingKey)).find((r) => r.signerId === ada.signerId)!.keys)
-      .toEqual({ committeeKey: key(1), recordsKey: hex(0x11), recordsKeyStatement: statement, recordsKeySeat: seat });
-    expect(accounts.giveVaultKeys(company, viewingKey, 'usr_ada', withStatement)).toBe('already-given');
-    /* RED WHEN: a statement for the seat held now, after a re-seat, does not replace the one kept. */
-    const reseated = { ...withStatement, recordsKeyStatement: '7c'.repeat(64) as Hex, recordsKeySeat: '8d'.repeat(32) as Hex };
-    expect(accounts.giveVaultKeys(company, viewingKey, 'usr_ada', reseated)).toBe('given');
-    expect(rosterVaultKeys(accounts.open(company, viewingKey)).find((r) => r.signerId === ada.signerId)!.keys!.recordsKeySeat)
-      .toBe('8d'.repeat(32));
-    expect(accounts.giveVaultKeys(company, viewingKey, 'usr_ada', withStatement)).toBe('given');
-    /* RED WHEN: a statement opens the door to different keys under the same seat. */
-    expect(() => accounts.giveVaultKeys(company, viewingKey, 'usr_ada', { ...signed(ada, 4), recordsKeyStatement: statement, recordsKeySeat: seat }))
-      .toThrow(VaultKeysAlreadyGiven);
-    /* RED WHEN: a set given again without a statement wipes the one already kept. */
-    expect(accounts.giveVaultKeys(company, viewingKey, 'usr_ada', signed(ada, 1))).toBe('already-given');
-    expect(rosterVaultKeys(accounts.open(company, viewingKey)).find((r) => r.signerId === ada.signerId)!.keys!.recordsKeyStatement)
-      .toBe(statement);
+  describe('A STATEMENT OVER THE RECORDS KEY, GIVEN AGAIN', () => {
+    /* Ada's wallet: her committee key for this company, and her records key worked out from the company key it releases. */
+    const me = identityFromSecret(new Uint8Array(32).fill(7));
+    const companyKey = new Uint8Array(32).fill(0x2a);
+    const hers = () => {
+      const committeeKey = committeeKeyFor(me, label) as { tag: string; value: string };
+      const seat = accounts.open(company, viewingKey).signers.find((x) => x.id === ada.signerId)!.leafCommitment!.toLowerCase();
+      const statement = signRecordsKey(me, label, companyKey, seat);
+      const keys = signVaultKeys(company, ada.signerId, { committeeKey, recordsKey: statement.recordsKey as Hex }, ada.signingSecret);
+      const withIt = (st: { signature: string; seat: string }) => ({ ...keys, recordsKeyStatement: st.signature as Hex, recordsKeySeat: st.seat as Hex });
+      return { keys, seat, statement, withIt };
+    };
+    const kept = () => rosterVaultKeys(accounts.open(company, viewingKey)).find((r) => r.signerId === ada.signerId)!.keys!;
+
+    it('THE SAME KEYS GIVEN AGAIN WITH THE WALLET\'S STATEMENT ADD IT, A NEWER ONE REPLACES IT, AND NOTHING ELSE CHANGES', () => {
+      const h = hers();
+      accounts.giveVaultKeys(company, viewingKey, 'usr_ada', h.keys);
+      /* RED WHEN: a statement given with the same keys is dropped, or a set given once refuses it. */
+      expect(accounts.giveVaultKeys(company, viewingKey, 'usr_ada', h.withIt(h.statement))).toBe('given');
+      expect(kept()).toEqual({
+        committeeKey: h.keys.committeeKey, recordsKey: h.keys.recordsKey, recordsKeyStatement: h.statement.signature, recordsKeySeat: h.seat,
+      });
+      expect(accounts.giveVaultKeys(company, viewingKey, 'usr_ada', h.withIt(h.statement))).toBe('already-given');
+      /* RED WHEN: the wallet's statement signed again for the seat held now does not replace the one kept. */
+      const again = signRecordsKey(me, label, companyKey, h.seat);
+      expect(again.signature).not.toBe(h.statement.signature);
+      expect(accounts.giveVaultKeys(company, viewingKey, 'usr_ada', h.withIt(again))).toBe('given');
+      expect(kept().recordsKeyStatement).toBe(again.signature);
+      /* RED WHEN: a statement opens the door to different keys under the same seat. */
+      expect(() => accounts.giveVaultKeys(company, viewingKey, 'usr_ada', { ...signed(ada, 4), recordsKeyStatement: again.signature as Hex, recordsKeySeat: h.seat as Hex }))
+        .toThrow(VaultKeysAlreadyGiven);
+      /* RED WHEN: a set given again without a statement wipes the one already kept. */
+      expect(accounts.giveVaultKeys(company, viewingKey, 'usr_ada', h.keys)).toBe('already-given');
+      expect(kept().recordsKeyStatement).toBe(again.signature);
+    });
+
+    it('A STATEMENT THAT DOES NOT VERIFY IS REFUSED, AND THE ONE KEPT IS KEPT', () => {
+      const h = hers();
+      accounts.giveVaultKeys(company, viewingKey, 'usr_ada', h.withIt(h.statement));
+      const other = identityFromSecret(new Uint8Array(32).fill(8));
+      for (const [why, bad] of [
+        /* RED WHEN: a signature that is no signature replaces a good one. */
+        ['not a signature over it', { signature: 'ab'.repeat(64), seat: h.seat }],
+        /* RED WHEN: a statement signed by any key but the committee key this entry carries replaces it. */
+        ['signed by another wallet', signRecordsKey(other, label, companyKey, h.seat)],
+        /* RED WHEN: a statement for a seat the roster does not hold for this signer replaces it. */
+        ['for another seat', signRecordsKey(me, label, companyKey, '8d'.repeat(32))],
+        /* RED WHEN: a statement for another company replaces it. */
+        ['for another company', signRecordsKey(me, drawCompanyLabel(), companyKey, h.seat)],
+      ] as const) {
+        expect(() => accounts.giveVaultKeys(company, viewingKey, 'usr_ada', h.withIt(bad)), why).toThrow(RecordsKeyNotSignedForYourSeat);
+        expect(kept().recordsKeyStatement, why).toBe(h.statement.signature);
+        expect(kept().recordsKeySeat, why).toBe(h.seat);
+      }
+      /* Said as keys that are not this signer's, so the route answers it as it answers those. */
+      expect(new RecordsKeyNotSignedForYourSeat()).toBeInstanceOf(VaultKeysNotYours);
+    });
   });
 
   it('NOBODY CAN PUT A KEY IN ANOTHER SIGNER\'S NAME: keys signed by any other seat are refused, and the roster is untouched', () => {

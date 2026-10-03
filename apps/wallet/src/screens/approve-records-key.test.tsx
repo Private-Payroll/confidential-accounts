@@ -11,7 +11,7 @@ import { committeeKeyFor } from 'midnight-identity/profile/committee-key';
 import { recordsKeySignedBy, type RecordsKeyAnswer } from 'midnight-identity/profile/records-key';
 import type { AccountAddress, CompanyLabel } from 'midnight-identity/profile/company-label';
 import type { LabelReader } from './company-on-chain.js';
-import { ApproveRecordsKey } from './approve-records-key.js';
+import { ApproveRecordsKey, type VaultReader } from './approve-records-key.js';
 import { Approve } from './approve.js';
 import { secretFromWords } from 'midnight-identity/keys/derivation';
 import type { ChannelWindow } from 'midnight-identity/profile/channel';
@@ -49,10 +49,16 @@ const channelFor = (answers: unknown[]): Channel => ({
 } as Channel);
 const consented = { ok: true } as never;
 const settle = async () => { await act(async () => { for (let i = 0; i < 5; i += 1) await Promise.resolve(); }); };
-const draw = async (answers: unknown[], readLabel: LabelReader, consent = consented) => {
+const VAULT = '9a'.repeat(32);
+/* The vault, as this wallet reads it: held by the person's committee key, pinned to the account the page names. */
+const HOLDERS = { vault: VAULT, account: ACCOUNT as string, committee: [mine], threshold: 1 };
+const vaultChain = (over: Partial<typeof HOLDERS> = {}): VaultReader => async (v) =>
+  (v === VAULT ? { of: 'read', holders: { ...HOLDERS, ...over } } : { of: 'no-vault' });
+const draw = async (answers: unknown[], readLabel: LabelReader, consent = consented, vault?: { readVault: VaultReader }) => {
   const r = render(
-    <ApproveRecordsKey request={ask()} identity={identity} channel={channelFor(answers)} consent={consent}
-      whoIsAsking={<p>asker</p>} onDecline={() => answers.push('declined')} now={() => NOW} readLabel={readLabel} />);
+    <ApproveRecordsKey request={vault === undefined ? ask() : ask({ vault: VAULT })} identity={identity} channel={channelFor(answers)} consent={consent}
+      whoIsAsking={<p>asker</p>} onDecline={() => answers.push('declined')} now={() => NOW} readLabel={readLabel}
+      {...(vault === undefined ? {} : { readVault: vault.readVault })} />);
   await settle();
   return r;
 };
@@ -117,6 +123,33 @@ describe('THE SCREEN FOR SIGNING A RECORDS KEY FOR A SEAT', () => {
     /* RED WHEN: a read that failed is shown as one still under way, or the wallet offers to sign without seats. */
     expect(container.querySelector('[data-seat-checking]')).toBeNull();
     expect(container.querySelector('[data-seat-unread]')).not.toBeNull();
+    expect(button(container).disabled).toBe(true);
+    fireEvent.click(button(container));
+    expect(answers).toEqual([]);
+  });
+
+  it('WITH A VAULT NAMED, THE ANSWER CARRIES WHO HOLDS THAT VAULT AS THIS WALLET READ IT, AND NOTHING IS SIGNED UNTIL IT IS READ', async () => {
+    const answers: unknown[] = [];
+    const { container } = await draw(answers, chain(), consented, { readVault: vaultChain() });
+    expect(container.querySelector('[data-vault-read]')).not.toBeNull();
+    await act(async () => { fireEvent.click(button(container)); });
+    /* RED WHEN: the answer drops the vault, or carries anything but what this wallet read off it. */
+    expect((answers[0] as RecordsKeyAnswer).vault).toEqual(HOLDERS);
+    /* RED WHEN: a vault this wallet could not read is signed for anyway. */
+    const unread: unknown[] = [];
+    cleanup();
+    const failed = await draw(unread, chain(), consented, { readVault: async () => ({ of: 'unreadable', why: 'offline' }) });
+    expect(failed.container.querySelector('[data-vault-unread]')).not.toBeNull();
+    expect(button(failed.container).disabled).toBe(true);
+    fireEvent.click(button(failed.container));
+    expect(unread).toEqual([]);
+  });
+
+  it('A VAULT PINNED TO ANOTHER COMPANY\'S ACCOUNT IS NOT SIGNED FOR, and the screen says why', async () => {
+    const answers: unknown[] = [];
+    const { container } = await draw(answers, chain(), consented, { readVault: vaultChain({ account: 'ad'.repeat(32) }) });
+    /* RED WHEN: the wallet signs while the vault it read belongs to another company account. */
+    expect(container.querySelector('[data-vault-other-account]')).not.toBeNull();
     expect(button(container).disabled).toBe(true);
     fireEvent.click(button(container));
     expect(answers).toEqual([]);

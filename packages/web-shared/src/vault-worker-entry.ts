@@ -384,6 +384,17 @@ export const answerVaultAsk = async (
       }
       return { id: ask.id, ok: true, ask: 'own-seat', seat: storedSignerLeaf(m, MidnightCommitments).toLowerCase() };
     }
+    case 'secret-is-the-vaults': {
+      /* The vault's own commitment function over the secret, against the commitment the vault's state holds. */
+      const hex = /^[0-9a-f]{64}$/iu;
+      if (!hex.test(ask.vault) || !hex.test(ask.secret)) throw new Error('that is not a vault and a secret, so nothing was compared.');
+      const bytes = (h: string) => Uint8Array.from(h.match(/../gu)!, (x) => Number.parseInt(x, 16));
+      const held = (d.vault.ledger((d.runtimeState.deserialize(fromBase64(ask.state)) as { data: unknown }).data) as { nonceCommitment: Uint8Array }).nonceCommitment;
+      const worked = (d.vault.pureCircuits as { secretCommitmentOf(v: Uint8Array, s: Uint8Array): Uint8Array })
+        .secretCommitmentOf(bytes(ask.vault), bytes(ask.secret));
+      const matches = held.length === worked.length && held.every((b, i) => b === worked[i]) && held.some((b) => b !== 0);
+      return { id: ask.id, ok: true, ask: 'secret-is-the-vaults', matches };
+    }
     case 'commitments': {
       /* The two commitments a coin has: as an output the ledger records, and as the note the vault holds. */
       const [{ compiledOutputCommitment }, { commitmentForNote }] = await Promise.all([

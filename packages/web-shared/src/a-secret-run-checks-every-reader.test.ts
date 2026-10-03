@@ -51,7 +51,7 @@ const press = async (o: {
   roster?: RosterVaultKeys[];
   /** The seats the account holds now, as the wallet read them, when not Ada's and Bo's. */
   seats?: string[];
-  /** The committee the chain shows holding the vault, when it is not the account's. */
+  /** The committee the signer's wallet reads holding the vault, when it is not the account's. The service always reports the account's. */
   vaultHeldBy?: { tag: string; value: string }[];
 }) => {
   const asked: string[] = [];
@@ -59,7 +59,7 @@ const press = async (o: {
   const view: VaultChainView = {
     vault: VAULT, onChain: true, heldByCommittee: true, why: null, notes: [], everCreated: [],
     committee: { committee, threshold: 2 } as never,
-    authority: { committee: o.vaultHeldBy ?? committee, threshold: 2, counter: '1', shape: 'committee' },
+    authority: { committee, threshold: 2, counter: '1', shape: 'committee' },
   };
   const stores = new Map<WireRecord, MemorySealedPoolStore>();
   const records = (r: WireRecord) => stores.get(r) ?? stores.set(r, new MemorySealedPoolStore()).get(r)!;
@@ -106,7 +106,11 @@ const press = async (o: {
     material: { signingSecret: '11'.repeat(32), blinding: '22'.repeat(32), scope: '33'.repeat(32) },
     secretReaders: {
       company: CO, committeeKey: ada.committeeKey,
-      seats: { committee, threshold: 2, seats: o.seats ?? [ada.seat, bo.seat] },
+      /* Who holds the account and the vault, as Ada's own wallet read them for this check: the vault read off the vault itself. */
+      read: async () => ({
+        committee, threshold: 2, seats: o.seats ?? [ada.seat, bo.seat],
+        vault: { vault: VAULT, account: ACCOUNT, committee: o.vaultHeldBy ?? committee, threshold: 2 },
+      }),
       roster: async () => o.roster ?? [ada.entry, bo.entry],
     },
   }, VAULT as never).catch((e: unknown) => e);
@@ -164,7 +168,7 @@ describe('A SECRET RUN IS CHECKED, READER BY READER, BEFORE THIS DEVICE RAISES O
     expect((result as Error).message).toMatch(/does not open with the key your own recovery words give/);
   });
 
-  it('A VAULT THE CHAIN SHOWS HELD BY ANY OTHER COMMITTEE THAN THE ACCOUNT\'S IS REFUSED', async () => {
+  it('A VAULT THE SIGNER\'S OWN WALLET READS HELD BY ANY OTHER COMMITTEE THAN THE ACCOUNT\'S IS REFUSED, WHATEVER THE SERVICE REPORTS', async () => {
     const temporary = { tag: 'schnorr', value: '77'.repeat(32) };
     const { result, asked } = await press({
       readers: [ada.recordsKey, bo.recordsKey], copies: run(ada.recordsKey, bo.recordsKey), vaultHeldBy: [ada.committeeKey, temporary],

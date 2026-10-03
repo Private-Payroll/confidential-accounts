@@ -13,12 +13,15 @@
  *   · Ada and Bo both deposit; one of Ada's attempts is abandoned; payments leave
  *     a change, and a change of a change.
  *   · Bo leaves: a new epoch, wrapped to Ada. Carol joins and is given it.
- *   · Ada deposits under the new epoch.
+ *   · Ada deposits under the new epoch, once the vault holds it: no deposit
+ *     is made under a secret the vault does not hold.
  *   · The pool and both journals are thrown away. What is left is the chain,
  *     the company's own amounts, and the filed versions of the nonce secret.
  *   · **Carol, who deposited nothing and joined last, rebuilds the vault from
  *     her own words**, and a rebuilt note is spent.
- *   · Bo, from his words, names what was made before he left and nothing after.
+ *   · Bo, from his words, is given only the epoch before he left, and names
+ *     nothing once the vault holds the epoch after. Whether a signer who left
+ *     should still name what was made before is not shown here.
  *
  * **WHAT THIS DOES NOT SHOW**: where the nonce secret's filed versions survive
  * this product. Here they are handed to the rebuild as the bytes the server
@@ -300,7 +303,12 @@ describe('a deposit whose record is made on the device', () => {
       const { coin, epoch } = await depositCoinOnThisDevice({
         vault: vaultAddr, money: { token: toHex(TOKEN_BYTES), value }, me: p.device,
         signers: async () => poolSigners(), records,
-        chain: { everCreated, outputCommitmentOf: outputCommitment, heldNow: (c) => chainNotes().includes(held(c)) },
+        chain: {
+          everCreated, outputCommitmentOf: outputCommitment, heldNow: (c) => chainNotes().includes(held(c)),
+          /* The vault's own commitment to the secret, against the one its state holds now. */
+          secretIsTheVaults: (s) => toHex(vaultCircuits.secretCommitmentOf(fromHex(vaultAddr), fromHex(s)))
+            === toHex(vaultLedger(charged() as never).nonceCommitment),
+        },
       });
       if (opts.abandon) return { coin, epoch };
       /* The device builds the call with the coin it chose. */
@@ -403,6 +411,10 @@ describe('a deposit whose record is made on the device', () => {
     await secrets.put(vaultAddr, admitToNonceSecret(rotated, vaultAddr, adasKey, [recordsReaderOf(carol.device.companyKey)]));
     await expect(bos.deposit(10n), 'RED WHEN: a signer who has left can still file for the vault').rejects.toThrow(/403/);
 
+    /* A deposit is made only under the secret the vault holds: until the vault takes the new epoch, none is made under it. */
+    await expect(adas.deposit(600n), 'RED WHEN: a deposit is made under a secret the vault does not hold').rejects.toThrow(/not the one the vault holds on the chain/);
+    const rotatedSecret = openNewestNonceSecrets(await secrets.versions(vaultAddr), vaultAddr, adasKey).secrets[1]!;
+    await setTheVaultSecretTo(fromHex(rotatedSecret), 0x94);
     const afterRotation = await adas.deposit(600n);
     expect(afterRotation.epoch, 'RED WHEN: a deposit after a signer left is made under a secret they know').toBe(2);
     const before = priv.notes.map((n) => n.value).sort((a, b) => Number(a - b));
@@ -454,12 +466,12 @@ describe('a deposit whose record is made on the device', () => {
     expect(left.nonce).toBe(changeNoteOf(rebuiltChange, 40n, { circuits: vaultCircuits, vault: vaultAddr, secret: toHex(vaultSecret!) })!.nonce);
     expect(chainNotes(), 'RED WHEN: the rebuilt note is still in the vault after it was spent').not.toContain(held(rebuiltChange));
 
-    /* ------------- BO, WHO LEFT, KEEPS WHAT HE HAD AND NOTHING MADE AFTER ------------- */
-    const byBoAfter = await rebuildAs(bo, filedSecrets, books);
-    expect(byBoAfter.opened.epoch, 'RED WHEN: a signer who left is handed the epoch made after').toBe(1);
-    const theNewDeposit = held(afterRotation.coin);
-    expect(byBoAfter.rebuilt.unexplained, 'RED WHEN: a signer who left can name a deposit made after they left').toContain(theNewDeposit);
-    expect(byBoAfter.rebuilt.held.some((n) => n.nonce === afterRotation.coin.nonce)).toBe(false);
+    /* ------------- BO, WHO LEFT, HOLDS ONLY THE EPOCH BEFORE, AND NAMES NOTHING ONCE THE VAULT HOLDS THE NEXT ------------- */
+    const bosOwn = openNewestNonceSecrets(filedSecrets, vaultAddr, recordsKeypairFrom(releasedCompanyKey(bo.words, company)));
+    expect(bosOwn.epoch, 'RED WHEN: a signer who left is handed the epoch made after').toBe(1);
+    /* The vault holds the epoch made after Bo left, so nothing Bo holds is its secret: his rebuild names nothing. */
+    await expect(rebuildAs(bo, filedSecrets, books), 'RED WHEN: a signer who left can name what the vault holds now')
+      .rejects.toThrow(/none of the 1 nonce secret\(s\) given is the one vault/);
   });
 
   it('A STRANGER\'S WORDS OPEN NOTHING, AND NOBODY BUT A SIGNER OF THE VAULT\'S COMPANY FILES ANYTHING', async () => {

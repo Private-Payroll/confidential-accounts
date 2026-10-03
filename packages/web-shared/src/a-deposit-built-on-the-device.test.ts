@@ -257,6 +257,8 @@ describe.skipIf(!KEYS_ON_DISK)('A DEPOSIT FROM THE PAGE, BUILT ON THE DEVICE [ne
   });
   let vault: Hex;
   let state: string;
+  /* The vault's state with its commitment to `secret`: the vault holds the secret the company's records hold. */
+  let stateHolding: (secret: string) => string;
 
   beforeAll(async () => {
     setNetworkId(NET as never);
@@ -269,18 +271,23 @@ describe.skipIf(!KEYS_ON_DISK)('A DEPOSIT FROM THE PAGE, BUILT ON THE DEVICE [ne
      * approved its first secret, every sealed copy written. A vault fresh from its
      * deploy takes no money (`src/wiring/vault-submission.test.ts` pins that).
      */
-    const deployed: any = L.ContractState.deserialize(deploy.intents.values().next().value.actions[0].initialState.serialize());
-    const fields = deployed.data.state.asArray();
-    const commitment = (L as any).StateValue.newCell({ value: [new Uint8Array(32).fill(0x51)], alignment: fields[5].asCell().alignment });
-    let next = (L as any).StateValue.newArray();
-    /* And the mark the last sealed copy leaves, without which the vault still takes no money. */
-    const bytes32 = new (runtime as any).CompactTypeBytes(32);
-    const aligned = (b: Uint8Array) => ({ value: bytes32.toValue(b), alignment: bytes32.alignment() });
-    const written = (L as any).StateValue.newMap((fields[7] as any).asMap().insert(
-      aligned((vaultModule as any).pureCircuits.copiesWrittenKey()), (L as any).StateValue.newCell(aligned(new Uint8Array(32).fill(0x51)))));
-    fields.forEach((f: unknown, i: number) => { next = next.arrayPush(i === 5 ? commitment : i === 7 ? written : f); });
-    deployed.data = new (L as any).ChargedState(next);
-    state = Buffer.from(deployed.serialize()).toString('base64');
+    const initial = deploy.intents.values().next().value.actions[0].initialState.serialize();
+    stateHolding = (secret: string): string => {
+      const deployed: any = L.ContractState.deserialize(initial);
+      const fields = deployed.data.state.asArray();
+      const held = (vaultModule as any).pureCircuits.secretCommitmentOf(Buffer.from(vault, 'hex'), Buffer.from(secret, 'hex'));
+      const commitment = (L as any).StateValue.newCell({ value: [held], alignment: fields[5].asCell().alignment });
+      let next = (L as any).StateValue.newArray();
+      /* And the mark the last sealed copy leaves, without which the vault still takes no money. */
+      const bytes32 = new (runtime as any).CompactTypeBytes(32);
+      const aligned = (b: Uint8Array) => ({ value: bytes32.toValue(b), alignment: bytes32.alignment() });
+      const written = (L as any).StateValue.newMap((fields[7] as any).asMap().insert(
+        aligned((vaultModule as any).pureCircuits.copiesWrittenKey()), (L as any).StateValue.newCell(aligned(held))));
+      fields.forEach((f: unknown, i: number) => { next = next.arrayPush(i === 5 ? commitment : i === 7 ? written : f); });
+      deployed.data = new (L as any).ChargedState(next);
+      return Buffer.from(deployed.serialize()).toString('base64');
+    };
+    state = stateHolding('51'.repeat(31) + '00');
   });
 
   it('SENDS THE SERVICE ONLY THE DEPOSIT THE WALLET FINISHED, WHICH SHOWS NO TOKEN OR AMOUNT, AND NOTHING SENT ANYWHERE CARRIES THE NONCE, ITS SECRET OR ANY PART OF THE UNPROVEN TRANSACTION', async () => {
@@ -361,7 +368,11 @@ describe.skipIf(!KEYS_ON_DISK)('A DEPOSIT FROM THE PAGE, BUILT ON THE DEVICE [ne
       myRecordsKey: recordsKeypairFrom(companyKey).publicKey,
       signers: async () => [{ id: 'ada', wrappingPublicKey: wrapping.publicKey }],
     };
-    await openCompanyVaultPool(doors, vault);
+    await openCompanyVaultPool(doors, vault, async () => {});
+    /* The vault holds the secret the company's records now hold, as a started vault does: the worker checks it. */
+    state = stateHolding(openNonceSecrets((await kept.get('nonce-secret')!.get(vault))!, vault, recordsKeypairFrom(companyKey)).secrets[0]!);
+    /* RED WHEN: the worker's own comparison says yes for a secret the vault's commitment does not name. */
+    expect(await builder.secretIsTheVaults({ vault, state, secret: '52'.repeat(31) + '00' })).toBe(false);
     /* The page's own source, a private token paid in by the person's wallet, over an asset whose private token is this test's. */
     const source = privateTokenFromTheWallet(async (ask) => {
         catching('wallet', ask);

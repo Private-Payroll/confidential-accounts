@@ -573,7 +573,7 @@ describe('creating a vault: one component, on the step and on the Vaults page', 
   it('says what resolves a set up that stopped before its secret was approved', async () => {
     const { container } = await draw(<CreateVault leadTo={() => {}} onChanged={() => {}} />, sessionWith({ company: 'c-1' }));
     for (const [stopped, key] of [
-      ['wallet', 'createVault.stopped.wallet'], ['hand-over', 'createVault.stopped.handOver'],
+      ['wallet', 'createVault.stopped.wallet'], ['hand-over', 'createVault.stopped.handOver'], ['vault', 'createVault.stopped.vault'],
       ['signers', 'createVault.stopped.signers'], ['mismatch', 'createVault.stopped.mismatch'],
     ] as const) {
       state.vaultCreated = { of: 'start-owed', vault: 'v-5', stopped } as never;
@@ -582,6 +582,109 @@ describe('creating a vault: one component, on the step and on the Vaults page', 
       expect(q(container, '[data-result]')!.dataset.stopped, stopped).toBe(stopped);
       expect(q(container, '[data-result] [data-says]')!.textContent, stopped).toBe(EN[key]);
     }
+  });
+
+  /*
+   * RED WHEN: a set up that stopped offers anything but the one action that resolves its own stop: the company not yet
+   * held leads to handing it over; a vault not held by the signers as they stand finishes its handover from the device
+   * holding its key, and otherwise leads to the change; signers' keys that do not match offer no blind retry; the
+   * wallet and the signers carry on.
+   */
+  it('a set up that stopped offers the action that resolves its own stop, and no other', async () => {
+    const led: string[] = [];
+    const press = async (container: HTMLElement) => {
+      await act(async () => { fireEvent.click(q(container, '[data-action=create-vault-now]')!); await settle(); });
+      await act(async () => { fireEvent.click([...container.querySelectorAll('button')].find((b) => b.textContent === EN['kit.confirm.confirm'])!); await settle(); });
+    };
+    const offered = (c: HTMLElement) => [...c.querySelectorAll('[data-result] button')].map((b) => b.getAttribute('data-action') ?? `lead-to ${b.getAttribute('data-lead-to')}`);
+    const { container } = await draw(<CreateVault leadTo={(step) => led.push(step)} onChanged={() => {}} />, sessionWith({ company: 'c-1' }));
+    for (const [stopped, actions] of [
+      ['wallet', ['finish-start']], ['signers', ['finish-start']], ['mismatch', []],
+      ['hand-over', ['lead-to handOver']], ['vault', ['lead-to handOver']],
+    ] as const) {
+      state.vaultCreated = { of: 'start-owed', vault: 'v-5', stopped } as never;
+      await press(container);
+      expect(offered(container), stopped).toEqual(actions);
+    }
+    /* The company not held leads to handing it over, said as that; a vault not held, to the change its signers sign. */
+    state.vaultCreated = { of: 'start-owed', vault: 'v-5', stopped: 'hand-over' } as never;
+    await press(container);
+    expect(q(container, '[data-result] [data-lead-to]')!.textContent).toBe(EN['createVault.goHandOver']);
+    await act(async () => { fireEvent.click(q(container, '[data-result] [data-lead-to]')!); await settle(); });
+    expect(led).toEqual(['handOver']);
+    state.vaultCreated = { of: 'start-owed', vault: 'v-5', stopped: 'vault' } as never;
+    await press(container);
+    expect(q(container, '[data-result] [data-lead-to]')!.textContent).toBe(EN['createVault.goSignChange']);
+    /* RED WHEN: the vault's own stop tells a person to hand over a company that is already handed over. */
+    expect(EN['createVault.stopped.vault']).not.toMatch(/hand your company/iu);
+    cleanup();
+    /* The vault was created on this device and is not handed over yet: finishing its handover is what resolves it. */
+    state.owed = [{ vault: 'v-5', number: 1, here: true }];
+    const here = await draw(<CreateVault leadTo={() => {}} onChanged={() => {}} />, sessionWith({ company: 'c-1' }));
+    state.vaultCreated = { of: 'start-owed', vault: 'v-5', stopped: 'vault' } as never;
+    await press(here.container);
+    expect(offered(here.container)).toEqual(['finish-handover']);
+    await act(async () => { fireEvent.click(q(here.container, '[data-result] [data-action=finish-handover]')!); await settle(); });
+    expect(q(here.container, '[data-slot=confirm-in-your-account]')!.textContent).toContain(EN['createVault.confirmFinish']);
+    cleanup();
+    /* RED WHEN: a vault waiting on the device it was created on leads to a step with nothing to do there. */
+    state.owed = [{ vault: 'v-5', number: 1, here: false }];
+    const elsewhere = await draw(<CreateVault leadTo={() => {}} onChanged={() => {}} />, sessionWith({ company: 'c-1' }));
+    await press(elsewhere.container);
+    expect(offered(elsewhere.container)).toEqual([]);
+  });
+
+  /* RED WHEN: opened to carry a vault on, the confirm opens again after every read of the company - the blind retry back. */
+  it('opened to carry a vault on, asks once and not again after the set up ends', async () => {
+    const { readVaultReadiness } = await import('../adapters/create-vault.js');
+    /* Every read answers with a new object, as the adapter does. */
+    vi.mocked(readVaultReadiness).mockImplementation(async () => ({ ...state.ready }) as never);
+    state.vaultCreated = { of: 'start-owed', vault: 'v-6', stopped: 'mismatch' } as never;
+    const { container } = await draw(<CreateVault leadTo={() => {}} onChanged={() => {}} starting="v-6" />, sessionWith({ company: 'c-1' }));
+    await act(async () => { fireEvent.click([...container.querySelectorAll('button')].find((b) => b.textContent === EN['kit.confirm.confirm'])!); await settle(); });
+    await act(settle);
+    expect(q(container, '[data-result]')!.dataset.stopped).toBe('mismatch');
+    expect(q(container, '[data-slot=confirm-in-your-account]')).toBeNull();
+    vi.mocked(readVaultReadiness).mockImplementation(async () => state.ready as never);
+  });
+
+  /* RED WHEN: what a set up came to is put on the screen where a screen reader does not announce it. */
+  it('announces what a set up came to', async () => {
+    const { container } = await draw(<CreateVault leadTo={() => {}} onChanged={() => {}} />, sessionWith({ company: 'c-1' }));
+    const live = q(container, '[data-outcome]')!;
+    /* A status region is announced politely by its role alone. */
+    expect(live.getAttribute('role')).toBe('status');
+    state.vaultCreated = { of: 'start-owed', vault: 'v-5', stopped: 'wallet' } as never;
+    await act(async () => { fireEvent.click(q(container, '[data-action=create-vault-now]')!); await settle(); });
+    await act(async () => { fireEvent.click([...container.querySelectorAll('button')].find((b) => b.textContent === EN['kit.confirm.confirm'])!); await settle(); });
+    expect(q(live, '[data-says]')!.textContent).toBe(EN['createVault.stopped.wallet']);
+    state.vaultCreated = { of: 'done', vault: 'v-6' } as never;
+    await act(async () => { fireEvent.click(q(container, '[data-action=create-vault-now]')!); await settle(); });
+    await act(async () => { fireEvent.click([...container.querySelectorAll('button')].find((b) => b.textContent === EN['kit.confirm.confirm'])!); await settle(); });
+    expect(q(live, '[data-created]')).not.toBeNull();
+  });
+
+  /* RED WHEN: a set up refused for the signer's seat - none in the records, or one their own key does not make - is not said in its own words on the screen. */
+  it('drives a set up to each of the two seat refusals and says each in its own words', async () => {
+    const { container } = await draw(<CreateVault leadTo={() => {}} onChanged={() => {}} />, sessionWith({ company: 'c-1' }));
+    for (const [why, key] of [['no-seat', 'act.refused.noSeat'], ['not-your-seat', 'act.refused.notYourSeat']] as const) {
+      state.vaultCreated = { of: 'refused', why } as never;
+      await act(async () => { fireEvent.click(q(container, '[data-action=create-vault-now]')!); await settle(); });
+      await act(async () => { fireEvent.click([...container.querySelectorAll('button')].find((b) => b.textContent === EN['kit.confirm.confirm'])!); await settle(); });
+      expect(q(container, `[data-refusal=${why}]`)?.textContent, why).toContain(EN[key]);
+      expect(q(container, `[data-refusal=${why}]`)?.textContent, why).not.toContain(EN['act.refused.didNotFinish']);
+    }
+  });
+
+  /* RED WHEN: asked to carry one vault's set up on, the component opens its confirm before it has read the company. */
+  it('opened to carry a vault\'s set up on, reads the company before asking to confirm', async () => {
+    const { readVaultReadiness } = await import('../adapters/create-vault.js');
+    let release: () => void = () => {};
+    vi.mocked(readVaultReadiness).mockImplementationOnce(() => new Promise((r) => { release = () => r(state.ready as never); }));
+    const { container } = await draw(<CreateVault leadTo={() => {}} onChanged={() => {}} starting="v-6" />, sessionWith({ company: 'c-1' }));
+    expect(q(container, '[data-slot=confirm-in-your-account]')).toBeNull();
+    await act(async () => { release(); await settle(); });
+    expect(q(container, '[data-slot=confirm-in-your-account]')!.textContent).toContain(EN['createVault.confirmStart']);
   });
 
   /* RED WHEN: asked to carry one vault's set up on, the component does not ask to confirm that, or carries another vault on. */

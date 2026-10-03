@@ -18,7 +18,7 @@ const kr = vi.hoisted(() => ({
   /** When set, what the shared check answers, in place of its own answer. */
   check: undefined as undefined | null | { code: string; why: string },
   /* The seat this device's own key material makes, and every seat the account was asked to sign for. */
-  ownSeat: '5a'.repeat(32), walletAsked: [] as string[],
+  ownSeat: '5a'.repeat(32), walletAsked: [] as string[], released: 0,
 }));
 vi.mock('./vault-builder.js', () => ({ theVaultBuilder: async () => ({ ownSeat: async () => kr.ownSeat }) }));
 vi.mock('vaults-web-shared/committee-change-on-device.js', async (real) => {
@@ -38,7 +38,10 @@ vi.mock('vaults-web-shared/keyring.js', async (real) => ({
   finishPendingSeat: async () => { if (!kr.seat) return false; kr.seat = false; kr.keys = { signerId: 's1', signingSecret: 'aa', wrappingSecret: 'bb', blinding: 'cc' }; return true; },
   viewingKeyFor: () => 'vk',
   openAccount: () => kr.roster,
-  companyKeysForVaults: async () => ({ companyKey: '11'.repeat(32), committeeKey: kr.walletKey, company: 'co_' + 'a1'.repeat(32), account: 'a0'.repeat(32) }),
+  companyKeysForVaults: async () => {
+    kr.released += 1;
+    return { companyKey: '11'.repeat(32), committeeKey: kr.walletKey, company: 'co_' + 'a1'.repeat(32), account: 'a0'.repeat(32) };
+  },
   /* The account signs this person's records key for the seat the page names; what it signs is the identity library's to test. */
   recordsKeyFromTheWallet: async (_origin: string, ask: { seat: string }) => (kr.walletAsked.push(ask.seat), {
     committeeKey: kr.walletKey, statement: { recordsKey: '33'.repeat(32), seat: ask.seat, signature: '44'.repeat(64) },
@@ -76,7 +79,7 @@ const AUTHORITY = (over: Record<string, unknown> = {}) => ({
   handover: { possible: true, why: null }, change: { possible: false, why: 'x' }, ...over,
 });
 
-beforeEach(() => { kr.ownSeat = '5a'.repeat(32); kr.walletAsked = []; kr.check = undefined; kr.seat = false; kr.user = 'u1'; kr.calls = []; kr.answers = {}; kr.keys = { signerId: 's1', signingSecret: 'aa', wrappingSecret: 'bb', blinding: 'cc' }; kr.opened = 0; kr.walletKey = K(1); kr.roster = null; kr.signed = null; });
+beforeEach(() => { kr.ownSeat = '5a'.repeat(32); kr.walletAsked = []; kr.released = 0; kr.check = undefined; kr.seat = false; kr.user = 'u1'; kr.calls = []; kr.answers = {}; kr.keys = { signerId: 's1', signingSecret: 'aa', wrappingSecret: 'bb', blinding: 'cc' }; kr.opened = 0; kr.walletKey = K(1); kr.roster = null; kr.signed = null; });
 afterEach(() => { vi.unstubAllEnvs(); });
 
 describe('where a company stands, from the shape of the service\'s answer', () => {
@@ -186,6 +189,8 @@ describe('handing it over', () => {
     kr.answers['/api/accounts/c1'] = {};
     kr.roster = { ...rosterWith(K(1)), signers: rosterWith(K(1)).signers.map((x) => ({ ...x, leafCommitment: null })) };
     expect(await acts.giveMyVaultKeys('u1', 'c1')).toEqual({ of: 'refused', why: 'no-seat' });
+    /* RED WHEN: the account is asked to release the company's keys before the seat is checked on this device. */
+    expect(kr.released).toBe(0);
     expect(kr.calls.filter((c) => c.path.startsWith('give'))).toEqual([]);
     expect(kr.walletAsked).toEqual([]);
   });
@@ -197,6 +202,8 @@ describe('handing it over', () => {
     kr.roster = rosterWith(K(1));
     kr.ownSeat = '6b'.repeat(32);
     expect(await acts.giveMyVaultKeys('u1', 'c1')).toEqual({ of: 'refused', why: 'not-your-seat' });
+    /* RED WHEN: the account is asked to release the company's keys before the seat is checked on this device. */
+    expect(kr.released).toBe(0);
     expect(kr.walletAsked).toEqual([]);
     expect(kr.calls.filter((c) => c.path.startsWith('give'))).toEqual([]);
     kr.ownSeat = '5a'.repeat(32);

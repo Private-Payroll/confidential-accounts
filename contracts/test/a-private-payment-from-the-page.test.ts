@@ -67,7 +67,7 @@ import { MemoryStore } from '../../src/core/store.js';
 import { AccountService, openAccount, sealAccount } from '../../src/core/account.js';
 import { MidnightCommitments } from '../../src/midnight/commitments.js';
 import { rosterVaultKeys, signVaultKeys } from '../../src/core/vault-keys.js';
-import { seatsInAccountState } from '../../apps/wallet/src/chain/company-label-on-chain.js';
+import { seatsInAccountState, vaultInState } from '../../apps/wallet/src/chain/company-label-on-chain.js';
 import { ChainLedger } from '../../src/wiring/chain.js';
 import { companyVaultRoutes, type VaultChain } from '../../src/server/company-vaults.js';
 import { mountVaultRecords, vaultAccountFromTheIndexer } from '../../src/server/vault-records-authority.js';
@@ -518,7 +518,10 @@ describe.skipIf(!KEYS_ON_DISK)('A PRIVATE PAYMENT OUT OF A COMPANY VAULT, FROM T
       material: { signingSecret: hex(founder.secretKey), blinding: hex(founder.blinding), scope: hex(founder.scope) },
       secretReaders: {
         company: LABEL, committeeKey: committeeKeyFor(identityFromWords(words), LABEL),
-        seats: seatsInAccountState(chain.contract(company).serialize()),
+        read: async (v: Hex) => ({
+          ...seatsInAccountState(chain.contract(company).serialize()),
+          vault: vaultInState(v as never, chain.contract(v).serialize()),
+        }),
         roster: async () => rosterVaultKeys(openAccount(store.getAccount(ACCOUNT_ID)!, viewingKey)),
       },
     }, resume as never);
@@ -531,7 +534,7 @@ describe.skipIf(!KEYS_ON_DISK)('A PRIVATE PAYMENT OUT OF A COMPANY VAULT, FROM T
     const created = await press(first.vault);
     if (created.state !== 'started') throw new Error(`the vault was not started: ${JSON.stringify(created)}`);
     const { vault } = created;
-    await openCompanyVaultPool(poolDoors, vault);
+    await openCompanyVaultPool(poolDoors, vault, async () => {});
     const deposited = await depositIntoCompanyVault({ ...poolDoors, company: LABEL, account: readAccountAddress(company)!, builder: builder(), pay: wallet, inFlight: inFlightInMemory() }, vault, { token: TOKEN, value: 1_000n });
     return { vault, note: deposited.note };
   };

@@ -2,7 +2,10 @@ import type { SealedAccount } from '../../../../src/core/types.js';
 import { rosterVaultKeys } from '../../../../src/core/vault-keys.js';
 import { READER_REFUSAL, type ReaderRefusalCode } from '../../../../src/midnight/secret-readers.js';
 import { whyNotTheCommittee } from 'vaults-web-shared/handover-check.js';
-import { api, canOpenCompanies, currentUser, openAccount, openKeysWithWallet, viewingKeyFor } from 'vaults-web-shared/keyring.js';
+import {
+  api, canOpenCompanies, currentUser, openAccount, openKeysWithWallet, recordsKeyFromTheWallet, viewingKeyFor,
+} from 'vaults-web-shared/keyring.js';
+import type { VaultAddress } from 'midnight-identity/profile/company-label';
 import { createCompanyVault, VaultHandoverOwed, VaultStartOwed, type VaultStage } from 'vaults-web-shared/vault-operation.js';
 import {
   browserTemporaryKeys, deviceRecordsFor, deviceSignerFrom, marked, rosterOf, vaultServiceFor,
@@ -27,7 +30,7 @@ import { handoverOwed, readVaultRows } from './vault-rows.js';
  * is kept in this browser before anything is sent, the vault is sent, and it
  * is handed to the company's committee as soon as the chain has it. The
  * operation then starts the vault - adopted by the company's account, its pool
- * and nonce secret filed and read back, its first secret set, every signer's
+ * and nonce secret filed (or read back and checked against the chain), its first secret set, every signer's
  * sealed copy written - and ends only when the chain shows it started, or
  * names the proposal that waits for other signers' approvals. This file brings it
  * the keys this person's account gives for the company, this signer's own
@@ -94,15 +97,16 @@ export const STARTING = { owed: 'start-owed', awaiting: 'awaiting-approvals' } a
 /**
  * **WHAT RESOLVES A START THAT STOPPED BEFORE ITS SECRET WAS APPROVED**, said
  * on the screen in its own words: the wallet reading the company again, the
- * company handed to its signers, every signer set up for vaults, or nothing a
- * person here can do because what the service sent did not check out.
+ * company handed to its signers, the vault handed to the signers as they stand
+ * now, every signer set up for vaults, or nothing a person here can do because
+ * what the service sent did not check out.
  */
-export const STOPPED = { wallet: 'wallet', handOver: 'hand-over', signers: 'signers', mismatch: 'mismatch' } as const;
+export const STOPPED = { wallet: 'wallet', handOver: 'hand-over', vault: 'vault', signers: 'signers', mismatch: 'mismatch' } as const;
 export type StartStopped = (typeof STOPPED)[keyof typeof STOPPED];
-const STOPPED_BY: Record<ReaderRefusalCode, StartStopped> = {
+export const STOPPED_BY: Record<ReaderRefusalCode, StartStopped> = {
   [READER_REFUSAL.walletReadNothing]: STOPPED.wallet,
   [READER_REFUSAL.accountNotHeld]: STOPPED.handOver,
-  [READER_REFUSAL.vaultNotHeld]: STOPPED.handOver,
+  [READER_REFUSAL.vaultNotHeld]: STOPPED.vault,
   [READER_REFUSAL.committeeOutOfDate]: STOPPED.signers,
   [READER_REFUSAL.keysNotGiven]: STOPPED.signers,
   [READER_REFUSAL.notSigned]: STOPPED.mismatch,
@@ -110,6 +114,7 @@ const STOPPED_BY: Record<ReaderRefusalCode, StartStopped> = {
   [READER_REFUSAL.rosterNotTheChains]: STOPPED.mismatch,
   [READER_REFUSAL.readerNotASigner]: STOPPED.mismatch,
   [READER_REFUSAL.signerLeftOut]: STOPPED.mismatch,
+  [READER_REFUSAL.vaultNotTheCompanys]: STOPPED.mismatch,
 };
 
 /**
@@ -252,8 +257,17 @@ async function run(personId: string, companyId: string, onStage: (stage: Creatin
       records: deviceRecordsFor(o.keys.signingSecret, roster.filers, () => currentUser()?.id ?? null),
       material: { signingSecret: o.keys.signingSecret, blinding: o.keys.blinding, scope: (o.keys as { scope?: Hex }).scope },
       secretReaders: {
-        /* Who holds the company, as this signer's account read it off the chain just now, for this press. */
-        company: released.company, committeeKey: released.signed.committeeKey, seats: released.signed.seats,
+        company: released.company, committeeKey: released.signed.committeeKey,
+        /*
+         * Who holds the company and the vault, asked of this signer's account afresh for every check, so a check
+         * after a wait never rests on what was read before it; the vault is read by the account itself.
+         */
+        read: async (vault) => {
+          const now = await recordsKeyFromTheWallet(ACCOUNT_ORIGIN, {
+            company: released.company, account: released.account, seat: released.signed.statement.seat, vault: vault as string as VaultAddress,
+          });
+          return { ...now.seats, vault: now.vault };
+        },
         roster: async () => rosterVaultKeys(await o.roster()),
       },
     }, resume as Parameters<typeof createCompanyVault>[1]);
