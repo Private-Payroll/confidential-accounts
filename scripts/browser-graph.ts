@@ -29,7 +29,8 @@
  * repository, including those reached through an alias, those reached only by a
  * dynamic `import()`, and those reached by package name through a workspace
  * link back into this repository, where it reads the package's `exports` the
- * way the bundler does.
+ * way the bundler does. A module a build's own plugin serves is followed into
+ * the source that plugin serves, never into the plugin's own imports.
  *
  * A DYNAMIC import of a Node built-in is reported but is not a violation: it is
  * evaluated only if the line that asks for it runs, so a guard that a browser
@@ -37,11 +38,26 @@
  */
 import { existsSync, readFileSync, readdirSync, realpathSync, statSync } from 'node:fs';
 import { builtinModules } from 'node:module';
-import { dirname, extname, join, relative, resolve, sep } from 'node:path';
+import { dirname, extname, isAbsolute, join, relative, resolve, sep } from 'node:path';
 import { parseSync, transformWithOxc } from 'vite';
+import { SERVED_TO_THE_WALLET } from '../apps/wallet/this-builds-account-keys.js';
 
 /** One alias, with vite's own matching rule: a string matches exactly or as a prefix followed by `/`. */
 export interface Alias { find: string | RegExp; replacement: string }
+
+/**
+ * A module a build serves that no file on disk holds, as the build itself
+ * declares it: its id, the file whose plugin serves it, and that plugin. The
+ * walk asks the plugin for the module, the same load the bundler makes, and
+ * walks the source it serves; what the serving file imports runs only when
+ * the build runs and is not walked.
+ */
+export interface VirtualModule {
+  id: string;
+  /** The serving file, absolute or relative to the repository root. */
+  servedBy: string;
+  plugin: (root: string) => { resolveId(id: string): string | null; load(id: string): string | null };
+}
 
 /** One build that serves pages to a browser. Paths are relative to the repository root. */
 export interface BrowserBuild {
@@ -54,6 +70,8 @@ export interface BrowserBuild {
   pages: string[];
   /** The build's `resolve.alias`, replacements relative to the repository root. */
   alias: Alias[];
+  /** The modules the build's plugins serve, each read from the build's own declaration. */
+  virtual?: VirtualModule[];
 }
 
 export interface NodeImport {
@@ -195,6 +213,7 @@ const resolveWorkspacePackage = (specifier: string, from: string, repo: string):
 
 type Resolved =
   | { kind: 'file'; path: string; worker: boolean }
+  | { kind: 'virtual'; module: VirtualModule }
   | { kind: 'asset' }
   | { kind: 'node' }
   | { kind: 'package' }
@@ -204,6 +223,8 @@ const resolveSpecifier = (raw: string, from: string, build: BrowserBuild, repo: 
   const [bare, query = ''] = raw.split('?');
   const worker = /(^|&)(worker|sharedworker)(&|$)/.test(query);
   if (!worker && /(^|&)(url|raw|inline)(&|$)/.test(query)) return { kind: 'asset' };
+  const served = (build.virtual ?? []).find((v) => v.id === bare);
+  if (served !== undefined) return { kind: 'virtual', module: served };
   const aliased = applyAlias(bare, build.alias, repo);
   let target: string | null = null;
   if (aliased.startsWith('./') || aliased.startsWith('../')) target = resolve(dirname(from), aliased);
@@ -260,11 +281,20 @@ export const importsOf = async (file: string, source: string): Promise<Edge[]> =
 export const scriptsOf = (html: string): string[] =>
   [...html.matchAll(/<script\b[^>]*\bsrc\s*=\s*["']([^"']+)["'][^>]*>/g)].map((m) => m[1]);
 
+/** What a build's plugin serves for one of its declared modules, by the same two calls the bundler makes. */
+const servedSource = (v: VirtualModule, repo: string): string | null => {
+  const plugin = v.plugin(repo);
+  const id = plugin.resolveId(v.id);
+  return id === null ? null : plugin.load(id);
+};
+
 /** Walks one build's whole browser graph, from every page and every worker. */
 export const walkBuild = async (build: BrowserBuild, repoGiven: string): Promise<BuildGraph> => {
   // Normalised once, so a root given with a trailing separator compares equal to the paths built from it.
   const repo = resolve(repoGiven);
-  const rel = (p: string): string => relative(repo, p).split(sep).join('/');
+  /* A served module is known by its id, and its own imports are read as the serving file's would be. */
+  const served = new Map<string, { source: string; from: string }>();
+  const rel = (p: string): string => (served.has(p) ? p : relative(repo, p).split(sep).join('/'));
   const parent = new Map<string, string | null>();
   const queue: string[] = [];
   const entries: string[] = [];
@@ -295,14 +325,22 @@ export const walkBuild = async (build: BrowserBuild, repoGiven: string): Promise
 
   while (queue.length > 0) {
     const file = queue.shift() as string;
-    for (const edge of await importsOf(file, readFileSync(file, 'utf8'))) {
-      const r = resolveSpecifier(edge.specifier, file, build, repo);
+    const own = served.get(file);
+    for (const edge of await importsOf(file, own?.source ?? readFileSync(file, 'utf8'))) {
+      const r = resolveSpecifier(edge.specifier, own?.from ?? file, build, repo);
       if (r.kind === 'node') {
         (edge.dynamic ? dynamicNode : staticNode).push({ file: rel(file), specifier: edge.specifier, chain: chainOf(file) });
       } else if (r.kind === 'unresolved') {
         unresolved.push({ file: rel(file), specifier: edge.specifier });
       } else if (r.kind === 'file') {
         enqueue(r.path, file, edge.worker || r.worker);
+      } else if (r.kind === 'virtual') {
+        if (!served.has(r.module.id)) {
+          const source = servedSource(r.module, repo);
+          if (source === null) { unresolved.push({ file: rel(file), specifier: edge.specifier }); continue; }
+          served.set(r.module.id, { source, from: isAbsolute(r.module.servedBy) ? r.module.servedBy : join(repo, r.module.servedBy) });
+        }
+        enqueue(r.module.id, file, edge.worker);
       }
     }
   }
@@ -316,6 +354,9 @@ export const pagesIn = (root: string, repo: string): string[] =>
 
 /**
  * EVERY BUILD IN THIS REPOSITORY THAT SERVES A BROWSER.
+ *
+ * The wallet's served module is read from the wallet's own declaration
+ * (`SERVED_TO_THE_WALLET`, which its config installs), not restated here.
  *
  * The aliases are the builds' own, restated by hand. NOTHING CHECKS THAT THEY
  * STILL MATCH the configs they were copied from - loading the wallet's config
@@ -339,5 +380,6 @@ export const BROWSER_BUILDS: BrowserBuild[] = [
       { find: /^midnight-identity\/network$/, replacement: 'packages/identity/src/wallet/network.ts' },
       { find: 'midnight-identity', replacement: 'packages/identity/src' },
     ],
+    virtual: [SERVED_TO_THE_WALLET],
   },
 ];

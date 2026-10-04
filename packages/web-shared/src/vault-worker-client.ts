@@ -61,6 +61,21 @@ export interface AccountCallChainOnTheWire {
 
 export type VaultAsk =
   | { id: number; network: string; ask: 'deploy'; account: string }
+  /*
+   * **A COMPANY'S ACCOUNT, HELD BY ITS FOUNDING SIGNER'S OWN COMMITTEE KEY FROM
+   * ITS FIRST TRANSACTION**, and then the second step that finishes it, signed
+   * by that key in the founding signer's wallet. Nothing secret crosses: a
+   * seat, a label, a public key and a signature.
+   */
+  | { id: number; network: string; ask: 'account-deploy'; foundingLeaf: string; label: string; foundingKey: SigningKeyOnTheWire }
+  | { id: number; network: string; ask: 'finished-creation'; account: string; signature: SigningKeyOnTheWire }
+  /*
+   * **A VAULT HELD BY THE COMPANY'S COMMITTEE FROM ITS FIRST TRANSACTION**, and
+   * the reading of a vault's deploy, as sent, before it is adopted: held by
+   * exactly that committee, this build's circuits, nothing written.
+   */
+  | { id: number; network: string; ask: 'born-held-vault'; account: string; holders: Committee }
+  | { id: number; network: string; ask: 'vault-as-deployed'; vault: string; account: string; holders: Committee; deploy: string }
   | { id: number; network: string; ask: 'handover'; vault: string; counter: string; temporaryKey: SigningKeyOnTheWire; to: Committee }
   | { id: number; network: string; ask: 'deposit'; vault: string; coin: CoinOnTheWire; state: string; parameters: string }
   | { id: number; network: string; ask: 'public-deposit'; vault: string; token: string; amount: string; state: string; parameters: string }
@@ -126,6 +141,10 @@ type Answered<A extends VaultAsk['ask'], T> = { id: number; ok: true; ask: A } &
 
 export type VaultAnswer =
   | Answered<'deploy', { vault: string; temporaryKey: SigningKeyOnTheWire; tx: string }>
+  | Answered<'account-deploy', { account: string; tx: string; insert: ReadonlyArray<{ circuit: string; key: string }> }>
+  | Answered<'finished-creation', { tx: string }>
+  | Answered<'born-held-vault', { vault: string; tx: string }>
+  | Answered<'vault-as-deployed', { refusal: string | null }>
   | Answered<'handover', { tx: string }>
   | Answered<'deposit', { tx: string }>
   | Answered<'public-deposit', { tx: string }>
@@ -151,6 +170,25 @@ export type VaultRequest = Without<VaultAsk>;
 /** What the page needs from wherever vault transactions are built. */
 export interface VaultBuilderClient {
   deploy(account: string): Promise<{ vault: string; temporaryKey: SigningKeyOnTheWire; tx: string }>;
+  /**
+   * The company's account, deployed held by the founding signer's committee key
+   * from its first transaction, proved; and the keys of this build the second
+   * step inserts, each checked against the compiled account's own digest, as
+   * base64 of their files, for the founding signer's wallet to check again.
+   */
+  accountDeploy?(input: { foundingLeaf: string; label: string; foundingKey: SigningKeyOnTheWire }): Promise<{
+    account: string; tx: string; insert: ReadonlyArray<{ circuit: string; key: string }>;
+  }>;
+  /** The second step of the account's creation, with the founding signer's wallet's signature on it, proved. */
+  finishedCreation?(input: { account: string; signature: SigningKeyOnTheWire }): Promise<{ tx: string }>;
+  /** A vault deployed held by the company's committee at its threshold from its first transaction, proved. */
+  bornHeldVault?(input: { account: string; holders: Committee }): Promise<{ vault: string; tx: string }>;
+  /**
+   * The vault as its deploy made it, read here: null when it was born held by
+   * `holders`, pinned to `account`, with this build's circuits and nothing
+   * written; otherwise the sentence that says what it is instead.
+   */
+  vaultAsDeployed?(input: { vault: string; account: string; holders: Committee; deploy: string }): Promise<{ refusal: string | null }>;
   handover(input: { vault: string; counter: bigint; temporaryKey: SigningKeyOnTheWire; to: Committee }): Promise<{ tx: string }>;
   /** `state` and `parameters` are base64 of the vault's state and of the ledger parameters the chain holds now. */
   deposit(input: { vault: string; coin: CoinOnTheWire; state: string; parameters: string }): Promise<{ tx: string }>;
@@ -256,6 +294,16 @@ export function vaultBuilderOver(worker: WorkerLike, network: string): VaultBuil
       const a = await ask({ ask: 'deploy', account });
       return { vault: a.vault, temporaryKey: a.temporaryKey, tx: a.tx };
     },
+    accountDeploy: async (input) => {
+      const a = await ask({ ask: 'account-deploy', ...input });
+      return { account: a.account, tx: a.tx, insert: a.insert };
+    },
+    finishedCreation: async (input) => ({ tx: (await ask({ ask: 'finished-creation', ...input })).tx }),
+    bornHeldVault: async (input) => {
+      const a = await ask({ ask: 'born-held-vault', ...input });
+      return { vault: a.vault, tx: a.tx };
+    },
+    vaultAsDeployed: async (input) => ({ refusal: (await ask({ ask: 'vault-as-deployed', ...input })).refusal }),
     handover: async (input) => {
       const a = await ask({
         ask: 'handover', vault: input.vault, counter: input.counter.toString(),

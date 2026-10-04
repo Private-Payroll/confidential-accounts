@@ -27,7 +27,12 @@
  * landed and never sends anywhere; the note a payment spends and the pool after
  * it, which it files only sealed; and a payment's confirmed hash.
  */
-import { committeeReplacement, type Committee } from '../../../src/midnight/vault-committee.js';
+import { committeeReplacement, whyOneKeyCouldActAlone, type Committee } from '../../../src/midnight/vault-committee.js';
+import { VAULT_CIRCUITS } from '../../../src/midnight/vault-contract.js';
+import { heldStateFromTheStart, type HeldStateDeps } from '../../../src/midnight/held-from-the-start.js';
+import { CREATION_STEPS, overTheCeiling } from '../../../src/midnight/deferral.js';
+import { buildCreationInsert } from 'midnight-identity/profile/contract-keys';
+import { companyLabelBytes, readCompanyLabel } from 'midnight-identity/profile/company-label';
 import type { Hex } from '../../../src/core/crypto.js';
 import {
   afterPayment, noteToSpend, paymentsFitAnswer, withIndexRead, witnessesOver, type Note, type PaymentsFitAnswer,
@@ -123,6 +128,107 @@ export async function buildCommitteeHandover(
   const unproven = L.Transaction.fromParts(deps.network, undefined, undefined, L.Intent.new(ttl).addMaintenanceUpdate(update));
   const proven = await deps.prove(unproven);
   return { proven: proven.serialize() };
+}
+
+/* ----------------------------------------------- contracts held from their first transaction */
+
+/** What a deploy held from its first transaction answers with: its address, its bytes, and what it writes. */
+interface HeldDeploy {
+  readonly address: string;
+  readonly proven: Uint8Array;
+  /** What the ledger's own cost function says it writes, at the ledger's starting parameters. */
+  readonly bytesWritten: number;
+}
+
+/**
+ * **A CONTRACT DEPLOYED ALREADY HELD BY THE KEYS GIVEN, FROM ITS FIRST
+ * TRANSACTION**: the one state assembly the service reads it back with
+ * (`held-from-the-start.ts`), put in a deploy and proved (a deploy has no
+ * circuit, so proving asks the prover nothing).
+ */
+async function deployHeldFromTheStart(
+  deps: HeldStateDeps & Pick<VaultBuilderDeps, 'prove' | 'network' | 'now'>,
+  input: Parameters<typeof heldStateFromTheStart>[1],
+): Promise<HeldDeploy> {
+  const L = deps.ledger;
+  const deploy = new L.ContractDeploy(await heldStateFromTheStart(deps, input));
+  const ttl = new Date((deps.now ?? Date.now)() + 30 * 60_000);
+  const tx = L.Transaction.fromParts(deps.network, undefined, undefined, L.Intent.new(ttl).addDeploy(deploy));
+  const bytesWritten = Number(tx.cost(L.LedgerParameters.initialParameters()).bytesWritten);
+  const proven = await deps.prove(tx);
+  return { address: String(deploy.address).toLowerCase(), proven: proven.serialize(), bytesWritten };
+}
+
+/**
+ * **A COMPANY'S VAULT, DEPLOYED HELD BY THE COMPANY'S COMMITTEE AT THE
+ * COMPANY'S THRESHOLD FROM ITS FIRST TRANSACTION**, pinned to the company's
+ * account. No key outside the committee ever holds it, so there is nothing to
+ * hand over and nothing to forget. Refused before anything is built for a
+ * committee one of whose keys could change it alone.
+ */
+export async function buildVaultBornHeld(
+  deps: VaultBuilderDeps, input: { readonly account: string; readonly holders: Committee },
+): Promise<HeldDeploy> {
+  const account = input.account.toLowerCase();
+  if (!HEX64.test(account)) throw new Error('a vault is pinned to its company\'s account address, and this is not one.');
+  const alone = whyOneKeyCouldActAlone(input.holders);
+  if (alone !== null) throw new Error(`no vault was built: ${alone}.`);
+  const built = await deployHeldFromTheStart(deps, {
+    compiled: deps.compiled, zkConfig: deps.zkConfig, args: [{ bytes: fromHex(account) }], circuits: VAULT_CIRCUITS,
+    holders: { committee: input.holders.committee.map((k) => ({ tag: k.tag, value: k.value.toLowerCase() })), threshold: input.holders.threshold },
+  });
+  const tooBig = overTheCeiling(built.bytesWritten, 'the vault\'s deploy');
+  if (tooBig !== null) throw new Error(tooBig);
+  return built;
+}
+
+/**
+ * **A COMPANY'S ACCOUNT, DEPLOYED HELD BY ITS FOUNDING SIGNER'S OWN COMMITTEE
+ * KEY FROM ITS FIRST TRANSACTION**, at a threshold of one: the key the
+ * founding signer's wallet gave for the label it drew. The deploy carries the
+ * first step's circuits; the rest are inserted by the one update that key
+ * signs (`finishedCreation`).
+ */
+export async function buildAccountDeploy(
+  deps: Parameters<typeof deployHeldFromTheStart>[0] & { readonly accountCompiled: unknown; readonly accountKeys: unknown },
+  input: { readonly foundingLeaf: string; readonly label: string; readonly foundingKey: SigningKeyLike },
+): Promise<HeldDeploy> {
+  const leaf = input.foundingLeaf.toLowerCase();
+  if (!HEX64.test(leaf)) throw new Error('the founding signer\'s seat is not one, so no account was built.');
+  const label = readCompanyLabel(input.label);
+  if (label === null) throw new Error('that is not a company\'s label, so no account was built.');
+  const built = await deployHeldFromTheStart(deps, {
+    compiled: deps.accountCompiled, zkConfig: deps.accountKeys,
+    args: [fromHex(leaf), companyLabelBytes(label)],
+    circuits: CREATION_STEPS.first,
+    holders: { committee: [{ tag: input.foundingKey.tag, value: input.foundingKey.value.toLowerCase() }], threshold: 1 },
+  });
+  const tooBig = overTheCeiling(built.bytesWritten, 'the account\'s deploy');
+  if (tooBig !== null) throw new Error(tooBig);
+  return built;
+}
+
+/**
+ * **THE SECOND STEP OF A COMPANY'S CREATION, SIGNED BY ITS FOUNDING SIGNER'S
+ * WALLET.** The insert is built by the one builder the wallet built what it
+ * signed with, from the same keys, so the signature verifies over exactly this.
+ */
+export async function finishedCreation(
+  deps: Pick<VaultBuilderDeps, 'ledger' | 'prove' | 'network' | 'now'>,
+  input: { readonly account: string; readonly keys: ReadonlyMap<string, Uint8Array>; readonly signature: SigningKeyLike },
+): Promise<{ proven: Uint8Array; bytesWritten: number }> {
+  const L = deps.ledger;
+  const { update } = buildCreationInsert(L, {
+    address: input.account.toLowerCase(), counter: 0n, onChain: CREATION_STEPS.first, keys: input.keys, steps: CREATION_STEPS,
+  });
+  const signed = (update as any).addSignature(0n, { tag: input.signature.tag, value: input.signature.value });
+  const ttl = new Date((deps.now ?? Date.now)() + 30 * 60_000);
+  const tx = L.Transaction.fromParts(deps.network, undefined, undefined, L.Intent.new(ttl).addMaintenanceUpdate(signed));
+  const bytesWritten = Number(tx.cost(L.LedgerParameters.initialParameters()).bytesWritten);
+  const tooBig = overTheCeiling(bytesWritten, 'the second step of the account\'s creation');
+  if (tooBig !== null) throw new Error(tooBig);
+  const proven = await deps.prove(tx);
+  return { proven: proven.serialize(), bytesWritten };
 }
 
 /**

@@ -12,7 +12,7 @@
  * origin and sends nothing anywhere.
  */
 import {
-  buildCommitteeHandover, buildDeposit, buildPayout, buildPublicDeposit, buildPublicPayout, buildSetNonceSecret, buildVaultDeploy,
+  buildAccountDeploy, buildVaultBornHeld, buildCommitteeHandover, buildDeposit, buildPayout, finishedCreation, buildPublicDeposit, buildPublicPayout, buildSetNonceSecret, buildVaultDeploy,
   buildWriteSecretCopy, chooseNoteForPayment, confirmPayment, paymentsFitNotes, poolAfterPayment,
   type SecretRunOnTheWire, type VaultBuilderDeps,
 } from './vault-builder.js';
@@ -31,6 +31,11 @@ import type { Hex } from '../../../src/core/crypto.js';
 import { ensureBuffer } from 'midnight-identity/browser';
 import { whyItFailed } from './why-it-failed.js';
 import { proofProviderOnWorkers } from './vault-proof-workers.js';
+import { CREATION_STEPS } from '../../../src/midnight/deferral.js';
+import { startingLedgerFrom, vaultBornHeldRefusal } from '../../../src/midnight/vault-circuits.js';
+import { VAULT_CIRCUITS } from '../../../src/midnight/vault-contract.js';
+import type { Committee } from '../../../src/midnight/vault-committee.js';
+import { sha256 } from '@noble/hashes/sha2.js';
 
 /** Where this application serves the vault's public proving material. */
 export const VAULT_ARTEFACT_BASE = '/artefacts/vault';
@@ -116,7 +121,79 @@ export const creatingTransactionOfNote = (input: {
  * reads the account's rounds with.
  */
 export type WorkerDeps = Omit<VaultBuilderDeps, 'network'> & { vault: any; accountLedger: (data: unknown) => unknown }
-  & Omit<GovernedCallDeps, 'random'>;
+  & Omit<GovernedCallDeps, 'random'> & {
+    /**
+     * Every one of the company account's verifying keys, fetched from this
+     * application's own origin and each checked against the digest the account's
+     * compiled module carries for it before it is used. Answers as the SDK's key
+     * provider asks.
+     */
+    accountKeys: { getVerifierKey(c: string): Promise<Uint8Array>; getVerifierKeys(cs: readonly string[]): Promise<Array<[string, Uint8Array]>> };
+    /** Every vault circuit's verifying key, checked the same way against the compiled vault's own digests. */
+    vaultKeys: { getVerifierKey(c: string): Promise<Uint8Array>; getVerifierKeys(cs: readonly string[]): Promise<Array<[string, Uint8Array]>> };
+  };
+
+/**
+ * **A CONTRACT'S VERIFYING KEYS, EACH CHECKED AGAINST THE DIGEST ITS COMPILED
+ * MODULE CARRIES FOR IT**, from wherever they are fetched. A key that is not the
+ * build's own is refused by name before anything is built or read with it.
+ */
+export const checkedAccountKeys = (
+  fetchKey: (circuit: string) => Promise<Uint8Array>, expected: Readonly<Record<string, string>>,
+  digest: (bytes: Uint8Array) => Uint8Array, whose = 'the company account',
+): WorkerDeps['accountKeys'] => {
+  const hex = (b: Uint8Array) => Array.from(b, (x) => x.toString(16).padStart(2, '0')).join('');
+  const one = async (c: string): Promise<Uint8Array> => {
+    const want = expected[c];
+    if (typeof want !== 'string') throw new Error(`${whose} has no circuit called ${c} in this build.`);
+    const key = await fetchKey(c);
+    if (hex(digest(key)) !== want.toLowerCase()) {
+      throw new Error(`the verifying key served for ${whose}'s ${c} circuit is not this build's, so nothing was built.`);
+    }
+    return key;
+  };
+  return {
+    getVerifierKey: one,
+    getVerifierKeys: async (cs) => Promise.all(cs.map(async (c): Promise<[string, Uint8Array]> => [c, await one(c)])),
+  };
+};
+
+/**
+ * **A VAULT AS ITS DEPLOY MADE IT, READ ON THIS DEVICE** before the vault is
+ * adopted or its set-up carried on. The deploy is the one its address
+ * was made from, whoever served it: one that makes another address is refused.
+ * Read with the one reading the service makes before paying for a deploy
+ * (`vaultBornHeldRefusal`), against this build's keys, each checked against the
+ * compiled vault's own digest. Null when the vault was born held.
+ */
+export const vaultAsDeployed = async (
+  d: Pick<WorkerDeps, 'ledger' | 'runtimeState' | 'vault' | 'vaultKeys'>,
+  ask: { vault: string; account: string; holders: Committee; deploy: string },
+): Promise<string | null> => {
+  const what = 'a vault this company can use';
+  let action: { address?: unknown; initialState?: unknown } | undefined;
+  try {
+    const tx = d.ledger.Transaction.deserialize('signature', 'proof', 'pre-binding', fromBase64(ask.deploy)) as { intents?: Map<unknown, { actions?: unknown[] }> };
+    const intents = [...(tx.intents?.values() ?? [])];
+    action = intents.length === 1 && intents[0]?.actions?.length === 1 ? intents[0].actions[0] as typeof action : undefined;
+  } catch {
+    action = undefined;
+  }
+  if (action?.initialState === undefined || action.address === undefined) {
+    return `this is not ${what}: what was served as its deploy is not one deploy. Nothing was sent.`;
+  }
+  if (String(action.address).toLowerCase() !== ask.vault.toLowerCase()) {
+    return `this is not ${what}: what was served as its deploy makes another address than this vault's, so it says `
+      + 'nothing about this vault. Nothing was sent.';
+  }
+  const verifierKeys = new Map(await d.vaultKeys.getVerifierKeys(VAULT_CIRCUITS));
+  return vaultBornHeldRefusal(action.initialState, {
+    account: ask.account, holders: ask.holders, verifierKeys,
+    startingLedgerOf: (state) => startingLedgerFrom(
+      d.vault.ledger((d.runtimeState as any).deserialize((state as { serialize(): Uint8Array }).serialize()).data),
+      d.vault.pureCircuits.copiesWrittenKey()),
+  }, what);
+};
 
 /** The first secret run, as it crosses to the page. */
 const secretRunToWire = (r: SecretRun): SecretRunOnTheWire => ({
@@ -200,6 +277,12 @@ const loadDeps = (scope: any) => {
           CompiledContract.withWitnesses((accountWitnesses as any).witnesses)),
         accountZkConfig: zkConfig,
         accountPure: (account as any).pureCircuits,
+        accountKeys: checkedAccountKeys(
+          (c) => httpKeyMaterialSource(`${VAULT_ARTEFACT_BASE}/account`, options).artefact('verifier', c),
+          (account as any).expectedVk, sha256),
+        vaultKeys: checkedAccountKeys(
+          (c) => httpKeyMaterialSource(VAULT_ARTEFACT_BASE, options).artefact('verifier', c),
+          (vault as any).expectedVk, sha256, 'the vault'),
         accountLedger: (account as any).ledger,
         prove: async (unproven: any, circuit?: string) =>
           (await (prover as any).proveTx(unproven, circuit === undefined ? undefined : { circuitId: circuit })) as { serialize(): Uint8Array },
@@ -236,6 +319,28 @@ export const answerVaultAsk = async (
     case 'deploy': {
       const built = await buildVaultDeploy(withNetwork, { account: ask.account });
       return { id: ask.id, ok: true, ask: 'deploy', vault: built.vault, temporaryKey: built.temporaryKey, tx: toBase64(built.proven) };
+    }
+    case 'account-deploy': {
+      const built = await buildAccountDeploy({ ...withNetwork, accountKeys: d.accountKeys } as never, {
+        foundingLeaf: ask.foundingLeaf, label: ask.label, foundingKey: ask.foundingKey,
+      });
+      const insert = await d.accountKeys.getVerifierKeys(CREATION_STEPS.second);
+      return {
+        id: ask.id, ok: true, ask: 'account-deploy', account: built.address, tx: toBase64(built.proven),
+        insert: insert.map(([circuit, key]) => ({ circuit, key: toBase64(key) })),
+      };
+    }
+    case 'finished-creation': {
+      const keys = new Map(await d.accountKeys.getVerifierKeys(CREATION_STEPS.second));
+      const built = await finishedCreation(withNetwork, { account: ask.account, keys, signature: ask.signature });
+      return { id: ask.id, ok: true, ask: 'finished-creation', tx: toBase64(built.proven) };
+    }
+    case 'born-held-vault': {
+      const built = await buildVaultBornHeld(withNetwork, { account: ask.account, holders: ask.holders });
+      return { id: ask.id, ok: true, ask: 'born-held-vault', vault: built.address, tx: toBase64(built.proven) };
+    }
+    case 'vault-as-deployed': {
+      return { id: ask.id, ok: true, ask: 'vault-as-deployed', refusal: await vaultAsDeployed(d, ask) };
     }
     case 'handover': {
       const built = await buildCommitteeHandover(withNetwork, {

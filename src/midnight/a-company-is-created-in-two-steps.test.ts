@@ -17,7 +17,7 @@ import { join } from 'node:path';
 import { describe, expect, it } from 'vitest';
 
 import {
-  DEPLOYED_CIRCUITS, FIRST_STEP_CIRCUITS, SECOND_STEP_CIRCUITS, assertCreationSteps,
+  CREATION_STEPS, DEPLOYED_CIRCUITS, FIRST_STEP_CIRCUITS, SECOND_STEP_CIRCUITS, assertCreationSteps,
   creationStepOf,
 } from './deferral.js';
 import {
@@ -104,7 +104,7 @@ describe('the second step, as built', () => {
 
   it("inserts exactly the second step's circuits, in order, at the counter it was given, and nothing else", () => {
     const P = recording();
-    const out = buildCreationInsert(P, {
+    const out = buildCreationInsert(P, { steps: CREATION_STEPS,
       address: ADDRESS, counter: 0n, onChain: [...FIRST_STEP_CIRCUITS], keys: keysFor(SECOND_STEP_CIRCUITS),
     });
     const u = P.built[0];
@@ -119,10 +119,10 @@ describe('the second step, as built', () => {
   it('refuses a key set that is not exactly the second step', () => {
     const P = recording();
     const missing = keysFor(SECOND_STEP_CIRCUITS.slice(1));
-    expect(() => buildCreationInsert(P, { address: ADDRESS, counter: 0n, onChain: [...FIRST_STEP_CIRCUITS], keys: missing }))
+    expect(() => buildCreationInsert(P, { steps: CREATION_STEPS, address: ADDRESS, counter: 0n, onChain: [...FIRST_STEP_CIRCUITS], keys: missing }))
       .toThrow(/inserts exactly .* and was handed keys for/);
     const extra = keysFor([...SECOND_STEP_CIRCUITS, 'approve']);
-    expect(() => buildCreationInsert(P, { address: ADDRESS, counter: 0n, onChain: [...FIRST_STEP_CIRCUITS], keys: extra }))
+    expect(() => buildCreationInsert(P, { steps: CREATION_STEPS, address: ADDRESS, counter: 0n, onChain: [...FIRST_STEP_CIRCUITS], keys: extra }))
       .toThrow(/inserts exactly/);
     expect(P.built).toEqual([]);
   });
@@ -130,14 +130,14 @@ describe('the second step, as built', () => {
   it('refuses an account that already carries a second-step circuit, rather than inserting over it', () => {
     const P = recording();
     /* RED WHEN the builder inserts over a key the account already holds: the ledger refuses, and the fee is spent. */
-    expect(() => buildCreationInsert(P, {
+    expect(() => buildCreationInsert(P, { steps: CREATION_STEPS,
       address: ADDRESS, counter: 1n, onChain: [...FIRST_STEP_CIRCUITS, 'sealPayKey'], keys: keysFor(SECOND_STEP_CIRCUITS),
     })).toThrow(/already carries sealPayKey/);
   });
 
   it('refuses an account whose deploy is not the first step', () => {
     const P = recording();
-    expect(() => buildCreationInsert(P, {
+    expect(() => buildCreationInsert(P, { steps: CREATION_STEPS,
       address: ADDRESS, counter: 0n, onChain: FIRST_STEP_CIRCUITS.filter((n) => n !== 'approve'),
       keys: keysFor(SECOND_STEP_CIRCUITS),
     })).toThrow(/does not carry approve/);
@@ -147,7 +147,7 @@ describe('the second step, as built', () => {
     const P = recording();
     const keys = keysFor(SECOND_STEP_CIRCUITS);
     keys.set('sealPayKey', new TextEncoder().encode('midnight:verifier-key[v7]:xx'));
-    const { update } = buildCreationInsert(P, { address: ADDRESS, counter: 0n, onChain: [...FIRST_STEP_CIRCUITS], keys });
+    const { update } = buildCreationInsert(P, { steps: CREATION_STEPS, address: ADDRESS, counter: 0n, onChain: [...FIRST_STEP_CIRCUITS], keys });
     /* RED WHEN the insert wraps every key as v3 whatever its header says: a key built as [v7] would be inserted as the
      * wrong version after the deploy had already spent its fee. */
     expect((update as any).updates.map((x: any) => [x.operation, x.vk.version]))
@@ -159,7 +159,7 @@ describe('the second step, as built', () => {
     const keys = keysFor(SECOND_STEP_CIRCUITS);
     keys.set('sealPayKey', new TextEncoder().encode('midnight:verifier-key[v5]:xx'));
     /* RED WHEN a key with any other header is inserted under a guessed version. */
-    expect(() => buildCreationInsert(P, { address: ADDRESS, counter: 0n, onChain: [...FIRST_STEP_CIRCUITS], keys }))
+    expect(() => buildCreationInsert(P, { steps: CREATION_STEPS, address: ADDRESS, counter: 0n, onChain: [...FIRST_STEP_CIRCUITS], keys }))
       .toThrow(/key handed in for sealPayKey is not a compiled verifier key/);
     expect(P.built).toEqual([]);
   });
@@ -212,7 +212,7 @@ describe.skipIf(!KEYED)('both steps, applied to an empty ledger and measured wit
     let ls = L.LedgerState.blank(NET);
     [ls] = ls.apply(first.wellFormed(ls, strictness(), NOW), new L.TransactionContext(ls, blockContext));
 
-    const built = buildCreationInsert(L as CreationInsertPrimitives, {
+    const built = buildCreationInsert(L as CreationInsertPrimitives, { steps: CREATION_STEPS,
       address: dep.address, counter: 0n, onChain: [...FIRST_STEP_CIRCUITS],
       keys: new Map(SECOND_STEP_CIRCUITS.map((n) => [n, key(n)] as [string, Uint8Array])),
     });

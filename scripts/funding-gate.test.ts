@@ -167,6 +167,8 @@ const serviceAsks = async (
       DEPLOYED_CIRCUITS, 'the account\'s'),
     committee,
     heldHere: [vk(9)] as never,
+    /* The product's route reads its own record; these rows are about the chain, so the record holds both as born held. */
+    bornHeld: { vault: true, account: true },
     ...over,
   };
   return refusalToPutMoneyIn(facts)?.why ?? null;
@@ -187,11 +189,26 @@ const operatorAsks = (
   vault: VAULT, vaultName: 'payroll', account: ACCOUNT, readState, held: [vk(9)] as never, verifierKeys,
 });
 
+/*
+ * **THE OPERATOR DOOR KEEPS NO RECORD OF HOW A CONTRACT WAS CREATED, SO IT
+ * FUNDS NOTHING.** Money goes only into a vault and an account the product's
+ * service read at their creation as held by the company's committee, and only
+ * that service's record says so. The operator door still asks every question
+ * that comes before the record - who holds each contract, and whether one key
+ * of several could act alone - and says the record is what stops it after
+ * those pass.
+ */
+const NO_RECORD = /this tool keeps no record of how/;
+
 describe('ONE GATE, AND BOTH DOORS ASK IT', () => {
-  it('BOTH FUND a vault and an account the committee holds, each changed once', async () => {
+  it('THE PRODUCT FUNDS a vault and an account its record holds as born held; THE OPERATOR DOOR FUNDS NOTHING', async () => {
     const at = { [VAULT]: HANDED_OVER, [ACCOUNT]: HANDED_OVER };
-    expect(await operatorAsks(at)).toBeNull();
+    /* RED WHEN: a door with no record funds a contract a stranger could have deployed held by keys of their own. */
+    expect(await operatorAsks(at)).toMatch(NO_RECORD);
     expect(await serviceAsks(at, THE_COMMITTEE)).toBeNull();
+    /* RED WHEN: the product's door funds a contract its record does not hold as born held. */
+    expect(await serviceAsks(at, THE_COMMITTEE, {}, { bornHeld: { vault: false, account: true } })).toMatch(/were not read by this service at their creation/);
+    expect(await serviceAsks(at, THE_COMMITTEE, {}, { bornHeld: { vault: true, account: false } })).toMatch(/account, which every vault pays out on, were not read/);
   });
 
   /*
@@ -202,13 +219,12 @@ describe('ONE GATE, AND BOTH DOORS ASK IT', () => {
   it('BOTH REFUSE a vault the committee holds while the ACCOUNT is still on this machine\'s key', async () => {
     const at = { [VAULT]: HANDED_OVER, [ACCOUNT]: HELD_BY_US };
     /* Both name the ACCOUNT, and both name the one press that resolves it. */
-    for (const why of [await operatorAsks(at), await serviceAsks(at, THE_COMMITTEE)]) {
-      expect(why).toMatch(/account is still held by the temporary key it was created with/);
-      expect(why).toMatch(/Hand the account to the company's committee in Settings first/);
-    }
+    const why = await serviceAsks(at, THE_COMMITTEE);
+    expect(why).toMatch(/account is still held by the temporary key it was created with/);
+    expect(why).toMatch(/Hand the account to the company's committee in Settings first/);
+    expect(await operatorAsks(at)).toMatch(NO_RECORD);
     /* And where the account is held by keys that are nobody's here, the account is still what is named. */
     const strangers = { [VAULT]: HANDED_OVER, [ACCOUNT]: { committee: [vk(7), vk(8)], threshold: 2, counter: 3n } };
-    expect(await operatorAsks(strangers)).toMatch(/changed 3 times/);
     expect(await serviceAsks(strangers, THE_COMMITTEE)).toMatch(/account, which every vault pays out on/);
   });
 
@@ -224,24 +240,26 @@ describe('ONE GATE, AND BOTH DOORS ASK IT', () => {
       { [VAULT]: HANDED_OVER, [ACCOUNT]: 'down' },
     ]) {
       /* RED WHEN: a chain that did not answer is read as one that answered and holds nothing. */
-      expect(await operatorAsks(at)).toMatch(/could not be asked: down/);
       expect(await serviceAsks(at, THE_COMMITTEE)).toMatch(/could not be asked/);
     }
+    /* The operator door asks who holds the vault before its record, so it names the chain there too. */
+    expect(await operatorAsks({ [VAULT]: 'down', [ACCOUNT]: HANDED_OVER })).toMatch(/could not be asked: down/);
   });
 
   /*
-   * Read by the product's route from the moment it existed and by no operator
-   * tool until this change: a key that held the rules could have swapped a
-   * circuit, used it and put it back, so anything changed more than once
-   * cannot be vouched for.
+   * A contract born held has had no key outside its committee, so every change
+   * since its deploy needed the committee's own signatures: how many there have
+   * been says nothing, and no history is read.
    */
-  it('BOTH REFUSE rules changed more than once, on the vault and on the account', async () => {
+  it('THE PRODUCT FUNDS A CONTRACT BORN HELD AT ANY COUNTER; THE OPERATOR DOOR STILL FUNDS NONE', async () => {
     for (const at of [
+      { [VAULT]: { ...HANDED_OVER, counter: 0n }, [ACCOUNT]: { ...HANDED_OVER, counter: 0n } },
       { [VAULT]: { ...HANDED_OVER, counter: 2n }, [ACCOUNT]: HANDED_OVER },
-      { [VAULT]: HANDED_OVER, [ACCOUNT]: { ...HANDED_OVER, counter: 2n } },
+      { [VAULT]: HANDED_OVER, [ACCOUNT]: { ...HANDED_OVER, counter: 7n } },
     ]) {
-      expect(await operatorAsks(at)).toMatch(/changed 2 times/);
-      expect(await serviceAsks(at, THE_COMMITTEE)).toMatch(/changed 2 times/);
+      /* RED WHEN: counter 0 or a counter above 1 is refused for a contract the record holds as born held. */
+      expect(await serviceAsks(at, THE_COMMITTEE)).toBeNull();
+      expect(await operatorAsks(at)).toMatch(NO_RECORD);
     }
   });
 
@@ -255,12 +273,10 @@ describe('ONE GATE, AND BOTH DOORS ASK IT', () => {
   it('BOTH REFUSE a vault the chain says is pinned to an account that is not the company\'s', async () => {
     const at = { [VAULT]: HANDED_OVER, [ACCOUNT]: HANDED_OVER };
     const elsewhere = { vaultData: PINNED_ELSEWHERE };
-    /* RED WHEN: the operator door stops reading the pin from the vault's own state. */
-    expect(await operatorAsks(at, elsewhere)).toMatch(/pinned to an account other than the company's/);
     expect(await serviceAsks(at, THE_COMMITTEE, elsewhere)).toMatch(/pinned to an account other than the company's/);
+    expect(await operatorAsks(at, elsewhere)).toMatch(NO_RECORD);
     /* And a vault whose state cannot be read as a vault's is refused, not passed. */
     const notAVault = { vaultData: {} };
-    expect(await operatorAsks(at, notAVault)).toMatch(/cannot be read as a vault's/);
     expect(await serviceAsks(at, THE_COMMITTEE, notAVault)).toMatch(/cannot be read as a vault's/);
   });
 
@@ -269,7 +285,6 @@ describe('ONE GATE, AND BOTH DOORS ASK IT', () => {
     const vault = new VaultContract({ noteToSpend: () => { throw new Error('unused'); }, nonceSecret: () => { throw new Error('unused'); } } as never);
     const fresh = { vaultData: (await (vault as any).initialState(createConstructorContext({}, '0'.repeat(64)), { bytes: fromHex(ACCOUNT as never) })).currentContractState.data };
     /* RED WHEN: a door offers a deposit the vault will refuse in its circuit, after the money was booked. */
-    expect(await operatorAsks(at, fresh)).toMatch(/has not yet adopted it and approved its first secret/);
     expect(await serviceAsks(at, THE_COMMITTEE, fresh)).toMatch(/has not yet adopted it and approved its first secret/);
   });
 
@@ -283,21 +298,13 @@ describe('ONE GATE, AND BOTH DOORS ASK IT', () => {
   it('BOTH REFUSE circuits that are not this build\'s, on the vault and on the account', async () => {
     const at = { [VAULT]: HANDED_OVER, [ACCOUNT]: HANDED_OVER };
     const swapped = (name: string) => (c: string) => (c === name ? vkOf('someone else') : vkOf(c));
-    /* RED WHEN: the operator door stops reading the vault's circuits. */
-    for (const why of [
-      await operatorAsks(at, { vaultKeyOf: swapped('payout') }),
-      await serviceAsks(at, THE_COMMITTEE, { vaultKeyOf: swapped('payout') }),
-    ]) expect(why).toMatch(/its 'payout' circuit is not the one this service's build compiled/);
+    expect(await serviceAsks(at, THE_COMMITTEE, { vaultKeyOf: swapped('payout') }))
+      .toMatch(/its 'payout' circuit is not the one this service's build compiled/);
     /* RED WHEN: a vault carrying one circuit more than this build's is read as this build's. */
-    for (const why of [
-      await operatorAsks(at, { vaultOps: [...VAULT_CIRCUITS, 'drain'] }),
-      await serviceAsks(at, THE_COMMITTEE, { vaultOps: [...VAULT_CIRCUITS, 'drain'] }),
-    ]) expect(why).toMatch(/has circuits other than the vault's own/);
-    /* RED WHEN: the operator door stops reading the ACCOUNT's circuits, or reads them against the vault's keys. */
-    for (const why of [
-      await operatorAsks(at, { accountKeyOf: swapped('approve') }),
-      await serviceAsks(at, THE_COMMITTEE, { accountKeyOf: swapped('approve') }),
-    ]) expect(why).toMatch(/its 'approve' circuit is not the one this service's build compiled/);
+    expect(await serviceAsks(at, THE_COMMITTEE, { vaultOps: [...VAULT_CIRCUITS, 'drain'] })).toMatch(/has circuits other than the vault's own/);
+    /* RED WHEN: the ACCOUNT's circuits stop being read, or are read against the vault's keys. */
+    expect(await serviceAsks(at, THE_COMMITTEE, { accountKeyOf: swapped('approve') }))
+      .toMatch(/its 'approve' circuit is not the one this service's build compiled/);
   });
 
   /* RED WHEN: keys that cannot be read are taken as agreement, or the door throws past its own refusal. */
@@ -329,7 +336,7 @@ describe('ONE GATE, AND BOTH DOORS ASK IT', () => {
       reads.push(address);
       return (reads.filter((a) => a === address).length === 1 ? first : later)(address);
     };
-    expect(await operatorAsks(at, {}, BUILT, moving)).toBeNull();
+    expect(await operatorAsks(at, {}, BUILT, moving)).toMatch(NO_RECORD);
     expect(reads.filter((a) => a === VAULT)).toHaveLength(1);
     expect(reads.filter((a) => a === ACCOUNT)).toHaveLength(1);
   });
@@ -349,10 +356,11 @@ describe('ONE GATE, AND BOTH DOORS ASK IT', () => {
     lay('managed', DEPLOYED_CIRCUITS, vkOf);
     const at = { [VAULT]: HANDED_OVER, [ACCOUNT]: HANDED_OVER };
     /* RED WHEN: either reader reads the other contract's keys, or anything but these files. */
-    expect(await operatorAsks(at, {}, thisBuildsVerifierKeys(root))).toBeNull();
+    const built = thisBuildsVerifierKeys(root);
+    expect([...(await built.vault()).keys()].sort()).toEqual([...VAULT_CIRCUITS].sort());
+    expect([...(await built.account()).keys()].sort()).toEqual([...DEPLOYED_CIRCUITS].sort());
     lay('managed', ['approve'], () => vkOf('rebuilt'));
-    expect(await operatorAsks(at, {}, thisBuildsVerifierKeys(root)))
-      .toMatch(/its 'approve' circuit is not the one this service's build compiled/);
+    expect(new TextDecoder().decode((await thisBuildsVerifierKeys(root).account()).get('approve'))).toBe('vk:rebuilt');
     expect(await operatorAsks(at, {}, thisBuildsVerifierKeys(join(root, 'nowhere'))))
       .toMatch(/this build's verifying keys could not be read/);
   });
@@ -370,12 +378,12 @@ describe('ONE GATE, AND BOTH DOORS ASK IT', () => {
     expect(await operatorAsks(at)).toMatch(/still held by a single key/);
   });
 
-  /* The same difference where the committee has members but any one of them can act alone. */
-  it('DIFFER, AND ON PURPOSE, about a committee of two that either member can use alone', async () => {
+  it('AGREE about a committee of two that either member can use alone: both refuse it', async () => {
     const either = { committee: [vk(3), vk(4)], threshold: 1, counter: 1n };
     const at = { [VAULT]: either, [ACCOUNT]: either };
     const asAsked: Committee = { committee: [vk(3), vk(4)] as never, threshold: 1 };
-    expect(await serviceAsks(at, asAsked)).toBeNull();
+    /* RED WHEN: the product's door funds a committee either member could change alone, which the operator door refuses. */
+    expect(await serviceAsks(at, asAsked)).toMatch(/could change them alone/);
     expect(await operatorAsks(at)).toMatch(/any one member of its committee can change which proofs it accepts/);
   });
 });

@@ -161,7 +161,9 @@ describe('§4 — A REQUEST DECLARES WHAT IT IS', () => {
      * `screens/approve-records-key.tsx`. */
     /* **AND FOR `holders`**, appended ninth, answered with no press by
      * `screens/answer-holders.tsx`, because it carries only public chain facts. */
-    expect([...ASK_KINDS]).toEqual(['disclosure', 'sign-in', 'unlock', 'join', 'keyring', 'balance', 'committee', 'records-key', 'holders']);
+    /* **AND FOR `creation`**, appended tenth, with its screen in
+     * `screens/approve-creation.tsx`. */
+    expect([...ASK_KINDS]).toEqual(['disclosure', 'sign-in', 'unlock', 'join', 'keyring', 'balance', 'committee', 'records-key', 'holders', 'creation']);
   });
 });
 

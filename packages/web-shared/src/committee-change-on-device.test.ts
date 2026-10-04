@@ -67,6 +67,9 @@ describe('WHAT A SIGNER\'S DEVICE CHECKS BEFORE ITS WALLET IS ASKED TO SIGN A CO
     expect(whyNotSignCommitteeChange(view({ to: { committee: [k(1), k(2)], threshold: 1 } }), k(1), withPolicy, ME))
       .toMatch(/the service says 1 of the company's signers must sign a change after this one, and the company's own record says 2/);
     expect(whyNotSignCommitteeChange(view({ to: null, why: 'no committee yet' }), k(1), roster, ME)).toBe('no committee yet');
+    /* RED WHEN: the wallet is asked to sign a committee either of two keys could change alone, which every door refuses. */
+    expect(whyNotSignCommitteeChange(view({ to: { committee: [k(1), k(2)], threshold: 1 } }), k(1), roster, ME))
+      .toMatch(/no change is signed from here: any one of the 2 keys holding these rules could change them alone/);
   });
 });
 

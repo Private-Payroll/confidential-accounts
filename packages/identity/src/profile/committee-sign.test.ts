@@ -105,10 +105,14 @@ describe('A COMMITTEE CHANGE, AS A PAGE ASKS FOR IT', () => {
     }
   });
 
-  it('REFUSES A CONTRACT NAMED TWICE, WITH NO COUNTER, AT COUNTER ZERO, OR OF NO KIND IT KNOWS; AND NO CONTRACTS AT ALL', () => {
+  it('REFUSES A CONTRACT NAMED TWICE, WITH NO COUNTER, AN ACCOUNT AT COUNTER ZERO, OR OF NO KIND IT KNOWS; AND NO CONTRACTS AT ALL', () => {
     const c = (x: Record<string, unknown>) => ({ contract: 'vault', address: VAULT, counter: '2', now: { committee: sorted(mine), threshold: 1 }, ...x });
+    /* RED WHEN: a vault born held, at counter 0 until its first committee change, cannot have its committee changed. */
+    expect(ask({ contracts: [c({ counter: '0' })] }).contracts[0]!.counter).toBe('0');
+    /* RED WHEN: an account whose creation has not finished - still at counter 0 - is offered for a committee change. */
+    expect(refusal({ contracts: [c({ contract: 'account', address: ACCOUNT, counter: '0' })] }).message).toMatch(/not finished being created, so who holds it cannot be changed yet/);
     for (const contracts of [
-      [], [c({}), c({})], [c({ counter: '0' })], [c({ counter: 'x' })], [c({ contract: 'other' })], [c({ address: 'ab' })],
+      [], [c({}), c({})], [c({ counter: 'x' })], [c({ contract: 'other' })], [c({ address: 'ab' })],
       [c({ contract: 'account', address: ACCOUNT }), c({ contract: 'account', address: VAULT })],
     ]) {
       expect(refusal({ contracts }).code).toBe('not-a-committee-change');

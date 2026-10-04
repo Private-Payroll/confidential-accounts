@@ -1,6 +1,7 @@
 import type { BalancedAnswer } from './balance.js';
 import type { CommitteeSignatures } from './committee-sign.js';
 import type { HoldersAnswer, RecordsKeyAnswer } from './records-key.js';
+import type { CreationSignature } from './creation-sign.js';
 import { PROGRESS_SCHEMA, parseAsk } from './request.js';
 import type { Ask, RequestError } from './request.js';
 import type { DisclosureResponse } from './disclosure.js';
@@ -166,7 +167,7 @@ export function framingOf(view: ChannelWindow, embedder: string | null): Framing
  */
 export type Answer =
   | DisclosureResponse | UnlockRelease | KeyringRelease | SealedAcceptance | BalancedAnswer | CommitteeSignatures
-  | RecordsKeyAnswer | HoldersAnswer;
+  | RecordsKeyAnswer | HoldersAnswer | CreationSignature;
 
 /**
  * **WHY A PAYMENT THE PERSON APPROVED DID NOT HAPPEN, IN FOUR WORDS AND NO MORE.**

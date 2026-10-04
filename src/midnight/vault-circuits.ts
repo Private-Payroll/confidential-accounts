@@ -1,9 +1,12 @@
 /**
- * **WHAT A VAULT'S STATE HOLDS, AND WHETHER ITS CIRCUITS ARE THIS BUILD'S** -
- * pure, so the service reading a deploy before it pays for one, and reading the
- * chain's state before money is carried in, makes the one check, in one place.
+ * **WHAT A VAULT'S STATE HOLDS, WHETHER ITS CIRCUITS ARE THIS BUILD'S, AND
+ * WHETHER IT WAS BORN HELD** - pure, so the service reading a deploy before it
+ * pays for one, the service reading the chain's state before money is carried
+ * in, and a signer's device reading a vault's deploy before it is adopted, make
+ * the one check, in one place.
  */
 import { VAULT_CIRCUITS } from './vault-contract.js';
+import { sameCommittee, whyOneKeyCouldActAlone, type Committee } from './vault-committee.js';
 
 const nameOf = (entryPoint: unknown): string =>
   entryPoint instanceof Uint8Array ? new TextDecoder().decode(entryPoint) : String(entryPoint);
@@ -97,6 +100,97 @@ export function circuitsRefusal(
       return `${what}: its '${name}' circuit is not the one this service's build compiled, `
         + 'so it would accept proofs this product never made. Nothing was sent.';
     }
+  }
+  return null;
+}
+
+/**
+ * **A CONTRACT'S STATE AT DEPLOY STARTS WITH NO MONEY**, or the sentence that
+ * says it would not. The one reading of a deploy's starting balance, for the
+ * vault's deploy and the account's alike: any token at all, the fee token
+ * included, refuses it.
+ */
+export function startsHoldingMoney(initialState: unknown, what: string): string | null {
+  const balance = (initialState as { balance?: unknown } | null)?.balance;
+  return balance instanceof Map && balance.size > 0 ? `${what}: it would start holding money. Nothing was sent.` : null;
+}
+
+/** What a vault born held must be, as it was deployed. */
+export interface VaultBornHeldExpectations {
+  /** The company's account the vault is pinned to, 64 hex characters. */
+  readonly account: string;
+  /** The keys that hold the company's rules, and how many of them must sign: the vault is held by exactly these. */
+  readonly holders: Committee;
+  /** Every vault circuit's verifying key as this build compiled it, by circuit name. */
+  readonly verifierKeys: ReadonlyMap<string, Uint8Array>;
+  /** What a vault's state holds, read through the vault's own compiled ledger. Throws for a state that is not a vault's. */
+  readonly startingLedgerOf: (initialState: unknown) => VaultStartingLedger;
+}
+
+const bare = (h: unknown): string => String(h).trim().toLowerCase().replace(/^0x/u, '');
+
+/**
+ * **A VAULT AS IT WAS DEPLOYED IS BORN HELD, OR THE SENTENCE THAT SAYS IT IS
+ * NOT.** Held by exactly the company's committee at the company's threshold,
+ * never changed, a committee no one of whose keys could change it alone; no
+ * money; this build's circuits; pinned to this company's account; and nothing
+ * written that only the company's approved runs write - no note, payment,
+ * secret, sealed copy, copies-written mark, split or reserved entry.
+ *
+ * The one reading of a vault's state at deploy: the service reads a deploy with
+ * it before paying for one, and a signer's device reads the deploy the vault's
+ * address was made from with it before the vault is adopted or set up. After
+ * that, changing who holds the vault or which circuits it runs needs the
+ * committee's signatures, and its state changes only through those circuits,
+ * so nothing later is read for it.
+ */
+export function vaultBornHeldRefusal(initialState: unknown, expect: VaultBornHeldExpectations, what: string): string | null {
+  const state = initialState as {
+    maintenanceAuthority?: { committee?: unknown[]; threshold?: unknown; counter?: unknown };
+  } | null;
+  const authority = state?.maintenanceAuthority;
+  const committee = Array.isArray(authority?.committee)
+    ? authority.committee.map((k) => ({ tag: String((k as { tag?: unknown }).tag), value: bare((k as { value?: unknown }).value) }))
+    : null;
+  const threshold = authority?.threshold;
+  if (committee === null || typeof threshold !== 'number' || authority?.counter !== 0n
+    || !sameCommittee({ committee, threshold }, expect.holders)) {
+    return `this is not ${what}: a vault is held from its first transaction by the company's committee, at the `
+      + 'company\'s threshold, and this one is held by other keys, at another threshold, or was changed. Nothing was sent.';
+  }
+  const alone = whyOneKeyCouldActAlone(expect.holders);
+  if (alone !== null) return `this is not ${what}: ${alone}. Nothing was sent.`;
+  const money = startsHoldingMoney(state, `this is not ${what}`);
+  if (money !== null) return money;
+  const circuits = circuitsRefusal(state, expect.verifierKeys, `this is not ${what}`);
+  if (circuits !== null) return circuits;
+  let start: VaultStartingLedger;
+  try {
+    start = expect.startingLedgerOf(state);
+  } catch {
+    return `this is not ${what}: its state is not a vault's. Nothing was sent.`;
+  }
+  const pinned = bare(start.account);
+  if (!/^[0-9a-f]{64}$/u.test(pinned)) return `this is not ${what}: its state is not a vault's. Nothing was sent.`;
+  if (pinned !== bare(expect.account)) {
+    return `this is not ${what}: it is pinned to a different company's account, so this company could `
+      + 'never pay out of it. Nothing was sent.';
+  }
+  if (start.notes !== 0n || start.unshieldedTokens !== 0n || start.payments !== 0n) {
+    return `this is not ${what}: it starts with records a new vault does not have - notes, public tokens `
+      + 'or payments already written - so its pool could never match it. Nothing was sent.';
+  }
+  /*
+   * A vault takes money only once it has a secret, and it gets one only from a
+   * run the account approved. A deploy that wrote a commitment, a sealed copy
+   * (the copies-written mark among them), a split or a reserved entry into its
+   * own starting state would skip that.
+   */
+  if (!/^0{64}$/u.test(start.nonceCommitment) || start.splitJournal !== 0n || start.secretCopies !== 0n
+    || start.reserved !== 0n) {
+    return `this is not ${what}: it starts with a secret, a sealed copy, a split or a reserved entry already `
+      + 'written, which only the company\'s approved runs may write, so it could take money nobody approved. '
+      + 'Nothing was sent.';
   }
   return null;
 }

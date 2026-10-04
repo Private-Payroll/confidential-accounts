@@ -29,12 +29,27 @@ export interface MaintenanceRefusal {
     | 'threshold-above-committee'
     | 'committee-emptied'
     | 'repeated-committee-member'
+    | 'committee-over-the-metadata-limit'
     | 'malformed-committee-key'
     | 'unnamed-verifier-key-operation'
     | 'empty-verifier-key'
     | 'unknown-verifier-key-version';
   why: string;
 }
+
+/**
+ * **THE MOST KEYS A COMMITTEE MAY HOLD AND STILL FIT THE LEDGER'S LIMIT ON A
+ * CONTRACT'S AUTHORITY, AT ANY THRESHOLD AND ANY COUNTER.** The ledger refuses
+ * a deploy or a replacement whose authority serializes above
+ * `max_contract_metadata_size` (`midnight-ledger` `ledger-9.1.0.0-rc.3`,
+ * `ledger/src/verify.rs:384-391`, `:1780-1792`; `ledger/src/semantics.rs:1632-1653`),
+ * a replacement only once it is applied, after its fee is spent. Read off the
+ * ledger's own serialization against its starting limit of 50,000 bytes: each
+ * key is 33 bytes, and at the largest threshold and counter 1,514 keys serialize
+ * to 49,974 and 1,515 to 50,007. `authority-replacement.test.ts` reads both
+ * again from the ledger every run, so this number cannot drift from it.
+ */
+export const LARGEST_COMMITTEE = 1514;
 
 /**
  * WHAT MUST BE REFUSED BEFORE ANYTHING IS BUILT, SO NOTHING UNSAFE IS EVER SIGNED:
@@ -120,6 +135,15 @@ export function authorityValueRefusals(
         `${threshold}-of-${committee.length}. MEASURED on ledger 9: one holder signs ONCE and ` +
         'attaches that one signature at every seat holding their key, which is well-formed. ' +
         'The threshold this reads as is not the threshold it buys.',
+    });
+  }
+
+  /* A committee the ledger would refuse for its size, refused here before any fee is spent on it. */
+  if (committee.length > LARGEST_COMMITTEE) {
+    out.push({
+      code: 'committee-over-the-metadata-limit',
+      why: `a committee of ${committee.length} keys is more than the ${LARGEST_COMMITTEE} the ledger's limit on a ` +
+        'contract\'s authority holds, so the chain would refuse it, a replacement only after its fee was spent.',
     });
   }
 

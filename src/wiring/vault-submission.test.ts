@@ -7,7 +7,7 @@ import * as contracts from '@midnight-ntwrk/midnight-js-contracts';
 import { NodeZkConfigProvider } from '@midnight-ntwrk/midnight-js-node-zk-config-provider';
 import { setNetworkId } from '@midnight-ntwrk/midnight-js-network-id';
 import * as vaultModule from '../../contracts/managed-vault/contract/index.js';
-import { buildDeposit, buildVaultDeploy, type VaultBuilderDeps } from 'vaults-web-shared/vault-builder.js';
+import { buildDeposit, buildVaultBornHeld, type VaultBuilderDeps } from 'vaults-web-shared/vault-builder.js';
 import { committeeReplacement, type Committee } from '../midnight/vault-committee.js';
 import { VAULT_CIRCUITS } from '../midnight/vault-contract.js';
 import type { AuthorityRead, OnChainAuthority } from '../midnight/ledger.js';
@@ -70,21 +70,22 @@ describe.skipIf(!KEYS_ON_DISK)('what the fee payer pays for on a vault [needs co
 
   beforeAll(async () => {
     setNetworkId(NET as never);
-    const built = await buildVaultDeploy(deps, { account: ACCOUNT });
+    const built = await buildVaultBornHeld(deps, { account: ACCOUNT, holders: committee });
     deploy = readDeploy(built.proven);
-    temporary = built.temporaryKey;
-    vault = built.vault;
+    /* Any key outside the committee: what the old hand-over was signed with, which the readers below still refuse. */
+    temporary = L.signingKeyFromBip340(new Uint8Array(32).fill(9)) as never;
+    vault = built.address;
     verifierKeys = new Map(await Promise.all(VAULT_CIRCUITS.map(async (c) => [c, await zk.getVerifierKey(c) as unknown as Uint8Array] as const)));
   });
 
-  const expectations = () => ({ account: ACCOUNT, verifierKeys, startingLedgerOf });
+  const expectations = () => ({ account: ACCOUNT, holders: committee, verifierKeys, startingLedgerOf });
   const oneIntent = (actions: unknown[], extra: Record<string, unknown> = {}) => ({
     intents: new Map([[1, { actions, ...extra }]]),
   });
   const refusalOf = (v: { vault: string } | { refusal: string }) => ('refusal' in v ? v.refusal : null);
 
   describe('A VAULT DEPLOYED FOR THIS COMPANY', () => {
-    it('is read, and its address is the one the device will hand over', () => {
+    it('is read, held by the company\'s committee from its first transaction, at the address the device built', () => {
       expect(readVaultDeploy(deploy, expectations())).toEqual({ vault });
     });
 
@@ -125,7 +126,7 @@ describe.skipIf(!KEYS_ON_DISK)('what the fee payer pays for on a vault [needs co
         .toMatch(/its 'payout' circuit is not the one this service's build compiled/);
     });
 
-    it('REFUSES ANY AUTHORITY BUT ONE TEMPORARY KEY, AND A STATE THAT HOLDS MONEY', () => {
+    it('REFUSES ANY AUTHORITY BUT EXACTLY THE COMPANY\'S COMMITTEE AT ITS THRESHOLD, NEVER CHANGED, AND A STATE THAT HOLDS MONEY', () => {
       const d = deploy.intents.values().next().value.actions[0];
       const state = d.initialState;
       const as = (mutate: (s: any) => void) => {
@@ -133,10 +134,27 @@ describe.skipIf(!KEYS_ON_DISK)('what the fee payer pays for on a vault [needs co
         mutate(copy);
         return oneIntent([{ address: d.address, initialState: copy }]);
       };
-      expect(refusalOf(readVaultDeploy(as((s) => { s.maintenanceAuthority = new L.ContractMaintenanceAuthority([vk(1), vk(2)], 1, 0n); }), expectations())))
-        .toMatch(/one temporary key/);
-      expect(refusalOf(readVaultDeploy(as((s) => { s.maintenanceAuthority = new L.ContractMaintenanceAuthority([vk(1)], 0, 0n); }), expectations())))
-        .toMatch(/one temporary key/);
+      const held = /held from its first transaction by the company's committee/;
+      const ck = committee.committee as unknown as ReturnType<typeof vk>[];
+      /* RED WHEN a vault held by one key outside the committee - the old temporary key - is read as the company's. */
+      expect(refusalOf(readVaultDeploy(as((s) => { s.maintenanceAuthority = new L.ContractMaintenanceAuthority([vk(9)], 1, 0n); }), expectations())))
+        .toMatch(held);
+      /* RED WHEN the committee is compared by its size, its first key, or as a set rather than exactly. */
+      expect(refusalOf(readVaultDeploy(as((s) => { s.maintenanceAuthority = new L.ContractMaintenanceAuthority([ck[0]!, vk(9)], 2, 0n); }), expectations())))
+        .toMatch(held);
+      expect(refusalOf(readVaultDeploy(as((s) => { s.maintenanceAuthority = new L.ContractMaintenanceAuthority([...ck].reverse(), 2, 0n); }), expectations())))
+        .toMatch(held);
+      expect(refusalOf(readVaultDeploy(as((s) => { s.maintenanceAuthority = new L.ContractMaintenanceAuthority([...ck, vk(9)], 2, 0n); }), expectations())))
+        .toMatch(held);
+      /* RED WHEN the threshold is not compared, or a deploy at a counter other than 0 is read as born. */
+      expect(refusalOf(readVaultDeploy(as((s) => { s.maintenanceAuthority = new L.ContractMaintenanceAuthority([...ck], 1, 0n); }), expectations())))
+        .toMatch(held);
+      expect(refusalOf(readVaultDeploy(as((s) => { s.maintenanceAuthority = new L.ContractMaintenanceAuthority([...ck], 2, 1n); }), expectations())))
+        .toMatch(held);
+      /* RED WHEN a committee any one of whose keys could change the vault alone is taken, even matching the company's. */
+      const loose = { committee: [...committee.committee], threshold: 1 };
+      expect(refusalOf(readVaultDeploy(as((s) => { s.maintenanceAuthority = new L.ContractMaintenanceAuthority([...ck], 1, 0n); }), { ...expectations(), holders: loose })))
+        .toMatch(/could change them alone/);
       expect(refusalOf(readVaultDeploy(as(() => {}), expectations()))).toBeNull();
       const rich = { address: d.address, initialState: { ...state, maintenanceAuthority: state.maintenanceAuthority, balance: new Map([['x', 1n]]), operations: () => state.operations(), operation: (n: string) => state.operation(n) } };
       expect(refusalOf(readVaultDeploy(oneIntent([rich]), expectations()))).toMatch(/start holding money/);
@@ -318,7 +336,7 @@ describe.skipIf(!KEYS_ON_DISK)('what the fee payer pays for on a vault [needs co
     ): string | null => refusalToPutMoneyIn({
       label: 'v', what: 'no money goes in', vault: vaultRead, vaultCircuits: null,
       pinnedAccount: 'acc', started: true, companyAccount: 'acc', account: ok, accountCircuits: null,
-      committee: to, heldHere: [], ...over,
+      committee: to, heldHere: [], bornHeld: to === null ? null : { vault: true, account: true }, ...over,
     })?.why ?? null;
 
     it('NOT INTO A VAULT THAT IS NOT STARTED: no secret approved, or a secret whose sealed copies are not all on the chain', () => {
@@ -332,7 +350,7 @@ describe.skipIf(!KEYS_ON_DISK)('what the fee payer pays for on a vault [needs co
       const facts = {
         label: 'v', what: 'no money goes in', vault: read({}), vaultCircuits: null,
         pinnedAccount: 'acc', started: false, companyAccount: 'acc', account: ok, accountCircuits: null,
-        committee, heldHere: [],
+        committee, heldHere: [], bornHeld: { vault: true, account: true },
       };
       /* RED WHEN: the question a handover waits on folds in the start - a handed-over vault is then handed over again and refused. */
       expect(committeeHoldsTheVault(facts)).toBeNull();
@@ -364,7 +382,7 @@ describe.skipIf(!KEYS_ON_DISK)('what the fee payer pays for on a vault [needs co
       expect(gate(read({}), committee)).toBeNull();
       expect(gate(read({ threshold: 1 }), committee)).toMatch(/not held by the company's committee/);
       expect(gate(read({ committee: [{ tag: 'schnorr', value: 'aa'.repeat(32) }], threshold: 1, shape: 'one-key' }), committee))
-        .toMatch(/finish handing it to the committee first/);
+        .toMatch(/its committee is changed to match in Settings/);
       expect(gate({ state: 'unreachable', address: vault, why: 'down' }, committee)).toMatch(/could not be asked/);
       expect(gate({ state: 'absent', address: vault, why: 'none' }, committee)).toMatch(/could not be asked/);
     });
@@ -384,7 +402,8 @@ describe.skipIf(!KEYS_ON_DISK)('what the fee payer pays for on a vault [needs co
     /* The same gate with no roster to compare against, which is what an operator tool asks. */
     it('with no roster it refuses a committee any one member can act for, one nobody can, and one listing a key twice', () => {
       const three = [vk(4), vk(5), vk(6)];
-      expect(gate(read({ committee: three, threshold: 2 }), null)).toBeNull();
+      /* A committee the structural question passes still meets the record, which an operator tool does not keep. */
+      expect(gate(read({ committee: three, threshold: 2 }), null)).toMatch(/this tool keeps no record of how/);
       expect(gate(read({ committee: three, threshold: 1 }), null)).toMatch(/any one member/);
       expect(gate(read({ committee: three, threshold: 4, shape: 'no-one' }), null)).toMatch(/nobody can ever change its rules/);
       expect(gate(read({ committee: [], threshold: 1, shape: 'no-one' }), null)).toMatch(/nobody can ever change its rules/);
@@ -402,8 +421,9 @@ describe.skipIf(!KEYS_ON_DISK)('what the fee payer pays for on a vault [needs co
       expect(gate({ state: 'unreadable', address: vault, why: 'x' }, null)).toMatch(/could not be asked/);
       /* The account is asked the same question, so it too must hold no key this machine keeps. */
       const clean = read({ committee: [vk(3), vk(4)], shape: 'committee' });
-      expect(gate(clean, null, { heldHere: held, account: clean })).toBeNull();
-      expect(gate(clean, null, { heldHere: held }), 'RED WHEN: the account half stops being asked with no roster')
+      expect(gate(clean, null, { heldHere: held, account: clean })).toMatch(/this tool keeps no record of how/);
+      /* The account half is asked structurally too, before its record; given a record, so the vault passes, it is reached. */
+      expect(gate(clean, null, { heldHere: held, bornHeld: { vault: true, account: true } }), 'RED WHEN: the account half stops being asked with no roster')
         .toMatch(/a key this machine keeps/);
     });
   });

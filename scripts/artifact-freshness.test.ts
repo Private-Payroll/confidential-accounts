@@ -556,6 +556,7 @@ describe('the guard is WIRED IN, and is pointed at the artifacts the tests impor
      * whole thing passing over nothing.
      */
     const NAMED = [
+      'contracts/test/a-company-born-held-from-the-browser.test.ts',
       'contracts/test/a-company-seats-its-signers-from-the-page.test.ts',
       'contracts/test/a-company-vault-from-the-page.test.ts',
       'contracts/test/a-payment-needs-a-vaults-receipt.test.ts',
@@ -563,11 +564,13 @@ describe('the guard is WIRED IN, and is pointed at the artifacts the tests impor
       'contracts/test/a-run-raised-and-approved-from-the-page.test.ts',
       'contracts/test/a-vaults-committee-changes-with-its-signers.test.ts',
       'packages/web-shared/src/a-deposit-built-on-the-device.test.ts',
+      'packages/web-shared/src/a-vault-is-read-as-it-was-born.test.ts',
       'src/midnight/a-company-is-created-in-two-steps.test.ts',
       'src/midnight/deferred-set.test.ts',
       'src/midnight/ledger.test.ts',
       'src/midnight/the-key-reaches-the-circuit.test.ts',
       'src/midnight/the-secret-comes-from-the-keyring.test.ts',
+      'src/server/account-creation.test.ts',
       'src/wiring/vault-submission.test.ts',
     ];
     expect(gated.filter((f) => !NAMED.includes(f)),
@@ -584,6 +587,7 @@ describe('the guard is WIRED IN, and is pointed at the artifacts the tests impor
       'contracts/test/a-vaults-committee-changes-with-its-signers.test.ts',
       'src/wiring/vault-submission.test.ts',
       'packages/web-shared/src/a-deposit-built-on-the-device.test.ts',
+      'packages/web-shared/src/a-vault-is-read-as-it-was-born.test.ts',
       'contracts/test/a-payment-needs-a-vaults-receipt.test.ts',
     ];
     const vaultGated = gatedOnKeys([VAULT_KEY_DIR]);

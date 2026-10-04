@@ -170,7 +170,61 @@ export interface Profile {
    * `releasesOf` is the only reader and `recordRelease` the only writer.
    */
   readonly releases?: readonly Release[];
+  /**
+   * **THE ACCOUNT EACH COMPANY THIS WALLET CREATED IS, PINNED WHEN IT WAS
+   * CREATED.** A label does not name an account on its own: nothing on the
+   * chain stops a second account being deployed carrying a label somebody
+   * learned. The founding signer's wallet read the deploy it signed for and
+   * wrote its address here, never one a service named. Absent on a profile
+   * written before this existed. `pinnedAccountOf` is the only reader and
+   * `pinCompanyAccount` the only writer.
+   */
+  readonly pinned?: readonly CompanyPin[];
   readonly updatedAt: number;
+}
+
+/** One company's account, as this wallet pinned it. */
+export interface CompanyPin {
+  readonly company: CompanyLabel;
+  readonly account: AccountAddress;
+  /** How the address was learned: read by this wallet off the deploy it signed the creation of. */
+  readonly from: 'created';
+  readonly at: number;
+}
+
+/**
+ * **WHETHER THIS WALLET DREW A LABEL FOR A NEW COMPANY AND HAS NOT FINISHED
+ * CREATING IT**: a key was released for the label before it had any account,
+ * which is what drawing it writes down, and no account is pinned for it yet.
+ * The second press of a creation is signed for nothing else.
+ */
+export function drewTheLabelFor(profile: Profile, company: CompanyLabel): boolean {
+  return releasesOf(profile).some((r) => r.company === company && (r.account ?? null) === null)
+    && pinnedAccountOf(profile, company) === null;
+}
+
+/** The account this wallet pinned for a company, or null when it pinned none. */
+export function pinnedAccountOf(profile: Profile, company: CompanyLabel): AccountAddress | null {
+  return (profile.pinned ?? []).find((p) => p.company === company)?.account ?? null;
+}
+
+/**
+ * **PINS A COMPANY'S ACCOUNT, ONCE.** The same pin again changes nothing; a
+ * second, different account for a label already pinned is refused, because a
+ * wallet that let a later press move its pin would take a label's account from
+ * whoever asked last.
+ */
+export function pinCompanyAccount(profile: Profile, pin: CompanyPin, now: number): Profile {
+  const already = pinnedAccountOf(profile, pin.company);
+  if (already !== null) {
+    if (already === pin.account) return profile;
+    throw new Error('this wallet has already pinned another account for this company, so it will not pin a second one.');
+  }
+  return Object.freeze({
+    ...profile,
+    pinned: Object.freeze([...(profile.pinned ?? []), Object.freeze({ ...pin })]),
+    updatedAt: now,
+  });
 }
 
 /* --------------------------------- grants -------------------------------- */

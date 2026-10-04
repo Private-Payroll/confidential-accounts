@@ -59,10 +59,10 @@ import { MemorySealedPoolStore } from '../../src/midnight/vault-pool.js';
 import type { WireRecord } from '../../src/midnight/sealed-record-wire.js';
 import { HttpSealedPoolStore, type WireSend } from 'vaults-web-shared/http-sealed-pool-store.js';
 import { recordsReaderOf, type DeviceSigner } from 'vaults-web-shared/deposit-on-device.js';
-import { answerVaultAsk } from 'vaults-web-shared/vault-worker-entry.js';
+import { answerVaultAsk, checkedAccountKeys } from 'vaults-web-shared/vault-worker-entry.js';
 import { vaultBuilderOver, type VaultAnswer } from 'vaults-web-shared/vault-worker-client.js';
 import {
-  createCompanyVault, depositIntoCompanyVault, openCompanyVaultPool, VaultStartOwed, payPrivatelyFromCompanyVault,
+  createCompanyVault, depositIntoCompanyVault, openCompanyVaultPool, payPrivatelyFromCompanyVault,
   type TemporaryKeys, type VaultService, type DepositInFlight, type DepositsInFlight, type PaymentInFlight,
 } from 'vaults-web-shared/vault-operation.js';
 import { inFlightInMemory as inFlightRecordsInMemory, sealedOnThisDevice, type KeptOnThisDevice } from 'vaults-web-shared/in-flight-on-this-device.js';
@@ -70,7 +70,7 @@ import { readWhatThePageAsks, base64FromBytes } from '../../apps/wallet/src/chai
 import { UNLOCK_PURPOSE, UNLOCK_WINDOW_MS, unlockAsk } from '../../src/core/wallet-unlock.js';
 import { fromHex, newSigningKeypair, newWrappingKeypair, toHex, type Hex } from '../../src/core/crypto.js';
 import {
-  accountHandoverWith, accountTemporaryVerifyingKey, accountVerifierKeysIn, committeeChangeWith,
+  accountVerifierKeysIn, committeeChangeWith,
 } from '../../src/server/vault-chain.js';
 import { committeeSignaturesFor, readCommitteeSignatures } from 'midnight-identity/profile/committee-sign';
 import { committeeAsk } from 'vaults-web-shared/wallet-committee.js';
@@ -80,7 +80,7 @@ import { DEPLOYED_CIRCUITS } from '../../src/midnight/deferral.js';
 import { fileURLToPath } from 'node:url';
 import { readProvenTransaction } from '../../src/wiring/proven-submission.js';
 import { startingLedgerFrom } from '../../src/wiring/vault-submission.js';
-import { signingKeyFromBip340 } from '@midnightntwrk/ledger-v9';
+import { anAccountBornHeld } from './an-account-born-held.js';
 import { buildRun } from '../../src/midnight/payout-tree.js';
 import { vaultDetails } from '../../src/testing/vault-details.js';
 import { payeeAddressFromKeys, type Payee } from '../../src/midnight/payee-address.js';
@@ -176,9 +176,7 @@ class Chain {
   }
 }
 
-const TEMPORARY_ACCOUNT_KEY = signingKeyFromBip340(new Uint8Array(32).fill(0x5a));
 const accountKeys = accountVerifierKeysIn(fileURLToPath(new URL('../..', import.meta.url)));
-const TEMPORARY = { kind: 'single-key', signingKey: TEMPORARY_ACCOUNT_KEY, temporary: { fixedBy: 'this watch' } } as const;
 
 /*
  * **THE VAULT'S AND THE ACCOUNT'S VERIFIER KEYS, WHICH ONLY A FULL COMPILE OF
@@ -239,6 +237,9 @@ describe.skipIf(!KEYS_ON_DISK)('A VAULT\'S COMMITTEE CHANGES WITH THE COMPANY\'S
       /* The company account beside the vault, as the worker loads it: its compiled contract, its functions and its ledger. */
       accountCompiled, accountZkConfig: accountZk, accountPure: (accountModule as any).pureCircuits,
       accountLedger: (accountModule as any).ledger,
+      /* The vault's keys as the worker checks them before reading a vault as it was born. */
+      vaultKeys: checkedAccountKeys(async (c) => await vaultZk.getVerifierKey(c) as unknown as Uint8Array, (vaultModule as any).expectedVk,
+        (b) => new Uint8Array(createHash('sha256').update(b).digest()), 'the vault'),
       prove: async (unproven: any, circuit?: string) =>
         (circuit === undefined ? unproven.prove(neverAsked, (L as any).CostModel.initialCostModel()) : unproven),
     });
@@ -283,23 +284,15 @@ describe.skipIf(!KEYS_ON_DISK)('A VAULT\'S COMMITTEE CHANGES WITH THE COMPANY\'S
     chain.applied.pop();
     store = new MemoryStore();
     founder = privateStateFor(1);
-    /* The company account, with the state its own constructor writes for its founder, this build's circuits and the service's temporary key. */
-    const init = await new (accountModule as any).Contract(witnesses).initialState(
-      runtime.createConstructorContext(founder, '0'.repeat(64)), leafOfDevice(founder), COMPANY_LABEL);
-    const accountState = L.ContractState.deserialize(init.currentContractState.serialize());
-    accountState.maintenanceAuthority = new L.ContractMaintenanceAuthority([L.signatureVerifyingKey(TEMPORARY_ACCOUNT_KEY)], 1, 0n);
-    for (const c of DEPLOYED_CIRCUITS) {
-      const op = new L.ContractOperation();
-      op.verifierKey = new Uint8Array(readFileSync(new URL(`../managed/keys/${c}.verifier`, import.meta.url)));
-      accountState.setOperation(c, op);
-    }
-    const accountDeploy = new L.ContractDeploy(accountState);
-    const seeded = chain.apply(L.Transaction.fromParts(NET, undefined, undefined,
-      L.Intent.new(new Date(Date.now() + 600_000)).addDeploy(accountDeploy)));
-    if (!seeded.ok) throw new Error(`the company account was not deployed: ${seeded.error}`);
-    chain.applied.pop();
-    company = String(accountDeploy.address).toLowerCase() as Hex;
     words = newWords().join(' ');
+    /* The company account, created as its founding signer's browser creates one: held by their committee key from its first transaction. */
+    const made = await anAccountBornHeld({ network: NET, founder: identityFromWords(words), label: LABEL, foundingLeaf: hex(leafOfDevice(founder)) });
+    for (const step of [made.deploy.proven, made.insert.proven]) {
+      const seeded = chain.apply((L.Transaction.deserialize('signature', 'proof', 'pre-binding', step) as any).bind());
+      if (!seeded.ok) throw new Error(`the company account was not created: ${seeded.error}`);
+      chain.applied.pop();
+    }
+    company = made.deploy.address.toLowerCase() as Hex;
     signing = newSigningKeypair();
     wrapping = newWrappingKeypair();
     companyThreshold = 1;
@@ -319,6 +312,11 @@ describe.skipIf(!KEYS_ON_DISK)('A VAULT\'S COMMITTEE CHANGES WITH THE COMPANY\'S
       }],
       policy: { threshold: 1, limitsByRole: {} }, recovery: { signerIds: ['ada'], threshold: 1 }, wrappedKeys: [],
     } as never, viewingKey, []));
+    store.recordAccountOpening({ accountId: ACCOUNT_ID, foundingKey: made.foundingKey, foundingLeaf: hex(leafOfDevice(founder)), companyLabel: LABEL });
+    store.recordAccountDeploy({
+      accountId: ACCOUNT_ID, address: company, foundingKey: made.foundingKey, recordedAt: new Date().toISOString(),
+      deploy: base64FromBytes(made.deploy.proven), insert: base64FromBytes(made.insert.proven),
+    });
     const accounts = new AccountService(store, {} as never, MidnightCommitments);
 
     const app = express();
@@ -350,8 +348,6 @@ describe.skipIf(!KEYS_ON_DISK)('A VAULT\'S COMMITTEE CHANGES WITH THE COMPANY\'S
           parameters: b64(chain.state.parameters), accountState: b64(a),
         };
       },
-      /* As the indexer serves a contract's actions: every state it was left in, oldest first. */
-      historyOf: async (address) => chain.history.get(address.toLowerCase()) ?? [],
       /* As the indexer serves them: the transaction's own events, named by its hash. */
       eventsOf: async (tx) => (chain.events.get(tx) ?? []).map((e: any) => ({
         transactionHash: tx,
@@ -414,8 +410,6 @@ describe.skipIf(!KEYS_ON_DISK)('A VAULT\'S COMMITTEE CHANGES WITH THE COMPANY\'S
       account: {
         circuits: DEPLOYED_CIRCUITS,
         verifierKeys: accountKeys,
-        handover: accountHandoverWith(TEMPORARY, NET),
-        temporaryKey: await accountTemporaryVerifyingKey(TEMPORARY),
       },
       readers,
       committeeChange: committeeChangeWith(NET),
@@ -528,18 +522,13 @@ describe.skipIf(!KEYS_ON_DISK)('A VAULT\'S COMMITTEE CHANGES WITH THE COMPANY\'S
         roster: async () => rosterVaultKeys(openAccount(store.getAccount(ACCOUNT_ID)!, viewingKey)),
       },
     }, resume as never);
-    /* Deployed, handed over and adopted; its first secret waits for the account to be the committee's. */
-    const first = await press().catch((e: unknown) => e);
-    if (!(first instanceof VaultStartOwed)) throw new Error(`the vault's first secret was not held back: ${String((first as Error)?.message ?? JSON.stringify(first))}`);
-    const authority = await http(`${at}/authority`);
-    await http(`${at}/authority/handover`, { method: 'POST', body: { committee: authority.committee } });
-    /* The founding signer's own directory entry, filed from their device once the account is the committee's. */
+    /* The founding signer's own directory entry, filed from their device: the account is the committee's from its first transaction. */
     await fileOwnEntry({
       api, accountId: ACCOUNT_ID, person: 'ada', identity: identityFromWords(words), label: LABEL,
       companyKey: me.companyKey, signingKey: signing.publicKey, seat: hex(leafOfDevice(founder)),
     });
-    /* Then started by the same press: its secret set and every copy written. */
-    const created = await press(first.vault);
+    /* Deployed born held, read as it was born, adopted and started by one press. */
+    const created = await press();
     if (created.state !== 'started') throw new Error(`the vault was not started: ${JSON.stringify(created)}`);
     const { vault } = created;
     await openCompanyVaultPool(poolDoors, vault, async () => {});
@@ -686,19 +675,24 @@ describe.skipIf(!KEYS_ON_DISK)('A VAULT\'S COMMITTEE CHANGES WITH THE COMPANY\'S
     asked = [];
     const { vault } = await aFundedVault();
     await pay(vault, 100n);
-    expect(onChain(vault)).toEqual({ keys: sortedKeys('ada'), threshold: 1, counter: 1n });
+    /* Born held and never changed: the vault at counter 0, the account at 1 after the second step of its creation. */
+    expect(onChain(vault)).toEqual({ keys: sortedKeys('ada'), threshold: 1, counter: 0n });
+    expect(onChain(company)).toEqual({ keys: sortedKeys('ada'), threshold: 1, counter: 1n });
 
     await seat('bo');
-    /* The company's committee is now two keys at a threshold of one; the vault and the account still hold one. */
+    /* The company's committee is now two keys; the vault and the account are still held by one. */
     /* RED WHEN: a payment is paid for out of a vault whose committee is not the company's. */
     const payoutsBefore = arrivals.filter((a) => a === 'proven-moving-the-vaults-own-coins').length;
     await expect(pay(vault, 100n)).rejects.toThrow(/not held by the company's committee/);
     expect(arrivals.filter((a) => a === 'proven-moving-the-vaults-own-coins')).toHaveLength(payoutsBefore);
 
+    /* RED WHEN: two keys at a threshold of one, either of which could change the rules alone, are installed. */
+    await expect(signAs('ada')).rejects.toThrow(/could change them alone/);
+    thresholdBecomes(2);
     const owed = await http(`${at}/committee-change`) as CommitteeChangeView;
-    expect(owed.to).toEqual({ committee: sortedKeys('ada', 'bo').map((value) => ({ tag: 'schnorr', value })), threshold: 1 });
+    expect(owed.to).toEqual({ committee: sortedKeys('ada', 'bo').map((value) => ({ tag: 'schnorr', value })), threshold: 2 });
     expect(owed.contracts.map((c) => [c.contract, c.address, c.counter, c.required, c.signedSeats])).toEqual([
-      ['account', company, '1', 1, []], ['vault', vault, '1', 1, []],
+      ['account', company, '1', 1, []], ['vault', vault, '0', 1, []],
     ]);
 
     const before = chain.applied.length;
@@ -709,11 +703,12 @@ describe.skipIf(!KEYS_ON_DISK)('A VAULT\'S COMMITTEE CHANGES WITH THE COMPANY\'S
     expect(asked).toHaveLength(1);
     expect((asked[0] as any).to.committee.map((k: any) => k.value)).toEqual(sortedKeys('ada', 'bo'));
     /* RED WHEN: the change installs anything but the company's committee, or on only one of its contracts. */
-    for (const c of [vault, company]) expect(onChain(c)).toEqual({ keys: sortedKeys('ada', 'bo'), threshold: 1, counter: 2n });
+    /* Each moved on by one: the vault from 0, the account from 1. */
+    for (const c of [vault, company]) expect(onChain(c)).toEqual({ keys: sortedKeys('ada', 'bo'), threshold: 2, counter: c === vault ? 1n : 2n });
     expect((await http(`${at}/committee-change`) as CommitteeChangeView).contracts).toEqual([]);
     expect((await http(`${at}/authority`)).change.possible).toBe(false);
 
-    /* RED WHEN: a contract changed after its handover is refused although its whole history vouches for it. */
+    /* RED WHEN: a contract born held is refused after a committee change its committee signed. */
     const paid = await pay(vault, 100n);
     expect([chain.applied.at(-1)!.ok, chain.applied.at(-1)!.error]).toEqual([true, '']);
     expect(paid.transactionHash).toBe(chain.applied.at(-1)!.name);
@@ -726,10 +721,10 @@ describe.skipIf(!KEYS_ON_DISK)('A VAULT\'S COMMITTEE CHANGES WITH THE COMPANY\'S
     const sig = kept.signatures[0]!.signature;
     const updateFor = (address: string, committee: string[], threshold: number, counter: bigint) => new L.MaintenanceUpdate(address,
       [new L.ReplaceAuthority(new L.ContractMaintenanceAuthority(committee.map((value) => ({ tag: 'schnorr', value })) as never, threshold, counter + 1n))], counter);
-    expect(L.verifySignature(committeeKeyOf('ada') as never, updateFor(vault, sortedKeys('ada', 'bo'), 1, 1n).dataToSign, sig as never)).toBe(true);
-    expect(L.verifySignature(committeeKeyOf('ada') as never, updateFor(vault, sortedKeys('ada', 'bo'), 1, 2n).dataToSign, sig as never)).toBe(false);
-    expect(L.verifySignature(committeeKeyOf('ada') as never, updateFor(company, sortedKeys('ada', 'bo'), 1, 1n).dataToSign, sig as never)).toBe(false);
-    expect(L.verifySignature(committeeKeyOf('ada') as never, updateFor(vault, sortedKeys('ada'), 1, 1n).dataToSign, sig as never)).toBe(false);
+    expect(L.verifySignature(committeeKeyOf('ada') as never, updateFor(vault, sortedKeys('ada', 'bo'), 2, 0n).dataToSign, sig as never)).toBe(true);
+    expect(L.verifySignature(committeeKeyOf('ada') as never, updateFor(vault, sortedKeys('ada', 'bo'), 2, 1n).dataToSign, sig as never)).toBe(false);
+    expect(L.verifySignature(committeeKeyOf('ada') as never, updateFor(company, sortedKeys('ada', 'bo'), 2, 0n).dataToSign, sig as never)).toBe(false);
+    expect(L.verifySignature(committeeKeyOf('ada') as never, updateFor(vault, sortedKeys('ada', 'bo'), 1, 0n).dataToSign, sig as never)).toBe(false);
   });
 
   it('A SIGNER WHO LEAVES LOSES EVERY SEAT: TWO SIGNERS SIGN ON THEIR OWN, AND THE ONE WHO LEFT CAN SIGN NOTHING AFTERWARDS', async () => {
@@ -738,14 +733,14 @@ describe.skipIf(!KEYS_ON_DISK)('A VAULT\'S COMMITTEE CHANGES WITH THE COMPANY\'S
     await seat('cy');
     thresholdBecomes(2);
     await signAs('ada');
-    for (const c of [vault, company]) expect(onChain(c)).toEqual({ keys: sortedKeys('ada', 'bo', 'cy'), threshold: 2, counter: 2n });
+    for (const c of [vault, company]) expect(onChain(c)).toEqual({ keys: sortedKeys('ada', 'bo', 'cy'), threshold: 2, counter: c === vault ? 1n : 2n });
 
     /* cy's device is lost: the company takes them off, and the committee left is two keys at a threshold of two. */
     unseat('cy');
     const first = await signAs('ada');
     /* RED WHEN: a change is sent with fewer signatures than the committee holding the contract now requires. */
     expect(first.results.map((r) => [r.state, r.have, r.required])).toEqual([['waiting', 1, 2], ['waiting', 1, 2]]);
-    for (const c of [vault, company]) expect(onChain(c).counter).toBe(2n);
+    for (const c of [vault, company]) expect(onChain(c).counter).toBe(c === vault ? 1n : 2n);
     await expect(pay(vault, 100n)).rejects.toThrow(/not held by the company's committee/);
     /* Signed a second time by the same person, nothing moves: each seat counts once. */
     await expect(signAs('ada')).rejects.toThrow(/you have signed the change on every contract you hold a seat on/);
@@ -754,7 +749,7 @@ describe.skipIf(!KEYS_ON_DISK)('A VAULT\'S COMMITTEE CHANGES WITH THE COMPANY\'S
     expect(second.results.map((r) => r.state)).toEqual(['sent', 'sent']);
     /* RED WHEN: a signer who left keeps any seat on the account or the vault. */
     for (const c of [vault, company]) {
-      expect(onChain(c)).toEqual({ keys: sortedKeys('ada', 'bo'), threshold: 2, counter: 3n });
+      expect(onChain(c)).toEqual({ keys: sortedKeys('ada', 'bo'), threshold: 2, counter: c === vault ? 2n : 3n });
       expect(onChain(c).keys).not.toContain(committeeKeyOf('cy').value);
     }
     const paid = await pay(vault, 100n);

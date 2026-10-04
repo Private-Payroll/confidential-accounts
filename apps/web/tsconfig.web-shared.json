@@ -27,6 +27,6 @@
     "rootDir": "../..",
     "outDir": "../../dist/declarations"
   },
-  "include": ["../../packages/web-shared/src", "../../src", "../../src/**/*.json", "../../contracts/src"],
+  "include": ["../../packages/web-shared/src", "../../src", "../../src/**/*.json", "../../contracts/src", "../../scripts/dispatch-ceiling.ts"],
   "exclude": ["../../**/*.test.ts", "../../**/*.test.tsx", "../../**/*.test-support.ts"]
 }

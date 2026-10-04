@@ -99,7 +99,7 @@ const NOT_A_CONTRACT_BALANCE: Record<string, { count: number; why: string }> = {
   'scripts/run-preview.ts': { count: 2, why: 'a phase code named for the wallet\'s balancing step' },
   'src/core/ledger.ts': { count: 2, why: 'a proof\'s witness, not a contract state' },
   'src/midnight/public-balance.ts': { count: 1, why: 'the one reader' },
-  'src/wiring/vault-submission.ts': { count: 2, why: 'a vault deploy is refused unless its starting balance is empty at all, fee token included' },
+  'src/midnight/vault-circuits.ts': { count: 1, why: 'a deploy is refused unless its starting balance is empty' },
 };
 
 describe('the census can see what it looks for', () => {

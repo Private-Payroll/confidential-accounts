@@ -9,17 +9,17 @@
  * ── CREATING A VAULT IS ONE OPERATION WITH NO SUCCESS STATE UNTIL THE END ──
  *
  *   1. the company's committee must already be complete: every signer's wallet
- *      has given its committee key. No committee, no deploy;
- *   2. the vault is built here with a temporary key made here, and the key is
- *      kept on this device BEFORE the deploy is sent, so an answer lost on the
- *      way does not lose the key;
+ *      has given its committee key, and the company's account is held by that
+ *      committee as this signer's own wallet reads it. No committee, no deploy;
+ *   2. the vault is built here held by that committee, at its threshold, from
+ *      its first transaction: there is no temporary key and no hand-over;
  *   3. the deploy is sent;
- *   4. as soon as the chain has the vault, the handover to the committee is
- *      built against the counter the chain reports, signed with the temporary
- *      key, and sent - and sent again, rebuilt, if it does not land;
- *   5. once the chain says the committee holds the vault, the temporary key is
- *      forgotten and the vault is STARTED, each step raised only once the chain
- *      shows the one before:
+ *   4. as soon as the chain has the vault, this device reads it as it was born,
+ *      from the deploy its address was made from, and refuses it unless it was
+ *      held by the committee at counter 0, ran this build's circuits and wrote
+ *      nothing;
+ *   5. the vault is STARTED, each step raised only once the chain shows the one
+ *      before:
  *        a. the company's account adopts it: the adoption round is raised,
  *           approved by this signer and carried out;
  *        b. its note pool and nonce secret are filed through the company's
@@ -30,7 +30,7 @@
  *      The operation ends `started` when the chain shows every copy written.
  *
  * **ANYTHING SHORT OF THE END IS A FAILURE THAT NAMES THE VAULT**
- * (`VaultHandoverOwed` before the handover has landed, `VaultStartOwed` after),
+ * (`VaultStartOwed`, or `VaultNotTheCompanys` for a vault not born held),
  * or, for a company whose rounds need more approvals than this signer's, the
  * named state `awaiting-approvals`, saying which round waits for how many.
  * Running the operation again for that vault carries on from what the chain
@@ -58,7 +58,7 @@
  * the transaction that made it - only once the chain shows both.
  */
 import type { Hex } from '../../../src/core/crypto.js';
-import type { Committee } from '../../../src/midnight/vault-committee.js';
+import { sameCommittee, whyOneKeyCouldActAlone, type Committee } from '../../../src/midnight/vault-committee.js';
 import type { DepositMoney } from '../../../src/midnight/deposit-nonce.js';
 import { SealedNotePool, isALostPoolRace, type PoolSigner, type SealedPool } from '../../../src/midnight/vault-pool.js';
 import { afterDeposit } from '../../../src/midnight/vault-note-deposit.js';
@@ -144,6 +144,8 @@ export interface VaultChainView {
   } | null;
   readonly committee?: Committee | null;
   readonly heldByCommittee?: boolean;
+  /** Base64 of the deploy the vault's address was made from, as the service kept it when it sent it. */
+  readonly deployed?: string | null;
   /**
    * Whether money may go in now: the vault held by the committee AND the
    * company account held by it too, since a vault pays out on the account's
@@ -325,11 +327,104 @@ export class VaultStartOwed extends Error {
 }
 
 /**
- * **STEPS 1 TO 5.** With `resume`, starts at step 4 for a vault this device
- * deployed and has not yet seen handed over, or at step 5 for one the
- * committee already holds.
+ * **THE COMMITTEE A NEW VAULT IS BORN HELD BY**: the company's, as the service
+ * reports it and the roster this device opened names it (`vaultServiceFor`),
+ * and the very committee, at the very threshold, that holds the company's
+ * account as this signer's own wallet reads it off the chain. A company whose
+ * account is not yet held by its current committee changes that first, so no
+ * vault is ever held by keys its account is not.
+ */
+async function theCommitteeAVaultIsBornHeldBy(doors: CreateVaultDoors): Promise<Committee> {
+  const { committee, why } = await doors.service.keys();
+  if (committee === null) throw new Error(why ?? 'this company has no committee yet, so no vault is created.');
+  let holders: AccountHolders;
+  try {
+    /* Read before the vault exists, so the wallet is asked about the account the vault will be pinned to. */
+    holders = (await doors.onChain(doors.account as string as Hex)).holders;
+  } catch (e) {
+    throw new Error(`your wallet could not say who holds your company's account (${(e as Error)?.message ?? e}), so no vault was built.`);
+  }
+  if (!sameCommittee(committee, { committee: holders.committee, threshold: holders.threshold })) {
+    throw new Error('your company\'s account is not held by its current committee yet, as your own wallet read it, so a '
+      + 'vault held by that committee would not match it. Change the account\'s committee in Settings first. Nothing was built.');
+  }
+  const alone = whyOneKeyCouldActAlone(committee);
+  if (alone !== null) throw new Error(`no vault was built: ${alone}.`);
+  return committee;
+}
+
+/**
+ * **THE VAULT AS IT WAS BORN, READ ON THIS DEVICE BEFORE IT IS ADOPTED OR ITS
+ * SET-UP IS CARRIED ON**: the chain shows it, and the deploy its
+ * address was made from was held by the company's committee at counter 0, ran
+ * this build's circuits and wrote nothing. Every later change needs the
+ * committee's signatures, so this one read is enough.
+ */
+async function readBornHeld(doors: CreateVaultDoors, vault: Hex): Promise<void> {
+  doors.progress?.('waiting for the chain');
+  const view = await until(doors, async () => {
+    let v: VaultChainView;
+    try {
+      v = await doors.service.chain(vault);
+    } catch (e) {
+      throw new VaultStartOwed(vault, `the chain could not be read for it (${(e as Error)?.message ?? e}).`);
+    }
+    return v.onChain ? v : null;
+  });
+  if (view === null) throw new VaultStartOwed(vault, 'it was sent and the chain has not shown it yet.');
+  if (typeof view.deployed !== 'string' || doors.builder.vaultAsDeployed === undefined) {
+    throw new VaultNotTheCompanys(vault, 'this device cannot read how this vault was created, so it is not set up from here and '
+      + 'no money is put into it. Reload the page and try again; if it still cannot be read, create a new vault.');
+  }
+  const holders = await theCommitteeAVaultIsBornHeldBy(doors);
+  const { refusal } = await doors.builder.vaultAsDeployed({ vault, account: doors.account, holders, deploy: view.deployed });
+  if (refusal !== null) {
+    throw new VaultNotTheCompanys(vault, `${refusal.replace(/ Nothing was sent\.$/u, '')} This vault is not set up and no money `
+      + 'is put into it; create a new vault.');
+  }
+}
+
+/**
+ * **CREATING A VAULT, BORN HELD.** The vault is deployed held by the company's
+ * committee at its threshold from its first transaction: there is no temporary
+ * key, no hand-over, and nothing to forget. Then it is read as it was born and
+ * started. With `resume`, a vault already sent is read as it was born and its
+ * start carried on.
  */
 export async function createCompanyVault(
+  doors: CreateVaultDoors, resume?: Hex,
+): Promise<VaultCreated> {
+  let vault = resume;
+  if (vault === undefined) {
+    doors.progress?.('checking the committee');
+    const holders = await theCommitteeAVaultIsBornHeldBy(doors);
+    if (doors.builder.bornHeldVault === undefined) {
+      throw new Error('this page cannot build a vault held by the company from the start. Reload it to get the current version.');
+    }
+    doors.progress?.('building the vault');
+    const built = await doors.builder.bornHeldVault({ account: doors.account, holders });
+    doors.progress?.('sending the vault');
+    try {
+      vault = (await doors.service.deploy(built.tx)).vault;
+    } catch (e) {
+      if (sentNothing(e)) throw e;
+      throw new VaultStartOwed(built.vault as Hex, `the vault may have been sent (${(e as Error)?.message ?? e}).`);
+    }
+    /* The vault carried on is the one this device built and sent, never another address the service answers with. */
+    if (String(vault).toLowerCase() !== String(built.vault).toLowerCase()) {
+      throw new VaultStartOwed(built.vault as Hex, 'the service answered with another vault than the one this device sent, so '
+        + 'nothing is carried on with that one.');
+    }
+  }
+  await readBornHeld(doors, vault);
+  return startCompanyVault(doors, vault);
+}
+
+/**
+ * **THE OLD HAND-OVER, LEFT UNUSED.** Nothing above calls it: a vault is born
+ * held. It is removed with the rest of the hand-over.
+ */
+export async function createCompanyVaultByHandover(
   doors: CreateVaultDoors, resume?: Hex,
 ): Promise<VaultCreated> {
   let vault = resume;
@@ -348,7 +443,6 @@ export async function createCompanyVault(
       else throw new VaultHandoverOwed(built.vault as Hex, `the deploy may have been sent (${(e as Error)?.message ?? e}).`);
       throw e;
     }
-    /* The vault carried on is the one this device built and sent, never another address the service answers with. */
     if (String(vault).toLowerCase() !== String(built.vault).toLowerCase()) {
       throw new VaultHandoverOwed(built.vault as Hex, 'the service answered with another vault than the one this device sent, so '
         + 'nothing is carried on with that one.');

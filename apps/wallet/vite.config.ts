@@ -5,6 +5,7 @@ import wasm from 'vite-plugin-wasm';
 import tailwind from '@tailwindcss/vite';
 import topLevelAwait from 'vite-plugin-top-level-await';
 import { embedderFrom, framingHeadersFor } from '../../packages/identity/src/profile/origin.js';
+import { SERVED_TO_THE_WALLET } from './this-builds-account-keys.js';
 
 /*
  * **WHO MAY FRAME THIS WALLET, SENT WITH EVERY DOCUMENT THE DEV AND PREVIEW
@@ -65,7 +66,8 @@ export default defineConfig({
    * copying
    * the folder.
    */
-  plugins: [react(), tailwind(), wasm(), topLevelAwait()],
+  /* The company account's key digests the founding signer's wallet checks a creation against, made from this build's keys. */
+  plugins: [react(), tailwind(), wasm(), topLevelAwait(), SERVED_TO_THE_WALLET.plugin(fileURLToPath(new URL('../..', import.meta.url)))],
   /*
    * The PROVING WORKER's own build pipeline. `proving-worker.ts` loads
    * the zkir WASM, which arrives through the same wasm plugin and therefore

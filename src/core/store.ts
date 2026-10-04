@@ -1,7 +1,7 @@
 import { sha256 } from '@noble/hashes/sha2.js';
 import { bytesToHex } from '@noble/hashes/utils.js';
 import { utf8 } from './crypto.js';
-import type { SealedAccount, SealedProposal, SealedRun, Attestation, SealedEmployee, Invite, Installation, PluginEvent, User, CompanyVault } from './types.js';
+import type { SealedAccount, SealedProposal, SealedRun, Attestation, SealedEmployee, Invite, Installation, PluginEvent, User, CompanyVault, AccountDeploy, AccountOpeningRecord } from './types.js';
 import type { DirectoryFiling } from '../midnight/seat-directory.js';
 import type { CompanyVaultKeyIndex } from './vault-keys.js';
 import { provenanceOf, type Marked, type WiringName } from './provenance.js';
@@ -18,6 +18,14 @@ export interface Shape {
   users: Record<string, User>;
   /** A company's vaults, keyed by vault address. */
   companyVaults: Record<string, CompanyVault>;
+  /**
+   * **EACH COMPANY ACCOUNT CREATED FROM ITS FOUNDING SIGNER'S BROWSER**, keyed
+   * by account id: the deploy and its signed second step, as first recorded.
+   * Absent from files written before it existed, and read as empty then.
+   */
+  accountDeploys?: Record<string, AccountDeploy>;
+  /** What each company's account must be created from, keyed by account id, recorded when the company is. */
+  accountOpenings?: Record<string, AccountOpeningRecord>;
   /**
    * Each company's vault keys with nobody's name on them, keyed by account. Made
    * from the sealed roster every time the roster is written; the roster is the
@@ -479,6 +487,29 @@ export class MemoryStore {
   /* A company's vaults, and its signers' public vault keys. */
   putCompanyVault(v: CompanyVault) { this.data.companyVaults[v.vault] = v; this.flush(); }
   getCompanyVault(vault: string) { return this.data.companyVaults[vault.toLowerCase()] ?? null; }
+  /**
+   * **RECORDS A COMPANY ACCOUNT'S DEPLOY, AND ONLY THE FIRST.** Answers false and
+   * keeps nothing when the company already has one or another company has this
+   * address, so a recorded address is never written over.
+   */
+  recordAccountDeploy(d: AccountDeploy): boolean {
+    const all = this.data.accountDeploys ?? {};
+    if (all[d.accountId] !== undefined) return false;
+    if (Object.values(all).some((x) => x.address.toLowerCase() === d.address.toLowerCase())) return false;
+    this.data.accountDeploys = { ...all, [d.accountId]: d };
+    this.flush();
+    return true;
+  }
+  getAccountDeploy(accountId: string): AccountDeploy | null { return this.data.accountDeploys?.[accountId] ?? null; }
+  /** Records what a company's account must be created from, once: answers false and keeps nothing for a second. */
+  recordAccountOpening(o: AccountOpeningRecord): boolean {
+    const all = this.data.accountOpenings ?? {};
+    if (all[o.accountId] !== undefined) return false;
+    this.data.accountOpenings = { ...all, [o.accountId]: o };
+    this.flush();
+    return true;
+  }
+  getAccountOpening(accountId: string): AccountOpeningRecord | null { return this.data.accountOpenings?.[accountId] ?? null; }
   listCompanyVaults(accountId: string): CompanyVault[] {
     return Object.values(this.data.companyVaults)
       .filter(v => v.accountId === accountId)

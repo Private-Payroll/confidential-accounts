@@ -2,6 +2,7 @@ import express from 'express';
 import { existsSync } from 'node:fs';
 import { join, resolve } from 'node:path';
 import { ACCOUNT_CIRCUITS_SERVED_TO_A_DEVICE, VAULT_CIRCUITS } from '../midnight/vault-contract.js';
+import { DEPLOYED_CIRCUITS } from '../midnight/deferral.js';
 import { genuineParameterFiles, publishedByMidnight, type PublishedDigest } from './proving-parameters.js';
 
 /**
@@ -76,7 +77,12 @@ function vaultArtefactLocation(places: VaultArtefactPlaces, path: string): Artef
   const account = /^\/account\/(keys|zkir)\/([A-Za-z]+)\.(prover|verifier|bzkir)$/u.exec(path);
   if (account) {
     const [, dir, circuit, ext] = account;
-    if (!ACCOUNT_CIRCUITS_SERVED_TO_A_DEVICE.includes(circuit!)) return null;
+    /* Every circuit's verifying key, for the founding signer's device to deploy the account with; proving
+     * material only for the circuits a device proves. */
+    const served = ext === 'verifier'
+      ? (DEPLOYED_CIRCUITS as readonly string[]).includes(circuit!)
+      : ACCOUNT_CIRCUITS_SERVED_TO_A_DEVICE.includes(circuit!);
+    if (!served) return null;
     if ((dir === 'zkir') !== (ext === 'bzkir')) return null;
     return { root: places.account, below: join(dir!, `${circuit}.${ext}`) };
   }

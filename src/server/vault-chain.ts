@@ -4,10 +4,12 @@ import type { Hex } from '../core/crypto.js';
 import { VAULT_CIRCUITS } from '../midnight/vault-contract.js';
 import { vaultOutputHistoryFrom } from '../midnight/deposit-nonce.js';
 import { indexerNoteEvents, indexerVaultTransactions, transactionThatCreatedOutput, type ServedEvent } from '../midnight/note-index.js';
-import { indexerContractHistory } from '../midnight/contract-history.js';
 import type { VaultChain } from './company-vaults.js';
 import { startingLedgerFrom } from '../wiring/vault-submission.js';
-import { DEPLOYED_CIRCUITS } from '../midnight/deferral.js';
+import { CREATION_STEPS, DEPLOYED_CIRCUITS } from '../midnight/deferral.js';
+import { heldStateFromTheStart } from '../midnight/held-from-the-start.js';
+import { buildCreationInsert } from 'midnight-identity/profile/contract-keys';
+import type { AccountOpeningRecord } from '../core/types.js';
 import type { AuthorityRead } from '../midnight/ledger.js';
 import type { MaintenanceAuthorityChoice } from '../midnight/partial-contract.js';
 import type { Committee } from '../midnight/vault-committee.js';
@@ -26,13 +28,11 @@ import { assertVaultLedgerIsThisBuilds } from '../midnight/vault-ledger-shape.js
 const hex = (bytes: Uint8Array): Hex => Array.from(bytes, (b) => b.toString(16).padStart(2, '0')).join('') as Hex;
 
 export async function vaultChainFromTheIndexer(indexer: { url: string; wsUrl: string }): Promise<VaultChain> {
-  const [{ indexerPublicDataProvider }, runtime, vault, { deserializeCompactContractState }] = await Promise.all([
+  const [{ indexerPublicDataProvider }, runtime, vault] = await Promise.all([
     import('@midnight-ntwrk/midnight-js-indexer-public-data-provider'),
     import('@midnight-ntwrk/compact-runtime'),
     import('../../contracts/managed-vault/contract/index.js'),
-    import('@midnight-ntwrk/midnight-js-utils'),
   ]);
-  const contractHistory = indexerContractHistory(indexer.url, indexer.wsUrl);
   type Serialisable = { serialize(): Uint8Array };
   type AtBlock = { type: 'blockHash'; blockHash: string };
   const provider = indexerPublicDataProvider(indexer.url, indexer.wsUrl) as unknown as {
@@ -71,12 +71,6 @@ export async function vaultChainFromTheIndexer(indexer: { url: string; wsUrl: st
       return startingLedgerFrom(ledger, (vault as unknown as { pureCircuits: { copiesWrittenKey(): Uint8Array } }).pureCircuits.copiesWrittenKey());
     },
     everCreated: (address) => history.everCreated(address),
-    /* Each step's state read by the same reader the indexer's own client reads a contract's state with. */
-    historyOf: async (address) => (await contractHistory.of(address)).map((step) => ({
-      kind: step.kind,
-      transaction: step.transaction,
-      state: deserializeCompactContractState(step.state, { caller: 'company-vaults:historyOf' }),
-    })),
     /*
      * **ONE BLOCK, NAMED FIRST, AND BOTH CONTRACTS READ AS OF IT.** The vault's
      * call reads the account's state inside the same circuit, so the two must
@@ -143,6 +137,71 @@ export function accountVerifierKeysIn(root: string): () => Promise<ReadonlyMap<s
       c, new Uint8Array(readFileSync(join(root, 'contracts', 'managed', 'keys', `${c}.verifier`))),
     ]));
     return read;
+  };
+}
+
+/**
+ * **WHAT THIS SERVICE READS A COMPANY'S CREATION AGAINST, BUILT HERE FROM THIS
+ * BUILD'S OWN ARTEFACTS UNDER `root`**: the account's state at deploy, by the
+ * same assembly the founding signer's device builds it with, from what was
+ * recorded when the company was made; the first step's verifying keys; and the
+ * second step, by the one builder the founding signer's wallet signs.
+ */
+export function accountCreationExpectationsIn(root: string) {
+  const keysOf = accountVerifierKeysIn(root);
+  const loaded = (async () => {
+    const [L, runtime, contracts, compactJs, account, witnessesModule, zk, labels] = await Promise.all([
+      import('@midnightntwrk/ledger-v9'),
+      import('@midnight-ntwrk/compact-runtime'),
+      import('@midnight-ntwrk/midnight-js-contracts'),
+      import('@midnight-ntwrk/compact-js'),
+      import('../../contracts/managed/contract/index.js'),
+      import('../../contracts/src/witnesses.js'),
+      import('@midnight-ntwrk/midnight-js-node-zk-config-provider'),
+      import('midnight-identity/profile/company-label'),
+    ]);
+    const CompiledContract = (compactJs as any).CompiledContract;
+    return {
+      L: L as any, runtime: runtime as any, contracts: contracts as any, labels,
+      compiled: CompiledContract.make('ConfidentialAccount', (account as any).Contract).pipe(
+        CompiledContract.withWitnesses((witnessesModule as any).witnesses)),
+      zkConfig: new zk.NodeZkConfigProvider(join(root, 'contracts', 'managed')),
+    };
+  })();
+  loaded.catch(() => { /* asked again by each caller, which then says why */ });
+  return {
+    async stateOf(opening: AccountOpeningRecord): Promise<Uint8Array> {
+      const d = await loaded;
+      const label = d.labels.readCompanyLabel(opening.companyLabel);
+      if (label === null) throw new Error('the label recorded for this company is not one.');
+      const leaf = Uint8Array.from(opening.foundingLeaf.match(/../gu) ?? [], (x) => Number.parseInt(x, 16));
+      const state = await heldStateFromTheStart(
+        { ledger: d.L, runtimeState: d.runtime.ContractState, contracts: d.contracts },
+        {
+          compiled: d.compiled, zkConfig: d.zkConfig, args: [leaf, d.labels.companyLabelBytes(label)], circuits: CREATION_STEPS.first,
+          holders: { committee: [{ tag: opening.foundingKey.tag, value: opening.foundingKey.value.toLowerCase() }], threshold: 1 },
+        });
+      return state.serialize();
+    },
+    async firstKeys(): Promise<ReadonlyMap<string, Uint8Array>> {
+      const all = await keysOf();
+      return new Map(CREATION_STEPS.first.map((c) => [c, all.get(c)!] as [string, Uint8Array]));
+    },
+    async insertDataToSign(account: string): Promise<Uint8Array> {
+      const d = await loaded;
+      const all = await keysOf();
+      const { update } = buildCreationInsert(d.L, {
+        address: account, counter: 0n, onChain: CREATION_STEPS.first,
+        keys: new Map(CREATION_STEPS.second.map((c) => [c, all.get(c)!] as [string, Uint8Array])), steps: CREATION_STEPS,
+      });
+      return (update as { dataToSign: Uint8Array }).dataToSign;
+    },
+    async verifier(): Promise<(key: { tag: string; value: string }, data: Uint8Array, signature: { tag: string; value: string }) => boolean> {
+      const { L } = await loaded;
+      return (key, data, signature) => {
+        try { return L.verifySignature(key as never, data, signature as never); } catch { return false; }
+      };
+    },
   };
 }
 

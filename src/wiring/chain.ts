@@ -760,9 +760,16 @@ export function chainLedger(
      * other operation does: somewhere to hand the assigned address, and the
      * choice of who may maintain the contract afterwards.
      */
+    /*
+     * **A COMPANY'S ACCOUNT ON A CHAIN IS DEPLOYED FROM ITS FOUNDING SIGNER'S
+     * BROWSER**, held by their own committee key from its first transaction, so
+     * opening one here deploys nothing and this ledger is handed no key to
+     * deploy under: only where the address the founding signer's deploy gets is
+     * written down.
+     */
     capability && {
       register: book.record,
-      maintenanceAuthority: capability.maintenanceAuthority,
+      fromTheFoundingSigner: true,
     },
   );
   return new ChainLedger(inner, d, capability);
