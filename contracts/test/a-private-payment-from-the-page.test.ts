@@ -319,6 +319,8 @@ describe.skipIf(!KEYS_ON_DISK)('A PRIVATE PAYMENT OUT OF A COMPANY VAULT, FROM T
     viewingKey = toHex(new Uint8Array(32).fill(0x5e));
     store.putAccount(sealAccount({
       id: ACCOUNT_ID, createdAt: new Date().toISOString(), name: 'Northwind', companyLabel: LABEL,
+      /* The account's address, recorded on the company as the account-creation route records it once the deploy is read. */
+      contractAddress: company, addressSource: 'chain',
       signers: [{
         /* The founding signer's own seat, as the chain seats it: a records key is believed only for the seat held. */
         id: 'ada', userId: 'ada', name: 'Ada', status: 'active', role: 'admin', leafCommitment: hex(leafOfDevice(founder)),
@@ -493,7 +495,7 @@ describe.skipIf(!KEYS_ON_DISK)('A PRIVATE PAYMENT OUT OF A COMPANY VAULT, FROM T
     http(path, { method: String(init?.method ?? 'GET'), ...(init?.body === undefined ? {} : { body: JSON.parse(String(init.body)) }) });
   /* Who filed each version, judged afresh for every read: the directory read again and the account read off the chain. */
   const records = (record: WireRecord) => new HttpSealedPoolStore(record, wire, signing.secret, judgeOver({
-    api, accountId: ACCOUNT_ID, label: LABEL, accountState: () => chain.contract(company),
+    api, accountId: ACCOUNT_ID, label: LABEL, account: company, accountState: () => chain.contract(company),
     roster: async () => openAccount(store.getAccount(ACCOUNT_ID)!, viewingKey),
   }));
   /* Who holds the company and which vaults it adopted, as the signer's own wallet reads them off the chain for each step. */
@@ -515,7 +517,7 @@ describe.skipIf(!KEYS_ON_DISK)('A PRIVATE PAYMENT OUT OF A COMPANY VAULT, FROM T
         ...signVaultKeys(ACCOUNT_ID, 'ada', {
           committeeKey: committeeKeyFor(identityFromWords(words), LABEL), recordsKey: recordsReaderOf(me.companyKey).publicKey,
           ...((st) => ({ recordsKeyStatement: st.signature as Hex, recordsKeySeat: st.seat as Hex }))(
-            signRecordsKey(identityFromWords(words), LABEL, me.companyKey, hex(leafOfDevice(founder)))),
+            signRecordsKey(identityFromWords(words), LABEL, company as never, me.companyKey, hex(leafOfDevice(founder)))),
         }, signing.secret),
       },
     });
@@ -538,7 +540,7 @@ describe.skipIf(!KEYS_ON_DISK)('A PRIVATE PAYMENT OUT OF A COMPANY VAULT, FROM T
     }, resume as never);
     /* The founding signer's own directory entry, filed from their device: the account is the committee's from its first transaction. */
     await fileOwnEntry({
-      api, accountId: ACCOUNT_ID, person: 'ada', identity: identityFromWords(words), label: LABEL,
+      api, accountId: ACCOUNT_ID, person: 'ada', identity: identityFromWords(words), label: LABEL, account: company,
       companyKey: me.companyKey, signingKey: signing.publicKey, seat: hex(leafOfDevice(founder)),
     });
     /* Deployed born held, read as it was born, adopted and started by one press: its secret set and every copy written. */

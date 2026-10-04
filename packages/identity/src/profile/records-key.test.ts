@@ -32,7 +32,7 @@ const hex = (b: Uint8Array): string => Buffer.from(b).toString('hex');
 const flip = (h: string, at = 0): string => h.slice(0, at) + (h[at] === '0' ? '1' : '0') + h.slice(at + 1);
 
 describe('A RECORDS KEY AND A SEAT, SIGNED BY THE WALLET WITH THE COMMITTEE KEY', () => {
-  const statement = signRecordsKey(me, CO, companyKey, SEAT);
+  const statement = signRecordsKey(me, CO, ACCOUNT, companyKey, SEAT);
   const mine = committeeKeyFor(me, CO);
 
   it('signs the records key the company key opens, worked out in the records\' own domain', () => {
@@ -48,38 +48,40 @@ describe('A RECORDS KEY AND A SEAT, SIGNED BY THE WALLET WITH THE COMMITTEE KEY'
 
   it('checks against the signer\'s committee key for that company, and against nothing else', () => {
     /* RED WHEN: the check passes nothing, or the signing key is not the committee key. */
-    expect(recordsKeySignedBy(CO, mine, statement)).toBe(true);
+    expect(recordsKeySignedBy(CO, ACCOUNT, mine, statement)).toBe(true);
     /* RED WHEN: another person's committee key, or this person's for another company, passes. */
-    expect(recordsKeySignedBy(CO, committeeKeyFor(somebodyElse, CO), statement)).toBe(false);
-    expect(recordsKeySignedBy(CO, committeeKeyFor(me, OTHER_CO), statement)).toBe(false);
+    expect(recordsKeySignedBy(CO, ACCOUNT, committeeKeyFor(somebodyElse, CO), statement)).toBe(false);
+    expect(recordsKeySignedBy(CO, ACCOUNT, committeeKeyFor(me, OTHER_CO), statement)).toBe(false);
     /* RED WHEN: the label is not part of what is signed. */
-    expect(recordsKeySignedBy(OTHER_CO, mine, statement)).toBe(false);
+    expect(recordsKeySignedBy(OTHER_CO, ACCOUNT, mine, statement)).toBe(false);
     /* RED WHEN: the records key is not part of what is signed - a key the service substitutes passes. */
     const substituted = recordsPublicKeyOf(new Uint8Array(32).fill(5));
-    expect(recordsKeySignedBy(CO, mine, { ...statement, recordsKey: substituted })).toBe(false);
+    expect(recordsKeySignedBy(CO, ACCOUNT, mine, { ...statement, recordsKey: substituted })).toBe(false);
     /* RED WHEN: the seat is not part of what is signed - a statement from a seat somebody left passes for another. */
-    expect(recordsKeySignedBy(CO, mine, { ...statement, seat: ANOTHER_SEAT })).toBe(false);
+    expect(recordsKeySignedBy(CO, ACCOUNT, mine, { ...statement, seat: ANOTHER_SEAT })).toBe(false);
     /* RED WHEN: a signature with one bit changed passes. */
-    expect(recordsKeySignedBy(CO, mine, { ...statement, signature: flip(statement.signature, 70) })).toBe(false);
+    expect(recordsKeySignedBy(CO, ACCOUNT, mine, { ...statement, signature: flip(statement.signature, 70) })).toBe(false);
   });
 
   it('never throws on what is not a statement, a committee key or a label', () => {
-    expect(recordsKeySignedBy(CO, { tag: 'ecdsa', value: mine.value }, statement)).toBe(false);
-    expect(recordsKeySignedBy(CO, { tag: 'schnorr', value: 'ab' }, statement)).toBe(false);
-    expect(recordsKeySignedBy('co_nope' as CompanyLabel, mine, statement)).toBe(false);
-    expect(recordsKeySignedBy(CO, mine, { ...statement, signature: 'zz' })).toBe(false);
-    expect(recordsKeySignedBy(CO, mine, null as never)).toBe(false);
-    expect(recordsKeySignedBy(CO, mine, { ...statement, recordsKey: statement.recordsKey.toUpperCase() })).toBe(false);
-    expect(recordsKeySignedBy(CO, mine, { ...statement, seat: 'ab' })).toBe(false);
-    expect(() => signRecordsKey(me, CO, companyKey, 'not a seat')).toThrow(/no records key was signed/);
+    expect(recordsKeySignedBy(CO, ACCOUNT, { tag: 'ecdsa', value: mine.value }, statement)).toBe(false);
+    expect(recordsKeySignedBy(CO, ACCOUNT, { tag: 'schnorr', value: 'ab' }, statement)).toBe(false);
+    expect(recordsKeySignedBy('co_nope' as CompanyLabel, ACCOUNT, mine, statement)).toBe(false);
+    expect(recordsKeySignedBy(CO, ACCOUNT, mine, { ...statement, signature: 'zz' })).toBe(false);
+    expect(recordsKeySignedBy(CO, ACCOUNT, mine, null as never)).toBe(false);
+    expect(recordsKeySignedBy(CO, ACCOUNT, mine, { ...statement, recordsKey: statement.recordsKey.toUpperCase() })).toBe(false);
+    expect(recordsKeySignedBy(CO, ACCOUNT, mine, { ...statement, seat: 'ab' })).toBe(false);
+    expect(() => signRecordsKey(me, CO, ACCOUNT, companyKey, 'not a seat')).toThrow(/no records key was signed/);
   });
 
   it('IS NEVER A CHANGE TO A CONTRACT\'S RULES, AND NO SUCH CHANGE IS EVER A STATEMENT', () => {
-    const bytes = recordsKeyStatementBytes(CO, statement.recordsKey, SEAT)!;
+    const bytes = recordsKeyStatementBytes(CO, ACCOUNT, statement.recordsKey, SEAT)!;
     const tag = new TextEncoder().encode(RECORDS_KEY_STATEMENT_TAG);
     /* RED WHEN: what is signed does not begin with the statement's own tag. */
     expect(hex(bytes.subarray(0, tag.length))).toBe(hex(tag));
-    expect(bytes).toHaveLength(tag.length + 1 + CO.length + 1 + 32 + 32);
+    /* RED WHEN: the account is not among what is signed. */
+    expect(bytes).toHaveLength(tag.length + 1 + CO.length + 1 + 32 + 32 + 32);
+    expect(hex(bytes.subarray(tag.length + 1 + CO.length + 1, tag.length + 1 + CO.length + 1 + 32))).toBe(ACCOUNT);
     /* The ledger's own signatures are made a different way: it does not take the statement's as one of its own even over these bytes. */
     expect(L.verifySignature(mine as never, bytes, { tag: 'schnorr', value: statement.signature } as never)).toBe(false);
     /* A maintenance update this key would sign begins with the ledger's own tag, which is not the statement's. */
@@ -92,7 +94,7 @@ describe('A RECORDS KEY AND A SEAT, SIGNED BY THE WALLET WITH THE COMMITTEE KEY'
     expect(L.verifySignature(mine as never, data, { tag: 'schnorr', value: statement.signature } as never)).toBe(false);
     const maintenance = L.signData(committeeSigningKeyFor(me, CO) as never, data) as unknown as { tag: string; value: string };
     expect(L.verifySignature(mine as never, data, maintenance as never)).toBe(true);
-    expect(recordsKeySignedBy(CO, mine, { ...statement, signature: maintenance.value })).toBe(false);
+    expect(recordsKeySignedBy(CO, ACCOUNT, mine, { ...statement, signature: maintenance.value })).toBe(false);
   });
 });
 
@@ -107,6 +109,15 @@ describe('THE RECORDS-KEY ASK: SIGNED ONLY FOR A SEAT THE ACCOUNT HOLDS NOW, AND
   const seats = { committee: [committeeKeyFor(me, CO) as { tag: string; value: string }], threshold: 1, seats: [ANOTHER_SEAT, SEAT] };
   const expecting = { atOrigin: PAGE, expectingNonce: 'r1', company: CO, account: ACCOUNT, seat: SEAT };
 
+  it('SIGNS ONLY FOR THE ACCOUNT THIS WALLET PINNED FOR THE COMPANY WHEN IT CREATED IT, WHERE IT PINNED ONE', () => {
+    /* RED WHEN: a wallet that pinned the company's account signs a records key or an entry for another account carrying the label. */
+    expect(() => recordsKeyAnswerFor(me, ask({ signingKey: '3c'.repeat(32) }), seats, NOW, undefined, 'a8'.repeat(32) as AccountAddress))
+      .toThrow(/other than the one this wallet kept as its account when you created it/);
+    const answer = recordsKeyAnswerFor(me, ask({ signingKey: '3c'.repeat(32) }), seats, NOW, undefined, ACCOUNT);
+    expect(recordsKeySignedBy(CO, ACCOUNT, answer.committeeKey, answer.statement)).toBe(true);
+    expect(answer.entry?.account).toBe(ACCOUNT);
+  });
+
   it('signs the records key of this company\'s key for the seat asked about, and hands back the seats it read', () => {
     const answer = recordsKeyAnswerFor(me, ask(), seats, NOW);
     expect(answer.schema).toBe(RECORDS_KEY_ANSWER_SCHEMA);
@@ -114,7 +125,7 @@ describe('THE RECORDS-KEY ASK: SIGNED ONLY FOR A SEAT THE ACCOUNT HOLDS NOW, AND
     /* RED WHEN: the statement is for any other records key than the one this company's key opens. */
     expect(answer.statement.recordsKey).toBe(recordsPublicKeyOf(companyKeyHere));
     expect(answer.statement.seat).toBe(SEAT);
-    expect(recordsKeySignedBy(CO, answer.committeeKey, answer.statement)).toBe(true);
+    expect(recordsKeySignedBy(CO, ACCOUNT, answer.committeeKey, answer.statement)).toBe(true);
     /* RED WHEN: who holds the account, as the wallet read it, does not travel with the answer. */
     expect(answer.seats).toEqual(seats);
     /* No secret crosses. */
@@ -218,32 +229,55 @@ describe('THE RECORDS-KEY ASK: SIGNED ONLY FOR A SEAT THE ACCOUNT HOLDS NOW, AND
   });
 });
 
+describe('A STATEMENT AND AN ENTRY ARE FOR ONE ACCOUNT: ANOTHER ACCOUNT CARRYING THE SAME LABEL IS NOT IT', () => {
+  const OTHER = 'a8'.repeat(32) as AccountAddress;
+  const mine = committeeKeyFor(me, CO);
+  it('A RECORDS-KEY STATEMENT SIGNED FOR ONE ACCOUNT DOES NOT VERIFY FOR ANOTHER', () => {
+    const statement = signRecordsKey(me, CO, ACCOUNT, companyKey, SEAT);
+    /* RED WHEN: the account is not part of what is signed, so a statement for one account passes for another. */
+    expect(recordsKeySignedBy(CO, ACCOUNT, mine, statement)).toBe(true);
+    expect(recordsKeySignedBy(CO, OTHER, mine, statement)).toBe(false);
+    expect(recordsKeySignedBy(CO, 'not an account' as AccountAddress, mine, statement)).toBe(false);
+    expect(recordsKeyStatementBytes(CO, OTHER, statement.recordsKey, SEAT)).not.toEqual(recordsKeyStatementBytes(CO, ACCOUNT, statement.recordsKey, SEAT));
+  });
+  it('AN ENTRY IS FALSE FOR ANY ACCOUNT BUT THE ONE IT NAMES AND WAS SIGNED FOR', () => {
+    const entry = signDirectoryEntry(me, CO, ACCOUNT, companyKey, '3c'.repeat(32), SEAT);
+    expect(entry.account).toBe(ACCOUNT);
+    /* RED WHEN: an entry signed for one account is believed for another. */
+    expect(directoryEntrySignedBy(CO, OTHER, mine, entry)).toBe(false);
+    /* RED WHEN: an entry is believed for the account it names, when its signature is over another. */
+    const forOther = signDirectoryEntry(me, CO, OTHER, companyKey, '3c'.repeat(32), SEAT);
+    expect(directoryEntrySignedBy(CO, ACCOUNT, mine, { ...forOther, account: ACCOUNT })).toBe(false);
+    expect(directoryEntrySignedBy(CO, OTHER, mine, forOther)).toBe(true);
+  });
+});
+
 describe('A DIRECTORY ENTRY, SIGNED BY THE WALLET WITH THE COMMITTEE KEY, IN THE SAME PRESS AS THE RECORDS KEY', () => {
   const FILING = '3c'.repeat(32);
   const PAGE = 'https://payroll.example';
   const NOW = 1_755_000_000_000;
-  const entry = signDirectoryEntry(me, CO, companyKey, FILING, SEAT);
+  const entry = signDirectoryEntry(me, CO, ACCOUNT, companyKey, FILING, SEAT);
   const mine = committeeKeyFor(me, CO);
 
   it('signs the filing key, the records key the company key opens and the seat, and checks against that committee key only', () => {
     /* RED WHEN: the wrapping key signed is anything but the records key this company key opens. */
     expect(entry.wrappingKey).toBe(recordsPublicKeyOf(companyKey));
-    expect(directoryEntrySignedBy(CO, mine, entry)).toBe(true);
+    expect(directoryEntrySignedBy(CO, ACCOUNT, mine, entry)).toBe(true);
     /* RED WHEN: an entry verifies under another wallet's key, another company's label, or with any part changed. */
-    expect(directoryEntrySignedBy(CO, committeeKeyFor(somebodyElse, CO), entry)).toBe(false);
-    expect(directoryEntrySignedBy(OTHER_CO, mine, entry)).toBe(false);
+    expect(directoryEntrySignedBy(CO, ACCOUNT, committeeKeyFor(somebodyElse, CO), entry)).toBe(false);
+    expect(directoryEntrySignedBy(OTHER_CO, ACCOUNT, mine, entry)).toBe(false);
     for (const part of ['signingKey', 'wrappingKey', 'seat'] as const) {
-      expect(directoryEntrySignedBy(CO, mine, { ...entry, [part]: flip(entry[part]) }), part).toBe(false);
+      expect(directoryEntrySignedBy(CO, ACCOUNT, mine, { ...entry, [part]: flip(entry[part]) }), part).toBe(false);
     }
   });
 
   it('IS NEVER THE RECORDS-KEY STATEMENT, AND THE RECORDS-KEY STATEMENT IS NEVER AN ENTRY', () => {
     expect(DIRECTORY_ENTRY_STATEMENT_TAG).not.toBe(RECORDS_KEY_STATEMENT_TAG);
-    const statement = signRecordsKey(me, CO, companyKey, SEAT);
+    const statement = signRecordsKey(me, CO, ACCOUNT, companyKey, SEAT);
     /* RED WHEN: the two statements share a domain, so one signature passes as the other. */
-    expect(directoryEntrySignedBy(CO, mine, { signingKey: statement.recordsKey, wrappingKey: statement.recordsKey, seat: SEAT, signature: statement.signature })).toBe(false);
-    expect(Buffer.from(directoryEntryStatementBytes(CO, FILING, entry.wrappingKey, SEAT)!).toString('utf8')).toContain(DIRECTORY_ENTRY_STATEMENT_TAG);
-    expect(directoryEntryStatementBytes(CO, 'nope', entry.wrappingKey, SEAT)).toBeNull();
+    expect(directoryEntrySignedBy(CO, ACCOUNT, mine, { account: ACCOUNT, signingKey: statement.recordsKey, wrappingKey: statement.recordsKey, seat: SEAT, signature: statement.signature })).toBe(false);
+    expect(Buffer.from(directoryEntryStatementBytes(CO, ACCOUNT, FILING, entry.wrappingKey, SEAT)!).toString('utf8')).toContain(DIRECTORY_ENTRY_STATEMENT_TAG);
+    expect(directoryEntryStatementBytes(CO, ACCOUNT, 'nope', entry.wrappingKey, SEAT)).toBeNull();
   });
 
   it('THE RECORDS-KEY ANSWER CARRIES THE ENTRY EXACTLY WHEN THE ASK NAMED A FILING KEY, AND THE PAGE REFUSES ONE THAT IS NOT FOR IT', () => {
@@ -259,8 +293,8 @@ describe('A DIRECTORY ENTRY, SIGNED BY THE WALLET WITH THE COMMITTEE KEY, IN THE
     const answer = recordsKeyAnswerFor(me, ask({ signingKey: FILING }), seats, NOW);
     /* RED WHEN: the entry is for another filing key, records key or seat than the ask's, or does not verify. */
     const companyKeyHere = unlockKeyFor(me, { ...ask(), kind: 'unlock' } as unknown as UnlockRequest);
-    expect({ ...answer.entry, signature: '' }).toEqual({ signingKey: FILING, wrappingKey: recordsPublicKeyOf(companyKeyHere), seat: SEAT, signature: '' });
-    expect(directoryEntrySignedBy(CO, answer.committeeKey, answer.entry!)).toBe(true);
+    expect({ ...answer.entry, signature: '' }).toEqual({ account: ACCOUNT, signingKey: FILING, wrappingKey: recordsPublicKeyOf(companyKeyHere), seat: SEAT, signature: '' });
+    expect(directoryEntrySignedBy(CO, ACCOUNT, answer.committeeKey, answer.entry!)).toBe(true);
     const read = readRecordsKeyAnswer(answer, { ...expecting, signingKey: FILING });
     expect(read.ok && read.entry).toEqual(answer.entry);
     /* RED WHEN: the page takes an entry for another filing key, or an answer with no entry, as the one it asked for. */
@@ -273,7 +307,7 @@ describe('A DIRECTORY ENTRY, SIGNED BY THE WALLET WITH THE COMMITTEE KEY, IN THE
     const unsigned = readRecordsKeyAnswer(forged, { ...expecting, signingKey: FILING });
     expect(unsigned.ok ? 'accepted' : unsigned.code).toBe('not-signed');
     /* RED WHEN: the page takes an entry whose wrapping key is not the records key the same answer signed, even one the wallet signed. */
-    const otherWrapping = { ...answer, entry: signDirectoryEntry(me, CO, new Uint8Array(32).fill(0x5e), FILING, SEAT) };
+    const otherWrapping = { ...answer, entry: signDirectoryEntry(me, CO, ACCOUNT, new Uint8Array(32).fill(0x5e), FILING, SEAT) };
     const moved = readRecordsKeyAnswer(otherWrapping, { ...expecting, signingKey: FILING });
     expect(moved.ok ? 'accepted' : moved.code).toBe('not-signed');
     /* RED WHEN: a filing key rides along on another kind of ask and is ignored, or is not a key. */
@@ -314,7 +348,8 @@ describe('THE HOLDERS ASK: PUBLIC CHAIN FACTS, NO PRESS, AND NOTHING ELSE', () =
     expect(said).not.toContain(hex(unlockKeyFor(me, { ...ask(), seat: SEAT, kind: 'unlock' } as unknown as UnlockRequest)));
     expect(said).not.toMatch(/signature/);
     const read = readHoldersAnswer(answer, expecting);
-    expect(read.ok && read.holders).toEqual(holders);
+    /* RED WHEN: who holds an account is read without the account the wallet read it for. */
+    expect(read.ok && read.holders).toEqual({ ...holders, account: ACCOUNT });
   });
 
   it('THE PAGE REFUSES AN ANSWER TO ANOTHER QUESTION, OR HOLDERS IN A SHAPE NO WALLET WRITES', () => {

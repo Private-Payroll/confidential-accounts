@@ -14,12 +14,13 @@ import { readerRefusalOf, whyNotTheseReaders, type SecretReadersToCheck } from '
  * handed.
  */
 const CO = `co_${'c1'.repeat(32)}` as CompanyLabel;
+const ACCOUNT = 'ac'.repeat(32);
 const leaf = (n: number): string => n.toString(16).padStart(2, '0').repeat(32);
 const signer = (n: number, name: string, seat = leaf(0x40 + n)) => {
   const identity = identityFromSecret(new Uint8Array(32).fill(n));
   const companyKey = new Uint8Array(32).fill(n + 100);
   const committeeKey = committeeKeyFor(identity, CO) as { tag: string; value: string };
-  const statement = signRecordsKey(identity, CO, companyKey, seat);
+  const statement = signRecordsKey(identity, CO, ACCOUNT as never, companyKey, seat);
   const entry: RosterVaultKeys = {
     signerId: name.toLowerCase(), userId: name.toLowerCase(), name, filingKey: '00'.repeat(32) as never,
     keys: {
@@ -35,7 +36,6 @@ const cy = signer(3, 'Cy');
 const all = [ada, bo, cy];
 
 const VAULT = '9a'.repeat(32);
-const ACCOUNT = 'ac'.repeat(32);
 type Key = { tag: string; value: string };
 /* The vault, as the signer's own wallet read it off the vault: held by `committee` at `threshold`, pinned to the account. */
 const vaultHeldBy = (committee: readonly Key[], threshold = 2, over: Partial<{ vault: string; account: string }> = {}) =>
@@ -180,10 +180,17 @@ describe('A SECRET RUN\'S READERS, CHECKED BEFORE THIS DEVICE APPROVES IT', () =
       .toBeNull();
   });
 
+  it('A STATEMENT A SIGNER\'S WALLET SIGNED FOR ANOTHER ACCOUNT CARRYING THE LABEL IS REFUSED', () => {
+    const elsewhere = signRecordsKey(bo.identity, CO, 'ad'.repeat(32) as never, bo.companyKey, bo.seat);
+    const boElsewhere = { ...bo.entry, keys: { ...bo.entry.keys!, recordsKeyStatement: elsewhere.signature as never } };
+    /* RED WHEN: a statement is checked for any account but the one this device is approving for. */
+    expect(readerRefusalOf({ ...good(), roster: [ada.entry, boElsewhere, cy.entry] })?.code).toBe('not-signed');
+  });
+
   it('two seated signers giving one records key is refused', () => {
     /* Bo's roster entry names Ada's records key, signed by Bo's own wallet: two signers, one key, so one copy for two people. */
     const sameKey = { identity: bo.identity, companyKey: ada.companyKey };
-    const statement = signRecordsKey(sameKey.identity, CO, sameKey.companyKey, bo.seat);
+    const statement = signRecordsKey(sameKey.identity, CO, ACCOUNT as never, sameKey.companyKey, bo.seat);
     const boTwin = { ...bo.entry, keys: { ...bo.entry.keys!, recordsKey: statement.recordsKey as never, recordsKeyStatement: statement.signature as never } };
     /* RED WHEN: two entries with one records key count as two readers, so the run seals one copy fewer than there are signers. */
     expect(readerRefusalOf({ ...good(), roster: [ada.entry, boTwin, cy.entry], readers: [ada.statement.recordsKey, cy.statement.recordsKey] }))
@@ -191,7 +198,7 @@ describe('A SECRET RUN\'S READERS, CHECKED BEFORE THIS DEVICE APPROVES IT', () =
   });
 
   it('two seated signers giving one wallet key is refused', () => {
-    const twin = { ...cy.entry, keys: { ...bo.entry.keys!, recordsKeySeat: cy.seat as never, recordsKeyStatement: signRecordsKey(bo.identity, CO, bo.companyKey, cy.seat).signature as never } };
+    const twin = { ...cy.entry, keys: { ...bo.entry.keys!, recordsKeySeat: cy.seat as never, recordsKeyStatement: signRecordsKey(bo.identity, CO, ACCOUNT as never, bo.companyKey, cy.seat).signature as never } };
     expect(whyNotTheseReaders({ ...good(), roster: [ada.entry, bo.entry, twin] })).toMatch(/two seated signers give the same wallet key/);
   });
 
@@ -212,7 +219,7 @@ describe('A SECRET RUN\'S READERS, CHECKED BEFORE THIS DEVICE APPROVES IT', () =
     expect(code({ readers: [ada.statement.recordsKey, bo.statement.recordsKey, recordsKeypairFrom(new Uint8Array(32).fill(0x60)).publicKey] })).toBe('reader-not-a-signer');
     expect(code({ readers: [ada.statement.recordsKey, bo.statement.recordsKey] })).toBe('signer-left-out');
     /* The service's roster against the chain's seats: one signer twice, or the roster's count not the chain's. */
-    const twin = { ...cy.entry, keys: { ...bo.entry.keys!, recordsKeySeat: cy.seat as never, recordsKeyStatement: signRecordsKey(bo.identity, CO, bo.companyKey, cy.seat).signature as never } };
+    const twin = { ...cy.entry, keys: { ...bo.entry.keys!, recordsKeySeat: cy.seat as never, recordsKeyStatement: signRecordsKey(bo.identity, CO, ACCOUNT as never, bo.companyKey, cy.seat).signature as never } };
     expect(code({ roster: [ada.entry, bo.entry, twin] })).toBe('roster-not-the-chains');
     expect(code({ roster: [ada.entry, bo.entry], readers: [ada.statement.recordsKey, bo.statement.recordsKey] })).toBe('roster-not-the-chains');
   });

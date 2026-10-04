@@ -8,6 +8,7 @@ import type { VaultChain } from './company-vaults.js';
 import { startingLedgerFrom } from '../wiring/vault-submission.js';
 import { CREATION_STEPS, DEPLOYED_CIRCUITS } from '../midnight/deferral.js';
 import { heldStateFromTheStart } from '../midnight/held-from-the-start.js';
+import { payKeyCommitmentIn } from '../midnight/pay-key-round.js';
 import { buildCreationInsert } from 'midnight-identity/profile/contract-keys';
 import type { AccountOpeningRecord } from '../core/types.js';
 import type { AuthorityRead } from '../midnight/ledger.js';
@@ -162,7 +163,7 @@ export function accountCreationExpectationsIn(root: string) {
     ]);
     const CompiledContract = (compactJs as any).CompiledContract;
     return {
-      L: L as any, runtime: runtime as any, contracts: contracts as any, labels,
+      L: L as any, runtime: runtime as any, contracts: contracts as any, labels, account: account as any,
       compiled: CompiledContract.make('ConfidentialAccount', (account as any).Contract).pipe(
         CompiledContract.withWitnesses((witnessesModule as any).witnesses)),
       zkConfig: new zk.NodeZkConfigProvider(join(root, 'contracts', 'managed')),
@@ -186,6 +187,19 @@ export function accountCreationExpectationsIn(root: string) {
     async firstKeys(): Promise<ReadonlyMap<string, Uint8Array>> {
       const all = await keysOf();
       return new Map(CREATION_STEPS.first.map((c) => [c, all.get(c)!] as [string, Uint8Array]));
+    },
+    async allKeys(): Promise<ReadonlyMap<string, Uint8Array>> {
+      return keysOf();
+    },
+    async payKeyCommitment(state: unknown): Promise<string | null> {
+      const { account, runtime } = await loaded;
+      /* Read as the contract runtime reads a state, whichever reader served it. */
+      const asRead = runtime.ContractState.deserialize((state as { serialize(): Uint8Array }).serialize());
+      const roles = (account.ledger(asRead.data) as { signerRoles?: unknown })?.signerRoles;
+      if (roles == null || typeof (roles as { member?: unknown }).member !== 'function') {
+        throw new Error('the account\'s state does not carry its roles map as this build reads it.');
+      }
+      return payKeyCommitmentIn(account.pureCircuits, roles as never);
     },
     async insertDataToSign(account: string): Promise<Uint8Array> {
       const d = await loaded;

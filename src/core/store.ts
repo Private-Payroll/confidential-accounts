@@ -501,6 +501,21 @@ export class MemoryStore {
     return true;
   }
   getAccountDeploy(accountId: string): AccountDeploy | null { return this.data.accountDeploys?.[accountId] ?? null; }
+  /**
+   * **REPLACES A COMPANY ACCOUNT'S RECORDED DEPLOY OR SECOND STEP WITH THE SAME
+   * ONE CARRIED AGAIN**, for a transaction that ran out before it landed. Only
+   * the transactions' bytes and when they were recorded change: answers false
+   * and keeps nothing when nothing is recorded for the company, or what is sent
+   * names another account or another key.
+   */
+  replaceAccountDeploy(d: AccountDeploy): boolean {
+    const was = this.data.accountDeploys?.[d.accountId];
+    if (was === undefined || was.address.toLowerCase() !== d.address.toLowerCase()
+      || was.foundingKey.tag !== d.foundingKey.tag || was.foundingKey.value.toLowerCase() !== d.foundingKey.value.toLowerCase()) return false;
+    this.data.accountDeploys = { ...this.data.accountDeploys, [d.accountId]: d };
+    this.flush();
+    return true;
+  }
   /** Records what a company's account must be created from, once: answers false and keeps nothing for a second. */
   recordAccountOpening(o: AccountOpeningRecord): boolean {
     const all = this.data.accountOpenings ?? {};

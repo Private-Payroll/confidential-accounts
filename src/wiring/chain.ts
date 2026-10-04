@@ -367,6 +367,11 @@ export class ChainLedger implements Ledger {
     return this.inner.reseal(accountId, next);
   }
 
+  /** Delegated: it writes only to this deployment's own blob storage, and sends nothing. */
+  fileFoundingState(accountId: string, sealed: SealedStateAt): Promise<void> {
+    return this.inner.fileFoundingState(accountId, sealed);
+  }
+
   /**
    * **WHAT IS RUNNING, AND ONLY WHAT IS RUNNING.** The ledger underneath
    * describes itself as sponsoring fees, which on a deployment with nobody to

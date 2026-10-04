@@ -42,6 +42,7 @@ import { MidnightLedger, type MidnightConfig, type FeeSponsor, type SealedStateS
  * `sendTransition` seam.
  */
 import type { StateChange, SignerRef, AccountOpening } from '../core/ledger.js';
+import { viewDigestOf } from '../core/ledger.js';
 import { MidnightCommitments } from './commitments.js';
 import type { Sealed, Hex } from '../core/crypto.js';
 import { fromHex, toHex } from '../core/crypto.js';
@@ -393,6 +394,11 @@ function harness(chain: {
    * that went too far waits out the deploy path's pause and retries.
    */
   providersRefused?: boolean;
+  /**
+   * The blob store starts empty and answers only what was put into it, for a
+   * test of what is kept. Without it every read answers one sealed state.
+   */
+  keptOnly?: boolean;
 },
 /**
  * **THE DEPLOYMENT BAG, AND IT IS A SEPARATE ARGUMENT BECAUSE IT IS A SEPARATE
@@ -521,9 +527,10 @@ deployment?: ConstructorParameters<typeof MidnightLedger>[6]) {
   };
 
   const puts: Array<{ commitment: Hex; keyEpoch: number }> = [];
+  const kept = new Map<string, unknown>();
   const blobs: SealedStateStore = {
-    put: async (_id, c, keyEpoch) => { puts.push({ commitment: c, keyEpoch }); },
-    get: async () => SEALED_BYTES,
+    put: async (id, c, keyEpoch, sealed) => { puts.push({ commitment: c, keyEpoch }); kept.set(`${id}|${c}|${keyEpoch}`, sealed); },
+    get: async (id, c, keyEpoch) => (chain.keptOnly ? (kept.get(`${id}|${c}|${keyEpoch}`) ?? null) : SEALED_BYTES) as never,
   };
 
   // What `stageChange` wrote, so a test can assert the witnesses actually
@@ -2162,16 +2169,38 @@ describe('C334: MidnightLedger.open refuses an opening it cannot honour', () => 
     }
   });
 
-  it('IN THE FOUNDING SIGNER\'S MODE, KEEPS ONLY THE SEALED FIRST VIEW AND ASKS NO CHAIN FOR ANYTHING', async () => {
+  it('IN THE FOUNDING SIGNER\'S MODE, OPENS NOTHING EITHER: A COMPANY ON A CHAIN IS MADE ON THAT DEVICE', async () => {
     /*
-     * The deployment the service runs on a chain: the account is deployed by
-     * its founding signer's device, so opening it here keeps the sealed state
-     * its first view opens with and sends nothing. RED WHEN this mode deploys,
-     * or asks the chain for its providers, or is refused like any other.
+     * RED WHEN opening here keeps a state or deploys in the mode every chain
+     * deployment runs in: the company's secrets and first state are made on
+     * the founding signer's device, and this service keeps only what it sealed.
      */
-    const h = harness({ providersRefused: true }, { register: async () => {}, fromTheFoundingSigner: true } as never);
-    const ref = await h.ledger.open('acct', opening());
-    expect(ref.ref).toBe('deployed from the founding signer\'s browser');
+    const h = harness({ providersRefused: true, keptOnly: true }, { register: async () => {}, fromTheFoundingSigner: true } as never);
+    await expect(h.ledger.open('acct', opening())).rejects.toThrow(/created only from its founding signer's browser/);
+    expect(h.puts).toEqual([]);
+  });
+
+  it('KEEPS THE FIRST STATE THE FOUNDING SIGNER\'S DEVICE SEALED, ONCE, AND ASKS NO CHAIN FOR ANYTHING', async () => {
+    const h = harness({ providersRefused: true, keptOnly: true }, { register: async () => {}, fromTheFoundingSigner: true } as never);
+    const first = { keyEpoch: 0, sealed: { iv: '01', tag: '02', body: '03' } };
+    await h.ledger.fileFoundingState('acct', first);
+    /* RED WHEN: nothing is kept, or it is kept under another view or epoch than every later read asks for. */
+    expect(h.puts).toEqual([{ commitment: viewDigestOf([]), keyEpoch: 0 }]);
+    /* RED WHEN: the same state sent again is refused, or written a second time. */
+    await h.ledger.fileFoundingState('acct', { keyEpoch: 0, sealed: { iv: '01', tag: '02', body: '03' } });
+    expect(h.puts).toHaveLength(1);
+    /* RED WHEN: a second state for the same company at the same epoch is written over the first. */
+    await expect(h.ledger.fileFoundingState('acct', { keyEpoch: 0, sealed: { iv: '0a', tag: '0b', body: '0c' } }))
+      .rejects.toThrow(/already kept at key epoch 0, and it is never written over/);
+    expect(h.puts).toHaveLength(1);
+  });
+
+  it('KEEPS NO FIRST STATE ON A DEPLOYMENT THAT DOES NOT TAKE COMPANIES MADE ON THE DEVICE', async () => {
+    /* RED WHEN: a deployment outside the founding signer's mode keeps a state for a company it did not open. */
+    const h = harness({ providersRefused: true, keptOnly: true }, { register: async () => {} } as never);
+    await expect(h.ledger.fileFoundingState('acct', { keyEpoch: 0, sealed: { iv: '01', tag: '02', body: '03' } }))
+      .rejects.toThrow(/does not take companies made on their founding signer's device/);
+    expect(h.puts).toEqual([]);
   });
 
   it('lets a well-formed opening past all three', async () => {

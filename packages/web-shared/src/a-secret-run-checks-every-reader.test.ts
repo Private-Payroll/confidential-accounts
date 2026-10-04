@@ -30,7 +30,7 @@ const signer = (n: number, name: string) => {
   const companyKey = new Uint8Array(32).fill(n + 100);
   const committeeKey = committeeKeyFor(identity, CO) as { tag: string; value: string };
   const seat = (0x40 + n).toString(16).repeat(32);
-  const statement = signRecordsKey(identity, CO, companyKey, seat);
+  const statement = signRecordsKey(identity, CO, ACCOUNT, companyKey, seat);
   const entry: RosterVaultKeys = {
     signerId: name.toLowerCase(), userId: name.toLowerCase(), name, filingKey: '00'.repeat(32) as never,
     keys: {

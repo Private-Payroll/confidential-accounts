@@ -43,65 +43,18 @@ import type { AuthorityRead, OnChainAuthority } from '../midnight/ledger.js';
 import { compareAuthority } from '../midnight/ledger.js';
 import type { Committee, CommitteeKey } from '../midnight/vault-committee.js';
 import { sameCommittee, whyOneKeyCouldActAlone } from '../midnight/vault-committee.js';
-import { circuitsRefusal, startsHoldingMoney, vaultBornHeldRefusal, type VaultBornHeldExpectations } from '../midnight/vault-circuits.js';
+import { vaultBornHeldRefusal, type VaultBornHeldExpectations } from '../midnight/vault-circuits.js';
+import { bare, emptyOffer, nameOf, theOnlyIntent, type DeployVerdict, type IntentShape, type TxShape } from '../midnight/account-deploy.js';
+
+export { readAccountDeploy, type AccountDeployExpectations, type DeployVerdict } from '../midnight/account-deploy.js';
 
 export { circuitsRefusal, startingLedgerFrom, type VaultStartingLedger } from '../midnight/vault-circuits.js';
-
-const bare = (a: unknown): string => String(a).trim().toLowerCase().replace(/^0x/u, '');
-const nameOf = (entryPoint: unknown): string =>
-  entryPoint instanceof Uint8Array ? new TextDecoder().decode(entryPoint) : String(entryPoint);
-
-const emptyOffer = (offer: unknown, parts: readonly string[]): boolean => {
-  if (offer === undefined || offer === null) return true;
-  if (typeof offer !== 'object') return false;
-  return parts.every((k) => {
-    const v = (offer as Record<string, unknown>)[k];
-    return Array.isArray(v) && v.length === 0;
-  });
-};
-
-interface TxShape {
-  intents?: unknown;
-  guaranteedOffer?: unknown;
-  fallibleOffer?: unknown;
-}
-interface IntentShape {
-  actions?: unknown;
-  guaranteedUnshieldedOffer?: unknown;
-  fallibleUnshieldedOffer?: unknown;
-  dustActions?: unknown;
-}
-
-/** The one intent a fee-only transaction carries, or a refusal. */
-const theOnlyIntent = (tx: unknown, what: string): { intent: IntentShape } | { refusal: string } => {
-  const t = tx as TxShape | null;
-  if (!(t?.intents instanceof Map) || t.intents.size !== 1) {
-    return { refusal: `this is not ${what}: it must carry exactly one set of actions. Nothing was sent.` };
-  }
-  if (!emptyOffer(t.guaranteedOffer, ['inputs', 'outputs', 'transients'])
-    || (t.fallibleOffer !== undefined && t.fallibleOffer !== null
-      && (!(t.fallibleOffer instanceof Map) || [...t.fallibleOffer.values()].some(
-        (o) => !emptyOffer(o, ['inputs', 'outputs', 'transients']))))) {
-    return { refusal: `this is not ${what}: it moves coins, and the company pays only for one that moves none. Nothing was sent.` };
-  }
-  const intent = [...t.intents.values()][0] as IntentShape | null;
-  if (!intent || !emptyOffer(intent.guaranteedUnshieldedOffer, ['inputs', 'outputs'])
-    || !emptyOffer(intent.fallibleUnshieldedOffer, ['inputs', 'outputs'])
-    || !emptyOffer(intent.dustActions, ['spends', 'registrations'])) {
-    return { refusal: `this is not ${what}: it moves coins, and the company pays only for one that moves none. Nothing was sent.` };
-  }
-  if (!Array.isArray(intent.actions) || intent.actions.length !== 1) {
-    return { refusal: `this is not ${what}: it must do exactly one thing. Nothing was sent.` };
-  }
-  return { intent };
-};
 
 /* ------------------------------------------------------------ 1. the deploy */
 
 /** What the deploy of a vault born held must be: the company's account, the committee holding the company's rules, this build's circuits. */
 export type VaultDeployExpectations = VaultBornHeldExpectations;
 
-export type DeployVerdict = { readonly vault: string } | { readonly refusal: string };
 
 /**
  * **A NEW VAULT, READ BEFORE THE COMPANY PAYS TO SEND IT**: one deploy, moving
@@ -121,73 +74,6 @@ export function readVaultDeploy(tx: unknown, expect: VaultDeployExpectations): D
   }
   const refusal = vaultBornHeldRefusal(deploy.initialState, expect, what);
   return refusal === null ? { vault: bare(deploy.address) } : { refusal };
-}
-
-/* ------------------------------------------------ 1a. a company's account, deployed from its founding signer's browser */
-
-export interface AccountDeployExpectations {
-  /** The founding signer's committee key, as recorded when the company was created, before anything was sent. */
-  readonly foundingKey: CommitteeKey;
-  /** The first step's circuits and their verifying keys, as this build compiled them. */
-  readonly verifierKeys: ReadonlyMap<string, Uint8Array>;
-  readonly circuits: readonly string[];
-  /**
-   * The whole state this service builds itself from what it recorded - the
-   * constructor run over the founding signer's seat and the company's label,
-   * this build's first circuits and the founding signer's key - serialized.
-   */
-  readonly expectedState: Uint8Array;
-}
-
-/**
- * **A COMPANY'S ACCOUNT, DEPLOYED BY ITS FOUNDING SIGNER'S DEVICE, AS THIS
- * SERVICE READS IT BEFORE IT PAYS.** One deploy and nothing else; held by the
- * founding signer's recorded key alone, at a threshold of one, never changed;
- * running exactly this build's first circuits; starting from exactly the state
- * the constructor makes from what this service recorded, compared byte for
- * byte, so no seat, proposal or field the roster does not show is written into
- * the account for good.
- */
-export function readAccountDeploy(tx: unknown, expect: AccountDeployExpectations): DeployVerdict {
-  const what = 'this company\'s account, as its founding signer created it';
-  const only = theOnlyIntent(tx, what);
-  if ('refusal' in only) return only;
-  const deploy = (only.intent.actions as unknown[])[0] as { address?: unknown; initialState?: unknown; entryPoint?: unknown };
-  if (deploy.initialState === undefined || deploy.address === undefined || deploy.entryPoint !== undefined) {
-    return { refusal: `this is not ${what}: it does something other than deploy a contract. Nothing was sent.` };
-  }
-  const state = deploy.initialState as {
-    maintenanceAuthority?: { committee?: unknown[]; threshold?: unknown; counter?: unknown };
-    serialize?: () => Uint8Array;
-  };
-  const authority = state.maintenanceAuthority;
-  const keys = Array.isArray(authority?.committee) ? (authority!.committee as CommitteeKey[]) : null;
-  if (keys === null || typeof authority?.threshold !== 'number' || authority.counter !== 0n
-    || !sameCommittee(
-      { committee: keys.map((k) => ({ tag: String(k.tag), value: String(k.value).toLowerCase() })), threshold: authority.threshold },
-      { committee: [{ tag: expect.foundingKey.tag, value: expect.foundingKey.value.toLowerCase() }], threshold: 1 })) {
-    return {
-      refusal: `this is not ${what}: a company's account is created held by its founding signer's own key alone, at a `
-        + 'threshold of one and never changed, and this one carries another authority. Nothing was sent.',
-    };
-  }
-  const money = startsHoldingMoney(state, `this is not ${what}`);
-  if (money !== null) return { refusal: money };
-  const circuits = circuitsRefusal(state, expect.verifierKeys, `this is not ${what}`, expect.circuits, 'the account\'s first step\'s');
-  if (circuits !== null) return { refusal: circuits };
-  let bytes: Uint8Array;
-  try {
-    bytes = state.serialize!();
-  } catch {
-    return { refusal: `this is not ${what}: its state cannot be read. Nothing was sent.` };
-  }
-  if (bytes.length !== expect.expectedState.length || bytes.some((b, i) => b !== expect.expectedState[i])) {
-    return {
-      refusal: `this is not ${what}: it starts from a state other than the one the account's constructor makes from `
-        + 'the founding signer\'s seat and the company\'s label, so it would carry something nobody approved. Nothing was sent.',
-    };
-  }
-  return { vault: bare(deploy.address) };
 }
 
 /**
@@ -804,6 +690,26 @@ export function refusalForStartAccountCall(
   tx: unknown, expect: { readonly account: string; readonly circuit: StartAccountCall },
 ): string | null {
   const what = 'a step of this vault\'s start on the company\'s account';
+  const read = callsMovingNothing(tx, what);
+  if ('refusal' in read) return read.refusal;
+  if (read.calls.length !== 1 || read.calls[0] !== `${bare(expect.account)}/${expect.circuit}`) {
+    return `this is not ${what}: it must make exactly one '${expect.circuit}' call to this company's account, and `
+      + 'nothing else. Nothing was sent.';
+  }
+  return null;
+}
+
+/** The account's circuits a company's creation calls to commit it to its pay-record key, each moving nothing. */
+export type PayKeyCall = 'propose' | 'approve' | 'sealPayKey';
+
+/**
+ * **ONE CALL TO THIS COMPANY'S ACCOUNT THAT COMMITTING IT TO ITS PAY-RECORD KEY
+ * MAKES, AND NOTHING ELSE**: raising or approving the proposal, or sealing the
+ * key to a signer. Which round it is, and which key, the account itself checks
+ * inside the call, from what the signer's device proved.
+ */
+export function refusalForPayKeyCall(tx: unknown, expect: { readonly account: string; readonly circuit: PayKeyCall }): string | null {
+  const what = 'a step of committing this company\'s account to its pay-record key';
   const read = callsMovingNothing(tx, what);
   if ('refusal' in read) return read.refusal;
   if (read.calls.length !== 1 || read.calls[0] !== `${bare(expect.account)}/${expect.circuit}`) {

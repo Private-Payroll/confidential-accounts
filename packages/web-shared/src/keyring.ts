@@ -21,7 +21,8 @@
  */
 import { readAccountAddress, readCompanyLabel } from 'midnight-identity/profile/company-label';
 import type { AccountAddress, CompanyLabel, VaultAddress } from 'midnight-identity/profile/company-label';
-import { seal, sign, toHex, unseal, unwrapKey, type Hex, type Sealed } from '../../../src/core/crypto.js';
+import { parseCanonical, randomBytes, seal, sign, toHex, unseal, unwrapKey, type Hex, type Sealed } from '../../../src/core/crypto.js';
+import { NO_ASSET } from '../../../src/core/assets.js';
 import {
   askWalletToSignIn, openWalletDialog, type Openable, type WalletDialog,
 } from './wallet-sign-in.js';
@@ -40,6 +41,14 @@ import {
 import { walletInThisPage } from './wallet-frame.js';
 import { askWalletForPayeeAddress } from './wallet-payee.js';
 import { openAccount as openSealedAccount, approvalMessage } from '../../../src/core/account.js';
+import {
+  COMPANY_CREATION_STATES, foundTheCompanyHere, type CompanyCreationState, type CompanyFounded,
+} from '../../../src/core/company-founding.js';
+import type { AccountCallChainOnTheWire, PayKeyStandingOnTheWire } from './vault-worker-client.js';
+import type { GovernedCallOrder, OpenedRound, SignerMaterial } from './governed-call-builder.js';
+
+export type { CompanyCreationState } from '../../../src/core/company-founding.js';
+import { newSeatKeys } from './accept-seat.js';
 import { clobberRefusal, seatToPromote } from './seat-repair.js';
 import type { Account, SealedAccount } from '../../../src/core/types.js';
 import {
@@ -210,6 +219,12 @@ export interface Keyring {
    * `JSON.parse` of them must keep working.
    */
   paidBy?: string[];
+  /**
+   * **A COMPANY THIS PERSON IS CREATING ON A CHAIN, UNTIL ITS CREATION IS
+   * FINISHED**, keyed by the company. Optional, because saved keys written
+   * before it have no such field.
+   */
+  creations?: Record<string, SavedCreation>;
 }
 
 export interface Me { id: string; email: string | null; name: string }
@@ -1256,7 +1271,6 @@ export function forgetLocally() {
    * keeping their secrets against a session that no longer exists.
    */
   pendingCompany = null;
-  pendingCreation = null;
 }
 
 /**
@@ -1579,7 +1593,7 @@ async function putBundle(next: Keyring) {
 /**
  * **A COMPANY THAT EXISTS AND WHOSE KEYS THIS TAB HAS NOT SAVED YET.**
  *
- * `create` returns **the founder's signing secret, wrapping secret and blinding
+ * `create` returns **the founding signer's signing secret, wrapping secret and blinding
  * ONCE, and they are written down nowhere.** The viewing key is wrapped to that
  * wrapping key on the account record, so losing these secrets is losing the
  * company - intact, sealed, and unopenable.
@@ -1636,7 +1650,7 @@ export const companyAwaitingSetup = (): string | null => (startedByTheSignedIn(p
  *   2. **The company is brought into being with that label**, and the ledger
  *      assigns whatever it assigns. Nothing about saving the founding signer's
  *      keys waits on it.
- *   3. **The founder's own secrets are saved beside everything already saved**,
+ *   3. **The founding signer's own secrets are saved beside everything already saved**,
  *      under the same key. From here a second device, or a recovery, opens them.
  *
  * **ANY NUMBER OF COMPANIES.** Nothing here looks at whether this person already
@@ -1677,14 +1691,15 @@ interface Founded {
 }
 
 /**
- * **ONE WAY A COMPANY IS FOUNDED, WITH ONE DIFFERENCE**: `held-from-the-start`
- * sends the service the founding signer's committee key, which their wallet
- * gave beside the label it drew, and reads back their seat - everything the
- * account's deploy is built from in this browser.
+ * **ONE WAY A COMPANY IS FOUNDED, WITH ONE DIFFERENCE**: held from the start,
+ * the company is made on this device (`foundTheCompanyOnThisDevice`) and the
+ * service is sent, in the same request, the founding signer's committee key,
+ * which their wallet gave beside the label it drew, and what this device made
+ * and sealed - everything the account's deploy is built from in this browser.
  */
 async function foundCompany(
   spec: Parameters<typeof createCompanyWithWallet>[0], walletOrigin: string, view: Openable, atOrigin: string,
-  how: 'as-today' | 'held-from-the-start',
+  how: 'as-today' | { readonly heldFromTheStart: AccountCreationBuilder },
 ): Promise<Founded> {
   if (!sessionLive || me === null) throw new Error('not signed in');
   const startedBy = me.id;
@@ -1705,8 +1720,8 @@ async function foundCompany(
   try {
     const { drawn, committeeKey } = await openKeysOnceOpen(walletOrigin, view, atOrigin, dialog, 'new');
     if (drawn === null) throw new Error('Your wallet did not make up a label for the new company, so nothing was created. Update your wallet and try again.');
-    const foundingKey = how === 'held-from-the-start' ? schnorrKeyOf(committeeKey) : null;
-    if (how === 'held-from-the-start' && foundingKey === null) {
+    const foundingKey = how !== 'as-today' ? schnorrKeyOf(committeeKey) : null;
+    if (how !== 'as-today' && foundingKey === null) {
       throw new Error('Your wallet drew a label for the new company but gave no key to hold it with, so nothing was created. '
         + 'Update your wallet and try again.');
     }
@@ -1717,23 +1732,21 @@ async function foundCompany(
     /* Asked before anything is created, so a refusal costs nothing. */
     if (savedKeys !== 'some' && !keyCheckedAgainstSignIn) throw new FirstKeysNeedTheSignIn(FIRST_KEYS_NEED_THE_SIGN_IN);
 
+    if (how !== 'as-today') return await foundTheCompanyOnThisDevice(spec, drawn, foundingKey!, how.heldFromTheStart, startedBy);
+
     /*
-     * **STEP 2.** What comes back is used for one thing: the founder's own
+     * **STEP 2.** What comes back is used for one thing: the founding signer's own
      * secrets, which exist in this response and nowhere else in the world.
      */
     const created = await api('/api/accounts', {
       method: 'POST',
       body: JSON.stringify({
         name: spec.name, signers: spec.signers, threshold: spec.threshold, companyLabel: drawn,
-        ...(foundingKey === null ? {} : { foundingKey }),
       }),
     });
 
     const accountId = String(created.account.id);
-    const founded: Founded = {
-      accountId, label: drawn, foundingKey,
-      foundingLeaf: foundingKey === null ? null : seatOf(created),
-    };
+    const founded: Founded = { accountId, label: drawn, foundingKey: null, foundingLeaf: null };
     const mine = created.secrets[0];
     pendingCompany = {
       accountId,
@@ -1744,7 +1757,7 @@ async function foundCompany(
         signingSecret: mine.signingSecret,
         wrappingSecret: mine.wrappingSecret,
         blinding: mine.blinding,
-        /* The scope the founder's own leaf was made under, carried from the
+        /* The scope the founding signer's own leaf was made under, carried from the
          * response rather than defaulted here. */
         scope: mine.scope,
       },
@@ -1820,57 +1833,180 @@ const schnorrKeyOf = (k: { tag: string; value: string } | null): { tag: 'schnorr
   return HEX64_KEY.test(value) ? { tag: 'schnorr', value } : null;
 };
 
-/** The founding signer's seat, as the service's answer to the creation names it. Refused by name when it names none. */
-const seatOf = (created: { account?: { signers?: ReadonlyArray<{ leafCommitment?: unknown }> } }): string => {
-  const leaf = String(created.account?.signers?.[0]?.leafCommitment ?? '').toLowerCase().replace(/^0x/u, '');
-  if (!HEX64_KEY.test(leaf)) {
-    throw new Error('the service made the company but did not say which seat is yours, so its account cannot be built. Nothing was sent.');
-  }
-  return leaf;
+/**
+ * **WHAT IS KEPT OF A COMPANY THIS PERSON IS CREATING ON A CHAIN, UNTIL ITS
+ * CREATION IS FINISHED**: with everything else they have saved, so a reload, a
+ * closed tab or another of their browsers carries on from where it stopped and
+ * never makes a second company.
+ *
+ * Nothing here is a secret of the company: the request that made it is public
+ * halves and what its secrets seal, the deploy and the second step are public
+ * once sent, and the signature is the founding signer's on a public step. The
+ * seat's own secrets are kept beside it as every seat's are.
+ */
+interface SavedCreation {
+  readonly accountId: string;
+  readonly label: CompanyLabel;
+  readonly foundingKey: { readonly tag: 'schnorr'; readonly value: string };
+  /** The request that made the company, exactly as sent: sent again, it is the same company. */
+  readonly request: {
+    readonly name: string;
+    readonly signers: ReadonlyArray<{ readonly name: string; readonly role: 'admin' | 'approver' | 'initiator' | 'viewer' }>;
+    readonly threshold: number;
+    readonly companyLabel: CompanyLabel;
+    readonly foundingKey: { readonly tag: 'schnorr'; readonly value: string };
+    readonly founding: CompanyFounded;
+  };
+  /** The service answered the request: the company exists. */
+  readonly made: boolean;
+  /** The account's deploy, built here, and the keys its second step adds. */
+  readonly deploy: { readonly account: AccountAddress; readonly tx: string; readonly insert: ReadonlyArray<{ circuit: string; key: string }> } | null;
+  /** The second step, signed by the founding signer's wallet, and that signature. */
+  readonly signed: { readonly tx: string; readonly signature: { readonly tag: string; readonly value: string } } | null;
+  /** The service recorded the deploy and the second step. */
+  readonly recorded: boolean;
+}
+
+/** This person's company being created, if there is one. */
+const savedCreation = (): SavedCreation | null => {
+  const all = Object.values(keyring.creations ?? {});
+  return all.length === 0 ? null : all[0]!;
 };
 
-/** What builds and proves the account's two transactions: the vault worker, or anything that answers as it does. */
+/** Writes what is kept of a creation, with everything else saved, and nothing else changed. */
+async function keepCreation(c: SavedCreation): Promise<void> {
+  await putBundle({ ...keyring, creations: { ...(keyring.creations ?? {}), [c.accountId]: c } });
+}
+
+/** Drops what was kept of a creation, once it is finished. */
+async function forgetCreation(accountId: string): Promise<void> {
+  const { [accountId]: _done, ...rest } = keyring.creations ?? {};
+  await putBundle({ ...keyring, creations: rest });
+}
+
+/**
+ * **THE COMPANY MADE ON THIS DEVICE, AND KEPT BEFORE ANYTHING IS SENT.**
+ *
+ * The founding signer's seat is made here with the keys an invited seat is
+ * made with, and its leaf worked out from them where the chain's own function
+ * runs. Every secret of the company is made here beside it and sealed: the
+ * service is sent the seat's public halves and leaf, the company's record with
+ * its viewing key wrapped to this seat alone, and its first state, sealed.
+ *
+ * **THE SEAT'S SECRETS AND THE REQUEST ARE SAVED FIRST, IN ONE WRITE**, with
+ * everything else this person has saved, so a company never exists whose
+ * founding signer's keys were not kept, and a request that was sent and not
+ * answered is sent again as it was rather than made again. If the save is
+ * refused, nothing has been sent.
+ */
+async function foundTheCompanyOnThisDevice(
+  spec: Parameters<typeof createCompanyWithWallet>[0], label: CompanyLabel, foundingKey: { tag: 'schnorr'; value: string },
+  builder: AccountCreationBuilder, person: string,
+): Promise<Founded> {
+  const keys = newSeatKeys();
+  const seat = await builder.foundingSeat({ signingSecret: keys.signingSecret, blinding: keys.blinding });
+  const leaf = String(seat?.seat ?? '').toLowerCase();
+  const scope = String(seat?.scope ?? '').toLowerCase();
+  if (!HEX64_KEY.test(leaf) || !HEX64_KEY.test(scope)) {
+    throw new Error('your seat in the new company could not be worked out on this device, so nothing was created.');
+  }
+  const founded = foundTheCompanyHere({
+    name: spec.name, signer: spec.signers[0]!, userId: person, label,
+    seat: { signingPublicKey: keys.signingPublicKey, wrappingPublicKey: keys.wrappingPublicKey, leaf },
+  });
+  const accountId = founded.account.id;
+  /* Somebody else signed in while it was being made: their saved keys are not where this seat goes. */
+  if (me === null || me.id !== person) throw new CompanyStartedBySomebodyElse(STARTED_BY_SOMEBODY_ELSE);
+  const mine: AccountKeys = {
+    signerId: founded.seat.signerId, signingSecret: keys.signingSecret, wrappingSecret: keys.wrappingSecret,
+    blinding: keys.blinding, scope,
+  };
+  refuseToClobber(accountId, mine);
+  const saved: SavedCreation = {
+    accountId, label, foundingKey,
+    request: { name: spec.name, signers: spec.signers, threshold: spec.threshold, companyLabel: label, foundingKey, founding: founded },
+    made: false, deploy: null, signed: null, recorded: false,
+  };
+  await putBundle({
+    ...keyring,
+    accounts: { ...keyring.accounts, [accountId]: mine },
+    creations: { ...(keyring.creations ?? {}), [accountId]: saved },
+  });
+  await sendTheCompany(saved);
+  return { accountId, label, foundingKey, foundingLeaf: founded.seat.leaf };
+}
+
+/** Sends the request that made the company, as it was kept, and keeps that the service answered. */
+async function sendTheCompany(saved: SavedCreation): Promise<SavedCreation> {
+  if (saved.made) return saved;
+  await api('/api/accounts', { method: 'POST', body: JSON.stringify(saved.request) });
+  const made = { ...saved, made: true };
+  await keepCreation(made);
+  return made;
+}
+
+/** Builds the account's deploy for a company kept here, once, and keeps it. */
+async function buildTheDeploy(saved: SavedCreation, builder: AccountCreationBuilder): Promise<SavedCreation> {
+  if (saved.deploy !== null) return saved;
+  const built = await builder.accountDeploy({
+    foundingLeaf: saved.request.founding.seat.leaf, label: saved.label, foundingKey: saved.foundingKey,
+  });
+  const account = readAccountAddress(built.account);
+  if (account === null) throw new Error('the account\'s deploy was built without an address that can be read, so nothing was sent.');
+  const next = { ...saved, deploy: { account, tx: built.tx, insert: built.insert } };
+  await keepCreation(next);
+  return next;
+}
+
+/** What builds and proves the account's transactions: the vault worker, or anything that answers as it does. */
 export interface AccountCreationBuilder {
+  /**
+   * The leaf the account seats for the keys made on this device, and the scope
+   * it was made under, worked out with the chain's own function.
+   */
+  foundingSeat(material: { signingSecret: string; blinding: string }): Promise<{ seat: string; scope: string }>;
   accountDeploy(input: { foundingLeaf: string; label: string; foundingKey: { tag: string; value: string } }): Promise<{
     account: string; tx: string; insert: ReadonlyArray<{ circuit: string; key: string }>;
   }>;
   finishedCreation(input: { account: string; signature: { tag: string; value: string } }): Promise<{ tx: string }>;
+  /**
+   * The same deploy and the same signed second step, each carried in a fresh
+   * transaction: the same account, the same signature, nothing made again.
+   */
+  creationAgain(input: { deploy: string; insert: string }): Promise<{ account: string; deploy: string; insert: string }>;
+  /** Where the pay-record key stands on the account for this signer, and a copy of it sealed to them. */
+  payKeyStanding(input: {
+    account: string; accountState: string; key: string; signingSecret: string; wrappingPublicKey: string;
+  }): Promise<PayKeyStandingOnTheWire>;
+  /** A raise, an approval or a seal on the company account, built and proved with this signer's own material. */
+  governedCall(input: {
+    account: string; order: GovernedCallOrder; material: SignerMaterial; chain: AccountCallChainOnTheWire; opened: OpenedRound;
+  }): Promise<{ tx: string }>;
 }
 
-/** Where a company's creation stands, as the service reads its record and the chain. */
-export type CompanyCreationState = 'not-created' | 'deploy-sent' | 'finish-owed' | 'finish-sent' | 'finished' | 'unknown';
+/** The company this person has started on a chain and whose account's deploy is built, until the service has recorded it. */
+export const companyAwaitingItsSecondPress = (): { accountId: string; account: AccountAddress } | null => {
+  const saved = savedCreation();
+  return saved !== null && saved.deploy !== null && !saved.recorded ? { accountId: saved.accountId, account: saved.deploy.account } : null;
+};
+
+/** The company this person is creating on a chain, kept with their saved keys, until its creation is finished. */
+export const companyBeingCreated = (): string | null => savedCreation()?.accountId ?? null;
 
 /**
- * **THE COMPANY THIS TAB IS CREATING ON A CHAIN, BETWEEN ITS TWO PRESSES.**
- * The deploy is built and unsent; once the wallet has signed the second step,
- * that is kept too, so a send that did not arrive is sent again with the same
- * bytes and the wallet is not asked twice. Nothing of it is secret.
- */
-let pendingCreation: {
-  accountId: string;
-  personId: string;
-  label: CompanyLabel;
-  account: AccountAddress;
-  foundingKey: { tag: 'schnorr'; value: string };
-  deploy: string;
-  insertKeys: ReadonlyArray<{ circuit: string; key: string }>;
-  signedInsert: string | null;
-} | null = null;
-
-/** The company this tab has started on a chain and not yet sent, for the person who started it. */
-export const companyAwaitingItsSecondPress = (): { accountId: string; account: AccountAddress } | null =>
-  startedByTheSignedIn(pendingCreation) && pendingCreation !== null
-    ? { accountId: pendingCreation.accountId, account: pendingCreation.account } : null;
-
-/**
- * **THE FIRST PRESS: THE COMPANY IS MADE AND ITS ACCOUNT'S DEPLOY IS BUILT HERE,
- * HELD BY THE FOUNDING SIGNER'S OWN KEY FROM ITS FIRST TRANSACTION.**
+ * **THE FIRST PRESS: THE COMPANY IS MADE HERE AND ITS ACCOUNT'S DEPLOY IS
+ * BUILT HERE, HELD BY THE FOUNDING SIGNER'S OWN KEY FROM ITS FIRST TRANSACTION.**
  *
  * The wallet draws the company's label and gives the key the founding signer
- * sits on its committee with; the service makes the company and records that
- * key before any deploy exists; this browser builds and proves the deploy.
- * **NOTHING IS SENT.** The account's address is known now, and the second press
- * asks the wallet to sign the step that finishes it.
+ * sits on its committee with; the company and every secret it has are made on
+ * this device and kept; the service records what they seal, and the key, before
+ * any deploy exists; this browser builds and proves the deploy and keeps it.
+ * **NOTHING IS SENT TO THE CHAIN.** The account's address is known now, and the
+ * second press asks the wallet to sign the step that finishes it.
+ *
+ * **ONE COMPANY AT A TIME.** While a company this person started is not
+ * finished, this refuses: the second press, or `finishCompanyOnTheChain`, carries
+ * that one on, from wherever it stopped.
  */
 export async function startCompanyHeldFromTheStart(
   spec: Parameters<typeof createCompanyWithWallet>[0],
@@ -1879,32 +2015,32 @@ export async function startCompanyHeldFromTheStart(
   view: Openable = walletInThisPage(window),
   atOrigin: string = window.location.origin,
 ): Promise<{ accountId: string; account: AccountAddress }> {
-  if (startedByTheSignedIn(pendingCreation)) {
-    throw new Error('a company this tab started is waiting to be finished. Finish it before starting another.');
+  if (savedCreation() !== null) {
+    throw new Error('a company you started is not finished yet. Finish it before starting another.');
   }
-  const founded = await foundCompany(spec, walletOrigin, view, atOrigin, 'held-from-the-start');
-  if (founded.foundingKey === null || founded.foundingLeaf === null) {
-    throw new Error('this company was made without the key that holds its account, so its account was not built. Nothing was sent.');
+  /* Before the wallet is opened: a company is created with its founding signer only. */
+  if (spec.signers.length !== 1 || spec.threshold !== 1) {
+    throw new Error('a company is created with you as its only signer, at a threshold of one; everybody else joins by '
+      + 'invitation, their seat made on their own device. Nothing was created.');
   }
-  const built = await builder.accountDeploy({
-    foundingLeaf: founded.foundingLeaf, label: founded.label, foundingKey: founded.foundingKey,
-  });
-  const account = readAccountAddress(built.account);
-  if (account === null) throw new Error('the account\'s deploy was built without an address that can be read, so nothing was sent.');
-  pendingCreation = {
-    accountId: founded.accountId, personId: me?.id ?? '', label: founded.label, account,
-    foundingKey: founded.foundingKey, deploy: built.tx, insertKeys: built.insert, signedInsert: null,
-  };
-  return { accountId: founded.accountId, account };
+  const founded = await foundCompany(spec, walletOrigin, view, atOrigin, { heldFromTheStart: builder });
+  const saved = keyring.creations?.[founded.accountId];
+  if (saved === undefined) throw new Error('the company was made but what was kept of it could not be read back, so no account was built. Nothing was sent.');
+  const built = await buildTheDeploy(saved, builder);
+  return { accountId: founded.accountId, account: built.deploy!.account };
 }
 
 /**
  * **THE SECOND PRESS: THE WALLET READS THE DEPLOY ITSELF AND SIGNS THE STEP THAT
  * FINISHES THE ACCOUNT, AND BOTH ARE SENT TOGETHER.**
  *
- * The service records the deploy and the signed second step before it sends
- * either, and sends the deploy. A send that did not arrive is pressed again:
- * the same bytes go, and the wallet is not asked a second time.
+ * It carries on from what was kept: a request the service did not answer is
+ * sent again as it was, a deploy not yet built is built, and a step already
+ * signed is not signed again. The service records the deploy and the signed
+ * second step before it sends either, and sends the deploy. A send that did not
+ * arrive is pressed again: the same bytes go, and the wallet is not asked twice.
+ *
+ * Needs this person's saved keys open, which is where what was kept is.
  */
 export async function signCompanyCreationFromTheWallet(
   walletOrigin: string,
@@ -1913,16 +2049,18 @@ export async function signCompanyCreationFromTheWallet(
   atOrigin: string = window.location.origin,
 ): Promise<{ accountId: string; account: AccountAddress; state: CompanyCreationState }> {
   if (!sessionLive) throw new Error('not signed in');
-  const waiting = pendingCreation;
-  if (waiting === null) throw new Error('there is no company waiting to be finished in this tab. If the page was reloaded, start creating the company again.');
-  if (!startedByTheSignedIn(waiting)) throw new CompanyStartedBySomebodyElse(STARTED_BY_SOMEBODY_ELSE);
-  if (waiting.signedInsert === null) {
+  if (encKey === null) throw new Error('open your saved keys first: what was kept of the company you are creating is with them.');
+  let saved = savedCreation();
+  if (saved === null) throw new Error('there is no company waiting to be finished.');
+  saved = await buildTheDeploy(await sendTheCompany(saved), builder);
+  const deploy = saved.deploy!;
+  if (saved.signed === null) {
     const dialog = openTheWallet(view, walletOrigin);
     let signature: { tag: string; value: string };
     try {
       ({ signature } = await askWalletToFinishCreation(view, walletOrigin, {
-        company: waiting.label, account: waiting.account, deploy: waiting.deploy, insert: waiting.insertKeys,
-        signer: waiting.foundingKey, atOrigin, name: US_TO_A_WALLET.name, rdns: US_TO_A_WALLET.rdns,
+        company: saved.label, account: deploy.account, deploy: deploy.tx, insert: deploy.insert,
+        signer: saved.foundingKey, atOrigin, name: US_TO_A_WALLET.name, rdns: US_TO_A_WALLET.rdns,
       }, dialog));
     } catch (e) {
       putAway(dialog);
@@ -1930,25 +2068,154 @@ export async function signCompanyCreationFromTheWallet(
     } finally {
       doneWaiting();
     }
-    const finished = await builder.finishedCreation({ account: waiting.account, signature });
-    if (pendingCreation !== waiting) throw new Error('this tab started something else while the wallet was open, so nothing was sent.');
-    waiting.signedInsert = finished.tx;
+    const finished = await builder.finishedCreation({ account: deploy.account, signature });
+    saved = { ...saved, signed: { tx: finished.tx, signature: { tag: signature.tag, value: signature.value } } };
+    await keepCreation(saved);
   }
-  const sent = await api(`/api/accounts/${waiting.accountId}/creation`, {
-    method: 'POST', body: JSON.stringify({ deploy: waiting.deploy, insert: waiting.signedInsert }),
+  const sent = await api(`/api/accounts/${saved.accountId}/creation`, {
+    method: 'POST', body: JSON.stringify({ deploy: deploy.tx, insert: saved.signed!.tx }),
   });
-  if (pendingCreation === waiting) pendingCreation = null;
-  return { accountId: waiting.accountId, account: waiting.account, state: creationStateOf(sent.state) };
+  if (!saved.recorded) await keepCreation({ ...saved, recorded: true });
+  return { accountId: saved.accountId, account: deploy.account, state: creationStateOf(sent.state) };
+}
+
+/**
+ * **A DEPLOY OR A SECOND STEP THAT CAN NO LONGER LAND, CARRIED AGAIN.** Each
+ * transaction lives thirty minutes. One that ran out before it landed is
+ * carried in a fresh one: the same deploy, so the same account, and the same
+ * signature, so the wallet is not asked again and nothing is made again.
+ */
+async function carriedAgain(accountId: string, builder: AccountCreationBuilder): Promise<{ deploy: string; insert: string }> {
+  const saved = keyring.creations?.[accountId];
+  if (saved === undefined || saved.deploy === null || saved.signed === null) {
+    throw new Error('this browser does not hold what was sent for this company, so it cannot be sent again. Open your '
+      + 'saved keys on the browser you created it from. Nothing was sent.');
+  }
+  const again = await builder.creationAgain({ deploy: saved.deploy.tx, insert: saved.signed.tx });
+  if (readAccountAddress(again.account) !== saved.deploy.account) {
+    throw new Error('carried again, the deploy would create another account than the one your wallet signed for. Nothing was sent.');
+  }
+  await keepCreation({ ...saved, deploy: { ...saved.deploy, tx: again.deploy }, signed: { ...saved.signed, tx: again.insert } });
+  return { deploy: again.deploy, insert: again.insert };
 }
 
 /**
  * **FINISHING A COMPANY WHOSE ACCOUNT IS ON THE CHAIN**: the service sends the
- * second step it recorded with the deploy, the same bytes, once the chain shows
- * the account. Pressed again when it did not land; nothing is rebuilt or signed.
+ * second step it recorded with the deploy, once the chain shows the account.
+ * Pressed again when it did not land; nothing is signed again. A deploy that
+ * ran out before it landed, or a second step that ran out before it was sent,
+ * is carried again from what this browser kept and recorded in its place.
  */
-export async function finishCompanyOnTheChain(accountId: string): Promise<{ account: AccountAddress | null; state: CompanyCreationState }> {
+export async function finishCompanyOnTheChain(
+  accountId: string, builder?: AccountCreationBuilder,
+): Promise<{ account: AccountAddress | null; state: CompanyCreationState }> {
+  const standing = await companyCreationStanding(accountId);
+  if (standing.state === 'deploy-expired' && builder !== undefined) {
+    const again = await carriedAgain(accountId, builder);
+    const answer = await api(`/api/accounts/${accountId}/creation/again`, { method: 'POST', body: JSON.stringify(again) });
+    return { account: readAccountAddress(answer.account), state: creationStateOf(answer.state) };
+  }
+  if (standing.state === 'finish-expired' && builder !== undefined) {
+    const { insert } = await carriedAgain(accountId, builder);
+    const answer = await api(`/api/accounts/${accountId}/creation/finish`, { method: 'POST', body: JSON.stringify({ insert }) });
+    return { account: readAccountAddress(answer.account), state: creationStateOf(answer.state) };
+  }
   const answer = await api(`/api/accounts/${accountId}/creation/finish`, { method: 'POST' });
   return { account: readAccountAddress(answer.account), state: creationStateOf(answer.state) };
+}
+
+/**
+ * **THE COMPANY'S PAY-RECORD KEY, COMMITTED ON ITS ACCOUNT AND SEALED TO ITS
+ * FOUNDING SIGNER**, the last step of creating it. The key was made with the
+ * company, on this device, and kept sealed in its first state; it is opened
+ * here with the founding signer's own key, and nothing of it leaves but the
+ * account's commitment to it and the copy sealed to them.
+ *
+ * Carried out from what the chain shows, so a press that stopped half way
+ * carries on: the proposal that commits the account to the key is raised once,
+ * approved by the founding signer, and carried out by sealing their copy, each
+ * only once the chain shows the one before. Each is built and proved here, and
+ * the service only reads it and sends it. When the chain shows the founding
+ * signer's copy sealed, what was kept of the creation is dropped.
+ */
+export async function sealThePayRecordKey(
+  accountId: string, builder: AccountCreationBuilder,
+  opts: { readonly wait?: (ms: number) => Promise<void>; readonly tries?: number } = {},
+): Promise<{ state: CompanyCreationState }> {
+  if (encKey === null) throw new Error('open your saved keys first: the company\'s pay-record key is opened with them.');
+  const saved = keyring.creations?.[accountId];
+  const mine = keysFor(accountId);
+  if (saved === undefined || mine === null) {
+    throw new Error('this browser does not hold what this company was created with, so its pay-record key cannot be sealed '
+      + 'here. Open your saved keys on the browser you created it from. Nothing was sent.');
+  }
+  const founding = saved.request.founding;
+  const wrapped = founding.account.wrappedKeys.find((w) => w.signerId === mine.signerId);
+  if (wrapped === undefined) throw new Error('the company was not made with a viewing key for your seat, so its pay-record key cannot be opened. Nothing was sent.');
+  const viewingKey = unwrapKey(wrapped, mine.wrappingSecret);
+  const key = String(parseCanonical<{ blinding: { payRecordKey?: unknown } }>(unseal(founding.sealedState.sealed, viewingKey)).blinding.payRecordKey ?? '');
+  if (!HEX64_KEY.test(key)) throw new Error('the company\'s first state carries no pay-record key, so none was sealed. Nothing was sent.');
+  const material: SignerMaterial = { signingSecret: mine.signingSecret, blinding: mine.blinding, scope: mine.scope };
+  const wait = opts.wait ?? ((ms: number) => new Promise<void>((r) => { setTimeout(r, ms); }));
+  const tries = opts.tries ?? 60;
+
+  const read = async () => {
+    const chain = await api(`/api/accounts/${accountId}/call-state`) as AccountCallChainOnTheWire & { account: string };
+    const standing = await builder.payKeyStanding({
+      account: chain.account, accountState: chain.accountState, key, signingSecret: mine.signingSecret,
+      wrappingPublicKey: founding.seat.wrappingPublicKey,
+    });
+    return { chain, standing };
+  };
+  const until = async (what: string, done: (s: PayKeyStandingOnTheWire) => boolean) => {
+    for (let i = 0; i < tries; i += 1) {
+      const now = await read();
+      if (done(now.standing)) return now;
+      await wait(5_000);
+    }
+    throw new Error(`the chain does not show ${what} yet. Nothing more was sent; press again to carry on from there.`);
+  };
+  const send = async (call: 'propose' | 'approve' | 'sealPayKey', tx: string) => {
+    await api(`/api/accounts/${accountId}/creation/pay-key`, { method: 'POST', body: JSON.stringify({ call, tx }) });
+  };
+
+  let at = await read();
+  if (at.standing.committed !== null && !at.standing.isThisKey) {
+    throw new Error('the company\'s account is committed to another pay-record key than the one it was created with, so '
+      + 'yours was not sealed. Nothing was sent.');
+  }
+  const r = at.standing.round;
+  const payKey = { kind: 'pay-key', commitment: r.commitment } as const;
+  const opened: OpenedRound = {
+    chainId: r.proposal, digest: r.payload, vault: at.standing.noVault, salt: r.salt,
+    summary: 'Commit the company to its pay-record key', governance: payKey,
+    half: { assetId: NO_ASSET_ON_THE_WIRE, changeAmount: '0', changeBatchDigest: ZERO_ON_THE_WIRE },
+  };
+  const call = async (order: GovernedCallOrder) =>
+    (await builder.governedCall({ account: at.chain.account, order, material, chain: at.chain, opened })).tx;
+  if (at.standing.committed === null) {
+    if (!r.open) {
+      await send('propose', await call({
+        circuit: 'propose', payKey,
+        half: { assetId: NO_ASSET_ON_THE_WIRE, assetBlinding: randomHex32(), proposalSalt: r.salt, changeAmount: '0', changeBatchDigest: ZERO_ON_THE_WIRE },
+        proposal: r.proposal,
+      }));
+      at = await until('the proposal that commits the company to its pay-record key', (s) => s.round.open || s.committed !== null);
+    }
+    if (at.standing.committed === null && at.standing.round.approvals < at.standing.round.needed) {
+      const before = at.standing.round.approvals;
+      await send('approve', await call({ circuit: 'approve', proposal: r.proposal, of: { governance: payKey, proposalSalt: r.salt } }));
+      at = await until('your approval of that proposal', (s) => s.round.approvals > before || s.committed !== null);
+    }
+  }
+  if (!at.standing.sealedMine) {
+    await send('sealPayKey', await call({
+      circuit: 'sealPayKey', wrap: at.standing.wrap, commitment: r.commitment, proposal: r.proposal, proposalSalt: r.salt,
+    }));
+    at = await until('your copy of the pay-record key', (s) => s.sealedMine);
+  }
+  await forgetCreation(accountId);
+  return { state: 'finished' };
 }
 
 /** **WHETHER A COMPANY IS FINISHED**, as the service reads its record and the chain. */
@@ -1957,16 +2224,20 @@ export async function companyCreationStanding(accountId: string): Promise<{ acco
   return { account: readAccountAddress(answer.account), state: creationStateOf(answer.state) };
 }
 
-const CREATION_STATES: readonly CompanyCreationState[] = ['not-created', 'deploy-sent', 'finish-owed', 'finish-sent', 'finished', 'unknown'];
 /** A state the service named, or `unknown` for anything this page does not know. */
 const creationStateOf = (s: unknown): CompanyCreationState =>
-  CREATION_STATES.find((k) => k === s) ?? 'unknown';
+  COMPANY_CREATION_STATES.find((k) => k === s) ?? 'unknown';
+
+const ZERO_ON_THE_WIRE = '00'.repeat(32);
+const NO_ASSET_ON_THE_WIRE = NO_ASSET;
+const randomHex32 = (): string => toHex(randomBytes(32));
 
 /**
  * Derives the viewing key from the account's wrapped keys and this user's own
- * wrapping secret. Note what does not happen: the viewing key is never stored,
- * never sent, and never asked of the server. It is recomputed per session from
- * material only this device holds.
+ * wrapping secret. It is not stored on this device: it is recomputed per
+ * session from material only this device holds. It is not kept by the server
+ * either, but the page still hands it to the service on the read routes that
+ * open a company's sealed records, so it is not a key the service never sees.
  */
 export function viewingKeyFor(account: { id: string; wrappedKeys: any[] }): Hex {
   const keys = keysFor(account.id);

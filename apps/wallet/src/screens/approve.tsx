@@ -6,7 +6,7 @@ import type { Registry } from 'midnight-identity/profile/attributes';
 import { abbreviate, check } from 'midnight-identity/profile/definition';
 import type { AttributeDefinition, AttributeName } from 'midnight-identity/profile/definition';
 import {
-  drewTheLabelFor, emptyProfile, grantTo, heldAbout, originsFor, pinCompanyAccount, recordDisclosure, recordRelease, selfAssert,
+  drewTheLabelFor, emptyProfile, grantTo, heldAbout, originsFor, pinCompanyAccount, pinnedAccountOf, recordDisclosure, recordRelease, selfAssert,
 } from 'midnight-identity/profile/model';
 import type { Held, Profile, Recipient, Sent } from 'midnight-identity/profile/model';
 import { browserPort, load, save } from 'midnight-identity/profile/store';
@@ -1215,6 +1215,7 @@ export function Approve({
         whoIsAsking={whoIsAsking}
         onDecline={() => { channel?.refuse('declined'); setChannelState({ of: 'waiting' }); }}
         readLabel={readLabel}
+        pinned={profile === null ? null : pinnedAccountOf(profile, request.company)}
       />
     );
   }

@@ -37,25 +37,25 @@ export const mayFileUnderOver = (store: DirectoryStore): MayFileUnder => (compan
 
 /** A device's judge of who filed a version: the directory read again, and the account read again off the chain. */
 export const judgeOver = (deps: {
-  api: Api; accountId: string; label: CompanyLabel; accountState: StateOf; roster: () => Promise<Pick<Account, 'signers'>>;
+  api: Api; accountId: string; label: CompanyLabel; account: string; accountState: StateOf; roster: () => Promise<Pick<Account, 'signers'>>;
 }): FreshJudge => directoryJudge({
   accountId: deps.accountId, label: deps.label,
   filings: () => directoryFilingsFrom(deps.api, deps.accountId),
   holders: async () => {
     const state = deps.accountState();
     if (state === null) throw new Error('the wallet read no company account');
-    return holdersInAccountState(state.serialize());
+    return { ...holdersInAccountState(state.serialize()), account: deps.account.toLowerCase() as never };
   },
   attested: async () => attestedIn(await deps.roster()),
 });
 
 /** A seat's own entry, signed by its wallet for its filing key and filed from its device, as the page files one. */
 export const fileOwnEntry = async (deps: {
-  api: Api; accountId: string; person: string; identity: Identity; label: CompanyLabel;
+  api: Api; accountId: string; person: string; identity: Identity; label: CompanyLabel; account: string;
   companyKey: Uint8Array; signingKey: Hex; seat: string;
 }) => fileOwnDirectoryEntry(deps.api, deps.accountId, deps.person, deps.label, {
   committeeKey: committeeKeyFor(deps.identity, deps.label),
-  entry: signDirectoryEntry(deps.identity, deps.label, deps.companyKey, deps.signingKey.toLowerCase(), deps.seat.toLowerCase()),
+  entry: signDirectoryEntry(deps.identity, deps.label, deps.account.toLowerCase() as never, deps.companyKey, deps.signingKey.toLowerCase(), deps.seat.toLowerCase()),
 });
 
 /** The wallet's read for a step on any vault of the company whose account `accountState` reads. */

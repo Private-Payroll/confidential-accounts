@@ -55,7 +55,7 @@ describe('ASKING THE PERSON\'S WALLET TO SIGN THEIR RECORDS KEY, AND TO SAY WHO 
     /* RED WHEN: the seat travels in another spelling than the one the wallet signs, or a vault is named when none was asked about. */
     expect(sent['seat']).toBe(SEAT);
     expect('vault' in sent).toBe(false);
-    expect(recordsKeySignedBy(CO, read.committeeKey, read.statement)).toBe(true);
+    expect(recordsKeySignedBy(CO, ACCOUNT, read.committeeKey, read.statement)).toBe(true);
     expect(read.vault).toBeNull();
 
     const withVault = walletAnswering(honestly);

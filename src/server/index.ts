@@ -68,7 +68,7 @@ import { openCompanyRecords, openVaultRecords, refuseVaultsTheOperatorToolsKeep 
 import { companyRecordsRoutes, MemoryCompanyRecordStore } from './company-records-route.js';
 import { MemorySealedPoolStore, type SealedPoolStore } from '../midnight/vault-pool.js';
 import type { CompanyRecordStore, WireRecord } from '../midnight/sealed-record-wire.js';
-import { accountCreationRoutes, serverCreationRefusal } from './account-creation.js';
+import { aCompanyCreatedOnTheLedger, accountCreationRoutes } from './account-creation.js';
 import { companyVaultRoutes, type VaultChain } from './company-vaults.js';
 import { directoryOf, seatDirectoryRoutes } from './seat-directory-route.js';
 import { filerSeatOf } from '../midnight/seat-directory.js';
@@ -1228,6 +1228,18 @@ if (WEB_CONSOLE_SINK) {
 /* ------------------------- accounts ------------------------- */
 
 app.post('/api/accounts', authed, wrap(async (req, res) => {
+  /*
+   * **ON A CHAIN THIS SERVICE MAKES NOTHING FOR A COMPANY.** Its secrets and
+   * its founding signer's seat are made on that signer's device, and what this
+   * service is sent is what they seal: it is checked, recorded, and nothing is
+   * made here. A creation that does not name the founding signer's committee
+   * key is the old path, and is refused by name first.
+   */
+  const onTheLedger = await aCompanyCreatedOnTheLedger({ store, ledger }, req.userId!, req.body);
+  if (onTheLedger !== null) {
+    res.status(onTheLedger.status).json(onTheLedger.body);
+    return;
+  }
   const body = z.object({
     name: z.string().min(1),
     signers: z.array(z.object({
@@ -1252,14 +1264,15 @@ app.post('/api/accounts', authed, wrap(async (req, res) => {
     foundingKey: z.object({ tag: z.literal('schnorr'), value: z.string().regex(/^[0-9a-f]{64}$/u) }).strict().optional(),
   }).parse(req.body);
   /*
-   * **ON A CHAIN THIS SERVICE CREATES NO COMPANY'S ACCOUNT.** It is deployed
-   * from the founding signer's browser, held by their own key; a creation that
-   * does not name that key is the old path, which deployed under a key this
-   * service held, and is refused by name.
+   * **THE SIMULATED LEDGER MAKES ITS COMPANIES HERE**, so a company made on a
+   * device is refused by name rather than ignored: what the device sealed
+   * would otherwise be dropped and a second company made here in its place.
    */
-  const notHere = serverCreationRefusal(ledger.wiring, body.foundingKey);
-  if (notHere !== null) {
-    res.status(409).json(notHere);
+  if (typeof req.body === 'object' && req.body !== null && 'founding' in req.body) {
+    res.status(409).json({
+      code: 'made-here-on-the-simulated-ledger',
+      error: 'the simulated ledger makes its companies on this service, and a company made on a device is refused. Nothing was created.',
+    });
     return;
   }
   /*

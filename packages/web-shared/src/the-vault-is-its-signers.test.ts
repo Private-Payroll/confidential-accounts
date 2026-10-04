@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import { identityFromSecret } from 'midnight-identity';
 import { committeeKeyFor } from 'midnight-identity/profile/committee-key';
-import { signDirectoryEntry, signRecordsKey, type AccountHolders, type RecordsKeyStatement } from 'midnight-identity/profile/records-key';
+import { signDirectoryEntry, signRecordsKey, type AccountHoldersRead, type RecordsKeyStatement } from 'midnight-identity/profile/records-key';
 import type { CompanyLabel } from 'midnight-identity/profile/company-label';
 import { theVaultAsItsSignersHoldIt, VaultNotTheCompanys, type VaultAsTheWalletRead } from './vault-operation.js';
 import { fileTheChainsSecretAsTheNewest } from './deposit-on-device.js';
@@ -23,6 +23,8 @@ import { directoryChangeMessage, vaultRecordKey, type DirectoryChange, type Dire
 const VAULT = 'ab'.repeat(32) as Hex;
 const CO = 'acc_signers';
 const LABEL = `co_${'c1'.repeat(32)}` as CompanyLabel;
+/** The company's account, as each signer's wallet reads it and signs for it. */
+const ACCOUNT = 'ac'.repeat(32) as never;
 
 describe('THE VAULT IS ONE ITS COMPANY\'S ACCOUNT ADOPTED, AS THE SIGNER\'S OWN WALLET READS THE CHAIN', () => {
   const holders = { committee: [{ tag: 'schnorr', value: '11'.repeat(32) }], threshold: 2, seats: ['4a'.repeat(32)], approvals: 1, adoptedVaults: [VAULT as string] };
@@ -58,10 +60,10 @@ const filings: DirectoryFiling[] = [ADA, BO].map((s, i) => {
   const identity = identityFromSecret(new Uint8Array(32).fill(i + 1));
   return {
     company: CO, version: i + 1,
-    change: { kind: 'claim', entry: { person: s.person, committeeKey: s.committeeKey, statement: signDirectoryEntry(identity, LABEL, s.companyKey, s.signing.publicKey, s.seat) } },
+    change: { kind: 'claim', entry: { person: s.person, committeeKey: s.committeeKey, statement: signDirectoryEntry(identity, LABEL, ACCOUNT, s.companyKey, s.signing.publicKey, s.seat) } },
   };
 });
-const seatsNow = (...seated: Signer[]): AccountHolders => ({ committee: [ADA, BO].map((s) => s.committeeKey), threshold: 2, seats: seated.map((s) => s.seat), approvals: 1, adoptedVaults: [] });
+const seatsNow = (...seated: Signer[]): AccountHoldersRead => ({ committee: [ADA, BO].map((s) => s.committeeKey), threshold: 2, seats: seated.map((s) => s.seat), approvals: 1, adoptedVaults: [], account: ACCOUNT });
 /** The records route, in memory, as the page's store reaches it. */
 const routeOver = (kept: Map<WireRecord, MemorySealedPoolStore>): WireSend => async (path, init) => {
   const m = path.match(/\/api\/vaults\/([0-9a-f]{64})\/records\/([a-z-]+)(?:\/(versions|\d+))?$/u)!;
@@ -79,9 +81,9 @@ const routeOver = (kept: Map<WireRecord, MemorySealedPoolStore>): WireSend => as
 type Attested = { committeeKey: { tag: string; value: string }; statement: RecordsKeyStatement };
 /** A seat's own records-key statement, signed by its wallet for the key its directory entry names, as the roster carries it. */
 const attestedBy = (s: Signer, n: number): Attested =>
-  ({ committeeKey: s.committeeKey, statement: signRecordsKey(identityFromSecret(new Uint8Array(32).fill(n)), LABEL, s.companyKey, s.seat) });
+  ({ committeeKey: s.committeeKey, statement: signRecordsKey(identityFromSecret(new Uint8Array(32).fill(n)), LABEL, ACCOUNT, s.companyKey, s.seat) });
 const everySeatAttested: Attested[] = [attestedBy(ADA, 1), attestedBy(BO, 2)];
-const deviceOf = (who: Signer, kept: Map<WireRecord, MemorySealedPoolStore>, seated: () => AccountHolders, reads: { n: number }, attested: Attested[] = everySeatAttested, served: readonly DirectoryFiling[] = filings) =>
+const deviceOf = (who: Signer, kept: Map<WireRecord, MemorySealedPoolStore>, seated: () => AccountHoldersRead, reads: { n: number }, attested: Attested[] = everySeatAttested, served: readonly DirectoryFiling[] = filings) =>
   (record: WireRecord) => new HttpSealedPoolStore(record, routeOver(kept), who.signing.secret, directoryJudge({
     accountId: CO, label: LABEL, filings: async () => served, attested: async () => attested,
     holders: async () => { reads.n += 1; return seated(); },
@@ -122,13 +124,13 @@ describe('A SEAT WHOSE DIRECTORY ENTRY NAMES ANOTHER KEY THAN ITS WALLET ATTESTE
     await new SealedNotePool(deviceOf(BO, kept, () => seatsNow(ADA, BO), { n: 0 })('pool'), { signerId: 'ada', wrappingSecret: wrapping.secret }, signers).create(VAULT, { notes: [] });
     /* Bo's wallet attested, in the roster this device opened, a records key that is not the one his directory entry names. */
     const bosIdentity = identityFromSecret(new Uint8Array(32).fill(2));
-    const otherKey = signRecordsKey(bosIdentity, LABEL, new Uint8Array(32).fill(0x77), BO.seat);
+    const otherKey = signRecordsKey(bosIdentity, LABEL, ACCOUNT, new Uint8Array(32).fill(0x77), BO.seat);
     const attested = [attestedBy(ADA, 1), { committeeKey: BO.committeeKey, statement: otherKey }];
     const read = new SealedNotePool(deviceOf(ADA, kept, () => seatsNow(ADA, BO), { n: 0 }, attested)('pool'), { signerId: 'ada', wrappingSecret: wrapping.secret }, signers);
     /* RED WHEN: a device believes a seat whose entry names another wrapping key than the records key its own wallet attested. */
     await expect(read.load(VAULT)).rejects.toThrow(/has not attested the records key its directory entry names/);
     /* The control: the same pool, with the statement that names the entry's own key, is read. */
-    const same = [attestedBy(ADA, 1), { committeeKey: BO.committeeKey, statement: signRecordsKey(bosIdentity, LABEL, BO.companyKey, BO.seat) }];
+    const same = [attestedBy(ADA, 1), { committeeKey: BO.committeeKey, statement: signRecordsKey(bosIdentity, LABEL, ACCOUNT, BO.companyKey, BO.seat) }];
     expect((await new SealedNotePool(deviceOf(ADA, kept, () => seatsNow(ADA, BO), { n: 0 }, same)('pool'), { signerId: 'ada', wrappingSecret: wrapping.secret }, signers).load(VAULT)).notes).toEqual([]);
   });
 
@@ -142,7 +144,7 @@ describe('A SEAT WHOSE DIRECTORY ENTRY NAMES ANOTHER KEY THAN ITS WALLET ATTESTE
     await expect(readWith([attestedBy(ADA, 1)])).rejects.toThrow(/has not attested the records key its directory entry names/);
     /* RED WHEN: a statement under a key the service derives, not the one that signed Bo's entry, is taken as Bo's. */
     const derived = identityFromSecret(new Uint8Array(32).fill(0x55));
-    const notBos = { committeeKey: committeeKeyFor(derived, LABEL) as never, statement: signRecordsKey(derived, LABEL, BO.companyKey, BO.seat) };
+    const notBos = { committeeKey: committeeKeyFor(derived, LABEL) as never, statement: signRecordsKey(derived, LABEL, ACCOUNT, BO.companyKey, BO.seat) };
     await expect(readWith([attestedBy(ADA, 1), notBos])).rejects.toThrow(/has not attested the records key its directory entry names/);
     /* The control: with every seat's own statement, the same pool is read. */
     expect((await readWith(everySeatAttested)).notes).toEqual([]);
@@ -158,7 +160,7 @@ describe('A RETIREMENT THE SERVER STORED BELOW THE ACCOUNT\'S THRESHOLD NOW DOES
     const wrapping = newWrappingKeypair();
     const signers = async () => [{ id: 'ada', wrappingPublicKey: wrapping.publicKey }];
     await new SealedNotePool(deviceOf(BO, kept, () => seatsNow(ADA, BO), { n: 0 })('pool'), { signerId: 'ada', wrappingSecret: wrapping.secret }, signers).create(VAULT, { notes: [] });
-    const leftAtTwo = (): AccountHolders => ({ ...seatsNow(ADA), approvals: 2 });
+    const leftAtTwo = (): AccountHoldersRead => ({ ...seatsNow(ADA), approvals: 2 });
     const read = new SealedNotePool(deviceOf(ADA, kept, leftAtTwo, { n: 0 }, everySeatAttested, [...filings, retire])('pool'), { signerId: 'ada', wrappingSecret: wrapping.secret }, signers);
     /* RED WHEN: the device takes the threshold a stored change names instead of the one the wallet read off the account now. */
     await expect(read.load(VAULT)).rejects.toThrow(/no longer holds/);

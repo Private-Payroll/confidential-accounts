@@ -54,10 +54,10 @@ const VAULT = '9a'.repeat(32);
 const HOLDERS = { vault: VAULT, account: ACCOUNT as string, committee: [mine], threshold: 1 };
 const vaultChain = (over: Partial<typeof HOLDERS> = {}): VaultReader => async (v) =>
   (v === VAULT ? { of: 'read', holders: { ...HOLDERS, ...over } } : { of: 'no-vault' });
-const draw = async (answers: unknown[], readLabel: LabelReader, consent = consented, vault?: { readVault: VaultReader }) => {
+const draw = async (answers: unknown[], readLabel: LabelReader, consent = consented, vault?: { readVault: VaultReader }, pinned: AccountAddress | null = null) => {
   const r = render(
     <ApproveRecordsKey request={vault === undefined ? ask() : ask({ vault: VAULT })} identity={identity} channel={channelFor(answers)} consent={consent}
-      whoIsAsking={<p>asker</p>} onDecline={() => answers.push('declined')} now={() => NOW} readLabel={readLabel}
+      whoIsAsking={<p>asker</p>} onDecline={() => answers.push('declined')} now={() => NOW} readLabel={readLabel} pinned={pinned}
       {...(vault === undefined ? {} : { readVault: vault.readVault })} />);
   await settle();
   return r;
@@ -84,9 +84,18 @@ describe('THE SCREEN FOR SIGNING A RECORDS KEY FOR A SEAT', () => {
     expect(answer.statement.seat).toBe(SEAT);
     /* RED WHEN: the records key signed is not the one the screen showed before the press. */
     expect(answer.statement.recordsKey).toBe(shown);
-    expect(recordsKeySignedBy(CO, mine, answer.statement)).toBe(true);
+    expect(recordsKeySignedBy(CO, ACCOUNT, mine, answer.statement)).toBe(true);
     expect(answer.seats).toEqual(SEATS);
     expect(container.querySelector('[data-signed]')).not.toBeNull();
+  });
+
+  it('NOTHING IS SIGNED FOR AN ACCOUNT OTHER THAN THE ONE THIS WALLET PINNED FOR THE COMPANY WHEN IT CREATED IT', async () => {
+    const answers: unknown[] = [];
+    const { container } = await draw(answers, chain(), consented, undefined, 'a8'.repeat(32) as AccountAddress);
+    await act(async () => { fireEvent.click(button(container)); });
+    /* RED WHEN: a page naming another account carrying the label is answered with a statement for it. */
+    expect(answers).toEqual([]);
+    expect(container.querySelector('[data-records-key-refused]')?.textContent).toMatch(/kept as its account when you created it/);
   });
 
   it('A SEAT THE ACCOUNT DOES NOT HOLD NOW IS NOT SIGNED: the button stays held and nothing is answered', async () => {

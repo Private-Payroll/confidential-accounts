@@ -18,7 +18,7 @@
  */
 import { REQUEST_SCHEMA } from 'midnight-identity/profile/request';
 import {
-  readHoldersAnswer, readRecordsKeyAnswer, type AccountHolders, type AccountSeats, type DirectoryEntryStatement,
+  readHoldersAnswer, readRecordsKeyAnswer, type AccountHoldersRead, type AccountSeats, type DirectoryEntryStatement,
   type RecordsKeyStatement, type VaultHolders,
 } from 'midnight-identity/profile/records-key';
 import type { AccountAddress, CompanyLabel, VaultAddress } from 'midnight-identity/profile/company-label';
@@ -130,9 +130,9 @@ export interface HoldersAsked {
   readonly nonce?: string;
 }
 
-/** What comes back, checked: who holds the account and what it has adopted. */
+/** What comes back, checked: who holds the account, what it has adopted, and the account it was read for. */
 export interface HoldersRead {
-  readonly holders: AccountHolders;
+  readonly holders: AccountHoldersRead;
 }
 
 /**

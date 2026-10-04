@@ -23,6 +23,8 @@ import { witnesses } from '../../../../contracts/src/witnesses.js';
 import { CREATION_STEPS } from '../../../../src/midnight/deferral.js';
 import type { BuiltAccountKeys } from '../chain/this-builds-account-keys.js';
 import { ApproveCreation } from './approve-creation.js';
+import { liveConstruction, startingStateRefusal } from '../chain/account-as-constructed.js';
+import { sha256 } from '@noble/hashes/sha2.js';
 import { keysOnDisk, ACCOUNT_KEYS } from '../../../../contracts/test/keys-on-disk.js';
 import { Approve } from './approve.js';
 import { secretFromWords } from 'midnight-identity/keys/derivation';
@@ -192,6 +194,49 @@ describe.skipIf(!ON_DISK)('THE SCREEN FOR FINISHING A COMPANY\'S ACCOUNT [needs 
     expect(button(container).disabled).toBe(true);
     await act(async () => { fireEvent.click(button(container)); });
     expect(log).toEqual([]);
+  });
+
+  it('SIGNS NOTHING FOR A DEPLOY WHOSE STARTING STATE IS NOT THE ONE ITS CONSTRUCTOR MAKES, WHATEVER ELSE IT GETS RIGHT', async () => {
+    /* The same account, held by the same key, with the same label, seat and circuits, and one cell more than its constructor makes. */
+    const tx = L.Transaction.deserialize('signature', 'proof', 'pre-binding', deploy.proven) as any;
+    const made = [...tx.intents.values()][0].actions[0].initialState;
+    const read = (runtime as any).ContractState.deserialize(made.serialize());
+    const cells = (runtime as any).StateValue.newArray();
+    let grown = cells;
+    for (const cell of read.data.state.asArray()) grown = grown.arrayPush(cell);
+    read.data = new (runtime as any).ChargedState(grown.arrayPush((runtime as any).StateValue.newNull()));
+    const state = (L as any).ContractState.deserialize(read.serialize());
+    const other = new (L as any).ContractDeploy(state);
+    const unproven = (L as any).Transaction.fromParts(NET, undefined, undefined,
+      (L as any).Intent.new(new Date(Date.now() + 600_000)).addDeploy(other));
+    const proven = unproven.prove({
+      check: async () => { throw new Error('asked to check'); }, prove: async () => { throw new Error('asked to prove'); }, lookupKey: async () => undefined,
+    } as never, L.CostModel.initialCostModel());
+    const bytes = (await proven).serialize();
+    const log: unknown[] = [];
+    const { container } = await draw(log, { request: askOf({ account: other.address, deploy: b64(bytes) }) });
+    /* RED WHEN: the screen keeps an account as the company's without comparing its whole starting state with the constructor's. */
+    expect(container.querySelector('[data-creation-refused]')?.textContent).toContain('does not start as its own constructor makes it');
+    expect(button(container).disabled).toBe(true);
+    await act(async () => { fireEvent.click(button(container)); });
+    expect(log).toEqual([]);
+  });
+
+  it('RUNS THE CONSTRUCTOR ONLY WITH KEYS IT HAS CHECKED ARE THIS BUILD\'S, AND COMPARES WHAT IT MAKES WITH THE DEPLOY', async () => {
+    const request = askOf();
+    const deps = await liveConstruction();
+    const input = (insert: CreationRequest['insert']) => ({
+      deploy: request.deploy, label: LABEL, foundingKey: committeeKeyFor(identity, LABEL) as never, insert,
+      build: (thisBuilds() as Extract<BuiltAccountKeys, { of: 'built' }>).keys, digest: sha256,
+    });
+    /* The control: this build's deploy and keys start exactly as the constructor makes the account. */
+    expect(await startingStateRefusal(deps, input(request.insert))).toBeNull();
+    /* RED WHEN: a key the second step adds is taken as sent rather than compared with this build's before anything runs. */
+    const swapped = request.insert.map((k, i) => (i === 0 ? { circuit: k.circuit, key: request.insert[1]!.key } : k));
+    expect(await startingStateRefusal(deps, input(swapped))).toMatch(/second step's key for ".+" is not this build's/u);
+    /* RED WHEN: the state is compared with one the constructor made for anyone but this person. */
+    expect(await startingStateRefusal(deps, { ...input(request.insert), foundingKey: committeeKeyFor(identity, `co_${'6b'.repeat(32)}` as CompanyLabel) as never }))
+      .toContain('does not start as its own constructor makes it');
   });
 
   it('SIGNS NOTHING WHEN THE PAGE NAMES ANOTHER ACCOUNT THAN THE DEPLOY CREATES', async () => {

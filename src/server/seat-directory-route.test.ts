@@ -26,6 +26,8 @@ import { directoryJudge } from 'vaults-web-shared/vault-page-doors.js';
 const CO = 'acc_route';
 const OTHER = 'acc_other';
 const LABEL = `co_${'c1'.repeat(32)}` as CompanyLabel;
+/** The company's account, as this service records it and every wallet here signs for it. */
+const ADDRESS = 'c0'.repeat(32) as never;
 
 interface Seat { person: string; seat: string; signing: { secret: Hex; publicKey: Hex }; entry: DirectoryEntry; committeeKey: { tag: string; value: string } }
 const seatOf = (person: string, n: number): Seat => {
@@ -33,7 +35,7 @@ const seatOf = (person: string, n: number): Seat => {
   const signing = newSigningKeypair();
   const seat = n.toString(16).padStart(2, '0').repeat(32);
   const committeeKey = committeeKeyFor(identity, LABEL) as { tag: string; value: string };
-  return { person, seat, signing, committeeKey, entry: { person, committeeKey, statement: signDirectoryEntry(identity, LABEL, new Uint8Array(32).fill(n + 100), signing.publicKey, seat) } };
+  return { person, seat, signing, committeeKey, entry: { person, committeeKey, statement: signDirectoryEntry(identity, LABEL, ADDRESS, new Uint8Array(32).fill(n + 100), signing.publicKey, seat) } };
 };
 const ADA = seatOf('ada', 1);
 const BO = seatOf('bo', 2);
@@ -41,7 +43,7 @@ const CY = seatOf('cy', 3);
 /** Every seat's own records-key statement, signed by its wallet for the key its entry names, as the roster carries it. */
 const everySeatAttested = async () => [ADA, BO, CY].map((s, i) => ({
   committeeKey: s.committeeKey,
-  statement: signRecordsKey(identityFromSecret(new Uint8Array(32).fill(i + 1)), LABEL, new Uint8Array(32).fill(i + 101), s.seat),
+  statement: signRecordsKey(identityFromSecret(new Uint8Array(32).fill(i + 1)), LABEL, ADDRESS, new Uint8Array(32).fill(i + 101), s.seat),
 }));
 
 const accountOf = (id: string, members: string[], keyEpoch = 0): SealedAccount => ({
@@ -195,7 +197,7 @@ describe('A COMPANY\'S OWN RECORDS, FILED BY ITS SEATS (CHECK S)', () => {
 
   it('THE DEVICE BELIEVES ONLY A VERSION A SEAT IT BELIEVES FILED, CHECKED AFRESH FOR EVERY READ, AND REFUSES TAMPERED BYTES', async () => {
     let reads = 0;
-    const holders = async () => { reads += 1; const c = seated([ADA, BO]); return { ...c.seats, approvals: c.approvals, adoptedVaults: [] }; };
+    const holders = async () => { reads += 1; const c = seated([ADA, BO]); return { ...c.seats, approvals: c.approvals, adoptedVaults: [], account: ADDRESS }; };
     const judge = directoryJudge({
       accountId: CO, label: LABEL, holders, attested: everySeatAttested,
       filings: async () => store.directoryFilingsOf(CO),

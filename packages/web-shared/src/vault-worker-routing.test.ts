@@ -47,9 +47,9 @@ describe('WHERE A PAYMENT OUT\'S PROVING MATERIAL IS FETCHED FROM', () => {
 
   it('NO VAULT CIRCUIT SHARES A NAME WITH AN ACCOUNT CIRCUIT SERVED TO A DEVICE, which is what routing by name rests on', () => {
     /* RED WHEN: the served list is not exactly these eight, or a vault circuit is named like one of them. */
-    /* A vault's creation adopts it on the account from the device that made it. */
-    expect(ACCOUNT_CIRCUITS_A_DEVICE_GOVERNS).toEqual(['propose', 'approve', 'amendSigner', 'setThreshold', 'adopt']);
-    expect([...ACCOUNT_CIRCUITS_SERVED_TO_A_DEVICE].sort()).toEqual(['adopt', 'amendSigner', 'approve', 'approveVaultChange', 'propose', 'recordBatchFromVault', 'recordPaymentFromVault', 'setThreshold']);
+    /* A vault's creation adopts it on the account from the device that made it; a company's creation seals its pay-record key from its founding signer's. */
+    expect(ACCOUNT_CIRCUITS_A_DEVICE_GOVERNS).toEqual(['propose', 'approve', 'amendSigner', 'setThreshold', 'adopt', 'sealPayKey']);
+    expect([...ACCOUNT_CIRCUITS_SERVED_TO_A_DEVICE].sort()).toEqual(['adopt', 'amendSigner', 'approve', 'approveVaultChange', 'propose', 'recordBatchFromVault', 'recordPaymentFromVault', 'sealPayKey', 'setThreshold']);
     expect((VAULT_CIRCUITS as readonly string[]).filter((c) => ACCOUNT_CIRCUITS_SERVED_TO_A_DEVICE.includes(c))).toEqual([]);
   });
 

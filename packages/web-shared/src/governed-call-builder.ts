@@ -74,6 +74,7 @@ import type { AccountPrivateState } from '../../../contracts/src/witnesses.js';
 import { fromHex } from '../../../src/core/crypto.js';
 import { CIRCUITS_THAT_READ_NO_WITNESS } from '../../../src/midnight/governed-call.js';
 import { ACCOUNT_CIRCUITS_A_DEVICE_GOVERNS } from '../../../src/midnight/vault-contract.js';
+import { PAY_KEY_PARTS } from '../../../src/midnight/pay-key-round.js';
 import { signerHalfOf, type SignerMaterial } from './private-state.js';
 
 export type { SignerMaterial } from './private-state.js';
@@ -123,8 +124,15 @@ export type GovernanceOnTheWire =
  */
 interface AdoptionOnTheWire { readonly kind: 'adopt-vault'; readonly vault: string }
 
-/** Any change a governance round on the account makes: a seat, a threshold, or a vault adopted. */
-export type RoundChangeOnTheWire = GovernanceOnTheWire | AdoptionOnTheWire;
+/**
+ * **THE COMPANY'S ACCOUNT COMMITTED TO ITS PAY-RECORD KEY**, named by the
+ * commitment to the key: the proposal a company's creation raises from its
+ * founding signer's device. Its payload is made by the contract's own function.
+ */
+interface PayKeyOnTheWire { readonly kind: 'pay-key'; readonly commitment: string }
+
+/** Any change a governance round on the account makes: a seat, a threshold, a vault adopted, or the pay-record key committed. */
+export type RoundChangeOnTheWire = GovernanceOnTheWire | AdoptionOnTheWire | PayKeyOnTheWire;
 
 /** Raising a payroll run. */
 export interface RaiseRunOrder {
@@ -146,6 +154,12 @@ interface RaiseAdoptionOrder {
   readonly proposal: string;
 }
 
+/** Raising the proposal that commits the account to its pay-record key, with the identity this device made for it. */
+interface RaisePayKeyOrder {
+  readonly circuit: 'propose'; readonly payKey: PayKeyOnTheWire; readonly half: RaiseHalfOnTheWire;
+  readonly proposal: string;
+}
+
 /**
  * **WHAT TO BUILD.** One shape per call a device makes here. `proposal` is the
  * proposal's identity on the chain; `proposalSalt` is the salt that identity
@@ -155,6 +169,7 @@ export type GovernedCallOrder =
   | RaiseRunOrder
   | RaiseGovernanceOrder
   | RaiseAdoptionOrder
+  | RaisePayKeyOrder
   | {
     readonly circuit: 'approve'; readonly proposal: string;
     /**
@@ -167,7 +182,15 @@ export type GovernedCallOrder =
   | { readonly circuit: 'amendSigner'; readonly leaf: string; readonly proposal: string; readonly proposalSalt: string }
   | { readonly circuit: 'setThreshold'; readonly threshold: string; readonly proposal: string; readonly proposalSalt: string }
   /** Carrying out an approved adoption: the vault joins the account's vaults. */
-  | { readonly circuit: 'adopt'; readonly vault: string; readonly proposal: string; readonly proposalSalt: string };
+  | { readonly circuit: 'adopt'; readonly vault: string; readonly proposal: string; readonly proposalSalt: string }
+  /**
+   * Sealing the pay-record key to this signer, as four entries; the first to
+   * seal also writes the commitment, under the approved round named.
+   */
+  | {
+    readonly circuit: 'sealPayKey'; readonly wrap: readonly string[]; readonly commitment: string;
+    readonly proposal: string; readonly proposalSalt: string;
+  };
 
 /**
  * **WHAT THIS DEVICE OPENED ITSELF** from the company's records, with the
@@ -188,7 +211,8 @@ export interface OpenedRound {
   readonly summary: string;
   /**
    * For a seat or a threshold change: the change the proposal names, the leaf
-   * read from the company's own roster. For a vault adopted: that vault.
+   * read from the company's own roster. For a vault adopted: that vault. For
+   * the pay-record key: the commitment to the key this device holds.
    */
   readonly governance?: RoundChangeOnTheWire;
   /** For a raise: the change sealed inside the proposal. */
@@ -199,13 +223,14 @@ export interface OpenedRound {
 const SAID: Readonly<Record<string, string>> = {
   'proposal identity': 'proposal', salt: 'proposal', change: 'proposal', vault: 'proposal',
   'run vault': 'account this run pays from', leaf: 'person being given access',
-  threshold: 'number of approvals required', 'vault adopted': 'vault being adopted', run: 'payroll run', asset: 'token', amount: 'amount',
+  threshold: 'number of approvals required', 'vault adopted': 'vault being adopted', 'pay-record key': 'company\'s pay-record key',
+  run: 'payroll run', asset: 'token', amount: 'amount',
   'payments digest': 'list of payments',
 };
 /** What not to do if the refusal comes back, for each call a device makes. */
 const IF_AGAIN: Readonly<Record<string, string>> = {
   approve: 'do not approve it', propose: 'do not send it', amendSigner: 'do not grant this access',
-  setThreshold: 'do not make this change', adopt: 'do not adopt this vault',
+  setThreshold: 'do not make this change', adopt: 'do not adopt this vault', sealPayKey: 'do not seal this key',
 };
 
 /**
@@ -273,6 +298,8 @@ export interface GovernedCallDeps {
     setThresholdPayload(threshold: bigint): Uint8Array;
     /** Present where a vault's adoption is built; asked for only then. */
     adoptVaultPayload?(vault: Uint8Array): Uint8Array;
+    /** Present where the pay-record key's round is built; asked for only then. */
+    payKeyPayload?(commitment: Uint8Array): Uint8Array;
     noVault(): Uint8Array;
   };
   readonly random?: (n: number) => Uint8Array;
@@ -351,6 +378,7 @@ export function recordForOneCall(order: GovernedCallOrder, material: SignerMater
   }
   const record = { ...signer, pinnedPath: null } as AccountPrivateState;
   const salt = order.circuit === 'amendSigner' || order.circuit === 'setThreshold' || order.circuit === 'adopt'
+    || order.circuit === 'sealPayKey'
     ? bytesOf('proposal\'s salt', opened?.salt ?? order.proposalSalt) : null;
   for (const field of ACCOUNT_FIELDS) {
     if (field === 'proposalSalt' && salt !== null) {
@@ -385,6 +413,13 @@ export function argumentsFor(order: GovernedCallOrder): unknown[] {
   if (order.circuit === 'adopt') {
     return [bytesOf('vault', order.vault), bytesOf('proposal\'s identity', order.proposal)];
   }
+  if (order.circuit === 'sealPayKey') {
+    if (!Array.isArray(order.wrap) || order.wrap.length !== PAY_KEY_PARTS) {
+      throw new Error('a sealed pay-record key is four entries of thirty-two bytes, and this is not. Nothing was built.');
+    }
+    return [order.wrap.map((part) => bytesOf('sealed pay-record key', part)), bytesOf('pay-record key\'s commitment', order.commitment),
+      bytesOf('proposal\'s identity', order.proposal)];
+  }
   if (!raisesARun(order)) {
     /*
      * The merged circuit on its governance branch: the payload is passed, the
@@ -413,9 +448,17 @@ const adoptionPayloadOf = (deps: Pick<GovernedCallDeps, 'accountPure'>, vault: s
   return deps.accountPure.adoptVaultPayload(bytesOf('vault', vault));
 };
 
-/** What a raise that is not a run changes: a seat or a threshold, or a vault adopted. */
-const raisedChange = (order: RaiseGovernanceOrder | RaiseAdoptionOrder): RoundChangeOnTheWire =>
-  ('adoption' in order ? order.adoption : order.governance);
+/** The contract's own payload for committing to the pay-record key, refused by name where this device was not given the function. */
+const payKeyPayloadOf = (deps: Pick<GovernedCallDeps, 'accountPure'>, commitment: string): Uint8Array => {
+  if (typeof deps.accountPure.payKeyPayload !== 'function') {
+    throw new Error('this device was not given the account\'s function for its pay-record key, so nothing was built.');
+  }
+  return deps.accountPure.payKeyPayload(bytesOf('pay-record key\'s commitment', commitment));
+};
+
+/** What a raise that is not a run changes: a seat or a threshold, a vault adopted, or the pay-record key committed. */
+const raisedChange = (order: RaiseGovernanceOrder | RaiseAdoptionOrder | RaisePayKeyOrder): RoundChangeOnTheWire =>
+  ('adoption' in order ? order.adoption : 'payKey' in order ? order.payKey : order.governance);
 
 /** Stand-ins in a governance raise's arguments, replaced with the contract's own values before the call is built. */
 const GOVERNANCE_PAYLOAD = Symbol('the governance payload');
@@ -426,7 +469,8 @@ export function governancePayloadOf(deps: Pick<GovernedCallDeps, 'accountPure'>,
   if (g.kind === 'add-signer') return deps.accountPure.signerAddPayload(bytesOf('signer\'s leaf', g.leaf));
   if (g.kind === 'threshold') return deps.accountPure.setThresholdPayload(thresholdOf(g.threshold));
   if (g.kind === 'adopt-vault') return adoptionPayloadOf(deps, g.vault);
-  throw new Error('this proposal is neither a seat nor a threshold, nor a vault adopted, so nothing was built.');
+  if (g.kind === 'pay-key') return payKeyPayloadOf(deps, g.commitment);
+  throw new Error('this proposal is neither a seat nor a threshold, nor a vault adopted, nor the pay-record key, so nothing was built.');
 }
 
 /** The arguments as the circuit is handed them, with the contract's own payload and no-vault in place. */
@@ -447,7 +491,7 @@ const argumentsBuilt = (deps: Pick<GovernedCallDeps, 'accountPure'>, order: Gove
 /** What each call is called in a sentence a person reads. */
 const CALLED: Readonly<Record<string, string>> = {
   approve: 'approval', propose: 'proposal', amendSigner: 'seat', setThreshold: 'threshold change',
-  adopt: 'adoption of the vault',
+  adopt: 'adoption of the vault', sealPayKey: 'sealing of the pay-record key',
 };
 
 export class CallNotBuilt extends Error {
@@ -493,6 +537,8 @@ export function refuseARaiseThatIsNotTheRecordedOne(deps: Pick<GovernedCallDeps,
       bytesOf('proposal\'s salt', order.proposalSalt));
   } else if (order.circuit === 'adopt') {
     made = P.proposalIdOf(adoptionPayloadOf(deps, order.vault), P.noVault(), bytesOf('proposal\'s salt', order.proposalSalt));
+  } else if (order.circuit === 'sealPayKey') {
+    made = P.proposalIdOf(payKeyPayloadOf(deps, order.commitment), P.noVault(), bytesOf('proposal\'s salt', order.proposalSalt));
   } else {
     made = P.proposalIdOf(P.setThresholdPayload(thresholdOf(order.threshold)), P.noVault(),
       bytesOf('proposal\'s salt', order.proposalSalt));
@@ -518,9 +564,11 @@ const sameGovernance = (a: RoundChangeOnTheWire, b: RoundChangeOnTheWire): boole
     ? same(a.leaf, (b as { leaf: string }).leaf)
     : a.kind === 'adopt-vault'
       ? same(a.vault, (b as { vault: string }).vault)
-      : thresholdOf(a.threshold) === thresholdOf((b as { threshold: string }).threshold));
+      : a.kind === 'pay-key'
+        ? same(a.commitment, (b as { commitment: string }).commitment)
+        : thresholdOf(a.threshold) === thresholdOf((b as { threshold: string }).threshold));
 const changeNamed = (g: RoundChangeOnTheWire | undefined): string =>
-  (g?.kind === 'threshold' ? 'threshold' : g?.kind === 'adopt-vault' ? 'vault adopted' : 'leaf');
+  (g?.kind === 'threshold' ? 'threshold' : g?.kind === 'adopt-vault' ? 'vault adopted' : g?.kind === 'pay-key' ? 'pay-record key' : 'leaf');
 
 /**
  * **NOTHING IS PROVED WITH A VALUE THIS DEVICE DID NOT READ ITSELF, BUT TWO.**
@@ -582,6 +630,10 @@ export function refuseWhatThisDeviceDidNotOpen(
     if (g?.kind !== 'adopt-vault' || !same(order.vault, g.vault)) refuse('vault adopted');
     return;
   }
+  if (order.circuit === 'sealPayKey') {
+    if (g?.kind !== 'pay-key' || !same(order.commitment, g.commitment)) refuse('pay-record key');
+    return;
+  }
   if (raisesARun(order)) {
     if (g !== undefined) refuse('change');
     const [, root, payees, opensAt, closesAt, required, , vault] = argumentsFor(order) as [unknown, Uint8Array, bigint, bigint, bigint, bigint, unknown, Uint8Array];
@@ -632,7 +684,7 @@ export async function buildGovernedCall(
   }
   const circuit = input.order.circuit;
   if (!ACCOUNT_CIRCUITS_A_DEVICE_GOVERNS.includes(circuit) || CIRCUITS_THAT_READ_NO_WITNESS.has(circuit)) {
-    throw new Error(`a device here raises and approves proposals, seats signers, changes the threshold and adopts a vault, and "${String(circuit)}" is none of those. Nothing was built.`);
+    throw new Error(`a device here raises and approves proposals, seats signers, changes the threshold, adopts a vault and seals the pay-record key, and "${String(circuit)}" is none of those. Nothing was built.`);
   }
   const args = argumentsBuilt(deps, input.order);
   /* What this device opened first, so a value the service handed over that is not in the company's records is named. */

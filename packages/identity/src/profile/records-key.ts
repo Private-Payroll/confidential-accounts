@@ -61,8 +61,12 @@ import type { HoldersRequest, RecordsKeyRequest, UnlockRequest } from './request
 /** The domain a records key is expanded in. It is the records' own: changing it re-keys every company's records. */
 const RECORDS_WRAPPING_SALT = new TextEncoder().encode('confidential-accounts/company-records-wrapping/v1');
 
-/** The tag every statement begins with, and nothing else this wallet signs begins with it. */
-export const RECORDS_KEY_STATEMENT_TAG = 'midnight-identity:records-key-statement:v1';
+/**
+ * The tag every statement begins with, and nothing else this wallet signs
+ * begins with it. **Version 2 names the company's account**: a statement for
+ * one account is never a statement for another account carrying the same label.
+ */
+export const RECORDS_KEY_STATEMENT_TAG = 'midnight-identity:records-key-statement:v2';
 
 /** The answer this wallet gives a records-key ask. */
 export const RECORDS_KEY_ANSWER_SCHEMA = 'midnight-identity/records-key-answer/v1';
@@ -74,7 +78,11 @@ const HEX128 = /^[0-9a-f]{128}$/u;
 const toHex = (b: Uint8Array): string => Array.from(b, (x) => x.toString(16).padStart(2, '0')).join('');
 const fromHex = (h: string): Uint8Array => Uint8Array.from(h.match(/../gu) ?? [], (x) => Number.parseInt(x, 16));
 
-/** What a signer's wallet signs: their records key, the seat they hold, and its signature over both. */
+/**
+ * What a signer's wallet signs: their records key and the seat they hold, on
+ * the company's account, and its signature over all of it. The account is not
+ * carried: whoever checks a statement names the account they hold it for.
+ */
 export interface RecordsKeyStatement {
   /** The public half of the signer's records key, 64 lower-case hex characters. */
   readonly recordsKey: string;
@@ -125,36 +133,43 @@ export function recordsPublicKeyOf(companyKey: Uint8Array): string {
 }
 
 /**
- * **THE BYTES SIGNED**, or `null` when the label, the key or the seat is not
- * one. The tag, a zero byte, the label as written, a zero byte, the records
- * key's thirty-two bytes, the seat's thirty-two bytes.
+ * **THE BYTES SIGNED**, or `null` when the label, the account, the key or the
+ * seat is not one. The tag, a zero byte, the label as written, a zero byte, the
+ * account's thirty-two bytes, the records key's thirty-two bytes, the seat's
+ * thirty-two bytes. One format for every seat, the founding signer's and every
+ * signer who joins.
  */
-export function recordsKeyStatementBytes(company: CompanyLabel, recordsKey: string, seat: string): Uint8Array | null {
+export function recordsKeyStatementBytes(company: CompanyLabel, account: AccountAddress, recordsKey: string, seat: string): Uint8Array | null {
   const label = readCompanyLabel(company);
-  if (label === null || typeof recordsKey !== 'string' || !HEX64.test(recordsKey)
+  const where = readAccountAddress(account);
+  if (label === null || where === null || typeof recordsKey !== 'string' || !HEX64.test(recordsKey)
     || typeof seat !== 'string' || !HEX64.test(seat)) return null;
+  return taggedBytes(RECORDS_KEY_STATEMENT_TAG, label, [fromHex(where), fromHex(recordsKey), fromHex(seat)]);
+}
+
+/** A statement's bytes: the tag, a zero byte, the label as written, a zero byte, then each part's thirty-two bytes. */
+const taggedBytes = (tagText: string, label: string, parts: readonly Uint8Array[]): Uint8Array => {
   const enc = new TextEncoder();
-  const tag = enc.encode(RECORDS_KEY_STATEMENT_TAG);
+  const tag = enc.encode(tagText);
   const name = enc.encode(label);
-  const key = fromHex(recordsKey);
-  const leaf = fromHex(seat);
-  const out = new Uint8Array(tag.length + 1 + name.length + 1 + key.length + leaf.length);
+  const out = new Uint8Array(tag.length + 1 + name.length + 1 + KEY_BYTES * parts.length);
   out.set(tag, 0);
   out.set(name, tag.length + 1);
-  out.set(key, tag.length + 1 + name.length + 1);
-  out.set(leaf, tag.length + 1 + name.length + 1 + key.length);
+  parts.forEach((part, i) => out.set(part, tag.length + 1 + name.length + 1 + KEY_BYTES * i));
   return out;
-}
+};
 
 /**
  * **THE STATEMENT, SIGNED. Used inside the wallet only**, at the press on the
  * records-key screen, so the person has been shown that their records key is
  * being signed for this company and this seat.
  */
-export function signRecordsKey(identity: Identity, company: CompanyLabel, companyKey: Uint8Array, seat: string): RecordsKeyStatement {
+export function signRecordsKey(
+  identity: Identity, company: CompanyLabel, account: AccountAddress, companyKey: Uint8Array, seat: string,
+): RecordsKeyStatement {
   const recordsKey = recordsPublicKeyOf(companyKey);
-  const message = recordsKeyStatementBytes(company, recordsKey, seat);
-  if (message === null) throw new Error('that is not a company\'s label and a seat on its account, so no records key was signed.');
+  const message = recordsKeyStatementBytes(company, account, recordsKey, seat);
+  if (message === null) throw new Error('that is not a company\'s label, its account and a seat on it, so no records key was signed.');
   const secret = fromHex(committeeSigningKeyFor(identity, company).value);
   try {
     return Object.freeze({ recordsKey, seat, signature: toHex(schnorr.sign(message, secret)) });
@@ -164,18 +179,19 @@ export function signRecordsKey(identity: Identity, company: CompanyLabel, compan
 }
 
 /**
- * **WHETHER A RECORDS KEY WAS SIGNED FOR THIS COMPANY BY THIS COMMITTEE KEY.**
- * Never throws: anything that is not a statement, a schnorr committee key or a
- * label is `false`.
+ * **WHETHER A RECORDS KEY WAS SIGNED FOR THIS COMPANY'S ACCOUNT BY THIS
+ * COMMITTEE KEY.** `account` is the account the caller holds the statement
+ * for, never one the statement or a service names. Never throws: anything that
+ * is not a statement, a schnorr committee key, a label or an account is `false`.
  */
 export function recordsKeySignedBy(
-  company: CompanyLabel, committeeKey: { readonly tag: string; readonly value: string }, statement: RecordsKeyStatement,
+  company: CompanyLabel, account: AccountAddress, committeeKey: { readonly tag: string; readonly value: string }, statement: RecordsKeyStatement,
 ): boolean {
   if (typeof committeeKey !== 'object' || committeeKey === null || committeeKey.tag !== 'schnorr'
     || typeof committeeKey.value !== 'string' || !HEX64.test(committeeKey.value)) return false;
   if (typeof statement !== 'object' || statement === null || typeof statement.signature !== 'string'
     || !HEX128.test(statement.signature)) return false;
-  const message = recordsKeyStatementBytes(company, statement.recordsKey, statement.seat);
+  const message = recordsKeyStatementBytes(company, account, statement.recordsKey, statement.seat);
   if (message === null) return false;
   try {
     return schnorr.verify(fromHex(statement.signature), message, fromHex(committeeKey.value));
@@ -202,10 +218,17 @@ export function recordsKeySignedBy(
  * **ITS OWN TAG**, so this statement is never the records-key statement and
  * never a change to a contract's rules, and the reverse.
  */
-export const DIRECTORY_ENTRY_STATEMENT_TAG = 'midnight-identity:directory-entry-statement:v1';
+export const DIRECTORY_ENTRY_STATEMENT_TAG = 'midnight-identity:directory-entry-statement:v2';
 
-/** What a signer's wallet signs for their directory entry, and the signature. */
+/**
+ * What a signer's wallet signs for their directory entry, and the signature.
+ * **Version 2 names the company's account**, and the entry carries it so the
+ * device that files its own entry knows which account it is for; whoever
+ * checks an entry compares it with the account they hold, never the reverse.
+ */
 export interface DirectoryEntryStatement {
+  /** The company's account the seat is on, 64 lower-case hex characters. */
+  readonly account: string;
   /** The signer's filing key: the ed25519 public key their filings are signed with, 64 lower-case hex characters. */
   readonly signingKey: string;
   /** The key copies are sealed to: their records key, 64 lower-case hex characters. */
@@ -218,53 +241,48 @@ export interface DirectoryEntryStatement {
 
 /**
  * **THE BYTES SIGNED FOR AN ENTRY**, or `null` when any part is not one. The
- * tag, a zero byte, the label as written, a zero byte, then the signing key's,
- * the wrapping key's and the seat's thirty-two bytes each.
+ * tag, a zero byte, the label as written, a zero byte, then the account's, the
+ * signing key's, the wrapping key's and the seat's thirty-two bytes each.
  */
 export function directoryEntryStatementBytes(
-  company: CompanyLabel, signingKey: string, wrappingKey: string, seat: string,
+  company: CompanyLabel, account: AccountAddress, signingKey: string, wrappingKey: string, seat: string,
 ): Uint8Array | null {
   const label = readCompanyLabel(company);
-  if (label === null || [signingKey, wrappingKey, seat].some((k) => typeof k !== 'string' || !HEX64.test(k))) return null;
-  const enc = new TextEncoder();
-  const tag = enc.encode(DIRECTORY_ENTRY_STATEMENT_TAG);
-  const name = enc.encode(label);
-  const parts = [fromHex(signingKey), fromHex(wrappingKey), fromHex(seat)];
-  const out = new Uint8Array(tag.length + 1 + name.length + 1 + KEY_BYTES * 3);
-  out.set(tag, 0);
-  out.set(name, tag.length + 1);
-  parts.forEach((part, i) => out.set(part, tag.length + 1 + name.length + 1 + KEY_BYTES * i));
-  return out;
+  const where = readAccountAddress(account);
+  if (label === null || where === null || [signingKey, wrappingKey, seat].some((k) => typeof k !== 'string' || !HEX64.test(k))) return null;
+  return taggedBytes(DIRECTORY_ENTRY_STATEMENT_TAG, label, [fromHex(where), fromHex(signingKey), fromHex(wrappingKey), fromHex(seat)]);
 }
 
 /** **THE ENTRY, SIGNED. Used inside the wallet only**, at the press that signs the records key. */
 export function signDirectoryEntry(
-  identity: Identity, company: CompanyLabel, companyKey: Uint8Array, signingKey: string, seat: string,
+  identity: Identity, company: CompanyLabel, account: AccountAddress, companyKey: Uint8Array, signingKey: string, seat: string,
 ): DirectoryEntryStatement {
   const wrappingKey = recordsPublicKeyOf(companyKey);
-  const message = directoryEntryStatementBytes(company, signingKey, wrappingKey, seat);
-  if (message === null) throw new Error('that is not a company\'s label, a filing key and a seat on its account, so no entry was signed.');
+  const message = directoryEntryStatementBytes(company, account, signingKey, wrappingKey, seat);
+  if (message === null) throw new Error('that is not a company\'s label, its account, a filing key and a seat on it, so no entry was signed.');
   const secret = fromHex(committeeSigningKeyFor(identity, company).value);
   try {
-    return Object.freeze({ signingKey, wrappingKey, seat, signature: toHex(schnorr.sign(message, secret)) });
+    return Object.freeze({ account: readAccountAddress(account)!, signingKey, wrappingKey, seat, signature: toHex(schnorr.sign(message, secret)) });
   } finally {
     secret.fill(0);
   }
 }
 
 /**
- * **WHETHER A DIRECTORY ENTRY WAS SIGNED FOR THIS COMPANY BY THIS COMMITTEE
- * KEY.** Never throws: anything that is not an entry, a schnorr committee key
- * or a label is `false`.
+ * **WHETHER A DIRECTORY ENTRY WAS SIGNED FOR THIS COMPANY'S ACCOUNT BY THIS
+ * COMMITTEE KEY.** `account` is the account the caller holds the entry for: an
+ * entry naming any other is `false`, however it is signed. Never throws:
+ * anything that is not an entry, a schnorr committee key, a label or an account
+ * is `false`.
  */
 export function directoryEntrySignedBy(
-  company: CompanyLabel, committeeKey: { readonly tag: string; readonly value: string }, entry: DirectoryEntryStatement,
+  company: CompanyLabel, account: AccountAddress, committeeKey: { readonly tag: string; readonly value: string }, entry: DirectoryEntryStatement,
 ): boolean {
   if (typeof committeeKey !== 'object' || committeeKey === null || committeeKey.tag !== 'schnorr'
     || typeof committeeKey.value !== 'string' || !HEX64.test(committeeKey.value)) return false;
   if (typeof entry !== 'object' || entry === null || typeof entry.signature !== 'string'
     || !HEX128.test(entry.signature)) return false;
-  const message = directoryEntryStatementBytes(company, entry.signingKey, entry.wrappingKey, entry.seat);
+  const message = directoryEntryStatementBytes(company, account, entry.signingKey, entry.wrappingKey, entry.seat);
   if (message === null) return false;
   try {
     return schnorr.verify(fromHex(entry.signature), message, fromHex(committeeKey.value));
@@ -331,9 +349,16 @@ const frozenKeys = (keys: readonly { readonly tag: string; readonly value: strin
  */
 export function recordsKeyAnswerFor(
   identity: Identity, request: RecordsKeyRequest, seats: AccountSeats, at: number, vault?: VaultHolders,
+  /** The account this wallet pinned for the company when it created it, or null when it pinned none. */
+  pinned: AccountAddress | null = null,
 ): RecordsKeyAnswer {
   if (!usableOrigin(request.requester.origin)) {
     throw new RecordsKeyRefused('This wallet could not tell who asked, so nothing has been signed.');
+  }
+  if (pinned !== null && pinned !== request.account) {
+    throw new RecordsKeyRefused(
+      'The page names an account for this company other than the one this wallet kept as its account when you created it, '
+      + 'so nothing has been signed.');
   }
   if (request.vault !== undefined && (vault === undefined || vault.vault !== request.vault)) {
     throw new RecordsKeyRefused(
@@ -353,8 +378,10 @@ export function recordsKeyAnswerFor(
   let statement: RecordsKeyStatement;
   let entry: DirectoryEntryStatement | undefined;
   try {
-    statement = signRecordsKey(identity, request.company, companyKey, request.seat);
-    if (request.signingKey !== undefined) entry = signDirectoryEntry(identity, request.company, companyKey, request.signingKey, request.seat);
+    statement = signRecordsKey(identity, request.company, request.account, companyKey, request.seat);
+    if (request.signingKey !== undefined) {
+      entry = signDirectoryEntry(identity, request.company, request.account, companyKey, request.signingKey, request.seat);
+    }
   } finally {
     companyKey.fill(0);
   }
@@ -465,7 +492,7 @@ export function readRecordsKeyAnswer(
     || typeof statement !== 'object' || statement === null) {
     return { ok: false, code: 'not-an-answer', says: 'that is not a signed records key.' };
   }
-  if (statement.seat !== expecting.seat || !recordsKeySignedBy(expecting.company, committeeKey, statement)) {
+  if (statement.seat !== expecting.seat || !recordsKeySignedBy(expecting.company, expecting.account, committeeKey, statement)) {
     return {
       ok: false, code: 'not-signed',
       says: 'this answer does not carry your records key signed by your wallet for this company and your seat. It is refused.',
@@ -475,13 +502,13 @@ export function readRecordsKeyAnswer(
   if (expecting.signingKey !== undefined) {
     const e = body.entry;
     if (typeof e !== 'object' || e === null || e.signingKey !== expecting.signingKey || e.seat !== expecting.seat
-      || e.wrappingKey !== statement.recordsKey || !directoryEntrySignedBy(expecting.company, committeeKey, e)) {
+      || e.wrappingKey !== statement.recordsKey || !directoryEntrySignedBy(expecting.company, expecting.account, committeeKey, e)) {
       return {
         ok: false, code: 'not-signed',
         says: 'this answer does not carry your directory entry signed by your wallet for this company, your filing key and your seat. It is refused.',
       };
     }
-    entry = Object.freeze({ signingKey: e.signingKey, wrappingKey: e.wrappingKey, seat: e.seat, signature: e.signature });
+    entry = Object.freeze({ account: e.account, signingKey: e.signingKey, wrappingKey: e.wrappingKey, seat: e.seat, signature: e.signature });
   }
   return {
     ok: true,
@@ -556,8 +583,13 @@ export function holdersAnswerFor(request: HoldersRequest, holders: AccountHolder
   });
 }
 
+/** Who holds an account, as the page read the wallet's answer: with the account the wallet read, which is the one asked about. */
+export interface AccountHoldersRead extends AccountHolders {
+  readonly account: AccountAddress;
+}
+
 export type HoldersRead =
-  | { readonly ok: true; readonly holders: AccountHolders; readonly at: number }
+  | { readonly ok: true; readonly holders: AccountHoldersRead; readonly at: number }
   | { readonly ok: false; readonly code: 'not-an-answer' | 'origin-mismatch' | 'nonce-mismatch' | 'other-company'; readonly says: string };
 
 /**
@@ -589,5 +621,5 @@ export function readHoldersAnswer(
   if (holders === null || typeof body.at !== 'number' || !Number.isSafeInteger(body.at)) {
     return { ok: false, code: 'not-an-answer', says: 'that is not an answer saying who holds the company.' };
   }
-  return { ok: true, holders, at: body.at };
+  return { ok: true, holders: Object.freeze({ ...holders, account: expecting.account }), at: body.at };
 }
