@@ -28,6 +28,8 @@ let deployShape = false;
 let circuitKeys: (c: string) => Uint8Array;
 /* The account the vault's ledger names on the chain now. */
 let pinnedNow: string;
+/* Whether the vault's state on the chain fails to read as a vault's at all. */
+let startingLedgerUnreadable: boolean;
 const CIRCUITS = ['batchPayout', 'deposit', 'depositUnshielded', 'forgetUnshielded', 'mergeNotes', 'payout', 'payoutUnshielded', 'retire', 'setNonceSecret', 'splitNote', 'writeSecretCopy'];
 /* The company account: its own circuits, its own authority, and its own verifying keys, apart from the vault's. */
 const ACCOUNT_CIRCUITS = ['approve', 'propose', 'recordPaymentFromVault'];
@@ -145,6 +147,7 @@ beforeEach(async () => {
     return { blockHash: 'B', accountState: 'YQ==', parameters: 'cA==' };
   };
   pinnedNow = hex(0xc0);
+  startingLedgerUnreadable = false;
   ledgerIsThisBuilds = async () => {};
   assembleDep = undefined;
   vaultBalance = undefined;
@@ -187,7 +190,10 @@ beforeEach(async () => {
       serialize: (s) => (s as { serialize(): Uint8Array }).serialize(),
       notesOf: () => [hex(0x5a)],
       get ledgerIsThisBuilds() { return ledgerIsThisBuilds; },
-      startingLedgerOf: () => ({ account: pinnedNow, notes: 0n, unshieldedTokens: 0n, payments: 0n, nonceCommitment: secretNow, splitJournal: 0n, secretCopies: 0n, reserved: 0n, started: startedNow }),
+      startingLedgerOf: () => {
+        if (startingLedgerUnreadable) throw new Error('this state has no vault ledger in it');
+        return { account: pinnedNow, notes: 0n, unshieldedTokens: 0n, payments: 0n, nonceCommitment: secretNow, splitJournal: 0n, secretCopies: 0n, reserved: 0n, started: startedNow };
+      },
       everCreated: async () => new Set(),
       get payoutState() { return payoutState; },
       get eventsOf() { return eventsOf; },
@@ -385,6 +391,10 @@ describe('A VAULT\'S ROUTES', () => {
     store.putCompanyVault({ accountId: 'acc_1', vault: VAULT, deployedAt: '', deployRef: 'r', intended: { committee: [key(1), key(2)], threshold: 2 }, bornHeld: true });
     pinnedNow = hex(0xd0);
     await refusedEverywhere(/pinned to an account other than the company's/);
+    /* RED WHEN: a vault whose state on the chain cannot be read as a vault's is passed rather than refused. */
+    startingLedgerUnreadable = true;
+    await refusedEverywhere(/its state on the chain cannot be read as a vault's/);
+    startingLedgerUnreadable = false;
     expect(sent).toEqual([]);
     pinnedNow = hex(0xc0);
     expect((await call('/api/accounts/acc_1/vaults', 'ada')).body.rows[0].state).toBe('held-by-committee');

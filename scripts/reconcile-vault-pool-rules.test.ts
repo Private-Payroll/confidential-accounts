@@ -261,9 +261,9 @@ describe('what the operator is shown', () => {
      * first version of this test asserted that these lines carry no vault address --
      * which cannot fail, because `linesForAnOperator` is never given one. An
      * auditor called it decorative and was right. What actually keeps a vault's
-     * address off the screen is the `forbidden`/`createScreen` mechanism in
-     * `scripts/reconcile-vault-pool.ts`, which this file does not reach, and that is
-     * a door the session that wrote it may not run.
+     * address off a screen is the `forbidden`/`createScreen` mechanism
+     * (`scripts/deploy-report.ts`) in whatever program prints these lines, which
+     * this file does not reach.
      *
      * What IS worth pinning here: these lines are built from note nonces and
      * commitments, and the function takes nothing else, so there is nothing for an

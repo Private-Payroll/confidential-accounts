@@ -48,7 +48,7 @@ import { join, relative } from 'node:path';
  * than on the text of the literal that built it.
  */
 import { MidnightCommitments } from '../midnight/commitments.js';
-import { wiring, observerView } from './selection.js';
+import { wiring } from './selection.js';
 
 /** The item at a place in a list; an item that is not there fails the test here rather than being read through. */
 const itemAt = <T,>(xs: readonly T[], i: number): T => {
@@ -601,19 +601,5 @@ describe('one wiring point', () => {
     for (const fact of ['contract', 'indexer', 'node', 'proof server']) {
       expect(() => chosen.createLedger()).toThrow(new RegExp(fact));
     }
-  });
-
-  /**
-   * **AND THE EVIDENCE ROUTE REFUSES RATHER THAN ANSWERING PARTLY.**
-   *
-   * A public observer view existed only on the simulated ledger. Under the
-   * chain selection there is nothing to answer it with, and the decision about
-   * what a chain SHOULD answer has not been taken. **The failure this pins is
-   * the route serving the half it can compute**, which would be a
-   * privacy-evidence route showing less than it claims to.
-   */
-  it('the public observer view refuses, and says the shape is undecided', () => {
-    expect(() => observerView(null as never)).toThrow(/public observer view/);
-    expect(() => observerView(null as never)).toThrow(/has not been decided/);
   });
 });

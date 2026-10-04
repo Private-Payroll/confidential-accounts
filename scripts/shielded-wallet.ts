@@ -3,7 +3,7 @@
  *
  * WHY THIS FILE EXISTS. Two doors needed a shielded coin and each answered the
  * question its own way. `mint-test-token.ts` polled for five minutes;
- * `deposit-to-vault.ts` read the coin list once, about three seconds after the
+ * the deposit door read the coin list once, about three seconds after the
  * wallet was built, and threw. The mint's copy was the one that worked, and the
  * deposit refused twice in a row on 30 August with `the wallet holds 0 of that
  * colour` against a wallet that had held ten trillion of it minutes earlier.
@@ -170,7 +170,7 @@ export function deadlineFromEnv(raw: string | undefined): number {
       `MIDNIGHT_SHIELDED_SCAN_TIMEOUT_MS is set to ${JSON.stringify(raw)}, which is not a ` +
       'positive number of milliseconds. A wait with no usable deadline does not return, and a ' +
       'door that does not return is worse than one that refuses.\n' +
-      'Unset it and open DEPOSIT-TO-VAULT.command or MINT-TEST-TOKEN.command again.');
+      'Unset it and open the same door again.');
   }
   return parsed;
 }
@@ -258,7 +258,7 @@ export const describeShieldedProgress = (p: any): string => {
 /**
  * **WHAT THE WALLET HOLDS OF ONE COLOUR — OR `null`, WHICH IS NOT ZERO.**
  *
- * **ONE COPY, AND THE FIRST DRAFT OF IT WAS A `C271`.** `deposit-to-vault.ts`
+ * **ONE COPY, AND THE FIRST DRAFT OF IT WAS A `C271`.** The deposit door
  * and `mint-test-token.ts` each had their own and they had already drifted; the
  * shared replacement then wrapped the whole read in `catch { return 0n; }`, so
  * a coin whose value would not parse, a colour spelled differently, or a

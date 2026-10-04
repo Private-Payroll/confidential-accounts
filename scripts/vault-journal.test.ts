@@ -18,7 +18,6 @@ import {
   SealedPaymentJournal, SealedDepositJournal, journalledAttempts, paymentJournalFile, depositJournalFileOf,
 } from './vault-journal.js';
 import { FileSealedPoolStore, vaultPoolFile } from './vault-pool-file.js';
-import { depositJournalFile } from './deposit-to-vault.js';
 import { sealPool, openPool, type PoolSigner } from '../src/midnight/vault-pool.js';
 import { newWrappingKeypair, newSymmetricKey, seal, wrapKey, canonical } from '../src/core/crypto.js';
 import { depositNonceAt, depositNonceKeyFor } from '../src/midnight/deposit-nonce.js';
@@ -57,17 +56,16 @@ describe('the payment journal is named after the vault, never addressed by it', 
     expect(() => paymentJournalFile('/state', 'stagenet', '../x')).toThrow();
   });
 
-  it('the reader opens the file the deposit door writes: the two spellings of its name are one', () => {
+  it('the reader opens the deposit journal files already on disk, under the name they were written with', () => {
     /*
-     * The name is declared twice on purpose -- the rebuild must not import the
-     * door -- so this is what keeps them one. If they drift, the door keeps
-     * writing and the rebuild reads "0 version(s) filed", which is absent-equals-
-     * empty doing exactly what it should about the wrong file.
+     * Journals written before this reader existed are on disk under this exact
+     * name. If the spelling drifts, the reader finds "0 version(s) filed", which
+     * is absent-equals-empty doing exactly what it should about the wrong file.
      */
     expect(
       depositJournalFileOf('/x/.midnight', 'stagenet', 'payroll-test-2'),
-      'RED WHEN: the deposit door and the rebuild spell the deposit journal\'s name differently, so the record written before every deposit is never read',
-    ).toBe(depositJournalFile('/x/.midnight', 'stagenet', 'payroll-test-2'));
+      'RED WHEN: the deposit journal\'s file name is spelled any other way, so a journal already on disk is never read',
+    ).toBe('/x/.midnight/stagenet-vault-deposit-journal-payroll-test-2.json');
   });
 
   it('the two journals and the pool are three different files', () => {

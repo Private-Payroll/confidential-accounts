@@ -21,7 +21,7 @@ import { join } from 'node:path';
 
 import { AccountService } from './account.js';
 import { PayrollService, RecordingInviteDelivery, runLegOf } from './payroll.js';
-import { SimulatedLedger, SimulatedProofSystem } from './ledger.js';
+import { SimulatedLedger } from './ledger.js';
 import { MidnightCommitments } from '../midnight/commitments.js';
 import { runMaterialFor } from '../midnight/run-material.js';
 import { vaultDetails } from '../testing/vault-details.js';
@@ -66,7 +66,7 @@ const aCompany = async (opts: { held?: Record<LedgerForm, bigint> } = {}) => {
   const servicesOver = (f: string) => {
     const store = new FileStore(f);
     const accounts = new AccountService(store, ledger, MidnightCommitments, registry, vault.holdings);
-    const payroll = new PayrollService(store, accounts, new SimulatedProofSystem(), registry, NETWORK, invites);
+    const payroll = new PayrollService(store, accounts, registry, NETWORK, invites);
     return { store, accounts, payroll };
   };
   const s = servicesOver(file);

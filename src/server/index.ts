@@ -3,7 +3,7 @@ import cors from 'cors';
 import { z } from 'zod';
 import { join } from 'node:path';
 import { FileStore } from '../core/store-file.js';
-import { observerView, wiring } from '../wiring/selection.js';
+import { wiring } from '../wiring/selection.js';
 import { startProduct, holdingsFor } from '../wiring/product.js';
 import { ContractBook } from '../wiring/account-contract.js';
 import type { WriteCapability } from '../wiring/write-capability.js';
@@ -14,7 +14,6 @@ import { AccountService, CompanyLabelTaken, NotACompanyLabel } from '../core/acc
 import { readCompanyLabel } from 'midnight-identity/profile/company-label';
 import { PayrollService, RecordingInviteDelivery, canonicalPeriod } from '../core/payroll.js';
 import { runLegOf, type RunLegChoice } from '../core/payroll.js';
-import { PluginService } from '../core/plugins.js';
 import { IdentityService, TooManyAttempts, StaleKeyBundle } from '../core/identity.js';
 import {
   WalletIdentityService, WalletSignInError, walletSignInOrigin,
@@ -356,17 +355,17 @@ const accounts = new AccountService(
  * email changes one line and nothing else.
  */
 const invites = new RecordingInviteDelivery();
-const payroll = new PayrollService(store, accounts, proofs, undefined, NETWORK, invites);
-const plugins = new PluginService(store, accounts);
+const payroll = new PayrollService(store, accounts, undefined, NETWORK, invites);
 
 /*
  * SESSIONS AND THE LIMITER COME FROM POSTGRES, AND THE SERVER REFUSES TO START
  * WITHOUT IT UNLESS SOMEBODY SAYS OTHERWISE OUT LOUD.
  *
- * The in-memory versions are correct for the standalone single-tab build and
- * wrong for a server, in the same way and for the same reason: they are
- * per-process. Two instances double the login allowance, and a restart both
- * clears the count and — before S-3 — silently signed everybody out. Falling
+ * The in-memory versions are correct for one process nothing else shares -
+ * development and the tests, which say so out loud - and wrong for a server,
+ * in the same way and for the same reason: they are per-process. Two
+ * instances double the login allowance, and a restart both clears the count
+ * and — before S-3 — silently signed everybody out. Falling
  * back quietly would reproduce exactly the failure S-2 and S-4 describe, with
  * the code to fix it sitting right here looking like it was doing something.
  *
@@ -505,8 +504,8 @@ const app = express();
  * broken for every screen that shows money.
  *
  * `res.json` calls `JSON.stringify`, which THROWS on a bigint — *Do not know
- * how to serialize a BigInt* — so `/state`, `/people`, `/plugins` and
- * `/api/public` all answered 400 the moment amounts became integers. It
+ * how to serialize a BigInt* — so `/state` and `/people` answered 400 the
+ * moment amounts became integers. It
  * typechecked perfectly: no signature says what `res.json` can carry.
  *
  * The replacer is imported rather than written here, so the tag has one
@@ -860,7 +859,7 @@ const member: express.RequestHandler = (req, res, next) => {
 
 /**
  * The same gate for routes keyed by a child record rather than an account:
- * proposals, runs, people, installations. Every child carries the account it
+ * proposals, runs, people. Every child carries the account it
  * belongs to, so authorisation is one hop away and there is no reason for a
  * handler to do it by hand. Missing and not-yours are again the same 404.
  */
@@ -878,8 +877,6 @@ const ownedBy = (
 const ownsProposal = ownedBy('id', id => store.getProposal(id));
 const ownsRun = ownedBy('id', id => store.getRun(id));
 const ownsPerson = ownedBy('id', id => store.getEmployee(id));
-const ownsInstall = ownedBy('id', id => store.getInstallation(id));
-const ownsAttestation = ownedBy('id', id => store.getAttestation(id));
 
 /**
  * **A SIGNING SECRET IS REFUSED, OUT LOUD, RATHER THAN IGNORED.**
@@ -2878,270 +2875,12 @@ app.post('/api/accounts/:id/threshold', authed, member, async (req, res) => {
   });
 });
 
-/* ------------------------- disclosure ------------------------- */
-
-/*
- * **ALL THREE ROUTES BELOW ARE LIVE AND NONE OF THEM CAN COMPLETE.** `T-217`
- * `F10`, `T-234`, confirmed at source by `SC10b`
- * (`docs/scope-the-product-surface.md` §0) and stated here by `S47`. Rule 14,
- * and `C178`'s species: a control that appears to be a capability and is not.
- *
- *   · `POST /api/runs/:id/attest` reaches `attestPayrollTotal`, whose gate is
- *     `run.status === 'settled'`. **`'settled'` is assigned nowhere in `src/`**
- *     — `run.status` is written twice, `'draft'` and `'proposed'` — because
- *     `C292`/`S26` deleted `settle` with the balance. So it can only ever
- *     answer 400, and `this.proofs.prove` is unreachable.
- *   · `POST /api/accounts/:id/attest-solvency` refuses unconditionally at
- *     `src/core/payroll.ts:2232`: the account holds no balance to prove a
- *     threshold against.
- *   · `GET /api/attestations/:id/verify` **never reaches its handler**.
- *     `store.putAttestation` has one caller, below the unpassable gate above,
- *     so the attestation store can never hold a row and `ownsAttestation`
- *     answers 404 on the null lookup. An integrator therefore gets *not found*
- *     where the truth is *this capability is not built*, and the guard is
- *     deliberately NOT loosened here to fix that — it is an access gate and
- *     changing one is not this round's. **`S47` reports it rather than
- *     touching it.**
- *
- * **NOT DELETED, AND THE REASON IS RULE 22b:** selective disclosure returns
- * with vault settlement, and a route removed is a route somebody has to
- * rediscover. What changed in `S47` is that the refusals now name what is
- * missing instead of naming a step nobody can take — rule 19.
- */
-
-app.post('/api/runs/:id/attest', authed, ownsRun, wrap(async (req, res) => {
-  // A run has a subtotal per asset and never one total, so an attestation has
-  // to say which one it is about.
-  const asset = assetCode.parse(req.query.asset);
-  res.json(await payroll.attestPayrollTotal(
-    String(req.params.id), String(req.query.viewingKey ?? ''), asset));
-}));
-
-app.post('/api/accounts/:id/attest-solvency', authed, member, wrap(async (req, res) => {
-  const b = z.object({
-    viewingKey: z.string(), asset: assetCode, threshold: z.string().min(1),
-  }).parse(req.body);
-  res.json(await payroll.attestSolvency(
-    String(req.params.id), b.viewingKey, b.asset, money(b.asset, b.threshold)));
-}));
-
-app.get('/api/attestations/:id/verify', authed, ownsAttestation, wrap(async (req, res) => {
-  res.json({ valid: await payroll.verifyAttestation(String(req.params.id)) });
-}));
-
-
-/* ------------------------- plug-ins ------------------------- */
-
-app.get('/api/plugins/catalogue', wrap(async (_req, res) => res.json(plugins.catalogue())));
-
-app.get('/api/accounts/:id/plugins', authed, member, wrap(async (req, res) => {
-  res.json(plugins.installed(String(req.params.id)));
-}));
-
-app.post('/api/accounts/:id/plugins', authed, member, wrap(async (req, res) => {
-  const b = z.object({
-    pluginId: z.string(), scopes: z.array(z.string()),
-    /*
-     * A CEILING PER ASSET, as decimal strings.
-     *
-     * The old shape was two bare numbers and no asset, which is a limit that
-     * means a sensible weekly cap in pounds and roughly nothing in ether — with
-     * the plug-in, not the person setting it, deciding which. The figures cross
-     * the wire as strings for the same reason every other amount does: a JSON
-     * number cannot carry 10^18.
-     */
-    allowance: z.object({
-      periodDays: z.number().positive(),
-      limits: z.record(assetCode, z.object({
-        perProposal: z.string().min(1),
-        perPeriod: z.string().min(1),
-      })),
-    }).nullable().default(null),
-    /*
-     * **WHICH SEAT INSTALLED THIS IS NOT IN THIS SCHEMA, AND IT BECAME
-     * LOAD-BEARING THE DAY A PLUG-IN'S ROUNDS STARTED BEING RAISED UNDER IT.**
-     *
-     * It used to be whatever the caller typed, which read as a record of who
-     * accepted the allowance and nothing more. It is not: every round this
-     * plug-in raises is now attributed to this seat and judged against that
-     * seat's ceiling, so a seat a caller could name here would be the same hole
-     * one step earlier - moved rather than closed.
-     *
-     * The viewing key is what makes the mapping possible at all: which person
-     * holds which seat is exactly the pairing the roster is sealed to hide.
-     */
-    viewingKey: z.string(),
-  }).parse(req.body);
-
-  const allowance = b.allowance && {
-    periodDays: b.allowance.periodDays,
-    limits: Object.fromEntries(Object.entries(b.allowance.limits).map(([asset, l]) => [
-      asset,
-      { perProposal: money(asset, l.perProposal), perPeriod: money(asset, l.perPeriod) },
-    ])),
-  };
-
-  /*
-   * No `as any`. It carried one, and that cast is what let the old flat
-   * allowance shape survive a type change underneath it — M-42's lesson, and
-   * the reason this route was still accepting a body the service could not use.
-   */
-  res.json(plugins.install({
-    accountId: String(req.params.id),
-    pluginId: b.pluginId,
-    scopes: b.scopes as Parameters<typeof plugins.install>[0]['scopes'],
-    allowance,
-    installedBy: accounts.seatOf(String(req.params.id), b.viewingKey as Hex, req.userId!),
-  }));
-}));
-
-app.post('/api/installations/:id/status', authed, ownsInstall, wrap(async (req, res) => {
-  const b = z.object({ status: z.enum(['active', 'suspended', 'removed']) }).parse(req.body);
-  res.json(plugins.setStatus(String(req.params.id), b.status));
-}));
-
-app.get('/api/accounts/:id/plugin-events', authed, member, wrap(async (req, res) => {
-  res.json(plugins.events(String(req.params.id)));
-}));
-
-/** Everything below is what a plug-in itself calls, using its capability token. */
-app.get('/api/plugin/state', wrap(async (req, res) => {
-  res.json(await plugins.read(String(req.query.token ?? ''), String(req.query.viewingKey ?? '')));
-}));
-app.get('/api/plugin/people', wrap(async (req, res) => {
-  res.json(plugins.readPeople(String(req.query.token ?? '')));
-}));
-app.get('/api/plugin/runs', wrap(async (req, res) => {
-  res.json(plugins.readRuns(String(req.query.token ?? '')));
-}));
-app.post('/api/plugin/propose', wrap(async (req, res) => {
-  const b = z.object({
-    token: z.string(), viewingKey: z.string(), summary: z.string(),
-    asset: assetCode, amount: z.string().min(1),
-    /*
-     * **A PLUG-IN DOES NOT SAY WHO IS RAISING ITS ROUND, AND UNLIKE THE OTHER
-     * TWO ROUTES THE ANSWER IS NOT THE SIGNED-IN CALLER - THERE IS NOT ONE.**
-     *
-     * This route is called by a plug-in holding a capability token, with no
-     * session behind it, so the fix that works next door has nothing to reach
-     * for here. What a plug-in DOES have is an installation: a seat granted it
-     * an allowance, deliberately, and every ceiling it spends against is that
-     * installation's. So the approval is raised under the seat that installed it,
-     * which is the authority the plug-in is actually acting on.
-     */
-    recipient: z.string(),
-  }).parse(req.body);
-  /*
-   * The plug-in names the asset, and that is safe because the CEILING IS LOOKED
-   * UP BY IT — an asset the installation was not granted has no ceiling to
-   * reach and is refused outright.
-   */
-  res.json(await plugins.propose(b.token, b.viewingKey, {
-    summary: b.summary,
-    asset: b.asset,
-    amount: money(b.asset, b.amount),
-    recipient: b.recipient,
-  }));
-}));
-
-/* ------------------------- the point ------------------------- */
-
-/**
- * Everything an outside observer can see. This endpoint exists to be shown to
- * someone sceptical: the commitments and the public face of every proposal. No
- * individual amount or name appears anywhere in it.
- *
- * **IT USED TO SAY *the commitments, the aggregate settlements, and the public
- * face of every proposal*, AND TWO OF THOSE THREE WERE EMPTY OR CONSTANT.**
- * `C292` removed the account's balance: every commitment here is
- * `viewDigestOf([])`, one value for every account and every state. **The
- * settlements array is not empty any more — it is gone**,
- * because an empty one read as evidence that an observer sees no settlements
- * when in fact nothing had ever written one. What is genuinely demonstrated is
- * the proposal face — ids, digests, counts, no names — and that is the whole of
- * it until a vault pays somebody.
- *
- * **THIS ROUTE STILL HAS NO SIGN-IN ON IT.** `C122`, open. What it returns now
- * carries nothing denominated in money, which is half of that row's *Done
- * when*; the other half is that a stranger cannot reach it at all.
- */
-app.get('/api/public', wrap(async (_req, res) => {
-  /*
-   * **THIS ROUTE REFUSES WHOLE RATHER THAN SERVING THE HALF IT CAN ANSWER.**
-   *
-   * It is the evidence behind the claim that a public observer learns nothing,
-   * and the observer's own view of the ledger is the half that cannot be
-   * answered by reading a chain today - the shape it should return is an
-   * undecided design question, not a missing function. Serving the rounds
-   * without it would be a privacy-evidence route quietly showing less than it
-   * claims to, which is worse than one that stops. The refusal is spread into
-   * the reply below rather than raised here, so that the day it answers, this
-   * route answers WITH it.
-   *
-   * `src/wiring/selection.ts` holds the refusal and the question it leaves
-   * open, so the hosted build and the browser-only build cannot answer this
-   * differently.
-   */
-  /*
-   * What an observer can see — and since S-8 that is genuinely all we can show,
-   * not all we chose to show.
-   *
-   * This used to expose `kind`, the human-written `summary` and
-   * `approvals[].signerId`. That last one is the deanonymised version of the
-   * nullifiers the chain blinds on purpose: an endpoint built to demonstrate
-   * privacy was publishing precisely what the privacy exists to hide.
-   */
-  /*
-   * **AN OBSERVER IS HELD TO THE SAME RULE AS A COMPANY, AND FOR A SHARPER
-   * REASON.** This route exists to be evidence. A page of rounds in which some
-   * reached a chain and some never did, with nothing saying which, is evidence
-   * of the wrong thing - and unlike a company's own list, whoever reads this
-   * has no other way to find out.
-   *
-   * **BUT THE DECISION IS TAKEN PER COMPANY AND NOT OVER THE ESTATE**, which
-   * is the one place that difference matters. A company's own list is one
-   * company's belief and refusing it whole is right. This is a flat page of
-   * everybody's rounds, so deciding over the whole of it would let a single
-   * company's mixture withhold the evidence route from every reader, for
-   * every other company, permanently - and the sentence they would be handed
-   * is addressed to somebody looking at their own payroll, which an observer
-   * is not. So each company is judged on its own records, the ones that can
-   * be shown are shown with their words on them, and the number withheld is
-   * stated rather than left as a silence.
-   */
-  const withheld: string[] = [];
-  const proposals = store.listAccounts().flatMap(a => {
-    const seen = decideList(chosen.name, store.listProposals(a.id));
-    if (!seen.listed) { withheld.push(a.id); return []; }
-    return seen.rows;
-  }).map(p => ({
-    id: p.id, accountId: p.accountId, digest: p.digest, status: p.status,
-    approvalCount: p.approvalCount,
-    sealed: { iv: p.sealed.iv, body: p.sealed.body.slice(0, 48) + '...' },
-    txRef: p.txRef ?? null,
-    provenance: p.provenance,
-  }));
-  /*
-   * **THE OBSERVER VIEW IS SPREAD AND NOT MERELY CALLED.** It refuses today, so
-   * this line is not reached - but the day it answers, this route answers with
-   * it rather than quietly without it. `src/wiring/selection.ts` says why that
-   * distinction is the whole point of this route.
-   */
-  res.json({
-    ...observerView(ledger),
-    proposals,
-    /* Named rather than omitted: an observer counting rounds must be able to
-     * tell a company with none from a company being withheld. */
-    withheldAccounts: withheld.length,
-  });
-}));
-
 /**
  * M-98: THE APP IS EXPORTED, AND IT DOES NOT LISTEN ON IMPORT.
  *
  * Every test in this project used to stop at the service layer, and the two
- * leaks that actually shipped were both in a route — `/api/public` publishing
- * `approvals[].signerId`, and a projection that named the company. The types
+ * leaks that actually shipped were both in a route — a public route, since
+ * deleted, publishing `approvals[].signerId`, and a projection that named the company. The types
  * carry most of the weight now, but a hand-built response object still
  * compiles, and a status code has no type at all.
  *

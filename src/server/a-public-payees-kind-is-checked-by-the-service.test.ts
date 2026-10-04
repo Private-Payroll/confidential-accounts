@@ -107,7 +107,7 @@ store.putUser({
   walletKey: walletKeyOf(addressOfSlot(SLOT, NETWORK)), createdAt: '2026-09-25T00:00:00.000Z',
 } as never);
 const accounts = new AccountService(store, ledger, MidnightCommitments, productAssets, aVaultHolding(HELD));
-const payroll = new PayrollService(store, accounts, new SimulatedProofSystem(), productAssets, NETWORK);
+const payroll = new PayrollService(store, accounts, productAssets, NETWORK);
 
 /** A company whose one payee is paid publicly, in NIGHT, with a run drawn over them; its leg raised on chain when asked. */
 const aCompanyPayingPublicly = async (name: string, raised: boolean) => {

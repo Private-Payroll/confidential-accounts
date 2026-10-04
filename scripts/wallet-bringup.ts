@@ -93,8 +93,8 @@ export interface BringUpOptions {
    * needs it — `M-141`. This one is not: only a door that spends or
    * reads a SHIELDED coin needs the shielded scan, and there is no cache for it
    * here, so a scan runs from genesis every time it is asked for. Turning it on
-   * for every caller would put a genesis replay in front of `DEPLOY-VAULT`,
-   * `FUND-VAULT` and every measurement door, none of which touch a shielded
+   * for every caller would put a genesis replay in front of every deploy and
+   * every measurement door, none of which touch a shielded
    * coin — a cost paid by doors that cannot benefit from it, on instruments a
    * session may not re-run.
    *
@@ -287,7 +287,7 @@ export async function bringUpWallet(
    * `1010: Invalid Transaction: Custom error: 170` — InvalidDustSpendProof.
    *
    * `deploy-preview.ts` called `waitForDustCatchUp` itself, at its own call
-   * site, and worked. `deploy-vault.ts` reused THIS function — correctly, per
+   * site, and worked. The vault deploy reused THIS function — correctly, per
    * And did not know there was a second step afterwards, so the first
    * vault deploy ever submitted was refused twice with 170: once from a
    * 123-minute-old cache, and again from a wallet freshly synced from genesis
@@ -318,7 +318,7 @@ export async function bringUpWallet(
    *
    * The loops above wait for DUST. Nothing anywhere waited for the shielded
    * sub-wallet, and the faster this function returns the less the shielded scan
-   * has done: `DEPOSIT-TO-VAULT.command` refused twice on 30 August with `the
+   * has done: a deposit door refused twice on 30 August with `the
    * wallet holds 0 of that colour`, two lines under `wallet ready after 1s`,
    * against a wallet that had held ten trillion of it minutes earlier.
    *

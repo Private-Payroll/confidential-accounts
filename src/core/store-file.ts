@@ -11,13 +11,11 @@ import type { Shape } from './store.js';
  * `canonical`/`parseCanonical` rather than `JSON.stringify`/`JSON.parse`, and
  * this is not a preference.
  *
- * Almost everything in here is ciphertext, but not all of it: a plug-in's
- * spending allowance and a plug-in event's amount are readable by design, and
- * both are bigints. `JSON.stringify` throws on a bigint — which is the loud
- * failure bigint was chosen for, and it would fire on the write that records
- * an installation rather than on the read that misinterprets it. Pretty
- * printing goes with it, which is a real loss for a file meant to be inspected
- * and a small one next to a store that cannot save an installation.
+ * Almost everything in here is ciphertext. A value that is not may be a
+ * bigint, and `JSON.stringify` throws on a bigint — which is the loud failure
+ * bigint was chosen for — so the file is written with `canonical`, which
+ * carries one. Pretty printing goes with it, which is a real loss for a file
+ * meant to be inspected.
  */
 /**
  * **TABLES THIS STORE NO LONGER KEEPS, DROPPED WHEN A FILE IS LOADED.**
@@ -36,7 +34,18 @@ import type { Shape } from './store.js';
  * entries each seat's own wallet signs, holds that now, and the old table is
  * dropped on load for the same reason.
  */
-const RETIRED_TABLES: readonly string[] = ['vaultKeys', 'filingKeys'];
+/*
+ * `installations` and `pluginEvents` held each plug-in installed on a company,
+ * its capability token and spending allowance in plain text, and every action
+ * it took. Plug-ins are gone from the service, so a file that still carries
+ * those tables would keep a live-looking token and a company's allowances on
+ * every write; they are dropped on load for the same reason.
+ */
+/*
+ * `attestations` was to hold each disclosure proof the service issued. Nothing
+ * issues one any more, so the table is dropped on load with the others.
+ */
+const RETIRED_TABLES: readonly string[] = ['vaultKeys', 'filingKeys', 'installations', 'pluginEvents', 'attestations'];
 
 export const withoutRetiredTables = <T extends object>(parsed: T): T => {
   const kept = { ...parsed } as Record<string, unknown>;

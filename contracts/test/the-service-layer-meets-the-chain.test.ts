@@ -377,16 +377,13 @@ describe('the service layer meets the chain', () => {
   it('the range is refused where the change is BUILT, not left to the binding', () => {
     /*
      * **THE ANSWER: over-ceiling was REACHABLE, negative was not.** The live
-     * door is the plug-in one — `POST /api/accounts/:id/plugins` takes
-     * `perProposal` as a string through `parseAmount`
-     * (`src/server/index.ts:1482`), **which imposes no maximum**
-     * (`src/core/assets.ts:253-269`), so the only ceiling on the path was a
-     * number the same caller set; `POST /api/plugin/propose`
-     * (`src/server/index.ts:1533`) then passes all four of
-     * `src/core/plugins.ts`'s checks (`:308-326`) and writes `entries` at
-     * `:333`. A negative is refused twice before that — `parseAmount`'s regex
-     * (`src/core/assets.ts:255`) and `src/core/plugins.ts:311` — **and neither
-     * refusal is pinned by any test in this repository.**
+     * door was the plug-in one, since deleted — its install route took
+     * `perProposal` as a string through `parseAmount`, **which imposes no
+     * maximum** (`src/core/assets.ts`), so the only ceiling on the path was a
+     * number the same caller set; its propose route then passed every check
+     * the plug-in service made and wrote `entries`. A negative was refused
+     * twice before that — `parseAmount`'s regex and the plug-in service's own
+     * check.
      *
      * **AND THE FAILURE WAS SILENT ON THE WIRING THE PRODUCT RUNS.**
      * `src/wiring/selection.ts:144` selects the simulated scheme, which HMACs

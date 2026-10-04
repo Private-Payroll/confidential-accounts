@@ -2,12 +2,11 @@ import { describe, expect, it, beforeEach } from 'vitest';
 import { drawCompanyLabel } from 'midnight-identity/profile/company-label';
 import { MemoryStore } from '../core/store.js';
 import { AccountService, openAccount, sealAccount, approvalMessage } from '../core/account.js';
-import { PluginService } from '../core/plugins.js';
 import { sign } from '../core/crypto.js';
 import { openRecord } from '../core/sealed-records.js';
 import type { Ledger } from '../core/ledger.js';
 import { PayrollService, RecordingInviteDelivery } from '../core/payroll.js';
-import { SimulatedLedger, SimulatedProofSystem, SimulatedCommitments } from '../core/ledger.js';
+import { SimulatedLedger, SimulatedCommitments } from '../core/ledger.js';
 import {
   countProvenance, decideList, provenanceOf, refuseSelectionOver,
 } from '../core/provenance.js';
@@ -102,7 +101,7 @@ const world = () => {
   const registry = registryWithTestPrivateForms();
   const accounts = new AccountService(store, ledger, chosen.commitments, registry);
   const payroll = new PayrollService(
-    store, accounts, new SimulatedProofSystem(), registry, NETWORK,
+    store, accounts, registry, NETWORK,
     new RecordingInviteDelivery(),
   );
   return { chosen, store, ledger, accounts, payroll };
@@ -362,7 +361,7 @@ describe('the marker follows the ledger, not a literal in the write path', () =>
     const registry = registryWithTestPrivateForms();
     const accounts = new AccountService(store, ledger, SimulatedCommitments, registry);
     const payroll = new PayrollService(
-      store, accounts, new SimulatedProofSystem(), registry, NETWORK,
+      store, accounts, registry, NETWORK,
       new RecordingInviteDelivery(),
     );
     return { store, accounts, payroll };
@@ -586,31 +585,6 @@ describe('a record that says nothing goes on saying nothing', () => {
 });
 
 describe('the other doors a belief comes through', () => {
-  it('A PLUG-IN\'S LIST OF RUNS CARRIES THE WORD AND REFUSES A MIXTURE', async () => {
-    /*
-     * RED WHEN: `readRuns` goes back to mapping the store rows straight out.
-     * A company's bookkeeping reads this, `status` is the field that says a
-     * run settled, and nothing here is looked at by a person.
-     */
-    const w = world();
-    const plugins = new PluginService(w.store, w.accounts);
-    const made = await w.accounts.create('Acme', SIGNERS, 2, undefined, drawCompanyLabel());
-    w.payroll.hireDirect(made.account.id, {
-      name: 'Dana', email: 'd@a.co', title: 'Eng', asset: TEST_TOKEN, baseAmount: 100_00n,
-    }, made.viewingKey);
-    const { run } = await w.payroll.createRunFromRoster(made.account.id, '2026-08', made.viewingKey);
-
-    const install = plugins.install({
-      accountId: made.account.id, pluginId: 'moneygram-payout',
-      scopes: ['runs:read'], allowance: null, installedBy: present(made.secrets[0]).signerId,
-    });
-    expect(plugins.readRuns(install.token).map(r => r.provenance)).toEqual([w.ledger.wiring]);
-
-    w.store.putRun({ ...w.store.getRun(run.id)!, id: 'run_onchain', wiring: 'chain' });
-    expect(() => plugins.readRuns(install.token))
-      .toThrow(/not all written against the same ledger/);
-  });
-
   it('A PAYSLIP CARRIES THE WORD, BECAUSE A PAYSLIP IS A LIST OF ONE', async () => {
     /*
      * RED WHEN: `employeeView` stops carrying it.

@@ -30,7 +30,7 @@ import { mkdtempSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { FileStore } from './store-file.js';
-import { SimulatedLedger, SimulatedProofSystem, SimulatedCommitments } from './ledger.js';
+import { SimulatedLedger, SimulatedCommitments } from './ledger.js';
 import { AccountService } from './account.js';
 import { PayrollService, RecordingInviteDelivery } from './payroll.js';
 import { newWrappingKeypair } from './crypto.js';
@@ -54,12 +54,11 @@ const THREE_SIGNERS = [
 function harness() {
   const store = new FileStore(join(mkdtempSync(join(tmpdir(), 'mn-s101-')), 'db.json'));
   const ledger = new SimulatedLedger(SimulatedCommitments);
-  const proofs = new SimulatedProofSystem();
   const accounts = new AccountService(store, ledger, SimulatedCommitments, registryWithTestPrivateForms());
   const invites = new RecordingInviteDelivery();
   /* GBP given a private token of its own, so a person can be hired in it. */
   const payroll = new PayrollService(
-    store, accounts, proofs, registryWithTestPrivateForms(), 'undeployed', invites);
+    store, accounts, registryWithTestPrivateForms(), 'undeployed', invites);
   return { store, accounts, payroll, invites };
 }
 

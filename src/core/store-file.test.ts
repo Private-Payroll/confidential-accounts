@@ -95,4 +95,42 @@ describe('a table this store no longer keeps', () => {
     expect(loaded.getUser('u1')?.email).toBe('u1@a.co');
     void ({} as Shape);
   });
+
+  it('THE PLUG-IN TABLES - EACH INSTALLATION WITH ITS CAPABILITY TOKEN, AND EVERY PLUG-IN EVENT - ARE DROPPED WHEN A FILE IS LOADED, AND NOT WRITTEN BACK', () => {
+    const dir = mkdtempSync(join(tmpdir(), 'mn-sf-retired-plugins-'));
+    const path = join(dir, 'db.json');
+    const first = new FileStore(path);
+    first.putUser(user('u1'));
+    /* A file written while plug-ins could be installed: a token and an allowance in plain text. */
+    const old = parseCanonical<Record<string, unknown>>(readFileSync(path, 'utf8'));
+    old.installations = { ins_1: { id: 'ins_1', accountId: 'acc_1', pluginId: 'xero-sync', token: 'capability-token-ins-1' } };
+    old.pluginEvents = { evt_1: { id: 'evt_1', installationId: 'ins_1', accountId: 'acc_1', action: 'read-plugin-event-1' } };
+    writeFileSync(path, canonical(old));
+    const loaded = new FileStore(path);
+    const after = readFileSync(path, 'utf8');
+    /* RED WHEN: `installations` leaves the retired list - the capability token is written back on load. */
+    expect(after).not.toContain('capability-token-ins-1');
+    /* RED WHEN: `pluginEvents` leaves the retired list - the event is written back on load. */
+    expect(after).not.toContain('read-plugin-event-1');
+    expect(Object.keys(parseCanonical<Record<string, unknown>>(after))).not.toContain('installations');
+    expect(Object.keys(parseCanonical<Record<string, unknown>>(after))).not.toContain('pluginEvents');
+    /* And everything else in the file is kept. */
+    expect(loaded.getUser('u1')?.email).toBe('u1@a.co');
+  });
+
+  it('THE ATTESTATION TABLE IS DROPPED WHEN A FILE IS LOADED, AND NOT WRITTEN BACK', () => {
+    const dir = mkdtempSync(join(tmpdir(), 'mn-sf-retired-attestations-'));
+    const path = join(dir, 'db.json');
+    const first = new FileStore(path);
+    first.putUser(user('u1'));
+    const old = parseCanonical<Record<string, unknown>>(readFileSync(path, 'utf8'));
+    old.attestations = { att_1: { id: 'att_1', accountId: 'acc_1', statement: 'attestation-statement-1' } };
+    writeFileSync(path, canonical(old));
+    const loaded = new FileStore(path);
+    const after = readFileSync(path, 'utf8');
+    /* RED WHEN: `attestations` leaves the retired list - the row is written back on load. */
+    expect(after).not.toContain('attestation-statement-1');
+    expect(Object.keys(parseCanonical<Record<string, unknown>>(after))).not.toContain('attestations');
+    expect(loaded.getUser('u1')?.email).toBe('u1@a.co');
+  });
 });

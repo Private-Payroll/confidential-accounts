@@ -1,7 +1,7 @@
 import { sha256 } from '@noble/hashes/sha2.js';
 import { bytesToHex } from '@noble/hashes/utils.js';
 import { utf8 } from './crypto.js';
-import type { SealedAccount, SealedProposal, SealedRun, Attestation, SealedEmployee, Invite, Installation, PluginEvent, User, CompanyVault, AccountDeploy, AccountOpeningRecord } from './types.js';
+import type { SealedAccount, SealedProposal, SealedRun, SealedEmployee, Invite, User, CompanyVault, AccountDeploy, AccountOpeningRecord } from './types.js';
 import type { DirectoryFiling } from '../midnight/seat-directory.js';
 import type { CompanyVaultKeyIndex } from './vault-keys.js';
 import { provenanceOf, type Marked, type WiringName } from './provenance.js';
@@ -10,11 +10,8 @@ export interface Shape {
   accounts: Record<string, SealedAccount>;
   proposals: Record<string, SealedProposal>;
   runs: Record<string, SealedRun>;
-  attestations: Record<string, Attestation>;
   employees: Record<string, SealedEmployee>;
   invites: Record<string, Invite>;
-  installations: Record<string, Installation>;
-  pluginEvents: Record<string, PluginEvent>;
   users: Record<string, User>;
   /** A company's vaults, keyed by vault address. */
   companyVaults: Record<string, CompanyVault>;
@@ -86,8 +83,8 @@ export interface CollectedCommitteeSignatures {
 }
 
 export const emptyShape = (): Shape =>
-  ({ accounts: {}, proposals: {}, runs: {}, attestations: {}, employees: {}, invites: {},
-    installations: {}, pluginEvents: {}, users: {}, writtenBy: [], companyVaults: {}, vaultKeyIndex: {}, directories: {},
+  ({ accounts: {}, proposals: {}, runs: {}, employees: {}, invites: {},
+    users: {}, writtenBy: [], companyVaults: {}, vaultKeyIndex: {}, directories: {},
     committeeSignatures: {} });
 
 /**
@@ -469,21 +466,6 @@ export class MemoryStore {
     return Object.values(this.data.invites).filter(i => i.accountId === accountId);
   }
 
-  putInstallation(i: Installation) { this.data.installations[i.id] = i; this.flush(); }
-  getInstallation(id: string) { return this.data.installations[id] ?? null; }
-  getInstallationByToken(token: string) {
-    return Object.values(this.data.installations).find(i => i.token === token) ?? null;
-  }
-  listInstallations(accountId: string) {
-    return Object.values(this.data.installations)
-      .filter(i => i.accountId === accountId && i.status !== 'removed');
-  }
-
-  putPluginEvent(e: PluginEvent) { this.data.pluginEvents[e.id] = e; this.flush(); }
-  listPluginEvents(accountId: string) {
-    return Object.values(this.data.pluginEvents).filter(e => e.accountId === accountId);
-  }
-
   /* A company's vaults, and its signers' public vault keys. */
   putCompanyVault(v: CompanyVault) { this.data.companyVaults[v.vault] = v; this.flush(); }
   getCompanyVault(vault: string) { return this.data.companyVaults[vault.toLowerCase()] ?? null; }
@@ -552,9 +534,6 @@ export class MemoryStore {
   getCommitteeSignatures(address: string): CollectedCommitteeSignatures | null {
     return this.data.committeeSignatures[address.toLowerCase()] ?? null;
   }
-
-  putAttestation(a: Attestation) { this.data.attestations[a.id] = a; this.flush(); }
-  getAttestation(id: string) { return this.data.attestations[id] ?? null; }
 
   /**
    * The flip, and the only reason this method exists.

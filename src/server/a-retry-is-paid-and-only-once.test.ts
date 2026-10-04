@@ -106,7 +106,7 @@ store.putUser({
   walletKey: walletKeyOf(addressOfSlot(SLOT, NETWORK)), createdAt: '2026-09-23T00:00:00.000Z',
 } as never);
 const accounts = new AccountService(store, ledger, MidnightCommitments, productAssets, aVaultHolding(HELD));
-const payroll = new PayrollService(store, accounts, new SimulatedProofSystem(), productAssets);
+const payroll = new PayrollService(store, accounts, productAssets);
 
 /** A company with three people on one private leg, raised and held by the chain. */
 const aCompany = async (name: string, legWindowOpen = false) => {
@@ -250,7 +250,7 @@ const deviceRetry = async (c: Company, indices: number[], window: { opensAt: str
 };
 /** The retries written down on the run, as the store now holds it, and every retry round written for it. */
 const retriesOf = (c: Company) => {
-  const fresh = new PayrollService(new FileStore(process.env.DATA_PATH!), accounts, new SimulatedProofSystem(), productAssets);
+  const fresh = new PayrollService(new FileStore(process.env.DATA_PATH!), accounts, productAssets);
   return fresh.requireRun(c.runId, c.viewingKey).payout![runLegOf(PRIVATE.code, 'shielded')]!.retries ?? [];
 };
 const retryRoundsOf = (c: Company) =>

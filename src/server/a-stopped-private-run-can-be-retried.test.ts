@@ -123,7 +123,7 @@ store.putUser({
 } as never);
 /* This service's own reader, before the server starts, CAN read private money: that is how each leg reached the chain here. */
 const accounts = new AccountService(store, ledger, MidnightCommitments, productAssets, aVaultHolding(HELD));
-const payroll = new PayrollService(store, accounts, new SimulatedProofSystem(), productAssets);
+const payroll = new PayrollService(store, accounts, productAssets);
 
 const aStoppedRun = async (name: string, retryWrittenDown = false, legOnChain = true) => {
   const created = await accounts.create(name, [{ name: 'Ada', role: 'admin', userId: USER }], 1, undefined, drawCompanyLabel());
@@ -225,7 +225,7 @@ const retryBody = (c: Company, more: Record<string, unknown>) =>
   ({ viewingKey: c.viewingKey, indices: UNPAID, vault: VAULT, ...WINDOW, ...more });
 /** The retries written down on the company's own record of the run, as the store now holds it. */
 const retriesOf = (c: Company) => {
-  const fresh = new PayrollService(new FileStore(process.env.DATA_PATH!), accounts, new SimulatedProofSystem(), productAssets);
+  const fresh = new PayrollService(new FileStore(process.env.DATA_PATH!), accounts, productAssets);
   return fresh.requireRun(c.runId, c.viewingKey as Hex).payout![runLegOf(PRIVATE.code, 'shielded')]!.retries ?? [];
 };
 
@@ -357,7 +357,7 @@ describe('A PRIVATE RETRY FROM A DEVICE IS WRITTEN DOWN AND SENT; ONE FROM ANYWH
     expect(ok.body.proposal.raisedAt).toBeUndefined();
     expect(sent).toEqual([]);
     expect(ok.body.order.indices).toEqual(UNPAID);
-    const leg = new PayrollService(new FileStore(process.env.DATA_PATH!), accounts, new SimulatedProofSystem(), productAssets)
+    const leg = new PayrollService(new FileStore(process.env.DATA_PATH!), accounts, productAssets)
       .requireRun(c.runId, c.viewingKey as Hex).payout![runLegOf(PRIVATE.code, 'shielded')]!;
     /* RED WHEN: the retry's material is built under another identity or generation - its people then have new leaves, and both rounds pay them. */
     const rebuilt = await retryMaterialFor({

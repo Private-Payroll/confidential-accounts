@@ -7,7 +7,6 @@ import { join } from 'node:path';
 import { AccountService } from './account.js';
 import { PayrollService, RecordingInviteDelivery } from './payroll.js';
 import { SimulatedLedger } from './ledger.js';
-import { SimulatedProofSystem } from './ledger.js';
 import { MidnightCommitments } from '../midnight/commitments.js';
 import { registryWithTestPrivateForms, TEST_TOKEN } from '../testing/assets.js';
 import { payeeFor, unshieldedPayeeFor } from '../testing/payees.js';
@@ -38,7 +37,7 @@ const aCompany = async () => {
   const registry = registryWith();
   const invites = new RecordingInviteDelivery();
   const accounts = new AccountService(store, new SimulatedLedger(MidnightCommitments), MidnightCommitments, registry);
-  const payroll = new PayrollService(store, accounts, new SimulatedProofSystem(), registry, NETWORK, invites);
+  const payroll = new PayrollService(store, accounts, registry, NETWORK, invites);
   store.putUser({
     id: 'usr_founder', email: 'founder@acme.example', name: 'founder', keyBundle: null,
     keyBundleVersion: 0, identityPublicKey: null, walletKey: null, createdAt: '2026-09-25T00:00:00.000Z',

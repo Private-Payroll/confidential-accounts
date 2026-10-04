@@ -5,7 +5,7 @@ import { join } from 'node:path';
 import { newWords } from 'midnight-identity';
 import { drawCompanyLabel } from 'midnight-identity/profile/company-label';
 import { FileStore } from './store-file.js';
-import { SimulatedLedger, SimulatedProofSystem } from './ledger.js';
+import { SimulatedLedger } from './ledger.js';
 import { MidnightCommitments } from '../midnight/commitments.js';
 import { AccountService } from './account.js';
 import { PayrollService, RecordingInviteDelivery } from './payroll.js';
@@ -64,7 +64,7 @@ const harness = () => {
   const accounts = new AccountService(
     store, new SimulatedLedger(MidnightCommitments), MidnightCommitments, registry, aVaultHolding());
   const invites = new RecordingInviteDelivery();
-  const payroll = new PayrollService(store, accounts, new SimulatedProofSystem(), registry, 'undeployed', invites);
+  const payroll = new PayrollService(store, accounts, registry, 'undeployed', invites);
   return { store, accounts, payroll, invites };
 };
 type H = ReturnType<typeof harness>;

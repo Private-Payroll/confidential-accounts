@@ -342,8 +342,8 @@ export interface NotePool {
    *
    * **Whoever implements this holds signer key material**, because a pool is
    * sealed under a fresh key wrapped to each signer and `sealPool` refuses a
-   * pool wrapped to nobody (`V-91`). That is why `scripts/deploy-vault.ts`
-   * cannot call it and why the deploy deliberately does not create one.
+   * pool wrapped to nobody (`V-91`). That is why a deploy that holds no signer
+   * key cannot call it, and why a deploy deliberately does not create one.
    */
   create(vaultAddress: string, notes: VaultNotes): Promise<void>;
 }
@@ -1122,8 +1122,8 @@ export class VaultLedger implements PaysFromAVault {
    * A vault deployed today cannot be funded. `SealedNotePool.load` refuses
    * when no record exists — correctly, because an absent pool and an empty
    * vault are opposite facts — and `deposit` below loads before it calls, so
-   * **the client cannot take the first deposit.** `scripts/deploy-vault.ts`
-   * deliberately does not create one: a pool is sealed under a fresh key
+   * **the client cannot take the first deposit.** A deploy deliberately does
+   * not create one: a pool is sealed under a fresh key
    * wrapped to each signer, `sealPool` refuses a pool wrapped to nobody
    * (`V-91`), and a deploy instrument holds no signer key material.
    *

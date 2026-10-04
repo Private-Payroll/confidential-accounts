@@ -18,7 +18,7 @@ import { join } from 'node:path';
 
 import { AccountService, openAccount, sealAccount } from './account.js';
 import { PayrollService, RecordingInviteDelivery, runLegOf } from './payroll.js';
-import { SimulatedLedger, SimulatedProofSystem } from './ledger.js';
+import { SimulatedLedger } from './ledger.js';
 import { MidnightCommitments } from '../midnight/commitments.js';
 import { runMaterialFor } from '../midnight/run-material.js';
 import { vaultDetails } from '../testing/vault-details.js';
@@ -43,7 +43,7 @@ const aCompany = async (perTransaction: bigint) => {
   const invites = new RecordingInviteDelivery();
   const ledger = new SimulatedLedger(MidnightCommitments);
   const accounts = new AccountService(store, ledger, MidnightCommitments, registry, aVaultHolding());
-  const payroll = new PayrollService(store, accounts, new SimulatedProofSystem(), registry, NETWORK, invites);
+  const payroll = new PayrollService(store, accounts, registry, NETWORK, invites);
   store.putUser({
     id: 'usr_founder', email: 'founder@acme.example', name: 'founder', keyBundle: null,
     keyBundleVersion: 0, identityPublicKey: null, walletKey: null, createdAt: '2026-10-01T00:00:00.000Z',

@@ -732,13 +732,12 @@ export const MAX_CHANGE_AMOUNT = (1n << 128n) - 1n;
  * ── WHAT WAS REACHABLE BEFORE IT, MEASURED ──────────────────────────────────
  *
  * `AccountService.propose` summed with a bare reduce and nothing bounded the
- * result. The live door is the plug-in one: `POST /api/accounts/:id/plugins`
- * takes `perProposal` as a string and converts it with `parseAmount`
- * (`src/server/index.ts:1482`), **which refuses a sign, separators and an
- * exponent and imposes NO MAXIMUM** (`:253-269` above) — so the only ceiling on
- * the path is a number the same caller sets. `POST /api/plugin/propose`
- * (`src/server/index.ts:1533`) then passes all four of `src/core/plugins.ts`'s
- * checks (`:308-326`) and writes `entries` at `:333`.
+ * result. The live door was the plug-in one, since deleted: its install route
+ * took `perProposal` as a string and converted it with `parseAmount`, **which
+ * refuses a sign, separators and an exponent and imposes NO MAXIMUM** (above)
+ * — so the only ceiling on the path was a number the same caller set. Its
+ * propose route then passed every check the plug-in service made and wrote
+ * `entries`.
  *
  * **AND ON TODAY'S WIRING NOTHING DOWNSTREAM REFUSES IT.**
  * `src/wiring/selection.ts:144` selects the simulated scheme, whose
@@ -756,10 +755,9 @@ export const MAX_CHANGE_AMOUNT = (1n << 128n) - 1n;
  * (`src/midnight/ledger.ts:1672`). A tested guard on a path the product does
  * not take proves nothing about the product.
  *
- * **A NEGATIVE IS ALREADY REFUSED TWICE AND NEITHER REFUSAL IS PINNED** —
- * `parseAmount`'s regex (`:255`) and `src/core/plugins.ts:311`. It is refused
- * here as well, because the ceiling and the floor are one rule about one value
- * and splitting them across three files is how one of them goes missing.
+ * **A NEGATIVE IS ALSO REFUSED BY `parseAmount`'s REGEX** (above). It is
+ * refused here as well, because the ceiling and the floor are one rule about
+ * one value and splitting them across files is how one of them goes missing.
  */
 export const sumChangeAmount = (xs: readonly bigint[], what: string): bigint => {
   const total = sumAmounts(xs);

@@ -35,7 +35,7 @@ import { pureCircuits } from '../managed/contract/index.js';
 import { AccountService, openAccount, sealAccount } from '../../src/core/account.js';
 import { PayrollService, runLegOf } from '../../src/core/payroll.js';
 import {
-  SimulatedLedger, SimulatedProofSystem, type StateChange,
+  SimulatedLedger, type StateChange,
 } from '../../src/core/ledger.js';
 import { MidnightCommitments } from '../../src/midnight/commitments.js';
 import { buildRun, buildRetryRun } from '../../src/midnight/payout-tree.js';
@@ -82,7 +82,7 @@ const services = () => {
    */
   Object.assign(ledger, { paidAmong: async () => ({ known: true, paid: [] }) });
   const accounts = new AccountService(store, ledger, MidnightCommitments, registry, aVaultHolding());
-  const payroll = new PayrollService(store, accounts, new SimulatedProofSystem(), registry);
+  const payroll = new PayrollService(store, accounts, registry);
   return { store, accounts, payroll };
 };
 

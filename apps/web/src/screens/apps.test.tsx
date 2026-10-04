@@ -5,15 +5,43 @@ import { fileURLToPath } from 'node:url';
 import { act, cleanup, fireEvent, render } from '@testing-library/react';
 import { afterEach, describe, expect, it } from 'vitest';
 import { KitProvider } from 'vaults-ui';
-import { CATALOGUE as LEGACY } from '../../../../src/core/plugins.js';
 import { LANGUAGES } from '../languages.js';
 import { Apps } from './apps.js';
 
 /*
- * THE APPS PAGE, AGAINST THE CATALOGUE IT IS TAKEN FROM: the catalogue in the
- * product's own code and the category names the earlier application gave it,
- * so a name, summary or category that drifts from them turns this red.
+ * THE APPS PAGE, AGAINST THE CATALOGUE IT IS TAKEN FROM: the ten apps the
+ * earlier application listed, written out below, the page's own locale file,
+ * and the category names the earlier application gave them, so a name,
+ * summary or category that drifts from them turns this red.
  */
+
+/**
+ * THE TEN APPS THE EARLIER APPLICATION LISTED, written out here: each one's
+ * id, name, publisher, category and summary, in the order it listed them.
+ */
+const LEGACY: readonly { id: string; name: string; publisher: string; category: string; summary: string }[] = [
+  { id: 'safe-bridge', name: 'Safe Connect', publisher: 'First party', category: 'interop',
+    summary: 'Use an existing Safe on another chain as the source of funds. Assets never move. Deliberation and policy run here, the Safe keeps enforcing its own threshold.' },
+  { id: 'moneygram-payout', name: 'MoneyGram Payout', publisher: 'MoneyGram', category: 'offramp',
+    summary: 'Cash collection in 100+ countries. Employees convert salary without a bank account. Only the aggregate and the recipient reference leave the account.' },
+  { id: 'wise-payout', name: 'Wise Transfers', publisher: 'Wise', category: 'offramp',
+    summary: 'Multi currency payout to local bank accounts at interbank rates. Handles the leg between settlement and an employee bank account.' },
+  { id: 'monument-gbp', name: 'Monument Deposits', publisher: 'Monument Bank', category: 'offramp',
+    summary: 'Fund payroll from a UK bank account in tokenised sterling. No stablecoin conversion and no offramp needed, because the asset is already a regulated deposit.' },
+  { id: 'treasury-yield', name: 'Treasury Yield', publisher: 'Community', category: 'treasury',
+    summary: 'Deploy idle treasury into lending markets without publishing the strategy. Proposes moves inside an allowance you set. It cannot move funds on its own.' },
+  { id: 'xero-sync', name: 'Xero Sync', publisher: 'Community', category: 'accounting',
+    summary: 'Posts settled payroll to your ledger as a single journal entry. Reads totals only, so your accounting integration never holds individual salaries.' },
+  { id: 'hmrc-rti', name: 'HMRC Real Time Information', publisher: 'Community', category: 'compliance',
+    summary: 'Files UK payroll submissions from an attestation rather than a spreadsheet of salaries. Issues the proof, submits the return.' },
+  { id: 'auditor-portal', name: 'Auditor Portal', publisher: 'First party', category: 'compliance',
+    summary: 'Scoped, time boxed access for an external accountant. They verify what they need and see nothing else, and the grant expires on its own.' },
+  { id: 'vesting', name: 'Vesting and Cap Table', publisher: 'Community', category: 'treasury',
+    summary: 'Scheduled disbursement with shielded amounts on the same engine as payroll. Cliffs are provable without being publicly trackable.' },
+  { id: 'contributor-bounties', name: 'Contributor Payouts', publisher: 'Community', category: 'treasury',
+    summary: 'Pay contributors and bounty claimants from the same account, confidentially, without adding them to the payroll roster.' },
+];
+
 const HERE = dirname(fileURLToPath(import.meta.url));
 const EN = JSON.parse(readFileSync(resolve(HERE, '../locales/en.json'), 'utf8')) as Record<string, string>;
 /** The category names, as the earlier application named them. */

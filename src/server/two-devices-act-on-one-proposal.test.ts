@@ -115,7 +115,7 @@ const seeded = await (async () => {
   }
   const registry = registryWithTestPrivateForms();
   const accounts = new AccountService(store, ledger, MidnightCommitments, registry, aVaultHolding());
-  const payroll = new PayrollService(store, accounts, new SimulatedProofSystem(), registry);
+  const payroll = new PayrollService(store, accounts, registry);
   const aCompany = async (name: string, threshold: number, onChain: boolean) => {
     const created = await accounts.create(name, [
       { name: 'Ada', role: 'admin', userId: USERS.ada },

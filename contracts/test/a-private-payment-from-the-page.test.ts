@@ -111,7 +111,7 @@ import { payFor } from '../../src/testing/payees.js';
 import { ACCOUNT_CIRCUITS_SERVED_TO_A_DEVICE, VAULT_CIRCUITS } from '../../src/midnight/vault-contract.js';
 import { keysOnDisk } from './keys-on-disk.js';
 import { PayrollService, RecordingInviteDelivery, runLegOf } from '../../src/core/payroll.js';
-import { SimulatedLedger, SimulatedProofSystem } from '../../src/core/ledger.js';
+import { SimulatedLedger } from '../../src/core/ledger.js';
 import { sealHandover } from '../../src/core/invite-handover.js';
 import { currentPayoutSeed } from '../../src/midnight/run-keys.js';
 import { openNonceSecrets, recordsKeypairFrom } from '../../src/midnight/company-nonce-secret.js';
@@ -881,7 +881,7 @@ describe.skipIf(!KEYS_ON_DISK)('A PRIVATE PAYMENT OUT OF A COMPANY VAULT, FROM T
     const holdings = { held: async () => ({ of: 'held' as const, amount: 1n << 100n }), fits: async () => ({ of: 'fits' as const }) };
     const accounts = new AccountService(store, new SimulatedLedger(MidnightCommitments), MidnightCommitments, registry, holdings as never);
     const invites = new RecordingInviteDelivery();
-    const payroll = new PayrollService(store, accounts, new SimulatedProofSystem(), registry, NET, invites);
+    const payroll = new PayrollService(store, accounts, registry, NET, invites);
     store.putUser({
       id: 'usr_founder', email: 'founder@acme.example', name: 'founder', keyBundle: null,
       keyBundleVersion: 0, identityPublicKey: null, walletKey: null, createdAt: '2026-09-25T00:00:00.000Z',

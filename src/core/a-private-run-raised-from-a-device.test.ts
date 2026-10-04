@@ -14,7 +14,7 @@ import { join } from 'node:path';
 
 import { AccountService } from './account.js';
 import { PayrollService } from './payroll.js';
-import { SimulatedLedger, SimulatedProofSystem } from './ledger.js';
+import { SimulatedLedger } from './ledger.js';
 import { MidnightCommitments } from '../midnight/commitments.js';
 import { runMaterialFor } from '../midnight/run-material.js';
 import { vaultDetails } from '../testing/vault-details.js';
@@ -58,7 +58,7 @@ async function aCompany(publicHeld = 0n, opts: { alsoEur?: true } = {}) {
   const registry = registryWithTestPrivateForms();
   const { reader, asked } = theServiceReader(publicHeld);
   const accounts = new AccountService(store, ledger, MidnightCommitments, registry, reader);
-  const payroll = new PayrollService(store, accounts, new SimulatedProofSystem(), registry);
+  const payroll = new PayrollService(store, accounts, registry);
   const created = await accounts.create('Northwind Ltd', [{ name: 'Ada', role: 'admin' }], 1, undefined, drawCompanyLabel());
   const { viewingKey } = created;
   for (let i = 0; i < 3; i++) {
