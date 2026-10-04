@@ -65,6 +65,8 @@ const press = async (o: {
     vault: VAULT, onChain: true, heldByCommittee: true, why: null, notes: [], everCreated: [],
     committee: { committee, threshold: 2 } as never,
     authority: { committee, threshold: 2, counter: '1', shape: 'committee' },
+    /* The deploy the vault was born from; the stand-in builder below reads it as born held. */
+    deployed: 'D',
   };
   const stores = new Map<WireRecord, MemorySealedPoolStore>();
   const records = (r: WireRecord) => stores.get(r) ?? stores.set(r, new MemorySealedPoolStore()).get(r)!;
@@ -105,13 +107,15 @@ const press = async (o: {
       },
       ...(i.secret === undefined ? {} : { run: { root: 'r', payees: '0', asset: '00'.repeat(32), copies: o.copies(await filedSecret()) } as never }),
     }),
+    vaultAsDeployed: async () => ({ refusal: null }),
     governedCall: async () => { asked.push('asked to raise or approve'); throw new Error('stop here'); },
     setNonceSecret: async () => { asked.push('built the set'); throw new Error('stop here'); },
   } as unknown as VaultBuilderClient;
   const result = await createCompanyVault({
     ...pacing, account: ACCOUNT, service, builder,
     onChain: async (v: string) => ({
-      holders: { committee: [], threshold: 1, seats: [], approvals: 1, adoptedVaults: [v] },
+      /* The account held by the company's committee, which the vault was born held by. */
+      holders: { committee, threshold: 2, seats: [], approvals: 1, adoptedVaults: [v] },
     }),
     keys: { put: async () => {}, get: async () => null, forget: async () => {} },
     me, myRecordsKey: ada.recordsKey as never, records,

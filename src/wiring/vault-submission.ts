@@ -42,8 +42,8 @@
 import type { AuthorityRead, OnChainAuthority } from '../midnight/ledger.js';
 import { compareAuthority } from '../midnight/ledger.js';
 import type { Committee, CommitteeKey } from '../midnight/vault-committee.js';
-import { sameCommittee } from '../midnight/vault-committee.js';
-import { circuitsRefusal, type VaultStartingLedger } from '../midnight/vault-circuits.js';
+import { sameCommittee, whyOneKeyCouldActAlone } from '../midnight/vault-committee.js';
+import { circuitsRefusal, startsHoldingMoney, vaultBornHeldRefusal, type VaultBornHeldExpectations } from '../midnight/vault-circuits.js';
 
 export { circuitsRefusal, startingLedgerFrom, type VaultStartingLedger } from '../midnight/vault-circuits.js';
 
@@ -98,17 +98,17 @@ const theOnlyIntent = (tx: unknown, what: string): { intent: IntentShape } | { r
 
 /* ------------------------------------------------------------ 1. the deploy */
 
-export interface VaultDeployExpectations {
-  /** This company's account contract address. */
-  readonly account: string;
-  /** Every circuit's verifying key as this build compiled it, by circuit name. */
-  readonly verifierKeys: ReadonlyMap<string, Uint8Array>;
-  /** What a vault's state holds, read through the vault's own compiled ledger. Throws for a state that is not a vault's. */
-  readonly startingLedgerOf: (initialState: unknown) => VaultStartingLedger;
-}
+/** What the deploy of a vault born held must be: the company's account, the committee holding the company's rules, this build's circuits. */
+export type VaultDeployExpectations = VaultBornHeldExpectations;
 
 export type DeployVerdict = { readonly vault: string } | { readonly refusal: string };
 
+/**
+ * **A NEW VAULT, READ BEFORE THE COMPANY PAYS TO SEND IT**: one deploy, moving
+ * nothing, of a vault born held by the company's committee
+ * (`vaultBornHeldRefusal`, the one reading a signer's device makes of the same
+ * deploy before the vault is adopted).
+ */
 export function readVaultDeploy(tx: unknown, expect: VaultDeployExpectations): DeployVerdict {
   const what = 'a new vault for this company';
   const only = theOnlyIntent(tx, what);
@@ -119,61 +119,116 @@ export function readVaultDeploy(tx: unknown, expect: VaultDeployExpectations): D
   if (deploy.initialState === undefined || deploy.address === undefined || deploy.entryPoint !== undefined) {
     return { refusal: `this is not ${what}: it does something other than deploy a contract. Nothing was sent.` };
   }
+  const refusal = vaultBornHeldRefusal(deploy.initialState, expect, what);
+  return refusal === null ? { vault: bare(deploy.address) } : { refusal };
+}
+
+/* ------------------------------------------------ 1a. a company's account, deployed from its founding signer's browser */
+
+export interface AccountDeployExpectations {
+  /** The founding signer's committee key, as recorded when the company was created, before anything was sent. */
+  readonly foundingKey: CommitteeKey;
+  /** The first step's circuits and their verifying keys, as this build compiled them. */
+  readonly verifierKeys: ReadonlyMap<string, Uint8Array>;
+  readonly circuits: readonly string[];
+  /**
+   * The whole state this service builds itself from what it recorded - the
+   * constructor run over the founding signer's seat and the company's label,
+   * this build's first circuits and the founding signer's key - serialized.
+   */
+  readonly expectedState: Uint8Array;
+}
+
+/**
+ * **A COMPANY'S ACCOUNT, DEPLOYED BY ITS FOUNDING SIGNER'S DEVICE, AS THIS
+ * SERVICE READS IT BEFORE IT PAYS.** One deploy and nothing else; held by the
+ * founding signer's recorded key alone, at a threshold of one, never changed;
+ * running exactly this build's first circuits; starting from exactly the state
+ * the constructor makes from what this service recorded, compared byte for
+ * byte, so no seat, proposal or field the roster does not show is written into
+ * the account for good.
+ */
+export function readAccountDeploy(tx: unknown, expect: AccountDeployExpectations): DeployVerdict {
+  const what = 'this company\'s account, as its founding signer created it';
+  const only = theOnlyIntent(tx, what);
+  if ('refusal' in only) return only;
+  const deploy = (only.intent.actions as unknown[])[0] as { address?: unknown; initialState?: unknown; entryPoint?: unknown };
+  if (deploy.initialState === undefined || deploy.address === undefined || deploy.entryPoint !== undefined) {
+    return { refusal: `this is not ${what}: it does something other than deploy a contract. Nothing was sent.` };
+  }
   const state = deploy.initialState as {
-    operations?: () => unknown[];
-    operation?: (name: string) => { verifierKey?: Uint8Array } | undefined;
     maintenanceAuthority?: { committee?: unknown[]; threshold?: unknown; counter?: unknown };
-    balance?: Map<unknown, unknown>;
+    serialize?: () => Uint8Array;
   };
   const authority = state.maintenanceAuthority;
-  if (!authority || !Array.isArray(authority.committee) || authority.committee.length !== 1
-    || authority.threshold !== 1 || authority.counter !== 0n) {
+  const keys = Array.isArray(authority?.committee) ? (authority!.committee as CommitteeKey[]) : null;
+  if (keys === null || typeof authority?.threshold !== 'number' || authority.counter !== 0n
+    || !sameCommittee(
+      { committee: keys.map((k) => ({ tag: String(k.tag), value: String(k.value).toLowerCase() })), threshold: authority.threshold },
+      { committee: [{ tag: expect.foundingKey.tag, value: expect.foundingKey.value.toLowerCase() }], threshold: 1 })) {
     return {
-      refusal: `this is not ${what}: a vault is deployed with one temporary key, which the device hands to `
-        + 'the company\'s committee straight after, and this one carries another authority. Nothing was sent.',
+      refusal: `this is not ${what}: a company's account is created held by its founding signer's own key alone, at a `
+        + 'threshold of one and never changed, and this one carries another authority. Nothing was sent.',
     };
   }
-  if (state.balance instanceof Map && state.balance.size > 0) {
-    return { refusal: `this is not ${what}: it would start holding money. Nothing was sent.` };
-  }
-  const circuits = circuitsRefusal(state, expect.verifierKeys, `this is not ${what}`);
+  const money = startsHoldingMoney(state, `this is not ${what}`);
+  if (money !== null) return { refusal: money };
+  const circuits = circuitsRefusal(state, expect.verifierKeys, `this is not ${what}`, expect.circuits, 'the account\'s first step\'s');
   if (circuits !== null) return { refusal: circuits };
-  let start: VaultStartingLedger;
+  let bytes: Uint8Array;
   try {
-    start = expect.startingLedgerOf(state);
+    bytes = state.serialize!();
   } catch {
-    return { refusal: `this is not ${what}: its state is not a vault's. Nothing was sent.` };
+    return { refusal: `this is not ${what}: its state cannot be read. Nothing was sent.` };
   }
-  const pinned = bare(start.account);
-  if (!/^[0-9a-f]{64}$/u.test(pinned)) {
-    return { refusal: `this is not ${what}: its state is not a vault's. Nothing was sent.` };
-  }
-  if (pinned !== bare(expect.account)) {
+  if (bytes.length !== expect.expectedState.length || bytes.some((b, i) => b !== expect.expectedState[i])) {
     return {
-      refusal: `this is not ${what}: it is pinned to a different company's account, so this company could `
-        + 'never pay out of it. Nothing was sent.',
-    };
-  }
-  if (start.notes !== 0n || start.unshieldedTokens !== 0n || start.payments !== 0n) {
-    return {
-      refusal: `this is not ${what}: it starts with records a new vault does not have - notes, public tokens `
-        + 'or payments already written - so its pool could never match it. Nothing was sent.',
-    };
-  }
-  /*
-   * A vault takes money only once it has a secret, and it gets one only from a
-   * run the account approved. A deploy that wrote a commitment, a sealed copy, a
-   * split or a reserved entry into its own starting state would skip that.
-   */
-  if (!/^0{64}$/u.test(start.nonceCommitment) || start.splitJournal !== 0n || start.secretCopies !== 0n
-    || start.reserved !== 0n) {
-    return {
-      refusal: `this is not ${what}: it starts with a secret, a sealed copy, a split or a reserved entry already `
-        + 'written, which only the company\'s approved runs may write, so it could take money nobody approved. '
-        + 'Nothing was sent.',
+      refusal: `this is not ${what}: it starts from a state other than the one the account's constructor makes from `
+        + 'the founding signer\'s seat and the company\'s label, so it would carry something nobody approved. Nothing was sent.',
     };
   }
   return { vault: bare(deploy.address) };
+}
+
+/**
+ * **THE SECOND STEP OF A COMPANY'S CREATION, AS THIS SERVICE READS IT BEFORE
+ * IT PAYS.** One maintenance update and nothing else, to this company's
+ * account, against counter 0, that is exactly the insert this service builds
+ * itself from this build's keys - compared by the bytes a signer signs - and
+ * signed once, at seat 0, by the founding signer's recorded key.
+ */
+export function refusalForCreationInsert(
+  tx: unknown,
+  expect: {
+    readonly account: string;
+    readonly foundingKey: CommitteeKey;
+    /** What the signer signs, of the insert this service builds itself. */
+    readonly expectedDataToSign: Uint8Array;
+    readonly verify: (key: CommitteeKey, data: Uint8Array, signature: { tag: string; value: string }) => boolean;
+  },
+): string | null {
+  const what = 'the second step of this company\'s account\'s creation';
+  const only = theOnlyIntent(tx, what);
+  if ('refusal' in only) return only.refusal;
+  const update = (only.intent.actions as unknown[])[0] as {
+    address?: unknown; counter?: unknown; signatures?: unknown; entryPoint?: unknown; dataToSign?: unknown; updates?: unknown;
+  };
+  if (update.entryPoint !== undefined || !Array.isArray(update.updates) || update.address === undefined) {
+    return `this is not ${what}: it does something other than change the account's circuits. Nothing was sent.`;
+  }
+  if (bare(update.address) !== bare(expect.account)) return `this is not ${what}: it changes a different contract. Nothing was sent.`;
+  if (update.counter !== 0n) return `this is not ${what}: it is built against a counter other than the account's first. Nothing was sent.`;
+  const data = update.dataToSign;
+  if (!(data instanceof Uint8Array) || data.length !== expect.expectedDataToSign.length
+    || data.some((b, i) => b !== expect.expectedDataToSign[i])) {
+    return `this is not ${what}: it inserts something other than exactly this build's remaining circuits. Nothing was sent.`;
+  }
+  const signatures = update.signatures;
+  const one = Array.isArray(signatures) && signatures.length === 1 ? signatures[0] as [unknown, { tag: string; value: string }] : null;
+  if (one === null || one[0] !== 0n || !expect.verify(expect.foundingKey, data, one[1])) {
+    return `this is not ${what}: it is not signed once by the founding signer's own key. Nothing was sent.`;
+  }
+  return null;
 }
 
 /* ---------------------------------------------------------- 2. the handover */
@@ -243,6 +298,8 @@ export function refusalForHandover(
     return `this is not ${what}: the keys or the threshold it installs are not this company's committee. `
       + 'Nothing was sent.';
   }
+  const alone = whyOneKeyCouldActAlone(expect.to);
+  if (alone !== null) return `${noun} is not handed over: ${alone}. Nothing was sent.`;
   if (authority.counter !== expect.onChain.counter + 1n) {
     return `this is not ${what}: the authority it installs carries the wrong counter. Nothing was sent.`;
   }
@@ -260,14 +317,17 @@ export function refusalForHandover(
  * transaction, whoever assembled it: one maintenance update and nothing else,
  * replacing the whole authority with exactly the company's committee, against
  * the counter the chain holds now, carrying at least as many signatures as the
- * committee on chain requires. A contract still held by the key it was created
- * with is not changed this way; that is its handover.
+ * committee on chain requires. Only a contract this service's record holds as
+ * born held is changed this way: its first change, when a one-signer company
+ * seats its second signer, is the same change as every later one.
  */
 export function refusalForCommitteeChange(
   tx: unknown,
   expect: {
     readonly address: string; readonly to: Committee; readonly onChain: OnChainAuthority;
     readonly contract: 'vault' | 'account';
+    /** Whether this service's record holds the contract as born held by the company's committee. */
+    readonly bornHeld: boolean;
   },
 ): string | null {
   const noun = expect.contract === 'account' ? 'the company\'s account' : 'this vault';
@@ -284,9 +344,12 @@ export function refusalForCommitteeChange(
   if (bare(update.address) !== bare(expect.address)) {
     return `this is not ${what}: it changes a different contract. Nothing was sent.`;
   }
-  if (expect.onChain.shape === 'one-key' && expect.onChain.counter === 0n) {
-    return `${noun} is still held by the key it was created with, so it is handed to the committee first. Nothing was sent.`;
+  if (!expect.bornHeld) {
+    return `${noun} was not created here held by the company's committee, so a change to its committee is not paid `
+      + 'for: it would not make the contract the company\'s. Nothing was sent.';
   }
+  const alone = whyOneKeyCouldActAlone(expect.to);
+  if (alone !== null) return `this change is not sent: ${alone}. Nothing was sent.`;
   if (update.counter !== expect.onChain.counter) {
     return `this change was built against counter ${String(update.counter)} and ${noun} is at `
       + `${expect.onChain.counter}, so the chain would refuse it after charging the fee. Nothing was sent; `
@@ -942,16 +1005,21 @@ export interface FundingFacts {
   /** The verifying keys of every maintenance key the door's own machine keeps. */
   readonly heldHere: readonly CommitteeKey[];
   /**
-   * **WHAT THE CHAIN'S OWN HISTORY OF THE VAULT SAYS ABOUT EVERY CHANGE TO ITS
-   * RULES**, read by the door only when the vault has been changed more than
-   * once: `null` when that history vouches for every change
-   * (`whyTheHistoryDoesNotVouch`), a sentence when it does not, and absent when
-   * the door did not read it - and then a vault changed more than once is
-   * refused, exactly as before any change after the handover could be made.
+   * **WHETHER THIS SERVICE'S OWN RECORD HOLDS EACH CONTRACT AS BORN HELD**: its
+   * deploy read, before this service paid for it, by the reader for its kind,
+   * and found holding exactly the company's committee at counter 0, running
+   * this build's circuits and starting from the constructor's own state. From
+   * that first transaction on, every change to its rules needed the
+   * committee's own signatures, so nothing about its history is read: that one
+   * read is the whole of what vouches for it.
+   *
+   * `null` at a door that keeps no such record - an operator tool - and then
+   * nothing is funded, whoever the chain says holds it. It is never inferred
+   * from the chain: a stranger can deploy a contract pinned to the company's
+   * account and held by keys of their own, and only the record tells the two
+   * apart.
    */
-  readonly vaultHistory?: string | null;
-  /** The same, of the account the vault pays out on. */
-  readonly accountHistory?: string | null;
+  readonly bornHeld: { readonly vault: boolean; readonly account: boolean } | null;
 }
 
 /** Why no money goes in, and what kind of thing is in the way. */
@@ -1019,117 +1087,30 @@ export const committeeHoldsIt = (
       + 'chain answers.';
   }
   return `${refusing}: ${what} are not held by the company's committee on the chain. ${verdict.why} `
-    + `If ${whose} was created here, finish handing it to the committee first. Nothing was sent.`;
+    + `If ${whose} was created here and the company's signers or threshold have changed since, its committee is `
+    + 'changed to match in Settings, signed by the signers who hold it now. Nothing was sent.';
 };
 
 /**
- * **CHANGED EXACTLY ONCE, WHICH IS THE HANDOVER - OR MORE OFTEN, WITH THE
- * CHAIN'S OWN HISTORY VOUCHING FOR EVERY CHANGE.** A contract whose committee
- * has changed since its handover has been changed more than once, and that is
- * the ordinary life of a company whose signers come and go. It is vouched for
- * only by its history, read off the chain (`whyTheHistoryDoesNotVouch`); a door
- * that did not read the history refuses it.
+ * **BORN HELD BY THE COMPANY'S COMMITTEE, AS THIS SERVICE'S OWN RECORD SAYS.**
+ * One rule for a vault and for the account. What it closes: a key that held a
+ * contract's rules before its committee did could have swapped a circuit, used
+ * it to rewrite what the contract holds, put the circuit back and installed the
+ * committee itself, and afterwards the chain would show the right keys and this
+ * build's circuits. A contract born held has had no such key, and the record is
+ * the only thing that says a contract was born held.
  */
-const changedOnceRefusal = (
-  read: AuthorityRead, what: string, refusing: string, history?: string | null,
+const bornHeldRefusal = (
+  inTheRecord: boolean | null, what: string, refusing: string,
 ): string | null => {
-  if (read.state === 'read' && read.authority.counter === 1n) return null;
-  if (read.state === 'read' && read.authority.counter > 1n && history === null) return null;
-  const changes = read.state === 'read' ? String(read.authority.counter) : 'an unknown number of';
-  if (read.state === 'read' && read.authority.counter > 1n) {
-    return history === undefined
-      ? `${refusing}: ${what} have been changed ${changes} times, and this service could not read the chain's record of `
-        + 'those changes. Nothing was sent. Contact support.'
-      : `${refusing}: ${what} have been changed ${changes} times, and the chain's record does not show that every change `
-        + `was made safely. Nothing was sent. Contact support and quote this: ${history}.`;
-  }
-  return `${refusing}: ${what} have been changed ${changes} times, and one handed straight to its committee has `
-    + 'been changed once, so what it accepts cannot be vouched for. Nothing was sent.';
+  if (inTheRecord === true) return null;
+  return inTheRecord === null
+    ? `${refusing}: this tool keeps no record of how ${what} were created, and money goes only into a vault and an `
+      + 'account this service read at their creation as held by the company\'s committee. Nothing was sent.'
+    : `${refusing}: ${what} were not read by this service at their creation as held by the company's committee `
+      + 'from their first transaction, so what they accepted before the committee held them cannot be vouched for. '
+      + 'Nothing was sent.';
 };
-
-/** One thing the chain did to a contract, as its history lists it, oldest first. */
-export interface ContractHistoryStep {
-  readonly kind: 'deploy' | 'call' | 'update';
-  /** The transaction that did it. */
-  readonly transaction: string;
-  /** Who held the contract's rules in the state this step left. */
-  readonly authority: AuthorityRead;
-  /** The reading of that state's circuits against this build's: `null` when they are this build's. */
-  readonly circuits: string | null;
-}
-
-/**
- * **WHETHER A CONTRACT'S HISTORY ON THE CHAIN VOUCHES FOR EVERY CHANGE TO ITS
- * RULES**, or the sentence saying why it does not.
- *
- * What changing a contract only once was protecting against: a key that held
- * the rules could replace a circuit, use it to rewrite what the contract holds,
- * put the circuit back and hand the rules on, and afterwards the chain would
- * show the right keys and this build's circuits. So, read off every state the
- * contract has been in:
- *
- *   1. it was created held by one key and never changed;
- *   2. every change after that moved its counter by exactly one, in order, up to
- *      the counter it holds now, so no change is missing from the history;
- *   3. the first change took the key it was created with off its rules, so that
- *      key made one change and let go;
- *   4. no transaction that changed its rules did anything else to it, so no
- *      circuit was called between two changes inside one transaction;
- *   5. every state a change left runs this build's circuits, so no replaced
- *      circuit was ever in force when a call could reach it.
- *
- * **HOW THE INDEXER SERVES A HISTORY, WHICH THIS IS WRITTEN AGAINST.** Every
- * change a transaction asked for is listed, whether or not it applied, and each
- * step carries the contract's state as its block left it, not as that one step
- * left it. So a change listed with the counter it found is one that did not
- * apply, and is passed over; and two changes applied in one block show as one
- * step whose counter moved by two, which this refuses, because what the
- * contract held between them cannot be read. A call's state says nothing about
- * the order within its block, so only the changes are counted.
- *
- * A history that cannot be read in full, or is in a shape this does not
- * recognise, does not vouch.
- */
-export function whyTheHistoryDoesNotVouch(steps: readonly ContractHistoryStep[], now: AuthorityRead): string | null {
-  if (now.state !== 'read') return `the chain could not be asked who holds it now (${now.why})`;
-  if (steps.length === 0 || steps[0]!.kind !== 'deploy') return 'its history does not begin with it being created';
-  if (steps.filter((s) => s.kind === 'deploy').length !== 1) return 'its history shows it created more than once';
-  const created = steps[0]!.authority;
-  if (created.state !== 'read') return `the state it was created with cannot be read (${created.why})`;
-  if (created.authority.shape !== 'one-key' || created.authority.counter !== 0n) {
-    return 'it was not created held by one key and never changed';
-  }
-  if (steps[0]!.circuits !== null) return `it was created with circuits other than this build's: ${steps[0]!.circuits}`;
-  let counter = 0n;
-  let first: Extract<AuthorityRead, { state: 'read' }> | undefined;
-  for (const u of steps.filter((s) => s.kind === 'update')) {
-    const change = counter + 1n;
-    if (u.authority.state !== 'read') return `the state change ${change} left cannot be read (${u.authority.why})`;
-    if (u.circuits !== null) return `change ${change} left it running circuits other than this build's: ${u.circuits}`;
-    if (steps.filter((s) => s.transaction.toLowerCase() === u.transaction.toLowerCase()).length !== 1) {
-      return `the transaction that made change ${change} also did something else to it`;
-    }
-    const at = u.authority.authority.counter;
-    /* A change the chain did not apply leaves the counter where it found it. */
-    if (at === counter) continue;
-    if (at !== change) {
-      return `its history goes from ${counter} change(s) to ${at} in one step, so a change is missing from the history `
-        + 'or two were made at once';
-    }
-    counter = at;
-    first ??= u.authority;
-  }
-  if (counter !== now.authority.counter) {
-    return `its history shows ${counter} change(s) and the chain says it has been changed `
-      + `${now.authority.counter} times, so the history is not complete`;
-  }
-  if (first === undefined) return 'its history shows no change at all';
-  const createdWith = new Set(created.authority.committee.map((k) => `${k.tag.toLowerCase()}:${k.value.toLowerCase()}`));
-  if (first.authority.committee.some((k) => createdWith.has(`${k.tag.toLowerCase()}:${k.value.toLowerCase()}`))) {
-    return 'its first change left the key it was created with on its rules, so that key could have changed it again';
-  }
-  return null;
-}
 
 /**
  * **THE ONE ANSWER TO WHETHER MONEY MAY GO INTO A VAULT, AND EVERY DOOR ASKS
@@ -1144,25 +1125,23 @@ export function whyTheHistoryDoesNotVouch(steps: readonly ContractHistoryStep[],
  * screen. The account is what every vault pays out on, so every door now reads
  * it.
  *
- * **A VAULT IS FUNDED ONLY WHEN THE CHAIN SHOWS ALL OF THIS AT ONCE**, because
- * a key that held the rules before the handover could have swapped a circuit,
- * used it to rewrite the vault's ledger, put the circuit back and installed the
- * committee itself, and the chain would then show the committee and this
- * build's circuits:
+ * **A VAULT IS FUNDED ONLY WHEN ALL OF THIS IS TRUE AT ONCE**, read from the
+ * chain except where it says the record:
  *
  *   1. the vault's rules are the company's committee, or, where no roster can
  *      be read, a committee of at least two keys none of which this machine
- *      holds;
- *   2. the vault's rules have been changed exactly once, or more often with
- *      the chain's own history vouching for every change;
+ *      holds; and never a committee any one of several keys could change alone;
+ *   2. this service's record holds the vault as born held: its deploy read
+ *      before it was paid for, holding the company's committee from its first
+ *      transaction, so every change since needed that committee's signatures;
  *   3. the vault runs this build's circuits, byte for byte;
  *   4. the vault is pinned to the company's own account;
  *   5. the vault is started: its account adopted it and approved a secret,
  *      and every signer's sealed copy of that secret is on the chain;
  *   6. all of 1 to 3 again, of that account.
  *
- * The order is the order a person can act on: who holds it, then how often it
- * changed, then what it runs, then which account it answers to, then the same
+ * The order is the order a person can act on: who holds it, then how it was
+ * created, then what it runs, then which account it answers to, then the same
  * of the account. A refusal names the first thing in the way and stops.
  */
 export function refusalToPutMoneyIn(facts: FundingFacts): FundingRefusal | null {
@@ -1195,9 +1174,12 @@ export function committeeHoldsTheVault(facts: FundingFacts): FundingRefusal | nu
    * not be asked is not resolved by a handover, so it is not that.
    */
   if (held !== null) return { why: held, heldByOthers: facts.vault.state === 'read' };
+  /* The structural question above already refuses one key in several; a roster is asked the same here. */
+  const alone = facts.committee === null ? null : whyOneKeyCouldActAlone(facts.committee);
+  if (alone !== null) return { why: `${facts.what}: ${alone}. Nothing was sent.`, heldByOthers: false };
 
-  const changed = changedOnceRefusal(facts.vault, vaultRules, facts.what, facts.vaultHistory);
-  if (changed !== null) return { why: changed, heldByOthers: false };
+  const born = bornHeldRefusal(facts.bornHeld === null ? null : facts.bornHeld.vault, vaultRules, facts.what);
+  if (born !== null) return { why: born, heldByOthers: false };
 
   if (facts.vaultCircuits !== null) return { why: facts.vaultCircuits, heldByOthers: false };
 
@@ -1257,8 +1239,8 @@ function andTheAccount(facts: FundingFacts): FundingRefusal | null {
       accountNotReady: kind,
     };
   }
-  const accountChanged = changedOnceRefusal(facts.account, accountRules, facts.what, facts.accountHistory);
-  if (accountChanged !== null) return { why: accountChanged, heldByOthers: false, accountNotReady: kind };
+  const accountBorn = bornHeldRefusal(facts.bornHeld === null ? null : facts.bornHeld.account, accountRules, facts.what);
+  if (accountBorn !== null) return { why: accountBorn, heldByOthers: false, accountNotReady: kind };
   if (facts.accountCircuits !== null) {
     return { why: facts.accountCircuits, heldByOthers: false, accountNotReady: kind };
   }

@@ -1737,7 +1737,7 @@ export interface PayrollRun {
 
 /**
  * **A VAULT CREATED FROM THIS COMPANY'S PAGE.** A record that it was deployed
- * here and what committee it was to be handed to - never a record of who holds
+ * here and what committee held it at its deploy - never a record of who holds
  * it now. That is read from the chain every time it is asked.
  */
 export interface CompanyVault {
@@ -1745,6 +1745,53 @@ export interface CompanyVault {
   vault: Hex;
   deployedAt: string;
   deployRef: string;
-  /** The committee the device said it would hand the vault to, at deploy time. */
+  /** The committee the vault's deploy carried, as this service's reader read it before paying for it. */
   intended: { committee: { tag: string; value: string }[]; threshold: number };
+  /**
+   * **SET ONLY BY THE ROUTE WHOSE READER READ THE DEPLOY AS BORN HELD**:
+   * holding exactly `intended` at counter 0 from its first transaction, this
+   * build's circuits, an empty starting state. A record without it is a vault
+   * created under a key outside the committee, and no money goes into it.
+   */
+  bornHeld?: true;
+  /**
+   * **THE VAULT'S DEPLOY, AS SENT**, base64: what its address was made from. A
+   * signer's device reads the vault as deployed from it before the vault is
+   * adopted or set up, and checks that it makes this address.
+   */
+  deploy?: string;
+}
+
+/**
+ * **WHAT A COMPANY'S ACCOUNT MUST BE CREATED FROM, RECORDED WHEN THE COMPANY IS,
+ * BEFORE ANY DEPLOY EXISTS**: the founding signer's committee key, as their
+ * wallet gave it when it drew the label, and the two values the account's
+ * constructor takes. The deploy the founding signer's device then builds is
+ * read against these, and against nothing it carries itself.
+ */
+export interface AccountOpeningRecord {
+  accountId: string;
+  foundingKey: { tag: string; value: string };
+  /** The founding signer's seat, as sixty-four lower-case hex characters. */
+  foundingLeaf: string;
+  companyLabel: string;
+}
+
+/**
+ * **A COMPANY ACCOUNT CREATED FROM ITS FOUNDING SIGNER'S BROWSER, AS IT WAS
+ * SENT.** Recorded before anything is sent and never written over, so a retry
+ * sends these same bytes and never a second account: a rebuilt deploy draws a
+ * new nonce, and with it a new address. Everything here is public once it lands.
+ */
+export interface AccountDeploy {
+  accountId: string;
+  /** The account's contract address: the hash of the deploy below. */
+  address: Hex;
+  /** The founding signer's committee key the deploy is held by, at threshold 1 and counter 0. */
+  foundingKey: { tag: string; value: string };
+  /** The deploy, proven, as base64. */
+  deploy: string;
+  /** The second step, the insert of the rest of the account's circuits, signed by that key, as base64. */
+  insert: string;
+  recordedAt: string;
 }

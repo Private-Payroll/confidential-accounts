@@ -68,6 +68,7 @@ import { openCompanyRecords, openVaultRecords, refuseVaultsTheOperatorToolsKeep 
 import { companyRecordsRoutes, MemoryCompanyRecordStore } from './company-records-route.js';
 import { MemorySealedPoolStore, type SealedPoolStore } from '../midnight/vault-pool.js';
 import type { CompanyRecordStore, WireRecord } from '../midnight/sealed-record-wire.js';
+import { accountCreationRoutes, serverCreationRefusal } from './account-creation.js';
 import { companyVaultRoutes, type VaultChain } from './company-vaults.js';
 import { directoryOf, seatDirectoryRoutes } from './seat-directory-route.js';
 import { filerSeatOf } from '../midnight/seat-directory.js';
@@ -75,7 +76,7 @@ import { readContractAuthority } from '../midnight/ledger.js';
 import { vaultArtefactPlaces, vaultArtefactRoutes } from './vault-artefacts.js';
 import { parameterSources, startProvingParameters } from './proving-parameters.js';
 import {
-  accountHandoverWith, accountTemporaryVerifyingKey, accountVerifierKeysIn, committeeChangeWith, vaultChainFromTheIndexer,
+  accountCreationExpectationsIn, accountHandoverWith, accountTemporaryVerifyingKey, accountVerifierKeysIn, committeeChangeWith, vaultChainFromTheIndexer,
   vaultVerifierKeysIn,
 } from './vault-chain.js';
 import { DEPLOYED_CIRCUITS } from '../midnight/deferral.js';
@@ -620,6 +621,21 @@ app.use(cors());
         approvals: status.threshold,
       };
     },
+  }));
+  /*
+   * A COMPANY'S ACCOUNT, deployed by its founding signer's device held by their own key, and paid for here: read
+   * against what was recorded when the company was made, recorded before it is sent, and finished by its second step.
+   */
+  const creationExpected = accountCreationExpectationsIn(process.cwd());
+  app.use(accountCreationRoutes({
+    signedIn: (req, res, next) => authed(req, res, next),
+    member: (req, res, next) => member(req, res, next),
+    store,
+    ledger,
+    contractState: (address) => theChain.contractState(address),
+    register: (accountId, address) => book.record(accountId, address),
+    readers: { proven: readProvenTransaction },
+    expected: creationExpected,
   }));
   app.use(companyVaultRoutes({
     signedIn: (req, res, next) => authed(req, res, next),
@@ -1226,7 +1242,26 @@ app.post('/api/accounts', authed, wrap(async (req, res) => {
      * company no wallet could open.
      */
     companyLabel: z.string(),
+    /*
+     * **THE FOUNDING SIGNER'S COMMITTEE KEY FOR THE COMPANY, AS THEIR WALLET
+     * GAVE IT WHEN IT DREW THE LABEL.** On a chain the account is deployed from
+     * their browser held by this key alone, and this service records it now,
+     * before any deploy exists, so the deploy is read against a key recorded
+     * first and never against one the deploy carries itself.
+     */
+    foundingKey: z.object({ tag: z.literal('schnorr'), value: z.string().regex(/^[0-9a-f]{64}$/u) }).strict().optional(),
   }).parse(req.body);
+  /*
+   * **ON A CHAIN THIS SERVICE CREATES NO COMPANY'S ACCOUNT.** It is deployed
+   * from the founding signer's browser, held by their own key; a creation that
+   * does not name that key is the old path, which deployed under a key this
+   * service held, and is refused by name.
+   */
+  const notHere = serverCreationRefusal(ledger.wiring, body.foundingKey);
+  if (notHere !== null) {
+    res.status(409).json(notHere);
+    return;
+  }
   /*
    * **NOTHING IS REFUSED HERE FOR BEING A SECOND COMPANY.** `C155`, `C131`,
    * `docs/scope-v1-data-model.md` D4: *"A person may create and belong to many
@@ -1252,7 +1287,17 @@ app.post('/api/accounts', authed, wrap(async (req, res) => {
     return;
   }
   try {
-    res.json(await accounts.create(body.name, signers, body.threshold, undefined, label));
+    const created = await accounts.create(body.name, signers, body.threshold, undefined, label);
+    if (body.foundingKey !== undefined) {
+      /* What the account must be deployed from, recorded before the founding signer's device builds the deploy. */
+      const leaf = created.account.signers[0]?.leafCommitment ?? null;
+      if (leaf === null || !store.recordAccountOpening({
+        accountId: created.account.id, foundingKey: body.foundingKey, foundingLeaf: String(leaf).toLowerCase(), companyLabel: label,
+      })) {
+        throw new Error('what this company\'s account must be created from could not be recorded, so it cannot be created.');
+      }
+    }
+    res.json(created);
   } catch (e) {
     /* **A LABEL ANOTHER COMPANY HAS IS REFUSED, AND NOTHING IS DEPLOYED FOR IT.** */
     if (e instanceof CompanyLabelTaken) {

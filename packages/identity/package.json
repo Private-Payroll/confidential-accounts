@@ -76,6 +76,14 @@
       "types": "./lib/profile/committee-sign.d.ts",
       "default": "./lib/profile/committee-sign.js"
     },
+    "./profile/contract-keys": {
+      "types": "./lib/profile/contract-keys.d.ts",
+      "default": "./lib/profile/contract-keys.js"
+    },
+    "./profile/creation-sign": {
+      "types": "./lib/profile/creation-sign.d.ts",
+      "default": "./lib/profile/creation-sign.js"
+    },
     "./profile/origin": {
       "types": "./lib/profile/origin.d.ts",
       "default": "./lib/profile/origin.js"

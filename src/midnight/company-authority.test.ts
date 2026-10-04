@@ -20,6 +20,7 @@ import { refusalForHandover, refusalToPutMoneyIn } from '../wiring/vault-submiss
  */
 const moneyIn = (
   accountRead: AuthorityRead, to: Committee, circuits: string | null, heldHere: CommitteeKey[] = [],
+  accountBornHeld = true,
 ): string | null => refusalToPutMoneyIn({
   label: 'v',
   what: 'no money goes in',
@@ -39,6 +40,7 @@ const moneyIn = (
   accountCircuits: circuits,
   committee: to,
   heldHere,
+  bornHeld: { vault: true, account: accountBornHeld },
 })?.why ?? null;
 
 
@@ -262,6 +264,8 @@ describe('A COMPANY ACCOUNT HANDED FROM THE TEMPORARY KEY TO ITS COMMITTEE, ON T
     const now = await readFrom(after, address);
     expect(now).toMatchObject({ state: 'read', authority: { shape: 'committee', threshold: 2, counter: 1n } });
     expect(moneyIn(now, committee, null)).toBeNull();
+    /* RED WHEN: an account handed over from another key, which the record does not hold as born held, is funded. */
+    expect(moneyIn(now, committee, null, [], false)).toMatch(/not read by this service at their creation as held by the company's committee/);
     expect(moneyIn(now, committee, 'its circuits are not this build\'s')).toBe('its circuits are not this build\'s');
     expect(authorityView('account', now, committee, new Map([[`schnorr:${vk(1).value}`, 'ada']]))).toMatchObject({
       heldByTheCompany: true, seatsOutsideTheCommittee: 0, changes: '1',

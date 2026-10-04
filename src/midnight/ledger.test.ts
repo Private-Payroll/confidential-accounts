@@ -2132,31 +2132,46 @@ describe('C334: MidnightLedger.open refuses an opening it cannot honour', () => 
      * AND WHERE IT GOT TO INSTEAD, NAMED — the same gate the positive control
      * below names. A bare `not.toMatch` would be satisfied by any other
      * refusal firing earlier, including one that happened to stop this for a
-     * different reason, and would then read as *the hole is closed*.
+     * different reason, and would then read as *the hole is closed*. It is
+     * the refusal that ends every creation on a chain: this service deploys no
+     * company's account, and that refusal comes after the three guards above.
      */
-    expect(why).toMatch(/single-key maintenance authority is accepted only as a RECORDED/);
+    expect(why).toMatch(/created only from its founding signer's browser, held by their own committee key/);
   });
 
-  it('refuses, before anything is deployed, an authority that could never sign the second step of the creation', async () => {
+  it('DEPLOYS NOTHING ON A CHAIN, WHATEVER AUTHORITY IT WAS GIVEN: A COMPANY\'S ACCOUNT IS CREATED IN ITS FOUNDING SIGNER\'S BROWSER', async () => {
     /*
-     * A company is created in two steps and the second is a maintenance update
-     * signed by the authority the deploy installed. An unmaintainable account, or
-     * one held by a committee whose keys this process does not hold, could be
-     * deployed and never finished: it could govern itself and pay nobody. RED WHEN
-     * the gate is dropped, or moved after the deploy: the call then asks this
-     * chain for its providers, which refuses at once, and the refusal read is not
-     * the gate's.
+     * On a chain a company's account is deployed from its founding signer's
+     * browser, held by their own committee key from its first transaction, and
+     * this service deploys none: an opening that passes the three guards above
+     * is refused by name, before any chain is asked for anything. RED WHEN the
+     * refusal is dropped or moved after the deploy: the call then asks this
+     * chain for its providers, which refuses at once, and the refusal read is
+     * not this one.
      */
-    for (const [authority, refusal] of [
-      [{ kind: 'unmaintainable' }, /can never take the second\. Nothing was deployed/],
-      [{ kind: 'committee', committee: [{ tag: 'schnorr', value: 'cd'.repeat(32) }], threshold: 1 },
-        /holds\s+none of their signing keys/],
+    for (const authority of [
+      { kind: 'unmaintainable' },
+      { kind: 'committee', committee: [{ tag: 'schnorr', value: 'cd'.repeat(32) }], threshold: 1 },
+      { kind: 'single-key', signingKey: { tag: 'schnorr', value: 'ff'.repeat(32) }, temporary: { fixedBy: 'a recorded state' } },
     ] as const) {
       const h = harness({ providersRefused: true }, { register: async () => {}, maintenanceAuthority: authority as never });
       const why = await h.ledger.open('acct', opening()).then(() => '', (e: Error) => e.message);
-      expect(why).toMatch(refusal);
+      expect(why, authority.kind).toMatch(/created only from its founding signer's browser, held by their own committee key/);
+      expect(why, authority.kind).toMatch(/Nothing was deployed and nothing was spent/);
       expect(why).not.toMatch(/submitPartialDeployTx was reached/);
     }
+  });
+
+  it('IN THE FOUNDING SIGNER\'S MODE, KEEPS ONLY THE SEALED FIRST VIEW AND ASKS NO CHAIN FOR ANYTHING', async () => {
+    /*
+     * The deployment the service runs on a chain: the account is deployed by
+     * its founding signer's device, so opening it here keeps the sealed state
+     * its first view opens with and sends nothing. RED WHEN this mode deploys,
+     * or asks the chain for its providers, or is refused like any other.
+     */
+    const h = harness({ providersRefused: true }, { register: async () => {}, fromTheFoundingSigner: true } as never);
+    const ref = await h.ledger.open('acct', opening());
+    expect(ref.ref).toBe('deployed from the founding signer\'s browser');
   });
 
   it('lets a well-formed opening past all three', async () => {
@@ -2181,9 +2196,10 @@ describe('C334: MidnightLedger.open refuses an opening it cannot honour', () => 
      * while every test it controls was unreachable. It now says which gate was
      * reached: `requireMaintenanceAuthority`, which `open` calls immediately
      * after the three (`ledger.ts:492`). A refusal from anywhere earlier fails
-     * this line, including the credentials one.
+     * this line, including the credentials one. On a chain the gate after the
+     * three is the one that refuses every creation this service would make.
      */
-    expect(why).toMatch(/single-key maintenance authority is accepted only as a RECORDED/);
+    expect(why).toMatch(/created only from its founding signer's browser, held by their own committee key/);
   });
 });
 
@@ -2412,23 +2428,6 @@ describe('T-324: a refused run leaves no salt behind, because nothing was staged
  * other half of the same subject and is recorded rather than quietly left.
  */
 describe('T-345: a committee the SDK could never sign with is refused at the account door', () => {
-  const opening = (over: Partial<AccountOpening> = {}): AccountOpening => ({
-    companyLabel: 'co_' + 'c5'.repeat(32) as AccountOpening['companyLabel'],
-    signerLeaves: ['aa'.repeat(32)],
-    threshold: 2,
-    assetBlinding: 'bb'.repeat(32),
-    sealedState: { keyEpoch: 1, sealed: { iv: '', tag: '', body: '' } },
-    ...over,
-  });
-
-  /* The type is reached THROUGH the constructor rather than imported, because
-   * an added import line at the top of this file used to move line numbers a
-   * derived record cited. That record is gone; this is left as it is. */
-  type Deployment = NonNullable<ConstructorParameters<typeof MidnightLedger>[6]>;
-  const withAuthority = (
-    maintenanceAuthority: Deployment['maintenanceAuthority'],
-  ): Deployment => ({ register: async () => {}, maintenanceAuthority });
-
   const KEY = { tag: 'schnorr', value: 'ff'.repeat(32) } as const;
 
   it('refuses an EMPTY committee by name, rather than deploying an unmaintainable contract quietly',
@@ -2438,16 +2437,17 @@ describe('T-345: a committee the SDK could never sign with is refused at the acc
      * The refusal exists so that the two are never the same keystroke: saying
      * *no maintenance, ever* has to be said, and `[]` is not saying it.
      */
-    const h = harness({}, withAuthority({ kind: 'committee', committee: [], threshold: 1 }));
-    await expect(h.ledger.open('acct', opening()))
-      .rejects.toThrow(/needs at least one verifying key/);
+    /* At the validator: on a chain `open` deploys nothing, so the account door no longer reaches it. */
+    const { requireMaintenanceAuthority } = await import('./partial-contract.js');
+    expect(() => requireMaintenanceAuthority({ kind: 'committee', committee: [], threshold: 1 }))
+      .toThrow(/needs at least one verifying key/);
   });
 
   it('refuses a threshold ABOVE the committee size, which is unmaintainable wearing a committee\'s clothes',
     async () => {
-    const h = harness({}, withAuthority({ kind: 'committee', committee: [KEY], threshold: 2 }));
-    await expect(h.ledger.open('acct', opening()))
-      .rejects.toThrow(/cannot have threshold/);
+    const { requireMaintenanceAuthority } = await import('./partial-contract.js');
+    expect(() => requireMaintenanceAuthority({ kind: 'committee', committee: [KEY], threshold: 2 }))
+      .toThrow(/cannot have threshold/);
   });
 
   it('refuses a threshold BELOW one, which is the same refusal reached from the other side',
@@ -2457,9 +2457,9 @@ describe('T-345: a committee the SDK could never sign with is refused at the acc
      * `> size`. A case for only the upper bound would stay green against a
      * mutation that dropped the lower one, which is `C286`'s shape.
      */
-    const h = harness({}, withAuthority({ kind: 'committee', committee: [KEY], threshold: 0 }));
-    await expect(h.ledger.open('acct', opening()))
-      .rejects.toThrow(/cannot have threshold/);
+    const { requireMaintenanceAuthority } = await import('./partial-contract.js');
+    expect(() => requireMaintenanceAuthority({ kind: 'committee', committee: [KEY], threshold: 0 }))
+      .toThrow(/cannot have threshold/);
   });
 
   /*
@@ -2473,8 +2473,8 @@ describe('T-345: a committee the SDK could never sign with is refused at the acc
    * committee passes the authority gate and carries on into
    * `submitPartialDeployTx`, against a harness that has no chain. That is a
    * real demonstration that the gate was passed, and it is not a test. The
-   * three refusals above still go through `open`, which is where `T-345` asks
-   * for them; only the control steps in one layer.
+   * three refusals above are taken at the validator too: on a chain `open`
+   * deploys nothing, so it no longer reaches the authority at all.
    *
    * **THE IMPORT IS DYNAMIC FOR THE LAPSED LINE-NUMBER REASON GIVEN BELOW**,
    * and needs no longer be. It resolves through this file's own `vi.doMock`,
@@ -3463,7 +3463,7 @@ describe.skipIf(!KEYS_ON_DISK)('S74/T-359: reading the verifier keys back, which
       new Map([['adopt', swapped]]));
     expect(c.verdict).toBe('disagree');
     expect(c.mismatched).toEqual(['adopt']);
-    expect(c.why).toMatch(/THIS IS WHAT `C353` LOOKS LIKE FROM OUTSIDE/);
+    expect(c.why).toMatch(/THIS IS WHAT A SWAPPED KEY LOOKS LIKE FROM OUTSIDE/);
     expect(c.fingerprints[0]!.name).toBe('adopt');
   });
 
@@ -3665,7 +3665,9 @@ describe('S74: the verifier-key half of the builder, which the first draft refus
       new Map([['adopt', bytes]]));
     expect(c.verdict).toBe('agree');
     expect(c.why).toMatch(/LATEST VERSION OF EACH/);
-    expect(c.why).toMatch(/ledger-v9\.d\.ts:742-745/);
+    /* The message names the reason, the only version the ledger exposes, and no longer cites a file that does not ship
+     * with the module it moved into. RED WHEN: the sentence stops saying it is the ledger that exposes only the latest. */
+    expect(c.why).toMatch(/the only version the ledger exposes/);
   });
 });
 

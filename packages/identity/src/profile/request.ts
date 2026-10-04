@@ -175,7 +175,7 @@ export const PROGRESS_SCHEMA = 'midnight-identity/wallet-progress/v1';
  * than inserted, so the sentence a refusal already produced does not change
  * shape for the three kinds that were there before it.
  */
-export const ASK_KINDS = ['disclosure', 'sign-in', 'unlock', 'join', 'keyring', 'balance', 'committee', 'records-key', 'holders'] as const;
+export const ASK_KINDS = ['disclosure', 'sign-in', 'unlock', 'join', 'keyring', 'balance', 'committee', 'records-key', 'holders', 'creation'] as const;
 export type AskKind = (typeof ASK_KINDS)[number];
 
 /** One thing an application is asking for. */
@@ -483,6 +483,40 @@ export interface RecordsKeyRequest extends Asking {
   readonly signingKey?: string;
 }
 
+/** One circuit's verifier key, as the second step of a company's creation inserts it. Base64 of the key's file. */
+export interface InsertedKeyOnTheWire {
+  readonly circuit: string;
+  readonly key: string;
+}
+
+/**
+ * ASKING THE FOUNDING SIGNER'S WALLET TO FINISH CREATING A COMPANY'S ACCOUNT,
+ * BEFORE ANYTHING IS SENT.
+ *
+ * A company's account is deployed in two transactions: the deploy, and one
+ * update that inserts the rest of its circuits. The deploy is held from its
+ * first transaction by this wallet's own committee key for the label it drew,
+ * so the update can be signed by that key alone, and by nothing else. **The
+ * wallet reads the unsent deploy itself** - who holds it, the label it carries,
+ * its address and the circuits it runs - **and builds the update itself** from
+ * the keys named here, each checked against this build's own; it signs that,
+ * and pins the address as the account carrying the label.
+ *
+ * **EVERYTHING HERE IS CLAIMED, AND NONE OF IT IS TAKEN ON TRUST.** The address
+ * must be the deploy's own; every key must be this build's.
+ */
+export interface CreationRequest extends Asking {
+  readonly kind: 'creation';
+  /** The label this wallet drew for the company. It selects the key that signs. */
+  readonly company: CompanyLabel;
+  /** The address of the account the deploy below creates. Claimed; worked out again from the deploy. */
+  readonly account: AccountAddress;
+  /** The deploy, unsent, as base64. */
+  readonly deploy: string;
+  /** The keys the second step inserts, one per circuit. */
+  readonly insert: readonly InsertedKeyOnTheWire[];
+}
+
 /**
  * ASKING THIS WALLET WHO HOLDS A COMPANY'S ACCOUNT NOW, AS IT READS THE CHAIN
  * ITSELF, AND NOTHING ELSE.
@@ -505,7 +539,7 @@ export interface HoldersRequest extends Asking {
 /** What an application may open this wallet with. */
 export type Ask =
   | DisclosureRequest | SignInRequest | UnlockRequest | JoinRequest | KeyringRequest | BalanceRequest | CommitteeRequest
-  | RecordsKeyRequest | HoldersRequest;
+  | RecordsKeyRequest | HoldersRequest | CreationRequest;
 
 /**
  * THE KINDS THAT CARRY A LIST OF THINGS ASKED FOR.
@@ -585,7 +619,13 @@ export type RequestFailure =
   | 'inbox-key-on-a-records-key'
   | 'records-key-fields-on-another-kind'
   /* A holders ask carries a label and an account, and nothing else. */
-  | 'more-than-holders';
+  | 'more-than-holders'
+  /* A request to finish creating a company's account: the deploy and the keys it names, the two things it may not
+   * carry, and its own fields arriving on another kind. */
+  | 'not-a-creation'
+  | 'attributes-on-a-creation'
+  | 'inbox-key-on-a-creation'
+  | 'creation-fields-on-another-kind';
 
 export class RequestError extends Error {
   readonly code: RequestFailure;
@@ -977,8 +1017,16 @@ function committeeChangeOf(body: Record<string, unknown>, asking: Asking): Commi
     if (typeof address !== 'string' || !CONTRACT_ADDRESS.test(address)) {
       throw notACommitteeChange('one of the contracts is not named by a sixty-four character address');
     }
-    if (typeof counter !== 'string' || !COUNTER.test(counter) || BigInt(counter) < 1n) {
-      throw notACommitteeChange('one of the contracts names no counter a handed-over contract can be at');
+    /*
+     * A vault is born held by the company's committee and sits at counter 0
+     * until its first committee change, so 0 is a counter it can be at. The
+     * account is at 1 once the second step of its creation has landed: an
+     * account at 0 is a creation not finished, which nothing here changes.
+     */
+    if (typeof counter !== 'string' || !COUNTER.test(counter) || BigInt(counter) < (contract === 'vault' ? 0n : 1n)) {
+      throw notACommitteeChange(contract === 'vault'
+        ? 'one of the vaults names no counter it can be at'
+        : 'the company\'s account is not finished being created, so who holds it cannot be changed yet');
     }
     const folded = address.toLowerCase();
     if (seen.has(folded)) throw notACommitteeChange('it names one contract twice');
@@ -1057,6 +1105,56 @@ function recordsKeyAskOf(body: Record<string, unknown>, asking: Asking): Records
       `${asks} and names one of its vaults by something that is not a vault's address on the chain. ${nothing}`);
   }
   return Object.freeze({ ...asking, kind: 'records-key' as const, company, account, seat, vault, ...withKey });
+}
+
+/** The most keys one creation inserts, and the most characters one of them may take. */
+const MAX_INSERTED = 64;
+const MAX_KEY = 16_384;
+const CIRCUIT = /^[A-Za-z][A-Za-z0-9_]{0,63}$/u;
+
+/** A creation, read whole: a label, the account the deploy creates, the deploy and the keys to insert. */
+function creationAskOf(body: Record<string, unknown>, asking: Asking): CreationRequest {
+  const asks = 'this asks your wallet to finish creating a company\'s account';
+  const nothing = 'Nothing has been shown to them and nothing has been signed.';
+  if ('wants' in body) {
+    throw new RequestError(
+      'attributes-on-a-creation',
+      `${asks}, and it also carries a list of details to hand over. Those are two different powers and this wallet will `
+      + `not approve them behind one press, so the whole request is refused. ${nothing}`);
+  }
+  if ('inboxPublicKey' in body) {
+    throw new RequestError(
+      'inbox-key-on-a-creation',
+      `${asks}, and it also names a key to seal an answer to. The answer is handed back to the page that asked, so the `
+      + `key is refused rather than ignored. ${nothing}`);
+  }
+  const company = labelIn(body['company'], asks, nothing);
+  const account = accountIn(body['account'], asks, nothing);
+  const notOne = (why: string) => new RequestError('not-a-creation', `${asks} and ${why}. ${nothing}`);
+  const deploy = body['deploy'];
+  if (typeof deploy !== 'string' || deploy.length === 0 || deploy.length > MAX_TRANSACTION || deploy.length % 4 !== 0
+    || !TRANSACTION.test(deploy)) {
+    throw notOne(`what it sent as the deploy is not one this wallet can read: it must be base64, and no longer than ${MAX_TRANSACTION} characters`);
+  }
+  const insert = body['insert'];
+  if (!Array.isArray(insert) || insert.length === 0 || insert.length > MAX_INSERTED) {
+    throw notOne(`it names no key to insert, or more than ${MAX_INSERTED}`);
+  }
+  const seen = new Set<string>();
+  const keys = insert.map((entry: unknown) => {
+    if (typeof entry !== 'object' || entry === null) throw notOne('one of the keys to insert is not readable');
+    const e = entry as Record<string, unknown>;
+    const circuit = e['circuit'];
+    const key = e['key'];
+    if (typeof circuit !== 'string' || !CIRCUIT.test(circuit)) throw notOne('one of the keys to insert names no circuit');
+    if (seen.has(circuit)) throw notOne('it names one circuit twice');
+    seen.add(circuit);
+    if (typeof key !== 'string' || key.length === 0 || key.length > MAX_KEY || key.length % 4 !== 0 || !TRANSACTION.test(key)) {
+      throw notOne(`the key for ${circuit} is not base64 of a key file`);
+    }
+    return Object.freeze({ circuit, key });
+  });
+  return Object.freeze({ ...asking, kind: 'creation' as const, company, account, deploy, insert: Object.freeze(keys) });
 }
 
 /** Every field a holders ask may carry: the ones every ask carries, then its own three. */
@@ -1166,7 +1264,19 @@ export function parseAsk(raw: unknown, observedOrigin: string, now: number): Ask
       + 'to sign your records key for your seat, so they are refused rather than ignored. Nothing has been shown to them.');
   }
 
+  /*
+   * **A DEPLOY AND THE KEYS AN INSERT ADDS BELONG TO A CREATION AND TO NOTHING
+   * ELSE**, refused by presence on every other kind for the keyring fields' reason.
+   */
+  if (kind !== 'creation' && ('deploy' in body || 'insert' in body)) {
+    throw new RequestError(
+      'creation-fields-on-another-kind',
+      `this is a '${kind}' and it carries a deploy or keys to insert. Those belong only to a request to finish creating `
+      + 'a company\'s account, so they are refused rather than ignored. Nothing has been shown to them.');
+  }
+
   if (kind === 'committee') return committeeChangeOf(body, asking);
+  if (kind === 'creation') return creationAskOf(body, asking);
   if (kind === 'records-key') return recordsKeyAskOf(body, asking);
   if (kind === 'holders') return holdersAskOf(body, asking);
 

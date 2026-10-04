@@ -1,5 +1,6 @@
 import { fileURLToPath } from 'node:url';
 import { defineConfig } from 'vitest/config';
+import { SERVED_TO_THE_WALLET } from './apps/wallet/this-builds-account-keys.js';
 
 /*
  * ── THE WALLET REACHES THE LIBRARY FROM SOURCE. NOTHING ELSE DOES. ──────────
@@ -54,6 +55,8 @@ export default defineConfig({
    * no opinion - which is the answer for every importer that is not the wallet.
    */
   plugins: [
+    /* The company account's key digests the wallet checks a creation against, served to its tests as to its bundle. */
+    SERVED_TO_THE_WALLET.plugin(fileURLToPath(new URL('.', import.meta.url))),
     {
       name: 'wallet-reaches-the-library-from-source',
       enforce: 'pre' as const,

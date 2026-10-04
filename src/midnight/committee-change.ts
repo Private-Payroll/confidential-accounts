@@ -66,20 +66,22 @@ export interface ContractNotChangeable {
  *
  * A contract already holding exactly the company's committee owes nothing. One
  * the chain could not be asked about is not changeable, because a change is
- * signed against the counter on the chain and nobody has read it. One still
- * held by the single key it was created with, never changed, is waiting for
- * its handover, which is a different act signed by that key, so it is not
- * offered here. One whose rules need no signature at all, or can never be
- * changed, is named and not offered.
+ * signed against the counter on the chain and nobody has read it. One the
+ * service's record does not hold as born held by the company's committee is
+ * named and not offered: a change signed by whoever holds it would not make it
+ * the company's. A born-held contract still held by its founding signer's one
+ * key, never changed, is offered like any other: that is a one-signer company
+ * seating its second signer. One whose rules need no signature at all, or can
+ * never be changed, is named and not offered.
  */
 export function contractsOwingAChange(
-  reads: ReadonlyArray<{ readonly contract: 'account' | 'vault'; readonly read: AuthorityRead }>,
+  reads: ReadonlyArray<{ readonly contract: 'account' | 'vault'; readonly read: AuthorityRead; readonly bornHeld: boolean }>,
   company: Committee,
 ): { readonly owed: ContractOwingAChange[]; readonly notChangeable: ContractNotChangeable[] } {
   const owed: ContractOwingAChange[] = [];
   const notChangeable: ContractNotChangeable[] = [];
   const target = company.committee.map(idOf);
-  for (const { contract, read } of reads) {
+  for (const { contract, read, bornHeld } of reads) {
     const noun = contract === 'account' ? 'the company\'s account' : 'this vault';
     if (read.state !== 'read') {
       notChangeable.push({ contract, address: read.address, why: `the chain could not be asked who holds ${noun}'s rules: ${read.why}` });
@@ -89,10 +91,11 @@ export function contractsOwingAChange(
     const same = a.threshold === company.threshold && a.committee.length === target.length
       && a.committee.every((k, i) => idOf(k) === target[i]);
     if (same) continue;
-    if (a.shape === 'one-key' && a.counter === 0n) {
+    if (!bornHeld) {
       notChangeable.push({
         contract, address: read.address,
-        why: `${noun} is still held by the key it was created with, so it is handed to the committee first.`,
+        why: `${noun} was not created here held by the company's committee, so a change signed by whoever holds it `
+          + 'would not make it the company\'s.',
       });
       continue;
     }

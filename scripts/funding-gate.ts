@@ -66,7 +66,11 @@ export function keysThisMachineHolds(
  *
  * **THIS DOOR HAS NO COMPANY ROSTER**, so it cannot compare the chain against a
  * committee. It asks the stricter structural question instead, which is what
- * `committee: null` means to the gate.
+ * `committee: null` means to the gate. **AND IT KEEPS NO RECORD OF HOW A
+ * CONTRACT WAS CREATED**, which is what `bornHeld: null` says, so the gate
+ * funds nothing through it: money goes only into a vault and an account the
+ * product's own service read at their creation as held by the company's
+ * committee, and only that service's record can say so.
  *
  * **EVERY FACT IT HANDS THE GATE IS READ HERE, FROM THE CHAIN, AND NONE IS
  * THE CALLER'S TO STATE.** Who holds each contract's rules; each contract's
@@ -170,5 +174,6 @@ export async function refusalToFund(input: {
       DEPLOYED_CIRCUITS, 'the account\'s'),
     committee: null,
     heldHere: input.held,
+    bornHeld: null,
   })?.why ?? null;
 }

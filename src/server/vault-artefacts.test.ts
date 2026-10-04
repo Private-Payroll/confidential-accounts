@@ -7,6 +7,7 @@ import type { AddressInfo } from 'node:net';
 import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
 import { vaultArtefactFile, vaultArtefactPlaces, vaultArtefactRoutes } from './vault-artefacts.js';
+import { DEPLOYED_CIRCUITS } from '../midnight/deferral.js';
 
 /* Only the files a device proves a vault's transactions with; nothing else by any spelling. */
 const places = vaultArtefactPlaces('/repo', {});
@@ -38,6 +39,17 @@ describe('THE PROVING MATERIAL A DEVICE MAY FETCH', () => {
       '/keys/recordPayment.prover', '/keys/propose.prover', '/keys/approve.prover',
       '/account/params/bls_midnight_2p13', '/account/keys/recordpayment.prover', '/account/keys/Propose.prover',
     ]) {
+      expect(vaultArtefactFile(places, path), path).toBeNull();
+    }
+  });
+
+  it('EVERY ONE OF THE ACCOUNT\'S VERIFYING KEYS IS SERVED, FOR THE FOUNDING SIGNER\'S DEVICE TO DEPLOY THE ACCOUNT WITH, AND NO MORE PROVING MATERIAL', () => {
+    /* RED WHEN a verifying key the account's deploy or its second step carries cannot be fetched by the device. */
+    for (const circuit of DEPLOYED_CIRCUITS) {
+      expect(vaultArtefactFile(places, `/account/keys/${circuit}.verifier`), circuit).toBe(`/repo/contracts/managed/keys/${circuit}.verifier`);
+    }
+    /* RED WHEN serving every verifying key also serves proving material for a circuit no device proves. */
+    for (const path of ['/account/keys/sealPayKey.prover', '/account/zkir/setPolicy.bzkir', '/account/keys/recordPayment.verifier']) {
       expect(vaultArtefactFile(places, path), path).toBeNull();
     }
   });

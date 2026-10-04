@@ -78,10 +78,10 @@ import { PaymentJournalInStore } from '../../src/midnight/vault-journal.js';
 import type { WireRecord } from '../../src/midnight/sealed-record-wire.js';
 import { HttpSealedPoolStore, type WireSend } from 'vaults-web-shared/http-sealed-pool-store.js';
 import { recordsReaderOf, type DeviceSigner } from 'vaults-web-shared/deposit-on-device.js';
-import { answerVaultAsk } from 'vaults-web-shared/vault-worker-entry.js';
+import { answerVaultAsk, checkedAccountKeys } from 'vaults-web-shared/vault-worker-entry.js';
 import { vaultBuilderOver, type VaultAnswer } from 'vaults-web-shared/vault-worker-client.js';
 import {
-  createCompanyVault, depositIntoCompanyVault, openCompanyVaultPool, VaultStartOwed, payPrivatelyFromCompanyVault,
+  createCompanyVault, depositIntoCompanyVault, openCompanyVaultPool, payPrivatelyFromCompanyVault,
   payPubliclyFromCompanyVault,
   type TemporaryKeys, type VaultService, type DepositInFlight, type DepositsInFlight, type PaymentInFlight, type PaymentsInFlight,
 } from 'vaults-web-shared/vault-operation.js';
@@ -93,14 +93,14 @@ import { depositFromSource, publicTokenFromTheWallet } from 'vaults-web-shared/d
 import { StaticAssetRegistry, type Asset } from '../../src/core/assets.js';
 import { UNLOCK_PURPOSE, UNLOCK_WINDOW_MS, unlockAsk } from '../../src/core/wallet-unlock.js';
 import { fromHex, newSigningKeypair, newWrappingKeypair, toHex, type Hex } from '../../src/core/crypto.js';
-import { accountHandoverWith, accountTemporaryVerifyingKey, accountVerifierKeysIn } from '../../src/server/vault-chain.js';
+import { accountVerifierKeysIn } from '../../src/server/vault-chain.js';
+import { anAccountBornHeld } from './an-account-born-held.js';
 import { DEPLOYED_CIRCUITS } from '../../src/midnight/deferral.js';
 import { fileURLToPath } from 'node:url';
 import { readProvenTransaction } from '../../src/wiring/proven-submission.js';
 import {
   refusalForDeposit, refusalForPayout, refusalForPublicDeposit, refusalForPublicPayout, startingLedgerFrom,
 } from '../../src/wiring/vault-submission.js';
-import { signingKeyFromBip340 } from '@midnightntwrk/ledger-v9';
 import { buildRun } from '../../src/midnight/payout-tree.js';
 import { vaultDetails } from '../../src/testing/vault-details.js';
 import { payeeAddressFromKeys, type Payee } from '../../src/midnight/payee-address.js';
@@ -194,9 +194,7 @@ class Chain {
   }
 }
 
-const TEMPORARY_ACCOUNT_KEY = signingKeyFromBip340(new Uint8Array(32).fill(0x5a));
 const accountKeys = accountVerifierKeysIn(fileURLToPath(new URL('../..', import.meta.url)));
-const TEMPORARY = { kind: 'single-key', signingKey: TEMPORARY_ACCOUNT_KEY, temporary: { fixedBy: 'this watch' } } as const;
 
 /*
  * **THE VAULT'S AND THE ACCOUNT'S VERIFIER KEYS, WHICH ONLY A FULL COMPILE OF
@@ -255,6 +253,9 @@ describe.skipIf(!KEYS_ON_DISK)('A PRIVATE PAYMENT OUT OF A COMPANY VAULT, FROM T
       /* The company account beside the vault, as the worker loads it: its compiled contract, its functions and its ledger. */
       accountCompiled, accountZkConfig: accountZk, accountPure: (accountModule as any).pureCircuits,
       accountLedger: (accountModule as any).ledger,
+      /* The vault's keys as the worker checks them before reading a vault as it was born. */
+      vaultKeys: checkedAccountKeys(async (c) => await vaultZk.getVerifierKey(c) as unknown as Uint8Array, (vaultModule as any).expectedVk,
+        (b) => new Uint8Array(createHash('sha256').update(b).digest()), 'the vault'),
       prove: async (unproven: any, circuit?: string) =>
         (circuit === undefined ? unproven.prove(neverAsked, (L as any).CostModel.initialCostModel()) : unproven),
     });
@@ -299,23 +300,15 @@ describe.skipIf(!KEYS_ON_DISK)('A PRIVATE PAYMENT OUT OF A COMPANY VAULT, FROM T
     chain.applied.pop();
     store = new MemoryStore();
     founder = privateStateFor(1);
-    /* The company account, with the state its own constructor writes for its founder, this build's circuits and the service's temporary key. */
-    const init = await new (accountModule as any).Contract(witnesses).initialState(
-      runtime.createConstructorContext(founder, '0'.repeat(64)), leafOfDevice(founder), COMPANY_LABEL);
-    const accountState = L.ContractState.deserialize(init.currentContractState.serialize());
-    accountState.maintenanceAuthority = new L.ContractMaintenanceAuthority([L.signatureVerifyingKey(TEMPORARY_ACCOUNT_KEY)], 1, 0n);
-    for (const c of DEPLOYED_CIRCUITS) {
-      const op = new L.ContractOperation();
-      op.verifierKey = new Uint8Array(readFileSync(new URL(`../managed/keys/${c}.verifier`, import.meta.url)));
-      accountState.setOperation(c, op);
-    }
-    const accountDeploy = new L.ContractDeploy(accountState);
-    const seeded = chain.apply(L.Transaction.fromParts(NET, undefined, undefined,
-      L.Intent.new(new Date(Date.now() + 600_000)).addDeploy(accountDeploy)));
-    if (!seeded.ok) throw new Error(`the company account was not deployed: ${seeded.error}`);
-    chain.applied.pop();
-    company = String(accountDeploy.address).toLowerCase() as Hex;
     words = newWords().join(' ');
+    /* The company account, created as its founding signer's browser creates one: held by their committee key from its first transaction. */
+    const made = await anAccountBornHeld({ network: NET, founder: identityFromWords(words), label: LABEL, foundingLeaf: hex(leafOfDevice(founder)) });
+    for (const step of [made.deploy.proven, made.insert.proven]) {
+      const seeded = chain.apply((L.Transaction.deserialize('signature', 'proof', 'pre-binding', step) as any).bind());
+      if (!seeded.ok) throw new Error(`the company account was not created: ${seeded.error}`);
+      chain.applied.pop();
+    }
+    company = made.deploy.address.toLowerCase() as Hex;
     signing = newSigningKeypair();
     wrapping = newWrappingKeypair();
     me = { signerId: 'ada', wrappingSecret: wrapping.secret, companyKey: releasedCompanyKey(words, company) };
@@ -333,6 +326,11 @@ describe.skipIf(!KEYS_ON_DISK)('A PRIVATE PAYMENT OUT OF A COMPANY VAULT, FROM T
       }],
       policy: { threshold: 1, limitsByRole: {} }, recovery: { signerIds: ['ada'], threshold: 1 }, wrappedKeys: [],
     } as never, viewingKey, []));
+    store.recordAccountOpening({ accountId: ACCOUNT_ID, foundingKey: made.foundingKey, foundingLeaf: hex(leafOfDevice(founder)), companyLabel: LABEL });
+    store.recordAccountDeploy({
+      accountId: ACCOUNT_ID, address: company, foundingKey: made.foundingKey, recordedAt: new Date().toISOString(),
+      deploy: base64FromBytes(made.deploy.proven), insert: base64FromBytes(made.insert.proven),
+    });
     const accounts = new AccountService(store, {} as never, MidnightCommitments);
 
     const app = express();
@@ -426,8 +424,6 @@ describe.skipIf(!KEYS_ON_DISK)('A PRIVATE PAYMENT OUT OF A COMPANY VAULT, FROM T
       account: {
         circuits: DEPLOYED_CIRCUITS,
         verifierKeys: accountKeys,
-        handover: accountHandoverWith(TEMPORARY, NET),
-        temporaryKey: await accountTemporaryVerifyingKey(TEMPORARY),
       },
       readers,
     }));
@@ -510,7 +506,7 @@ describe.skipIf(!KEYS_ON_DISK)('A PRIVATE PAYMENT OUT OF A COMPANY VAULT, FROM T
     return { transaction: base64FromBytes((depositor.payFor(read.tx) as any).bind().serialize()), leaves: read.leaves };
   };
 
-  /** A vault the committee holds, its pool open, the account handed over, and 1,000 in it: the existing path, run to its end. */
+  /** A vault born held by the committee, started, its pool open, and 1,000 in it: the existing path, run to its end. */
   const aFundedVault = async (): Promise<{ vault: Hex; note: { nonce: Hex; token: Hex; value: bigint } }> => {
     await http(`${at}/vault-keys`, {
       method: 'PUT',
@@ -540,18 +536,13 @@ describe.skipIf(!KEYS_ON_DISK)('A PRIVATE PAYMENT OUT OF A COMPANY VAULT, FROM T
         roster: async () => rosterVaultKeys(openAccount(store.getAccount(ACCOUNT_ID)!, viewingKey)),
       },
     }, resume as never);
-    /* Deployed, handed over and adopted; its first secret waits for the account to be the committee's. */
-    const first = await press().catch((e: unknown) => e);
-    if (!(first instanceof VaultStartOwed)) throw new Error(`the vault's first secret was not held back: ${String((first as Error)?.message ?? JSON.stringify(first))}`);
-    const authority = await http(`${at}/authority`);
-    await http(`${at}/authority/handover`, { method: 'POST', body: { committee: authority.committee } });
-    /* The founding signer's own directory entry, filed from their device once the account is the committee's. */
+    /* The founding signer's own directory entry, filed from their device: the account is the committee's from its first transaction. */
     await fileOwnEntry({
       api, accountId: ACCOUNT_ID, person: 'ada', identity: identityFromWords(words), label: LABEL,
       companyKey: me.companyKey, signingKey: signing.publicKey, seat: hex(leafOfDevice(founder)),
     });
-    /* Then started by the same press: its secret set and every copy written. */
-    const created = await press(first.vault);
+    /* Deployed born held, read as it was born, adopted and started by one press: its secret set and every copy written. */
+    const created = await press();
     if (created.state !== 'started') throw new Error(`the vault was not started: ${JSON.stringify(created)}`);
     const { vault } = created;
     await openCompanyVaultPool(poolDoors, vault, async () => {});
@@ -606,9 +597,9 @@ describe.skipIf(!KEYS_ON_DISK)('A PRIVATE PAYMENT OUT OF A COMPANY VAULT, FROM T
 
   it('ONE PERSON IS PAID: THE ACCOUNT RECORDS IT, THE VAULT SPENDS ITS NOTE AND KEEPS THE CHANGE, THE POOL SAYS SO, AND THE PAYEE HOLDS A COIN', async () => {
     const { vault, note } = await aFundedVault();
-    /* The deploy, the handover, the seven steps of its start, the account's handover and the deposit, every one applied.
-     * RED WHEN: a step of the vault's start is skipped or sent twice. */
-    expect(chain.applied.map((a) => a.ok)).toEqual(Array(11).fill(true));
+    /* The deploy, born held, the seven steps of its start and the deposit, every one applied: no hand-over of either contract.
+     * RED WHEN: a step of the vault's start is skipped or sent twice, or a hand-over is sent. */
+    expect(chain.applied.map((a) => a.ok)).toEqual(Array(9).fill(true));
     const run = await anApprovedRun(vault, 250n);
     expect(accountLedgerOf(chain.contract(company)).openProposals.member(fromHex(run.id))).toBe(true);
     const order = run.order();

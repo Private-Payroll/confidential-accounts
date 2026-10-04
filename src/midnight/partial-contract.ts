@@ -4,9 +4,10 @@
  * **THIS IS THE ACCOUNT'S. THE VAULT'S IS `src/midnight/vault-contract.ts`,
  * AND THEY MUST NOT BE SWAPPED.** `S6e`, and the distinction is not stylistic:
  * every line below exists because the ACCOUNT did not fit in one transaction
- * and deployed eleven of thirteen circuits. **Since S23 shed two circuits and
- * S25 emptied the deferred list the account is eleven of eleven and defers
- * nothing** — this path stays because it is also what pins the operations map
+ * and deployed eleven of thirteen circuits. **The account is now twenty
+ * circuits, created in two steps: its deploy carries the eight
+ * `FIRST_STEP_CIRCUITS` and one maintenance update then inserts the twelve
+ * `SECOND_STEP_CIRCUITS` (`deferral.ts`).** This path stays because it is also what pins the operations map
  * to a decided list rather than to whatever compiled, and because a
  * contract that grows past the ceiling again needs it back. **A vault fits — four circuits,
  * 16,040 bytesWritten, 49.4% of the ceiling — so it deploys whole, through the
@@ -27,8 +28,8 @@
  *
  * How many circuits deploy and which defer is `src/midnight/deferral.ts`'s
  * to say — S8b deferred four of the fifteen; S9 re-decided the split to
- * thirteen deployed, two deferred; S25 emptied the deferred list, so all
- * eleven the contract now compiles deploy. Nothing in this file carries the
+ * thirteen deployed, two deferred; the account now compiles twenty and is
+ * created in the two steps `deferral.ts` names. Nothing in this file carries the
  * count, which is why none of that changed a line of code here.
  *
  * The SDK cannot express this deployment, in either direction, and both
@@ -87,6 +88,7 @@
  * compiled ones, for the deployed circuits that exist.
  */
 import {
+  CREATION_STEPS,
   DEPLOYED_CIRCUITS,
   DEFERRED_CIRCUITS,
   FIRST_STEP_CIRCUITS,
@@ -94,6 +96,7 @@ import {
   assertCreationSteps,
   assertKnownCircuitSet,
 } from './deferral.js';
+import { buildCreationInsert, type CreationInsertPrimitives } from 'midnight-identity/profile/contract-keys';
 
 /** The circuit names a call interface for this deployment carries. */
 const DEPLOYED: ReadonlySet<string> = new Set<string>(DEPLOYED_CIRCUITS);
@@ -421,90 +424,14 @@ export async function submitPartialDeployTx(
  * the second step of a company's creation
  * ------------------------------------------------------------------ */
 
-/** The ledger pieces the second step is built from, passed in so it can be tested without a chain. */
-export interface CreationInsertPrimitives {
-  VerifierKeyInsert: new (operation: string, vk: object) => object;
-  ContractOperationVersionedVerifierKey: new (version: 'v3' | 'v4', rawVk: Uint8Array) => object;
-  MaintenanceUpdate: new (address: string, updates: object[], counter: bigint) => {
-    readonly dataToSign: Uint8Array;
-    addSignature(idx: bigint, signature: { tag: string; value: string }): unknown;
-  };
-}
-
-/** The ledger's operation version for a compiled verifier key file, read from its header, or null for any other file. */
-export function operationVersionOfKeyFile(vk: Uint8Array): 'v3' | 'v4' | null {
-  const header = (tag: string) => new TextDecoder().decode(vk.slice(0, tag.length)) === tag;
-  if (header('midnight:verifier-key[v6]:')) return 'v3';
-  if (header('midnight:verifier-key[v7]:')) return 'v4';
-  return null;
-}
-
-/**
- * BUILDS THE SECOND STEP: ONE MAINTENANCE UPDATE THAT ONLY INSERTS.
- *
- * One `VerifierKeyInsert` for each of `SECOND_STEP_CIRCUITS`, in that order, and
- * nothing else: no key is removed and the authority is not replaced. Refuses a
- * key set that is not exactly those circuits, a key that is not a compiled
- * verifier key of the version this product builds, and a contract that already
- * carries one of them, because the ledger refuses an insert over a key already
- * there and the fee would be spent for nothing.
+/*
+ * The second step's builder, and how a key file's version is read, are one
+ * module the founding signer's wallet, the page and this service share; they
+ * are re-exported here so every existing caller keeps its import.
  */
-export function buildCreationInsert(
-  P: CreationInsertPrimitives,
-  args: {
-    address: string;
-    /** The contract's maintenance counter now: zero straight after its deploy. */
-    counter: bigint;
-    /** The operations the contract carries now, read from the chain. */
-    onChain: readonly string[];
-    keys: ReadonlyMap<string, Uint8Array>;
-  },
-): { update: InstanceType<CreationInsertPrimitives['MaintenanceUpdate']>; inserted: string[] } {
-  const wanted = [...SECOND_STEP_CIRCUITS] as string[];
-  const given = [...args.keys.keys()].sort();
-  if (given.length !== wanted.length || [...wanted].sort().some((n, i) => n !== given[i])) {
-    throw new Error(
-      `the second step inserts exactly ${wanted.join(', ')}, and was handed keys for ` +
-        `${given.join(', ') || 'nothing'}. Nothing was built.`,
-    );
-  }
-  const already = wanted.filter((n) => args.onChain.includes(n));
-  if (already.length > 0) {
-    throw new Error(
-      `the account at ${args.address} already carries ${already.join(', ')}, so its second step ` +
-        'has already landed, or somebody else changed it. Read the account again before doing ' +
-        'anything; nothing was built.',
-    );
-  }
-  const missingFirst = FIRST_STEP_CIRCUITS.filter((n) => !args.onChain.includes(n));
-  if (missingFirst.length > 0) {
-    throw new Error(
-      `the account at ${args.address} does not carry ${missingFirst.join(', ')}, which its deploy ` +
-        'should have. It is not an account this product created; nothing was built.',
-    );
-  }
-  /*
-   * Each key is inserted under the version its own file's header names, so the
-   * insert can never wrap a key as another version than the one it was
-   * compiled as: `[v6]` is the ledger's `v3` slot and `[v7]` its `v4` slot. A
-   * file with any other header is refused before anything is built.
-   */
-  const updates = wanted.map((name) => {
-    const vk = args.keys.get(name)!;
-    const version = operationVersionOfKeyFile(vk);
-    if (version === null) {
-      throw new Error(
-        `the key handed in for ${name} is not a compiled verifier key of a version the ledger takes. ` +
-          'Rebuild the keys; nothing was built.',
-      );
-    }
-    return new P.VerifierKeyInsert(name, new P.ContractOperationVersionedVerifierKey(version, vk));
-  });
-  return {
-    update: new P.MaintenanceUpdate(args.address, updates, args.counter),
-    inserted: wanted,
-  };
-}
+export {
+  buildCreationInsert, operationVersionOfKeyFile, type CreationInsertPrimitives,
+} from 'midnight-identity/profile/contract-keys';
 
 /**
  * THE SECOND STEP, SIGNED AND SUBMITTED. Reads the account, builds the insert,
@@ -548,6 +475,7 @@ export async function submitCreationInsertTx(
     counter,
     onChain: opNames(state),
     keys,
+    steps: CREATION_STEPS,
   });
   const update = built.update as any;
   const signed = update.addSignature(0n, L.signData(authority.signingKey as any, update.dataToSign));
@@ -586,7 +514,7 @@ export async function submitCreationInsertTx(
  * never fire, and a deployment carrying an operation NOBODY DECIDED ON — one
  * inserted by a maintenance update, say — is no longer refused by name. The
  * key comparison above still refuses a deployment that is missing or has
- * changed any of the eleven, which is what catches the live 28 Aug contract.
+ * changed any of the circuits it deploys, which is what catches the live 28 Aug contract.
  * Widening this to "no operation outside `DEPLOYED_CIRCUITS`" is a new check,
  * not a deletion, so S25 filed it rather than writing it.
  */

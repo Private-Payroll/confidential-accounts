@@ -43,6 +43,10 @@ const hasBuffer = (): boolean => (globalThis as { Buffer?: unknown }).Buffer !==
  */
 const BARE: Record<string, Record<string, unknown>> = {
   deploy: { account: 'ab'.repeat(32) },
+  'account-deploy': { foundingLeaf: 'ab'.repeat(32), label: 'co_' + 'cd'.repeat(32), foundingKey: { tag: 'schnorr', value: 'ef'.repeat(32) } },
+  'finished-creation': { account: 'ab'.repeat(32), signature: { tag: 'schnorr', value: '00' } },
+  'born-held-vault': { account: 'ab'.repeat(32), holders: { committee: [], threshold: 1 } },
+  'vault-as-deployed': { vault: 'ab'.repeat(32), account: 'cd'.repeat(32), holders: { committee: [], threshold: 1 }, deploy: '' },
   handover: { vault: 'ab'.repeat(32), counter: '0', temporaryKey: {}, to: {} },
   deposit: { vault: 'ab'.repeat(32), coin: { nonce: '00', token: '00', value: '1' }, state: '', parameters: '' },
   'public-deposit': { vault: 'ab'.repeat(32), token: '00', amount: '1', state: '', parameters: '' },

@@ -14,14 +14,13 @@
 import { createHash } from 'node:crypto';
 import { existsSync, readdirSync, readFileSync } from 'node:fs';
 import { join, relative } from 'node:path';
-import { fileURLToPath } from 'node:url';
 import { VAULT_CIRCUITS } from '../../src/midnight/vault-contract.js';
 import { DEPLOYED_CIRCUITS } from '../../src/midnight/deferral.js';
 import { expectedVk as accountExpectedVk } from '../managed/contract/index.js';
 import { expectedVk as vaultExpectedVk } from '../managed-vault/contract/index.js';
 
 /** The repository's root, from this file's own place in it. */
-const ROOT = fileURLToPath(new URL('../../', import.meta.url));
+const ROOT = join(import.meta.dirname, '..', '..');
 
 /** One contract's keys: where they are, which circuits must have one, and what the compiled module pins for each. */
 export interface ContractKeys {

@@ -83,7 +83,17 @@ import { assetIdBytes, NO_ASSET } from '../core/assets.js';
 import { MidnightCommitments } from './commitments.js';
 import type { Sealed, Hex } from '../core/crypto.js';
 import { toHex, fromHex, randomBytes } from '../core/crypto.js';
-import { companyLabelBytes, readCompanyLabel } from 'midnight-identity/profile/company-label';
+import { companyLabelBytes, readCompanyLabel, type CompanyLabel } from 'midnight-identity/profile/company-label';
+/*
+ * A contract's verifier keys - what a write of one must be and whether a contract
+ * carries this build's - are one module the wallet, the page and this service
+ * share, re-exported here so every existing caller keeps its import.
+ */
+import { verifierKeyRefusals, type VerifierKeyWrite } from 'midnight-identity/profile/contract-keys';
+export {
+  compareVerifierKeys, operationsFromContractState, verifierKeyRefusals,
+  type OnChainOperation, type OperationsRead, type VerifierKeyComparison, type VerifierKeyVerdict, type VerifierKeyWrite,
+} from 'midnight-identity/profile/contract-keys';
 import type { NetworkName } from './network.js';
 import { arityFrom, assertArity } from './circuit-arity.js';
 import { withRetry, sleep, type RetryOptions } from './retry.js';
@@ -553,15 +563,21 @@ export class MidnightLedger implements Ledger {
        */
       register: (accountId: string, address: string) => Promise<void>;
       /**
-       * The maintenance authority the deployed contract gets. REQUIRED, and
-       * never defaulted: `deployContract`'s own default is
-       * `sampleSigningKey()`, which is how every earlier deployment acquired
-       * a single random key able to change which proofs the contract accepts
-       *. The deploy refuses to run rather than sample —
-       * `requireMaintenanceAuthority` in partial-contract.ts is the refusal,
-       * and its error lays the options out.
+       * **SET ON A DEPLOYMENT WHOSE COMPANIES ARE CREATED FROM THEIR FOUNDING
+       * SIGNER'S BROWSER, WHICH IS EVERY ONE ON A CHAIN.** Opening an account
+       * then deploys nothing: it keeps the opening's sealed state for the
+       * account, and the founding signer's device deploys the account, held by
+       * their own committee key from its first transaction, through the
+       * service's creation route. A deployment without it refuses to open an
+       * account at all, by name.
        */
-      maintenanceAuthority: MaintenanceAuthorityChoice;
+      fromTheFoundingSigner?: true;
+      /**
+       * The maintenance authority a deploy made by this process would give the
+       * account. Read only by `deployFromThisProcess`, which nothing calls: a
+       * company on a chain is created from its founding signer's browser.
+       */
+      maintenanceAuthority?: MaintenanceAuthorityChoice;
       /** Passed through so a script keeps its own logging. */
       retry?: RetryOptions;
     },
@@ -747,13 +763,42 @@ export class MidnightLedger implements Ledger {
       );
     }
     /*
+     * **ON A CHAIN, A COMPANY'S ACCOUNT IS DEPLOYED BY ITS FOUNDING SIGNER'S
+     * DEVICE, AND NOTHING HERE DEPLOYS ONE.** What opening keeps is the
+     * sealed state the account's first view opens with, under the company;
+     * the address is recorded when the founding signer's deploy is.
+     */
+    if (this.deployment.fromTheFoundingSigner === true) {
+      await this.blobs.put(accountId, viewDigestOf([]), opening.sealedState.keyEpoch, opening.sealedState.sealed);
+      return { ref: 'deployed from the founding signer\'s browser', at: new Date().toISOString() };
+    }
+    throw new Error(
+      `cannot open "${accountId}": on a chain, a company's account is created only from its founding signer's `
+        + 'browser, held by their own committee key from its first transaction, and this service deploys none. '
+        + 'Create the company from the product\'s own page, in the founding signer\'s browser. Nothing was deployed '
+        + 'and nothing was spent.',
+    );
+  }
+
+  /**
+   * **THE DEPLOY THIS PROCESS USED TO MAKE ITSELF, UNDER A KEY IT HELD.**
+   * Nothing calls it: on a chain a company's account is created from its
+   * founding signer's browser. It is left whole until the operator paths that
+   * reached it are removed with it; protected rather than private only so the
+   * compiler's check for unused code does not ask for it to go before then.
+   */
+  protected async deployFromThisProcess(accountId: string, opening: AccountOpening, foundingLeaf: string, label: CompanyLabel): Promise<TxRef> {
+    if (!this.deployment || this.deployment.maintenanceAuthority === undefined) {
+      throw new Error(`cannot open "${accountId}": this deployment has no maintenance authority to deploy under.`);
+    }
+    /*
      * NOT the SDK's `deployContract`. S8c: the deployment carries the
      * circuits `deferral.ts` names — the fifteen-circuit contract this path
      * was built for exceeded the chain's write ceiling — and the SDK can
      * neither build a partial operations map nor read one back
      * (`partial-contract.ts` has the file:line for both refusals). The
-     * contract is eleven circuits since S23 and the list defers none of them
-     *, so the map this builds is currently the whole contract; the path
+     * account is twenty circuits, created in the two steps `deferral.ts`
+     * names, so the map this builds is its first step; the path
      * stays because it is also what pins the operations map to a decided list
      * rather than to whatever compiled. The partial deploy also
      * refuses to run without a deliberate maintenance authority, which is
@@ -3687,67 +3732,6 @@ export function compareAuthority(
  * reach them without this module. What stays here refuses the verifier keys.
  */
 
-/**
- * WHAT MUST BE REFUSED ABOUT A VERIFIER KEY THIS UPDATE WRITES — `T-359`, from the
- * other side.
- *
- * **THIS EXISTS BECAUSE THE FIRST DRAFT OF THIS BLOCK REFUSED FIVE THINGS ABOUT THE
- * AUTHORITY AND NOTHING AT ALL ABOUT THE VERIFIER KEYS, AND ITS OWN
- * money-safety pass SAID SO FIRST AND LOUDEST.** A `ReplaceAuthority` decides
- * WHO may change a contract; a `VerifierKeyInsert` is the change that actually moves
- * the money — `C353`'s drain is a verifier-key swap performed USING the authority.
- * Building the second with no check at all, in the same function that refuses five
- * things about the first, is the wrong way round.
- *
- * **WHAT IS REFUSED HERE AND WHAT IS NOT, STATED SO THE GAP IS NOT MISTAKEN FOR
- * COVER.** This refuses what can be judged from the write alone: an unnamed entry
- * point, empty bytes, and a version the runtime does not have. **It does NOT check
- * that the bytes are the artefact on disk**, because the artefact set belongs to the
- * caller and this module must stay loadable without a filesystem. That check is
- * `compareVerifierKeys`, against the chain, after the fact — and the round that
- * wires a caller owes it before submission rather than after.
- *
- * **THE VERSION IS NOT COSMETIC AND IT IS NOT FREE-FORM.** Measured: the runtime's
- * `ContractOperationVersionedVerifierKey` performs a VERSION-KEYED HEADER PARSE —
- * `'v3'` requires a `midnight:verifier-key[v6]:` header and `'v4'` requires `[v7]` —
- * and throws on a mismatch, on an unknown version, and on bytes whose header has
- * already been stripped. It cannot silently produce the wrong key, which is the one
- * reassuring thing in this area.
- */
-export function verifierKeyRefusals(
-  writes: readonly VerifierKeyWrite[],
-): MaintenanceRefusal[] {
-  const out: MaintenanceRefusal[] = [];
-  for (const [i, w] of writes.entries()) {
-    if (typeof w?.operation !== 'string' || w.operation.trim() === '') {
-      out.push({
-        code: 'unnamed-verifier-key-operation',
-        why: `verifier-key write [${i}] names no entry point. A key written at an entry point ` +
-          'nobody named is a key nothing can read back or compare, which is the state `T-359` ' +
-          'exists about.',
-      });
-    }
-    if (!(w?.verifierKey instanceof Uint8Array) || w.verifierKey.length === 0) {
-      out.push({
-        code: 'empty-verifier-key',
-        why: `verifier-key write [${i}] ("${String(w?.operation)}") carries no key bytes. This ` +
-          'must be the `.verifier` artefact EXACTLY as it sits on disk, header and all — ' +
-          'measured: that is what the chain hands back, not the header-stripped form the ' +
-          'runtime constructor is handed.',
-      });
-    }
-    if (w?.version !== 'v3' && w?.version !== 'v4') {
-      out.push({
-        code: 'unknown-verifier-key-version',
-        why: `verifier-key write [${i}] ("${String(w?.operation)}") names version ` +
-          `"${String(w?.version)}", and the runtime has exactly two: "v3" and "v4". They are ` +
-          'not labels — each one requires its own header tag on the bytes and the constructor ' +
-          'throws on a mismatch.',
-      });
-    }
-  }
-  return out;
-}
 
 /**
  * WHAT TO DO ABOUT ONE CONTRACT, DECIDED BEFORE ANYTHING IS BUILT.
@@ -4017,32 +4001,6 @@ export interface MaintenancePrimitives {
   ) => boolean;
 }
 
-/** One entry point whose verifier key this update writes. `T-359`'s other half. */
-export interface VerifierKeyWrite {
-  /** The entry-point name exactly as the contract carries it. */
-  operation: string;
-  /**
-   * The operation version, which the runtime has exactly two of
-   * (`ledger-v9.d.ts:2239`). **Narrowed from `string` after this round's own
-   * money-safety pass pointed out that widening a two-member union is the
-   * opposite of what a named interface is for.**
-   */
-  version: 'v3' | 'v4';
-  /**
-   * The verifier key EXACTLY AS THE BUILT ARTEFACT HOLDS IT, header included.
-   *
-   * **MEASURED, AND IT IS THE TRAP IN THIS WHOLE AREA:**
-   * `ContractOperationVersionedVerifierKey` STRIPS the 26-byte
-   * `midnight:verifier-key[v6]:` header — a 2,119-byte `.verifier` file becomes a
-   * 2,093-byte `rawVk` — **and yet what ends up on chain, readable at
-   * `ContractOperation.verifierKey` (`ledger-v9.d.ts:752`), is byte-identical to
-   * the FILE, header and all.** Deployed one and read it back to check. So the
-   * constructor takes the file bytes and `compareVerifierKeys` compares against
-   * the file bytes; **a comparison written against `rawVk` reports a MISMATCH on
-   * a perfectly correct contract**, and it is the obvious thing to write.
-   */
-  verifierKey: Uint8Array;
-}
 
 /** A built, unsigned-or-partly-signed maintenance instruction, with everything a signer needs. */
 export interface BuiltMaintenanceInstruction {
@@ -4266,233 +4224,16 @@ export function signatureProgress(
 }
 
 /* ── `T-359` — READING THE VERIFIER KEYS BACK, WHICH IS THE THING `C353`
- *              ACTUALLY SWAPS ────────────────────────────────────────────── */
-
-/**
- * WHAT THE AUTHORITY READ-BACK CANNOT SEE, AND IT IS THE ACT THAT MOVES THE
- * MONEY. `T-359` `P1`.
+ *              ACTUALLY SWAPS ──────────────────────────────────────────────
  *
- * `readContractAuthority` answers WHO MAY CHANGE a contract.
- * **`C353`'s drain is not an authority change — it is a VERIFIER KEY SWAP
- * performed USING the authority.** A contract whose `recordPayment` verifier key
- * has been replaced answers `MAINTENANCE-AUTHORITY-CHECK` with AGREE, and that
- * door prints *"Every contract carries the authority recorded for it."* The
- * sentence is true and reads as more than it says.
- *
- * **THE EVIDENCE COSTS NOTHING, WHICH IS WHY IT IS HERE:** it is on the same
- * `ContractState` object the authority read-back already fetches and discards.
- * `operations()` lists the entry points and `operation(name).verifierKey` is the
- * key itself (`ledger-v9.d.ts:816`, `:822`, `:752`). One query answers both
- * questions.
- *
- * **AND IT SEES ONE KEY PER OPERATION, WHICH IS A LIMIT OF THE RUNTIME'S GETTER
- * AND IS SAID HERE RATHER THAN DISCOVERED.** A `ContractOperation` holds up to two
- * verifier keys, one per proving-system version (`midnight-ledger` at
- * `ledger-9.1.0.0-rc.3`, `onchain-state/src/state.rs:892-899`), and `verifierKey`
- * returns the newer slot when it is filled and the older one otherwise
- * (`onchain-runtime-wasm/src/state.rs:501-510`; `ledger-v9.d.ts:742-745` says *"Only
- * the latest available version is exposed to this API."*). Every key this product
- * compiles is the OLDER version (its file starts `midnight:verifier-key[v6]`, and
- * that key is stored in the older slot, `ledger/src/structure.rs:2861-2884`), so today
- * the getter returns the only key there is, and both ways an authority holder could
- * change it show up here: inserting a newer-version key, which the getter then
- * returns, or removing and re-inserting the older one, since inserting over it is
- * refused (`ledger/src/semantics.rs:1592-1597`). **That stops being true the day a
- * newer-version key is inserted BESIDE an older one:** a call is checked against the
- * key of its own proof's version (`ledger/src/structure.rs:455-509`), so the older key
- * goes on verifying calls and this read no longer sees it. The whole operation, both
- * slots and its IR, is `operation(name).serialize()`
- * (`onchain-runtime-wasm/src/state.rs:524-526`). **The
- * `agree` sentence below says what it cannot see rather than claiming more than
- * it looked at.**
- *
- * **AND THE OPERATIONS MAP IS THE WRONG THING TO CHECK, WHICH IS THE HALF THAT
- * MAKES THIS WORTH BUILDING.** `docs/scope-the-upgrade-path.md:216-231`'s
- * SILENTLY WEAKEN is 32 bytes on chain **with the operations map still listing
- * exactly the same names.** `findDeployedPartialContract`, `findDeployedVaultContract`
- * and the SDK's own `verifyContractState` all check that the names are present.
- * **The names being present is what a swap looks like. The keys are the evidence.**
- */
-export interface OnChainOperation {
-  /** The entry-point name as the chain carries it. */
-  name: string;
-  /** The verifier key bytes, exactly as the chain holds them. */
-  verifierKey: Uint8Array;
-}
+ * The read and the comparison are one module the wallet, the page and this
+ * service share (`midnight-identity/profile/contract-keys`), re-exported at the
+ * top of this file. Only a key held at an earlier version beside a newer one is
+ * out of their sight. */
 
-export type OperationsRead =
-  | { state: 'read'; address: string; operations: OnChainOperation[] }
-  | { state: 'unreadable'; address: string; why: string };
 
-/**
- * The entry points and their verifier keys off a `ContractState`, or a refusal.
- *
- * Structural rather than typed against the runtime class, for the same reason
- * `authorityFromContractState` is: this is a boundary, and it states what it
- * relies on rather than trusting a type.
- */
-export function operationsFromContractState(
-  state: unknown, address: string,
-): OperationsRead {
-  if (!state || typeof state !== 'object') {
-    return { state: 'unreadable', address, why: 'contract state was not an object' };
-  }
-  const s = state as {
-    operations?: () => unknown;
-    operation?: (name: unknown) => unknown;
-  };
-  if (typeof s.operations !== 'function' || typeof s.operation !== 'function') {
-    return {
-      state: 'unreadable', address,
-      why: 'contract state does not expose `operations()` and `operation(name)`, so its verifier ' +
-        'keys cannot be read. NOTHING may be concluded about them from this.',
-    };
-  }
-  let names: unknown;
-  try { names = s.operations(); } catch (e) {
-    return {
-      state: 'unreadable', address,
-      why: `listing this contract's entry points threw: ${e instanceof Error ? e.message : String(e)}`,
-    };
-  }
-  if (!Array.isArray(names)) {
-    return { state: 'unreadable', address, why: '`operations()` did not return a list' };
-  }
-  const operations: OnChainOperation[] = [];
-  for (const raw of names) {
-    const name = typeof raw === 'string' ? raw : String(raw);
-    let op: unknown;
-    try { op = s.operation(raw); } catch (e) {
-      return {
-        state: 'unreadable', address,
-        why: `reading entry point "${name}" threw: ${e instanceof Error ? e.message : String(e)}`,
-      };
-    }
-    const vk = (op as { verifierKey?: unknown } | undefined)?.verifierKey;
-    if (!(vk instanceof Uint8Array)) {
-      return {
-        state: 'unreadable', address,
-        why: `entry point "${name}" carries no readable \`verifierKey\`. A partial answer here is ` +
-          'worse than none: it would let a swapped key hide behind an unreadable one.',
-      };
-    }
-    operations.push({ name, verifierKey: vk });
-  }
-  return { state: 'read', address, operations };
-}
 
-export type VerifierKeyVerdict = 'agree' | 'disagree' | 'unknown';
 
-export interface VerifierKeyComparison {
-  verdict: VerifierKeyVerdict;
-  address: string;
-  why: string;
-  /** Entry points whose on-chain key is byte-identical to the built artefact. */
-  matched: string[];
-  /** **Entry points whose on-chain key DIFFERS. This is `C353`'s act, seen.** */
-  mismatched: string[];
-  /** On chain and not in the artefact: an entry point this build does not know about. */
-  onChainOnly: string[];
-  /** In the artefact and not on chain: a circuit that was never deployed here. */
-  missingOnChain: string[];
-  /** First eight bytes of each side, for a person. **Display only — the comparison is over full bytes.** */
-  fingerprints: { name: string; onChain: string; expected: string }[];
-}
-
-/**
- * DOES EVERY DEPLOYED ENTRY POINT STILL CARRY THE KEY THIS BUILD PRODUCES?
- * `T-359`'s *done when*.
- *
- * **THE COMPARISON IS OVER FULL BYTES AND THE EXPECTED SIDE IS THE `.verifier`
- * FILE EXACTLY AS IT SITS ON DISK, HEADER INCLUDED.** Measured this round by
- * deploying a contract, inserting `contracts/managed/keys/adopt.verifier` through
- * `VerifierKeyInsert` and reading the result back: what the chain returns is
- * byte-identical to the file, all 2,119 bytes of it — **even though the
- * constructor strips the 26-byte `midnight:verifier-key[v6]:` header to a
- * 2,093-byte `rawVk` on the way in.** A comparison written against `rawVk` — the
- * obvious thing to write, since that is what the caller hands the constructor —
- * calls a correct contract WRONG on every entry point.
- *
- * **A MISSING OR EXTRA ENTRY POINT IS NOT A MISMATCH AND IS NOT SILENCE.** It is
- * reported in its own list and it makes the verdict `disagree`, because a build
- * that does not know about an entry point cannot say anything about the key on
- * it, and *cannot say* is not *fine*.
- *
- * **`unknown` REFUSES, EXACTLY AS THE AUTHORITY COMPARISON DOES.** An unreadable
- * state is not a swapped key and is not a clean one. **AND SO DOES AN EMPTY
- * COMPARISON:** both sides empty used to answer `agree` over nothing, which is a pass
- * on no evidence — the shape `C185` is about, where the failure is an ABSENCE where
- * evidence should be.
- */
-export function compareVerifierKeys(
-  read: OperationsRead,
-  expected: ReadonlyMap<string, Uint8Array>,
-): VerifierKeyComparison {
-  const empty = { matched: [], mismatched: [], onChainOnly: [], missingOnChain: [], fingerprints: [] };
-  if (read.state !== 'read') {
-    return {
-      ...empty, verdict: 'unknown', address: read.address,
-      why: `this contract's verifier keys could not be read — ${read.why}. NOTHING may be ` +
-        'concluded: an unreadable state is not a clean one.',
-    };
-  }
-  const fp = (b: Uint8Array) => toHex(b.slice(0, 8));
-  const matched: string[] = [], mismatched: string[] = [], onChainOnly: string[] = [];
-  const fingerprints: VerifierKeyComparison['fingerprints'] = [];
-  const seen = new Set<string>();
-
-  for (const op of read.operations) {
-    seen.add(op.name);
-    const want = expected.get(op.name);
-    if (!want) { onChainOnly.push(op.name); continue; }
-    const same = op.verifierKey.length === want.length &&
-      op.verifierKey.every((b, i) => b === want[i]);
-    (same ? matched : mismatched).push(op.name);
-    if (!same) fingerprints.push({ name: op.name, onChain: fp(op.verifierKey), expected: fp(want) });
-  }
-  const missingOnChain = [...expected.keys()].filter((n) => !seen.has(n));
-
-  if (mismatched.length > 0) {
-    return {
-      verdict: 'disagree', address: read.address, matched, mismatched, onChainOnly,
-      missingOnChain, fingerprints,
-      why: `${mismatched.length} entry point(s) carry a verifier key this build did not produce: ` +
-        `${mismatched.join(', ')}. **THIS IS WHAT \`C353\` LOOKS LIKE FROM OUTSIDE.** Whoever ` +
-        'holds the maintenance authority can replace an entry point\'s verifier key, and the ' +
-        'contract then accepts proofs of a DIFFERENT statement under the same name, with the ' +
-        'operations map unchanged. Do not submit anything against this contract.',
-    };
-  }
-  if (onChainOnly.length > 0 || missingOnChain.length > 0) {
-    return {
-      verdict: 'disagree', address: read.address, matched, mismatched, onChainOnly,
-      missingOnChain, fingerprints,
-      why: 'every key this build knows about matches, and the ENTRY POINT SETS DIFFER: ' +
-        `${onChainOnly.length} on chain that this build does not know (${onChainOnly.join(', ') || '-'}) ` +
-        `and ${missingOnChain.length} in this build that the chain does not carry ` +
-        `(${missingOnChain.join(', ') || '-'}). A key this build cannot name is a key nothing here ` +
-        'can check, which is a disagreement rather than a silence.',
-    };
-  }
-  if (matched.length === 0) {
-    return {
-      verdict: 'unknown', address: read.address, matched, mismatched, onChainOnly,
-      missingOnChain, fingerprints,
-      why: 'there was nothing to compare: the chain carries no entry points this build knows ' +
-        'about and this build named none. NOTHING may be concluded — a pass over an empty set ' +
-        'is an absence where evidence should be, not evidence of absence.',
-    };
-  }
-  return {
-    verdict: 'agree', address: read.address, matched, mismatched, onChainOnly,
-    missingOnChain, fingerprints,
-    why: `all ${matched.length} deployed entry point(s) carry exactly the verifier key this ` +
-      'build produces, compared over FULL BYTES against the artefact on disk — AT THE LATEST ' +
-      'VERSION OF EACH, which is the only version the runtime exposes ' +
-      '(`ledger-v9.d.ts:742-745`). A key held at an earlier version is not visible from here ' +
-      'and this says nothing about one.',
-  };
-}
 
 /** One person on a run, as the approving device asks about them: everything but the occurrence. */
 export type PaidFor = Omit<PayRecord, 'occurrence'> & { occurrence?: number };

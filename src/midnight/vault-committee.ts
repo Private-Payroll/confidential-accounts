@@ -56,6 +56,9 @@ const companySentence = (r: MaintenanceRefusal, threshold: number, signerCount: 
     case 'malformed-committee-key':
       return 'a committee key this company holds is not one a wallet derives, so the committee '
         + 'cannot be trusted. No vault is created.';
+    case 'committee-over-the-metadata-limit':
+      return `this company has more signers than the ledger lets one committee hold, so no committee can hold its `
+        + 'vault\'s rules. No vault is created.';
     case 'committee-emptied':
       return 'this company has no signers, so there is nobody to hold its vault\'s rules. No vault is created.';
     default:
@@ -108,6 +111,27 @@ export function committeeOf(
     .map((k) => ({ tag: k.tag, value: k.value.toLowerCase() }))
     .sort((a, b) => (a.value < b.value ? -1 : a.value > b.value ? 1 : 0));
   return { committee, threshold };
+}
+
+/**
+ * **NEVER A COMMITTEE ANY ONE OF SEVERAL KEYS COULD CHANGE ALONE.** A signer
+ * who leaves a company keeps their seat on every contract until the others
+ * change its committee, so on a committee of several at a threshold of one,
+ * the one who left could change the rules on their own before the others do -
+ * and for the account, those are the rules every vault pays out by.
+ *
+ * One rule, asked by every door that installs a committee and by both doors of
+ * the money gate, so no door installs or funds what another refuses. A single
+ * key at a threshold of one is a company with one signer and is not this. The
+ * sentence says what is wrong and what resolves it; each door puts its own
+ * refusal in front of it.
+ */
+export function whyOneKeyCouldActAlone(c: { readonly committee: readonly unknown[]; readonly threshold: number }): string | null {
+  return c.committee.length > 1 && c.threshold < 2
+    ? `any one of the ${c.committee.length} keys holding these rules could change them alone, and a signer who `
+      + 'leaves keeps their seat until the others change the committee. Raise the company\'s threshold to at least '
+      + 'two first'
+    : null;
 }
 
 /** Two committee values are the same value: same keys, same order, same threshold. */

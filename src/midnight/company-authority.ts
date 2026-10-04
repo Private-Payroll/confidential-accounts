@@ -312,9 +312,8 @@ export interface CommitteeChangeLedger extends MaintenancePrimitives {
  * the chain holds now, so a signature collected for it verifies against no
  * other contract, no other committee and no later counter.
  *
- * Refused here, before anything is built: a contract still held by the key it
- * was created with and never changed (that is its handover, a different act),
- * a contract whose rules need no signature or can never be changed, a contract
+ * Refused here, before anything is built: a contract whose rules need no
+ * signature or can never be changed, a contract
  * already held by the company's committee, and anything the product's one
  * authority builder refuses about the new committee. A committee looser than
  * the strictest approval bar the contract enforces is reported, not refused.
@@ -344,10 +343,12 @@ export function buildCommitteeChange(
   if (read.state !== 'read') {
     throw new Error(`the chain could not be asked who holds ${input.label}'s rules (${read.why}), so nothing was built.`);
   }
-  if (read.authority.shape === 'one-key' && read.authority.counter === 0n) {
-    throw new Error(`${input.label} is still held by the key it was created with, so it is handed to the committee `
-      + 'first. Nothing was built.');
-  }
+  /*
+   * A contract held by one key and never changed is built for like any other:
+   * born held, that is a one-signer company's founding signer, and this change
+   * is how its second signer joins. Whether the contract was born held is the
+   * record's to say, and the door the change is paid through asks it.
+   */
   if (read.authority.shape === 'anyone' || read.authority.shape === 'no-one') {
     throw new Error(`${input.label}'s rules ${read.authority.shape === 'anyone' ? 'need no signature at all' : 'can never be changed'}, `
       + 'so a change signed by the company\'s signers is not built for it. Nothing was built.');

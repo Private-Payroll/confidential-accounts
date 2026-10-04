@@ -247,4 +247,39 @@ describe('THE INDEXER\'S ANSWERS, READ AS WHAT THEY ARE', () => {
     /* And a state that is not hex is still refused. */
     await expect(withFetch(answering({ data: { contract: { state: 'zz' } } }), () => fromIndexerAt('https://indexer.example')('ab'.repeat(32) as AccountAddress))).rejects.toThrow(/not a state/);
   });
+
+  it('AN INDEXER THAT FAILS, REFUSES OR ANSWERS WITH NOTHING IS NEVER A LABEL', async () => {
+    const read = () => fromIndexerAt('https://indexer.example')('ab'.repeat(32) as AccountAddress);
+    const status = (code: number) => (async () => new Response('{}', { status: code })) as unknown as typeof fetch;
+    /* RED WHEN: an answer the indexer marked as failed is read as a state. */
+    await expect(withFetch(status(502), read)).rejects.toThrow('the indexer answered 502.');
+    /* RED WHEN: an answer carrying errors is read past them. */
+    await expect(withFetch(answering({ errors: [{ message: 'no' }], data: { contract: { state: 'abcd' } } }), read)).rejects.toThrow('the indexer refused the read.');
+    /* RED WHEN: no contract at the address is read as an unreadable one, or as a state. */
+    expect(await withFetch(answering({ data: { contract: null } }), read)).toBeNull();
+    /* RED WHEN: a state that is not a string is taken as one. */
+    await expect(withFetch(answering({ data: { contract: { state: 12 } } }), read)).rejects.toThrow(/not a state/);
+    /* And through the label reader, a failure is unreadable and never a label. */
+    const label = await withFetch(status(500), () => labelOnAccount(ACCOUNT, fromIndexerAt('https://indexer.example')));
+    expect(label).toEqual({ of: 'unreadable', why: 'the indexer answered 500.' });
+  });
+});
+
+describe('A LABEL ENTRY THAT HOLDS ZERO', () => {
+  it('IS NO LABEL, NEVER THE LABEL OF ALL ZEROES', async () => {
+    /* The constructor refuses a zero label, so the deployed state's entry is set to zero here, as the state holds it: its zero bytes dropped. */
+    const zeroed = ContractState.deserialize(await deployedState(LABEL_BYTES));
+    const fields = zeroed.data.state.asArray()!;
+    const roles = fields[ROLES_FIELD]!.asMap()!;
+    const key = roles.keys().find((k) => hexOf(k.value[0]!) === COMPANY_LABEL_ENTRY)!;
+    const { alignment } = roles.get(key)!.asCell()!;
+    const entries = StateValue.newMap(roles.insert(key, StateValue.newCell({ value: [new Uint8Array(0)], alignment })));
+    let rebuilt = (StateValue as any).newArray();
+    fields.forEach((f, i) => { rebuilt = rebuilt.arrayPush(i === ROLES_FIELD ? entries : f); });
+    zeroed.data = new ChargedState(rebuilt);
+    const state = hexOf(zeroed.serialize());
+    /* RED WHEN: an entry written as zero is read as a company's label. */
+    expect(labelInAccountState(Buffer.from(state, 'hex'))).toBeNull();
+    expect(await labelOnAccount(ACCOUNT, async () => state)).toEqual({ of: 'no-label' });
+  });
 });

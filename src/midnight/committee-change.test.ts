@@ -3,16 +3,13 @@ import * as L from '@midnightntwrk/ledger-v9';
 import type { AuthorityRead, OnChainAuthority } from './ledger.js';
 import { committeeDifference, contractsOwingAChange, seatsOf } from './committee-change.js';
 import { buildCommitteeChange, type CommitteeChangeLedger } from './company-authority.js';
-import {
-  refusalForCommitteeChange, refusalToPutMoneyIn, whyTheHistoryDoesNotVouch, type ContractHistoryStep, type FundingFacts,
-} from '../wiring/vault-submission.js';
+import { refusalForCommitteeChange, refusalForHandover } from '../wiring/vault-submission.js';
 
 /*
- * A company's committee changed after its contracts were handed over: which
- * contracts owe the change, how it is put together from signatures made one at
- * a time, what the fee payer pays for, and when a contract changed more than
- * once is still vouched for. Every change here is applied by the ledger's own
- * state machine with signatures checked.
+ * A company's committee changed after its contracts were created held by it:
+ * which contracts owe the change, how it is put together from signatures made
+ * one at a time, and what the fee payer pays for. Every change here is applied
+ * by the ledger's own state machine with signatures checked.
  */
 const NET = 'undeployed';
 const sk = (n: number) => L.signingKeyFromBip340(new Uint8Array(32).fill(n));
@@ -71,26 +68,31 @@ describe('WHO JOINS, WHO LEAVES, AND WHICH CONTRACTS OWE THE CHANGE', () => {
     expect([d.thresholdNow, d.thresholdAfter]).toEqual([1, 2]);
   });
 
-  it('OWES A CHANGE ONLY WHERE A HANDED-OVER CONTRACT HOLDS A COMMITTEE OTHER THAN THE COMPANY\'S, AND SAYS WHY FOR THE REST', () => {
+  it('OWES A CHANGE ONLY WHERE A CONTRACT BORN HELD CARRIES A COMMITTEE OTHER THAN THE COMPANY\'S, AND SAYS WHY FOR THE REST', () => {
     const company = { committee: sorted(1, 2), threshold: 2 };
     const { owed, notChangeable } = contractsOwingAChange([
-      { contract: 'account', read: read(A, sorted(1, 2), 2, 1n) },
-      { contract: 'vault', read: read(B, sorted(1), 1, 1n) },
-      { contract: 'vault', read: read('c3'.repeat(32), sorted(9), 1, 0n) },
-      { contract: 'vault', read: read('d4'.repeat(32), sorted(1, 2), 0, 3n) },
-      { contract: 'vault', read: read('d5'.repeat(32), sorted(1, 2), 3, 3n) },
-      { contract: 'vault', read: { state: 'unreachable', address: 'e5'.repeat(32), why: 'down' } },
+      { contract: 'account', read: read(A, sorted(1, 2), 2, 1n), bornHeld: true },
+      { contract: 'vault', read: read(B, sorted(1), 1, 1n), bornHeld: true },
+      /* A one-signer company's vault, still held by its founding signer's one key: owed once a second signer is seated. */
+      { contract: 'vault', read: read('c3'.repeat(32), sorted(1), 1, 0n), bornHeld: true },
+      { contract: 'vault', read: read('d4'.repeat(32), sorted(1, 2), 0, 3n), bornHeld: true },
+      { contract: 'vault', read: read('d5'.repeat(32), sorted(1, 2), 3, 3n), bornHeld: true },
+      { contract: 'vault', read: { state: 'unreachable', address: 'e5'.repeat(32), why: 'down' }, bornHeld: true },
       /* Same keys, other order: not the company's value, so it owes the change. */
-      { contract: 'vault', read: read('f6'.repeat(32), [...sorted(1, 2)].reverse(), 2, 1n) },
+      { contract: 'vault', read: read('f6'.repeat(32), [...sorted(1, 2)].reverse(), 2, 1n), bornHeld: true },
+      /* Held by a key outside the company, and not born held: never offered. */
+      { contract: 'vault', read: read('a7'.repeat(32), sorted(9), 1, 0n), bornHeld: false },
     ], company);
     /* RED WHEN: a contract already holding the company's committee is offered a change, or one that does not hold it is not. */
-    expect(owed.map((o) => [o.address, o.counter])).toEqual([[B, 1n], ['f6'.repeat(32), 1n]]);
+    /* RED WHEN: a born-held one-key contract at counter 0 is left out (a one-signer company could never seat a second). */
+    expect(owed.map((o) => [o.address, o.counter])).toEqual([[B, 1n], ['c3'.repeat(32), 0n], ['f6'.repeat(32), 1n]]);
     expect(owed[0]!.now).toEqual({ committee: sorted(1), threshold: 1 });
-    expect(notChangeable.map((n) => n.address)).toEqual(['c3'.repeat(32), 'd4'.repeat(32), 'd5'.repeat(32), 'e5'.repeat(32)]);
-    expect(notChangeable[0]!.why).toMatch(/handed to the committee first/);
-    expect(notChangeable[1]!.why).toMatch(/anybody can change/);
-    expect(notChangeable[2]!.why).toMatch(/nobody can ever sign a change/);
-    expect(notChangeable[3]!.why).toMatch(/could not be asked/);
+    expect(notChangeable.map((n) => n.address)).toEqual(['d4'.repeat(32), 'd5'.repeat(32), 'e5'.repeat(32), 'a7'.repeat(32)]);
+    expect(notChangeable[0]!.why).toMatch(/anybody can change/);
+    expect(notChangeable[1]!.why).toMatch(/nobody can ever sign a change/);
+    expect(notChangeable[2]!.why).toMatch(/could not be asked/);
+    /* RED WHEN: a contract the record does not hold as born held is offered a change. */
+    expect(notChangeable[3]!.why).toMatch(/was not created here held by the company's committee/);
   });
 
   it('a key signs at every seat it holds', () => {
@@ -121,7 +123,7 @@ describe('THE CHANGE PUT TOGETHER FROM SIGNATURES MADE ONE AT A TIME, AND APPLIE
     const full = buildCommitteeChange(L as unknown as CommitteeChangeLedger, { read: now, to, strictestBar: 1, signatures: [two, one], network: NET, ttl: new Date(Date.now() + 600_000), label: 'x' });
     expect(full.seatsSigned).toEqual([seatOf(1), seatOf(2)].sort());
     expect(refusalForCommitteeChange(full.unproven, {
-      address, to, onChain: (now as Extract<AuthorityRead, { state: 'read' }>).authority, contract: 'vault',
+      address, to, onChain: (now as Extract<AuthorityRead, { state: 'read' }>).authority, contract: 'vault', bornHeld: true,
     })).toBeNull();
     expect(chain.apply(full.unproven)).toEqual({ ok: true, error: '' });
     expect(chain.authority(address)).toEqual(read(address, to.committee, 2, 2n));
@@ -144,11 +146,12 @@ describe('THE CHANGE PUT TOGETHER FROM SIGNATURES MADE ONE AT A TIME, AND APPLIE
     expect(meets.required).toBe(1);
   });
 
-  it('IS NOT BUILT FOR A CONTRACT STILL HELD BY ITS CREATOR\'S KEY, ONE ANYBODY CAN CHANGE, OR ONE ALREADY THE COMPANY\'S', () => {
+  it('IS NOT BUILT FOR A CONTRACT ANYBODY CAN CHANGE, NOBODY CAN, OR ONE ALREADY THE COMPANY\'S', () => {
     const P = L as unknown as CommitteeChangeLedger;
     const to = { committee: sorted(1, 2), threshold: 2 };
     const base = { to, strictestBar: 1, signatures: [], network: NET, ttl: new Date(Date.now() + 600_000), label: 'the vault' };
-    expect(() => buildCommitteeChange(P, { ...base, read: read(A, sorted(9), 1, 0n) })).toThrow(/handed to the committee first/);
+    /* RED WHEN: the first change of a one-signer company is refused as a handover. */
+    expect(buildCommitteeChange(P, { ...base, read: read(A, sorted(1), 1, 0n) }).required).toBe(1);
     expect(() => buildCommitteeChange(P, { ...base, read: read(A, sorted(9), 0, 2n) })).toThrow(/need no signature at all/);
     expect(() => buildCommitteeChange(P, { ...base, read: read(A, sorted(8, 9), 3, 2n) })).toThrow(/can never be changed/);
     expect(() => buildCommitteeChange(P, { ...base, read: read(A, to.committee, 2, 2n) })).toThrow(/already held by the company's committee/);
@@ -167,13 +170,13 @@ describe('WHAT THE FEE PAYER PAYS FOR', () => {
     if (sign) u = u.addSignature(0n, L.signData(sk(1), u.dataToSign));
     return L.Transaction.fromParts(NET, undefined, undefined, L.Intent.new(new Date(Date.now() + 600_000)).addMaintenanceUpdate(u));
   };
-  const expect_ = { address: A, to, onChain, contract: 'vault' as const };
+  const expect_ = { address: A, to, onChain, contract: 'vault' as const, bornHeld: true };
 
   it('pays for exactly the company\'s committee installed against the counter on the chain, signed enough', () => {
     expect(refusalForCommitteeChange(tx(A, to.committee, 2, 4n), expect_)).toBeNull();
   });
 
-  it('REFUSES ANOTHER CONTRACT, ANOTHER COMMITTEE OR THRESHOLD, A STALE COUNTER, TWO CHANGES, TOO FEW SIGNATURES, OR A CONTRACT STILL AT ITS HANDOVER', () => {
+  it('REFUSES ANOTHER CONTRACT, ANOTHER COMMITTEE OR THRESHOLD, A STALE COUNTER, TWO CHANGES, TOO FEW SIGNATURES, OR A CONTRACT NOT BORN HELD', () => {
     /* Each RED WHEN its own check is removed. */
     expect(refusalForCommitteeChange(tx(B, to.committee, 2, 4n), expect_)).toMatch(/changes a different contract/);
     expect(refusalForCommitteeChange(tx(A, sorted(1, 3), 2, 4n), expect_)).toMatch(/not this company's committee/);
@@ -183,75 +186,36 @@ describe('WHAT THE FEE PAYER PAYS FOR', () => {
     expect(refusalForCommitteeChange(tx(A, to.committee, 2, 4n, false), expect_)).toMatch(/fewer signatures than the 1/);
     const twoNeeded = (read(A, sorted(1, 3), 2, 4n) as Extract<AuthorityRead, { state: 'read' }>).authority;
     expect(refusalForCommitteeChange(tx(A, to.committee, 2, 4n), { ...expect_, onChain: twoNeeded })).toMatch(/fewer signatures than the 2/);
-    const atHandover = (read(A, sorted(9), 1, 0n) as Extract<AuthorityRead, { state: 'read' }>).authority;
-    expect(refusalForCommitteeChange(tx(A, to.committee, 2, 0n), { ...expect_, onChain: atHandover })).toMatch(/handed to the committee first/);
-  });
-});
-
-describe('A CONTRACT CHANGED MORE THAN ONCE IS VOUCHED FOR ONLY BY ITS WHOLE HISTORY', () => {
-  const r = (committee: number[], threshold: number, counter: bigint) => read(A, sorted(...committee), threshold, counter);
-  const history = (): ContractHistoryStep[] => [
-    { kind: 'deploy', transaction: 't0', authority: r([9], 1, 0n), circuits: null },
-    { kind: 'update', transaction: 't1', authority: r([1], 1, 1n), circuits: null },
-    { kind: 'call', transaction: 't2', authority: r([1], 1, 1n), circuits: null },
-    { kind: 'update', transaction: 't3', authority: r([1, 2], 1, 2n), circuits: null },
-  ];
-  const now = r([1, 2], 1, 2n);
-
-  it('vouches for a contract created by one key that made one change and let go, every change in order, every state this build\'s', () => {
-    expect(whyTheHistoryDoesNotVouch(history(), now)).toBeNull();
+    /* RED WHEN: a contract the record does not hold as born held has its change paid for. */
+    expect(refusalForCommitteeChange(tx(A, to.committee, 2, 4n), { ...expect_, bornHeld: false })).toMatch(/not created here held by the company's committee/);
+    /* RED WHEN: a committee any one of several keys could change alone is installed through this door. */
+    const loose = { committee: sorted(1, 2), threshold: 1 };
+    expect(refusalForCommitteeChange(tx(A, loose.committee, 1, 4n), { ...expect_, to: loose })).toMatch(/could change them alone/);
   });
 
-  it('A CHANGE THE CHAIN DID NOT APPLY IS PASSED OVER, AS THE INDEXER LISTS EVERY CHANGE ASKED FOR WITH ITS BLOCK\'S STATE', () => {
-    /* A second copy of change 2 sent after it landed: listed, with the counter it found. RED WHEN such a step
-     * strands the contract for good. */
-    const refusedCopy: ContractHistoryStep = { kind: 'update', transaction: 't4', authority: r([1, 2], 1, 2n), circuits: null };
-    expect(whyTheHistoryDoesNotVouch([...history(), refusedCopy], now)).toBeNull();
-    /* And one before any change landed. */
-    const early: ContractHistoryStep = { kind: 'update', transaction: 't0b', authority: r([9], 1, 0n), circuits: null };
-    expect(whyTheHistoryDoesNotVouch([history()[0]!, early, ...history().slice(1)], now)).toBeNull();
-    /* Two changes in one block show as one step whose counter moved by two: what it held between is unread. */
-    const both: ContractHistoryStep[] = [history()[0]!, { ...history()[1]!, authority: r([1, 2], 1, 2n) }];
-    expect(whyTheHistoryDoesNotVouch(both, now)).toMatch(/goes from 0 change\(s\) to 2 in one step/);
+  it('THE OLD HANDOVER DOOR REFUSES A COMMITTEE ANY ONE OF SEVERAL KEYS COULD CHANGE ALONE, AS EVERY DOOR DOES', () => {
+    const loose = { committee: sorted(1, 2), threshold: 1 };
+    const atDeploy = (read(A, sorted(9), 1, 0n) as Extract<AuthorityRead, { state: 'read' }>).authority;
+    /* RED WHEN: the handover door installs what the committee change door refuses. */
+    expect(refusalForHandover(tx(A, loose.committee, 1, 0n), { vault: A, to: loose, onChain: atDeploy })).toMatch(/could change them alone/);
+    expect(refusalForHandover(tx(A, to.committee, 2, 0n), { vault: A, to, onChain: atDeploy })).toBeNull();
   });
 
-  it('DOES NOT VOUCH WHEN ANY LINK IS MISSING OR WRONG', () => {
-    const h = history;
-    const cases: Array<[ContractHistoryStep[], RegExp]> = [
-      [[], /does not begin with it being created/],
-      [h().slice(1), /does not begin with it being created/],
-      [[h()[0]!, ...h()], /created more than once/],
-      [[{ ...h()[0]!, authority: r([9, 8], 2, 0n) }, ...h().slice(1)], /not created held by one key/],
-      [[{ ...h()[0]!, circuits: 'x' }, ...h().slice(1)], /created with circuits other than this build's/],
-      /* The key it was created with is still on its rules after the first change. RED WHEN that check goes. */
-      [[h()[0]!, { ...h()[1]!, authority: r([9, 1], 1, 1n) }, ...h().slice(2)], /left the key it was created with/],
-      /* A change missing from the history. */
-      [[h()[0]!, h()[1]!, h()[2]!, { ...h()[3]!, authority: r([1, 2], 1, 3n) }], /missing from the history or two were made at once/],
-      /* A change that left another build's circuit in force. RED WHEN only the state now is checked. */
-      [[h()[0]!, h()[1]!, h()[2]!, { ...h()[3]!, circuits: 'swapped' }], /circuits other than this build's: swapped/],
-      /* A change and a call in one transaction. */
-      [[h()[0]!, h()[1]!, { ...h()[2]!, transaction: 't1' }, h()[3]!], /also did something else to it/],
-      [h().slice(0, 3), /history shows 1 change\(s\) and the chain says it has been changed 2 times/],
-      [[h()[0]!, h()[1]!, h()[2]!, { ...h()[3]!, authority: { state: 'unreadable', address: A, why: 'odd' } }], /cannot be read \(odd\)/],
-    ];
-    for (const [steps, why] of cases) expect(whyTheHistoryDoesNotVouch(steps, now)).toMatch(why);
-  });
-
-  const facts = (over: Partial<FundingFacts> = {}): FundingFacts => ({
-    label: 'v', what: 'no money goes into this vault', vault: now, vaultCircuits: null, pinnedAccount: B, started: true, companyAccount: B,
-    committee: { committee: sorted(1, 2), threshold: 1 }, heldHere: [], account: r([1, 2], 1, 1n), accountCircuits: null, ...over,
-  });
-
-  it('THE GATE EVERY DOOR ASKS: A VAULT CHANGED TWICE PASSES ONLY WITH A HISTORY THAT VOUCHES', () => {
-    /* RED WHEN: a door that read no history lets a vault changed more than once through. */
-    expect(refusalToPutMoneyIn(facts())!.why).toMatch(/changed 2 times, and this service could not read the chain's record of those changes/);
-    expect(refusalToPutMoneyIn(facts({ vaultHistory: 'a change is missing' }))!.why).toMatch(/does not show that every change was made safely.*quote this: a change is missing/);
-    expect(refusalToPutMoneyIn(facts({ vaultHistory: null }))).toBeNull();
-    /* And the account the vault pays out on, the same way. */
-    const accountTwice = r([1, 2], 1, 2n);
-    expect(refusalToPutMoneyIn(facts({ vaultHistory: null, account: accountTwice }))!.why).toMatch(/account.*changed 2 times/);
-    expect(refusalToPutMoneyIn(facts({ vaultHistory: null, account: accountTwice, accountHistory: null }))).toBeNull();
-    /* Changed once is the handover, and needs no history, exactly as before. */
-    expect(refusalToPutMoneyIn(facts({ vault: r([1, 2], 1, 1n) }))).toBeNull();
+  it('PAYS FOR THE FIRST CHANGE OF A ONE-SIGNER COMPANY BORN HELD, SIGNED BY ITS FOUNDING SIGNER\'S KEY, AND THE LEDGER APPLIES IT', () => {
+    const chain = new Chain();
+    /* The account and a vault of a company whose founding signer, key 1, holds both from their first transaction. */
+    const account = chain.deploy([1], 1);
+    const vault = chain.deploy([1], 1);
+    for (const address of [account, vault]) {
+      const now = chain.authority(address) as Extract<AuthorityRead, { state: 'read' }>;
+      expect([now.authority.shape, now.authority.counter]).toEqual(['one-key', 0n]);
+      let u = new L.MaintenanceUpdate(address, [new L.ReplaceAuthority(new L.ContractMaintenanceAuthority(to.committee as never, 2, 1n))], 0n);
+      u = u.addSignature(0n, L.signData(sk(1), u.dataToSign));
+      const change = L.Transaction.fromParts(NET, undefined, undefined, L.Intent.new(new Date(Date.now() + 600_000)).addMaintenanceUpdate(u));
+      /* RED WHEN: a one-key contract at counter 0 is refused as one still owed its handover. */
+      expect(refusalForCommitteeChange(change, { address, to, onChain: now.authority, contract: address === account ? 'account' : 'vault', bornHeld: true })).toBeNull();
+      expect(chain.apply(change)).toEqual({ ok: true, error: '' });
+      expect(chain.authority(address)).toEqual(read(address, to.committee, 2, 1n));
+    }
   });
 });

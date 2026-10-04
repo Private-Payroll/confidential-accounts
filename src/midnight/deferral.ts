@@ -13,17 +13,16 @@
  * two deferred.
  *
  * `S23` SHED `credit` AND `attestSolvency` FROM THE CONTRACT ITSELF, which is
- * the reason this file no longer needs a deferred list. The contract now
- * exports TEN circuits and the deployment must carry all ten. **THE FIGURES
- * BELOW ARE THE ELEVEN-CIRCUIT MEASUREMENT AND ARE NOW STALE**: `C292`/`S26`
- * deleted `execute`, and no instrument has read the ten-circuit shape yet. The
- * door is `MEASURE-DEPLOY-SHAPE.command`, and until it is walked no number here
- * describes what would be deployed. Measured, not argued:
- * `REPORT-DEPLOY-SHAPE.txt`, 30 Aug — eleven circuits, 22,541 bytes of
- * key, 31,499 bytesWritten, 96.9% of the ceiling, 998 bytes under it, read
- * ±~260 once proven and balanced. `contracts/managed/keys/`,
- * `contracts/managed/zkir/` and `contracts/managed/compiler/contract-info.json`
- * agree on the same ten.
+ * the reason this file no longer needs a deferred list. The contract has since
+ * grown again, to the twenty circuits `DEPLOYED_CIRCUITS` names, and the
+ * deployment carries all twenty: eight in its deploy and twelve in the one
+ * update that finishes it (below). **THE FIGURES IN THE NEXT PARAGRAPH ARE AN
+ * ELEVEN-CIRCUIT MEASUREMENT AND ARE STALE**; what decides a deploy now is
+ * `PER_TRANSACTION_CEILING`, read below from the derivation, and the two-step
+ * test that measures both steps against it with the ledger's own cost
+ * function. The eleven-circuit reading: `REPORT-DEPLOY-SHAPE.txt`, 30 Aug -
+ * 22,541 bytes of key, 31,499 bytesWritten, 998 bytes under the ceiling, read
+ * ±~260 once proven and balanced.
  *
  * **THAT HEADROOM IS AGAINST A DERIVED CEILING, NOT A CALIBRATED ONE, AND THE
  * DIFFERENCE MATTERS BEFORE A DEPLOY.** `scripts/dispatch-ceiling.ts:130,135`
@@ -62,11 +61,13 @@
  *     arrives only in a NEW deployment.
  */
 
+import { BYTES_WRITTEN_LIMIT, extrinsicCeiling } from '../../scripts/dispatch-ceiling.js';
+
 /**
- * The fourteen circuits a finished company account carries — every circuit the
- * contract has. **They no longer fit one deploy**: all fourteen measure 37,466
- * bytes written, with no authority, against a per-transaction ceiling of 31,997
- * (`scripts/dispatch-ceiling.ts`). So a company is created in two steps, a
+ * The twenty circuits a finished company account carries — every circuit the
+ * contract has. **They do not fit one deploy**: the whole account in one deploy
+ * is over the per-transaction ceiling (`PER_TRANSACTION_CEILING`, measured by
+ * `a-company-is-created-in-two-steps.test.ts`). So a company is created in two steps, a
  * deploy carrying `FIRST_STEP_CIRCUITS` and then one maintenance update that
  * only inserts `SECOND_STEP_CIRCUITS`. This list is what the account carries
  * once both have landed, and every reader that asks "which circuits does a
@@ -179,6 +180,27 @@ export const SECOND_STEP_CIRCUITS = [
 
 const FIRST = new Set<string>(FIRST_STEP_CIRCUITS);
 const SECOND = new Set<string>(SECOND_STEP_CIRCUITS);
+
+/** The two steps of a company's creation, as the one builder of the second step takes them. */
+export const CREATION_STEPS = { first: FIRST_STEP_CIRCUITS, second: SECOND_STEP_CIRCUITS } as const;
+
+/**
+ * **THE MOST BYTES ONE TRANSACTION MAY WRITE**, derived from the node's own
+ * weights, the size weight it adds to every transaction included
+ * (`scripts/dispatch-ceiling.ts`). Every step of a company's creation is
+ * measured against this before anything is paid for.
+ */
+export const PER_TRANSACTION_CEILING = extrinsicCeiling(BYTES_WRITTEN_LIMIT);
+
+/** Why a transaction writing `bytesWritten` would be refused for its size, or null when it fits. */
+export function overTheCeiling(bytesWritten: bigint | number, what: string): string | null {
+  const written = Number(bytesWritten);
+  if (!Number.isFinite(written) || written < 0) return `${what} could not be measured, so it is not sent. Nothing was sent.`;
+  return written <= PER_TRANSACTION_CEILING
+    ? null
+    : `${what} writes ${written.toLocaleString('en')} bytes, more than the ${PER_TRANSACTION_CEILING.toLocaleString('en')} one `
+      + 'transaction may write, so the chain would refuse it. Nothing was sent.';
+}
 
 /** Which step of a company's creation adds a circuit, or null for a name the account does not have. */
 export const creationStepOf = (name: string): 1 | 2 | null =>

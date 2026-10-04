@@ -16,6 +16,7 @@
  */
 import { whyNotTheCommittee, type Roster } from './handover-check.js';
 import { rosterVaultKeys } from '../../../src/core/vault-keys.js';
+import { whyOneKeyCouldActAlone } from '../../../src/midnight/vault-committee.js';
 
 import { readAccountAddress, readCompanyLabel } from 'midnight-identity/profile/company-label';
 import type { AccountAddress, CompanyLabel } from 'midnight-identity/profile/company-label';
@@ -116,6 +117,9 @@ export function committeeChangeRefusal(
       + `company's own record says ${roster.policy.threshold}. No change is signed from here. Reload the page, and if it `
       + 'happens again, contact support.');
   }
+  /* The same rule every door that installs a committee asks, so a wallet is never asked to sign what the service refuses. */
+  const alone = whyOneKeyCouldActAlone(view.to);
+  if (alone !== null) return refused(`no change is signed from here: ${alone}.`);
   const myEntry = rosterVaultKeys(roster).find((r) => r.signerId === me.signerId);
   if (!myEntry?.keys || !same(myEntry.keys.committeeKey, mine)) {
     return refused('the company\'s roster does not carry the key your wallet gives for this company as yours, so no change is '

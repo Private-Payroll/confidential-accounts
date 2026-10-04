@@ -6,7 +6,7 @@ import type { Registry } from 'midnight-identity/profile/attributes';
 import { abbreviate, check } from 'midnight-identity/profile/definition';
 import type { AttributeDefinition, AttributeName } from 'midnight-identity/profile/definition';
 import {
-  emptyProfile, grantTo, heldAbout, originsFor, recordDisclosure, recordRelease, selfAssert,
+  drewTheLabelFor, emptyProfile, grantTo, heldAbout, originsFor, pinCompanyAccount, recordDisclosure, recordRelease, selfAssert,
 } from 'midnight-identity/profile/model';
 import type { Held, Profile, Recipient, Sent } from 'midnight-identity/profile/model';
 import { browserPort, load, save } from 'midnight-identity/profile/store';
@@ -35,6 +35,7 @@ import { ApproveBalance } from './approve-balance.js';
 import { recordAsk, recordChannelState, recordedChannel } from '../lib/ask-record.js';
 import { ApproveCommittee } from './approve-committee.js';
 import { ApproveRecordsKey } from './approve-records-key.js';
+import { ApproveCreation } from './approve-creation.js';
 import { AnswerHolders } from './answer-holders.js';
 import type { Consent } from '../framing.js';
 
@@ -525,6 +526,9 @@ export function Approve({
     /* **NOR A HOLDERS ASK**: it hands back public chain facts and signs nothing, and its one door is its own
      * screen (`answer-holders.tsx`), which answers without a press. */
     if (request.kind === 'holders') return;
+    /* **NOR A CREATION**: it signs the second step of a company's account and discloses nothing, and its one door is
+     * the press on its own screen (`approve-creation.tsx`). */
+    if (request.kind === 'creation') return;
     const disclosed: Sent[] = [];
     const declined: AttributeName[] = [];
     for (const row of rows) {
@@ -1211,6 +1215,32 @@ export function Approve({
         whoIsAsking={whoIsAsking}
         onDecline={() => { channel?.refuse('declined'); setChannelState({ of: 'waiting' }); }}
         readLabel={readLabel}
+      />
+    );
+  }
+
+  if (request.kind === 'creation') {
+    return (
+      <ApproveCreation
+        request={request}
+        identity={identity}
+        channel={channel}
+        consent={consent}
+        whoIsAsking={whoIsAsking}
+        onDecline={() => { channel?.refuse('declined'); setChannelState({ of: 'waiting' }); }}
+        drewTheLabel={profile !== null && drewTheLabelFor(profile, request.company)}
+        onPin={async (account, at) => {
+          if (profile === null) throw new Error('this wallet\'s record is not open, so nothing has been signed.');
+          /* The account the deploy creates, as this wallet read it, is pinned as the company's: once, and here, and kept
+           * before the signature is handed back. A pin this wallet could not keep is no pin, so nothing is signed. */
+          const next = pinCompanyAccount(profile, { company: request.company, account, from: 'created', at }, at);
+          try {
+            await save(port, identity, next);
+          } catch {
+            throw new Error('This wallet could not keep the company\'s account, so nothing has been signed. Try again.');
+          }
+          setProfile(next);
+        }}
       />
     );
   }
