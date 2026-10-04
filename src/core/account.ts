@@ -4094,8 +4094,8 @@ export class AccountService {
    * The account as we hold it: ciphertext, plus the handful of fields that are
    * public on chain or opaque by construction.
    *
-   * This is what an existence check should use, and it is all `payroll` and
-   * `plugins` ever wanted from it. Anything that needs a name, a signer or a
+   * This is what an existence check should use, and it is all `payroll` ever
+   * wanted from it. Anything that needs a name, a signer or a
    * limit calls `open` and supplies a key.
    */
   require(accountId: string): SealedAccount {

@@ -1320,7 +1320,7 @@ export class SimulatedLedger implements Ledger {
    * to publish a settlement, which is when the decision about what an observer
    * may see actually has to be made. **AND THERE IS A SECOND HALF TO THIS**:
    * every field this array carried — `asset`, `amount` as a real integer, and
-   * the memo — went to `GET /api/public`, which has no sign-in on it.
+   * the memo — went to a public route that had no sign-in on it.
    *
    * `core.test.ts`'s *the public observer view carries nothing denominated in
    * money* is what holds the ground it left.

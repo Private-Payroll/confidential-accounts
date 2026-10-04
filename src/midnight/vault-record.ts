@@ -96,8 +96,8 @@
  *
  * ------------------------------------------------------------------------
  * This module is PURE. It builds paths, validates names and merges records; it
- * opens no file. `scripts/deploy-vault.ts` does the I/O, so both halves can be
- * tested without one.
+ * opens no file. Its callers do the I/O, so this half can be tested without
+ * one.
  */
 import type { MaintenanceAuthorityDescription } from './partial-contract.js';
 

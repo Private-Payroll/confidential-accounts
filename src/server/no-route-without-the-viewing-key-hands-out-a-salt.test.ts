@@ -3,7 +3,7 @@ import { readFileSync, mkdtempSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { FileStore } from '../core/store-file.js';
-import { SimulatedLedger, SimulatedProofSystem } from '../core/ledger.js';
+import { SimulatedLedger } from '../core/ledger.js';
 import { MidnightCommitments } from '../midnight/commitments.js';
 import { AccountService } from '../core/account.js';
 import { PayrollService, RecordingInviteDelivery } from '../core/payroll.js';
@@ -95,7 +95,7 @@ describe('no route that does not take the viewing key returns a salt or a path',
     const accounts = new AccountService(
       store, new SimulatedLedger(MidnightCommitments), MidnightCommitments, registry, aVaultHolding());
     const invites = new RecordingInviteDelivery();
-    const payroll = new PayrollService(store, accounts, new SimulatedProofSystem(), registry, 'undeployed', invites);
+    const payroll = new PayrollService(store, accounts, registry, 'undeployed', invites);
     const created = await accounts.create('Acme', [{ name: 'Ada', role: 'admin' as const }], 1, undefined, drawCompanyLabel());
     const rec = accounts.require(created.account.id);
     store.putAccount({ ...rec, addressSource: 'chain' } as typeof rec);

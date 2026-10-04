@@ -16,7 +16,7 @@ import { mkdtempSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 
-const { SimulatedLedger, SimulatedProofSystem } = await import('../core/ledger.js');
+const { SimulatedLedger } = await import('../core/ledger.js');
 const { MidnightCommitments } = await import('../midnight/commitments.js');
 const { FileStore } = await import('../core/store-file.js');
 const { AccountService } = await import('../core/account.js');
@@ -50,7 +50,7 @@ const UNOPENED = { opensAt: now + 5_000, closesAt: now + 9_000 };
 
 const store = new FileStore(DATA);
 const accounts = new AccountService(store, ledger, MidnightCommitments, productAssets, aVaultHolding(HELD));
-const payroll = new PayrollService(store, accounts, new SimulatedProofSystem(), productAssets);
+const payroll = new PayrollService(store, accounts, productAssets);
 
 const aCompany = async (name: string) => {
   const created = await accounts.create(name, [{ name: 'Ada', role: 'admin' }], 1, undefined, drawCompanyLabel());

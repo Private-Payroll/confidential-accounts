@@ -5,7 +5,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { addressFingerprint } from 'midnight-identity/profile/fingerprint';
 import { FileStore } from './store-file.js';
-import { SimulatedLedger, SimulatedProofSystem, SimulatedCommitments } from './ledger.js';
+import { SimulatedLedger, SimulatedCommitments } from './ledger.js';
 import { AccountService } from './account.js';
 import { PayrollService, RecordingInviteDelivery } from './payroll.js';
 import { sealHandover } from './invite-handover.js';
@@ -60,7 +60,7 @@ const harness = () => {
     store, new SimulatedLedger(SimulatedCommitments), SimulatedCommitments, registry, aVaultHolding());
   const invites = new RecordingInviteDelivery();
   const payroll = new PayrollService(
-    store, accounts, new SimulatedProofSystem(), registry, NETWORK, invites);
+    store, accounts, registry, NETWORK, invites);
   return { store, accounts, payroll, invites };
 };
 

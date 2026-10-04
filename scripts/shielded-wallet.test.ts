@@ -3,7 +3,7 @@
  * THE SAME SENTENCE.**
  *
  * The defect this file exists for is not an exception or a wrong number. It is
- * that `DEPOSIT-TO-VAULT.command` read a coin list three seconds after the
+ * that the deposit door read a coin list three seconds after the
  * wallet was built, printed `the wallet holds 0 of that colour`, and told a
  * person to wait — against a wallet that had held ten trillion of it minutes
  * earlier. It was right by accident. **The same output for the opposite
@@ -294,11 +294,11 @@ describe('the wait is bounded, which the SDK\x27s own wait is not', () => {
      * `Number('soon')` is `NaN`, `elapsed > NaN` is false for every elapsed,
      * and the deadline branch becomes unreachable — `M-22` restored by a typo
      * in an environment variable, in the file written to avoid it. Found by
-     * `S17`'s money-safety pass. Rule 19: the refusal names a door.
+     * `S17`'s money-safety pass. Rule 19: the refusal says what resolves it.
      */
     for (const bad of ['soon', '0', '-1', 'Infinity', '1e400']) {
       expect(() => deadlineFromEnv(bad)).toThrow(/not a positive number of milliseconds/);
-      expect(() => deadlineFromEnv(bad)).toThrow(/DEPOSIT-TO-VAULT\.command/);
+      expect(() => deadlineFromEnv(bad)).toThrow(/Unset it and open the same door again/);
     }
   });
 

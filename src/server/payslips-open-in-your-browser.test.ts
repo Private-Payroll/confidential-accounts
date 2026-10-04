@@ -49,7 +49,7 @@ const seeded = await (async () => {
     store, new SimulatedLedger(SimulatedCommitments), SimulatedCommitments, undefined, aVaultHolding());
   const invites = new RecordingInviteDelivery();
   const payroll = new PayrollService(
-    store, accounts, new SimulatedProofSystem(), undefined, 'undeployed', invites);
+    store, accounts, undefined, 'undeployed', invites);
   const { account, viewingKey } = await accounts.create(
     'Acme', [{ name: 'Ada', role: 'admin' as const }], 1, undefined, drawCompanyLabel());
   const rec = accounts.require(account.id);

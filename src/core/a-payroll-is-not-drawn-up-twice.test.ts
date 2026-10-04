@@ -21,7 +21,7 @@ import { mkdtempSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { FileStore } from './store-file.js';
-import { SimulatedLedger, SimulatedProofSystem, SimulatedCommitments } from './ledger.js';
+import { SimulatedLedger, SimulatedCommitments } from './ledger.js';
 import { AccountService } from './account.js';
 import { PayrollService } from './payroll.js';
 
@@ -31,7 +31,7 @@ function harness() {
   const registry = registryWithTestPrivateForms();
   const accounts = new AccountService(
     store, new SimulatedLedger(SimulatedCommitments), SimulatedCommitments, registry);
-  const payroll = new PayrollService(store, accounts, new SimulatedProofSystem(), registry);
+  const payroll = new PayrollService(store, accounts, registry);
   return { store, accounts, payroll };
 }
 

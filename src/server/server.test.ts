@@ -3,7 +3,7 @@
  *
  * WHY THIS FILE EXISTS, stated as the damage: every other test in this project
  * stops at the service layer, and both leaks that actually shipped were in a
- * route. `/api/public` published `approvals[].signerId` — the deanonymised
+ * route. A public route, since deleted, published `approvals[].signerId` — the deanonymised
  * version of the nullifiers the chain blinds on purpose — and nobody noticed,
  * because no test had ever read a response body.
  *

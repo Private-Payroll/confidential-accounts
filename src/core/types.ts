@@ -1073,86 +1073,6 @@ export interface Invite {
   offer?: Sealed | null;
 }
 
-/* ---------------- extension layer ---------------- */
-
-export type Scope =
-  | 'state:read'
-  | 'state:read:totals'
-  | 'people:read'
-  | 'runs:read'
-  | 'proposal:create'
-  | 'disclosure:issue';
-
-export type PluginCategory =
-  | 'offramp' | 'treasury' | 'interop' | 'compliance' | 'accounting' | 'identity';
-
-export interface PluginManifest {
-  id: string;
-  name: string;
-  publisher: string;
-  category: PluginCategory;
-  /** first-party is built by us, verified is a named company, community is neither. */
-  verification: 'first-party' | 'verified' | 'community';
-  version: string;
-  summary: string;
-  scopes: Scope[];
-  requestsSpend: boolean;
-}
-
-export interface Installation {
-  id: string;
-  accountId: string;
-  pluginId: string;
-  grantedScopes: Scope[];
-  /**
-   * Null when the plug-in cannot propose spending at all.
-   *
-   * A CEILING PER ASSET, in one installation.
-   *
-   * The property that has to hold is that a limit and the spend it governs are
-   * in the SAME currency — an allowance of 1,000 means a sensible weekly limit
-   * in pounds and roughly nothing in ether, and the plug-in must not be the one
-   * that decides which. A map keyed by asset gives that by construction: the
-   * ceiling is looked up by the asset being spent, so there is no pairing to
-   * get wrong.
-   *
-   * The first version of this made an installation single-asset and said a
-   * plug-in needing two should be installed twice. That bought the same safety
-   * and charged for it twice over — two capability tokens, two audit trails,
-   * two things to revoke, and a plug-in having to know which token to use for
-   * which currency. That design was rejected.
-   *
-   * AN ASSET WITH NO ENTRY CANNOT BE SPENT AT ALL. That is the honest default
-   * and the reason this is a map rather than a map with a fallback: a limit
-   * nobody set is not a limit of zero and not a limit of infinity, it is an
-   * asset this plug-in was never granted.
-   */
-  allowance: {
-    limits: PerAsset<{ perProposal: bigint; perPeriod: bigint }>;
-    periodDays: number;
-  } | null;
-  status: 'active' | 'suspended' | 'removed';
-  installedAt: string;
-  installedBy: string;
-  /** Capability token. Bound to one account and one scope set. Not a viewing key. */
-  token: string;
-}
-
-/** Every plug-in action, allowed or refused. Refusals are the interesting ones. */
-export interface PluginEvent {
-  id: string;
-  installationId: string;
-  accountId: string;
-  pluginId: string;
-  action: string;
-  detail: string;
-  allowed: boolean;
-  /** Present together or not at all. An amount with no asset cannot be read. */
-  asset?: AssetId;
-  amount?: bigint;
-  at: string;
-}
-
 /**
  * **ONE LEG OF A PAYROLL RUN: ONE LEDGER TOKEN, IN ONE FORM**, written
  * `<token>:<form>`. One run pays one token in one form, so a payroll whose
@@ -1462,17 +1382,6 @@ export interface SealedRun {
    * more than one ledger together rather than guess which of them settled.
    */
   wiring?: WiringName | null;
-}
-
-export interface Attestation {
-  id: string;
-  accountId: string;
-  circuit: string;
-  statement: string;
-  publicInputs: Record<string, unknown>;
-  proof: Hex;
-  issuedAt: string;
-  expiresAt: string;
 }
 
 /**

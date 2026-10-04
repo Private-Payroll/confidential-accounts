@@ -11,7 +11,6 @@ import { AccountService, openAccount, sealAccount, approvalMessage } from './acc
 import { payeeAddressFromKeys } from '../midnight/payee-address.js';
 import { runPayments } from '../midnight/run-status.js';
 import { PayrollService, RecordingInviteDelivery } from './payroll.js';
-import { PluginService } from './plugins.js';
 import { NO_ASSET } from './assets.js';
 import { newWrappingKeypair, newSigningKeypair, newSymmetricKey, seal, unseal,
   commit, newProposalSalt } from './crypto.js';
@@ -34,7 +33,7 @@ import type { Hex } from './crypto.js';
 import type { PayeeAddress } from '../midnight/payee-address.js';
 import { newSeatInvitation, proveSeatKeys } from './seat-invite-proof.js';
 
-import { TEST_TOKEN, OTHER_TEST_TOKEN, testToken } from '../testing/assets.js';
+import { TEST_TOKEN } from '../testing/assets.js';
 import { TEST_SETTLEMENT_ASSET } from './assets.js';
 /** The value, or a failure that says one was missing: an index that finds nothing is a broken test, not a value to carry on with. */
 function present<T>(value: T | undefined): T {
@@ -101,9 +100,8 @@ function harness() {
    * `invite()`'s return, and what the reversal costs is set out there with it.
    */
   const invites = new RecordingInviteDelivery();
-  const payroll = new PayrollService(store, accounts, proofs, registry, 'undeployed', invites);
-  const plugins = new PluginService(store, accounts, registry);
-  // In-memory sessions: the same class the standalone build uses, so these
+  const payroll = new PayrollService(store, accounts, registry, 'undeployed', invites);
+  // In-memory sessions: the same class development uses, so these
   // tests exercise a real implementation rather than a stub. The Postgres one
   // is held to the identical contract in sessions.test.ts.
   const sessionStore = new MemorySessionStore();
@@ -113,7 +111,7 @@ function harness() {
    * sign-in, which takes its own. */
   const identity = new IdentityService(store, sessionStore);
   return {
-    store, ledger, proofs, accounts, payroll, plugins, identity, sessionStore, invites, challenges,
+    store, ledger, proofs, accounts, payroll, identity, sessionStore, invites, challenges,
   };
 }
 
@@ -367,54 +365,6 @@ describe('payroll and disclosure', () => {
     const roster = h.payroll.listPeople(account.id, viewingKey); // sorted by name
     expect(roster.map(e => e.baseAmount)).toEqual([6_200_00n, 4_800_00n]);
     expect(roster.map(e => e.asset)).toEqual([TEST_TOKEN, TEST_TOKEN]);
-  });
-
-  /*
-   * THREE SOLVENCY TESTS STOOD HERE AND ARE REPLACED BY ONE.
-   *
-   * They proved a threshold against the account's balance, refused an asset it
-   * had never held, and refused a false statement. All three needed a balance,
-   * and the account keeps none.
-   *
-   * `attestSolvency` IS NOT DELETED: it and its screen are reserved for work of
-   * their own. What it must not do meanwhile is issue an attestation that is
-   * true only because there is nothing to be solvent with, which would be a
-   * claim the product cannot stand behind. So it refuses, and this test is what
-   * holds it to refusing rather than quietly attesting zero.
-   */
-  it('refuses to attest solvency at all, because there is no balance to attest to', async () => {
-    const s = await setup();
-    await expect(
-      h.payroll.attestSolvency(s.account.id, s.viewingKey, TEST_TOKEN, 50_000_00n),
-    ).rejects.toThrow(/holds no balance/);
-  });
-
-  /**
-   * **THE REFUSAL USED TO SAY *"cannot attest an unsettled run"*, AND THE
-   * SENTENCE CHANGED RATHER THAN THE BEHAVIOUR.**
-   *
-   * That wording describes a RUN, as though settling one were a step somebody
-   * could go and take. It is not: `run.status` is assigned in exactly two
-   * places in `src/`, `'draft'` and `'proposed'`, and **`'settled'` is assigned
-   * nowhere** — `settle` was deleted with the balance. A refusal names the door
-   * that resolves it, and when there is no door the honest refusal says so.
-   *
-   * **AND THIS ASSERTS THE FACT, NOT THE WORDING**, so it is the mechanical
-   * half rather than a string check: the day something assigns `'settled'`,
-   * the second expectation goes red and the sentences above it — in
-   * `payroll.ts`, in the three routes and on the screen — have to be revisited
-   * in the same round.
-   */
-  it('will not attest a run that has not settled, because nothing can settle one', async () => {
-    const s = await setup();
-    await expect(h.payroll.attestPayrollTotal(s.run.id, s.viewingKey, TEST_TOKEN))
-      .rejects.toThrow(/no run in this product can be anything else/);
-
-    const src = readFileSync(new URL('./payroll.ts', import.meta.url), 'utf8');
-    const writers = [...src.matchAll(/run\.status\s*=\s*'([a-z]+)'|status:\s*'([a-z]+)'/g)]
-      .map(m => m[1] ?? m[2]);
-    expect(writers, 'something now assigns a run status; revisit every sentence that says nothing can')
-      .not.toContain('settled');
   });
 });
 
@@ -1626,132 +1576,6 @@ describe('onboarding', () => {
   });
 });
 
-describe('plug-ins', () => {
-  let h: ReturnType<typeof harness>;
-  beforeEach(() => { h = harness(); });
-
-  async function acct() {
-    const c = await h.accounts.create('Acme', THREE_SIGNERS, 2, undefined, drawCompanyLabel());
-    return c;
-  }
-
-  it('refuses a scope the plug-in never requested', async () => {
-    const c = await acct();
-    expect(() => h.plugins.install({
-      accountId: c.account.id, pluginId: 'xero-sync',
-      scopes: ['state:read'] as any, allowance: null, installedBy: present(c.secrets[0]).signerId,
-    })).toThrow(/did not request/);
-  });
-
-  it('will not let a plug-in propose without an allowance', async () => {
-    const c = await acct();
-    const ins = h.plugins.install({
-      accountId: c.account.id, pluginId: 'treasury-yield',
-      scopes: ['state:read', 'proposal:create'], allowance: null, installedBy: present(c.secrets[0]).signerId,
-    });
-    await expect(h.plugins.propose(ins.token, c.viewingKey, {
-      summary: 'Deploy to lending', asset: TEST_TOKEN, amount: 10_00n, recipient: 'Pool',
-    })).rejects.toThrow(/no spending allowance/);
-  });
-
-  it('enforces the per-proposal and per-period allowance', async () => {
-    const c = await acct();
-    const ins = h.plugins.install({
-      accountId: c.account.id, pluginId: 'treasury-yield',
-      scopes: ['state:read', 'proposal:create'],
-      /*
-       * A CEILING PER ASSET, in ONE installation.
-       *
-       * The first version of this made an installation single-asset and said a
-       * plug-in needing two should be installed twice — the same safety,
-       * charged for twice over: two capability tokens, two audit trails, two
-       * things to revoke. The ceiling is looked up by the asset being spent, so
-       * there is no pairing left to get wrong.
-       */
-      allowance: { limits: { [TEST_TOKEN]: { perProposal: 5_000_00n, perPeriod: 8_000_00n } }, periodDays: 30 },
-      installedBy: present(c.secrets[0]).signerId,
-    });
-    const go = (amount: bigint) => h.plugins.propose(ins.token, c.viewingKey, {
-      summary: 'Deploy', asset: TEST_TOKEN, amount, recipient: 'Pool',
-    });
-
-    await expect(go(9_000_00n)).rejects.toThrow(/per-proposal allowance/);
-    await go(5_000_00n);                              // fine
-    await expect(go(4_000_00n)).rejects.toThrow(/allowance for the period/);
-  });
-
-  it('refuses an asset the installation was never granted, rather than defaulting', async () => {
-    /*
-     * The other half of the per-asset ceiling, and the reason the allowance is
-     * a map with no fallback. An asset with no entry is not a limit of zero and
-     * not a limit of infinity — it is an asset this plug-in was never granted,
-     * and the refusal says which assets it may spend instead.
-     *
-     * Without this a plug-in granted a sterling ceiling could spend ether
-     * against it: 5,000 is a sensible weekly limit in pounds and roughly
-     * nothing in ether, and the plug-in must not be the one that decides which.
-     */
-    const c = await acct();
-    const ins = h.plugins.install({
-      accountId: c.account.id, pluginId: 'treasury-yield',
-      scopes: ['state:read', 'proposal:create'],
-      allowance: { limits: { [TEST_TOKEN]: { perProposal: 5_000_00n, perPeriod: 8_000_00n } }, periodDays: 30 },
-      installedBy: present(c.secrets[0]).signerId,
-    });
-    await expect(h.plugins.propose(ins.token, c.viewingKey, {
-      summary: 'Deploy', asset: OTHER_TEST_TOKEN, amount: 1n, recipient: 'Pool',
-    /* RED WHEN the refusal names tokens by their hex rather than the symbols a person reads. */
-    })).rejects.toThrow(/no tOTH allowance\. It may spend tPAY and nothing else/);
-
-    // Refused, and recorded — a refusal is the more interesting audit line.
-    const refused = h.plugins.events(c.account.id).filter(e => !e.allowed);
-    expect(refused).toHaveLength(1);
-    expect(present(refused[0]).asset).toBe(OTHER_TEST_TOKEN);
-    expect(present(refused[0]).amount).toBe(1n);
-  });
-
-  it('an allowance naming an asset the registry does not know is refused at install', async () => {
-    /*
-     * Checked when the grant is made rather than at the first payment, because
-     * an allowance in a currency nobody can resolve is a limit nobody can
-     * enforce — and the first payment is the worst possible moment to discover
-     * that.
-     */
-    const c = await acct();
-    expect(() => h.plugins.install({
-      accountId: c.account.id, pluginId: 'treasury-yield',
-      scopes: ['state:read', 'proposal:create'],
-      allowance: { limits: { [testToken('never registered')]: { perProposal: 1n, perPeriod: 1n } }, periodDays: 30 },
-      installedBy: present(c.secrets[0]).signerId,
-    /* RED WHEN an allowance in a token the registry does not hold is accepted. */
-    })).toThrow(`no asset in the registry is the token "${testToken('never registered')}"`);
-  });
-
-  it('stops working the moment it is suspended', async () => {
-    const c = await acct();
-    const ins = h.plugins.install({
-      accountId: c.account.id, pluginId: 'xero-sync',
-      scopes: ['state:read:totals', 'runs:read'], allowance: null, installedBy: present(c.secrets[0]).signerId,
-    });
-    h.plugins.readRuns(ins.token);
-    h.plugins.setStatus(ins.id, 'suspended');
-    expect(() => h.plugins.readRuns(ins.token)).toThrow(/suspended/);
-  });
-
-  it('records refusals in the audit trail, not just successes', async () => {
-    const c = await acct();
-    const ins = h.plugins.install({
-      accountId: c.account.id, pluginId: 'xero-sync',
-      scopes: ['runs:read'], allowance: null, installedBy: present(c.secrets[0]).signerId,
-    });
-    expect(() => h.plugins.readPeople(ins.token)).toThrow(/not granted/);
-
-    const refused = h.plugins.events(c.account.id).filter(e => !e.allowed);
-    expect(refused).toHaveLength(1);
-    expect(present(refused[0]).detail).toMatch(/people:read was not granted/);
-  });
-});
-
 /* ============================================================================
  * Identity and multi-tenancy.
  *
@@ -2250,17 +2074,11 @@ describe('the approval round, as the chain enforces it', () => {
    * not *the list is empty*, which is true of any absence, but *nothing this
    * boundary publishes is denominated in money* — which is false the moment a
    * settlement row comes back, with its asset and its amount as a real integer.
-   * That is what must never go out of `GET /api/public` to anybody at all.
+   * That is what must never go out of a public view to anybody at all.
    *
-   * **AND THIS MEETS ONLY HALF OF THE REQUIREMENT.** The requirement is *"the
-   * endpoint shows commitments and nothing denominated in money, and a test
-   * that fails if any field it returns is a number of an asset"* — and the
-   * subject of both halves is THE ENDPOINT. **This test is about
-   * `SimulatedLedger.publicView()`, which is not the endpoint**: the route
-   * spreads this object and then overwrites `proposals` with a store-derived
-   * list of its own (`src/server/index.ts`), so the half of the response a
-   * stranger actually reads is not walked here at all, and nothing in this
-   * repository exercises `GET /api/public`.
+   * **THERE IS NO ENDPOINT BEHIND IT ANY MORE.** The public route that once
+   * served this view has been deleted, so this test is about
+   * `SimulatedLedger.publicView()` alone.
    *
    * **THE WALKER IS CONTROLLED BOTH WAYS.** An absence test whose probe cannot
    * see the thing it looks for passes perfectly, so the probe is run over an

@@ -95,7 +95,6 @@ const count = (pattern: RegExp) => Object.fromEntries(FILES
 /** What the broad read above finds that is not a walk over a contract state's balance, each with why. */
 const NOT_A_CONTRACT_BALANCE: Record<string, { count: number; why: string }> = {
   'scripts/chain-probe.ts': { count: 2, why: 'a phase code named for the wallet\'s balancing step' },
-  'scripts/pay-from-vault.ts': { count: 1, why: 'a row of the vault client\'s own list, printed' },
   'scripts/run-preview.ts': { count: 2, why: 'a phase code named for the wallet\'s balancing step' },
   'src/core/ledger.ts': { count: 2, why: 'a proof\'s witness, not a contract state' },
   'src/midnight/public-balance.ts': { count: 1, why: 'the one reader' },

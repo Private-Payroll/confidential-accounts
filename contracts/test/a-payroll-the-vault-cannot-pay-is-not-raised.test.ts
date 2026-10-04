@@ -6,7 +6,7 @@ import { join } from 'node:path';
 
 import { AccountService } from '../../src/core/account.js';
 import { PayrollService, runLegOf } from '../../src/core/payroll.js';
-import { SimulatedLedger, SimulatedProofSystem } from '../../src/core/ledger.js';
+import { SimulatedLedger } from '../../src/core/ledger.js';
 import { assets as productAssets, ledgerTokenOf, NIGHT, SEED_ASSETS, StaticAssetRegistry, type AssetRegistry, type LedgerForm } from '../../src/core/assets.js';
 import { MidnightCommitments } from '../../src/midnight/commitments.js';
 import { runMaterialFor, retryMaterialFor } from '../../src/midnight/run-material.js';
@@ -86,7 +86,7 @@ const services = (opts: { registry?: AssetRegistry } = {}) => {
   };
   const registry = opts.registry ?? registryWithTestPrivateForms();
   const accounts = new AccountService(store, ledger, MidnightCommitments, registry, reader);
-  const payroll = new PayrollService(store, accounts, new SimulatedProofSystem(), registry);
+  const payroll = new PayrollService(store, accounts, registry);
   return { store, accounts, payroll, control, vault };
 };
 

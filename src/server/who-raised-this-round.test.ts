@@ -1,7 +1,7 @@
 /**
  * **WHO RAISED THIS ROUND COMES FROM THE SIGNED-IN CALLER, NEVER FROM THE
  * REQUEST.** The same rule the payroll skip register already holds, on the
- * three routes that were left with the older shape.
+ * routes that were left with the older shape.
  *
  * ── WHY THIS IS WORSE THAN A WRONG NAME ON A RECORD ──────────────────────
  *
@@ -20,15 +20,6 @@
  * arrives in - and the answer is the caller's own seat, or the same answer the
  * request would have got with no seat named at all. **A field that is merely
  * unused comes back**, so the schemas do not accept it either.
- *
- * ── THE THIRD ROUTE HAS NO SIGNED-IN CALLER, AND ITS ANSWER IS DIFFERENT ─
- *
- * `POST /api/plugin/propose` is called by a plug-in holding a capability token.
- * There is no session to take a seat from. What a plug-in has instead is an
- * installation - a seat granted it an allowance, and every ceiling it spends
- * against is that installation's - so its round is raised under the seat that
- * installed it. That is the authority it is actually acting on, and it is the
- * one route where copying the other two would have had nothing to copy.
  */
 import { describe, it, expect, beforeAll, afterAll } from 'vitest';
 import { drawCompanyLabel } from 'midnight-identity/profile/company-label';
@@ -165,82 +156,6 @@ const aCompany = async (token: string) => {
 
 describe('a caller cannot choose which seat raises a round, or which ceiling judges it', () => {
   /*
-   * **THE PLUG-IN ROUTE, END TO END, AND IT IS THE ONE THAT PROVES THE SEAT
-   * RATHER THAN MERELY PROVING THE FIELD IS INERT.**
-   *
-   * RED WHEN: `PluginService.propose` takes the seat from its arguments again,
-   * or the route puts `proposedBy` back in its schema. Watched red both ways.
-   *
-   * The body carries a real seat on the caller's own account - the viewer's -
-   * so a route that believed it would produce a round attributed to a viewer
-   * and judged against a viewer's ceiling.
-   */
-  it('a plug-in\'s round is raised under the seat that installed it, not the one it names',
-    async () => {
-      const token = await signedIn(11);
-      const { accountId, viewingKey, mine, notMine } = await aCompany(token);
-
-      const installed = await call('POST', `/api/accounts/${accountId}/plugins`, {
-        token,
-        body: {
-          pluginId: 'treasury-yield',
-          scopes: ['state:read', 'proposal:create'],
-          allowance: { periodDays: 30, limits: { [TEST_SETTLEMENT_ASSET]: { perProposal: '5000', perPeriod: '8000' } } },
-          viewingKey,
-          /* Named, and it must not be believed - see the case below. */
-          installedBy: notMine.id,
-        },
-      });
-      expect(installed.status, JSON.stringify(installed.body)).toBe(200);
-
-      const raised = await call('POST', '/api/plugin/propose', {
-        body: {
-          token: installed.body.token,
-          viewingKey,
-          summary: 'Deploy to lending',
-          asset: TEST_SETTLEMENT_ASSET,
-          amount: '10',
-          recipient: 'Pool',
-          /* The attack, in the shape it would actually arrive in. */
-          proposedBy: notMine.id,
-        },
-      });
-      expect(raised.status, JSON.stringify(raised.body)).toBe(200);
-      expect(raised.body.proposedBy).toBe(mine.id);
-      expect(raised.body.proposedBy).not.toBe(notMine.id);
-    });
-
-  /*
-   * **AND THE SEAT IT IS RAISED UNDER IS ITSELF NOT NAMEABLE**, which is the
-   * half that would otherwise move the hole one step earlier rather than close
-   * it.
-   *
-   * RED WHEN: `installedBy` goes back into the install schema and is believed.
-   */
-  it('the seat that installed a plug-in comes from the signed-in caller too', async () => {
-    const token = await signedIn(12);
-    const { accountId, viewingKey, mine, notMine } = await aCompany(token);
-
-    const installed = await call('POST', `/api/accounts/${accountId}/plugins`, {
-      token,
-      body: {
-        pluginId: 'treasury-yield',
-        scopes: ['state:read'],
-        allowance: null,
-        viewingKey,
-        installedBy: notMine.id,
-      },
-    });
-    expect(installed.status, JSON.stringify(installed.body)).toBe(200);
-
-    const list = await call('GET', `/api/accounts/${accountId}/plugins`, { token });
-    expect(list.status, JSON.stringify(list.body)).toBe(200);
-    expect(list.body).toHaveLength(1);
-    expect(list.body[0].installedBy).toBe(mine.id);
-    expect(list.body[0].installedBy).not.toBe(notMine.id);
-  });
-
-  /*
    * **THE TWO SIGNED-IN ROUTES: THE FIELD HAS NO EFFECT AT ALL.**
    *
    * These two rounds cannot be driven to a proposal here - one needs a vault
@@ -362,7 +277,7 @@ describe('a caller cannot choose which seat raises a round, or which ceiling jud
 describe('no door on the server has anywhere to put somebody else\'s seat', () => {
   const SURFACES = ['src/server/index.ts'];
   /* Who is acting. Every one of these selects a ceiling, not just a name. */
-  const CLAIMS = ['proposedBy', 'installedBy'];
+  const CLAIMS = ['proposedBy'];
 
   /** Comments only describe; what runs is what is left when they are gone. */
   const code = (text: string): string =>
@@ -397,9 +312,9 @@ describe('no door on the server has anywhere to put somebody else\'s seat', () =
    * **AND THE SHAPE THAT NAMES NOTHING: A WHOLE REQUEST BODY HANDED TO A
    * SERVICE.**
    *
-   * The four cases above look for a field. A spread carries every field the
+   * The cases above look for a field. A spread carries every field the
    * caller sent and mentions none of them, so it is invisible to them - and it
-   * is what one of these routes actually did: the plug-in propose door passed
+   * is what one of these routes actually did: a route since deleted passed
    * the request body whole, so the seat rode in without appearing anywhere in
    * the file.
    *
@@ -417,7 +332,7 @@ describe('no door on the server has anywhere to put somebody else\'s seat', () =
   });
 
   /*
-   * **THE POSITIVE CONTROL, AND WITHOUT IT THE FIVE ABOVE ALSO PASS IF THE
+   * **THE POSITIVE CONTROL, AND WITHOUT IT THE CASES ABOVE ALSO PASS IF THE
    * STRIPPER EATS THE WHOLE FILE** - which is how a walk quietly stops walking.
    */
   it('the walk is looking at code that is still there', async () => {

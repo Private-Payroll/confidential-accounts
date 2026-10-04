@@ -73,10 +73,8 @@ export const paymentJournalFile = (stateDir: string, network: string, name: stri
   join(stateDir, `${network}-vault-payment-journal-${assertVaultName(name)}.json`);
 
 /**
- * Where a vault's deposit journal lives. The deposit door defines the same
- * name in its own file; it is repeated here rather than imported because a
- * rebuild that imports a door imports the door's whole module, and this one
- * has to stay importable by a test that runs no door.
+ * Where a vault's deposit journal lives: the name every deposit journal
+ * already on disk was written under.
  */
 export const depositJournalFileOf = (stateDir: string, network: string, name: string): string =>
   join(stateDir, `${network}-vault-deposit-journal-${assertVaultName(name)}.json`);

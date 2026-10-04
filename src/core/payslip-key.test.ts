@@ -9,7 +9,7 @@ import { Purposes, identityFromWords, newWords } from 'midnight-identity';
 import { parseAsk } from 'midnight-identity/profile/request';
 import { unlockKeyFor } from 'midnight-identity/profile/unlock';
 import { FileStore } from './store-file.js';
-import { SimulatedLedger, SimulatedProofSystem, SimulatedCommitments } from './ledger.js';
+import { SimulatedLedger, SimulatedCommitments } from './ledger.js';
 import { AccountService } from './account.js';
 import { PayrollService, RecordingInviteDelivery } from './payroll.js';
 import { payeeAddressFromKeys } from '../midnight/payee-address.js';
@@ -93,7 +93,7 @@ const world = () => {
     store, new SimulatedLedger(SimulatedCommitments), SimulatedCommitments);
   const invites = new RecordingInviteDelivery();
   const payroll = new PayrollService(
-    store, accounts, new SimulatedProofSystem(),
+    store, accounts,
     /* GBP given a private token of its own, so a person can be hired in it. */
     registryWithTestPrivateForms(), 'undeployed', invites);
   return { store, accounts, payroll, invites };

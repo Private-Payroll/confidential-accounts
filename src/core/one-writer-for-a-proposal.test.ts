@@ -23,7 +23,7 @@ import { join } from 'node:path';
 
 import { AccountService, approvalMessage } from './account.js';
 import { PayrollService } from './payroll.js';
-import { SimulatedLedger, SimulatedProofSystem, type StateChange } from './ledger.js';
+import { SimulatedLedger, type StateChange } from './ledger.js';
 import { MidnightCommitments } from '../midnight/commitments.js';
 import { runMaterialFor, retryMaterialFor } from '../midnight/run-material.js';
 import { vaultDetails } from '../testing/vault-details.js';
@@ -81,7 +81,7 @@ async function aCompany(opts: { threshold: number }) {
   };
   const accounts = new AccountService(store, ledger, MidnightCommitments, registry, holdings,
     { everyMs: 0, attempts: 4 });
-  const payroll = new PayrollService(store, accounts, new SimulatedProofSystem(), registry);
+  const payroll = new PayrollService(store, accounts, registry);
   const created = await accounts.create('Northwind Ltd', [
     { name: 'Ada', role: 'admin' }, { name: 'Blake', role: 'approver' }, { name: 'Cleo', role: 'approver' },
   ], opts.threshold, undefined, drawCompanyLabel());

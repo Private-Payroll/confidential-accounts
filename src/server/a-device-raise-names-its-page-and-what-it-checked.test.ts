@@ -105,7 +105,7 @@ const seeded = await (async () => {
     walletKey: walletKeyOf(addressOfSlot(SLOT, NETWORK)), createdAt: '2026-09-23T00:00:00.000Z',
   } as never);
   const accounts = new AccountService(store, ledger, MidnightCommitments, productAssets, aVaultHolding(HELD));
-  const payroll = new PayrollService(store, accounts, new SimulatedProofSystem(), productAssets);
+  const payroll = new PayrollService(store, accounts, productAssets);
   const aCompany = async (name: string, writtenDown: boolean, withdrawn = false) => {
     const created = await accounts.create(name, [{ name: 'Ada', role: 'admin', userId: USER }], 1, undefined, drawCompanyLabel());
     const { viewingKey } = created;

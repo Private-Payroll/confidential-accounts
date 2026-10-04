@@ -370,29 +370,22 @@ const NOT_AN_ASSET_BECOMING_A_TOKEN: Record<string, { count: number; why: string
   'src/core/payroll.ts inviteKeyOf(raw)': { count: 1, why: 'the stored key of an invitation' },
   'src/core/payroll.ts token': { count: 1, why: 'the record of an invitation delivered' },
   'src/core/store.ts inviteKeyOf(token)': { count: 1, why: 'an invitation kept under its old key, moved to its stored key' },
-  'src/core/plugins.ts \' \' + nanoid(24)': { count: 1, why: 'a plug-in\'s capability, minted at random' },
   'src/testing/assets.ts token': { count: 1, why: 'a record of which token a test vault was asked about' },
 
   'src/midnight/vault-coins.ts token': { count: 1, why: 'the colour read off a coin in the ledger\'s own state' },
   'src/midnight/public-balance.ts token': { count: 1, why: 'the colour read off a contract\'s balance in the ledger\'s own state, to say how much of it the contract holds' },
   'src/midnight/vault-ledger.ts token': { count: 1, why: '`toNote` carries the token it is handed into a note' },
   'src/midnight/vault-recovery.ts token': { count: 1, why: '`paidCoinOf` carries the spent note\'s token to the coin it paid' },
-  'src/server/index.ts z.string()': { count: 1, why: 'a request schema, which describes a body and makes nothing' },
   'src/server/company-vaults.ts z.string().regex(HEX64)': { count: 1, why: 'a request schema, which describes a body and makes nothing' },
-  'scripts/deposit-to-vault.ts colour': { count: 1, why: 'the colour read off the coin that arrived in the wallet, handed to the deposit; the journal line is written from the same coin inside the ledger' },
-  'scripts/fund-vault.ts colour': { count: 1, why: 'the ledger\'s own native token, read from the ledger at run time' },
   'scripts/measure-call-cost.ts toHex(TEST_TOKEN_BYTES)': { count: 1, why: 'a colour a measurement mints for itself, never a payment' },
   'src/midnight/vault-journal.ts token': { count: 1, why: 'the colour read off a journal line this reader has already checked is a coin, carried into the coin proposed to the chain' },
   'packages/web-shared/src/device-vault-holdings.ts p.token as Hex': { count: 1, why: 'the token the service already read off the asset\'s row for this payment, carried into the question the worker is asked' },
   'packages/web-shared/src/governed-call-on-device.ts String(p.token)': { count: 1, why: 'the token the service already read off the asset\'s row for this payment, carried into the check the device runs' },
   'packages/web-shared/src/vault-builder.ts p.token as Hex': { count: 1, why: 'a payment\'s token as it arrived over the wire, checked as 64 hex characters and carried into the notes walk' },
-  'scripts/record-a-notes-transaction.ts target.token as Hex': { count: 1, why: 'the token of the note already in the pool, put back into the commitment so it can be compared with the one the chain holds' },
 };
 
 /** Files that ask the ledger for its native token at run time, each to compare or deposit what it reads. */
-const READS_THE_LEDGERS_NATIVE_TOKEN = [
-  'scripts/fund-vault.ts', 'scripts/pay-from-vault.ts', 'scripts/transfer-from-vault.ts',
-];
+const READS_THE_LEDGERS_NATIVE_TOKEN: string[] = [];
 
 describe('§3 the census: no second place turns an asset into a ledger token', () => {
   const files = shippingSources();
@@ -413,7 +406,7 @@ describe('§3 the census: no second place turns an asset into a ledger token', (
     expect(files.length).toBeGreaterThan(100);
     expect(files.some(f => f.endsWith('.mjs'))).toBe(true);
     /* RED WHEN the shared browser package drops out of the walk: its vault builder is no longer read. */
-    const READ = ['src/core/movement.ts', 'src/core/payroll.ts', 'src/midnight/vault-ledger.ts', 'scripts/fund-vault.ts',
+    const READ = ['src/core/movement.ts', 'src/core/payroll.ts', 'src/midnight/vault-ledger.ts', 'scripts/mint-test-token.ts',
       'packages/web-shared/src/vault-builder.ts'];
     for (const f of READ) {
       expect(sources.has(f), `${f} names money and is read`).toBe(true);
@@ -497,7 +490,12 @@ describe('§3 the census: no second place turns an asset into a ledger token', (
   });
 
   it('only the doors that read the ledger\'s native token ask for it', () => {
-    const asking = [...sources].filter(([, s]) => /(?<![\w$])nativeToken\s*(\?\.)?\s*\(/.test(strip(s))).map(([f]) => f);
+    const asks = /(?<![\w$])nativeToken\s*(\?\.)?\s*\(/;
+    /* RED WHEN: the pattern stops recognising a call, so the list below could never name one. */
+    expect(asks.test('const t = ledger.nativeToken();')).toBe(true);
+    expect(asks.test('const t = ledger?.nativeToken?.();')).toBe(true);
+    expect(asks.test('const t = nativeTokenOf(ledger);')).toBe(false);
+    const asking = [...sources].filter(([, s]) => asks.test(strip(s))).map(([f]) => f);
     /*
      * BOTH DIRECTIONS. A door asking for the native token and not named here is
      * what this is watching for, always. A file named here that a copy does not

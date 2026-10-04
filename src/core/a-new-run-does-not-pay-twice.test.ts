@@ -24,7 +24,7 @@ import { join } from 'node:path';
 
 import { AccountService, approvalMessage } from './account.js';
 import { PayrollService } from './payroll.js';
-import { SimulatedLedger, SimulatedProofSystem, type Ledger } from './ledger.js';
+import { SimulatedLedger, type Ledger } from './ledger.js';
 import { MidnightCommitments } from '../midnight/commitments.js';
 import { runMaterialFor } from '../midnight/run-material.js';
 import { payRecordNonceOf } from '../midnight/run-keys.js';
@@ -110,7 +110,7 @@ const servicesOver = (chain: ReturnType<typeof aChain>, file: string) => {
   const store = new FileStore(file);
   const registry = registryWithTestPrivateForms();
   const accounts = new AccountService(store, chain.ledger, MidnightCommitments, registry, aVaultHolding());
-  const payroll = new PayrollService(store, accounts, new SimulatedProofSystem(), registry);
+  const payroll = new PayrollService(store, accounts, registry);
   return { store, accounts, payroll };
 };
 

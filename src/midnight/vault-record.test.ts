@@ -786,17 +786,9 @@ describe('nothing resolves a vault name to a vault outside this module', () => {
      * THAT STOPPED ASKING.** Rewrite any of these to resolve its vault some
      * other way and both `toEqual([])` stay green, because not indexing the map
      * is exactly what such a door would do. **So the doors are named here.**
-     *
-     * The rebuild door is the reason this list is written down: the refusal used
-     * to live in that door's own rules file, was tested there, and the test went
-     * with the function when it moved.
      */
     const doors = [
-      'scripts/fund-vault.ts', 'scripts/deposit-to-vault.ts', 'scripts/pay-from-vault.ts',
-      'scripts/pay-privately-from-vault.ts', 'scripts/transfer-from-vault.ts',
-      'scripts/open-vault-pool.ts', 'scripts/reconcile-vault-pool.ts',
-      'scripts/record-a-notes-transaction.ts', 'scripts/measure-note-index.ts',
-      'scripts/read-the-chain.ts',
+      'scripts/measure-note-index.ts', 'scripts/read-the-chain.ts',
     ];
     for (const door of doors) {
       const text = readFileSync(join(root, door), 'utf8');
@@ -806,9 +798,6 @@ describe('nothing resolves a vault name to a vault outside this module', () => {
         + 'accepted by that door again with the whole suite still green',
       ).toBe(true);
     }
-    /* The deploy door creates a vault rather than opening one, and asks the other question. */
-    expect(/\bwhenThisNameWasTaken\s*\(/.test(readFileSync(join(root, 'scripts/deploy-vault.ts'),
-      'utf8'))).toBe(true);
   });
 
   it('finds no door written in shell reaching for a vault\x27s address', () => {
@@ -874,9 +863,9 @@ describe('nothing resolves a vault name to a vault outside this module', () => {
      */
     const files = sourceFiles();
     expect(files.length).toBeGreaterThan(100);
-    expect(files.some((f) => f.endsWith('scripts/deposit-to-vault.ts'))).toBe(true);
+    expect(files.some((f) => f.endsWith('scripts/measure-note-index.ts'))).toBe(true);
     expect(files.some((f) => f.endsWith('src/midnight/vault-record.ts'))).toBe(true);
-    expect(offenders(/theVault\b/, []).length).toBeGreaterThan(5);
+    expect(offenders(/theVault\b/, []).length).toBeGreaterThanOrEqual(5);
 
     /*
      * **AND A POSITIVE CONTROL ON EACH REGEX THE TWO CHECKS ABOVE ACTUALLY

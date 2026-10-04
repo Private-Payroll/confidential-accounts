@@ -20,7 +20,7 @@ import { join } from 'node:path';
 import { AccountSimulator, privateStateFor } from './simulator.js';
 import { AccountService } from '../../src/core/account.js';
 import { PayrollService } from '../../src/core/payroll.js';
-import { SimulatedLedger, SimulatedProofSystem, type StateChange } from '../../src/core/ledger.js';
+import { SimulatedLedger, type StateChange } from '../../src/core/ledger.js';
 import { MidnightCommitments } from '../../src/midnight/commitments.js';
 import { buildRun, buildRetryRun } from '../../src/midnight/payout-tree.js';
 import { runMaterialFor, retryMaterialFor } from '../../src/midnight/run-material.js';
@@ -69,7 +69,7 @@ describe('a payment made by a retry reads as paid on its payee\'s page', () => {
     /* A double, named: the retry door asks who was paid, and here the answer is nobody yet. */
     Object.assign(ledger, { paidAmong: async () => ({ known: true, paid: [] }) });
     const accounts = new AccountService(store, ledger, MidnightCommitments, registry, aVaultHolding());
-    const payroll = new PayrollService(store, accounts, new SimulatedProofSystem(), registry);
+    const payroll = new PayrollService(store, accounts, registry);
 
     const created = await accounts.create('Northwind Ltd', [{ name: 'Ada', role: 'admin' }], 1, undefined, drawCompanyLabel());
     const viewingKey = created.viewingKey;

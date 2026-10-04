@@ -5,7 +5,7 @@ import { join } from 'node:path';
 import { newWords } from 'midnight-identity';
 import { drawCompanyLabel } from 'midnight-identity/profile/company-label';
 import { FileStore } from './store-file.js';
-import { SimulatedLedger, SimulatedProofSystem, SimulatedCommitments } from './ledger.js';
+import { SimulatedLedger, SimulatedCommitments } from './ledger.js';
 import { AccountService } from './account.js';
 import { PayrollService, RecordingInviteDelivery } from './payroll.js';
 import { payslipKeypairForWallet } from './payslip-key.js';
@@ -58,7 +58,7 @@ const harness = () => {
   const registry = registryWithTestPrivateForms();
   const accounts = new AccountService(store, ledger, SimulatedCommitments, registry, aVaultHolding());
   const payroll = new PayrollService(
-    store, accounts, new SimulatedProofSystem(), registry, 'undeployed',
+    store, accounts, registry, 'undeployed',
     new RecordingInviteDelivery());
   return { store, accounts, payroll };
 };

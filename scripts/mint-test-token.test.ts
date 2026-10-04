@@ -9,7 +9,7 @@
  * coin arrived, and therefore which colour is written into the record.
  *
  * That last one is the reason this file exists rather than being a smaller
- * version of `fund-vault.test.ts`: **a colour written wrongly is a deposit
+ * version of the vault funding door's test: **a colour written wrongly is a deposit
  * aimed at the wrong money**, and the only defence is that the function refuses
  * ignorance instead of picking a coin.
  *

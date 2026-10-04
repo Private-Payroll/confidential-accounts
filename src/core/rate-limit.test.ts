@@ -13,6 +13,13 @@ import {
   type RateLimiter,
 } from './rate-limit.js';
 
+/** A scope's policy, or a failure that says it is missing: a scope the table does not hold is a broken test, not a policy to carry on with. */
+const policyOf = (scope: string) => {
+  const policy = DEFAULT_POLICY[scope];
+  if (policy === undefined) throw new Error(`there is no rate-limit policy for ${scope}`);
+  return policy;
+};
+
 /*
  * The Postgres half needs a real database and is SKIPPED without one, loudly,
  * rather than quietly passing. A skipped test that reads as green is the
@@ -66,7 +73,7 @@ for (const [name, make, run] of implementations) {
      * out, exactly as before.
      */
     const SCOPE = 'invite-offer';
-    const POLICY = DEFAULT_POLICY[SCOPE];
+    const POLICY = policyOf(SCOPE);
 
     it('allows attempts up to the limit and refuses the one after', async () => {
       const rl = make();
@@ -188,12 +195,12 @@ withDb('THE ONE THAT MATTERS: concurrent attempts each get their own number', ()
     const [row] = await sql`
       SELECT attempts FROM login_attempts
       WHERE scope = 'invite-offer' AND key = 'flood@example.com'
-        AND window_start = ${windowStart(now, DEFAULT_POLICY['invite-offer'].windowSeconds)}
+        AND window_start = ${windowStart(now, policyOf('invite-offer').windowSeconds)}
     `;
     expect(Number(row.attempts)).toBe(100);
 
     // And the ones past the limit were refused, which is the point of counting.
-    expect(results.filter(r => r.allowed)).toHaveLength(DEFAULT_POLICY['invite-offer'].max);
+    expect(results.filter(r => r.allowed)).toHaveLength(policyOf('invite-offer').max);
   });
 
   it('one bucket per window, not one row per attempt', async () => {
@@ -247,12 +254,12 @@ describe('the unauthenticated surface, counted rather than described', () => {
   const signInRequired = (line: string): boolean =>
     /[(,]\s*authed\s*[,)]/u.test(line.replace(/\/\*.*?\*\//gu, '').replace(/\/\/.*$/u, ''));
 
-  it('there are twelve routes with no `authed`, the offer endpoint is one of them, and no payslip door is', () => {
+  it('there are six routes with no `authed`, the offer endpoint is one of them, and no payslip door is', () => {
     const open = routes.filter(r => !signInRequired(r.line));
     expect(
       open.map(r => `${r.at}: ${r.line.trim().slice(0, 70)}`).join('\n'),
     ).toBeTruthy();
-    expect(open).toHaveLength(12);
+    expect(open).toHaveLength(6);
     expect(open.some(r => r.line.includes("'/api/invites/:token/offer'"))).toBe(true);
     /* RED WHEN a payslip door answers without a sign-in again. */
     for (const path of ["'/api/payslips/proof'", "'/api/payslips'", "'/api/payslips/addresses'"]) {

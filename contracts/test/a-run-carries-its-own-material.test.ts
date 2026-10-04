@@ -23,7 +23,7 @@ import { join } from 'node:path';
 
 import { AccountService } from '../../src/core/account.js';
 import { PayrollService, runLegOf } from '../../src/core/payroll.js';
-import { SimulatedLedger, SimulatedProofSystem } from '../../src/core/ledger.js';
+import { SimulatedLedger } from '../../src/core/ledger.js';
 import { MidnightCommitments } from '../../src/midnight/commitments.js';
 import { buildRun, rootOfPayments } from '../../src/midnight/payout-tree.js';
 import { runMaterialFor } from '../../src/midnight/run-material.js';
@@ -55,7 +55,7 @@ const services = () => {
   const registry = registryWithTestPrivateForms();
   const accounts = new AccountService(
     store, new SimulatedLedger(MidnightCommitments), MidnightCommitments, registry, aVaultHolding());
-  const payroll = new PayrollService(store, accounts, new SimulatedProofSystem(), registry);
+  const payroll = new PayrollService(store, accounts, registry);
   return { store, accounts, payroll };
 };
 

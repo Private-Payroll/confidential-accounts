@@ -244,8 +244,8 @@ const UINT64_MAX = 18_446_744_073_709_551_615n;
  * **NO SCREEN GUARD HERE, AND THE ABSENCE IS A DECISION RATHER THAN AN
  * OVERSIGHT.**
  *
- * `fund-vault.ts` and `open-vault-pool.ts` refuse to print a line carrying a
- * VAULT's address, because a plain send to a vault is money on chain nobody can
+ * An instrument holding a VAULT's address refuses to print a line carrying
+ * it, because a plain send to a vault is money on chain nobody can
  * spend and no contract can refuse. **This contract is not a vault**: it holds
  * no treasury, it has one circuit, and it is deliberately throwaway. Its
  * address has to be printed and recorded because deriving the token's colour
@@ -276,8 +276,8 @@ let provingSeconds: number | null = null;
 /**
  * The amount, as a whole number of the token's smallest unit.
  *
- * **WHOLE SMALLEST UNITS, AND NEVER A DECIMAL POINT.** `fund-vault.ts` refuses
- * a point because how many decimal places NIGHT has has never been measured
+ * **WHOLE SMALLEST UNITS, AND NEVER A DECIMAL POINT.** A point is refused
+ * because how many decimal places NIGHT has has never been measured
  * against the chain. The asset registry (`src/core/assets.ts`, `testAssetsFor`)
  * does declare a scale for the test asset: 6 decimal places, for the one
  * colour it names, on stagenet. When this run mints that colour, one whole
@@ -727,7 +727,7 @@ async function main(): Promise<Verdict> {
   say('  \x1b[1mWhat was minted\x1b[0m');
   say(`    ${minted.value.toLocaleString()} of colour ${colour}`);
   say('    THE CALL REPORTED THAT, not a derivation and not a difference between two wallet');
-  say('    readings. It is what DEPOSIT-TO-VAULT.command reads and what the vault will record.');
+  say('    readings. It is what SEND-TEST-TOKEN.command reads.');
   if (minted.value !== amount) {
     say(`    \x1b[33mTHE COIN IS WORTH ${minted.value.toLocaleString()} AND ${amount.toLocaleString()} WAS ASKED FOR.\x1b[0m`);
     say('    That is a disagreement between this door and the circuit and is worth reporting.');
@@ -791,8 +791,8 @@ async function main(): Promise<Verdict> {
     for (const line of why.message.split('\n')) say(`    ${line}`);
     say(`    The colour IS recorded, so nothing is lost and nothing has to be guessed later.`);
     say(`    The transaction id is ${txId}.`);
-    say('    DEPOSIT-TO-VAULT.command waits for this same scan and refuses while the wallet');
-    say('    holds none of that colour. Run it when the wallet has caught up — not this door,');
+    say('    SEND-TEST-TOKEN.command refuses while the wallet holds none of that colour and');
+    say('    sends nothing. Run it when the wallet has caught up — not this door,');
     say('    \x1b[1mwhich would mint a second coin.\x1b[0m');
     say('    THIS DOOR NEVER SAYS THE COIN DOES NOT EXIST. It submitted the transaction itself');
     say('    and nothing here reads back which block it landed in.');
@@ -867,8 +867,8 @@ function fail(e: any): never {
 
 /**
  * GUARDED, so a test can import the pure parts above without this file going to
- * the network and spending money on import. `fund-vault.ts` and
- * `measure-note-index.ts` carry the same guard for the same reason.
+ * the network and spending money on import. `measure-note-index.ts` carries
+ * the same guard for the same reason.
  */
 const RUN_DIRECTLY = typeof process.argv[1] === 'string'
   && fileURLToPath(import.meta.url) === resolve(process.argv[1]);

@@ -267,8 +267,7 @@ const B = '\x1b[1m', D = '\x1b[2m', R = '\x1b[31m', G = '\x1b[32m', Y = '\x1b[33
  * `ZswapChainState` Debug dump whose format this file says it does not know.
  * **A promise not to print the address is a promise kept by whoever edits this
  * next; the screen makes it a refusal at the moment the line is written**, and
- * every other instrument that holds an address already uses it
- * (`scripts/deploy-vault.ts`, `scripts/open-vault-pool.ts`). `V-97` is the row
+ * every other instrument that holds an address already uses it. `V-97` is the row
  * about a refusal path putting an address into a `REPORT-*.txt` twice, found by
  * running an instrument rather than by reasoning about it.
  */
@@ -573,7 +572,7 @@ async function stageTwo(): Promise<VaultSubject | undefined> {
   if (!existsSync(vaultsFile)) {
     refuse('the vault',
       `there is no ${NETWORK}-vaults.json on this machine, so there is no deployed vault `
-      + 'to measure against. DEPLOY-VAULT.command creates one.');
+      + 'to measure against. This instrument reads only a vault recorded there.');
     return undefined;
   }
 
@@ -646,7 +645,7 @@ async function stageTwo(): Promise<VaultSubject | undefined> {
    * **Only the public data provider is built**: no wallet, no proof server, no
    * proving config. This reads one contract state and never builds a
    * transaction, and a providers bundle carrying credentials it does not use is
-   * a bundle somebody later reaches into (`open-vault-pool.ts:298-306`).
+   * a bundle somebody later reaches into.
    */
   let state: any;
   try {

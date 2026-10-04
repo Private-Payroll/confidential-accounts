@@ -27,9 +27,9 @@ import { NO_COMPANY, NO_LABEL, NO_LEAF, untilText, type SealedPayslip } from './
  */
 const SEED_WALLET_ORIGIN = 'https://payroll.example';
 import type { AssetId, AssetRegistry, LedgerForm } from './assets.js';
-import { assets as defaultAssets, subtotals, formatAmount, ledgerTokenOf, ledgerFormOf, symbolOf } from './assets.js';
+import { assets as defaultAssets, subtotals, ledgerTokenOf, ledgerFormOf, symbolOf } from './assets.js';
 import type { RunLeg } from './types.js';
-import type { Employee, PayrollRun, SealedRun, ShieldedEntry, Attestation, RosterEmployee, SealedEmployee, Invite, User, RunSkip, RunSkips, RunRetry, RunRepeatRecord, RunPayout, Proposal } from './types.js';
+import type { Employee, PayrollRun, SealedRun, ShieldedEntry, RosterEmployee, SealedEmployee, Invite, User, RunSkip, RunSkips, RunRetry, RunRepeatRecord, RunPayout, Proposal } from './types.js';
 import { sealRecord, openRecord, sealToInbox, openFromInbox } from './sealed-records.js';
 import {
   sealHandover, openHandover, type SealedHandover,
@@ -511,7 +511,6 @@ const legOf = (run: PayrollRun, which: RunLegChoice | undefined, registry: Asset
   return leg;
 };
 import type { AccountService, RaiseHalf } from './account.js';
-import type { ProofSystem } from './ledger.js';
 import type { DataStore } from './store.js';
 import { paymentChecked, paymentsCheckedDigest, type PaymentChecked } from './device-raise.js';
 import { isLiveRound, sameList, untoldRetryRounds } from './retry-cover.js';
@@ -601,7 +600,6 @@ export class PayrollService {
   constructor(
     private store: DataStore,
     private accounts: AccountService,
-    private proofs: ProofSystem,
     private assets = defaultAssets,
     /**
      * WHICH NETWORK THIS COMPANY'S MONEY IS ON.
@@ -4321,161 +4319,6 @@ export class PayrollService {
       wiring: run.wiring ?? null,
       payslip: decoded,
     };
-  }
-
-  /* ---------------- selective disclosure ---------------- */
-
-  /**
-   * Proves the total paid and the headcount for a period, and proves nothing else.
-   * The auditor receives a statement and a proof. Individual amounts are never
-   * part of the public inputs, so there is nothing in the attestation to leak.
-   */
-  async attestPayrollTotal(
-    runId: string,
-    viewingKey: Hex,
-    /** Which subtotal is being attested. A run has one per asset, never one total. */
-    asset: AssetId,
-    validForDays = 30,
-  ): Promise<Attestation> {
-    const run = this.requireRun(runId, viewingKey);
-    /*
-     * **THIS GATE CANNOT PASS, AND THE SENTENCE NOW SAYS SO.**
-     *
-     * *"cannot attest an unsettled run"* stood here, and it describes a run —
-     * as though settling one were a thing a person could go and do. **Measured:
-     * `run.status` is assigned in exactly two places in `src/`, `'draft'`
-     * (`:2012`) and `'proposed'`, and `'settled'` is assigned NOWHERE; nor is
-     * `run.settledAt`, which is only read.** The writer that set both, `settle`,
-     * went with the balance, and the note twenty lines above
-     * says so in its own words: *"NOTHING IN THIS SYSTEM PAYS ANYBODY NOW."*
-     *
-     * **SO `this.proofs.prove` BELOW IS UNREACHABLE, AND SO IS
-     * `store.putAttestation`, WHICH MAKES `verifyAttestation` UNREACHABLE
-     * TOO** — the store can never hold a row. `SimulatedProofSystem` is wired
-     * live and both of its methods are dead in the shipped product.
-     *
-     * **NOT REMOVED, AND THE REASON IS NOT RELUCTANCE:** the statement is real
-     * and is what a vault-settled run will prove. What is corrected is the
-     * claim — a refusal names the door that resolves it, and when there is no
-     * door the honest refusal says that instead of naming a step nobody can
-     * take.
-     */
-    if (run.status !== 'settled') {
-      throw new Error(
-        `run ${run.id} is ${run.status}, and no run in this product can be anything else: ` +
-          'a payroll total is proved from a run a VAULT has paid, and the vault payment path ' +
-          'is not built (the only path that ever settled a run was removed). Nothing assigns ' +
-          "'settled' anywhere in this product, so this is not waiting on a step you can take. " +
-          'Selective disclosure returns with vault settlement.',
-      );
-    }
-    const total = run.totals[asset];
-    if (total === undefined) throw new Error(`this run pays nobody in ${symbolOf(asset, this.assets)}`);
-    const registered = this.assets.require(asset);
-
-    const paid = run.employees.filter(e => e.asset === asset);
-    /*
-     * `asset` and `decimals` ARE PUBLIC INPUTS, and leaving them out would make
-     * the attestation unreadable rather than private. "The total was 500000" is
-     * five thousand pounds, half a USDC, or a rounding error in ether, and
-     * nothing in the number says which — so an auditor could not check it and a
-     * court could not use it. What stays out is every individual amount, which
-     * is the thing this exists to withhold.
-     */
-    const publicInputs = {
-      runId: run.id,
-      period: run.period,
-      asset,
-      decimals: registered.decimals,
-      total,
-      headcount: paid.length,
-    };
-    const proof = await this.proofs.prove('payroll-total', publicInputs, {
-      amounts: paid.map(e => e.amount),
-    });
-
-    const now = new Date();
-    const att: Attestation = {
-      id: 'att_' + nanoid(12),
-      accountId: run.accountId,
-      circuit: 'payroll-total',
-      statement:
-        `Total ${registered.symbol} payroll for ${run.period} was ${formatAmount(total, registered)} ` +
-        `across ${paid.length} recipients. No individual amount is disclosed.`,
-      publicInputs,
-      proof,
-      issuedAt: now.toISOString(),
-      expiresAt: new Date(now.getTime() + validForDays * 86400_000).toISOString(),
-    };
-    this.store.putAttestation(att);
-    return att;
-  }
-
-  /**
-   * **THERE IS NO BALANCE TO ATTEST TO.**
-   *
-   * This read `state.balances[asset]` and proved it was at least `threshold`.
-   * The account keeps no balance, so the only honest answer this could give is
-   * "at least zero", and issuing an attestation saying an account HOLDS an
-   * amount when it holds nothing is exactly the failure to avoid — a signed
-   * claim about money, from a system with no money in it.
-   *
-   * **REMOVING THE FEATURE IS NOT THIS METHOD'S TO DO.** `attestSolvency` and
-   * its screen are reserved for work of their own, and reserving them is not
-   * the same as leaving them issuing a true-by-vacuity attestation — which is
-   * what this would do if it were left reading a field that is gone. So the
-   * method refuses and the screen is untouched, for that work to take whole.
-   * When solvency comes back it is the VAULT's holding that is proved, which is
-   * a different statement over a different commitment.
-   */
-  async attestSolvency(
-    accountId: string,
-    _viewingKey: Hex,
-    asset: AssetId,
-    _threshold: bigint,
-    _validForDays = 30,
-  ): Promise<Attestation> {
-    this.assets.require(asset);
-    throw new Error(
-      `account ${accountId} cannot attest solvency in ${symbolOf(asset, this.assets)}: this account holds no balance ` +
-        'at all. It is an authority over a vault, not a holder of money, so there is ' +
-        'nothing here to prove a threshold against. Proving what a VAULT holds is a different ' +
-        'statement and is not built.',
-    );
-  }
-
-  /**
-   * **IT CAN ONLY EVER ANSWER `false`, AND THAT IS THE DIRECTION THAT CALLS A
-   * TRUE CLAIM FALSE.**
-   *
-   * `store.putAttestation` has exactly one caller — inside `attestPayrollTotal`
-   * above, BELOW a gate nothing can pass — so the attestation store can never
-   * hold a row, `:getAttestation` always answers null, and `this.proofs.verify`
-   * is never reached. **A caller cannot tell that apart from *the proof did not
-   * verify*, which is the worst of the two readings to be given by accident.**
-   * Through HTTP it is worse still: `ownsAttestation` 404s on a null lookup,
-   * so the hosted route never reaches this method at all.
-   *
-   * The refusal is kept rather than the method deleted, for `attestPayrollTotal`'s
-   * reason: the statement is real and returns with vault settlement.
-   */
-  async verifyAttestation(attestationId: string): Promise<boolean> {
-    const att = this.store.getAttestation(attestationId);
-    if (!att) {
-      /*
-       * **THROWS RATHER THAN ANSWERING `false`.** No attestation with this id
-       * exists, and no attestation with ANY id can exist yet — answering
-       * `false` states that a proof was checked and failed, which is a claim
-       * about a proof that was never made.
-       */
-      throw new Error(
-        `there is no attestation ${attestationId}, and there is none with any id: issuing one ` +
-          'requires a run a vault has paid, and the vault payment path is not built. ' +
-          'This is not a proof that failed to verify — no proof was ever issued.',
-      );
-    }
-    if (new Date(att.expiresAt) < new Date()) return false;
-    return this.proofs.verify(att.circuit as any, att.publicInputs, att.proof);
   }
 
   /* ---------------- sealing runs ---------------- */
