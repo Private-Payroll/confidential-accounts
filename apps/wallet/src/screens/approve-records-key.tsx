@@ -6,7 +6,7 @@ import type { Channel } from 'midnight-identity/profile/channel';
 import { RecordsKeyRefused, recordsKeyAnswerFor, recordsKeyFor } from 'midnight-identity/profile/records-key';
 import { CompanyOnChain, accountCarriesTheLabel, liveLabelReader, useCompanyCheck } from './company-on-chain.js';
 import type { LabelReader } from './company-on-chain.js';
-import type { VaultAddress } from 'midnight-identity/profile/company-label';
+import type { AccountAddress, VaultAddress } from 'midnight-identity/profile/company-label';
 import { fromIndexerAt, vaultOnChain, type VaultOnChain } from '../chain/company-label-on-chain.js';
 import { INDEXER_HTTP_URL } from '../config.js';
 import { Button, Section } from 'vaults-ui';
@@ -72,7 +72,7 @@ const short = (hex: string): string => `${hex.slice(0, 12)}…${hex.slice(-8)}`;
 
 export function ApproveRecordsKey({
   request, identity, channel, consent, whoIsAsking, onDecline, now = Date.now, readLabel = liveLabelReader,
-  readVault = liveVaultReader,
+  readVault = liveVaultReader, pinned = null,
 }: {
   readonly request: RecordsKeyRequest;
   readonly identity: Identity;
@@ -83,6 +83,8 @@ export function ApproveRecordsKey({
   readonly now?: () => number;
   readonly readLabel?: LabelReader;
   readonly readVault?: VaultReader;
+  /** The account this wallet pinned for the company when it created it, or null when it pinned none: nothing is signed for another. */
+  readonly pinned?: AccountAddress | null;
 }): ReactNode {
   const [stage, setStage] = useState<Stage>({ of: 'ready' });
   const check = useCompanyCheck(request.company, request.account, readLabel);
@@ -100,12 +102,12 @@ export function ApproveRecordsKey({
     if (!consent.ok || stage.of !== 'ready' || channel === null || !onChain || seats === null || !seated || !vaultOk) return;
     try {
       const at = now();
-      channel.answer(recordsKeyAnswerFor(identity, request, seats, at, vaultRead ?? undefined));
+      channel.answer(recordsKeyAnswerFor(identity, request, seats, at, vaultRead ?? undefined, pinned));
       setStage({ of: 'sent', at });
     } catch (e) {
       setStage({ of: 'refused', says: e instanceof RecordsKeyRefused ? e.message : 'Nothing has been signed.' });
     }
-  }, [consent, stage, channel, onChain, seats, seated, vaultOk, vaultRead, now, identity, request]);
+  }, [consent, stage, channel, onChain, seats, seated, vaultOk, vaultRead, now, identity, request, pinned]);
 
   if (stage.of === 'sent') {
     return (

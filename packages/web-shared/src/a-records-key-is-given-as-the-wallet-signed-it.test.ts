@@ -32,7 +32,7 @@ const giving = () => {
 describe('A SIGNER\'S RECORDS KEY IS GIVEN AS THEIR WALLET SIGNED IT', () => {
   it('sends the wallet\'s statement beside the two keys, signed into this signer\'s own roster entry', async () => {
     const { sent, api } = giving();
-    const statement = signRecordsKey(me, CO, companyKey, SEAT);
+    const statement = signRecordsKey(me, CO, 'c0'.repeat(32) as never, companyKey, SEAT);
     await giveVaultKeys(api, 'acc_1', {
       committeeKey, companyKey: toHex(companyKey), signingSecret: signing.secret, signerId: 's1', viewingKey: 'vk' as never,
       recordsKey: statement,
@@ -51,7 +51,7 @@ describe('A SIGNER\'S RECORDS KEY IS GIVEN AS THEIR WALLET SIGNED IT', () => {
 
   it('REFUSES, SENDING NOTHING, A STATEMENT FOR ANY OTHER RECORDS KEY THAN THE ONE THIS DEVICE DERIVES', async () => {
     const { sent, api } = giving();
-    const forAnother = signRecordsKey(me, CO, new Uint8Array(32).fill(0x22), SEAT);
+    const forAnother = signRecordsKey(me, CO, 'c0'.repeat(32) as never, new Uint8Array(32).fill(0x22), SEAT);
     /* RED WHEN: a statement for a key other than the one the company key opens is sent as this signer's. */
     await expect(giveVaultKeys(api, 'acc_1', {
       committeeKey, companyKey: toHex(companyKey), signingSecret: signing.secret, signerId: 's1', viewingKey: 'vk' as never,

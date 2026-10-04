@@ -70,6 +70,7 @@
  *    account abstraction row as empty across every interface. Nothing to
  *    integrate with, and nothing competing.
  */
+import { payKeyCommitmentIn, sealedPayKeyIn } from './pay-key-round.js';
 import type {
   Ledger, LedgerAddress, LedgerRecord, TxRef, ProofSystem, Circuit,
   StateChange, LedgerStatus, SignerRef, AccountOpening,
@@ -563,13 +564,13 @@ export class MidnightLedger implements Ledger {
        */
       register: (accountId: string, address: string) => Promise<void>;
       /**
-       * **SET ON A DEPLOYMENT WHOSE COMPANIES ARE CREATED FROM THEIR FOUNDING
-       * SIGNER'S BROWSER, WHICH IS EVERY ONE ON A CHAIN.** Opening an account
-       * then deploys nothing: it keeps the opening's sealed state for the
-       * account, and the founding signer's device deploys the account, held by
+       * **SET ON A DEPLOYMENT WHOSE COMPANIES ARE MADE ON THEIR FOUNDING
+       * SIGNER'S DEVICE, WHICH IS EVERY ONE ON A CHAIN.** The state a
+       * company's first view opens with is then kept by `fileFoundingState`,
+       * as that device sealed it, and the device deploys the account, held by
        * their own committee key from its first transaction, through the
-       * service's creation route. A deployment without it refuses to open an
-       * account at all, by name.
+       * service's creation route. Opening an account here is refused by name
+       * either way.
        */
       fromTheFoundingSigner?: true;
       /**
@@ -763,21 +764,41 @@ export class MidnightLedger implements Ledger {
       );
     }
     /*
-     * **ON A CHAIN, A COMPANY'S ACCOUNT IS DEPLOYED BY ITS FOUNDING SIGNER'S
-     * DEVICE, AND NOTHING HERE DEPLOYS ONE.** What opening keeps is the
-     * sealed state the account's first view opens with, under the company;
-     * the address is recorded when the founding signer's deploy is.
+     * **ON A CHAIN, A COMPANY IS MADE ON ITS FOUNDING SIGNER'S DEVICE, AND
+     * NOTHING HERE OPENS ONE.** Its secrets are made there and its first state
+     * sealed there; what this service keeps of it is filed by
+     * `fileFoundingState`, and the account is deployed from that device.
      */
-    if (this.deployment.fromTheFoundingSigner === true) {
-      await this.blobs.put(accountId, viewDigestOf([]), opening.sealedState.keyEpoch, opening.sealedState.sealed);
-      return { ref: 'deployed from the founding signer\'s browser', at: new Date().toISOString() };
-    }
     throw new Error(
       `cannot open "${accountId}": on a chain, a company's account is created only from its founding signer's `
         + 'browser, held by their own committee key from its first transaction, and this service deploys none. '
         + 'Create the company from the product\'s own page, in the founding signer\'s browser. Nothing was deployed '
         + 'and nothing was spent.',
     );
+  }
+
+  /**
+   * **THE STATE A COMPANY'S FIRST VIEW OPENS WITH, AS ITS FOUNDING SIGNER'S
+   * DEVICE SEALED IT**, kept under the company before its account's deploy is
+   * built. Only on a deployment whose companies are made on their founding
+   * signer's device. A state already kept at that epoch is never written over:
+   * it would destroy the only copy under that key. The same state sent again,
+   * by a device that did not hear the first answer, keeps nothing new.
+   */
+  async fileFoundingState(accountId: string, sealed: SealedStateAt): Promise<void> {
+    if (this.deployment?.fromTheFoundingSigner !== true) {
+      throw new Error(
+        `cannot keep a first state for "${accountId}": this deployment does not take companies made on their founding `
+          + 'signer\'s device. Nothing was kept.');
+    }
+    const already = await this.blobs.get(accountId, viewDigestOf([]), sealed.keyEpoch);
+    if (already) {
+      if (already.iv === sealed.sealed.iv && already.tag === sealed.sealed.tag && already.body === sealed.sealed.body) return;
+      throw new Error(
+        `the state for "${accountId}" is already kept at key epoch ${sealed.keyEpoch}, and it is never written over. `
+          + 'Nothing was kept.');
+    }
+    await this.blobs.put(accountId, viewDigestOf([]), sealed.keyEpoch, sealed.sealed);
   }
 
   /**
@@ -1572,27 +1593,13 @@ export class MidnightLedger implements Ledger {
   }
 
   private async payKeyCommitmentAt(address: string): Promise<Hex | null> {
-    const { ledger: readLedger, pureCircuits } = await import('../../contracts/managed/contract/index.js');
-    const providers = await this.providers();
-    const state = await providers.publicDataProvider.queryContractState(address as any);
-    if (!state) throw new Error('the contract has no state on chain');
-    const roles = (readLedger(state.data) as any)?.signerRoles;
-    if (roles == null || typeof roles.member !== 'function') {
-      throw new UndecodedLedgerField('signerRoles', 'map');
-    }
-    const at = pureCircuits.payKeyCommitmentKey();
-    return roles.member(at) ? toHex(roles.lookup(at)) : null;
+    const read = await this.signerRolesAt(address);
+    if (read === null) throw new Error('the contract has no state on chain');
+    return payKeyCommitmentIn(read.pureCircuits, read.roles);
   }
 
-  /**
-   * **ONE SIGNER'S SEALED COPY OF THE PAY-RECORD KEY**, as the four entries the
-   * account holds under keys derived from that signer's secret key and this
-   * account, or null when they have not sealed one. `secretKey` never leaves
-   * the device: the keys are worked out here and only looked up.
-   */
-  async sealedPayKeyOf(accountId: string, secretKey: Hex): Promise<Hex[] | null> {
-    const address = await this.addressOf(accountId);
-    if (!address) return null;
+  /** The account's `signerRoles` map as the indexer holds it now, with the functions that read it, or null with no state. */
+  private async signerRolesAt(address: string): Promise<{ roles: any; pureCircuits: any } | null> {
     const { ledger: readLedger, pureCircuits } = await import('../../contracts/managed/contract/index.js');
     const providers = await this.providers();
     const state = await providers.publicDataProvider.queryContractState(address as any);
@@ -1601,11 +1608,22 @@ export class MidnightLedger implements Ledger {
     if (roles == null || typeof roles.member !== 'function') {
       throw new UndecodedLedgerField('signerRoles', 'map');
     }
-    const self = fromHex(String(address).replace(/^0x/, ''));
-    if (self.length !== 32) throw new Error(`this account's address is not 32 bytes: ${address}`);
-    const keys = [0n, 1n, 2n, 3n].map(i => pureCircuits.payKeyWrapKeyOf(self, fromHex(secretKey), i));
-    if (!roles.member(keys[0])) return null;
-    return keys.map(k => toHex(roles.lookup(k)));
+    return { roles, pureCircuits };
+  }
+
+  /**
+   * **ONE SIGNER'S SEALED COPY OF THE PAY-RECORD KEY**, as the four entries the
+   * account holds under keys derived from that signer's secret key and this
+   * account, or null when they have not sealed one. `secretKey` never leaves
+   * the device: the keys are worked out here and only looked up, by the one
+   * reader a device's own standing uses too.
+   */
+  async sealedPayKeyOf(accountId: string, secretKey: Hex): Promise<Hex[] | null> {
+    const address = await this.addressOf(accountId);
+    if (!address) return null;
+    const read = await this.signerRolesAt(String(address));
+    if (read === null) return null;
+    return sealedPayKeyIn(read.pureCircuits, read.roles, String(address), secretKey);
   }
 
   /**

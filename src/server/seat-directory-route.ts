@@ -22,7 +22,7 @@
  * key that could.
  */
 import express from 'express';
-import type { CompanyLabel } from 'midnight-identity/profile/company-label';
+import { readAccountAddress, type CompanyLabel } from 'midnight-identity/profile/company-label';
 import type { SealedAccount } from '../core/types.js';
 import {
   applyFiling, believedDirectory, DirectoryRefused, emptyDirectory,
@@ -47,8 +47,10 @@ export interface DirectoryStore {
 export const directoryOf = (store: DirectoryStore, accountId: string): Directory => {
   const account = store.getAccount(accountId);
   const label = account?.companyLabel ?? null;
-  if (label === null) return emptyDirectory(accountId);
-  return believedDirectory(accountId, store.directoryFilingsOf(accountId), label as CompanyLabel);
+  const address = readAccountAddress(account?.contractAddress ?? null);
+  /* No label, or no account on a chain: no entry can have been signed for it. */
+  if (label === null || address === null) return emptyDirectory(accountId);
+  return believedDirectory(accountId, store.directoryFilingsOf(accountId), label as CompanyLabel, address);
 };
 
 export const seatDirectoryRoutes = (deps: {
@@ -106,7 +108,9 @@ export const seatDirectoryRoutes = (deps: {
       return;
     }
     try {
-      applyFiling(dir, filing, { label: label as CompanyLabel, chain, who: { person, members: account.memberUserIds } });
+      const address = readAccountAddress(account.contractAddress ?? null);
+      if (address === null) throw new DirectoryRefused('not-on-the-committee');
+      applyFiling(dir, filing, { label: label as CompanyLabel, account: address, chain, who: { person, members: account.memberUserIds } });
     } catch (e) {
       if (!(e instanceof DirectoryRefused)) throw e;
       res.status(e.code === 'not-the-next-version' ? 409 : 422).json({ refused: e.code, error: e.message });

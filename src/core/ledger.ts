@@ -928,6 +928,19 @@ export interface Ledger {
    */
   reseal(accountId: string, next: SealedStateAt): Promise<void>;
 
+  /**
+   * **KEEPS THE STATE A COMPANY'S FIRST VIEW OPENS WITH, AS ITS FOUNDING
+   * SIGNER'S DEVICE SEALED IT.** On a chain a company is made on that device:
+   * the state is sealed there, under a viewing key this service never sees, and
+   * filed here before the account's deploy is built. Nothing is deployed and
+   * nothing is sent. A state already kept for the account is never written
+   * over.
+   *
+   * Optional, because only a ledger whose companies are made on their founding
+   * signer's device has anything to keep this way.
+   */
+  fileFoundingState?(accountId: string, sealed: SealedStateAt): Promise<void>;
+
   /** The state as sealed under `keyEpoch`. Null when there is none at that epoch. */
   fetch(accountId: string, keyEpoch: number): Promise<LedgerRecord | null>;
 

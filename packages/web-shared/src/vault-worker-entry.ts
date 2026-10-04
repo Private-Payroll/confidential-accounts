@@ -12,7 +12,7 @@
  * origin and sends nothing anywhere.
  */
 import {
-  buildAccountDeploy, buildVaultBornHeld, buildCommitteeHandover, buildDeposit, buildPayout, finishedCreation, buildPublicDeposit, buildPublicPayout, buildSetNonceSecret, buildVaultDeploy,
+  buildAccountDeploy, buildVaultBornHeld, buildCommitteeHandover, buildDeposit, buildPayout, creationCarriedAgain, finishedCreation, buildPublicDeposit, buildPublicPayout, buildSetNonceSecret, buildVaultDeploy,
   buildWriteSecretCopy, chooseNoteForPayment, confirmPayment, paymentsFitNotes, poolAfterPayment,
   type SecretRunOnTheWire, type VaultBuilderDeps,
 } from './vault-builder.js';
@@ -488,6 +488,52 @@ export const answerVaultAsk = async (
         throw new Error('this device holds no usable key for its seat, so its seat cannot be worked out.');
       }
       return { id: ask.id, ok: true, ask: 'own-seat', seat: storedSignerLeaf(m, MidnightCommitments).toLowerCase() };
+    }
+    case 'founding-seat': {
+      /* The same definition as a seat already held, over keys made on this device, under the scope every new seat takes. */
+      const [{ storedSignerLeaf }, { MidnightCommitments }] = await Promise.all([
+        import('../../../src/core/signer-leaf.js'),
+        import('../../../src/midnight/commitments.js'),
+      ]);
+      const m = ask.material;
+      if (!/^[0-9a-f]{64}$/iu.test(m?.signingSecret ?? '') || !/^[0-9a-f]{64}$/iu.test(m?.blinding ?? '')) {
+        throw new Error('this device made no usable key for its seat, so its seat cannot be worked out.');
+      }
+      const scope = MidnightCommitments.allVaults().toLowerCase();
+      const seat = storedSignerLeaf({ signingSecret: m.signingSecret, blinding: m.blinding, scope }, MidnightCommitments).toLowerCase();
+      return { id: ask.id, ok: true, ask: 'founding-seat', seat, scope };
+    }
+    case 'creation-again': {
+      const again = await creationCarriedAgain(withNetwork, { deploy: fromBase64(ask.deploy), insert: fromBase64(ask.insert) });
+      return { id: ask.id, ok: true, ask: 'creation-again', account: again.account, deploy: toBase64(again.deploy), insert: toBase64(again.insert) };
+    }
+    case 'pay-key-standing': {
+      /* Read with the account's own functions; the key and the secret only work keys out and seal, and go nowhere. */
+      const [{ payKeyStandingOf }, { sealPayKeyTo }] = await Promise.all([
+        import('../../../src/midnight/pay-key-round.js'),
+        import('../../../src/midnight/run-keys.js'),
+      ]);
+      const hex = /^[0-9a-f]{64}$/iu;
+      if (!hex.test(ask.account) || !hex.test(ask.key) || !hex.test(ask.signingSecret) || !hex.test(ask.wrappingPublicKey)) {
+        throw new Error('that is not an account, a pay-record key, a signer\'s key and a wrapping key, so nothing was read.');
+      }
+      const P = d.accountPure as unknown as Parameters<typeof payKeyStandingOf>[0];
+      const ledger = d.accountLedger((d.runtimeState.deserialize(fromBase64(ask.accountState)) as { data: unknown }).data);
+      const s = payKeyStandingOf(P, {
+        address: ask.account.toLowerCase(), account: ledger as never, key: ask.key.toLowerCase(), secretKey: ask.signingSecret.toLowerCase(),
+      });
+      return {
+        id: ask.id, ok: true, ask: 'pay-key-standing',
+        standing: {
+          committed: s.committed, isThisKey: s.isThisKey, sealedMine: s.sealedMine,
+          round: {
+            commitment: s.round.commitment, payload: s.round.payload, salt: s.round.salt, proposal: s.round.proposal,
+            open: s.round.open, approvals: s.round.approvals, needed: s.round.needed, stale: s.round.stale,
+          },
+          noVault: Array.from(P.noVault(), (b: number) => b.toString(16).padStart(2, '0')).join(''),
+          wrap: sealPayKeyTo(ask.key.toLowerCase(), ask.wrappingPublicKey.toLowerCase()),
+        },
+      };
     }
     case 'secret-is-the-vaults': {
       /* The vault's own commitment function over the secret, against the commitment the vault's state holds. */

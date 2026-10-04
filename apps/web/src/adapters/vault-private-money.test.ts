@@ -48,7 +48,7 @@ vi.mock('vaults-web-shared/keyring.js', async (real) => ({
   pendingSeatsFor: () => [],
   keysFor: () => kr.keys,
   openAccount: () => kr.roster,
-  holdersFromTheWallet: async () => ({ holders: { committee: kr.committee, threshold: 1, seats: kr.seated, approvals: 1, adoptedVaults: [] }, vault: null }),
+  holdersFromTheWallet: async () => ({ holders: { committee: kr.committee, threshold: 1, seats: kr.seated, approvals: 1, adoptedVaults: [], account: 'c0'.repeat(32) }, vault: null }),
   api: async (path: string) => {
     kr.asked.push(path);
     if (path === '/api/accounts/c1') return { id: 'c1', companyLabel: `co_${'c1'.repeat(32)}`, contractAddress: 'c0'.repeat(32) };
@@ -96,9 +96,9 @@ const LABEL = `co_${'c1'.repeat(32)}` as CompanyLabel;
 const SEAT = '5a'.repeat(32);
 const PRIYA = identityFromSecret(new Uint8Array(32).fill(1));
 const COMMITTEE_KEY = committeeKeyFor(PRIYA, LABEL) as { tag: string; value: string };
-const ENTRY = { person: 'u1', committeeKey: COMMITTEE_KEY, statement: signDirectoryEntry(PRIYA, LABEL, new Uint8Array(32).fill(0x11), SIGNING.publicKey, SEAT) };
+const ENTRY = { person: 'u1', committeeKey: COMMITTEE_KEY, statement: signDirectoryEntry(PRIYA, LABEL, 'c0'.repeat(32) as never, new Uint8Array(32).fill(0x11), SIGNING.publicKey, SEAT) };
 /* Her records key for her seat, as her wallet signed it in the same press: the roster carries it. */
-const ATTESTED = signRecordsKey(PRIYA, LABEL, new Uint8Array(32).fill(0x11), SEAT);
+const ATTESTED = signRecordsKey(PRIYA, LABEL, 'c0'.repeat(32) as never, new Uint8Array(32).fill(0x11), SEAT);
 const VAULT_KEYS = { committeeKey: COMMITTEE_KEY, recordsKey: ATTESTED.recordsKey, recordsKeySeat: SEAT, recordsKeyStatement: ATTESTED.signature };
 
 /** The pool filed by `filer` and wrapped to `to`, holding `notes`. */

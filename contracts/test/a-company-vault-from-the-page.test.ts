@@ -306,6 +306,8 @@ describe.skipIf(!KEYS_ON_DISK)('A COMPANY VAULT, FROM THE SIGNER\'S DEVICE [need
     viewingKey = toHex(new Uint8Array(32).fill(0x5e));
     store.putAccount(sealAccount({
       id: ACCOUNT_ID, createdAt: new Date().toISOString(), name: 'Northwind', companyLabel: label,
+      /* The account's address, recorded on the company as the account-creation route records it once the deploy is read. */
+      contractAddress: company, addressSource: 'chain',
       signers: [{
         /* The founding signer's own seat, as the chain seats it: a records key is believed only for the seat held. */
         id: 'ada', userId: 'ada', name: 'Ada', status: 'active', role: 'admin', leafCommitment: hex(leafOfDevice(founder)),
@@ -463,14 +465,14 @@ describe.skipIf(!KEYS_ON_DISK)('A COMPANY VAULT, FROM THE SIGNER\'S DEVICE [need
     http(path, { method: String(init?.method ?? 'GET'), ...(init?.body === undefined ? {} : { body: JSON.parse(String(init.body)) }) }, as);
   /* Who filed each version, judged afresh for every read: the directory read again and the account read off the chain. */
   const judge = () => judgeOver({
-    api: apiAs(), accountId: ACCOUNT_ID, label, accountState: () => chain.contract(company),
+    api: apiAs(), accountId: ACCOUNT_ID, label, account: company, accountState: () => chain.contract(company),
     roster: async () => openAccount(store.getAccount(ACCOUNT_ID)!, viewingKey),
   });
   const records = (secret = signing.secret) => (record: WireRecord) =>
     new HttpSealedPoolStore(record, wireAs('ada'), secret, judge());
   /* The founding signer's own directory entry, signed by their wallet and filed from their device once the account is the committee's. */
   const fileEntry = () => fileOwnEntry({
-    api: apiAs(), accountId: ACCOUNT_ID, person: 'ada', identity: identityFromWords(words), label,
+    api: apiAs(), accountId: ACCOUNT_ID, person: 'ada', identity: identityFromWords(words), label, account: company,
     companyKey: me.companyKey, signingKey: signing.publicKey, seat: hex(leafOfDevice(founder)),
   });
   const signers = async () => [{ id: 'ada', wrappingPublicKey: wrapping.publicKey }];
@@ -500,7 +502,7 @@ describe.skipIf(!KEYS_ON_DISK)('A COMPANY VAULT, FROM THE SIGNER\'S DEVICE [need
       ...signVaultKeys(ACCOUNT_ID, 'ada', {
         committeeKey: committeeKeyFor(identityFromWords(words), label), recordsKey: recordsReaderOf(me.companyKey).publicKey,
         ...((st) => ({ recordsKeyStatement: st.signature as Hex, recordsKeySeat: st.seat as Hex }))(
-            signRecordsKey(identityFromWords(words), label, me.companyKey, hex(leafOfDevice(founder)))),
+            signRecordsKey(identityFromWords(words), label, company as never, me.companyKey, hex(leafOfDevice(founder)))),
       }, signing.secret),
     },
   });

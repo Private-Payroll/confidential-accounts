@@ -49,7 +49,7 @@ describe('THE PROVING MATERIAL A DEVICE MAY FETCH', () => {
       expect(vaultArtefactFile(places, `/account/keys/${circuit}.verifier`), circuit).toBe(`/repo/contracts/managed/keys/${circuit}.verifier`);
     }
     /* RED WHEN serving every verifying key also serves proving material for a circuit no device proves. */
-    for (const path of ['/account/keys/sealPayKey.prover', '/account/zkir/setPolicy.bzkir', '/account/keys/recordPayment.verifier']) {
+    for (const path of ['/account/keys/setPolicy.prover', '/account/zkir/setPolicy.bzkir', '/account/keys/recordPayment.verifier']) {
       expect(vaultArtefactFile(places, path), path).toBeNull();
     }
   });

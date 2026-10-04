@@ -448,7 +448,7 @@ describe('CREATING A VAULT', () => {
       const identity = identityFromSecret(new Uint8Array(32).fill(1));
       const companyKey = startDoors().me.companyKey;
       const committeeKey = committeeKeyFor(identity, LABEL) as { tag: string; value: string };
-      const statement = signRecordsKey(identity, LABEL, companyKey, '4a'.repeat(32));
+      const statement = signRecordsKey(identity, LABEL, ACCOUNT, companyKey, '4a'.repeat(32));
       const secretReaders = {
         company: LABEL, committeeKey, read: async () => walletRead(committeeKey),
         roster: async () => [{
@@ -475,7 +475,7 @@ describe('CREATING A VAULT', () => {
         const identity = identityFromSecret(new Uint8Array(32).fill(1));
         const companyKey = startDoors().me.companyKey;
         const committeeKey = committeeKeyFor(identity, LABEL) as { tag: string; value: string };
-        const statement = signRecordsKey(identity, LABEL, companyKey, '4a'.repeat(32));
+        const statement = signRecordsKey(identity, LABEL, ACCOUNT, companyKey, '4a'.repeat(32));
         const secretReaders = {
           company: LABEL, committeeKey, read: async () => walletRead(committeeKey),
           roster: async () => [{
@@ -1844,7 +1844,7 @@ describe('THE VAULT\'S COMMITTEE AND ITS SECRET, FROM THE CHAIN', () => {
   /* Ada's own doors, her wallet read stood in by `reads`, one answer per check in order, the last repeated. */
   const ada = (reads: Array<ReturnType<typeof walletRead> | null>, asked: string[]) => {
     const doors = startDoors();
-    const statement = signRecordsKey(identity, LABEL, doors.me.companyKey, '4a'.repeat(32));
+    const statement = signRecordsKey(identity, LABEL, ACCOUNT, doors.me.companyKey, '4a'.repeat(32));
     let n = 0;
     const secretReaders: SecretReaderSources = {
       company: LABEL, committeeKey,

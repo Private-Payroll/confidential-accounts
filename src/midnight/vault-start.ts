@@ -271,13 +271,15 @@ export interface StartStanding {
 
 const sameBytes = (a: Uint8Array, b: Uint8Array): boolean => a.length === b.length && a.every((x, i) => x === b[i]);
 
-const removalsSoFar = (P: AccountStartPure, a: AccountLedgerForAStart): bigint => {
+const removalsSoFar = (P: Pick<AccountStartPure, 'removalCountKey'>, a: Pick<AccountLedgerForAStart, 'proposalHolds'>): bigint => {
   const key = P.removalCountKey();
   return a.proposalHolds.member(key) ? a.proposalHolds.lookup(key).removals : 0n;
 };
 
-const standingOf = (
-  P: AccountStartPure, a: AccountLedgerForAStart, proposal: Hex, bar: bigint, isRun: boolean,
+/** Where one proposal stands on the account, at `bar` approvals, as the account's ledger holds it. */
+export const standingOf = (
+  P: Pick<AccountStartPure, 'removalCountKey'>, a: Pick<AccountLedgerForAStart, 'openProposals' | 'approvalCounts' | 'proposalHolds'>,
+  proposal: Hex, bar: bigint, isRun: boolean,
 ): RoundStanding => {
   const id = fromHex(proposal);
   const open = a.openProposals.member(id);

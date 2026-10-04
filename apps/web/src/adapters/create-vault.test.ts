@@ -31,7 +31,7 @@ const ME = identityFromSecret(new Uint8Array(32).fill(1));
 const MINE = committeeKeyFor(ME, LABEL) as { tag: string; value: string };
 /* The seat this signer holds on the company's account. */
 const SEAT = '5a'.repeat(32);
-const STATEMENT = signRecordsKey(ME, LABEL, fromHex('11'.repeat(32)), SEAT);
+const STATEMENT = signRecordsKey(ME, LABEL, 'c0'.repeat(32) as never, fromHex('11'.repeat(32)), SEAT);
 const SIGNER = newSigningKeypair();
 const COMPANY = 'c0'.repeat(32);
 const VAULT = 'ab'.repeat(32);
@@ -76,7 +76,7 @@ vi.mock('vaults-web-shared/keyring.js', async (real) => ({
     return { companyKey: '11'.repeat(32), committeeKey: committeeOf(fromSecret(new Uint8Array(32).fill(1)), `co_${'c1'.repeat(32)}` as never), company: `co_${'c1'.repeat(32)}`, account: COMPANY };
   },
   /* The person's account signs their records key for the seat the page names, and says who holds the company. */
-  recordsKeyFromTheWallet: async (_origin: string, ask: { company: string; seat: string; vault?: string; signingKey?: string }) => {
+  recordsKeyFromTheWallet: async (_origin: string, ask: { company: string; account: string; seat: string; vault?: string; signingKey?: string }) => {
     kr.log.push(`records key signed for ${ask.seat.slice(0, 4)}${ask.vault === undefined ? '' : ` with vault ${ask.vault.slice(0, 4)}`}`);
     const { identityFromSecret: fromSecret } = await import('midnight-identity');
     const { committeeKeyFor: committeeOf } = await import('midnight-identity/profile/committee-key');
@@ -84,9 +84,9 @@ vi.mock('vaults-web-shared/keyring.js', async (real) => ({
     const me = fromSecret(new Uint8Array(32).fill(1));
     const committeeKey = committeeOf(me, ask.company as never);
     return {
-      committeeKey, statement: sign(me, ask.company as never, new Uint8Array(32).fill(0x11), ask.seat),
+      committeeKey, statement: sign(me, ask.company as never, ask.account as never, new Uint8Array(32).fill(0x11), ask.seat),
       /* The directory entry, signed in the same press when the page names its filing key. */
-      entry: ask.signingKey === undefined ? null : signEntry(me, ask.company as never, new Uint8Array(32).fill(0x11), ask.signingKey, ask.seat),
+      entry: ask.signingKey === undefined ? null : signEntry(me, ask.company as never, ask.account as never, new Uint8Array(32).fill(0x11), ask.signingKey, ask.seat),
       seats: { committee: kr.accountHeld ? [committeeKey] : [{ tag: 'schnorr', value: '77'.repeat(32) }], threshold: 1, seats: [ask.seat] },
       vault: ask.vault === undefined || kr.vaultHeld === 'unread' ? null : {
         vault: ask.vault, account: 'c0'.repeat(32), threshold: 1,
@@ -100,7 +100,7 @@ vi.mock('vaults-web-shared/keyring.js', async (real) => ({
     const { committeeKeyFor: committeeOf } = await import('midnight-identity/profile/committee-key');
     const committeeKey = committeeOf(fromSecret(new Uint8Array(32).fill(1)), ask.company as never);
     return {
-      holders: { committee: [committeeKey], threshold: 1, seats: ['5a'.repeat(32)], approvals: 1, adoptedVaults: kr.start.adopted ? ['ab'.repeat(32)] : [] },
+      holders: { committee: [committeeKey], threshold: 1, seats: ['5a'.repeat(32)], approvals: 1, adoptedVaults: kr.start.adopted ? ['ab'.repeat(32)] : [], account: 'c0'.repeat(32) },
     };
   },
   api: async (path: string, opts?: RequestInit) => {

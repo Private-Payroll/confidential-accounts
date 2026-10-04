@@ -16,6 +16,7 @@ import { hrefOf } from '../routes.js';
 import type { Consent } from '../framing.js';
 import { labelInAccountState } from '../chain/company-label-on-chain.js';
 import { builtAccountKeys, type BuiltAccountKeys } from '../chain/this-builds-account-keys.js';
+import { liveConstruction, startingStateRefusal, type ConstructionDeps } from '../chain/account-as-constructed.js';
 
 /**
  * THE SCREEN FOR THE SECOND PRESS OF CREATING A COMPANY: FINISHING ITS ACCOUNT.
@@ -26,7 +27,10 @@ import { builtAccountKeys, type BuiltAccountKeys } from '../chain/this-builds-ac
  * reads the unsent deploy itself and shows what it found: the label it drew,
  * the account the deploy creates, worked out from the deploy and not taken from
  * the page, and that the account is held by this person's own key alone. It
- * signs nothing unless every circuit is this build's.
+ * signs nothing unless every circuit is this build's, and unless the account
+ * starts exactly as its own constructor makes it for this person and this
+ * label: this wallet runs the constructor itself and compares the whole
+ * starting state, so nothing the page set in it is kept as the company's.
  *
  * **ON THE PRESS THIS WALLET PINS THE ACCOUNT AS THE COMPANY'S**, so the label
  * and the account are tied together by this wallet and never by a service.
@@ -44,7 +48,7 @@ type Stage =
 
 export function ApproveCreation({
   request, identity, channel, consent, whoIsAsking, onDecline, onPin, drewTheLabel,
-  ledger = liveCreationLedger, now = Date.now, built = builtAccountKeys,
+  ledger = liveCreationLedger, now = Date.now, built = builtAccountKeys, construction = liveConstruction,
 }: {
   readonly request: CreationRequest;
   readonly identity: Identity;
@@ -66,6 +70,8 @@ export function ApproveCreation({
   readonly ledger?: () => Promise<CreationLedger>;
   readonly now?: () => number;
   readonly built?: () => BuiltAccountKeys;
+  /** What the account's constructor is run with here, to make the starting state the deploy is compared with. */
+  readonly construction?: () => Promise<ConstructionDeps>;
 }): ReactNode {
   const [stage, setStage] = useState<Stage>({ of: 'reading' });
   const [drewAtOpen] = useState(drewTheLabel);
@@ -85,16 +91,36 @@ export function ApproveCreation({
       setStage({ of: 'refused', says: `${keys.why}, so it cannot check what it would sign. Nothing has been signed.` });
       return () => { alive = false; };
     }
-    void ledger().then((L) => {
+    const cannotLoad = 'This wallet could not load what it needs to read the deploy. Nothing has been signed. Close this window and try again.';
+    void ledger().then(async (L) => {
       if (!alive) return;
+      let shown: CreationShown;
       try {
-        setStage({ of: 'ready', shown: creationShown(L, identity, request, keys.keys, sha256, labelInAccountState), ledger: L });
+        shown = creationShown(L, identity, request, keys.keys, sha256, labelInAccountState);
       } catch (e) {
         setStage({ of: 'refused', says: e instanceof CreationSignError ? e.message : 'Nothing has been signed.' });
+        return;
       }
-    }, () => { if (alive) setStage({ of: 'refused', says: 'This wallet could not load what it needs to read the deploy. Nothing has been signed. Close this window and try again.' }); });
+      let deps: ConstructionDeps;
+      try {
+        deps = await construction();
+      } catch {
+        if (alive) setStage({ of: 'refused', says: cannotLoad });
+        return;
+      }
+      let why: string | null;
+      try {
+        why = await startingStateRefusal(deps, {
+          deploy: request.deploy, label: request.company, foundingKey: shown.mine, insert: request.insert, build: keys.keys, digest: sha256,
+        });
+      } catch {
+        why = 'This wallet could not compare the account\'s starting state with the one its constructor makes.';
+      }
+      if (!alive) return;
+      setStage(why === null ? { of: 'ready', shown, ledger: L } : { of: 'refused', says: `${why} Nothing has been signed.` });
+    }, () => { if (alive) setStage({ of: 'refused', says: cannotLoad }); });
     return () => { alive = false; };
-  }, [identity, request, ledger, built, drewAtOpen]);
+  }, [identity, request, ledger, built, drewAtOpen, construction]);
 
   const sign = useCallback(async (): Promise<void> => {
     if (stage.of !== 'ready' || channel === null || !drewAtOpen || !consent.ok) return;

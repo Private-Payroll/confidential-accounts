@@ -59,6 +59,26 @@ export interface AccountCallChainOnTheWire {
   readonly parameters: string;
 }
 
+/**
+ * **WHERE THE COMPANY'S PAY-RECORD KEY STANDS ON ITS ACCOUNT, FOR ONE SIGNER**,
+ * read off the account's state with its own functions, and a copy of the key
+ * sealed to that signer, ready to write.
+ */
+export interface PayKeyStandingOnTheWire {
+  /** The commitment the account holds, or null when none is written yet. */
+  readonly committed: string | null;
+  readonly isThisKey: boolean;
+  readonly sealedMine: boolean;
+  readonly round: {
+    readonly commitment: string; readonly payload: string; readonly salt: string; readonly proposal: string;
+    readonly open: boolean; readonly approvals: number; readonly needed: number; readonly stale: boolean;
+  };
+  /** The value a governance round names in place of a vault. */
+  readonly noVault: string;
+  /** The key sealed to the signer's wrapping key, as the four entries the account stores. */
+  readonly wrap: string[];
+}
+
 export type VaultAsk =
   | { id: number; network: string; ask: 'deploy'; account: string }
   /*
@@ -81,6 +101,15 @@ export type VaultAsk =
   | { id: number; network: string; ask: 'public-deposit'; vault: string; token: string; amount: string; state: string; parameters: string }
   | { id: number; network: string; ask: 'commitments'; vault: string; coin: CoinOnTheWire }
   | { id: number; network: string; ask: 'own-seat'; material: SignerMaterial }
+  /* The founding signer's seat in a company made on this device: its leaf, and the scope it was made under. */
+  | { id: number; network: string; ask: 'founding-seat'; material: { signingSecret: string; blinding: string } }
+  /* A company's deploy and its signed second step, carried in fresh transactions: the same account, the same signature. */
+  | { id: number; network: string; ask: 'creation-again'; deploy: string; insert: string }
+  /* Where the pay-record key stands on the account for one signer, and their copy sealed. The key stays on this device. */
+  | {
+    id: number; network: string; ask: 'pay-key-standing'; account: string; accountState: string; key: string;
+    signingSecret: string; wrappingPublicKey: string;
+  }
   | { id: number; network: string; ask: 'secret-is-the-vaults'; vault: string; state: string; secret: string }
   | { id: number; network: string; ask: 'choose-note'; notes: readonly NoteOnTheWire[]; token: string; amount: string }
   | {
@@ -150,6 +179,9 @@ export type VaultAnswer =
   | Answered<'public-deposit', { tx: string }>
   | Answered<'commitments', { output: string; held: string }>
   | Answered<'own-seat', { seat: string }>
+  | Answered<'founding-seat', { seat: string; scope: string }>
+  | Answered<'creation-again', { account: string; deploy: string; insert: string }>
+  | Answered<'pay-key-standing', { standing: PayKeyStandingOnTheWire }>
   | Answered<'secret-is-the-vaults', { matches: boolean }>
   | Answered<'choose-note', { note: NoteOnTheWire }>
   | Answered<'payments-fit', { answer: PaymentsFitAnswer }>
@@ -203,6 +235,18 @@ export interface VaultBuilderClient {
    * leaf the account holds for them, worked out here and not taken from any record.
    */
   ownSeat(material: SignerMaterial): Promise<string>;
+  /**
+   * The seat keys made on this device make on a company founded here: the leaf
+   * the account seats, and the scope it was made under, both worked out with
+   * the chain's own function.
+   */
+  foundingSeat?(material: { signingSecret: string; blinding: string }): Promise<{ seat: string; scope: string }>;
+  /** A company's deploy and its signed second step carried again in fresh transactions, as base64. */
+  creationAgain?(input: { deploy: string; insert: string }): Promise<{ account: string; deploy: string; insert: string }>;
+  /** Where the pay-record key stands on the account (its state as base64) for the signer whose secret is given. */
+  payKeyStanding?(input: {
+    account: string; accountState: string; key: string; signingSecret: string; wrappingPublicKey: string;
+  }): Promise<PayKeyStandingOnTheWire>;
   /**
    * Whether `secret` is the one the vault's commitment names in `state` (base64
    * of the vault's state): its commitment, worked out with the vault's own
@@ -321,6 +365,15 @@ export function vaultBuilderOver(worker: WorkerLike, network: string): VaultBuil
       return { output: a.output, held: a.held };
     },
     ownSeat: async (material) => (await ask({ ask: 'own-seat', material })).seat,
+    foundingSeat: async (material) => {
+      const a = await ask({ ask: 'founding-seat', material });
+      return { seat: a.seat, scope: a.scope };
+    },
+    creationAgain: async (input) => {
+      const a = await ask({ ask: 'creation-again', ...input });
+      return { account: a.account, deploy: a.deploy, insert: a.insert };
+    },
+    payKeyStanding: async (input) => (await ask({ ask: 'pay-key-standing', ...input })).standing,
     secretIsTheVaults: async (input) => (await ask({ ask: 'secret-is-the-vaults', ...input })).matches,
     chooseNote: async (input) => (await ask({ ask: 'choose-note', ...input })).note,
     paymentsFit: async (input) => (await ask({ ask: 'payments-fit', ...input })).answer,

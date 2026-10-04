@@ -38,7 +38,7 @@
 import {
   directoryEntrySignedBy, recordsKeySignedBy, type AccountSeats, type DirectoryEntryStatement, type RecordsKeyStatement,
 } from 'midnight-identity/profile/records-key';
-import type { CompanyLabel } from 'midnight-identity/profile/company-label';
+import type { AccountAddress, CompanyLabel } from 'midnight-identity/profile/company-label';
 import { canonical, verify, type Hex } from '../core/crypto.js';
 import type { Role } from '../core/types.js';
 import { COMPANY_RECORD_KINDS, WIRE_RECORDS, type CompanyRecordKind, type WireRecord } from './sealed-record-wire.js';
@@ -185,13 +185,14 @@ const sameKey = (a: CommitteeKey, b: CommitteeKey): boolean =>
  * seated. Never throws.
  */
 export const entryRefusalOf = (
-  label: CompanyLabel, entry: DirectoryEntry, chain: ChainHolders | null,
+  label: CompanyLabel, account: AccountAddress, entry: DirectoryEntry, chain: ChainHolders | null,
 ): DirectoryRefusalCode | null => {
   const s = entry?.statement;
-  if (typeof s !== 'object' || s === null || ![s.signingKey, s.wrappingKey, s.seat].every((k) => typeof k === 'string' && HEX64.test(k))
+  if (typeof s !== 'object' || s === null || ![s.account, s.signingKey, s.wrappingKey, s.seat].every((k) => typeof k === 'string' && HEX64.test(k))
     || typeof entry.committeeKey !== 'object' || entry.committeeKey === null) return 'not-a-change';
   if (chain !== null && !chain.seats.committee.some((k) => sameKey(k, entry.committeeKey))) return 'not-on-the-committee';
-  if (!directoryEntrySignedBy(label, entry.committeeKey, s)) return 'entry-not-signed';
+  /* Signed for this company's account and no other: an entry for another account carrying the label decides nothing here. */
+  if (!directoryEntrySignedBy(label, account, entry.committeeKey, s)) return 'entry-not-signed';
   if (chain !== null && !chain.seats.seats.includes(s.seat)) return 'seat-not-seated';
   return null;
 };
@@ -240,6 +241,8 @@ export const applyFiling = (
   dir: Directory, filing: DirectoryFiling,
   ctx: {
     readonly label: CompanyLabel;
+    /** The company's account, as the one applying the filing holds it: an entry signed for any other is refused. */
+    readonly account: AccountAddress;
     readonly chain: ChainHolders | null;
     readonly who?: { readonly person: string; readonly members: readonly string[] };
     /**
@@ -266,7 +269,7 @@ export const applyFiling = (
       if (entry.person !== ctx.who.person) throw new DirectoryRefused('not-your-entry');
       if (!ctx.who.members.includes(entry.person)) throw new DirectoryRefused('not-a-member');
     }
-    const refused = entryRefusalOf(ctx.label, entry, ctx.chain);
+    const refused = entryRefusalOf(ctx.label, ctx.account, entry, ctx.chain);
     if (refused !== null) throw new DirectoryRefused(refused);
     const s = entry.statement;
     if (dir.seats.some((x) => x.seat === s.seat)) throw new DirectoryRefused('seat-taken');
@@ -319,14 +322,14 @@ export const applyFiling = (
  * threshold now, signed by that many seats seated now.
  */
 export const believedDirectory = (
-  company: string, filings: readonly DirectoryFiling[], label: CompanyLabel,
+  company: string, filings: readonly DirectoryFiling[], label: CompanyLabel, account: AccountAddress,
   now?: { readonly approvals: number; readonly seats: readonly string[]; readonly committee: readonly CommitteeKey[] },
 ): Directory => {
   let dir = emptyDirectory(company);
   filings.forEach((f, i) => {
     if (f?.version !== i + 1) throw new DirectoryRefused('not-the-next-version');
     try {
-      dir = applyFiling(dir, f, { label, chain: null, ...(now === undefined ? {} : { now }) });
+      dir = applyFiling(dir, f, { label, account, chain: null, ...(now === undefined ? {} : { now }) });
     } catch (e) {
       if (!(e instanceof DirectoryRefused)) throw e;
       dir = { ...dir, version: f.version };
@@ -396,13 +399,13 @@ export const filerSeatOf = (
  * secret, and takes the statement as the one word on whose a records key is.
  */
 export const seatsWithAnotherRecordsKey = (
-  dir: Directory, label: CompanyLabel,
+  dir: Directory, label: CompanyLabel, account: AccountAddress,
   attested: readonly { readonly committeeKey: CommitteeKey; readonly statement: RecordsKeyStatement }[],
 ): ReadonlySet<string> => {
   const refused = new Set<string>();
   for (const seat of dir.seats) {
     const counted = attested.filter((a) => String(a.statement.seat).toLowerCase() === seat.seat
-      && recordsKeySignedBy(label, seat.committeeKey, a.statement));
+      && recordsKeySignedBy(label, account, seat.committeeKey, a.statement));
     if (counted.length === 0 || counted.some((a) => String(a.statement.recordsKey).toLowerCase() !== seat.wrappingKey)) {
       refused.add(seat.seat);
     }

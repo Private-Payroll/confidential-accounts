@@ -1,5 +1,5 @@
 import { nanoid } from 'nanoid';
-import { readCompanyLabel } from 'midnight-identity/profile/company-label';
+import { readAccountAddress, readCompanyLabel } from 'midnight-identity/profile/company-label';
 import { recordsKeySignedBy } from 'midnight-identity/profile/records-key';
 import type { CompanyLabel } from 'midnight-identity/profile/company-label';
 import {
@@ -633,6 +633,113 @@ export function evaluatePolicy(
   };
 }
 
+/* ---------------- a company as it is founded ---------------- */
+
+/** A company's id: `acc_` and twelve characters. Made where the company is made. */
+export const newAccountId = (): string => 'acc_' + nanoid(12);
+/** A signer's id: `sgn_` and ten characters. Made where the seat is made. */
+export const newSignerId = (): string => 'sgn_' + nanoid(10);
+/** Whether a value is shaped as an id `newAccountId` makes. */
+export const isAccountId = (v: unknown): v is string => typeof v === 'string' && /^acc_[A-Za-z0-9_-]{12}$/u.test(v);
+/** Whether a value is shaped as an id `newSignerId` makes. */
+export const isSignerId = (v: unknown): v is string => typeof v === 'string' && /^sgn_[A-Za-z0-9_-]{10}$/u.test(v);
+
+/**
+ * **A SEAT AS ITS COMPANY IS FOUNDED WITH IT**: active, with its two public
+ * halves and its leaf. Only the leaf is kept; the blinding that made it stays
+ * on the device that holds the seat and is never written down here.
+ */
+export function seatAtFounding(
+  id: string, spec: SignerSpec, keys: { signingPublicKey: Hex; wrappingPublicKey: Hex; leaf: Hex },
+): Signer {
+  return {
+    id, name: spec.name, role: spec.role, status: 'active', userId: spec.userId ?? null,
+    signingPublicKey: keys.signingPublicKey, wrappingPublicKey: keys.wrappingPublicKey,
+    leafCommitment: keys.leaf,
+  };
+}
+
+/**
+ * **A COMPANY AS IT IS FOUNDED**: its seats, the default policy at its
+ * threshold, the viewing key wrapped to each seat, and a recovery rule over
+ * every seat. The one shape of a new company, wherever it is made.
+ */
+export function companyAtItsFounding(input: {
+  id: string; name: string; signers: Signer[]; threshold: number;
+  wrappedKeys: Account['wrappedKeys']; recoveryThreshold?: number; createdAt: string;
+}): Account {
+  return {
+    id: input.id,
+    name: input.name,
+    signers: input.signers,
+    policy: defaultPolicy(input.threshold),
+    wrappedKeys: input.wrappedKeys,
+    recovery: {
+      signerIds: input.signers.map(s => s.id),
+      threshold: input.recoveryThreshold ?? Math.min(input.threshold, input.signers.length),
+    },
+    createdAt: input.createdAt,
+  };
+}
+
+/* ---------------- a company's state secrets, and their sealing ---------------- */
+
+/**
+ * **A NEW COMPANY'S STATE SECRETS**: its asset blinding, its first payout seed
+ * and its pay-record key, made where this is called. On a chain that is the
+ * founding signer's own device; on the simulated ledger, this service. One
+ * function, so the two can never make them differently, and so a later
+ * re-making of the payout seeds starts from the same shape.
+ */
+export function newStateBlinding(): StateBlinding {
+  return {
+    /*
+     * Made once, at creation, and never made again, not even by a rotation:
+     * every change commitment already approved names an asset through it, so
+     * changing it would make an approval in flight unspendable. See
+     * `StateBlinding.assetBlinding`.
+     */
+    assetBlinding: newBlinding(),
+    /*
+     * The account's first payout seed, made now so that a run raised on the
+     * very first day is already rebuildable by every signer rather than by
+     * whoever happened to raise it. A rotation appends later generations;
+     * nothing ever removes one, so an approved run stays payable across a
+     * signer leaving.
+     */
+    payoutSeeds: [{ epoch: GENESIS_KEY_EPOCH, seed: newBlinding() }],
+    /*
+     * The key every payment's nonce is derived from, with who is paid and for
+     * which month. Made once and carried unchanged through every rotation, so a
+     * month already paid keeps its nonce when a signer leaves.
+     */
+    payRecordKey: newBlinding(),
+  };
+}
+
+/**
+ * **A COMPANY'S STATE, SEALED UNDER ITS VIEWING KEY.** The one sealing of it:
+ * this service calls it for the simulated ledger and for a rotation, and the
+ * founding signer's device calls it when it makes a company on a chain.
+ *
+ * The blob carries the entry log and the blindings, `assetBlinding` among
+ * them, which every proposal needs and which cannot be recomputed from
+ * anything else. Nothing proves a current state to anybody.
+ *
+ * `canonical`, not `JSON.stringify`: an amount is a bigint, which
+ * `JSON.stringify` throws on. `canonical` writes `{"$n":"..."}` and
+ * `parseCanonical` reads it back; the two are a pair and neither is correct
+ * alone.
+ */
+export function sealState(
+  state: ShieldedState,
+  blinding: StateBlinding,
+  viewingKey: Hex,
+  keyEpoch: number,
+): SealedStateAt {
+  return { keyEpoch, sealed: seal(canonical({ state, blinding }), viewingKey) };
+}
+
 /* ---------------- sealing the account ---------------- */
 
 /** What the roster envelope holds. There is no other copy of any of it. */
@@ -815,7 +922,9 @@ function resealDropBox(
 /**
  * **WHETHER A WALLET'S STATEMENT OVER A RECORDS KEY IS FOR THIS SIGNER'S SEAT**:
  * signed by the committee key the signer gives, over the records key they give,
- * for the seat the roster holds for them, under the company's label.
+ * for the seat the roster holds for them, on the company's account as this
+ * service recorded it, under the company's label. A company with no account
+ * recorded has no statement that is for it.
  */
 function statementVerifiesForTheSeat(
   rec: SealedAccount, account: Account, seat: Signer,
@@ -823,9 +932,10 @@ function statementVerifiesForTheSeat(
   statement: Hex, signedSeat: Hex,
 ): boolean {
   const label = rec.companyLabel ?? account.companyLabel ?? null;
+  const where = readAccountAddress(rec.contractAddress ?? account.contractAddress ?? null);
   const ownSeat = typeof seat.leafCommitment === 'string' ? seat.leafCommitment.toLowerCase() : null;
-  return label !== null && ownSeat !== null && signedSeat.toLowerCase() === ownSeat
-    && recordsKeySignedBy(label, { tag: keys.committeeKey.tag, value: keys.committeeKey.value.toLowerCase() },
+  return label !== null && where !== null && ownSeat !== null && signedSeat.toLowerCase() === ownSeat
+    && recordsKeySignedBy(label, where, { tag: keys.committeeKey.tag, value: keys.committeeKey.value.toLowerCase() },
       { recordsKey: keys.recordsKey.toLowerCase(), seat: signedSeat.toLowerCase(), signature: statement.toLowerCase() });
 }
 
@@ -961,7 +1071,7 @@ export class AccountService {
       const sk = newSigningKeypair();
       const wk = newWrappingKeypair();
       const blinding = newBlinding();
-      const id = 'sgn_' + nanoid(10);
+      const id = newSignerId();
       /*
        * **THE PUBLIC HALF IS THE SCHEME'S, NOT THE CURVE'S.**
        *
@@ -980,14 +1090,7 @@ export class AccountService {
       const leaf = storedSignerLeaf(
         { signingSecret: sk.secret, blinding, scope }, this.commitments);
       leaves.push(leaf);
-      signers.push({
-        id, name: spec.name, role: spec.role, status: 'active', userId: spec.userId ?? null,
-        signingPublicKey: sk.publicKey, wrappingPublicKey: wk.publicKey,
-        // Only the leaf is kept. The blinding factor leaves in `secrets`, goes
-        // to that signer's device, and is never written down here, which is the
-        // way decision 0003 wants it.
-        leafCommitment: leaf,
-      });
+      signers.push(seatAtFounding(id, spec, { signingPublicKey: sk.publicKey, wrappingPublicKey: wk.publicKey, leaf }));
       secrets.push({
         signerId: id, name: spec.name,
         signingSecret: sk.secret, wrappingSecret: wk.secret, blinding, scope,
@@ -998,18 +1101,9 @@ export class AccountService {
       signerId: s.id, ...wrapKey(viewingKey, s.wrappingPublicKey),
     }));
 
-    const account: Account = {
-      id: 'acc_' + nanoid(12),
-      name,
-      signers,
-      policy: defaultPolicy(threshold),
-      wrappedKeys,
-      recovery: {
-        signerIds: signers.map(s => s.id),
-        threshold: recoveryThreshold ?? Math.min(threshold, signers.length),
-      },
-      createdAt: new Date().toISOString(),
-    };
+    const account = companyAtItsFounding({
+      id: newAccountId(), name, signers, threshold, wrappedKeys, recoveryThreshold, createdAt: new Date().toISOString(),
+    });
 
     /*
      * Opening the account, not publishing a state. On Midnight this is the
@@ -1021,34 +1115,13 @@ export class AccountService {
      * map to open an entry in. Only the entry log is committed here.
      */
     const initialState: ShieldedState = { entries: [] };
-    const blinding: StateBlinding = {
-      // Generated once, here, and never regenerated — not even by a rotation.
-      // See `StateBlinding.assetBlinding`: every change commitment already
-      // approved names an asset through it, so changing it would make an
-      // approval in flight unspendable.
-      assetBlinding: newBlinding(),
-      /*
-       * The account's first payout seed.
-       *
-       * Generated here so that a run raised on the very first day is already
-       * rebuildable by every signer rather than by whoever happened to raise
-       * it. `rotate` appends later generations; nothing ever removes one, so an
-       * approved run stays payable across a signer leaving.
-       */
-      payoutSeeds: [{ epoch: GENESIS_KEY_EPOCH, seed: newBlinding() }],
-      /*
-       * The key every payment's nonce is derived from, with who is paid and for
-       * which month. Generated once, here, and carried unchanged through every
-       * rotation, so a month already paid keeps its nonce when a signer leaves.
-       */
-      payRecordKey: newBlinding(),
-    };
+    const blinding = newStateBlinding();
     await this.ledger.open(account.id, {
       signerLeaves: leaves,
       threshold,
       companyLabel: label,
       assetBlinding: blinding.assetBlinding,
-      sealedState: this.sealState(initialState, blinding, viewingKey, GENESIS_KEY_EPOCH),
+      sealedState: sealState(initialState, blinding, viewingKey, GENESIS_KEY_EPOCH),
     });
 
     /*
@@ -2286,7 +2359,7 @@ export class AccountService {
     };
     await this.ledger.reseal(
       accountId,
-      this.sealState(current.state, nextBlinding, nextKey, nextEpoch),
+      sealState(current.state, nextBlinding, nextKey, nextEpoch),
     );
 
     /* 2. the complete new set, computed and not yet written. */
@@ -2470,40 +2543,6 @@ export class AccountService {
       );
     }
     return named[0] ?? fallback;
-  }
-
-  /**
-   * The sealed blob now carries the opening as well as the state.
-   *
-   * It had to. The next call had to prove what the *current* state was —
-   * `stateBalance`, `stateEntriesDigest` and `stateSalt` were witnesses to the
-   * circuit — and the salt is unrecoverable from the state alone. The blob used
-   * to hold a nonce that nothing ever read again, because the commitment was
-   * computed here and handed to the ledger; then it was computed by the ledger,
-   * and this is what let the next one be computed at all.
-   *
-   * ALL THREE WITNESSES AND THE CIRCUIT THAT READ THEM ARE DELETED. What the
-   * blob still carries is the entry log and the blindings, `assetBlinding`
-   * among them, which every proposal needs and which cannot be recomputed from
-   * anything else. Nothing proves a current state to anybody.
-   */
-  private sealState(
-    state: ShieldedState,
-    blinding: StateBlinding,
-    viewingKey: Hex,
-    keyEpoch: number,
-  ): SealedStateAt {
-    /*
-     * `canonical`, not `JSON.stringify`.
-     *
-     * Every amount in here is a bigint — the balances were and the entries
-     * still are — and `JSON.stringify` throws on one, which is the loud failure
-     * bigint was chosen for, but only if the write
-     * path is the one that knows how to encode it. `canonical` writes
-     * `{"$n":"…"}` and `parseCanonical` in `readSealed` reads it back. The two
-     * are a pair and neither is correct alone.
-     */
-    return { keyEpoch, sealed: seal(canonical({ state, blinding }), viewingKey) };
   }
 
   /**

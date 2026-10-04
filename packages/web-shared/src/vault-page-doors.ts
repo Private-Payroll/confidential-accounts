@@ -17,8 +17,8 @@ import {
   believedDirectory, FILING_REFUSAL, filingRefusalOf, seatsWithAnotherRecordsKey,
   type CommitteeKey, type Directory, type DirectoryEntry, type DirectoryFiling,
 } from '../../../src/midnight/seat-directory.js';
-import type { AccountHolders, DirectoryEntryStatement, RecordsKeyStatement } from 'midnight-identity/profile/records-key';
-import type { CompanyLabel } from 'midnight-identity/profile/company-label';
+import type { AccountHoldersRead, DirectoryEntryStatement, RecordsKeyStatement } from 'midnight-identity/profile/records-key';
+import type { AccountAddress, CompanyLabel } from 'midnight-identity/profile/company-label';
 import type { DeviceRecords, DeviceSigner } from './deposit-on-device.js';
 import type {
   DepositInFlight, DepositsInFlight, PaymentInFlight, PaymentsInFlight, TemporaryKeys, VaultService,
@@ -186,12 +186,12 @@ export const directoryJudge = (deps: {
   readonly label: CompanyLabel;
   readonly accountId: string;
   /** Who holds the account now and its approval threshold, as the person's own wallet read it for this read. */
-  readonly holders: () => Promise<AccountHolders>;
+  readonly holders: () => Promise<AccountHoldersRead>;
   /** The records-key statements in the roster this device opened. */
   readonly attested: () => Promise<readonly { committeeKey: CommitteeKey; statement: RecordsKeyStatement }[]>;
 }): FreshJudge => async () => {
   let filings: readonly DirectoryFiling[];
-  let holders: AccountHolders;
+  let holders: AccountHoldersRead;
   let attested: readonly { committeeKey: CommitteeKey; statement: RecordsKeyStatement }[];
   try {
     [filings, holders, attested] = await Promise.all([deps.filings(), deps.holders(), deps.attested()]);
@@ -199,8 +199,10 @@ export const directoryJudge = (deps: {
     const why = `who filed it could not be checked (${(e as Error)?.message ?? String(e)})`;
     return () => why;
   }
-  const dir: Directory = believedDirectory(deps.accountId, filings, deps.label, { approvals: holders.approvals, seats: holders.seats, committee: holders.committee });
-  const another = seatsWithAnotherRecordsKey(dir, deps.label, attested);
+  /* The account the person's own wallet read who holds, and the only one an entry or a statement is believed for. */
+  const dir: Directory = believedDirectory(deps.accountId, filings, deps.label, holders.account,
+    { approvals: holders.approvals, seats: holders.seats, committee: holders.committee });
+  const another = seatsWithAnotherRecordsKey(dir, deps.label, holders.account, attested);
   const judge: FilingJudge = (filer, kind, recordKey, version) => {
     if (filer === null) return 'it carries no valid signature for this record';
     const seat = dir.seats.find((x) => x.signingKey === filer.toLowerCase());
@@ -231,7 +233,8 @@ export const fileOwnDirectoryEntry = async (
   signed: { readonly committeeKey: CommitteeKey; readonly entry: DirectoryEntryStatement },
 ): Promise<'filed' | 'already-there'> => {
   const filings = await directoryFilingsFrom(api, accountId);
-  const dir = believedDirectory(accountId, filings, label);
+  /* The account this person's own wallet signed the entry for. */
+  const dir = believedDirectory(accountId, filings, label, signed.entry.account as AccountAddress);
   const mine = dir.seats.find((x) => x.seat === signed.entry.seat);
   if (mine !== undefined && mine.signingKey === signed.entry.signingKey && mine.wrappingKey === signed.entry.wrappingKey) {
     return 'already-there';

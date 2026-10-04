@@ -47,6 +47,9 @@ import type { NetworkName } from '../../../src/midnight/network.js';
 import { pathFromWire, type PrivatePaymentOnTheWire, type PrivatePaymentOrderOnTheWire } from '../../../src/midnight/private-payment-wire.js';
 import { noFurtherNote } from '../../../src/midnight/vault-step-notes.js';
 
+/** How long an intent this builder makes may wait to land: thirty minutes from when it is built. */
+const INTENT_LIFETIME_MS = 30 * 60_000;
+
 export interface SigningKeyLike { readonly tag: string; readonly value: string }
 
 export interface VaultBuilderDeps {
@@ -124,7 +127,7 @@ export async function buildCommitteeHandover(
   const L = deps.ledger;
   let update = committeeReplacement(L, { vault: input.vault, counter: input.counter, to: input.to }) as any;
   update = update.addSignature(0n, L.signData(input.temporaryKey, update.dataToSign));
-  const ttl = new Date((deps.now ?? Date.now)() + 30 * 60_000);
+  const ttl = new Date((deps.now ?? Date.now)() + INTENT_LIFETIME_MS);
   const unproven = L.Transaction.fromParts(deps.network, undefined, undefined, L.Intent.new(ttl).addMaintenanceUpdate(update));
   const proven = await deps.prove(unproven);
   return { proven: proven.serialize() };
@@ -152,7 +155,7 @@ async function deployHeldFromTheStart(
 ): Promise<HeldDeploy> {
   const L = deps.ledger;
   const deploy = new L.ContractDeploy(await heldStateFromTheStart(deps, input));
-  const ttl = new Date((deps.now ?? Date.now)() + 30 * 60_000);
+  const ttl = new Date((deps.now ?? Date.now)() + INTENT_LIFETIME_MS);
   const tx = L.Transaction.fromParts(deps.network, undefined, undefined, L.Intent.new(ttl).addDeploy(deploy));
   const bytesWritten = Number(tx.cost(L.LedgerParameters.initialParameters()).bytesWritten);
   const proven = await deps.prove(tx);
@@ -222,13 +225,64 @@ export async function finishedCreation(
     address: input.account.toLowerCase(), counter: 0n, onChain: CREATION_STEPS.first, keys: input.keys, steps: CREATION_STEPS,
   });
   const signed = (update as any).addSignature(0n, { tag: input.signature.tag, value: input.signature.value });
-  const ttl = new Date((deps.now ?? Date.now)() + 30 * 60_000);
+  const ttl = new Date((deps.now ?? Date.now)() + INTENT_LIFETIME_MS);
   const tx = L.Transaction.fromParts(deps.network, undefined, undefined, L.Intent.new(ttl).addMaintenanceUpdate(signed));
   const bytesWritten = Number(tx.cost(L.LedgerParameters.initialParameters()).bytesWritten);
   const tooBig = overTheCeiling(bytesWritten, 'the second step of the account\'s creation');
   if (tooBig !== null) throw new Error(tooBig);
   const proven = await deps.prove(tx);
   return { proven: proven.serialize(), bytesWritten };
+}
+
+/**
+ * **A COMPANY'S CREATION, CARRIED AGAIN IN FRESH TRANSACTIONS.** Each
+ * transaction lives thirty minutes; one that ran out before it landed can never
+ * land. This carries the same deploy - its state and its nonce, so the same
+ * account - and the same signed second step - the founding signer's signature
+ * over the same update, which names no time - each in a new transaction that
+ * lives another thirty minutes. Nothing is made again and nobody is asked to
+ * sign again. Refused unless each is exactly one deploy, or exactly one update,
+ * and the update is for the account the deploy creates.
+ */
+export async function creationCarriedAgain(
+  deps: Pick<VaultBuilderDeps, 'ledger' | 'prove' | 'network' | 'now'>,
+  input: { readonly deploy: Uint8Array; readonly insert: Uint8Array },
+): Promise<{ account: string; deploy: Uint8Array; insert: Uint8Array }> {
+  const L = deps.ledger;
+  const onlyAction = (bytes: Uint8Array, what: string): any => {
+    let tx: any;
+    try {
+      tx = L.Transaction.deserialize('signature', 'proof', 'pre-binding', bytes);
+    } catch {
+      throw new Error(`${what} is not a transaction this device can read, so nothing was carried again.`);
+    }
+    const intents = tx.intents instanceof Map ? [...tx.intents.values()] : [];
+    const actions = intents.length === 1 ? intents[0].actions : null;
+    if (!Array.isArray(actions) || actions.length !== 1 || tx.guaranteedOffer || tx.fallibleOffer) {
+      throw new Error(`${what} does more than one thing, so nothing was carried again.`);
+    }
+    return actions[0];
+  };
+  const deploy = onlyAction(input.deploy, 'the deploy');
+  if (deploy.initialState === undefined || deploy.address === undefined || deploy.entryPoint !== undefined) {
+    throw new Error('the deploy does something other than deploy a contract, so nothing was carried again.');
+  }
+  const update = onlyAction(input.insert, 'the second step');
+  if (typeof update.dataToSign === 'undefined' || update.signatures === undefined) {
+    throw new Error('the second step is not an update of a contract, so nothing was carried again.');
+  }
+  const account = String(deploy.address).toLowerCase();
+  if (String(update.address).toLowerCase() !== account) {
+    throw new Error('the second step is for another account than the deploy creates, so nothing was carried again.');
+  }
+  const ttl = new Date((deps.now ?? Date.now)() + INTENT_LIFETIME_MS);
+  const deployTx = L.Transaction.fromParts(deps.network, undefined, undefined, L.Intent.new(ttl).addDeploy(deploy));
+  const insertTx = L.Transaction.fromParts(deps.network, undefined, undefined, L.Intent.new(ttl).addMaintenanceUpdate(update));
+  return {
+    account,
+    deploy: (await deps.prove(deployTx)).serialize(),
+    insert: (await deps.prove(insertTx)).serialize(),
+  };
 }
 
 /**

@@ -35,7 +35,7 @@
  * sends nothing.
  */
 import { recordsKeySignedBy } from 'midnight-identity/profile/records-key';
-import type { CompanyLabel } from 'midnight-identity/profile/company-label';
+import type { AccountAddress, CompanyLabel } from 'midnight-identity/profile/company-label';
 import type { RosterVaultKeys } from '../core/vault-keys.js';
 
 type Key = { readonly tag: string; readonly value: string };
@@ -166,7 +166,7 @@ export function readerRefusalOf(input: SecretReadersToCheck): ReaderRefusal | nu
         + 'yet, so no secret can be sealed to them. They open the company\'s vaults on their own device once and finish '
         + 'setting this vault up from there; then try again.');
     }
-    if (!recordsKeySignedBy(input.company, keys.committeeKey,
+    if (!recordsKeySignedBy(input.company, fold(input.account) as AccountAddress, keys.committeeKey,
       { recordsKey: fold(keys.recordsKey), seat: fold(keys.recordsKeySeat), signature: fold(keys.recordsKeyStatement) })) {
       return refused('not-signed', `the key ${entry.name}'s copy of the secret would be sealed to was not signed by ${entry.name}'s own `
         + 'wallet, so it may not be theirs. Nothing is approved. They open the company with their wallet once to sign '
