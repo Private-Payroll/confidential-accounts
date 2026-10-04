@@ -565,6 +565,7 @@ describe('the guard is WIRED IN, and is pointed at the artifacts the tests impor
       'contracts/test/a-vaults-committee-changes-with-its-signers.test.ts',
       'packages/web-shared/src/a-deposit-built-on-the-device.test.ts',
       'packages/web-shared/src/a-vault-is-read-as-it-was-born.test.ts',
+      'packages/web-shared/src/the-worker-builds-an-account-only-with-this-builds-keys.test.ts',
       'src/midnight/a-company-is-created-in-two-steps.test.ts',
       'src/midnight/deferred-set.test.ts',
       'src/midnight/ledger.test.ts',

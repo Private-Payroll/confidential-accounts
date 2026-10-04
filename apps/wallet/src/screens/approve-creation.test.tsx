@@ -23,7 +23,7 @@ import { witnesses } from '../../../../contracts/src/witnesses.js';
 import { CREATION_STEPS } from '../../../../src/midnight/deferral.js';
 import type { BuiltAccountKeys } from '../chain/this-builds-account-keys.js';
 import { ApproveCreation } from './approve-creation.js';
-import { builtAccountKeys } from '../chain/this-builds-account-keys.js';
+import { keysOnDisk, ACCOUNT_KEYS } from '../../../../contracts/test/keys-on-disk.js';
 import { Approve } from './approve.js';
 import { secretFromWords } from 'midnight-identity/keys/derivation';
 import type { ChannelWindow } from 'midnight-identity/profile/channel';
@@ -50,22 +50,22 @@ const KEYS = join(import.meta.dirname, '../../../../contracts/managed/keys');
 const keyFile = (c: string) => new Uint8Array(readFileSync(join(KEYS, `${c}.verifier`)));
 const b64 = (b: Uint8Array) => PolyfillBuffer.from(b).toString('base64');
 const fromHex = (h: string) => Uint8Array.from(h.match(/../gu)!, (x) => Number.parseInt(x, 16));
-const expected = (account as unknown as { expectedVk: Record<string, string> }).expectedVk;
-const thisBuilds: BuiltAccountKeys = {
-  of: 'built',
-  keys: {
-    first: new Map(CREATION_STEPS.first.map((c) => [c, fromHex(expected[c]!)] as [string, Uint8Array])),
-    second: new Map(CREATION_STEPS.second.map((c) => [c, fromHex(expected[c]!)] as [string, Uint8Array])),
-  },
+/* Read only inside a test that runs, never when this file is loaded: a compile without keys carries no digests. */
+const thisBuilds = (): BuiltAccountKeys => {
+  const expected = (account as unknown as { expectedVk: Record<string, string> }).expectedVk;
+  return {
+    of: 'built',
+    keys: {
+      first: new Map(CREATION_STEPS.first.map((c) => [c, fromHex(expected[c]!)] as [string, Uint8Array])),
+      second: new Map(CREATION_STEPS.second.map((c) => [c, fromHex(expected[c]!)] as [string, Uint8Array])),
+    },
+  };
 };
 const ledger = async () => L as unknown as CreationLedger;
 
 let deploy: { proven: Uint8Array; address: string };
-/*
- * The deploy here is built from this build's account keys, which only a full compile of the account produces. Read
- * through the wallet's own build step, which makes this build's digests from those files or says they are missing.
- */
-const ON_DISK = builtAccountKeys().of === 'built';
+/* The deploy here is built from this build's account keys, which only a full compile of the account produces. */
+const ON_DISK = keysOnDisk([ACCOUNT_KEYS]).ok;
 
 beforeAll(async () => {
   if (!ON_DISK) return;
@@ -114,7 +114,7 @@ const draw = async (log: unknown[], over: Over = {}) => {
     <ApproveCreation request={over.request ?? askOf()} identity={identity} channel={channelFor(log, over.answered ?? true)} consent={{ ok: true } as never}
       whoIsAsking={<p>asker</p>} onDecline={() => log.push(['declined'])}
       onPin={over.onPin ?? (async (a, at) => { log.push(['pin', a, at]); })}
-      drewTheLabel={over.drewTheLabel ?? true} ledger={over.ledger ?? ledger} built={over.built ?? (() => thisBuilds)} />);
+      drewTheLabel={over.drewTheLabel ?? true} ledger={over.ledger ?? ledger} built={over.built ?? thisBuilds} />);
   await settle();
   return r;
 };
@@ -146,7 +146,7 @@ describe.skipIf(!ON_DISK)('THE SCREEN FOR FINISHING A COMPANY\'S ACCOUNT [needs 
     const log: unknown[] = [];
     const request = askOf();
     const channel = channelFor(log);
-    const built = () => thisBuilds;
+    const built = thisBuilds;
     /* The host, as the wallet's approve screen is: pinning makes the label one this wallet has finished, here once the signature has gone. */
     function Host() {
       const [drew, setDrew] = useState(true);

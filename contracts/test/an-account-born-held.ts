@@ -39,11 +39,14 @@ export const accountKeyFile = (c: string): Uint8Array => new Uint8Array(readFile
 /** SHA-256, as the wallet takes a key's digest. */
 export const digest = (b: Uint8Array): Uint8Array => new Uint8Array(createHash('sha256').update(b).digest());
 
-/** This build's account keys as the wallet holds them: the digests the compiler wrote beside the keys it made. */
-export const thisBuilds: ThisBuildsAccountKeys = {
+/**
+ * This build's account keys as the wallet holds them: the digests the compiler wrote beside the keys it made. Read
+ * only when a test that runs asks, never when this module is loaded: a compile without keys carries none.
+ */
+export const thisBuilds = (): ThisBuildsAccountKeys => ({
   first: new Map(CREATION_STEPS.first.map((c) => [c, fromHex((account as any).expectedVk[c])] as [string, Uint8Array])),
   second: new Map(CREATION_STEPS.second.map((c) => [c, fromHex((account as any).expectedVk[c])] as [string, Uint8Array])),
-};
+});
 
 /** The device's builder's deps for an account, as the vault worker loads them. Nothing is proved: a deploy and an update call no circuit. */
 export const accountBuilderDeps = (network: string) => {
@@ -97,7 +100,7 @@ export async function anAccountBornHeld(input: {
   const deps = accountBuilderDeps(input.network);
   const deploy = await buildAccountDeploy(deps, { foundingLeaf: input.foundingLeaf, label: input.label, foundingKey });
   const answer = creationSignatureFor(L as never, input.founder, creationAskOf(input.label, deploy.proven, deploy.address, now), now,
-    thisBuilds, digest, labelInAccountState);
+    thisBuilds(), digest, labelInAccountState);
   const keys = new Map(CREATION_STEPS.second.map((c) => [c, accountKeyFile(c)] as [string, Uint8Array]));
   const insert = await finishedCreation(deps, { account: deploy.address, keys, signature: answer.signature });
   return { deploy, answer, insert, foundingKey: { tag: foundingKey.tag, value: foundingKey.value } };

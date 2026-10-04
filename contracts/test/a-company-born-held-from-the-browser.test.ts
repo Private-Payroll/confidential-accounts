@@ -95,9 +95,9 @@ describe.skipIf(!ON_DISK)('A COMPANY BORN HELD [needs contracts/managed/keys; `n
   it('THE FOUNDING SIGNER\'S WALLET REFUSES A DEPLOY IT DID NOT DRAW, IS NOT HELD BY ITS KEY, OR RUNS ANOTHER BUILD\'S CIRCUITS', async () => {
     const d = deps();
     const good = await buildAccountDeploy(d, { foundingLeaf: LEAF, label: LABEL, foundingKey });
-    const shown = creationShown(L as never, founder, askOf(good.proven, good.address), thisBuilds, digest, labelInAccountState);
+    const shown = creationShown(L as never, founder, askOf(good.proven, good.address), thisBuilds(), digest, labelInAccountState);
     expect(shown).toMatchObject({ account: good.address, mine: foundingKey });
-    const refused = (bytes: Uint8Array, address: string, over: Record<string, unknown> = {}, build = thisBuilds) => {
+    const refused = (bytes: Uint8Array, address: string, over: Record<string, unknown> = {}, build = thisBuilds()) => {
       try {
         creationShown(L as never, founder, askOf(bytes, address, over), build, digest, labelInAccountState);
         return null;
@@ -115,7 +115,7 @@ describe.skipIf(!ON_DISK)('A COMPANY BORN HELD [needs contracts/managed/keys; `n
     const elsewhere = await buildAccountDeploy(d, { foundingLeaf: LEAF, label: other, foundingKey });
     expect(refused(elsewhere.proven, elsewhere.address)).toMatch(/not held by your own key|does not carry the label/);
     /* RED WHEN a first-step circuit that is not this build's is signed for. */
-    const swappedFirst = { ...thisBuilds, first: new Map([...thisBuilds.first].map(([c, h]) => [c, c === 'approve' ? new Uint8Array(32) : h] as [string, Uint8Array])) };
+    const swappedFirst = { ...thisBuilds(), first: new Map([...thisBuilds().first].map(([c, h]) => [c, c === 'approve' ? new Uint8Array(32) : h] as [string, Uint8Array])) };
     expect(refused(good.proven, good.address, {}, swappedFirst)).toMatch(/circuits the deploy runs are not this build's/);
     /* RED WHEN a key the page asks to insert is not this build's. */
     const drained = CREATION_STEPS.second.map((c) => ({ circuit: c, key: b64(c === 'recordPaymentFromVault' ? keyFile('approve') : keyFile(c)) }));

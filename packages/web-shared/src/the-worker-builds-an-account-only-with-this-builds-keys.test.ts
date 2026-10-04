@@ -5,6 +5,7 @@ import { sha256 } from '@noble/hashes/sha2.js';
 import * as account from '../../../contracts/managed/contract/index.js';
 import { CREATION_STEPS } from '../../../src/midnight/deferral.js';
 import { answerVaultAsk, checkedAccountKeys, type WorkerDeps } from './vault-worker-entry.js';
+import { keysOnDisk, ACCOUNT_KEYS } from '../../../contracts/test/keys-on-disk.js';
 import type { VaultAsk } from './vault-worker-client.js';
 
 /*
@@ -16,8 +17,10 @@ import type { VaultAsk } from './vault-worker-client.js';
 const KEYS = join(import.meta.dirname, '../../../contracts/managed/keys');
 const fileOf = async (c: string): Promise<Uint8Array> => new Uint8Array(readFileSync(join(KEYS, `${c}.verifier`)));
 const expected = (account as unknown as { expectedVk: Record<string, string> }).expectedVk;
+/* The keys and their digests come from a full compile of the account; the general checks compile without them. */
+const ON_DISK = keysOnDisk([ACCOUNT_KEYS]).ok;
 
-describe('THE KEYS THE WORKER BUILDS A COMPANY\'S ACCOUNT WITH', () => {
+describe.skipIf(!ON_DISK)('THE KEYS THE WORKER BUILDS A COMPANY\'S ACCOUNT WITH [needs contracts/managed/keys; `npm run compact` builds them]', () => {
   it('ARE THIS BUILD\'S OWN, HANDED BACK IN THE ORDER THEY WERE ASKED FOR', async () => {
     const keys = checkedAccountKeys(fileOf, expected, sha256);
     const got = await keys.getVerifierKeys([...CREATION_STEPS.second]);
@@ -47,7 +50,7 @@ describe('THE KEYS THE WORKER BUILDS A COMPANY\'S ACCOUNT WITH', () => {
   });
 });
 
-describe('THE WORKER FINISHING A COMPANY', () => {
+describe.skipIf(!ON_DISK)('THE WORKER FINISHING A COMPANY [needs contracts/managed/keys; `npm run compact` builds them]', () => {
   it('BUILDS NOTHING WHEN A KEY OF THE SECOND STEP IS NOT THIS BUILD\'S', async () => {
     const wrong = async (c: string) => { const k = await fileOf(c); k[0] = (k[0] ?? 0) ^ 1; return k; };
     const deps = async () => ({ accountKeys: checkedAccountKeys(wrong, expected, sha256) }) as unknown as WorkerDeps;
