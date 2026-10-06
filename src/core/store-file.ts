@@ -1,6 +1,6 @@
 import { readFileSync, writeFileSync, existsSync, mkdirSync, renameSync, unlinkSync } from 'node:fs';
 import { dirname } from 'node:path';
-import { MemoryStore, emptyShape } from './store.js';
+import { MemoryStore, emptyShape, withPeopleAsRecords } from './store.js';
 import { canonical, parseCanonical } from './crypto.js';
 import type { Shape } from './store.js';
 
@@ -45,7 +45,13 @@ import type { Shape } from './store.js';
  * `attestations` was to hold each disclosure proof the service issued. Nothing
  * issues one any more, so the table is dropped on load with the others.
  */
-const RETIRED_TABLES: readonly string[] = ['vaultKeys', 'filingKeys', 'installations', 'pluginEvents', 'attestations'];
+/*
+ * `employees` held each person on a payroll as a row the service wrote. Each
+ * person is now every version of their `person` record (`Shape.people`), so a
+ * file that still carries the rows has them turned into records on load
+ * (`withPeopleAsRecords`) before the table is dropped.
+ */
+const RETIRED_TABLES: readonly string[] = ['vaultKeys', 'filingKeys', 'installations', 'pluginEvents', 'attestations', 'employees'];
 
 export const withoutRetiredTables = <T extends object>(parsed: T): T => {
   const kept = { ...parsed } as Record<string, unknown>;
@@ -72,7 +78,7 @@ export class FileStore extends MemoryStore {
      * backup.** A one-shot migration fixes the deploy and not the restore.
      */
     this.data = existsSync(path)
-      ? { ...emptyShape(), ...withoutRetiredTables(parseCanonical<Shape>(readFileSync(path, 'utf8'))) }
+      ? { ...emptyShape(), ...withoutRetiredTables(withPeopleAsRecords(parseCanonical<Shape>(readFileSync(path, 'utf8')))) }
       : emptyShape();
     this.flush();
   }

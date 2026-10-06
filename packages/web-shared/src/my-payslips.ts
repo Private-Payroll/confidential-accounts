@@ -310,9 +310,6 @@ export async function payslipAddressesFor(
  */
 const REMEMBERED = 'payslip-companies-of:';
 
-/** A company's label as somebody pasted it: surrounding space dropped, and nothing else changed. */
-export const tidyCompanyLabel = (text: string): CompanyLabel | null => readCompanyLabel(text.trim());
-
 /** Only well-formed company labels, each once. */
 export const onlyCompanyLabels = (list: unknown): CompanyLabel[] =>
   Array.isArray(list)
@@ -328,18 +325,6 @@ export function rememberedCompanies(
   } catch {
     return [];
   }
-}
-
-export function rememberCompany(
-  person: string, label: string,
-  storage: Pick<Storage, 'getItem' | 'setItem'> | null = safeStorage(),
-): string[] {
-  const tidy = tidyCompanyLabel(label);
-  const list = rememberedCompanies(person, storage);
-  if (tidy === null || list.includes(tidy)) return list;
-  const next = [...list, tidy];
-  try { storage?.setItem(REMEMBERED + person, JSON.stringify(next)); } catch { /* kept for this visit only */ }
-  return next;
 }
 
 /** Empties one person's list in this browser, once what it held has been saved with them. */

@@ -35,6 +35,8 @@ import { ApproveBalance } from './approve-balance.js';
 import { recordAsk, recordChannelState, recordedChannel } from '../lib/ask-record.js';
 import { ApproveCommittee } from './approve-committee.js';
 import { ApproveRecordsKey } from './approve-records-key.js';
+import { ApproveJoinCode } from './approve-join-code.js';
+import { payslipKeyOfThisWallet } from './join-code-payslip-key.js';
 import { ApproveCreation } from './approve-creation.js';
 import { AnswerHolders } from './answer-holders.js';
 import type { Consent } from '../framing.js';
@@ -529,6 +531,9 @@ export function Approve({
     /* **NOR A CREATION**: it signs the second step of a company's account and discloses nothing, and its one door is
      * the press on its own screen (`approve-creation.tsx`). */
     if (request.kind === 'creation') return;
+    /* **NOR A JOIN CODE**: it signs one code and discloses nothing, and its one door is the press on its own screen
+     * (`approve-join-code.tsx`). */
+    if (request.kind === 'join-code') return;
     const disclosed: Sent[] = [];
     const declined: AttributeName[] = [];
     for (const row of rows) {
@@ -1242,6 +1247,23 @@ export function Approve({
           }
           setProfile(next);
         }}
+      />
+    );
+  }
+
+  if (request.kind === 'join-code') {
+    return (
+      <ApproveJoinCode
+        request={request}
+        identity={identity}
+        channel={channel}
+        consent={consent}
+        whoIsAsking={whoIsAsking}
+        onDecline={() => { channel?.refuse('declined'); setChannelState({ of: 'waiting' }); }}
+        receives={receivingAddressesOf(identity, NETWORK)}
+        ownPayslipKey={request.parts.kind === 'payee'
+          ? payslipKeyOfThisWallet(identity, request) : null}
+        fingerprintClass={FINGERPRINT_TEXT}
       />
     );
   }

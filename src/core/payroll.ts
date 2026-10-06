@@ -27,10 +27,12 @@ import { NO_COMPANY, NO_LABEL, NO_LEAF, untilText, type SealedPayslip } from './
  */
 const SEED_WALLET_ORIGIN = 'https://payroll.example';
 import type { AssetId, AssetRegistry, LedgerForm } from './assets.js';
-import { assets as defaultAssets, subtotals, ledgerTokenOf, ledgerFormOf, symbolOf } from './assets.js';
+import { assets as defaultAssets, subtotals, ledgerTokenOf, ledgerFormOf, symbolOf, whyTheMoneyCannotReach } from './assets.js';
 import type { RunLeg } from './types.js';
 import type { Employee, PayrollRun, SealedRun, ShieldedEntry, RosterEmployee, SealedEmployee, Invite, User, RunSkip, RunSkips, RunRetry, RunRepeatRecord, RunPayout, Proposal } from './types.js';
 import { sealRecord, openRecord, sealToInbox, openFromInbox } from './sealed-records.js';
+import { openEmployeeRow, type PersonSecrets } from './person-record.js';
+import { INVITATION_LIFETIME_MS } from './invitation.js';
 import {
   sealHandover, openHandover, type SealedHandover,
 } from './invite-handover.js';
@@ -53,7 +55,7 @@ import {
  * Split out because this, and only this, is what gets sealed. `id` and
  * `accountId` stay outside so a record can be found without opening it.
  */
-type EmployeeSecrets = Omit<RosterEmployee, 'id' | 'accountId' | 'wrappingPublicKey' | 'status'>;
+type EmployeeSecrets = PersonSecrets;
 
 /**
  * The key an invite's offer is sealed under: derived from the RAW token.
@@ -87,7 +89,7 @@ const offerKeyOf = (token: string): Hex =>
  * It is one constant rather than a per-invitation choice because a screen that
  * offers a deadline offers a person the chance to set it to a year.
  */
-export const INVITATION_LIFETIME_MS = 14 * 24 * 60 * 60 * 1000;
+export { INVITATION_LIFETIME_MS };
 
 /**
  * A deterministic stand-in address, for seeding and tests ONLY.
@@ -1890,14 +1892,7 @@ export class PayrollService {
    * question's (`refuseAPayeeWhoCannotBePaid` below).
    */
   private addressTheMoneyCannotReach(code: AssetId, address: Payee): string | null {
-    const paidIn = this.assets.require(code);
-    const other = address.kind === 'shielded' ? 'unshielded' : 'shielded';
-    if (ledgerFormOf(paidIn, address.kind).of === 'token' || ledgerFormOf(paidIn, other).of !== 'token') {
-      return null;
-    }
-    return `${paidIn.symbol} can only be paid to a ${address.kind === 'shielded' ? 'public' : 'private'} `
-      + `address, and the address that arrived is a ${address.kind === 'shielded' ? 'private' : 'public'} one. `
-      + 'Nothing has been paid.';
+    return whyTheMoneyCannotReach(this.assets.require(code), address.kind);
   }
 
   private refuseAPayeeWhoCannotBePaid(spec: HireSpec): void {
@@ -2130,15 +2125,8 @@ export class PayrollService {
    * which is a different and worse failure.
    */
   private open(r: SealedEmployee, viewingKey: Hex): RosterEmployee {
-    const secrets = openRecord<EmployeeSecrets>('payroll', r.accountId, r.sealed, viewingKey);
-    return {
-      id: r.id, accountId: r.accountId,
-      wrappingPublicKey: r.wrappingPublicKey, status: r.status,
-      ...secrets,
-      address: secrets.address
-        ? payeeOf(secrets.address.bech32, secrets.address.network)
-        : secrets.address,
-    };
+    const e = openEmployeeRow(r, viewingKey);
+    return { ...e, address: e.address ? payeeOf(e.address.bech32, e.address.network) : e.address };
   }
 
   person(employeeId: string, viewingKey: Hex): RosterEmployee | null {
@@ -2153,21 +2141,6 @@ export class PayrollService {
    * name any more — which is the property we wanted. A store that could sort by
    * name would be a store that could read it.
    */
-  /**
-   * **IS THERE SOMETHING WAITING TO BE ADMITTED FOR THIS PERSON?**
-   *
-   * A boolean and deliberately not the contents. The drop box is sealed to the
-   * account's inbox and this answers without opening it, so the one thing an
-   * admin's roster screen needs — *is this row waiting on THEM or on US* — is
-   * available without a second decryption and without this method ever holding
-   * an address.
-   *
-   * `createRunFromRoster` already asks the same question inline to write the
-   * two different refusals it names; this is that question with a name.
-   */
-  hasHandover(employeeId: string): boolean {
-    return Boolean(this.store.getEmployee(employeeId)?.inbox);
-  }
 
   /**
    * **THE SEALED DROP BOX ITSELF, FOR THE ONE MACHINE THAT CAN OPEN IT.**
@@ -2185,9 +2158,6 @@ export class PayrollService {
    * not reach this method on any path. **It is not a widening**: anybody who can
    * ask for it is a member, every member already holds the viewing key that
    * would open it, and the value is unreadable to everybody else including us.
-   *
-   * `hasHandover` above stays, and stays a boolean: it answers the ROSTER
-   * listing, where a sealed envelope per row would be a payload nobody reads.
    */
   handoverBlob(employeeId: string): ({ ephemeral: Hex } & Sealed) | null {
     const rec = this.store.getEmployee(employeeId);

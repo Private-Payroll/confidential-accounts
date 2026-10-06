@@ -61,8 +61,21 @@
  * route it took.
  */
 import type { Wiring } from './selection.js';
+import type { ChainHolders } from '../midnight/seat-directory.js';
 
-let handed: Wiring | null = null;
+/**
+ * A boundary handed in by a test: the ledger's, and with it, when the test
+ * stands in for the chain too, the server's read of a company's account on the
+ * chain - its committee, the seats it holds and its approval threshold - which
+ * every seat directory the server believes is replayed against
+ * (`seat-directory-route.ts` `directoryOf`). A simulated ledger has no account
+ * on a chain to read; without this, such a server believes no seat.
+ */
+export interface HandedInWiring extends Wiring {
+  readonly directoryChain?: (accountId: string, seats: readonly string[]) => Promise<ChainHolders | null>;
+}
+
+let handed: HandedInWiring | null = null;
 
 /**
  * Hand a whole boundary implementation to the entry point, for a test.
@@ -73,12 +86,12 @@ let handed: Wiring | null = null;
  * used it. A caller that gets the order wrong sees the deployment's own answer
  * rather than its own, which is a test measuring something it did not mean to.
  */
-export function handInWiring(w: Wiring): void {
+export function handInWiring(w: HandedInWiring): void {
   handed = w;
 }
 
 /** What was handed over, or `null` - which is every shipped build. */
-export function handedInWiring(): Wiring | null {
+export function handedInWiring(): HandedInWiring | null {
   return handed;
 }
 

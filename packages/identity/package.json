@@ -44,6 +44,10 @@
       "types": "./lib/profile/company-label.d.ts",
       "default": "./lib/profile/company-label.js"
     },
+    "./profile/join-code": {
+      "types": "./lib/profile/join-code.d.ts",
+      "default": "./lib/profile/join-code.js"
+    },
     "./profile/fingerprint": {
       "types": "./lib/profile/fingerprint.d.ts",
       "default": "./lib/profile/fingerprint.js"

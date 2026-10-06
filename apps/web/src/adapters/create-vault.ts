@@ -8,7 +8,7 @@ import {
 import type { VaultAddress } from 'midnight-identity/profile/company-label';
 import { createCompanyVault, VaultHandoverOwed, VaultStartOwed, type VaultStage } from 'vaults-web-shared/vault-operation.js';
 import {
-  browserTemporaryKeys, deviceRecordsFor, deviceSignerFrom, marked, rosterOf, vaultServiceFor,
+  browserTemporaryKeys, deviceRecordsFor, deviceSignerFrom, marked, readersIn, vaultServiceFor,
 } from 'vaults-web-shared/vault-page-doors.js';
 import { recordsKeypairFrom } from '../../../../src/midnight/company-nonce-secret.js';
 import { fromHex, type Hex } from '../../../../src/core/crypto.js';
@@ -18,7 +18,7 @@ import { companyRoute } from './handover-state.js';
 import { keyringFor, keysOnTheWayIn } from './keyring-person.js';
 import { ACT_REFUSAL, ACTED, refusalOf, type ActRefusal } from './refusals.js';
 import { ACCOUNT_ORIGIN } from './session.js';
-import { filingJudgeFor } from './filing-judge.js';
+import { directoryHereFor, filingJudgeFor } from './filing-judge.js';
 import { giveTheVaultKeys } from './vault-keys.js';
 import { theVaultBuilder } from './vault-builder.js';
 import { handoverOwed, readVaultRows } from './vault-rows.js';
@@ -247,14 +247,14 @@ async function run(personId: string, companyId: string, onStage: (stage: Creatin
     const released = await giveTheVaultKeys(companyId, o.keys, viewingKeyFor(o.sealed), o.roster);
     if (released.of === ACTED.refused) return released;
     service = withTheStart(companyId, vaultServiceFor(api, companyId, o.roster));
-    /* This signer's own pool, journals and records, over the records route, believing only the signers on the roster opened here. */
-    const roster = rosterOf(await o.roster());
+    /* This signer's own pool, journals and records, over the records route, wrapped to the seats the directory names now. */
+    const readers = readersIn(directoryHereFor(companyId, released.company, released.account, o.roster));
     const done = await createCompanyVault({
       ...pacing(onStage), account: released.account, service,
       builder: await theVaultBuilder(), keys: browserTemporaryKeys(),
-      me: deviceSignerFrom({ signerId: o.keys.signerId, wrappingSecret: o.keys.wrappingSecret }, released.companyKey),
+      me: deviceSignerFrom(released.signed.statement.seat, released.companyKey),
       myRecordsKey: recordsKeypairFrom(fromHex(released.companyKey)).publicKey as Hex,
-      signers: roster.signers,
+      signers: readers.signers,
       records: deviceRecordsFor(o.keys.signingSecret, filingJudgeFor(companyId, released.company, released.account, o.roster),
         () => currentUser()?.id ?? null),
       material: { signingSecret: o.keys.signingSecret, blinding: o.keys.blinding, scope: (o.keys as { scope?: Hex }).scope },

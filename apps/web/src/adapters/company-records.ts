@@ -3,6 +3,7 @@ import { reviveBigints } from '../../../../src/core/crypto.js';
 import type { Hex } from '../../../../src/core/crypto.js';
 import { assets, type AssetRegistry } from '../../../../src/core/assets.js';
 import { openRecord } from '../../../../src/core/sealed-records.js';
+import { onlyPayableWhenActive, openPerson, peopleOnTheWire } from '../../../../src/core/person-record.js';
 import type { Account, PayrollRun, Proposal, ProposalKind, ProposalStatus, SealedAccount, SealedProposal, SealedRun } from '../../../../src/core/types.js';
 import { api, canOpenCompanies, openAccount, openKeysWithWallet, viewingKeyFor } from 'vaults-web-shared/keyring.js';
 import { paidPublicly } from 'vaults-web-shared/public-payment.js';
@@ -27,12 +28,15 @@ export { OPENED, READ, type Read };
  * same `openRecord` the legacy application uses. Nothing here decides who may
  * read what: the service answers only a member, and only this device opens.
  *
- * ONE READ SENDS THE VIEWING KEY TO THE SERVICE: the people on the payroll,
- * which the service opens with it to answer, as the legacy application's
- * roster read does. That is the same key that opens the name, the signers,
- * the runs and the proposals, so on every read of a company the service is
- * handed the key to all of them. The other reads do not carry it; they are
- * opened here.
+ * NO READ SENDS THE VIEWING KEY TO THE SERVICE. The people on the payroll
+ * come as their signed person records and are opened here, as the runs and
+ * the proposals are; the service is handed no key to answer any of them.
+ * Like the runs and the proposals, they are read to be shown: who filed each
+ * version is judged where a person is changed or admitted
+ * (`vaults-web-shared/people-on-device.ts`), not on this read. But an active
+ * person is shown only when their address and payslip key are what their own
+ * wallet signed (`whyNotPayable`); otherwise the people are not read at all,
+ * so a screen never shows somebody as paid at an address they did not give.
  *
  * EACH READ IS ASKED AND OPENED ON ITS OWN. One that fails is handed on as
  * unreadable and the others as read, so a page never hides what was read
@@ -49,7 +53,7 @@ export { OPENED, READ, type Read };
 
 /** The service's addresses, the purposes its records are sealed for, and the words of its answers: sent and compared, never shown. */
 export const SERVICE = {
-  company: '/api/accounts/', proposals: '/proposals', runs: '/runs', people: '/people?viewingKey=',
+  company: '/api/accounts/', proposals: '/proposals', runs: '/runs', people: '/people',
   vaults: '/vaults', vault: '/vaults/', chain: '/chain', invites: '/invites',
   proposalsRecord: 'proposals', runsRecord: 'payroll',
   active: 'active', pending: 'pending', leaver: 'leaver', shielded: 'shielded', unshielded: 'unshielded',
@@ -353,7 +357,10 @@ export async function readCompany(personId: string, companyId: string): Promise<
       const all = (await ask(route(SERVICE.proposals)) as SealedProposal[]).map((p) => openProposal(p, viewingKey));
       return all.map((p) => proposalRow(p, signers, read.of === READ.read ? read.value : []));
     }),
-    alone(async () => (await ask(route(SERVICE.people + viewingKey)) as RosterRow[]).map((p) => personRow(p))),
+    alone(async () => [...onlyPayableWhenActive(peopleOnTheWire(await ask(route(SERVICE.people)), companyId)
+      .map(({ rec, handedOver }) => ({ ...openPerson(rec, viewingKey), handedOver })), sealed.companyLabel ?? '')]
+      .sort((a, b) => a.name.localeCompare(b.name))
+      .map((p) => personRow(p))),
     alone(async () => ((await ask(route(SERVICE.vaults)) as { rows: { vault: string; deployedAt: string; state: string }[] }).rows).map(vaultRow)),
     alone(async () => invitationRows(await ask(route(SERVICE.invites)) as InviteRow[], Date.now())),
   ]);

@@ -9,7 +9,7 @@
  *
  * **THE MECHANISM OUTLIVED THE DOOR IT WAS BUILT FOR, AND OTHERS USE IT.**
  * `WalletIdentityService` counts every challenge and every sign-in attempt on
- * the `ip` scope; `GET /api/invites/:token/offer`, a METERED door that answers
+ * the `ip` scope; `GET /api/invites/:id/offer`, a METERED door that answers
  * a stranger, counts on `invite-offer`; and the three doors a payee asks for
  * their own payslips by, which answer a signed-in person only, share
  * `payslips`. None is a guessing oracle the way login was; what a limit buys
@@ -90,7 +90,7 @@ export const DEFAULT_POLICY: Record<string, LimitPolicy> = {
    * **THE UNAUTHENTICATED OFFER ENDPOINT.** `docs/NEXT.md` `X11` §6,
    * `docs/scope-invitations.md` §8.
    *
-   * `GET /api/invites/:token/offer` is the one door in this product that
+   * `GET /api/invites/:id/offer` is the one door in this product that
    * answers a stranger AND COUNTS THE ANSWER, and it was made reachable by a
    * real screen for the first time. **It is not the only unauthenticated
    * door.** Twelve routes carry no `authed`; what is unique here is the meter,
@@ -233,7 +233,9 @@ export class PostgresRateLimiter implements RateLimiter {
       DO UPDATE SET attempts = login_attempts.attempts + 1
       RETURNING attempts
     `;
-    return decide(Number(rows[0].attempts), p, start, now);
+    const counted = rows[0];
+    if (counted === undefined) throw new Error('the attempt was not counted, so it is not allowed. Try again in a moment.');
+    return decide(Number(counted.attempts), p, start, now);
   }
 
   /**

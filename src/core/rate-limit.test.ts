@@ -246,13 +246,16 @@ withDb('THE ONE THAT MATTERS: concurrent attempts each get their own number', ()
  */
 describe('the unauthenticated surface, counted rather than described', () => {
   const server = readFileSync('src/server/index.ts', 'utf8');
-  const routes = server.split('\n')
-    .map((line, i) => ({ line, at: i + 1 }))
-    .filter(r => /^\s*app\.(get|post|put|patch|delete)\(/.test(r.line));
+  /* The invitation routes are their own router, mounted by the server: `deps.signedIn` there is `authed` here. */
+  const invitations = readFileSync('src/server/invitations-route.ts', 'utf8');
+  const routes = [
+    ...server.split('\n').map((line, i) => ({ line, at: i + 1 })).filter(r => /^\s*app\.(get|post|put|patch|delete)\(/.test(r.line)),
+    ...invitations.split('\n').map((line, i) => ({ line, at: i + 1 })).filter(r => /^\s*router\.(get|post|put|patch|delete)\(/.test(r.line)),
+  ];
   /* Whether a route line hands `authed` to the route, read with its comments taken out, so a
    * commented-out `authed` is not counted as one. */
   const signInRequired = (line: string): boolean =>
-    /[(,]\s*authed\s*[,)]/u.test(line.replace(/\/\*.*?\*\//gu, '').replace(/\/\/.*$/u, ''));
+    /[(,]\s*(authed|deps\.signedIn)\s*[,)]/u.test(line.replace(/\/\*.*?\*\//gu, '').replace(/\/\/.*$/u, ''));
 
   it('there are six routes with no `authed`, the offer endpoint is one of them, and no payslip door is', () => {
     const open = routes.filter(r => !signInRequired(r.line));
@@ -260,7 +263,7 @@ describe('the unauthenticated surface, counted rather than described', () => {
       open.map(r => `${r.at}: ${r.line.trim().slice(0, 70)}`).join('\n'),
     ).toBeTruthy();
     expect(open).toHaveLength(6);
-    expect(open.some(r => r.line.includes("'/api/invites/:token/offer'"))).toBe(true);
+    expect(open.some(r => r.line.includes("'/api/invites/:id/offer'"))).toBe(true);
     /* RED WHEN a payslip door answers without a sign-in again. */
     for (const path of ["'/api/payslips/proof'", "'/api/payslips'", "'/api/payslips/addresses'"]) {
       expect(open.some(r => r.line.includes(path)), path).toBe(false);

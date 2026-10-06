@@ -27,12 +27,8 @@ import { join } from 'node:path';
 import type { Server } from 'node:http';
 import { signInWithAWallet } from '../testing/wallet-session.js';
 import { TEST_MNEMONIC } from '@midnight-ntwrk/testkit-js';
-import { signatureVerifyingKey } from '@midnightntwrk/ledger-v9';
 import { addressFor, identityFromWords } from 'midnight-identity';
-import { addressOfVerifyingKey, mint } from 'midnight-identity/profile/disclosure';
-import { RECEIVING_ADDRESS } from 'midnight-identity/profile/attributes';
 import { newWrappingKeypair } from '../core/crypto.js';
-import { payeeFor } from '../testing/payees.js';
 
 import { TEST_SETTLEMENT_ASSET } from '../core/assets.js';
 /* The same declarations `unlock-company.test.ts` makes, and for the same
@@ -92,16 +88,8 @@ const NETWORK = theNetwork();
 
 const identity = identityFromWords(TEST_MNEMONIC);
 const SLOT = 2;
-const signingAddress = addressOfVerifyingKey(
-  signatureVerifyingKey({
-    tag: 'schnorr',
-    value: Buffer.from(identity.moneyAt(SLOT).night).toString('hex'),
-  }).value,
-  NETWORK);
 const shielded = addressFor(identity.moneyAt(SLOT).zswap, NETWORK).bech32;
 
-/** A complete, well-formed payee address that belongs to somebody else. */
-const NOT_THEIRS = payeeFor('f0'.repeat(32), NETWORK).bech32;
 
 let server: Server;
 let base: string;
@@ -160,109 +148,34 @@ const withACompany = async () => {
   };
 };
 
-/** What a wallet would answer, minted by the wallet's own `mint`. */
-const disclosureFor = (nonce: string, over: { origin?: string; value?: string } = {}) =>
-  mint(identity, SLOT, {
-    origin: over.origin ?? ORIGIN,
-    nonce,
-    address: signingAddress,
-    at: Date.now(),
-    disclosed: [{
-      id: RECEIVING_ADDRESS,
-      about: RECEIVING_ADDRESS,
-      says: { of: 'value', value: over.value ?? shielded },
-      asserted: { by: 'wallet' },
-    }],
-    declined: [],
-    requesterSaidItWas: { name: 'Payroll', rdns: 'example.payroll' },
-  }).response;
-
-const asked = async (token: string, accountId: string) => {
-  const r = await call('POST', `/api/accounts/${accountId}/payee-challenge`, { token });
-  expect(r.status, JSON.stringify(r.body)).toBe(200);
-  return { handle: r.body.handle as string, nonce: r.body.nonce as string };
-};
-
-const payload = (extra: Record<string, unknown>, viewingKey: string) => ({
+/** The body this door took before a payee was a signed record: a name, a salary, the company's key, an address. */
+const theOldBody = (viewingKey: string) => ({
   name: 'The Founder', title: 'Founder', asset: TEST_SETTLEMENT_ASSET, salary: '5500.00',
-  viewingKey,
-  wrappingPublicKey: newWrappingKeypair().publicKey,
-  ...extra,
+  viewingKey, wrappingPublicKey: newWrappingKeypair().publicKey, address: shielded,
 });
 
 describe('POST /api/accounts/:id/self-payee', () => {
-  it('THE ADDRESS COMES FROM THE WALLET, SIGNED, AND THE RECORD IS PAYABLE', async () => {
-    const { token, accountId, viewingKey } = await withACompany();
-    const given = await asked(token, accountId);
-    const r = await call('POST', `/api/accounts/${accountId}/self-payee`, {
-      token,
-      body: payload({ disclosure: { ...given, response: disclosureFor(given.nonce) } },
-        viewingKey),
-    });
-    expect(r.status, JSON.stringify(r.body)).toBe(200);
-    expect(r.body.status).toBe('active');
-    expect(r.body.address.bech32).toBe(shielded);
-  });
-
-  it('A CALLER THAT NAMES ITS OWN ADDRESS IS NOT SERVED IT', async () => {
+  it('THE OLD BODY - A SALARY, THE COMPANY\'S KEY AND AN ADDRESS - IS REFUSED, AND NOBODY IS ON THE PAYROLL', async () => {
     /*
-     * The attack, in the shape it would actually arrive in: an honest
-     * disclosure, and a perfectly valid payee address in the body beside it. If
-     * any of these were believed, an operator could put a salary anywhere they
-     * liked and every signature in the request would still check out.
+     * A signer makes themselves payable from their own device, as the first
+     * version of their person record, sealed and signed there
+     * (`people-on-device.ts`). This door files that and nothing else: a body
+     * that carries an address, a key or a salary in the clear has nowhere to
+     * put them.
      */
     const { token, accountId, viewingKey } = await withACompany();
-    for (const extra of [
-      { address: NOT_THEIRS },
-      { payeeAddress: NOT_THEIRS },
-      { address: NOT_THEIRS, bech32: NOT_THEIRS },
-    ]) {
-      const given = await asked(token, accountId);
-      const r = await call('POST', `/api/accounts/${accountId}/self-payee`, {
-        token,
-        body: payload(
-          { ...extra, disclosure: { ...given, response: disclosureFor(given.nonce) } },
-          viewingKey),
-      });
-      expect(r.status, JSON.stringify(r.body)).toBe(200);
-      expect(r.body.address.bech32).toBe(shielded);
-      expect(r.body.address.bech32).not.toBe(NOT_THEIRS);
-      expect(JSON.stringify(r.body)).not.toContain(NOT_THEIRS);
-      /* One payable entry per person, so the next attempt needs its own
-       * company rather than a second entry here. */
-      break;
-    }
-  });
-
-  it('AND AN ADDRESS WITH NO DISCLOSURE AT ALL IS REFUSED BY SHAPE', async () => {
-    /* The old body, sent to the new door. There is nowhere to put an address,
-     * so this is a 400 from the shape and never a record. */
-    const { token, accountId, viewingKey } = await withACompany();
-    const r = await call('POST', `/api/accounts/${accountId}/self-payee`, {
-      token, body: payload({ address: shielded }, viewingKey),
-    });
+    const r = await call('POST', `/api/accounts/${accountId}/self-payee`, { token, body: theOldBody(viewingKey) });
+    /* RED WHEN: a person is made payable from a body the service can read. */
     expect(r.status).toBe(400);
-  });
-
-  it('AND A DISCLOSURE MINTED FOR ANOTHER PAYROLL IS REFUSED AT THIS ONE', async () => {
-    const { token, accountId, viewingKey } = await withACompany();
-    const given = await asked(token, accountId);
-    const r = await call('POST', `/api/accounts/${accountId}/self-payee`, {
-      token,
-      body: payload({
-        disclosure: {
-          ...given,
-          response: disclosureFor(given.nonce, { origin: 'https://elsewhere.example' }),
-        },
-      }, viewingKey),
-    });
-    expect(r.status).toBe(400);
-    expect(r.body.code).toBe('origin-mismatch');
+    expect(r.body.refused).toBe('not-a-person');
+    const people = await call('GET', `/api/accounts/${accountId}/people`, { token });
+    expect(people.body.people).toEqual([]);
+    /* RED WHEN: what the old body carried reaches the store. */
+    expect(JSON.stringify(people.body)).not.toContain(shielded);
   });
 
   it('no session, no payee', async () => {
     const { accountId } = await withACompany();
     expect((await call('POST', `/api/accounts/${accountId}/self-payee`)).status).toBe(401);
-    expect((await call('POST', `/api/accounts/${accountId}/payee-challenge`)).status).toBe(401);
   });
 });

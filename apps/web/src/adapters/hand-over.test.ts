@@ -21,6 +21,8 @@ const kr = vi.hoisted(() => ({
   ownSeat: '5a'.repeat(32), walletAsked: [] as string[], released: 0,
   /* Whether the account is held by the committee that lists this person's key, as the wallet read it. */
   accountHeld: true,
+  /* This person's signed directory entries kept with their keys until the directory takes them, by company. */
+  owed: {} as Record<string, { person: string; signed: unknown }>,
 }));
 vi.mock('./vault-builder.js', () => ({ theVaultBuilder: async () => ({ ownSeat: async () => kr.ownSeat }) }));
 vi.mock('vaults-web-shared/committee-change-on-device.js', async (real) => {
@@ -52,6 +54,8 @@ vi.mock('vaults-web-shared/keyring.js', async (real) => ({
     entry: ask.signingKey === undefined ? null : { signingKey: ask.signingKey, wrappingKey: '33'.repeat(32), seat: ask.seat, signature: '55'.repeat(64) },
   }),
   signCommitteeChangeFromTheWallet: async () => kr.signed,
+  oweDirectoryEntry: async (id: string, owed: { person: string; signed: unknown }) => { kr.owed[id] = owed; },
+  directoryEntryOwed: (id: string) => ({ read: () => kr.owed[id] ?? null, settle: async () => { delete kr.owed[id]; } }),
   api: async (path: string, opts?: RequestInit) => {
     kr.calls.push({ path, method: String(opts?.method ?? 'GET'), body: opts?.body === undefined ? undefined : JSON.parse(String(opts.body)) });
     if (!(path in kr.answers)) throw new Error(`no answer for ${path}`);
@@ -63,8 +67,13 @@ vi.mock('vaults-web-shared/keyring.js', async (real) => ({
 }));
 vi.mock('vaults-web-shared/vault-page-doors.js', () => ({
   giveVaultKeys: async (_api: unknown, id: string, keys: unknown) => { kr.calls.push({ path: `give ${id}`, method: 'PUT', body: keys }); },
-  fileOwnDirectoryEntry: async (_api: unknown, id: string, person: string, _label: unknown, signed: unknown) => {
-    kr.calls.push({ path: `entry ${id} ${person}`, method: 'PUT', body: signed });
+  /* The directory takes an entry only while the account is held by a committee listing this person's key; until then it stays owed. */
+  fileTheOwedDirectoryEntry: async (_api: unknown, id: string, owed: { read(): { person: string; signed: unknown } | null; settle(): Promise<void> }) => {
+    const o = owed.read();
+    if (o === null) return 'nothing-owed';
+    if (!kr.accountHeld) return { notYet: 'not on the committee' };
+    kr.calls.push({ path: `entry ${id} ${o.person}`, method: 'PUT', body: o.signed });
+    await owed.settle();
     return 'filed';
   },
 }));
@@ -87,7 +96,7 @@ const AUTHORITY = (over: Record<string, unknown> = {}) => ({
   handover: { possible: true, why: null }, change: { possible: false, why: 'x' }, ...over,
 });
 
-beforeEach(() => { kr.accountHeld = true; kr.ownSeat = '5a'.repeat(32); kr.walletAsked = []; kr.released = 0; kr.check = undefined; kr.seat = false; kr.user = 'u1'; kr.calls = []; kr.answers = {}; kr.keys = { signerId: 's1', signingSecret: 'aa'.repeat(32), wrappingSecret: 'bb', blinding: 'cc' }; kr.opened = 0; kr.walletKey = K(1); kr.roster = null; kr.signed = null; });
+beforeEach(() => { kr.owed = {}; kr.accountHeld = true; kr.ownSeat = '5a'.repeat(32); kr.walletAsked = []; kr.released = 0; kr.check = undefined; kr.seat = false; kr.user = 'u1'; kr.calls = []; kr.answers = {}; kr.keys = { signerId: 's1', signingSecret: 'aa'.repeat(32), wrappingSecret: 'bb', blinding: 'cc' }; kr.opened = 0; kr.walletKey = K(1); kr.roster = null; kr.signed = null; });
 afterEach(() => { vi.unstubAllEnvs(); });
 
 describe('where a company stands, from the shape of the service\'s answer', () => {
@@ -237,18 +246,26 @@ describe('handing it over', () => {
     } });
   });
 
-  it('gives the keys before the account is its committee\'s, and files the directory entry only from the press after', async () => {
+  it('gives the keys before the account is its committee\'s, keeps the directory entry, and files it on the next way in with no press', async () => {
     const { acts } = await load();
     kr.answers['/api/accounts/c1'] = {};
     kr.roster = rosterWith(K(1));
     kr.accountHeld = false;
     expect(await acts.giveMyVaultKeys('u1', 'c1')).toEqual({ of: 'done' });
     expect(kr.calls.filter((c) => c.path.startsWith('give'))).toHaveLength(1);
-    /* RED WHEN: an entry the server must refuse - its committee key is not on the account yet - is filed and stops the press. */
+    /* RED WHEN: an entry the directory will not take yet stops the press, or the press does not hand it to be kept (what the shared step keeps is its own test's, `seat-directory-route.test.ts`). */
     expect(kr.calls.filter((c) => c.path.startsWith('entry'))).toEqual([]);
+    expect(kr.owed.c1?.person).toBe('u1');
     kr.accountHeld = true;
-    expect(await acts.giveMyVaultKeys('u1', 'c1')).toEqual({ of: 'done' });
-    /* RED WHEN: once the account is held, the entry is still not filed. */
+    const asked = kr.walletAsked.length;
+    const { keysOnTheWayIn } = await import('./keyring-person.js');
+    await keysOnTheWayIn('c1', async () => ({}) as never);
+    /* RED WHEN: once the account is held, the entry waits for another press rather than being filed on the way in. */
+    expect(kr.calls.filter((c) => c.path.startsWith('entry'))).toHaveLength(1);
+    expect(kr.walletAsked.length).toBe(asked);
+    /* RED WHEN: a filed entry is kept owed, and filed again on every way in. */
+    expect(kr.owed.c1).toBeUndefined();
+    await keysOnTheWayIn('c1', async () => ({}) as never);
     expect(kr.calls.filter((c) => c.path.startsWith('entry'))).toHaveLength(1);
   });
 });

@@ -27,7 +27,8 @@ import {
   assertCompanyRecordId, assertCompanyRecordKind, assertWireVersionNumber, fromCompanyWire, toCompanyWire,
   verifiedCompanyFiler, type CompanyRecordKind, type CompanyRecordStore, type SealedCompanyRecord,
 } from '../midnight/sealed-record-wire.js';
-import { FILING_REFUSAL, filerSeatOf, type Directory } from '../midnight/seat-directory.js';
+import { FILING_REFUSAL } from '../midnight/seat-directory.js';
+import { CHAIN_UNREAD, filerSeatNow, type DirectoryNow } from './seat-directory-route.js';
 import { assertTheNextVersion, VaultPoolVersionAlreadyFiled } from '../midnight/vault-pool.js';
 
 /** The largest body one company record may be. */
@@ -61,13 +62,124 @@ export class MemoryCompanyRecordStore implements CompanyRecordStore {
   }
 }
 
+/** Thrown by a store asked to file a record under an id another company's record already has. */
+export class CompanyRecordIdTaken extends Error {
+  constructor(readonly kind: CompanyRecordKind, readonly id: string) {
+    super(`${kind} ${id} is another company's, so nothing was filed`);
+    this.name = 'CompanyRecordIdTaken';
+  }
+}
+
+/** What the service's main store keeps of people (`store.ts`): every version of each, filed one at a time. */
+export interface PeopleStore {
+  personVersions(id: string): SealedCompanyRecord[];
+  filePerson(rec: SealedCompanyRecord): 'version-already-filed' | 'not-the-next-version' | 'another-company' | null;
+}
+
+/**
+ * **ONE STORE OF A COMPANY'S RECORDS, WITH ITS PEOPLE KEPT IN THE SERVICE'S
+ * MAIN STORE** and every other kind in `others`. People are kept there because
+ * the service's older payroll code reads a person without waiting, and that
+ * store is the only copy of each: nothing here copies a person anywhere else.
+ * A person is served only to the company whose payroll they are on.
+ */
+export const withPeopleIn = (people: PeopleStore, others: CompanyRecordStore): CompanyRecordStore => {
+  const ofCompany = (company: string, id: string) => people.personVersions(id).filter((r) => r.company === company);
+  return {
+    get: async (c, k, i) => (k !== 'person' ? others.get(c, k, i) : ofCompany(c, i).at(-1) ?? null),
+    versions: async (c, k, i) => (k !== 'person' ? others.versions(c, k, i) : ofCompany(c, i)),
+    at: async (c, k, i, v) => (k !== 'person' ? others.at(c, k, i, v) : ofCompany(c, i).find((r) => r.version === v) ?? null),
+    put: async (rec) => {
+      if (rec.kind !== 'person') return others.put(rec);
+      const refused = people.filePerson(rec);
+      if (refused === 'another-company') throw new CompanyRecordIdTaken(rec.kind, rec.id);
+      if (refused !== null) throw new VaultPoolVersionAlreadyFiled(rec.id, rec.version);
+    },
+  };
+};
+
+/** What filing a company record answered: the status and the body a route sends. */
+export interface FilingAnswer { readonly status: number; readonly body: Record<string, unknown> }
+
+/** What filing a company record needs of the service. */
+export interface FilingDeps {
+  readonly records: CompanyRecordStore;
+  readonly accountOf: (accountId: string) => SealedAccount | null;
+  /** The company's seat directory against the chain now (`seat-directory-route.ts` `directoryOf`). */
+  readonly directoryOf: (accountId: string) => Promise<DirectoryNow>;
+}
+
+/**
+ * **ONE COMPANY RECORD VERSION, CHECKED AND FILED, OR REFUSED** - check S, the
+ * key epoch and the next version, as the record route makes them. Every route
+ * that files a company record files it through here, so there is one check.
+ */
+export const fileCompanyRecord = async (
+  deps: FilingDeps, person: unknown, n: { company: string; kind: CompanyRecordKind; id: string }, pathVersion: unknown, message: unknown,
+): Promise<FilingAnswer> => {
+  const account = deps.accountOf(n.company);
+  if (typeof person !== 'string' || account === null) return { status: 404, body: { error: 'account not found' } };
+  let rec: SealedCompanyRecord;
+  let digest: string;
+  try {
+    const version = assertWireVersionNumber(pathVersion);
+    const got = fromCompanyWire(message, { ...n, version });
+    rec = got.sealed;
+    digest = got.wire.digest;
+  } catch (e) {
+    return { status: 400, body: { error: (e as Error).message } };
+  }
+  const filer = verifiedCompanyFiler(rec);
+  if (filer === null) {
+    return { status: 403, body: {
+      refused: 'not-signed',
+      error: 'a company record is signed by the seat that files it, over exactly this record, and this one is not. Nothing was filed.',
+    } };
+  }
+  let now: DirectoryNow;
+  try { now = await deps.directoryOf(n.company); } catch (e) { return { status: 503, body: { error: CHAIN_UNREAD(e) } }; }
+  const seat = filerSeatNow(now, person, filer, n.kind);
+  if (typeof seat === 'string') {
+    const remedy = seat === 'no-entry'
+      ? ' Set up your vault keys again on your own device: that enters your seat in the company\'s directory.'
+      : '';
+    return { status: 403, body: { refused: seat, error: `this record was not filed, because ${FILING_REFUSAL[seat]}.${remedy}` } };
+  }
+  if (rec.keyEpoch !== account.keyEpoch) {
+    return { status: 422, body: {
+      refused: 'not-the-current-epoch',
+      error: `this record is sealed under key epoch ${rec.keyEpoch} and the company's key is at epoch ${account.keyEpoch}, so nobody could open it with the company's current key. Nothing was filed. Open the company again and file it under its current key.`,
+    } };
+  }
+  const unreadable = (e: unknown): FilingAnswer => ({ status: 502, body: { error: `the record could not be read: ${(e as Error)?.message ?? String(e)}` } });
+  let next: number;
+  try { next = ((await deps.records.get(n.company, n.kind, n.id))?.version ?? 0) + 1; } catch (e) { return unreadable(e); }
+  const taken = `version ${rec.version} of this record is already filed. Read it again and build the change on what it holds now.`;
+  if (rec.version < next) return { status: 409, body: { refused: 'version-already-filed', kind: n.kind, id: n.id, version: rec.version, error: taken } };
+  if (rec.version > next) {
+    return { status: 422, body: { refused: 'not-the-next-version', kind: n.kind, id: n.id, version: rec.version, error: `the next version of this record is ${next}. Read it again and build the change on what it holds now.` } };
+  }
+  try {
+    await deps.records.put(rec);
+  } catch (e) {
+    if (e instanceof CompanyRecordIdTaken) {
+      return { status: 409, body: { refused: 'another-companys-record', kind: n.kind, id: n.id, error: `${e.message}. Choose another id for a new ${n.kind}.` } };
+    }
+    if ((e as Error)?.name === 'VaultPoolVersionAlreadyFiled') {
+      return { status: 409, body: { refused: 'version-already-filed', kind: n.kind, id: n.id, version: rec.version, error: taken } };
+    }
+    return { status: 503, body: { error: `version ${rec.version} was not confirmed filed: ${(e as Error)?.message ?? String(e)}` } };
+  }
+  return { status: 201, body: { filed: true, kind: n.kind, id: n.id, version: rec.version, digest } };
+};
+
 export const companyRecordsRoutes = (deps: {
   readonly signedIn: express.RequestHandler;
   readonly member: express.RequestHandler;
   readonly records: CompanyRecordStore;
   readonly accountOf: (accountId: string) => SealedAccount | null;
-  /** The company's seat directory, as every filing this server holds makes it. */
-  readonly directoryOf: (accountId: string) => Directory;
+  /** The company's seat directory, as every filing this server holds makes it against the chain now. */
+  readonly directoryOf: (accountId: string) => Promise<DirectoryNow>;
 }): express.Router => {
   const router = express.Router();
   const base = '/api/accounts/:id/records/:kind/:rid';
@@ -114,62 +226,18 @@ export const companyRecordsRoutes = (deps: {
   router.put(`${base}/:version`, deps.signedIn, deps.member, express.json({ limit: COMPANY_RECORD_BODY_LIMIT }), async (req, res) => {
     const n = named(req, res);
     if (!n) return;
-    const person = (req as { userId?: unknown }).userId;
-    const account = deps.accountOf(n.company);
-    if (typeof person !== 'string' || account === null) { res.status(404).json({ error: 'account not found' }); return; }
-    let rec: SealedCompanyRecord;
-    let digest: string;
-    try {
-      const version = assertWireVersionNumber(req.params.version);
-      const got = fromCompanyWire(req.body, { ...n, version });
-      rec = got.sealed;
-      digest = got.wire.digest;
-    } catch (e) {
-      res.status(400).json({ error: (e as Error).message });
+    /*
+     * A person is filed only through the routes that say what each change of a
+     * person is - an invitation, a status, an admission, making yourself
+     * payable (`people-route.ts`, `invitations-route.ts`) - so no second door
+     * files one past their rules. A person is still read here like any record.
+     */
+    if (n.kind === 'person') {
+      res.status(405).json({ refused: 'not-this-route', error: 'a person is filed through the people routes, as an invitation, a status, an admission or making yourself payable, and never here. Nothing was filed.' });
       return;
     }
-    const filer = verifiedCompanyFiler(rec);
-    if (filer === null) {
-      res.status(403).json({
-        refused: 'not-signed',
-        error: 'a company record is signed by the seat that files it, over exactly this record, and this one is not. Nothing was filed.',
-      });
-      return;
-    }
-    const seat = filerSeatOf(deps.directoryOf(n.company), person, filer, n.kind);
-    if (typeof seat === 'string') {
-      const remedy = seat === 'no-entry'
-        ? ' Set up your vault keys again on your own device: that enters your seat in the company\'s directory.'
-        : '';
-      res.status(403).json({ refused: seat, error: `this record was not filed, because ${FILING_REFUSAL[seat]}.${remedy}` });
-      return;
-    }
-    if (rec.keyEpoch !== account.keyEpoch) {
-      res.status(422).json({
-        refused: 'not-the-current-epoch',
-        error: `this record is sealed under key epoch ${rec.keyEpoch} and the company's key is at epoch ${account.keyEpoch}, so nobody could open it with the company's current key. Nothing was filed. Open the company again and file it under its current key.`,
-      });
-      return;
-    }
-    let next: number;
-    try { next = ((await deps.records.get(n.company, n.kind, n.id))?.version ?? 0) + 1; } catch (e) { unreadable(res, e); return; }
-    const taken = `version ${rec.version} of this record is already filed. Read it again and build the change on what it holds now.`;
-    if (rec.version < next) { res.status(409).json({ refused: 'version-already-filed', kind: n.kind, id: n.id, version: rec.version, error: taken }); return; }
-    if (rec.version > next) {
-      res.status(422).json({ refused: 'not-the-next-version', kind: n.kind, id: n.id, version: rec.version, error: `the next version of this record is ${next}. Read it again and build the change on what it holds now.` });
-      return;
-    }
-    try {
-      await deps.records.put(rec);
-    } catch (e) {
-      if ((e as Error)?.name === 'VaultPoolVersionAlreadyFiled') {
-        res.status(409).json({ refused: 'version-already-filed', kind: n.kind, id: n.id, version: rec.version, error: taken });
-        return;
-      }
-      res.status(503).json({ error: `version ${rec.version} was not confirmed filed: ${(e as Error)?.message ?? String(e)}` });
-      return;
-    }
-    res.status(201).json({ filed: true, kind: n.kind, id: n.id, version: rec.version, digest });
+    const answer = await fileCompanyRecord(deps, (req as { userId?: unknown }).userId, n, req.params.version, req.body);
+    res.status(answer.status).json(answer.body);
   });
 
   return router;

@@ -2,13 +2,18 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { bigintJsonReplacer, type Hex } from '../../../../src/core/crypto.js';
 import { sealRecord } from '../../../../src/core/sealed-records.js';
+import { sealPerson } from '../../../../src/core/person-record.js';
+import { identityFromSecret } from 'midnight-identity';
+import { signJoinCode } from 'midnight-identity/profile/join-code';
+import { toCompanyWire } from '../../../../src/midnight/sealed-record-wire.js';
 import { SEED_ASSETS, StaticAssetRegistry } from '../../../../src/core/assets.js';
 
 /*
  * A COMPANY'S RECORDS, OPENED AND READ THROUGH THE ADAPTER. The keyring and
  * the service are stood in for; the runs and proposals are sealed with the
  * record code the service uses and opened with the one the legacy application
- * uses, so what is opened here is what a real record opens to.
+ * uses, so what is opened here is what a real record opens to. The people
+ * are person records sealed with the code a seat's device seals them with.
  */
 const VK = '11'.repeat(32) as Hex;
 const OTHER_VK = '22'.repeat(32) as Hex;
@@ -49,13 +54,27 @@ const sealedRun = (id: string, period: string, status: string, employees: unknow
   id, accountId: 'c1', period, status, payslips: [], keyEpoch: 1, proposalIds: ['p1'],
   sealed: sealRecord('payroll', 'c1', { employees, totals: {}, proposalIds: { [NIGHT_PUBLICLY]: 'p1' } }, key), ...extra,
 });
+/** The company's label, as its record names it: every payee's code is signed for it. */
+const LABEL = `co_${'c1'.repeat(32)}`;
+/** What makes a person payable: an address of `kind` their own wallet (numbered `n`) signed in a code, with their payslip key, kept in their record. */
+const payable = (n: number, kind: 'shielded' | 'unshielded', label = LABEL) => {
+  const bech32 = kind === 'shielded' ? `mn_shield-addr_test1${'q'.repeat(59)}${n}` : `mn_addr_test1${'q'.repeat(59)}${n}`;
+  const payslipKey = n.toString(16).padStart(2, '0').repeat(32);
+  const payeeCode = signJoinCode(identityFromSecret(new Uint8Array(32).fill(n)), label as never, `usr_${n}`, { kind: 'payee', address: bech32, payslipKey });
+  return { address: { kind, bech32 }, wrappingPublicKey: payslipKey, handedOverBy: payeeCode.committeeKey.value, payeeCode };
+};
+/** A person as the people read answers: their newest record on the wire, and whether a hand-over waits. */
+const filedPerson = (p: Record<string, unknown>, handedOver?: boolean, key = VK, company = 'c1') => ({
+  filed: toCompanyWire(sealPerson({ accountId: company, email: null, wrappingPublicKey: null, handedOverBy: null, ...p } as never, 1, 1, key)),
+  ...(handedOver === undefined ? {} : { handedOver }),
+});
 const sealedProposal = (id: string, status: string, secrets: Record<string, unknown>) => ({
   id, accountId: 'c1', status, createdAt: '2026-09-20T10:00:00.000Z', digest: 'dd', chainId: 'cc', approvalCount: 99, keyEpoch: 1,
   sealed: sealRecord('proposals', 'c1', { kind: 'payroll', summary: 'Pay the October run, a sentence the service wrote', proposedBy: 's2', approvals: [{ signerId: 's1' }], vault: 'v', ...secrets }, VK),
 });
 
 function everything() {
-  kr.answers[ROUTE()] = { id: 'c1', threshold: 2, signerCount: 2, wrappedKeys: [] };
+  kr.answers[ROUTE()] = { id: 'c1', threshold: 2, signerCount: 2, wrappedKeys: [], companyLabel: LABEL };
   kr.answers[ROUTE('/runs')] = [
     sealedRun('r1', '2026-10', 'draft', [
       { id: 'e1', name: 'Ana', asset: NIGHT.code, amount: 5_000_000n, paidTo: PRIVATE_ADDRESS },
@@ -70,13 +89,13 @@ function everything() {
     sealedProposal('p1', 'open', { approvalRound: { state: 'short', approvals: 1, threshold: 2 } }),
     sealedProposal('p2', 'executed', { kind: 'add-signer', proposedBy: 'gone' }),
   ];
-  kr.answers[ROUTE(`/people?viewingKey=${VK}`)] = [
-    { id: 'e1', name: 'Ana', title: 'Engineer', asset: NIGHT.code, baseAmount: 5_000_000n, startDate: '2026-01-01', status: 'active', address: { kind: 'shielded' }, handedOver: false },
-    { id: 'e2', name: 'Bo', title: 'Designer', asset: NIGHT.code, baseAmount: 2_000_000n, startDate: '2026-02-01', status: 'active', address: { kind: 'unshielded' }, handedOver: false },
-    { id: 'e5', name: 'Eve', title: 'Writer', asset: NIGHT.code, baseAmount: 1n, startDate: '2026-03-01', status: 'pending', address: null, handedOver: true },
-    { id: 'e6', name: 'Fay', title: 'Writer', asset: NIGHT.code, baseAmount: 1n, startDate: '2026-03-01', status: 'pending', address: null, handedOver: false },
-    { id: 'e7', name: 'Gus', title: 'Writer', asset: NIGHT.code, baseAmount: 1n, startDate: '2026-03-01', status: 'leaver', address: { kind: 'shielded' } },
-  ];
+  kr.answers[ROUTE('/people')] = { people: [
+    filedPerson({ id: 'e2', name: 'Bo', title: 'Designer', asset: NIGHT.code, baseAmount: 2_000_000n, startDate: '2026-02-01', status: 'active', ...payable(2, 'unshielded') }, false),
+    filedPerson({ id: 'e1', name: 'Ana', title: 'Engineer', asset: NIGHT.code, baseAmount: 5_000_000n, startDate: '2026-01-01', status: 'active', ...payable(1, 'shielded') }, false),
+    filedPerson({ id: 'e5', name: 'Eve', title: 'Writer', asset: NIGHT.code, baseAmount: 1n, startDate: '2026-03-01', status: 'pending', address: null }, true),
+    filedPerson({ id: 'e6', name: 'Fay', title: 'Writer', asset: NIGHT.code, baseAmount: 1n, startDate: '2026-03-01', status: 'pending', address: null }, false),
+    filedPerson({ id: 'e7', name: 'Gus', title: 'Writer', asset: NIGHT.code, baseAmount: 1n, startDate: '2026-03-01', status: 'leaver', address: { kind: 'shielded' } }),
+  ] };
   kr.answers[ROUTE('/vaults')] = { rows: [
     { vault: 'ab'.repeat(32), deployedAt: '2026-09-01T00:00:00.000Z', state: 'held-by-committee', why: 'a sentence the service wrote' },
     { vault: 'cd'.repeat(32), deployedAt: '2026-09-02T00:00:00.000Z', state: 'something new', why: null },
@@ -171,7 +190,7 @@ describe('each read, on its own', () => {
   it('hands on every read that worked beside one that did not', async () => {
     const { readCompany } = await load();
     kr.answers[ROUTE('/vaults')] = new Error('the chain could not be read');
-    kr.answers[ROUTE(`/people?viewingKey=${VK}`)] = new TypeError('fetch failed');
+    kr.answers[ROUTE('/people')] = new TypeError('fetch failed');
     const c = await readCompany('u1', 'c1');
     if (c.of !== 'open') throw new Error('not open');
     expect([c.proposals.of, c.runs.of, c.people.of, c.vaults.of, c.invitations.of]).toEqual(['read', 'read', 'unreadable', 'unreadable', 'read']);
@@ -186,12 +205,48 @@ describe('each read, on its own', () => {
     expect([c.runs.of, c.proposals.of]).toEqual(['unreadable', 'read']);
   });
 
-  /* RED WHEN: the viewing key is sent to the service on any read but the people's, which the service opens to answer. */
-  it('sends the viewing key only to read the people', async () => {
+  /* RED WHEN: the viewing key is sent to the service on any read - the people's included, which used to carry it in its address. */
+  it('sends the viewing key on no read', async () => {
     const { readCompany } = await load();
-    await readCompany('u1', 'c1');
-    expect(kr.asked.filter((p) => p.includes(VK))).toEqual([ROUTE(`/people?viewingKey=${VK}`)]);
+    const c = await readCompany('u1', 'c1');
+    if (c.of !== 'open') throw new Error('not open');
+    expect(c.people.of).toBe('read');
+    expect(kr.asked.filter((p) => p.includes(VK))).toEqual([]);
     expect(kr.asked.some((p) => p.endsWith('/state') || p.includes('/state?'))).toBe(false);
+  });
+
+  /* RED WHEN: an active person is shown as paid at an address, or with a payslip key, their own wallet did not sign, or with no code at all. */
+  it('hands on the people as unreadable when an active person is not payable at what their own wallet signed', async () => {
+    const { readCompany } = await load();
+    const ana = { id: 'e1', name: 'Ana', title: 'Engineer', asset: NIGHT.code, baseAmount: 1n, startDate: '2026-01-01', status: 'active' };
+    const good = payable(1, 'shielded');
+    for (const [what, p] of [
+      ['another address', { ...ana, ...good, address: { kind: 'shielded', bech32: payable(3, 'shielded').address.bech32 } }],
+      ['another payslip key', { ...ana, ...good, wrappingPublicKey: 'ee'.repeat(32) }],
+      ['no code', { ...ana, ...good, payeeCode: null }],
+      ['a code changed after it was signed', { ...ana, ...good, payeeCode: { ...good.payeeCode, person: 'usr_mallory' } }],
+      ['a code for another company', { ...ana, ...payable(1, 'shielded', `co_${'c2'.repeat(32)}`) }],
+    ] as const) {
+      kr.answers[ROUTE('/people')] = { people: [filedPerson(p, false)] };
+      const c = await readCompany('u1', 'c1');
+      if (c.of !== 'open') throw new Error('not open');
+      expect(c.people.of, what).toBe('unreadable');
+    }
+    kr.answers[ROUTE('/people')] = { people: [filedPerson({ ...ana, ...good }, false)] };
+    const c = await readCompany('u1', 'c1');
+    expect(c.of === 'open' && c.people.of).toBe('read');
+  });
+
+  /* RED WHEN: a person record sealed under another key, or filed for another company, is shown as a person rather than the people being handed on unreadable. */
+  it('hands on the people as unreadable when a record is not this company\'s or will not open', async () => {
+    const { readCompany } = await load();
+    const ana = { id: 'e1', name: 'Ana', title: 'Engineer', asset: NIGHT.code, baseAmount: 1n, startDate: '2026-01-01', status: 'pending', address: null };
+    for (const wrong of [filedPerson(ana, false, OTHER_VK), filedPerson(ana, false, VK, 'c2')]) {
+      kr.answers[ROUTE('/people')] = { people: [wrong] };
+      const c = await readCompany('u1', 'c1');
+      if (c.of !== 'open') throw new Error('not open');
+      expect([c.people.of, c.runs.of]).toEqual(['unreadable', 'read']);
+    }
   });
 
   /*
@@ -242,7 +297,7 @@ describe('amounts, marked by how they are paid', () => {
     expect(paid!.currencies[0]!.publicly).toBeNull();
   });
 
-  /* RED WHEN: a person's pay is marked private without a private address, or where each stands is not the service's (waiting on us, waiting on them, active, left). */
+  /* RED WHEN: a person's pay is marked private without a private address, where each stands is not their record's (waiting on us, waiting on them, active, left), or they are not listed by name. */
   it('marks a person\'s pay by their address, and says where each stands', async () => {
     const { readCompany } = await load();
     const c = await readCompany('u1', 'c1');

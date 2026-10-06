@@ -1,4 +1,5 @@
 import type { CompanyLabel } from 'midnight-identity/profile/company-label';
+import type { JoinCode } from 'midnight-identity/profile/join-code';
 import type { Hex, Sealed } from './crypto.js';
 import type { PayoutSeed, PayRecord } from '../midnight/run-keys.js';
 import type { Payee } from '../midnight/payee-address.js';
@@ -870,6 +871,15 @@ export interface RosterEmployee {
   admittedBy: string | null;
   admittedAt: string | null;
   /**
+   * **THE CODE THE PAYEE'S OWN WALLET SIGNED FOR WHERE THEY ARE PAID**, sealed
+   * with the rest when they are admitted or make themselves payable, and
+   * carried unchanged by every later version. Every reader checks the address
+   * and payslip key above against it (`whyNotPayable`): a person whose code is
+   * missing, or whose address or key is not their code's, is never read as
+   * payable, whoever filed the version.
+   */
+  payeeCode?: JoinCode | null;
+  /**
    * The person who raised this invite is the person who redeemed it.
    *
    * **A FACT, NOT A REFUSAL.** `admit` used to throw on this. Refusing asked
@@ -1071,6 +1081,22 @@ export interface Invite {
    * Emptied when the invite is redeemed, so it is not a second standing copy.
    */
   offer?: Sealed | null;
+  /**
+   * **WHAT THE PAYEE HANDED OVER WHEN THEY ACCEPTED**: sealed on their own
+   * device to the company's inbox key, which only a holder of the company's
+   * key can open. It is kept on the invitation and not on the person, because
+   * the payee writes it and holds no seat to file a person record with; it is
+   * emptied when an admin admits it. Null or absent when nothing is waiting.
+   */
+  handover?: ({ ephemeral: Hex } & Sealed) | null;
+  /**
+   * **THE HASH OF WHAT ACCEPTS THIS INVITATION**, on an invitation its
+   * inviter's device made (`invitation.ts`). Such an invitation is stored under
+   * its lookup id, which is `token` here; the acceptance proof itself, and the
+   * token both come from, never reach this service. Absent on an invitation
+   * this service made.
+   */
+  acceptanceHash?: Hex;
 }
 
 /**

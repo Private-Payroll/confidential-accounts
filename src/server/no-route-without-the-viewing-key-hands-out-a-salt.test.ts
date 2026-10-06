@@ -63,7 +63,8 @@ describe('no route that does not take the viewing key returns a salt or a path',
   it('EVERY ROUTE THAT REACHES A SALT OR A PATH IS ONE OF THESE, AND EACH TAKES THE VIEWING KEY', () => {
     const all = FILES.flatMap(routesIn);
     /* RED WHEN the walk stops finding routes: it would then pass by finding none. */
-    expect(all.length).toBeGreaterThan(85);
+    /* Routes were removed on purpose when joining moved onto people's own devices (the old invitation, people, state and payee-challenge routes): 82 found then. */
+    expect(all.length).toBeGreaterThan(81);
     const reaching = all.filter(r => HANDS_OUT.some(f => r.body.includes(f)));
     /* RED WHEN a route is added that reaches one of them, or one of these stops doing so. */
     expect(reaching.map(r => r.route).sort()).toEqual([

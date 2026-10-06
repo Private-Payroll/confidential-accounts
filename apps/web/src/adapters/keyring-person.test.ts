@@ -29,6 +29,9 @@ vi.mock('vaults-web-shared/keyring.js', () => ({
     kr.keys = kr.finishes;
     return true;
   },
+  /* No directory entry is owed here; one that is, is `hand-over`'s own test's. */
+  directoryEntryOwed: () => ({ read: () => null, settle: async () => {} }),
+  api: async () => { throw new Error('nothing is asked of the service on the way in when no entry is owed'); },
 }));
 const { keyringFor, keysOnTheWayIn } = await import('./keyring-person.js');
 

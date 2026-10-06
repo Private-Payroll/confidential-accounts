@@ -1,7 +1,9 @@
 import type { SealedAccount } from '../../../../src/core/types.js';
 import {
-  canOpenCompanies, currentUser, finishPendingSeat, forgetLocally, keysFor, pendingSeatsFor, reopenSavedKeys, resumeSession, type AccountKeys,
+  api, canOpenCompanies, currentUser, directoryEntryOwed, finishPendingSeat, forgetLocally, keysFor, pendingSeatsFor, reopenSavedKeys, resumeSession,
+  type AccountKeys,
 } from 'vaults-web-shared/keyring.js';
+import { fileTheOwedDirectoryEntry } from 'vaults-web-shared/vault-page-doors.js';
 import { readSignIn } from './kept-sign-in.js';
 import { tabStorage } from './kept-skips.js';
 
@@ -34,10 +36,15 @@ export async function keyringFor(personId: string): Promise<boolean> {
  * them are read first, and a seat this device published and did not finish
  * saving is finished before anything asks for the company's keys. Nothing to
  * finish is the ordinary case: the company's record is not asked for and
- * nothing is written. Null when this device holds no keys for the company.
+ * nothing is written. A directory entry this person's wallet signed and the
+ * directory did not take yet is filed again (`fileTheOwedDirectoryEntry`); a
+ * refusal leaves it owed and stops nothing. Null when this device holds no
+ * keys for the company.
  */
 export async function keysOnTheWayIn(companyId: string, sealed: () => Promise<SealedAccount>): Promise<AccountKeys | null> {
   if (keysFor(companyId) === null && canOpenCompanies()) await reopenSavedKeys();
   if (pendingSeatsFor(companyId).length > 0) await finishPendingSeat(companyId, await sealed());
+  const owed = directoryEntryOwed(companyId);
+  if (owed.read() !== null) await fileTheOwedDirectoryEntry(api, companyId, owed);
   return keysFor(companyId);
 }

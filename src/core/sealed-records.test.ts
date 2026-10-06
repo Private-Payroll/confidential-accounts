@@ -49,8 +49,8 @@ describe('separate keys per purpose', () => {
 
   it('every purpose gets its own key', async () => {
     const vk = newSymmetricKey();
-    const keys = (['roster', 'policy', 'payroll', 'audit'] as const).map((p) => purposeKey(vk, ACCOUNT, p));
-    expect(new Set(keys).size).toBe(4);
+    const keys = (['roster', 'policy', 'payroll', 'inbox', 'proposals'] as const).map((p) => purposeKey(vk, ACCOUNT, p));
+    expect(new Set(keys).size).toBe(5);
   });
 });
 
@@ -104,8 +104,8 @@ describe('changing the locks', () => {
     const newKey = newSymmetricKey();
     const rotated = reseal('payroll', ACCOUNT, recordsFor(oldKey), oldKey, newKey);
 
-    expect(openRecord('payroll', ACCOUNT, rotated[0].sealed, newKey)).toEqual(STAFF[0]);
-    expect(() => openRecord('payroll', ACCOUNT, rotated[0].sealed, oldKey)).toThrow();
+    expect(openRecord('payroll', ACCOUNT, rotated[0]!.sealed, newKey)).toEqual(STAFF[0]);
+    expect(() => openRecord('payroll', ACCOUNT, rotated[0]!.sealed, oldKey)).toThrow();
   });
 
   it('advances the epoch, which is how a client knows which key applies', async () => {
@@ -129,7 +129,7 @@ describe('changing the locks', () => {
     const oldKey = newSymmetricKey();
     const before = recordsFor(oldKey);
     reseal('payroll', ACCOUNT, before, oldKey, newSymmetricKey());
-    expect(openRecord('payroll', ACCOUNT, before[0].sealed, oldKey)).toEqual(STAFF[0]);
+    expect(openRecord('payroll', ACCOUNT, before[0]!.sealed, oldKey)).toEqual(STAFF[0]);
   });
 });
 

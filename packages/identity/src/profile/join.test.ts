@@ -104,11 +104,12 @@ describe('a join is one of the kinds this wallet answers', () => {
     /* **AND AGAIN WHEN THE SIXTH, `balance`, WAS APPENDED**, and the function
      * produced the commas unchanged once more. */
     /* **AND AGAIN WHEN THE SEVENTH, `committee`, WAS APPENDED**, and the eighth, `records-key`. */
+    /* **AND AGAIN WHEN `join-code` WAS APPENDED**, and the function produced the commas unchanged. */
     /* **AND AGAIN WHEN THE NINTH, `holders`, WAS APPENDED**, and the commas held. */
     /* **AND AGAIN WHEN THE TENTH, `creation`, WAS APPENDED**, and the commas held. */
     expect(said).toContain(
-      "this wallet answers 'disclosure', 'sign-in', 'unlock', 'join', 'keyring', 'balance', 'committee', 'records-key', 'holders' and 'creation', and that asks");
-    expect(said).not.toContain("'holders' and 'creation' and");
+      "this wallet answers 'disclosure', 'sign-in', 'unlock', 'join', 'keyring', 'balance', 'committee', 'records-key', 'holders', 'creation' and 'join-code', and that asks");
+    expect(said).not.toContain("'creation' and 'join-code' and");
   });
 
   it('a well-formed invitation parses, and the key is folded to one spelling', () => {

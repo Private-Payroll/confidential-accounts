@@ -366,6 +366,11 @@ export const filingRefusalOf = (
     const last = seat.retired[recordKey];
     return last !== undefined && version <= last ? null : 'past-its-boundary';
   }
+  return notOnTheChainNow(seat, chain);
+};
+
+/** Whether the chain, read now, lists the committee key that signed `seat`'s entry and holds the seat: one rule for a device and the server. */
+export const notOnTheChainNow = (seat: DirectorySeat, chain: AccountSeats): 'not-on-the-committee' | 'seat-not-seated' | null => {
   if (!chain.committee.some((k) => sameKey(k, seat.committeeKey))) return 'not-on-the-committee';
   if (!chain.seats.includes(seat.seat)) return 'seat-not-seated';
   return null;
@@ -373,18 +378,23 @@ export const filingRefusalOf = (
 
 /**
  * **CHECK S, ON THE SERVER**: the seat the signed-in person holds, filing under
- * `publicKey` a record of kind `kind`, or the reason they may not. The server
- * cannot tell whether the seat is seated now without a chain read; the member
- * gate and every device's own check answer that.
+ * `publicKey` a record of kind `kind`, or the reason they may not. `dir` is the
+ * directory replayed against the server's own read of the chain now, and
+ * `chain` is that read, null when the company has no account on a chain the
+ * server can read: a seat files only while the committee key that signed its
+ * entry is on the committee and the account holds it, the rule a device
+ * applies to every filing it reads (`filingRefusalOf`). A retired seat files
+ * nothing new.
  */
 export const filerSeatOf = (
-  dir: Directory, person: string, publicKey: Hex, kind: FiledKind,
+  dir: Directory, chain: AccountSeats | null, person: string, publicKey: Hex, kind: FiledKind,
 ): DirectorySeat | FilingRefusal => {
   const seat = dir.seats.find((x) => x.person === person);
   if (seat === undefined || seat.signingKey !== publicKey.toLowerCase()) return 'no-entry';
   if (seat.retired !== null) return 'past-its-boundary';
   if (!MAY_FILE[seat.role ?? 'unset'].includes(kind)) return 'role-may-not-file';
-  return seat;
+  if (chain === null) return 'not-on-the-committee';
+  return notOnTheChainNow(seat, chain) ?? seat;
 };
 
 /**

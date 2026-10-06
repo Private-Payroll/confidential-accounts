@@ -196,7 +196,7 @@ const raiseBody = (c: { viewingKey: string }, more: Record<string, unknown>) =>
 const nothingWrittenDown = async (c: { account: string; runId: string; viewingKey: string }) => {
   const order = await post(`/api/runs/${c.runId}/raise-order`, { viewingKey: c.viewingKey });
   expect(order.status, JSON.stringify(order.body)).toBe(409);
-  const runs = await call('GET', `/api/accounts/${c.account}/runs?viewingKey=${c.viewingKey}`, { token });
+  const runs = await call('GET', `/api/accounts/${c.account}/runs`, { token });
   expect(runs.status, JSON.stringify(runs.body)).toBe(200);
   expect((runs.body as Array<{ id: string; status: string }>).find((r) => r.id === c.runId)?.status).toBe('draft');
 };

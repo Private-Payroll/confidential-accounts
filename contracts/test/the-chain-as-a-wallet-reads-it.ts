@@ -11,11 +11,10 @@ import { signDirectoryEntry } from 'midnight-identity/profile/records-key';
 import { holdersInAccountState } from '../../apps/wallet/src/chain/company-label-on-chain.js';
 import type { Account } from '../../src/core/types.js';
 import type { Hex } from '../../src/core/crypto.js';
-import { filerSeatOf } from '../../src/midnight/seat-directory.js';
-import { directoryOf, type DirectoryChainRead, type DirectoryStore } from '../../src/server/seat-directory-route.js';
+import { directoryOf, filerSeatNow, type DirectoryChainRead, type DirectoryStore } from '../../src/server/seat-directory-route.js';
 import type { MayFileUnder } from '../../src/server/vault-records-authority.js';
 import type { FreshJudge } from 'vaults-web-shared/http-sealed-pool-store.js';
-import { attestedIn, directoryFilingsFrom, directoryJudge, fileOwnDirectoryEntry } from 'vaults-web-shared/vault-page-doors.js';
+import { attestedIn, directoryFilingsFrom, directoryJudge, fileTheOwedDirectoryEntry, type OwedDirectoryEntry } from 'vaults-web-shared/vault-page-doors.js';
 
 type StateOf = () => { serialize(): Uint8Array } | null;
 type Api = (path: string, init?: RequestInit) => Promise<any>;
@@ -31,9 +30,9 @@ export const directoryChainOver = (accountState: StateOf): DirectoryChainRead =>
   };
 };
 
-/** The server's check S over its own directory, as `src/server/index.ts` makes it. */
-export const mayFileUnderOver = (store: DirectoryStore): MayFileUnder => (companyId, person, filer, record) =>
-  typeof filerSeatOf(directoryOf(store, companyId), person, filer, record) !== 'string';
+/** The server's check S over its own directory against its own read of the chain, as `src/server/index.ts` makes it. */
+export const mayFileUnderOver = (store: DirectoryStore, chain: DirectoryChainRead): MayFileUnder => async (companyId, person, filer, record) =>
+  typeof filerSeatNow(await directoryOf(store, chain, companyId), person, filer, record) !== 'string';
 
 /** A device's judge of who filed a version: the directory read again, and the account read again off the chain. */
 export const judgeOver = (deps: {
@@ -49,14 +48,22 @@ export const judgeOver = (deps: {
   attested: async () => attestedIn(await deps.roster()),
 });
 
-/** A seat's own entry, signed by its wallet for its filing key and filed from its device, as the page files one. */
+/** A seat's own entry, signed by its wallet for its filing key and filed from its device, as the page files one; a refusal is thrown. */
 export const fileOwnEntry = async (deps: {
   api: Api; accountId: string; person: string; identity: Identity; label: CompanyLabel; account: string;
   companyKey: Uint8Array; signingKey: Hex; seat: string;
-}) => fileOwnDirectoryEntry(deps.api, deps.accountId, deps.person, deps.label, {
-  committeeKey: committeeKeyFor(deps.identity, deps.label),
-  entry: signDirectoryEntry(deps.identity, deps.label, deps.account.toLowerCase() as never, deps.companyKey, deps.signingKey.toLowerCase(), deps.seat.toLowerCase()),
-});
+}) => {
+  let owed: OwedDirectoryEntry | null = {
+    person: deps.person, company: deps.label,
+    signed: {
+      committeeKey: committeeKeyFor(deps.identity, deps.label) as { tag: string; value: string },
+      entry: signDirectoryEntry(deps.identity, deps.label, deps.account.toLowerCase() as never, deps.companyKey, deps.signingKey.toLowerCase(), deps.seat.toLowerCase()),
+    },
+  };
+  const done = await fileTheOwedDirectoryEntry(deps.api, deps.accountId, { read: () => owed, settle: async () => { owed = null; } });
+  if (typeof done === 'object') throw new Error(done.notYet);
+  return done;
+};
 
 /** The wallet's read for a step on any vault of the company whose account `accountState` reads. */
 export const walletReadsOver = (accountState: StateOf) => async () => {

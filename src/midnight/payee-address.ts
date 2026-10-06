@@ -448,7 +448,7 @@ export function payeeOf(bech32: string, network: NetworkName): Payee {
    * READS.** product-copy pass.
    *
    * Before this round a public address was refused by name upstream, so almost
-   * nothing reached this dispatch. `wallet-payee.ts` surfaces it verbatim now
+   * nothing reached this dispatch. The service surfaces it verbatim now
    * to whoever pasted or disclosed the address, and it said *"shield-addr,
    * private money, carrying the key that says who may READ the payment"* to an
    * employee at their own wallet screen. **The only thing they can act on is

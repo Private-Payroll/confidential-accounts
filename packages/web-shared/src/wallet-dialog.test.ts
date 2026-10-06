@@ -298,32 +298,6 @@ describe('§1 — THE WINDOW IS OPENED IN THE CLICK, BEFORE ANYTHING IS AWAITED'
       await journey;
     });
 
-  it('WATCHED FAILING: A COMPANY\'S KEY OPENS THE WALLET BEFORE IT ASKS WHICH COMPANY',
-    async () => {
-      const happened: string[] = [];
-      const view = new ARecordingView(happened);
-      view.answers = () => ({ schema: 'a-sign-in' });
-      const server = aServer(happened);
-      (globalThis as { window?: unknown }).window =
-        Object.assign(view, { location: { origin: US } });
-      globalThis.fetch = server.fetchImpl;
-
-      const keyring = await import('./keyring.js');
-      await keyring.signInWithWallet(WALLET, undefined, view);
-      view.answers = givesTheKeys;
-      await keyring.openKeysWithWallet(WALLET, view, US);
-      expect(keyring.canOpenCompanies()).toBe(true);
-
-      happened.length = 0;
-      /* Nothing answers this one: what is being watched is the first two
-       * things it does, and both have happened by the time it returns. */
-      view.answers = null;
-      const asking = keyring.payslipKeyAndPayeeAddress('acc_1', WALLET, view, US);
-      asking.catch(() => { /* it never finishes; the order is the subject */ });
-
-      expect(happened[0]).toBe(`open ${WALLET_DIALOG_NAME}`);
-      expect(happened[1]).toBe('fetch POST /api/accounts/acc_1/unlock');
-    });
 });
 
 describe('§1 — IT IS A DIALOG RATHER THAN A TAB', () => {
@@ -819,42 +793,6 @@ describe('§3 — A JOURNEY WHOSE SERVER CALL FAILS PUTS ITS WALLET AWAY', () =>
     expect(view.made).toHaveLength(1);
     expect(view.stillOpen()).toEqual([]);
   });
-
-  it('WATCHED FAILING: ASKING WHERE TO PAY THIS PERSON, WHEN THE CHALLENGE FAILS', async () => {
-    const view = new ARecordingView();
-    const keyring = await signedIn(view);
-    globalThis.fetch = aServerThatFails((_m, url) => url.endsWith('/payee-challenge'));
-    await expect(keyring.payeeDisclosureFromWallet('acc_1', WALLET, view)).rejects.toThrow('the server fell over');
-    expect(view.stillOpen()).toEqual([]);
-  });
-
-  it('WATCHED FAILING: A COMPANY\'S KEY, WHEN THE COMPANY CANNOT BE ASKED FOR', async () => {
-    const view = new ARecordingView();
-    const keyring = await signedIn(view);
-    view.answers = givesTheKeys;
-    await keyring.openKeysWithWallet(WALLET, view, US);
-    view.answers = null;
-    globalThis.fetch = aServerThatFails((_m, url) => url.endsWith('/unlock'));
-    await expect(keyring.payslipKeyAndPayeeAddress('acc_1', WALLET, view, US)).rejects.toThrow('the server fell over');
-    expect(view.stillOpen()).toEqual([]);
-  });
-
-  it('WATCHED FAILING: A COMPANY\'S KEY AND WHERE TO PAY GO THROUGH ONE WINDOW, WHICH IS PUT AWAY AFTER BOTH',
-    async () => {
-      const view = new ARecordingView();
-      const keyring = await signedIn(view);
-      view.answers = givesTheKeys;
-      await keyring.openKeysWithWallet(WALLET, view, US);
-      /* The keyring ask with a company is answered with both keys; the payee ask
-       * with anything, since this page judges none of it. */
-      view.answers = givesTheKeys;
-      const { companyKey, disclosure } = await keyring.payslipKeyAndPayeeAddress('acc_1', WALLET, view, US);
-      expect(companyKey).toMatch(/^[0-9a-f]{64}$/u);
-      expect(disclosure.handle).toBe('h1');
-      /* Both asks reached a window, and none is left on screen afterwards. */
-      expect(view.posted.length).toBeGreaterThanOrEqual(3);
-      expect(view.stillOpen()).toEqual([]);
-    });
 
   it('WATCHED FAILING: CREATING A COMPANY, WHEN THE COMPANY CANNOT BE MADE', async () => {
     const view = new ARecordingView();

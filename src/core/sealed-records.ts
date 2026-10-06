@@ -46,7 +46,12 @@ import {
  * a failure that looks like corruption and is impossible to diagnose from the
  * data. The compiler is a better place to catch that than a support ticket.
  */
-export type Purpose = 'roster' | 'policy' | 'payroll' | 'audit' | 'inbox' | 'proposals';
+export type Purpose = 'roster' | 'policy' | 'payroll' | 'inbox' | 'proposals';
+/*
+ * `'audit'` WAS ON THIS LIST AND IS GONE. Nothing was ever
+ * sealed for it, so the key it named opened nothing; a purpose with no record
+ * behind it reads as one more kind of secret than the company keeps.
+ */
 
 /**
  * One key per purpose, derived from the account's viewing key.
