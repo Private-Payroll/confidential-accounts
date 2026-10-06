@@ -114,8 +114,7 @@ export const sealHandover = (
  *
  * What comes out of an envelope is JSON: a shape that looks like a handover,
  * not a handover. Every field is checked here so that nothing downstream throws
- * a `TypeError` out of a property access — the same rule `wallet-payee.ts`'s
- * `asResponse` is written to, and for the same reason.
+ * a `TypeError` out of a property access.
  */
 export function openHandover(
   sealed: SealedHandover, accountId: string, viewingKey: Hex,

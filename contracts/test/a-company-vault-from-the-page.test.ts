@@ -32,7 +32,6 @@
  * one would be read.
  */
 import { describe, it, expect, beforeEach, afterEach } from 'vitest';
-import { readFileSync } from 'node:fs';
 import { createHash } from 'node:crypto';
 import express from 'express';
 import type { AddressInfo } from 'node:net';
@@ -51,7 +50,6 @@ import * as vaultModule from '../managed-vault/contract/index.js';
 import * as accountModule from '../managed/contract/index.js';
 import { witnesses, type AccountPrivateState } from '../src/witnesses.js';
 import { privateStateFor, leafOfDevice } from './simulator.js';
-import { companyLabelBytes } from 'midnight-identity/profile/company-label';
 import { recordsKeypairFrom } from '../../src/midnight/company-nonce-secret.js';
 import { openSecretCopy, secretCopyOnTheChain } from '../../src/midnight/sealed-secret-copy.js';
 import { ACCOUNT_CIRCUITS_SERVED_TO_A_DEVICE, VAULT_CIRCUITS } from '../../src/midnight/vault-contract.js';
@@ -407,7 +405,7 @@ describe.skipIf(!KEYS_ON_DISK)('A COMPANY VAULT, FROM THE SIGNER\'S DEVICE [need
         queryContractState: async (a) => { const c = chain.contract(a); return c === null ? null : { data: asRuntime(c).data }; },
       }),
       companies: () => store.listAccounts().map((a) => ({ id: a.id, contractAddress: company, memberUserIds: a.memberUserIds })),
-      mayFileUnder: mayFileUnderOver(store),
+      mayFileUnder: mayFileUnderOver(store, directoryChainOver(() => chain.contract(company))),
     });
     await new Promise<void>((resolve) => { server = app.listen(0, '127.0.0.1', () => resolve()); });
     base = `http://127.0.0.1:${(server.address() as AddressInfo).port}`;

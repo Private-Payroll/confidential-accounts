@@ -54,7 +54,7 @@ const fold = (h: string): string => h.trim().toLowerCase().replace(/^0x/u, '');
  * Whether the seat directory of `companyId` holds, for `person`, a seat whose
  * filing key is `filer` and whose role may file `record` (`filerSeatOf`).
  */
-export type MayFileUnder = (companyId: string, person: string, filer: Hex, record: WireRecord) => boolean;
+export type MayFileUnder = (companyId: string, person: string, filer: Hex, record: WireRecord) => boolean | Promise<boolean>;
 
 /**
  * **THE ANSWER TO WHO MAY TOUCH WHICH VAULT'S RECORDS**, from the chain's pin,

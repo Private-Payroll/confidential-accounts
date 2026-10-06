@@ -289,17 +289,37 @@ describe('WHAT A DEVICE BELIEVES (CHECK S, ON THE DEVICE)', () => {
 
 describe('WHO MAY FILE, ON THE SERVER (CHECK S)', () => {
   const dir = withAll([ADA, BO]);
+  /** The chain read now: both seats' committee keys listed and both seats held. */
+  const both = { committee: [ADA.committeeKey, BO.committeeKey], threshold: 2, seats: [ADA.seat, BO.seat] };
   it('only the signed-in person\'s own seat key, for a kind its role files, and never a retired seat', () => {
-    expect(typeof filerSeatOf(dir, 'ada', ADA.signing.publicKey, 'run')).toBe('object');
+    expect(typeof filerSeatOf(dir, both, 'ada', ADA.signing.publicKey, 'run')).toBe('object');
     /* RED WHEN: a filing signed by one person is accepted in another's session. */
-    expect(filerSeatOf(dir, 'ada', BO.signing.publicKey, 'pool')).toBe('no-entry');
+    expect(filerSeatOf(dir, both, 'ada', BO.signing.publicKey, 'pool')).toBe('no-entry');
     /* RED WHEN: a person with no entry may file. */
-    expect(filerSeatOf(dir, 'cy', CY.signing.publicKey, 'pool')).toBe('no-entry');
+    expect(filerSeatOf(dir, both, 'cy', CY.signing.publicKey, 'pool')).toBe('no-entry');
     const roles = { ...dir, seats: dir.seats.map((s) => (s.person === 'bo' ? { ...s, role: 'approver' as const } : s)) };
     /* RED WHEN: a role files a kind it may not. */
-    expect(filerSeatOf(roles, 'bo', BO.signing.publicKey, 'run')).toBe('role-may-not-file');
+    expect(filerSeatOf(roles, both, 'bo', BO.signing.publicKey, 'run')).toBe('role-may-not-file');
     const retired = { ...dir, seats: dir.seats.map((s) => (s.person === 'bo' ? { ...s, retired: {} } : s)) };
     /* RED WHEN: a retired seat may file again. */
-    expect(filerSeatOf(retired, 'bo', BO.signing.publicKey, 'pool')).toBe('past-its-boundary');
+    expect(filerSeatOf(retired, both, 'bo', BO.signing.publicKey, 'pool')).toBe('past-its-boundary');
+  });
+
+  it('only while the chain lists the seat\'s committee key and holds its seat now - the rule a device reads by', () => {
+    const notListed = { ...both, committee: [ADA.committeeKey] };
+    const notHeld = { ...both, seats: [ADA.seat] };
+    /* RED WHEN: the server keeps a filing by a seat whose committee key the chain no longer lists. */
+    expect(filerSeatOf(dir, notListed, 'bo', BO.signing.publicKey, 'pool')).toBe('not-on-the-committee');
+    /* RED WHEN: the server keeps a filing by a seat the account no longer holds. */
+    expect(filerSeatOf(dir, notHeld, 'bo', BO.signing.publicKey, 'pool')).toBe('seat-not-seated');
+    /* RED WHEN: a company with no account on a chain the server can read lets a seat file. */
+    expect(filerSeatOf(dir, null, 'ada', ADA.signing.publicKey, 'pool')).toBe('not-on-the-committee');
+    /* One rule: the server says of the filer what a device says of the filing. */
+    for (const chain of [both, notListed, notHeld]) {
+      for (const seat of [ADA, BO]) {
+        const server = filerSeatOf(dir, chain, seat.person, seat.signing.publicKey, 'pool');
+        expect(typeof server === 'string' ? server : null).toBe(filingRefusalOf(dir, chain, seat.signing.publicKey, 'pool', 'k', 1));
+      }
+    }
   });
 });

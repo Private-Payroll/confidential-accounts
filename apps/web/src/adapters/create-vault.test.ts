@@ -1,13 +1,13 @@
 // @vitest-environment jsdom
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import { newSigningKeypair, type Hex } from '../../../../src/core/crypto.js';
+import { newSigningKeypair, signingPublicKeyOf, type Hex } from '../../../../src/core/crypto.js';
 import { signVaultKeys } from '../../../../src/core/vault-keys.js';
-import { MemorySealedPoolStore } from '../../../../src/midnight/vault-pool.js';
+import { MemorySealedPoolStore, SealedNotePool } from '../../../../src/midnight/vault-pool.js';
 import { recordsKeypairFrom } from '../../../../src/midnight/company-nonce-secret.js';
 import { fromHex } from '../../../../src/core/crypto.js';
 import { identityFromSecret } from 'midnight-identity';
 import { committeeKeyFor } from 'midnight-identity/profile/committee-key';
-import { signRecordsKey } from 'midnight-identity/profile/records-key';
+import { signDirectoryEntry, signRecordsKey } from 'midnight-identity/profile/records-key';
 import type { CompanyLabel } from 'midnight-identity/profile/company-label';
 
 /*
@@ -33,6 +33,8 @@ const MINE = committeeKeyFor(ME, LABEL) as { tag: string; value: string };
 const SEAT = '5a'.repeat(32);
 const STATEMENT = signRecordsKey(ME, LABEL, 'c0'.repeat(32) as never, fromHex('11'.repeat(32)), SEAT);
 const SIGNER = newSigningKeypair();
+/* This signer's entry in the company's seat directory, signed by their wallet: the seat and the records key a vault's pool and journals are wrapped to. */
+const ENTRY = { person: 'u1', committeeKey: MINE, statement: signDirectoryEntry(ME, LABEL, 'c0'.repeat(32) as never, fromHex('11'.repeat(32)), signingPublicKeyOf('aa'.repeat(32)), SEAT) };
 const COMPANY = 'c0'.repeat(32);
 const VAULT = 'ab'.repeat(32);
 const kr = vi.hoisted(() => ({
@@ -57,6 +59,9 @@ const kr = vi.hoisted(() => ({
 }));
 vi.mock('vaults-web-shared/keyring.js', async (real) => ({
   ...(await real<typeof import('vaults-web-shared/keyring.js')>()),
+  /* This signer's signed directory entry, kept until it is filed; what becomes of it is `hand-over`'s own test's. */
+  oweDirectoryEntry: async () => {},
+  directoryEntryOwed: () => ({ read: () => null, settle: async () => {} }),
   currentUser: () => ({ id: 'u1' }),
   forgetLocally: () => {},
   resumeSession: async () => null,
@@ -117,7 +122,7 @@ vi.mock('vaults-web-shared/vault-page-doors.js', async (real) => ({
   ...(await real<typeof import('vaults-web-shared/vault-page-doors.js')>()),
   giveVaultKeys: async () => { kr.log.push('keys given'); },
   /* This signer's entry in the seat directory; whether it is filed is `vault-keys`' own test's. */
-  fileOwnDirectoryEntry: async () => 'filed',
+  fileTheOwedDirectoryEntry: async () => 'filed',
   /* The company's records, kept here for the length of one test. */
   deviceRecordsFor: () => (record: string) => {
     if (!kr.records.has(record)) kr.records.set(record, new MemorySealedPoolStore());
@@ -227,6 +232,7 @@ beforeEach(() => {
   kr.keys = { signerId: 's1', signingSecret: 'aa'.repeat(32), wrappingSecret: 'bb', blinding: 'cc' };
   kr.roster = rosterWith(MINE);
   kr.answers[ROUTE()] = { id: 'c1' };
+  kr.answers[ROUTE('/directory')] = { filings: [{ company: 'c1', version: 1, change: { kind: 'claim', entry: ENTRY } }] };
   kr.answers[`PUT ${ROUTE('/vault-keys')}`] = { given: true };
   kr.answers[`GET ${ROUTE('/vault-keys')}`] = { committee: COMMITTEE, why: null, readers: [MY_RECORDS_KEY] };
 });
@@ -246,6 +252,10 @@ describe('creating a vault', () => {
     kr.answers[`GET ${ROUTE(`/vaults/${VAULT}/chain`)}`] = onChain(true);
     const stages: string[] = [];
     expect(await m.createVault('u1', 'c1', (s) => stages.push(s))).toEqual({ of: 'done', vault: VAULT });
+    /* RED WHEN: the vault's pool is filed under this signer's roster id, or wrapped to a key their directory entry does not name. */
+    const pool = await (kr.records.get('pool') as MemorySealedPoolStore).get(VAULT);
+    expect(pool?.wrapped.map((w) => w.signerId)).toEqual([SEAT]);
+    await expect(new SealedNotePool(kr.records.get('pool') as MemorySealedPoolStore, { signerId: SEAT, wrappingSecret: recordsKeypairFrom(fromHex('11'.repeat(32))).secret }, async () => []).load(VAULT)).resolves.toBeDefined();
     /* Every step but the reads of the company's record and its committee, in the order it was taken. */
     expect(kr.log.filter((l) => !l.startsWith('GET /api/accounts/c1') || l.endsWith('/chain'))
       .filter((l, i, all) => !(l.endsWith('/chain') && all[i - 1]?.endsWith('/chain')))).toEqual([

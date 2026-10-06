@@ -49,11 +49,16 @@ const { AccountService, approvalMessage, openAccount } = await import('../core/a
 const { NO_ASSET } = await import('../core/assets.js');
 const { addressOfSlot, signInWithAWallet } = await import('../testing/wallet-session.js');
 const { theNetwork } = await import('../midnight/network.js');
-const { sign, newSigningKeypair, newWrappingKeypair, newBlinding } = await import('../core/crypto.js');
+const { sign, newSigningKeypair, newWrappingKeypair, newBlinding, signingPublicKeyOf } = await import('../core/crypto.js');
 const { storedSignerLeaf } = await import('../core/signer-leaf.js');
-const { newSeatInvitation, proveSeatKeys, seatInvitationFragment, seatInvitationFromFragment } =
+const { newSeatInvitation, proveSeatKeys } =
   await import('../core/seat-invite-proof.js');
-const { acceptSeatOnThisDevice, newSeatKeys } = await import('vaults-web-shared/accept-seat.js');
+const { newSeatKeys } = await import('vaults-web-shared/accept-seat.js');
+const { invitePayeeHere, inviteSignerHere, openInvitationHere, acceptAsSignerHere } = await import('vaults-web-shared/invitation-on-device.js');
+const { identityFromSecret } = await import('midnight-identity');
+const { committeeKeyFor } = await import('midnight-identity/profile/committee-key');
+const { signDirectoryEntry } = await import('midnight-identity/profile/records-key');
+type CompanyLabel = import('midnight-identity/profile/company-label').CompanyLabel;
 type PendingSeat = import('vaults-web-shared/keyring.js').PendingSeat;
 const device = await import('vaults-web-shared/governed-call-on-device.js');
 const { refuseARaiseThatIsNotTheRecordedOne, refuseWhatThisDeviceDidNotOpen, recordForOneCall, NotWhatThisDeviceOpened } =
@@ -178,12 +183,32 @@ const joined = await accounts.create('Joined', [
 for (const [i, sg] of joined.account.signers.entries()) {
   leaves.set(`${joined.account.id} ${joined.secrets[i]!.signerId}`, sg.leafCommitment as Hex);
 }
+/*
+ * Ada's seat in Joined's directory, as her own wallet would have signed it: the
+ * key her filings are signed with is her device's signing key, so the
+ * invitations her device makes are hers by the directory's own check.
+ */
+const adaInJoined = (() => {
+  const identity = identityFromSecret(new Uint8Array(32).fill(41));
+  const label = store.getAccount(joined.account.id)!.companyLabel as CompanyLabel;
+  const account = store.getAccount(joined.account.id)!.contractAddress as never;
+  const committeeKey = committeeKeyFor(identity, label) as { tag: string; value: string };
+  const statement = signDirectoryEntry(identity, label, account, new Uint8Array(32).fill(141),
+    signingPublicKeyOf(joined.secrets[0]!.signingSecret), '41'.repeat(32));
+  store.fileDirectory(joined.account.id, { company: joined.account.id, version: 1, change: { kind: 'claim', entry: { person: USERS.ada, committeeKey, statement } } });
+  return { committeeKey, statement, signingSecret: joined.secrets[0]!.signingSecret, label, account };
+})();
 
 handInWiring({
   name: 'simulated',
   commitments: MidnightCommitments,
   createLedger: () => ledger,
   createProofSystem: () => new SimulatedProofSystem(),
+  /* The chain as the server reads Joined's account: Ada's wallet on its committee and her seat held, one approval. */
+  directoryChain: async (accountId, seats) => (accountId !== joined.account.id ? null : {
+    seats: { committee: [adaInJoined.committeeKey], threshold: 1, seats: seats.filter((x) => x === adaInJoined.statement.seat) },
+    approvals: 1,
+  }),
 });
 
 const { app } = await importTheServer();
@@ -414,35 +439,38 @@ describe('A COMPANY SEATS ITS SIGNERS FROM THEIR OWN DEVICES, ON THE PRODUCT\'S 
     expect(t.body.error).toMatch(/only a seated signer who may approve/u);
     expect(sent).toEqual([]);
   });
-  it('AN INVITATION RAISED ON ONE DEVICE IS ACCEPTED ON THE INVITEE\'S OWN AND SEATED FROM TWO OTHERS, END TO END', async () => {
+  it('AN INVITATION MADE ON ONE DEVICE IS ACCEPTED ON THE INVITEE\'S OWN AND SEATED FROM TWO OTHERS, END TO END', async () => {
     const at = joined.account.id;
     const [jAda, jBlake] = joined.secrets as [typeof joined.secrets[0], typeof joined.secrets[0]];
-    /* Ada's page raises the invitation over the route, and makes the link's secret as the page does. */
-    const raised = await call('POST', `/api/accounts/${at}/invites/signer`, {
-      token: tokens.ada, body: { name: 'Dora', email: 'dora@joined.example', role: 'approver' } });
-    expect(raised.status).toBe(200);
-    const link = seatInvitationFromFragment(seatInvitationFragment(raised.body.token,
-      newSeatInvitation(joined.viewingKey, at, raised.body.name, raised.body.role)))!;
-    /* Dora's device, signed in as Dora, accepts from the link with nothing but what the link carries. */
+    /* Ada's device makes the invitation: the token, the sealed offer and the seat's secret never leave it. */
+    const sendAs = (who: Who) => async (path: string, init: { method: 'GET' | 'POST'; body?: string }) => {
+      const r = await fetch(base + path, { method: init.method, ...(init.body === undefined ? {} : { body: init.body }),
+        headers: { 'content-type': 'application/json', ...(who === 'dora' || init.method === 'POST' ? { authorization: `Bearer ${tokens[who]}` } : {}) } });
+      return { status: r.status, body: await r.json().catch(() => ({})) };
+    };
+    const opened = await call('GET', `/api/accounts/${at}`, { token: tokens.ada });
+    const made = await inviteSignerHere({
+      id: at, name: 'Joined', label: adaInJoined.label, account: adaInJoined.account, inboxPublicKey: opened.body.inboxPublicKey,
+      keyEpoch: opened.body.keyEpoch, viewingKey: joined.viewingKey,
+    }, adaInJoined, { name: 'Dora', role: 'approver' }, ORIGIN, sendAs('ada'));
+    /* Dora's device, signed in as Dora, opens the link and accepts with nothing but what the link carries. */
     const sealedThere: PendingSeat[] = [];
-    const accepted = await acceptSeatOnThisDevice(at, MidnightCommitments, {
+    const accepted = await acceptAsSignerHere(await openInvitationHere(made.link, sendAs('dora')), MidnightCommitments, {
       newKeys: newSeatKeys,
       seal: async (seat) => { sealedThere.push(seat); },
-      publish: (payload) => apiAs('dora')(`/api/invites/${encodeURIComponent(link.token)}/accept-signer`, {
-        method: 'POST', body: JSON.stringify(payload) }),
       promote: async () => {},
-    }, link.invitation);
+    }, sendAs('dora'));
     const leaf = storedSignerLeaf(sealedThere[0]!, MidnightCommitments);
     /* Ada's device raises the seat and approves it; two approvals are needed, so it waits. */
     const adaDevice = aDevice('ada', jAda.signerId, jAda.signingSecret, [], at);
     const first = await device.seatSignerOnDevice(adaDevice.doors, {
-      viewingKey: joined.viewingKey, signerId: jAda.signerId, sign: adaDevice.sign, seat: { signerId: accepted.signerId, leaf } });
+      viewingKey: joined.viewingKey, signerId: jAda.signerId, sign: adaDevice.sign, seat: { signerId: accepted.signerId!, leaf } });
     /* RED WHEN: the device that raised the invitation cannot raise the seat of a key that arrived from another device. */
     expect(first.state).toBe('waiting-for-approvals');
     /* Blake's device, which raised nothing, approves it and carries it out. */
     const blakeDevice = aDevice('blake', jBlake.signerId, jBlake.signingSecret, [], at);
     const second = await device.seatSignerOnDevice(blakeDevice.doors, {
-      viewingKey: joined.viewingKey, signerId: jBlake.signerId, sign: blakeDevice.sign, seat: { signerId: accepted.signerId, leaf } });
+      viewingKey: joined.viewingKey, signerId: jBlake.signerId, sign: blakeDevice.sign, seat: { signerId: accepted.signerId!, leaf } });
     /* RED WHEN: an honest invitation accepted on the invitee's own device cannot be seated. */
     expect(second).toEqual({ state: 'done' });
     const now = openAccount((await call('GET', `/api/accounts/${at}`, { token: tokens.ada })).body, joined.viewingKey);
@@ -451,5 +479,73 @@ describe('A COMPANY SEATS ITS SIGNERS FROM THEIR OWN DEVICES, ON THE PRODUCT\'S 
       { name: 'Ada', status: 'active' }, { name: 'Blake', status: 'active' }, { name: 'Dora', status: 'active' }]);
     /* RED WHEN: the key seated is not the one made and kept on Dora's device. */
     expect(now.signers.find((x) => x.name === 'Dora')!.signingPublicKey).toBe(sealedThere[0]!.signingPublicKey);
+  });
+
+  it('A PERSON\'S STATUS AND ADMISSION ANSWER ONLY A MEMBER OF THEIR COMPANY, BEHIND THE SERVICE\'S OWN GATE', async () => {
+    const at = joined.account.id;
+    const sendAs = (who: Who) => async (path: string, init: { method: string; body?: string }) => {
+      const r = await fetch(base + path, { method: init.method, headers: { 'content-type': 'application/json', authorization: `Bearer ${tokens[who]}` }, ...(init.body === undefined ? {} : { body: init.body }) });
+      return { status: r.status, body: await r.json().catch(() => ({})) };
+    };
+    const opened = await call('GET', `/api/accounts/${at}`, { token: tokens.ada });
+    const made = await invitePayeeHere({
+      id: at, name: 'Joined', label: adaInJoined.label, account: adaInJoined.account, inboxPublicKey: opened.body.inboxPublicKey,
+      keyEpoch: opened.body.keyEpoch, viewingKey: joined.viewingKey,
+    }, adaInJoined, { name: 'Eli', email: 'eli@joined.co', title: 'Engineer', asset: NO_ASSET as never, baseAmount: 1n, startDate: '2026-10-01' }, ORIGIN, sendAs('ada'));
+    const person = made.person!;
+    for (const [path, member] of [[`/api/people/${person}/status`, 'not-this-change'], [`/api/employees/${person}/admit`, 'nothing-handed-over']] as const) {
+      /* RED WHEN: somebody who is not a member of the person's company reaches the route at all. */
+      expect((await call('POST', path, { token: tokens.vic, body: {} })).status, path).toBe(404);
+      /* RED WHEN: a member of the person's company is turned away at the gate rather than answered by the route. */
+      expect((await call('POST', path, { token: tokens.ada, body: {} })).body, path).toMatchObject({ refused: member });
+    }
+  });
+
+  it('A PAYEE INVITED, ACCEPTED AND ADMITTED FROM DEVICES, AGAINST THE SERVICE\'S OWN ROUTES', async () => {
+    const { acceptAsPayeeHere } = await import('vaults-web-shared/invitation-on-device.js');
+    const { admitHere, readPeopleHere } = await import('vaults-web-shared/people-on-device.js');
+    const { directoryHere } = await import('vaults-web-shared/vault-page-doors.js');
+    const { signJoinCode } = await import('midnight-identity/profile/join-code');
+    const { signRecordsKey } = await import('midnight-identity/profile/records-key');
+    const { payeeFor } = await import('../testing/payees.js');
+    const { TEST_SETTLEMENT_ASSET } = await import('../core/assets.js');
+    const at = joined.account.id;
+    const sendAs = (who: Who) => async (path: string, init: { method: string; body?: string }) => {
+      const r = await fetch(base + path, { method: init.method, headers: { 'content-type': 'application/json', authorization: `Bearer ${tokens[who]}` }, ...(init.body === undefined ? {} : { body: init.body }) });
+      return { status: r.status, body: await r.json().catch(() => ({})) };
+    };
+    const opened = await call('GET', `/api/accounts/${at}`, { token: tokens.ada });
+    const company = {
+      id: at, name: 'Joined', label: adaInJoined.label, account: adaInJoined.account, inboxPublicKey: opened.body.inboxPublicKey,
+      keyEpoch: opened.body.keyEpoch, viewingKey: joined.viewingKey,
+    };
+    const made = await invitePayeeHere(company, adaInJoined, { name: 'Fen', email: 'fen@joined.co', title: 'Engineer', asset: TEST_SETTLEMENT_ASSET, baseAmount: 1n, startDate: '2026-10-01' }, ORIGIN, sendAs('ada'));
+    /* Fen's own wallet signs the code for where Fen is paid, and Fen's device accepts the link with it. */
+    const address = payeeFor('7e'.repeat(32), NETWORK).bech32;
+    const code = signJoinCode(identityFromSecret(new Uint8Array(32).fill(77)), adaInJoined.label, USERS.vic, { kind: 'payee', address, payslipKey: 'cd'.repeat(32) });
+    const accepted = await acceptAsPayeeHere(await openInvitationHere(made.link, sendAs('vic')), code, sendAs('vic'));
+    /* RED WHEN: the service's invitation list hands a member the acceptance's hash, the sealed offer or what the payee handed over. */
+    const listed = (await call('GET', `/api/accounts/${at}/invites`, { token: tokens.ada })).body as Record<string, unknown>[];
+    const mine = listed.find((i) => i.subjectId === made.person);
+    expect(mine, 'the invitation is listed').toBeDefined();
+    for (const field of ['acceptanceHash', 'offer', 'handover', 'token']) expect(Object.keys(mine!), field).not.toContain(field);
+    /* Ada's device: the directory as she believes it, her wallet's read of the chain, and her wallet's statement of her records key. */
+    const seatOfAda = adaInJoined.statement.seat;
+    const device = {
+      company, signingSecret: adaInJoined.signingSecret, signedInAs: USERS.ada, send: sendAs('ada'), network: NETWORK,
+      directory: () => directoryHere({
+        accountId: at, label: adaInJoined.label,
+        filings: async () => (await call('GET', `/api/accounts/${at}/directory`, { token: tokens.ada })).body.filings,
+        holders: async () => ({ committee: [adaInJoined.committeeKey], threshold: 1, seats: [seatOfAda], approvals: 1, adoptedVaults: [], account: adaInJoined.account }),
+        attested: async () => [{ committeeKey: adaInJoined.committeeKey, statement: signRecordsKey(identityFromSecret(new Uint8Array(32).fill(41)), adaInJoined.label, adaInJoined.account, new Uint8Array(32).fill(141), seatOfAda) }],
+      }),
+    };
+    const here = (await readPeopleHere(device)).people.find((p) => p.person.id === made.person)!;
+    expect(here.handedOver).toBe(true);
+    /* RED WHEN: the service's own hand-over route or invitation list gives the admitting device something it cannot admit from. */
+    const admitted = await admitHere(device, here, accepted.fingerprint);
+    expect(admitted).toMatchObject({ status: 'active', address: { bech32: address }, wrappingPublicKey: 'cd'.repeat(32) });
+    const after = (await readPeopleHere(device)).people.find((p) => p.person.id === made.person)!;
+    expect([after.person.status, after.handedOver]).toEqual(['active', false]);
   });
 });

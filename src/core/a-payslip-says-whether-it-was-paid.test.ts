@@ -471,7 +471,7 @@ describe('the payslip lookups read what they answer and not every record', () =>
     /* From here every read of the three collections is counted. */
     const data = (h.store as any).data;
     const counts = { listed: 0, read: 0 };
-    for (const name of ['accounts', 'runs', 'employees'] as const) {
+    for (const name of ['accounts', 'runs', 'people'] as const) {
       data[name] = new Proxy(data[name], {
         ownKeys: (t) => { counts.listed += 1; return Reflect.ownKeys(t); },
         get: (t, k, r) => { if (typeof k === 'string') counts.read += 1; return Reflect.get(t, k, r); },

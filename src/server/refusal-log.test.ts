@@ -32,6 +32,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import type { Server } from 'node:http';
 import { appendRefusal, renderRefusal, refusalLogPath } from './refusal-log.js';
+import { INVITATION_REFUSAL } from '../core/invitation.js';
 
 const DIR = mkdtempSync(join(tmpdir(), 'mn-refusals-'));
 const REPORT = join(DIR, 'REPORT-REFUSALS.txt');
@@ -140,17 +141,17 @@ const read = () => readFileSync(REPORT, 'utf8');
 describe('what the service writes down when it refuses', () => {
   it('THE ONE C157 ASKS FOR: a real refusal, on disk, with its reason and its kind',
     async () => {
-      // Unauthenticated and wrapped, so this is `wrap` and nothing else.
+      // Unauthenticated: the offer route writes its own refusals down, as `wrap` does.
       const res = await fetch(`${base}/api/invites/not-a-real-token/offer`);
-      expect(res.status).toBe(400);
-      expect((await res.json()).error).toBe('invite not found');
+      expect(res.status).toBe(404);
+      expect((await res.json()).error).toBe(INVITATION_REFUSAL['not-found']);
 
       expect(existsSync(REPORT), 'nothing was written').toBe(true);
       const written = read();
-      expect(written).toContain('400 GET');
+      expect(written).toContain('404 GET');
       expect(written).toContain('/api/invites/not-a-real-token/offer');
       // THE HALF THE ROW IS ABOUT: which failure it was, not merely that one was.
-      expect(written).toContain('Error: invite not found');
+      expect(written).toContain(`not-found: ${INVITATION_REFUSAL['not-found']}`);
       expect(written).toMatch(/\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}/);
     });
 
@@ -159,17 +160,19 @@ describe('what the service writes down when it refuses', () => {
     // — or the artefacts disagree and reading them is guesswork again.
     const res = await fetch(`${base}/api/invites/another-bad-token/offer`);
     const { error } = await res.json() as { error: string };
-    expect(read()).toContain(`Error: ${error}`);
+    expect(read()).toContain(`not-found: ${error}`);
   });
 
   it('C157: it walks its own report and finds no seed, key or token', () => {
     /*
      * A refusal about a key is exactly the kind of message that quotes one, and
-     * the path carries a query string, which is where `viewingKey` travels.
-     * Both go through the redactor. A defect removes it from the reason.
+     * a path can carry a query string. No route reads `viewingKey` from one any
+     * more, but a caller can still put a key in an address, and the
+     * report is written before anything decides what the address meant. Both
+     * go through the redactor. A defect removes it from the reason.
      */
     appendRefusal(
-      'GET', `/api/accounts/a1/state?viewingKey=${PLANTED.viewingKey}`, 400, 'Error',
+      'GET', `/api/accounts/a1/people?viewingKey=${PLANTED.viewingKey}`, 400, 'Error',
       `this key does not open a record sealed at that epoch: ${PLANTED.seedHex}`);
     appendRefusal(
       'POST', '/api/auth/wallet', 400, 'WalletSignInError',
@@ -189,7 +192,7 @@ describe('what the service writes down when it refuses', () => {
     // Without this the case above passes for a file with nothing in it, and an
     // empty report is not a redacted one.
     const written = read();
-    expect(written).toContain('/api/accounts/a1/state');
+    expect(written).toContain('/api/accounts/a1/people');
     expect(written).toContain('WalletSignInError');
     expect(written).toContain('this key does not open a record sealed at that epoch');
     expect(written).toContain('<redacted');

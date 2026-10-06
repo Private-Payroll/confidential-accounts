@@ -40,6 +40,31 @@ export const WIRE_RECORDS: readonly WireRecord[] = ['pool', 'deposit-journal', '
 export const COMPANY_RECORD_KINDS = ['state', 'roster', 'policy', 'person', 'run', 'proposal', 'offer'] as const;
 export type CompanyRecordKind = (typeof COMPANY_RECORD_KINDS)[number];
 
+/**
+ * **THE KINDS SEALED UNDER ONE OF THE COMPANY'S PURPOSE KEYS**, and which one.
+ * Such a record is opened by whoever holds that purpose key, so it carries no
+ * per-reader wraps: a wrap beside it would be a second, drifting answer to who
+ * may read it. Every other kind is sealed under a fresh key wrapped to each
+ * reader.
+ */
+export const SEALED_UNDER_PURPOSE: Readonly<Partial<Record<CompanyRecordKind, 'payroll'>>> = Object.freeze({ person: 'payroll' });
+
+/** Where a person on a company's payroll stands. */
+export const PERSON_STANDINGS = ['active', 'pending', 'leaver'] as const;
+export type PersonStanding = (typeof PERSON_STANDINGS)[number];
+
+/**
+ * **WHAT A PERSON RECORD SAYS IN PLAIN TEXT, BESIDE ITS SEAL**: where the
+ * person stands, and the public key their payslips are sealed to. Both were
+ * plain on the employee row before the record replaced it, and the filer's
+ * signature covers them as it covers the seal. Nothing else about a person is
+ * readable outside the seal.
+ */
+export interface PersonFacts {
+  readonly status: PersonStanding;
+  readonly wrappingPublicKey: Hex | null;
+}
+
 /** One filed version, as it crosses the wire. */
 export interface WireVersion {
   readonly record: WireRecord;
@@ -214,7 +239,10 @@ export interface SealedCompanyRecord {
   /** The company key's epoch the record is sealed under. */
   keyEpoch: number;
   sealed: Sealed;
+  /** One wrap per reader; none for a kind sealed under a purpose key (`SEALED_UNDER_PURPOSE`). */
   wrapped: WrappedPoolKey[];
+  /** A person record's plain facts (`PersonFacts`); absent on every other kind. */
+  facts?: PersonFacts;
   filedBy?: { publicKey: Hex; signature: Hex };
 }
 
@@ -246,8 +274,20 @@ export const whyThisIsNotACompanyRecord = (
   }
   if (!Number.isSafeInteger(r.version) || (r.version as number) < 1) return 'its version is not a whole number';
   if (!Number.isSafeInteger(r.keyEpoch) || (r.keyEpoch as number) < 0) return 'it names no key epoch';
-  if (!Array.isArray(r.wrapped) || r.wrapped.length === 0) return 'it carries no wrapped keys, so nobody could open it';
+  if (SEALED_UNDER_PURPOSE[expect.kind] !== undefined) {
+    if (!Array.isArray(r.wrapped) || r.wrapped.length !== 0) {
+      return `a ${expect.kind} record is sealed under the company's ${SEALED_UNDER_PURPOSE[expect.kind]} key and carries no wrapped keys`;
+    }
+  } else if (!Array.isArray(r.wrapped) || r.wrapped.length === 0) return 'it carries no wrapped keys, so nobody could open it';
   if (r.sealed === null || typeof r.sealed !== 'object') return 'it carries no sealed payload';
+  if (expect.kind === 'person') {
+    const f = r.facts as Record<string, unknown> | null | undefined;
+    if (f === null || typeof f !== 'object' || Object.keys(f).sort().join(',') !== 'status,wrappingPublicKey'
+      || !(PERSON_STANDINGS as readonly unknown[]).includes(f.status)
+      || !(f.wrappingPublicKey === null || (typeof f.wrappingPublicKey === 'string' && /^[0-9a-f]{64}$/u.test(f.wrappingPublicKey)))) {
+      return 'a person record says where the person stands and their payslip key, and this one does not say both in the one form';
+    }
+  } else if (r.facts !== undefined) return `a ${expect.kind} record carries no plain facts`;
   if (r.filedBy !== undefined) {
     const f = r.filedBy as Record<string, unknown> | null;
     if (f === null || typeof f !== 'object' || typeof f.publicKey !== 'string' || !/^[0-9a-f]{64}$/u.test(f.publicKey)

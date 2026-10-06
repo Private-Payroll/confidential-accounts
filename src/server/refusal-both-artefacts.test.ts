@@ -26,6 +26,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import type { Server } from 'node:http';
 import { installErrorSink, type SinkPost, type SinkWindow } from 'vaults-web-shared/error-sink.js';
+import { INVITATION_REFUSAL } from '../core/invitation.js';
 
 const DIR = mkdtempSync(join(tmpdir(), 'mn-both-'));
 const REPORT = join(DIR, 'REPORT-REFUSALS.txt');
@@ -117,29 +118,29 @@ const aBrowser = () => {
 const settled = () => new Promise(resolve => { setTimeout(resolve, 0); });
 
 describe('a refusal, read the way a walk reads one', () => {
-  it('THE ONE C157 ASKS FOR: the log and the sink give the same reason for one 400',
+  it('THE ONE C157 ASKS FOR: the log and the sink give the same reason for one refusal',
     async () => {
       const { w, posted } = aBrowser();
 
       const response = await w.fetch(`${base}/api/invites/nothing-here/offer`);
-      expect(response.status).toBe(400);
+      expect(response.status).toBe(404);
       await settled();
 
       /* 1. WHAT THE PERSON WAS GIVEN. */
       const shown = (await response.json()).error as string;
-      expect(shown).toBe('invite not found');
+      expect(shown).toBe(INVITATION_REFUSAL['not-found']);
 
       /* 2. WHAT THE SINK KEPT — the status, the path AND the reason. Before
        *    this round it was the first two, and nothing else. */
-      const kept = posted[0].entries[0].message;
-      expect(kept).toContain('400 ');
+      const kept = posted[0]!.entries[0]!.message;
+      expect(kept).toContain('404 ');
       expect(kept).toContain('/api/invites/nothing-here/offer');
       expect(kept).toContain(`— ${shown}`);
 
       /* 3. AND WHAT THE SERVICE WROTE DOWN. */
       const written = readFileSync(REPORT, 'utf8');
       expect(written).toContain('/api/invites/nothing-here/offer');
-      expect(written).toContain(`Error: ${shown}`);
+      expect(written).toContain(`not-found: ${shown}`);
 
       /*
        * **THE ASSERTION THE ROW IS ACTUALLY ABOUT.** Not that each artefact has
@@ -176,7 +177,7 @@ describe('a refusal, read the way a walk reads one', () => {
       const secret = 'ab'.repeat(32);
 
       const response = await w.fetch(`${base}/api/invites/${secret}/offer`);
-      expect(response.status).toBe(400);
+      expect(response.status).toBe(404);
       await settled();
 
       const shown = (await response.json()).error as string;
@@ -189,7 +190,7 @@ describe('a refusal, read the way a walk reads one', () => {
        * otherwise. The disk line carries the path, and carries it redacted.
        * Neither is a substring of the other.
        */
-      expect(shown).toBe('invite not found');
+      expect(shown).toBe(INVITATION_REFUSAL['not-found']);
       expect(shown).not.toContain(secret);
       expect(shown).not.toContain('<redacted:hex>');
       expect(shown).not.toContain('/api/invites');
@@ -205,9 +206,9 @@ describe('a refusal, read the way a walk reads one', () => {
        * copies. What is NOT true, and what the header claimed until `S58`, is
        * that one redactor produced them.
        */
-      const kept = posted[0].entries[0].message;
+      const kept = posted[0]!.entries[0]!.message;
       expect(kept).toContain(`— ${shown}`);
-      expect(written).toContain(`Error: ${shown}`);
+      expect(written).toContain(`not-found: ${shown}`);
       /* The page redacted its own copy, independently — `packages/web-shared/src/error-sink.ts`.
        * That is the third boundary, and it is why the sink shows the same
        * placeholder as the disk while having never read the disk's copy. */
@@ -218,15 +219,15 @@ describe('a refusal, read the way a walk reads one', () => {
     async () => {
       const { w, posted } = aBrowser();
       await w.fetch(`${base}/api/invites/one-bad-token/offer`);
-      await w.fetch(`${base}/api/accounts/a1/state?viewingKey=nope`);
+      await w.fetch(`${base}/api/accounts/a1/people`);
       await settled();
 
-      const [first, second] = posted.map(p => p.entries[0].message);
-      // Both were 400s on this walk. Before this round these two lines differed
+      const [first, second] = posted.map(p => p.entries[0]!.message);
+      // Both were refusals on this walk. Before these two lines differed
       // only in their path; a policy refusal and a key failure on the SAME path
       // did not differ at all.
       expect(first).not.toBe(second);
-      expect(first).toContain('invite not found');
+      expect(first).toContain(INVITATION_REFUSAL['not-found']);
       /*
        * **AND THE SECOND NEVER REACHES `wrap` AT ALL**, which is worth pinning
        * rather than discovering. `authed` answers `401` itself, above the
@@ -236,12 +237,12 @@ describe('a refusal, read the way a walk reads one', () => {
        *
        * So the sink now carries a reason for these too, because it reads the
        * BODY and does not care which handler wrote it — while the service's
-       * refusal report holds `wrap`'s 400s only. **That asymmetry is real and
+       * refusal report holds what `wrap` and the routes that write their own refusals down answered. **That asymmetry is real and
        * is named here** so nobody reads a missing line in `REPORT-REFUSALS.txt`
        * as a refusal that went unrecorded.
        */
       expect(second).toContain('401');
       expect(second).toContain('not signed in');
-      expect(readFileSync(REPORT, 'utf8')).not.toContain('a1/state');
+      expect(readFileSync(REPORT, 'utf8')).not.toContain('a1/people');
     });
 });

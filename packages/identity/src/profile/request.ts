@@ -4,6 +4,7 @@ import { RECEIVING_ADDRESS } from './attributes.js';
 import type { Registry } from './attributes.js';
 import { readAccountAddress, readCompanyLabel, readVaultAddress } from './company-label.js';
 import type { AccountAddress, CompanyLabel, VaultAddress } from './company-label.js';
+import { readJoinParts, type JoinParts } from './join-parts.js';
 
 /**
  * WHAT AN APPLICATION SENDS, AND THE ONE FIELD IT MAY NEVER SEND.
@@ -175,7 +176,7 @@ export const PROGRESS_SCHEMA = 'midnight-identity/wallet-progress/v1';
  * than inserted, so the sentence a refusal already produced does not change
  * shape for the three kinds that were there before it.
  */
-export const ASK_KINDS = ['disclosure', 'sign-in', 'unlock', 'join', 'keyring', 'balance', 'committee', 'records-key', 'holders', 'creation'] as const;
+export const ASK_KINDS = ['disclosure', 'sign-in', 'unlock', 'join', 'keyring', 'balance', 'committee', 'records-key', 'holders', 'creation', 'join-code'] as const;
 export type AskKind = (typeof ASK_KINDS)[number];
 
 /** One thing an application is asking for. */
@@ -536,10 +537,33 @@ export interface HoldersRequest extends Asking {
   readonly account: AccountAddress;
 }
 
+/**
+ * ASKING THIS WALLET TO MAKE A JOIN CODE FOR ONE COMPANY (`join-code.ts`).
+ *
+ * The person is joining a company: as a signer, with the public halves of the
+ * seat keys their own device has just made and kept, or as a payee, with an
+ * address and the key their payslips are sealed to. The wallet shows the
+ * company, the person's sign-in and the fingerprint of what it is about to
+ * sign, and signs it with its committee key for that label at the press.
+ *
+ * **EVERYTHING HERE IS CLAIMED, AND THE PRESS IS WHAT DECIDES.** A payee's
+ * address must be one this wallet receives at, or nothing is signed; a
+ * signer's keys are the page's, and the fingerprint the person compares is
+ * what makes a swapped key visible.
+ */
+export interface JoinCodeRequest extends Asking {
+  readonly kind: 'join-code';
+  /** The company's label. It selects the key that signs. */
+  readonly company: CompanyLabel;
+  /** The id the person signed in to the company's service with. */
+  readonly person: string;
+  readonly parts: JoinParts;
+}
+
 /** What an application may open this wallet with. */
 export type Ask =
   | DisclosureRequest | SignInRequest | UnlockRequest | JoinRequest | KeyringRequest | BalanceRequest | CommitteeRequest
-  | RecordsKeyRequest | HoldersRequest | CreationRequest;
+  | RecordsKeyRequest | HoldersRequest | CreationRequest | JoinCodeRequest;
 
 /**
  * THE KINDS THAT CARRY A LIST OF THINGS ASKED FOR.
@@ -625,7 +649,10 @@ export type RequestFailure =
   | 'not-a-creation'
   | 'attributes-on-a-creation'
   | 'inbox-key-on-a-creation'
-  | 'creation-fields-on-another-kind';
+  | 'creation-fields-on-another-kind'
+  /* A request to make a join code: its parts, and anything more than a join code carries. */
+  | 'not-a-join-code'
+  | 'join-code-fields-on-another-kind';
 
 export class RequestError extends Error {
   readonly code: RequestFailure;
@@ -1157,6 +1184,33 @@ function creationAskOf(body: Record<string, unknown>, asking: Asking): CreationR
   return Object.freeze({ ...asking, kind: 'creation' as const, company, account, deploy, insert: Object.freeze(keys) });
 }
 
+/** Every field a join-code ask may carry: the ones every ask carries, then its own three. */
+const JOIN_CODE_FIELDS: ReadonlySet<string> = new Set([
+  'schema', 'kind', 'requester', 'purpose', 'nonce', 'expiresAt', 'company', 'person', 'parts',
+]);
+
+/** A join-code ask, read whole: a label, the person's sign-in, and the parts to sign. */
+function joinCodeAskOf(body: Record<string, unknown>, asking: Asking): JoinCodeRequest {
+  const asks = 'this asks your wallet to make a code for joining a company';
+  const nothing = 'Nothing has been shown to them and nothing has been signed.';
+  const extra = Object.keys(body).filter((k) => !JOIN_CODE_FIELDS.has(k));
+  if (extra.length > 0) {
+    throw new RequestError(
+      'not-a-join-code',
+      `${asks}, and it also carries ${extra.map((k) => `'${k}'`).join(', ')}, which is refused. ${nothing}`);
+  }
+  const company = labelIn(body['company'], asks, nothing);
+  const person = body['person'];
+  if (typeof person !== 'string' || !/^[A-Za-z0-9_-]{1,64}$/u.test(person)) {
+    throw new RequestError('not-a-person', `${asks} and names you by something that is not a sign-in. ${nothing}`);
+  }
+  const parts = readJoinParts(body['parts']);
+  if (parts === null) {
+    throw new RequestError('not-a-join-code', `${asks} and what it asks to be signed is neither a signer's keys nor a payee's. ${nothing}`);
+  }
+  return Object.freeze({ ...asking, kind: 'join-code' as const, company, person, parts });
+}
+
 /** Every field a holders ask may carry: the ones every ask carries, then its own three. */
 const HOLDERS_FIELDS: ReadonlySet<string> = new Set([
   'schema', 'kind', 'requester', 'purpose', 'nonce', 'expiresAt', 'company', 'account',
@@ -1216,7 +1270,7 @@ export function parseAsk(raw: unknown, observedOrigin: string, now: number): Ask
    * one and was answered with something else would be entitled to believe the
    * wallet had read it.
    */
-  if (kind !== 'keyring' && ('person' in body || 'signedInAs' in body || 'drawLabel' in body)) {
+  if (kind !== 'keyring' && ('signedInAs' in body || 'drawLabel' in body || (kind !== 'join-code' && 'person' in body))) {
     throw new RequestError(
       'keyring-fields-on-another-kind',
       `this is a '${kind}' and it names a person, the address a page signed in as, or asks to start a company. Those `
@@ -1275,6 +1329,17 @@ export function parseAsk(raw: unknown, observedOrigin: string, now: number): Ask
       + 'a company\'s account, so they are refused rather than ignored. Nothing has been shown to them.');
   }
 
+  /*
+   * **A CODE'S PARTS BELONG TO A JOIN-CODE ASK AND TO NOTHING ELSE**, refused
+   * by presence on every other kind for the keyring fields' reason.
+   */
+  if (kind !== 'join-code' && 'parts' in body) {
+    throw new RequestError(
+      'join-code-fields-on-another-kind',
+      `this is a '${kind}' and it carries the parts of a join code, which are refused. Nothing has been shown to them.`);
+  }
+
+  if (kind === 'join-code') return joinCodeAskOf(body, asking);
   if (kind === 'committee') return committeeChangeOf(body, asking);
   if (kind === 'creation') return creationAskOf(body, asking);
   if (kind === 'records-key') return recordsKeyAskOf(body, asking);

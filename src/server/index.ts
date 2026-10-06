@@ -23,7 +23,6 @@ import { MemoryChallengeStore } from '../core/challenges.js';
 /* `X8` — the server half of taking a receiving address from a wallet. It
  * reaches the wallet SDK, which is why no browser application (`apps/web`, or
  * the shared code in `packages/web-shared`) may. */
-import { WalletPayeeError, payeeFromWallet } from '../core/wallet-payee.js';
 import {
   MemorySessionStore, PostgresSessionStore, type SessionStore,
 } from '../core/sessions.js';
@@ -64,13 +63,14 @@ import {
   type VaultAccountReader,
 } from './vault-records-authority.js';
 import { openCompanyRecords, openVaultRecords, refuseVaultsTheOperatorToolsKeep } from '../db/vault-records.js';
-import { companyRecordsRoutes, MemoryCompanyRecordStore } from './company-records-route.js';
+import { companyRecordsRoutes, MemoryCompanyRecordStore, withPeopleIn } from './company-records-route.js';
+import { invitationRoutes } from './invitations-route.js';
+import { peopleRoutes } from './people-route.js';
 import { MemorySealedPoolStore, type SealedPoolStore } from '../midnight/vault-pool.js';
 import type { CompanyRecordStore, WireRecord } from '../midnight/sealed-record-wire.js';
 import { aCompanyCreatedOnTheLedger, accountCreationRoutes } from './account-creation.js';
 import { companyVaultRoutes, type VaultChain } from './company-vaults.js';
-import { directoryOf, seatDirectoryRoutes } from './seat-directory-route.js';
-import { filerSeatOf } from '../midnight/seat-directory.js';
+import { directoryOf, filerSeatNow, seatDirectoryRoutes, type DirectoryChainRead } from './seat-directory-route.js';
 import { readContractAuthority } from '../midnight/ledger.js';
 import { vaultArtefactPlaces, vaultArtefactRoutes } from './vault-artefacts.js';
 import { parameterSources, startProvingParameters } from './proving-parameters.js';
@@ -548,12 +548,41 @@ app.use(cors());
       return indexerPublicDataProvider(startup.deployment.indexerUrl, startup.deployment.indexerWsUrl) as never;
     })())
     : async () => { throw new Error(startup.refusal); };
+  const refusingChain: VaultChain = {
+    contractState: async () => { throw new Error(startup.started ? 'unreachable' : startup.refusal); },
+    serialize: () => { throw new Error('no chain'); },
+    notesOf: () => { throw new Error('no chain'); },
+    startingLedgerOf: () => { throw new Error('no chain'); },
+    everCreated: async () => { throw new Error(startup.started ? 'unreachable' : startup.refusal); },
+  };
+  const theChain = startup.started
+    ? await vaultChainFromTheIndexer({ url: startup.deployment.indexerUrl, wsUrl: startup.deployment.indexerWsUrl })
+    : refusingChain;
+  /*
+   * WHAT THE CHAIN SAYS OF A COMPANY'S ACCOUNT NOW, read by this server: its committee, the seats it holds of those
+   * asked about, and its approval threshold. Every seat directory this server believes is replayed against it. A
+   * test that hands in a simulated ledger hands in this read with it (`handInWiring`); nothing shipped can.
+   */
+  const directoryChain: DirectoryChainRead = handed?.directoryChain ?? (async (accountId, seats) => {
+    const [address, status] = await Promise.all([ledger.address(accountId), ledger.status(accountId)]);
+    if (!address || !status) return null;
+    const read = await readContractAuthority((a) => theChain.contractState(a as Hex), address.value);
+    if (read.state === 'absent') return null;
+    if (read.state !== 'read') throw new Error(read.why);
+    const held: string[] = [];
+    for (const seat of seats) if ((await ledger.holdsSigner?.(accountId, seat as Hex)) === true) held.push(seat);
+    return {
+      seats: { committee: read.authority.committee.map((k) => ({ tag: k.tag, value: k.value.toLowerCase() })), threshold: read.authority.threshold, seats: held },
+      approvals: status.threshold,
+    };
+  });
+  const directoryNow = (accountId: string) => directoryOf(store, directoryChain, accountId);
   /* `authed` is defined further down; it is looked up when a request arrives, by which time it is. */
   mountVaultRecords(app, {
     signedIn: (req, res, next) => authed(req, res, next),
     records, accountOf, companies: () => store.listAccounts(),
-    mayFileUnder: (companyId, person, filer, record) =>
-      typeof filerSeatOf(directoryOf(store, companyId), person, filer, record) !== 'string',
+    mayFileUnder: async (companyId, person, filer, record) =>
+      typeof filerSeatNow(await directoryNow(companyId), person, filer, record) !== 'string',
   });
 
   /*
@@ -575,12 +604,29 @@ app.use(cors());
       };
     })()
     : new MemoryCompanyRecordStore();
+  /* A company's people are kept in the main store, beside the payroll code that reads them (`withPeopleIn`). */
+  const companyRecordStore = withPeopleIn(store, companyRecords);
   app.use(companyRecordsRoutes({
     signedIn: (req, res, next) => authed(req, res, next),
     member: (req, res, next) => member(req, res, next),
-    records: companyRecords,
+    records: companyRecordStore,
     accountOf: (accountId) => store.getAccount(accountId),
-    directoryOf: (accountId) => directoryOf(store, accountId),
+    directoryOf: directoryNow,
+  }));
+  app.use(invitationRoutes({
+    signedIn: (req, res, next) => authed(req, res, next),
+    member: (req, res, next) => member(req, res, next),
+    store, records: () => companyRecordStore,
+    directoryOf: directoryNow,
+    meterOffer: (req, res) => meteredOfferLookup(req, res),
+    recordRefusal: appendRefusal,
+  }));
+  app.use(peopleRoutes({
+    signedIn: (req, res, next) => authed(req, res, next),
+    member: (req, res, next) => member(req, res, next),
+    ownsPerson: (req, res, next) => ownsPerson(req, res, next),
+    store, records: () => companyRecordStore,
+    directoryOf: directoryNow,
   }));
 
   /*
@@ -588,17 +634,7 @@ app.use(cors());
    * from its signers' own devices. Mounted before the general parser for the
    * same reason as the records above: a deploy is larger than most bodies.
    */
-  const refusingChain: VaultChain = {
-    contractState: async () => { throw new Error(startup.started ? 'unreachable' : startup.refusal); },
-    serialize: () => { throw new Error('no chain'); },
-    notesOf: () => { throw new Error('no chain'); },
-    startingLedgerOf: () => { throw new Error('no chain'); },
-    everCreated: async () => { throw new Error(startup.started ? 'unreachable' : startup.refusal); },
-  };
   app.use(vaultArtefactRoutes(vaultArtefactPlaces(process.cwd(), process.env)));
-  const theChain = startup.started
-    ? await vaultChainFromTheIndexer({ url: startup.deployment.indexerUrl, wsUrl: startup.deployment.indexerWsUrl })
-    : refusingChain;
   /*
    * A COMPANY'S SEAT DIRECTORY: every filing served whole, each new one checked against this server's own read of
    * the account on the chain - its committee, the seats it holds now and its approval threshold.
@@ -607,19 +643,7 @@ app.use(cors());
     signedIn: (req, res, next) => authed(req, res, next),
     member: (req, res, next) => member(req, res, next),
     store,
-    chain: async (accountId, seats) => {
-      const [address, status] = await Promise.all([ledger.address(accountId), ledger.status(accountId)]);
-      if (!address || !status) return null;
-      const read = await readContractAuthority((a) => theChain.contractState(a as Hex), address.value);
-      if (read.state === 'absent') return null;
-      if (read.state !== 'read') throw new Error(read.why);
-      const held: string[] = [];
-      for (const seat of seats) if ((await ledger.holdsSigner?.(accountId, seat as Hex)) === true) held.push(seat);
-      return {
-        seats: { committee: read.authority.committee.map((k) => ({ tag: k.tag, value: k.value.toLowerCase() })), threshold: read.authority.threshold, seats: held },
-        approvals: status.threshold,
-      };
-    },
+    chain: directoryChain,
   }));
   /*
    * A COMPANY'S ACCOUNT, deployed by its founding signer's device held by their own key, and paid for here: read
@@ -812,6 +836,38 @@ const bearer = (req: express.Request) => credentialOf(req.headers).token;
  * APPLICATION'S OWN PAGE**, before the sign-in is even looked up - the cookie is
  * sent by the browser on its own, so its presence says nothing about who asked.
  */
+/*
+ * **AN INVITATION'S OFFER IS METERED, AND KEYED ON WHO IS ASKING.** `X11` §6,
+ * `docs/scope-invitations.md` §8.
+ *
+ * It is the one door that answers somebody with no sign-in with something worth
+ * having. **The limiter is the one sign-in already uses** - the same class, the
+ * same store, the same buckets - because a second implementation of a counter is
+ * a second thing that can be wrong about atomicity.
+ *
+ * **THE KEY IS THE CALLER AND NOT THE INVITATION**: a limit per invitation
+ * would give a guesser a fresh allowance for every guess. **Recorded before the
+ * lookup**, because a limiter that only counts misses lets the one guess that
+ * lands through. A caller with no address is not counted and is not refused:
+ * `req.ip` is absent only where there is no socket, a test driving the app
+ * directly, and refusing there would fail closed on the one path that is not a
+ * caller at all.
+ */
+const meteredOfferLookup = async (req: express.Request, res: express.Response): Promise<boolean> => {
+  const from = context(req).ip;
+  if (!from) return true;
+  const decision = await limiter.record('invite-offer', from);
+  if (decision.allowed) return true;
+  res.setHeader('Retry-After', String(decision.retryAfterSeconds));
+  res.status(429).json({
+    error:
+      'too many invitation lookups from here. This door answers anybody who has a link, '
+      + `so it is metered — try again in ${decision.retryAfterSeconds} seconds.`,
+    retryAfterSeconds: decision.retryAfterSeconds,
+  });
+  return false;
+};
+
 const authed: express.RequestHandler = async (req, res, next) => {
   const credential = credentialOf(req.headers);
   const refusal = crossSiteWriteRefusal({
@@ -1327,10 +1383,14 @@ app.get('/api/accounts/:id', authed, member, wrap(async (req, res) => {
   res.json(accounts.require(String(req.params.id)));
 }));
 
-app.get('/api/accounts/:id/state', authed, member, wrap(async (req, res) => {
-  const viewingKey = String(req.query.viewingKey ?? '');
-  res.json(await accounts.readState(String(req.params.id), viewingKey));
-}));
+/*
+ * `GET /api/accounts/:id/state` STOOD HERE AND IS GONE.
+ *
+ * It took the company's viewing key in its address and opened the company's
+ * records with it to answer. No app called it. No route reads a viewing key
+ * from a query string now, and `no-route-reads-a-key-from-an-address.test.ts`
+ * says so of every route.
+ */
 
 /*
  * `POST /api/accounts/:id/deposit` STOOD HERE AND IS GONE.
@@ -2290,48 +2350,9 @@ app.get('/api/payslips/addresses', currentPayslipPage, authed, wrap(async (req, 
 }));
 
 /*
- * The roster needs the viewing key now, because the server cannot read it.
- *
- * That is the property, not an inconvenience: a route that could list employees
- * without a key would be a route that proves we can read them.
+ * A company's people are read, and changed, as their signed records: `peopleRoutes`, mounted beside the company's
+ * records. No route here takes a key to read or change one.
  */
-app.get('/api/accounts/:id/people', authed, member, wrap(async (req, res) => {
-  /*
-   * **`handedOver` SAYS WHETHER A ROW IS WAITING ON US OR ON THEM.** `X11` §4,
-   *
-   *
-   * A run already refuses in two different sentences for the two cases — *has
-   * not set up yet* and *is waiting to be admitted by an admin* — and the
-   * roster screen could not tell them apart, so the control that admits
-   * somebody had nowhere to appear. It is a BOOLEAN and not the contents: the
-   * drop box stays sealed and nothing here opens it.
-   *
-   * It is added HERE rather than on `RosterEmployee`, and that is not
-   * cosmetic: `EmployeeSecrets` is `RosterEmployee` minus four fields, so
-   * anything added to that type is added to **what gets sealed**, and a
-   * derived fact would then be frozen into the envelope and able to disagree
-   * with the store.
-   */
-  res.json(payroll.listPeople(String(req.params.id), String(req.query.viewingKey ?? ''))
-    .map(p => ({ ...p, handedOver: payroll.hasHandover(p.id) })));
-}));
-
-app.post('/api/accounts/:id/people', authed, member, wrap(async (req, res) => {
-  const b = z.object({
-    name: z.string().min(1), email: z.string().min(1), title: z.string().min(1),
-    // One asset. There are no exchange rates in this product.
-    asset: assetCode,
-    salary: z.string().min(1), startDate: z.string().optional(),
-    viewingKey: z.string(),
-  }).parse(req.body);
-  res.json(payroll.invite(String(req.params.id), {
-    name: b.name, email: b.email, title: b.title,
-    asset: b.asset,
-    baseAmount: money(b.asset, b.salary),
-    startDate: b.startDate,
-    /* Who raised it. `admit` records rather than refuses when they also redeem it. */
-  }, b.viewingKey, req.userId!));
-}));
 
 /**
  * **AN ADMIN TAKES AN INVITATION BACK.** `X12` §3,
@@ -2373,10 +2394,6 @@ app.get('/api/employees/:id/handover', authed, ownsPerson, wrap(async (req, res)
   res.json({ inbox: payroll.handoverBlob(String(req.params.id)) });
 }));
 
-app.post('/api/people/:id/status', authed, ownsPerson, wrap(async (req, res) => {
-  const b = z.object({ status: z.enum(['active', 'leaver']), viewingKey: z.string() }).parse(req.body);
-  res.json(payroll.setStatus(String(req.params.id), b.status, b.viewingKey));
-}));
 
 /*
  * **THE ACKNOWLEDGEMENT IS A ROUTE PARAMETER AND NOT A FLAG.**
@@ -2454,13 +2471,6 @@ app.post('/api/accounts/:id/runs', authed, member, wrap(async (req, res) => {
 }));
 
 
-app.post('/api/accounts/:id/invites/signer', authed, member, wrap(async (req, res) => {
-  const b = z.object({
-    name: z.string().min(1), email: z.string().min(1),
-    role: z.enum(['admin', 'approver', 'initiator', 'viewer']),
-  }).parse(req.body);
-  res.json(accounts.inviteSigner(String(req.params.id), b.name, b.email, b.role));
-}));
 
 app.get('/api/accounts/:id/invites', authed, member, wrap(async (req, res) => {
   /*
@@ -2476,289 +2486,22 @@ app.get('/api/accounts/:id/invites', authed, member, wrap(async (req, res) => {
    * are corrected rather than left standing.** An EMPLOYEE invite's token does
    * not come back to its creator at all — `invite()` returns where it went and
    * nothing else — and `admit` no longer refuses a handover redeemed by the
-   * person who raised it; it records it. What holds the flow now is that the
-   * redeemer must be signed in as the address on the record, plus one payable
-   * entry per person. A SIGNER invite's token does still come back once, in the
-   * response to raising it, because `grantAccess` is its second gate.
+   * person who raised it; it records it. What holds the flow now is the admitting
+   * device's own checks (`people-on-device.ts` `admitHere`): the payee's code,
+   * signed by their own wallet for this company, the fingerprint they read out,
+   * and one payable record per person. An invitation made on a device keeps no
+   * token here at all, only the hash of what accepts it.
    */
-  res.json(store.listInvites(String(req.params.id)).map(({ token, ...rest }) => ({
+  /* Nor what accepts one, its sealed offer or what a payee handed over: a list says who was invited and where it stands. */
+  res.json(store.listInvites(String(req.params.id)).map(({ token, acceptanceHash, offer, handover, ...rest }) => ({
     ...rest, redeemed: Boolean(rest.acceptedAt),
   })));
 }));
 
-// Signed in, but deliberately not `member`: accepting the invite is what makes
-// you a member. The invite token is the authorisation, the session is the identity.
-app.post('/api/invites/:token/accept-signer', authed, wrap(async (req, res) => {
-  const b = z.object({
-    signingPublicKey: z.string(), wrappingPublicKey: z.string(),
-    /*
-     * The commitment, and NOT the blinding factor behind it.
-     *
-     * This endpoint briefly took both, because a removal re-seated every
-     * remaining signer and could not compute their new leaves without their
-     * blindings. Slots re-seat nobody, so the blinding never has to leave the
-     * invitee's device — which is what decision 0003 says, and it is better
-     * that this server cannot receive it than that it promises not to keep it.
-     */
-    leafCommitment: z.string().min(32),
-    /*
-     * The invitee's proof that these keys are theirs, made with a secret in
-     * their link that this server never receives. It is passed through sealed
-     * and checked on every signer's device, not here: this server holds
-     * nothing that could check it, and that is the point of it.
-     */
-    seatProof: z.object({
-      nonce: z.string().regex(/^[0-9a-f]{64}$/), proof: z.string().regex(/^[0-9a-f]{64}$/),
-    }).strict().optional(),
-  }).parse(req.body);
-  res.json(accounts.acceptSignerInvite(
-    String(req.params.token), req.userId!, b.signingPublicKey, b.wrappingPublicKey,
-    b.leafCommitment, b.seatProof));
-}));
-
 /*
- * SIGNED IN, LIKE `accept-signer` ABOVE IT. A-10.
- *
- * This was the one account-scoped write in this file with no `authed` on it, so
- * a handover carried no trace of who made it — and `admit` had nothing to
- * compare against the person who minted the invite. The decision that an
- * employee logs in (`A-4`) is what makes this affordable: they have an identity
- * before they have a salary.
+ * Making, reading and accepting an invitation are `invitationRoutes`, mounted
+ * beside the company's records.
  */
-/*
- * WHAT AN INVITEE IS BEING OFFERED, BEFORE THEY HAND ANYTHING OVER. A-7.
- *
- * Not `member` — by definition this is somebody who is not on the account yet.
- * Not even `authed`: they may be reading it before they sign up, which is when
- * a person actually decides. **The token is the authorisation and the key at
- * once**: the offer is sealed under a key derived from it, so holding it is what
- * opens it, and the server cannot — it stores only the hash.
- */
-app.get('/api/invites/:token/offer', wrap(async (req, res) => {
-  /*
-   * **METERED, AND KEYED ON WHO IS ASKING.** `X11` §6,
-   * `docs/scope-invitations.md` §8.
-   *
-   * This is the only unauthenticated door in the product that answers with
-   * something worth having, and `X11` is what puts a real screen in front of
-   * it. **The limiter is the one sign-in already uses** — the same class, the
-   * same store, the same buckets — because a second implementation of a
-   * counter is a second thing that can be wrong about atomicity, which is the
-   * whole of `S-2`'s argument.
-   *
-   * **THE KEY IS THE CALLER AND NOT THE TOKEN**, and that is the load-bearing
-   * line: a limit per token would give a guesser a fresh allowance for every
-   * guess, so the endpoint would be metered and completely unprotected at the
-   * same time.
-   *
-   * **RECORDED BEFORE THE LOOKUP**, for the reason `IdentityService.verify`
-   * gives about counting before deciding: a limiter that only counts misses
-   * lets the one guess that lands through, and the server cannot know a guess
-   * was wrong until it has already done the work.
-   *
-   * A caller with no address is not counted and is not refused. `req.ip` is
-   * absent only where there is no socket — a test driving the app directly —
-   * and refusing there would fail closed on the one path that is not a caller
-   * at all.
-   */
-  const from = context(req).ip;
-  if (from) {
-    const decision = await limiter.record('invite-offer', from);
-    if (!decision.allowed) {
-      res.setHeader('Retry-After', String(decision.retryAfterSeconds));
-      res.status(429).json({
-        error:
-          'too many invitation lookups from here. This door answers anybody who has a link, '
-          + `so it is metered — try again in ${decision.retryAfterSeconds} seconds.`,
-        retryAfterSeconds: decision.retryAfterSeconds,
-      });
-      return;
-    }
-  }
-  res.json(payroll.offerFor(String(req.params.token)));
-}));
-
-app.post('/api/invites/:token/accept-employee', authed, wrap(async (req, res) => {
-  /*
-   * **THE SERVER IS A COURIER, AND SINCE `X11` IT IS ONLY A COURIER.** `X11`
-   * §7, `docs/how-money-can-be-lost.md` `C160`,
-   * `docs/scope-invitations.md` §5.
-   *
-   * This took the receiving address as a bech32 STRING and called
-   * `payeeAddress(b.address, NETWORK)` to build the value the service sealed.
-   * Where the address ENDED UP was already right — sealed to the company's
-   * inbox key, unreadable to us. **How it got there was not:** the plaintext
-   * existed in this process, in whatever the framework buffered, and in
-   * anything that ever logged a request body. Decided the opposite on
-   * 22 Aug: the acceptance seals the address to the company's inbox key **on
-   * the employee's own device**.
-   *
-   * **WE DO NOT STORE IT IS A POLICY. NOT BEING ABLE TO SEE IT IS A PROPERTY.**
-   * What arrives now is a blob sealed to the account's inbox public key, and
-   * the secret for that is derived from the account's viewing key, which does
-   * not reach this route on any path. This handler cannot open what it is
-   * forwarding, and neither can the service behind it.
-   *
-   * ── THE TWO OLD FIELDS ARE REFUSED BY NAME, NOT DROPPED ──────────────────
-   *
-   * `zod` strips unknown keys, so leaving them out would mean a client that
-   * still posts an address is answered *"handover is required"* — and whoever
-   * wrote it is entitled to believe the address was read. That is the same
-   * sentence the wallet's own request parser is written in: **ignoring a field
-   * lets the sender believe it counted.** So both are named, and the message
-   * says where they went.
-   *
-   * ── AND `payeeAddress`'s THREE CHECKS DID NOT DISAPPEAR ──────────────────
-   *
-   * They moved to the invitee's device, where somebody can act on them
-   * (`midnight-identity/wallet/address-shape`), and they still run HERE in the
-   * sense that matters: `admit` rebuilds the value through the real
-   * `payeeAddress()` from the string inside the envelope, on the machine that
-   * holds the key, exactly as it always has. `A-1`.
-   */
-  const refuseInTheClear = (field: string, what: string) => {
-    if (req.body && typeof req.body === 'object' && field in (req.body as object)) {
-      res.status(400).json({
-        code: 'handover-in-the-clear',
-        error:
-          `this posts ${what} in the clear. Since X11 the acceptance is sealed to the `
-          + "company's inbox key on the employee's own device and this route takes a blob it "
-          + 'cannot open, so the field is refused rather than ignored — ignoring it would '
-          + 'leave whoever sent it believing we had read it. Seal it with `sealHandover` and '
-          + 'send it as `handover`.',
-      });
-      return true;
-    }
-    return false;
-  };
-  if (refuseInTheClear('address', 'a receiving address')) return;
-  if (refuseInTheClear('wrappingPublicKey', 'a payslip key')) return;
-
-  const b = z.object({
-    /* The sealed envelope's own shape, and nothing about what is inside it. */
-    handover: z.object({
-      ephemeral: z.string().min(1),
-      iv: z.string().min(1),
-      tag: z.string(),
-      body: z.string().min(1),
-    }),
-  }).parse(req.body);
-  res.json(payroll.acceptInvite(String(req.params.token), b.handover, req.userId!));
-}));
-
-/*
- * `ownsPerson`, NOT JUST `authed`. Found by audit before it shipped.
- *
- * Every other route keyed by a child record carries this gate; this one went
- * out with only a session check, so any signed-in stranger could call admit for
- * any employee id, on any company. What stood between that and setting where
- * somebody's salary goes was knowing the account's viewing key — which is a
- * secret doing an authorisation check's job, and the reason the 404 below is
- * the same whether the record is missing or simply not yours.
- */
-/*
- * A MEMBER MAKES THEMSELVES PAYABLE. A-12, and it is the replacement for the
- * exception `C18` deleted.
- *
- * A founder creating a company and adding themselves, or a vendor who has just
- * incorporated, is not an employee being invited — no token, no third party,
- * nobody to impersonate. It had no route at all, which meant the case it exists
- * for had exactly one available path in the product, and that path was the
- * sockpuppet in `C21`.
- */
-/*
- * **THE NONCE A PAYEE DISCLOSURE ANSWERS.**
- *
- * The same store and the same two halves as the sign-in challenge — a nonce
- * that travels to the wallet inside the signature, and a HANDLE that never
- * leaves this origin and must be presented alongside, so a nonce on its own is
- * not an address (`WalletIdentityService.challenge` argues the fixation this
- * closes).
- *
- * **IT IS ITS OWN ROUTE, BEHIND `member`, RATHER THAN THE SIGN-IN'S.** Not
- * because sharing the store is unsafe — it is the same store — but because the
- * thing this leads to is a row on ONE company's roster, and a door that writes
- * there should be reached only by somebody already on it. It also stops a
- * challenge for *where do I pay you* being served to anybody who can reach the
- * unauthenticated sign-in door.
- */
-app.post('/api/accounts/:id/payee-challenge', authed, member, wrap(async (req, res) => {
-  const svc = walletService(res);
-  if (!svc) return;
-  try {
-    res.json(await svc.challenge(context(req)));
-  } catch (e) {
-    if (e instanceof TooManyAttempts) {
-      res.setHeader('Retry-After', String(e.retryAfterSeconds));
-      res.status(429).json({ error: e.message, retryAfterSeconds: e.retryAfterSeconds });
-      return;
-    }
-    throw e;
-  }
-}));
-
-app.post('/api/accounts/:id/self-payee', authed, member, wrap(async (req, res) => {
-  /*
-   * NO `email` FIELD, and that is `C24`. It is read off the caller's own
-   * sign-in inside the service, so this route cannot be used to mint a payable
-   * entry under somebody else's name.
-   *
-   * **AND NO `address` FIELD EITHER, WHICH IS `X8` AND `C153`.** It was a
-   * string — the address the person had pasted into a box — and `X7` said in as
-   * many words that pasting is safe on this one door and is a precedent that
-   * must not spread. **The field is gone and there is nowhere to put one.** A
-   * signed disclosure arrives instead, and `payeeFromWallet` is what turns it
-   * into an address: the value is one a wallet WORKED OUT from its own keys,
-   * inside a signature over a nonce this deployment issued, for this origin.
-   *
-   * **A BUTTON THAT FORWARDED WHATEVER THE WALLET SAID WOULD BE THE SAME DOOR
-   * WITH THE BOX HIDDEN**, so nothing in the page judges it and the check is
-   * here, where the record is written.
-   */
-  const svc = walletService(res);
-  if (!svc) return;
-  const b = z.object({
-    name: z.string().min(1), title: z.string().min(1),
-    asset: z.string().min(1), salary: z.string().min(1), startDate: z.string().optional(),
-    viewingKey: z.string(),
-    wrappingPublicKey: z.string(),
-    disclosure: z.object({
-      handle: z.string().min(1),
-      nonce: z.string().min(1),
-      response: z.unknown(),
-    }),
-  }).parse(req.body);
-  let fromWallet;
-  try {
-    fromWallet = await payeeFromWallet(b.disclosure, {
-      /* OURS, from configuration. A disclosure minted for another payroll names
-       * that payroll inside the signature and is refused. */
-      origin: svc.requesterOrigin,
-      network: NETWORK,
-      challenges,
-    });
-  } catch (e) {
-    if (e instanceof WalletPayeeError) {
-      res.status(400).json({ error: e.message, code: e.code });
-      return;
-    }
-    throw e;
-  }
-  res.json(payroll.addSelfAsPayee(String(req.params.id), req.userId!, {
-    /* `null`, not `''`. Whether this person has an email is read off their own
-     * sign-in inside the service; there is nothing about one on this route. */
-    name: b.name, email: null, title: b.title,
-    asset: b.asset, baseAmount: money(b.asset, b.salary), startDate: b.startDate,
-  }, b.viewingKey, {
-    wrappingPublicKey: b.wrappingPublicKey,
-    address: fromWallet.address,
-  }));
-}));
-
-app.post('/api/employees/:id/admit', authed, ownsPerson, wrap(async (req, res) => {
-  const b = z.object({ viewingKey: z.string() }).parse(req.body);
-  res.json(payroll.admit(String(req.params.id), b.viewingKey, req.userId!));
-}));
 
 app.post('/api/accounts/:id/grant', authed, member, wrap(async (req, res) => {
   const b = z.object({ viewingKey: z.string(), signerId: z.string() }).parse(req.body);

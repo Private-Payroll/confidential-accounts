@@ -339,7 +339,7 @@ describe('payroll and disclosure', () => {
     h.payroll.hireDirect(account.id, { name: 'Dana Whitfield', email: 'dana@acme.co', title: 'Engineer', asset: TEST_TOKEN, baseAmount: 6_200_00n }, viewingKey);
     h.payroll.hireDirect(account.id, { name: 'Sam Ortega', email: 'sam@acme.co', title: 'Designer', asset: TEST_TOKEN, baseAmount: 4_800_00n }, viewingKey);
 
-    const whatWeHold = readableStore((h.store as any).data.employees);
+    const whatWeHold = readableStore((h.store as any).data.people);
 
     for (const amount of [6_200_00n, 4_800_00n]) expect(whatWeHold).not.toContain(String(amount));
     for (const text of ['Dana Whitfield', 'Sam Ortega', 'dana@acme.co', 'sam@acme.co', 'Engineer', 'Designer']) {

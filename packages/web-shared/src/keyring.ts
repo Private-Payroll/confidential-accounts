@@ -19,6 +19,7 @@
  * wallet again**, because keeping it in storage would put it where any script
  * on the page can read it.
  */
+import type { OwedDirectoryEntry } from './vault-page-doors.js';
 import { readAccountAddress, readCompanyLabel } from 'midnight-identity/profile/company-label';
 import type { AccountAddress, CompanyLabel, VaultAddress } from 'midnight-identity/profile/company-label';
 import { parseCanonical, randomBytes, seal, sign, toHex, unseal, unwrapKey, type Hex, type Sealed } from '../../../src/core/crypto.js';
@@ -39,7 +40,6 @@ import {
 /* **THE WALLET IS SHOWN INSIDE THIS PAGE.** Every journey below defaults to it;
  * a test hands in a window of its own and drives the same conversation. */
 import { walletInThisPage } from './wallet-frame.js';
-import { askWalletForPayeeAddress } from './wallet-payee.js';
 import { openAccount as openSealedAccount, approvalMessage } from '../../../src/core/account.js';
 import {
   COMPANY_CREATION_STATES, foundTheCompanyHere, type CompanyCreationState, type CompanyFounded,
@@ -53,7 +53,7 @@ import { clobberRefusal, seatToPromote } from './seat-repair.js';
 import type { Account, SealedAccount } from '../../../src/core/types.js';
 import {
   forgetRememberedCompanies, markOlderListTaken, olderListNotYetTaken, onlyCompanyLabels,
-  rememberCompany, rememberedCompanies, tidyCompanyLabel,
+  rememberedCompanies,
 } from './my-payslips.js';
 
 export interface AccountKeys {
@@ -225,6 +225,13 @@ export interface Keyring {
    * before it have no such field.
    */
   creations?: Record<string, SavedCreation>;
+  /**
+   * **THIS PERSON'S SIGNED DIRECTORY ENTRY FOR A COMPANY, UNTIL ITS DIRECTORY
+   * HOLDS IT**, keyed by the company (`fileTheOwedDirectoryEntry`). Public
+   * keys and a signature: nothing here opens anything. Optional, because saved
+   * keys written before it have no such field.
+   */
+  directoryEntriesOwed?: Record<string, OwedDirectoryEntry>;
 }
 
 export interface Me { id: string; email: string | null; name: string }
@@ -798,51 +805,6 @@ export async function resumeSession(carried: SignInCarried | null = null): Promi
 }
 
 /**
- * **ASKING THE WALLET WHERE TO PAY THIS PERSON.**
- *
- * It returns the three things `POST /api/accounts/:id/self-payee` needs and
- * **judges none of them**: the handle, the nonce, and whatever the wallet
- * answered. `src/core/wallet-payee.ts` decides on the server, where the record
- * is written — a check made in this page would be a second opinion about a
- * value the server has to judge for itself, and it would drag `ledger-v9` into
- * the bundle.
- *
- * **THE CHALLENGE IS ASKED FOR BEHIND THE MEMBERSHIP GATE**, on the company
- * this is about, because the row it leads to is on that company's roster.
- *
- * `already` is the dialog a longer journey opened in its own click, so the
- * second ask in it does not open a second window.
- */
-export async function payeeDisclosureFromWallet(
-  accountId: string, walletOrigin: string,
-  view: Openable = walletInThisPage(window),
-  already?: WalletDialog,
-): Promise<{ handle: string; nonce: string; response: unknown }> {
-  if (!sessionLive) throw new Error('not signed in');
-  /* **OPENED IN THE CLICK.** `C154` — the same order as the other two, and for
-   * the same reason: the challenge below is a proposal trip, and a permission
-   * spent on it is gone by the time a window is wanted. */
-  const dialog = openTheWallet(view, walletOrigin, already);
-  try {
-    const challenge = await api(
-      `/api/accounts/${accountId}/payee-challenge`, { method: 'POST' });
-    const response = await askWalletForPayeeAddress(view, walletOrigin, {
-      nonce: challenge.nonce,
-      /* The challenge's own deadline, not a second number beside it. */
-      expiresAt: Date.parse(challenge.expiresAt),
-      name: US_TO_A_WALLET.name,
-      rdns: US_TO_A_WALLET.rdns,
-    }, dialog);
-    return { handle: challenge.handle, nonce: challenge.nonce, response };
-  } catch (e) {
-    if (!already) putAway(dialog);
-    throw e;
-  } finally {
-    doneWaiting();
-  }
-}
-
-/**
  * **OPENING THE KEYS SAVED FOR THIS PERSON, WITH THE KEY THEIR WALLET GIVES FOR
  * THEM ON THIS SITE.**
  *
@@ -858,7 +820,7 @@ export async function payeeDisclosureFromWallet(
  *
  * **ONE KEY FOR EVERY COMPANY THIS PERSON BELONGS TO HERE.** A company's own
  * key is not asked for by this; it is asked for, in the same kind of answer,
- * only where a payslip key has to be worked out from it.
+ * only where the company's own keys are wanted (`companyKeysForVaults`).
  *
  * **THE KEY IS NEVER SENT ANYWHERE.** It is assigned to `encKey`, which lives in
  * this module for the life of the tab and is dropped by `forgetLocally`. A
@@ -987,84 +949,11 @@ async function companyNamedFor(accountId: string): Promise<{ accountId: string; 
 }
 
 /**
- * **THE KEY FOR ONE COMPANY, FROM THE WALLET WHOSE KEYS THIS TAB HAS OPEN, AND
- * WHERE TO PAY THIS PERSON - IN ONE JOURNEY, IN ONE WALLET.**
- *
- * A founder's own payslip key is worked out from the key their wallet gives for
- * this company, and nothing else will do: a key from anywhere else is a key
- * nothing can work out again. That key is asked for together with the keyring
- * key, so the answer is checked against the keyring key this tab already holds
- * - two keys in one answer are two keys from one wallet, and a different wallet
- * is refused before its company key is used. Then the wallet is asked where to
- * pay them, through the same window.
- *
- * A tab that already holds this company's key from this wallet asks only the second question.
- */
-export async function payslipKeyAndPayeeAddress(
-  accountId: string, walletOrigin: string,
-  view: Openable = walletInThisPage(window),
-  atOrigin: string = window.location.origin,
-): Promise<{
-  companyKey: Hex; companyLabel: CompanyLabel; disclosure: { handle: string; nonce: string; response: unknown };
-}> {
-  if (!sessionLive) throw new Error('not signed in');
-  /* OPENED IN THE CLICK, and carried through both asks. */
-  const dialog = openTheWallet(view, walletOrigin);
-  let companyKey = companyKeyReleasedFor(accountId);
-  /* **TWO ASKS, ONE WINDOW.** An ask that settles closes its window unless it was
-   * told another is coming, and the second would then meet a window that is gone.
-   * So the window is this journey's, and the journey closes it. */
-  const twoAsks = companyKey === null;
-  if (twoAsks) dialog.moreThanOneAsk();
-  try {
-    if (companyKey === null) {
-      if (encKey === null) {
-        throw new Error('your saved keys are not open in this tab, so the key for this company '
-          + 'cannot be checked against them. Open the company with your wallet and try again.');
-      }
-      /* THE COMPANY COMES FROM THE SIGN-IN, by `companyNamedFor`. */
-      await openKeysOnceOpen(walletOrigin, view, atOrigin, dialog, await companyNamedFor(accountId));
-      companyKey = companyKeyReleasedFor(accountId);
-      if (companyKey === null) throw new Error('your wallet did not give a key for this company.');
-    }
-    const companyLabel = releasedCompanyKey?.accountId === accountId ? releasedCompanyKey.label : null;
-    if (companyLabel === null) throw new Error('your wallet did not give a key for this company.');
-    const disclosure = await payeeDisclosureFromWallet(accountId, walletOrigin, view, dialog);
-    return { companyKey, companyLabel, disclosure };
-  } catch (e) {
-    putAway(dialog);
-    throw e;
-  } finally {
-    if (twoAsks) putAway(dialog);
-    doneWaiting();
-  }
-}
-
-/**
- * **A SIGNER MADE PAYABLE BY THEIR OWN COMPANY, AND THAT COMPANY PUT ON THEIR
- * OWN LIST OF COMPANIES THAT PAY THEM.** The key and the address come from the
- * wallet as `payslipKeyAndPayeeAddress` gets them; `send` hands them to the
- * service; once it has taken them, the label of the company the payslip key
- * was worked out from is saved with this person, as an invitation's is.
- */
-export async function payYourselfHere(
-  accountId: string, walletOrigin: string,
-  send: (companyKey: Hex, disclosure: { handle: string; nonce: string; response: unknown }) => Promise<void>,
-  view: Openable = walletInThisPage(window),
-  atOrigin: string = window.location.origin,
-): Promise<void> {
-  const { companyKey, companyLabel, disclosure } = await payslipKeyAndPayeeAddress(
-    accountId, walletOrigin, view, atOrigin);
-  await send(companyKey, disclosure);
-  await rememberCompanyThatPaysYou(companyLabel);
-}
-
-/**
  * **THIS COMPANY'S KEY AND THE PUBLIC KEY THIS PERSON SITS ON ITS VAULT
- * COMMITTEE WITH, FROM THE WALLET WHOSE KEYS THIS TAB HAS OPEN.** The same
- * journey as the payslip key's first half, and the same check: both come in the
- * answer that also gives the keyring key this tab already holds, so they are
- * that wallet's. A tab that already holds them asks nothing.
+ * COMMITTEE WITH, FROM THE WALLET WHOSE KEYS THIS TAB HAS OPEN.** Both come in
+ * the answer that also gives the keyring key this tab already holds, and are
+ * kept only when that key matches, so they are that wallet's. A tab that
+ * already holds them asks nothing.
  */
 export async function companyKeysForVaults(
   accountId: string, walletOrigin: string,
@@ -1359,37 +1248,6 @@ export function companiesThatPayYou(storage?: Pick<Storage, 'getItem'> | null): 
 }
 
 /**
- * **ONE MORE COMPANY THAT PAYS YOU, SAVED WITH YOU.** Into the saved keys when
- * this tab has them open. Before they are open, into this browser's list for
- * this person, which is moved into the saved keys the next time they are
- * opened here, and says so there if it cannot be. Refuses anything that is not
- * a company's label.
- *
- * **ONCE THE SAVED KEYS ARE OPEN, A REFUSED SAVE IS SAID, NEVER KEPT IN THIS
- * BROWSER INSTEAD.** A person whose first keys cannot be saved from this tab is
- * told to sign in again in it; keeping the company here instead left it in one
- * browser with nothing on screen to say so.
- */
-async function rememberCompanyThatPaysYou(
-  label: string, storage?: Pick<Storage, 'getItem' | 'setItem'> | null,
-): Promise<void> {
-  const who = me;
-  if (who === null) throw new Error('not signed in');
-  const tidy = tidyCompanyLabel(label);
-  if (tidy === null) {
-    throw new Error('That is not a company\'s label. It is co_ and 64 characters of 0-9 and a-f; the company '
-      + 'that pays you can tell you theirs.');
-  }
-  if (encKey !== null) {
-    const held = onlyCompanyLabels(keyring.paidBy ?? []);
-    if (held.includes(tidy)) return;
-    await putBundle({ ...keyring, paidBy: [...held, tidy] });
-    return;
-  }
-  rememberCompany(who.id, tidy, storage);
-}
-
-/**
  * **WHAT THIS BROWSER HELD FOR THIS PERSON, MOVED INTO THEIR SAVED KEYS.** Run
  * once the saved keys are open. The browser's list is emptied only after the
  * save is taken; a refused save leaves it where it was and is thrown, so the
@@ -1469,6 +1327,24 @@ export async function sealPendingSeat(seat: PendingSeat) {
 }
 
 /** What this device sealed and has not promoted yet, for one account. */
+/**
+ * **KEEPS THIS PERSON'S SIGNED DIRECTORY ENTRY FOR `accountId` UNTIL THE
+ * DIRECTORY HOLDS IT**, and hands back the doors that read it and let it go.
+ * Saved with the keys, so another of this person's devices files it too.
+ */
+export async function oweDirectoryEntry(accountId: string, owed: OwedDirectoryEntry): Promise<void> {
+  await putBundle({ ...keyring, directoryEntriesOwed: { ...keyring.directoryEntriesOwed, [accountId]: owed } });
+}
+
+/** The doors over this person's owed directory entry for `accountId`: read it, and let it go once it is filed. */
+export const directoryEntryOwed = (accountId: string) => ({
+  read: (): OwedDirectoryEntry | null => keyring.directoryEntriesOwed?.[accountId] ?? null,
+  settle: async (): Promise<void> => {
+    const { [accountId]: _filed, ...rest } = keyring.directoryEntriesOwed ?? {};
+    await putBundle({ ...keyring, directoryEntriesOwed: rest });
+  },
+});
+
 export const pendingSeatsFor = (accountId: string): PendingSeat[] =>
   Object.values(keyring.pendingSeats ?? {}).filter(x => x.accountId === accountId);
 
@@ -2236,8 +2112,11 @@ const randomHex32 = (): string => toHex(randomBytes(32));
  * Derives the viewing key from the account's wrapped keys and this user's own
  * wrapping secret. It is not stored on this device: it is recomputed per
  * session from material only this device holds. It is not kept by the server
- * either, but the page still hands it to the service on the read routes that
- * open a company's sealed records, so it is not a key the service never sees.
+ * either, and no read hands it over: the page opens what it reads, the people
+ * included, and no route reads it from an address. But the page still hands
+ * it to the service in the body of the run, proposal and governance writes
+ * that open a company's sealed records there (`governed-call-on-device.ts`,
+ * `vault-page-doors.ts`), so it is not yet a key the service never sees.
  */
 export function viewingKeyFor(account: { id: string; wrappedKeys: any[] }): Hex {
   const keys = keysFor(account.id);

@@ -73,13 +73,19 @@ export interface SeatDoors {
     signingPublicKey: Hex; wrappingPublicKey: Hex; leafCommitment: Hex;
     /** The nonce and the proof. The invitation's secret is not a field either. */
     seatProof?: SeatProof;
-  }): Promise<{ id: string }>;
+  }): Promise<{ id: string | null }>;
   /** Binds the sealed material to the seat the server named. Step 5. */
   promote(signingPublicKey: Hex, signerId: string): Promise<void>;
 }
 
 export interface AcceptedSeat {
-  signerId: string;
+  /**
+   * The seat request the keys went out as; null when they went out in a code,
+   * whose seat request somebody already in the company files when they paste
+   * it. The material is sealed either way, and `finishPendingSeat` binds it to
+   * its seat once that seat carries this device's own key.
+   */
+  signerId: string | null;
   /** Shown once, so an invitee can carry it to their own device. */
   wrappingSecret: Hex;
 }
@@ -139,6 +145,6 @@ export async function acceptSeatOnThisDevice(
     ? { ...published, seatProof: proveSeatKeys(invitation, published) }
     : published);
 
-  await doors.promote(keys.signingPublicKey, signer.id);
+  if (signer.id !== null) await doors.promote(keys.signingPublicKey, signer.id);
   return { signerId: signer.id, wrappingSecret: keys.wrappingSecret };
 }

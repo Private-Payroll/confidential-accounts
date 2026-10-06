@@ -7,6 +7,7 @@ import type { Ask, RequestError } from './request.js';
 import type { DisclosureResponse } from './disclosure.js';
 import type { KeyringRelease, UnlockRelease } from './unlock.js';
 import type { SealedAcceptance } from './inbox.js';
+import type { JoinCode } from './join-code.js';
 
 /**
  * HOW A REQUEST GETS IN, AND HOW THE ANSWER GETS OUT.
@@ -167,7 +168,7 @@ export function framingOf(view: ChannelWindow, embedder: string | null): Framing
  */
 export type Answer =
   | DisclosureResponse | UnlockRelease | KeyringRelease | SealedAcceptance | BalancedAnswer | CommitteeSignatures
-  | RecordsKeyAnswer | HoldersAnswer | CreationSignature;
+  | RecordsKeyAnswer | HoldersAnswer | CreationSignature | JoinCode;
 
 /**
  * **WHY A PAYMENT THE PERSON APPROVED DID NOT HAPPEN, IN FOUR WORDS AND NO MORE.**

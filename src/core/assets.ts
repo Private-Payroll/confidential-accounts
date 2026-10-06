@@ -589,6 +589,20 @@ export type LedgerAnswer =
   | { readonly of: 'token'; readonly token: string }
   | { readonly of: 'no-such-form'; readonly why: string };
 
+/**
+ * **WHY MONEY IN `asset` CANNOT REACH AN ADDRESS OF ONE `kind`**, or null when
+ * it can: a token the ledger carries in only one form is never paid to an
+ * address of the other. One rule, read by the service's payroll code and by an
+ * admitting device alike.
+ */
+export function whyTheMoneyCannotReach(asset: Asset, kind: LedgerForm): string | null {
+  const other: LedgerForm = kind === 'shielded' ? 'unshielded' : 'shielded';
+  if (ledgerFormOf(asset, kind).of === 'token' || ledgerFormOf(asset, other).of !== 'token') return null;
+  return `${asset.symbol} can only be paid to a ${kind === 'shielded' ? 'public' : 'private'} `
+    + `address, and the address that arrived is a ${kind === 'shielded' ? 'private' : 'public'} one. `
+    + 'Nothing has been paid.';
+}
+
 export function ledgerFormOf(asset: Asset, form: LedgerForm): LedgerAnswer {
   if (form !== 'shielded' && form !== 'unshielded') {
     throw new Error(`"${String(form)}" is not a form money takes on Midnight; it is private or public.`);

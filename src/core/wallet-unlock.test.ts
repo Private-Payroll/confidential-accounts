@@ -644,7 +644,7 @@ describe('§4 - THE KEYS SAVED FOR A PERSON OPEN WITH THE KEY THEIR WALLET GIVES
   });
 });
 
-describe('§5 - A PAYSLIP KEY IS WORKED OUT ONLY FROM THIS COMPANY\'S KEY, FROM THE WALLET WHOSE KEYS ARE OPEN', () => {
+describe('§5 - A COMPANY\'S KEY IS TAKEN ONLY FROM THE WALLET WHOSE KEYS ARE OPEN', () => {
   const realFetch = globalThis.fetch;
   const realWindow = (globalThis as { window?: unknown }).window;
   const other = identityFromWords(
@@ -664,15 +664,13 @@ describe('§5 - A PAYSLIP KEY IS WORKED OUT ONLY FROM THIS COMPANY\'S KEY, FROM 
         const who = a.company === null ? identity : keysAnsweredBy;
         return keyringReleaseFor(who, a, AT, held => held === SIGNED_IN);
       }
-      return { schema: 'a-payee-answer' };
+      throw new Error(`nothing here answers a ${a.kind} ask`);
     });
     const answers: Record<string, unknown> = {
       'POST /api/auth/wallet/challenge': { nonce: 's', handle: 'h', expiresAt: new Date(AT + 60_000).toISOString() },
       'POST /api/auth/wallet': { address: SIGNED_IN, created: true, user: { id: 'usr_1', email: null, name: '' } },
       'GET /api/me/keys': { keyBundle: seal(A_KEYRING, personKey), version: 3 },
       'POST /api/accounts/acc_1/unlock': { company: ACME, account: ACME_ACCOUNT },
-      'POST /api/accounts/acc_1/payee-challenge': { nonce: 'p', handle: 'ph', expiresAt: new Date(AT + 60_000).toISOString() },
-      'PUT /api/me/keys': { version: 4 },
     };
     (globalThis as { window?: unknown }).window = Object.assign(view, { location: { origin: US } });
     globalThis.fetch = (async (url: string, init?: RequestInit) => {
@@ -697,62 +695,24 @@ describe('§5 - A PAYSLIP KEY IS WORKED OUT ONLY FROM THIS COMPANY\'S KEY, FROM 
 
   it('THE KEY HANDED BACK IS THE COMPANY\'S OWN KEY FROM THIS WALLET, NOT THE KEY THE SAVED KEYS OPEN WITH', async () => {
     const { keyring, view, personKey, asks } = await journey(identity);
-    const { companyKey, companyLabel, disclosure } = await keyring.payslipKeyAndPayeeAddress('acc_1', WALLET, view, US);
-    expect(companyLabel).toBe(ACME);
+    const { companyKey, company } = await keyring.companyKeysForVaults('acc_1', WALLET, view, US);
+    expect(company).toBe(ACME);
     const expected = toHex(unlockKeyFor(identity, asUnlock(parseAsk(unlockAsk({
       name: NAME, rdns: RDNS, purpose: UNLOCK_PURPOSE, nonce: 'n', expiresAt: AT + 60_000, company: ACME, account: null,
     }), US, AT))));
     expect(companyKey).toBe(expected);
     expect(companyKey).not.toBe(personKey);
     expect(keyring.companyKeyReleasedFor('acc_1')).toBe(expected);
-    expect(disclosure.handle).toBe('ph');
-    /* And a second time asks the wallet for no key, only for where to pay. */
-    const again = await keyring.payslipKeyAndPayeeAddress('acc_1', WALLET, view, US);
+    /* And a second time asks the wallet nothing. */
+    const again = await keyring.companyKeysForVaults('acc_1', WALLET, view, US);
     expect(asks()).toBe(2);
     /* RED WHEN the label of the company the key came from is not handed back, first time or after. */
-    expect(again.companyLabel).toBe(ACME);
-  });
-
-  it('A SIGNER WHO MAKES THEMSELVES PAYABLE HAS THEIR COMPANY ON THEIR OWN LIST, ONCE THE SERVICE TOOK IT', async () => {
-    const { keyring, view, personKey } = await journey(identity);
-    expect(keyring.companiesThatPayYou()).toEqual([]);
-    /* A service that refuses: nothing goes on the list. */
-    await expect(keyring.payYourselfHere('acc_1', WALLET, async () => { throw new Error('refused'); }, view, US))
-      .rejects.toThrow('refused');
-    expect(keyring.companiesThatPayYou()).toEqual([]);
-    const sent: string[] = [];
-    const answering = globalThis.fetch;
-    const saved: string[] = [];
-    globalThis.fetch = (async (url: string, init?: RequestInit) => {
-      if (`${String(init?.method ?? 'GET')} ${url}` === 'PUT /api/me/keys') saved.push(JSON.parse(String(init!.body)).keyBundle);
-      return answering(url, init);
-    }) as typeof fetch;
-    await keyring.payYourselfHere('acc_1', WALLET, async (_key, d) => { sent.push(d.handle); }, view, US);
-    expect(sent).toEqual(['ph']);
-    /* RED WHEN a signer paid through self-payee is left off their own list of companies that pay them. */
-    expect(keyring.companiesThatPayYou()).toEqual([ACME]);
-    expect(saved).toHaveLength(1);
-    expect(JSON.parse(unseal(saved[0] as never, personKey)).paidBy).toEqual([ACME]);
-  });
-
-  it('A LIST THAT CANNOT BE SAVED AFTER A SIGNER MADE THEMSELVES PAYABLE IS SAID, NOT SWALLOWED', async () => {
-    const { keyring, view } = await journey(identity);
-    const answering = globalThis.fetch;
-    globalThis.fetch = (async (url: string, init?: RequestInit) => {
-      if (`${String(init?.method ?? 'GET')} ${url}` === 'PUT /api/me/keys') {
-        return { ok: false, status: 409, json: async () => ({ error: 'the keys changed on another device' }) } as Response;
-      }
-      return answering(url, init);
-    }) as typeof fetch;
-    /* RED WHEN the refused save is caught and dropped: the signer is paid and the company never reaches their list. */
-    await expect(keyring.payYourselfHere('acc_1', WALLET, async () => {}, view, US))
-      .rejects.toThrow(/changed on another device/);
-    expect(keyring.companiesThatPayYou()).toEqual([]);
+    expect(again.company).toBe(ACME);
   });
 
   it('A DIFFERENT WALLET ANSWERING THE COMPANY\'S ASK IS REFUSED, AND NO COMPANY KEY IS KEPT', async () => {
     const { keyring, view } = await journey(other);
-    await expect(keyring.payslipKeyAndPayeeAddress('acc_1', WALLET, view, US))
+    await expect(keyring.companyKeysForVaults('acc_1', WALLET, view, US))
       .rejects.toThrow('gave a different key from the one this tab opened your saved keys with');
     expect(keyring.companyKeyReleasedFor('acc_1')).toBeNull();
     expect(keyring.canOpenCompanies()).toBe(true);

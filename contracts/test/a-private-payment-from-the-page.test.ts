@@ -42,7 +42,6 @@
  */
 import { describe, it, expect, beforeEach, afterEach } from 'vitest';
 import { createHash, randomBytes } from 'node:crypto';
-import { readFileSync } from 'node:fs';
 import express from 'express';
 import type { AddressInfo } from 'node:net';
 import * as L from '@midnightntwrk/ledger-v9';
@@ -437,7 +436,7 @@ describe.skipIf(!KEYS_ON_DISK)('A PRIVATE PAYMENT OUT OF A COMPANY VAULT, FROM T
         queryContractState: async (a) => { const c = chain.contract(a); return c === null ? null : { data: asRuntime(c).data }; },
       }),
       companies: () => store.listAccounts().map((a) => ({ id: a.id, contractAddress: company, memberUserIds: a.memberUserIds })),
-      mayFileUnder: mayFileUnderOver(store),
+      mayFileUnder: mayFileUnderOver(store, directoryChainOver(() => chain.contract(company))),
     });
     await new Promise<void>((resolve) => { server = app.listen(0, '127.0.0.1', () => resolve()); });
     base = `http://127.0.0.1:${(server.address() as AddressInfo).port}`;

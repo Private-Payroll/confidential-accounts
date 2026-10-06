@@ -1,8 +1,10 @@
 import { sha256 } from '@noble/hashes/sha2.js';
 import { bytesToHex } from '@noble/hashes/utils.js';
-import { utf8 } from './crypto.js';
+import { canonical, utf8 } from './crypto.js';
 import type { SealedAccount, SealedProposal, SealedRun, SealedEmployee, Invite, User, CompanyVault, AccountDeploy, AccountOpeningRecord } from './types.js';
 import type { DirectoryFiling } from '../midnight/seat-directory.js';
+import type { SealedCompanyRecord } from '../midnight/sealed-record-wire.js';
+import { employeeRowOf, personRecordFromRow, rowChangesThePerson } from './person-record.js';
 import type { CompanyVaultKeyIndex } from './vault-keys.js';
 import { provenanceOf, type Marked, type WiringName } from './provenance.js';
 
@@ -10,7 +12,16 @@ export interface Shape {
   accounts: Record<string, SealedAccount>;
   proposals: Record<string, SealedProposal>;
   runs: Record<string, SealedRun>;
-  employees: Record<string, SealedEmployee>;
+  /**
+   * **EVERY PERSON ON EVERY COMPANY'S PAYROLL, AS EVERY VERSION OF THEIR
+   * RECORD**, keyed by the person's id, oldest first. Each version is a `person`
+   * company record (`person-record.ts`): sealed under the company's payroll
+   * key, where the person stands and their payslip key beside the seal, and
+   * signed by the seat that filed it. The newest version is the person; there
+   * is no other copy. Kept here, beside the rest of this store, because the
+   * service's older payroll code reads a person without waiting.
+   */
+  people: Record<string, SealedCompanyRecord[]>;
   invites: Record<string, Invite>;
   users: Record<string, User>;
   /** A company's vaults, keyed by vault address. */
@@ -83,9 +94,36 @@ export interface CollectedCommitteeSignatures {
 }
 
 export const emptyShape = (): Shape =>
-  ({ accounts: {}, proposals: {}, runs: {}, employees: {}, invites: {},
+  ({ accounts: {}, proposals: {}, runs: {}, people: {}, invites: {},
     users: {}, writtenBy: [], companyVaults: {}, vaultKeyIndex: {}, directories: {},
     committeeSignatures: {} });
+
+/**
+ * **A FILE WRITTEN WHEN EACH PERSON WAS A ROW, READ AS RECORDS.** Each row in
+ * an `employees` table becomes version 1 of that person's record, unsigned as
+ * the service wrote it, and what the row held as waiting to be admitted moves
+ * to the person's newest invitation. A person who already has a
+ * record keeps it. The `employees` table itself is dropped by the loader.
+ */
+export const withPeopleAsRecords = <T extends Partial<Shape>>(parsed: T): T => {
+  const rows = (parsed as { employees?: Record<string, SealedEmployee> }).employees;
+  if (rows === undefined || rows === null) return parsed;
+  const people: Record<string, SealedCompanyRecord[]> = { ...(parsed.people ?? {}) };
+  const invites: Record<string, Invite> = { ...(parsed.invites ?? {}) };
+  for (const row of Object.values(rows)) {
+    if (people[row.id] === undefined) people[row.id] = [personRecordFromRow(row, 1)];
+    if (row.inbox) {
+      const newest = Object.values(invites)
+        .filter(i => i.subjectId === row.id)
+        .sort((a, b) => b.createdAt.localeCompare(a.createdAt))[0];
+      if (newest === undefined) {
+        throw new Error(`the stored payroll entry ${row.id} holds a handover and no invitation to keep it on, so this file is not loaded. Nothing was changed.`);
+      }
+      invites[newest.token] = { ...newest, handover: row.inbox };
+    }
+  }
+  return { ...parsed, people, invites };
+};
 
 /**
  * Note what is NOT stored here: viewing keys and signer secrets. Nothing that can
@@ -163,7 +201,10 @@ class PayslipIndex {
 
   constructor(readonly builtFrom: Shape) {
     for (const a of Object.values(builtFrom.accounts)) this.account(a);
-    for (const e of Object.values(builtFrom.employees)) this.employee(e);
+    for (const versions of Object.values(builtFrom.people)) {
+      const newest = versions[versions.length - 1];
+      if (newest !== undefined) this.employee(employeeRowOf(newest, null));
+    }
     for (const r of Object.values(builtFrom.runs)) this.run(r);
   }
 
@@ -395,21 +436,107 @@ export class MemoryStore {
   }
 
   /*
-   * Employees are stored SEALED.
+   * Employees are stored SEALED, as `person` records.
    *
    * The store cannot sort by name any more, because it cannot read one — and
    * that is the correct outcome rather than a limitation to work around. Sorting
    * moves to the caller, which has the viewing key and is the only place that
    * should. A store that could sort by name would be a store that could read it.
    */
-  putEmployee(e: SealedEmployee) {
-    this.data.employees[e.id] = e; this.indexed(ix => ix.employee(e)); this.flush();
+
+  /** Every version of the person `id`, oldest first; empty when there is none. */
+  personVersions(id: string): SealedCompanyRecord[] { return [...(this.data.people[id] ?? [])]; }
+
+  /** The newest version of the person `id`, or null. */
+  newestPerson(id: string): SealedCompanyRecord | null {
+    const all = this.data.people[id];
+    return all?.[all.length - 1] ?? null;
   }
-  getEmployee(id: string) { return this.data.employees[id] ?? null; }
-  listEmployees(accountId: string): SealedEmployee[] {
-    return Object.values(this.data.employees)
-      .filter(e => e.accountId === accountId)
+
+  /** The newest version of every person on `accountId`'s payroll, by id. */
+  peopleOf(accountId: string): SealedCompanyRecord[] {
+    return Object.values(this.data.people)
+      .map(all => all[all.length - 1])
+      .filter((r): r is SealedCompanyRecord => r !== undefined && r.company === accountId)
       .sort((a, b) => a.id.localeCompare(b.id));
+  }
+
+  /**
+   * **FILES THE NEXT VERSION OF A PERSON, OR REFUSES.** The version must be the
+   * next, and a person id already on another company's payroll is not taken.
+   * Returns null when filed, or why not.
+   */
+  filePerson(rec: SealedCompanyRecord): 'version-already-filed' | 'not-the-next-version' | 'another-company' | null {
+    const all = this.data.people[rec.id] ?? [];
+    const newest = all[all.length - 1];
+    if (newest !== undefined && newest.company !== rec.company) return 'another-company';
+    const next = (newest?.version ?? 0) + 1;
+    if (rec.version < next) return 'version-already-filed';
+    if (rec.version > next) return 'not-the-next-version';
+    this.data.people[rec.id] = [...all, rec];
+    this.indexed(ix => ix.employee(employeeRowOf(rec, null)));
+    this.flush();
+    return null;
+  }
+
+  /** The invitations naming the person `subjectId`, newest first: one taken back still holds what was handed over on it. */
+  private invitationsOf(subjectId: string): Invite[] {
+    return Object.values(this.data.invites)
+      .filter(i => i.subjectId === subjectId)
+      .sort((a, b) => b.createdAt.localeCompare(a.createdAt));
+  }
+
+  /** What a payee handed over and nobody has admitted yet, from their invitation; null when nothing waits. */
+  handoverFor(subjectId: string): SealedEmployee['inbox'] {
+    return this.invitationsOf(subjectId).find(i => i.handover)?.handover ?? null;
+  }
+
+  /** The person as the service's older payroll code reads one: their newest record, and what waits on their invitation. */
+  private rowOf(rec: SealedCompanyRecord): SealedEmployee {
+    return employeeRowOf(rec, this.handoverFor(rec.id));
+  }
+
+  /**
+   * **A PERSON AS AN EMPLOYEE ROW, WRITTEN BY THE SERVICE'S OLDER PAYROLL CODE.**
+   * What it says about the person becomes the next version of their record,
+   * unsigned (`personRecordFromRow`); what it says is waiting goes on their
+   * invitation. Nothing is written for a row that changes neither.
+   */
+  putEmployee(e: SealedEmployee) {
+    this.putRow(e);
+    this.flush();
+  }
+
+  private putRow(e: SealedEmployee) {
+    const newest = this.newestPerson(e.id);
+    if (newest !== null && newest.company !== e.accountId) {
+      throw new Error(`person ${e.id} is on another company's payroll, so nothing was written.`);
+    }
+    if (rowChangesThePerson(newest, e)) {
+      const rec = personRecordFromRow(e, (newest?.version ?? 0) + 1);
+      this.data.people[e.id] = [...(this.data.people[e.id] ?? []), rec];
+      this.indexed(ix => ix.employee(employeeRowOf(rec, null)));
+    }
+    const waiting = e.inbox ?? null;
+    if (canonical(waiting) === canonical(this.handoverFor(e.id))) return;
+    const invites = this.invitationsOf(e.id);
+    if (waiting === null) {
+      for (const i of invites) if (i.handover) this.data.invites[i.token] = { ...i, handover: null };
+      return;
+    }
+    const newestInvite = invites[0];
+    if (newestInvite === undefined) {
+      throw new Error(`nothing can wait to be admitted for person ${e.id}: they hold no invitation to keep it on. Nothing was written.`);
+    }
+    this.data.invites[newestInvite.token] = { ...newestInvite, handover: waiting };
+  }
+
+  getEmployee(id: string): SealedEmployee | null {
+    const rec = this.newestPerson(id);
+    return rec === null ? null : this.rowOf(rec);
+  }
+  listEmployees(accountId: string): SealedEmployee[] {
+    return this.peopleOf(accountId).map(r => this.rowOf(r));
   }
 
   /**
@@ -417,7 +544,27 @@ export class MemoryStore {
    * is named for what it identifies, and its doc says what it holds. Keyed by it
    * directly so a caller cannot store one under a raw token by mistake.
    */
-  putInvite(i: Invite) { this.data.invites[i.token] = i; this.flush(); }
+  /**
+   * An invitation, written whole - except what the payee handed over, which
+   * only `setHandover` and a person's own row change: an invitation read before
+   * or after the payee handed something over, and written back, keeps what the
+   * store holds now.
+   */
+  putInvite(i: Invite) {
+    const stored = this.data.invites[i.token];
+    const { handover: _ignored, ...rest } = i;
+    this.data.invites[i.token] = stored === undefined ? i : { ...rest, handover: stored.handover ?? null };
+    this.flush();
+  }
+
+  /** What the payee handed over on the invitation stored under `key`, or null to empty it. False when there is no such invitation. */
+  setHandover(key: string, handover: Invite['handover']): boolean {
+    const stored = this.data.invites[key];
+    if (stored === undefined) return false;
+    this.data.invites[key] = { ...stored, handover: handover ?? null };
+    this.flush();
+    return true;
+  }
   /**
    * Looked up by the HASH of the token.
    *
@@ -462,6 +609,12 @@ export class MemoryStore {
     this.flush();
     return migrated;
   }
+  /** An invitation an inviter's device made, by its lookup id; null for none, and for one this service made. */
+  invitationById(id: string): Invite | null {
+    const row = this.data.invites[id];
+    return row !== undefined && typeof row.acceptanceHash === 'string' ? row : null;
+  }
+
   listInvites(accountId: string) {
     return Object.values(this.data.invites).filter(i => i.accountId === accountId);
   }
@@ -562,12 +715,11 @@ export class MemoryStore {
     proposals: SealedProposal[];
   }): void {
     this.data.accounts[set.account.id] = set.account;
-    for (const e of set.employees) this.data.employees[e.id] = e;
+    for (const e of set.employees) this.putRow(e);
     for (const r of set.runs) this.data.runs[r.id] = r;
     for (const p of set.proposals) this.data.proposals[p.id] = p;
     this.indexed(ix => {
       ix.account(set.account);
-      for (const e of set.employees) ix.employee(e);
       for (const r of set.runs) ix.run(r);
     });
     /* This writes records without going through the three methods above, so it

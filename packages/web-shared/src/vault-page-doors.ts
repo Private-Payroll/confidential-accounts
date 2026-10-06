@@ -11,11 +11,11 @@ import { whyNotTheCommittee, whyNotTheReaders, type Roster } from './handover-ch
 import type { Account } from '../../../src/core/types.js';
 import type { WireRecord } from '../../../src/midnight/sealed-record-wire.js';
 import type { PoolSigner } from '../../../src/midnight/vault-pool.js';
-import { recordsKeypairFrom } from '../../../src/midnight/company-nonce-secret.js';
+import { admitToNonceSecret, openNonceSecrets, recordsKeypairFrom } from '../../../src/midnight/company-nonce-secret.js';
 import { HttpSealedPoolStore, pageWireSend, type FilingJudge, type FreshJudge } from './http-sealed-pool-store.js';
 import {
-  believedDirectory, FILING_REFUSAL, filingRefusalOf, seatsWithAnotherRecordsKey,
-  type CommitteeKey, type Directory, type DirectoryEntry, type DirectoryFiling,
+  believedDirectory, FILING_REFUSAL, filingRefusalOf, notOnTheChainNow, seatsWithAnotherRecordsKey,
+  type CommitteeKey, type Directory, type DirectoryEntry, type DirectoryFiling, type DirectorySeat, type FiledKind,
 } from '../../../src/midnight/seat-directory.js';
 import type { AccountHoldersRead, DirectoryEntryStatement, RecordsKeyStatement } from 'midnight-identity/profile/records-key';
 import type { AccountAddress, CompanyLabel } from 'midnight-identity/profile/company-label';
@@ -139,19 +139,35 @@ export const giveVaultKeys = (
   });
 };
 
-/** This device as a signer of the company's vaults. */
-export const deviceSignerFrom = (
-  secrets: { signerId: string; wrappingSecret: Hex }, companyKey: Hex,
-): DeviceSigner => ({ signerId: secrets.signerId, wrappingSecret: secrets.wrappingSecret, companyKey: fromHex(companyKey) });
-
-/** Everybody on the roster this device opened: who the pool is wrapped to. Whose filings are believed is `directoryJudge`'s. */
-export const rosterOf = (account: Account) => {
-  const active = account.signers.filter((s) => s.status === 'active');
-  return {
-    signers: async (): Promise<readonly PoolSigner[]> =>
-      active.map((s) => ({ id: s.id, wrappingPublicKey: s.wrappingPublicKey })),
-  };
+/**
+ * **THIS DEVICE AS A SIGNER OF THE COMPANY'S VAULTS: ITS SEAT, AND THE RECORDS
+ * KEY ITS WALLET GIVES FOR THE COMPANY.** A vault's pool and journals are
+ * wrapped to the records key in each signer's own directory entry and filed
+ * under their seat, so this device opens its copy with the records key worked
+ * out from the company key its wallet released - never with a key the roster
+ * names, which the service opens with a key it holds.
+ */
+export const deviceSignerFrom = (seat: string, companyKey: Hex): DeviceSigner => {
+  const key = fromHex(companyKey);
+  return { signerId: seat.toLowerCase(), wrappingSecret: recordsKeypairFrom(key).secret, companyKey: key };
 };
+
+/**
+ * **WHO A VAULT'S POOL AND JOURNALS ARE WRAPPED TO: EVERY SEAT THIS DEVICE
+ * BELIEVES NOW**, read afresh for each write - an entry its own wallet signed,
+ * for a records key that wallet attested, not retired, its committee key on
+ * the account's committee and its seat held - each under its seat, to the
+ * records key its entry names. A seat with no entry yet is given no copy; it
+ * is wrapped in on the first write after its entry is filed.
+ */
+export const readersIn = (directory: () => Promise<DirectoryHere>) => ({
+  signers: async (): Promise<readonly PoolSigner[]> => {
+    const here = await directory();
+    return here.dir.seats
+      .filter((x) => seatNotBelievedHere(here, x) === null)
+      .map((x) => ({ id: x.seat, wrappingPublicKey: x.wrappingKey }));
+  },
+});
 
 /** Every records-key statement the roster this device opened carries, with the committee key that signed it. */
 export const attestedIn = (account: Pick<Account, 'signers'>): { committeeKey: CommitteeKey; statement: RecordsKeyStatement }[] =>
@@ -171,6 +187,69 @@ export const directoryFilingsFrom = async (api: Api, accountId: string): Promise
   return answer!.filings as DirectoryFiling[];
 };
 
+/** What this device reads to believe a company's directory: every filing, its own wallet's read of the chain, and the roster's statements. */
+export interface DirectoryHereDeps {
+  readonly filings: () => Promise<readonly DirectoryFiling[]>;
+  readonly label: CompanyLabel;
+  readonly accountId: string;
+  /** Who holds the account now and its approval threshold, as the person's own wallet read it for this read. */
+  readonly holders: () => Promise<AccountHoldersRead>;
+  /** The records-key statements in the roster this device opened. */
+  readonly attested: () => Promise<readonly { committeeKey: CommitteeKey; statement: RecordsKeyStatement }[]>;
+}
+
+/** A company's directory as this device believes it for one read, with the read of the chain it was believed against. */
+export interface DirectoryHere {
+  readonly dir: Directory;
+  readonly holders: AccountHoldersRead;
+  /** The seats whose entry names a wrapping key their own wallet did not attest. */
+  readonly another: ReadonlySet<string>;
+}
+
+/**
+ * **THE DIRECTORY THIS DEVICE BELIEVES, READ AFRESH.** Replayed against the
+ * account this person's own wallet read who holds, and the only one an entry or
+ * a statement is believed for. Throws when anything it reads cannot be read.
+ */
+export const directoryHere = async (deps: DirectoryHereDeps): Promise<DirectoryHere> => {
+  const [filings, holders, attested] = await Promise.all([deps.filings(), deps.holders(), deps.attested()]);
+  const dir: Directory = believedDirectory(deps.accountId, filings, deps.label, holders.account,
+    { approvals: holders.approvals, seats: holders.seats, committee: holders.committee });
+  return { dir, holders, another: seatsWithAnotherRecordsKey(dir, deps.label, holders.account, attested) };
+};
+
+/**
+ * Why this device does not believe a filing signed by `filer`, of kind `kind`,
+ * counted under `recordKey` at `version`, or null when it does: one rule for
+ * every filing it reads and every copy it gives.
+ */
+const refusalHere = (here: DirectoryHere, filer: Hex | null, kind: FiledKind, recordKey: string, version: number): string | null => {
+  if (filer === null) return 'it carries no valid signature for this record';
+  const seat = here.dir.seats.find((x) => x.signingKey === filer.toLowerCase());
+  if (seat !== undefined && here.another.has(seat.seat)) {
+    return 'it is signed by a seat whose own wallet has not attested the records key its directory entry names';
+  }
+  const refused = filingRefusalOf(here.dir, here.holders, filer, kind, recordKey, version);
+  return refused === null ? null : FILING_REFUSAL[refused];
+};
+
+/**
+ * **WHETHER THIS DEVICE BELIEVES A SEAT NOW, AS A SEAT**: its entry's records
+ * key attested by its own wallet, not retired, its committee key on the
+ * account's committee and the seat held. The one rule for who a vault's
+ * records are wrapped to, who is given a vault's secret, and whose wallet
+ * raised an invitation. Null when it does; the reason when it does not.
+ */
+export const seatNotBelievedHere = (here: DirectoryHere, seat: DirectorySeat): string | null => {
+  if (here.another.has(seat.seat)) return 'its own wallet has not attested the records key its directory entry names';
+  if (seat.retired !== null) return 'it has retired';
+  const off = notOnTheChainNow(seat, here.holders);
+  return off === null ? null : FILING_REFUSAL[off].replace(/^it is signed by a seat /u, 'it is a seat ');
+};
+
+/** Who this device believes filed a version, by the directory it believes for one read. */
+export const judgeIn = (here: DirectoryHere): FilingJudge => (filer, kind, recordKey, version) => refusalHere(here, filer, kind, recordKey, version);
+
 /**
  * **WHO THIS DEVICE BELIEVES FILED A VERSION, WORKED OUT AFRESH FOR EVERY
  * READ.** The directory is read again and replayed here, and the chain is read
@@ -181,39 +260,60 @@ export const directoryFilingsFrom = async (api: Api, accountId: string): Promise
  * roster this device opened, under the key that signed its entry: a seat with
  * no such statement is refused, never skipped. Nothing of one read is kept for the next.
  */
-export const directoryJudge = (deps: {
-  readonly filings: () => Promise<readonly DirectoryFiling[]>;
-  readonly label: CompanyLabel;
-  readonly accountId: string;
-  /** Who holds the account now and its approval threshold, as the person's own wallet read it for this read. */
-  readonly holders: () => Promise<AccountHoldersRead>;
-  /** The records-key statements in the roster this device opened. */
-  readonly attested: () => Promise<readonly { committeeKey: CommitteeKey; statement: RecordsKeyStatement }[]>;
-}): FreshJudge => async () => {
-  let filings: readonly DirectoryFiling[];
-  let holders: AccountHoldersRead;
-  let attested: readonly { committeeKey: CommitteeKey; statement: RecordsKeyStatement }[];
+export const directoryJudge = (deps: DirectoryHereDeps): FreshJudge => async () => {
+  let here: DirectoryHere;
   try {
-    [filings, holders, attested] = await Promise.all([deps.filings(), deps.holders(), deps.attested()]);
+    here = await directoryHere(deps);
   } catch (e) {
     const why = `who filed it could not be checked (${(e as Error)?.message ?? String(e)})`;
     return () => why;
   }
-  /* The account the person's own wallet read who holds, and the only one an entry or a statement is believed for. */
-  const dir: Directory = believedDirectory(deps.accountId, filings, deps.label, holders.account,
-    { approvals: holders.approvals, seats: holders.seats, committee: holders.committee });
-  const another = seatsWithAnotherRecordsKey(dir, deps.label, holders.account, attested);
-  const judge: FilingJudge = (filer, kind, recordKey, version) => {
-    if (filer === null) return 'it carries no valid signature for this record';
-    const seat = dir.seats.find((x) => x.signingKey === filer.toLowerCase());
-    if (seat !== undefined && another.has(seat.seat)) {
-      return 'it is signed by a seat whose own wallet has not attested the records key its directory entry names';
-    }
-    const refused = filingRefusalOf(dir, holders, filer, kind, recordKey, version);
-    return refused === null ? null : FILING_REFUSAL[refused];
-  };
-  return judge;
+  return judgeIn(here);
 };
+
+/**
+ * **A NEW SIGNER'S COPY OF EACH VAULT'S NONCE SECRET, GIVEN FROM A SIGNER'S
+ * OWN DEVICE.** Every vault named is opened here with this signer's records
+ * key, and the next version is filed wrapped to everybody who could open it
+ * and to the new signer too (`admitToNonceSecret`): nothing about the secret
+ * changes. The new signer's copy is sealed to the records key their own
+ * directory entry names - the key their wallet signed for the seat the account
+ * holds - and to nothing the roster says, so it is given only once this device
+ * believes that seat, by the one rule it wraps a vault's records by
+ * (`seatNotBelievedHere`), whatever its role: an entry not
+ * yet filed, or not believed, gives nothing. A vault whose newest version the
+ * new signer can already open is left as it is.
+ */
+export async function giveEachVaultSecretHere(input: {
+  /** Each vault by the id its nonce secret is filed under. */
+  readonly vaultIds: readonly string[];
+  readonly me: DeviceSigner;
+  /** The seat being given its copies. */
+  readonly seat: string;
+  readonly directory: () => Promise<DirectoryHere>;
+  readonly records: DeviceRecords;
+}): Promise<{ readonly given: readonly string[]; readonly had: readonly string[] }> {
+  const here = await input.directory();
+  const entry = here.dir.seats.find((x) => x.seat === input.seat.toLowerCase());
+  if (entry === undefined) {
+    throw new Error('the new signer has no entry in the company\'s directory that this device believes yet, so there is no '
+      + 'key of theirs to give a copy to. Nothing was filed. Their entry is filed from their own device once they are seated.');
+  }
+  const store = input.records('nonce-secret');
+  const opener = recordsKeypairFrom(input.me.companyKey);
+  const given: string[] = [];
+  const had: string[] = [];
+  const why = seatNotBelievedHere(here, entry);
+  if (why !== null) throw new Error(`the new signer is not given a copy, because their seat is not one this device believes: ${why}. Nothing was filed.`);
+  for (const vault of input.vaultIds) {
+    const rec = await store.get(vault);
+    if (rec === null) throw new Error(`vault ${vault} has no nonce secret filed, so there is no copy to give. Nothing more was filed.`);
+    if (openNonceSecrets(rec, vault, opener).readers.includes(entry.wrappingKey)) { had.push(vault); continue; }
+    await store.put(vault, admitToNonceSecret(rec, vault, opener, [{ publicKey: entry.wrappingKey }]));
+    given.push(vault);
+  }
+  return { given, had };
+}
 
 export const deviceRecordsFor = (
   signingSecret: Hex, judge: FreshJudge, signedInAs: () => string | null,
@@ -228,7 +328,7 @@ export const deviceRecordsFor = (
  * records key. Filed as the next version; an entry already there for this seat
  * with these keys is left alone, so it can run on every press.
  */
-export const fileOwnDirectoryEntry = async (
+const fileOwnDirectoryEntry = async (
   api: Api, accountId: string, person: string, label: CompanyLabel,
   signed: { readonly committeeKey: CommitteeKey; readonly entry: DirectoryEntryStatement },
 ): Promise<'filed' | 'already-there'> => {
@@ -243,6 +343,42 @@ export const fileOwnDirectoryEntry = async (
   const filing: DirectoryFiling = { company: accountId, version: filings.length + 1, change: { kind: 'claim', entry } };
   await api(`/api/accounts/${encodeURIComponent(accountId)}/directory/${filing.version}`, { method: 'PUT', body: JSON.stringify(filing) });
   return 'filed';
+};
+
+/** A directory entry this signer's own wallet signed, kept on their device until the company's directory holds it. */
+export interface OwedDirectoryEntry {
+  /** The signed-in person the entry names: only they may file it. */
+  readonly person: string;
+  readonly company: CompanyLabel;
+  readonly signed: { readonly committeeKey: CommitteeKey; readonly entry: DirectoryEntryStatement };
+}
+
+/** What became of an owed entry: filed now, found already there, nothing owed, or not yet taken, and why. */
+export type OwedEntryFiled = 'filed' | 'already-there' | 'nothing-owed' | { readonly notYet: string };
+
+/**
+ * **A SIGNER'S DIRECTORY ENTRY, FILED FROM THEIR OWN DEVICE AS SOON AS THE
+ * DIRECTORY WILL TAKE IT.** The entry is signed by their wallet in the press
+ * that gives their vault keys at seating; it is believed only while the
+ * account's committee lists the wallet that signed it and the account holds
+ * the seat, which may be later. So it is kept (`owed`) and filed again on
+ * every way into the company until the directory holds it, and let go then.
+ * A refusal is not an error here: it leaves the entry owed, and says why.
+ */
+export const fileTheOwedDirectoryEntry = async (
+  api: Api, accountId: string,
+  owed: { read(): OwedDirectoryEntry | null; settle(): Promise<void> },
+): Promise<OwedEntryFiled> => {
+  const now = owed.read();
+  if (now === null) return 'nothing-owed';
+  let done: 'filed' | 'already-there';
+  try {
+    done = await fileOwnDirectoryEntry(api, accountId, now.person, now.company, now.signed);
+  } catch (e) {
+    return { notYet: (e as Error)?.message ?? String(e) };
+  }
+  await owed.settle();
+  return done;
 };
 
 /**

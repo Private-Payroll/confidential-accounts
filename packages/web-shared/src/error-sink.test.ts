@@ -65,10 +65,10 @@ describe('the browser error sink', () => {
     const error = new TypeError('t is not a function');
     r.fire('error', { error, filename: 'http://localhost:5173/main.tsx', lineno: 4, colno: 1 });
     expect(r.posted).toHaveLength(1);
-    expect(r.posted[0].page).toBe('http://localhost:5173/');
-    expect(r.posted[0].entries[0].level).toBe('error');
-    expect(r.posted[0].entries[0].message).toContain('TypeError: t is not a function');
-    expect(r.posted[0].entries[0].message).toContain('main.tsx:4:1');
+    expect(r.posted[0]!.page).toBe('http://localhost:5173/');
+    expect(r.posted[0]!.entries[0]!.level).toBe('error');
+    expect(r.posted[0]!.entries[0]!.message).toContain('TypeError: t is not a function');
+    expect(r.posted[0]!.entries[0]!.message).toContain('main.tsx:4:1');
   });
 
   it('THE ONE A WHITE PAGE NEEDS: a script that fails to load is kept too', () => {
@@ -77,15 +77,15 @@ describe('the browser error sink', () => {
     // blank with nothing else to say.
     const r = rig();
     r.fire('error', { target: { src: 'http://localhost:5173/main.tsx' } });
-    expect(r.posted[0].entries[0].level).toBe('resource');
-    expect(r.posted[0].entries[0].message).toContain('failed to load');
+    expect(r.posted[0]!.entries[0]!.level).toBe('resource');
+    expect(r.posted[0]!.entries[0]!.message).toContain('failed to load');
   });
 
   it('keeps an unhandled rejection', () => {
     const r = rig();
     r.fire('unhandledrejection', { reason: new Error('nope') });
-    expect(r.posted[0].entries[0].level).toBe('rejection');
-    expect(r.posted[0].entries[0].message).toContain('nope');
+    expect(r.posted[0]!.entries[0]!.level).toBe('rejection');
+    expect(r.posted[0]!.entries[0]!.message).toContain('nope');
   });
 
   it('keeps console.error and console.warn', () => {
@@ -109,7 +109,7 @@ describe('the browser error sink', () => {
     r.willAnswer(response);
     const got = await r.w.fetch('/api/me');
     expect(got).toBe(response);
-    expect(r.posted[0].entries[0].message).toBe('503 /api/me');
+    expect(r.posted[0]!.entries[0]!.message).toBe('503 /api/me');
   });
 
   /*
@@ -144,7 +144,7 @@ describe('the browser error sink', () => {
     r.willAnswer(answering(400, JSON.stringify({ error: 'you are already on this account' })));
     await r.w.fetch('/api/accounts');
     await settled();
-    expect(r.posted[0].entries[0].message)
+    expect(r.posted[0]!.entries[0]!.message)
       .toBe('400 /api/accounts — you are already on this account');
   });
 
@@ -174,7 +174,7 @@ describe('the browser error sink', () => {
     const padding = 'the service refused this request. '.repeat(9).slice(0, 279);
     const r = rig();
     r.willAnswer(answering(400, JSON.stringify({ error: `${padding} ${key}` })));
-    await r.w.fetch('/api/accounts/a1/state');
+    await r.w.fetch('/api/accounts/a1/people');
     await settled();
 
     const wire = r.text();
@@ -198,7 +198,7 @@ describe('the browser error sink', () => {
     const failure = new Error('connection refused');
     r.willAnswer(failure);
     await expect(r.w.fetch('/api/me')).rejects.toBe(failure);
-    expect(r.posted[0].entries[0].message).toContain('connection refused');
+    expect(r.posted[0]!.entries[0]!.message).toContain('connection refused');
   });
 
   it('THE ONE C145 ASKS OF THE PAGE: nothing shaped like a secret crosses the wire', () => {
@@ -225,7 +225,7 @@ describe('the browser error sink', () => {
     const before = r.posted.length;
     expect(before).toBe(1);
     // Posting again must not add entries about the post itself.
-    expect(r.posted[0].entries).toHaveLength(1);
+    expect(r.posted[0]!.entries).toHaveLength(1);
   });
 
   it('stops keeping entries long before it could fill anything', () => {

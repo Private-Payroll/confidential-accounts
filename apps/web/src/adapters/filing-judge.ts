@@ -1,7 +1,7 @@
 import type { AccountAddress, CompanyLabel } from 'midnight-identity/profile/company-label';
 import type { Account } from '../../../../src/core/types.js';
 import { api, holdersFromTheWallet } from 'vaults-web-shared/keyring.js';
-import { attestedIn, directoryFilingsFrom, directoryJudge } from 'vaults-web-shared/vault-page-doors.js';
+import { attestedIn, directoryFilingsFrom, directoryHere, directoryJudge, type DirectoryHere, type DirectoryHereDeps } from 'vaults-web-shared/vault-page-doors.js';
 import type { FreshJudge } from 'vaults-web-shared/http-sealed-pool-store.js';
 import { ACCOUNT_ORIGIN } from './session.js';
 
@@ -12,12 +12,22 @@ import { ACCOUNT_ORIGIN } from './session.js';
  * and the records-key statements in the roster this device opened - all of it
  * afresh for every read, so no read rests on one made before it.
  */
-export const filingJudgeFor = (
+/** What this page reads to believe a company's directory, the one way every screen asks it. */
+const directoryDeps = (
   companyId: string, company: CompanyLabel, account: AccountAddress, roster: () => Promise<Pick<Account, 'signers'>>,
-): FreshJudge => directoryJudge({
+): DirectoryHereDeps => ({
   accountId: companyId,
   label: company,
   filings: () => directoryFilingsFrom(api, companyId),
   holders: async () => (await holdersFromTheWallet(ACCOUNT_ORIGIN, { company, account })).holders,
   attested: async () => attestedIn(await roster()),
 });
+
+export const filingJudgeFor = (
+  companyId: string, company: CompanyLabel, account: AccountAddress, roster: () => Promise<Pick<Account, 'signers'>>,
+): FreshJudge => directoryJudge(directoryDeps(companyId, company, account, roster));
+
+/** The company's directory as this page believes it, read afresh at each call by the same reads: who a vault's records are wrapped to. */
+export const directoryHereFor = (
+  companyId: string, company: CompanyLabel, account: AccountAddress, roster: () => Promise<Pick<Account, 'signers'>>,
+): (() => Promise<DirectoryHere>) => () => directoryHere(directoryDeps(companyId, company, account, roster));
