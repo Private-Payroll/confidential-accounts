@@ -154,32 +154,8 @@ export function walletRestoredFrom(serialized: string): RunningShieldedWallet {
   return configuredWallet().restore(serialized);
 }
 
-/**
- * **WHETHER A STATE MAY BE WRITTEN DOWN AS A CHECKPOINT: ONLY WITH NOTHING IN
- * FLIGHT.**
- *
- * A snapshot carries the coins this wallet has set aside for a transaction it
- * has not seen land, and the coins such a transaction would pay back to it.
- * The ledger's own way of letting set-aside coins go after their deadline does
- * nothing (`clearPending` in `ledger-v9.d.ts` says so), and letting them go by
- * hand needs the transaction, which does not outlive the screen that built it.
- * So a snapshot taken with coins set aside keeps them set aside in every wallet
- * restored from it, and every later snapshot writes them back: the person's
- * money reads as gone on this device for good. A snapshot is therefore written
- * only when nothing is set aside and nothing is expected - and when that cannot
- * be read, it is not written. Missing a checkpoint costs one slow read.
- */
-export function nothingInFlight(state: unknown): boolean {
-  const local = (state as { state?: { state?: { pendingSpends?: unknown; pendingOutputs?: unknown } } } | null)
-    ?.state?.state;
-  const spends = local?.pendingSpends;
-  const outputs = local?.pendingOutputs;
-  if (!(spends instanceof Map) || !(outputs instanceof Map)) return false;
-  return spends.size === 0 && outputs.size === 0;
-}
-
 /** The shielded native token — tNIGHT — as the balances record keys it. */
-const NIGHT_RAW = shieldedToken().raw;
+export const NIGHT_RAW = shieldedToken().raw;
 
 type Synced = Extract<BalanceState, { name: 'synced' }>;
 
@@ -278,9 +254,8 @@ const startBalanceRaw: BalanceEngine = (identity, account, onState) => {
             const { night, others, asOf } = synced;
             tell(synced);
             /* The checkpoint that makes the NEXT open cheap — sealed, and a
-             * failure to write is a failure to cache, nothing more. Never
-             * with anything in flight: `nothingInFlight` says why. */
-            if (!nothingInFlight(state)) return;
+             * failure to write is a failure to cache, nothing more. The store
+             * keeps none with anything in flight (`snapshot.ts` says why). */
             try {
               void saveWalletCheckpoint(coinPublicKey, account, {
                 serialized: state.serialize(), night, others, asOf,

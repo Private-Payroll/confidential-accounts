@@ -48,6 +48,10 @@
       "types": "./lib/profile/join-code.d.ts",
       "default": "./lib/profile/join-code.js"
     },
+    "./profile/addresses-and-balances": {
+      "types": "./lib/profile/addresses-and-balances.d.ts",
+      "default": "./lib/profile/addresses-and-balances.js"
+    },
     "./profile/fingerprint": {
       "types": "./lib/profile/fingerprint.d.ts",
       "default": "./lib/profile/fingerprint.js"

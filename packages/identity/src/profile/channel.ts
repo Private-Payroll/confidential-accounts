@@ -8,6 +8,7 @@ import type { DisclosureResponse } from './disclosure.js';
 import type { KeyringRelease, UnlockRelease } from './unlock.js';
 import type { SealedAcceptance } from './inbox.js';
 import type { JoinCode } from './join-code.js';
+import type { AddressesAndBalances } from './addresses-and-balances.js';
 
 /**
  * HOW A REQUEST GETS IN, AND HOW THE ANSWER GETS OUT.
@@ -168,7 +169,7 @@ export function framingOf(view: ChannelWindow, embedder: string | null): Framing
  */
 export type Answer =
   | DisclosureResponse | UnlockRelease | KeyringRelease | SealedAcceptance | BalancedAnswer | CommitteeSignatures
-  | RecordsKeyAnswer | HoldersAnswer | CreationSignature | JoinCode;
+  | RecordsKeyAnswer | HoldersAnswer | CreationSignature | JoinCode | AddressesAndBalances;
 
 /**
  * **WHY A PAYMENT THE PERSON APPROVED DID NOT HAPPEN, IN FOUR WORDS AND NO MORE.**
@@ -277,6 +278,21 @@ export function askerIsAllowed(view: ChannelWindow, framing: Framing, event: Mes
  * the same reason: a page that can send a second request while the first is on
  * screen can change what the person is looking at while they are reading it.
  */
+/**
+ * **EVERY ASK THIS WINDOW HAS ALREADY ANSWERED**, by the page that asked and the
+ * nonce it chose. One terminal message per ask, not per channel: a screen that
+ * is put away and shown again opens a second channel on the same window, and a
+ * page that sends its ask again would otherwise be answered twice - a refusal
+ * after a payment, or a payment after a refusal. Kept per window, for as long as
+ * the window is open, and never written anywhere.
+ */
+const answeredHere = new WeakMap<ChannelWindow, Set<string>>();
+const answeredIn = (view: ChannelWindow): Set<string> => {
+  let answered = answeredHere.get(view);
+  if (answered === undefined) { answered = new Set(); answeredHere.set(view, answered); }
+  return answered;
+};
+
 export function listen(
   view: ChannelWindow,
   now: () => number,
@@ -293,6 +309,8 @@ export function listen(
   /* Set once, from the parsed request; a request that did not parse hears nothing but its refusal. */
   let hearsProgress = false;
   let ended = false;
+  /* Which ask this channel is answering: the observed origin and the ask's own nonce. */
+  let ask: string | null = null;
   const framing = framingOf(view, embedder);
 
   const send = (message: unknown): boolean => {
@@ -304,8 +322,10 @@ export function listen(
   /* **THE ONE PLACE THE CONVERSATION ENDS.** Every terminal message passes here. */
   const end = (message: unknown): boolean => {
     if (ended) return false;
+    if (ask !== null && answeredIn(view).has(ask)) { ended = true; return false; }
     if (!send(message)) return false;
     ended = true;
+    if (ask !== null) answeredIn(view).add(ask);
     return true;
   };
 
@@ -320,6 +340,15 @@ export function listen(
     source = event.source;
     /* THE ONE LINE THIS MODULE IS FOR. The browser's value, not the payload's. */
     origin = event.origin;
+    const nonce = (body as { nonce?: unknown }).nonce;
+    ask = typeof nonce === 'string' ? `${event.origin}\n${nonce}` : null;
+    /* An ask this window has already answered is not shown again: its one answer has gone. */
+    if (ask !== null && answeredIn(view).has(ask)) {
+      ended = true;
+      /* Said, so a screen that asks `over()` looks again; there is still no request to show. */
+      onState({ of: 'waiting' });
+      return;
+    }
     let request: Ask;
     try {
       request = parseAsk(event.data, event.origin, now());
@@ -382,7 +411,8 @@ export function listen(
       if (!(PROGRESS_STAGES as readonly unknown[]).includes(stage)) return false;
       return send({ schema: PROGRESS_SCHEMA, stage });
     },
-    over: () => ended,
+    /* Over once this channel has ended, or once another channel on this window has answered the same ask. */
+    over: () => ended || (ask !== null && answeredIn(view).has(ask)),
     stop: () => view.removeEventListener('message', handler),
   });
 }

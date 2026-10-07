@@ -16,12 +16,13 @@
  * is, the nonce it chose, the company, the account, the seat and the vault it
  * asked about.
  */
-import { REQUEST_SCHEMA } from 'midnight-identity/profile/request';
+import { REQUEST_SCHEMA, type InvitedBy } from 'midnight-identity/profile/request';
 import {
   readHoldersAnswer, readRecordsKeyAnswer, type AccountHoldersRead, type AccountSeats, type DirectoryEntryStatement,
   type RecordsKeyStatement, type VaultHolders,
 } from 'midnight-identity/profile/records-key';
 import type { AccountAddress, CompanyLabel, VaultAddress } from 'midnight-identity/profile/company-label';
+import { readAddressesAndBalancesAnswer, type AddressesAndBalancesShown } from 'midnight-identity/profile/addresses-and-balances';
 import { toHex, randomBytes } from '../../../src/core/crypto.js';
 import { askWallet, type Openable, type WalletDialog } from './wallet-sign-in.js';
 
@@ -48,6 +49,14 @@ export interface RecordsKeyAsked {
   readonly vault?: VaultAddress;
   /** This person's filing key, when their directory entry is to be signed in the same press. */
   readonly signingKey?: string;
+  /**
+   * The invitation this person joined by - the inviting signer's committee key
+   * and the entry their wallet signed, from the signed invitation - for a
+   * wallet that has not kept this company's account yet. It keeps the account
+   * that invitation names, and signs for no other; with neither, it signs
+   * nothing.
+   */
+  readonly invitedBy?: InvitedBy;
   readonly atOrigin: string;
   readonly name: string;
   readonly rdns: string;
@@ -58,7 +67,7 @@ export interface RecordsKeyAsked {
 /** The ask on the wire. */
 const recordsKeyAsk = (parts: {
   name: string; rdns: string; purpose: string; nonce: string; expiresAt: number;
-  company: CompanyLabel; account: AccountAddress; seat: string; vault?: VaultAddress; signingKey?: string;
+  company: CompanyLabel; account: AccountAddress; seat: string; vault?: VaultAddress; signingKey?: string; invitedBy?: InvitedBy;
 }) => Object.freeze({
   schema: REQUEST_SCHEMA,
   kind: 'records-key' as const,
@@ -71,6 +80,7 @@ const recordsKeyAsk = (parts: {
   seat: parts.seat.toLowerCase(),
   ...(parts.vault === undefined ? {} : { vault: parts.vault.toLowerCase() }),
   ...(parts.signingKey === undefined ? {} : { signingKey: parts.signingKey.toLowerCase() }),
+  ...(parts.invitedBy === undefined ? {} : { invitedBy: parts.invitedBy }),
 });
 
 /** What comes back, checked: the statement, the committee key it verifies against, and who holds the account. */
@@ -93,6 +103,7 @@ export async function askWalletToSignRecordsKey(
     name: ask.name, rdns: ask.rdns, purpose: RECORDS_KEY_PURPOSE, nonce, expiresAt: now() + RECORDS_KEY_WINDOW_MS,
     company: ask.company, account: ask.account, seat: ask.seat, ...(ask.vault === undefined ? {} : { vault: ask.vault }),
     ...(ask.signingKey === undefined ? {} : { signingKey: ask.signingKey }),
+    ...(ask.invitedBy === undefined ? {} : { invitedBy: ask.invitedBy }),
   }), dialog);
   const read = readRecordsKeyAnswer(answer, {
     atOrigin: ask.atOrigin, expectingNonce: nonce, company: ask.company, account: ask.account, seat: ask.seat.toLowerCase(),
@@ -163,4 +174,60 @@ export async function askWalletWhoHolds(
     throw new WalletDidNotSayWhoHolds(refused.code, refused.says);
   }
   return { holders: read.holders };
+}
+
+/* ------------------------------------------------------------------ addresses and balances, after one press */
+
+const ADDRESSES_AND_BALANCES_WINDOW_MS = 10 * 60_000;
+const ADDRESSES_AND_BALANCES_PURPOSE =
+  'So this page can show you where your wallet receives and what it holds: your wallet shows you exactly what it will '
+  + 'hand over, and hands it over only if you press. Nothing is signed.';
+
+class WalletDidNotShowAddressesAndBalances extends Error {
+  constructor(readonly code: string, message: string) {
+    super(message);
+    this.name = 'WalletDidNotShowAddressesAndBalances';
+  }
+}
+
+interface AddressesAndBalancesAsked {
+  readonly atOrigin: string;
+  readonly name: string;
+  readonly rdns: string;
+  readonly now?: () => number;
+  readonly nonce?: string;
+}
+
+/**
+ * **WHERE THE PERSON'S WALLET RECEIVES, AND WHAT IT HOLDS, AFTER THEIR PRESS.**
+ * The wallet shows the person its private and public receiving addresses and
+ * every token it holds on each side, and hands them over only on one press on
+ * its own screen, every time this is asked. Which of their wallets answers is
+ * theirs to choose there. What comes back is checked against this page's own
+ * origin and nonce, and is `AddressesAndBalancesShown`
+ * (`midnight-identity/profile/addresses-and-balances`): two addresses, the
+ * amounts each marked `private` or `public`, and the moment each side was read,
+ * or `null` for a side the wallet could not read - which is not known, never
+ * zero. A refusal, a decline or a wallet that never answers throws, and
+ * nothing is handed over.
+ */
+export async function askWalletForAddressesAndBalances(
+  view: Openable, walletOrigin: string, ask: AddressesAndBalancesAsked, dialog?: WalletDialog,
+): Promise<{ readonly shown: AddressesAndBalancesShown; readonly at: number }> {
+  const now = ask.now ?? (() => Date.now());
+  const nonce = ask.nonce ?? toHex(randomBytes(16));
+  const answer = await askWallet(view, walletOrigin, Object.freeze({
+    schema: REQUEST_SCHEMA,
+    kind: 'addresses-and-balances' as const,
+    requester: Object.freeze({ name: ask.name, rdns: ask.rdns }),
+    purpose: ADDRESSES_AND_BALANCES_PURPOSE,
+    nonce,
+    expiresAt: now() + ADDRESSES_AND_BALANCES_WINDOW_MS,
+  }), dialog);
+  const read = readAddressesAndBalancesAnswer(answer, { atOrigin: ask.atOrigin, expectingNonce: nonce });
+  if (!read.ok) {
+    const refused = read as Extract<typeof read, { ok: false }>;
+    throw new WalletDidNotShowAddressesAndBalances(refused.code, refused.says);
+  }
+  return { shown: read.shown, at: read.at };
 }

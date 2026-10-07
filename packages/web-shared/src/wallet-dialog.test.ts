@@ -805,6 +805,19 @@ describe('§3 — A JOURNEY WHOSE SERVER CALL FAILS PUTS ITS WALLET AWAY', () =>
     expect(view.stillOpen()).toEqual([]);
   });
 
+  it('WATCHED FAILING: OPENING THE SAVED KEYS, WHEN THE SAVED KEYS CANNOT BE READ', async () => {
+    const view = new ARecordingView();
+    const keyring = await signedIn(view);
+    view.answers = givesTheKeys;
+    globalThis.fetch = aServerThatFails((method, url) => method === 'GET' && url === '/api/me/keys');
+    /* RED WHEN: the wallet window opened for the saved keys stays on screen after the read of those keys fails - watched red
+     * by the ask no longer putting away the window it used; the journey's own put-away after the read is not reached here,
+     * because the window has already gone with the ask. */
+    await expect(keyring.openKeysWithWallet(WALLET, view, US)).rejects.toThrow();
+    expect(view.made.length).toBeGreaterThan(0);
+    expect(view.stillOpen()).toEqual([]);
+  });
+
   it('AND THE PAGE STOPS SAYING IT IS WAITING, in the same failure', async () => {
     const view = new ARecordingView();
     const keyring = await signedIn(view);

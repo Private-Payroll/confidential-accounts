@@ -3,11 +3,13 @@ import type { ReactNode } from 'react';
 import { Button } from 'vaults-ui';
 import { framingOf, listen } from 'midnight-identity/profile/channel';
 import { EMBEDDER } from '../config.js';
-import type { ChannelState, ChannelWindow } from 'midnight-identity/profile/channel';
+import type { Channel, ChannelState, ChannelWindow } from 'midnight-identity/profile/channel';
 import { hrefOf } from '../routes.js';
 import { useSession } from '../session.js';
 import type { Phase } from '../session.js';
 import { ErrorNote, Moon, StatusNote } from '../components/ui.js';
+import { StatusAlert } from '../components/status.js';
+import { AskOver } from './ask-over.js';
 
 /**
  * **A WINDOW OPENED FOR A REQUEST, WITH NO WALLET IN IT.**
@@ -72,11 +74,13 @@ export function ApproveEntry({
 }: ApproveEntryProps): ReactNode {
   const { createAccount, busy, error } = useSession();
   const [channelState, setChannelState] = useState<ChannelState>({ of: 'waiting' });
+  const [channel, setChannel] = useState<Channel | null>(null);
 
   useEffect(() => {
     const target = view ?? (window as unknown as ChannelWindow);
-    const channel = listen(target, now, setChannelState, embedder);
-    return () => channel.stop();
+    const opened = listen(target, now, setChannelState, embedder);
+    setChannel(opened);
+    return () => opened.stop();
   }, [view, now, embedder]);
 
   /*
@@ -102,6 +106,19 @@ export function ApproveEntry({
    * the allowed page, a framed entry is a waiting line and nothing else.
    */
   const framed = framingOf(view ?? (window as unknown as ChannelWindow), embedder).of === 'framed';
+  /* A request this wallet refused on arrival has been answered already: it is said, never waited for. */
+  if (framed && channelState.of === 'refused') {
+    return (
+      <>
+        <h1 data-ask-refused>Nothing has been shared</h1>
+        <StatusAlert tone="danger" title="This request was refused before you saw it">
+          <p className="m-0">{channelState.error.message}</p>
+        </StatusAlert>
+      </>
+    );
+  }
+  /* An ask this window has already answered is finished; it is not waited for again. */
+  if (framed && channelState.of !== 'request' && channel !== null && channel.over()) return <AskOver framed />;
   if (framed && channelState.of !== 'request') {
     return (
       <>

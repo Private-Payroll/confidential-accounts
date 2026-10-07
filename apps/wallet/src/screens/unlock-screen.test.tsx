@@ -385,7 +385,11 @@ describe('§4 — THE SCREEN IS WRITTEN IN WHAT WAS OBSERVED, NOT IN WHAT WAS CL
        * person is actually being asked to compare. */
       expect(sizeOf('[data-company-fingerprint]'))
         .toBeGreaterThan(sizeOf('[data-company-label]'));
-      expect(document.body.textContent).toContain('check that every character matches, not only the ends');
+      /* Compared with one source, the person who invited you, and never "the company". */
+      expect(document.querySelector('[data-compare-with]')?.textContent).toContain(
+        'Check every character, not only the ends, against the fingerprint the person who invited you to this company gave you themselves',
+      );
+      expect(document.body.textContent).not.toMatch(/ask the company for its fingerprint/i);
     });
 
   it('A DIFFERENT COMPANY SHOWS A DIFFERENT FINGERPRINT, AND ONE THAT IS NOT NEARBY',

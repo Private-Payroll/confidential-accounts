@@ -26,7 +26,7 @@ const ADDRESS = `mn_shield-addr_test1${'p'.repeat(60)}`;
 const ask = (over: Record<string, unknown> = {}) => parseAsk({
   schema: 'midnight-identity/disclosure-request/v1', kind: 'join-code',
   requester: { name: 'Payroll', rdns: 'example.payroll' }, purpose: 'To join.',
-  nonce: 'n1', expiresAt: NOW + 600_000, company: CO, person: 'usr_ada', parts: SIGNER, ...over,
+  nonce: 'n1', expiresAt: NOW + 600_000, company: CO, account: 'ab'.repeat(32), person: 'usr_ada', parts: SIGNER, ...over,
 }, ORIGIN, NOW);
 
 describe('A JOIN CODE', () => {
@@ -111,6 +111,10 @@ describe('A JOIN CODE', () => {
     /* RED WHEN: parts of neither kind are taken. */
     expect(() => ask({ parts: { kind: 'signer', signingPublicKey: '11'.repeat(32) } })).toThrow(/neither a signer's keys nor a payee's/);
     expect(() => ask({ person: 'not a sign-in!' })).toThrow(/not a sign-in/);
+    /* RED WHEN: a join-code ask is read without the account the wallet shows the company's fingerprint from, or with a label in its place. */
+    expect((ask() as JoinCodeRequest).account).toBe('ab'.repeat(32));
+    expect(() => ask({ account: undefined })).toThrow(/does not name the company's account/);
+    expect(() => ask({ account: CO })).toThrow(/does not name the company's account/);
     /* RED WHEN: a code's parts are taken on another kind of ask. */
     expect(() => parseAsk({
       schema: 'midnight-identity/disclosure-request/v1', kind: 'records-key', requester: { name: 'P', rdns: 'p' }, purpose: 'x',

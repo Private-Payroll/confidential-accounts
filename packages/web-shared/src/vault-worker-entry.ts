@@ -248,7 +248,7 @@ const loadDeps = (scope: any) => {
           httpKeyMaterialSource(`${VAULT_ARTEFACT_BASE}/account`, options)),
         httpKeyMaterialSource(`${VAULT_ARTEFACT_BASE}/builtin/zswap/9`, options));
       /* Each proof on a thread of its own where this thread can start one (`vault-proof-workers.ts`); on this thread where it cannot. */
-      const prover = (await proofProviderOnWorkers(source, scope)) ?? await proving.wasmProofProvider(source);
+      const prover = await proofProviderOnWorkers(source, scope, () => proving.wasmProofProvider(source));
       const CompiledContract = (compactJs as any).CompiledContract;
       const zkConfig = zkConfigOver(source, byCircuitName);
       const compiled = CompiledContract.make('Vault', (vault as any).Contract).pipe(

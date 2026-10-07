@@ -231,6 +231,39 @@ describe('ONE TERMINAL MESSAGE PER REQUEST, AND EVERY END STATE ANSWERS', () => 
     expect(second.sent()).toEqual([{ message: { schema: REFUSED, reason: 'failed', why: 'did-not-finish' }, target: EMBEDDER }]);
   });
 
+  it('ONE TERMINAL MESSAGE PER ASK, NOT PER CHANNEL: A SCREEN SHOWN AGAIN ON THE SAME WINDOW ANSWERS NOTHING TWICE', () => {
+    const opener = postable();
+    const view = walletView({ opener });
+    const sent = () => opener.posted.filter((p) => (p.message as { schema?: string }).schema !== READY_PING);
+    /* Two screens on one window, each with its own channel, both handed the same ask before either answers. */
+    const firstStates: ChannelState[] = [];
+    const first = listen(view, () => NOW, (st) => firstStates.push(st), null);
+    view.deliver({ source: opener as never, origin: EMBEDDER, data: signIn() });
+    const secondStates: ChannelState[] = [];
+    const second = listen(view, () => NOW, (st) => secondStates.push(st), null);
+    view.deliver({ source: opener as never, origin: EMBEDDER, data: signIn() });
+    expect(first.answer({ schema: 'paid' } as never)).toBe(true);
+    /* RED WHEN: a screen on the second channel, asking whether it may still press, is told the ask is open after the first answered it. */
+    expect(second.over()).toBe(true);
+    /* RED WHEN: the second channel's refusal crosses after the first channel's answer - a page told "nothing was paid" after it was handed a payment. */
+    expect(second.refuse('declined')).toBe(false);
+    expect(second.over()).toBe(true);
+    /* A third screen on the same window, after the ask has been answered, is not shown it again. */
+    const thirdStates: ChannelState[] = [];
+    const third = listen(view, () => NOW, (st) => thirdStates.push(st), null);
+    view.deliver({ source: opener as never, origin: EMBEDDER, data: signIn() });
+    /* RED WHEN: an ask already answered is put in front of the person again, as if it were still waiting. */
+    expect(thirdStates.map((st) => st.of)).toEqual(['waiting', 'waiting']);
+    expect(third.over()).toBe(true);
+    expect(third.answer({ schema: 'again' } as never)).toBe(false);
+    expect(sent()).toEqual([{ message: { schema: 'paid' }, target: EMBEDDER }]);
+    /* RED WHEN: another ask from the same page, with its own nonce, is refused because an earlier one was answered. */
+    const fourth = listen(view, () => NOW, () => {}, null);
+    view.deliver({ source: opener as never, origin: EMBEDDER, data: { ...signIn(), nonce: 'n2' } });
+    expect(fourth.answer({ schema: 'next' } as never)).toBe(true);
+    first.stop(); second.stop(); third.stop(); fourth.stop();
+  });
+
   it('sends nothing, and counts nothing as sent, before a request has arrived', () => {
     const opener = postable();
     const channel = listen(walletView({ opener }), () => NOW, () => {}, null);

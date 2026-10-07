@@ -6,7 +6,7 @@
  */
 import { REQUEST_SCHEMA } from 'midnight-identity/profile/request';
 import { joinCodeSignedBy, readJoinParts, type JoinCode, type JoinParts } from 'midnight-identity/profile/join-code';
-import type { CompanyLabel } from 'midnight-identity/profile/company-label';
+import type { AccountAddress, CompanyLabel } from 'midnight-identity/profile/company-label';
 import { toHex, randomBytes } from '../../../src/core/crypto.js';
 import { askWallet, type Openable, type WalletDialog } from './wallet-sign-in.js';
 
@@ -27,6 +27,8 @@ export class WalletDidNotMakeTheCode extends Error {
 
 interface JoinCodeAsked {
   readonly company: CompanyLabel;
+  /** The account that carries the label: the wallet reads it off the chain and shows the company's fingerprint from it. */
+  readonly account: AccountAddress;
   /** The id this person signed in to the service with. */
   readonly person: string;
   readonly parts: JoinParts;
@@ -48,6 +50,7 @@ export async function askWalletForAJoinCode(
     nonce: toHex(randomBytes(16)),
     expiresAt: now() + JOIN_CODE_WINDOW_MS,
     company: ask.company,
+    account: ask.account,
     person: ask.person,
     parts: ask.parts,
   }), dialog);

@@ -64,6 +64,9 @@ export const accountCarriesTheLabel = (check: CompanyCheck, label: CompanyLabel 
  * THE SECTION ITSELF. `fingerprintClass` lets each screen keep its own size for
  * the one thing a person compares; `doing` is what the screen would do for the
  * company - give its key, sign, or pay - so every sentence says that.
+ * `compareWith` is who this person compares the fingerprint with, in the
+ * screen's own words: always the person who invited them, never "the company"
+ * and never this page, so a screen names one source and only one.
  */
 export function CompanyOnChain(props: {
   readonly label: CompanyLabel;
@@ -71,19 +74,21 @@ export function CompanyOnChain(props: {
   readonly check: CompanyCheck;
   readonly fingerprintClass?: string;
   readonly doing?: 'given' | 'signed' | 'paid';
+  readonly compareWith: string;
 }): ReactNode {
   /* Announced as it changes, so a person who cannot see the screen hears why the button is held or let go. */
   return <div aria-live="polite" data-company-section><CompanySection {...props} /></div>;
 }
 
 function CompanySection({
-  label, account, check, fingerprintClass = 'text-xl', doing = 'given',
+  label, account, check, fingerprintClass = 'text-xl', doing = 'given', compareWith,
 }: {
   readonly label: CompanyLabel;
   readonly account: AccountAddress | null;
   readonly check: CompanyCheck;
   readonly fingerprintClass?: string;
   readonly doing?: 'given' | 'signed' | 'paid';
+  readonly compareWith: string;
 }): ReactNode {
   if (check.of === 'no-account-yet') {
     return (
@@ -109,9 +114,8 @@ function CompanySection({
         <p className={`m-0 font-mono tracking-wide text-foreground ${fingerprintClass}`} data-company-fingerprint>
           {companyFingerprint(label, account)}
         </p>
-        <p className="m-0 text-sm text-muted-foreground">
-          Those twenty characters stand for this company and its account together, and are the same in every wallet,
-          for ever. Ask the company for its fingerprint and check that every character matches, not only the ends.
+        <p className="m-0 text-sm text-muted-foreground" data-compare-with>
+          {`Those twenty characters stand for this company and its account together, and are the same in every wallet, for ever. Check every character, not only the ends, against the fingerprint ${compareWith}.`}
         </p>
         <p className="m-0 text-sm text-muted-foreground" style={{ marginTop: '0.75rem' }}>
           {`This wallet read the account from ${INDEXER_HOST} and it carries this company's label.`}
@@ -130,7 +134,9 @@ function CompanySection({
       ? `There is no account on the chain at the address the page gave. ${nothing} If the company was set up in the last few minutes, refuse this and try again shortly; otherwise tell the company.`
       : check.of === 'no-label'
         ? `The contract at the address the page gave is not a company account: it carries no company label. ${nothing} Tell whoever sent you to this page.`
-        : `This wallet could not read the company's account from ${INDEXER_HOST}: ${check.why} ${nothing} Refuse this, and ask the page again; if it happens again, tell whoever runs that site.`;
+        /* A fixed sentence, never `check.why`: the read's own words come from the network, and a person must not be
+         * shown text the indexer or a page could choose in the place where the fingerprint goes. */
+        : `This wallet could not read the company's account from the network, so it cannot show you the fingerprint. ${nothing} Nothing has been kept. Refuse this and try again in a minute.`;
   return (
     <StatusAlert
       tone="danger"

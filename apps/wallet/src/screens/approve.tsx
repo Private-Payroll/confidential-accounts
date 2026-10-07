@@ -39,6 +39,8 @@ import { ApproveJoinCode } from './approve-join-code.js';
 import { payslipKeyOfThisWallet } from './join-code-payslip-key.js';
 import { ApproveCreation } from './approve-creation.js';
 import { AnswerHolders } from './answer-holders.js';
+import { AskOver } from './ask-over.js';
+import { ApproveAddressesAndBalances } from './approve-addresses-and-balances.js';
 import type { Consent } from '../framing.js';
 
 /**
@@ -844,6 +846,11 @@ export function Approve({
     );
   }
 
+  if (request === null && channel !== null && channel.over()) {
+    /* The page has had its answer - a person said no, or closed a request this wallet refused - and nothing more is coming. */
+    return <AskOver framed={framing.of === 'framed'} />;
+  }
+
   if (request === null) {
     /*
      * **TWO WAYS TO BE HERE WITH NOTHING TO SHOW, AND THEY ARE NOT THE SAME
@@ -1221,6 +1228,18 @@ export function Approve({
         onDecline={() => { channel?.refuse('declined'); setChannelState({ of: 'waiting' }); }}
         readLabel={readLabel}
         pinned={profile === null ? null : pinnedAccountOf(profile, request.company)}
+        onPin={async (account, at) => {
+          if (profile === null) throw new Error('This wallet\'s record is not open, so nothing has been signed.');
+          /* Called only by the person's press confirming the company's fingerprint matches the one their inviter gave
+           * them: the account is kept as the company's once, and nothing is signed until it has been. */
+          const next = pinCompanyAccount(profile, { company: request.company, account, from: 'invited', at }, at);
+          try {
+            await save(port, identity, next);
+          } catch {
+            throw new Error('This wallet could not keep the company\'s account, so nothing has been signed. Try again.');
+          }
+          setProfile(next);
+        }}
       />
     );
   }
@@ -1264,12 +1283,32 @@ export function Approve({
         ownPayslipKey={request.parts.kind === 'payee'
           ? payslipKeyOfThisWallet(identity, request) : null}
         fingerprintClass={FINGERPRINT_TEXT}
+        readLabel={readLabel}
       />
     );
   }
 
   if (request.kind === 'holders') {
     return <AnswerHolders request={request} channel={channel} consent={consent} />;
+  }
+
+  if (request.kind === 'addresses-and-balances') {
+    return (
+      <ApproveAddressesAndBalances
+        request={request}
+        identity={identity}
+        owned={owned}
+        channel={channel}
+        consent={consent}
+        whoIsAsking={whoIsAsking}
+        whichWallet={whichWallet(
+          'Which of your wallets',
+          'The page sees this wallet\'s addresses and balances, and nothing about your other wallets.', walletLocked)}
+        onDecline={() => { channel?.refuse('declined'); setChannelState({ of: 'waiting' }); }}
+        onBusy={setWalletLocked}
+        now={now}
+      />
+    );
   }
 
   if (request.kind === 'balance') {
@@ -1350,6 +1389,7 @@ export function Approve({
           <CompanyOnChain
             label={request.company} account={request.account} check={companyCheck}
             fingerprintClass={FINGERPRINT_TEXT}
+            compareWith="the person who invited you to this company gave you themselves, and not through this page"
           />
           <p className="m-0 text-sm text-muted-foreground" style={{ marginTop: '0.75rem' }}>
             This wallet cannot check that the company belongs to the page asking. It can only
@@ -1575,6 +1615,7 @@ export function Approve({
             <CompanyOnChain
               label={request.company} account={request.account} check={companyCheck}
               fingerprintClass={FINGERPRINT_TEXT}
+              compareWith="the person who invited you to this company gave you themselves, and not through this page"
             />
             <p className="m-0 text-sm text-muted-foreground">
               That company&rsquo;s key is what your payslip key there is worked out from. This wallet

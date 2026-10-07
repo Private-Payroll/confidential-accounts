@@ -219,3 +219,54 @@ describe('§3 - A FRAMED ENTRY SHOWS NO CONTROL UNTIL THE EMBEDDER HAS SPOKEN', 
     expect(document.body.textContent).toContain(`${EMBEDDER} is asking you for something`);
   });
 });
+
+describe('§4 - A REQUEST THAT HAS BEEN ANSWERED IS NEVER WAITED FOR AGAIN', () => {
+  it('after Do not sign in, the framed wallet says the request is finished, puts focus there, and does not say it is waiting', async () => {
+    const { view, from } = framed();
+    render(<Approve identity={identity} secret={SECRET} port={watchedStore()} view={view} now={() => NOW} embedder={EMBEDDER} />);
+    from(EMBEDDER);
+    await settled();
+    fireEvent.click(document.querySelector('[data-decline]')!);
+    await settled();
+    /* RED WHEN: a wallet whose page has its answer says the page is still preparing what it wants to ask. */
+    expect(document.querySelector('[data-waiting-for-ask]')).toBeNull();
+    expect(document.querySelector('[data-ask-over]')).not.toBeNull();
+    /* RED WHEN: focus drops to the page's body, and a keyboard or screen-reader user is told nothing. */
+    expect(document.activeElement).toBe(document.querySelector('[data-ask-over]'));
+  });
+
+  it('a framed entry shown again after this window answered the ask says it is finished, and does not wait for it', async () => {
+    const { view, from } = framed();
+    const first = render(<Approve identity={identity} secret={SECRET} port={watchedStore()} view={view} now={() => NOW} embedder={EMBEDDER} />);
+    from(EMBEDDER);
+    await settled();
+    fireEvent.click(document.querySelector('[data-decline]')!);
+    await settled();
+    first.unmount();
+    /* The wallet is put away and shown again in the same window - its entry listening afresh - and the page sends the same ask. */
+    render(
+      <SessionProvider>
+        <ApproveEntry phase={{ name: 'welcome' }} entry={<p>entry</p>} view={view} now={() => NOW} embedder={EMBEDDER} />
+      </SessionProvider>,
+    );
+    from(EMBEDDER);
+    await settled();
+    /* RED WHEN: an ask this window already answered is waited for again, or offered to a person as if it were new. */
+    expect(document.querySelector('[data-waiting-for-ask]')).toBeNull();
+    expect(document.querySelector('[data-ask-over]')).not.toBeNull();
+  });
+
+  it('a framed entry answered with a refusal on arrival says so, and does not say it is waiting', async () => {
+    const { view, from } = framed();
+    render(
+      <SessionProvider>
+        <ApproveEntry phase={{ name: 'welcome' }} entry={<p>entry</p>} view={view} now={() => NOW} embedder={EMBEDDER} />
+      </SessionProvider>,
+    );
+    from(EMBEDDER, { ...signIn(), kind: 'approve' });
+    await settled();
+    /* RED WHEN: a request already refused, and answered, is shown as one the page is still preparing. */
+    expect(document.querySelector('[data-waiting-for-ask]')).toBeNull();
+    expect(document.querySelector('[data-ask-refused]')).not.toBeNull();
+  });
+});

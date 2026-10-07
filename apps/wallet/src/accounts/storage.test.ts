@@ -13,6 +13,10 @@ import {
 import type { SecuredSetup } from './storage.js';
 import type { Passkey } from 'midnight-identity/passkey/verify';
 import { ORIGINAL_SLOT, forgetOpenWallet, heldWallets, openWallet } from './wallets-held.js';
+import { snapshotForTest } from '../testing/snapshot.js';
+
+const A_STATE = snapshotForTest({ coinPublicKey: 'coin-key-a' });
+const B_STATE = snapshotForTest({ coinPublicKey: 'coin-key-b' });
 
 /*
  * THE RECORD THAT SWITCHES OFF §7.7's NOTICE, UNDER ATTACK — TWO WAYS —
@@ -599,6 +603,21 @@ describe('THE RULE — no record of wallet B is ever shown over wallet A', () =>
     expect(walletOfCredential('cred-from-a-cleared-browser')).toBeNull();
   });
 
+  it('BALANCE CHECKPOINTS — THE STORE KEEPS NO SNAPSHOT HOLDING ANYTHING IN FLIGHT, AND NONE IT CANNOT READ', async () => {
+    const { aSlot } = await twoWallets();
+    const { loadWalletCheckpoint, saveWalletCheckpoint } = await import('./storage.js');
+    for (const [why, serialized] of [
+      ['a coin set aside', snapshotForTest({ inFlight: 'spend' })],
+      ['a coin expected', snapshotForTest({ inFlight: 'output' })],
+      ['unreadable', 'not a snapshot'],
+    ] as const) {
+      /* RED WHEN: whichever writer asks, the store keeps a snapshot whose set-aside coins every restore would keep set aside for good. */
+      expect(await saveWalletCheckpoint('coin-key-a', 0, { serialized, night: 3n, asOf: 2_000 }, aSlot), why).toBe(false);
+      expect(await loadWalletCheckpoint('coin-key-a', 0, aSlot), why).toBeNull();
+    }
+    expect(await saveWalletCheckpoint('coin-key-a', 0, { serialized: A_STATE, night: 3n, asOf: 2_000 }, aSlot)).toBe(true);
+  });
+
   it('BALANCE CHECKPOINTS — the cache is per wallet, so a switch is not a cold sync',
     async () => {
       const { aSlot, bSlot } = await twoWallets();
@@ -608,13 +627,13 @@ describe('THE RULE — no record of wallet B is ever shown over wallet A', () =>
        * `openWallet` calls below it looked load-bearing; they are not, and
        * the test is sharper for saying which compartment it means. */
       await saveWalletCheckpoint('coin-key-b', 0,
-        { serialized: 'B-STATE', night: 7n, asOf: 1_000 }, bSlot);
+        { serialized: B_STATE, night: 7n, asOf: 1_000 }, bSlot);
       await saveWalletCheckpoint('coin-key-a', 0,
-        { serialized: 'A-STATE', night: 3n, asOf: 2_000 }, aSlot);
+        { serialized: A_STATE, night: 3n, asOf: 2_000 }, aSlot);
 
-      expect((await loadWalletCheckpoint('coin-key-a', 0, aSlot))?.serialized).toBe('A-STATE');
+      expect((await loadWalletCheckpoint('coin-key-a', 0, aSlot))?.serialized).toBe(A_STATE);
       /* B\u2019s entry for the SAME account number survived A writing one. */
-      expect((await loadWalletCheckpoint('coin-key-b', 0, bSlot))?.serialized).toBe('B-STATE');
+      expect((await loadWalletCheckpoint('coin-key-b', 0, bSlot))?.serialized).toBe(B_STATE);
       /* And a checkpoint is still refused for a wallet whose coin key it does
        * not name — the check that was there before this change. */
       expect(await loadWalletCheckpoint('coin-key-b', 0, aSlot)).toBeNull();

@@ -51,7 +51,12 @@ self.addEventListener('message', ({ data }) => {
     waiting.delete(data.askId);
     if (w === undefined) return;
     if (data.ok) w.resolve(data.value as never);
-    else w.reject(new Error(data.error ?? 'the vault worker could not supply the proving material'));
+    else {
+      w.reject(new Error(
+        'This device could not load what it needs to work out the proof for this transaction, so nothing was sent. '
+        + 'Check your connection and try again.',
+        { cause: new Error(data.error ?? 'the vault worker could not supply the proving material') }));
+    }
     return;
   }
   const work = data.op === 'prove'

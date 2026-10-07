@@ -42,6 +42,9 @@ import {
   ORIGINAL_SLOT, checkpointKeyFor, forgetOpenWallet, openWallet, sealKeyFor,
 } from '../accounts/wallets-held.js';
 import { Home } from '../screens/home.js';
+import { KEPT_SNAPSHOT, snapshotForTest } from '../testing/snapshot.js';
+
+const A_STATE = snapshotForTest({ coinPublicKey: 'coin-key-a' });
 
 /*
  * THE BALANCE, HELD TO ITS RULES.
@@ -763,7 +766,7 @@ const HERE = ORIGINAL_SLOT;
 
 describe('checkpoints: sealed, named by their wallet, and only ever a cache', () => {
   const identity = identityFromSecret(newSecret());
-  const CP = { serialized: '{"fake":"snapshot"}', night: 123_456n, asOf: 1_700_000_000_000 };
+  const CP = { serialized: KEPT_SNAPSHOT, night: 123_456n, asOf: 1_700_000_000_000 };
 
   it('round-trips for the wallet that wrote it, and is null for any other', async () => {
     const mine = coinPublicKeyOf(identity, 2);
@@ -791,7 +794,7 @@ describe('checkpoints: sealed, named by their wallet, and only ever a cache', ()
       open.onerror = () => reject(open.error);
     });
     const flattened = JSON.stringify(raw);
-    expect(flattened).not.toContain('fake');
+    expect(flattened).not.toContain('publicKeys');
     expect(flattened).not.toContain(CP.serialized);
     /* Encoding is not sealing: DECODE the stored blob and look again — a
      * base64 of the plaintext must fail here, only ciphertext passes. */
@@ -799,7 +802,7 @@ describe('checkpoints: sealed, named by their wallet, and only ever a cache', ()
     const decoded = new TextDecoder().decode(
       Uint8Array.from(atob(entry.sealed.replace(/-/gu, '+').replace(/_/gu, '/')),
         (c) => c.charCodeAt(0)));
-    expect(decoded).not.toContain('fake');
+    expect(decoded).not.toContain('publicKeys');
     expect(decoded).not.toContain('123456');
     expect(decoded).not.toContain('coinPublicKey');
   });
@@ -908,7 +911,7 @@ describe('every wallet, honestly — §5 decided, and the invisible-money answer
     const secret = newSecret();
     const identity = identityFromSecret(secret);
     await saveWalletCheckpoint(coinPublicKeyOf(identity, 3), 3, {
-      serialized: 'x', night: 2_500_000n, asOf: new Date(2026, 7, 18, 9, 30).getTime(),
+      serialized: KEPT_SNAPSHOT, night: 2_500_000n, asOf: new Date(2026, 7, 18, 9, 30).getTime(),
     }, HERE);
     const fake = fakeEngine();
     render(
@@ -992,10 +995,10 @@ describe('every wallet, honestly — §5 decided, and the invisible-money answer
      * recorded every token, and there were none. A figure that recorded NIGHT
      * only could not say that, and would rank with the funded ones. */
     await saveWalletCheckpoint(coinPublicKeyOf(identity, 9), 9, {
-      serialized: 'x', night: 4_000_000n, asOf: Date.now(),
+      serialized: KEPT_SNAPSHOT, night: 4_000_000n, asOf: Date.now(),
     }, HERE);
     await saveWalletCheckpoint(coinPublicKeyOf(identity, 11), 11, {
-      serialized: 'x', night: 0n, others: {}, asOf: Date.now(),
+      serialized: KEPT_SNAPSHOT, night: 0n, others: {}, asOf: Date.now(),
     }, HERE);
     render(
       <BalanceEnginesContext.Provider
@@ -1017,7 +1020,7 @@ describe('every wallet, honestly — §5 decided, and the invisible-money answer
     const identity = identityFromSecret(secret);
     for (const account of [3, 5, 7, 9, 11]) {
       await saveWalletCheckpoint(coinPublicKeyOf(identity, account), account, {
-        serialized: 'x', night: BigInt(account) * 1_000_000n, asOf: Date.now(),
+        serialized: KEPT_SNAPSHOT, night: BigInt(account) * 1_000_000n, asOf: Date.now(),
       }, HERE);
     }
     render(
@@ -1061,11 +1064,11 @@ describe('a wallet switch mid-flight does not move where the work lands', () => 
      * has turned to B. The compartment the engine captured is the argument. */
     openWallet('wallet-b');
     await saveWalletCheckpoint('coin-key-a', 3,
-      { serialized: 'A-STATE', night: 5n, asOf: 1_000 }, 'wallet-a');
+      { serialized: A_STATE, night: 5n, asOf: 1_000 }, 'wallet-a');
 
     /* It landed in A's compartment... */
     expect((await loadWalletCheckpoint('coin-key-a', 3, 'wallet-a'))?.serialized)
-      .toBe('A-STATE');
+      .toBe(A_STATE);
     /* ...and B's compartment never heard of it. Before this was an argument,
      * this is where the entry went. */
     expect(await loadWalletCheckpoint('coin-key-a', 3, 'wallet-b')).toBeNull();
@@ -1079,7 +1082,7 @@ describe('a wallet switch mid-flight does not move where the work lands', () => 
     openWallet('wallet-a');
     for (const account of [3, 5, 7, 9, 11]) {
       await saveWalletCheckpoint(coinPublicKeyOf(identity, account), account, {
-        serialized: 'x', night: BigInt(account) * 1_000_000n, asOf: Date.now(),
+        serialized: KEPT_SNAPSHOT, night: BigInt(account) * 1_000_000n, asOf: Date.now(),
       }, 'wallet-a');
     }
 
@@ -1230,10 +1233,10 @@ describe('every private token the wallet holds, from the SDK to the screen', () 
     const secret = newSecret();
     const identity = identityFromSecret(secret);
     await saveWalletCheckpoint(coinPublicKeyOf(identity, 9), 9, {
-      serialized: 'x', night: 0n, others: { [TOKEN]: 5_000n }, asOf: Date.now(),
+      serialized: KEPT_SNAPSHOT, night: 0n, others: { [TOKEN]: 5_000n }, asOf: Date.now(),
     }, HERE);
     await saveWalletCheckpoint(coinPublicKeyOf(identity, 11), 11, {
-      serialized: 'x', night: 0n, others: {}, asOf: Date.now(),
+      serialized: KEPT_SNAPSHOT, night: 0n, others: {}, asOf: Date.now(),
     }, HERE);
     render(
       <BalanceEnginesContext.Provider value={{ shielded: inert, unshielded: inert, dust: inert }}>
@@ -1317,7 +1320,7 @@ describe('every private token the wallet holds, from the SDK to the screen', () 
     const identity = identityFromSecret(secret);
     const mine = coinPublicKeyOf(identity, 3);
     await sealOldShape(mine, 3, {
-      serialized: 'x', night: 2_500_000n, asOf: new Date(2026, 7, 18, 9, 30).getTime(),
+      serialized: KEPT_SNAPSHOT, night: 2_500_000n, asOf: new Date(2026, 7, 18, 9, 30).getTime(),
     });
     const loaded = await loadWalletCheckpoint(mine, 3, HERE);
     /* RED WHEN the old record no longer loads, or its NIGHT moves. */
@@ -1353,7 +1356,7 @@ describe('every private token the wallet holds, from the SDK to the screen', () 
     const identity = identityFromSecret(newSecret());
     const mine = coinPublicKeyOf(identity, 0);
     const CP = {
-      serialized: '{"fake":"snapshot"}', night: 123_456n, asOf: 1_700_000_000_000,
+      serialized: KEPT_SNAPSHOT, night: 123_456n, asOf: 1_700_000_000_000,
       others: { [TOKEN]: 18_446_744_073_709_551_615n, [SECOND]: 7n },
     };
     await saveWalletCheckpoint(mine, 0, CP, HERE);

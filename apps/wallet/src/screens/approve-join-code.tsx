@@ -11,6 +11,8 @@ import { StatusAlert } from '../components/status.js';
 import { CopyButton } from '../components/ui.js';
 import { hrefOf } from '../routes.js';
 import type { Consent } from '../framing.js';
+import { CompanyOnChain, accountCarriesTheLabel, liveLabelReader, useCompanyCheck } from './company-on-chain.js';
+import type { LabelReader } from './company-on-chain.js';
 
 /**
  * THE SCREEN FOR A PAGE ASKING THIS WALLET TO MAKE A CODE FOR JOINING A
@@ -33,6 +35,7 @@ type Stage = { of: 'ready' } | { of: 'refused'; says: string } | { of: 'sent'; a
 
 export function ApproveJoinCode({
   request, identity, channel, consent, whoIsAsking, onDecline, receives, ownPayslipKey, fingerprintClass, now = Date.now,
+  readLabel = liveLabelReader,
 }: {
   readonly request: JoinCodeRequest;
   readonly identity: Identity;
@@ -47,8 +50,14 @@ export function ApproveJoinCode({
   /** How the wallet sets every fingerprint a person compares: the largest thing in its section. */
   readonly fingerprintClass: string;
   readonly now?: () => number;
+  /** How the company's account is read off the chain. Replaceable so a test can answer. */
+  readonly readLabel?: LabelReader;
 }): ReactNode {
   const [stage, setStage] = useState<Stage>({ of: 'ready' });
+  /* The account the page names, read off the chain: the company's fingerprint is shown from it, and nothing is signed
+   * until it carries the label the code is for. */
+  const check = useCompanyCheck(request.company, request.account, readLabel);
+  const onChain = accountCarriesTheLabel(check, request.company);
   const parts = request.parts;
   /* The fingerprint the person reads out, shown before the press. */
   const fingerprint = useMemo(
@@ -61,7 +70,7 @@ export function ApproveJoinCode({
 
   const sign = useCallback((): void => {
     /* What this wallet will not sign is refused by `joinCodeAnswerFor` as well as by the button. */
-    if (!consent.ok || stage.of !== 'ready' || channel === null) return;
+    if (!consent.ok || stage.of !== 'ready' || channel === null || !onChain) return;
     try {
       const at = now();
       channel.answer(joinCodeAnswerFor(identity, request, receives, ownPayslipKey));
@@ -69,7 +78,7 @@ export function ApproveJoinCode({
     } catch (e) {
       setStage({ of: 'refused', says: e instanceof JoinCodeRefused ? e.message : 'No code has been made.' });
     }
-  }, [consent, stage, channel, now, identity, request, receives, ownPayslipKey]);
+  }, [consent, stage, channel, onChain, now, identity, request, receives, ownPayslipKey]);
 
   const fingerprintBox = (
     <div className="mt-1 rounded-md border border-border p-3" data-join-code-fingerprint-box>
@@ -111,9 +120,6 @@ export function ApproveJoinCode({
         </p>
         <p className="m-0 text-sm text-muted-foreground">The company, as the page names it</p>
         <p className="m-0 font-mono break-all text-sm" data-join-code-company>{request.company}</p>
-        <p className="m-0 text-sm text-muted-foreground" data-join-code-no-company-fingerprint>
-          A code names the company by its label alone, with no account, so there is no company fingerprint to compare here.
-        </p>
         <p className="m-0 text-sm text-muted-foreground">You, as the page signed you in</p>
         <p className="m-0 font-mono break-all text-sm" data-join-code-person>{request.person}</p>
         {parts.kind === 'payee' && (
@@ -129,11 +135,18 @@ export function ApproveJoinCode({
           </StatusAlert>
         )}
       </Section>
+      <Section
+        list={false} box={false} aria-label="The company, as the page names it" title="The company, as the page names it"
+        description="Compare this fingerprint with the one the person adding you sees for the company."
+      >
+        <CompanyOnChain label={request.company} account={request.account} check={check} fingerprintClass={fingerprintClass} doing="signed"
+          compareWith="the person adding you sees for the company, read out to you by a call, a message or in person, and not through this page" />
+      </Section>
       {whoIsAsking}
       <div className="flex flex-wrap gap-2">
         <Button
           size="lg" type="button" variant="default" onClick={sign} data-approve data-make-join-code
-          disabled={!consent.ok || stage.of !== 'ready' || channel === null || notOurs !== null}
+          disabled={!consent.ok || stage.of !== 'ready' || channel === null || notOurs !== null || !onChain}
         >
           Make my code
         </Button>
