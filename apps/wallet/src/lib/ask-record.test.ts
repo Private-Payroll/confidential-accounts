@@ -46,20 +46,26 @@ describe('THE WALLET\'S RECORD OF EACH REQUEST', () => {
     vi.spyOn(console, 'info').mockImplementation(() => {});
     const port = aPort();
     recordAsk(port, 'shown', 'failed: 4999 of 5000 NIGHT from mn_shield-addr_test1q...', 1);
-    const [line] = readAskRecord(port);
-    /* RED WHEN: a caller's sentence, which can name coins, amounts and addresses, is kept as it was written. */
-    expect(line!.detail).not.toMatch(/\s|\./u);
-    expect(line!.detail.length).toBeLessThanOrEqual(48);
-    expect(port.raw()).not.toMatch(/ NIGHT/u);
+    recordAsk(port, 'shown', 'refused:mn_shield-addr_test1qxy', 2);
+    recordAsk(port, 'shown', 'reading:4999', 3);
+    recordAsk(port, 'sent', 'refused:failed:not-enough', 4);
+    recordAsk(port, 'shown', 'refused:Payroll for Alice', 5);
+    recordAsk(port, 'shown', `refused:${'a'.repeat(33)}`, 6);
+    /* RED WHEN: a caller's sentence, which can name coins, amounts and addresses, keeps any digit or any fragment of one. */
+    /* RED WHEN: a name or a sentence of letters only - a company's, a person's - or an over-long word is kept as written. */
+    expect(readAskRecord(port).map((l) => l.detail)).toEqual(['failed:other', 'refused:other', 'reading:other', 'refused:failed:not-enough', 'refused:other']);
+    expect(port.raw()).not.toMatch(/[0-9]{2}|NIGHT|addr|shield|test/u);
   });
 
   it('keeps the last lines only, and one line for a wallet saying the same stage many times', () => {
     vi.spyOn(console, 'info').mockImplementation(() => {});
     const port = aPort();
-    for (let i = 0; i < KEPT_LINES + 30; i += 1) recordAsk(port, 'shown', `s${i}`, i);
+    /* A different word for each line: its number spelled in letters, since a word carries no digit. */
+    const spelled = (i: number): string => `s${String(i).replace(/[0-9]/gu, (d) => 'abcdefghij'[Number(d)]!)}`;
+    for (let i = 0; i < KEPT_LINES + 30; i += 1) recordAsk(port, 'shown', spelled(i), i);
     /* RED WHEN: the record grows without end in the wallet's own storage. */
     expect(readAskRecord(port)).toHaveLength(KEPT_LINES);
-    expect(readAskRecord(port)[0]!.detail).toBe('s30');
+    expect(readAskRecord(port)[0]!.detail).toBe(spelled(30));
     const quiet = aPort();
     const channel = recordedChannel(recordingChannel([]), quiet, (() => { let t = 0; return () => { t += 1; return t; }; })());
     for (let i = 0; i < 40; i += 1) channel.progress('reading');

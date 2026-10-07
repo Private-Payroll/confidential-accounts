@@ -7,8 +7,9 @@ import { NoOpTransactionHistoryStorage, WalletFacade } from '@midnightntwrk/wall
 import { addressFor, identityFromWords } from 'midnight-identity';
 import type { Identity } from 'midnight-identity';
 import { EMPTY, firstValueFrom } from 'rxjs';
+import { ZswapLocalState, coinCommitment, coinNullifier, shieldedToken } from '@midnightntwrk/ledger-v9';
 import { NETWORK } from '../config.js';
-import { walletFor } from './balance.js';
+import { secretKeysFor, walletFor } from './balance.js';
 import { FACADE_CONFIG, NODE_RPC_URL, facadeFor, facadeKeysFor, failingProving, startForAPage } from './facade.js';
 import type { FacadeServiceOverrides } from './facade.js';
 import { unshieldedAddressFor, unshieldedWalletFor } from './unshielded.js';
@@ -166,6 +167,40 @@ describe('A PAGE\'S PAYMENT STARTS WHAT IT PAYS FROM, FROM WHERE THIS WALLET LAS
       expect(first.progress.isConnected).toBe(false);
     } finally {
       await facade.stop().catch(() => {});
+    }
+    /*
+     * **AND ONLY A SNAPSHOT OF THIS ACCOUNT, FROM THIS NETWORK, WITH NOTHING IN
+     * FLIGHT.** Each of the three below is the same snapshot bent one way: read
+     * to event 4242, so a part rebuilt from it is told apart from one started
+     * cold by where it starts.
+     */
+    const other = walletFor(ours, 0);
+    const account0 = JSON.stringify({ ...JSON.parse(await other.serializeState()) as object, offset: '4242' });
+    await other.stop().catch(() => {});
+    const ownSnapshot = JSON.parse(serialized) as { state: string; publicKeys: { coinPublicKey: string } };
+    const local = ZswapLocalState.deserialize(Uint8Array.from(Buffer.from(ownSnapshot.state, 'hex')));
+    const coin = { type: shieldedToken().raw, nonce: '11'.repeat(32), value: 5n };
+    const expecting = local.watchFor(ownSnapshot.publicKeys.coinPublicKey, coin);
+    /* The SDK restores a snapshot only with the hashes of every coin it holds or expects, as its own snapshots carry them. */
+    const hashes = { [coin.nonce]: {
+      commitment: coinCommitment(coin, ownSnapshot.publicKeys.coinPublicKey),
+      nullifier: coinNullifier(coin, secretKeysFor(ours, 2).coinSecretKey),
+    } };
+    for (const [why, bent] of [
+      ['another account\'s', account0],
+      ['another network\'s', JSON.stringify({ ...JSON.parse(serialized) as object, networkId: 'another-network' })],
+      ['one with a coin expected', JSON.stringify({ ...ownSnapshot, state: Buffer.from(expecting.serialize()).toString('hex'), coinHashes: hashes })],
+    ] as const) {
+      const refused = await facadeFor(ours, 2, failingProving, offlineServices, { restoreShieldedFrom: bent });
+      try {
+        /* RED WHEN: the named snapshot is restored: another account's coins paid from under this one's name, another
+         * network's view balanced against this one, or a coin in flight kept in flight for good. */
+        expect(MidnightBech32m.encode(NETWORK, await refused.shielded.getAddress()).asString(), why)
+          .toBe(addressFor(ours.moneyAt(2).zswap, NETWORK).bech32);
+        expect((await firstValueFrom(refused.shielded.state)).progress.appliedIndex, why).not.toBe(4242n);
+      } finally {
+        await refused.stop().catch(() => {});
+      }
     }
     const damaged = await facadeFor(ours, 2, failingProving, offlineServices, { restoreShieldedFrom: 'not a snapshot' });
     try {

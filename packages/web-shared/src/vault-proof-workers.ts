@@ -52,6 +52,22 @@ export const KEPT_IDLE_MS = 2 * 60_000;
 
 const failureOf = (e: unknown): string => (e instanceof Error ? e.message : String(e));
 
+/*
+ * **WHAT A PERSON IS TOLD WHEN A PROOF'S THREAD FAILS**: what happened, that
+ * nothing was sent, and what to do. The thread's own words, which name its
+ * internals, are kept underneath as the cause, where a report can still read
+ * them.
+ */
+const THREAD_STOPPED =
+  'This device stopped working out the proof for this transaction before it finished, so nothing was sent. '
+  + 'Try again; if it happens again, reload the page and try once more.';
+const PROOF_FAILED =
+  'This device could not work out the proof for this transaction, so nothing was sent. Reload the page and try again.';
+const proofTookTooLong = (op: 'prove' | 'check'): string =>
+  `${op === 'prove' ? 'Working out' : 'Checking'} the proof for this transaction took more than ten minutes, so this device `
+  + 'stopped and nothing was sent. Try again with this page open in front and other heavy work closed.';
+const plainly = (says: string, underneath: string): Error => new Error(says, { cause: new Error(underneath) });
+
 /**
  * **A `ProvingProvider` WHOSE PROOFS RUN ON THREADS OF THEIR OWN.** Every call
  * gets a thread: an idle one kept from an earlier proof of the same circuit,
@@ -65,7 +81,7 @@ export function provingOnWorkers(
     set(run: () => void, ms: number): unknown;
     clear(handle: unknown): void;
   } = { set: (run, ms) => setTimeout(run, ms), clear: (h) => { clearTimeout(h as ReturnType<typeof setTimeout>); } },
-): LedgerProvingProvider & { stop(): void; readonly idle: number } {
+): LedgerProvingProvider & { stop(): void; readonly idle: number; readonly didNotLoad: boolean } {
   interface Job {
     readonly op: 'prove' | 'check';
     readonly preimage: Uint8Array;
@@ -82,6 +98,8 @@ export function provingOnWorkers(
   }
   const idle = new Map<string, Thread>();
   let stopped = false;
+  /* A thread that failed before it said `ready` never loaded: this device cannot start the prover on a thread of its own. */
+  let didNotLoad = false;
 
   const post = (t: Thread): void => {
     if (t.job === null || !t.ready) return;
@@ -99,8 +117,9 @@ export function provingOnWorkers(
       const job = t.job;
       t.job = null;
       t.dead = true;
+      if (!t.ready) didNotLoad = true;
       t.worker.terminate();
-      job?.reject(new Error(event.message || 'a proof\'s thread stopped before it answered'));
+      job?.reject(plainly(THREAD_STOPPED, event.message || 'a proof\'s thread stopped before it answered'));
     });
     t.worker.addEventListener('message', ({ data }) => {
       const job = t.job;
@@ -113,7 +132,7 @@ export function provingOnWorkers(
           t.job = null;
           t.dead = true;
           t.worker.terminate();
-          job?.reject(new Error(data.error));
+          job?.reject(plainly(PROOF_FAILED, data.error));
       }
     });
     return t;
@@ -143,7 +162,7 @@ export function provingOnWorkers(
         t.job = null;
         t.dead = true;
         t.worker.terminate();
-        reject(new Error(`the ${op} did not finish within ten minutes`));
+        reject(plainly(proofTookTooLong(op), `the ${op} did not finish within ten minutes`));
       }, PROOF_CEILING_MS);
       t.job = {
         op, preimage, overwriteBindingInput,
@@ -179,22 +198,63 @@ export function provingOnWorkers(
       idle.clear();
     },
     get idle() { return idle.size; },
+    get didNotLoad() { return didNotLoad; },
+  };
+}
+
+/** A proof provider as a transaction is proved through it. */
+interface TransactionProver {
+  proveTx(tx: unknown, config?: unknown): Promise<unknown>;
+}
+
+/**
+ * **ONE THREAD, WHEN A THREAD OF ITS OWN CANNOT BE STARTED.** The proofs go to
+ * threads of their own (`workers`); when one of those threads fails to load -
+ * a browser that will not start a worker from this page, or a worker file that
+ * did not arrive - the transaction is proved again, whole, on this thread
+ * (`inThread`), and every transaction after it is too. A proof that failed for
+ * any other reason is not tried again: it is said.
+ */
+export function oneThreadWhenAThreadDoesNotLoad(
+  workers: TransactionProver & { readonly didNotLoad: boolean; stop(): void },
+  inThread: () => Promise<TransactionProver>,
+): TransactionProver {
+  let one: Promise<TransactionProver> | null = null;
+  const onOneThread = (): Promise<TransactionProver> => { one ??= inThread(); return one; };
+  return {
+    proveTx: async (tx, config) => {
+      if (workers.didNotLoad) return (await onOneThread()).proveTx(tx, config);
+      try {
+        return await workers.proveTx(tx, config);
+      } catch (e) {
+        if (!workers.didNotLoad) throw e;
+        workers.stop();
+        return (await onOneThread()).proveTx(tx, config);
+      }
+    },
   };
 }
 
 /**
- * **THE VAULT WORKER'S PROOF PROVIDER, ON THREADS OF THEIR OWN** - or `null`
- * where this thread cannot start one, and the caller then proves on its own
- * thread exactly as before.
+ * **THE VAULT WORKER'S PROOF PROVIDER**: each proof on a thread of its own
+ * where this thread can start one, and on this thread (`inThread`) where it
+ * cannot - because `Worker` does not exist here, or because a thread failed to
+ * load. Both ways to one thread are this function's, and only this function's.
  */
 export async function proofProviderOnWorkers(
   source: KeyMaterialSource,
   scope: { readonly Worker?: unknown },
-): Promise<{ proveTx(tx: unknown, config?: unknown): Promise<unknown> } | null> {
-  if (typeof scope.Worker !== 'function') return null;
+  inThread: () => Promise<TransactionProver>,
+): Promise<TransactionProver> {
+  if (typeof scope.Worker !== 'function') return inThread();
   const { createProofProvider } = await import('@midnight-ntwrk/midnight-js-types');
   const provider = provingOnWorkers(source, () => new Worker(new URL('./vault-proof-worker-entry.js', import.meta.url), {
     type: 'module', name: 'vault-proof',
   }) as unknown as ProofWorkerLike);
-  return createProofProvider(provider as never) as unknown as { proveTx(tx: unknown, config?: unknown): Promise<unknown> };
+  const onWorkers = createProofProvider(provider as never) as unknown as TransactionProver;
+  return oneThreadWhenAThreadDoesNotLoad({
+    proveTx: (tx, config) => onWorkers.proveTx(tx, config),
+    get didNotLoad() { return provider.didNotLoad; },
+    stop: () => provider.stop(),
+  }, inThread);
 }

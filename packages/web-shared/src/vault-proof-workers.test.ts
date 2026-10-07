@@ -1,5 +1,8 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
-import { KEPT_IDLE_MS, PROOF_CEILING_MS, proofProviderOnWorkers, provingOnWorkers } from './vault-proof-workers.js';
+import {
+  KEPT_IDLE_MS, PROOF_CEILING_MS, oneThreadWhenAThreadDoesNotLoad, proofProviderOnWorkers, provingOnWorkers,
+} from './vault-proof-workers.js';
+import { whyItFailed } from './why-it-failed.js';
 import type { ProofWorkerLike } from './vault-proof-workers.js';
 
 /*
@@ -110,14 +113,22 @@ describe('THE PAGE PROVES A DEPOSIT\'S PROOFS ON THREADS OF THEIR OWN', () => {
     const failed = p.prove(new Uint8Array([1]), OUTPUT);
     AThread.made[0]!.says({ op: 'ready' });
     AThread.made[0]!.says({ op: 'failure', error: 'no proof' });
-    await expect(failed).rejects.toThrow('no proof');
+    /* Each failure says what happened, that nothing was sent and what to do; the thread's own words stay underneath. */
+    const said = async (p2: Promise<unknown>) => whyItFailed(await p2.catch((e: unknown) => e));
+    /* RED WHEN: a failed proof reaches the page in the prover's internal words alone, with no next step. */
+    expect(await said(failed)).toMatch(/^This device could not work out the proof for this transaction, so nothing was sent\. Reload the page and try again\. Underneath that: no proof$/u);
     const broke = p.prove(new Uint8Array([1]), OUTPUT);
+    AThread.made[1]!.says({ op: 'ready' });
     AThread.made[1]!.breaks('the thread stopped');
-    await expect(broke).rejects.toThrow('the thread stopped');
+    /* RED WHEN: a thread that stopped is told to the page as its internal event and nothing else. */
+    expect(await said(broke)).toMatch(/^This device stopped working out the proof for this transaction before it finished, so nothing was sent\. Try again.*Underneath that: the thread stopped$/u);
     const slow = p.prove(new Uint8Array([1]), OUTPUT);
     AThread.made[2]!.says({ op: 'ready' });
     timers.fire(PROOF_CEILING_MS);
-    await expect(slow).rejects.toThrow(/did not finish within ten minutes/u);
+    /* RED WHEN: a proof past the ceiling says only that the ceiling passed. */
+    expect(await said(slow)).toMatch(/^Working out the proof for this transaction took more than ten minutes, so this device stopped and nothing was sent\. Try again.*Underneath that: the prove did not finish within ten minutes$/u);
+    /* RED WHEN: a thread that loaded and then broke is read as one that could not load, and every proof after it is moved to one thread. */
+    expect(p.didNotLoad).toBe(false);
     /* RED WHEN: a thread in an unknown state is kept and handed the next proof. */
     expect(AThread.made.map((t) => t.terminated)).toEqual([true, true, true]);
     expect(p.idle).toBe(0);
@@ -142,8 +153,48 @@ describe('THE PAGE PROVES A DEPOSIT\'S PROOFS ON THREADS OF THEIR OWN', () => {
     expect(AThread.made[2]!.terminated).toBe(true);
   });
 
-  it('where the vault worker cannot start a thread, the caller proves on its own thread as before', async () => {
+  it('where the vault worker cannot start a thread, it proves on its own thread as before', async () => {
+    const oneThread = { proveTx: async () => 'proved on one thread' };
     /* RED WHEN: a browser without threads in a worker is handed a provider that can never answer. */
-    expect(await proofProviderOnWorkers(source(), {})).toBeNull();
+    expect(await proofProviderOnWorkers(source(), {}, async () => oneThread)).toBe(oneThread);
+  });
+
+  it('A THREAD THAT FAILS TO LOAD IS SAID SO, AND THE TRANSACTION IS PROVED AGAIN ON ONE THREAD, AS IS EVERY ONE AFTER IT', async () => {
+    const p = provingOnWorkers(source(), () => new AThread() as unknown as ProofWorkerLike, handTimers());
+    const proof = p.prove(new Uint8Array([1]), OUTPUT);
+    /* The thread breaks before it ever said it was listening: its file did not load. */
+    AThread.made[0]!.breaks('failed to fetch the worker script');
+    await expect(proof).rejects.toThrow(/nothing was sent/u);
+    /* RED WHEN: a thread that never loaded is not told apart from a proof that failed. */
+    expect(p.didNotLoad).toBe(true);
+
+    const proved: string[] = [];
+    let onOneThreadMade = 0;
+    /* Threads that prove 'a' and fail for a reason of its own, and whose thread for 'b' does not load. */
+    const onWorkers = {
+      didNotLoad: false,
+      stopped: 0,
+      async proveTx(tx: unknown) {
+        proved.push(`workers:${String(tx)}`);
+        if (tx === 'b') this.didNotLoad = true;
+        throw new Error('no thread');
+      },
+      stop() { this.stopped += 1; },
+    };
+    const prover = oneThreadWhenAThreadDoesNotLoad(onWorkers, async () => {
+      onOneThreadMade += 1;
+      return { proveTx: async (tx: unknown) => { proved.push(`one:${String(tx)}`); return `proof of ${String(tx)}`; } };
+    });
+    /* A proof that failed for its own reason is said, and not tried again on one thread. */
+    await expect(prover.proveTx('a')).rejects.toThrow('no thread');
+    /* RED WHEN: any failure, not only a thread that did not load, sends the transaction round again. */
+    expect(onOneThreadMade).toBe(0);
+    /* RED WHEN: a deposit whose thread did not load fails instead of being proved on one thread. */
+    expect(await prover.proveTx('b')).toBe('proof of b');
+    expect(await prover.proveTx('c')).toBe('proof of c');
+    /* RED WHEN: every transaction after it tries the threads again, or the prover is made afresh each time. */
+    expect(proved).toEqual(['workers:a', 'workers:b', 'one:b', 'one:c']);
+    expect(onOneThreadMade).toBe(1);
+    expect(onWorkers.stopped).toBe(1);
   });
 });

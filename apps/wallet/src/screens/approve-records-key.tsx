@@ -3,7 +3,9 @@ import type { ReactNode } from 'react';
 import type { Identity } from 'midnight-identity/keys/derivation';
 import type { RecordsKeyRequest } from 'midnight-identity/profile/request';
 import type { Channel } from 'midnight-identity/profile/channel';
-import { RecordsKeyRefused, recordsKeyAnswerFor, recordsKeyFor } from 'midnight-identity/profile/records-key';
+import {
+  INVITATION_REFUSAL, RecordsKeyRefused, recordsKeyAnswerFor, recordsKeyFor, whyTheInvitationDoesNotNameIt,
+} from 'midnight-identity/profile/records-key';
 import { CompanyOnChain, accountCarriesTheLabel, liveLabelReader, useCompanyCheck } from './company-on-chain.js';
 import type { LabelReader } from './company-on-chain.js';
 import type { AccountAddress, VaultAddress } from 'midnight-identity/profile/company-label';
@@ -68,11 +70,14 @@ function useVaultCheck(vault: VaultAddress | undefined, read: VaultReader): Vaul
   return found !== null && found.vault === vault ? found.check : { of: 'checking' };
 }
 
+/** Who the fingerprint is compared with: one source, the same words in the company section and in the question below it. */
+const COMPARE_WITH_THE_INVITER = 'the person who invited you gave you themselves, by a call, a message or in person, and not through this page';
+
 const short = (hex: string): string => `${hex.slice(0, 12)}…${hex.slice(-8)}`;
 
 export function ApproveRecordsKey({
   request, identity, channel, consent, whoIsAsking, onDecline, now = Date.now, readLabel = liveLabelReader,
-  readVault = liveVaultReader, pinned = null,
+  readVault = liveVaultReader, pinned = null, onPin,
 }: {
   readonly request: RecordsKeyRequest;
   readonly identity: Identity;
@@ -83,8 +88,14 @@ export function ApproveRecordsKey({
   readonly now?: () => number;
   readonly readLabel?: LabelReader;
   readonly readVault?: VaultReader;
-  /** The account this wallet pinned for the company when it created it, or null when it pinned none: nothing is signed for another. */
+  /** The account this wallet kept for the company, or null when it kept none: nothing is signed for another. */
   readonly pinned?: AccountAddress | null;
+  /**
+   * Keeps the account the invitation names as the company's. Called only by
+   * the person's press confirming that the company's fingerprint matches the
+   * one the inviter gave them, and by nothing else; a keep that fails throws.
+   */
+  readonly onPin?: (account: AccountAddress, at: number) => Promise<void>;
 }): ReactNode {
   const [stage, setStage] = useState<Stage>({ of: 'ready' });
   const check = useCompanyCheck(request.company, request.account, readLabel);
@@ -95,6 +106,15 @@ export function ApproveRecordsKey({
   const vaultRead = vaultCheck.of === 'read' ? vaultCheck.holders : null;
   /* With no vault named there is none to read; with one named, it must be read and pinned to this account. */
   const vaultOk = request.vault === undefined || (vaultRead !== null && vaultRead.account === request.account);
+  /* With no account kept for the company, the invitation must name this one, checked against the account as read. */
+  const notInvited = pinned === null && seats !== null ? whyTheInvitationDoesNotNameIt(request, seats) : null;
+  /* The joiner's own comparison with the inviter, on its own press: the only way the account is kept. */
+  const [keeping, setKeeping] = useState<'idle' | 'keeping' | 'failed'>('idle');
+  const confirm = useCallback((): void => {
+    if (!consent.ok || pinned !== null || !onChain || seats === null || notInvited !== null || onPin === undefined || keeping === 'keeping') return;
+    setKeeping('keeping');
+    void onPin(request.account, now()).then(() => setKeeping('idle'), () => setKeeping('failed'));
+  }, [consent, pinned, onChain, seats, notInvited, onPin, keeping, request.account, now]);
   /* The key the press signs, shown before it is pressed. */
   const recordsKey = useMemo(() => recordsKeyFor(identity, request), [identity, request]);
 
@@ -102,10 +122,12 @@ export function ApproveRecordsKey({
     if (!consent.ok || stage.of !== 'ready' || channel === null || !onChain || seats === null || !seated || !vaultOk) return;
     try {
       const at = now();
+      /* With no account kept, this refuses: the account is kept only on the fingerprint confirmation below. */
       channel.answer(recordsKeyAnswerFor(identity, request, seats, at, vaultRead ?? undefined, pinned));
       setStage({ of: 'sent', at });
     } catch (e) {
-      setStage({ of: 'refused', says: e instanceof RecordsKeyRefused ? e.message : 'Nothing has been signed.' });
+      /* Only the wallet's own sentences reach the person; anything else is said plainly. */
+      setStage({ of: 'refused', says: e instanceof RecordsKeyRefused ? e.message : 'Nothing has been signed. Close this window and try again from the page.' });
     }
   }, [consent, stage, channel, onChain, seats, seated, vaultOk, vaultRead, now, identity, request, pinned]);
 
@@ -196,13 +218,48 @@ export function ApproveRecordsKey({
         ))}
       </Section>
       <Section list={false} box={false} aria-label="The company, as the page names it" title="The company, as the page names it" description="This wallet signs with the key it holds for this company and no other.">
-        <CompanyOnChain label={request.company} account={request.account} check={check} doing="signed" />
+        <CompanyOnChain label={request.company} account={request.account} check={check} doing="signed" compareWith={COMPARE_WITH_THE_INVITER} />
       </Section>
+      {pinned === null && seats !== null && (notInvited !== null ? (
+        <StatusAlert tone="danger" title="This wallet will not sign for this company">
+          <p className="m-0" data-invitation-does-not-name-it>{INVITATION_REFUSAL[notInvited]}</p>
+        </StatusAlert>
+      ) : (
+        <Section
+          list={false} box={false} aria-label="Is this your company?" title="Is this your company?"
+          description="This wallet has not kept an account for this company yet."
+        >
+          <p className="m-0 text-sm text-foreground" data-compare-fingerprint>
+            {`Compare the company's fingerprint above with the one ${COMPARE_WITH_THE_INVITER}.`} If they match, press It matches: this wallet keeps this
+            account as the company&rsquo;s for good and will sign for no other, and you then sign your records key. If they do not
+            match, press It does not match: the page&rsquo;s request is refused, nothing is kept, and you should tell the person
+            who invited you by a call or a message.
+          </p>
+          {keeping === 'failed' && (
+            <StatusAlert tone="danger" title="The account was not kept">
+              <p className="m-0" data-keep-failed>
+                This wallet could not keep the company&rsquo;s account, so nothing has been kept or signed. Try again.
+              </p>
+            </StatusAlert>
+          )}
+          <div className="flex flex-wrap gap-2">
+            <Button
+              size="lg" type="button" variant="default" onClick={confirm} data-confirm-fingerprint
+              disabled={!consent.ok || !onChain || onPin === undefined || keeping === 'keeping'}
+            >
+              It matches: keep this account
+            </Button>
+            <Button size="lg" type="button" variant="ghost" data-fingerprint-differs onClick={onDecline}>
+              It does not match
+            </Button>
+          </div>
+        </Section>
+      ))}
       {whoIsAsking}
       <div className="flex flex-wrap gap-2">
         <Button
           size="lg" type="button" variant="default" onClick={sign} data-approve data-sign-records-key
-          disabled={!consent.ok || stage.of !== 'ready' || channel === null || !onChain || !seated || !vaultOk}
+          disabled={!consent.ok || stage.of !== 'ready' || channel === null || !onChain || !seated || !vaultOk || pinned === null}
         >
           Sign my records key
         </Button>
@@ -210,6 +267,11 @@ export function ApproveRecordsKey({
           Do not sign
         </Button>
       </div>
+      {pinned === null && (
+        <p className="m-0 text-sm text-muted-foreground" data-sign-held>
+          Signing is held until this wallet has kept an account for this company, after you confirm its fingerprint above.
+        </p>
+      )}
     </>
   );
 }

@@ -308,7 +308,10 @@ export function ApproveBalance({
         : 'What the page says. This wallet checked that the transaction calls this vault and nothing else, and that the one coin it creates belongs to this vault.'}
     >
       <p className="m-0 text-sm text-muted-foreground">The company, as the page names it</p>
-      <CompanyOnChain label={request.company} account={request.account} check={check} doing="paid" />
+      <CompanyOnChain
+        label={request.company} account={request.account} check={check} doing="paid"
+        compareWith="the person at this company who asked you to pay gave you themselves, and not through this page"
+      />
       <p className="m-0 text-sm text-muted-foreground" style={{ marginTop: '0.75rem' }}>The vault the transaction pays into</p>
       <p className="m-0 font-mono break-all text-foreground text-lg" data-vault>{request.vault}</p>
       <p className="m-0 text-sm text-muted-foreground">

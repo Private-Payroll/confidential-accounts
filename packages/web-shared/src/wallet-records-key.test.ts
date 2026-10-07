@@ -6,7 +6,9 @@ import { parseAsk, type RecordsKeyRequest } from 'midnight-identity/profile/requ
 import { committeeKeyFor } from 'midnight-identity/profile/committee-key';
 import { recordsKeyAnswerFor, recordsKeySignedBy } from 'midnight-identity/profile/records-key';
 import { READY_PING } from 'midnight-identity/profile/channel';
-import { askWalletToSignRecordsKey } from './wallet-records-key.js';
+import { askWalletForAddressesAndBalances, askWalletToSignRecordsKey } from './wallet-records-key.js';
+import { addressesAndBalancesAnswerFor, type AddressesAndBalancesShown } from 'midnight-identity/profile/addresses-and-balances';
+import type { AddressesAndBalancesRequest } from 'midnight-identity/profile/request';
 import type { Openable, WalletWindow } from './wallet-sign-in.js';
 
 /* The page's side of a records-key ask: what it sends, and what it believes of the answer. */
@@ -44,7 +46,8 @@ const walletAnswering = (answer: (ask: unknown) => unknown): { view: Openable; a
   return { view, asked };
 };
 /** The wallet's own parser and answer, as it would answer the ask that arrives. */
-const honestly = (ask: unknown) => recordsKeyAnswerFor(identity, parseAsk(ask, US, 1_000) as RecordsKeyRequest, SEATS, 1_000, HELD);
+/* As a wallet that kept this account for the company answers. */
+const honestly = (ask: unknown) => recordsKeyAnswerFor(identity, parseAsk(ask, US, 1_000) as RecordsKeyRequest, SEATS, 1_000, HELD, ACCOUNT);
 const input = { company: CO, account: ACCOUNT, seat: SEAT.toUpperCase(), atOrigin: US, name: 'Us', rdns: 'example.us', nonce: 'n1', now: () => 1_000 };
 
 describe('ASKING THE PERSON\'S WALLET TO SIGN THEIR RECORDS KEY, AND TO SAY WHO HOLDS THE COMPANY AND ITS VAULT', () => {
@@ -67,6 +70,17 @@ describe('ASKING THE PERSON\'S WALLET TO SIGN THEIR RECORDS KEY, AND TO SAY WHO 
     expect(both.seats).toEqual(SEATS);
   });
 
+  it('HANDS THE WALLET THE INVITATION IT IS GIVEN, WHOLE, SO A WALLET THAT KEPT NO ACCOUNT CAN KEEP THE ONE IT NAMES', async () => {
+    const invitedBy = { committeeKey: { tag: 'schnorr' as const, value: '1d'.repeat(32) }, statement: { account: ACCOUNT as string, signingKey: '2b'.repeat(32), wrappingKey: '3c'.repeat(32), seat: '7c'.repeat(32), signature: '4d'.repeat(64) } };
+    const w = walletAnswering(honestly);
+    await askWalletToSignRecordsKey(w.view, WALLET, { ...input, invitedBy });
+    /* RED WHEN: the invitation is dropped or changed on the way, and the wallet cannot tell which account the inviter named. */
+    expect((parseAsk(w.asked[0], US, 1_000) as RecordsKeyRequest).invitedBy).toEqual(invitedBy);
+    const plain = walletAnswering(honestly);
+    await askWalletToSignRecordsKey(plain.view, WALLET, input);
+    expect('invitedBy' in (plain.asked[0] as object)).toBe(false);
+  });
+
   it('BELIEVES AN ANSWER TO ITS OWN QUESTION, AND NOTHING ELSE', async () => {
     /* RED WHEN: an answer about another vault, about none, for another seat, to another nonce or from another page is taken. */
     for (const [why, bend, code] of [
@@ -80,6 +94,39 @@ describe('ASKING THE PERSON\'S WALLET TO SIGN THEIR RECORDS KEY, AND TO SAY WHO 
       const e = await askWalletToSignRecordsKey(bent.view, WALLET, { ...input, vault: VAULT }).catch((x: Error) => x);
       expect((e as Error).name, why).toBe('WalletDidNotSignRecordsKey');
       /* Each refused by its own check. */
+      expect((e as { code?: string }).code, why).toBe(code);
+    }
+  });
+});
+
+describe('ASKING THE PERSON\'S WALLET WHERE IT RECEIVES AND WHAT IT HOLDS', () => {
+  const SHOWN: AddressesAndBalancesShown = {
+    addresses: { private: `mn_shield-addr_test1${'q'.repeat(60)}`, public: `mn_addr_test1${'p'.repeat(60)}` },
+    balances: [{ token: '00'.repeat(32), amount: '5', visibility: 'private' }, { token: '00'.repeat(32), amount: '9', visibility: 'public' }],
+    read: { private: 900, public: 950 },
+  };
+  const showing = (ask: unknown) => addressesAndBalancesAnswerFor(parseAsk(ask, US, 1_000) as AddressesAndBalancesRequest, SHOWN, 1_000);
+  const asked = { atOrigin: US, name: 'Us', rdns: 'example.us', nonce: 'n9', now: () => 1_000 };
+
+  it('sends an ask the wallet\'s own parser takes, carrying nothing that chooses the wallet, and hands back what the wallet showed', async () => {
+    const w = walletAnswering(showing);
+    const got = await askWalletForAddressesAndBalances(w.view, WALLET, asked);
+    /* RED WHEN: the ask names anything beyond what every ask carries, or the page reads back other than what was shown. */
+    expect(Object.keys(w.asked[0] as object).sort()).toEqual(['expiresAt', 'kind', 'nonce', 'purpose', 'requester', 'schema']);
+    expect((parseAsk(w.asked[0], US, 1_000) as AddressesAndBalancesRequest).kind).toBe('addresses-and-balances');
+    expect(got).toEqual({ shown: SHOWN, at: 1_000 });
+  });
+
+  it('BELIEVES ONLY AN ANSWER TO ITS OWN QUESTION, SHOWN TO THIS PAGE', async () => {
+    for (const [why, bend, code] of [
+      ['another nonce', (a: any) => ({ ...a, nonce: 'n2' }), 'nonce-mismatch'],
+      ['another page', (a: any) => ({ ...a, origin: 'https://elsewhere.example' }), 'origin-mismatch'],
+      ['a figure for a side not read', (a: any) => ({ ...a, read: { private: null, public: 950 } }), 'not-an-answer'],
+    ] as const) {
+      const bent = walletAnswering((ask) => bend(JSON.parse(JSON.stringify(showing(ask)))));
+      const e = await askWalletForAddressesAndBalances(bent.view, WALLET, asked).catch((x: Error) => x);
+      /* RED WHEN: the named answer is believed. */
+      expect((e as Error).name, why).toBe('WalletDidNotShowAddressesAndBalances');
       expect((e as { code?: string }).code, why).toBe(code);
     }
   });

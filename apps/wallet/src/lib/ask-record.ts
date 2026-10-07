@@ -39,8 +39,16 @@ export interface AskRecordLine {
   readonly times?: number;
 }
 
-/** A word only: letters, digits and the three separators, cut short. Anything else is replaced, never carried. */
-const word = (detail: string): string => detail.replace(/[^a-z0-9:-]/giu, '_').slice(0, 48);
+/**
+ * **FIXED WORDS ONLY.** A detail is words joined by `:`, and each word is kept
+ * only when it is lower-case letters joined by `-` - the shape of every kind,
+ * stage, refusal and failure this wallet names. Anything else in that place -
+ * a number, an address, part of a sentence - is replaced, whole, by `other`, so
+ * no digit and no fragment of a value is ever carried.
+ */
+const FIXED_WORD = /^[a-z]+(?:-[a-z]+)*$/u;
+const word = (detail: string): string =>
+  detail.split(':').map((w) => (FIXED_WORD.test(w) && w.length <= 32 ? w : 'other')).join(':').slice(0, 48);
 
 /** Every line kept here, oldest first. An unreadable record reads as none. */
 export function readAskRecord(port: Port): AskRecordLine[] {

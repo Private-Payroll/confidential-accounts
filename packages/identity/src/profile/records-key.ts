@@ -339,6 +339,59 @@ export function recordsKeyFor(identity: Identity, request: RecordsKeyRequest): s
 const frozenKeys = (keys: readonly { readonly tag: string; readonly value: string }[]) =>
   Object.freeze(keys.map((k) => Object.freeze({ tag: k.tag, value: k.value.toLowerCase() })));
 
+/** What can be wrong with the invitation a page hands over for a wallet that has kept no account for the company. */
+export type InvitationRefusal = 'no-invitation' | 'other-account' | 'not-signed' | 'inviter-not-on-account';
+
+/**
+ * **WHAT A PERSON IS TOLD FOR EACH, AND WHAT TO DO.** A missing invitation is
+ * opened again; one that does not match cannot be repaired by opening it again,
+ * so the person asks the inviter for a new one and compares the company's
+ * fingerprint with them.
+ */
+export const INVITATION_REFUSAL: Readonly<Record<InvitationRefusal, string>> = Object.freeze({
+  'no-invitation':
+    'The page did not hand over the invitation you joined by, so this wallet cannot tell which account is your company\'s. '
+    + 'Nothing has been signed. Open the invitation link you were sent, on this device, and try again from there; if you '
+    + 'were not sent one, ask the person who added you for an invitation.',
+  'other-account':
+    'The invitation the page handed over names a different account for this company, so nothing has been signed. '
+    + 'Ask the person who invited you for a new invitation, and compare the company\'s fingerprint with them when you open it.',
+  'not-signed':
+    'The invitation the page handed over was not signed for this company by the signer it names, so nothing has been signed. '
+    + 'Ask the person who invited you for a new invitation, and compare the company\'s fingerprint with them when you open it.',
+  'inviter-not-on-account':
+    'The signer the invitation names is not on this company\'s account, as this wallet read it from the network, so nothing '
+    + 'has been signed. If they joined only a minute ago, wait a minute and open this again; otherwise ask the person who '
+    + 'invited you for a new invitation, and compare the company\'s fingerprint with them when you open it.',
+});
+
+/**
+ * **WHY THE INVITATION A PAGE HANDED OVER DOES NOT NAME THIS ACCOUNT**, as this
+ * wallet reads it, or null when it does. The inviting signer's entry must name
+ * the account the ask names, be signed by the committee key the invitation
+ * names for this company's label and that account, and that key and the
+ * inviter's seat must both be on the account as this wallet read it off the
+ * chain (`seats`).
+ *
+ * **IT NEVER SETS THE ACCOUNT ON ITS OWN.** Everything it checks reaches the
+ * wallet through the page, and a service could deploy a second account
+ * carrying the label under a committee of its own. What decides is the person:
+ * the screen shows the company's fingerprint, read off the chain, and the
+ * account is kept only when they confirm it matches the one the inviter gave
+ * them directly.
+ */
+export function whyTheInvitationDoesNotNameIt(request: RecordsKeyRequest, seats: AccountSeats): InvitationRefusal | null {
+  const invited = request.invitedBy;
+  if (invited === undefined) return 'no-invitation';
+  if (invited.statement.account !== request.account) return 'other-account';
+  if (!directoryEntrySignedBy(request.company, request.account, invited.committeeKey, invited.statement)) return 'not-signed';
+  const sameKey = (k: { readonly tag: string; readonly value: string }): boolean =>
+    k.tag.toLowerCase() === invited.committeeKey.tag.toLowerCase()
+    && k.value.toLowerCase() === invited.committeeKey.value.toLowerCase();
+  if (!seats.committee.some(sameKey) || !seats.seats.includes(invited.statement.seat)) return 'inviter-not-on-account';
+  return null;
+}
+
 /**
  * **THE ANSWER THE PERSON'S PRESS PRODUCES, AND THE SEAT CHECK IS INSIDE IT.**
  * `seats` is what this wallet read off the account itself; a seat the account
@@ -357,8 +410,21 @@ export function recordsKeyAnswerFor(
   }
   if (pinned !== null && pinned !== request.account) {
     throw new RecordsKeyRefused(
-      'The page names an account for this company other than the one this wallet kept as its account when you created it, '
+      'The page names an account for this company other than the one this wallet kept as its account, '
       + 'so nothing has been signed.');
+  }
+  /*
+   * **A WALLET THAT HAS KEPT NO ACCOUNT FOR THE COMPANY SIGNS NOTHING.** The
+   * account is kept only on the person's own confirmation that the company's
+   * fingerprint matches the one the inviter gave them, on the screen, and only
+   * then is anything signed for it.
+   */
+  if (pinned === null) {
+    const why = whyTheInvitationDoesNotNameIt(request, seats);
+    throw new RecordsKeyRefused(why === null
+      ? 'This wallet has not kept an account for this company yet, so nothing has been signed. Compare the company\'s '
+        + 'fingerprint with the one the person who invited you gave you, and confirm it first.'
+      : INVITATION_REFUSAL[why]);
   }
   if (request.vault !== undefined && (vault === undefined || vault.vault !== request.vault)) {
     throw new RecordsKeyRefused(

@@ -11,7 +11,7 @@ import { unlockKeyFor } from './unlock.js';
 import type { UnlockRequest } from './request.js';
 import {
   DIRECTORY_ENTRY_STATEMENT_TAG, HOLDERS_ANSWER_SCHEMA, RECORDS_KEY_ANSWER_SCHEMA, RECORDS_KEY_STATEMENT_TAG, RecordsKeyRefused,
-  directoryEntrySignedBy, directoryEntryStatementBytes, holdersAnswerFor, readHoldersAnswer, readRecordsKeyAnswer, recordsKeyAnswerFor,
+  INVITATION_REFUSAL, directoryEntrySignedBy, directoryEntryStatementBytes, whyTheInvitationDoesNotNameIt, holdersAnswerFor, readHoldersAnswer, readRecordsKeyAnswer, recordsKeyAnswerFor,
   recordsKeySignedBy, recordsKeyStatementBytes, recordsPublicKeyOf, signDirectoryEntry, signRecordsKey,
 } from './records-key.js';
 
@@ -112,14 +112,54 @@ describe('THE RECORDS-KEY ASK: SIGNED ONLY FOR A SEAT THE ACCOUNT HOLDS NOW, AND
   it('SIGNS ONLY FOR THE ACCOUNT THIS WALLET PINNED FOR THE COMPANY WHEN IT CREATED IT, WHERE IT PINNED ONE', () => {
     /* RED WHEN: a wallet that pinned the company's account signs a records key or an entry for another account carrying the label. */
     expect(() => recordsKeyAnswerFor(me, ask({ signingKey: '3c'.repeat(32) }), seats, NOW, undefined, 'a8'.repeat(32) as AccountAddress))
-      .toThrow(/other than the one this wallet kept as its account when you created it/);
+      .toThrow(/other than the one this wallet kept as its account/);
     const answer = recordsKeyAnswerFor(me, ask({ signingKey: '3c'.repeat(32) }), seats, NOW, undefined, ACCOUNT);
     expect(recordsKeySignedBy(CO, ACCOUNT, answer.committeeKey, answer.statement)).toBe(true);
     expect(answer.entry?.account).toBe(ACCOUNT);
   });
 
+  it('A WALLET THAT KEPT NO ACCOUNT SIGNS NOTHING; THE INVITATION IS ONLY READ, AND EACH WAY IT CAN BE WRONG IS SAID', () => {
+    /* The inviting signer: their committee key and the entry their wallet signed, as the invitation carries them. */
+    const INVITER_SEAT = '7a'.repeat(32);
+    const inviterKey = committeeKeyFor(somebodyElse, CO) as { tag: 'schnorr'; value: string };
+    const entry = signDirectoryEntry(somebodyElse, CO, ACCOUNT, new Uint8Array(32).fill(6), '2b'.repeat(32), INVITER_SEAT);
+    const invitedBy = { committeeKey: inviterKey, statement: entry };
+    const onChain = { committee: [...seats.committee, inviterKey], threshold: 1, seats: [...seats.seats, INVITER_SEAT] };
+    /* An invitation that checks out still sets nothing: the person's fingerprint confirmation does, on the screen. */
+    expect(whyTheInvitationDoesNotNameIt(ask({ invitedBy }), onChain)).toBeNull();
+    /* RED WHEN: a wallet with no account kept signs for an account the page named, with or without an invitation. */
+    expect(() => recordsKeyAnswerFor(me, ask({ invitedBy }), onChain, NOW)).toThrow(/Compare the company's fingerprint/);
+    expect(() => recordsKeyAnswerFor(me, ask(), onChain, NOW)).toThrow(INVITATION_REFUSAL['no-invitation']);
+    const signed = recordsKeyAnswerFor(me, ask({ invitedBy }), onChain, NOW, undefined, ACCOUNT);
+    expect(recordsKeySignedBy(CO, ACCOUNT, signed.committeeKey, signed.statement)).toBe(true);
+    for (const [why, bent, chain, code] of [
+      ['an entry for another account', { ...invitedBy, statement: signDirectoryEntry(somebodyElse, CO, 'a8'.repeat(32) as AccountAddress, new Uint8Array(32).fill(6), '2b'.repeat(32), INVITER_SEAT) }, onChain, 'other-account'],
+      ['an entry signed by a key it does not name', { ...invitedBy, committeeKey: committeeKeyFor(me, CO) as { tag: 'schnorr'; value: string } }, onChain, 'not-signed'],
+      ['an inviter whose key is not on the account', invitedBy, { ...onChain, committee: seats.committee }, 'inviter-not-on-account'],
+      ['an inviter whose seat is not on the account', invitedBy, { ...onChain, seats: seats.seats }, 'inviter-not-on-account'],
+      ['the same key value under another tag on the chain', invitedBy, { ...onChain, committee: [...seats.committee, { tag: 'ecdsa', value: inviterKey.value }] }, 'inviter-not-on-account'],
+    ] as const) {
+      /* RED WHEN: the named invitation is read as naming the account, so the screen offers to keep it. */
+      expect(whyTheInvitationDoesNotNameIt(ask({ invitedBy: bent }), chain as never), why).toBe(code);
+      /* RED WHEN: what the person is told is anything but the sentence for that defect, which says what to do. */
+      expect(() => recordsKeyAnswerFor(me, ask({ invitedBy: bent }), chain as never, NOW), why).toThrow(INVITATION_REFUSAL[code]);
+    }
+    /* RED WHEN: the tag or the value is compared in one spelling only, so a key the chain writes in upper case is not found. */
+    expect(whyTheInvitationDoesNotNameIt(ask({ invitedBy }), { ...onChain, committee: [{ tag: 'SCHNORR', value: inviterKey.value.toUpperCase() }] })).toBeNull();
+    for (const code of ['other-account', 'not-signed', 'inviter-not-on-account'] as const) {
+      /* RED WHEN: an invitation that cannot be repaired by opening it again is told to be opened again. */
+      expect(INVITATION_REFUSAL[code]).toMatch(/ask the person who invited you for a new invitation, and compare the company's fingerprint with them/i);
+    }
+    /* RED WHEN: an invitation is read anywhere but on a records-key ask, or a malformed one is taken. */
+    expect(() => ask({ invitedBy: { ...invitedBy, statement: { ...entry, signature: 'zz' } } })).toThrow(/is not a signer's committee key/);
+    expect(() => parseAsk({
+      schema: 'midnight-identity/disclosure-request/v1', kind: 'holders', requester: { name: 'Payroll', rdns: 'example.payroll' },
+      purpose: 'x', nonce: 'h1', expiresAt: NOW + 60_000, company: CO, account: ACCOUNT, invitedBy,
+    }, PAGE, NOW)).toThrow(/an invitation/);
+  });
+
   it('signs the records key of this company\'s key for the seat asked about, and hands back the seats it read', () => {
-    const answer = recordsKeyAnswerFor(me, ask(), seats, NOW);
+    const answer = recordsKeyAnswerFor(me, ask(), seats, NOW, undefined, ACCOUNT);
     expect(answer.schema).toBe(RECORDS_KEY_ANSWER_SCHEMA);
     const companyKeyHere = unlockKeyFor(me, { ...ask(), kind: 'unlock' } as unknown as UnlockRequest);
     /* RED WHEN: the statement is for any other records key than the one this company's key opens. */
@@ -138,8 +178,8 @@ describe('THE RECORDS-KEY ASK: SIGNED ONLY FOR A SEAT THE ACCOUNT HOLDS NOW, AND
 
   it('A SEAT THE ACCOUNT DOES NOT HOLD NOW IS REFUSED, AND NOTHING IS SIGNED', () => {
     /* RED WHEN: the wallet signs a seat somebody has left. */
-    expect(() => recordsKeyAnswerFor(me, ask(), { ...seats, seats: [ANOTHER_SEAT] }, NOW)).toThrow(RecordsKeyRefused);
-    expect(() => recordsKeyAnswerFor(me, ask(), { ...seats, seats: [] }, NOW)).toThrow(/not one this company's account holds now/);
+    expect(() => recordsKeyAnswerFor(me, ask(), { ...seats, seats: [ANOTHER_SEAT] }, NOW, undefined, ACCOUNT)).toThrow(RecordsKeyRefused);
+    expect(() => recordsKeyAnswerFor(me, ask(), { ...seats, seats: [] }, NOW, undefined, ACCOUNT)).toThrow(/not one this company's account holds now/);
   });
 
   it('the ask is read whole: a seat that is not one, or a seat on any other kind, is refused', () => {
@@ -154,7 +194,7 @@ describe('THE RECORDS-KEY ASK: SIGNED ONLY FOR A SEAT THE ACCOUNT HOLDS NOW, AND
   });
 
   it('THE PAGE REFUSES AN ANSWER TO ANY OTHER QUESTION, OR ONE NOT SIGNED FOR ITS SEAT', () => {
-    const answer = recordsKeyAnswerFor(me, ask(), seats, NOW);
+    const answer = recordsKeyAnswerFor(me, ask(), seats, NOW, undefined, ACCOUNT);
     const code = (over: Record<string, unknown>, exp = expecting) => {
       const r = readRecordsKeyAnswer({ ...answer, ...over }, exp);
       return r.ok ? 'accepted' : r.code;
@@ -193,22 +233,22 @@ describe('THE RECORDS-KEY ASK: SIGNED ONLY FOR A SEAT THE ACCOUNT HOLDS NOW, AND
     });
 
     it('the answer carries who holds the vault as the wallet read it, and the wallet signs nothing without that read', () => {
-      const answer = recordsKeyAnswerFor(me, ask({ vault: VAULT }), seats, NOW, held);
+      const answer = recordsKeyAnswerFor(me, ask({ vault: VAULT }), seats, NOW, held, ACCOUNT);
       /* RED WHEN: the vault the wallet read does not travel with the answer, or travels changed. */
       expect(answer.vault).toEqual(held);
       /* RED WHEN: the wallet signs for a vault it did not read, or read another vault in its place. */
-      expect(() => recordsKeyAnswerFor(me, ask({ vault: VAULT }), seats, NOW)).toThrow(/has not read the vault the page names/);
-      expect(() => recordsKeyAnswerFor(me, ask({ vault: VAULT }), seats, NOW, { ...held, vault: '9b'.repeat(32) }))
+      expect(() => recordsKeyAnswerFor(me, ask({ vault: VAULT }), seats, NOW, undefined, ACCOUNT)).toThrow(/has not read the vault the page names/);
+      expect(() => recordsKeyAnswerFor(me, ask({ vault: VAULT }), seats, NOW, { ...held, vault: '9b'.repeat(32) }, ACCOUNT))
         .toThrow(/has not read the vault the page names/);
       /* RED WHEN: the wallet signs while the vault it read is pinned to another company's account. */
-      expect(() => recordsKeyAnswerFor(me, ask({ vault: VAULT }), seats, NOW, { ...held, account: 'ad'.repeat(32) }))
+      expect(() => recordsKeyAnswerFor(me, ask({ vault: VAULT }), seats, NOW, { ...held, account: 'ad'.repeat(32) }, ACCOUNT))
         .toThrow(/belongs to a different company account/);
       /* An ask that names no vault is answered with none. */
-      expect('vault' in recordsKeyAnswerFor(me, ask(), seats, NOW, held)).toBe(false);
+      expect('vault' in recordsKeyAnswerFor(me, ask(), seats, NOW, held, ACCOUNT)).toBe(false);
     });
 
     it('THE PAGE TAKES AN ANSWER ONLY WHEN IT SAYS WHO HOLDS THE VAULT IT ASKED ABOUT', () => {
-      const answer = recordsKeyAnswerFor(me, ask({ vault: VAULT }), seats, NOW, held);
+      const answer = recordsKeyAnswerFor(me, ask({ vault: VAULT }), seats, NOW, held, ACCOUNT);
       const withVault = { ...expecting, vault: VAULT };
       const read = readRecordsKeyAnswer(answer, withVault);
       expect(read.ok && read.vault).toEqual(held);
@@ -289,8 +329,8 @@ describe('A DIRECTORY ENTRY, SIGNED BY THE WALLET WITH THE COMMITTEE KEY, IN THE
     const seats = { committee: [mine as { tag: string; value: string }], threshold: 1, seats: [SEAT] };
     const expecting = { atOrigin: PAGE, expectingNonce: 'r1', company: CO, account: ACCOUNT, seat: SEAT };
     /* RED WHEN: an entry is signed when the page asked for none. */
-    expect(recordsKeyAnswerFor(me, ask(), seats, NOW).entry).toBeUndefined();
-    const answer = recordsKeyAnswerFor(me, ask({ signingKey: FILING }), seats, NOW);
+    expect(recordsKeyAnswerFor(me, ask(), seats, NOW, undefined, ACCOUNT).entry).toBeUndefined();
+    const answer = recordsKeyAnswerFor(me, ask({ signingKey: FILING }), seats, NOW, undefined, ACCOUNT);
     /* RED WHEN: the entry is for another filing key, records key or seat than the ask's, or does not verify. */
     const companyKeyHere = unlockKeyFor(me, { ...ask(), kind: 'unlock' } as unknown as UnlockRequest);
     expect({ ...answer.entry, signature: '' }).toEqual({ account: ACCOUNT, signingKey: FILING, wrappingKey: recordsPublicKeyOf(companyKeyHere), seat: SEAT, signature: '' });
@@ -300,7 +340,7 @@ describe('A DIRECTORY ENTRY, SIGNED BY THE WALLET WITH THE COMMITTEE KEY, IN THE
     /* RED WHEN: the page takes an entry for another filing key, or an answer with no entry, as the one it asked for. */
     const other = readRecordsKeyAnswer(answer, { ...expecting, signingKey: '4d'.repeat(32) });
     expect(other.ok ? 'accepted' : other.code).toBe('not-signed');
-    const none = readRecordsKeyAnswer(recordsKeyAnswerFor(me, ask(), seats, NOW), { ...expecting, signingKey: FILING });
+    const none = readRecordsKeyAnswer(recordsKeyAnswerFor(me, ask(), seats, NOW, undefined, ACCOUNT), { ...expecting, signingKey: FILING });
     expect(none.ok ? 'accepted' : none.code).toBe('not-signed');
     /* RED WHEN: the page takes an entry whose signature does not verify against the wallet's committee key. */
     const forged = { ...answer, entry: { ...answer.entry!, signature: answer.entry!.signature.replace(/^./u, (c) => (c === '0' ? '1' : '0')) } };

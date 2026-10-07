@@ -17,6 +17,7 @@ import {
   SWEEP_SLOT_GIVE_UP_MS, earnsAPreviewPlace, holdsMoney, useWalletBalances,
 } from './wallet-balances.js';
 import type { WalletBalanceRows } from './wallet-balances.js';
+import { KEPT_SNAPSHOT } from '../testing/snapshot.js';
 
 (globalThis as { Buffer?: unknown }).Buffer = PolyfillBuffer;
 
@@ -188,10 +189,10 @@ describe('a figure that did not record other tokens is not ranked empty', () => 
     /* Account 9 was saved by an older wallet that recorded NIGHT only. Account
      * 11 was checked by this one and holds nothing. */
     await saveWalletCheckpoint(coinPublicKeyOf(identity, 9), 9, {
-      serialized: 'x', night: 0n, asOf: Date.now(),
+      serialized: KEPT_SNAPSHOT, night: 0n, asOf: Date.now(),
     }, ORIGINAL_SLOT);
     await saveWalletCheckpoint(coinPublicKeyOf(identity, 11), 11, {
-      serialized: 'x', night: 0n, others: {}, asOf: Date.now(),
+      serialized: KEPT_SNAPSHOT, night: 0n, others: {}, asOf: Date.now(),
     }, ORIGINAL_SLOT);
     render(
       <BalanceEnginesContext.Provider value={{ shielded: inert, unshielded: inert, dust: inert }}>

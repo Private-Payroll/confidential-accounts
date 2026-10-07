@@ -382,6 +382,26 @@ describe('THE WALLET READS THE CHAIN BEFORE IT PAYS', () => {
     expect(log).toEqual([]);
   });
 
+  it('A RESTORED READ THAT STALLS AFTER IT HEARD THE NETWORK IS NOT TOLD IT COULD NOT REACH THE NETWORK', async () => {
+    const log: string[] = [];
+    const shielded = aPartStillReading();
+    const timers = handTimers();
+    const paid = payForThePage(doorsOver({ shielded }, log), tx, undefined, { timers }).catch((e: unknown) => e);
+    await settle();
+    /* A part restored from a snapshot says where its snapshot got to, and that it is not connected. */
+    shielded.says(false, false, 51_333n, 0n);
+    /* The network hands back the snapshot's last event first, and the part is connected from then on. */
+    shielded.says(true, false, 51_333n, 51_400n);
+    /* Then the connection drops part of the way through, and the part says so while it tries again. */
+    shielded.says(false, false, 51_333n, 51_400n);
+    timers.fireAll();
+    const e = await paid;
+    /* RED WHEN: the choice of words reads the part's connection now rather than whether it ever heard the network, so a
+     * restored read that stalls is told the wallet could not reach the network. */
+    expect((e as Error).message).toBe(CHAIN_WENT_QUIET);
+    expect(log).toEqual([]);
+  });
+
   it('THE PUBLIC PART\'S PROGRESS IS READ IN ITS OWN WORDS: THE SAME REPORT AGAIN IS SILENCE, A NEW ONE IS MOVEMENT', async () => {
     let observer: Parameters<WalletPartForBalancing['state']['subscribe']>[0] | null = null;
     const unshielded: WalletPartForBalancing = { state: { subscribe: (o) => { observer = o; return { unsubscribe: () => {} }; } } };

@@ -176,7 +176,7 @@ export const PROGRESS_SCHEMA = 'midnight-identity/wallet-progress/v1';
  * than inserted, so the sentence a refusal already produced does not change
  * shape for the three kinds that were there before it.
  */
-export const ASK_KINDS = ['disclosure', 'sign-in', 'unlock', 'join', 'keyring', 'balance', 'committee', 'records-key', 'holders', 'creation', 'join-code'] as const;
+export const ASK_KINDS = ['disclosure', 'sign-in', 'unlock', 'join', 'keyring', 'balance', 'committee', 'records-key', 'holders', 'creation', 'join-code', 'addresses-and-balances'] as const;
 export type AskKind = (typeof ASK_KINDS)[number];
 
 /** One thing an application is asking for. */
@@ -482,6 +482,27 @@ export interface RecordsKeyRequest extends Asking {
    * Claimed: the wallet shows it and signs it, and cannot tell whose it is.
    */
   readonly signingKey?: string;
+  /**
+   * The invitation this person joined by, when this wallet has kept no account
+   * for the company yet: the inviting signer's committee key and the directory
+   * entry their wallet signed, as the signed invitation carries them. The
+   * wallet keeps the account that entry names, after checking the signature and
+   * reading off the chain that the key and its seat are on that account, and
+   * signs for no other account from then on. Never the service's word.
+   */
+  readonly invitedBy?: InvitedBy;
+}
+
+/** The inviting signer, as a signed invitation names them: their committee key and the entry their wallet signed. */
+export interface InvitedBy {
+  readonly committeeKey: { readonly tag: 'schnorr'; readonly value: string };
+  readonly statement: {
+    readonly account: string;
+    readonly signingKey: string;
+    readonly wrappingKey: string;
+    readonly seat: string;
+    readonly signature: string;
+  };
 }
 
 /** One circuit's verifier key, as the second step of a company's creation inserts it. Base64 of the key's file. */
@@ -555,15 +576,39 @@ export interface JoinCodeRequest extends Asking {
   readonly kind: 'join-code';
   /** The company's label. It selects the key that signs. */
   readonly company: CompanyLabel;
+  /**
+   * The account that carries the label. Claimed: the wallet reads it off the
+   * chain and shows the company's fingerprint from it before anything is
+   * signed. It is not part of what the code signs.
+   */
+  readonly account: AccountAddress;
   /** The id the person signed in to the company's service with. */
   readonly person: string;
   readonly parts: JoinParts;
 }
 
+/**
+ * ASKING THIS WALLET FOR THE ADDRESSES ONE OF ITS WALLETS RECEIVES AT, AND
+ * WHAT THAT WALLET HOLDS (`addresses-and-balances.ts`).
+ *
+ * The answer is the wallet's private and public receiving addresses and its
+ * balance of every token on each side, as this wallet reads them for itself.
+ * **It is answered only after one press on its own screen, every time**: the
+ * page is served by a service that is not trusted with a person's money, so
+ * nothing about it leaves this wallet without the person seeing exactly what
+ * goes. Nothing is signed.
+ *
+ * **IT CARRIES NOTHING BUT WHAT EVERY ASK CARRIES.** Which wallet answers is
+ * chosen on the screen, never by the page, and anything else is refused.
+ */
+export interface AddressesAndBalancesRequest extends Asking {
+  readonly kind: 'addresses-and-balances';
+}
+
 /** What an application may open this wallet with. */
 export type Ask =
   | DisclosureRequest | SignInRequest | UnlockRequest | JoinRequest | KeyringRequest | BalanceRequest | CommitteeRequest
-  | RecordsKeyRequest | HoldersRequest | CreationRequest | JoinCodeRequest;
+  | RecordsKeyRequest | HoldersRequest | CreationRequest | JoinCodeRequest | AddressesAndBalancesRequest;
 
 /**
  * THE KINDS THAT CARRY A LIST OF THINGS ASKED FOR.
@@ -652,7 +697,9 @@ export type RequestFailure =
   | 'creation-fields-on-another-kind'
   /* A request to make a join code: its parts, and anything more than a join code carries. */
   | 'not-a-join-code'
-  | 'join-code-fields-on-another-kind';
+  | 'join-code-fields-on-another-kind'
+  /* A request for a wallet's addresses and balances carries nothing of its own, and anything more is refused. */
+  | 'more-than-addresses-and-balances';
 
 export class RequestError extends Error {
   readonly code: RequestFailure;
@@ -1087,6 +1134,29 @@ function committeeChangeOf(body: Record<string, unknown>, asking: Asking): Commi
 
 const SEAT = /^[0-9a-f]{64}$/u;
 
+const HEX128 = /^[0-9a-f]{128}$/u;
+
+/** The inviting signer an ask hands over, read whole: a schnorr committee key and a signed entry, every part lower-case hex. */
+function invitedByIn(value: unknown, asks: string, nothing: string): InvitedBy {
+  const v = value as { committeeKey?: { tag?: unknown; value?: unknown }; statement?: Record<string, unknown> } | null;
+  const s = v?.statement;
+  const hex64 = (x: unknown): x is string => typeof x === 'string' && SEAT.test(x);
+  if (typeof v !== 'object' || v === null || v.committeeKey?.tag !== 'schnorr' || !hex64(v.committeeKey.value)
+    || typeof s !== 'object' || s === null || !hex64(s['account']) || !hex64(s['signingKey']) || !hex64(s['wrappingKey'])
+    || !hex64(s['seat']) || typeof s['signature'] !== 'string' || !HEX128.test(s['signature'])) {
+    throw new RequestError(
+      'malformed-field',
+      `${asks} and what it hands over as the invitation you joined by is not a signer's committee key and the entry their `
+      + `wallet signed. ${nothing}`);
+  }
+  return Object.freeze({
+    committeeKey: Object.freeze({ tag: 'schnorr' as const, value: v.committeeKey.value }),
+    statement: Object.freeze({
+      account: s['account'], signingKey: s['signingKey'], wrappingKey: s['wrappingKey'], seat: s['seat'], signature: s['signature'],
+    }),
+  });
+}
+
 /** A records-key ask, read whole: a label, the account that carries it, and one seat. */
 function recordsKeyAskOf(body: Record<string, unknown>, asking: Asking): RecordsKeyRequest {
   if ('wants' in body) {
@@ -1123,7 +1193,10 @@ function recordsKeyAskOf(body: Record<string, unknown>, asking: Asking): Records
     }
     signingKey = k;
   }
-  const withKey = signingKey === undefined ? {} : { signingKey };
+  const withKey = {
+    ...(signingKey === undefined ? {} : { signingKey }),
+    ...('invitedBy' in body ? { invitedBy: invitedByIn(body['invitedBy'], asks, nothing) } : {}),
+  };
   if (!('vault' in body)) return Object.freeze({ ...asking, kind: 'records-key' as const, company, account, seat, ...withKey });
   const vault = readVaultAddress(body['vault']);
   if (vault === null || String(vault) === String(account)) {
@@ -1184,12 +1257,12 @@ function creationAskOf(body: Record<string, unknown>, asking: Asking): CreationR
   return Object.freeze({ ...asking, kind: 'creation' as const, company, account, deploy, insert: Object.freeze(keys) });
 }
 
-/** Every field a join-code ask may carry: the ones every ask carries, then its own three. */
+/** Every field a join-code ask may carry: the ones every ask carries, then its own four. */
 const JOIN_CODE_FIELDS: ReadonlySet<string> = new Set([
-  'schema', 'kind', 'requester', 'purpose', 'nonce', 'expiresAt', 'company', 'person', 'parts',
+  'schema', 'kind', 'requester', 'purpose', 'nonce', 'expiresAt', 'company', 'account', 'person', 'parts',
 ]);
 
-/** A join-code ask, read whole: a label, the person's sign-in, and the parts to sign. */
+/** A join-code ask, read whole: a label, the account that carries it, the person's sign-in, and the parts to sign. */
 function joinCodeAskOf(body: Record<string, unknown>, asking: Asking): JoinCodeRequest {
   const asks = 'this asks your wallet to make a code for joining a company';
   const nothing = 'Nothing has been shown to them and nothing has been signed.';
@@ -1200,6 +1273,7 @@ function joinCodeAskOf(body: Record<string, unknown>, asking: Asking): JoinCodeR
       `${asks}, and it also carries ${extra.map((k) => `'${k}'`).join(', ')}, which is refused. ${nothing}`);
   }
   const company = labelIn(body['company'], asks, nothing);
+  const account = accountIn(body['account'], asks, nothing);
   const person = body['person'];
   if (typeof person !== 'string' || !/^[A-Za-z0-9_-]{1,64}$/u.test(person)) {
     throw new RequestError('not-a-person', `${asks} and names you by something that is not a sign-in. ${nothing}`);
@@ -1208,7 +1282,25 @@ function joinCodeAskOf(body: Record<string, unknown>, asking: Asking): JoinCodeR
   if (parts === null) {
     throw new RequestError('not-a-join-code', `${asks} and what it asks to be signed is neither a signer's keys nor a payee's. ${nothing}`);
   }
-  return Object.freeze({ ...asking, kind: 'join-code' as const, company, person, parts });
+  return Object.freeze({ ...asking, kind: 'join-code' as const, company, account, person, parts });
+}
+
+/** Every field an addresses-and-balances ask may carry: the ones every ask carries, and nothing of its own. */
+const ADDRESSES_AND_BALANCES_FIELDS: ReadonlySet<string> = new Set([
+  'schema', 'kind', 'requester', 'purpose', 'nonce', 'expiresAt',
+]);
+
+/** An addresses-and-balances ask, read whole: nothing of its own, so anything more is refused by name. */
+function addressesAndBalancesAskOf(body: Record<string, unknown>, asking: Asking): AddressesAndBalancesRequest {
+  const extra = Object.keys(body).filter((k) => !ADDRESSES_AND_BALANCES_FIELDS.has(k));
+  if (extra.length > 0) {
+    throw new RequestError(
+      'more-than-addresses-and-balances',
+      'this asks your wallet for the addresses one of your wallets receives at and what it holds, and it also carries '
+      + `${extra.map((k) => `'${k}'`).join(', ')}. Which wallet answers is yours to choose on the screen, so anything `
+      + 'more is refused rather than ignored. Nothing has been shown to them.');
+  }
+  return Object.freeze({ ...asking, kind: 'addresses-and-balances' as const });
 }
 
 /** Every field a holders ask may carry: the ones every ask carries, then its own three. */
@@ -1311,11 +1403,11 @@ export function parseAsk(raw: unknown, observedOrigin: string, now: number): Ask
    * **A SEAT BELONGS TO A RECORDS-KEY ASK AND TO NOTHING ELSE**, refused by
    * presence on every other kind for the keyring fields' reason.
    */
-  if (kind !== 'records-key' && ('seat' in body || 'signingKey' in body)) {
+  if (kind !== 'records-key' && ('seat' in body || 'signingKey' in body || 'invitedBy' in body)) {
     throw new RequestError(
       'records-key-fields-on-another-kind',
-      `this is a '${kind}' and it names a seat on a company's account or a filing key. Those belong only to a request `
-      + 'to sign your records key for your seat, so they are refused rather than ignored. Nothing has been shown to them.');
+      `this is a '${kind}' and it names a seat on a company's account, an invitation, or a filing key. Those belong only to a `
+      + 'request to sign your records key for your seat, so they are refused rather than ignored. Nothing has been shown to them.');
   }
 
   /*
@@ -1344,6 +1436,7 @@ export function parseAsk(raw: unknown, observedOrigin: string, now: number): Ask
   if (kind === 'creation') return creationAskOf(body, asking);
   if (kind === 'records-key') return recordsKeyAskOf(body, asking);
   if (kind === 'holders') return holdersAskOf(body, asking);
+  if (kind === 'addresses-and-balances') return addressesAndBalancesAskOf(body, asking);
 
   if (kind === 'balance') {
     if ('wants' in body) {

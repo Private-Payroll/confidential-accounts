@@ -10,6 +10,8 @@ import { isWalletAccount } from './subwallets.js';
  * `shielded-tokens.ts` imports nothing, so this is acyclic. */
 import { otherTokensFromStored, otherTokensToStored } from '../chain/shielded-tokens.js';
 import type { OtherTokens } from '../chain/shielded-tokens.js';
+/* What a snapshot says about itself. `snapshot.ts` imports only the ledger, so this is acyclic. */
+import { snapshotFacts } from '../chain/snapshot.js';
 /* Which compartment a record is in. `wallets-held.ts` imports
  * nothing from this file, so this is acyclic, exactly as `subwallets.ts` is. */
 import {
@@ -488,10 +490,21 @@ interface StoredCheckpoints {
  * the end of it. A defaulted argument here reads mutable global state at an
  * arbitrary later time, and that is precisely the trap.
  */
+/*
+ * **AND NO SNAPSHOT HOLDING ANYTHING IN FLIGHT IS KEPT, WHOEVER ASKS.** A
+ * snapshot taken while coins are set aside, or expected, keeps them so in every
+ * wallet restored from it, for good (`snapshot.ts` says why). The rule is kept
+ * here, in the store, so that it holds for every writer: one that cannot be
+ * read is not kept either, because it cannot be shown to hold nothing. A
+ * refused save writes nothing and answers `false`; missing a checkpoint costs
+ * one slow read.
+ */
 export async function saveWalletCheckpoint(
   coinPublicKey: string, account: number, checkpoint: WalletCheckpoint,
   walletId: string,
-): Promise<void> {
+): Promise<boolean> {
+  const facts = snapshotFacts(checkpoint.serialized);
+  if (facts === null || facts.inFlight) return false;
   const key = await sealingKey(walletId);
   const iv = crypto.getRandomValues(new Uint8Array(12));
   const plain = new TextEncoder().encode(JSON.stringify({
@@ -511,6 +524,7 @@ export async function saveWalletCheckpoint(
     sealed: toBase64Url(sealed),
   };
   await idbPut(checkpointKeyFor(walletId), record);
+  return true;
 }
 
 /**
@@ -543,6 +557,17 @@ export async function loadWalletCheckpoint(
      * this check makes a mismatched outer label a null rather than a lie. */
     if (parsed.coinPublicKey !== coinPublicKey) return null;
     if (typeof parsed.serialized !== 'string' || !Number.isFinite(parsed.asOf)) return null;
+    /* A snapshot holding anything in flight, kept before the store refused one,
+     * is refused here and taken out, so the next complete read writes a clean
+     * one in its place rather than restoring the set-aside coins for ever. */
+    if (snapshotFacts(parsed.serialized)?.inFlight === true) {
+      const now = (await idbGet(checkpointKeyFor(walletId))) as StoredCheckpoints | undefined;
+      if (now?.perAccount?.[String(account)]?.sealed === entry.sealed) {
+        delete now.perAccount[String(account)];
+        await idbPut(checkpointKeyFor(walletId), now);
+      }
+      return null;
+    }
     /* A checkpoint saved before other tokens were recorded has no `others`
      * and loads as NIGHT only; a damaged map throws and is no checkpoint. */
     const others = otherTokensFromStored(parsed.others);

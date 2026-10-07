@@ -171,11 +171,13 @@ export interface Profile {
    */
   readonly releases?: readonly Release[];
   /**
-   * **THE ACCOUNT EACH COMPANY THIS WALLET CREATED IS, PINNED WHEN IT WAS
-   * CREATED.** A label does not name an account on its own: nothing on the
+   * **THE ACCOUNT OF EACH COMPANY THIS WALLET CREATED OR JOINED, PINNED
+   * ONCE.** A label does not name an account on its own: nothing on the
    * chain stops a second account being deployed carrying a label somebody
    * learned. The founding signer's wallet read the deploy it signed for and
-   * wrote its address here, never one a service named. Absent on a profile
+   * wrote its address here; a joining signer's wallet writes an account only
+   * when the person confirms its fingerprint matches the one their inviter gave
+   * them directly. Never one a service named alone. Absent on a profile
    * written before this existed. `pinnedAccountOf` is the only reader and
    * `pinCompanyAccount` the only writer.
    */
@@ -187,8 +189,13 @@ export interface Profile {
 export interface CompanyPin {
   readonly company: CompanyLabel;
   readonly account: AccountAddress;
-  /** How the address was learned: read by this wallet off the deploy it signed the creation of. */
-  readonly from: 'created';
+  /**
+   * How the address was learned: read by this wallet off the deploy it signed
+   * the creation of (`created`), or confirmed by the joining person, who
+   * compared its fingerprint with the one their inviter gave them directly
+   * (`invited`).
+   */
+  readonly from: 'created' | 'invited';
   readonly at: number;
 }
 

@@ -1,14 +1,17 @@
 // @vitest-environment jsdom
-import { afterEach, describe, expect, it } from 'vitest';
+import { afterEach, describe, expect, it, vi } from 'vitest';
 import { act, cleanup, fireEvent, render } from '../testing/render.js';
 import { Buffer as PolyfillBuffer } from 'buffer/';
 import { TEST_MNEMONIC } from '@midnight-ntwrk/testkit-js';
-import { identityFromWords } from 'midnight-identity/keys/derivation';
+import { identityFromSecret, identityFromWords } from 'midnight-identity/keys/derivation';
 import { parseAsk } from 'midnight-identity/profile/request';
 import type { RecordsKeyRequest } from 'midnight-identity/profile/request';
 import type { Channel } from 'midnight-identity/profile/channel';
 import { committeeKeyFor } from 'midnight-identity/profile/committee-key';
-import { recordsKeySignedBy, type RecordsKeyAnswer } from 'midnight-identity/profile/records-key';
+import { INVITATION_REFUSAL, recordsKeySignedBy, signDirectoryEntry, type RecordsKeyAnswer } from 'midnight-identity/profile/records-key';
+import { companyFingerprint } from 'midnight-identity/profile/fingerprint';
+import { pinnedAccountOf } from 'midnight-identity/profile/model';
+import { load } from 'midnight-identity/profile/store';
 import type { AccountAddress, CompanyLabel } from 'midnight-identity/profile/company-label';
 import type { LabelReader } from './company-on-chain.js';
 import { ApproveRecordsKey, type VaultReader } from './approve-records-key.js';
@@ -16,7 +19,7 @@ import { Approve } from './approve.js';
 import { secretFromWords } from 'midnight-identity/keys/derivation';
 import type { ChannelWindow } from 'midnight-identity/profile/channel';
 import { watchedStore } from '../testing/settled-store.js';
-import { watchedOpener } from '../testing/settled-channel.js';
+import { THE_ANSWER, watchedOpener } from '../testing/settled-channel.js';
 
 /*
  * The screen a person sees when a company's page asks this wallet to sign their
@@ -54,7 +57,8 @@ const VAULT = '9a'.repeat(32);
 const HOLDERS = { vault: VAULT, account: ACCOUNT as string, committee: [mine], threshold: 1 };
 const vaultChain = (over: Partial<typeof HOLDERS> = {}): VaultReader => async (v) =>
   (v === VAULT ? { of: 'read', holders: { ...HOLDERS, ...over } } : { of: 'no-vault' });
-const draw = async (answers: unknown[], readLabel: LabelReader, consent = consented, vault?: { readVault: VaultReader }, pinned: AccountAddress | null = null) => {
+/* A wallet that kept this account for the company - as its creator, or from its invitation - unless a test says otherwise. */
+const draw = async (answers: unknown[], readLabel: LabelReader, consent = consented, vault?: { readVault: VaultReader }, pinned: AccountAddress | null = ACCOUNT) => {
   const r = render(
     <ApproveRecordsKey request={vault === undefined ? ask() : ask({ vault: VAULT })} identity={identity} channel={channelFor(answers)} consent={consent}
       whoIsAsking={<p>asker</p>} onDecline={() => answers.push('declined')} now={() => NOW} readLabel={readLabel} pinned={pinned}
@@ -89,13 +93,13 @@ describe('THE SCREEN FOR SIGNING A RECORDS KEY FOR A SEAT', () => {
     expect(container.querySelector('[data-signed]')).not.toBeNull();
   });
 
-  it('NOTHING IS SIGNED FOR AN ACCOUNT OTHER THAN THE ONE THIS WALLET PINNED FOR THE COMPANY WHEN IT CREATED IT', async () => {
+  it('NOTHING IS SIGNED FOR AN ACCOUNT OTHER THAN THE ONE THIS WALLET KEPT FOR THE COMPANY', async () => {
     const answers: unknown[] = [];
     const { container } = await draw(answers, chain(), consented, undefined, 'a8'.repeat(32) as AccountAddress);
     await act(async () => { fireEvent.click(button(container)); });
     /* RED WHEN: a page naming another account carrying the label is answered with a statement for it. */
     expect(answers).toEqual([]);
-    expect(container.querySelector('[data-records-key-refused]')?.textContent).toMatch(/kept as its account when you created it/);
+    expect(container.querySelector('[data-records-key-refused]')?.textContent).toMatch(/other than the one this wallet kept as its account/);
   });
 
   it('A SEAT THE ACCOUNT DOES NOT HOLD NOW IS NOT SIGNED: the button stays held and nothing is answered', async () => {
@@ -162,6 +166,131 @@ describe('THE SCREEN FOR SIGNING A RECORDS KEY FOR A SEAT', () => {
     expect(button(container).disabled).toBe(true);
     fireEvent.click(button(container));
     expect(answers).toEqual([]);
+  });
+
+  describe('A JOINING SIGNER\'S WALLET KEEPS THE ACCOUNT ITS SIGNED INVITATION NAMES, AND NO OTHER', () => {
+    /* The signer who invited this person, as the signed invitation carries them, and as the chain holds them. */
+    const inviter = identityFromSecret(new Uint8Array(32).fill(9));
+    const INVITER_SEAT = '7c'.repeat(32);
+    const inviterKey = committeeKeyFor(inviter, CO) as { tag: 'schnorr'; value: string };
+    const invitedBy = { committeeKey: inviterKey, statement: signDirectoryEntry(inviter, CO, ACCOUNT, new Uint8Array(32).fill(6), '2b'.repeat(32), INVITER_SEAT) };
+    const joined = chain({ committee: [mine, inviterKey], seats: ['6b'.repeat(32), SEAT, INVITER_SEAT] });
+    const drawUnpinned = async (answers: unknown[], request: RecordsKeyRequest, onPin: (a: AccountAddress, at: number) => Promise<void>) => {
+      const r = render(
+        <ApproveRecordsKey request={request} identity={identity} channel={channelFor(answers)} consent={consented}
+          whoIsAsking={<p>asker</p>} onDecline={() => answers.push('declined')} now={() => NOW} readLabel={joined} pinned={null} onPin={onPin} />);
+      await settle();
+      return r;
+    };
+
+    const sign = (c: HTMLElement) => c.querySelector('[data-sign-records-key]') as HTMLButtonElement;
+    const confirmButton = (c: HTMLElement) => c.querySelector('[data-confirm-fingerprint]') as HTMLButtonElement | null;
+
+    it('with no account kept and no invitation handed over, nothing can be kept or signed, and the screen says what to do', async () => {
+      const answers: unknown[] = []; const pinned: string[] = [];
+      const { container } = await drawUnpinned(answers, ask(), async (a) => { pinned.push(a); });
+      /* RED WHEN: a wallet that kept no account offers to keep, or signs for, whichever account the service named. */
+      expect(container.querySelector('[data-invitation-does-not-name-it]')?.textContent).toBe(INVITATION_REFUSAL['no-invitation']);
+      expect(confirmButton(container)).toBeNull();
+      expect(sign(container).disabled).toBe(true);
+      fireEvent.click(sign(container));
+      await settle();
+      expect(answers).toEqual([]);
+      expect(pinned).toEqual([]);
+    });
+
+    it('an invitation that names another account, or is not signed by its inviter, says what is wrong and what to do, and offers nothing to keep', async () => {
+      const answers: unknown[] = []; const pinned: string[] = [];
+      const other = { ...invitedBy, statement: signDirectoryEntry(inviter, CO, 'a8'.repeat(32) as AccountAddress, new Uint8Array(32).fill(6), '2b'.repeat(32), INVITER_SEAT) };
+      const { container } = await drawUnpinned(answers, ask({ invitedBy: other }), async (a) => { pinned.push(a); });
+      /* RED WHEN: the person is shown the wallet's internal words, or told to reopen an invitation that cannot be repaired that way. */
+      expect(container.querySelector('[data-invitation-does-not-name-it]')?.textContent).toBe(INVITATION_REFUSAL['other-account']);
+      expect(confirmButton(container)).toBeNull();
+      expect(sign(container).disabled).toBe(true);
+      expect(pinned).toEqual([]);
+    });
+
+    it('A SECOND ACCOUNT CARRYING THE LABEL, WITH A VALID INVITATION, IS KEPT ONLY IF THE JOINER CONFIRMS ITS FINGERPRINT, AND ONLY BY THAT PRESS', async () => {
+      /* A service deployed its own account carrying the company's label, seated the joiner and itself, and signed an
+       * invitation for it with its own committee key: every check on what the page hands over passes. */
+      const SECOND = 'ad'.repeat(32) as AccountAddress;
+      const service = identityFromSecret(new Uint8Array(32).fill(11));
+      const serviceKey = committeeKeyFor(service, CO) as { tag: 'schnorr'; value: string };
+      const forged = { committeeKey: serviceKey, statement: signDirectoryEntry(service, CO, SECOND, new Uint8Array(32).fill(6), '2b'.repeat(32), INVITER_SEAT) };
+      const secondChain: LabelReader = async (account) => (account === SECOND
+        ? { of: 'carries', label: CO, seats: { committee: [mine, serviceKey], threshold: 1, seats: [SEAT, INVITER_SEAT] } }
+        : { of: 'no-account' });
+      const answers: unknown[] = []; const pinned: string[] = []; const declined: string[] = [];
+      const { container } = render(
+        <ApproveRecordsKey request={ask({ account: SECOND, invitedBy: forged })} identity={identity} channel={channelFor(answers)} consent={consented}
+          whoIsAsking={<p>asker</p>} onDecline={() => declined.push('declined')} now={() => NOW} readLabel={secondChain} pinned={null}
+          onPin={async (a) => { pinned.push(a); }} />);
+      await settle();
+      /* The joiner is shown the fingerprint of the account the page names, read off the chain, and asked to compare it. */
+      expect(container.textContent).toContain(companyFingerprint(CO, SECOND));
+      expect(container.querySelector('[data-compare-fingerprint]')?.textContent).toMatch(/the one the person who invited you gave you themselves/);
+      /* One source: the sentence under the fingerprint names the same person, and never the company. RED WHEN they differ. */
+      const under = container.querySelector('[data-compare-with]')?.textContent ?? '';
+      expect(under).toMatch(/against the fingerprint the person who invited you gave you themselves, by a call, a message or in person, and not through this page\./);
+      expect(under).not.toMatch(/ask the company/i);
+      /* RED WHEN: anything is signed, or anything kept, before the joiner has confirmed the fingerprint. */
+      expect(sign(container).disabled).toBe(true);
+      fireEvent.click(sign(container));
+      await settle();
+      expect(answers).toEqual([]);
+      expect(pinned).toEqual([]);
+      /* The fingerprint differs from the inviter's: the joiner says so, and nothing is kept. */
+      fireEvent.click(container.querySelector('[data-fingerprint-differs]')!);
+      expect(declined).toEqual(['declined']);
+      expect(pinned).toEqual([]);
+      /* RED WHEN: the confirming press is not the one way the account is kept, or keeps another account. */
+      await act(async () => { fireEvent.click(confirmButton(container)!); });
+      expect(pinned).toEqual([SECOND]);
+    });
+
+    it('a keep that fails is said, and nothing is kept or signed', async () => {
+      const answers: unknown[] = [];
+      const { container } = await drawUnpinned(answers, ask({ invitedBy }), async () => { throw new Error('quota exceeded in the store'); });
+      await act(async () => { fireEvent.click(confirmButton(container)!); });
+      await settle();
+      /* RED WHEN: a failed keep is silent, shows the store's own words, or lets the press sign anyway. */
+      expect(container.querySelector('[data-keep-failed]')?.textContent).toMatch(/could not keep the company.s account, so nothing has been kept or signed/);
+      expect(container.textContent).not.toContain('quota exceeded');
+      expect(sign(container).disabled).toBe(true);
+      expect(answers).toEqual([]);
+    });
+
+    it('through the approval screen, the confirming press keeps the account in the wallet\'s own record, and only then can it sign', async () => {
+      const opener = watchedOpener();
+      const handlers: ((event: MessageEvent) => void)[] = [];
+      const view: ChannelWindow = {
+        opener: opener as ChannelWindow['opener'],
+        addEventListener: (_t, h) => { handlers.push(h); },
+        removeEventListener: () => {},
+      };
+      const port = watchedStore();
+      const { container } = render(
+        <Approve identity={identity} secret={secretFromWords(TEST_MNEMONIC)} port={port} view={view} now={() => NOW} readLabel={joined} />);
+      const wire = {
+        schema: 'midnight-identity/disclosure-request/v1', kind: 'records-key',
+        requester: { name: 'Payroll A', rdns: 'example.payroll-a' }, purpose: 'To check your records key.',
+        nonce: 'r9', expiresAt: NOW + 600_000, company: CO, account: ACCOUNT, seat: SEAT, invitedBy,
+      };
+      await act(async () => { for (const h of handlers) h({ source: opener, origin: ORIGIN, data: wire } as unknown as MessageEvent); });
+      await settle();
+      expect(sign(container).disabled).toBe(true);
+      await act(async () => { fireEvent.click(confirmButton(container)!); });
+      await vi.waitFor(async () => {
+        const opened = await load(port, identity);
+        /* RED WHEN: the approval screen keeps nothing on the confirmation, or keeps another account. */
+        expect(opened.of === 'profile' ? pinnedAccountOf(opened.profile, CO) : null).toBe(ACCOUNT);
+      });
+      await vi.waitFor(() => expect(sign(container).disabled).toBe(false));
+      await act(async () => { fireEvent.click(sign(container)); });
+      const answered = await opener.posted(THE_ANSWER);
+      /* RED WHEN: once kept, the records key is still not signed for the account the joiner confirmed. */
+      expect((answered.message as RecordsKeyAnswer).statement.seat).toBe(SEAT);
+    });
   });
 
   it('declining answers that it was declined, and nothing else', async () => {

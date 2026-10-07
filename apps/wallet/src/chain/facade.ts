@@ -3,7 +3,8 @@ import type { DefaultConfiguration, InitParams } from '@midnightntwrk/wallet-sdk
 import type { ProvingService, UnboundTransaction } from '@midnightntwrk/wallet-sdk/proving';
 import type { Identity } from 'midnight-identity';
 import { INDEXER_HTTP_URL, INDEXER_WS_URL, NETWORK } from '../config.js';
-import { secretKeysFor, walletFor, walletRestoredFrom } from './balance.js';
+import { coinPublicKeyOf, secretKeysFor, walletFor, walletRestoredFrom } from './balance.js';
+import { restorableAs } from './snapshot.js';
 import { unshieldedWalletFor } from './unshielded.js';
 import { dustSecretKeyFor, dustWalletFor } from './dust.js';
 
@@ -76,11 +77,12 @@ export type FacadeServiceOverrides = Partial<Pick<
  * nothing syncs, proves or submits because this function ran.
  *
  * `restoreShieldedFrom` is a sealed checkpoint's snapshot of this account's
- * private part: the part is rebuilt from it and reads only what is new. A
- * snapshot the SDK refuses is a cache miss, never a dead end, and the part
- * starts from nothing as before. **The caller must have taken it for THIS
- * account** - the checkpoint store files each one under the account's own coin
- * public key for exactly that reason.
+ * private part: the part is rebuilt from it and reads only what is new. **It is
+ * restored only when it is this account's own, read from this network, and
+ * holds nothing in flight** (`restorableAs`); any other snapshot, and one the
+ * SDK refuses, is a cache miss, never a dead end, and the part starts from
+ * nothing as before. A snapshot of another account would otherwise pay from
+ * that account's coins under this one's name.
  */
 export async function facadeFor(
   identity: Identity,
@@ -90,7 +92,8 @@ export async function facadeFor(
   from: { readonly restoreShieldedFrom?: string } = {},
 ): Promise<WalletFacade> {
   const shielded = () => {
-    if (from.restoreShieldedFrom !== undefined) {
+    if (from.restoreShieldedFrom !== undefined
+      && restorableAs(from.restoreShieldedFrom, coinPublicKeyOf(identity, account), NETWORK)) {
       try { return walletRestoredFrom(from.restoreShieldedFrom); } catch { /* a cache miss: the cold door below */ }
     }
     return walletFor(identity, account);

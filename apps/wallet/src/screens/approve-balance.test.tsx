@@ -1,5 +1,5 @@
 // @vitest-environment jsdom
-import { afterEach, beforeEach, describe, expect, it } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import type { AccountAddress, CompanyLabel } from 'midnight-identity/profile/company-label';
 import type { LabelReader } from './company-on-chain.js';
 import { cleanup, fireEvent, render, screen } from '../testing/render.js';
@@ -491,6 +491,43 @@ describe('THE WALLET SAYS WHAT IT IS DOING, ON EVENTS ONLY', () => {
     expect(t.watching).toBe(0);
     t.proof('end');
     expect(progress).toHaveLength(6);
+  });
+});
+
+describe('THE WALLET NEVER SAYS IT IS AT WORK BECAUSE A CLOCK TICKED', () => {
+  afterEach(() => { vi.useRealTimers(); });
+  it('a minute of silence on the network, and between proofs, sends the page nothing', async () => {
+    /* Every clock this screen could start is one the test moves by hand; the page's own reads still run. */
+    vi.useFakeTimers({ toFake: ['setTimeout', 'setInterval'], shouldAdvanceTime: true });
+    const answers: unknown[] = []; const progress: string[] = [];
+    const shielded = stillReading();
+    const held = heldBalance();
+    let clock = NOW;
+    const t = trackedDoors([], { shielded, balanceUnboundTransaction: held.balanceUnboundTransaction as never });
+    render(
+      <ApproveBalance readLabel={carries}
+        request={ask} identity={identity} account={0} channel={recordingChannel(answers, progress as never)} consent={consented}
+        whoIsAsking={<p>asker</p>} whichWallet={<p>picker</p>} onDecline={() => {}}
+        doorsFor={t.doors} now={() => clock} />);
+    expect(await screen.findByText(/2500 base units/)).toBeTruthy();
+    fireEvent.click(screen.getByText('Pay into the vault'));
+    await screen.findByText(/Your wallet is reading the network/);
+    shielded.says(true, false, 100n);
+    const afterAReport = [...progress];
+    clock += 60_000;
+    await vi.advanceTimersByTimeAsync(60_000);
+    /* RED WHEN: anything in the wallet says "reading" on a timer, so a read that has stopped looks alive to the page. */
+    expect(progress).toEqual(afterAReport);
+    shielded.says(true, true);
+    await settled(10);
+    t.proof('start');
+    const afterAProof = [...progress];
+    clock += 60_000;
+    await vi.advanceTimersByTimeAsync(60_000);
+    /* RED WHEN: anything says "proving" on a timer, so a proof that has died looks alive to the page. */
+    expect(progress).toEqual(afterAProof);
+    held.release();
+    await vi.advanceTimersByTimeAsync(10);
   });
 });
 

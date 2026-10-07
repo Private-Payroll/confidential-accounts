@@ -163,7 +163,10 @@ export function ApproveCommittee({
         </Section>
       ))}
       <Section list={false} box={false} aria-label="The company, as the page names it" title="The company, as the page names it" description="This wallet signs with the key it holds for this company and no other.">
-        <CompanyOnChain label={request.company} account={request.account} check={check} doing="signed" />
+        <CompanyOnChain
+          label={request.company} account={request.account} check={check} doing="signed"
+          compareWith="the person who invited you to this company gave you themselves, and not through this page"
+        />
         <p className="m-0 text-sm text-muted-foreground">
           This wallet cannot tell who each key belongs to. Check the new list with the other signers before you sign.
           Whoever holds enough of its keys can change the rules the company account and every vault follow.

@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import type { CompanyLabel } from 'midnight-identity/profile/company-label';
+import type { AccountAddress, CompanyLabel } from 'midnight-identity/profile/company-label';
 import { TEST_MNEMONIC } from '@midnight-ntwrk/testkit-js';
 import { identityFromWords } from 'midnight-identity';
 import { parseAsk, type JoinCodeRequest } from 'midnight-identity/profile/request';
@@ -36,13 +36,16 @@ const walletAnswering = (answer: (ask: unknown) => unknown): { view: Openable; a
   } as unknown as Openable;
   return { view, asked };
 };
-const input = { company: CO, person: 'usr_ada', parts: PARTS, name: 'Us', rdns: 'example.us', now: () => 1_000 };
+const ACCOUNT = 'ab'.repeat(32) as AccountAddress;
+const input = { company: CO, account: ACCOUNT, person: 'usr_ada', parts: PARTS, name: 'Us', rdns: 'example.us', now: () => 1_000 };
 
 describe('ASKING THE PERSON\'S WALLET FOR A JOIN CODE', () => {
   it('SENDS AN ASK THE WALLET\'S OWN PARSER ACCEPTS, AND BELIEVES THE CODE IT SIGNED FOR EXACTLY WHAT WAS ASKED', async () => {
     const honest = walletAnswering((ask) => joinCodeAnswerFor(identity, parseAsk(ask, US, 1_000) as JoinCodeRequest, [], null));
     const code = await askWalletForAJoinCode(honest.view, WALLET, input);
     expect(code).toMatchObject({ company: CO, person: 'usr_ada', parts: PARTS });
+    /* RED WHEN: the ask leaves out the company's account, so the wallet's code screen has no fingerprint to show. */
+    expect((parseAsk(honest.asked[0], US, 1_000) as JoinCodeRequest).account).toBe(ACCOUNT);
   });
 
   it('REFUSES A CODE FOR OTHER KEYS, ANOTHER SIGN-IN, OR ONE NOBODY SIGNED', async () => {

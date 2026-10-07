@@ -2,7 +2,7 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { Buffer as PolyfillBuffer } from 'buffer/';
 import { IDBFactory } from 'fake-indexeddb';
-import { ZswapLocalState, shieldedToken } from '@midnightntwrk/ledger-v9';
+import { shieldedToken } from '@midnightntwrk/ledger-v9';
 import { identityFromSecret, newSecret } from 'midnight-identity';
 import type { BalanceState } from './balance.js';
 
@@ -27,10 +27,10 @@ const NIGHT_RAW = shieldedToken().raw;
 let reported: Record<string, bigint> = {};
 /** Which door the engine took: the cold one or the restore one. */
 const doors: string[] = [];
-/** What the stand-in wallet holds set aside and expected, as the SDK's local state keeps them. */
-let inFlight: { pendingSpends: Map<string, unknown>; pendingOutputs: Map<string, unknown> } = {
-  pendingSpends: new Map(), pendingOutputs: new Map(),
-};
+/** What the stand-in wallet holds in flight when it is serialised: a coin set aside, a coin expected, or nothing. */
+let inFlight: 'spend' | 'output' | null = null;
+/** Every save the engine asked of the store, and what the store answered: kept, or refused. */
+const saves: Promise<boolean>[] = [];
 /** The configuration the app hands the SDK's shielded wallet. */
 const configured: unknown[] = [];
 
@@ -41,8 +41,7 @@ vi.mock('@midnightntwrk/wallet-sdk/shielded', () => {
         queueMicrotask(() => observer.next({
           progress: { isConnected: true, isStrictlyComplete: () => true },
           balances: reported,
-          serialize: () => 'SNAPSHOT',
-          state: { state: inFlight },
+          serialize: () => snapshotForTest({ inFlight }),
         }));
         return { unsubscribe: () => {} };
       },
@@ -61,16 +60,83 @@ vi.mock('@midnightntwrk/wallet-sdk/shielded', () => {
   };
 });
 
-const { READ_BATCH_SIZE, nothingInFlight, startBalance, coinPublicKeyOf } = await import('./balance.js');
+/* The store the app runs, with each save the engine asks for kept, so a test waits for the store's answer rather than a clock. */
+vi.mock('../accounts/storage.js', async (original) => {
+  const real = await original<typeof import('../accounts/storage.js')>();
+  return {
+    ...real,
+    saveWalletCheckpoint: (...args: Parameters<typeof real.saveWalletCheckpoint>) => {
+      const answered = real.saveWalletCheckpoint(...args);
+      saves.push(answered);
+      return answered;
+    },
+  };
+});
+
+const { snapshotForTest } = await import('../testing/snapshot.js');
+const { READ_BATCH_SIZE, startBalance, coinPublicKeyOf } = await import('./balance.js');
 const { loadWalletCheckpoint, saveWalletCheckpoint } = await import('../accounts/storage.js');
-const { ORIGINAL_SLOT, forgetOpenWallet } = await import('../accounts/wallets-held.js');
+const { ORIGINAL_SLOT, checkpointKeyFor, forgetOpenWallet, sealKeyFor } = await import('../accounts/wallets-held.js');
+const { toBase64Url } = await import('midnight-identity/passkey/bytes');
+
+/** Account 0's entry in the open compartment's checkpoint record, as the store holds it. */
+const keptFor0 = async (): Promise<unknown> => {
+  const db = await new Promise<IDBDatabase>((resolve, reject) => {
+    const open = indexedDB.open('midnight-identity', 1);
+    open.onsuccess = () => resolve(open.result);
+    open.onerror = () => reject(open.error);
+  });
+  const record = await new Promise<unknown>((resolve, reject) => {
+    const request = db.transaction('keys', 'readonly').objectStore('keys').get(checkpointKeyFor(ORIGINAL_SLOT));
+    request.onsuccess = () => resolve(request.result);
+    request.onerror = () => reject(request.error);
+  });
+  db.close();
+  return (record as { perAccount?: Record<string, unknown> } | undefined)?.perAccount?.['0'];
+};
+
+/**
+ * Seals a checkpoint for account 0 into the store the way a wallet did before
+ * the store refused snapshots holding anything in flight: written field by
+ * field, so it does not pass through today's guard.
+ */
+const sealAsBefore = async (coinPublicKey: string, serialized: string): Promise<void> => {
+  /* Any kept save makes the compartment's sealing key; then the entry is replaced. */
+  await saveWalletCheckpoint(coinPublicKey, 0, { serialized: snapshotForTest(), night: 1n, asOf: 1 }, ORIGINAL_SLOT);
+  saves.length = 0;
+  const db = await new Promise<IDBDatabase>((resolve, reject) => {
+    const open = indexedDB.open('midnight-identity', 1);
+    open.onsuccess = () => resolve(open.result);
+    open.onerror = () => reject(open.error);
+  });
+  const get = (key: string): Promise<unknown> => new Promise((resolve, reject) => {
+    const request = db.transaction('keys', 'readonly').objectStore('keys').get(key);
+    request.onsuccess = () => resolve(request.result);
+    request.onerror = () => reject(request.error);
+  });
+  const key = (await get(sealKeyFor(ORIGINAL_SLOT))) as CryptoKey;
+  const record = (await get(checkpointKeyFor(ORIGINAL_SLOT))) as {
+    perAccount: Record<string, { coinPublicKey: string; iv: string; sealed: string }>;
+  };
+  const iv = crypto.getRandomValues(new Uint8Array(12));
+  const plain = new TextEncoder().encode(JSON.stringify({ coinPublicKey, serialized, night: '5', asOf: 1 }));
+  const sealed = new Uint8Array(await crypto.subtle.encrypt({ name: 'AES-GCM', iv }, key, plain as BufferSource));
+  record.perAccount['0'] = { coinPublicKey, iv: toBase64Url(iv), sealed: toBase64Url(sealed) };
+  await new Promise<void>((resolve, reject) => {
+    const request = db.transaction('keys', 'readwrite').objectStore('keys').put(record, checkpointKeyFor(ORIGINAL_SLOT));
+    request.onsuccess = () => resolve();
+    request.onerror = () => reject(request.error);
+  });
+  db.close();
+};
 
 beforeEach(() => {
   localStorage.clear();
   (globalThis as { indexedDB?: unknown }).indexedDB = new IDBFactory();
   forgetOpenWallet();
   doors.length = 0;
-  inFlight = { pendingSpends: new Map(), pendingOutputs: new Map() };
+  saves.length = 0;
+  inFlight = null;
 });
 
 /** Runs the engine until it has said `count` synced states, then stops it. */
@@ -99,7 +165,7 @@ describe('the engine reads the whole balance map and seals all of it', () => {
     await vi.waitFor(async () => {
       const saved = await loadWalletCheckpoint(coinPublicKeyOf(identity, 0), 0, ORIGINAL_SLOT);
       expect(saved).toMatchObject({
-        serialized: 'SNAPSHOT', night: 1_234_567n, others: { [TOKEN]: 5_000n },
+        serialized: snapshotForTest(), night: 1_234_567n, others: { [TOKEN]: 5_000n },
       });
     });
   });
@@ -107,7 +173,7 @@ describe('the engine reads the whole balance map and seals all of it', () => {
   it('opens from a checkpoint that recorded other tokens WITH them, before the live answer', async () => {
     const identity = identityFromSecret(newSecret());
     await saveWalletCheckpoint(coinPublicKeyOf(identity, 0), 0, {
-      serialized: 'NEW', night: 9n, others: { [TOKEN]: 7n }, asOf: 1_000,
+      serialized: snapshotForTest(), night: 9n, others: { [TOKEN]: 7n }, asOf: 1_000,
     }, ORIGINAL_SLOT);
     reported = { [TOKEN]: 5_000n };
     const [fromDisk] = await syncedStates(identity, 2);
@@ -120,7 +186,7 @@ describe('the engine reads the whole balance map and seals all of it', () => {
   it('opens from an old checkpoint as NIGHT only, then the live sync brings the whole map', async () => {
     const identity = identityFromSecret(newSecret());
     await saveWalletCheckpoint(coinPublicKeyOf(identity, 0), 0, {
-      serialized: 'OLD', night: 9n, asOf: 1_000,
+      serialized: snapshotForTest(), night: 9n, asOf: 1_000,
     }, ORIGINAL_SLOT);
     reported = { [TOKEN]: 5_000n };
     const [fromDisk, live] = await syncedStates(identity, 2);
@@ -136,29 +202,38 @@ describe('the engine reads the whole balance map and seals all of it', () => {
 
 describe('A CHECKPOINT IS NEVER WRITTEN WITH ANYTHING IN FLIGHT', () => {
   it('a state holding coins set aside, or coins expected, is shown and never written down', async () => {
-    for (const which of ['pendingSpends', 'pendingOutputs'] as const) {
+    for (const which of ['spend', 'output'] as const) {
       localStorage.clear();
       (globalThis as { indexedDB?: unknown }).indexedDB = new IDBFactory();
+      saves.length = 0;
       const identity = identityFromSecret(newSecret());
-      inFlight = { pendingSpends: new Map(), pendingOutputs: new Map() };
-      inFlight[which].set('a coin', ['coin', undefined]);
+      inFlight = which;
       reported = { [NIGHT_RAW]: 5n };
       const [synced] = await syncedStates(identity, 1);
       expect(synced?.night, which).toBe(5n);
-      await new Promise((r) => { setTimeout(r, 50); });
+      /* The store's own answer to the engine's save, awaited rather than guessed at with a clock. */
+      await vi.waitFor(() => expect(saves.length, which).toBeGreaterThan(0));
       /* RED WHEN: a snapshot with coins set aside is sealed, and every wallet restored from it keeps them set aside for good. */
+      expect(await Promise.all(saves), which).toEqual(saves.map(() => false));
       expect(await loadWalletCheckpoint(coinPublicKeyOf(identity, 0), 0, ORIGINAL_SLOT), which).toBeNull();
     }
   });
 
-  it('reads the ledger\'s own local state, and refuses a state it cannot read', () => {
-    const local = new ZswapLocalState();
-    /* RED WHEN: the guard reads fields the ledger does not have, so no checkpoint is ever written again. */
-    expect(nothingInFlight({ state: { state: local } })).toBe(true);
-    /* RED WHEN: a state whose in-flight coins cannot be read is written down anyway. */
-    expect(nothingInFlight({ state: {} })).toBe(false);
-    expect(nothingInFlight(null)).toBe(false);
-    expect(nothingInFlight({ state: { state: { pendingSpends: new Map(), pendingOutputs: new Map([['x', 1]]) } } })).toBe(false);
+  it('a snapshot kept before the store refused one is not restored: it is taken out, and the next read writes a clean one', async () => {
+    const identity = identityFromSecret(newSecret());
+    /* A snapshot holding a coin set aside, sealed into the store as an older wallet could have done. */
+    await sealAsBefore(coinPublicKeyOf(identity, 0), snapshotForTest({ inFlight: 'spend' }));
+    /* RED WHEN: the refused snapshot is left in the store, to be refused again on every open until a read completes. */
+    expect(await loadWalletCheckpoint(coinPublicKeyOf(identity, 0), 0, ORIGINAL_SLOT)).toBeNull();
+    expect(await keptFor0()).toBeUndefined();
+    reported = { [NIGHT_RAW]: 5n };
+    await syncedStates(identity, 1);
+    /* RED WHEN: the engine restores a snapshot that still holds coins set aside. */
+    expect(doors).toEqual(['cold']);
+    await vi.waitFor(() => expect(saves.length).toBeGreaterThan(0));
+    await Promise.all(saves);
+    /* RED WHEN: the refused snapshot stays, and is never replaced by the clean read that followed. */
+    expect((await loadWalletCheckpoint(coinPublicKeyOf(identity, 0), 0, ORIGINAL_SLOT))?.serialized).toBe(snapshotForTest());
   });
 });
 

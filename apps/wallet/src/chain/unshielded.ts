@@ -88,7 +88,7 @@ export function unshieldedWalletFor(
 }
 
 /** Unshielded NIGHT, as the balances record keys it. */
-const NIGHT_UNSHIELDED_RAW = nativeToken().raw;
+export const NIGHT_UNSHIELDED_RAW = nativeToken().raw;
 
 type Synced = Extract<BalanceState, { name: 'synced' }>;
 
