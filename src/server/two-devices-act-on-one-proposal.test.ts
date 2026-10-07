@@ -3,9 +3,10 @@
  * MODULE AND THE SERVED ROUTES, AND THE RECORD IS RIGHT AFTERWARDS.**
  *
  * What runs is the page's device module - `sendRaiseFromDevice`, `approveOnDevice`
- * and `governedCallServiceFor` - talking over real HTTP to this server's raise,
- * approval, standing and withdrawal routes, with two signed-in people and two
- * tabs of one person. **Two pieces are doubles, and they are named here**:
+ * `withdrawOnDevice` and `governedCallServiceFor` - talking over real HTTP to
+ * this server's raise, approval, standing and withdrawal relays, which take no
+ * key, with two signed-in people and two tabs of one person. **Three pieces are
+ * doubles, and they are named here**:
  *
  *   - the ledger under the server is the simulated one, with a door for a
  *     device's transaction that records what it was handed and then does to the
@@ -14,7 +15,10 @@
  *     read of the account's on-chain state, are stand-ins: the served
  *     call-state route answers only for a company whose contract this server can
  *     read, and no contract exists here. The stand-in builder writes down which
- *     call it was asked for, and that is what the door carries out.
+ *     call it was asked for, and that is what the door carries out;
+ *   - the chain's read of who holds each company's account, as the server
+ *     checks a relay's seat against it: Ada's and Blake's seats, whose entries
+ *     their wallets signed in each company's directory.
  *
  * **WHY THE PROPOSALS ARE WRITTEN BEFORE THE SERVER STARTS.** Raising a payroll
  * leg over the served route asks the vault holdings reader first, and a server
@@ -24,6 +28,7 @@
  * handed, before it is imported - the people who sign in are real sign-ins, and
  * every write after that goes through a route.
  */
+import { runsFiledBy } from '../testing/runs-a-seat-filed.js';
 import { describe, it, expect, beforeAll, afterAll, beforeEach } from 'vitest';
 import { drawCompanyLabel } from 'midnight-identity/profile/company-label';
 import { importTheServer, useOnlyTheseSettings } from '../testing/server-under-test.js';
@@ -49,21 +54,24 @@ const { MidnightCommitments } = await import('../midnight/commitments.js');
 const { handInWiring } = await import('../wiring/handed-in.js');
 const { FileStore } = await import('../core/store-file.js');
 const { walletKeyOf } = await import('../core/store.js');
-const { AccountService, approvalMessage } = await import('../core/account.js');
+const { AccountService } = await import('../core/account.js');
 const { PayrollService } = await import('../core/payroll.js');
 const { runMaterialFor } = await import('../midnight/run-material.js');
 const { vaultDetails } = await import('../testing/vault-details.js');
 const { registryWithTestPrivateForms, aVaultHolding } = await import('../testing/assets.js');
 const { addressOfSlot, signInWithAWallet } = await import('../testing/wallet-session.js');
 const { theNetwork } = await import('../midnight/network.js');
-const { sign, toHex } = await import('../core/crypto.js');
+const { toHex, newSigningKeypair } = await import('../core/crypto.js');
+const { directorySeats } = await import('../testing/directory-seats.js');
+const { signedFoundingState } = await import('../core/founding-state.js');
 const device = await import('vaults-web-shared/governed-call-on-device.js');
 type Hex = import('../core/crypto.js').Hex;
-type Proposal = import('../core/types.js').Proposal;
+type Standing = import('vaults-web-shared/governed-call-on-device.js').RoundOnThePage;
 
 const NETWORK = theNetwork();
-const SLOTS = { ada: 71, blake: 72 } as const;
-const USERS = { ada: 'usr_two_devices_ada', blake: 'usr_two_devices_blake' } as const;
+const SLOTS = { ada: 71, blake: 72, cy: 73 } as const;
+/** Cy signs in and is a member of none of these companies. */
+const USERS = { ada: 'usr_two_devices_ada', blake: 'usr_two_devices_blake', cy: 'usr_two_devices_cy' } as const;
 const VAULT = toHex(new Uint8Array(32).fill(0xa1));
 
 /* ── the chain, and its door for a device's transaction ─────────────────── */
@@ -76,7 +84,7 @@ let door: (circuit: string, land: () => Promise<{ ref: string; at: string }>) =>
   (_c, land) => land();
 type Built = {
   signer: string;
-  order: { circuit: 'approve'; proposal: Hex } | {
+  order: { circuit: 'approve'; proposal: Hex } | { circuit: 'cancel'; proposal: Hex } | {
     circuit: 'propose'; proposal: Hex;
     run: { root: Hex; payees: string; opensAt: string; closesAt: string; vault: Hex };
     half: { changeAmount: string; changeBatchDigest: Hex; proposalSalt: Hex };
@@ -90,6 +98,7 @@ Object.assign(ledger, {
     const land = async () => {
       const o = built.order;
       if (o.circuit === 'approve') return ledger.approve(accountId, o.proposal, by);
+      if (o.circuit === 'cancel') return ledger.cancel(accountId, o.proposal, by);
       const r = await ledger.proposeRun(accountId, {
         root: o.run.root, payees: BigInt(o.run.payees), opensAt: BigInt(o.run.opensAt),
         closesAt: BigInt(o.run.closesAt), vault: o.run.vault,
@@ -105,9 +114,12 @@ Object.assign(ledger, {
 
 /* ── the companies, written before the server starts ────────────────────── */
 
+/** Each company's seats as the chain holds them: Ada's and Blake's, whose wallets signed their directory entries. */
+const seats = directorySeats();
+
 const seeded = await (async () => {
   const store = new FileStore(process.env.DATA_PATH!);
-  for (const who of ['ada', 'blake'] as const) {
+  for (const who of ['ada', 'blake', 'cy'] as const) {
     store.putUser({
       id: USERS[who], email: `${who}@northwind.example`, name: who, keyBundle: null, keyBundleVersion: 0,
       walletKey: walletKeyOf(addressOfSlot(SLOTS[who], NETWORK)), createdAt: '2026-09-17T00:00:00.000Z',
@@ -125,6 +137,9 @@ const seeded = await (async () => {
     const viewingKey = created.viewingKey;
     const account = created.account.id;
     for (const s of accounts.open(account, viewingKey).signers) leaves.set(`${account} ${s.id}`, s.leafCommitment as Hex);
+    /* Ada's and Blake's wallets sign their entries in the company's directory, under the keys their devices file with. */
+    seats.claim(store, account, USERS.ada, created.secrets[0]!.signingSecret, 0x51);
+    seats.claim(store, account, USERS.blake, created.secrets[1]!.signingSecret, 0x52);
     for (let i = 0; i < 3; i++) {
       payroll.hireDirect(account, {
         name: `${name} payee ${i}`, email: `p${i}@${name.toLowerCase()}.example`, title: 'Eng', asset: TEST_TOKEN,
@@ -153,9 +168,31 @@ const seeded = await (async () => {
       await accounts.sendRaise(proposal.id, viewingKey, Buffer.from(JSON.stringify(built)), created.secrets[0]!.signerId);
       await accounts.refreshStanding(proposal.id, viewingKey);
     }
+    /*
+     * **THE COMPANY'S RECORDS A DEVICE READS THE RUN FROM**, to approve it or
+     * to make what it sends: its first state as a founding seat signed it, a
+     * directory believing that seat, the people as the service holds them, and
+     * the runs and proposals as it stores them now.
+     */
+    const founder = newSigningKeypair();
+    const state = signedFoundingState(account, { keyEpoch: 0, sealed: (await ledger.fetch(account, 0))!.sealedState }, founder.secret);
+    const people = payroll.listPeople(account, viewingKey);
+    const committee = { tag: 'schnorr', value: '7a'.repeat(32) };
+    const records: import('vaults-web-shared/run-rebuilt-here.js').CompanyRecordsHere = {
+      directory: async () => ({
+        dir: { company: account, version: 1, seats: [{ seat: '4e'.repeat(32), person: USERS.ada, signingKey: founder.publicKey, wrappingKey: 'ab'.repeat(32), committeeKey: committee, role: 'admin', retired: null }] },
+        holders: { committee: [committee], seats: ['4e'.repeat(32)], approvals: 1, adoptedVaults: [], founding: '4e'.repeat(32), foundingCommittee: [committee], account: 'ac'.repeat(32) } as never,
+        another: new Set(),
+      }),
+      people: async () => ({ people: people.map((person) => ({ person, version: 1, handedOver: true })), notBelieved: [], notPayable: [] }),
+      state: async (id) => (id === '0' ? state : null),
+      runs: async () => runsFiledBy(new FileStore(process.env.DATA_PATH!).listRuns(account), account, founder.secret),
+      proposals: async () => new FileStore(process.env.DATA_PATH!).listProposals(account),
+      registry,
+    };
     return {
       account, viewingKey, runId: run.id, proposalId: proposal.id,
-      ada: created.secrets[0]!, blake: created.secrets[1]!,
+      ada: created.secrets[0]!, blake: created.secrets[1]!, records,
     };
   };
   const result = {
@@ -173,13 +210,14 @@ handInWiring({
   commitments: MidnightCommitments,
   createLedger: () => ledger,
   createProofSystem: () => new SimulatedProofSystem(),
+  directoryChain: seats.directoryChain,
 });
 
 const { app } = await importTheServer();
 
 let server: Server;
 let base: string;
-const tokens: Record<keyof typeof USERS, string> = { ada: '', blake: '' };
+const tokens: Record<keyof typeof USERS, string> = { ada: '', blake: '', cy: '' };
 
 type Res = { status: number; body: any };
 const call = async (method: string, path: string, opts: { token?: string; body?: unknown } = {}): Promise<Res> => {
@@ -199,7 +237,7 @@ beforeAll(async () => {
   const a = server.address();
   if (!a || typeof a === 'string') throw new Error('no port');
   base = `http://127.0.0.1:${a.port}`;
-  for (const who of ['ada', 'blake'] as const) {
+  for (const who of ['ada', 'blake', 'cy'] as const) {
     const signedIn = await signInWithAWallet(call, { slot: SLOTS[who], origin: ORIGIN, network: NETWORK });
     expect(signedIn.userId).toBe(USERS[who]);
     tokens[who] = signedIn.token;
@@ -220,7 +258,7 @@ const apiAs = (who: keyof typeof USERS) => async (path: string, init?: RequestIn
   return body;
 };
 
-const aDevice = (who: keyof typeof USERS, company: { account: string }, signer: string) => {
+const aDevice = (who: keyof typeof USERS, company: { account: string; records: import('vaults-web-shared/run-rebuilt-here.js').CompanyRecordsHere }, signer: string) => {
   const stages: string[] = [];
   const doors: import('vaults-web-shared/governed-call-on-device.js').RaiseDoors = {
     service: {
@@ -240,14 +278,15 @@ const aDevice = (who: keyof typeof USERS, company: { account: string }, signer: 
     /* The device's read of the vault is a stand-in too: every send asks it first, and here it can pay. */
     holdings: aVaultHolding(), assets: registryWithTestPrivateForms(),
     accountId: company.account,
+    records: company.records,
     progress: (s) => stages.push(s),
     sleep: async () => {}, waitMs: 40, everyMs: 1,
   };
   return { doors, stages };
 };
 
-const standing = async (who: keyof typeof USERS, c: { proposalId: string; viewingKey: string }): Promise<Proposal> => {
-  const r = await call('POST', `/api/proposals/${c.proposalId}/standing`, { token: tokens[who], body: { viewingKey: c.viewingKey } });
+const standing = async (who: keyof typeof USERS, c: { proposalId: string }): Promise<Standing> => {
+  const r = await call('POST', `/api/proposals/${c.proposalId}/standing`, { token: tokens[who], body: {} });
   expect(r.status, JSON.stringify(r.body)).toBe(200);
   return r.body;
 };
@@ -291,79 +330,104 @@ describe('TWO DEVICES, ONE PROPOSAL, THE SERVED ROUTES', () => {
     expect(won.error).toBeUndefined();
     expect(won.value!.raisedAt).toBeDefined();
     /* RED WHEN: the refusal loses the sentence the page reads to say nothing was sent. */
-    expect(String(lost.error?.message)).toMatch(/is being sent to the chain right now/u);
+    expect(String(lost.error?.message)).toMatch(/is being sent from another request right now/u);
     expect(device.nothingWasSentBy(lost.error)).toBe(true);
     expect((await standing('ada', c)).raisedAt).toBeDefined();
   });
 
-  it('TWO SIGNERS APPROVING FROM THEIR OWN DEVICES AT ONCE: BOTH SIGNATURES ARE RECORDED, AND THE PROPOSAL IS APPROVED', async () => {
+  it('TWO SIGNERS APPROVING FROM THEIR OWN DEVICES AT ONCE: BOTH ARE COUNTED, AND THE COUNT IS THE CHAIN\'S', async () => {
     const c = seeded.twoSigners;
     const round = await standing('ada', c);
     const gate = aGate();
     door = async (_c, land) => { const r = await land(); await gate.opened; return r; };
     const ada = aDevice('ada', c, c.ada.signerId);
     const blake = aDevice('blake', c, c.blake.signerId);
-    const signed = (s: { signingSecret: Hex }) => sign(approvalMessage(round), s.signingSecret);
     const both = Promise.all([
-      device.approveOnDevice(ada.doors, { round, signerId: c.ada.signerId, signature: signed(c.ada), viewingKey: c.viewingKey }),
-      device.approveOnDevice(blake.doors, { round, signerId: c.blake.signerId, signature: signed(c.blake), viewingKey: c.viewingKey }),
+      device.approveOnDevice(ada.doors, { round, viewingKey: c.viewingKey }),
+      device.approveOnDevice(blake.doors, { round, viewingKey: c.viewingKey }),
     ]);
     await until(() => sent.length === 2);
     gate.open();
     const [a, b] = await both;
-    /* RED WHEN: an approval route writes back the record it read before its send - one signature is dropped for ever. */
+    /* RED WHEN: an approval relay writes back the count it read before its send, or a lower count after a higher one - one approval is dropped. */
     const after = await standing('blake', c);
-    expect(after.approvals.map((x) => x.signerId).sort()).toEqual([c.ada.signerId, c.blake.signerId].sort());
-    expect(after.status).toBe('approved');
-    expect(after.approvalRound).toEqual({ state: 'satisfied', approvals: 2, threshold: 2 });
-    expect([a.status, b.status]).toEqual(['approved', 'approved']);
+    expect(after.approvalCount).toBe(2);
+    expect(Math.max(a.approvalCount ?? 0, b.approvalCount ?? 0)).toBe(2);
+    /* RED WHEN: the service writes "approved" itself: whether a proposal is approved is judged on a device, where the vault is opened. */
+    expect(after.status).toBe('open');
   });
 
-  it('ONE PERSON APPROVING FROM TWO TABS AT ONCE: ONE TRANSACTION, ONE SIGNATURE, AND THE OTHER TAB IS TOLD NOTHING WAS SENT', async () => {
+  it('ONE PERSON APPROVING FROM TWO TABS AT ONCE: ONE TRANSACTION, AND THE OTHER TAB IS TOLD NOTHING WAS SENT', async () => {
     const c = seeded.twoTabs;
     const round = await standing('ada', c);
     const gate = aGate();
     door = async (_c, land) => { await gate.opened; return land(); };
-    const signature = sign(approvalMessage(round), c.ada.signingSecret);
-    const first = settle(device.approveOnDevice(aDevice('ada', c, c.ada.signerId).doors,
-      { round, signerId: c.ada.signerId, signature, viewingKey: c.viewingKey }));
-    const second = settle(device.approveOnDevice(aDevice('ada', c, c.ada.signerId).doors,
-      { round, signerId: c.ada.signerId, signature, viewingKey: c.viewingKey }));
+    const first = settle(device.approveOnDevice(aDevice('ada', c, c.ada.signerId).doors, { round, viewingKey: c.viewingKey }));
+    const second = settle(device.approveOnDevice(aDevice('ada', c, c.ada.signerId).doors, { round, viewingKey: c.viewingKey }));
     await until(() => sent.length >= 2 || (sent.length === 1 && (first.done || second.done)));
     gate.open();
     await until(() => first.done && second.done);
     const [won, lost] = first.error === undefined ? [first, second] : [second, first];
-    /* RED WHEN: both tabs' approvals pass the check before either is recorded, and both are handed to the chain. */
+    /* RED WHEN: both tabs' approvals pass the check before either is sent, and both are handed to the chain. */
     expect(sent.filter((s) => s.circuit === 'approve')).toHaveLength(1);
     expect(won.error).toBeUndefined();
-    expect(String(lost.error?.message)).toMatch(/is being sent to the chain right now/u);
+    expect(String(lost.error?.message)).toMatch(/is being sent from another request right now/u);
     expect(device.nothingWasSentBy(lost.error)).toBe(true);
-    const after = await standing('ada', c);
-    expect(after.approvals.map((x) => x.signerId)).toEqual([c.ada.signerId]);
-    expect(after.approvalRound).toEqual({ state: 'short', approvals: 1, threshold: 3 });
+    expect((await standing('ada', c)).approvalCount).toBe(1);
   });
 
-  it('A WITHDRAWAL THROUGH ITS ROUTE WHILE AN APPROVAL IS BEING SENT STAYS A WITHDRAWAL, AND THE DEVICE IS NOT TOLD NOTHING WAS SENT', async () => {
+  it('A WITHDRAWAL FROM ANOTHER DEVICE WHILE AN APPROVAL IS BEING SENT STAYS A WITHDRAWAL, AND THE APPROVING DEVICE IS NOT TOLD NOTHING WAS SENT', async () => {
     const c = seeded.withdrawn;
     const round = await standing('ada', c);
     const gate = aGate();
-    door = async (_c, land) => { const r = await land(); await gate.opened; return r; };
-    const approving = settle(device.approveOnDevice(aDevice('ada', c, c.ada.signerId).doors, {
-      round, signerId: c.ada.signerId, signature: sign(approvalMessage(round), c.ada.signingSecret), viewingKey: c.viewingKey,
-    }));
+    door = async (circuit, land) => { const r = await land(); if (circuit === 'approve') await gate.opened; return r; };
+    const approving = settle(device.approveOnDevice(aDevice('ada', c, c.ada.signerId).doors, { round, viewingKey: c.viewingKey }));
     await until(() => sent.length === 1);
-    const withdrawn = await call('POST', `/api/proposals/${c.proposalId}/cancel`, {
-      token: tokens.blake, body: { viewingKey: c.viewingKey, by: c.blake.signerId },
-    });
-    expect(withdrawn.status, JSON.stringify(withdrawn.body)).toBe(200);
+    /* Ada raised it; the chain lets the signer who raised a proposal withdraw it, from any device of theirs. */
+    const withdrawn = await device.withdrawOnDevice(aDevice('ada', c, c.ada.signerId).doors, { round, viewingKey: c.viewingKey });
+    expect(withdrawn.status).toBe('cancelled');
     gate.open();
     await until(() => approving.done);
-    /* RED WHEN: the approval route's write puts back the open record it read before the withdrawal. */
+    /* RED WHEN: the approval relay's write puts back the open record it read before the withdrawal. */
     const after = await standing('ada', c);
     expect(after.status).toBe('cancelled');
-    expect(after.approvals).toEqual([]);
-    /* RED WHEN: a send that reached the chain is reported to the page as nothing sent. */
+    /* RED WHEN: a send that reached the chain is reported to the page as nothing sent, or as sent and not yet seen. */
+    expect(approving.error?.name).toBe('WithdrawnWhileSent');
     expect(String(approving.error?.message)).toMatch(/withdrawn while this approval was being sent/u);
     expect(device.nothingWasSentBy(approving.error)).toBe(false);
+    expect(sent.map((x) => x.circuit)).toEqual(['approve', 'cancel']);
+  });
+
+  it('AN APPROVAL CARRYING A SIGNING SECRET IS REFUSED BY NAME ON THE SERVED ROUTE, AND NOTHING IS SENT', async () => {
+    const c = seeded.twoSigners;
+    const r = await call('POST', `/api/proposals/${c.proposalId}/approve`, {
+      token: tokens.ada, body: { tx: Buffer.from('{}').toString('base64'), signingSecret: c.ada.signingSecret },
+    });
+    /* RED WHEN: the served approval route stops refusing a signing secret by name - a key sent by an old page is then dropped silently, and nobody is told to replace it. */
+    expect(r.status).toBe(400);
+    expect(r.body.code).toBe('signing-secret-refused');
+    expect(r.body.error).toMatch(/does not accept a signing secret.*replace it\./su);
+    expect(sent).toEqual([]);
+  });
+
+  it('EVERY RELAY OF A PROPOSAL, AND THE RUN ROUTES THAT RAISE ONE, ANSWER ONLY A MEMBER OF ITS COMPANY: ANYONE ELSE IS TOLD IT IS NOT FOUND', async () => {
+    const c = seeded.raisedTwice;
+    /* A body no route takes: a member gets past the gate and is refused for the body; nothing is written or sent. */
+    const body = { nothing: 'this route takes' };
+    const before = await standing('ada', c);
+    const routes = [
+      ...['approve', 'standing', 'cancel', 'send', 'carry'].map((r) => `/api/proposals/${c.proposalId}/${r}`),
+      `/api/accounts/${c.account}/proposals`,
+    ];
+    for (const path of routes) {
+      const stranger = await call('POST', path, { token: tokens.cy, body });
+      /* RED WHEN: the route's gate (ownsProposal, ownsRun or member) is taken off, or stops asking whose company it is. */
+      expect(stranger.status, `${path} ${JSON.stringify(stranger.body)}`).toBe(404);
+      const member = await call('POST', path, { token: tokens.ada, body });
+      /* RED WHEN: the gate refuses a member of the company too. */
+      expect(member.status, `${path} ${JSON.stringify(member.body)}`).toBe(400);
+    }
+    expect(sent).toEqual([]);
+    expect(await standing('ada', c)).toEqual(before);
   });
 });

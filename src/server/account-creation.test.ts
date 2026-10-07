@@ -35,7 +35,7 @@ import * as accountModule from '../../contracts/managed/contract/index.js';
 import { newWrappingKeypair } from '../core/crypto.js';
 import { NO_ASSET } from '../core/assets.js';
 import { readAccountDeploy } from '../wiring/vault-submission.js';
-import { openSealedPayKey, payKeyCommitmentOf, payKeyPayloadOf } from '../midnight/run-keys.js';
+import { openSealedPayKey, payKeyCommitmentOf, payKeyPayloadOf } from '../midnight/pay-key-commitment.js';
 import { sealedPayKeyIn } from '../midnight/pay-key-round.js';
 import { creationCarriedAgain } from '../../packages/web-shared/src/vault-builder.js';
 import { answerVaultAsk } from '../../packages/web-shared/src/vault-worker-entry.js';

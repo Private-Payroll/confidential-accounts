@@ -49,7 +49,8 @@ import {
 } from '../midnight/vault-pool.js';
 import { parseVaultRegistry, namesRecordedFor } from '../midnight/vault-record.js';
 import {
-  whyThisIsNotACompanyRecord, type CompanyRecordKind, type CompanyRecordStore, type SealedCompanyRecord,
+  CompanyRecordIdTaken, whyThisIsNotACompanyRecord, type CompanyRecordKind, type CompanyRecordStore, type PeopleRecords,
+  type SealedCompanyRecord,
 } from '../midnight/sealed-record-wire.js';
 
 /** The sealed records a vault has. */
@@ -385,7 +386,7 @@ export const openVaultRecords = (
  * Opened only by `openCompanyRecords`, which asks whether commits are durable
  * first.
  */
-export class PostgresCompanyRecords implements CompanyRecordStore {
+export class PostgresCompanyRecords implements CompanyRecordStore, PeopleRecords {
   private constructor(opened: symbol, private readonly sql: RecordsSql) {
     if (opened !== OPENED_AFTER_THE_CHECK) {
       throw new Error('the store of company records is opened with openCompanyRecords, which first asks the database whether its commits are durable.');
@@ -433,6 +434,22 @@ export class PostgresCompanyRecords implements CompanyRecordStore {
     return rows.map((row) => this.validated({ company, kind, id }, row));
   }
 
+  /** The newest version of every person on `company`'s payroll, by id. */
+  async peopleOf(company: string): Promise<readonly SealedCompanyRecord[]> {
+    const rows = await this.sql<{ record_id: string; version: number; body: string; digest: Uint8Array }>`
+      SELECT DISTINCT ON (record_id) record_id, version, body, digest FROM company_sealed_records
+      WHERE company = ${company} AND kind = 'person'
+      ORDER BY record_id ASC, version DESC`;
+    return rows.map((row) => this.validated({ company, kind: 'person', id: row.record_id }, row));
+  }
+
+  /** The company whose payroll the person `id` is on, or null. */
+  async companyOfPerson(id: string): Promise<string | null> {
+    const rows = await this.sql<{ company: string }>`
+      SELECT company FROM company_sealed_records WHERE kind = 'person' AND record_id = ${id} LIMIT 1`;
+    return rows[0]?.company ?? null;
+  }
+
   async put(rec: SealedCompanyRecord): Promise<void> {
     const unusable = whyThisIsNotACompanyRecord(rec, rec);
     if (unusable !== null) throw new VaultRecordRefused(`this is not a company's sealed record (${unusable}), so nothing is filed.`);
@@ -440,6 +457,13 @@ export class PostgresCompanyRecords implements CompanyRecordStore {
     try {
       await this.sql.begin(async (tx: RecordsQuery) => {
         await tx`SET LOCAL synchronous_commit TO on`;
+        /* A person's id is on one company's payroll only. */
+        if (rec.kind === 'person') {
+          const held = await tx<{ company: string }>`
+            SELECT company FROM company_sealed_records
+            WHERE kind = 'person' AND record_id = ${rec.id} AND company <> ${rec.company} LIMIT 1`;
+          if (held.length > 0) throw new OwnRefusal(new CompanyRecordIdTaken(rec.kind, rec.id));
+        }
         const filed = await tx<{ version: number; commit_mode: string }>`
           INSERT INTO company_sealed_records (company, kind, record_id, version, key_epoch, body, digest)
           SELECT ${rec.company}, ${rec.kind}, ${rec.id}, ${rec.version}, ${rec.keyEpoch}, ${body}, ${digestOf(body)}
@@ -465,7 +489,15 @@ export class PostgresCompanyRecords implements CompanyRecordStore {
       });
     } catch (cause) {
       if (cause instanceof OwnRefusal) throw cause.error;
-      if ((cause as { code?: string })?.code === '23505') throw new VaultPoolVersionAlreadyFiled(rec.id, rec.version);
+      if ((cause as { code?: string })?.code === '23505') {
+        /* Two companies filing one person id at once: the index the database keeps for it refuses the second. */
+        if ((cause as { constraint_name?: string })?.constraint_name === 'company_sealed_records_one_payroll_per_person') {
+          /* The index refuses a same-company race for one version too: only another company's hold is a taken id. */
+          const holder = await this.companyOfPerson(rec.id).catch(() => null);
+          if (holder !== null && holder !== rec.company) throw new CompanyRecordIdTaken(rec.kind, rec.id);
+        }
+        throw new VaultPoolVersionAlreadyFiled(rec.id, rec.version);
+      }
       throw new Error(
         `version ${rec.version} of this company's ${rec.kind} record was not confirmed filed (${(cause as Error)?.message ?? String(cause)}). `
         + 'It may have been filed: read the record again before deciding anything.', { cause });

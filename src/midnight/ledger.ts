@@ -566,8 +566,8 @@ export class MidnightLedger implements Ledger {
       /**
        * **SET ON A DEPLOYMENT WHOSE COMPANIES ARE MADE ON THEIR FOUNDING
        * SIGNER'S DEVICE, WHICH IS EVERY ONE ON A CHAIN.** The state a
-       * company's first view opens with is then kept by `fileFoundingState`,
-       * as that device sealed it, and the device deploys the account, held by
+       * company's first view opens with is then the company's state record,
+       * as that device sealed and signed it, and the device deploys the account, held by
        * their own committee key from its first transaction, through the
        * service's creation route. Opening an account here is refused by name
        * either way.
@@ -767,7 +767,7 @@ export class MidnightLedger implements Ledger {
      * **ON A CHAIN, A COMPANY IS MADE ON ITS FOUNDING SIGNER'S DEVICE, AND
      * NOTHING HERE OPENS ONE.** Its secrets are made there and its first state
      * sealed there; what this service keeps of it is filed by
-     * `fileFoundingState`, and the account is deployed from that device.
+     * the company's signed state record, and the account is deployed from that device.
      */
     throw new Error(
       `cannot open "${accountId}": on a chain, a company's account is created only from its founding signer's `
@@ -777,28 +777,9 @@ export class MidnightLedger implements Ledger {
     );
   }
 
-  /**
-   * **THE STATE A COMPANY'S FIRST VIEW OPENS WITH, AS ITS FOUNDING SIGNER'S
-   * DEVICE SEALED IT**, kept under the company before its account's deploy is
-   * built. Only on a deployment whose companies are made on their founding
-   * signer's device. A state already kept at that epoch is never written over:
-   * it would destroy the only copy under that key. The same state sent again,
-   * by a device that did not hear the first answer, keeps nothing new.
-   */
-  async fileFoundingState(accountId: string, sealed: SealedStateAt): Promise<void> {
-    if (this.deployment?.fromTheFoundingSigner !== true) {
-      throw new Error(
-        `cannot keep a first state for "${accountId}": this deployment does not take companies made on their founding `
-          + 'signer\'s device. Nothing was kept.');
-    }
-    const already = await this.blobs.get(accountId, viewDigestOf([]), sealed.keyEpoch);
-    if (already) {
-      if (already.iv === sealed.sealed.iv && already.tag === sealed.sealed.tag && already.body === sealed.sealed.body) return;
-      throw new Error(
-        `the state for "${accountId}" is already kept at key epoch ${sealed.keyEpoch}, and it is never written over. `
-          + 'Nothing was kept.');
-    }
-    await this.blobs.put(accountId, viewDigestOf([]), sealed.keyEpoch, sealed.sealed);
+  /** Only on a deployment whose companies are made on their founding signer's device. */
+  get takesCompaniesFromTheirFoundingSigner(): boolean {
+    return this.deployment?.fromTheFoundingSigner === true;
   }
 
   /**

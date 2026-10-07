@@ -7,7 +7,7 @@
 import { describe, expect, it } from 'vitest';
 import { pureCircuits } from '../../contracts/managed/contract/index.js';
 import { payKeyCommitmentIn, payKeyRoundOf, sealedPayKeyIn, payKeyStandingOf, type PayKeyPure } from './pay-key-round.js';
-import { payKeyCommitmentOf, payKeyPayloadOf } from './run-keys.js';
+import { payKeyCommitmentOf, payKeyPayloadOf } from './pay-key-commitment.js';
 
 const P = pureCircuits as unknown as PayKeyPure;
 const hex = (b: Uint8Array) => Buffer.from(b).toString('hex');

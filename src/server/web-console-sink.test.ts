@@ -25,8 +25,9 @@
  * Each case therefore gets its own directory, its own `.env`, and an
  * environment built from scratch.
  */
-import { describe, it, expect, afterAll } from 'vitest';
-import { spawn, type ChildProcess } from 'node:child_process';
+import { describe, it, expect, afterEach } from 'vitest';
+import type { ChildProcess } from 'node:child_process';
+import { startInItsOwnGroup, stopEverythingStarted, stopTheWholeGroup } from './a-started-server.test-support.js';
 import { createServer } from 'node:net';
 import { mkdtempSync, readFileSync, writeFileSync, existsSync, mkdirSync } from 'node:fs';
 import { tmpdir } from 'node:os';
@@ -98,7 +99,18 @@ const SHAPES: ReadonlyArray<readonly [string, RegExp]> = [
 /* ------------------------------------------------------------- the process */
 
 const children: ChildProcess[] = [];
-afterAll(() => { for (const c of children) { try { c.kill('SIGKILL'); } catch { /* gone */ } } });
+/*
+ * **EVERY CASE STOPS WHAT IT STARTED, WHOLE, AND CHECKS NOTHING IS LEFT.** The
+ * service runs under `tsx` as a process of its own, and a stop that reaches
+ * only `tsx` leaves it listening after the case is over.
+ */
+afterEach(async () => {
+  const left: number[] = [];
+  for (const c of children.splice(0)) left.push(...await stopTheWholeGroup(c));
+  /* And anything started that the list above did not name. */
+  left.push(...await stopEverythingStarted());
+  expect(left, `still running after this case was stopped: ${left.join(', ')}`).toEqual([]);
+}, 30_000);
 
 /*
  * **A PORT THE SYSTEM WILL NOT HAND TO ANOTHER TEST IN THE MEANTIME.** The port is found here
@@ -153,7 +165,7 @@ const start = async (overrides: Record<string, string>): Promise<Running> => {
   const port = await freePort();
   const report = join(dir, 'REPORT-WEB-CONSOLE.txt');
 
-  const child = spawn(TSX, [ENTRY], {
+  const child = startInItsOwnGroup(TSX, [ENTRY], {
     cwd: dir,
     env: {
       PATH: process.env.PATH ?? '', HOME: process.env.HOME ?? '',

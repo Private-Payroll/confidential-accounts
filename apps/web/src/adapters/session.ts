@@ -185,10 +185,12 @@ export async function companyNamesFor(personId: string): Promise<ReadonlyMap<str
   const out = new Map<string, string>();
   try {
     if (listed.person !== personId) return out;
-    const [{ keyringFor }, { openAccount }] = await Promise.all([import('./keyring-person.js'), keyring()]);
+    const [{ keyringFor }, { openedHere }] = await Promise.all([import('./keyring-person.js'), import('./filing-judge.js')]);
     if (!(await keyringFor(personId))) return out;
     for (const row of listed.rows) {
-      const opened = openAccount(row as SealedAccount);
+      /* A company whose roster this device does not believe has no name shown, and the others are still read. */
+      let opened: Awaited<ReturnType<typeof openedHere>> = null;
+      try { opened = await openedHere(row as SealedAccount); } catch { opened = null; }
       if (opened !== null && typeof opened.name === 'string') out.set(opened.id, opened.name);
     }
   } catch { /* a name not opened is not shown */ }

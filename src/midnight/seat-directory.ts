@@ -422,3 +422,32 @@ export const seatsWithAnotherRecordsKey = (
   }
   return refused;
 };
+
+/** Why a signed-in person may not act on the company's proposals now. */
+export type ActingRefusal = 'no-entry' | 'past-its-boundary' | 'not-on-the-committee' | 'seat-not-seated' | 'role-may-not-act';
+
+export const ACTING_REFUSAL: Readonly<Record<ActingRefusal, string>> = Object.freeze({
+  'no-entry': 'you hold no seat on this company that its directory believes, so nothing is relayed for you',
+  'past-its-boundary': 'your seat on this company has been retired, so nothing is relayed for you',
+  'not-on-the-committee': 'your seat\'s entry was signed by a key the company\'s account does not list on its committee now, so nothing is relayed for you',
+  'seat-not-seated': 'the company\'s account does not hold your seat now, so nothing is relayed for you',
+  'role-may-not-act': 'your seat on this company may read but not raise, approve, withdraw or carry out proposals',
+});
+
+/**
+ * **CHECK S FOR A RELAY, ON THE SERVER**: the seat the signed-in person holds on
+ * the company now, as the directory replayed against the chain believes it, or
+ * why they may not act. A proposal is raised, approved, withdrawn and carried
+ * out only for a seat the account holds now, whose entry its own wallet signed
+ * with a key on the account's committee now, and whose role is not a limited
+ * one. The chain makes its own signer check on every call relayed; this one
+ * decides whether this service pays the fee for it.
+ */
+export const actingSeatOf = (dir: Directory, chain: AccountSeats | null, person: string): DirectorySeat | ActingRefusal => {
+  const seat = dir.seats.find((x) => x.person === person);
+  if (seat === undefined) return 'no-entry';
+  if (seat.retired !== null) return 'past-its-boundary';
+  if (seat.role === 'viewer') return 'role-may-not-act';
+  if (chain === null) return 'not-on-the-committee';
+  return notOnTheChainNow(seat, chain) ?? seat;
+};

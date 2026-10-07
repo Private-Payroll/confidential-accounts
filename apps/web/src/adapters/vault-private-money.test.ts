@@ -53,7 +53,7 @@ vi.mock('vaults-web-shared/keyring.js', async (real) => ({
   keysFor: () => kr.keys,
   openAccount: () => kr.roster,
   companyKeyReleasedFor: () => kr.companyKey,
-  holdersFromTheWallet: async () => ({ holders: { committee: kr.committee, threshold: 1, seats: kr.seated, approvals: 1, adoptedVaults: [], account: 'c0'.repeat(32) }, vault: null }),
+  holdersFromTheWallet: async () => ({ holders: { committee: kr.committee, threshold: 1, seats: kr.seated, approvals: 1, adoptedVaults: [], founding: '5a'.repeat(32), foundingCommittee: [{ tag: 'schnorr', value: '11'.repeat(32) }], account: 'c0'.repeat(32) }, vault: null }),
   api: async (path: string) => {
     kr.asked.push(path);
     if (path === '/api/accounts/c1') return { id: 'c1', companyLabel: `co_${'c1'.repeat(32)}`, contractAddress: 'c0'.repeat(32) };

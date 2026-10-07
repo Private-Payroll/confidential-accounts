@@ -66,7 +66,7 @@ const setUp = async () => {
   const refuse = async () => { throw new Error('a deposit never asks this'); };
   const builder: VaultBuilderClient = {
     deploy: refuse, handover: refuse, chooseNote: refuse, paymentsFit: refuse, afterPayment: refuse,
-    confirmPayment: refuse, startStanding: refuse, setNonceSecret: refuse, writeSecretCopy: refuse, creatingTransaction: async (i) => creatingTransactionOfNote(i), payout: refuse, payoutPublicly: refuse, governedCall: refuse,
+    confirmPayment: refuse, startStanding: refuse, setNonceSecret: refuse, writeSecretCopy: refuse, proposalIdentity: refuse, companyWide: refuse, creatingTransaction: async (i) => creatingTransactionOfNote(i), payout: refuse, payoutPublicly: refuse, governedCall: refuse,
     commitments: async (i) => ({ output: `out:${i.coin.nonce}`, held: held(i.coin) }),
     ownSeat: refuse,
     secretIsTheVaults: async () => true,
@@ -84,7 +84,7 @@ const setUp = async () => {
     company: LABEL, account: ACCOUNT, builder,
     /* The wallet's read: the account has adopted the vault. */
     onChain: async (v: string) => ({
-      holders: { committee: [], threshold: 1, seats: [], approvals: 1, adoptedVaults: [v] },
+      holders: { committee: [], threshold: 1, seats: [], approvals: 1, adoptedVaults: [v], founding: '4a'.repeat(32), foundingCommittee: [{ tag: 'schnorr', value: '11'.repeat(32) }] },
     }),
     inFlight: sealedOnThisDevice<DepositInFlight>(inFlightInMemory(inFlight), { signerId: 'ada', wrappingSecret: wrapping.secret }, 'deposit') as DepositsInFlight,
   };

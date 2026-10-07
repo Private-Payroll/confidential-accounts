@@ -12,7 +12,7 @@ import { signJoinCode, type JoinCode } from 'midnight-identity/profile/join-code
 import { addressFingerprint, payeeCodeFingerprint } from 'midnight-identity/profile/fingerprint';
 import { canonical } from '../core/crypto.js';
 import { TEST_SETTLEMENT_ASSET } from '../core/assets.js';
-import { openEmployeeRow, sealPerson } from '../core/person-record.js';
+import { openPerson, sealPerson } from '../core/person-record.js';
 import { theNetwork } from '../midnight/network.js';
 import { payeeFor, unshieldedPayeeFor } from '../testing/payees.js';
 import { signCompanyFiling, toCompanyWire, verifiedCompanyFiler } from '../midnight/sealed-record-wire.js';
@@ -23,7 +23,8 @@ import {
   admitHere, makeMyselfPayableHere, PersonNotChanged, readPeopleHere, setStatusHere, type PeopleDevice, type PeopleHere, type PersonHere,
 } from 'vaults-web-shared/people-on-device.js';
 import {
-  aCompanyOfTwoSeats, acmeDirectory, ACME, ADA, BO, CO, fromAda, KEY, LABEL, OTHER_LABEL, ORIGIN, sendAs, store,
+  aCompanyOfTwoSeats, acmeDirectory, ACME, ADA, aVersionNoSeatSigned, BO, CO, fromAda, KEY, LABEL, newestPerson, OTHER_LABEL, ORIGIN,
+  peopleRecords, sendAs, store,
 } from './a-company-of-two-seats.test-support.js';
 
 aCompanyOfTwoSeats();
@@ -52,8 +53,8 @@ describe('THE PEOPLE ARE READ AS THEIR SIGNED RECORDS, WITH NO KEY IN ANY REQUES
     const read = await readPeopleHere(adasDevice());
     const dana = read.people.find((p) => p.person.id === w.id)!;
     expect(dana).toMatchObject({ version: 1, handedOver: true, person: { name: 'Payee 1', status: 'pending' } });
-    /* The service's older code writes a version no seat signed. */
-    store.putEmployee({ ...store.getEmployee(w.id)!, status: 'leaver' });
+    /* The service writes a version no seat signed. */
+    await aVersionNoSeatSigned(w.id, 'leaver');
     /* RED WHEN: a version no seat this device believes filed is opened as the person. */
     const again = await readPeopleHere(adasDevice());
     expect(again.people.some((p) => p.person.id === w.id)).toBe(false);
@@ -65,7 +66,7 @@ describe('THE PEOPLE ARE READ AS THEIR SIGNED RECORDS, WITH NO KEY IN ANY REQUES
      */
     const next = await waiting(30, codeOf(30, addressOf(30)));
     await expect(admitHere(adasDevice(), await hereOf(next.id), next.fingerprint)).rejects.toThrow(new RegExp(`1 record\\(s\\) no seat this device believes filed \\(${w.id}\\)`));
-    expect(store.getEmployee(next.id)!.status).toBe('pending');
+    expect((await newestPerson(next.id))!.facts!.status).toBe('pending');
     /* Ada files the next version of that person from her own device, and the payroll is one she believes again. */
     const refiled = signCompanyFiling(sealPerson({ ...dana.person, status: 'leaver' }, 3, 0, KEY), ADA.signingSecret);
     expect((await fromAda(`/api/people/${w.id}/status`, { method: 'POST', body: JSON.stringify({ person: toCompanyWire(refiled) }) })).status).toBe(201);
@@ -82,16 +83,18 @@ describe('ADMITTING: THE DECISION THAT MAKES SOMEBODY PAYABLE, MADE ON THE ADMIT
     const admitted = await admitHere(adasDevice(), await hereOf(w.id), w.fingerprint);
     expect(admitted).toMatchObject({ status: 'active', wrappingPublicKey: 'cd'.repeat(32), admittedBy: 'ada', payslipKeyFrom: LABEL });
     expect(admitted.address!.bech32).toBe(address);
-    /* The service's older payroll code reads the same person, payable, from the one record. */
-    const row = store.getEmployee(w.id)!;
-    expect(row).toMatchObject({ status: 'active', wrappingPublicKey: 'cd'.repeat(32), inbox: null });
-    expect(openEmployeeRow(row, KEY).address!.bech32).toBe(address);
+    /* The company's records hold the same person, payable, as the one record, and nothing waits for them. */
+    const rec = (await newestPerson(w.id))!;
+    expect(rec.facts).toEqual({ status: 'active', wrappingPublicKey: 'cd'.repeat(32) });
+    expect(store.handoverFor(w.id)).toBeNull();
+    expect(openPerson(rec, KEY).address!.bech32).toBe(address);
     /* RED WHEN: the version admitted is not the one Ada's seat signed. */
-    expect(verifiedCompanyFiler(store.newestPerson(w.id)!)).toBe(ADA.statement.signingKey);
+    expect(verifiedCompanyFiler(rec)).toBe(ADA.statement.signingKey);
     /* RED WHEN: the offer is kept after the person is admitted, a second standing copy of their pay. */
     expect(store.listInvites(CO).find((i) => i.subjectId === w.id)!.offer).toBeNull();
     /* RED WHEN: the admitted address or salary reaches the service in the clear. */
     expect(canonical(store.snapshot())).not.toContain(address);
+    expect(canonical(await peopleRecords.versions(CO, 'person', w.id))).not.toContain(address);
   });
 
   it('REFUSES A FINGERPRINT THAT IS NOT THE ADDRESS\'S, AND FILES NOTHING', async () => {
@@ -102,8 +105,8 @@ describe('ADMITTING: THE DECISION THAT MAKES SOMEBODY PAYABLE, MADE ON THE ADMIT
     const swapped = await waiting(33, codeOf(70, addressOf(43)));
     const payeesOwn = payeeCodeFingerprint(codeOf(43, addressOf(43)) as never);
     await expect(admitHere(adasDevice(), await hereOf(swapped.id), payeesOwn)).rejects.toThrow(/not the fingerprint of the code that arrived/);
-    expect(store.newestPerson(swapped.id)!.version).toBe(1);
-    expect(store.newestPerson(w.id)!.version).toBe(1);
+    expect((await newestPerson(swapped.id))!.version).toBe(1);
+    expect((await newestPerson(w.id))!.version).toBe(1);
     /*
      * RED WHEN: a refusal tells the admin to have the payee accept again - an
      * invitation is accepted once, so that advice strands them - rather than
@@ -119,11 +122,11 @@ describe('ADMITTING: THE DECISION THAT MAKES SOMEBODY PAYABLE, MADE ON THE ADMIT
     /* The same wallet hands over again under another invitation. */
     const again = await waiting(5, codeOf(44, addressOf(45)));
     /* RED WHEN: one wallet is made payable twice: two records is two salaries. */
-    await expect(admitHere(adasDevice(), await hereOf(again.id), again.fingerprint)).rejects.toThrow(/already payable/);
+    await expect(admitHere(adasDevice(), await hereOf(again.id), again.fingerprint)).rejects.toThrow(/is already payable on this company\. One person gets one payable record/);
     /* Another wallet, the same email. */
     const sameEmail = await waiting(6, codeOf(46, addressOf(46)), { ...pay(6), email: 'PAYEE4@acme.co' });
     /* RED WHEN: one person, by email, is made payable twice. */
-    await expect(admitHere(adasDevice(), await hereOf(sameEmail.id), sameEmail.fingerprint)).rejects.toThrow(/already payable/);
+    await expect(admitHere(adasDevice(), await hereOf(sameEmail.id), sameEmail.fingerprint)).rejects.toThrow(/is already payable on this company\. One person gets one payable record/);
   });
 
   it('REFUSES A WITHDRAWN INVITATION, A CODE FOR ANOTHER COMPANY, AN UNREACHABLE ADDRESS, AND A SECOND ADMISSION', async () => {
@@ -153,7 +156,7 @@ describe('ADMITTING: THE DECISION THAT MAKES SOMEBODY PAYABLE, MADE ON THE ADMIT
     const unreachable = await waiting(9, codeOf(49, publicAddress));
     /* RED WHEN: an address the money cannot reach is admitted. */
     await expect(admitHere(adasDevice(), await hereOf(unreachable.id), unreachable.fingerprint)).rejects.toThrow(/^not admitted\./);
-    expect(store.newestPerson(unreachable.id)!.facts!.status).toBe('pending');
+    expect((await newestPerson(unreachable.id))!.facts!.status).toBe('pending');
   });
 
   it('REFUSES, EACH BY ITS OWN SENTENCE: NOTHING HANDED OVER, A HAND-OVER SEALED TO ANOTHER COMPANY, AND A PERSON ALREADY ADMITTED', async () => {
@@ -184,7 +187,7 @@ describe('ADMITTING: THE DECISION THAT MAKES SOMEBODY PAYABLE, MADE ON THE ADMIT
     const post = (body: unknown) => sendAs('usr_63')(`/api/invites/${clear.id}/accept-employee`, { method: 'POST', body: JSON.stringify(body) });
     expect((await post({ acceptance: proof, handover: sealedFor, wrappingPublicKey: 'cd'.repeat(32) })).body).toMatchObject({ refused: 'handover-in-the-clear' });
     expect((await post({ acceptance: proof, handover: sealedFor, note: 'hi' })).body).toMatchObject({ refused: 'not-an-acceptance' });
-    expect(store.newestPerson(clear.person!)!.facts!.status).toBe('pending');
+    expect((await newestPerson(clear.person!))!.facts!.status).toBe('pending');
   });
 
   it('THE SERVICE FILES AN ADMISSION ONLY FROM A SEAT, ONLY AS ACTIVE, AND ONLY WHILE SOMETHING WAITS', async () => {
@@ -200,7 +203,8 @@ describe('ADMITTING: THE DECISION THAT MAKES SOMEBODY PAYABLE, MADE ON THE ADMIT
     /* RED WHEN: an approver's seat, whose role may not file a person, admits somebody. */
     expect((await post('bo', wire('active', BO.signingSecret))).body).toMatchObject({ refused: 'role-may-not-file' });
     /* RED WHEN: somebody who is not a member of the company reaches the person at all (the ownsPerson gate). */
-    expect((await post('eve', wire('active'))).status).toBe(404);
+    /* The person gate's own answer, not a route that is not there. */
+    expect(await post('eve', wire('active'))).toMatchObject({ status: 404, body: { error: 'not found' } });
     expect((await post('ada', wire('active'))).status).toBe(201);
     /* RED WHEN: a person is admitted again once nothing waits. */
     expect((await post('ada', toCompanyWire(signCompanyFiling(sealPerson({ ...here.person, status: 'active' }, 3, 0, KEY), ADA.signingSecret)))).body).toMatchObject({ refused: 'nothing-handed-over' });
@@ -288,14 +292,15 @@ describe('A STATUS, CHANGED ON A SEAT\'S DEVICE', () => {
     /* RED WHEN: a person with nowhere to be paid is made active from the roster. */
     await expect(setStatusHere(adasDevice(), here, 'active')).rejects.toThrow(/no address on file/);
     await setStatusHere(adasDevice(), here, 'leaver');
-    expect(store.getEmployee(made.person!)!.status).toBe('leaver');
+    expect((await newestPerson(made.person!))!.facts!.status).toBe('leaver');
     /* RED WHEN: the status route files a version that makes a person anything but active or a leaver. */
     const { sealPerson } = await import('../core/person-record.js');
     const { signCompanyFiling, toCompanyWire } = await import('../midnight/sealed-record-wire.js');
     const pendingAgain = toCompanyWire(signCompanyFiling(sealPerson({ ...here.person, status: 'pending' }, 3, 0, KEY), ADA.signingSecret));
     expect((await fromAda(`/api/people/${made.person}/status`, { method: 'POST', body: JSON.stringify({ person: pendingAgain }) })).body).toMatchObject({ refused: 'not-this-change' });
     /* RED WHEN: a member of another company changes this one's person (the ownsPerson gate). */
-    expect((await sendAs('eve')(`/api/people/${made.person}/status`, { method: 'POST', body: JSON.stringify({ person: pendingAgain }) })).status).toBe(404);
+    expect(await sendAs('eve')(`/api/people/${made.person}/status`, { method: 'POST', body: JSON.stringify({ person: pendingAgain }) }))
+      .toMatchObject({ status: 404, body: { error: 'not found' } });
   });
 });
 
@@ -307,10 +312,10 @@ describe('A SIGNER MAKES THEMSELVES PAYABLE FROM THEIR OWN DEVICE', () => {
     /* RED WHEN: a signer is made payable at an address another wallet signed. */
     await expect(makeMyselfPayableHere(adasDevice(), codeOf(62, addressOf(62)), self)).rejects.toThrow(/not signed by the wallet your seat/);
     const payable = await makeMyselfPayableHere(adasDevice(), mine, self);
-    expect(store.getEmployee(payable.id)).toMatchObject({ status: 'active', wrappingPublicKey: 'ef'.repeat(32) });
+    expect((await newestPerson(payable.id))!.facts).toEqual({ status: 'active', wrappingPublicKey: 'ef'.repeat(32) });
     expect(payable).toMatchObject({ selfRaised: true, handedOverBy: ADA.committeeKey.value });
     /* RED WHEN: the same signer is made payable twice. */
-    await expect(makeMyselfPayableHere(adasDevice(), mine, self)).rejects.toThrow(/already payable/);
+    await expect(makeMyselfPayableHere(adasDevice(), mine, self)).rejects.toThrow(/is already payable on this company\. One person gets one payable record/);
     /* RED WHEN: the self-payee route files anybody but a new, active person. */
     const { sealPerson } = await import('../core/person-record.js');
     const { signCompanyFiling, toCompanyWire } = await import('../midnight/sealed-record-wire.js');

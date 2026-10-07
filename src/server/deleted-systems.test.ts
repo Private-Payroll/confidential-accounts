@@ -193,6 +193,15 @@ describe('§2 — THE DEVICE-ENVELOPE SYSTEM IS GONE', () => {
   });
 });
 
+describe('§2b — THE SERVICE NO LONGER DRAWS A RUN ITSELF', () => {
+  it('THE AD HOC DRAW, WHICH MADE A PAYSLIP KEY ON THE SERVER AND HANDED ITS SECRET BACK, ANSWERS 404', async () => {
+    /* A run is drawn, sealed and signed on a signer's device and only kept here (`run-routes.ts`); nothing here mints a key. */
+    const token = await signedIn();
+    const r = await call('POST', '/api/accounts/acc_any/payroll', { token, body: { period: '2026-07', viewingKey: 'ab'.repeat(32), employees: [] } });
+    expect(r.status).toBe(404);
+  });
+});
+
 describe('§3 — AND WHAT NOW DOES THE JOB THE ENVELOPE DID', () => {
   it('REMOVING A DEVICE IS REVOKING ITS SESSION, AND THAT STILL WORKS', async () => {
     /*

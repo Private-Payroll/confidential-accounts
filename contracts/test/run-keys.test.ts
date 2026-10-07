@@ -181,14 +181,15 @@ describe('a run is derived, not generated', () => {
     const run = buildRun(seeds, ID, staff(10), detailsOf, payFor(staff(10)), TOKEN);
     const retry = buildRetryRun(run, [7, 9]);
 
-    // The same tree - a retry is raised over the run's own, so a spending policy charges it once -
-    // and each person paid with the leaf and path they already had.
-    expect(retry.tree.root).toBe(run.tree.root);
+    // A tree of its own, of only the two it names - so an approval of it pays nobody else - and
+    // each person paid with the leaf they already had, so the same leaf is refused a second time.
+    expect(retry.tree.root).not.toBe(run.tree.root);
+    expect(retry.tree.payees).toBe(2n);
     expect([retry.payeeArgs(0).leaf, retry.payeeArgs(1).leaf]).toEqual([run.tree.leaves[7], run.tree.leaves[9]]);
 
     const first = retry.payeeArgs(0);
     expect(first.originalIndex).toBe(7);
-    expect(first.path).toEqual(run.payeeArgs(7).path);
+    expect(first.path).toEqual(retry.tree.pathFor(0));
     expect(first.nonce).toBe(run.payeeArgs(7).nonce);
     expect(first.blinding).toBe(run.payeeArgs(7).blinding);
     expect(first.amount).toBe(run.payeeArgs(7).amount);

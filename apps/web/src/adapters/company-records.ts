@@ -5,7 +5,8 @@ import { assets, type AssetRegistry } from '../../../../src/core/assets.js';
 import { openRecord } from '../../../../src/core/sealed-records.js';
 import { onlyPayableWhenActive, openPerson, peopleOnTheWire } from '../../../../src/core/person-record.js';
 import type { Account, PayrollRun, Proposal, ProposalKind, ProposalStatus, SealedAccount, SealedProposal, SealedRun } from '../../../../src/core/types.js';
-import { api, canOpenCompanies, openAccount, openKeysWithWallet, viewingKeyFor } from 'vaults-web-shared/keyring.js';
+import { api, canOpenCompanies, openKeysWithWallet, viewingKeyFor } from 'vaults-web-shared/keyring.js';
+import { openedHere } from './filing-judge.js';
 import { paidPublicly } from 'vaults-web-shared/public-payment.js';
 import { keyringFor, keysOnTheWayIn } from './keyring-person.js';
 import { ACCOUNT_ORIGIN } from './session.js';
@@ -336,7 +337,7 @@ export async function readCompany(personId: string, companyId: string): Promise<
     sealed = await ask(SERVICE.company + companyId) as SealedAccount;
     /* Keys saved in another tab since are read first, so a person who opened them there is not asked again here, and a seat this device did not finish is finished. */
     if (await keysOnTheWayIn(companyId, async () => sealed) === null) return { of: canOpenCompanies() ? OPENED.noKeysHere : OPENED.locked };
-    const opened = openAccount(sealed);
+    const opened = await openedHere(sealed);
     if (opened === null) return { of: OPENED.noKeysHere };
     account = opened;
     viewingKey = viewingKeyFor(sealed);

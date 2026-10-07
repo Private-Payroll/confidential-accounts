@@ -1,4 +1,5 @@
 import { describe, expect, it } from 'vitest';
+import { approverRosterFrom } from '../../../src/core/vault-approvers.js';
 import { identityFromSecret } from 'midnight-identity';
 import { committeeKeyFor } from 'midnight-identity/profile/committee-key';
 import { signRecordsKey } from 'midnight-identity/profile/records-key';
@@ -23,7 +24,18 @@ import type { RosterVaultKeys } from '../../../src/core/vault-keys.js';
 const VAULT = 'ab'.repeat(32);
 const ACCOUNT = 'c0'.repeat(32) as AccountAddress;
 const CO = `co_${'c1'.repeat(32)}` as CompanyLabel;
-const pacing = { sleep: async () => {}, waitMs: 3, everyMs: 1 };
+/*
+ * The company as a device counts it for the vault check, beside the pacing every operation takes: three seats with every
+ * right and one approval needed, so no vault here is left short. The check is driven in
+ * `src/core/a-vault-keeps-as-many-approvers-as-its-bar.test.ts` and `apps/web/src/adapters/create-vault.test.ts`.
+ */
+const nobodyShort = {
+  approvers: async () => approverRosterFrom({
+    threshold: 1, vaultThresholds: [], seated: ['e1', 'e2', 'e3'].map((leaf) => ({ leaf })), adoptedVaults: [], companyWide: 'cc'.repeat(32),
+  }),
+  vaultName: (v: string) => v,
+};
+const pacing = { sleep: async () => {}, waitMs: 3, everyMs: 1, ...nobodyShort };
 
 const signer = (n: number, name: string) => {
   const identity = identityFromSecret(new Uint8Array(32).fill(n));
@@ -115,7 +127,7 @@ const press = async (o: {
     ...pacing, account: ACCOUNT, service, builder,
     onChain: async (v: string) => ({
       /* The account held by the company's committee, which the vault was born held by. */
-      holders: { committee, threshold: 2, seats: [], approvals: 1, adoptedVaults: [v] },
+      holders: { committee, threshold: 2, seats: [], approvals: 1, adoptedVaults: [v], founding: '4a'.repeat(32), foundingCommittee: [{ tag: 'schnorr', value: '11'.repeat(32) }] },
     }),
     keys: { put: async () => {}, get: async () => null, forget: async () => {} },
     me, myRecordsKey: ada.recordsKey as never, records,

@@ -23,13 +23,17 @@
  */
 import express from 'express';
 import type { SealedAccount } from '../core/types.js';
+import { canonical } from '../core/crypto.js';
 import {
-  assertCompanyRecordId, assertCompanyRecordKind, assertWireVersionNumber, fromCompanyWire, toCompanyWire,
-  verifiedCompanyFiler, type CompanyRecordKind, type CompanyRecordStore, type SealedCompanyRecord,
+  assertCompanyRecordId, assertCompanyRecordKind, assertWireVersionNumber, CompanyRecordIdTaken, fromCompanyWire, toCompanyWire,
+  verifiedCompanyFiler, type CompanyRecordKind, type CompanyRecordStore, type PeopleRecords, type SealedCompanyRecord,
 } from '../midnight/sealed-record-wire.js';
 import { FILING_REFUSAL } from '../midnight/seat-directory.js';
 import { CHAIN_UNREAD, filerSeatNow, type DirectoryNow } from './seat-directory-route.js';
 import { assertTheNextVersion, VaultPoolVersionAlreadyFiled } from '../midnight/vault-pool.js';
+import { ROSTER_ID } from '../core/roster-record.js';
+
+export { CompanyRecordIdTaken, type PeopleRecords };
 
 /** The largest body one company record may be. */
 export const COMPANY_RECORD_BODY_LIMIT = '16mb';
@@ -39,9 +43,20 @@ export const COMPANY_RECORD_BODY_LIMIT = '16mb';
  * every version in order, nothing changed, and the same named refusals every
  * store raises.
  */
-export class MemoryCompanyRecordStore implements CompanyRecordStore {
+export class MemoryCompanyRecordStore implements CompanyRecordStore, PeopleRecords {
   private readonly filed = new Map<string, SealedCompanyRecord[]>();
   private key = (company: string, kind: CompanyRecordKind, id: string) => `${company}\u0000${kind}\u0000${id}`;
+  async peopleOf(company: string) {
+    return [...this.filed.values()]
+      .map((all) => all[all.length - 1]!)
+      .filter((r) => r.company === company && r.kind === 'person')
+      .sort((a, b) => a.id.localeCompare(b.id));
+  }
+  async companyOfPerson(id: string) { return this.holderOf(id); }
+  private holderOf(id: string): string | null {
+    for (const all of this.filed.values()) if (all[0]!.kind === 'person' && all[0]!.id === id) return all[0]!.company;
+    return null;
+  }
   async get(company: string, kind: CompanyRecordKind, id: string) {
     const all = this.filed.get(this.key(company, kind, id));
     return all?.[all.length - 1] ?? null;
@@ -53,6 +68,11 @@ export class MemoryCompanyRecordStore implements CompanyRecordStore {
     return (this.filed.get(this.key(company, kind, id)) ?? []).find((r) => r.version === version) ?? null;
   }
   async put(rec: SealedCompanyRecord) {
+    /* Checked and filed with nothing awaited between, so two companies cannot both take one person's id. */
+    if (rec.kind === 'person') {
+      const holder = this.holderOf(rec.id);
+      if (holder !== null && holder !== rec.company) throw new CompanyRecordIdTaken(rec.kind, rec.id);
+    }
     const k = this.key(rec.company, rec.kind, rec.id);
     const all = this.filed.get(k) ?? [];
     const newest = all[all.length - 1]?.version ?? null;
@@ -62,40 +82,72 @@ export class MemoryCompanyRecordStore implements CompanyRecordStore {
   }
 }
 
-/** Thrown by a store asked to file a record under an id another company's record already has. */
-export class CompanyRecordIdTaken extends Error {
-  constructor(readonly kind: CompanyRecordKind, readonly id: string) {
-    super(`${kind} ${id} is another company's, so nothing was filed`);
-    this.name = 'CompanyRecordIdTaken';
-  }
-}
 
-/** What the service's main store keeps of people (`store.ts`): every version of each, filed one at a time. */
-export interface PeopleStore {
-  personVersions(id: string): SealedCompanyRecord[];
-  filePerson(rec: SealedCompanyRecord): 'version-already-filed' | 'not-the-next-version' | 'another-company' | null;
+/**
+ * What the service's main store keeps of each company's roster (`store.ts`):
+ * every version, filed one at a time.
+ */
+export interface RosterStore {
+  rosterVersions(company: string): SealedCompanyRecord[];
+  fileRoster(rec: SealedCompanyRecord): 'version-already-filed' | 'not-the-next-version' | 'another-company' | null;
 }
 
 /**
- * **ONE STORE OF A COMPANY'S RECORDS, WITH ITS PEOPLE KEPT IN THE SERVICE'S
- * MAIN STORE** and every other kind in `others`. People are kept there because
- * the service's older payroll code reads a person without waiting, and that
- * store is the only copy of each: nothing here copies a person anywhere else.
- * A person is served only to the company whose payroll they are on.
+ * **ONE STORE OF A COMPANY'S RECORDS, WITH ITS ROSTER KEPT IN THE SERVICE'S
+ * MAIN STORE** and every other kind, its people among them, in `others`. The
+ * roster is kept there because the service's own account record reads its
+ * signers without waiting, and that store is its only copy: nothing here copies
+ * it anywhere else. A roster is served only to its own company.
  */
-export const withPeopleIn = (people: PeopleStore, others: CompanyRecordStore): CompanyRecordStore => {
-  const ofCompany = (company: string, id: string) => people.personVersions(id).filter((r) => r.company === company);
+export const withTheRosterIn = (roster: RosterStore, others: CompanyRecordStore): CompanyRecordStore => {
+  const ofCompany = (company: string, id: string): SealedCompanyRecord[] =>
+    (id === ROSTER_ID ? roster.rosterVersions(company) : []).filter((r) => r.company === company);
   return {
-    get: async (c, k, i) => (k !== 'person' ? others.get(c, k, i) : ofCompany(c, i).at(-1) ?? null),
-    versions: async (c, k, i) => (k !== 'person' ? others.versions(c, k, i) : ofCompany(c, i)),
-    at: async (c, k, i, v) => (k !== 'person' ? others.at(c, k, i, v) : ofCompany(c, i).find((r) => r.version === v) ?? null),
+    get: async (c, k, i) => (k !== 'roster' ? others.get(c, k, i) : ofCompany(c, i).at(-1) ?? null),
+    versions: async (c, k, i) => (k !== 'roster' ? others.versions(c, k, i) : ofCompany(c, i)),
+    at: async (c, k, i, v) => (k !== 'roster' ? others.at(c, k, i, v) : ofCompany(c, i).find((r) => r.version === v) ?? null),
     put: async (rec) => {
-      if (rec.kind !== 'person') return others.put(rec);
-      const refused = people.filePerson(rec);
+      if (rec.kind !== 'roster') return others.put(rec);
+      const refused = roster.fileRoster(rec);
       if (refused === 'another-company') throw new CompanyRecordIdTaken(rec.kind, rec.id);
       if (refused !== null) throw new VaultPoolVersionAlreadyFiled(rec.id, rec.version);
     },
   };
+};
+
+/** What the service's main store still holds of people filed before they moved: every version, and letting each go. */
+export interface PeopleHeldElsewhere {
+  peopleHeld(): Array<readonly SealedCompanyRecord[]>;
+  /** Names the person's payslip key on their slips sealed before slips named one, which were found through the person. */
+  nameTheKeyOnOlderSlipsOf(id: string): void;
+  letGoOfPerson(id: string): void;
+}
+
+/**
+ * **EVERY PERSON THE MAIN STORE STILL HOLDS, MOVED TO WHERE A COMPANY'S RECORDS
+ * ARE KEPT**, one person at a time: each version filed there, or found there
+ * already as exactly that version, and only then let go of here, so a person is
+ * held in one place once each move finishes. A version filed there that is not
+ * the one held here stops the move with the person still here, named.
+ */
+export const movePeopleToTheirRecords = async (from: PeopleHeldElsewhere, to: CompanyRecordStore): Promise<number> => {
+  let moved = 0;
+  for (const versions of from.peopleHeld()) {
+    for (const rec of versions) {
+      const there = await to.at(rec.company, 'person', rec.id, rec.version);
+      if (there === null) await to.put(rec);
+      else if (canonical(there) !== canonical(rec)) {
+        throw new Error(`person ${rec.id}'s version ${rec.version} is filed with the company's records as something other than the `
+          + 'version this service held, so the person was left where they were. Compare the two before moving them.');
+      }
+    }
+    if (versions[0] !== undefined) {
+      from.nameTheKeyOnOlderSlipsOf(versions[0].id);
+      from.letGoOfPerson(versions[0].id);
+      moved += 1;
+    }
+  }
+  return moved;
 };
 
 /** What filing a company record answered: the status and the body a route sends. */
@@ -234,6 +286,15 @@ export const companyRecordsRoutes = (deps: {
      */
     if (n.kind === 'person') {
       res.status(405).json({ refused: 'not-this-route', error: 'a person is filed through the people routes, as an invitation, a status, an admission or making yourself payable, and never here. Nothing was filed.' });
+      return;
+    }
+    /*
+     * The same for the company's roster: it changes only as a signer is admitted
+     * or gives their vault keys (`signer-routes.ts`), each of which changes what
+     * the service keeps in plain text of the signers with it.
+     */
+    if (n.kind === 'roster') {
+      res.status(405).json({ refused: 'not-this-route', error: 'the company\'s roster is filed as a signer is admitted or gives their vault keys, and never here. Nothing was filed.' });
       return;
     }
     const answer = await fileCompanyRecord(deps, (req as { userId?: unknown }).userId, n, req.params.version, req.body);

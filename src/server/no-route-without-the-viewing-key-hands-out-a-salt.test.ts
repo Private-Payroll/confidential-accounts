@@ -33,7 +33,7 @@ import { TEST_TOKEN } from '../testing/assets.js';
 
 const SERVER = join(__dirname);
 /** Every file that declares a route, the fee payer's included. */
-const FILES = ['index.ts', 'company-vaults.ts', 'vault-records-route.ts', 'vault-artefacts.ts', '../fee-payer/service.ts'];
+const FILES = ['index.ts', 'company-vaults.ts', 'vault-records-route.ts', 'vault-artefacts.ts', 'proposal-relays.ts', 'signer-routes.ts', 'run-routes.ts', '../fee-payer/service.ts'];
 
 /**
  * Every function in this service whose answer carries a run's salt or a payee's
@@ -42,8 +42,8 @@ const FILES = ['index.ts', 'company-vaults.ts', 'vault-records-route.ts', 'vault
  * (every path).
  */
 const HANDS_OUT = [
-  'privatePaymentOrderOf', 'retryPaymentOrderOf', 'runSaltOf', 'assemblePrivatePayments',
-  'raiseOrderOf', 'retryRaiseOrderOf', 'raiseOrderOnTheWire', 'raiseHalfOf', 'payeeArgs', 'pathFor', 'proposalSalt',
+  'privatePaymentOrderOf', 'runSaltOf', 'assemblePrivatePayments',
+  'raiseOrderOf', 'retryRaiseOrderOf', 'raiseHalfOf', 'payeeArgs', 'pathFor', 'proposalSalt',
   'payoutRebuildOf', 'runMaterialInputs', 'payoutSeedsOf', 'payoutMaterialOf', '.leaves',
   /* A seat's or a threshold change's own salt, and the account's half of raising one. */
   'governanceOrderOf', 'governanceOrderOnTheWire', 'governanceAsked', 'roundForADevice', 'seatOrderOf', 'thresholdOrderOf',
@@ -63,25 +63,16 @@ describe('no route that does not take the viewing key returns a salt or a path',
   it('EVERY ROUTE THAT REACHES A SALT OR A PATH IS ONE OF THESE, AND EACH TAKES THE VIEWING KEY', () => {
     const all = FILES.flatMap(routesIn);
     /* RED WHEN the walk stops finding routes: it would then pass by finding none. */
-    /* Routes were removed on purpose when joining moved onto people's own devices (the old invitation, people, state and payee-challenge routes): 82 found then. */
-    expect(all.length).toBeGreaterThan(81);
+    /* Routes were removed on purpose when joining moved onto people's own devices (the old invitation, people, state and payee-challenge routes): 82 found then.
+     * Nine more went when what a raise, a retry, a seat and a payment are built from came to be made on the device: 73 found then.
+     * The relays then took no key, and the server's own seating and threshold routes went: 69 found then, with the relays' and the roster's own files.
+     * The service's own two draws of a run went, and the route that keeps a run a device drew came: 68 found then, with its own file.
+     * A run's raise and retry went to the device, and the route that answered for a run and a person went: 65 found then. */
+    expect(all.length).toBeGreaterThan(60);
     const reaching = all.filter(r => HANDS_OUT.some(f => r.body.includes(f)));
     /* RED WHEN a route is added that reaches one of them, or one of these stops doing so. */
-    expect(reaching.map(r => r.route).sort()).toEqual([
-      'POST /api/accounts/:id/signers/:signerId/round',
-      'POST /api/accounts/:id/signers/:signerId/seat-order',
-      'POST /api/accounts/:id/threshold/order',
-      'POST /api/accounts/:id/threshold/round',
-      'POST /api/proposals/:id/governance-send',
-      'POST /api/runs/:id/payments',
-      'POST /api/runs/:id/private-payments',
-      'POST /api/runs/:id/propose',
-      'POST /api/runs/:id/raise-order',
-      'POST /api/runs/:id/raise-send',
-      'POST /api/runs/:id/retry',
-      'POST /api/runs/:id/retry-order',
-      'POST /api/runs/:id/retry-send',
-    ]);
+    /* A run's raise and retry are made on the signer's device: no route takes the viewing key to reach either. */
+    expect(reaching.map(r => r.route).sort()).toEqual([]);
     for (const r of reaching) {
       /* RED WHEN any of them reads its viewing key from anywhere but its own body, or not at all. */
       expect(r.body, r.route).toMatch(/viewingKey: z\.string\(\)/u);

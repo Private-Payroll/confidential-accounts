@@ -289,12 +289,14 @@ describe('§2 the choice of reader is a function, and both services pass what it
     return args.map(a => a.trim());
   };
 
-  it('the server passes five arguments, and the fifth is what the choice returned', () => {
-    /* RED WHEN the argument is dropped, or a sixth appears, or the fifth stops
-     * being the value `holdingsFor` produced. */
+  it('the server passes six arguments: the fifth is what the choice returned, the sixth the company records', () => {
+    /* RED WHEN the argument is dropped, or a seventh appears, or the fifth stops
+     * being the value `holdingsFor` produced, or the sixth is not the store a
+     * company's signed state record is filed in. */
     const args = accountServiceArgs('src/server/index.ts');
-    expect(args).toHaveLength(5);
+    expect(args).toHaveLength(6);
     expect(args[4]).toBe('holdings');
+    expect(args[5]).toBe('companyRecordStore');
     expect(withoutComments(readFileSync('src/server/index.ts', 'utf8')))
       .toMatch(/const holdings = holdingsFor\(startup\);/);
   });

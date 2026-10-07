@@ -24,20 +24,39 @@
  */
 import express from 'express';
 import type { Invite, SealedAccount } from '../core/types.js';
-import { toCompanyWire, type CompanyRecordStore, type PersonStanding, type SealedCompanyRecord } from '../midnight/sealed-record-wire.js';
+import {
+  toCompanyWire, type CompanyRecordStore, type PeopleRecords, type PersonStanding, type SealedCompanyRecord,
+} from '../midnight/sealed-record-wire.js';
 import type { DirectoryNow } from './seat-directory-route.js';
 import { fileCompanyRecord, type FilingAnswer } from './company-records-route.js';
 
 /** What these routes need of the service's store. */
 export interface PeopleRouteStore {
   getAccount(accountId: string): SealedAccount | null;
-  peopleOf(accountId: string): SealedCompanyRecord[];
-  newestPerson(id: string): SealedCompanyRecord | null;
   handoverFor(subjectId: string): Invite['handover'];
   listInvites(accountId: string): Invite[];
   putInvite(invite: Invite): void;
   setHandover(key: string, handover: Invite['handover']): boolean;
 }
+
+/**
+ * **THE PERSON NAMED IN THE PATH IS ON THE PAYROLL OF A COMPANY THE SIGNED-IN
+ * PERSON IS A MEMBER OF**, as the company's records hold them; anybody else is
+ * answered 404, as if the person did not exist.
+ */
+export const ownsPersonIn = (
+  people: () => PeopleRecords, isMember: (accountId: string, userId: string) => boolean,
+): express.RequestHandler => (req, res, next) => {
+  people().companyOfPerson(String(req.params.id)).then((company) => {
+    if (company === null || typeof req.userId !== 'string' || !isMember(company, req.userId)) {
+      res.status(404).json({ error: 'not found' });
+      return;
+    }
+    next();
+  }, (e: unknown) => {
+    res.status(502).json({ error: `the company's people could not be read: ${(e as Error)?.message ?? String(e)}` });
+  });
+};
 
 export const peopleRoutes = (deps: {
   readonly signedIn: express.RequestHandler;
@@ -46,6 +65,8 @@ export const peopleRoutes = (deps: {
   readonly ownsPerson: express.RequestHandler;
   readonly store: PeopleRouteStore;
   readonly records: () => CompanyRecordStore;
+  /** The company's people, kept with its other records: the only copy of each. */
+  readonly people: () => PeopleRecords;
   readonly directoryOf: (accountId: string) => Promise<DirectoryNow>;
 }): express.Router => {
   const router = express.Router();
@@ -77,17 +98,25 @@ export const peopleRoutes = (deps: {
    * whether something they handed over waits to be admitted. The device that
    * asked opens them and believes only versions a seat it believes filed.
    */
-  router.get('/api/accounts/:id/people', deps.signedIn, deps.member, (req, res) => {
+  router.get('/api/accounts/:id/people', deps.signedIn, deps.member, async (req, res) => {
     const company = String(req.params.id);
+    let people: readonly SealedCompanyRecord[];
+    try { people = await deps.people().peopleOf(company); } catch (e) {
+      res.status(502).json({ error: `the company's people could not be read: ${(e as Error)?.message ?? String(e)}` });
+      return;
+    }
     res.status(200).json({
-      people: deps.store.peopleOf(company).map((r) => ({ filed: toCompanyWire(r), handedOver: deps.store.handoverFor(r.id) !== null })),
+      people: people.map((r) => ({ filed: toCompanyWire(r), handedOver: deps.store.handoverFor(r.id) !== null })),
     });
   });
+
+  /** The company whose payroll the person `id` is on; the person gate has already found them on one. */
+  const companyOf = async (id: string): Promise<string> => (await deps.people().companyOfPerson(id))!;
 
   /* **WHERE A PERSON STANDS**, changed on a seat's device: active, or a leaver. */
   router.post('/api/people/:id/status', deps.signedIn, deps.ownsPerson, json, async (req, res) => {
     const id = String(req.params.id);
-    const company = deps.store.newestPerson(id)!.company;
+    const company = await companyOf(id);
     const answer = await file(req, company, id, ['active', 'leaver'], 'a status change makes a person active or a leaver');
     res.status(answer.status).json(answer.body);
   });
@@ -100,7 +129,7 @@ export const peopleRoutes = (deps: {
    */
   router.post('/api/employees/:id/admit', deps.signedIn, deps.ownsPerson, json, async (req, res) => {
     const id = String(req.params.id);
-    const company = deps.store.newestPerson(id)!.company;
+    const company = await companyOf(id);
     if (deps.store.handoverFor(id) === null) {
       res.status(409).json({ refused: 'nothing-handed-over', error: 'nothing waits to be admitted for this person, so there is nothing to admit. Nothing was filed.' });
       return;

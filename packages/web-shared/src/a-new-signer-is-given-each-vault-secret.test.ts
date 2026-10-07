@@ -44,7 +44,7 @@ const company = (o: { filings?: DirectoryFiling[]; seats?: string[]; attested?: 
   const deps: DirectoryHereDeps = {
     accountId: CO, label: LABEL,
     filings: async () => o.filings ?? [ADA.claim(1), CAROL.claim(2)],
-    holders: async () => ({ account: ACCOUNT, approvals: 1, threshold: 1, adoptedVaults: VAULTS, seats: o.seats ?? [ADA.seat, CAROL.seat], committee: [ADA.committeeKey, CAROL.committeeKey] }),
+    holders: async () => ({ account: ACCOUNT, approvals: 1, threshold: 1, adoptedVaults: VAULTS, founding: ADA.seat, foundingCommittee: [ADA.committeeKey], seats: o.seats ?? [ADA.seat, CAROL.seat], committee: [ADA.committeeKey, CAROL.committeeKey] }),
     attested: async () => o.attested ?? [ADA.attested, CAROL.attested],
   };
   const directory = (): Promise<DirectoryHere> => directoryHere(deps);

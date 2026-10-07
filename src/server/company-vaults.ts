@@ -11,7 +11,6 @@
  * reads a stranger's before paying for it. What it answers about a vault's rules is read from
  * the chain each time it is asked.
  *
- *   PUT  /api/accounts/:id/vault-keys                   a signer's three public vault keys
  *   GET  /api/accounts/:id/vault-keys                   the committee, and who can read the records
  *   GET  /api/accounts/:id/vaults                       the company's vaults, and who holds each on chain
  *   POST /api/accounts/:id/vaults                       a vault deployed with a temporary key
@@ -45,8 +44,7 @@ import express from 'express';
 import { z } from 'zod';
 import type { Hex } from '../core/crypto.js';
 import type { SealedAccount, CompanyVault, AccountDeploy } from '../core/types.js';
-import type { CompanyVaultKeyIndex, SignedVaultKeys } from '../core/vault-keys.js';
-import { NoSeatToGiveKeysFor, VaultKeysAlreadyGiven, VaultKeysNotYours } from '../core/account.js';
+import type { CompanyVaultKeyIndex } from '../core/vault-keys.js';
 import type { Ledger, VaultTxArrival } from '../core/ledger.js';
 import { saysNothingWasSent } from '../core/jobs.js';
 import { readContractAuthority, type AuthorityRead } from '../midnight/ledger.js';
@@ -153,12 +151,6 @@ export interface CompanyVaultDeps {
     getCommitteeSignatures(address: string): CollectedCommitteeSignatures | null;
     putCommitteeSignatures(c: CollectedCommitteeSignatures): void;
   };
-  /**
-   * Writes one signer's signed vault keys into their own entry in the sealed
-   * roster. It needs the viewing key, and it refuses keys not signed by that
-   * entry's own signing key.
-   */
-  readonly giveVaultKeys: (accountId: string, viewingKey: string, userId: string, given: SignedVaultKeys) => 'given' | 'already-given';
   /** The company's account contract address, its approval threshold and every vault's own, as the chain holds them. */
   readonly company: (accountId: string) => Promise<{
     address: Hex; threshold: number; vaultThresholds: ReadonlyArray<{ vault: Hex; threshold: number }>;
@@ -427,30 +419,7 @@ export function companyVaultRoutes(deps: CompanyVaultDeps): express.Router {
 
   /* ---- keys ---- */
 
-  r.put('/api/accounts/:id/vault-keys', ...guard, async (req, res) => {
-    const body = z.object({
-      viewingKey: z.string().min(1),
-      committeeKey: z.object({ tag: z.literal('schnorr'), value: z.string().regex(HEX64) }),
-      recordsKey: z.string().regex(HEX64),
-      signature: z.string().regex(/^[0-9a-f]{128}$/u),
-      recordsKeyStatement: z.string().regex(/^[0-9a-f]{128}$/u).optional(),
-      recordsKeySeat: z.string().regex(HEX64).optional(),
-    }).strict().refine((b) => (b.recordsKeyStatement === undefined) === (b.recordsKeySeat === undefined)).safeParse(req.body);
-    if (!body.success) {
-      res.status(400).json({ error: 'these are not the two public keys, and your signature over them, that a signer gives for a company\'s vaults.' });
-      return;
-    }
-    const account = accountOf(req);
-    const { viewingKey, ...given } = body.data;
-    try {
-      const done = deps.giveVaultKeys(account.id, viewingKey, personOf(req), given as SignedVaultKeys);
-      res.status(done === 'given' ? 201 : 200).json({ given: true });
-    } catch (e) {
-      if (e instanceof VaultKeysAlreadyGiven) { res.status(409).json({ error: e.message }); return; }
-      if (e instanceof VaultKeysNotYours || e instanceof NoSeatToGiveKeysFor) { res.status(403).json({ error: e.message }); return; }
-      throw e;
-    }
-  });
+  /* A signer's vault keys are offered, and folded into the roster, through `signerRoutes`. */
 
   /*
    * **THE COMMITTEE AND THE READERS, WITH NOBODY'S NAME ON EITHER.** Which key

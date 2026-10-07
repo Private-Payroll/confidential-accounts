@@ -42,6 +42,9 @@ import type { CommitteeKey } from '../midnight/vault-committee.js';
 import { CREATION_STEPS, DEPLOYED_CIRCUITS } from '../midnight/deferral.js';
 import { circuitsRefusal, readAccountDeploy, refusalForCreationInsert, refusalForPayKeyCall } from '../wiring/vault-submission.js';
 import type { CompanyCreationState } from '../core/company-founding.js';
+import { foundingStateRefusal } from '../core/founding-state.js';
+import { foundingRosterRefusal, ROSTER_ID } from '../core/roster-record.js';
+import type { CompanyRecordStore, SealedCompanyRecord } from '../midnight/sealed-record-wire.js';
 
 const HEX64 = /^[0-9a-f]{64}$/u;
 const fold = (h: string): string => h.trim().toLowerCase().replace(/^0x/u, '');
@@ -153,14 +156,24 @@ const FOUNDED = z.object({
     pendingSigners: z.tuple([]),
     wrappedKeys: z.array(SEALED.extend({ signerId: z.string(), ephemeral: HEX_64 }).strict()).length(1),
     inboxPublicKey: HEX_64,
-    sealedRoster: SEALED,
     sealedPolicy: SEALED,
     contractAddress: z.null(),
     addressSource: z.null(),
     companyLabel: z.string(),
     wiring: z.null(),
   }).strict(),
-  sealedState: z.object({ keyEpoch: z.literal(0), sealed: SEALED }).strict(),
+  /* The first roster, the founding signer's entry only, signed by the founding seat. Checked by `foundingRosterRefusal`. */
+  roster: z.object({
+    company: z.string(), kind: z.literal('roster'), id: z.literal(ROSTER_ID), version: z.literal(1), keyEpoch: z.literal(0),
+    sealed: SEALED, wrapped: z.tuple([]),
+    filedBy: z.object({ publicKey: HEX_64, signature: z.string().regex(/^[0-9a-f]{128}$/u) }).strict(),
+  }).strict(),
+  /* The first state, signed by the founding seat as the company's state record. Checked by `foundingStateRefusal`. */
+  state: z.object({
+    company: z.string(), kind: z.literal('state'), id: z.literal('0'), version: z.literal(1), keyEpoch: z.literal(0),
+    sealed: SEALED, wrapped: z.tuple([]),
+    filedBy: z.object({ publicKey: HEX_64, signature: z.string().regex(/^[0-9a-f]{128}$/u) }).strict(),
+  }).strict(),
 }).strict();
 
 /** The whole request, on a chain: what the founding signer's wallet gave, and what their device made. */
@@ -181,11 +194,34 @@ export interface MadeOnTheDeviceDeps {
     getAccountOpening(accountId: string): AccountOpeningRecord | null;
     recordAccountOpening(o: AccountOpeningRecord): boolean;
   };
-  readonly ledger: Pick<Ledger, 'wiring' | 'fileFoundingState'>;
+  readonly ledger: Pick<Ledger, 'wiring' | 'takesCompaniesFromTheirFoundingSigner'>;
+  /** The company's signed records, where its first state is filed: the only copy of it kept. */
+  readonly records: Pick<CompanyRecordStore, 'get' | 'put'>;
 }
 
 type Answer = { readonly status: number; readonly body: Record<string, unknown> };
 const refused = (status: number, code: string, error: string): Answer => ({ status, body: { code, error } });
+
+/**
+ * Files the first version of one of a company's records - its state, its
+ * roster - once. The same record sent again, as a creation carried again
+ * after its answer was lost, is already there and is not filed twice. False
+ * when a different first version is kept for the company: it is never
+ * written over.
+ */
+async function fileTheFirstVersion(records: Pick<CompanyRecordStore, 'get' | 'put'>, rec: SealedCompanyRecord): Promise<boolean> {
+  const already = await records.get(rec.company, rec.kind, rec.id);
+  if (already !== null) return canonical(already) === canonical(rec);
+  try {
+    await records.put(rec);
+  } catch (e) {
+    /* Another creation of the same company filed it between the read and the write: the same record is no refusal. */
+    const now = await records.get(rec.company, rec.kind, rec.id);
+    if (now === null) throw e;
+    return canonical(now) === canonical(rec);
+  }
+  return true;
+}
 
 /**
  * **A COMPANY ITS FOUNDING SIGNER'S DEVICE MADE, RECORDED HERE.** On a chain
@@ -243,7 +279,11 @@ export async function recordTheCompanyMadeOnTheDevice(deps: MadeOnTheDeviceDeps,
     : f.account.companyLabel !== label ? 'it names a label other than the one the wallet drew'
       : f.account.wrappedKeys[0]!.signerId !== f.seat.signerId ? 'its viewing key is wrapped to a seat other than the founding signer\'s'
         : /^0+$/u.test(f.seat.leaf) ? 'its seat is no seat'
-          : null;
+          : foundingStateRefusal(f.state, f.account.id, f.seat.signingPublicKey) !== null
+            ? `its first state is not one its founding seat signed for it (${foundingStateRefusal(f.state, f.account.id, f.seat.signingPublicKey)})`
+            : foundingRosterRefusal(f.roster, f.account.id, f.seat.signingPublicKey) !== null
+              ? `its first roster is not one its founding seat signed for it (${foundingRosterRefusal(f.roster, f.account.id, f.seat.signingPublicKey)})`
+              : null;
   if (misfit !== null) {
     return refused(422, 'the-company-does-not-fit', `the company sent does not fit together: ${misfit}. Nothing was created.`);
   }
@@ -255,22 +295,32 @@ export async function recordTheCompanyMadeOnTheDevice(deps: MadeOnTheDeviceDeps,
   const already = deps.store.getAccount(id);
   if (already !== null) {
     if (sameAccount(already) && sameOpening(deps.store.getAccountOpening(id) ?? ({} as AccountOpeningRecord))) {
+      /* A creation whose answer was lost after the company was recorded and before its roster was: the roster is filed now. */
+      if (!await fileTheFirstVersion(deps.records, f.roster)) {
+        return refused(409, 'company-taken', 'a different first roster is already kept under that id. Nothing was created.');
+      }
       return { status: 200, body: { account: { id }, state: 'made' } };
     }
     return refused(409, 'company-taken', 'a different company is already recorded under that id. Nothing was created.');
   }
   const labelTaken = (): boolean => deps.store.listAccounts().some((a) => a.id !== id && a.companyLabel === label);
   if (labelTaken()) return refused(409, 'company-label-taken', 'another company has that label. Nothing was created.');
-  if (typeof deps.ledger.fileFoundingState !== 'function') {
+  if (deps.ledger.takesCompaniesFromTheirFoundingSigner !== true) {
     return refused(503, 'made-on-the-founding-signers-device', 'this deployment keeps no state for a company made on its founding signer\'s device. Nothing was created.');
   }
   if (!deps.store.recordAccountOpening(opening) && !sameOpening(deps.store.getAccountOpening(id)!)) {
     return refused(409, 'company-taken', 'a different company is already recorded under that id. Nothing was created.');
   }
-  await deps.ledger.fileFoundingState(id, f.sealedState);
+  if (!await fileTheFirstVersion(deps.records, f.state)) {
+    return refused(409, 'company-taken', 'a different first state is already kept under that id. Nothing was created.');
+  }
   /* Asked once more: the state was kept with an await, and two companies with one label must not both be recorded. */
   if (labelTaken()) return refused(409, 'company-label-taken', 'another company has that label. Nothing was created.');
   deps.store.putAccount(kept);
+  /* Its signers, filed as the company's first roster record: the record they are held in, and nowhere else. */
+  if (!await fileTheFirstVersion(deps.records, f.roster)) {
+    return refused(409, 'company-taken', 'a different first roster is already kept under that id. Nothing was created.');
+  }
   return { status: 201, body: { account: { id }, state: 'made' } };
 }
 

@@ -1,4 +1,5 @@
 import { afterEach, describe, expect, it } from 'vitest';
+import { foundingStateRefusal } from '../../../src/core/founding-state.js';
 import { TEST_MNEMONIC } from '@midnight-ntwrk/testkit-js';
 import { identityFromWords } from 'midnight-identity';
 import { READY_PING } from 'midnight-identity/profile/channel';
@@ -8,7 +9,10 @@ import { committeeKeyFor } from 'midnight-identity/profile/committee-key';
 import { CREATION_SIGNATURE_SCHEMA } from 'midnight-identity/profile/creation-sign';
 import type { CompanyLabel } from 'midnight-identity/profile/company-label';
 import { unwrapKey, unseal, parseCanonical, signingPublicKeyOf } from '../../../src/core/crypto.js';
-import { openAccount } from '../../../src/core/account.js';
+import { openAccount, sealAccount } from '../../../src/core/account.js';
+import { newSigningKeypair } from '../../../src/core/crypto.js';
+import { signCompanyFiling, verifiedCompanyFiler } from '../../../src/midnight/sealed-record-wire.js';
+import { NO_ROSTER_RECORD } from './roster-here.js';
 import { secretCarried } from '../../../src/server/account-creation.js';
 import * as keyring from './keyring.js';
 import type { PayKeyStandingOnTheWire } from './vault-worker-client.js';
@@ -144,6 +148,7 @@ function aService(opts: { creationFails?: () => boolean; companyFails?: () => bo
       case 'POST /api/accounts/acc_X/creation/again': return json(200, { account: ACCOUNT, state: 'deploy-sent' });
       case 'GET /api/accounts/acc_X/call-state': return json(200, { account: ACCOUNT, blockHash: '00'.repeat(32), accountState: 'U1RBVEU=', parameters: 'UEFSQU1T' });
       case 'POST /api/accounts/acc_X/creation/pay-key': return json(200, { txRef: 'tx' });
+      case 'GET /api/accounts/acc_X/directory': return json(200, { filings: [] });
       default: return json(404, { error: `no route for ${route}` });
     }
   }) as typeof fetch;
@@ -187,7 +192,9 @@ describe('THE FIRST PRESS', () => {
     const id = made.founding.account.id as string;
     /* RED WHEN: the service is sent any secret, under any name, anywhere in the creation. */
     expect(secretCarried(made)).toBeNull();
-    expect(Object.keys(made.founding).sort()).toEqual(['account', 'sealedState', 'seat']);
+    expect(Object.keys(made.founding).sort()).toEqual(['account', 'roster', 'seat', 'state']);
+    /* RED WHEN: the first state is sent as anything but the record this seat signed for this company. */
+    expect(foundingStateRefusal(made.founding.state, made.founding.account.id, made.founding.seat.signingPublicKey)).toBeNull();
     /* RED WHEN: the seat's secrets are kept after the company is sent, or not at all: a company would exist whose keys were never kept. */
     expect(service.order.slice(0, 2)).toEqual(['PUT /api/me/keys', 'POST /api/accounts']);
     const mine = keyring.keysFor(id)!;
@@ -200,11 +207,14 @@ describe('THE FIRST PRESS', () => {
     expect(b.calls[0]).toEqual(['seat', { signingSecret: mine.signingSecret, blinding: mine.blinding }]);
     /* RED WHEN: the viewing key is wrapped to anybody but this seat, or the record does not open with it. */
     const viewingKey = unwrapKey(made.founding.account.wrappedKeys[0], mine.wrappingSecret);
-    const opened = openAccount(made.founding.account, viewingKey);
+    /* RED WHEN: the signers are sent anywhere but in the first roster, signed by this seat. */
+    expect(made.founding.account.sealedRoster).toBeUndefined();
+    expect(verifiedCompanyFiler(made.founding.roster)).toBe(signingPublicKeyOf(mine.signingSecret));
+    const opened = openAccount(made.founding.account, viewingKey, made.founding.roster);
     expect(opened.signers.map((x) => [x.id, x.userId, x.leafCommitment])).toEqual([[mine.signerId, A.id, LEAF]]);
     expect(opened.policy.threshold).toBe(1);
     /* RED WHEN: the first state is not sealed under the same viewing key, or carries no asset blinding, payout seed or pay-record key. */
-    const state = parseCanonical<{ blinding: Record<string, unknown> }>(unseal(made.founding.sealedState.sealed, viewingKey));
+    const state = parseCanonical<{ blinding: Record<string, unknown> }>(unseal(made.founding.state.sealed, viewingKey));
     expect(Object.keys(state.blinding).sort()).toEqual(['assetBlinding', 'payRecordKey', 'payoutSeeds']);
   });
 
@@ -446,7 +456,7 @@ describe('THE PAY-RECORD KEY, COMMITTED AND SEALED FROM THE FOUNDING SIGNER\'S D
     expect(await keyring.sealThePayRecordKey(accountId, b, { wait })).toEqual({ state: 'finished' });
     const mine = keyring.keysFor(accountId)!;
     const viewingKey = unwrapKey(founding.account.wrappedKeys[0], mine.wrappingSecret);
-    const key = parseCanonical<any>(unseal(founding.sealedState.sealed, viewingKey)).blinding.payRecordKey;
+    const key = parseCanonical<any>(unseal(founding.state.sealed, viewingKey)).blinding.payRecordKey;
     /* RED WHEN: the key read on the chain's behalf is not the one the company was made with, or is read for another signer. */
     expect(b.calls.find(([k]) => k === 'standing')![1]).toEqual({
       account: ACCOUNT, accountState: 'U1RBVEU=', key, signingSecret: mine.signingSecret, wrappingPublicKey: founding.seat.wrappingPublicKey,
@@ -486,5 +496,48 @@ describe('THE PAY-RECORD KEY, COMMITTED AND SEALED FROM THE FOUNDING SIGNER\'S D
     await expect(keyring.sealThePayRecordKey(other.accountId, other.b, { wait })).rejects.toThrow(/committed to another pay-record key/);
     expect(other.service.sent('POST /api/accounts/acc_X/creation/pay-key')).toEqual([]);
     expect(keyring.companyBeingCreated()).toBe(other.accountId);
+  });
+});
+
+describe('THE COMPANY\'S SIGNERS ARE READ ON THIS DEVICE FROM ITS ROSTER RECORD ONLY', () => {
+  /** The company the first press made, as the service serves it once the account is deployed, with its first roster beside it. */
+  const servedAfterTheFirstPress = async () => {
+    const service = aService();
+    signIn();
+    await keyring.startCompanyHeldFromTheStart(A_COMPANY, WALLET, builder(), new Wallet(), US);
+    const made = madeOf(service);
+    return { made, served: { ...made.founding.account, contractAddress: ACCOUNT, roster: made.founding.roster } };
+  };
+  /** Who holds the account, as the founding signer's own wallet reads it: their seat, and the key the deploy held it by. */
+  const holders = (founding = LEAF) => async () => ({
+    committee: [{ tag: 'schnorr', value: '11'.repeat(32) }], threshold: 1, seats: [LEAF], approvals: 1, adoptedVaults: [],
+    founding, foundingCommittee: [{ tag: 'schnorr', value: '11'.repeat(32) }], account: ACCOUNT,
+  }) as never;
+
+  it('THE FOUNDING SIGNER\'S DEVICE READS THE FIRST ROSTER ON ITS OWN SIGNING KEY, BEFORE ITS DIRECTORY ENTRY IS FILED', async () => {
+    const { made, served } = await servedAfterTheFirstPress();
+    const opened = await keyring.openAccount(served, holders());
+    /* RED WHEN: the founding signer cannot read their own company before their entry is filed - they could then never set up their vault keys. */
+    expect(opened?.signers.map((x) => [x.id, x.leafCommitment])).toEqual([[made.founding.seat.signerId, LEAF]]);
+    expect(opened?.name).toBe('Acme Ltd');
+  });
+
+  it('A COMPANY WITH NO ROSTER RECORD IS REFUSED WITH THE FIXED SENTENCE, AND THE LIST ON ITS ACCOUNT RECORD IS NEVER READ', async () => {
+    const { made, served } = await servedAfterTheFirstPress();
+    const viewingKey = unwrapKey(made.founding.account.wrappedKeys[0], keyring.keysFor(made.founding.account.id)!.wrappingSecret);
+    const { roster: _filed, ...withoutIt } = served;
+    /* The signers as an account record carried them before they were a record: a list that opens with the company's key. */
+    const unsigned = sealAccount(openAccount(made.founding.account, viewingKey, made.founding.roster), viewingKey, []).sealedRoster!;
+    /* RED WHEN: a device reads a company's signers from anything but a roster record a seat signed. */
+    await expect(keyring.openAccount({ ...withoutIt, sealedRoster: unsigned }, holders())).rejects.toThrow(NO_ROSTER_RECORD);
+    await expect(keyring.openAccount(withoutIt, holders())).rejects.toThrow(NO_ROSTER_RECORD);
+  });
+
+  it('A FIRST ROSTER NOT SIGNED BY THE FOUNDING SEAT IS REFUSED', async () => {
+    const { served } = await servedAfterTheFirstPress();
+    const { filedBy: _was, ...unsigned } = served.roster;
+    const another = signCompanyFiling(unsigned, newSigningKeypair().secret);
+    /* RED WHEN: a first roster signed by a key other than this device's own, with no founding entry to hold it to, is believed. */
+    await expect(keyring.openAccount({ ...served, roster: another }, holders())).rejects.toThrow(/does not believe the company's roster/u);
   });
 });

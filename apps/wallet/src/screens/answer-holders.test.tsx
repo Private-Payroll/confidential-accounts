@@ -20,7 +20,9 @@ const ORIGIN = 'https://payroll-a.example';
 const CO = 'co_1f2e3d4c5b6a79880a1b2c3d4e5f60718293a4b5c6d7e8f90a1b2c3d4e5f6071' as CompanyLabel;
 const ACCOUNT = 'dbe119a304f8e7ea882353435c1d536cf2faf4298236a9aae77670e750af65c8' as AccountAddress;
 const VAULT = '9a'.repeat(32);
-const HOLDERS = { committee: [{ tag: 'schnorr', value: '11'.repeat(32) }], threshold: 1, seats: ['5a'.repeat(32)], approvals: 1, adoptedVaults: [VAULT] };
+const HOLDERS = {
+  committee: [{ tag: 'schnorr', value: '11'.repeat(32) }], threshold: 1, seats: ['5a'.repeat(32)], approvals: 1, adoptedVaults: [VAULT], founding: '5a'.repeat(32), foundingCommittee: [{ tag: 'schnorr', value: '11'.repeat(32) }],
+};
 const ask = (over: Record<string, unknown> = {}) => parseAsk({
   schema: 'midnight-identity/disclosure-request/v1', kind: 'holders',
   requester: { name: 'Payroll A', rdns: 'example.payroll-a' }, purpose: 'Who holds the company.',

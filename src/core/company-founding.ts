@@ -11,7 +11,8 @@
  *   - the seat's two public halves and its leaf;
  *   - the company's record sealed under the viewing key, with that key wrapped
  *     to the seat's own wrapping key, so only that seat can open it;
- *   - the company's first state, sealed under the same viewing key.
+ *   - the company's first state, sealed under the same viewing key and signed
+ *     by the founding seat as a company record, which is the only copy kept.
  *
  * The viewing key and the state's secrets are made, used to seal, and dropped
  * here. The seat's own secrets are the caller's to keep, durably, before
@@ -27,12 +28,14 @@
  * the shape of what it is sent.
  */
 import type { CompanyLabel } from 'midnight-identity/profile/company-label';
-import { newSymmetricKey, wrapKey, type Hex } from './crypto.js';
+import { newSymmetricKey, signingPublicKeyOf, wrapKey, type Hex } from './crypto.js';
 import {
   GENESIS_KEY_EPOCH, companyAtItsFounding, newAccountId, newSignerId, newStateBlinding, sealAccount, sealState,
   seatAtFounding,
 } from './account.js';
-import type { SealedStateAt } from './ledger.js';
+import { signedFoundingState } from './founding-state.js';
+import { signedFoundingRoster } from './roster-record.js';
+import type { SealedCompanyRecord } from '../midnight/sealed-record-wire.js';
 import type { Role, SealedAccount } from './types.js';
 
 /** The founding signer's seat, as its two public halves and the leaf the account seats. */
@@ -45,14 +48,22 @@ export interface FoundingSeat {
 
 /**
  * **WHAT LEAVES THE FOUNDING SIGNER'S DEVICE WHEN A COMPANY IS MADE THERE.**
- * Public halves, a leaf, and two things sealed under a key that does not leave.
+ * Public halves, a leaf, and three things sealed under a key that does not leave.
  */
 export interface CompanyFounded {
   readonly seat: FoundingSeat;
-  /** The company's record, sealed. Its viewing key is wrapped to the seat and to nobody else. */
+  /**
+   * The company's record, sealed. Its viewing key is wrapped to the seat and to
+   * nobody else. It carries no signers: they are its roster record.
+   */
   readonly account: SealedAccount;
-  /** The state the company's first view opens with, sealed under the same viewing key. */
-  readonly sealedState: SealedStateAt;
+  /** The company's first roster, the founding signer's entry only, signed by the founding seat as its roster record. */
+  readonly roster: SealedCompanyRecord;
+  /**
+   * The state the company's first view opens with, sealed under the same
+   * viewing key and signed by the founding seat as the company's state record.
+   */
+  readonly state: SealedCompanyRecord;
 }
 
 /**
@@ -68,8 +79,14 @@ export function foundTheCompanyHere(input: {
   readonly userId: string;
   readonly label: CompanyLabel;
   readonly seat: { readonly signingPublicKey: Hex; readonly wrappingPublicKey: Hex; readonly leaf: Hex };
+  /** The seat's signing secret, which signs the first state here and is not kept by anything this returns. */
+  readonly signingSecret: Hex;
   readonly now?: () => Date;
 }): CompanyFounded {
+  if (signingPublicKeyOf(input.signingSecret).toLowerCase() !== input.seat.signingPublicKey.toLowerCase()) {
+    throw new Error('the seat\'s signing key is not the one its secret makes, so the company\'s first state could not be '
+      + 'signed for it. Nothing was made.');
+  }
   const seat: FoundingSeat = {
     signerId: newSignerId(),
     signingPublicKey: input.seat.signingPublicKey.toLowerCase(),
@@ -86,10 +103,14 @@ export function foundTheCompanyHere(input: {
     wrappedKeys: [{ signerId: seat.signerId, ...wrapKey(viewingKey, seat.wrappingPublicKey) }],
     createdAt: (input.now?.() ?? new Date()).toISOString(),
   });
+  /* The signers are the roster record and nothing else: the sealed account is sent without them. */
+  const { sealedRoster: _theRosterRecord, ...sealed } = sealAccount({ ...account, companyLabel: input.label }, viewingKey, []);
   return {
     seat,
-    account: sealAccount({ ...account, companyLabel: input.label }, viewingKey, []),
-    sealedState: sealState({ entries: [] }, newStateBlinding(), viewingKey, GENESIS_KEY_EPOCH),
+    account: sealed,
+    roster: signedFoundingRoster(account.id, { name: account.name, signers: account.signers }, viewingKey, input.signingSecret),
+    state: signedFoundingState(
+      account.id, sealState({ entries: [] }, newStateBlinding(), viewingKey, GENESIS_KEY_EPOCH), input.signingSecret),
   };
 }
 

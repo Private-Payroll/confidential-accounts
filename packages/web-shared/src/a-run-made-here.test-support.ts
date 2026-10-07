@@ -1,0 +1,41 @@
+/**
+ * **A PAYROLL RUN AS AN APPROVING DEVICE MAKES IT AGAIN, FOR TESTS OF THE
+ * BUILDER THAT ARE ABOUT SOMETHING ELSE.** Three payees, their leaves made with
+ * the compiled circuits from a payout seed and a pay-record key, and an account
+ * ledger that holds the pay-record key committed, so the honest case of an
+ * approval is a real run made again.
+ */
+import { buildRun, type PaymentFacts } from '../../../src/midnight/payout-tree.js';
+import { toHex, type Hex } from '../../../src/core/crypto.js';
+import { payeeFor, payFor } from '../../../src/testing/payees.js';
+import { vaultDetails } from '../../../src/testing/vault-details.js';
+import { TEST_TOKEN, registryWithTestPrivateForms } from '../../../src/testing/assets.js';
+import { ledgerTokenOf } from '../../../src/core/assets.js';
+import type { AccountLedgerView, RunMadeHere } from './what-this-device-made.js';
+
+/** A run of three, in a window, made the way the approving device makes it. */
+export const aRunMadeHere = (window: { opensAt: string; closesAt: string }) => {
+  const facts: PaymentFacts[] = [0, 1, 2].map((i) => ({
+    payee: payeeFor(`a${i + 1}`.repeat(32), 'undeployed'),
+    token: ledgerTokenOf(TEST_TOKEN, 'shielded', registryWithTestPrivateForms()), amount: BigInt(100 + i),
+  }));
+  const pay = payFor(facts, { people: ['p1', 'p2', 'p3'] });
+  const seeds = [{ epoch: 0, seed: '6e'.repeat(32) as Hex }];
+  const identity = { accountId: 'acc_1', runId: 'run_1:leg', epoch: 0 };
+  const tree = buildRun(seeds, identity, facts, vaultDetails, pay, TEST_TOKEN).tree;
+  const made: RunMadeHere = {
+    kind: 'payroll', seeds, payKey: pay.key, identity, facts, records: pay.records,
+    asset: TEST_TOKEN, opensAt: window.opensAt, closesAt: window.closesAt, required: '0',
+  };
+  return { made, root: tree.root, payees: tree.payees };
+};
+
+/**
+ * A ledger that holds every proposal asked about open, has paid nobody, and
+ * holds `commitment` as the company's pay-record key at `keyAt`.
+ */
+export const aLedgerHolding = (keyAt: Uint8Array, commitment: Uint8Array, holds: 'every proposal' | 'none' = 'every proposal'): AccountLedgerView => ({
+  openProposals: { member: () => holds === 'every proposal', [Symbol.iterator]: () => ([] as Array<[Uint8Array, unknown]>)[Symbol.iterator]() },
+  movements: { member: () => false, size: () => 0n },
+  signerRoles: { member: (k) => toHex(k) === toHex(keyAt), lookup: () => commitment },
+});

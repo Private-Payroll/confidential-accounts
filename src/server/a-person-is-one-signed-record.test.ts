@@ -1,9 +1,10 @@
 /**
- * **A PERSON ON A PAYROLL IS ONE SIGNED RECORD, AND THE SERVICE'S OLDER CODE
- * READS THAT RECORD.** Every version of a person is a `person` company record
- * in the service's main store, filed through the company-record route by a seat
- * the directory names, and the employee row the older payroll code reads is
- * made from the newest one. What a payee hands over waits on their invitation.
+ * **A PERSON ON A PAYROLL IS ONE SIGNED RECORD, KEPT WITH THE COMPANY'S OTHER
+ * RECORDS.** Every version of a person is a `person` company record, filed
+ * through the company-record route by a seat the directory names, into the store
+ * that keeps the company's records and nowhere else. What a payee hands over
+ * waits on their invitation. A person the service's main store still held from
+ * before is moved there, and let go of here.
  */
 import { describe, it, expect, beforeAll, afterAll } from 'vitest';
 import express from 'express';
@@ -20,9 +21,9 @@ import { MemoryStore } from '../core/store.js';
 import { FileStore } from '../core/store-file.js';
 import { sealRecord } from '../core/sealed-records.js';
 import type { Invite, RosterEmployee, SealedAccount, SealedEmployee } from '../core/types.js';
-import { openEmployeeRow, openPerson, sealPerson } from '../core/person-record.js';
+import { openPerson, sealPerson } from '../core/person-record.js';
 import { seatDirectoryRoutes, directoryOf, type DirectoryChainRead } from './seat-directory-route.js';
-import { companyRecordsRoutes, fileCompanyRecord, MemoryCompanyRecordStore, withPeopleIn } from './company-records-route.js';
+import { companyRecordsRoutes, fileCompanyRecord, MemoryCompanyRecordStore, movePeopleToTheirRecords, withTheRosterIn } from './company-records-route.js';
 import type { ChainHolders, DirectoryEntry, DirectoryFiling } from '../midnight/seat-directory.js';
 import { fromCompanyWire, signCompanyFiling, toCompanyWire, type SealedCompanyRecord } from '../midnight/sealed-record-wire.js';
 import { HttpCompanyRecordStore, FilingNotBelieved, type WireSend } from 'vaults-web-shared/http-sealed-pool-store.js';
@@ -58,6 +59,8 @@ const accountOf = (id: string, members: string[], label: CompanyLabel, address: 
 let base = '';
 let server: ReturnType<express.Express['listen']>;
 const store = new MemoryStore();
+/** The company's records other than its roster, its people among them, as the service keeps them. */
+const records = new MemoryCompanyRecordStore();
 let chain: ChainHolders | null = null;
 /** The chain as the server reads it, each company's account on its own once both are set up; `chain` while they are. */
 const chains = new Map<string, ChainHolders | null>();
@@ -73,7 +76,7 @@ beforeAll(async () => {
     ? next() : res.status(404).json({ error: 'account not found' }));
   app.use(seatDirectoryRoutes({ signedIn, member, store, chain: chainRead }));
   app.use(companyRecordsRoutes({
-    signedIn, member, records: withPeopleIn(store, new MemoryCompanyRecordStore()),
+    signedIn, member, records: withTheRosterIn(store, records),
     accountOf: (id) => store.getAccount(id), directoryOf: (id) => directoryOf(store, chainRead, id),
   }));
   await new Promise<void>((resolve) => { server = app.listen(0, '127.0.0.1', () => resolve()); });
@@ -108,29 +111,27 @@ const dana = (over: Partial<RosterEmployee> = {}): RosterEmployee => ({
 });
 /** A person version filed through the one filing check every people route files through (`fileCompanyRecord`), in `person`'s session. */
 const put = (person: string, rec: SealedCompanyRecord, signer: Hex | null) => fileCompanyRecord(
-  { records: withPeopleIn(store, new MemoryCompanyRecordStore()), accountOf: (id) => store.getAccount(id), directoryOf: (id) => directoryOf(store, chainRead, id) },
+  { records: withTheRosterIn(store, records), accountOf: (id) => store.getAccount(id), directoryOf: (id) => directoryOf(store, chainRead, id) },
   person, { company: rec.company, kind: 'person', id: rec.id }, rec.version,
   JSON.parse(JSON.stringify(toCompanyWire(signer === null ? rec : signCompanyFiling(rec, signer)))));
 
-describe('A PERSON IS FILED FROM A SEAT\'S DEVICE, AND THE SERVICE READS THAT ONE COPY', () => {
-  it('A PERSON A SEAT FILED IS THE EMPLOYEE ROW THE OLDER CODE READS, AND THE NEXT VERSION REPLACES IT', async () => {
+describe('A PERSON IS FILED FROM A SEAT\'S DEVICE, AND THE SERVICE KEEPS THAT ONE COPY WITH THE COMPANY\'S RECORDS', () => {
+  it('A PERSON A SEAT FILED IS KEPT WITH THE COMPANY\'S OTHER RECORDS AND NOWHERE ELSE, AND THE NEXT VERSION REPLACES IT', async () => {
     expect((await put('ada', sealPerson(dana(), 1, 0, KEY), ADA.signing.secret)).status).toBe(201);
-    const row = store.getEmployee('emp_dana')!;
-    /* RED WHEN: the older code's reader still reads a table nothing files into. */
-    expect(row).toMatchObject({ id: 'emp_dana', accountId: CO, status: 'pending', wrappingPublicKey: null, inbox: null });
-    expect(openEmployeeRow(row, KEY).name).toBe('Dana Whitfield');
-    expect(store.listEmployees(CO).map((e) => e.id)).toEqual(['emp_dana']);
-    /* The payslip key index is built here, before the next version is filed. */
-    expect(store.employeeIdsWithKey('ab'.repeat(32))).toEqual([]);
+    /* RED WHEN: a person is filed anywhere but the store of the company's records. */
+    expect((await records.peopleOf(CO)).map((r) => [r.id, r.version, r.facts?.status])).toEqual([['emp_dana', 1, 'pending']]);
+    expect(await records.companyOfPerson('emp_dana')).toBe(CO);
+    /* RED WHEN: the service's main store keeps a second copy of the person. */
+    expect(store.personVersions('emp_dana')).toEqual([]);
+    expect(store.getEmployee('emp_dana')).toBeNull();
     const key = newWrappingKeypair().publicKey;
     expect((await put('ada', sealPerson(dana({ wrappingPublicKey: key, title: 'Lead' }), 2, 0, KEY), ADA.signing.secret)).status).toBe(201);
     /* RED WHEN: a reader takes the first version, not the newest. */
-    expect(store.getEmployee('emp_dana')!.wrappingPublicKey).toBe(key);
-    expect(openEmployeeRow(store.getEmployee('emp_dana')!, KEY).title).toBe('Lead');
-    /* RED WHEN: a version filed after the payslip key index was built is not indexed. */
-    expect(store.employeeIdsWithKey(key)).toEqual(['emp_dana']);
+    const [newest] = await records.peopleOf(CO);
+    expect(newest!.facts?.wrappingPublicKey).toBe(key);
+    expect(openPerson(newest!, KEY).title).toBe('Lead');
     /* Nothing readable about the person is kept beside the seal; the salary by its field's name, since its digits are hex and could match ciphertext by chance. */
-    const held = canonical(store.personVersions('emp_dana'));
+    const held = canonical(await records.versions(CO, 'person', 'emp_dana'));
     for (const text of ['Dana Whitfield', 'dana@acme.co', 'Lead', 'baseAmount']) expect(held).not.toContain(text);
   });
 
@@ -150,7 +151,8 @@ describe('A PERSON IS FILED FROM A SEAT\'S DEVICE, AND THE SERVICE READS THAT ON
     expect((await put('eve', theirs, EVE.signing.secret)).body).toMatchObject({ refused: 'another-companys-record' });
     /* RED WHEN: a person is served to another company by id. */
     expect((await sendAs('eve')(`/api/accounts/${OTHER}/records/person/emp_dana`, { method: 'GET' })).body).toMatchObject({ filed: null });
-    expect(store.personVersions('emp_dana').map((r) => r.version)).toEqual([1, 2]);
+    expect((await records.versions(CO, 'person', 'emp_dana')).map((r) => r.version)).toEqual([1, 2]);
+    expect(await records.peopleOf(OTHER)).toEqual([]);
   });
 
   it('A PERSON RECORD IS SEALED UNDER THE PAYROLL KEY, CARRIES ITS TWO FACTS AND NO WRAPS, AND SAYS NOTHING ELSE IN PLAIN TEXT', () => {
@@ -172,7 +174,7 @@ describe('A PERSON IS FILED FROM A SEAT\'S DEVICE, AND THE SERVICE READS THAT ON
   });
 
   it('THE DEVICE BELIEVES A PERSON A SEAT IT BELIEVES FILED, AND NOT ONE THE SERVICE WROTE', async () => {
-    const holders = async () => ({ committee: [ADA.committeeKey, BO.committeeKey], threshold: 1, seats: [ADA.seat, BO.seat], approvals: 1, adoptedVaults: [], account: ADDRESS });
+    const holders = async () => ({ committee: [ADA.committeeKey, BO.committeeKey], threshold: 1, seats: [ADA.seat, BO.seat], approvals: 1, adoptedVaults: [], founding: ADA.seat, foundingCommittee: [ADA.committeeKey], account: ADDRESS });
     const attested = async () => [ADA, BO].map((s) => ({
       committeeKey: s.committeeKey,
       statement: signRecordsKey(identityFromSecret(new Uint8Array(32).fill(s.n)), LABEL, ADDRESS, new Uint8Array(32).fill(s.n + 100), s.seat),
@@ -181,9 +183,9 @@ describe('A PERSON IS FILED FROM A SEAT\'S DEVICE, AND THE SERVICE READS THAT ON
       accountId: CO, label: LABEL, holders: holders as never, attested, filings: async () => store.directoryFilingsOf(CO),
     }));
     expect((await device.get('person', 'emp_dana'))!.version).toBe(2);
-    /* The older code writes a version with no seat's signature. */
-    const row = store.getEmployee('emp_dana')!;
-    store.putEmployee({ ...row, status: 'leaver' });
+    /* The service writes a version with no seat's signature. */
+    const { filedBy: _signature, ...unsigned } = (await records.get(CO, 'person', 'emp_dana'))!;
+    await records.put({ ...unsigned, version: 3, facts: { ...unsigned.facts!, status: 'leaver' } });
     /* RED WHEN: a person version no seat signed is believed because the service served it. */
     await expect(device.get('person', 'emp_dana')).rejects.toBeInstanceOf(FilingNotBelieved);
   });
@@ -250,5 +252,66 @@ describe('THE OLDER CODE\'S ROW, WRITTEN AS THE NEXT VERSION OF THE SAME RECORD'
     expect(loaded.listInvites(CO).find((i) => i.token === 'k0')!.handover ?? null).toBeNull();
     /* RED WHEN: the old table is written back beside the records. */
     expect('employees' in loaded.snapshot()).toBe(false);
+  });
+});
+
+describe('A PERSON THE MAIN STORE STILL HOLDS IS MOVED TO THE COMPANY\'S RECORDS, AND LET GO OF THERE', () => {
+  const row = (over: Partial<SealedEmployee> = {}): SealedEmployee => {
+    const rec = sealPerson(dana({ id: 'emp_moved', accountId: CO }), 1, 0, KEY);
+    return { id: 'emp_moved', accountId: CO, keyEpoch: 0, status: 'pending', wrappingPublicKey: null, sealed: rec.sealed, inbox: null, ...over } as SealedEmployee;
+  };
+
+  it('EVERY VERSION IS FILED THERE AS IT WAS HELD, THE MAIN STORE LETS THE PERSON GO, AND MOVING AGAIN CHANGES NOTHING', async () => {
+    const held = new MemoryStore();
+    held.putEmployee(row());
+    held.putEmployee(row({ status: 'leaver' }));
+    const kept = held.personVersions('emp_moved');
+    const to = new MemoryCompanyRecordStore();
+    /* RED WHEN: a person held in the main store is not moved, or not every version of them. */
+    expect(await movePeopleToTheirRecords(held, to)).toBe(1);
+    expect(canonical(await to.versions(CO, 'person', 'emp_moved'))).toBe(canonical(kept));
+    /* RED WHEN: the main store keeps the person it moved, so they are held in two places. */
+    expect(held.personVersions('emp_moved')).toEqual([]);
+    expect(held.getEmployee('emp_moved')).toBeNull();
+    expect(await movePeopleToTheirRecords(held, to)).toBe(0);
+    expect((await to.versions(CO, 'person', 'emp_moved')).length).toBe(2);
+  });
+
+  it('A PAYEE\'S SLIPS SEALED BEFORE SLIPS NAMED THEIR KEY ARE STILL FOUND BY THAT KEY ONCE THE PERSON HAS MOVED', async () => {
+    const key = newWrappingKeypair().publicKey;
+    const held = new MemoryStore();
+    held.putEmployee(row({ status: 'active', wrappingPublicKey: key }));
+    const slip = { employeeId: 'emp_moved', wrapped: {} as never, slip: {} as never };
+    const run = (id: string, filedBy?: { publicKey: string; signature: string }) => ({
+      id, accountId: CO, period: '2026-08', status: 'proposed' as const, keyEpoch: 0, payslips: [slip],
+      sealed: { iv: '', tag: '', body: '' }, ...(filedBy === undefined ? {} : { filedBy }),
+    });
+    held.putRun(run('run_older') as never);
+    /* A run a seat's device filed is kept exactly as it was signed. */
+    held.putRun(run('run_signed', { publicKey: 'aa'.repeat(32), signature: 'bb'.repeat(64) }) as never);
+    expect(held.runsWithPayslipsSealedTo(key).map((r) => r.id).sort()).toEqual(['run_older', 'run_signed']);
+    await movePeopleToTheirRecords(held, new MemoryCompanyRecordStore());
+    /* RED WHEN: a slip found only through the person is lost when the person moves, and its payee is served fewer slips. */
+    expect(held.runsWithPayslipsSealedTo(key).map((r) => r.id)).toEqual(['run_older']);
+    expect(held.getRun('run_older')!.payslips[0]!.sealedTo).toBe(key.toLowerCase());
+    /* RED WHEN: a run a seat signed is changed after it was signed. */
+    expect(held.getRun('run_signed')!.payslips[0]!.sealedTo).toBeUndefined();
+  });
+
+  it('A VERSION ALREADY FILED THERE IS TAKEN AS MOVED ONLY WHEN IT IS EXACTLY THE ONE HELD; OTHERWISE THE PERSON STAYS, NAMED', async () => {
+    const held = new MemoryStore();
+    held.putEmployee(row());
+    const to = new MemoryCompanyRecordStore();
+    /* A move that filed the version and stopped before letting go is finished by the next. */
+    await to.put(held.personVersions('emp_moved')[0]!);
+    expect(await movePeopleToTheirRecords(held, to)).toBe(1);
+    expect(held.personVersions('emp_moved')).toEqual([]);
+    const other = new MemoryStore();
+    other.putEmployee(row({ status: 'active' }));
+    const there = new MemoryCompanyRecordStore();
+    await there.put(held.personVersions('emp_moved')[0] ?? (await to.versions(CO, 'person', 'emp_moved'))[0]!);
+    /* RED WHEN: a person is let go of here though what is filed there under the same version says otherwise. */
+    await expect(movePeopleToTheirRecords(other, there)).rejects.toThrow(/person emp_moved's version 1 is filed with the company's records as something other/);
+    expect(other.personVersions('emp_moved').length).toBe(1);
   });
 });

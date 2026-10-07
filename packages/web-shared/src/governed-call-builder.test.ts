@@ -1,7 +1,9 @@
 import { describe, it, expect } from 'vitest';
+import { aRunMadeHere, aLedgerHolding } from './a-run-made-here.test-support.js';
+import { vaultDetails } from '../../../src/testing/vault-details.js';
 import { createHash } from 'node:crypto';
 import {
-  argumentsFor, buildGovernedCall, CallNotBuilt, NotReadByAnApproval, recordForOneCall, RecordChangedByTheCall,
+  argumentsFor, buildGovernedCall, CallNotBuilt, identityOfAChange, NotReadByAnApproval, recordForOneCall, RecordChangedByTheCall,
   refuseARaiseThatIsNotTheRecordedOne,
   type GovernedCallDeps, type GovernedCallOrder, type OpenedRound, type RoundChangeOnTheWire,
 } from './governed-call-builder.js';
@@ -17,7 +19,9 @@ const half = {
   assetId: '44'.repeat(32), assetBlinding: '55'.repeat(32), proposalSalt: '66'.repeat(32),
   changeAmount: '30000', changeBatchDigest: '77'.repeat(32),
 };
-const run = { root: '88'.repeat(32), payees: '3', opensAt: '100', closesAt: '200', vault: '99'.repeat(32) };
+/* A real run of three, made the way the approving device makes it again (`a-run-made-here.test-support.ts`). */
+const RUN_MADE = aRunMadeHere({ opensAt: '100', closesAt: '200' });
+const run = { root: RUN_MADE.root, payees: '3', opensAt: '100', closesAt: '200', vault: '99'.repeat(32) };
 /* The contract's two pure functions, stood in for by hashes over the same parts. */
 const sha = (...parts: Array<Uint8Array | bigint>) => Uint8Array.from(createHash('sha256')
   .update(Buffer.concat(parts.map((p) => (p instanceof Uint8Array ? Buffer.from(p) : Buffer.from(p.toString()))))).digest());
@@ -26,9 +30,14 @@ const accountPure = {
   proposalIdOf: (payload: Uint8Array, vault: Uint8Array, salt: Uint8Array) => sha(payload, vault, salt),
   signerAddPayload: (leaf: Uint8Array) => sha(Buffer.from('seat'), leaf),
   setThresholdPayload: (t: bigint) => sha(Buffer.from('threshold'), t),
+  setVaultThresholdPayload: (vault: Uint8Array, t: bigint) => sha(Buffer.from('vault-threshold'), vault, t),
   adoptVaultPayload: (vault: Uint8Array) => sha(Buffer.from('adopt'), vault),
   payKeyPayload: (commitment: Uint8Array) => sha(Buffer.from('pay-key'), commitment),
   noVault: () => new Uint8Array(32).fill(0xfe),
+  /* What an approval of a run also reads: the pay-record key's commitment and where it is kept. */
+  payKeyCommitmentOf: (key: Uint8Array) => sha(Buffer.from('pay-key-commitment'), key),
+  payKeyCommitmentKey: () => sha(Buffer.from('pay-key-at')),
+  policyOnKeyOf: (vault: Uint8Array) => sha(Buffer.from('policy-on'), vault),
 };
 const idOf = (r: typeof run, salt: string) => Buffer.from(accountPure.proposalIdOf(
   accountPure.runPayload(Buffer.from(r.root, 'hex'), BigInt(r.payees), BigInt(r.opensAt), BigInt(r.closesAt)),
@@ -48,12 +57,16 @@ const hex = (b: Uint8Array) => Buffer.from(b).toString('hex');
 const payloadOf = (g: RoundChangeOnTheWire) => (g.kind === 'add-signer'
   ? accountPure.signerAddPayload(bytes(g.leaf))
   : g.kind === 'adopt-vault' ? accountPure.adoptVaultPayload(bytes(g.vault))
-    : g.kind === 'pay-key' ? accountPure.payKeyPayload(bytes(g.commitment)) : accountPure.setThresholdPayload(BigInt(g.threshold)));
+    : g.kind === 'pay-key' ? accountPure.payKeyPayload(bytes(g.commitment))
+      : g.kind === 'vault-threshold' ? accountPure.setVaultThresholdPayload(bytes(g.vault), BigInt(g.threshold))
+        : accountPure.setThresholdPayload(BigInt(g.threshold)));
 const recordOf = (digest: Uint8Array, vault: Uint8Array, salt: string) => ({
   chainId: hex(accountPure.proposalIdOf(digest, vault, bytes(salt))), digest: hex(digest), vault: hex(vault), salt,
   summary: 'the proposal',
 });
 const halfOf = (h: typeof half) => ({ assetId: h.assetId, changeAmount: h.changeAmount, changeBatchDigest: h.changeBatchDigest });
+/* What the company's records account for when the run is raised: nothing on the chain beyond them. */
+const RAISING = { period: '2026-9', knownRounds: [], knownLeaves: [], knownNonces: [] };
 const openedFor = (order: GovernedCallOrder): OpenedRound => {
   const o = order as any;
   if (o.circuit === 'propose' && o.run) {
@@ -62,6 +75,7 @@ const openedFor = (order: GovernedCallOrder): OpenedRound => {
       ...recordOf(accountPure.runPayload(bytes(r.root), BigInt(r.payees), BigInt(r.opensAt), BigInt(r.closesAt)),
         bytes(r.vault), o.half.proposalSalt),
       half: halfOf(o.half),
+      made: { ...RUN_MADE.made, raising: RAISING },
     };
   }
   if (o.circuit === 'propose') {
@@ -76,6 +90,15 @@ const openedFor = (order: GovernedCallOrder): OpenedRound => {
     const g = { kind: 'threshold', threshold: o.threshold } as const;
     return { ...recordOf(payloadOf(g), accountPure.noVault(), o.proposalSalt), governance: g };
   }
+  if (o.circuit === 'setVaultThreshold') {
+    const g = { kind: 'vault-threshold', vault: o.vault, threshold: o.threshold } as const;
+    return { ...recordOf(payloadOf(g), accountPure.noVault(), o.proposalSalt), governance: g };
+  }
+  /* A withdrawal names only the proposal: the honest case is the run the raise put on the chain. */
+  if (o.circuit === 'cancel') {
+    const { half: _h, ...record } = openedFor(raise);
+    return record;
+  }
   if (o.circuit === 'adopt') {
     const g = { kind: 'adopt-vault', vault: o.vault } as const;
     return { ...recordOf(payloadOf(g), accountPure.noVault(), o.proposalSalt), governance: g };
@@ -85,12 +108,19 @@ const openedFor = (order: GovernedCallOrder): OpenedRound => {
     return { ...recordOf(payloadOf(g), accountPure.noVault(), o.proposalSalt), governance: g };
   }
   if (o.of) return { ...recordOf(payloadOf(o.of.governance), accountPure.noVault(), o.of.proposalSalt), governance: o.of.governance };
+  /*
+   * An approval of a run is built only for what the device made again; here it
+   * is the honest case, the run the order raised (`what-this-device-made.ts`).
+   */
   const { half: _h, ...record } = openedFor(raise);
-  return record;
+  return { ...record, made: RUN_MADE.made };
 };
 type Input = Parameters<typeof buildGovernedCall>[1];
+/* A raise is built while the chain does not hold the proposal yet; an approval while it does. */
+const notYetRaised = () => aLedgerHolding(accountPure.payKeyCommitmentKey(), accountPure.payKeyCommitmentOf(bytes(RUN_MADE.made.payKey)), 'none');
 const build = (deps: GovernedCallDeps, input: Omit<Input, 'opened'> & { opened?: OpenedRound }) =>
-  buildGovernedCall(deps, { ...input, opened: input.opened ?? openedFor(input.order) });
+  buildGovernedCall(input.order.circuit === 'propose' && 'run' in input.order ? { ...deps, accountLedger: notYetRaised } : deps,
+    { ...input, opened: input.opened ?? openedFor(input.order) });
 
 type Handed = { options: any; zk: unknown };
 const depsWith = (log: string[], handed: Handed[], over: {
@@ -116,6 +146,9 @@ const depsWith = (log: string[], handed: Handed[], over: {
   accountCompiled: 'COMPILED',
   accountZkConfig: 'ZK',
   accountPure,
+  /* The chain holds every proposal asked about open. */
+  accountLedger: () => aLedgerHolding(accountPure.payKeyCommitmentKey(), accountPure.payKeyCommitmentOf(bytes(RUN_MADE.made.payKey))),
+  vaultDetails,
   prove: over.prove ?? (async (u: unknown, circuit?: string) => {
     log.push(`proved ${String(u)} for ${circuit}`);
     return { serialize: () => new Uint8Array([9, 9]) };
@@ -292,6 +325,37 @@ describe('ONE GOVERNED CALL', () => {
     await build(depsWith([], []), { account: ACCOUNT, order: { ...raise, proposal: raise.proposal.toUpperCase() }, material, chain });
   });
 
+  it('A RUN IS RAISED ONLY AS THIS DEVICE BUILT IT AGAIN, AND ONLY WHILE THE CHAIN DOES NOT HOLD IT YET', async () => {
+    const opened = openedFor(raise);
+    const otherAmounts = { ...RUN_MADE.made, facts: RUN_MADE.made.facts.map((f, i) => (i === 0 ? { ...f, amount: f.amount + 1n } : f)), raising: RAISING };
+    const holdingIt = () => aLedgerHolding(accountPure.payKeyCommitmentKey(), accountPure.payKeyCommitmentOf(bytes(RUN_MADE.made.payKey)));
+    for (const [deps, made, says] of [
+      [depsWith([], []), undefined, /did not rebuild what this proposal pays/u],
+      [depsWith([], []), otherAmounts, /not what this device rebuilt/u],
+      [depsWith([], []), { ...RUN_MADE.made }, /did not read what the company's records account for on the chain/u],
+    ] as const) {
+      const log: string[] = [];
+      const { made: _m, ...withoutMade } = opened;
+      /* RED WHEN: the raise of a run is proved without the run built again here, built from other amounts, or without the chain's check. */
+      await expect(build({ ...deps, contracts: depsWith(log, []).contracts }, {
+        account: ACCOUNT, order: raise, material, chain, opened: made === undefined ? withoutMade : { ...withoutMade, made },
+      })).rejects.toThrow(says);
+      expect(log).toEqual([]);
+    }
+    {
+      const log: string[] = [];
+      const zero = { ...opened, half: { ...opened.half!, changeAmount: '0' }, made: otherAmounts };
+      /* RED WHEN: a payroll raise whose filer sealed a change of 0 is proved without the run built again here. */
+      await expect(build({ ...depsWith([], []), contracts: depsWith(log, []).contracts }, {
+        account: ACCOUNT, order: { ...raise, half: { ...(raise as any).half, changeAmount: '0' } } as GovernedCallOrder, material, chain, opened: zero,
+      })).rejects.toThrow(/not what this device rebuilt/u);
+      expect(log).toEqual([]);
+    }
+    /* RED WHEN: a raise is proved for a proposal the chain already holds open. */
+    await expect(buildGovernedCall({ ...depsWith([], []), accountLedger: holdingIt }, { account: ACCOUNT, order: raise, material, chain, opened }))
+      .rejects.toThrow(/already holds this proposal open/u);
+  });
+
   it('THE RECORD IS FROZEN FOR THE CALL: a circuit that writes into it fails there', async () => {
     const refused = await build(depsWith([], [], {
       build: async (options) => { options.initialPrivateState.proposalSalt = new Uint8Array(32); return { private: { nextPrivateState: options.initialPrivateState, unprovenTx: 'U' } }; },
@@ -300,13 +364,13 @@ describe('ONE GOVERNED CALL', () => {
     expect(refused).toBeInstanceOf(TypeError);
   });
 
-  it('ONLY A RAISE, AN APPROVAL, A SEAT, A THRESHOLD, AN ADOPTION OR THE PAY-RECORD KEY SEALED, ONLY FOR AN ACCOUNT ADDRESS, AND NOTHING IS BUILT OTHERWISE', async () => {
-    for (const circuit of ['cancel', 'closeExpiredRun', 'recordPayment', 'setVaultThreshold', 'retireVault', 'toString']) {
+  it('ONLY A RAISE, AN APPROVAL, A WITHDRAWAL, A SEAT, A THRESHOLD, AN ADOPTION OR THE PAY-RECORD KEY SEALED, ONLY FOR AN ACCOUNT ADDRESS, AND NOTHING IS BUILT OTHERWISE', async () => {
+    for (const circuit of ['closeExpiredRun', 'recordPayment', 'holdRun', 'retireVault', 'toString']) {
       const log: string[] = [];
       /* RED WHEN: a circuit a device does not govern here - or one open to anybody - is built with a signer's record. */
       await expect(build(depsWith(log, []), {
         account: ACCOUNT, order: { circuit, proposal: 'aa'.repeat(32) } as unknown as GovernedCallOrder, material, chain,
-      })).rejects.toThrow(/raises and approves proposals, seats signers, changes the threshold, adopts a vault and seals the pay-record key/u);
+      })).rejects.toThrow(/raises, approves and withdraws proposals, seats signers, changes the company's or a vault's threshold, adopts a vault and seals the pay-record key/u);
       expect(log).toEqual([]);
     }
     const log: string[] = [];
@@ -513,5 +577,66 @@ describe('THE PAY-RECORD KEY COMMITTED AND SEALED, FROM THE FOUNDING SIGNER\'S D
     expect(() => refuseARaiseThatIsNotTheRecordedOne({ accountPure },
       { ...approveIt, of: { governance: { kind: 'pay-key', commitment: 'cd'.repeat(32) }, proposalSalt: salt } } as GovernedCallOrder))
       .toThrow(/not for the change asked for here/);
+  });
+});
+
+describe('A VAULT\'S OWN APPROVALS NEEDED, AND A WITHDRAWAL, BUILT ON THE DEVICE', () => {
+  const VAULT = 'b1'.repeat(32);
+  const vaultChange = { kind: 'vault-threshold', vault: VAULT, threshold: '2' } as const;
+  const vaultRoundId = (vault: string, t: bigint, salt: string) => hexOf(accountPure.proposalIdOf(
+    accountPure.setVaultThresholdPayload(bytes(vault), t), accountPure.noVault(), bytes(salt)));
+  const setTheVault: GovernedCallOrder = { circuit: 'setVaultThreshold', vault: VAULT, threshold: '2', proposal: vaultRoundId(VAULT, 2n, SALT), proposalSalt: SALT };
+  const withdraw: GovernedCallOrder = { circuit: 'cancel', proposal: idOf(run, half.proposalSalt) };
+
+  it('a vault\'s change is setVaultThreshold with the vault, the number and the proposal, and reads only the proposal\'s salt', async () => {
+    const handed: Handed[] = [];
+    await build(depsWith([], handed), { account: ACCOUNT, order: setTheVault, material, chain });
+    /* RED WHEN: the vault's change is built for another vault, another number or another proposal, or in another order. */
+    expect(handed[0]!.options.args).toEqual([bytes(VAULT), 2n, bytes(vaultRoundId(VAULT, 2n, SALT))]);
+    expect(handed[0]!.options.circuitId).toBe('setVaultThreshold');
+    const r = recordForOneCall(setTheVault, material);
+    expect(r.proposalSalt).toEqual(bytes(SALT));
+    expect(() => r.assetBlinding).toThrow(NotReadByAnApproval);
+  });
+
+  it('A VAULT\'S CHANGE FOR ANOTHER VAULT OR ANOTHER NUMBER THAN THE PROPOSAL\'S IS NOT BUILT', async () => {
+    for (const order of [
+      { ...setTheVault, vault: 'b2'.repeat(32) },
+      { ...setTheVault, threshold: '3' },
+      { ...setTheVault, proposalSalt: 'ee'.repeat(32) },
+    ] as GovernedCallOrder[]) {
+      const log: string[] = [];
+      /* RED WHEN: a proposal approved for one vault's approvals carries out another's, or another number. */
+      expect(() => refuseARaiseThatIsNotTheRecordedOne({ accountPure }, order)).toThrow(/not for this change/u);
+      await expect(build(depsWith(log, []), { account: ACCOUNT, order, material, chain, opened: openedFor(setTheVault) }))
+        .rejects.toThrow(/does not match the company's own record of this proposal/u);
+      expect(log).toEqual([]);
+    }
+  });
+
+  it('a withdrawal is cancel with the proposal\'s identity alone, and only for the proposal this device opened', async () => {
+    const handed: Handed[] = [];
+    await build(depsWith([], handed), { account: ACCOUNT, order: withdraw, material, chain });
+    expect(handed[0]!.options.args).toEqual([bytes(idOf(run, half.proposalSalt))]);
+    expect(handed[0]!.options.circuitId).toBe('cancel');
+    const log: string[] = [];
+    /* RED WHEN: a device withdraws whatever proposal it is handed rather than the one it opened. */
+    await expect(build(depsWith(log, []), {
+      account: ACCOUNT, order: { circuit: 'cancel', proposal: 'dd'.repeat(32) }, material, chain, opened: openedFor(withdraw),
+    })).rejects.toThrow(/does not match the company's own record of this proposal/u);
+    expect(log).toEqual([]);
+  });
+
+  it('A CHANGE\'S IDENTITY IS THE ONE THE CONTRACT\'S OWN FUNCTIONS MAKE FROM ITS PAYLOAD AND SALT, UNDER NO VAULT', () => {
+    const id = identityOfAChange({ accountPure }, vaultChange, SALT);
+    /* RED WHEN: a device files a proposal under an identity the chain will not compute for the same change. */
+    expect(id).toEqual({
+      digest: hexOf(accountPure.setVaultThresholdPayload(bytes(VAULT), 2n)), chainId: vaultRoundId(VAULT, 2n, SALT), noVault: hexOf(accountPure.noVault()),
+    });
+    expect(identityOfAChange({ accountPure }, vaultChange, 'ee'.repeat(32)).chainId).not.toBe(id.chainId);
+    expect(identityOfAChange({ accountPure }, { kind: 'threshold', threshold: '2' }, SALT).chainId).toBe(thresholdRoundId(2n, SALT));
+    /* A device not given the function for a vault's change makes no identity for one. */
+    const { setVaultThresholdPayload: _gone, ...without } = accountPure;
+    expect(() => identityOfAChange({ accountPure: without as never }, vaultChange, SALT)).toThrow(/approvals needed, so nothing was built/u);
   });
 });

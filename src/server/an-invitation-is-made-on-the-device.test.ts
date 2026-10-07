@@ -29,7 +29,7 @@ import { signJoinCode, writeJoinCode, type JoinCode, type SignerParts } from 'mi
 import {
   aCompanyOfTwoSeats, ACME, ADA, ADDRESS, BO, chains, CO, DANA, danasCode, EVE, fromAda, KEY, LABEL, metered, ORIGIN, OTHER, OTHER_ADDRESS, OTHER_LABEL, refusals,
   type Seat,
-  sendAs, store, wire,
+  newestPerson, peopleRecords, personVersions, sendAs, store, wire,
 } from './a-company-of-two-seats.test-support.js';
 import { payeeCodeFingerprint } from 'midnight-identity/profile/fingerprint';
 
@@ -43,9 +43,9 @@ describe('A PAYEE IS INVITED FROM A SIGNER\'S DEVICE', () => {
     /* RED WHEN: a link's path and fragment do not come from one token. */
     expect(token).not.toBeNull();
     expect(made.link).toBe(`${ORIGIN}/join/${invitationIdOf(token)}#${token}`);
-    /* The person is the person record filed, and the service's older code reads it. */
-    expect(store.personVersions(made.person!).map((r) => [r.version, r.facts!.status])).toEqual([[1, 'pending']]);
-    expect(openPerson(store.personVersions(made.person!)[0]!, KEY).name).toBe('Dana Whitfield');
+    /* The person is the person record filed, kept with the company's records. */
+    expect((await personVersions(made.person!)).map((r) => [r.version, r.facts!.status])).toEqual([[1, 'pending']]);
+    expect(openPerson((await personVersions(made.person!))[0]!, KEY).name).toBe('Dana Whitfield');
     const kept = store.invitationById(made.id)!;
     expect(kept).toMatchObject({ kind: 'employee', accountId: CO, subjectId: made.person, acceptanceHash: acceptanceHashOf(acceptanceProofOf(token)) });
     /* RED WHEN: the token, the offer key, the acceptance proof or anything offered reaches the service, in a path or a body. */
@@ -109,7 +109,7 @@ describe('A PAYEE IS INVITED FROM A SIGNER\'S DEVICE', () => {
     const again = { person: fresh.person, invitation: signInvitationFiling({ ...unsignedFresh, id: good.invitation.id }, ADA.signingSecret) };
     expect((await post('ada', again)).body).toMatchObject({ refused: 'invitation-taken' });
     /* RED WHEN: an invitation refused after its person was checked still files the person. */
-    expect(store.personVersions(String(fresh.invitation.person))).toEqual([]);
+    expect(await personVersions(String(fresh.invitation.person))).toEqual([]);
   });
 });
 
@@ -177,7 +177,7 @@ describe('THE INVITEE OPENS THE OFFER WITH THE LINK, AND ACCEPTS WITH WHAT ONLY 
     /* RED WHEN: the payee is shown a fingerprint of anything but the address they are paid at. */
     expect(accepted.fingerprint).toBe(payeeCodeFingerprint(danasCode() as never));
     /* What was handed over waits on the invitation, for an admitting device to open: the code her wallet signed. */
-    expect(openFromInbox<JoinCode>(store.getEmployee(made.person!)!.inbox!, CO, KEY)).toEqual(code);
+    expect(openFromInbox<JoinCode>(store.handoverFor(made.person!)!, CO, KEY)).toEqual(code);
     /* RED WHEN: an invitation is accepted twice. */
     await expect(acceptAsPayeeHere(opened, code, sendAs('mallory'))).rejects.toMatchObject({ refused: 'used' });
     /* RED WHEN: an accepted invitation's offer is still served. */
@@ -194,7 +194,7 @@ describe('THE INVITEE OPENS THE OFFER WITH THE LINK, AND ACCEPTS WITH WHAT ONLY 
       await expect(openInvitationHere(made.link, sendAs(null)), close).rejects.toMatchObject({ refused: close });
       /* RED WHEN: a closed invitation is still accepted. */
       await expect(acceptAsPayeeHere(opened, danasCode(), sendAs('dana')), close).rejects.toMatchObject({ refused: close });
-      expect(store.getEmployee(made.person!)!.inbox).toBeNull();
+      expect(store.handoverFor(made.person!)).toBeNull();
     }
   });
 });
@@ -208,12 +208,13 @@ describe('A SIGNER IS INVITED AND ACCEPTS THROUGH THE ONE SEAT PATH', () => {
     const kept: unknown[] = [];
     const seat = await acceptAsSignerHere(opened, SimulatedCommitments, {
       newKeys: newSeatKeys, seal: async (s) => { kept.push(s); }, promote: async () => {},
-    }, sendAs('cleo'));
+    }, sendAs('cleo'), 'cleo');
     const pending = store.getAccount(CO)!.pendingSigners.find((p) => p.id === seat.signerId)!;
     expect(pending.userId).toBe('cleo');
     /* The company's devices open it, and the proof of the keys holds for the name and role the offer gave. */
     const waiting = openFromInbox<PendingSignerPayload>(pending.sealed, CO, KEY);
-    expect(waiting).toMatchObject({ name: 'Cleo', role: 'approver' });
+    /* RED WHEN: the request is not sealed for the sign-in that accepted it, which every seating device holds it to. */
+    expect(waiting).toMatchObject({ name: 'Cleo', role: 'approver', person: 'cleo' });
     expect(() => refuseASeatKeyNotFromTheInvitee(KEY, CO, waiting)).not.toThrow();
     /* RED WHEN: a seat request names another role than the one the invitation was proved for. */
     expect(() => refuseASeatKeyNotFromTheInvitee(KEY, CO, { ...waiting, role: 'admin' })).toThrow();
@@ -226,12 +227,12 @@ describe('A SIGNER IS INVITED AND ACCEPTS THROUGH THE ONE SEAT PATH', () => {
     const again = await inviteSignerHere(ACME, ADA, { name: 'Ada again', role: 'admin' }, ORIGIN, fromAda);
     await expect(acceptAsSignerHere(await openInvitationHere(again.link, sendAs(null)), SimulatedCommitments, {
       newKeys: newSeatKeys, seal: async () => {}, promote: async () => {},
-    }, sendAs('ada'))).rejects.toMatchObject({ refused: 'already-on-this-account' });
+    }, sendAs('ada'), 'ada')).rejects.toMatchObject({ refused: 'already-on-this-account' });
     /* RED WHEN: a payee's invitation is accepted as a seat. */
     const payee = await invitePayeeHere(ACME, ADA, DANA, ORIGIN, fromAda);
     await expect(acceptAsSignerHere(await openInvitationHere(payee.link, sendAs(null)), SimulatedCommitments, {
       newKeys: newSeatKeys, seal: async () => {}, promote: async () => {},
-    }, sendAs('zed'))).rejects.toThrow(/offers pay, not a seat/);
+    }, sendAs('zed'), 'zed')).rejects.toThrow(/offers pay, not a seat/);
     /* RED WHEN: the service accepts a seat request against a payee's invitation. */
     expect((await sendAs('zed')(`/api/invites/${payee.id}/accept-signer`, { method: 'POST', body: JSON.stringify({ acceptance: acceptanceProofOf(tokenOfLink(payee.link)!), waiting: sealToInbox({}, ACME.inboxPublicKey) }) })).status).toBe(404);
   });
@@ -265,7 +266,7 @@ describe('A CODE ENDS WHERE A LINK DOES: THE SAME PACKAGE, THE SAME SEAT REQUEST
     const viaLink = await inviteSignerHere(ACME, ADA, { name: 'Dee', role: 'approver' }, ORIGIN, fromAda);
     const linked = await acceptAsSignerHere(await openInvitationHere(viaLink.link, sendAs(null)), SimulatedCommitments, {
       newKeys: () => keys, seal: async () => {}, promote: async () => {},
-    }, sendAs('dee'));
+    }, sendAs('dee'), 'dee');
     /* By code: Fen's device makes the same keys into a code her wallet signs; Ada pastes it. */
     const sealedForCode: unknown[] = [];
     const made = await makeSignerCodeHere(CO, SimulatedCommitments, { newKeys: () => keys, seal: async (x) => { sealedForCode.push(x); } }, walletOf(31, 'fen'));
@@ -275,10 +276,12 @@ describe('A CODE ENDS WHERE A LINK DOES: THE SAME PACKAGE, THE SAME SEAT REQUEST
     const added = await addSignerFromCodeHere(ACME, ADA, made.code, { name: 'Dee', role: 'approver' }, fromAda);
     const a = opened(pendingOf(linked.signerId!));
     const b = opened(pendingOf(added.id));
-    /* RED WHEN: a code and a link end in seat requests that differ in anything but the invitation each was proved under. */
-    const { seatProof: proofA, ...restA } = a;
-    const { seatProof: proofB, ...restB } = b;
+    /* RED WHEN: a code and a link end in seat requests that differ in anything but the invitation each was proved under and the sign-in it was sealed for. */
+    const { seatProof: proofA, person: personA, ...restA } = a;
+    const { seatProof: proofB, person: personB, ...restB } = b;
     expect(restB).toEqual(restA);
+    /* RED WHEN: either request is not sealed for the sign-in its seat request is filed under, so no device would seat it. */
+    expect([personA, personB]).toEqual([pendingOf(linked.signerId!).userId, pendingOf(added.id).userId]);
     expect(Object.keys(proofB!).sort()).toEqual(Object.keys(proofA!).sort());
     /* Both pass the check every seating device makes before it seats anybody. */
     expect(() => refuseASeatKeyNotFromTheInvitee(KEY, CO, a)).not.toThrow();
@@ -358,12 +361,13 @@ describe('A CODE ENDS WHERE A LINK DOES: THE SAME PACKAGE, THE SAME SEAT REQUEST
     const made = await invitePayeeHere(ACME, ADA, DANA, ORIGIN, fromAda);
     const linked = await acceptAsPayeeHere(await openInvitationHere(made.link, sendAs(null)), code, sendAs('dana'));
     /* RED WHEN: the two ways hand over different packages. */
-    const byCode = openFromInbox<JoinCode>(store.getEmployee(added.person)!.inbox!, CO, KEY);
-    const byLink = openFromInbox<JoinCode>(store.getEmployee(made.person!)!.inbox!, CO, KEY);
+    const byCode = openFromInbox<JoinCode>(store.handoverFor(added.person)!, CO, KEY);
+    const byLink = openFromInbox<JoinCode>(store.handoverFor(made.person!)!, CO, KEY);
     expect(byCode).toEqual(code);
     expect(byLink).toEqual(code);
     expect(added.fingerprint).toBe(linked.fingerprint);
     /* RED WHEN: a payee added from a code is not on the payroll as a person record, waiting to be admitted. */
-    expect(store.getEmployee(added.person)).toMatchObject({ accountId: CO, status: 'pending' });
+    expect(await peopleRecords.companyOfPerson(added.person)).toBe(CO);
+    expect((await newestPerson(added.person))!.facts!.status).toBe('pending');
   });
 });

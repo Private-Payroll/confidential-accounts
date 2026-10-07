@@ -109,8 +109,10 @@ describe('ONE APPROVED LEG\'S PAYMENTS, AS THE SERVICE HANDS THEM TO A DEVICE', 
       built: retry, facts: [facts[1]!], leaves: retry.tree.leaves, indices: [1],
       order: { ...input().order, root: retry.tree.root, payees: retry.tree.payees, proposal: idFrom(retry.tree.leaves, window) },
     });
-    /* RED WHEN: a retry is raised over a tree of its own rather than the leg's. */
-    expect([retry.tree.root, retry.tree.payees]).toEqual([built.tree.root, 2n]);
+    /* RED WHEN: a retry is raised over the leg's whole tree rather than a tree of only the people it names, each at their own leaf. */
+    expect(retry.tree.payees).toBe(1n);
+    expect(retry.tree.root).not.toBe(built.tree.root);
+    expect(retry.tree.leaves).toEqual([built.tree.leaves[1]]);
     const out = assemblePrivatePayments(retryInput);
     if ('refusal' in out) throw new Error(out.refusal);
     /* RED WHEN: a retry's payment is numbered by its place in the retry's tree - the screen then names the leg's first person. */

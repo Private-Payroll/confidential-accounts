@@ -1,7 +1,12 @@
 import { signingPublicKeyOf, type Hex } from '../../../../src/core/crypto.js';
 import type { Account } from '../../../../src/core/types.js';
-import { api, companyKeysForVaults, currentUser, directoryEntryOwed, oweDirectoryEntry, recordsKeyFromTheWallet } from 'vaults-web-shared/keyring.js';
-import { fileTheOwedDirectoryEntry, giveVaultKeys } from 'vaults-web-shared/vault-page-doors.js';
+import {
+  api, companyKeysForVaults, currentUser, directoryEntryOwed, invitedByForTheWallet, oweDirectoryEntry, recordsKeyFromTheWallet,
+} from 'vaults-web-shared/keyring.js';
+import { fileTheOwedDirectoryEntry } from 'vaults-web-shared/vault-page-doors.js';
+import { foldOffersHere, offerVaultKeysHere } from 'vaults-web-shared/roster-here.js';
+import type { Inviter } from '../../../../src/core/invitation.js';
+import { rosterReadsFor } from './filing-judge.js';
 import { ACT_REFUSAL, ACTED, type ActRefusal } from './refusals.js';
 import { ACCOUNT_ORIGIN } from './session.js';
 import { theVaultBuilder } from './vault-builder.js';
@@ -9,22 +14,26 @@ import { theVaultBuilder } from './vault-builder.js';
 /*
  * A SIGNER'S VAULT KEYS, GIVEN FOR A COMPANY, the one way every page gives
  * them: the company's keys released by the person's account first, then their
- * records key signed by their account for the seat their own key makes, then this
- * signer's vault keys, signed with their own key, sent with the company's
- * viewing key. The service keeps the first set a signer gives, and takes the
- * account's statement again whenever it is given again, so it follows the seat.
- * In the same press the account signs this signer's entry in the company's
- * seat directory - their filing key, their records key and their seat - and it
- * is kept with their keys and filed as soon as the directory takes it: now, or
- * on a later way into the company, unless the directory already holds exactly
- * that entry.
+ * records key signed by their account for the seat their own key makes - with
+ * the invitation they joined by, for an account that has not kept the company
+ * yet - then this signer's vault keys, signed with their own key, offered to
+ * the service with the directory entry their account signed in the same press.
+ * The offer waits until a seat the company already believes folds it into the
+ * roster from its own device: this one, once the company's directory believes
+ * it, which it tries at every press. The entry is kept with their keys and
+ * filed as soon as the directory takes it: now, or on a later way into the
+ * company, unless the directory already holds exactly that entry.
  */
 
 /** What giving the keys hands back: the account's release, and its signed statement with who holds the company. */
 type Given = Awaited<ReturnType<typeof companyKeysForVaults>> & { signed: Awaited<ReturnType<typeof recordsKeyFromTheWallet>> };
 
 /** This signer's own part: who they are on the roster, the key they sign with, and what their seat is made from. */
-interface SignerKeys { readonly signerId: string; readonly signingSecret: Hex; readonly blinding: Hex; readonly scope?: Hex }
+interface SignerKeys {
+  readonly signerId: string; readonly signingSecret: Hex; readonly blinding: Hex; readonly scope?: Hex;
+  /** The seat that invited this signer, as the invitation carried it: for their account's first records-key ask. */
+  readonly invitedBy?: Inviter;
+}
 
 /**
  * GIVE THE VAULT KEYS of `signer` for the company `companyId`. The keys the
@@ -51,10 +60,12 @@ export async function giveTheVaultKeys(
   if (person === null) return { of: ACTED.refused, why: ACT_REFUSAL.notSignedIn };
   const released = await companyKeysForVaults(companyId, ACCOUNT_ORIGIN);
   const signingKey = signingPublicKeyOf(signer.signingSecret).toLowerCase();
-  const signed = await recordsKeyFromTheWallet(ACCOUNT_ORIGIN, { company: released.company, account: released.account, seat, signingKey });
-  await giveVaultKeys(api, companyId, {
-    committeeKey: released.committeeKey, companyKey: released.companyKey, signingSecret: signer.signingSecret,
-    signerId: signer.signerId, viewingKey, recordsKey: signed.statement,
+  const signed = await recordsKeyFromTheWallet(ACCOUNT_ORIGIN, {
+    company: released.company, account: released.account, seat, signingKey, ...invitedByForTheWallet(signer.invitedBy),
+  });
+  await offerVaultKeysHere(api, companyId, {
+    signerId: signer.signerId, signingSecret: signer.signingSecret, companyKey: released.companyKey,
+    committeeKey: released.committeeKey, recordsKey: signed.statement, entry: signed.entry!,
   });
   /*
    * The answer was read against this filing key, so it carries the entry; a wallet that signed none is refused there.
@@ -64,5 +75,17 @@ export async function giveTheVaultKeys(
    */
   await oweDirectoryEntry(companyId, { person, company: released.company, signed: { committeeKey: signed.committeeKey, entry: signed.entry! } });
   await fileTheOwedDirectoryEntry(api, companyId, directoryEntryOwed(companyId));
+  /*
+   * Every open offer, this signer's own included, folded into the roster from this device - which the service files
+   * only once the company's directory believes this seat. Until then the offer waits for a seat it does believe.
+   */
+  try {
+    await foldOffersHere({
+      api, accountId: companyId, viewingKey, signingSecret: signer.signingSecret, label: released.company, account: released.account,
+      reads: rosterReadsFor(companyId, released.company, released.account),
+    });
+  } catch {
+    /* Not believed yet, or the roster moved meanwhile: the offer stays open for the next press or another seat. */
+  }
   return { of: ACTED.done, ...released, signed };
 }

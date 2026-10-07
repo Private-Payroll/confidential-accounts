@@ -10,7 +10,9 @@ import type { CompanyLabel } from 'midnight-identity/profile/company-label';
 import { MemoryStore } from '../core/store.js';
 import { foundTheCompanyHere, type CompanyFounded } from '../core/company-founding.js';
 import { newSigningKeypair, newWrappingKeypair, type Hex } from '../core/crypto.js';
-import type { SealedStateAt } from '../core/ledger.js';
+import type { SealedCompanyRecord } from '../midnight/sealed-record-wire.js';
+import { signCompanyFiling, type CompanyRecordKind } from '../midnight/sealed-record-wire.js';
+import { MemoryCompanyRecordStore } from './company-records-route.js';
 import { aCompanyCreatedOnTheLedger, recordTheCompanyMadeOnTheDevice, secretCarried } from './account-creation.js';
 import { newStateBlinding } from '../core/account.js';
 import { newSeatKeys } from '../../packages/web-shared/src/accept-seat.js';
@@ -21,11 +23,18 @@ const PERSON = 'usr_founder';
 const KEY = { tag: 'schnorr' as const, value: '7a'.repeat(32) };
 const LEAF = '4e'.repeat(32);
 
-const madeHere = (over: { label?: CompanyLabel; userId?: string } = {}): CompanyFounded =>
-  foundTheCompanyHere({
+/** The founding seat's signing secret each company made here was signed with, for a test that signs another of its records. */
+const SEAT_SECRET = new WeakMap<CompanyFounded, Hex>();
+const madeHere = (over: { label?: CompanyLabel; userId?: string } = {}): CompanyFounded => {
+  const signing = newSigningKeypair();
+  const f = foundTheCompanyHere({
     name: 'Acme Ltd', signer: { name: 'Priya', role: 'admin' }, userId: over.userId ?? PERSON, label: over.label ?? LABEL,
-    seat: { signingPublicKey: newSigningKeypair().publicKey, wrappingPublicKey: newWrappingKeypair().publicKey, leaf: LEAF },
+    seat: { signingPublicKey: signing.publicKey, wrappingPublicKey: newWrappingKeypair().publicKey, leaf: LEAF },
+    signingSecret: signing.secret,
   });
+  SEAT_SECRET.set(f, signing.secret);
+  return f;
+};
 
 const request = (founding: unknown, over: Record<string, unknown> = {}) => ({
   name: 'Acme Ltd', signers: [{ name: 'Priya', role: 'admin' }], threshold: 1, companyLabel: LABEL, foundingKey: KEY, founding,
@@ -34,15 +43,16 @@ const request = (founding: unknown, over: Record<string, unknown> = {}) => ({
 
 function aService(opts: { noFiling?: true; wiring?: 'midnight' | 'simulated'; whileFiling?: (store: MemoryStore) => void } = {}) {
   const store = new MemoryStore();
-  const filed: Array<[string, SealedStateAt]> = [];
-  const ledger = {
-    wiring: opts.wiring ?? 'midnight',
-    ...(opts.noFiling ? {} : {
-      fileFoundingState: async (id: string, s: SealedStateAt) => { filed.push([id, s]); await Promise.resolve(); opts.whileFiling?.(store); },
-    }),
+  const filed: SealedCompanyRecord[] = [];
+  const ledger = { wiring: opts.wiring ?? 'midnight', ...(opts.noFiling ? {} : { takesCompaniesFromTheirFoundingSigner: true }) };
+  /* The service's own record store, which refuses a version filed twice; `filed` is what it took. */
+  const kept = new MemoryCompanyRecordStore();
+  const records = {
+    get: (company: string, kind: CompanyRecordKind, id: string) => kept.get(company, kind, id),
+    put: async (rec: SealedCompanyRecord) => { await kept.put(rec); filed.push(rec); opts.whileFiling?.(store); },
   };
-  const send = (body: unknown, userId = PERSON) => recordTheCompanyMadeOnTheDevice({ store, ledger: ledger as never }, userId, body);
-  return { store, filed, send };
+  const send = (body: unknown, userId = PERSON) => recordTheCompanyMadeOnTheDevice({ store, ledger: ledger as never, records }, userId, body);
+  return { store, filed, records, send };
 }
 
 /** A deep copy with one change, so a refusal is of exactly that change. */
@@ -62,8 +72,11 @@ describe('A COMPANY ITS FOUNDING SIGNER\'S DEVICE MADE', () => {
     expect(s.store.getAccount(f.account.id)).toEqual({ ...f.account, wiring: 'midnight' });
     /* RED WHEN: the account would be read against another seat, key or label than the device made and the wallet gave. */
     expect(s.store.getAccountOpening(f.account.id)).toEqual({ accountId: f.account.id, foundingKey: KEY, foundingLeaf: LEAF, companyLabel: LABEL });
-    /* RED WHEN: the first state kept is not the one the device sealed. */
-    expect(s.filed).toEqual([[f.account.id, f.sealedState]]);
+    /* RED WHEN: the first state or roster kept is not the record the device sealed and its founding seat signed. */
+    expect(s.filed).toEqual([f.state, f.roster]);
+    /* RED WHEN: the signers are kept anywhere but the roster record: the account record carries none. */
+    expect(f.account.sealedRoster).toBeUndefined();
+    expect(s.store.getAccount(f.account.id)!.sealedRoster).toBeUndefined();
     /* RED WHEN: the answer carries anything secret, or anything this service made. */
     expect(secretCarried(answer)).toBeNull();
   });
@@ -74,14 +87,62 @@ describe('A COMPANY ITS FOUNDING SIGNER\'S DEVICE MADE', () => {
     await s.send(request(f));
     /* RED WHEN: a page that did not hear the first answer makes a second company, or is refused, by sending it again. */
     expect(await s.send(request(f))).toEqual({ status: 200, body: { account: { id: f.account.id }, state: 'made' } });
-    expect(s.filed).toHaveLength(1);
+    expect(s.filed).toHaveLength(2);
     expect(s.store.listAccounts()).toHaveLength(1);
     /* RED WHEN: another company sent under an id already recorded is written over the first. */
-    const other = changed(madeHere(), (x) => { x.account.id = f.account.id; x.account.wrappedKeys[0].signerId = x.seat.signerId; });
+    const other = (() => {
+      const o = changed(madeHere(), (x) => { x.account.id = f.account.id; x.account.wrappedKeys[0].signerId = x.seat.signerId; }) as any;
+      const signing = newSigningKeypair();
+      const { filedBy: _was, ...unsigned } = o.state;
+      const { filedBy: _wasToo, ...unsignedRoster } = o.roster;
+      return {
+        ...o, seat: { ...o.seat, signingPublicKey: signing.publicKey },
+        state: signCompanyFiling({ ...unsigned, company: f.account.id }, signing.secret),
+        roster: signCompanyFiling({ ...unsignedRoster, company: f.account.id }, signing.secret),
+      };
+    })();
     const refused = await s.send(request(other));
     expect(refused.status).toBe(409);
     expect(refused.body.code).toBe('company-taken');
     expect(s.store.getAccount(f.account.id)).toEqual({ ...f.account, wiring: 'midnight' });
+  });
+
+  it('SENT AGAIN WITH ANOTHER FIRST ROSTER, THE COMPANY RECORDED IS REFUSED, AND ITS ROSTER IS NOT WRITTEN OVER', async () => {
+    const s = aService();
+    const f = madeHere();
+    await s.send(request(f));
+    /* The same company, with a first roster of other bytes, still signed by the founding seat. */
+    const { filedBy: _was, ...unsigned } = f.roster;
+    const other = { ...f, roster: signCompanyFiling({ ...unsigned, sealed: { ...unsigned.sealed, iv: '00'.repeat(12) } }, SEAT_SECRET.get(f)!) };
+    const answer = await s.send(request(other));
+    /* RED WHEN: a creation sent again with a different first roster answers as the same company, or writes the roster over. */
+    expect([answer.status, answer.body.code]).toEqual([409, 'company-taken']);
+    expect(s.filed).toEqual([f.state, f.roster]);
+  });
+
+  it('A FIRST STATE ALREADY KEPT IS NOT FILED AGAIN, AND ANOTHER UNDER THE SAME ID IS REFUSED, RECORDING NOTHING', async () => {
+    const s = aService();
+    const f = madeHere();
+    await s.records.put(f.state);
+    /* RED WHEN: a creation carried again after its state was kept, and before its company was, files the state twice. */
+    expect((await s.send(request(f))).status).toBe(201);
+    expect(s.filed).toEqual([f.state, f.roster]);
+    const t = aService();
+    const other = madeHere();
+    await t.records.put({ ...f.state, company: other.account.id });
+    /* RED WHEN: a creation is recorded whose company has a different first state kept. */
+    expect((await t.send(request(other))).body).toMatchObject({ code: 'company-taken' });
+    expect(t.store.getAccount(other.account.id)).toBeNull();
+  });
+
+  it('THE SAME CREATION SENT TWICE AT ONCE FILES ITS FIRST STATE ONCE AND IS ONE COMPANY', async () => {
+    const s = aService();
+    const f = madeHere();
+    const answers = await Promise.all([s.send(request(f)), s.send(request(f))]);
+    /* RED WHEN: the second of two concurrent sends is refused, or fails on the store's refusal of a second version 1. */
+    expect(answers.map((a) => a.status).sort()).toEqual([201, 201]);
+    expect(s.filed).toEqual([f.state, f.roster]);
+    expect(s.store.listAccounts().map((a) => a.id)).toEqual([f.account.id]);
   });
 
   it('EVERY SECRET THE DEVICE MAKES AT A FOUNDING IS ONE THE SERVICE REFUSES BY NAME', () => {
@@ -99,7 +160,7 @@ describe('A COMPANY ITS FOUNDING SIGNER\'S DEVICE MADE', () => {
       (x, n) => { x[n] = 'aa'.repeat(32); },
       (x, n) => { x.founding[n] = 'aa'.repeat(32); },
       (x, n) => { x.founding.seat[n] = 'aa'.repeat(32); },
-      (x, n) => { x.founding.sealedState[n] = 'aa'.repeat(32); },
+      (x, n) => { x.founding.state[n] = 'aa'.repeat(32); },
     ];
     for (const name of ['signingSecret', 'wrappingSecret', 'blinding', 'viewingKey', 'assetBlinding', 'payoutSeeds', 'payRecordKey', 'secrets', 'seed']) {
       for (const put of places) {
@@ -142,7 +203,35 @@ describe('A COMPANY ITS FOUNDING SIGNER\'S DEVICE MADE', () => {
       ['a seat of zeroes', changed(madeHere(), (x) => { x.seat.leaf = '00'.repeat(32); }), 422, 'the-company-does-not-fit'],
       ['a second wrapped key', changed(madeHere(), (x) => { x.account.wrappedKeys.push(x.account.wrappedKeys[0]); }), 400, 'not-a-company-made-on-the-device'],
       ['a pending signer', changed(madeHere(), (x) => { x.account.pendingSigners.push({ id: 'p' }); }), 400, 'not-a-company-made-on-the-device'],
-      ['a later key epoch', changed(madeHere(), (x) => { x.sealedState.keyEpoch = 1; }), 400, 'not-a-company-made-on-the-device'],
+      ['a later key epoch', changed(madeHere(), (x) => { x.state.keyEpoch = 1; }), 400, 'not-a-company-made-on-the-device'],
+      ['a first state with no signature', changed(madeHere(), (x) => { delete x.state.filedBy; }), 400, 'not-a-company-made-on-the-device'],
+      ['a first state its signature does not cover', changed(madeHere(), (x) => { x.state.sealed.body = `${x.state.sealed.body}00`; }), 422, 'the-company-does-not-fit'],
+      ['a first state signed by another seat', (() => {
+        const f = madeHere();
+        const { filedBy: _was, ...unsigned } = f.state;
+        return { ...f, state: signCompanyFiling(unsigned, newSigningKeypair().secret) };
+      })(), 422, 'the-company-does-not-fit'],
+      ['a first roster signed by a seat other than the founding signer\'s', (() => {
+        const f = madeHere();
+        const { filedBy: _was, ...unsigned } = f.roster;
+        return { ...f, roster: signCompanyFiling(unsigned, newSigningKeypair().secret) };
+      })(), 422, 'the-company-does-not-fit'],
+      ['a first roster at a later version', (() => {
+        const f = madeHere();
+        const { filedBy: _was, ...unsigned } = f.roster;
+        return { ...f, roster: { ...unsigned, version: 2, filedBy: f.roster.filedBy } };
+      })(), 400, 'not-a-company-made-on-the-device'],
+      ['a first roster filed for another company', (() => {
+        const f = madeHere();
+        const { filedBy: _was, ...unsigned } = f.roster;
+        return { ...f, roster: { ...unsigned, company: 'acc_another', filedBy: f.roster.filedBy } };
+      })(), 422, 'the-company-does-not-fit'],
+      ['the signers carried on the account record as well', changed(madeHere(), (x) => { x.account.sealedRoster = x.account.sealedPolicy; }), 400, 'not-a-company-made-on-the-device'],
+      ['a first state filed for another company', (() => {
+        const f = madeHere();
+        const { filedBy: _was, ...unsigned } = f.state;
+        return { ...f, state: { ...unsigned, company: 'acc_another', filedBy: f.state.filedBy } };
+      })(), 422, 'the-company-does-not-fit'],
       ['a record already given an address', changed(madeHere(), (x) => { x.account.contractAddress = 'aa'.repeat(32); }), 400, 'not-a-company-made-on-the-device'],
       ['two seats on the record', changed(madeHere(), (x) => { x.account.signerCount = 2; }), 400, 'not-a-company-made-on-the-device'],
       ['a field nobody named', changed(madeHere(), (x) => { x.seat.extra = 'aa'; }), 400, 'not-a-company-made-on-the-device'],
@@ -180,14 +269,18 @@ describe('THE ONE SEALING CODE', () => {
     const { unwrapKey, unseal, parseCanonical } = await import('../core/crypto.js');
     const { openAccount, sealState, newStateBlinding } = await import('../core/account.js');
     const wk = newWrappingKeypair();
+    const signing = newSigningKeypair();
     const f = foundTheCompanyHere({
       name: 'Acme Ltd', signer: { name: 'Priya', role: 'admin' }, userId: PERSON, label: LABEL,
-      seat: { signingPublicKey: newSigningKeypair().publicKey, wrappingPublicKey: wk.publicKey, leaf: LEAF },
+      seat: { signingPublicKey: signing.publicKey, wrappingPublicKey: wk.publicKey, leaf: LEAF },
+      signingSecret: signing.secret,
     });
     const viewingKey = unwrapKey(f.account.wrappedKeys[0]!, wk.secret) as Hex;
     /* RED WHEN: the record is sealed some other way than the one opener reads. */
-    expect(openAccount(f.account, viewingKey).name).toBe('Acme Ltd');
-    const opened = parseCanonical<any>(unseal(f.sealedState.sealed, viewingKey));
+    expect(openAccount(f.account, viewingKey, f.roster).name).toBe('Acme Ltd');
+    /* RED WHEN: the record carries the signers beside the roster record, a second copy of them. */
+    expect(() => openAccount(f.account, viewingKey, null)).toThrow(/could not be found/u);
+    const opened = parseCanonical<any>(unseal(f.state.sealed, viewingKey));
     /* RED WHEN: the state is sealed in another shape than the service's own sealing makes, or with other parts. */
     const ours = parseCanonical<any>(unseal(sealState(opened.state, opened.blinding, viewingKey, 0).sealed, viewingKey));
     expect(opened).toEqual(ours);
@@ -202,16 +295,16 @@ describe('THE ONE WAY A COMPANY IS CREATED ON A CHAIN', () => {
     const chain = aService();
     const old = { name: 'Acme Ltd', signers: [{ name: 'Priya', role: 'admin' }], threshold: 1, companyLabel: LABEL };
     /* RED WHEN: on a chain, a creation that names no founding key reaches any creation at all, which would make the company's secrets here. */
-    expect(await aCompanyCreatedOnTheLedger({ store: chain.store, ledger: { wiring: 'midnight' } as never }, PERSON, old))
+    expect(await aCompanyCreatedOnTheLedger({ store: chain.store, ledger: { wiring: 'midnight' } as never, records: chain.records }, PERSON, old))
       .toMatchObject({ status: 409, body: { code: 'created-from-the-founding-signers-browser' } });
     expect(chain.store.listAccounts()).toEqual([]);
     /* RED WHEN: on a chain, a company the device made is not recorded as it was sent. */
     const f = madeHere();
     const sim = aService({ wiring: 'simulated' });
     const send = (s: ReturnType<typeof aService>, body: unknown) =>
-      aCompanyCreatedOnTheLedger({ store: s.store, ledger: { wiring: s === sim ? 'simulated' : 'midnight', fileFoundingState: async (id: string, x: SealedStateAt) => { s.filed.push([id, x]); } } as never }, PERSON, body);
+      aCompanyCreatedOnTheLedger({ store: s.store, ledger: { wiring: s === sim ? 'simulated' : 'midnight', takesCompaniesFromTheirFoundingSigner: true } as never, records: s.records }, PERSON, body);
     expect(await send(chain, request(f))).toEqual({ status: 201, body: { account: { id: f.account.id }, state: 'made' } });
-    expect(chain.filed).toHaveLength(1);
+    expect(chain.filed).toHaveLength(2);
     /* RED WHEN: the simulated ledger, which development and the tests run on, is sent down the chain's path. */
     expect(await send(sim, old)).toBeNull();
     expect(sim.store.listAccounts()).toEqual([]);

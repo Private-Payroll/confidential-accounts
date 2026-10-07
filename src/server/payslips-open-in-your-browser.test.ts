@@ -205,15 +205,16 @@ describe('a payee\'s own payslips, over the wire', () => {
     expect(got.body).toEqual([]);
   });
 
-  it('THE ROUTE THAT TOOK A SECRET IN ITS ADDRESS NOW REFUSES, AND OPENS NOTHING', async () => {
-    const r = await fetch(
-      `${base}/api/runs/${seeded.runId}/employee/${seeded.dana.employeeId}?secret=${seeded.dana.secret}`);
-    /* RED WHEN it goes on opening slips with the secret it was handed. */
-    expect(r.status).toBe(410);
-    const text = await r.text();
-    expect(text).not.toContain('Dana');
-    expect(text).not.toContain(seeded.dana.secret);
-    expect(JSON.parse(text).code).toBe('payslips-open-in-your-browser');
+  it('THE ROUTE THAT TOOK A SECRET IN ITS ADDRESS IS GONE: IT SAYS NOTHING ABOUT A RUN OR A PERSON, TO ANYBODY', async () => {
+    for (const [runId, employeeId] of [[seeded.runId, seeded.dana.employeeId], ['run_nobody', 'emp_nobody']]) {
+      const r = await fetch(`${base}/api/runs/${runId}/employee/${employeeId}?secret=${seeded.dana.secret}`);
+      /* RED WHEN the route is back, answering for a run and person that exist differently from ones that do not. */
+      expect(r.status).toBe(404);
+      const text = await r.text();
+      expect(text).not.toContain('Dana');
+      expect(text).not.toContain(seeded.dana.secret);
+      expect(text).not.toContain('payslips-open-in-your-browser');
+    }
   });
 
   it('A COMPANY\'S LABEL, ASKED BY ITS LABEL, WITH THE ACCOUNT THAT CARRIES IT', async () => {

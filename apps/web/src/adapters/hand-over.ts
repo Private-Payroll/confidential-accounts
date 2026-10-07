@@ -1,10 +1,12 @@
 import type { SealedAccount } from '../../../../src/core/types.js';
+import type { BelievedAccount } from 'vaults-web-shared/roster-here.js';
 import { whyNotHandOver } from 'vaults-web-shared/handover-check.js';
 import {
   COMMITTEE_CHANGE_REFUSAL, committeeChangeRefusal, signCommitteeChangeOnDevice, type CommitteeChangeView,
 } from 'vaults-web-shared/committee-change-on-device.js';
 import {
-  api, canOpenCompanies, companyKeysForVaults, openAccount, openKeysWithWallet, signCommitteeChangeFromTheWallet, viewingKeyFor,
+  api, canOpenCompanies, companyKeysForVaults, holdersFromTheWallet, openKeysWithWallet, signCommitteeChangeFromTheWallet,
+  viewingKeyFor,
   type AccountKeys,
 } from 'vaults-web-shared/keyring.js';
 import { companyRoute, SERVICE } from './handover-state.js';
@@ -13,14 +15,17 @@ import { ACT_REFUSAL, ACTED, refusalOf, type ActRefusal } from './refusals.js';
 import { ACCOUNT_ORIGIN } from './session.js';
 import { Fault, FAULT } from '../faults.js';
 import { giveTheVaultKeys } from './vault-keys.js';
+import { foldOffersHere } from 'vaults-web-shared/roster-here.js';
+import { openedHere, rosterReadsFor } from './filing-judge.js';
 
 /*
  * HANDING A COMPANY TO ITS COMMITTEE, OVER THE SHARED STEPS, IN THEIR ORDER.
  *
  * 1. EVERY SIGNER GIVES THEIR VAULT KEYS. The committee is one key per
- *    signer, each from that signer's own account, written into their own
- *    entry of the sealed roster and signed there (`giveVaultKeys`). This
- *    person gives theirs here; the others give theirs from their own devices.
+ *    signer, each from that signer's own account, offered and folded into
+ *    their own entry of the roster by a seat the company believes
+ *    (`offerVaultKeysHere`, `foldOffersHere`). This person gives theirs here;
+ *    the others give theirs from their own devices.
  * 2. THE HANDOVER. The service's answer is read afresh, and this device checks
  *    the committee it names against the roster it opens itself, and that this
  *    person's own entry carries the key their account gives
@@ -47,7 +52,7 @@ const refused = (why: ActRefusal): Acted => ({ of: ACTED.refused, why });
  * has not opened them yet, read again when they do not hold this company, and
  * a seat this device did not finish is finished first.
  */
-async function opened(personId: string, companyId: string): Promise<{ keys: AccountKeys; roster: () => Promise<NonNullable<ReturnType<typeof openAccount>>>; viewingKey: ReturnType<typeof viewingKeyFor> } | ActRefusal> {
+async function opened(personId: string, companyId: string): Promise<{ keys: AccountKeys; roster: () => Promise<BelievedAccount>; viewingKey: ReturnType<typeof viewingKeyFor> } | ActRefusal> {
   if (ACCOUNT_ORIGIN === '') return ACT_REFUSAL.notSetUp;
   if (!(await keyringFor(personId))) return ACT_REFUSAL.notSignedIn;
   if (!canOpenCompanies()) await openKeysWithWallet(ACCOUNT_ORIGIN);
@@ -55,7 +60,7 @@ async function opened(personId: string, companyId: string): Promise<{ keys: Acco
   if (keys === null) return ACT_REFUSAL.noKeysHere;
   const sealed = await api(companyRoute(companyId));
   const roster = async () => {
-    const account = openAccount(await api(companyRoute(companyId)));
+    const account = await openedHere(await api(companyRoute(companyId)) as SealedAccount);
     /* The keys for this company were found just above, so it opens; a company that does not is a fault in this code. */
     if (account === null) throw new Fault(FAULT.companyDidNotOpen);
     return account;
@@ -108,16 +113,33 @@ export async function signChange(personId: string, companyId: string): Promise<A
      * account is asked to sign. "Nothing to sign" is told from the other
      * refusals by the code the check gives, never by its sentence.
      */
-    const [now, mine, roster] = [await view(), await committeeKeyFor(companyId), await o.roster()];
+    /* Every open offer of vault keys folded in first, so the committee the change is to is made from all of them. */
+    const released = await companyKeysForVaults(companyId, ACCOUNT_ORIGIN);
+    const fold = () => foldOffersHere({
+      api, accountId: companyId, viewingKey: o.viewingKey, signingSecret: o.keys.signingSecret,
+      label: released.company, account: released.account,
+      reads: rosterReadsFor(companyId, released.company, released.account),
+    });
+    await fold();
+    /*
+     * The threshold a change after this one needs is the chain's, as this person's own wallet reads it: a threshold
+     * changed from a device is carried out on the chain alone, and no copy of it is written anywhere else.
+     */
+    const rosterNow = async () => ({
+      ...(await o.roster()),
+      policy: { threshold: (await holdersFromTheWallet(ACCOUNT_ORIGIN, { company: released.company, account: released.account })).holders.threshold },
+    });
+    const [now, mine, roster] = [await view(), released.committeeKey, await rosterNow()];
     const me = { signerId: o.keys.signerId };
     const check = committeeChangeRefusal(now, mine, roster, me);
     if (check !== null) {
       return refused(check.code === COMMITTEE_CHANGE_REFUSAL.nothingToSign ? ACT_REFUSAL.nothingToSign : ACT_REFUSAL.rosterDisagrees);
     }
     await signCommitteeChangeOnDevice({
+      fold,
       view,
       walletKey: () => committeeKeyFor(companyId),
-      roster: o.roster,
+      roster: rosterNow,
       askWallet: (ask) => signCommitteeChangeFromTheWallet(ACCOUNT_ORIGIN, ask),
       send: async (body) => await api(companyRoute(companyId, SERVICE.signatures), { method: SERVICE.post, body: JSON.stringify(body) }),
     }, me);

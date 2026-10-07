@@ -368,7 +368,7 @@ describe.skipIf(!KEYS_ON_DISK)('A DEPOSIT FROM THE PAGE, BUILT ON THE DEVICE [ne
       /* The wallet's read: the account has adopted this vault. */
       account: ACCOUNT,
       onChain: async (v: string) => ({
-        holders: { committee: [], threshold: 1, seats: [], approvals: 1, adoptedVaults: [v] },
+        holders: { committee: [], threshold: 1, seats: [], approvals: 1, adoptedVaults: [v], founding: '4a'.repeat(32), foundingCommittee: [{ tag: 'schnorr', value: '11'.repeat(32) }] },
       }),
       myRecordsKey: recordsKeypairFrom(companyKey).publicKey,
       signers: async () => [{ id: 'ada', wrappingPublicKey: wrapping.publicKey }],

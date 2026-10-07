@@ -1,4 +1,5 @@
 import { describe, it, expect } from 'vitest';
+import { approverRosterFrom } from '../../../src/core/vault-approvers.js';
 import type { AccountAddress, CompanyLabel } from 'midnight-identity/profile/company-label';
 import {
   createCompanyVault, createCompanyVaultByHandover, depositIntoCompanyVault, openCompanyVaultPool, DepositNotYetSeen,
@@ -58,7 +59,18 @@ const VAULT = 'ab'.repeat(32);
 const ACCOUNT = 'c0'.repeat(32) as AccountAddress;
 const LABEL = `co_${'c1'.repeat(32)}` as CompanyLabel;
 const committee = { committee: [{ tag: 'schnorr', value: '11'.repeat(32) }], threshold: 1 };
-const pacing = { sleep: async () => {}, waitMs: 3, everyMs: 1 };
+/*
+ * The company as a device counts it for the vault check, beside the pacing every operation takes: three seats with every
+ * right and one approval needed, so no vault here is left short. The check is driven in
+ * `src/core/a-vault-keeps-as-many-approvers-as-its-bar.test.ts` and `apps/web/src/adapters/create-vault.test.ts`.
+ */
+const nobodyShort = {
+  approvers: async () => approverRosterFrom({
+    threshold: 1, vaultThresholds: [], seated: ['e1', 'e2', 'e3'].map((leaf) => ({ leaf })), adoptedVaults: [], companyWide: 'cc'.repeat(32),
+  }),
+  vaultName: (v: string) => v,
+};
+const pacing = { sleep: async () => {}, waitMs: 3, everyMs: 1, ...nobodyShort };
 /*
  * The vault's company account as the signer's own wallet reads it: an account that has adopted the vault. A test about
  * a vault that is not the company's hands its own.
@@ -66,7 +78,7 @@ const pacing = { sleep: async () => {}, waitMs: 3, everyMs: 1 };
 const walletReadsTheVault = {
   account: 'c0'.repeat(32) as AccountAddress,
   onChain: async (v: string) => ({
-    holders: { committee: [{ tag: 'schnorr', value: '11'.repeat(32) }], threshold: 1, seats: ['4a'.repeat(32)], approvals: 1, adoptedVaults: [v] },
+    holders: { committee: [{ tag: 'schnorr', value: '11'.repeat(32) }], threshold: 1, seats: ['4a'.repeat(32)], approvals: 1, adoptedVaults: [v], founding: '4a'.repeat(32), foundingCommittee: [{ tag: 'schnorr', value: '11'.repeat(32) }] },
   }),
 };
 /* Stand-in ledger parameters: the header the ledger writes them under, and nothing a ledger could read. */
@@ -76,6 +88,9 @@ const view = (over: Partial<VaultChainView>): VaultChainView => ({ vault: VAULT,
 const nothingToCheck = async (): Promise<void> => {};
 
 const builder = (log: string[]): VaultBuilderClient => ({
+  /* What a governance proposal is called, and the value a company-wide run names: no vault operation asks either. */
+  proposalIdentity: async () => { throw new Error('a vault operation never names a governance proposal'); },
+  companyWide: async () => { throw new Error('a vault operation never asks what a company-wide run names'); },
   /* The old temporary-key deploy and hand-over: creating a vault never asks for either. */
   deploy: async () => { log.push('build deploy'); return { vault: VAULT, temporaryKey: { tag: 'schnorr', value: '77'.repeat(32) }, tx: 'D' }; },
   handover: async (i) => { log.push(`build handover at ${i.counter}`); return { tx: 'H' }; },
@@ -1329,7 +1344,7 @@ describe('A PRIVATE PAYMENT OUT', () => {
 
   it('A PAYMENT OUT OF A VAULT THE ACCOUNT HAS NOT ADOPTED, AS THE SIGNER\'S OWN WALLET READS IT, IS REFUSED BEFORE ANYTHING IS WRITTEN DOWN', async () => {
     const t = await setUp();
-    const b = { ...t.doors(landsWhenSent()), onChain: async (v: string) => ({ holders: { committee: [], threshold: 1, seats: [], approvals: 1, adoptedVaults: [] } }) };
+    const b = { ...t.doors(landsWhenSent()), onChain: async (v: string) => ({ holders: { committee: [], threshold: 1, seats: [], approvals: 1, adoptedVaults: [], founding: '4a'.repeat(32), foundingCommittee: [{ tag: 'schnorr', value: '11'.repeat(32) }] } }) };
     const e = await payPrivatelyFromCompanyVault(b, order()).catch((x: Error) => x);
     /* RED WHEN: a payment is made out of a vault the service named and the account never adopted. */
     expect((e as Error).message).toMatch(/not one your company's account has adopted/);
@@ -1768,7 +1783,7 @@ describe('A PUBLIC PAYMENT OUT', () => {
     const log: string[] = [];
     const d = {
       ...doorsFor(log, [false]),
-      onChain: async (v: string) => ({ holders: { committee: [], threshold: 1, seats: [], approvals: 1, adoptedVaults: [] } }),
+      onChain: async (v: string) => ({ holders: { committee: [], threshold: 1, seats: [], approvals: 1, adoptedVaults: [], founding: '4a'.repeat(32), foundingCommittee: [{ tag: 'schnorr', value: '11'.repeat(32) }] } }),
     };
     /* RED WHEN: public money is paid out of a vault the service named and the account never adopted. */
     await expect(payPubliclyFromCompanyVault(d, order())).rejects.toThrow(/not one your company's account has adopted/);

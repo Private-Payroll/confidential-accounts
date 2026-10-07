@@ -363,6 +363,8 @@ describe('THE HOLDERS ASK: PUBLIC CHAIN FACTS, NO PRESS, AND NOTHING ELSE', () =
   const PAGE = 'https://payroll.example';
   const NOW = 1_755_000_000_000;
   const VAULT = '9a'.repeat(32);
+  /* A founding seat no longer held: the deploy's seat is answered whoever holds the account now. */
+  const FOUNDING = '5f'.repeat(32);
   const ask = (over: Record<string, unknown> = {}) => parseAsk({
     schema: 'midnight-identity/disclosure-request/v1', kind: 'holders',
     requester: { name: 'Payroll', rdns: 'example.payroll' }, purpose: 'Who holds the company.',
@@ -370,6 +372,7 @@ describe('THE HOLDERS ASK: PUBLIC CHAIN FACTS, NO PRESS, AND NOTHING ELSE', () =
   }, PAGE, NOW) as HoldersRequest;
   const holders = {
     committee: [committeeKeyFor(me, CO) as { tag: string; value: string }], threshold: 1, seats: [SEAT], approvals: 2, adoptedVaults: [VAULT],
+    founding: FOUNDING, foundingCommittee: [committeeKeyFor(me, CO) as { tag: string; value: string }],
   };
   const expecting = { atOrigin: PAGE, expectingNonce: 'h1', company: CO, account: ACCOUNT };
 
@@ -378,10 +381,12 @@ describe('THE HOLDERS ASK: PUBLIC CHAIN FACTS, NO PRESS, AND NOTHING ELSE', () =
     expect(answer.schema).toBe(HOLDERS_ANSWER_SCHEMA);
     /* RED WHEN: the answer carries any field but the public chain facts and the echo of the ask. */
     expect(Object.keys(answer).sort()).toEqual(['account', 'at', 'company', 'holders', 'nonce', 'origin', 'schema']);
-    expect(Object.keys(answer.holders).sort()).toEqual(['adoptedVaults', 'approvals', 'committee', 'seats', 'threshold']);
+    expect(Object.keys(answer.holders).sort()).toEqual(['adoptedVaults', 'approvals', 'committee', 'founding', 'foundingCommittee', 'seats', 'threshold']);
+    /* RED WHEN: the founding seat the wallet read from the deploy is not handed on as read. */
+    expect(answer.holders.founding).toBe(FOUNDING);
     /* RED WHEN: whatever else the wallet's read carries is passed on rather than only the five facts named. */
     const carrying = holdersAnswerFor(ask(), { ...holders, companyKey: 'aa'.repeat(32) } as typeof holders, NOW);
-    expect(Object.keys(carrying.holders).sort()).toEqual(['adoptedVaults', 'approvals', 'committee', 'seats', 'threshold']);
+    expect(Object.keys(carrying.holders).sort()).toEqual(['adoptedVaults', 'approvals', 'committee', 'founding', 'foundingCommittee', 'seats', 'threshold']);
     /* RED WHEN: a key the wallet holds crosses: no committee secret, no company key, no signature. */
     const said = JSON.stringify(answer);
     expect(said).not.toContain(committeeSigningKeyFor(me, CO).value);
@@ -405,6 +410,13 @@ describe('THE HOLDERS ASK: PUBLIC CHAIN FACTS, NO PRESS, AND NOTHING ELSE', () =
     /* RED WHEN: holders in a shape no wallet writes are taken. */
     expect(code({ ...answer, holders: { ...holders, approvals: 0 } }, expecting)).toBe('not-an-answer');
     expect(code({ ...answer, holders: { ...holders, adoptedVaults: [VAULT, VAULT] } }, expecting)).toBe('not-an-answer');
+    /* RED WHEN: holders with no founding seat, or one that is not a seat, are taken: a page would anchor to nothing. */
+    const { founding: _f, ...noFounding } = holders;
+    expect(code({ ...answer, holders: noFounding }, expecting)).toBe('not-an-answer');
+    expect(code({ ...answer, holders: { ...holders, founding: 'AB'.repeat(32) } }, expecting)).toBe('not-an-answer');
+    /* RED WHEN: holders with no committee the deploy held the account by are taken: the founding seat's entry could then be anybody's. */
+    expect(code({ ...answer, holders: { ...holders, foundingCommittee: [] } }, expecting)).toBe('not-an-answer');
+    expect(code({ ...answer, holders: { ...holders, foundingCommittee: [{ tag: 'schnorr' }] } }, expecting)).toBe('not-an-answer');
   });
 
   it('THE ASK REFUSES ANY FIELD BUT THE LABEL AND THE ACCOUNT', () => {

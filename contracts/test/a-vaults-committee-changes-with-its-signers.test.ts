@@ -87,6 +87,8 @@ import { assemblePrivatePayments } from '../../src/midnight/private-payment-wire
 import { witnessesOver } from '../../src/midnight/vault-notes.js';
 import { payFor } from '../../src/testing/payees.js';
 import { ACCOUNT_CIRCUITS_SERVED_TO_A_DEVICE, VAULT_CIRCUITS } from '../../src/midnight/vault-contract.js';
+import { approverRosterFrom } from '../../src/core/vault-approvers.js';
+import { keysFoldedIntoTheRoster } from './keys-folded-into-the-roster.js';
 import { keysOnDisk } from './keys-on-disk.js';
 
 /** Deposits or payments on their way, kept for the length of one test, sealed as the page keeps them. */
@@ -197,6 +199,8 @@ describe.skipIf(!KEYS_ON_DISK)('A VAULT\'S COMMITTEE CHANGES WITH THE COMPANY\'S
   let store: MemoryStore;
   let viewingKey: Hex;
   let company: Hex;
+  /* The account as its deploy left it: what the signer's wallet reads its founding seat from. */
+  let deployed: { serialize(): Uint8Array };
   let words: string;
   let me: DeviceSigner;
   let founder: AccountPrivateState;
@@ -236,6 +240,8 @@ describe.skipIf(!KEYS_ON_DISK)('A VAULT\'S COMMITTEE CHANGES WITH THE COMPANY\'S
       /* The company account beside the vault, as the worker loads it: its compiled contract, its functions and its ledger. */
       accountCompiled, accountZkConfig: accountZk, accountPure: (accountModule as any).pureCircuits,
       accountLedger: (accountModule as any).ledger,
+      /* What a vault's first secret run is made again with, where its approval is built. */
+      vaultPure: (vaultModule as any).pureCircuits,
       /* The vault's keys as the worker checks them before reading a vault as it was born. */
       vaultKeys: checkedAccountKeys(async (c) => await vaultZk.getVerifierKey(c) as unknown as Uint8Array, (vaultModule as any).expectedVk,
         (b) => new Uint8Array(createHash('sha256').update(b).digest()), 'the vault'),
@@ -290,6 +296,7 @@ describe.skipIf(!KEYS_ON_DISK)('A VAULT\'S COMMITTEE CHANGES WITH THE COMPANY\'S
       const seeded = chain.apply((L.Transaction.deserialize('signature', 'proof', 'pre-binding', step) as any).bind());
       if (!seeded.ok) throw new Error(`the company account was not created: ${seeded.error}`);
       chain.applied.pop();
+      if (step === made.deploy.proven) deployed = chain.contract(made.deploy.address.toLowerCase());
     }
     company = made.deploy.address.toLowerCase() as Hex;
     signing = newSigningKeypair();
@@ -402,7 +409,6 @@ describe.skipIf(!KEYS_ON_DISK)('A VAULT\'S COMMITTEE CHANGES WITH THE COMPANY\'S
     app.use(seatDirectoryRoutes({ signedIn, member, store, chain: directoryChainOver(() => chain.contract(company)) }));
     app.use(companyVaultRoutes({
       signedIn, member, store,
-      giveVaultKeys: (id, vk, person, given) => accounts.giveVaultKeys(id, vk as Hex, person, given),
       company: async () => ({ address: company, threshold: companyThreshold, vaultThresholds: [] }),
       ledger: watched, chain: vaultChain,
       verifierKeys: async () => new Map(await Promise.all(
@@ -466,7 +472,17 @@ describe.skipIf(!KEYS_ON_DISK)('A VAULT\'S COMMITTEE CHANGES WITH THE COMPANY\'S
     get: async (v) => temporaryKeys.get(v) ?? null,
     forget: async (v) => { temporaryKeys.delete(v); },
   };
-  const pacing = { sleep: async () => {}, waitMs: 3, everyMs: 1 };
+  /*
+   * The pacing every operation takes, and the company as a device counts it for the vault check: three seats with every
+   * right and one approval needed, a stand-in, so no vault here is left short. The check is driven in
+   * `src/core/a-vault-keeps-as-many-approvers-as-its-bar.test.ts` and `apps/web/src/adapters/create-vault.test.ts`.
+   */
+  const pacing = {
+    sleep: async () => {}, waitMs: 3, everyMs: 1, vaultName: (v: string) => v,
+    approvers: async () => approverRosterFrom({
+      threshold: 1, vaultThresholds: [], seated: ['e1', 'e2', 'e3'].map((leaf) => ({ leaf })), adoptedVaults: [], companyWide: 'cc'.repeat(32),
+    }),
+  };
   const wire: WireSend = async (path, init) => {
     if (init.body !== undefined) sent.push(init.body);
     const r = await fetch(base + path, {
@@ -480,11 +496,11 @@ describe.skipIf(!KEYS_ON_DISK)('A VAULT\'S COMMITTEE CHANGES WITH THE COMPANY\'S
     http(path, { method: String(init?.method ?? 'GET'), ...(init?.body === undefined ? {} : { body: JSON.parse(String(init.body)) }) });
   /* Who filed each version, judged afresh for every read: the directory read again and the account read off the chain. */
   const records = (record: WireRecord) => new HttpSealedPoolStore(record, wire, signing.secret, judgeOver({
-    api, accountId: ACCOUNT_ID, label: LABEL, account: company, accountState: () => chain.contract(company),
+    api, accountId: ACCOUNT_ID, label: LABEL, account: company, accountState: () => chain.contract(company), deployed: () => deployed,
     roster: async () => openAccount(store.getAccount(ACCOUNT_ID)!, viewingKey),
   }));
   /* Who holds the company and which vaults it adopted, as the signer's own wallet reads them off the chain for each step. */
-  const walletReads = walletReadsOver(() => chain.contract(company));
+  const walletReads = walletReadsOver(() => chain.contract(company), { state: () => deployed, label: () => LABEL });
   const signers = async () => [{ id: 'ada', wrappingPublicKey: wrapping.publicKey }];
   const wallet = async (ask: { company: Hex; vault: Hex; transaction: string }) => {
     const asProven = { Transaction: { deserialize: (_s: string, _p: string, b: 'pre-binding', raw: Uint8Array) => L.Transaction.deserialize('signature', 'pre-proof', b, raw) } };
@@ -495,17 +511,11 @@ describe.skipIf(!KEYS_ON_DISK)('A VAULT\'S COMMITTEE CHANGES WITH THE COMPANY\'S
 
   /** A vault the committee holds, its pool open, the account handed over, and 1,000 in it: the existing path, run to its end. */
   const aFundedVault = async (): Promise<{ vault: Hex; note: { nonce: Hex; token: Hex; value: bigint } }> => {
-    await http(`${at}/vault-keys`, {
-      method: 'PUT',
-      body: {
-        viewingKey,
-        ...signVaultKeys(ACCOUNT_ID, 'ada', {
+    await keysFoldedIntoTheRoster(store, ACCOUNT_ID, viewingKey, LABEL, company, 'ada', signVaultKeys(ACCOUNT_ID, 'ada', {
           committeeKey: committeeKeyFor(identityFromWords(words), LABEL), recordsKey: recordsReaderOf(me.companyKey).publicKey,
           ...((st) => ({ recordsKeyStatement: st.signature as Hex, recordsKeySeat: st.seat as Hex }))(
             signRecordsKey(identityFromWords(words), LABEL, company as never, me.companyKey, hex(leafOfDevice(founder)))),
-        }, signing.secret),
-      },
-    });
+        }, signing.secret));
     const poolDoors = {
       ...pacing, service, account: readAccountAddress(company)!, onChain: walletReads,
       me, myRecordsKey: recordsReaderOf(me.companyKey).publicKey, signers, records,
@@ -592,16 +602,10 @@ describe.skipIf(!KEYS_ON_DISK)('A VAULT\'S COMMITTEE CHANGES WITH THE COMPANY\'S
         signingPublicKey: p.signing.publicKey, wrappingPublicKey: p.wrapping.publicKey,
       }],
     } as never, viewingKey, []));
-    await http(`${at}/vault-keys`, {
-      method: 'PUT',
-      body: {
-        viewingKey,
-        ...signVaultKeys(ACCOUNT_ID, id, {
+    await keysFoldedIntoTheRoster(store, ACCOUNT_ID, viewingKey, LABEL, company, id, signVaultKeys(ACCOUNT_ID, id, {
           committeeKey: committeeKeyFor(identityFromWords(p.words), LABEL),
           recordsKey: recordsReaderOf(releasedCompanyKey(p.words, company)).publicKey,
-        }, p.signing.secret),
-      },
-    }, id);
+        }, p.signing.secret));
   };
 
   /** Somebody taken off the company's roster, and the index the service keeps made again from what is left. */
@@ -636,9 +640,12 @@ describe.skipIf(!KEYS_ON_DISK)('A VAULT\'S COMMITTEE CHANGES WITH THE COMPANY\'S
   const signAs = async (id: string) => {
     const identity = identityFromWords(people.get(id)!.words);
     return signCommitteeChangeOnDevice({
+      /* No offer is open here: each signer's keys are folded into the roster where they are seated. */
+      fold: async () => undefined,
       view: async () => await http(`${at}/committee-change`, undefined, id) as CommitteeChangeView,
       walletKey: async () => committeeKeyFor(identity, LABEL),
-      roster: async () => openAccount(store.getAccount(ACCOUNT_ID)!, viewingKey),
+      /* A company the service made has no roster record to believe on a device; its own list is read, every seat counted as shown. */
+      roster: async () => ({ ...openAccount(store.getAccount(ACCOUNT_ID)!, viewingKey), notBelieved: [] }),
       askWallet: async (ask) => {
         const nonce = toHex(new Uint8Array(randomBytes(16)));
         const wire = JSON.parse(JSON.stringify(committeeAsk({

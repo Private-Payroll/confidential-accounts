@@ -2814,7 +2814,8 @@ describe('what the ACCOUNTS table leaves in the store', () => {
      */
     const { h, c } = await company();
     const rec = h.accounts.require(c.account.id);
-    expect(() => openRecord('policy', rec.id, rec.sealedRoster, c.viewingKey)).toThrow(/will not open/);
+    /* A company made here still holds its roster on its account record until a seat's device files the roster record. */
+    expect(() => openRecord('policy', rec.id, rec.sealedRoster!, c.viewingKey)).toThrow(/will not open/);
     expect(() => openRecord('roster', rec.id, rec.sealedPolicy, c.viewingKey)).toThrow(/will not open/);
   });
 

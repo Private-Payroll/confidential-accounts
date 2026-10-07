@@ -39,6 +39,13 @@ import { vaultBuilderOver, type AccountCallChainOnTheWire, type VaultAnswer } fr
 import type { GovernedCallOrder, OpenedRound, SignerMaterial } from 'vaults-web-shared/governed-call-builder.js';
 import { refusalForProven } from '../../src/wiring/proven-submission.js';
 import { keysOnDisk } from './keys-on-disk.js';
+import { newWrappingKeypair } from '../../src/core/crypto.js';
+import { NO_ASSET } from '../../src/core/assets.js';
+import { buildRun, type PaymentFacts } from '../../src/midnight/payout-tree.js';
+import { payeeFor, payFor } from '../../src/testing/payees.js';
+import { vaultDetails } from '../../src/testing/vault-details.js';
+import { TEST_TOKEN } from '../../src/testing/assets.js';
+import type { RunMadeHere } from 'vaults-web-shared/what-this-device-made.js';
 
 const NET = 'undeployed';
 const hex = (b: Uint8Array): string => Buffer.from(b).toString('hex');
@@ -115,8 +122,12 @@ describe.skipIf(!KEYS_ON_DISK)('A PAYROLL RUN RAISED AND APPROVED FROM THE SIGNE
    */
   const opened = new Map<string, OpenedRound>();
   const openedFor = (order: GovernedCallOrder): OpenedRound => {
-    const { half, ...record } = opened.get(order.proposal)!;
-    return order.circuit === 'propose' ? { ...record, half: half! } : record;
+    const { half, made, ...record } = opened.get(order.proposal)!;
+    /* A run is raised as this device made it again, with every round the company's records hold to check the chain against. */
+    const raising = { period: '2026-09', knownRounds: [...opened.keys()], knownLeaves: [], knownNonces: [] };
+    return order.circuit === 'propose'
+      ? { ...record, half: half!, ...(made?.kind !== 'payroll' ? {} : { made: { ...made, raising } }) }
+      : { ...record, ...(made === undefined ? {} : { made }) };
   };
 
   const builder = () => {
@@ -124,6 +135,8 @@ describe.skipIf(!KEYS_ON_DISK)('A PAYROLL RUN RAISED AND APPROVED FROM THE SIGNE
       ledger: L, runtimeState: (runtime as any).ContractState,
       contracts: onlyTheValueBuilder(),
       accountCompiled, accountZkConfig: accountZk, accountPure: circuits,
+      /* What an approval of a run is checked against: the account's ledger as the chain holds it, and the vault's circuits. */
+      accountLedger: (accountModule as any).ledger, vaultDetails,
       /* No proof is made here: what the chain is handed is the unproven call. */
       prove: async (unproven: any) => unproven,
     });
@@ -139,7 +152,35 @@ describe.skipIf(!KEYS_ON_DISK)('A PAYROLL RUN RAISED AND APPROVED FROM THE SIGNE
     return {
       governedCall: (input: Omit<Parameters<typeof client.governedCall>[0], 'opened'>) =>
         client.governedCall({ ...input, opened: openedFor(input.order) }),
+      client,
     };
+  };
+
+  /**
+   * **THE COMPANY COMMITS TO ITS PAY-RECORD KEY**, from the founding signer's device, as
+   * a company created on its founding signer's device does: the proposal
+   * raised, approved and carried out. An approval of a run checks the run's
+   * pay-record key against this commitment.
+   */
+  const commitThePayKey = async (b: ReturnType<typeof builder>, key: string) => {
+    const standing = () => b.client.payKeyStanding!({
+      account: company, accountState: callState().accountState, key, signingSecret: hex(founder.secretKey),
+      wrappingPublicKey: newWrappingKeypair().publicKey,
+    });
+    const s = await standing();
+    const r = s.round;
+    const payKey = { kind: 'pay-key', commitment: r.commitment } as const;
+    const half = { assetId: NO_ASSET, changeAmount: '0', changeBatchDigest: '00'.repeat(32) };
+    opened.set(r.proposal, { chainId: r.proposal, digest: r.payload, vault: s.noVault, salt: r.salt, summary: '', governance: payKey, half });
+    for (const order of [
+      { circuit: 'propose', payKey, half: { ...half, assetBlinding: hex(new Uint8Array(randomBytes(32))), proposalSalt: r.salt }, proposal: r.proposal },
+      { circuit: 'approve', proposal: r.proposal, of: { governance: payKey, proposalSalt: r.salt } },
+      { circuit: 'sealPayKey', wrap: s.wrap, commitment: r.commitment, proposal: r.proposal, proposalSalt: r.salt },
+    ] as GovernedCallOrder[]) {
+      const sent = send((await b.governedCall({ account: company, order, material: keyringOf(founder), chain: callState() })).tx);
+      if (!sent.ok) throw new Error(`committing the pay-record key: ${order.circuit} was refused: ${sent.error}`);
+    }
+    expect((await standing()).committed).toBe(r.commitment);
   };
 
   /** The account as the chain holds it now, the way the service hands it over. */
@@ -166,9 +207,26 @@ describe.skipIf(!KEYS_ON_DISK)('A PAYROLL RUN RAISED AND APPROVED FROM THE SIGNE
   const aRun = (seed: number) => {
     const c = change(BigInt(1_000 + seed), seed);
     const now = BigInt(Math.floor(Date.now() / 1000));
+    /*
+     * **A REAL RUN, AS THE APPROVING DEVICE MAKES IT AGAIN**: three payees,
+     * their leaves from a payout seed and the pay-record key. Which seat's
+     * signature makes the state they come from believed is settled where the
+     * run is read, from the account's deploy: `src/server/the-company-state-is-believed-from-the-deploys-seat.test.ts`.
+     */
+    const facts: PaymentFacts[] = [0, 1, 2].map((i) => ({
+      payee: payeeFor(`a${i + 1}`.repeat(32), NET), token: TEST_TOKEN, amount: BigInt(100 + seed + i),
+    }));
+    const pay = payFor(facts, { people: ['p1', 'p2', 'p3'] });
+    const seeds = [{ epoch: 0, seed: hex(new Uint8Array(randomBytes(32))) as never }];
+    const identity = { accountId: 'acc_page', runId: `run_${seed}`, epoch: 0 };
+    const tree = buildRun(seeds, identity, facts, vaultDetails, pay, TEST_TOKEN).tree;
     const run = {
-      root: hex(new Uint8Array(randomBytes(32))), payees: '3',
+      root: tree.root as string, payees: String(tree.payees),
       opensAt: String(now - 60n), closesAt: String(now + 3_600n), vault: hex(new Uint8Array(randomBytes(32))),
+    };
+    const made: RunMadeHere = {
+      kind: 'payroll', seeds, payKey: pay.key, identity, facts, records: pay.records,
+      asset: TEST_TOKEN, opensAt: run.opensAt, closesAt: run.closesAt, required: '0',
     };
     const payload = circuits.runPayload(Buffer.from(run.root, 'hex'), 3n, BigInt(run.opensAt), BigInt(run.closesAt), 0n);
     const id = hex(circuits.proposalIdOf(payload, Buffer.from(run.vault, 'hex'), c.salt));
@@ -181,9 +239,9 @@ describe.skipIf(!KEYS_ON_DISK)('A PAYROLL RUN RAISED AND APPROVED FROM THE SIGNE
     };
     opened.set(id, {
       chainId: id, digest: hex(payload), vault: run.vault, salt: hex(c.salt), summary: '',
-      half: { assetId: hex(c.asset), changeAmount: c.amount.toString(), changeBatchDigest: hex(c.batch) },
+      half: { assetId: hex(c.asset), changeAmount: c.amount.toString(), changeBatchDigest: hex(c.batch) }, made,
     });
-    return { order, id };
+    return { order, id, made, payKey: pay.key };
   };
   const ledgerNow = () => accountLedgerOf(chain.contract(company));
   const approvalsOf = (id: string): bigint | null => {
@@ -215,6 +273,8 @@ describe.skipIf(!KEYS_ON_DISK)('A PAYROLL RUN RAISED AND APPROVED FROM THE SIGNE
 
   it('A RUN IS RAISED FROM THE DEVICE AND THE CHAIN HOLDS IT UNDER THE ID ITS OWN PARTS MAKE', async () => {
     const run = aRun(1);
+    /* A run is raised only against the pay-record key the company committed to on the chain. */
+    await commitThePayKey(builder(), aRun(0).payKey);
     const built = await builder().governedCall({ account: company, order: run.order, material: keyringOf(founder), chain: callState() });
     /* RED WHEN: the builder drops the salt or the vault from the call, or builds another branch - the id then differs. */
     expect(send(built.tx)).toEqual({ ok: true, error: '' });
@@ -225,6 +285,7 @@ describe.skipIf(!KEYS_ON_DISK)('A PAYROLL RUN RAISED AND APPROVED FROM THE SIGNE
   it('AND IS APPROVED FROM THE DEVICE: THE CHAIN COUNTS ONE APPROVAL, AND A SECOND ONE FROM THE SAME SIGNER IS REFUSED', async () => {
     const run = aRun(2);
     const b = builder();
+    await commitThePayKey(b, aRun(0).payKey);
     expect(send((await b.governedCall({ account: company, order: run.order, material: keyringOf(founder), chain: callState() })).tx).ok).toBe(true);
     const approve: GovernedCallOrder = { circuit: 'approve', proposal: run.id };
     /* RED WHEN: the approval is built from anything but this signer's own three, or names another round. */
@@ -236,8 +297,33 @@ describe.skipIf(!KEYS_ON_DISK)('A PAYROLL RUN RAISED AND APPROVED FROM THE SIGNE
       .rejects.toThrow(/already approved/u);
   });
 
+  it('AN APPROVAL IS NOT BUILT FOR A RUN OTHER THAN THE ONE THIS DEVICE MADE AGAIN, READ AGAINST THE CHAIN ITSELF', async () => {
+    const run = aRun(5);
+    const b = builder();
+    await commitThePayKey(b, aRun(0).payKey);
+    expect(send((await b.governedCall({ account: company, order: run.order, material: keyringOf(founder), chain: callState() })).tx).ok).toBe(true);
+    const approve: GovernedCallOrder = { circuit: 'approve', proposal: run.id };
+    const honest = opened.get(run.id)!;
+    for (const [why, made, says] of [
+      ['another amount', { ...run.made, facts: run.made.facts.map((f, i) => (i === 0 ? { ...f, amount: f.amount + 1n } : f)) }, /is not what this device rebuilt/u],
+      ['a pay-record key the company did not commit to', { ...run.made, payKey: '5b'.repeat(32) }, /pay-record key other than the one the company committed to/u],
+    ] as Array<[string, RunMadeHere, RegExp]>) {
+      opened.set(run.id, { ...honest, made });
+      /* RED WHEN: the worker proves an approval for a run it did not make again, or with a pay-record key the chain does not hold. */
+      await expect(b.governedCall({ account: company, order: approve, material: keyringOf(founder), chain: callState() }), why).rejects.toThrow(says);
+    }
+    expect(approvalsOf(run.id)).toBe(0n);
+    opened.set(run.id, honest);
+    /* RED WHEN: the run this device made, read against the real chain, is refused. */
+    expect(send((await b.governedCall({ account: company, order: approve, material: keyringOf(founder), chain: callState() })).tx).ok).toBe(true);
+    expect(approvalsOf(run.id)).toBe(1n);
+  });
+
   it('FOUR GOVERNED CALLS IN A ROW THROUGH ONE CLIENT EACH LAND AS THEMSELVES: nothing one call staged is seen, or put back, by the next', async () => {
     const b = builder();
+    await commitThePayKey(b, aRun(0).payKey);
+    /* The four counted below are the run's: the pay-record key's three calls came before. */
+    handed.length = 0;
     const first = aRun(3);
     const second = aRun(4);
     for (const order of [first.order, { circuit: 'approve', proposal: first.id } as const,
@@ -256,6 +342,9 @@ describe.skipIf(!KEYS_ON_DISK)('A PAYROLL RUN RAISED AND APPROVED FROM THE SIGNE
 
   it('REACHES ONE CALL BUILDER AND NO PRIVATE-STATE STORE, AND OVERWRITES THE SIGNER\'S THREE WHEN THE CALL IS DONE', async () => {
     const run = aRun(5);
+    /* A run is raised only against the pay-record key the company committed to on the chain. */
+    await commitThePayKey(builder(), aRun(0).payKey);
+    asked = [];
     await builder().governedCall({ account: company, order: run.order, material: keyringOf(founder), chain: callState() });
     /* RED WHEN: the worker is given, or reaches for, any other entry point of the package. */
     expect(new Set(asked)).toEqual(new Set(['createUnprovenCallTxFromInitialStates']));
@@ -270,6 +359,9 @@ describe.skipIf(!KEYS_ON_DISK)('A PAYROLL RUN RAISED AND APPROVED FROM THE SIGNE
 
   it('KEY MATERIAL SAVED BEFORE SCOPES WERE RECORDED IS REFUSED BY NAME, BEFORE ANYTHING IS BUILT', async () => {
     const run = aRun(6);
+    /* A run is raised only against the pay-record key the company committed to on the chain. */
+    await commitThePayKey(builder(), aRun(0).payKey);
+    handed.length = 0;
     const { scope: _none, ...beforeScopes } = keyringOf(founder);
     /* RED WHEN: the absence is read as some value - the build is then reached and fails as "not a signer", or worse, lands. */
     await expect(builder().governedCall({ account: company, order: run.order, material: beforeScopes, chain: callState() }))
@@ -279,6 +371,8 @@ describe.skipIf(!KEYS_ON_DISK)('A PAYROLL RUN RAISED AND APPROVED FROM THE SIGNE
 
   it('AND A SCOPE READ AS THIRTY-TWO ZERO BYTES IS NOT A SIGNER: this is the failure the refusal above stands in front of', async () => {
     const run = aRun(7);
+    /* A run is raised only against the pay-record key the company committed to on the chain. */
+    await commitThePayKey(builder(), aRun(0).payKey);
     /* RED WHEN: a zero scope proves membership - the refusal above would then be protecting nothing. */
     await expect(builder().governedCall({
       account: company, order: run.order, material: { ...keyringOf(founder), scope: '00'.repeat(32) }, chain: callState(),
@@ -288,6 +382,8 @@ describe.skipIf(!KEYS_ON_DISK)('A PAYROLL RUN RAISED AND APPROVED FROM THE SIGNE
 
   it('SOMEBODY WHO IS NOT A SIGNER CANNOT RAISE, AND A PROPOSAL THAT IS NOT OPEN CANNOT BE APPROVED', async () => {
     const run = aRun(8);
+    /* A run is raised only against the pay-record key the company committed to on the chain. */
+    await commitThePayKey(builder(), aRun(0).payKey);
     await expect(builder().governedCall({
       account: company, order: run.order, material: keyringOf(privateStateFor(9)), chain: callState(),
     })).rejects.toThrow(/not a signer/u);

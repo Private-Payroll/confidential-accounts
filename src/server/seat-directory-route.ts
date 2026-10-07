@@ -24,7 +24,8 @@
 import express from 'express';
 import { readAccountAddress, type CompanyLabel } from 'midnight-identity/profile/company-label';
 import type { SealedAccount } from '../core/types.js';
-import type { Hex } from '../core/crypto.js';
+import { fromHex, type Hex } from '../core/crypto.js';
+import { readContractAuthority } from '../midnight/ledger.js';
 import {
   applyFiling, believedDirectory, DirectoryRefused, emptyDirectory, filerSeatOf,
   type ChainHolders, type Directory, type DirectoryFiling, type DirectorySeat, type FiledKind, type FilingRefusal,
@@ -32,6 +33,45 @@ import {
 
 /** What the chain says of a company's account, read by this server: null when it has no contract this server can read. */
 export type DirectoryChainRead = (accountId: string, seats: readonly string[]) => Promise<ChainHolders | null>;
+
+/** What the account's contract holds, as the compiled contract reads its public state. */
+export interface AccountHolds {
+  readonly signerLeaves: { member(leaf: Uint8Array): boolean };
+  readonly threshold: bigint;
+}
+
+/**
+ * **THIS SERVER'S OWN READ OF THE CHAIN FOR A COMPANY'S DIRECTORY**, from one
+ * read of the account's contract state: its committee and that committee's
+ * threshold as the state's maintenance authority holds them, which of the seats
+ * asked about its signers' set holds, and how many approvals it needs. Null when
+ * the company has no account on a chain, or the chain holds no state there; a
+ * read that fails, or a state with no committee this server can read, throws.
+ */
+export const directoryChainFromTheContract = (deps: {
+  /** The company's account address on the chain, or null when it has none. */
+  readonly addressOf: (accountId: string) => Promise<string | null>;
+  /** The account's contract state, as the chain's indexer serves it. */
+  readonly contractState: (address: string) => Promise<unknown>;
+  /** The compiled contract's reader of that state's public data. */
+  readonly readLedger: (data: unknown) => AccountHolds;
+}): DirectoryChainRead => async (accountId, seats) => {
+  const address = await deps.addressOf(accountId);
+  if (address === null) return null;
+  let state: unknown;
+  const read = await readContractAuthority(async (a) => (state = await deps.contractState(a)), address);
+  if (read.state === 'absent') return null;
+  if (read.state !== 'read') throw new Error(read.why);
+  const holds = deps.readLedger((state as { data: unknown }).data);
+  return {
+    seats: {
+      committee: read.authority.committee.map((k) => ({ tag: k.tag, value: k.value.toLowerCase() })),
+      threshold: read.authority.threshold,
+      seats: seats.filter((seat) => holds.signerLeaves.member(fromHex(seat as Hex))),
+    },
+    approvals: Number(holds.threshold),
+  };
+};
 
 /** What this route needs of the store. */
 export interface DirectoryStore {

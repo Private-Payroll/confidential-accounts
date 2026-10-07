@@ -42,7 +42,6 @@ import { MidnightLedger, type MidnightConfig, type FeeSponsor, type SealedStateS
  * `sendTransition` seam.
  */
 import type { StateChange, SignerRef, AccountOpening } from '../core/ledger.js';
-import { viewDigestOf } from '../core/ledger.js';
 import { MidnightCommitments } from './commitments.js';
 import type { Sealed, Hex } from '../core/crypto.js';
 import { fromHex, toHex } from '../core/crypto.js';
@@ -2180,27 +2179,12 @@ describe('C334: MidnightLedger.open refuses an opening it cannot honour', () => 
     expect(h.puts).toEqual([]);
   });
 
-  it('KEEPS THE FIRST STATE THE FOUNDING SIGNER\'S DEVICE SEALED, ONCE, AND ASKS NO CHAIN FOR ANYTHING', async () => {
+  it('SAYS WHETHER IT TAKES COMPANIES MADE ON THEIR FOUNDING SIGNER\'S DEVICE', async () => {
+    /* RED WHEN: a deployment outside the founding signer's mode says it takes such companies, or the one in it says it does not. */
+    expect(harness({ providersRefused: true, keptOnly: true }, { register: async () => {} } as never).ledger
+      .takesCompaniesFromTheirFoundingSigner).toBe(false);
     const h = harness({ providersRefused: true, keptOnly: true }, { register: async () => {}, fromTheFoundingSigner: true } as never);
-    const first = { keyEpoch: 0, sealed: { iv: '01', tag: '02', body: '03' } };
-    await h.ledger.fileFoundingState('acct', first);
-    /* RED WHEN: nothing is kept, or it is kept under another view or epoch than every later read asks for. */
-    expect(h.puts).toEqual([{ commitment: viewDigestOf([]), keyEpoch: 0 }]);
-    /* RED WHEN: the same state sent again is refused, or written a second time. */
-    await h.ledger.fileFoundingState('acct', { keyEpoch: 0, sealed: { iv: '01', tag: '02', body: '03' } });
-    expect(h.puts).toHaveLength(1);
-    /* RED WHEN: a second state for the same company at the same epoch is written over the first. */
-    await expect(h.ledger.fileFoundingState('acct', { keyEpoch: 0, sealed: { iv: '0a', tag: '0b', body: '0c' } }))
-      .rejects.toThrow(/already kept at key epoch 0, and it is never written over/);
-    expect(h.puts).toHaveLength(1);
-  });
-
-  it('KEEPS NO FIRST STATE ON A DEPLOYMENT THAT DOES NOT TAKE COMPANIES MADE ON THE DEVICE', async () => {
-    /* RED WHEN: a deployment outside the founding signer's mode keeps a state for a company it did not open. */
-    const h = harness({ providersRefused: true, keptOnly: true }, { register: async () => {} } as never);
-    await expect(h.ledger.fileFoundingState('acct', { keyEpoch: 0, sealed: { iv: '01', tag: '02', body: '03' } }))
-      .rejects.toThrow(/does not take companies made on their founding signer's device/);
-    expect(h.puts).toEqual([]);
+    expect(h.ledger.takesCompaniesFromTheirFoundingSigner).toBe(true);
   });
 
   it('lets a well-formed opening past all three', async () => {

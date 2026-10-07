@@ -83,6 +83,8 @@ import { DEPLOYED_CIRCUITS } from '../../src/midnight/deferral.js';
 import { fileURLToPath } from 'node:url';
 import { readProvenTransaction } from '../../src/wiring/proven-submission.js';
 import { startingLedgerFrom } from '../../src/wiring/vault-submission.js';
+import { approverRosterFrom } from '../../src/core/vault-approvers.js';
+import { keysFoldedIntoTheRoster } from './keys-folded-into-the-roster.js';
 import { keysOnDisk } from './keys-on-disk.js';
 import { anAccountBornHeld } from './an-account-born-held.js';
 
@@ -187,6 +189,8 @@ describe.skipIf(!KEYS_ON_DISK)('A COMPANY VAULT, FROM THE SIGNER\'S DEVICE [need
   let store: MemoryStore;
   let viewingKey: Hex;
   let company: Hex;
+  /* The account as its deploy left it: what the signer's wallet reads its founding seat from. */
+  let deployed: { serialize(): Uint8Array };
   /* The label the company's keys are derived from, drawn once as the founding signer's wallet draws it. */
   let label: CompanyLabel;
   let words: string;
@@ -234,6 +238,8 @@ describe.skipIf(!KEYS_ON_DISK)('A COMPANY VAULT, FROM THE SIGNER\'S DEVICE [need
       /* The company account beside the vault, as the worker loads it: its compiled contract, its functions and its ledger. */
       accountCompiled, accountZkConfig: accountZk, accountPure: (accountModule as any).pureCircuits,
       accountLedger: (accountModule as any).ledger,
+      /* What a vault's first secret run is made again with, where its approval is built. */
+      vaultPure: (vaultModule as any).pureCircuits,
       /* The vault's keys as the worker checks them before reading a vault as it was born. */
       vaultKeys: checkedAccountKeys(async (c) => await zk.getVerifierKey(c) as unknown as Uint8Array, (vaultModule as any).expectedVk,
         (b) => new Uint8Array(createHash('sha256').update(b).digest()), 'the vault'),
@@ -292,6 +298,7 @@ describe.skipIf(!KEYS_ON_DISK)('A COMPANY VAULT, FROM THE SIGNER\'S DEVICE [need
     for (const step of [made.deploy.proven, made.insert.proven]) {
       const seeded = chain.seed((L.Transaction.deserialize('signature', 'proof', 'pre-binding', step) as any).bind());
       if (!seeded.ok) throw new Error(`the company account was not created: ${seeded.error}`);
+      if (step === made.deploy.proven) deployed = chain.contract(made.deploy.address.toLowerCase());
     }
     company = made.deploy.address.toLowerCase() as Hex;
     companyThreshold = 1;
@@ -385,7 +392,6 @@ describe.skipIf(!KEYS_ON_DISK)('A COMPANY VAULT, FROM THE SIGNER\'S DEVICE [need
     app.use(seatDirectoryRoutes({ signedIn, member, store, chain: directoryChainOver(() => chain.contract(company)) }));
     app.use(companyVaultRoutes({
       signedIn, member, store,
-      giveVaultKeys: (id, vk, person, given) => accounts.giveVaultKeys(id, vk as Hex, person, given),
       company: async () => ({ address: company, threshold: companyThreshold, vaultThresholds: [] }),
       ledger, chain: vaultChain,
       verifierKeys: async () => new Map(await Promise.all(
@@ -449,7 +455,17 @@ describe.skipIf(!KEYS_ON_DISK)('A COMPANY VAULT, FROM THE SIGNER\'S DEVICE [need
     get: async (v) => temporaryKeys.get(v) ?? null,
     forget: async (v) => { temporaryKeys.delete(v); },
   };
-  const pacing = { sleep: async () => {}, waitMs: 3, everyMs: 1 };
+  /*
+   * The pacing every operation takes, and the company as a device counts it for the vault check: three seats with every
+   * right and one approval needed, a stand-in, so no vault here is left short. The check is driven in
+   * `src/core/a-vault-keeps-as-many-approvers-as-its-bar.test.ts` and `apps/web/src/adapters/create-vault.test.ts`.
+   */
+  const pacing = {
+    sleep: async () => {}, waitMs: 3, everyMs: 1, vaultName: (v: string) => v,
+    approvers: async () => approverRosterFrom({
+      threshold: 1, vaultThresholds: [], seated: ['e1', 'e2', 'e3'].map((leaf) => ({ leaf })), adoptedVaults: [], companyWide: 'cc'.repeat(32),
+    }),
+  };
   const wireAs = (person: string): WireSend => async (path, init) => {
     if (init.body !== undefined) sent.push(init.body);
     const r = await fetch(base + path, {
@@ -463,7 +479,7 @@ describe.skipIf(!KEYS_ON_DISK)('A COMPANY VAULT, FROM THE SIGNER\'S DEVICE [need
     http(path, { method: String(init?.method ?? 'GET'), ...(init?.body === undefined ? {} : { body: JSON.parse(String(init.body)) }) }, as);
   /* Who filed each version, judged afresh for every read: the directory read again and the account read off the chain. */
   const judge = () => judgeOver({
-    api: apiAs(), accountId: ACCOUNT_ID, label, account: company, accountState: () => chain.contract(company),
+    api: apiAs(), accountId: ACCOUNT_ID, label, account: company, accountState: () => chain.contract(company), deployed: () => deployed,
     roster: async () => openAccount(store.getAccount(ACCOUNT_ID)!, viewingKey),
   });
   const records = (secret = signing.secret) => (record: WireRecord) =>
@@ -492,18 +508,12 @@ describe.skipIf(!KEYS_ON_DISK)('A COMPANY VAULT, FROM THE SIGNER\'S DEVICE [need
     },
   });
   /* Who holds the company and which vaults it adopted, as the signer's own wallet reads them off the chain for each step. */
-  const walletReads = walletReadsOver(() => chain.contract(company));
-  const giveKeys = () => http(`/api/accounts/${ACCOUNT_ID}/vault-keys`, {
-    method: 'PUT',
-    body: {
-      viewingKey,
-      ...signVaultKeys(ACCOUNT_ID, 'ada', {
+  const walletReads = walletReadsOver(() => chain.contract(company), { state: () => deployed, label: () => label });
+  const giveKeys = () => keysFoldedIntoTheRoster(store, ACCOUNT_ID, viewingKey, label, company, 'ada', signVaultKeys(ACCOUNT_ID, 'ada', {
         committeeKey: committeeKeyFor(identityFromWords(words), label), recordsKey: recordsReaderOf(me.companyKey).publicKey,
         ...((st) => ({ recordsKeyStatement: st.signature as Hex, recordsKeySeat: st.seat as Hex }))(
             signRecordsKey(identityFromWords(words), label, company as never, me.companyKey, hex(leafOfDevice(founder)))),
-      }, signing.secret),
-    },
-  });
+      }, signing.secret));
   /** The person's wallet: its own reader decides what is shown, and it binds what it was given. */
   const wallet = async (ask: { company: Hex; vault: Hex; transaction: string }) => {
     const asProven = { Transaction: { deserialize: (_s: string, _p: string, b: 'pre-binding', raw: Uint8Array) => L.Transaction.deserialize('signature', 'pre-proof', b, raw) } };

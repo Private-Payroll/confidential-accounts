@@ -5,8 +5,7 @@ import { MemoryStore } from '../core/store.js';
 import type { SealedAccount } from '../core/types.js';
 import { NothingWasSent } from '../core/jobs.js';
 import { companyCommittee, companyVaultRoutes, vaultState, type CompanyVaultDeps } from './company-vaults.js';
-import { VaultKeysAlreadyGiven, VaultKeysNotYours } from '../core/account.js';
-import type { SignedVaultKeys } from '../core/vault-keys.js';
+import type { VaultKey } from '../core/vault-keys.js';
 
 /*
  * The company-vault routes' own refusals, with the chain and the fee payer
@@ -62,27 +61,12 @@ let assembleDep: CompanyVaultDeps['committeeChange'];
 let vaultBalance: unknown;
 /*
  * **THE ROSTER, STOOD IN.** What each member's own roster entry carries, and the
- * index the service would make from it - sorted, with no names. The real roster
- * write is `AccountService.giveVaultKeys`, driven in `a-signers-keys-are-the-rosters.test.ts`.
+ * index a seat's device files with the roster, made from it - sorted, with no
+ * names. The roster itself is written on a device: offered and folded in
+ * `vault-keys-are-offered-and-folded.test.ts`, and checked in
+ * `a-signers-keys-are-the-rosters.test.ts`.
  */
-let roster: Map<string, SignedVaultKeys>;
-const BAD_SIGNATURE = 'ee'.repeat(64);
-const giveVaultKeys: CompanyVaultDeps['giveVaultKeys'] = (accountId, _vk, userId, given) => {
-  if (given.signature === BAD_SIGNATURE) throw new VaultKeysNotYours();
-  const before = roster.get(`${accountId}:${userId}`);
-  if (before) {
-    if (before.committeeKey.value === given.committeeKey.value && before.recordsKey === given.recordsKey) return 'already-given';
-    throw new VaultKeysAlreadyGiven();
-  }
-  roster.set(`${accountId}:${userId}`, given);
-  const mine = [...roster.entries()].filter(([k]) => k.startsWith(`${accountId}:`)).map(([, v]) => v);
-  store.putVaultKeyIndex({
-    accountId, signerCount: store.getAccount(accountId)!.signerCount,
-    committeeKeys: mine.map((k) => k.committeeKey).sort((a, b) => (a.value < b.value ? -1 : 1)),
-    readers: mine.map((k) => k.recordsKey).sort(), filers: [],
-  });
-  return 'given';
-};
+let roster: Map<string, { committeeKey: VaultKey; recordsKey: string }>;
 const vkOf = (c: string) => new TextEncoder().encode(`vk:${c}`);
 const aDeploy = () => ({
   intents: new Map([[1, { actions: [{
@@ -165,7 +149,6 @@ beforeEach(async () => {
       next();
     },
     store,
-    giveVaultKeys,
     company: async (id) => (id === 'acc_1'
       ? { address: hex(0xc0), threshold: acc1Threshold, vaultThresholds: acc1VaultThresholds }
       : { address: hex(0xc1), threshold: 1, vaultThresholds: [] }),
@@ -233,53 +216,23 @@ const call = async (path: string, as: string | null, method = 'GET', body?: unkn
 const accountNotBornHeld = () => {
   delete (store as unknown as { data: { accountDeploys: Record<string, unknown> } }).data.accountDeploys['acc_1'];
 };
-const give = (as: string, n: number, over: Record<string, unknown> = {}) => call('/api/accounts/acc_1/vault-keys', as, 'PUT', {
-  viewingKey: 'vk', committeeKey: key(n), recordsKey: hex(n + 0x10), signature: 'ab'.repeat(64), ...over,
-});
+/** A member's vault keys, folded into the roster as a seat's device folds them, and the index filed with it. */
+const give = async (as: string, n: number): Promise<void> => {
+  roster.set(`acc_1:${as}`, { committeeKey: key(n), recordsKey: hex(n + 0x10) });
+  const mine = [...roster.values()];
+  store.putVaultKeyIndex({
+    accountId: 'acc_1', signerCount: store.getAccount('acc_1')!.signerCount,
+    committeeKeys: mine.map((k) => k.committeeKey).sort((a, b) => (a.value < b.value ? -1 : 1)),
+    readers: mine.map((k) => k.recordsKey).sort(), filers: [],
+  });
+};
 
 describe('A SIGNER\'S VAULT KEYS', () => {
-  it('are given once, and the same keys again change nothing', async () => {
-    expect((await give('ada', 1)).status).toBe(201);
-    expect((await give('ada', 1)).status).toBe(200);
-    expect(roster.get('acc_1:ada')!.recordsKey).toBe(hex(0x11));
-  });
-
-  it('carry the wallet\'s statement over the records key to the roster, and refuse one of any other shape', async () => {
-    /* RED WHEN: the route drops the statement a signer's wallet signed, so no other device can check their key. */
-    expect((await give('ada', 1, { recordsKeyStatement: 'cd'.repeat(64), recordsKeySeat: 'ef'.repeat(32) })).status).toBe(201);
-    expect(roster.get('acc_1:ada')!.recordsKeyStatement).toBe('cd'.repeat(64));
-    /* RED WHEN: the route drops the seat the statement is signed for. */
-    expect(roster.get('acc_1:ada')!.recordsKeySeat).toBe('ef'.repeat(32));
-    /* RED WHEN: a statement that is not a signature's 64 bytes, or a seat that is not one, is taken. */
-    expect((await give('bo', 2, { recordsKeyStatement: 'cd'.repeat(32), recordsKeySeat: 'ef'.repeat(32) })).status).toBe(400);
-    expect((await give('bo', 2, { recordsKeyStatement: 'CD'.repeat(64), recordsKeySeat: 'ef'.repeat(32) })).status).toBe(400);
-    expect((await give('bo', 2, { recordsKeyStatement: 'cd'.repeat(64), recordsKeySeat: 'ef' })).status).toBe(400);
-    /* RED WHEN: a statement without the seat it is for, or a seat without a statement, is taken. */
-    expect((await give('bo', 2, { recordsKeyStatement: 'cd'.repeat(64) })).status).toBe(400);
-    expect((await give('bo', 2, { recordsKeySeat: 'ef'.repeat(32) })).status).toBe(400);
-  });
-
-  it('A DIFFERENT SET FROM THE SAME PERSON IS REFUSED, AND THE FIRST IS KEPT', async () => {
-    await give('ada', 1);
-    const r = await give('ada', 2);
-    expect(r.status).toBe(409);
-    expect(r.body.error).toMatch(/different vault keys for this company, from a different wallet/);
-    expect(roster.get('acc_1:ada')!.committeeKey).toEqual(key(1));
-    expect((await give('ada', 1, { recordsKey: hex(0x99) })).status).toBe(409);
-  });
-
-  it('refuses anything that is not two public keys and a signature, keys not signed by the giver\'s own seat, a non-member and nobody signed in', async () => {
-    expect((await give('ada', 1, { committeeKey: { tag: 'ecdsa', value: hex(1) } })).status).toBe(400);
-    expect((await give('ada', 1, { recordsKey: 'AB'.repeat(32) })).status).toBe(400);
-    expect((await give('ada', 1, { signingSecret: hex(1) })).status).toBe(400);
-    /* RED WHEN: the old shape - a filing key, and no viewing key or signature - is still taken. */
-    expect((await give('ada', 1, { filingKey: hex(1) })).status).toBe(400);
-    expect((await give('ada', 1, { signature: undefined })).status).toBe(400);
-    expect((await give('ada', 1, { viewingKey: undefined })).status).toBe(400);
-    expect((await give('ada', 1, { signature: BAD_SIGNATURE })).status).toBe(403);
-    expect((await give('carol', 1)).status).toBe(404);
-    expect((await call('/api/accounts/acc_1/vault-keys', null, 'PUT', {})).status).toBe(401);
-    expect(roster.has('acc_1:carol')).toBe(false);
+  it('ARE NOT TAKEN BY THE VAULT ROUTES: a seat\'s device files them in the roster, or offers them to be folded in', async () => {
+    /* RED WHEN: the vault routes write a signer's keys into the roster again. */
+    expect((await call('/api/accounts/acc_1/vault-keys', 'ada', 'PUT', {
+      viewingKey: 'vk', committeeKey: key(1), recordsKey: hex(0x11), signature: 'ab'.repeat(64),
+    })).status).toBe(404);
   });
 
   it('the committee is complete only when every signer has given a key', async () => {

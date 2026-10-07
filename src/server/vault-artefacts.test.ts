@@ -24,16 +24,17 @@ describe('THE PROVING MATERIAL A DEVICE MAY FETCH', () => {
       .toBe('/params/bls_midnight_2p9');
   });
 
-  it('A VAULT CALL ALSO PROVES THE ACCOUNT\'S recordPaymentFromVault OR approveVaultChange, AND A SIGNER\'S DEVICE PROVES propose, approve, amendSigner, setThreshold AND adopt: THOSE SEVEN AND NO OTHER OF THE ACCOUNT\'S', () => {
+  it('A VAULT CALL ALSO PROVES THE ACCOUNT\'S recordPaymentFromVault OR approveVaultChange, AND A SIGNER\'S DEVICE PROVES propose, approve, cancel, amendSigner, setThreshold, setVaultThreshold AND adopt: THOSE NINE AND NO OTHER OF THE ACCOUNT\'S', () => {
     /* RED WHEN: the account's folder is not served (a payment out, a raise, an approval, a seat or a threshold change then cannot be
      * proved on a device, nor a vault's adoption when it is created), or it serves any other circuit of the account's, or a vault name reaches it. */
-    for (const circuit of ['recordPaymentFromVault', 'approveVaultChange', 'propose', 'approve', 'amendSigner', 'setThreshold', 'adopt']) {
+    /* A withdrawal and a vault's own approvals needed are proved on a signer's device too: RED WHEN either is not served. */
+    for (const circuit of ['recordPaymentFromVault', 'approveVaultChange', 'propose', 'approve', 'cancel', 'amendSigner', 'setThreshold', 'setVaultThreshold', 'adopt']) {
       expect(vaultArtefactFile(places, `/account/keys/${circuit}.prover`)).toBe(`/repo/contracts/managed/keys/${circuit}.prover`);
       expect(vaultArtefactFile(places, `/account/keys/${circuit}.verifier`)).toBe(`/repo/contracts/managed/keys/${circuit}.verifier`);
       expect(vaultArtefactFile(places, `/account/zkir/${circuit}.bzkir`)).toBe(`/repo/contracts/managed/zkir/${circuit}.bzkir`);
     }
     for (const path of [
-      '/account/keys/cancel.prover', '/account/keys/closeExpiredRun.prover', '/account/keys/setVaultThreshold.prover',
+      '/account/keys/closeExpiredRun.prover', '/account/keys/holdRun.prover',
       '/account/keys/retireVault.prover', '/account/keys/payout.prover', '/account/keys/recordPayment.prover',
       '/account/zkir/recordPayment.prover', '/account/keys/recordPayment.bzkir', '/account/keys/../keys/recordPayment.prover',
       '/keys/recordPayment.prover', '/keys/propose.prover', '/keys/approve.prover',

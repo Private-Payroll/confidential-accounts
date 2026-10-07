@@ -1,27 +1,39 @@
 import { sha256 } from '@noble/hashes/sha2.js';
 import { bytesToHex } from '@noble/hashes/utils.js';
-import { canonical, utf8 } from './crypto.js';
+import { canonical, utf8, type Hex } from './crypto.js';
 import type { SealedAccount, SealedProposal, SealedRun, SealedEmployee, Invite, User, CompanyVault, AccountDeploy, AccountOpeningRecord } from './types.js';
 import type { DirectoryFiling } from '../midnight/seat-directory.js';
 import type { SealedCompanyRecord } from '../midnight/sealed-record-wire.js';
 import { employeeRowOf, personRecordFromRow, rowChangesThePerson } from './person-record.js';
-import type { CompanyVaultKeyIndex } from './vault-keys.js';
+import type { CompanyVaultKeyIndex, VaultKeysOffer } from './vault-keys.js';
 import { provenanceOf, type Marked, type WiringName } from './provenance.js';
+import { ROSTER_ID } from './roster-record.js';
 
 export interface Shape {
   accounts: Record<string, SealedAccount>;
   proposals: Record<string, SealedProposal>;
   runs: Record<string, SealedRun>;
   /**
-   * **EVERY PERSON ON EVERY COMPANY'S PAYROLL, AS EVERY VERSION OF THEIR
-   * RECORD**, keyed by the person's id, oldest first. Each version is a `person`
-   * company record (`person-record.ts`): sealed under the company's payroll
-   * key, where the person stands and their payslip key beside the seal, and
-   * signed by the seat that filed it. The newest version is the person; there
-   * is no other copy. Kept here, beside the rest of this store, because the
-   * service's older payroll code reads a person without waiting.
+   * **PEOPLE AS THE SERVICE'S OLDER PAYROLL CODE WRITES AND READS THEM**, every
+   * version of each, keyed by the person's id, oldest first. Each version is a
+   * `person` company record (`person-record.ts`). The service keeps a company's
+   * people with its other records, in the store of company records: anybody
+   * this store holds when the service starts is moved there and let go of here
+   * (`movePeopleToTheirRecords`), and nothing the service runs writes one here
+   * again. What remains is the older code's own, reached only by its tests.
    */
   people: Record<string, SealedCompanyRecord[]>;
+  /**
+   * **EACH COMPANY'S SIGNERS, AS EVERY VERSION OF ITS `roster` RECORD**, keyed
+   * by account, oldest first: who holds a seat, their public keys, leaf and
+   * vault keys, sealed under the company's roster key and signed by the seat
+   * that filed it. The newest version is the roster. Once a company has one,
+   * its account record carries no sealed roster beside it. Absent from files
+   * written before it existed, and read as empty then. Kept here, beside the
+   * rest of this store, because the service's older code reads a roster without
+   * waiting.
+   */
+  rosters?: Record<string, SealedCompanyRecord[]>;
   invites: Record<string, Invite>;
   users: Record<string, User>;
   /** A company's vaults, keyed by vault address. */
@@ -40,6 +52,14 @@ export interface Shape {
    * only record of whose each key is.
    */
   vaultKeyIndex: Record<string, CompanyVaultKeyIndex>;
+  /**
+   * **A NEW SIGNER'S VAULT KEYS, OFFERED AND NOT YET FOLDED INTO THE ROSTER**,
+   * keyed by account and then by seat: at most one per seat, a new offer
+   * replacing the old. Public keys and signatures only, and never read as the
+   * roster: a seat the company believes folds one in from its own device, and it
+   * goes in the same filing. Absent from files written before it existed.
+   */
+  vaultKeysOffers?: Record<string, Record<string, VaultKeysOffer>>;
   /**
    * **EACH COMPANY'S SEAT DIRECTORY, AS EVERY FILING THAT MADE IT**, keyed by
    * account, versions in order. Plain text: public keys, seats and roles, and
@@ -431,6 +451,18 @@ export class MemoryStore {
     this.data.runs[r.id] = r; this.observe(r); this.indexed(ix => ix.run(r)); this.flush();
   }
   getRun(id: string) { return this.data.runs[id] ?? null; }
+  /**
+   * **WRITES A RUN ONLY WHILE THE STORE STILL HOLDS IT EXACTLY AS `before`**, and
+   * says whether it did. Two writers that each read the same run and each
+   * change it cannot both land: the second finds the run moved on and writes
+   * nothing.
+   */
+  putRunIfStill(r: SealedRun, before: SealedRun): boolean {
+    const now = this.data.runs[r.id];
+    if (now === undefined || canonical(now) !== canonical(before)) return false;
+    this.putRun(r);
+    return true;
+  }
   listRuns(accountId: string) {
     return Object.values(this.data.runs).filter(r => r.accountId === accountId);
   }
@@ -447,6 +479,39 @@ export class MemoryStore {
   /** Every version of the person `id`, oldest first; empty when there is none. */
   personVersions(id: string): SealedCompanyRecord[] { return [...(this.data.people[id] ?? [])]; }
 
+  /** Every version of every person this store holds, one list per person: what moves to where a company's records are kept. */
+  peopleHeld(): Array<readonly SealedCompanyRecord[]> { return Object.values(this.data.people).map((all) => [...all]); }
+
+  /**
+   * **NAMES THE KEY ON EVERY SLIP OF THE PERSON `id` SEALED BEFORE SLIPS NAMED
+   * ONE**: the payslip key their newest record holds, which is the key such a
+   * slip was found by while the person was held here. Only on a run the service
+   * drew itself: a run a seat's device filed is kept as it was signed, and names
+   * the key on every slip it seals. Done before the person is let go of, so a
+   * payee's older slips are still found by their key once nothing here holds
+   * the person.
+   */
+  nameTheKeyOnOlderSlipsOf(id: string): void {
+    const newest = this.newestPerson(id);
+    const key = newest?.facts?.wrappingPublicKey;
+    if (typeof key !== 'string') return;
+    for (const run of Object.values(this.data.runs)) {
+      if (run.filedBy !== undefined || !(run.payslips ?? []).some((p) => p.employeeId === id && p.sealedTo === undefined)) continue;
+      this.putRun({
+        ...run,
+        payslips: run.payslips.map((p) => (p.employeeId === id && p.sealedTo === undefined ? { ...p, sealedTo: key.toLowerCase() as Hex } : p)),
+      });
+    }
+  }
+
+  /** Lets go of the person `id`, once every version of theirs is filed where a company's records are kept. */
+  letGoOfPerson(id: string): void {
+    const { [id]: _moved, ...rest } = this.data.people;
+    this.data.people = rest;
+    this.payslipIndex = null;
+    this.flush();
+  }
+
   /** The newest version of the person `id`, or null. */
   newestPerson(id: string): SealedCompanyRecord | null {
     const all = this.data.people[id];
@@ -461,20 +526,33 @@ export class MemoryStore {
       .sort((a, b) => a.id.localeCompare(b.id));
   }
 
+  /** Every version of `accountId`'s roster, oldest first; empty when its signers are still on its account record. */
+  rosterVersions(accountId: string): SealedCompanyRecord[] { return [...(this.data.rosters?.[accountId] ?? [])]; }
+
+  /** The newest version of `accountId`'s roster, or null while its signers are still on its account record. */
+  newestRoster(accountId: string): SealedCompanyRecord | null {
+    const all = this.data.rosters?.[accountId];
+    return all?.[all.length - 1] ?? null;
+  }
+
   /**
-   * **FILES THE NEXT VERSION OF A PERSON, OR REFUSES.** The version must be the
-   * next, and a person id already on another company's payroll is not taken.
+   * **FILES THE NEXT VERSION OF A COMPANY'S ROSTER, OR REFUSES**, under the one
+   * id a roster has. Its first version moves the signers off the company's
+   * account record in the same write, so the roster is never held twice.
    * Returns null when filed, or why not.
    */
-  filePerson(rec: SealedCompanyRecord): 'version-already-filed' | 'not-the-next-version' | 'another-company' | null {
-    const all = this.data.people[rec.id] ?? [];
-    const newest = all[all.length - 1];
-    if (newest !== undefined && newest.company !== rec.company) return 'another-company';
-    const next = (newest?.version ?? 0) + 1;
+  fileRoster(rec: SealedCompanyRecord): 'version-already-filed' | 'not-the-next-version' | 'another-company' | null {
+    const account = this.data.accounts[rec.company];
+    if (account === undefined || rec.id !== ROSTER_ID) return 'another-company';
+    const all = this.data.rosters?.[rec.company] ?? [];
+    const next = (all[all.length - 1]?.version ?? 0) + 1;
     if (rec.version < next) return 'version-already-filed';
     if (rec.version > next) return 'not-the-next-version';
-    this.data.people[rec.id] = [...all, rec];
-    this.indexed(ix => ix.employee(employeeRowOf(rec, null)));
+    this.data.rosters = { ...(this.data.rosters ?? {}), [rec.company]: [...all, rec] };
+    if (account.sealedRoster !== undefined) {
+      const { sealedRoster: _moved, ...rest } = account;
+      this.data.accounts[rec.company] = rest;
+    }
     this.flush();
     return null;
   }
@@ -666,6 +744,21 @@ export class MemoryStore {
       .sort((a, b) => a.deployedAt.localeCompare(b.deployedAt));
   }
   putVaultKeyIndex(k: CompanyVaultKeyIndex) { this.data.vaultKeyIndex[k.accountId] = k; this.flush(); }
+  /** The vault keys offered for `accountId` and not yet folded into its roster, one per seat. */
+  vaultKeysOffersOf(accountId: string): VaultKeysOffer[] { return Object.values(this.data.vaultKeysOffers?.[accountId] ?? {}); }
+  /** Keeps one offer for `seat`, replacing any open offer for it. */
+  putVaultKeysOffer(accountId: string, seat: string, offer: VaultKeysOffer) {
+    const all = this.data.vaultKeysOffers ?? {};
+    this.data.vaultKeysOffers = { ...all, [accountId]: { ...(all[accountId] ?? {}), [seat.toLowerCase()]: offer } };
+    this.flush();
+  }
+  /** Lets go of the offers for `seats`, once the roster that folds them in is filed. */
+  dropVaultKeysOffers(accountId: string, seats: readonly string[]) {
+    const mine = { ...(this.data.vaultKeysOffers?.[accountId] ?? {}) };
+    for (const seat of seats) delete mine[seat.toLowerCase()];
+    this.data.vaultKeysOffers = { ...(this.data.vaultKeysOffers ?? {}), [accountId]: mine };
+    this.flush();
+  }
   getVaultKeyIndex(accountId: string): CompanyVaultKeyIndex | null { return this.data.vaultKeyIndex[accountId] ?? null; }
   /** Every filing of a company's directory, in version order. */
   directoryFilingsOf(accountId: string): readonly DirectoryFiling[] { return this.data.directories[accountId] ?? []; }

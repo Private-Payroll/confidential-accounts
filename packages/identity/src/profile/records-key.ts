@@ -603,6 +603,18 @@ export interface AccountHolders extends AccountSeats {
   readonly approvals: number;
   /** Every vault the account has adopted and not retired, each 64 lower-case hex characters. */
   readonly adoptedVaults: readonly string[];
+  /**
+   * The seat the account's deploy seated, 64 lower-case hex characters: its
+   * founding signer, read from the state the deploy left, never from whoever
+   * holds a slot now. It is the same seat however the signers change later.
+   */
+  readonly founding: string;
+  /**
+   * The committee the account's deploy held it by: the founding signer's own
+   * committee key. A directory entry for the founding seat is that seat's only
+   * when it is signed by this key, so no other key can speak for it.
+   */
+  readonly foundingCommittee: readonly { readonly tag: string; readonly value: string }[];
 }
 
 /** What this wallet hands back for a holders ask. Everything in it is public, and nothing in it is signed. */
@@ -624,7 +636,18 @@ const readHolders = (value: unknown): AccountHolders | null => {
   if (seats === null || v === null || typeof v !== 'object' || !Number.isSafeInteger(v.approvals)
     || (v.approvals as number) < 1 || !Array.isArray(v.adoptedVaults)) return null;
   if (!v.adoptedVaults.every((x) => typeof x === 'string' && HEX64.test(x)) || new Set(v.adoptedVaults).size !== v.adoptedVaults.length) return null;
-  return Object.freeze({ ...seats, approvals: v.approvals as number, adoptedVaults: Object.freeze([...v.adoptedVaults as string[]]) });
+  if (typeof v.founding !== 'string' || !HEX64.test(v.founding)) return null;
+  if (!Array.isArray(v.foundingCommittee) || v.foundingCommittee.length === 0) return null;
+  const foundingCommittee: { tag: string; value: string }[] = [];
+  for (const k of v.foundingCommittee) {
+    const key = readCommitteeKey(k);
+    if (key === null) return null;
+    foundingCommittee.push({ tag: key.tag, value: key.value });
+  }
+  return Object.freeze({
+    ...seats, approvals: v.approvals as number, adoptedVaults: Object.freeze([...v.adoptedVaults as string[]]), founding: v.founding,
+    foundingCommittee: Object.freeze(foundingCommittee),
+  });
 };
 
 /**
@@ -644,7 +667,8 @@ export function holdersAnswerFor(request: HoldersRequest, holders: AccountHolder
     at,
     holders: Object.freeze({
       committee: frozenKeys(holders.committee), threshold: holders.threshold, seats: Object.freeze([...holders.seats]),
-      approvals: holders.approvals, adoptedVaults: Object.freeze([...holders.adoptedVaults]),
+      approvals: holders.approvals, adoptedVaults: Object.freeze([...holders.adoptedVaults]), founding: holders.founding,
+      foundingCommittee: frozenKeys(holders.foundingCommittee),
     }),
   });
 }

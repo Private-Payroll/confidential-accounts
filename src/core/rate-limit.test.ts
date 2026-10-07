@@ -257,13 +257,15 @@ describe('the unauthenticated surface, counted rather than described', () => {
   const signInRequired = (line: string): boolean =>
     /[(,]\s*(authed|deps\.signedIn)\s*[,)]/u.test(line.replace(/\/\*.*?\*\//gu, '').replace(/\/\/.*$/u, ''));
 
-  it('there are six routes with no `authed`, the offer endpoint is one of them, and no payslip door is', () => {
+  it('there are five routes with no `authed`, the offer endpoint is one of them, and no payslip door is', () => {
     const open = routes.filter(r => !signInRequired(r.line));
     expect(
       open.map(r => `${r.at}: ${r.line.trim().slice(0, 70)}`).join('\n'),
     ).toBeTruthy();
-    expect(open).toHaveLength(6);
+    expect(open).toHaveLength(5);
     expect(open.some(r => r.line.includes("'/api/invites/:id/offer'"))).toBe(true);
+    /* RED WHEN the route that answered for a run and a person with no sign-in comes back. */
+    expect(routes.some(r => r.line.includes("'/api/runs/:runId/employee/:employeeId'"))).toBe(false);
     /* RED WHEN a payslip door answers without a sign-in again. */
     for (const path of ["'/api/payslips/proof'", "'/api/payslips'", "'/api/payslips/addresses'"]) {
       expect(open.some(r => r.line.includes(path)), path).toBe(false);

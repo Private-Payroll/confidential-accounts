@@ -130,7 +130,7 @@ export function seatsInAccountState(serialized: Uint8Array): SeatsOnChain {
  * dropped) and every vault in its set of adopted vaults. Throws when the bytes
  * are not a contract's state laid out as a company's account is.
  */
-export function holdersInAccountState(serialized: Uint8Array): AccountHolders {
+export function holdersInAccountState(serialized: Uint8Array): Omit<AccountHolders, 'founding' | 'foundingCommittee'> {
   const seats = seatsInAccountState(serialized);
   const fields = ContractState.deserialize(serialized).data.state.asArray();
   const notAnAccount = 'that contract\'s state is not laid out as a company\'s account.';
@@ -228,6 +228,55 @@ export const fromIndexerAt = (indexerUri: string): ContractStateHex => async (ac
   return state;
 };
 
+/** What the read of a deploy goes through: the state the contract's deploy left, as hex, or null when the indexer has none. */
+export type DeployStateHex = (account: AccountAddress) => Promise<string | null>;
+
+const DEPLOY_QUERY = 'query ($address: HexEncoded!) { contract(address: $address) { actions(type: DEPLOY, limit: 1) { state } } }';
+
+/**
+ * The read of a contract's deploy through one indexer: the screens pass the one
+ * this wallet reads its own balance from. A contract is deployed once, so the
+ * one deploy action the indexer holds for it is the deploy, however many calls
+ * and updates came after.
+ */
+export const deployFromIndexerAt = (indexerUri: string): DeployStateHex => async (account) => {
+  const response = await fetch(indexerUri, {
+    method: 'POST',
+    headers: { 'content-type': 'application/json' },
+    body: JSON.stringify({ query: DEPLOY_QUERY, variables: { address: account } }),
+  });
+  if (!response.ok) throw new Error(`the indexer answered ${response.status}.`);
+  const body = await response.json() as { data?: { contract?: { actions?: unknown } | null }; errors?: unknown };
+  if (body.errors !== undefined) throw new Error('the indexer refused the read.');
+  const contract = body.data?.contract;
+  if (contract === undefined || contract === null) return null;
+  const actions = contract.actions;
+  if (!Array.isArray(actions) || actions.length !== 1) throw new Error('the indexer did not answer with the account\'s one deploy.');
+  const state = (actions[0] as { state?: unknown } | null)?.state;
+  if (typeof state !== 'string' || !/^([0-9a-fA-F]{2})+$/u.test(state)) throw new Error('the indexer answered with something that is not a state.');
+  return state;
+};
+
+/**
+ * **THE SEAT AN ACCOUNT'S DEPLOY SEATED, AND THE COMMITTEE IT WAS HELD BY**:
+ * the one leaf in the set of seated signers' leaves of the state the deploy
+ * left, and the deploy's maintenance committee, for an account carrying
+ * `label`. A company's account is deployed with exactly one seat, its founding
+ * signer's, held by that signer's own committee key; both stay the founding
+ * signer's whoever is removed or seated after. Throws when the bytes are not a
+ * company's account as deployed: another label, not exactly one seat, or held
+ * by no committee.
+ */
+export function foundingInDeployState(serialized: Uint8Array, label: CompanyLabel): {
+  readonly seat: string; readonly committee: readonly { readonly tag: string; readonly value: string }[];
+} {
+  if (labelInAccountState(serialized) !== label) throw new Error('the account\'s deploy does not carry this company\'s label.');
+  const { seats, committee } = seatsInAccountState(serialized);
+  if (seats.length !== 1) throw new Error('the account\'s deploy did not seat exactly one signer.');
+  if (committee.length === 0) throw new Error('the account\'s deploy was held by no committee.');
+  return { seat: seats[0]!, committee };
+}
+
 /** Reads the label the account at `account` carries. Never throws: a failed read is `unreadable`. */
 export async function labelOnAccount(account: AccountAddress, read: ContractStateHex): Promise<LabelOnAccount> {
   if (readAccountAddress(account) === null) return { of: 'unreadable', why: 'that is not an account\'s address.' };
@@ -259,12 +308,18 @@ export type HoldersOnChain =
   | { readonly of: 'other-label' }
   | { readonly of: 'unreadable'; readonly why: string };
 
-/** Reads who holds the account at `account`, which must carry `label`. Never throws. */
-export async function holdersOnChain(account: AccountAddress, label: CompanyLabel, read: ContractStateHex): Promise<HoldersOnChain> {
+/**
+ * Reads who holds the account at `account`, which must carry `label`, and the
+ * seat its deploy seated (`readDeploy`). Never throws.
+ */
+export async function holdersOnChain(
+  account: AccountAddress, label: CompanyLabel, read: ContractStateHex, readDeploy: DeployStateHex,
+): Promise<HoldersOnChain> {
   if (readAccountAddress(account) === null) return { of: 'unreadable', why: 'that is not an account\'s address.' };
   let hex: string | null;
+  let deployHex: string | null;
   try {
-    hex = await read(account);
+    [hex, deployHex] = await Promise.all([read(account), readDeploy(account)]);
   } catch (e) {
     return { of: 'unreadable', why: e instanceof Error ? e.message : 'the read did not come back.' };
   }
@@ -272,7 +327,10 @@ export async function holdersOnChain(account: AccountAddress, label: CompanyLabe
   try {
     const bytes = bytesOf(hex);
     if (labelInAccountState(bytes) !== label) return { of: 'other-label' };
-    return { of: 'read', holders: holdersInAccountState(bytes) };
+    /* An account the indexer holds a state for and no deploy is not one this wallet can say who founded. */
+    if (deployHex === null) return { of: 'unreadable', why: 'the indexer holds no deploy for that account.' };
+    const founding = foundingInDeployState(bytesOf(deployHex), label);
+    return { of: 'read', holders: { ...holdersInAccountState(bytes), founding: founding.seat, foundingCommittee: founding.committee } };
   } catch (e) {
     return { of: 'unreadable', why: e instanceof Error ? e.message : 'the state did not read.' };
   }

@@ -131,6 +131,12 @@ export function committeeChangeRefusal(
 }
 
 export interface CommitteeChangeDoors {
+  /**
+   * Folds every vault-key offer still open into the roster from this device,
+   * before anything else is read, so the committee the change is to is never one
+   * made from a roster missing keys that were offered.
+   */
+  readonly fold: () => Promise<unknown>;
   /** What the service says is owed now. */
   readonly view: () => Promise<CommitteeChangeView>;
   /** This person's committee key for the company, as their wallet gives it. */
@@ -161,6 +167,7 @@ export class NothingToSign extends Error {
 export async function signCommitteeChangeOnDevice(
   doors: CommitteeChangeDoors, me: { signerId: string },
 ): Promise<{ results: ReadonlyArray<Record<string, unknown>> }> {
+  await doors.fold();
   const view = await doors.view();
   const mine = await doors.walletKey();
   const refused = committeeChangeRefusal(view, mine, await doors.roster(), me);

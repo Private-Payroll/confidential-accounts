@@ -4,13 +4,13 @@ import type { SealedAccount } from '../../../../src/core/types.js';
 import type { Hex } from '../../../../src/core/crypto.js';
 import { SealedNotePool } from '../../../../src/midnight/vault-pool.js';
 import { deviceVaultHoldings } from 'vaults-web-shared/device-vault-holdings.js';
-import { api, companyKeyReleasedFor, currentUser, openAccount } from 'vaults-web-shared/keyring.js';
+import { api, companyKeyReleasedFor, currentUser } from 'vaults-web-shared/keyring.js';
 import { deviceRecordsFor, deviceSignerFrom, readersIn, vaultServiceFor } from 'vaults-web-shared/vault-page-doors.js';
 import { wireOf } from 'vaults-web-shared/vault-operation.js';
 import { Fault, FAULT } from '../faults.js';
 import { companyRoute } from './handover-state.js';
 import { keyringFor, keysOnTheWayIn } from './keyring-person.js';
-import { directoryHereFor, filingJudgeFor } from './filing-judge.js';
+import { directoryHereFor, filingJudgeFor, openedHere } from './filing-judge.js';
 import type { AccountAddress, CompanyLabel } from 'midnight-identity/profile/company-label';
 import { theVaultBuilder } from './vault-builder.js';
 
@@ -61,7 +61,7 @@ export async function readVaultPrivateMoney(
     const sealed = await api(companyRoute(companyId)) as SealedAccount;
     const me = await keysOnTheWayIn(companyId, async () => sealed);
     if (me === null) return null;
-    const account = openAccount(sealed);
+    const account = await openedHere(sealed);
     if (account === null) return null;
     const builder = await theVaultBuilder();
     const label = sealed.companyLabel ?? null;
