@@ -204,7 +204,7 @@ describe('A COMPANY\'S OWN RECORDS, FILED BY ITS SEATS (CHECK S)', () => {
 
   it('THE DEVICE BELIEVES ONLY A VERSION A SEAT IT BELIEVES FILED, CHECKED AFRESH FOR EVERY READ, AND REFUSES TAMPERED BYTES', async () => {
     let reads = 0;
-    const holders = async () => { reads += 1; const c = seated([ADA, BO]); return { ...c.seats, approvals: c.approvals, adoptedVaults: [], account: ADDRESS }; };
+    const holders = async () => { reads += 1; const c = seated([ADA, BO]); return { ...c.seats, approvals: c.approvals, adoptedVaults: [], founding: ADA.seat, foundingCommittee: [ADA.committeeKey], account: ADDRESS }; };
     const judge = directoryJudge({
       accountId: CO, label: LABEL, holders, attested: everySeatAttested,
       filings: async () => store.directoryFilingsOf(CO),
@@ -258,7 +258,7 @@ describe('THE SERVER BELIEVES THE DIRECTORY A DEVICE BELIEVES, AGAINST THE CHAIN
     const c = chain!;
     const judge = await directoryJudge({
       accountId: CO, label: LABEL, attested: everySeatAttested, filings: async () => store.directoryFilingsOf(CO),
-      holders: async () => ({ ...c.seats, approvals: c.approvals, adoptedVaults: [], account: ADDRESS }),
+      holders: async () => ({ ...c.seats, approvals: c.approvals, adoptedVaults: [], founding: ADA.seat, foundingCommittee: [ADA.committeeKey], account: ADDRESS }),
     })();
     return judge(seat.signing.publicKey, rec.kind, companyRecordKey(rec.kind, rec.id), rec.version);
   };

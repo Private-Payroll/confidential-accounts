@@ -30,7 +30,7 @@ export interface StartStandingOnTheWire {
     readonly started: boolean;
   };
 }
-import type { GovernedCallOrder, OpenedRound, SignerMaterial } from './governed-call-builder.js';
+import type { GovernanceOnTheWire, GovernedCallOrder, OpenedRound, ProposalIdentity, SignerMaterial } from './governed-call-builder.js';
 
 export interface SigningKeyOnTheWire { readonly tag: string; readonly value: string }
 export interface CoinOnTheWire { readonly nonce: string; readonly token: string; readonly value: string }
@@ -162,6 +162,10 @@ export type VaultAsk =
    * keeps none of it.
    */
   | {
+    id: number; network: string; ask: 'proposal-identity'; change: GovernanceOnTheWire; salt: string;
+  }
+  | { id: number; network: string; ask: 'company-wide' }
+  | {
     id: number; network: string; ask: 'governed-call'; account: string; order: GovernedCallOrder;
     material: SignerMaterial; chain: AccountCallChainOnTheWire; opened: OpenedRound;
   };
@@ -191,6 +195,8 @@ export type VaultAnswer =
   | Answered<'payout', { tx: string; spent: string; change: NoteOnTheWire | null }>
   | Answered<'payout-publicly', { tx: string }>
   | Answered<'governed-call', { tx: string }>
+  | Answered<'proposal-identity', { identity: ProposalIdentity }>
+  | Answered<'company-wide', { value: string }>
   | Answered<'start-standing', { standing: StartStandingOnTheWire; run?: SecretRunOnTheWire }>
   | Answered<'set-nonce-secret', { tx: string }>
   | Answered<'write-secret-copy', { tx: string }>
@@ -280,6 +286,14 @@ export interface VaultBuilderClient {
   payoutPublicly(input: {
     vault: string; account: string; order: OrderOnTheWire; payment: PrivatePaymentOnTheWire; chain: PayoutChainOnTheWire;
   }): Promise<{ tx: string }>;
+  /**
+   * **A GOVERNANCE PROPOSAL'S IDENTITY, MADE HERE WITH THE CONTRACT'S OWN
+   * FUNCTIONS**: the payload the change commits to, and its identity on the
+   * chain under the salt given and no vault.
+   */
+  proposalIdentity(change: GovernanceOnTheWire, salt: string): Promise<ProposalIdentity>;
+  /** The value a company-wide run names in place of a vault, made with the account's own function. */
+  companyWide(): Promise<string>;
   /** A raise or an approval on the company account, built and proved with this signer's own material. */
   governedCall(input: {
     account: string; order: GovernedCallOrder; material: SignerMaterial; chain: AccountCallChainOnTheWire;
@@ -386,6 +400,8 @@ export function vaultBuilderOver(worker: WorkerLike, network: string): VaultBuil
     },
     payoutPublicly: async (input) => ({ tx: (await ask({ ask: 'payout-publicly', ...input })).tx }),
     governedCall: async (input) => ({ tx: (await ask({ ask: 'governed-call', ...input })).tx }),
+    proposalIdentity: async (change, salt) => (await ask({ ask: 'proposal-identity', change, salt })).identity,
+    companyWide: async () => (await ask({ ask: 'company-wide' })).value,
     startStanding: async (input) => {
       const a = await ask({ ask: 'start-standing', ...input });
       return { standing: a.standing, ...(a.run === undefined ? {} : { run: a.run }) };

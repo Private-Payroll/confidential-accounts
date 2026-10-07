@@ -377,6 +377,7 @@ const NOT_AN_ASSET_BECOMING_A_TOKEN: Record<string, { count: number; why: string
   'src/midnight/vault-ledger.ts token': { count: 1, why: '`toNote` carries the token it is handed into a note' },
   'src/midnight/vault-recovery.ts token': { count: 1, why: '`paidCoinOf` carries the spent note\'s token to the coin it paid' },
   'src/server/company-vaults.ts z.string().regex(HEX64)': { count: 1, why: 'a request schema, which describes a body and makes nothing' },
+  'src/server/proposal-relays.ts z.string().regex(HEX64)': { count: 1, why: 'a request schema, which describes a body and makes nothing' },
   'scripts/measure-call-cost.ts toHex(TEST_TOKEN_BYTES)': { count: 1, why: 'a colour a measurement mints for itself, never a payment' },
   'src/midnight/vault-journal.ts token': { count: 1, why: 'the colour read off a journal line this reader has already checked is a coin, carried into the coin proposed to the chain' },
   'packages/web-shared/src/device-vault-holdings.ts p.token as Hex': { count: 1, why: 'the token the service already read off the asset\'s row for this payment, carried into the question the worker is asked' },

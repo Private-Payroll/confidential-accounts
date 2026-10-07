@@ -7,6 +7,7 @@
  * company. Every entry is signed by a real wallet's committee key, and every
  * request a device sends is recorded.
  */
+import { aDevicesRosterMemory } from '../testing/a-roster-a-seat-filed.js';
 import { expect, beforeAll, afterAll } from 'vitest';
 import express from 'express';
 import type { AddressInfo } from 'node:net';
@@ -21,9 +22,10 @@ import { MemoryStore } from '../core/store.js';
 import { inboxPublicKey } from '../core/sealed-records.js';
 import type { SealedAccount } from '../core/types.js';
 import { seatDirectoryRoutes, directoryOf, type DirectoryChainRead } from './seat-directory-route.js';
-import { companyRecordsRoutes, MemoryCompanyRecordStore, withPeopleIn } from './company-records-route.js';
+import { companyRecordsRoutes, MemoryCompanyRecordStore, withTheRosterIn } from './company-records-route.js';
+import type { PersonStanding, SealedCompanyRecord } from '../midnight/sealed-record-wire.js';
 import { invitationRoutes } from './invitations-route.js';
-import { peopleRoutes } from './people-route.js';
+import { ownsPersonIn, peopleRoutes } from './people-route.js';
 import type { ChainHolders, DirectoryEntry, DirectoryFiling } from '../midnight/seat-directory.js';
 import { directoryChangeMessage } from '../midnight/seat-directory.js';
 import type { InvitationSend, InvitingCompany, InvitingSeat } from 'vaults-web-shared/invitation-on-device.js';
@@ -59,6 +61,24 @@ const accountOf = (id: string, members: string[], label: CompanyLabel, address: 
 export const ACME: InvitingCompany = { id: CO, name: 'Acme', label: LABEL, account: ADDRESS, inboxPublicKey: inboxPublicKey(KEY, CO), keyEpoch: 0, viewingKey: KEY };
 
 export const store = new MemoryStore();
+/** The company's records other than its roster - its people among them - as the server keeps them. */
+export const peopleRecords = new MemoryCompanyRecordStore();
+/** The person `id` as the company's records hold them now: their newest version, or null. */
+export const newestPerson = async (id: string): Promise<SealedCompanyRecord | null> => {
+  const company = await peopleRecords.companyOfPerson(id);
+  return company === null ? null : peopleRecords.get(company, 'person', id);
+};
+/** Every version of the person `id` the company's records hold, oldest first. */
+export const personVersions = async (id: string): Promise<readonly SealedCompanyRecord[]> => {
+  const company = await peopleRecords.companyOfPerson(id);
+  return company === null ? [] : peopleRecords.versions(company, 'person', id);
+};
+/** The next version of the person `id`, written by the service itself and signed by no seat: what no device may believe. */
+export const aVersionNoSeatSigned = async (id: string, status: PersonStanding): Promise<void> => {
+  const newest = (await newestPerson(id))!;
+  const { filedBy: _signature, ...unsigned } = newest;
+  await peopleRecords.put({ ...unsigned, version: newest.version + 1, facts: { ...newest.facts!, status } });
+};
 export const metered: string[] = [];
 export const refusals: string[] = [];
 /** Every request any device sent: its method, its path and its body. */
@@ -84,18 +104,30 @@ export function sendAs(person: string | null): InvitationSend {
 export const fromAda = sendAs('ada');
 
 /**
+ * What a seat's device reads of Acme, afresh at each call, to believe its
+ * records: every directory filing the service holds, and the chain as the test
+ * sets it, read in place of the person's own wallet. Ada's seat is the one the
+ * account was deployed with.
+ */
+export const acmeReads = {
+  /** A device that has read none of Acme's roster before: a fresh memory at every read. */
+  get believed() { return aDevicesRosterMemory(); },
+  filings: async () => store.directoryFilingsOf(CO),
+  holders: async () => {
+    const c = await chainRead(CO, [ADA.seat, BO.seat]);
+    if (c === null) throw new Error('the test has the company on no chain');
+    return { ...c.seats, approvals: c.approvals, adoptedVaults: [], founding: ADA.seat, foundingCommittee: [ADA.committeeKey], account: ADDRESS };
+  },
+};
+
+/**
  * Acme's seat directory as a seat's device believes it, read afresh at each
  * call: every filing the service holds, the chain as the test sets it, and Ada's
  * and Bo's wallets' own statements of their records keys.
  */
 export const acmeDirectory = (attestedBy: readonly Seat[] = [ADA, BO]): Promise<DirectoryHere> => directoryHere({
   accountId: CO, label: LABEL,
-  filings: async () => store.directoryFilingsOf(CO),
-  holders: async () => {
-    const c = await chainRead(CO, [ADA.seat, BO.seat]);
-    if (c === null) throw new Error('the test has the company on no chain');
-    return { ...c.seats, approvals: c.approvals, adoptedVaults: [], account: ADDRESS };
-  },
+  ...acmeReads,
   attested: async () => attestedBy.map((s) => ({
     committeeKey: s.committeeKey,
     statement: signRecordsKey(identityFromSecret(new Uint8Array(32).fill(s.n)), LABEL, ADDRESS, new Uint8Array(32).fill(s.n + 100), s.seat),
@@ -108,8 +140,20 @@ export const danasCode = (label: CompanyLabel = LABEL, person = 'dana', address 
   signJoinCode(identityFromSecret(new Uint8Array(32).fill(77)), label, person, { kind: 'payee', address, payslipKey: 'ab'.repeat(32) });
 export const DANA = { name: 'Dana Whitfield', email: 'dana@acme.co', title: 'Engineer', asset: 'TEST', baseAmount: 620000n, startDate: '2026-10-01' };
 
-/** Mounts the routes before the file's tests run, enters the three seats, and closes the server after. */
-export function aCompanyOfTwoSeats(): void {
+/** What a file mounting routes of its own beside these is handed: the same gates, records and directory. */
+export interface MountedBeside {
+  readonly signedIn: express.RequestHandler;
+  readonly member: express.RequestHandler;
+  readonly records: ReturnType<typeof withTheRosterIn>;
+  readonly directoryOf: (accountId: string) => ReturnType<typeof directoryOf>;
+}
+
+/**
+ * Mounts the routes before the file's tests run, enters the three seats, and
+ * closes the server after. `beside` mounts a file's own routes on the same app,
+ * behind the same gates.
+ */
+export function aCompanyOfTwoSeats(beside?: (app: express.Express, deps: MountedBeside) => void): void {
   let server: ReturnType<express.Express['listen']>;
   beforeAll(async () => {
     store.putAccount(accountOf(CO, ['ada', 'bo'], LABEL, ADDRESS));
@@ -119,11 +163,9 @@ export function aCompanyOfTwoSeats(): void {
     const signedIn: express.RequestHandler = (req, res, next) => (req.userId ? next() : res.status(401).json({ error: 'sign in' }));
     const member: express.RequestHandler = (req, res, next) => (store.getAccount(String(req.params.id))?.memberUserIds.includes(req.userId!)
       ? next() : res.status(404).json({ error: 'account not found' }));
-    const ownsPerson: express.RequestHandler = (req, res, next) => {
-      const p = store.getEmployee(String(req.params.id));
-      return p !== null && store.getAccount(p.accountId)?.memberUserIds.includes(req.userId!) ? next() : res.status(404).json({ error: 'not found' });
-    };
-    const records = withPeopleIn(store, new MemoryCompanyRecordStore());
+    /* The service's own person gate, over the company's records as this test keeps them. */
+    const ownsPerson = ownsPersonIn(() => peopleRecords, (company, person) => store.getAccount(company)?.memberUserIds.includes(person) ?? false);
+    const records = withTheRosterIn(store, peopleRecords);
     app.use(seatDirectoryRoutes({ signedIn, member, store, chain: chainRead }));
     app.use(companyRecordsRoutes({ signedIn, member, records, accountOf: (id) => store.getAccount(id), directoryOf: (id) => directoryOf(store, chainRead, id) }));
     app.use(invitationRoutes({
@@ -131,12 +173,15 @@ export function aCompanyOfTwoSeats(): void {
       meterOffer: async (req) => { metered.push(String(req.params.id)); return true; },
       recordRefusal: (method, path, status, kind) => { refusals.push(`${status} ${method} ${path} ${kind}`); },
     }));
-    app.use(peopleRoutes({ signedIn, member, ownsPerson, store, records: () => records, directoryOf: (id) => directoryOf(store, chainRead, id) }));
+    app.use(peopleRoutes({
+      signedIn, member, ownsPerson, store, records: () => records, people: () => peopleRecords, directoryOf: (id) => directoryOf(store, chainRead, id),
+    }));
     /* The handover and the invitation list, as the whole server serves them, for an admitting device. */
-    app.get('/api/employees/:id/handover', signedIn, ownsPerson, (req, res) => { res.json({ inbox: store.getEmployee(String(req.params.id))?.inbox ?? null }); });
+    app.get('/api/employees/:id/handover', signedIn, ownsPerson, (req, res) => { res.json({ inbox: store.handoverFor(String(req.params.id)) }); });
     app.get('/api/accounts/:id/invites', signedIn, member, (req, res) => {
       res.json(store.listInvites(String(req.params.id)).map(({ token: _t, acceptanceHash: _a, offer: _o, handover: _h, ...rest }) => rest));
     });
+    beside?.(app, { signedIn, member, records, directoryOf: (id) => directoryOf(store, chainRead, id) });
     await new Promise<void>((resolve) => { server = app.listen(0, '127.0.0.1', () => resolve()); });
     base = `http://127.0.0.1:${(server.address() as AddressInfo).port}`;
     const seated = (seats: Seat[]): ChainHolders => ({ seats: { committee: seats.map((s) => s.committeeKey), threshold: 1, seats: seats.map((s) => s.seat) }, approvals: 1 });

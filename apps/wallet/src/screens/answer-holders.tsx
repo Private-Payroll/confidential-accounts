@@ -4,7 +4,7 @@ import type { HoldersRequest } from 'midnight-identity/profile/request';
 import type { Channel } from 'midnight-identity/profile/channel';
 import { RecordsKeyRefused, holdersAnswerFor, type AccountHolders } from 'midnight-identity/profile/records-key';
 import type { AccountAddress, CompanyLabel } from 'midnight-identity/profile/company-label';
-import { fromIndexerAt, holdersOnChain, type HoldersOnChain } from '../chain/company-label-on-chain.js';
+import { deployFromIndexerAt, fromIndexerAt, holdersOnChain, type HoldersOnChain } from '../chain/company-label-on-chain.js';
 import { INDEXER_HTTP_URL } from '../config.js';
 import { StatusAlert } from '../components/status.js';
 import type { Consent } from '../framing.js';
@@ -28,7 +28,8 @@ import type { Consent } from '../framing.js';
 /** How this screen reads the account. Replaceable so a test can answer. */
 export type HoldersReader = (account: AccountAddress, label: CompanyLabel) => Promise<HoldersOnChain>;
 
-export const liveHoldersReader: HoldersReader = (account, label) => holdersOnChain(account, label, fromIndexerAt(INDEXER_HTTP_URL));
+export const liveHoldersReader: HoldersReader = (account, label) => holdersOnChain(
+  account, label, fromIndexerAt(INDEXER_HTTP_URL), deployFromIndexerAt(INDEXER_HTTP_URL));
 
 type Stage = { of: 'reading' } | { of: 'sent' } | { of: 'refused'; says: string };
 

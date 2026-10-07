@@ -41,13 +41,17 @@ export const COMPANY_RECORD_KINDS = ['state', 'roster', 'policy', 'person', 'run
 export type CompanyRecordKind = (typeof COMPANY_RECORD_KINDS)[number];
 
 /**
- * **THE KINDS SEALED UNDER ONE OF THE COMPANY'S PURPOSE KEYS**, and which one.
- * Such a record is opened by whoever holds that purpose key, so it carries no
- * per-reader wraps: a wrap beside it would be a second, drifting answer to who
- * may read it. Every other kind is sealed under a fresh key wrapped to each
- * reader.
+ * **THE KINDS SEALED UNDER ONE OF THE COMPANY'S OWN KEYS**, and which one: a
+ * person under the payroll purpose key, the company's signers under the roster
+ * purpose key, and the company's state under the viewing key of the epoch the
+ * record names, exactly as the founding signer's device sealed it. Such a record is opened by whoever holds that key, so it
+ * carries no per-reader wraps: a wrap beside it would be a second, drifting
+ * answer to who may read it. Every other kind is sealed under a fresh key
+ * wrapped to each reader.
  */
-export const SEALED_UNDER_PURPOSE: Readonly<Partial<Record<CompanyRecordKind, 'payroll'>>> = Object.freeze({ person: 'payroll' });
+export const SEALED_UNDER_PURPOSE: Readonly<Partial<Record<CompanyRecordKind, 'payroll' | 'roster' | 'viewing'>>> = Object.freeze({
+  person: 'payroll', roster: 'roster', state: 'viewing',
+});
 
 /** Where a person on a company's payroll stands. */
 export const PERSON_STANDINGS = ['active', 'pending', 'leaver'] as const;
@@ -382,6 +386,25 @@ export const companyWirePaths = {
   versions: (company: string, kind: CompanyRecordKind, id: string) => `/api/accounts/${assertCompany(company)}/records/${kind}/${id}/versions`,
   one: (company: string, kind: CompanyRecordKind, id: string, version: number) => `/api/accounts/${assertCompany(company)}/records/${kind}/${id}/${version}`,
 };
+
+/** Thrown by a store asked to file a record under an id another company's record already has. */
+export class CompanyRecordIdTaken extends Error {
+  constructor(readonly kind: CompanyRecordKind, readonly id: string) {
+    super(`${kind} ${id} is another company's, so nothing was filed`);
+    this.name = 'CompanyRecordIdTaken';
+  }
+}
+
+/**
+ * **A COMPANY'S PEOPLE, AS THE STORE OF ITS RECORDS HOLDS THEM**: the newest
+ * version of every person on its payroll, and which company's payroll a person
+ * is on. A person's id is on one company's payroll only: a store refuses to file
+ * another company's person under it (`CompanyRecordIdTaken`).
+ */
+export interface PeopleRecords {
+  peopleOf(company: string): Promise<readonly SealedCompanyRecord[]>;
+  companyOfPerson(id: string): Promise<string | null>;
+}
 
 /** What a store of company records keeps: every version of every record, in order, and nothing changed. */
 export interface CompanyRecordStore {

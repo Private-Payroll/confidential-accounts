@@ -1,12 +1,15 @@
 import type { SealedAccount } from '../../../../src/core/types.js';
+import type { BelievedAccount } from 'vaults-web-shared/roster-here.js';
 import { rosterVaultKeys } from '../../../../src/core/vault-keys.js';
+import { approverRosterFrom } from '../../../../src/core/vault-approvers.js';
 import { READER_REFUSAL, type ReaderRefusalCode } from '../../../../src/midnight/secret-readers.js';
 import { whyNotTheCommittee } from 'vaults-web-shared/handover-check.js';
 import {
-  api, canOpenCompanies, currentUser, holdersFromTheWallet, openAccount, openKeysWithWallet, recordsKeyFromTheWallet, viewingKeyFor,
+  api, canOpenCompanies, currentUser, holdersFromTheWallet, openKeysWithWallet, recordsKeyFromTheWallet, viewingKeyFor,
 } from 'vaults-web-shared/keyring.js';
 import type { VaultAddress } from 'midnight-identity/profile/company-label';
 import { createCompanyVault, VaultHandoverOwed, VaultStartOwed, type VaultStage } from 'vaults-web-shared/vault-operation.js';
+import { governedCallServiceFor } from 'vaults-web-shared/governed-call-on-device.js';
 import {
   browserTemporaryKeys, deviceRecordsFor, deviceSignerFrom, marked, readersIn, vaultServiceFor,
 } from 'vaults-web-shared/vault-page-doors.js';
@@ -18,7 +21,7 @@ import { companyRoute } from './handover-state.js';
 import { keyringFor, keysOnTheWayIn } from './keyring-person.js';
 import { ACT_REFUSAL, ACTED, refusalOf, type ActRefusal } from './refusals.js';
 import { ACCOUNT_ORIGIN } from './session.js';
-import { directoryHereFor, filingJudgeFor } from './filing-judge.js';
+import { directoryHereFor, filingJudgeFor, openedHere } from './filing-judge.js';
 import { giveTheVaultKeys } from './vault-keys.js';
 import { theVaultBuilder } from './vault-builder.js';
 import { handoverOwed, readVaultRows } from './vault-rows.js';
@@ -165,7 +168,7 @@ const withTheStart = (companyId: string, service: VaultService): VaultService =>
   };
 };
 
-type Opened = { sealed: SealedAccount; keys: NonNullable<Awaited<ReturnType<typeof keysOnTheWayIn>>>; roster: () => Promise<NonNullable<ReturnType<typeof openAccount>>> };
+type Opened = { sealed: SealedAccount; keys: NonNullable<Awaited<ReturnType<typeof keysOnTheWayIn>>>; roster: () => Promise<BelievedAccount> };
 
 /** Keys saved for the person that are not open in this tab, and a read that does not ask the account to open them. */
 const LOCKED = READY.locked;
@@ -187,7 +190,7 @@ async function opened(personId: string, companyId: string, open: boolean): Promi
   const keys = await keysOnTheWayIn(companyId, async () => sealed);
   if (keys === null) return ACT_REFUSAL.noKeysHere;
   const roster = async () => {
-    const account = openAccount(await api(companyRoute(companyId)) as SealedAccount);
+    const account = await openedHere(await api(companyRoute(companyId)) as SealedAccount);
     /* The keys for this company were found just above, so it opens; a company that does not is a fault in this code. */
     if (account === null) throw new Fault(FAULT.vaultCompanyDidNotOpen);
     return account;
@@ -276,6 +279,27 @@ async function run(personId: string, companyId: string, onStage: (stage: Creatin
         },
         roster: async () => rosterVaultKeys(await o.roster()),
       },
+      /*
+       * The company as this device counts it before the adoption is raised, approved or carried out: the bars the chain
+       * holds, the seated signers and the rights the roster records for them, and the vaults the account holds as this
+       * person's own wallet reads it.
+       */
+      approvers: async () => {
+        const [status, account, held, wide] = await Promise.all([
+          /* Refused, with what was not read, when the chain's account could not be read. */
+          governedCallServiceFor(api).bars!(companyId),
+          o.roster(),
+          holdersFromTheWallet(ACCOUNT_ORIGIN, { company: released.company, account: released.account }),
+          (await theVaultBuilder()).companyWide(),
+        ]);
+        return approverRosterFrom({
+          threshold: status.threshold, vaultThresholds: status.vaultThresholds,
+          seated: account.signers.filter((x) => x.status === 'active' && x.leafCommitment !== null)
+            .map((x) => ({ leaf: x.leafCommitment!, ...(x.rights === undefined ? {} : { rights: x.rights }) })),
+          adoptedVaults: held.holders.adoptedVaults, companyWide: wide,
+        });
+      },
+      vaultName: (vault) => vault,
     }, resume as Parameters<typeof createCompanyVault>[1]);
     if (done.state === 'awaiting-approvals') {
       return { of: STARTING.awaiting, vault: done.vault, ...done.awaiting };

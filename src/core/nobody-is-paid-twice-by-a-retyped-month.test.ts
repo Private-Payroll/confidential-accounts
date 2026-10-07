@@ -330,24 +330,12 @@ describe('the served routes hand the period to the same reader', () => {
   const sourceOf = (path: string) =>
     readFileSync(fileURLToPath(new URL(path, import.meta.url)), 'utf8');
 
-  it('the served routes read the month first', () => {
+  it('no served route takes a month to draw a run with, and the route that keeps a run refuses one not written as a month', () => {
     const served = sourceOf('../server/index.ts');
-    /*
-     * Every mention of the period the request carried, and what stands
-     * immediately in front of it. RED WHEN a door reads one of them somewhere
-     * and hands another one straight on, which is the shape a second route
-     * added later would have.
-     */
-    const unread = (src: string, field: string): string[] =>
-      [...src.matchAll(new RegExp(`.{0,32}${field.replace('.', '\\.')}`, 'g'))]
-        .map(m => m[0]).filter(m => !m.includes('canonicalPeriod('));
-    expect(unread(served, 'b.period')).toEqual([]);
-    /* RED WHEN a door stops reading it at all, so that nothing above has
-       anything to be true about: a door that never mentions the field passes
-       the check above for the wrong reason. */
-    expect(served.match(/canonicalPeriod\(/g)).toHaveLength(2);
-    /* RED WHEN a route grows a second copy of the rule instead of calling the
-       one the service enforces. */
-    expect(served).toMatch(/canonicalPeriod[^\n]*from '\.\.\/core\/payroll\.js'/);
+    /* RED WHEN a route takes a period off a request again, to draw a run on the service. */
+    expect(served).not.toMatch(/\bb\.period\b/);
+    /* RED WHEN the route that keeps a run drawn on a device stops asking whether its month is written as a month, by the one reader. */
+    expect(sourceOf('../server/run-routes.ts')).toMatch(/runFilingRefusal\(company, /);
+    expect(sourceOf('./run-filing.ts')).toMatch(/canonicalPeriod\(r\.period\) !== r\.period/);
   });
 });

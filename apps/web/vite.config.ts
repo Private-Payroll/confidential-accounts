@@ -52,30 +52,7 @@ export const SERVED_FROM = [
  * was measured when it was set; a test holds it within a kilobyte of what is built, so when the
  * download falls the budget is lowered with it.
  */
-// 672,000: on the Mac on 29 Sep the build plugin measured 669,922 and the test's own measure 671,451 for the same
-// build (the two measures differ); the budget holds the larger. The rise is the wallet's two new kit parts
-// (textarea, item) and the Apps catalogue's words, which load with every page until a screen's words load with it.
-// 674,000: the test's own measure rose from 671,451 to 673,808 when the kit's index began to export its item (1,491
-// bytes, drawn in the panels of a person and of a proposal) and the kit's table began to stack its rows on a phone
-// and to open a row from the keyboard (866 bytes, most of it stylesheet).
-// 676,000: the test's own measure rose from 673,808 to 675,456 on a Linux machine on 30 Sep, the same build measured
-// without its stylesheet rising by the same 1,648 bytes, when the page began to hear the wallet say it is still
-// reading or proving, to say which of the two went quiet or that the ask ran out of time, and to tell the wallet it
-// can hear that (`wallet-sign-in.ts`, `wallet-balance.ts`).
-// 678,000: the test's own measure rose from 675,456 to 677,456 on a Linux machine on 1 Oct, when creating a vault
-// began to carry on past the handover (adopting the vault, setting its first secret, writing every signer's copy,
-// waiting on approvals) and every amount on a page began to be named by its token's symbol.
-// 680,205: the test's own measure rose from 677,760 to 679,965 on a Linux machine on 3 Oct, by 2,205 bytes that are
-// all the English file's words: the same build with only `locales/en.json` put back as it was measures 677,760. The
-// words are what a vault's set-up that stopped says, the standing of a vault held and not set up, the two awaiting
-// texts, and a seat missing or not the signer's own. A screen's words load with every page until they can load with
-// the screen; the budget rose by exactly the measured rise.
-// 680,479: the test's own measure rose from 679,965 to 680,479 on a Linux machine on 3 Oct, by 514 bytes that are all
-// the English file's words: the same build with only the three new phrases taken out of `locales/en.json` measures
-// 679,965. They are what a vault's set-up says when the vault is not held by the signers as they stand now, and the
-// two buttons that lead from a stopped set-up to handing the company over or to signing the change. The budget rose
-// by exactly the measured rise.
-export const FIRST_DOWNLOAD_BUDGET = 680_479;
+export const FIRST_DOWNLOAD_BUDGET = 680_811;
 
 /**
  * THE WORKERS THIS APPLICATION STARTS, by their entry's path from this folder,

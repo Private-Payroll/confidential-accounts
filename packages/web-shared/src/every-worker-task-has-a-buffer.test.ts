@@ -64,6 +64,8 @@ const BARE: Record<string, Record<string, unknown>> = {
   payout: { vault: 'ab'.repeat(32), account: 'cd'.repeat(32), order: {}, payment: {}, note: {}, events: [], chain: {} },
   'payout-publicly': { vault: 'ab'.repeat(32), account: 'cd'.repeat(32), order: {}, payment: {}, chain: {} },
   'governed-call': { account: 'cd'.repeat(32), order: {}, material: {}, chain: {}, opened: {} },
+  'proposal-identity': { change: { kind: 'threshold', threshold: '1' }, salt: '00'.repeat(32) },
+  'company-wide': {},
   'start-standing': { vault: 'ab'.repeat(32), accountState: '', vaultState: '', now: '0' },
   'set-nonce-secret': { vault: 'ab'.repeat(32), account: 'cd'.repeat(32), run: {}, proposal: '00', opensAt: '0', closesAt: '1', chain: {} },
   'write-secret-copy': { vault: 'ab'.repeat(32), run: {}, place: 0, state: '' },

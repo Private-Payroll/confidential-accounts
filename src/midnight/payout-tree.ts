@@ -519,9 +519,9 @@ const assemble = (
       blinding: at(secrets, index, 'payee').blinding,
       nonce: at(secrets, index, 'payee').nonce,
       details: at(payments, index, 'payee').details,
-      /* The tree's own position for this payee: a retry pays over the run's own tree. */
-      leaf: at(tree.leaves, at(originalIndices, index, 'payee'), 'payee'),
-      path: tree.pathFor(at(originalIndices, index, 'payee')),
+      /* The payee's position in this run's own tree: a retry pays over a tree of only the people it names. */
+      leaf: at(tree.leaves, index, 'payee'),
+      path: tree.pathFor(index),
       asset: tree.asset,
     };
   },
@@ -612,12 +612,13 @@ export const buildRun = (
  * It also means a retry can be approved and submitted while the original run is
  * still open, which is what lets a run's window be days rather than minutes.
  *
- * **AND IT IS RAISED OVER THE ORIGINAL RUN'S OWN TREE**, the same root, total
- * and payee count, paying only the people named here. A spending policy charges
- * a run's total to its period once per tree, so a retry over the same tree in
- * the same period is not charged a second time; a retry over a smaller tree of
- * its own would be. The people the original run already paid cannot be paid
- * again through it: the account refuses a leaf it has recorded.
+ * **AND IT IS RAISED OVER A TREE OF ITS OWN, OF ONLY THE PEOPLE NAMED HERE**,
+ * each at the leaf the original run gave them. Its root, total and payee count
+ * are those people's, so an approval of a retry authorises paying them and
+ * nobody else the original run named, and a spending policy charges a retry
+ * its own total. A retry in the same period as its run is charged that total on
+ * top of the run's, which counts the same people's money twice against the
+ * period's limit; it can refuse a retry, and it pays nobody twice.
  *
  * The indices are the ORIGINAL run's — `stillToPay(runStatus(...))` returns
  * exactly this list, read from the chain rather than from anyone's memory, so a
@@ -637,10 +638,11 @@ export const buildRetryRun = (original: PayrollRun, indices: number[]): PayrollR
 
   refuseAMixedRun(indices.map((i) => at(original.facts, i, 'payee')), original.tree.asset);
   const payments = indices.map((i) => at(original.payments, i, 'payee'));
+  const facts = indices.map((i) => at(original.facts, i, 'payee'));
   return assemble(
-    original.tree,
+    buildPayoutTree(payments, facts.map((f) => f.amount), original.tree.asset),
     original.identity,
-    indices.map((i) => at(original.facts, i, 'payee')),
+    facts,
     indices.map((i) => at(original.records, i, 'payee')),
     indices.map((i) => at(original.secrets, i, 'payee')),
     payments,

@@ -9,6 +9,8 @@
  * about them taken on trust. The one value the device takes from the service,
  * the account's asset blinding, is pinned as exactly that.
  */
+import { aRunMadeHere, aLedgerHolding } from './a-run-made-here.test-support.js';
+import { vaultDetails } from '../../../src/testing/vault-details.js';
 import { NO_ASSET } from '../../../src/core/assets.js';
 import { describe, it, expect } from 'vitest';
 import { drawCompanyLabel } from 'midnight-identity/profile/company-label';
@@ -26,7 +28,8 @@ import {
 import { SimulatedLedger } from '../../../src/core/ledger.js';
 import { MidnightCommitments } from '../../../src/midnight/commitments.js';
 import { FileStore } from '../../../src/core/store-file.js';
-import { AccountService } from '../../../src/core/account.js';
+import { AccountService, openAccount } from '../../../src/core/account.js';
+import { signedFoundingRoster } from '../../../src/core/roster-record.js';
 import { newSigningKeypair, newWrappingKeypair, newBlinding, type Hex } from '../../../src/core/crypto.js';
 import { storedSignerLeaf } from '../../../src/core/signer-leaf.js';
 import { sealedProposalFor } from '../../../src/testing/sealed-records.js';
@@ -42,6 +45,10 @@ const accountPure = {
   signerAddPayload: (leaf: Uint8Array) => sha(Buffer.from('seat'), leaf),
   setThresholdPayload: (t: bigint) => sha(Buffer.from('threshold'), t),
   noVault: () => new Uint8Array(32).fill(0xfe),
+  /* What an approval of a run also reads: the pay-record key's commitment and where it is kept. */
+  payKeyCommitmentOf: (key: Uint8Array) => sha(Buffer.from('pay-key-commitment'), key),
+  payKeyCommitmentKey: () => sha(Buffer.from('pay-key-at')),
+  policyOnKeyOf: (vault: Uint8Array) => sha(Buffer.from('policy-on'), vault),
 };
 const bytes = (h: string) => Uint8Array.from(Buffer.from(h, 'hex'));
 const hex = (b: Uint8Array) => Buffer.from(b).toString('hex');
@@ -51,7 +58,9 @@ const chain = { accountState: new Uint8Array([1]), parameters: new Uint8Array([2
 
 const SALT = '66'.repeat(32);
 const LEAF = 'ab'.repeat(32);
-const run = { root: '88'.repeat(32), payees: '3', opensAt: '100', closesAt: '200', vault: '99'.repeat(32) };
+/* A real run of three, made the way the approving device makes it again (`a-run-made-here.test-support.ts`). */
+const RUN_MADE = aRunMadeHere({ opensAt: '100', closesAt: '200' });
+const run = { root: RUN_MADE.root, payees: '3', opensAt: '100', closesAt: '200', vault: '99'.repeat(32) };
 const half = { assetId: '44'.repeat(32), changeAmount: '30000', changeBatchDigest: '77'.repeat(32) };
 const BLINDING = '55'.repeat(32);
 const record = (digest: Uint8Array, vault: Uint8Array, salt = SALT) => ({
@@ -63,8 +72,12 @@ const payloadOf = (g: GovernanceOnTheWire) => (g.kind === 'add-signer'
 const seat = { kind: 'add-signer', leaf: LEAF } as const;
 const three = { kind: 'threshold', threshold: '3' } as const;
 /* What the device opened: the company's own records of a run, a seat and a threshold change. */
+/* The run as the approving device made it again: here the honest case, the run the record names (`what-this-device-made.ts`). */
+const MADE = RUN_MADE.made;
 const RUN: OpenedRound = {
   ...record(accountPure.runPayload(bytes(run.root), 3n, 100n, 200n), bytes(run.vault)), half,
+  /* A run is raised only as this device made it again, with what the company's records account for on the chain. */
+  made: { ...RUN_MADE.made, raising: { period: '2026-09', knownRounds: [], knownLeaves: [], knownNonces: [] } },
 };
 const SEAT: OpenedRound = { ...record(payloadOf(seat), accountPure.noVault()), governance: seat, half: { ...half, changeAmount: '0' } };
 const THREE: OpenedRound = { ...record(payloadOf(three), accountPure.noVault()), governance: three, half: { ...half, changeAmount: '0' } };
@@ -79,7 +92,7 @@ const approveSeat: GovernedCallOrder = { circuit: 'approve', proposal: SEAT.chai
 const seatIt: GovernedCallOrder = { circuit: 'amendSigner', leaf: LEAF, proposal: SEAT.chainId, proposalSalt: SALT };
 const setIt: GovernedCallOrder = { circuit: 'setThreshold', threshold: '3', proposal: THREE.chainId, proposalSalt: SALT };
 
-const depsWith = (log: string[]): GovernedCallDeps => ({
+const depsWith = (log: string[], raising = false): GovernedCallDeps => ({
   ledger: {
     ZswapSecretKeys: { fromSeed: () => ({ coinPublicKey: 'cpk', encryptionPublicKey: 'epk', clear: () => {} }) },
     ZswapChainState: class { },
@@ -95,6 +108,11 @@ const depsWith = (log: string[]): GovernedCallDeps => ({
     },
   },
   accountCompiled: 'COMPILED', accountZkConfig: 'ZK', accountPure,
+  /* The chain holds every proposal asked about open. */
+  /* The chain holds every proposal open for an approval, and none yet for a raise. */
+  accountLedger: () => aLedgerHolding(accountPure.payKeyCommitmentKey(), accountPure.payKeyCommitmentOf(bytes(RUN_MADE.made.payKey)),
+    raising ? 'none' : 'every proposal'),
+  vaultDetails,
   prove: async () => { log.push('proved'); return { serialize: () => new Uint8Array([9]) }; },
   random: (n) => new Uint8Array(n).fill(7),
 });
@@ -111,19 +129,35 @@ const noHalf = (o: OpenedRound): OpenedRound => { const { half: _h, ...r } = o; 
 describe('THE BUILDER PROVES ONLY WHAT THIS DEVICE READ', () => {
   it('4. an honest service is built for every call a device makes: raise, approve, seat and threshold', async () => {
     for (const [order, opened] of [
-      [raiseRun, RUN], [approveRun, noHalf(RUN)], [raiseSeat, SEAT], [approveSeat, noHalf(SEAT)], [seatIt, noHalf(SEAT)],
+      [raiseRun, RUN], [approveRun, { ...noHalf(RUN), made: MADE }], [raiseSeat, SEAT], [approveSeat, noHalf(SEAT)], [seatIt, noHalf(SEAT)],
       [setIt, noHalf(THREE)],
     ] as Array<[GovernedCallOrder, OpenedRound]>) {
       const log: string[] = [];
       /* RED WHEN: the check refuses a call whose every value is the company's own - an honest company then cannot act. */
-      await buildGovernedCall(depsWith(log), { account: ACCOUNT, order, material, chain, opened });
+      await buildGovernedCall(depsWith(log, order === raiseRun), { account: ACCOUNT, order, material, chain, opened });
       expect(log.filter((l) => !l.startsWith('with')), order.circuit).toEqual([`built ${order.circuit}`, 'proved']);
     }
   });
 
+  it('AN APPROVAL OF A RUN IS NOT BUILT UNLESS THIS DEVICE MADE THE RUN AGAIN, AND ONE OF A SEAT NEEDS NOTHING MADE', async () => {
+    const log: string[] = [];
+    /* RED WHEN: an approval of a run is built for a record this device only opened and did not make again. */
+    const { made: _made, ...onlyOpened } = noHalf(RUN);
+    await expect(buildGovernedCall(depsWith(log), { account: ACCOUNT, order: approveRun, material, chain, opened: onlyOpened }))
+      .rejects.toThrow(/did not rebuild what this proposal pays/u);
+    /* RED WHEN: the run it made is not the one the record commits to, and the approval is built anyway. */
+    await expect(buildGovernedCall(depsWith(log), {
+      account: ACCOUNT, order: approveRun, material, chain, opened: { ...noHalf(RUN), made: { ...MADE, facts: MADE.facts.map((f, i) => (i === 0 ? { ...f, amount: f.amount + 1n } : f)) } },
+    })).rejects.toThrow(/is not what this device rebuilt/u);
+    expect(log.filter((l) => l.startsWith('built') || l === 'proved')).toEqual([]);
+    /* RED WHEN: an approval of a seat is asked for a run made again, which it has none of. */
+    await buildGovernedCall(depsWith(log), { account: ACCOUNT, order: approveSeat, material, chain, opened: noHalf(SEAT) });
+    expect(log.filter((l) => l.startsWith('built') || l === 'proved')).toEqual(['built approve', 'proved']);
+  });
+
   it('A RAISE IS PROVED WITH THE SALT READ HERE AND THE BLINDING THE SERVICE SENT, AND NO OTHER', async () => {
     const log: string[] = [];
-    await buildGovernedCall(depsWith(log), { account: ACCOUNT, order: raiseRun, material, chain, opened: RUN });
+    await buildGovernedCall(depsWith(log, true), { account: ACCOUNT, order: raiseRun, material, chain, opened: RUN });
     /* RED WHEN: the blinding stops being the service's, or the salt stops being the sealed one - either is then undocumented. */
     expect(log).toContain('with blinding 5555 salt 6666');
   });
@@ -228,11 +262,16 @@ const lateSeat = accounts.acceptSignerInvite(invite.token, 'usr_late', late.publ
   proveSeatKeys(newSeatInvitation(viewingKey, company, 'Late', 'approver'), lateKeys));
 const seatRound = await accounts.seatRound(company, viewingKey, lateSeat.id, ada.signerId);
 const thresholdRound = await accounts.thresholdRound(company, viewingKey, 2, ada.signerId);
+/* A device reads the signers only from a roster record a seat filed: Ada's seat files the company's, as it stands. */
+const roster = (() => {
+  const { name, signers } = openAccount(accounts.require(company), viewingKey as Hex, null);
+  return signedFoundingRoster(company, { name, signers }, viewingKey as Hex, ada.signingSecret as Hex);
+})();
 
 /** The company's records, served as they are stored - the service a device reads them through - with any extra given. */
 const honest = (extra: ReturnType<typeof sealedProposalFor>[] = []): GovernedCallService => ({
   sealedProposals: async (id: string) => [...store.listProposals(id), ...extra],
-  sealedAccount: async (id: string) => accounts.require(id),
+  sealedAccount: async (id: string) => ({ ...accounts.require(id), roster }),
 } as unknown as GovernedCallService);
 const aRecord = (id: string, over: Partial<Parameters<typeof sealedProposalFor>[2]> = {}, forCompany = company) =>
   sealedProposalFor(forCompany, viewingKey, { id, chainId: 'cc'.repeat(32), salt: SALT, ...over });
@@ -270,7 +309,10 @@ describe('THE PAGE READS THE COMPANY\'S OWN RECORDS WITH THE VIEWING KEY', () =>
     ['a record with no salt sealed in it', 'prp_x', [aRecord('prp_x', { payload: { __change: undefined } })],
       /record is incomplete, so this device cannot check it\. Withdraw the proposal and raise it again\./u],
     ['a seat for somebody not on the roster', 'prp_x', [aRecord('prp_x', { kind: 'add-signer', payload: { signerId: 'sgn_nobody' } })],
-      /not on the company's list of signers\. Withdraw this proposal, then grant access again\./u],
+      /not waiting for a seat on the company's list of signers\. Withdraw this proposal, then grant access again\./u],
+    /* RED WHEN: a seat is raised or approved at a leaf read from a roster entry, which any seat files whole, instead of a waiting person's proof. */
+    ['a seat for somebody already on the roster', 'prp_x', [aRecord('prp_x', { kind: 'add-signer', payload: { signerId: created.secrets[1]!.signerId } })],
+      /not waiting for a seat on the company's list of signers\. Withdraw this proposal, then grant access again\./u],
     ['a threshold change that names no threshold', 'prp_x', [aRecord('prp_x', { kind: 'set-threshold' })],
       /does not say how many approvals it requires/u],
     ['a record another company wrote, in this company\'s list', 'prp_x', [aRecord('prp_x', {}, 'acc_other')],
@@ -290,8 +332,14 @@ describe('THE PAGE READS THE COMPANY\'S OWN RECORDS WITH THE VIEWING KEY', () =>
 
   it('a payroll run in a real asset is opened as one: only the run in no asset is refused', async () => {
     /* RED WHEN: the refusal of a vault's set-up step catches every payroll run. */
-    const opened = await openTheRoundHere(honest([aRecord('prp_pay', { asset: '44'.repeat(32) })]), company, 'prp_pay', viewingKey, false);
-    expect(opened.chainId).toBe('cc'.repeat(32));
+    const asRaise = await openTheRoundHere(honest([aRecord('prp_pay', { asset: '44'.repeat(32) })]), company, 'prp_pay', viewingKey, true)
+      .catch((e: Error) => e);
+    expect((asRaise as Error).message).not.toMatch(/sets up one of the company's vaults/u);
+    /* RED WHEN: a payroll run is opened for a raise without the company's records it is made again from and checked against. */
+    expect((asRaise as Error).message).toMatch(/cannot read the company's records a payroll run is checked against, so it cannot raise one/u);
+    /* RED WHEN: a payroll run is opened for an approval without the company's records it is made again from. */
+    await expect(openTheRoundHere(honest([aRecord('prp_pay', { asset: '44'.repeat(32) })]), company, 'prp_pay', viewingKey, false))
+      .rejects.toThrow(/cannot read the company's records a payroll run is checked against/u);
   });
 
   it('is not built from a record this company\'s key does not open, or when the page cannot read the records at all', async () => {
@@ -301,6 +349,9 @@ describe('THE PAGE READS THE COMPANY\'S OWN RECORDS WITH THE VIEWING KEY', () =>
       .rejects.toThrow(/^This page cannot read the company's records/u);
     await expect(openTheRoundHere({ ...honest(), sealedAccount: undefined } as GovernedCallService, company, seatRound.id, viewingKey, false))
       .rejects.toThrow(/^This page cannot read the company's list of signers/u);
+    /* RED WHEN: a seat is opened from the signers on the account record, which no seat signed, when the company has no roster record. */
+    await expect(openTheRoundHere({ ...honest(), sealedAccount: async (id: string) => accounts.require(id) } as GovernedCallService, company, seatRound.id, viewingKey, false))
+      .rejects.toThrow(/never been filed as a record a seat signed/u);
   });
 });
 
@@ -308,23 +359,21 @@ describe('3. WHAT THE PERSON IS SHOWN AND WHAT THE DEVICE PROVES COME FROM THE S
   const doorsOver = (built: Array<{ order: GovernedCallOrder; opened: OpenedRound }>): GovernedCallDoors => ({
     service: {
       ...honest(),
-      /* Open when the approval is asked for, approved once it is sent. */
-      standing: async () => ({ id: seatRound.id, chainId: seatRound.chainId, status: built.length ? 'approved' : 'open' }),
+      /* No approval counted when the approval is asked for, one once it is sent. */
+      standing: async () => ({ id: seatRound.id, chainId: seatRound.chainId, status: 'open', approvalCount: built.length ? 1 : 0 }),
       callState: async () => ({ account: 'ac'.repeat(32), blockHash: 'b', accountState: 'AS', parameters: 'PP' }),
-      approve: async () => ({ id: seatRound.id, chainId: seatRound.chainId, status: 'approved' }),
+      approve: async () => ({ id: seatRound.id, chainId: seatRound.chainId, status: 'open', approvalCount: 1 }),
     } as unknown as GovernedCallService,
     builder: { governedCall: async ({ order, opened }) => { built.push({ order, opened }); return { tx: 'TX' }; } },
     material, accountId: company, sleep: async () => {}, waitMs: 2, everyMs: 1,
   });
   const shown = { id: seatRound.id, chainId: seatRound.chainId, status: 'open', summary: seatRound.summary };
 
-  it('the approval is proved for the identity of the record read here, and that record says what the page showed', async () => {
+  it('a seat, opened here as the record the page showed, is not approved by the plain approval: it is approved where it is made', async () => {
     const built: Array<{ order: GovernedCallOrder; opened: OpenedRound }> = [];
-    await approveOnDevice(doorsOver(built), { round: shown, signerId: ada.signerId, signature: 'SIG', viewingKey });
-    expect(built).toHaveLength(1);
-    /* RED WHEN: the identity proved, or the summary shown, is anything but the one record's this device read. */
-    expect(built[0]!.order).toEqual({ circuit: 'approve', proposal: built[0]!.opened.chainId });
-    expect(built[0]!.opened.summary).toBe(shown.summary);
+    /* RED WHEN: a change to the company is approved without the checks made where it is made - who is seated, and that no vault is left short. */
+    await expect(approveOnDevice(doorsOver(built), { round: shown, viewingKey })).rejects.toThrow(/approved where it is made/u);
+    expect(built).toEqual([]);
   });
 
   it.each([
@@ -337,7 +386,7 @@ describe('3. WHAT THE PERSON IS SHOWN AND WHAT THE DEVICE PROVES COME FROM THE S
     /* The service's own answer agrees with the page, so only the record read here can catch it. */
     (doors.service as any).standing = async () => round;
     /* RED WHEN: a device approves a record other than the one whose words the person read. */
-    await expect(approveOnDevice(doors, { round, signerId: ada.signerId, signature: 'SIG', viewingKey })).rejects.toThrow(says);
+    await expect(approveOnDevice(doors, { round, viewingKey })).rejects.toThrow(says);
     expect(built).toEqual([]);
   });
 });

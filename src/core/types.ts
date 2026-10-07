@@ -160,6 +160,14 @@ export interface Signer {
   wrappingPublicKey: Hex;
   role: Role;
   /**
+   * **WHAT THIS SEAT MAY APPROVE, AND ON WHICH VAULTS**, as the company recorded
+   * it when the seat was made. Absent is every right on every vault, which is
+   * how every seat is made today: its leaf is made under the scope of all
+   * vaults. A signer's device counts these before it approves a change of who
+   * may approve (`vault-approvers.ts`).
+   */
+  rights?: import('./vault-approvers.js').SeatRights;
+  /**
    * The two public keys this signer gave for the company's vaults, signed with
    * this entry's own signing key. Absent until they give them. The roster is
    * the only record of whose they are. `recordsKeyStatement` is the signer's
@@ -170,6 +178,16 @@ export interface Signer {
   vaultKeys?: {
     committeeKey: { tag: string; value: string }; recordsKey: Hex; signature: Hex;
     recordsKeyStatement?: Hex | null; recordsKeySeat?: Hex | null;
+  } | null;
+  /**
+   * The directory entry this signer's own wallet signed for their seat, kept
+   * in their roster entry when their vault keys are folded in. A device holds
+   * the entry's signing key to it while the company's directory has no entry
+   * for that seat yet. Absent until then.
+   */
+  directoryEntry?: {
+    committeeKey: { tag: string; value: string };
+    statement: import('midnight-identity/profile/records-key').DirectoryEntryStatement;
   } | null;
   /*
    * `blinding` USED TO BE HERE, AND IT WAS TAKEN BACK OUT. Read this before
@@ -388,6 +406,13 @@ export interface PendingSignerPayload {
    * `seat-invite-proof.ts`. Absent means refused there, not trusted.
    */
   seatProof?: { nonce: Hex; proof: Hex };
+  /**
+   * **THE SIGN-IN THIS SEAT REQUEST IS FOR**, sealed with it: the joiner's own,
+   * from the device that accepted a link, or the one their own wallet signed
+   * into the code a seat pasted. The device that seats them holds the sign-in
+   * the company would make a member to it. Absent is refused there.
+   */
+  person?: string;
   /*
    * No `blinding`. See `Signer` above: one was needed here so a removal could
    * re-seat this person later, and the re-seating is gone, so the invitee's
@@ -445,8 +470,12 @@ export interface SealedAccount {
    * without re-sealing every account — which is precisely the cost the subkey
    * decision was taken to avoid.
    */
-  /** name, signers[]. */
-  sealedRoster: Sealed;
+  /**
+   * name, signers[]. **Absent once the company's signers are its `roster`
+   * record** (`roster-record.ts`): its first version moves them off this record
+   * in the same write, so they are never held twice.
+   */
+  sealedRoster?: Sealed;
   /** policy, recovery. */
   sealedPolicy: Sealed;
   /**
@@ -775,7 +804,25 @@ export interface SealedProposal {
   txRef?: string;
   /** How many approvals, without saying whose. Mirrors the chain's own count. */
   approvalCount: number;
+  /**
+   * **WHEN THE CHAIN WAS FIRST SEEN TO HOLD THIS PROPOSAL.** Public on the chain
+   * the moment it lands, so kept outside the envelope, where a relay that holds
+   * no key can write it. A record written before it moved out carries it sealed.
+   */
+  raisedAt?: string;
   keyEpoch: number;
+  /**
+   * **THE SEAT THAT WROTE THIS PROPOSAL DOWN, BY ITS SIGNATURE**, for a proposal
+   * a signer's device sealed and filed (`proposal-filing.ts`): checked against
+   * the company's directory when it is filed, and by every device that reads it.
+   * Absent on one this service wrote down itself.
+   */
+  filedBy?: { publicKey: Hex; signature: Hex };
+  /**
+   * **WHAT A PAYROLL PROPOSAL A DEVICE FILED COMMITS TO PAYING** - a hash made
+   * with the proposal's sealed salt, part of what its filing signature covers.
+   */
+  pays?: Hex;
   /** kind, summary, sealedPayload, proposedBy, approvals[], blockedReason. */
   sealed: Sealed;
   /**
@@ -1408,6 +1455,12 @@ export interface SealedRun {
    * more than one ledger together rather than guess which of them settled.
    */
   wiring?: WiringName | null;
+  /**
+   * **THE SEAT THAT FILED THIS VERSION OF THE RUN, FROM ITS OWN DEVICE**: its
+   * signing key and its signature over the run as kept (`run-filing.ts`).
+   * Absent on a run the service drew itself.
+   */
+  filedBy?: { publicKey: string; signature: string };
 }
 
 /**

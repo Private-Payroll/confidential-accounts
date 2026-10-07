@@ -41,7 +41,7 @@ const directory = (o: { seats?: string[]; committee?: (typeof ADA.committeeKey)[
   accountId: CO, label: LABEL,
   filings: async () => [ADA.claim(1), BO.claim(2), CY.claim(3)],
   holders: async () => ({
-    account: ACCOUNT, approvals: 1, threshold: 1, adoptedVaults: [VAULT],
+    account: ACCOUNT, approvals: 1, threshold: 1, adoptedVaults: [VAULT], founding: ADA.seat, foundingCommittee: [ADA.committeeKey],
     seats: o.seats ?? [ADA.seat, BO.seat, CY.seat], committee: o.committee ?? [ADA.committeeKey, BO.committeeKey, CY.committeeKey],
   }),
   attested: async () => o.attested ?? [ADA.attested, BO.attested, CY.attested],

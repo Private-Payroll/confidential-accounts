@@ -27,7 +27,7 @@ const LABEL = `co_${'c1'.repeat(32)}` as CompanyLabel;
 const ACCOUNT = 'ac'.repeat(32) as never;
 
 describe('THE VAULT IS ONE ITS COMPANY\'S ACCOUNT ADOPTED, AS THE SIGNER\'S OWN WALLET READS THE CHAIN', () => {
-  const holders = { committee: [{ tag: 'schnorr', value: '11'.repeat(32) }], threshold: 2, seats: ['4a'.repeat(32)], approvals: 1, adoptedVaults: [VAULT as string] };
+  const holders = { committee: [{ tag: 'schnorr', value: '11'.repeat(32) }], threshold: 2, seats: ['4a'.repeat(32)], approvals: 1, adoptedVaults: [VAULT as string], founding: '4a'.repeat(32), foundingCommittee: [{ tag: 'schnorr', value: '11'.repeat(32) }] };
   const read: VaultAsTheWalletRead = { holders };
   const doors = (over: { read?: () => Promise<VaultAsTheWalletRead> } = {}) => ({ onChain: over.read ?? (async () => read) });
 
@@ -63,7 +63,7 @@ const filings: DirectoryFiling[] = [ADA, BO].map((s, i) => {
     change: { kind: 'claim', entry: { person: s.person, committeeKey: s.committeeKey, statement: signDirectoryEntry(identity, LABEL, ACCOUNT, s.companyKey, s.signing.publicKey, s.seat) } },
   };
 });
-const seatsNow = (...seated: Signer[]): AccountHoldersRead => ({ committee: [ADA, BO].map((s) => s.committeeKey), threshold: 2, seats: seated.map((s) => s.seat), approvals: 1, adoptedVaults: [], account: ACCOUNT });
+const seatsNow = (...seated: Signer[]): AccountHoldersRead => ({ committee: [ADA, BO].map((s) => s.committeeKey), threshold: 2, seats: seated.map((s) => s.seat), approvals: 1, adoptedVaults: [], founding: ADA.seat, foundingCommittee: [ADA.committeeKey], account: ACCOUNT });
 /** The records route, in memory, as the page's store reaches it. */
 const routeOver = (kept: Map<WireRecord, MemorySealedPoolStore>): WireSend => async (path, init) => {
   const m = path.match(/\/api\/vaults\/([0-9a-f]{64})\/records\/([a-z-]+)(?:\/(versions|\d+))?$/u)!;

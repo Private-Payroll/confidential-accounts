@@ -12,8 +12,7 @@ import { handedInFundedParties } from '../wiring/handed-in-wallets.js';
 import { handedInWiring } from '../wiring/handed-in.js';
 import { AccountService, CompanyLabelTaken, NotACompanyLabel } from '../core/account.js';
 import { readCompanyLabel } from 'midnight-identity/profile/company-label';
-import { PayrollService, RecordingInviteDelivery, canonicalPeriod } from '../core/payroll.js';
-import { runLegOf, type RunLegChoice } from '../core/payroll.js';
+import { PayrollService, RecordingInviteDelivery } from '../core/payroll.js';
 import { IdentityService, TooManyAttempts, StaleKeyBundle } from '../core/identity.js';
 import {
   WalletIdentityService, WalletSignInError, walletSignInOrigin,
@@ -33,7 +32,8 @@ import {
   countProvenance, decideList, refuseSelectionOver, refuseSelectionOverHistory,
   type ListVerdict, type Marked,
 } from '../core/provenance.js';
-import { assets as assetRegistry, parseAmount } from '../core/assets.js';
+import { assets as assetRegistry, type AssetId, type LedgerForm } from '../core/assets.js';
+import { refuseWhatTheVaultCannotPay } from '../core/vault-holdings.js';
 import { bigintJsonReplacer, wrapKey } from '../core/crypto.js';
 import { payslipProofSubject } from '../core/payslip-open.js';
 import { PAGE_OUT_OF_DATE, PAYSLIP_PAGE_HEADER, isCurrentPayslipPage } from '../core/payslip-page.js';
@@ -44,16 +44,6 @@ import {
 import type { Hex } from '../core/crypto.js';
 import { theNetwork } from '../midnight/network.js';
 import { NothingWasSent, saysNothingWasSent } from '../core/jobs.js';
-import { roundForADevice } from './governance-wire.js';
-import {
-  DEVICE_RAISE_VERSION, DIGEST_SHAPE, RAISE_IS_NOT_WHAT_WAS_CHECKED, RAISE_NAMES_NOTHING_CHECKED,
-  SEND_IS_NOT_WHAT_WAS_CHECKED, paymentChecked, paymentsCheckedDigest, paymentsOnTheWire, reloadThePage,
-} from '../core/device-raise.js';
-import { runPayments } from '../midnight/run-status.js';
-import { buildRun, buildRetryRun, rootOfPayments } from '../midnight/payout-tree.js';
-import { vaultDetailsOf } from '../midnight/vault-details.js';
-import { assemblePrivatePayments } from '../midnight/private-payment-wire.js';
-import { runMaterialFor, retryMaterialFor } from '../midnight/run-material.js';
 import { loadEnvFile } from '../db/connect.js';
 import { appendWebConsole, webConsoleLogPath } from './web-console-log.js';
 /* `C157` — every refusal this service makes, kept. See `wrap` below. */
@@ -63,15 +53,20 @@ import {
   type VaultAccountReader,
 } from './vault-records-authority.js';
 import { openCompanyRecords, openVaultRecords, refuseVaultsTheOperatorToolsKeep } from '../db/vault-records.js';
-import { companyRecordsRoutes, MemoryCompanyRecordStore, withPeopleIn } from './company-records-route.js';
+import { companyRecordsRoutes, MemoryCompanyRecordStore, movePeopleToTheirRecords, withTheRosterIn } from './company-records-route.js';
 import { invitationRoutes } from './invitations-route.js';
-import { peopleRoutes } from './people-route.js';
+import { ownsPersonIn, peopleRoutes } from './people-route.js';
+import { proposalRelayRoutes } from './proposal-relays.js';
+import { runRoutes } from './run-routes.js';
+import { signerRoutes } from './signer-routes.js';
 import { MemorySealedPoolStore, type SealedPoolStore } from '../midnight/vault-pool.js';
-import type { CompanyRecordStore, WireRecord } from '../midnight/sealed-record-wire.js';
+import type { CompanyRecordStore, PeopleRecords, WireRecord } from '../midnight/sealed-record-wire.js';
 import { aCompanyCreatedOnTheLedger, accountCreationRoutes } from './account-creation.js';
 import { companyVaultRoutes, type VaultChain } from './company-vaults.js';
-import { directoryOf, filerSeatNow, seatDirectoryRoutes, type DirectoryChainRead } from './seat-directory-route.js';
-import { readContractAuthority } from '../midnight/ledger.js';
+import {
+  directoryChainFromTheContract, directoryOf, filerSeatNow, seatDirectoryRoutes, type AccountHolds, type DirectoryChainRead,
+} from './seat-directory-route.js';
+import { ledger as readAccountLedger } from '../../contracts/managed/contract/index.js';
 import { vaultArtefactPlaces, vaultArtefactRoutes } from './vault-artefacts.js';
 import { parameterSources, startProvingParameters } from './proving-parameters.js';
 import {
@@ -79,6 +74,7 @@ import {
   vaultVerifierKeysIn,
 } from './vault-chain.js';
 import { DEPLOYED_CIRCUITS } from '../midnight/deferral.js';
+import { MidnightCommitments } from '../midnight/commitments.js';
 import { readProvenTransaction, readFinishedTransaction } from '../wiring/proven-submission.js';
 
 /**
@@ -122,44 +118,7 @@ loadEnvFile();
  */
 const NETWORK = theNetwork();
 
-/**
- * How an amount crosses the HTTP boundary.
- *
- * A DECIMAL STRING PLUS THE ASSET'S TOKEN, never a JSON number, and both halves
- * of that are load-bearing.
- *
- * A JSON number cannot carry these values. Amounts are integers in the asset's
- * smallest unit, so one whole unit of an 18-decimal token is 10^18, past
- * `Number.MAX_SAFE_INTEGER`, and `JSON.parse` would round it silently on the
- * way in. It is also the wrong thing to ask a person for: nobody types
- * 5000000000 meaning five thousand tUSD.
- *
- * So the wire carries what a human wrote — `"5000.00"` — and the registry's
- * decimals turn it into an integer HERE, at the edge, once. `parseAmount`
- * refuses thousands separators, exponents, signs and more decimal places than
- * the asset has, so a request that would have been rounded is a 400 with a
- * sentence rather than a payslip that is quietly wrong.
- */
-const assetCode = z.string().regex(/^[0-9a-f]{64}$/u, 'an asset is its ledger token: 64 lower-case hex characters');
 
-/*
- * **WHICH LEG OF A RUN A REQUEST IS ABOUT: A TOKEN, AND THE FORM WHERE THE RUN
- * PAYS THAT TOKEN IN BOTH.** One run pays one token in one form, so a payroll
- * with private and public payees has two legs, each its own approval round.
- * Both are optional where the run has one leg; a form on its own names nothing.
- */
-const legForm = z.enum(['shielded', 'unshielded']);
-
-const legChoiceOf = (b: { asset?: string; form?: 'shielded' | 'unshielded' }): RunLegChoice | undefined => {
-  if (b.form !== undefined && b.asset === undefined) {
-    throw new Error('a form names a leg only beside the token it is a form of. Send the token as well.');
-  }
-  if (b.asset === undefined) return undefined;
-  return b.form === undefined ? b.asset : runLegOf(b.asset, b.form);
-};
-
-const money = (asset: string, amount: string): bigint =>
-  parseAmount(amount, assetRegistry.require(asset));
 
 const DATA = process.env.DATA_PATH ?? join(process.cwd(), '.data', 'beta.json');
 
@@ -314,48 +273,6 @@ const chosen = handed ?? startup.wiring;
 }
 const ledger = chosen.createLedger();
 const proofs = chosen.createProofSystem();
-/*
- * **WHAT A VAULT HOLDS, WIRED, SO THAT A ROUND THAT MOVES MONEY IS REFUSED FOR
- * A REASON ABOUT THE MONEY RATHER THAN ABOUT THIS SERVICE.**
- *
- * Without it every such round is refused before it is raised, by a reader that
- * answers nothing - which is the correct default for a service that might not
- * be able to see a chain, and the wrong answer for one that can. This process
- * resolved a deployment, so it can.
- *
- * **IT DOES NOT ANSWER PRIVATE MONEY, AND A PAYROLL RUN IS ALL PRIVATE.** The
- * reader answers public money only. A private payment is checked on the
- * signer's device that raises the proposal, against the vault's pool that device
- * opens, before it asks for the raise; this service then asks only about the
- * public money on that round. A round this service would send itself is still
- * asked about both, so a private payment on it is refused, as before.
- *
- * **WHAT IT WIDENS, EXACTLY.** A reader that answers nothing refuses every
- * round that moves money. This one refuses on what the chain says, so a round
- * whose payees are all PUBLIC and whose total the vault's public balance covers
- * is now raised where it was previously stopped. Every other answer this
- * reader gives - the chain unreadable, a read that failed, a private balance
- * this service cannot see - is still a refusal to raise.
- *
- * The asset registry is named rather than skipped because the reader is the
- * argument after it and there is no way to pass the fifth without the fourth.
- * It is the same registry the constructor's default supplies, and it is the one
- * this file already holds.
- */
-const holdings = holdingsFor(startup);
-const accounts = new AccountService(
-  store, ledger, chosen.commitments, assetRegistry, holdings);
-/**
- * Where employee invites go. A-10.
- *
- * **This is not a mailer**, and the product does not have one yet — it keeps
- * what it was given so a development console can show it. What matters is the
- * shape: `invite()` hands the token here and not back to whoever raised it, so
- * an operator cannot redeem an invite they raised. Replacing this with real
- * email changes one line and nothing else.
- */
-const invites = new RecordingInviteDelivery();
-const payroll = new PayrollService(store, accounts, undefined, NETWORK, invites);
 
 /*
  * SESSIONS AND THE LIMITER COME FROM POSTGRES, AND THE SERVER REFUSES TO START
@@ -430,6 +347,83 @@ if (DATABASE_URL) {
   );
   process.exit(1);
 }
+
+const sqlForRecordsOfCompanies = recordsSql;
+/*
+ * A COMPANY'S OWN SEALED RECORDS, filed by its seats: kept as a vault's are, in the database when there is one,
+ * and opened at the first request for the same reason.
+ */
+const companyRecords: CompanyRecordStore & PeopleRecords = sqlForRecordsOfCompanies
+  ? (() => {
+    let opened: Promise<CompanyRecordStore & PeopleRecords> | null = null;
+    const db = () => {
+      if (opened === null) { opened = openCompanyRecords(sqlForRecordsOfCompanies); opened.catch(() => { opened = null; }); }
+      return opened;
+    };
+    return {
+      get: async (c, k, i) => (await db()).get(c, k, i),
+      versions: async (c, k, i) => (await db()).versions(c, k, i),
+      at: async (c, k, i, v) => (await db()).at(c, k, i, v),
+      put: async (r) => (await db()).put(r),
+      peopleOf: async (c) => (await db()).peopleOf(c),
+      companyOfPerson: async (i) => (await db()).companyOfPerson(i),
+    };
+  })()
+  : new MemoryCompanyRecordStore();
+/* A company's roster is kept in the main store, beside the account record that reads its signers (`withTheRosterIn`). */
+const companyRecordStore = withTheRosterIn(store, companyRecords);
+/*
+ * A company's people are kept with its other records. Anyone the main store still holds from before is moved there
+ * first, one person at a time, and the service does not start while one cannot be.
+ */
+{
+  const moved = await movePeopleToTheirRecords(store, companyRecords);
+  if (moved > 0) console.log(`moved ${moved} people from the main store to the company records store`);
+}
+
+/*
+ * **WHAT A VAULT HOLDS, WIRED, SO THAT A ROUND THAT MOVES MONEY IS REFUSED FOR
+ * A REASON ABOUT THE MONEY RATHER THAN ABOUT THIS SERVICE.**
+ *
+ * Without it every such round is refused before it is raised, by a reader that
+ * answers nothing - which is the correct default for a service that might not
+ * be able to see a chain, and the wrong answer for one that can. This process
+ * resolved a deployment, so it can.
+ *
+ * **IT DOES NOT ANSWER PRIVATE MONEY, AND A PAYROLL RUN IS ALL PRIVATE.** The
+ * reader answers public money only. A private payment is checked on the
+ * signer's device that raises the proposal, against the vault's pool that device
+ * opens, before it asks for the raise; this service then asks only about the
+ * public money on that round. A round this service would send itself is still
+ * asked about both, so a private payment on it is refused, as before.
+ *
+ * **WHAT IT WIDENS, EXACTLY.** A reader that answers nothing refuses every
+ * round that moves money. This one refuses on what the chain says, so a round
+ * whose payees are all PUBLIC and whose total the vault's public balance covers
+ * is now raised where it was previously stopped. Every other answer this
+ * reader gives - the chain unreadable, a read that failed, a private balance
+ * this service cannot see - is still a refusal to raise.
+ *
+ * The asset registry is named rather than skipped because the reader is the
+ * argument after it and there is no way to pass the fifth without the fourth.
+ * It is the same registry the constructor's default supplies, and it is the one
+ * this file already holds.
+ */
+const holdings = holdingsFor(startup);
+/* The sixth is where a company's signed state record is read: the only copy of the state a device founded. */
+const accounts = new AccountService(
+  store, ledger, chosen.commitments, assetRegistry, holdings, companyRecordStore);
+/**
+ * Where employee invites go. A-10.
+ *
+ * **This is not a mailer**, and the product does not have one yet — it keeps
+ * what it was given so a development console can show it. What matters is the
+ * shape: `invite()` hands the token here and not back to whoever raised it, so
+ * an operator cannot redeem an invite they raised. Replacing this with real
+ * email changes one line and nothing else.
+ */
+const invites = new RecordingInviteDelivery();
+const payroll = new PayrollService(store, accounts, undefined, NETWORK, invites);
 
 const challenges = new MemoryChallengeStore();
 /* Its own store, so a value sealed for a payslip proof can never be spent as a sign-in. */
@@ -563,18 +557,10 @@ app.use(cors());
    * asked about, and its approval threshold. Every seat directory this server believes is replayed against it. A
    * test that hands in a simulated ledger hands in this read with it (`handInWiring`); nothing shipped can.
    */
-  const directoryChain: DirectoryChainRead = handed?.directoryChain ?? (async (accountId, seats) => {
-    const [address, status] = await Promise.all([ledger.address(accountId), ledger.status(accountId)]);
-    if (!address || !status) return null;
-    const read = await readContractAuthority((a) => theChain.contractState(a as Hex), address.value);
-    if (read.state === 'absent') return null;
-    if (read.state !== 'read') throw new Error(read.why);
-    const held: string[] = [];
-    for (const seat of seats) if ((await ledger.holdsSigner?.(accountId, seat as Hex)) === true) held.push(seat);
-    return {
-      seats: { committee: read.authority.committee.map((k) => ({ tag: k.tag, value: k.value.toLowerCase() })), threshold: read.authority.threshold, seats: held },
-      approvals: status.threshold,
-    };
+  const directoryChain: DirectoryChainRead = handed?.directoryChain ?? directoryChainFromTheContract({
+    addressOf: async (accountId) => (await ledger.address(accountId))?.value ?? null,
+    contractState: (address) => theChain.contractState(address as Hex),
+    readLedger: (data) => readAccountLedger(data as never) as unknown as AccountHolds,
   });
   const directoryNow = (accountId: string) => directoryOf(store, directoryChain, accountId);
   /* `authed` is defined further down; it is looked up when a request arrives, by which time it is. */
@@ -585,27 +571,6 @@ app.use(cors());
       typeof filerSeatNow(await directoryNow(companyId), person, filer, record) !== 'string',
   });
 
-  /*
-   * A COMPANY'S OWN SEALED RECORDS, filed by its seats: kept as a vault's are, in the database when there is one,
-   * and opened at the first request for the same reason.
-   */
-  const companyRecords: CompanyRecordStore = sqlForRecords
-    ? (() => {
-      let opened: Promise<CompanyRecordStore> | null = null;
-      const db = () => {
-        if (opened === null) { opened = openCompanyRecords(sqlForRecords); opened.catch(() => { opened = null; }); }
-        return opened;
-      };
-      return {
-        get: async (c, k, i) => (await db()).get(c, k, i),
-        versions: async (c, k, i) => (await db()).versions(c, k, i),
-        at: async (c, k, i, v) => (await db()).at(c, k, i, v),
-        put: async (r) => (await db()).put(r),
-      };
-    })()
-    : new MemoryCompanyRecordStore();
-  /* A company's people are kept in the main store, beside the payroll code that reads them (`withPeopleIn`). */
-  const companyRecordStore = withPeopleIn(store, companyRecords);
   app.use(companyRecordsRoutes({
     signedIn: (req, res, next) => authed(req, res, next),
     member: (req, res, next) => member(req, res, next),
@@ -625,8 +590,46 @@ app.use(cors());
     signedIn: (req, res, next) => authed(req, res, next),
     member: (req, res, next) => member(req, res, next),
     ownsPerson: (req, res, next) => ownsPerson(req, res, next),
-    store, records: () => companyRecordStore,
+    store, records: () => companyRecordStore, people: () => companyRecords,
     directoryOf: directoryNow,
+  }));
+  /* A COMPANY'S SIGNERS: admitted, their vault keys offered, and the roster filed, each from a seat's own device. */
+  app.use(signerRoutes({
+    signedIn: (req, res, next) => authed(req, res, next),
+    member: (req, res, next) => member(req, res, next),
+    store, records: () => companyRecordStore, ledger, directoryOf: directoryNow,
+  }));
+  /* A COMPANY'S PAYROLL RUNS: drawn, sealed and signed on a signer's own device, and kept as they are given. */
+  app.use(runRoutes({
+    signedIn: (req, res, next) => authed(req, res, next),
+    member: (req, res, next) => member(req, res, next),
+    store, directoryOf: directoryNow, wiring: () => ledger.wiring ?? null,
+  }));
+  /*
+   * A COMPANY'S PROPOSALS: a raise, an approval or a withdrawal a signer's device proved, relayed for a seat that may act,
+   * and where each stands read off the chain. Nothing here holds a key.
+   */
+  app.use(proposalRelayRoutes({
+    signedIn: (req, res, next) => authed(req, res, next),
+    ownsProposal: (req, res, next) => ownsProposal(req, res, next),
+    refuseSigningSecret: (req, res, next) => refuseSigningSecret(req, res, next),
+    member: (req, res, next) => member(req, res, next),
+    store, ledger, directoryOf: directoryNow, recordRefusal: appendRefusal,
+    wiring: () => ledger.wiring ?? null,
+    /* A proposal's identity is the contract's on every wiring, as the device that raised it made it. */
+    proposalIdOf: (payloadHash, salt, vault) => MidnightCommitments.proposalId(payloadHash as Hex, salt as Hex, vault as Hex | undefined),
+    /* A raise is refused before it is written down when the vault's public money cannot pay what it says it pays. */
+    publicMoney: async ({ vault, asset, payments }) => {
+      const asked = payments.map((p) => ({ payee: { kind: p.kind as LedgerForm }, token: p.token, amount: BigInt(p.amount) }));
+      try {
+        await refuseWhatTheVaultCannotPay(holdings, {
+          vault: vault as Hex, asset: assetRegistry.require(asset as AssetId), total: asked.reduce((a, p) => a + p.amount, 0n),
+          payees: BigInt(asked.length), payments: asked,
+        }, ['unshielded']);
+      } catch (e) {
+        throw new NothingWasSent((e as Error).message);
+      }
+    },
   }));
 
   /*
@@ -664,7 +667,6 @@ app.use(cors());
     signedIn: (req, res, next) => authed(req, res, next),
     member: (req, res, next) => member(req, res, next),
     store,
-    giveVaultKeys: (accountId, viewingKey, userId, given) => accounts.giveVaultKeys(accountId, viewingKey as Hex, userId, given),
     company: async (accountId) => {
       const [address, status] = await Promise.all([ledger.address(accountId), ledger.status(accountId)]);
       if (!address || !status) return null;
@@ -931,8 +933,8 @@ const ownedBy = (
 };
 
 const ownsProposal = ownedBy('id', id => store.getProposal(id));
-const ownsRun = ownedBy('id', id => store.getRun(id));
-const ownsPerson = ownedBy('id', id => store.getEmployee(id));
+/* A person is on the payroll of the company whose records hold them. */
+const ownsPerson = ownsPersonIn(() => companyRecords, (accountId, userId) => accounts.membership(accountId, userId));
 
 /**
  * **A SIGNING SECRET IS REFUSED, OUT LOUD, RATHER THAN IGNORED.**
@@ -958,10 +960,10 @@ const refuseSigningSecret: express.RequestHandler = (req, res, next) => {
   const body = req.body;
   if (body && typeof body === 'object' && 'signingSecret' in body) {
     const reason =
-      'this endpoint does not accept a signing secret. An approval is a signature '
-      + 'made on the signer\'s device over the proposal digest, and the key never '
-      + 'leaves it. Send `signature`. Treat any key that has already been sent this '
-      + 'way as disclosed and replace it.';
+      'this endpoint does not accept a signing secret. An approval is a call the '
+      + 'signer\'s own device proves, and the key never leaves it. Send the proven '
+      + 'transaction alone. Treat any key that has already been sent this way as '
+      + 'disclosed and replace it.';
     appendRefusal(req.method, req.originalUrl, 400, 'SigningSecretRefused', reason);
     res.status(400).json({ error: reason, code: 'signing-secret-refused' });
     return;
@@ -1288,7 +1290,7 @@ app.post('/api/accounts', authed, wrap(async (req, res) => {
    * made here. A creation that does not name the founding signer's committee
    * key is the old path, and is refused by name first.
    */
-  const onTheLedger = await aCompanyCreatedOnTheLedger({ store, ledger }, req.userId!, req.body);
+  const onTheLedger = await aCompanyCreatedOnTheLedger({ store, ledger, records: companyRecordStore }, req.userId!, req.body);
   if (onTheLedger !== null) {
     res.status(onTheLedger.status).json(onTheLedger.body);
     return;
@@ -1375,12 +1377,20 @@ app.post('/api/accounts', authed, wrap(async (req, res) => {
 }));
 
 // Scoped to the caller. This is the list endpoint, not a directory of the estate.
+/*
+ * **A COMPANY AS IT IS SERVED: ITS ACCOUNT RECORD, AND ITS ROSTER RECORD WHERE
+ * IT HAS ONE**, newest version, sealed as filed. A device opens both; nothing
+ * here opens either, and nothing is stored twice to serve them together.
+ */
+const withRoster = <T extends { id: string }>(rec: T): T & { roster: ReturnType<typeof store.newestRoster> } =>
+  ({ ...rec, roster: store.newestRoster(rec.id) });
+
 app.get('/api/accounts', authed, wrap(async (req, res) => {
-  answerList(res, store.accountsForUser(req.userId!));
+  answerList(res, store.accountsForUser(req.userId!).map(withRoster));
 }));
 
 app.get('/api/accounts/:id', authed, member, wrap(async (req, res) => {
-  res.json(accounts.require(String(req.params.id)));
+  res.json(withRoster(accounts.require(String(req.params.id))));
 }));
 
 /*
@@ -1409,70 +1419,10 @@ app.get('/api/accounts/:id/proposals', authed, member, wrap(async (req, res) => 
 }));
 
 /*
- * **WHAT ARRIVES IS A SIGNATURE. NOTHING HERE COULD PRODUCE ONE.**
- *
- * `.strict()` is the second half of `refuseSigningSecret` and covers what the
- * named check cannot: any other spelling of a secret somebody adds to a client
- * later is an unrecognised key and is refused rather than carried. A schema that
- * ignores what it does not recognise is how a field nobody meant to accept ends
- * up being accepted for a year.
+ * Approving, asking where a proposal stands, withdrawing it and sending its
+ * raise are `proposalRelayRoutes`: each takes the transaction a signer's device
+ * proved, relays it for a seat that may act, and holds no key.
  */
-app.post('/api/proposals/:id/approve', authed, refuseSigningSecret, ownsProposal, wrap(async (req, res) => {
-  const b = z.object({
-    signerId: z.string(), signature: z.string().min(1), viewingKey: z.string(),
-    /*
-     * **THE APPROVAL ITSELF, AS THE SIGNER'S DEVICE BUILT AND PROVED IT**, as
-     * base64. A proof, not a key: what the device proved with never leaves it.
-     */
-    tx: z.string().min(1).max(1_000_000).optional(),
-  }).strict().parse(req.body);
-  if (b.tx === undefined) {
-    res.json(await accounts.approve(String(req.params.id), b.signerId, b.signature, b.viewingKey));
-    return;
-  }
-  await answerASend(req, res, () => accounts.approve(
-    String(req.params.id), b.signerId, b.signature, b.viewingKey, new Uint8Array(Buffer.from(b.tx!, 'base64'))));
-}));
-
-/**
- * **A SEND FROM A DEVICE IS ANSWERED WITH WHETHER ANYTHING WAS SENT.**
- * `nothingWasSent: true` is a refusal before the chain was asked, which the
- * device may report as final; `false` is a failure from the send onwards, which
- * may have landed and must not be reported as nothing.
- */
-async function answerASend(req: express.Request, res: express.Response, send: () => Promise<unknown>): Promise<void> {
-  try {
-    res.json(await send());
-  } catch (e: any) {
-    const nothing = saysNothingWasSent(e);
-    const reason = e?.message ?? 'unknown error';
-    appendRefusal(req.method, req.originalUrl, nothing ? 422 : 502, e?.name ?? 'Error', reason);
-    res.status(nothing ? 422 : 502).json({ nothingWasSent: nothing, error: reason });
-  }
-}
-
-/*
- * **WHERE A PROPOSAL STANDS ON THE CHAIN NOW, READ AND WRITTEN DOWN.** An approval
- * a device sends is answered before the chain has counted it, so the device
- * asks again here once it has. Sends nothing.
- */
-app.post('/api/proposals/:id/standing', authed, ownsProposal, wrap(async (req, res) => {
-  const b = z.object({ viewingKey: z.string() }).strict().parse(req.body ?? {});
-  res.json(await accounts.refreshStanding(String(req.params.id), b.viewingKey));
-}));
-
-/*
- * Withdrawing a round.
- *
- * New with M-29 and not optional. The contract permits exactly one open
- * proposal per account, so without this endpoint a single proposal that will
- * never reach its threshold wedges the account permanently — nothing else can
- * be proposed until it is closed.
- */
-app.post('/api/proposals/:id/cancel', authed, ownsProposal, wrap(async (req, res) => {
-  const b = z.object({ viewingKey: z.string(), by: z.string().optional() }).parse(req.body ?? {});
-  res.json(await accounts.cancel(String(req.params.id), b.viewingKey, b.by));
-}));
 
 /*
  * What the chain says about this account's round.
@@ -1533,68 +1483,12 @@ app.get('/api/accounts/:id/ledger', authed, member, wrap(async (req, res) => {
 /*
  * ── ONE VAULT'S OWN APPROVAL THRESHOLD ──────────────────────────────────
  *
- *
- * **THERE IS NO READ ROUTE HERE, DELIBERATELY.** What every signer needs to see
- * is `LedgerStatus.vaultThresholds`, and that already crosses on
- * `GET /api/accounts/:id/ledger` above, from the same single read of the
- * boundary as the account's own threshold and its seat count. A second route
- * answering the same question would be a second read, at a second moment, and
- * a screen showing a vault's bar from one moment beside the account's from
- * another is arithmetic over two chain states — the race `R4` spent a round
- * removing from one layer down.
- *
- * **AND THERE IS NOTHING TO LIST.** Absence means inherit, so the chain
- * publishes only the deliberate exceptions and there is no roster of vaults to
- * enumerate. A route that returned "every vault and its threshold" would have
- * to invent the left-hand column.
- *
- * The two routes below are the two halves of a governance round, matching
- * `setThreshold`'s pair: raise it, gather approvals through the ordinary
- * `/api/proposals/:id/approve`, then apply it.
+ * There is no route of its own here. What every signer needs to see is
+ * `LedgerStatus.vaultThresholds`, which crosses on `GET /api/accounts/:id/ledger`
+ * from the same read as the account's own threshold. Changing it is a
+ * governance proposal like any other, written down, raised, approved and carried
+ * out from signers' devices through `proposalRelayRoutes`.
  */
-app.post('/api/accounts/:id/vault-threshold/propose', authed, member, wrap(async (req, res) => {
-  const b = z.object({
-    viewingKey: z.string(),
-    /*
-     * A vault is a contract address — `Bytes<32>` in the contract's
-     * `thresholds` map — so the shape is fixed and checkable here. Refusing a
-     * malformed one at the door is cheap; letting it through produces a row on
-     * chain keyed by a value no vault can ever equal, which is a governed round
-     * spent on nothing.
-     */
-    vault: z.string().regex(/^[0-9a-f]{64}$/, 'a vault address is 64 lower-case hex characters'),
-    /*
-     * `.int().min(1)` here as well as in `core/`, and the duplication is the
-     * ordinary one: this is a wire schema refusing a body, and that is a rule
-     * refusing a state. The message a person reads comes from `core/`.
-     */
-    newThreshold: z.number().int().min(1),
-    /*
-     * **WHO IS RAISING THIS IS NOT IN THIS SCHEMA, AND THAT IS THE POINT.**
-     * It used to be, and it was whatever the caller typed - so any seat could
-     * raise a round under a colleague's name. The cost is not the name: a round
-     * is judged against the ceiling of the ROLE that raised it, so a caller
-     * free to name any seat is a caller choosing which ceiling applies.
-     */
-  }).parse(req.body);
-  res.json(await accounts.proposeVaultThresholdChange(
-    String(req.params.id), b.viewingKey, b.vault as Hex, b.newThreshold,
-    accounts.seatOf(String(req.params.id), b.viewingKey as Hex, req.userId!)));
-}));
-
-app.post('/api/accounts/:id/vault-threshold', authed, member, wrap(async (req, res) => {
-  const b = z.object({
-    viewingKey: z.string(),
-    vault: z.string().regex(/^[0-9a-f]{64}$/),
-    newThreshold: z.number().int().min(1),
-    by: z.string().optional(),
-  }).parse(req.body);
-  await accounts.setVaultThreshold(
-    String(req.params.id), b.viewingKey, b.vault as Hex, b.newThreshold, b.by);
-  /* The chain is the record. Answering with the boundary's own view rather than
-   * with anything this server holds, because this server holds none of it. */
-  res.json(await accounts.ledgerStatus(String(req.params.id)));
-}));
 
 /**
  * **WHICH COMPANY THIS SESSION MAY ASK A WALLET TO OPEN.**
@@ -1643,582 +1537,23 @@ app.post('/api/accounts/:id/unlock', authed, member, wrap(async (req, res) => {
 
 /* ------------------------- payroll ------------------------- */
 
-app.post('/api/accounts/:id/payroll', authed, member, wrap(async (req, res) => {
-  const b = z.object({
-    period: z.string().min(1),
-    employees: z.array(z.object({
-      name: z.string().min(1), asset: assetCode, amount: z.string().min(1),
-    })).min(1),
-    viewingKey: z.string(),
-    /*
-     * **THE CONFIRMATION FOR A RUN THAT REPEATS ANOTHER: WHICH RUNS, AND WHY.**
-     * Absent means a repeat is refused, and the refusal names the runs to name
-     * back. Who is confirming it is not in this schema, for the reason it is not
-     * in the roster door's: it is taken from the signed-in caller.
-     */
-    repeats: z.object({
-      runIds: z.array(z.string()),
-      reason: z.string(),
-      /* Who this run pays a second time for the month, as a numbered extra, by roster entry. */
-      extra: z.array(z.string()).optional(),
-    }).optional(),
-  }).parse(req.body);
-  const me = b.repeats ? identity.user(req.userId!) : undefined;
-  /*
-   * **THE MONTH IS READ AT THE DOOR AS WELL AS IN THE SERVICE, AND IT IS THE
-   * SAME FUNCTION RATHER THAN A SECOND COPY OF IT.** The service refuses a
-   * period it cannot read and that is what actually bounds this; asking here
-   * costs nothing and answers a retyped month as a refusal about the month,
-   * before a body of payees is turned into money.
-   */
-  res.json(await payroll.createRun(
-    String(req.params.id),
-    canonicalPeriod(b.period),
-    b.employees.map(e => ({ name: e.name, asset: e.asset, amount: money(e.asset, e.amount) })),
-    b.viewingKey,
-    undefined,
-    undefined,
-    b.repeats && me && { ...b.repeats, by: me.name.trim() || me.id },
-  ));
-}));
 
 app.get('/api/accounts/:id/runs', authed, member, wrap(async (req, res) => {
   answerList(res, store.listRuns(String(req.params.id)));
 }));
 
-app.post('/api/runs/:id/propose', authed, ownsRun, wrap(async (req, res) => {
-  const b = z.object({
-    /*
-     * **NO `proposedBy` HERE EITHER.** Same field, same shape, same reason as
-     * the vault-threshold round next door: the seat comes from the signed-in
-     * caller, because it selects the ceiling this approval is judged against.
-     */
-    viewingKey: z.string(),
-    // Optional, and only needed by a run that settles in more than one asset —
-    // each is its own approval round.
-    asset: assetCode.optional(), form: legForm.optional(),
-    /*
-     * **THE VAULT THAT WILL PAY THIS LEG.** A contract address — `Bytes<32>` in
-     * the contract's signature — as sixty-four lower-case hexadecimal
-     * characters. **The width is not restated here**: it is checked where the
-     * run's payout root's width is checked, so the rule has one home and every
-     * propose surface gets the same answer.
-     *
-     * **NOTHING ANYWHERE CHECKS THAT IT NAMES A DEPLOYED VAULT.** The account
-     * contract does not consult its own vault registry when a payment is
-     * recorded, and the registry is not on the ledger boundary, so there is
-     * nothing to compare against. The vault is folded into the proposal's
-     * identity, so a well-formed wrong one produces a round that is approved,
-     * paid for, and presentable by nobody. What bounds it is a person typing it
-     * and a person reading it back before they approve.
-     */
-    vault: z.string(),
-    /*
-     * **THE WINDOW, IN SECONDS SINCE THE UNIX EPOCH.** Seconds because block
-     * time is what it is compared against; a window in milliseconds opens in
-     * the year 56000, is approved, and pays nobody. Taken as digits in a string
-     * because these are the chain's own 64-bit values and JSON has no integer
-     * wide enough to carry one without rounding it.
-     */
-    opensAt: z.string().regex(/^[0-9]+$/, 'a window bound is whole seconds since the Unix epoch'),
-    closesAt: z.string().regex(/^[0-9]+$/, 'a window bound is whole seconds since the Unix epoch'),
-    /*
-     * **THE SIGNER'S DEVICE BUILDS AND SENDS THE PROPOSAL.** It is written
-     * down here exactly as it otherwise is, nothing is sent from this service,
-     * and the answer carries what the device builds it from.
-     */
-    onDevice: z.literal(true).optional(),
-    /*
-     * **WHICH PAGE CHECKED IT, AND WHAT IT CHECKED.** A raise the device sends
-     * is not checked for its private money here, because only the device can
-     * read the vault's notes. So it names the version of the page that did the
-     * check, and the digest of the payments it checked - a kind, a token and an
-     * amount each, exactly what `/leg-payments` handed it - and both are
-     * compared below before anything is written down.
-     */
-    version: z.unknown().optional(),
-    checked: z.string().regex(DIGEST_SHAPE, 'the payments checked are a digest of sixty-four hexadecimal characters').optional(),
-  }).parse(req.body);
-
-  /*
-   * **A PAGE THAT IS NOT THE CURRENT VERSION IS NOT TRUSTED TO HAVE CHECKED
-   * ANYTHING.** Refused before a single read, so nothing is written down.
-   */
-  if (b.onDevice && b.version !== DEVICE_RAISE_VERSION) {
-    throw new Error(reloadThePage(b.version, 'Nothing was written down.'));
-  }
-  if (b.onDevice && b.checked === undefined) {
-    throw new Error(RAISE_NAMES_NOTHING_CHECKED);
-  }
-
-  /*
-   * **THE RUN'S MATERIAL IS BUILT HERE AND NOT INSIDE THE SERVICE**, because
-   * the root is a merkle tree hashed the way the chain hashes it and the layer
-   * that holds the payroll may not reach the runtime that does it. What the
-   * service supplies is the payroll and the account's own payout seeds; what
-   * this adds is the window and the vault, neither of which is derivable from
-   * anything this product holds.
-   */
-  const inputs = await payroll.runMaterialInputs(
-    String(req.params.id), b.viewingKey, legChoiceOf(b));
-  const material = await runMaterialFor({
-    accountId: inputs.accountId,
-    runId: inputs.runId,
-    seeds: inputs.seeds,
-    facts: inputs.facts,
-    pay: inputs.pay,
-    asset: inputs.asset,
-    opensAt: BigInt(b.opensAt),
-    closesAt: BigInt(b.closesAt),
-    vault: b.vault,
-    epoch: inputs.epoch,
-  });
-
-  /*
-   * **WHAT IS RAISED IS WHAT THE DEVICE CHECKED.** The payments are rebuilt
-   * here from the run, and the run may have changed since the device asked for
-   * them - a salary corrected, a person added. A mismatch is refused before the
-   * proposal is written down. A leg that is already proposed is refused as
-   * that first, because raising again cannot change it.
-   */
-  if (b.onDevice) payroll.refuseRaisingAProposedLeg(String(req.params.id), b.viewingKey, legChoiceOf(b));
-  if (b.onDevice && paymentsCheckedDigest(material.facts.map(paymentChecked)) !== b.checked) {
-    throw new Error(RAISE_IS_NOT_WHAT_WAS_CHECKED);
-  }
-
-  /*
-   * The account is resolved from the RUN and not from the URL - this route is
-   * scoped by run id, so `inputs.accountId` is the only account in scope and
-   * taking it from anywhere else would be taking it from the caller again.
-   */
-  const proposal = await payroll.proposeRun(
-    String(req.params.id), b.viewingKey,
-    accounts.seatOf(inputs.accountId, b.viewingKey as Hex, req.userId!),
-    material, legChoiceOf(b), b.onDevice ? { onDevice: true } : undefined);
-  if (!b.onDevice) {
-    res.json(proposal);
-    return;
-  }
-  res.json({ proposal, order: raiseOrderOnTheWire(await payroll.raiseOrderOf(String(req.params.id), b.viewingKey, legChoiceOf(b))) });
-}));
-
-/** What a device builds a written-down proposal from, every value a string; `null` when there is nothing to send. */
-const raiseOrderOnTheWire = (o: Awaited<ReturnType<typeof payroll.raiseOrderOf>>) => (o === null ? null : {
-  proposalId: o.proposalId,
-  chainId: o.chainId,
-  order: {
-    circuit: 'propose' as const,
-    run: {
-      root: o.run.root, payees: o.run.payees.toString(), opensAt: o.run.opensAt.toString(),
-      closesAt: o.run.closesAt.toString(), vault: o.run.vault,
-      ...(o.run.required ? { required: o.run.required.toString() } : {}),
-    },
-    half: o.half,
-    proposal: o.chainId,
-  },
-  /* The digest of the payments this proposal pays, so the device that builds it can refuse other payments than it checked. */
-  paymentsChecked: o.paymentsChecked,
-});
+/*
+ * A leg of a run is raised on a signer's device: the run as raised and its proposal are filed together, and the raise
+ * relayed, by `POST /api/accounts/:id/proposals` in `proposalRelayRoutes`; a raise written down and not yet seen on the
+ * chain is sent again by `POST /api/proposals/:id/send`.
+ */
 
 /*
- * **THE PROPOSAL ONE LEG OF A RUN IS WRITTEN DOWN AS, FOR THE SIGNER'S DEVICE
- * TO BUILD** - again, after a device that raised it did not get as far as
- * sending it. The run is read off the leg's own record and the account's half
- * off the proposal's own sealed payload. The viewing key travels in the body.
+ * A retry of some of a leg's people is raised on a signer's device, over a tree of its own: the run as raised and its
+ * proposal are filed together, and the raise relayed, by `POST /api/accounts/:id/proposals` in `proposalRelayRoutes`.
  */
-app.post('/api/runs/:id/raise-order', authed, ownsRun, wrap(async (req, res) => {
-  const b = z.object({ viewingKey: z.string(), asset: assetCode.optional(), form: legForm.optional() }).strict().parse(req.body ?? {});
-  const order = raiseOrderOnTheWire(await payroll.raiseOrderOf(String(req.params.id), b.viewingKey, legChoiceOf(b)));
-  if (order === null) {
-    res.status(409).json({ error: 'this run has no proposal written down that is waiting to be sent to the chain.' });
-    return;
-  }
-  res.json(order);
-}));
 
-/*
- * **WHAT ONE LEG OF A RUN WILL ASK ITS VAULT TO PAY**, for the signer's device
- * to check against the vault's notes before it asks for the raise. Each payment
- * is a kind, a token and an amount: no address, no seed, and nothing about the
- * vault's notes, which this service cannot read. The viewing key travels in the
- * body.
- */
-app.post('/api/runs/:id/leg-payments', authed, ownsRun, wrap(async (req, res) => {
-  const b = z.object({ viewingKey: z.string(), asset: assetCode.optional(), form: legForm.optional() }).strict().parse(req.body ?? {});
-  const asked = await payroll.legPaymentsAsked(String(req.params.id), b.viewingKey as Hex, legChoiceOf(b));
-  res.json({
-    asset: asked.asset,
-    form: asked.form,
-    leg: asked.leg,
-    payments: paymentsOnTheWire(asked.payments),
-  });
-}));
-
-/*
- * **THE LEGS OF A RUN, SIDE BY SIDE.** One run pays one token in one form, so a
- * payroll with private and public payees is two legs, each raised and approved
- * on its own. Each leg names its token, its form, the symbol a screen shows,
- * who is on it by roster entry, its total and the proposal it was raised as.
- */
-app.post('/api/runs/:id/legs', authed, ownsRun, wrap(async (req, res) => {
-  const b = z.object({ viewingKey: z.string() }).strict().parse(req.body ?? {});
-  res.json({
-    legs: payroll.legsOf(String(req.params.id), b.viewingKey as Hex).map(l => ({
-      ...l, total: l.total.toString(),
-    })),
-  });
-}));
-
-/*
- * **THE PROPOSAL A SIGNER'S DEVICE BUILT FOR ONE LEG OF A RUN, SENT.** It goes
- * through the one door this service has for a transaction proved on a device,
- * which reads it and refuses anything but calls to this company's own contract
- * that move no coin.
- */
-app.post('/api/runs/:id/raise-send', authed, ownsRun, async (req, res) => {
-  const b = z.object({
-    viewingKey: z.string(), asset: assetCode.optional(), form: legForm.optional(), tx: z.string().min(1).max(1_000_000),
-    /* Which page checked the vault right before this send, and the digest of what it checked. */
-    version: z.unknown().optional(),
-    checked: z.string().optional(),
-  }).strict().safeParse(req.body ?? {});
-  if (!b.success) {
-    res.status(400).json({ nothingWasSent: true, error: 'this request does not carry a proposal to send. Nothing was sent.' });
-    return;
-  }
-  await answerASend(req, res, async () => {
-    /*
-     * **ONLY A PAGE OF THE CURRENT VERSION SENDS**, because only that page
-     * checks the vault on the device right before every send, a send again
-     * included.
-     */
-    if (b.data.version !== DEVICE_RAISE_VERSION) {
-      throw new NothingWasSent(reloadThePage(b.data.version, 'Nothing was sent.'));
-    }
-    /* Everything before the send is a refusal that sent nothing, and is marked so. */
-    let order: Awaited<ReturnType<typeof payroll.raiseOrderOf>>;
-    let by: string;
-    try {
-      const run = payroll.requireRun(String(req.params.id), b.data.viewingKey);
-      by = accounts.seatOf(run.accountId, b.data.viewingKey as Hex, req.userId!);
-      order = await payroll.raiseOrderOf(String(req.params.id), b.data.viewingKey, legChoiceOf(b.data));
-    } catch (e: any) {
-      if (saysNothingWasSent(e)) throw e;
-      throw new NothingWasSent(`${String(e?.message ?? e).replace(/\.\s*$/u, '')}. Nothing was sent.`);
-    }
-    if (order === null) {
-      throw new NothingWasSent('this run has no proposal written down that is waiting to be sent to the chain. Nothing was sent.');
-    }
-    /* What is sent is what the device checked just now: the payments of the proposal written down. */
-    if (b.data.checked !== order.paymentsChecked) {
-      throw new NothingWasSent(SEND_IS_NOT_WHAT_WAS_CHECKED);
-    }
-    return accounts.sendRaise(order.proposalId, b.data.viewingKey, new Uint8Array(Buffer.from(b.data.tx, 'base64')), by);
-  });
-});
-
-/*
- * **ANOTHER ATTEMPT AT SOME OF ONE LEG'S PEOPLE, ON THE RUN THAT FIRST TRIED
- * TO PAY THEM.**
- *
- * The body names WHO - positions in the leg as it was raised, which is the
- * order the payment view on this run reports them in - and WHEN and FROM
- * WHICH VAULT, the two facts nothing here can derive. **It does not name a run
- * identity, and there is no field through which one could be supplied**: the
- * material is built from what the leg was raised under, read back off the run's
- * own record, so each person's leaf in the retry is the leaf they already had and
- * nobody can be paid by both rounds.
- */
-app.post('/api/runs/:id/retry', authed, ownsRun, wrap(async (req, res) => {
-  const b = z.object({
-    viewingKey: z.string(),
-    asset: assetCode.optional(), form: legForm.optional(),
-    indices: z.array(z.number().int().min(0)).min(1),
-    vault: z.string(),
-    opensAt: z.string().regex(/^[0-9]+$/, 'a window bound is whole seconds since the Unix epoch'),
-    closesAt: z.string().regex(/^[0-9]+$/, 'a window bound is whole seconds since the Unix epoch'),
-    /*
-     * **THE SIGNER'S DEVICE BUILDS AND SENDS THE RETRY, HAVING CHECKED THE
-     * VAULT FOR EXACTLY ITS PAYMENTS.** As for a leg: it names the version of the
-     * page that checked and the digest of what it checked - what
-     * `/retry-payments` handed it for these people - and both are compared below
-     * before anything is written down.
-     */
-    onDevice: z.literal(true).optional(),
-    version: z.unknown().optional(),
-    checked: z.string().regex(DIGEST_SHAPE, 'the payments checked are a digest of sixty-four hexadecimal characters').optional(),
-  }).parse(req.body);
-
-  /* A page that is not the current version is not trusted to have checked anything. Refused before a single read. */
-  if (b.onDevice && b.version !== DEVICE_RAISE_VERSION) {
-    throw new Error(reloadThePage(b.version, 'Nothing was written down.'));
-  }
-  if (b.onDevice && b.checked === undefined) {
-    throw new Error(RAISE_NAMES_NOTHING_CHECKED);
-  }
-
-  const rebuild = await payroll.payoutRebuildOf(String(req.params.id), b.viewingKey, legChoiceOf(b));
-  if (!rebuild) {
-    throw new Error(
-      'this leg of the run has not been raised, so there is nobody on it to retry. Raise the leg '
-      + 'first; a retry pays people an approved round did not reach.');
-  }
-  const material = await retryMaterialFor({
-    rebuild,
-    indices: b.indices,
-    opensAt: BigInt(b.opensAt),
-    closesAt: BigInt(b.closesAt),
-    vault: b.vault,
-  });
-  /*
-   * **WHAT IS RAISED IS WHAT THE DEVICE CHECKED**: the leg's own payments for
-   * the people this retry pays, in the retry's own order.
-   */
-  if (b.onDevice) {
-    const asked = payroll.retryPaymentsAsked(String(req.params.id), b.viewingKey as Hex, material.originalIndices, legChoiceOf(b));
-    if (paymentsCheckedDigest(asked.payments) !== b.checked) {
-      throw new Error(RAISE_IS_NOT_WHAT_WAS_CHECKED);
-    }
-    /*
-     * **A RETRY OF THESE PEOPLE A DEVICE WROTE DOWN AND DID NOT SEND IS SENT AS
-     * ITSELF.** Raising it again would be a second round over the same leaves:
-     * a second fee, a second set of approvals, and a round that can never
-     * complete. It is handed back to be sent, with the window and vault it was
-     * written down with, or refused if the person chose others.
-     */
-    const unsent = payroll.unsentRetryOf(String(req.params.id), b.viewingKey as Hex, material.originalIndices, legChoiceOf(b));
-    if (unsent) {
-      if (unsent.vault.toLowerCase() !== b.vault.toLowerCase()
-          || unsent.opensAt !== BigInt(b.opensAt) || unsent.closesAt !== BigInt(b.closesAt)) {
-        throw new Error(
-          `a retry of these people is already written down, for the window ${unsent.opensAt} to ${unsent.closesAt} `
-          + `at vault ${unsent.vault}, and has not reached the chain. Retry them with that window and that vault to `
-          + 'send it, or withdraw it first. Nothing was written down.');
-      }
-      res.json({
-        proposal: accounts.requireProposal(unsent.proposalId, b.viewingKey as Hex),
-        order: retryOrderOnTheWire(await payroll.retryRaiseOrderOf(String(req.params.id), b.viewingKey, unsent.proposalId, legChoiceOf(b))),
-      });
-      return;
-    }
-  }
-  const proposal = await payroll.proposeRetry(
-    String(req.params.id), b.viewingKey,
-    accounts.seatOf(rebuild.identity.accountId, b.viewingKey as Hex, req.userId!),
-    material, legChoiceOf(b), b.onDevice ? { onDevice: true } : undefined);
-  if (!b.onDevice) {
-    res.json(proposal);
-    return;
-  }
-  res.json({
-    proposal,
-    order: retryOrderOnTheWire(await payroll.retryRaiseOrderOf(String(req.params.id), b.viewingKey, proposal.id, legChoiceOf(b))),
-  });
-}));
-
-/** What a device builds a written-down retry from, every value a string; `null` when there is nothing to send. */
-const retryOrderOnTheWire = (o: Awaited<ReturnType<typeof payroll.retryRaiseOrderOf>>) => (o === null ? null : {
-  ...raiseOrderOnTheWire({ ...o })!,
-  indices: o.indices,
-});
-
-/*
- * **WHAT A RETRY OF SOME OF ONE LEG'S PEOPLE WILL ASK ITS VAULT TO PAY**, for
- * the signer's device to check against the vault's notes before it asks for
- * the retry, and again before every send. A kind, a token and an amount per
- * payment, as `/leg-payments` answers for a leg. The viewing key travels in the
- * body.
- */
-app.post('/api/runs/:id/retry-payments', authed, ownsRun, wrap(async (req, res) => {
-  const b = z.object({
-    viewingKey: z.string(), asset: assetCode.optional(), form: legForm.optional(), indices: z.array(z.number().int().min(0)).min(1),
-  }).strict().parse(req.body ?? {});
-  const asked = payroll.retryPaymentsAsked(String(req.params.id), b.viewingKey as Hex, b.indices, legChoiceOf(b));
-  res.json({
-    asset: asked.asset,
-    form: asked.form,
-    leg: asked.leg,
-    payments: paymentsOnTheWire(asked.payments),
-  });
-}));
-
-/*
- * **THE PROPOSAL A RETRY IS WRITTEN DOWN AS, FOR THE SIGNER'S DEVICE TO
- * BUILD** - again, after a device that raised it did not get as far as sending
- * it. Found by its proposal among this leg's own retries.
- */
-app.post('/api/runs/:id/retry-order', authed, ownsRun, wrap(async (req, res) => {
-  const b = z.object({ viewingKey: z.string(), asset: assetCode.optional(), form: legForm.optional(), proposalId: z.string().min(1) })
-    .strict().parse(req.body ?? {});
-  const order = retryOrderOnTheWire(await payroll.retryRaiseOrderOf(String(req.params.id), b.viewingKey, b.proposalId, legChoiceOf(b)));
-  if (order === null) {
-    res.status(409).json({ error: 'this run has no retry written down as that proposal waiting to be sent: it has been sent already, or withdrawn. Reload the run to see who is still unpaid.' });
-    return;
-  }
-  res.json(order);
-}));
-
-/*
- * **THE RETRY A SIGNER'S DEVICE BUILT, SENT**, through the same door as a
- * leg's: only from a page of the current version, and only when what the
- * device just checked is the retry written down.
- */
-app.post('/api/runs/:id/retry-send', authed, ownsRun, async (req, res) => {
-  const b = z.object({
-    viewingKey: z.string(), asset: assetCode.optional(), form: legForm.optional(), proposalId: z.string().min(1), tx: z.string().min(1).max(1_000_000),
-    version: z.unknown().optional(),
-    checked: z.string().optional(),
-  }).strict().safeParse(req.body ?? {});
-  if (!b.success) {
-    res.status(400).json({ nothingWasSent: true, error: 'this request does not carry a retry to send. Reload the page and retry from it. Nothing was sent.' });
-    return;
-  }
-  await answerASend(req, res, async () => {
-    if (b.data.version !== DEVICE_RAISE_VERSION) {
-      throw new NothingWasSent(reloadThePage(b.data.version, 'Nothing was sent.'));
-    }
-    let order: Awaited<ReturnType<typeof payroll.retryRaiseOrderOf>>;
-    let by: string;
-    try {
-      const run = payroll.requireRun(String(req.params.id), b.data.viewingKey);
-      by = accounts.seatOf(run.accountId, b.data.viewingKey as Hex, req.userId!);
-      order = await payroll.retryRaiseOrderOf(String(req.params.id), b.data.viewingKey, b.data.proposalId, legChoiceOf(b.data));
-    } catch (e: any) {
-      if (saysNothingWasSent(e)) throw e;
-      throw new NothingWasSent(`${String(e?.message ?? e).replace(/\.\s*$/u, '')}. Nothing was sent.`);
-    }
-    if (order === null) {
-      throw new NothingWasSent('this run has no retry written down as that proposal waiting to be sent: it has been sent already, or withdrawn. Reload the run to see who is still unpaid. Nothing was sent.');
-    }
-    if (b.data.checked !== order.paymentsChecked) {
-      throw new NothingWasSent(SEND_IS_NOT_WHAT_WAS_CHECKED);
-    }
-    return accounts.sendRaise(order.proposalId, b.data.viewingKey, new Uint8Array(Buffer.from(b.data.tx, 'base64')), by);
-  });
-});
-
-/*
- * **WHO HAS BEEN PAID ON THIS RUN — OR WHY NOBODY CAN SAY.**
- *
- * A run is paid one payee at a time, so at any moment some are paid and some
- * are not. **A run reported as finished while two people are unpaid is worse
- * than one that fails outright, because nobody goes looking.** This is the
- * route that answers which two.
- *
- * **IT ASKS THE LEDGER, AND ONLY ABOUT THIS RUN'S OWN PAYEES.** The account's
- * record of completed payments is public and append-only; the question asked
- * here is bounded by the run rather than by the set, so what it costs is the
- * size of one payroll and not the age of the company.
- *
- * **AND IT CAN ANSWER THAT IT DOES NOT KNOW, WHICH IS A DIFFERENT ANSWER FROM
- * "NOBODY".** Two things can be missing: the run's payout leaves, which a run
- * only has once one of its legs has been raised, and a ledger that records
- * payments at all. Either one produces a refusal to report rather than a report
- * of nobody paid — the body carries `answered: false` and a sentence, and there
- * is no count in it to misread.
- *
- * **A POST FOR A READ, AND THE KEY IN THE BODY IS WHY.** The viewing key is
- * what decrypts this company's own records, and a web address is the one part
- * of a request that gets written down all the way along: browser history,
- * proxies, load balancers, access logs. Three older reads here take it in the
- * query and each is a place it has already been written; this one does not add
- * a fourth. The verb is the cost of that and it is worth paying.
- */
-app.post('/api/runs/:id/payments', authed, ownsRun, wrap(async (req, res) => {
-  const b = z.object({
-    viewingKey: z.string(),
-    /* One approval per settlement asset, so one payment view per settlement
-     * asset. Only a run that settles in more than one needs to say which. */
-    asset: assetCode.optional(), form: legForm.optional(),
-  }).parse(req.body ?? {});
-  const run = payroll.requireRun(String(req.params.id), b.viewingKey);
-  /*
-   * **`rootOfPayments` IS PASSED IN, WHICH IS WHAT MAKES THE ANSWER VERIFIED.**
-   * The view rebuilds this leg's proposal id from the leaves in hand and
-   * refuses to report on them if it does not match the payroll run they are filed
-   * under. Without it every answer this route can produce carries a disclaimer
-   * that is permanently on — and a warning that is always on stops being read,
-   * which is how the one genuine case is missed later.
-   */
-  const material = payroll.payoutMaterialOf(
-    run.id, b.viewingKey, { leg: legChoiceOf(b), rootOf: rootOfPayments });
-  const among = material ? await ledger.paidAmong(run.accountId, material.leaves) : null;
-  res.json(runPayments(material, among));
-}));
-
-/*
- * **WHAT A SIGNER'S DEVICE NEEDS TO PAY ONE APPROVED LEG PRIVATELY, AND NOTHING
- * THAT OPENS A NOTE.**
- *
- * The device holds the vault's pool and chooses which note to spend; this
- * answers only what every payment in the leg is, rebuilt from what the leg was
- * raised under - the run's own recorded facts, the account's payout seed of the
- * generation the leg was built with, and the run's own salt - and checked
- * twice before anything is answered: the rebuilt leaves are the recorded ones,
- * and they rebuild the identity the chain opened the run under. A leg that
- * fails either check is refused rather than paid against.
- *
- * **A POST FOR A READ**, for the reason the payment view above gives: the
- * viewing key travels in the body and never in an address.
- *
- * **AND AN APPROVED RETRY ON THE LEG IS PAID THROUGH THE SAME DOOR**, named by
- * the proposal it was raised as. Its order is read off the retry as it was
- * written onto the leg, its payments are the leg's own payments for only the
- * people it names, each with the leaf they already had, and each is reported
- * against their position in the leg.
- */
-app.post('/api/runs/:id/private-payments', authed, ownsRun, wrap(async (req, res) => {
-  const b = z.object({
-    viewingKey: z.string(), asset: assetCode.optional(), form: legForm.optional(), proposalId: z.string().min(1).optional(),
-  }).parse(req.body ?? {});
-  const run = payroll.requireRun(String(req.params.id), b.viewingKey);
-  if (b.proposalId !== undefined) {
-    const retry = payroll.retryPaymentOrderOf(run.id, b.viewingKey as Hex, b.proposalId, legChoiceOf(b), rootOfPayments);
-    const rebuilt = await payroll.payoutRebuildOf(run.id, b.viewingKey, legChoiceOf(b));
-    if (retry === null || rebuilt === null) {
-      res.status(409).json({
-        error: 'this run has no retry on the chain raised as that proposal, so there is nothing a vault can pay '
-          + 'against it: either it is not a retry on this run, or it has not been sent yet and can be paid once it '
-          + 'has been sent and approved. Reload the run and choose again.',
-      });
-      return;
-    }
-    const whole = buildRun(rebuilt.seeds, rebuilt.identity, rebuilt.facts, await vaultDetailsOf(), rebuilt.pay, rebuilt.asset);
-    const paidAmongThem = await ledger.paidAmong(run.accountId, retry.leaves);
-    const assembledRetry = assemblePrivatePayments({
-      order: retry.order, leaves: retry.leaves, window: retry.window, idFrom: retry.idFrom,
-      built: buildRetryRun(whole, retry.indices), facts: retry.indices.map((i) => rebuilt.facts[i]!),
-      paid: paidAmongThem?.known ? new Set(paidAmongThem.paid) : null, indices: retry.indices,
-    });
-    if ('refusal' in assembledRetry) {
-      res.status(409).json({ error: assembledRetry.refusal });
-      return;
-    }
-    res.json(assembledRetry.order);
-    return;
-  }
-  const order = payroll.privatePaymentOrderOf(run.id, b.viewingKey, legChoiceOf(b));
-  const material = payroll.payoutMaterialOf(run.id, b.viewingKey, { leg: legChoiceOf(b), rootOf: rootOfPayments });
-  const rebuild = await payroll.payoutRebuildOf(run.id, b.viewingKey, legChoiceOf(b));
-  if (order === null || material === null || rebuild === null || material.proposal === undefined) {
-    res.status(409).json({
-      error: 'this run has no round on the chain a vault can pay yet. It is paid once it has been raised and '
-        + 'approved.',
-    });
-    return;
-  }
-  const built = buildRun(rebuild.seeds, rebuild.identity, rebuild.facts, await vaultDetailsOf(), rebuild.pay, rebuild.asset);
-  const among = await ledger.paidAmong(run.accountId, material.leaves);
-  const assembled = assemblePrivatePayments({
-    order, leaves: material.leaves, window: material.window, idFrom: material.proposal.idFrom,
-    built, facts: rebuild.facts, paid: among?.known ? new Set(among.paid) : null,
-  });
-  if ('refusal' in assembled) {
-    res.status(409).json({ error: assembled.refusal });
-    return;
-  }
-  res.json(assembled.order);
-}));
+/* A retry's raise is sent as any proposal's is: `POST /api/proposals/:id/send`, in `proposalRelayRoutes`. */
 
 /*
  * `POST /api/runs/:id/settle` STOOD HERE AND IS GONE.
@@ -2229,22 +1564,13 @@ app.post('/api/runs/:id/private-payments', authed, ownsRun, wrap(async (req, res
  */
 
 /*
- * **NO ROUTE HERE TAKES THE KEY THAT OPENS A PAYSLIP.**
+ * `GET /api/runs/:runId/employee/:employeeId` STOOD HERE AND IS GONE.
  *
- * This one used to: it took the payee's secret in the query string and opened
- * the slip in this process, which put the one key that is meant to live only
- * with the payee into a URL, a request log and this service's memory. It now
- * refuses before reading anything, and says where payslips are opened instead.
+ * It took a payee's payslip secret in its address and opened the slip here, and
+ * later only refused, with no sign-in. Removed rather than left answering a
+ * refusal: a route that exists is a route somebody integrates against. Payslips
+ * are opened in the payee's own browser, with the key from their wallet.
  */
-app.get('/api/runs/:runId/employee/:employeeId', (_req, res) => {
-  res.status(410).json({
-    code: 'payslips-open-in-your-browser',
-    error: 'payslips are now opened in your own browser, with the key from your wallet. This '
-      + 'service never takes that key, and this request was refused without being read. A key '
-      + 'put in a web address can be kept by the browser and anything in between, so treat one '
-      + 'sent here as seen.',
-  });
-});
 
 /*
  * **A PAYEE'S OWN PAYSLIPS, TO A SIGNED-IN PERSON WHO HOLDS THEIR KEY.**
@@ -2369,7 +1695,8 @@ app.get('/api/payslips/addresses', currentPayslipPage, authed, wrap(async (req, 
  * `ownsPerson`, not `member`: the same gate `admit` and `status` stand behind.
  */
 app.post('/api/employees/:id/invite/revoke', authed, ownsPerson, wrap(async (req, res) => {
-  res.json(payroll.revokeInvite(String(req.params.id)));
+  const id = String(req.params.id);
+  res.json(payroll.revokeInvite((await companyRecords.companyOfPerson(id))!, id));
 }));
 
 /**
@@ -2391,84 +1718,10 @@ app.post('/api/employees/:id/invite/revoke', authed, ownsPerson, wrap(async (req
  * nobody else can read it, including this deployment.
  */
 app.get('/api/employees/:id/handover', authed, ownsPerson, wrap(async (req, res) => {
-  res.json({ inbox: payroll.handoverBlob(String(req.params.id)) });
+  res.json({ inbox: store.handoverFor(String(req.params.id)) });
 }));
 
 
-/*
- * **THE ACKNOWLEDGEMENT IS A ROUTE PARAMETER AND NOT A FLAG.**
- *
- * A pending employee no longer freezes the whole company's payroll — the run
- * refuses ONCE, naming who would be left out and which of the two things is
- * wrong with each, and an admin who has read that may proceed. **What they send
- * back is the names and a reason**, because the service compares those names
- * against the people it is actually about: a boolean here would let a client
- * that never showed a name drop whoever happened to be pending.
- *
- * `.optional()` is what makes the default refuse, and it is the whole default:
- * a body without this field is a body the service will not skip anybody for.
- *
- * **AND `by` IS NOT IN THIS SCHEMA, WHICH IS THE POINT OF THIS PARAGRAPH.**
- * The record this produces is permanent, sealed and append-only, and the one
- * question it exists to answer is WHO DECIDED not to pay somebody. **A name
- * taken from the request body answers that question with whatever the caller
- * typed** — so any member seat could leave people out of payroll and file the
- * decision under a colleague's name, and the record would be confidently wrong
- * about the only fact it was built to hold. That is worse than no record.
- *
- * So it is taken from the signed-in caller instead. **There is nowhere in this body to
- * put a name**, which is the same shape as the roster's addresses: a value that
- * must be somebody's own is not a parameter.
- *
- * **THE SERVICE STILL TAKES IT AS A STRING AND MUST**, because it also runs
- * with no server in front of it and cannot authenticate anybody. This route is
- * where the string stops being a claim. **The neighbouring propose routes
- * carried the same shape and no longer do**; they take the seat from the
- * signed-in caller too, and there the cost was sharper than a wrong name on a
- * record, because a round is judged against the ceiling of the role that
- * raised it.
- */
-app.post('/api/accounts/:id/runs', authed, member, wrap(async (req, res) => {
-  const b = z.object({
-    period: z.string().min(1), employeeIds: z.array(z.string()).optional(), viewingKey: z.string(),
-    skipPending: z.object({
-      employeeIds: z.array(z.string()),
-      reason: z.string(),
-    }).optional(),
-    /*
-     * **A SECOND RUN FOR A MONTH THAT ALREADY HAS ONE, CONFIRMED BY NAMING WHAT
-     * IT REPEATS.** As at the ad hoc door, who is confirming it is taken from
-     * the signed-in caller and never from this body.
-     */
-    repeats: z.object({
-      runIds: z.array(z.string()),
-      reason: z.string(),
-      chainPayments: z.number().int().nonnegative().optional(),
-      /*
-       * **WHO THIS RUN PAYS A SECOND TIME FOR THE MONTH, AS A NUMBERED EXTRA**,
-       * by roster entry, with the repeat's reason. Everybody else is paid as the
-       * first payment for the month, which the chain refuses for anybody paid.
-       */
-      extra: z.array(z.string()).optional(),
-    }).optional(),
-  }).parse(req.body);
-  const me = identity.user(req.userId!);
-  /* The month is read here too, by the same function the service uses. */
-  res.json(await payroll.createRunFromRoster(
-    String(req.params.id), canonicalPeriod(b.period), b.viewingKey, b.employeeIds,
-    /*
-     * `name` is never null on a `User`; `id` is the fallback for a record whose
-     * name is blank, because an attribution nobody can resolve is what `decide`
-     * refuses and a run refused for want of a name would be a worse answer than
-     * an id somebody can look up.
-     */
-    b.skipPending && { ...b.skipPending, by: me.name.trim() || me.id },
-    b.repeats && {
-      runIds: b.repeats.runIds, reason: b.repeats.reason, by: me.name.trim() || me.id,
-      ...(b.repeats.chainPayments === undefined ? {} : { chainPayments: b.repeats.chainPayments }),
-      ...(b.repeats.extra === undefined ? {} : { extra: b.repeats.extra }),
-    }));
-}));
 
 
 
@@ -2503,120 +1756,15 @@ app.get('/api/accounts/:id/invites', authed, member, wrap(async (req, res) => {
  * beside the company's records.
  */
 
-app.post('/api/accounts/:id/grant', authed, member, wrap(async (req, res) => {
-  const b = z.object({ viewingKey: z.string(), signerId: z.string() }).parse(req.body);
-  res.json(await accounts.grantAccess(String(req.params.id), b.viewingKey, b.signerId));
-}));
-
 /*
- * ── SEATING A SIGNER AND CHANGING THE THRESHOLD, FROM A SIGNER'S DEVICE ──────
+ * ── A COMPANY'S SIGNERS, FROM ITS SIGNERS' OWN DEVICES ──────────────────────
  *
- * **THIS SERVICE HOLDS NO SIGNER'S SECRET, SO IT CANNOT RAISE, APPROVE OR CARRY
- * OUT A ROUND THAT CHANGES WHO MAY APPROVE.** Every one of those calls opens with
- * the contract's signer check, which only a seated signer's own device can pass.
- * So the service writes the proposal down and hands over what the device needs to
- * build it; the device raises it, each approver approves it from their own
- * device through the ordinary approval route, and once it is approved a seated
- * signer's device carries it out. What reaches this service is a proven
- * transaction, which its one door for such transactions refuses unless it is
- * exactly one call to the named circuit of this company's own contract.
- *
- * Nothing here takes the caller's word for who they are: the seat they act from
- * is the one their sign-in holds on this company.
+ * A signer is seated by a governance proposal like any other - written down,
+ * raised, approved and carried out from signers' devices through
+ * `proposalRelayRoutes` - and admitted, their vault keys offered and the roster
+ * filed through `signerRoutes`. This service holds no signer's secret and no
+ * viewing key, so it seats, grants and writes no roster itself.
  */
-app.post('/api/accounts/:id/signers/:signerId/round', authed, member, wrap(async (req, res) => {
-  const b = z.object({ viewingKey: z.string() }).strict().parse(req.body ?? {});
-  const id = String(req.params.id);
-  const by = accounts.seatOf(id, b.viewingKey as Hex, req.userId!);
-  res.json(await roundForADevice(accounts,
-    await accounts.seatRound(id, b.viewingKey as Hex, String(req.params.signerId), by), b.viewingKey as Hex));
-}));
-
-app.post('/api/accounts/:id/threshold/round', authed, member, wrap(async (req, res) => {
-  const b = z.object({ viewingKey: z.string(), newThreshold: z.number().int().min(1) }).strict().parse(req.body ?? {});
-  const id = String(req.params.id);
-  const by = accounts.seatOf(id, b.viewingKey as Hex, req.userId!);
-  res.json(await roundForADevice(accounts,
-    await accounts.thresholdRound(id, b.viewingKey as Hex, b.newThreshold, by), b.viewingKey as Hex));
-}));
-
-/*
- * **A SEAT OR A THRESHOLD ROUND A DEVICE BUILT, SENT.** Only those two kinds:
- * a payroll round is sent through its run, where what the device checked
- * against the vault is compared with what was written down.
- */
-app.post('/api/proposals/:id/governance-send', authed, ownsProposal, async (req, res) => {
-  const b = z.object({ viewingKey: z.string(), tx: z.string().min(1).max(1_000_000) }).strict().safeParse(req.body ?? {});
-  if (!b.success) {
-    res.status(400).json({ nothingWasSent: true, error: 'this request does not carry a round to send. Nothing was sent.' });
-    return;
-  }
-  await answerASend(req, res, async () => {
-    let by: string;
-    try {
-      const order = await accounts.governanceOrderOf(String(req.params.id), b.data.viewingKey as Hex);
-      by = accounts.seatOf(accounts.requireProposal(order.proposalId, b.data.viewingKey as Hex).accountId,
-        b.data.viewingKey as Hex, req.userId!);
-    } catch (e: any) {
-      if (saysNothingWasSent(e)) throw e;
-      throw new NothingWasSent(`${String(e?.message ?? e).replace(/\.\s*$/u, '')}. Nothing was sent.`);
-    }
-    return accounts.sendRaise(String(req.params.id), b.data.viewingKey as Hex,
-      new Uint8Array(Buffer.from(b.data.tx, 'base64')), by);
-  });
-});
-
-app.post('/api/accounts/:id/signers/:signerId/seat-order', authed, member, wrap(async (req, res) => {
-  const b = z.object({ viewingKey: z.string() }).strict().parse(req.body ?? {});
-  const o = accounts.seatOrderOf(String(req.params.id), b.viewingKey as Hex, String(req.params.signerId));
-  res.json({ order: { circuit: 'amendSigner', leaf: o.leaf, proposal: o.proposal, proposalSalt: o.proposalSalt } });
-}));
-
-app.post('/api/accounts/:id/signers/:signerId/seat', authed, member, async (req, res) => {
-  const b = z.object({ viewingKey: z.string(), tx: z.string().min(1).max(1_000_000) }).strict().safeParse(req.body ?? {});
-  if (!b.success) {
-    res.status(400).json({ nothingWasSent: true, error: 'this request does not carry a seat to send. Nothing was sent.' });
-    return;
-  }
-  await answerASend(req, res, async () => {
-    const id = String(req.params.id);
-    let by: string;
-    try {
-      by = accounts.seatOf(id, b.data.viewingKey as Hex, req.userId!);
-    } catch (e: any) {
-      throw new NothingWasSent(`${String(e?.message ?? e).replace(/\.\s*$/u, '')}. Nothing was sent.`);
-    }
-    return accounts.seatFromDevice(id, b.data.viewingKey as Hex, String(req.params.signerId),
-      new Uint8Array(Buffer.from(b.data.tx, 'base64')), by);
-  });
-});
-
-app.post('/api/accounts/:id/threshold/order', authed, member, wrap(async (req, res) => {
-  const b = z.object({ viewingKey: z.string(), newThreshold: z.number().int().min(1) }).strict().parse(req.body ?? {});
-  const o = accounts.thresholdOrderOf(String(req.params.id), b.viewingKey as Hex, b.newThreshold);
-  res.json({ order: { circuit: 'setThreshold', threshold: String(o.threshold), proposal: o.proposal, proposalSalt: o.proposalSalt } });
-}));
-
-app.post('/api/accounts/:id/threshold', authed, member, async (req, res) => {
-  const b = z.object({
-    viewingKey: z.string(), newThreshold: z.number().int().min(1), tx: z.string().min(1).max(1_000_000),
-  }).strict().safeParse(req.body ?? {});
-  if (!b.success) {
-    res.status(400).json({ nothingWasSent: true, error: 'this request does not carry a threshold change to send. Nothing was sent.' });
-    return;
-  }
-  await answerASend(req, res, async () => {
-    const id = String(req.params.id);
-    let by: string;
-    try {
-      by = accounts.seatOf(id, b.data.viewingKey as Hex, req.userId!);
-    } catch (e: any) {
-      throw new NothingWasSent(`${String(e?.message ?? e).replace(/\.\s*$/u, '')}. Nothing was sent.`);
-    }
-    return accounts.setThresholdFromDevice(id, b.data.viewingKey as Hex, b.data.newThreshold,
-      new Uint8Array(Buffer.from(b.data.tx, 'base64')), by);
-  });
-});
 
 /**
  * M-98: THE APP IS EXPORTED, AND IT DOES NOT LISTEN ON IMPORT.

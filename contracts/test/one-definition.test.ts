@@ -518,7 +518,7 @@ const SCHEMES: Entry[] = [
   {
     circuit: 'payKeyCommitmentOf',
     contractOnly:
-      'the commitment every device checks its unsealed key against; run-keys.ts calls this ' +
+      'the commitment every device checks its unsealed key against; pay-key-commitment.ts calls this ' +
       'circuit off pureCircuits and has no TypeScript copy.',
   },
   {
@@ -554,7 +554,7 @@ const SCHEMES: Entry[] = [
   {
     circuit: 'payKeyPayload',
     contractOnly:
-      'what signers approve to commit the account to its pay-record key; run-keys.ts calls this ' +
+      'what signers approve to commit the account to its pay-record key; pay-key-commitment.ts calls this ' +
       'circuit off pureCircuits to raise the proposal, and sealPayKey recomputes it inside the proof.',
   },
   {

@@ -1,6 +1,6 @@
 import { nanoid } from 'nanoid';
 import {
-  newWrappingKeypair, newSymmetricKey, wrapKey, unwrapKey, seal, unseal, canonical,
+  newWrappingKeypair, unwrapKey, seal, unseal, canonical,
   parseCanonical, toHex, utf8, type Hex, type Sealed,
 } from './crypto.js';
 import { sha256 as sha256Bytes } from '@noble/hashes/sha2.js';
@@ -13,7 +13,7 @@ import { newWords } from 'midnight-identity';
  * sides of the comparison cannot drift apart. */
 import { addressFingerprint, FingerprintError } from 'midnight-identity/profile/fingerprint';
 import { payslipKeypairForWallet } from './payslip-key.js';
-import { NO_COMPANY, NO_LABEL, NO_LEAF, untilText, type SealedPayslip } from './payslip-open.js';
+import type { SealedPayslip } from './payslip-open.js';
 
 /**
  * **THE ORIGIN THE SEED'S STAND-IN WALLET IS ASKED AT, AND IT IS NOT AN
@@ -26,11 +26,11 @@ import { NO_COMPANY, NO_LABEL, NO_LEAF, untilText, type SealedPayslip } from './
  * which is what keeps this from quietly becoming load bearing.
  */
 const SEED_WALLET_ORIGIN = 'https://payroll.example';
-import type { AssetId, AssetRegistry, LedgerForm } from './assets.js';
-import { assets as defaultAssets, subtotals, ledgerTokenOf, ledgerFormOf, symbolOf, whyTheMoneyCannotReach } from './assets.js';
+import type { AssetId, LedgerForm } from './assets.js';
+import { assets as defaultAssets, ledgerFormOf, symbolOf, whyTheMoneyCannotReach } from './assets.js';
 import type { RunLeg } from './types.js';
-import type { Employee, PayrollRun, SealedRun, ShieldedEntry, RosterEmployee, SealedEmployee, Invite, User, RunSkip, RunSkips, RunRetry, RunRepeatRecord, RunPayout, Proposal } from './types.js';
-import { sealRecord, openRecord, sealToInbox, openFromInbox } from './sealed-records.js';
+import type { Employee, PayrollRun, SealedRun, ShieldedEntry, RosterEmployee, SealedEmployee, Invite, User, RunSkip, RunRetry, RunRepeatRecord, Proposal } from './types.js';
+import { sealRecord, sealToInbox, openFromInbox } from './sealed-records.js';
 import { openEmployeeRow, type PersonSecrets } from './person-record.js';
 import { INVITATION_LIFETIME_MS } from './invitation.js';
 import {
@@ -43,10 +43,22 @@ import { payrollPayee } from './movement.js';
 import type { NetworkName } from '../midnight/network.js';
 import type { PaymentFacts } from '../midnight/payout-tree.js';
 import type { RunInputs } from '../midnight/run-status.js';
-import { emptyRegister, decide, registerFor, skippedIndices } from '../midnight/run-skips.js';
+import { registerFor, skippedIndices } from '../midnight/run-skips.js';
+import {
+  acknowledgedRepeats, assembledRun, canonicalOrAsWritten, contentOf, peopleDrawn, peopleOnTheRun, recordSkips, refuseAPayrollThatMayBeOnChain,
+  refuseAPeriodAlreadyRaised, runsRepeatingIn, samePeriod, withNumberedExtras,
+  type EmployeeSpec, type RepeatAcknowledgement, type RepeatedRun, type SkipAcknowledgement,
+} from './run-drawing.js';
+import {
+  earlierRoundOfLeg, receiptsOf, refuseALegThatIsProposed, refuseFactsOutOfOrder, refuseMaterialThatIsNotThisLeg,
+  refusePayingOnePayeeTwice, refuseRaisingAgainDifferently, refuseRaisingOverAnotherRun, refuseRecordsMadeElsewise,
+  unaccountedRefusal, refuseARetryOfNobody, refuseRetryMaterialThatIsNotItsPeople, refuseARetryOverPeopleCovered,
+  type LegBeingRaised,
+} from './run-raising.js';
+export { recordSkips, type EmployeeSpec, type RepeatAcknowledgement, type SkipAcknowledgement } from './run-drawing.js';
 import type { RunMaterial, RetryMaterial } from '../midnight/run-material.js';
 import {
-  runSecrets, payRecordNonceOf, type PayoutSeed, type RunIdentity, type PayRecord, type PayRecords,
+  payRecordNonceOf, type PayoutSeed, type PayRecords,
 } from '../midnight/run-keys.js';
 
 /**
@@ -103,17 +115,6 @@ export { INVITATION_LIFETIME_MS };
  * whose coin key and reading key were equal would make every crossed-pair
  * assertion in the suite pass while proving nothing.
  */
-const addressOf = (
-  spec: EmployeeSpec, existing?: RosterEmployee,
-): string | null => {
-  if (!existing) return null;
-  if (existing.name !== spec.name) {
-    throw new Error(
-      `the roster entry beside ${spec.name} on this run is ${existing.name}. `
-      + 'Refusing rather than printing one payee\'s address on another\'s payslip.');
-  }
-  return existing.address?.bech32 ?? null;
-};
 
 const seededAddress = (employeeId: string, network: NetworkName): PayeeAddress => {
   const from = (tag: string): Hex => {
@@ -210,112 +211,8 @@ export class RecordingInviteDelivery implements InviteDelivery {
   }
 }
 
-/**
- * **WHAT AN ADMIN HAS TO SAY TO RUN PAYROLL WITHOUT SOMEBODY ON IT.**
- *
- * **NOT A BOOLEAN, AND THAT IS THE WHOLE OF IT.** A flag says *yes, whatever
- * that was*; it can be set by a screen that never showed a name, carried over
- * from a previous attempt, or defaulted true by a client somebody wrote in a
- * hurry — and in each case whoever happens to be pending at the moment the
- * button is pressed is dropped without anybody reading their name. **That is
- * the silent skip the old refusal existed to prevent, and it would be the way
- * this change reintroduced it.**
- *
- * So the acknowledgement carries the NAMES, the PERSON accepting it, and the
- * REASON — and the door compares the names against the ones it is actually
- * about.
- */
-export interface SkipAcknowledgement {
-  /**
-   * **THE SAME SET as the people this run would leave out — neither a superset
-   * nor a subset of it.**
-   *
-   * A run that skips somebody the admin did not name is the silent drop. A run
-   * naming somebody who is NOT being skipped is the same failure seen from the
-   * other side: the list the admin read is not the list the run would act on,
-   * so their agreement is about a different payroll. Both are refused.
-   *
-   * **COMPARED AS A SET AND NOT AS A LIST**, said here because the first
-   * wording of this sentence said *exactly these ids* and a reviewer was right
-   * that a repeated id passes. It should: a duplicate is the same person named
-   * twice, one `RunSkip` is still recorded, and nobody is dropped. Order is not
-   * compared either, for the same reason.
-   */
-  employeeIds: string[];
-  /**
-   * **WHO IS ACCEPTING IT, AND IT IS NOT SOMETHING A CALLER GETS TO CHOOSE
-   * WHERE THERE IS ANYBODY TO ASK.**
-   *
-   * Checked by `decide`, which refuses an unattributed decision. **What `decide`
-   * cannot check is whether the name is the caller's own**, and this service
-   * cannot either: it runs with no server in front of it. So the served routes
-   * take this from the signed-in caller and do not read it off the request body — see
-   * `src/server/index.ts`'s run-creation route, which says why at length. **A
-   * string here is a claim; it stops being one at the door.**
-   */
-  by: string;
-  /** Why, in their words. Checked by `decide`, which refuses a blank reason on a skip. */
-  reason: string;
-}
 
-/**
- * **THE RUN'S RECORD OF WHO IT LEFT OUT, BUILT THROUGH `run-skips.ts` RATHER
- * THAN BESIDE IT.**
- *
- * The skip reader was written and tested against the compiled contract, and
- * wired it to nothing. **This is its second and closer caller and it does not
- * close that** — the index `runStatus` reads is a different one, over a
- * leg's payout leaves and under the proposal id that leg was raised with, and
- * joining the two is still owed.
- *
- * **EVERY RULE ABOUT A SKIP IS ASKED BY CALLING `decide`, AND NOT ONE OF THEM
- * IS RESTATED HERE.** An unattributed decision, a blank reason and an index
- * outside the run are refused by that function, in its own sentences, because a
- * rule written twice is this project's oldest failure and a refusal written
- * twice is one that can be deleted in one place and go on looking enforced.
- * **What that costs is that the values handed to it have to be capable of
- * failing its checks** — see the note on `reason` below, which is where the
- * first draft of this function quietly stopped being able to. **The
- * consequence is deliberate: this throws before a run exists**, so an
- * acknowledgement with nobody's name on it produces no payroll rather than a
- * payroll with an unsigned skip in it.
- */
-export const recordSkips = (
-  runId: string, people: RunSkip[], ack: SkipAcknowledgement, at: string,
-): RunSkips => {
-  let decisions = emptyRegister(runId, people.length);
-  people.forEach((person, index) => {
-    decisions = decide(decisions, {
-      index,
-      skip: true,
-      by: ack.by,
-      at,
-      /*
-       * **THE OPERATOR'S WORDS, VERBATIM AND ALONE.**
-       *
-       * **THE FIRST DRAFT COMPOSED THIS** — the operator's reason, then which
-       * of the two pending states the person is in — and a test written to
-       * watch `decide` refuse a blank reason went green instead. **The
-       * composition is never blank, so `decide`'s check could not fail, and the
-       * rule this function's own comment says it delegates was not being
-       * asked.** A guard whose written reason does not match its behaviour is
-       * the next round's false confidence, and this file already carries that
-       * sentence about somebody else's code.
-       *
-       * So the two facts stay apart, which is what they are: **`reason` is what
-       * a person said, and `RunSkips.people[index].waiting` is what the system
-       * measured.** They travel together by construction — the index and the
-       * list are one field, at one index — so a report has both without either
-       * being able to defeat a check on the other.
-       */
-      reason: ack.reason,
-    });
-  });
-  return { people, decisions };
-};
 
-/** The numbers on a run. Everything else about it is operational. */
-type RunSecrets = Pick<PayrollRun, 'employees' | 'totals' | 'proposalIds' | 'payout' | 'skips' | 'repeats'>;
 
 /**
  * **THE PEOPLE ONE LEG OF A RUN PAYS, THROUGH ONE FILTER.**
@@ -327,207 +224,21 @@ type RunSecrets = Pick<PayrollRun, 'employees' | 'totals' | 'proposalIds' | 'pay
  * sequence. Written once so that the count the signers approve and the tree the
  * vault proves against cannot be drawn from two different lists.
  */
-/**
- * One receipt, sealed under a fresh key wrapped to the payee's public key.
- * `paid` absent writes the stand-in: the same fields at the same lengths, so a
- * slip whose leg has not been raised is not told apart from one whose has. A
- * leg raised at a company with no address, and a window not known, are
- * written at the same lengths as the values they stand in for, for the same
- * reason.
- *
- * **IT CARRIES THE PAYEE'S OWN NONCE AND BLINDING, AND NOTHING THAT LETS ITS
- * HOLDER RECORD OR MOVE A PAYMENT.** From those, the address the payee's own
- * wallet confirms, and the slip's token and amount, the payee's device builds
- * the payment's leaf with the contract's own circuits and looks for its record.
- * Recording a payment as made, or paying it, also needs the run's salt and
- * the payee's merkle path, and neither is ever written here.
- */
-function sealReceipt(
-  runId: string, publicKey: Hex, company: string | null,
-  paid: { nonce: Hex; blinding: Hex; until: bigint | null } | null,
-  /** The company's label: which company the account the payment is read at belongs to. */
-  label: string | null,
-): NonNullable<PayrollRun['payslips'][number]['receipt']> {
-  const key = newSymmetricKey();
-  const sealed = seal(canonical({
-    runId,
-    nonce: paid ? paid.nonce.toLowerCase() : NO_LEAF,
-    blinding: paid ? paid.blinding.toLowerCase() : NO_LEAF,
-    company: company === null ? NO_COMPANY : company.toLowerCase(),
-    label: label === null ? NO_LABEL : label,
-    until: untilText(paid ? paid.until : null),
-  }), key);
-  return { wrapped: wrapKey(key, publicKey), sealed };
-}
 
-/**
- * **ONE LEG OF A RUN IS ONE TOKEN IN ONE FORM.**
- *
- * One run pays one ledger token, in one form: privately from the vault's notes
- * or publicly from its balance. A payroll whose payees include both private and
- * public addresses is raised as two legs, one per form, side by side, each its
- * own approval round over its own tree. A leg is written `<token>:<form>`.
- */
-export const runLegOf = (asset: AssetId, form: LedgerForm): RunLeg => `${asset}:${form}`;
-
-/** Whether a value names a leg, as against naming only a token. */
-export const isRunLeg = (value: string): value is RunLeg =>
-  /^[0-9a-f]{64}:(shielded|unshielded)$/.test(value);
-
-/** The token a leg pays. */
-export const assetOfLeg = (leg: RunLeg): AssetId => leg.slice(0, leg.indexOf(':'));
-
-/** The form a leg pays in. */
-export const formOfLeg = (leg: RunLeg): LedgerForm =>
-  (leg.slice(leg.indexOf(':') + 1) === 'unshielded' ? 'unshielded' : 'shielded');
-
-/** What an answer about one leg carries: its token, its form and the leg itself. */
-const legFieldsOf = (leg: RunLeg): { asset: AssetId; form: LedgerForm; leg: RunLeg } =>
-  ({ asset: assetOfLeg(leg), form: formOfLeg(leg), leg });
-
-/** A leg as a person reads it: the form and the token's symbol, never the token. */
-export const legName = (leg: RunLeg, registry: AssetRegistry = defaultAssets): string =>
-  `${formOfLeg(leg) === 'shielded' ? 'private' : 'public'} ${symbolOf(assetOfLeg(leg), registry)}`;
-
-/**
- * **WHICH LEG A CALLER MEANS: A LEG, A TOKEN, OR NOTHING.** A token on its own
- * is enough where the run pays it in one form only; nothing at all is enough
- * where the run has one leg.
- */
-export type RunLegChoice = RunLeg | AssetId;
-
-/** The form a person on a run is paid in: their address's kind when the run was drawn. */
-const formOfEmployee = (e: Employee): LedgerForm => e.form ?? 'shielded';
-
-const legOfEmployee = (e: Employee): RunLeg => runLegOf(e.asset, formOfEmployee(e));
-
-/** Every leg a run pays, sorted, so two reads of one run list them in one order. */
-export const legsOfRun = (run: PayrollRun): RunLeg[] =>
-  [...new Set(run.employees.map(legOfEmployee))].sort();
-
-const legEmployees = (run: PayrollRun, leg: RunLeg): Employee[] =>
-  run.employees.filter(e => legOfEmployee(e) === leg);
-
-/** The leg a payroll round written down here is for. */
-const legOfRound = (r: { asset: AssetId; form?: LedgerForm }): RunLeg => runLegOf(r.asset, r.form ?? 'shielded');
-
-/**
- * Resolves a choice among the legs given, or refuses naming them. `null` where
- * a choice was made and none of the legs is it.
- */
-const chooseLeg = (
-  legs: readonly RunLeg[], which: RunLegChoice | undefined, _what: string, registry: AssetRegistry,
-): RunLeg | null => {
-  if (which === undefined) {
-    if (legs.length === 1) return legs[0]!;
-    const names = legs.map(l => legName(l, registry));
-    throw new Error(
-      `This run has ${legs.length === 2 ? 'two' : legs.length} sets of payments: `
-      + `${names.slice(0, -1).join(', ')} and ${names[names.length - 1]}. `
-      + 'Each is approved on its own. Choose which to send for approval.');
-  }
-  if (isRunLeg(which)) return legs.includes(which) ? which : null;
-  const ofToken = legs.filter(l => assetOfLeg(l) === which);
-  if (ofToken.length <= 1) return ofToken[0] ?? null;
-  throw new Error(
-    `This run pays ${symbolOf(which, registry)} both privately and publicly. Each is approved on its own. `
-    + 'Say whether you mean the private or the public payments.');
-};
-
-/**
- * **WHAT EACH PERSON ON ONE LEG IS PAID FOR, IN THE LEG'S ORDER**: the person
- * by their roster entry, the run's month, the run's kind of pay, and which
- * payment of that kind for that month it is - the first, unless the run was
- * drawn to pay them a numbered extra. Each payee's nonce is derived from it,
- * and the account refuses a second payment carrying a nonce it has recorded, so
- * nobody is paid twice for one month by this run or any other.
- */
-const payRecordsOf = (run: PayrollRun, people: Employee[]): PayRecord[] =>
-  people.map(e => ({
-    person: e.id,
-    month: canonicalPeriod(run.period),
-    kind: kindOfRun(run),
-    occurrence: run.repeats?.extra?.[e.id] ?? 0,
-  }));
-
-/**
- * **WHAT ONE LEG'S PAYEE SECRETS ARE DERIVED FROM, AND WHY IT IS NOT THE RUN'S
- * OWN ID.**
- *
- * Every per-payee nonce and blinding on a run comes out of this identifier and
- * the account's seed. Two legs of one payroll are two approvals over two
- * separate trees, and if they shared an identifier they would derive the SAME
- * secrets for position 0 of each - and each payee is handed their own nonce and
- * blinding, so the person at position 0 of one leg would hold the secrets of
- * whoever sits there in the other. They are different runs by the only measure
- * that matters here, so they get different identifiers.
- *
- * The value is stored with the leg rather than recomputed on demand, so that
- * changing this rule cannot strand a run that is already approved.
- */
-const runIdForLeg = (run: PayrollRun, leg: RunLeg): string => `${run.id}:${leg}`;
-
-/**
- * **WHICH LEG OF A RUN IS BEING ACTED ON, RESOLVED IN ONE PLACE.**
- *
- * A run that settles in one asset needs nobody to say which; a run that settles
- * in two cannot be guessed at, because guessing would act on one set of people
- * and report about another. Every door that works a leg at a time asks here, so
- * a caller cannot get one answer at the raise and a different one at the read.
- */
-/**
- * **WHICH LEG A PAYMENT VIEW IS ABOUT, RESOLVED OVER THE LEGS THAT HAVE
- * MATERIAL RATHER THAN OVER THE PAYROLL.**
- *
- * A run's payroll says which currencies it settles in; its payout record says
- * which of those have actually been raised. A view is about the second, and the
- * difference matters at both ends: a run with nothing raised has nothing to
- * report and says so once, in the shape every reader already handles, rather
- * than refusing for want of an argument that would not have helped; and a run
- * with two legs raised cannot be reported on without being told which, because
- * answering about one is how a screen comes to call a payroll complete while
- * everybody in the other currency is still owed.
- *
- * `null` where there is nothing to report on at all.
- */
-const raisedLegOf = (
-  run: PayrollRun, which: RunLegChoice | undefined, registry: AssetRegistry = defaultAssets,
-): RunLeg | null => {
-  const raised = Object.keys(run.payout ?? {}).sort();
-  if (raised.length === 0) return null;
-  if (which === undefined && raised.length > 1) {
-    throw new Error(
-      `this run has payout material for ${raised.length} legs (${raised.map(l => legName(l, registry)).join(', ')}) and a ` +
-        'payment view is about one of them. Name which leg: each is its own approval round ' +
-        'over its own set of payees, and an answer about one says nothing about the other.',
-    );
-  }
-  return chooseLeg(raised, which, 'has payout material for', registry);
-};
-
-const legOf = (run: PayrollRun, which: RunLegChoice | undefined, registry: AssetRegistry = defaultAssets): RunLeg => {
-  const leg = chooseLeg(legsOfRun(run), which, 'pays', registry);
-  if (leg === null) {
-    throw new Error(`this run pays nobody in ${isRunLeg(which!) ? legName(which!, registry) : symbolOf(which!, registry)}`);
-  }
-  return leg;
-};
+import {
+  assetOfLeg, formOfLeg, legFieldsOf, legName, legsOfRun, legEmployees,
+  legOfRound, payRecordsOf, runIdForLeg, raisedLegOf, legOf, canonicalPeriod, openSealedRun, sealedRunOf,
+  factsOfThePaid, type RunLegChoice,
+} from './run-legs.js';
+export { runLegOf, isRunLeg, assetOfLeg, formOfLeg, legName, legsOfRun, canonicalPeriod, type RunLegChoice } from './run-legs.js';
 import type { AccountService, RaiseHalf } from './account.js';
 import type { DataStore } from './store.js';
 import { paymentChecked, paymentsCheckedDigest, type PaymentChecked } from './device-raise.js';
-import { isLiveRound, sameList, untoldRetryRounds } from './retry-cover.js';
+import { isLiveRound, sameList } from './retry-cover.js';
 import {
-  alreadyPaying, confirmationCovers, kindOfRun, paidTwiceOnOneRun, unaccountedOnChain,
-  type Payee as PaidPerson, type RunPaying,
+  confirmationCovers, unaccountedOnChain,
 } from './already-paid.js';
 
-export interface EmployeeSpec {
-  name: string;
-  /** What actually moves for this person. */
-  asset: AssetId;
-  /** In `asset`'s smallest unit. */
-  amount: bigint;
-}
 
 export interface HireSpec {
   name: string;
@@ -1205,10 +916,8 @@ export class PayrollService {
    * lifecycle §8 describes is explicitly not this method's. What this does is
    * make the link dead, everywhere it is read.
    */
-  revokeInvite(employeeId: string): Invite {
-    const rec = this.store.getEmployee(employeeId);
-    if (!rec) throw new Error('employee not found');
-    const invite = this.store.listInvites(rec.accountId)
+  revokeInvite(accountId: string, employeeId: string): Invite {
+    const invite = this.store.listInvites(accountId)
       .find(i => i.subjectId === employeeId);
     if (!invite) {
       throw new Error(
@@ -2287,144 +1996,7 @@ export class PayrollService {
      * asking `all` a second time, so a subset the refusal was computed over and
      * a subset the roster is drawn from cannot come apart.
      */
-    const asked = all.filter(e => !employeeIds || employeeIds.includes(e.id));
-    /*
-     * **AND WHOEVER THE SUBSET LEAVES OUT IS LEFT OUT ON THE RECORD.** Somebody
-     * active on the roster whom the admin did not name is not paid by this run,
-     * and a month from now the record has to say who was not paid and who
-     * decided that, exactly as it does for somebody pending. So they join the
-     * confirmation below, named, and the record, marked as not chosen.
-     */
-    const notChosen = employeeIds
-      ? all.filter(e => e.status === 'active' && !employeeIds.includes(e.id))
-      : [];
-
-    // Pre-flight. Refusing by default is still the right call: silently
-    // escrowing someone's salary data because they have not set up yet is worse
-    // than a delay. What an admin gets now is a way to say they have read it.
-    /*
-     * TWO PENDING STATES, NAMED SEPARATELY: "outstanding" that covers two
-     * different situations is how an operator stops looking. Somebody who has
-     * handed nothing over is waiting on THEM; somebody whose drop box is full
-     * is waiting on US.
-     */
-    const pending = asked.filter(e => e.status === 'pending');
-    /*
-     * **THE PEOPLE, NOT THE INDEX.** The index is minted in `createRun`,
-     * because a register names the run it belongs to (`run-skips.ts`,
-     * `emptyRegister`) and the run has no id until it is built. **A stand-in id
-     * was considered and refused**: `registerFor` exists to refuse a register
-     * raised for a different run, and an id this method invented is a value
-     * that comparison could never be right about.
-     */
-    let leftOut: RunSkip[] | undefined;
-    if (pending.length || notChosen.length) {
-      const waitingOnUs = pending.filter(e => this.store.getEmployee(e.id)?.inbox);
-      const waitingOnThem = pending.filter(e => !this.store.getEmployee(e.id)?.inbox);
-      const parts: string[] = [];
-      if (notChosen.length) {
-        parts.push(
-          `${notChosen.map(e => e.name).join(', ')} `
-          + `${notChosen.length === 1 ? 'is' : 'are'} on the roster and not among the people chosen for this run`);
-      }
-      if (waitingOnThem.length) {
-        parts.push(
-          `${waitingOnThem.map(e => e.name).join(', ')} `
-          + `${waitingOnThem.length === 1 ? 'has' : 'have'} not set up yet`);
-      }
-      if (waitingOnUs.length) {
-        parts.push(
-          `${waitingOnUs.map(e => e.name).join(', ')} `
-          + `${waitingOnUs.length === 1 ? 'is' : 'are'} waiting to be admitted by an admin`);
-      }
-      const named = parts.join('; ');
-
-      /*
-       * **THE DEFAULT REFUSES. THAT IS THE PROPERTY, NOT THE ERGONOMICS.**
-       *
-       * Everything below this line — the acknowledgement, the name comparison,
-       * the record — exists so that an admin can proceed DELIBERATELY. Nothing
-       * exists so that a run can proceed by itself. A caller that passes
-       * nothing is refused, which is every caller that existed before this
-       * round and every caller that forgets.
-       */
-      if (!skipPending) {
-        throw new Error(
-          `payroll cannot run without leaving somebody out: ${named}. `
-          + (pending.length && notChosen.length
-            ? 'Admit the people waiting, or add the others to this run, and run again. '
-            : pending.length ? 'Admit them and run again. ' : 'Add them to this run and run again. ')
-          + 'Or confirm this run goes ahead without them. That needs their names, yours and a reason, '
-          + 'so that a month from now the record says who this run did not pay and who decided that.');
-      }
-
-      /*
-       * **THE ACKNOWLEDGEMENT IS ABOUT THESE PEOPLE OR IT IS ABOUT NOBODY.**
-       *
-       * Both directions are refused and they are different failures. A pending
-       * person the admin did NOT name is somebody dropped without being read —
-       * the exact thing the old wall was there to stop, arriving through the
-       * way this change opens. A name the admin DID give who is not being
-       * skipped means the list they were shown has moved since they read it:
-       * somebody was admitted, withdrawn, or the run is over a different subset.
-       * **In that case their agreement is about a different payroll, and
-       * treating it as agreement to this one is putting words in their mouth.**
-       */
-      const acknowledged = new Set(skipPending.employeeIds);
-      const unnamed = [...pending, ...notChosen].filter(e => !acknowledged.has(e.id));
-      const wouldSkip = new Set([...pending, ...notChosen].map(e => e.id));
-      const notSkipped = skipPending.employeeIds.filter(id => !wouldSkip.has(id));
-      if (unnamed.length) {
-        throw new Error(
-          `this run would also leave out ${unnamed.map(e => e.name).join(', ')}, `
-          + 'who is not in what was confirmed. Nobody a run is drawn over is left out of it '
-          + 'without being named, so read the list again and confirm the whole of it, or '
-          + 'admit them.');
-      }
-      if (notSkipped.length) {
-        throw new Error(
-          `${notSkipped.length === 1 ? 'one of the people' : 'some of the people'} confirmed as `
-          + 'being left out is not being left out by this run, so the list that was read is not '
-          + `the list this run would act on: ${named}. Take the confirmation again against `
-          + 'what this run actually skips.');
-      }
-
-      /*
-       * **WHICH HALF EACH PERSON IS IN, DECIDED ONCE, HERE.** The refusal
-       * sentence above and the record below are two renderings of this one
-       * partition. Asking `inbox` a second time to build the record would be a
-       * second split that could disagree with the first — and the way it would
-       * disagree is that somebody's report says an admin is holding them up
-       * when nobody is.
-       */
-      leftOut = [
-        ...pending.map((e): RunSkip => ({
-          employeeId: e.id,
-          name: e.name,
-          waiting: waitingOnUs.some(u => u.id === e.id) ? 'us' : 'them',
-        })),
-        ...notChosen.map((e): RunSkip => ({ employeeId: e.id, name: e.name, waiting: 'not chosen' })),
-      ];
-    }
-
-    const roster = asked.filter(e => e.status === 'active');
-    if (roster.length === 0) {
-      throw new Error(leftOut
-        ? 'there is nobody left to pay: everybody this run was drawn over is still pending, so '
-          + 'confirming that they are left out leaves the run empty. Admit somebody first.'
-        : 'no active employees to pay');
-    }
-    /*
-     * **EVERY PAYEE'S ADDRESS IS ONE A RUN CAN PAY, ASKED HERE AS WELL AS AT
-     * THE MONEY.** `paymentFactsFor` is the line nothing reaches the chain
-     * without. This one is earlier and is for the person: a run refused at the
-     * moment it is drawn names the roster entry and costs nothing.
-     *
-     * **THE SAME FUNCTION, NOT A SECOND COPY OF THE SENTENCE.**
-     */
-    for (const e of roster) {
-      if (e.address) payrollPayee(e.name, e.address);
-    }
+    const { roster, leftOut } = peopleDrawn(all, employeeIds, skipPending, (e) => Boolean(this.store.getEmployee(e.id)?.inbox));
     /*
      * **A CONFIRMATION IS CHECKED AGAINST WHAT IT CONFIRMS, IN BOTH DIRECTIONS,
      * BEFORE IT LETS ANYTHING THROUGH.** Without one, the chain is asked here
@@ -2435,20 +2007,7 @@ export class PayrollService {
       ? await this.confirmedRosterRepeat(accountId, period, viewingKey, repeats)
       : undefined;
     if (!drawnRepeat) await this.refuseWhatTheChainHoldsUnaccounted(accountId, period, viewingKey, undefined, 'draw');
-    if (!drawnRepeat && this.store.listRuns(accountId)
-      .some(r => samePeriod(r.period, period) && r.status !== 'draft')) {
-      /*
-       * **AND IT NAMES WHAT TO DO INSTEAD, BECAUSE OF WHO READS IT.** This is
-       * the refusal a person meets when they type the month again after a raise
-       * they did not get an answer to, and the answer they need is that the run
-       * they are trying to recreate is the one to raise again.
-       */
-      throw new Error(
-        `a run for ${period} already exists. If that is the run you meant and its raise failed, `
-        + 'raise that run again unchanged rather than drawing this payroll up a second time: it '
-        + 'keeps its people\'s payment secrets, so raising it again cannot pay anybody twice. If '
-        + 'some of the people on it were not reached, raise a retry on it for them.');
-    }
+    if (!drawnRepeat) refuseAPeriodAlreadyRaised(period, this.store.listRuns(accountId));
     /*
      * **AND A DRAFT IS NOT ALWAYS A DRAFT.** A run stays `draft` until its raise
      * returns, and a raise can throw after the network has the transaction - so
@@ -2456,7 +2015,7 @@ export class PayrollService {
      * about, may be on chain. The status alone cannot say; the proposal records
      * can, because they are written before the chain is called.
      */
-    if (!drawnRepeat) this.refuseAPayrollThatMayBeOnChain(accountId, period, viewingKey);
+    if (!drawnRepeat) refuseAPayrollThatMayBeOnChain(period, this.store.listRuns(accountId), this.accounts.payrollRoundsOf(accountId, viewingKey));
     /*
      * NO CROSS-RATE CHECK, because there is nothing to cross. Exchange rates
      * are ruled out entirely: everybody is paid in the currency assigned to
@@ -2526,64 +2085,7 @@ export class PayrollService {
   ): PaymentFacts[] {
     const run = this.requireRun(runId, viewingKey);
     const people = which === undefined ? run.employees : legEmployees(run, legOf(run, which, this.assets));
-    return people.map((e) => {
-      const person = this.person(e.id, viewingKey);
-      if (!person) {
-        throw new Error(
-          `${e.name} is not on the roster, so there is no address to pay them at. `
-          + 'An ad hoc run can seal a payslip to somebody, but it cannot send them money.');
-      }
-      if (person.status !== 'active') {
-        throw new Error(
-          `${person.name} is ${person.status}, not active. Paying them now would settle `
-          + 'into an address nobody has confirmed they can reach.');
-      }
-      if (!person.address) {
-        throw new Error(
-          `${person.name} has no address. It has to come from their own device or wallet — `
-          + 'there is nowhere for an operator to enter one for somebody else, on purpose.');
-      }
-      /*
-       * **THE TOKEN IS THE LEDGER'S, IN THE FORM THIS PAYEE IS PAID IN, READ OFF
-       * THE ASSET'S ROW.** A vault pays out of the token a payment names, so a
-       * payment naming its money by the account's name for the asset would be
-       * approved, paid for, and refused at the vault. Where the asset has no
-       * private form this refuses now, before any material is built or any fee
-       * is spent, and says which assets can be paid privately.
-       */
-      const payee = payrollPayee(person.name, person.address);
-      /*
-       * **THE ADDRESS PAID IS THE ADDRESS ON THE PAYSLIP, OR NOTHING IS PAID.**
-       * The payslip was written when the run was drawn and names where its
-       * payee is paid; this pays the roster's address as it is now. Asked
-       * after the address is known to be one a payroll may pay at all. A run
-       * drawn before its people's addresses were kept beside them has nothing
-       * to compare, and is paid as it always was.
-       */
-      if (e.paidTo !== undefined && e.paidTo.toLowerCase() !== person.address.bech32.toLowerCase()) {
-        throw new Error(
-          `${person.name}'s address on the roster has changed since this run was drawn, so it would `
-          + 'pay an address their payslip does not name. Nothing was raised and no fee was spent. '
-          + `Check the change with ${person.name}, then draw the run again. If a round of this run was `
-          + 'raised before, withdraw it first.');
-      }
-      /*
-       * **A PERSON IS PAID IN THE FORM THEIR LEG IS.** The leg was settled by
-       * their address when the run was drawn; an address of the other kind now
-       * would put them in a run of the other form.
-       */
-      if (payee.kind !== formOfEmployee(e)) {
-        throw new Error(
-          `${person.name} is on this run to be paid ${formOfEmployee(e) === 'shielded' ? 'privately' : 'publicly'}, `
-          + `but their payment address is now a ${payee.kind === 'shielded' ? 'private' : 'public'} one. `
-          + `Nothing was sent for approval and no fee was spent. Create the run again so ${person.name} is paid the way their address allows.`);
-      }
-      return {
-        payee,
-        token: ledgerTokenOf(e.asset, payee.kind, this.assets),
-        amount: e.amount,
-      };
-    });
+    return factsOfThePaid(people, (id) => this.person(id, viewingKey), this.assets);
   }
 
   /**
@@ -2613,51 +2115,6 @@ export class PayrollService {
     });
   }
 
-  /**
-   * **A NUMBERED EXTRA: A REAL SECOND PAYMENT TO A PERSON FOR A MONTH, SAID SO
-   * AND NUMBERED.** The account refuses a second payment carrying a nonce it has
-   * recorded, and a nonce is derived from the person, the month, the kind of pay
-   * and the occurrence. So a correction, a top-up or back pay for a month
-   * already part-paid is paid as the next occurrence: 1, then 2. It is only ever
-   * part of a confirmed repeat, whose reason is the extra's reason, and each
-   * person it names must be on the run.
-   *
-   * **THE OCCURRENCE IS ONE PAST THE HIGHEST ANY RUN FOR THE MONTH GAVE THAT
-   * PERSON**, drafts included: a run drawn over somebody used their first
-   * payment whether or not it was paid, and giving two runs the same extra would
-   * make the second one's payment the one the account refuses.
-   */
-  private withNumberedExtras(
-    accountId: string, period: string, viewingKey: Hex, employees: Employee[],
-    repeated: RunRepeatRecord | undefined, named: string[],
-  ): RunRepeatRecord | undefined {
-    if (named.length === 0) return repeated;
-    if (!repeated) {
-      throw new Error(
-        `a numbered extra is a second payment for ${period}, and this run repeats no run for that `
-        + 'month. Draw it as a repeat that names the runs for the month and says why, and name the '
-        + 'people it pays again. No screen takes that confirmation yet.');
-    }
-    const onRun = new Map(employees.map(e => [e.id, e]));
-    const strangers = [...new Set(named)].filter(id => !onRun.has(id));
-    if (strangers.length) {
-      const who = strangers.map(id => this.person(id, viewingKey)?.name ?? id);
-      throw new Error(
-        `${who.join(', ')} ${strangers.length === 1 ? 'is' : 'are'} named for a numbered extra `
-        + 'and not on this run. Only somebody this run pays can be paid an extra by it.');
-    }
-    const earlier = this.store.listRuns(accountId)
-      .filter(r => samePeriod(r.period, period))
-      .map(r => this.openRun(r, viewingKey));
-    const extra: Record<string, number> = {};
-    for (const id of [...new Set(named)].sort()) {
-      const used = earlier
-        .filter(r => r.employees.some(e => e.id === id))
-        .map(r => r.repeats?.extra?.[id] ?? 0);
-      extra[id] = (used.length ? Math.max(...used) : 0) + 1;
-    }
-    return { ...repeated, extra };
-  }
 
   async createRun(
     accountId: string,
@@ -2737,152 +2194,21 @@ export class PayrollService {
       ? recordSkips(runId, leftOut.people, leftOut.ack, new Date().toISOString())
       : undefined;
 
-    const employees: Employee[] = [];
-    const secrets: EmployeeSecret[] = [];
-    const payslips: PayrollRun['payslips'] = [];
-
-    specs.forEach((spec, i) => {
-      if (typeof spec.amount !== 'bigint') {
-        throw new Error(`amount for ${spec.name} must be a bigint in minor units`);
-      }
-      if (spec.amount <= 0n) throw new Error(`amount for ${spec.name} must be positive`);
-      this.assets.require(spec.asset);
-
-      // A person on the roster keeps the same identity and key across every run.
-      // Only an ad hoc run mints a new one, and then the secret is returned once.
-      const existing = roster?.[i];
-      /*
-       * JOINED THROUGH THE RECORD, NOT THROUGH THE INDEX. `roster?.[i]` was
-       * read a second time further down for `paidTo`, and changing it to
-       * `roster?.[0]` left 145 tests green — on a hundred-person run that
-       * prints one person's address on every payslip, which is the single field
-       * a payee is told to check. One read, one variable.
-       */
-      const id = existing?.id ?? 'emp_' + nanoid(10);
-      let publicKey: string;
-      if (existing) {
-        if (!existing.wrappingPublicKey) throw new Error(`${existing.name} has no key yet`);
-        publicKey = existing.wrappingPublicKey;
-      } else {
-        /*
-         * **THE ONE PLACE LEFT THAT MINTS A PAYSLIP KEY.**
-         *
-         * An ad hoc run pays somebody who is not on the roster, so there is no
-         * handover, no wallet and nothing to derive from — `payslipKeypairFrom`
-         * would have nothing to expand. So this stays random, the secret is
-         * returned once, and `words` is absent to say so in the type.
-         *
-         * **IT IS NOT A GAP LEFT OPEN BY OVERSIGHT.** Closing it means an ad
-         * hoc payee handing over a public key first, which is an onboarding
-         * flow and not a derivation — reported rather than smuggled in. Until
-         * then, an ad hoc payslip is exactly the hazard described above.
-         */
-        const wk = newWrappingKeypair();
-        publicKey = wk.publicKey;
-        secrets.push({ employeeId: id, name: spec.name, wrappingSecret: wk.secret });
-      }
-
-      /*
-       * **WHERE THIS PERSON IS PAID, AS THEIR PAYSLIP SAYS, KEPT BESIDE THEM ON
-       * THE RUN.** The payslip is sealed to the payee and nobody else can open
-       * it, so this is the only copy the company can compare with the roster
-       * when the run is raised: a raise pays the roster's address, and the
-       * payslip is how the payee checks it.
-       */
-      const paidTo = addressOf(spec, existing);
-      /*
-       * **THE FORM THIS PERSON IS PAID IN, SETTLED BY THEIR ADDRESS.** It
-       * decides which leg they are on: one run pays one token in one form, so
-       * a payroll with private and public payees is two legs side by side.
-       * Somebody with no address yet is put in the token's private form where
-       * it has one.
-       */
-      const form: LedgerForm = existing?.address?.kind
-        ?? (ledgerFormOf(this.assets.require(spec.asset), 'shielded').of === 'token' ? 'shielded' : 'unshielded');
-      employees.push({
-        id, name: spec.name, wrappingPublicKey: publicKey,
-        asset: spec.asset, amount: spec.amount, form,
-        ...(paidTo ? { paidTo } : {}),
-      });
-
-      // Two layers: seal the slip under a fresh key, wrap that key to the employee.
-      /*
-       * THE PAYSLIP CARRIES THE ADDRESS OF RECORD.
-       *
-       * The employee cannot read the company's roster — they hold no viewing
-       * key, and must not. So the only way they can ever check that the address
-       * the company holds for them is the one they handed over is for it to
-       * come back to them **sealed to their own key**, which is what a payslip
-       * already is.
-       *
-       * **AND HERE IS WHAT IT DOES NOT DO, because the first version of this
-       * comment claimed otherwise and was wrong.** The payslip is sealed to the
-       * payee's wrapping key — **which arrives in the SAME handover, in the same
-       * drop box, as the address.** So whoever supplied the address supplied the
-       * key that opens the slip reporting it: an impostor reads their own
-       * address back, and the real employee gets "that key cannot open this
-       * payslip". It is a mirror in the honest case and useless in the attack it
-       * was written for.
-       *
-       * It is kept because it is the right field in the right place — what a
-       * payee was paid to belongs on their payslip — and because it becomes a
-       * real check the moment the two halves stop travelling together. **It is
-       * not a defence today and must not be counted as one.**
-       */
-      /*
-       * **THE COMPANY THE PAYEE ASKS THEIR WALLET ABOUT, WRITTEN ON THE SLIP.**
-       * A roster payee's key was worked out from one company's label, and
-       * that is the label that opens this slip for as long as it exists,
-       * whatever account the company has. An ad hoc payee's key was minted
-       * above and no company produces it, so there is none to name.
-       *
-       * **IT IS SEALED INSIDE THE SLIP AS WELL AS WRITTEN BESIDE IT.** The copy
-       * beside it is what the slip is filed and found by; the sealed one is
-       * what the payee's page believes, so a copy changed in the store names
-       * an address the page then refuses rather than one it shows.
-       */
-      const issuedBy = existing
-        ? (existing.payslipKeyFrom ?? companyLabelOfRecord(this.store, accountId))
-        : null;
-      const slipKey = newSymmetricKey();
-      const slip = seal(canonical({
-        employeeId: id, name: spec.name, asset: spec.asset, amount: spec.amount, period,
-        paidTo,
-        issuedBy: issuedBy === null ? null : issuedBy.toLowerCase(),
-      }), slipKey);
-      payslips.push({
-        employeeId: id, wrapped: wrapKey(slipKey, publicKey), slip, issuedBy,
-        /* The public key it is wrapped to, which is what its payee asks by. */
-        sealedTo: publicKey.toLowerCase(),
-        /* A stand-in until the payee's leg is raised; see `withReceipts`. */
-        receipt: sealReceipt(runId, publicKey, companyForOffer(this.store, accountId)?.account ?? null, null,
-          companyLabelOfRecord(this.store, accountId)),
-      });
+    const { employees, payslips, secrets } = peopleOnTheRun({
+      runId, period, specs, ...(roster ? { roster } : {}), assets: this.assets,
+      company: { account: companyForOffer(this.store, accountId)?.account ?? null, label: companyLabelOfRecord(this.store, accountId) },
+      mint: () => { const wk = newWrappingKeypair(); return { id: 'emp_' + nanoid(10), publicKey: wk.publicKey, secret: wk.secret }; },
     });
 
-    const repeatedWithExtra = this.withNumberedExtras(
-      accountId, period, viewingKey, employees, repeated, extra ?? repeats?.extra ?? []);
+    const repeatedWithExtra = withNumberedExtras(
+      period, employees, repeated, extra ?? repeats?.extra ?? [],
+      this.store.listRuns(accountId).filter(r => samePeriod(r.period, period)).map(r => this.openRun(r, viewingKey)),
+      (id) => this.person(id, viewingKey)?.name ?? null);
 
-    const run: PayrollRun = {
-      id: runId,
-      accountId,
-      period,
-      employees,
-      payslips,
-      /*
-       * A SUBTOTAL PER ASSET, never one total.
-       *
-       * Adding 5,000 GBP to 5,000 USDC and displaying 10,000 is not an
-       * approximation, it is meaningless — and the sufficiency check that used
-       * that figure would have passed or failed for reasons unrelated to
-       * whether the account can pay anybody.
-       */
-      totals: subtotals(employees.map(e => ({ asset: e.asset, amount: e.amount }))),
-      proposalIds: {},
-      status: 'draft',
-      ...(skips ? { skips } : {}),
-      ...(repeatedWithExtra ? { repeats: repeatedWithExtra } : {}),
-    };
+    const run = assembledRun({
+      runId, accountId, period, employees, payslips,
+      ...(skips ? { skips } : {}), ...(repeatedWithExtra ? { repeats: repeatedWithExtra } : {}),
+    });
     this.putRun(run, viewingKey);
     return { run, secrets };
   }
@@ -3008,72 +2334,7 @@ export class PayrollService {
           'and could never be paid. Build the material for this leg first and raise the run with it.',
       );
     }
-    if (payable.run.payees !== BigInt(paid.length)) {
-      throw new Error(
-        `this run pays ${paid.length} people in the ${legName(leg, this.assets)} leg and the run material names ` +
-          `${payable.run.payees}. The payee count is bound into the payload the signers ` +
-          'approve, so a run cannot be declared finished early or made never to finish. A ' +
-          'count that disagrees with the roster would do one of the two.',
-      );
-    }
-    /*
-     * **THE LEAF LIST AND THE COUNT THE SIGNERS APPROVE ARE THE SAME NUMBER.**
-     *
-     * The root and the leaves are two views of one tree, and a leaf list that is
-     * short by one is a person whose payment nothing will ever report on.
-     */
-    if (payable.run.payees !== BigInt(payable.leaves.length)) {
-      throw new Error(
-        `this run material names ${payable.run.payees} payees and carries ` +
-          `${payable.leaves.length} payout leaves. They are two views of one tree and a run ` +
-          'whose leaves do not account for its own payees cannot be reported on.',
-      );
-    }
-    /*
-     * **AND THE ROOT THE SIGNERS WILL APPROVE IS THE ROOT OVER THESE LEAVES,
-     * CHECKED HERE AND NOT INFERRED FROM WHERE THE VALUE CAME FROM.**
-     *
-     * This is the strongest of the three agreements and it is the one that costs
-     * a whole payroll: a run approved against a root that does not describe its
-     * own payees is refused at every `recordPaymentFromVault`, on payday, after the
-     * signatures are in and the fee is spent. **The material's TYPE cannot carry
-     * this** — the brand says the value was built rather than typed out, and a
-     * spread carries the brand across while replacing a field — so the
-     * derivation travels with the material and is called here on the values
-     * actually in front of the door.
-     *
-     * **IT IS THE TREE BUILDER'S OWN FUNCTION AND NEVER A SECOND ONE.** A root
-     * computed a second way here would build a check that agrees with itself and
-     * with nothing the chain will do.
-     */
-    if (payable.rootOf(payable.leaves, payable.facts, assetOfLeg(leg)) !== payable.run.root) {
-      throw new Error(
-        'this run material\'s payout root is not the root over its own leaves, so the run the ' +
-          'signers would approve is not the run these payees are in. Every payment against it ' +
-          'would be refused as a payee who is not in the approved run, on payday, after the ' +
-          'signatures were collected and the fee was spent.',
-      );
-    }
-    /*
-     * **THE MATERIAL WAS BUILT FOR THIS LEG OF THIS RUN, CHECKED AND NOT
-     * ASSUMED.** Every payee's secrets are derived from the identifier below, so
-     * material built under another one derives different leaves for the same
-     * people. Two legs of one payroll are two runs by this measure.
-     */
-    const legRunId = runIdForLeg(run, leg);
-    if (payable.identity.runId !== legRunId) {
-      throw new Error(
-        `this material was built for run ${payable.identity.runId} and is being raised for ` +
-          `${legRunId}. A run's payee secrets are derived from its identifier, so material ` +
-          'from another run describes other people.',
-      );
-    }
-    if (payable.identity.accountId !== run.accountId) {
-      throw new Error(
-        `this material was built for account ${payable.identity.accountId} and this run ` +
-          `belongs to ${run.accountId}.`,
-      );
-    }
+    refuseMaterialThatIsNotThisLeg(run, leg, paid, payable, payable.rootOf, this.assets);
 
     /*
      * **THE MATERIAL IS WRITTEN DOWN BEFORE THE PROPOSAL IS RAISED, AND THE ORDER
@@ -3122,19 +2383,7 @@ export class PayrollService {
      */
     const again = this.earlierRoundOfLeg(run, leg, viewingKey);
     const earlierMaterial = run.payout?.[leg];
-    if (again !== undefined && earlierMaterial
-        && (payable.run.opensAt !== earlierMaterial.opensAt
-          || payable.run.closesAt !== earlierMaterial.closesAt
-          || payable.run.vault !== earlierMaterial.vault)) {
-      throw new Error(
-        `the ${legName(leg, this.assets)} leg of run ${run.id} was raised before, may be on chain, and was raised with `
-        + `the window ${earlierMaterial.opensAt} to ${earlierMaterial.closesAt} at vault `
-        + `${earlierMaterial.vault}. Raising it again is raising that same round, so it takes `
-        + 'that window and that vault; a different one would be a second round over the same '
-        + 'people. To raise it with a different window or vault, withdraw that round first - '
-        + 'withdrawing asks the chain, and a round the chain holds can be withdrawn only until its '
-        + 'window opens - and raise it after.');
-    }
+    refuseRaisingAgainDifferently(run, leg, again, payable.run, this.assets);
     if (again !== undefined) {
       this.accounts.refuseRaisingADifferentRound(run.accountId, again, viewingKey, payable.run, assetOfLeg(leg));
     }
@@ -3170,20 +2419,8 @@ export class PayrollService {
      * otherwise be raised, and the chain would record a value that connects
      * nothing.
      */
-    const payments = payable.payments ?? [];
-    const madeElsewise = payRecords.some((r, i) => {
-      const p = payments[i];
-      return p === undefined
-        || p.nonce.toLowerCase() !== payRecordNonceOf(payKey, r).toLowerCase()
-        || payable.leafOf(p).toLowerCase() !== (payable.leaves[i] ?? '').toLowerCase();
-    });
-    if (madeElsewise) {
-      throw new Error(
-        `the payments prepared for the ${legName(leg, this.assets)} leg are not this run's payments to its people for `
-        + `${run.period}, so the chain could not tell them from another month's or from a second `
-        + 'payment nobody confirmed. Prepare this leg\'s payments again from the run and send them. '
-        + 'Nothing was changed.');
-    }
+    refuseRecordsMadeElsewise(run, leg, payRecords, payKey, payable.payments ?? [], payable.leaves,
+      payable.leafOf as (p: never) => Hex, this.assets);
     /*
      * **A NEW ROUND OF A LEG IS ASKED TWO MORE THINGS BEFORE ANYTHING IS
      * WRITTEN DOWN**: that it does not pay one payee twice, and that the chain
@@ -3272,29 +2509,13 @@ export class PayrollService {
   private refuseMaterialOutOfOrder(
     run: PayrollRun, leg: RunLeg, people: Employee[], payable: RunMaterial, viewingKey: Hex,
   ): void {
-    type Paying = Pick<PaymentFacts, 'payee' | 'token' | 'amount'>;
-    const same = (a: Paying | undefined, b: Paying | undefined): boolean =>
-      a !== undefined && b !== undefined && a.amount === b.amount
-      && canonical(a.token) === canonical(b.token) && canonical(a.payee) === canonical(b.payee);
     let roster: PaymentFacts[] | null;
     try {
       roster = this.paymentFactsFor(run.id, viewingKey, leg);
     } catch {
-      /* Somebody on the leg cannot be paid from the roster now; the leg's own record still can. */
       roster = null;
     }
-    const recorded = run.payout?.[leg]?.facts;
-    people.forEach((e, i) => {
-      const fact = payable.facts[i];
-      if (fact !== undefined && fact.amount === e.amount
-        && (same(fact, roster?.[i]) || same(fact, recorded?.[i]))) return;
-      throw new Error(
-        `the payments prepared for the ${legName(leg, this.assets)} leg do not match the people on this run: the one at `
-        + `position ${i + 1} is not ${e.name}'s as the run has them now or as the leg first `
-        + 'recorded them. Each person is told about the payment at their own position, so these '
-        + 'would tell somebody about another person\'s. Prepare this leg\'s payments again from '
-        + 'the run and send them. Nothing was changed.');
-    });
+    refuseFactsOutOfOrder(people, payable.facts, roster, run.payout?.[leg]?.facts);
   }
 
   /**
@@ -3339,68 +2560,13 @@ export class PayrollService {
    */
   private withReceipts(
     run: PayrollRun,
-    /** The account's payout seeds, every generation, read before the run was. */
     seeds: PayoutSeed[],
-    /** The account's pay-record key, read before the run was. Each nonce is derived from it. */
     payKey: Hex,
-    /**
-     * The leg being raised, before it is written onto the run: its leaves, its
-     * window's end, where it is recorded - the company's address now, or where
-     * it was first raised - and the identity its secrets are derived under.
-     * Absent when every leg is already written.
-     */
-    raising?: {
-      leg: RunLeg; leaves: Hex[]; closesAt: bigint; company: string | null; identity: RunIdentity;
-      records: PayRecord[];
-    },
+    raising?: LegBeingRaised,
   ): PayrollRun['payslips'] {
-    const now = companyForOffer(this.store, run.accountId)?.account ?? null;
-    /* The company's label, which every receipt carries beside the account it is read at. */
-    const label = companyLabelOfRecord(this.store, run.accountId);
-    const paidAt = new Map<string, { nonce: Hex; blinding: Hex; company: string | null; until: bigint }>();
-    const legs = new Set<RunLeg>([
-      ...(raising ? [raising.leg] : []), ...(Object.keys(run.payout ?? {}) as RunLeg[])]);
-    for (const asset of legs) {
-      const recorded = run.payout?.[asset];
-      const mine = raising?.leg === asset;
-      const leaves = mine ? raising.leaves : recorded?.leaves;
-      /*
-       * A leg raised earlier sends its payees to the address it was raised
-       * at, never to the company's address now. One raised before that was
-       * recorded is given the stand-in: better nothing to ask than the wrong
-       * record to ask.
-       */
-      const company = mine ? raising.company : recorded?.company;
-      const closesAt = mine ? raising.closesAt : recorded?.closesAt;
-      const identity: RunIdentity | undefined = mine
-        ? raising.identity
-        : recorded && { accountId: run.accountId, runId: recorded.runId, epoch: recorded.epoch };
-      if (!leaves || leaves.length === 0 || company === undefined || closesAt === undefined
-        || identity === undefined) continue;
-      const records = mine ? raising.records : (recorded?.records ?? payRecordsOf(run, legEmployees(run, asset)));
-      if (records.length !== leaves.length) continue;
-      const secrets = runSecrets(seeds, identity, { key: payKey, records });
-      const retries = (recorded?.retries ?? []).filter(r => r.proposalId !== undefined);
-      legEmployees(run, asset).forEach((e, i) => {
-        const mineAt = secrets[i];
-        if (leaves[i] === undefined || mineAt === undefined) return;
-        const until = retries
-          .filter(r => r.originalIndices.includes(i))
-          .reduce((latest, r) => (r.closesAt > latest ? r.closesAt : latest), closesAt);
-        paidAt.set(e.id, { nonce: mineAt.nonce, blinding: mineAt.blinding, company, until });
-      });
-    }
-    return run.payslips.map(p => {
-      const publicKey = p.sealedTo ?? run.employees.find(e => e.id === p.employeeId)?.wrappingPublicKey;
-      if (!publicKey) return p;
-      const paid = paidAt.get(p.employeeId);
-      return {
-        ...p,
-        receipt: paid === undefined
-          ? sealReceipt(run.id, publicKey, now, null, label)
-          : sealReceipt(run.id, publicKey, paid.company,
-            { nonce: paid.nonce, blinding: paid.blinding, until: paid.until }, label),
-      };
+    return receiptsOf(run, seeds, payKey, raising, {
+      company: companyForOffer(this.store, run.accountId)?.account ?? null,
+      label: companyLabelOfRecord(this.store, run.accountId),
     });
   }
 
@@ -3499,60 +2665,9 @@ export class PayrollService {
         + 'the merkle root over the leaves of the people it pays, the window it may be paid in, '
         + 'and the vault that will pay it.');
     }
-    if (payable.identity.accountId !== run.accountId
-        || payable.identity.runId !== recorded.runId
-        || payable.identity.epoch !== recorded.epoch) {
-      throw new Error(
-        `this retry was built under run ${payable.identity.runId} at seed generation `
-        + `${payable.identity.epoch} for account ${payable.identity.accountId}, and the leg it `
-        + `retries was raised under ${recorded.runId} at generation ${recorded.epoch} for account `
-        + `${run.accountId}. Nothing was raised. Prepare the retry again from run ${run.id} and `
-        + 'send it.');
-    }
     const indices = payable.originalIndices;
-    if (indices.length === 0) {
-      throw new Error('a retry pays at least one person, and this one names nobody');
-    }
-    const seen = new Set<number>();
-    for (const i of indices) {
-      if (!Number.isInteger(i) || i < 0 || i >= recorded.leaves.length) {
-        throw new Error(
-          `the ${legName(leg, this.assets)} leg of run ${run.id} pays ${recorded.leaves.length} people; there is no `
-          + `person ${i} on it to retry`);
-      }
-      if (seen.has(i)) throw new Error(`person ${i} is named twice on this retry`);
-      seen.add(i);
-    }
-    if (payable.leaves.length !== indices.length
-        || payable.leaves.some((leaf, at) => leaf !== recorded.leaves[indices[at]!])) {
-      throw new Error(
-        'this retry\'s leaves are not the leaves the leg already holds for the people it names. '
-        + 'The leaf is the payment - the same leaf is refused a second time and a different one is '
-        + 'not - so a retry over different leaves would pay those people again.');
-    }
-    /*
-     * **A RETRY IS RAISED OVER THE LEG'S OWN TREE**: its root and payee count are
-     * the leg's, and it pays only the people it names. A vault under a spending
-     * policy charges a tree to its period once, so a retry over the same tree in
-     * the same period is not charged again; the people already paid cannot be
-     * paid through it, because the account refuses a leaf it has recorded.
-     */
-    if (payable.run.payees !== BigInt(recorded.leaves.length)) {
-      throw new Error(
-        `a retry is raised over the leg's own tree, which pays ${recorded.leaves.length} people, and `
-        + `this retry's material binds ${payable.run.payees}. The count is part of what the signers approve.`);
-    }
-    if (payable.rootOf(recorded.leaves, recorded.facts, assetOfLeg(leg)) !== payable.run.root) {
-      throw new Error(
-        'this retry\'s payout root is not the root over its leg\'s own leaves, so what the signers '
-        + 'would approve is not the proposal these people are in. Every payment against it would be '
-        + 'refused, after the signatures were collected and the fee was spent.');
-    }
-    /*
-     * **A RETRY IS A RAISE, AND IT IS NOT RAISED OVER PEOPLE ANOTHER RUN FOR THE
-     * PERIOD HAS BEEN RAISED TO PAY.** Their leaves in that other run are not
-     * these, so the account could pay them from both.
-     */
+    refuseARetryOfNobody(run, leg, recorded.leaves.length, indices, this.assets);
+    refuseRetryMaterialThatIsNotItsPeople(run, leg, indices, payable, payable.rootOf);
     this.refuseRaisingOverAnotherRun(run, viewingKey);
     const people = legEmployees(run, leg);
     if (people.length !== recorded.leaves.length) {
@@ -3706,64 +2821,16 @@ export class PayrollService {
     again: string | undefined, viewingKey: Hex,
   ): Promise<void> {
     const recorded = run.payout![leg]!;
-    const nowInSeconds = BigInt(Math.floor(Date.now() / 1000));
     const people = (xs: readonly number[]) => `#${[...xs].sort((a, b) => a - b).map((i) => i + 1).join(', #')}`;
     const isAre = (xs: readonly number[]) => (xs.length === 1 ? 'is' : 'are');
-    const when = (s: bigint) => `${new Date(Number(s) * 1000).toISOString().slice(0, 16).replace('T', ' ')} UTC`;
-    const named = new Set(indices);
-    const stopped = (p: Proposal) => p.status === 'cancelled' || p.status === 'blocked';
-
-    if (run.skips) {
-      const register = registerFor(run.skips.decisions, run.id, run.skips.people.length);
-      const notToPay = new Set(skippedIndices(register).map((i) => run.skips!.people[i]!.employeeId));
-      const onTheLeg = legEmployees(run, leg);
-      const marked = indices.filter((i) => notToPay.has(onTheLeg[i]!.id));
-      if (marked.length > 0) {
-        throw new Error(
-          `${people(marked)} ${isAre(marked)} marked on run ${run.id} as not to be paid, by a decision on record. A retry `
-          + 'pays only people the run meant to pay, so none was raised. Nothing was written down.');
-      }
-    }
-
-    if (!stopped(legRound) && nowInSeconds < recorded.closesAt) {
-      throw new Error(
-        `the ${legName(leg, this.assets)} leg of run ${run.id} can still pay everybody on it until ${when(recorded.closesAt)}, when its `
-        + 'window closes. A retry now would be a second round over the same people. Retry whoever it has not paid '
-        + 'once its window has closed. Nothing was written down.');
-    }
-
-    for (const r of recorded.retries ?? []) {
-      if (r.proposalId === undefined || nowInSeconds >= r.closesAt) continue;
-      const round = this.accounts.requireProposal(r.proposalId, viewingKey);
-      if (stopped(round)) continue;
-      const shared = r.originalIndices.filter((i) => named.has(i));
-      if (shared.length === 0) continue;
-      const until = when(r.closesAt);
-      throw new Error(
-        `${people(shared)} ${isAre(shared)} already on retry ${r.proposalId} of the ${legName(leg, this.assets)} leg of run ${run.id}, `
-        + (round.raisedAt
-          ? `which can still pay them until ${until}. Retry them once its window has closed.`
-          : round.txRef
-            ? `which was sent from a device and is not yet seen on chain. Send it again by retrying exactly `
-              + `${people(r.originalIndices)} with its window and vault, or retry them once its window closes at ${until}.`
-            : `which is written down and has not been sent. Send it by retrying exactly ${people(r.originalIndices)} `
-              + `with its window and vault, or retry them once its window closes at ${until}.`)
-        + ' Nothing was written down.');
-    }
-
-    /* Clause 3, as `untoldRetryRounds` decides it, which is what the page reads too. */
-    const legRounds = this.accounts.payrollRoundsOf(run.accountId, viewingKey)
-      .filter((r) => r.runId === run.id && legOfRound(r) === leg);
-    for (const { round: r, people: onIt, closesAt } of untoldRetryRounds(recorded.retries ?? [], legRounds, nowInSeconds, again)) {
-      const shared = onIt.filter((i) => named.has(i));
-      if (shared.length === 0) continue;
-      throw new Error(
-        `${people(shared)} ${isAre(shared)} on retry ${r.id} of the ${legName(leg, this.assets)} leg of run ${run.id}, whose raise did not `
-        + 'answer and which may be on chain. Retry exactly '
-        + `${people(onIt)} again with its window and vault to send it as itself`
-        + (closesAt !== undefined ? `, or retry them once its window closes at ${when(closesAt)}.` : '.')
-        + ' Nothing was written down.');
-    }
+    const register = run.skips ? registerFor(run.skips.decisions, run.id, run.skips.people.length) : undefined;
+    refuseARetryOverPeopleCovered({
+      run, leg, legRound, indices, again, nowInSeconds: BigInt(Math.floor(Date.now() / 1000)),
+      standingOf: (id) => this.accounts.requireProposal(id, viewingKey),
+      legRounds: this.accounts.payrollRoundsOf(run.accountId, viewingKey),
+      notToPay: new Set(register ? skippedIndices(register).map((i) => run.skips!.people[i]!.employeeId) : []),
+      registry: this.assets,
+    });
 
     const among = await this.accounts.paidAmong(run.accountId, [...leaves]);
     if (among === null || !among.known) {
@@ -3808,33 +2875,12 @@ export class PayrollService {
     }
   }
 
-  /**
-   * **EVERY RUN FOR THIS PERIOD THAT PAYS THE SAME PEOPLE THE SAME AMOUNTS,
-   * AND HOW FAR EACH ONE GOT.**
-   *
-   * The same people means the same names in the same currencies for the same
-   * amounts, in any order. Every run is counted, drafts and withdrawn ones
-   * included, because a draft can be raised at any moment and a withdrawn
-   * round's run can be raised again; what differs is the sentence a person
-   * reads about it.
-   */
   private runsRepeating(
     accountId: string, period: string, content: string, viewingKey: Hex, excluding?: string,
   ): RepeatedRun[] {
-    const rounds = this.accounts.payrollRoundsOf(accountId, viewingKey);
-    return this.store.listRuns(accountId)
-      .filter(r => samePeriod(r.period, period) && r.id !== excluding)
-      .map(r => this.openRun(r, viewingKey))
-      .filter(r => contentOf(r.employees) === content)
-      .map(r => {
-        const mine = rounds.filter(x => x.runId === r.id);
-        const live = mine.filter(isLiveRound);
-        const state: RepeatedRun['state'] = live.some(x => x.raisedAt) ? 'on chain'
-          : live.length ? 'raised, not confirmed by the chain'
-          : mine.some(x => x.status === 'cancelled') ? 'withdrawn'
-          : 'drawn up, not raised';
-        return { run: r, state };
-      });
+    return runsRepeatingIn(
+      this.store.listRuns(accountId).filter(r => samePeriod(r.period, period)).map(r => this.openRun(r, viewingKey)),
+      this.accounts.payrollRoundsOf(accountId, viewingKey), period, content, excluding);
   }
 
   /**
@@ -3868,32 +2914,15 @@ export class PayrollService {
   private refuseRaisingOverAnotherRun(run: PayrollRun, viewingKey: Hex): void {
     const live = new Set(this.accounts.payrollRoundsOf(run.accountId, viewingKey)
       .filter(isLiveRound).map(r => r.runId));
-    const content = contentOf(run.employees);
     const others = this.store.listRuns(run.accountId)
       .filter(r => samePeriod(r.period, run.period) && r.id !== run.id && live.has(r.id))
-      .map(r => this.openRun(r, viewingKey))
-      .filter(r => !(run.repeats?.of ?? []).includes(r.id) && !(r.repeats?.of ?? []).includes(run.id));
-    /*
-     * **THE SAME PEOPLE ARE THE SAME PAYEES: ONE ROSTER ENTRY, OR ONE ADDRESS.**
-     * This run's people are read at the address the raise will pay; the other
-     * run's at the address its payslips name, where it kept one.
-     */
-    const paying = new Set(alreadyPaying(
-      this.paying(run, viewingKey, 'now'), others.map(r => this.paying(r, viewingKey, 'recorded')), samePeriod,
-    ).map(c => c.run.id));
-    const clashes = others.filter(r => contentOf(r.employees) === content || paying.has(r.id));
-    if (clashes.length === 0) return;
-    const ids = clashes.map(r => r.id).join(', ');
-    throw new Error(
-      `${clashes.length === 1 ? `run ${ids} has` : `runs ${ids} have`} already been raised for `
-      + `${run.period} to pay some of the same people. The chain refuses a second salary payment to `
-      + 'the same roster entry for the same month, unless it is raised as a numbered extra, so '
-      + 'whichever run pays first is paid and the other collects approvals and a fee for payments the '
-      + 'chain will refuse; somebody on the roster twice can still be paid twice. Pay them from '
-      + 'the run already raised: raise it again '
-      + 'if its raise failed, or raise a retry on it for anybody it has not reached. A run that '
-      + `means to pay them a second time has to be drawn up with a confirmation naming run ${ids}. `
-      + 'No screen takes that confirmation yet.');
+      .map(r => this.openRun(r, viewingKey));
+    refuseRaisingOverAnotherRun(run, others, live, this.addressNow(viewingKey));
+  }
+
+  /** Where each person on a run is paid now: their roster address. */
+  private addressNow(viewingKey: Hex): (e: Employee) => string | null {
+    return (e) => this.person(e.id, viewingKey)?.address?.bech32 ?? null;
   }
 
   /**
@@ -3902,35 +2931,10 @@ export class PayrollService {
    * in two; asked of every pair with somebody in the leg being raised.
    */
   private refusePayingOnePayeeTwice(run: PayrollRun, leg: RunLeg, viewingKey: Hex): void {
-    const inLeg = new Set(legEmployees(run, leg).map(e => e.id));
-    const twice = paidTwiceOnOneRun(this.paying(run, viewingKey, 'now').people)
-      .filter(([a, b]) => inLeg.has(a.id) || inLeg.has(b.id));
-    if (twice.length === 0) return;
-    const [a, b] = twice[0]!;
-    throw new Error(
-      `${a.name} and ${b.name} are both on this run and are paid at the same address, so this run `
-      + `would pay that address twice for ${run.period}. Nothing was raised and no fee was spent. `
-      + 'If one of the two entries is a duplicate, mark it as a leaver on the roster and draw the run '
-      + 'again.');
+    refusePayingOnePayeeTwice(run, leg, this.addressNow(viewingKey));
   }
 
-  /**
-   * **A RUN AS `already-paid.ts` COMPARES IT.** `now` reads each person at the
-   * roster's address, which is what a raise pays; `recorded` reads them at the
-   * address their payslip names, where the run kept one, and at the roster's
-   * otherwise. Somebody with no roster entry has no address and matches by
-   * entry alone.
-   */
-  private paying(run: PayrollRun, viewingKey: Hex, at: 'now' | 'recorded'): RunPaying {
-    return {
-      id: run.id, month: run.period, kind: kindOfRun(run),
-      people: run.employees.map((e): PaidPerson => ({
-        id: e.id, name: e.name,
-        address: (at === 'recorded' ? e.paidTo : undefined)
-          ?? this.person(e.id, viewingKey)?.address?.bech32 ?? null,
-      })),
-    };
-  }
+
 
   /**
    * **WHAT THE CHAIN HOLDS FOR THIS ACCOUNT THAT THESE RECORDS CANNOT ACCOUNT
@@ -3995,10 +2999,12 @@ export class PayrollService {
    * restored from an older copy have no trace of what was raised after it: the
    * round that is missing may be this month's pay for these people.
    *
-   * **ASKED WHEN A RUN IS DRAWN, AND AGAIN WHEN A LEG OF IT IS FIRST RAISED.**
+   * **ASKED WHEN THIS SERVICE DRAWS A RUN, AND AGAIN WHEN IT RAISES A LEG.**
    * At the draw it is an early answer and a chain that cannot be read, or does
    * not answer, leaves the draw alone; at the raise it is the answer, and a
-   * chain that cannot be read, or does not answer, refuses.
+   * chain that cannot be read, or does not answer, refuses. A run drawn on a
+   * signer's device is not asked when drawn: it is asked when its leg is raised
+   * on the device, where nothing is raised while the chain holds any.
    */
   private async refuseWhatTheChainHoldsUnaccounted(
     accountId: string, period: string, viewingKey: Hex,
@@ -4066,30 +3072,6 @@ export class PayrollService {
     };
   }
 
-  /**
-   * **A DRAFT RUN FOR THIS PERIOD THAT A RAISE HAS ALREADY BEEN ATTEMPTED FOR.**
-   * Refused at the roster door, which draws up one run per period, because
-   * drawing it up again opens a second round over people the first may pay.
-   */
-  private refuseAPayrollThatMayBeOnChain(accountId: string, period: string, viewingKey: Hex): void {
-    const live = this.accounts.payrollRoundsOf(accountId, viewingKey).filter(isLiveRound);
-    const raised = this.store.listRuns(accountId)
-      .filter(r => samePeriod(r.period, period) && live.some(x => x.runId === r.id));
-    if (raised.length === 0) return;
-    const seen = raised.some(r => live.some(x => x.runId === r.id && x.raisedAt));
-    throw new Error(
-      `a run for ${period} already exists and a round has been raised for it: `
-      + `${raised.map(r => r.id).join(', ')}. `
-      + (seen
-        ? 'The chain has been seen to hold that round. '
-        : 'The chain has not been seen to hold it, which is not the same as it not being there: a '
-          + 'raise can fail after the network already has it. ')
-      + 'A new run would open a second round for the same people. The chain refuses a second '
-      + `salary payment to the same roster entry for ${period}, but only after that round has `
-      + 'collected approvals and a fee. Raise that run again unchanged instead. The chain is asked '
-      + 'first, so it cannot open a second round. If some people on it are not paid by the time '
-      + 'its window closes, raise a retry on it for them.');
-  }
 
   /**
    * **A LEG IS PROPOSED WHILE THE PROPOSAL IT POINTS AT STANDS, AND NOT BECAUSE
@@ -4109,21 +3091,9 @@ export class PayrollService {
   private refuseALegThatIsProposed(run: PayrollRun, leg: RunLeg, viewingKey: Hex): void {
     const pointed = run.proposalIds[leg];
     if (!pointed) return;
-    const standing = this.accounts.requireProposal(pointed, viewingKey).status;
-    if (standing !== 'cancelled') {
-      throw new Error(
-        `the ${legName(leg, this.assets)} leg of this run is already proposed, as ${pointed}, which is ${standing}. A leg is raised `
-        + 'again only once that proposal is withdrawn - withdrawing asks the chain - and then as a new proposal.');
-    }
-    const retries = this.accounts.payrollRoundsOf(run.accountId, viewingKey).filter(r =>
-      r.runId === run.id && legOfRound(r) === leg && r.retry !== undefined && isLiveRound(r));
-    if (retries.length > 0) {
-      throw new Error(
-        `the ${legName(leg, this.assets)} leg of run ${run.id} was withdrawn, and a retry on it is still live `
-        + `(${retries.map(r => r.id).join(', ')}). Raising the leg again would raise all of its people while `
-        + 'that retry can still pay some of them. Withdraw the retry first - withdrawing asks the chain - '
-        + 'and raise the leg again after.');
-    }
+    /* The proposal the run points at is read by its name, so one the records do not hold is refused as unknown. */
+    this.accounts.requireProposal(pointed, viewingKey);
+    refuseALegThatIsProposed(run, leg, this.accounts.payrollRoundsOf(run.accountId, viewingKey), this.assets);
   }
 
   /** A round seen on chain that is neither withdrawn nor stopped by policy. */
@@ -4138,15 +3108,7 @@ export class PayrollService {
    * rather than chosen between.
    */
   private earlierRoundOfLeg(run: PayrollRun, leg: RunLeg, viewingKey: Hex): string | undefined {
-    const rounds = this.accounts.payrollRoundsOf(run.accountId, viewingKey).filter(r =>
-      r.runId === run.id && legOfRound(r) === leg && r.retry === undefined && isLiveRound(r));
-    if (rounds.length > 1) {
-      throw new Error(
-        `the ${legName(leg, this.assets)} leg of run ${run.id} is written down as ${rounds.length} rounds that may be on `
-        + `chain (${rounds.map(r => r.id).join(', ')}), and a leg is raised as one. Cancel all but `
-        + 'one of them (cancelling asks the chain first) before raising this leg again.');
-    }
-    return rounds[0]?.id;
+    return earlierRoundOfLeg(run, leg, this.accounts.payrollRoundsOf(run.accountId, viewingKey), this.assets);
   }
 
   /*
@@ -4294,7 +3256,6 @@ export class PayrollService {
   /* ---------------- sealing runs ---------------- */
 
   private putRun(run: PayrollRun, viewingKey: Hex): void {
-    const { employees, totals, proposalIds, payout, skips, repeats, ...operational } = run;
     /*
      * **A RUN'S MARKER IS ITS OWN AND IT IS NOT ITS COMPANY'S.**
      *
@@ -4313,17 +3274,8 @@ export class PayrollService {
      */
     const already = this.store.getRun(run.id);
     this.store.putRun({
-      ...operational,
+      ...sealedRunOf(run, viewingKey, this.accounts.keyEpochOf(run.accountId)),
       wiring: already ? already.wiring ?? null : this.accounts.wiring,
-      // Outside the envelope so a run can be found by its proposals; the map
-      // that says which asset each leg is in stays inside, so the store cannot
-      // see that this company pays anyone in ether.
-      proposalIds: [...Object.values(proposalIds), ...retryProposalIdsOf(payout)].sort(),
-      keyEpoch: this.accounts.keyEpochOf(run.accountId),
-      sealed: sealRecord(
-        'payroll', run.accountId,
-        { employees, totals, proposalIds, payout, skips, repeats } satisfies RunSecrets, viewingKey,
-      ),
     });
   }
 
@@ -4331,8 +3283,7 @@ export class PayrollService {
     // `proposalIds` is dropped from the operational half and taken from the
     // envelope instead. Two copies of the same list, one of them lossy, is the
     // shape this project keeps recording — and the outside one has no assets.
-    const { sealed, keyEpoch, proposalIds: _outside, ...operational } = r;
-    return { ...operational, ...openRecord<RunSecrets>('payroll', r.accountId, sealed, viewingKey) };
+    return openSealedRun(r, viewingKey);
   }
 
   requireRun(id: string, viewingKey: Hex): PayrollRun {
@@ -4439,56 +3390,6 @@ export class PayrollService {
     };
   }
 
-  /**
-   * **WHAT RAISING ONE LEG WILL ASK ITS VAULT TO PAY, FOR A SIGNER'S DEVICE TO
-   * CHECK AGAINST THE VAULT'S NOTES BEFORE IT ASKS FOR THE RAISE.**
-   *
-   * The same payments the raise is checked against, from the same inputs its
-   * material is built from, so the device asks about the proposal that will
-   * actually be raised. Each payment is its payee's kind, its token and its
-   * amount, and nothing else: no address, and none of the seeds the inputs are
-   * gathered with. A private payment can only be checked where the vault's pool
-   * is opened, which is the device, and this is what the device needs to ask.
-   */
-  async legPaymentsAsked(runId: string, viewingKey: Hex, which?: RunLegChoice): Promise<{
-    asset: AssetId; form: LedgerForm; leg: RunLeg;
-    payments: Array<PaymentChecked<'shielded' | 'unshielded', bigint>>;
-  }> {
-    const run = this.requireRun(runId, viewingKey);
-    const leg = legOf(run, which, this.assets);
-    /*
-     * **A LEG WITH A PROPOSAL WRITTEN DOWN ASKS FOR WHAT WAS WRITTEN DOWN.** A
-     * proposal is sent as it was written, so the device checks the payments that
-     * will be sent, not the roster as it stands now; a roster edited since would
-     * otherwise have the device check one set and the service send another.
-     */
-    const facts = this.writtenDownFactsOf(run, leg, viewingKey)
-      ?? (await this.runMaterialInputs(runId, viewingKey, leg)).facts;
-    return {
-      ...legFieldsOf(leg),
-      payments: facts.map(paymentChecked),
-    };
-  }
-
-  /**
-   * **THE REFUSAL A RAISE GIVES FOR A LEG ALREADY PROPOSED, ASKED ON ITS OWN.**
-   * A caller that compares anything about the raise first asks this before, so
-   * a leg that cannot be raised at all is told so, rather than told something
-   * about the raise that raising again would not change.
-   */
-  refuseRaisingAProposedLeg(runId: string, viewingKey: Hex, which?: RunLegChoice): void {
-    const run = this.requireRun(runId, viewingKey);
-    this.refuseALegThatIsProposed(run, legOf(run, which, this.assets), viewingKey);
-  }
-
-  /** The payments of the proposal this leg is written down as, unless it has none or it was withdrawn. */
-  private writtenDownFactsOf(run: PayrollRun, leg: RunLeg, viewingKey: Hex): PaymentFacts[] | undefined {
-    const pointed = run.proposalIds[leg];
-    const payout = run.payout?.[leg];
-    if (!pointed || !payout) return undefined;
-    if (this.accounts.requireProposal(pointed, viewingKey).status === 'cancelled') return undefined;
-    return payout.facts;
-  }
 
   /**
    * **WHAT ONE LEG OF A RUN WAS RAISED AGAINST, READ BACK OFF THE RECORD.**
@@ -4658,32 +3559,6 @@ export class PayrollService {
     };
   }
 
-  /**
-   * **A RETRY OF EXACTLY THESE PEOPLE THAT IS WRITTEN DOWN AND HAS NOT
-   * REACHED THE CHAIN**, with the window and vault it was written down with.
-   * A signer's device writes a retry down before it sends it, so a device that
-   * stopped in between leaves one; retrying the same people again sends that
-   * one as itself rather than raising a second round over the same leaves.
-   * `null` when there is none. A retry whose window has closed is not one: it
-   * can never pay anybody, so sending it would only spend a fee, and the people
-   * on it may be retried with a window of their own.
-   */
-  unsentRetryOf(runId: string, viewingKey: Hex, indices: number[], which?: RunLegChoice): {
-    proposalId: string; opensAt: bigint; closesAt: bigint; vault: Hex;
-  } | null {
-    const run = this.requireRun(runId, viewingKey);
-    const leg = raisedLegOf(run, which, this.assets);
-    const nowInSeconds = BigInt(Math.floor(Date.now() / 1000));
-    for (const r of (leg ? run.payout?.[leg]?.retries : undefined) ?? []) {
-      if (r.proposalId === undefined || !sameList(r.originalIndices, indices)) continue;
-      if (nowInSeconds >= r.closesAt) continue;
-      const written = this.accounts.requireProposal(r.proposalId, viewingKey);
-      if (written.status === 'open' && !written.raisedAt) {
-        return { proposalId: r.proposalId, opensAt: r.opensAt, closesAt: r.closesAt, vault: r.vault };
-      }
-    }
-    return null;
-  }
 
   /**
    * **WHAT A SIGNER'S DEVICE BUILDS A RETRY'S PROPOSAL FROM, WHILE IT IS
@@ -4745,65 +3620,6 @@ export class PayrollService {
       payees: payout.payees,
       opensAt: payout.opensAt,
       closesAt: payout.closesAt,
-    };
-  }
-
-  /**
-   * **WHAT A VAULT IS HANDED TO PAY ONE APPROVED RETRY ON A LEG**, in the shape
-   * `privatePaymentOrderOf` answers for the leg's own round, beside what the
-   * retry's payments are checked against before anything is offered to pay.
-   *
-   * Everything is read off the retry as it was written onto the leg and the
-   * proposal it was raised as - its root, count, window and vault, and that
-   * round's salt and identity - never off the request. `indices` are the
-   * people it pays, as positions in the leg, in the order the retry named them,
-   * and `leaves` are the leg's own leaves: the retry is raised over the leg's
-   * own tree and pays each person with the leaf they already had, which is why
-   * the account can pay each of them once whichever round reaches them first.
-   *
-   * `null` when this leg has no retry raised as that proposal, or the chain was
-   * never seen to hold it: a round with no raise has no identity a vault could
-   * present. Approval is not asked here; the vault asks the account.
-   */
-  retryPaymentOrderOf(
-    runId: string, viewingKey: Hex, proposalId: string, which: RunLegChoice | undefined,
-    /** The payout tree's own root function, passed in for the reason `payoutMaterialOf` gives. */
-    rootOf: (leaves: Hex[], facts: readonly PaymentFacts[], asset: AssetId) => Hex,
-  ): {
-    order: {
-      asset: AssetId; form: LedgerForm; leg: RunLeg; vault: Hex; proposal: Hex; salt: Hex;
-      root: Hex; payees: bigint; opensAt: bigint; closesAt: bigint;
-    };
-    indices: number[];
-    leaves: Hex[];
-    window: { from: bigint; until: bigint };
-    idFrom: (leaves: Hex[], w: { from: bigint; until: bigint }) => Hex;
-  } | null {
-    const run = this.requireRun(runId, viewingKey);
-    const leg = raisedLegOf(run, which, this.assets);
-    const payout = leg ? run.payout?.[leg] : undefined;
-    const retry = payout?.retries?.find((r) => r.proposalId === proposalId);
-    if (!leg || !payout || !retry) return null;
-    const raised = this.accounts.requireProposal(proposalId, viewingKey);
-    if (!raised.raisedAt) return null;
-    return {
-      order: {
-        ...legFieldsOf(leg),
-        vault: retry.vault,
-        proposal: raised.chainId,
-        salt: this.accounts.runSaltOf(proposalId, viewingKey),
-        root: retry.root,
-        payees: retry.payees,
-        opensAt: retry.opensAt,
-        closesAt: retry.closesAt,
-      },
-      indices: [...retry.originalIndices],
-      /* The leg's own leaves: a retry is raised over the leg's own tree. */
-      leaves: [...payout.leaves],
-      window: { from: retry.opensAt, until: retry.closesAt },
-      idFrom: (leaves, w) => this.accounts.runProposalIdFrom(proposalId, viewingKey, {
-        root: rootOf(leaves, payout.facts, assetOfLeg(leg)), payees: BigInt(leaves.length), opensAt: w.from, closesAt: w.until,
-      }),
     };
   }
 
@@ -4902,94 +3718,8 @@ export class PayrollService {
   }
 }
 
-/**
- * **WHAT AN ADMIN HAS TO SAY TO DRAW UP A RUN THAT REPEATS ANOTHER.**
- *
- * The shape the roster door uses for people left out of a run, applied to runs
- * repeated: refused by default, the refusal names what it found, and a person
- * proceeds only by naming that same set back, with a reason, under their own
- * name. The names are compared in both directions. A repeated run the admin did
- * not name is one they have not read about; a run they named that is not
- * repeated means the list they read has moved, and their agreement is about a
- * different payroll.
- *
- * **WHY A REPEAT IS REFUSED AT ALL.** Every run derives its own per-payee
- * payment secrets from its own id, so two runs over the same people are, to the
- * account, two unrelated sets of payments, and both can be paid. For a bonus or
- * a second invoice that is exactly right. For somebody whose first run failed
- * and who does not know whether it reached the chain, it is everybody paid
- * twice - and the way to try again is not a new run at all.
- */
-export interface RepeatAcknowledgement {
-  /** The same set as the runs this one repeats. Compared as a set. */
-  runIds: string[];
-  /**
-   * **WHO THIS RUN PAYS A SECOND TIME FOR THE MONTH, AS A NUMBERED EXTRA**, by
-   * roster entry. Each is paid as the next occurrence for that month, which the
-   * account records apart from the first payment; everybody else on the run is
-   * paid as the first, which the account refuses for anybody it has already
-   * paid. Absent means nobody is paid an extra.
-   */
-  extra?: string[];
-  /**
-   * Who is accepting it. Where there is a signed-in caller the served routes
-   * take this from the signed-in caller and never from the request body.
-   */
-  by: string;
-  /** Why, in their words. A blank reason is refused. */
-  reason: string;
-  /**
-   * How many of the chain's completed payments this company's records cannot
-   * account for, as the person confirming it read them. Taken only at the
-   * roster door; absent means none.
-   */
-  chainPayments?: number;
-}
 
-interface RepeatedRun {
-  run: PayrollRun;
-  state: 'on chain' | 'raised, not confirmed by the chain' | 'withdrawn' | 'drawn up, not raised';
-}
 
-/**
- * **A PAY PERIOD HAS ONE SPELLING, AND ANYTHING ELSE IS REFUSED HERE RATHER
- * THAN COMPARED LATER.**
- *
- * Every guard in this file against paying somebody twice asks whether two runs
- * are for the same period, and every one of them asked it by comparing the text
- * a person typed. So `2026-08 ` with a trailing space, or `2026-8` without the
- * zero, was a DIFFERENT period to all of them: a second payroll was drawn for
- * it beside the first, raised beside it, and everybody on both was paid twice,
- * each time under their own payment secrets so that nothing on chain connected
- * the two. The chain now records the month each payment is for, and it is
- * spelled one way for that too. Neither spelling is an attack. Both are a retype, and the restart a
- * person reaches for is exactly the moment they retype it.
- *
- * **SO A PERIOD STOPS BEING FREE TEXT AT THE POINT IT ENTERS.** A run is drawn
- * for a month, written `YYYY-MM`, and a month is what this returns: anything
- * that names August 2026 comes back as `2026-08` however it was typed, and a
- * string that names no month is refused, with the form that is wanted. The
- * guards then compare a value rather than a typing, and there is no longer such
- * a thing as a spelling they have not seen.
- *
- * **IT IS IN THE SERVICE AND NOT ONLY ON THE WAY IN.** The routes in front of
- * this are the doors the product happens to have today; a third one, a script,
- * or a call path added later would each reach those guards with whatever it was
- * handed. A refusal a caller cannot go around is the only kind that bounds
- * anything.
- */
-export const canonicalPeriod = (period: string): string => {
-  const written = period.trim();
-  const named = /^(\d{4})-(\d{1,2})$/.exec(written);
-  const month = named ? Number(named[2]) : 0;
-  if (!named || month < 1 || month > 12) {
-    throw new Error(
-      `"${period}" does not name a pay period. A run is drawn for one month, written as the `
-      + 'year, a hyphen and the month: 2026-08 is August 2026. Write the month that way and '
-      + 'draw the run again.');
-  }
-  return `${named[1]}-${String(month).padStart(2, '0')}`;
-};
 
 /**
  * **TWO RUNS ARE FOR THE SAME PERIOD WHEN THEY NAME THE SAME MONTH**, whichever
@@ -5002,27 +3732,8 @@ export const canonicalPeriod = (period: string): string => {
  * stands, so a record that cannot be read still matches itself and is never
  * quietly treated as a period of its own.
  */
-/** A period's month, or the period as written when it names none. */
-const canonicalOrAsWritten = (period: string): string => {
-  try {
-    return canonicalPeriod(period);
-  } catch {
-    return period;
-  }
-};
 
-const samePeriod = (a: string, b: string): boolean =>
-  canonicalOrAsWritten(a) === canonicalOrAsWritten(b);
 
-/**
- * **WHAT A RUN PAYS, AS ONE COMPARABLE VALUE.** Names, currencies and amounts,
- * in any order: a run is a repeat of another by what it pays, not by how its
- * list happens to be sorted.
- */
-const contentOf = (people: Array<{ name: string; asset: AssetId; amount: bigint }>): string =>
-  JSON.stringify(people.map((p): [string, string, string] => [p.name, p.asset, String(p.amount)]).sort((a, b) =>
-    a[0] < b[0] ? -1 : a[0] > b[0] ? 1 : a[1] < b[1] ? -1 : a[1] > b[1] ? 1
-      : a[2] < b[2] ? -1 : a[2] > b[2] ? 1 : 0));
 
 /** A round that is not withdrawn and was not stopped by this company's own policy may be on chain. */
 
@@ -5032,85 +3743,7 @@ const isThisRetry = (r: RunRetry, m: RetryMaterial): boolean =>
   && r.vault === m.run.vault;
 
 /** Every proposal a leg's retries were raised as, so a run can be found by any of its rounds. */
-const retryProposalIdsOf = (payout: Record<RunLeg, RunPayout> | undefined): string[] =>
-  Object.values(payout ?? {}).flatMap(p =>
-    (p.retries ?? []).map(r => r.proposalId).filter((id): id is string => id !== undefined));
-
 /** Why a raise is refused while the chain holds what these records cannot account for. */
-const unaccountedRefusal = (
-  period: string, found: { rounds: string[]; payments: number; cannotSay: boolean }, partlyRaised = false,
-): string => {
-  const parts = [
-    ...(found.rounds.length
-      ? [`${found.rounds.length} open ${found.rounds.length === 1 ? 'round' : 'rounds'} (${found.rounds.join(', ')})`]
-      : []),
-    ...(found.payments ? [`${found.payments} unexplained payment ${found.payments === 1 ? 'entry' : 'entries'} (every payment leaves two)`] : []),
-  ];
-  return `the chain holds ${parts.join(' and ')} that this company's records cannot account for`
-    + (found.cannotSay
-      ? ', and it could not say which payments these records know about, so none is counted as known'
-      : '')
-    + `. They may be ${period}'s pay for the people on this run. The chain refuses a second salary `
-    + 'payment to the same roster entry for the same month, but these records cannot say whose those '
-    + 'are. Nothing was raised '
-    + 'and no fee was spent. Whoever keeps this company\'s records has to restore the copy that holds '
-    + 'them before this run is raised. If they are known to be for something else, '
-    + (partlyRaised
-      ? 'the people on this run who have no round yet have to be drawn up on a run of their own from the '
-        + 'roster, and nobody else, with a confirmation that names every run already raised for '
-      : 'the run has to be drawn up again from the roster with a confirmation that names every run '
-        + 'already raised for ')
-    + `${period}`
-    + (found.rounds.length ? `, names ${found.rounds.join(', ')}` : '')
-    + (found.payments ? `, and counts ${found.payments} payment ${found.payments === 1 ? 'entry' : 'entries'}` : '')
-    + '. No screen takes that confirmation yet.';
-};
 
-const repeatRefusal = (period: string, found: RepeatedRun[]): string =>
-  `this run pays the same people the same amounts for ${period} as `
-  + `${found.map(f => `run ${f.run.id} (${f.state})`).join(', ')}. The chain refuses a second salary `
-  + `payment to the same roster entry for ${period}, unless it is raised as a numbered extra, so `
-  + 'whichever run pays first is paid and the other collects approvals and a fee for payments the chain '
-  + 'will refuse. Somebody on the roster twice can still be paid twice. If an earlier run failed and it is '
-  + 'not known whether it reached the chain, do not draw it up again. Raise that run again unchanged '
-  + 'instead - it keeps its people\'s payment secrets, so nobody on it can be paid twice, and a '
-  + 'round of it that may already be on chain is asked about rather than opened again - or raise a '
-  + 'retry on it for the people it did not reach. '
-  + `If this really is a second payment, confirm it by naming ${found.map(f => f.run.id).join(', ')} `
-  + 'back with a reason, and name the people it pays again as a numbered extra.';
 
-/**
- * **THE CONFIRMATION FOR A REPEATED RUN, CHECKED, OR THE REFUSAL.** Returns the
- * record to keep on the run, or nothing when the run repeats nothing.
- */
-const acknowledgedRepeats = (
-  period: string, found: RepeatedRun[], ack: RepeatAcknowledgement | undefined, at: string,
-): RunRepeatRecord | undefined => {
-  if (!ack) {
-    if (found.length) throw new Error(repeatRefusal(period, found));
-    return undefined;
-  }
-  const named = new Set(ack.runIds);
-  const unnamed = found.filter(f => !named.has(f.run.id));
-  if (unnamed.length) {
-    throw new Error(
-      `this run also repeats ${unnamed.map(f => `run ${f.run.id} (${f.state})`).join(', ')}, which `
-      + 'is not in what was confirmed. A repeat is confirmed by naming every run it repeats, so '
-      + 'read the list again and confirm the whole of it.');
-  }
-  const repeating = new Set(found.map(f => f.run.id));
-  const notRepeated = [...named].filter(id => !repeating.has(id));
-  if (notRepeated.length) {
-    throw new Error(
-      `${notRepeated.join(', ')} ${notRepeated.length === 1 ? 'was' : 'were'} confirmed as repeated `
-      + `and this run does not repeat ${notRepeated.length === 1 ? 'it' : 'them'}, so the list that was `
-      + 'read is not the list this run would act on. Take the confirmation again against what this '
-      + 'run actually repeats.');
-  }
-  if (found.length === 0) return undefined;
-  if (!ack.by.trim()) throw new Error('a repeated payroll has to be attributable to somebody');
-  if (!ack.reason.trim()) {
-    throw new Error('say why this run repeats another; a blank reason is not a record');
-  }
-  return { of: [...repeating].sort(), reason: ack.reason, by: ack.by, at };
-};
+

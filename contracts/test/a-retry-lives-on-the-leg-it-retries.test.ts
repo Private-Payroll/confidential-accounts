@@ -151,11 +151,11 @@ describe('a retry lives on the leg it retries', () => {
     expect(after.proposalIds[LEG]).toBe(r.proposal.id);
     /* RED WHEN the retry is not written down, or its proposal is not recorded against it. */
     expect(after.payout![LEG]!.retries).toEqual([expect.objectContaining({
-      originalIndices: [0, 2], root: retry.run.root, payees: 3n,
+      originalIndices: [0, 2], root: retry.run.root, payees: 2n,
       opensAt: RETRY_OPENS, closesAt: RETRY_CLOSES, proposalId: raised.id,
     })]);
-    /* RED WHEN a retry is raised over a tree of its own rather than the leg's, and a policy would charge it again. */
-    expect(retry.run.root).toBe(before.payout![LEG]!.root);
+    /* RED WHEN a retry is raised over the leg's whole tree, so an approval of it would let anybody on the leg be paid. */
+    expect(retry.run.root).not.toBe(before.payout![LEG]!.root);
     /* RED WHEN a run cannot be found by the round its retry was raised as. */
     expect(r.store.getRun(r.run.id)!.proposalIds).toContain(raised.id);
     /* RED WHEN the retry is written outside the sealed envelope, where the store can read it. */

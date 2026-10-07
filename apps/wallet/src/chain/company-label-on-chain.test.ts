@@ -4,15 +4,15 @@ import { COMPANY_LABEL_ENTRY, companyLabelOf } from 'midnight-identity/profile/c
 import type { AccountAddress } from 'midnight-identity/profile/company-label';
 import { Contract, ledger, pureCircuits } from '../../../../contracts/managed/contract/index.js';
 import { witnesses } from '../../../../contracts/src/witnesses.js';
-import { AccountSimulator, leafOfDevice, privateStateFor } from '../../../../contracts/test/simulator.js';
+import { AccountSimulator, COMPANY_LABEL, change, leafOfDevice, privateStateFor } from '../../../../contracts/test/simulator.js';
 import { Contract as VaultContract, ledger as vaultLedger } from '../../../../contracts/managed-vault/contract/index.js';
 import type { VaultAddress } from 'midnight-identity/profile/company-label';
 import { ChargedState, ContractMaintenanceAuthority, ContractState, StateValue } from '@midnightntwrk/ledger-v9';
 import { schnorr } from '@noble/curves/secp256k1.js';
 import {
   ACCOUNT_THRESHOLD_FIELD, ADOPTED_VAULTS_FIELD, ROLES_FIELD, SIGNER_LEAVES_FIELD, VAULT_ACCOUNT_FIELD,
-  accountCarries, fromIndexerAt, holdersInAccountState, holdersOnChain, labelInAccountState, labelOnAccount,
-  seatsInAccountState, vaultInState, vaultOnChain,
+  accountCarries, deployFromIndexerAt, foundingInDeployState, fromIndexerAt, holdersInAccountState, holdersOnChain,
+  labelInAccountState, labelOnAccount, seatsInAccountState, vaultInState, vaultOnChain,
 } from './company-label-on-chain.js';
 
 /*
@@ -35,6 +35,14 @@ const deployedState = async (label: Uint8Array): Promise<Uint8Array> => {
   return (currentContractState as { serialize(): Uint8Array }).serialize();
 };
 const hexOf = (b: Uint8Array): string => Buffer.from(b).toString('hex');
+/* The founding signer's committee key: the one key a company's account is deployed held by. */
+const FOUNDING_KEY = Buffer.from(schnorr.getPublicKey(new Uint8Array(32).fill(41))).toString('hex');
+/** The state a company's deploy leaves: the constructor's, held by the founding signer's committee key alone. */
+const deployHeld = async (label: Uint8Array, keys: string[] = [FOUNDING_KEY]): Promise<Uint8Array> => {
+  const state = ContractState.deserialize(await deployedState(label));
+  state.maintenanceAuthority = new ContractMaintenanceAuthority(keys.map((value) => ({ tag: 'schnorr', value })) as never, keys.length, 0n);
+  return state.serialize();
+};
 
 describe('THE LABEL, READ OFF THE ACCOUNT', () => {
   it('the key it looks under is the key the contract writes the label under', () => {
@@ -224,11 +232,70 @@ describe('WHO HOLDS THE ACCOUNT, ITS OWN THRESHOLD AND THE VAULTS IT HAS ADOPTED
   });
 
   it('a read for an account carrying another label is not an answer, and no account is not unreadable', async () => {
-    const state = hexOf(await deployedState(LABEL_BYTES));
-    expect((await holdersOnChain(ACCOUNT, companyLabelOf(LABEL_BYTES), async () => state)).of).toBe('read');
+    const state = hexOf(await deployHeld(LABEL_BYTES));
+    expect((await holdersOnChain(ACCOUNT, companyLabelOf(LABEL_BYTES), async () => state, async () => state)).of).toBe('read');
     /* RED WHEN: the holders of another company's account are handed back for this label. */
-    expect((await holdersOnChain(ACCOUNT, companyLabelOf(TRAILING_ZEROS), async () => state)).of).toBe('other-label');
-    expect(await holdersOnChain(ACCOUNT, companyLabelOf(LABEL_BYTES), async () => null)).toEqual({ of: 'no-account' });
+    expect((await holdersOnChain(ACCOUNT, companyLabelOf(TRAILING_ZEROS), async () => state, async () => state)).of).toBe('other-label');
+    expect(await holdersOnChain(ACCOUNT, companyLabelOf(LABEL_BYTES), async () => null, async () => null)).toEqual({ of: 'no-account' });
+  });
+});
+
+describe('THE FOUNDING SEAT, READ FROM THE ACCOUNT\'S DEPLOY AND NEVER FROM WHO HOLDS A SLOT NOW', () => {
+  const [F, B, C, D] = [privateStateFor(1), privateStateFor(2), privateStateFor(3), privateStateFor(4)];
+  /* The label the simulator's accounts are deployed with. */
+  const LABEL = companyLabelOf(COMPANY_LABEL);
+
+  /** A proposal over `payload` raised by `by` under `seed`'s salt and approved by `approvers`; its id and salt. */
+  const approved = async (sim: AccountSimulator, by: typeof F, payload: Uint8Array, seed: number, approvers: Array<typeof F>) => {
+    const c = change(0n, seed);
+    await sim.as(sim.applying(by, c)).propose(payload);
+    const id = sim.proposalId(payload, c.salt);
+    for (const a of approvers) await sim.as(a).approve(id);
+    return { id, by: sim.applying(by, c) };
+  };
+
+  /** The founding signer removed by two of three, and D put into the slot the founding signer left - the first slot - by the two left. */
+  const founderReplaced = async (): Promise<AccountSimulator> => {
+    const sim = await AccountSimulator.liveAccount([F, B, C], 2n);
+    const removal = await approved(sim, F, pureCircuits.removeSignerPayload(sim.leafOf(F)), 611, [F, B]);
+    await sim.as(removal.by).removeSigner(sim.leafOf(F), removal.id);
+    const seating = await approved(sim, B, pureCircuits.signerAddPayload(sim.leafOf(D)), 612, [B, C]);
+    await sim.as(seating.by).addSigner(sim.leafOf(D), seating.id, true);
+    return sim;
+  };
+
+  it('THE ONE SEAT THE DEPLOY SEATED IS THE FOUNDING SEAT, AND A DEPLOY OF ANOTHER LABEL OR MORE SEATS IS NO ANSWER', async () => {
+    const deploy = await deployHeld(COMPANY_LABEL);
+    /* RED WHEN: the founding seat or its committee key is read from anything but the deploy's one seated leaf and its own committee. */
+    expect(foundingInDeployState(deploy, LABEL)).toEqual({ seat: hexOf(leafOfDevice(F)), committee: [{ tag: 'schnorr', value: FOUNDING_KEY }] });
+    /* RED WHEN: a deploy of another company's account names this company's founding signer. */
+    expect(() => foundingInDeployState(deploy, companyLabelOf(TRAILING_ZEROS))).toThrow(/does not carry this company's label/);
+    /* RED WHEN: a deploy held by no committee names a founding committee, so any entry for the seat would be believed. */
+    const unheld = await deployedState(COMPANY_LABEL);
+    expect(() => foundingInDeployState(unheld, LABEL)).toThrow(/held by no committee/);
+    /* RED WHEN: a state with two seats is read as a deploy, so whichever is listed first is taken as the founding signer. */
+    const two = await AccountSimulator.liveAccount([F, B], 2n);
+    expect(() => foundingInDeployState((two.contractStateForCall as { serialize(): Uint8Array }).serialize(), LABEL))
+      .toThrow(/did not seat exactly one signer/);
+  });
+
+  it('A FOUNDER REMOVED AND ANOTHER SEAT IN THE FIRST SLOT: THE FOUNDING SEAT IS STILL THE DEPLOY\'S', async () => {
+    const sim = await founderReplaced();
+    /* The chain as it is now: the founding signer gone, D seated in the founding signer's slot. */
+    expect(sim.slotOf(D)).toBe(0n);
+    const now = hexOf((sim.contractStateForCall as { serialize(): Uint8Array }).serialize());
+    const deploy = hexOf(await deployHeld(COMPANY_LABEL));
+    const read = await holdersOnChain(ACCOUNT, LABEL, async () => now, async () => deploy);
+    if (read.of !== 'read') throw new Error(`not read: ${JSON.stringify(read)}`);
+    /* RED WHEN: the founding seat is read as whoever holds the first slot now, or as any seat held now. */
+    expect(read.holders.founding).toBe(hexOf(leafOfDevice(F)));
+    /* RED WHEN: the founding committee is read as whoever holds the account now rather than whoever the deploy was held by. */
+    expect(read.holders.foundingCommittee).toEqual([{ tag: 'schnorr', value: FOUNDING_KEY }]);
+    expect(read.holders.seats).not.toContain(read.holders.founding);
+    expect([...read.holders.seats].sort()).toEqual([B, C, D].map((d) => hexOf(sim.leafOf(d))).sort());
+    /* RED WHEN: an account the indexer holds no deploy for is answered with a founding seat. */
+    expect(await holdersOnChain(ACCOUNT, LABEL, async () => now, async () => null))
+      .toEqual({ of: 'unreadable', why: 'the indexer holds no deploy for that account.' });
   });
 });
 
@@ -246,6 +313,24 @@ describe('THE INDEXER\'S ANSWERS, READ AS WHAT THEY ARE', () => {
     expect(await withFetch(answering({ data: { contract: { state: '' } } }), () => vaultOnChain('9a'.repeat(32) as VaultAddress, fromIndexerAt('https://indexer.example')))).toEqual({ of: 'no-vault' });
     /* And a state that is not hex is still refused. */
     await expect(withFetch(answering({ data: { contract: { state: 'zz' } } }), () => fromIndexerAt('https://indexer.example')('ab'.repeat(32) as AccountAddress))).rejects.toThrow(/not a state/);
+  });
+
+  it('THE DEPLOY IS READ AS THE ACCOUNT\'S ONE DEPLOY ACTION, AND ANYTHING ELSE IS NO DEPLOY', async () => {
+    const read = () => deployFromIndexerAt('https://indexer.example')('ab'.repeat(32) as AccountAddress);
+    let asked = '';
+    const asking = (body: unknown) => (async (_u: unknown, init: { body: string }) => {
+      asked = init.body;
+      return new Response(JSON.stringify(body), { status: 200 });
+    }) as unknown as typeof fetch;
+    /* RED WHEN: the read asks for anything but the contract's deploy action, so a call's or an update's state is taken as the deploy's. */
+    expect(await withFetch(asking({ data: { contract: { actions: [{ state: 'abcd' }] } } }), read)).toBe('abcd');
+    expect(JSON.parse(asked).query).toMatch(/actions\(type: DEPLOY, limit: 1\) \{ state \}/);
+    /* RED WHEN: no contract is read as a deploy, or none or two deploy actions are read as one. */
+    expect(await withFetch(answering({ data: { contract: null } }), read)).toBeNull();
+    await expect(withFetch(answering({ data: { contract: { actions: [] } } }), read)).rejects.toThrow(/one deploy/);
+    await expect(withFetch(answering({ data: { contract: { actions: [{ state: 'ab' }, { state: 'cd' }] } } }), read)).rejects.toThrow(/one deploy/);
+    await expect(withFetch(answering({ data: { contract: { actions: [{ state: 'zz' }] } } }), read)).rejects.toThrow(/not a state/);
+    await expect(withFetch(answering({ errors: [{ message: 'no' }] }), read)).rejects.toThrow('the indexer refused the read.');
   });
 
   it('AN INDEXER THAT FAILS, REFUSES OR ANSWERS WITH NOTHING IS NEVER A LABEL', async () => {

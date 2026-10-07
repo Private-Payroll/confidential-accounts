@@ -19,10 +19,12 @@
  * wallet again**, because keeping it in storage would put it where any script
  * on the page can read it.
  */
+import type { Inviter } from '../../../src/core/invitation.js';
 import type { OwedDirectoryEntry } from './vault-page-doors.js';
 import { readAccountAddress, readCompanyLabel } from 'midnight-identity/profile/company-label';
 import type { AccountAddress, CompanyLabel, VaultAddress } from 'midnight-identity/profile/company-label';
-import { parseCanonical, randomBytes, seal, sign, toHex, unseal, unwrapKey, type Hex, type Sealed } from '../../../src/core/crypto.js';
+import { randomBytes, seal, sign, signingPublicKeyOf, toHex, unseal, unwrapKey, type Hex, type Sealed } from '../../../src/core/crypto.js';
+import type { AccountHoldersRead } from 'midnight-identity/profile/records-key';
 import { NO_ASSET } from '../../../src/core/assets.js';
 import {
   askWalletToSignIn, openWalletDialog, type Openable, type WalletDialog,
@@ -40,17 +42,23 @@ import {
 /* **THE WALLET IS SHOWN INSIDE THIS PAGE.** Every journey below defaults to it;
  * a test hands in a window of its own and drives the same conversation. */
 import { walletInThisPage } from './wallet-frame.js';
-import { openAccount as openSealedAccount, approvalMessage } from '../../../src/core/account.js';
+import { approvalMessage } from '../../../src/core/account.js';
+import {
+  rosterBelievedHere, RosterNotBelieved, type BelievedAccount, type RosterBelievedBefore, type RosterSeenBefore,
+} from './roster-here.js';
+import { directoryFilingsFrom } from './vault-page-doors.js';
+import type { SealedCompanyRecord } from '../../../src/midnight/sealed-record-wire.js';
 import {
   COMPANY_CREATION_STATES, foundTheCompanyHere, type CompanyCreationState, type CompanyFounded,
 } from '../../../src/core/company-founding.js';
+import { CREATED_BEFORE_SIGNED_STATE, openStateRecord } from '../../../src/core/founding-state.js';
 import type { AccountCallChainOnTheWire, PayKeyStandingOnTheWire } from './vault-worker-client.js';
 import type { GovernedCallOrder, OpenedRound, SignerMaterial } from './governed-call-builder.js';
 
 export type { CompanyCreationState } from '../../../src/core/company-founding.js';
 import { newSeatKeys } from './accept-seat.js';
 import { clobberRefusal, seatToPromote } from './seat-repair.js';
-import type { Account, SealedAccount } from '../../../src/core/types.js';
+import type { SealedAccount } from '../../../src/core/types.js';
 import {
   forgetRememberedCompanies, markOlderListTaken, olderListNotYetTaken, onlyCompanyLabels,
   rememberedCompanies,
@@ -87,6 +95,14 @@ export interface AccountKeys {
    * seat has to be taken on this device again. Nothing converts one.
    */
   scope: Hex;
+  /**
+   * **THE SEAT THAT INVITED THIS SIGNER: ITS COMMITTEE KEY AND THE DIRECTORY
+   * ENTRY ITS WALLET SIGNED**, as the invitation carried it. Handed to this
+   * person's wallet on their first records-key ask for the company, which keeps
+   * no account for a company it did not create until the person confirms it
+   * against the inviter's. Absent for a seat taken without an invitation.
+   */
+  invitedBy?: Inviter;
 }
 
 /** An entry as a saved bundle may hold it: material saved before scopes were recorded has no scope. */
@@ -143,6 +159,8 @@ export interface PendingSeat {
   wrappingSecret: Hex;
   blinding: Hex;
   scope: Hex;
+  /** The seat that invited this signer, as the invitation carried it; promoted with the material. */
+  invitedBy?: Inviter;
 }
 
 /**
@@ -232,6 +250,13 @@ export interface Keyring {
    * keys written before it have no such field.
    */
   directoryEntriesOwed?: Record<string, OwedDirectoryEntry>;
+  /**
+   * **WHAT THIS PERSON'S DEVICES BELIEVED OF EACH COMPANY'S ROSTER**, by
+   * account id: the newest version read, its digest, and the wallet each seat
+   * was believed on. A later read that goes back on it is refused. Optional,
+   * because a bundle sealed before it has none.
+   */
+  rostersBelieved?: Record<string, RosterSeenBefore>;
 }
 
 export interface Me { id: string; email: string | null; name: string }
@@ -1052,6 +1077,15 @@ export async function signCommitteeChangeFromTheWallet(
 }
 
 /**
+ * **THE SEAT THAT INVITED THIS SIGNER, AS A RECORDS-KEY ASK CARRIES IT.** The
+ * wallet checks an inviter's signed entry against a schnorr committee key, so
+ * an inviter named under any other is left out and the ask is made without one.
+ */
+export const invitedByForTheWallet = (inviter: Inviter | undefined): Pick<RecordsKeyAsked, 'invitedBy'> =>
+  inviter === undefined || inviter.committeeKey.tag !== 'schnorr' ? {}
+    : { invitedBy: { committeeKey: { tag: 'schnorr', value: inviter.committeeKey.value }, statement: inviter.statement } };
+
+/**
  * **THIS PERSON'S RECORDS KEY FOR THEIR SEAT, SIGNED BY THEIR OWN WALLET, AND WHO
  * HOLDS THE COMPANY'S ACCOUNT NOW AS THAT WALLET READ IT.** Asked right before a
  * vault's secret is approved, so what it is checked against is read then.
@@ -1059,7 +1093,7 @@ export async function signCommitteeChangeFromTheWallet(
  */
 export async function recordsKeyFromTheWallet(
   walletOrigin: string,
-  ask: Pick<RecordsKeyAsked, 'company' | 'account' | 'seat' | 'vault' | 'signingKey'>,
+  ask: Pick<RecordsKeyAsked, 'company' | 'account' | 'seat' | 'vault' | 'signingKey' | 'invitedBy'>,
   view: Openable = walletInThisPage(window),
   atOrigin: string = window.location.origin,
   already?: WalletDialog,
@@ -1345,6 +1379,15 @@ export const directoryEntryOwed = (accountId: string) => ({
   },
 });
 
+/** The doors over what this person's devices believed of `accountId`'s roster, kept sealed with their keys. */
+export const rosterBelievedBeforeFor = (accountId: string): RosterBelievedBefore => ({
+  read: (): RosterSeenBefore | null => keyring.rostersBelieved?.[accountId] ?? null,
+  keep: async (now: RosterSeenBefore): Promise<void> => {
+    if (!encKey) return;
+    await putBundle({ ...keyring, rostersBelieved: { ...(keyring.rostersBelieved ?? {}), [accountId]: now } });
+  },
+});
+
 export const pendingSeatsFor = (accountId: string): PendingSeat[] =>
   Object.values(keyring.pendingSeats ?? {}).filter(x => x.accountId === accountId);
 
@@ -1371,6 +1414,7 @@ export async function promotePendingSeat(signingPublicKey: Hex, signerId: string
     wrappingSecret: seat.wrappingSecret,
     blinding: seat.blinding,
     scope: seat.scope,
+    ...(seat.invitedBy === undefined ? {} : { invitedBy: seat.invitedBy }),
   };
   refuseToClobber(seat.accountId, keys);
   const { [signingPublicKey]: _gone, ...rest } = keyring.pendingSeats ?? {};
@@ -1789,6 +1833,7 @@ async function foundTheCompanyOnThisDevice(
   const founded = foundTheCompanyHere({
     name: spec.name, signer: spec.signers[0]!, userId: person, label,
     seat: { signingPublicKey: keys.signingPublicKey, wrappingPublicKey: keys.wrappingPublicKey, leaf },
+    signingSecret: keys.signingSecret,
   });
   const accountId = founded.account.id;
   /* Somebody else signed in while it was being made: their saved keys are not where this seat goes. */
@@ -2029,7 +2074,9 @@ export async function sealThePayRecordKey(
   const wrapped = founding.account.wrappedKeys.find((w) => w.signerId === mine.signerId);
   if (wrapped === undefined) throw new Error('the company was not made with a viewing key for your seat, so its pay-record key cannot be opened. Nothing was sent.');
   const viewingKey = unwrapKey(wrapped, mine.wrappingSecret);
-  const key = String(parseCanonical<{ blinding: { payRecordKey?: unknown } }>(unseal(founding.sealedState.sealed, viewingKey)).blinding.payRecordKey ?? '');
+  /* A creation kept before the first state was a signed record carries none: that company is made again. */
+  if (founding.state === undefined) throw new Error(CREATED_BEFORE_SIGNED_STATE);
+  const key = String(openStateRecord(founding.state, viewingKey).blinding.payRecordKey ?? '');
   if (!HEX64_KEY.test(key)) throw new Error('the company\'s first state carries no pay-record key, so none was sealed. Nothing was sent.');
   const material: SignerMaterial = { signingSecret: mine.signingSecret, blinding: mine.blinding, scope: mine.scope };
   const wait = opts.wait ?? ((ms: number) => new Promise<void>((r) => { setTimeout(r, ms); }));
@@ -2134,14 +2181,41 @@ export function viewingKeyFor(account: { id: string; wrappedKeys: any[] }): Hex 
  * key it never sees. Opening happens here, on the device that can, using exactly
  * the same code the server used to seal it.
  *
+ * **THE SIGNERS ARE READ ONLY FROM THE COMPANY'S ROSTER RECORD, AND ONLY AS
+ * THIS DEVICE BELIEVES IT** (`rosterBelievedHere`): filed by a seat the
+ * company's directory believes, read afresh with the chain as `holders` reads
+ * it through the person's own wallet, and each entry held to its own signer's
+ * witnesses, this device's own key among them for its own entry. A company with
+ * no roster record is refused with `NO_ROSTER_RECORD`; the unsigned list on
+ * its account record is never read. A refusal throws `RosterNotBelieved`.
+ *
  * Returns null rather than throwing when this device holds no keys for the
  * account. That is a real state — you are a member, on a machine you have not
  * enrolled — and the account picker has to render something for it.
  */
-export function openAccount(rec: SealedAccount): Account | null {
+export async function openAccount(
+  rec: SealedAccount & { readonly roster?: SealedCompanyRecord | null },
+  holders: (company: CompanyLabel, account: AccountAddress) => Promise<AccountHoldersRead>,
+): Promise<BelievedAccount | null> {
+  const keys = keysFor(rec.id);
+  let viewingKey: Hex;
   try {
-    return openSealedAccount(rec, viewingKeyFor(rec));
+    if (keys === null) return null;
+    viewingKey = viewingKeyFor(rec);
   } catch {
     return null;
   }
+  const label = readCompanyLabel(rec.companyLabel ?? null);
+  const account = readAccountAddress(rec.contractAddress ?? null);
+  if (label === null || account === null) throw new RosterNotBelieved(NO_ACCOUNT_TO_READ_SIGNERS_BY);
+  const read = await rosterBelievedHere(rec, viewingKey, {
+    accountId: rec.id, label, account,
+    reads: { filings: () => directoryFilingsFrom(api, rec.id), holders: () => holders(label, account), believed: rosterBelievedBeforeFor(rec.id) },
+    own: { signerId: keys.signerId, signingPublicKey: signingPublicKeyOf(keys.signingSecret) },
+  });
+  return read.account;
 }
+
+/** The fixed sentence for a company with no account on the chain: nothing names who holds its seats, so its signers are not read. */
+const NO_ACCOUNT_TO_READ_SIGNERS_BY = 'This company has no account on the chain that names who holds its seats, so this '
+  + 'device does not read its signers.';

@@ -46,7 +46,7 @@ const { handInWiring } = await import('../wiring/handed-in.js');
 const { FileStore } = await import('../core/store-file.js');
 const { walletKeyOf } = await import('../core/store.js');
 const { AccountService } = await import('../core/account.js');
-const { PayrollService, runLegOf } = await import('../core/payroll.js');
+const { PayrollService } = await import('../core/payroll.js');
 const { SEED_ASSETS, assets: productAssets } = await import('../core/assets.js');
 const { runMaterialFor, retryMaterialFor } = await import('../midnight/run-material.js');
 const { vaultDetails } = await import('../testing/vault-details.js');
@@ -54,8 +54,8 @@ const { aVaultHolding } = await import('../testing/assets.js');
 const { addressOfSlot, signInWithAWallet } = await import('../testing/wallet-session.js');
 const { theNetwork } = await import('../midnight/network.js');
 const { toHex } = await import('../core/crypto.js');
-const { DEVICE_RAISE_VERSION, paymentsCheckedDigest } = await import('../core/device-raise.js');
-const device = await import('vaults-web-shared/governed-call-on-device.js');
+const { directorySeats } = await import('../testing/directory-seats.js');
+const { DEVICE_RAISE_VERSION, paymentsCheckedDigest, paymentsOnTheWire } = await import('../core/device-raise.js');
 type Hex = import('../core/crypto.js').Hex;
 
 const NETWORK = theNetwork();
@@ -125,11 +125,14 @@ store.putUser({
 const accounts = new AccountService(store, ledger, MidnightCommitments, productAssets, aVaultHolding(HELD));
 const payroll = new PayrollService(store, accounts, productAssets);
 
+/* Ada's seat in each company's directory, as her wallet signed it, and the chain's read of it: a stand-in, as the relays check her seat against it. */
+const seats = directorySeats();
 const aStoppedRun = async (name: string, retryWrittenDown = false, legOnChain = true) => {
   const created = await accounts.create(name, [{ name: 'Ada', role: 'admin', userId: USER }], 1, undefined, drawCompanyLabel());
   const { viewingKey } = created;
   const account = created.account.id;
   for (const s of accounts.open(account, viewingKey).signers) leaves.set(`${account} ${s.id}`, s.leafCommitment as Hex);
+  seats.claim(store, account, USER, created.secrets[0]!.signingSecret, 0x62);
   for (let i = 0; i < 3; i++) {
     payroll.hireDirect(account, {
       name: `${name} payee ${i}`, email: `p${i}@${name.toLowerCase()}.example`, title: 'Eng', asset: PRIVATE.code,
@@ -180,6 +183,7 @@ handInWiring({
   commitments: MidnightCommitments,
   createLedger: () => ledger,
   createProofSystem: () => new SimulatedProofSystem(),
+  directoryChain: seats.directoryChain,
 });
 
 const { app } = await importTheServer();
@@ -214,236 +218,52 @@ beforeEach(() => { sent.length = 0; });
 /* ── what the device would have been handed, and what it would send ─────── */
 
 type Company = { runId: string; viewingKey: string };
+/** What the service's own reading of the leg says a retry of these people pays: what a device's digest is compared with. */
 const retryPayments = async (c: Company, indices: number[]) => {
-  const r = await post(`/api/runs/${c.runId}/retry-payments`, { viewingKey: c.viewingKey, indices });
-  expect(r.status, JSON.stringify(r.body)).toBe(200);
-  return r.body as { asset: string; payments: Array<{ kind: string; token: string; amount: string }> };
+  const asked = payroll.retryPaymentsAsked(c.runId, c.viewingKey as Hex, indices);
+  return { asset: asked.asset, payments: paymentsOnTheWire(asked.payments) as Array<{ kind: string; token: string; amount: string }> };
 };
 const digestOf = (payments: Array<{ kind: string; token: string; amount: string }>) =>
   paymentsCheckedDigest(payments);
-const retryBody = (c: Company, more: Record<string, unknown>) =>
-  ({ viewingKey: c.viewingKey, indices: UNPAID, vault: VAULT, ...WINDOW, ...more });
-/** The retries written down on the company's own record of the run, as the store now holds it. */
-const retriesOf = (c: Company) => {
-  const fresh = new PayrollService(new FileStore(process.env.DATA_PATH!), accounts, productAssets);
-  return fresh.requireRun(c.runId, c.viewingKey as Hex).payout![runLegOf(PRIVATE.code, 'shielded')]!.retries ?? [];
-};
 
-describe('A PRIVATE RETRY FROM A DEVICE IS WRITTEN DOWN AND SENT; ONE FROM ANYWHERE ELSE IS REFUSED', () => {
-  it('1. A PRIVATE RETRY MARKED AS THE DEVICE\'S, THROUGH THE PAGE\'S OWN MODULE, IS WRITTEN DOWN AND SENT, AND NOTHING SENT CARRIES AN ADDRESS, A NOTE OR A BALANCE', async () => {
-    const c = seeded.retried;
-    const bodies: Array<{ path: string; body: Record<string, unknown> }> = [];
-    const api = async (path: string, init?: RequestInit) => {
-      if (init?.body) bodies.push({ path: path.replace(c.runId, ':run').replace(/prp_[A-Za-z0-9_-]+/u, ':proposal'), body: JSON.parse(String(init.body)) });
-      const r = await fetch(base + path, { ...init, headers: { 'content-type': 'application/json', authorization: `Bearer ${token}` } });
-      const body = await r.json().catch(() => ({}));
-      if (!r.ok) throw Object.assign(new Error(body?.error ?? `request failed: ${r.status}`), body);
-      return body;
-    };
-    const holdings = aVaultHolding(HELD);
-    const done = await device.raiseRetryOnDevice({
-      service: { ...device.governedCallServiceFor(api), callState: async () => ({ account: 'ac'.repeat(32), blockHash: 'b', accountState: 'AS', parameters: 'PP' }) },
-      builder: { governedCall: async ({ order }) => ({ tx: Buffer.from(JSON.stringify({ signer: c.signer, order })).toString('base64') }) },
-      material: { signingSecret: '11'.repeat(32), blinding: '22'.repeat(32), scope: '33'.repeat(32) },
-      accountId: c.account, holdings, sleep: async () => {}, waitMs: 40, everyMs: 1,
-    }, { runId: c.runId, viewingKey: c.viewingKey, indices: UNPAID, vault: VAULT, ...WINDOW });
-    /* RED WHEN: the retry route does not take a device's raise - every private retry is then refused, as before this round. */
-    expect(done.raisedAt).toBeDefined();
-    expect(done.id).not.toBe(c.leg);
-    expect(sent).toEqual(['propose']);
-    /* RED WHEN: the retry is not written down on the run as the proposal the device sent. */
-    expect(retriesOf(c).map((r) => [r.originalIndices, r.proposalId])).toEqual([[UNPAID, done.id]]);
-    /* RED WHEN: a route gains a field - above all one carrying who is paid, a note or what the vault holds. */
-    const KEYS: Record<string, string[]> = {
-      '/api/runs/:run/retry-payments': ['indices', 'viewingKey'],
-      '/api/runs/:run/retry': ['checked', 'closesAt', 'indices', 'onDevice', 'opensAt', 'vault', 'version', 'viewingKey'],
-      '/api/runs/:run/retry-send': ['checked', 'proposalId', 'tx', 'version', 'viewingKey'],
-      '/api/proposals/:proposal/standing': ['viewingKey'],
-    };
-    for (const b of bodies) expect(Object.keys(b.body).sort(), b.path).toEqual(KEYS[b.path]);
-    /* RED WHEN: the device stops checking the vault again right before the send. */
-    expect(bodies.map((b) => b.path).slice(0, 4)).toEqual([
-      '/api/runs/:run/retry-payments', '/api/runs/:run/retry', '/api/runs/:run/retry-payments', '/api/runs/:run/retry-send',
-    ]);
-    const everything = JSON.stringify(bodies.map((b) => ({ ...b, body: { ...b.body, tx: undefined } })));
-    expect(c.addresses.length).toBeGreaterThanOrEqual(3);
-    for (const a of c.addresses) expect(everything).not.toContain(a);
-    expect(everything).not.toContain(HELD.toString());
-    expect(everything).not.toMatch(/notes|nonce|pool|balance|held|address/u);
-    expect(holdings.reads.length).toBeGreaterThan(0);
-  });
+/*
+ * A retry is raised on the signer's device, over a tree of its own, and filed with the run as raised; every rule a
+ * retry has is asked there: `a-leg-is-raised-on-the-device.test.ts`. What stays here is the send of a retry already
+ * written down.
+ */
 
-  it('2. A PRIVATE RETRY NOT MARKED AS THE DEVICE\'S IS REFUSED FOR ITS PRIVATE MONEY, AS IT ALWAYS WAS, AND NOTHING IS WRITTEN DOWN', async () => {
-    const c = seeded.notDevice;
-    const checked = digestOf((await retryPayments(c, UNPAID)).payments);
-    for (const [why, more] of [
-      ['a retry that names nothing', {}],
-      ['one that names the version and what was checked, but not the device', { version: DEVICE_RAISE_VERSION, checked }],
-    ] as const) {
-      const r = await post(`/api/runs/${c.runId}/retry`, retryBody(c, more));
-      /* RED WHEN: the service stops asking about private money a retry not marked as the device's would pay, or the new fields switch that off. */
-      expect(r.status, why).toBe(400);
-      expect(String(r.body?.error), why).toMatch(
-        /cannot read what a vault holds.*Nothing was raised and no fee was spent\.$/su);
-      expect(String(r.body?.error), why).not.toMatch(/out of date|does not say which payments|the run changed after this device checked it/u);
-    }
-    /* RED WHEN: a refused retry is written onto the run anyway. */
-    expect(retriesOf(c).filter((r) => r.proposalId !== undefined)).toEqual([]);
-    expect(sent).toEqual([]);
-  });
-
-  it('3. A RETRY FROM AN OUT-OF-DATE PAGE, OR THAT DOES NOT SAY WHAT IT CHECKED, IS REFUSED BEFORE ANYTHING IS WRITTEN DOWN', async () => {
-    const c = seeded.noVersion;
-    const checked = digestOf((await retryPayments(c, UNPAID)).payments);
-    for (const [why, more] of [
-      ['no version', { checked }],
-      ['the version before', { checked, version: DEVICE_RAISE_VERSION - 1 }],
-      ['a version after', { checked, version: DEVICE_RAISE_VERSION + 1 }],
-      ['the right number spelled as a string', { checked, version: String(DEVICE_RAISE_VERSION) }],
-    ] as const) {
-      const r = await post(`/api/runs/${c.runId}/retry`, retryBody(c, { onDevice: true, ...more }));
-      /* RED WHEN: a retry from a page that may not have checked the vault is trusted. */
-      expect(r.status, why).toBe(400);
-      expect(String(r.body?.error), why).toMatch(/Reload the page and try again\. Nothing was written down\./u);
-    }
-    const unchecked = await post(`/api/runs/${c.runId}/retry`, retryBody(c, { onDevice: true, version: DEVICE_RAISE_VERSION }));
-    /* RED WHEN: a device retry that names the version but not what it checked is trusted. */
-    expect(unchecked.status).toBe(400);
-    expect(String(unchecked.body?.error)).toMatch(/does not say which payments the device checked/u);
-    expect(retriesOf(c)).toEqual([]);
-    expect(sent).toEqual([]);
-  });
-
-  it('3b. A RETRY WHOSE DIGEST IS NOT OF ITS OWN PAYMENTS IS REFUSED BEFORE ANYTHING IS WRITTEN DOWN', async () => {
-    const c = seeded.mismatch;
-    const asked = (await retryPayments(c, UNPAID)).payments;
-    const everyone = (await retryPayments(c, [0, 1, 2])).payments;
-    for (const [why, other] of [
-      ['one amount different', asked.map((p, i) => (i === 1 ? { ...p, amount: String(BigInt(p.amount) + 1n) } : p))],
-      ['the payments of the whole leg, not the retry', everyone],
-      ['the payments of other people on the leg', [everyone[0]!, everyone[1]!]],
-      ['the same payments in another order', [...asked].reverse()],
-    ] as const) {
-      const r = await post(`/api/runs/${c.runId}/retry`,
-        retryBody(c, { onDevice: true, version: DEVICE_RAISE_VERSION, checked: digestOf([...other]) }));
-      /* RED WHEN: the service writes the retry down without comparing its payments with what the device checked. */
-      expect(r.status, why).toBe(400);
-      expect(String(r.body?.error), why).toMatch(/the run changed after this device checked it against the vault.*Nothing was written down\./su);
-    }
-    expect(retriesOf(c)).toEqual([]);
-    expect(sent).toEqual([]);
-  });
-
-  it('5. A DEVICE RETRY IS HELD TO EVERY RULE A RETRY HAS: ONLY THE LEG\'S OWN PEOPLE, EACH ONCE, AT THE LEAF THEY ALREADY HAVE', async () => {
-    const c = seeded.rules;
-    for (const [why, indices, refusal] of [
-      ['a person who is not on the leg', [1, 3], /there is no person 3 on it to retry|payee 3 is not in the original run/u],
-      ['one person named twice', [1, 1], /named twice|listed twice/u],
-    ] as const) {
-      /* The digest the device would compute over whatever it was handed; the rule refuses before or after it. */
-      const r = await post(`/api/runs/${c.runId}/retry`, retryBody(c, {
-        indices, onDevice: true, version: DEVICE_RAISE_VERSION, checked: 'ab'.repeat(32),
-      }));
-      /* RED WHEN: a device retry skips a rule of the retry's own. */
-      expect(r.status, why).toBe(400);
-      expect(String(r.body?.error), why).toMatch(refusal);
-    }
-    expect(retriesOf(c)).toEqual([]);
-    /* And a retry that is allowed pays each person at the leaf the leg already holds for them - the leaf is the payment. */
-    const checked = digestOf((await retryPayments(c, UNPAID)).payments);
-    const ok = await post(`/api/runs/${c.runId}/retry`, retryBody(c, { onDevice: true, version: DEVICE_RAISE_VERSION, checked }));
-    expect(ok.status, JSON.stringify(ok.body)).toBe(200);
-    /* RED WHEN: a device retry is sent by this service - it is the device that sends it. */
-    expect(ok.body.proposal.raisedAt).toBeUndefined();
-    expect(sent).toEqual([]);
-    expect(ok.body.order.indices).toEqual(UNPAID);
-    const leg = new PayrollService(new FileStore(process.env.DATA_PATH!), accounts, productAssets)
-      .requireRun(c.runId, c.viewingKey as Hex).payout![runLegOf(PRIVATE.code, 'shielded')]!;
-    /* RED WHEN: the retry's material is built under another identity or generation - its people then have new leaves, and both rounds pay them. */
-    const rebuilt = await retryMaterialFor({
-      rebuild: (await payroll.payoutRebuildOf(c.runId, c.viewingKey as Hex))!, indices: UNPAID,
-      opensAt: BigInt(WINDOW.opensAt), closesAt: BigInt(WINDOW.closesAt), vault: VAULT, detailsOf: vaultDetails,
-    });
-    expect(rebuilt.leaves).toEqual(UNPAID.map((i) => leg.leaves[i]));
-    expect(ok.body.order.order.run.root).toBe(rebuilt.run.root);
-  });
-
-  it('5b. A DEVICE RETRY THAT PASSES EVERY CHECK OF ITS OWN IS STILL REFUSED BY THE RETRY\'S RULES: A LEG THE CHAIN NEVER HELD HAS NO ROUND TO RETRY', async () => {
-    const c = seeded.neverSent;
-    const checked = digestOf((await retryPayments(c, UNPAID)).payments);
-    const r = await post(`/api/runs/${c.runId}/retry`, retryBody(c, { onDevice: true, version: DEVICE_RAISE_VERSION, checked }));
-    /* RED WHEN: the device path reaches the write-down without the retry's own rules - a round never on chain is split into retries. */
-    expect(r.status, JSON.stringify(r.body)).toBe(400);
-    expect(String(r.body?.error)).toMatch(/has no round the chain has been seen to hold, so there is no round on it to retry/u);
-    expect(retriesOf(c)).toEqual([]);
-    expect(sent).toEqual([]);
-  });
-
-  it('5c. A RETRY A DEVICE WROTE DOWN AND DID NOT SEND IS SENT AS ITSELF WHEN THE SAME PEOPLE ARE RETRIED AGAIN, NEVER RAISED A SECOND TIME', async () => {
-    const c = seeded.resumed;
-    const checked = digestOf((await retryPayments(c, UNPAID)).payments);
-    const again = await post(`/api/runs/${c.runId}/retry`, retryBody(c, { onDevice: true, version: DEVICE_RAISE_VERSION, checked }));
-    expect(again.status, JSON.stringify(again.body)).toBe(200);
-    /* RED WHEN: retrying the same people writes down a second round over the same leaves - a second fee, and a round that can never complete. */
-    expect(again.body.proposal.id).toBe(c.retryId);
-    expect(again.body.order.proposalId).toBe(c.retryId);
-    expect(retriesOf(c).map((r) => r.proposalId)).toEqual([c.retryId]);
-    /* A different window is a different round: refused, and the sentence says what the written-down one is. */
-    const other = await post(`/api/runs/${c.runId}/retry`, retryBody(c, {
-      onDevice: true, version: DEVICE_RAISE_VERSION, checked, closesAt: String(now + 7_200),
-    }));
-    /* RED WHEN: a retry with another window is handed the written-down one, or raised as a second round. */
-    expect(other.status).toBe(400);
-    expect(String(other.body?.error)).toMatch(/a retry of these people is already written down.*Retry them with that window and that vault/su);
-    expect(retriesOf(c).map((r) => r.proposalId)).toEqual([c.retryId]);
-    expect(sent).toEqual([]);
-  });
-});
-
-describe('A RETRY WRITTEN DOWN ON A DEVICE IS SENT ONLY FROM THE CURRENT PAGE, AND ONLY AS WHAT IT CHECKED', () => {
+describe('A RETRY WRITTEN DOWN ON A DEVICE IS SENT ONLY FROM THE CURRENT PAGE, AS THE CALL IT PROVED', () => {
   const send = (c: Company & { retryId?: string }, more: Record<string, unknown>) =>
-    post(`/api/runs/${c.runId}/retry-send`, { viewingKey: c.viewingKey, proposalId: c.retryId, tx: Buffer.from('{}').toString('base64'), ...more });
+    post(`/api/proposals/${c.retryId}/send`, { tx: Buffer.from('{}').toString('base64'), ...more });
 
-  it('3c. A RETRY SEND FROM AN OUT-OF-DATE PAGE, OR WHOSE DIGEST IS NOT THE RETRY\'S, IS REFUSED, AND NOTHING IS SENT', async () => {
+  it('3c. A RETRY SEND FROM AN OUT-OF-DATE PAGE, OR CARRYING WHAT THE DEVICE CHECKED, IS REFUSED, AND NOTHING IS SENT', async () => {
     const c = seeded.written;
     const asked = (await retryPayments(c, UNPAID)).payments;
-    const everyone = (await retryPayments(c, [0, 1, 2])).payments;
-    for (const [why, more, refusal] of [
-      ['no version', { checked: digestOf(asked) }, /Reload the page and try again\. Nothing was sent\./u],
-      ['another version', { checked: digestOf(asked), version: DEVICE_RAISE_VERSION + 1 }, /Reload the page and try again\. Nothing was sent\./u],
-      ['the whole leg checked, not the retry', { checked: digestOf(everyone), version: DEVICE_RAISE_VERSION }, /is not what this device checked against the vault just now.*Nothing was sent\./su],
-      ['nothing said about what was checked', { version: DEVICE_RAISE_VERSION }, /is not what this device checked against the vault just now.*Nothing was sent\./su],
+    for (const [why, more, status] of [
+      ['no version', {}, 422],
+      ['another version', { version: DEVICE_RAISE_VERSION + 1 }, 422],
+      ['the digest of what was checked beside the call', { version: DEVICE_RAISE_VERSION, checked: digestOf(asked) }, 400],
     ] as const) {
       const r = await send(c, more);
-      /* RED WHEN: a retry is sent from a page that may not have checked the vault, or without comparing what it checked. */
-      expect(r.status, why).toBe(422);
+      /* RED WHEN: a retry is sent from a page that may not have checked the vault, or the send route takes more than the call. */
+      expect(r.status, why).toBe(status);
       expect(r.body?.nothingWasSent, why).toBe(true);
-      expect(String(r.body?.error), why).toMatch(refusal);
     }
-    /* RED WHEN: the retry-send door sends the LEG's proposal, or any proposal not written down as a retry of this run. */
-    const theLeg = await send({ ...c, retryId: seeded.written.leg }, { checked: digestOf(asked), version: DEVICE_RAISE_VERSION });
-    expect(theLeg.status).toBe(422);
-    expect(String(theLeg.body?.error)).toMatch(/no retry written down as that proposal/u);
-    /* RED WHEN: the retry is looked up by anything but the proposal named - a name nobody wrote down finds some other retry. */
-    const nobody = await send({ ...c, retryId: 'prp_written_down_nowhere' }, { checked: digestOf(asked), version: DEVICE_RAISE_VERSION });
-    expect(nobody.status).toBe(422);
-    expect(String(nobody.body?.error)).toMatch(/no retry written down as that proposal waiting to be sent/u);
     expect(sent).toEqual([]);
   });
 
-  it('A RETRY WRITTEN DOWN IS HANDED OVER AS WRITTEN, AND A SEND OF EXACTLY THAT GOES OUT', async () => {
+  it('A SEND OF EXACTLY THE RETRY WRITTEN DOWN GOES OUT', async () => {
     const c = seeded.sendsOnce;
-    const r = await post(`/api/runs/${c.runId}/retry-order`, { viewingKey: c.viewingKey, proposalId: c.retryId });
-    expect(r.status, JSON.stringify(r.body)).toBe(200);
-    /* RED WHEN: the order starts carrying the payments, or anything about who is paid. */
-    expect(Object.keys(r.body).sort()).toEqual(['chainId', 'indices', 'order', 'paymentsChecked', 'proposalId']);
-    expect(r.body.indices).toEqual(UNPAID);
-    const checked = digestOf((await retryPayments(c, UNPAID)).payments);
-    /* RED WHEN: the digest the order carries is not the digest of what the device is handed to check - the device then refuses a good send. */
-    expect(r.body.paymentsChecked).toBe(checked);
-    const built = Buffer.from(JSON.stringify({ signer: c.signer, order: r.body.order })).toString('base64');
-    const ok = await send({ ...c }, { tx: built, version: DEVICE_RAISE_VERSION, checked });
-    /* RED WHEN: the digest of what the device is handed for a retry is not the retry's own. */
+    const o = (await payroll.retryRaiseOrderOf(c.runId, c.viewingKey, c.retryId!))!;
+    expect(o.indices).toEqual(UNPAID);
+    /* RED WHEN: the digest of the retry written down is not the digest of what a device checks - every good send is then refused on the device. */
+    expect(o.paymentsChecked).toBe(digestOf((await retryPayments(c, UNPAID)).payments));
+    const order = {
+      circuit: 'propose', proposal: o.chainId, half: o.half,
+      run: { root: o.run.root, payees: o.run.payees.toString(), opensAt: o.run.opensAt.toString(), closesAt: o.run.closesAt.toString(), vault: o.run.vault },
+    };
+    const built = Buffer.from(JSON.stringify({ signer: c.signer, order })).toString('base64');
+    const ok = await send({ ...c }, { tx: built, version: DEVICE_RAISE_VERSION });
     expect(ok.status, JSON.stringify(ok.body)).toBe(200);
     expect(sent).toEqual(['propose']);
   });

@@ -26,6 +26,8 @@
  *
  * Pure, so the page and the service ask the same questions of the same record.
  */
+import { recordsKeySignedBy, directoryEntrySignedBy, type DirectoryEntryStatement } from 'midnight-identity/profile/records-key';
+import type { AccountAddress, CompanyLabel } from 'midnight-identity/profile/company-label';
 import { sign, verify, type Hex } from './crypto.js';
 import type { Account, Signer } from './types.js';
 
@@ -184,3 +186,175 @@ export function whyNotTheRostersReaders(
       + `vault, so ${missing === 1 ? 'that signer' : 'those signers'} could not read the vault's records. The vault is `
       + 'not set up from here. Reload the page, and if it happens again, contact support.';
 }
+
+export class VaultKeysNotYours extends Error {
+  constructor() {
+    super('these vault keys were not set up from your own seat on this company, so they are not kept. Open the '
+      + 'company on this device again and set them up from Vaults.');
+    this.name = 'VaultKeysNotYours';
+  }
+}
+
+/**
+ * A signer giving their records key again with a statement that does not
+ * verify: not signed by the committee key their entry already carries, or for a
+ * seat that is not the one the roster holds for them. The statement kept
+ * before is kept.
+ */
+export class RecordsKeyNotSignedForYourSeat extends VaultKeysNotYours {
+  constructor() {
+    super();
+    this.message = 'your records key was not signed by your own wallet for the seat you hold on this company, so it is '
+      + 'not kept; any records key given before stays as it was. Open the company with your own wallet on this device and set up its '
+      + 'vaults again.';
+    this.name = 'RecordsKeyNotSignedForYourSeat';
+  }
+}
+
+/** A signer giving different vault keys from the ones their roster entry already carries. */
+export class VaultKeysAlreadyGiven extends Error {
+  constructor() {
+    super('you already set up different vault keys for this company, from a different wallet. The first ones are '
+      + 'kept and these are not. Open the company with that wallet, or ask the company\'s signers to remove you and '
+      + 'invite you again.');
+    this.name = 'VaultKeysAlreadyGiven';
+  }
+}
+
+/** Somebody with no seat on the company giving vault keys for it. */
+export class NoSeatToGiveKeysFor extends Error {
+  constructor() {
+    super('only a signer with access to this company sets up vault keys for it. Ask a signer to grant you access.');
+    this.name = 'NoSeatToGiveKeysFor';
+  }
+}
+
+
+/**
+ * **WHETHER A WALLET'S STATEMENT OVER A RECORDS KEY IS FOR THIS SIGNER'S SEAT**:
+ * signed by the committee key the signer gives, over the records key they give,
+ * for the seat the roster holds for them, on the company's account, under the
+ * company's label.
+ */
+export const recordsKeyIsForTheSeat = (
+  label: CompanyLabel, account: AccountAddress, seat: Pick<Signer, 'leafCommitment'>,
+  keys: { readonly committeeKey: VaultKey; readonly recordsKey: Hex }, statement: Hex, signedSeat: Hex,
+): boolean => {
+  const ownSeat = typeof seat.leafCommitment === 'string' ? seat.leafCommitment.toLowerCase() : null;
+  return ownSeat !== null && signedSeat.toLowerCase() === ownSeat
+    && recordsKeySignedBy(label, account, { tag: keys.committeeKey.tag, value: keys.committeeKey.value.toLowerCase() },
+      { recordsKey: keys.recordsKey.toLowerCase(), seat: signedSeat.toLowerCase(), signature: statement.toLowerCase() });
+};
+
+/**
+ * **ONE SIGNER'S VAULT KEYS, WRITTEN INTO THEIR OWN ENTRY OF A ROSTER**, or
+ * `'already-given'` when the roster holds them already, or a refusal. Refused
+ * unless signed with that entry's own signing key, so nobody can put a key in
+ * another signer's name without that signer's signing secret. Given once: the
+ * same keys again are taken only for a new statement over the records key,
+ * which is kept only when it verifies; different keys are refused. Pure: the
+ * roster is the caller's, opened on its device.
+ */
+export function rosterWithVaultKeys<R extends { readonly signers: readonly Signer[] }>(
+  roster: R, accountId: string, label: CompanyLabel, account: AccountAddress, signerId: string, given: SignedVaultKeys,
+): R | 'already-given' {
+  const seat = roster.signers.find((s) => s.id === signerId && s.status === 'active');
+  if (seat === undefined) throw new NoSeatToGiveKeysFor();
+  if (!vaultKeysAreTheSigners(accountId, { ...seat, vaultKeys: given })) throw new VaultKeysNotYours();
+  const statement = given.recordsKeyStatement ?? null;
+  const signedSeat = given.recordsKeySeat ?? null;
+  let kept: NonNullable<Signer['vaultKeys']>;
+  if (seat.vaultKeys) {
+    const same = seat.vaultKeys.committeeKey.value.toLowerCase() === given.committeeKey.value.toLowerCase()
+      && seat.vaultKeys.recordsKey.toLowerCase() === given.recordsKey.toLowerCase();
+    if (!same) throw new VaultKeysAlreadyGiven();
+    if (statement === null || signedSeat === null
+      || (statement === (seat.vaultKeys.recordsKeyStatement ?? null) && signedSeat === (seat.vaultKeys.recordsKeySeat ?? null))) {
+      return 'already-given';
+    }
+    if (!recordsKeyIsForTheSeat(label, account, seat, seat.vaultKeys, statement, signedSeat)) throw new RecordsKeyNotSignedForYourSeat();
+    kept = { ...seat.vaultKeys, recordsKeyStatement: statement, recordsKeySeat: signedSeat };
+  } else {
+    if (statement !== null && signedSeat !== null && !recordsKeyIsForTheSeat(label, account, seat, given, statement, signedSeat)) {
+      throw new RecordsKeyNotSignedForYourSeat();
+    }
+    kept = {
+      committeeKey: { ...given.committeeKey }, recordsKey: given.recordsKey, signature: given.signature,
+      ...(statement !== null && signedSeat !== null ? { recordsKeyStatement: statement, recordsKeySeat: signedSeat } : {}),
+    };
+  }
+  return { ...roster, signers: roster.signers.map((s) => (s.id === signerId ? { ...s, vaultKeys: kept } : s)) };
+}
+
+/**
+ * **A NEW SIGNER'S VAULT KEYS, OFFERED BEFORE THEY CAN FILE THE ROSTER
+ * THEMSELVES.** Public keys and signatures only: the keys signed with the
+ * signer's own signing key for their roster entry, and the directory entry their
+ * own wallet signed for their seat, which names that signing key. It is a
+ * waiting slot, never the roster: a seat the company already believes folds it
+ * into the roster from its own device, after checking it against the roster it
+ * opened (`rosterWithVaultKeys`).
+ */
+export interface VaultKeysOffer {
+  /** The roster entry the keys are signed for. */
+  readonly signerId: string;
+  /** The signed-in person who offered them. The service's attribution, checked against who is signed in. */
+  readonly person: string;
+  readonly entry: { readonly committeeKey: VaultKey; readonly statement: DirectoryEntryStatement };
+  readonly keys: SignedVaultKeys;
+}
+
+/**
+ * **AN OFFER AS THE COMPANY KEEPS IT**: the fields an offer has and nothing
+ * else a client sent beside them, so what every member is handed back is only
+ * what was checked.
+ */
+export const offerAsKept = (o: VaultKeysOffer): VaultKeysOffer => {
+  const st = o.entry.statement;
+  const k = o.keys;
+  return {
+    signerId: o.signerId, person: o.person,
+    entry: {
+      committeeKey: { tag: o.entry.committeeKey.tag, value: o.entry.committeeKey.value } as VaultKey,
+      statement: { account: st.account, signingKey: st.signingKey, wrappingKey: st.wrappingKey, seat: st.seat, signature: st.signature },
+    },
+    keys: {
+      committeeKey: { tag: k.committeeKey.tag, value: k.committeeKey.value } as VaultKey, recordsKey: k.recordsKey, signature: k.signature,
+      ...(k.recordsKeyStatement === undefined ? {} : { recordsKeyStatement: k.recordsKeyStatement }),
+      ...(k.recordsKeySeat === undefined ? {} : { recordsKeySeat: k.recordsKeySeat }),
+    },
+  };
+};
+
+/**
+ * Why `offer` is not one this company keeps, or null: the directory entry its
+ * wallet signed must verify for this company's label and account, under the
+ * committee key the keys name; the records key must be the one the entry names;
+ * and the keys must be signed for the roster entry named, by the signing key
+ * the wallet's entry names. Whether the account holds the seat is the chain's
+ * question, asked by the caller.
+ */
+export const vaultKeysOfferRefusal = (
+  label: CompanyLabel, account: AccountAddress, accountId: string, offer: unknown,
+): string | null => {
+  if (typeof offer !== 'object' || offer === null) return 'it is not an offer of vault keys';
+  const o = offer as Partial<VaultKeysOffer>;
+  if (typeof o.signerId !== 'string' || o.signerId.length === 0 || o.signerId.length > 64) return 'it names no signer';
+  const e = o.entry as Partial<VaultKeysOffer['entry']> | undefined;
+  const k = o.keys as Partial<SignedVaultKeys> | undefined;
+  if (typeof e !== 'object' || e === null || typeof e.statement !== 'object' || e.statement === null || typeof e.committeeKey !== 'object') {
+    return 'it carries no directory entry signed by the signer\'s wallet';
+  }
+  if (typeof k !== 'object' || k === null || typeof k.committeeKey !== 'object' || k.committeeKey === null
+    || typeof k.recordsKey !== 'string' || typeof k.signature !== 'string') return 'it carries no signed vault keys';
+  if (!directoryEntrySignedBy(label, account, e.committeeKey!, e.statement)) {
+    return 'its directory entry is not signed by the signer\'s wallet for this company';
+  }
+  if (fold(e.committeeKey!.tag) !== fold(k.committeeKey.tag) || fold(e.committeeKey!.value) !== fold(k.committeeKey.value)) {
+    return 'its vault keys name another committee key than the wallet that signed its entry';
+  }
+  if (fold(String(e.statement.wrappingKey)) !== fold(k.recordsKey)) return 'its records key is not the one its entry names';
+  let ok = false;
+  try { ok = verify(vaultKeysMessage(accountId, o.signerId, k as SignedVaultKeys), k.signature, String(e.statement.signingKey)); } catch { ok = false; }
+  return ok ? null : 'its vault keys are not signed by the signing key its own directory entry names';
+};

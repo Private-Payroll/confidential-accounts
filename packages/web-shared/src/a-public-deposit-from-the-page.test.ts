@@ -90,7 +90,7 @@ const setUp = (over: { view?: Partial<VaultChainView>; send?: VaultService['depo
     company: LABEL, account: ACCOUNT, builder,
     /* The wallet's read: the account has adopted the vault. */
     onChain: async (v: string) => ({
-      holders: { committee: [], threshold: 1, seats: [], approvals: 1, adoptedVaults: [v] },
+      holders: { committee: [], threshold: 1, seats: [], approvals: 1, adoptedVaults: [v], founding: '4a'.repeat(32), foundingCommittee: [{ tag: 'schnorr', value: '11'.repeat(32) }] },
     }),
     inFlight: sealedOnThisDevice<DepositInFlight>(inFlightInMemory(inFlight), { signerId: 'ada', wrappingSecret: wrapping.secret }, 'deposit') as DepositsInFlight,
   };

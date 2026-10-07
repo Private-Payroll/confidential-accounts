@@ -80,7 +80,7 @@ async function aCompany(opts: { threshold: number }) {
     },
   };
   const accounts = new AccountService(store, ledger, MidnightCommitments, registry, holdings,
-    { everyMs: 0, attempts: 4 });
+    undefined, { everyMs: 0, attempts: 4 });
   const payroll = new PayrollService(store, accounts, registry);
   const created = await accounts.create('Northwind Ltd', [
     { name: 'Ada', role: 'admin' }, { name: 'Blake', role: 'approver' }, { name: 'Cleo', role: 'approver' },

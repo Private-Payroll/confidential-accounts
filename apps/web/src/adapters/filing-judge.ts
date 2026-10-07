@@ -1,6 +1,8 @@
 import type { AccountAddress, CompanyLabel } from 'midnight-identity/profile/company-label';
-import type { Account } from '../../../../src/core/types.js';
-import { api, holdersFromTheWallet } from 'vaults-web-shared/keyring.js';
+import type { AccountHoldersRead } from 'midnight-identity/profile/records-key';
+import type { Account, SealedAccount } from '../../../../src/core/types.js';
+import { api, holdersFromTheWallet, openAccount, rosterBelievedBeforeFor } from 'vaults-web-shared/keyring.js';
+import type { BelievedAccount, RosterReads } from 'vaults-web-shared/roster-here.js';
 import { attestedIn, directoryFilingsFrom, directoryHere, directoryJudge, type DirectoryHere, type DirectoryHereDeps } from 'vaults-web-shared/vault-page-doors.js';
 import type { FreshJudge } from 'vaults-web-shared/http-sealed-pool-store.js';
 import { ACCOUNT_ORIGIN } from './session.js';
@@ -12,14 +14,27 @@ import { ACCOUNT_ORIGIN } from './session.js';
  * and the records-key statements in the roster this device opened - all of it
  * afresh for every read, so no read rests on one made before it.
  */
+/** Who holds the company's account now, as this person's own wallet reads the chain, with no press. */
+const holdersHere = async (company: CompanyLabel, account: AccountAddress): Promise<AccountHoldersRead> =>
+  (await holdersFromTheWallet(ACCOUNT_ORIGIN, { company, account })).holders;
+
+/** What this page reads, afresh for each read, to believe a company's roster and each entry in it. */
+export const rosterReadsFor = (companyId: string, company: CompanyLabel, account: AccountAddress): RosterReads => ({
+  filings: () => directoryFilingsFrom(api, companyId),
+  holders: () => holdersHere(company, account),
+  believed: rosterBelievedBeforeFor(companyId),
+});
+
+/** The company as this page believes it (`openAccount`), its signers read from its roster record only. */
+export const openedHere = (sealed: SealedAccount): Promise<BelievedAccount | null> => openAccount(sealed, holdersHere);
+
 /** What this page reads to believe a company's directory, the one way every screen asks it. */
 const directoryDeps = (
   companyId: string, company: CompanyLabel, account: AccountAddress, roster: () => Promise<Pick<Account, 'signers'>>,
 ): DirectoryHereDeps => ({
   accountId: companyId,
   label: company,
-  filings: () => directoryFilingsFrom(api, companyId),
-  holders: async () => (await holdersFromTheWallet(ACCOUNT_ORIGIN, { company, account })).holders,
+  ...rosterReadsFor(companyId, company, account),
   attested: async () => attestedIn(await roster()),
 });
 

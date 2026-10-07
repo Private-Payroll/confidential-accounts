@@ -1,6 +1,5 @@
 import { nanoid } from 'nanoid';
-import { readAccountAddress, readCompanyLabel } from 'midnight-identity/profile/company-label';
-import { recordsKeySignedBy } from 'midnight-identity/profile/records-key';
+import { readCompanyLabel } from 'midnight-identity/profile/company-label';
 import type { CompanyLabel } from 'midnight-identity/profile/company-label';
 import {
   newSigningKeypair, newWrappingKeypair, newSymmetricKey, newProposalSalt, newBlinding,
@@ -13,9 +12,10 @@ import type {
   ShieldedState, StateBlinding, ShieldedEntry, Invite,
   ApprovalOutcome, ApprovalUnknown, PayoutSeed,
 } from './types.js';
-import type { AssetId, AssetRegistry, LedgerForm } from './assets.js';
+import type { AssetId, LedgerForm } from './assets.js';
 import { assets as defaultAssets, assetIdBytes, NO_ASSET, sumChangeAmount, symbolOf } from './assets.js';
 import { NothingWasSent, saysNothingWasSent } from './jobs.js';
+import { CANNOT_ASK_THE_CHAIN, notSentBecauseItIs, RAISE_ON_ITS_WAY, THE_CHAIN_ALREADY_HOLDS_IT } from './proposal-standing.js';
 import {
   sealRecord, openRecord, inboxPublicKey, sealToInbox, openFromInbox,
 } from './sealed-records.js';
@@ -30,13 +30,19 @@ import {
 import { storedSignerLeaf } from './signer-leaf.js';
 import { refuseASeatKeyNotFromTheInvitee, SeatKeyNotFromTheInvitee } from './seat-invite-proof.js';
 import { payrollRoundOf } from './retry-cover.js';
-import { vaultKeyIndexOf, vaultKeysAreTheSigners, type SignedVaultKeys } from './vault-keys.js';
+import { vaultKeyIndexOf } from './vault-keys.js';
 import {
   noVaultHoldingsReader, refuseWhatTheVaultCannotPay,
   type PaymentAsked, type VaultHoldings,
 } from './vault-holdings.js';
 import type { DataStore } from './store.js';
+import { openStateRecord, stateRecordId } from './founding-state.js';
+import { openRoster, ROSTER_ID, RosterIsASignedRecord, sameRoster, type RosterSecrets } from './roster-record.js';
+import type { CompanyRecordStore, SealedCompanyRecord } from '../midnight/sealed-record-wire.js';
 import { inviteKeyOf } from './store.js';
+import { refuseARunNoVaultCanPay } from './run-raising.js';
+import { evaluatePolicy } from './company-policy.js';
+import { batchDigestOf } from './proposal-filing.js';
 
 /**
  * The epoch a brand new account is sealed under.
@@ -162,48 +168,6 @@ export class NotACompanyLabel extends Error {
     super('what was given as the company\'s label is not one: co_ and sixty-four lower-case characters, '
       + 'made up by the founding signer\'s wallet. Nothing was created and nothing was deployed.');
     this.name = 'NotACompanyLabel';
-  }
-}
-
-export class VaultKeysNotYours extends Error {
-  constructor() {
-    super('these vault keys were not set up from your own seat on this company, so they are not kept. Open the '
-      + 'company on this device again and set them up from Vaults.');
-    this.name = 'VaultKeysNotYours';
-  }
-}
-
-/**
- * A signer giving their records key again with a statement that does not
- * verify: not signed by the committee key their entry already carries, or for a
- * seat that is not the one the roster holds for them. The statement kept
- * before is kept.
- */
-export class RecordsKeyNotSignedForYourSeat extends VaultKeysNotYours {
-  constructor() {
-    super();
-    this.message = 'your records key was not signed by your own wallet for the seat you hold on this company, so it is '
-      + 'not kept; any records key given before stays as it was. Open the company with your own wallet on this device and set up its '
-      + 'vaults again.';
-    this.name = 'RecordsKeyNotSignedForYourSeat';
-  }
-}
-
-/** A signer giving different vault keys from the ones their roster entry already carries. */
-export class VaultKeysAlreadyGiven extends Error {
-  constructor() {
-    super('you already set up different vault keys for this company, from a different wallet. The first ones are '
-      + 'kept and these are not. Open the company with that wallet, or ask the company\'s signers to remove you and '
-      + 'invite you again.');
-    this.name = 'VaultKeysAlreadyGiven';
-  }
-}
-
-/** Somebody with no seat on the company giving vault keys for it. */
-export class NoSeatToGiveKeysFor extends Error {
-  constructor() {
-    super('only a signer with access to this company sets up vault keys for it. Ask a signer to grant you access.');
-    this.name = 'NoSeatToGiveKeysFor';
   }
 }
 
@@ -514,124 +478,7 @@ export function survivorsAfter(
   return Math.min(ourSurvivors, Math.max(0, seating.signerCount - seatsDropped));
 }
 
-/**
- * **WHAT THIS SERVICE MAY STILL DECIDE, WHICH IS ONE THING.**
- *
- * It decides whether to RELAY a proposal, against ceilings the company set and
- * asked us to apply. It no longer decides whether a round is approved: that
- * answer arrives in `chain`, having been read off `LedgerStatus`, and this
- * function's only job with it is to compare two of the ledger's own numbers to
- * each other and label the result.
- *
- * **The threshold is not read from `account.policy` anywhere below.** If you
- * are adding a rule here, that is the line to keep: this process may render the
- * number and may not produce it.
- *
- * It is still written as a general evaluator rather than a signature counter
- * because agents-as-principals and delegated authority are the same mechanism
- * with different inputs, and retrofitting that later is expensive.
- *
- * `asset` is not optional and there is no default.
- *
- * A ceiling is a number in one currency and nothing else. Evaluating a payment
- * against a limit set for a different asset is not a slightly wrong answer, it
- * is an answer about a different question — a 5,000 GBP ceiling applied to an
- * ETH amount blocks 0.000000000000005001 ether and waves through anything
- * smaller than five picoether, which is every real payment. So every rule below
- * is looked up per asset, and an asset nobody set a rule for has no rule.
- */
-export function evaluatePolicy(
-  account: Account,
-  asset: AssetId,
-  amount: bigint,
-  proposerRole: Role,
-  chain: ChainApprovals,
-  /** The registry the limit's token is named from in a refusal. */
-  registry: AssetRegistry = defaultAssets,
-): PolicyVerdict {
-  const p = account.policy;
-  const limit = p.limitsByRole[proposerRole]?.[asset];
-
-  /*
-   * **A PAIRING GUARD STOOD HERE AND IT COULD NOT FIRE.**
-   * It threw when `chain.vault !== vault`, and both sides were the same
-   * expression — `approvalsOnChain` echoed its own argument back, and the one
-   * call site that reaches the `read` arm passed `proposal.vault` to both. The
-   * paragraph that stood with it claimed *"a reduction taken against a
-   * different one is refused below rather than quietly deciding the round …
-   * That refusal is worth having because the failure it catches is invisible
-   * without it"*, and nothing was behind it.
-   *
-   * **GUARD AND CLAIM REMOVED TOGETHER.** Where the pairing is actually
-   * enforced is written on `ChainApprovals` above: at the door that writes the
-   * record, not at the end that reads it. **The interaction matters and is why
-   * this is not merely tidying:** had the guard ever been made real it would
-   * have thrown at this line — AFTER `ledger.approve` has landed — so every
-   * time it fired it would have reported a failure against an approval the
-   * chain had already accepted.
-   */
-
-  if (limit?.perTransaction != null && amount > limit.perTransaction) {
-    return {
-      blocked: true,
-      /*
-       * IT SAYS WHOSE RULE IT IS.
-       *
-       * The contract has no ceiling and never sees this number. A refusal
-       * phrased as though the chain had refused is a promise this product is
-       * not keeping — the company can ask us to stop relaying and cannot make
-       * that stick against anybody else.
-       */
-      reason:
-        `this company's own policy, applied by this service and not by the chain: ` +
-        `${amount} exceeds the per-transaction ${symbolOf(asset, registry)} limit for role "${proposerRole}" ` +
-        `(${limit.perTransaction}). The proposal was not relayed to the ledger.`,
-      /*
-       * A blocked proposal is never submitted, so there is no round on chain to
-       * ask about. That is not "nobody has approved it": it does not exist.
-       */
-      approval: { state: 'unknown', why: 'not-yet-proposed' },
-    };
-  }
-
-  /*
-   * **THE ESCALATION FIGURE IS GONE FROM THE TYPE AS WELL AS FROM HERE.** An
-   * earlier change deleted the evaluation and kept the field; the field is now
-   * gone too, and the argument is in `Policy`'s own comment in `core/types.ts`,
-   * with the short form immediately below.
-   *
-   * The short of it: the one meaning on offer was *"above this amount use the
-   * account's threshold rather than the vault's lower one"*, and NOTHING ON
-   * CHAIN WOULD ENFORCE IT. `thresholdFor` is amount-blind. Applying it here
-   * would make this service tell a company that a large payment needs more
-   * approvals than the contract will actually require — and that is the
-   * dangerous direction, because it claims safety that does not exist rather
-   * than merely failing to add any.
-   */
-
-  /*
-   * **THE DISCRIMINANT IS A STRING AND NOT A BOOLEAN, AND THAT IS NOT A STYLE
-   * CHOICE.**
-   *
-   * It was `known: true | false` and `tsconfig.json` narrowed it correctly.
-   * `tsconfig.scripts.json` compiles with `strict: false`, which turns off
-   * `strictNullChecks`, and WITHOUT `strictNullChecks` TypeScript does not
-   * narrow a discriminated union on a boolean literal — so `chain.why` was an
-   * error in one tree and fine in the other. This file is reached by both
-   * configs, through `src/midnight/*`. A string discriminant narrows under
-   * either.
-   */
-  if (chain.state === 'unknown') return { blocked: false, approval: { state: 'unknown', why: chain.why } };
-
-  return {
-    blocked: false,
-    approval: {
-      state: chain.approvals >= chain.threshold ? 'satisfied' : 'short',
-      approvals: chain.approvals,
-      threshold: chain.threshold,
-    },
-  };
-}
+export { evaluatePolicy } from './company-policy.js';
 
 /* ---------------- a company as it is founded ---------------- */
 
@@ -742,8 +589,6 @@ export function sealState(
 
 /* ---------------- sealing the account ---------------- */
 
-/** What the roster envelope holds. There is no other copy of any of it. */
-interface RosterSecrets { name: string; signers: Signer[]; }
 /** What the policy envelope holds. */
 interface PolicySecrets { policy: Policy; recovery: Account['recovery']; }
 
@@ -822,6 +667,22 @@ export function sealAccount(
 }
 
 /**
+ * **A COMPANY'S SIGNERS, FROM WHERE THEY ARE HELD**: its roster record once it
+ * has one, and the account record's own envelope until then. There is never
+ * both: the roster's first version moves them off the account record.
+ */
+const rosterOf = (rec: SealedAccount, roster: SealedCompanyRecord | null, viewingKey: Hex): RosterSecrets => {
+  if (roster !== null) {
+    if (roster.company !== rec.id || roster.kind !== 'roster' || roster.id !== ROSTER_ID) {
+      throw new Error('the roster served with this company is another company\'s, so its signers cannot be read.');
+    }
+    return openRoster(roster, viewingKey);
+  }
+  if (rec.sealedRoster === undefined) throw new Error('this company\'s signers could not be found, so they cannot be read.');
+  return openRecord<RosterSecrets>('roster', rec.id, rec.sealedRoster, viewingKey);
+};
+
+/**
  * Opens a stored account. Needs the viewing key, and nothing about the account
  * beyond its id and ciphertext.
  *
@@ -830,8 +691,12 @@ export function sealAccount(
  * only wanted to know who is on an account cannot tell the difference; the
  * difference is that we can no longer read any of it.
  */
-export function openAccount(rec: SealedAccount, viewingKey: Hex): Account {
-  const { name, signers } = openRecord<RosterSecrets>('roster', rec.id, rec.sealedRoster, viewingKey);
+export function openAccount(
+  rec: SealedAccount & { readonly roster?: SealedCompanyRecord | null }, viewingKey: Hex,
+  /** The company's roster record, newest version; the one served with the account when not given. */
+  roster: SealedCompanyRecord | null = rec.roster ?? null,
+): Account {
+  const { name, signers } = rosterOf(rec, roster, viewingKey);
   const { policy: stored, recovery } = openRecord<PolicySecrets>('policy', rec.id, rec.sealedPolicy, viewingKey);
   /*
    * **THE POLICY IS REBUILT FIELD BY FIELD, NOT PASSED THROUGH.**
@@ -919,25 +784,9 @@ function resealDropBox(
     nextInbox);
 }
 
-/**
- * **WHETHER A WALLET'S STATEMENT OVER A RECORDS KEY IS FOR THIS SIGNER'S SEAT**:
- * signed by the committee key the signer gives, over the records key they give,
- * for the seat the roster holds for them, on the company's account as this
- * service recorded it, under the company's label. A company with no account
- * recorded has no statement that is for it.
- */
-function statementVerifiesForTheSeat(
-  rec: SealedAccount, account: Account, seat: Signer,
-  keys: { readonly committeeKey: { readonly tag: string; readonly value: string }; readonly recordsKey: Hex },
-  statement: Hex, signedSeat: Hex,
-): boolean {
-  const label = rec.companyLabel ?? account.companyLabel ?? null;
-  const where = readAccountAddress(rec.contractAddress ?? account.contractAddress ?? null);
-  const ownSeat = typeof seat.leafCommitment === 'string' ? seat.leafCommitment.toLowerCase() : null;
-  return label !== null && where !== null && ownSeat !== null && signedSeat.toLowerCase() === ownSeat
-    && recordsKeySignedBy(label, where, { tag: keys.committeeKey.tag, value: keys.committeeKey.value.toLowerCase() },
-      { recordsKey: keys.recordsKey.toLowerCase(), seat: signedSeat.toLowerCase(), signature: statement.toLowerCase() });
-}
+
+/** No company records: every company's state is the ledger's. What a service made without the record store reads. */
+const NO_STATE_RECORDS: Pick<CompanyRecordStore, 'get'> = Object.freeze({ get: async () => null });
 
 export class AccountService {
   constructor(
@@ -968,6 +817,13 @@ export class AccountService {
      * cannot pay from being approved and paid for.
      */
     private holdings: VaultHoldings = noVaultHoldingsReader,
+    /**
+     * **WHERE A COMPANY'S SIGNED STATE RECORD IS READ.** A company made on its
+     * founding signer's device keeps its state only as the record that signer
+     * signed, and this service reads its copy from there. A company made by
+     * this service itself has no such record and its state is the ledger's.
+     */
+    private stateRecords: Pick<CompanyRecordStore, 'get'> = NO_STATE_RECORDS,
     /** How long an approval a device sent is waited on. A test passes a shorter one. */
     private inclusion: InclusionWait = INCLUSION_WAIT,
   ) {}
@@ -2265,7 +2121,7 @@ export class AccountService {
     const rec = this.require(accountId);
     // Opening it is what proves the caller holds the current key. A rotation
     // driven by someone who does not would seal the account to nobody.
-    const account = openAccount(rec, viewingKey);
+    const account = openAccount(rec, viewingKey, this.store.newestRoster(rec.id));
     const nextEpoch = rec.keyEpoch + 1;
     const nextKey = newSymmetricKey();
 
@@ -2512,7 +2368,7 @@ export class AccountService {
 
   /** The digest of a batch of entries, as the change commits to it. */
   private batchDigestOf(entries: ShieldedEntry[]): Hex {
-    return commit(canonical(entries), '');
+    return batchDigestOf(entries);
   }
 
   /**
@@ -2560,6 +2416,14 @@ export class AccountService {
     viewingKey: Hex,
     keyEpoch: number,
   ): Promise<{ state: ShieldedState; blinding: StateBlinding }> {
+    const filed = await this.stateRecords.get(accountId, 'state', stateRecordId(keyEpoch));
+    if (filed !== null) {
+      try {
+        return openStateRecord(filed, viewingKey);
+      } catch {
+        throw new Error('viewing key cannot open this account');
+      }
+    }
     const rec = await this.ledger.fetch(accountId, keyEpoch);
     if (!rec) throw new Error('no state for that account');
     try {
@@ -2950,85 +2814,8 @@ export class AccountService {
      */
     const digest = this.runPayloadOf(args.run);
 
-    /*
-     * **THE ROOT IS 32 BYTES, AND IT IS CHECKED HERE.**
-     *
-     * `MidnightCommitments.runPayload` hands the root to `fromHex` and the
-     * binding refuses anything SHORT. **A FRONT-PADDED root is silent** — it is
-     * 32 bytes and it is the wrong 32 — and the simulated scheme interpolates
-     * the hex string and accepts any width at all, which is what the product
-     * actually runs. Either way the run is well-formed, approved, and carries a
-     * root no payout tree produced, so every merkle path a vault presents fails
-     * at `recordPaymentFromVault` after the signatures are in. The same species as a
-     * malformed root, at a door no malformed-root check covers.
-     *
-     * Sixty-four lower-case hex characters, which is what `toHex` emits for
-     * the payout tree's root.
-     */
-    if (!/^[0-9a-f]{64}$/.test(args.run.root)) {
-      throw new Error(
-        `a run's payout root is 32 bytes as 64 lower-case hex characters; this one is ` +
-          `${args.run.root.length} character(s). A root of the wrong width builds a proposal ` +
-          'id no merkle path can ever satisfy, and nothing finds out until a vault tries to pay.',
-      );
-    }
-    /*
-     * **AND THE VAULT IS THIRTY-TWO BYTES, CHECKED HERE FOR THE ROOT'S OWN
-     * REASON.**
-     *
-     * The vault is folded into the proposal's identity, so a vault of the wrong
-     * width builds an id no vault can ever recompute — the same failure as a
-     * short root, at the argument next to it, and equally silent. **Neither
-     * ledger catches it:** both refuse only the sentinel, and the simulated
-     * scheme interpolates the value into a string and accepts any width at all.
-     * **It is checked HERE and not at the doors** so that every propose surface
-     * gets it from one place; a copy per route is a rule with no home.
-     */
-    if (!/^[0-9a-f]{64}$/.test(args.run.vault)) {
-      throw new Error(
-        `a vault address is 32 bytes as 64 lower-case hex characters; this one is ` +
-          `${args.run.vault.length} character(s). The vault is folded into the run's identity, ` +
-          'so one of the wrong width builds a round no vault can ever present.',
-      );
-    }
-    if (args.run.vault === this.commitments.noVault()) {
-      throw new Error(
-        'a payroll run must name the vault that will pay it. Refused here rather than raised, ' +
-          'approved and then presented at a vault that cannot recompute its id.',
-      );
-    }
-    /*
-     * **A WINDOW THAT HAS ALREADY CLOSED, REFUSED BEFORE ANYBODY SIGNS.**
-     *
-     * Neither ledger checks this and neither can be blamed for it: they mirror
-     * the contract, which compares the window against BLOCK time and has no
-     * opinion about when the run was raised. What they refuse is a window that
-     * is inside out and one written in milliseconds, and both of those are
-     * shapes rather than moments.
-     *
-     * **THE RUN THIS CATCHES CAN BE NEITHER PAID NOR WITHDRAWN.** Its window
-     * has closed, so no payment can fall inside it; and it has opened, so the
-     * contract refuses to cancel it. It collects approvals, costs a fee, and
-     * ends as an expired row somebody has to notice. The one-character version
-     * of that mistake — a year typed wrong, a stale draft raised a month later —
-     * is common enough to be worth a sentence here.
-     *
-     * **AGAINST OUR OWN CLOCK, WHICH IS THE HONEST LIMIT OF IT.** Block time is
-     * not this machine's time, so this is an approximation in the safe
-     * direction: a clock that runs fast refuses a run that would have been
-     * payable, which costs a retry with a later window and nothing else. It is
-     * deliberately not applied to `opensAt` — a window that has already opened
-     * is perfectly payable, it just cannot be withdrawn any more.
-     */
-    const nowInSeconds = BigInt(Math.floor(Date.now() / 1000));
-    if (args.run.closesAt <= nowInSeconds) {
-      throw new Error(
-        `this run's window closed at ${args.run.closesAt} and it is now ${nowInSeconds}, so no ` +
-          'payment could ever fall inside it — and a run whose window has opened can no longer ' +
-          'be withdrawn, so raising it would leave a round that can be neither paid nor ' +
-          'cancelled. Raise it with a window that ends in the future.',
-      );
-    }
+    /* A root, a vault and a window a vault can pay, or nothing is raised. */
+    refuseARunNoVaultCanPay(args.run, this.commitments.noVault(), BigInt(Math.floor(Date.now() / 1000)));
 
     const verdict = evaluatePolicy(
       account, asset, change.amount, proposer.role,
@@ -3708,33 +3495,6 @@ export class AccountService {
     this.putProposal(now, viewingKey);
   }
 
-  /**
-   * A threshold change a signer's device built and proved, sent, and written on
-   * the record only once the chain's threshold is the new one.
-   */
-  async setThresholdFromDevice(
-    accountId: string, viewingKey: Hex, newThreshold: number, proven: Uint8Array, by: string,
-  ): Promise<Account> {
-    const order = this.beforeSending(() => {
-      this.refuseAGovernorWhoIsNot(accountId, viewingKey, by);
-      return this.thresholdOrderOf(accountId, viewingKey, newThreshold);
-    });
-    const release = this.holdTheSend(`threshold ${accountId}`, 'this threshold change');
-    try {
-      await this.sendProvenCall(accountId, proven, 'setThreshold', 'this threshold change');
-      if (!await this.untilTheChainShows(async () => (await this.ledger.status(accountId))?.threshold === newThreshold)) {
-        throw new Error(
-          'the threshold change was sent and the chain has not shown it yet, so it is not written on the company\'s '
-          + 'record. Do not send it again: enter the same number and press Change later, and it is recorded once the '
-          + 'chain shows it.');
-      }
-      const round = this.listProposals(accountId, viewingKey).find(p => p.chainId === order.proposal) ?? null;
-      return this.recordTheThreshold(accountId, viewingKey, newThreshold, round);
-    } finally {
-      release();
-    }
-  }
-
   private recordTheThreshold(accountId: string, viewingKey: Hex, newThreshold: number, round: Proposal | null): Account {
     if (round) this.markCarriedOut(round.id, viewingKey);
     const { rec, account } = this.load(accountId, viewingKey);
@@ -4106,8 +3866,9 @@ export class AccountService {
 
   /** The account, opened. Everything private about it comes from here or nowhere. */
   open(accountId: string, viewingKey: Hex): Account {
-    return openAccount(this.require(accountId), viewingKey);
+    return openAccount(this.require(accountId), viewingKey, this.store.newestRoster(accountId));
   }
+
 
   /**
    * Which viewing key is current for this account.
@@ -4244,7 +4005,7 @@ export class AccountService {
    */
   private load(accountId: string, viewingKey: Hex): { rec: SealedAccount; account: Account } {
     const rec = this.require(accountId);
-    return { rec, account: openAccount(rec, viewingKey) };
+    return { rec, account: openAccount(rec, viewingKey, this.store.newestRoster(accountId)) };
   }
 
   /** The one place an account is written back. */
@@ -4254,7 +4015,20 @@ export class AccountService {
     viewingKey: Hex,
     pendingSigners: PendingSigner[] = rec.pendingSigners,
   ): void {
-    this.store.putAccount(sealAccount(account, viewingKey, pendingSigners, rec.keyEpoch));
+    const sealed = sealAccount(account, viewingKey, pendingSigners, rec.keyEpoch);
+    /*
+     * **ONCE THE SIGNERS ARE THE COMPANY'S ROSTER RECORD, THIS WRITES NONE.** A
+     * write that would change them is refused; one that leaves them as the
+     * record says writes the account record without a second copy of them.
+     */
+    const roster = this.store.newestRoster(rec.id);
+    if (roster !== null) {
+      if (!sameRoster(openRoster(roster, viewingKey), { name: account.name, signers: account.signers })) throw new RosterIsASignedRecord();
+      const { sealedRoster: _held, ...withoutIt } = sealed;
+      this.store.putAccount(withoutIt);
+    } else {
+      this.store.putAccount(sealed);
+    }
     /*
      * **THE NAMELESS INDEX OF THE COMPANY'S VAULT KEYS IS MADE AGAIN FROM THE
      * ROSTER ON EVERY ROSTER WRITE**, so a seat, a removal or a signer giving
@@ -4264,66 +4038,7 @@ export class AccountService {
     this.store.putVaultKeyIndex(vaultKeyIndexOf(account));
   }
 
-  /**
-   * **ONE SIGNER GIVES THEIR VAULT KEYS, AND THEY ARE WRITTEN INTO THEIR OWN
-   * ENTRY IN THE SEALED ROSTER.** Refused unless they are signed with that
-   * entry's own signing key, so no member can put a key in another signer's
-   * name without that signer's signing secret. **WHAT THIS DOES NOT STOP:** the
-   * roster is sealed under the company's viewing key, and whoever holds that key
-   * - this service is handed it on every request that needs it - can rewrite an
-   * entry whole, its signing key included. Given once: the same keys again are
-   * accepted, and different ones are refused, because every one of them is
-   * worked out again from the same wallet and the same seat. **A statement
-   * over the records key is kept only when it verifies**, on the first give as
-   * on every later one. Which key a member's filings are signed with is not
-   * kept here: it is in the company's seat directory, in an entry the member's
-   * own wallet signed.
-   */
-  giveVaultKeys(accountId: string, viewingKey: Hex, userId: string, given: SignedVaultKeys): 'given' | 'already-given' {
-    const { rec, account } = this.load(accountId, viewingKey);
-    const seat = account.signers.find(s => s.userId === userId && s.status === 'active');
-    if (!seat) throw new NoSeatToGiveKeysFor();
-    const candidate = { ...seat, vaultKeys: given };
-    if (!vaultKeysAreTheSigners(accountId, candidate)) {
-      throw new VaultKeysNotYours();
-    }
-    if (seat.vaultKeys) {
-      const same = seat.vaultKeys.committeeKey.value.toLowerCase() === given.committeeKey.value.toLowerCase()
-        && seat.vaultKeys.recordsKey.toLowerCase() === given.recordsKey.toLowerCase();
-      if (!same) throw new VaultKeysAlreadyGiven();
-      /* The same keys again, with the wallet's statement over the records key for the seat held now. */
-      const statement = given.recordsKeyStatement ?? null;
-      const signedSeat = given.recordsKeySeat ?? null;
-      if (statement === null || signedSeat === null
-        || (statement === (seat.vaultKeys.recordsKeyStatement ?? null) && signedSeat === (seat.vaultKeys.recordsKeySeat ?? null))) {
-        return 'already-given';
-      }
-      /*
-       * **A STATEMENT REPLACES THE ONE KEPT ONLY WHEN IT VERIFIES**: signed by the committee key this entry carries,
-       * over its records key, for the seat the roster holds for this signer. One that does not is refused and the
-       * one kept stays, so a bad give cannot leave every approval refusing until this signer signs again.
-       */
-      if (!statementVerifiesForTheSeat(rec, account, seat, seat.vaultKeys, statement, signedSeat)) {
-        throw new RecordsKeyNotSignedForYourSeat();
-      }
-      seat.vaultKeys = { ...seat.vaultKeys, recordsKeyStatement: statement, recordsKeySeat: signedSeat };
-      this.save(rec, account, viewingKey, rec.pendingSigners);
-      return 'given';
-    }
-    const statement = given.recordsKeyStatement ?? null;
-    const signedSeat = given.recordsKeySeat ?? null;
-    /* **AND ON THE FIRST GIVE THE SAME CHECK**: a statement that does not verify is refused, and nothing is kept. */
-    if (statement !== null && signedSeat !== null
-      && !statementVerifiesForTheSeat(rec, account, seat, given, statement, signedSeat)) {
-      throw new RecordsKeyNotSignedForYourSeat();
-    }
-    seat.vaultKeys = {
-      committeeKey: { ...given.committeeKey }, recordsKey: given.recordsKey, signature: given.signature,
-      ...(statement !== null && signedSeat !== null ? { recordsKeyStatement: statement, recordsKeySeat: signedSeat } : {}),
-    };
-    this.save(rec, account, viewingKey, rec.pendingSigners);
-    return 'given';
-  }
+
 
   /* ---------------- sealing proposals ---------------- */
 
@@ -4347,7 +4062,7 @@ export class AccountService {
      * second copy of one fact is a second answer the day the two disagree.
      * There is one marker and it is on the outside of the record.
      */
-    const { id, accountId, status, createdAt, executedAt, digest, txRef, chainId,
+    const { id, accountId, status, createdAt, executedAt, digest, txRef, chainId, raisedAt,
       wiring: _notSealed, ...secrets } = proposal as Proposal & { wiring?: unknown };
     /*
      * **THE MARKER IS WRITTEN BY THE LEDGER THAT RAISED IT, ON THE
@@ -4377,7 +4092,12 @@ export class AccountService {
      */
     const already = this.store.getProposal(id);
     this.store.putProposal({
-      id, accountId, status, createdAt, executedAt, digest, txRef, chainId, approvalCount,
+      id, accountId, status, createdAt, executedAt, digest, txRef, chainId,
+      /* The chain's count, as a relay that holds no key last wrote it, is never lowered by this write. */
+      approvalCount: Math.max(approvalCount, already?.approvalCount ?? 0),
+      ...(raisedAt === undefined ? {} : { raisedAt }),
+      /* A device's signature over a proposal it filed stays with the proposal. */
+      ...(already?.filedBy === undefined ? {} : { filedBy: already.filedBy }),
       keyEpoch: this.keyEpochOf(accountId),
       sealed: sealRecord('proposals', accountId, secrets, viewingKey),
       wiring: already ? already.wiring ?? null : this.ledger.wiring,
@@ -4387,10 +4107,14 @@ export class AccountService {
   private openProposal(r: SealedProposal, viewingKey: Hex): Proposal {
     /* The marker stays on the stored record and does not travel on the opened
      * one: everything that judges it reads the record, before any key. */
-    const { sealed, keyEpoch, approvalCount, wiring: _stored, ...open } = r;
-    return { ...open, ...openRecord<Omit<Proposal,
+    const { sealed, keyEpoch, approvalCount, wiring: _stored, filedBy: _signed, ...open } = r;
+    const inside = openRecord<Omit<Proposal,
       'id' | 'accountId' | 'status' | 'createdAt' | 'executedAt' | 'digest' | 'txRef' | 'chainId'>>(
-        'proposals', r.accountId, sealed, viewingKey) };
+        'proposals', r.accountId, sealed, viewingKey);
+    /* Seen on the chain is kept outside the envelope; a record written before that carries it inside. */
+    const raisedAt = r.raisedAt ?? inside.raisedAt;
+    const { raisedAt: _inside, ...rest } = inside;
+    return { ...open, ...rest, ...(raisedAt === undefined ? {} : { raisedAt }) };
   }
 
   /**
@@ -5134,30 +4858,6 @@ export function approvalMessage(proposal: { digest: Hex; chainId: Hex }): string
  * end above the class.
  */
 export const REFUSED_APPROVALS_KEPT = 20;
-
-/** What a withdrawal says while the proposal's raise is on its way to the chain. */
-const RAISE_ON_ITS_WAY =
-  'this proposal is being sent to the chain right now, so it is not withdrawn: if that send lands, a record '
-  + 'closed here would sit beside an open proposal on chain that nothing here can withdraw. Nothing was '
-  + 'withdrawn. Try again once the send has answered.';
-/** What a device's send is told when the proposal is not one to send, said once for every place that asks. */
-const notSentBecauseItIs = (status: string) =>
-  `this proposal is ${status}, so it is not sent to the chain. Nothing was sent.`;
-const THE_CHAIN_ALREADY_HOLDS_IT = 'the chain already holds this proposal, so it is not sent again. Nothing was sent.';
-
-/**
- * **WHAT `cancel` SAYS WHEN THE LEDGER WOULD NOT ANSWER.** It names the DOOR,
- * not a field to set.
- *
- * A round whose chain confirmation was never recorded cannot be withdrawn on a
- * guess. Cancelling locally would clear the approvals (`cancel`, below the
- * ledger call) while the chain went on holding the round, open and approved, so
- * a signer who withdrew would have no record that they had.
- */
-const CANNOT_ASK_THE_CHAIN =
-  'this round has no record of being accepted on chain and the ledger did not answer, so '
-  + 'cancelling it here could clear approvals the chain still holds. Read the account\'s '
-  + 'ledger status (GET /api/accounts/:id/ledger) and try again once it answers.';
 
 /**
  * **THE VAULT A GOVERNANCE ROUND MAY NAME, WHICH IS EXACTLY ONE VALUE.**

@@ -31,8 +31,24 @@ export interface HandoverView {
 
 const same = (a: Key, b: Key) => a.tag.toLowerCase() === b.tag.toLowerCase() && a.value.toLowerCase() === b.value.toLowerCase();
 
-/** The roster this device opened, as the vault keys it names. */
-export type Roster = Pick<Account, 'id' | 'signers'>;
+/**
+ * The roster this device opened, as the vault keys it names, with the seats
+ * the chain holds that no entry it believes names (`rosterBelievedHere`).
+ */
+export type Roster = Pick<Account, 'id' | 'signers'> & { readonly notBelieved: readonly string[] };
+
+/**
+ * **WHY NOTHING IS BUILT FOR A COMMITTEE FROM THIS ROSTER**, or null when the
+ * roster names a signer this device believes at every seat the chain holds. A
+ * seat it does not is a signer left out of whatever would be built.
+ */
+export const whyNotWhole = (roster: Roster): string | null => {
+  const n = roster.notBelieved.length;
+  return n === 0 ? null
+    : `the company's roster, as this device believes it, shows no signer for ${n} seat${n === 1 ? '' : 's'} the `
+      + 'company\'s account holds on the chain, so nothing is built for a committee from it. Each signer without an '
+      + 'entry opens the company on their own device and sets up their vault keys; if they have, reload the page.';
+};
 
 /**
  * **WHY THE COMPANY ACCOUNT IS NOT HANDED TO THE COMMITTEE THE SERVICE REPORTS**,
@@ -42,6 +58,8 @@ export type Roster = Pick<Account, 'id' | 'signers'>;
  */
 export function whyNotHandOver(view: HandoverView, mine: Key, roster: Roster, me: { signerId: string }): string | null {
   if (view.committee === null) return view.why ?? 'this company has no committee yet.';
+  const notWhole = whyNotWhole(roster);
+  if (notWhole !== null) return `${notWhole} The account is not handed over from here.`;
   const named = rosterVaultKeys(roster);
   const refused = whyNotTheRostersCommittee(view.committee.committee, named);
   if (refused !== null) return `${refused} The account is not handed to it from here.`;
@@ -60,14 +78,14 @@ export function whyNotHandOver(view: HandoverView, mine: Key, roster: Roster, me
 
 /** The committee as the roster names it, or the reason it cannot be used. */
 export const whyNotTheCommittee = (committee: readonly Key[], roster: Roster): string | null =>
-  whyNotTheRostersCommittee(committee, rosterVaultKeys(roster));
+  whyNotWhole(roster) ?? whyNotTheRostersCommittee(committee, rosterVaultKeys(roster));
 
 /**
  * Whether the records keys the service reports are the roster's: none it does
  * not name, and, when the committee is complete, none it names left out.
  */
 export const whyNotTheReaders = (readers: readonly Hex[], roster: Roster, complete = true): string | null =>
-  whyNotTheRostersReaders(readers, rosterVaultKeys(roster), { complete });
+  (complete ? whyNotWhole(roster) : null) ?? whyNotTheRostersReaders(readers, rosterVaultKeys(roster), { complete });
 
 /**
  * **WHOSE KEY A SEAT HOLDS, FROM THE ROSTER THIS DEVICE OPENED**, or null when

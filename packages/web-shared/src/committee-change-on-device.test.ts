@@ -19,7 +19,7 @@ const entry = (id: string, pair: { publicKey: Hex; secret: Hex }, key: number, s
   id, userId: id, name: id, status: 'active', signingPublicKey: pair.publicKey,
   vaultKeys: signVaultKeys('acc_1', id, { committeeKey: k(key), recordsKey: k(key + 0x10).value as Hex }, signedBy.secret),
 });
-const roster = { id: 'acc_1', signers: [entry('ada', ADA, 1), entry('bo', BO, 2)] } as unknown as Account;
+const roster = { id: 'acc_1', signers: [entry('ada', ADA, 1), entry('bo', BO, 2)], notBelieved: [] as string[] } as unknown as Account & { readonly notBelieved: readonly string[] };
 const ME = { signerId: 'ada' };
 const VAULT = 'ab'.repeat(32);
 /* The company's account, and the label it carries. */
@@ -62,7 +62,7 @@ describe('WHAT A SIGNER\'S DEVICE CHECKS BEFORE ITS WALLET IS ASKED TO SIGN A CO
     expect(whyNotSignCommitteeChange(view({ contracts: [view().contracts[2]!] }), k(1), roster, ME))
       .toMatch(/you do not hold a seat on any contract that needs this change/);
     /* RED WHEN: the threshold the service reports is taken over the one the company's own record holds. */
-    const withPolicy = { ...roster, policy: { threshold: 2 } } as unknown as Account;
+    const withPolicy = { ...roster, policy: { threshold: 2 } } as unknown as Account & { readonly notBelieved: readonly string[] };
     expect(whyNotSignCommitteeChange(view(), k(1), withPolicy, ME)).toBeNull();
     expect(whyNotSignCommitteeChange(view({ to: { committee: [k(1), k(2)], threshold: 1 } }), k(1), withPolicy, ME))
       .toMatch(/the service says 1 of the company's signers must sign a change after this one, and the company's own record says 2/);
@@ -81,8 +81,8 @@ describe('WHICH KIND OF REFUSAL IT IS, AS A CODE', () => {
    * check gives, or the flow's error stops carrying the code.
    */
   it('gives "nothing to sign" its own code, for both reasons there is nothing, and every other refusal the other', async () => {
-    const withPolicy = { ...roster, policy: { threshold: 2 } } as unknown as Account;
-    const cases: [CommitteeChangeView, { tag: string; value: string }, Account, string | null][] = [
+    const withPolicy = { ...roster, policy: { threshold: 2 } } as unknown as Account & { readonly notBelieved: readonly string[] };
+    const cases: [CommitteeChangeView, { tag: string; value: string }, typeof roster, string | null][] = [
       [view({ contracts: [view().contracts[1]!] }), k(1), roster, COMMITTEE_CHANGE_REFUSAL.nothingToSign],
       [view({ contracts: [view().contracts[2]!] }), k(1), roster, COMMITTEE_CHANGE_REFUSAL.nothingToSign],
       [view({ to: { committee: [k(1), k(5)], threshold: 2 } }), k(1), roster, COMMITTEE_CHANGE_REFUSAL.refused],
@@ -98,6 +98,7 @@ describe('WHICH KIND OF REFUSAL IT IS, AS A CODE', () => {
       expect(got?.why ?? null).toBe(whyNotSignCommitteeChange(v, mine, r, ME));
     }
     const thrown = await signCommitteeChangeOnDevice({
+      fold: async () => undefined,
       view: async () => view({ contracts: [view().contracts[1]!] }), walletKey: async () => k(1), roster: async () => roster,
       askWallet: async () => { throw new Error('the wallet was asked'); }, send: async () => ({ results: [] }),
     }, ME).catch((e: unknown) => e);
@@ -108,6 +109,7 @@ describe('WHICH KIND OF REFUSAL IT IS, AS A CODE', () => {
 
 describe('THE FLOW', () => {
   const doors = (over: Partial<CommitteeChangeDoors> = {}, log: unknown[] = []): CommitteeChangeDoors => ({
+    fold: async () => undefined,
     view: async () => view(),
     walletKey: async () => k(1),
     roster: async () => roster,
@@ -150,5 +152,22 @@ describe('THE FLOW', () => {
       askWallet: async () => ({ signer: k(2), signatures: [{ address: COMPANY, counter: '1', seat: 0, signature: k(0xee) }] }),
     }, log), ME)).rejects.toThrow(/signed with a key other than/);
     expect(log).toEqual([]);
+  });
+
+  it('FOLDS EVERY OPEN VAULT-KEY OFFER BEFORE ANYTHING IS READ, AND A FOLD THAT FAILS ASKS NOTHING OF THE WALLET', async () => {
+    const order: string[] = [];
+    const log: unknown[] = [];
+    await signCommitteeChangeOnDevice(doors({
+      fold: async () => { order.push('fold'); },
+      view: async () => { order.push('view'); return view(); },
+      roster: async () => { order.push('roster'); return roster; },
+    }, log), ME);
+    /* RED WHEN: the committee is read, or built, from a roster before the offers waiting are folded into it. */
+    expect(order).toEqual(['fold', 'view', 'roster']);
+    const stopped: unknown[] = [];
+    /* RED WHEN: a fold that failed is passed over and the change is signed on a roster missing keys that were offered. */
+    await expect(signCommitteeChangeOnDevice(doors({ fold: async () => { throw new Error('the offer did not verify'); } }, stopped), ME))
+      .rejects.toThrow('the offer did not verify');
+    expect(stopped).toEqual([]);
   });
 });

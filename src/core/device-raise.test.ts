@@ -1,7 +1,7 @@
 import { describe, it, expect } from 'vitest';
 import {
-  DEVICE_RAISE_VERSION, DIGEST_SHAPE, RAISE_IS_NOT_WHAT_WAS_CHECKED, RAISE_NAMES_NOTHING_CHECKED,
-  SEND_IS_NOT_WHAT_WAS_CHECKED, WRITTEN_DOWN_IS_NOT_WHAT_IS_CHECKED, paymentsCheckedDigest, reloadThePage, type PaymentChecked,
+  DEVICE_RAISE_VERSION,
+  WRITTEN_DOWN_IS_NOT_WHAT_IS_CHECKED, paymentsCheckedDigest, reloadThePage, type PaymentChecked,
 } from './device-raise.js';
 import { redactSecrets } from './redact-secrets.js';
 
@@ -24,7 +24,7 @@ describe('THE DIGEST OF THE PAYMENTS CHECKED', () => {
      * service built at different times would then disagree about every run.
      */
     expect(paymentsCheckedDigest(TWO)).toBe('9eeae1ead1cc13449294e1e231e19c7f78ce3117dc646eb84fca08584d44da27');
-    expect(paymentsCheckedDigest(TWO)).toMatch(DIGEST_SHAPE);
+    expect(paymentsCheckedDigest(TWO)).toMatch(/^[0-9a-f]{64}$/u);
   });
 
   it('changes with every field of every payment, with the order and with the count', () => {
@@ -73,7 +73,7 @@ describe('THE SENTENCE A PAGE OF ANOTHER VERSION IS REFUSED WITH', () => {
 describe('EVERY REFUSAL HERE REACHES THE REFUSAL LOG AS WRITTEN', () => {
   it('none is taken for a recovery phrase and hidden', () => {
     for (const sentence of [
-      RAISE_NAMES_NOTHING_CHECKED, RAISE_IS_NOT_WHAT_WAS_CHECKED, SEND_IS_NOT_WHAT_WAS_CHECKED, WRITTEN_DOWN_IS_NOT_WHAT_IS_CHECKED,
+      WRITTEN_DOWN_IS_NOT_WHAT_IS_CHECKED,
       reloadThePage(undefined, 'Nothing was written down.'), reloadThePage(0, 'Nothing was sent.'),
     ]) {
       /* RED WHEN: a sentence runs twelve short words together - the log then shows a redaction where the reason should be. */

@@ -32,8 +32,8 @@
  * enough to prove the server got past the refusal and listened — and it keeps
  * this file free of any database at all, live or test.
  */
-import { describe, it, expect } from 'vitest';
-import { spawn } from 'node:child_process';
+import { describe, it, expect, afterEach } from 'vitest';
+import { startInItsOwnGroup, stopEverythingStarted, stopTheWholeGroup } from './a-started-server.test-support.js';
 import { mkdtempSync, mkdirSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { fileURLToPath } from 'node:url';
@@ -127,7 +127,7 @@ async function start(
     if (v === undefined) delete env[k]; else env[k] = v;
   }
 
-  const child = spawn(TSX, [ENTRY], { cwd: dir, env, stdio: ['ignore', 'pipe', 'pipe'] });
+  const child = startInItsOwnGroup(TSX, [ENTRY], { cwd: dir, env, stdio: ['ignore', 'pipe', 'pipe'] });
 
   return await new Promise<Started>(resolveStarted => {
     let out = '';
@@ -136,8 +136,10 @@ async function start(
       if (done) return;
       done = true;
       clearTimeout(timer);
-      try { child.kill('SIGKILL'); } catch { /* already gone */ }
-      resolveStarted({ out, code, listened });
+      void stopTheWholeGroup(child).then(left => {
+        leftRunning.push(...left);
+        resolveStarted({ out, code, listened });
+      });
     };
     const read = (b: Buffer) => {
       out += b.toString();
@@ -150,7 +152,21 @@ async function start(
   });
 }
 
+/** What a case's start left running after it was stopped, read by the check after every case. */
+const leftRunning: number[] = [];
+
 describe('starting the payroll server', () => {
+  /*
+   * **NOTHING A CASE STARTED IS STILL RUNNING WHEN IT ENDS.** The service runs
+   * under `tsx` as a process of its own, and a stop that reaches only `tsx`
+   * leaves it listening after the case is over, for every case, every run.
+   */
+  afterEach(async () => {
+    /* And whatever a case started and did not stop - one that ran out of time - is stopped here and checked the same way. */
+    const left = [...leftRunning.splice(0), ...await stopEverythingStarted()];
+    expect(left, `still running after this case was stopped: ${left.join(', ')}`).toEqual([]);
+  }, 30_000);
+
   it('THE ONE THAT WOULD HAVE CAUGHT IT: DATABASE_URL only in .env, and the server starts', async () => {
     const r = await start(`DATABASE_URL=${NOWHERE}\n`, { DATABASE_URL: undefined });
     expect(r.out).not.toContain('DATABASE_URL is not set');

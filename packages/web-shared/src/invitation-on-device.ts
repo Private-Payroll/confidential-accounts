@@ -215,6 +215,8 @@ export async function acceptAsPayeeHere(opened: OpenedInvitation, code: JoinCode
  */
 export async function acceptAsSignerHere(
   opened: OpenedInvitation, commitments: LeafScheme, doors: Omit<SeatDoors, 'publish'>, send: InvitationSend,
+  /** The sign-in accepting it: sealed into the request, and held to the member the company would make of it when it is seated. */
+  person: string,
 ): Promise<AcceptedSeat & { readonly fingerprint: string }> {
   const o = opened.signed.offer;
   if (o.for.kind !== 'signer') throw new Error('that invitation offers pay, not a seat, so it is not accepted as a signer.');
@@ -222,8 +224,10 @@ export async function acceptAsSignerHere(
   let fingerprint = '';
   const seated = await acceptSeatOnThisDevice(o.company, commitments, {
     ...doors,
+    /* The inviter's signed entry is kept with the material, for this person's first records-key ask. */
+    seal: (seat) => doors.seal({ ...seat, invitedBy: o.inviter }),
     publish: async (payload) => {
-      const waiting: PendingSignerPayload = { name: offer.name, role: offer.role, ...payload };
+      const waiting: PendingSignerPayload = { name: offer.name, role: offer.role, ...payload, person };
       fingerprint = seatRequestFingerprint(waiting);
       const b = answered(await send(`/api/invites/${invitationIdOf(opened.token)}/accept-signer`, {
         method: 'POST', body: JSON.stringify({ acceptance: acceptanceProofOf(opened.token), waiting: sealToInbox(waiting, o.inboxPublicKey) }),
@@ -311,7 +315,8 @@ export async function addSignerFromCodeHere(
    * then the one a link's acceptance files, and every seat has one invitation
    * behind it.
    */
-  const waiting: PendingSignerPayload = { name: signer.name, role: signer.role, ...keys, seatProof: proveSeatKeys(made.proved, keys) };
+  /* The sign-in their own wallet signed into the code, sealed with the request, and held to the member the company makes. */
+  const waiting: PendingSignerPayload = { name: signer.name, role: signer.role, ...keys, seatProof: proveSeatKeys(made.proved, keys), person: code.person };
   const b = answered(await send(`/api/invites/${made.id}/accept-signer`, {
     method: 'POST',
     body: JSON.stringify({ acceptance: acceptanceProofOf(made.token), waiting: sealToInbox(waiting, company.inboxPublicKey), for: code.person }),

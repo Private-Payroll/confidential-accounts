@@ -33,7 +33,6 @@ import { signatureVerifyingKey } from '@midnightntwrk/ledger-v9';
 import { identityFromWords } from 'midnight-identity';
 import { addressOfVerifyingKey, mint } from 'midnight-identity/profile/disclosure';
 
-import { TEST_SETTLEMENT_ASSET } from '../core/assets.js';
 useOnlyTheseSettings({
   ALLOW_SIMULATED_COMPANY_ADDRESS: '1',
   ALLOW_MEMORY_SESSIONS: '1',
@@ -156,101 +155,27 @@ const aCompany = async (token: string) => {
 
 describe('a caller cannot choose which seat raises a round, or which ceiling judges it', () => {
   /*
-   * **THE TWO SIGNED-IN ROUTES: THE FIELD HAS NO EFFECT AT ALL.**
-   *
-   * These two rounds cannot be driven to a proposal here - one needs a vault
-   * with state on chain, the other a payroll run with material - so what is
-   * pinned is the stronger-than-it-looks property that the request answers
-   * IDENTICALLY whether a seat is named or not.
-   *
-   * **AND THAT IS NOT A WEAK ASSERTION, BECAUSE OF WHAT IT CATCHES.** Put
-   * `proposedBy: z.string()` back in either schema and the two requests stop
-   * agreeing at once: the one that names a seat proceeds to whatever refusal
-   * lies beyond, and the one that names none is refused by the schema, with a
-   * different status and a different body. The case dies on the first
-   * comparison.
-   *
-   * RED WHEN: either schema accepts the field again, or the handler reads it.
+   * **THE ROUTE THAT TOOK A NAMED SEAT IS GONE.** The payroll round's case
+   * went with the service's own draw of a run: a run is drawn, sealed and
+   * signed on a signer's device, and the seat that files it is the one its
+   * signature names (`run-routes.ts`).
    */
-  it('the vault-threshold round is raised by the caller\'s own seat, whoever is named', async () => {
+  /*
+   * **A VAULT'S THRESHOLD IS NOW RAISED FROM A SEAT'S OWN DEVICE**: written down
+   * by `POST /api/accounts/:id/proposals` only when signed by the key the
+   * company's directory holds for the signed-in person's own seat, so there is no
+   * seat to name. That rule, and its refusal of another seat's key, is driven in
+   * `a-proposal-is-relayed-for-a-seat-that-may-act.test.ts`.
+   *
+   * RED WHEN: the route that took a named seat beside the viewing key is served again.
+   */
+  it('the vault-threshold round that took a named seat is gone', async () => {
     const token = await signedIn(13);
-    const { accountId, viewingKey, mine, notMine } = await aCompany(token);
-    const vault = 'a'.repeat(64);
-
-    const naming = await call('POST', `/api/accounts/${accountId}/vault-threshold/propose`, {
-      token, body: { viewingKey, vault, newThreshold: 1, proposedBy: notMine.id },
-    });
-    expect(naming.status, JSON.stringify(naming.body)).toBe(200);
-    expect(naming.body.proposedBy).toBe(mine.id);
-    expect(naming.body.proposedBy).not.toBe(notMine.id);
-
-    /*
-     * **AND THE ROLE THE ROUND WILL BE JUDGED BY MOVED WITH IT**, which is the
-     * half that is about money rather than about a name. The seat named in the
-     * body is a viewer; the caller's is an admin.
-     */
-    expect(naming.body.proposerRole).toBe('admin');
-    expect(naming.body.proposerRole).not.toBe('viewer');
-
-    /*
-     * And the field is gone from the door rather than ignored at it: a body
-     * with no seat in it is answered exactly the same way. **A field that is
-     * merely unused comes back.**
-     */
-    const silent = await call('POST', `/api/accounts/${accountId}/vault-threshold/propose`, {
-      token, body: { viewingKey, vault: 'c'.repeat(64), newThreshold: 1 },
-    });
-    expect(silent.status, JSON.stringify(silent.body)).toBe(200);
-    expect(silent.body.proposedBy).toBe(mine.id);
-  });
-
-  it('naming a seat on a payroll round changes nothing about the answer', async () => {
-    const token = await signedIn(14);
     const { accountId, viewingKey, notMine } = await aCompany(token);
-
-    const made = await call('POST', `/api/accounts/${accountId}/payroll`, {
-      token,
-      body: {
-        period: '2026-07', viewingKey,
-        employees: [{ name: 'Nina', asset: TEST_SETTLEMENT_ASSET, amount: '1000' }],
-      },
+    const naming = await call('POST', `/api/accounts/${accountId}/vault-threshold/propose`, {
+      token, body: { viewingKey, vault: 'a'.repeat(64), newThreshold: 1, proposedBy: notMine.id },
     });
-    /* If a run cannot be created here the case has nothing to drive, and a
-     * silently skipped case is worse than an absent one. */
-    expect(made.status, JSON.stringify(made.body)).toBe(200);
-    /*
-     * **THE RUN IS INSIDE THE ANSWER, NOT THE ANSWER.** The first version of
-     * this case read `made.body.id`, which is undefined - so both requests
-     * below were refused by the ownership gate before either reached the route,
-     * and the case compared two identical 404s. It passed, and it could not
-     * fail. The round's own mutation of the schema is what found it.
-     */
-    const runId = made.body.run.id;
-    expect(runId, JSON.stringify(made.body).slice(0, 200)).toMatch(/^run_/);
-
-    const window = { vault: 'b'.repeat(64), opensAt: '1000', closesAt: '2000' };
-    const silent = await call('POST', `/api/runs/${runId}/propose`, {
-      token, body: { viewingKey, ...window },
-    });
-    const naming = await call('POST', `/api/runs/${runId}/propose`, {
-      token, body: { viewingKey, ...window, proposedBy: notMine.id },
-    });
-
-    /* Neither may be refused for want of an owner: that would mean this case
-     * never reached the route at all, which is exactly how it first passed. */
-    expect(silent.status, JSON.stringify(silent.body)).not.toBe(404);
-    expect(naming.status, JSON.stringify(naming.body)).toBe(silent.status);
-    expect(naming.body).toEqual(silent.body);
-    expect(JSON.stringify(naming.body ?? null)).not.toContain(notMine.id);
-
-    /*
-     * **AND THE ANSWER IS NOT ABOUT THE FIELD**, which is what stops this case
-     * being vacuous. Both requests are refused - this run's payee is not on the
-     * roster, so it is refused before the seat is ever used - but neither
-     * refusal may be the schema asking for a seat.
-     */
-    expect(JSON.stringify(silent.body ?? null)).not.toContain('proposedBy');
-    expect(JSON.stringify(naming.body ?? null)).not.toContain('proposedBy');
+    expect(naming.status, JSON.stringify(naming.body)).toBe(404);
   });
 });
 
@@ -258,9 +183,9 @@ describe('a caller cannot choose which seat raises a round, or which ceiling jud
  * **WHAT THE CASE ABOVE CANNOT SEE, AND WHY THIS WALK IS HERE RATHER THAN A
  * BETTER ASSERTION.**
  *
- * The payroll round is refused before the seat is reached, so no answer it can
- * produce carries one. That makes it blind to the regression in the shape the
- * regression would actually take: **`proposedBy: z.string().optional()` put
+ * No answer a route gives carries the seat it was raised under, so a case
+ * that drives one is blind to the regression in the shape the regression
+ * would actually take: **`proposedBy: z.string().optional()` put
  * back, and the handler preferring it.** Measured - that mutation left every
  * behavioural case in this file green, and the caller had full control of the
  * seat and therefore of the ceiling again. Every other attribution field on
@@ -275,7 +200,11 @@ describe('a caller cannot choose which seat raises a round, or which ceiling jud
  * that no wrong one can arrive.
  */
 describe('no door on the server has anywhere to put somebody else\'s seat', () => {
-  const SURFACES = ['src/server/index.ts'];
+  /* The server's routes, and the files of routes it mounts that relay or file what a seat's device made, each with code it must still hold. */
+  const MARKS: Record<string, string> = {
+    'src/server/index.ts': 'proposalRelayRoutes(', 'src/server/proposal-relays.ts': 'actingSeat', 'src/server/signer-routes.ts': 'fileRoster',
+  };
+  const SURFACES = Object.keys(MARKS);
   /* Who is acting. Every one of these selects a ceiling, not just a name. */
   const CLAIMS = ['proposedBy'];
 
@@ -339,8 +268,8 @@ describe('no door on the server has anywhere to put somebody else\'s seat', () =
     const { readFileSync } = await import('node:fs');
     for (const surface of SURFACES) {
       const text = code(readFileSync(surface, 'utf8'));
-      expect(text, surface).toContain('seatOf');
-      expect(text.length, surface).toBeGreaterThan(10_000);
+      expect(text, surface).toContain(MARKS[surface]);
+      expect(text.length, surface).toBeGreaterThan(5_000);
     }
   });
 });

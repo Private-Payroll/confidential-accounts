@@ -27,7 +27,7 @@ import { answerVaultAsk } from './vault-worker-entry.js';
 import { vaultBuilderOver } from './vault-worker-client.js';
 import {
   sendRaiseFromDevice, sendRetryFromDevice,
-  type GovernedCallService, type RaiseDoors, type RaiseOrderOnTheWire, type RetryOrderOnTheWire,
+  type GovernedCallService, type MadeHereDoors, type RaiseDoors, type RaiseOrderOnTheWire, type RetryOrderOnTheWire,
 } from './governed-call-on-device.js';
 import { opensAs } from '../../../src/testing/sealed-records.js';
 
@@ -215,19 +215,21 @@ const ORDER: RaiseOrderOnTheWire = {
 };
 const aSender = (order: RaiseOrderOnTheWire) => {
   const log: string[] = [];
-  const service = {
+  /* What a raise or a retry is made from on this device; made from real records in `a-raise-is-made-from-the-companys-records.test.ts`. */
+  const made = {
     legPayments: async () => { log.push('leg-payments'); return LEG; },
     raiseOrder: async () => order,
     retryOrder: async () => ({ ...order, indices: [0, 1] }),
     retryPayments: async () => { log.push('retry-payments'); return LEG; },
+  } as unknown as MadeHereDoors;
+  const service = {
     callState: async () => { log.push('call-state'); return { account: 'ac'.repeat(32), blockHash: 'b', accountState: 'AS', parameters: 'PP' }; },
-    sendRaise: async () => { log.push('send'); return { id: 'prp_1', chainId: 'cc'.repeat(32), status: 'open', raisedAt: 'now' }; },
-    sendRetry: async () => { log.push('send'); return { id: 'prp_1', chainId: 'cc'.repeat(32), status: 'open', raisedAt: 'now' }; },
+    send: async () => { log.push('send'); return { id: 'prp_1', chainId: 'cc'.repeat(32), status: 'open', raisedAt: 'now' }; },
     standing: async () => ({ id: 'prp_1', chainId: 'cc'.repeat(32), status: 'open', raisedAt: 'now' }),
   } as unknown as GovernedCallService;
   const pool = [coin(1, 1_000n)];
   const doors: RaiseDoors = {
-    service, holdings: theDevice(pool, pool), assets: registryWithTestPrivateForms(),
+    service, made, holdings: theDevice(pool, pool), assets: registryWithTestPrivateForms(),
     builder: { governedCall: async () => { log.push('build'); return { tx: 'TX' }; } },
     material: { signingSecret: '11'.repeat(32), blinding: '22'.repeat(32), scope: '33'.repeat(32) },
     accountId: 'acc_1', sleep: async () => {}, waitMs: 2, everyMs: 1,

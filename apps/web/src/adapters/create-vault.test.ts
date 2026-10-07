@@ -105,7 +105,7 @@ vi.mock('vaults-web-shared/keyring.js', async (real) => ({
     const { committeeKeyFor: committeeOf } = await import('midnight-identity/profile/committee-key');
     const committeeKey = committeeOf(fromSecret(new Uint8Array(32).fill(1)), ask.company as never);
     return {
-      holders: { committee: [committeeKey], threshold: 1, seats: ['5a'.repeat(32)], approvals: 1, adoptedVaults: kr.start.adopted ? ['ab'.repeat(32)] : [], account: 'c0'.repeat(32) },
+      holders: { committee: [committeeKey], threshold: 1, seats: ['5a'.repeat(32)], approvals: 1, adoptedVaults: kr.start.adopted ? ['ab'.repeat(32)] : [], founding: '5a'.repeat(32), foundingCommittee: [{ tag: 'schnorr', value: '11'.repeat(32) }], account: 'c0'.repeat(32) },
     };
   },
   api: async (path: string, opts?: RequestInit) => {
@@ -118,9 +118,14 @@ vi.mock('vaults-web-shared/keyring.js', async (real) => ({
     return Array.isArray(a) ? (a.length > 1 ? a.shift() : a[0]) : a;
   },
 }));
+/* Offering and folding vault keys are their own tests' (`vault-keys-are-offered-and-folded.test.ts`); here each is written down. */
+vi.mock('vaults-web-shared/roster-here.js', async (real) => ({
+  ...(await real<typeof import('vaults-web-shared/roster-here.js')>()),
+  offerVaultKeysHere: async () => { kr.log.push('keys offered'); },
+  foldOffersHere: async () => { kr.log.push('offers folded'); return { folded: [], refused: [] }; },
+}));
 vi.mock('vaults-web-shared/vault-page-doors.js', async (real) => ({
   ...(await real<typeof import('vaults-web-shared/vault-page-doors.js')>()),
-  giveVaultKeys: async () => { kr.log.push('keys given'); },
   /* This signer's entry in the seat directory; whether it is filed is `vault-keys`' own test's. */
   fileTheOwedDirectoryEntry: async () => 'filed',
   /* The company's records, kept here for the length of one test. */
@@ -137,6 +142,8 @@ vi.mock('vaults-web-shared/vault-page-doors.js', async (real) => ({
 vi.mock('vaults-web-shared/vault-worker-client.js', () => ({
   startVaultBuilder: async () => ({
     ownSeat: async (material: { blinding: string }) => { kr.log.push(`own seat from ${material.blinding}`); return kr.ownSeat; },
+    /* The value a company-wide run names, which the vault check counts as one of the company's vaults. */
+    companyWide: async () => 'cc'.repeat(32),
     deploy: async (account: string) => { kr.log.push(`built for ${account}`); return { vault: VAULT, temporaryKey: K(0x77), tx: 'deploy-tx' }; },
     bornHeldVault: async (input: { account: string; holders: { committee: unknown[]; threshold: number } }) => {
       kr.log.push(`built held for ${input.account} by ${input.holders.committee.length} at ${input.holders.threshold}`);
@@ -188,7 +195,7 @@ const rosterWith = (mine: { tag: string; value: string } | null) => ({ id: 'c1',
       committeeKey: mine, recordsKey: MY_RECORDS_KEY, recordsKeyStatement: STATEMENT.signature as Hex, recordsKeySeat: SEAT as Hex,
     }, SIGNER.secret),
   }),
-}] });
+}], notBelieved: [] as string[] });
 const COMMITTEE = { committee: [MINE], threshold: 1 };
 const ONE_KEY = { committee: [K(0x77)], threshold: 1, counter: '1', shape: 'one-key' };
 const onChain = (held: boolean) => ({
@@ -235,6 +242,8 @@ beforeEach(() => {
   kr.answers[ROUTE('/directory')] = { filings: [{ company: 'c1', version: 1, change: { kind: 'claim', entry: ENTRY } }] };
   kr.answers[`PUT ${ROUTE('/vault-keys')}`] = { given: true };
   kr.answers[`GET ${ROUTE('/vault-keys')}`] = { committee: COMMITTEE, why: null, readers: [MY_RECORDS_KEY] };
+  /* The approvals the account and its vaults need, as the chain holds them: one, everywhere. */
+  kr.answers[ROUTE('/ledger')] = { threshold: 1, vaultThresholds: [] };
 });
 afterEach(() => { vi.unstubAllEnvs(); });
 
@@ -260,7 +269,7 @@ describe('creating a vault', () => {
     expect(kr.log.filter((l) => !l.startsWith('GET /api/accounts/c1') || l.endsWith('/chain'))
       .filter((l, i, all) => !(l.endsWith('/chain') && all[i - 1]?.endsWith('/chain')))).toEqual([
       /* The seat is worked out on this device before the account is asked for anything. */
-      'own seat from cc', 'account asked', 'records key signed for 5a5a', 'keys given',
+      'own seat from cc', 'account asked', 'records key signed for 5a5a', 'keys offered', 'offers folded',
       `built held for ${COMPANY} by 1 at 1`, `POST ${ROUTE('/vaults')}`,
       `GET ${ROUTE(`/vaults/${VAULT}/chain`)}`, `read as born ${VAULT} from deploy-tx`,
       /* The start, each step sent only once the stand-in chain showed the one before. */
@@ -402,6 +411,15 @@ describe('creating a vault', () => {
 });
 
 describe('a vault whose start is not finished', () => {
+  /* RED WHEN: an adoption is raised, approved or carried out for a vault that would join the company needing more approvals than its seated signers could give. */
+  it('takes no step to adopt a vault that would join the company unable to pay', async () => {
+    const m = await load();
+    kr.answers[`GET ${ROUTE(`/vaults/${VAULT}/chain`)}`] = onChain(true);
+    kr.answers[ROUTE('/ledger')] = { threshold: 1, vaultThresholds: [{ vault: VAULT, threshold: 2 }] };
+    expect(await m.finishHandingOver('u1', 'c1', VAULT, () => {})).toEqual({ of: 'start-owed', vault: VAULT });
+    expect(kr.log.filter((l) => l.endsWith(' proved') || l.startsWith('POST'))).toEqual([]);
+  });
+
   /* RED WHEN: a round waiting on other signers is said as done, or as a failure, or without what it waits for. */
   it('says which round waits for other signers, with its approvals, and creating it again carries on', async () => {
     const m = await load();
@@ -438,16 +456,16 @@ describe('giving your vault keys where a vault is created', () => {
   it('gives this signer\'s vault keys, after the account releases the company\'s, and nothing else', async () => {
     const m = await load();
     expect(await m.giveYourVaultKeys('u1', 'c1')).toEqual({ of: 'done' });
-    expect(kr.log.filter((l) => l === 'account asked' || l === 'keys given')).toEqual(['account asked', 'keys given']);
+    expect(kr.log.filter((l) => l === 'account asked' || l === 'keys offered')).toEqual(['account asked', 'keys offered']);
     expect(kr.log.filter((l) => l.startsWith('built') || l.startsWith('POST'))).toEqual([]);
     kr.log = [];
     kr.keys = null;
     expect(await m.giveYourVaultKeys('u1', 'c1')).toEqual({ of: 'refused', why: 'no-keys-here' });
-    expect(kr.log).not.toContain('keys given');
+    expect(kr.log).not.toContain('keys offered');
     kr.keys = { signerId: 's1', signingSecret: 'aa'.repeat(32), wrappingSecret: 'bb', blinding: 'cc' };
     kr.keysFail = new Error('the account said no');
     expect((await m.giveYourVaultKeys('u1', 'c1')).of).toBe('refused');
-    expect(kr.log).not.toContain('keys given');
+    expect(kr.log).not.toContain('keys offered');
   });
 
   /* RED WHEN: the account is asked to sign for the seat the service's records name rather than the one this device's own key makes. */
@@ -457,7 +475,7 @@ describe('giving your vault keys where a vault is created', () => {
     expect(await m.giveYourVaultKeys('u1', 'c1')).toEqual({ of: 'refused', why: 'not-your-seat' });
     expect(kr.log).toContain('own seat from cc');
     expect(kr.log.filter((l) => l.startsWith('records key signed'))).toEqual([]);
-    expect(kr.log).not.toContain('keys given');
+    expect(kr.log).not.toContain('keys offered');
     /* RED WHEN: the account is asked to release the company's keys before this device has checked its own seat. */
     expect(kr.log).not.toContain('account asked');
     kr.log = [];
@@ -472,7 +490,7 @@ describe('giving your vault keys where a vault is created', () => {
     kr.roster = { ...roster, signers: roster.signers.map((x) => ({ ...x, leafCommitment: null })) };
     expect(await m.giveYourVaultKeys('u1', 'c1')).toEqual({ of: 'refused', why: 'no-seat' });
     expect(await m.createVault('u1', 'c1', () => {})).toEqual({ of: 'refused', why: 'no-seat' });
-    expect(kr.log.filter((l) => l.startsWith('records key signed') || l === 'keys given' || l.startsWith('built') || l.startsWith('POST'))).toEqual([]);
+    expect(kr.log.filter((l) => l.startsWith('records key signed') || l === 'keys offered' || l.startsWith('built') || l.startsWith('POST'))).toEqual([]);
     /* RED WHEN: a signer with no seat is shown an account prompt to release the company's keys before being refused. */
     expect(kr.log).not.toContain('account asked');
   });

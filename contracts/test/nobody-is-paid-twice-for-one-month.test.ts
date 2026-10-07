@@ -19,13 +19,16 @@ import { describe, it, expect, beforeEach } from 'vitest';
 import { AccountSimulator, privateStateFor, change, type Change, payoutTreeOf, rootOfTestLeaves, TEST_AMOUNT, TEST_TOKEN_BYTES } from './simulator.js';
 import { pureCircuits } from '../managed/contract/index.js';
 import { payoutLeafOf, sumTreeOfLeaves, type PayoutLeafInput } from '../../src/midnight/payout-tree.js';
-import {
-  payRecordNonceOf, sealPayKeyTo, openSealedPayKey, payKeyCommitmentOf, payKeyPayloadOf,
-  type PayRecord,
-} from '../../src/midnight/run-keys.js';
+import { payRecordNonceOf, sealPayKeyTo, type PayRecord } from '../../src/midnight/run-keys.js';
+import { openSealedPayKey, payKeyCommitmentOf, payKeyPayloadOf } from '../../src/midnight/pay-key-commitment.js';
 import { vaultDetails } from '../../src/testing/vault-details.js';
 import { alreadyPaidOf, alreadyPaidSentence } from '../../src/midnight/ledger.js';
 import { newWrappingKeypair, toHex, fromHex, type Hex } from '../../src/core/crypto.js';
+import { buildRun, type PaymentFacts } from '../../src/midnight/payout-tree.js';
+import { payeeFor, payFor } from '../../src/testing/payees.js';
+import { TEST_TOKEN, registryWithTestPrivateForms } from '../../src/testing/assets.js';
+import { ledgerTokenOf } from '../../src/core/assets.js';
+import { refuseWhatThisDeviceDidNotMake, type AccountLedgerView, type RunMadeHere } from '../../packages/web-shared/src/what-this-device-made.js';
 
 const A = privateStateFor(1);
 const B = privateStateFor(2);
@@ -340,5 +343,65 @@ describe('what the client refuses before anybody signs, and what the approving d
     /* A different key sees nothing: the check is only as good as the key it is given. */
     expect(alreadyPaidOf(has, '77'.repeat(32), [{ person: 'emp_ada', month: '2026-09', kind: 'salary' }])[0]!.paid)
       .toEqual([]);
+  });
+
+  it('ON THE CHAIN: ONCE A PAYEE OF ONE RUN IS PAID, AN APPROVING DEVICE REFUSES A SECOND RUN PAYING THEM FOR THAT MONTH', async () => {
+    const sim = await AccountSimulator.liveAccount([A, B], 2n);
+    sim.at(NOW);
+    /* The company's pay-record key, committed on chain under an approved round, as a company's state names it. */
+    const payKey = '5d'.repeat(32) as Hex;
+    const committed = change(0n, 61);
+    const keyPayload = fromHex(payKeyPayloadOf(payKeyCommitmentOf(payKey)));
+    await sim.as(carrying(sim, A, committed)).propose(keyPayload);
+    const keyRound = sim.proposalId(keyPayload, committed.salt);
+    for (const who of [A, B]) await sim.as(carrying(sim, who, committed)).approve(keyRound);
+    await sim.as(carrying(sim, A, committed)).sealPayKey(sealPayKeyTo(payKey, newWrappingKeypair().publicKey).map(fromHex), fromHex(payKeyCommitmentOf(payKey)), keyRound);
+    await sim.adoptVault(PAYROLL, [A, B]);
+
+    /* Two people paid for September, the way an approving device makes each run again. */
+    const facts: PaymentFacts[] = [0, 1].map((i) => ({
+      payee: payeeFor(`c${i + 1}`.repeat(32), 'undeployed'),
+      token: ledgerTokenOf(TEST_TOKEN, 'shielded', registryWithTestPrivateForms()), amount: BigInt(200 + i),
+    }));
+    const pay = payFor(facts, { key: payKey, people: ['emp_ada', 'emp_bo'], month: '2026-09' });
+    const seeds = [{ epoch: 0, seed: '6f'.repeat(32) as Hex }];
+    const runOf = (runId: string, salt: number) => {
+      const identity = { accountId: 'acc_1', runId, epoch: 0 };
+      const run = buildRun(seeds, identity, facts, vaultDetails, pay, TEST_TOKEN);
+      const made: RunMadeHere = {
+        kind: 'payroll', seeds, payKey, identity, facts, records: pay.records, asset: TEST_TOKEN,
+        opensAt: String(OPENS), closesAt: String(CLOSES), required: '0',
+      };
+      return { run, made, c: change(0n, salt), payload: pureCircuits.runPayload(fromHex(run.tree.root), run.tree.payees, OPENS, CLOSES, 0n) };
+    };
+    const raised = async (r: ReturnType<typeof runOf>) => {
+      await sim.as(carrying(sim, A, r.c)).proposeRun({ root: fromHex(r.run.tree.root), payees: r.run.tree.payees, from: OPENS, until: CLOSES, vault: PAYROLL });
+      return sim.proposalId(r.payload, r.c.salt, PAYROLL);
+    };
+    const check = (r: ReturnType<typeof runOf>, id: Uint8Array) => () => refuseWhatThisDeviceDidNotMake({
+      runPayload: pureCircuits.runPayload, vaultDetails, payKeyCommitmentOf: pureCircuits.payKeyCommitmentOf,
+      payKeyCommitmentKey: pureCircuits.payKeyCommitmentKey,
+    }, { chainId: toHex(id), digest: toHex(r.payload), made: r.made }, sim.ledger as unknown as AccountLedgerView, 'approve');
+
+    const first = runOf('run_sep:leg', 62);
+    const firstId = await raised(first);
+    /* The control: the chain has paid nobody, so the first run is approved as made again. */
+    expect(check(first, firstId)).not.toThrow();
+    for (const who of [A, B]) await sim.as(carrying(sim, who, first.c)).approve(firstId);
+    const second = runOf('run_sep_again:leg', 63);
+    const secondId = await raised(second);
+    /* Another run, made again with leaves of its own, for the same people and month: nobody is paid yet, so it is not refused. */
+    expect(second.run.tree.leaves[0]).not.toBe(first.run.tree.leaves[0]);
+    expect(check(second, secondId)).not.toThrow();
+
+    /* The first run pays Ada on the chain. */
+    await sim.as(carrying(sim, A, first.c)).recordPaymentFromVault({
+      proposal: firstId, vault: PAYROLL, root: fromHex(first.run.tree.root), payees: first.run.tree.payees, from: OPENS, until: CLOSES,
+      salt: first.c.salt, details: fromHex(first.run.payments[0]!.details), nonce: fromHex(first.run.payments[0]!.nonce),
+      amount: facts[0]!.amount, asset: fromHex(first.run.tree.asset), path: first.run.tree.pathFor(0),
+    });
+    expect(sim.ledger.movements.member(pureCircuits.paidOnceOf(fromHex(payRecordNonceOf(payKey, pay.records[0]!))))).toBe(true);
+    /* RED WHEN: the approving device does not read the chain's record of who was paid for the month, so a second run paying Ada for September is approved. */
+    expect(check(second, secondId)).toThrow(/This run pays somebody already recorded as paid for 2026-09/u);
   });
 });

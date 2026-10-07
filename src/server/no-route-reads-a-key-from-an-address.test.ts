@@ -48,10 +48,11 @@ describe('no route reads a viewing key from an address', () => {
       'index.ts: reported req.originalUrl',
       'index.ts: reported req.originalUrl',
       'index.ts: reported req.originalUrl',
-      'index.ts: reported req.originalUrl',
       /* `GET /api/payslips/addresses?company=co_…`: a public label. */
       'index.ts: company',
       'invitations-route.ts: reported req.originalUrl',
+      /* A relay of a proven call refused or failed, written down as every other is. */
+      'proposal-relays.ts: reported req.originalUrl',
       /* The refusal report saying, in its own words, that it writes the address down redacted. */
       'refusal-log.ts: req.originalUrl',
     ]);

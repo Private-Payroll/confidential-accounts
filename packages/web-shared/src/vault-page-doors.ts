@@ -6,7 +6,6 @@
  */
 import type { Hex } from '../../../src/core/crypto.js';
 import { fromHex } from '../../../src/core/crypto.js';
-import { signVaultKeys } from '../../../src/core/vault-keys.js';
 import { whyNotTheCommittee, whyNotTheReaders, type Roster } from './handover-check.js';
 import type { Account } from '../../../src/core/types.js';
 import type { WireRecord } from '../../../src/midnight/sealed-record-wire.js';
@@ -25,7 +24,6 @@ import type {
 } from './vault-operation.js';
 import { sealedOnThisDevice, type InFlightOpener, type InFlightRecords, type SealedInFlight } from './in-flight-on-this-device.js';
 import type { SigningKeyOnTheWire } from './vault-worker-client.js';
-import type { PrivatePaymentOrderOnTheWire } from '../../../src/midnight/private-payment-wire.js';
 
 type Api = (path: string, init?: RequestInit) => Promise<any>;
 
@@ -87,56 +85,6 @@ export const vaultServiceFor = (api: Api, accountId: string, roster: () => Promi
     payout: (vault, tx) => post(`${base}/vaults/${vault}/payout`, tx),
     payoutPublicly: (vault, tx) => post(`${base}/vaults/${vault}/public-payout`, tx),
   };
-};
-
-/**
- * **ONE APPROVED LEG'S PAYMENTS, AS THE SERVICE REBUILT THEM FROM THE RUN THE
- * COMPANY APPROVED** - or, naming the proposal a retry on it was raised as,
- * that retry's payments and nobody else's. The viewing key travels in the
- * body, never in an address.
- */
-export const privatePaymentsFor = (
-  api: Api, runId: string, viewingKey: Hex, asset?: string, retry?: string,
-): Promise<PrivatePaymentOrderOnTheWire> => api(`/api/runs/${encodeURIComponent(runId)}/private-payments`, {
-  method: 'POST',
-  body: JSON.stringify({
-    viewingKey, ...(asset === undefined ? {} : { asset }), ...(retry === undefined ? {} : { proposalId: retry }),
-  }),
-});
-
-/**
- * **THIS SIGNER'S TWO VAULT KEYS, SIGNED WITH THEIR OWN ROSTER SIGNING KEY AND
- * WRITTEN INTO THEIR OWN ENTRY IN THE SEALED ROSTER**, with their wallet's own
- * statement over the records key beside them. The roster signature is what
- * stops another member putting a key in this signer's name; the wallet's
- * statement over the records key and the seat this signer holds, signed by
- * the committee key the chain lists, is what every other device checks before
- * it approves a copy of a vault's secret sealed to this signer. The filing key is the roster signing key itself, so it is not sent.
- *
- * Refused before anything is sent when the statement is not for the records
- * key this device derives from the same release.
- */
-export const giveVaultKeys = (
-  api: Api, accountId: string,
-  keys: {
-    committeeKey: { tag: string; value: string }; companyKey: Hex; signingSecret: Hex; signerId: string; viewingKey: Hex;
-    /** The statement this signer's wallet signed for their records key and their seat. */
-    recordsKey: { readonly recordsKey: string; readonly seat: string; readonly signature: string };
-  },
-): Promise<unknown> => {
-  const recordsKey = recordsKeypairFrom(fromHex(keys.companyKey)).publicKey;
-  if (keys.recordsKey.recordsKey.toLowerCase() !== recordsKey.toLowerCase()) {
-    return Promise.reject(new Error('your wallet signed a records key that is not the one your company key gives, so '
-      + 'your vault keys were not given. Open the company with your wallet again.'));
-  }
-  const signed = signVaultKeys(accountId, keys.signerId, {
-    committeeKey: keys.committeeKey, recordsKey,
-    recordsKeyStatement: keys.recordsKey.signature as Hex, recordsKeySeat: keys.recordsKey.seat as Hex,
-  }, keys.signingSecret);
-  return api(`/api/accounts/${encodeURIComponent(accountId)}/vault-keys`, {
-    method: 'PUT',
-    body: JSON.stringify({ viewingKey: keys.viewingKey, ...signed }),
-  });
 };
 
 /**
@@ -216,6 +164,24 @@ export const directoryHere = async (deps: DirectoryHereDeps): Promise<DirectoryH
   const dir: Directory = believedDirectory(deps.accountId, filings, deps.label, holders.account,
     { approvals: holders.approvals, seats: holders.seats, committee: holders.committee });
   return { dir, holders, another: seatsWithAnotherRecordsKey(dir, deps.label, holders.account, attested) };
+};
+
+/**
+ * **THE FOUNDING SEAT'S ENTRY, AS THIS DEVICE BELIEVES IT**, or why not. The
+ * founding seat is the deploy's, as the person's own wallet read it
+ * (`holders.founding`), and its entry speaks for it only when signed by the
+ * committee key the deploy held the account by (`holders.foundingCommittee`):
+ * an entry the directory keeps whether the seat is held now or not, and no
+ * entry under another key speaks for that seat. The one rule for the records
+ * a company is founded with: its first state and its first roster.
+ */
+export const foundingSeatHere = (here: DirectoryHere): DirectorySeat | string => {
+  const seat = here.dir.seats.find((s) => s.seat === here.holders.founding);
+  if (seat === undefined) return 'the seat the company\'s account was deployed with has no entry in its directory that this device believes';
+  const byTheFoundingKey = here.holders.foundingCommittee.some((k) =>
+    k.tag === seat.committeeKey.tag && k.value.toLowerCase() === seat.committeeKey.value.toLowerCase());
+  return byTheFoundingKey ? seat
+    : 'the founding seat\'s directory entry is not signed by the committee key the company\'s account was deployed with';
 };
 
 /**

@@ -57,6 +57,7 @@
  * and sends it; and the pool is advanced - the note gone, its change added with
  * the transaction that made it - only once the chain shows both.
  */
+import { refuseLeavingAVaultShort, type ApproverRoster } from '../../../src/core/vault-approvers.js';
 import type { Hex } from '../../../src/core/crypto.js';
 import { sameCommittee, whyOneKeyCouldActAlone, type Committee } from '../../../src/midnight/vault-committee.js';
 import type { DepositMoney } from '../../../src/midnight/deposit-nonce.js';
@@ -274,6 +275,13 @@ export interface CreateVaultDoors extends PoolDoors {
   readonly material: SignerMaterial;
   /** What every key the vault's secret is sealed to is checked against, before this device raises or approves it. */
   readonly secretReaders: SecretReaderSources;
+  /**
+   * The company as this device counts it for the vault check
+   * (`approverRosterFrom`), before it raises, approves or carries out the
+   * adoption, with each vault's name to say it by.
+   */
+  readonly approvers: () => Promise<ApproverRoster>;
+  readonly vaultName: (vault: Hex) => string;
   /** The time now, in milliseconds. */
   readonly clock?: () => number;
 }
@@ -619,6 +627,12 @@ async function startCompanyVault(doors: CreateVaultDoors, vault: Hex): Promise<V
       throw new VaultStartOwed(vault, 'a signer left the company after its adoption was raised, so that round can no '
         + 'longer be carried out. Create a new vault instead; this one holds nothing.');
     }
+    /* No adoption this device raises, approves or carries out leaves the new vault, or any other, unable to pay. */
+    try {
+      refuseLeavingAVaultShort(await doors.approvers(), { kind: 'adopt', vault }, doors.vaultName);
+    } catch (e) {
+      throw new VaultStartOwed(vault, `${(e as Error).message.replace(/ Nothing was approved\.$/u, '')} Nothing was sent.`);
+    }
     if (!a.open) {
       await accountStep(doors, vault, at.chain, 'adoption', {
         circuit: 'propose', adoption: governance, half: nothingMoves(noAsset, a.salt), proposal: a.proposal,
@@ -710,6 +724,7 @@ async function startCompanyVault(doors: CreateVaultDoors, vault: Hex): Promise<V
         chainId: raise.proposal, digest: raise.payload, vault: raise.named, salt: raise.salt,
         summary: 'Finish setting up a new vault',
         half: { assetId: run.asset, changeAmount: '0', changeBatchDigest: ZERO_HEX },
+        made: { kind: 'vault-secret', vault, secret: secret.secret, readers: [...secret.readers], opensAt: raise.opensAt, closesAt: raise.closesAt },
       }, 'raising its first secret');
       at = await untilTheChainShows(doors, vault, 'raising its first secret',
         (n) => n.standing.secret?.run?.proposal === raise.proposal || n.standing.secret?.set === true, secret);
@@ -720,6 +735,8 @@ async function startCompanyVault(doors: CreateVaultDoors, vault: Hex): Promise<V
       const approved = await accountStep(doors, vault, at.chain, 'secret-run', { circuit: 'approve', proposal: found.proposal }, {
         chainId: found.proposal, digest: found.payload, vault: found.named, salt: found.salt,
         summary: 'Finish setting up a new vault',
+        /* The run this device made from the secret it set: its payload is worked out again where the approval is built. */
+        made: { kind: 'vault-secret', vault, secret: secret.secret, readers: [...secret.readers], opensAt: found.opensAt, closesAt: found.closesAt },
       }, 'approving its first secret');
       if (approved === 'sent') {
         const p = found.proposal;

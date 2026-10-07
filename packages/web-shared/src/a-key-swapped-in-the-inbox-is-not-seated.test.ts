@@ -31,6 +31,8 @@ import type { GovernedCallOrder, OpenedRound } from './governed-call-builder.js'
 import {
   approveOnDevice, openTheRoundHere, seatSignerOnDevice, type GovernedCallDoors, type GovernedCallService,
 } from './governed-call-on-device.js';
+import { rosterBelievedHere, type RosterDoors, type RosterReads } from './roster-here.js';
+import { aDevicesRosterMemory, aRosterASeatFiled } from '../../../src/testing/a-roster-a-seat-filed.js';
 
 const scope = MidnightCommitments.allVaults();
 const keysOf = () => {
@@ -58,7 +60,17 @@ const danaProof = proveSeatKeys(newSeatInvitation(viewingKey, company, 'Dana', '
 const waiting = accounts.acceptSignerInvite(invite.token, 'usr_dana', dana.signingPublicKey, dana.wrappingPublicKey,
   dana.leafCommitment, danaProof);
 const seatRound = await accounts.seatRound(company, viewingKey, waiting.id, ada.signerId);
+/* Ada's and Bo's devices read the signers from a roster record Ada's seat filed, believed by entries their wallets signed. */
+const filed = aRosterASeatFiled(store, company, viewingKey as Hex, [
+  { signerId: ada.signerId, person: 'ada', signingSecret: ada.signingSecret, n: 1 },
+  { signerId: bo.signerId, person: 'bo', signingSecret: bo.signingSecret, n: 2 },
+]);
 const honestRecord = structuredClone(store.getAccount(company)!);
+/** The roster doors of Ada's device, over what the service holds now. */
+const adasRoster = (api: RosterDoors['api']): RosterDoors => ({
+  api, accountId: company, viewingKey: viewingKey as Hex, signingSecret: ada.signingSecret as Hex,
+  label: honestRecord.companyLabel as never, account: honestRecord.contractAddress as never, reads: filed.reads,
+});
 
 /** A writer with the stored record and nothing else: it seals a new entry to the inbox's public key. */
 const swapInTheInbox = (payload: Partial<PendingSignerPayload>) => {
@@ -71,11 +83,11 @@ const putBack = () => store.putAccount(structuredClone(honestRecord));
 
 const service = (built: unknown[] = []): GovernedCallService => ({
   sealedProposals: async (id: string) => store.listProposals(id),
-  sealedAccount: async (id: string) => store.getAccount(id),
-  /* Open when the approval is asked for, approved once one has been built and sent. */
-  standing: async () => ({ id: seatRound.id, chainId: seatRound.chainId, status: built.length ? 'approved' : 'open' }),
+  sealedAccount: async (id: string) => ({ ...store.getAccount(id), roster: filed.roster }),
+  /* No approval counted when the approval is asked for, one once it has been built and sent. */
+  standing: async () => ({ id: seatRound.id, chainId: seatRound.chainId, status: 'open', approvalCount: built.length ? 1 : 0 }),
   callState: async () => ({ account: 'ac'.repeat(32), blockHash: 'b', accountState: 'AS', parameters: 'PP' }),
-  approve: async () => ({ id: seatRound.id, chainId: seatRound.chainId, status: 'approved' }),
+  approve: async () => ({ id: seatRound.id, chainId: seatRound.chainId, status: 'open', approvalCount: 1 }),
 } as unknown as GovernedCallService);
 
 /** One signer's device. Whatever it builds - and so proves - is written down. */
@@ -88,12 +100,12 @@ const aDevice = (built: Array<{ order: GovernedCallOrder; opened: OpenedRound }>
 const shown = { id: seatRound.id, chainId: seatRound.chainId, status: 'open', summary: seatRound.summary };
 
 /** Every reading of the seat a device makes: to raise it, to approve it, to carry it out. */
-const everyReading = async (signerId: string) => {
+const everyReading = async (_signerId: string) => {
   const built: Array<{ order: GovernedCallOrder; opened: OpenedRound }> = [];
   const outcomes = await Promise.allSettled([
     openTheRoundHere(service(), company, seatRound.id, viewingKey, true),
     openTheRoundHere(service(), company, seatRound.id, viewingKey, false),
-    approveOnDevice(aDevice(built), { round: shown, signerId, signature: 'SIG', viewingKey }),
+    approveOnDevice(aDevice(built), { round: shown, viewingKey }),
   ]);
   return { outcomes, built };
 };
@@ -104,10 +116,12 @@ describe('A KEY THAT DID NOT COME FROM THE INVITED PERSON IS NOT SEATED', () => 
     for (const signer of [ada, bo]) {
       const { outcomes, built } = await everyReading(signer.signerId);
       /* RED WHEN: the check refuses an honest invitation - nobody could then be seated at all. */
-      expect(outcomes.map((o) => o.status)).toEqual(['fulfilled', 'fulfilled', 'fulfilled']);
+      expect(outcomes.map((o) => o.status)).toEqual(['fulfilled', 'fulfilled', 'rejected']);
       expect((outcomes[0] as PromiseFulfilledResult<OpenedRound>).value.governance)
         .toEqual({ kind: 'add-signer', leaf: dana.leafCommitment });
-      expect(built).toHaveLength(1);
+      /* The plain approval reads the honest entry and then leaves the seat to be approved where it is made. */
+      expect(String((outcomes[2] as PromiseRejectedResult).reason?.message)).toMatch(/approved where it is made/u);
+      expect(built).toEqual([]);
     }
   });
 
@@ -147,39 +161,26 @@ describe('A KEY THAT DID NOT COME FROM THE INVITED PERSON IS NOT SEATED', () => 
     }
   });
 
-  it('a device that raises the seat, and a device that carries it out, each refuse the swapped key before building', async () => {
+  it('a device that seats the person refuses the swapped key before it raises, approves, carries out or admits anything', async () => {
     const swapped = keysOf();
     swapInTheInbox(swapped);
     try {
-      const salt = accounts.governanceAsked(seatRound.id, viewingKey).proposalSalt;
-      const asked = { governance: { kind: 'add-signer' as const, leaf: swapped.leafCommitment }, proposalSalt: salt };
-      const half = { assetId: '44'.repeat(32), assetBlinding: '55'.repeat(32), proposalSalt: salt, changeAmount: '0',
-        changeBatchDigest: '77'.repeat(32) };
-      const toRaise = {
-        proposal: { id: seatRound.id, chainId: seatRound.chainId, status: 'open', approvals: [] }, asked,
-        order: { proposalId: seatRound.id, chainId: seatRound.chainId,
-          order: { circuit: 'propose', governance: asked.governance, half, proposal: seatRound.chainId } },
-      };
-      const toCarry = {
-        proposal: { id: seatRound.id, chainId: seatRound.chainId, status: 'approved', approvals: [{ signerId: ada.signerId }] },
-        asked, order: null,
-      };
-      for (const [what, round] of [['raise', toRaise], ['carry out', toCarry]] as const) {
-        const built: Array<{ order: GovernedCallOrder; opened: OpenedRound }> = [];
-        const doors = aDevice(built);
-        Object.assign(doors.service, {
-          seatRound: async () => round,
-          seatOrder: async () => ({ order: { circuit: 'amendSigner', leaf: swapped.leafCommitment, proposal: seatRound.chainId,
-            proposalSalt: salt } }),
-          sendGovernance: async () => { throw new Error('a raise was sent'); },
-          seat: async () => { throw new Error('a seat was sent'); },
-        });
-        const out = seatSignerOnDevice(doors, {
-          viewingKey, signerId: ada.signerId, sign: () => 'SIG', seat: { signerId: waiting.id, leaf: swapped.leafCommitment } });
-        /* RED WHEN: the device that raises, or the one that carries out, builds before it has checked the key. */
-        await expect(out, what).rejects.toBeInstanceOf(SeatKeyNotFromTheInvitee);
-        expect(built, what).toEqual([]);
-      }
+      const asked: string[] = [];
+      const built: Array<{ order: GovernedCallOrder; opened: OpenedRound }> = [];
+      const doors = aDevice(built);
+      const roster = adasRoster(async (path: string, init?: RequestInit) => {
+        asked.push(`${init?.method ?? 'GET'} ${path}`);
+        if (path === `/api/accounts/${company}`) return { ...store.getAccount(company), roster: filed.roster };
+        throw new Error(`this device asked the service for ${path}`);
+      });
+      const out = seatSignerOnDevice({
+        ...doors, roster, filing: { seat: '41'.repeat(32), keyEpoch: 0, salt: () => '66'.repeat(32), newId: () => 'prp_swappedseat1' },
+        approvers: async () => { throw new Error('the vault check was reached'); }, vaultName: (v) => v,
+      }, { viewingKey, signerId: waiting.id, readOut: 'read out by Dana' });
+      /* RED WHEN: the device raises, approves, carries out or admits a seat before it has checked the key in the inbox. */
+      await expect(out).rejects.toBeInstanceOf(SeatKeyNotFromTheInvitee);
+      expect(built).toEqual([]);
+      expect(asked).toEqual([`GET /api/accounts/${company}`]);
     } finally {
       putBack();
     }
@@ -194,6 +195,17 @@ describe('A KEY THAT DID NOT COME FROM THE INVITED PERSON IS NOT SEATED', () => 
       /* RED WHEN: the same keys waiting twice are each read as a person to seat. */
       await expect(openTheRoundHere(service(), company, seatRound.id, viewingKey, true))
         .rejects.toBeInstanceOf(SeatKeyNotFromTheInvitee);
+      /* RED WHEN: the device that seats a person takes the copy's keys as a second person's, before anything is built. */
+      const built: Array<{ order: GovernedCallOrder; opened: OpenedRound }> = [];
+      const roster = adasRoster(async (path: string) => {
+        if (path === `/api/accounts/${company}`) return { ...store.getAccount(company), roster: filed.roster };
+        throw new Error(path);
+      });
+      await expect(seatSignerOnDevice({
+        ...aDevice(built), roster, filing: { seat: '41'.repeat(32), keyEpoch: 0, salt: () => '66'.repeat(32), newId: () => 'prp_copiedseat01' },
+        approvers: async () => { throw new Error('the vault check was reached'); }, vaultName: (v) => v,
+      }, { viewingKey, signerId: 'sgn_copy', readOut: 'read out by Dana' })).rejects.toThrow(/already belong to another signer/u);
+      expect(built).toEqual([]);
     } finally {
       putBack();
     }
@@ -340,3 +352,36 @@ describe('THE SERVICE WRITES DOWN ONLY THE KEYS THE INVITED PERSON PROVED', () =
   });
 });
 
+
+describe('A SEAT THE CHAIN HOLDS BEFORE ITS SIGNER IS ADMITTED', () => {
+  /* The chain has seated Dana's leaf; the roster does not name her until she is admitted. */
+  const readsWithDanasSeat: RosterReads = {
+    filings: filed.reads.filings,
+    holders: async () => { const h = await filed.reads.holders(); return { ...h, seats: [...h.seats, dana.leafCommitment] }; },
+    believed: aDevicesRosterMemory(),
+  };
+  const readHere = () => rosterBelievedHere({ ...store.getAccount(company)!, roster: filed.roster }, viewingKey as Hex, {
+    accountId: company, label: honestRecord.companyLabel as never, account: honestRecord.contractAddress as never,
+    reads: { ...readsWithDanasSeat, believed: aDevicesRosterMemory() },
+  });
+
+  it('is read while the person invited to it waits in the inbox, and nothing for a committee is built from it', async () => {
+    putBack();
+    const read = await readHere();
+    /* RED WHEN: a roster is refused in the window between the chain seating a person and their admission, so nobody could be admitted. */
+    expect(read.account.notBelieved).toEqual([dana.leafCommitment.toLowerCase()]);
+  });
+
+  it.each([
+    ['nobody waits for it', () => { const rec = structuredClone(honestRecord); rec.pendingSigners = []; store.putAccount(rec); }],
+    ['the inbox holds the writer\'s own keys at Dana\'s leaf, with no proof', () => swapInTheInbox({ ...keysOf(), leafCommitment: dana.leafCommitment })],
+  ])('is refused when %s', async (_what, setUp) => {
+    setUp();
+    try {
+      /* RED WHEN: a seat the chain holds with no roster entry is taken as waited for without a request its invitation proves. */
+      await expect(readHere()).rejects.toThrow(/has no entry for 1 seat\(s\) the company's account holds on the chain/u);
+    } finally {
+      putBack();
+    }
+  });
+});

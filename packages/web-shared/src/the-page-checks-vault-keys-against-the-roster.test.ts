@@ -18,7 +18,7 @@ const entry = (id: string, pair: { publicKey: Hex; secret: Hex }, n: number) => 
   id, userId: id, name: id, status: 'active', signingPublicKey: pair.publicKey,
   vaultKeys: signVaultKeys('acc_1', id, { committeeKey: k(n), recordsKey: r(n + 0x10) }, pair.secret),
 });
-const roster = { id: 'acc_1', signers: [entry('ada', ADA, 1), entry('bo', BO, 2)] } as unknown as Account;
+const roster = { id: 'acc_1', signers: [entry('ada', ADA, 1), entry('bo', BO, 2)], notBelieved: [] as string[] } as unknown as Account & { readonly notBelieved: readonly string[] };
 const VAULT = 'ab'.repeat(32) as Hex;
 
 const serviceAnswering = (answers: Record<string, unknown>) => vaultServiceFor(async (path) => {

@@ -23,10 +23,9 @@ import type { LedgerForm } from './assets.js';
 import type { PaymentAsked, VaultHoldings } from './vault-holdings.js';
 import { FileStore } from './store-file.js';
 import { toHex } from './crypto.js';
-import { paymentsCheckedDigest } from './device-raise.js';
 
 import { runLegOf } from './payroll.js';
-import { TEST_TOKEN, OTHER_TEST_TOKEN } from '../testing/assets.js';
+import { TEST_TOKEN } from '../testing/assets.js';
 const VAULT = toHex(new Uint8Array(32).fill(0xa1));
 /* The fixture token in its public form: the same token type, which is how the ledger names both forms. */
 const PUBLIC_GBP = TEST_TOKEN;
@@ -50,7 +49,7 @@ const theServiceReader = (publicHeld: bigint) => {
   return { reader, asked };
 };
 
-async function aCompany(publicHeld = 0n, opts: { alsoEur?: true } = {}) {
+async function aCompany(publicHeld = 0n) {
   const store = new FileStore(join(mkdtempSync(join(tmpdir(), 'mn-private-run-')), 'db.json'));
   const ledger = new SimulatedLedger(MidnightCommitments);
   Object.assign(ledger, { submitProvenCall: async () => ({ ref: 'tx', at: new Date().toISOString() }) });
@@ -64,11 +63,6 @@ async function aCompany(publicHeld = 0n, opts: { alsoEur?: true } = {}) {
   for (let i = 0; i < 3; i++) {
     payroll.hireDirect(created.account.id, {
       name: `Payee ${i}`, email: `p${i}@a.co`, title: 'Eng', asset: TEST_TOKEN, baseAmount: 100_00n,
-    }, viewingKey);
-  }
-  if (opts.alsoEur) {
-    payroll.hireDirect(created.account.id, {
-      name: 'Payee EUR', email: 'e@a.co', title: 'Eng', asset: OTHER_TEST_TOKEN, baseAmount: 7_00n,
     }, viewingKey);
   }
   const me = created.secrets[0]!;
@@ -140,48 +134,5 @@ describe('A PAYROLL RUN WITH PRIVATE PAYEES, RAISED', () => {
     await enough.raise({ onDevice: true });
     /* RED WHEN: the public payments are not asked about, or not walked at all. */
     expect(enough.asked).toEqual([{ q: 'held', form: 'unshielded' }, { q: 'fits', kinds: ['unshielded', 'unshielded', 'unshielded'] }]);
-  });
-
-  it('WHAT A DEVICE IS TOLD A LEG PAYS IS WHAT THE RAISE IS CHECKED AGAINST, AND NAMES NOBODY', async () => {
-    const c = await aCompany();
-    const told = await c.payroll.legPaymentsAsked(c.runId, c.viewingKey);
-    const inputs = await c.payroll.runMaterialInputs(c.runId, c.viewingKey);
-    /* RED WHEN: the device is told about other payments than the ones the raise will ask the vault for. */
-    expect(told.asset).toBe(TEST_TOKEN);
-    expect(told.payments).toEqual(inputs.facts.map((f) => ({ kind: f.payee.kind, token: f.token, amount: f.amount })));
-    /* RED WHEN: an address or a seed rides along to a device that only needed a kind, a token and an amount. */
-    expect(told.payments.every((p) => Object.keys(p).sort().join() === 'amount,kind,token')).toBe(true);
-    /* The leg's token and form ride along, which name the leg and nobody on it. */
-    expect(Object.keys(told).sort()).toEqual(['asset', 'form', 'leg', 'payments']);
-
-    /* RED WHEN: the leg asked for is not the leg answered - a device then checks one asset's payments and raises another's. */
-    const two = await aCompany(0n, { alsoEur: true });
-    const eur = await two.payroll.legPaymentsAsked(two.runId, two.viewingKey, OTHER_TEST_TOKEN);
-    expect(eur.asset).toBe(OTHER_TEST_TOKEN);
-    expect(eur.payments).toEqual([{ kind: 'shielded', token: OTHER_TEST_TOKEN, amount: 7_00n }]);
-  });
-
-  it('A LEG WRITTEN DOWN IS TOLD AS IT WAS WRITTEN, WHATEVER THE ROSTER SAYS SINCE, AND ITS DIGEST IS THE ONE A SEND IS COMPARED WITH', async () => {
-    const c = await aCompany();
-    const before = await c.payroll.legPaymentsAsked(c.runId, c.viewingKey);
-    const round = await c.raise({ onDevice: true });
-    /* The roster moves after the write-down: one person on the run is marked a leaver. */
-    const run = c.payroll.requireRun(c.runId, c.viewingKey);
-    c.payroll.setStatus(run.employees[0]!.id, 'leaver', c.viewingKey);
-    await expect(c.payroll.runMaterialInputs(c.runId, c.viewingKey)).rejects.toThrow(/leaver, not active/u);
-    /* RED WHEN: a device about to send a written-down proposal is told the roster as it is now - it then checks one set of payments and the service sends another, or it cannot send at all. */
-    const after = await c.payroll.legPaymentsAsked(c.runId, c.viewingKey);
-    expect(after).toEqual(before);
-    const order = (await c.payroll.raiseOrderOf(c.runId, c.viewingKey))!;
-    /*
-     * RED WHEN: the digest a send is compared with is not of the payments written down. This
-     * fixture's payments are alike, so their ORDER is pinned by the served-route test of a send,
-     * whose payees are paid different amounts.
-     */
-    expect(order.paymentsChecked).toBe(paymentsCheckedDigest(after.payments));
-
-    /* Withdrawn, the leg is raised afresh from the roster, so that is what a device is told. */
-    await c.accounts.cancel(round.id, c.viewingKey);
-    await expect(c.payroll.legPaymentsAsked(c.runId, c.viewingKey)).rejects.toThrow(/leaver, not active/u);
   });
 });

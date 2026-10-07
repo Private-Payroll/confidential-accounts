@@ -321,7 +321,8 @@ export const retryMaterialFor = async (args: {
       closesAt: args.closesAt,
       vault: args.vault,
     },
-    leaves: retry.originalIndices.map((i) => retry.tree.leaves[i]!),
+    /* Its own tree's leaves: each person's leaf from the run it retries, in the order the retry names them. */
+    leaves: [...retry.tree.leaves],
     originalIndices: retry.originalIndices,
     identity: retry.identity,
     rootOf: (leaves: Hex[], facts: readonly PaymentFacts[], asset: AssetId) => rootOfPayments(leaves, facts, asset),

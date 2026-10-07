@@ -34,7 +34,8 @@ import {
 import { carryTheAccount, startTheVault, TEST_VAULT_SECRET } from './start-a-vault.js';
 import { type PayoutLeafInput } from '../../src/midnight/payout-tree.js';
 import { toHex, fromHex, newWrappingKeypair } from '../../src/core/crypto.js';
-import { payKeyCommitmentOf, payKeyPayloadOf, sealPayKeyTo } from '../../src/midnight/run-keys.js';
+import { sealPayKeyTo } from '../../src/midnight/run-keys.js';
+import { payKeyCommitmentOf, payKeyPayloadOf } from '../../src/midnight/pay-key-commitment.js';
 import { Transcript, encodeUint, asHex } from './transcript.js';
 import { noFurtherNote } from '../../src/midnight/vault-step-notes.js';
 

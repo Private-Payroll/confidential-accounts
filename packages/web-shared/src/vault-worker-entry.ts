@@ -20,7 +20,8 @@ import {
   firstSecretRunOf, startStandingOf, type AccountLedgerForAStart, type AccountStartPure, type SecretRun,
   type StartStanding, type VaultLedgerForAStart, type VaultStartPure,
 } from '../../../src/midnight/vault-start.js';
-import { buildGovernedCall, type GovernedCallDeps } from './governed-call-builder.js';
+import { buildGovernedCall, identityOfAChange, type GovernedCallDeps } from './governed-call-builder.js';
+import { detailsOfKind } from '../../../src/midnight/vault-details.js';
 import { circuitOf, httpKeyMaterialSource, IndexedDbArtefactCache, type ArtefactSource } from './key-material.js';
 import { ACCOUNT_CIRCUITS_SERVED_TO_A_DEVICE } from '../../../src/midnight/vault-contract.js';
 import { zkConfigOver, byCircuitName } from './zk-config.js';
@@ -284,6 +285,9 @@ const loadDeps = (scope: any) => {
           (c) => httpKeyMaterialSource(VAULT_ARTEFACT_BASE, options).artefact('verifier', c),
           (vault as any).expectedVk, sha256, 'the vault'),
         accountLedger: (account as any).ledger,
+        /* The vault's two details circuits, paired once: what a payee's leaf is made with when a run is rebuilt here. */
+        vaultDetails: detailsOfKind((vault as any).pureCircuits),
+        vaultPure: (vault as any).pureCircuits,
         prove: async (unproven: any, circuit?: string) =>
           (await (prover as any).proveTx(unproven, circuit === undefined ? undefined : { circuitId: circuit })) as { serialize(): Uint8Array },
       };
@@ -421,6 +425,12 @@ export const answerVaultAsk = async (
       });
       return { id: ask.id, ok: true, ask: 'payout-publicly', tx: toBase64(built.proven) };
     }
+    case 'company-wide': {
+      const v = (d.accountPure as unknown as { companyWide(): Uint8Array }).companyWide();
+      return { id: ask.id, ok: true, ask: 'company-wide', value: Array.from(v, (b) => b.toString(16).padStart(2, '0')).join('') };
+    }
+    case 'proposal-identity':
+      return { id: ask.id, ok: true, ask: 'proposal-identity', identity: identityOfAChange(d, ask.change, ask.salt) };
     case 'governed-call': {
       const built = await buildGovernedCall(d, {
         account: ask.account,

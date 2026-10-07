@@ -367,9 +367,9 @@ export class ChainLedger implements Ledger {
     return this.inner.reseal(accountId, next);
   }
 
-  /** Delegated: it writes only to this deployment's own blob storage, and sends nothing. */
-  fileFoundingState(accountId: string, sealed: SealedStateAt): Promise<void> {
-    return this.inner.fileFoundingState(accountId, sealed);
+  /** Delegated: a property of this deployment, which sends nothing. */
+  get takesCompaniesFromTheirFoundingSigner(): boolean {
+    return this.inner.takesCompaniesFromTheirFoundingSigner;
   }
 
   /**
