@@ -36,6 +36,7 @@
  * `public-data.test.ts` is where the measurement above is kept so that it is a
  * fact somebody watched rather than a paragraph.
  */
+import type { PublicDataProvider as IndexerReader } from '@midnight-ntwrk/midnight-js-types';
 
 /**
  * What a wallet reports about where to read.
@@ -50,14 +51,12 @@ export interface IndexerEndpoints {
   indexerWsUri: string;
 }
 
-/** What `indexerPublicDataProvider` hands back. Narrow on purpose. */
-export interface PublicDataProvider {
-  queryContractState(...args: any[]): Promise<unknown>;
-  /** The state a contract's deploy left at its address, as the chain recorded it; null when there is none. */
-  queryDeployContractState(...args: any[]): Promise<unknown>;
-  watchForTxData?(...args: any[]): unknown;
-  [more: string]: unknown;
-}
+/**
+ * What `indexerPublicDataProvider` hands back, as the package itself declares
+ * it: every read through it is checked against the package's own signatures,
+ * so a change to them fails the typecheck rather than a read on a device.
+ */
+export type PublicDataProvider = IndexerReader;
 
 const scheme = (uri: string): string | null => {
   try {
@@ -146,5 +145,5 @@ export const publicDataProviderFor = async (
   return indexerPublicDataProvider({
     queryURL: endpoints.indexerUri,
     subscriptionURL: endpoints.indexerWsUri,
-  }) as unknown as PublicDataProvider;
+  });
 };

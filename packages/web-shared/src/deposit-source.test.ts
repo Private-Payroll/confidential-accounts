@@ -53,15 +53,11 @@ const setUp = async () => {
     handover: async () => { throw new Error('no handover'); },
     /* Opening the pool asks the service; a deposit reads the vault on this device. */
     chain: async () => view(),
-    payoutState: async (v) => ({ vault: v, account: ACCOUNT, blockHash: 'B1', vaultState: 'V', zswapState: 'Z', parameters: PARAMS, accountState: 'A' }),
+    /* Only a vault's start reads its block through the service. */
+    payoutState: async () => { throw new Error('a deposit never asks the service for its block'); },
     deposit: async (_v, tx) => { log.push(`sent ${tx}`); notes.push(held(lastBuilt!)); return { txRef: 'r1', transactionHash: null }; },
-    events: async () => { throw new Error('no events'); },
-    /* The vault's history holds the deposit's output in one transaction, which made it. */
-    createdBy: async (v, commitment) => ({
-      transactionHash: 'e8'.repeat(32),
-      events: [{ transactionHash: 'e8'.repeat(32), details: { tag: 'zswapOutput', commitment, contract: v, mtIndex: '0' } }],
-    }),
     payout: async () => { throw new Error('no payout'); },
+    merge: async () => { throw new Error('no merge'); },
     payoutPublicly: async () => { throw new Error('no payout'); },
   };
   const refuse = async () => { throw new Error('a deposit never asks this'); };
@@ -74,8 +70,16 @@ const setUp = async () => {
         authority: { committee: [], threshold: 1 }, account: ACCOUNT, started: true,
       };
     },
+    /* The block, a transaction's events and the vault's history, read here at the wallet's indexer. */
+    chainAtOneBlock: async () => ({ blockHash: 'B1', vaultState: 'V', zswapState: 'Z', parameters: PARAMS, accountState: 'A' }),
+    eventsOf: async () => { throw new Error('no events'); },
+    /* The vault's history holds the deposit's output in one transaction, which made it. */
+    createdBy: async (i) => ({
+      transactionHash: 'e8'.repeat(32),
+      events: [{ transactionHash: 'e8'.repeat(32), details: { tag: 'zswapOutput', commitment: i.commitment, contract: i.vault, mtIndex: '0' } }],
+    }),
     deploy: refuse, handover: refuse, notesForPayment: refuse, paymentsFit: refuse, afterPayment: refuse, stepKept: refuse,
-    confirmPayment: refuse, startStanding: refuse, setNonceSecret: refuse, writeSecretCopy: refuse, proposalIdentity: refuse, companyWide: refuse, creatingTransaction: async (i) => creatingTransactionOfNote(i), payout: refuse, payoutPublicly: refuse, governedCall: refuse,
+    confirmPayment: refuse, startStanding: refuse, setNonceSecret: refuse, writeSecretCopy: refuse, proposalIdentity: refuse, companyWide: refuse, creatingTransaction: async (i) => creatingTransactionOfNote(i), payout: refuse, mergeNotes: refuse, payoutPublicly: refuse, governedCall: refuse,
     commitments: async (i) => ({ output: `out:${i.coin.nonce}`, held: held(i.coin) }),
     ownSeat: refuse,
     secretIsTheVaults: async () => true,

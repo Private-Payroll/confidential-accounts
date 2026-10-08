@@ -825,6 +825,40 @@ describe('A PRIVATE PAYMENT OUT OF A VAULT', () => {
     expect(asked).toEqual([]);
   });
 
+  /* A merge with the shape the fee payer reads: two of the vault's coins in, one coin back to the vault, one call. */
+  const aMerge = (vault = VAULT) => ({
+    intents: new Map([[1, { actions: [{ address: vault, entryPoint: 'mergeNotes' }] }]]),
+    guaranteedOffer: { inputs: [{ contractAddress: vault }, { contractAddress: vault }], outputs: [{ contractAddress: vault }], transients: [] },
+    imbalances: () => new Map(),
+  });
+
+  it('A MERGE OF THE VAULT\'S NOTES IS RELAYED AS THE VAULT\'S OWN COINS, AND ANSWERS ITS TRANSACTION', async () => {
+    payoutShape = aMerge();
+    /* RED WHEN: the merge route is missing, sends under another arrival, or drops the hash. */
+    const r = await call(`/api/accounts/acc_1/vaults/${VAULT}/merge`, 'ada', 'POST', { tx: PAYOUT_TX });
+    expect(r).toEqual({ status: 200, body: { txRef: 'r-pay', transactionHash: 'fe'.repeat(32) } });
+    expect(arrivals).toEqual(['proven-moving-the-vaults-own-coins']);
+    expect(sent).toEqual(['a merge of a vault\'s notes']);
+  });
+
+  it('THE MERGE ROUTE PAYS NO FEE FOR A PAYMENT, A MERGE OF ANOTHER VAULT, A VAULT IT CANNOT VOUCH FOR, OR A NON-MEMBER', async () => {
+    /* RED WHEN: the merge route hands its transaction to any reader but the merge's, or for any vault but this one. */
+    payoutShape = aPayout();
+    expect(await call(`/api/accounts/acc_1/vaults/${VAULT}/merge`, 'ada', 'POST', { tx: PAYOUT_TX }))
+      .toMatchObject({ status: 422, body: { nothingWasSent: true, error: expect.stringMatching(/^this is not a merge of this vault's own notes/) } });
+    payoutShape = aMerge(hex(0xaa));
+    expect(await call(`/api/accounts/acc_1/vaults/${VAULT}/merge`, 'ada', 'POST', { tx: PAYOUT_TX }))
+      .toMatchObject({ status: 422, body: { nothingWasSent: true } });
+    /* RED WHEN: the route stops asking what the chain shows of the vault before it pays the fee. */
+    payoutShape = aMerge();
+    authority = { committee: [key(9)], threshold: 1, counter: 0n };
+    expect(await call(`/api/accounts/acc_1/vaults/${VAULT}/merge`, 'ada', 'POST', { tx: PAYOUT_TX }))
+      .toMatchObject({ status: 409, body: { nothingWasSent: true, error: expect.stringMatching(/^this service pays no fee for a merge of this vault's notes:/) } });
+    authority = { committee: [key(1), key(2)], threshold: 2, counter: 1n };
+    expect((await call(`/api/accounts/acc_1/vaults/${VAULT}/merge`, 'carol', 'POST', { tx: PAYOUT_TX })).status).toBe(404);
+    expect(sent).toEqual([]);
+  });
+
   it('WHAT A PAYMENT IS BUILT ON IS READ FOR THIS VAULT AND THIS COMPANY\'S ACCOUNT, AT ONE BLOCK', async () => {
     /* RED WHEN: the state is read for any other pair, or the block is dropped from the answer. */
     const r = await call(`/api/accounts/acc_1/vaults/${VAULT}/payout-state`, 'ada');

@@ -5,11 +5,12 @@ import {
   createCompanyVault, createCompanyVaultByHandover, depositIntoCompanyVault, openCompanyVaultPool, DepositNotYetSeen,
   DepositNotSent, DepositStillInFlight, DepositLandedNotYetRecorded, settleDepositInFlight, DEPOSIT_TIME_TO_LIVE_MS,
   payPrivatelyFromCompanyVault, PaymentNotYetSeen, PaymentNotAsBuilt, PaymentLandedUnrecorded,
+  mergeNotesInCompanyVault, MergeNotYetSeen, MergeNotAsBuilt,
   payPubliclyFromCompanyVault, PublicPaymentNotYetSeen,
   type TemporaryKeys, type VaultChainView, type VaultService, type DepositInFlight, type SecretReaderSources,
   type PaymentInFlight, type PaymentsInFlight,
   checkWhatThisBrowserSent, sayWhatTheCheckFound, DepositStartedElsewhere, PaymentStillInFlight, PaymentStartedElsewhere,
-  settlePaymentInFlight, VaultStartOwed, VaultNotTheCompanys, VaultNotReadHere,
+  settlePaymentInFlight, VaultStartOwed, VaultNotTheCompanys, VaultNotReadHere, StepOvertaken, NotesMovedUnderAStep,
 } from './vault-operation.js';
 import type { Kept, KeptOnThisDevice } from './in-flight-on-this-device.js';
 import { notesForPayment, confirmPayment, poolAfterPayment } from './vault-builder.js';
@@ -18,6 +19,7 @@ import { SealedNotePool } from '../../../src/midnight/vault-pool.js';
 import { PaymentJournalInStore } from '../../../src/midnight/vault-journal.js';
 import type { PrivatePaymentOnTheWire, PrivatePaymentOrderOnTheWire } from '../../../src/midnight/private-payment-wire.js';
 import { vaultBuilderOver, type VaultBuilderClient, type VaultOnChainOnTheWire } from './vault-worker-client.js';
+import type { EventOnTheWire } from './vault-builder.js';
 import { MemorySealedPoolStore } from '../../../src/midnight/vault-pool.js';
 import type { WireRecord } from '../../../src/midnight/sealed-record-wire.js';
 import { newWrappingKeypair } from '../../../src/core/crypto.js';
@@ -103,8 +105,27 @@ const CURRENT_CHAIN = 'https://indexer.current.example/api/v3/graphql';
 const indexerOf = (service: VaultService) => {
   const uri = `https://indexer-${chains.size + 1}.example/api/v3/graphql`;
   chains.set(uri, (v) => service.chain(v as never));
+  behind.set(uri, behindOf.get(service) ?? nothingBehind(uri));
   return async () => ({ indexerUri: uri, indexerWsUri: `wss://indexer-${chains.size}.example/api/v3/graphql/ws` });
 };
+/*
+ * **WHAT A STEP IS BUILT ON AND JUDGED BY, BEHIND EACH STAND-IN INDEXER**: one block's view, a transaction's events and
+ * the vault's own history, as each stand-in service's chain holds them. The stand-in builder reads them at the indexer a
+ * door names, as the worker does; a deposit or a payment never asks the service for any of the three. Only a vault's
+ * start still reads its block through the service. The read of a real indexer's answers is `vault-on-chain-here.test.ts`'s.
+ */
+interface ChainBehind {
+  payoutState(vault: string): Promise<{ vault: string; account: string; blockHash: string; vaultState: string; zswapState: string; parameters: string; accountState: string }>;
+  events(vault: string, transactionHash: string): Promise<{ events: EventOnTheWire[] }>;
+  createdBy(vault: string, commitment: string): Promise<{ transactionHash: string; events: EventOnTheWire[] } | null>;
+}
+const behind = new Map<string, ChainBehind>();
+const behindOf = new WeakMap<VaultService, ChainBehind>();
+const nothingBehind = (uri: string): ChainBehind => {
+  const none = async (): Promise<never> => { throw new Error(`the stand-in has no chain behind ${uri}`); };
+  return { payoutState: none, events: none, createdBy: none };
+};
+const behindAt = (i: { indexerUri: string }): ChainBehind => behind.get(i.indexerUri) ?? nothingBehind(i.indexerUri);
 /** A service, and the indexer door that names its chain. */
 const hereAndThere = (service: VaultService) => ({ service, indexer: indexerOf(service) });
 /** The same doors with the service's own answer about the vault refused, and every time it is asked counted. */
@@ -152,6 +173,16 @@ const builder = (log: string[]): VaultBuilderClient => ({
   /* The stand-in vault holds the secret the company's records hold; a test about one it does not hands its own. */
   secretIsTheVaults: async () => true,
   vaultOnChain: readOnTheDevice,
+  chainAtOneBlock: async (i) => {
+    log.push('read the block here');
+    const at = await behindAt(i.indexer).payoutState(i.vault);
+    return { blockHash: at.blockHash, vaultState: at.vaultState, zswapState: at.zswapState, parameters: at.parameters, accountState: at.accountState };
+  },
+  eventsOf: async (i) => {
+    log.push(`read events of ${i.transactionHash.slice(0, 2)} here`);
+    return [...(await behindAt(i.indexer).events(VAULT, i.transactionHash)).events];
+  },
+  createdBy: async (i) => behindAt(i.indexer).createdBy(i.vault, i.commitment),
   notesForPayment: async (i) => { log.push('choose'); return notesForPayment(i); },
   paymentsFit: async () => { throw new Error('a payment out never asks whether a run fits'); },
   afterPayment: async (i) => poolAfterPayment(i),
@@ -171,6 +202,12 @@ const builder = (log: string[]): VaultBuilderClient => ({
     log.push(`build payout spending ${[i.note, ...(i.further ?? []).map((f) => f.note)].map((n) => n.nonce.slice(0, 2)).join('+')} with ${[i.events, ...(i.further ?? []).map((f) => f.events)].map((e) => e.length).join('+')} event(s) at ${i.chain.blockHash}`);
     const rest = [i.note, ...(i.further ?? []).map((f) => f.note)].reduce((t, n) => t + BigInt(n.value), 0n) - BigInt(i.payment.amount);
     return { tx: 'O', spent: i.note.nonce, change: rest === 0n ? null : { nonce: 'cc'.repeat(32), token: i.note.token, value: rest.toString() } };
+  },
+  /* A merge keeps one coin worth every note it spends; the stand-in names it as `stepKept` names a merge's coin. */
+  mergeNotes: async (i) => {
+    log.push(`build merge spending ${i.notes.map((n) => n.note.nonce.slice(0, 2)).join('+')} with ${i.notes.map((n) => n.events.length).join('+')} event(s) at ${i.chain.blockHash}`);
+    const held = i.notes.reduce((t, n) => t + BigInt(n.note.value), 0n);
+    return { tx: 'M', spent: i.notes.map((n) => n.note.nonce), kept: { nonce: 'e7'.repeat(32), token: i.notes[0]!.note.token, value: held.toString() } };
   },
   payoutPublicly: async (i) => {
     log.push(`build public payout of ${i.payment.amount} to ${i.payment.payee} at ${i.chain.blockHash}`);
@@ -237,29 +274,21 @@ const memoryKeys = (log: string[]) => {
   };
   return { keys, held };
 };
-const serviceFrom = (views: VaultChainView[], log: string[], over: Partial<VaultService> = {}): VaultService => {
+const serviceFrom = (views: VaultChainView[], log: string[], over: Partial<VaultService> & Partial<ChainBehind> = {}): VaultService => {
   let i = 0;
   /* The stand-in chain is what this service would have said; the device reads it there, never by asking the service. */
   chains.set(CURRENT_CHAIN, async () => views[Math.min(i++, views.length - 1)]!);
-  return {
-    keys: async () => ({ committee, why: null, readers: [] }),
-    deploy: async () => { log.push('sent deploy'); return { vault: VAULT, txRef: 'd' }; },
-    handover: async () => { log.push('sent handover'); return { txRef: 'h' }; },
-    chain: async () => views[Math.min(i++, views.length - 1)]!,
-    deposit: async () => { log.push('sent deposit'); return { txRef: 'p', transactionHash: 'ee'.repeat(32) }; },
-    payoutState: async (v) => {
-      log.push('read the block');
-      return { vault: v, account: ACCOUNT, blockHash: 'B1', vaultState: 'V', zswapState: 'Z', parameters: PARAMS, accountState: 'A' };
-    },
-    events: async (_v, tx) => {
-      log.push(`read events of ${tx.slice(0, 2)}`);
+  const { events: eventsBehind, createdBy: createdByBehind, ...forTheService } = over;
+  const chainBehind: ChainBehind = {
+    payoutState: over.payoutState ?? (async (v) => ({ vault: v, account: ACCOUNT, blockHash: 'B1', vaultState: 'V', zswapState: 'Z', parameters: PARAMS, accountState: 'A' })),
+    events: eventsBehind ?? (async (_v, tx) => {
       const landed = paymentEvents.get(tx);
       if (landed) return { events: landed };
       if (tx === 'dd'.repeat(32)) throw new Error('the indexer does not hold this transaction yet');
       return { events: [{ transactionHash: tx, details: { tag: 'zswapOutput' } }] };
-    },
+    }),
     /* The vault's history, searched by an output's commitment: the landed payments' events. */
-    createdBy: async (_v, commitment) => {
+    createdBy: createdByBehind ?? (async (_v, commitment) => {
       for (const [hash, events] of paymentEvents) {
         if (events.some((e) => e.details.tag === 'zswapOutput' && e.details.commitment === commitment && e.details.contract === VAULT)) {
           log.push(`found ${commitment.slice(0, 4)} in ${hash.slice(0, 2)}`);
@@ -267,12 +296,40 @@ const serviceFrom = (views: VaultChainView[], log: string[], over: Partial<Vault
         }
       }
       return null;
+    }),
+  };
+  behind.set(CURRENT_CHAIN, chainBehind);
+  const service: VaultService = {
+    keys: async () => ({ committee, why: null, readers: [] }),
+    deploy: async () => { log.push('sent deploy'); return { vault: VAULT, txRef: 'd' }; },
+    handover: async () => { log.push('sent handover'); return { txRef: 'h' }; },
+    chain: async () => views[Math.min(i++, views.length - 1)]!,
+    deposit: async () => { log.push('sent deposit'); return { txRef: 'p', transactionHash: 'ee'.repeat(32) }; },
+    /* A vault's start, and nothing else, reads its block through the service. */
+    payoutState: async (v) => {
+      log.push('read the block');
+      return chainBehind.payoutState(v);
     },
     payout: async () => { log.push('sent payout'); return { txRef: 'o', transactionHash: 'dd'.repeat(32) }; },
+    merge: async () => { log.push('sent merge'); return { txRef: 'm', transactionHash: 'dc'.repeat(32) }; },
     payoutPublicly: async () => { log.push('sent public payout'); return { txRef: 'u', transactionHash: 'de'.repeat(32) }; },
-    ...over,
+    ...forTheService,
   };
+  behindOf.set(service, chainBehind);
+  return service;
 };
+/**
+ * **A SERVICE THAT WOULD SERVE A LIE ABOUT THE BLOCK**: a block of its own and other parameters, counted every time it
+ * is asked. A deposit or a payment that asks it either builds on the lie or is seen asking. The service has no events
+ * or history to ask any more; that a step reads both here is what each test's own log of device reads shows.
+ */
+const aServiceThatLies = (service: VaultService, asked: string[]): VaultService => ({
+  ...service,
+  payoutState: async () => {
+    asked.push('the block');
+    return { vault: VAULT as never, account: 'ee'.repeat(32) as never, blockHash: 'LIE', vaultState: 'L', zswapState: 'L', parameters: btoa('midnight:ledger-parameters[v8]:a lie'), accountState: 'L' };
+  },
+});
 /** The events a landed payment has, by its hash; a test fills this in when its payment lands. */
 const paymentEvents = new Map<string, Array<{ transactionHash: string; details: { tag: string; commitment?: string; contract?: string; mtIndex?: string } }>>();
 const eventsOfAPayment = async (hash: string, change: { nonce: string; token: string; value: bigint } | null, vault = VAULT) => [
@@ -713,6 +770,23 @@ describe('THE POOL AND A DEPOSIT', () => {
     expect(await records('deposit-journal').get(VAULT)).toBeNull();
   });
 
+  it('A DEPOSIT IS BUILT ON THE PARAMETERS THIS DEVICE READ AT THE WALLET\'S INDEXER; WHAT THE SERVICE WOULD SERVE IS NEVER ASKED', async () => {
+    const log: string[] = [];
+    const asked: string[] = [];
+    const records = stores();
+    const ready = view({ heldByCommittee: true, fundable: true, state: 'AAAA', notes: [], everCreated: [] });
+    await openCompanyVaultPool(poolDoors(serviceFrom([ready], log), records), VAULT, nothingToCheck);
+    const doors = poolDoors(serviceFrom([ready], log), records);
+    await depositIntoCompanyVault({
+      ...doors, service: aServiceThatLies(doors.service, asked), company: LABEL, account: ACCOUNT, inFlight: inFlightInMemory(), builder: builder(log),
+      pay: async () => { log.push('paid'); return { transaction: 'X', leaves: [] }; },
+    }, VAULT, { token: 'ab'.repeat(32), value: 7n }).catch(() => undefined);
+    /* RED WHEN: the deposit's block, or the transaction it is looked for in, is asked of the service. */
+    expect(asked).toEqual([]);
+    /* RED WHEN: the deposit is built with any parameters but those this device read. */
+    expect(log.filter((l) => l.startsWith('build'))).toEqual([`build deposit with ${PARAMS}`]);
+  });
+
   it('A DEPOSIT THE CHAIN HAS NOT SHOWN IS NOT RECORDED IN THE POOL, AND SAYS IT MAY STILL LAND', async () => {
     const log: string[] = [];
     const records = stores();
@@ -724,7 +798,7 @@ describe('THE POOL AND A DEPOSIT', () => {
     }, VAULT, { token: 'ab'.repeat(32), value: 7n }).catch((x) => x);
     expect(e).toBeInstanceOf(DepositNotYetSeen);
     /* RED WHEN: the deposit is built with anything but the parameters the block read served, or the block is not read. */
-    expect(log).toEqual(['read the block', `build deposit with ${PARAMS}`, 'paid', 'sent deposit']);
+    expect(log).toEqual(['read the block here', `build deposit with ${PARAMS}`, 'paid', 'sent deposit']);
     expect((await records('pool').versions(VAULT)).length).toBe(1);
     expect(await records('deposit-journal').get(VAULT)).not.toBeNull();
   });
@@ -766,7 +840,7 @@ describe('THE POOL AND A DEPOSIT', () => {
     }, VAULT, money).catch((x) => x);
     /* RED WHEN: the worker's `output` is not the ledger's commitment (the held one, say), or the history is not asked. */
     expect(e).toBeInstanceOf(DepositCoinAlreadyMade);
-    expect(log, 'RED WHEN: a coin the ledger has recorded reaches the builder or the wallet').toEqual(['read the block']);
+    expect(log, 'RED WHEN: a coin the ledger has recorded reaches the builder or the wallet').toEqual(['read the block here']);
 
     /* Two of the three taken: the deposit moves to the free slot and builds with that coin. */
     const log2: string[] = [];
@@ -783,11 +857,10 @@ describe('THE POOL AND A DEPOSIT', () => {
   it('A DEPOSIT WHOSE CHAIN PARAMETERS CANNOT BE READ CHOOSES NO COIN, BUILDS NOTHING AND ASKS NO WALLET', async () => {
     const ready = view({ heldByCommittee: true, fundable: true, state: 'AAAA', notes: [], everCreated: [] });
     const COULD_NOT_READ = /^the chain's current parameters could not be read for this vault, so no coin was chosen and nothing was built or sent/;
-    const ANSWERED_WRONGLY = /^the service answered with something other than this vault's current parameters \(.+\), so no coin was chosen and nothing was built or sent/;
-    const refusals: Array<[string, Partial<VaultService>]> = [
+    const ANSWERED_WRONGLY = /^the chain your wallet reads answered with something other than this vault's current parameters \(.+\), so no coin was chosen and nothing was built or sent/;
+    const refusals: Array<[string, Partial<ChainBehind>]> = [
       ['the block cannot be read', { payoutState: async () => { throw new Error('the chain could not be read'); } }],
       ['the block names no parameters', { payoutState: async (v) => ({ vault: v, account: ACCOUNT, blockHash: 'B1', vaultState: 'V', zswapState: 'Z', parameters: '', accountState: 'A' }) }],
-      ['the block is another vault\'s', { payoutState: async () => ({ vault: 'ee'.repeat(32) as never, account: ACCOUNT, blockHash: 'B1', vaultState: 'V', zswapState: 'Z', parameters: PARAMS, accountState: 'A' }) }],
       ['the block\'s parameters are not parameters', { payoutState: async (v) => ({ vault: v, account: ACCOUNT, blockHash: 'B1', vaultState: 'V', zswapState: 'Z', parameters: btoa('not parameters at all, just bytes'), accountState: 'A' }) }],
       ['the block\'s parameters are not base64', { payoutState: async (v) => ({ vault: v, account: ACCOUNT, blockHash: 'B1', vaultState: 'V', zswapState: 'Z', parameters: '%%%%', accountState: 'A' }) }],
     ];
@@ -805,7 +878,7 @@ describe('THE POOL AND A DEPOSIT', () => {
       expect(said, why).toMatch(why === 'the block cannot be read' ? COULD_NOT_READ : ANSWERED_WRONGLY);
       /* RED WHEN: any of a deposit's own refusals is worded for a payment. */
       expect(said, why).not.toMatch(/paid out|payment/i);
-      expect(log, why).toEqual([]);
+      expect(log.filter((l) => l !== 'read the block here'), why).toEqual([]);
       expect(await records('deposit-journal').get(VAULT), why).toBeNull();
     }
   });
@@ -830,7 +903,7 @@ describe('THE POOL AND A DEPOSIT', () => {
       expect((e as Error).message, said).toMatch(/current parameters could not be read.*no coin was chosen/);
       /* RED WHEN: the route's own refusal is carried into the deposit's, so a deposit says nothing can be paid out. */
       expect((e as Error).message, said).not.toMatch(/paid out|payment/i);
-      expect(log, said).toEqual([]);
+      expect(log.filter((l) => l !== 'read the block here'), said).toEqual([]);
       expect(await records('deposit-journal').get(VAULT), said).toBeNull();
     }
   });
@@ -852,7 +925,7 @@ describe('THE POOL AND A DEPOSIT', () => {
       /* RED WHEN: only the header's start is checked, so another version reaches the worker after the journal line is filed. */
       expect((e as Error).message, other).toMatch(/different ledger version from the one this page builds deposits with, so no coin was chosen, nothing was built or sent/);
       expect((e as Error).message, other).not.toMatch(/paid out|payment/i);
-      expect(log, other).toEqual([]);
+      expect(log.filter((l) => l !== 'read the block here'), other).toEqual([]);
       expect(await records('deposit-journal').get(VAULT), other).toBeNull();
     }
   });
@@ -931,6 +1004,23 @@ describe('A DEPOSIT THAT DOES NOT FINISH', () => {
       async () => [{ id: 'ada', wrappingPublicKey: wrapping.publicKey }]);
     return { ...t, doors, records, kept, pool, later: (ms: number) => { now += ms; } };
   };
+
+  it('A DEPOSIT ON ITS WAY IS FOUND BY WHAT THIS DEVICE READ AT THE WALLET\'S INDEXER, BY ITS NAME OR BY ITS OUTPUT; THE SERVICE IS NEVER ASKED', async () => {
+    for (const named of [HASH, null]) {
+      const t = await setUp();
+      t.w.depositAnswer = { txRef: 'p', transactionHash: named };
+      const asked: string[] = [];
+      const doors = { ...t.doors, service: aServiceThatLies(t.doors.service, asked) };
+      await depositIntoCompanyVault(doors, VAULT, MONEY).catch(() => undefined);
+      t.lands(t.w.built[0]!);
+      const reads = [t.w.eventReads, t.w.lookups];
+      expect(await settleDepositInFlight(doors, VAULT), String(named)).toMatchObject({ state: 'recorded', note: { createdIn: HASH } });
+      /* RED WHEN: the transaction a deposit landed in is asked of the service, by its name or by its output. */
+      expect(asked, String(named)).toEqual([]);
+      /* RED WHEN: the deposit is recorded without the chain being read here - by name when the send named one, else by its output. */
+      expect([t.w.eventReads - reads[0]! > 0, t.w.lookups - reads[1]! > 0], String(named)).toEqual(named === null ? [false, true] : [true, false]);
+    }
+  });
 
   it('A DEPOSIT THE WALLET FINISHED AND THE SERVICE REFUSED TO SEND SAYS NO MONEY MOVED, AND LEAVES NOTHING IN FLIGHT', async () => {
     const t = await setUp();
@@ -1054,8 +1144,8 @@ describe('A DEPOSIT THAT DOES NOT FINISH', () => {
     const firstCoin = t.w.built[0]!;
     t.lands(firstCoin);
     const otherVersion = btoa('midnight:ledger-parameters[v9]:stand-in');
-    const service = { ...t.service, payoutState: async (v: string) => ({ vault: v, account: ACCOUNT, blockHash: 'B1', vaultState: 'V', zswapState: 'Z', parameters: otherVersion, accountState: 'A' }) } as VaultService;
-    const second = await depositIntoCompanyVault({ ...t.doors, service }, VAULT, MONEY).catch((x) => x);
+    const builder = { ...t.doors.builder, chainAtOneBlock: async () => ({ blockHash: 'B1', vaultState: 'V', zswapState: 'Z', parameters: otherVersion, accountState: 'A' }) };
+    const second = await depositIntoCompanyVault({ ...t.doors, builder }, VAULT, MONEY).catch((x) => x);
     expect((second as Error).message).toMatch(/different ledger version/);
     /* RED WHEN: the ledger version is checked before the earlier deposit is settled, so a landed note waits for a page update. */
     expect((await t.pool.load(VAULT)).notes.find((n) => n.nonce === firstCoin.nonce), 'the landed deposit was not recorded')
@@ -1384,7 +1474,7 @@ describe('WHAT THIS BROWSER LAST SENT, CHECKED ON ITS OWN, AND TWO TABS OR TWO B
     await c.pool.save(VAULT, { notes: [...now.notes, { nonce: coin.nonce as never, token: coin.token as never, value: 9n }] }, now.readAt);
     c.w.notes.push(heldOf(coin));
     const lying = (events: Array<{ transactionHash: string; details: { tag: string; commitment?: string; contract?: string; mtIndex?: string } }>) =>
-      ({ ...c.first.doors, service: { ...c.first.doors.service, createdBy: async () => ({ transactionHash: LANDED_IN, events }) } });
+      ({ ...c.first.doors, builder: { ...c.first.doors.builder, createdBy: async () => ({ transactionHash: LANDED_IN, events }) } });
     for (const events of [
       /* made for another contract */
       [{ transactionHash: LANDED_IN, details: { tag: 'zswapOutput', commitment: outputOf(coin), contract: 'ee'.repeat(32), mtIndex: '1' } }],
@@ -1394,7 +1484,7 @@ describe('WHAT THIS BROWSER LAST SENT, CHECKED ON ITS OWN, AND TWO TABS OR TWO B
       [{ transactionHash: 'e4'.repeat(32), details: { tag: 'zswapOutput', commitment: outputOf(coin), contract: VAULT, mtIndex: '1' } }],
     ]) {
       const found = await checkWhatThisBrowserSent(lying(events), VAULT);
-      /* RED WHEN: the check records whatever the service's lookup answers, without the vault worker judging it. */
+      /* RED WHEN: the check records whatever the history's lookup answers, without the vault worker judging it. */
       expect((await c.pool.load(VAULT)).notes.find((n) => n.nonce === coin.nonce)?.createdIn).toBeUndefined();
       expect([found.named, found.unnamed]).toEqual([0, 1]);
     }
@@ -1470,7 +1560,7 @@ describe('A PRIVATE PAYMENT OUT', () => {
     const held = view({ heldByCommittee: true, fundable: true, notes: chainNotes });
     const kept = new Map<string, Kept<PaymentInFlight>>();
     const inFlight: PaymentsInFlight = inFlightInMemory<PaymentInFlight>(kept);
-    const doors = (over: Partial<VaultService> = {}, views = [held]) => {
+    const doors = (over: Partial<VaultService> & Partial<ChainBehind> = {}, views = [held]) => {
       const service = serviceFrom(views, log, over);
       return {
         ...pacing, ...walletReadsTheVault, now: () => NOW, me, myRecordsKey: 'ff'.repeat(32), records, signers,
@@ -1490,6 +1580,20 @@ describe('A PRIVATE PAYMENT OUT', () => {
     },
   });
 
+  it('A PRIVATE PAYMENT IS BUILT ON THE BLOCK AND THE EVENTS THIS DEVICE READ AT THE WALLET\'S INDEXER, AND CONFIRMED BY THEM; THE SERVICE IS NEVER ASKED', async () => {
+    const t = await setUp();
+    const asked: string[] = [];
+    const d = t.doors(landsWhenSent());
+    const done = await payPrivatelyFromCompanyVault({ ...d, service: aServiceThatLies(d.service, asked) }, order());
+    /* RED WHEN: the block, the note's events or the payment's own events are asked of the service. */
+    expect(asked).toEqual([]);
+    /* RED WHEN: the payment is built at any block but the one this device read, or on any events but those it read. */
+    expect(t.log).toContain('build payout spending 01 with 1 event(s) at B1');
+    expect(t.log.filter((l) => l.endsWith(' here'))).toEqual(['read events of 0e here', 'read the block here', 'read events of dd here']);
+    /* RED WHEN: the change is recorded under the service's history rather than this payment's own events, read here. */
+    expect(done.transactionHash).toBe(PAID_IN);
+  });
+
   it('WRITES THE PAYMENT DOWN BEFORE IT IS BUILT OR SENT, AND ADVANCES THE POOL ONLY ON THIS PAYMENT\'S OWN EVENTS, UNDER ITS OWN HASH', async () => {
     /* RED WHEN: the journal line moves below the build or the send (the journal read inside the builder stand-in is
      * then empty); the pool is advanced before this payment's own events are read (the log then lacks that read);
@@ -1505,7 +1609,7 @@ describe('A PRIVATE PAYMENT OUT', () => {
     /* RED WHEN: the payment is built with anything but the vault's secret as the company's filed record holds it. */
     expect(builtWith).toBe(openNonceSecrets((await b.records('nonce-secret').get(VAULT))!, VAULT, recordsKeypairFrom(me.companyKey)).secrets[0]);
     expect(t.log).toEqual([
-      'choose', 'read events of 0e', 'read the block', 'build payout spending 01 with 1 event(s) at B1', 'read events of dd',
+      'choose', 'read events of 0e here', 'read the block here', 'build payout spending 01 with 1 event(s) at B1', 'read events of dd here',
     ]);
     expect(done).toEqual({
       txRef: 'o', transactionHash: PAID_IN, spent: NOTE.nonce, change: { ...CHANGE, value: '300' }, seenAs: 'its-own-transaction',
@@ -1532,7 +1636,7 @@ describe('A PRIVATE PAYMENT OUT', () => {
     b.service.payout = async (v, tx) => { inFlightWhileSending = await b.inFlight.get(v); return send(v, tx); };
     const done = await payPrivatelyFromCompanyVault(b, order());
     expect(t.log).toEqual([
-      'choose', 'read events of 0e', 'read events of 0f', 'read the block', 'build payout spending 02+03 with 1+1 event(s) at B1', 'read events of dd',
+      'choose', 'read events of 0e here', 'read events of 0f here', 'read the block here', 'build payout spending 02+03 with 1+1 event(s) at B1', 'read events of dd here',
     ]);
     expect(done).toMatchObject({ spent: A.nonce, change: { ...change, value: '20' } });
     const [line] = await t.journal();
@@ -1620,7 +1724,7 @@ describe('A PRIVATE PAYMENT OUT', () => {
     }), order()).catch((x) => x);
     expect(e1).toBeInstanceOf(PaymentNotAsBuilt);
     expect(e1.message).toMatch(/did not create this note/);
-    expect(noChange.log.filter((l) => l === 'read events of dd')).toHaveLength(1);
+    expect(noChange.log.filter((l) => l === 'read events of dd here')).toHaveLength(1);
     expect(await noChange.notesNow()).toEqual([NOTE]);
     const nobody = await setUp();
     const e2 = await payPrivatelyFromCompanyVault(nobody.doors({
@@ -1648,6 +1752,26 @@ describe('A PRIVATE PAYMENT OUT', () => {
     /* The change must be this vault's: the same output for another contract is not it. */
     await expect(confirmPayment({ vault: 'ee'.repeat(32), transactionHash: PAID_IN, change, events: own }))
       .resolves.toMatchObject({ state: 'not-as-built' });
+  });
+
+  it('A MERGE IS CONFIRMED ONLY BY ITS OWN EVENTS KEEPING ONE COIN FOR THIS VAULT AND PAYING NOBODY', async () => {
+    const MERGED_IN = 'dc'.repeat(32);
+    const kept = { nonce: 'e7'.repeat(32), token: TOKEN, value: 220n };
+    const keptOut = { transactionHash: MERGED_IN, details: { tag: 'zswapOutput', commitment: await vaultNoteCommitment(kept as never, VAULT as never), contract: VAULT, mtIndex: '13' } };
+    const keptWire = { ...kept, value: '220' };
+    /* RED WHEN: a merge's own events, which pay nobody, are refused as a payment that paid nobody. */
+    await expect(confirmPayment({ vault: VAULT, transactionHash: MERGED_IN, change: keptWire, events: [keptOut], merge: true }))
+      .resolves.toEqual({ state: 'landed', createdIn: MERGED_IN });
+    /* RED WHEN: a transaction under a merge's name that pays a person is accepted as the merge. */
+    const toAPerson = { transactionHash: MERGED_IN, details: { tag: 'zswapOutput', commitment: 'f0'.repeat(32), mtIndex: '11' } };
+    await expect(confirmPayment({ vault: VAULT, transactionHash: MERGED_IN, change: keptWire, events: [toAPerson, keptOut], merge: true }))
+      .resolves.toEqual({ state: 'not-as-built', why: expect.stringMatching(/pays somebody/) });
+    /* RED WHEN: a merge with no coin named is taken as landed on any events at all. */
+    await expect(confirmPayment({ vault: VAULT, transactionHash: MERGED_IN, change: null, events: [keptOut], merge: true }))
+      .resolves.toEqual({ state: 'not-as-built', why: expect.stringMatching(/keeps one coin/) });
+    /* And the same events are not a payment: one that pays nobody is refused as one. */
+    await expect(confirmPayment({ vault: VAULT, transactionHash: MERGED_IN, change: keptWire, events: [keptOut] }))
+      .resolves.toEqual({ state: 'not-as-built', why: expect.stringMatching(/paid nobody/) });
   });
 
   it('A PERSON THE ACCOUNT ALREADY RECORDS PAID, OR A WINDOW THAT IS NOT OPEN, IS REFUSED BEFORE THE POOL IS OPENED', async () => {
@@ -1894,6 +2018,95 @@ describe('A PRIVATE PAYMENT OUT', () => {
     expect(stays.kept.size).toBe(0);
   });
 
+  it('A PAYMENT FOUND ONLY BY ITS NOTE LEAVING, WHEN ANOTHER HOLDER\'S MERGE SPENT THAT NOTE: THE MERGE IS RECORDED, NOT THE PAYMENT, WHETHER IT IS SEEN WHILE WATCHING OR ON THE NEXT LOOK', async () => {
+    /*
+     * The payment spends the 500 exactly, so it keeps no coin, and its send names no transaction. Another holder of
+     * the vault's secret merges the 500 and the 300 into one coin of 800 - written down first, as every step is - and
+     * the merge lands first. The 500 leaves the chain, and not by this payment.
+     */
+    const B = { nonce: '04'.repeat(32), token: TOKEN, value: 300n, createdIn: '0e'.repeat(32) };
+    const MERGED_IN = 'e8'.repeat(32);
+    const merged = { nonce: 'e7'.repeat(32), token: TOKEN, value: 800n };
+    const both = view({ heldByCommittee: true, fundable: true, notes: [`h${NOTE.nonce.slice(1)}`, `h${B.nonce.slice(1)}`] });
+    const afterMerge = view({ heldByCommittee: true, fundable: true, notes: [`h${merged.nonce.slice(1)}`] });
+    const theirMergeLands = async (records: ReturnType<Awaited<ReturnType<typeof setUp>>['doors']>['records']) => {
+      await new PaymentJournalInStore(records('payment-journal'), VAULT, { id: 'ada', wrappingSecret: wrapping.secret }, signers)
+        .record(VAULT, { spent: { nonce: NOTE.nonce as never, token: TOKEN as never, value: 500n }, further: [{ nonce: B.nonce as never, token: TOKEN as never, value: 300n }], step: 'merge', amount: 0n, attemptedAt: 'm' });
+      paymentEvents.set(MERGED_IN, await eventsOfAPayment(MERGED_IN, merged));
+    };
+
+    /* Seen while this device watches for the payment. */
+    const t = await setUp([NOTE, B], both.notes as string[]);
+    const d = t.doors({ payout: async () => { await theirMergeLands(d.records); return { txRef: 'o', transactionHash: null }; } }, [both, both, afterMerge]);
+    d.builder = withRealOutputs(d.builder);
+    const e = await payPrivatelyFromCompanyVault(d, order({}, { amount: '500' })).catch((x) => x);
+    /* RED WHEN: the note leaving is taken as this payment landing - it returns as paid, with the merge's notes taken as its own. */
+    expect(e).toBeInstanceOf(StepOvertaken);
+    /* RED WHEN: the overtaken payment is not something the leg plans again from - it would stop the leg instead of paying from what is left. */
+    expect(e).toBeInstanceOf(NotesMovedUnderAStep);
+    /* RED WHEN: the merge is recorded as this payment: the record then holds the 300, which the chain does not, and lacks the 800. */
+    expect(await t.notesNow()).toEqual([{ ...merged, createdIn: MERGED_IN }]);
+    expect(t.kept.size, 'RED WHEN: the payment that can never land is still kept on its way').toBe(0);
+
+    /* The page stopped watching first, and the next look from this browser settles it. */
+    const u = await setUp([NOTE, B], both.notes as string[]);
+    const firstU = u.doors({ payout: async () => ({ txRef: 'o', transactionHash: null }) }, [both]);
+    firstU.builder = withRealOutputs(firstU.builder);
+    await expect(payPrivatelyFromCompanyVault(firstU, order({}, { amount: '500' }))).rejects.toBeInstanceOf(PaymentNotYetSeen);
+    await theirMergeLands(firstU.records);
+    /* RED WHEN: settling a payment that kept no coin records it as landed without asking whether another step spent its note. */
+    expect(await settlePaymentInFlight({ ...u.doors({}, [afterMerge]), builder: withRealOutputs(u.doors().builder) }, VAULT))
+      .toEqual({ state: 'overtaken' });
+    expect(await u.notesNow()).toEqual([{ ...merged, createdIn: MERGED_IN }]);
+    expect(u.kept.size).toBe(0);
+  });
+
+  it('A PAYMENT THAT KEPT NO COIN AND SPENDS TWO NOTES IS NOT RECORDED WHILE THE CHAIN STILL HOLDS ITS SECOND, WATCHING OR ON THE NEXT LOOK', async () => {
+    /*
+     * 800 paid exactly from the 500 and the 300, the send naming no transaction. The 500 leaves the chain - spent by a
+     * step this device's journal does not name - and the 300 is still there: a payment spends all its notes in one
+     * transaction, so this one has not landed.
+     */
+    const B = { nonce: '04'.repeat(32), token: TOKEN, value: 300n, createdIn: '0e'.repeat(32) };
+    const both = view({ heldByCommittee: true, fundable: true, notes: [`h${NOTE.nonce.slice(1)}`, `h${B.nonce.slice(1)}`] });
+    const onlyB = view({ heldByCommittee: true, fundable: true, notes: [`h${B.nonce.slice(1)}`] });
+    const t = await setUp([NOTE, B], both.notes as string[]);
+    const d = t.doors({ payout: async () => ({ txRef: 'o', transactionHash: null }) }, [both, both, onlyB]);
+    const e = await payPrivatelyFromCompanyVault(d, order({}, { amount: '800' })).catch((x) => x);
+    /* RED WHEN: the payment is taken as landed once its first note leaves, and the 300 the chain still holds leaves the record. */
+    expect(e).toBeInstanceOf(PaymentNotYetSeen);
+    expect((await t.notesNow()).map((n) => n.nonce)).toEqual([NOTE.nonce, B.nonce]);
+    expect(t.kept.size).toBe(1);
+    /* RED WHEN: settling on the next look records it on its first note alone. */
+    await expect(settlePaymentInFlight(t.doors({}, [onlyB]), VAULT)).rejects.toBeInstanceOf(PaymentStillInFlight);
+    expect((await t.notesNow()).map((n) => n.nonce)).toEqual([NOTE.nonce, B.nonce]);
+    /* Both gone: it landed, and both leave the record. */
+    expect(await settlePaymentInFlight(t.doors({}, [view({ heldByCommittee: true, fundable: true, notes: [] })]), VAULT))
+      .toEqual({ state: 'recorded', createdIn: null });
+    expect(await t.notesNow()).toEqual([]);
+  });
+
+  it('A PAYMENT THAT KEPT NO COIN IS NOT LET GO FOR A LANDED LINE THAT SPENT ITS NOTE ONLY BESIDE ANOTHER: THAT COIN NAMES THE OTHER NOTE, NOT THIS ONE', async () => {
+    /*
+     * A merge of the 300 and the 500, the 300 first, and a coin of 800 made from the 300 on the chain. With no coin of
+     * its own to weigh that against, this payment cannot say the coin is that merge's rather than another step's that
+     * also began with the 300; the 500 may have left by this payment. It is recorded as landed, as before.
+     */
+    const B = { nonce: '04'.repeat(32), token: TOKEN, value: 300n, createdIn: '0e'.repeat(32) };
+    const both = view({ heldByCommittee: true, fundable: true, notes: [`h${NOTE.nonce.slice(1)}`, `h${B.nonce.slice(1)}`] });
+    const t = await setUp([NOTE, B], both.notes as string[]);
+    const first = t.doors({ payout: async () => ({ txRef: 'o', transactionHash: null }) }, [both]);
+    first.builder = withRealOutputs(first.builder);
+    await expect(payPrivatelyFromCompanyVault(first, order({}, { amount: '500' }))).rejects.toBeInstanceOf(PaymentNotYetSeen);
+    await new PaymentJournalInStore(first.records('payment-journal'), VAULT, { id: 'ada', wrappingSecret: wrapping.secret }, signers)
+      .record(VAULT, { spent: { nonce: B.nonce as never, token: TOKEN as never, value: 300n }, further: [{ nonce: NOTE.nonce as never, token: TOKEN as never, value: 500n }], step: 'merge', amount: 0n, attemptedAt: 'm' });
+    paymentEvents.set('e8'.repeat(32), await eventsOfAPayment('e8'.repeat(32), { nonce: 'e7'.repeat(32), token: TOKEN, value: 800n }));
+    const afterMerge = view({ heldByCommittee: true, fundable: true, notes: [`h${'e7'.repeat(32).slice(1)}`] });
+    /* RED WHEN: a line whose coin names another note is believed over a payment with no coin of its own. */
+    expect(await settlePaymentInFlight({ ...t.doors({}, [afterMerge]), builder: withRealOutputs(t.doors().builder) }, VAULT))
+      .toEqual({ state: 'recorded', createdIn: null });
+  });
+
   it('A MERGE THAT LANDS UNDER A PAYMENT ON ITS WAY: THE PAYMENT FAILS CLEANLY AT ONCE, THE RECORD FOLLOWS THE CHAIN, AND THE PERSON IS PAID FROM WHAT IS LEFT', async () => {
     /*
      * The payment spends the 500 and its send drops. Before it lands, another holder of the vault's secret merges the
@@ -2025,11 +2238,12 @@ describe('A PRIVATE PAYMENT OUT', () => {
     await new PaymentJournalInStore(first.records('payment-journal'), VAULT, { id: 'ada', wrappingSecret: wrapping.secret }, signers)
       .record(VAULT, { spent: { nonce: NOTE.nonce as never, token: TOKEN as never, value: 500n }, further: [{ nonce: B.nonce as never, token: TOKEN as never, value: 300n }], step: 'merge', amount: 0n, attemptedAt: 'm' });
     /*
-     * The 500 has left the chain - by this payment or by something else - and the merged coin is not there, though a
-     * transfer naming it can be read. A coin the chain does not hold is no proof that the merge spent the note.
+     * Both notes the merge names have left the chain - by this payment or by something else - and the merged coin is
+     * not there, though a transfer naming it can be read. A coin the chain does not hold is no proof that the merge
+     * spent the note: with every note of the line gone, only the coin's absence stops it being believed.
      */
     paymentEvents.set('e8'.repeat(32), await eventsOfAPayment('e8'.repeat(32), { nonce: 'e7'.repeat(32), token: TOKEN, value: 800n }));
-    const gone = view({ heldByCommittee: true, fundable: true, notes: [`h${B.nonce.slice(1)}`] });
+    const gone = view({ heldByCommittee: true, fundable: true, notes: [] });
     const s = await settlePaymentInFlight({ ...t.doors({}, [gone]), builder: withRealOutputs(t.doors().builder) }, VAULT).catch((e) => e);
     expect(s).toBeInstanceOf(PaymentStillInFlight);
     expect(t.kept.size).toBe(1);
@@ -2056,7 +2270,7 @@ describe('A PRIVATE PAYMENT OUT', () => {
     const t = await setUp();
     const lost = t.doors({ payout: async () => { throw new Error('the connection dropped'); } });
     await payPrivatelyFromCompanyVault(lost, order()).catch(() => undefined);
-    const later = (ms: number, views: VaultChainView[], over: Partial<VaultService> = {}) =>
+    const later = (ms: number, views: VaultChainView[], over: Partial<VaultService> & Partial<ChainBehind> = {}) =>
       ({ ...t.doors(over, views), builder: withRealOutputs(t.doors().builder), now: () => new Date(NOW.getTime() + ms) });
     const held = view({ heldByCommittee: true, fundable: true, notes: [`h${NOTE.nonce.slice(1)}`] });
     const gone = view({ heldByCommittee: true, fundable: true, notes: [] });
@@ -2067,7 +2281,7 @@ describe('A PRIVATE PAYMENT OUT', () => {
 
     const u = await setUp();
     await payPrivatelyFromCompanyVault(u.doors({ payout: async () => { throw new Error('the connection dropped'); } }), order()).catch(() => undefined);
-    const at = (ms: number, over: Partial<VaultService> = {}) =>
+    const at = (ms: number, over: Partial<VaultService> & Partial<ChainBehind> = {}) =>
       ({ ...u.doors(over, [gone]), builder: withRealOutputs(u.doors().builder), now: () => new Date(NOW.getTime() + ms) });
     /* The note is gone and the change is nowhere: kept until its time to live has passed and the history was read in full. */
     await expect(settlePaymentInFlight(at(DEPOSIT_TIME_TO_LIVE_MS + 1, { createdBy: async () => { throw new Error('the indexer is down'); } }), VAULT),
@@ -2156,6 +2370,141 @@ describe('A PRIVATE PAYMENT OUT', () => {
     await payPrivatelyFromCompanyVault(b, order());
     expect((await t.notesNow()).map((n) => n.nonce).sort()).toEqual(['02'.repeat(32), 'cc'.repeat(32)]);
   });
+
+  /* ---------------------------------------------------------------- a merge of the vault's own notes */
+  const A = { nonce: '02'.repeat(32), token: TOKEN, value: 120n, createdIn: '0e'.repeat(32) };
+  const B = { nonce: '03'.repeat(32), token: TOKEN, value: 100n, createdIn: '0f'.repeat(32) };
+  const MERGED = { nonce: 'e7'.repeat(32), token: TOKEN, value: 220n };
+  const MERGED_IN = 'dc'.repeat(32);
+  const wireNote = (n: { nonce: string; token: string; value: bigint }) => ({ nonce: n.nonce, token: n.token, value: n.value.toString() });
+  /** A merge's own events: its notes in, and one coin out, kept by the vault; nobody paid. */
+  const eventsOfAMerge = async (hash: string, kept = MERGED, payingSomebody = false) => [
+    { transactionHash: hash, details: { tag: 'zswapInput' } },
+    ...(payingSomebody ? [{ transactionHash: hash, details: { tag: 'zswapOutput', commitment: 'f0'.repeat(32), mtIndex: '11' } }] : []),
+    { transactionHash: hash, details: { tag: 'zswapOutput', commitment: await vaultNoteCommitment(kept as never, VAULT as never), contract: VAULT, mtIndex: '13' } },
+  ];
+  const mergeLandsWhenSent = (payingSomebody = false): Partial<VaultService> => ({
+    merge: async () => { paymentEvents.set(MERGED_IN, await eventsOfAMerge(MERGED_IN, MERGED, payingSomebody)); return { txRef: 'm', transactionHash: MERGED_IN }; },
+  });
+  const twoNotes = () => setUp([B, A], [`h${A.nonce.slice(1)}`, `h${B.nonce.slice(1)}`]);
+
+  it('A MERGE IS WRITTEN DOWN AS A MERGE BEFORE IT IS BUILT OR SENT, SPENDS EXACTLY THE NOTES NAMED, AND THE POOL KEEPS ONE NOTE WORTH THEM UNDER ITS OWN TRANSACTION', async () => {
+    const t = await twoNotes();
+    const b = t.doors(mergeLandsWhenSent());
+    let journalledBeforeBuild = -1;
+    let keptWhileSending: PaymentInFlight | null = null;
+    const build = b.builder.mergeNotes;
+    b.builder.mergeNotes = async (i) => { journalledBeforeBuild = (await t.journal()).length; return build(i); };
+    const send = b.service.merge;
+    b.service.merge = async (v, tx) => { keptWhileSending = await b.inFlight.get(v); return send(v, tx); };
+    const done = await mergeNotesInCompanyVault(b, { vault: VAULT as never, notes: [wireNote(A), wireNote(B)] });
+    /* RED WHEN: the journal line moves below the build, or the merge is not kept on this device before it is sent. */
+    expect(journalledBeforeBuild).toBe(1);
+    expect(keptWhileSending).toMatchObject({ spent: { nonce: A.nonce }, further: [{ nonce: B.nonce }], amount: '0', change: { ...wireNote(MERGED) }, merge: true });
+    /* RED WHEN: a note is chosen again rather than the ones named, any fact is read anywhere but here, or the pool is
+     * advanced before the merge's own events are read. */
+    expect(t.log).toEqual([
+      'read events of 0e here', 'read events of 0f here', 'read the block here', 'build merge spending 02+03 with 1+1 event(s) at B1', 'read events of dc here',
+    ]);
+    expect(done).toEqual({ txRef: 'm', transactionHash: MERGED_IN, spent: [A.nonce, B.nonce], kept: wireNote(MERGED), seenAs: 'its-own-transaction' });
+    /* RED WHEN: the merged note is recorded under anything but the merge's own transaction - the next payment could not read its place. */
+    expect(await t.notesNow()).toEqual([{ ...MERGED, createdIn: MERGED_IN }]);
+    const lines = await t.journal();
+    expect(lines).toEqual([expect.objectContaining({
+      spent: { nonce: A.nonce, token: TOKEN, value: 120n }, further: [{ nonce: B.nonce, token: TOKEN, value: 100n }], step: 'merge', amount: 0n,
+    })]);
+    /* RED WHEN: a merge that landed is left kept on this device, so every later step from this browser waits on it. */
+    expect(t.kept.size).toBe(0);
+  });
+
+  it('A MERGE REFUSES NOTES THE RECORD DOES NOT HOLD AS NAMED, FEWER THAN TWO OR MORE THAN FOUR, ONE NAMED TWICE, OR TWO TOKENS: NOTHING IS WRITTEN, BUILT OR SENT', async () => {
+    const OTHER = { nonce: '04'.repeat(32), token: 'cd'.repeat(32), value: 50n, createdIn: '0d'.repeat(32) };
+    const t = await setUp([B, A, OTHER], [`h${A.nonce.slice(1)}`, `h${B.nonce.slice(1)}`, `h${OTHER.nonce.slice(1)}`]);
+    const b = t.doors(mergeLandsWhenSent());
+    for (const [why, notes, refusal] of [
+      ['a note the record does not hold', [wireNote(A), wireNote({ ...B, nonce: '09'.repeat(32) })], /does not hold as named/],
+      ['a note named at another value', [wireNote(A), wireNote({ ...B, value: 99n })], /does not hold as named/],
+      ['one note', [wireNote(A)], /two to 4 notes/],
+      ['five notes', [A, B, A, B, A].map(wireNote), /two to 4 notes/],
+      ['one note twice', [wireNote(A), wireNote(A)], /names one note twice/],
+      ['two tokens', [wireNote(A), wireNote(OTHER)], /notes of one token/],
+    ] as const) {
+      /* RED WHEN: any of these reaches the journal, the builder or the service. */
+      await expect(mergeNotesInCompanyVault(b, { vault: VAULT as never, notes }), why).rejects.toThrow(refusal);
+    }
+    expect(t.log.filter((l) => l.startsWith('build') || l.startsWith('sent'))).toEqual([]);
+    expect(await t.journal()).toEqual([]);
+  });
+
+  it('A MERGE WHOSE TRANSACTION PAYS SOMEBODY IS NOT A MERGE: NOTHING IS RECORDED FROM IT', async () => {
+    const t = await twoNotes();
+    const e = await mergeNotesInCompanyVault(t.doors(mergeLandsWhenSent(true)), { vault: VAULT as never, notes: [wireNote(A), wireNote(B)] }).catch((x) => x);
+    /* RED WHEN: a transaction under the merge's name that pays a person is judged as the merge - money out read as money kept. */
+    expect(e).toBeInstanceOf(MergeNotAsBuilt);
+    expect((e as Error).message).toMatch(/pays somebody, and a merge pays nobody/);
+    expect(await t.notesNow()).toEqual([B, A]);
+  });
+
+  it('A MERGE SENT WITHOUT A NAME, ON A PAGE THAT STOPPED WATCHING, IS RECORDED BY THE NEXT STEP ONCE ITS COIN IS ON THE CHAIN', async () => {
+    const t = await twoNotes();
+    const lost = t.doors({ merge: async () => { throw new Error('the connection dropped'); } });
+    const e = await mergeNotesInCompanyVault(lost, { vault: VAULT as never, notes: [wireNote(A), wireNote(B)] }).catch((x) => x);
+    /* RED WHEN: a merge that may have been sent is reported as one that was not, or worded as a person's payment. */
+    expect(e).toBeInstanceOf(MergeNotYetSeen);
+    expect((e as Error).message).not.toMatch(/pay this person/);
+    expect(t.kept.size).toBe(1);
+    /* It landed after all: its coin is on the chain, under its own transaction. */
+    paymentEvents.set(MERGED_IN, await eventsOfAMerge(MERGED_IN));
+    const real = withRealOutputs(t.doors().builder);
+    const { held } = await real.commitments({ vault: VAULT, coin: wireNote(MERGED) });
+    const shows = view({ heldByCommittee: true, fundable: true, notes: [held] });
+    const d = { ...t.doors({}, [shows]), builder: { ...t.doors().builder, commitments: real.commitments } };
+    /* RED WHEN: a merge kept on this device is not settled as one - its two notes stay in the record after the chain spent them. */
+    expect(await settlePaymentInFlight(d, VAULT as never)).toEqual({ state: 'recorded', createdIn: MERGED_IN });
+    expect(await t.notesNow()).toEqual([{ ...MERGED, createdIn: MERGED_IN }]);
+  });
+
+  it('A MERGE BUILT OVER OTHER NOTES THAN THE ONES NAMED IS NOT SENT', async () => {
+    const t = await twoNotes();
+    const b = t.doors(mergeLandsWhenSent());
+    const build = b.builder.mergeNotes;
+    for (const spent of [[B.nonce, A.nonce], [A.nonce, '09'.repeat(32)], [A.nonce]]) {
+      b.builder.mergeNotes = async (i) => ({ ...(await build(i)), spent });
+      /* RED WHEN: the page sends whatever the worker built, without checking it spends exactly the notes named, in order. */
+      await expect(mergeNotesInCompanyVault(b, { vault: VAULT as never, notes: [wireNote(A), wireNote(B)] })).rejects.toThrow(/spends other notes than the ones named/);
+    }
+    expect(t.log.filter((l) => l.startsWith('sent'))).toEqual([]);
+    expect(t.kept.size).toBe(0);
+  });
+
+  it('A MERGE THAT FAILS AFTER IT WAS SENT SAYS IT MAY HAVE LANDED, IN A MERGE\'S WORDS', async () => {
+    const t = await twoNotes();
+    const b = t.doors({ merge: async () => ({ txRef: 'm', transactionHash: null }) });
+    const commitments = b.builder.commitments;
+    let sent = false;
+    b.service.merge = async () => { sent = true; return { txRef: 'm', transactionHash: null }; };
+    b.builder.commitments = async (i) => { if (sent) throw new Error('the worker stopped'); return commitments(i); };
+    const e = await mergeNotesInCompanyVault(b, { vault: VAULT as never, notes: [wireNote(A), wireNote(B)] }).catch((x) => x);
+    /* RED WHEN: a failure after the send is reported with a payment's words, or as anything but a merge that may have landed. */
+    expect(e).toBeInstanceOf(MergeNotYetSeen);
+    expect((e as Error).message).toMatch(/the worker stopped/);
+    expect((e as Error).message).not.toMatch(/pay this person/);
+  });
+
+  it('A PAYMENT GIVEN THE PLAN\'S NOTES SPENDS EXACTLY THOSE AND CHOOSES NONE, AND REFUSES ONE THE RECORD DOES NOT HOLD AS NAMED', async () => {
+    const t = await twoNotes();
+    const change = { nonce: 'cc'.repeat(32), token: TOKEN, value: 20n };
+    /* B alone does not cover 200; the plan named A and B. RED WHEN: the payment chooses its notes again. */
+    const done = await payPrivatelyFromCompanyVault(t.doors(landsWhenSent(change)), { ...order(), notes: [wireNote(A), wireNote(B)] });
+    expect(done.spent).toBe(A.nonce);
+    expect(t.log.includes('choose')).toBe(false);
+    expect(t.log).toContain('build payout spending 02+03 with 1+1 event(s) at B1');
+    const u = await twoNotes();
+    await expect(payPrivatelyFromCompanyVault(u.doors(landsWhenSent(change)), { ...order(), notes: [wireNote({ ...A, value: 121n }), wireNote(B)] }))
+      .rejects.toThrow(/does not hold as named/);
+    expect(u.log.filter((l) => l.startsWith('build') || l === 'choose')).toEqual([]);
+    expect(await u.journal()).toEqual([]);
+  });
 });
 
 describe('A PUBLIC PAYMENT OUT', () => {
@@ -2174,7 +2523,7 @@ describe('A PUBLIC PAYMENT OUT', () => {
       } as PrivatePaymentOrderOnTheWire,
     };
   };
-  const doorsFor = (log: string[], answers: Array<boolean | null>, over: Partial<VaultService> = {}) => {
+  const doorsFor = (log: string[], answers: Array<boolean | null>, over: Partial<VaultService> & Partial<ChainBehind> = {}) => {
     let i = 0;
     const service = serviceFrom([view({ heldByCommittee: true, fundable: true })], log, over);
     return {
@@ -2196,13 +2545,23 @@ describe('A PUBLIC PAYMENT OUT', () => {
     expect(log.filter((l) => l.startsWith('build') || l.startsWith('sent'))).toEqual([]);
   });
 
+  it('A PUBLIC PAYMENT IS BUILT ON THE BLOCK THIS DEVICE READ AT THE WALLET\'S INDEXER; WHAT THE SERVICE WOULD SERVE IS NEVER ASKED', async () => {
+    const log: string[] = [];
+    const asked: string[] = [];
+    const d = doorsFor(log, [false, true]);
+    await payPubliclyFromCompanyVault({ ...d, service: aServiceThatLies(d.service, asked) }, order());
+    /* RED WHEN: the block a public payment is built on is asked of the service. */
+    expect(asked).toEqual([]);
+    expect(log.filter((l) => l.startsWith('build'))).toEqual(['build public payout of 250 to mn_addr_x at B1']);
+  });
+
   it('BUILDS THE VAULT\'S PUBLIC PAYOUT, SENDS IT THROUGH THE PUBLIC DOOR, AND IS DONE WHEN THE ACCOUNT RECORDS IT', async () => {
     const log: string[] = [];
     const done = await payPubliclyFromCompanyVault(doorsFor(log, [false, true]), order());
     /* RED WHEN: a public payment chooses a note, reads a note's events, goes out through the private door, or
      * reports done before the company's account records it. */
     expect(log).toEqual([
-      'read the block', 'build public payout of 250 to mn_addr_x at B1', 'sent public payout',
+      'read the block here', 'build public payout of 250 to mn_addr_x at B1', 'sent public payout',
       'asked the account', 'asked the account',
     ]);
     expect(done).toEqual({ txRef: 'u' });

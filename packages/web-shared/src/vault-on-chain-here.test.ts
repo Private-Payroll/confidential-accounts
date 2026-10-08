@@ -14,7 +14,7 @@ import * as vaultModule from '../../../contracts/managed-vault/contract/index.js
 import { identityFromSecret } from 'midnight-identity';
 import { committeeKeyFor } from 'midnight-identity/profile/committee-key';
 import type { CompanyLabel } from 'midnight-identity/profile/company-label';
-import { readVaultOnChain, vaultChainSourceAt, type VaultChainSource } from './vault-on-chain-here.js';
+import { atOneBlockOver, readVaultOnChain, vaultChainSourceAt, type BlockReader, type VaultChainSource } from './vault-on-chain-here.js';
 import { answerVaultAsk, vaultAsDeployed } from './vault-worker-entry.js';
 import { vaultBuilderOver, type VaultAnswer } from './vault-worker-client.js';
 
@@ -76,7 +76,27 @@ const anIndexer = (served: { serialize(): Uint8Array } | null, asked: string[] =
       { transactionHash: 'e1'.repeat(32), details: { tag: 'zswapOutput', commitment: 'f1'.repeat(32), contract: 'cd'.repeat(32), mtIndex: 4n } },
     ],
   },
+  /* One block, and as of it the commitment tree, the vault's state, the parameters and the account's state; none while there is no vault. */
+  atOneBlock: async (vault, account) => {
+    asked.push(`block for ${vault.slice(0, 4)} and ${account.slice(0, 4)}`);
+    if (served === null || served === undefined) return null;
+    return { blockHash: 'b1'.repeat(32), zswap: bytesOf('zswap'), vault: served, parameters: bytesOf('parameters'), account: bytesOf('account') };
+  },
 });
+const bytesOf = (t: string) => ({ serialize: () => new TextEncoder().encode(t) });
+/** The page's own client over the worker's own handler, with the indexer the worker reads at stood in by `source`. */
+const aClient = (source: () => VaultChainSource, at: unknown[]) => {
+  const listeners: Array<(e: { data: unknown }) => void> = [];
+  const deps = async () => ({ ...d, chainSourceAt: (i: unknown) => { at.push(i); return source(); } });
+  return vaultBuilderOver({
+    addEventListener: (_t, l) => { listeners.push(l); },
+    postMessage: (message) => {
+      void answerVaultAsk(deps as never, message as never).then(
+        (a: VaultAnswer) => listeners.forEach((l) => l({ data: a })),
+        (e: Error) => listeners.forEach((l) => l({ data: { id: (message as { id: number }).id, ok: false, error: e.message } })));
+    },
+  }, 'undeployed');
+};
 
 describe('THE VAULT, READ ON THIS DEVICE', () => {
   it('READS THE STATE, THE NOTES, EVERY COIN EVER MADE FOR IT, WHO HOLDS IT AND WHETHER IT IS STARTED, OFF THE STATE THE INDEXER SERVES', async () => {
@@ -150,6 +170,65 @@ describe('THE VAULT, READ ON THIS DEVICE', () => {
     expect(at).toEqual([INDEXER]);
     expect(asked).toEqual([`state of ${VAULT.slice(0, 4)}`, `history of ${VAULT.slice(0, 4)}`]);
     expect(read).toMatchObject({ onChain: true, notes: [NOTE], started: true });
+  });
+
+  it('WHAT A STEP OUT OF THE VAULT IS BUILT ON IS READ BY THE WORKER AT THE WALLET\'S INDEXER, BOTH CONTRACTS AT ONE BLOCK', async () => {
+    const at: unknown[] = [];
+    const asked: string[] = [];
+    const state = aVault({ notes: [NOTE], started: true });
+    const chain = await aClient(() => anIndexer(state, asked), at).chainAtOneBlock({ vault: VAULT, account: ACCOUNT, indexer: INDEXER });
+    /* RED WHEN: the worker reads the block anywhere but at the indexer the page was handed by the wallet. */
+    expect(at).toEqual([INDEXER]);
+    /* RED WHEN: the account read is any but the one the page named, or the vault any but the one asked. */
+    expect(asked).toEqual([`block for ${VAULT.slice(0, 4)} and ${ACCOUNT.slice(0, 4)}`]);
+    const b64 = (u: Uint8Array) => Buffer.from(u).toString('base64');
+    /* RED WHEN: any of the four is taken from somewhere but the one block read, or two of them are swapped. */
+    expect(chain).toEqual({
+      blockHash: 'b1'.repeat(32), vaultState: b64(state.serialize()), zswapState: b64(bytesOf('zswap').serialize()),
+      parameters: b64(bytesOf('parameters').serialize()), accountState: b64(bytesOf('account').serialize()),
+    });
+    /* RED WHEN: a block that holds no vault is answered as an empty one rather than as not read yet. */
+    expect(await aClient(() => anIndexer(null, []), []).chainAtOneBlock({ vault: VAULT, account: ACCOUNT, indexer: INDEXER })).toBeNull();
+  });
+
+  it('THE INDEXER IS ASKED FOR ONE BLOCK FIRST, AND BOTH CONTRACTS ARE READ AS OF THAT BLOCK; A CONTRACT IT HOLDS AT NONE IS NOT READ YET', async () => {
+    const asked: string[] = [];
+    /* A stand-in for the indexer package's reader, answering only the three reads asked of it, each with bytes that name it. */
+    type AtBlock = { readonly blockHash: string };
+    const reader = (o: { block?: boolean; vault?: boolean; account?: boolean } = {}): BlockReader => ({
+      queryBlock: async () => { asked.push('block'); return o.block === false ? null : { hash: 'b7'.repeat(32) }; },
+      queryZSwapAndContractState: async (address: string, at: AtBlock) => {
+        asked.push(`tree, state and parameters of ${address.slice(0, 4)} at ${at.blockHash.slice(0, 4)}`);
+        return o.vault === false ? null : [bytesOf('zswap'), bytesOf('vault'), bytesOf('parameters')];
+      },
+      queryContractState: async (address: string, at: AtBlock) => {
+        asked.push(`state of ${address.slice(0, 4)} at ${at.blockHash.slice(0, 4)}`);
+        return o.account === false ? null : bytesOf('account');
+      },
+    }) as unknown as BlockReader;
+    const read = await atOneBlockOver(reader(), VAULT, ACCOUNT);
+    /* RED WHEN: either contract is read at any moment but the block named first, or the account read is not the one asked. */
+    expect(asked).toEqual(['block', `tree, state and parameters of ${VAULT.slice(0, 4)} at b7b7`, `state of ${ACCOUNT.slice(0, 4)} at b7b7`]);
+    /* RED WHEN: the three the vault's read answers are taken in any other order. */
+    expect([read!.blockHash, ...[read!.zswap, read!.vault, read!.parameters, read!.account].map((b) => new TextDecoder().decode(b.serialize()))])
+      .toEqual(['b7'.repeat(32), 'zswap', 'vault', 'parameters', 'account']);
+    /* RED WHEN: a block, a vault or an account the indexer does not hold is answered as anything but not read yet. */
+    for (const o of [{ block: false }, { vault: false }, { account: false }]) expect(await atOneBlockOver(reader(o), VAULT, ACCOUNT), JSON.stringify(o)).toBeNull();
+  });
+
+  it('A TRANSACTION\'S EVENTS AND THE ONE THAT CREATED AN OUTPUT ARE READ BY THE WORKER AT THE WALLET\'S INDEXER, ONLY THE VAULT\'S OWN', async () => {
+    const at: unknown[] = [];
+    const client = aClient(() => anIndexer(aVault({ notes: [], started: true })), at);
+    /* RED WHEN: an index crosses as anything but its decimal digits, or an event's owner is dropped on the way. */
+    expect(await client.eventsOf({ transactionHash: 'e1'.repeat(32), indexer: INDEXER })).toEqual([
+      { transactionHash: 'e1'.repeat(32), details: { tag: 'zswapOutput', commitment: 'f0'.repeat(32), contract: VAULT, mtIndex: '3' } },
+      { transactionHash: 'e1'.repeat(32), details: { tag: 'zswapOutput', commitment: 'f1'.repeat(32), contract: 'cd'.repeat(32), mtIndex: '4' } },
+    ]);
+    expect(await client.createdBy({ vault: VAULT, commitment: 'f0'.repeat(32), indexer: INDEXER }))
+      .toMatchObject({ transactionHash: 'e1'.repeat(32), events: [{ details: { mtIndex: '3' } }, { details: { mtIndex: '4' } }] });
+    /* RED WHEN: an output another contract owns answers for this vault. */
+    expect(await client.createdBy({ vault: VAULT, commitment: 'f1'.repeat(32), indexer: INDEXER })).toBeNull();
+    expect(at).toEqual([INDEXER, INDEXER, INDEXER]);
   });
 
   it('READS WHAT THE VAULT HOLDS IN PUBLIC MONEY OFF THE SAME STATE, AND SAYS WHY WHEN IT CANNOT', async () => {

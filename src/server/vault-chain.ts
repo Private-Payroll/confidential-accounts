@@ -3,7 +3,7 @@ import { join } from 'node:path';
 import type { Hex } from '../core/crypto.js';
 import { VAULT_CIRCUITS } from '../midnight/vault-contract.js';
 import { vaultOutputHistoryFrom } from '../midnight/deposit-nonce.js';
-import { indexerNoteEvents, indexerVaultTransactions, transactionThatCreatedOutput, type ServedEvent } from '../midnight/note-index.js';
+import { eventOnTheWire, indexerNoteEvents, indexerVaultTransactions, transactionThatCreatedOutput } from '../midnight/note-index.js';
 import type { VaultChain } from './company-vaults.js';
 import { startingLedgerFrom } from '../wiring/vault-submission.js';
 import { CREATION_STEPS, DEPLOYED_CIRCUITS } from '../midnight/deferral.js';
@@ -51,15 +51,6 @@ export async function vaultChainFromTheIndexer(indexer: { url: string; wsUrl: st
   }).ledger;
   const vaultTransactions = indexerVaultTransactions(indexer.url, indexer.wsUrl);
   const history = vaultOutputHistoryFrom({ transactions: vaultTransactions, events: indexerNoteEvents(indexer.url) });
-  const onTheWire = (e: ServedEvent) => ({
-    transactionHash: e.transactionHash,
-    details: {
-      tag: e.details.tag,
-      ...(e.details.commitment === undefined ? {} : { commitment: e.details.commitment }),
-      ...(e.details.contract === undefined ? {} : { contract: e.details.contract }),
-      ...(e.details.mtIndex === undefined ? {} : { mtIndex: e.details.mtIndex.toString() }),
-    },
-  });
   return {
     contractState: async (address) => (await provider.queryContractState(address)) ?? null,
     serialize: (state) => (state as { serialize(): Uint8Array }).serialize(),
@@ -110,11 +101,11 @@ export async function vaultChainFromTheIndexer(indexer: { url: string; wsUrl: st
       const [, accountState, parameters] = both;
       return { blockHash: block.hash, accountState: base64(accountState), parameters: base64(parameters) };
     },
-    eventsOf: async (transactionHash) => (await events.eventsOf({ hash: transactionHash })).map(onTheWire),
+    eventsOf: async (transactionHash) => (await events.eventsOf({ hash: transactionHash })).map(eventOnTheWire),
     /* The vault's own transactions, newest first, the same list its history of outputs is read from. */
     createdBy: async (vault, commitment) => {
       const found = await transactionThatCreatedOutput(vault, commitment, { transactions: vaultTransactions, events });
-      return found === null ? null : { transactionHash: found.transactionHash, events: found.events.map(onTheWire) };
+      return found === null ? null : { transactionHash: found.transactionHash, events: found.events.map(eventOnTheWire) };
     },
   };
 }

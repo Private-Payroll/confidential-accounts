@@ -320,6 +320,17 @@ describe.skipIf(!KEYS_ON_DISK)('A DEPOSIT FROM THE PAGE, BUILT ON THE DEVICE [ne
         catching('device read', [i.vault, i.indexer]);
         return { onChain: true as const, state, notes: [...notes], notesFromThisBuild: true, everCreated: [], authority: { committee: [], threshold: 1 }, account: ACCOUNT, started: true };
       },
+      /* The block a deposit is built on, read by this device's worker at the wallet's indexer, never asked of the service. */
+      chainAtOneBlock: async (i: { vault: string; account: string; indexer: unknown }) => {
+        catching('device block', [i.vault, i.account, i.indexer]);
+        return { blockHash: 'b1'.repeat(32), vaultState: state, zswapState: '', parameters: Buffer.from(CHAIN_PARAMETERS).toString('base64'), accountState: '' };
+      },
+      eventsOf: async () => { throw new Error('no events'); },
+      /* The vault's history, asked by the output the send could not name: one transaction, which made it. */
+      createdBy: async (i: { vault: string; commitment: string; indexer: unknown }) => {
+        catching('device created-by', [i.vault, i.commitment, i.indexer]);
+        return { transactionHash: LANDED_IN, events: [{ transactionHash: LANDED_IN, details: { tag: 'zswapOutput', commitment: i.commitment, contract: vault, mtIndex: '0' } }] };
+      },
     };
 
     /* The records route: every record filed or asked for, as the device hands it over. */
@@ -339,29 +350,21 @@ describe.skipIf(!KEYS_ON_DISK)('A DEPOSIT FROM THE PAGE, BUILT ON THE DEVICE [ne
     const view = (): VaultChainView => ({
       vault, onChain: true, committee: null, heldByCommittee: true, fundable: true, state, notes: [...notes], everCreated: [],
     });
-    const PARAMETERS = Buffer.from(CHAIN_PARAMETERS).toString('base64');
     const service: VaultService = {
       keys: async () => { catching('service keys', []); return { committee: null, why: null, readers: [] }; },
       deploy: async () => { throw new Error('no deploy'); },
       handover: async () => { throw new Error('no handover'); },
       chain: async (v) => { catching('service chain', [v]); return view(); },
-      payoutState: async (v) => {
-        catching('service payout-state', [v]);
-        return { vault, account: ACCOUNT as Hex, blockHash: 'b1'.repeat(32), vaultState: state, zswapState: '', parameters: PARAMETERS, accountState: '' };
-      },
+      /* Only a vault's start reads its block through the service; a deposit never does. */
+      payoutState: async (v) => { catching('service payout-state', [v]); throw new Error('a deposit never asks the service for its block'); },
       deposit: async (v, tx) => {
         catching('service deposit', [v, tx]);
         /* The chain shows the note: its held commitment, worked out by the test from what the device chose. */
         notes.push((await builder.commitments({ vault, coin: chosen! })).held);
         return { txRef: 'r1', transactionHash: null };
       },
-      events: async () => { throw new Error('no events'); },
-      /* The vault's history, asked by the output the send could not name: one transaction, which made it. */
-      createdBy: async (v, commitment) => {
-        catching('service created-by', [v, commitment]);
-        return { transactionHash: LANDED_IN, events: [{ transactionHash: LANDED_IN, details: { tag: 'zswapOutput', commitment, contract: vault, mtIndex: '0' } }] };
-      },
       payout: async () => { throw new Error('no payout'); },
+      merge: async () => { throw new Error('no merge'); },
       payoutPublicly: async () => { throw new Error('no payout'); },
     };
     /* What this browser keeps of the deposit on its way, every write watched. */
@@ -427,8 +430,8 @@ describe.skipIf(!KEYS_ON_DISK)('A DEPOSIT FROM THE PAGE, BUILT ON THE DEVICE [ne
       .toEqual([Buffer.from(CHAIN_PARAMETERS).toString('hex')]);
     /* Every door a deposit uses was watched, so a search over them searched something. */
     expect([...new Set(caught.map((c) => c.to.split(' ').slice(0, 2).join(' ')))].sort(), 'RED WHEN: a door stops being watched').toEqual([
-      'browser in-flight', 'device read', 'records deposit-journal', 'records nonce-secret', 'records pool', 'service created-by',
-      'service deposit', 'service keys', 'service payout-state', 'wallet',
+      'browser in-flight', 'device block', 'device created-by', 'device read', 'records deposit-journal', 'records nonce-secret',
+      'records pool', 'service deposit', 'service keys', 'wallet',
     ]);
 
     /* ---- what the chain is sent states neither the deposit's token nor its amount ---- */

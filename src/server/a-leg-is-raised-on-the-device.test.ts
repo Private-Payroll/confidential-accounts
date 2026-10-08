@@ -563,6 +563,19 @@ describe('A LEG IS RAISED ON THE SIGNER\'S DEVICE, AND THE SERVICE FILES AND REL
 /** After the leg's window has closed, and a retry's window after that. */
 const AFTER = NOW + 7300;
 const RETRY = { viewingKey: KEY, vault: VAULT, opensAt: String(NOW + 8000), closesAt: String(NOW + 9000) };
+/**
+ * An approver's device judged at `at`, by its own clock: a retry is approved
+ * only once its leg's own round can no longer pay everybody on it.
+ */
+const atTime = async <T>(at: number, act: () => Promise<T>): Promise<T> => {
+  vi.useFakeTimers({ toFake: ['Date'] });
+  vi.setSystemTime(at * 1000);
+  try {
+    return await act();
+  } finally {
+    vi.useRealTimers();
+  }
+};
 const legOf = (id: string) => {
   const run = openSealedRun(store.getRun(id)!, KEY);
   return run.payout![Object.keys(run.payout!)[0] as never]!;
@@ -592,7 +605,7 @@ describe('A RETRY IS RAISED ON THE SIGNER\'S DEVICE, OVER A TREE OF ONLY THE PEO
     /* RED WHEN: the vault's public money is asked about the leg's people rather than the retry's one. */
     expect((JSON.parse(publicAsks.at(-1)!) as { payments: Array<{ amount: string }> }).payments.map((p) => p.amount)).toEqual([String(leg.facts![1]!.amount)]);
     /* RED WHEN: an approver holds a retry's commitment to the leg's whole list of payments rather than the people it names. */
-    await expect(openTheRoundHere(storedFor(BO), CO, round.id, KEY, false, recordsOn(BO))).resolves.toMatchObject({ vault: VAULT });
+    await expect(atTime(AFTER, () => openTheRoundHere(storedFor(BO), CO, round.id, KEY, false, recordsOn(BO)))).resolves.toMatchObject({ vault: VAULT });
   });
 
   it('A RETRY THAT NAMES NOBODY, SOMEBODY TWICE OR NOBODY ON THE LEG, OR OF A LEG NOT RAISED, IS REFUSED AND NOTHING IS FILED', async () => {
@@ -688,7 +701,7 @@ describe('THE RAISE CHECKS ARE ONE LIST, RUN WHERE A ROUND IS RAISED AND AGAIN W
       const leg = await raiseRunOnDevice(raisingOn(ADA), { runId, ...RAISE });
       await approvingOn(recordsOn(BO), leg.id);
       const retry = await raiseRetryOnDevice(raisingOn(ADA, AFTER), { runId, ...RETRY, indices: [1] });
-      await approvingOn(recordsOn(BO), retry.id);
+      await atTime(AFTER, () => approvingOn(recordsOn(BO), retry.id));
     } finally {
       list.pop();
     }
@@ -732,9 +745,73 @@ describe('THE RAISE CHECKS ARE ONE LIST, RUN WHERE A ROUND IS RAISED AND AGAIN W
     const round = await raiseRetryOnDevice(raisingOn(ADA, AFTER), { runId, ...RETRY, indices: [1] });
     const [first, second] = openSealedRun(store.getRun(runId)!, KEY).employees;
     /* RED WHEN: an approver of a retry holds everybody on the leg to the people it believes, so one who left blocks every retry. */
-    await expect(approvingOn(doubting(first!.id), round.id)).resolves.toMatchObject({ vault: VAULT });
+    await expect(atTime(AFTER, () => approvingOn(doubting(first!.id), round.id))).resolves.toMatchObject({ vault: VAULT });
     /* RED WHEN: an approver of a retry does not hold the people it names to the people it believes. */
-    await expect(approvingOn(doubting(second!.id), round.id)).rejects.toThrow(new RegExp(`${second!.name} is on this run, and this device does not believe`, 'u'));
+    await expect(atTime(AFTER, () => approvingOn(doubting(second!.id), round.id))).rejects.toThrow(new RegExp(`${second!.name} is on this run, and this device does not believe`, 'u'));
+  });
+});
+
+/* ── THE CHECKS ON A LEG'S ROUNDS AND A RETRY'S, RUN BY EVERY APPROVER ────── */
+
+/** A window for the leg raised again after the first one's has closed. */
+const LATER = { viewingKey: KEY, vault: VAULT, opensAt: String(AFTER + 100), closesAt: String(AFTER + 3600) };
+/** The company's record of a proposal, set to `status` where it is kept, as a withdrawal that did or did not take. */
+const standing = (id: string, status: 'open' | 'cancelled') => store.putProposal({ ...store.getProposal(id)!, status });
+
+describe('EVERY APPROVER OF A ROUND RUNS THE CHECKS ITS RAISER RAN ON THE LEG\'S OTHER ROUNDS', () => {
+  it('A LEG RAISED AGAIN IS REFUSED BY AN APPROVER WHILE A RETRY ON IT CAN STILL PAY SOME OF ITS PEOPLE', async () => {
+    const first = await raiseRunOnDevice(raisingOn(ADA), { runId, ...RAISE });
+    const retry = await raiseRetryOnDevice(raisingOn(ADA, AFTER), { runId, ...RETRY, indices: [1] });
+    standing(retry.id, 'cancelled');
+    standing(first.id, 'cancelled');
+    const again = await raiseRunOnDevice(raisingOn(ADA, AFTER), { runId, ...LATER });
+    /* The company's records hold the retry live after all: its withdrawal did not take. */
+    standing(retry.id, 'open');
+    /* RED WHEN: an approver of a leg does not ask whether a retry on it can still pay some of the same people. */
+    await expect(approvingOn(recordsOn(BO), again.id)).rejects.toThrow(new RegExp(`a retry on it is still live \\(${retry.id}\\)`, 'u'));
+    standing(retry.id, 'cancelled');
+    /* RED WHEN: an approver refuses the leg's round because the run points at it - the proposal it is approving. */
+    await expect(approvingOn(recordsOn(BO), again.id)).resolves.toMatchObject({ vault: VAULT });
+  });
+
+  it('A LEG RAISED AGAIN IS REFUSED BY AN APPROVER WHILE THE LEG\'S EARLIER ROUND MAY STILL BE ON THE CHAIN', async () => {
+    const first = await raiseRunOnDevice(raisingOn(ADA), { runId, ...RAISE });
+    standing(first.id, 'cancelled');
+    const again = await raiseRunOnDevice(raisingOn(ADA), { runId, ...RAISE });
+    /* The company's records hold the first round live after all: its withdrawal did not take. */
+    standing(first.id, 'open');
+    /* RED WHEN: an approver of a leg does not ask whether another round of the leg may still be on the chain. */
+    await expect(approvingOn(recordsOn(BO), again.id)).rejects.toThrow(new RegExp(`is written down as ${first.id}, which may be on the chain`, 'u'));
+    standing(first.id, 'cancelled');
+    /* RED WHEN: an approver counts the proposal it is approving as another round of the leg. */
+    await expect(approvingOn(recordsOn(BO), again.id)).resolves.toMatchObject({ vault: VAULT });
+  });
+
+  it('A RETRY IS REFUSED BY AN APPROVER WHILE ITS LEG\'S OWN ROUND CAN STILL PAY, OR WAS NEVER SEEN ON THE CHAIN', async () => {
+    const leg = await raiseRunOnDevice(raisingOn(ADA), { runId, ...RAISE });
+    const round = await raiseRetryOnDevice(raisingOn(ADA, AFTER), { runId, ...RETRY, indices: [1] });
+    /* RED WHEN: an approver of a retry does not ask whether the leg's own round can still pay everybody on it, by its own clock. */
+    await expect(atTime(NOW, () => approvingOn(recordsOn(BO), round.id))).rejects.toThrow(/can still pay everybody on it until/u);
+    await expect(atTime(AFTER, () => approvingOn(recordsOn(BO), round.id))).resolves.toMatchObject({ vault: VAULT });
+    const kept = store.getProposal(leg.id)!;
+    store.putProposal({ ...kept, raisedAt: undefined });
+    /* RED WHEN: an approver of a retry does not ask whether the leg's own round was ever seen on the chain. */
+    await expect(atTime(AFTER, () => approvingOn(recordsOn(BO), round.id))).rejects.toThrow(/has no round the chain has been seen to hold/u);
+    store.putProposal(kept);
+  });
+
+  it('A RETRY IS REFUSED BY AN APPROVER WHILE ANOTHER RETRY OF THE LEG CAN STILL PAY SOMEBODY IT NAMES', async () => {
+    await raiseRunOnDevice(raisingOn(ADA), { runId, ...RAISE });
+    const one = await raiseRetryOnDevice(raisingOn(ADA, AFTER), { runId, ...RETRY, indices: [0] });
+    standing(one.id, 'cancelled');
+    const both = await raiseRetryOnDevice(raisingOn(ADA, AFTER), { runId, ...RETRY, indices: [0, 1] });
+    /* The company's records hold the first retry live after all: its withdrawal did not take. */
+    standing(one.id, 'open');
+    /* RED WHEN: an approver of a retry does not ask whether another retry can still pay somebody it names. */
+    await expect(atTime(AFTER, () => approvingOn(recordsOn(BO), both.id))).rejects.toThrow(new RegExp(`#1 is already on retry ${one.id}`, 'u'));
+    standing(one.id, 'cancelled');
+    /* RED WHEN: an approver counts the retry it is approving as another retry over the same people. */
+    await expect(atTime(AFTER, () => approvingOn(recordsOn(BO), both.id))).resolves.toMatchObject({ vault: VAULT });
   });
 });
 

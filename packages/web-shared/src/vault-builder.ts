@@ -40,7 +40,7 @@ import {
 import { changeCoinOf, type VaultCoin } from '../../../src/midnight/vault-coins.js';
 import {
   establishCreatingTransaction, indexForSpend, theTransactionTheseEventsAreFrom, vaultNoteCommitment,
-  type ServedEvent,
+  type EventOnTheWire, type ServedEvent,
 } from '../../../src/midnight/note-index.js';
 import { payeeAddress, unshieldedPayeeAddress } from '../../../src/midnight/payee-address.js';
 import type { NetworkName } from '../../../src/midnight/network.js';
@@ -461,11 +461,8 @@ export interface NoteOnTheWire {
   readonly createdIn?: string;
 }
 
-/** One zswap event of one transaction, as the service serves it. */
-export interface EventOnTheWire {
-  readonly transactionHash: string;
-  readonly details: { readonly tag: string; readonly commitment?: string; readonly contract?: string; readonly mtIndex?: string };
-}
+/** One zswap event of one transaction, as it crosses to this worker. */
+export type { EventOnTheWire } from '../../../src/midnight/note-index.js';
 
 /** The chain as one block saw it, each value its bytes. */
 export interface PayoutChain {
@@ -677,6 +674,12 @@ export async function confirmPayment(input: {
   readonly transactionHash: string;
   readonly change: NoteOnTheWire | null;
   readonly events: readonly EventOnTheWire[];
+  /**
+   * A merge of the vault's own notes, judged as one: it pays nobody, so an
+   * output to a person under its name is not it, and the one coin it keeps
+   * must be an output of the transaction, owned by this vault.
+   */
+  readonly merge?: true;
 }): Promise<PaymentConfirmation> {
   const vault = input.vault.toLowerCase();
   const transaction = { hash: input.transactionHash as Hex };
@@ -687,7 +690,11 @@ export async function confirmPayment(input: {
     if (served.some((e) => e.transactionHash.toLowerCase().replace(/^0x/u, '') !== hash)) {
       return { state: 'not-as-built', why: 'the events read for this payment are not all its own' };
     }
-    if (!served.some((e) => e.details.tag === 'zswapOutput' && e.details.contract === undefined)) {
+    const paysAPerson = served.some((e) => e.details.tag === 'zswapOutput' && e.details.contract === undefined);
+    if (input.merge === true) {
+      if (paysAPerson) return { state: 'not-as-built', why: 'the transaction under this merge\'s name pays somebody, and a merge pays nobody' };
+      if (input.change === null) return { state: 'not-as-built', why: 'a merge keeps one coin, and none was named for this one' };
+    } else if (!paysAPerson) {
       return { state: 'not-as-built', why: 'the transaction under this payment\'s name paid nobody' };
     }
     if (input.change === null) return { state: 'landed', createdIn: hash };
@@ -844,6 +851,96 @@ export async function buildPayout(
     proven: proven.serialize(),
     spent: chosen.nonce,
     change: kept === undefined ? null : { nonce: kept.nonce, token: kept.token, value: kept.value.toString() },
+  };
+}
+
+/**
+ * **TWO TO FOUR OF THE VAULT'S OWN NOTES MERGED INTO ONE, BUILT AND PROVED
+ * HERE.**
+ *
+ * `notes` are the notes the run's plan names, in place order, each with the
+ * chain's events for the transaction that created it, which is where its place
+ * in the commitment tree is read - now, for this merge, by the one function
+ * every spend reads it by. `chain` is one block's view of the vault and the
+ * commitment tree. The vault refuses notes it does not hold, notes of another
+ * token, a merge of fewer than two, and a secret that is not its own; it sends
+ * nothing out and asks the account nothing.
+ *
+ * The coin the vault keeps is read from the call's own outputs and is checked
+ * against what the notes held: a merge that kept anything else is not sent.
+ */
+export async function buildMerge(
+  deps: VaultBuilderDeps,
+  input: {
+    readonly vault: string;
+    readonly notes: ReadonlyArray<{ readonly note: NoteOnTheWire; readonly events: readonly EventOnTheWire[] }>;
+    readonly chain: PayoutChain;
+    /** The vault's current nonce secret, opened on this device from the company's record of it. */
+    readonly secret: string;
+  },
+): Promise<{ proven: Uint8Array; spent: string[]; kept: NoteOnTheWire }> {
+  const vault = input.vault.toLowerCase();
+  if (!HEX64.test(vault)) throw new Error('this is not a vault\'s address, so nothing was built.');
+  if (deps.compiledWith === undefined) {
+    throw new Error('this device was not given the vault in the form a merge is built with, so nothing was built.');
+  }
+  if (typeof input.secret !== 'string' || !HEX64.test(input.secret)) {
+    throw new Error('this device has not opened the vault\'s nonce secret, which a merge is made with, so nothing was built.');
+  }
+  const all = input.notes.map((n) => ({ note: noteFromWire(n.note), events: n.events }));
+  if (all.length < 2 || all.length > STEP_LIMITS.mergeNotes || new Set(all.map((n) => n.note.nonce)).size !== all.length) {
+    throw new Error(`a merge combines two to ${STEP_LIMITS.mergeNotes} different notes, so nothing was built.`);
+  }
+  const token = all[0]!.note.token;
+  if (all.some((n) => n.note.token !== token)) {
+    throw new Error('a merge combines notes of one token, so nothing was built.');
+  }
+  const holds = all.reduce((t, n) => t + n.note.value, 0n);
+  /* Every index is read from the chain's events now, by the one function every spend reads it by. */
+  let notes: VaultNotes = { notes: all.map((n) => n.note) };
+  const places = [];
+  for (const { note, events } of all) {
+    const served = servedFromWire(events);
+    const index = await indexForSpend(vault as Hex, note, {
+      eventsOf: async (tx) => {
+        if (!('hash' in tx) || tx.hash !== note.createdIn) {
+          throw new Error('the chain\'s events handed over are not for the transaction that created this note.');
+        }
+        return served;
+      },
+    });
+    notes = withIndexRead(notes, note.nonce, index);
+    places.push({ nonce: fromHex(note.nonce), color: fromHex(note.token), value: note.value, mt_index: index });
+  }
+  const pending: { spending?: Hex } = {};
+  const secret = fromHex(input.secret);
+  const compiled = deps.compiledWith({
+    ...witnessesOver(() => notes, pending, all[0]!.note.nonce),
+    /* The vault's secret, for this one call; the vault refuses one that is not the secret it holds. */
+    nonceSecret: (ctx: unknown) => [ctx, secret],
+  } as ReturnType<typeof witnessesOver>);
+  const L = deps.ledger;
+  const keys = throwawayKeys(deps);
+  const built = await deps.contracts.createUnprovenCallTxFromInitialStates(deps.zkConfig, {
+    compiledContract: compiled,
+    circuitId: 'mergeNotes',
+    contractAddress: vault,
+    coinPublicKey: keys.coinPublicKey,
+    initialContractState: deps.runtimeState.deserialize(input.chain.vaultState),
+    initialZswapChainState: L.ZswapChainState.deserialize(input.chain.zswapState),
+    ledgerParameters: L.LedgerParameters.deserialize(input.chain.parameters),
+    /* Every note at the place the chain filed it; the places past the last are unused. */
+    args: [fromHex(token), notePlaces(places, STEP_LIMITS.mergeNotes)],
+  }, keys.encryptionPublicKey);
+  const kept = changeCoinOf(built.private.nextZswapLocalState, vault as Hex);
+  if (kept === undefined || kept.token !== token || kept.value !== holds) {
+    throw new Error('the merge built does not keep one coin worth every note it spends, so it was not sent and the pool is unchanged.');
+  }
+  const proven = await deps.prove(built.private.unprovenTx, 'mergeNotes');
+  return {
+    proven: proven.serialize(),
+    spent: all.map((n) => n.note.nonce),
+    kept: { nonce: kept.nonce, token: kept.token, value: kept.value.toString() },
   };
 }
 

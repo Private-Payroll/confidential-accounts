@@ -40,15 +40,17 @@ const canonical = (s: string): string => s.toLowerCase();
  * **A LEG IS RAISED ONCE.** Refused while the proposal the run points at for it
  * is anything but withdrawn, and, once withdrawn, while a retry on it is still
  * live: raising the leg again would raise all of its people while that retry
- * can still pay some of them.
+ * can still pay some of them. `self` is the proposal being judged when it is
+ * already written down - approved, or sent again - which the run pointing at is
+ * no reason to refuse.
  */
 export function refuseALegThatIsProposed(
-  run: PayrollRun, leg: RunLeg, rounds: readonly RoundOfARun[], registry: AssetRegistry = defaultAssets,
+  run: PayrollRun, leg: RunLeg, rounds: readonly RoundOfARun[], registry: AssetRegistry = defaultAssets, self?: string,
 ): void {
   const pointed = run.proposalIds[leg];
   if (!pointed) return;
   const standing = rounds.find((r) => r.id === pointed)?.status;
-  if (standing !== 'cancelled') {
+  if (pointed !== self && standing !== 'cancelled') {
     throw new Error(
       `the ${legName(leg, registry)} leg of this run is already proposed, as ${pointed}, which is ${standing ?? 'not in the company\'s records'}. A leg is raised `
       + 'again only once that proposal is withdrawn - withdrawing asks the chain - and then as a new proposal.');
@@ -57,19 +59,23 @@ export function refuseALegThatIsProposed(
     r.runId === run.id && legOfRound(r as never) === leg && r.retry !== undefined && isLiveRound(r));
   if (retries.length > 0) {
     throw new Error(
-      `the ${legName(leg, registry)} leg of run ${run.id} was withdrawn, and a retry on it is still live `
-      + `(${retries.map((r) => r.id).join(', ')}). Raising the leg again would raise all of its people while `
-      + 'that retry can still pay some of them. Withdraw the retry first - withdrawing asks the chain - '
+      `the ${legName(leg, registry)} leg of run ${run.id} ${pointed === self ? 'was raised again' : 'was withdrawn'}, and a `
+      + `retry on it is still live (${retries.map((r) => r.id).join(', ')}). Raising the leg again would raise all of its `
+      + 'people while that retry can still pay some of them. Withdraw the retry first - withdrawing asks the chain - '
       + 'and raise the leg again after.');
   }
 }
 
-/** The one round of this leg that may still be on the chain, if there is one; more than one is refused. */
+/**
+ * The one round of this leg that may still be on the chain, if there is one;
+ * more than one is refused. `self`, the proposal being judged when it is already
+ * written down, is not counted.
+ */
 export function earlierRoundOfLeg(
-  run: PayrollRun, leg: RunLeg, rounds: readonly RoundOfARun[], registry: AssetRegistry = defaultAssets,
+  run: PayrollRun, leg: RunLeg, rounds: readonly RoundOfARun[], registry: AssetRegistry = defaultAssets, self?: string,
 ): string | undefined {
   const live = rounds.filter((r) =>
-    r.runId === run.id && legOfRound(r as never) === leg && r.retry === undefined && isLiveRound(r));
+    r.id !== self && r.runId === run.id && legOfRound(r as never) === leg && r.retry === undefined && isLiveRound(r));
   if (live.length > 1) {
     throw new Error(
       `the ${legName(leg, registry)} leg of run ${run.id} is written down as ${live.length} rounds that may be on `
@@ -481,16 +487,6 @@ export function refuseRetryMaterialThatIsNotItsPeople(
 export interface ProposalStandingRead { readonly status: string; readonly raisedAt?: string; readonly txRef?: string }
 
 /**
- * **A RETRY NAMES ONLY PEOPLE THE RUN MEANT TO PAY AND NOTHING ELSE CAN STILL
- * PAY.** Refused, never narrowed, when it names somebody a decision on record
- * says not to pay; while the leg's own round can still pay everybody on it;
- * when somebody it names is on another retry that can still pay them, or that
- * was written down or sent and not yet seen. `standingOf` reads a proposal of
- * the company's by its name; `legRounds` are the rounds written down for this
- * run's leg; `again` is a retry of exactly these people being raised again as
- * itself. Whether the chain has paid them is asked where the chain is read.
- */
-/**
  * **NOBODY A ROUND PAYS IS SOMEBODY THE RUN RECORDS A DECISION NOT TO PAY.**
  * `indices` are positions on the leg; `notToPay` the roster entries the run's
  * own record of decisions says not to pay.
@@ -507,6 +503,16 @@ export function refusePeopleDecidedNotToPay(
     + 'pays only people the run meant to pay, so none was raised. Nothing was written down.');
 }
 
+/**
+ * **A RETRY NAMES ONLY PEOPLE THE RUN MEANT TO PAY AND NOTHING ELSE CAN STILL
+ * PAY.** Refused, never narrowed, when it names somebody a decision on record
+ * says not to pay; while the leg's own round can still pay everybody on it;
+ * when somebody it names is on another retry that can still pay them, or that
+ * was written down or sent and not yet seen. `standingOf` reads a proposal of
+ * the company's by its name; `legRounds` are the rounds written down for this
+ * run's leg; `again` is a retry of exactly these people being raised again as
+ * itself. Whether the chain has paid them is asked where the chain is read.
+ */
 export function refuseARetryOverPeopleCovered(input: {
   readonly run: PayrollRun; readonly leg: RunLeg; readonly legRound: ProposalStandingRead;
   readonly indices: readonly number[];
@@ -516,37 +522,84 @@ export function refuseARetryOverPeopleCovered(input: {
   readonly notToPay: ReadonlySet<string>;
   readonly registry?: AssetRegistry;
 }): void {
-  const { run, leg, indices, nowInSeconds } = input;
-  const registry = input.registry ?? defaultAssets;
-  const recorded = run.payout![leg]!;
-  const people = (xs: readonly number[]) => `#${[...xs].sort((a, b) => a - b).map((i) => i + 1).join(', #')}`;
-  const isAre = (xs: readonly number[]) => (xs.length === 1 ? 'is' : 'are');
-  const when = (s: bigint) => `${new Date(Number(s) * 1000).toISOString().slice(0, 16).replace('T', ' ')} UTC`;
-  const named = new Set(indices);
-  const stopped = (p: ProposalStandingRead) => p.status === 'cancelled' || p.status === 'blocked';
+  refusePeopleDecidedNotToPay(input.run, input.leg, input.indices, input.notToPay);
+  refuseARetryWhileItsLegCanPay(input.run, input.leg, input.legRound, input.nowInSeconds, input.registry);
+  refuseARetryOverAnotherRetry(input);
+}
 
-  refusePeopleDecidedNotToPay(run, leg, indices, input.notToPay);
-  if (!stopped(input.legRound) && nowInSeconds < recorded.closesAt) {
+const stopped = (p: ProposalStandingRead): boolean => p.status === 'cancelled' || p.status === 'blocked';
+const peopleNamed = (xs: readonly number[]): string => `#${[...xs].sort((a, b) => a - b).map((i) => i + 1).join(', #')}`;
+const isAre = (xs: readonly number[]): string => (xs.length === 1 ? 'is' : 'are');
+const whenUtc = (s: bigint): string => `${new Date(Number(s) * 1000).toISOString().slice(0, 16).replace('T', ' ')} UTC`;
+
+/**
+ * **A RETRY IS OF A LEG WHOSE ROUND THE CHAIN WAS SEEN TO HOLD.** A retry pays
+ * people an approved round did not reach; a leg with no round, or one never
+ * seen on the chain, has reached nobody, and splitting it into smaller rounds
+ * is not a way round the rules any round is judged against.
+ */
+export function refuseARetryOfALegNeverOnChain(
+  run: PayrollRun, leg: RunLeg, legRound: ProposalStandingRead | undefined, registry: AssetRegistry = defaultAssets,
+): void {
+  if (run.payout?.[leg] === undefined || legRound === undefined) {
+    throw new Error(`the ${legName(leg, registry)} leg of run ${run.id} has not been raised, so there is nobody on it to `
+      + 'retry: a retry pays people an approved round did not reach, and this leg has no round yet. Raise the leg first');
+  }
+  if (!legRound.raisedAt) {
+    throw new Error(`the ${legName(leg, registry)} leg of run ${run.id} ${legRound.status === 'blocked'
+      ? 'was stopped by this company\'s own policy'
+      : 'has no round the chain has been seen to hold'}, so there is no round on it to retry. A retry is judged against `
+      + 'the same rules as any round, and splitting a payroll that never reached the chain into smaller ones is not a way '
+      + 'round them');
+  }
+}
+
+/** **NO RETRY WHILE THE LEG'S OWN ROUND CAN STILL PAY EVERYBODY ON IT**: until it is stopped or its window closes. */
+export function refuseARetryWhileItsLegCanPay(
+  run: PayrollRun, leg: RunLeg, legRound: ProposalStandingRead, nowInSeconds: bigint, registry: AssetRegistry = defaultAssets,
+): void {
+  const recorded = run.payout![leg]!;
+  if (!stopped(legRound) && nowInSeconds < recorded.closesAt) {
     throw new Error(
-      `the ${legName(leg, registry)} leg of run ${run.id} can still pay everybody on it until ${when(recorded.closesAt)}, when its `
+      `the ${legName(leg, registry)} leg of run ${run.id} can still pay everybody on it until ${whenUtc(recorded.closesAt)}, when its `
       + 'window closes. A retry now would be a second round over the same people. Retry whoever it has not paid '
       + 'once its window has closed. Nothing was written down.');
   }
+}
+
+/**
+ * **NOBODY A RETRY NAMES IS ON ANOTHER RETRY THAT CAN STILL PAY THEM**, or that
+ * was written down or sent and not yet seen. `self` is the retry being judged
+ * when it is already written down - approved, or sent again - which does not
+ * cover its own people against itself.
+ */
+export function refuseARetryOverAnotherRetry(input: {
+  readonly run: PayrollRun; readonly leg: RunLeg; readonly indices: readonly number[];
+  readonly standingOf: (proposalId: string) => ProposalStandingRead;
+  readonly legRounds: ReadonlyArray<RoundOfARun & { readonly raisedAt?: string }>;
+  readonly again: string | undefined; readonly nowInSeconds: bigint;
+  readonly registry?: AssetRegistry;
+  readonly self?: string;
+}): void {
+  const { run, leg, indices, nowInSeconds } = input;
+  const registry = input.registry ?? defaultAssets;
+  const recorded = run.payout![leg]!;
+  const named = new Set(indices);
   for (const r of recorded.retries ?? []) {
-    if (r.proposalId === undefined || nowInSeconds >= r.closesAt) continue;
+    if (r.proposalId === undefined || r.proposalId === input.self || nowInSeconds >= r.closesAt) continue;
     const round = input.standingOf(r.proposalId);
     if (stopped(round)) continue;
     const shared = r.originalIndices.filter((i) => named.has(i));
     if (shared.length === 0) continue;
-    const until = when(r.closesAt);
+    const until = whenUtc(r.closesAt);
     throw new Error(
-      `${people(shared)} ${isAre(shared)} already on retry ${r.proposalId} of the ${legName(leg, registry)} leg of run ${run.id}, `
+      `${peopleNamed(shared)} ${isAre(shared)} already on retry ${r.proposalId} of the ${legName(leg, registry)} leg of run ${run.id}, `
       + (round.raisedAt
         ? `which can still pay them until ${until}. Retry them once its window has closed.`
         : round.txRef
           ? `which was sent from a device and is not yet seen on chain. Send it again by retrying exactly `
-            + `${people(r.originalIndices)} with its window and vault, or retry them once its window closes at ${until}.`
-          : `which is written down and has not been sent. Send it by retrying exactly ${people(r.originalIndices)} `
+            + `${peopleNamed(r.originalIndices)} with its window and vault, or retry them once its window closes at ${until}.`
+          : `which is written down and has not been sent. Send it by retrying exactly ${peopleNamed(r.originalIndices)} `
             + `with its window and vault, or retry them once its window closes at ${until}.`)
       + ' Nothing was written down.');
   }
@@ -555,10 +608,10 @@ export function refuseARetryOverPeopleCovered(input: {
     const shared = onIt.filter((i) => named.has(i));
     if (shared.length === 0) continue;
     throw new Error(
-      `${people(shared)} ${isAre(shared)} on retry ${(r as { id: string }).id} of the ${legName(leg, registry)} leg of run ${run.id}, whose raise did not `
+      `${peopleNamed(shared)} ${isAre(shared)} on retry ${(r as { id: string }).id} of the ${legName(leg, registry)} leg of run ${run.id}, whose raise did not `
       + 'answer and which may be on chain. Retry exactly '
-      + `${people(onIt)} again with its window and vault to send it as itself`
-      + (closesAt !== undefined ? `, or retry them once its window closes at ${when(closesAt)}.` : '.')
+      + `${peopleNamed(onIt)} again with its window and vault to send it as itself`
+      + (closesAt !== undefined ? `, or retry them once its window closes at ${whenUtc(closesAt)}.` : '.')
       + ' Nothing was written down.');
   }
 }

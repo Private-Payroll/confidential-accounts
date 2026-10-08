@@ -224,12 +224,13 @@ export async function openTheRoundHere(
     }
     /*
      * **AND EVERY CHECK THE RAISING DEVICE RAN, RUN AGAIN HERE** on what this
-     * device reads now, for a send and an approval alike: the one list of raise
-     * checks, judged for the seat that filed the proposal.
+     * device reads now, by its own clock, for a send and an approval alike: the
+     * one list of raise checks, judged for the seat that filed the proposal, and
+     * never refusing the proposal for being itself.
      */
     try {
       await refuseWhatNoRoundMay(records, accountId, key, {
-        run: rebuilt.run, leg: rebuilt.leg, made: rebuilt.made, filedBy: rec.filedBy?.publicKey ?? '',
+        run: rebuilt.run, leg: rebuilt.leg, made: rebuilt.made, filedBy: rec.filedBy?.publicKey ?? '', proposal: rec.id,
       });
     } catch (e) {
       if (!(e instanceof RoundRefusedHere)) throw e;

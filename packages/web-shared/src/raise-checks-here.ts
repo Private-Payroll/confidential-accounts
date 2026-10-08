@@ -15,6 +15,7 @@
  * - is still refused there; these refuse first, so no approval is collected
  * and no fee is spent on a round the chain or the company would refuse.
  */
+import type { PayrollRound } from '../../../src/core/account.js';
 import type { AssetRegistry } from '../../../src/core/assets.js';
 import { assets as theAssets, type AssetId } from '../../../src/core/assets.js';
 import type { Hex } from '../../../src/core/crypto.js';
@@ -22,10 +23,12 @@ import { evaluatePolicy } from '../../../src/core/company-policy.js';
 import { confirmationCovers, unaccountedOnChain } from '../../../src/core/already-paid.js';
 import { isLiveRound } from '../../../src/core/retry-cover.js';
 import {
-  refusePayingOnePayeeTwice, refusePeopleDecidedNotToPay, refuseRaisingOverAnotherRun, unaccountedRefusalHere,
+  earlierRoundOfLeg, refuseALegThatIsProposed, refuseARetryOfALegNeverOnChain, refuseARetryOverAnotherRetry,
+  refuseARetryWhileItsLegCanPay, refusePayingOnePayeeTwice, refusePeopleDecidedNotToPay, refuseRaisingOverAnotherRun,
+  unaccountedRefusalHere, type ProposalStandingRead,
 } from '../../../src/core/run-raising.js';
 import { registerFor, skippedIndices } from '../../../src/midnight/run-skips.js';
-import { assetOfLeg, legEmployees, openSealedRun } from '../../../src/core/run-legs.js';
+import { assetOfLeg, legEmployees, legName, openSealedRun } from '../../../src/core/run-legs.js';
 import type { PaymentFacts } from '../../../src/midnight/payout-tree.js';
 import type { Account, PayrollRun, Role, RunLeg } from '../../../src/core/types.js';
 import type { PeopleHere } from './people-on-device.js';
@@ -39,13 +42,19 @@ export interface RoundToCheck {
   readonly run: PayrollRun;
   readonly leg: RunLeg;
   /**
-   * The round as made here: every payment on the leg in the leg's order, the
+   * The proposal as made here: every payment on the leg in the leg's order, the
    * positions a retry pays (every position, for a leg), what the company's
    * records account for on the chain, and what the person's own wallet read.
    */
   readonly made: RunMadeHere;
-  /** The signing key the round's filing is signed with: this device's seat's for a raise, the filer's for an approval. */
+  /** The signing key the proposal's filing is signed with: this device's seat's for a raise, the filer's for an approval. */
   readonly filedBy: string;
+  /**
+   * The proposal the proposal is written down as, when it is: the one being
+   * approved or sent again. Absent while it is raised. A round is never
+   * refused for being itself.
+   */
+  readonly proposal?: string;
 }
 
 /** Everything the checks read, read on this device for one round. */
@@ -58,6 +67,11 @@ export interface FactsHere {
   readonly live: ReadonlySet<string>;
   readonly circuits: CompanyRecordsHere['payments'];
   readonly registry: AssetRegistry;
+  /** Every payroll round of the company's, opened here, and where any of its proposals stands, by name. */
+  readonly rounds: readonly PayrollRound[];
+  readonly standingOf: (proposalId: string) => ProposalStandingRead | undefined;
+  /** Now, by this device's clock, in seconds since the Unix epoch: what a window is judged against. */
+  readonly nowInSeconds: bigint;
 }
 
 /** One check: its name, and what it refuses, by throwing what it says. */
@@ -74,7 +88,7 @@ export class RoundRefusedHere extends Error {
   }
 }
 
-/** The positions on the leg the round pays: those a retry names, or every one. */
+/** The positions on the leg the proposal pays: those a retry names, or every one. */
 const positionsOf = (made: RunMadeHere): readonly number[] => made.retry ?? made.facts.map((_, i) => i);
 
 /** The same payment: to the same address, in the same form, of the same token and amount. */
@@ -85,8 +99,62 @@ const addressOfIn = (people: PeopleHere) => (e: { id: string }): string | null =
   people.people.find((p) => p.person.id === e.id)?.person.address?.bech32 ?? null;
 
 /**
- * **EVERYBODY THE ROUND PAYS IS SOMEBODY THIS DEVICE BELIEVES AND WOULD PAY,
- * AT EXACTLY WHAT THE ROUND PAYS THEM.** Only the people it pays: a retry is
+ * **A LEG IS PAID BY ONE ROUND.** A leg's round is refused while the run points
+ * at another round for the leg that is not withdrawn, while a retry on the leg
+ * can still pay some of its people, and while another round of the leg may
+ * still be on the chain. A retry is judged by the two checks after these.
+ */
+const legRaisedOnce: RaiseCheck = {
+  name: 'leg-raised-once',
+  check: ({ run, leg, made, proposal }, facts) => {
+    if (made.retry !== undefined) return;
+    refuseALegThatIsProposed(run, leg, facts.rounds, facts.registry, proposal);
+  },
+};
+
+const noOtherRoundOfTheLeg: RaiseCheck = {
+  name: 'no-other-round-of-the-leg',
+  check: ({ run, leg, made, proposal }, facts) => {
+    if (made.retry !== undefined) return;
+    const other = earlierRoundOfLeg(run, leg, facts.rounds, facts.registry, proposal);
+    if (other === undefined) return;
+    throw new Error(`the ${legName(leg, facts.registry)} leg of run ${run.id} is written down as ${other}, which may be on `
+      + 'the chain, and a leg is paid by one round. Send that one, or withdraw it - withdrawing asks the chain - and raise '
+      + 'the leg again after');
+  },
+};
+
+/**
+ * **A RETRY IS OF A LEG WHOSE OWN ROUND HAS REACHED THE CHAIN AND CAN NO LONGER
+ * PAY EVERYBODY ON IT**: seen on the chain, and stopped or past its window.
+ */
+const legNoLongerPays: RaiseCheck = {
+  name: 'leg-no-longer-pays',
+  check: ({ run, leg, made }, facts) => {
+    if (made.retry === undefined) return;
+    const pointed = run.proposalIds[leg];
+    const legRound = pointed === undefined ? undefined : facts.standingOf(pointed);
+    refuseARetryOfALegNeverOnChain(run, leg, legRound, facts.registry);
+    refuseARetryWhileItsLegCanPay(run, leg, legRound!, facts.nowInSeconds, facts.registry);
+  },
+};
+
+/** **NOBODY A RETRY PAYS IS ON ANOTHER RETRY OF THE LEG THAT CAN STILL PAY THEM.** */
+const notOnAnotherRetry: RaiseCheck = {
+  name: 'not-on-another-retry',
+  check: ({ run, leg, made, proposal }, facts) => {
+    if (made.retry === undefined) return;
+    refuseARetryOverAnotherRetry({
+      run, leg, indices: made.retry, legRounds: facts.rounds, again: undefined, nowInSeconds: facts.nowInSeconds,
+      standingOf: (id) => facts.standingOf(id) ?? { status: 'unknown' }, registry: facts.registry,
+      ...(proposal === undefined ? {} : { self: proposal }),
+    });
+  },
+};
+
+/**
+ * **EVERYBODY THE PROPOSAL PAYS IS SOMEBODY THIS DEVICE BELIEVES AND WOULD PAY,
+ * AT EXACTLY WHAT THE PROPOSAL PAYS THEM.** Only the people it pays: a retry is
  * judged on the people it names, so somebody who left after the leg was raised
  * does not stop a retry of the others.
  */
@@ -97,14 +165,14 @@ const payable: RaiseCheck = {
     const positions = positionsOf(made);
     const paid = positions.map((i) => onTheLeg[i]);
     if (paid.some((e) => e === undefined) || onTheLeg.length !== made.facts.length) {
-      throw new Error(`this round names people who are not on the leg it pays, or the leg lists ${onTheLeg.length} people `
+      throw new Error(`this run names people who are not on the leg it pays, or the leg lists ${onTheLeg.length} people `
         + `and records ${made.facts.length} payments, so who each payment is for cannot be said`);
     }
     const now = payableFactsOf(facts.people, paid as NonNullable<(typeof paid)[number]>[], 'Leave them unpaid until their '
       + 'record is put right.', 'This device will not raise or approve a round it would not pay.', facts.registry);
     positions.forEach((i, at) => {
       if (!samePayment(now[at]!, made.facts[i]!)) {
-        throw new Error(`this round pays ${paid[at]!.name} at another address, in another form or another amount than this device `
+        throw new Error(`this run pays ${paid[at]!.name} at another address, in another form or another amount than this device `
           + 'would pay them now from their record and the run. Draw the run again, or raise a retry once their record is put right');
       }
     });
@@ -112,7 +180,7 @@ const payable: RaiseCheck = {
 };
 
 /**
- * **NOBODY THE ROUND PAYS IS SOMEBODY THE RUN RECORDS A DECISION NOT TO PAY**,
+ * **NOBODY THE PROPOSAL PAYS IS SOMEBODY THE RUN RECORDS A DECISION NOT TO PAY**,
  * read from the run's own record of decisions.
  */
 const decidedNotToPay: RaiseCheck = {
@@ -125,7 +193,7 @@ const decidedNotToPay: RaiseCheck = {
   },
 };
 
-/** **THE COMPANY'S OWN CEILING** for the role of the seat that files the round, over what the round pays. */
+/** **THE COMPANY'S OWN CEILING** for the role of the seat that files the proposal, over what the proposal pays. */
 const ceiling: RaiseCheck = {
   name: 'ceiling',
   check: ({ leg, made, filedBy }, facts) => {
@@ -134,7 +202,7 @@ const ceiling: RaiseCheck = {
     const total = positionsOf(made).reduce((a, i) => a + made.facts[i]!.amount, 0n);
     const verdict = evaluatePolicy({ policy: facts.policy } as Account, assetOfLeg(leg) as AssetId, total, role ?? 'admin',
       { state: 'unknown', why: 'not-yet-proposed' }, facts.registry);
-    if (verdict.blocked) throw new Error(verdict.reason ?? 'this company\'s own policy stops this round');
+    if (verdict.blocked) throw new Error(verdict.reason ?? 'this company\'s own policy stops this run');
   },
 };
 
@@ -186,19 +254,32 @@ const unaccounted: RaiseCheck = {
  * **THE ONE LIST.** Every raise and every approval of a payroll round runs all
  * of it, in this order. A check added here is run on both.
  */
-export const RAISE_CHECKS: readonly RaiseCheck[] = [payable, decidedNotToPay, ceiling, overAnotherRun, onePayeeTwice, unaccounted];
+export const RAISE_CHECKS: readonly RaiseCheck[] = [
+  legRaisedOnce, noOtherRoundOfTheLeg, legNoLongerPays, notOnAnotherRetry,
+  payable, decidedNotToPay, ceiling, overAnotherRun, onePayeeTwice, unaccounted,
+];
 
-/** What the checks read for `run`, each read on this device from the company's records and the person's own wallet. */
-export async function factsHere(records: CompanyRecordsHere, accountId: string, run: PayrollRun, viewingKey: Hex): Promise<FactsHere> {
+/**
+ * What the checks read for `run`, each read on this device from the company's
+ * records and the person's own wallet, judged at `now` by this device's clock.
+ */
+export async function factsHere(
+  records: CompanyRecordsHere, accountId: string, run: PayrollRun, viewingKey: Hex, now: Date = new Date(),
+): Promise<FactsHere> {
   if (records.proposals === undefined) {
     throw new Error('this page cannot read the company\'s proposals, so it cannot check a payroll round. Reload the page to get '
       + 'the current version');
   }
   const [people, directory, policy, proposals, runs] = await Promise.all([
     records.people(), records.directory(), records.policy(), records.proposals(), records.runs()]);
-  const live = new Set(payrollRoundsHere(proposals, accountId, viewingKey).filter(isLiveRound).map((r) => r.runId));
+  const rounds = payrollRoundsHere(proposals, accountId, viewingKey);
+  const live = new Set(rounds.filter(isLiveRound).map((r) => r.runId));
   const others = runs.filter((r) => r.accountId === accountId && r.id !== run.id && live.has(r.id)).map((r) => openSealedRun(r, viewingKey));
-  return { people, directory, policy, others, live, circuits: records.payments, registry: records.registry ?? theAssets };
+  return {
+    people, directory, policy, others, live, circuits: records.payments, registry: records.registry ?? theAssets, rounds,
+    standingOf: (id) => proposals.find((p) => p.id === id && p.accountId === accountId),
+    nowInSeconds: BigInt(Math.floor(now.getTime() / 1000)),
+  };
 }
 
 /**
@@ -207,14 +288,14 @@ export async function factsHere(records: CompanyRecordsHere, accountId: string, 
  * written down; every approving device runs it before an approval is built.
  */
 export async function refuseWhatNoRoundMay(
-  records: CompanyRecordsHere, accountId: string, viewingKey: Hex, round: RoundToCheck,
+  records: CompanyRecordsHere, accountId: string, viewingKey: Hex, round: RoundToCheck, now?: Date,
 ): Promise<void> {
-  const facts = await factsHere(records, accountId, round.run, viewingKey);
+  const facts = await factsHere(records, accountId, round.run, viewingKey, now);
   for (const c of RAISE_CHECKS) {
     try {
       c.check(round, facts);
     } catch (e) {
-      /* Said once, by whoever refused the round, what was not done. */
+      /* Said once, by whoever refused the proposal, what was not done. */
       const why = String((e as Error)?.message ?? e).replace(/\s*Nothing was built or sent\.\s*$/u, '').replace(/\.?\s*$/u, '');
       throw new RoundRefusedHere(c.name, why, { cause: e });
     }

@@ -133,7 +133,7 @@ export async function askWalletToUnlockAndWhereItReads(
     forCompany: ask.company,
     forAccount: ask.account,
   });
-  if (!read.ok) throw new UnlockRefused(read.code, read.says);
+  if (read.ok === false) throw new UnlockRefused(read.code, read.says);
   return {
     key: read.key, indexer: read.indexer,
     held: read.held === null ? null : Object.freeze({
@@ -198,8 +198,6 @@ export async function askWalletForKeys(
     forCompany: company === 'new' ? 'drawn' : company,
     forAccount: company === 'new' ? null : ask.account,
   });
-  if (checked.ok) {
-    return { key: checked.key, companyKey: checked.companyKey, committeeKey: checked.committeeKey, company: checked.company };
-  }
-  throw new UnlockRefused(checked.code, checked.says);
+  if (checked.ok === false) throw new UnlockRefused(checked.code, checked.says);
+  return { key: checked.key, companyKey: checked.companyKey, committeeKey: checked.committeeKey, company: checked.company };
 }

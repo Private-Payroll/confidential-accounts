@@ -102,6 +102,10 @@ export type VaultAsk =
   | { id: number; network: string; ask: 'commitments'; vault: string; coin: CoinOnTheWire }
   | { id: number; network: string; ask: 'step-kept'; vault: string; secret: string; step: StepOnTheWire }
   | { id: number; network: string; ask: 'vault-on-chain'; vault: string; indexer: { indexerUri: string; indexerWsUri: string } }
+  /* What a step out of the vault is built on, and the events it is judged by, read here at the indexer the wallet names. */
+  | { id: number; network: string; ask: 'chain-at-one-block'; vault: string; account: string; indexer: { indexerUri: string; indexerWsUri: string } }
+  | { id: number; network: string; ask: 'events-of'; transactionHash: string; indexer: { indexerUri: string; indexerWsUri: string } }
+  | { id: number; network: string; ask: 'created-by'; vault: string; commitment: string; indexer: { indexerUri: string; indexerWsUri: string } }
   | { id: number; network: string; ask: 'own-seat'; material: SignerMaterial }
   /* The founding signer's seat in a company made on this device: its leaf, and the scope it was made under. */
   | { id: number; network: string; ask: 'founding-seat'; material: { signingSecret: string; blinding: string } }
@@ -124,7 +128,7 @@ export type VaultAsk =
   }
   | {
     id: number; network: string; ask: 'confirm-payment'; vault: string; transactionHash: string;
-    change: NoteOnTheWire | null; events: readonly EventOnTheWire[];
+    change: NoteOnTheWire | null; events: readonly EventOnTheWire[]; merge?: true;
   }
   | {
     id: number; network: string; ask: 'creating-transaction'; vault: string; commitment: string;
@@ -135,6 +139,12 @@ export type VaultAsk =
     payment: PrivatePaymentOnTheWire; note: NoteOnTheWire; events: readonly EventOnTheWire[];
     further?: ReadonlyArray<{ readonly note: NoteOnTheWire; readonly events: readonly EventOnTheWire[] }>; chain: PayoutChainOnTheWire;
     /** The vault's current nonce secret, opened on this device, for this one payment. */
+    secret: string;
+  }
+  | {
+    id: number; network: string; ask: 'merge'; vault: string;
+    notes: ReadonlyArray<{ readonly note: NoteOnTheWire; readonly events: readonly EventOnTheWire[] }>; chain: PayoutChainOnTheWire;
+    /** The vault's current nonce secret, opened on this device, for this one merge. */
     secret: string;
   }
   /*
@@ -187,6 +197,9 @@ export type VaultAnswer =
   | Answered<'commitments', { output: string; held: string }>
   | Answered<'step-kept', { kept: NoteOnTheWire | null }>
   | Answered<'vault-on-chain', { read: VaultOnChainOnTheWire }>
+  | Answered<'chain-at-one-block', { chain: PayoutChainOnTheWire | null }>
+  | Answered<'events-of', { events: EventOnTheWire[] }>
+  | Answered<'created-by', { found: { transactionHash: string; events: EventOnTheWire[] } | null }>
   | Answered<'own-seat', { seat: string }>
   | Answered<'founding-seat', { seat: string; scope: string }>
   | Answered<'creation-again', { account: string; deploy: string; insert: string }>
@@ -198,6 +211,7 @@ export type VaultAnswer =
   | Answered<'confirm-payment', { confirmation: PaymentConfirmation }>
   | Answered<'creating-transaction', { answer: CreatingTransactionAnswer }>
   | Answered<'payout', { tx: string; spent: string; change: NoteOnTheWire | null }>
+  | Answered<'merge', { tx: string; spent: string[]; kept: NoteOnTheWire }>
   | Answered<'payout-publicly', { tx: string }>
   | Answered<'governed-call', { tx: string }>
   | Answered<'proposal-identity', { identity: ProposalIdentity }>
@@ -290,6 +304,21 @@ export interface VaultBuilderClient {
    */
   vaultOnChain(input: { vault: string; indexer: { indexerUri: string; indexerWsUri: string } }): Promise<VaultOnChainOnTheWire>;
   /**
+   * **WHAT A STEP OUT OF THE VAULT IS BUILT ON**, read in this worker at the
+   * indexer the person's own wallet names: one block, named first, and as of it
+   * the vault's state, the commitment tree, the ledger's parameters and the
+   * state of `account`. Null while that block holds either contract not yet.
+   */
+  chainAtOneBlock(input: { vault: string; account: string; indexer: { indexerUri: string; indexerWsUri: string } }): Promise<PayoutChainOnTheWire | null>;
+  /** Every zswap event the chain holds for one transaction, read in this worker at the indexer the wallet names. */
+  eventsOf(input: { transactionHash: string; indexer: { indexerUri: string; indexerWsUri: string } }): Promise<EventOnTheWire[]>;
+  /**
+   * Which of the vault's own transactions created the output with this
+   * commitment, and its events, read in this worker at the indexer the wallet
+   * names; null while no transaction the chain lists for the vault does.
+   */
+  createdBy(input: { vault: string; commitment: string; indexer: { indexerUri: string; indexerWsUri: string } }): Promise<{ transactionHash: string; events: EventOnTheWire[] } | null>;
+  /**
    * The seat this signer's own key material makes on the company's account: the
    * leaf the account holds for them, worked out here and not taken from any record.
    */
@@ -328,9 +357,9 @@ export interface VaultBuilderClient {
     notes: readonly NoteOnTheWire[]; spent: string; further?: readonly string[]; amount: string;
     change: NoteOnTheWire | null; createdIn: string | null;
   }): Promise<NoteOnTheWire[]>;
-  /** What this payment's own events say about it. */
+  /** What this payment's own events say about it; with `merge`, what a merge's own events say about it. */
   confirmPayment(input: {
-    vault: string; transactionHash: string; change: NoteOnTheWire | null; events: readonly EventOnTheWire[];
+    vault: string; transactionHash: string; change: NoteOnTheWire | null; events: readonly EventOnTheWire[]; merge?: true;
   }): Promise<PaymentConfirmation>;
   /** Which transaction created the note with this commitment, as these events of the named transaction say. */
   creatingTransaction(input: {
@@ -345,6 +374,17 @@ export interface VaultBuilderClient {
     /** The vault's current nonce secret, opened on this device. */
     secret: string;
   }): Promise<{ tx: string; spent: string; change: NoteOnTheWire | null }>;
+  /**
+   * A merge of two to four of the vault's own notes into one, built and
+   * proved: the notes in place order, each with the events of the transaction
+   * that created it. Answers the notes spent and the one coin the vault keeps.
+   */
+  mergeNotes(input: {
+    vault: string; notes: ReadonlyArray<{ readonly note: NoteOnTheWire; readonly events: readonly EventOnTheWire[] }>;
+    chain: PayoutChainOnTheWire;
+    /** The vault's current nonce secret, opened on this device. */
+    secret: string;
+  }): Promise<{ tx: string; spent: string[]; kept: NoteOnTheWire }>;
   /** A public payment out of the vault, built and proved: no note, no change. */
   payoutPublicly(input: {
     vault: string; account: string; order: OrderOnTheWire; payment: PrivatePaymentOnTheWire; chain: PayoutChainOnTheWire;
@@ -443,6 +483,9 @@ export function vaultBuilderOver(worker: WorkerLike, network: string): VaultBuil
     },
     stepKept: async (input) => (await ask({ ask: 'step-kept', ...input })).kept,
     vaultOnChain: async (input) => (await ask({ ask: 'vault-on-chain', ...input })).read,
+    chainAtOneBlock: async (input) => (await ask({ ask: 'chain-at-one-block', ...input })).chain,
+    eventsOf: async (input) => (await ask({ ask: 'events-of', ...input })).events,
+    createdBy: async (input) => (await ask({ ask: 'created-by', ...input })).found,
     ownSeat: async (material) => (await ask({ ask: 'own-seat', material })).seat,
     foundingSeat: async (material) => {
       const a = await ask({ ask: 'founding-seat', material });
@@ -462,6 +505,10 @@ export function vaultBuilderOver(worker: WorkerLike, network: string): VaultBuil
     payout: async (input) => {
       const a = await ask({ ask: 'payout', ...input });
       return { tx: a.tx, spent: a.spent, change: a.change };
+    },
+    mergeNotes: async (input) => {
+      const a = await ask({ ask: 'merge', ...input });
+      return { tx: a.tx, spent: a.spent, kept: a.kept };
     },
     payoutPublicly: async (input) => ({ tx: (await ask({ ask: 'payout-publicly', ...input })).tx }),
     governedCall: async (input) => ({ tx: (await ask({ ask: 'governed-call', ...input })).tx }),
