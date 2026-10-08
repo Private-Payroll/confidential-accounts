@@ -74,6 +74,23 @@ export interface ServedEvent {
   };
 }
 
+/** One zswap event as it crosses a wire: the same fields, its index as decimal digits. */
+export interface EventOnTheWire {
+  readonly transactionHash: string;
+  readonly details: { readonly tag: string; readonly commitment?: string; readonly contract?: string; readonly mtIndex?: string };
+}
+
+/** **AN EVENT AS IT CROSSES A WIRE**, the one way it is written for one: every field kept, the index as decimal digits. */
+export const eventOnTheWire = (e: ServedEvent): EventOnTheWire => ({
+  transactionHash: e.transactionHash,
+  details: {
+    tag: e.details.tag,
+    ...(e.details.commitment === undefined ? {} : { commitment: e.details.commitment }),
+    ...(e.details.contract === undefined ? {} : { contract: e.details.contract }),
+    ...(e.details.mtIndex === undefined ? {} : { mtIndex: e.details.mtIndex.toString() }),
+  },
+});
+
 /** Where a transaction's events come from. The indexer, in production. */
 export interface NoteEvents {
   /**
@@ -319,7 +336,7 @@ export function noteIndexFrom(
       + 'recorded from it.');
   }
 
-  const found = matches[0].details;
+  const found = matches[0]!.details;
   if (typeof found.contract !== 'string' || bare(found.contract) !== bare(want.vault)) {
     throw new NoteIndexRefused(
       `${where} created an output with this note's commitment, but ${found.contract === undefined

@@ -92,6 +92,6 @@ export async function askWalletToPay(
   const read = readBalancedAnswer(answer, {
     atOrigin: ask.atOrigin, expectingNonce: nonce, company: ask.company, account: ask.account, vault: ask.vault,
   });
-  if (!read.ok) throw new WalletDidNotPay(read.code, read.says);
+  if (read.ok === false) throw new WalletDidNotPay(read.code, read.says);
   return { transaction: read.transaction, leaves: read.leaves };
 }

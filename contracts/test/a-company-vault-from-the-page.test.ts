@@ -32,6 +32,7 @@
  * one would be read.
  */
 import { describe, it, expect, beforeEach, afterEach } from 'vitest';
+import { NoteIndexUnreadable } from '../../src/midnight/note-index.js';
 import { createHash } from 'node:crypto';
 import express from 'express';
 import type { AddressInfo } from 'node:net';
@@ -242,18 +243,34 @@ describe.skipIf(!KEYS_ON_DISK)('A COMPANY VAULT, FROM THE SIGNER\'S DEVICE [need
     const deps = async () => ({
       ledger: L, vault: vaultModule, runtimeState: (runtime as any).ContractState, contracts: contracts as any,
       /*
-       * The indexer the wallet names, over this chain: the vault's state as the ledger holds it, and every output the
-       * chain made for it, served as one transaction's events. The worker reads the vault from these and nothing else.
+       * The indexer the wallet names, over this chain: the vault's state as the ledger holds it, every applied
+       * transaction and its own events, and one moment of both contracts with the commitment tree. The worker reads
+       * the vault, what a step is built on and what it is judged by from these and nothing else.
        */
       chainSourceAt: () => ({
         contractState: async (v: string) => chain.contract(v),
         deployState: async (v: string) => chain.deploys.get(v.toLowerCase()) ?? null,
-        transactions: { of: async () => ['e0'.repeat(32)] as never },
+        transactions: { of: async () => [...chain.events.keys()].reverse() as never },
         events: {
-          eventsOf: async () => [...chain.everCreated.values()].flatMap((made, i) => [...made].map((commitment) => ({
-            transactionHash: 'e0'.repeat(32),
-            details: { tag: 'zswapOutput', commitment, contract: [...chain.everCreated.keys()][i]!, mtIndex: 0n },
-          }))),
+          eventsOf: async (tx: { hash?: string }) => {
+            const events = chain.events.get(String(tx.hash));
+            if (events === undefined) throw new NoteIndexUnreadable('the indexer does not hold this transaction yet');
+            return events.map((e: any) => ({
+              transactionHash: String(tx.hash),
+              details: {
+                tag: String(e.content.tag),
+                ...(e.content.commitment === undefined ? {} : { commitment: String(e.content.commitment) }),
+                ...(e.content.contract === undefined ? {} : { contract: String(e.content.contract) }),
+                ...(e.content.mtIndex === undefined ? {} : { mtIndex: BigInt(e.content.mtIndex) }),
+              },
+            }));
+          },
+        },
+        atOneBlock: async (vault: string, account: string) => {
+          const v = chain.contract(vault);
+          const a = chain.contract(account);
+          if (v === null || a === null) return null;
+          return { blockHash: 'b1'.repeat(32), zswap: chain.state.zswap, vault: v, parameters: chain.state.parameters, account: a };
         },
       }),
       compiled, zkConfig: both,
@@ -461,12 +478,8 @@ describe.skipIf(!KEYS_ON_DISK)('A COMPANY VAULT, FROM THE SIGNER\'S DEVICE [need
     deposit: (vault, tx) => http(`/api/accounts/${ACCOUNT_ID}/vaults/${vault}/deposit`, { method: 'POST', body: { tx } }, as),
     /* A payment out is watched in `a-private-payment-from-the-page.test.ts`; a deposit reads the chain's parameters here. */
     payoutState: (vault) => http(`/api/accounts/${ACCOUNT_ID}/vaults/${vault}/payout-state`, undefined, as),
-    events: () => { throw new Error('this watch makes no payment out'); },
-    createdBy: async (vault, commitment) => {
-      const found = await http(`/api/accounts/${ACCOUNT_ID}/vaults/${vault}/created/${commitment}`, undefined, as);
-      return found.found === true ? { transactionHash: found.transactionHash, events: found.events } : null;
-    },
     payout: () => { throw new Error('this watch makes no payment out'); },
+    merge: () => { throw new Error('this watch merges no notes'); },
     payoutPublicly: () => { throw new Error('this watch makes no payment out'); },
     startAccountCall: (vault, body) => http(`/api/accounts/${ACCOUNT_ID}/vaults/${vault}/start/account`, { method: 'POST', body }, as),
     startSecret: (vault, tx) => http(`/api/accounts/${ACCOUNT_ID}/vaults/${vault}/start/secret`, { method: 'POST', body: { tx } }, as),

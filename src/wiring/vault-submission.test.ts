@@ -13,7 +13,7 @@ import { VAULT_CIRCUITS } from '../midnight/vault-contract.js';
 import type { AuthorityRead, OnChainAuthority } from '../midnight/ledger.js';
 import {
   circuitsRefusal, refusalToPutMoneyIn, readVaultDeploy, refusalForDeposit, refusalForHandover,
-  refusalForPayout, refusalForPublicPayout, startingLedgerFrom, type VaultStartingLedger,
+  refusalForMerge, refusalForPayout, refusalForPublicPayout, startingLedgerFrom, type VaultStartingLedger,
   committeeHoldsTheVault, refusalForSecretCopy, refusalForSetNonceSecret, refusalForStartAccountCall,
 } from './vault-submission.js';
 
@@ -496,13 +496,19 @@ describe('A PRIVATE PAYMENT OUT OF THE VAULT', () => {
     expect(refusalForPayout(payout({ intentExtra: { dustActions: { spends: [1], registrations: [] } } }), expect_)).toMatch(/network fee from somewhere else/);
   });
 
-  it('REFUSES A COIN THAT IS NOT THIS VAULT\'S, A SECOND COIN, A SECOND PERSON, CHANGE SENT ELSEWHERE, OR A COIN MADE AND SPENT', () => {
+  it('REFUSES A COIN THAT IS NOT THIS VAULT\'S, A THIRD COIN, A SECOND PERSON, CHANGE SENT ELSEWHERE, OR A COIN MADE AND SPENT', () => {
     const offer = (o: Record<string, unknown>) => payout({ guaranteed: { inputs: [{ contractAddress: VAULT }], outputs: [{}], transients: [], ...o } });
     /* RED WHEN: the input's owner is not compared - a person's own coin, or another contract's, would be spent under the company's fee. */
-    expect(refusalForPayout(offer({ inputs: [{ contractAddress: OTHER }] }), expect_)).toMatch(/exactly one coin, and that coin must be this vault's/);
-    expect(refusalForPayout(offer({ inputs: [{}] }), expect_)).toMatch(/exactly one coin, and that coin must be this vault's/);
-    expect(refusalForPayout(offer({ inputs: [{ contractAddress: VAULT }, { contractAddress: VAULT }] }), expect_)).toMatch(/exactly one coin/);
-    expect(refusalForPayout(offer({ inputs: [] }), expect_)).toMatch(/exactly one coin/);
+    const coins = /must spend one to 2 coins, every one of them this vault's/;
+    expect(refusalForPayout(offer({ inputs: [{ contractAddress: OTHER }] }), expect_)).toMatch(coins);
+    expect(refusalForPayout(offer({ inputs: [{}] }), expect_)).toMatch(coins);
+    /* RED WHEN: the bound is not the contract's own: a payment draws on one or two of the vault's notes, never a third. */
+    expect(refusalForPayout(offer({ inputs: [{ contractAddress: VAULT }, { contractAddress: VAULT }] }), expect_)).toBeNull();
+    expect(refusalForPayout(offer({ inputs: [{ contractAddress: VAULT }, { contractAddress: VAULT }, { contractAddress: VAULT }] }), expect_)).toMatch(coins);
+    /* RED WHEN: only the first coin's owner is compared - a second coin of anybody else's would ride on the company's fee. */
+    expect(refusalForPayout(offer({ inputs: [{ contractAddress: VAULT }, { contractAddress: OTHER }] }), expect_)).toMatch(coins);
+    expect(refusalForPayout(offer({ inputs: [{ contractAddress: VAULT }, {}] }), expect_)).toMatch(coins);
+    expect(refusalForPayout(offer({ inputs: [] }), expect_)).toMatch(coins);
     /* RED WHEN: the person count is not checked. */
     expect(refusalForPayout(offer({ outputs: [{}, {}] }), expect_)).toMatch(/pay exactly one person/);
     expect(refusalForPayout(offer({ outputs: [{ contractAddress: VAULT }] }), expect_)).toMatch(/pay exactly one person/);
@@ -645,5 +651,61 @@ describe('A VAULT\'S START', () => {
     /* RED WHEN: a copy written into another vault, or another call under this route, is paid for. */
     expect(refusalForSecretCopy(tx([call(OTHER, 'writeSecretCopy')]), { vault: VAULT })).toMatch(/Nothing was sent/);
     expect(refusalForSecretCopy(tx([call(VAULT, 'deposit')]), { vault: VAULT })).toMatch(/Nothing was sent/);
+  });
+});
+
+describe('A MERGE OF A VAULT\'S OWN NOTES', () => {
+  const VAULT = 'ab'.repeat(32);
+  const OTHER = 'ee'.repeat(32);
+  const merge = (over: { actions?: unknown[]; inputs?: unknown[]; outputs?: unknown[]; transients?: unknown[]; intentExtra?: Record<string, unknown>; imbalances?: () => Map<unknown, bigint>; fallible?: unknown } = {}) => ({
+    intents: new Map([[1, { actions: over.actions ?? [{ address: VAULT, entryPoint: new TextEncoder().encode('mergeNotes') }], ...(over.intentExtra ?? {}) }]]),
+    guaranteedOffer: {
+      inputs: over.inputs ?? [{ contractAddress: VAULT }, { contractAddress: VAULT }],
+      outputs: over.outputs ?? [{ contractAddress: VAULT }],
+      transients: over.transients ?? [],
+    },
+    fallibleOffer: over.fallible,
+    imbalances: over.imbalances ?? (() => new Map<unknown, bigint>([[{ tag: 'dust' }, -5n], [{ tag: 'shielded', raw: 'ab' }, 0n]])),
+  });
+  const expect_ = { vault: VAULT };
+
+  it('is paid for when it spends two to four of this vault\'s coins into one the vault keeps, with one call to its mergeNotes', () => {
+    for (const n of [2, 3, 4]) {
+      /* RED WHEN: a merge of any size the vault takes is refused. */
+      expect(refusalForMerge(merge({ inputs: Array.from({ length: n }, () => ({ contractAddress: VAULT })) }), expect_), String(n)).toBeNull();
+    }
+  });
+
+  it('REFUSES ANY CALL BUT THIS VAULT\'S MERGE, AND ANY COIN, PERSON OR PUBLIC MONEY A MERGE DOES NOT MOVE', () => {
+    /* RED WHEN: the call is not compared exactly - a payout, another vault's merge, or a second call would be paid for. */
+    const call = /exactly one call, this vault's mergeNotes/;
+    expect(refusalForMerge(merge({ actions: [{ address: VAULT, entryPoint: 'payout' }] }), expect_)).toMatch(call);
+    expect(refusalForMerge(merge({ actions: [{ address: OTHER, entryPoint: 'mergeNotes' }] }), expect_)).toMatch(call);
+    expect(refusalForMerge(merge({ actions: [{ address: VAULT, entryPoint: 'mergeNotes' }, { address: VAULT, entryPoint: 'mergeNotes' }] }), expect_)).toMatch(call);
+    /* RED WHEN: the input count or owner is not checked - one coin, five, or a coin that is not the vault's. */
+    const coins = /two to 4 coins, every one of them this vault's/;
+    expect(refusalForMerge(merge({ inputs: [{ contractAddress: VAULT }] }), expect_)).toMatch(coins);
+    expect(refusalForMerge(merge({ inputs: Array.from({ length: 5 }, () => ({ contractAddress: VAULT })) }), expect_)).toMatch(coins);
+    expect(refusalForMerge(merge({ inputs: [{ contractAddress: VAULT }, { contractAddress: OTHER }] }), expect_)).toMatch(coins);
+    expect(refusalForMerge(merge({ inputs: [{ contractAddress: VAULT }, {}] }), expect_)).toMatch(coins);
+    /* RED WHEN: an output to a person, a second output, or one to another contract is let through. */
+    const kept = /exactly one coin, kept by this vault, and pay nobody/;
+    expect(refusalForMerge(merge({ outputs: [{}] }), expect_)).toMatch(kept);
+    expect(refusalForMerge(merge({ outputs: [{ contractAddress: VAULT }, {}] }), expect_)).toMatch(kept);
+    expect(refusalForMerge(merge({ outputs: [{ contractAddress: OTHER }] }), expect_)).toMatch(kept);
+    expect(refusalForMerge(merge({ transients: [{}] }), expect_)).toMatch(/makes and spends a coin in one go/);
+    /* RED WHEN: either public offer, or a fee from elsewhere, is not checked. */
+    expect(refusalForMerge(merge({ intentExtra: { guaranteedUnshieldedOffer: { inputs: [1], outputs: [] } } }), expect_)).toMatch(/moves public money/);
+    expect(refusalForMerge(merge({ intentExtra: { fallibleUnshieldedOffer: { inputs: [], outputs: [1] } } }), expect_)).toMatch(/moves public money/);
+    expect(refusalForMerge(merge({ intentExtra: { dustActions: { spends: [1], registrations: [] } } }), expect_)).toMatch(/network fee from somewhere else/);
+    /* RED WHEN: coins in a fallible part are not read. */
+    expect(refusalForMerge(merge({ fallible: new Map([[1, { inputs: [{ contractAddress: OTHER }], outputs: [], transients: [] }]]) }), expect_)).toMatch(coins);
+  });
+
+  it('REFUSES A MERGE THAT DOES NOT BALANCE IN ITS OWN MONEY, OR CANNOT BE ADDED UP', () => {
+    /* RED WHEN: the imbalance check is removed, or DUST is counted as the merge's own money. */
+    expect(refusalForMerge(merge({ imbalances: () => new Map([[{ tag: 'shielded', raw: 'ab' }, 3n]]) }), expect_)).toMatch(/does not balance in its own money/);
+    expect(refusalForMerge(merge({ imbalances: () => { throw new Error('unreadable'); } }), expect_)).toMatch(/could not be added up/);
+    expect(refusalForMerge({ intents: new Map() }, expect_)).toMatch(/exactly one set of actions/);
   });
 });

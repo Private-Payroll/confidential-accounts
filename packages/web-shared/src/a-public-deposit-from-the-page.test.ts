@@ -59,10 +59,11 @@ const setUp = (over: { view?: Partial<VaultChainView>; send?: VaultService['depo
   });
   const refuse = async () => { log.push('a private step was asked'); throw new Error('a public deposit never asks this'); };
   const service: VaultService = {
-    keys: refuse, deploy: refuse, handover: refuse, events: refuse, createdBy: refuse, payout: refuse, payoutPublicly: refuse,
+    keys: refuse, deploy: refuse, handover: refuse, payout: refuse, merge: refuse, payoutPublicly: refuse,
     /* Asked of the vault, the service is never believed: the vault is read on this device, below. */
     chain: async () => { log.push('the service was asked for the vault'); throw new Error('a deposit never asks the service for the vault'); },
-    payoutState: async (v) => ({ vault: v, account: ACCOUNT, blockHash: 'B1', vaultState: 'V', zswapState: 'Z', parameters: PARAMS, accountState: 'A' }),
+    /* Only a vault's start reads its block through the service. */
+    payoutState: async () => { log.push('the service was asked for the block'); throw new Error('a deposit never asks the service for its block'); },
     deposit: async () => { log.push('sent to the private route'); return { txRef: 'no', transactionHash: null }; },
     depositPublicly: over.send ?? (async (_v, tx, money) => { log.push(`sent ${tx} ${money.token.slice(0, 2)} ${money.amount}`); return { txRef: 'r1', transactionHash: 'h1' }; }),
   };
@@ -81,6 +82,9 @@ const setUp = (over: { view?: Partial<VaultChainView>; send?: VaultService['depo
         account: ACCOUNT, started: v.fundable === true,
       };
     },
+    /* The block the deposit is built on, read here at the wallet's indexer. */
+    chainAtOneBlock: async () => ({ blockHash: 'B1', vaultState: 'V', zswapState: 'Z', parameters: PARAMS, accountState: 'A' }),
+    eventsOf: refuse, createdBy: refuse,
     deploy: refuse, handover: refuse, notesForPayment: refuse, paymentsFit: refuse, afterPayment: refuse, stepKept: refuse, confirmPayment: refuse,
     creatingTransaction: refuse, payout: refuse, payoutPublicly: refuse, governedCall: refuse, commitments: refuse, deposit: refuse,
     ...(over.noBuilder ? {} : {

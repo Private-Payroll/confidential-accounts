@@ -46,7 +46,7 @@ const factsOf = (people: readonly RosterEmployee[]): FactsHere => ({
   people: { people: people.map((p) => ({ person: p, version: 1, handedOver: true })), notBelieved: [], notPayable: [] } as unknown as PeopleHere,
   directory: { dir: { company: CO, version: 1, seats: [] }, holders: {} as never, another: new Set() },
   policy: { threshold: 1, limitsByRole: {} } as never,
-  others: [], live: new Set(), registry: REGISTRY,
+  others: [], live: new Set(), registry: REGISTRY, rounds: [], standingOf: () => undefined, nowInSeconds: 0n,
   circuits: { paidOnceOf: pureCircuits.paidOnceOf, paidMovementOf: pureCircuits.paidMovementOf, read: async () => { throw new Error('not read here'); } },
 });
 const check = (name: string) => RAISE_CHECKS.find((c) => c.name === name)!.check;
@@ -54,7 +54,10 @@ const check = (name: string) => RAISE_CHECKS.find((c) => c.name === name)!.check
 describe('THE ONE LIST OF RAISE CHECKS', () => {
   it('HOLDS EVERY CHECK A RAISE AND AN APPROVAL RUN, EACH ONCE', () => {
     /* RED WHEN: a check is dropped from the list, so the raiser or an approver no longer runs it. */
-    expect(RAISE_CHECKS.map((c) => c.name)).toEqual(['payable', 'decided-not-to-pay', 'ceiling', 'over-another-run', 'one-payee-twice', 'unaccounted']);
+    expect(RAISE_CHECKS.map((c) => c.name)).toEqual([
+      'leg-raised-once', 'no-other-round-of-the-leg', 'leg-no-longer-pays', 'not-on-another-retry',
+      'payable', 'decided-not-to-pay', 'ceiling', 'over-another-run', 'one-payee-twice', 'unaccounted',
+    ]);
   });
 
   it('TWO PEOPLE AT ONE ADDRESS ON THE LEG ARE REFUSED ON A RETRY AS ON A RAISE, WHOEVER THE RETRY NAMES', () => {
@@ -72,13 +75,13 @@ describe('THE ONE LIST OF RAISE CHECKS', () => {
     const run = runOf([ALI, BEA, CAL]);
     const moved = { ...BEA, address: payeeFor('b9'.repeat(32), 'undeployed') } as RosterEmployee;
     /* RED WHEN: a person whose record now names another address than the leg records paying them at is paid at the old one. */
-    expect(() => check('payable')(roundOf(run, [ALI, moved, CAL]), factsOf([ALI, BEA, CAL]))).toThrow(/this round pays Person p2 at another address, in another form or another amount/u);
-    expect(() => check('payable')(roundOf(run, [ALI, moved, CAL], [1]), factsOf([ALI, BEA, CAL]))).toThrow(/this round pays Person p2 at another address, in another form or another amount/u);
+    expect(() => check('payable')(roundOf(run, [ALI, moved, CAL]), factsOf([ALI, BEA, CAL]))).toThrow(/this run pays Person p2 at another address, in another form or another amount/u);
+    expect(() => check('payable')(roundOf(run, [ALI, moved, CAL], [1]), factsOf([ALI, BEA, CAL]))).toThrow(/this run pays Person p2 at another address, in another form or another amount/u);
     /* RED WHEN: a leg that records paying somebody another amount, or another token, than the run names is paid as recorded. */
     for (const changed of [{ amount: 1n }, { token: 'ee'.repeat(32) }]) {
       const round = roundOf(run, [ALI, BEA, CAL], [1]);
       const off = { ...round, made: { ...round.made, facts: round.made.facts.map((f, i) => (i === 1 ? { ...f, ...changed } : f)) } } as RoundToCheck;
-      expect(() => check('payable')(off, factsOf([ALI, BEA, CAL])), Object.keys(changed).join()).toThrow(/this round pays Person p2 at another address/u);
+      expect(() => check('payable')(off, factsOf([ALI, BEA, CAL])), Object.keys(changed).join()).toThrow(/this run pays Person p2 at another address/u);
     }
     /* RED WHEN: a retry is judged on people it does not pay. */
     expect(() => check('payable')(roundOf(run, [ALI, moved, CAL], [2]), factsOf([ALI, BEA, CAL]))).not.toThrow();

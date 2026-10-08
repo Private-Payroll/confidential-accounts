@@ -41,6 +41,7 @@
  *     public payments below are paid out of money no wallet sent.
  */
 import { describe, it, expect, beforeEach, afterEach } from 'vitest';
+import { NoteIndexUnreadable } from '../../src/midnight/note-index.js';
 import { createHash, randomBytes } from 'node:crypto';
 import express from 'express';
 import type { AddressInfo } from 'node:net';
@@ -63,7 +64,7 @@ import { aWalletThatPaysPrivately, type AWalletThatPaysPrivately } from './a-wal
 import { aWalletThatPaysPublicly } from './a-wallet-that-pays-publicly.js';
 import { privateStateFor, leafOfDevice, change, ZERO_32, COMPANY_LABEL, rootOfTestLeaves } from './simulator.js';
 import { MemoryStore } from '../../src/core/store.js';
-import { AccountService, openAccount, sealAccount } from '../../src/core/account.js';
+import { AccountService, newStateBlinding, openAccount, sealAccount, sealState } from '../../src/core/account.js';
 import { MidnightCommitments } from '../../src/midnight/commitments.js';
 import { rosterVaultKeys, signVaultKeys } from '../../src/core/vault-keys.js';
 import { seatsInAccountState, vaultInState } from '../../apps/wallet/src/chain/company-label-on-chain.js';
@@ -80,7 +81,7 @@ import { recordsReaderOf, type DeviceSigner } from 'vaults-web-shared/deposit-on
 import { answerVaultAsk, checkedAccountKeys } from 'vaults-web-shared/vault-worker-entry.js';
 import { vaultBuilderOver, type VaultAnswer } from 'vaults-web-shared/vault-worker-client.js';
 import {
-  createCompanyVault, depositIntoCompanyVault, openCompanyVaultPool, payPrivatelyFromCompanyVault,
+  createCompanyVault, depositIntoCompanyVault, mergeNotesInCompanyVault, openCompanyVaultPool, payPrivatelyFromCompanyVault,
   payPubliclyFromCompanyVault,
   type TemporaryKeys, type VaultService, type DepositInFlight, type DepositsInFlight, type PaymentInFlight, type PaymentsInFlight,
 } from 'vaults-web-shared/vault-operation.js';
@@ -100,7 +101,7 @@ import { readProvenTransaction } from '../../src/wiring/proven-submission.js';
 import {
   refusalForDeposit, refusalForPayout, refusalForPublicDeposit, refusalForPublicPayout, startingLedgerFrom,
 } from '../../src/wiring/vault-submission.js';
-import { buildRun } from '../../src/midnight/payout-tree.js';
+import { buildRetryRun, buildRun, rootOfPayments } from '../../src/midnight/payout-tree.js';
 import { vaultDetails } from '../../src/testing/vault-details.js';
 import { payeeAddressFromKeys, type Payee } from '../../src/midnight/payee-address.js';
 import { unshieldedPayeeFor } from '../../src/testing/payees.js';
@@ -116,7 +117,22 @@ import { SimulatedLedger } from '../../src/core/ledger.js';
 import { sealHandover } from '../../src/core/invite-handover.js';
 import { currentPayoutSeed } from '../../src/midnight/run-keys.js';
 import { openNonceSecrets, recordsKeypairFrom } from '../../src/midnight/company-nonce-secret.js';
-import type { User } from '../../src/core/types.js';
+import type { PayrollRun, RosterEmployee, User } from '../../src/core/types.js';
+import { signedFoundingState } from '../../src/core/founding-state.js';
+import { newProposalId } from '../../src/core/proposal-filing.js';
+import { NothingWasSent } from '../../src/core/jobs.js';
+import type { LedgerStatus } from '../../src/core/ledger.js';
+import { runRoutes } from '../../src/server/run-routes.js';
+import { openSealedRun } from '../../src/core/run-legs.js';
+import { proposalRelayRoutes } from '../../src/server/proposal-relays.js';
+import { directoryOf } from '../../src/server/seat-directory-route.js';
+import { attestedIn, directoryFilingsFrom, directoryHere } from 'vaults-web-shared/vault-page-doors.js';
+import { drawRunHere } from 'vaults-web-shared/run-drawn-here.js';
+import { governedCallServiceFor, openTheRoundHere, raiseRunOnDevice } from 'vaults-web-shared/governed-call-on-device.js';
+import type { LegRaiseDoors } from 'vaults-web-shared/run-raised-here.js';
+import type { CompanyRecordsHere } from 'vaults-web-shared/run-rebuilt-here.js';
+import type { PeopleHere } from 'vaults-web-shared/people-on-device.js';
+import { payAnApprovedLeg } from 'vaults-web-shared/leg-paid-here.js';
 
 /** Deposits or payments on their way, kept for the length of one test, sealed as the page keeps them. */
 const keptOnThisDevice = <T,>(kind: 'deposit' | 'payment'): KeptOnThisDevice<T> =>
@@ -253,23 +269,42 @@ describe.skipIf(!KEYS_ON_DISK)('A PRIVATE PAYMENT OUT OF A COMPANY VAULT, FROM T
     prove: async () => { throw new Error('asked to prove a circuit'); },
     lookupKey: async () => undefined,
   };
-  /** The worker's own handler, reached through the page's own client, with no Worker and no prover. */
-  const builder = () => {
+  /**
+   * The worker's own handler, reached through the page's own client, with no Worker and no prover. `over` stands in
+   * for the call builder where a test makes it build what the ledger never would.
+   */
+  const builder = (over?: { createUnprovenCallTxFromInitialStates: (...args: any[]) => Promise<any> }) => {
     const deps = async () => ({
-      ledger: L, vault: vaultModule, runtimeState: (runtime as any).ContractState, contracts: contracts as any,
+      ledger: L, vault: vaultModule, runtimeState: (runtime as any).ContractState, contracts: { ...(contracts as any), ...over },
       /*
-       * The indexer the wallet names, over this chain: the vault's state as the ledger holds it, and every output the
-       * chain made for it, served as one transaction's events. The worker reads the vault from these and nothing else.
+       * The indexer the wallet names, over this chain: the vault's state as the ledger holds it, every applied
+       * transaction and its own events, and one moment of both contracts with the commitment tree. The worker reads
+       * the vault, what a step is built on and what it is judged by from these and nothing else.
        */
       chainSourceAt: () => ({
         contractState: async (v: string) => chain.contract(v),
         deployState: async (v: string) => chain.deploys.get(v.toLowerCase()) ?? null,
-        transactions: { of: async () => ['e0'.repeat(32)] as never },
+        transactions: { of: async () => [...chain.events.keys()].reverse() as never },
         events: {
-          eventsOf: async () => [...chain.everCreated.values()].flatMap((made, i) => [...made].map((commitment) => ({
-            transactionHash: 'e0'.repeat(32),
-            details: { tag: 'zswapOutput', commitment, contract: [...chain.everCreated.keys()][i]!, mtIndex: 0n },
-          }))),
+          eventsOf: async (tx: { hash?: string }) => {
+            const events = chain.events.get(String(tx.hash));
+            if (events === undefined) throw new NoteIndexUnreadable('the indexer does not hold this transaction yet');
+            return events.map((e: any) => ({
+              transactionHash: String(tx.hash),
+              details: {
+                tag: String(e.content.tag),
+                ...(e.content.commitment === undefined ? {} : { commitment: String(e.content.commitment) }),
+                ...(e.content.contract === undefined ? {} : { contract: String(e.content.contract) }),
+                ...(e.content.mtIndex === undefined ? {} : { mtIndex: BigInt(e.content.mtIndex) }),
+              },
+            }));
+          },
+        },
+        atOneBlock: async (vault: string, account: string) => {
+          const v = chain.contract(vault);
+          const a = chain.contract(account);
+          if (v === null || a === null) return null;
+          return { blockHash: 'b1'.repeat(32), zswap: chain.state.zswap, vault: v, parameters: chain.state.parameters, account: a };
         },
       }),
       compiled: vaultCompiled({ noteToSpend: () => { throw new Error('nothing here spends'); }, nonceSecret: () => { throw new Error('nothing here spends'); } }),
@@ -443,6 +478,41 @@ describe.skipIf(!KEYS_ON_DISK)('A PRIVATE PAYMENT OUT OF A COMPANY VAULT, FROM T
       },
     };
     app.use(seatDirectoryRoutes({ signedIn, member, store, chain: directoryChainOver(() => chain.contract(company)) }));
+    /*
+     * The routes a run drawn and raised on a device is filed and relayed through, over this chain: the company's
+     * directory as the service reads it, and the account's open proposals and approvals as the chain holds them. A
+     * raise is relayed by applying it to this chain. The vault's public money is not asked here: a private leg spends none.
+     */
+    const directoryNow = (id: string) => directoryOf(store, directoryChainOver(() => chain.contract(company)), id);
+    app.use(runRoutes({ signedIn, member, store, directoryOf: directoryNow, wiring: () => 'simulated' }));
+    const ownsProposal: express.RequestHandler = (req, res, next) => {
+      const p = store.getProposal(String(req.params.id));
+      return p !== null && store.getAccount(p.accountId)?.memberUserIds.includes((req as { userId?: string }).userId!) ? next() : res.status(404).json({ error: 'not found' });
+    };
+    app.use(proposalRelayRoutes({
+      signedIn, member, ownsProposal, refuseSigningSecret: (_q, _r, next) => next(), store, directoryOf: directoryNow,
+      ledger: {
+        wiring: 'simulated',
+        status: async (): Promise<LedgerStatus | null> => {
+          const l = accountLedgerOf(chain.contract(company));
+          return {
+            assets: [], vaultThresholds: [], signerCount: 1, threshold: Number(l.threshold),
+            openProposals: [...l.openProposals].map(([id, c]: [Uint8Array, Uint8Array]) => ({
+              id: hex(id) as Hex, change: hex(c) as Hex, approvals: Number(l.approvalCounts.member(id) ? l.approvalCounts.lookup(id) : 0n),
+            })),
+          } as unknown as LedgerStatus;
+        },
+        submitProvenCall: async (_accountId: string, bytes: Uint8Array) => {
+          const tx = L.Transaction.deserialize('signature', 'pre-proof', 'pre-binding', bytes);
+          const r = chain.apply(tx);
+          if (!r.ok) throw new NothingWasSent(`the chain refused it: ${r.error}. Nothing was sent.`);
+          return { ref: nameOf(tx), at: new Date().toISOString() };
+        },
+      },
+      recordRefusal: () => undefined, wiring: () => 'simulated',
+      proposalIdOf: (h, salt, v) => MidnightCommitments.proposalId(h as Hex, salt as Hex, v as Hex | undefined),
+      publicMoney: async () => undefined,
+    }));
     app.use(companyVaultRoutes({
       signedIn, member, store,
       company: async () => ({ address: company, threshold: 1, vaultThresholds: [] }),
@@ -492,12 +562,8 @@ describe.skipIf(!KEYS_ON_DISK)('A PRIVATE PAYMENT OUT OF A COMPANY VAULT, FROM T
     deposit: (vault, tx) => http(`${at}/vaults/${vault}/deposit`, { method: 'POST', body: { tx } }),
     depositPublicly: (vault, tx, money) => http(`${at}/vaults/${vault}/public-deposit`, { method: 'POST', body: { tx, ...money } }),
     payoutState: (vault) => http(`${at}/vaults/${vault}/payout-state`),
-    events: (vault, tx) => http(`${at}/vaults/${vault}/events/${tx}`),
-    createdBy: async (vault, commitment) => {
-      const found = await http(`${at}/vaults/${vault}/created/${commitment}`);
-      return found.found === true ? { transactionHash: found.transactionHash, events: found.events } : null;
-    },
     payout: (vault, tx) => http(`${at}/vaults/${vault}/payout`, { method: 'POST', body: { tx } }),
+    merge: (vault, tx) => http(`${at}/vaults/${vault}/merge`, { method: 'POST', body: { tx } }),
     payoutPublicly: (vault, tx) => http(`${at}/vaults/${vault}/public-payout`, { method: 'POST', body: { tx } }),
     startAccountCall: (vault, body) => http(`${at}/vaults/${vault}/start/account`, { method: 'POST', body }),
     startSecret: (vault, tx) => http(`${at}/vaults/${vault}/start/secret`, { method: 'POST', body: { tx } }),
@@ -684,6 +750,258 @@ describe.skipIf(!KEYS_ON_DISK)('A PRIVATE PAYMENT OUT OF A COMPANY VAULT, FROM T
     }
   });
 
+  it('TWO NOTES ARE MERGED FROM THE DEVICE: WRITTEN DOWN, PAID FOR AS THE VAULT\'S OWN COINS, KEPT AS ONE, AND A PAYMENT NEITHER COVERED SPENDS IT WITH NO REBUILD', async () => {
+    const { vault, note } = await aFundedVault();
+    const doors = {
+      ...pacing, service, me, myRecordsKey: recordsReaderOf(me.companyKey).publicKey, signers, records, account: readAccountAddress(company)!,
+      onChain: walletReads, builder: builder(), inFlight: paymentsInFlight(),
+    };
+    const second = await depositIntoCompanyVault({ ...doors, company: LABEL, pay: wallet, inFlight: inFlightInMemory() }, vault, { token: TOKEN, value: 500n });
+    const poolOf = async () => new SealedNotePool(records('pool'), { signerId: 'ada', wrappingSecret: wrapping.secret }, signers).load(vault);
+    const named = (await poolOf()).notes.map((n) => ({ nonce: n.nonce, token: n.token, value: n.value.toString() }))
+      .sort((a, b) => Number(BigInt(b.value) - BigInt(a.value)));
+    expect(named.map((n) => n.nonce)).toEqual([note.nonce, second.note.nonce]);
+    const before = chain.applied.length;
+    const merged = await mergeNotesInCompanyVault(doors, { vault, notes: named });
+
+    /* ---- one transaction, applied, paid for as the vault moving its own coins ---- */
+    expect(chain.applied.slice(before).map((a) => [a.ok, a.error])).toEqual([[true, '']]);
+    expect(arrivals.at(-1)).toBe('proven-moving-the-vaults-own-coins');
+    /* ---- the vault holds one note, worth both, and pays nobody: RED WHEN the merged coin is not the vault's or not the sum ---- */
+    const held = async (n: { nonce: string; token: string; value: string }) => (await builder().commitments({ vault, coin: n })).held;
+    expect([...vaultLedgerOf(chain.contract(vault)).notes].map((c: Uint8Array) => hex(c))).toEqual([await held(merged.kept)]);
+    expect(merged.kept.value).toBe('1500');
+    expect(chain.events.get(chain.applied.at(-1)!.name)!.filter((e: any) => e.content.tag === 'zswapOutput' && e.content.contract === undefined)).toEqual([]);
+    /* ---- the pool: both notes gone, the merged one recorded under the merge's own transaction ---- */
+    expect((await poolOf()).notes).toEqual([{ nonce: merged.kept.nonce, token: TOKEN, value: 1_500n, createdIn: chain.applied.at(-1)!.name }]);
+    expect([merged.transactionHash, merged.seenAs]).toEqual([chain.applied.at(-1)!.name, 'its-own-transaction']);
+    /* ---- the journal wrote the merge down as a merge, sending nothing out ---- */
+    const journal = await new PaymentJournalInStore(records('payment-journal'), vault, { id: 'ada', wrappingSecret: wrapping.secret }, signers).open();
+    expect(journal.attempts.at(-1)).toEqual(expect.objectContaining({
+      spent: { nonce: note.nonce, token: TOKEN, value: 1_000n }, further: [{ nonce: second.note.nonce, token: TOKEN, value: 500n }], step: 'merge', amount: 0n,
+    }));
+
+    /* ---- the merged note pays a person neither note could: read from the pool as advanced, nothing rebuilt ---- */
+    const run = await anApprovedRun(vault, 1_200n);
+    const order = run.order();
+    const paid = await payPrivatelyFromCompanyVault(doors, { order, payment: order.payments[0]!, notes: [merged.kept] });
+    expect(paid.spent).toBe(merged.kept.nonce);
+    expect(accountLedgerOf(chain.contract(company)).movements.member(accountCircuits.paidMovementOf(fromHex(run.leaf)))).toBe(true);
+    expect((await poolOf()).notes.map((n) => n.value)).toEqual([300n]);
+  });
+
+  it('A MERGE WHOSE BUILD KEEPS A COIN WORTH LESS THAN THE NOTES IT SPENDS IS NOT SENT, AND THE VAULT AND ITS POOL ARE UNCHANGED', async () => {
+    const { vault } = await aFundedVault();
+    const doors = {
+      ...pacing, service, me, myRecordsKey: recordsReaderOf(me.companyKey).publicKey, signers, records, account: readAccountAddress(company)!,
+      onChain: walletReads, builder: builder(), inFlight: paymentsInFlight(),
+    };
+    await depositIntoCompanyVault({ ...doors, company: LABEL, pay: wallet, inFlight: inFlightInMemory() }, vault, { token: TOKEN, value: 500n });
+    const poolOf = async () => new SealedNotePool(records('pool'), { signerId: 'ada', wrappingSecret: wrapping.secret }, signers).load(vault);
+    const before = (await poolOf()).notes;
+    const named = before.map((n) => ({ nonce: n.nonce, token: n.token, value: n.value.toString() }))
+      .sort((a, b) => Number(BigInt(b.value) - BigInt(a.value)));
+    /*
+     * The stand-in builds the merge with the ledger's own call builder, then hands back the coin it keeps for the vault
+     * worth one less than the notes: the real ledger never builds that, so only this shows the build's own check holds.
+     */
+    const short = builder({
+      createUnprovenCallTxFromInitialStates: async (...args: any[]) => {
+        const built = await (contracts as any).createUnprovenCallTxFromInitialStates(...args);
+        if (args[1]?.circuitId !== 'mergeNotes') return built;
+        const next = built.private.nextZswapLocalState;
+        const outputs = [...next.outputs].map((o: any) => {
+          const c = o.coinInfo;
+          return o.recipient.is_left ? o : { recipient: o.recipient, coinInfo: { nonce: c.nonce, color: c.color, type: c.type, value: BigInt(c.value) - 1n } };
+        });
+        return { ...built, private: { ...built.private, nextZswapLocalState: { outputs } } };
+      },
+    });
+    const applied = chain.applied.length;
+    const refused = await mergeNotesInCompanyVault({ ...doors, builder: short }, { vault, notes: named }).catch((e: Error) => e);
+    /* RED WHEN: a merge is sent though the coin it keeps is not worth every note it spends - the difference leaves the vault's record. */
+    expect(String((refused as Error).message)).toMatch(/does not keep one coin worth every note it spends/u);
+    expect(chain.applied.length).toBe(applied);
+    expect((await poolOf()).notes).toEqual(before);
+  });
+
+  /*
+   * ---- A RUN DRAWN, RAISED AND APPROVED ON A SIGNER'S DEVICE, AND PAID FROM THE VAULT ----
+   *
+   * WHAT IS A STAND-IN, SAID HERE:
+   *   · the people the device believes are handed to it as they are once invited, accepted and admitted on devices
+   *     (that is driven in `src/server/a-leg-is-raised-on-the-device.test.ts`), each with an address their own keys make;
+   *   · the company's first state, signed by the founding seat's filing key, is kept here rather than filed;
+   *   · the device's proving of the raise is building the account's own `propose` call from the founding signer's
+   *     private state with exactly the order the device made; the approval is the founding signer's own `approve` call, after the
+   *     approving device opened the proposal and ran every raise check on it;
+   *   · the vault's private money is not asked before the raise: the payment itself refuses what the vault cannot pay;
+   *   · the company's ceilings are none (`policy`), and who the account records paid is read straight off this chain's
+   *     account (`paidAmong`, and the wallet's `payments.read`), as the person's own wallet reads it; `paidYet` is never
+   *     asked, because a private leg is not paid publicly;
+   *   · that the approving device refuses what the raise checks refuse is pinned in
+   *     `src/server/a-leg-is-raised-on-the-device.test.ts`, not here: here it opens a round every check passes.
+   */
+  const PAY_ROW: Asset = {
+    code: TOKEN, symbol: 'tPAY', name: 'Test Pay', decimals: 0,
+    ledger: { shielded: TOKEN, unshielded: TOKEN } as Asset['ledger'], enabled: true, sortOrder: 1,
+  };
+  const aPersonPaidPrivately = (n: number, name: string, amount: bigint): RosterEmployee => {
+    const k = L.ZswapSecretKeys.fromSeed(new Uint8Array(randomBytes(32)));
+    return {
+      id: `emp_${n}`, accountId: ACCOUNT_ID, name, email: `${name.toLowerCase()}@acme.example`, title: 'Eng', asset: TOKEN, baseAmount: amount,
+      startDate: '2026-09-01', status: 'active', wrappingPublicKey: newWrappingKeypair().publicKey, handedOverBy: `usr_${n}`,
+      admittedBy: 'ada', admittedAt: '2026-09-02T00:00:00.000Z', selfRaised: false,
+      address: payeeAddressFromKeys({ coinPublicKey: k.coinPublicKey as Hex, encryptionPublicKey: k.encryptionPublicKey as Hex }, NET),
+    } as unknown as RosterEmployee;
+  };
+  /** The company's records as the founding signer's device opens them: the directory, the people, the first state, the runs and proposals, and the wallet's read of the account. */
+  const recordsHere = (people: readonly RosterEmployee[]): CompanyRecordsHere & { proposals: () => Promise<ReturnType<typeof store.listProposals>> } => {
+    const registry = new StaticAssetRegistry([PAY_ROW]);
+    const firstState = signedFoundingState(ACCOUNT_ID, sealState({ entries: [] }, newStateBlinding(), viewingKey, 0), signing.secret);
+    return {
+      directory: () => directoryHere({
+        accountId: ACCOUNT_ID, label: LABEL, filings: () => directoryFilingsFrom(api, ACCOUNT_ID),
+        holders: async () => ({ ...(await walletReads()).holders, account: company as never }),
+        attested: async () => attestedIn(openAccount(store.getAccount(ACCOUNT_ID)!, viewingKey)),
+      }),
+      people: async () => ({ people: people.map((person) => ({ person, version: 1, handedOver: true })), notBelieved: [], notPayable: [] }) as unknown as PeopleHere,
+      state: async (id) => (id === '0' ? firstState : null),
+      runs: async () => store.listRuns(ACCOUNT_ID),
+      proposals: async () => store.listProposals(ACCOUNT_ID),
+      registry,
+      payments: {
+        paidOnceOf: accountCircuits.paidOnceOf, paidMovementOf: accountCircuits.paidMovementOf,
+        /* What the person's own wallet reads off the account: the entries it holds, its open proposals, how many entries in all. */
+        read: async (entries) => {
+          const l = accountLedgerOf(chain.contract(company));
+          const key = accountCircuits.payKeyCommitmentKey();
+          return {
+            payKeyCommitment: l.signerRoles.member(key) ? hex(l.signerRoles.lookup(key)) : null,
+            held: entries.filter((e) => l.movements.member(fromHex(e))),
+            openRounds: [...l.openProposals].map(([id]: [Uint8Array]) => hex(id)).sort(),
+            entries: Number(l.movements.size()),
+          };
+        },
+      },
+      policy: async () => ({ threshold: 1, limitsByRole: {} }) as never,
+    };
+  };
+  /** The founding signer's device raising a leg: the proving is the account's own call, built from their private state with the device's order. */
+  const raisingOn = (here: ReturnType<typeof recordsHere>): LegRaiseDoors => ({
+    service: { ...governedCallServiceFor(api), callState: async () => ({ account: company, accountState: '', parameters: '' }) as never },
+    builder: {
+      governedCall: async ({ order }: { order: { run: { root: string; payees: string; opensAt: string; closesAt: string; vault: string }; half: Record<string, string> } }) => {
+        const keys = L.ZswapSecretKeys.fromSeed(new Uint8Array(randomBytes(32)));
+        const staged = {
+          ...founder, assetId: fromHex(order.half.assetId!), assetBlinding: fromHex(order.half.assetBlinding!),
+          changeAmount: BigInt(order.half.changeAmount!), changeBatchDigest: fromHex(order.half.changeBatchDigest!), proposalSalt: fromHex(order.half.proposalSalt!),
+        };
+        const built = await (contracts as any).createUnprovenCallTxFromInitialStates(accountZk, {
+          compiledContract: accountCompiled, circuitId: 'propose', contractAddress: company, coinPublicKey: keys.coinPublicKey,
+          initialContractState: asRuntime(chain.contract(company)), initialZswapChainState: new L.ZswapChainState(),
+          ledgerParameters: L.LedgerParameters.initialParameters(), initialPrivateState: staged,
+          args: [ZERO_32, fromHex(order.run.root), BigInt(order.run.payees), BigInt(order.run.opensAt), BigInt(order.run.closesAt), 0n, true, fromHex(order.run.vault)],
+        }, keys.encryptionPublicKey);
+        return { tx: base64FromBytes(built.private.unprovenTx.serialize()) };
+      },
+    } as never,
+    material: { signingSecret: signing.secret as Hex, blinding: hex(founder.blinding) as Hex } as never,
+    accountId: ACCOUNT_ID,
+    records: here,
+    holdings: { held: async () => ({ of: 'held', amount: 1n << 100n }), fits: async () => ({ of: 'fits' }) } as never,
+    filing: { seat: hex(leafOfDevice(founder)), keyEpoch: 0, salt: () => toHex(new Uint8Array(randomBytes(32))), newId: () => newProposalId() },
+    company: { account: company, label: LABEL },
+    runs: {
+      detailsOf: vaultDetails, runPayload: accountCircuits.runPayload, proposalIdOf: accountCircuits.proposalIdOf, noVault: accountCircuits.noVault,
+      buildRun, buildRetryRun, rootOfPayments,
+    },
+    assets: here.registry!,
+    waitMs: 50, everyMs: 10, sleep: async () => undefined,
+  });
+
+  it('A RUN DRAWN AND RAISED ON A SIGNER\'S DEVICE AND APPROVED BY THE BAR IS PAID FROM THE VAULT, MERGING FIRST FOR THE PERSON NO TWO NOTES COVER: EVERY PERSON RECORDED PAID, EVERY STEP JOURNALLED, AND PAYING AGAIN PAYS NOBODY', async () => {
+    const { vault } = await aFundedVault();
+    const doors = {
+      ...pacing, service, me, myRecordsKey: recordsReaderOf(me.companyKey).publicKey, signers, records, account: readAccountAddress(company)!,
+      onChain: walletReads, builder: builder(), inFlight: paymentsInFlight(), paidYet: async () => null,
+    };
+    /* The vault holds 1,000, 500 and 400: no two of them cover 1,600. */
+    for (const value of [500n, 400n]) await depositIntoCompanyVault({ ...doors, company: LABEL, pay: wallet, inFlight: inFlightInMemory() }, vault, { token: TOKEN, value });
+    const people = [aPersonPaidPrivately(1, 'Dana', 1_600n), aPersonPaidPrivately(2, 'Eve', 250n)];
+    const here = recordsHere(people);
+
+    /* ---- drawn on the device and filed signed by its seat ---- */
+    const drawn: PayrollRun = await drawRunHere({
+      api, accountId: ACCOUNT_ID, viewingKey, keyEpoch: 0, signingSecret: signing.secret as Hex, company: { account: company, label: LABEL },
+      records: here, by: 'ada', registry: here.registry!,
+    }, { period: '2026-10' });
+    /* ---- raised on the device, and the chain holds it ---- */
+    const now = Math.floor(Date.now() / 1000);
+    const round = await raiseRunOnDevice(raisingOn(here), {
+      runId: drawn.id, viewingKey, vault, opensAt: String(now - 600), closesAt: String(now + 3_600),
+    });
+    expect(round.raisedAt, 'RED WHEN: the raise the device built does not reach the chain').toBeTruthy();
+    /* ---- approved by the bar: the approving device opens it and runs every raise check, then the founding signer approves ---- */
+    const proposal = store.getProposal(round.id)!;
+    await expect(openTheRoundHere({ ...governedCallServiceFor(api), sealedProposals: async () => store.listProposals(ACCOUNT_ID) }, ACCOUNT_ID, round.id, viewingKey, false, here))
+      .resolves.toMatchObject({ vault, chainId: proposal.chainId });
+    await callAccount('approve', [fromHex(proposal.chainId)], founder);
+
+    /* ---- paid from the vault by one function, from what the device made of the records ---- */
+    const paidAmong = async (leaves: readonly Hex[]) => {
+      const l = accountLedgerOf(chain.contract(company));
+      return { known: true, paid: leaves.filter((leaf) => l.movements.member(accountCircuits.paidMovementOf(fromHex(leaf)))) };
+    };
+    const leg = {
+      records: here, accountId: ACCOUNT_ID, runId: drawn.id, viewingKey,
+      deps: { detailsOf: vaultDetails, runPayload: accountCircuits.runPayload, proposalIdOf: accountCircuits.proposalIdOf, paidAmong },
+    };
+    const before = chain.applied.length;
+    const done = await payAnApprovedLeg(doors as never, leg);
+
+    /* RED WHEN: the person no two notes cover is refused, or paid before the merge that covers them. */
+    expect(done.steps.map((st) => st.kind)).toEqual(['merge', 'payment', 'payment']);
+    expect(chain.applied.slice(before).map((a) => [a.ok, a.error])).toEqual([[true, ''], [true, ''], [true, '']]);
+    /* RED WHEN: anybody on the run is not recorded paid by the account: each leaf the device made, recorded once. */
+    expect([...done.paid].sort()).toEqual([0, 1]);
+    const raised = openSealedRun(store.listRuns(ACCOUNT_ID).find((r) => r.id === drawn.id)!, viewingKey);
+    const leaves = Object.values(raised.payout ?? {}).flatMap((l) => [...l!.leaves]);
+    expect(leaves).toHaveLength(2);
+    expect((await paidAmong(leaves as Hex[])).paid).toEqual(leaves);
+    /* RED WHEN: a step is sent without being written down first: the merge as a merge, then each person's payment. */
+    const journal = await new PaymentJournalInStore(records('payment-journal'), vault, { id: 'ada', wrappingSecret: wrapping.secret }, signers).open();
+    expect(journal.attempts.map((a) => [a.step, a.amount])).toEqual([['merge', 0n], ['payment', 1_600n], ['payment', 250n]]);
+    /* The pool follows the chain: one note left, worth what nobody was paid. */
+    const pool = await new SealedNotePool(records('pool'), { signerId: 'ada', wrappingSecret: wrapping.secret }, signers).load(vault);
+    expect(pool.notes.map((n) => n.value)).toEqual([50n]);
+
+    /* ---- paying again pays nobody ---- */
+    const again = await payAnApprovedLeg(doors as never, leg);
+    /* RED WHEN: a person the account records paid is paid, or anything is sent, a second time. */
+    expect(again).toMatchObject({ paid: [], sentNotNamed: [], alreadyPaid: [0, 1], steps: [] });
+    expect(chain.applied.length).toBe(before + 3);
+  });
+
+  it('A PAYMENT NO ONE NOTE COVERS DRAWS ON TWO OF THE VAULT\'S NOTES, AND THE SERVICE PAYS ITS FEE AS THE VAULT\'S OWN COINS', async () => {
+    const { vault } = await aFundedVault();
+    const doors = {
+      ...pacing, service, me, myRecordsKey: recordsReaderOf(me.companyKey).publicKey, signers, records, account: readAccountAddress(company)!,
+      onChain: walletReads, builder: builder(), inFlight: paymentsInFlight(),
+    };
+    await depositIntoCompanyVault({ ...doors, company: LABEL, pay: wallet, inFlight: inFlightInMemory() }, vault, { token: TOKEN, value: 500n });
+    const run = await anApprovedRun(vault, 1_200n);
+    const order = run.order();
+    const before = chain.applied.length;
+    /* RED WHEN: the fee payer refuses a payment that spends two of the vault's coins, which the contract and the planner allow. */
+    await payPrivatelyFromCompanyVault(doors, { order, payment: order.payments[0]! });
+    expect(chain.applied.slice(before).map((a) => [a.ok, a.error])).toEqual([[true, '']]);
+    expect(arrivals.at(-1)).toBe('proven-moving-the-vaults-own-coins');
+    expect(accountLedgerOf(chain.contract(company)).movements.member(accountCircuits.paidMovementOf(fromHex(run.leaf)))).toBe(true);
+    const pool = await new SealedNotePool(records('pool'), { signerId: 'ada', wrappingSecret: wrapping.secret }, signers).load(vault);
+    expect(pool.notes.map((n) => n.value)).toEqual([300n]);
+  });
+
   it('THE SAME PERSON IS NOT OFFERED TWICE, AND A SECOND PAYMENT BUILT ANYWAY IS REFUSED BY THE ACCOUNT', async () => {
     const { vault } = await aFundedVault();
     const run = await anApprovedRun(vault, 100n);
@@ -734,7 +1052,10 @@ describe.skipIf(!KEYS_ON_DISK)('A PRIVATE PAYMENT OUT OF A COMPANY VAULT, FROM T
     const built = await builder().payout({
       vault, account: company, order: round, payment: order.payments[0]!,
       note: { nonce: note.nonce, token: note.token, value: note.value.toString(), createdIn: (await new SealedNotePool(records('pool'), { signerId: 'ada', wrappingSecret: wrapping.secret }, signers).load(vault)).notes[0]!.createdIn },
-      events: (await service.events(vault, (await new SealedNotePool(records('pool'), { signerId: 'ada', wrappingSecret: wrapping.secret }, signers).load(vault)).notes[0]!.createdIn!)).events,
+      events: await builder().eventsOf({
+        transactionHash: (await new SealedNotePool(records('pool'), { signerId: 'ada', wrappingSecret: wrapping.secret }, signers).load(vault)).notes[0]!.createdIn!,
+        indexer: { indexerUri: 'https://indexer.example/api/v3/graphql', indexerWsUri: 'wss://indexer.example/api/v3/graphql/ws' },
+      }),
       chain: chainNow,
       /* The vault's secret, read back from the company's records and opened on this device, as a payment out opens it. */
       secret: await theSecretReadBack(vault),

@@ -166,6 +166,7 @@ describe('THE SCREEN FOR SIGNING A CHANGE TO WHO HOLDS A COMPANY\'S RULES', () =
   it('SAYS SO WHEN THIS PERSON\'S OWN KEY LEAVES', async () => {
     const { container } = renderWith(ask({ to: { committee: sorted(joining), threshold: 1 } }), []);
     await screen.findByText('Sign this change');
+    await settled(5);
     expect(container.querySelector('[data-you-leave]')).not.toBeNull();
   });
 

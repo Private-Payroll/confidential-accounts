@@ -13,7 +13,7 @@
  */
 import {
   buildAccountDeploy, buildVaultBornHeld, buildCommitteeHandover, buildDeposit, buildPayout, creationCarriedAgain, finishedCreation, buildPublicDeposit, buildPublicPayout, buildSetNonceSecret, buildVaultDeploy,
-  buildWriteSecretCopy, notesForPayment, confirmPayment, paymentsFitNotes, poolAfterPayment,
+  buildWriteSecretCopy, notesForPayment, confirmPayment, paymentsFitNotes, poolAfterPayment, buildMerge,
   type SecretRunOnTheWire, type VaultBuilderDeps,
 } from './vault-builder.js';
 import {
@@ -386,6 +386,7 @@ export const answerVaultAsk = async (
     case 'confirm-payment': {
       const confirmation = await confirmPayment({
         vault: ask.vault, transactionHash: ask.transactionHash, change: ask.change, events: ask.events,
+        ...(ask.merge === true ? { merge: true as const } : {}),
       });
       return { id: ask.id, ok: true, ask: 'confirm-payment', confirmation };
     }
@@ -408,6 +409,19 @@ export const answerVaultAsk = async (
         },
       });
       return { id: ask.id, ok: true, ask: 'payout', tx: toBase64(built.proven), spent: built.spent, change: built.change };
+    }
+    case 'merge': {
+      const built = await buildMerge(withNetwork, {
+        vault: ask.vault, notes: ask.notes, secret: ask.secret,
+        chain: {
+          blockHash: ask.chain.blockHash,
+          vaultState: fromBase64(ask.chain.vaultState),
+          zswapState: fromBase64(ask.chain.zswapState),
+          parameters: fromBase64(ask.chain.parameters),
+          accountState: fromBase64(ask.chain.accountState),
+        },
+      });
+      return { id: ask.id, ok: true, ask: 'merge', tx: toBase64(built.proven), spent: built.spent, kept: built.kept };
     }
     case 'payout-publicly': {
       const built = await buildPublicPayout(withNetwork, {
@@ -558,6 +572,22 @@ export const answerVaultAsk = async (
       const { readVaultOnChain, vaultChainSourceAt } = await import('./vault-on-chain-here.js');
       const source = (d.chainSourceAt ?? vaultChainSourceAt)(ask.indexer);
       return { id: ask.id, ok: true, ask: 'vault-on-chain', read: await readVaultOnChain(d, source, ask.vault) };
+    }
+    case 'chain-at-one-block': {
+      /* What a step out of the vault is built on, at one block, from the indexer the wallet names: never the service's. */
+      const { readChainAtOneBlock, vaultChainSourceAt } = await import('./vault-on-chain-here.js');
+      const source = (d.chainSourceAt ?? vaultChainSourceAt)(ask.indexer);
+      return { id: ask.id, ok: true, ask: 'chain-at-one-block', chain: await readChainAtOneBlock(source, ask.vault, ask.account) };
+    }
+    case 'events-of': {
+      const { readEventsOf, vaultChainSourceAt } = await import('./vault-on-chain-here.js');
+      const source = (d.chainSourceAt ?? vaultChainSourceAt)(ask.indexer);
+      return { id: ask.id, ok: true, ask: 'events-of', events: await readEventsOf(source, ask.transactionHash) };
+    }
+    case 'created-by': {
+      const { readCreatedBy, vaultChainSourceAt } = await import('./vault-on-chain-here.js');
+      const source = (d.chainSourceAt ?? vaultChainSourceAt)(ask.indexer);
+      return { id: ask.id, ok: true, ask: 'created-by', found: await readCreatedBy(source, ask.vault, ask.commitment) };
     }
     case 'step-kept': {
       /* The coin a journalled step kept, worked out with the vault's own functions: a merge's, or a payment's change. */

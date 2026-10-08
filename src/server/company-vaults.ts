@@ -54,7 +54,7 @@ import { authorityView, everySignerNeeded, type ContractAuthorityView, type Seat
 import { contractsOwingAChange, type ContractOwingAChange } from '../midnight/committee-change.js';
 import type { CollectedCommitteeSignatures } from '../core/store.js';
 import {
-  circuitsRefusal, committeeHoldsTheVault, readVaultDeploy, refusalForCommitteeChange, refusalForDeposit, refusalForHandover, refusalForPayout,
+  circuitsRefusal, committeeHoldsTheVault, readVaultDeploy, refusalForCommitteeChange, refusalForDeposit, refusalForHandover, refusalForMerge, refusalForPayout,
   refusalForPublicDeposit, refusalForPublicPayout, refusalForSecretCopy, refusalForSetNonceSecret, refusalForStartAccountCall,
   refusalToPutMoneyIn, type FundingFacts, type VaultStartingLedger,
 } from '../wiring/vault-submission.js';
@@ -1001,6 +1001,37 @@ export function companyVaultRoutes(deps: CompanyVaultDeps): express.Router {
     }
     const sent = await send(res, account.id, 'a private payment out of a vault', 'proven-moving-the-vaults-own-coins', bytes,
       (tx) => refusalForPayout(tx, { vault: record.vault, account: company.address }));
+    if (sent === null) return;
+    res.json({ txRef: sent.ref, transactionHash: sent.transactionHash });
+  });
+
+  /*
+   * **THE FEE ON A MERGE OF THE VAULT'S OWN NOTES, BEHIND THE SAME GATE.** A
+   * merge moves nothing out of the vault and needs no approval; the device
+   * planned it, wrote it down and built it on what it read itself. What is
+   * read here is only that it reshapes this vault's own coins into one the
+   * vault keeps, and that the vault is one this service can vouch for.
+   */
+  r.post('/api/accounts/:id/vaults/:vault/merge', ...guard, async (req, res) => {
+    const record = theVault(req, res);
+    if (record === null) return;
+    const bytes = txFrom(req, res);
+    if (bytes === null) return;
+    const account = accountOf(req);
+    const { company, committee, why } = await committeeNow(account);
+    if (company === null || committee === null) {
+      res.status(409).json({ nothingWasSent: true, error: `${why} Nothing was sent.` });
+      return;
+    }
+    const unvouched = await whyNotFunded(
+      record.vault, await authorityOf(record.vault), committee, company.address, undefined, undefined,
+      'this service pays no fee for a merge of this vault\'s notes');
+    if (unvouched !== null) {
+      res.status(409).json({ nothingWasSent: true, error: unvouched.why });
+      return;
+    }
+    const sent = await send(res, account.id, 'a merge of a vault\'s notes', 'proven-moving-the-vaults-own-coins', bytes,
+      (tx) => refusalForMerge(tx, { vault: record.vault }));
     if (sent === null) return;
     res.json({ txRef: sent.ref, transactionHash: sent.transactionHash });
   });

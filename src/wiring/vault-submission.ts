@@ -45,6 +45,7 @@ import type { Committee, CommitteeKey } from '../midnight/vault-committee.js';
 import { sameCommittee, whyOneKeyCouldActAlone } from '../midnight/vault-committee.js';
 import { vaultBornHeldRefusal, type VaultBornHeldExpectations } from '../midnight/vault-circuits.js';
 import { bare, emptyOffer, nameOf, theOnlyIntent, type DeployVerdict, type IntentShape, type TxShape } from '../midnight/account-deploy.js';
+import { STEP_LIMITS } from '../midnight/payment-plan.js';
 
 export { readAccountDeploy, type AccountDeployExpectations, type DeployVerdict } from '../midnight/account-deploy.js';
 
@@ -537,6 +538,28 @@ const ownerOf = (part: ShieldedPart): string | null =>
   part.contractAddress === undefined || part.contractAddress === null ? null : bare(part.contractAddress);
 
 /**
+ * **HOW MANY OF THE VAULT'S OWN COINS ONE STEP OUT OF IT SPENDS, BY ITS KIND**:
+ * the contract's own limits, read from the one place they are written. A batch
+ * is one more case here when it is relayed.
+ */
+const COINS_A_STEP_SPENDS = {
+  payment: { least: 1, most: STEP_LIMITS.paymentNotes },
+  merge: { least: 2, most: STEP_LIMITS.mergeNotes },
+} as const;
+
+/** The refusal for a step whose coins in are not between its kind's limits, every one of them this vault's; null when they are. */
+const coinsInRefusal = (
+  kind: keyof typeof COINS_A_STEP_SPENDS, inputs: readonly ShieldedPart[], vault: string, what: string,
+): string | null => {
+  const { least, most } = COINS_A_STEP_SPENDS[kind];
+  if (inputs.length < least || inputs.length > most || inputs.some((i) => ownerOf(i) !== bare(vault))) {
+    return `this is not ${what}: it must spend ${['no', 'one', 'two'][least]} to ${most} coins, every one of them this `
+      + 'vault\'s. Nothing was sent.';
+  }
+  return null;
+};
+
+/**
  * **`null` ONLY FOR A PAYMENT THAT MOVES THIS VAULT'S OWN MONEY TO ONE PERSON
  * AND NOTHING ELSE.**
  *
@@ -584,8 +607,8 @@ export function refusalForPayout(tx: unknown, expect: PayoutExpectations): strin
       + 'nothing else. Nothing was sent.';
   }
   /*
-   * **THE COINS: ONE OF THE VAULT'S IN, ONE PERSON'S OUT, AND AT MOST ONE BACK
-   * TO THE VAULT.** Read across the guaranteed part and every fallible part,
+   * **THE COINS: ONE OR TWO OF THE VAULT'S IN, ONE PERSON'S OUT, AND AT MOST ONE
+   * BACK TO THE VAULT.** Read across the guaranteed part and every fallible part,
    * because a coin in either is a coin moved.
    */
   const offers: ShieldedOfferShape[] = [];
@@ -608,9 +631,9 @@ export function refusalForPayout(tx: unknown, expect: PayoutExpectations): strin
     inputs.push(...offer.inputs as ShieldedPart[]);
     outputs.push(...offer.outputs as ShieldedPart[]);
   }
-  if (inputs.length !== 1 || ownerOf(inputs[0]!) !== bare(expect.vault)) {
-    return `this is not ${what}: it must spend exactly one coin, and that coin must be this vault's. Nothing was sent.`;
-  }
+  /* One or two of the vault's notes: a payment may draw on a further note when one does not cover it. */
+  const coinsIn = coinsInRefusal('payment', inputs, expect.vault, what);
+  if (coinsIn !== null) return coinsIn;
   const toPeople = outputs.filter((o) => ownerOf(o) === null);
   const toContracts = outputs.filter((o) => ownerOf(o) !== null);
   if (toPeople.length !== 1) {
@@ -624,6 +647,94 @@ export function refusalForPayout(tx: unknown, expect: PayoutExpectations): strin
    * anything else left unbalanced is either somebody else's to fill or a
    * transaction the network refuses after the fee payer has booked for it.
    */
+  if (typeof t.imbalances !== 'function') {
+    return `this is not ${what}: what it moves could not be added up, so it was not paid for. Nothing was sent.`;
+  }
+  const segments = [0, ...(t.fallibleOffer instanceof Map ? [...t.fallibleOffer.keys()].map(Number) : [])];
+  for (const segment of segments) {
+    let owed: Map<{ tag?: unknown }, bigint>;
+    try {
+      owed = t.imbalances(segment);
+    } catch {
+      return `this is not ${what}: what it moves could not be added up, so it was not paid for. Nothing was sent.`;
+    }
+    for (const [token, amount] of owed) {
+      if (token?.tag !== 'dust' && amount !== 0n) {
+        return `this is not ${what}: it does not balance in its own money, and the company pays only the network `
+          + 'fee. Nothing was sent.';
+      }
+    }
+  }
+  return null;
+}
+
+/* ------------------------------------------- 5. a merge of the vault's own notes */
+
+
+/**
+ * **`null` ONLY FOR A MERGE OF THIS VAULT'S OWN NOTES INTO ONE COIN THE VAULT
+ * KEEPS, AND NOTHING ELSE.**
+ *
+ * A merge needs no approval and moves nothing out of the vault: the vault
+ * itself asserts every note is its own and of one token, and keeps one coin
+ * worth all of them. What is decided here is only whether the fee payer adds
+ * DUST to it: one call, the vault's `mergeNotes`; two to four coins in, every
+ * one this vault's; exactly one coin out, back to this vault; no public money,
+ * no fee from elsewhere, and nothing left unbalanced but the fee.
+ */
+export function refusalForMerge(tx: unknown, expect: { readonly vault: string }): string | null {
+  const what = 'a merge of this vault\'s own notes';
+  const t = tx as (TxShape & { imbalances?: (segment: number) => Map<{ tag?: unknown }, bigint> }) | null;
+  if (!(t?.intents instanceof Map) || t.intents.size !== 1) {
+    return `this is not ${what}: it must carry exactly one set of actions. Nothing was sent.`;
+  }
+  const intent = [...t.intents.values()][0] as IntentShape | null;
+  if (!intent || !Array.isArray(intent.actions)) {
+    return `this is not ${what}: it could not be read, so it was not paid for. Nothing was sent.`;
+  }
+  if (!emptyOffer(intent.guaranteedUnshieldedOffer, ['inputs', 'outputs'])
+    || !emptyOffer(intent.fallibleUnshieldedOffer, ['inputs', 'outputs'])) {
+    return `this is not ${what}: it moves public money, and a merge moves none. Nothing was sent.`;
+  }
+  if (!emptyOffer(intent.dustActions, ['spends', 'registrations'])) {
+    return `this is not ${what}: it already pays a network fee from somewhere else. Nothing was sent.`;
+  }
+  const called: string[] = [];
+  for (const action of intent.actions) {
+    const call = action as { address?: unknown; entryPoint?: unknown } | null;
+    if (!call || call.entryPoint === undefined || call.address === undefined) {
+      return `this is not ${what}: it does something other than call the vault. Nothing was sent.`;
+    }
+    called.push(`${bare(call.address)}/${nameOf(call.entryPoint)}`);
+  }
+  if (called.length !== 1 || called[0] !== `${bare(expect.vault)}/mergeNotes`) {
+    return `this is not ${what}: it must make exactly one call, this vault's mergeNotes, and nothing else. Nothing was sent.`;
+  }
+  const offers: ShieldedOfferShape[] = [];
+  if (t.guaranteedOffer !== undefined && t.guaranteedOffer !== null) offers.push(t.guaranteedOffer as ShieldedOfferShape);
+  if (t.fallibleOffer !== undefined && t.fallibleOffer !== null) {
+    if (!(t.fallibleOffer instanceof Map)) {
+      return `this is not ${what}: its coins could not be read, so it was not paid for. Nothing was sent.`;
+    }
+    offers.push(...[...t.fallibleOffer.values()] as ShieldedOfferShape[]);
+  }
+  const inputs: ShieldedPart[] = [];
+  const outputs: ShieldedPart[] = [];
+  for (const offer of offers) {
+    if (!Array.isArray(offer.inputs) || !Array.isArray(offer.outputs) || !Array.isArray(offer.transients)) {
+      return `this is not ${what}: its coins could not be read, so it was not paid for. Nothing was sent.`;
+    }
+    if (offer.transients.length > 0) {
+      return `this is not ${what}: it makes and spends a coin in one go, which a merge never does. Nothing was sent.`;
+    }
+    inputs.push(...offer.inputs as ShieldedPart[]);
+    outputs.push(...offer.outputs as ShieldedPart[]);
+  }
+  const coinsIn = coinsInRefusal('merge', inputs, expect.vault, what);
+  if (coinsIn !== null) return coinsIn;
+  if (outputs.length !== 1 || ownerOf(outputs[0]!) !== bare(expect.vault)) {
+    return `this is not ${what}: it must make exactly one coin, kept by this vault, and pay nobody. Nothing was sent.`;
+  }
   if (typeof t.imbalances !== 'function') {
     return `this is not ${what}: what it moves could not be added up, so it was not paid for. Nothing was sent.`;
   }

@@ -14,10 +14,9 @@ import { randomBytes, signingPublicKeyOf, type Hex } from '../../../src/core/cry
 import { batchDigestOf, paysCommitmentOf, sealPayrollProposal, signProposalFiling } from '../../../src/core/proposal-filing.js';
 import { signRunFiling } from '../../../src/core/run-filing.js';
 import {
-  earlierRoundOfLeg, receiptsOf, refuseALegThatIsProposed, refuseARetryOfNobody, refuseARetryOverPeopleCovered,
-  refuseARunNoVaultCanPay, refuseMaterialThatIsNotThisLeg, refuseRetryMaterialThatIsNotItsPeople,
+  receiptsOf, refuseARetryOfALegNeverOnChain, refuseARetryOfNobody, refuseARunNoVaultCanPay, refuseMaterialThatIsNotThisLeg,
+  refuseRetryMaterialThatIsNotItsPeople,
 } from '../../../src/core/run-raising.js';
-import { registerFor, skippedIndices } from '../../../src/midnight/run-skips.js';
 import {
   assetOfLeg, formOfLeg, legChoiceOf, legEmployees, legName, legOf, payRecordsOf, runIdForLeg, sealedRunOf,
 } from '../../../src/core/run-legs.js';
@@ -31,7 +30,7 @@ import type { OpenedRound, RaiseRunOrder } from './governed-call-builder.js';
 import type { RunMadeHere } from './what-this-device-made.js';
 import type { RaiseDoors, RoundOnThePage } from './governed-call-on-device.js';
 import {
-  checkedAgainstTheRecordsAndTheWallet, keptRunHere, payableFactsHere, payrollRoundsHere, signedStateHere, type CompanyRecordsHere,
+  checkedAgainstTheRecordsAndTheWallet, keptRunHere, payableFactsHere, signedStateHere, type CompanyRecordsHere,
 } from './run-rebuilt-here.js';
 import { RoundRefusedHere, refuseWhatNoRoundMay, type RoundToCheck } from './raise-checks-here.js';
 
@@ -85,12 +84,17 @@ const raised = <T>(make: () => T): T => {
   }
 };
 
-/** The raise checks every raising and approving device runs (`raise-checks-here.ts`), each refusal said as this raise's. */
+/**
+ * The raise checks every raising and approving device runs
+ * (`raise-checks-here.ts`), at this device's clock, each refusal said as this
+ * raise's: among them that the leg is raised once, and that a retry is of a leg
+ * that can no longer pay its people and names nobody another retry can.
+ */
 const checkedHere = async (doors: LegRaiseDoors, key: Hex, round: Omit<RoundToCheck, 'filedBy'>): Promise<void> => {
   try {
     await refuseWhatNoRoundMay(doors.records, doors.accountId, key, {
       ...round, filedBy: signingPublicKeyOf(doors.material.signingSecret as Hex),
-    });
+    }, (doors.now ?? (() => new Date()))());
   } catch (e) {
     if (e instanceof RoundRefusedHere) throw new LegNotRaisedHere(e.message);
     throw e;
@@ -123,14 +127,6 @@ export async function raiseLegHere(
   const { run } = await keptRunHere(records, accountId, input.runId, key);
   if (run.status !== 'draft' && run.status !== 'proposed') throw new LegNotRaisedHere(`this run is ${run.status}`);
   const leg = raised(() => legOf(run, legChoiceOf(input), registry));
-  const proposals = await records.proposals();
-  const rounds = payrollRoundsHere(proposals, accountId, key);
-  raised(() => refuseALegThatIsProposed(run, leg, rounds, registry));
-  const again = raised(() => earlierRoundOfLeg(run, leg, rounds, registry));
-  if (again !== undefined) {
-    throw new LegNotRaisedHere(`this leg is written down as ${again}, which may be on the chain. Send that one, or withdraw it `
-      + '- withdrawing asks the chain - and raise the leg again after');
-  }
   const paid = legEmployees(run, leg);
   const facts = await payableFactsHere(records, paid, 'Leave this run unraised until their record is put right.',
     'This device will not raise a run it would not pay.');
@@ -284,22 +280,12 @@ export async function raiseRetryHere(
 
   const { run } = await keptRunHere(records, accountId, input.runId, key);
   const leg = raised(() => legOf(run, legChoiceOf(input), registry));
-  const recorded = run.payout?.[leg];
   const proposals = await records.proposals();
-  const legRound = recorded === undefined ? undefined : proposals.find((p) => p.id === run.proposalIds[leg]);
-  if (recorded === undefined || legRound === undefined) {
-    throw new LegNotRaisedHere(`the ${legName(leg, registry)} leg of run ${run.id} has not been raised, so there is nobody on it to `
-      + 'retry: a retry pays people an approved round did not reach, and this leg has no round yet. Raise the leg first');
-  }
-  if (!legRound.raisedAt) {
-    throw new LegNotRaisedHere(`the ${legName(leg, registry)} leg of run ${run.id} ${legRound.status === 'blocked'
-      ? 'was stopped by this company\'s own policy'
-      : 'has no round the chain has been seen to hold'}, so there is no round on it to retry. A retry is judged against `
-      + 'the same rules as any round, and splitting a payroll that never reached the chain into smaller ones is not a way '
-      + 'round them');
-  }
+  const legRound = run.payout?.[leg] === undefined ? undefined : proposals.find((p) => p.id === run.proposalIds[leg]);
+  /* Before anything is built from the leg's record; the raise checks below ask it again, as every approver does. */
+  raised(() => refuseARetryOfALegNeverOnChain(run, leg, legRound, registry));
+  const recorded = run.payout![leg]!;
   raised(() => refuseARetryOfNobody(run, leg, recorded.leaves.length, indices, registry));
-  const rounds = payrollRoundsHere(proposals, accountId, key);
   /* A retry of exactly these people written down and not yet seen on the chain is sent as itself, not raised again. */
   const unsent = (recorded.retries ?? []).find((r) => r.proposalId !== undefined
     && r.originalIndices.length === indices.length && r.originalIndices.every((i, at) => i === indices[at])
@@ -313,14 +299,6 @@ export async function raiseRetryHere(
     throw new LegNotRaisedHere(`the ${legName(leg, registry)} leg of run ${run.id} lists ${onTheLeg.length} people and was raised `
       + `over ${recorded.leaves.length} leaves, so which person each leaf belongs to cannot be said`);
   }
-  const register = run.skips ? registerFor(run.skips.decisions, run.id, run.skips.people.length) : undefined;
-  raised(() => refuseARetryOverPeopleCovered({
-    run, leg, legRound, indices, again: undefined, nowInSeconds: BigInt(Math.floor(now.getTime() / 1000)),
-    standingOf: (id) => proposals.find((p) => p.id === id) ?? { status: 'unknown' },
-    legRounds: rounds,
-    notToPay: new Set(register ? skippedIndices(register).map((i) => run.skips!.people[i]!.employeeId) : []),
-    registry,
-  }));
   /* The leg built again from its own record; whether this device would pay the people it names is a raise check, below. */
   const state = await signedStateHere(records, accountId, key);
   const asset = assetOfLeg(leg) as AssetId;
