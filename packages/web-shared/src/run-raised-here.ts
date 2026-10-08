@@ -10,23 +10,20 @@
  * given no key and builds nothing.
  */
 import { assetIdBytes, assets as theAssets, sumChangeAmount, type AssetId, type LedgerForm } from '../../../src/core/assets.js';
-import { randomBytes, type Hex } from '../../../src/core/crypto.js';
-import { evaluatePolicy } from '../../../src/core/company-policy.js';
+import { randomBytes, signingPublicKeyOf, type Hex } from '../../../src/core/crypto.js';
 import { batchDigestOf, paysCommitmentOf, sealPayrollProposal, signProposalFiling } from '../../../src/core/proposal-filing.js';
 import { signRunFiling } from '../../../src/core/run-filing.js';
-import { isLiveRound } from '../../../src/core/retry-cover.js';
 import {
   earlierRoundOfLeg, receiptsOf, refuseALegThatIsProposed, refuseARetryOfNobody, refuseARetryOverPeopleCovered,
-  refuseARunNoVaultCanPay, refuseMaterialThatIsNotThisLeg, refusePayingOnePayeeTwice, refuseRaisingOverAnotherRun,
-  refuseRetryMaterialThatIsNotItsPeople,
+  refuseARunNoVaultCanPay, refuseMaterialThatIsNotThisLeg, refuseRetryMaterialThatIsNotItsPeople,
 } from '../../../src/core/run-raising.js';
 import { registerFor, skippedIndices } from '../../../src/midnight/run-skips.js';
 import {
-  assetOfLeg, formOfLeg, legChoiceOf, legEmployees, legName, legOf, openSealedRun, payRecordsOf, runIdForLeg, sealedRunOf,
+  assetOfLeg, formOfLeg, legChoiceOf, legEmployees, legName, legOf, payRecordsOf, runIdForLeg, sealedRunOf,
 } from '../../../src/core/run-legs.js';
 import { DEVICE_RAISE_VERSION, paymentChecked, paymentsOnTheWire, type PaymentChecked } from '../../../src/core/device-raise.js';
 import { refuseWhatTheVaultCannotPay } from '../../../src/core/vault-holdings.js';
-import type { Account, Employee, PayrollRun, Role, RunLeg, SealedProposal, ShieldedEntry } from '../../../src/core/types.js';
+import type { Employee, PayrollRun, Role, RunLeg, SealedProposal, ShieldedEntry } from '../../../src/core/types.js';
 import type { buildRetryRun, buildRun, rootOfPayments, DetailsOfKind } from '../../../src/midnight/payout-tree.js';
 import { currentPayoutSeed } from '../../../src/midnight/run-keys.js';
 import type { CompanyLabel } from 'midnight-identity/profile/company-label';
@@ -34,9 +31,9 @@ import type { OpenedRound, RaiseRunOrder } from './governed-call-builder.js';
 import type { RunMadeHere } from './what-this-device-made.js';
 import type { RaiseDoors, RoundOnThePage } from './governed-call-on-device.js';
 import {
-  keptRunHere, payableFactsHere, payrollRoundsHere, signedStateHere, whatTheRecordsAccountFor, withWhatTheWalletRead,
-  type CompanyRecordsHere,
+  checkedAgainstTheRecordsAndTheWallet, keptRunHere, payableFactsHere, payrollRoundsHere, signedStateHere, type CompanyRecordsHere,
 } from './run-rebuilt-here.js';
+import { RoundRefusedHere, refuseWhatNoRoundMay, type RoundToCheck } from './raise-checks-here.js';
 
 /** Why this device did not raise a leg. Nothing was written down, built or sent. */
 export class LegNotRaisedHere extends Error {
@@ -69,8 +66,6 @@ export interface LegRaiseDoors extends RaiseDoors {
   /** The company's account and label, which each payslip's receipt names. */
   readonly company: { readonly account: string | null; readonly label: CompanyLabel | null };
   readonly runs: RunIdentityDeps;
-  /** The company's own ceilings, opened from its sealed policy record. */
-  readonly policy: () => Promise<Account['policy']>;
   readonly now?: () => Date;
 }
 
@@ -87,6 +82,18 @@ const raised = <T>(make: () => T): T => {
   } catch (e) {
     if (e instanceof LegNotRaisedHere) throw e;
     throw new LegNotRaisedHere((e as Error)?.message ?? String(e));
+  }
+};
+
+/** The raise checks every raising and approving device runs (`raise-checks-here.ts`), each refusal said as this raise's. */
+const checkedHere = async (doors: LegRaiseDoors, key: Hex, round: Omit<RoundToCheck, 'filedBy'>): Promise<void> => {
+  try {
+    await refuseWhatNoRoundMay(doors.records, doors.accountId, key, {
+      ...round, filedBy: signingPublicKeyOf(doors.material.signingSecret as Hex),
+    });
+  } catch (e) {
+    if (e instanceof RoundRefusedHere) throw new LegNotRaisedHere(e.message);
+    throw e;
   }
 };
 
@@ -127,15 +134,6 @@ export async function raiseLegHere(
   const paid = legEmployees(run, leg);
   const facts = await payableFactsHere(records, paid, 'Leave this run unraised until their record is put right.',
     'This device will not raise a run it would not pay.');
-  const people = await records.people();
-  const addressOf = (e: { id: string }): string | null =>
-    people.people.find((p) => p.person.id === e.id)?.person.address?.bech32 ?? null;
-  const live = new Set(rounds.filter(isLiveRound).map((r) => r.runId));
-  const others = (await records.runs())
-    .filter((r) => r.accountId === accountId && r.id !== run.id && live.has(r.id))
-    .map((r) => openSealedRun(r, key));
-  raised(() => refuseRaisingOverAnotherRun(run, others, live, addressOf));
-  raised(() => refusePayingOnePayeeTwice(run, leg, addressOf));
 
   const state = await signedStateHere(records, accountId, key);
   const asset = assetOfLeg(leg) as AssetId;
@@ -149,14 +147,14 @@ export async function raiseLegHere(
   raised(() => refuseMaterialThatIsNotThisLeg(run, leg, paid, { run: { root, payees }, leaves: built.tree.leaves, facts, identity },
     doors.runs.rootOfPayments as never, registry));
 
-  const directory = await records.directory();
-  /* A seat its directory gives no role has every right, as the directory reads it; the ceilings are an admin's. */
-  const role = directory.dir.seats.find((s) => s.seat === doors.filing.seat)?.role as Role | undefined;
-  const total = facts.reduce((a, f) => a + f.amount, 0n);
-  const verdict = evaluatePolicy({ policy: await doors.policy() } as Account, asset, total, role ?? 'admin',
-    { state: 'unknown', why: 'not-yet-proposed' }, registry);
-  if (verdict.blocked) throw new LegNotRaisedHere(verdict.reason ?? 'the company\'s own policy stops this run');
+  const made = await checkedAgainstTheRecordsAndTheWallet(records, accountId, run, key, {
+    kind: 'payroll', seeds: state.seeds, payKey: state.payKey, identity, facts, records: payRecords, asset,
+    opensAt: input.opensAt, closesAt: input.closesAt, required: '0',
+  });
+  await checkedHere(doors, key, { run, leg, made });
 
+  const role = await roleOfThisSeat(doors);
+  const total = facts.reduce((a, f) => a + f.amount, 0n);
   doors.progress?.('checking-the-vault');
   const payments = facts.map(paymentChecked);
   await refuseWhatTheVaultCannotPay(doors.holdings, {
@@ -181,13 +179,14 @@ export async function raiseLegHere(
       status: 'proposed',
       proposalIds: { ...run.proposalIds, [leg]: proposalId },
     }),
-    made: {
-      kind: 'payroll', seeds: state.seeds, payKey: state.payKey, identity, facts, records: payRecords, asset,
-      opensAt: input.opensAt, closesAt: input.closesAt, required: '0',
-    },
+    made,
     assetBlinding: state.assetBlinding,
   });
 }
+
+/** The role this device's seat holds, as the company's directory reads it, written on the proposal as its raiser's. */
+const roleOfThisSeat = async (doors: LegRaiseDoors): Promise<Role | undefined> =>
+  ((await doors.records.directory()).dir.seats.find((s) => s.seat === doors.filing.seat)?.role ?? undefined) as Role | undefined;
 
 /**
  * **WHAT EVERY RAISE FROM THIS DEVICE ENDS WITH**: the proposal written and
@@ -202,10 +201,11 @@ async function writtenProvedAndFiled(doors: LegRaiseDoors, key: Hex, r: {
   readonly payments: ReadonlyArray<ReturnType<typeof paymentChecked>>;
   readonly retry?: readonly number[];
   readonly raisedRun: (proposalId: string) => PayrollRun;
-  readonly made: Omit<RunMadeHere, 'raising'>;
+  /** The proposal as made here, with what it was checked against before anything was written down. */
+  readonly made: RunMadeHere;
   readonly assetBlinding: string;
 }): Promise<RoundOnThePage> {
-  const { accountId, records, service } = doors;
+  const { accountId, service } = doors;
   doors.progress?.('writing-down');
   const entries: ShieldedEntry[] = r.entries.map(({ e, at }) => ({
     id: entryId(), kind: 'payroll', asset: e.asset, amount: e.amount, counterparty: e.name, memo: `${r.run.period} salary`,
@@ -232,7 +232,7 @@ async function writtenProvedAndFiled(doors: LegRaiseDoors, key: Hex, r: {
   const opened: OpenedRound = {
     chainId, digest, vault: r.vault, salt, summary: r.summary,
     half: { assetId: hex(named.assetId), changeAmount: String(change.amount), changeBatchDigest: change.batchDigest },
-    made: await withWhatTheWalletRead(records, { ...r.made, raising: await whatTheRecordsAccountFor(records, accountId, r.run, key) }),
+    made: r.made,
   };
   const order: RaiseRunOrder = {
     circuit: 'propose',
@@ -308,14 +308,6 @@ export async function raiseRetryHere(
     throw new LegNotRaisedHere(`a retry of these people is already written down, as ${unsent.proposalId}, and has not reached the `
       + 'chain. Send that one, or withdraw it first');
   }
-  const people = await records.people();
-  const addressOf = (e: { id: string }): string | null =>
-    people.people.find((p) => p.person.id === e.id)?.person.address?.bech32 ?? null;
-  const live = new Set(rounds.filter(isLiveRound).map((r) => r.runId));
-  const others = (await records.runs())
-    .filter((r) => r.accountId === accountId && r.id !== run.id && live.has(r.id))
-    .map((r) => openSealedRun(r, key));
-  raised(() => refuseRaisingOverAnotherRun(run, others, live, addressOf));
   const onTheLeg = legEmployees(run, leg);
   if (onTheLeg.length !== recorded.leaves.length) {
     throw new LegNotRaisedHere(`the ${legName(leg, registry)} leg of run ${run.id} lists ${onTheLeg.length} people and was raised `
@@ -329,9 +321,7 @@ export async function raiseRetryHere(
     notToPay: new Set(register ? skippedIndices(register).map((i) => run.skips!.people[i]!.employeeId) : []),
     registry,
   }));
-  /* The people it pays, as this device believes them now; and the leg built again from its own record. */
-  await payableFactsHere(records, indices.map((i) => onTheLeg[i]!), 'Leave them unpaid until their record is put right.',
-    'This device will not raise a retry it would not pay.');
+  /* The leg built again from its own record; whether this device would pay the people it names is a raise check, below. */
   const state = await signedStateHere(records, accountId, key);
   const asset = assetOfLeg(leg) as AssetId;
   const identity = { accountId, runId: recorded.runId, epoch: recorded.epoch };
@@ -349,13 +339,15 @@ export async function raiseRetryHere(
   raised(() => refuseRetryMaterialThatIsNotItsPeople(run, leg, indices, { run: { root, payees }, leaves: retry.tree.leaves, identity },
     doors.runs.rootOfPayments as never));
 
-  const directory = await records.directory();
-  const role = directory.dir.seats.find((x) => x.seat === doors.filing.seat)?.role as Role | undefined;
+  const made = await checkedAgainstTheRecordsAndTheWallet(records, accountId, run, key, {
+    kind: 'payroll', seeds: state.seeds, payKey: state.payKey, identity, facts: recorded.facts, records: payRecords, asset,
+    opensAt: input.opensAt, closesAt: input.closesAt, required: '0', retry: indices,
+  });
+  await checkedHere(doors, key, { run, leg, made });
+
+  const role = await roleOfThisSeat(doors);
   const facts = retry.facts;
   const total = facts.reduce((a, f) => a + f.amount, 0n);
-  const verdict = evaluatePolicy({ policy: await doors.policy() } as Account, asset, total, role ?? 'admin',
-    { state: 'unknown', why: 'not-yet-proposed' }, registry);
-  if (verdict.blocked) throw new LegNotRaisedHere(verdict.reason ?? 'the company\'s own policy stops this retry');
 
   doors.progress?.('checking-the-vault');
   const payments = facts.map(paymentChecked);
@@ -383,10 +375,7 @@ export async function raiseRetryHere(
       };
       return { ...withRetry, payslips: receiptsOf(withRetry, [...state.seeds], state.payKey as Hex, undefined, { company: doors.company.account, label: doors.company.label }) };
     },
-    made: {
-      kind: 'payroll', seeds: state.seeds, payKey: state.payKey, identity, facts: recorded.facts, records: payRecords, asset,
-      opensAt: input.opensAt, closesAt: input.closesAt, required: '0', retry: indices,
-    },
+    made,
     assetBlinding: state.assetBlinding,
   });
 }

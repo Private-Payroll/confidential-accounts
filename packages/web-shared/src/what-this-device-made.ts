@@ -28,9 +28,7 @@
  * A vault's first secret run is made again here from the secret, the vault and
  * the readers it is sealed to, so no run but a secret run can pass as one.
  */
-import { buildRetryRun, buildRun, paidMovementOfLeaf, paidOnceOfNonce, type DetailsOfKind, type PaymentFacts } from '../../../src/midnight/payout-tree.js';
-import { confirmationCovers, unaccountedOnChain } from '../../../src/core/already-paid.js';
-import { unaccountedRefusalHere } from '../../../src/core/run-raising.js';
+import { buildRetryRun, buildRun, paidOnceOfNonce, type DetailsOfKind, type PaymentFacts } from '../../../src/midnight/payout-tree.js';
 import { payRecordNonceOf, type PayoutSeed, type PayRecord, type RunIdentity } from '../../../src/midnight/run-keys.js';
 import { fromHex, toHex, type Hex } from '../../../src/core/crypto.js';
 import { firstSecretRunOf, type AccountStartPure, type VaultStartPure } from '../../../src/midnight/vault-start.js';
@@ -70,16 +68,19 @@ export interface RunMadeHere {
 }
 
 /**
- * **THREE FACTS OF THE ACCOUNT'S STATE, AS THE PERSON'S OWN WALLET READ THEM.**
- * The proof of an approval binds only the account's open proposals, so these
- * are read through the wallet rather than taken from the account state the
- * service serves: the entries of its record of payments that were asked
- * about, those of them it holds, and its pay-record key commitment.
+ * **FACTS OF THE ACCOUNT'S STATE, AS THE PERSON'S OWN WALLET READ THEM.** The
+ * proof of an approval binds only the account's open proposals, so these are
+ * read through the wallet rather than taken from the account state the service
+ * serves: the entries of its record of payments that were asked about, those
+ * of them it holds, its pay-record key commitment, every proposal it holds
+ * open, and how many entries its record of payments holds in all.
  */
 export interface WalletReadFacts {
   readonly payKeyCommitment: string | null;
   readonly asked: readonly string[];
   readonly held: readonly string[];
+  readonly openRounds: readonly string[];
+  readonly entries: number;
 }
 
 /**
@@ -109,8 +110,8 @@ export type MadeHere = RunMadeHere | SecretRunMadeHere;
 
 /** The parts of the account's ledger this check reads. */
 export interface AccountLedgerView {
-  readonly openProposals: { member(id: Uint8Array): boolean; [Symbol.iterator]?(): Iterator<[Uint8Array, unknown]> };
-  readonly movements: { member(entry: Uint8Array): boolean; size?(): bigint };
+  readonly openProposals: { member(id: Uint8Array): boolean };
+  readonly movements: { member(entry: Uint8Array): boolean };
   readonly signerRoles: { member(key: Uint8Array): boolean; lookup(key: Uint8Array): Uint8Array };
 }
 
@@ -173,7 +174,12 @@ export function refuseWhatThisDeviceDidNotMake(
       throw new NotMadeOnThisDevice('The chain already holds this proposal open, so there is nothing to send. Reload the '
         + 'page to see where it stands.');
     }
-    refuseWhatTheChainHoldsBeyondTheRecords(deps, made, opened.vault, ledger);
+    /* What the chain holds beyond the company's records is judged by the raise checks over these, before anything is built. */
+    if (made.raising === undefined) {
+      throw new NotMadeOnThisDevice('This device did not read what the company\'s records account for on the chain, so it will '
+        + 'not raise this run. Reload the page and raise it again.');
+    }
+    refuseAVaultNoDeviceCanClear(deps, opened.vault, ledger);
   }
   let root: Hex;
   let payees: bigint;
@@ -260,28 +266,16 @@ export function refuseWhatThisDeviceDidNotMake(
   }
 }
 
-const bytesHex = (b: Uint8Array): string => Array.from(b, (x) => x.toString(16).padStart(2, '0')).join('');
-
 /**
- * **A RAISE IS SENT ONLY WHILE THE CHAIN HOLDS NOTHING THE COMPANY'S RECORDS
- * CANNOT ACCOUNT FOR, AND ONLY TO A VAULT WHOSE RUNS IT CAN PAY.**
- *
- * Every open round on the chain must be one the records hold, and every payment
- * the chain counts (each leaves two entries) must be one of a leaf or a payment
- * nonce the records hold, unless the run was drawn as a repeat confirming
- * exactly those. And a vault the account marks as paying only runs cleared
- * against its spending policy is refused: a run there is paid only when its
- * whole window lies in one of the policy's periods, and no device holds a
- * vault's policy, so no window raised here can be shown to.
+ * **A RAISE IS SENT ONLY TO A VAULT WHOSE RUNS IT CAN PAY.** A vault the
+ * account marks as paying only runs cleared against its spending policy is
+ * refused: a run there is paid only when its whole window lies in one of the
+ * policy's periods, and no device holds a vault's policy, so no window raised
+ * here can be shown to. Whether the chain holds anything the company's records
+ * cannot account for is one of the raise checks every raising and approving
+ * device runs before it builds anything (`raise-checks-here.ts`).
  */
-function refuseWhatTheChainHoldsBeyondTheRecords(
-  deps: MadeHereDeps, made: RunMadeHere, vault: string | undefined, ledger: AccountLedgerView,
-): void {
-  const r = made.raising;
-  if (r === undefined) {
-    throw new NotMadeOnThisDevice('This device did not read what the company\'s records account for on the chain, so it will '
-      + 'not raise this run. Reload the page and raise it again.');
-  }
+function refuseAVaultNoDeviceCanClear(deps: MadeHereDeps, vault: string | undefined, ledger: AccountLedgerView): void {
   if (vault === undefined || !/^[0-9a-f]{64}$/iu.test(vault)) {
     throw new NotMadeOnThisDevice('This device cannot tell which vault this run is paid from, so it will not raise it.');
   }
@@ -294,21 +288,4 @@ function refuseWhatTheChainHoldsBeyondTheRecords(
       + 'a run is cleared only when its whole window lies in one of the policy\'s periods. This device does not hold the '
       + 'vault\'s policy, so it cannot show this window does. Raise the run from a vault with no spending policy.');
   }
-  const iterate = ledger.openProposals[Symbol.iterator];
-  const size = ledger.movements.size;
-  if (iterate === undefined || size === undefined) {
-    throw new NotMadeOnThisDevice('This page cannot list what the chain holds for the company, so it will not raise a run. '
-      + 'Reload the page to get the current version.');
-  }
-  const open = [...{ [Symbol.iterator]: () => iterate.call(ledger.openProposals) }].map(([id]) => bytesHex(id));
-  const payments = Number(size.call(ledger.movements));
-  const leaves = [...new Set(r.knownLeaves.map((l) => l.toLowerCase()))];
-  const nonces = [...new Set(r.knownNonces.map((n) => n.toLowerCase()))];
-  const paid = payments === 0 ? 0
-    : leaves.filter((l) => ledger.movements.member(fromHex(paidMovementOfLeaf(l as Hex)))).length
-      + nonces.filter((n) => ledger.movements.member(fromHex(paidOnceOfNonce(n as Hex)))).length;
-  const found = unaccountedOnChain({ openRounds: open, payments }, { rounds: [...r.knownRounds], paid });
-  if (found.rounds.length === 0 && found.payments === 0) return;
-  if (confirmationCovers(found, r.confirmed)) return;
-  throw new NotMadeOnThisDevice(unaccountedRefusalHere(r.period, found));
 }

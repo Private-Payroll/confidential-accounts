@@ -55,7 +55,9 @@ const { vaultDetails } = await import('../testing/vault-details.js');
 const { aVaultHolding } = await import('../testing/assets.js');
 const { addressOfSlot, signInWithAWallet } = await import('../testing/wallet-session.js');
 const { theNetwork } = await import('../midnight/network.js');
-const { toHex } = await import('../core/crypto.js');
+const { toHex, newSigningKeypair } = await import('../core/crypto.js');
+const { legPaymentsHere } = await import('vaults-web-shared/material-made-here.js');
+const { runsFiledBy } = await import('../testing/runs-a-seat-filed.js');
 const { directorySeats } = await import('../testing/directory-seats.js');
 const { DEVICE_RAISE_VERSION, paymentChecked, paymentsCheckedDigest, paymentsOnTheWire } = await import('../core/device-raise.js');
 type Hex = import('../core/crypto.js').Hex;
@@ -211,8 +213,30 @@ const writtenDown = async (c: { runId: string; viewingKey: string }) => {
     paymentsChecked: o.paymentsChecked,
   };
 };
-const digestOf = (payments: Array<{ kind: string; token: string; amount: string }>) =>
+const digestOf = (payments: ReadonlyArray<{ kind: string; token: string; amount: string }>) =>
   paymentsCheckedDigest(payments);
+/**
+ * What a signer's device makes a written-down leg's payments from: the company's runs and proposals as the service
+ * stores them, read under a directory believing the seat that signed them. Nothing the service works out is used.
+ */
+const onTheDevice = async (c: { account: string; runId: string; viewingKey: string }) => {
+  const founder = newSigningKeypair();
+  const committee = { tag: 'schnorr', value: '7a'.repeat(32) };
+  const unread = async (): Promise<never> => { throw new Error('a leg\'s payments are made from the company\'s runs and proposals'); };
+  const kept = () => new FileStore(process.env.DATA_PATH!);
+  return legPaymentsHere({
+    directory: async () => ({
+      dir: { company: c.account, version: 1, seats: [{ seat: '4e'.repeat(32), person: USER, signingKey: founder.publicKey, wrappingKey: 'ab'.repeat(32), committeeKey: committee, role: 'admin', retired: null }] },
+      holders: { committee: [committee], seats: ['4e'.repeat(32)], approvals: 1, adoptedVaults: [], founding: '4e'.repeat(32), foundingCommittee: [committee], account: 'ac'.repeat(32) } as never,
+      another: new Set(),
+    }),
+    people: unread, state: unread, policy: unread,
+    payments: { paidOnceOf: () => { throw new Error('not read here'); }, paidMovementOf: () => { throw new Error('not read here'); }, read: unread },
+    runs: async () => runsFiledBy(kept().listRuns(c.account), c.account, founder.secret),
+    proposals: async () => kept().listProposals(c.account),
+    registry: productAssets,
+  }, c.account, c.runId, c.viewingKey as Hex);
+};
 
 /*
  * A leg's first raise is made on the signer's device and filed with its proposal and the run as raised, in one
@@ -266,10 +290,9 @@ describe('A SEND FROM A DEVICE NAMES ITS PAGE, AND CARRIES ONLY THE CALL IT PROV
 
   it('A SEND OF EXACTLY WHAT WAS WRITTEN DOWN GOES OUT', async () => {
     const c = seeded.sendsOnce;
-    const asked = await legPayments(c);
     const order = (await writtenDown(c))!;
-    /* RED WHEN: the digest of what was written down is not the digest of what a device checks - every good send is then refused on the device. */
-    expect(order.paymentsChecked).toBe(digestOf(asked.payments));
+    /* RED WHEN: what the service wrote down is not what a signer's device makes the leg's payments from the company's records - every good send is then refused on the device. */
+    expect(order.paymentsChecked).toBe(digestOf((await onTheDevice(c)).payments));
     const built = Buffer.from(JSON.stringify({ signer: c.signer, order: order.order })).toString('base64');
     const ok = await post(`/api/proposals/${order.proposalId}/send`, { tx: built, version: DEVICE_RAISE_VERSION });
     expect(ok.status, JSON.stringify(ok.body)).toBe(200);

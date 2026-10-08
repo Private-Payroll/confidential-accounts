@@ -61,9 +61,13 @@ const { vaultDetails } = await import('../testing/vault-details.js');
 const { registryWithTestPrivateForms, aVaultHolding } = await import('../testing/assets.js');
 const { addressOfSlot, signInWithAWallet } = await import('../testing/wallet-session.js');
 const { theNetwork } = await import('../midnight/network.js');
-const { toHex, newSigningKeypair } = await import('../core/crypto.js');
+const { toHex, fromHex, newSigningKeypair } = await import('../core/crypto.js');
+const { pureCircuits } = await import('../../contracts/managed/contract/index.js');
 const { directorySeats } = await import('../testing/directory-seats.js');
 const { signedFoundingState } = await import('../core/founding-state.js');
+const { paysCommitmentOf } = await import('../core/proposal-filing.js');
+const { paymentChecked } = await import('../core/device-raise.js');
+const { runLegOf } = await import('../core/run-legs.js');
 const device = await import('vaults-web-shared/governed-call-on-device.js');
 type Hex = import('../core/crypto.js').Hex;
 type Standing = import('vaults-web-shared/governed-call-on-device.js').RoundOnThePage;
@@ -155,6 +159,10 @@ const seeded = await (async () => {
     });
     const proposal = await payroll.proposeRun(run.id, viewingKey, created.secrets[0]!.signerId, material, undefined,
       { onDevice: true });
+    /* What a filing from a seat's device commits to paying: the leg's recorded payments, from its vault, under its salt. */
+    const written = (await payroll.raiseOrderOf(run.id, viewingKey))!;
+    const recorded = payroll.requireRun(run.id, viewingKey).payout![runLegOf(TEST_TOKEN, 'shielded')]!.facts;
+    store.putProposal({ ...store.getProposal(proposal.id)!, pays: paysCommitmentOf({ vault: VAULT, asset: TEST_TOKEN, payments: recorded.map(paymentChecked) }, written.half.proposalSalt) });
     if (onChain) {
       const order = (await payroll.raiseOrderOf(run.id, viewingKey))!;
       const built: Built = {
@@ -189,6 +197,15 @@ const seeded = await (async () => {
       runs: async () => runsFiledBy(new FileStore(process.env.DATA_PATH!).listRuns(account), account, founder.secret),
       proposals: async () => new FileStore(process.env.DATA_PATH!).listProposals(account),
       registry,
+      /* The person's own wallet over this file's chain: the pay-record key the service holds, nobody paid, the rounds it holds open. */
+      payments: {
+        paidOnceOf: pureCircuits.paidOnceOf, paidMovementOf: pureCircuits.paidMovementOf,
+        read: async () => ({
+          payKeyCommitment: toHex(pureCircuits.payKeyCommitmentOf(fromHex(await accounts.payRecordKeyOf(account, viewingKey)))), held: [],
+          openRounds: ((await ledger.status(account))?.openProposals ?? []).map((p) => p.id.toLowerCase()).sort(), entries: 0,
+        }),
+      },
+      policy: async () => accounts.open(account, viewingKey).policy,
     };
     return {
       account, viewingKey, runId: run.id, proposalId: proposal.id,

@@ -10,7 +10,7 @@ import type { VaultAddress } from 'midnight-identity/profile/company-label';
 import { ChargedState, ContractMaintenanceAuthority, ContractState, StateValue } from '@midnightntwrk/ledger-v9';
 import { schnorr } from '@noble/curves/secp256k1.js';
 import {
-  ACCOUNT_THRESHOLD_FIELD, ADOPTED_VAULTS_FIELD, MOVEMENTS_FIELD, ROLES_FIELD, SIGNER_LEAVES_FIELD, VAULT_ACCOUNT_FIELD,
+  ACCOUNT_THRESHOLD_FIELD, ADOPTED_VAULTS_FIELD, MOVEMENTS_FIELD, OPEN_PROPOSALS_FIELD, ROLES_FIELD, SIGNER_LEAVES_FIELD, VAULT_ACCOUNT_FIELD,
   accountCarries, deployFromIndexerAt, foundingInDeployState, fromIndexerAt, holdersInAccountState, holdersOnChain,
   labelInAccountState, labelOnAccount, paymentsInAccountState, seatsInAccountState, vaultInState, vaultOnChain,
 } from './company-label-on-chain.js';
@@ -384,10 +384,28 @@ describe('WHAT THE ACCOUNT RECORDS ABOUT PAYMENTS, READ WITH NO PRESS', () => {
     expect(MOVEMENTS_FIELD).toBe(4);
     expect(fields[MOVEMENTS_FIELD]!.asMap()!.keys().length).toBe(Number(sim.ledger.movements.size()));
     const asked = ['a1'.repeat(32), 'b2'.repeat(32)];
-    /* A new account has paid nobody and committed to no pay-record key. */
-    expect(paymentsInAccountState(state.serialize(), asked)).toEqual({ payKeyCommitment: null, held: [] });
+    /* A new account has paid nobody, committed to no pay-record key and holds nothing open. */
+    expect(paymentsInAccountState(state.serialize(), asked)).toEqual({ payKeyCommitment: null, held: [], openRounds: [], entries: 0 });
     /* RED WHEN: a state that is not a company's account is read as one that paid nobody. */
     expect(() => paymentsInAccountState(new Uint8Array([1, 2, 3]), asked)).toThrow();
+  });
+
+  it('READS EVERY PROPOSAL THE ACCOUNT HOLDS OPEN, AND HOW MANY ENTRIES ITS RECORD OF PAYMENTS HOLDS, FROM THE FIELDS THE CONTRACT KEEPS THEM IN', async () => {
+    const sim = await AccountSimulator.liveAccount([privateStateFor(1), privateStateFor(2)], 2n);
+    await sim.propose(new Uint8Array(32).fill(7));
+    await sim.propose(new Uint8Array(32).fill(8));
+    const state = ContractState.deserialize((sim.contractStateForCall as { serialize(): Uint8Array }).serialize());
+    const fields = state.data.state.asArray()!;
+    const open = [...sim.ledger.openProposals].map(([id]) => hexOf(id)).sort();
+    /* RED WHEN: the open proposals are read from any field but the one the contract keeps them in. */
+    expect(OPEN_PROPOSALS_FIELD).toBe(2);
+    expect(open).toHaveLength(2);
+    expect(fields[OPEN_PROPOSALS_FIELD]!.asMap()!.keys().length).toBe(Number(sim.ledger.openProposals.size()));
+    const read = paymentsInAccountState(state.serialize(), ['a1'.repeat(32)]);
+    /* RED WHEN: a proposal the account holds open is left out of the read, or one it does not hold is added. */
+    expect(read.openRounds).toEqual(open);
+    /* RED WHEN: the count of the record's entries is anything but how many the account holds. */
+    expect(read.entries).toBe(Number(sim.ledger.movements.size()));
   });
 
   it('A HOLDERS READ THAT ASKS ABOUT PAYMENTS ANSWERS THEM IN THE SAME READ, AND ONE THAT DOES NOT ANSWERS NOTHING ABOUT THEM', async () => {

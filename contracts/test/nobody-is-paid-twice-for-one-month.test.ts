@@ -384,7 +384,7 @@ describe('what the client refuses before anybody signs, and what the approving d
     const walletRead = (made: RunMadeHere): RunMadeHere => {
       const asked = paymentEntriesOf(made, pureCircuits.paidOnceOf);
       const read = paymentsInAccountState((sim.contractStateForCall as { serialize(): Uint8Array }).serialize(), asked);
-      return { ...made, wallet: { payKeyCommitment: read.payKeyCommitment, asked, held: [...read.held] } };
+      return { ...made, wallet: { payKeyCommitment: read.payKeyCommitment, asked, held: [...read.held], openRounds: [...read.openRounds], entries: read.entries } };
     };
     const check = (r: ReturnType<typeof runOf>, id: Uint8Array) => () => refuseWhatThisDeviceDidNotMake({
       runPayload: pureCircuits.runPayload, vaultDetails, payKeyCommitmentOf: pureCircuits.payKeyCommitmentOf,
@@ -408,6 +408,11 @@ describe('what the client refuses before anybody signs, and what the approving d
       amount: facts[0]!.amount, asset: fromHex(first.run.tree.asset), path: first.run.tree.pathFor(0),
     });
     expect(sim.ledger.movements.member(pureCircuits.paidOnceOf(fromHex(payRecordNonceOf(payKey, pay.records[0]!))))).toBe(true);
+    /* RED WHEN: the wallet's read of the account counts other than every entry its record of payments holds - here the two Ada's payment left - or misses a round it holds open. */
+    const read = walletRead(second.made).wallet!;
+    expect(read.entries).toBe(Number(sim.ledger.movements.size()));
+    expect(read.entries).toBe(2);
+    expect(read.openRounds).toEqual(expect.arrayContaining([toHex(secondId)]));
     /* RED WHEN: the approving device does not read the chain's record of who was paid for the month, so a second run paying Ada for September is approved. */
     expect(check(second, secondId)).toThrow(/This run pays somebody already recorded as paid for 2026-09/u);
   });

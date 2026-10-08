@@ -19,47 +19,45 @@
 import { assets as theAssets, symbolOf, type AssetId, type AssetRegistry, type LedgerForm } from '../../../src/core/assets.js';
 import { refuseWhatTheVaultCannotPay, type PaymentAsked, type VaultHoldings } from '../../../src/core/vault-holdings.js';
 import {
-  DEVICE_RAISE_VERSION, WRITTEN_DOWN_IS_NOT_WHAT_IS_CHECKED, paymentChecked, paymentsCheckedDigest, type PaymentChecked,
+  DEVICE_RAISE_VERSION, WRITTEN_DOWN_IS_NOT_WHAT_IS_CHECKED, paymentsCheckedDigest, type PaymentChecked,
 } from '../../../src/core/device-raise.js';
 import type {
   SignerMaterial, OpenedRound, RaiseRunOrder, GovernanceOnTheWire,
 } from './governed-call-builder.js';
-import { commit, parseCanonical, unseal, type Hex, type Sealed } from '../../../src/core/crypto.js';
+import { commit, type Hex, type Sealed } from '../../../src/core/crypto.js';
 import {
   EVERY_RIGHT, refuseLeavingAVaultShort, type ApproverRoster, type GovernanceChange as VaultCheckChange,
 } from '../../../src/core/vault-approvers.js';
-import { openFromInbox, openRecord } from '../../../src/core/sealed-records.js';
-import { openAccount } from '../../../src/core/account.js';
-import { refuseASeatKeyNotFromTheInvitee, SeatKeyNotFromTheInvitee } from '../../../src/core/seat-invite-proof.js';
 import { assetIdBytes, NO_ASSET } from '../../../src/core/assets.js';
-import type { PendingSignerPayload, SealedAccount, SealedProposal } from '../../../src/core/types.js';
-import type { StateChange } from '../../../src/core/ledger.js';
+import type { SealedAccount, SealedProposal } from '../../../src/core/types.js';
 import { payrollRoundOf, sameList, untoldRetryRounds } from '../../../src/core/retry-cover.js';
 import type { AccountCallChainOnTheWire, VaultBuilderClient } from './vault-worker-client.js';
-import {
-  openedRunHere, runRebuiltHere, signedStateHere, whatTheRecordsAccountFor, type CompanyRecordsHere,
-} from './run-rebuilt-here.js';
+import { signedStateHere, type CompanyRecordsHere } from './run-rebuilt-here.js';
+import { NotOpenedOnThisDevice, openTheRoundHere } from './round-opened-here.js';
 import { raiseLegHere, raiseRetryHere, type LegRaiseDoors } from './run-raised-here.js';
 import type { SignedRunFiling } from '../../../src/core/run-filing.js';
 import {
-  paysCommitmentOf, proposalFilingRefusal, sealGovernanceProposal, signProposalFiling, type GovernancePayloadBody,
-  type SignedProposalFiling,
+  paysCommitmentOf, sealGovernanceProposal, signProposalFiling, type GovernancePayloadBody, type SignedProposalFiling,
 } from '../../../src/core/proposal-filing.js';
-import { companyRecordKey } from '../../../src/midnight/seat-directory.js';
-import { judgeIn } from './vault-page-doors.js';
-import { admitSignerHere, NO_ROSTER_RECORD, rosterHere, waitingHere, type RosterDoors } from './roster-here.js';
-import type { SealedCompanyRecord } from '../../../src/midnight/sealed-record-wire.js';
+import { admitSignerHere, rosterHere, waitingHere, type RosterDoors } from './roster-here.js';
 import {
   carryOrderHere, legPaymentsHere, raiseOrderHere, retryOrderHere, retryPaymentsHere, NotMadeHere,
 } from './material-made-here.js';
+
+/* Where a proposal is opened on this device, said once in its own file, and named here for whoever raises or approves. */
+export { NotOpenedOnThisDevice, openTheRoundHere };
 
 /** A proposal written down and not yet sent, as the service hands it to the device that builds it. */
 export interface RaiseOrderOnTheWire {
   readonly proposalId: string;
   readonly chainId: string;
   readonly order: RaiseRunOrder;
-  /** The digest of the payments the proposal written down pays, taken as `paymentsCheckedDigest` takes it. */
-  readonly paymentsChecked: string;
+  /**
+   * What the proposal written down commits to paying, from its own record: the
+   * commitment its filing carries (`paysCommitmentOf`), made with the salt in
+   * `order.half`. The payments the vault is checked for are held to it.
+   */
+  readonly pays: string;
 }
 
 /** A retry written down and not yet sent: its proposal, and the people it pays as positions in the leg. */
@@ -140,28 +138,18 @@ export interface GovernedCallDoors {
   readonly progress?: (stage: GovernedStage) => void;
   readonly sleep?: (ms: number) => Promise<void>;
   /**
-   * Opens one proposal from the company's sealed records on this device. The
-   * company's own records, through `openTheRoundHere`, when not given.
-   */
-  readonly opens?: (proposalId: string, viewingKey: string, forARaise: boolean) => Promise<OpenedRound>;
-  /**
    * The company's records a payroll run is read from on this device, so that
    * an approval of one is built only for the run made again here. Without
    * them a payroll proposal is not approved from this device.
    */
   readonly records?: CompanyRecordsHere;
-  /**
-   * What a raise or a retry is built from and checked against, made on this
-   * device from the company's records (`material-made-here.ts`) when not given.
-   */
-  readonly made?: MadeHereDoors;
   /** How long to wait for the chain to show what was sent, and how often to ask. */
   readonly waitMs?: number;
   readonly everyMs?: number;
 }
 
 /** What a raise or a retry is built from and checked against, each made on this device. */
-export interface MadeHereDoors {
+interface MadeHereDoors {
   legPayments(runId: string, viewingKey: string, which?: { asset?: string; form?: LedgerForm }): Promise<LegPaymentsOnTheWire>;
   retryPayments(runId: string, viewingKey: string, indices: readonly number[], which?: { asset?: string; form?: LedgerForm }): Promise<LegPaymentsOnTheWire>;
   raiseOrder(runId: string, viewingKey: string, which?: { asset?: string; form?: LedgerForm }): Promise<RaiseOrderOnTheWire>;
@@ -176,9 +164,8 @@ const madeFromTheRecords = (records: CompanyRecordsHere, accountId: string): Mad
   retryOrder: (runId, viewingKey, proposalId, which) => retryOrderHere(records, accountId, runId, viewingKey as Hex, proposalId, which),
 });
 
-/** What this device makes a raise or a retry from: the doors given, or the company's records. */
+/** What this device makes a raise or a retry from: the company's records, and nothing else. */
 const madeFor = (doors: GovernedCallDoors): MadeHereDoors => {
-  if (doors.made !== undefined) return doors.made;
   if (doors.records === undefined) {
     throw new NotMadeHere('This page cannot read the company\'s records, so it cannot make a raise or a retry here. Reload '
       + 'the page to get the current version.');
@@ -189,222 +176,9 @@ const madeFor = (doors: GovernedCallDoors): MadeHereDoors => {
 const HEX64 = /^[0-9a-f]{64}$/u;
 const hexOfBytes = (b: Uint8Array): string => Array.from(b, (x) => x.toString(16).padStart(2, '0')).join('');
 
-/** Why this device could not read the company's record of a proposal itself. Nothing is built without it. */
-export class NotOpenedOnThisDevice extends Error {
-  constructor(why: string, options?: { cause?: unknown }) {
-    super(`${why} Nothing was built or sent.`, options);
-    this.name = 'NotOpenedOnThisDevice';
-  }
-}
-
-/** Kinds a device here acts on. Any other is refused before anything is read out of it. */
-const KINDS_A_DEVICE_ACTS_ON = new Set(['payroll', 'add-signer', 'set-threshold', 'set-vault-threshold']);
-
-/**
- * **ONE PROPOSAL, READ ON THIS DEVICE FROM THE COMPANY'S OWN RECORDS.**
- *
- * The proposal's record is opened with the viewing key this device holds, and
- * the payload sealed inside it with the same key: that is where the salt its
- * identity was made with is kept, what a seat or a threshold change changes,
- * and, for a raise, the change the proposal commits to. The leaf of a person to
- * be seated is read from the company's roster, opened here too. What is
- * returned is what the call is checked against and proved with
- * (`refuseWhatThisDeviceDidNotOpen`).
- *
- * **THE LIMITS, SAID PLAINLY.** Every one of these records is sealed under the
- * viewing key, and the service is handed that key, so a service that rewrote a
- * record whole and sealed it again would be read here as written. The identity
- * and the payload it is made from sit on the record beside the sealed part,
- * not inside it. A person waiting for a seat is read from what they left in
- * the company's inbox, which is sealed to a key anybody may seal to, so their
- * keys are taken only with the proof their invitation gave them. What
- * this closes is a service that sends a device values other than its own
- * records hold: a salt, an identity, a leaf, a run or a change the records do
- * not name.
- *
- * **A PAYROLL RUN IS ALSO MADE AGAIN HERE** (`runRebuiltHere`): its payees'
- * addresses come from the people this device believes, its secrets from the
- * state the founding seat signed, and its leaves, root and payload are worked
- * out again where the approval is built. Who the run names and what it pays
- * each of them are still read from the run as the service stored it.
- */
-export async function openTheRoundHere(
-  service: GovernedCallService, accountId: string, proposalId: string, viewingKey: string, forARaise: boolean,
-  records?: CompanyRecordsHere,
-): Promise<OpenedRound> {
-  const key = viewingKey as Hex;
-  if (!service.sealedProposals) {
-    throw new NotOpenedOnThisDevice('This page cannot read the company\'s records, so it cannot check this proposal. Reload '
-      + 'the page to get the current version.');
-  }
-  const rec = (await service.sealedProposals(accountId)).find((r) => r.id === proposalId);
-  if (!rec || rec.accountId !== accountId) {
-    throw new NotOpenedOnThisDevice('This company\'s records hold no proposal by that name. It may have been withdrawn. '
-      + 'Reload the page to see where it stands.');
-  }
-  let envelope: { kind: string; summary: string; vault: string; sealedPayload: Sealed };
-  let body: { signerId?: unknown; newThreshold?: unknown; vault?: unknown; __change?: StateChange };
-  try {
-    envelope = openRecord('proposals', rec.accountId, rec.sealed, key);
-    if (!KINDS_A_DEVICE_ACTS_ON.has(envelope.kind)) {
-      throw new NotOpenedOnThisDevice('This page acts on payroll runs, access for new signers and changes to the approvals '
-        + 'required by the company or by one of its vaults, and this proposal is none of those, so it cannot be approved '
-        + 'from this device yet. Leave it unapproved.');
-    }
-    body = parseCanonical(unseal(envelope.sealedPayload, key));
-  } catch (e) {
-    if (e instanceof NotOpenedOnThisDevice) throw e;
-    throw new NotOpenedOnThisDevice('This device cannot read the company\'s record of this proposal, so it cannot check it. '
-      + 'Reload the page and try again. If it happens again, do not act on this proposal.', { cause: e });
-  }
-  const change = body.__change;
-  if (!change || typeof change.salt !== 'string' || !HEX64.test(change.salt)) {
-    throw new NotOpenedOnThisDevice('This proposal\'s record is incomplete, so this device cannot check it. Withdraw the '
-      + 'proposal and raise it again.');
-  }
-  /*
-   * **A RUN THAT PAYS NOTHING IS A VAULT'S SET-UP STEP, NOT A PAYROLL RUN.** A vault's first secret is set by a run in no
-   * asset, and it is approved only from setting that vault up, where every key the secret is sealed to is checked
-   * first. One reached through this door would skip that check, so it is refused here.
-   */
-  if (envelope.kind === 'payroll' && String(change.asset).toLowerCase() === NO_ASSET) {
-    throw new NotOpenedOnThisDevice('This proposal pays nothing: it sets up one of the company\'s vaults, and it is '
-      + 'approved only from setting that vault up, where who it is sealed to is checked. Leave it unapproved here, and '
-      + 'open the vault to finish setting it up.');
-  }
-  let governance: GovernanceOnTheWire | undefined;
-  if (envelope.kind === 'add-signer') {
-    if (!service.sealedAccount) {
-      throw new NotOpenedOnThisDevice('This page cannot read the company\'s list of signers, so it cannot check this '
-        + 'proposal. Reload the page to get the current version.');
-    }
-    let leaf: string | null | undefined;
-    try {
-      const sealedAccount = await service.sealedAccount(accountId) as SealedAccount & { roster?: SealedCompanyRecord | null };
-      /* The signers are read only from the company's roster record, never from a list on its account record. */
-      if ((sealedAccount.roster ?? null) === null) throw new NotOpenedOnThisDevice(NO_ROSTER_RECORD);
-      const signers = openAccount(sealedAccount, key, sealedAccount.roster).signers;
-      const named = signers.find((x) => x.id === body.signerId);
-      /*
-       * **ONLY A PERSON WAITING FOR A SEAT IS SEATED, AT THE LEAF THEIR OWN
-       * PROOF CARRIES.** A roster entry is filed whole by any seat, so a leaf
-       * read from one is not taken as the seat to raise or approve.
-       */
-      leaf = undefined;
-      /*
-       * **A PERSON WAITING FOR A SEAT IS READ FROM THE INBOX, AND THE INBOX
-       * TAKES ANYBODY'S WRITE.** So the keys found there are seated only if
-       * they carry the invitee's proof, made with the secret in their link,
-       * which this device works out again from the viewing key. A key put
-       * there by somebody without that key carries no proof that passes, and
-       * is refused here, before anything is built or approved.
-       */
-      if (named?.status === 'pending') {
-        const box = sealedAccount.pendingSigners.find((p) => p.id === named.id);
-        if (!box) {
-          throw new SeatKeyNotFromTheInvitee('This person\'s acceptance could not be found. Access was not granted and '
-            + 'nothing was sent. Reload the page; if they are still shown as waiting, press Grant access again.');
-        }
-        const waiting = openFromInbox<PendingSignerPayload>(box.sealed, accountId, key);
-        refuseASeatKeyNotFromTheInvitee(key, accountId, waiting);
-        /* The same keys as somebody already on the list is the same person twice, or a copy. */
-        if (signers.some((x) => x.id !== named.id && (x.signingPublicKey === waiting.signingPublicKey
-          || (x.leafCommitment ?? '').toLowerCase() === waiting.leafCommitment.toLowerCase()))) {
-          throw new SeatKeyNotFromTheInvitee('These keys already belong to another signer on this company, so they '
-            + 'cannot be given access under this name. Access was not granted and nothing was sent. Do not give this '
-            + 'person access: they need a new invitation, and check with them that they were the one who accepted.');
-        }
-        leaf = waiting.leafCommitment;
-      }
-    } catch (e) {
-      if (e instanceof SeatKeyNotFromTheInvitee || e instanceof NotOpenedOnThisDevice) throw e;
-      throw new NotOpenedOnThisDevice('This device cannot read the company\'s list of signers, so it cannot check this '
-        + 'proposal. Reload the page and try again. If it happens again, do not act on this proposal.', { cause: e });
-    }
-    if (typeof leaf !== 'string') {
-      throw new NotOpenedOnThisDevice('The person this proposal gives access to is not waiting for a seat on the company\'s '
-        + 'list of signers. Withdraw this proposal, then grant access again.');
-    }
-    governance = { kind: 'add-signer', leaf };
-  } else if (envelope.kind === 'set-threshold') {
-    if (typeof body.newThreshold !== 'number') {
-      throw new NotOpenedOnThisDevice('This proposal does not say how many approvals it requires. Withdraw it and make the '
-        + 'change again.');
-    }
-    governance = { kind: 'threshold', threshold: String(body.newThreshold) };
-  } else if (envelope.kind === 'set-vault-threshold') {
-    if (typeof body.newThreshold !== 'number' || typeof body.vault !== 'string' || !HEX64.test(body.vault)) {
-      throw new NotOpenedOnThisDevice('This proposal does not say which vault it is for, or how many approvals that vault '
-        + 'would need. Withdraw it and make the change again.');
-    }
-    governance = { kind: 'vault-threshold', vault: body.vault, threshold: String(body.newThreshold) };
-  }
-  /*
-   * **A PROPOSAL A SEAT'S DEVICE WROTE DOWN IS BELIEVED ONLY AS THAT SEAT FILED
-   * IT**: its filing signed by a key this device's own read of the company's
-   * directory holds for a seat whose role may raise proposals. One the service
-   * wrote down itself carries no filing, and is read as before.
-   */
-  if (rec.filedBy !== undefined) {
-    if (records === undefined) {
-      throw new NotOpenedOnThisDevice('This page cannot read the company\'s directory, so it cannot check who wrote this '
-        + 'proposal down. Reload the page to get the current version.');
-    }
-    const why = proposalFilingRefusal(accountId, rec) ?? judgeIn(await records.directory())(
-      rec.filedBy.publicKey, 'proposal', companyRecordKey('proposal', rec.id), 1);
-    if (why !== null) {
-      throw new NotOpenedOnThisDevice(`This device does not believe the company's record of this proposal (${why}). Do not `
-        + 'act on it.');
-    }
-  }
-  /*
-   * **A PAYROLL RUN IS APPROVED ONLY AS THIS DEVICE READS IT FROM THE
-   * COMPANY'S RECORDS**, and made again from them where the approval is built.
-   */
-  let made: OpenedRound['made'];
-  if (envelope.kind === 'payroll') {
-    if (records === undefined) {
-      throw new NotOpenedOnThisDevice('This page cannot read the company\'s records a payroll run is checked against, so it '
-        + `cannot ${forARaise ? 'raise' : 'approve'} one. Reload the page to get the current version.`);
-    }
-    const rebuilt = await runRebuiltHere(records, accountId, rec.id, key);
-    made = rebuilt;
-    /*
-     * **WHAT THE FILING SAID IT PAYS IS WHAT THIS DEVICE WOULD PAY**: the vault
-     * the service checked is the proposal's, and the payments are the run's as
-     * built again here, so a raise cannot pass the vault's public money check on
-     * payments other than its own.
-     */
-    if (rec.filedBy !== undefined) {
-      const paying = rebuilt.retry === undefined ? rebuilt.facts : rebuilt.retry.map((i) => rebuilt.facts[i]!);
-      const pays = paysCommitmentOf({ vault: envelope.vault, asset: String(change.asset), payments: paying.map(paymentChecked) }, change.salt);
-      if (String(rec.pays ?? '').toLowerCase() !== pays) {
-        throw new NotOpenedOnThisDevice('What the company\'s record of this proposal says it pays is not what this device '
-          + 'builds the run to pay, from the vault it names. Do not act on it.');
-      }
-    }
-    /* A raise is also checked against what the chain holds beyond the company's records. */
-    if (forARaise) {
-      const kept = (await records.runs()).find((r) => r.accountId === accountId && (r.proposalIds ?? []).includes(rec.id))!;
-      made = { ...made, raising: await whatTheRecordsAccountFor(records, accountId, await openedRunHere(records, accountId, kept.id, key), key) };
-    }
-  }
-  let half: OpenedRound['half'];
-  if (forARaise) {
-    /* The account's own name for the asset, which is what the asset witness answers with. */
-    const named = { assetId: assetIdBytes(change.asset) };
-    half = { assetId: hexOfBytes(named.assetId), changeAmount: String(change.amount), changeBatchDigest: change.batchDigest };
-  }
-  return {
-    chainId: rec.chainId, digest: rec.digest, vault: envelope.vault, salt: change.salt, summary: envelope.summary,
-    ...(governance === undefined ? {} : { governance }), ...(half === undefined ? {} : { half }),
-    ...(made === undefined ? {} : { made }),
-  };
-}
-
-const opensFor = (doors: GovernedCallDoors) => doors.opens
-  ?? ((proposalId: string, viewingKey: string, forARaise: boolean) =>
-    openTheRoundHere(doors.service, doors.accountId, proposalId, viewingKey, forARaise, doors.records));
+/** One proposal, opened on this device from the company's own records (`openTheRoundHere`), and from nowhere else. */
+const opensFor = (doors: GovernedCallDoors) => (proposalId: string, viewingKey: string, forARaise: boolean): Promise<OpenedRound> =>
+  openTheRoundHere(doors.service, doors.accountId, proposalId, viewingKey, forARaise, doors.records);
 
 /** Sent, and the chain has not shown it yet. Not a failure, and not to be sent again. */
 export class SentAndNotYetSeen extends Error {
@@ -573,7 +347,18 @@ async function refusePaymentsTheVaultCannotPay(
   const checked = paymentsCheckedDigest(leg.payments);
   let payees = BigInt(payments.length);
   if (input.order !== undefined) {
-    if (checked !== String(input.order.paymentsChecked)) throw new Error(WRITTEN_DOWN_IS_NOT_WHAT_IS_CHECKED);
+    /*
+     * **WHAT IS CHECKED IS WHAT THE PROPOSAL WRITTEN DOWN COMMITS TO PAYING.**
+     * The payments come from the run's record of the leg; the commitment from
+     * the proposal's own record, signed by the seat that filed it. Two records,
+     * so a run changed after its proposal was written down is refused here.
+     */
+    const half = input.order.order.half as { proposalSalt?: unknown } | undefined;
+    const salt = String(half?.proposalSalt ?? '');
+    if (!/^[0-9a-f]{64}$/u.test(salt)
+      || paysCommitmentOf({ vault: input.vault, asset: leg.asset, payments: leg.payments }, salt) !== String(input.order.pays).toLowerCase()) {
+      throw new Error(WRITTEN_DOWN_IS_NOT_WHAT_IS_CHECKED);
+    }
     if (!DIGITS.test(String(input.order.order.run.payees))) {
       throw new Error('the proposal written down for this run does not say how many people it pays, so this device cannot '
         + 'check it. Nothing was built or sent. Reload the page and send it again. If this comes back, withdraw the '

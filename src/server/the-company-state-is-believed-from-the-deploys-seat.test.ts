@@ -42,7 +42,7 @@ import { sealRecord } from '../core/sealed-records.js';
 import { signRunFiling } from '../core/run-filing.js';
 import { newStateBlinding, sealState } from '../core/account.js';
 import { openStateRecord, signedFoundingState } from '../core/founding-state.js';
-import { runLegOf } from '../core/run-legs.js';
+import { factsOfThePaid, runLegOf } from '../core/run-legs.js';
 import { signCompanyFiling } from '../midnight/sealed-record-wire.js';
 import { buildRun } from '../midnight/payout-tree.js';
 import { sealPayKeyTo } from '../midnight/run-keys.js';
@@ -76,14 +76,17 @@ const person = (id: string, n: string): RosterEmployee => ({
 } as unknown as RosterEmployee);
 const PEOPLE = [person('p1', 'a1'), person('p2', 'a2')];
 
+const EMPLOYEES = PEOPLE.map((p, i) => ({ id: p.id, name: p.name, wrappingPublicKey: null, asset: TEST_TOKEN, amount: BigInt(100 + i), form: 'shielded' }));
+/* What the leg records it pays, as the device that raised it worked it out from the people it believed. */
+const RECORDED = factsOfThePaid(EMPLOYEES as never, (id) => PEOPLE.find((p) => p.id === id), registryWithTestPrivateForms());
 const sealedRun = (): SealedRun => {
   const run = {
     id: 'run_bbbbbbbbbbb1', accountId: CO, period: '2026-09', status: 'proposed',
-    employees: PEOPLE.map((p, i) => ({ id: p.id, name: p.name, wrappingPublicKey: null, asset: TEST_TOKEN, amount: BigInt(100 + i), form: 'shielded' })),
+    employees: EMPLOYEES,
     totals: {}, proposalIds: { [LEG]: 'prp_1' }, skips: undefined, repeats: undefined,
     payout: { [LEG]: {
       root: '00'.repeat(32), payees: 2n, opensAt: OPENS, closesAt: CLOSES, vault: hex(VAULT), required: 0n,
-      leaves: [], facts: [], runId: `run_bbbbbbbbbbb1:${LEG}`, epoch: 0,
+      leaves: [], facts: RECORDED, runId: `run_bbbbbbbbbbb1:${LEG}`, epoch: 0,
     } },
   } as unknown as PayrollRun;
   const { employees, totals, proposalIds, payout, skips, repeats } = run;
@@ -152,10 +155,12 @@ const recordsOver = (here: DirectoryHere, state: unknown): CompanyRecordsHere =>
   people: async () => ({ people: PEOPLE.map((p) => ({ person: p, version: 1, handedOver: true })), notBelieved: [], notPayable: [] }),
   state: async (id) => (id === '0' ? state as never : null),
   runs: async () => [sealedRun()],
+  proposals: async () => [],
   registry: registryWithTestPrivateForms(),
+  policy: async () => ({ threshold: 1, limitsByRole: {} }) as never,
   /* What the person's own wallet reads off the account: its own parser, over the chain's bytes as the test left them. */
   payments: {
-    paidOnceOf: pureCircuits.paidOnceOf,
+    paidOnceOf: pureCircuits.paidOnceOf, paidMovementOf: pureCircuits.paidMovementOf,
     read: async (entries) => paymentsInAccountState((onTheChain!.contractStateForCall as { serialize(): Uint8Array }).serialize(), entries),
   },
 });
@@ -175,7 +180,7 @@ describe('THE FOUNDING SEAT IS THE DEPLOY\'S, WHOEVER HOLDS THE FIRST SLOT LATER
     const here = directory(sim, { ...read.holders, account: ACCOUNT });
 
     /* RED WHEN: the first state is believed only while its signer holds the account, or from whoever holds the first slot. */
-    const made = await runRebuiltHere(recordsOver(here, STATE), CO, 'prp_1', KEY);
+    const { made } = await runRebuiltHere(recordsOver(here, STATE), CO, 'prp_1', KEY);
     expect(made.payKey).toBe(PAY_KEY);
 
     /* The run raised as the device rebuilt it, held open by the chain, approved by D in the founding signer's slot. */

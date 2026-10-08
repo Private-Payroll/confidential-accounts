@@ -63,14 +63,19 @@ describe('A RUN THE SERVICE RAISED', () => {
       people: async () => ({ people: hired.map((e) => ({ person: payroll.person(e.id, viewingKey)!, version: 1, handedOver: true })), notBelieved: [], notPayable: [] }),
       state: async (id) => (id === '0' ? state : null),
       runs: async () => runsFiledBy(store.listRuns(account), account, founder.secret),
+      proposals: async () => store.listProposals(account),
       registry,
-      /* The person's own wallet reads nobody paid, and the commitment to the pay-record key the service holds. */
+      /* The person's own wallet reads nobody paid, the commitment to the pay-record key the service holds, and the proposal open. */
       payments: {
-        paidOnceOf: pureCircuits.paidOnceOf,
-        read: async () => ({ payKeyCommitment: toHex(pureCircuits.payKeyCommitmentOf(fromHex(await accounts.payRecordKeyOf(account, viewingKey)))), held: [] }),
+        paidOnceOf: pureCircuits.paidOnceOf, paidMovementOf: pureCircuits.paidMovementOf,
+        read: async () => ({
+          payKeyCommitment: toHex(pureCircuits.payKeyCommitmentOf(fromHex(await accounts.payRecordKeyOf(account, viewingKey)))), held: [],
+          openRounds: [proposal.chainId.toLowerCase()], entries: 0,
+        }),
       },
+      policy: async () => ({ threshold: 1, limitsByRole: {} }) as never,
     };
-    const made = await runRebuiltHere(records, account, proposal.id, viewingKey);
+    const { made } = await runRebuiltHere(records, account, proposal.id, viewingKey);
     const payKey = await accounts.payRecordKeyOf(account, viewingKey);
     const chain = {
       openProposals: { member: (id: Uint8Array) => toHex(id) === proposal.chainId },

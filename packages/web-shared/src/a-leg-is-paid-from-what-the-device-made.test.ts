@@ -72,6 +72,9 @@ const aRaisedRun = async (o: { sent?: boolean } = {}) => {
     runs: async () => runsFiledBy(store.listRuns(account), account, founder.secret),
     proposals: async () => store.listProposals(account),
     registry,
+    /* Paying reads neither what the wallet says of payments nor the company's ceilings. */
+    payments: { paidOnceOf: () => { throw new Error('not read here'); }, paidMovementOf: () => { throw new Error('not read here'); }, read: async () => { throw new Error('not read here'); } },
+    policy: async () => { throw new Error('not read here'); },
   };
   const deps: PaymentsHereDeps = {
     detailsOf: vaultDetails, runPayload: pureCircuits.runPayload, proposalIdOf: pureCircuits.proposalIdOf,

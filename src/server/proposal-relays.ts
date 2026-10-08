@@ -50,8 +50,12 @@ export interface RelayStore {
   listProposals(accountId: string): SealedProposal[];
   getAccount(accountId: string): Pick<SealedAccount, 'id' | 'keyEpoch'> | null;
   getRun?(id: string): SealedRun | null;
-  /** Writes the run only while the store still holds it exactly as `before`; false when it has moved on. */
-  putRunIfStill?(r: SealedRun, before: SealedRun): boolean;
+  /**
+   * Writes a raised run and its proposal in one write, only while the store
+   * still holds the run exactly as `before` and the proposal's name is free;
+   * false, with nothing written, otherwise.
+   */
+  putRaisedRunAndProposal?(r: SealedRun, before: SealedRun, p: SealedProposal): boolean;
 }
 
 /**
@@ -423,7 +427,7 @@ export const proposalRelayRoutes = (deps: ProposalRelayDeps): express.Router => 
     if (!MAY_FILE[seat.role ?? 'unset'].includes('run')) {
       throw new NothingWasSent('your seat on this company may not raise payroll runs. Nothing was written down or sent.');
     }
-    if (deps.store.getRun === undefined || deps.store.putRunIfStill === undefined || deps.publicMoney === undefined) {
+    if (deps.store.getRun === undefined || deps.store.putRaisedRunAndProposal === undefined || deps.publicMoney === undefined) {
       throw new NothingWasSent('this service does not keep payroll runs raised from a device. Nothing was written down or sent.');
     }
     const kept = deps.store.getRun(run.id);
@@ -514,25 +518,32 @@ export const proposalRelayRoutes = (deps: ProposalRelayDeps): express.Router => 
             + 'Raise it from the run. Nothing was written down or sent.');
         }
         const raised = b.run === undefined ? undefined : runRaisedWith(company, filing, b.run, b.pays, seat, account.keyEpoch, b.salt);
-        if (raised !== undefined) {
-          await deps.publicMoney!({ vault: b.pays!.vault, asset: b.pays!.asset, payments: b.pays!.payments });
-          /* Two raises of one run checked at once: the run is written only as it was read, and the second is refused. */
-          /* And the proposal's name is still free: another raise, of another run, may have taken it meanwhile. */
-          if (deps.store.getProposal(filing.id) !== null) {
-            throw new NothingWasSent('a proposal by this name was written down while this one was checked. Nothing was written down or sent.');
-          }
-          if (!deps.store.putRunIfStill!({ ...raised.run, wiring: deps.wiring?.() ?? deps.ledger.wiring ?? null }, raised.kept)) {
-            throw new NothingWasSent(`another raise of run ${raised.run.id} was written down while this one was checked, so this `
-              + 'one was not. Reload the page to see the run as it is now. Nothing was written down or sent.');
-          }
-        }
-        deps.store.putProposal({
+        const proposal: SealedProposal = {
           id: filing.id, accountId: company, status: 'open', createdAt: filing.createdAt, digest: filing.digest,
           chainId: filing.chainId, approvalCount: 0, keyEpoch: filing.keyEpoch, sealed: filing.sealed,
           filedBy: { publicKey: filing.filedBy.publicKey, signature: filing.filedBy.signature },
           ...(filing.pays === undefined ? {} : { pays: filing.pays }),
           wiring: deps.ledger.wiring ?? null,
-        });
+        };
+        if (raised === undefined) {
+          deps.store.putProposal(proposal);
+          return;
+        }
+        await deps.publicMoney!({ vault: b.pays!.vault, asset: b.pays!.asset, payments: b.pays!.payments });
+        /*
+         * **THE RUN AND ITS PROPOSAL ARE WRITTEN IN ONE WRITE, OR NEITHER IS.**
+         * Only while the run is as it was read - two raises of one run checked
+         * at once, the second is refused - and while the proposal's name is
+         * still free, since another raise, of another run, may have taken it
+         * meanwhile.
+         */
+        if (deps.store.getProposal(filing.id) !== null) {
+          throw new NothingWasSent('a proposal by this name was written down while this one was checked. Nothing was written down or sent.');
+        }
+        if (!deps.store.putRaisedRunAndProposal!({ ...raised.run, wiring: deps.wiring?.() ?? deps.ledger.wiring ?? null }, raised.kept, proposal)) {
+          throw new NothingWasSent(`another raise of run ${raised.run.id} was written down while this one was checked, so this `
+            + 'one was not. Reload the page to see the run as it is now. Nothing was written down or sent.');
+        }
       });
       if (b.tx === undefined) return standingOf(requireProposal(filing.id));
       return sendTheRaise(filing.id, b.tx);

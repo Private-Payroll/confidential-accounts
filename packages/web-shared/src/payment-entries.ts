@@ -5,7 +5,7 @@
  */
 import type { Hex } from '../../../src/core/crypto.js';
 import { payRecordNonceOf } from '../../../src/midnight/run-keys.js';
-import type { RunMadeHere } from './what-this-device-made.js';
+import type { RaisingHere, RunMadeHere } from './what-this-device-made.js';
 
 /**
  * **THE ENTRIES A RUN IS CHECKED AGAINST**:
@@ -31,3 +31,21 @@ export const paymentEntriesOf = (
 
 const bytesOfHex = (h: string): Uint8Array => Uint8Array.from(h.match(/../gu) ?? [], (x) => Number.parseInt(x, 16));
 
+
+/**
+ * **THE ENTRIES THE ACCOUNT RECORDS FOR EVERY PAYMENT THE COMPANY'S RECORDS
+ * KNOW ABOUT**: for each leaf of every leg they hold, the entry recorded when
+ * that leaf is paid, and for each person-month nonce, the entry recorded once
+ * they are paid for it. Made with the account's own circuits, handed in, so
+ * this loads no contract. In the order the records hold them, each once.
+ */
+export const knownEntriesOf = (
+  raising: Pick<RaisingHere, 'knownLeaves' | 'knownNonces'>,
+  circuits: { readonly paidMovementOf: (leaf: Uint8Array) => Uint8Array; readonly paidOnceOf: (nonce: Uint8Array) => Uint8Array },
+): string[] => {
+  const hex = (b: Uint8Array): string => Array.from(b, (x) => x.toString(16).padStart(2, '0')).join('');
+  return [...new Set([
+    ...raising.knownLeaves.map((l) => hex(circuits.paidMovementOf(bytesOfHex(l.toLowerCase())))),
+    ...raising.knownNonces.map((n) => hex(circuits.paidOnceOf(bytesOfHex(n.toLowerCase())))),
+  ])];
+};

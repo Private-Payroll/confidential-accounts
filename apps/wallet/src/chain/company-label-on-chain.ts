@@ -36,6 +36,9 @@ export const ACCOUNT_THRESHOLD_FIELD = 5;
 /** Where the account's record of payments sits among the fields of its public state. */
 export const MOVEMENTS_FIELD = 4;
 
+/** Where the account's map of the proposals it holds open sits among the fields of its public state. */
+export const OPEN_PROPOSALS_FIELD = 2;
+
 /** Where the account's set of adopted vaults sits among the fields of its public state. */
 export const ADOPTED_VAULTS_FIELD = 7;
 
@@ -161,8 +164,10 @@ export function holdersInAccountState(serialized: Uint8Array): Omit<AccountHolde
  * **WHAT AN ACCOUNT RECORDS ABOUT PAYMENTS, FROM ITS SERIALISED STATE**, for
  * the entries asked about: which of them its record of payments holds, in the
  * order asked, and the commitment its map of roles holds to the company's
- * pay-record key, or null when it holds none. Throws when the bytes are not a
- * contract's state laid out as a company's account is.
+ * pay-record key, or null when it holds none; and from the same state every
+ * proposal it holds open and how many entries its record of payments holds.
+ * Throws when the bytes are not a contract's state laid out as a company's
+ * account is.
  */
 export function paymentsInAccountState(serialized: Uint8Array, asked: readonly string[]): AccountPaymentFacts {
   const fields = ContractState.deserialize(serialized).data.state.asArray();
@@ -170,12 +175,19 @@ export function paymentsInAccountState(serialized: Uint8Array, asked: readonly s
   if (fields === undefined || fields.length <= ROLES_FIELD) throw new Error(notAnAccount);
   const movements = fields[MOVEMENTS_FIELD]!.asMap();
   const roles = fields[ROLES_FIELD]!.asMap();
-  if (movements === undefined || roles === undefined) throw new Error(notAnAccount);
+  const open = fields[OPEN_PROPOSALS_FIELD]!.asMap();
+  if (movements === undefined || roles === undefined || open === undefined) throw new Error(notAnAccount);
   const recorded = new Set<string>();
   for (const key of movements.keys()) {
     const entry = as32(key.value[0]);
     if (entry === null) throw new Error(notAnAccount);
     recorded.add(hexOf32(entry));
+  }
+  const openRounds: string[] = [];
+  for (const key of open.keys()) {
+    const id = as32(key.value[0]);
+    if (id === null) throw new Error(notAnAccount);
+    openRounds.push(hexOf32(id));
   }
   let payKeyCommitment: string | null = null;
   for (const key of roles.keys()) {
@@ -187,7 +199,10 @@ export function paymentsInAccountState(serialized: Uint8Array, asked: readonly s
     if (value === null) throw new Error(notAnAccount);
     payKeyCommitment = hexOf32(value);
   }
-  return Object.freeze({ payKeyCommitment, held: Object.freeze(asked.filter((e) => recorded.has(e))) });
+  return Object.freeze({
+    payKeyCommitment, held: Object.freeze(asked.filter((e) => recorded.has(e))),
+    openRounds: Object.freeze(openRounds.sort()), entries: recorded.size,
+  });
 }
 
 const hexOf32 = (b: Uint8Array): string => Array.from(b, (x) => x.toString(16).padStart(2, '0')).join('');

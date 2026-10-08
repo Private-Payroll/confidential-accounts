@@ -630,12 +630,19 @@ export const PAY_KEY_COMMITMENT_ENTRY = 'cc3136c78f2e28cdca860e119187d8ccafdae6f
  * **WHAT THE ACCOUNT RECORDS ABOUT PAYMENTS, AS A WALLET READ IT**, for the
  * entries a page asked about: which of them the account's record of payments
  * holds, and the commitment it holds to its pay-record key (null when it holds
- * none). Public chain facts only.
+ * none); and, read in the same state, every proposal the account holds open
+ * and how many entries its record of payments holds in all, so a page can tell
+ * whether the chain holds anything its company's records cannot account for.
+ * Public chain facts only.
  */
 export interface AccountPaymentFacts {
   readonly payKeyCommitment: string | null;
   /** Of the entries asked about, those the account holds, in the order asked. */
   readonly held: readonly string[];
+  /** Every proposal the account holds open, by its identity: lower-case hexadecimal, each once. */
+  readonly openRounds: readonly string[];
+  /** How many entries the account's record of payments holds in all. Each payment leaves two. */
+  readonly entries: number;
 }
 
 /** What this wallet hands back for a holders ask. Everything in it is public, and nothing in it is signed. */
@@ -713,14 +720,21 @@ export function holdersAnswerFor(
 /** What an answer says about payments, for the entries asked, or null for a shape no wallet writes. */
 const readPayments = (value: unknown, asked: readonly string[]): AccountPaymentFacts | null => {
   const v = value as Partial<AccountPaymentFacts> | null;
-  if (v === null || typeof v !== 'object' || !Array.isArray(v.held)) return null;
+  if (v === null || typeof v !== 'object' || !Array.isArray(v.held) || !Array.isArray(v.openRounds)) return null;
   if (v.payKeyCommitment !== null && (typeof v.payKeyCommitment !== 'string' || !HEX64.test(v.payKeyCommitment))) return null;
   const held = v.held as unknown[];
   const askedSet = new Set(asked);
   if (!held.every((e) => typeof e === 'string' && askedSet.has(e)) || new Set(held).size !== held.length) return null;
+  const open = v.openRounds as unknown[];
+  if (!open.every((r) => typeof r === 'string' && HEX64.test(r)) || new Set(open).size !== open.length) return null;
+  /* Every entry held of those asked is one of the entries the record holds, so there are at least as many. */
+  if (!Number.isSafeInteger(v.entries) || (v.entries as number) < held.length) return null;
   const order = new Map(asked.map((e, i) => [e, i]));
   const sorted = [...held as string[]].sort((a, b) => order.get(a)! - order.get(b)!);
-  return Object.freeze({ payKeyCommitment: v.payKeyCommitment as string | null, held: Object.freeze(sorted) });
+  return Object.freeze({
+    payKeyCommitment: v.payKeyCommitment as string | null, held: Object.freeze(sorted),
+    openRounds: Object.freeze([...open as string[]].sort()), entries: v.entries as number,
+  });
 };
 
 /** Who holds an account, as the page read the wallet's answer: with the account the wallet read, which is the one asked about. */

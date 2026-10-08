@@ -25,8 +25,9 @@ import { SimulatedLedger } from '../../../src/core/ledger.js';
 import { FileStore } from '../../../src/core/store-file.js';
 import { canonical, newSigningKeypair, newSymmetricKey, parseCanonical, seal, toHex, unseal, type Hex, type Sealed } from '../../../src/core/crypto.js';
 import { signedFoundingState } from '../../../src/core/founding-state.js';
-import { paymentChecked, paymentsCheckedDigest, paymentsOnTheWire } from '../../../src/core/device-raise.js';
-import { legFieldsOf, runLegOf } from '../../../src/core/run-legs.js';
+import { paymentChecked, paymentsOnTheWire } from '../../../src/core/device-raise.js';
+import { paysCommitmentOf } from '../../../src/core/proposal-filing.js';
+import { legFieldsOf, proposalListOf, runLegOf } from '../../../src/core/run-legs.js';
 import { openRecord, sealRecord } from '../../../src/core/sealed-records.js';
 import { MidnightCommitments } from '../../../src/midnight/commitments.js';
 import { runMaterialFor } from '../../../src/midnight/run-material.js';
@@ -45,6 +46,12 @@ const SEAT = '4e'.repeat(32);
 const COMMITTEE = { tag: 'schnorr', value: '7a'.repeat(32) };
 
 /** A company the service made, three payees, one run drawn, and its records as a device reads them. */
+/** The salt a proposal's identity is made with, from the change sealed in its payload. */
+const saltOf = (rec: SealedProposal, account: string, viewingKey: Hex): string => {
+  const envelope = openRecord<{ sealedPayload: Sealed }>('proposals', account, rec.sealed, viewingKey);
+  return parseCanonical<{ __change: { salt: string } }>(unseal(envelope.sealedPayload, viewingKey)).__change.salt;
+};
+
 const aCompany = async (o: { writtenDown: boolean; alsoAnotherToken?: true }) => {
   const store = new FileStore(join(mkdtempSync(join(tmpdir(), 'mn-s293-made-')), 'db.json'));
   const registry = registryWithTestPrivateForms();
@@ -69,6 +76,11 @@ const aCompany = async (o: { writtenDown: boolean; alsoAnotherToken?: true }) =>
       opensAt: BigInt(NOW - 3_600), closesAt: BigInt(NOW + 3_600), vault: VAULT, detailsOf: vaultDetails,
     });
     proposalId = (await payroll.proposeRun(run.id, viewingKey, created.secrets[0]!.signerId, material, undefined, { onDevice: true })).id;
+    /* What a filing from a seat's device commits to paying: the leg's recorded payments, from its vault, under its salt. */
+    const rec = store.getProposal(proposalId)!;
+    const leg = runLegOf(TEST_TOKEN, 'shielded');
+    const recorded = payroll.requireRun(run.id, viewingKey).payout![leg]!.facts;
+    store.putProposal({ ...rec, pays: paysCommitmentOf({ vault: VAULT, asset: legFieldsOf(leg).asset, payments: recorded.map(paymentChecked) }, saltOf(rec, account, viewingKey)) });
   }
   const founder = newSigningKeypair();
   const state = signedFoundingState(account, { keyEpoch: 0, sealed: (await ledger.fetch(account, 0))!.sealedState }, founder.secret);
@@ -83,6 +95,9 @@ const aCompany = async (o: { writtenDown: boolean; alsoAnotherToken?: true }) =>
     runs: async () => runsFiledBy(store.listRuns(account), account, founder.secret),
     proposals: async () => store.listProposals(account),
     registry,
+    /* Nothing made here reads what the wallet says of payments, or the company's ceilings. */
+    payments: { paidOnceOf: () => { throw new Error('not read here'); }, paidMovementOf: () => { throw new Error('not read here'); }, read: async () => { throw new Error('not read here'); } },
+    policy: async () => { throw new Error('not read here'); },
     ...over,
   });
   return { store, accounts, payroll, account, viewingKey, runId: run.id, proposalId, records, hired, founder };
@@ -112,9 +127,10 @@ describe('WHAT A RAISE IS BUILT FROM, MADE HERE FROM THE COMPANY\'S RECORDS', ()
         },
         half: service.half, proposal: service.chainId,
       },
-      paymentsChecked: service.paymentsChecked,
+      pays: c.store.getProposal(service.proposalId)!.pays,
     });
-    expect(order.paymentsChecked).toBe(paymentsCheckedDigest(payments.payments));
+    /* RED WHEN: the order carries anything but the proposal's own commitment, over exactly the payments checked, from its vault, under its salt. */
+    expect(order.pays).toBe(paysCommitmentOf({ vault: VAULT, asset: payments.asset, payments: payments.payments }, service.half.proposalSalt));
     /* RED WHEN: a written-down leg is checked against the people as they are now rather than what was written down. */
     const doubted = c.records({ people: async () => ({ ...(await c.records().people()), notBelieved: [c.hired[1]!.id] }) });
     expect((await legPaymentsHere(doubted, c.account, c.runId, c.viewingKey)).payments).toEqual(payments.payments);
@@ -157,6 +173,9 @@ describe('WHAT A RAISE IS BUILT FROM, MADE HERE FROM THE COMPANY\'S RECORDS', ()
     /* RED WHEN: a proposal the chain is seen to hold, as the record now keeps that in plain text, is handed over to be sent again. */
     const held = c.records({ proposals: async () => [{ ...rec, raisedAt: '2026-10-07T00:00:00.000Z' }] });
     await expect(raiseOrderHere(held, c.account, c.runId, c.viewingKey)).rejects.toThrow(/waiting to be sent/u);
+    /* RED WHEN: a proposal written down with no commitment to what it pays is handed over to be sent, with nothing to hold the send to. */
+    const silent = c.records({ proposals: async () => [{ ...rec, pays: undefined }] });
+    await expect(raiseOrderHere(silent, c.account, c.runId, c.viewingKey)).rejects.toThrow(/does not say what it pays/u);
     /* RED WHEN: a withdrawn proposal's payments are taken as the leg's, so the device checks what will never be sent. */
     const doubting = { people: async () => ({ ...(await c.records().people()), notBelieved: [c.hired[1]!.id] }) };
     const cancelled = c.records({ ...doubting, proposals: async () => [{ ...rec, status: 'cancelled' as const }] });
@@ -166,7 +185,7 @@ describe('WHAT A RAISE IS BUILT FROM, MADE HERE FROM THE COMPANY\'S RECORDS', ()
     const run = c.payroll.requireRun(c.runId, c.viewingKey);
     const sealed = c.store.listRuns(c.account).find((x) => x.id === c.runId)!;
     const { employees, totals, payout, skips, repeats } = run;
-    const unnamed = { ...sealed, sealed: sealRecord('payroll', c.account, { employees, totals, proposalIds: {}, payout, skips, repeats }, c.viewingKey) };
+    const unnamed = { ...sealed, proposalIds: [], sealed: sealRecord('payroll', c.account, { employees, totals, proposalIds: {}, payout, skips, repeats }, c.viewingKey) };
     const earlier = (status: SealedProposal['status']) =>
       c.records({ ...doubting, runs: async () => runsFiledBy([unnamed as SealedRun], c.account, c.founder.secret), proposals: async () => [{ ...rec, status }] });
     /* RED WHEN: a leg whose earlier round may be on chain is checked against the people now, so raising it again raises another round. */
@@ -192,6 +211,7 @@ describe('WHAT A RETRY IS BUILT FROM, MADE HERE FROM THE LEG IT RETRIES', () => 
     const RETRY_SALT = '5c'.repeat(32);
     const retryRec: SealedProposal = {
       ...legRec, id: 'prp_retry', chainId: 'cd'.repeat(32) as Hex,
+      pays: paysCommitmentOf({ vault: payout.vault, asset: legFieldsOf(leg).asset, payments: [2, 1].map((i) => paymentChecked(payout.facts[i]!)) }, RETRY_SALT),
       sealed: sealRecord('proposals', c.account, {
         ...envelope, sealedPayload: seal(canonical({ ...payload, __change: { ...payload.__change, salt: RETRY_SALT } }), c.viewingKey),
       }, c.viewingKey),
@@ -201,7 +221,7 @@ describe('WHAT A RETRY IS BUILT FROM, MADE HERE FROM THE LEG IT RETRIES', () => 
       ...run, payout: { [leg]: { ...payout, retries: [{ originalIndices: [2, 1], root: payout.root, payees: payout.payees, opensAt: 5n, closesAt: 6n, vault: payout.vault, proposalId: retryId, proposedBy: 's', at: 'now' }] } },
     };
     const { employees, totals, proposalIds, payout: p, skips, repeats } = retried;
-    const resealed = { ...sealed, sealed: sealRecord('payroll', c.account, { employees, totals, proposalIds, payout: p, skips, repeats }, c.viewingKey) };
+    const resealed = { ...sealed, proposalIds: proposalListOf({ proposalIds, payout: p }), sealed: sealRecord('payroll', c.account, { employees, totals, proposalIds, payout: p, skips, repeats }, c.viewingKey) };
     return {
       ...c, retryId, RETRY_SALT, payout,
       records: (over: Partial<CompanyRecordsHere> = {}) => c.records({ runs: async () => runsFiledBy([resealed], c.account, c.founder.secret), proposals: async () => [legRec, retryRec], ...over }),
@@ -218,7 +238,8 @@ describe('WHAT A RETRY IS BUILT FROM, MADE HERE FROM THE LEG IT RETRIES', () => 
     expect([order.order.run.opensAt, order.order.run.closesAt, order.indices]).toEqual(['5', '6', [2, 1]]);
     /* RED WHEN: the retry is built under the leg's own proposal - its identity or its salt - rather than its own. */
     expect([order.proposalId, order.chainId, order.order.proposal, order.order.half.proposalSalt]).toEqual(['prp_retry', 'cd'.repeat(32), 'cd'.repeat(32), c.RETRY_SALT]);
-    expect(order.paymentsChecked).toBe(paymentsCheckedDigest(retry.payments));
+    /* RED WHEN: the retry's order carries anything but its own proposal's commitment, over exactly the retry's payments. */
+    expect(order.pays).toBe(paysCommitmentOf({ vault: c.payout.vault, asset: retry.asset, payments: retry.payments }, c.RETRY_SALT));
     for (const [why, indices] of [['nobody', []], ['a person twice', [1, 1]], ['a person not on the leg', [3]], ['a position that is not one', [-1]]] as const) {
       /* RED WHEN: a retry naming nobody, somebody twice or somebody not on the leg is checked as a retry. */
       await expect(retryPaymentsHere(c.records(), c.account, c.runId, c.viewingKey, [...indices]), why).rejects.toThrow(NotMadeHere);

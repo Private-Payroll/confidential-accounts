@@ -1,16 +1,57 @@
-import { describe, it, expect } from 'vitest';
+import { describe, it, expect, vi } from 'vitest';
 import {
   approveOnDevice, governedCallServiceFor, nothingWasSentBy, SentAndNotYetSeen,
   sendRaiseFromDevice, sendRetryFromDevice, withdrawOnDevice,
-  type GovernedCallService, type LegPaymentsOnTheWire, type MadeHereDoors, type RaiseDoors, type RaiseOrderOnTheWire,
+  type GovernedCallService, type LegPaymentsOnTheWire, type RaiseDoors, type RaiseOrderOnTheWire,
   type RetryOrderOnTheWire, type RoundOnThePage,
 } from './governed-call-on-device.js';
+import type { OpenedRound } from './governed-call-builder.js';
+import type { CompanyRecordsHere } from './run-rebuilt-here.js';
+import { paysCommitmentOf } from '../../../src/core/proposal-filing.js';
+
+/**
+ * **WHAT THIS DEVICE MAKES FROM THE COMPANY'S RECORDS, AND THE PROPOSAL IT OPENS
+ * FROM THEM, STAND IN FOR THE RECORDS HERE**, through the modules that make
+ * them, so the send, the vault check and the waiting can be watched in order.
+ * Nothing in the product takes them from anywhere but the records: what is made
+ * from real records is the subject of `a-raise-is-made-from-the-companys-records.test.ts`,
+ * and what is opened, of `the-device-proves-what-it-opened.test.ts`.
+ */
+const seams = vi.hoisted(() => ({
+  made: undefined as unknown as MadeHereDoors,
+  opens: undefined as unknown as (proposalId: string, viewingKey: string, forARaise: boolean) => Promise<OpenedRound>,
+}));
+vi.mock('./material-made-here.js', async (importOriginal) => {
+  const real = await importOriginal<typeof import('./material-made-here.js')>();
+  type W = { asset?: string; form?: LedgerForm };
+  return {
+    ...real,
+    legPaymentsHere: (_r: unknown, _a: string, runId: string, viewingKey: string, which?: W) => seams.made.legPayments(runId, viewingKey, which),
+    retryPaymentsHere: (_r: unknown, _a: string, runId: string, viewingKey: string, indices: readonly number[], which?: W) =>
+      seams.made.retryPayments(runId, viewingKey, indices, which),
+    raiseOrderHere: (_r: unknown, _a: string, runId: string, viewingKey: string, which?: W) => seams.made.raiseOrder(runId, viewingKey, which),
+    retryOrderHere: (_r: unknown, _a: string, runId: string, viewingKey: string, proposalId: string, which?: W) =>
+      seams.made.retryOrder(runId, viewingKey, proposalId, which),
+  };
+});
+vi.mock('./round-opened-here.js', async (importOriginal) => ({
+  ...(await importOriginal<typeof import('./round-opened-here.js')>()),
+  openTheRoundHere: (_s: unknown, _a: string, proposalId: string, viewingKey: string, forARaise: boolean) =>
+    seams.opens(proposalId, viewingKey, forARaise),
+}));
+/** What a raise or a retry is made from on this device, as the page's modules make it. */
+interface MadeHereDoors {
+  legPayments(runId: string, viewingKey: string, which?: { asset?: string; form?: LedgerForm }): Promise<LegPaymentsOnTheWire>;
+  retryPayments(runId: string, viewingKey: string, indices: readonly number[], which?: { asset?: string; form?: LedgerForm }): Promise<LegPaymentsOnTheWire>;
+  raiseOrder(runId: string, viewingKey: string, which?: { asset?: string; form?: LedgerForm }): Promise<RaiseOrderOnTheWire>;
+  retryOrder(runId: string, viewingKey: string, proposalId: string, which?: { asset?: string; form?: LedgerForm }): Promise<RetryOrderOnTheWire>;
+}
 import type { LedgerForm } from '../../../src/core/assets.js';
 import { deviceVaultHoldings, type PoolNote } from './device-vault-holdings.js';
 import { paymentsFitNotes } from './vault-builder.js';
 import { registryWithTestPrivateForms, TEST_TOKEN } from '../../../src/testing/assets.js';
 import type { Hex } from '../../../src/core/crypto.js';
-import { DEVICE_RAISE_VERSION, WRITTEN_DOWN_IS_NOT_WHAT_IS_CHECKED, paymentsCheckedDigest } from '../../../src/core/device-raise.js';
+import { DEVICE_RAISE_VERSION, WRITTEN_DOWN_IS_NOT_WHAT_IS_CHECKED } from '../../../src/core/device-raise.js';
 import { opensAs } from '../../../src/testing/sealed-records.js';
 
 /* The page's side, over a service and a worker that write down what they were asked, in order. */
@@ -26,30 +67,32 @@ const LEG: LegPaymentsOnTheWire = {
   asset: TOKEN, payments: [0, 1, 2].map(() => ({ kind: 'shielded', token: TOKEN, amount: '10000' })),
 };
 const PLENTY = [note(1, 1_000_000n)];
-/* The digest of LEG's payments, as the service computes it over what it raises or sends. */
-const CHECKED = paymentsCheckedDigest(LEG.payments);
+const VAULT = '99'.repeat(32);
+const SALT = '66'.repeat(32);
+/* What a proposal written down for `payments` commits to paying, as its filing carries it, under ORDER's vault and salt. */
+const paysFor = (payments: LegPaymentsOnTheWire['payments'], asset: string = TOKEN): string => paysCommitmentOf({ vault: VAULT, asset, payments }, SALT);
 
 const ORDER: RaiseOrderOnTheWire = {
   proposalId: 'prp_1', chainId: 'cc'.repeat(32),
   order: {
     circuit: 'propose',
-    run: { root: '88'.repeat(32), payees: '3', opensAt: '1', closesAt: '2', vault: '99'.repeat(32) },
-    half: { assetId: '44'.repeat(32), assetBlinding: '55'.repeat(32), proposalSalt: '66'.repeat(32), changeAmount: '1', changeBatchDigest: '77'.repeat(32) },
+    run: { root: '88'.repeat(32), payees: '3', opensAt: '1', closesAt: '2', vault: VAULT },
+    half: { assetId: '44'.repeat(32), assetBlinding: '55'.repeat(32), proposalSalt: SALT, changeAmount: '1', changeBatchDigest: '77'.repeat(32) },
     proposal: 'cc'.repeat(32),
   },
-  paymentsChecked: CHECKED,
+  pays: paysFor(LEG.payments),
 };
-/* The proposal written down for another set of payments than LEG's: its count of payees and its digest follow them. */
-const orderPaying = (payments: LegPaymentsOnTheWire['payments']): RaiseOrderOnTheWire => ({
+/* The proposal written down for another set of payments than LEG's: its count of payees and its commitment follow them. */
+const orderPaying = (payments: LegPaymentsOnTheWire['payments'], asset: string = TOKEN): RaiseOrderOnTheWire => ({
   ...ORDER, order: { ...ORDER.order, run: { ...ORDER.order.run, payees: String(payments.length) } },
-  paymentsChecked: paymentsCheckedDigest(payments),
+  pays: paysFor(payments, asset),
 });
 /* A retry of the leg's second and third people, written down and not yet sent. */
 const RETRY_ORDER: RetryOrderOnTheWire = {
   ...ORDER, proposalId: 'prp_r', chainId: 'cd'.repeat(32),
   order: { ...ORDER.order, run: { ...ORDER.order.run, payees: '2' }, proposal: 'cd'.repeat(32) },
   indices: [1, 2],
-  paymentsChecked: paymentsCheckedDigest(LEG.payments.slice(1)),
+  pays: paysFor(LEG.payments.slice(1)),
 };
 const round = (over: Partial<RoundOnThePage> = {}): RoundOnThePage => ({ id: 'prp_1', chainId: 'cc'.repeat(32), status: 'open', ...over });
 
@@ -114,8 +157,10 @@ const aDevice = (over: Partial<GovernedCallService> & MadeOver & {
       });
     },
   });
+  seams.made = made;
+  seams.opens = opensAs({ prp_1: 'cc'.repeat(32), prp_r: 'cd'.repeat(32) });
   const doors: RaiseDoors = {
-    service, holdings, made, assets: registryWithTestPrivateForms(),
+    service, holdings, records: {} as CompanyRecordsHere, assets: registryWithTestPrivateForms(),
     builder: {
       governedCall: async (input) => {
         log.push(`build ${input.order.circuit} for ${input.account} on ${input.chain.accountState}`);
@@ -125,8 +170,6 @@ const aDevice = (over: Partial<GovernedCallService> & MadeOver & {
       },
     },
     material, accountId: 'acc_1',
-    /* What the device opens is the subject of `the-device-proves-what-it-opened.test.ts`; here each proposal opens as itself. */
-    opens: opensAs({ prp_1: 'cc'.repeat(32), prp_r: 'cd'.repeat(32) }),
     progress: (s) => log.push(`stage ${s}`),
     sleep: async () => {}, waitMs: 3, everyMs: 1,
   };
@@ -284,7 +327,7 @@ describe('THE VAULT\'S PRIVATE MONEY IS ASKED ON THIS DEVICE BEFORE A RAISE WRIT
         asked.push(`${runId} ${JSON.stringify(body)}`);
         return { asset: '0'.repeat(64), payments: [{ kind: 'unshielded', token: '0'.repeat(64), amount: '5' }] };
       },
-      raiseOrder: async () => orderPaying([{ kind: 'unshielded', token: '0'.repeat(64), amount: '5' }]),
+      raiseOrder: async () => orderPaying([{ kind: 'unshielded', token: '0'.repeat(64), amount: '5' }], '0'.repeat(64)),
     });
     /* RED WHEN: this device asks itself about public money it cannot read - every run with a public payee is then refused here. */
     expect((await sendRaiseFromDevice(d.doors, { ...RAISE, asset: '0'.repeat(64) })).raisedAt).toBe('now');
@@ -375,7 +418,7 @@ describe('THE VAULT\'S PRIVATE MONEY IS ASKED ON THIS DEVICE BEFORE A RAISE WRIT
 
   it('A PAGE THAT CAN READ NEITHER THE COMPANY\'S RECORDS NOR WHAT IS MADE FROM THEM BUILDS NOTHING', async () => {
     const d = aDevice();
-    const { made: _m, ...unread } = d.doors;
+    const { records: _r, ...unread } = d.doors;
     /* RED WHEN: a raise is built or sent from anything but what this device made from the company's records. */
     await expect(sendRaiseFromDevice(unread, { runId: 'run_1', viewingKey: 'vk', asset: TOKEN })).rejects.toThrow(/cannot read the company's records/u);
     expect(d.log.filter((l) => /^(build|send)/u.test(l))).toEqual([]);

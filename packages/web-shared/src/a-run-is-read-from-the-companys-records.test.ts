@@ -9,12 +9,14 @@ import { signRunFiling } from '../../../src/core/run-filing.js';
 import { sealRecord } from '../../../src/core/sealed-records.js';
 import { newStateBlinding, sealState } from '../../../src/core/account.js';
 import { signedFoundingState, CREATED_BEFORE_SIGNED_STATE, openStateRecord } from '../../../src/core/founding-state.js';
-import { runLegOf } from '../../../src/core/run-legs.js';
+import { factsOfThePaid, proposalListOf, runLegOf } from '../../../src/core/run-legs.js';
+import { pureCircuits } from '../../../contracts/managed/contract/index.js';
 import { signCompanyFiling } from '../../../src/midnight/sealed-record-wire.js';
 import type { PayrollRun, RosterEmployee, SealedRun } from '../../../src/core/types.js';
 import { payeeFor } from '../../../src/testing/payees.js';
 import { TEST_TOKEN, registryWithTestPrivateForms } from '../../../src/testing/assets.js';
 import { runRebuiltHere, RunNotReadHere, type CompanyRecordsHere } from './run-rebuilt-here.js';
+import { factsHere, RAISE_CHECKS } from './raise-checks-here.js';
 import type { DirectoryHere } from './vault-page-doors.js';
 import type { PeopleHere } from './people-on-device.js';
 
@@ -32,14 +34,17 @@ const person = (id: string, n: string): RosterEmployee => ({
 const ALI = person('p1', 'a1');
 const BEA = person('p2', 'a2');
 
+const EMPLOYEES = [ALI, BEA].map((p, i) => ({ id: p.id, name: p.name, wrappingPublicKey: null, asset: TEST_TOKEN, amount: BigInt(100 + i), form: 'shielded' }));
+/* What the leg records it pays, as the device that raised it worked it out from the people it believed. */
+const RECORDED = factsOfThePaid(EMPLOYEES as never, (id) => [ALI, BEA].find((p) => p.id === id), registryWithTestPrivateForms());
 const runOf = (over: Partial<PayrollRun> = {}, filedWith?: { secret: Hex }): SealedRun => {
   const run = {
     id: 'run_aaaaaaaaaaa1', accountId: CO, period: '2026-09', status: 'proposed',
-    employees: [ALI, BEA].map((p, i) => ({ id: p.id, name: p.name, wrappingPublicKey: null, asset: TEST_TOKEN, amount: BigInt(100 + i), form: 'shielded' })),
+    employees: EMPLOYEES,
     totals: {}, proposalIds: { [LEG]: 'prp_1' }, skips: undefined, repeats: undefined,
     payout: { [LEG]: {
       root: '00'.repeat(32), payees: 2n, opensAt: 1_800_000_000n, closesAt: 1_800_600_000n, vault: '99'.repeat(32), required: 1n,
-      leaves: [], facts: [], runId: `run_aaaaaaaaaaa1:${LEG}`, epoch: 0,
+      leaves: [], facts: RECORDED, runId: `run_aaaaaaaaaaa1:${LEG}`, epoch: 0,
       retries: [{ originalIndices: [1], root: '00'.repeat(32), payees: 2n, opensAt: 1_900_000_000n, closesAt: 1_900_600_000n, vault: '99'.repeat(32), proposalId: 'prp_2', proposedBy: 's', at: 'now' }],
     } },
     ...over,
@@ -48,7 +53,7 @@ const runOf = (over: Partial<PayrollRun> = {}, filedWith?: { secret: Hex }): Sea
   /* Filed by the founding seat, as a run is filed from a seat's device. */
   return signRunFiling(CO, {
     id: run.id, accountId: run.accountId, period: run.period, status: run.status, payslips: [], keyEpoch: 0,
-    proposalIds: ['prp_1', 'prp_2'], sealed: sealRecord('payroll', CO, { employees, totals, proposalIds, payout, skips, repeats }, KEY),
+    proposalIds: proposalListOf({ proposalIds, payout }), sealed: sealRecord('payroll', CO, { employees, totals, proposalIds, payout, skips, repeats }, KEY),
   } as never, (filedWith ?? founder).secret) as unknown as SealedRun;
 };
 
@@ -75,16 +80,23 @@ const records = (o: { state?: unknown; founderRemoved?: boolean; founding?: stri
   people: async () => o.people ?? peopleOf(),
   state: async (id) => (id === '0' ? ('state' in o ? o.state : STATE) as never : null),
   runs: async () => o.runs ?? [runOf()],
+  proposals: async () => [],
+  /* A chain that has paid nobody and holds nothing open, as the person's own wallet reads it. */
+  payments: {
+    paidOnceOf: pureCircuits.paidOnceOf, paidMovementOf: pureCircuits.paidMovementOf,
+    read: async () => ({ payKeyCommitment: null, held: [], openRounds: [], entries: 0 }),
+  },
+  policy: async () => ({ threshold: 1, limitsByRole: {} }) as never,
   registry: registryWithTestPrivateForms(),
 });
 
 describe('A RUN READ HERE FOR APPROVAL', () => {
   it('IS THE LEG THE PROPOSAL RAISED, PAID TO THE PEOPLE THIS DEVICE BELIEVES, FROM THE STATE THE FOUNDING SEAT SIGNED', async () => {
-    const made = await runRebuiltHere(records(), CO, 'prp_1', KEY);
+    const { made } = await runRebuiltHere(records(), CO, 'prp_1', KEY);
     const blinding = openStateRecord(STATE, KEY).blinding;
     /* RED WHEN: the seeds or the pay-record key come from anywhere but the signed state. */
     expect([made.seeds, made.payKey]).toEqual([blinding.payoutSeeds, blinding.payRecordKey]);
-    /* RED WHEN: the people paid, their amounts or their addresses are not the run's and the believed records'. */
+    /* RED WHEN: the people paid, their amounts or their addresses are not what the leg records it pays. */
     expect(made.facts.map((f) => [f.amount, f.payee])).toEqual([[100n, ALI.address], [101n, BEA.address]]);
     /* RED WHEN: a person-month is written other than the run's month, in its one spelling, or as an extra it is not. */
     expect(made.records).toEqual([
@@ -95,7 +107,7 @@ describe('A RUN READ HERE FOR APPROVAL', () => {
   });
 
   it('A RETRY IS READ AS THE LEG IT RETRIES, WITH ITS OWN WINDOW AND THE PEOPLE IT PAYS', async () => {
-    const made = await runRebuiltHere(records(), CO, 'prp_2', KEY);
+    const { made } = await runRebuiltHere(records(), CO, 'prp_2', KEY);
     /* RED WHEN: a retry is read with the leg's window, or without the positions it pays. */
     expect([made.opensAt, made.closesAt, made.required, made.retry, made.facts.length]).toEqual(['1900000000', '1900600000', '0', [1], 2]);
   });
@@ -109,7 +121,7 @@ describe('A RUN READ HERE FOR APPROVAL', () => {
 
   it('THE FOUNDING SEAT IS THE DEPLOY\'S: A FOUNDER REMOVED SINCE STILL MAKES THE FIRST STATE BELIEVED', async () => {
     /* RED WHEN: the first state is believed only while its signer still holds the account, so removing the founding signer strands every approval. */
-    const made = await runRebuiltHere(records({ founderRemoved: true, runs: [runOf({}, later)] }), CO, 'prp_1', KEY);
+    const { made } = await runRebuiltHere(records({ founderRemoved: true, runs: [runOf({}, later)] }), CO, 'prp_1', KEY);
     expect(made.payKey).toBe(openStateRecord(STATE, KEY).blinding.payRecordKey);
   });
 
@@ -141,7 +153,9 @@ describe('A RUN READ HERE FOR APPROVAL', () => {
     }
   });
 
-  it('A RUN PAYING ANYBODY THIS DEVICE DOES NOT BELIEVE OR WOULD NOT PAY IS NOT READ', async () => {
+  it('A RUN PAYING ANYBODY THIS DEVICE DOES NOT BELIEVE OR WOULD NOT PAY IS REFUSED BY THE RAISE CHECKS AN APPROVER RUNS', async () => {
+    const payable = RAISE_CHECKS.find((c) => c.name === 'payable')!;
+    const { run, leg, made } = await runRebuiltHere(records(), CO, 'prp_1', KEY);
     const cases: Array<[string, PeopleHere, RegExp]> = [
       ['a record no believed seat filed', peopleOf({ notBelieved: ['p2'] }), /Person p2 is on this run, and this device does not believe/],
       ['an address not their code\'s', peopleOf({ notPayable: [{ here: { person: BEA, version: 1, handedOver: true }, why: 'x' }] }), /Person p2 is on this run/],
@@ -149,8 +163,9 @@ describe('A RUN READ HERE FOR APPROVAL', () => {
       ['a leaver', peopleOf({ people: [ALI, { ...BEA, status: 'leaver' as const }].map((p) => ({ person: p, version: 1, handedOver: true })) }), /leaver, not active/],
     ];
     for (const [why, people, says] of cases) {
-      /* RED WHEN: a run paying that person is read as one this device would approve. */
-      await expect(runRebuiltHere(records({ people }), CO, 'prp_1', KEY), why).rejects.toThrow(says);
+      /* RED WHEN: a run paying that person passes the checks an approving device runs. */
+      const facts = await factsHere(records({ people }), CO, run, KEY);
+      expect(() => payable.check({ run, leg, made, filedBy: founder.publicKey }, facts), why).toThrow(says);
     }
   });
 
