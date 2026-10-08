@@ -77,7 +77,7 @@ const press = async (o: {
     vault: VAULT, onChain: true, heldByCommittee: true, why: null, notes: [], everCreated: [],
     committee: { committee, threshold: 2 } as never,
     authority: { committee, threshold: 2, counter: '1', shape: 'committee' },
-    /* The deploy the vault was born from; the stand-in builder below reads it as born held. */
+    /* What the service would say of the vault; nothing in a start asks it - the vault is read on the device (`vaultOnChain` below). */
     deployed: 'D',
   };
   const stores = new Map<WireRecord, MemorySealedPoolStore>();
@@ -120,11 +120,17 @@ const press = async (o: {
       ...(i.secret === undefined ? {} : { run: { root: 'r', payees: '0', asset: '00'.repeat(32), copies: o.copies(await filedSecret()) } as never }),
     }),
     vaultAsDeployed: async () => ({ refusal: null }),
+    /* The vault as this device's worker reads it at the wallet's indexer: held by the account's committee, pinned to the account, empty. */
+    vaultOnChain: async () => ({
+      onChain: true, state: 'QUJD', notes: [], notesFromThisBuild: true, everCreated: [],
+      authority: { committee, threshold: 2 }, account: ACCOUNT, started: false,
+    }),
     governedCall: async () => { asked.push('asked to raise or approve'); throw new Error('stop here'); },
     setNonceSecret: async () => { asked.push('built the set'); throw new Error('stop here'); },
   } as unknown as VaultBuilderClient;
   const result = await createCompanyVault({
     ...pacing, account: ACCOUNT, service, builder,
+    indexer: async () => ({ indexerUri: 'https://indexer.example/api/v3/graphql', indexerWsUri: 'wss://indexer.example/api/v3/graphql/ws' }),
     onChain: async (v: string) => ({
       /* The account held by the company's committee, which the vault was born held by. */
       holders: { committee, threshold: 2, seats: [], approvals: 1, adoptedVaults: [v], founding: '4a'.repeat(32), foundingCommittee: [{ tag: 'schnorr', value: '11'.repeat(32) }] },

@@ -71,6 +71,7 @@ import {
 } from '@midnight-ntwrk/compact-runtime';
 import { toHex, fromHex, type Hex } from '../core/crypto.js';
 import type { VaultCoin } from './vault-coins.js';
+import { attemptKey, type AttemptedStep } from './vault-journal.js';
 import {
   NonceSecretNeeded, nonceCircuitsFrom, secretsOfTheVault, spentNullifierOf, madeCoinNonce, splitPieceAmountOf,
   type VaultNonceCircuits, type VaultNonceSecrets,
@@ -214,6 +215,50 @@ export const mergedNoteOf = (spent: readonly VaultCoin[], under: MadeUnder): Vau
   };
 };
 
+/**
+ * **THE ONE COIN A JOURNALLED STEP KEPT, IF IT LANDED, OR NOTHING WHEN IT KEPT
+ * NONE**: a merge's coin, worth every note it spent; any other step's change,
+ * worth what its notes held less what left. Derived from the line alone, so a
+ * device can ask the chain whether that step landed. A line no step could have
+ * made is refused, as the replay refuses it.
+ */
+export const keptByAStep = (step: AttemptedStep, under: MadeUnder): VaultCoin | undefined => {
+  const why = whyNoStepCouldBe(step);
+  if (why !== null) throw new Error(`a journal line ${why}`);
+  const notes = [step.spent, ...(step.further ?? [])];
+  if (step.merge === true) return mergedNoteOf(notes, under);
+  return changeAfterSpending(step.spent, notes.reduce((t, n) => t + n.value, 0n), step.amount, under);
+};
+
+/**
+ * **WHY NO STEP THE VAULT MAKES COULD BE THIS LINE**, or null when one could:
+ * the one statement of it, asked by the replay and by the device alike. One
+ * note named twice, notes of two tokens, a merge of fewer than two notes or one
+ * sending money out, and a payment of nothing or of more than its notes hold
+ * are each refused by the contract.
+ */
+export const whyNoStepCouldBe = (step: AttemptedStep): string | null => {
+  const notes = [step.spent, ...(step.further ?? [])];
+  if (new Set(notes.map((n) => n.nonce)).size !== notes.length || notes.some((n) => n.token !== step.spent.token)) {
+    return 'attempts a step that names one note twice, or notes of two tokens. The contract refuses that, so this '
+      + 'attempt cannot have landed and the journal line is wrong.';
+  }
+  const held = notes.reduce((t, n) => t + n.value, 0n);
+  if (step.merge === true) {
+    return notes.length < 2 || step.amount !== 0n
+      ? `attempts a merge of ${notes.length} note(s) sending ${step.amount} out. A merge takes at least two notes and `
+        + 'sends nothing, so this line is wrong.'
+      : null;
+  }
+  if (step.amount <= 0n) return `attempts to pay ${step.amount}, which is not a payment.`;
+  if (step.amount > held) {
+    return `attempts to pay ${step.amount} out of ${notes.length === 1 ? `note ${step.spent.nonce}, which` : `notes ${notes.map((n) => n.nonce).join(', ')}, which together`} the line says `
+      + `${notes.length === 1 ? 'holds' : 'hold'} ${held}. The contract refuses that, so this attempt cannot have landed `
+      + 'and the journal line is wrong.';
+  }
+  return null;
+};
+
 /* ------------------------------------------------------------------ *
  * the pool
  * ------------------------------------------------------------------ */
@@ -304,7 +349,7 @@ export type VaultEvent =
    * which of the results it holds. That is the same question the whole file
    * asks.
    */
-  | { kind: 'payout-attempt'; spent: VaultCoin; amount: bigint };
+  | ({ kind: 'payout-attempt' } & AttemptedStep);
 
 /** A note, with wherever the chain filed it if that is known. */
 export interface PoolNote extends VaultCoin {
@@ -607,17 +652,12 @@ export const replayVault = (input: PoolRecoveryInput): PoolRecovery => {
        * change note has a commitment the chain does not hold, which is the
        * chain refusing it, loudly, as an unexplained commitment at most.
        */
-      if (e.amount <= 0n) throw new Error(`event ${i} attempts to pay ${e.amount}, which is not a payment`);
-      if (e.amount > e.spent.value) {
-        throw new Error(
-          `event ${i} attempts to pay ${e.amount} out of note ${e.spent.nonce}, which the line says ` +
-          `holds ${e.spent.value}. The contract refuses that, so this attempt cannot have landed ` +
-          'and the journal line is wrong. Nothing is derived past this point.');
-      }
-      if (e.amount === e.spent.value) return;
+      const why = whyNoStepCouldBe(e);
+      if (why !== null) throw new Error(`event ${i} ${why} Nothing is derived past this point.`);
+      if (e.merge !== true && e.amount === holding([e.spent, ...(e.further ?? [])])) return;
       if (!naming) { unnamedWithoutTheSecret.push(i); return; }
       for (const s of naming.secrets) {
-        const kept = changeNoteOf(e.spent, e.amount, under(s));
+        const kept = keptByAStep(e, under(s));
         if (kept) propose(kept);
       }
       return;
@@ -738,7 +778,7 @@ export interface AttemptedVaultCalls {
    * whole, and how much of it was leaving. The note is carried whole so an
    * attempt can be named even when no filed version holds the note it spent.
    */
-  readonly payments: readonly { spent: VaultCoin; amount: bigint }[];
+  readonly payments: readonly AttemptedStep[];
 }
 
 /** Which record on this machine described a note. */
@@ -944,7 +984,9 @@ export const reconcileVaultPool = (input: {
   const attempted = input.attempted ?? { deposits: [], payments: [] };
   for (const coin of attempted.deposits) file(coin, { kind: 'deposit journal' });
   for (const coin of named) file(coin, { kind: 'company records' });
-  for (const a of attempted.payments) file(a.spent, { kind: 'payment journal' });
+  for (const a of attempted.payments) {
+    for (const n of [a.spent, ...(a.further ?? [])]) file(n, { kind: 'payment journal' });
+  }
 
   const onChain = new Set<Hex>(input.chain);
   const settled: SettledByTheChain[] = [];
@@ -1037,10 +1079,8 @@ export const reconcileVaultPool = (input: {
    * accepts both by design (see `payout-attempt`). Each carries its own note
    * whole, exactly as the line recorded it.
    */
-  const attempts = new Map<string, { spent: VaultCoin; amount: bigint }>();
-  for (const a of attempted.payments) {
-    attempts.set(`${a.spent.nonce}:${a.spent.token}:${a.spent.value}:${a.amount}`, { spent: a.spent, amount: a.amount });
-  }
+  const attempts = new Map<string, AttemptedStep>();
+  for (const a of attempted.payments) attempts.set(attemptKey(a), a);
 
   const rebuilt = replayVault({
     vault: input.vault,

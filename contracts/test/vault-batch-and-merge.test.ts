@@ -22,7 +22,7 @@ import { sumTreeOfLeaves } from '../../src/midnight/payout-tree.js';
 import { copiesTreeOf } from '../../src/midnight/sealed-copies-tree.js';
 import { fromHex, toHex, type Hex } from '../../src/core/crypto.js';
 import { noFurtherNote, notePlaces, unusedNotePlace } from '../../src/midnight/vault-step-notes.js';
-import { replayVault, type VaultEvent } from '../../src/midnight/vault-recovery.js';
+import { replayVault, keptByAStep, whyNoStepCouldBe, type VaultEvent } from '../../src/midnight/vault-recovery.js';
 import { STEP_LIMITS } from '../../src/midnight/payment-plan.js';
 
 const A = privateStateFor(1);
@@ -535,6 +535,68 @@ describe('recovery names every coin these steps made', () => {
     w.priv = { ...w.priv, coin: { nonce: fromHex(merged.nonce), color: TOKEN, value: 85n, mt_index: 0n } };
     await w.call('payout', singleRun(r, 2, after.nonce), after.recipient, TOKEN, 80n, after.blinding, noFurtherNote());
     expect(paidMarks(w, payeeLeaf(w, after), after.nonce)).toEqual([true, true]);
+  });
+});
+
+describe('the journal alone names what every note of a step left, when the pool write was lost', () => {
+  it('A TWO-NOTE PAYMENT, A BATCH OF TWO NOTES AND A MERGE, EACH JOURNALLED BEFORE ITS CALL, ARE REBUILT FROM THEIR LINES, AND WHAT THEY NAME SPENDS', async () => {
+    const w = await World.started();
+    const notes = [coin(0x81, 60n), coin(0x82, 50n), coin(0x83, 100n), coin(0x84, 90n), coin(0x85, 40n), coin(0x86, 45n)];
+    await w.deposit(...notes);
+    const single = pay(0x0a, 100n, 0xb1);
+    const ps = [pay(0x0b, 70n, 0xb2), pay(0x0c, 80n, 0xb3)];
+    const after = pay(0x0d, 80n, 0xb4);
+    const r = await w.run([{ leaf: payeeLeaf(w, single), amount: 100n }, batchLeaf(w, ps), { leaf: payeeLeaf(w, after), amount: 80n }], 531);
+
+    w.priv = { ...w.priv, coin: notes[0]! };
+    await w.call('payout', singleRun(r, 0, single.nonce), single.recipient, TOKEN, 100n, single.blinding, [notes[1]!]);
+    await w.call('batchPayout', batchRun(r, 1), TOKEN, fill4(ps), notePlaces([notes[2]!, notes[3]!], 3));
+    await w.call('mergeNotes', TOKEN, notePlaces([notes[4]!, notes[5]!], 4));
+
+    /*
+     * No pool was written after any of the three: only the deposits are known as notes, and each step's journal line,
+     * written before its call, names every note it spent. RED WHEN an attempt is derived from its first note alone - the
+     * coin it kept would be named at the first note's value less what left, which the chain never made.
+     */
+    const hexed = (c: Held) => ({ nonce: toHex(c.nonce) as Hex, token: toHex(c.color) as Hex, value: c.value });
+    const rebuilt = replayVault({
+      vault: w.addr as Hex, chain: w.notes() as Hex[], pool: notes.map(hexed),
+      history: [
+        ...notes.map((c) => ({ kind: 'deposit' as const, coin: hexed(c) })),
+        { kind: 'payout-attempt', spent: hexed(notes[0]!), further: [hexed(notes[1]!)], amount: 100n },
+        { kind: 'payout-attempt', spent: hexed(notes[2]!), further: [hexed(notes[3]!)], amount: 150n },
+        { kind: 'payout-attempt', spent: hexed(notes[4]!), further: [hexed(notes[5]!)], merge: true, amount: 0n },
+      ],
+      circuits: V as never,
+      nonceSecrets: { secrets: [toHex(SECRET) as Hex], commitment: toHex(w.ledger.nonceCommitment) as Hex },
+    });
+    expect(rebuilt.unexplained, 'RED WHEN: a coin a several-note step kept comes back unexplained').toEqual([]);
+    expect(rebuilt.held.map((n) => n.value).sort((a, b) => Number(a - b))).toEqual([10n, 40n, 85n]);
+    /* Every note the steps spent is stale: the pool that still held them is told so, and none is offered again. */
+    expect(rebuilt.stale.map((n) => n.nonce).sort()).toEqual(notes.map((c) => toHex(c.nonce)).sort());
+
+    const merged = rebuilt.held.find((n) => n.value === 85n)!;
+    w.priv = { ...w.priv, coin: { nonce: fromHex(merged.nonce), color: TOKEN, value: 85n, mt_index: 0n } };
+    await w.call('payout', singleRun(r, 2, after.nonce), after.recipient, TOKEN, 80n, after.blinding, noFurtherNote());
+    expect(paidMarks(w, payeeLeaf(w, after), after.nonce), 'RED WHEN: the merged note the journal named is not the vault\'s').toEqual([true, true]);
+  });
+
+  it('refuses an attempt line no step could have made', () => {
+    const N = (n: number, value: bigint) => ({ nonce: toHex(bytes(n)) as Hex, token: toHex(TOKEN) as Hex, value });
+    const replay = (e: VaultEvent) => () => replayVault({ vault: toHex(bytes(0xee)) as Hex, chain: [], pool: [], history: [e], circuits: V as never });
+    /* RED WHEN a payment line paying more than all its notes held is derived from. */
+    expect(replay({ kind: 'payout-attempt', spent: N(1, 10n), further: [N(2, 20n)], amount: 31n })).toThrow(/which together the line says hold 30/);
+    /* RED WHEN a merge line of one note, or one sending money out, is derived from. */
+    expect(replay({ kind: 'payout-attempt', spent: N(1, 10n), merge: true, amount: 0n })).toThrow(/A merge takes at least two notes and sends nothing/);
+    expect(replay({ kind: 'payout-attempt', spent: N(1, 10n), further: [N(2, 20n)], merge: true, amount: 5n })).toThrow(/sends nothing/);
+    /* RED WHEN one note named twice in a line is read as two notes. */
+    expect(replay({ kind: 'payout-attempt', spent: N(1, 10n), further: [N(1, 10n)], amount: 15n })).toThrow(/names one note twice/);
+    /* RED WHEN a line of two tokens is derived from: the coin it names is no coin the vault made. */
+    expect(replay({ kind: 'payout-attempt', spent: N(1, 10n), further: [{ ...N(2, 20n), token: toHex(OTHER_TOKEN) as Hex }], amount: 15n })).toThrow(/notes of two tokens/);
+    /* The same statement refuses the line on the device, where a step's coin is named to ask the chain about it. */
+    expect(whyNoStepCouldBe({ spent: N(1, 10n), merge: true, amount: 0n })).toMatch(/A merge takes at least two notes/);
+    expect(() => keptByAStep({ spent: N(1, 10n), merge: true, amount: 0n }, { circuits: V as never, vault: toHex(bytes(0xee)) as Hex, secret: toHex(SECRET) as Hex }))
+      .toThrow(/A merge takes at least two notes/);
   });
 });
 

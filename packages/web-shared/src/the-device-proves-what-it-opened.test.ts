@@ -59,7 +59,7 @@ const chain = { accountState: new Uint8Array([1]), parameters: new Uint8Array([2
 const SALT = '66'.repeat(32);
 const LEAF = 'ab'.repeat(32);
 /* A real run of three, made the way the approving device makes it again (`a-run-made-here.test-support.ts`). */
-const RUN_MADE = aRunMadeHere({ opensAt: '100', closesAt: '200' });
+const RUN_MADE = aRunMadeHere({ opensAt: '100', closesAt: '200' }, (key) => accountPure.payKeyCommitmentOf(key));
 const run = { root: RUN_MADE.root, payees: '3', opensAt: '100', closesAt: '200', vault: '99'.repeat(32) };
 const half = { assetId: '44'.repeat(32), changeAmount: '30000', changeBatchDigest: '77'.repeat(32) };
 const BLINDING = '55'.repeat(32);

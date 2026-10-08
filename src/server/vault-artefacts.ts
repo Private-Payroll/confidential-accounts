@@ -106,13 +106,26 @@ export function vaultArtefactFile(places: VaultArtefactPlaces, path: string): st
 const NOTHING_HERE = { error: 'there is no such proving material here.' };
 
 /**
+ * **PARAMETERS MIDNIGHT PUBLISHES, NOT HERE OR NOT GENUINE, ARE REFUSED BY
+ * NAME.** A device proving a circuit of that size can do nothing until this
+ * server holds them, and only whoever runs the server can make it fetch them,
+ * so the refusal says which file and what brings it here. A name nothing
+ * publishes gets the same answer as any other name off the list.
+ */
+const parametersNotHere = (name: string): { error: string } => ({
+  error: `the public parameters ${name} are not on this server, or the copy here is not the one Midnight publishes, `
+    + 'so nothing that needs them can be proved. The server fetches and checks them each time it starts: let it reach '
+    + 'its parameter source, or set MIDNIGHT_PARAM_SOURCE to one that serves them, and restart it; then try again.',
+});
+
+/**
  * **A REFUSAL IS NEVER KEPT.** A file missing now can be here a minute later -
  * this server fetches public parameters when it starts - so every refusal
  * tells a browser, and anything between, to ask again next time.
  */
-const refuse = (res: express.Response): void => {
+const refuse = (res: express.Response, body: { error: string } = NOTHING_HERE): void => {
   res.setHeader('cache-control', 'no-store');
-  res.status(404).json(NOTHING_HERE);
+  res.status(404).json(body);
 };
 
 /**
@@ -138,6 +151,11 @@ export function vaultArtefactRoutes(places: VaultArtefactPlaces, published: Publ
   r.get(`${VAULT_ARTEFACT_PATH}/*path`, async (req, res) => {
     const at = vaultArtefactLocation(places, req.path.slice(VAULT_ARTEFACT_PATH.length));
     const file = at === null ? null : join(at.root, at.below);
+    if (at !== null && at.parameters !== undefined && published(at.parameters) !== undefined
+      && (!existsSync(file!) || !(await genuine(file!, at.parameters)))) {
+      refuse(res, parametersNotHere(at.parameters));
+      return;
+    }
     if (at === null || file === null || !existsSync(file)
       || (at.parameters !== undefined && !(await genuine(file, at.parameters)))) {
       refuse(res);

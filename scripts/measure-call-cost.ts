@@ -665,7 +665,8 @@ async function measureVault(
   /** The pool the client's witness selects from. */
   const pool: { notes: Note[] } = { notes: [] };
   const pending: { spending?: string } = {};
-  const vaultWitnesses = witnessesOver(() => pool as never, pending as never);
+  /* The pool holds one note, and every spend measured here spends it: it is the note each call is offered. */
+  const vaultWitnesses = witnessesOver(() => pool as never, pending as never, () => pool.notes[0]?.nonce);
 
   const vaultCompiled = CC.make('Vault', VaultContract as any).pipe(
     CC.withWitnesses(vaultWitnesses as any),

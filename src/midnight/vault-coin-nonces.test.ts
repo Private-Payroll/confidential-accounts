@@ -18,7 +18,7 @@ import {
 } from '../../contracts/test/simulator.js';
 import { carryTheAccount, startTheVault, TEST_VAULT_SECRET } from '../../contracts/test/start-a-vault.js';
 import { copiesTreeOf } from './sealed-copies-tree.js';
-import { changeCoinOf, paidCoinTo } from './vault-coins.js';
+import { changeCoinOf, paidCoinsTo } from './vault-coins.js';
 import { replayVault, reconcileVaultPool } from './vault-recovery.js';
 import { NonceSecretNotTheVaults } from './vault-coin-nonces.js';
 import { smallestNoteCovering, type Note } from './vault-notes.js';
@@ -232,8 +232,8 @@ describe('naming the coins a vault made, with the secret each was made under', (
       /* RED WHEN the payee coin is taken from a secret other than the one its change shows */
       'RED WHEN: a payee coin is named under a secret that did not make it',
     ).toEqual([
-      paidCoinTo(before.context.callContext.currentZswapLocalState, toHex(ALICE)),
-      paidCoinTo(after.context.callContext.currentZswapLocalState, toHex(BOB)),
+      ...paidCoinsTo(before.context.callContext.currentZswapLocalState, toHex(ALICE)),
+      ...paidCoinsTo(after.context.callContext.currentZswapLocalState, toHex(BOB)),
     ]);
 
     priv = { notes: asNotes(both.held) };

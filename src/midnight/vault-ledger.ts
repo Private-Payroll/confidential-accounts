@@ -36,7 +36,7 @@ import { paysNoFees } from './fee-seat.js';
 import type { SignerRef, TxRef } from '../core/ledger.js';
 import type { SumStep } from './payout-tree.js';
 import {
-  witnessesOver, witnessesWithoutAPool, afterDeposit, afterPayment, noteToSpend, paymentsFit,
+  witnessesOver, witnessesWithoutAPool, afterDeposit, afterStep, notesToSpend, paymentsFit,
   withIndexRead,
   type VaultNotes, type Note,
 } from './vault-notes.js';
@@ -54,7 +54,8 @@ import {
   noVaultOutputHistory, claimNewDepositCoin,
   type DepositMoney, type VaultOutputHistory,
 } from './deposit-nonce.js';
-import { noFurtherNote } from './vault-step-notes.js';
+import { notePlaces } from './vault-step-notes.js';
+import { STEP_LIMITS } from './payment-plan.js';
 
 /** One payment, exactly as `PayrollRun.payeeArgs` hands it over. */
 export interface VaultPayment {
@@ -368,9 +369,23 @@ export interface NotePool {
  * vault holds a note it may not, which is every later payment refused.
  */
 export interface PaymentAttempt {
-  /** The note the payment is about to spend, exactly as the pool holds it. */
+  /** The note the step is about to spend first, exactly as the pool holds it. */
   readonly spent: { readonly nonce: Hex; readonly token: Hex; readonly value: bigint };
-  /** How much of it is leaving. The change note is worth the rest. */
+  /**
+   * Every further note the same step spends, in place order, exactly as the
+   * pool holds them. Absent or empty when it spends one note. Every note a step
+   * spends is written down, because the coin it keeps is worth what all of
+   * them held, and a line naming only the first describes a coin the chain
+   * never made.
+   */
+  readonly further?: ReadonlyArray<{ readonly nonce: Hex; readonly token: Hex; readonly value: bigint }>;
+  /**
+   * What the step is: a payment of one payee, a batch, or a merge. Absent on a
+   * line written before steps took several notes, which is a payment. A merge
+   * sends nothing out and keeps one coin worth all it spent.
+   */
+  readonly step?: 'payment' | 'batch' | 'merge';
+  /** How much is leaving: a payment's amount, a batch's total, nothing for a merge. The coin kept is worth the rest. */
   readonly amount: bigint;
   /** When, so two lines for one note can be told apart by a reader. */
   readonly attemptedAt: string;
@@ -887,11 +902,12 @@ export class VaultLedger implements PaysFromAVault {
      */
     encryptionKeys?: Record<string, Hex>,
     /**
-     * The index of the note this call spends, read from the chain just before
-     * it. Applied to this call's copy of the pool and never saved: the next
-     * spend reads it again.
+     * The notes this call spends, in place order, each with its index read from
+     * the chain just before it. The first is the one the vault is offered; the
+     * call's own arguments carry the rest. Applied to this call's copy of the
+     * pool and never saved: the next spend reads them again.
      */
-    readIndex?: { note: Note; index: ChainReadIndex },
+    readIndexes?: ReadonlyArray<{ note: Note; index: ChainReadIndex }>,
     /**
      * The vault's current nonce secret, for a call whose circuit asks for it.
      * Without one the witness refuses by name rather than answering.
@@ -899,7 +915,7 @@ export class VaultLedger implements PaysFromAVault {
     secret?: Uint8Array,
   ): Promise<{ result: any; notes: VaultNotes; spent?: Hex; readAt: PoolVersion }> {
     const loaded = await this.pool.load(address);
-    if (readIndex) {
+    for (const readIndex of readIndexes ?? []) {
       /*
        * The index was read for one coin. If the pool now holds something else
        * under that nonce, that index belongs to nothing here.
@@ -920,10 +936,9 @@ export class VaultLedger implements PaysFromAVault {
      * witness picks a different one, that note has no index and the witness
      * refuses it by name rather than spending at a number nobody read.
      */
-    const notes = readIndex
-      ? withIndexRead(
-        { ...loaded, notes: loaded.notes.map(({ index: _notReadHere, ...n }) => n) },
-        readIndex.note.nonce, readIndex.index)
+    const notes = readIndexes
+      ? readIndexes.reduce((pool, r) => withIndexRead(pool, r.note.nonce, r.index),
+        { ...loaded, notes: loaded.notes.map(({ index: _notReadHere, ...n }) => n) } as VaultNotes)
       : loaded;
     const pending: { spending?: Hex } = {};
 
@@ -933,7 +948,7 @@ export class VaultLedger implements PaysFromAVault {
      * actually take" — and a client that assumed which note was spent would
      * drift from the chain on the first payment where the assumption was wrong.
      */
-    const over = witnessesOver(() => notes, pending);
+    const over = witnessesOver(() => notes, pending, readIndexes?.[0]?.note.nonce);
     const result = await this.submit(
       address, planCall(circuit, args, encryptionKeys),
       secret === undefined ? over : {
@@ -1813,43 +1828,58 @@ export class VaultLedger implements PaysFromAVault {
     const run = runArgOf(p);
     const current = await this.pool.load(vaultAddress);
     /* Throws with what the pool actually holds, and names merging if that is
-     * the problem. See `noteToSpend`. */
-    const chosen = noteToSpend(current.notes, p.token, p.amount);
+     * the problem. See `choosingNotesToSpend`: the first note is the one the
+     * vault is offered, and the rest go in the call's further place. */
+    const [chosen, ...further] = notesToSpend(current.notes, p.token, p.amount) as [Note, ...Note[]];
     /*
-     * **THE INDEX IS READ FROM THE CHAIN NOW, FOR THIS CALL ONLY.** Before a
-     * fee and before a proof. A note with no recorded transaction, a chain that
-     * cannot be read, or an answer that does not show this note created for
-     * this vault, each stops the payment here with a sentence.
+     * **THE INDEX OF EVERY NOTE IS READ FROM THE CHAIN NOW, FOR THIS CALL ONLY.**
+     * Before a fee and before a proof. A note with no recorded transaction, a
+     * chain that cannot be read, or an answer that does not show this note
+     * created for this vault, each stops the payment here with a sentence.
      */
-    const index = await indexForSpend(vaultAddress as Hex, chosen, events);
+    const readIndexes: Array<{ note: Note; index: ChainReadIndex }> = [];
+    for (const note of [chosen, ...further]) {
+      readIndexes.push({ note, index: await indexForSpend(vaultAddress as Hex, note, events) });
+    }
 
     /*
      * **THE AMOUNT IS WRITTEN DOWN HERE, BEFORE THE MONEY MOVES, AND THIS LINE
-     * MAY NOT MOVE BELOW THE CALL.** The note `call` spends is `chosen` or
-     * nothing: every other note reaches the witness without an index and is
-     * refused by name. So this is the moment the whole of the change note is
-     * known -- the nonce and colour follow from `chosen` and the vault's secret, and the value is
-     * `chosen.value - p.amount` -- and the last moment before the process can
-     * stop with the chain holding it. A journal that throws stops the payment
-     * with nothing spent; the same throw one statement later would be a loss.
+     * MAY NOT MOVE BELOW THE CALL.** The notes `call` spends are `chosen`,
+     * offered to the witness, and `further`, in the call's further place - each
+     * with the index just read, and no other. So this is the moment the whole of
+     * the change note is known -- the nonce and colour follow from `chosen` and
+     * the vault's secret, and the value is what all of them hold less
+     * `p.amount` -- and the last moment before the process can stop with the
+     * chain holding it. A journal that throws stops the payment with nothing
+     * spent; the same throw one statement later would be a loss.
      */
     await this.journal.record(vaultAddress, {
       spent: { nonce: chosen.nonce, token: chosen.token, value: chosen.value },
+      ...(further.length === 0 ? {} : { further: further.map((n) => ({ nonce: n.nonce, token: n.token, value: n.value })) }),
+      step: 'payment',
       amount: p.amount,
       attemptedAt: new Date().toISOString(),
     });
 
     const { result, spent } = await this.call(vaultAddress, 'payout', [
       run, fromHex(payee.coinPublicKey), fromHex(p.token), p.amount, fromHex(p.blinding),
-      /* The one note chosen above and no other: the further place the payment takes is left unused. */
-      noFurtherNote(),
+      /* The further notes chosen above, each at the place the chain filed it; an unused place when there are none. */
+      notePlaces(readIndexes.slice(1).map(({ note, index }) => ({
+        nonce: fromHex(note.nonce), color: fromHex(note.token), value: note.value, mt_index: index,
+      })), STEP_LIMITS.paymentNotes - 1),
       /*
        * BOTH HALVES OUT OF ONE VALUE, in one expression, so no call site can
        * pair one payee's coin key with another's reading key. That pairing was
        * the silent half of C7 and it no longer has anywhere to go wrong.
        */
-    ], { [payee.coinPublicKey]: payee.encryptionPublicKey }, { note: chosen, index }, secret);
+    ], { [payee.coinPublicKey]: payee.encryptionPublicKey }, readIndexes, secret);
 
+    if (spent !== undefined && spent !== chosen.nonce) {
+      /* The witness hands over only the note it was offered; anything else is a model of the vault this client does not hold. */
+      throw new Error(
+        `the vault spent note ${spent} first where this payment offered ${chosen.nonce}. The pool cannot be `
+        + 'advanced safely; rebuild it from the chain with replayVault before paying again.');
+    }
     if (!spent) {
       /*
        * The contract cannot have paid without asking which note to spend. If it
@@ -1962,9 +1992,9 @@ export class VaultLedger implements PaysFromAVault {
     const recorded = kept === undefined
       ? undefined
       : await this.creatingTransactionOf(result, events, kept, vaultAddress);
-    await this.advancePool(vaultAddress, 'the payment\'s change note', (now) => afterPayment(
+    await this.advancePool(vaultAddress, 'the payment\'s change note', (now) => afterStep(
       { notes: now.notes.map(({ index: _readAtTheSpend, ...note }) => note) },
-      spent, p.amount, kept, recorded?.createdIn));
+      { spent: [spent, ...further.map((n) => n.nonce)], pays: p.amount, kept }, recorded?.createdIn));
     return {
       ...this.txRef(result, by), kind: 'shielded', spentNote: spent,
       ...(recorded === undefined ? {} : { change: recorded }),
@@ -2204,22 +2234,20 @@ export class VaultLedger implements PaysFromAVault {
     }
 
     if (verdict.of === 'counts-differ') {
-      const { chainHolds, poolHolds: held } = verdict;
-      /*
-       * THE OTHER DIRECTION, AND IT IS `C199`'s WINDOW. Every note we hold is
-       * on chain, and the chain holds more — so a note reached the vault that
-       * the pool never recorded, which is exactly what a crash between the call
-       * and the pool save leaves behind. The amount cannot be stated: a
-       * commitment discloses nothing, which is the point of it.
-       */
+      /* The pool names one note more than once, so a balance summed from it counts money twice. */
       throw new VaultPoolDisagreesWithChain(
         vaultAddress,
-        `the chain holds ${chainHolds} note(s) and this pool holds ${held}. Every note the ` +
-        'pool knows about IS on chain, so the pool claims LESS than the vault holds — a note ' +
-        'reached the vault and was never recorded, which is what a crash between a call and ' +
-        'the pool write leaves behind. The amount cannot be stated from here, because a ' +
-        'commitment discloses nothing. Rebuild the pool from the chain with replayVault.');
+        `this pool holds ${verdict.poolHolds} note(s) and names one of them more than once, so it counts money `
+        + 'twice. Rebuild the pool from the chain with replayVault.');
     }
+    /*
+     * **A NOTE THE CHAIN HOLDS AND THE POOL DOES NOT IS NOT A REASON TO STOP.**
+     * Anyone may deposit into a vault, and a coin whose opening never reached
+     * this pool is spendable by nobody: it is ignored, and the vault pays from
+     * the notes it holds. One of this vault's own notes whose pool write was
+     * lost is named by its journal and recovered by the rebuild, which proposes
+     * every journalled note to the chain.
+     */
   }
 
   /**

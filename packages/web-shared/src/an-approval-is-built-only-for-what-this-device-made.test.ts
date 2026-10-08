@@ -14,8 +14,9 @@ import { payeeFor, payFor } from '../../../src/testing/payees.js';
 import { vaultDetails } from '../../../src/testing/vault-details.js';
 import { TEST_TOKEN } from '../../../src/testing/assets.js';
 import {
-  NotMadeOnThisDevice, refuseWhatThisDeviceDidNotMake, type AccountLedgerView, type MadeHere, type RunMadeHere,
+  NotMadeOnThisDevice, refuseWhatThisDeviceDidNotMake, type AccountLedgerView, type MadeHere, type RunMadeHere, type WalletReadFacts,
 } from './what-this-device-made.js';
+import { paymentEntriesOf } from './payment-entries.js';
 
 const NET = 'undeployed' as const;
 const facts: PaymentFacts[] = [
@@ -45,23 +46,36 @@ const payloadOfRetry = (m: RunMadeHere): string => {
 };
 
 const CHAIN_ID = 'c1'.repeat(32);
-const chain = (o: { open?: boolean; paid?: readonly Hex[]; payKey?: Hex | null } = {}): AccountLedgerView => ({
+type ChainSays = { open?: boolean; paid?: readonly Hex[]; payKey?: Hex | null };
+/** The account as the chain holds it: who is paid, and the pay-record key it committed to; `payKey: null` for none. */
+const chain = (o: ChainSays = {}): AccountLedgerView & { readonly says: ChainSays } => ({
+  says: o,
   openProposals: { member: (id: Uint8Array) => (o.open ?? true) && toHex(id) === CHAIN_ID },
   movements: { member: (x: Uint8Array) => (o.paid ?? []).some((n) => paidOnceOfNonce(n) === toHex(x)) },
-  /* The company committed to its pay-record key; `payKey: null` for a company that committed to none. */
   signerRoles: {
     member: (k: Uint8Array) => o.payKey !== null && toHex(k) === toHex(pureCircuits.payKeyCommitmentKey()),
     lookup: () => pureCircuits.payKeyCommitmentOf(fromHex(o.payKey ?? pay.key)),
   },
 });
+/** What the person's own wallet reads off the chain about a run's payments: the entries asked about, those held, the commitment. */
+const walletRead = (m: RunMadeHere, o: ChainSays): WalletReadFacts => {
+  const asked = paymentEntriesOf(m, pureCircuits.paidOnceOf);
+  const paid = new Set((o.paid ?? []).map((n) => paidOnceOfNonce(n)));
+  return {
+    asked, held: asked.filter((e) => paid.has(e as Hex)),
+    payKeyCommitment: o.payKey === null ? null : toHex(pureCircuits.payKeyCommitmentOf(fromHex(o.payKey ?? pay.key))),
+  };
+};
 
 const deps = {
-  runPayload: pureCircuits.runPayload, vaultDetails,
-  payKeyCommitmentOf: pureCircuits.payKeyCommitmentOf, payKeyCommitmentKey: pureCircuits.payKeyCommitmentKey,
+  runPayload: pureCircuits.runPayload, vaultDetails, payKeyCommitmentOf: pureCircuits.payKeyCommitmentOf,
   secretRun: { vault: vaultCircuits as never, account: pureCircuits as never },
 };
-const check = (m: MadeHere | undefined, digest: string, ledger: AccountLedgerView | null = chain(), d: object = deps) =>
-  () => refuseWhatThisDeviceDidNotMake(d as never, { chainId: CHAIN_ID, digest, ...(m === undefined ? {} : { made: m }) }, ledger);
+/* Unless a case says otherwise, the wallet reads the same chain the ledger is: a run carries what it read. */
+const check = (m: MadeHere | undefined, digest: string, ledger: (AccountLedgerView & { says?: ChainSays }) | null = chain(), d: object = deps) => {
+  const read = m?.kind === 'payroll' && m.wallet === undefined ? { ...m, wallet: walletRead(m, ledger?.says ?? {}) } : m;
+  return () => refuseWhatThisDeviceDidNotMake(d as never, { chainId: CHAIN_ID, digest, ...(read === undefined ? {} : { made: read }) }, ledger);
+};
 const nonceOf = (i: number, occurrence = 0) => payRecordNonceOf(pay.key, { ...pay.records[i]!, occurrence });
 
 describe('AN APPROVAL OF A PAYROLL RUN', () => {
@@ -133,6 +147,30 @@ describe('AN APPROVAL OF A PAYROLL RUN', () => {
     expect(check(extra, payloadOf(extra), chain({ paid: [nonceOf(0, 0)] }))).not.toThrow();
     /* RED WHEN: the extra itself already paid is approved again. */
     expect(check(extra, payloadOf(extra), chain({ paid: [nonceOf(0, 0), nonceOf(0, 1)] }))).toThrow(/already recorded as paid/);
+  });
+
+  it('WHO IS PAID AND THE PAY-RECORD KEY ARE THE PERSON\'S OWN WALLET\'S READ: A SERVED LIE ABOUT EACH IS REFUSED', () => {
+    const served = chain();
+    /* RED WHEN: the paid entry is read from the served state, which says nobody is paid, while the wallet reads somebody paid. */
+    expect(check(made({ wallet: walletRead(made(), { paid: [nonceOf(1)] }) }), payloadOf(made()), served)).toThrow(/already recorded as paid/);
+    const extra = made({ records: pay.records.map((r, i) => (i === 0 ? { ...r, occurrence: 1 } : r)) });
+    /* RED WHEN: the payment before an extra is taken as made because the served state says so and the wallet reads it unmade. */
+    expect(check({ ...extra, wallet: walletRead(extra, {}) }, payloadOf(extra), chain({ paid: [nonceOf(0, 0)] }))).toThrow(/whose payment before it has not been made/);
+    /* RED WHEN: the pay-record key is held to the served state's commitment rather than the one the wallet read. */
+    expect(check(made({ wallet: walletRead(made(), { payKey: '5b'.repeat(32) as Hex }) }), payloadOf(made()), served))
+      .toThrow(/pay-record key other than the one the company committed to/);
+    /* And the served state is not believed the other way: a served "paid" the wallet does not read refuses nothing. */
+    expect(check(made({ wallet: walletRead(made(), {}) }), payloadOf(made()), chain({ paid: [nonceOf(1)], payKey: '5b'.repeat(32) as Hex }))).not.toThrow();
+  });
+
+  it('A RUN THE WALLET READ NOTHING FOR, OR WAS NOT ASKED ABOUT IN FULL, IS REFUSED', () => {
+    const m = made();
+    const full = walletRead(m, {});
+    /* RED WHEN: a run is approved with no read through the wallet at all, falling back on the served state. */
+    expect(() => refuseWhatThisDeviceDidNotMake(deps as never, { chainId: CHAIN_ID, digest: payloadOf(m), made: m }, chain()))
+      .toThrow(/Your wallet did not read whether the people on this run were already paid/);
+    /* RED WHEN: an entry the wallet was not asked about is taken as unpaid. */
+    expect(check(made({ wallet: { ...full, asked: full.asked.slice(1) } }), payloadOf(m))).toThrow(/was not asked about every payment/);
   });
 
   it('A RETRY IS CHECKED OVER A TREE OF ONLY THE PEOPLE IT NAMES, AND ONLY THEY ARE ASKED ABOUT', () => {

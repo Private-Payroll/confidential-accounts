@@ -41,13 +41,13 @@ import { pureCircuits } from '../managed/contract/index.js';
 import { AccountSimulator, privateStateFor, change, type Change, payoutTreeOf, vaultRunOf } from './simulator.js';
 import { carryTheAccount, startTheVault, TEST_VAULT_SECRET } from './start-a-vault.js';
 import { buildPayoutTree, type PayoutLeafInput } from '../../src/midnight/payout-tree.js';
-import { changeCoinOf, paidCoinTo } from '../../src/midnight/vault-coins.js';
+import { changeCoinOf, paidCoinsTo } from '../../src/midnight/vault-coins.js';
 import {
   replayVault, reconcileVaultPool, commitmentForNote, paidCoinOf, changeNoteOf, type VaultEvent,
   NoteDescribedTwice, nameTheRecord,
 } from '../../src/midnight/vault-recovery.js';
 import {
-  noteToSpend, paymentsFit, smallestNoteCovering, choosingANoteToSpend, type Note,
+  notesToSpend, paymentsFit, smallestNoteCovering, choosingNotesToSpend, type Note,
 } from '../../src/midnight/vault-notes.js';
 import {
   creatingTransactionsAmong, indexForSpend, vaultNoteCommitment,
@@ -79,18 +79,14 @@ const CAROL = bytes(0x0c);
 /**
  * The device's pool, and the witness the contract calls over it.
  *
- * **Coin selection is the PRODUCTION ordering**, imported rather than written
- * here: `smallestNoteCovering` picks the smallest note that covers the payment,
- * ties broken by nonce. A test with its own selection would be a second
- * implementation of the thing that matters here — two operators picking
- * differently and both half-succeeding — and would also let these tests pass
- * while the client's rule was wrong.
- *
- * **It is the ordering and not the whole decision**, because this witness
- * models the circuit's view of a pool whose notes carry no creating
- * transaction. The product's `noteToSpend` applies the same ordering to the
- * notes a payment can spend; the tests that go through the product's path
- * (`theProductChooses`) ask it, and pay the note it chose.
+ * **This witness is a model of the circuit's input, not the product's choice.**
+ * It hands the vault the smallest note that covers the payment
+ * (`smallestNoteCovering`), over a pool whose notes carry no creating
+ * transaction. The product chooses differently - the run planner's largest
+ * notes first, at most two, offered to a witness that chooses nothing - and the
+ * tests that go through the product's path (`theProductChooses`) ask it; where
+ * such a test then pays through this model, it hands this model only the note
+ * the product chose.
  */
 interface VaultPrivate { notes: Note[] }
 
@@ -1015,7 +1011,7 @@ describe('a vault whose pool is gone, and the chain that still knows', () => {
   /** What `payPrivately` does with a pool before its call: choose, then read the index from the chain. */
   const theProductChooses = async (notes: readonly Note[], amount: bigint) => {
     paymentsFit({ notes: [...notes] }, [{ token: toHex(TOKEN_BYTES), amount }]);
-    const chosen = noteToSpend([...notes], toHex(TOKEN_BYTES), amount);
+    const [chosen] = notesToSpend([...notes], toHex(TOKEN_BYTES), amount) as [Note];
     const index = await indexForSpend(vaultAddr as Hex, chosen, theChain().events);
     return { chosen, index };
   };
@@ -1035,11 +1031,11 @@ describe('a vault whose pool is gone, and the chain that still knows', () => {
       const rebuilt = rebuildWith(versions, { payments: [{ spent: SECOND, amount: 250n }] });
       const unasked = whatTheRebuildWrites({ versions, held: rebuilt.held, alsoDropStaleNotes: true, found: [] });
       const recoveredNonce = unasked.notes.find((n) => n.value === 150n)!.nonce;
-      const withoutAsking = choosingANoteToSpend(unasked.notes, toHex(TOKEN_BYTES), 120n);
+      const withoutAsking = choosingNotesToSpend(unasked.notes, toHex(TOKEN_BYTES), 120n);
       expect(
-        withoutAsking.of === 'chosen' && [withoutAsking.note.value, withoutAsking.passedOver.map((n) => n.nonce)],
+        withoutAsking.of === 'chosen' && [withoutAsking.notes.map((n) => n.value), withoutAsking.passedOver.map((n) => n.nonce)],
         'the note a rebuild recovers without asking the chain is one the product cannot spend: it pays out of the 1,000 and names the 150 as passed over',
-      ).toEqual([1_000n, [recoveredNonce]]);
+      ).toEqual([[1_000n], [recoveredNonce]]);
       await expect(
         indexForSpend(vaultAddr as Hex, unasked.notes.find((n) => n.value === 150n)!, theChain().events),
       ).rejects.toThrow(/does not record which transaction created it/);
@@ -1063,9 +1059,13 @@ describe('a vault whose pool is gone, and the chain that still knows', () => {
         'RED WHEN: writing the rebuild strips the transaction a deposit recorded for a note it carries',
       ).toBe(chainLog[0]!.hash);
 
-      /* The product's own path: pre-flight, choice, and the index read at the spend. */
-      const { chosen, index } = await theProductChooses(written.notes, 120n);
-      expect(chosen.value, 'the smallest note that covers 120 is the recovered one').toBe(150n);
+      /*
+       * The product's own path: pre-flight, choice, and the index read at the spend, over the recovered note. The
+       * product offers the largest note first, so the 1,000 is set aside here: what is asked is whether the note the
+       * rebuild recovered is one a payment can choose and spend.
+       */
+      const { chosen, index } = await theProductChooses(written.notes.filter((n) => n.value === 150n), 120n);
+      expect(chosen.value, 'the recovered note is one a payment chooses').toBe(150n);
       expect(index, 'RED WHEN: the index is read from anywhere but the payout\'s own events').toBe(payout.index);
 
       /* And the only proof that counts. */
@@ -1087,7 +1087,8 @@ describe('a vault whose pool is gone, and the chain that still knows', () => {
       asked.found,
       'RED WHEN: the deposit journal\'s note is given a transaction other than the deposit that made it',
     ).toEqual([{ nonce: SECOND.nonce, createdIn: chainLog[1]!.hash }]);
-    const { chosen, index } = await theProductChooses(written.notes, 300n);
+    /* The recovered deposit alone, as above: the product would offer the larger 1,000 first. */
+    const { chosen, index } = await theProductChooses(written.notes.filter((n) => n.nonce === SECOND.nonce), 300n);
     expect(chosen.nonce).toBe(SECOND.nonce);
     expect(index).toBe(chainLog[1]!.index);
     priv = { notes: written.notes.map((n) => ({ ...n, index: n.nonce === chosen.nonce ? index : NO_INDEX_YET })) };
@@ -1125,13 +1126,13 @@ describe('a vault whose pool is gone, and the chain that still knows', () => {
      */
     const { written: dropped } = await throughTheRebuild(versions, { payments: [{ spent: SECOND, amount: 250n }] }, lagging, true);
     const stuck = dropped.notes.find((n) => n.value === 150n)!;
-    const choice = choosingANoteToSpend(dropped.notes, toHex(TOKEN_BYTES), 120n);
+    const choice = choosingNotesToSpend(dropped.notes, toHex(TOKEN_BYTES), 120n);
     expect(
-      choice.of === 'chosen' && [choice.note.value, choice.passedOver.map((n) => n.nonce)],
+      choice.of === 'chosen' && [choice.notes.map((n) => n.value), choice.passedOver.map((n) => n.nonce)],
       'RED WHEN: a transaction nothing established is recorded, or the note that records none is chosen and refused at the spend',
-    ).toEqual([1_000n, [stuck.nonce]]);
+    ).toEqual([[1_000n], [stuck.nonce]]);
     expect(
-      choosingANoteToSpend([stuck], toHex(TOKEN_BYTES), 120n),
+      choosingNotesToSpend([stuck], toHex(TOKEN_BYTES), 120n),
       'RED WHEN: a vault whose only covering note records no transaction is told to pay in more money, or is told it can pay',
     ).toEqual({ of: 'stranded', notes: [stuck] });
     await expect(theProductChooses([stuck], 120n)).rejects.toThrow(/does not record which transaction created it/);
@@ -1360,15 +1361,15 @@ describe('a vault whose pool is gone, and the chain that still knows', () => {
       priv = { notes: asNotes([FIRST]) };
       const second = await pay(run, c, 1, BOB, 200n, 0xa2);    // FIRST (1000)
 
-      const alices = paidCoinTo(first.context.callContext.currentZswapLocalState, toHex(ALICE));
-      const bobs = paidCoinTo(second.context.callContext.currentZswapLocalState, toHex(BOB));
+      const alices = paidCoinsTo(first.context.callContext.currentZswapLocalState, toHex(ALICE));
+      const bobs = paidCoinsTo(second.context.callContext.currentZswapLocalState, toHex(BOB));
 
       const { paid } = recover([...OPENING,
         { kind: 'payout', spent: SECOND.nonce, amount: 100n },
         { kind: 'payout', spent: FIRST.nonce, amount: 200n }], []);
 
-      expect(paid[0]).toEqual(alices);
-      expect(paid[1]).toEqual(bobs);
+      expect([paid[0]]).toEqual(alices);
+      expect([paid[1]]).toEqual(bobs);
     });
 
   it('the coin that LEAVES and the coin that STAYS are different derivations', () => {

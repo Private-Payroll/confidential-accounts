@@ -244,9 +244,9 @@ describe('THE VAULT\'S PRIVATE MONEY IS ASKED ON THIS DEVICE BEFORE A RAISE WRIT
     expect(String(refused?.message)).toMatch(/Nothing was raised and no fee was spent\./u);
     expect(serviceCalls(short.log)).toEqual([]);
 
-    /* Enough in total, and no single note can make the second payment: a question about notes, not a sum. */
+    /* Enough in total, and no two notes can make the second payment: a question about notes, not a sum. */
     const split = aDevice({
-      pool: [note(1, 20_000n), note(2, 10_000n)],
+      pool: [note(1, 20_000n), note(2, 4_000n), note(3, 4_000n), note(4, 4_000n)],
       legPayments: async () => ({ asset: TOKEN, payments: [0, 1].map(() => ({ kind: 'shielded', token: TOKEN, amount: '15000' })) }),
       raiseOrder: async () => orderPaying([0, 1].map(() => ({ kind: 'shielded', token: TOKEN, amount: '15000' }))),
     });
@@ -260,7 +260,6 @@ describe('THE VAULT\'S PRIVATE MONEY IS ASKED ON THIS DEVICE BEFORE A RAISE WRIT
   it('2. A POOL THAT DISAGREES WITH THE CHAIN IS NAMED AS A DISAGREEMENT, NEVER READ AS A BALANCE', async () => {
     for (const [why, chainNotes] of [
       ['a recorded note the chain does not hold', ['c' + 'f'.repeat(63)]],
-      ['a note the chain holds that the pool does not record', [committed(PLENTY[0]!), 'c' + 'f'.repeat(63)]],
     ] as const) {
       const d = aDevice({ chainNotes: [...chainNotes] });
       const refused = await sendRaiseFromDevice(d.doors, RAISE).catch((e) => e);
@@ -269,6 +268,12 @@ describe('THE VAULT\'S PRIVATE MONEY IS ASKED ON THIS DEVICE BEFORE A RAISE WRIT
       expect(String(refused?.message), why).toMatch(/disagrees with the chain/u);
       expect(serviceCalls(d.log), why).toEqual([]);
     }
+  });
+
+  it('2b. A NOTE THE CHAIN HOLDS THAT NOTHING HERE NAMES IS IGNORED: THE RAISE GOES AHEAD ON THE NOTES THE POOL HOLDS', async () => {
+    /* A stranger's deposit. RED WHEN: it is read as a disagreement - one deposit would then stop every run from this vault. */
+    const d = aDevice({ chainNotes: [...PLENTY.map(committed), 'c' + 'f'.repeat(63)], standings: [round({ raisedAt: 'now' })] });
+    expect((await sendRaiseFromDevice(d.doors, RAISE)).raisedAt).toBe('now');
   });
 
   it('A PUBLIC PAYMENT IS LEFT TO THE COMPANY, WHICH CAN READ PUBLIC MONEY, AND NOT REFUSED HERE', async () => {

@@ -279,6 +279,27 @@ export class DepositJournalInStore implements DepositJournal {
 }
 
 /**
+ * **ONE STEP A JOURNAL SAYS WAS ATTEMPTED**: every note it was about to spend,
+ * whole, and what was leaving. `spent` is the first note, `further` the rest in
+ * place order; a merge sends nothing out (`amount` 0) and keeps one coin worth
+ * all of them, and every other step keeps what is left of them as change. Every
+ * note is carried, because the coin a step keeps is named by its first note and
+ * worth what all of them held: a line naming only the first describes a coin
+ * the chain never made.
+ */
+export interface AttemptedStep {
+  readonly spent: VaultCoin;
+  readonly further?: readonly VaultCoin[];
+  readonly merge?: boolean;
+  readonly amount: bigint;
+}
+
+/** The one spelling of "the same attempt", so a line read twice, or from two versions, is one attempt. */
+export const attemptKey = (a: AttemptedStep): string =>
+  `${[a.spent, ...(a.further ?? [])].map((c) => `${c.nonce}:${c.token}:${c.value}`).join('+')}`
+  + `:${a.merge === true ? 'merge' : 'pays'}:${a.amount}`;
+
+/**
  * **EVERYTHING THE JOURNALS SAY WAS ATTEMPTED AGAINST ONE VAULT**, from their
  * filed versions, in the shape the rebuild takes.
  *
@@ -322,7 +343,13 @@ export const attemptsFromJournalVersions = (input: {
   }
 
   const paymentPages = open(input.payments, 'payment-journal');
-  const payments = new Map<string, { spent: VaultCoin; amount: bigint }>();
+  const payments = new Map<string, AttemptedStep>();
+  const coinOf = (c: unknown): VaultCoin | undefined => {
+    const x = c as { nonce?: unknown; token?: unknown; value?: unknown } | null | undefined;
+    if (!x || typeof x.nonce !== 'string' || typeof x.token !== 'string' || typeof x.value !== 'bigint') return undefined;
+    const read = x as VaultCoin;
+    return { nonce: read.nonce, token: read.token, value: read.value };
+  };
   for (const page of paymentPages) {
     const lines = (page as { attempts?: unknown }).attempts;
     if (!Array.isArray(lines)) {
@@ -332,14 +359,25 @@ export const attemptsFromJournalVersions = (input: {
     }
     for (const line of lines) {
       const a = line as PaymentAttempt;
-      const s = a?.spent;
-      if (!s || typeof s.nonce !== 'string' || typeof s.token !== 'string'
-        || typeof s.value !== 'bigint' || typeof a.amount !== 'bigint') {
-        throw new Error('a payment journal line is not an attempt (spent note and amount). Nothing is proposed from it.');
+      const spent = coinOf(a?.spent);
+      /*
+       * **EVERY NOTE THE LINE NAMES, OR NONE OF IT.** A line whose further notes
+       * cannot be read describes a coin worth an amount nobody can now state, so
+       * it is refused whole rather than read as a one-note payment.
+       */
+      const furtherRaw = (a as { further?: unknown })?.further;
+      const further = furtherRaw === undefined ? [] : Array.isArray(furtherRaw) ? furtherRaw.map(coinOf) : [undefined];
+      const step = (a as { step?: unknown })?.step;
+      if (!spent || typeof a.amount !== 'bigint' || further.some((c) => c === undefined)
+        || (step !== undefined && step !== 'payment' && step !== 'batch' && step !== 'merge')) {
+        throw new Error('a payment journal line is not an attempt (the notes it spends and the amount). Nothing is proposed from it.');
       }
-      payments.set(`${s.nonce}:${s.token}:${s.value}:${a.amount}`, {
-        spent: { nonce: s.nonce, token: s.token, value: s.value }, amount: a.amount,
-      });
+      const attempt: AttemptedStep = {
+        spent, amount: a.amount,
+        ...(further.length === 0 ? {} : { further: further as VaultCoin[] }),
+        ...(step === 'merge' ? { merge: true } : {}),
+      };
+      payments.set(attemptKey(attempt), attempt);
     }
   }
 

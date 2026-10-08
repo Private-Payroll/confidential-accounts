@@ -46,6 +46,8 @@ import { payeeFor, payFor } from '../../src/testing/payees.js';
 import { vaultDetails } from '../../src/testing/vault-details.js';
 import { TEST_TOKEN } from '../../src/testing/assets.js';
 import type { RunMadeHere } from 'vaults-web-shared/what-this-device-made.js';
+import { paymentEntriesOf } from 'vaults-web-shared/payment-entries.js';
+import { paymentsInAccountState } from '../../apps/wallet/src/chain/company-label-on-chain.js';
 
 const NET = 'undeployed';
 const hex = (b: Uint8Array): string => Buffer.from(b).toString('hex');
@@ -126,8 +128,14 @@ describe.skipIf(!KEYS_ON_DISK)('A PAYROLL RUN RAISED AND APPROVED FROM THE SIGNE
     /* A run is raised as this device made it again, with every round the company's records hold to check the chain against. */
     const raising = { period: '2026-09', knownRounds: [...opened.keys()], knownLeaves: [], knownNonces: [] };
     return order.circuit === 'propose'
-      ? { ...record, half: half!, ...(made?.kind !== 'payroll' ? {} : { made: { ...made, raising } }) }
-      : { ...record, ...(made === undefined ? {} : { made }) };
+      ? { ...record, half: half!, ...(made?.kind !== 'payroll' ? {} : { made: walletRead({ ...made, raising }) }) }
+      : { ...record, ...(made === undefined ? {} : { made: made.kind === 'payroll' ? walletRead(made) : made }) };
+  };
+  /* Who is already paid and the pay-record key, as the signer's own wallet reads them: the wallet's own parser, over the chain's bytes. */
+  const walletRead = (made: RunMadeHere): RunMadeHere => {
+    const asked = paymentEntriesOf(made, circuits.paidOnceOf);
+    const read = paymentsInAccountState(chain.contract(company).serialize(), asked);
+    return { ...made, wallet: { payKeyCommitment: read.payKeyCommitment, asked, held: [...read.held] } };
   };
 
   const builder = () => {

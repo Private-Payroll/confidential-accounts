@@ -13,8 +13,9 @@
  *
  * Which seat's signature makes the company state believed is settled where the
  * run is read (`runRebuiltHere`): the seat the account's deploy seated, as the
- * person's own wallet read it. It also reads off the chain, at the block the
- * approval is built against:
+ * person's own wallet read it. It also holds the run to three facts the
+ * person's own wallet read off the chain (`WalletReadFacts`), never to the
+ * account state the service served:
  *   - that the pay-record key in that state is the one the account committed
  *     to, so every person-month nonce is the one the chain records payments
  *     under;
@@ -32,7 +33,6 @@ import { confirmationCovers, unaccountedOnChain } from '../../../src/core/alread
 import { unaccountedRefusalHere } from '../../../src/core/run-raising.js';
 import { payRecordNonceOf, type PayoutSeed, type PayRecord, type RunIdentity } from '../../../src/midnight/run-keys.js';
 import { fromHex, toHex, type Hex } from '../../../src/core/crypto.js';
-import { payKeyCommitmentIn } from '../../../src/midnight/pay-key-round.js';
 import { firstSecretRunOf, type AccountStartPure, type VaultStartPure } from '../../../src/midnight/vault-start.js';
 
 /** A payroll run, as this device rebuilt it from the company's records. */
@@ -60,6 +60,26 @@ export interface RunMadeHere {
    * chain holds beyond it is found before a new round is sent.
    */
   readonly raising?: RaisingHere;
+  /**
+   * What the person's own wallet read off the chain about this run's payments
+   * (`withWhatTheWalletRead`): whether each person is already paid for the
+   * month, whether an extra payment's predecessor was made, and the account's
+   * commitment to its pay-record key. Absent, the run is refused.
+   */
+  readonly wallet?: WalletReadFacts;
+}
+
+/**
+ * **THREE FACTS OF THE ACCOUNT'S STATE, AS THE PERSON'S OWN WALLET READ THEM.**
+ * The proof of an approval binds only the account's open proposals, so these
+ * are read through the wallet rather than taken from the account state the
+ * service serves: the entries of its record of payments that were asked
+ * about, those of them it holds, and its pay-record key commitment.
+ */
+export interface WalletReadFacts {
+  readonly payKeyCommitment: string | null;
+  readonly asked: readonly string[];
+  readonly held: readonly string[];
 }
 
 /**
@@ -96,9 +116,8 @@ export interface AccountLedgerView {
 
 interface MadeHereDeps {
   readonly runPayload: (root: Uint8Array, payees: bigint, opensAt: bigint, closesAt: bigint, required: bigint) => Uint8Array;
-  /** The account's own commitment to a pay-record key, and where it keeps it. */
+  /** The account's own commitment to a pay-record key. */
   readonly payKeyCommitmentOf?: (key: Uint8Array) => Uint8Array;
-  readonly payKeyCommitmentKey?: () => Uint8Array;
   /** The account's and the vault's circuits a vault's first secret run is made with. */
   readonly secretRun?: { readonly vault: VaultStartPure; readonly account: AccountStartPure };
   /** The vault's two details circuits, without which no payee's leaf can be made here. */
@@ -121,7 +140,6 @@ const digits = (what: string, v: string): bigint => {
   if (!/^[0-9]+$/u.test(String(v))) throw new NotMadeOnThisDevice(`what this device worked out for the ${what} is not a whole number.`);
   return BigInt(v);
 };
-const paidOnce = (ledger: AccountLedgerView, nonce: Hex): boolean => ledger.movements.member(fromHex(paidOnceOfNonce(nonce)));
 
 /**
  * Refuses unless `made` is a run or a vault's secret run this device made
@@ -173,11 +191,32 @@ export function refuseWhatThisDeviceDidNotMake(
     payees = secretRun.payees;
     window = { opensAt: digits('window', made.opensAt), closesAt: digits('window', made.closesAt) };
   } else {
-    if (deps.payKeyCommitmentOf === undefined || deps.payKeyCommitmentKey === undefined) {
+    if (deps.payKeyCommitmentOf === undefined) {
       throw new NotMadeOnThisDevice('This page cannot read the company\'s pay-record key off the chain, so it will not '
         + 'approve a payroll run. Reload the page to get the current version.');
     }
-    const committed = payKeyCommitmentIn({ payKeyCommitmentKey: deps.payKeyCommitmentKey }, ledger.signerRoles);
+    /*
+     * **THE PAY-RECORD KEY AND WHO IS PAID ARE READ BY THE PERSON'S OWN WALLET,
+     * NEVER FROM THE ACCOUNT STATE THE SERVICE SERVED.** The proof binds only
+     * the open proposals; a served state could say nobody was paid, or commit
+     * to another key, and nothing on the chain would refuse it.
+     */
+    const read = made.wallet;
+    if (read === undefined) {
+      throw new NotMadeOnThisDevice('Your wallet did not read whether the people on this run were already paid, so this '
+        + `device will not ${when === 'raise' ? 'raise' : 'approve'} it. Reload the page and try again.`);
+    }
+    const asked = new Set(read.asked.map((e) => e.toLowerCase()));
+    const held = new Set(read.held.map((e) => e.toLowerCase()));
+    const paidOnce = (nonce: Hex): boolean => {
+      const entry = paidOnceOfNonce(nonce).toLowerCase();
+      if (!asked.has(entry)) {
+        throw new NotMadeOnThisDevice('Your wallet was not asked about every payment on this run, so this device cannot say '
+          + 'who on it was already paid. Reload the page and try again.');
+      }
+      return held.has(entry);
+    };
+    const committed = read.payKeyCommitment;
     if (committed === null || !same(toHex(deps.payKeyCommitmentOf(fromHex(made.payKey))), committed)) {
       throw new NotMadeOnThisDevice('The company state this run was rebuilt from carries a pay-record key other than the '
         + `one the company committed to on the chain, so its payments would not be recorded as the chain records them. ${DO_NOT}`);
@@ -202,11 +241,11 @@ export function refuseWhatThisDeviceDidNotMake(
     for (const i of positions) {
       const record = made.records[i]!;
       const nonce = payRecordNonceOf(made.payKey as Hex, record);
-      if (paidOnce(ledger, nonce)) {
+      if (paidOnce(nonce)) {
         throw new NotMadeOnThisDevice(`This run pays somebody already recorded as paid for ${record.month}, so it would `
           + `be refused when paid. ${DO_NOT}`);
       }
-      if (record.occurrence > 0 && !paidOnce(ledger, payRecordNonceOf(made.payKey as Hex, { ...record, occurrence: record.occurrence - 1 }))) {
+      if (record.occurrence > 0 && !paidOnce(payRecordNonceOf(made.payKey as Hex, { ...record, occurrence: record.occurrence - 1 }))) {
         throw new NotMadeOnThisDevice(`This run pays an extra payment for ${record.month} to somebody whose payment `
           + `before it has not been made, so it would pay them twice for one month. ${DO_NOT}`);
       }

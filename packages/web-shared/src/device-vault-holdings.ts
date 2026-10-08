@@ -8,17 +8,20 @@
  * place a private balance can be read is a signer's device, and this is that
  * reader. It answers the same three ways the service's reader does:
  *
- *   - **held**, only when every note the pool records is one the chain holds,
- *     and the chain holds no note the pool does not record;
+ *   - **held**, only when every note the pool records is one the chain holds.
+ *     A note the chain holds that the pool does not is counted when a record
+ *     on this device names it as the vault's (a payment's change or a deposit
+ *     on its way), and otherwise ignored: anyone may deposit into a vault, and
+ *     a note nothing here names is not money the vault can spend;
  *   - **unreadable**, when the chain did not answer or shows no vault here;
  *   - **contradicted**, when the pool and the chain disagree. A pool that
  *     disagrees with the chain has no balance: it is never summed.
  *
  * **IT READS PRIVATE MONEY FOR PAYMENTS.** Public money is a contract balance
- * the company's service reads off the vault's state, and a payment's check asks
- * it there. What this file does with public money is only to show it:
- * `readPublicHoldings` reads the service's list for the vault's screen, and
- * says so when there is none to read.
+ * read off the vault's state, and a payment's check asks the company's service
+ * for it where the payment is filed. What this file does with public money is
+ * only to show it: `readPublicHoldings` reads the list a read of the vault
+ * carries, for the vault's screen, and says so when there is none to read.
  *
  * **NOTHING IT READS LEAVES THIS DEVICE.** The vault's address goes out to ask
  * the chain what it holds; the notes, their values and the sum stay here.
@@ -39,9 +42,10 @@ export interface PoolNote {
 
 export interface DeviceHoldingsDoors {
   /**
-   * What the chain holds for the vault now, as the company's service reports
-   * it: the vault's note commitments, and whether they were read off a ledger
-   * of the shape this build's vault has. A ledger of another shape answers the
+   * What the chain holds for the vault now, as this device's vault worker read
+   * it at the indexer the person's own wallet names: the vault's note
+   * commitments, and whether they were read off a ledger of the shape this
+   * build's vault has. A ledger of another shape answers the
    * question about notes out of whichever field sits in that place.
    */
   readonly chain: (vault: Hex) => Promise<ChainNotesView>;
@@ -55,15 +59,22 @@ export interface DeviceHoldingsDoors {
    * cannot. Refuses only when it could not ask.
    */
   readonly paymentsFit: (notes: readonly PoolNote[], payments: ReadonlyArray<{ token: Hex; amount: bigint }>) => Promise<PaymentsFitAnswer>;
+  /**
+   * The notes this device's records name as the vault's that its pool may not
+   * hold yet: the change of a payment on its way, the coin of a deposit on its
+   * way. Absent, nothing is recovered, and every note the pool does not hold is
+   * ignored.
+   */
+  readonly accountedFor?: (vault: Hex) => Promise<readonly PoolNote[]>;
 }
 
-/** The parts of the service's view of a vault this reader reads. */
+/** The parts of a read of a vault this reader reads: this device's own, in its vault worker. */
 export interface ChainNotesView {
   readonly onChain: boolean;
   readonly notes?: readonly string[];
   /** `true` only when the notes were read off a ledger of the shape this build's vault has. */
   readonly notesFromThisBuild?: boolean;
-  /** Why they were not, when the service could say. */
+  /** Why they were not, when the read could say. */
   readonly notesWhy?: string;
 }
 
@@ -95,7 +106,7 @@ async function reconciled(doors: DeviceHoldingsDoors, vault: Hex): Promise<Recon
   if (view.notesFromThisBuild !== true) {
     return {
       of: 'unreadable',
-      why: 'the company\'s service did not confirm that this vault is laid out the way this version of the product '
+      why: 'the read of the chain did not confirm that this vault is laid out the way this version of the product '
         + `reads one, so which notes it holds is not known${typeof view.notesWhy === 'string' ? `: ${view.notesWhy}` : ''}`,
     };
   }
@@ -103,7 +114,11 @@ async function reconciled(doors: DeviceHoldingsDoors, vault: Hex): Promise<Recon
   const notes = await doors.pool(vault);
   const held: Array<{ note: PoolNote; commitment: string }> = [];
   for (const note of notes) held.push({ note, commitment: (await doors.heldCommitmentOf(vault, note)).toLowerCase() });
-  const verdict = poolAgainstChain(held, { has: (c) => onChain.has(c), size: BigInt(onChain.size) });
+  const named: Array<{ note: PoolNote; commitment: string }> = [];
+  for (const note of await doors.accountedFor?.(vault) ?? []) {
+    named.push({ note, commitment: (await doors.heldCommitmentOf(vault, note)).toLowerCase() });
+  }
+  const verdict = poolAgainstChain(held, { has: (c) => onChain.has(c), size: BigInt(onChain.size) }, named);
   if (verdict.of === 'pool-claims-more') {
     return {
       of: 'contradicted',
@@ -114,13 +129,11 @@ async function reconciled(doors: DeviceHoldingsDoors, vault: Hex): Promise<Recon
   if (verdict.of === 'counts-differ') {
     return {
       of: 'contradicted',
-      why: `the chain holds ${verdict.chainHolds} note(s) for this vault and its record holds ${verdict.poolHolds}, so `
-        + (verdict.chainHolds > verdict.poolHolds
-          ? 'money reached the vault that the record does not show'
-          : 'the record counts one note the chain holds more than once'),
+      why: `this vault's record holds ${verdict.poolHolds} note(s) and counts one of them more than once, so it counts money twice`,
     };
   }
-  return { of: 'notes', notes };
+  /* Notes nothing here names are left out: never the vault's to spend, and never a reason to stop reading. */
+  return { of: 'notes', notes: [...notes, ...verdict.recovered] };
 }
 
 export const deviceVaultHoldings = (doors: DeviceHoldingsDoors): VaultHoldings => ({
@@ -166,8 +179,7 @@ const COLOUR = /^[0-9a-f]{64}$/u;
 const WHOLE = /^[0-9]+$/u;
 
 /**
- * **THE VAULT'S PUBLIC MONEY, AS THE COMPANY'S SERVICE READ IT OFF THE VAULT'S
- * STATE.** An empty list is the vault holding no public money; anything that is
+ * **THE VAULT'S PUBLIC MONEY, AS A READ OF THE VAULT'S STATE GAVE IT.** An empty list is the vault holding no public money; anything that is
  * not a list of tokens and whole amounts is not a reading, and is said to be
  * unreadable rather than shown as nothing.
  */
@@ -179,7 +191,7 @@ function publicHoldingsFromView(view: unknown): PublicHoldingsAnswer {
       of: 'unreadable',
       why: typeof v.publicBalancesWhy === 'string' && v.publicBalancesWhy !== ''
         ? v.publicBalancesWhy
-        : 'the company\'s service did not say what this vault holds in public money',
+        : 'the read of the chain did not say what this vault holds in public money',
     };
   }
   const holdings: Array<{ token: string; amount: bigint }> = [];
@@ -188,7 +200,7 @@ function publicHoldingsFromView(view: unknown): PublicHoldingsAnswer {
       || typeof row.amount !== 'string' || !WHOLE.test(row.amount)) {
       return {
         of: 'unreadable',
-        why: 'the service sent an amount this page cannot read, so none is shown',
+        why: 'the read of the vault gave an amount this page cannot read, so none is shown',
       };
     }
     holdings.push({ token: row.token, amount: BigInt(row.amount) });
@@ -196,11 +208,11 @@ function publicHoldingsFromView(view: unknown): PublicHoldingsAnswer {
   return { of: 'held', holdings };
 }
 
-/** Asks the service for the vault's view now and reads its public money; a failed ask is unreadable, never nothing. */
+/** Reads the vault now and reads its public money from that read; a failed read is unreadable, never nothing. */
 export async function readPublicHoldings(chain: () => Promise<unknown>): Promise<PublicHoldingsAnswer> {
   try {
     return publicHoldingsFromView(await chain());
   } catch (e) {
-    return { of: 'unreadable', why: `this page could not reach the company's service: ${why(e)}` };
+    return { of: 'unreadable', why: `this vault could not be read from the chain: ${why(e)}` };
   }
 }

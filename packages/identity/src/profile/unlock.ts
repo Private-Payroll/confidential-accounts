@@ -380,7 +380,7 @@ const MAX_INDEXER_ADDRESS = 512;
  * Anything else answers `null`: a release is still a good release without
  * it, and the requester then reads nothing rather than reading from a guess.
  */
-const indexerOf = (said: unknown): WalletIndexer | null => {
+export const walletIndexerOf = (said: unknown): WalletIndexer | null => {
   if (typeof said !== 'object' || said === null) return null;
   const { indexerUri, indexerWsUri } = said as Record<string, unknown>;
   const usable = (v: unknown): v is string =>
@@ -483,7 +483,7 @@ export function readRelease(
     return { ok: false, code: 'not-a-release', says: 'that is not a released key.' };
   }
   return {
-    ok: true, key, at: body.at, indexer: indexerOf(body.indexer), held: readHeldAddressList(body.held),
+    ok: true, key, at: body.at, indexer: walletIndexerOf(body.indexer), held: readHeldAddressList(body.held),
   };
 }
 

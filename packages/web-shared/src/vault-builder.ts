@@ -35,7 +35,7 @@ import { buildCreationInsert } from 'midnight-identity/profile/contract-keys';
 import { companyLabelBytes, readCompanyLabel } from 'midnight-identity/profile/company-label';
 import type { Hex } from '../../../src/core/crypto.js';
 import {
-  afterPayment, noteToSpend, paymentsFitAnswer, withIndexRead, witnessesOver, type Note, type PaymentsFitAnswer,
+  afterStep, notesToSpend, paymentsFitAnswer, withIndexRead, witnessesOver, type Note, type PaymentsFitAnswer, type VaultNotes,
 } from '../../../src/midnight/vault-notes.js';
 import { changeCoinOf, type VaultCoin } from '../../../src/midnight/vault-coins.js';
 import {
@@ -45,7 +45,8 @@ import {
 import { payeeAddress, unshieldedPayeeAddress } from '../../../src/midnight/payee-address.js';
 import type { NetworkName } from '../../../src/midnight/network.js';
 import { pathFromWire, type PrivatePaymentOnTheWire, type PrivatePaymentOrderOnTheWire } from '../../../src/midnight/private-payment-wire.js';
-import { noFurtherNote } from '../../../src/midnight/vault-step-notes.js';
+import { notePlaces } from '../../../src/midnight/vault-step-notes.js';
+import { STEP_LIMITS } from '../../../src/midnight/payment-plan.js';
 
 /** How long an intent this builder makes may wait to land: thirty minutes from when it is built. */
 const INTENT_LIFETIME_MS = 30 * 60_000;
@@ -495,16 +496,18 @@ export const noteToWire = (n: Note): NoteOnTheWire => ({
 });
 
 /**
- * **WHICH NOTE A PAYMENT SPENDS**, chosen by the one function every payment
- * chooses by, from the pool the page opened. Refuses with what the pool holds.
+ * **WHICH NOTES A PAYMENT SPENDS**, chosen by the one function every payment
+ * chooses by, from the pool the page opened: in place order, the first the one
+ * the vault is offered, the rest the further notes the payment takes. Refuses
+ * with what the pool holds.
  */
-export function chooseNoteForPayment(
+export function notesForPayment(
   input: { readonly notes: readonly NoteOnTheWire[]; readonly token: string; readonly amount: string },
-): NoteOnTheWire {
+): NoteOnTheWire[] {
   if (!HEX64.test(input.token) || !DIGITS.test(input.amount)) {
     throw new Error('this payment names no token or amount a note could cover, so nothing was chosen.');
   }
-  return noteToWire(noteToSpend(input.notes.map(noteFromWire), input.token as Hex, BigInt(input.amount)));
+  return notesToSpend(input.notes.map(noteFromWire), input.token as Hex, BigInt(input.amount)).map(noteToWire);
 }
 
 /**
@@ -529,18 +532,22 @@ export function paymentsFitNotes(input: {
 }
 
 /**
- * **THE POOL AFTER A PAYMENT LANDED**: the spent note gone and its change added,
- * applied to what the pool holds now and not to the copy the payment was built
- * from. The same function the operator's client applies.
+ * **THE POOL AFTER A PAYMENT LANDED**: every note it spent gone and its change
+ * added, applied to what the pool holds now and not to the copy the payment was
+ * built from. The same function the operator's client applies.
  */
 export function poolAfterPayment(input: {
   readonly notes: readonly NoteOnTheWire[];
+  /** The note the payment spent first. */
   readonly spent: string;
+  /** Every further note it spent, in place order; absent or empty when it spent one. */
+  readonly further?: readonly string[];
   readonly amount: string;
   readonly change: NoteOnTheWire | null;
   readonly createdIn: string | null;
 }): NoteOnTheWire[] {
-  if (!HEX64.test(input.spent) || !DIGITS.test(input.amount)
+  const further = input.further ?? [];
+  if (!HEX64.test(input.spent) || further.some((n) => !HEX64.test(n)) || !DIGITS.test(input.amount)
     || (input.createdIn !== null && !HEX64.test(input.createdIn))) {
     throw new Error('this payment cannot be recorded as it was described, so the pool was not changed.');
   }
@@ -548,8 +555,9 @@ export function poolAfterPayment(input: {
     const c = noteFromWire(input.change);
     return { nonce: c.nonce, token: c.token, value: c.value };
   })();
-  const next = afterPayment(
-    { notes: input.notes.map(noteFromWire) }, input.spent as Hex, BigInt(input.amount), change,
+  const next = afterStep(
+    { notes: input.notes.map(noteFromWire) },
+    { spent: [input.spent as Hex, ...further.map((n) => n as Hex)], pays: BigInt(input.amount), kept: change },
     input.createdIn === null ? undefined : input.createdIn as Hex);
   return next.notes.map(noteToWire);
 }
@@ -715,8 +723,15 @@ export async function buildPayout(
     readonly account: string;
     readonly order: Omit<PrivatePaymentOrderOnTheWire, 'payments'>;
     readonly payment: PrivatePaymentOnTheWire;
+    /** The note the vault is offered first, and the events of the transaction that created it. */
     readonly note: NoteOnTheWire;
     readonly events: readonly EventOnTheWire[];
+    /**
+     * The further notes the same choice named, in place order, each with the
+     * events of the transaction that created it. Absent or empty when one note
+     * covers the payment.
+     */
+    readonly further?: ReadonlyArray<{ readonly note: NoteOnTheWire; readonly events: readonly EventOnTheWire[] }>;
     readonly chain: PayoutChain;
     /**
      * The vault's current nonce secret, opened on this device from the
@@ -753,30 +768,41 @@ export async function buildPayout(
   const amount = BigInt(payment.amount);
   if (amount <= 0n) throw new Error('a payment of nothing is not made, so nothing was built.');
   const chosen = noteFromWire(input.note);
-  if (chosen.token !== payment.token || chosen.value < amount) {
-    throw new Error('the note chosen does not cover this payment, so nothing was built.');
+  const further = (input.further ?? []).map((f) => ({ note: noteFromWire(f.note), events: f.events }));
+  const all = [{ note: chosen, events: input.events }, ...further];
+  if (all.length > STEP_LIMITS.paymentNotes || new Set(all.map((n) => n.note.nonce)).size !== all.length) {
+    throw new Error(`a payment draws on one to ${STEP_LIMITS.paymentNotes} different notes, so nothing was built.`);
+  }
+  if (all.some((n) => n.note.token !== payment.token)
+    || all.reduce((t, n) => t + n.note.value, 0n) < amount) {
+    throw new Error('the notes chosen do not cover this payment, so nothing was built.');
   }
   /*
-   * **THE INDEX IS READ FROM THE CHAIN'S EVENTS NOW, BY THE ONE FUNCTION EVERY
+   * **EVERY INDEX IS READ FROM THE CHAIN'S EVENTS NOW, BY THE ONE FUNCTION EVERY
    * SPEND READS IT BY.** A note with no recorded transaction, events that are
    * not that transaction's, or events that do not show this note created for
    * this vault, each stop here with a sentence and before a proof.
    */
-  const served = servedFromWire(input.events);
-  const index = await indexForSpend(vault as Hex, chosen, {
-    eventsOf: async (tx) => {
-      if (!('hash' in tx) || tx.hash !== chosen.createdIn) {
-        throw new Error('the chain\'s events handed over are not for the transaction that created this note.');
-      }
-      return served;
-    },
-  });
-  /* ONE NOTE, WITH THE INDEX JUST READ: the witness can hand the circuit this note or refuse. */
-  const notes = withIndexRead({ notes: [chosen] }, chosen.nonce, index);
+  let notes: VaultNotes = { notes: all.map((n) => n.note) };
+  const places = [];
+  for (const { note, events } of all) {
+    const served = servedFromWire(events);
+    const index = await indexForSpend(vault as Hex, note, {
+      eventsOf: async (tx) => {
+        if (!('hash' in tx) || tx.hash !== note.createdIn) {
+          throw new Error('the chain\'s events handed over are not for the transaction that created this note.');
+        }
+        return served;
+      },
+    });
+    notes = withIndexRead(notes, note.nonce, index);
+    places.push({ nonce: fromHex(note.nonce), color: fromHex(note.token), value: note.value, mt_index: index });
+  }
+  /* THE NOTES CHOSEN, WITH THE INDEXES JUST READ: the witness hands the circuit the first, and the call's further place the rest. */
   const pending: { spending?: Hex } = {};
   const secret = fromHex(input.secret);
   const compiled = deps.compiledWith({
-    ...witnessesOver(() => notes, pending),
+    ...witnessesOver(() => notes, pending, chosen.nonce),
     /* The vault's secret, for this one call; the vault refuses one that is not the secret it holds. */
     nonceSecret: (ctx: unknown) => [ctx, secret],
   } as ReturnType<typeof witnessesOver>);
@@ -796,8 +822,8 @@ export async function buildPayout(
     args: [
       runOf(order, payment),
       fromHex(payee.coinPublicKey), fromHex(payment.token), amount, fromHex(payment.blinding),
-      /* The one note chosen above and no other: the further place the payment takes is left unused. */
-      noFurtherNote(),
+      /* The further notes chosen above, at the places the chain filed them; an unused place when there are none. */
+      notePlaces(places.slice(1), STEP_LIMITS.paymentNotes - 1),
     ],
     /* The payee's wallet reads the payment with this key; it came out of the same decode as the coin key. */
     additionalCoinEncPublicKeyMappings: new Map([[payee.coinPublicKey, payee.encryptionPublicKey]]),

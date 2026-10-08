@@ -209,79 +209,84 @@ const coinOn = (o: unknown, what: string): VaultCoin => {
   return { nonce, token, value: c.value };
 };
 
+/**
+ * **EVERY COIN ONE CALL KEPT IN THE VAULT, IN THE ORDER THE CALL'S OUTPUTS
+ * CARRY THEM.** The plural reader: `changeCoinOf` reads through the same filter
+ * and refuses more than one.
+ *
+ * A payment, a batch and a merge each keep at most one coin; a split keeps
+ * exactly two, the piece asked for and the rest. A reader that answered one
+ * coin for a split would leave the pool holding one note where the chain holds
+ * two, and the other note's nonce cannot be read again from anywhere: so this
+ * answers every coin, and a caller that expects one says so itself
+ * (`changeCoinOf`). An empty list is a true statement about the call; a state
+ * that cannot be read is refused, as everywhere in this file.
+ */
+export const coinsKeptBy = (zswap: unknown, vaultAddress: Hex): VaultCoin[] =>
+  keptIn(zswap, vaultAddress, 'coins this call kept in the vault');
+
+/*
+ * `is_left` false means the recipient is a CONTRACT rather than a person, and
+ * then the address must be this vault's own: the payee's output is in this
+ * same list, and paying one contract from another is a thing this vault will
+ * eventually do. An output this cannot classify throws from `recipientOf`
+ * rather than being filtered away, because a dropped output and an output
+ * addressed elsewhere are the two things this file exists to tell apart.
+ */
+const keptIn = (zswap: unknown, vaultAddress: Hex, what: string): VaultCoin[] =>
+  outputsOf(zswap, what)
+    .filter((o) => recipientOf(o, what).toContract === vaultAddress)
+    .map((o) => coinOn(o, what));
+
+/**
+ * **THE ONE COIN A PAYMENT, A BATCH OR A MERGE KEPT, OR `undefined` WHEN IT
+ * KEPT NONE** - a payment that spent its notes exactly.
+ *
+ * Refuses rather than answering `undefined` for a state it could not read,
+ * which here would mean "it paid out everything". And refuses more than one
+ * coin rather than choosing: none of these steps keeps more than one, so more
+ * means this is being pointed at a call it does not describe - a split keeps
+ * two, and is read with `coinsKeptBy`. Taking the first would hand the caller
+ * a coin that is not the whole of what the vault holds.
+ */
 export const changeCoinOf = (zswap: unknown, vaultAddress: Hex): VaultCoin | undefined => {
-  /*
-   * REFUSES rather than answering `undefined`, which above means "it paid out
-   * everything". `C197`, and the header three lines up is what forbids it.
-   */
-  const what = 'coin this payout left the vault';
-  const outputs = outputsOf(zswap, what);
-
-  const mine = outputs.filter((o) => {
-    /*
-     * `is_left` false means the recipient is a CONTRACT rather than a person —
-     * and then the address must be this vault's own. Both halves matter: the
-     * payee's output is in this same list, and paying one contract from another
-     * is a thing this vault will eventually do.
-     *
-     * **BOTH SPELLINGS, AND A THIRD IS A REFUSAL.** `C239` — see `recipientOf`.
-     * An output this cannot classify throws from in there rather than being
-     * filtered away, because a dropped output and an output addressed
-     * elsewhere are the two things this file exists to tell apart.
-     */
-    return recipientOf(o, what).toContract === vaultAddress;
-  });
-
-  if (mine.length === 0) return undefined;
-  if (mine.length > 1) {
-    /*
-     * Refused rather than guessed. One payment produces at most one change
-     * coin; more than one means this function is being pointed at something it
-     * does not understand, and picking the first would hand the caller a coin
-     * that is not the whole of what the vault holds.
-     *
-     * **`C205`, AND IT IS NOT THIS ROUND'S TO CLOSE.** `splitNote` produces
-     * exactly two outputs back to the vault, so a plural reader is what that
-     * circuit's client needs — `S6h`. Making this throw go away by taking the
-     * first is how the pool holds one note where the chain holds two.
-     */
+  const kept = keptIn(zswap, vaultAddress, 'coin this payout left the vault');
+  if (kept.length > 1) {
     throw new Error(
-      `expected at most one coin returning to the vault, found ${mine.length}`);
+      `expected at most one coin returning to the vault, found ${kept.length}. A payment, a batch or a merge `
+      + 'keeps one coin at most; a split keeps two and is read with coinsKeptBy.');
   }
-
-  return coinOn(mine[0], what);
+  return kept[0];
 };
 
 
 /**
- * The coin a PAYEE received from a payment, read from the call's outputs.
+ * **EVERY COIN A PAYEE RECEIVED FROM ONE CALL, READ FROM ITS OUTPUTS**, in the
+ * order the outputs carry them.
  *
  * The everyday counterpart to `paidCoinOf` in `vault-recovery.ts`: this is what
  * the payer captures at payment time and seals to the payee, because a shielded
- * payment tells them nothing on its own (V-50). Deriving it is the fallback for
- * when this was never captured or has been lost.
+ * payment tells them nothing on its own. Deriving it is the fallback for when
+ * this was never captured or has been lost.
+ *
+ * **EVERY PLACE, NOT ONE.** A batch pays up to four places, and one person's
+ * key can hold more than one of them; each is a coin of its own, and each is
+ * that person's money. An empty list means this call paid that key nothing.
  *
  * @param recipient the payee's shielded public key, hex
  */
-export const paidCoinTo = (zswap: unknown, recipient: Hex): VaultCoin | undefined => {
+export const paidCoinsTo = (zswap: unknown, recipient: Hex): VaultCoin[] => {
   /*
-   * The same refusal as `changeCoinOf`'s and for the same reason. Here
-   * `undefined` means this call paid that recipient nothing — so a state we
-   * could not read, answered as `undefined`, is what sends a payee away with
-   * "you were not paid" about a payment that settled, and their coin is one
-   * nobody can hand them again (`B4`).
+   * The same refusal as `changeCoinOf`'s and for the same reason. Here an
+   * empty list means this call paid that recipient nothing - so a state we
+   * could not read, answered as empty, is what sends a payee away with "you
+   * were not paid" about a payment that settled, and their coin is one nobody
+   * can hand them again.
    */
   const what = 'coin this payment sent';
-  const outputs = outputsOf(zswap, what);
-
-  const theirs = outputs.filter((o) =>
-    /* `is_left` true means a person rather than a contract — the opposite of the
+  return outputsOf(zswap, what)
+    /* `is_left` true means a person rather than a contract - the opposite of the
      * change, which comes back to the vault. Both spellings. */
-    recipientOf(o, what).toPerson === recipient);
-
-  if (theirs.length === 0) return undefined;
-  if (theirs.length > 1) {
-    throw new Error(`expected one coin for ${recipient}, found ${theirs.length}`);
-  }
-  return coinOn(theirs[0], what);
+    .filter((o) => recipientOf(o, what).toPerson === recipient)
+    .map((o) => coinOn(o, what));
 };

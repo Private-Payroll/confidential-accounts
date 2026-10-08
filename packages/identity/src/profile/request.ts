@@ -546,9 +546,11 @@ export interface CreationRequest extends Asking {
  * The answer is public chain facts only - the account's committee and its
  * threshold, the account's own approval threshold, every seat it holds and
  * every vault it has adopted; and, when the ask names one vault, that vault's
- * state at its deploy and at each update since. **Nothing private is handed
- * over and nothing is signed, so it is answered without a press.** Every
- * field but the label, the account and one vault is refused.
+ * state at its deploy and at each update since; and, when the ask names
+ * entries of the account's record of payments, which of them it holds and the
+ * commitment it holds to its pay-record key. **Nothing private is handed over
+ * and nothing is signed, so it is answered without a press, and without the
+ * wallet being shown or unlocked.** Every other field is refused.
  */
 export interface HoldersRequest extends Asking {
   readonly kind: 'holders';
@@ -556,7 +558,20 @@ export interface HoldersRequest extends Asking {
   readonly company: CompanyLabel;
   /** The account that carries the label. Claimed; read off the chain. */
   readonly account: AccountAddress;
+  /**
+   * **ENTRIES OF THE ACCOUNT'S RECORD OF PAYMENTS, ASKED ABOUT BY A PAGE ABOUT
+   * TO APPROVE OR RAISE A PAYROLL RUN.** When present, the answer also says
+   * which of them the account holds, and the commitment it holds to its
+   * pay-record key: whether a person was already paid for a month, whether the
+   * payment before an extra one was made, and which key the account records
+   * payments under. Public chain facts, each 64 lower-case hex characters, at
+   * most `MOST_ENTRIES_ASKED`.
+   */
+  readonly movements?: readonly string[];
 }
+
+/** The most payment-record entries one holders ask may ask about: two for each person on the largest run. */
+export const MOST_ENTRIES_ASKED = 2048;
 
 /**
  * ASKING THIS WALLET TO MAKE A JOIN CODE FOR ONE COMPANY (`join-code.ts`).
@@ -1305,8 +1320,10 @@ function addressesAndBalancesAskOf(body: Record<string, unknown>, asking: Asking
 
 /** Every field a holders ask may carry: the ones every ask carries, then its own three. */
 const HOLDERS_FIELDS: ReadonlySet<string> = new Set([
-  'schema', 'kind', 'requester', 'purpose', 'nonce', 'expiresAt', 'company', 'account',
+  'schema', 'kind', 'requester', 'purpose', 'nonce', 'expiresAt', 'company', 'account', 'movements',
 ]);
+
+const ENTRY = /^[0-9a-f]{64}$/u;
 
 /** A holders ask, read whole: a label and the account that carries it. */
 function holdersAskOf(body: Record<string, unknown>, asking: Asking): HoldersRequest {
@@ -1321,7 +1338,14 @@ function holdersAskOf(body: Record<string, unknown>, asking: Asking): HoldersReq
   }
   const company = labelIn(body['company'], asks, nothing);
   const account = accountIn(body['account'], asks, nothing);
-  return Object.freeze({ ...asking, kind: 'holders' as const, company, account });
+  const asked = body['movements'];
+  if (asked === undefined) return Object.freeze({ ...asking, kind: 'holders' as const, company, account });
+  if (!Array.isArray(asked) || asked.length === 0 || asked.length > MOST_ENTRIES_ASKED
+    || !asked.every((e) => typeof e === 'string' && ENTRY.test(e)) || new Set(asked).size !== asked.length) {
+    throw new RequestError('malformed-field', `${asks} and which payments its account records, and the payments it names are `
+      + `not between 1 and ${MOST_ENTRIES_ASKED} different entries of 64 lower-case hex characters. ${nothing}`);
+  }
+  return Object.freeze({ ...asking, kind: 'holders' as const, company, account, movements: Object.freeze([...asked as string[]]) });
 }
 
 /**

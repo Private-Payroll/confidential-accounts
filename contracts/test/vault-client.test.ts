@@ -32,8 +32,8 @@ import { vaultDetails } from '../../src/testing/vault-details.js';
 import { recipientOf } from '../../src/midnight/payee-address.js';
 import type { PayoutSeed, RunIdentity } from '../../src/midnight/run-keys.js';
 import {
-  witnessesOver, afterDeposit, afterPayment, balanceOf, withIndexRead,
-  type VaultNotes,
+  witnessesOver, afterDeposit, afterStep, notesToSpend, balanceOf, withIndexRead,
+  type VaultNotes, type Note,
 } from '../../src/midnight/vault-notes.js';
 import type { ChainReadIndex } from '../../src/midnight/note-index.js';
 
@@ -63,7 +63,7 @@ import { toHex, fromHex, type Hex } from '../../src/core/crypto.js';
 import { payFor } from '../../src/testing/payees.js';
 import { OTHER_TEST_TOKEN, TEST_TOKEN } from '../../src/testing/assets.js';
 import { NIGHT as NIGHT_TOKEN } from '../../src/core/assets.js';
-import { noFurtherNote } from '../../src/midnight/vault-step-notes.js';
+import { noFurtherNote, notePlaces } from '../../src/midnight/vault-step-notes.js';
 
 const NOW = 1_800_000_000;
 const FROM = BigInt(NOW - 3_600);
@@ -95,6 +95,8 @@ describe('a vault driven by the client\'s own note pool', () => {
   let vaultState: any;
   let notes: VaultNotes;
   const pending: { spending?: string } = {};
+  /** The note a payment offers the vault first, chosen before the call as the client chooses it. */
+  let offered: Hex | undefined;
 
   const provider = () => ({
     getContractState: async (_b: string, address: unknown) =>
@@ -159,7 +161,7 @@ describe('a vault driven by the client\'s own note pool', () => {
      * A snapshot here is the "one payment only" defect wearing a closure.
      */
     vault = new Vault<VaultNotes>({
-      ...witnessesOver(() => notes, pending),
+      ...witnessesOver(() => notes, pending, () => offered),
       /* The vault's nonce secret, opened on the paying device, as the client hands it over. */
       nonceSecret: (c: { privateState: unknown }) => [c.privateState, TEST_VAULT_SECRET],
     } as never);
@@ -222,11 +224,13 @@ describe('a vault driven by the client\'s own note pool', () => {
 
   const pay = async (run: any, id: Uint8Array, c: Change, i: number) => {
     const a = run.payeeArgs(i);
-    const before = pending.spending;
-    void before;
+    /* As the client chooses: the notes first, the first offered to the witness and the rest in the further place. */
+    const [first, ...further] = notesToSpend(notes.notes, a.token, a.amount) as [Note, ...Note[]];
+    offered = first.nonce;
     const r = await vault.impureCircuits.payout(
       ctx('payout'), runOf(run, id, c, i),
-      fromHex(recipientOf(a.payee)), fromHex(a.token), a.amount, fromHex(a.blinding), noFurtherNote());
+      fromHex(recipientOf(a.payee)), fromHex(a.token), a.amount, fromHex(a.blinding),
+      notePlaces(further.map((n) => ({ nonce: fromHex(n.nonce), color: fromHex(n.token), value: n.value, mt_index: n.index! })), 1));
     vaultState = r.context.callContext.currentQueryContext.state;
     sim.adoptFromCall(r.context);
     /*
@@ -254,7 +258,7 @@ describe('a vault driven by the client\'s own note pool', () => {
      * above uses: there is no commitment tree in this test to assign one.
      */
     const kept = changeCoinOf(r.context.callContext.currentZswapLocalState, toHex(vaultBytes()));
-    notes = afterPayment(notes, pending.spending!, a.amount, kept, aTransaction());
+    notes = afterStep(notes, { spent: [pending.spending!, ...further.map((n) => n.nonce)], pays: a.amount, kept }, aTransaction());
     if (kept) notes = withIndexRead(notes, kept.nonce, noTreeHere);
     return r;
   };
@@ -287,7 +291,7 @@ describe('a vault driven by the client\'s own note pool', () => {
     expect([...vaultLedger(vaultState as never).notes]).toHaveLength(1);
   });
 
-  it('spends the SMALLEST covering note, leaving the big one whole', async () => {
+  it('spends the LARGEST note first, as the run planner does, and the pool agrees with the chain', async () => {
     await deposit(0x81, 1_000n);
     await deposit(0x82, 300n);
 
@@ -296,19 +300,38 @@ describe('a vault driven by the client\'s own note pool', () => {
       [{ payee: payeeFor(ALICE, 'undeployed'), token: toHex(TOKEN_BYTES), amount: 200n }], c, 'payroll-small');
     await pay(run, id, c, 0);
 
-    expect(notes.notes.map(n => n.value).sort((a, b) => Number(a - b))).toEqual([100n, 1_000n]);
+    /* RED WHEN the payment's first note is not the planner's: the smallest covering note would leave [100, 1000]. */
+    expect(pending.spending).toBe(toHex(bytes(0x81)));
+    expect(notes.notes.map(n => n.value).sort((a, b) => Number(a - b))).toEqual([300n, 800n]);
+    expect([...vaultLedger(vaultState as never).notes]).toHaveLength(2);
+  });
+
+  it('THROUGH THE COMPILED CIRCUIT: a payment no single note covers is paid from two, and both leave the pool as they leave the chain', async () => {
+    await deposit(0x83, 60n);
+    await deposit(0x84, 70n);
+
+    const c = change(0n, 79);
+    const { run, id } = await approvedRun(
+      [{ payee: payeeFor(ALICE, 'undeployed'), token: toHex(TOKEN_BYTES), amount: 100n }], c, 'payroll-two-notes');
+    await pay(run, id, c, 0);
+
+    expect(vaultLedger(vaultState as never).payments).toBe(1n);
+    /* The larger offered first; the other in the further place; one change coin of 30, and nothing else, on chain and in the pool. */
+    expect(pending.spending).toBe(toHex(bytes(0x84)));
+    expect(notes.notes.map((n) => n.value)).toEqual([30n]);
+    expect([...vaultLedger(vaultState as never).notes]).toHaveLength(1);
   });
 
   it('a note spent EXACTLY leaves no change, and the pool agrees with the chain', async () => {
     await deposit(0x91, 500n);
-    await deposit(0x92, 1_000n);
+    await deposit(0x92, 300n);
 
     const c = change(0n, 76);
     const { run, id } = await approvedRun(
       [{ payee: payeeFor(ALICE, 'undeployed'), token: toHex(TOKEN_BYTES), amount: 500n }], c, 'payroll-exact');
     await pay(run, id, c, 0);
 
-    expect(balanceOf(notes, toHex(TOKEN_BYTES))).toBe(1_000n);
+    expect(balanceOf(notes, toHex(TOKEN_BYTES))).toBe(300n);
     expect(notes.notes).toHaveLength(1);
     expect([...vaultLedger(vaultState as never).notes]).toHaveLength(1);
   });
@@ -335,15 +358,16 @@ describe('a vault driven by the client\'s own note pool', () => {
     expect(notes.notes.find((n) => n.value === 150n)).not.toHaveProperty('createdIn');
   });
 
-  it('REFUSES A PAYMENT NO SINGLE NOTE COVERS rather than paying part of it', async () => {
-    await deposit(0xa1, 60n);
-    await deposit(0xa2, 60n);
+  it('REFUSES A PAYMENT NO TWO NOTES COVER rather than paying part of it', async () => {
+    await deposit(0xa1, 40n);
+    await deposit(0xa2, 40n);
+    await deposit(0xa3, 40n);
 
     const c = change(0n, 77);
     const { run, id } = await approvedRun(
       [{ payee: payeeFor(ALICE, 'undeployed'), token: toHex(TOKEN_BYTES), amount: 100n }], c, 'payroll-merge');
 
-    await expect(pay(run, id, c, 0)).rejects.toThrow(/no single note covers 100/i);
+    await expect(pay(run, id, c, 0)).rejects.toThrow(/no 2 notes a payment can spend cover 100/i);
     expect(vaultLedger(vaultState as never).payments).toBe(0n);
   });
   /* ------------------------------------------------------------------ *
@@ -489,6 +513,7 @@ describe('a vault driven by the client\'s own note pool', () => {
     const priv = await approvedRun([{ payee: privateAlice(), token: toHex(TOKEN_BYTES), amount: 250n }], c, 'payroll-token:shielded', TEST_TOKEN, ['person-0']);
     const a = priv.run.payeeArgs(0);
     /* RED WHEN the vault pays out a coin whose colour is not the token the approved leaf and root commit to. */
+    offered = toHex(bytes(0xd1));
     await expect(vault.impureCircuits.payout(
       ctx('payout'), runOf(priv.run, priv.id, c, 0), fromHex(recipientOf(a.payee)), OTHER, a.amount, fromHex(a.blinding), noFurtherNote()))
       .rejects.toThrow(NOT_IN_THE_APPROVED_RUN);

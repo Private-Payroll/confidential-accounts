@@ -30,7 +30,7 @@ import { sealToInbox } from 'midnight-identity/profile/inbox';
  * asked. The same file, the same width, the same argument. */
 import { addressFingerprint, companyFingerprint } from 'midnight-identity/profile/fingerprint';
 import { EMBEDDER, INDEXER_HTTP_URL, INDEXER_WS_URL } from '../config.js';
-import { useConsent } from '../framing.js';
+import { quietConsentFor, useConsent } from '../framing.js';
 import { ApproveBalance } from './approve-balance.js';
 import { recordAsk, recordChannelState, recordedChannel } from '../lib/ask-record.js';
 import { ApproveCommittee } from './approve-committee.js';
@@ -1289,7 +1289,7 @@ export function Approve({
   }
 
   if (request.kind === 'holders') {
-    return <AnswerHolders request={request} channel={channel} consent={consent} />;
+    return <AnswerHolders request={request} channel={channel} consent={quietConsentFor(framing)} />;
   }
 
   if (request.kind === 'addresses-and-balances') {

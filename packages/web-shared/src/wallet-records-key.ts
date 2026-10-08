@@ -18,10 +18,11 @@
  */
 import { REQUEST_SCHEMA, type InvitedBy } from 'midnight-identity/profile/request';
 import {
-  readHoldersAnswer, readRecordsKeyAnswer, type AccountHoldersRead, type AccountSeats, type DirectoryEntryStatement,
+  readHoldersAnswer, readRecordsKeyAnswer, type AccountHoldersRead, type AccountPaymentFacts, type AccountSeats, type DirectoryEntryStatement,
   type RecordsKeyStatement, type VaultHolders,
 } from 'midnight-identity/profile/records-key';
 import type { AccountAddress, CompanyLabel, VaultAddress } from 'midnight-identity/profile/company-label';
+import type { WalletIndexer } from 'midnight-identity/profile/unlock';
 import { readAddressesAndBalancesAnswer, type AddressesAndBalancesShown } from 'midnight-identity/profile/addresses-and-balances';
 import { toHex, randomBytes } from '../../../src/core/crypto.js';
 import { askWallet, type Openable, type WalletDialog } from './wallet-sign-in.js';
@@ -134,6 +135,8 @@ class WalletDidNotSayWhoHolds extends Error {
 export interface HoldersAsked {
   readonly company: CompanyLabel;
   readonly account: AccountAddress;
+  /** Entries of the account's record of payments to ask about; the answer then says which it holds, and its pay-key commitment. */
+  readonly movements?: readonly string[];
   readonly atOrigin: string;
   readonly name: string;
   readonly rdns: string;
@@ -144,6 +147,10 @@ export interface HoldersAsked {
 /** What comes back, checked: who holds the account, what it has adopted, and the account it was read for. */
 export interface HoldersRead {
   readonly holders: AccountHoldersRead;
+  /** Present exactly when the ask named entries of the account's record of payments. */
+  readonly payments?: AccountPaymentFacts;
+  /** The indexer the wallet read through, which this device reads the company's vaults through; null when it said none. */
+  readonly indexer: WalletIndexer | null;
 }
 
 /**
@@ -165,15 +172,19 @@ export async function askWalletWhoHolds(
     expiresAt: now() + HOLDERS_WINDOW_MS,
     company: ask.company,
     account: ask.account,
+    ...(ask.movements === undefined ? {} : { movements: [...ask.movements] }),
   }), dialog);
   const read = readHoldersAnswer(answer, {
     atOrigin: ask.atOrigin, expectingNonce: nonce, company: ask.company, account: ask.account,
+    ...(ask.movements === undefined ? {} : { movements: ask.movements }),
   });
   if (!read.ok) {
     const refused = read as Extract<typeof read, { ok: false }>;
     throw new WalletDidNotSayWhoHolds(refused.code, refused.says);
   }
-  return { holders: read.holders };
+  return read.payments === undefined
+    ? { holders: read.holders, indexer: read.indexer }
+    : { holders: read.holders, payments: read.payments, indexer: read.indexer };
 }
 
 /* ------------------------------------------------------------------ addresses and balances, after one press */

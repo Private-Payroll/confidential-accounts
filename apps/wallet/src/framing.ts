@@ -81,6 +81,18 @@ export function consentFor(seen: WhatCanBeSeen): Consent {
 }
 
 /**
+ * **THE GUARD FOR AN ASK WITH NOTHING TO PRESS.** A page asking only for facts
+ * that are public on the chain - who holds a company's account - is answered
+ * without a press, so there is nothing for a dwell, a size or the tab being
+ * shown to protect: the frame may be hidden and the wallet locked. What still
+ * holds is where the wallet is: a frame the wallet was not built for is
+ * answered nothing, exactly as for every other ask.
+ */
+export function quietConsentFor(framing: Framing): Consent {
+  return framing.of === 'refused' ? { ok: false, says: framing.why } : { ok: true };
+}
+
+/**
  * **THE GUARD, MEASURED LIVE.** Re-read on every resize and every change of tab
  * visibility, and the dwell restarts whenever any measure stops holding - so a
  * frame that was hidden and shown again waits again.

@@ -45,6 +45,41 @@ describe('a journal over any store', () => {
     expect(read.versionsRead).toEqual({ deposits: 0, payments: 2 });
   });
 
+  it('A STEP THAT SPENDS SEVERAL NOTES IS WRITTEN AND READ BACK WITH EVERY ONE OF THEM, a merge as a merge', async () => {
+    const a = signer('ada');
+    const store = new MemorySealedPoolStore();
+    const j = new PaymentJournalInStore(store, VAULT, { id: 'ada', wrappingSecret: a.secret }, async () => [a.who]);
+    const n = (b: string, value: bigint) => ({ nonce: b.repeat(32), token: GBP, value });
+    await j.record(VAULT, { spent: n('01', 60n), further: [n('02', 50n)], step: 'payment', amount: 100n, attemptedAt: 't' } as never);
+    await j.record(VAULT, { spent: n('03', 40n), further: [n('04', 45n), n('05', 5n)], step: 'merge', amount: 0n, attemptedAt: 't' } as never);
+    /* The same line again, as a retry writes it: one attempt, not two. */
+    await j.record(VAULT, { spent: n('01', 60n), further: [n('02', 50n)], step: 'payment', amount: 100n, attemptedAt: 't2' } as never);
+    const read = attemptsFromJournalVersions({ deposits: [], payments: await store.versions(VAULT), opener: { id: 'ada', wrappingSecret: a.secret } });
+    /* RED WHEN the reader drops `further` or `step`: the rebuild would derive each kept coin from the first note alone. */
+    expect(read.payments).toEqual([
+      { spent: n('01', 60n), further: [n('02', 50n)], amount: 100n },
+      { spent: n('03', 40n), further: [n('04', 45n), n('05', 5n)], merge: true, amount: 0n },
+    ]);
+  });
+
+  it('REFUSES a line whose further notes cannot be read, rather than reading it as a one-note payment', async () => {
+    const a = signer('ada');
+    const store = new MemorySealedPoolStore();
+    const j = new PaymentJournalInStore(store, VAULT, { id: 'ada', wrappingSecret: a.secret }, async () => [a.who]);
+    await j.record(VAULT, { ...attempt('01'.repeat(32), 60n, 100n), further: [{ nonce: '02'.repeat(32), token: GBP, value: '50' }] } as never);
+    /* RED WHEN an unreadable further note is skipped: the line would describe a change the chain never made. */
+    const versions = await store.versions(VAULT);
+    expect(() => attemptsFromJournalVersions({ deposits: [], payments: versions, opener: { id: 'ada', wrappingSecret: a.secret } }))
+      .toThrow(/is not an attempt \(the notes it spends and the amount\)/);
+    /* RED WHEN a line naming a step no vault makes is read as a payment. */
+    const other = new MemorySealedPoolStore();
+    await new PaymentJournalInStore(other, VAULT, { id: 'ada', wrappingSecret: a.secret }, async () => [a.who])
+      .record(VAULT, { ...attempt('01'.repeat(32), 60n, 10n), step: 'swap' } as never);
+    const otherVersions = await other.versions(VAULT);
+    expect(() => attemptsFromJournalVersions({ deposits: [], payments: otherVersions, opener: { id: 'ada', wrappingSecret: a.secret } }))
+      .toThrow(/is not an attempt/);
+  });
+
   it('a deposit line is the coin, under the page every deposit line has always had', async () => {
     const a = signer('ada');
     const inner = new MemorySealedPoolStore();

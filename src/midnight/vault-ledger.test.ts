@@ -516,8 +516,9 @@ function harness(opts: {
    * the vault. A fake carrying only the change would let a reader that ignored
    * `is_left` pass.
    */
-  const payoutResult = (coin: any, amount: bigint, recipient: string) => {
-    const kept = (coin.value as bigint) - amount;
+  const payoutResult = (coin: any, amount: bigint, recipient: string, further: any[] = []) => {
+    /* What the vault spends: the note offered, and every live further place the call carried. */
+    const kept = (coin.value as bigint) + further.reduce((t, c) => t + (c.value as bigint), 0n) - amount;
     const outputs: unknown[] = [
       {
         recipient: { is_left: true, left: recipient, right: '' },
@@ -644,8 +645,9 @@ function harness(opts: {
           const [, secret] = witnesses.nonceSecret({ privateState: undefined });
           secretsRead.push(toHex(secret as Uint8Array));
           const [, coin] = witnesses.noteToSpend({}, Buffer.from(GBP, 'hex'), args[3] as bigint);
-          spentCoins.push(coin);
-          return payoutResult(coin, args[3] as bigint, toHex(args[1] as Uint8Array));
+          const further = (args[5] as any[] ?? []).filter((c) => (c.value as bigint) > 0n);
+          spentCoins.push(coin, ...further);
+          return payoutResult(coin, args[3] as bigint, toHex(args[1] as Uint8Array), further);
         }
         return { public: { txId: 'tx_pay' } };
       },
@@ -1140,10 +1142,10 @@ describe('V-74: the vault client', () => {
      * touched one.
      */
     if (r.kind !== 'shielded') throw new Error('a shielded payee was paid through another door');
-    // The smallest covering note, chosen by the witness and reported back.
-    expect(r.spentNote).toBe('02'.repeat(32));
+    /* The planner's first note, offered to the witness and reported back as the one it handed over. */
+    expect(r.spentNote).toBe('01'.repeat(32));
     expect(balanceOf(current(), GBP)).toBe(1_100n);
-    expect(current().notes.some(n => n.value === 100n && n.createdIn === payHash(1) && n.index === undefined))
+    expect(current().notes.some(n => n.value === 800n && n.createdIn === payHash(1) && n.index === undefined))
       .toBe(true);
   });
 
@@ -1237,13 +1239,25 @@ describe('V-74: the vault client', () => {
     expect(Object.keys(payment(1n))).not.toContain('recipient');
   });
 
-  it('REFUSES BEFORE A FEE when no single note covers the payment', async () => {
+  it('REFUSES BEFORE A FEE when no two notes cover the payment', async () => {
     const { ledger, calls } = harness({
-      notes: [{ nonce: '01'.repeat(32), value: 60n }, { nonce: '02'.repeat(32), value: 60n }],
+      notes: [{ nonce: '01'.repeat(32), value: 40n }, { nonce: '02'.repeat(32), value: 40n }, { nonce: '03'.repeat(32), value: 40n }],
     });
     await expect(ledger.payout(VAULT, payment(100n), BY, EVENTS, SECRET))
-      .rejects.toThrow(/no single note covers 100/i);
+      .rejects.toThrow(/no 2 notes a payment can spend cover 100/i);
     expect(calls).toEqual([]);
+  });
+
+  it('PAYS FROM TWO NOTES WHEN NO ONE NOTE COVERS IT: both indexes read, both journalled, both out of the pool', async () => {
+    const { ledger, spentCoins, eventReads, journalled, saves } = harness({
+      notes: [{ nonce: '01'.repeat(32), value: 60n }, { nonce: '02'.repeat(32), value: 70n }],
+    });
+    await ledger.payout(VAULT, payment(100n), BY, EVENTS, SECRET);
+    /* RED WHEN the further note is not handed to the call, not journalled, or left in the pool the chain has spent it from. */
+    expect(spentCoins.map((c) => c.value)).toEqual([70n, 60n]);
+    expect(eventReads).toHaveLength(2);
+    expect(journalled.map((j) => [j.spent.value, (j.further ?? []).map((f) => f.value)])).toEqual([[70n, [60n]]]);
+    expect(saves[saves.length - 1]!.notes.map((n) => n.value)).toEqual([30n]);
   });
 
   it('DOES NOT TOUCH THE POOL when the call fails', async () => {
@@ -1332,24 +1346,18 @@ describe('C198: balance reconciles against the chain, or refuses to answer', () 
     expect(failed).not.toBeInstanceOf(VaultChainUnreadable);
   });
 
-  it('DISAGREES, pool claims LESS: says a note reached the vault unrecorded', async () => {
+  it('A NOTE THE CHAIN HOLDS AND THE POOL DOES NOT IS IGNORED, NEVER A FREEZE: the vault states its balance and pays on', async () => {
     /*
-     * `C199`'s window seen from the other side — the chain holding a note the
-     * pool never learned about. The amount cannot be stated and this says so
-     * rather than inventing one: a commitment discloses nothing, which is the
-     * entire point of it.
+     * Anyone may deposit into a vault. A stranger's note is on chain and spendable by nobody, because its opening
+     * never reached this pool. RED WHEN the balance, the affordability check or a payment refuses because the chain
+     * holds a note the pool does not - one stranger's deposit would freeze a funded vault for good.
      */
     const { ledger } = harness({
       notes: [{ nonce: '01'.repeat(32), value: 600n }],
       chain: [{ nonce: '01'.repeat(32), value: 600n }, { nonce: '02'.repeat(32), value: 400n }],
     });
-    const failed = await ledger.balance(VAULT, GBP).then(() => null, (e: Error) => e);
-    expect(failed).toBeInstanceOf(VaultPoolDisagreesWithChain);
-    expect(failed?.message).toMatch(/claims LESS than the vault holds/);
-    expect(failed?.message).toMatch(/chain holds 2 note\(s\) and this pool holds 1/);
-    expect(failed?.message).toMatch(/amount cannot be stated/);
-    // And it names the recovery, because that is what the operator does next.
-    expect(failed?.message).toMatch(/replayVault/);
+    expect(await ledger.balance(VAULT, GBP)).toBe(600n);
+    await expect(ledger.payout(VAULT, payment(100n), BY, EVENTS, SECRET)).resolves.toMatchObject({ kind: 'shielded', spentNote: '01'.repeat(32) });
   });
 
   it('COULD NOT READ: refuses when the indexer returns no state, and never a local number',
@@ -1688,23 +1696,25 @@ describe('a private payment spends against the index the chain reports at that m
     expect(saves).toEqual([]);
   });
 
-  it('never hands the contract an index the pool stored for a note other than the one just read', async () => {
+  it('never hands the contract a note other than the one whose index was just read', async () => {
     /*
-     * The pool changes while the chosen note's index is being read: a smaller
-     * note that also covers the payment arrives, carrying a stored index. The
-     * witness picks it. It must be refused, not spent at the stored number.
+     * The pool changes while the chosen note's index is being read: a larger
+     * note that also covers the payment arrives, carrying a stored index - the
+     * one any rule choosing again now would take. The witness is offered the
+     * chosen note and nothing else, so the note that arrived is neither spent
+     * nor spent at its stored number.
      */
-    const { ledger, saves, spentCoins, current } = harness({ notes: [{ nonce: '01'.repeat(32), value: 1_000n }] });
+    const { ledger, spentCoins, current } = harness({ notes: [{ nonce: '01'.repeat(32), value: 1_000n }] });
     const reading = eventsInUse;
     eventsInUse = {
       eventsOf: async (tx) => {
-        current().notes.push({ nonce: '02'.repeat(32), token: GBP, value: 300n, index: 7n, createdIn: SEEDED_TX });
+        current().notes.push({ nonce: '02'.repeat(32), token: GBP, value: 5_000n, index: 7n, createdIn: SEEDED_TX });
         return reading.eventsOf(tx);
       },
     };
-    await expect(ledger.payout(VAULT, payment(200n), BY, EVENTS, SECRET)).rejects.toThrow(/has not been read for this call/);
-    expect(spentCoins).toEqual([]);
-    expect(saves).toEqual([]);
+    await ledger.payout(VAULT, payment(200n), BY, EVENTS, SECRET);
+    /* RED WHEN the witness chooses again from the pool as it now stands, or spends at an index nobody read for this call. */
+    expect(spentCoins.map((c) => [c.value, c.mt_index === 7n])).toEqual([[1_000n, false]]);
   });
 
   it('saves no index for any note, including one the pool held before the payment', async () => {
@@ -2153,7 +2163,7 @@ describe('T-38: an affordability check refuses on EITHER refusal', () => {
     expect(after.map((n) => n.value).sort((a, b) => Number(a - b))).toEqual([150n, 4_900n]);
     /* And a payment only the unrecorded note could make is refused before anything is called, naming it. */
     const again = harness({ notes: [{ nonce: '01'.repeat(32), value: 150n }], noCreatingTransaction: true });
-    await expect(again.ledger.payout(VAULT, payment(100n), BY, EVENTS, SECRET)).rejects.toThrow(/One note does: 0101.*\(150\)/);
+    await expect(again.ledger.payout(VAULT, payment(100n), BY, EVENTS, SECRET)).rejects.toThrow(/one more note would: 0101.*\(150\)/);
     expect(again.calls).toEqual([]);
   });
 
@@ -2170,12 +2180,13 @@ describe('T-38: an affordability check refuses on EITHER refusal', () => {
 
   it('CANNOT AFFORD when the notes do not cover it, even though the SUM does', async () => {
     /*
-     * The question a balance answers wrongly. Two notes of 60 reconcile
-     * perfectly and cannot pay 100, because `noteToSpend` does not merge — so a
-     * check built on `balance` alone passes a run that stops on its first payee.
+     * The question a balance answers wrongly. Three notes of 40 reconcile
+     * perfectly and cannot pay 100, because one payment draws on two notes at
+     * most and does not merge - so a check built on the balance alone passes a
+     * run that stops on its first payee.
      */
     const { ledger } = harness({
-      notes: [{ nonce: '01'.repeat(32), value: 60n }, { nonce: '02'.repeat(32), value: 60n }],
+      notes: [{ nonce: '01'.repeat(32), value: 40n }, { nonce: '02'.repeat(32), value: 40n }, { nonce: '03'.repeat(32), value: 40n }],
     });
     const failed = await ledger.affordable(VAULT, run(100n)).then(() => null, (e: Error) => e);
     expect(failed).toBeInstanceOf(VaultCannotAfford);
@@ -2196,11 +2207,11 @@ describe('T-38: an affordability check refuses on EITHER refusal', () => {
      * The order matters and is not cosmetic. A pool that disagrees with the
      * chain can easily "cover" a run out of notes the chain will refuse, and
      * answering `notes-do-not-cover` — or worse, answering yes — for a pool
-     * nothing had checked is `C198`'s defect wearing this function's name.
+     * nothing had checked is the defect this order prevents.
      */
     const { ledger } = harness({
-      notes: [{ nonce: '01'.repeat(32), value: 1_000n }],
-      chain: [{ nonce: '01'.repeat(32), value: 1_000n }, { nonce: '02'.repeat(32), value: 5n }],
+      notes: [{ nonce: '01'.repeat(32), value: 1_000n }, { nonce: '02'.repeat(32), value: 5n }],
+      chain: [{ nonce: '01'.repeat(32), value: 1_000n }],
     });
     const failed = await ledger.affordable(VAULT, run(999_999n)).then(() => null, (e: Error) => e);
     expect((failed as VaultCannotAfford).why).toBe('pool-disagrees');

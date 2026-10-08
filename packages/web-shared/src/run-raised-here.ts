@@ -34,7 +34,8 @@ import type { OpenedRound, RaiseRunOrder } from './governed-call-builder.js';
 import type { RunMadeHere } from './what-this-device-made.js';
 import type { RaiseDoors, RoundOnThePage } from './governed-call-on-device.js';
 import {
-  keptRunHere, payableFactsHere, payrollRoundsHere, signedStateHere, whatTheRecordsAccountFor, type CompanyRecordsHere,
+  keptRunHere, payableFactsHere, payrollRoundsHere, signedStateHere, whatTheRecordsAccountFor, withWhatTheWalletRead,
+  type CompanyRecordsHere,
 } from './run-rebuilt-here.js';
 
 /** Why this device did not raise a leg. Nothing was written down, built or sent. */
@@ -231,7 +232,7 @@ async function writtenProvedAndFiled(doors: LegRaiseDoors, key: Hex, r: {
   const opened: OpenedRound = {
     chainId, digest, vault: r.vault, salt, summary: r.summary,
     half: { assetId: hex(named.assetId), changeAmount: String(change.amount), changeBatchDigest: change.batchDigest },
-    made: { ...r.made, raising: await whatTheRecordsAccountFor(records, accountId, r.run, key) },
+    made: await withWhatTheWalletRead(records, { ...r.made, raising: await whatTheRecordsAccountFor(records, accountId, r.run, key) }),
   };
   const order: RaiseRunOrder = {
     circuit: 'propose',

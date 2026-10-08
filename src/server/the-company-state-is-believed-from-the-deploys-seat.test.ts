@@ -25,7 +25,7 @@ import { Contract, pureCircuits } from '../../contracts/managed/contract/index.j
 import { witnesses } from '../../contracts/src/witnesses.js';
 import { AccountSimulator, COMPANY_LABEL, change, leafOfDevice, privateStateFor } from '../../contracts/test/simulator.js';
 import { companyLabelOf, type AccountAddress } from 'midnight-identity/profile/company-label';
-import { holdersOnChain } from '../../apps/wallet/src/chain/company-label-on-chain.js';
+import { holdersOnChain, paymentsInAccountState } from '../../apps/wallet/src/chain/company-label-on-chain.js';
 import { runRebuiltHere, RunNotReadHere, type CompanyRecordsHere } from '../../packages/web-shared/src/run-rebuilt-here.js';
 import { refuseWhatThisDeviceDidNotMake, type AccountLedgerView } from '../../packages/web-shared/src/what-this-device-made.js';
 import { directoryHere, foundingSeatHere, type DirectoryHere } from '../../packages/web-shared/src/vault-page-doors.js';
@@ -153,16 +153,20 @@ const recordsOver = (here: DirectoryHere, state: unknown): CompanyRecordsHere =>
   state: async (id) => (id === '0' ? state as never : null),
   runs: async () => [sealedRun()],
   registry: registryWithTestPrivateForms(),
+  /* What the person's own wallet reads off the account: its own parser, over the chain's bytes as the test left them. */
+  payments: {
+    paidOnceOf: pureCircuits.paidOnceOf,
+    read: async (entries) => paymentsInAccountState((onTheChain!.contractStateForCall as { serialize(): Uint8Array }).serialize(), entries),
+  },
 });
+let onTheChain: Awaited<ReturnType<typeof founderReplaced>> | null = null;
 
-const gateDeps = {
-  runPayload: pureCircuits.runPayload, vaultDetails,
-  payKeyCommitmentOf: pureCircuits.payKeyCommitmentOf, payKeyCommitmentKey: pureCircuits.payKeyCommitmentKey,
-};
+const gateDeps = { runPayload: pureCircuits.runPayload, vaultDetails, payKeyCommitmentOf: pureCircuits.payKeyCommitmentOf };
 
 describe('THE FOUNDING SEAT IS THE DEPLOY\'S, WHOEVER HOLDS THE FIRST SLOT LATER', () => {
   it('A FOUNDER REMOVED AND A NEW SEAT IN THE FIRST SLOT LEAVE A RUN\'S APPROVAL WORKING', async () => {
     const sim = await founderReplaced();
+    onTheChain = sim;
     /* The chain as it is: F holds nothing, D holds the first slot. */
     expect(sim.slotOf(D)).toBe(0n);
     expect(sim.ledger.signers.findPathForLeaf(sim.leafOf(F))).toBeUndefined();

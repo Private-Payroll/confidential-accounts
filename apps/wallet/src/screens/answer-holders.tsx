@@ -5,7 +5,7 @@ import type { Channel } from 'midnight-identity/profile/channel';
 import { RecordsKeyRefused, holdersAnswerFor, type AccountHolders } from 'midnight-identity/profile/records-key';
 import type { AccountAddress, CompanyLabel } from 'midnight-identity/profile/company-label';
 import { deployFromIndexerAt, fromIndexerAt, holdersOnChain, type HoldersOnChain } from '../chain/company-label-on-chain.js';
-import { INDEXER_HTTP_URL } from '../config.js';
+import { INDEXER_HTTP_URL, INDEXER_WS_URL } from '../config.js';
 import { StatusAlert } from '../components/status.js';
 import type { Consent } from '../framing.js';
 
@@ -14,22 +14,28 @@ import type { Consent } from '../framing.js';
  *
  * A page about to believe a record the company's server hands it asks who
  * holds the account now: the committee and its threshold, the account's own
- * approval threshold, the seats it holds and the vaults it has adopted.
+ * approval threshold, the seats it holds and the vaults it has adopted. A page
+ * about to approve a payroll run also asks which of the run's payments the
+ * account already records, and the commitment it holds to its pay-record key.
  * **Everything in the answer is public on the chain and nothing is
  * signed**, so this wallet reads it over its own connection to the network and
  * answers as soon as the read is in, without asking the person to press
- * anything. What it hands back is what this wallet read, never what the page
- * or its server said.
+ * anything - and without being shown or unlocked: a locked wallet, or one in
+ * a frame the person cannot see, answers it the same. What it hands back is
+ * what this wallet read, never what the page or its server said.
  *
  * It answers only an ask whose framing passes the same checks as every other
  * (`consent`), and only when the account carries the company's label.
  */
 
 /** How this screen reads the account. Replaceable so a test can answer. */
-export type HoldersReader = (account: AccountAddress, label: CompanyLabel) => Promise<HoldersOnChain>;
+export type HoldersReader = (account: AccountAddress, label: CompanyLabel, movements?: readonly string[]) => Promise<HoldersOnChain>;
 
-export const liveHoldersReader: HoldersReader = (account, label) => holdersOnChain(
-  account, label, fromIndexerAt(INDEXER_HTTP_URL), deployFromIndexerAt(INDEXER_HTTP_URL));
+export const liveHoldersReader: HoldersReader = (account, label, movements) => holdersOnChain(
+  account, label, fromIndexerAt(INDEXER_HTTP_URL), deployFromIndexerAt(INDEXER_HTTP_URL), movements);
+
+/** The indexer this wallet reads the chain through, handed back with every answer so the page reads its vaults there too. */
+const THIS_WALLETS_INDEXER = Object.freeze({ indexerUri: INDEXER_HTTP_URL, indexerWsUri: INDEXER_WS_URL });
 
 type Stage = { of: 'reading' } | { of: 'sent' } | { of: 'refused'; says: string };
 
@@ -57,7 +63,7 @@ export function AnswerHolders({
     if (!allowed || channel === null || settled.current === request) return undefined;
     let alive = true;
     void (async () => {
-      const read = await readHolders(request.account, request.company);
+      const read = await readHolders(request.account, request.company, request.movements);
       if (!alive) return;
       if (read.of !== 'read') {
         settled.current = request;
@@ -67,7 +73,7 @@ export function AnswerHolders({
       }
       settled.current = request;
       try {
-        const sent = channel.answer(holdersAnswerFor(request, read.holders as AccountHolders, now()));
+        const sent = channel.answer(holdersAnswerFor(request, read.holders as AccountHolders, now(), read.payments, THIS_WALLETS_INDEXER));
         setStage(sent === false
           ? { of: 'refused', says: 'This page had already been answered, so nothing more was sent.' }
           : { of: 'sent' });

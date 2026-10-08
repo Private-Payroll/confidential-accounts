@@ -120,13 +120,24 @@ const api = (s: Seat) => async (path: string, init?: RequestInit) => {
   if (r.status >= 300) throw Object.assign(new Error(String((r.body as { error?: string }).error ?? r.status)), { status: r.status, body: r.body });
   return r.body;
 };
+/** What the person's own wallet reads off the chain about payments: the chain as the test keeps it, never what is served. */
+const walletReads: string[][] = [];
 const recordsOn = (s: Seat): CompanyRecordsHere & { proposals: () => Promise<ReturnType<typeof store.listProposals>> } => ({
   directory: () => acmeDirectory(),
   people: () => readPeopleHere(peopleOn(s)),
   state: (id) => records.get(CO, 'state', id),
   runs: async () => store.listRuns(CO),
   proposals: async () => store.listProposals(CO),
+  payments: {
+    paidOnceOf: pureCircuits.paidOnceOf,
+    read: async (entries) => {
+      walletReads.push([...entries]);
+      return { payKeyCommitment: COMMITMENT, held: entries.filter((e) => movements.has(e)) };
+    },
+  },
 });
+/** While set, the account state the service serves says nobody is paid and commits to another pay-record key. */
+let servedLies = false;
 const drawingOn = (s: Seat): RunDrawDoors => ({
   api: api(s), accountId: CO, viewingKey: KEY, keyEpoch: 0, signingSecret: s.signingSecret as Hex, company: { account: ADDRESS, label: LABEL },
   records: recordsOn(s), by: s.person,
@@ -138,10 +149,10 @@ const theChainNow = (): AccountLedgerView => ({
     member: (id) => open.has(toHex(id)),
     [Symbol.iterator]: () => [...open.keys()].map((k): [Uint8Array, unknown] => [fromHex(k), 0n])[Symbol.iterator](),
   },
-  movements: { member: (e) => movements.has(toHex(e)), size: () => BigInt(movements.size) },
+  movements: { member: (e) => !servedLies && movements.has(toHex(e)), size: () => BigInt(servedLies ? 0 : movements.size) },
   signerRoles: {
     member: (k) => toHex(k) === PAY_KEY_AT || marks.has(toHex(k)),
-    lookup: (k) => (toHex(k) === PAY_KEY_AT ? fromHex(COMMITMENT) : new Uint8Array(32)),
+    lookup: (k) => (toHex(k) === PAY_KEY_AT ? fromHex(servedLies ? '77'.repeat(32) : COMMITMENT) : new Uint8Array(32)),
   },
 });
 const P = pureCircuits as unknown as Parameters<typeof refuseWhatThisDeviceDidNotOpen>[0]['accountPure'];
@@ -152,7 +163,7 @@ const builder = {
     refuseWhatThisDeviceDidNotOpen({ accountPure: P }, input.order, input.opened);
     refuseWhatThisDeviceDidNotMake({
       runPayload: pureCircuits.runPayload, vaultDetails, payKeyCommitmentOf: pureCircuits.payKeyCommitmentOf,
-      payKeyCommitmentKey: pureCircuits.payKeyCommitmentKey, policyOnKeyOf: pureCircuits.policyOnKeyOf,
+      policyOnKeyOf: pureCircuits.policyOnKeyOf,
     }, input.opened, theChainNow(), input.order.circuit === 'propose' ? 'raise' : 'approve');
     refuseARaiseThatIsNotTheRecordedOne({ accountPure: P }, input.order);
     proved.push(input);
@@ -190,6 +201,7 @@ beforeAll(async () => {
 });
 beforeEach(async () => {
   open.clear(); movements.clear(); marks.clear(); publicAsks.length = 0; publicRefuses = null; proved.length = 0; dropTheSend = false;
+  servedLies = false; walletReads.length = 0;
   holdThePublicMoney = null;
   policy = { threshold: 1, limitsByRole: {} };
   for (const r of store.listRuns(CO)) store.putRun({ ...r, accountId: 'acc_set_aside' });
@@ -221,7 +233,6 @@ describe('A LEG IS RAISED ON THE SIGNER\'S DEVICE, AND THE SERVICE FILES AND REL
     const made = await runRebuiltHere(recordsOn(BO), CO, round.id, KEY);
     expect(() => refuseWhatThisDeviceDidNotMake({
       runPayload: pureCircuits.runPayload, vaultDetails, payKeyCommitmentOf: pureCircuits.payKeyCommitmentOf,
-      payKeyCommitmentKey: pureCircuits.payKeyCommitmentKey,
     }, { chainId: proposal.chainId, digest: proposal.digest, made }, theChainNow())).not.toThrow();
     /* RED WHEN: another signer's device does not open, as the run it builds again pays, what the filing committed to paying. */
     await expect(openTheRoundHere(storedFor(BO), CO, round.id, KEY, false, recordsOn(BO))).resolves.toMatchObject({ vault: VAULT });
@@ -460,7 +471,6 @@ describe('A RETRY IS RAISED ON THE SIGNER\'S DEVICE, OVER A TREE OF ONLY THE PEO
     const proposal = store.getProposal(round.id)!;
     expect(() => refuseWhatThisDeviceDidNotMake({
       runPayload: pureCircuits.runPayload, vaultDetails, payKeyCommitmentOf: pureCircuits.payKeyCommitmentOf,
-      payKeyCommitmentKey: pureCircuits.payKeyCommitmentKey,
     }, { chainId: proposal.chainId, digest: proposal.digest, made }, theChainNow())).not.toThrow();
     /* RED WHEN: the vault's public money is asked about the leg's people rather than the retry's one. */
     expect((JSON.parse(publicAsks.at(-1)!) as { payments: Array<{ amount: string }> }).payments.map((p) => p.amount)).toEqual([String(leg.facts![1]!.amount)]);
@@ -523,6 +533,20 @@ describe('A RETRY IS RAISED ON THE SIGNER\'S DEVICE, OVER A TREE OF ONLY THE PEO
     /* RED WHEN: a retry is proved over somebody the chain already records paid for the month. */
     await expect(raiseRetryOnDevice(raisingOn(ADA, AFTER), { runId, ...RETRY, indices: [0] })).rejects.toThrow(/already recorded as paid/);
     expect(filedNow()).toEqual(before);
+    /* RED WHEN: who is paid is read from the account state the service serves, which here says nobody is, and not by the wallet. */
+    servedLies = true;
+    await expect(raiseRetryOnDevice(raisingOn(ADA, AFTER), { runId, ...RETRY, indices: [0] })).rejects.toThrow(/already recorded as paid/);
+    expect(filedNow()).toEqual(before);
+  });
+
+  it('A SERVED STATE THAT LIES ABOUT THE PAY-RECORD KEY OR WHO IS PAID CHANGES NOTHING: THE WALLET\'S READ IS WHAT IS CHECKED', async () => {
+    servedLies = true;
+    /* RED WHEN: the pay-record key is held to the commitment the service served rather than the one the wallet read. */
+    const sent = await raiseRunOnDevice(raisingOn(ADA), { runId, ...RAISE });
+    expect(sent.raisedAt).toBeTruthy();
+    /* RED WHEN: the wallet is not asked about the payments of everybody the run pays. */
+    const record = legOf(runId).records!;
+    expect(walletReads.at(-1)).toEqual(record.map((r) => paidOnceOfNonce(payRecordNonceOf(STATE_BLINDING.payRecordKey as Hex, r))));
   });
 });
 

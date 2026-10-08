@@ -30,7 +30,8 @@ import { pureCircuits } from '../managed/contract/index.js';
 import { AccountSimulator, privateStateFor, change, type Change, payoutTreeOf, vaultRunOf } from './simulator.js';
 import { carryTheAccount, startTheVault, TEST_VAULT_SECRET } from './start-a-vault.js';
 import { type PayoutLeafInput } from '../../src/midnight/payout-tree.js';
-import { toHex, fromHex } from '../../src/core/crypto.js';
+import { toHex, fromHex, type Hex } from '../../src/core/crypto.js';
+import { coinsKeptBy } from '../../src/midnight/vault-coins.js';
 import { noFurtherNote } from '../../src/midnight/vault-step-notes.js';
 
 const VAULT_NOW = 1_800_000_000;
@@ -58,32 +59,9 @@ const vaultWitnesses = {
 const carrying = (sim: AccountSimulator, d: ReturnType<typeof privateStateFor>, c: Change) =>
   sim.applying(d, c);
 
-/**
- * EVERY coin this call sent back to the vault, in the order the outputs carry.
- *
- * Written here rather than taken from `src/midnight/vault-coins.ts`, and that
- * is a FINDING rather than a convenience: `changeCoinOf` throws when it finds
- * more than one output addressed to the vault — deliberately, because one
- * payment produces at most one change coin and guessing between two would hand
- * a caller something that is not the whole of what the vault holds. A split
- * produces exactly two. So the client that drives this circuit needs a
- * plural reader, and does not have one yet.
- */
-const coinsBackTo = (zswap: unknown, vaultAddress: string) => {
-  const outputs = (zswap as { outputs?: unknown[] } | undefined)?.outputs ?? [];
-  return outputs
-    .filter((o) => {
-      const r = (o as { recipient?: { is_left?: boolean; right?: { bytes?: Uint8Array } } })
-        .recipient;
-      return r?.is_left === false && r.right?.bytes !== undefined
-        && toHex(r.right.bytes) === vaultAddress;
-    })
-    .map((o) => {
-      const c = (o as { coinInfo: { nonce: Uint8Array; color: Uint8Array; value: bigint } })
-        .coinInfo;
-      return { nonce: c.nonce, color: c.color, value: c.value };
-    });
-};
+/** Every coin this call kept in the vault, as the product reads a split: both of them, in output order. */
+const coinsBackTo = (zswap: unknown, vaultAddress: string) =>
+  coinsKeptBy(zswap, vaultAddress as Hex).map((c) => ({ nonce: fromHex(c.nonce), color: fromHex(c.token), value: c.value }));
 
 /** The pool's record for a coin, from the contract's own two circuits. */
 const heldBy = (
@@ -192,6 +170,8 @@ describe('a vault splits one of its own notes', () => {
      */
     const { r, spent } = await split(TOKEN_BYTES, 300n, 0xb1);
     const back = coinsBackTo(r.context.callContext.currentZswapLocalState, toHex(vaultBytes()));
+    /* RED WHEN the product's reader answers one coin of a split's two: the piece and the rest are both the vault's. */
+    expect(back.map((c) => c.value)).toEqual([300n, 700n]);
     const piece = back.find((c) => c.value === 300n)!;
     expect(piece).toBeDefined();
     /* RED WHEN the piece's nonce is not the one worked out from the secret and the spent note. */

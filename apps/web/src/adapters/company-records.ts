@@ -5,8 +5,10 @@ import { assets, type AssetRegistry } from '../../../../src/core/assets.js';
 import { openRecord } from '../../../../src/core/sealed-records.js';
 import { onlyPayableWhenActive, openPerson, peopleOnTheWire } from '../../../../src/core/person-record.js';
 import type { Account, PayrollRun, Proposal, ProposalKind, ProposalStatus, SealedAccount, SealedProposal, SealedRun } from '../../../../src/core/types.js';
-import { api, canOpenCompanies, openKeysWithWallet, viewingKeyFor } from 'vaults-web-shared/keyring.js';
-import { openedHere } from './filing-judge.js';
+import { api, canOpenCompanies, holdersFromTheWallet, openKeysWithWallet, viewingKeyFor } from 'vaults-web-shared/keyring.js';
+import { openedHere, walletIndexerFor } from './filing-judge.js';
+import { theVaultBuilder } from './vault-builder.js';
+import type { AccountAddress, CompanyLabel } from 'midnight-identity/profile/company-label';
 import { paidPublicly } from 'vaults-web-shared/public-payment.js';
 import { keyringFor, keysOnTheWayIn } from './keyring-person.js';
 import { ACCOUNT_ORIGIN } from './session.js';
@@ -55,7 +57,7 @@ export { OPENED, READ, type Read };
 /** The service's addresses, the purposes its records are sealed for, and the words of its answers: sent and compared, never shown. */
 export const SERVICE = {
   company: '/api/accounts/', proposals: '/proposals', runs: '/runs', people: '/people',
-  vaults: '/vaults', vault: '/vaults/', chain: '/chain', invites: '/invites',
+  vaults: '/vaults', invites: '/invites',
   proposalsRecord: 'proposals', runsRecord: 'payroll',
   active: 'active', pending: 'pending', leaver: 'leaver', shielded: 'shielded', unshielded: 'unshielded',
 } as const;
@@ -324,6 +326,50 @@ export const vaultRow = (v: { vault: string; deployedAt: string; state: string }
   vault: v.vault, createdAt: v.deployedAt, standing: (VAULT_STANDINGS.includes(v.state) ? v.state : VAULT.unknown) as VaultStanding,
 });
 
+/** A vault sent and not yet adopted: its set-up is not finished, so it is not yet one of the company's vaults. */
+const NOT_YET_ADOPTED: ReadonlySet<string> = new Set([VAULT.handoverOwed, VAULT.startOwed, VAULT.notOnChain]);
+
+/** A row of the service's list of a company's vaults, as it answers it. */
+type ServedVault = { vault: string; deployedAt: string; state: string };
+
+/**
+ * **THE COMPANY'S VAULTS ARE THE VAULTS ITS ACCOUNT HAS ADOPTED, AS THE
+ * PERSON'S OWN WALLET READ THEM OFF THE CHAIN.** The service's list only
+ * says when each was made and where its set-up stands. A vault the account
+ * adopted that the service's list leaves out makes the whole list unreadable,
+ * so a list cut short is noticed rather than shown short; a vault the service
+ * lists that the account has not adopted is shown only as a set-up not
+ * finished, never as one of the company's vaults.
+ */
+export const vaultsAsTheChainHoldsThem = (served: readonly ServedVault[], adopted: readonly string[]): Read<readonly VaultRow[]> => {
+  const held = new Set(adopted.map((v) => v.toLowerCase()));
+  const listed = new Set(served.map((r) => r.vault.toLowerCase()));
+  if ([...held].some((v) => !listed.has(v))) return { of: READ.unreadable };
+  return { of: READ.read, value: served.filter((r) => held.has(r.vault.toLowerCase()) || NOT_YET_ADOPTED.has(r.state)).map(vaultRow) };
+};
+
+/**
+ * The vaults of the company `companyId`, whose record is `sealed`: the account's own, as the person's own wallet reads
+ * them, each with the service's row for it; unreadable when the company names no account yet, or either read fails.
+ */
+export async function vaultListOf(
+  companyId: string, sealed: Pick<SealedAccount, 'companyLabel' | 'contractAddress'>, read: (path: string) => Promise<unknown> = api,
+): Promise<Read<readonly VaultRow[]>> {
+  try {
+    const label = sealed.companyLabel ?? null;
+    const address = sealed.contractAddress ?? null;
+    if (label === null || address === null) return { of: READ.unreadable };
+    const [answer, wallet] = await Promise.all([
+      read(SERVICE.company + companyId + SERVICE.vaults) as Promise<{ rows?: unknown }>,
+      holdersFromTheWallet(ACCOUNT_ORIGIN, { company: label as CompanyLabel, account: address as AccountAddress }),
+    ]);
+    if (!Array.isArray(answer?.rows)) return { of: READ.unreadable };
+    return vaultsAsTheChainHoldsThem(answer.rows as ServedVault[], wallet.holders.adoptedVaults);
+  } catch {
+    return { of: READ.unreadable };
+  }
+}
+
 /**
  * THE COMPANY `companyId`'S RECORDS, FOR THE PERSON `personId`: opened with
  * the keys saved for them, then read, each read on its own.
@@ -362,7 +408,7 @@ export async function readCompany(personId: string, companyId: string): Promise<
       .map(({ rec, handedOver }) => ({ ...openPerson(rec, viewingKey), handedOver })), sealed.companyLabel ?? '')]
       .sort((a, b) => a.name.localeCompare(b.name))
       .map((p) => personRow(p))),
-    alone(async () => ((await ask(route(SERVICE.vaults)) as { rows: { vault: string; deployedAt: string; state: string }[] }).rows).map(vaultRow)),
+    vaultListOf(companyId, sealed, ask),
     alone(async () => invitationRows(await ask(route(SERVICE.invites)) as InviteRow[], Date.now())),
   ]);
   return {
@@ -388,15 +434,23 @@ export async function openWithYourAccount(personId: string): Promise<{ of: typeo
 }
 
 /**
- * WHAT THE VAULT `vault` HOLDS IN PUBLIC MONEY, read when the person asks, as
- * the legacy vault screen reads it: the service's view of the vault, read by
- * the shared reader. Null when it could not be read, which is never shown as
- * nothing held.
+ * WHAT THE VAULT `vault` HOLDS IN PUBLIC MONEY, read when the person asks: the
+ * vault's state read in this device's vault worker, at the indexer this
+ * person's own wallet names, and read by the shared reader. Null when it could
+ * not be read, the company names no account or label, or the wallet names no
+ * indexer, which is never shown as nothing held.
  */
 export async function readVaultPublicMoney(personId: string, companyId: string, vault: string): Promise<VaultPublicMoney | null> {
   try {
     if (!(await keyringFor(personId))) return null;
-    return await vaultPublicMoney(() => api(SERVICE.company + companyId + SERVICE.vault + vault + SERVICE.chain));
+    const sealed = await api(SERVICE.company + companyId) as SealedAccount;
+    const label = sealed.companyLabel ?? null;
+    const address = sealed.contractAddress ?? null;
+    if (label === null || address === null) return null;
+    const indexer = await walletIndexerFor(label as CompanyLabel, address as AccountAddress);
+    if (indexer === null) return null;
+    const builder = await theVaultBuilder();
+    return await vaultPublicMoney(() => builder.vaultOnChain({ vault, indexer }));
   } catch {
     return null;
   }

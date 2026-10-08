@@ -195,6 +195,13 @@ const paidRecord = (w: World) => [...w.sim.ledger.movements].map(hex).sort();
 /** The tokens a call minted, as [tag hex, amount]. */
 const mints = (w: World) => [...w.lastFx.unshieldedMints].map(([k, v]: [any, bigint]) => [typeof k === 'string' ? k : hex(k), v]);
 
+/**
+ * Every unshielded token a call claimed as sent, as [kind, token, recipient's kind, recipient, amount]. A receipt
+ * minted to any recipient balances in this simulator, so only this says whom the vault minted it to.
+ */
+const receiptsSent = (w: World) => [...w.lastFx.claimedUnshieldedSpends].map(([[token, to], amount]: [[any, any], bigint]) =>
+  [token.tag, typeof token.raw === 'string' ? token.raw : hex(token.raw), to.tag, String(to.address), amount]);
+
 /** The coin commitments a call claimed as made, as hex, however the runtime spells them. */
 const claimed = (w: World): string[] => [...w.lastFx.claimedShieldedSpends].map((x: any) =>
   typeof x === 'string' ? x : x instanceof Uint8Array ? hex(x) : String(x.bytes ? hex(x.bytes) : x));
@@ -253,6 +260,8 @@ describe('the nonce secret: approved, chained, never zero or repeated, and recor
     const payColour = L.rawTokenType(V.paymentReceiptTag(), w.addr);
     /* RED WHEN the run mints any other token or amount. */
     expect(mints(w)).toEqual([[hex(V.changeReceiptTag()), 1n]]);
+    /* RED WHEN the change receipt is claimed for anybody but the company's account. */
+    expect(receiptsSent(w)).toEqual([['unshielded', changeColour, 'contract', String(w.sim.address), 1n]]);
     /* RED WHEN the colours kept for later receipts are not the ledger's own. */
     expect(hex(w.ledger.secretCopies.lookup(V.changeReceiptKey()))).toBe(changeColour);
     expect(hex(w.ledger.secretCopies.lookup(V.paymentReceiptKey()))).toBe(payColour);
@@ -341,12 +350,12 @@ describe('the nonce secret: approved, chained, never zero or repeated, and recor
       .rejects.toThrow(/a secret is never set twice/);
   });
 
-  it('A RUN BELOW THE VAULT\'S BAR cannot set its secret', async () => {
+  it('A RUN BELOW THE COMPANY\'S BAR cannot set its secret', async () => {
     const w = await World.make([A, B, C], 3n);
     const commitment = V.secretCommitmentOf(w.self, SECRET);
     const tree = treeOf(commitment, [copyFor(1)]);
     const run = await w.approved(secretLeaf(w.self, ZERO, commitment, tree, 8), [0n], 408, [A, B]);
-    /* The bar is the vault's: the account's own threshold is three here, and two approved. */
+    /* The company's bar is three here, and two approved; a vault's own bar above the company's is held below, in the last describe. */
     /* RED WHEN the secret is set on fewer approvals than a payment from this vault needs. */
     await expect(w.call('setNonceSecret', run.runOf(0), ZERO, commitment, tree.root, tree.count, tree.edge, SECRET, ZERO))
       .rejects.toThrow(/not enough approvals yet/);
@@ -520,6 +529,9 @@ describe('paying: through the account\'s receipt step, with every new coin\'s no
     expect(w.notes()).toEqual([hex(w.held(changeCoin))]);
     /* RED WHEN the payment's receipt is not minted, or is the change receipt. */
     expect(mints(w)).toEqual([[hex(V.paymentReceiptTag()), 1n]]);
+    /* RED WHEN the receipt is claimed for anybody but the company's account: the vault itself, a user, or nobody. */
+    const L: any = await import('@midnight-ntwrk/midnight-js-protocol/ledger');
+    expect(receiptsSent(w)).toEqual([['unshielded', L.rawTokenType(V.paymentReceiptTag(), w.addr), 'contract', String(w.sim.address), 1n]]);
   });
 
   it('THE PAYEE\'S COIN carries the nonce worked out from the spent note, and no argument can choose it', async () => {
@@ -1094,5 +1106,100 @@ describe('a finished secret run is closed, and the company-wide secret change is
     /* The run is still open for the signers who stay. */
     await w.call('setNonceSecret', run.runOf(0), previous, commitment, tree.root, tree.count, tree.edge, NEXT_SECRET, SECRET);
     expect(w.ledger.nonceCommitment).toEqual(commitment);
+  });
+});
+
+/*
+ * **THE COMPANY-WIDE AND STRICTER-VAULT PATHS, THROUGH THE VAULT'S OWN STEPS.** The account's step decides both;
+ * these drive them from a payment and a split, so a vault that stopped asking the account the run's own vault, or
+ * asked it about another, is caught where money moves.
+ */
+describe('a company-wide run and a stricter vault, through a payment and a split', () => {
+  const NOTE: Coin = { nonce: bytes(0x77), color: TOKEN_BYTES, value: 1_000n };
+  const payee = (amount: bigint) => V.payoutDetails(ALICE, TOKEN_BYTES, amount, bytes(0x40));
+  /** A started vault holding NOTE, of a company of three whose bar is two. */
+  const started = async (): Promise<World> => {
+    const w = await World.make([A, B, C], 2n);
+    await w.setSecret(SECRET);
+    await w.deposit(NOTE);
+    return w;
+  };
+  /** The vault's own bar, set by the company. */
+  const setBar = async (w: World, to: bigint, seed: number) => {
+    const tc = change(0n, seed);
+    const bar = P.setVaultThresholdPayload(w.self, to);
+    await w.sim.as(w.sim.applying(A, tc)).propose(bar);
+    const bid = w.sim.proposalId(bar, tc.salt);
+    await w.sim.as(A).approve(bid);
+    await w.sim.as(B).approve(bid);
+    await w.sim.as(w.sim.applying(A, tc)).setVaultThreshold(w.self, to, bid);
+  };
+  /** One leaf, bound to this vault, on a company-wide run. */
+  const companyWide = (w: World, details: Uint8Array, amount: bigint, seed: number, approvers = [A, B]) =>
+    w.approved([{ details: toHex(P.companyWideDetailsOf(details, w.self)), nonce: toHex(bytes(seed)) }], [amount], 900 + seed, approvers, P.companyWide());
+  const splitOf = (w: World, amount: bigint) => V.splitDetails(w.self, w.nullifierOf(NOTE), TOKEN_BYTES, amount);
+
+  it('A COMPANY-WIDE RUN PAYS FROM A VAULT WITH NO BAR OF ITS OWN, and records the payment once', async () => {
+    const w = await started();
+    const run = await companyWide(w, payee(250n), 250n, 0xd1);
+    await w.call('payout', run.runOf(0), ALICE, TOKEN_BYTES, 250n, bytes(0x40), noFurtherNote());
+    /* RED WHEN the vault stops paying a leaf the company approved for it on a company-wide run. */
+    expect(w.sim.ledger.movements.member(P.paidOnceOf(bytes(0xd1)))).toBe(true);
+    expect(w.ledger.payments).toBe(1n);
+  });
+
+  it('A COMPANY-WIDE RUN SPLITS A NOTE OF A VAULT WITH NO BAR OF ITS OWN, and records no payment', async () => {
+    const w = await started();
+    const before = paidRecord(w);
+    const run = await companyWide(w, splitOf(w, 300n), 0n, 0xd2);
+    await w.call('splitNote', run.runOf(0), TOKEN_BYTES, 300n);
+    /* RED WHEN a split on a company-wide run is refused, or recorded as a payment. */
+    expect(w.ledger.splitJournal.member(w.nullifierOf(NOTE))).toBe(true);
+    expect(paidRecord(w)).toEqual(before);
+  });
+
+  it('A VAULT STRICTER THAN THE COMPANY REFUSES A COMPANY-WIDE PAYMENT AND SPLIT, and pays on a run of its own at its own bar', async () => {
+    const w = await started();
+    await setBar(w, 3n, 0xd3);
+    const pay = await companyWide(w, payee(250n), 250n, 0xd4);
+    /* RED WHEN the payment step stops comparing the paying vault's own bar with the company's. */
+    await expect(w.call('payout', pay.runOf(0), ALICE, TOKEN_BYTES, 250n, bytes(0x40), noFurtherNote()))
+      .rejects.toThrow(/needs more approvals than the company's threshold; pay it through a run of its own/);
+    const split = await companyWide(w, splitOf(w, 300n), 0n, 0xd5);
+    /* RED WHEN the change step stops comparing it on a split. */
+    await expect(w.call('splitNote', split.runOf(0), TOKEN_BYTES, 300n))
+      .rejects.toThrow(/needs more approvals than the company's threshold; change it through a run of its own/);
+    expect(w.notes()).toEqual([hex(w.held({ ...NOTE }))]);
+    expect(w.sim.ledger.movements.member(P.paidOnceOf(bytes(0xd4)))).toBe(false);
+    /* Its own run, approved by all three, pays. */
+    const own = await w.approved([{ details: toHex(payee(250n)), nonce: toHex(bytes(0xd6)) }], [250n], 0xd6, [A, B, C]);
+    await w.call('payout', own.runOf(0), ALICE, TOKEN_BYTES, 250n, bytes(0x40), noFurtherNote());
+    expect(w.sim.ledger.movements.member(P.paidOnceOf(bytes(0xd6)))).toBe(true);
+  });
+
+  it('A RUN OF ITS OWN BELOW THE VAULT\'S BAR, though at the company\'s, pays nothing, splits nothing and sets no secret', async () => {
+    const w = await started();
+    await setBar(w, 3n, 0xd7);
+    const pay = await w.approved([{ details: toHex(payee(250n)), nonce: toHex(bytes(0xd8)) }], [250n], 0xd8, [A, B]);
+    /* RED WHEN a vault's own run is held to the company's bar rather than the vault's. */
+    await expect(w.call('payout', pay.runOf(0), ALICE, TOKEN_BYTES, 250n, bytes(0x40), noFurtherNote()))
+      .rejects.toThrow(/not enough approvals yet/);
+    const split = await w.approved([{ details: toHex(splitOf(w, 300n)), nonce: toHex(bytes(0xd9)) }], [0n], 0xd9, [A, B]);
+    await expect(w.call('splitNote', split.runOf(0), TOKEN_BYTES, 300n)).rejects.toThrow(/not enough approvals yet/);
+    /* RED WHEN: a refused payment or split leaves anything behind: the note spent, a payment recorded, a journal entry. */
+    expect(w.notes()).toEqual([hex(w.held(NOTE))]);
+    expect(w.sim.ledger.movements.member(P.paidOnceOf(bytes(0xd8)))).toBe(false);
+    expect(w.ledger.splitJournal.member(w.nullifierOf(NOTE))).toBe(false);
+    /* Its own run at its own bar splits. */
+    const ownSplit = await w.approved([{ details: toHex(splitOf(w, 300n)), nonce: toHex(bytes(0xdb)) }], [0n], 0xdb, [A, B, C]);
+    await w.call('splitNote', ownSplit.runOf(0), TOKEN_BYTES, 300n);
+    expect(w.ledger.splitJournal.member(w.nullifierOf(NOTE))).toBe(true);
+    const commitment = V.secretCommitmentOf(w.self, NEXT_SECRET);
+    const tree = treeOf(commitment, [copyFor(2)]);
+    const previous = w.ledger.nonceCommitment;
+    const secret = await w.approved(secretLeaf(w.self, previous, commitment, tree, 0xda), [0n], 0xda, [A, B]);
+    await expect(w.call('setNonceSecret', secret.runOf(0), previous, commitment, tree.root, tree.count, tree.edge, NEXT_SECRET, SECRET))
+      .rejects.toThrow(/not enough approvals yet/);
+    expect(w.ledger.nonceCommitment).toEqual(previous);
   });
 });

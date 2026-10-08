@@ -5,12 +5,12 @@ import type { Hex } from '../../../../src/core/crypto.js';
 import { SealedNotePool } from '../../../../src/midnight/vault-pool.js';
 import { deviceVaultHoldings } from 'vaults-web-shared/device-vault-holdings.js';
 import { api, companyKeyReleasedFor, currentUser } from 'vaults-web-shared/keyring.js';
-import { deviceRecordsFor, deviceSignerFrom, readersIn, vaultServiceFor } from 'vaults-web-shared/vault-page-doors.js';
+import { deviceRecordsFor, deviceSignerFrom, readersIn } from 'vaults-web-shared/vault-page-doors.js';
 import { wireOf } from 'vaults-web-shared/vault-operation.js';
 import { Fault, FAULT } from '../faults.js';
 import { companyRoute } from './handover-state.js';
 import { keyringFor, keysOnTheWayIn } from './keyring-person.js';
-import { directoryHereFor, filingJudgeFor, openedHere } from './filing-judge.js';
+import { directoryHereFor, filingJudgeFor, openedHere, walletIndexerFor } from './filing-judge.js';
 import type { AccountAddress, CompanyLabel } from 'midnight-identity/profile/company-label';
 import { theVaultBuilder } from './vault-builder.js';
 
@@ -24,9 +24,9 @@ import { theVaultBuilder } from './vault-builder.js';
  * (`deviceVaultHoldings`), given the same doors: the vault's pool opened with
  * the records key this signer's wallet released for the company, filed under
  * their seat, the seats the company's directory names as the ones the pool is
- * wrapped to, the company's service asked what the
- * chain holds for the vault, and each note's commitment worked out in the
- * page's vault worker. The pool is believed only when a seat the company's
+ * wrapped to, the vault's notes read off the chain in the page's vault worker
+ * at the indexer the person's own wallet names, and each note's commitment
+ * worked out in the same worker. The pool is believed only when a seat the company's
  * directory names filed it, checked against a fresh read by the person's own
  * wallet. The notes are summed only when the pool and the chain agree both
  * ways. Nothing it reads leaves this device; the vault's address
@@ -80,7 +80,12 @@ export async function readVaultPrivateMoney(
     const records = deviceRecordsFor(me.signingSecret, judge, () => currentUser()?.id ?? null);
     const pool = new SealedNotePool(records(LEDGER.pool), { signerId: mine.signerId, wrappingSecret: mine.wrappingSecret }, readers.signers);
     const holdings = deviceVaultHoldings({
-      chain: (v) => vaultServiceFor(api, account.id, async () => account).chain(v),
+      /* The vault's notes as the chain holds them, read in this device's vault worker at the indexer this person's own wallet names. */
+      chain: async (v) => {
+        const indexer = await walletIndexerFor(label as CompanyLabel, address as AccountAddress);
+        /* A wallet that names no indexer has the vault read nowhere: the reader answers that the chain was not read. */
+        return indexer === null ? { onChain: false } : builder.vaultOnChain({ vault: v, indexer });
+      },
       pool: async (v) => (await pool.load(v)).notes,
       heldCommitmentOf: async (v, note) => (await builder.commitments({ vault: v, coin: wireOf(note) })).held,
       /* Only what the vault holds is read here; whether payments fit is asked where a payment is made. */

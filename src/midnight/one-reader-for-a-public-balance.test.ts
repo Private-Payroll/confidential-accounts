@@ -5,7 +5,9 @@
  * contract's latest action. The vault client builds `unshieldedBalance` and
  * `unshieldedHoldings` on it, and every payout check, holdings read and
  * operator door asks those; the company's service calls it once, for the
- * vault's screen, and the page reads only what the service sent.
+ * vault's view, and the device calls it once, where its worker reads a vault
+ * at the indexer the person's own wallet names. The page's screens read only
+ * that device read, through the vault holdings reader.
  *
  * This reads the source and fails the day a second way in appears: the
  * indexer's balance query, which answers a vault's deploy rather than its
@@ -83,7 +85,7 @@ const BALANCE_QUERY = /\bqueryUnshieldedBalances\b/u;
 const BALANCE_READ = /\??\.\s*balance\b(?!\s*\()|\[\s*['"]balance['"]\s*\]|\{[^{}]*\bbalance\b[^{}]*\}\s*=(?!=)/gu;
 /** The one reader, by name: a call, a reference, or an import under another name. */
 const READER_NAMED = /\bpublicHoldingsOf\b/u;
-/** The page's copy of what the service read. */
+/** A vault's public balances, as the page holds them. */
 const SERVED_LIST = /\bpublicBalances\b/u;
 
 const where = (pattern: RegExp) => FILES.filter((f) => pattern.test(f.code)).map((f) => f.file).sort();
@@ -152,15 +154,15 @@ describe('a vault\'s public balance has one way in', () => {
       Object.entries(NOT_A_CONTRACT_BALANCE).map(([file, { count: n }]) => [file, n])));
   });
 
-  it('the reader is named by the vault client and by the service\'s vault view, and by nothing else', () => {
-    /* RED WHEN a caller reads the balance off a state itself instead of asking the vault client's reader. */
+  it('the reader is named by the vault client, by the service\'s vault view and by the device\'s read of a vault, and by nothing else', () => {
+    /* RED WHEN a caller reads the balance off a state itself instead of asking the one reader. */
     expect(where(READER_NAMED).filter((f) => f !== 'src/midnight/public-balance.ts'))
-      .toEqual(['src/midnight/vault-ledger.ts', 'src/server/company-vaults.ts']);
+      .toEqual(['packages/web-shared/src/vault-on-chain-here.ts', 'src/midnight/vault-ledger.ts', 'src/server/company-vaults.ts']);
   });
 
-  it('on the page, only the vault holdings reader reads the list the service sent', () => {
-    /* RED WHEN a screen reads the served list itself and so skips the refusal of a list it cannot read. */
+  it('on the page, the device\'s read of a vault writes the list, it crosses from the worker, and only the vault holdings reader reads it', () => {
+    /* RED WHEN a screen reads the list itself and so skips the refusal of a list it cannot read. */
     expect(where(SERVED_LIST).filter((f) => f.startsWith('apps/web/') || f.startsWith('packages/web-shared/')))
-      .toEqual(['packages/web-shared/src/device-vault-holdings.ts']);
+      .toEqual(['packages/web-shared/src/device-vault-holdings.ts', 'packages/web-shared/src/vault-on-chain-here.ts', 'packages/web-shared/src/vault-worker-client.ts']);
   });
 });

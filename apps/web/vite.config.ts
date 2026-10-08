@@ -52,7 +52,7 @@ export const SERVED_FROM = [
  * was measured when it was set; a test holds it within a kilobyte of what is built, so when the
  * download falls the budget is lowered with it.
  */
-export const FIRST_DOWNLOAD_BUDGET = 680_811;
+export const FIRST_DOWNLOAD_BUDGET = 681_429;
 
 /**
  * THE WORKERS THIS APPLICATION STARTS, by their entry's path from this folder,

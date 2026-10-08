@@ -41,7 +41,9 @@ import { companyRecordKey } from '../../../src/midnight/seat-directory.js';
 import { payRecordNonceOf } from '../../../src/midnight/run-keys.js';
 import type { RaisingHere } from './what-this-device-made.js';
 import type { PeopleHere } from './people-on-device.js';
-import type { RunMadeHere } from './what-this-device-made.js';
+import type { RunMadeHere, WalletReadFacts } from './what-this-device-made.js';
+import { paymentEntriesOf } from './payment-entries.js';
+import type { AccountPaymentFacts } from 'midnight-identity/profile/records-key';
 
 /** The company's records this device reads a run from. */
 export interface CompanyRecordsHere {
@@ -59,6 +61,18 @@ export interface CompanyRecordsHere {
   readonly runs: () => Promise<readonly SealedRun[]>;
   /** The company's proposals, sealed as they are stored. Read where a raise or a retry is made here. */
   readonly proposals?: () => Promise<readonly SealedProposal[]>;
+  /**
+   * **WHAT THE ACCOUNT RECORDS ABOUT PAYMENTS, READ BY THE PERSON'S OWN
+   * WALLET**: `read` asks the wallet which of the given entries of the
+   * account's record of payments it holds, and the commitment it holds to its
+   * pay-record key (`holdersFromTheWallet` with `movements`); `paidOnceOf` is
+   * the account's own circuit an entry is made with. A page without it raises
+   * and approves no payroll run.
+   */
+  readonly payments?: {
+    readonly paidOnceOf: (nonce: Uint8Array) => Uint8Array;
+    readonly read: (entries: readonly string[]) => Promise<AccountPaymentFacts>;
+  };
   readonly registry?: AssetRegistry;
 }
 
@@ -216,7 +230,7 @@ export async function runRebuiltHere(
   const facts = await payableFactsHere(records, paid, 'Leave this proposal unapproved until their record is put right.',
     'This device will not approve a run it would not pay.');
   const window = retry ?? payout;
-  return {
+  const made: RunMadeHere = {
     kind: 'payroll',
     seeds: state.seeds,
     payKey: state.payKey,
@@ -229,6 +243,29 @@ export async function runRebuiltHere(
     required: String(window.required ?? 0n),
     ...(retry === undefined ? {} : { retry: [...retry.originalIndices] }),
   };
+  return withWhatTheWalletRead(records, made);
+}
+
+/**
+ * **A RUN MADE HERE, WITH WHAT THE PERSON'S OWN WALLET READ ABOUT ITS
+ * PAYMENTS**: which of its entries the account already records, and the
+ * account's commitment to its pay-record key. Where the run is proved, these
+ * are what it is checked against, never the account state the service serves.
+ * A page that cannot ask the wallet returns the run without them, and the run
+ * is then refused where it is proved.
+ */
+export async function withWhatTheWalletRead(records: CompanyRecordsHere, made: RunMadeHere): Promise<RunMadeHere> {
+  if (records.payments === undefined) return made;
+  const asked = paymentEntriesOf(made, records.payments.paidOnceOf);
+  let read: AccountPaymentFacts;
+  try {
+    read = await records.payments.read(asked);
+  } catch (e) {
+    throw new RunNotReadHere(`Your wallet could not read from the network whether the people on this run were already paid `
+      + `(${(e as Error)?.message ?? String(e)}). Try again in a minute.`, { cause: e });
+  }
+  const wallet: WalletReadFacts = { payKeyCommitment: read.payKeyCommitment, asked, held: [...read.held] };
+  return { ...made, wallet };
 }
 
 /**

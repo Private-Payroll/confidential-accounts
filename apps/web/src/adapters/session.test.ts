@@ -428,3 +428,47 @@ describe('a company one person left unfinished is never handed to the next', () 
     expect(keyring.companyAwaitingSetup()).toBeNull();
   });
 });
+
+describe('who holds a company, asked of the account with nothing shown', () => {
+  /*
+   * RED WHEN: a holders ask shows the person's account, says the page is waiting
+   * on it, goes through the frame a person reads other asks in, or leaves its own
+   * frame behind once answered.
+   */
+  it('asks in a hidden frame of its own, shows nothing and says nothing is waiting, and takes the frame away', async () => {
+    const m = await load();
+    const keyring = await import('vaults-web-shared/keyring.js');
+    keyring.signedInByAnotherScreen({ user: { id: 'u1', email: null, name: 'x' }, address: 'mn_addr_a' });
+    const seen: boolean[] = [];
+    const stop = m.onWaiting((w) => seen.push(w));
+    const company = 'co_1f2e3d4c5b6a79880a1b2c3d4e5f60718293a4b5c6d7e8f90a1b2c3d4e5f6071';
+    const account = 'dbe119a304f8e7ea882353435c1d536cf2faf4298236a9aae77670e750af65c8';
+    const asking = keyring.holdersFromTheWallet(ACCOUNT, { company: company as never, account: account as never });
+    const frame = document.querySelector('iframe') as HTMLIFrameElement;
+    expect(frame).not.toBeNull();
+    expect(frame.hidden).toBe(true);
+    const quietPosted: Array<{ nonce: string; kind: string }> = [];
+    (frame.contentWindow as unknown as { postMessage: (m: unknown) => void }).postMessage = (msg) => { quietPosted.push(msg as never); };
+    const fromTheQuietFrame = (data: unknown) => {
+      const e = new MessageEvent('message', { data, origin: ACCOUNT });
+      Object.defineProperty(e, 'source', { value: frame.contentWindow });
+      window.dispatchEvent(e);
+    };
+    fromTheQuietFrame({ schema: READY });
+    expect(quietPosted.map((x) => x.kind)).toEqual(['holders']);
+    expect(m.accountFrame.shown()).toBe(false);
+    expect(posted).toEqual([]);
+    fromTheQuietFrame({
+      schema: 'midnight-identity/holders-answer/v1', origin: window.location.origin, company, account, nonce: quietPosted[0]!.nonce, at: 1,
+      holders: {
+        committee: [{ tag: 'schnorr', value: '11'.repeat(32) }], threshold: 1, seats: ['5a'.repeat(32)], approvals: 1, adoptedVaults: [],
+        founding: '5a'.repeat(32), foundingCommittee: [{ tag: 'schnorr', value: '11'.repeat(32) }],
+      },
+    });
+    expect((await asking).holders.approvals).toBe(1);
+    expect(document.querySelector('iframe')).toBeNull();
+    expect(seen).toEqual([]);
+    expect(m.accountFrame.shown()).toBe(false);
+    stop();
+  });
+});
