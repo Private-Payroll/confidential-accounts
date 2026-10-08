@@ -161,6 +161,8 @@ const nameOf = (tx: any): string => {
 class Chain {
   state: any = L.LedgerState.blank(NET);
   everCreated = new Map<string, Set<string>>();
+  /* The state each deploy left at its address, as an indexer answers for the deploy of a contract. */
+  deploys = new Map<string, any>();
   events = new Map<string, any[]>();
   applied: Array<{ name: string; ok: boolean; error: string; tx: any }> = [];
   apply(tx: any): { ok: boolean; error: string } {
@@ -176,6 +178,11 @@ class Chain {
     const ok = result.type === 'success';
     const name = nameOf(tx);
     if (ok) {
+      for (const intent of tx.intents?.values() ?? []) {
+        for (const action of intent.actions ?? []) {
+          if (action.initialState !== undefined && action.address !== undefined) this.deploys.set(String(action.address).toLowerCase(), action.initialState);
+        }
+      }
       /* Each transaction is its own block, so the commitment tree's root is one a later spend may prove against. */
       this.state = next.postBlockUpdate(now);
       this.events.set(name, [...result.events]);
@@ -250,6 +257,21 @@ describe.skipIf(!KEYS_ON_DISK)('A PRIVATE PAYMENT OUT OF A COMPANY VAULT, FROM T
   const builder = () => {
     const deps = async () => ({
       ledger: L, vault: vaultModule, runtimeState: (runtime as any).ContractState, contracts: contracts as any,
+      /*
+       * The indexer the wallet names, over this chain: the vault's state as the ledger holds it, and every output the
+       * chain made for it, served as one transaction's events. The worker reads the vault from these and nothing else.
+       */
+      chainSourceAt: () => ({
+        contractState: async (v: string) => chain.contract(v),
+        deployState: async (v: string) => chain.deploys.get(v.toLowerCase()) ?? null,
+        transactions: { of: async () => ['e0'.repeat(32)] as never },
+        events: {
+          eventsOf: async () => [...chain.everCreated.values()].flatMap((made, i) => [...made].map((commitment) => ({
+            transactionHash: 'e0'.repeat(32),
+            details: { tag: 'zswapOutput', commitment, contract: [...chain.everCreated.keys()][i]!, mtIndex: 0n },
+          }))),
+        },
+      }),
       compiled: vaultCompiled({ noteToSpend: () => { throw new Error('nothing here spends'); }, nonceSecret: () => { throw new Error('nothing here spends'); } }),
       compiledWith: (w: ReturnType<typeof witnessesOver>) => vaultCompiled(w),
       zkConfig: both,
@@ -493,6 +515,8 @@ describe.skipIf(!KEYS_ON_DISK)('A PRIVATE PAYMENT OUT OF A COMPANY VAULT, FROM T
    */
   const pacing = {
     sleep: async () => {}, waitMs: 3, everyMs: 1, vaultName: (v: string) => v,
+    /* The indexer this signer's own wallet names: the worker reads the vault there, over the chain above. */
+    indexer: async () => ({ indexerUri: 'https://indexer.example/api/v3/graphql', indexerWsUri: 'wss://indexer.example/api/v3/graphql/ws' }),
     approvers: async () => approverRosterFrom({
       threshold: 1, vaultThresholds: [], seated: ['e1', 'e2', 'e3'].map((leaf) => ({ leaf })), adoptedVaults: [], companyWide: 'cc'.repeat(32),
     }),
@@ -531,7 +555,7 @@ describe.skipIf(!KEYS_ON_DISK)('A PRIVATE PAYMENT OUT OF A COMPANY VAULT, FROM T
             signRecordsKey(identityFromWords(words), LABEL, company as never, me.companyKey, hex(leafOfDevice(founder)))),
         }, signing.secret));
     const poolDoors = {
-      ...pacing, service, account: readAccountAddress(company)!, onChain: walletReads,
+      ...pacing, service, builder: builder(), account: readAccountAddress(company)!, onChain: walletReads,
       me, myRecordsKey: recordsReaderOf(me.companyKey).publicKey, signers, records,
     };
     /* The founding signer's press, with who holds the account as their wallet read it off the chain just then. */

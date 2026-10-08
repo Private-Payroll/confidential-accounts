@@ -95,11 +95,13 @@ export type VaultAsk =
    * exactly that committee, this build's circuits, nothing written.
    */
   | { id: number; network: string; ask: 'born-held-vault'; account: string; holders: Committee }
-  | { id: number; network: string; ask: 'vault-as-deployed'; vault: string; account: string; holders: Committee; deploy: string }
+  | { id: number; network: string; ask: 'vault-as-deployed'; vault: string; account: string; holders: Committee; indexer: { indexerUri: string; indexerWsUri: string } }
   | { id: number; network: string; ask: 'handover'; vault: string; counter: string; temporaryKey: SigningKeyOnTheWire; to: Committee }
   | { id: number; network: string; ask: 'deposit'; vault: string; coin: CoinOnTheWire; state: string; parameters: string }
   | { id: number; network: string; ask: 'public-deposit'; vault: string; token: string; amount: string; state: string; parameters: string }
   | { id: number; network: string; ask: 'commitments'; vault: string; coin: CoinOnTheWire }
+  | { id: number; network: string; ask: 'step-kept'; vault: string; secret: string; step: StepOnTheWire }
+  | { id: number; network: string; ask: 'vault-on-chain'; vault: string; indexer: { indexerUri: string; indexerWsUri: string } }
   | { id: number; network: string; ask: 'own-seat'; material: SignerMaterial }
   /* The founding signer's seat in a company made on this device: its leaf, and the scope it was made under. */
   | { id: number; network: string; ask: 'founding-seat'; material: { signingSecret: string; blinding: string } }
@@ -111,14 +113,14 @@ export type VaultAsk =
     signingSecret: string; wrappingPublicKey: string;
   }
   | { id: number; network: string; ask: 'secret-is-the-vaults'; vault: string; state: string; secret: string }
-  | { id: number; network: string; ask: 'choose-note'; notes: readonly NoteOnTheWire[]; token: string; amount: string }
+  | { id: number; network: string; ask: 'notes-for-payment'; notes: readonly NoteOnTheWire[]; token: string; amount: string }
   | {
     id: number; network: string; ask: 'payments-fit'; notes: readonly NoteOnTheWire[];
     payments: ReadonlyArray<{ token: string; amount: string }>;
   }
   | {
     id: number; network: string; ask: 'after-payment'; notes: readonly NoteOnTheWire[];
-    spent: string; amount: string; change: NoteOnTheWire | null; createdIn: string | null;
+    spent: string; further?: readonly string[]; amount: string; change: NoteOnTheWire | null; createdIn: string | null;
   }
   | {
     id: number; network: string; ask: 'confirm-payment'; vault: string; transactionHash: string;
@@ -130,7 +132,8 @@ export type VaultAsk =
   }
   | {
     id: number; network: string; ask: 'payout'; vault: string; account: string; order: OrderOnTheWire;
-    payment: PrivatePaymentOnTheWire; note: NoteOnTheWire; events: readonly EventOnTheWire[]; chain: PayoutChainOnTheWire;
+    payment: PrivatePaymentOnTheWire; note: NoteOnTheWire; events: readonly EventOnTheWire[];
+    further?: ReadonlyArray<{ readonly note: NoteOnTheWire; readonly events: readonly EventOnTheWire[] }>; chain: PayoutChainOnTheWire;
     /** The vault's current nonce secret, opened on this device, for this one payment. */
     secret: string;
   }
@@ -182,12 +185,14 @@ export type VaultAnswer =
   | Answered<'deposit', { tx: string }>
   | Answered<'public-deposit', { tx: string }>
   | Answered<'commitments', { output: string; held: string }>
+  | Answered<'step-kept', { kept: NoteOnTheWire | null }>
+  | Answered<'vault-on-chain', { read: VaultOnChainOnTheWire }>
   | Answered<'own-seat', { seat: string }>
   | Answered<'founding-seat', { seat: string; scope: string }>
   | Answered<'creation-again', { account: string; deploy: string; insert: string }>
   | Answered<'pay-key-standing', { standing: PayKeyStandingOnTheWire }>
   | Answered<'secret-is-the-vaults', { matches: boolean }>
-  | Answered<'choose-note', { note: NoteOnTheWire }>
+  | Answered<'notes-for-payment', { notes: NoteOnTheWire[] }>
   | Answered<'payments-fit', { answer: PaymentsFitAnswer }>
   | Answered<'after-payment', { notes: NoteOnTheWire[] }>
   | Answered<'confirm-payment', { confirmation: PaymentConfirmation }>
@@ -206,6 +211,39 @@ type Without<T> = T extends unknown ? Omit<T, 'id' | 'network'> : never;
 export type VaultRequest = Without<VaultAsk>;
 
 /** What the page needs from wherever vault transactions are built. */
+/**
+ * **A VAULT AS THE CHAIN HOLDS IT, AS THIS DEVICE READ IT.** `onChain: false`
+ * when the indexer holds no state for the address. `notes` and `everCreated`
+ * are commitments, 64 hex characters each; `notes` is absent when the state was
+ * not laid out the way this build's vault is (`notesWhy` says why). `authority`
+ * is who holds the vault; `account` the company account it is pinned to;
+ * `started` whether its first secret is set and every sealed copy written.
+ */
+export type VaultOnChainOnTheWire =
+  | { readonly onChain: false }
+  | {
+    readonly onChain: true;
+    readonly state: string;
+    readonly notes?: readonly string[];
+    readonly notesFromThisBuild: boolean;
+    readonly notesWhy?: string;
+    readonly everCreated: readonly string[];
+    readonly authority: { readonly committee: ReadonlyArray<{ readonly tag: string; readonly value: string }>; readonly threshold: number } | null;
+    readonly account: string | null;
+    readonly started: boolean;
+    /** What it holds in public money, read off its state; absent, with why, when that could not be read. */
+    readonly publicBalances?: ReadonlyArray<{ readonly token: string; readonly amount: string }>;
+    readonly publicBalancesWhy?: string;
+  };
+
+/** One step of the vault's payment journal as it crosses to the worker: its notes in place order, what left, and whether it was a merge. */
+interface StepOnTheWire {
+  readonly spent: NoteOnTheWire;
+  readonly further?: readonly NoteOnTheWire[];
+  readonly amount: string;
+  readonly merge?: boolean;
+}
+
 export interface VaultBuilderClient {
   deploy(account: string): Promise<{ vault: string; temporaryKey: SigningKeyOnTheWire; tx: string }>;
   /**
@@ -226,7 +264,11 @@ export interface VaultBuilderClient {
    * `holders`, pinned to `account`, with this build's circuits and nothing
    * written; otherwise the sentence that says what it is instead.
    */
-  vaultAsDeployed?(input: { vault: string; account: string; holders: Committee; deploy: string }): Promise<{ refusal: string | null }>;
+  /**
+   * The vault as its deploy made it, read in the worker from the deploy the
+   * chain holds for its address, at the indexer the person's own wallet names.
+   */
+  vaultAsDeployed?(input: { vault: string; account: string; holders: Committee; indexer: { indexerUri: string; indexerWsUri: string } }): Promise<{ refusal: string | null }>;
   handover(input: { vault: string; counter: bigint; temporaryKey: SigningKeyOnTheWire; to: Committee }): Promise<{ tx: string }>;
   /** `state` and `parameters` are base64 of the vault's state and of the ledger parameters the chain holds now. */
   deposit(input: { vault: string; coin: CoinOnTheWire; state: string; parameters: string }): Promise<{ tx: string }>;
@@ -236,6 +278,17 @@ export interface VaultBuilderClient {
    */
   publicDeposit?(input: { vault: string; token: string; amount: string; state: string; parameters: string }): Promise<{ tx: string }>;
   commitments(input: { vault: string; coin: CoinOnTheWire }): Promise<{ output: string; held: string }>;
+  /**
+   * The one coin a step written in the vault's payment journal kept, if it
+   * landed, worked out with the vault's own functions under `secret`: a merge's
+   * coin, or a payment's change; `null` when it kept none.
+   */
+  stepKept(input: { vault: string; secret: string; step: StepOnTheWire }): Promise<NoteOnTheWire | null>;
+  /**
+   * The vault as the chain holds it, read in this worker from the indexer the
+   * person's own wallet names (`indexer`), and from nowhere else.
+   */
+  vaultOnChain(input: { vault: string; indexer: { indexerUri: string; indexerWsUri: string } }): Promise<VaultOnChainOnTheWire>;
   /**
    * The seat this signer's own key material makes on the company's account: the
    * leaf the account holds for them, worked out here and not taken from any record.
@@ -259,14 +312,21 @@ export interface VaultBuilderClient {
    * function, against the one the state holds.
    */
   secretIsTheVaults(input: { vault: string; state: string; secret: string }): Promise<boolean>;
-  chooseNote(input: { notes: readonly NoteOnTheWire[]; token: string; amount: string }): Promise<NoteOnTheWire>;
+  /**
+   * The notes a payment spends, by the one choice every payment makes: in place
+   * order, the first the one the vault is offered and the rest the further notes
+   * the payment takes. Refuses with what the pool holds.
+   */
+  notesForPayment(input: { notes: readonly NoteOnTheWire[]; token: string; amount: string }): Promise<NoteOnTheWire[]>;
   /**
    * Whether the notes can make every payment in turn: `fits`, or `does-not-fit`
    * naming the first they cannot. Refuses only when it could not ask.
    */
   paymentsFit(input: { notes: readonly NoteOnTheWire[]; payments: ReadonlyArray<{ token: string; amount: string }> }): Promise<PaymentsFitAnswer>;
+  /** The pool after a payment landed: `spent` and every `further` note gone, the change added. */
   afterPayment(input: {
-    notes: readonly NoteOnTheWire[]; spent: string; amount: string; change: NoteOnTheWire | null; createdIn: string | null;
+    notes: readonly NoteOnTheWire[]; spent: string; further?: readonly string[]; amount: string;
+    change: NoteOnTheWire | null; createdIn: string | null;
   }): Promise<NoteOnTheWire[]>;
   /** What this payment's own events say about it. */
   confirmPayment(input: {
@@ -278,7 +338,10 @@ export interface VaultBuilderClient {
   }): Promise<CreatingTransactionAnswer>;
   payout(input: {
     vault: string; account: string; order: OrderOnTheWire; payment: PrivatePaymentOnTheWire;
-    note: NoteOnTheWire; events: readonly EventOnTheWire[]; chain: PayoutChainOnTheWire;
+    note: NoteOnTheWire; events: readonly EventOnTheWire[];
+    /** The further notes the payment draws on, in place order, each with the events of the transaction that created it. */
+    further?: ReadonlyArray<{ readonly note: NoteOnTheWire; readonly events: readonly EventOnTheWire[] }>;
+    chain: PayoutChainOnTheWire;
     /** The vault's current nonce secret, opened on this device. */
     secret: string;
   }): Promise<{ tx: string; spent: string; change: NoteOnTheWire | null }>;
@@ -378,6 +441,8 @@ export function vaultBuilderOver(worker: WorkerLike, network: string): VaultBuil
       const a = await ask({ ask: 'commitments', ...input });
       return { output: a.output, held: a.held };
     },
+    stepKept: async (input) => (await ask({ ask: 'step-kept', ...input })).kept,
+    vaultOnChain: async (input) => (await ask({ ask: 'vault-on-chain', ...input })).read,
     ownSeat: async (material) => (await ask({ ask: 'own-seat', material })).seat,
     foundingSeat: async (material) => {
       const a = await ask({ ask: 'founding-seat', material });
@@ -389,7 +454,7 @@ export function vaultBuilderOver(worker: WorkerLike, network: string): VaultBuil
     },
     payKeyStanding: async (input) => (await ask({ ask: 'pay-key-standing', ...input })).standing,
     secretIsTheVaults: async (input) => (await ask({ ask: 'secret-is-the-vaults', ...input })).matches,
-    chooseNote: async (input) => (await ask({ ask: 'choose-note', ...input })).note,
+    notesForPayment: async (input) => (await ask({ ask: 'notes-for-payment', ...input })).notes,
     paymentsFit: async (input) => (await ask({ ask: 'payments-fit', ...input })).answer,
     afterPayment: async (input) => (await ask({ ask: 'after-payment', ...input })).notes,
     confirmPayment: async (input) => (await ask({ ask: 'confirm-payment', ...input })).confirmation,

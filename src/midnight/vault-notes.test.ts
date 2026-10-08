@@ -30,11 +30,12 @@
  */
 import { describe, it, expect } from 'vitest';
 import {
-  noteToSpend, afterPayment, afterDeposit, paymentsFit,
+  notesToSpend, afterPayment, afterStep, afterDeposit, paymentsFit,
   balanceOf, witnessesOver, withIndexRead, type VaultNotes, type Note,
-  choosingANoteToSpend, smallestNoteCovering, aPaymentCanSpend,
+  choosingNotesToSpend, aPaymentCanSpend,
 } from './vault-notes.js';
 import type { ChainReadIndex } from './note-index.js';
+import { planRun } from './payment-plan.js';
 import { changeNonceOf } from './vault-recovery.js';
 import { toHex, fromHex, type Hex } from '../core/crypto.js';
 
@@ -78,94 +79,109 @@ const pool = (notes: Note[]): VaultNotes => ({ notes });
 const recorded = (n: number, value: bigint, token = GBP, index?: bigint): Note =>
   ({ ...note(n, value, token, index), createdIn: TX_A });
 
-describe('V-74: choosing a note to spend', () => {
-  it('takes the smallest note that covers it, keeping big notes whole', () => {
+describe('V-74: choosing the notes a payment spends', () => {
+  it('takes the largest note first, as few as cover it, as the run planner does', () => {
     const notes = [recorded(1, 1_000n), recorded(2, 300n), recorded(3, 50n)];
-    expect(noteToSpend(notes, GBP, 200n).value).toBe(300n);
-    expect(noteToSpend(notes, GBP, 400n).value).toBe(1_000n);
+    /* RED WHEN the payment's choice is not the planner's: the smallest covering note would be 300. */
+    expect(notesToSpend(notes, GBP, 200n).map((n) => n.value)).toEqual([1_000n]);
+    expect(notesToSpend(notes, GBP, 1_100n).map((n) => n.value)).toEqual([1_000n, 300n]);
   });
 
-  it('is deterministic on ties, so two operators pick the same note and collide visibly', () => {
+  it('is the planner\'s choice for every pool and amount in the table, never a second rule', () => {
+    const values = [900n, 150n, 150n, 400n, 100n, 5_000n];
+    for (let mask = 0; mask < 1 << values.length; mask += 1) {
+      const notes = values.map((v, i) => ((mask >> i) & 1 ? recorded(i + 1, v) : note(i + 1, v)));
+      for (const amount of [1n, 100n, 150n, 151n, 900n, 5_000n, 5_001n, 5_900n, 6_000n]) {
+        const plan = planRun({
+          token: GBP,
+          notes: notes.map((n) => ({ id: n.nonce, token: n.token, value: n.value, spendable: aPaymentCanSpend(n) })),
+          units: [{ kind: 'payment', payees: [{ id: 'p', amount, nonce: 'p' }] }],
+        });
+        const step = plan.ok ? plan.steps[0] : undefined;
+        const choice = choosingNotesToSpend(notes, GBP, amount);
+        if (step !== undefined && step.kind !== 'merge') {
+          expect(
+            choice.of === 'chosen' && choice.notes.map((n) => n.nonce),
+            `RED WHEN: the payment chooses by a rule other than the planner's (mask ${mask}, ${amount})`,
+          ).toEqual(step.notes.map((r) => (r.kind === 'held' ? r.id : '')));
+        } else {
+          expect(choice.of, `mask ${mask}, ${amount}`).not.toBe('chosen');
+        }
+      }
+    }
+  });
+
+  it('is deterministic on ties, so two operators pick the same notes and collide visibly', () => {
     /*
-     * B3. Two devices running the same payroll must not both half-succeed. If
-     * they pick the same note the chain refuses the second, which is a
-     * conflict an operator can see; if they picked differently they would both
-     * land and the pool would be wrong in a way nobody notices.
+     * Two devices running the same payroll must not both half-succeed. If they
+     * pick the same note the chain refuses the second, which is a conflict an
+     * operator can see.
      */
     const notes = [recorded(9, 500n), recorded(2, 500n), recorded(5, 500n)];
-    expect(noteToSpend(notes, GBP, 100n).nonce).toBe(noteToSpend([...notes].reverse(), GBP, 100n).nonce);
+    expect(notesToSpend(notes, GBP, 100n)).toEqual(notesToSpend([...notes].reverse(), GBP, 100n));
     /* RED WHEN the tie-break changes: the lowest nonce is the one every operator picks. */
-    expect(noteToSpend(notes, GBP, 100n).nonce).toBe(note(2, 0n).nonce);
-    expect(smallestNoteCovering(notes, GBP, 100n)?.nonce).toBe(note(2, 0n).nonce);
+    expect(notesToSpend(notes, GBP, 100n).map((n) => n.nonce)).toEqual([note(2, 0n).nonce]);
   });
 
   it('never spends a note of the wrong token', () => {
     const notes = [recorded(1, 1_000n, USD), recorded(2, 400n, GBP)];
-    expect(noteToSpend(notes, GBP, 100n).token).toBe(GBP);
-    expect(() => noteToSpend(notes, 'cc'.repeat(32), 1n)).toThrow(/holds no notes/i);
+    expect(notesToSpend(notes, GBP, 100n).map((n) => n.token)).toEqual([GBP]);
+    expect(() => notesToSpend(notes, 'cc'.repeat(32) as Hex, 1n)).toThrow(/holds no notes/i);
   });
 
-  it('REFUSES TO MERGE, and says what the pool actually holds', () => {
+  it('DRAWS ON TWO NOTES AT MOST, AND REFUSES TO MERGE, saying what the pool holds', () => {
+    /* Two notes of 60 pay 100 together: one payment takes two notes. */
+    expect(notesToSpend([recorded(1, 60n), recorded(2, 60n)], GBP, 100n).map((n) => n.value)).toEqual([60n, 60n]);
     /*
-     * A vault with two notes of 60 cannot pay 100. Saying so is the whole
-     * point: silently paying 60 would be worse than failing, and merging at
-     * payment time is maintenance discovered on a payroll deadline (B12).
+     * Three notes of 40 cannot: that needs a merge, which is maintenance and
+     * not something a payment discovers it needs on a payroll deadline.
      */
-    const notes = [note(1, 60n), note(2, 60n)];
-    expect(() => noteToSpend(notes, GBP, 100n))
-      .toThrow(/no single note covers 100: the largest is 60 and the pool holds 120 across 2/i);
+    const notes = [recorded(1, 40n), recorded(2, 40n), recorded(3, 40n)];
+    expect(() => notesToSpend(notes, GBP, 100n))
+      .toThrow(/no 2 notes a payment can spend cover 100: the largest is 40 and the pool holds 120 across 3.*Merge them first/i);
   });
 });
 
-describe('ONE FUNCTION DECIDES WHICH NOTE A PAYMENT SPENDS, AND EVERY QUESTION ABOUT IT ASKS THAT FUNCTION', () => {
+describe('ONE FUNCTION DECIDES WHICH NOTES A PAYMENT SPENDS, AND EVERY QUESTION ABOUT IT ASKS THAT FUNCTION', () => {
   /*
    * A payment spends a note at the place the chain filed it, read from the
    * transaction that created it. A note that records none is still the vault's
-   * and still on chain; a payment cannot take it. The chooser used to take it
-   * anyway when it was the smallest, so a vault that could pay out of a larger
-   * note was refused - and a check that asked a different question passed it.
+   * and still on chain; a payment cannot take it.
    */
   const unrecorded = (n: number, value: bigint) => note(n, value);
 
-  it('PASSES OVER a smaller note that records no transaction, spends the larger one that does, and NAMES what it passed over', () => {
-    const notes = [recorded(1, 5_000n), unrecorded(2, 150n)];
-    const choice = choosingANoteToSpend(notes, GBP, 100n);
+  it('PASSES OVER a larger note that records no transaction, spends the ones that do, and NAMES what it passed over', () => {
+    const notes = [unrecorded(2, 5_000n), recorded(1, 150n)];
+    const choice = choosingNotesToSpend(notes, GBP, 100n);
     expect(
-      choice.of === 'chosen' && choice.note.nonce,
-      'RED WHEN: the chooser takes the smallest covering note whether or not a payment can spend it, which refuses a vault that can pay',
-    ).toBe(note(1, 0n).nonce);
+      choice.of === 'chosen' && choice.notes.map((n) => n.nonce),
+      'RED WHEN: the choice takes the largest note whether or not a payment can spend it, which refuses a vault that can pay',
+    ).toEqual([note(1, 0n).nonce]);
     expect(
       choice.of === 'chosen' && choice.passedOver.map((n) => n.nonce),
       'RED WHEN: a note the payment could not reach is passed over silently, so nobody is told the vault holds money a payment cannot spend',
     ).toEqual([note(2, 0n).nonce]);
-    expect(noteToSpend(notes, GBP, 100n).nonce).toBe(note(1, 0n).nonce);
-    /* A note too small for this payment is not "passed over": it could never have been chosen. */
-    const small = choosingANoteToSpend([recorded(1, 5_000n), unrecorded(2, 50n)], GBP, 100n);
-    expect(
-      small.of === 'chosen' && small.passedOver,
-      'RED WHEN: passedOver lists notes that do not cover the payment, which names money as unreachable for a payment it could never have made',
-    ).toEqual([]);
   });
 
-  it('SAYS STRANDED, naming every covering note in the order it would have been chosen, when no covering note can be spent', () => {
+  it('SAYS STRANDED, naming the notes it could not spend, when only they would make the payment', () => {
     const notes = [unrecorded(9, 700n), unrecorded(3, 200n), recorded(1, 50n)];
-    const choice = choosingANoteToSpend(notes, GBP, 100n);
+    const choice = choosingNotesToSpend(notes, GBP, 800n);
     expect(
       choice,
       'RED WHEN: stranded money is reported as "nothing covers it" or loses a note from the list, which sends a person to pay in money the vault already holds',
-    ).toEqual({ of: 'stranded', notes: [unrecorded(3, 200n), unrecorded(9, 700n)] });
-    const refused = (() => { try { noteToSpend(notes, GBP, 100n); } catch (e) { return (e as Error).message; } return ''; })();
+    ).toEqual({ of: 'stranded', notes: [unrecorded(9, 700n), unrecorded(3, 200n)] });
+    const refused = (() => { try { notesToSpend(notes, GBP, 800n); } catch (e) { return (e as Error).message; } return ''; })();
     expect(refused, 'RED WHEN: the refusal does not name the notes it is about').toContain(`${note(3, 0n).nonce} (200)`);
     expect(refused).toContain(`${note(9, 0n).nonce} (700)`);
     expect(refused, 'RED WHEN: the refusal implies the money is gone').toMatch(/still on chain and still the vault's/);
     expect(refused, 'RED WHEN: the refusal names nothing a person can do').toMatch(/recordCreatingTransaction, or rebuild the pool/);
     expect(refused, 'RED WHEN: stranded money is told to merge').not.toMatch(/Merge/);
     expect(refused).toMatch(/None of them records which transaction created it/);
-    expect(() => noteToSpend([unrecorded(3, 200n)], GBP, 100n)).toThrow(/One note does: .*\. It does not record which transaction/);
+    expect(() => notesToSpend([unrecorded(3, 200n)], GBP, 100n)).toThrow(/one more note would: .*\. It does not record which transaction/);
   });
 
   it('counts a recorded value that no spend could read as not recorded', () => {
-    const malformed = { ...note(1, 150n), createdIn: 'not-a-hash' as Hex };
+    const malformed = { ...note(1, 950n), createdIn: 'not-a-hash' as Hex };
     const upper = { ...note(4, 160n), createdIn: 'A1'.repeat(32) as Hex };
     expect(
       aPaymentCanSpend(malformed),
@@ -180,73 +196,138 @@ describe('ONE FUNCTION DECIDES WHICH NOTE A PAYMENT SPENDS, AND EVERY QUESTION A
     ).toBe(false);
     /* The product's shape reads a hash in either case, so either case can be spent. */
     expect(aPaymentCanSpend(upper)).toBe(true);
-    expect(choosingANoteToSpend([malformed, recorded(2, 900n)], GBP, 100n))
-      .toEqual({ of: 'chosen', note: recorded(2, 900n), passedOver: [malformed] });
-  });
-
-  it('keeps the ordering exactly: among notes a payment can spend, the choice is smallestNoteCovering\'s', () => {
-    const values = [900n, 150n, 150n, 400n, 100n, 5_000n];
-    for (let mask = 0; mask < 1 << values.length; mask += 1) {
-      const notes = values.map((v, i) => ((mask >> i) & 1 ? recorded(i + 1, v) : unrecorded(i + 1, v)));
-      for (const amount of [1n, 100n, 150n, 151n, 900n, 5_000n, 5_001n]) {
-        const spendable = notes.filter((n) => n.createdIn !== undefined);
-        const expected = smallestNoteCovering(spendable, GBP, amount);
-        const choice = choosingANoteToSpend(notes, GBP, amount);
-        if (expected !== undefined) {
-          expect(
-            choice.of === 'chosen' && choice.note.nonce,
-            `RED WHEN: the order among spendable notes moves (mask ${mask}, ${amount})`,
-          ).toBe(expected.nonce);
-        } else {
-          expect(choice.of, `mask ${mask}, ${amount}`).not.toBe('chosen');
-        }
-      }
-    }
-    /* And with every note recorded, nothing differs from the plain ordering: no payment that succeeded before moves. */
-    const all = values.map((v, i) => recorded(i + 1, v));
-    for (const amount of [1n, 100n, 150n, 151n, 900n, 5_000n]) {
-      expect(noteToSpend(all, GBP, amount)).toEqual(smallestNoteCovering(all, GBP, amount));
-    }
+    expect(choosingNotesToSpend([malformed, recorded(2, 900n)], GBP, 100n))
+      .toEqual({ of: 'chosen', notes: [recorded(2, 900n)], passedOver: [malformed] });
   });
 
   it('still tells "no notes of this token" and "nothing covers it" apart, and the second counts every note of the token', () => {
-    expect(choosingANoteToSpend([recorded(1, 10n, USD)], GBP, 1n)).toEqual({ of: 'no-notes-of-token' });
+    expect(choosingNotesToSpend([recorded(1, 10n, USD)], GBP, 1n)).toEqual({ of: 'no-notes-of-token' });
     expect(
-      choosingANoteToSpend([recorded(1, 60n), unrecorded(2, 90n)], GBP, 100n),
+      choosingNotesToSpend([recorded(1, 60n), unrecorded(2, 30n)], GBP, 100n),
       'RED WHEN: the merge refusal forgets notes a payment cannot spend, understating what the vault holds',
-    ).toEqual({ of: 'none-covers', largest: 90n, held: 150n, count: 2 });
+    ).toEqual({ of: 'none-covers', largest: 60n, held: 90n, count: 2 });
   });
 
-  it('THE WALK AND THE PAYMENT AGREE: a run fits exactly when the payment would choose a note, for every pool in the table', () => {
+  it('THE WALK AND THE PAYMENT AGREE: a run fits exactly when the payment would choose its notes, for every pool in the table', () => {
     const table: Array<[string, Note[], bigint]> = [
       ['the pool this was filed about', [recorded(1, 5_000n), unrecorded(2, 150n)], 100n],
       ['the other way round', [unrecorded(1, 5_000n), recorded(2, 150n)], 100n],
       ['only unrecorded', [unrecorded(1, 5_000n)], 100n],
       ['nothing big enough', [recorded(1, 50n)], 100n],
+      ['two notes together', [recorded(1, 60n), recorded(2, 60n)], 100n],
+      ['three notes needed', [recorded(1, 40n), recorded(2, 40n), recorded(3, 40n)], 100n],
       ['another token', [recorded(1, 5_000n, USD)], 100n],
       ['exact', [recorded(1, 100n), unrecorded(2, 100n)], 100n],
     ];
     for (const [what, notes, amount] of table) {
-      const pays = choosingANoteToSpend(notes, GBP, amount).of === 'chosen';
+      const pays = choosingNotesToSpend(notes, GBP, amount).of === 'chosen';
       let fits = true;
       try { paymentsFit(pool(notes), [{ token: GBP, amount }]); } catch { fits = false; }
       expect(fits, `RED WHEN: the affordability walk and the payment answer differently - ${what}`).toBe(pays);
     }
   });
 
-  it('THE WITNESS THE CIRCUIT CALLS CHOOSES THE SAME NOTE, with only that note read for the call', () => {
-    /* As `call` builds it: the chosen note carries the index read for this call, and no other note does. */
-    const chosen = noteToSpend([recorded(1, 5_000n), unrecorded(2, 150n)], GBP, 100n);
-    const forTheCall = withIndexRead(pool([recorded(1, 5_000n), unrecorded(2, 150n)]), chosen.nonce, readFromChain(7n));
+  it('THE WALK AGREES WITH A RUN OF PAYMENTS MADE ONE AFTER ANOTHER, change and all', () => {
+    /*
+     * A walk that chose by one rule and a payment that spent by another could
+     * say a run fits and then stop half way: the pool [12, 8, 5, 5] paying
+     * 4, 6, 4, 11 is one such run. RED WHEN the walk and the payments made in
+     * turn by `notesToSpend` and `afterStep` disagree for any run here.
+     */
+    const runs: Array<[bigint[], bigint[]]> = [
+      [[12n, 8n, 5n, 5n], [4n, 6n, 4n, 11n]],
+      [[11n, 1n, 7n, 8n], [1n, 3n, 4n, 8n, 11n]],
+      [[9n, 5n, 2n], [4n, 1n, 2n, 1n, 7n]],
+      [[100n, 60n], [50n, 90n]],
+      [[40n, 40n, 40n], [100n]],
+    ];
+    for (const [values, amounts] of runs) {
+      const start = values.map((v, i) => recorded(i + 1, v));
+      let fits = true;
+      try { paymentsFit(pool(start), amounts.map((amount) => ({ token: GBP, amount }))); } catch { fits = false; }
+      let paid = true;
+      let now = pool(start);
+      amounts.forEach((amount, i) => {
+        if (!paid) return;
+        try {
+          const spent = notesToSpend(now.notes, GBP, amount);
+          const left = spent.reduce((t, n) => t + n.value, 0n) - amount;
+          const change = left === 0n ? undefined : { nonce: note(100 + i, 0n).nonce, token: GBP, value: left };
+          now = afterStep(now, { spent: spent.map((n) => n.nonce), pays: amount, kept: change }, TX_B);
+        } catch { paid = false; }
+      });
+      expect(fits, `RED WHEN: the walk says ${fits ? 'fits' : 'does not fit'} and the payments ${paid ? 'were all made' : 'stopped'}: ${values} paying ${amounts}`).toBe(paid);
+    }
+  });
+
+  it('THE WITNESS THE CIRCUIT CALLS HANDS OVER EXACTLY THE NOTE IT IS OFFERED, and chooses nothing', () => {
+    /* As `call` builds it: the chosen notes carry the index read for this call. */
+    const pooled = pool([recorded(1, 30n), recorded(2, 90n), unrecorded(3, 150n)]);
+    const [first, second] = notesToSpend(pooled.notes, GBP, 100n);
+    const forTheCall = withIndexRead(withIndexRead(pooled, first!.nonce, readFromChain(7n)), second!.nonce, readFromChain(8n));
     const pending: { spending?: string } = {};
-    const w = witnessesOver(() => forTheCall, pending);
+    const w = witnessesOver(() => forTheCall, pending, first!.nonce);
     const [, coin] = w.noteToSpend({}, fromHex(GBP), 100n) as [unknown, any];
     expect(
       pending.spending,
-      'RED WHEN: the witness chooses with a different rule from the payment, and takes the unrecorded note the payment passed over',
-    ).toBe(chosen.nonce);
-    expect(coin.value).toBe(5_000n);
+      'RED WHEN: the witness makes a choice of its own instead of handing over the note the payment was offered',
+    ).toBe(first!.nonce);
+    /* The planner offers the larger note first; a witness choosing for itself would hand over the smaller. */
+    expect(coin.value).toBe(90n);
     expect(coin.mt_index).toBe(7n);
+    /* Offered the note no rule would pick first, it hands over exactly that one. RED WHEN the witness chooses by any rule. */
+    const asked: { spending?: string } = {};
+    const [, other] = witnessesOver(() => forTheCall, asked, second!.nonce).noteToSpend({}, fromHex(GBP), 100n) as [unknown, any];
+    expect([asked.spending, other.value]).toEqual([second!.nonce, 30n]);
+    /* RED WHEN a call offered nothing is handed a note anyway. */
+    expect(() => witnessesOver(() => forTheCall, {}).noteToSpend({}, fromHex(GBP), 100n)).toThrow(/was offered none/);
+    /* RED WHEN the witness hands over a note of another token than the call pays. */
+    expect(() => witnessesOver(() => forTheCall, {}, first!.nonce).noteToSpend({}, fromHex(USD), 1n)).toThrow(/of another token/);
+  });
+});
+
+describe('a step that spends several notes is recorded as the chain holds it', () => {
+  const kept = (value: bigint, nonce = 'f2'.repeat(32)) => ({ nonce: nonce as Hex, token: GBP, value });
+
+  it('takes EVERY note a two-note payment spent out of the pool, and adds its change', () => {
+    const a = recorded(1, 60n);
+    const b = recorded(2, 60n);
+    const other = recorded(3, 7n);
+    const s = afterStep(pool([a, b, other]), { spent: [a.nonce, b.nonce], pays: 100n, kept: kept(20n) }, TX_B);
+    /* RED WHEN only the first note leaves: the pool would offer a note the chain has nullified. */
+    expect(s.notes.map((n) => n.nonce).sort()).toEqual([other.nonce, 'f2'.repeat(32)].sort());
+    expect(balanceOf(s, GBP)).toBe(27n);
+    expect(s.notes.find((n) => n.nonce === 'f2'.repeat(32))?.createdIn).toBe(TX_B);
+  });
+
+  it('records a merge: every note it spent gone, and the one coin it kept, worth all of them', () => {
+    const notes = [recorded(1, 10n), recorded(2, 20n), recorded(3, 30n)];
+    const s = afterStep(pool(notes), { spent: notes.map((n) => n.nonce), pays: 0n, kept: kept(60n), merge: true }, TX_B);
+    /* RED WHEN a merge is recorded as spending its first note only. */
+    expect(s.notes).toEqual([{ ...kept(60n), createdIn: TX_B }]);
+    /* RED WHEN a merge's coin is recorded at a value the arithmetic does not give. */
+    expect(() => afterStep(pool(notes), { spent: notes.map((n) => n.nonce), pays: 0n, kept: kept(59n), merge: true }))
+      .toThrow(/arithmetic says 60/);
+    /* RED WHEN a "merge" that sends money out, or merges one note, is recorded. */
+    expect(() => afterStep(pool(notes), { spent: notes.map((n) => n.nonce), pays: 1n, kept: kept(59n), merge: true }))
+      .toThrow(/a merge spends at least two notes and sends nothing/);
+    expect(() => afterStep(pool(notes), { spent: [notes[0]!.nonce], pays: 0n, kept: kept(10n), merge: true }))
+      .toThrow(/a merge spends at least two notes/);
+  });
+
+  it('refuses a step whose notes are of two tokens, rather than dropping one of them', () => {
+    /* RED WHEN a note of another token is taken out of the pool by a step that pays in one. */
+    expect(() => afterStep(pool([recorded(1, 60n), recorded(2, 50n, USD)]), { spent: [note(1, 0n).nonce, note(2, 0n).nonce], pays: 100n, kept: kept(10n) }))
+      .toThrow(/more than one token/);
+  });
+
+  it('refuses a step naming a note the pool does not hold, or one note twice, and changes nothing', () => {
+    const a = recorded(1, 60n);
+    /* RED WHEN a step is half-applied to a pool that holds only some of its notes. */
+    expect(() => afterStep(pool([a]), { spent: [a.nonce, note(9, 0n).nonce], pays: 50n, kept: kept(10n) }))
+      .toThrow(/no note 0909.* to spend/);
+    expect(() => afterStep(pool([a]), { spent: [a.nonce, a.nonce], pays: 50n, kept: kept(70n) }))
+      .toThrow(/names one note twice/);
   });
 });
 
@@ -263,7 +344,7 @@ describe('V-74: carrying the pool forward', () => {
     s = afterPayment(s, first.nonce, 250n, changeOf(first, 250n), TX_A);
     expect(balanceOf(s, GBP)).toBe(750n);
 
-    const next = noteToSpend(s.notes, GBP, 200n);
+    const [next] = notesToSpend(s.notes, GBP, 200n) as [Note];
     expect(next.value).toBe(750n);
     /* Where to read its index from, and no index: that is read when it is spent. */
     expect(next.createdIn).toBe(TX_A);
@@ -406,7 +487,7 @@ describe('V-74: the witnesses the contract actually calls', () => {
   it('hand the contract a qualified coin, and record which note was chosen', () => {
     const state = pool([recorded(1, 1_000n, GBP, 4n)]);
     const pending: { spending?: string } = {};
-    const w = witnessesOver(() => state, pending);
+    const w = witnessesOver(() => state, pending, note(1, 0n).nonce);
 
     const [, coin] = w.noteToSpend({}, fromHex(GBP), 250n) as [unknown, any];
     expect(coin.value).toBe(1_000n);
@@ -433,7 +514,7 @@ describe('V-74: the witnesses the contract actually calls', () => {
      * the note IS on chain and IS the vault's.
      */
     const unread = { nonce: '07'.repeat(32), token: GBP, value: 900n, createdIn: TX_A } as Note;
-    const w = witnessesOver(() => pool([unread]), {});
+    const w = witnessesOver(() => pool([unread]), {}, unread.nonce);
     expect(() => w.noteToSpend({}, fromHex(GBP), 100n))
       .toThrow(/has not been read for this call/);
     expect(() => w.noteToSpend({}, fromHex(GBP), 100n))
@@ -459,19 +540,21 @@ describe('T-38: whether a run fits the pool, one payment at a time', () => {
   /* A note a payment can spend: it records the transaction that created it. */
   const spendable = (n: number, value: bigint, token = GBP): Note => ({ ...note(n, value, token), createdIn: TX_A });
 
-  it('THE QUESTION A SUM ANSWERS WRONGLY: 120 across two notes cannot pay 100', () => {
+  it('THE QUESTION A SUM ANSWERS WRONGLY: 120 across three notes cannot pay 100', () => {
     /*
-     * `C203`'s mitigation is only worth having if it asks the right question.
-     * A pool of 60 + 60 has a balance of 120 and cannot make a payment of 100,
-     * because `noteToSpend` does not merge (`V-58`, `B12`) — so an
-     * affordability check built on `balance` alone passes a run that stops on
-     * its first payee.
+     * The check is only worth having if it asks the right question. A pool of
+     * 40 + 40 + 40 has a balance of 120 and cannot make a payment of 100,
+     * because one payment draws on two notes at most and does not merge - so
+     * an affordability check built on the balance alone passes a run that
+     * stops on its first payee.
      */
-    const p = pool([spendable(1, 60n), spendable(2, 60n)]);
+    const p = pool([spendable(1, 40n), spendable(2, 40n), spendable(3, 40n)]);
     expect(() => paymentsFit(p, [{ token: GBP, amount: 100n }]))
       .toThrow(/payment 1 of 1 cannot be made/);
     expect(() => paymentsFit(p, [{ token: GBP, amount: 100n }]))
-      .toThrow(/no single note covers 100/);
+      .toThrow(/no 2 notes a payment can spend cover 100/);
+    /* And two notes of 60 do pay it, together, as one payment can. */
+    expect(() => paymentsFit(pool([spendable(1, 60n), spendable(2, 60n)]), [{ token: GBP, amount: 100n }])).not.toThrow();
   });
 
   it('carries the change forward, so a run of many payments out of one note fits', () => {
@@ -536,12 +619,12 @@ describe('T-38: whether a run fits the pool, one payment at a time', () => {
      */
     const legacy = note(1, 1_000n);
     expect(() => paymentsFit(pool([legacy]), [{ token: GBP, amount: 100n }]))
-      .toThrow(/payment 1 of 1 cannot be made out of this vault: no note this vault can spend covers 100\. One note does: 0101.* It does not record which transaction created it/);
+      .toThrow(/payment 1 of 1 cannot be made out of this vault: the notes this vault can spend do not cover 100, and one more note would: 0101.* It does not record which transaction created it/);
     expect(() => paymentsFit(pool([legacy]), [{ token: GBP, amount: 100n }]))
       .toThrow(/recordCreatingTransaction/);
   });
 
-  it('FITS a run out of a larger recorded note when the smallest covering note records no transaction', () => {
+  it('FITS a run out of a recorded note when a note beside it records no transaction', () => {
     /*
      * This used to be refused: the walk chose the smallest covering note and
      * then asked whether it could be spent, so a vault holding 5,000 it could
@@ -558,7 +641,7 @@ describe('T-38: whether a run fits the pool, one payment at a time', () => {
     expect(() => paymentsFit(q, [{ token: GBP, amount: 100n }])).not.toThrow();
     /* A second payment that only the unrecorded note could cover is refused, and names it. */
     expect(() => paymentsFit(p, [{ token: GBP, amount: 100n }, { token: GBP, amount: 4_950n }]))
-      .toThrow(/payment 2 of 2 cannot be made out of this vault: no single note covers 4950/);
+      .toThrow(/payment 2 of 2 cannot be made out of this vault: the notes this vault can spend do not cover 4950/);
   });
 
   it('does not ask it of the change the walk puts back, which the payment itself records', () => {

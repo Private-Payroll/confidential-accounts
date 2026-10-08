@@ -144,17 +144,28 @@ const bare = (h: unknown): string => String(h).trim().toLowerCase().replace(/^0x
  * committee's signatures, and its state changes only through those circuits,
  * so nothing later is read for it.
  */
-export function vaultBornHeldRefusal(initialState: unknown, expect: VaultBornHeldExpectations, what: string): string | null {
-  const state = initialState as {
+/**
+ * **WHO HOLDS A CONTRACT, AS ITS STATE SAYS**: the committee and threshold of
+ * its maintenance authority, and how many times that authority has changed;
+ * null when the state carries no authority this can read.
+ */
+export function authorityOfState(contractState: unknown): (Committee & { readonly counter: unknown }) | null {
+  const authority = (contractState as {
     maintenanceAuthority?: { committee?: unknown[]; threshold?: unknown; counter?: unknown };
-  } | null;
-  const authority = state?.maintenanceAuthority;
-  const committee = Array.isArray(authority?.committee)
-    ? authority.committee.map((k) => ({ tag: String((k as { tag?: unknown }).tag), value: bare((k as { value?: unknown }).value) }))
-    : null;
-  const threshold = authority?.threshold;
-  if (committee === null || typeof threshold !== 'number' || authority?.counter !== 0n
-    || !sameCommittee({ committee, threshold }, expect.holders)) {
+  } | null)?.maintenanceAuthority;
+  if (!Array.isArray(authority?.committee) || typeof authority?.threshold !== 'number') return null;
+  return {
+    committee: authority.committee.map((k) => ({ tag: String((k as { tag?: unknown }).tag), value: bare((k as { value?: unknown }).value) })),
+    threshold: authority.threshold,
+    counter: authority.counter,
+  };
+}
+
+export function vaultBornHeldRefusal(initialState: unknown, expect: VaultBornHeldExpectations, what: string): string | null {
+  const state = initialState as Record<string, unknown> | null;
+  const authority = authorityOfState(state);
+  if (authority === null || authority.counter !== 0n
+    || !sameCommittee({ committee: authority.committee, threshold: authority.threshold }, expect.holders)) {
     return `this is not ${what}: a vault is held from its first transaction by the company's committee, at the `
       + 'company\'s threshold, and this one is held by other keys, at another threshold, or was changed. Nothing was sent.';
   }

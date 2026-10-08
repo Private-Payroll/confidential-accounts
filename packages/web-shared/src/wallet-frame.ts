@@ -115,3 +115,58 @@ export function walletInThisPage(
     },
   };
 }
+
+/* ------------------------------------------------------------------ an ask with nothing to show */
+
+/** What this file needs of the page's document to make a frame nobody sees. */
+interface QuietDocument {
+  createElement(tag: 'iframe'): HTMLIFrameElement;
+  readonly body: { appendChild(node: unknown): unknown; removeChild(node: unknown): unknown; contains(node: unknown): boolean };
+}
+
+/**
+ * **THE WALLET ASKED FOR PUBLIC FACTS, IN A FRAME NOBODY SEES.**
+ *
+ * Who holds a company's account is public on the chain, and the wallet answers
+ * it without a press and without being unlocked. So it is asked in a frame of
+ * its own, made for the one ask and hidden from the person and from assistive
+ * technology, and taken away when the ask ends: the wallet the person sees,
+ * and any ask shown in it, is never touched by it, and two such asks never
+ * share a frame.
+ */
+export function walletQuietlyInThisPage(
+  view: Pick<Openable, 'addEventListener' | 'removeEventListener' | 'setTimeout' | 'clearTimeout'>,
+  doc: QuietDocument = document as unknown as QuietDocument,
+): Openable {
+  return {
+    addEventListener: (type, handler) => view.addEventListener(type, handler),
+    removeEventListener: (type, handler) => view.removeEventListener(type, handler),
+    setTimeout: (handler, ms) => view.setTimeout(handler, ms),
+    clearTimeout: (id) => view.clearTimeout(id),
+    open(url: string): WalletWindow | null {
+      const element = doc.createElement('iframe');
+      element.hidden = true;
+      element.setAttribute('aria-hidden', 'true');
+      element.setAttribute('tabindex', '-1');
+      element.style.display = 'none';
+      element.src = url;
+      doc.body.appendChild(element);
+      const target = element.contentWindow;
+      if (target === null) {
+        doc.body.removeChild(element);
+        return null;
+      }
+      let gone = false;
+      return {
+        postMessage: (message, targetOrigin) => target.postMessage(message, targetOrigin),
+        messageSource: target,
+        close: () => {
+          if (gone) return;
+          gone = true;
+          if (doc.body.contains(element)) doc.body.removeChild(element);
+        },
+        get closed(): boolean { return gone; },
+      };
+    },
+  };
+}

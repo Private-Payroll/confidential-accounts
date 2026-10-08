@@ -84,7 +84,7 @@ const OUTPUT = bytes('shielded output proving key');
 const SECRET = bytes('seed words');
 
 /* The only parameters this checkout knows as genuine. The real table is Midnight's; this one names test bytes. */
-const KNOWN: Readonly<Record<string, string>> = { bls_midnight_2p0: sha256(PARAMS), bls_midnight_2p1: sha256(PARAMS) };
+const KNOWN: Readonly<Record<string, string>> = { bls_midnight_2p0: sha256(PARAMS), bls_midnight_2p1: sha256(PARAMS), bls_midnight_2p17: sha256(PARAMS) };
 const known = (name: string): string | undefined => KNOWN[name];
 
 const lay = (root: string, files: Record<string, Uint8Array>): void => {
@@ -249,6 +249,21 @@ describe('A REFUSAL IS NEVER KEPT BY A BROWSER, AND A FILE THAT IS SENT MAY BE',
       expect(got.status, path).toBe(404);
       expect(got.cache, path).toBe('no-store');
     }
+  });
+
+  it('PARAMETERS MIDNIGHT PUBLISHES THAT ARE NOT HERE, OR NOT GENUINE, ARE REFUSED BY NAME, WITH WHAT BRINGS THEM HERE, AND NOT KEPT', async () => {
+    /* RED WHEN: a device asking for published parameters this server lacks, or holds a wrong copy of, is told only that nothing is here. */
+    for (const name of ['bls_midnight_2p17', 'bls_midnight_2p1']) {
+      const got = await get(server, `/artefacts/vault/params/${name}`);
+      expect(got.status, name).toBe(404);
+      const said = JSON.parse(got.body.toString('utf8')).error as string;
+      expect(said, name).toContain(`the public parameters ${name} are not on this server`);
+      expect(said, name).toMatch(/fetches and checks them each time it starts: let it reach its parameter source, or set MIDNIGHT_PARAM_SOURCE .* and restart it/u);
+      expect((await head(server, `/artefacts/vault/params/${name}`)).cache, name).toBe('no-store');
+    }
+    /* RED WHEN: a name nothing publishes is answered as if it were parameters, and so named back to whoever asked. */
+    const unpublished = await get(server, '/artefacts/vault/params/bls_filecoin_2p0');
+    expect(JSON.parse(unpublished.body.toString('utf8'))).toEqual({ error: 'there is no such proving material here.' });
   });
 
   it('A FILE THAT IS SENT MAY BE KEPT FOR AN HOUR', async () => {

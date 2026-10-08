@@ -64,6 +64,11 @@ describe('A RUN THE SERVICE RAISED', () => {
       state: async (id) => (id === '0' ? state : null),
       runs: async () => runsFiledBy(store.listRuns(account), account, founder.secret),
       registry,
+      /* The person's own wallet reads nobody paid, and the commitment to the pay-record key the service holds. */
+      payments: {
+        paidOnceOf: pureCircuits.paidOnceOf,
+        read: async () => ({ payKeyCommitment: toHex(pureCircuits.payKeyCommitmentOf(fromHex(await accounts.payRecordKeyOf(account, viewingKey)))), held: [] }),
+      },
     };
     const made = await runRebuiltHere(records, account, proposal.id, viewingKey);
     const payKey = await accounts.payRecordKeyOf(account, viewingKey);
@@ -79,8 +84,7 @@ describe('A RUN THE SERVICE RAISED', () => {
     /* RED WHEN: the device makes any leaf, the month, the order or the payload other than the service raised it. */
     expect(() => refuseWhatThisDeviceDidNotMake(
       {
-        runPayload: pureCircuits.runPayload, vaultDetails,
-        payKeyCommitmentOf: pureCircuits.payKeyCommitmentOf, payKeyCommitmentKey: pureCircuits.payKeyCommitmentKey,
+        runPayload: pureCircuits.runPayload, vaultDetails, payKeyCommitmentOf: pureCircuits.payKeyCommitmentOf,
       },
       { chainId: proposal.chainId, digest: proposal.digest, made }, chain)).not.toThrow();
     expect(made.facts.map((f) => f.amount)).toEqual([10000n, 10001n, 10002n]);

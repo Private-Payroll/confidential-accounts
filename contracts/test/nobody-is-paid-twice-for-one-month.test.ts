@@ -29,6 +29,8 @@ import { payeeFor, payFor } from '../../src/testing/payees.js';
 import { TEST_TOKEN, registryWithTestPrivateForms } from '../../src/testing/assets.js';
 import { ledgerTokenOf } from '../../src/core/assets.js';
 import { refuseWhatThisDeviceDidNotMake, type AccountLedgerView, type RunMadeHere } from '../../packages/web-shared/src/what-this-device-made.js';
+import { paymentEntriesOf } from '../../packages/web-shared/src/payment-entries.js';
+import { paymentsInAccountState } from '../../apps/wallet/src/chain/company-label-on-chain.js';
 
 const A = privateStateFor(1);
 const B = privateStateFor(2);
@@ -378,10 +380,15 @@ describe('what the client refuses before anybody signs, and what the approving d
       await sim.as(carrying(sim, A, r.c)).proposeRun({ root: fromHex(r.run.tree.root), payees: r.run.tree.payees, from: OPENS, until: CLOSES, vault: PAYROLL });
       return sim.proposalId(r.payload, r.c.salt, PAYROLL);
     };
+    /* What the approving person's own wallet reads off the account's state: the wallet's own parser, over the chain's bytes. */
+    const walletRead = (made: RunMadeHere): RunMadeHere => {
+      const asked = paymentEntriesOf(made, pureCircuits.paidOnceOf);
+      const read = paymentsInAccountState((sim.contractStateForCall as { serialize(): Uint8Array }).serialize(), asked);
+      return { ...made, wallet: { payKeyCommitment: read.payKeyCommitment, asked, held: [...read.held] } };
+    };
     const check = (r: ReturnType<typeof runOf>, id: Uint8Array) => () => refuseWhatThisDeviceDidNotMake({
       runPayload: pureCircuits.runPayload, vaultDetails, payKeyCommitmentOf: pureCircuits.payKeyCommitmentOf,
-      payKeyCommitmentKey: pureCircuits.payKeyCommitmentKey,
-    }, { chainId: toHex(id), digest: toHex(r.payload), made: r.made }, sim.ledger as unknown as AccountLedgerView, 'approve');
+    }, { chainId: toHex(id), digest: toHex(r.payload), made: walletRead(r.made) }, sim.ledger as unknown as AccountLedgerView, 'approve');
 
     const first = runOf('run_sep:leg', 62);
     const firstId = await raised(first);

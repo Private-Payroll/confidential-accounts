@@ -308,7 +308,19 @@ describe.skipIf(!KEYS_ON_DISK)('A DEPOSIT FROM THE PAGE, BUILT ON THE DEVICE [ne
       },
     }, NET);
     let chosen: { nonce: string; token: string; value: string } | null = null;
-    const watched = { ...builder, deposit: async (i: Parameters<typeof builder.deposit>[0]) => { chosen = i.coin; return builder.deposit(i); } };
+    /*
+     * The vault as this device's worker reads it at the wallet's indexer: the state above, held by the keys that hold
+     * the account as the wallet reads it, and the notes the chain shows. The read of a real state is
+     * `vault-on-chain-here.test.ts`'s.
+     */
+    const watched = {
+      ...builder,
+      deposit: async (i: Parameters<typeof builder.deposit>[0]) => { chosen = i.coin; return builder.deposit(i); },
+      vaultOnChain: async (i: { vault: string; indexer: unknown }) => {
+        catching('device read', [i.vault, i.indexer]);
+        return { onChain: true as const, state, notes: [...notes], notesFromThisBuild: true, everCreated: [], authority: { committee: [], threshold: 1 }, account: ACCOUNT, started: true };
+      },
+    };
 
     /* The records route: every record filed or asked for, as the device hands it over. */
     const kept = new Map<WireRecord, MemorySealedPoolStore>();
@@ -373,7 +385,8 @@ describe.skipIf(!KEYS_ON_DISK)('A DEPOSIT FROM THE PAGE, BUILT ON THE DEVICE [ne
       myRecordsKey: recordsKeypairFrom(companyKey).publicKey,
       signers: async () => [{ id: 'ada', wrappingPublicKey: wrapping.publicKey }],
     };
-    await openCompanyVaultPool(doors, vault, async () => {});
+    /* The pool is opened from this device's own read of the vault, at the indexer the wallet names, as the deposit is. */
+    await openCompanyVaultPool({ ...doors, builder: watched, indexer: async () => ({ indexerUri: 'https://indexer.example/api/v3/graphql', indexerWsUri: 'wss://indexer.example/api/v3/graphql/ws' }) }, vault, async () => {});
     /* The vault holds the secret the company's records now hold, as a started vault does: the worker checks it. */
     state = stateHolding(openNonceSecrets((await kept.get('nonce-secret')!.get(vault))!, vault, recordsKeypairFrom(companyKey)).secrets[0]!);
     /* RED WHEN: the worker's own comparison says yes for a secret the vault's commitment does not name. */
@@ -394,6 +407,7 @@ describe.skipIf(!KEYS_ON_DISK)('A DEPOSIT FROM THE PAGE, BUILT ON THE DEVICE [ne
     }]));
     const done = await depositFromSource({
       ...doors, company: LABEL, account: ACCOUNT, builder: watched, inFlight: inFlightOver(inFlightRecords, wrapping.secret),
+      indexer: async () => ({ indexerUri: 'https://indexer.example/api/v3/graphql', indexerWsUri: 'wss://indexer.example/api/v3/graphql/ws' }),
     }, vault, source, { code: TOKEN, value: VALUE });
 
     /* ---- the deposit happened, and what the service was sent is what the wallet finished ---- */
@@ -413,7 +427,7 @@ describe.skipIf(!KEYS_ON_DISK)('A DEPOSIT FROM THE PAGE, BUILT ON THE DEVICE [ne
       .toEqual([Buffer.from(CHAIN_PARAMETERS).toString('hex')]);
     /* Every door a deposit uses was watched, so a search over them searched something. */
     expect([...new Set(caught.map((c) => c.to.split(' ').slice(0, 2).join(' ')))].sort(), 'RED WHEN: a door stops being watched').toEqual([
-      'browser in-flight', 'records deposit-journal', 'records nonce-secret', 'records pool', 'service chain', 'service created-by',
+      'browser in-flight', 'device read', 'records deposit-journal', 'records nonce-secret', 'records pool', 'service created-by',
       'service deposit', 'service keys', 'service payout-state', 'wallet',
     ]);
 

@@ -18,6 +18,16 @@ import { ACCOUNT_ORIGIN } from './session.js';
 const holdersHere = async (company: CompanyLabel, account: AccountAddress): Promise<AccountHoldersRead> =>
   (await holdersFromTheWallet(ACCOUNT_ORIGIN, { company, account })).holders;
 
+/**
+ * The indexer this person's own wallet reads the chain through, as it said in
+ * a fresh read with no press, or null when it said none: the one place a
+ * vault is read from on this device. No other address is ever used.
+ */
+export const walletIndexerFor = async (
+  company: CompanyLabel, account: AccountAddress,
+): Promise<{ readonly indexerUri: string; readonly indexerWsUri: string } | null> =>
+  (await holdersFromTheWallet(ACCOUNT_ORIGIN, { company, account })).indexer;
+
 /** What this page reads, afresh for each read, to believe a company's roster and each entry in it. */
 export const rosterReadsFor = (companyId: string, company: CompanyLabel, account: AccountAddress): RosterReads => ({
   filings: () => directoryFilingsFrom(api, companyId),

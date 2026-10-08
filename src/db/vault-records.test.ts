@@ -36,6 +36,10 @@ const withDb = DB ? describe : describe.skip;
 const OWN_DB = 'ca_test_vault_records';
 const MIGRATION = 'db/migrations/0002_vault_sealed_records.sql';
 const GBP = '9b'.repeat(32);
+/** The setting the durability check reads for the timeline of a server that replicates its log. */
+const REPLICATED_LOG = 'neon.timeline_id';
+/** How many vaults the one-writer race is run over. */
+const ROUNDS = 25;
 
 /** A vault no other test has used, so nothing here depends on what ran before. */
 const aVault = (): string => randomBytes(32).toString('hex');
@@ -53,7 +57,7 @@ describe('what makes a commit durable on a server', () => {
   it('accepts a server that makes a commit durable by replicating its log, which reports fsync off', () => {
     expect(
       whyCommitsMayNotBeDurable({ fsync: 'off', neonTimeline: '22b046870ee624e560b7e6146796576b' }),
-      'RED WHEN: the product\'s own database - measured reporting fsync off and a Neon timeline - is refused',
+      'RED WHEN: a server measured reporting fsync off, whose configuration defines the timeline of a replicated log, is refused',
     ).toBeNull();
   });
 
@@ -150,19 +154,29 @@ withDb('against a real database', () => {
     await expect(assertCommitsAreDurable(sql)).resolves.toBeUndefined();
   });
 
-  it('A TIMELINE A SESSION INVENTS IS NOT BELIEVED: only one the server\'s own configuration defines', async () => {
-    /* This server flushes; the wrapper makes it read as one that does not, inside a transaction that invents a Neon timeline. */
+  it('A REPLICATED LOG A CONNECTION CLAIMS IS NOT BELIEVED: only a timeline the server\'s own configuration defines', async () => {
+    /*
+     * Where the server's configuration defines the timeline, no connection can set it: the server refuses, so there is
+     * no claim to make and nothing more to check. Everywhere else a connection can invent one.
+     */
+    const [defined] = await sql`SELECT count(*)::int AS n FROM pg_settings WHERE name = ${REPLICATED_LOG} AND context = 'postmaster'`;
+    if (defined.n > 0) {
+      await expect(sql.begin((tx: any) => tx.unsafe(`SET LOCAL ${REPLICATED_LOG} = 'invented'`)),
+        'RED WHEN: a connection can set the timeline its server\'s configuration defines').rejects.toThrow();
+      return;
+    }
+    /* The wrapper makes this server read as one that does not flush, inside a transaction that invents a timeline. */
     await sql.begin(async (tx: any) => {
-      await tx`SET LOCAL neon.timeline_id = 'invented'`;
-      const [seen] = await tx`SELECT current_setting('neon.timeline_id', true) AS t`;
-      expect(seen.t, 'the fixture did not take: the session has no invented timeline').toBe('invented');
+      await tx.unsafe(`SET LOCAL ${REPLICATED_LOG} = 'invented'`);
+      const [seen] = await tx`SELECT current_setting(${REPLICATED_LOG}, true) AS t`;
+      expect(seen.t, 'the fixture did not take: the connection has no invented timeline').toBe('invented');
       const readsAsNotFlushing: any = (strings: TemplateStringsArray, ...values: unknown[]) => {
         const swapped = strings.map((s) => s.replace("current_setting('fsync')", "'off'::text"));
         return tx(Object.assign(swapped, { raw: swapped }), ...values);
       };
       await expect(
         assertCommitsAreDurable(readsAsNotFlushing),
-        'RED WHEN: any session can make a server that does not flush pass the durability check by setting one name',
+        'RED WHEN: any connection can make a server that does not flush pass the durability check by setting one name',
       ).rejects.toThrow(/fsync off/);
     });
   });
@@ -217,7 +231,11 @@ withDb('against a real database', () => {
     const a = (await openVaultRecords(sql, { refuseToCreate: NOTHING_IS_KEPT_ELSEWHERE })).of('pool');
     const b = (await openVaultRecords(second, { refuseToCreate: NOTHING_IS_KEPT_ELSEWHERE })).of('pool');
     let lost = 0;
-    for (let round = 0; round < 25; round += 1) {
+    /*
+     * Every round is its own vault and runs beside the others, so the time this takes is a few round trips to the
+     * server, wherever it is, not twenty-five in a row; within a round the two writers still race for one version.
+     */
+    await Promise.all(Array.from({ length: ROUNDS }, async () => {
       const v = aVault();
       await a.put(v, sealPool(v, { notes: [] }, s.list, 1));
       const mine = sealPool(v, { notes: [{ nonce: '01'.repeat(32), token: GBP, value: 1n }] }, s.list, 2);
@@ -233,8 +251,8 @@ withDb('against a real database', () => {
       expect(await a.get(v)).toEqual(JSON.parse(JSON.stringify(winner)));
       expect((await a.versions(v)).map((x) => x.version)).toEqual([1, 2]);
       lost += 1;
-    }
-    expect(lost).toBe(25);
+    }));
+    expect(lost).toBe(ROUNDS);
   });
 
   it('REFUSES a version already filed and a version past the next one, and files nothing for either', async () => {
@@ -257,7 +275,7 @@ withDb('against a real database', () => {
     const lax = postgres(url, { onnotice: () => {} });
     try {
       const [d] = await lax`SELECT current_setting('synchronous_commit') AS s`;
-      expect(d.s, 'the fixture did not take: this connection does not default to off').toBe('off');
+      expect(d?.s, 'the fixture did not take: this connection does not default to off').toBe('off');
       const v = aVault(); const s = signers();
       await expect(
         (await openVaultRecords(lax, { refuseToCreate: NOTHING_IS_KEPT_ELSEWHERE })).of('payment-journal').put(v, sealPool(v, { attempts: [] } as never, s.list, 1)),

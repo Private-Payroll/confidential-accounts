@@ -60,13 +60,28 @@ const setUp = (over: { view?: Partial<VaultChainView>; send?: VaultService['depo
   const refuse = async () => { log.push('a private step was asked'); throw new Error('a public deposit never asks this'); };
   const service: VaultService = {
     keys: refuse, deploy: refuse, handover: refuse, events: refuse, createdBy: refuse, payout: refuse, payoutPublicly: refuse,
-    chain: async () => { log.push('chain'); return view(); },
+    /* Asked of the vault, the service is never believed: the vault is read on this device, below. */
+    chain: async () => { log.push('the service was asked for the vault'); throw new Error('a deposit never asks the service for the vault'); },
     payoutState: async (v) => ({ vault: v, account: ACCOUNT, blockHash: 'B1', vaultState: 'V', zswapState: 'Z', parameters: PARAMS, accountState: 'A' }),
     deposit: async () => { log.push('sent to the private route'); return { txRef: 'no', transactionHash: null }; },
     depositPublicly: over.send ?? (async (_v, tx, money) => { log.push(`sent ${tx} ${money.token.slice(0, 2)} ${money.amount}`); return { txRef: 'r1', transactionHash: 'h1' }; }),
   };
   const builder = {
-    deploy: refuse, handover: refuse, chooseNote: refuse, paymentsFit: refuse, afterPayment: refuse, confirmPayment: refuse,
+    /*
+     * The vault as this device's worker reads it at the wallet's indexer: held by the keys that hold the account as the
+     * wallet reads it when the view says the committee holds it, by another key when it says not, started when money may
+     * go in. The read of a real state is `vault-on-chain-here.test.ts`'s.
+     */
+    vaultOnChain: async (i: { vault: string; indexer: unknown }) => {
+      log.push('read here');
+      const v = view();
+      return {
+        onChain: v.onChain, state: v.state ?? '', notes: v.notes, notesFromThisBuild: true, everCreated: v.everCreated ?? [],
+        authority: v.heldByCommittee === true ? { committee: [], threshold: 1 } : { committee: [{ tag: 'schnorr', value: '99'.repeat(32) }], threshold: 1 },
+        account: ACCOUNT, started: v.fundable === true,
+      };
+    },
+    deploy: refuse, handover: refuse, notesForPayment: refuse, paymentsFit: refuse, afterPayment: refuse, stepKept: refuse, confirmPayment: refuse,
     creatingTransaction: refuse, payout: refuse, payoutPublicly: refuse, governedCall: refuse, commitments: refuse, deposit: refuse,
     ...(over.noBuilder ? {} : {
       publicDeposit: async (i: { vault: string; token: string; amount: string; state: string; parameters: string }) => {
@@ -88,6 +103,8 @@ const setUp = (over: { view?: Partial<VaultChainView>; send?: VaultService['depo
     myRecordsKey: 'ff'.repeat(32) as Hex,
     signers: async () => [{ id: 'ada', wrappingPublicKey: wrapping.publicKey }],
     company: LABEL, account: ACCOUNT, builder,
+    /* The indexer the wallet names. */
+    indexer: async () => ({ indexerUri: 'https://indexer.example/api/v3/graphql', indexerWsUri: 'wss://indexer.example/api/v3/graphql/ws' }),
     /* The wallet's read: the account has adopted the vault. */
     onChain: async (v: string) => ({
       holders: { committee: [], threshold: 1, seats: [], approvals: 1, adoptedVaults: [v], founding: '4a'.repeat(32), foundingCommittee: [{ tag: 'schnorr', value: '11'.repeat(32) }] },
@@ -107,7 +124,7 @@ describe('A PUBLIC DEPOSIT FROM THE PAGE', () => {
     const source = publicTokenFromTheWallet(async (ask) => { log.push('wallet'); return paid('40')(ask); }, REGISTRY);
     /* RED WHEN: public money goes into a vault the service's rows name and the account never adopted. */
     await expect(depositFromSource(unadopted, VAULT, source, { code: PUBLIC_TOKEN, value: 40n })).rejects.toThrow(/not one your company's account has adopted/);
-    expect(log.filter((l) => l !== 'chain')).toEqual([]);
+    expect(log.filter((l) => l !== 'read here')).toEqual([]);
   });
 
   it('THE PUBLIC SOURCE ENDS IN THE VAULT\'S PUBLIC DEPOSIT: THE ASSET\'S PUBLIC TOKEN AND THE AMOUNT ASKED, BUILT, PAID BY THE WALLET AND SENT, AND NOTHING KEPT ON THIS DEVICE', async () => {
@@ -116,7 +133,7 @@ describe('A PUBLIC DEPOSIT FROM THE PAGE', () => {
     const source = publicTokenFromTheWallet(async (ask) => { asked.push(ask); log.push('wallet'); return paid('40')(ask); }, REGISTRY);
     const done = await depositFromSource(doors, VAULT, source, { code: PUBLIC_TOKEN, value: 40n });
     /* RED WHEN: the public source goes down the private step, is built with another token, amount or vault, or is sent anywhere but the public route. */
-    expect(log).toEqual(['chain', `built ab ${PUBLIC_TOKEN.slice(0, 2)} 40 true`, 'wallet', `sent PROVEN+public-coins ${PUBLIC_TOKEN.slice(0, 2)} 40`]);
+    expect(log).toEqual(['read here', `built ab ${PUBLIC_TOKEN.slice(0, 2)} 40 true`, 'wallet', `sent PROVEN+public-coins ${PUBLIC_TOKEN.slice(0, 2)} 40`]);
     expect(done).toEqual({ txRef: 'r1', transactionHash: 'h1', token: PUBLIC_TOKEN, value: 40n });
     /* RED WHEN: the wallet is handed anything beyond the company, its account, the vault and the proven deposit. */
     expect(asked).toEqual([{ company: LABEL, account: ACCOUNT, vault: VAULT, transaction: 'PROVEN' }]);
@@ -150,15 +167,15 @@ describe('A PUBLIC DEPOSIT FROM THE PAGE', () => {
 
   it('A VAULT THAT TAKES NO MONEY, OR A PAGE THAT CANNOT BUILD OR SEND A PUBLIC DEPOSIT, BUILDS NOTHING AND ASKS THE WALLET FOR NOTHING', async () => {
     for (const [why, over, says] of [
-      ['not held by the committee', { view: { heldByCommittee: false, why: 'held by other keys' } }, /^held by other keys$/],
-      ['the account not handed over', { view: { fundable: false, why: 'the account is not held yet' } }, /^the account is not held yet$/],
+      ['not held by the committee', { view: { heldByCommittee: false } }, /^this vault is not held by the keys that hold your company's account/],
+      ['not started', { view: { fundable: false } }, /^this vault has not been started/],
       ['no public build in the worker', { noBuilder: true }, /cannot build a public deposit/],
     ] as const) {
       const { log, doors } = setUp(over as never);
       const source = publicTokenFromTheWallet(async (ask) => { log.push('wallet'); return paid('40')(ask); }, REGISTRY);
       /* RED WHEN: the vault's state is asked after the wallet, or the step builds for a vault that takes no money. */
       await expect(depositFromSource(doors, VAULT, source, { code: PUBLIC_TOKEN, value: 40n }), why).rejects.toThrow(says);
-      expect(log.filter((l) => l !== 'chain'), why).toEqual([]);
+      expect(log.filter((l) => l !== 'read here'), why).toEqual([]);
     }
     const { log, doors } = setUp();
     const withoutTheRoute = { ...doors, service: { ...doors.service, depositPublicly: undefined } };

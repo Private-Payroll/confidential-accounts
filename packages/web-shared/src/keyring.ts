@@ -41,7 +41,7 @@ import {
 } from './wallet-records-key.js';
 /* **THE WALLET IS SHOWN INSIDE THIS PAGE.** Every journey below defaults to it;
  * a test hands in a window of its own and drives the same conversation. */
-import { walletInThisPage } from './wallet-frame.js';
+import { walletInThisPage, walletQuietlyInThisPage } from './wallet-frame.js';
 import { approvalMessage } from '../../../src/core/account.js';
 import {
   rosterBelievedHere, RosterNotBelieved, type BelievedAccount, type RosterBelievedBefore, type RosterSeenBefore,
@@ -1115,26 +1115,24 @@ export async function recordsKeyFromTheWallet(
 /**
  * **WHO HOLDS THE COMPANY NOW, AS THIS PERSON'S OWN WALLET READS THE CHAIN**, with
  * no press. Asked afresh for every read that believes a filing; see
- * `wallet-records-key.ts`.
+ * `wallet-records-key.ts`. Nothing is shown and nothing is unlocked: the wallet
+ * is asked in a frame of its own that nobody sees (`walletQuietlyInThisPage`),
+ * and the page says it is waiting for nothing.
  */
 export async function holdersFromTheWallet(
   walletOrigin: string,
-  ask: Pick<HoldersAsked, 'company' | 'account'>,
-  view: Openable = walletInThisPage(window),
+  ask: Pick<HoldersAsked, 'company' | 'account' | 'movements'>,
+  view: Openable = walletQuietlyInThisPage(window),
   atOrigin: string = window.location.origin,
-  already?: WalletDialog,
 ): Promise<HoldersRead> {
   if (!sessionLive) throw new Error('not signed in');
-  const dialog = openTheWallet(view, walletOrigin, already);
+  const dialog = openWalletDialog(view, walletOrigin);
   try {
     return await askWalletWhoHolds(view, walletOrigin, {
       ...ask, atOrigin, name: US_TO_A_WALLET.name, rdns: US_TO_A_WALLET.rdns,
     }, dialog);
-  } catch (e) {
-    if (!already) putAway(dialog);
-    throw e;
   } finally {
-    doneWaiting();
+    putAway(dialog);
   }
 }
 

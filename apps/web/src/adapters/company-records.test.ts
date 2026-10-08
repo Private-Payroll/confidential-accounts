@@ -25,6 +25,22 @@ const PUBLIC_ADDRESS = 'mn_addr_preview1qqqq';
 const kr = vi.hoisted(() => ({
   answers: {} as Record<string, unknown>, asked: [] as string[], keys: true, canOpen: true, user: 'u1', opened: 0, seat: false,
   account: { id: 'c1', name: 'Northwind', signers: [{ id: 's1', name: 'Priya' }, { id: 's2', name: 'Sam' }] } as unknown,
+  /* The indexer the person's own wallet names, and each vault the page's vault worker read there. */
+  indexer: null as { indexerUri: string; indexerWsUri: string } | null,
+  vaults: {} as Record<string, unknown>,
+  readHere: [] as string[],
+  /* The vaults the company's account has adopted, as the wallet reads the chain. */
+  adopted: [] as string[],
+}));
+vi.mock('./vault-builder.js', () => ({
+  theVaultBuilder: async () => ({
+    vaultOnChain: async (i: { vault: string; indexer: { indexerUri: string } }) => {
+      kr.readHere.push(`${i.vault} at ${i.indexer.indexerUri}`);
+      const v = kr.vaults[i.vault];
+      if (v === undefined) throw new Error('the indexer holds nothing for that vault');
+      return v;
+    },
+  }),
 }));
 vi.mock('vaults-web-shared/keyring.js', async (real) => ({
   ...(await real<typeof import('vaults-web-shared/keyring.js')>()),
@@ -40,6 +56,8 @@ vi.mock('vaults-web-shared/keyring.js', async (real) => ({
   openAccount: () => kr.account,
   viewingKeyFor: () => VK,
   openKeysWithWallet: async () => { kr.opened += 1; },
+  /* Who holds the company, as the person's own wallet reads it with no press: the vaults its account has adopted, and its indexer. */
+  holdersFromTheWallet: async () => ({ holders: { adoptedVaults: kr.adopted }, indexer: kr.indexer }),
   api: async (path: string) => {
     kr.asked.push(path);
     const a = kr.answers[path];
@@ -74,7 +92,8 @@ const sealedProposal = (id: string, status: string, secrets: Record<string, unkn
 });
 
 function everything() {
-  kr.answers[ROUTE()] = { id: 'c1', threshold: 2, signerCount: 2, wrappedKeys: [], companyLabel: LABEL };
+  kr.answers[ROUTE()] = { id: 'c1', threshold: 2, signerCount: 2, wrappedKeys: [], companyLabel: LABEL, contractAddress: 'c0'.repeat(32) };
+  kr.adopted = ['ab'.repeat(32), 'cd'.repeat(32)];
   kr.answers[ROUTE('/runs')] = [
     sealedRun('r1', '2026-10', 'draft', [
       { id: 'e1', name: 'Ana', asset: NIGHT.code, amount: 5_000_000n, paidTo: PRIVATE_ADDRESS },
@@ -347,6 +366,28 @@ describe('proposals, vaults and invitations', () => {
     ]);
   });
 
+  /*
+   * RED WHEN: the vault list is the service's rather than the vaults the account adopted as the person's own wallet reads
+   * the chain: a vault the service leaves out goes unnoticed, or a vault it lists that the account never adopted is shown
+   * as the company's.
+   */
+  it('lists the vaults the account adopted on the chain, notices one the service leaves out, and shows no vault the account never adopted', async () => {
+    const { readCompany } = await load();
+    const rows = (kr.answers[ROUTE('/vaults')] as { rows: unknown[] }).rows;
+    kr.answers[ROUTE('/vaults')] = { rows: [...rows,
+      { vault: 'ee'.repeat(32), deployedAt: '2026-09-03T00:00:00.000Z', state: 'held-by-committee' },
+      { vault: 'ef'.repeat(32), deployedAt: '2026-09-04T00:00:00.000Z', state: 'start-owed' },
+    ] };
+    const listed = await readCompany('u1', 'c1');
+    if (listed.of !== 'open' || listed.vaults.of !== 'read') throw new Error('not read');
+    /* A vault the service calls the company's that the account never adopted is not listed; one whose set-up is not finished is, as not finished. */
+    expect(listed.vaults.value.map((v) => [v.vault.slice(0, 2), v.standing])).toEqual([['ab', 'held-by-committee'], ['cd', 'unknown'], ['ef', 'start-owed']]);
+    /* The service leaves out a vault the account holds: the list is unreadable, never shown one short. */
+    kr.adopted = ['ab'.repeat(32), 'cd'.repeat(32), 'aa'.repeat(32)];
+    const short = await readCompany('u1', 'c1');
+    expect(short.of === 'open' && short.vaults.of).toBe('unreadable');
+  });
+
   /* RED WHEN: a link used, withdrawn or expired is listed as waiting to be used, or one that names nobody is given a name. */
   it('lists only the links still waiting to be used', async () => {
     const { readCompany } = await load();
@@ -355,14 +396,25 @@ describe('proposals, vaults and invitations', () => {
     expect(c.invitations.value.map((i) => [i.kind, i.name])).toEqual([['signer', 'Tom'], ['employee', null]]);
   });
 
-  /* RED WHEN: a vault's public money is read from anywhere but that vault's view, or a failure is handed on as nothing held. */
-  it('reads a vault\'s public money from its view, when asked', async () => {
+  /*
+   * RED WHEN: a vault's public money is read from anywhere but this device's own read of that vault, at the indexer the
+   * person's own wallet names; or a failure, or a wallet naming no indexer, is handed on as nothing held.
+   */
+  it('reads a vault\'s public money on this device, at the wallet\'s indexer, when asked', async () => {
     const { readVaultPublicMoney } = await load();
     const token = NIGHT.ledger.unshielded!;
-    kr.answers[ROUTE(`/vaults/${'ab'.repeat(32)}/chain`)] = { onChain: true, publicBalances: [{ token, amount: '4000000' }] };
+    kr.answers[ROUTE()] = { ...(kr.answers[ROUTE()] as object), contractAddress: 'c0'.repeat(32) };
+    kr.indexer = { indexerUri: 'https://indexer.wallet.example/api/v3/graphql', indexerWsUri: 'wss://indexer.wallet.example/api/v3/graphql/ws' };
+    kr.vaults['ab'.repeat(32)] = { onChain: true, publicBalances: [{ token, amount: '4000000' }] };
     const held = await readVaultPublicMoney('u1', 'c1', 'ab'.repeat(32));
     expect([held?.amounts.map((a) => formatTokenAmount(a, 'en')), held?.unrecognised]).toEqual([['4'], 0]);
+    expect(kr.readHere).toEqual([`${'ab'.repeat(32)} at https://indexer.wallet.example/api/v3/graphql`]);
+    expect(kr.asked.filter((p) => p.endsWith('/chain'))).toEqual([]);
     expect(await readVaultPublicMoney('u1', 'c1', 'cd'.repeat(32))).toBeNull();
+    kr.indexer = null;
+    kr.readHere = [];
+    expect(await readVaultPublicMoney('u1', 'c1', 'ab'.repeat(32))).toBeNull();
+    expect(kr.readHere).toEqual([]);
   });
 });
 

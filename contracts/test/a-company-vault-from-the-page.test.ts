@@ -116,6 +116,8 @@ const releasedCompanyKey = (words: string, company: CompanyLabel, account: strin
 class Chain {
   state: any = L.LedgerState.blank(NET);
   everCreated = new Map<string, Set<string>>();
+  /* The state each deploy left at its address, as an indexer answers for the deploy of a contract. */
+  deploys = new Map<string, any>();
   /* Every applied transaction's events, under the name an indexer would give it: its hash, or for an unproven one a hash of its identifier. */
   events = new Map<string, any[]>();
   applied: Array<{ hash: string; ok: boolean; error: string }> = [];
@@ -134,6 +136,11 @@ class Chain {
       }));
     const ok = result.type === 'success';
     if (ok) {
+      for (const intent of tx.intents?.values() ?? []) {
+        for (const action of intent.actions ?? []) {
+          if (action.initialState !== undefined && action.address !== undefined) this.deploys.set(String(action.address).toLowerCase(), action.initialState);
+        }
+      }
       this.state = next;
       let named: string;
       try { named = String(tx.transactionHash()); } catch { named = createHash('sha256').update(String(tx.identifiers()[0])).digest('hex'); }
@@ -234,6 +241,21 @@ describe.skipIf(!KEYS_ON_DISK)('A COMPANY VAULT, FROM THE SIGNER\'S DEVICE [need
   const builder = (proves = true) => {
     const deps = async () => ({
       ledger: L, vault: vaultModule, runtimeState: (runtime as any).ContractState, contracts: contracts as any,
+      /*
+       * The indexer the wallet names, over this chain: the vault's state as the ledger holds it, and every output the
+       * chain made for it, served as one transaction's events. The worker reads the vault from these and nothing else.
+       */
+      chainSourceAt: () => ({
+        contractState: async (v: string) => chain.contract(v),
+        deployState: async (v: string) => chain.deploys.get(v.toLowerCase()) ?? null,
+        transactions: { of: async () => ['e0'.repeat(32)] as never },
+        events: {
+          eventsOf: async () => [...chain.everCreated.values()].flatMap((made, i) => [...made].map((commitment) => ({
+            transactionHash: 'e0'.repeat(32),
+            details: { tag: 'zswapOutput', commitment, contract: [...chain.everCreated.keys()][i]!, mtIndex: 0n },
+          }))),
+        },
+      }),
       compiled, zkConfig: both,
       /* The company account beside the vault, as the worker loads it: its compiled contract, its functions and its ledger. */
       accountCompiled, accountZkConfig: accountZk, accountPure: (accountModule as any).pureCircuits,
@@ -462,6 +484,8 @@ describe.skipIf(!KEYS_ON_DISK)('A COMPANY VAULT, FROM THE SIGNER\'S DEVICE [need
    */
   const pacing = {
     sleep: async () => {}, waitMs: 3, everyMs: 1, vaultName: (v: string) => v,
+    /* The indexer this signer's own wallet names: the worker reads the vault there, over the chain above. */
+    indexer: async () => ({ indexerUri: 'https://indexer.example/api/v3/graphql', indexerWsUri: 'wss://indexer.example/api/v3/graphql/ws' }),
     approvers: async () => approverRosterFrom({
       threshold: 1, vaultThresholds: [], seated: ['e1', 'e2', 'e3'].map((leaf) => ({ leaf })), adoptedVaults: [], companyWide: 'cc'.repeat(32),
     }),
@@ -588,7 +612,7 @@ describe.skipIf(!KEYS_ON_DISK)('A COMPANY VAULT, FROM THE SIGNER\'S DEVICE [need
     /* The committee holds the vault and the account it pays out on. */
     expect((await http(`/api/accounts/${ACCOUNT_ID}/vaults`)).rows)
       .toEqual([expect.objectContaining({ vault, state: 'held-by-committee', why: null })]);
-    const poolDoors = { ...pacing, service: service(), account: readAccountAddress(company)!, onChain: walletReads, me, myRecordsKey: recordsReaderOf(me.companyKey).publicKey, signers, records: records() };
+    const poolDoors = { ...pacing, service: service(), builder: builder(), account: readAccountAddress(company)!, onChain: walletReads, me, myRecordsKey: recordsReaderOf(me.companyKey).publicKey, signers, records: records() };
 
     /* ---- the pool and the nonce secret, filed signed through the mounted route ---- */
     await openCompanyVaultPool(poolDoors, vault, async () => {});

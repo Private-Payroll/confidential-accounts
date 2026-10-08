@@ -10,6 +10,8 @@ import type { Phase } from '../session.js';
 import { ErrorNote, Moon, StatusNote } from '../components/ui.js';
 import { StatusAlert } from '../components/status.js';
 import { AskOver } from './ask-over.js';
+import { AnswerHolders, type HoldersReader } from './answer-holders.js';
+import { quietConsentFor } from '../framing.js';
 
 /**
  * **A WINDOW OPENED FOR A REQUEST, WITH NO WALLET IN IT.**
@@ -67,10 +69,12 @@ export interface ApproveEntryProps {
   readonly now?: () => number;
   /** The one page allowed to frame this wallet. Injected so a test can frame it. */
   readonly embedder?: string | null;
+  /** How a holders ask reads the account. Injected so a test can answer it. */
+  readonly readHolders?: HoldersReader;
 }
 
 export function ApproveEntry({
-  phase, entry, view, now = Date.now, embedder = EMBEDDER,
+  phase, entry, view, now = Date.now, embedder = EMBEDDER, readHolders,
 }: ApproveEntryProps): ReactNode {
   const { createAccount, busy, error } = useSession();
   const [channelState, setChannelState] = useState<ChannelState>({ of: 'waiting' });
@@ -105,7 +109,20 @@ export function ApproveEntry({
    * asker's origin is observed at all. So until a request has been accepted from
    * the allowed page, a framed entry is a waiting line and nothing else.
    */
-  const framed = framingOf(view ?? (window as unknown as ChannelWindow), embedder).of === 'framed';
+  const framing = framingOf(view ?? (window as unknown as ChannelWindow), embedder);
+  const framed = framing.of === 'framed';
+  /*
+   * **A PAGE ASKING WHO HOLDS A COMPANY IS ANSWERED WITH NO WALLET OPEN.** The
+   * answer is public facts this wallet reads off the chain itself, and nothing
+   * private is given or signed, so no key is needed and nothing is unlocked: a
+   * locked wallet, or a browser with no wallet in it yet, answers it the same.
+   */
+  if (channelState.of === 'request' && channelState.request.kind === 'holders') {
+    return (
+      <AnswerHolders request={channelState.request} channel={channel} consent={quietConsentFor(framing)} now={now}
+        {...(readHolders === undefined ? {} : { readHolders })} />
+    );
+  }
   /* A request this wallet refused on arrival has been answered already: it is said, never waited for. */
   if (framed && channelState.of === 'refused') {
     return (

@@ -1,7 +1,7 @@
 import { afterEach, describe, expect, it } from 'vitest';
 import {
   WALLET_FRAME_ALLOW, closeWalletFrame, mountWalletFrame, onWalletFrame, walletFrameShown,
-  walletInThisPage,
+  walletInThisPage, walletQuietlyInThisPage,
 } from './wallet-frame.js';
 import type { FrameElement } from './wallet-frame.js';
 import { READY_PING } from 'midnight-identity/profile/channel';
@@ -141,5 +141,56 @@ describe('the product\'s journeys default to the wallet in this page', () => {
     } finally {
       g.window = realWindow; g.fetch = realFetch;
     }
+  });
+});
+
+describe('the wallet asked for public facts, in a frame nobody sees', () => {
+  const aDocument = () => {
+    const attached = new Set<unknown>();
+    const made: Array<Record<string, unknown> & { attrs: Record<string, string>; style: Record<string, string> }> = [];
+    const doc = {
+      createElement: () => {
+        const el = {
+          src: '', hidden: false, attrs: {} as Record<string, string>, style: {} as Record<string, string>,
+          contentWindow: { postMessage: () => {} },
+          setAttribute(k: string, v: string) { this.attrs[k] = v; },
+        };
+        made.push(el as never);
+        return el as never;
+      },
+      body: {
+        appendChild: (n: unknown) => { attached.add(n); return n; },
+        removeChild: (n: unknown) => { attached.delete(n); return n; },
+        contains: (n: unknown) => attached.has(n),
+      },
+    };
+    return { doc, made, attached };
+  };
+
+  it('OPENS a hidden frame of its own for each ask, never the frame the person sees, and takes it away when the ask ends', () => {
+    const { element } = aFrame();
+    mountWalletFrame(element);
+    const { doc, made, attached } = aDocument();
+    const quiet = walletQuietlyInThisPage(aPage(), doc as never);
+    const one = quiet.open('https://wallet.example/?ask=1#/approve', 'n')!;
+    const two = quiet.open('https://wallet.example/?ask=2#/approve', 'n')!;
+    /* RED WHEN: a holders ask shows the wallet, or navigates the frame a person may be reading another ask in. */
+    expect(walletFrameShown()).toBe(false);
+    expect(element.src).toBe('');
+    /* RED WHEN: two quiet asks share one frame, so the second cuts the first off. */
+    expect(made).toHaveLength(2);
+    expect(made[0]!.src).toBe('https://wallet.example/?ask=1#/approve');
+    expect(made[1]!.src).toBe('https://wallet.example/?ask=2#/approve');
+    /* RED WHEN: the frame can be seen, focused or read out by assistive technology. */
+    expect(made.every((f) => f.hidden === true && f.attrs['aria-hidden'] === 'true' && f.attrs['tabindex'] === '-1' && f.style.display === 'none')).toBe(true);
+    /* RED WHEN: an ask listens for its answer from another ask's frame. */
+    expect(one.messageSource).toBe(made[0]!.contentWindow);
+    expect(two.messageSource).toBe(made[1]!.contentWindow);
+    one.close!();
+    /* RED WHEN: an ask that ended leaves its frame, holding a live wallet, in the page. */
+    expect(attached.has(made[0])).toBe(false);
+    expect(one.closed).toBe(true);
+    expect(attached.has(made[1])).toBe(true);
+    expect(two.closed).toBe(false);
   });
 });

@@ -1049,7 +1049,6 @@ export const CODES: Readonly<Record<string, string>> = {
   'apps/web/src/adapters/create-vault.ts#STOPPED': 'what resolves a start that stopped before its secret was approved, one of a fixed set a screen turns into its own phrase',
   'apps/web/src/adapters/create-vault.ts#OWED': 'a vault sent and not yet held by its committee, one of a fixed set a screen turns into its own phrase',
   'apps/web/src/adapters/create-vault.ts#SERVICE': 'the service\'s addresses, sent and never shown',
-  'apps/web/src/adapters/vault-rows.ts#SERVICE': 'the service\'s address for a company\'s vaults, sent and never shown',
   'apps/web/src/adapters/kept-sign-in.ts#KEPT': 'where the sign-in is kept in the tab\'s storage',
   'apps/web/src/actions/create-vault.tsx#ASKING': 'which confirmation is being asked for, compared by the code',
 };

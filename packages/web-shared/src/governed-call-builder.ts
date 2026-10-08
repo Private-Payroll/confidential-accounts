@@ -784,7 +784,7 @@ export async function buildGovernedCall(
       : deps.accountLedger((deps.runtimeState.deserialize(input.chain.accountState) as { data: unknown }).data) as AccountLedgerView;
     refuseWhatThisDeviceDidNotMake({
       runPayload: deps.accountPure.runPayload, vaultDetails: deps.vaultDetails,
-      payKeyCommitmentOf: deps.accountPure.payKeyCommitmentOf, payKeyCommitmentKey: deps.accountPure.payKeyCommitmentKey,
+      payKeyCommitmentOf: deps.accountPure.payKeyCommitmentOf,
       ...(deps.accountPure.policyOnKeyOf === undefined ? {} : { policyOnKeyOf: deps.accountPure.policyOnKeyOf }),
       ...(deps.vaultPure === undefined ? {} : { secretRun: { vault: deps.vaultPure, account: deps.accountPure as unknown as AccountStartPure } }),
     }, input.opened, view, raisingARun ? 'raise' : 'approve');

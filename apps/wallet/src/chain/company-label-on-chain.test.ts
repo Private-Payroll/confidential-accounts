@@ -10,10 +10,11 @@ import type { VaultAddress } from 'midnight-identity/profile/company-label';
 import { ChargedState, ContractMaintenanceAuthority, ContractState, StateValue } from '@midnightntwrk/ledger-v9';
 import { schnorr } from '@noble/curves/secp256k1.js';
 import {
-  ACCOUNT_THRESHOLD_FIELD, ADOPTED_VAULTS_FIELD, ROLES_FIELD, SIGNER_LEAVES_FIELD, VAULT_ACCOUNT_FIELD,
+  ACCOUNT_THRESHOLD_FIELD, ADOPTED_VAULTS_FIELD, MOVEMENTS_FIELD, ROLES_FIELD, SIGNER_LEAVES_FIELD, VAULT_ACCOUNT_FIELD,
   accountCarries, deployFromIndexerAt, foundingInDeployState, fromIndexerAt, holdersInAccountState, holdersOnChain,
-  labelInAccountState, labelOnAccount, seatsInAccountState, vaultInState, vaultOnChain,
+  labelInAccountState, labelOnAccount, paymentsInAccountState, seatsInAccountState, vaultInState, vaultOnChain,
 } from './company-label-on-chain.js';
+import { PAY_KEY_COMMITMENT_ENTRY } from 'midnight-identity/profile/records-key';
 
 /*
  * The label a company's account carries, read the way this wallet reads it:
@@ -366,5 +367,37 @@ describe('A LABEL ENTRY THAT HOLDS ZERO', () => {
     /* RED WHEN: an entry written as zero is read as a company's label. */
     expect(labelInAccountState(Buffer.from(state, 'hex'))).toBeNull();
     expect(await labelOnAccount(ACCOUNT, async () => state)).toEqual({ of: 'no-label' });
+  });
+});
+
+describe('WHAT THE ACCOUNT RECORDS ABOUT PAYMENTS, READ WITH NO PRESS', () => {
+  it('the key the pay-record key commitment is looked up under is the key the contract writes it under', () => {
+    /* RED WHEN: the wallet's copy of the entry drifts from the contract's own derivation. */
+    expect(PAY_KEY_COMMITMENT_ENTRY).toBe(hexOf(pureCircuits.payKeyCommitmentKey()));
+  });
+
+  it('reads the account\'s record of payments from the field the account\'s own decoder reads it from', async () => {
+    const sim = await AccountSimulator.liveAccount([privateStateFor(1), privateStateFor(2)], 2n);
+    const state = ContractState.deserialize((sim.contractStateForCall as { serialize(): Uint8Array }).serialize());
+    const fields = state.data.state.asArray()!;
+    /* RED WHEN: payments are read from any field but the one the contract's decoder calls its record of payments. */
+    expect(MOVEMENTS_FIELD).toBe(4);
+    expect(fields[MOVEMENTS_FIELD]!.asMap()!.keys().length).toBe(Number(sim.ledger.movements.size()));
+    const asked = ['a1'.repeat(32), 'b2'.repeat(32)];
+    /* A new account has paid nobody and committed to no pay-record key. */
+    expect(paymentsInAccountState(state.serialize(), asked)).toEqual({ payKeyCommitment: null, held: [] });
+    /* RED WHEN: a state that is not a company's account is read as one that paid nobody. */
+    expect(() => paymentsInAccountState(new Uint8Array([1, 2, 3]), asked)).toThrow();
+  });
+
+  it('A HOLDERS READ THAT ASKS ABOUT PAYMENTS ANSWERS THEM IN THE SAME READ, AND ONE THAT DOES NOT ANSWERS NOTHING ABOUT THEM', async () => {
+    const state = hexOf(await deployHeld(LABEL_BYTES));
+    const asked = ['c3'.repeat(32)];
+    const withPayments = await holdersOnChain(ACCOUNT, companyLabelOf(LABEL_BYTES), async () => state, async () => state, asked);
+    /* RED WHEN: the payments asked about are dropped from the answer, or read from another state than the holders. */
+    expect(withPayments).toMatchObject({ of: 'read', payments: { payKeyCommitment: null, held: [] } });
+    const without = await holdersOnChain(ACCOUNT, companyLabelOf(LABEL_BYTES), async () => state, async () => state);
+    /* RED WHEN: a read nobody asked payments of says anything about them. */
+    expect(without.of === 'read' && 'payments' in without).toBe(false);
   });
 });

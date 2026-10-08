@@ -6,7 +6,7 @@ import { x25519 } from '@noble/curves/ed25519.js';
 import { identityFromSecret } from '../keys/derivation.js';
 import { committeeKeyFor, committeeSigningKeyFor } from './committee-key.js';
 import type { AccountAddress, CompanyLabel } from './company-label.js';
-import { parseAsk, type HoldersRequest, type RecordsKeyRequest } from './request.js';
+import { MOST_ENTRIES_ASKED, parseAsk, type HoldersRequest, type RecordsKeyRequest } from './request.js';
 import { unlockKeyFor } from './unlock.js';
 import type { UnlockRequest } from './request.js';
 import {
@@ -417,6 +417,40 @@ describe('THE HOLDERS ASK: PUBLIC CHAIN FACTS, NO PRESS, AND NOTHING ELSE', () =
     /* RED WHEN: holders with no committee the deploy held the account by are taken: the founding seat's entry could then be anybody's. */
     expect(code({ ...answer, holders: { ...holders, foundingCommittee: [] } }, expecting)).toBe('not-an-answer');
     expect(code({ ...answer, holders: { ...holders, foundingCommittee: [{ tag: 'schnorr' }] } }, expecting)).toBe('not-an-answer');
+  });
+
+  it('A PAGE ABOUT TO APPROVE A RUN ASKS ABOUT ITS PAYMENTS, AND IS TOLD ONLY ABOUT THE ENTRIES IT ASKED', () => {
+    const asked = ['a1'.repeat(32), 'b2'.repeat(32), 'c3'.repeat(32)];
+    const request = ask({ movements: asked });
+    /* RED WHEN: the entries a page asked about are dropped from the ask. */
+    expect(request.movements).toEqual(asked);
+    const payments = { payKeyCommitment: 'cc'.repeat(32), held: [asked[2]!, asked[0]!] };
+    const answer = holdersAnswerFor(request, holders, NOW, payments);
+    /* RED WHEN: what is held is not answered in the order asked, or the commitment is not passed on as read. */
+    expect(answer.payments).toEqual({ payKeyCommitment: 'cc'.repeat(32), held: [asked[0], asked[2]] });
+    const exp = { ...expecting, movements: asked };
+    const read = readHoldersAnswer(answer, exp);
+    expect(read.ok && read.payments).toEqual(answer.payments);
+    const refuses = (message: unknown, e: Parameters<typeof readHoldersAnswer>[1] = exp) => readHoldersAnswer(message, e).ok;
+    /* RED WHEN: a page that asked about payments takes an answer that says nothing about them as nobody paid. */
+    expect(refuses({ ...answer, payments: undefined })).toBe(false);
+    /* RED WHEN: an entry the page did not ask about is taken as held, or one entry twice, or a commitment in no wallet's shape. */
+    expect(refuses({ ...answer, payments: { ...payments, held: ['dd'.repeat(32)] } })).toBe(false);
+    expect(refuses({ ...answer, payments: { ...payments, held: [asked[0], asked[0]] } })).toBe(false);
+    expect(refuses({ ...answer, payments: { ...payments, payKeyCommitment: 'CC'.repeat(32) } })).toBe(false);
+    /* RED WHEN: an account that committed to no pay-record key is read as one that did. */
+    expect(readHoldersAnswer(holdersAnswerFor(request, holders, NOW, { payKeyCommitment: null, held: [] }), exp)).toMatchObject({ ok: true, payments: { payKeyCommitment: null, held: [] } });
+    /* RED WHEN: a page that asked nothing about payments takes an answer that volunteers them. */
+    expect(refuses(answer, expecting)).toBe(false);
+    /* RED WHEN: a wallet answers an ask about payments without reading them, or answers payments nobody asked about. */
+    expect(() => holdersAnswerFor(request, holders, NOW)).toThrow(/did not read the payments/);
+    expect(() => holdersAnswerFor(ask(), holders, NOW, payments)).toThrow(/did not read the payments/);
+    /* RED WHEN: a wallet answers as held an entry the page did not ask about. */
+    expect(() => holdersAnswerFor(request, holders, NOW, { ...payments, held: ['dd'.repeat(32)] })).toThrow(/did not read the payments/);
+    /* RED WHEN: an ask names no entries, an entry in no shape, one twice, or more than the most allowed, and is answered. */
+    for (const bad of [[], ['zz'], [asked[0], asked[0]], Array.from({ length: MOST_ENTRIES_ASKED + 1 }, (_, i) => i.toString(16).padStart(64, '0')), 'a1']) {
+      expect(() => ask({ movements: bad }), JSON.stringify(bad).slice(0, 40)).toThrow(/between 1 and/);
+    }
   });
 
   it('THE ASK REFUSES ANY FIELD BUT THE LABEL AND THE ACCOUNT', () => {

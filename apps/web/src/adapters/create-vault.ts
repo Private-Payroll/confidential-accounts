@@ -21,7 +21,7 @@ import { companyRoute } from './handover-state.js';
 import { keyringFor, keysOnTheWayIn } from './keyring-person.js';
 import { ACT_REFUSAL, ACTED, refusalOf, type ActRefusal } from './refusals.js';
 import { ACCOUNT_ORIGIN } from './session.js';
-import { directoryHereFor, filingJudgeFor, openedHere } from './filing-judge.js';
+import { directoryHereFor, filingJudgeFor, openedHere, walletIndexerFor } from './filing-judge.js';
 import { giveTheVaultKeys } from './vault-keys.js';
 import { theVaultBuilder } from './vault-builder.js';
 import { handoverOwed, readVaultRows } from './vault-rows.js';
@@ -265,6 +265,8 @@ async function run(personId: string, companyId: string, onStage: (stage: Creatin
       onChain: async () => ({
         holders: (await holdersFromTheWallet(ACCOUNT_ORIGIN, { company: released.company, account: released.account })).holders,
       }),
+      /* The vault itself is read in this device's vault worker, at the indexer this person's own wallet names. */
+      indexer: () => walletIndexerFor(released.company, released.account),
       secretReaders: {
         company: released.company, committeeKey: released.signed.committeeKey,
         /*

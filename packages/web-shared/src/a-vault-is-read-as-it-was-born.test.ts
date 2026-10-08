@@ -26,7 +26,6 @@ const MANAGED = join(import.meta.dirname, '../../../contracts/managed-vault');
 const KEYS = keysOnDisk([VAULT_KEYS]).ok;
 const vk = (n: number) => L.signatureVerifyingKey(L.signingKeyFromBip340(new Uint8Array(32).fill(n)));
 const committee: Committee = { committee: [vk(1), vk(2)].sort((a, b) => (a.value < b.value ? -1 : 1)), threshold: 2 };
-const b64 = (b: Uint8Array) => Buffer.from(b).toString('base64');
 const keyFile = async (c: string) => new Uint8Array(readFileSync(join(MANAGED, 'keys', `${c}.verifier`)));
 const expected = (vaultModule as unknown as { expectedVk: Record<string, string> }).expectedVk;
 const deps = (): VaultBuilderDeps => ({
@@ -37,6 +36,15 @@ const deps = (): VaultBuilderDeps => ({
   prove: async (tx: any) => tx.prove({
     check: async () => { throw new Error('asked to check'); }, prove: async () => { throw new Error('asked to prove'); }, lookupKey: async () => undefined,
   } as never, L.CostModel.initialCostModel()),
+});
+/** The state a built deploy leaves at its own address, as the chain records it: what the indexer serves for the vault's deploy. */
+const deployStateOf = (proven: Uint8Array): unknown => {
+  const tx = L.Transaction.deserialize('signature', 'proof', 'pre-binding', proven) as { intents?: Map<unknown, { actions?: Array<{ initialState?: unknown }> }> };
+  return [...(tx.intents?.values() ?? [])][0]?.actions?.[0]?.initialState;
+};
+/** The indexer the wallet names, standing in: it holds `deploys` by address, and nothing else. */
+const chainHolding = (deploys: Record<string, Uint8Array>) => ({
+  deployState: async (address: string) => (deploys[address] === undefined ? null : deployStateOf(deploys[address]!)),
 });
 const reader = (fetchKey = keyFile) => ({
   ledger: L, runtimeState: (runtime as any).ContractState, vault: vaultModule,
@@ -51,29 +59,30 @@ describe.skipIf(!KEYS)('A VAULT READ AS IT WAS BORN [needs contracts/managed-vau
     born = await buildVaultBornHeld(deps(), { account: ACCOUNT, holders: committee });
     other = await buildVaultBornHeld(deps(), { account: ACCOUNT, holders: { committee: [vk(3)], threshold: 1 } });
   }, 120_000);
-  const ask = (over: Partial<{ vault: string; account: string; holders: Committee; deploy: string }> = {}) =>
-    ({ vault: born.address, account: ACCOUNT, holders: committee, deploy: b64(born.proven), ...over });
+  const ask = (over: Partial<{ vault: string; account: string; holders: Committee }> = {}) =>
+    ({ vault: born.address, account: ACCOUNT, holders: committee, ...over });
+  const chain = () => chainHolding({ [born.address]: born.proven, [other.address]: other.proven });
 
   it('THE DEVICE\'S OWN BUILD IS READ AS BORN HELD BY THE COMMITTEE IT WAS BUILT FOR', async () => {
     /* RED WHEN: the device's builder holds the vault by anything but the committee it was given, or writes anything into it. */
-    expect(await vaultAsDeployed(reader(), ask())).toBeNull();
+    expect(await vaultAsDeployed(reader(), ask(), chain())).toBeNull();
   });
 
   it('A DEPLOY HELD BY OTHER KEYS, OR READ AGAINST ANOTHER COMMITTEE, ACCOUNT OR THRESHOLD, IS REFUSED', async () => {
     const held = /held from its first transaction by the company's committee/;
     /* RED WHEN: the deploy's own committee is believed rather than compared with the company's. */
-    expect(await vaultAsDeployed(reader(), ask({ vault: other.address, deploy: b64(other.proven) }))).toMatch(held);
-    expect(await vaultAsDeployed(reader(), ask({ holders: { ...committee, threshold: 1 } }))).toMatch(/could change them alone|held from/);
-    expect(await vaultAsDeployed(reader(), ask({ holders: { committee: [...committee.committee].reverse(), threshold: 2 } }))).toMatch(held);
+    expect(await vaultAsDeployed(reader(), ask({ vault: other.address }), chain())).toMatch(held);
+    expect(await vaultAsDeployed(reader(), ask({ holders: { ...committee, threshold: 1 } }), chain())).toMatch(/could change them alone|held from/);
+    expect(await vaultAsDeployed(reader(), ask({ holders: { committee: [...committee.committee].reverse(), threshold: 2 } }), chain())).toMatch(held);
     /* RED WHEN: the account the vault is pinned to is not compared. */
-    expect(await vaultAsDeployed(reader(), ask({ account: 'd0'.repeat(32) }))).toMatch(/pinned to a different company's account/);
+    expect(await vaultAsDeployed(reader(), ask({ account: 'd0'.repeat(32) }), chain())).toMatch(/pinned to a different company's account/);
   });
 
-  it('A DEPLOY THAT MAKES ANOTHER ADDRESS, OR IS NOT ONE DEPLOY, SAYS NOTHING ABOUT THIS VAULT', async () => {
-    /* RED WHEN: the deploy served for a vault is read without checking it makes that vault's address. */
-    expect(await vaultAsDeployed(reader(), ask({ deploy: b64(other.proven) }))).toMatch(/makes another address than this vault's/);
-    /* RED WHEN: bytes that are not a deploy are read as one. */
-    expect(await vaultAsDeployed(reader(), ask({ deploy: 'AAAA' }))).toMatch(/is not one deploy/);
+  it('THE DEPLOY READ IS THE ONE THE CHAIN HOLDS AT THE VAULT\'S OWN ADDRESS, AND AN ADDRESS WITH NONE IS NO VAULT', async () => {
+    /* RED WHEN: a vault is read from a deploy at another address than its own. */
+    expect(await vaultAsDeployed(reader(), ask(), chainHolding({ [born.address]: other.proven }))).toMatch(/held from its first transaction by the company's committee/);
+    /* RED WHEN: an address the chain holds no deploy for is read as a vault born held. */
+    expect(await vaultAsDeployed(reader(), ask(), chainHolding({}))).toMatch(/the chain holds no deploy at this vault's address/);
   });
 
   it('IS NEVER BUILT FOR A COMMITTEE ANY ONE OF WHOSE KEYS COULD CHANGE IT ALONE', async () => {
@@ -84,6 +93,6 @@ describe.skipIf(!KEYS)('A VAULT READ AS IT WAS BORN [needs contracts/managed-vau
   it('IS READ AGAINST THIS BUILD\'S KEYS ONLY: A SERVED KEY THAT IS NOT THIS BUILD\'S STOPS THE READ', async () => {
     const swapped = async (c: string) => (c === 'payout' ? keyFile('deposit') : keyFile(c));
     /* RED WHEN: the keys the deploy is compared with are taken as served, unchecked. */
-    await expect(vaultAsDeployed(reader(swapped), ask())).rejects.toThrow('the verifying key served for the vault\'s payout circuit is not this build\'s');
+    await expect(vaultAsDeployed(reader(swapped), ask(), chain())).rejects.toThrow('the verifying key served for the vault\'s payout circuit is not this build\'s');
   });
 });

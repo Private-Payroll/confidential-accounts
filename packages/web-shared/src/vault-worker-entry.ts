@@ -13,7 +13,7 @@
  */
 import {
   buildAccountDeploy, buildVaultBornHeld, buildCommitteeHandover, buildDeposit, buildPayout, creationCarriedAgain, finishedCreation, buildPublicDeposit, buildPublicPayout, buildSetNonceSecret, buildVaultDeploy,
-  buildWriteSecretCopy, chooseNoteForPayment, confirmPayment, paymentsFitNotes, poolAfterPayment,
+  buildWriteSecretCopy, notesForPayment, confirmPayment, paymentsFitNotes, poolAfterPayment,
   type SecretRunOnTheWire, type VaultBuilderDeps,
 } from './vault-builder.js';
 import {
@@ -132,6 +132,8 @@ export type WorkerDeps = Omit<VaultBuilderDeps, 'network'> & { vault: any; accou
     accountKeys: { getVerifierKey(c: string): Promise<Uint8Array>; getVerifierKeys(cs: readonly string[]): Promise<Array<[string, Uint8Array]>> };
     /** Every vault circuit's verifying key, checked the same way against the compiled vault's own digests. */
     vaultKeys: { getVerifierKey(c: string): Promise<Uint8Array>; getVerifierKeys(cs: readonly string[]): Promise<Array<[string, Uint8Array]>> };
+    /** Where a vault is read from, at the indexer the wallet names; absent, the indexer itself. A test hands its own. */
+    chainSourceAt?: (indexer: { indexerUri: string; indexerWsUri: string }) => import('./vault-on-chain-here.js').VaultChainSource;
   };
 
 /**
@@ -161,34 +163,25 @@ export const checkedAccountKeys = (
 
 /**
  * **A VAULT AS ITS DEPLOY MADE IT, READ ON THIS DEVICE** before the vault is
- * adopted or its set-up carried on. The deploy is the one its address
- * was made from, whoever served it: one that makes another address is refused.
- * Read with the one reading the service makes before paying for a deploy
- * (`vaultBornHeldRefusal`), against this build's keys, each checked against the
- * compiled vault's own digest. Null when the vault was born held.
+ * adopted or its set-up carried on: the state the chain recorded its deploy
+ * leaving at the vault's own address, read from the indexer the person's own
+ * wallet names, never a deploy anybody serves. Read with the one reading the
+ * service makes before paying for a deploy (`vaultBornHeldRefusal`), against
+ * this build's keys, each checked against the compiled vault's own digest. Null
+ * when the vault was born held.
  */
 export const vaultAsDeployed = async (
   d: Pick<WorkerDeps, 'ledger' | 'runtimeState' | 'vault' | 'vaultKeys'>,
-  ask: { vault: string; account: string; holders: Committee; deploy: string },
+  ask: { vault: string; account: string; holders: Committee },
+  source: Pick<import('./vault-on-chain-here.js').VaultChainSource, 'deployState'>,
 ): Promise<string | null> => {
   const what = 'a vault this company can use';
-  let action: { address?: unknown; initialState?: unknown } | undefined;
-  try {
-    const tx = d.ledger.Transaction.deserialize('signature', 'proof', 'pre-binding', fromBase64(ask.deploy)) as { intents?: Map<unknown, { actions?: unknown[] }> };
-    const intents = [...(tx.intents?.values() ?? [])];
-    action = intents.length === 1 && intents[0]?.actions?.length === 1 ? intents[0].actions[0] as typeof action : undefined;
-  } catch {
-    action = undefined;
-  }
-  if (action?.initialState === undefined || action.address === undefined) {
-    return `this is not ${what}: what was served as its deploy is not one deploy. Nothing was sent.`;
-  }
-  if (String(action.address).toLowerCase() !== ask.vault.toLowerCase()) {
-    return `this is not ${what}: what was served as its deploy makes another address than this vault's, so it says `
-      + 'nothing about this vault. Nothing was sent.';
+  const initialState = await source.deployState(ask.vault);
+  if (initialState === null || initialState === undefined) {
+    return `this is not ${what} yet: the chain holds no deploy at this vault's address. Nothing was sent.`;
   }
   const verifierKeys = new Map(await d.vaultKeys.getVerifierKeys(VAULT_CIRCUITS));
-  return vaultBornHeldRefusal(action.initialState, {
+  return vaultBornHeldRefusal(initialState, {
     account: ask.account, holders: ask.holders, verifierKeys,
     startingLedgerOf: (state) => startingLedgerFrom(
       d.vault.ledger((d.runtimeState as any).deserialize((state as { serialize(): Uint8Array }).serialize()).data),
@@ -344,7 +337,10 @@ export const answerVaultAsk = async (
       return { id: ask.id, ok: true, ask: 'born-held-vault', vault: built.address, tx: toBase64(built.proven) };
     }
     case 'vault-as-deployed': {
-      return { id: ask.id, ok: true, ask: 'vault-as-deployed', refusal: await vaultAsDeployed(d, ask) };
+      /* The deploy as the chain holds it, from the indexer the wallet names, read here and never served by anybody. */
+      const { vaultChainSourceAt } = await import('./vault-on-chain-here.js');
+      const source = (d.chainSourceAt ?? vaultChainSourceAt)(ask.indexer);
+      return { id: ask.id, ok: true, ask: 'vault-as-deployed', refusal: await vaultAsDeployed(d, ask, source) };
     }
     case 'handover': {
       const built = await buildCommitteeHandover(withNetwork, {
@@ -373,16 +369,17 @@ export const answerVaultAsk = async (
       });
       return { id: ask.id, ok: true, ask: 'public-deposit', tx: toBase64(built.proven) };
     }
-    case 'choose-note': {
-      const note = chooseNoteForPayment({ notes: ask.notes, token: ask.token, amount: ask.amount });
-      return { id: ask.id, ok: true, ask: 'choose-note', note };
+    case 'notes-for-payment': {
+      const notes = notesForPayment({ notes: ask.notes, token: ask.token, amount: ask.amount });
+      return { id: ask.id, ok: true, ask: 'notes-for-payment', notes };
     }
     case 'payments-fit': {
       return { id: ask.id, ok: true, ask: 'payments-fit', answer: paymentsFitNotes({ notes: ask.notes, payments: ask.payments }) };
     }
     case 'after-payment': {
       const notes = poolAfterPayment({
-        notes: ask.notes, spent: ask.spent, amount: ask.amount, change: ask.change, createdIn: ask.createdIn,
+        notes: ask.notes, spent: ask.spent, ...(ask.further === undefined ? {} : { further: ask.further }),
+        amount: ask.amount, change: ask.change, createdIn: ask.createdIn,
       });
       return { id: ask.id, ok: true, ask: 'after-payment', notes };
     }
@@ -401,7 +398,7 @@ export const answerVaultAsk = async (
     case 'payout': {
       const built = await buildPayout(withNetwork, {
         vault: ask.vault, account: ask.account, order: ask.order, payment: ask.payment,
-        note: ask.note, events: ask.events, secret: ask.secret,
+        note: ask.note, events: ask.events, ...(ask.further === undefined ? {} : { further: ask.further }), secret: ask.secret,
         chain: {
           blockHash: ask.chain.blockHash,
           vaultState: fromBase64(ask.chain.vaultState),
@@ -555,6 +552,31 @@ export const answerVaultAsk = async (
         .secretCommitmentOf(bytes(ask.vault), bytes(ask.secret));
       const matches = held.length === worked.length && held.every((b, i) => b === worked[i]) && held.some((b) => b !== 0);
       return { id: ask.id, ok: true, ask: 'secret-is-the-vaults', matches };
+    }
+    case 'vault-on-chain': {
+      /* The vault as the chain holds it, from the indexer the wallet names, read here and never by the page or the service. */
+      const { readVaultOnChain, vaultChainSourceAt } = await import('./vault-on-chain-here.js');
+      const source = (d.chainSourceAt ?? vaultChainSourceAt)(ask.indexer);
+      return { id: ask.id, ok: true, ask: 'vault-on-chain', read: await readVaultOnChain(d, source, ask.vault) };
+    }
+    case 'step-kept': {
+      /* The coin a journalled step kept, worked out with the vault's own functions: a merge's, or a payment's change. */
+      const [{ keptByAStep }, { nonceCircuitsFrom }] = await Promise.all([
+        import('../../../src/midnight/vault-recovery.js'),
+        import('../../../src/midnight/vault-coin-nonces.js'),
+      ]);
+      const coinOf = (n: { nonce: string; token: string; value: string }) => {
+        const c = n as unknown as { readonly nonce: Hex; readonly token: Hex; readonly value: string };
+        return { nonce: c.nonce, token: c.token, value: BigInt(c.value) };
+      };
+      const kept = keptByAStep({
+        spent: coinOf(ask.step.spent), further: (ask.step.further ?? []).map(coinOf),
+        amount: BigInt(ask.step.amount), ...(ask.step.merge === true ? { merge: true } : {}),
+      }, { circuits: nonceCircuitsFrom(d.vault.pureCircuits as never), vault: ask.vault as Hex, secret: ask.secret as Hex });
+      return {
+        id: ask.id, ok: true, ask: 'step-kept',
+        kept: kept === undefined ? null : { nonce: kept.nonce, token: kept.token, value: kept.value.toString() },
+      };
     }
     case 'commitments': {
       /* The two commitments a coin has: as an output the ledger records, and as the note the vault holds. */

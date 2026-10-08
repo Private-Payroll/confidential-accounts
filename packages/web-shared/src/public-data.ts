@@ -53,6 +53,8 @@ export interface IndexerEndpoints {
 /** What `indexerPublicDataProvider` hands back. Narrow on purpose. */
 export interface PublicDataProvider {
   queryContractState(...args: any[]): Promise<unknown>;
+  /** The state a contract's deploy left at its address, as the chain recorded it; null when there is none. */
+  queryDeployContractState(...args: any[]): Promise<unknown>;
   watchForTxData?(...args: any[]): unknown;
   [more: string]: unknown;
 }

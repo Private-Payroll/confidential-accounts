@@ -20,7 +20,9 @@ const half = {
   changeAmount: '30000', changeBatchDigest: '77'.repeat(32),
 };
 /* A real run of three, made the way the approving device makes it again (`a-run-made-here.test-support.ts`). */
-const RUN_MADE = aRunMadeHere({ opensAt: '100', closesAt: '200' });
+/* Its pay-record key committed as the stand-in `payKeyCommitmentOf` below commits it, which the wallet read. */
+const RUN_MADE = aRunMadeHere({ opensAt: '100', closesAt: '200' },
+  (key) => Uint8Array.from(createHash('sha256').update(Buffer.concat([Buffer.from('pay-key-commitment'), Buffer.from(key)])).digest()));
 const run = { root: RUN_MADE.root, payees: '3', opensAt: '100', closesAt: '200', vault: '99'.repeat(32) };
 /* The contract's two pure functions, stood in for by hashes over the same parts. */
 const sha = (...parts: Array<Uint8Array | bigint>) => Uint8Array.from(createHash('sha256')

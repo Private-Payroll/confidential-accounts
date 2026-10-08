@@ -45,6 +45,7 @@ import { toHex, fromHex, type Hex } from '../core/crypto.js';
 import type { VaultCoin } from './vault-coins.js';
 import type { SettledByTheChain } from './vault-recovery.js';
 import { theTransactionTheseEventsAreFrom, type ChainReadIndex } from './note-index.js';
+import { planRun, STEP_LIMITS } from './payment-plan.js';
 
 /**
  * One note the vault can spend.
@@ -203,22 +204,12 @@ export const aPaymentCanSpend = (note: Note): boolean => {
 const WILL_BE_RECORDED = 'sim:recorded-by-the-payment-that-makes-it' as Hex;
 
 /**
- * **SMALLEST NOTE THAT COVERS IT, OUT OF THE NOTES HANDED IN.** The ordering
- * rule and nothing else; it does not ask whether a note can be spent.
- *
- * The choice is not arbitrary:
- *
- *   - it keeps large notes intact, so a big payment later does not need a merge
- *   - it produces the smallest change, so the pool does not fill with dust
- *   - it is deterministic, so two operators who pick independently pick the
- *     same note and collide visibly rather than both half-succeeding (B3)
- *
- * Ties broken by nonce so the answer never depends on array order, which a
- * rebuild from the chain does not preserve.
- *
- * **A PAYMENT DOES NOT CALL THIS. IT CALLS `noteToSpend`**, which applies this
- * ordering to the notes a payment can spend. This is exported for a model of
- * the circuit whose notes carry no transaction at all.
+ * **SMALLEST NOTE THAT COVERS IT, OUT OF THE NOTES HANDED IN.** No payment
+ * chooses by this: a payment's notes are `choosingNotesToSpend`'s. It is the
+ * ordering a model of the circuit uses where its notes carry no transaction -
+ * a stand-in witness that hands the vault one covering note - and it is
+ * deterministic, ties broken by nonce, so the model never depends on array
+ * order.
  */
 export const smallestNoteCovering = (notes: readonly Note[], token: Hex, amount: bigint): Note | undefined => {
   const usable = notes.filter((n) => n.token === token && n.value >= amount);
@@ -227,59 +218,75 @@ export const smallestNoteCovering = (notes: readonly Note[], token: Hex, amount:
     b.value < a.value || (b.value === a.value && b.nonce < a.nonce) ? b : a);
 };
 
-/** What `choosingANoteToSpend` answers. */
+/** What `choosingNotesToSpend` answers. */
 export type NoteChoice =
-  | { readonly of: 'chosen'; readonly note: Note; readonly passedOver: readonly Note[] }
+  /** `notes` in place order: the first is the note the payment is offered, the rest the further notes it draws on. */
+  | { readonly of: 'chosen'; readonly notes: readonly Note[]; readonly passedOver: readonly Note[] }
   | { readonly of: 'no-notes-of-token' }
   | { readonly of: 'none-covers'; readonly largest: bigint; readonly held: bigint; readonly count: number }
   | { readonly of: 'stranded'; readonly notes: readonly Note[] };
 
 /**
- * **WHICH NOTE A PAYMENT OF `amount` IN `token` SPENDS, OR WHY NONE - DECIDED
+ * The notes one payment's step draws on, as the run planner plans a single
+ * payment, or nothing when its step cannot be made without a merge first.
+ */
+const aPaymentsStep = (notes: readonly Note[], token: Hex, amount: bigint, spendable: (n: Note) => boolean): Note[] | undefined => {
+  const plan = planRun({
+    token,
+    notes: notes.map((n) => ({ id: n.nonce, token: n.token, value: n.value, spendable: spendable(n) })),
+    units: [{ kind: 'payment', payees: [{ id: 'this payment', amount, nonce: 'this payment' }] }],
+  });
+  const step = plan.ok ? plan.steps[0] : undefined;
+  if (step === undefined || step.kind === 'merge') return undefined;
+  const byNonce = new Map(notes.map((n) => [n.nonce, n]));
+  return step.notes.map((r) => {
+    if (r.kind !== 'held') throw new Error('a single payment\'s first step draws only on notes the vault holds now');
+    return byNonce.get(r.id as Hex)!;
+  });
+};
+
+/**
+ * **WHICH NOTES A PAYMENT OF `amount` IN `token` SPENDS, OR WHY NONE - DECIDED
  * HERE AND ONLY HERE.**
  *
- * Every question about it asks this: the payment, the witness the circuit
- * calls, the walk that decides whether a run fits, and the check a door makes
- * before the first fee. Two functions asking two different questions about the
- * same pool is how a vault that can pay was told it could not, and how a
- * pre-flight passed a vault the spend then refused.
+ * Every question about it asks this: the payment, the witness the circuit is
+ * offered, the walk that decides whether a run fits, and the check a door
+ * makes before the first fee. Two functions asking two different questions
+ * about the same pool is how a vault that can pay was told it could not, and
+ * how a run judged to fit stopped half way.
  *
- * **THE ORDER IS `smallestNoteCovering`'S, UNCHANGED, OVER THE NOTES A PAYMENT
- * CAN SPEND.** A note that records no creating transaction is passed over rather
- * than chosen, because choosing it could only ever end in a refusal at the spend:
- * so passing it over changes no payment that used to succeed, and it lets a
- * larger note that can be spent make a payment that used to be refused.
+ * **THE CHOICE IS THE RUN PLANNER'S** (`planRun`): the largest notes first, as
+ * few as cover the payment, at most as many as one payment takes. So a payment
+ * planned with the run and a payment made on its own spend the same notes, and
+ * the note the vault is offered first is the planner's, never a second choice
+ * made by the witness. A payment that needs more notes than one step takes is
+ * not made here: the notes have to be merged first.
  *
- * **PASSED OVER IS NOT FORGOTTEN.** Every covering note that was passed over is
- * named in the answer, so whoever asked can say out loud that the vault holds
- * money a payment cannot reach yet. When the only covering notes are ones a
- * payment cannot spend, the answer is `stranded`, naming them, and never
- * *nothing big enough*: those are two different repairs.
- *
- * **It does not merge.** A vault holding two notes of 60 cannot pay 100, and
- * this says so rather than silently paying 60. Merging is a maintenance action
- * on its own schedule, never something a payroll discovers it needs at run time
- * (V-58, B12).
+ * **ONLY NOTES A PAYMENT CAN SPEND ARE CHOSEN, AND THE OTHERS ARE NAMED.** A
+ * note that records no creating transaction is still on chain and still the
+ * vault's; it is passed over and named in the answer, so whoever asked can say
+ * out loud that the vault holds money a payment cannot reach yet. When only
+ * those notes would make the payment, the answer is `stranded`, naming them,
+ * and never *nothing big enough*: those are two different repairs.
  */
-export const choosingANoteToSpend = (notes: readonly Note[], token: Hex, amount: bigint): NoteChoice => {
+export const choosingNotesToSpend = (notes: readonly Note[], token: Hex, amount: bigint): NoteChoice => {
   const ofToken = notes.filter((n) => n.token === token);
   if (ofToken.length === 0) return { of: 'no-notes-of-token' };
-  const covering = ofToken.filter((n) => n.value >= amount);
-  if (covering.length === 0) {
-    const most = ofToken.reduce((a, b) => (b.value > a.value ? b : a));
-    return {
-      of: 'none-covers',
-      largest: most.value,
-      held: ofToken.reduce((n, x) => n + x.value, 0n),
-      count: ofToken.length,
-    };
-  }
   const inOrder = (a: Note, b: Note) =>
-    a.value < b.value ? -1 : a.value > b.value ? 1 : a.nonce < b.nonce ? -1 : a.nonce > b.nonce ? 1 : 0;
-  const cannot = covering.filter((n) => !aPaymentCanSpend(n)).sort(inOrder);
-  const note = smallestNoteCovering(covering.filter(aPaymentCanSpend), token, amount);
-  if (note === undefined) return { of: 'stranded', notes: cannot };
-  return { of: 'chosen', note, passedOver: cannot };
+    a.value > b.value ? -1 : a.value < b.value ? 1 : a.nonce < b.nonce ? -1 : a.nonce > b.nonce ? 1 : 0;
+  const cannot = ofToken.filter((n) => !aPaymentCanSpend(n)).sort(inOrder);
+  const chosen = aPaymentsStep(ofToken, token, amount, aPaymentCanSpend);
+  if (chosen !== undefined) return { of: 'chosen', notes: chosen, passedOver: cannot };
+  if (cannot.length > 0 && aPaymentsStep(ofToken, token, amount, () => true) !== undefined) {
+    return { of: 'stranded', notes: cannot };
+  }
+  const most = ofToken.reduce((a, b) => (b.value > a.value ? b : a));
+  return {
+    of: 'none-covers',
+    largest: most.value,
+    held: ofToken.reduce((n, x) => n + x.value, 0n),
+    count: ofToken.length,
+  };
 };
 
 /**
@@ -292,12 +299,11 @@ const whyNoNote = (
 ): string => {
   if (choice.of === 'no-notes-of-token') return `this vault holds no notes of ${token}`;
   if (choice.of === 'none-covers') {
-    return `no single note covers ${amount}: the largest is ${choice.largest} and the pool holds `
+    return `no ${STEP_LIMITS.paymentNotes} notes a payment can spend cover ${amount}: the largest is ${choice.largest} and the pool holds `
       + `${choice.held} across ${choice.count} notes. Merge them first — a payment cannot.`;
   }
   const which = choice.notes.map((n) => `${n.nonce} (${n.value})`).join(', ');
-  return `no note this vault can spend covers ${amount}. `
-    + `${choice.notes.length === 1 ? 'One note does' : `${choice.notes.length} notes do`}: ${which}. `
+  return `the notes this vault can spend do not cover ${amount}, and ${choice.notes.length === 1 ? 'one more note' : `${choice.notes.length} more notes`} would: ${which}. `
     + `${choice.notes.length === 1 ? 'It does not record' : 'None of them records'} which transaction `
     + 'created it with a hash a spend can read, so a payment cannot read its place in the chain\'s '
     + 'commitment tree. The money is still on chain and still the vault\'s. Name the transaction '
@@ -306,13 +312,13 @@ const whyNoNote = (
 };
 
 /**
- * The note a payment of `amount` in `token` spends, or a refusal that says
- * which of the three reasons it is and what resolves it. See
- * `choosingANoteToSpend`, which is where the decision is.
+ * The notes a payment of `amount` in `token` spends, in place order, or a
+ * refusal that says which of the three reasons it is and what resolves it. See
+ * `choosingNotesToSpend`, which is where the decision is.
  */
-export const noteToSpend = (notes: readonly Note[], token: Hex, amount: bigint): Note => {
-  const choice = choosingANoteToSpend(notes, token, amount);
-  if (choice.of === 'chosen') return choice.note;
+export const notesToSpend = (notes: readonly Note[], token: Hex, amount: bigint): Note[] => {
+  const choice = choosingNotesToSpend(notes, token, amount);
+  if (choice.of === 'chosen') return [...choice.notes];
   throw new Error(whyNoNote(choice, token, amount));
 };
 
@@ -372,17 +378,57 @@ export const afterPayment = (
    * transaction's events. What is recorded is where to read it from.
    */
   createdIn?: Hex,
+): VaultNotes => afterStep(state, { spent: [spentNonce], pays: amount, kept: change }, createdIn);
+
+/**
+ * **ONE STEP OUT OF THE VAULT, AS THE CHAIN HOLDS IT: EVERY NOTE IT SPENT GONE,
+ * AND THE ONE COIN IT KEPT IN THEIR PLACE.** A payment that drew on several
+ * notes, a batch and a merge each spend up to four notes and keep at most one
+ * coin; recording only the first note spent would leave the pool offering
+ * notes the chain has already nullified, and every later payment that chose
+ * one would be refused.
+ *
+ *   - `spent`: the nonces of every note the step spent, in place order;
+ *   - `pays`: what left the vault - a payment's amount, a batch's total, and
+ *     nothing for a merge, which sends nothing out;
+ *   - `kept`: the coin the step handed back, read from the call's own outputs,
+ *     or `undefined` when it kept none. A merge always keeps one.
+ *
+ * Every figure is checked against the contract's own arithmetic - the coin
+ * kept is worth what the spent notes held less what left - and a disagreement
+ * is refused rather than recorded.
+ */
+export const afterStep = (
+  state: VaultNotes,
+  step: { readonly spent: readonly Hex[]; readonly pays: bigint; readonly kept: VaultCoin | undefined; readonly merge?: boolean },
+  createdIn?: Hex,
 ): VaultNotes => {
-  const spent = state.notes.find((n) => n.nonce === spentNonce);
-  if (!spent) {
-    throw new Error(
-      `this vault has no note ${spentNonce} to spend; its pool and the chain disagree`);
+  if (step.spent.length === 0) throw new Error('a step that spent no note is not a step out of this vault');
+  if (new Set(step.spent).size !== step.spent.length) {
+    throw new Error('a step names one note twice; the vault spends a note once, so this is not a step it made');
   }
-  if (amount > spent.value) {
-    throw new Error(`note ${spentNonce} holds ${spent.value} and the payment is ${amount}`);
+  if (step.merge === true && (step.spent.length < 2 || step.pays !== 0n)) {
+    throw new Error('a merge spends at least two notes and sends nothing out of the vault; this is not one');
   }
-  const rest = state.notes.filter((n) => n.nonce !== spentNonce);
-  const kept = spent.value - amount;
+  const spentNotes = step.spent.map((nonce) => {
+    const n = state.notes.find((x) => x.nonce === nonce);
+    if (!n) throw new Error(`this vault has no note ${nonce} to spend; its pool and the chain disagree`);
+    return n;
+  });
+  const first = spentNotes[0]!;
+  const what = spentNotes.length === 1 ? `note ${first.nonce} holds` : `notes ${step.spent.join(', ')} hold`;
+  if (spentNotes.some((n) => n.token !== first.token)) {
+    throw new Error(`${what} more than one token, and a step spends notes of the token it pays only`);
+  }
+  const held = spentNotes.reduce((t, n) => t + n.value, 0n);
+  if (step.pays > held) {
+    throw new Error(spentNotes.length === 1
+      ? `note ${first.nonce} holds ${held} and the payment is ${step.pays}`
+      : `${what} ${held} together and the step pays ${step.pays}`);
+  }
+  const rest = state.notes.filter((n) => !step.spent.includes(n.nonce));
+  const kept = held - step.pays;
+  const label = spentNotes.length === 1 ? `note ${first.nonce}` : `notes ${step.spent.join(', ')}`;
 
   /*
    * Change of exactly zero is DROPPED rather than kept. The contract emits no
@@ -391,48 +437,48 @@ export const afterPayment = (
    * unspendable. The READ must agree, and if it does not, this refuses.
    */
   if (kept === 0n) {
-    if (change !== undefined) {
+    if (step.kept !== undefined) {
       throw new Error(
-        `note ${spentNonce} was spent exactly and the contract emits no change for that, but `
-        + `the call's outputs carry a coin of ${change.value} coming back to the vault. The `
+        `${label} ${spentNotes.length === 1 ? 'was' : 'were'} spent exactly and the contract emits no change for that, but `
+        + `the call's outputs carry a coin of ${step.kept.value} coming back to the vault. The `
         + 'pool cannot be advanced from two answers about the same money — rebuild it from the '
         + 'chain with replayVault.');
     }
     return { ...state, notes: rest };
   }
 
-  if (change === undefined) {
+  if (step.kept === undefined) {
     /*
      * THE EXPENSIVE DIRECTION, AND THE REASON THIS IS A THROW. The contract
-     * kept a change coin; the read says it did not. Advancing the pool on the
-     * read would drop that note — the commitment stays on chain and nobody can
-     * ever say which note it describes (`B1`). Advancing it on the arithmetic
-     * would invent a nonce, which is the thing `C239` just removed.
+     * kept a coin; the read says it did not. Advancing the pool on the read
+     * would drop that note - the commitment stays on chain and nobody can ever
+     * say which note it describes. Advancing it on the arithmetic would invent
+     * a nonce.
      */
     throw new Error(
-      `note ${spentNonce} holds ${spent.value} and the payment is ${amount}, so the vault kept `
+      `${what} ${held} and the step pays ${step.pays}, so the vault kept `
       + `${kept} — but the call's outputs carry no coin coming back to it. Something is being `
-      + 'read that is not this payout. The pool is NOT advanced: the change is on chain and a '
+      + 'read that is not this step. The pool is NOT advanced: the coin is on chain and a '
       + 'guess at its nonce is a note nobody can spend.');
   }
-  if (change.value !== kept) {
+  if (step.kept.value !== kept) {
     throw new Error(
-      `the coin coming back to this vault is worth ${change.value} and the arithmetic says `
-      + `${kept} (note ${spentNonce} of ${spent.value}, paying ${amount}). These are two claims `
+      `the coin coming back to this vault is worth ${step.kept.value} and the arithmetic says `
+      + `${kept} (${label} of ${held}, paying ${step.pays}). These are two claims `
       + 'about the same money and there is no correct way to pick one.');
   }
-  if (change.token !== spent.token) {
+  if (step.kept.token !== first.token) {
     throw new Error(
-      `the coin coming back to this vault is of ${change.token} and the note spent was of `
-      + `${spent.token}. That is not this payout's change.`);
+      `the coin coming back to this vault is of ${step.kept.token} and the note spent was of `
+      + `${first.token}. That is not this payout's change.`);
   }
 
   return {
     ...state,
     notes: [...rest, {
-      nonce: change.nonce,
-      token: change.token,
-      value: change.value,
+      nonce: step.kept.nonce,
+      token: step.kept.token,
+      value: step.kept.value,
       ...(createdIn === undefined ? {} : { createdIn }),
     }],
   };
@@ -442,18 +488,19 @@ export const afterPayment = (
  * **WHETHER A RUN CAN BE PAID OUT OF THIS POOL, ONE PAYMENT AT A TIME.**
  *
  *
- * **A SUM IS THE WRONG QUESTION AND ALWAYS WAS.** `noteToSpend` does not merge
- * — a vault holding two notes of 60 cannot pay 100 — so a pool whose TOTAL
- * covers a run can still stop halfway through it, and a run that stops halfway
- * has failed at the only thing it was for. This walks the payments in the order
- * they will be made, through the SAME choice of note `noteToSpend` makes for
- * the payment path, so what it answers is what the run will do rather than a
- * number beside it.
+ * **A SUM IS THE WRONG QUESTION AND ALWAYS WAS.** A payment does not merge -
+ * a vault holding three notes of 40 cannot pay 100, because one payment draws
+ * on two notes at most - so a pool whose TOTAL covers a run can still stop
+ * halfway through it, and a run that stops halfway has failed at the only
+ * thing it was for. This walks the payments in the order they will be made,
+ * through the SAME choice of notes `choosingNotesToSpend` makes for the payment
+ * path, so what it answers is what the run will do rather than a number beside
+ * it.
  *
  * **IT MODELS VALUES AND NOT NONCES, AND THAT CANNOT CHANGE THE ANSWER.** A
  * change note's nonce is not knowable before the payment is made — that is
  * `V-47` — so the notes this walk puts back carry a synthetic one. The only
- * thing `noteToSpend` uses a nonce for is breaking a tie between notes of EQUAL
+ * thing the choice uses a nonce for is breaking a tie between notes of EQUAL
  * value, and either side of such a tie leaves the pool holding the same values.
  * So a tie broken differently here is a different note chosen and an identical
  * verdict. Stated rather than left to be worried about later.
@@ -477,7 +524,7 @@ export const paymentsFitAnswer = (
      * not pay. The change this walk puts back does not exist yet, and is marked
      * as a note a payment can spend on the assumption `WILL_BE_RECORDED` states.
      */
-    const choice = choosingANoteToSpend(notes, p.token, p.amount);
+    const choice = choosingNotesToSpend(notes, p.token, p.amount);
     if (choice.of !== 'chosen') {
       return {
         of: 'does-not-fit',
@@ -487,9 +534,9 @@ export const paymentsFitAnswer = (
           + whyNoNote(choice, p.token, p.amount),
       };
     }
-    const chosen = choice.note;
-    const rest = notes.filter((n) => n.nonce !== chosen.nonce);
-    const kept = chosen.value - p.amount;
+    const chosen = choice.notes;
+    const rest = notes.filter((n) => !chosen.some((c) => c.nonce === n.nonce));
+    const kept = chosen.reduce((t, n) => t + n.value, 0n) - p.amount;
     notes = kept === 0n
       ? rest
       /*
@@ -499,7 +546,7 @@ export const paymentsFitAnswer = (
        * refused by everything downstream the moment it escapes this function.
        */
       : [...rest, {
-        nonce: `sim:${i}` as Hex, token: chosen.token, value: kept, index: 0n,
+        nonce: `sim:${i}` as Hex, token: p.token, value: kept, index: 0n,
         createdIn: WILL_BE_RECORDED,
       }];
   }
@@ -556,13 +603,6 @@ export const balanceOf = (state: VaultNotes, token: Hex): bigint =>
   state.notes.filter((n) => n.token === token).reduce((n, x) => n + x.value, 0n);
 
 /**
- * The witnesses the generated vault contract calls, over this state.
- *
- * ONE, since S6a. Written here rather than at each call site so there is one
- * place coin selection lives — two implementations of which note to spend is
- * how two operators half-succeed at the same payment (B3).
- */
-/**
  * **THE WITNESSES FOR A CALL THAT HAS NO POOL, AND IT REFUSES RATHER THAN
  * ANSWERS.**
  *
@@ -606,9 +646,41 @@ export const witnessesWithoutAPool = () => ({
   nonceSecret: noSecretHere(),
 });
 
-export const witnessesOver = (get: () => VaultNotes, pending: { spending?: Hex }) => ({
+/**
+ * The witnesses the generated vault contract calls, over this state, for a call
+ * that is offered `offer` as its first note.
+ *
+ * **THE WITNESS CHOOSES NOTHING.** A payment's notes are chosen before the
+ * call, by `choosingNotesToSpend`, and the same choice names the further notes
+ * the call takes as an argument. The witness hands the circuit exactly the
+ * first of them, so the note the vault spends first and the notes beside it
+ * come from one choice, never from two that could differ. A call with nothing
+ * offered refuses by name.
+ */
+export const witnessesOver = (
+  get: () => VaultNotes, pending: { spending?: Hex },
+  /** The note this call is offered first, or a getter read at the moment the circuit asks, for witnesses bound once. */
+  offered?: Hex | (() => Hex | undefined),
+) => ({
   noteToSpend: (ctx: unknown, token: Uint8Array, amount: bigint) => {
-    const note = noteToSpend(get().notes, toHex(token), amount);
+    const offer = typeof offered === 'function' ? offered() : offered;
+    if (offer === undefined) {
+      throw new Error(
+        `this vault was asked which note to spend for ${amount} on a call that was offered none. A payment's `
+        + 'notes are chosen before the call, and the first of them is the one offered here. Nothing is '
+        + 'substituted.');
+    }
+    const note = get().notes.find((n) => n.nonce === offer);
+    if (note === undefined) {
+      throw new Error(
+        `the note offered to this call, ${offer}, is not in the copy of the pool the call was given. `
+        + 'The pool may have moved on since the notes were chosen; choose again.');
+    }
+    if (note.token !== toHex(token)) {
+      throw new Error(
+        `the note offered to this call is of ${note.token} and the call pays ${toHex(token)}. `
+        + 'Nothing is spent from a note of another token.');
+    }
     /*
      * **THE ONE PLACE AN UNREAD INDEX IS REFUSED, AND IT IS REFUSED RATHER
      * THAN SUBSTITUTED FOR.** See `Note.index`.

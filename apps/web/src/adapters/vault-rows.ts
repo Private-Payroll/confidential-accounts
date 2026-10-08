@@ -1,17 +1,18 @@
 import { api } from 'vaults-web-shared/keyring.js';
-import { VAULT, vaultRow, type VaultRow, type VaultStanding } from './company-records.js';
+import type { SealedAccount } from '../../../../src/core/types.js';
+import { VAULT, vaultListOf, type VaultRow, type VaultStanding } from './company-records.js';
+import { wasRead } from './reads.js';
 import { companyRoute } from './handover-state.js';
 import { keyringFor } from './keyring-person.js';
 
 /*
- * THE COMPANY'S VAULTS AND WHERE EACH STANDS, AS THE SERVICE LISTS THEM
- * (`GET /api/accounts/:id/vaults`), the one read the legacy page makes. Read
- * on its own, for what only needs to know which vaults there are: the setup
- * steps, and creating a vault. Nothing is opened.
+ * THE COMPANY'S VAULTS AND WHERE EACH STANDS: the vaults its account has
+ * adopted, as the person's own wallet reads them off the chain, each with when
+ * the service says it was made and where its set-up stands
+ * (`vaultsAsTheChainHoldsThem`). Read on its own, for what only needs to know
+ * which vaults there are: the setup steps, and creating a vault. Nothing is
+ * opened.
  */
-
-/** The service's address for the list, compared and never shown. */
-const SERVICE = { vaults: '/vaults' } as const;
 
 /**
  * A VAULT HANDED TO THE COMPANY'S SIGNERS: the chain shows the committee
@@ -31,9 +32,8 @@ export const handoverOwed = (vault: Pick<VaultRow, 'standing'>): boolean => vaul
 export async function readVaultRows(personId: string, companyId: string): Promise<readonly VaultRow[] | null> {
   try {
     if (!(await keyringFor(personId))) return null;
-    const answer = await api(companyRoute(companyId, SERVICE.vaults)) as { rows?: unknown };
-    if (!Array.isArray(answer?.rows)) return null;
-    return (answer.rows as { vault: string; deployedAt: string; state: string }[]).map(vaultRow);
+    const list = await vaultListOf(companyId, await api(companyRoute(companyId)) as SealedAccount);
+    return wasRead(list) ? list.value : null;
   } catch {
     return null;
   }

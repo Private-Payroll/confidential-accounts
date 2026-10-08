@@ -1,5 +1,6 @@
 import { ContractState } from '@midnightntwrk/ledger-v9';
-import type { AccountHolders, AccountSeats, VaultHolders } from 'midnight-identity/profile/records-key';
+import { PAY_KEY_COMMITMENT_ENTRY } from 'midnight-identity/profile/records-key';
+import type { AccountHolders, AccountPaymentFacts, AccountSeats, VaultHolders } from 'midnight-identity/profile/records-key';
 import { COMPANY_LABEL_ENTRY, companyLabelOf, readAccountAddress, readVaultAddress } from 'midnight-identity/profile/company-label';
 import type { AccountAddress, CompanyLabel, VaultAddress } from 'midnight-identity/profile/company-label';
 
@@ -31,6 +32,9 @@ export const SIGNER_LEAVES_FIELD = 9;
 
 /** Where the account's own approval threshold sits among the fields of its public state. */
 export const ACCOUNT_THRESHOLD_FIELD = 5;
+
+/** Where the account's record of payments sits among the fields of its public state. */
+export const MOVEMENTS_FIELD = 4;
 
 /** Where the account's set of adopted vaults sits among the fields of its public state. */
 export const ADOPTED_VAULTS_FIELD = 7;
@@ -152,6 +156,41 @@ export function holdersInAccountState(serialized: Uint8Array): Omit<AccountHolde
   }
   return Object.freeze({ ...seats, approvals, adoptedVaults: Object.freeze(vaults) });
 }
+
+/**
+ * **WHAT AN ACCOUNT RECORDS ABOUT PAYMENTS, FROM ITS SERIALISED STATE**, for
+ * the entries asked about: which of them its record of payments holds, in the
+ * order asked, and the commitment its map of roles holds to the company's
+ * pay-record key, or null when it holds none. Throws when the bytes are not a
+ * contract's state laid out as a company's account is.
+ */
+export function paymentsInAccountState(serialized: Uint8Array, asked: readonly string[]): AccountPaymentFacts {
+  const fields = ContractState.deserialize(serialized).data.state.asArray();
+  const notAnAccount = 'that contract\'s state is not laid out as a company\'s account.';
+  if (fields === undefined || fields.length <= ROLES_FIELD) throw new Error(notAnAccount);
+  const movements = fields[MOVEMENTS_FIELD]!.asMap();
+  const roles = fields[ROLES_FIELD]!.asMap();
+  if (movements === undefined || roles === undefined) throw new Error(notAnAccount);
+  const recorded = new Set<string>();
+  for (const key of movements.keys()) {
+    const entry = as32(key.value[0]);
+    if (entry === null) throw new Error(notAnAccount);
+    recorded.add(hexOf32(entry));
+  }
+  let payKeyCommitment: string | null = null;
+  for (const key of roles.keys()) {
+    const k = as32(key.value[0]);
+    if (k === null || hexOf32(k) !== PAY_KEY_COMMITMENT_ENTRY) continue;
+    const cell = roles.get(key);
+    const inner = cell === undefined ? undefined : (cell.asCell() as ReturnType<typeof cell.asCell> | undefined);
+    const value = inner === undefined ? null : as32(inner.value[0]);
+    if (value === null) throw new Error(notAnAccount);
+    payKeyCommitment = hexOf32(value);
+  }
+  return Object.freeze({ payKeyCommitment, held: Object.freeze(asked.filter((e) => recorded.has(e))) });
+}
+
+const hexOf32 = (b: Uint8Array): string => Array.from(b, (x) => x.toString(16).padStart(2, '0')).join('');
 
 const committeeOf = (state: ContractState): VaultHolders['committee'] =>
   Object.freeze(state.maintenanceAuthority.committee.map((k) => Object.freeze({ tag: String(k.tag), value: String(k.value).toLowerCase() })));
@@ -301,8 +340,12 @@ export const accountCarries = (read: LabelOnAccount, label: CompanyLabel): boole
   read.of === 'carries' && read.label === label;
 
 export type HoldersOnChain =
-  /** The account exists and carries this label; who holds it and what it has adopted, read in the same answer. */
-  | { readonly of: 'read'; readonly holders: AccountHolders }
+  /**
+   * The account exists and carries this label; who holds it and what it has
+   * adopted, read in the same answer, with what it records about the payments
+   * asked about when any were.
+   */
+  | { readonly of: 'read'; readonly holders: AccountHolders; readonly payments?: AccountPaymentFacts }
   | { readonly of: 'no-account' }
   /** A contract is there and does not carry this label: not this company's account. */
   | { readonly of: 'other-label' }
@@ -314,6 +357,8 @@ export type HoldersOnChain =
  */
 export async function holdersOnChain(
   account: AccountAddress, label: CompanyLabel, read: ContractStateHex, readDeploy: DeployStateHex,
+  /** Entries of the account's record of payments to say whether it holds, read in the same answer. */
+  movements?: readonly string[],
 ): Promise<HoldersOnChain> {
   if (readAccountAddress(account) === null) return { of: 'unreadable', why: 'that is not an account\'s address.' };
   let hex: string | null;
@@ -330,7 +375,8 @@ export async function holdersOnChain(
     /* An account the indexer holds a state for and no deploy is not one this wallet can say who founded. */
     if (deployHex === null) return { of: 'unreadable', why: 'the indexer holds no deploy for that account.' };
     const founding = foundingInDeployState(bytesOf(deployHex), label);
-    return { of: 'read', holders: { ...holdersInAccountState(bytes), founding: founding.seat, foundingCommittee: founding.committee } };
+    const holders = { ...holdersInAccountState(bytes), founding: founding.seat, foundingCommittee: founding.committee };
+    return movements === undefined ? { of: 'read', holders } : { of: 'read', holders, payments: paymentsInAccountState(bytes, movements) };
   } catch (e) {
     return { of: 'unreadable', why: e instanceof Error ? e.message : 'the state did not read.' };
   }

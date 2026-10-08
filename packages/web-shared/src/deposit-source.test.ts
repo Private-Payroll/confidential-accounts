@@ -51,6 +51,7 @@ const setUp = async () => {
     keys: async () => ({ committee: null, why: null, readers: [] }),
     deploy: async () => { throw new Error('no deploy'); },
     handover: async () => { throw new Error('no handover'); },
+    /* Opening the pool asks the service; a deposit reads the vault on this device. */
     chain: async () => view(),
     payoutState: async (v) => ({ vault: v, account: ACCOUNT, blockHash: 'B1', vaultState: 'V', zswapState: 'Z', parameters: PARAMS, accountState: 'A' }),
     deposit: async (_v, tx) => { log.push(`sent ${tx}`); notes.push(held(lastBuilt!)); return { txRef: 'r1', transactionHash: null }; },
@@ -65,7 +66,15 @@ const setUp = async () => {
   };
   const refuse = async () => { throw new Error('a deposit never asks this'); };
   const builder: VaultBuilderClient = {
-    deploy: refuse, handover: refuse, chooseNote: refuse, paymentsFit: refuse, afterPayment: refuse,
+    /* The vault as this device's worker reads it at the wallet's indexer: the chain moved by hand above. */
+    vaultOnChain: async () => {
+      const v = view();
+      return {
+        onChain: true, state: v.state!, notes: v.notes, notesFromThisBuild: true, everCreated: v.everCreated ?? [],
+        authority: { committee: [], threshold: 1 }, account: ACCOUNT, started: true,
+      };
+    },
+    deploy: refuse, handover: refuse, notesForPayment: refuse, paymentsFit: refuse, afterPayment: refuse, stepKept: refuse,
     confirmPayment: refuse, startStanding: refuse, setNonceSecret: refuse, writeSecretCopy: refuse, proposalIdentity: refuse, companyWide: refuse, creatingTransaction: async (i) => creatingTransactionOfNote(i), payout: refuse, payoutPublicly: refuse, governedCall: refuse,
     commitments: async (i) => ({ output: `out:${i.coin.nonce}`, held: held(i.coin) }),
     ownSeat: refuse,
@@ -82,6 +91,7 @@ const setUp = async () => {
     myRecordsKey: 'ff'.repeat(32) as Hex,
     signers: async () => [{ id: 'ada', wrappingPublicKey: wrapping.publicKey }],
     company: LABEL, account: ACCOUNT, builder,
+    indexer: async () => ({ indexerUri: 'https://indexer.example/api/v3/graphql', indexerWsUri: 'wss://indexer.example/api/v3/graphql/ws' }),
     /* The wallet's read: the account has adopted the vault. */
     onChain: async (v: string) => ({
       holders: { committee: [], threshold: 1, seats: [], approvals: 1, adoptedVaults: [v], founding: '4a'.repeat(32), foundingCommittee: [{ tag: 'schnorr', value: '11'.repeat(32) }] },

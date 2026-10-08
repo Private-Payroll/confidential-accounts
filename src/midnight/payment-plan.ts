@@ -61,6 +61,14 @@ export interface PlanNote {
   readonly id: string;
   readonly token: string;
   readonly value: bigint;
+  /**
+   * Whether a step can spend it at all. A step spends a note at the place the
+   * chain filed it, read from the transaction that created it, so a note that
+   * records no such transaction is still the vault's and is never planned. The
+   * caller says which, by the one statement of it; no plan leans on a note that
+   * would stop its step at the spend.
+   */
+  readonly spendable: boolean;
 }
 
 /** One payee of a run. `nonce` is the payee nonce their leaf carries. */
@@ -117,9 +125,12 @@ export type Plan =
     }
   | {
       readonly ok: false;
-      /** `short`: the notes of the token hold less than the run pays. `too-large`: a leaf needs more than its step can draw on and no merge can make one coin of it. */
+      /** `short`: the notes of the token a step can spend hold less than the run pays. `too-large`: a leaf needs more than its step can draw on and no merge can make one coin of it. */
       readonly reason: 'short' | 'too-large';
+      /** What the notes of the token a step can spend hold. */
       readonly holds: bigint;
+      /** What the notes of the token no step can spend yet hold: the vault's money, out of a plan's reach. */
+      readonly unreachable: bigint;
       readonly pays: bigint;
       readonly message: string;
     };
@@ -227,6 +238,30 @@ const mergeable = (pool: readonly Entry[]): Entry[] | undefined => {
   return undefined;
 };
 
+/**
+ * **A RUN'S RETRY, AFTER A BATCH FAILED: ITS PAYEES AGAIN, WITHOUT THE ONES
+ * THAT CANNOT BE PAID, GROUPED AS A RUN IS.**
+ *
+ * A batch is paid whole or not at all, so one payee who cannot be paid - an
+ * address that is not one, a person already paid - stops up to three who can.
+ * The retry takes every payee of the units handed in that is not named in
+ * `cannotBePaid`, keeps their order, and groups them exactly as a run is
+ * grouped when it is raised: one alone is a payment, more are batches of four.
+ * A name in `cannotBePaid` that is not one of the run's payees is refused,
+ * because a retry built on a wrong name would leave the one that failed in it.
+ * When nobody is left, there is nothing to retry and no units come back.
+ */
+export const unitsForARetry = (units: readonly PlanUnit[], cannotBePaid: readonly string[]): PlanUnit[] => {
+  checkUnits(units);
+  const everyone = units.flatMap((u) => u.payees);
+  const named = new Set(everyone.map((p) => p.id));
+  for (const id of cannotBePaid) {
+    if (!named.has(id)) throw new RunNotPlannable(`payee ${id} is not in this run, so a retry cannot be made without them.`);
+  }
+  const left = everyone.filter((p) => !cannotBePaid.includes(p.id));
+  return left.length === 0 ? [] : unitsOf(left);
+};
+
 const madeBy = (notes: readonly Entry[]): number[] =>
   [...new Set(notes.flatMap((e) => (e.ref.kind === 'made' ? [e.ref.step] : [])))].sort((a, b) => a - b);
 
@@ -244,6 +279,7 @@ export const planRun = (input: PlanInput): Plan => {
   checkUnits(units);
   const seen = new Set<string>();
   const pool: Entry[] = [];
+  let unreachable = 0n;
   for (const n of input.notes) {
     if (n.token !== input.token) continue;
     if (typeof n.value !== 'bigint' || n.value <= 0n || n.value > MOST_A_COIN_HOLDS) {
@@ -251,6 +287,11 @@ export const planRun = (input: PlanInput): Plan => {
     }
     if (seen.has(n.id)) throw new RunNotPlannable(`note ${n.id} is offered twice; one note can be spent once.`);
     seen.add(n.id);
+    if (typeof n.spendable !== 'boolean') {
+      throw new RunNotPlannable(`note ${n.id} does not say whether a step can spend it, so nothing is planned from it.`);
+    }
+    /* Still the vault's money, and counted as out of reach, never as spendable. */
+    if (!n.spendable) { unreachable += n.value; continue; }
     const ref: NoteRef = { kind: 'held', id: n.id };
     pool.push({ ref, value: n.value, order: refOrder(ref) });
   }
@@ -258,8 +299,12 @@ export const planRun = (input: PlanInput): Plan => {
   const pays = units.reduce((t, u) => t + total(u.payees), 0n);
   if (holds < pays) {
     return {
-      ok: false, reason: 'short', holds, pays,
-      message: `this vault holds ${holds} of this token and the run pays ${pays}. Deposit ${pays - holds} more, then pay the run.`,
+      ok: false, reason: 'short', holds, unreachable, pays,
+      message: `this vault holds ${holds} of this token that a payment can spend and the run pays ${pays}. `
+        + (unreachable > 0n
+          ? `A further ${unreachable} is held in notes that do not record the transaction that created them, so no payment can spend them until it is recorded. `
+          : '')
+        + `Deposit ${pays - holds} more, then pay the run.`,
     };
   }
 
@@ -288,7 +333,7 @@ export const planRun = (input: PlanInput): Plan => {
       const merge = mergeable(pool);
       if (merge === undefined) {
         return {
-          ok: false, reason: 'too-large', holds, pays,
+          ok: false, reason: 'too-large', holds, unreachable, pays,
           message: `item ${u} of this run needs more notes than its step can take, and this planner finds no merge that makes them fewer without making a coin larger than ${MOST_A_COIN_HOLDS}. Raise the run again with that item as smaller payments.`,
         };
       }

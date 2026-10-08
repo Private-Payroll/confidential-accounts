@@ -111,8 +111,9 @@ describe('1. THE DEVICE AND THE SERVICE GIVE THE SAME ANSWER ON THE SAME RECORD 
     ['they agree', [A, B], [A, B], 'held 1000'],
     ['they agree on an empty vault', [], [], 'held 0'],
     ['the record holds a note the chain does not', [A, B], [A], 'contradicted'],
-    ['the chain holds a note the record does not', [A], [A, B], 'contradicted'],
-    ['the record is empty and the chain is not', [], [C], 'contradicted'],
+    /* A note nothing on this side names is not the vault's money: ignored, never a freeze. */
+    ['the chain holds a note the record does not', [A], [A, B], 'held 600'],
+    ['the record is empty and the chain is not', [], [C], 'held 0'],
     ['as many notes, but not the same ones', [A], [B], 'contradicted'],
     ['the record holds one note twice', [A, A], [A], 'contradicted'],
     ['the chain does not answer', [A], 'unreadable', 'unreadable'],
@@ -127,29 +128,48 @@ describe('1. THE DEVICE AND THE SERVICE GIVE THE SAME ANSWER ON THE SAME RECORD 
     });
   }
 
-  it('A DRIFTED CHAIN IS CONTRADICTED, NEVER SHORT, ON BOTH SIDES', async () => {
+  it('A STRANGER\'S NOTE NEVER FREEZES A VAULT, ON EITHER SIDE: the vault pays from what it holds', async () => {
     /*
-     * The record holds 600 and the chain holds two notes: a reader that summed the record would say the vault is
-     * 400 short of a 1,000 payment and tell a person to deposit money the vault may already hold.
+     * Anyone may deposit into a vault, and a note whose opening never reached this record is spendable by nobody.
+     * RED WHEN: the chain holding a note the record does not stops a payment the record's own notes can make - one
+     * stranger's deposit would then freeze a funded vault for good.
      */
     for (const reader of [theService([A], [A, B]), theDevice([A], [A, B])]) {
-      /* RED WHEN: the chain holding more than the record is read as a balance. */
-      expect(await refusalOf(reader, 1_000n)).toBe('contradicted');
+      expect(answerOf(await reader.held(VAULT, 'shielded', PAY))).toBe('held 600');
     }
-    for (const reader of [theService([], [C]), theDevice([], [C])]) {
-      expect(await refusalOf(reader, 1n)).toBe('contradicted');
-    }
+    /* The device's record names the transaction each note came from, so its notes can be spent: it pays. */
+    const device = theDevice([A], [A, B]);
+    expect(await refusalOf(device, 500n)).toBe('pays');
+    /* And a payment beyond what the vault's own notes hold is short, never paid out of a stranger's note. */
+    expect(await refusalOf(device, 1_000n)).toBe('short');
+  });
+
+  it('A NOTE THIS DEVICE NAMES AS THE VAULT\'S IS RECOVERED; ONE IT DOES NOT NAME IS IGNORED', async () => {
+    /*
+     * A payment's change whose pool write has not happened yet is on chain and is the vault's: the device's record of
+     * the payment on its way names it. RED WHEN a named note the chain holds is left out of the balance, or a note
+     * nothing names is counted.
+     */
+    const named = theDevice([A], [A, B, C], { accountedFor: async () => [{ ...B, createdIn: 'ee'.repeat(32) as Hex }] });
+    expect(answerOf(await named.held(VAULT, 'shielded', PAY))).toBe('held 1000');
+    /* RED WHEN a named note the chain does not hold is counted as the vault's. */
+    const notLanded = theDevice([A], [A], { accountedFor: async () => [{ ...B, createdIn: 'ee'.repeat(32) as Hex }] });
+    expect(answerOf(await notLanded.held(VAULT, 'shielded', PAY))).toBe('held 600');
   });
 
   it('decides the answer in one place, which both sides call', () => {
     const held = [{ note: 'a', commitment: 'x' }, { note: 'b', commitment: 'y' }];
     const chain = (xs: string[]) => ({ has: (c: string) => xs.includes(c), size: BigInt(xs.length) });
     /* RED WHEN: the comparison's answers or their order change - the record claiming more is named before any count. */
-    expect(poolAgainstChain(held, chain(['x', 'y']))).toEqual({ of: 'agrees' });
+    expect(poolAgainstChain(held, chain(['x', 'y']))).toEqual({ of: 'agrees', recovered: [], ignored: 0n });
     expect(poolAgainstChain(held, chain(['x']))).toEqual({ of: 'pool-claims-more', missing: ['b'] });
-    expect(poolAgainstChain(held, chain(['x', 'y', 'z']))).toEqual({ of: 'counts-differ', chainHolds: 3n, poolHolds: 2n });
+    /* RED WHEN: a note the chain holds and nothing names stops the comparison instead of being ignored and counted. */
+    expect(poolAgainstChain(held, chain(['x', 'y', 'z']))).toEqual({ of: 'agrees', recovered: [], ignored: 1n });
+    /* RED WHEN: a note a journal names and the chain holds is not recovered, or is recovered twice when the record holds it. */
+    expect(poolAgainstChain(held, chain(['x', 'y', 'z', 'w']), [{ note: 'c', commitment: 'z' }, { note: 'a', commitment: 'x' }, { note: 'q', commitment: 'q' }]))
+      .toEqual({ of: 'agrees', recovered: ['c'], ignored: 1n });
     expect(poolAgainstChain(held, chain(['z', 'w']))).toEqual({ of: 'pool-claims-more', missing: ['a', 'b'] });
-    expect(poolAgainstChain([], chain([]))).toEqual({ of: 'agrees' });
+    expect(poolAgainstChain([], chain([]))).toEqual({ of: 'agrees', recovered: [], ignored: 0n });
     /* RED WHEN: a record holding one note twice is read as agreeing - its value would be counted twice. */
     expect(poolAgainstChain([{ note: 'a', commitment: 'x' }, { note: 'a2', commitment: 'x' }], chain(['x'])))
       .toEqual({ of: 'counts-differ', chainHolds: 1n, poolHolds: 2n });
@@ -166,7 +186,7 @@ describe('1. THE DEVICE AND THE SERVICE GIVE THE SAME ANSWER ON THE SAME RECORD 
 });
 
 describe('2. A SHORTFALL IS "DOES NOT FIT" BY ITS TYPE, WHATEVER ITS WORDS', () => {
-  const pool = [coin(1, 60n), coin(2, 60n)];
+  const pool = [coin(1, 40n), coin(2, 40n), coin(3, 40n)];
 
   it('the walk answers a real shortfall with its type, and the refusal a payment gives keeps its words', () => {
     const answer = paymentsFitAnswer({ notes: pool.map((c) => ({ ...c, index: 0n, createdIn: 'ee'.repeat(32) as Hex })) },
@@ -188,7 +208,7 @@ describe('2. A SHORTFALL IS "DOES NOT FIT" BY ITS TYPE, WHATEVER ITS WORDS', () 
     const real = await theDevice(pool, pool).fits(VAULT, [{ payee: { kind: 'shielded' }, token: PAY, amount: 100n }]);
     expect(real.of).toBe('does-not-fit');
     /* RED WHEN: the advice to merge reaches a screen - no vault can merge its notes. */
-    expect((real as { why: string }).why).toMatch(/^payment 1 of 1 cannot be made out of this vault: no single note covers 100/u);
+    expect((real as { why: string }).why).toMatch(/^payment 1 of 1 cannot be made out of this vault: no 2 notes a payment can spend cover 100/u);
     expect((real as { why: string }).why).not.toMatch(/Merge/u);
   });
 
@@ -369,13 +389,13 @@ describe('8. THE BACKGROUND THREAD\'S "payments-fit" STEP AND THE DEVICE READER\
     });
   }
 
-  it('says which way the counts differ', async () => {
+  it('a record counting one note twice is contradicted, and a chain holding more is not', async () => {
     const A = coin(1, 600n);
     const more = await theDevice([A], [A, coin(2, 1n)]).held(VAULT, 'shielded', PAY);
     const twice = await theDevice([A, A], [A]).held(VAULT, 'shielded', PAY);
-    /* RED WHEN: a record counting one note twice is told it is missing money that reached the vault. */
-    expect((more as { why: string }).why).toMatch(/money reached the vault that the record does not show$/u);
-    expect((twice as { why: string }).why).toMatch(/the record counts one note the chain holds more than once$/u);
+    /* RED WHEN: a note the record does not name stops the read, or a record counting one note twice is summed. */
+    expect(more).toEqual({ of: 'held', amount: 600n });
+    expect((twice as { why: string }).why).toMatch(/counts one of them more than once, so it counts money twice$/u);
   });
 
   it('a chain that throws is unreadable, with its reason', async () => {

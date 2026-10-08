@@ -20,7 +20,7 @@
  * everything; a test for only the first is what the old code passed.
  */
 import { describe, it, expect } from 'vitest';
-import { changeCoinOf, paidCoinTo, UnreadableZswapState } from './vault-coins.js';
+import { changeCoinOf, coinsKeptBy, paidCoinsTo, UnreadableZswapState } from './vault-coins.js';
 import { toHex, type Hex } from '../core/crypto.js';
 
 const bytes = (n: number): Uint8Array => Uint8Array.from({ length: 32 }, () => n);
@@ -90,15 +90,15 @@ describe('C197: changeCoinOf tells "no change" apart from "could not read"', () 
   });
 });
 
-describe('C197: paidCoinTo tells "not paid" apart from "could not read"', () => {
+describe('C197: paidCoinsTo tells "not paid" apart from "could not read"', () => {
   it('reads the coin a payee received', async () => {
     const zswap = { outputs: [toContract(VAULT, 800n), toPerson(PAYEE, 200n)] };
-    expect(paidCoinTo(zswap, PAYEE)).toEqual({ nonce: NONCE, token: GBP, value: 200n });
+    expect(paidCoinsTo(zswap, PAYEE)).toEqual([{ nonce: NONCE, token: GBP, value: 200n }]);
   });
 
-  it('answers undefined when the outputs are THERE and none is theirs', async () => {
+  it('answers an empty list when the outputs are THERE and none is theirs', async () => {
     const zswap = { outputs: [toContract(VAULT, 1_000n)] };
-    expect(paidCoinTo(zswap, PAYEE)).toBeUndefined();
+    expect(paidCoinsTo(zswap, PAYEE)).toEqual([]);
   });
 
   it('REFUSES a state with no readable outputs, rather than saying they were not paid', async () => {
@@ -110,9 +110,63 @@ describe('C197: paidCoinTo tells "not paid" apart from "could not read"', () => 
      * spend.
      */
     for (const unreadable of [undefined, null, {}, { outputs: undefined }]) {
-      expect(() => paidCoinTo(unreadable, PAYEE)).toThrow(UnreadableZswapState);
-      expect(() => paidCoinTo(unreadable, PAYEE)).toThrow(/coin this payment sent/);
+      expect(() => paidCoinsTo(unreadable, PAYEE)).toThrow(UnreadableZswapState);
+      expect(() => paidCoinsTo(unreadable, PAYEE)).toThrow(/coin this payment sent/);
     }
+  });
+});
+
+/** An output to a contract or a person whose coin carries its own nonce, so two outputs can be told apart. */
+const kept = (address: Hex, nonce: number, value: bigint) => ({
+  recipient: { is_left: false, right: { bytes: Uint8Array.from(Buffer.from(address, 'hex')) } },
+  coinInfo: { nonce: bytes(nonce), color: bytes(0xcc), value },
+});
+const paidTo = (key: Hex, nonce: number, value: bigint) => ({
+  recipient: { is_left: true, left: { bytes: Uint8Array.from(Buffer.from(key, 'hex')) } },
+  coinInfo: { nonce: bytes(nonce), color: bytes(0xcc), value },
+});
+
+describe('a split keeps two coins, and both are read', () => {
+  it('reads EVERY coin a call kept in the vault, in the order the outputs carry them', () => {
+    /*
+     * A split keeps the piece and the rest. RED WHEN the reader answers only
+     * the first coin (or only the last): the pool would then hold one note
+     * where the chain holds two, and the other's nonce cannot be read again.
+     */
+    const zswap = { outputs: [kept(VAULT, 0x11, 300n), paidTo(PAYEE, 0x12, 5n), kept(VAULT, 0x13, 700n)] };
+    expect(coinsKeptBy(zswap, VAULT)).toEqual([
+      { nonce: toHex(bytes(0x11)), token: GBP, value: 300n },
+      { nonce: toHex(bytes(0x13)), token: GBP, value: 700n },
+    ]);
+  });
+
+  it('answers an empty list for a call that kept nothing, and refuses a state it cannot read', () => {
+    expect(coinsKeptBy({ outputs: [paidTo(PAYEE, 0x12, 5n)] }, VAULT)).toEqual([]);
+    /* RED WHEN an unreadable state is answered as "kept nothing", which drops both halves of a split. */
+    for (const unreadable of [undefined, null, {}, { outputs: 7 }]) {
+      expect(() => coinsKeptBy(unreadable, VAULT)).toThrow(UnreadableZswapState);
+    }
+  });
+
+  it('keeps changeCoinOf one coin at most, and its refusal names the plural reader', () => {
+    const zswap = { outputs: [kept(VAULT, 0x11, 300n), kept(VAULT, 0x13, 700n)] };
+    /* RED WHEN changeCoinOf answers the first of two kept coins instead of refusing. */
+    expect(() => changeCoinOf(zswap, VAULT)).toThrow(/found 2.*coinsKeptBy/s);
+  });
+});
+
+describe('one person paid in two places of a batch is paid twice, and both coins are read', () => {
+  it('reads every place one recipient key holds', () => {
+    /*
+     * A batch pays four places and one key can hold two of them. RED WHEN the
+     * reader throws on the second place (the old "expected one coin"), or answers
+     * only one of them: a settled payment would read as an error, or as paid less.
+     */
+    const zswap = { outputs: [paidTo(PAYEE, 0x21, 100n), kept(VAULT, 0x22, 9n), paidTo(PAYEE, 0x23, 250n)] };
+    expect(paidCoinsTo(zswap, PAYEE)).toEqual([
+      { nonce: toHex(bytes(0x21)), token: GBP, value: 100n },
+      { nonce: toHex(bytes(0x23)), token: GBP, value: 250n },
+    ]);
   });
 });
 
@@ -173,7 +227,7 @@ describe('C239: both spellings of a Zswap output, and anything else refused', ()
   it('reads the payee\'s coin in the SDK\'s form too', async () => {
     const encoded = { outputs: [toContract(VAULT, 800n), toPerson(PAYEE, 200n)] };
     const asSdk = await decoded(encoded);
-    expect(paidCoinTo(asSdk, PAYEE)).toEqual({ nonce: NONCE, token: GBP, value: 200n });
+    expect(paidCoinsTo(asSdk, PAYEE)).toEqual([{ nonce: NONCE, token: GBP, value: 200n }]);
   });
 
   it('still says "no change" for a whole-balance payment in the SDK\'s form', async () => {

@@ -138,16 +138,17 @@ describe('§1 each form is asked with its own read, and each refusal keeps its k
     expect((await chainVaultHoldings(ledger).held(VAULT, 'shielded', COLOUR)).of).toBe('unreadable');
   });
 
-  it('whether payments FIT is the note a payment would spend, not the total', async () => {
+  it('whether payments FIT is the notes a payment would spend, not the total', async () => {
     const twoSixties = [note('01', 60n), note('02', 60n)];
+    const threeForties = [note('01', 40n), note('02', 40n), note('03', 40n)];
     const pay = (...amounts: bigint[]) => amounts.map(amount => ({ payee: { kind: 'shielded' as const }, token: COLOUR, amount }));
-    const { ledger } = vaultClient({ pool: twoSixties, chainNotes: twoSixties });
+    const { ledger } = vaultClient({ pool: threeForties, chainNotes: threeForties });
     const holdings = chainVaultHoldings(ledger);
-    /* RED WHEN a total of 120 is taken to cover one payment of 100. */
+    /* RED WHEN a total of 120 across three notes is taken to cover one payment of 100, which draws on two at most. */
     const one = await holdings.fits(VAULT, pay(100n));
     expect(one.of).toBe('does-not-fit');
-    expect((one as { why: string }).why).toMatch(/no single note covers 100/);
-    expect(await holdings.fits(VAULT, pay(60n, 60n))).toEqual({ of: 'fits' });
+    expect((one as { why: string }).why).toMatch(/no 2 notes a payment can spend cover 100/);
+    expect(await holdings.fits(VAULT, pay(40n, 40n, 40n))).toEqual({ of: 'fits' });
     const contradicted = vaultClient({ pool: twoSixties, chainNotes: [twoSixties[0]!] });
     expect((await chainVaultHoldings(contradicted.ledger).fits(VAULT, pay(10n))).of).toBe('contradicted');
     const dark = vaultClient({ pool: twoSixties, chainNotes: 'unreadable' });
@@ -209,18 +210,18 @@ describe('§2 a proposal raised against the chain\'s answer, through the vault c
     expect(h.raised.count).toBe(0);
   });
 
-  it('REFUSES a private proposal whose total the chain confirms but no single note can pay', async () => {
-    const twoSixties = [note('01', 60n), note('02', 60n)];
-    const h = harness({ pool: twoSixties, chainNotes: twoSixties }, registryWithTestPrivateForms());
+  it('REFUSES a private proposal whose total the chain confirms but no one payment\'s notes can pay', async () => {
+    const threeForties = [note('01', 40n), note('02', 40n), note('03', 40n)];
+    const h = harness({ pool: threeForties, chainNotes: threeForties }, registryWithTestPrivateForms());
     /* RED WHEN the private question is answered by `balance` alone. */
     await expect(raise(h, TEST_TOKEN, 'shielded', COLOUR, [100n]))
-      .rejects.toThrow(/holds enough tPAY in total, but its notes cannot make each payment in turn \(payment 1 of 1 cannot be made out of this vault: no single note covers 100: the largest is 60 and the pool holds 120 across 2 notes\)\. A private/);
+      .rejects.toThrow(/holds enough tPAY in total, but its notes cannot make each payment in turn \(payment 1 of 1 cannot be made out of this vault: no 2 notes a payment can spend cover 100: the largest is 40 and the pool holds 120 across 3 notes\)\. A private/);
     /* RED WHEN the reason passes on advice to merge notes, which no vault can do. */
-    await expect(raise(harness({ pool: twoSixties, chainNotes: twoSixties }, registryWithTestPrivateForms()), TEST_TOKEN, 'shielded', COLOUR, [100n]))
+    await expect(raise(harness({ pool: threeForties, chainNotes: threeForties }, registryWithTestPrivateForms()), TEST_TOKEN, 'shielded', COLOUR, [100n]))
       .rejects.not.toThrow(/Merge/);
     expect(h.raised.count).toBe(0);
-    const h2 = harness({ pool: twoSixties, chainNotes: twoSixties }, registryWithTestPrivateForms());
-    await raise(h2, TEST_TOKEN, 'shielded', COLOUR, [60n, 60n]);
+    const h2 = harness({ pool: threeForties, chainNotes: threeForties }, registryWithTestPrivateForms());
+    await raise(h2, TEST_TOKEN, 'shielded', COLOUR, [40n, 40n, 40n]);
     expect(h2.raised.count).toBe(1);
   });
 

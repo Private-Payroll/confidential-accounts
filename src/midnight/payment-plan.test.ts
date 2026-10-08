@@ -10,13 +10,13 @@ import { readFileSync, readdirSync, statSync } from 'node:fs';
 import { join, dirname } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import {
-  planRun, STEP_LIMITS, MOST_A_COIN_HOLDS, RunNotPlannable,
+  planRun, unitsForARetry, STEP_LIMITS, MOST_A_COIN_HOLDS, RunNotPlannable,
   type PlanNote, type PlanPayee, type PlanUnit, type Plan, type NoteRef,
 } from './payment-plan.js';
 
 const TOKEN = 'aa'.repeat(32);
 const OTHER = 'bb'.repeat(32);
-const note = (id: string, value: bigint, token = TOKEN): PlanNote => ({ id, token, value });
+const note = (id: string, value: bigint, token = TOKEN): PlanNote => ({ id, token, value, spendable: true });
 const payee = (id: string, amount: bigint): PlanPayee => ({ id, amount, nonce: `nonce-${id}` });
 const payees = (...amounts: bigint[]): PlanPayee[] => amounts.map((a, i) => payee(`p${i}`, a));
 
@@ -264,5 +264,57 @@ describe('where the planner runs', () => {
     const server = [...walk(join(root, 'src', 'server')), ...walk(join(root, 'src', 'db'))];
     expect(server.length).toBeGreaterThan(0);
     for (const f of server) expect(readFileSync(f, 'utf8'), f).not.toMatch(/payment-plan/);
+  });
+});
+
+describe('a note no step can spend is never planned', () => {
+  const unread = (id: string, value: bigint): PlanNote => ({ id, token: TOKEN, value, spendable: false });
+
+  it('plans around a note that records no creating transaction, even when it is the largest', () => {
+    const plan = planRun({ token: TOKEN, notes: [unread('big', 1_000n), note('a', 60n), note('b', 50n)], payees: payees(100n) });
+    /* RED WHEN the planner offers a note a payment cannot spend: largest first would take `big`. */
+    expect(plan).toMatchObject({ ok: true, steps: [{ kind: 'payment', notes: [{ kind: 'held', id: 'a' }, { kind: 'held', id: 'b' }] }] });
+  });
+
+  it('says a run is short of what can be spent, and names what is held out of reach', () => {
+    const plan = planRun({ token: TOKEN, notes: [unread('big', 1_000n), note('a', 60n)], payees: payees(100n) });
+    /* RED WHEN an unspendable note is counted as money a payment can reach. */
+    expect(plan).toMatchObject({ ok: false, reason: 'short', holds: 60n, unreachable: 1_000n, pays: 100n });
+    expect(plan.ok === false && plan.message).toMatch(/A further 1000 is held in notes that do not record/);
+  });
+
+  it('refuses a note that does not say whether it can be spent', () => {
+    const vague = { id: 'v', token: TOKEN, value: 5n } as unknown as PlanNote;
+    /* RED WHEN a note with no answer is taken as spendable. */
+    expect(() => planRun({ token: TOKEN, notes: [vague], payees: payees(1n) })).toThrow(/does not say whether a step can spend it/);
+  });
+});
+
+describe('a failed batch is retried without the payee who could not be paid', () => {
+  const ids = (units: ReturnType<typeof unitsForARetry>) => units.map((u) => [u.kind, u.payees.map((p) => p.id)]);
+  const run = (...names: string[]) => planRun({ token: TOKEN, notes: [note('n', 1_000_000n)], payees: names.map((n) => payee(n, 1n)) });
+  const unitsOf = (...names: string[]) => { const p = run(...names); if (!p.ok) throw new Error('unplannable'); return p.units; };
+
+  it('re-batches everyone else in their order, as a run is grouped, leaving the one that failed out', () => {
+    /* RED WHEN the one who failed is kept, or the payees who can be paid are dropped with them. */
+    expect(ids(unitsForARetry(unitsOf('a', 'b', 'c', 'd', 'e'), ['b']))).toEqual([['batch', ['a', 'c', 'd', 'e']]]);
+    /* Two batches, one failure: the rest are grouped again from the start. */
+    expect(ids(unitsForARetry(unitsOf('a', 'b', 'c', 'd', 'e', 'f'), ['c']))).toEqual([['batch', ['a', 'b', 'd', 'e']], ['batch', ['f']]]);
+    /* One left is a single payment, as it would be if raised alone. */
+    expect(ids(unitsForARetry(unitsOf('a', 'b'), ['a']))).toEqual([['payment', ['b']]]);
+    /* Nobody left: nothing to retry. */
+    expect(unitsForARetry(unitsOf('a', 'b'), ['a', 'b'])).toEqual([]);
+  });
+
+  it('refuses a name that is not in the run, rather than retrying with the failed payee still in it', () => {
+    /* RED WHEN a misspelt name is ignored: the retry would hold the payee who failed and fail the same way. */
+    expect(() => unitsForARetry(unitsOf('a', 'b'), ['z'])).toThrow(/payee z is not in this run/);
+    /* RED WHEN the units retried are not checked as a run's are: a payee twice would be retried twice. */
+    expect(() => unitsForARetry([{ kind: 'batch', payees: [payee('a', 1n), payee('a', 1n)] }], [])).toThrow(/appears twice/);
+  });
+
+  it('plans the retry like any run: the units it returns are paid by the planner', () => {
+    const units = unitsForARetry(unitsOf('a', 'b', 'c', 'd', 'e'), ['b']);
+    expect(planRun({ token: TOKEN, notes: [note('n', 10n)], units })).toMatchObject({ ok: true, steps: [{ kind: 'batch', pays: 4n }] });
   });
 });
