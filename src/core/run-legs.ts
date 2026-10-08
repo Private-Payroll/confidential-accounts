@@ -241,8 +241,9 @@ export const sealedRunOf = (run: PayrollRun, viewingKey: Hex, keyEpoch: number):
     ...operational,
     // Outside the envelope so a run can be found by its proposals; the map
     // that says which asset each leg is in stays inside, so the store cannot
-    // see that this company pays anyone in ether.
-    proposalIds: [...Object.values(proposalIds), ...retryProposalIdsOf(payout)].sort(),
+    // see that this company pays anyone in ether. The list outside is made from
+    // what is inside and nothing else, and a run whose list is not is not opened.
+    proposalIds: proposalListOf({ proposalIds, payout }),
     keyEpoch,
     sealed: sealRecord('payroll', run.accountId, { employees, totals, proposalIds, payout, skips, repeats } satisfies RunSecrets, viewingKey),
   };
@@ -252,13 +253,33 @@ export const sealedRunOf = (run: PayrollRun, viewingKey: Hex, keyEpoch: number):
 export type RunSecrets = Pick<PayrollRun, 'employees' | 'totals' | 'proposalIds' | 'payout' | 'skips' | 'repeats'>;
 
 /**
+ * **THE PROPOSALS A RUN WAS RAISED AS, AS THE LIST OUTSIDE ITS SEAL HOLDS THEM**:
+ * each leg's own proposal and every retry's, sorted. Made only from what is
+ * sealed inside the run, so the list outside is never a second account of the
+ * legs but a way to find the run by a proposal without opening it.
+ */
+export const proposalListOf = (secrets: Pick<RunSecrets, 'proposalIds' | 'payout'>): string[] =>
+  [...Object.values(secrets.proposalIds ?? {}), ...retryProposalIdsOf(secrets.payout)].sort();
+
+/** Why a run is not opened: the proposals outside its seal are not the ones inside it. */
+export const PROPOSALS_OUTSIDE_ARE_NOT_INSIDE = 'this run\'s record lists other proposals outside its sealed numbers than '
+  + 'inside them, so which proposal raised which of its payments cannot be said. Do not act on it';
+
+/**
  * **A STORED RUN, OPENED WITH THE VIEWING KEY.** `proposalIds` is taken from
- * inside the envelope rather than from the list outside it: the outside one is
- * there to find a run by its proposals and does not say which leg each is for.
+ * inside the envelope, which says which leg each is for. The list outside it
+ * is there to find a run by its proposals, and is what the service checks a
+ * raise against; a run whose list outside is not exactly the one made from
+ * inside (`proposalListOf`) is refused here, so what the service checked is
+ * always what every device reads.
  */
 export const openSealedRun = (r: SealedRun, viewingKey: Hex): PayrollRun => {
-  const { sealed, keyEpoch: _epoch, proposalIds: _outside, filedBy: _filedBy, ...operational } = r;
-  return { ...operational, ...openRecord<RunSecrets>('payroll', r.accountId, sealed, viewingKey) };
+  const { sealed, keyEpoch: _epoch, proposalIds: outside, filedBy: _filedBy, ...operational } = r;
+  const secrets = openRecord<RunSecrets>('payroll', r.accountId, sealed, viewingKey);
+  const inside = proposalListOf(secrets);
+  const listed = [...(outside ?? [])].sort();
+  if (listed.length !== inside.length || listed.some((id, i) => id !== inside[i])) throw new Error(PROPOSALS_OUTSIDE_ARE_NOT_INSIDE);
+  return { ...operational, ...secrets };
 };
 
 /**

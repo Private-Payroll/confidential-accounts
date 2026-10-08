@@ -135,7 +135,7 @@ describe.skipIf(!KEYS_ON_DISK)('A PAYROLL RUN RAISED AND APPROVED FROM THE SIGNE
   const walletRead = (made: RunMadeHere): RunMadeHere => {
     const asked = paymentEntriesOf(made, circuits.paidOnceOf);
     const read = paymentsInAccountState(chain.contract(company).serialize(), asked);
-    return { ...made, wallet: { payKeyCommitment: read.payKeyCommitment, asked, held: [...read.held] } };
+    return { ...made, wallet: { payKeyCommitment: read.payKeyCommitment, asked, held: [...read.held], openRounds: [...read.openRounds], entries: read.entries } };
   };
 
   const builder = () => {

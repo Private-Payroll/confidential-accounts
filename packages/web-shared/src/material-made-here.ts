@@ -31,7 +31,7 @@ import { parseCanonical, unseal, type Hex, type Sealed } from '../../../src/core
 import { openRecord } from '../../../src/core/sealed-records.js';
 import type { StateChange } from '../../../src/core/ledger.js';
 import type { PayrollRun, RunLeg, SealedProposal } from '../../../src/core/types.js';
-import { paymentChecked, paymentsCheckedDigest, paymentsOnTheWire } from '../../../src/core/device-raise.js';
+import { paymentChecked, paymentsOnTheWire } from '../../../src/core/device-raise.js';
 import { isLiveRound, payrollRoundOf } from '../../../src/core/retry-cover.js';
 import {
   assetOfLeg, legChoiceOf, legEmployees, legFieldsOf, legName, legOf, legOfRound, legsOfRun, raisedLegOf,
@@ -208,6 +208,19 @@ const NOTHING_WAITING = 'This run has no proposal written down that is waiting t
   + 'already, or withdrawn. Reload the run to see where it stands.';
 
 /**
+ * **WHAT A PROPOSAL WRITTEN DOWN COMMITS TO PAYING**, from its own record: the
+ * commitment its filing carries. A payroll proposal with none says nothing a
+ * send could be held to, so none is made from it.
+ */
+const writtenDownPays = (rec: SealedProposal): string => {
+  if (typeof rec.pays !== 'string' || !/^[0-9a-f]{64}$/iu.test(rec.pays)) {
+    throw new NotMadeHere('The proposal written down for this run does not say what it pays, so this device cannot hold what '
+      + 'it sends to it. Withdraw the proposal and raise the run again.');
+  }
+  return rec.pays.toLowerCase();
+};
+
+/**
  * **WHAT A SIGNER'S DEVICE BUILDS ONE LEG'S PROPOSAL FROM, WHILE IT IS WRITTEN
  * DOWN AND NOT YET SENT**: the run as the leg's own record holds it, and the
  * account's half of the call.
@@ -236,7 +249,7 @@ export async function raiseOrderHere(
       half: await halfOf(records, accountId, viewingKey, opened),
       proposal: rec.chainId,
     },
-    paymentsChecked: paymentsCheckedDigest(payout.facts.map(paymentChecked)),
+    pays: writtenDownPays(rec),
   };
 }
 
@@ -271,7 +284,7 @@ export async function retryOrderHere(
       proposal: rec.chainId,
     },
     indices: [...retry.originalIndices],
-    paymentsChecked: paymentsCheckedDigest(retry.originalIndices.map((i) => paymentChecked(payout.facts[i]!))),
+    pays: writtenDownPays(rec),
   };
 }
 

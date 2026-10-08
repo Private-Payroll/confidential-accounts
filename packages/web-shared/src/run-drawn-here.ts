@@ -22,8 +22,8 @@ import type { PayrollRound } from '../../../src/core/account.js';
 import type { PayrollRun, RosterEmployee, RunRepeatRecord, SealedProposal } from '../../../src/core/types.js';
 import { canonicalPeriod, openSealedRun, sealedRunOf } from '../../../src/core/run-legs.js';
 import {
-  assembledRun, peopleDrawn, peopleOnTheRun, recordSkips, refuseAPayrollThatMayBeOnChain, refuseAPeriodAlreadyRaised,
-  samePeriod, withNumberedExtras,
+  amountOnTheRun, assembledRun, peopleDrawn, peopleOnTheRun, recordSkips, refuseAPayrollThatMayBeOnChain,
+  refuseAPeriodAlreadyRaised, samePeriod, withNumberedExtras,
 } from '../../../src/core/run-drawing.js';
 import { signRunFiling } from '../../../src/core/run-filing.js';
 import type { CompanyLabel } from 'midnight-identity/profile/company-label';
@@ -175,7 +175,7 @@ export async function drawRunHere(doors: RunDrawDoors, asked: RunAsked): Promise
   const runId = newRunId();
   const skips = leftOut && skip ? drawn(() => recordSkips(runId, leftOut, skip, at)) : undefined;
   const { employees, payslips } = drawn(() => peopleOnTheRun({
-    runId, period, specs: roster.map((e) => ({ name: e.name, asset: e.asset, amount: e.baseAmount })), roster, assets,
+    runId, period, specs: roster.map((e) => ({ name: e.name, asset: e.asset, amount: amountOnTheRun(e, period) })), roster, assets,
     company: doors.company,
   }));
   const repeats = drawn(() => withNumberedExtras(period, employees, repeated, [...(asked.repeats?.extra ?? [])], runs,

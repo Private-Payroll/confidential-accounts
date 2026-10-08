@@ -7,7 +7,7 @@
  * the whole flow over the served routes is in
  * `src/server/a-company-seats-its-signers-from-a-device.test.ts`.
  */
-import { describe, it, expect } from 'vitest';
+import { describe, it, expect, vi } from 'vitest';
 import { canonical, newSigningKeypair, newSymmetricKey, seal } from '../../../src/core/crypto.js';
 import { signedFoundingState } from '../../../src/core/founding-state.js';
 import { approverRosterFrom, EVERY_RIGHT } from '../../../src/core/vault-approvers.js';
@@ -16,6 +16,16 @@ import {
   changeThresholdOnDevice, changeVaultThresholdOnDevice, governOnDevice, type GovernanceDoors, type RoundOnThePage,
 } from './governed-call-on-device.js';
 import type { GovernanceOnTheWire, GovernedCallOrder, OpenedRound } from './governed-call-builder.js';
+
+/*
+ * What each proposal opens as on this device stands in for the company's records here, through the module that opens
+ * it; what is opened from real records is the subject of `the-device-proves-what-it-opened.test.ts`.
+ */
+const seams = vi.hoisted(() => ({ opens: undefined as unknown as (proposalId: string) => Promise<OpenedRound> }));
+vi.mock('./round-opened-here.js', async (importOriginal) => ({
+  ...(await importOriginal<typeof import('./round-opened-here.js')>()),
+  openTheRoundHere: (_s: unknown, _a: string, proposalId: string) => seams.opens(proposalId),
+}));
 
 const ACC = 'acc_1';
 const KEY = newSymmetricKey();
@@ -51,6 +61,7 @@ const aDevice = (o: {
   }
   const page = (id: string): RoundOnThePage => { const { opened: _o, ...r } = rounds.get(id)!; return r; };
   let checks = 0;
+  seams.opens = async (id) => rounds.get(id)!.opened;
   const doors: GovernanceDoors = {
     service: {
       callState: async () => ({ account: 'ac'.repeat(32), blockHash: 'b', accountState: 'AS', parameters: 'PP' }),
@@ -87,7 +98,6 @@ const aDevice = (o: {
     },
     material: { signingSecret: founder.secret, blinding: '22'.repeat(32), scope: '33'.repeat(32) },
     accountId: ACC,
-    opens: async (id) => rounds.get(id)!.opened,
     records: {
       directory: async () => ({
         dir: { company: ACC, version: 1, seats: [{ seat: SEAT, person: 'ada', signingKey: founder.publicKey, wrappingKey: 'ab'.repeat(32), committeeKey: COMMITTEE, role: 'admin', retired: null }] },
@@ -97,6 +107,8 @@ const aDevice = (o: {
       people: async () => { throw new Error('no person here'); },
       state: async (id) => (id === '0' ? STATE : null),
       runs: async () => [],
+      payments: { paidOnceOf: () => { throw new Error('no payment here'); }, paidMovementOf: () => { throw new Error('no payment here'); }, read: async () => { throw new Error('no payment here'); } },
+      policy: async () => { throw new Error('no payroll here'); },
     },
     filing: { seat: SEAT, keyEpoch: 0, salt: () => SALT, newId: () => 'prp_newproposal1' },
     approvers: async () => {

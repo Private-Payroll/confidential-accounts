@@ -490,6 +490,23 @@ export interface ProposalStandingRead { readonly status: string; readonly raised
  * run's leg; `again` is a retry of exactly these people being raised again as
  * itself. Whether the chain has paid them is asked where the chain is read.
  */
+/**
+ * **NOBODY A ROUND PAYS IS SOMEBODY THE RUN RECORDS A DECISION NOT TO PAY.**
+ * `indices` are positions on the leg; `notToPay` the roster entries the run's
+ * own record of decisions says not to pay.
+ */
+export function refusePeopleDecidedNotToPay(
+  run: PayrollRun, leg: RunLeg, indices: readonly number[], notToPay: ReadonlySet<string>,
+): void {
+  const onTheLeg = legEmployees(run, leg);
+  const marked = indices.filter((i) => onTheLeg[i] !== undefined && notToPay.has(onTheLeg[i]!.id));
+  if (marked.length === 0) return;
+  const people = `#${[...marked].sort((a, b) => a - b).map((i) => i + 1).join(', #')}`;
+  throw new Error(
+    `${people} ${marked.length === 1 ? 'is' : 'are'} marked on run ${run.id} as not to be paid, by a decision on record. A retry `
+    + 'pays only people the run meant to pay, so none was raised. Nothing was written down.');
+}
+
 export function refuseARetryOverPeopleCovered(input: {
   readonly run: PayrollRun; readonly leg: RunLeg; readonly legRound: ProposalStandingRead;
   readonly indices: readonly number[];
@@ -508,13 +525,7 @@ export function refuseARetryOverPeopleCovered(input: {
   const named = new Set(indices);
   const stopped = (p: ProposalStandingRead) => p.status === 'cancelled' || p.status === 'blocked';
 
-  const onTheLeg = legEmployees(run, leg);
-  const marked = indices.filter((i) => input.notToPay.has(onTheLeg[i]!.id));
-  if (marked.length > 0) {
-    throw new Error(
-      `${people(marked)} ${isAre(marked)} marked on run ${run.id} as not to be paid, by a decision on record. A retry `
-      + 'pays only people the run meant to pay, so none was raised. Nothing was written down.');
-  }
+  refusePeopleDecidedNotToPay(run, leg, indices, input.notToPay);
   if (!stopped(input.legRound) && nowInSeconds < recorded.closesAt) {
     throw new Error(
       `the ${legName(leg, registry)} leg of run ${run.id} can still pay everybody on it until ${when(recorded.closesAt)}, when its `

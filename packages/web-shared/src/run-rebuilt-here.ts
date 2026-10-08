@@ -26,7 +26,7 @@ import type { Hex, Sealed } from '../../../src/core/crypto.js';
 import { openRecord } from '../../../src/core/sealed-records.js';
 import { payrollRoundOf } from '../../../src/core/retry-cover.js';
 import type { PayrollRound } from '../../../src/core/account.js';
-import type { Employee, PayrollRun, RosterEmployee, SealedProposal, SealedRun, StateBlinding } from '../../../src/core/types.js';
+import type { Account, Employee, PayrollRun, RosterEmployee, RunLeg, SealedProposal, SealedRun, StateBlinding } from '../../../src/core/types.js';
 import type { PaymentFacts } from '../../../src/midnight/payout-tree.js';
 import {
   assetOfLeg, factsOfThePaid, legEmployees, legsOfRun, openSealedRun, payRecordsOf, runIdForLeg,
@@ -42,8 +42,9 @@ import { payRecordNonceOf } from '../../../src/midnight/run-keys.js';
 import type { RaisingHere } from './what-this-device-made.js';
 import type { PeopleHere } from './people-on-device.js';
 import type { RunMadeHere, WalletReadFacts } from './what-this-device-made.js';
-import { paymentEntriesOf } from './payment-entries.js';
+import { knownEntriesOf, paymentEntriesOf } from './payment-entries.js';
 import type { AccountPaymentFacts } from 'midnight-identity/profile/records-key';
+import { MOST_ENTRIES_ASKED } from 'midnight-identity/profile/request';
 
 /** The company's records this device reads a run from. */
 export interface CompanyRecordsHere {
@@ -64,15 +65,20 @@ export interface CompanyRecordsHere {
   /**
    * **WHAT THE ACCOUNT RECORDS ABOUT PAYMENTS, READ BY THE PERSON'S OWN
    * WALLET**: `read` asks the wallet which of the given entries of the
-   * account's record of payments it holds, and the commitment it holds to its
-   * pay-record key (`holdersFromTheWallet` with `movements`); `paidOnceOf` is
-   * the account's own circuit an entry is made with. A page without it raises
-   * and approves no payroll run.
+   * account's record of payments it holds, the commitment it holds to its
+   * pay-record key, every proposal it holds open and how many entries its
+   * record holds (`holdersFromTheWallet` with `movements`); `paidOnceOf` and
+   * `paidMovementOf` are the account's own circuits an entry is made with, of a
+   * person-month's nonce and of a payee's leaf. Part of the records a run is
+   * read from, so nothing that raises or approves a run can be wired without it.
    */
-  readonly payments?: {
+  readonly payments: {
     readonly paidOnceOf: (nonce: Uint8Array) => Uint8Array;
+    readonly paidMovementOf: (leaf: Uint8Array) => Uint8Array;
     readonly read: (entries: readonly string[]) => Promise<AccountPaymentFacts>;
   };
+  /** The company's own ceilings, opened from its sealed policy record. */
+  readonly policy: () => Promise<Account['policy']>;
   readonly registry?: AssetRegistry;
 }
 
@@ -179,7 +185,13 @@ export async function keptRunHere(
 export async function payableFactsHere(
   records: CompanyRecordsHere, paid: readonly Employee[], whatToDo: string, whyNot: string,
 ): Promise<PaymentFacts[]> {
-  const people = await records.people();
+  return payableFactsOf(await records.people(), paid, whatToDo, whyNot, records.registry);
+}
+
+/** `payableFactsHere`, over the people this device has already read. */
+export function payableFactsOf(
+  people: PeopleHere, paid: readonly Employee[], whatToDo: string, whyNot: string, registry?: AssetRegistry,
+): PaymentFacts[] {
   const payable = new Map<string, RosterEmployee>(people.people.map((p) => [p.person.id, p.person]));
   const refusedHere = new Set([...people.notBelieved, ...people.notPayable.map((n) => n.here.person.id)]);
   const notHere = paid.find((e) => refusedHere.has(e.id));
@@ -188,7 +200,7 @@ export async function payableFactsHere(
       + `pay them at the address it holds. ${whatToDo}`);
   }
   try {
-    return factsOfThePaid(paid, (id) => payable.get(id), records.registry);
+    return factsOfThePaid(paid, (id) => payable.get(id), registry);
   } catch (e) {
     throw new RunNotReadHere(`${(e as Error).message.replace(/\.?\s*$/u, '.')} ${whyNot}`, { cause: e });
   }
@@ -196,13 +208,16 @@ export async function payableFactsHere(
 
 /**
  * **THE RUN A PAYROLL PROPOSAL RAISED, AS THIS DEVICE READS IT.** `proposalId`
- * is the company's own name for the proposal. Refused, by name, when no run of
- * the company raised it, when the company's state is not one this device
- * believes, or when anybody the run pays is not someone this device would pay.
+ * is the company's own name for the proposal. What it pays is the leg's record
+ * of its payments, which the tree is built again from; whether this device
+ * would pay each person the proposal pays, at exactly that, is one of the raise
+ * checks (`raise-checks-here.ts`), run on it wherever it is approved. Refused,
+ * by name, when no run of the company raised it or the company's state is not
+ * one this device believes.
  */
 export async function runRebuiltHere(
   records: CompanyRecordsHere, accountId: string, proposalId: string, viewingKey: Hex,
-): Promise<RunMadeHere> {
+): Promise<{ readonly run: PayrollRun; readonly leg: RunLeg; readonly made: RunMadeHere }> {
   const sealed = (await records.runs()).find((r) => r.accountId === accountId && (r.proposalIds ?? []).includes(proposalId));
   if (sealed === undefined) {
     throw new RunNotReadHere('No payroll run of this company raised this proposal, so this device has nothing to check it '
@@ -227,15 +242,13 @@ export async function runRebuiltHere(
   }
   const state = await signedStateHere(records, accountId, viewingKey);
   const paid = legEmployees(run, leg);
-  const facts = await payableFactsHere(records, paid, 'Leave this proposal unapproved until their record is put right.',
-    'This device will not approve a run it would not pay.');
   const window = retry ?? payout;
   const made: RunMadeHere = {
     kind: 'payroll',
     seeds: state.seeds,
     payKey: state.payKey,
     identity: { accountId, runId: payout.runId, epoch: payout.epoch },
-    facts,
+    facts: [...payout.facts],
     records: payRecordsOf(run, paid),
     asset: assetOfLeg(leg),
     opensAt: String(window.opensAt),
@@ -243,28 +256,58 @@ export async function runRebuiltHere(
     required: String(window.required ?? 0n),
     ...(retry === undefined ? {} : { retry: [...retry.originalIndices] }),
   };
-  return withWhatTheWalletRead(records, made);
+  return { run, leg, made: await checkedAgainstTheRecordsAndTheWallet(records, accountId, run, viewingKey, made) };
+}
+
+/**
+ * **A RUN MADE HERE, WITH WHAT IT IS CHECKED AGAINST**: what the company's
+ * records account for on the chain, and what the person's own wallet read
+ * about its payments and about the chain (`withWhatTheWalletRead`). The one way
+ * a raise and an approval both put a run made here beside what it is checked
+ * against.
+ */
+export async function checkedAgainstTheRecordsAndTheWallet(
+  records: CompanyRecordsHere, accountId: string, run: PayrollRun, viewingKey: Hex, made: Omit<RunMadeHere, 'raising' | 'wallet'>,
+): Promise<RunMadeHere> {
+  return withWhatTheWalletRead(records, { ...made, raising: await whatTheRecordsAccountFor(records, accountId, run, viewingKey) });
 }
 
 /**
  * **A RUN MADE HERE, WITH WHAT THE PERSON'S OWN WALLET READ ABOUT ITS
- * PAYMENTS**: which of its entries the account already records, and the
- * account's commitment to its pay-record key. Where the run is proved, these
- * are what it is checked against, never the account state the service serves.
- * A page that cannot ask the wallet returns the run without them, and the run
- * is then refused where it is proved.
+ * PAYMENTS AND ABOUT THE CHAIN**: which of its entries the account already
+ * records, and the account's commitment to its pay-record key; which of the
+ * entries the company's records know about it holds, every proposal it holds
+ * open and how many entries its record of payments holds. Where the run is
+ * checked and proved, these are what it is checked against, never the account
+ * state the service serves.
+ *
+ * A wallet is asked about at most `MOST_ENTRIES_ASKED` entries at a time, so a
+ * company with a longer history is asked in parts; every part must find the
+ * chain as the first did, or nothing is taken from any of them.
  */
 export async function withWhatTheWalletRead(records: CompanyRecordsHere, made: RunMadeHere): Promise<RunMadeHere> {
-  if (records.payments === undefined) return made;
-  const asked = paymentEntriesOf(made, records.payments.paidOnceOf);
-  let read: AccountPaymentFacts;
+  const own = paymentEntriesOf(made, records.payments.paidOnceOf);
+  const known = made.raising === undefined ? [] : knownEntriesOf(made.raising, records.payments);
+  const asked = [...new Set([...own, ...known])];
+  const reads: AccountPaymentFacts[] = [];
   try {
-    read = await records.payments.read(asked);
+    for (let at = 0; at < asked.length; at += MOST_ENTRIES_ASKED) reads.push(await records.payments.read(asked.slice(at, at + MOST_ENTRIES_ASKED)));
   } catch (e) {
     throw new RunNotReadHere(`Your wallet could not read from the network whether the people on this run were already paid `
       + `(${(e as Error)?.message ?? String(e)}). Try again in a minute.`, { cause: e });
   }
-  const wallet: WalletReadFacts = { payKeyCommitment: read.payKeyCommitment, asked, held: [...read.held] };
+  const first = reads[0];
+  if (first === undefined) return made;
+  const same = (r: AccountPaymentFacts): boolean => r.payKeyCommitment === first.payKeyCommitment && r.entries === first.entries
+    && r.openRounds.length === first.openRounds.length && r.openRounds.every((x, i) => x === first.openRounds[i]);
+  if (!reads.every(same)) {
+    throw new RunNotReadHere('The chain changed while your wallet was reading it, so what it read cannot be taken as one '
+      + 'reading. Try again in a minute.');
+  }
+  const wallet: WalletReadFacts = {
+    payKeyCommitment: first.payKeyCommitment, asked, held: reads.flatMap((r) => [...r.held]),
+    openRounds: [...first.openRounds], entries: first.entries,
+  };
   return { ...made, wallet };
 }
 
@@ -276,7 +319,7 @@ export async function withWhatTheWalletRead(records: CompanyRecordsHere, made: R
  * confirmed it repeats. Read from the records this device opened, never from
  * an answer the service made.
  */
-export async function whatTheRecordsAccountFor(
+async function whatTheRecordsAccountFor(
   records: CompanyRecordsHere, accountId: string, run: PayrollRun, viewingKey: Hex,
 ): Promise<RaisingHere> {
   if (records.proposals === undefined) {

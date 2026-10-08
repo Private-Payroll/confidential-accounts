@@ -206,6 +206,8 @@ const retriesOf = (c: Company) => {
  * Who the leg has paid, as a signer's device reads it: the company's runs and proposals from the server, made into the
  * view on the device, over this file's double of the account's record of who is paid. Nothing else of the company is read.
  */
+/** Paying a run reads neither what the wallet says of payments nor the company's ceilings. */
+const notReadHere = (): never => { throw new Error('paying reads neither what the wallet says of payments nor the company\'s ceilings'); };
 /** The directory a device holds for a company the service made: one seat, the founding signer's, holding the account. */
 const aDirectoryOf = (account: string, signingKey: string) => {
   const SEAT = '4e'.repeat(32);
@@ -225,6 +227,7 @@ const viewHere = (c: Company) => {
     runs: async () => runsFiledBy(await api(`/api/accounts/${c.account}/runs`), c.account, founder.secret),
     proposals: () => api(`/api/accounts/${c.account}/proposals`),
     registry: productAssets,
+    payments: { paidOnceOf: notReadHere, paidMovementOf: notReadHere, read: async () => notReadHere() }, policy: async () => notReadHere(),
   }, c.account, c.runId, c.viewingKey, {
     detailsOf: vaultDetails, runPayload: pureCircuits.runPayload, proposalIdOf: pureCircuits.proposalIdOf,
     paidAmong: (leaves) => ledger.paidAmong(c.account, [...leaves]),
@@ -246,6 +249,7 @@ const paysHere = async (c: Company, retry?: string) => {
     runs: async () => runsFiledBy(await api(`/api/accounts/${c.account}/runs`), c.account, founder.secret),
     proposals: () => api(`/api/accounts/${c.account}/proposals`),
     registry: productAssets,
+    payments: { paidOnceOf: notReadHere, paidMovementOf: notReadHere, read: async () => notReadHere() }, policy: async () => notReadHere(),
   }, c.account, c.runId, c.viewingKey, {
     detailsOf: vaultDetails, runPayload: pureCircuits.runPayload, proposalIdOf: pureCircuits.proposalIdOf,
     paidAmong: (leaves) => ledger.paidAmong(c.account, [...leaves]),

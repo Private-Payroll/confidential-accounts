@@ -1,11 +1,11 @@
-import { describe, it, expect } from 'vitest';
+import { describe, it, expect, vi } from 'vitest';
 import { mkdtempSync, chmodSync, readdirSync, readFileSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { FileStore } from './store-file.js';
 import { canonical, parseCanonical } from './crypto.js';
 import type { Shape } from './store.js';
-import type { User } from './types.js';
+import type { SealedProposal, SealedRun, User } from './types.js';
 
 /**
  * THE FILE IS EVERY USER'S KEYS, so a half-write is not one bad record.
@@ -65,6 +65,62 @@ describe('the store file', () => {
     const onDisk = parseCanonical<Shape>(readFileSync(path, 'utf8'));
     expect(Object.keys(onDisk.users)).toEqual(['usr_first']);
     expect(new FileStore(path).getUser('usr_first')).not.toBeNull();
+  });
+
+  it.skipIf(!canBlockWrites)('A RUN RAISED AND ITS PROPOSAL: A WRITE OF THE TWO THAT FAILS LEAVES NEITHER, ON DISK OR IN THE PROCESS', () => {
+    const dir = mkdtempSync(join(tmpdir(), 'mn-sf-raise-'));
+    const path = join(dir, 'db.json');
+    const store = new FileStore(path);
+    const drawn = { id: 'run_abcdefghijkl', accountId: 'acc_1', period: '2026-11', status: 'draft', payslips: [], keyEpoch: 0, sealed: { iv: 'a', tag: 'b', body: 'c' } } as unknown as SealedRun;
+    store.putRun(drawn);
+    const raised = { ...drawn, status: 'proposed', proposalIds: ['prp_1'] } as SealedRun;
+    const proposal = { id: 'prp_1', accountId: 'acc_1', status: 'open' } as unknown as SealedProposal;
+    chmodSync(dir, 0o500);
+    try {
+      /* RED WHEN: a failed write of the two is reported as a run that moved on, or leaves either changed in the process or on disk. */
+      expect(() => store.putRaisedRunAndProposal(raised, drawn, proposal)).toThrow();
+      expect(store.getRun(drawn.id)).toEqual(drawn);
+      expect(store.getProposal('prp_1')).toBeNull();
+    } finally {
+      chmodSync(dir, 0o700);
+    }
+    const again = new FileStore(path);
+    expect(again.getRun(drawn.id)).toEqual(drawn);
+    expect(again.getProposal('prp_1')).toBeNull();
+    /* And it writes both, once the store can write. */
+    expect(store.putRaisedRunAndProposal(raised, drawn, proposal)).toBe(true);
+    expect(new FileStore(path).getRun(drawn.id)?.proposalIds).toEqual(['prp_1']);
+    expect(new FileStore(path).getProposal('prp_1')).not.toBeNull();
+    /* RED WHEN: a run that moved on, or a proposal name already taken, is written over. */
+    expect(store.putRaisedRunAndProposal({ ...raised, proposalIds: ['prp_2'] }, drawn, { ...proposal, id: 'prp_2' })).toBe(false);
+    expect(store.putRaisedRunAndProposal({ ...raised, proposalIds: ['prp_1'] }, raised, proposal)).toBe(false);
+    expect(store.getProposal('prp_2')).toBeNull();
+  });
+
+  it.skipIf(!canBlockWrites)('A RUN RAISED AND ITS PROPOSAL GO TO DISK IN ONE WRITE: THE DISK FAILING AFTER ANY WRITE STILL LEAVES BOTH OR NEITHER', () => {
+    const dir = mkdtempSync(join(tmpdir(), 'mn-sf-raise-one-'));
+    const path = join(dir, 'db.json');
+    const store = new FileStore(path);
+    const drawn = { id: 'run_abcdefghijkl', accountId: 'acc_1', period: '2026-11', status: 'draft', payslips: [], keyEpoch: 0, sealed: { iv: 'a', tag: 'b', body: 'c' } } as unknown as SealedRun;
+    store.putRun(drawn);
+    const raised = { ...drawn, status: 'proposed', proposalIds: ['prp_1'] } as SealedRun;
+    const proposal = { id: 'prp_1', accountId: 'acc_1', status: 'open' } as unknown as SealedProposal;
+    /* The disk stops taking writes the moment one write of the raise has landed. */
+    const as = store as unknown as { flush: () => void };
+    const write = as.flush.bind(store);
+    const writes = vi.spyOn(as, 'flush').mockImplementation(() => { write(); chmodSync(dir, 0o500); });
+    try {
+      try { store.putRaisedRunAndProposal(raised, drawn, proposal); } catch { /* a later write failing is what is being checked */ }
+    } finally {
+      writes.mockRestore();
+      chmodSync(dir, 0o700);
+    }
+    const onDisk = new FileStore(path);
+    /* RED WHEN: the run as raised reaches the disk in a write of its own, and its proposal's write is the one that fails. */
+    expect([onDisk.getRun(drawn.id)?.proposalIds ?? [], onDisk.getProposal('prp_1') !== null])
+      .toEqual(onDisk.getProposal('prp_1') !== null ? [['prp_1'], true] : [[], false]);
+    expect([store.getRun(drawn.id)?.proposalIds ?? [], store.getProposal('prp_1') !== null])
+      .toEqual(store.getProposal('prp_1') !== null ? [['prp_1'], true] : [[], false]);
   });
 
   it('AND LEAVES NO TEMPORARY FILE BEHIND when it succeeds', () => {

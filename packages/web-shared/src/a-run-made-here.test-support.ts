@@ -38,7 +38,7 @@ export const aRunMadeHere = (
     asset: TEST_TOKEN, opensAt: window.opensAt, closesAt: window.closesAt, required: '0',
   };
   const asked = paymentEntriesOf(made, pureCircuits.paidOnceOf);
-  made = { ...made, wallet: { payKeyCommitment: toHex(commit(fromHex(pay.key))), asked, held: [] } };
+  made = { ...made, wallet: { payKeyCommitment: toHex(commit(fromHex(pay.key))), asked, held: [], openRounds: [], entries: 0 } };
   return { made, root: tree.root, payees: tree.payees };
 };
 
@@ -47,7 +47,7 @@ export const aRunMadeHere = (
  * holds `commitment` as the company's pay-record key at `keyAt`.
  */
 export const aLedgerHolding = (keyAt: Uint8Array, commitment: Uint8Array, holds: 'every proposal' | 'none' = 'every proposal'): AccountLedgerView => ({
-  openProposals: { member: () => holds === 'every proposal', [Symbol.iterator]: () => ([] as Array<[Uint8Array, unknown]>)[Symbol.iterator]() },
-  movements: { member: () => false, size: () => 0n },
+  openProposals: { member: () => holds === 'every proposal' },
+  movements: { member: () => false },
   signerRoles: { member: (k) => toHex(k) === toHex(keyAt), lookup: () => commitment },
 });

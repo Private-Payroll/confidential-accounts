@@ -7,7 +7,7 @@ import { describe, expect, it } from 'vitest';
 import { pureCircuits } from '../../../contracts/managed/contract/index.js';
 import { pureCircuits as vaultCircuits } from '../../../contracts/managed-vault/contract/index.js';
 import { firstSecretRunOf } from '../../../src/midnight/vault-start.js';
-import { buildRetryRun, buildRun, paidOnceOfNonce, type PaymentFacts } from '../../../src/midnight/payout-tree.js';
+import { buildPayoutTree, buildRun, paidOnceOfNonce, type PaymentFacts } from '../../../src/midnight/payout-tree.js';
 import { payRecordNonceOf } from '../../../src/midnight/run-keys.js';
 import { fromHex, toHex, type Hex } from '../../../src/core/crypto.js';
 import { payeeFor, payFor } from '../../../src/testing/payees.js';
@@ -39,10 +39,16 @@ const payloadOf = (m: RunMadeHere): string => {
   return toHex(pureCircuits.runPayload(fromHex(built.tree.root), built.tree.payees, BigInt(m.opensAt), BigInt(m.closesAt), BigInt(m.required)));
 };
 
-/* A retry's payload: the root and count of a tree of only the people it names, each at the leaf the leg gave them. */
+/*
+ * A retry's payload: the root and count of a tree of only the people it names, each at the leaf the leg gave them.
+ * Built here from the leg's own leaf inputs and amounts with the tree builder alone, not with the retry builder the
+ * check uses, so a retry builder that picked other people, other leaves or the whole leg is caught.
+ */
 const payloadOfRetry = (m: RunMadeHere): string => {
-  const built = buildRetryRun(buildRun([...m.seeds], m.identity, [...m.facts], vaultDetails, { key: m.payKey as Hex, records: [...m.records] }, m.asset), [...m.retry!]);
-  return toHex(pureCircuits.runPayload(fromHex(built.tree.root), built.tree.payees, BigInt(m.opensAt), BigInt(m.closesAt), BigInt(m.required)));
+  const leg = buildRun([...m.seeds], m.identity, [...m.facts], vaultDetails, { key: m.payKey as Hex, records: [...m.records] }, m.asset);
+  const tree = buildPayoutTree(m.retry!.map((i) => leg.payments[i]!), m.retry!.map((i) => m.facts[i]!.amount), leg.tree.asset);
+  expect(tree.leaves).toEqual(m.retry!.map((i) => leg.tree.leaves[i]));
+  return toHex(pureCircuits.runPayload(fromHex(tree.root), BigInt(m.retry!.length), BigInt(m.opensAt), BigInt(m.closesAt), BigInt(m.required)));
 };
 
 const CHAIN_ID = 'c1'.repeat(32);
@@ -64,6 +70,7 @@ const walletRead = (m: RunMadeHere, o: ChainSays): WalletReadFacts => {
   return {
     asked, held: asked.filter((e) => paid.has(e as Hex)),
     payKeyCommitment: o.payKey === null ? null : toHex(pureCircuits.payKeyCommitmentOf(fromHex(o.payKey ?? pay.key))),
+    openRounds: (o.open ?? true) ? [CHAIN_ID] : [], entries: 2 * (o.paid ?? []).length,
   };
 };
 

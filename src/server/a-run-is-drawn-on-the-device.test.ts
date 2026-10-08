@@ -17,6 +17,8 @@ import { TEST_SETTLEMENT_ASSET } from '../core/assets.js';
 import { sealPerson } from '../core/person-record.js';
 import { openSealedRun, sealedRunOf } from '../core/run-legs.js';
 import { signRunFiling } from '../core/run-filing.js';
+import { batchDigestOf, newProposalId, sealPayrollProposal } from '../core/proposal-filing.js';
+import type { SealedProposal } from '../core/types.js';
 import { theNetwork } from '../midnight/network.js';
 import { signCompanyFiling, toCompanyWire } from '../midnight/sealed-record-wire.js';
 import { payeeFor } from '../testing/payees.js';
@@ -29,8 +31,13 @@ import {
   sendAs, store, type Seat,
 } from './a-company-of-two-seats.test-support.js';
 
+/** While set, the company's directory cannot be read: the chain under it did not answer. */
+let directoryDown = false;
 aCompanyOfTwoSeats((app, deps) => {
-  app.use(runRoutes({ signedIn: deps.signedIn, member: deps.member, store, directoryOf: deps.directoryOf, wiring: () => 'simulated' }));
+  app.use(runRoutes({
+    signedIn: deps.signedIn, member: deps.member, store, wiring: () => 'simulated',
+    directoryOf: (id) => (directoryDown ? Promise.reject(new Error('the indexer did not answer')) : deps.directoryOf(id)),
+  }));
 });
 
 const NETWORK = theNetwork();
@@ -167,6 +174,76 @@ describe('A RUN IS DRAWN ON A SIGNER\'S DEVICE', () => {
   });
 });
 
+/** A payroll round written down for `runId`'s private leg, as a raise writes one: open, and seen on the chain or not. */
+const aRoundFor = (runId: string, raisedAt?: string): SealedProposal => {
+  const salt = '5d'.repeat(32) as Hex;
+  return {
+    id: newProposalId(), accountId: CO, status: 'open', createdAt: '2026-10-08T00:00:00.000Z', digest: 'd1'.repeat(32) as Hex,
+    chainId: 'c1'.repeat(32) as Hex, approvalCount: 0, keyEpoch: 0, ...(raisedAt === undefined ? {} : { raisedAt }),
+    sealed: sealPayrollProposal({
+      accountId: CO, viewingKey: KEY as Hex, vault: 'c5'.repeat(32) as Hex, summary: 'Payroll', proposedBy: ADA.seat,
+      payload: { runId, form: 'shielded', entries: [] },
+      change: { asset: TEST_SETTLEMENT_ASSET, amount: 0n, batchDigest: batchDigestOf([]), salt },
+    }),
+  } as SealedProposal;
+};
+
+describe('A RUN IS NOT DRAWN OVER ONE THAT MAY BE ON THE CHAIN, AND A REPEAT OR AN EXTRA IS DRAWN ONLY AS CONFIRMED', () => {
+  it('A DRAFT WHOSE ROUND MAY BE LIVE REFUSES A SECOND RUN FOR ITS MONTH, AND A REPEAT MUST NAME IT', async () => {
+    const draft = await drawRunHere(drawingOn(ADA), { period: '2027-04' });
+    const round = aRoundFor(draft.id);
+    store.putProposal(round);
+    const before = runsKept();
+    /* RED WHEN: a second run is drawn for a month whose draft has a round that may be on the chain. */
+    await expect(drawRunHere(drawingOn(ADA), { period: '2027-04' })).rejects.toThrow(/a round has been raised for it: .*has not been seen to hold it/u);
+    store.putProposal({ ...round, raisedAt: '2026-10-08T00:00:01.000Z' });
+    await expect(drawRunHere(drawingOn(ADA), { period: '2027-04' })).rejects.toThrow(/The chain has been seen to hold that round/u);
+    /* RED WHEN: a repeat that leaves out a draft whose round is live is taken as confirmed. */
+    await expect(drawRunHere(drawingOn(ADA), { period: '2027-04', repeats: { runIds: [], reason: 'back pay' } }))
+      .rejects.toThrow(new RegExp(`this confirmation leaves out ${draft.id}`, 'u'));
+    expect(runsKept()).toBe(before);
+    /* Withdrawn, the proposal leaves the draft as only a draft, and the month is drawn again. */
+    store.putProposal({ ...round, status: 'cancelled' });
+    expect((await drawRunHere(drawingOn(ADA), { period: '2027-04' })).period).toBe('2027-04');
+  });
+
+  it('A REPEAT CONFIRMED OVER A RUN IT DOES NOT REPEAT, WITH A BLANK REASON, OR BY NOBODY IS REFUSED, AND NOTHING IS KEPT', async () => {
+    const first = await drawRunHere(drawingOn(ADA), { period: '2027-05' });
+    store.putRun({ ...store.getRun(first.id)!, status: 'proposed' });
+    const before = runsKept();
+    for (const [why, doors, repeats, says] of [
+      ['a run named that it does not repeat', drawingOn(ADA), { runIds: [first.id, 'run_notthisone1'], reason: 'back pay' }, /run_notthisone1 was confirmed as repeated and this run does not repeat it/u],
+      ['a blank reason', drawingOn(ADA), { runIds: [first.id], reason: '   ' }, /a blank reason is not a record/u],
+      ['confirmed by nobody', { ...drawingOn(ADA), by: '  ' }, { runIds: [first.id], reason: 'back pay' }, /has to be attributable to somebody/u],
+    ] as const) {
+      /* RED WHEN: a repeat is drawn on that confirmation. */
+      await expect(drawRunHere(doors, { period: '2027-05', repeats }), why).rejects.toThrow(says);
+      await expect(drawRunHere(doors, { period: '2027-05', repeats }), why).rejects.toBeInstanceOf(RunNotDrawnHere);
+    }
+    expect(runsKept()).toBe(before);
+  });
+
+  it('A NUMBERED EXTRA IS DRAWN ONLY AS PART OF A CONFIRMED REPEAT, ONLY FOR SOMEBODY ON THE RUN, AND AS THE NEXT OCCURRENCE', async () => {
+    const somebody = (await readPeopleHere(peopleOn(ADA))).people.find((p) => p.person.status === 'active')!.person;
+    const before = runsKept();
+    /* RED WHEN: an extra is drawn for a month with no run it repeats - it would be a second payment nobody confirmed. */
+    await expect(drawRunHere(drawingOn(ADA), { period: '2027-06', repeats: { runIds: [], reason: 'back pay', extra: [somebody.id] } }))
+      .rejects.toThrow(/a numbered extra is a second payment for 2027-06, and this run repeats no run for that month/u);
+    const first = await drawRunHere(drawingOn(ADA), { period: '2027-06' });
+    store.putRun({ ...store.getRun(first.id)!, status: 'proposed' });
+    /* RED WHEN: an extra is drawn for somebody this run does not pay. */
+    await expect(drawRunHere(drawingOn(ADA), { period: '2027-06', repeats: { runIds: [first.id], reason: 'back pay', extra: ['per_nobodyhere'] } }))
+      .rejects.toThrow(/per_nobodyhere is named for a numbered extra and not on this run/u);
+    expect(runsKept()).toBe(before + 1);
+    /* RED WHEN: an extra is not the next occurrence for the month: the account would refuse it as the payment already made. */
+    const extra = await drawRunHere(drawingOn(ADA), { period: '2027-06', repeats: { runIds: [first.id], reason: 'back pay', extra: [somebody.id] } });
+    expect(extra.repeats?.extra).toEqual({ [somebody.id]: 1 });
+    store.putRun({ ...store.getRun(extra.id)!, status: 'proposed' });
+    const another = await drawRunHere(drawingOn(ADA), { period: '2027-06', repeats: { runIds: [first.id, extra.id], reason: 'more back pay', extra: [somebody.id] } });
+    expect(another.repeats?.extra).toEqual({ [somebody.id]: 2 });
+  });
+});
+
 describe('THE SERVICE KEEPS A RUN ONLY AS A SEAT THAT MAY FILE ONE SIGNED IT, WHOLE', () => {
   const aDrawnRun = async () => {
     const run = await drawRunHere({ ...drawingOn(ADA), api: async () => ({}) }, { period: '2027-03' });
@@ -198,6 +275,11 @@ describe('THE SERVICE KEEPS A RUN ONLY AS A SEAT THAT MAY FILE ONE SIGNED IT, WH
       ['sealed at another key epoch', 'ada', { run: signRunFiling(CO, { ...sealed, keyEpoch: 7 }, ADA.signingSecret as Hex) }, 409, 'not-the-current-key'],
       /* RED WHEN: a run is kept already raised, with proposals nothing here wrote down. */
       ['already raised', 'ada', { run: signRunFiling(CO, { ...sealed, status: 'proposed', proposalIds: ['prp_aaaaaaaaaaaa'] }, ADA.signingSecret as Hex) }, 422, 'not-a-drawn-run'],
+      /* RED WHEN: a run is kept as anything but drawn: raised with no proposal named, settled, a draft naming a proposal, or a draft already paid. */
+      ['raised, naming no proposal', 'ada', { run: signRunFiling(CO, { ...sealed, status: 'proposed' }, ADA.signingSecret as Hex) }, 422, 'not-a-drawn-run'],
+      ['settled', 'ada', { run: signRunFiling(CO, { ...sealed, status: 'settled' }, ADA.signingSecret as Hex) }, 422, 'not-a-drawn-run'],
+      ['a draft naming a proposal', 'ada', { run: signRunFiling(CO, { ...sealed, proposalIds: ['prp_aaaaaaaaaaaa'] }, ADA.signingSecret as Hex) }, 422, 'not-a-drawn-run'],
+      ['a draft already paid', 'ada', { run: signRunFiling(CO, { ...sealed, settledAt: '2027-03-31T00:00:00.000Z' }, ADA.signingSecret as Hex) }, 422, 'not-a-drawn-run'],
     ];
     for (const [what, person, body, status, refused] of cases) {
       const r = await keep(person, body);
@@ -212,6 +294,12 @@ describe('THE SERVICE KEEPS A RUN ONLY AS A SEAT THAT MAY FILE ONE SIGNED IT, WH
     expect((await keep('ada', { run: signed })).status).toBe(409);
     /* RED WHEN: somebody who is not a member of the company has a run kept. */
     expect((await keep('eve', { run: signed })).status).toBe(404);
+    /* RED WHEN: a run is kept, or refused as anything but unread, while the company's directory cannot be read. */
+    const another = signRunFiling(CO, await aDrawnRun(), ADA.signingSecret as Hex);
+    directoryDown = true;
+    const down = await keep('ada', { run: another });
+    directoryDown = false;
+    expect([down.status, String((down.body as { error?: string }).error)]).toEqual([503, expect.stringMatching(/the indexer did not answer/u)]);
     expect(runsKept()).toBe(before + 1);
   });
 });

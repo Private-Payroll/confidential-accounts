@@ -129,14 +129,14 @@ describe('THE WALLET SAYS WHO HOLDS A COMPANY, WITH NO PRESS', () => {
     const seen: Array<readonly string[] | undefined> = [];
     const withPayments: HoldersReader = async (_a, _l, movements) => {
       seen.push(movements);
-      return { of: 'read', holders: HOLDERS, payments: { payKeyCommitment: 'cc'.repeat(32), held: [asked[1]!] } };
+      return { of: 'read', holders: HOLDERS, payments: { payKeyCommitment: 'cc'.repeat(32), held: [asked[1]!], openRounds: ['e1'.repeat(32)], entries: 4 } };
     };
     const answers: unknown[] = [];
     render(<AnswerHolders request={ask({ movements: asked })} channel={channelFor(answers)} consent={{ ok: true }} now={() => NOW} readHolders={withPayments} />);
     await waitFor(() => expect(answers).toHaveLength(1));
     /* RED WHEN: the payments the page asked about are not handed to the read, or not answered from it. */
     expect(seen).toEqual([asked]);
-    expect((answers[0] as HoldersAnswer).payments).toEqual({ payKeyCommitment: 'cc'.repeat(32), held: [asked[1]] });
+    expect((answers[0] as HoldersAnswer).payments).toEqual({ payKeyCommitment: 'cc'.repeat(32), held: [asked[1]], openRounds: ['e1'.repeat(32)], entries: 4 });
     cleanup();
     const refused: unknown[] = [];
     render(<AnswerHolders request={ask({ movements: asked })} channel={channelFor(refused)} consent={{ ok: true }} now={() => NOW} readHolders={holders} />);

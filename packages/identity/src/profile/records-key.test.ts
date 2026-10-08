@@ -424,10 +424,11 @@ describe('THE HOLDERS ASK: PUBLIC CHAIN FACTS, NO PRESS, AND NOTHING ELSE', () =
     const request = ask({ movements: asked });
     /* RED WHEN: the entries a page asked about are dropped from the ask. */
     expect(request.movements).toEqual(asked);
-    const payments = { payKeyCommitment: 'cc'.repeat(32), held: [asked[2]!, asked[0]!] };
+    const OPEN = ['e2'.repeat(32), 'e1'.repeat(32)];
+    const payments = { payKeyCommitment: 'cc'.repeat(32), held: [asked[2]!, asked[0]!], openRounds: OPEN, entries: 6 };
     const answer = holdersAnswerFor(request, holders, NOW, payments);
-    /* RED WHEN: what is held is not answered in the order asked, or the commitment is not passed on as read. */
-    expect(answer.payments).toEqual({ payKeyCommitment: 'cc'.repeat(32), held: [asked[0], asked[2]] });
+    /* RED WHEN: what is held is not answered in the order asked, the commitment, the open rounds or the count of entries is not passed on as read. */
+    expect(answer.payments).toEqual({ payKeyCommitment: 'cc'.repeat(32), held: [asked[0], asked[2]], openRounds: [...OPEN].sort(), entries: 6 });
     const exp = { ...expecting, movements: asked };
     const read = readHoldersAnswer(answer, exp);
     expect(read.ok && read.payments).toEqual(answer.payments);
@@ -438,8 +439,16 @@ describe('THE HOLDERS ASK: PUBLIC CHAIN FACTS, NO PRESS, AND NOTHING ELSE', () =
     expect(refuses({ ...answer, payments: { ...payments, held: ['dd'.repeat(32)] } })).toBe(false);
     expect(refuses({ ...answer, payments: { ...payments, held: [asked[0], asked[0]] } })).toBe(false);
     expect(refuses({ ...answer, payments: { ...payments, payKeyCommitment: 'CC'.repeat(32) } })).toBe(false);
+    /* RED WHEN: an answer that says nothing of the rounds held open, or names one in no shape or twice, is taken as holding none. */
+    for (const openRounds of [undefined, ['zz'], [OPEN[0], OPEN[0]], 'e1']) {
+      expect(refuses({ ...answer, payments: { ...payments, openRounds } }), JSON.stringify(openRounds)).toBe(false);
+    }
+    /* RED WHEN: a count of entries that is not a whole number, or fewer than the entries it says it holds, is taken. */
+    for (const entries of [undefined, -1, 1.5, '6', 1]) {
+      expect(refuses({ ...answer, payments: { ...payments, entries } }), JSON.stringify(entries)).toBe(false);
+    }
     /* RED WHEN: an account that committed to no pay-record key is read as one that did. */
-    expect(readHoldersAnswer(holdersAnswerFor(request, holders, NOW, { payKeyCommitment: null, held: [] }), exp)).toMatchObject({ ok: true, payments: { payKeyCommitment: null, held: [] } });
+    expect(readHoldersAnswer(holdersAnswerFor(request, holders, NOW, { payKeyCommitment: null, held: [], openRounds: [], entries: 0 }), exp)).toMatchObject({ ok: true, payments: { payKeyCommitment: null, held: [], openRounds: [], entries: 0 } });
     /* RED WHEN: a page that asked nothing about payments takes an answer that volunteers them. */
     expect(refuses(answer, expecting)).toBe(false);
     /* RED WHEN: a wallet answers an ask about payments without reading them, or answers payments nobody asked about. */

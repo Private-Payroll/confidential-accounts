@@ -27,9 +27,33 @@ import { answerVaultAsk } from './vault-worker-entry.js';
 import { vaultBuilderOver } from './vault-worker-client.js';
 import {
   sendRaiseFromDevice, sendRetryFromDevice,
-  type GovernedCallService, type MadeHereDoors, type RaiseDoors, type RaiseOrderOnTheWire, type RetryOrderOnTheWire,
+  type GovernedCallService, type RaiseDoors, type RaiseOrderOnTheWire, type RetryOrderOnTheWire,
 } from './governed-call-on-device.js';
+import type { OpenedRound } from './governed-call-builder.js';
+import type { CompanyRecordsHere } from './run-rebuilt-here.js';
+import { paysCommitmentOf } from '../../../src/core/proposal-filing.js';
 import { opensAs } from '../../../src/testing/sealed-records.js';
+
+/*
+ * What this device makes a raise or a retry from, and the proposal it opens, stand in for the company's records here
+ * through the modules that make them; made from real records in `a-raise-is-made-from-the-companys-records.test.ts`.
+ */
+const seams = vi.hoisted(() => ({
+  made: undefined as unknown as Record<'legPayments' | 'raiseOrder' | 'retryOrder' | 'retryPayments', () => Promise<unknown>>,
+  opens: undefined as unknown as (proposalId: string, viewingKey: string, forARaise: boolean) => Promise<OpenedRound>,
+}));
+vi.mock('./material-made-here.js', async (importOriginal) => ({
+  ...(await importOriginal<typeof import('./material-made-here.js')>()),
+  legPaymentsHere: () => seams.made.legPayments(),
+  raiseOrderHere: () => seams.made.raiseOrder(),
+  retryOrderHere: () => seams.made.retryOrder(),
+  retryPaymentsHere: () => seams.made.retryPayments(),
+}));
+vi.mock('./round-opened-here.js', async (importOriginal) => ({
+  ...(await importOriginal<typeof import('./round-opened-here.js')>()),
+  openTheRoundHere: (_s: unknown, _a: string, proposalId: string, viewingKey: string, forARaise: boolean) =>
+    seams.opens(proposalId, viewingKey, forARaise),
+}));
 
 /*
  * The vault's generated module, faked down to its reader and its shape, with
@@ -228,20 +252,24 @@ describe('2. A SHORTFALL IS "DOES NOT FIT" BY ITS TYPE, WHATEVER ITS WORDS', () 
 const LEG = { asset: PAY, payments: [0, 1].map(() => ({ kind: 'shielded', token: PAY as string, amount: '100' })) };
 const RUN = { root: '88'.repeat(32), payees: '2', opensAt: '1', closesAt: '2', vault: VAULT as string };
 const HALF = { assetId: '44'.repeat(32), assetBlinding: '55'.repeat(32), proposalSalt: '66'.repeat(32), changeAmount: '1', changeBatchDigest: '77'.repeat(32) };
+/* What a proposal written down for `payments` commits to paying, under RUN's vault and HALF's salt. */
+const paysFor = (payments: typeof LEG.payments): string => paysCommitmentOf({ vault: VAULT, asset: PAY, payments }, HALF.proposalSalt);
 const ORDER: RaiseOrderOnTheWire = {
   proposalId: 'prp_1', chainId: 'cc'.repeat(32),
   order: { circuit: 'propose', run: RUN, half: HALF, proposal: 'cc'.repeat(32) },
-  paymentsChecked: paymentsCheckedDigest(LEG.payments),
+  pays: paysFor(LEG.payments),
 };
 const aSender = (order: RaiseOrderOnTheWire) => {
   const log: string[] = [];
   /* What a raise or a retry is made from on this device; made from real records in `a-raise-is-made-from-the-companys-records.test.ts`. */
-  const made = {
+  seams.made = {
     legPayments: async () => { log.push('leg-payments'); return LEG; },
     raiseOrder: async () => order,
     retryOrder: async () => ({ ...order, indices: [0, 1] }),
     retryPayments: async () => { log.push('retry-payments'); return LEG; },
-  } as unknown as MadeHereDoors;
+  };
+  /* What the device opens is checked where the call is built, which this test stands in for. */
+  seams.opens = opensAs({ prp_1: 'cc'.repeat(32) });
   const service = {
     callState: async () => { log.push('call-state'); return { account: 'ac'.repeat(32), blockHash: 'b', accountState: 'AS', parameters: 'PP' }; },
     send: async () => { log.push('send'); return { id: 'prp_1', chainId: 'cc'.repeat(32), status: 'open', raisedAt: 'now' }; },
@@ -249,12 +277,10 @@ const aSender = (order: RaiseOrderOnTheWire) => {
   } as unknown as GovernedCallService;
   const pool = [coin(1, 1_000n)];
   const doors: RaiseDoors = {
-    service, made, holdings: theDevice(pool, pool), assets: registryWithTestPrivateForms(),
+    service, records: {} as CompanyRecordsHere, holdings: theDevice(pool, pool), assets: registryWithTestPrivateForms(),
     builder: { governedCall: async () => { log.push('build'); return { tx: 'TX' }; } },
     material: { signingSecret: '11'.repeat(32), blinding: '22'.repeat(32), scope: '33'.repeat(32) },
     accountId: 'acc_1', sleep: async () => {}, waitMs: 2, everyMs: 1,
-    /* What the device opens is checked where the call is built, which this test stands in for. */
-    opens: opensAs({ prp_1: 'cc'.repeat(32) }),
   };
   return { log, doors };
 };
@@ -267,9 +293,11 @@ describe('3. THE DEVICE REFUSES A LEG WHOSE PAYMENTS ARE NOT WHAT THE SERVICE WI
   });
 
   for (const [why, order] of [
-    ['an amount changed', { ...ORDER, paymentsChecked: paymentsCheckedDigest([LEG.payments[0]!, { ...LEG.payments[1]!, amount: '101' }]) }],
-    ['one payment fewer', { ...ORDER, paymentsChecked: paymentsCheckedDigest(LEG.payments.slice(1)) }],
-    ['no digest at all', { ...ORDER, paymentsChecked: undefined as never }],
+    ['an amount changed', { ...ORDER, pays: paysFor([LEG.payments[0]!, { ...LEG.payments[1]!, amount: '101' }]) }],
+    ['one payment fewer', { ...ORDER, pays: paysFor(LEG.payments.slice(1)) }],
+    ['no commitment at all', { ...ORDER, pays: undefined as never }],
+    ['another salt', { ...ORDER, pays: paysCommitmentOf({ vault: VAULT, asset: PAY, payments: LEG.payments }, '67'.repeat(32)) }],
+    ['another vault', { ...ORDER, pays: paysCommitmentOf({ vault: '98'.repeat(32), asset: PAY, payments: LEG.payments }, HALF.proposalSalt) }],
   ] as const) {
     it(`refuses a raise before anything is built or sent: ${why}`, async () => {
       const s = aSender(order);
@@ -292,7 +320,7 @@ describe('3. THE DEVICE REFUSES A LEG WHOSE PAYMENTS ARE NOT WHAT THE SERVICE WI
   });
 
   it('refuses a retry the same way', async () => {
-    const order = { ...ORDER, paymentsChecked: paymentsCheckedDigest(LEG.payments.slice(1)) };
+    const order = { ...ORDER, pays: paysFor(LEG.payments.slice(1)) };
     const s = aSender(order);
     await expect(sendRetryFromDevice(s.doors, { runId: 'run_1', viewingKey: 'vk', asset: PAY, proposalId: 'prp_1' }))
       .rejects.toThrow(/not the payments in the proposal written down/u);

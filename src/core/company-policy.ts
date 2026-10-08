@@ -73,13 +73,15 @@ export function evaluatePolicy(
        *
        * The contract has no ceiling and never sees this number. A refusal
        * phrased as though the chain had refused is a promise this product is
-       * not keeping — the company can ask us to stop relaying and cannot make
-       * that stick against anybody else.
+       * not keeping: the device raising a run and every device approving it
+       * check the ceiling, and a signer who builds a call some other way is
+       * stopped by nothing on the chain. Nor does it say who applied it, since
+       * more than one place does.
        */
       reason:
-        `this company's own policy, applied by this service and not by the chain: ` +
+        `this company's own policy, which the chain does not apply: ` +
         `${amount} exceeds the per-transaction ${symbolOf(asset, registry)} limit for role "${proposerRole}" ` +
-        `(${limit.perTransaction}). The proposal was not relayed to the ledger.`,
+        `(${limit.perTransaction}). The proposal was not sent to the chain.`,
       /*
        * A blocked proposal is never submitted, so there is no round on chain to
        * ask about. That is not "nobody has approved it": it does not exist.

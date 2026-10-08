@@ -11,13 +11,13 @@
  * chain is the test's: the proposals it holds open, the payments it counts, and
  * the account's marks; the proving is the checks the worker runs before it builds.
  */
-import { describe, it, expect, beforeAll, beforeEach } from 'vitest';
+import { describe, it, expect, beforeAll, beforeEach, vi } from 'vitest';
 import express from 'express';
 import { identityFromSecret } from 'midnight-identity';
 import { signJoinCode, type JoinCode } from 'midnight-identity/profile/join-code';
 import { pureCircuits } from '../../contracts/managed/contract/index.js';
 import { fromHex, newWrappingKeypair, randomBytes, toHex, type Hex } from '../core/crypto.js';
-import { TEST_SETTLEMENT_ASSET } from '../core/assets.js';
+import { NIGHT, TEST_SETTLEMENT_ASSET } from '../core/assets.js';
 import { newStateBlinding, sealState } from '../core/account.js';
 import { signedFoundingState } from '../core/founding-state.js';
 import { newProposalId, paysCommitmentOf, signProposalFiling, type SignedProposalFiling } from '../core/proposal-filing.js';
@@ -30,15 +30,17 @@ import { payRecordNonceOf } from '../midnight/run-keys.js';
 import { payKeyCommitmentOf } from '../midnight/pay-key-commitment.js';
 import { buildRetryRun, buildRun, paidMovementOfLeaf, paidOnceOfNonce, rootOfPayments } from '../midnight/payout-tree.js';
 import { theNetwork } from '../midnight/network.js';
-import { payeeFor } from '../testing/payees.js';
+import { payeeFor, unshieldedPayeeFor } from '../testing/payees.js';
 import { vaultDetails } from '../testing/vault-details.js';
 import { acceptAsPayeeHere, invitePayeeHere, openInvitationHere, type InvitingCompany } from 'vaults-web-shared/invitation-on-device.js';
-import { admitHere, readPeopleHere, type PeopleDevice } from 'vaults-web-shared/people-on-device.js';
+import { admitHere, readPeopleHere, setStatusHere, type PeopleDevice } from 'vaults-web-shared/people-on-device.js';
 import { drawRunHere, type RunDrawDoors } from 'vaults-web-shared/run-drawn-here.js';
-import { openTheRoundHere, raiseRetryOnDevice, raiseRunOnDevice } from 'vaults-web-shared/governed-call-on-device.js';
+import { openTheRoundHere, raiseRetryOnDevice, raiseRunOnDevice, sendRaiseFromDevice } from 'vaults-web-shared/governed-call-on-device.js';
+import { WRITTEN_DOWN_IS_NOT_WHAT_IS_CHECKED } from '../core/device-raise.js';
 import { governedCallServiceFor } from 'vaults-web-shared/governed-call-on-device.js';
 import { LegNotRaisedHere, type LegRaiseDoors } from 'vaults-web-shared/run-raised-here.js';
 import { keptRunHere, runRebuiltHere, type CompanyRecordsHere } from 'vaults-web-shared/run-rebuilt-here.js';
+import { RAISE_CHECKS, type RaiseCheck } from 'vaults-web-shared/raise-checks-here.js';
 import {
   refuseARaiseThatIsNotTheRecordedOne, refuseWhatThisDeviceDidNotOpen, type GovernedCallOrder, type OpenedRound,
 } from 'vaults-web-shared/governed-call-builder.js';
@@ -46,7 +48,7 @@ import { refuseWhatThisDeviceDidNotMake, type AccountLedgerView } from 'vaults-w
 import { runRoutes } from './run-routes.js';
 import { proposalRelayRoutes } from './proposal-relays.js';
 import {
-  aCompanyOfTwoSeats, acmeDirectory, ACME, ADA, ADDRESS, BO, CO, fromAda, KEY, LABEL, ORIGIN, sendAs, store, wire, type Seat,
+  aCompanyOfTwoSeats, acmeDirectory, ACME, ADA, ADDRESS, BO, CO, fromAda, KEY, LABEL, ORIGIN, OTHER, sendAs, store, wire, type Seat,
 } from './a-company-of-two-seats.test-support.js';
 
 /* The chain, as the test keeps it: the proposals it holds open, the payment entries it counts, and the account's marks. */
@@ -107,9 +109,9 @@ const pay = (n: number) => ({ name: `Payee ${n}`, email: `payee${n}@acme.co`, ti
 const peopleOn = (s: Seat): PeopleDevice => ({
   company: ACME as InvitingCompany, signingSecret: s.signingSecret, signedInAs: s.person, send: sendAs(s.person), directory: acmeDirectory, network: NETWORK,
 });
-const aPayee = async (n: number, paidAt = n) => {
-  const code: JoinCode = signJoinCode(identityFromSecret(new Uint8Array(32).fill(n)), LABEL, `usr_${n}`, { kind: 'payee', address: addressOf(paidAt), payslipKey: newWrappingKeypair().publicKey });
-  const made = await invitePayeeHere(ACME, ADA, pay(n), ORIGIN, fromAda);
+const aPayee = async (n: number, paidAt = n, paid: { address: string; asset: string } = { address: addressOf(paidAt), asset: TEST_SETTLEMENT_ASSET }) => {
+  const code: JoinCode = signJoinCode(identityFromSecret(new Uint8Array(32).fill(n)), LABEL, `usr_${n}`, { kind: 'payee', address: paid.address, payslipKey: newWrappingKeypair().publicKey });
+  const made = await invitePayeeHere(ACME, ADA, { ...pay(n), asset: paid.asset as never }, ORIGIN, fromAda);
   const accepted = await acceptAsPayeeHere(await openInvitationHere(made.link, sendAs(null)), code, sendAs(`usr_${n}`));
   const here = (await readPeopleHere(peopleOn(ADA))).people.find((p) => p.person.id === made.person)!;
   await admitHere(peopleOn(ADA), here, accepted.fingerprint);
@@ -129,12 +131,13 @@ const recordsOn = (s: Seat): CompanyRecordsHere & { proposals: () => Promise<Ret
   runs: async () => store.listRuns(CO),
   proposals: async () => store.listProposals(CO),
   payments: {
-    paidOnceOf: pureCircuits.paidOnceOf,
+    paidOnceOf: pureCircuits.paidOnceOf, paidMovementOf: pureCircuits.paidMovementOf,
     read: async (entries) => {
       walletReads.push([...entries]);
-      return { payKeyCommitment: COMMITMENT, held: entries.filter((e) => movements.has(e)) };
+      return { payKeyCommitment: COMMITMENT, held: entries.filter((e) => movements.has(e)), openRounds: [...open.keys()].sort(), entries: movements.size };
     },
   },
+  policy: async () => policy as never,
 });
 /** While set, the account state the service serves says nobody is paid and commits to another pay-record key. */
 let servedLies = false;
@@ -143,13 +146,10 @@ const drawingOn = (s: Seat): RunDrawDoors => ({
   records: recordsOn(s), by: s.person,
 });
 
-/** The account as the chain holds it now, as the worker reads it. */
+/** The account as the service serves it to the worker; while `servedLies`, it hides the open rounds and the payments. */
 const theChainNow = (): AccountLedgerView => ({
-  openProposals: {
-    member: (id) => open.has(toHex(id)),
-    [Symbol.iterator]: () => [...open.keys()].map((k): [Uint8Array, unknown] => [fromHex(k), 0n])[Symbol.iterator](),
-  },
-  movements: { member: (e) => !servedLies && movements.has(toHex(e)), size: () => BigInt(servedLies ? 0 : movements.size) },
+  openProposals: { member: (id) => !servedLies && open.has(toHex(id)) },
+  movements: { member: (e) => !servedLies && movements.has(toHex(e)) },
   signerRoles: {
     member: (k) => toHex(k) === PAY_KEY_AT || marks.has(toHex(k)),
     lookup: (k) => (toHex(k) === PAY_KEY_AT ? fromHex(servedLies ? '77'.repeat(32) : COMMITMENT) : new Uint8Array(32)),
@@ -184,7 +184,6 @@ const raisingOn = (s: Seat, at?: number): LegRaiseDoors => ({
     detailsOf: vaultDetails, runPayload: pureCircuits.runPayload, proposalIdOf: pureCircuits.proposalIdOf, noVault: pureCircuits.noVault,
     buildRun, buildRetryRun, rootOfPayments,
   },
-  policy: async () => policy as never,
   waitMs: 50, everyMs: 10, sleep: async () => undefined,
   ...(at === undefined ? {} : { now: () => new Date(at * 1000) }),
 });
@@ -230,7 +229,7 @@ describe('A LEG IS RAISED ON THE SIGNER\'S DEVICE, AND THE SERVICE FILES AND REL
     const read = await keptRunHere(recordsOn(BO), CO, runId, KEY);
     expect(read.run.payout?.[Object.keys(read.run.payout!)[0] as never]?.vault).toBe(VAULT);
     /* RED WHEN: the run raised is not the one another signer's device builds again and would approve. */
-    const made = await runRebuiltHere(recordsOn(BO), CO, round.id, KEY);
+    const { made } = await runRebuiltHere(recordsOn(BO), CO, round.id, KEY);
     expect(() => refuseWhatThisDeviceDidNotMake({
       runPayload: pureCircuits.runPayload, vaultDetails, payKeyCommitmentOf: pureCircuits.payKeyCommitmentOf,
     }, { chainId: proposal.chainId, digest: proposal.digest, made }, theChainNow())).not.toThrow();
@@ -276,20 +275,23 @@ describe('A LEG IS RAISED ON THE SIGNER\'S DEVICE, AND THE SERVICE FILES AND REL
     expect(filedNow()).toEqual(before);
   });
 
-  it('A VAULT THAT PAYS ONLY RUNS CLEARED AGAINST A POLICY, AND A CHAIN HOLDING WHAT THE RECORDS CANNOT ACCOUNT FOR, ARE REFUSED WHERE THE RAISE IS PROVED', async () => {
+  it('A VAULT THAT PAYS ONLY RUNS CLEARED AGAINST A POLICY IS REFUSED WHERE THE RAISE IS PROVED, AND A CHAIN HOLDING WHAT THE RECORDS CANNOT ACCOUNT FOR, AS THE WALLET READS IT, BEFORE ANYTHING IS WRITTEN', async () => {
     const proposalsBefore = store.listProposals(CO).length;
     marks.add(toHex(pureCircuits.policyOnKeyOf(fromHex(VAULT))));
     /* RED WHEN: a raise is proved for a vault whose window rule no device can check. */
     await expect(raiseRunOnDevice(raisingOn(ADA), { runId, ...RAISE })).rejects.toThrow(/spending policy/);
     marks.clear();
     open.set('ee'.repeat(32), 0);
-    /* RED WHEN: a raise is proved while the chain holds a round the company's records do not, and the refusal does not say why a device cannot confirm over it. */
+    /* The service serves an account state holding nothing open and nothing paid: the wallet's read is what the check reads. */
+    servedLies = true;
+    /* RED WHEN: a raise goes ahead while the chain holds a round the company's records do not, or the open rounds are read from the state the service serves, or the refusal does not say why a device cannot confirm over it. */
     await expect(raiseRunOnDevice(raisingOn(ADA), { runId, ...RAISE })).rejects.toThrow(/1 open round .* cannot be confirmed as repeating these/);
     open.clear();
     movements.add('ab'.repeat(32));
     movements.add('cd'.repeat(32));
-    /* RED WHEN: payments the chain counts and the records cannot name are not counted. */
+    /* RED WHEN: payments the chain counts and the records cannot name are not counted, or are counted from the state the service serves. */
     await expect(raiseRunOnDevice(raisingOn(ADA), { runId, ...RAISE })).rejects.toThrow(/2 unexplained payment entries/);
+    servedLies = false;
     expect(store.listProposals(CO)).toHaveLength(proposalsBefore);
     expect(proved).toHaveLength(0);
   });
@@ -420,6 +422,121 @@ describe('A LEG IS RAISED ON THE SIGNER\'S DEVICE, AND THE SERVICE FILES AND REL
     expect(open.size).toBe(1);
   });
 
+  it('THE RUN AS RAISED AND ITS PROPOSAL ARE WRITTEN IN ONE WRITE: NO WRITE EVER HOLDS A RUN NAMING A PROPOSAL THE STORE DOES NOT', async () => {
+    /* What the store held at each of its writes during the raise: the run's proposals that the store did not hold. */
+    const unwritten: string[][] = [];
+    const writes = vi.spyOn(store as unknown as { flush: () => void }, 'flush').mockImplementation(() => {
+      const kept = store.getRun(runId);
+      unwritten.push((kept?.proposalIds ?? []).filter((id) => store.getProposal(id) === null));
+    });
+    try {
+      const round = await raiseRunOnDevice(raisingOn(ADA), { runId, ...RAISE });
+      expect(store.getRun(runId)!.proposalIds).toEqual([round.id]);
+    } finally {
+      writes.mockRestore();
+    }
+    /* RED WHEN: the run as raised is written in a write of its own before its proposal, so a failure between leaves a run naming a proposal never written. */
+    expect(unwritten.length).toBeGreaterThan(0);
+    expect(unwritten.filter((ids) => ids.length > 0)).toEqual([]);
+  });
+
+  it('A RAISE SENT AGAIN IS HELD TO WHAT ITS PROPOSAL COMMITS TO PAYING: A RUN RE-FILED TO PAY OTHERWISE AFTER IT WAS WRITTEN DOWN IS NOT SENT', async () => {
+    dropTheSend = true;
+    await expect(raiseRunOnDevice(raisingOn(ADA), { runId, ...RAISE })).rejects.toThrow();
+    dropTheSend = false;
+    const kept = store.getRun(runId)!;
+    const run = openSealedRun(kept, KEY);
+    const leg = Object.keys(run.payout!)[0] as keyof NonNullable<typeof run.payout>;
+    const proposalId = run.proposalIds[leg]!;
+    expect(store.getProposal(proposalId)?.txRef).toBeUndefined();
+    /* A believed seat re-files the run with the leg's first payment one unit more, after its proposal was written down. */
+    const recorded = run.payout![leg]!;
+    const changed = { ...run, payout: { ...run.payout, [leg]: { ...recorded, facts: recorded.facts.map((f, i) => (i === 0 ? { ...f, amount: f.amount + 1n } : f)) } } };
+    store.putRun({ ...signRunFiling(CO, sealedRunOf(changed, KEY, 0), ADA.signingSecret as Hex), wiring: 'simulated' });
+    const sends = proved.length;
+    const sending = raisingOn(ADA);
+    const again = { ...sending, service: { ...sending.service, sealedProposals: async () => store.listProposals(CO) } };
+    /* RED WHEN: what a send again checks is compared with a value made from the same record, so it cannot differ, rather than with the proposal's own commitment. */
+    await expect(sendRaiseFromDevice(again, { viewingKey: KEY, runId })).rejects.toThrow(WRITTEN_DOWN_IS_NOT_WHAT_IS_CHECKED);
+    expect(proved).toHaveLength(sends);
+    /* The run as its proposal was written down is sent. */
+    store.putRun(kept);
+    await expect(sendRaiseFromDevice(again, { viewingKey: KEY, runId })).resolves.toMatchObject({ id: proposalId });
+    expect(proved).toHaveLength(sends + 1);
+  });
+
+  it('THE FILING ROUTE FILES NOTHING FOR A SEAT THAT MAY NOT FILE A RUN, A RUN IT DOES NOT KEEP OR KEEPS FOR ANOTHER COMPANY, ANOTHER KEY OR MONTH, OR A RUN NOT RAISED', async () => {
+    const [body] = await twoRaisesHeld();
+    const raisedRun = openSealedRun(body!.run as never, KEY);
+    const asFiled = (r: Record<string, unknown>, by: Seat = ADA) =>
+      signRunFiling(CO, { ...sealedRunOf(raisedRun, KEY, 0), ...r } as never, by.signingSecret as Hex);
+    const post = (b: unknown, as = 'ada') => sendAs(as)(`/api/accounts/${CO}/proposals`, { method: 'POST', body: JSON.stringify(b) });
+    const kept = store.getRun(runId)!;
+    /* Another company keeps a run under a name this one's filing names. */
+    store.putRun({ ...kept, id: 'run_heldbyothers', accountId: OTHER });
+    const bosProposal = signProposalFiling(CO, filingOf(body!), BO.signingSecret as Hex);
+    const before = filedNow();
+    for (const [why, b, as, says] of [
+      ['a seat whose role may not file a run', { ...body, proposal: bosProposal, run: asFiled({}, BO) }, 'bo', /your seat on this company may not raise payroll runs/u],
+      ['a run this company does not keep', { ...body, run: asFiled({ id: 'run_notkepthere1' }) }, 'ada', /keeps no payroll run by that name/u],
+      ['a run kept for another company', { ...body, run: asFiled({ id: 'run_heldbyothers' }) }, 'ada', /keeps no payroll run by that name/u],
+      ['another key epoch', { ...body, run: asFiled({ keyEpoch: 1 }) }, 'ada', /not the run this company keeps under that name, under the key it uses now/u],
+      ['another month', { ...body, run: asFiled({ period: '2026-12' }) }, 'ada', /not the run this company keeps under that name, under the key it uses now/u],
+      ['a run not raised', { ...body, run: asFiled({ status: 'draft' }) }, 'ada', /a run is raised while it is unpaid, and is kept as raised/u],
+    ] as const) {
+      const r = await post(b, as);
+      /* RED WHEN: the filing route files a raise that refusal names, or refuses it for any other reason. */
+      expect(r.status, why).toBe(422);
+      expect(String((r.body as { error: string }).error), why).toMatch(says);
+      expect(filedNow(), why).toEqual(before);
+    }
+    /* RED WHEN: a raise is filed over a run the company already holds as settled. */
+    store.putRun({ ...kept, status: 'settled' });
+    const settled = await post(body);
+    expect([settled.status, String((settled.body as { error: string }).error)]).toEqual([422, expect.stringMatching(/a run is raised while it is unpaid/u)]);
+    store.putRun(kept);
+    /* The raise as made is filed. */
+    expect((await post(body)).status).toBe(200);
+  });
+
+  it('A RAISE THAT DROPS A PROPOSAL STILL OPEN FROM ITS RUN IS NOT FILED, AND ONE THAT DROPS A WITHDRAWN ONE IS', async () => {
+    /* Two raises of the leg, made on Ada's device before either is filed, over two windows: two proposals of their own. */
+    const held: Array<{ proposal: SignedProposalFiling }> = [];
+    for (const closesAt of [RAISE.closesAt, String(Number(RAISE.closesAt) + 60)]) {
+      const capture = raisingOn(ADA);
+      const caught: LegRaiseDoors = { ...capture, service: { ...capture.service, file: async (_a, b) => { held.push(b as never); throw new Error('held'); } } };
+      await expect(raiseRunOnDevice(caught, { runId, ...RAISE, closesAt })).rejects.toThrow('held');
+    }
+    const [first, second] = held;
+    const post = (b: unknown) => sendAs('ada')(`/api/accounts/${CO}/proposals`, { method: 'POST', body: JSON.stringify(b) });
+    expect((await post(first)).status).toBe(200);
+    const before = filedNow();
+    /* The second raise was made before the first was filed: its run names its own proposal and not the first, which is open. */
+    const dropped = await post(second);
+    /* RED WHEN: a raise is filed whose run lets go of a proposal that is still open, which can then never be withdrawn from the run. */
+    expect(dropped.status).toBe(422);
+    expect(String((dropped.body as { error: string }).error)).toMatch(/does not add exactly this proposal/u);
+    expect(filedNow()).toEqual(before);
+    /* Withdrawn, the first may leave the run, and the leg is raised again as the second. */
+    const firstKept = store.getProposal(first!.proposal.id)!;
+    store.putProposal({ ...firstKept, status: 'cancelled' });
+    expect((await post(second)).status).toBe(200);
+    expect(store.getRun(runId)!.proposalIds).toEqual([second!.proposal.id]);
+  });
+
+  it('A WINDOW THAT IS NOT WHOLE SECONDS SINCE THE UNIX EPOCH IS REFUSED ON THE DEVICE, FOR A LEG AND A RETRY, AND NOTHING IS FILED', async () => {
+    const before = filedNow();
+    for (const bound of ['1800000000.5', '1.8e9', ' 1800000000', '-1', '']) {
+      for (const window of [{ ...RAISE, opensAt: bound }, { ...RAISE, closesAt: bound }]) {
+        /* RED WHEN: a window bound that is not whole seconds is taken, read as another time, or reaches the chain. */
+        await expect(raiseRunOnDevice(raisingOn(ADA), { runId, ...window }), JSON.stringify(window)).rejects.toThrow(/a window bound is whole seconds since the Unix epoch/u);
+        await expect(raiseRetryOnDevice(raisingOn(ADA, AFTER), { runId, ...window, indices: [0] }), JSON.stringify(window)).rejects.toThrow(/a window bound is whole seconds since the Unix epoch/u);
+      }
+    }
+    expect(filedNow()).toEqual(before);
+    expect(proved).toHaveLength(0);
+  });
+
   it('ANOTHER SIGNER\'S DEVICE DOES NOT OPEN A PAYROLL PROPOSAL WHOSE FILING COMMITS TO PAYING OTHER THAN THE RUN IT BUILDS AGAIN', async () => {
     const round = await raiseRunOnDevice(raisingOn(ADA), { runId, ...RAISE });
     const kept = store.getProposal(round.id)!;
@@ -466,7 +583,7 @@ describe('A RETRY IS RAISED ON THE SIGNER\'S DEVICE, OVER A TREE OF ONLY THE PEO
     expect(store.getRun(runId)!.filedBy?.publicKey).toBe(ADA.statement.signingKey);
     expect(open.has(store.getProposal(round.id)!.chainId)).toBe(true);
     /* RED WHEN: the retry another signer's device builds again is not the one raised. */
-    const made = await runRebuiltHere(recordsOn(BO), CO, round.id, KEY);
+    const { made } = await runRebuiltHere(recordsOn(BO), CO, round.id, KEY);
     expect(made.retry).toEqual([1]);
     const proposal = store.getProposal(round.id)!;
     expect(() => refuseWhatThisDeviceDidNotMake({
@@ -550,6 +667,77 @@ describe('A RETRY IS RAISED ON THE SIGNER\'S DEVICE, OVER A TREE OF ONLY THE PEO
   });
 });
 
+/* ── THE RAISE CHECKS: ONE LIST, RUN BY THE RAISER AND BY EVERY APPROVER ──── */
+
+/** Bo's device, reading the company's people with `p` of them as people it does not believe. */
+const doubting = (...people: string[]): CompanyRecordsHere => ({
+  ...recordsOn(BO),
+  people: async () => {
+    const read = await readPeopleHere(peopleOn(BO));
+    return { ...read, notBelieved: [...read.notBelieved, ...people] };
+  },
+});
+const approvingOn = (records: CompanyRecordsHere, id: string) => openTheRoundHere(storedFor(BO), CO, id, KEY, false, records);
+
+describe('THE RAISE CHECKS ARE ONE LIST, RUN WHERE A ROUND IS RAISED AND AGAIN WHEREVER IT IS APPROVED', () => {
+  it('EVERY CHECK ON THE LIST RUNS WHERE A LEG IS RAISED, WHERE A RETRY IS RAISED, AND WHERE EACH IS APPROVED', async () => {
+    const ran: string[] = [];
+    const list = RAISE_CHECKS as RaiseCheck[];
+    list.push({ name: 'watched', check: (r) => { ran.push(r.made.retry === undefined ? 'leg' : `retry ${r.made.retry.join()}`); } });
+    try {
+      const leg = await raiseRunOnDevice(raisingOn(ADA), { runId, ...RAISE });
+      await approvingOn(recordsOn(BO), leg.id);
+      const retry = await raiseRetryOnDevice(raisingOn(ADA, AFTER), { runId, ...RETRY, indices: [1] });
+      await approvingOn(recordsOn(BO), retry.id);
+    } finally {
+      list.pop();
+    }
+    /* RED WHEN: a raise, a retry or an approval of either skips the list, or runs a list of its own. */
+    expect(ran).toEqual(['leg', 'leg', 'retry 1', 'retry 1']);
+  });
+
+  it('AN APPROVER REFUSES A LEG OVER THE COMPANY\'S CEILING, AND THE REFUSAL DOES NOT SAY THE SERVICE APPLIES IT', async () => {
+    const round = await raiseRunOnDevice(raisingOn(ADA), { runId, ...RAISE });
+    /* The company's own ceiling, as the approving device reads it now, is lower than the leg pays. */
+    policy = { threshold: 1, limitsByRole: { admin: { [TEST_SETTLEMENT_ASSET]: { perTransaction: 1000n } } } };
+    const refused = await approvingOn(recordsOn(BO), round.id).catch((e: Error) => e);
+    /* RED WHEN: an approver does not run the ceiling the raiser ran, judged for the seat that filed the proposal. */
+    expect(String((refused as Error).message)).toMatch(/this company's own policy, which the chain does not apply: .* per-transaction .* for role "admin"/u);
+    /* RED WHEN: the ceiling's refusal still says the service applies it. */
+    expect(String((refused as Error).message)).not.toMatch(/applied by this service/u);
+    policy = { threshold: 1, limitsByRole: {} };
+    await expect(approvingOn(recordsOn(BO), round.id)).resolves.toMatchObject({ vault: VAULT });
+  });
+
+  it('AN APPROVER REFUSES WHILE THE CHAIN, AS ITS OWN WALLET READS IT, HOLDS A ROUND THE COMPANY\'S RECORDS DO NOT', async () => {
+    const round = await raiseRunOnDevice(raisingOn(ADA), { runId, ...RAISE });
+    open.set('ef'.repeat(32), 0);
+    /* RED WHEN: an approver does not run the check the raiser ran, or runs it on the account state the service serves. */
+    servedLies = true;
+    await expect(approvingOn(recordsOn(BO), round.id)).rejects.toThrow(/1 open round .* that this company's records cannot account for/u);
+    servedLies = false;
+    open.delete('ef'.repeat(32));
+    await expect(approvingOn(recordsOn(BO), round.id)).resolves.toMatchObject({ vault: VAULT });
+  });
+
+  it('AN APPROVER REFUSES A LEG PAYING SOMEBODY IT WOULD NOT PAY', async () => {
+    const round = await raiseRunOnDevice(raisingOn(ADA), { runId, ...RAISE });
+    const second = openSealedRun(store.getRun(runId)!, KEY).employees[1]!;
+    /* RED WHEN: an approver of a leg does not hold everybody on it to the people it believes. */
+    await expect(approvingOn(doubting(second.id), round.id)).rejects.toThrow(new RegExp(`${second.name} is on this run, and this device does not believe`, 'u'));
+  });
+
+  it('A RETRY IS APPROVED WHEN SOMEBODY IT DOES NOT NAME HAS LEFT, AND REFUSED WHEN SOMEBODY IT NAMES HAS', async () => {
+    await raiseRunOnDevice(raisingOn(ADA), { runId, ...RAISE });
+    const round = await raiseRetryOnDevice(raisingOn(ADA, AFTER), { runId, ...RETRY, indices: [1] });
+    const [first, second] = openSealedRun(store.getRun(runId)!, KEY).employees;
+    /* RED WHEN: an approver of a retry holds everybody on the leg to the people it believes, so one who left blocks every retry. */
+    await expect(approvingOn(doubting(first!.id), round.id)).resolves.toMatchObject({ vault: VAULT });
+    /* RED WHEN: an approver of a retry does not hold the people it names to the people it believes. */
+    await expect(approvingOn(doubting(second!.id), round.id)).rejects.toThrow(new RegExp(`${second!.name} is on this run, and this device does not believe`, 'u'));
+  });
+});
+
 /* Last of all, because the two people it adds stay on the company's roster. */
 describe('ONE ADDRESS IS NOT PAID TWICE FOR A MONTH', () => {
   it('TWO PEOPLE PAID AT ONE ADDRESS ARE NOT RAISED, SO THE ADDRESS IS NOT PAID TWICE FOR THE MONTH', async () => {
@@ -562,5 +750,36 @@ describe('ONE ADDRESS IS NOT PAID TWICE FOR A MONTH', () => {
     /* Last, because the two stay on the company's roster. RED WHEN: the device raises a run that pays one address twice for one month. */
     await expect(raiseRunOnDevice(raisingOn(ADA), { runId: both, ...RAISE })).rejects.toThrow(/are paid at the same address/);
     expect(filedNow()).toEqual(before);
+  });
+});
+
+/* After the two above, who are made leavers first: a person paid publicly, in a token with a public form. */
+describe('A PUBLIC PAYEE IS RAISED FROM THE DEVICE AS PUBLIC', () => {
+  it('A LEG PAYING A PUBLIC ADDRESS IS RAISED FROM THE DEVICE, ITS PUBLIC MONEY ASKED AS PUBLIC, AND A RAISE NAMING THE PAYMENT PRIVATE IS NOT FILED', async () => {
+    for (const r of store.listRuns(CO)) store.putRun({ ...r, accountId: 'acc_set_aside' });
+    for (const here of (await readPeopleHere(peopleOn(ADA))).people.filter((p) => ['Payee 63', 'Payee 64'].includes(p.person.name))) {
+      await setStatusHere(peopleOn(ADA), here, 'leaver');
+    }
+    await aPayee(65, 65, { address: unshieldedPayeeFor('65'.repeat(32), NETWORK).bech32, asset: NIGHT });
+    const drawn = (await drawRunHere(drawingOn(ADA), { period: '2027-01' })).id;
+    let filed: { proposal: SignedProposalFiling; pays: { vault: string; asset: string; payments: Array<{ kind: string; token: string; amount: string }> } } | undefined;
+    const capture = raisingOn(ADA);
+    const caught: LegRaiseDoors = { ...capture, service: { ...capture.service, file: async (_a, b) => { filed = b as never; throw new Error('held'); } } };
+    await expect(raiseRunOnDevice(caught, { runId: drawn, ...RAISE, asset: NIGHT, form: 'unshielded' })).rejects.toThrow('held');
+    /* RED WHEN: a public payee's payment is named as anything but public, so the vault is asked for it as private money. */
+    expect(filed!.pays.payments.map((p) => [p.kind, p.amount])).toEqual([['unshielded', '700065']]);
+    const post = (b: unknown) => sendAs('ada')(`/api/accounts/${CO}/proposals`, { method: 'POST', body: JSON.stringify(b) });
+    const before = filedNow();
+    const asked = publicAsks.length;
+    const asPrivate = { ...filed, pays: { ...filed!.pays, payments: filed!.pays.payments.map((p) => ({ ...p, kind: 'shielded' })) } };
+    const refused = await post(asPrivate);
+    /* RED WHEN: a raise that names a public payment private is filed, or the vault's public money is asked for it. */
+    expect(refused.status).toBe(422);
+    expect(String((refused.body as { error: string }).error)).toMatch(/not what its proposal commits to paying/u);
+    expect(filedNow()).toEqual(before);
+    expect(publicAsks).toHaveLength(asked);
+    /* The raise as made is filed, and the vault's public money asked for the public payment. */
+    expect((await post(filed)).status).toBe(200);
+    expect(JSON.parse(publicAsks.at(-1)!)).toMatchObject({ asset: NIGHT, payments: [{ kind: 'unshielded', amount: '700065' }] });
   });
 });

@@ -503,6 +503,15 @@ export function refuseAPayrollThatMayBeOnChain(
 }
 
 /**
+ * **WHAT ONE PERSON IS PAID ON A RUN DRAWN FOR `period`**, worked out here and
+ * nowhere else: every run drawn on a device takes each person's amount from
+ * this. Today it is the person's base amount for any month. Pay for part of a
+ * month, or a bonus as a pay item of its own, is worked out here too, from the
+ * person and the month, so nothing that draws a run changes when it is.
+ */
+export const amountOnTheRun = (person: Pick<RosterEmployee, 'baseAmount'>, _period: string): bigint => person.baseAmount;
+
+/**
  * **EVERY PERSON ON A RUN, AND THEIR PAYSLIP, AS THE RUN IS DRAWN.** One entry
  * per spec, in order, each sealed to the payslip key the person's roster entry
  * carries. `roster[i]` is the roster entry beside `specs[i]`; a spec with none

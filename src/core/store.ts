@@ -452,15 +452,24 @@ export class MemoryStore {
   }
   getRun(id: string) { return this.data.runs[id] ?? null; }
   /**
-   * **WRITES A RUN ONLY WHILE THE STORE STILL HOLDS IT EXACTLY AS `before`**, and
-   * says whether it did. Two writers that each read the same run and each
-   * change it cannot both land: the second finds the run moved on and writes
-   * nothing.
+   * **A RUN RAISED AND THE PROPOSAL IT WAS RAISED AS, WRITTEN IN ONE WRITE**,
+   * and only while the store still holds the run exactly as `before`: two
+   * raises that each read the same run cannot both land, because the second
+   * finds the run moved on and writes nothing. Both are
+   * changed before anything is written, and written together, so no failure
+   * leaves a run naming a proposal that was never written, or a proposal whose
+   * run does not name it. False, with nothing written, when the run has moved
+   * on or the proposal's name is taken.
    */
-  putRunIfStill(r: SealedRun, before: SealedRun): boolean {
+  putRaisedRunAndProposal(r: SealedRun, before: SealedRun, p: SealedProposal): boolean {
     const now = this.data.runs[r.id];
-    if (now === undefined || canonical(now) !== canonical(before)) return false;
-    this.putRun(r);
+    if (now === undefined || canonical(now) !== canonical(before) || this.data.proposals[p.id] !== undefined) return false;
+    this.data.runs[r.id] = r;
+    this.data.proposals[p.id] = p;
+    this.observe(r);
+    this.observe(p);
+    this.indexed(ix => ix.run(r));
+    this.flush();
     return true;
   }
   listRuns(accountId: string) {
