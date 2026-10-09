@@ -169,7 +169,7 @@ jobs:
         # something that should not have it.
         with:
           persist-credentials: false
-      - uses: actions/setup-node@v4
+      - uses: actions/setup-node@v6
         with:
           node-version: '22'
       - run: npm run test:checks
@@ -197,7 +197,7 @@ jobs:
         # something that should not have it.
         with:
           persist-credentials: false
-      - uses: actions/setup-node@v4
+      - uses: actions/setup-node@v6
         with:
           node-version: '22'
       # Written through the environment rather than into the command line, so
