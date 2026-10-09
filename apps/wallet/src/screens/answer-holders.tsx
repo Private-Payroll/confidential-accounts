@@ -16,7 +16,9 @@ import type { Consent } from '../framing.js';
  * holds the account now: the committee and its threshold, the account's own
  * approval threshold, the seats it holds and the vaults it has adopted. A page
  * about to approve a payroll run also asks which of the run's payments the
- * account already records, and the commitment it holds to its pay-record key.
+ * account already records, and the commitment it holds to its pay-record key,
+ * and what the account holds under entries of its map of roles: whether a
+ * vault is under a spending policy, and the policy's commitment.
  * **Everything in the answer is public on the chain and nothing is
  * signed**, so this wallet reads it over its own connection to the network and
  * answers as soon as the read is in, without asking the person to press
@@ -29,10 +31,12 @@ import type { Consent } from '../framing.js';
  */
 
 /** How this screen reads the account. Replaceable so a test can answer. */
-export type HoldersReader = (account: AccountAddress, label: CompanyLabel, movements?: readonly string[]) => Promise<HoldersOnChain>;
+export type HoldersReader = (
+  account: AccountAddress, label: CompanyLabel, movements?: readonly string[], roles?: readonly string[],
+) => Promise<HoldersOnChain>;
 
-export const liveHoldersReader: HoldersReader = (account, label, movements) => holdersOnChain(
-  account, label, fromIndexerAt(INDEXER_HTTP_URL), deployFromIndexerAt(INDEXER_HTTP_URL), movements);
+export const liveHoldersReader: HoldersReader = (account, label, movements, roles) => holdersOnChain(
+  account, label, fromIndexerAt(INDEXER_HTTP_URL), deployFromIndexerAt(INDEXER_HTTP_URL), movements, roles);
 
 /** The indexer this wallet reads the chain through, handed back with every answer so the page reads its vaults there too. */
 const THIS_WALLETS_INDEXER = Object.freeze({ indexerUri: INDEXER_HTTP_URL, indexerWsUri: INDEXER_WS_URL });
@@ -63,7 +67,7 @@ export function AnswerHolders({
     if (!allowed || channel === null || settled.current === request) return undefined;
     let alive = true;
     void (async () => {
-      const read = await readHolders(request.account, request.company, request.movements);
+      const read = await readHolders(request.account, request.company, request.movements, request.roles);
       if (!alive) return;
       if (read.of !== 'read') {
         settled.current = request;
@@ -73,7 +77,7 @@ export function AnswerHolders({
       }
       settled.current = request;
       try {
-        const sent = channel.answer(holdersAnswerFor(request, read.holders as AccountHolders, now(), read.payments, THIS_WALLETS_INDEXER));
+        const sent = channel.answer(holdersAnswerFor(request, read.holders as AccountHolders, now(), read.payments, THIS_WALLETS_INDEXER, read.roles));
         setStage(sent === false
           ? { of: 'refused', says: 'This page had already been answered, so nothing more was sent.' }
           : { of: 'sent' });

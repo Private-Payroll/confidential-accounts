@@ -1,5 +1,6 @@
 import { describe, it, expect } from 'vitest';
 import { aRunMadeHere, aLedgerHolding } from './a-run-made-here.test-support.js';
+import { answerVaultAsk } from './vault-worker-entry.js';
 import { vaultDetails } from '../../../src/testing/vault-details.js';
 import { createHash } from 'node:crypto';
 import {
@@ -61,7 +62,7 @@ const payloadOf = (g: RoundChangeOnTheWire) => (g.kind === 'add-signer'
   : g.kind === 'adopt-vault' ? accountPure.adoptVaultPayload(bytes(g.vault))
     : g.kind === 'pay-key' ? accountPure.payKeyPayload(bytes(g.commitment))
       : g.kind === 'vault-threshold' ? accountPure.setVaultThresholdPayload(bytes(g.vault), BigInt(g.threshold))
-        : accountPure.setThresholdPayload(BigInt(g.threshold)));
+        : accountPure.setThresholdPayload(BigInt((g as { threshold: string }).threshold)));
 const recordOf = (digest: Uint8Array, vault: Uint8Array, salt: string) => ({
   chainId: hex(accountPure.proposalIdOf(digest, vault, bytes(salt))), digest: hex(digest), vault: hex(vault), salt,
   summary: 'the proposal',
@@ -119,7 +120,7 @@ const openedFor = (order: GovernedCallOrder): OpenedRound => {
 };
 type Input = Parameters<typeof buildGovernedCall>[1];
 /* A raise is built while the chain does not hold the proposal yet; an approval while it does. */
-const notYetRaised = () => aLedgerHolding(accountPure.payKeyCommitmentKey(), accountPure.payKeyCommitmentOf(bytes(RUN_MADE.made.payKey)), 'none');
+const notYetRaised = () => aLedgerHolding('none');
 const build = (deps: GovernedCallDeps, input: Omit<Input, 'opened'> & { opened?: OpenedRound }) =>
   buildGovernedCall(input.order.circuit === 'propose' && 'run' in input.order ? { ...deps, accountLedger: notYetRaised } : deps,
     { ...input, opened: input.opened ?? openedFor(input.order) });
@@ -149,7 +150,7 @@ const depsWith = (log: string[], handed: Handed[], over: {
   accountZkConfig: 'ZK',
   accountPure,
   /* The chain holds every proposal asked about open. */
-  accountLedger: () => aLedgerHolding(accountPure.payKeyCommitmentKey(), accountPure.payKeyCommitmentOf(bytes(RUN_MADE.made.payKey))),
+  accountLedger: () => aLedgerHolding(),
   vaultDetails,
   prove: over.prove ?? (async (u: unknown, circuit?: string) => {
     log.push(`proved ${String(u)} for ${circuit}`);
@@ -330,7 +331,7 @@ describe('ONE GOVERNED CALL', () => {
   it('A RUN IS RAISED ONLY AS THIS DEVICE BUILT IT AGAIN, AND ONLY WHILE THE CHAIN DOES NOT HOLD IT YET', async () => {
     const opened = openedFor(raise);
     const otherAmounts = { ...RUN_MADE.made, facts: RUN_MADE.made.facts.map((f, i) => (i === 0 ? { ...f, amount: f.amount + 1n } : f)), raising: RAISING };
-    const holdingIt = () => aLedgerHolding(accountPure.payKeyCommitmentKey(), accountPure.payKeyCommitmentOf(bytes(RUN_MADE.made.payKey)));
+    const holdingIt = () => aLedgerHolding();
     for (const [deps, made, says] of [
       [depsWith([], []), undefined, /did not rebuild what this proposal pays/u],
       [depsWith([], []), otherAmounts, /not what this device rebuilt/u],
@@ -372,7 +373,7 @@ describe('ONE GOVERNED CALL', () => {
       /* RED WHEN: a circuit a device does not govern here - or one open to anybody - is built with a signer's record. */
       await expect(build(depsWith(log, []), {
         account: ACCOUNT, order: { circuit, proposal: 'aa'.repeat(32) } as unknown as GovernedCallOrder, material, chain,
-      })).rejects.toThrow(/raises, approves and withdraws proposals, seats signers, changes the company's or a vault's threshold, adopts a vault and seals the pay-record key/u);
+      })).rejects.toThrow(/raises, approves and withdraws proposals, seats signers, changes the company's or a vault's threshold, adopts a vault, seals the pay-record key and sets a vault's spending policy/u);
       expect(log).toEqual([]);
     }
     const log: string[] = [];
@@ -640,5 +641,70 @@ describe('A VAULT\'S OWN APPROVALS NEEDED, AND A WITHDRAWAL, BUILT ON THE DEVICE
     /* A device not given the function for a vault's change makes no identity for one. */
     const { setVaultThresholdPayload: _gone, ...without } = accountPure;
     expect(() => identityOfAChange({ accountPure: without as never }, vaultChange, SALT)).toThrow(/approvals needed, so nothing was built/u);
+  });
+});
+
+describe('A SPENDING POLICY AND ITS BAR, CARRIED OUT ONLY AS THE CHANGE THE COMPANY WROTE DOWN', () => {
+  /* The contract's functions for a policy, stood in for by hashes over the same parts. */
+  const policyPure = {
+    ...accountPure,
+    setPolicyPayload: (vault: Uint8Array, key: Uint8Array, commitment: Uint8Array) => sha(Buffer.from('policy'), vault, key, commitment),
+    setPolicyBarPayload: (bar: bigint) => sha(Buffer.from('policy-bar'), bar),
+    assetKeyOf: (asset: Uint8Array, blinding: Uint8Array) => sha(Buffer.from('asset-key'), asset, blinding),
+  };
+  const VAULT = 'b1'.repeat(32);
+  const ASSET = 'a5'.repeat(32);
+  const BLINDING = '5b'.repeat(32);
+  const COMMITMENT = 'c3'.repeat(32);
+  const keyOf = (asset: string, blinding: string) => policyPure.assetKeyOf(bytes(asset), bytes(blinding));
+  const policyRoundId = (salt: string) => hexOf(policyPure.proposalIdOf(
+    policyPure.setPolicyPayload(bytes(VAULT), keyOf(ASSET, BLINDING), bytes(COMMITMENT)), policyPure.noVault(), bytes(salt)));
+  const barRoundId = (bar: bigint, salt: string) => hexOf(policyPure.proposalIdOf(policyPure.setPolicyBarPayload(bar), policyPure.noVault(), bytes(salt)));
+  const setPolicy = {
+    circuit: 'setPolicy', vault: VAULT, commitment: COMMITMENT, proposal: policyRoundId(SALT), proposalSalt: SALT,
+    asset: ASSET, assetBlinding: BLINDING, policy: { terms: {}, blinding: '' },
+  } as unknown as GovernedCallOrder;
+  const setBar = { circuit: 'setPolicyBar', bar: '2', proposal: barRoundId(2n, SALT), proposalSalt: SALT } as GovernedCallOrder;
+
+  it('IS CARRIED OUT WHEN THE VAULT, THE CURRENCY\'S KEY, THE COMMITMENT OR THE BAR, AND THE SALT, MAKE THE PROPOSAL NAMED', () => {
+    /* The positive control: the identity made again from the honest order is the proposal's. */
+    expect(() => refuseARaiseThatIsNotTheRecordedOne({ accountPure: policyPure as never }, setPolicy)).not.toThrow();
+    expect(() => refuseARaiseThatIsNotTheRecordedOne({ accountPure: policyPure as never }, setBar)).not.toThrow();
+  });
+
+  it('A POLICY FOR ANOTHER VAULT, CURRENCY, BLINDING OR COMMITMENT, OR A BAR OF ANOTHER NUMBER, IS REFUSED BY ITS IDENTITY ALONE', () => {
+    for (const order of [
+      { ...setPolicy, vault: 'b2'.repeat(32) },
+      { ...setPolicy, asset: 'a6'.repeat(32) },
+      { ...setPolicy, assetBlinding: '5c'.repeat(32) },
+      { ...setPolicy, commitment: 'c4'.repeat(32) },
+      { ...setPolicy, proposalSalt: 'ee'.repeat(32) },
+      { ...setBar, bar: '3' },
+      { ...setBar, proposalSalt: 'ee'.repeat(32) },
+    ] as GovernedCallOrder[]) {
+      /*
+       * RED WHEN: the identity of a policy or a bar carried out is not made
+       * again from every part of the order - a carrying out the device opened
+       * nothing for would then be refused only by the check that it opened it,
+       * and this one would never be seen.
+       */
+      expect(() => refuseARaiseThatIsNotTheRecordedOne({ accountPure: policyPure as never }, order), JSON.stringify(order)).toThrow(/not for this change/u);
+    }
+  });
+
+  it('A BAR THAT IS NOT A WHOLE NUMBER OF AT LEAST ONE IS REFUSED BEFORE ANY IDENTITY IS MADE FOR IT', () => {
+    for (const bar of ['0', '1.5', '-1', '', '00']) {
+      const order = { ...setBar, bar, proposal: barRoundId(0n, SALT) } as GovernedCallOrder;
+      /* RED WHEN: the bar's own number is not checked, so a change needing no approvals at all has an identity made for it. */
+      expect(() => refuseARaiseThatIsNotTheRecordedOne({ accountPure: policyPure as never }, order), bar).toThrow(/at least one approval|not a whole number/u);
+    }
+  });
+
+  it('THE WORKER SAYS WHERE THE BAR IS KEPT ONLY BY THE CONTRACT\'S OWN FUNCTION, AND NAMES IT WHEN IT WAS NOT GIVEN ONE', async () => {
+    const ask = (accountPure: object) => answerVaultAsk(async () => ({ accountPure }) as never, { id: 1, network: 'undeployed', ask: 'policy-bar-key' } as never);
+    /* RED WHEN: the key is made any other way than by the contract's own function. */
+    await expect(ask({ policyBarKey: () => new Uint8Array(32).fill(0x0b) })).resolves.toMatchObject({ ok: true, value: '0b'.repeat(32) });
+    /* RED WHEN: a worker without the function fails on an unnamed call rather than saying what it was not given. */
+    await expect(ask({})).rejects.toThrow(/not given the account's function for the key its policy bar is kept under/u);
   });
 });

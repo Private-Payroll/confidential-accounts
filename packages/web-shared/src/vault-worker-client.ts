@@ -30,7 +30,11 @@ export interface StartStandingOnTheWire {
     readonly started: boolean;
   };
 }
-import type { GovernanceOnTheWire, GovernedCallOrder, OpenedRound, ProposalIdentity, SignerMaterial } from './governed-call-builder.js';
+import type {
+  GovernanceOnTheWire, GovernedCallOrder, OpenedRound, ProposalIdentity, SignerMaterial, SpendingPolicyKeys,
+} from './governed-call-builder.js';
+import type { PolicyOpeningOnTheWire } from '../../../src/midnight/spending-policy-record.js';
+import type { PeriodTotalAskOnTheWire, RunChargeStanding, RunToChargeOnTheWire, RunTreeOnTheWire } from './run-charge-builder.js';
 
 export interface SigningKeyOnTheWire { readonly tag: string; readonly value: string }
 export interface CoinOnTheWire { readonly nonce: string; readonly token: string; readonly value: string }
@@ -178,10 +182,21 @@ export type VaultAsk =
     id: number; network: string; ask: 'proposal-identity'; change: GovernanceOnTheWire; salt: string;
   }
   | { id: number; network: string; ask: 'company-wide' }
+  | { id: number; network: string; ask: 'policy-bar-key' }
+  | {
+    id: number; network: string; ask: 'spending-policy-keys'; vault: string; asset: string; assetBlinding: string;
+    policy?: PolicyOpeningOnTheWire; total?: string;
+  }
   | {
     id: number; network: string; ask: 'governed-call'; account: string; order: GovernedCallOrder;
     material: SignerMaterial; chain: AccountCallChainOnTheWire; opened: OpenedRound;
-  };
+  }
+  | {
+    id: number; network: string; ask: 'clear-run'; account: string; run: RunToChargeOnTheWire;
+    runs: readonly RunTreeOnTheWire[]; chain: { accountState: string; parameters: string };
+  }
+  | { id: number; network: string; ask: 'period-total'; accountState: string; total: PeriodTotalAskOnTheWire }
+  | { id: number; network: string; ask: 'run-charged'; accountState: string; proposal: string };
 
 type Answered<A extends VaultAsk['ask'], T> = { id: number; ok: true; ask: A } & T;
 
@@ -214,8 +229,13 @@ export type VaultAnswer =
   | Answered<'merge', { tx: string; spent: string[]; kept: NoteOnTheWire }>
   | Answered<'payout-publicly', { tx: string }>
   | Answered<'governed-call', { tx: string }>
+  | Answered<'clear-run', { tx: string | null; spent: string | null }>
+  | Answered<'period-total', { spent: string }>
+  | Answered<'run-charged', { standing: RunChargeStanding }>
   | Answered<'proposal-identity', { identity: ProposalIdentity }>
   | Answered<'company-wide', { value: string }>
+  | Answered<'spending-policy-keys', { keys: SpendingPolicyKeys }>
+  | Answered<'policy-bar-key', { value: string }>
   | Answered<'start-standing', { standing: StartStandingOnTheWire; run?: SecretRunOnTheWire }>
   | Answered<'set-nonce-secret', { tx: string }>
   | Answered<'write-secret-copy', { tx: string }>
@@ -397,12 +417,45 @@ export interface VaultBuilderClient {
   proposalIdentity(change: GovernanceOnTheWire, salt: string): Promise<ProposalIdentity>;
   /** The value a company-wide run names in place of a vault, made with the account's own function. */
   companyWide(): Promise<string>;
+  /**
+   * Where the chain keeps a vault's spending policy for a currency, its marker
+   * and the approvals a policy change needs, and with `policy` the commitment it
+   * makes, and with `policy` and a run's `total` the approvals its band needs,
+   * each made with the account's own functions.
+   */
+  spendingPolicyKeys(input: {
+    vault: string; asset: string; assetBlinding: string; policy?: PolicyOpeningOnTheWire; total?: string;
+  }): Promise<SpendingPolicyKeys>;
+  /** The key the account keeps the approvals any change to a spending policy needs under, made with the account's own function. */
+  policyBarKey(): Promise<string>;
   /** A raise or an approval on the company account, built and proved with this signer's own material. */
   governedCall(input: {
     account: string; order: GovernedCallOrder; material: SignerMaterial; chain: AccountCallChainOnTheWire;
     /** What this device opened from the company's sealed records, which the call is checked against and proved with. */
     opened: OpenedRound;
   }): Promise<{ tx: string }>;
+  /**
+   * **AN APPROVED RUN CHARGED TO ITS VAULT'S PERIOD**, built and proved here
+   * against the account's state at one block (base64), with the period's
+   * running total worked out again from that state and `runs`, the company's
+   * runs that may have been charged to it. `tx` is null when the chain already
+   * holds the run as charged; `spent` is the period's total before this charge.
+   */
+  clearRun(input: {
+    account: string; run: RunToChargeOnTheWire; runs: readonly RunTreeOnTheWire[]; chain: { accountState: string; parameters: string };
+  }): Promise<{ tx: string | null; spent: string | null }>;
+  /**
+   * **WHAT A VAULT HAS BEEN CHARGED IN ONE PERIOD**, worked out again from the
+   * account's state at one block (base64) and the company's runs, and taken only
+   * when it opens the commitment the chain holds. Decimal digits.
+   */
+  periodTotal(input: { accountState: string; total: PeriodTotalAskOnTheWire }): Promise<string>;
+  /**
+   * **WHETHER THE CHAIN HOLDS A RUN AS CHARGED**, read off the account's state
+   * at one block (base64): its proposal open and charged, open and not yet
+   * charged, or not open.
+   */
+  runCharged(input: { accountState: string; proposal: string }): Promise<RunChargeStanding>;
   /**
    * Where a vault's start stands, read off both contracts' states at one block
    * (base64), and with `secret` the first secret run made from it. `now` is
@@ -512,8 +565,16 @@ export function vaultBuilderOver(worker: WorkerLike, network: string): VaultBuil
     },
     payoutPublicly: async (input) => ({ tx: (await ask({ ask: 'payout-publicly', ...input })).tx }),
     governedCall: async (input) => ({ tx: (await ask({ ask: 'governed-call', ...input })).tx }),
+    clearRun: async (input) => {
+      const a = await ask({ ask: 'clear-run', ...input });
+      return { tx: a.tx, spent: a.spent };
+    },
+    periodTotal: async (input) => (await ask({ ask: 'period-total', ...input })).spent,
+    runCharged: async (input) => (await ask({ ask: 'run-charged', ...input })).standing,
     proposalIdentity: async (change, salt) => (await ask({ ask: 'proposal-identity', change, salt })).identity,
     companyWide: async () => (await ask({ ask: 'company-wide' })).value,
+    spendingPolicyKeys: async (input) => (await ask({ ask: 'spending-policy-keys', ...input })).keys,
+    policyBarKey: async () => (await ask({ ask: 'policy-bar-key' })).value,
     startStanding: async (input) => {
       const a = await ask({ ask: 'start-standing', ...input });
       return { standing: a.standing, ...(a.run === undefined ? {} : { run: a.run }) };

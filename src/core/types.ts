@@ -1649,19 +1649,20 @@ export interface RunRetry {
    */
   originalIndices: number[];
   /**
-   * The root this attempt was raised with: the leg's own, because an attempt is
-   * raised over the leg's own tree and pays only the people it names. What the
-   * signers approve.
+   * The root this attempt was raised with: the root of a tree of its own, over
+   * only the people it names, each at the leaf the leg gave them, in the order
+   * it named them. What the signers approve, and what a charge of the attempt
+   * to its vault's period marks.
    */
   root: Hex;
-  /** The leg's payee count, which the root's tree holds. */
+  /** How many people the attempt names, which its own tree holds. */
   payees: bigint;
   /** Seconds since the Unix epoch, because block time is compared against it. */
   opensAt: bigint;
   closesAt: bigint;
   /** The vault that will pay this attempt. */
   vault: Hex;
-  /** The approvals the leg's total needs, since an attempt is raised over the leg's tree; bound into its identity. Absent is zero. */
+  /** The approvals the attempt's own total needs under its vault's policy, bound into its identity. Absent is zero. */
   required?: bigint;
   /**
    * The proposal this attempt was raised as. Absent between the moment the

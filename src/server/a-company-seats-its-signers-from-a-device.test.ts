@@ -124,7 +124,7 @@ Object.assign(ledger, {
         const g = o.governance;
         const payload = g.kind === 'add-signer' ? MidnightCommitments.signerAddPayload(g.leaf as Hex)
           : g.kind === 'vault-threshold' ? MidnightCommitments.vaultThresholdPayload(g.vault as Hex, Number(g.threshold))
-            : MidnightCommitments.signerThresholdPayload(Number(g.threshold));
+            : MidnightCommitments.signerThresholdPayload(Number((g as { threshold: string }).threshold));
         return await ledger.propose(accountId, payload, {
           asset: NO_ASSET, amount: 0n, batchDigest: o.half.changeBatchDigest as Hex, salt: o.half.proposalSalt as Hex,
         }, by, MidnightCommitments.noVault());

@@ -1,6 +1,6 @@
 import { ContractState } from '@midnightntwrk/ledger-v9';
 import { PAY_KEY_COMMITMENT_ENTRY } from 'midnight-identity/profile/records-key';
-import type { AccountHolders, AccountPaymentFacts, AccountSeats, VaultHolders } from 'midnight-identity/profile/records-key';
+import type { AccountHolders, AccountPaymentFacts, AccountRoleEntry, AccountSeats, VaultHolders } from 'midnight-identity/profile/records-key';
 import { COMPANY_LABEL_ENTRY, companyLabelOf, readAccountAddress, readVaultAddress } from 'midnight-identity/profile/company-label';
 import type { AccountAddress, CompanyLabel, VaultAddress } from 'midnight-identity/profile/company-label';
 
@@ -207,6 +207,35 @@ export function paymentsInAccountState(serialized: Uint8Array, asked: readonly s
 
 const hexOf32 = (b: Uint8Array): string => Array.from(b, (x) => x.toString(16).padStart(2, '0')).join('');
 
+/**
+ * **WHAT AN ACCOUNT HOLDS UNDER ENTRIES OF ITS MAP OF ROLES, FROM ITS
+ * SERIALISED STATE**, for the entries asked about, in the order asked: the
+ * thirty-two bytes held under each, or null where it holds nothing. Throws
+ * when the bytes are not a contract's state laid out as a company's account
+ * is, or an entry holds something that is not thirty-two bytes.
+ */
+export function rolesInAccountState(serialized: Uint8Array, asked: readonly string[]): readonly AccountRoleEntry[] {
+  const fields = ContractState.deserialize(serialized).data.state.asArray();
+  const notAnAccount = 'that contract\'s state is not laid out as a company\'s account.';
+  if (fields === undefined || fields.length <= ROLES_FIELD) throw new Error(notAnAccount);
+  const roles = fields[ROLES_FIELD]!.asMap();
+  if (roles === undefined) throw new Error(notAnAccount);
+  const wanted = new Set(asked);
+  const held = new Map<string, string>();
+  for (const key of roles.keys()) {
+    const k = as32(key.value[0]);
+    if (k === null) throw new Error(notAnAccount);
+    const entry = hexOf32(k);
+    if (!wanted.has(entry)) continue;
+    const cell = roles.get(key);
+    const inner = cell === undefined ? undefined : (cell.asCell() as ReturnType<typeof cell.asCell> | undefined);
+    const value = inner === undefined || inner.value.length !== 1 ? null : as32(inner.value[0]);
+    if (value === null) throw new Error(notAnAccount);
+    held.set(entry, hexOf32(value));
+  }
+  return Object.freeze(asked.map((key) => Object.freeze({ key, value: held.get(key) ?? null })));
+}
+
 const committeeOf = (state: ContractState): VaultHolders['committee'] =>
   Object.freeze(state.maintenanceAuthority.committee.map((k) => Object.freeze({ tag: String(k.tag), value: String(k.value).toLowerCase() })));
 
@@ -360,7 +389,11 @@ export type HoldersOnChain =
    * adopted, read in the same answer, with what it records about the payments
    * asked about when any were.
    */
-  | { readonly of: 'read'; readonly holders: AccountHolders; readonly payments?: AccountPaymentFacts }
+  | {
+    readonly of: 'read'; readonly holders: AccountHolders; readonly payments?: AccountPaymentFacts;
+    /** What the account holds under the entries of its map of roles asked about, when any were. */
+    readonly roles?: readonly AccountRoleEntry[];
+  }
   | { readonly of: 'no-account' }
   /** A contract is there and does not carry this label: not this company's account. */
   | { readonly of: 'other-label' }
@@ -374,6 +407,8 @@ export async function holdersOnChain(
   account: AccountAddress, label: CompanyLabel, read: ContractStateHex, readDeploy: DeployStateHex,
   /** Entries of the account's record of payments to say whether it holds, read in the same answer. */
   movements?: readonly string[],
+  /** Entries of the account's map of roles to say what it holds under, read in the same answer. */
+  roles?: readonly string[],
 ): Promise<HoldersOnChain> {
   if (readAccountAddress(account) === null) return { of: 'unreadable', why: 'that is not an account\'s address.' };
   let hex: string | null;
@@ -391,7 +426,11 @@ export async function holdersOnChain(
     if (deployHex === null) return { of: 'unreadable', why: 'the indexer holds no deploy for that account.' };
     const founding = foundingInDeployState(bytesOf(deployHex), label);
     const holders = { ...holdersInAccountState(bytes), founding: founding.seat, foundingCommittee: founding.committee };
-    return movements === undefined ? { of: 'read', holders } : { of: 'read', holders, payments: paymentsInAccountState(bytes, movements) };
+    return {
+      of: 'read', holders,
+      ...(movements === undefined ? {} : { payments: paymentsInAccountState(bytes, movements) }),
+      ...(roles === undefined ? {} : { roles: rolesInAccountState(bytes, roles) }),
+    };
   } catch (e) {
     return { of: 'unreadable', why: e instanceof Error ? e.message : 'the state did not read.' };
   }

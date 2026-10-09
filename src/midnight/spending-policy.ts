@@ -20,24 +20,16 @@
 import { pureCircuits } from '../../contracts/managed/contract/index.js';
 import type { PolicyOpening } from '../../contracts/src/witnesses.js';
 import { toHex, fromHex, type Hex } from '../core/crypto.js';
+import { POLICY_BANDS, periodOf, periodWindowOf, refuseAnUnusablePolicy } from './spending-policy-record.js';
 
 export type { PolicyOpening, PolicyBand } from '../../contracts/src/witnesses.js';
 
-/** How many bands a policy has. The contract's `Vector<4, Band>`. */
-export const POLICY_BANDS = 4;
-
-/** Refuses a policy the contract could not open, with a sentence saying why. */
-export const refuseAnUnusablePolicy = (policy: PolicyOpening): void => {
-  if (policy.terms.bands.length !== POLICY_BANDS) {
-    throw new Error(`a spending policy has exactly ${POLICY_BANDS} bands; this one has ${policy.terms.bands.length}`);
-  }
-  if (policy.terms.periodLength <= 0n) {
-    throw new Error('a spending policy needs periods of at least one second, or no run could ever fit inside one');
-  }
-  if (policy.blinding.length !== 32) {
-    throw new Error("this device's copy of the spending policy is damaged; get the current policy again from a signer who holds it");
-  }
-};
+/*
+ * How many bands a policy has, what a policy must be for the contract to open
+ * it, and where its periods fall: said once, beside the record that keeps it,
+ * where a page that loads no contract reads them too.
+ */
+export { POLICY_BANDS, periodOf, periodWindowOf, refuseAnUnusablePolicy };
 
 /** What the chain stores for a policy: its terms committed under its blinding. */
 export const policyCommitmentOf = (policy: PolicyOpening): Hex => {
@@ -67,25 +59,6 @@ export const policyBarKey = (): Hex => toHex(pureCircuits.policyBarKey());
 export const requiredFor = (policy: PolicyOpening, total: bigint): bigint => {
   refuseAnUnusablePolicy(policy);
   return pureCircuits.bandApprovals(policy.terms.bands, total);
-};
-
-/** When period `period` of `policy` starts and ends, in seconds since the Unix epoch. */
-export const periodWindowOf = (policy: PolicyOpening, period: bigint): { from: bigint; until: bigint } => {
-  refuseAnUnusablePolicy(policy);
-  const from = policy.terms.periodStart + period * policy.terms.periodLength;
-  return { from, until: from + policy.terms.periodLength };
-};
-
-/**
- * The period a run's whole window lies in, or null when it opens before the
- * policy's first period or crosses from one period into the next. A run the
- * chain cannot charge is refused here rather than after a fee.
- */
-export const periodOf = (policy: PolicyOpening, window: { opensAt: bigint; closesAt: bigint }): bigint | null => {
-  refuseAnUnusablePolicy(policy);
-  if (window.opensAt < policy.terms.periodStart) return null;
-  const period = (window.opensAt - policy.terms.periodStart) / policy.terms.periodLength;
-  return window.closesAt <= periodWindowOf(policy, period).until ? period : null;
 };
 
 /** Where the chain keeps what `vault` has been charged in `period` under this policy. */

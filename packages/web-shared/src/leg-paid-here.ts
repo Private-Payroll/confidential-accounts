@@ -29,12 +29,20 @@ import {
   type PayoutDoors,
 } from './vault-operation.js';
 import type { NoteOnTheWire } from './vault-builder.js';
-import { privatePaymentsHere, type PaymentsHereDeps } from './payments-made-here.js';
+import { legToPayHere, type PaymentsHereDeps } from './payments-made-here.js';
+import { chargeTheRunHere, type ChargeDoors } from './run-charged-here.js';
 import type { CompanyRecordsHere } from './run-rebuilt-here.js';
 import type { LegNamed } from './material-made-here.js';
 
 /** What paying a leg is done with: the doors every step out of the vault takes, and the account's record of a payment. */
 export interface LegDoors extends PayoutDoors {
+  /**
+   * The service's route a proven charge of the run to its vault's period is
+   * relayed by. A run from a vault under a spending policy is not paid without it.
+   */
+  readonly charge?: ChargeDoors['charge'];
+  /** Where this device keeps a charge it relayed until the chain shows it; a run from a policy vault is not paid without it. */
+  readonly chargesInFlight?: ChargeDoors['chargesInFlight'];
   /**
    * Whether the company's account records this payment as made, asked again
    * after a public payment is sent: `true` once it does, `false` while it does
@@ -57,6 +65,8 @@ export interface LegHere {
 
 /** One step the leg sent, in the order sent. */
 export type LegStepSent =
+  /** The run charged to its vault's period, before anything was paid; `spentBefore` is what the period had been charged. */
+  | { readonly kind: 'charge'; readonly spentBefore: bigint }
   | { readonly kind: 'merge'; readonly spent: readonly Hex[]; readonly kept: NoteOnTheWire; readonly transactionHash: string }
   /**
    * A person's payment. `seenAs` is the step's own: `by-what-it-left` when the
@@ -93,6 +103,9 @@ export class LegNotPayable extends Error {
 /** How many times a leg is planned again after the vault's notes moved under one of its steps, before it stops. */
 const PLANS_AT_MOST = 3;
 
+/** Why a plan with a batch step is not paid: no raise groups payees into batches yet. */
+const A_BATCH_IS_NOT_PAID_YET = 'This leg\'s plan has a batch step, and paying a batch is not built yet.';
+
 /**
  * **ONE STEP OF THE PLAN, SENT, BY ITS KIND.** A batch is a step the planner
  * makes only for a leg raised as batches, and no raise groups payees into
@@ -113,30 +126,48 @@ async function sendStep(
       return { sent: { kind: 'payment', index: payment.index, transactionHash: r.transactionHash, seenAs: r.seenAs }, kept: r.change };
     }
     case 'batch':
-      throw new LegNotPayable('This leg\'s plan has a batch step, and paying a batch is not built yet.');
+      throw new LegNotPayable(A_BATCH_IS_NOT_PAID_YET);
   }
 }
 
 /**
  * **PAY AN APPROVED LEG, OR A RETRY RAISED ON IT, FROM THE COMPANY'S VAULT.**
  * Everyone the account records paid is skipped; the rest are paid one step at
- * a time, as the plan says. A leg with nobody left to pay sends nothing.
+ * a time, as the plan says. A leg with nobody left to pay sends nothing. From
+ * a vault under a spending policy the run is charged to its period on this
+ * device (`chargeTheRunHere`) once the leg is known to be payable and before
+ * its first step is sent: after the planner has planned it from the vault's
+ * record, or, in public money, before the first person is paid. A leg the
+ * planner refuses is refused before any charge or fee. The run is charged at
+ * most once here, not again when the leg is planned again, and not at all
+ * when the chain already holds it as charged or its vault has no policy.
  */
 export async function payAnApprovedLeg(doors: LegDoors, leg: LegHere): Promise<LegPaid> {
   const steps: LegStepSent[] = [];
   const paid: number[] = [];
   const sentNotNamed: number[] = [];
   let alreadyPaid: number[] | null = null;
+  let chargeSettled = false;
+  /* The run charged to its vault's period, when the vault is under a policy: once, just before the leg's first step. */
+  const chargedFirst = async (toPay: Awaited<ReturnType<typeof legToPayHere>>): Promise<void> => {
+    if (chargeSettled) return;
+    const charged = await chargeTheRunHere(
+      { ...doors, records: leg.records, accountId: leg.accountId, viewingKey: leg.viewingKey }, toPay);
+    chargeSettled = true;
+    if (charged.state === 'charged') steps.push({ kind: 'charge', spentBefore: charged.spentBefore });
+  };
   for (let plans = 1; ; plans += 1) {
-    const order = await privatePaymentsHere(leg.records, leg.accountId, leg.runId, leg.viewingKey, leg.deps, leg.which, leg.retry);
+    const toPay = await legToPayHere(leg.records, leg.accountId, leg.runId, leg.viewingKey, leg.deps, leg.which, leg.retry);
+    const { order } = toPay;
     alreadyPaid ??= order.payments.filter((p) => p.paid === true).map((p) => p.index);
     /* Nobody this loop has already sent a payment to is planned again, whatever the account's read says yet. */
     const sentTo = new Set([...paid, ...sentNotNamed]);
     const owed = order.payments.filter((p) => p.paid !== true && !sentTo.has(p.index));
     if (owed.length === 0) return { paid, sentNotNamed, alreadyPaid, steps };
 
-    /* ---- public money spends no note: nothing to plan ---- */
+    /* ---- public money spends no note: nothing to plan, so the run is charged before the first person is paid ---- */
     if (order.form === 'unshielded') {
+      await chargedFirst(toPay);
       for (const payment of owed) {
         const r = await payPubliclyFromCompanyVault({ ...doors, paidYet: () => doors.paidYet(payment) }, { order, payment });
         paid.push(payment.index);
@@ -155,6 +186,9 @@ export async function payAnApprovedLeg(doors: LegDoors, leg: LegHere): Promise<L
       units: owed.map((p) => ({ kind: 'payment' as const, payees: [{ id: String(p.index), amount: BigInt(p.amount), nonce: p.nonce }] })),
     });
     if (plan.ok === false) throw new LegNotPayable(plan.message);
+    if (plan.steps.some((st) => st.kind === 'batch')) throw new LegNotPayable(A_BATCH_IS_NOT_PAID_YET);
+    /* ---- the leg is payable as planned: the run charged to its period before the plan's first step is sent ---- */
+    await chargedFirst(toPay);
     const held = new Map(pool.notes.map((n) => [n.nonce, wireOf(n)]));
     const made = new Map<number, NoteOnTheWire>();
     try {

@@ -24,6 +24,7 @@ import type {
 } from './vault-operation.js';
 import { sealedOnThisDevice, type InFlightOpener, type InFlightRecords, type SealedInFlight } from './in-flight-on-this-device.js';
 import type { SigningKeyOnTheWire } from './vault-worker-client.js';
+import type { ChargeInFlight, ChargesInFlight } from './run-charged-here.js';
 
 type Api = (path: string, init?: RequestInit) => Promise<any>;
 
@@ -438,3 +439,7 @@ export const browserDepositsInFlight = (me: InFlightOpener, factory: IDBFactory 
 /** A payment this signer sent from this browser and has not yet seen land, sealed under their own key. */
 export const browserPaymentsInFlight = (me: InFlightOpener, factory: IDBFactory = indexedDB): PaymentsInFlight =>
   sealedOnThisDevice<PaymentInFlight>(browserInFlightRecords(factory), me, 'payment');
+
+/** A charge of a run to its vault's period this signer sent from this browser and has not yet seen land, sealed under their own key. */
+export const browserChargesInFlight = (me: InFlightOpener, factory: IDBFactory = indexedDB): ChargesInFlight =>
+  sealedOnThisDevice<ChargeInFlight>(browserInFlightRecords(factory), me, 'charge');

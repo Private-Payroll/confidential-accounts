@@ -80,6 +80,12 @@ import { HttpSealedPoolStore, type WireSend } from 'vaults-web-shared/http-seale
 import { recordsReaderOf, type DeviceSigner } from 'vaults-web-shared/deposit-on-device.js';
 import { answerVaultAsk, checkedAccountKeys } from 'vaults-web-shared/vault-worker-entry.js';
 import { vaultBuilderOver, type VaultAnswer } from 'vaults-web-shared/vault-worker-client.js';
+import { chainReadThroughTheWallet, setSpendingPolicyOnDevice, spendingPolicyHere } from 'vaults-web-shared/spending-policy-here.js';
+import { signCompanyFiling, type SealedCompanyRecord } from '../../src/midnight/sealed-record-wire.js';
+import { rolesInAccountState } from '../../apps/wallet/src/chain/company-label-on-chain.js';
+import { periodTotalHere, type ChargeInFlight } from 'vaults-web-shared/run-charged-here.js';
+import { periodOf } from '../../src/midnight/spending-policy-record.js';
+import { spendingPolicyKeysOf } from 'vaults-web-shared/governed-call-builder.js';
 import {
   createCompanyVault, depositIntoCompanyVault, mergeNotesInCompanyVault, openCompanyVaultPool, payPrivatelyFromCompanyVault,
   payPubliclyFromCompanyVault,
@@ -92,7 +98,7 @@ import {
 import { depositFromSource, publicTokenFromTheWallet } from 'vaults-web-shared/deposit-source.js';
 import { StaticAssetRegistry, type Asset } from '../../src/core/assets.js';
 import { UNLOCK_PURPOSE, UNLOCK_WINDOW_MS, unlockAsk } from '../../src/core/wallet-unlock.js';
-import { fromHex, newSigningKeypair, newWrappingKeypair, toHex, type Hex } from '../../src/core/crypto.js';
+import { fromHex, newSigningKeypair, newWrappingKeypair, signingPublicKeyOf, toHex, type Hex } from '../../src/core/crypto.js';
 import { accountVerifierKeysIn } from '../../src/server/vault-chain.js';
 import { anAccountBornHeld } from './an-account-born-held.js';
 import { DEPLOYED_CIRCUITS } from '../../src/midnight/deferral.js';
@@ -251,6 +257,10 @@ describe.skipIf(!KEYS_ON_DISK)('A PRIVATE PAYMENT OUT OF A COMPANY VAULT, FROM T
   let arrivals: string[];
   let temporaryKeys: Map<string, { tag: string; value: string }>;
   let serverStores: Map<WireRecord, MemorySealedPoolStore>;
+  /* The company's records of every vault's spending policy, as the seats filed them. */
+  let policyRecords: SealedCompanyRecord[] = [];
+  /* The company's first state, as its founding seat signed it, made once per test. */
+  let firstStateKept: ReturnType<typeof signedFoundingState> | undefined;
 
   const vaultZk = new NodeZkConfigProvider(new URL('../managed-vault', import.meta.url).pathname);
   const accountZk = new NodeZkConfigProvider(new URL('../managed', import.meta.url).pathname);
@@ -356,6 +366,8 @@ describe.skipIf(!KEYS_ON_DISK)('A PRIVATE PAYMENT OUT OF A COMPANY VAULT, FROM T
   beforeEach(async () => {
     setNetworkId(NET as never);
     chain = new Chain();
+    policyRecords = [];
+    firstStateKept = undefined;
     /* The depositor's wallet holds its own private coins before anything else is on the chain. */
     depositor = aWalletThatPaysPrivately(NET);
     chain.apply(depositor.seedTransaction(TOKEN, [100_000n, 100_000n, 100_000n, 100_000n]));
@@ -372,7 +384,8 @@ describe.skipIf(!KEYS_ON_DISK)('A PRIVATE PAYMENT OUT OF A COMPANY VAULT, FROM T
       if (step === made.deploy.proven) deployed = chain.contract(made.deploy.address.toLowerCase());
     }
     company = made.deploy.address.toLowerCase() as Hex;
-    signing = newSigningKeypair();
+    /* The founding seat's own key signs its filings, as a device's seat key does: the one key the account seats it by. */
+    signing = { secret: hex(founder.secretKey) as Hex, publicKey: signingPublicKeyOf(hex(founder.secretKey) as Hex) } as ReturnType<typeof newSigningKeypair>;
     wrapping = newWrappingKeypair();
     me = { signerId: 'ada', wrappingSecret: wrapping.secret, companyKey: releasedCompanyKey(words, company) };
     sent = [];
@@ -396,8 +409,6 @@ describe.skipIf(!KEYS_ON_DISK)('A PRIVATE PAYMENT OUT OF A COMPANY VAULT, FROM T
       accountId: ACCOUNT_ID, address: company, foundingKey: made.foundingKey, recordedAt: new Date().toISOString(),
       deploy: base64FromBytes(made.deploy.proven), insert: base64FromBytes(made.insert.proven),
     });
-    const accounts = new AccountService(store, {} as never, MidnightCommitments);
-
     const app = express();
     const signedIn: express.RequestHandler = (req, res, next) => {
       const p = req.headers['x-test-person'];
@@ -839,6 +850,14 @@ describe.skipIf(!KEYS_ON_DISK)('A PRIVATE PAYMENT OUT OF A COMPANY VAULT, FROM T
    *   · the company's ceilings are none (`policy`), and who the account records paid is read straight off this chain's
    *     account (`paidAmong`, and the wallet's `payments.read`), as the person's own wallet reads it; `paidYet` is never
    *     asked, because a private leg is not paid publicly;
+   *   · what the account holds under its map of roles (a vault's spending-policy marker, its policy's commitment, and
+   *     each period's marks and total) is read by the wallet's own reader of the account's state (`rolesInAccountState`)
+   *     over this chain's account, without the wallet's ask and answer between the page and the wallet
+   *     (`spendingPolicies.onChain`); the ask and its answer are driven in `wallet-records-key.test.ts` and
+   *     `company-label-on-chain.test.ts`;
+   *   · the company's records of a vault's spending policy are kept in a list here, each version signed by the seat that
+   *     filed it as the product's records mount signs one (`spendingPolicies.versions` and `file`): no product code
+   *     reads or files them yet;
    *   · that the approving device refuses what the raise checks refuse is pinned in
    *     `src/server/a-leg-is-raised-on-the-device.test.ts`, not here: here it opens a round every check passes.
    */
@@ -858,7 +877,8 @@ describe.skipIf(!KEYS_ON_DISK)('A PRIVATE PAYMENT OUT OF A COMPANY VAULT, FROM T
   /** The company's records as the founding signer's device opens them: the directory, the people, the first state, the runs and proposals, and the wallet's read of the account. */
   const recordsHere = (people: readonly RosterEmployee[]): CompanyRecordsHere & { proposals: () => Promise<ReturnType<typeof store.listProposals>> } => {
     const registry = new StaticAssetRegistry([PAY_ROW]);
-    const firstState = signedFoundingState(ACCOUNT_ID, sealState({ entries: [] }, newStateBlinding(), viewingKey, 0), signing.secret);
+    /* One first state per company: every device reads the same blinding the founding seat signed. */
+    const firstState = firstStateKept ??= signedFoundingState(ACCOUNT_ID, sealState({ entries: [] }, newStateBlinding(), viewingKey, 0), signing.secret);
     return {
       directory: () => directoryHere({
         accountId: ACCOUNT_ID, label: LABEL, filings: () => directoryFilingsFrom(api, ACCOUNT_ID),
@@ -885,13 +905,27 @@ describe.skipIf(!KEYS_ON_DISK)('A PRIVATE PAYMENT OUT OF A COMPANY VAULT, FROM T
         },
       },
       policy: async () => ({ threshold: 1, limitsByRole: {} }) as never,
+      /*
+       * STAND-IN, NAMED: the company's records of a vault's spending policy are
+       * the list above, each version signed by its seat's filing key. What the
+       * account holds under its map of roles is the wallet's own reader of the
+       * account's state over this chain (`rolesInAccountState`), with the
+       * wallet's ask and answer between them left out.
+       */
+      spendingPolicies: {
+        versions: async (id) => policyRecords.filter((r) => r.id === id),
+        file: async (rec) => { policyRecords = [...policyRecords, signCompanyFiling(rec, signing.secret as Hex)]; },
+        me: { signerId: hex(leafOfDevice(founder)), wrappingSecret: recordsKeypairFrom(me.companyKey).secret as Hex },
+        keys: async (input) => spendingPolicyKeysOf({ accountPure: accountCircuits as never }, input),
+        onChain: chainReadThroughTheWallet(async (asked) => ({ roles: rolesInAccountState(chain.contract(company).serialize(), asked) })),
+      },
     };
   };
   /** The founding signer's device raising a leg: the proving is the account's own call, built from their private state with the device's order. */
   const raisingOn = (here: ReturnType<typeof recordsHere>): LegRaiseDoors => ({
     service: { ...governedCallServiceFor(api), callState: async () => ({ account: company, accountState: '', parameters: '' }) as never },
     builder: {
-      governedCall: async ({ order }: { order: { run: { root: string; payees: string; opensAt: string; closesAt: string; vault: string }; half: Record<string, string> } }) => {
+      governedCall: async ({ order }: { order: { run: { root: string; payees: string; opensAt: string; closesAt: string; vault: string; required?: string }; half: Record<string, string> } }) => {
         const keys = L.ZswapSecretKeys.fromSeed(new Uint8Array(randomBytes(32)));
         const staged = {
           ...founder, assetId: fromHex(order.half.assetId!), assetBlinding: fromHex(order.half.assetBlinding!),
@@ -901,7 +935,7 @@ describe.skipIf(!KEYS_ON_DISK)('A PRIVATE PAYMENT OUT OF A COMPANY VAULT, FROM T
           compiledContract: accountCompiled, circuitId: 'propose', contractAddress: company, coinPublicKey: keys.coinPublicKey,
           initialContractState: asRuntime(chain.contract(company)), initialZswapChainState: new L.ZswapChainState(),
           ledgerParameters: L.LedgerParameters.initialParameters(), initialPrivateState: staged,
-          args: [ZERO_32, fromHex(order.run.root), BigInt(order.run.payees), BigInt(order.run.opensAt), BigInt(order.run.closesAt), 0n, true, fromHex(order.run.vault)],
+          args: [ZERO_32, fromHex(order.run.root), BigInt(order.run.payees), BigInt(order.run.opensAt), BigInt(order.run.closesAt), BigInt(order.run.required ?? '0'), true, fromHex(order.run.vault)],
         }, keys.encryptionPublicKey);
         return { tx: base64FromBytes(built.private.unprovenTx.serialize()) };
       },
@@ -981,6 +1015,151 @@ describe.skipIf(!KEYS_ON_DISK)('A PRIVATE PAYMENT OUT OF A COMPANY VAULT, FROM T
     /* RED WHEN: a person the account records paid is paid, or anything is sent, a second time. */
     expect(again).toMatchObject({ paid: [], sentNotNamed: [], alreadyPaid: [0, 1], steps: [] });
     expect(chain.applied.length).toBe(before + 3);
+  });
+
+  /*
+   * ---- A VAULT'S SPENDING POLICY SET FROM A DEVICE, AND RUNS FROM THAT VAULT RAISED, APPROVED, CHARGED AND PAID ----
+   *
+   * WHAT IS A STAND-IN, SAID HERE, beyond what is said above:
+   *   · the policy's governance calls are built by the device's own worker (`governedCall`) from the founding signer's
+   *     private state and filed, approved and carried out through the product's own routes; what the account's state is
+   *     when the service hands it to the device to build a call on (`callState`), the bars it counts approvals against
+   *     (`bars`) and the proposals it serves (`sealedProposals`) are read here straight off this chain and the store;
+   *   · the company has one seat, so the second device is a second device of the same signer, made afresh: its own
+   *     worker, its own reads of the company's records, nothing kept on it, and it never set the policy;
+   *   · each run is approved by the founding signer's own `approve` call, with the run's opening, after the approving
+   *     device opened it from the company's records and ran every raise check on it.
+   */
+  const DAY = 86_400n;
+  /* Four bands of one approval each - the company has one signer - a limit of 2,000 a period, and a period ending in two hours. */
+  const policyTermsAt = (now: bigint) => ({
+    bands: ['1000', '10000', '100000', '1000000'].map((ceiling) => ({ ceiling, approvals: '1' })),
+    periodLimit: '2000', periodStart: String(now + 7_200n - 30n * DAY), periodLength: String(30n * DAY),
+  });
+  /** The founding signer's device setting a policy: the governance doors over the product's routes and this chain. */
+  const governingOn = (here: ReturnType<typeof recordsHere>) => ({
+    service: {
+      ...governedCallServiceFor(api),
+      callState: async () => ({
+        account: company, blockHash: '00'.repeat(32), accountState: base64FromBytes(chain.contract(company).serialize()),
+        parameters: base64FromBytes(L.LedgerParameters.initialParameters().serialize()),
+      }),
+      bars: async () => {
+        const l = accountLedgerOf(chain.contract(company));
+        return { threshold: Number(l.threshold), vaultThresholds: [...l.thresholds].map(([k, v]: [Uint8Array, bigint]) => ({ vault: hex(k), threshold: Number(v) })) };
+      },
+      sealedProposals: async () => store.listProposals(ACCOUNT_ID),
+    },
+    builder: builder(),
+    material: { signingSecret: hex(founder.secretKey), blinding: hex(founder.blinding), scope: hex(founder.scope) },
+    accountId: ACCOUNT_ID, records: here,
+    filing: { seat: hex(leafOfDevice(founder)), keyEpoch: 0, salt: () => toHex(new Uint8Array(randomBytes(32))), newId: () => newProposalId() },
+    approvers: pacing.approvers, vaultName: (v: Hex) => v, sleep: async () => {}, waitMs: 50, everyMs: 1,
+  });
+  /** A second device of the signer: its own worker, its own reads, its own store for a charge on its way, and the routes. */
+  const aSecondDevice = () => ({
+    ...pacing, service, me, myRecordsKey: recordsReaderOf(me.companyKey).publicKey, signers, records, account: readAccountAddress(company)!,
+    onChain: walletReads, builder: builder(), inFlight: paymentsInFlight(), paidYet: async () => null,
+    charge: (id: string, body: { tx: string }) => governedCallServiceFor(api).charge!(id, body),
+    chargesInFlight: sealedOnThisDevice<ChargeInFlight>(inFlightRecordsInMemory(), { signerId: 'ada', wrappingSecret: newWrappingKeypair().secret }, 'charge'),
+  });
+  const paidAmongNow = async (leaves: readonly Hex[]) => {
+    const l = accountLedgerOf(chain.contract(company));
+    return { known: true, paid: leaves.filter((leaf) => l.movements.member(accountCircuits.paidMovementOf(fromHex(leaf)))) };
+  };
+  /** A run drawn on the founding signer's device for `people` and raised there in `[opensAt, closesAt)`. */
+  const drawnAndRaised = async (people: readonly RosterEmployee[], period: string, vault: Hex, opensAt: bigint, closesAt: bigint) => {
+    const here = recordsHere(people);
+    const drawn: PayrollRun = await drawRunHere({
+      api, accountId: ACCOUNT_ID, viewingKey, keyEpoch: 0, signingSecret: signing.secret as Hex, company: { account: company, label: LABEL },
+      records: here, by: 'ada', registry: here.registry!,
+    }, { period });
+    const round = raiseRunOnDevice(raisingOn(here), { runId: drawn.id, viewingKey, vault, opensAt: String(opensAt), closesAt: String(closesAt) });
+    return { drawn, round };
+  };
+  /** Approved: the approving device opens it and runs every raise check, then the founding signer approves it with its opening. */
+  const approved = async (roundId: string, here: CompanyRecordsHere, vault: Hex) => {
+    const proposal = store.getProposal(roundId)!;
+    const opened = await openTheRoundHere({ ...governedCallServiceFor(api), sealedProposals: async () => store.listProposals(ACCOUNT_ID) },
+      ACCOUNT_ID, roundId, viewingKey, false, here);
+    await callAccount('approve', [fromHex(proposal.chainId)], {
+      ...founder, runOpenings: { [proposal.chainId]: { payload: fromHex(opened.digest), vault: fromHex(vault), salt: fromHex(opened.salt) } },
+    } as never);
+    return proposal;
+  };
+
+  it('A SPENDING POLICY SET FROM ONE DEVICE: A RUN RAISED AT ITS BAND, APPROVED, CHARGED ON A SECOND DEVICE THAT DID NOT SET IT, AND PAID; A RUN ACROSS THE PERIOD\'S END REFUSED AT RAISE, AND A RUN PAST THE PERIOD\'S LIMIT REFUSED BEFORE ANY FEE', async () => {
+    const { vault } = await aFundedVault();
+    const now = BigInt(Math.floor(Date.now() / 1000));
+    const dana = aPersonPaidPrivately(1, 'Dana', 600n);
+    const fay = aPersonPaidPrivately(3, 'Fay', 1_500n);
+
+    /* ---- the policy, set from the founding signer's device: raised, approved and carried out through the routes ---- */
+    const set = await setSpendingPolicyOnDevice(governingOn(recordsHere([dana])) as never, { viewingKey, vault, asset: TOKEN as never, terms: policyTermsAt(now) });
+    /* RED WHEN: a policy cannot be set from a device - nothing in the product would write one. */
+    expect(set.state).toBe('done');
+    /* The second device reads it from the company's records and the chain, having set nothing. */
+    const second = recordsHere([dana, fay]);
+    const read = await spendingPolicyHere({ records: second, accountId: ACCOUNT_ID, viewingKey }, { vault, asset: TOKEN as never });
+    /* RED WHEN: the record the setting device filed cannot be opened on another device against what the chain holds. */
+    expect(read.state).toBe('set');
+
+    /* ---- a run of 600, raised at its band ---- */
+    const first = await drawnAndRaised([dana], '2026-10', vault, now - 600n, now + 3_600n);
+    const round = await first.round;
+    const raised = openSealedRun(store.listRuns(ACCOUNT_ID).find((r) => r.id === first.drawn.id)!, viewingKey);
+    const leg = Object.values(raised.payout ?? {})[0]!;
+    /*
+     * RED WHEN: a run from a policy vault is raised needing no approvals of its
+     * band - the charge then refuses it after its approvals. Every band here
+     * needs one, as the company has one seat, so which band is chosen is not
+     * measured here: that is src/server/a-leg-is-raised-on-the-device.test.ts's.
+     */
+    expect(leg.required).toBe(1n);
+    expect(store.getProposal(round.id)!.digest).toBe(hex(accountCircuits.runPayload(fromHex(leg.root), leg.payees, leg.opensAt, leg.closesAt, 1n)));
+    await approved(round.id, second, vault);
+
+    /* ---- charged and paid on the second device ---- */
+    const device = aSecondDevice();
+    const legHere = {
+      records: second, accountId: ACCOUNT_ID, runId: first.drawn.id, viewingKey,
+      deps: { detailsOf: vaultDetails, runPayload: accountCircuits.runPayload, proposalIdOf: accountCircuits.proposalIdOf, paidAmong: paidAmongNow },
+    };
+    const before = chain.applied.length;
+    const done = await payAnApprovedLeg(device as never, legHere);
+    /* RED WHEN: a run from a policy vault is paid without being charged, or charged after its payment. */
+    expect(done.steps.map((st) => st.kind)).toEqual(['charge', 'payment']);
+    expect(done.steps[0]).toEqual({ kind: 'charge', spentBefore: 0n });
+    expect(chain.applied.slice(before).map((a) => [a.ok, a.error])).toEqual([[true, ''], [true, '']]);
+    expect(done.paid).toEqual([0]);
+    expect((await paidAmongNow([...leg.leaves] as Hex[])).paid).toEqual([...leg.leaves]);
+    /* RED WHEN: the period's total is kept anywhere or not what the chain charged: any device works it out again as 600. */
+    if (read.state !== 'set') throw new Error('the policy was not read');
+    const period = periodOf(read.policy, { opensAt: leg.opensAt, closesAt: leg.closesAt })!;
+    expect(await periodTotalHere({ ...aSecondDevice(), records: second, accountId: ACCOUNT_ID, viewingKey }, { vault, asset: TOKEN, period })).toBe(600n);
+    /* Paying again charges nothing and pays nobody. */
+    const again = await payAnApprovedLeg(aSecondDevice() as never, legHere);
+    /* RED WHEN: paying a run that has paid everybody sends anything - a charge the chain refuses after a fee, or a payment. */
+    expect(again).toMatchObject({ paid: [], steps: [] });
+    expect(chain.applied.length).toBe(before + 2);
+
+    /* ---- a run whose window crosses the period's end is refused at raise ---- */
+    const filed = store.listProposals(ACCOUNT_ID).length;
+    const across = await drawnAndRaised([fay], '2026-11', vault, now - 600n, now + 10_000n);
+    /* RED WHEN: a run whose window lies in no single period is raised - its approvals and fees are spent on a run no charge can clear. */
+    await expect(across.round).rejects.toThrow(/period/u);
+    expect(store.listProposals(ACCOUNT_ID).length).toBe(filed);
+    expect(chain.applied.length).toBe(before + 2);
+
+    /* ---- a run that takes the period past its limit is refused before any fee ---- */
+    await depositIntoCompanyVault({ ...aSecondDevice(), company: LABEL, pay: wallet, inFlight: inFlightInMemory() }, vault, { token: TOKEN, value: 2_000n });
+    const past = await drawnAndRaised([fay], '2026-12', vault, now - 600n, now + 3_600n);
+    const pastRound = await past.round;
+    await approved(pastRound.id, second, vault);
+    const sentBefore = chain.applied.length;
+    /* RED WHEN: a run past the period's limit is charged or paid - the chain refuses the charge after a fee, or the vault pays past its limit. */
+    await expect(payAnApprovedLeg(aSecondDevice() as never, { ...legHere, runId: past.drawn.id })).rejects.toThrow(/past its limit for the period/u);
+    expect(chain.applied.length).toBe(sentBefore);
   });
 
   it('A PAYMENT NO ONE NOTE COVERS DRAWS ON TWO OF THE VAULT\'S NOTES, AND THE SERVICE PAYS ITS FEE AS THE VAULT\'S OWN COINS', async () => {

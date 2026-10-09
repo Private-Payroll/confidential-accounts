@@ -1121,7 +1121,7 @@ export async function recordsKeyFromTheWallet(
  */
 export async function holdersFromTheWallet(
   walletOrigin: string,
-  ask: Pick<HoldersAsked, 'company' | 'account' | 'movements'>,
+  ask: Pick<HoldersAsked, 'company' | 'account' | 'movements' | 'roles'>,
   view: Openable = walletQuietlyInThisPage(window),
   atOrigin: string = window.location.origin,
 ): Promise<HoldersRead> {

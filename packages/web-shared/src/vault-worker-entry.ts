@@ -20,7 +20,8 @@ import {
   firstSecretRunOf, startStandingOf, type AccountLedgerForAStart, type AccountStartPure, type SecretRun,
   type StartStanding, type VaultLedgerForAStart, type VaultStartPure,
 } from '../../../src/midnight/vault-start.js';
-import { buildGovernedCall, identityOfAChange, type GovernedCallDeps } from './governed-call-builder.js';
+import { buildGovernedCall, identityOfAChange, spendingPolicyKeysOf, type GovernedCallDeps } from './governed-call-builder.js';
+import { buildClearRun, periodTotalOf, runChargeStandingOf } from './run-charge-builder.js';
 import { detailsOfKind } from '../../../src/midnight/vault-details.js';
 import { circuitOf, httpKeyMaterialSource, IndexedDbArtefactCache, type ArtefactSource } from './key-material.js';
 import { ACCOUNT_CIRCUITS_SERVED_TO_A_DEVICE } from '../../../src/midnight/vault-contract.js';
@@ -440,6 +441,20 @@ export const answerVaultAsk = async (
       const v = (d.accountPure as unknown as { companyWide(): Uint8Array }).companyWide();
       return { id: ask.id, ok: true, ask: 'company-wide', value: Array.from(v, (b) => b.toString(16).padStart(2, '0')).join('') };
     }
+    case 'policy-bar-key': {
+      const { policyBarKey } = d.accountPure as unknown as { policyBarKey?: () => Uint8Array };
+      if (typeof policyBarKey !== 'function') {
+        throw new Error('this device was not given the account\'s function for the key its policy bar is kept under, so nothing was read.');
+      }
+      const v = policyBarKey();
+      return { id: ask.id, ok: true, ask: 'policy-bar-key', value: Array.from(v, (b) => b.toString(16).padStart(2, '0')).join('') };
+    }
+    case 'spending-policy-keys':
+      return {
+        id: ask.id, ok: true, ask: 'spending-policy-keys',
+        keys: spendingPolicyKeysOf(d, { vault: ask.vault, asset: ask.asset, assetBlinding: ask.assetBlinding,
+          ...(ask.policy === undefined ? {} : { policy: ask.policy }), ...(ask.total === undefined ? {} : { total: ask.total }) }),
+      };
     case 'proposal-identity':
       return { id: ask.id, ok: true, ask: 'proposal-identity', identity: identityOfAChange(d, ask.change, ask.salt) };
     case 'governed-call': {
@@ -452,6 +467,27 @@ export const answerVaultAsk = async (
       });
       return { id: ask.id, ok: true, ask: 'governed-call', tx: toBase64(built.proven) };
     }
+    case 'clear-run': {
+      /* The charge and the period's total it is charged against are worked out from one block's state, never kept. */
+      const built = await buildClearRun(d, {
+        account: ask.account, run: ask.run, runs: ask.runs,
+        chain: { accountState: fromBase64(ask.chain.accountState), parameters: fromBase64(ask.chain.parameters) },
+      });
+      return {
+        id: ask.id, ok: true, ask: 'clear-run',
+        tx: built.proven === null ? null : toBase64(built.proven), spent: built.spent === null ? null : built.spent.toString(),
+      };
+    }
+    case 'period-total':
+      return {
+        id: ask.id, ok: true, ask: 'period-total',
+        spent: periodTotalOf(d, { accountState: fromBase64(ask.accountState), ask: ask.total }).toString(),
+      };
+    case 'run-charged':
+      return {
+        id: ask.id, ok: true, ask: 'run-charged',
+        standing: runChargeStandingOf(d, { accountState: fromBase64(ask.accountState), proposal: ask.proposal }),
+      };
     case 'start-standing': {
       /*
        * **HOW FAR A VAULT'S START HAS GOT, READ HERE FROM BOTH CONTRACTS AS ONE

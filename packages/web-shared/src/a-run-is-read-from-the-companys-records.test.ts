@@ -165,7 +165,7 @@ describe('A RUN READ HERE FOR APPROVAL', () => {
     for (const [why, people, says] of cases) {
       /* RED WHEN: a run paying that person passes the checks an approving device runs. */
       const facts = await factsHere(records({ people }), CO, run, KEY);
-      expect(() => payable.check({ run, leg, made, filedBy: founder.publicKey }, facts), why).toThrow(says);
+      expect(() => payable.check({ run, leg, made, filedBy: founder.publicKey, vault: 'c5'.repeat(32) }, facts), why).toThrow(says);
     }
   });
 

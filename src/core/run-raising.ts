@@ -532,6 +532,21 @@ const peopleNamed = (xs: readonly number[]): string => `#${[...xs].sort((a, b) =
 const isAre = (xs: readonly number[]): string => (xs.length === 1 ? 'is' : 'are');
 const whenUtc = (s: bigint): string => `${new Date(Number(s) * 1000).toISOString().slice(0, 16).replace('T', ' ')} UTC`;
 
+const neverRaised = (run: PayrollRun, leg: RunLeg, registry: AssetRegistry): string =>
+  `the ${legName(leg, registry)} leg of run ${run.id} has not been raised, so there is nobody on it to retry: a retry pays `
+  + 'people an approved round did not reach, and this leg has no round yet. Raise the leg first';
+
+/**
+ * **THE LEG A RETRY IS OF, AS THE RUN RECORDS IT RAISED**, or a refusal by
+ * name: every refusal of a retry reads the leg's record through this, so each
+ * one stands on its own, whatever ran before it.
+ */
+const raisedLegToRetry = (run: PayrollRun, leg: RunLeg, registry: AssetRegistry) => {
+  const recorded = run.payout?.[leg];
+  if (recorded === undefined) throw new Error(neverRaised(run, leg, registry));
+  return recorded;
+};
+
 /**
  * **A RETRY IS OF A LEG WHOSE ROUND THE CHAIN WAS SEEN TO HOLD.** A retry pays
  * people an approved round did not reach; a leg with no round, or one never
@@ -541,10 +556,8 @@ const whenUtc = (s: bigint): string => `${new Date(Number(s) * 1000).toISOString
 export function refuseARetryOfALegNeverOnChain(
   run: PayrollRun, leg: RunLeg, legRound: ProposalStandingRead | undefined, registry: AssetRegistry = defaultAssets,
 ): void {
-  if (run.payout?.[leg] === undefined || legRound === undefined) {
-    throw new Error(`the ${legName(leg, registry)} leg of run ${run.id} has not been raised, so there is nobody on it to `
-      + 'retry: a retry pays people an approved round did not reach, and this leg has no round yet. Raise the leg first');
-  }
+  raisedLegToRetry(run, leg, registry);
+  if (legRound === undefined) throw new Error(neverRaised(run, leg, registry));
   if (!legRound.raisedAt) {
     throw new Error(`the ${legName(leg, registry)} leg of run ${run.id} ${legRound.status === 'blocked'
       ? 'was stopped by this company\'s own policy'
@@ -558,7 +571,7 @@ export function refuseARetryOfALegNeverOnChain(
 export function refuseARetryWhileItsLegCanPay(
   run: PayrollRun, leg: RunLeg, legRound: ProposalStandingRead, nowInSeconds: bigint, registry: AssetRegistry = defaultAssets,
 ): void {
-  const recorded = run.payout![leg]!;
+  const recorded = raisedLegToRetry(run, leg, registry);
   if (!stopped(legRound) && nowInSeconds < recorded.closesAt) {
     throw new Error(
       `the ${legName(leg, registry)} leg of run ${run.id} can still pay everybody on it until ${whenUtc(recorded.closesAt)}, when its `
@@ -583,7 +596,7 @@ export function refuseARetryOverAnotherRetry(input: {
 }): void {
   const { run, leg, indices, nowInSeconds } = input;
   const registry = input.registry ?? defaultAssets;
-  const recorded = run.payout![leg]!;
+  const recorded = raisedLegToRetry(run, leg, registry);
   const named = new Set(indices);
   for (const r of recorded.retries ?? []) {
     if (r.proposalId === undefined || r.proposalId === input.self || nowInSeconds >= r.closesAt) continue;

@@ -24,11 +24,12 @@ describe('THE PROVING MATERIAL A DEVICE MAY FETCH', () => {
       .toBe('/params/bls_midnight_2p9');
   });
 
-  it('A VAULT CALL ALSO PROVES THE ACCOUNT\'S recordPaymentFromVault OR approveVaultChange, AND A SIGNER\'S DEVICE PROVES propose, approve, cancel, amendSigner, setThreshold, setVaultThreshold AND adopt: THOSE NINE AND NO OTHER OF THE ACCOUNT\'S', () => {
+  it('A VAULT CALL ALSO PROVES THE ACCOUNT\'S recordPaymentFromVault OR approveVaultChange, AND A SIGNER\'S DEVICE PROVES propose, approve, cancel, amendSigner, setThreshold, setVaultThreshold, adopt, setPolicy, setPolicyBar AND clearRun ARE SERVED, AND THE ACCOUNT\'S CIRCUITS NO DEVICE PROVES ARE NOT (THE WHOLE SERVED LIST IS PINNED IN vault-worker-routing.test.ts)', () => {
     /* RED WHEN: the account's folder is not served (a payment out, a raise, an approval, a seat or a threshold change then cannot be
      * proved on a device, nor a vault's adoption when it is created), or it serves any other circuit of the account's, or a vault name reaches it. */
-    /* A withdrawal and a vault's own approvals needed are proved on a signer's device too: RED WHEN either is not served. */
-    for (const circuit of ['recordPaymentFromVault', 'approveVaultChange', 'propose', 'approve', 'cancel', 'amendSigner', 'setThreshold', 'setVaultThreshold', 'adopt']) {
+    /* A withdrawal, a vault's own approvals needed, a vault's spending policy and the approvals a policy change needs are proved on a signer's device too: RED WHEN any is not served. */
+    /* Charging an approved run to its vault's period is proved on the paying signer's device: RED WHEN clearRun is not served. */
+    for (const circuit of ['recordPaymentFromVault', 'approveVaultChange', 'propose', 'approve', 'cancel', 'amendSigner', 'setThreshold', 'setVaultThreshold', 'adopt', 'setPolicy', 'setPolicyBar', 'clearRun']) {
       expect(vaultArtefactFile(places, `/account/keys/${circuit}.prover`)).toBe(`/repo/contracts/managed/keys/${circuit}.prover`);
       expect(vaultArtefactFile(places, `/account/keys/${circuit}.verifier`)).toBe(`/repo/contracts/managed/keys/${circuit}.verifier`);
       expect(vaultArtefactFile(places, `/account/zkir/${circuit}.bzkir`)).toBe(`/repo/contracts/managed/zkir/${circuit}.bzkir`);
@@ -50,7 +51,7 @@ describe('THE PROVING MATERIAL A DEVICE MAY FETCH', () => {
       expect(vaultArtefactFile(places, `/account/keys/${circuit}.verifier`), circuit).toBe(`/repo/contracts/managed/keys/${circuit}.verifier`);
     }
     /* RED WHEN serving every verifying key also serves proving material for a circuit no device proves. */
-    for (const path of ['/account/keys/setPolicy.prover', '/account/zkir/setPolicy.bzkir', '/account/keys/recordPayment.verifier']) {
+    for (const path of ['/account/keys/holdRun.prover', '/account/zkir/holdRun.bzkir', '/account/keys/recordPayment.verifier']) {
       expect(vaultArtefactFile(places, path), path).toBeNull();
     }
   });

@@ -6,7 +6,7 @@ import { x25519 } from '@noble/curves/ed25519.js';
 import { identityFromSecret } from '../keys/derivation.js';
 import { committeeKeyFor, committeeSigningKeyFor } from './committee-key.js';
 import type { AccountAddress, CompanyLabel } from './company-label.js';
-import { MOST_ENTRIES_ASKED, parseAsk, type HoldersRequest, type RecordsKeyRequest } from './request.js';
+import { MOST_ENTRIES_ASKED, MOST_ROLES_ASKED, parseAsk, type HoldersRequest, type RecordsKeyRequest } from './request.js';
 import { unlockKeyFor } from './unlock.js';
 import type { UnlockRequest } from './request.js';
 import {
@@ -460,6 +460,44 @@ describe('THE HOLDERS ASK: PUBLIC CHAIN FACTS, NO PRESS, AND NOTHING ELSE', () =
     for (const bad of [[], ['zz'], [asked[0], asked[0]], Array.from({ length: MOST_ENTRIES_ASKED + 1 }, (_, i) => i.toString(16).padStart(64, '0')), 'a1']) {
       expect(() => ask({ movements: bad }), JSON.stringify(bad).slice(0, 40)).toThrow(/between 1 and/);
     }
+  });
+
+  it('A PAGE ABOUT TO RAISE OR APPROVE A RUN ASKS WHAT THE ACCOUNT HOLDS UNDER SOME OF ITS ROLES, AND IS TOLD EXACTLY THOSE, IN ITS ORDER', () => {
+    const asked = ['d4'.repeat(32), 'a1'.repeat(32)];
+    const request = ask({ roles: asked });
+    /* RED WHEN: the entries a page asked about are dropped from the ask, or reordered. */
+    expect(request.roles).toEqual(asked);
+    const roles = [{ key: asked[0]!, value: 'ee'.repeat(32) }, { key: asked[1]!, value: null }];
+    const answer = holdersAnswerFor(request, holders, NOW, undefined, undefined, roles);
+    /* RED WHEN: what the wallet read under each entry is not passed on as read, in the order asked. */
+    expect(answer.roles).toEqual(roles);
+    expect(answer.payments).toBeUndefined();
+    const exp = { ...expecting, roles: asked };
+    const read = readHoldersAnswer(answer, exp);
+    expect(read.ok && read.roles).toEqual(roles);
+    const takes = (message: unknown, e: Parameters<typeof readHoldersAnswer>[1] = exp) => readHoldersAnswer(message, e).ok;
+    /* RED WHEN: a page that asked takes an answer that says nothing of the entries - a vault's marker would read as absent. */
+    expect(takes({ ...answer, roles: undefined })).toBe(false);
+    /* RED WHEN: an answer that leaves one out, answers another, reorders them, or holds a value in no wallet's shape is taken. */
+    for (const bad of [[roles[0]], [roles[1], roles[0]], [roles[0], { key: 'ff'.repeat(32), value: null }], [roles[0], { key: asked[1], value: 'EE'.repeat(32) }],
+      [roles[0], { key: asked[1] }], [...roles, roles[1]], 'x']) {
+      expect(takes({ ...answer, roles: bad }), JSON.stringify(bad).slice(0, 60)).toBe(false);
+    }
+    /* RED WHEN: a page that asked nothing about entries takes an answer that volunteers them. */
+    expect(takes(answer, expecting)).toBe(false);
+    /* RED WHEN: a wallet answers an ask about entries without reading them, answers entries nobody asked about, or answers others. */
+    expect(() => holdersAnswerFor(request, holders, NOW)).toThrow(/did not read the entries of the account/);
+    expect(() => holdersAnswerFor(ask(), holders, NOW, undefined, undefined, roles)).toThrow(/did not read the entries of the account/);
+    expect(() => holdersAnswerFor(request, holders, NOW, undefined, undefined, [roles[1]!, roles[0]!])).toThrow(/did not read the entries of the account/);
+    /* RED WHEN: an ask names no entries, an entry in no shape, one twice, or more than the most allowed, and is answered. */
+    for (const bad of [[], ['zz'], [asked[0], asked[0]], Array.from({ length: MOST_ROLES_ASKED + 1 }, (_, i) => i.toString(16).padStart(64, '0')), 'a1']) {
+      expect(() => ask({ roles: bad }), JSON.stringify(bad).slice(0, 40)).toThrow(/between 1 and/);
+    }
+    /* An ask may name payments and entries together, and is answered about both. */
+    const bothAsk = ask({ movements: ['c3'.repeat(32)], roles: asked });
+    const payments = { payKeyCommitment: null, held: [], openRounds: [], entries: 0 };
+    const both = readHoldersAnswer(holdersAnswerFor(bothAsk, holders, NOW, payments, undefined, roles), { ...exp, movements: ['c3'.repeat(32)] });
+    expect(both.ok && [both.payments, both.roles]).toEqual([payments, roles]);
   });
 
   it('THE ASK REFUSES ANY FIELD BUT THE LABEL AND THE ACCOUNT', () => {

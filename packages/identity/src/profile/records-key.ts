@@ -645,6 +645,17 @@ export interface AccountPaymentFacts {
   readonly entries: number;
 }
 
+/**
+ * **WHAT THE ACCOUNT HOLDS UNDER ONE ENTRY OF ITS MAP OF ROLES, AS A WALLET
+ * READ IT**, for an entry a page asked about: the thirty-two bytes it holds
+ * there as 64 lower-case hex characters, or null when it holds nothing there.
+ * Public chain facts only.
+ */
+export interface AccountRoleEntry {
+  readonly key: string;
+  readonly value: string | null;
+}
+
 /** What this wallet hands back for a holders ask. Everything in it is public, and nothing in it is signed. */
 export interface HoldersAnswer {
   readonly schema: typeof HOLDERS_ANSWER_SCHEMA;
@@ -657,6 +668,8 @@ export interface HoldersAnswer {
   readonly holders: AccountHolders;
   /** Present exactly when the ask named entries of the account's record of payments. */
   readonly payments?: AccountPaymentFacts;
+  /** Present exactly when the ask named entries of the account's map of roles: each one asked, in the order asked. */
+  readonly roles?: readonly AccountRoleEntry[];
   /**
    * The indexer this wallet read all of it through, which a page reads the
    * company's vaults through on its own device. Public: two addresses.
@@ -691,6 +704,7 @@ const readHolders = (value: unknown): AccountHolders | null => {
  */
 export function holdersAnswerFor(
   request: HoldersRequest, holders: AccountHolders, at: number, payments?: AccountPaymentFacts, indexer?: WalletIndexer,
+  roles?: readonly AccountRoleEntry[],
 ): HoldersAnswer {
   if (!usableOrigin(request.requester.origin)) {
     throw new RecordsKeyRefused('This wallet could not tell who asked, so nothing has been handed back.');
@@ -699,6 +713,11 @@ export function holdersAnswerFor(
   if ((asked === undefined) !== (payments === undefined)
     || (payments !== undefined && readPayments(payments, asked!) === null)) {
     throw new RecordsKeyRefused('This wallet did not read the payments the page asked about, so nothing has been handed back.');
+  }
+  const rolesAsked = request.roles;
+  if ((rolesAsked === undefined) !== (roles === undefined)
+    || (roles !== undefined && readRoles(roles, rolesAsked!) === null)) {
+    throw new RecordsKeyRefused('This wallet did not read the entries of the account the page asked about, so nothing has been handed back.');
   }
   return Object.freeze({
     schema: HOLDERS_ANSWER_SCHEMA,
@@ -713,6 +732,7 @@ export function holdersAnswerFor(
       foundingCommittee: frozenKeys(holders.foundingCommittee),
     }),
     ...(payments === undefined ? {} : { payments: readPayments(payments, asked!)! }),
+    ...(roles === undefined ? {} : { roles: readRoles(roles, rolesAsked!)! }),
     ...(indexer === undefined || walletIndexerOf(indexer) === null ? {} : { indexer: walletIndexerOf(indexer)! }),
   });
 }
@@ -737,6 +757,23 @@ const readPayments = (value: unknown, asked: readonly string[]): AccountPaymentF
   });
 };
 
+/**
+ * What an answer says the account holds under its roles, for the entries asked:
+ * every one asked, once, in the order asked, each with thirty-two bytes or
+ * null; or null for any other shape.
+ */
+const readRoles = (value: unknown, asked: readonly string[]): readonly AccountRoleEntry[] | null => {
+  if (!Array.isArray(value) || value.length !== asked.length) return null;
+  const out: AccountRoleEntry[] = [];
+  for (const [i, e] of (value as unknown[]).entries()) {
+    const entry = e as Partial<AccountRoleEntry> | null;
+    if (entry === null || typeof entry !== 'object' || entry.key !== asked[i]) return null;
+    if (entry.value !== null && (typeof entry.value !== 'string' || !HEX64.test(entry.value))) return null;
+    out.push(Object.freeze({ key: asked[i]!, value: entry.value as string | null }));
+  }
+  return Object.freeze(out);
+};
+
 /** Who holds an account, as the page read the wallet's answer: with the account the wallet read, which is the one asked about. */
 export interface AccountHoldersRead extends AccountHolders {
   readonly account: AccountAddress;
@@ -745,6 +782,8 @@ export interface AccountHoldersRead extends AccountHolders {
 export type HoldersRead =
   | {
     readonly ok: true; readonly holders: AccountHoldersRead; readonly at: number; readonly payments?: AccountPaymentFacts;
+    /** What the account holds under each entry of its map of roles the page asked about, in the order asked. */
+    readonly roles?: readonly AccountRoleEntry[];
     /** The indexer the wallet said it read through, or null when it said none. */
     readonly indexer: WalletIndexer | null;
   }
@@ -762,6 +801,8 @@ export function readHoldersAnswer(
     readonly company: CompanyLabel; readonly account: AccountAddress;
     /** The entries of the account's record of payments the page asked about, when it asked. */
     readonly movements?: readonly string[];
+    /** The entries of the account's map of roles the page asked about, when it asked. */
+    readonly roles?: readonly string[];
   },
 ): HoldersRead {
   const body = message as Partial<HoldersAnswer> | null;
@@ -781,15 +822,33 @@ export function readHoldersAnswer(
   if (holders === null || typeof body.at !== 'number' || !Number.isSafeInteger(body.at)) {
     return { ok: false, code: 'not-an-answer', says: 'that is not an answer saying who holds the company.' };
   }
+  let payments: AccountPaymentFacts | undefined;
   if (expecting.movements === undefined) {
     if (body.payments !== undefined) {
       return { ok: false, code: 'not-an-answer', says: 'that answer says what the account paid when nobody asked.' };
     }
-    return { ok: true, holders: Object.freeze({ ...holders, account: expecting.account }), at: body.at, indexer: walletIndexerOf(body.indexer) };
+  } else {
+    const read = readPayments(body.payments, expecting.movements);
+    if (read === null) {
+      return { ok: false, code: 'not-an-answer', says: 'that answer does not say what the account recorded as paid.' };
+    }
+    payments = read;
   }
-  const payments = readPayments(body.payments, expecting.movements);
-  if (payments === null) {
-    return { ok: false, code: 'not-an-answer', says: 'that answer does not say what the account recorded as paid.' };
+  let roles: readonly AccountRoleEntry[] | undefined;
+  if (expecting.roles === undefined) {
+    if (body.roles !== undefined) {
+      return { ok: false, code: 'not-an-answer', says: 'that answer says what the account holds under its roles when nobody asked.' };
+    }
+  } else {
+    const read = readRoles(body.roles, expecting.roles);
+    if (read === null) {
+      return { ok: false, code: 'not-an-answer', says: 'that answer does not say what the account holds under each of the entries asked about.' };
+    }
+    roles = read;
   }
-  return { ok: true, holders: Object.freeze({ ...holders, account: expecting.account }), at: body.at, payments, indexer: walletIndexerOf(body.indexer) };
+  return {
+    ok: true, holders: Object.freeze({ ...holders, account: expecting.account }), at: body.at,
+    ...(payments === undefined ? {} : { payments }), ...(roles === undefined ? {} : { roles }),
+    indexer: walletIndexerOf(body.indexer),
+  };
 }

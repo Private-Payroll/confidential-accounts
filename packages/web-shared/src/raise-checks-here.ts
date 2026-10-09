@@ -30,12 +30,13 @@ import {
 import { registerFor, skippedIndices } from '../../../src/midnight/run-skips.js';
 import { assetOfLeg, legEmployees, legName, openSealedRun } from '../../../src/core/run-legs.js';
 import type { PaymentFacts } from '../../../src/midnight/payout-tree.js';
-import type { Account, PayrollRun, Role, RunLeg } from '../../../src/core/types.js';
+import type { Account, PayrollRun, Role, RunLeg, SealedProposal } from '../../../src/core/types.js';
 import type { PeopleHere } from './people-on-device.js';
 import type { DirectoryHere } from './vault-page-doors.js';
 import type { RunMadeHere } from './what-this-device-made.js';
 import { knownEntriesOf } from './payment-entries.js';
 import { payableFactsOf, payrollRoundsHere, type CompanyRecordsHere } from './run-rebuilt-here.js';
+import { policyForARunHere, type PolicyForARun } from './spending-policy-here.js';
 
 /** A round of a run, as this device made it: the run, the leg, and the payments it makes, with what they are checked against. */
 export interface RoundToCheck {
@@ -49,12 +50,25 @@ export interface RoundToCheck {
   readonly made: RunMadeHere;
   /** The signing key the proposal's filing is signed with: this device's seat's for a raise, the filer's for an approval. */
   readonly filedBy: string;
+  /** The vault the proposal is paid from: the one it is raised on, which its identity on the chain is made with. */
+  readonly vault: string;
   /**
    * The proposal the proposal is written down as, when it is: the one being
    * approved or sent again. Absent while it is raised. A round is never
    * refused for being itself.
    */
   readonly proposal?: string;
+}
+
+/**
+ * What a raise has already read for the proposal it is checking, so the checks
+ * decide on that one read rather than reading it again: the company's
+ * proposals, and the proposal's vault's spending policy read for exactly this
+ * round's vault, currency, total and window.
+ */
+export interface ReadForTheRound {
+  readonly proposals?: readonly SealedProposal[];
+  readonly spendingPolicy?: PolicyForARun;
 }
 
 /** Everything the checks read, read on this device for one round. */
@@ -72,6 +86,8 @@ export interface FactsHere {
   readonly standingOf: (proposalId: string) => ProposalStandingRead | undefined;
   /** Now, by this device's clock, in seconds since the Unix epoch: what a window is judged against. */
   readonly nowInSeconds: bigint;
+  /** Where the proposal stands under its vault's spending policy, read here (`policyForARunHere`). */
+  readonly spendingPolicy: PolicyForARun;
 }
 
 /** One check: its name, and what it refuses, by throwing what it says. */
@@ -102,7 +118,9 @@ const addressOfIn = (people: PeopleHere) => (e: { id: string }): string | null =
  * **A LEG IS PAID BY ONE ROUND.** A leg's round is refused while the run points
  * at another round for the leg that is not withdrawn, while a retry on the leg
  * can still pay some of its people, and while another round of the leg may
- * still be on the chain. A retry is judged by the two checks after these.
+ * still be on the chain. A retry is judged by the two checks after these. Each
+ * check reads and refuses on its own inputs, so none of them relies on another
+ * having run before it.
  */
 const legRaisedOnce: RaiseCheck = {
   name: 'leg-raised-once',
@@ -135,7 +153,7 @@ const legNoLongerPays: RaiseCheck = {
     const pointed = run.proposalIds[leg];
     const legRound = pointed === undefined ? undefined : facts.standingOf(pointed);
     refuseARetryOfALegNeverOnChain(run, leg, legRound, facts.registry);
-    refuseARetryWhileItsLegCanPay(run, leg, legRound!, facts.nowInSeconds, facts.registry);
+    if (legRound !== undefined) refuseARetryWhileItsLegCanPay(run, leg, legRound, facts.nowInSeconds, facts.registry);
   },
 };
 
@@ -206,6 +224,48 @@ const ceiling: RaiseCheck = {
   },
 };
 
+/**
+ * **A RUN FROM A VAULT UNDER A SPENDING POLICY IS ONE THE CHAIN WILL CHARGE.**
+ * Read on this device for the proposal's own vault and currency: the vault has a
+ * policy for the currency, the run's whole window lies in one of its periods,
+ * its total fits a band and is no more than the vault may pay in a period, and
+ * it is raised needing at least the approvals its band needs - more is the
+ * raiser's own choice. A vault with no policy is paid as it always was.
+ */
+const spendingPolicy: RaiseCheck = {
+  name: 'spending-policy',
+  check: ({ made }, facts) => {
+    const p = facts.spendingPolicy;
+    if (p.state === 'none') return;
+    if (p.state === 'unread') {
+      throw new Error(`this device could not read the spending policy of the vault this run is paid from (${p.why}), so it `
+        + 'cannot say the vault would pay it. Reload the page and try again');
+    }
+    if (p.state === 'not-for-this-currency') {
+      throw new Error('the vault this run is paid from has a spending policy, but none for the currency this run pays in, so the '
+        + 'chain would charge it to no period and the vault would not pay it. Set a policy for this currency first, or raise '
+        + 'the run from another vault');
+    }
+    if (p.period === null) {
+      throw new Error('this run\'s window does not lie inside one period of the spending policy of the vault it is paid from, so '
+        + 'the chain would never charge it. Choose a window that opens and closes inside one period');
+    }
+    if (p.required === null) {
+      throw new Error('this run\'s total is above every band of the spending policy of the vault it is paid from, so no number '
+        + 'of approvals can pay it. Pay less in one run, or change the policy');
+    }
+    const total = positionsOf(made).reduce((a, i) => a + made.facts[i]!.amount, 0n);
+    if (total > p.periodLimit) {
+      throw new Error('this run alone is more than the vault it is paid from may pay in one period under its spending policy. '
+        + 'Pay less in one run, or raise the limit for the period');
+    }
+    if (!/^[0-9]+$/u.test(String(made.required)) || BigInt(made.required) < p.required) {
+      throw new Error(`this run is raised needing ${String(made.required)} approvals, and its band under the spending policy of `
+        + `the vault it is paid from needs ${p.required}, so the chain would not charge it. Raise it again`);
+    }
+  },
+};
+
 /** **NO OTHER RUN FOR THE MONTH IS RAISED TO PAY THE SAME PEOPLE.** */
 const overAnotherRun: RaiseCheck = {
   name: 'over-another-run',
@@ -256,29 +316,49 @@ const unaccounted: RaiseCheck = {
  */
 export const RAISE_CHECKS: readonly RaiseCheck[] = [
   legRaisedOnce, noOtherRoundOfTheLeg, legNoLongerPays, notOnAnotherRetry,
-  payable, decidedNotToPay, ceiling, overAnotherRun, onePayeeTwice, unaccounted,
+  payable, decidedNotToPay, ceiling, spendingPolicy, overAnotherRun, onePayeeTwice, unaccounted,
 ];
+
+/** The proposal's vault's spending policy, read for the proposal's vault, currency, total and window. */
+const policyOfTheRound = (
+  records: CompanyRecordsHere, accountId: string, viewingKey: Hex, round: Pick<RoundToCheck, 'vault' | 'leg' | 'made'> | undefined,
+): Promise<PolicyForARun> => {
+  if (round === undefined) return Promise.resolve({ state: 'unread', why: 'this device was not told which round to read it for' });
+  const { opensAt, closesAt } = round.made;
+  if (!/^[0-9]+$/u.test(String(opensAt)) || !/^[0-9]+$/u.test(String(closesAt))) {
+    return Promise.resolve({ state: 'unread', why: 'the run\'s window is not whole seconds since the Unix epoch' });
+  }
+  return policyForARunHere({ records, accountId, viewingKey }, {
+    vault: round.vault, asset: assetOfLeg(round.leg) as AssetId,
+    total: positionsOf(round.made).reduce((a, i) => a + round.made.facts[i]!.amount, 0n),
+    opensAt: BigInt(opensAt), closesAt: BigInt(closesAt),
+  });
+};
 
 /**
  * What the checks read for `run`, each read on this device from the company's
- * records and the person's own wallet, judged at `now` by this device's clock.
+ * records and the person's own wallet, judged at `now` by this device's clock,
+ * with the spending policy of `round`'s vault when a round is named.
  */
 export async function factsHere(
   records: CompanyRecordsHere, accountId: string, run: PayrollRun, viewingKey: Hex, now: Date = new Date(),
+  round?: Pick<RoundToCheck, 'vault' | 'leg' | 'made'>, read: ReadForTheRound = {},
 ): Promise<FactsHere> {
-  if (records.proposals === undefined) {
+  const readProposals = records.proposals;
+  if (readProposals === undefined) {
     throw new Error('this page cannot read the company\'s proposals, so it cannot check a payroll round. Reload the page to get '
       + 'the current version');
   }
-  const [people, directory, policy, proposals, runs] = await Promise.all([
-    records.people(), records.directory(), records.policy(), records.proposals(), records.runs()]);
+  const [people, directory, policy, proposals, runs, spendingPolicy] = await Promise.all([
+    records.people(), records.directory(), records.policy(), read.proposals ?? readProposals(), records.runs(),
+    read.spendingPolicy ?? policyOfTheRound(records, accountId, viewingKey, round)]);
   const rounds = payrollRoundsHere(proposals, accountId, viewingKey);
   const live = new Set(rounds.filter(isLiveRound).map((r) => r.runId));
   const others = runs.filter((r) => r.accountId === accountId && r.id !== run.id && live.has(r.id)).map((r) => openSealedRun(r, viewingKey));
   return {
     people, directory, policy, others, live, circuits: records.payments, registry: records.registry ?? theAssets, rounds,
     standingOf: (id) => proposals.find((p) => p.id === id && p.accountId === accountId),
-    nowInSeconds: BigInt(Math.floor(now.getTime() / 1000)),
+    nowInSeconds: BigInt(Math.floor(now.getTime() / 1000)), spendingPolicy,
   };
 }
 
@@ -288,9 +368,9 @@ export async function factsHere(
  * written down; every approving device runs it before an approval is built.
  */
 export async function refuseWhatNoRoundMay(
-  records: CompanyRecordsHere, accountId: string, viewingKey: Hex, round: RoundToCheck, now?: Date,
+  records: CompanyRecordsHere, accountId: string, viewingKey: Hex, round: RoundToCheck, now?: Date, read?: ReadForTheRound,
 ): Promise<void> {
-  const facts = await factsHere(records, accountId, round.run, viewingKey, now);
+  const facts = await factsHere(records, accountId, round.run, viewingKey, now, round, read);
   for (const c of RAISE_CHECKS) {
     try {
       c.check(round, facts);

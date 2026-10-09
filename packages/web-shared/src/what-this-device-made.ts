@@ -112,7 +112,6 @@ export type MadeHere = RunMadeHere | SecretRunMadeHere;
 export interface AccountLedgerView {
   readonly openProposals: { member(id: Uint8Array): boolean };
   readonly movements: { member(entry: Uint8Array): boolean };
-  readonly signerRoles: { member(key: Uint8Array): boolean; lookup(key: Uint8Array): Uint8Array };
 }
 
 interface MadeHereDeps {
@@ -123,8 +122,6 @@ interface MadeHereDeps {
   readonly secretRun?: { readonly vault: VaultStartPure; readonly account: AccountStartPure };
   /** The vault's two details circuits, without which no payee's leaf can be made here. */
   readonly vaultDetails?: DetailsOfKind;
-  /** The key under which the account marks a vault that pays only runs cleared against its spending policy. */
-  readonly policyOnKeyOf?: (vault: Uint8Array) => Uint8Array;
 }
 
 /** Why an approval was not built: this device could not make again what the proposal pays. */
@@ -179,7 +176,6 @@ export function refuseWhatThisDeviceDidNotMake(
       throw new NotMadeOnThisDevice('This device did not read what the company\'s records account for on the chain, so it will '
         + 'not raise this run. Reload the page and raise it again.');
     }
-    refuseAVaultNoDeviceCanClear(deps, opened.vault, ledger);
   }
   let root: Hex;
   let payees: bigint;
@@ -263,29 +259,5 @@ export function refuseWhatThisDeviceDidNotMake(
   if (!same(payload, opened.digest)) {
     throw new NotMadeOnThisDevice('What this proposal pays is not what this device rebuilt from the company\'s records: '
       + `other people, other amounts, another month or another window. ${DO_NOT}`);
-  }
-}
-
-/**
- * **A RAISE IS SENT ONLY TO A VAULT WHOSE RUNS IT CAN PAY.** A vault the
- * account marks as paying only runs cleared against its spending policy is
- * refused: a run there is paid only when its whole window lies in one of the
- * policy's periods, and no device holds a vault's policy, so no window raised
- * here can be shown to. Whether the chain holds anything the company's records
- * cannot account for is one of the raise checks every raising and approving
- * device runs before it builds anything (`raise-checks-here.ts`).
- */
-function refuseAVaultNoDeviceCanClear(deps: MadeHereDeps, vault: string | undefined, ledger: AccountLedgerView): void {
-  if (vault === undefined || !/^[0-9a-f]{64}$/iu.test(vault)) {
-    throw new NotMadeOnThisDevice('This device cannot tell which vault this run is paid from, so it will not raise it.');
-  }
-  if (deps.policyOnKeyOf === undefined) {
-    throw new NotMadeOnThisDevice('This page cannot read whether the vault pays only runs cleared against a spending policy, '
-      + 'so it will not raise a run. Reload the page to get the current version.');
-  }
-  if (ledger.signerRoles.member(deps.policyOnKeyOf(fromHex(vault.toLowerCase())))) {
-    throw new NotMadeOnThisDevice('The vault this run is paid from pays only runs cleared against its spending policy, and '
-      + 'a run is cleared only when its whole window lies in one of the policy\'s periods. This device does not hold the '
-      + 'vault\'s policy, so it cannot show this window does. Raise the run from a vault with no spending policy.');
   }
 }

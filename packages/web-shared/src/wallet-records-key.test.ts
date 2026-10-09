@@ -2,11 +2,11 @@ import { describe, it, expect } from 'vitest';
 import type { AccountAddress, CompanyLabel, VaultAddress } from 'midnight-identity/profile/company-label';
 import { TEST_MNEMONIC } from '@midnight-ntwrk/testkit-js';
 import { identityFromWords } from 'midnight-identity';
-import { parseAsk, type RecordsKeyRequest } from 'midnight-identity/profile/request';
+import { parseAsk, type HoldersRequest, type RecordsKeyRequest } from 'midnight-identity/profile/request';
 import { committeeKeyFor } from 'midnight-identity/profile/committee-key';
-import { recordsKeyAnswerFor, recordsKeySignedBy } from 'midnight-identity/profile/records-key';
+import { holdersAnswerFor, recordsKeyAnswerFor, recordsKeySignedBy } from 'midnight-identity/profile/records-key';
 import { READY_PING } from 'midnight-identity/profile/channel';
-import { askWalletForAddressesAndBalances, askWalletToSignRecordsKey } from './wallet-records-key.js';
+import { askWalletForAddressesAndBalances, askWalletToSignRecordsKey, askWalletWhoHolds } from './wallet-records-key.js';
 import { addressesAndBalancesAnswerFor, type AddressesAndBalancesShown } from 'midnight-identity/profile/addresses-and-balances';
 import type { AddressesAndBalancesRequest } from 'midnight-identity/profile/request';
 import type { Openable, WalletWindow } from './wallet-sign-in.js';
@@ -129,5 +129,39 @@ describe('ASKING THE PERSON\'S WALLET WHERE IT RECEIVES AND WHAT IT HOLDS', () =
       expect((e as Error).name, why).toBe('WalletDidNotShowAddressesAndBalances');
       expect((e as { code?: string }).code, why).toBe(code);
     }
+  });
+});
+
+describe('ASKING THE PERSON\'S WALLET WHAT THE COMPANY\'S ACCOUNT HOLDS UNDER SOME OF ITS ROLES', () => {
+  const HOLDERS = { ...SEATS, approvals: 1, adoptedVaults: [], founding: SEAT, foundingCommittee: [mine] };
+  const asked = ['d4'.repeat(32), 'a1'.repeat(32)];
+  const held = (key: string) => (key === asked[0] ? 'ee'.repeat(32) : null);
+  const answering = (withRoles: boolean) => (ask: unknown) => {
+    const request = parseAsk(ask, US, 1_000) as HoldersRequest;
+    return holdersAnswerFor(request, HOLDERS, 1_000, undefined, undefined,
+      withRoles ? (request.roles ?? []).map((key) => ({ key, value: held(key) })) : undefined);
+  };
+  const whoHolds = { company: CO, account: ACCOUNT, atOrigin: US, name: 'Us', rdns: 'example.us', nonce: 'n2', now: () => 1_000 };
+
+  it('sends the entries asked in an ask the wallet\'s own parser takes, and hands back what the wallet read under each, in the order asked', async () => {
+    const w = walletAnswering(answering(true));
+    const read = await askWalletWhoHolds(w.view, WALLET, { ...whoHolds, roles: asked });
+    /* RED WHEN: the entries are not on the wire, or the wallet's parser does not take them as asked. */
+    expect((w.asked[0] as Record<string, unknown>)['roles']).toEqual(asked);
+    expect((parseAsk(w.asked[0], US, 1_000) as HoldersRequest).roles).toEqual(asked);
+    /* RED WHEN: what the wallet read under each entry does not come back, or comes back in another order. */
+    expect(read.roles).toEqual([{ key: asked[0], value: 'ee'.repeat(32) }, { key: asked[1], value: null }]);
+    const plain = walletAnswering(answering(false));
+    const none = await askWalletWhoHolds(plain.view, WALLET, whoHolds);
+    /* RED WHEN: an ask that names no entries carries the field, or its answer is read as holding some. */
+    expect('roles' in (plain.asked[0] as Record<string, unknown>)).toBe(false);
+    expect(none.roles).toBeUndefined();
+  });
+
+  it('BELIEVES NO ANSWER THAT LEAVES OUT THE ENTRIES IT ASKED ABOUT', async () => {
+    /* A wallet that reads the account and says nothing of the entries asked: what a page must never take as "nothing held". */
+    const w = walletAnswering((ask) => holdersAnswerFor({ ...(parseAsk(ask, US, 1_000) as HoldersRequest), roles: undefined } as HoldersRequest, HOLDERS, 1_000));
+    /* RED WHEN: an answer silent about the entries asked is taken, so a vault's policy marker reads as absent. */
+    await expect(askWalletWhoHolds(w.view, WALLET, { ...whoHolds, roles: asked })).rejects.toThrow(/does not say what the account holds under each of the entries asked about/u);
   });
 });

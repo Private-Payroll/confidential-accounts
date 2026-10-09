@@ -36,8 +36,12 @@ import type { Sealed } from '../core/crypto.js';
 export type WireRecord = SealedRecordKind;
 export const WIRE_RECORDS: readonly WireRecord[] = ['pool', 'deposit-journal', 'payment-journal', 'nonce-secret'];
 
-/** A company's own records, as the signed company-record store files them. */
-export const COMPANY_RECORD_KINDS = ['state', 'roster', 'policy', 'person', 'run', 'proposal', 'offer'] as const;
+/**
+ * A company's own records, as the signed company-record store files them.
+ * `policy` is the company's own ceilings; `spending-policy` is one vault's
+ * spending policy for one currency, sealed to the signers.
+ */
+export const COMPANY_RECORD_KINDS = ['state', 'roster', 'policy', 'person', 'run', 'proposal', 'offer', 'spending-policy'] as const;
 export type CompanyRecordKind = (typeof COMPANY_RECORD_KINDS)[number];
 
 /**

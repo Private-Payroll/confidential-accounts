@@ -53,15 +53,11 @@ const payloadOfRetry = (m: RunMadeHere): string => {
 
 const CHAIN_ID = 'c1'.repeat(32);
 type ChainSays = { open?: boolean; paid?: readonly Hex[]; payKey?: Hex | null };
-/** The account as the chain holds it: who is paid, and the pay-record key it committed to; `payKey: null` for none. */
+/** The account as the chain holds it: whether the proposal is open and who is paid. What the wallet reads, `payKey` included (`null` for none), is `walletRead`'s. */
 const chain = (o: ChainSays = {}): AccountLedgerView & { readonly says: ChainSays } => ({
   says: o,
   openProposals: { member: (id: Uint8Array) => (o.open ?? true) && toHex(id) === CHAIN_ID },
   movements: { member: (x: Uint8Array) => (o.paid ?? []).some((n) => paidOnceOfNonce(n) === toHex(x)) },
-  signerRoles: {
-    member: (k: Uint8Array) => o.payKey !== null && toHex(k) === toHex(pureCircuits.payKeyCommitmentKey()),
-    lookup: () => pureCircuits.payKeyCommitmentOf(fromHex(o.payKey ?? pay.key)),
-  },
 });
 /** What the person's own wallet reads off the chain about a run's payments: the entries asked about, those held, the commitment. */
 const walletRead = (m: RunMadeHere, o: ChainSays): WalletReadFacts => {

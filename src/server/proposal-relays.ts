@@ -359,13 +359,14 @@ export const proposalRelayRoutes = (deps: ProposalRelayDeps): express.Router => 
 
   /*
    * **AN APPROVED GOVERNANCE PROPOSAL CARRIED OUT**, by the call a signer's
-   * device proved: a seat given, the company's threshold changed, or one vault's
-   * own approvals needed changed. The chain checks the proposal is approved and
+   * device proved: a seat given, the company's threshold changed, one vault's
+   * own approvals needed changed, a vault's spending policy set, or the approvals
+   * a change to a spending policy needs changed. The chain checks the proposal is approved and
    * is for exactly that change, and closes it; it is written down as carried out
    * once the chain no longer holds it open.
    */
   router.post('/api/proposals/:id/carry', deps.signedIn, json, deps.ownsProposal, async (req, res) => {
-    const b = parsed(res, z.object({ tx: TX, circuit: z.enum(['amendSigner', 'setThreshold', 'setVaultThreshold']) }).strict(),
+    const b = parsed(res, z.object({ tx: TX, circuit: z.enum(['amendSigner', 'setThreshold', 'setVaultThreshold', 'setPolicy', 'setPolicyBar']) }).strict(),
       req.body, 'a change to carry out');
     if (b === null) return;
     await answerASend(req, res, async () => {
@@ -393,6 +394,38 @@ export const proposalRelayRoutes = (deps: ProposalRelayDeps): express.Router => 
       const carried: SealedProposal = { ...latest, status: 'executed', executedAt: now() };
       deps.store.putProposal(carried);
       return standingOf(carried);
+    }, deps.recordRefusal);
+  });
+
+  /*
+   * **AN APPROVED RUN CHARGED TO ITS VAULT'S PERIOD**, by the call a signer's
+   * device proved: the device worked out the period's running total itself and
+   * the chain checks it against its own commitment, with the run's approvals,
+   * its window, its band and the period's limit. The run's proposal stays open
+   * on the chain - it is charged, to be paid - so what is written here is only
+   * where the chain was read to hold it.
+   */
+  router.post('/api/proposals/:id/charge', deps.signedIn, json, deps.ownsProposal, async (req, res) => {
+    const b = parsed(res, z.object({ tx: TX }).strict(), req.body, 'a run to charge to its period');
+    if (b === null) return;
+    await answerASend(req, res, async () => {
+      const id = String(req.params.id);
+      const { proposal, release } = await beforeSending(async () => {
+        const p = requireProposal(id);
+        await actingSeat(p.accountId, (req as { userId?: unknown }).userId);
+        if (p.status !== 'open' && p.status !== 'approved') throw new NothingWasSent(notSentBecauseItIs(p.status));
+        const h = chainHoldsIt(p, p.raisedAt ? null : await readTheChain(p.accountId));
+        if (h !== 'present') {
+          throw new NothingWasSent('the chain does not hold this run\'s proposal open, so there is nothing to charge. Nothing was sent.');
+        }
+        return { proposal: p, release: held(`charge ${id}`, 'charging this run to its period') };
+      });
+      try {
+        await relay(proposal.accountId, b.tx, 'clearRun', 'charging this run to its period');
+      } finally {
+        release();
+      }
+      return standingOf(written(id, await readTheChain(proposal.accountId)));
     }, deps.recordRefusal);
   });
 

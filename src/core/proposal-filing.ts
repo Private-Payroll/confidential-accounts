@@ -111,7 +111,18 @@ export const paysCommitmentOf = (pays: ProposalPays, salt: string): Hex => commi
 export type GovernancePayloadBody =
   | { readonly signerId: string }
   | { readonly newThreshold: number }
-  | { readonly vault: Hex; readonly newThreshold: number };
+  | { readonly vault: Hex; readonly newThreshold: number }
+  /** A vault's spending policy for one currency: the currency's blinded key, never the currency, and the policy's commitment. */
+  | { readonly vault: Hex; readonly assetKey: Hex; readonly commitment: Hex }
+  | { readonly newPolicyBar: number };
+
+/**
+ * The governance kinds a device seals. A vault's spending policy and the
+ * approvals a policy change needs are named here and not yet among the kinds
+ * the company's proposal list says in words, which reads either as a change to
+ * the company.
+ */
+type GovernanceKind = Extract<ProposalKind, 'add-signer' | 'set-threshold' | 'set-vault-threshold'> | 'set-spending-policy' | 'set-policy-bar';
 
 /**
  * **A GOVERNANCE PROPOSAL'S ENVELOPE, SEALED ON THE DEVICE RAISING IT**, in the
@@ -121,7 +132,7 @@ export type GovernancePayloadBody =
  * change is zero in the reserved "no asset".
  */
 export const sealGovernanceProposal = (input: {
-  readonly accountId: string; readonly viewingKey: Hex; readonly kind: Extract<ProposalKind, 'add-signer' | 'set-threshold' | 'set-vault-threshold'>;
+  readonly accountId: string; readonly viewingKey: Hex; readonly kind: GovernanceKind;
   readonly summary: string; readonly noVault: Hex; readonly body: GovernancePayloadBody;
   readonly change: { readonly asset: string; readonly amount: bigint; readonly batchDigest: Hex; readonly salt: Hex };
   /** The seat raising it, and its role, as the company's directory holds them. */
@@ -134,8 +145,9 @@ export const sealGovernanceProposal = (input: {
 }, input.viewingKey);
 
 /** Whether a value names a proposal kind this file seals. */
-export const isGovernanceKind = (kind: unknown): kind is 'add-signer' | 'set-threshold' | 'set-vault-threshold' =>
-  kind === 'add-signer' || kind === 'set-threshold' || kind === 'set-vault-threshold';
+export const isGovernanceKind = (kind: unknown): kind is GovernanceKind =>
+  kind === 'add-signer' || kind === 'set-threshold' || kind === 'set-vault-threshold' || kind === 'set-spending-policy'
+  || kind === 'set-policy-bar';
 
 /** What a round's entries commit to, folded into the change its proposal seals. */
 export const batchDigestOf = (entries: readonly ShieldedEntry[]): Hex => commit(canonical(entries), '');

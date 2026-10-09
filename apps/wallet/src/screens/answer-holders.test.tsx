@@ -143,4 +143,25 @@ describe('THE WALLET SAYS WHO HOLDS A COMPANY, WITH NO PRESS', () => {
     /* RED WHEN: a page that asked which payments are recorded is answered with none read, which it would take as nobody paid. */
     await waitFor(() => expect(refused).toEqual([{ refused: 'unreadable' }]));
   });
+
+  it('A PAGE ABOUT TO RAISE OR APPROVE A RUN IS TOLD WHAT THE ACCOUNT HOLDS UNDER THE ENTRIES IT ASKED, FROM THE SAME READ, AND NOTHING WHEN THE READ SAYS NOTHING', async () => {
+    const asked = ['d4'.repeat(32), 'a1'.repeat(32)];
+    const seen: Array<readonly string[] | undefined> = [];
+    const roles = [{ key: asked[0]!, value: 'ee'.repeat(32) }, { key: asked[1]!, value: null }];
+    const withRoles: HoldersReader = async (_a, _l, _m, entries) => {
+      seen.push(entries);
+      return { of: 'read', holders: HOLDERS, roles };
+    };
+    const answers: unknown[] = [];
+    render(<AnswerHolders request={ask({ roles: asked })} channel={channelFor(answers)} consent={{ ok: true }} now={() => NOW} readHolders={withRoles} />);
+    await waitFor(() => expect(answers).toHaveLength(1));
+    /* RED WHEN: the entries the page asked about are not handed to the read, or not answered from it. */
+    expect(seen).toEqual([asked]);
+    expect((answers[0] as HoldersAnswer).roles).toEqual(roles);
+    cleanup();
+    const refused: unknown[] = [];
+    render(<AnswerHolders request={ask({ roles: asked })} channel={channelFor(refused)} consent={{ ok: true }} now={() => NOW} readHolders={holders} />);
+    /* RED WHEN: a page that asked about entries is answered with none read, which would read a vault's marker as absent. */
+    await waitFor(() => expect(refused).toEqual([{ refused: 'unreadable' }]));
+  });
 });

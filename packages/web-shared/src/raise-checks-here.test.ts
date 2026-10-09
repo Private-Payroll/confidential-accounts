@@ -1,6 +1,6 @@
 /**
  * **THE ONE LIST OF RAISE CHECKS, ON A ROUND MADE HERE AND THE FACTS READ HERE.**
- * Each check is judged here on the round alone; that the raiser and every
+ * Each check is judged here on the proposal alone; that the raiser and every
  * approver run the whole list is pinned where they do it
  * (`src/server/a-leg-is-raised-on-the-device.test.ts`).
  */
@@ -15,6 +15,7 @@ import type { PayrollRun, RosterEmployee } from '../../../src/core/types.js';
 import { payeeFor } from '../../../src/testing/payees.js';
 import { TEST_TOKEN, registryWithTestPrivateForms } from '../../../src/testing/assets.js';
 import { RAISE_CHECKS, type FactsHere, type RoundToCheck } from './raise-checks-here.js';
+import { refuseARetryOfALegNeverOnChain, refuseARetryWhileItsLegCanPay } from '../../../src/core/run-raising.js';
 import type { RunMadeHere } from './what-this-device-made.js';
 import type { PeopleHere } from './people-on-device.js';
 
@@ -35,7 +36,7 @@ const runOf = (people: readonly RosterEmployee[]): PayrollRun => ({
 } as unknown as PayrollRun);
 /** A round of `run` as made here: the leg's recorded payments, and for a retry the positions it pays. */
 const roundOf = (run: PayrollRun, recordedFrom: readonly RosterEmployee[], retry?: number[]): RoundToCheck => ({
-  run, leg: LEG, filedBy: 'f1'.repeat(32),
+  run, leg: LEG, filedBy: 'f1'.repeat(32), vault: 'c5'.repeat(32),
   made: {
     kind: 'payroll', seeds: [], payKey: '00'.repeat(32), identity: { accountId: CO, runId: `run_aaaaaaaaaaa1:${LEG}`, epoch: 0 },
     facts: factsOfThePaid(run.employees, (id) => recordedFrom.find((p) => p.id === id), REGISTRY), records: [],
@@ -47,6 +48,7 @@ const factsOf = (people: readonly RosterEmployee[]): FactsHere => ({
   directory: { dir: { company: CO, version: 1, seats: [] }, holders: {} as never, another: new Set() },
   policy: { threshold: 1, limitsByRole: {} } as never,
   others: [], live: new Set(), registry: REGISTRY, rounds: [], standingOf: () => undefined, nowInSeconds: 0n,
+  spendingPolicy: { state: 'none' },
   circuits: { paidOnceOf: pureCircuits.paidOnceOf, paidMovementOf: pureCircuits.paidMovementOf, read: async () => { throw new Error('not read here'); } },
 });
 const check = (name: string) => RAISE_CHECKS.find((c) => c.name === name)!.check;
@@ -56,8 +58,65 @@ describe('THE ONE LIST OF RAISE CHECKS', () => {
     /* RED WHEN: a check is dropped from the list, so the raiser or an approver no longer runs it. */
     expect(RAISE_CHECKS.map((c) => c.name)).toEqual([
       'leg-raised-once', 'no-other-round-of-the-leg', 'leg-no-longer-pays', 'not-on-another-retry',
-      'payable', 'decided-not-to-pay', 'ceiling', 'over-another-run', 'one-payee-twice', 'unaccounted',
+      'payable', 'decided-not-to-pay', 'ceiling', 'spending-policy', 'over-another-run', 'one-payee-twice', 'unaccounted',
     ]);
+  });
+
+  it('A ROUND FROM A VAULT UNDER A SPENDING POLICY IS ONE THE CHAIN WILL CHARGE: IN ONE PERIOD, IN A BAND, WITHIN THE LIMIT, AT ITS BAND\'S APPROVALS', () => {
+    const run = runOf([ALI, BEA, CAL]);
+    const policyCheck = check('spending-policy');
+    const under = (spendingPolicy: FactsHere['spendingPolicy']): FactsHere => ({ ...factsOf([ALI, BEA, CAL]), spendingPolicy });
+    const set = (over: Partial<Extract<FactsHere['spendingPolicy'], { state: 'set' }>> = {}): FactsHere['spendingPolicy'] =>
+      ({ state: 'set', version: 1, period: 0n, required: 2n, periodLimit: 1000n, ...over });
+    const raisedNeeding = (required: string, retry?: number[]): RoundToCheck => {
+      const r = roundOf(run, [ALI, BEA, CAL], retry);
+      return { ...r, made: { ...r.made, required } };
+    };
+    /* RED WHEN: a vault with no policy is held to anything - it is paid as it always was, at whatever the raiser chose. */
+    expect(() => policyCheck(raisedNeeding('0'), under({ state: 'none' }))).not.toThrow();
+    /* RED WHEN: a round is raised or approved on a policy this device could not read - it would be raised on a guess. */
+    expect(() => policyCheck(raisedNeeding('2'), under({ state: 'unread', why: 'the wallet did not answer' })))
+      .toThrow(/could not read the spending policy of the vault this run is paid from \(the wallet did not answer\)/u);
+    /* RED WHEN: a round from a vault with a policy for another currency only is raised - the chain charges it to nothing and never pays it. */
+    expect(() => policyCheck(raisedNeeding('2'), under({ state: 'not-for-this-currency' }))).toThrow(/none for the currency this run pays in/u);
+    /* RED WHEN: a round whose window crosses from one period into the next is raised - the chain would never charge it (fees spent for nothing). */
+    expect(() => policyCheck(raisedNeeding('2'), under(set({ period: null })))).toThrow(/does not lie inside one period/u);
+    /* RED WHEN: a round above every band is raised - no number of approvals can pay it. */
+    expect(() => policyCheck(raisedNeeding('2'), under(set({ required: null })))).toThrow(/above every band/u);
+    /* RED WHEN: a round alone over the limit per period is raised; a retry of fewer people within it is not refused. */
+    expect(() => policyCheck(raisedNeeding('2'), under(set({ periodLimit: 302n })))).toThrow(/more than the vault it is paid from may pay in one period/u);
+    expect(() => policyCheck(raisedNeeding('2'), under(set({ periodLimit: 303n })))).not.toThrow();
+    expect(() => policyCheck(raisedNeeding('2', [2]), under(set({ periodLimit: 102n })))).not.toThrow();
+    expect(() => policyCheck(raisedNeeding('2', [2]), under(set({ periodLimit: 101n })))).toThrow(/may pay in one period/u);
+    /* RED WHEN: a round is raised needing fewer approvals than its band - the chain would refuse to charge it after every approval and fee. */
+    expect(() => policyCheck(raisedNeeding('1'), under(set()))).toThrow(/raised needing 1 approvals, and its band .* needs 2/u);
+    expect(() => policyCheck(raisedNeeding('0'), under(set()))).toThrow(/raised needing 0 approvals/u);
+    expect(() => policyCheck(raisedNeeding('two'), under(set()))).toThrow(/raised needing two approvals/u);
+    /* RED WHEN: a proposal raised needing more than its band is refused - that is the raiser's own choice (the founder's rule on extra approvals). */
+    expect(() => policyCheck(raisedNeeding('2'), under(set()))).not.toThrow();
+    expect(() => policyCheck(raisedNeeding('3'), under(set()))).not.toThrow();
+  });
+
+  it('EACH RETRY CHECK GUARDS ITS OWN INPUTS: RUN ALONE, OR BEFORE THE OTHERS, ON A LEG NEVER RAISED, IT REFUSES BY NAME', () => {
+    const run = runOf([ALI, BEA, CAL]);
+    for (const name of ['leg-no-longer-pays', 'not-on-another-retry']) {
+      /* RED WHEN: a retry check reads the leg's record without asking whether it is there, and works only because another check ran first. */
+      expect(() => check(name)(roundOf(run, [ALI, BEA, CAL], [1]), factsOf([ALI, BEA, CAL])), name)
+        .toThrow(/leg of run run_aaaaaaaaaaa1 has not been raised, so there is nobody on it to retry/u);
+    }
+    /* And with the list run backwards, the first check to refuse a retry of a leg never raised says the same. */
+    const backwards = [...RAISE_CHECKS].reverse();
+    const refused = backwards.map((c) => { try { c.check(roundOf(run, [ALI, BEA, CAL], [1]), factsOf([ALI, BEA, CAL])); return null; } catch (e) { return [c.name, (e as Error).message] as const; } })
+      .filter((x) => x !== null && /not-on-another-retry|leg-no-longer-pays/u.test(x[0]));
+    expect(refused.map((x) => x![1].includes('has not been raised'))).toEqual([true, true]);
+  });
+
+  it('EVERY REFUSAL OF A RETRY READS THE LEG\'S RECORD ONLY ONCE IT HAS ASKED WHETHER IT IS THERE, EVEN WITH THE LEG\'S ROUND IN HAND', () => {
+    const run = runOf([ALI, BEA, CAL]);
+    const legRound = { status: 'open', raisedAt: '2026-09-01T00:00:00.000Z' } as never;
+    /* RED WHEN: either refusal reads a leg the run never raised as though it had, rather than refusing by name. */
+    expect(() => refuseARetryOfALegNeverOnChain(run, LEG, legRound, REGISTRY)).toThrow(/has not been raised, so there is nobody on it to retry/u);
+    expect(() => refuseARetryWhileItsLegCanPay(run, LEG, legRound, 0n, REGISTRY)).toThrow(/has not been raised, so there is nobody on it to retry/u);
   });
 
   it('TWO PEOPLE AT ONE ADDRESS ON THE LEG ARE REFUSED ON A RETRY AS ON A RAISE, WHOEVER THE RETRY NAMES', () => {
@@ -135,7 +194,7 @@ describe('THE ONE LIST OF RAISE CHECKS', () => {
     expect(() => unaccounted(withChain({ open: [], entries: 0, asked: [] }), facts)).toThrow(/was not asked about every payment these records know about/u);
   });
 
-  it('THE CEILING IS THE ONE FOR THE ROLE OF THE SEAT THAT FILED THE ROUND, OVER WHAT THE ROUND PAYS', () => {
+  it('THE CEILING IS THE ONE FOR THE ROLE OF THE SEAT THAT FILED THE PROPOSAL, OVER WHAT THE PROPOSAL PAYS', () => {
     const run = runOf([ALI, BEA, CAL]);
     const seat = (role: string | null) => ({ seat: 's', person: 'p', signingKey: 'F1'.repeat(32), wrappingKey: 'ab'.repeat(32), committeeKey: { tag: 't', value: 'v' }, role, retired: null });
     const ceilingFor = (role: string | null, per: Record<string, bigint>) => ({
@@ -144,7 +203,7 @@ describe('THE ONE LIST OF RAISE CHECKS', () => {
       policy: { threshold: 1, limitsByRole: Object.fromEntries(Object.entries(per).map(([r, n]) => [r, { [TEST_TOKEN]: { perTransaction: n } }])) } as never,
     });
     /* The leg pays 100 + 101 + 102 = 303; a retry of the third person, 102. */
-    /* RED WHEN: the ceiling is judged for another role than the filing seat's, or over the leg when the round is a retry. */
+    /* RED WHEN: the ceiling is judged for another role than the filing seat's, or over the leg when the proposal is a retry. */
     expect(() => check('ceiling')(roundOf(run, [ALI, BEA, CAL]), ceilingFor('approver', { approver: 302n, admin: 10_000n }))).toThrow(/for role "approver"/u);
     expect(() => check('ceiling')(roundOf(run, [ALI, BEA, CAL]), ceilingFor('approver', { approver: 303n }))).not.toThrow();
     expect(() => check('ceiling')(roundOf(run, [ALI, BEA, CAL], [2]), ceilingFor('approver', { approver: 102n }))).not.toThrow();
