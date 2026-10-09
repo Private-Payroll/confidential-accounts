@@ -36,7 +36,7 @@
     "vaults-web": "file:./apps/web",
     "vaults-web-shared": "file:./packages/web-shared",
     "@midnight-ntwrk/compact-js": "2.5.5-rc.6",
-    "@midnight-ntwrk/compact-runtime": "0.19.0",
+    "@midnight-ntwrk/compact-runtime": "0.20.0",
     "@midnight-ntwrk/midnight-js-contracts": "5.0.0-beta.4",
     "@midnight-ntwrk/midnight-js-http-client-proof-provider": "5.0.0-beta.4",
     "@midnight-ntwrk/midnight-js-indexer-public-data-provider": "5.0.0-beta.4",
@@ -55,13 +55,13 @@
     "better-sqlite3": "13.0.3",
     "cors": "2.8.6",
     "express": "5.2.1",
-    "nanoid": "6.0.1",
-    "playwright": "1.62.1",
+    "nanoid": "6.0.2",
+    "playwright": "1.63.0",
     "rollup": "^4.62.4",
     "vite-plugin-singlefile": "2.3.3",
     "vite-plugin-top-level-await": "^1.6.0",
     "vite-plugin-wasm": "^3.6.0",
-    "zod": "4.4.3",
+    "zod": "4.6.5",
     "postgres": "3.4.9"
   },
   "devDependencies": {
@@ -75,7 +75,7 @@
     "@vitejs/plugin-react": "6.0.5",
     "react": "19.2.8",
     "react-dom": "19.2.8",
-    "tsx": "4.23.12",
+    "tsx": "4.23.15",
     "typescript": "7.0.2",
     "vite": "8.2.1",
     "vitest": "4.1.10"
@@ -83,6 +83,6 @@
   "private": true,
   "overrides": {
     "@midnightntwrk/onchain-runtime-v4": "4.0.0-rc.3",
-    "@midnight-ntwrk/compact-runtime": "0.19.0"
+    "@midnight-ntwrk/compact-runtime": "0.20.0"
   }
 }
