@@ -77,8 +77,11 @@ import { ACCOUNT_CIRCUITS_A_DEVICE_GOVERNS } from '../../../src/midnight/vault-c
 import { PAY_KEY_PARTS } from '../../../src/midnight/pay-key-round.js';
 import { signerHalfOf, type SignerMaterial } from './private-state.js';
 import { refuseWhatThisDeviceDidNotMake, type AccountLedgerView, type MadeHere } from './what-this-device-made.js';
+import { sameGovernance } from './governance-compared.js';
 import type { DetailsOfKind } from '../../../src/midnight/payout-tree.js';
 import type { AccountStartPure, VaultStartPure } from '../../../src/midnight/vault-start.js';
+import { policyOpeningFromWire, type PolicyOpeningOnTheWire } from '../../../src/midnight/spending-policy-record.js';
+import type { PolicyOpening } from '../../../contracts/src/witnesses.js';
 
 export type { SignerMaterial } from './private-state.js';
 
@@ -120,7 +123,15 @@ export type GovernanceOnTheWire =
   | { readonly kind: 'add-signer'; readonly leaf: string }
   | { readonly kind: 'threshold'; readonly threshold: string }
   /** One vault's own approvals needed: the vault's address, and the number. */
-  | { readonly kind: 'vault-threshold'; readonly vault: string; readonly threshold: string };
+  | { readonly kind: 'vault-threshold'; readonly vault: string; readonly threshold: string }
+  /**
+   * One vault's spending policy for one currency: the vault, the currency's
+   * blinded key and the commitment to the policy. The policy itself is never
+   * on the proposal; it is in the company's record of it, sealed to the signers.
+   */
+  | { readonly kind: 'spending-policy'; readonly vault: string; readonly assetKey: string; readonly commitment: string }
+  /** The approvals any change to a spending policy needs. */
+  | { readonly kind: 'policy-bar'; readonly bar: string };
 
 /**
  * **THE COMPANY'S ACCOUNT TAKING A NEW VAULT AS ITS OWN**, named by the vault's
@@ -192,6 +203,19 @@ export type GovernedCallOrder =
     readonly proposal: string; readonly proposalSalt: string;
   }
   /**
+   * Carrying out an approved spending policy: the vault and the commitment the
+   * proposal names, and the three the circuit reads off this device - the
+   * currency, the account's blinding its key is made with, and the policy's
+   * opening, which must make the commitment.
+   */
+  | {
+    readonly circuit: 'setPolicy'; readonly vault: string; readonly commitment: string;
+    readonly proposal: string; readonly proposalSalt: string;
+    readonly asset: string; readonly assetBlinding: string; readonly policy: PolicyOpeningOnTheWire;
+  }
+  /** Carrying out an approved change to the approvals any change to a spending policy needs. */
+  | { readonly circuit: 'setPolicyBar'; readonly bar: string; readonly proposal: string; readonly proposalSalt: string }
+  /**
    * Withdrawing an open proposal: a run before its window opens, by any signer;
    * any other proposal only by the signer who raised it, as the chain checks.
    */
@@ -245,13 +269,15 @@ const SAID: Readonly<Record<string, string>> = {
   'run vault': 'account this run pays from', leaf: 'person being given access',
   threshold: 'number of approvals required', 'vault adopted': 'vault being adopted', 'pay-record key': 'company\'s pay-record key',
   run: 'payroll run', asset: 'token', amount: 'amount',
-  'payments digest': 'list of payments',
+  'payments digest': 'list of payments', policy: 'spending policy',
+  'policy bar': 'number of approvals a change to a spending policy needs',
 };
 /** What not to do if the refusal comes back, for each call a device makes. */
 const IF_AGAIN: Readonly<Record<string, string>> = {
   approve: 'do not approve it', propose: 'do not send it', amendSigner: 'do not grant this access',
   setThreshold: 'do not make this change', adopt: 'do not adopt this vault', sealPayKey: 'do not seal this key',
   setVaultThreshold: 'do not make this change', cancel: 'do not withdraw it',
+  setPolicy: 'do not set this policy', setPolicyBar: 'do not make this change',
 };
 
 /**
@@ -326,8 +352,18 @@ export interface GovernedCallDeps {
     /** The commitment to a pay-record key, and where the account keeps it; asked for only when a payroll run is approved. */
     payKeyCommitmentOf?(key: Uint8Array): Uint8Array;
     payKeyCommitmentKey?(): Uint8Array;
-    /** Where the account marks a vault that pays only runs cleared against its spending policy; asked for when a run is raised. */
+    /** Where the account marks a vault that pays only runs cleared against its spending policy. */
     policyOnKeyOf?(vault: Uint8Array): Uint8Array;
+    /** Present where a spending policy or the approvals a policy change needs are set; asked for only then. */
+    setPolicyPayload?(vault: Uint8Array, assetKey: Uint8Array, commitment: Uint8Array): Uint8Array;
+    setPolicyBarPayload?(bar: bigint): Uint8Array;
+    assetKeyOf?(asset: Uint8Array, blinding: Uint8Array): Uint8Array;
+    policyCommitmentOf?(policy: PolicyOpening): Uint8Array;
+    /** Where the chain keeps a vault's policy for one currency, and the approvals a policy change needs. */
+    policyKeyOf?(vault: Uint8Array, assetKey: Uint8Array): Uint8Array;
+    policyBarKey?(): Uint8Array;
+    /** The approvals a run of a total needs under a policy's bands: the first band its total fits. */
+    bandApprovals?(bands: PolicyOpening['terms']['bands'], total: bigint): bigint;
     noVault(): Uint8Array;
   };
   /** Reads the account's ledger out of its contract state's data; what an approval is checked against on the chain. */
@@ -412,11 +448,23 @@ export function recordForOneCall(order: GovernedCallOrder, material: SignerMater
   }
   const record = { ...signer, pinnedPath: null } as AccountPrivateState;
   const salt = order.circuit === 'amendSigner' || order.circuit === 'setThreshold' || order.circuit === 'adopt'
-    || order.circuit === 'sealPayKey' || order.circuit === 'setVaultThreshold'
+    || order.circuit === 'sealPayKey' || order.circuit === 'setVaultThreshold' || order.circuit === 'setPolicy'
+    || order.circuit === 'setPolicyBar'
     ? bytesOf('proposal\'s salt', opened?.salt ?? order.proposalSalt) : null;
+  /* Setting a policy reads the currency and the account's blinding its key is made with, and the policy's opening. */
+  const policyFields: Partial<Record<(typeof ACCOUNT_FIELDS)[number], Uint8Array>> = order.circuit === 'setPolicy'
+    ? { assetId: bytesOf('currency', order.asset), assetBlinding: bytesOf('account\'s asset blinding', order.assetBlinding) } : {};
+  if (order.circuit === 'setPolicy') {
+    Object.defineProperty(record, 'policy', { enumerable: true, value: policyOpeningFromWire(order.policy) });
+  }
   for (const field of ACCOUNT_FIELDS) {
     if (field === 'proposalSalt' && salt !== null) {
       Object.defineProperty(record, field, { enumerable: true, value: salt });
+      continue;
+    }
+    const given = policyFields[field];
+    if (given !== undefined) {
+      Object.defineProperty(record, field, { enumerable: true, value: given });
       continue;
     }
     Object.defineProperty(record, field, {
@@ -431,6 +479,13 @@ export function recordForOneCall(order: GovernedCallOrder, material: SignerMater
 const thresholdOf = (value: string): bigint => {
   const t = digitsOf('threshold', value);
   if (t < 1n) throw new Error('a company\'s threshold is at least one, and this one is not. Nothing was built.');
+  return t;
+};
+
+/** The approvals a change to a spending policy needs, refused unless it is a whole number of at least one. */
+const policyBarOf = (value: string): bigint => {
+  const t = digitsOf('number of approvals a policy change needs', value);
+  if (t < 1n) throw new Error('a change to a spending policy needs at least one approval, and this number is not. Nothing was built.');
   return t;
 };
 
@@ -449,6 +504,12 @@ export function argumentsFor(order: GovernedCallOrder): unknown[] {
   }
   if (order.circuit === 'adopt') {
     return [bytesOf('vault', order.vault), bytesOf('proposal\'s identity', order.proposal)];
+  }
+  if (order.circuit === 'setPolicy') {
+    return [bytesOf('vault', order.vault), bytesOf('policy\'s commitment', order.commitment), bytesOf('proposal\'s identity', order.proposal)];
+  }
+  if (order.circuit === 'setPolicyBar') {
+    return [policyBarOf(order.bar), bytesOf('proposal\'s identity', order.proposal)];
   }
   if (order.circuit === 'sealPayKey') {
     if (!Array.isArray(order.wrap) || order.wrap.length !== PAY_KEY_PARTS) {
@@ -501,6 +562,38 @@ const payKeyPayloadOf = (deps: Pick<GovernedCallDeps, 'accountPure'>, commitment
   return deps.accountPure.payKeyPayload(bytesOf('pay-record key\'s commitment', commitment));
 };
 
+/** The contract's own payload for a vault's spending policy, refused by name where this device was not given the function. */
+const spendingPolicyPayloadOf = (deps: Pick<GovernedCallDeps, 'accountPure'>, vault: string, assetKey: string, commitment: string): Uint8Array => {
+  if (typeof deps.accountPure.setPolicyPayload !== 'function') {
+    throw new Error('this device was not given the account\'s function for a spending policy, so nothing was built.');
+  }
+  return deps.accountPure.setPolicyPayload(bytesOf('vault', vault), bytesOf('currency\'s key', assetKey), bytesOf('policy\'s commitment', commitment));
+};
+
+/** The contract's own payload for the approvals a policy change needs, refused by name where this device was not given the function. */
+const policyBarPayloadOf = (deps: Pick<GovernedCallDeps, 'accountPure'>, bar: string): Uint8Array => {
+  if (typeof deps.accountPure.setPolicyBarPayload !== 'function') {
+    throw new Error('this device was not given the account\'s function for the approvals a policy change needs, so nothing was built.');
+  }
+  return deps.accountPure.setPolicyBarPayload(policyBarOf(bar));
+};
+
+/** The currency's blinded key, made by the contract's own function from the currency and the account's blinding. */
+const assetKeyMadeHere = (deps: Pick<GovernedCallDeps, 'accountPure'>, asset: string, blinding: string): string => {
+  if (typeof deps.accountPure.assetKeyOf !== 'function') {
+    throw new Error('this device was not given the account\'s function for a currency\'s key, so nothing was built.');
+  }
+  return hexOf(deps.accountPure.assetKeyOf(bytesOf('currency', asset), bytesOf('account\'s asset blinding', blinding)));
+};
+
+/** The commitment a policy's opening makes, by the contract's own function. */
+const policyCommitmentMadeHere = (deps: Pick<GovernedCallDeps, 'accountPure'>, policy: PolicyOpeningOnTheWire): string => {
+  if (typeof deps.accountPure.policyCommitmentOf !== 'function') {
+    throw new Error('this device was not given the account\'s function for a policy\'s commitment, so nothing was built.');
+  }
+  return hexOf(deps.accountPure.policyCommitmentOf(policyOpeningFromWire(policy)));
+};
+
 /** What a raise that is not a run changes: a seat or a threshold, a vault adopted, or the pay-record key committed. */
 const raisedChange = (order: RaiseGovernanceOrder | RaiseAdoptionOrder | RaisePayKeyOrder): RoundChangeOnTheWire =>
   ('adoption' in order ? order.adoption : 'payKey' in order ? order.payKey : order.governance);
@@ -516,7 +609,10 @@ export function governancePayloadOf(deps: Pick<GovernedCallDeps, 'accountPure'>,
   if (g.kind === 'vault-threshold') return vaultThresholdPayloadOf(deps, g.vault, g.threshold);
   if (g.kind === 'adopt-vault') return adoptionPayloadOf(deps, g.vault);
   if (g.kind === 'pay-key') return payKeyPayloadOf(deps, g.commitment);
-  throw new Error('this proposal is neither a seat nor a threshold, nor a vault adopted, nor the pay-record key, so nothing was built.');
+  if (g.kind === 'spending-policy') return spendingPolicyPayloadOf(deps, g.vault, g.assetKey, g.commitment);
+  if (g.kind === 'policy-bar') return policyBarPayloadOf(deps, g.bar);
+  throw new Error('this proposal is neither a seat nor a threshold, nor a vault adopted, nor the pay-record key, nor a spending '
+    + 'policy, so nothing was built.');
 }
 
 /** A governance proposal's payload and its identity on the chain, each the hexadecimal of its thirty-two bytes. */
@@ -539,6 +635,71 @@ export function identityOfAChange(deps: Pick<GovernedCallDeps, 'accountPure'>, c
   return { digest: hexOf(digest), chainId: hexOf(P.proposalIdOf(digest, noVault, bytesOf('proposal\'s salt', salt))), noVault: hexOf(noVault) };
 }
 
+/**
+ * **WHERE THE CHAIN KEEPS ONE VAULT'S SPENDING POLICY FOR ONE CURRENCY, AND
+ * WHAT A POLICY COMMITS TO**, each by the contract's own function: the
+ * currency's blinded key (from the currency and the account's blinding), the
+ * key the policy's commitment is kept under, the vault's policy marker, the
+ * key the approvals a policy change needs are kept under, and, given an
+ * opening, the commitment it makes - and, given a run's total too, the
+ * approvals its band needs.
+ */
+export interface SpendingPolicyKeys {
+  readonly assetKey: string;
+  readonly policyKey: string;
+  readonly onKey: string;
+  readonly barKey: string;
+  readonly commitment: string | null;
+  /**
+   * Given an opening and a run's total: the approvals the band that total fits
+   * needs, as decimal digits, or null when it is above every band - a run the
+   * chain will never charge.
+   */
+  readonly required?: string | null;
+}
+
+export function spendingPolicyKeysOf(
+  deps: Pick<GovernedCallDeps, 'accountPure'>,
+  input: {
+    readonly vault: string; readonly asset: string; readonly assetBlinding: string; readonly policy?: PolicyOpeningOnTheWire;
+    /** A run's total, as decimal digits; with `policy`, the approvals its band needs are worked out too. */
+    readonly total?: string;
+  },
+): SpendingPolicyKeys {
+  const P = deps.accountPure;
+  if (typeof P.policyKeyOf !== 'function' || typeof P.policyOnKeyOf !== 'function' || typeof P.policyBarKey !== 'function') {
+    throw new Error('this device was not given the account\'s functions for a spending policy, so nothing was worked out.');
+  }
+  const assetKey = assetKeyMadeHere(deps, input.asset, input.assetBlinding);
+  return {
+    assetKey,
+    policyKey: hexOf(P.policyKeyOf(bytesOf('vault', input.vault), bytesOf('currency\'s key', assetKey))),
+    onKey: hexOf(P.policyOnKeyOf(bytesOf('vault', input.vault))),
+    barKey: hexOf(P.policyBarKey()),
+    commitment: input.policy === undefined ? null : policyCommitmentMadeHere(deps, input.policy),
+    ...(input.policy === undefined || input.total === undefined ? {} : { required: bandApprovalsMadeHere(deps, input.policy, input.total) }),
+  };
+}
+
+/**
+ * The approvals a run of `total` needs under `policy`, by the contract's own
+ * function, or null when the total is above every band: the contract refuses
+ * such a total, and that refusal is the only one taken as "above every band".
+ */
+const bandApprovalsMadeHere = (deps: Pick<GovernedCallDeps, 'accountPure'>, policy: PolicyOpeningOnTheWire, total: string): string | null => {
+  if (typeof deps.accountPure.bandApprovals !== 'function') {
+    throw new Error('this device was not given the account\'s function for a policy\'s bands, so nothing was worked out.');
+  }
+  const opening = policyOpeningFromWire(policy);
+  const amount = digitsOf('run\'s total', total);
+  try {
+    return deps.accountPure.bandApprovals(opening.terms.bands, amount).toString();
+  } catch (e) {
+    if (/above every band/u.test(String((e as Error)?.message ?? e))) return null;
+    throw e;
+  }
+};
+
 /** The arguments as the circuit is handed them, with the contract's own payload and no-vault in place. */
 const argumentsBuilt = (deps: Pick<GovernedCallDeps, 'accountPure'>, order: GovernedCallOrder): unknown[] => {
   const args = argumentsFor(order);
@@ -559,6 +720,7 @@ const CALLED: Readonly<Record<string, string>> = {
   approve: 'approval', propose: 'proposal', amendSigner: 'seat', setThreshold: 'threshold change',
   adopt: 'adoption of the vault', sealPayKey: 'sealing of the pay-record key',
   setVaultThreshold: 'change of a vault\'s approvals needed', cancel: 'withdrawal',
+  setPolicy: 'spending policy', setPolicyBar: 'change of the approvals a policy change needs',
 };
 
 export class CallNotBuilt extends Error {
@@ -609,6 +771,11 @@ export function refuseARaiseThatIsNotTheRecordedOne(deps: Pick<GovernedCallDeps,
   } else if (order.circuit === 'setVaultThreshold') {
     made = P.proposalIdOf(vaultThresholdPayloadOf(deps, order.vault, order.threshold), P.noVault(),
       bytesOf('proposal\'s salt', order.proposalSalt));
+  } else if (order.circuit === 'setPolicy') {
+    made = P.proposalIdOf(spendingPolicyPayloadOf(deps, order.vault, assetKeyMadeHere(deps, order.asset, order.assetBlinding),
+      order.commitment), P.noVault(), bytesOf('proposal\'s salt', order.proposalSalt));
+  } else if (order.circuit === 'setPolicyBar') {
+    made = P.proposalIdOf(policyBarPayloadOf(deps, order.bar), P.noVault(), bytesOf('proposal\'s salt', order.proposalSalt));
   } else {
     made = P.proposalIdOf(P.setThresholdPayload(thresholdOf(order.threshold)), P.noVault(),
       bytesOf('proposal\'s salt', order.proposalSalt));
@@ -629,18 +796,9 @@ export function refuseARaiseThatIsNotTheRecordedOne(deps: Pick<GovernedCallDeps,
 
 const hexOf = (b: Uint8Array): string => Array.from(b, (x) => x.toString(16).padStart(2, '0')).join('');
 const same = (a: unknown, b: unknown): boolean => String(a).toLowerCase() === String(b).toLowerCase();
-const sameGovernance = (a: RoundChangeOnTheWire, b: RoundChangeOnTheWire): boolean =>
-  a.kind === b.kind && (a.kind === 'add-signer'
-    ? same(a.leaf, (b as { leaf: string }).leaf)
-    : a.kind === 'vault-threshold'
-      ? same(a.vault, (b as { vault: string }).vault) && thresholdOf(a.threshold) === thresholdOf((b as { threshold: string }).threshold)
-      : a.kind === 'adopt-vault'
-      ? same(a.vault, (b as { vault: string }).vault)
-      : a.kind === 'pay-key'
-        ? same(a.commitment, (b as { commitment: string }).commitment)
-        : thresholdOf(a.threshold) === thresholdOf((b as { threshold: string }).threshold));
 const changeNamed = (g: RoundChangeOnTheWire | undefined): string =>
-  (g?.kind === 'threshold' || g?.kind === 'vault-threshold' ? 'threshold' : g?.kind === 'adopt-vault' ? 'vault adopted' : g?.kind === 'pay-key' ? 'pay-record key' : 'leaf');
+  (g?.kind === 'threshold' || g?.kind === 'vault-threshold' ? 'threshold' : g?.kind === 'adopt-vault' ? 'vault adopted'
+    : g?.kind === 'pay-key' ? 'pay-record key' : g?.kind === 'spending-policy' ? 'policy' : g?.kind === 'policy-bar' ? 'policy bar' : 'leaf');
 
 /**
  * **NOTHING IS PROVED WITH A VALUE THIS DEVICE DID NOT READ ITSELF, BUT TWO.**
@@ -714,6 +872,23 @@ export function refuseWhatThisDeviceDidNotOpen(
     if (g?.kind !== 'pay-key' || !same(order.commitment, g.commitment)) refuse('pay-record key');
     return;
   }
+  if (order.circuit === 'setPolicy') {
+    /*
+     * The policy carried out is the one approved: the vault, the currency's key
+     * made here from what this device is handed, and a commitment the opening
+     * this device holds makes, all the proposal's own.
+     */
+    if (g?.kind !== 'spending-policy' || !same(order.vault, g.vault) || !same(order.commitment, g.commitment)
+      || !same(assetKeyMadeHere(deps, order.asset, order.assetBlinding), g.assetKey)
+      || !same(policyCommitmentMadeHere(deps, order.policy), g.commitment)) {
+      refuse('policy');
+    }
+    return;
+  }
+  if (order.circuit === 'setPolicyBar') {
+    if (g?.kind !== 'policy-bar' || policyBarOf(order.bar) !== policyBarOf(g.bar)) refuse('policy bar');
+    return;
+  }
   if (raisesARun(order)) {
     if (g !== undefined) refuse('change');
     const [, root, payees, opensAt, closesAt, required, , vault] = argumentsFor(order) as [unknown, Uint8Array, bigint, bigint, bigint, bigint, unknown, Uint8Array];
@@ -764,7 +939,7 @@ export async function buildGovernedCall(
   }
   const circuit = input.order.circuit;
   if (!ACCOUNT_CIRCUITS_A_DEVICE_GOVERNS.includes(circuit) || CIRCUITS_THAT_READ_NO_WITNESS.has(circuit)) {
-    throw new Error(`a device here raises, approves and withdraws proposals, seats signers, changes the company's or a vault's threshold, adopts a vault and seals the pay-record key, and "${String(circuit)}" is none of those. Nothing was built.`);
+    throw new Error(`a device here raises, approves and withdraws proposals, seats signers, changes the company's or a vault's threshold, adopts a vault, seals the pay-record key and sets a vault's spending policy and the approvals a policy change needs, and "${String(circuit)}" is none of those. Nothing was built.`);
   }
   const args = argumentsBuilt(deps, input.order);
   /* What this device opened first, so a value the service handed over that is not in the company's records is named. */
@@ -785,7 +960,6 @@ export async function buildGovernedCall(
     refuseWhatThisDeviceDidNotMake({
       runPayload: deps.accountPure.runPayload, vaultDetails: deps.vaultDetails,
       payKeyCommitmentOf: deps.accountPure.payKeyCommitmentOf,
-      ...(deps.accountPure.policyOnKeyOf === undefined ? {} : { policyOnKeyOf: deps.accountPure.policyOnKeyOf }),
       ...(deps.vaultPure === undefined ? {} : { secretRun: { vault: deps.vaultPure, account: deps.accountPure as unknown as AccountStartPure } }),
     }, input.opened, view, raisingARun ? 'raise' : 'approve');
   }

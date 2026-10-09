@@ -67,7 +67,7 @@ const record = (digest: Uint8Array, vault: Uint8Array, salt = SALT) => ({
   chainId: hex(accountPure.proposalIdOf(digest, vault, bytes(salt))), digest: hex(digest), vault: hex(vault), salt, summary: 'the round',
 });
 const payloadOf = (g: GovernanceOnTheWire) => (g.kind === 'add-signer'
-  ? accountPure.signerAddPayload(bytes(g.leaf)) : accountPure.setThresholdPayload(BigInt(g.threshold)));
+  ? accountPure.signerAddPayload(bytes(g.leaf)) : accountPure.setThresholdPayload(BigInt((g as { threshold: string }).threshold)));
 
 const seat = { kind: 'add-signer', leaf: LEAF } as const;
 const three = { kind: 'threshold', threshold: '3' } as const;
@@ -110,8 +110,7 @@ const depsWith = (log: string[], raising = false): GovernedCallDeps => ({
   accountCompiled: 'COMPILED', accountZkConfig: 'ZK', accountPure,
   /* The chain holds every proposal asked about open. */
   /* The chain holds every proposal open for an approval, and none yet for a raise. */
-  accountLedger: () => aLedgerHolding(accountPure.payKeyCommitmentKey(), accountPure.payKeyCommitmentOf(bytes(RUN_MADE.made.payKey)),
-    raising ? 'none' : 'every proposal'),
+  accountLedger: () => aLedgerHolding(raising ? 'none' : 'every proposal'),
   vaultDetails,
   prove: async () => { log.push('proved'); return { serialize: () => new Uint8Array([9]) }; },
   random: (n) => new Uint8Array(n).fill(7),
@@ -315,6 +314,21 @@ describe('THE PAGE READS THE COMPANY\'S OWN RECORDS WITH THE VIEWING KEY', () =>
       /not waiting for a seat on the company's list of signers\. Withdraw this proposal, then grant access again\./u],
     ['a threshold change that names no threshold', 'prp_x', [aRecord('prp_x', { kind: 'set-threshold' })],
       /does not say how many approvals it requires/u],
+    /* RED WHEN: a spending policy's vault, currency key or commitment is taken from its record unchecked - or a policy bar that is not a whole number of at least one. */
+    ['a spending policy naming a vault one byte short', 'prp_x', [aRecord('prp_x', { kind: 'set-spending-policy', payload: { ...{ vault: 'aa'.repeat(32), assetKey: 'bb'.repeat(32), commitment: 'cc'.repeat(32) }, vault: 'aa'.repeat(31) } })],
+      /does not say which vault and currency its spending policy is for, or which policy/u],
+    ['a spending policy naming a currency\'s key that is not hex', 'prp_x', [aRecord('prp_x', { kind: 'set-spending-policy', payload: { ...{ vault: 'aa'.repeat(32), assetKey: 'bb'.repeat(32), commitment: 'cc'.repeat(32) }, assetKey: 'zz'.repeat(32) } })],
+      /does not say which vault and currency its spending policy is for, or which policy/u],
+    ['a spending policy naming no commitment', 'prp_x', [aRecord('prp_x', { kind: 'set-spending-policy', payload: { ...{ vault: 'aa'.repeat(32), assetKey: 'bb'.repeat(32), commitment: 'cc'.repeat(32) }, commitment: undefined } })],
+      /does not say which vault and currency its spending policy is for, or which policy/u],
+    ['a policy bar that names no number', 'prp_x', [aRecord('prp_x', { kind: 'set-policy-bar', payload: { newPolicyBar: undefined } })],
+      /does not say how many approvals a change to a spending policy would need/u],
+    ['a policy bar of zero', 'prp_x', [aRecord('prp_x', { kind: 'set-policy-bar', payload: { newPolicyBar: 0 } })],
+      /does not say how many approvals a change to a spending policy would need/u],
+    ['a policy bar that is not a whole number', 'prp_x', [aRecord('prp_x', { kind: 'set-policy-bar', payload: { newPolicyBar: 1.5 } })],
+      /does not say how many approvals a change to a spending policy would need/u],
+    ['a policy bar written as text', 'prp_x', [aRecord('prp_x', { kind: 'set-policy-bar', payload: { newPolicyBar: '2' } })],
+      /does not say how many approvals a change to a spending policy would need/u],
     ['a record another company wrote, in this company\'s list', 'prp_x', [aRecord('prp_x', {}, 'acc_other')],
       /hold no proposal by that name/u],
     ['a record nobody wrote', 'prp_nobody', [], /hold no proposal by that name/u],
@@ -329,6 +343,14 @@ describe('THE PAGE READS THE COMPANY\'S OWN RECORDS WITH THE VIEWING KEY', () =>
       expect(refused.message).toMatch(says);
       expect(refused.message).toMatch(/Nothing was built or sent\.$/u);
     });
+
+  it('a spending policy and a policy bar written whole are not refused for what their records say', async () => {
+    for (const r of [aRecord('prp_x', { kind: 'set-spending-policy', payload: { vault: 'aa'.repeat(32), assetKey: 'bb'.repeat(32), commitment: 'cc'.repeat(32) } }), aRecord('prp_x', { kind: 'set-policy-bar', payload: { newPolicyBar: 1 } })]) {
+      const opened = await openTheRoundHere(honest([r]), company, 'prp_x', viewingKey, false).catch((e) => e);
+      /* The positive control for the rows above: a body that says all of it passes the body's own check. */
+      expect(String(opened?.message ?? '')).not.toMatch(/does not say/u);
+    }
+  });
 
   it('a payroll run in a real asset is opened as one: only the run in no asset is refused', async () => {
     /* RED WHEN: the refusal of a vault's set-up step catches every payroll run. */

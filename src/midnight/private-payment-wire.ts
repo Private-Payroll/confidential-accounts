@@ -61,6 +61,13 @@ export interface PrivatePaymentOrderOnTheWire {
   /** Seconds since the Unix epoch, as decimal digits. */
   readonly opensAt: string;
   readonly closesAt: string;
+  /**
+   * The approvals the proposal was raised needing, as decimal digits: what its
+   * identity binds beside the root and the window, and what the account makes
+   * that identity again with when the vault pays and when the run is charged.
+   * Absent for a round raised needing none beyond its vault's own.
+   */
+  readonly required?: string;
   readonly payments: readonly PrivatePaymentOnTheWire[];
 }
 

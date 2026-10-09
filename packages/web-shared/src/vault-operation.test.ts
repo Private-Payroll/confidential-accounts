@@ -154,6 +154,11 @@ const builder = (log: string[]): VaultBuilderClient => ({
   /* What a governance proposal is called, and the value a company-wide run names: no vault operation asks either. */
   proposalIdentity: async () => { throw new Error('a vault operation never names a governance proposal'); },
   companyWide: async () => { throw new Error('a vault operation never asks what a company-wide run names'); },
+  spendingPolicyKeys: async () => { throw new Error('a vault operation never asks for a spending policy\'s keys'); },
+  policyBarKey: async () => { throw new Error('a vault operation never asks for the policy bar\'s key'); },
+  clearRun: async () => { throw new Error('a vault operation never charges a run to its period'); },
+  periodTotal: async () => { throw new Error('a vault operation never works out a period\'s total'); },
+  runCharged: async () => { throw new Error('a vault operation never asks whether a run is charged'); },
   /* The old temporary-key deploy and hand-over: creating a vault never asks for either. */
   deploy: async () => { log.push('build deploy'); return { vault: VAULT, temporaryKey: { tag: 'schnorr', value: '77'.repeat(32) }, tx: 'D' }; },
   handover: async (i) => { log.push(`build handover at ${i.counter}`); return { tx: 'H' }; },

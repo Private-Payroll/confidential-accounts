@@ -12,7 +12,7 @@ import { schnorr } from '@noble/curves/secp256k1.js';
 import {
   ACCOUNT_THRESHOLD_FIELD, ADOPTED_VAULTS_FIELD, MOVEMENTS_FIELD, OPEN_PROPOSALS_FIELD, ROLES_FIELD, SIGNER_LEAVES_FIELD, VAULT_ACCOUNT_FIELD,
   accountCarries, deployFromIndexerAt, foundingInDeployState, fromIndexerAt, holdersInAccountState, holdersOnChain,
-  labelInAccountState, labelOnAccount, paymentsInAccountState, seatsInAccountState, vaultInState, vaultOnChain,
+  labelInAccountState, labelOnAccount, paymentsInAccountState, rolesInAccountState, seatsInAccountState, vaultInState, vaultOnChain,
 } from './company-label-on-chain.js';
 import { PAY_KEY_COMMITMENT_ENTRY } from 'midnight-identity/profile/records-key';
 
@@ -417,5 +417,33 @@ describe('WHAT THE ACCOUNT RECORDS ABOUT PAYMENTS, READ WITH NO PRESS', () => {
     const without = await holdersOnChain(ACCOUNT, companyLabelOf(LABEL_BYTES), async () => state, async () => state);
     /* RED WHEN: a read nobody asked payments of says anything about them. */
     expect(without.of === 'read' && 'payments' in without).toBe(false);
+  });
+});
+
+describe('WHAT THE ACCOUNT HOLDS UNDER ENTRIES OF ITS MAP OF ROLES, READ WITH NO PRESS', () => {
+  it('reads each entry asked from the field the contract keeps its map of roles in, the thirty-two bytes it holds or nothing, in the order asked', async () => {
+    const NOT_HELD = 'c3'.repeat(32);
+    for (const label of [LABEL_BYTES, TRAILING_ZEROS]) {
+      const state = await deployedState(label);
+      /* The constructor writes the company's label under its entry: an entry the contract itself wrote. */
+      const read = rolesInAccountState(state, [NOT_HELD, COMPANY_LABEL_ENTRY]);
+      /* RED WHEN: an entry is read from another field, its value is cut short where it ends in zeroes, or the order asked is not kept. */
+      expect(read).toEqual([{ key: NOT_HELD, value: null }, { key: COMPANY_LABEL_ENTRY, value: hexOf(label) }]);
+    }
+    /* RED WHEN: a state that is not a company's account is read as one holding nothing. */
+    expect(() => rolesInAccountState(new Uint8Array([1, 2, 3]), [NOT_HELD])).toThrow();
+  });
+
+  it('A HOLDERS READ THAT ASKS ABOUT ENTRIES ANSWERS THEM IN THE SAME READ, AND ONE THAT DOES NOT ANSWERS NOTHING ABOUT THEM', async () => {
+    const state = hexOf(await deployHeld(LABEL_BYTES));
+    const read = await holdersOnChain(ACCOUNT, companyLabelOf(LABEL_BYTES), async () => state, async () => state, undefined, [COMPANY_LABEL_ENTRY]);
+    /* RED WHEN: the entries asked about are dropped from the answer, or read from another state than the holders. */
+    expect(read).toMatchObject({ of: 'read', roles: [{ key: COMPANY_LABEL_ENTRY, value: hexOf(LABEL_BYTES) }] });
+    expect(read.of === 'read' && 'payments' in read).toBe(false);
+    const both = await holdersOnChain(ACCOUNT, companyLabelOf(LABEL_BYTES), async () => state, async () => state, ['a1'.repeat(32)], [COMPANY_LABEL_ENTRY]);
+    expect(both).toMatchObject({ of: 'read', payments: { held: [] }, roles: [{ key: COMPANY_LABEL_ENTRY }] });
+    const without = await holdersOnChain(ACCOUNT, companyLabelOf(LABEL_BYTES), async () => state, async () => state);
+    /* RED WHEN: a read nobody asked entries of says anything about them. */
+    expect(without.of === 'read' && 'roles' in without).toBe(false);
   });
 });

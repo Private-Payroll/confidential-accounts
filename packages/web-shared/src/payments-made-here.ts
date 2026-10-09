@@ -36,8 +36,12 @@ export interface PaymentsHereDeps {
   readonly paidAmong: (leaves: readonly Hex[]) => Promise<PaymentsAmong | null>;
 }
 
-/** A raised round of the company, opened here: its identity, salt, vault, and the approvals its run required. */
-interface RoundHere { readonly chainId: Hex; readonly salt: Hex; readonly vault: Hex; readonly required: bigint; readonly raisedAt?: string; readonly status: string }
+/**
+ * A raised round of the company, opened here: its identity, salt and vault.
+ * The approvals its run needs are not read here but from the run's own record,
+ * the one the approving devices rebuild the proposal from.
+ */
+interface RoundHere { readonly chainId: Hex; readonly salt: Hex; readonly vault: Hex; readonly raisedAt?: string; readonly status: string }
 
 const roundOf = async (records: CompanyRecordsHere, accountId: string, proposalId: string, viewingKey: Hex): Promise<RoundHere | null> => {
   if (records.proposals === undefined) {
@@ -47,7 +51,7 @@ const roundOf = async (records: CompanyRecordsHere, accountId: string, proposalI
   const rec: SealedProposal | undefined = (await records.proposals()).find((p) => p.id === proposalId);
   if (rec === undefined || rec.accountId !== accountId) return null;
   let envelope: { kind: string; vault: Hex; raisedAt?: string; sealedPayload: Sealed };
-  let payload: { __change?: StateChange; __required?: bigint };
+  let payload: { __change?: StateChange };
   try {
     envelope = openRecord('proposals', rec.accountId, rec.sealed, viewingKey);
     payload = parseCanonical(unseal(envelope.sealedPayload, viewingKey));
@@ -57,16 +61,20 @@ const roundOf = async (records: CompanyRecordsHere, accountId: string, proposalI
   }
   if (envelope.kind !== 'payroll' || payload.__change === undefined) return null;
   return {
-    chainId: rec.chainId, salt: payload.__change.salt, vault: envelope.vault, required: payload.__required ?? 0n, status: rec.status,
+    chainId: rec.chainId, salt: payload.__change.salt, vault: envelope.vault, status: rec.status,
     /* When the chain was first seen to hold it is kept plain on the record; a record written before that kept it sealed. */
     ...((rec.raisedAt ?? envelope.raisedAt) ? { raisedAt: (rec.raisedAt ?? envelope.raisedAt)! } : {}),
   };
 };
 
-/** The identity a round over `leaves` in `window` would have, under a raised round's vault, salt and approvals. */
-const idFromFor = (deps: PaymentsHereDeps, round: RoundHere, facts: readonly PaymentFacts[], leg: RunLeg) =>
+/**
+ * The identity a round over `leaves` in `window` would have, under a raised
+ * round's vault and salt, at `required`: the approvals the run's record says
+ * the leg or retry was raised needing.
+ */
+const idFromFor = (deps: PaymentsHereDeps, round: RoundHere, required: bigint, facts: readonly PaymentFacts[], leg: RunLeg) =>
   (leaves: Hex[], w: RunWindow): Hex => toHex(deps.proposalIdOf(
-    deps.runPayload(fromHex(rootOfPayments(leaves, facts, assetOfLeg(leg))), BigInt(leaves.length), w.from, w.until, round.required),
+    deps.runPayload(fromHex(rootOfPayments(leaves, facts, assetOfLeg(leg))), BigInt(leaves.length), w.from, w.until, required),
     fromHex(round.vault), fromHex(round.salt)));
 
 /** The leg named, its record, and the run it is on. */
@@ -97,6 +105,22 @@ export async function privatePaymentsHere(
   records: CompanyRecordsHere, accountId: string, runId: string, viewingKey: Hex, deps: PaymentsHereDeps,
   which?: LegNamed, retry?: string,
 ): Promise<PrivatePaymentOrderOnTheWire> {
+  return (await legToPayHere(records, accountId, runId, viewingKey, deps, which, retry)).order;
+}
+
+/**
+ * **ONE APPROVED LEG, OR ONE RETRY ON IT, AS THE DEVICE THAT PAYS IT OPENS
+ * IT**: what the vault is handed (`privatePaymentsHere`), with the company's
+ * name for the proposal it was raised as. The order carries the approvals the
+ * leg or the retry was raised needing, as the run's own record holds them -
+ * the ones its identity on the chain was made again with here, and the ones
+ * the vault's payment and the run's charge make it again with. What a run is
+ * charged to its period with, before it is paid.
+ */
+export async function legToPayHere(
+  records: CompanyRecordsHere, accountId: string, runId: string, viewingKey: Hex, deps: PaymentsHereDeps,
+  which?: LegNamed, retry?: string,
+): Promise<{ readonly order: PrivatePaymentOrderOnTheWire; readonly proposalId: string }> {
   const { run, leg, payout } = await raisedLeg(records, accountId, runId, viewingKey, which);
   if (leg === null || payout === undefined) throw new NotMadeHere(NOTHING_TO_PAY);
   const entry = retry === undefined ? undefined : payout.retries?.find((r) => r.proposalId === retry);
@@ -105,13 +129,16 @@ export async function privatePaymentsHere(
       + 'Reload the run and choose again.');
   }
   const proposalId = entry === undefined ? run.proposalIds[leg] : entry.proposalId;
-  const round = proposalId === undefined ? null : await roundOf(records, accountId, proposalId, viewingKey);
+  if (proposalId === undefined) throw new NotMadeHere(NOTHING_TO_PAY);
+  const round = await roundOf(records, accountId, proposalId, viewingKey);
   if (round === null || round.raisedAt === undefined) throw new NotMadeHere(NOTHING_TO_PAY);
   const whole = await builtAgain(records, accountId, viewingKey, deps, run, leg);
   const shape = entry === undefined
     ? { root: payout.root, payees: payout.payees, opensAt: payout.opensAt, closesAt: payout.closesAt, vault: payout.vault }
     : { root: entry.root, payees: entry.payees, opensAt: entry.opensAt, closesAt: entry.closesAt, vault: entry.vault };
   const indices = entry === undefined ? undefined : [...entry.originalIndices];
+  /* The approvals the leg, or the retry, was raised needing, as the run's own record holds them. */
+  const required = (entry === undefined ? payout.required : entry.required) ?? 0n;
   /* A retry is paid over a tree of its own, of only the people it names, each at the leaf the leg gave them. */
   const leaves = indices === undefined ? [...payout.leaves] : indices.map((i) => payout.leaves[i]!);
   const facts = indices === undefined ? payout.facts : indices.map((i) => payout.facts[i]!);
@@ -119,14 +146,15 @@ export async function privatePaymentsHere(
   const assembled = assemblePrivatePayments({
     order: { ...legFieldsOf(leg), proposal: round.chainId, salt: round.salt, ...shape },
     leaves, window: { from: shape.opensAt, until: shape.closesAt },
-    idFrom: idFromFor(deps, round, facts, leg),
+    idFrom: idFromFor(deps, round, required, facts, leg),
     built: indices === undefined ? whole : buildRetryRun(whole, indices),
     facts,
     paid: paid?.known === true ? new Set(paid.paid) : null,
     ...(indices === undefined ? {} : { indices }),
   });
   if ('refusal' in assembled) throw new NotMadeHere(assembled.refusal.replace(/ Nothing was sent\.$/u, ''));
-  return assembled.order;
+  /* The vault's payment and the run's charge each make the proposal's identity again with the approvals it was raised needing. */
+  return { order: required === 0n ? assembled.order : { ...assembled.order, required: required.toString() }, proposalId };
 }
 
 /**
@@ -149,7 +177,7 @@ export async function paymentViewHere(
   }
   const inputs: RunInputs = {
     leaves: [...payout.leaves], window: { from: payout.opensAt, until: payout.closesAt },
-    ...(own !== null && own.raisedAt !== undefined ? { proposal: { id: own.chainId, idFrom: idFromFor(deps, own, payout.facts, leg) } } : {}),
+    ...(own !== null && own.raisedAt !== undefined ? { proposal: { id: own.chainId, idFrom: idFromFor(deps, own, payout.required ?? 0n, payout.facts, leg) } } : {}),
     ...(retries.length > 0 ? { retries } : {}),
   };
   return runPayments(inputs, await deps.paidAmong(inputs.leaves));

@@ -42,12 +42,8 @@ export const aRunMadeHere = (
   return { made, root: tree.root, payees: tree.payees };
 };
 
-/**
- * A ledger that holds every proposal asked about open, has paid nobody, and
- * holds `commitment` as the company's pay-record key at `keyAt`.
- */
-export const aLedgerHolding = (keyAt: Uint8Array, commitment: Uint8Array, holds: 'every proposal' | 'none' = 'every proposal'): AccountLedgerView => ({
+/** A ledger that holds every proposal asked about open, or none, and has paid nobody. */
+export const aLedgerHolding = (holds: 'every proposal' | 'none' = 'every proposal'): AccountLedgerView => ({
   openProposals: { member: () => holds === 'every proposal' },
   movements: { member: () => false },
-  signerRoles: { member: (k) => toHex(k) === toHex(keyAt), lookup: () => commitment },
 });

@@ -45,7 +45,8 @@ const ledger = {
     sent.push({ accountId, circuit, proposal: o.proposal });
     if (circuit === 'propose') open.set(o.proposal, 0);
     else if (circuit === 'approve') open.set(o.proposal, (open.get(o.proposal) ?? 0) + 1);
-    else open.delete(o.proposal);
+    /* A charge leaves the run's proposal open, to be paid; every other call closes the one it carries out. */
+    else if (circuit !== 'clearRun') open.delete(o.proposal);
     return { ref: `ref-${sent.length}`, at: new Date().toISOString() };
   },
 };
@@ -108,6 +109,7 @@ describe('A PROPOSAL IS RELAYED WITH NO KEY, FOR A SEAT THAT MAY ACT', () => {
       [`/api/proposals/${P}/cancel`, { viewingKey: key }],
       [`/api/proposals/${P}/send`, { tx: tx('propose', CHAIN), version: DEVICE_RAISE_VERSION, viewingKey: key }],
       [`/api/proposals/${P}/carry`, { tx: tx('setThreshold', CHAIN), circuit: 'setThreshold', viewingKey: key }],
+      [`/api/proposals/${P}/charge`, { tx: tx('clearRun', CHAIN), viewingKey: key }],
     ] as const) {
       const r = await post('ada', path, body);
       expect(r.status, path).toBe(400);
@@ -128,6 +130,7 @@ describe('A PROPOSAL IS RELAYED WITH NO KEY, FOR A SEAT THAT MAY ACT', () => {
       [`/api/proposals/${P}/cancel`, { tx: tx('cancel', CHAIN) }],
       [`/api/proposals/${P}/send`, { tx: tx('propose', CHAIN), version: DEVICE_RAISE_VERSION }],
       [`/api/proposals/${P}/carry`, { tx: tx('setThreshold', CHAIN), circuit: 'setThreshold' }],
+      [`/api/proposals/${P}/charge`, { tx: tx('clearRun', CHAIN) }],
     ] as const;
     for (const [path, body] of calls) {
       /* RED WHEN ownsProposal is taken off the route: another company's seat would be relayed for. */
@@ -224,6 +227,47 @@ describe('A PROPOSAL IS RELAYED WITH NO KEY, FOR A SEAT THAT MAY ACT', () => {
     expect(r.body).toMatchObject({ status: 'executed' });
     /* RED WHEN a circuit the route does not carry is relayed. */
     expect((await post('ada', `/api/proposals/${P}/carry`, { tx: tx('approve', CHAIN), circuit: 'approve' })).status).toBe(400);
+  });
+
+  it('A VAULT\'S SPENDING POLICY AND THE APPROVALS A POLICY CHANGE NEEDS ARE CARRIED OUT BY THE SAME ROUTE, AS THEIR OWN CIRCUITS', async () => {
+    for (const circuit of ['setPolicy', 'setPolicyBar']) {
+      sent.length = 0;
+      store.putProposal(proposal());
+      /* Not on the chain: nothing to carry out, and nothing is sent. */
+      expect((await post('ada', `/api/proposals/${P}/carry`, { tx: tx(circuit, CHAIN), circuit })).status, circuit).toBe(422);
+      expect(sent, circuit).toEqual([]);
+      open.set(CHAIN, 2);
+      const r = await post('bo', `/api/proposals/${P}/carry`, { tx: tx(circuit, CHAIN), circuit });
+      /* RED WHEN the route refuses a policy or its bar, or relays it as another circuit - a policy approved on devices is never set. */
+      expect(r.status, circuit).toBe(200);
+      expect(sent, circuit).toEqual([{ accountId: CO, circuit, proposal: CHAIN }]);
+      /* RED WHEN a policy carried out is not written down as carried out once the chain closed it. */
+      expect(r.body, circuit).toMatchObject({ status: 'executed' });
+    }
+  });
+
+  it('AN APPROVED RUN CHARGED TO ITS PERIOD IS RELAYED AS clearRun, AND ITS PROPOSAL, STILL OPEN TO BE PAID, IS NOT WRITTEN DOWN AS CARRIED OUT', async () => {
+    /* Not on the chain: nothing to charge. RED WHEN the route stops asking whether the chain holds it. */
+    const notHeld = await post('ada', `/api/proposals/${P}/charge`, { tx: tx('clearRun', CHAIN) });
+    expect(notHeld.status).toBe(422);
+    expect(notHeld.body).toMatchObject({ nothingWasSent: true });
+    expect(sent).toEqual([]);
+    open.set(CHAIN, 2);
+    const r = await post('bo', `/api/proposals/${P}/charge`, { tx: tx('clearRun', CHAIN) });
+    /* RED WHEN the route relays it as any other call than clearRun. */
+    expect(r.status).toBe(200);
+    expect(sent).toEqual([{ accountId: CO, circuit: 'clearRun', proposal: CHAIN }]);
+    /* RED WHEN a proposal the chain still holds open after the charge is written down as carried out, as /carry would. */
+    expect(r.body).toMatchObject({ id: P, status: 'open', approvalCount: 2 });
+    expect(store.getProposal(P)!.status).toBe('open');
+    /* RED WHEN the route takes a circuit from the body: it relays clearRun and nothing else. */
+    expect((await post('ada', `/api/proposals/${P}/charge`, { tx: tx('clearRun', CHAIN), circuit: 'setThreshold' })).status).toBe(400);
+    /* RED WHEN a withdrawn, carried-out or stopped proposal is charged: its plain status is read before anything is sent. */
+    for (const status of ['cancelled', 'executed', 'blocked'] as const) {
+      store.putProposal(proposal({ status }));
+      expect((await post('ada', `/api/proposals/${P}/charge`, { tx: tx('clearRun', CHAIN) })).status, status).toBe(422);
+    }
+    expect(sent).toHaveLength(1);
   });
 });
 

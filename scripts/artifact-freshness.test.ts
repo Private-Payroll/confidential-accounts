@@ -562,6 +562,7 @@ describe('the guard is WIRED IN, and is pointed at the artifacts the tests impor
       'contracts/test/a-payment-needs-a-vaults-receipt.test.ts',
       'contracts/test/a-private-payment-from-the-page.test.ts',
       'contracts/test/a-run-raised-and-approved-from-the-page.test.ts',
+      'contracts/test/a-spending-policy-is-set-from-a-device.test.ts',
       'contracts/test/a-vaults-committee-changes-with-its-signers.test.ts',
       'packages/web-shared/src/a-deposit-built-on-the-device.test.ts',
       'packages/web-shared/src/a-vault-is-read-as-it-was-born.test.ts',

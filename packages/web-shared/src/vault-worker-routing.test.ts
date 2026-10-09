@@ -2,7 +2,7 @@ import { describe, it, expect } from 'vitest';
 import { accountCircuitsBeside, networkCircuitsBeside } from './vault-worker-entry.js';
 import type { ArtefactSource } from './key-material.js';
 import {
-  ACCOUNT_CIRCUITS_A_DEVICE_GOVERNS, ACCOUNT_CIRCUITS_A_VAULT_CALLS, ACCOUNT_CIRCUITS_SERVED_TO_A_DEVICE, VAULT_CIRCUITS,
+  ACCOUNT_CIRCUITS_A_DEVICE_CHARGES, ACCOUNT_CIRCUITS_A_DEVICE_GOVERNS, ACCOUNT_CIRCUITS_A_VAULT_CALLS, ACCOUNT_CIRCUITS_SERVED_TO_A_DEVICE, VAULT_CIRCUITS,
 } from '../../../src/midnight/vault-contract.js';
 
 /*
@@ -46,11 +46,13 @@ describe('WHERE A PAYMENT OUT\'S PROVING MATERIAL IS FETCHED FROM', () => {
   });
 
   it('NO VAULT CIRCUIT SHARES A NAME WITH AN ACCOUNT CIRCUIT SERVED TO A DEVICE, which is what routing by name rests on', () => {
-    /* RED WHEN: the served list is not exactly these eleven, or a vault circuit is named like one of them. */
+    /* RED WHEN: the served list is not exactly these fourteen, or a vault circuit is named like one of them. */
     /* A vault's creation adopts it on the account from the device that made it; a company's creation seals its pay-record key from its founding signer's. */
-    /* A withdrawal and a change of one vault's own approvals needed are proved on a signer's device too. */
-    expect(ACCOUNT_CIRCUITS_A_DEVICE_GOVERNS).toEqual(['propose', 'approve', 'amendSigner', 'setThreshold', 'adopt', 'sealPayKey', 'cancel', 'setVaultThreshold']);
-    expect([...ACCOUNT_CIRCUITS_SERVED_TO_A_DEVICE].sort()).toEqual(['adopt', 'amendSigner', 'approve', 'approveVaultChange', 'cancel', 'propose', 'recordBatchFromVault', 'recordPaymentFromVault', 'sealPayKey', 'setThreshold', 'setVaultThreshold']);
+    /* A withdrawal, a change of one vault's own approvals needed, a vault's spending policy and the approvals a policy change needs are proved on a signer's device too. */
+    expect(ACCOUNT_CIRCUITS_A_DEVICE_GOVERNS).toEqual(['propose', 'approve', 'amendSigner', 'setThreshold', 'adopt', 'sealPayKey', 'cancel', 'setVaultThreshold', 'setPolicy', 'setPolicyBar']);
+    /* Charging an approved run to its vault's period is proved on the paying signer's device. */
+    expect(ACCOUNT_CIRCUITS_A_DEVICE_CHARGES).toEqual(['clearRun']);
+    expect([...ACCOUNT_CIRCUITS_SERVED_TO_A_DEVICE].sort()).toEqual(['adopt', 'amendSigner', 'approve', 'approveVaultChange', 'cancel', 'clearRun', 'propose', 'recordBatchFromVault', 'recordPaymentFromVault', 'sealPayKey', 'setPolicy', 'setPolicyBar', 'setThreshold', 'setVaultThreshold']);
     expect((VAULT_CIRCUITS as readonly string[]).filter((c) => ACCOUNT_CIRCUITS_SERVED_TO_A_DEVICE.includes(c))).toEqual([]);
   });
 

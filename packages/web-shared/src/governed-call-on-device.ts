@@ -22,8 +22,9 @@ import {
   DEVICE_RAISE_VERSION, WRITTEN_DOWN_IS_NOT_WHAT_IS_CHECKED, paymentsCheckedDigest, type PaymentChecked,
 } from '../../../src/core/device-raise.js';
 import type {
-  SignerMaterial, OpenedRound, RaiseRunOrder, GovernanceOnTheWire,
+  SignerMaterial, OpenedRound, RaiseRunOrder, GovernanceOnTheWire, GovernedCallOrder,
 } from './governed-call-builder.js';
+import { sameGovernance } from './governance-compared.js';
 import { commit, type Hex, type Sealed } from '../../../src/core/crypto.js';
 import {
   EVERY_RIGHT, refuseLeavingAVaultShort, type ApproverRoster, type GovernanceChange as VaultCheckChange,
@@ -90,7 +91,7 @@ export interface LegPaymentsOnTheWire {
 }
 
 /** The approvals the account and its vaults need, as the chain holds them. */
-interface BarsOnTheChain {
+export interface BarsOnTheChain {
   readonly threshold: number;
   readonly vaultThresholds: ReadonlyArray<{ readonly vault: string; readonly threshold: number }>;
 }
@@ -117,6 +118,11 @@ export interface GovernedCallService {
   }): Promise<RoundOnThePage>;
   /** An approved governance proposal carried out by the call this device proved. */
   carry?(proposalId: string, body: { tx: string; circuit: CarryCircuit }): Promise<RoundOnThePage>;
+  /**
+   * An approved run charged to its vault's period by the call this device
+   * proved. The run's proposal stays open on the chain, to be paid.
+   */
+  charge?(proposalId: string, body: { tx: string }): Promise<RoundOnThePage>;
   /** The approvals the account and each vault need, as the chain holds them now. */
   bars?(accountId: string): Promise<BarsOnTheChain>;
   /** The company's own records, sealed as they are stored, for this device to open itself. */
@@ -125,7 +131,7 @@ export interface GovernedCallService {
 }
 
 /** The calls that carry out an approved governance proposal. */
-type CarryCircuit = 'amendSigner' | 'setThreshold' | 'setVaultThreshold';
+type CarryCircuit = 'amendSigner' | 'setThreshold' | 'setVaultThreshold' | 'setPolicy' | 'setPolicyBar';
 
 type GovernedStage = 'checking-the-vault' | 'writing-down' | 'reading-the-chain' | 'building' | 'sending' | 'waiting-for-the-chain';
 
@@ -734,6 +740,7 @@ export const governedCallServiceFor = (api: Api): GovernedCallService => {
     cancel: (proposalId, body) => marked(() => post(`${proposal(proposalId)}/cancel`, body)),
     file: (accountId, body) => marked(() => post(`${account(accountId)}/proposals`, body)),
     carry: (proposalId, body) => marked(() => post(`${proposal(proposalId)}/carry`, body)),
+    charge: (proposalId, body) => marked(() => post(`${proposal(proposalId)}/charge`, body)),
     bars: async (accountId) => {
       const status = await api(`${account(accountId)}/ledger`);
       if (status === null || typeof status?.threshold !== 'number') {
@@ -755,24 +762,17 @@ export type GovernedOutcome =
   | { readonly state: 'waiting-for-approvals'; readonly round: RoundOnThePage };
 
 
-const sameGovernance = (a: GovernanceOnTheWire, b: GovernanceOnTheWire): boolean => {
-  if (a.kind !== b.kind) return false;
-  if (a.kind === 'add-signer') return a.leaf.toLowerCase() === (b as { leaf: string }).leaf.toLowerCase();
-  if (a.kind === 'vault-threshold') {
-    const o = b as { vault: string; threshold: string };
-    return a.vault.toLowerCase() === o.vault.toLowerCase() && BigInt(a.threshold) === BigInt(o.threshold);
-  }
-  return BigInt(a.threshold) === BigInt((b as { threshold: string }).threshold);
-};
-
 /** Each change's kind, as a proposal's sealed record names it. */
-const KIND_OF: Readonly<Record<GovernanceOnTheWire['kind'], 'add-signer' | 'set-threshold' | 'set-vault-threshold'>> = {
+const KIND_OF: Readonly<Record<GovernanceOnTheWire['kind'],
+  'add-signer' | 'set-threshold' | 'set-vault-threshold' | 'set-spending-policy' | 'set-policy-bar'>> = {
   'add-signer': 'add-signer', threshold: 'set-threshold', 'vault-threshold': 'set-vault-threshold',
+  'spending-policy': 'set-spending-policy', 'policy-bar': 'set-policy-bar',
 };
 
 /** The circuit that carries each change out. */
 const CARRIED_BY: Readonly<Record<GovernanceOnTheWire['kind'], CarryCircuit>> = {
   'add-signer': 'amendSigner', threshold: 'setThreshold', 'vault-threshold': 'setVaultThreshold',
+  'spending-policy': 'setPolicy', 'policy-bar': 'setPolicyBar',
 };
 
 /**
@@ -823,11 +823,18 @@ const governanceHalf = (salt: string, opened: OpenedRound, assetBlinding: string
   changeBatchDigest: opened.half?.changeBatchDigest ?? commit('', ''),
 });
 
-/** Whether the chain's count for a governance proposal meets the account's own threshold, as the chain holds it. */
-const meetsTheBar = async (doors: GovernedCallDoors, round: RoundOnThePage): Promise<boolean> => {
+/**
+ * Whether the chain's count for a governance proposal meets the bar it is
+ * carried out at: the account's own threshold, or, for a change to a spending
+ * policy, `bar` of what the chain holds. Only whether to try: the chain refuses
+ * a carrying out short of its bar whatever this says.
+ */
+const meetsTheBar = async (
+  doors: GovernedCallDoors, round: RoundOnThePage, bar?: (bars: BarsOnTheChain) => number,
+): Promise<boolean> => {
   if (!doors.service.bars) return false;
   const bars = await doors.service.bars(doors.accountId);
-  return counted(round) >= bars.threshold;
+  return counted(round) >= (bar === undefined ? bars.threshold : bar(bars));
 };
 
 /**
@@ -845,6 +852,10 @@ async function governOnDevice(
   input: {
     viewingKey: string; change: GovernanceOnTheWire; summary: string; body: GovernancePayloadBody;
     before?: () => Promise<void>;
+    /** For a change carried out at a bar other than the account's threshold: that bar, from what the chain holds. */
+    bar?: (bars: BarsOnTheChain) => number;
+    /** For a change whose carrying out reads more than the proposal holds: the order, made from the proposal opened. */
+    carry?: (opened: OpenedRound) => GovernedCallOrder;
   },
 ): Promise<GovernedOutcome> {
   const { service } = doors;
@@ -854,7 +865,8 @@ async function governOnDevice(
    * then, as well as any check the caller makes.
    */
   const check = async (): Promise<void> => {
-    refuseLeavingAVaultShort(await doors.approvers(), changeCounted(input.change), doors.vaultName);
+    const counts = changeCounted(input.change);
+    if (counts !== null) refuseLeavingAVaultShort(await doors.approvers(), counts, doors.vaultName);
     await input.before?.();
   };
   const key = input.viewingKey as Hex;
@@ -913,7 +925,7 @@ async function governOnDevice(
   let { round } = live;
   const { opened } = live;
   const of = { governance: input.change, proposalSalt: opened.salt };
-  if (!(await meetsTheBar(doors, round))) {
+  if (!(await meetsTheBar(doors, round, input.bar))) {
     await check();
     try {
       round = await approveHere(doors, { round, viewingKey: input.viewingKey, of }, true);
@@ -922,11 +934,11 @@ async function governOnDevice(
       round = await service.standing(round.id);
     }
   }
-  if (!(await meetsTheBar(doors, round))) return { state: 'waiting-for-approvals', round };
+  if (!(await meetsTheBar(doors, round, input.bar))) return { state: 'waiting-for-approvals', round };
   if (!service.carry) throw new Error('This page cannot carry out proposals. Reload the page to get the current version. Nothing was sent.');
   await check();
   /* What carries it out is made here, from the proposal as this device opened it. */
-  const order = carryOrderHere(opened);
+  const order = input.carry === undefined ? carryOrderHere(opened) : input.carry(opened);
   const carried = order as { circuit?: string; proposal?: string };
   if (carried.circuit !== CARRIED_BY[input.change.kind] || String(carried.proposal).toLowerCase() !== String(round.chainId).toLowerCase()) {
     throw new Error('the company\'s record of this proposal is not the change asked for here. Nothing was built or sent. '
@@ -961,10 +973,16 @@ export type GovernanceDoors = GovernedCallDoors & {
   readonly vaultName: (vault: Hex) => string;
 };
 
-/** A governance change, as the vault check counts it. A seat is given every right, as every seat is made today. */
-const changeCounted = (change: GovernanceOnTheWire): VaultCheckChange => {
+/**
+ * A governance change, as the vault check counts it. A seat is given every
+ * right, as every seat is made today. A spending policy and the approvals a
+ * policy change needs change no seat and no vault's threshold, so they are not
+ * counted.
+ */
+const changeCounted = (change: GovernanceOnTheWire): VaultCheckChange | null => {
   if (change.kind === 'add-signer') return { kind: 'seat', leaf: change.leaf.toLowerCase() as Hex, rights: EVERY_RIGHT };
   if (change.kind === 'threshold') return { kind: 'threshold', threshold: Number(change.threshold) };
+  if (change.kind === 'spending-policy' || change.kind === 'policy-bar') return null;
   return { kind: 'vaultThreshold', vault: change.vault.toLowerCase() as Hex, threshold: Number(change.threshold) };
 };
 

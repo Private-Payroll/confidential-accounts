@@ -443,7 +443,7 @@ export { hex as hexOfBytes };
 const runOf = (
   order: Omit<PrivatePaymentOrderOnTheWire, 'payments'>, payment: PrivatePaymentOnTheWire,
 ) => {
-  const required = (order as { required?: unknown }).required;
+  const { required } = order;
   return {
     proposal: fromHex(order.proposal), runVault: fromHex(order.vault.toLowerCase()), root: fromHex(order.root),
     payees: BigInt(order.payees), opensAt: BigInt(order.opensAt), closesAt: BigInt(order.closesAt),

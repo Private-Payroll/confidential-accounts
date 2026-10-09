@@ -2,7 +2,8 @@
  * **AN APPROVED LEG IS PAID BY ONE LOOP OVER THE PLAN'S STEPS, BY KIND.**
  *
  * **WHAT IS A STAND-IN, SAID HERE:** what the device makes for the leg
- * (`privatePaymentsHere`) and the three step functions are substituted as
+ * (`legToPayHere`), the charge of the run to its vault's period
+ * (`chargeTheRunHere`) and the three step functions are substituted as
  * modules, each recording what it was handed; the vault's record is a real
  * sealed pool in memory, and the plan is the run planner's own. Each step
  * function's own work - written down first, read on this device, sent and
@@ -28,7 +29,21 @@ let unnamed = new Set<number>();
 let accountLags = false;
 let poolOf: ((notes: Array<{ nonce: string; value: bigint }>) => Promise<void>) | null = null;
 vi.mock('./payments-made-here.js', () => ({
-  privatePaymentsHere: async () => ({ ...order, payments: order.payments.map((p) => ({ ...p, paid: paidOnTheAccount.has(p.index) })) }),
+  legToPayHere: async () => ({
+    order: { ...order, required: '2', payments: order.payments.map((p) => ({ ...p, paid: paidOnTheAccount.has(p.index) })) },
+    proposalId: 'prp_theLegAAAAAA',
+  }),
+}));
+/* Where the run stands under its vault's policy, as the charge answers it; every charge asked is kept, with what it was handed. */
+let charging: 'no-policy' | 'already-charged' | 'charged' | 'refused' = 'no-policy';
+const charges: Array<{ proposalId: string; required: string | undefined; vault: string }> = [];
+vi.mock('./run-charged-here.js', () => ({
+  chargeTheRunHere: async (_d: unknown, run: { order: { vault: string; required?: string }; proposalId: string }) => {
+    charges.push({ proposalId: run.proposalId, required: run.order.required, vault: run.order.vault });
+    calls.push(`charge ${charging}`);
+    if (charging === 'refused') throw new Error('this run would take the vault past its limit for the period. Nothing was sent.');
+    return charging === 'charged' ? { state: 'charged', spentBefore: 700n } : { state: charging };
+  },
 }));
 vi.mock('./vault-operation.js', async (real) => {
   const actual = await real<typeof import('./vault-operation.js')>();
@@ -101,6 +116,7 @@ const leg: Leg = { records: {} as never, accountId: 'acc_1', runId: 'run_1', vie
 beforeEach(() => {
   calls.length = 0; paidOnTheAccount = new Set(); moveOnce = null; planned = []; planAnswer = null;
   movedTo = null; movesEveryTime = 0; unnamed = new Set(); accountLags = false;
+  charging = 'no-policy'; charges.length = 0;
 });
 
 describe('PAYING AN APPROVED LEG', () => {
@@ -111,7 +127,7 @@ describe('PAYING AN APPROVED LEG', () => {
     const done: Paid = await payAnApprovedLeg(doors, leg);
     /* RED WHEN: a payment is sent before the merge it needs, chooses its notes instead of the step's, or the merged coin
      * and a payment's change are not carried to the step that spends them. */
-    expect(calls).toEqual(['merge a1:120+a2:100+a3:90', 'pay 0 250 from e7:310', 'pay 1 50 from c0:60']);
+    expect(calls).toEqual(['charge no-policy', 'merge a1:120+a2:100+a3:90', 'pay 0 250 from e7:310', 'pay 1 50 from c0:60']);
     expect(done).toMatchObject({ paid: [0, 1], alreadyPaid: [] });
     expect(done.steps.map((s) => s.kind)).toEqual(['merge', 'payment', 'payment']);
     /* RED WHEN: the leg is planned more than once without its notes moving, or the planner is asked for batches. */
@@ -123,8 +139,10 @@ describe('PAYING AN APPROVED LEG', () => {
     order = anOrder([aPayment(0, 30)]);
     const doors = await aVault([{ nonce: 'a1'.repeat(32), value: 100n }]);
     planAnswer = { ok: true, units: [], left: [], steps: [{ kind: 'batch', unit: 0, notes: [{ kind: 'held', id: 'a1'.repeat(32) }], pays: 30n, change: 70n, after: [] }] };
+    charging = 'charged';
     /* RED WHEN: a batch step is sent some other way - as a payment, say - rather than refused. */
     await expect(payAnApprovedLeg(doors, leg)).rejects.toThrow(/paying a batch is not built yet/);
+    /* RED WHEN: a plan that cannot be paid as planned is charged first - a fee, and the run counted in its period. */
     expect(calls).toEqual([]);
   });
 
@@ -134,9 +152,10 @@ describe('PAYING AN APPROVED LEG', () => {
     const doors = await aVault([{ nonce: 'a1'.repeat(32), value: 100n }]);
     /* RED WHEN: a person the account records paid is planned or sent again. */
     expect(await payAnApprovedLeg(doors, leg)).toMatchObject({ paid: [1], alreadyPaid: [0] });
-    expect(calls).toEqual(['pay 1 40 from a1:100']);
+    expect(calls).toEqual(['charge no-policy', 'pay 1 40 from a1:100']);
     calls.length = 0;
     expect(await payAnApprovedLeg(doors, leg)).toEqual({ paid: [], sentNotNamed: [], alreadyPaid: [0, 1], steps: [] });
+    /* RED WHEN: a leg with nobody left to pay is charged - a fee for a run nothing more is paid from. */
     expect(calls).toEqual([]);
   });
 
@@ -151,7 +170,7 @@ describe('PAYING AN APPROVED LEG', () => {
     const done = await payAnApprovedLeg(doors, leg);
     /* RED WHEN: a step that found its notes moved stops the leg, the replan pays person 0 again, or it plans over the
      * pool as it stood before the notes moved. */
-    expect(calls).toEqual(['pay 0 30 from a1:100', 'moved under 1', 'pay 1 40 from b9:90']);
+    expect(calls).toEqual(['charge no-policy', 'pay 0 30 from a1:100', 'moved under 1', 'pay 1 40 from b9:90']);
     expect(done.paid).toEqual([0, 1]);
     expect(planned).toHaveLength(2);
   });
@@ -184,6 +203,22 @@ describe('PAYING AN APPROVED LEG', () => {
     expect(calls).toEqual([]);
   });
 
+  it('FROM A VAULT UNDER A POLICY, A LEG THE VAULT CANNOT PAY IS REFUSED BY THE PLANNER BEFORE THE RUN IS CHARGED: NO CHARGE IS BUILT OR SENT', async () => {
+    charging = 'charged';
+    order = anOrder([aPayment(0, 500)]);
+    const doors = await aVault([{ nonce: 'a1'.repeat(32), value: 100n }]);
+    await expect(payAnApprovedLeg(doors, leg)).rejects.toThrow(/Deposit 400 more/);
+    /* RED WHEN: the run is charged before the leg is planned - a fee, and its total counted in the period, for a leg
+     * that is then refused and pays nobody. */
+    expect(charges).toEqual([]);
+    expect(calls).toEqual([]);
+    /* The same leg, once the vault holds enough, is charged after it is planned and before its first step. */
+    const funded = await aVault([{ nonce: 'a1'.repeat(32), value: 600n }]);
+    const done = await payAnApprovedLeg(funded, leg);
+    expect(calls).toEqual(['charge charged', 'pay 0 500 from a1:600']);
+    expect(done.steps.map((x) => x.kind)).toEqual(['charge', 'payment']);
+  });
+
   it('A LEG PAID IN PUBLIC MONEY IS NOT PLANNED: EACH PERSON STILL OWED IS PAID PUBLICLY, ASKED OF THEIR OWN PAYMENT', async () => {
     order = anOrder([aPayment(0, 30, 'unshielded'), aPayment(1, 40, 'unshielded'), aPayment(2, 50, 'unshielded')], 'unshielded');
     paidOnTheAccount = new Set([1]);
@@ -191,8 +226,44 @@ describe('PAYING AN APPROVED LEG', () => {
     const done = await payAnApprovedLeg(doors, leg);
     /* RED WHEN: a public leg is planned over notes, or pays a person the account records paid. */
     /* RED WHEN: each payment is not asked about by itself. */
-    expect(calls).toEqual(['asked about 0', 'pay publicly 0 30 asking true', 'asked about 2', 'pay publicly 2 50 asking true']);
+    expect(calls).toEqual(['charge no-policy', 'asked about 0', 'pay publicly 0 30 asking true', 'asked about 2', 'pay publicly 2 50 asking true']);
     const sent: StepSent[] = [{ kind: 'public-payment', index: 0, txRef: 'u0' }, { kind: 'public-payment', index: 2, txRef: 'u2' }];
     expect(done.steps).toEqual(sent);
+  });
+  it('FROM A VAULT UNDER A POLICY THE RUN IS CHARGED TO ITS PERIOD BEFORE ANYTHING IS PAID, ONCE, AND NOT AGAIN WHEN THE LEG IS PLANNED AGAIN', async () => {
+    charging = 'charged';
+    order = anOrder([aPayment(0, 30), aPayment(1, 40)]);
+    const doors = await aVault([{ nonce: 'a1'.repeat(32), value: 100n }]);
+    moveOnce = `c0`.padEnd(64, '0');
+    movedTo = [{ nonce: 'b9'.repeat(32), value: 90n }];
+    accountLags = true;
+    const done = await payAnApprovedLeg(doors, leg);
+    /* RED WHEN: the charge is not the first thing paying does, or a leg planned again is charged again. */
+    expect(calls).toEqual(['charge charged', 'pay 0 30 from a1:100', 'moved under 1', 'pay 1 40 from b9:90']);
+    /* RED WHEN: the run is charged as another proposal, or with other approvals, than the leg as this device opened it. */
+    expect(charges).toEqual([{ proposalId: 'prp_theLegAAAAAA', required: '2', vault: VAULT }]);
+    /* RED WHEN: what the charge did is not reported with what the leg sent. */
+    expect(done.steps[0]).toEqual({ kind: 'charge', spentBefore: 700n });
+    expect(done.steps.map((x) => x.kind)).toEqual(['charge', 'payment', 'payment']);
+  });
+
+  it('A RUN THE CHAIN ALREADY HOLDS AS CHARGED, OR FROM A VAULT WITH NO POLICY, IS PAID WITH NO CHARGE SENT', async () => {
+    for (const state of ['already-charged', 'no-policy'] as const) {
+      charging = state; calls.length = 0;
+      order = anOrder([aPayment(0, 30)]);
+      paidOnTheAccount = new Set();
+      const done = await payAnApprovedLeg(await aVault([{ nonce: 'a1'.repeat(32), value: 100n }]), leg);
+      /* RED WHEN: a charge is reported, or the payment is not made, for a run that needs none. */
+      expect(done.steps.map((x) => x.kind), state).toEqual(['payment']);
+      expect(calls, state).toEqual([`charge ${state}`, 'pay 0 30 from a1:100']);
+    }
+  });
+
+  it('A CHARGE REFUSED STOPS THE LEG BEFORE ANY PAYMENT IS SENT', async () => {
+    charging = 'refused';
+    order = anOrder([aPayment(0, 30, 'unshielded')], 'unshielded');
+    /* RED WHEN: a payment goes out from a policy vault after its charge was refused - the chain refuses it after a fee. */
+    await expect(payAnApprovedLeg(await aVault([]), leg)).rejects.toThrow(/past its limit for the period/u);
+    expect(calls).toEqual(['charge refused']);
   });
 });

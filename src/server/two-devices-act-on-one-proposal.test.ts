@@ -69,6 +69,8 @@ const { paysCommitmentOf } = await import('../core/proposal-filing.js');
 const { paymentChecked } = await import('../core/device-raise.js');
 const { runLegOf } = await import('../core/run-legs.js');
 const device = await import('vaults-web-shared/governed-call-on-device.js');
+const { chainReadThroughTheWallet } = await import('vaults-web-shared/spending-policy-here.js');
+const { spendingPolicyKeysOf } = await import('vaults-web-shared/governed-call-builder.js');
 type Hex = import('../core/crypto.js').Hex;
 type Standing = import('vaults-web-shared/governed-call-on-device.js').RoundOnThePage;
 
@@ -206,6 +208,19 @@ const seeded = await (async () => {
         }),
       },
       policy: async () => accounts.open(account, viewingKey).policy,
+      /*
+       * STAND-IN, NAMED: the person's own wallet's read of the account's map of
+       * roles, answering that it holds nothing under any key asked - so no
+       * policy marker, and the vault is paid as it always was. This file's chain
+       * is the service's own ledger double, which keeps no map of roles.
+       */
+      spendingPolicies: {
+        versions: async () => [],
+        file: async () => { throw new Error('no spending policy is set in this file'); },
+        me: { signerId: '4e'.repeat(32), wrappingSecret: '00'.repeat(32) as never },
+        keys: async (input) => spendingPolicyKeysOf({ accountPure: pureCircuits as never }, input),
+        onChain: chainReadThroughTheWallet(async (asked) => ({ roles: asked.map((key) => ({ key, value: null })) })),
+      },
     };
     return {
       account, viewingKey, runId: run.id, proposalId: proposal.id,

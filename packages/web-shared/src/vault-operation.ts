@@ -190,7 +190,7 @@ async function theWalletsIndexer(
  * by: this device's vault worker, at the indexer the person's own wallet names,
  * for the company's account as this device holds it.
  */
-interface BuiltOnHereDoors {
+export interface BuiltOnHereDoors {
   readonly account: AccountAddress;
   readonly builder: Pick<VaultBuilderClient, 'chainAtOneBlock' | 'eventsOf' | 'createdBy'>;
   readonly indexer: ChainHereDoors['indexer'];
@@ -203,7 +203,7 @@ interface BuiltOnHereDoors {
  * worker at the indexer the person's own wallet names. The account is the one
  * this device holds for the company, never one an answer names.
  */
-async function chainAtOneBlockHere(
+export async function chainAtOneBlockHere(
   doors: BuiltOnHereDoors, vault: Hex,
 ): Promise<PayoutChainOnTheWire & { readonly account: Hex }> {
   const indexer = await theWalletsIndexer(doors, vault);
@@ -416,7 +416,8 @@ export class VaultHandoverOwed extends Error {
 
 const sentNothing = (e: unknown): boolean => (e as { nothingWasSent?: unknown })?.nothingWasSent === true;
 
-async function until<T>(
+/** Asks `ask` every `everyMs` until it answers something, for at most `waitMs`; null when it never did. */
+export async function until<T>(
   pacing: Pacing, ask: () => Promise<T | null>,
 ): Promise<T | null> {
   const every = pacing.everyMs ?? 6_000;

@@ -548,7 +548,8 @@ export interface CreationRequest extends Asking {
  * every vault it has adopted; and, when the ask names one vault, that vault's
  * state at its deploy and at each update since; and, when the ask names
  * entries of the account's record of payments, which of them it holds and the
- * commitment it holds to its pay-record key. **Nothing private is handed over
+ * commitment it holds to its pay-record key; and, when the ask names entries
+ * of the account's map of roles, what the account holds under each. **Nothing private is handed over
  * and nothing is signed, so it is answered without a press, and without the
  * wallet being shown or unlocked.** Every other field is refused.
  */
@@ -568,7 +569,19 @@ export interface HoldersRequest extends Asking {
    * most `MOST_ENTRIES_ASKED`.
    */
   readonly movements?: readonly string[];
+  /**
+   * **ENTRIES OF THE ACCOUNT'S MAP OF ROLES, ASKED ABOUT BY A PAGE ABOUT TO
+   * RAISE OR APPROVE A PAYROLL RUN.** When present, the answer also says what
+   * the account holds under each, or that it holds nothing: whether a vault is
+   * under a spending policy, the commitment it holds to that policy, and what
+   * it holds for a period of it. Public chain facts, each 64 lower-case hex
+   * characters, at most `MOST_ROLES_ASKED`.
+   */
+  readonly roles?: readonly string[];
 }
+
+/** The most entries of the account's map of roles one holders ask may ask about. */
+export const MOST_ROLES_ASKED = 256;
 
 /** The most payment-record entries one holders ask may ask about: two for each person on the largest run. */
 export const MOST_ENTRIES_ASKED = 2048;
@@ -1318,9 +1331,9 @@ function addressesAndBalancesAskOf(body: Record<string, unknown>, asking: Asking
   return Object.freeze({ ...asking, kind: 'addresses-and-balances' as const });
 }
 
-/** Every field a holders ask may carry: the ones every ask carries, then its own three. */
+/** Every field a holders ask may carry: the ones every ask carries, then its own four. */
 const HOLDERS_FIELDS: ReadonlySet<string> = new Set([
-  'schema', 'kind', 'requester', 'purpose', 'nonce', 'expiresAt', 'company', 'account', 'movements',
+  'schema', 'kind', 'requester', 'purpose', 'nonce', 'expiresAt', 'company', 'account', 'movements', 'roles',
 ]);
 
 const ENTRY = /^[0-9a-f]{64}$/u;
@@ -1338,14 +1351,22 @@ function holdersAskOf(body: Record<string, unknown>, asking: Asking): HoldersReq
   }
   const company = labelIn(body['company'], asks, nothing);
   const account = accountIn(body['account'], asks, nothing);
-  const asked = body['movements'];
-  if (asked === undefined) return Object.freeze({ ...asking, kind: 'holders' as const, company, account });
-  if (!Array.isArray(asked) || asked.length === 0 || asked.length > MOST_ENTRIES_ASKED
-    || !asked.every((e) => typeof e === 'string' && ENTRY.test(e)) || new Set(asked).size !== asked.length) {
-    throw new RequestError('malformed-field', `${asks} and which payments its account records, and the payments it names are `
-      + `not between 1 and ${MOST_ENTRIES_ASKED} different entries of 64 lower-case hex characters. ${nothing}`);
-  }
-  return Object.freeze({ ...asking, kind: 'holders' as const, company, account, movements: Object.freeze([...asked as string[]]) });
+  const entries = (field: string, most: number, what: string): readonly string[] | undefined => {
+    const asked = body[field];
+    if (asked === undefined) return undefined;
+    if (!Array.isArray(asked) || asked.length === 0 || asked.length > most
+      || !asked.every((e) => typeof e === 'string' && ENTRY.test(e)) || new Set(asked).size !== asked.length) {
+      throw new RequestError('malformed-field', `${asks} and ${what}, and the entries it names are `
+        + `not between 1 and ${most} different entries of 64 lower-case hex characters. ${nothing}`);
+    }
+    return Object.freeze([...asked as string[]]);
+  };
+  const movements = entries('movements', MOST_ENTRIES_ASKED, 'which payments its account records');
+  const roles = entries('roles', MOST_ROLES_ASKED, 'what its account holds under some of its roles');
+  return Object.freeze({
+    ...asking, kind: 'holders' as const, company, account,
+    ...(movements === undefined ? {} : { movements }), ...(roles === undefined ? {} : { roles }),
+  });
 }
 
 /**

@@ -37,7 +37,7 @@ export class NotOpenedOnThisDevice extends Error {
 }
 
 /** Kinds a device here acts on. Any other is refused before anything is read out of it. */
-const KINDS_A_DEVICE_ACTS_ON = new Set(['payroll', 'add-signer', 'set-threshold', 'set-vault-threshold']);
+const KINDS_A_DEVICE_ACTS_ON = new Set(['payroll', 'add-signer', 'set-threshold', 'set-vault-threshold', 'set-spending-policy', 'set-policy-bar']);
 
 /**
  * **ONE PROPOSAL, READ ON THIS DEVICE FROM THE COMPANY'S OWN RECORDS.**
@@ -82,13 +82,16 @@ export async function openTheRoundHere(
       + 'Reload the page to see where it stands.');
   }
   let envelope: { kind: string; summary: string; vault: string; sealedPayload: Sealed };
-  let body: { signerId?: unknown; newThreshold?: unknown; vault?: unknown; __change?: StateChange };
+  let body: {
+    signerId?: unknown; newThreshold?: unknown; vault?: unknown; assetKey?: unknown; commitment?: unknown; newPolicyBar?: unknown;
+    __change?: StateChange;
+  };
   try {
     envelope = openRecord('proposals', rec.accountId, rec.sealed, key);
     if (!KINDS_A_DEVICE_ACTS_ON.has(envelope.kind)) {
-      throw new NotOpenedOnThisDevice('This page acts on payroll runs, access for new signers and changes to the approvals '
-        + 'required by the company or by one of its vaults, and this proposal is none of those, so it cannot be approved '
-        + 'from this device yet. Leave it unapproved.');
+      throw new NotOpenedOnThisDevice('This page acts on payroll runs, access for new signers, changes to the approvals '
+        + 'required by the company or by one of its vaults, and vaults\' spending policies, and this proposal is none of '
+        + 'those, so it cannot be approved from this device yet. Leave it unapproved.');
     }
     body = parseCanonical(unseal(envelope.sealedPayload, key));
   } catch (e) {
@@ -177,6 +180,18 @@ export async function openTheRoundHere(
         + 'would need. Withdraw it and make the change again.');
     }
     governance = { kind: 'vault-threshold', vault: body.vault, threshold: String(body.newThreshold) };
+  } else if (envelope.kind === 'set-spending-policy') {
+    if (![body.vault, body.assetKey, body.commitment].every((v) => typeof v === 'string' && HEX64.test(v))) {
+      throw new NotOpenedOnThisDevice('This proposal does not say which vault and currency its spending policy is for, or '
+        + 'which policy. Withdraw it and set the policy again.');
+    }
+    governance = { kind: 'spending-policy', vault: body.vault as string, assetKey: body.assetKey as string, commitment: body.commitment as string };
+  } else if (envelope.kind === 'set-policy-bar') {
+    if (typeof body.newPolicyBar !== 'number' || !Number.isInteger(body.newPolicyBar) || body.newPolicyBar < 1) {
+      throw new NotOpenedOnThisDevice('This proposal does not say how many approvals a change to a spending policy would '
+        + 'need. Withdraw it and make the change again.');
+    }
+    governance = { kind: 'policy-bar', bar: String(body.newPolicyBar) };
   }
   /*
    * **A PROPOSAL A SEAT'S DEVICE WROTE DOWN IS BELIEVED ONLY AS THAT SEAT FILED
@@ -231,6 +246,7 @@ export async function openTheRoundHere(
     try {
       await refuseWhatNoRoundMay(records, accountId, key, {
         run: rebuilt.run, leg: rebuilt.leg, made: rebuilt.made, filedBy: rec.filedBy?.publicKey ?? '', proposal: rec.id,
+        vault: envelope.vault,
       });
     } catch (e) {
       if (!(e instanceof RoundRefusedHere)) throw e;

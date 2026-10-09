@@ -165,18 +165,29 @@ export const ACCOUNT_CIRCUITS_A_VAULT_CALLS: readonly string[] = Object.freeze([
 /**
  * **THE ACCOUNT'S CIRCUITS A SIGNER'S OWN DEVICE BUILDS AND PROVES**: raising a
  * round, approving one, withdrawing one, and carrying out an approved round
- * that seats a signer, changes the company's or one vault's threshold or adopts
- * a new vault, and sealing the company's pay-record key to a signer. Each opens with the signer check, so each runs
+ * that seats a signer, changes the company's or one vault's threshold, adopts
+ * a new vault, or sets a vault's spending policy or the approvals a policy
+ * change needs, and sealing the company's pay-record key to a signer. Each opens with the signer check, so each runs
  * against the signer's own secret, which exists only on that device. No vault
  * circuit shares a name with any of them.
  */
 export const ACCOUNT_CIRCUITS_A_DEVICE_GOVERNS: readonly string[] = Object.freeze([
   'propose', 'approve', 'amendSigner', 'setThreshold', 'adopt', 'sealPayKey', 'cancel', 'setVaultThreshold',
+  'setPolicy', 'setPolicyBar',
 ]);
 
-/** Every one of the account's circuits whose proving material is served to a device, for either reason above. */
+/**
+ * **THE ACCOUNT'S CIRCUIT A DEVICE PROVES TO CHARGE AN APPROVED RUN TO ITS
+ * VAULT'S PERIOD**, before the run's first payment from a vault under a
+ * spending policy. It opens with no signer check: it reads the policy's
+ * opening and the period's running total, which only a signer's device can
+ * open, and the chain checks the run's approvals itself.
+ */
+export const ACCOUNT_CIRCUITS_A_DEVICE_CHARGES: readonly string[] = Object.freeze(['clearRun']);
+
+/** Every one of the account's circuits whose proving material is served to a device, for any reason above. */
 export const ACCOUNT_CIRCUITS_SERVED_TO_A_DEVICE: readonly string[] = Object.freeze([
-  ...ACCOUNT_CIRCUITS_A_VAULT_CALLS, ...ACCOUNT_CIRCUITS_A_DEVICE_GOVERNS,
+  ...ACCOUNT_CIRCUITS_A_VAULT_CALLS, ...ACCOUNT_CIRCUITS_A_DEVICE_GOVERNS, ...ACCOUNT_CIRCUITS_A_DEVICE_CHARGES,
 ]);
 
 /**

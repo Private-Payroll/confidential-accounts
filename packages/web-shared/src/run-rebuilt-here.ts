@@ -35,6 +35,7 @@ import {
   CREATED_BEFORE_SIGNED_STATE, FOUNDING_KEY_EPOCH, foundingStateRefusal, openStateRecord, stateRecordId,
 } from '../../../src/core/founding-state.js';
 import type { SealedCompanyRecord } from '../../../src/midnight/sealed-record-wire.js';
+import type { VaultBuilderClient } from './vault-worker-client.js';
 import { foundingSeatHere, judgeIn, type DirectoryHere } from './vault-page-doors.js';
 import { runFilingRefusal } from '../../../src/core/run-filing.js';
 import { companyRecordKey } from '../../../src/midnight/seat-directory.js';
@@ -80,6 +81,29 @@ export interface CompanyRecordsHere {
   /** The company's own ceilings, opened from its sealed policy record. */
   readonly policy: () => Promise<Account['policy']>;
   readonly registry?: AssetRegistry;
+  /** A vault's spending policies, and what the chain holds for them (`spending-policy-here.ts`). */
+  readonly spendingPolicies?: SpendingPoliciesHere;
+}
+
+/**
+ * **A VAULT'S SPENDING POLICIES, AS THIS DEVICE READS AND FILES THEM.** Every
+ * version the company's store serves under one policy's key, each believed
+ * only as `spending-policy-here.ts` judges it against the directory this
+ * device believes; filing a new version, signed by this device's seat; this
+ * signer's own seat and wrapping secret, which open it; the contract's own keys
+ * for a policy, made in the worker; and what the company's account holds under
+ * given keys, read by the person's own wallet (`chainReadThroughTheWallet`) -
+ * never an answer the company's service made. Who a version is sealed to is
+ * never a door: it is the seats this device believes (`readersIn`).
+ */
+export interface SpendingPoliciesHere {
+  readonly versions: (id: string) => Promise<readonly SealedCompanyRecord[]>;
+  readonly file: (rec: SealedCompanyRecord) => Promise<void>;
+  readonly me: { readonly signerId: string; readonly wrappingSecret: Hex };
+  /** The worker's `spending-policy-keys` ask (`VaultBuilderClient.spendingPolicyKeys`). */
+  readonly keys: VaultBuilderClient['spendingPolicyKeys'];
+  /** For each key asked, lower-cased, what the account's map of roles holds under it, or null for nothing. */
+  readonly onChain: (keys: readonly string[]) => Promise<ReadonlyMap<string, string | null>>;
 }
 
 /** Why this device could not read a run from the company's records. Nothing is built without it. */
@@ -176,6 +200,28 @@ export async function keptRunHere(
 }
 
 /**
+ * **EVERY RUN OF THE COMPANY'S THIS DEVICE BELIEVES**, opened here: each filed
+ * by a seat the directory this device believes may file a run, for this
+ * company. A run it does not believe, or cannot open, is passed over, never
+ * read: whatever is worked out from these runs is then short of it, and a sum
+ * that must open a commitment on the chain is refused rather than believed.
+ */
+export async function believedRunsHere(records: CompanyRecordsHere, accountId: string, viewingKey: Hex): Promise<readonly PayrollRun[]> {
+  const believed: PayrollRun[] = [];
+  for (const sealed of await records.runs()) {
+    if (sealed.accountId !== accountId) continue;
+    try {
+      await refuseARunNoSeatFiled(records, accountId, sealed);
+      const run = openedHere(sealed, viewingKey, 'one of the company\'s payroll runs');
+      if (run.id === sealed.id && run.accountId === accountId) believed.push(run);
+    } catch (e) {
+      if (!(e instanceof RunNotReadHere)) throw e;
+    }
+  }
+  return believed;
+}
+
+/**
  * **WHAT EACH OF `paid` IS PAID, FROM THE PEOPLE THIS DEVICE BELIEVES AND WOULD
  * PAY**: each person's address and form from their own believed record. A
  * person this device does not believe, or would not pay at the address it
@@ -268,8 +314,9 @@ export async function runRebuiltHere(
  */
 export async function checkedAgainstTheRecordsAndTheWallet(
   records: CompanyRecordsHere, accountId: string, run: PayrollRun, viewingKey: Hex, made: Omit<RunMadeHere, 'raising' | 'wallet'>,
+  proposals?: readonly SealedProposal[],
 ): Promise<RunMadeHere> {
-  return withWhatTheWalletRead(records, { ...made, raising: await whatTheRecordsAccountFor(records, accountId, run, viewingKey) });
+  return withWhatTheWalletRead(records, { ...made, raising: await whatTheRecordsAccountFor(records, accountId, run, viewingKey, proposals) });
 }
 
 /**
@@ -320,14 +367,15 @@ export async function withWhatTheWalletRead(records: CompanyRecordsHere, made: R
  * an answer the service made.
  */
 async function whatTheRecordsAccountFor(
-  records: CompanyRecordsHere, accountId: string, run: PayrollRun, viewingKey: Hex,
+  records: CompanyRecordsHere, accountId: string, run: PayrollRun, viewingKey: Hex, read?: readonly SealedProposal[],
 ): Promise<RaisingHere> {
-  if (records.proposals === undefined) {
+  const readProposals = records.proposals;
+  if (readProposals === undefined) {
     throw new RunNotReadHere('This page cannot read the company\'s proposals, so it cannot raise a run. Reload the page to get '
       + 'the current version.');
   }
   const [proposals, runs, state] = await Promise.all([
-    records.proposals(), records.runs(), signedStateHere(records, accountId, viewingKey)]);
+    read ?? readProposals(), records.runs(), signedStateHere(records, accountId, viewingKey)]);
   const opened = runs.filter((r) => r.accountId === accountId).map((r) => openedHere(r, viewingKey, 'one of the company\'s payroll runs'));
   const legs = opened.flatMap((r) => Object.values(r.payout ?? {}));
   return {

@@ -300,6 +300,8 @@ export function carryOrderHere(opened: OpenedRound): GovernedCallOrder {
   if (g?.kind === 'vault-threshold') {
     return { circuit: 'setVaultThreshold', vault: g.vault, threshold: g.threshold, proposal: opened.chainId, proposalSalt: opened.salt };
   }
+  if (g?.kind === 'policy-bar') return { circuit: 'setPolicyBar', bar: g.bar, proposal: opened.chainId, proposalSalt: opened.salt };
+  /* A spending policy is carried out with the policy's opening, which only the company's record of it holds (`spending-policy-here.ts`). */
   throw new NotMadeHere('This proposal neither seats a signer nor changes the approvals required, so there is nothing to carry '
     + 'out from here.');
 }

@@ -30,6 +30,7 @@ import { assemblePrivatePayments } from '../../../src/midnight/private-payment-w
 import { runPayments } from '../../../src/midnight/run-status.js';
 import { vaultDetails } from '../../../src/testing/vault-details.js';
 import { runsFiledBy } from '../../../src/testing/runs-a-seat-filed.js';
+import { openSealedRun, sealedRunOf } from '../../../src/core/run-legs.js';
 import { registryWithTestPrivateForms, aVaultHolding, TEST_TOKEN } from '../../../src/testing/assets.js';
 import type { CompanyRecordsHere } from './run-rebuilt-here.js';
 import { NotMadeHere } from './material-made-here.js';
@@ -80,7 +81,17 @@ const aRaisedRun = async (o: { sent?: boolean } = {}) => {
     detailsOf: vaultDetails, runPayload: pureCircuits.runPayload, proposalIdOf: pureCircuits.proposalIdOf,
     paidAmong: (leaves) => ledger.paidAmong(account, [...leaves]),
   };
-  return { store, ledger, accounts, payroll, account, viewingKey, runId: run.id, records, deps };
+  return { store, ledger, accounts, payroll, account, viewingKey, runId: run.id, records, deps, founder: founder.secret };
+};
+
+/** The company's records with the run's own record of its leg saying it was raised needing `required` approvals, filed again by its seat. */
+const recordedNeeding = (c: Awaited<ReturnType<typeof aRaisedRun>>, required: bigint): CompanyRecordsHere => {
+  const kept = c.store.listRuns(c.account).find((r) => r.id === c.runId)!;
+  const opened = openSealedRun(kept, c.viewingKey);
+  const leg = Object.keys(opened.payout!)[0] as keyof NonNullable<typeof opened.payout>;
+  const barred = { ...opened, payout: { ...opened.payout, [leg]: { ...opened.payout![leg]!, required } } };
+  const resealed = { ...kept, ...sealedRunOf(barred as never, c.viewingKey, kept.keyEpoch) };
+  return { ...c.records, runs: async () => runsFiledBy([resealed as never], c.account, c.founder) };
 };
 
 describe('AN APPROVED LEG, PAID FROM WHAT THIS DEVICE MADE', () => {
@@ -108,13 +119,17 @@ describe('AN APPROVED LEG, PAID FROM WHAT THIS DEVICE MADE', () => {
     /* RED WHEN: the identity the leaves rebuild is not compared with the one the chain opened the proposal under. */
     const otherSalt = { ...c.deps, proposalIdOf: (p: Uint8Array, v: Uint8Array) => pureCircuits.proposalIdOf(p, v, new Uint8Array(32).fill(7)) };
     await expect(privatePaymentsHere(c.records, c.account, c.runId, c.viewingKey, otherSalt)).rejects.toThrow(/not the ones its signers approved/u);
-    /* RED WHEN: the approvals a round's identity binds are not read from its own record, so a round raised with a bar is rebuilt as one without. */
+    /* RED WHEN: the approvals a round's identity binds are not read from the run's own record, so a round raised with a bar is rebuilt as one without. */
+    await expect(privatePaymentsHere(recordedNeeding(c, 2n), c.account, c.runId, c.viewingKey, c.deps))
+      .rejects.toThrow(/not the ones its signers approved/u);
+    /* RED WHEN: the paying device reads the approvals from the proposal's sealed payload rather than the run's record: a payload
+     * saying otherwise changes nothing. */
     const rec = c.store.listProposals(c.account)[0]!;
     const envelope = openRecord<{ sealedPayload: Sealed } & Record<string, unknown>>('proposals', c.account, rec.sealed, c.viewingKey);
     const payload = parseCanonical<Record<string, unknown>>(unseal(envelope.sealedPayload, c.viewingKey));
-    const barred = { ...rec, sealed: sealRecord('proposals', c.account, { ...envelope, sealedPayload: seal(canonical({ ...payload, __required: 2n }), c.viewingKey) }, c.viewingKey) };
-    await expect(privatePaymentsHere({ ...c.records, proposals: async () => [barred] }, c.account, c.runId, c.viewingKey, c.deps))
-      .rejects.toThrow(/not the ones its signers approved/u);
+    const saysTwo = { ...rec, sealed: sealRecord('proposals', c.account, { ...envelope, sealedPayload: seal(canonical({ ...payload, __required: 2n }), c.viewingKey) }, c.viewingKey) };
+    await expect(privatePaymentsHere({ ...c.records, proposals: async () => [saysTwo] }, c.account, c.runId, c.viewingKey, c.deps))
+      .resolves.toMatchObject({ proposal: rec.chainId });
     /* RED WHEN: a leg's payments are offered for a retry the leg does not record. */
     await expect(privatePaymentsHere(c.records, c.account, c.runId, c.viewingKey, c.deps, undefined, 'prp_none')).rejects.toThrow(NotMadeHere);
   });
@@ -138,5 +153,8 @@ describe('AN APPROVED LEG, PAID FROM WHAT THIS DEVICE MADE', () => {
     /* RED WHEN: a view over leaves that do not rebuild the proposal is reported on at all. */
     const otherSalt = { ...c.deps, paidAmong: async () => known, proposalIdOf: (p: Uint8Array, v: Uint8Array) => pureCircuits.proposalIdOf(p, v, new Uint8Array(32).fill(7)) };
     await expect(paymentViewHere(c.records, c.account, c.runId, c.viewingKey, otherSalt)).rejects.toThrow(/these are not that run's payees/u);
+    /* RED WHEN: the view's proof is made at other approvals than the run's own record says its leg was raised needing. */
+    await expect(paymentViewHere(recordedNeeding(c, 2n), c.account, c.runId, c.viewingKey, { ...c.deps, paidAmong: async () => known }))
+      .rejects.toThrow(/these are not that run's payees/u);
   });
 });

@@ -1730,6 +1730,20 @@ describe('R5b/C188: the boundary tells an empty map apart from a missing one', (
       .rejects.toThrow(/not the same as the map being empty/);
   });
 
+  it('thresholds: the policy bar, kept under its own key in the same map as each vault\'s, is handed over with them', async () => {
+    const vault = 'a1'.repeat(32) as Hex;
+    const { ledger } = harness({ vaultThresholds: [[vault, 2n], [policyBarKey(), 3n]] });
+    /*
+     * RED WHEN: the status hands over only the vaults' entries of the map - a
+     * device setting a spending policy or its bar then never finds the bar
+     * the chain keeps, and asks for approvals against the account's own
+     * threshold instead.
+     */
+    expect((await ledger.status('acct'))!.vaultThresholds).toEqual(expect.arrayContaining([
+      { vault, threshold: 2 }, { vault: policyBarKey(), threshold: 3 },
+    ]));
+  });
+
   it('approvalCounts: empty means nobody has approved anything; missing refuses', async () => {
     /*
      * **THE FOURTH MAP, AND THE ONE THAT WAS READ OUTSIDE THE GUARD.**
