@@ -20,7 +20,7 @@
  * on the page can read it.
  */
 import type { Inviter } from '../../../src/core/invitation.js';
-import type { OwedDirectoryEntry } from './vault-page-doors.js';
+import type { DirectoryHereDeps, OwedDirectoryEntry } from './vault-page-doors.js';
 import { readAccountAddress, readCompanyLabel } from 'midnight-identity/profile/company-label';
 import type { AccountAddress, CompanyLabel, VaultAddress } from 'midnight-identity/profile/company-label';
 import { randomBytes, seal, sign, signingPublicKeyOf, toHex, unseal, unwrapKey, type Hex, type Sealed } from '../../../src/core/crypto.js';
@@ -43,9 +43,7 @@ import {
  * a test hands in a window of its own and drives the same conversation. */
 import { walletInThisPage, walletQuietlyInThisPage } from './wallet-frame.js';
 import { approvalMessage } from '../../../src/core/account.js';
-import {
-  rosterBelievedHere, RosterNotBelieved, type BelievedAccount, type RosterBelievedBefore, type RosterSeenBefore,
-} from './roster-here.js';
+import { rosterBelievedHere, RosterNotBelieved, type BelievedAccount } from './roster-here.js';
 import { directoryFilingsFrom } from './vault-page-doors.js';
 import type { SealedCompanyRecord } from '../../../src/midnight/sealed-record-wire.js';
 import {
@@ -250,13 +248,6 @@ export interface Keyring {
    * keys written before it have no such field.
    */
   directoryEntriesOwed?: Record<string, OwedDirectoryEntry>;
-  /**
-   * **WHAT THIS PERSON'S DEVICES BELIEVED OF EACH COMPANY'S ROSTER**, by
-   * account id: the newest version read, its digest, and the wallet each seat
-   * was believed on. A later read that goes back on it is refused. Optional,
-   * because a bundle sealed before it has none.
-   */
-  rostersBelieved?: Record<string, RosterSeenBefore>;
 }
 
 export interface Me { id: string; email: string | null; name: string }
@@ -1377,15 +1368,6 @@ export const directoryEntryOwed = (accountId: string) => ({
   },
 });
 
-/** The doors over what this person's devices believed of `accountId`'s roster, kept sealed with their keys. */
-export const rosterBelievedBeforeFor = (accountId: string): RosterBelievedBefore => ({
-  read: (): RosterSeenBefore | null => keyring.rostersBelieved?.[accountId] ?? null,
-  keep: async (now: RosterSeenBefore): Promise<void> => {
-    if (!encKey) return;
-    await putBundle({ ...keyring, rostersBelieved: { ...(keyring.rostersBelieved ?? {}), [accountId]: now } });
-  },
-});
-
 export const pendingSeatsFor = (accountId: string): PendingSeat[] =>
   Object.values(keyring.pendingSeats ?? {}).filter(x => x.accountId === accountId);
 
@@ -1488,10 +1470,12 @@ async function putBundle(next: Keyring) {
   if (savedKeys !== 'some' && !keyCheckedAgainstSignIn) throw new FirstKeysNeedTheSignIn(FIRST_KEYS_NEED_THE_SIGN_IN);
   const key = encKey;
   const base = keyring;
+  /* What devices once believed of each company's roster was kept here; the anchor on chain answers that now, so it is not written again. */
+  const { rostersBelieved: _noLongerKept, ...written } = next as Keyring & { readonly rostersBelieved?: unknown };
   const r = await api('/api/me/keys', {
     method: 'PUT',
     body: JSON.stringify({
-      keyBundle: seal(JSON.stringify(next), key),
+      keyBundle: seal(JSON.stringify(written), key),
       ifVersion: bundleVersion,
     }),
   });
@@ -2194,6 +2178,8 @@ export function viewingKeyFor(account: { id: string; wrappedKeys: any[] }): Hex 
 export async function openAccount(
   rec: SealedAccount & { readonly roster?: SealedCompanyRecord | null },
   holders: (company: CompanyLabel, account: AccountAddress) => Promise<AccountHoldersRead>,
+  /** The company's records as the head on chain holds them, for the company `accountId` and its account (`heldFor`). */
+  anchored: (accountId: string, company: CompanyLabel, account: AccountAddress) => DirectoryHereDeps['anchored'],
 ): Promise<BelievedAccount | null> {
   const keys = keysFor(rec.id);
   let viewingKey: Hex;
@@ -2208,7 +2194,9 @@ export async function openAccount(
   if (label === null || account === null) throw new RosterNotBelieved(NO_ACCOUNT_TO_READ_SIGNERS_BY);
   const read = await rosterBelievedHere(rec, viewingKey, {
     accountId: rec.id, label, account,
-    reads: { filings: () => directoryFilingsFrom(api, rec.id), holders: () => holders(label, account), believed: rosterBelievedBeforeFor(rec.id) },
+    reads: {
+      filings: () => directoryFilingsFrom(api, rec.id), holders: () => holders(label, account), anchored: anchored(rec.id, label, account),
+    },
     own: { signerId: keys.signerId, signingPublicKey: signingPublicKeyOf(keys.signingSecret) },
   });
   return read.account;

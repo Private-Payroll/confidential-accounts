@@ -1,4 +1,5 @@
 import type { SealedAccount } from '../../../../src/core/types.js';
+import { recordsEnteredOver } from 'vaults-web-shared/record-entered-here.js';
 import type { BelievedAccount } from 'vaults-web-shared/roster-here.js';
 import { whyNotHandOver } from 'vaults-web-shared/handover-check.js';
 import {
@@ -119,6 +120,7 @@ export async function signChange(personId: string, companyId: string): Promise<A
       api, accountId: companyId, viewingKey: o.viewingKey, signingSecret: o.keys.signingSecret,
       label: released.company, account: released.account,
       reads: rosterReadsFor(companyId, released.company, released.account),
+      entered: recordsEnteredOver(api, companyId, o.keys.signingSecret),
     });
     await fold();
     /*

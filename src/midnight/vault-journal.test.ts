@@ -45,6 +45,21 @@ describe('a journal over any store', () => {
     expect(read.versionsRead).toEqual({ deposits: 0, payments: 2 });
   });
 
+  it('a version the company\'s records passed over is not read: it carries no bytes, and its lines are in no record they hold', async () => {
+    const a = signer('ada');
+    const store = new MemorySealedPoolStore();
+    const j = new PaymentJournalInStore(store, VAULT, { id: 'ada', wrappingSecret: a.secret }, async () => [a.who]);
+    await j.record(VAULT, attempt('01'.repeat(32), 500n, 100n) as never);
+    await j.record(VAULT, attempt('02'.repeat(32), 300n, 50n) as never);
+    const [, two] = await store.versions(VAULT);
+    /* RED WHEN: the reader opens a passed-over version - there are no bytes to open, and none the records hold. */
+    const read = attemptsFromJournalVersions({
+      deposits: [], payments: [{ version: 1, neverEntered: true }, two!], opener: { id: 'ada', wrappingSecret: a.secret },
+    });
+    expect(read.payments.map((p) => p.amount)).toEqual([100n, 50n]);
+    expect(read.versionsRead).toEqual({ deposits: 0, payments: 1 });
+  });
+
   it('A STEP THAT SPENDS SEVERAL NOTES IS WRITTEN AND READ BACK WITH EVERY ONE OF THEM, a merge as a merge', async () => {
     const a = signer('ada');
     const store = new MemorySealedPoolStore();

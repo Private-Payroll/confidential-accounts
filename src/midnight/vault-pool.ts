@@ -461,7 +461,28 @@ export const wrapFor = (
 export interface FiledPoolVersion {
   readonly version: number;
   readonly sealed: SealedPool;
+  readonly neverEntered?: false;
 }
+
+/**
+ * **A VERSION THE COMPANY'S RECORDS PASSED OVER**, as a device reading them
+ * says it: filed, its entry never entered, and a later version anchored past
+ * it. It is said, so a list of versions never skips one silently, and its bytes
+ * are not given, so nothing opens it as a version the records hold.
+ */
+export interface PassedOverVersion {
+  readonly version: number;
+  readonly neverEntered: true;
+  readonly sealed?: never;
+}
+
+/** The bytes of a version a store filed; refused for a version the company's records passed over, which carries none. */
+export const sealedOf = (v: FiledPoolVersion | PassedOverVersion): SealedPool => {
+  if (v.neverEntered === true) {
+    throw new Error(`version ${v.version} of this record was passed over by the company's records - its entry was never entered - so it is not read`);
+  }
+  return v.sealed;
+};
 
 /**
  * Where a sealed pool is kept. An interface for the reason `NotePool` is one:
@@ -504,8 +525,12 @@ export interface SealedPoolStore {
   /** The newest filed version, or `null` when none has ever been filed. */
   get(vault: string): Promise<SealedPool | null>;
   put(vault: string, rec: SealedPool): Promise<void>;
-  /** Every version ever filed for this vault, oldest first. Empty when none is. */
-  versions(vault: string): Promise<readonly FiledPoolVersion[]>;
+  /**
+   * Every version ever filed for this vault, oldest first. Empty when none is.
+   * A store read against the company's records says a version they passed over
+   * as such, without its bytes; a store that keeps the bytes answers every one.
+   */
+  versions(vault: string): Promise<readonly (FiledPoolVersion | PassedOverVersion)[]>;
   /** One filed version, or `null` when that version is not filed. Optional; `versions` answers it otherwise. */
   at?(vault: string, version: number): Promise<SealedPool | null>;
 }
