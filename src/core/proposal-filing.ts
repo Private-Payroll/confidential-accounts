@@ -12,6 +12,7 @@
  *
  * Pure: the page and the service both import it, and it loads nothing else.
  */
+import type { Vouched } from '../midnight/record-tree.js';
 import { canonical, commit, seal, sign, signingPublicKeyOf, verify, type Hex, type Sealed } from './crypto.js';
 import { sealRecord } from './sealed-records.js';
 import type { ProposalKind, Role, ShieldedEntry } from './types.js';
@@ -155,14 +156,26 @@ export const batchDigestOf = (entries: readonly ShieldedEntry[]): Hex => commit(
 /**
  * **A PAYROLL RUN'S LEG, SEALED AS A PROPOSAL OF THE COMPANY'S**, exactly as a
  * governance proposal is: the vault that pays it, a summary, the payload - the
- * run, the leg's form and its entries, the change and the approvals the run's
- * total needs - sealed under the company's viewing key, and the seat raising
+ * run, the leg's form and its entries, the window the run is raised with,
+ * the change and the approvals the run's total needs - sealed under the company's viewing key, and the seat raising
  * it. The device raising the leg seals it and signs the filing.
  */
 export const sealPayrollProposal = (input: {
   readonly accountId: string; readonly viewingKey: Hex; readonly vault: Hex; readonly summary: string;
-  readonly payload: { readonly runId: string; readonly form: string; readonly entries: readonly ShieldedEntry[] };
-  readonly change: { readonly asset: string; readonly amount: bigint; readonly batchDigest: Hex; readonly salt: Hex };
+  readonly payload: {
+    readonly runId: string; readonly form: string; readonly entries: readonly ShieldedEntry[];
+    /**
+     * The leg's root, its payee count and the run's window, as its identity
+     * on chain is made from them: where a device reads when the run's window
+     * closes, checked against that identity.
+     */
+    readonly window: { readonly root: Hex; readonly payees: string; readonly opensAt: string; readonly closesAt: string };
+  };
+  /**
+   * The change, with what the salt is made from beside it - the head its raiser
+   * checked and a random value: the one place they are kept.
+   */
+  readonly change: { readonly asset: string; readonly amount: bigint; readonly batchDigest: Hex; readonly salt: Hex; readonly vouched: Vouched };
   readonly required?: bigint;
   readonly proposedBy: string; readonly proposerRole?: Role;
 }): Sealed => sealRecord('proposals', input.accountId, {

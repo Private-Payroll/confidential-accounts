@@ -39,6 +39,9 @@ import { vaultBuilderOver, type AccountCallChainOnTheWire, type VaultAnswer } fr
 import type { GovernedCallOrder, OpenedRound, SignerMaterial } from 'vaults-web-shared/governed-call-builder.js';
 import { refusalForProven } from '../../src/wiring/proven-submission.js';
 import { keysOnDisk } from './keys-on-disk.js';
+import { NO_LEG } from '../../src/midnight/spending-policy-record.js';
+import { vouchedFreshOf } from '../../src/midnight/record-tree.js';
+import type { Hex } from '../../src/core/crypto.js';
 import { newWrappingKeypair } from '../../src/core/crypto.js';
 import { NO_ASSET } from '../../src/core/assets.js';
 import { buildRun, type PaymentFacts } from '../../src/midnight/payout-tree.js';
@@ -213,7 +216,13 @@ describe.skipIf(!KEYS_ON_DISK)('A PAYROLL RUN RAISED AND APPROVED FROM THE SIGNE
 
   /** A run's order and the id the chain will hold it under. */
   const aRun = (seed: number) => {
-    const c = change(BigInt(1_000 + seed), seed);
+    /*
+     * Raised over a head of the company's records this device checked, as every device raises a run: its salt is made
+     * from that head and a random value, sealed beside it, and names no leg. **A STAND-IN, NAMED**: the head is random and
+     * marked checked here; what this file proves is the call the worker builds from it, not which head a run is raised over.
+     */
+    const vouched = { head: hex(new Uint8Array(randomBytes(32))), r: hex(new Uint8Array(randomBytes(32))) };
+    const c = { ...change(BigInt(1_000 + seed), seed), salt: circuits.retrySaltOf(NO_LEG(), Buffer.from(vouchedFreshOf(vouched.head as Hex, vouched.r as Hex), 'hex')) as Uint8Array };
     const now = BigInt(Math.floor(Date.now() / 1000));
     /*
      * **A REAL RUN, AS THE APPROVING DEVICE MAKES IT AGAIN**: three payees,
@@ -248,6 +257,7 @@ describe.skipIf(!KEYS_ON_DISK)('A PAYROLL RUN RAISED AND APPROVED FROM THE SIGNE
     opened.set(id, {
       chainId: id, digest: hex(payload), vault: run.vault, salt: hex(c.salt), summary: '',
       half: { assetId: hex(c.asset), changeAmount: c.amount.toString(), changeBatchDigest: hex(c.batch) }, made,
+      vouched: { ...vouched, checkedHere: true },
     });
     return { order, id, made, payKey: pay.key };
   };

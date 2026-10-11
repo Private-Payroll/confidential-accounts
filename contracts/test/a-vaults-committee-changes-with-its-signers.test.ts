@@ -51,7 +51,10 @@ import { MidnightCommitments } from '../../src/midnight/commitments.js';
 import { rosterVaultKeys, signVaultKeys, vaultKeyIndexOf } from '../../src/core/vault-keys.js';
 import { seatsInAccountState, vaultInState } from '../../apps/wallet/src/chain/company-label-on-chain.js';
 import { directoryChainOver, fileOwnEntry, judgeOver, mayFileUnderOver, walletReadsOver } from './the-chain-as-a-wallet-reads-it.js';
-import { seatDirectoryRoutes } from '../../src/server/seat-directory-route.js';
+import { directoryOf, seatDirectoryRoutes } from '../../src/server/seat-directory-route.js';
+import { filedAsIn, recordManifestRoutes } from '../../src/server/record-manifest-route.js';
+import { MemoryCompanyRecordStore } from '../../src/server/company-records-route.js';
+import { manifestServiceFor, recordsEnteredFor } from 'vaults-web-shared/record-entered-here.js';
 import { ChainLedger } from '../../src/wiring/chain.js';
 import { companyVaultRoutes, type VaultChain } from '../../src/server/company-vaults.js';
 import { mountVaultRecords, vaultAccountFromTheIndexer } from '../../src/server/vault-records-authority.js';
@@ -470,6 +473,14 @@ describe.skipIf(!KEYS_ON_DISK)('A VAULT\'S COMMITTEE CHANGES WITH THE COMPANY\'S
       companies: () => store.listAccounts().map((a) => ({ id: a.id, contractAddress: company, memberUserIds: a.memberUserIds })),
       mayFileUnder: mayFileUnderOver(store, directoryChainOver(() => chain.contract(company))),
     });
+    /* The company's records: every filing entered and every header kept, as the whole server serves them. */
+    app.use(recordManifestRoutes({
+      signedIn, member, store, directoryOf: (id) => directoryOf(store, directoryChainOver(() => chain.contract(company)), id),
+      filedAs: filedAsIn({
+        company: new MemoryCompanyRecordStore(), vault: { of: (r) => serverStores.get(r)! },
+        runs: (c) => store.listRuns(c), proposals: (c) => store.listProposals(c),
+      }),
+    }));
     await new Promise<void>((resolve) => { server = app.listen(0, '127.0.0.1', () => resolve()); });
     base = `http://127.0.0.1:${(server.address() as AddressInfo).port}`;
   });
@@ -535,7 +546,7 @@ describe.skipIf(!KEYS_ON_DISK)('A VAULT\'S COMMITTEE CHANGES WITH THE COMPANY\'S
   const records = (record: WireRecord) => new HttpSealedPoolStore(record, wire, signing.secret, judgeOver({
     api, accountId: ACCOUNT_ID, label: LABEL, account: company, accountState: () => chain.contract(company), deployed: () => deployed,
     roster: async () => openAccount(store.getAccount(ACCOUNT_ID)!, viewingKey),
-  }));
+  }), recordsEnteredFor(manifestServiceFor(api), ACCOUNT_ID, signing.secret));
   /* Who holds the company and which vaults it adopted, as the signer's own wallet reads them off the chain for each step. */
   const walletReads = walletReadsOver(() => chain.contract(company), { state: () => deployed, label: () => LABEL });
   const signers = async () => [{ id: 'ada', wrappingPublicKey: wrapping.publicKey }];

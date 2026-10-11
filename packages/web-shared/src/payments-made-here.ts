@@ -10,6 +10,7 @@
  * paid is read off the account's own record of completed payments, through the
  * read this device is given, and reported against those same leaves.
  */
+import { vouchedRefusal, type Vouched } from '../../../src/midnight/record-tree.js';
 import { fromHex, parseCanonical, toHex, unseal, type Hex, type Sealed } from '../../../src/core/crypto.js';
 import { openRecord } from '../../../src/core/sealed-records.js';
 import type { StateChange, PaymentsAmong } from '../../../src/core/ledger.js';
@@ -22,7 +23,7 @@ import {
 } from '../../../src/midnight/payout-tree.js';
 import { assemblePrivatePayments, type PrivatePaymentOrderOnTheWire } from '../../../src/midnight/private-payment-wire.js';
 import { runPayments, type RunInputs, type RunPayments, type RunWindow } from '../../../src/midnight/run-status.js';
-import { openedRunHere, signedStateHere, type CompanyRecordsHere } from './run-rebuilt-here.js';
+import { openedRunHere, proposalsListedHere, signedStateHere, type CompanyRecordsHere } from './run-rebuilt-here.js';
 import { NotMadeHere, type LegNamed } from './material-made-here.js';
 
 /** What paying a leg is made with on this device: the vault's and the account's own circuits, and a read of the chain. */
@@ -41,16 +42,20 @@ export interface PaymentsHereDeps {
  * The approvals its run needs are not read here but from the run's own record,
  * the one the approving devices rebuild the proposal from.
  */
-interface RoundHere { readonly chainId: Hex; readonly salt: Hex; readonly vault: Hex; readonly raisedAt?: string; readonly status: string }
+interface RoundHere {
+  readonly chainId: Hex; readonly salt: Hex; readonly vault: Hex; readonly raisedAt?: string; readonly status: string;
+  /** What its salt was made from, sealed beside the salt; absent on a proposal raised before it was. */
+  readonly vouched?: Vouched;
+}
 
 const roundOf = async (records: CompanyRecordsHere, accountId: string, proposalId: string, viewingKey: Hex): Promise<RoundHere | null> => {
   if (records.proposals === undefined) {
     throw new NotMadeHere('This page cannot read the company\'s proposals, so it cannot make a payment here. Reload the page '
       + 'to get the current version.');
   }
-  const rec: SealedProposal | undefined = (await records.proposals()).find((p) => p.id === proposalId);
+  const rec: SealedProposal | undefined = (await proposalsListedHere({ ...records, proposals: records.proposals })).find((p) => p.id === proposalId);
   if (rec === undefined || rec.accountId !== accountId) return null;
-  let envelope: { kind: string; vault: Hex; raisedAt?: string; sealedPayload: Sealed };
+  let envelope: { kind: string; vault: Hex; sealedPayload: Sealed };
   let payload: { __change?: StateChange };
   try {
     envelope = openRecord('proposals', rec.accountId, rec.sealed, viewingKey);
@@ -62,8 +67,9 @@ const roundOf = async (records: CompanyRecordsHere, accountId: string, proposalI
   if (envelope.kind !== 'payroll' || payload.__change === undefined) return null;
   return {
     chainId: rec.chainId, salt: payload.__change.salt, vault: envelope.vault, status: rec.status,
-    /* When the chain was first seen to hold it is kept plain on the record; a record written before that kept it sealed. */
-    ...((rec.raisedAt ?? envelope.raisedAt) ? { raisedAt: (rec.raisedAt ?? envelope.raisedAt)! } : {}),
+    ...(vouchedRefusal(payload.__change.vouched) !== null ? {} : { vouched: payload.__change.vouched! }),
+    /* When the chain first held it, as the chain says (`proposalsListedHere`): never a time the service wrote, plain or sealed. */
+    ...(rec.raisedAt === undefined ? {} : { raisedAt: rec.raisedAt }),
   };
 };
 
@@ -120,7 +126,11 @@ export async function privatePaymentsHere(
 export async function legToPayHere(
   records: CompanyRecordsHere, accountId: string, runId: string, viewingKey: Hex, deps: PaymentsHereDeps,
   which?: LegNamed, retry?: string,
-): Promise<{ readonly order: PrivatePaymentOrderOnTheWire; readonly proposalId: string }> {
+): Promise<{
+  readonly order: PrivatePaymentOrderOnTheWire; readonly proposalId: string;
+  /** What the proposal's salt was made from, as its filing seals it: what a charge makes the salt again from. */
+  readonly vouched?: Vouched;
+}> {
   const { run, leg, payout } = await raisedLeg(records, accountId, runId, viewingKey, which);
   if (leg === null || payout === undefined) throw new NotMadeHere(NOTHING_TO_PAY);
   const entry = retry === undefined ? undefined : payout.retries?.find((r) => r.proposalId === retry);
@@ -154,7 +164,10 @@ export async function legToPayHere(
   });
   if ('refusal' in assembled) throw new NotMadeHere(assembled.refusal.replace(/ Nothing was sent\.$/u, ''));
   /* The vault's payment and the run's charge each make the proposal's identity again with the approvals it was raised needing. */
-  return { order: required === 0n ? assembled.order : { ...assembled.order, required: required.toString() }, proposalId };
+  return {
+    order: required === 0n ? assembled.order : { ...assembled.order, required: required.toString() }, proposalId,
+    ...(round.vouched === undefined ? {} : { vouched: round.vouched }),
+  };
 }
 
 /**

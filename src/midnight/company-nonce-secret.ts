@@ -63,7 +63,7 @@ import {
   seal, unseal, wrapKey, unwrapKey, canonical, fromHex, toHex, utf8, randomBytes,
   type Hex, type WrappingKeypair,
 } from '../core/crypto.js';
-import { paddedToABucket, type SealedPool } from './vault-pool.js';
+import { paddedToABucket, type FiledPoolVersion, type PassedOverVersion, type SealedPool } from './vault-pool.js';
 import { depositNonceKeyFor, type DepositNonceKey } from './deposit-nonce.js';
 
 const KEY_BYTES = 32;
@@ -349,16 +349,19 @@ export const currentDepositNonceKey = (opened: OpenedNonceSecrets): DepositNonce
  *
  * A signer who left can open only the versions before they left, and that is
  * the whole of what they keep. Everybody else opens the newest. A version this
- * signer has no copy in is skipped; a version they do have a copy in that does
- * not open is refused, because it is not theirs to guess past.
+ * signer has no copy in is skipped, as is one the company's records passed over;
+ * a version they do have a copy in that does not open is refused, because it is
+ * not theirs to guess past.
  */
 export const openNewestNonceSecrets = (
-  versions: readonly { readonly version: number; readonly sealed: SealedPool }[],
+  versions: readonly (FiledPoolVersion | PassedOverVersion)[],
   vault: string, me: NonceSecretOpener,
 ): OpenedNonceSecrets => {
   const mine = toHex(x25519.getPublicKey(fromHex(me.secret)));
   for (let i = versions.length - 1; i >= 0; i -= 1) {
     const v = versions[i]!;
+    /* A version the company's records passed over carries no bytes and holds nothing they hold. */
+    if (v.neverEntered === true) continue;
     if (!v.sealed.wrapped.some((w) => w.signerId === mine)) continue;
     return openNonceSecrets(v.sealed, vault, me);
   }

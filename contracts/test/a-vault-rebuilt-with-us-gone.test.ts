@@ -31,7 +31,7 @@ import { pureCircuits } from '../managed/contract/index.js';
 import { AccountSimulator, privateStateFor, change, type Change, payoutTreeOf, vaultRunOf } from './simulator.js';
 import { carryTheAccount, startTheVault, TEST_VAULT_SECRET } from './start-a-vault.js';
 import { type PayoutLeafInput } from '../../src/midnight/payout-tree.js';
-import { changeCoinOf } from '../../src/midnight/vault-coins.js';
+import { changeCoinOf, type VaultCoin } from '../../src/midnight/vault-coins.js';
 import {
   reconcileVaultPool, commitmentForNote, changeNoteOf, describeRecovery,
 } from '../../src/midnight/vault-recovery.js';
@@ -375,6 +375,87 @@ describe('a vault whose every record of ours is gone', () => {
     expect(kept.nonce).toBe(changeNoteOf(recoveredChange, 40n, { circuits: vaultCircuits, vault: vaultAddr, secret: toHex(TEST_VAULT_SECRET) })!.nonce);
     expect(chainNotes(), 'RED WHEN: the rebuilt note is still in the vault after it was spent')
       .not.toContain(held(recoveredChange));
+  });
+
+  it('THE POOL TEST: A DEPOSIT WHOSE POOL VERSION AND BOOK RECORD WERE IN A BATCH A RECOVERY GAVE UP IS NEVER LOST: UNEXPLAINED UNTIL ITS RECORD IS FILED AGAIN, THEN REBUILT FROM THE CHAIN AND SPENT', async () => {
+    const key = depositNonceKeyFor(releasedCompanyKey(WORDS, company), vaultAddr);
+    const work = await aCompanyAtWork(key);
+    const hexOf = (b: Uint8Array | undefined) => toHex(b ?? new Uint8Array(0));
+    /*
+     * **WHAT THE COMPANY'S RECORDS HOLD AS THE ANCHOR STANDS** - a stand-in for a device's read through the record
+     * tree, which `src/server/a-read-is-proven-for-what-it-asks.test.ts` holds for a recovery: each batch's pool
+     * version and book records, keyed by the head that anchored it, believed only on the chain of heads back from the
+     * head the account holds now - a recovery's head resuming from the head it names, so the batches after that one
+     * are given up.
+     */
+    type Batch = { readonly from: string; readonly pool?: { version: number; notes: VaultCoin[] }; readonly deposited: CompanyRecords['deposited'] };
+    const batches = new Map<string, Batch>();
+    const anchoredBy = (head: Uint8Array | undefined, from: Uint8Array, batch: Omit<Batch, 'from'>) => { batches.set(hexOf(head), { from: hexOf(from), ...batch }); };
+    const asTheAnchorStands = () => {
+      const believed: Batch[] = [];
+      for (let h = hexOf(sim.anchorHead()); batches.has(h); h = batches.get(h)!.from) believed.unshift(batches.get(h)!);
+      return {
+        versions: believed.flatMap((b) => (b.pool === undefined ? [] : [b.pool])),
+        records: { deposited: believed.flatMap((b) => b.deposited), paid: [] } as CompanyRecords,
+      };
+    };
+    /* Batch 0 anchors the pool as it was created, holding nothing. */
+    await sim.as(A).anchor(new Uint8Array(32), bytes(0xb0));
+    const head0 = sim.anchorHead()!;
+    anchoredBy(head0, new Uint8Array(32), { pool: { version: 1, notes: [] }, deposited: [] });
+    /* The deposit is made, and batch 1 anchors the pool's version holding it and the deposit's book record: a batch no device can check, so the quorum gives it up. */
+    const deposited = await work.deposit(1_000n, { slot: 1 });
+    const book = { token: toHex(TOKEN_BYTES), value: 1_000n };
+    await sim.as(B).anchor(head0, bytes(0xb1));
+    const head1 = sim.anchorHead()!;
+    anchoredBy(head1, head0, { pool: { version: 2, notes: [{ nonce: deposited.nonce, token: deposited.token, value: deposited.value }] }, deposited: [book] });
+    const { id, c, latest } = await sim.approvedRecovery(head0, [A, B]);
+    await sim.as(sim.applying(A, c)).recoverAnchor(head1, bytes(0xbf), head0, latest, id);
+    /* The recovery anchors nothing and resumes from batch 0's head. */
+    anchoredBy(sim.anchorHead(), head0, { deposited: [] });
+    /* RED WHEN: the recovery did not move the anchor on past the batch it gave up. */
+    expect(hexOf(sim.anchorHead())).not.toBe(hexOf(head1));
+    expect(sim.isOpen(id)).toBe(false);
+
+    /* What the anchor holds of the pool now is the version batch 0 anchored: the deposit is on the chain and in no version believed. */
+    priv = { notes: [] };
+    const read = asTheAnchorStands();
+    /* RED WHEN: the given-up batch is still read as the company's - the recovery gave up nothing. */
+    expect(read.versions).toEqual([{ version: 1, notes: [] }]);
+    const short = reconcileVaultPool({ vault: vaultAddr, chain: chainNotes(), versions: read.versions, circuits: vaultCircuits });
+    /* RED WHEN: the coin the given-up version named is counted from that version - it is believed no longer. */
+    expect(short.held).toEqual([]);
+    expect(short.unexplained).toEqual([held(deposited)]);
+
+    /* The deposit's own book record was given up with its batch: the books as the anchor stands cannot name the coin. */
+    const everCreated = await vaultOutputHistoryFrom(theChain()).everCreated(vaultAddr);
+    const walkOf = (records: CompanyRecords) => walkCompanyRecords({
+      vault: vaultAddr, keys: [key], records, everCreated, commitmentOf: vaultNoteCommitment, nonceSecrets: nonceSecrets(), splitJournal: splitJournal(),
+    });
+    const unnamed = reconcileVaultPool({ vault: vaultAddr, chain: chainNotes(), versions: read.versions, named: (await walkOf(read.records)).coins, circuits: vaultCircuits });
+    /* RED WHEN: a coin the given-up books named is believed named, or is lost: it is on the chain, unexplained, waiting for its record. */
+    expect(unnamed.held).toEqual([]);
+    expect(unnamed.unexplained).toEqual([held(deposited)]);
+
+    /* The depositor's device files its book record again, as a filing a recovery gave up is, and the next anchor holds it. */
+    const headR = sim.anchorHead()!;
+    await sim.as(A).anchor(headR, bytes(0xb2));
+    anchoredBy(sim.anchorHead(), headR, { deposited: [book] });
+    /* Rebuilt from the chain: every coin the chain made for the vault, named from the company's own books with the key its deposits came from. */
+    const again = asTheAnchorStands();
+    const rebuilt = reconcileVaultPool({ vault: vaultAddr, chain: chainNotes(), versions: again.versions, named: (await walkOf(again.records)).coins, circuits: vaultCircuits });
+    /* RED WHEN: the deposit the given-up batch held is not rebuilt from the chain under the nonce it was made with, once its record is filed again. */
+    expect(rebuilt.unexplained).toEqual([]);
+    expect(rebuilt.held.map((n) => [n.nonce, n.value])).toEqual([[deposited.nonce, 1_000n]]);
+
+    /* And spent. */
+    priv = { notes: rebuilt.held.map((n) => ({ nonce: n.nonce, token: n.token, value: n.value, index: NO_INDEX_YET })) };
+    const paymentsBefore = vaultLedger(charged() as never).payments;
+    const r = await pay(DAVE, 600n, 0xd2);
+    /* RED WHEN: a coin a recovery's given-up batch held cannot be spent. */
+    expect(vaultLedger(charged() as never).payments).toBe(paymentsBefore + 1n);
+    expect(changeCoinOf(r.context.callContext.currentZswapLocalState, vaultAddr)!.value).toBe(400n);
+    expect(chainNotes()).not.toContain(held(deposited));
   });
 
   it('A NONCE NOBODY ELSE CAN DERIVE: another person\'s words, or a rounded amount, name nothing, and the rebuild SAYS so rather than guessing', async () => {

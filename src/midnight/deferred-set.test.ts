@@ -176,7 +176,7 @@ describe('the deferral list: S25\'s decision, stated where a diff will show it',
     }
   });
 
-  it('the two lists name twenty circuits between them, none twice', () => {
+  it('the two lists name twenty-two circuits between them, none twice', () => {
     // Fifteen before the S11 merges (addSigner+removeSigner → amendSigner,
     // propose+proposeRun → propose), thirteen after them, eleven once S23 shed
     // credit and attestSolvency, ten since `C292`/`S26` removed `execute` with
@@ -186,16 +186,18 @@ describe('the deferral list: S25\'s decision, stated where a diff will show it',
     // fourteen with the spending policy, and EIGHTEEN since a run can be held
     // and released, a signer re-seated with other rights, and the approvals a
     // policy change needs set on their own, and NINETEEN since a vault's change
-    // that moves no money is approved by a step of its own, and TWENTY since a batch
-    // of payees is recorded by a step of its own.
+    // that moves no money is approved by a step of its own, TWENTY since a batch
+    // of payees is recorded by a step of its own, TWENTY-ONE since any signer
+    // moves the company's record anchor on, and TWENTY-TWO since a quorum can
+    // recover the anchor past a batch nobody can check.
     
     // "No overlap" is what this used to claim, and while DEFERRED_CIRCUITS is
     // empty that claim cannot fail, so it is not made. What IS checked is that
     // the concatenation has no duplicate — which can fail — and that
     // assertKnownCircuitSet accepts the set it was built from.
     const all = [...DEPLOYED_CIRCUITS, ...DEFERRED_CIRCUITS];
-    expect(all).toHaveLength(20);
-    expect(new Set(all).size).toBe(20);
+    expect(all).toHaveLength(22);
+    expect(new Set(all).size).toBe(22);
     expect(() => assertKnownCircuitSet(all)).not.toThrow();
   });
 
@@ -232,7 +234,7 @@ describe('the deferral list: S25\'s decision, stated where a diff will show it',
         .map((f) => f.replace(/\.verifier$/, '')),
     )].sort();
 
-    expect(keyed).toHaveLength(20);
+    expect(keyed).toHaveLength(22);
     expect([...DEPLOYED_CIRCUITS]).toEqual(keyed);
     expect(() => assertKnownCircuitSet(keyed)).not.toThrow();
   });

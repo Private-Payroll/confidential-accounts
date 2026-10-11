@@ -5,6 +5,8 @@
  * over it unchanged: a lost race is retried by name, every filing is signed and
  * checked, and nothing on the server can open what it keeps.
  */
+import { enteredHere } from '../testing/records-entered.js';
+import { vaultRecordEntry } from '../midnight/record-manifest.js';
 import { describe, it, expect, beforeAll, afterAll } from 'vitest';
 import express from 'express';
 import type { AddressInfo } from 'node:net';
@@ -15,7 +17,7 @@ import {
 } from 'vaults-web-shared/http-sealed-pool-store.js';
 import { FILING_REFUSAL } from '../midnight/seat-directory.js';
 import {
-  MemorySealedPoolStore, SealedNotePool, sealPool, VaultPoolVersionAlreadyFiled, VaultRecordRefused,
+  MemorySealedPoolStore, SealedNotePool, sealedOf, sealPool, VaultPoolVersionAlreadyFiled, VaultRecordRefused,
   type SealedPoolStore,
 } from '../midnight/vault-pool.js';
 import { DepositJournalInStore, PaymentJournalInStore } from '../midnight/vault-journal.js';
@@ -52,7 +54,7 @@ const judgeBelieving = (...keys: Hex[]): FreshJudge => async () => ((filer) => {
   return keys.includes(filer) ? null : FILING_REFUSAL['no-entry'];
 }) as FilingJudge;
 const roster = judgeBelieving(ADA.publicKey);
-const pageStore = (record: WireRecord, send: WireSend, key: Hex = ADA.secret) => new HttpSealedPoolStore(record, send, key, roster);
+const pageStore = (record: WireRecord, send: WireSend, key: Hex = ADA.secret) => new HttpSealedPoolStore(record, send, key, roster, enteredHere());
 
 beforeAll(async () => {
   stores = {
@@ -206,8 +208,8 @@ describe('a vault\'s sealed records, from the page to the server and back', () =
     /* Bo has left: his seat is not seated now and no quorum has retired him, so the device's check says so. */
     const boLeft: FreshJudge = async () => ((filer) => (filer === ADA.publicKey ? null
       : filer === BOB.publicKey ? FILING_REFUSAL['seat-not-seated'] : FILING_REFUSAL['no-entry'])) as FilingJudge;
-    const bos = new HttpSealedPoolStore('pool', direct, BOB.secret, bothSeated);
-    const adas = new HttpSealedPoolStore('pool', direct, ADA.secret, boLeft);
+    const bos = new HttpSealedPoolStore('pool', direct, BOB.secret, bothSeated, enteredHere());
+    const adas = new HttpSealedPoolStore('pool', direct, ADA.secret, boLeft, enteredHere());
     const pool = (store: HttpSealedPoolStore) => new SealedNotePool(store, { signerId: 'ada', wrappingSecret: signer.secret }, signers);
     await pool(bos).create(vault, { notes: [] });
     /* RED WHEN: a version signed by a seat the account no longer holds is believed with no retirement naming it. */
@@ -217,6 +219,19 @@ describe('a vault\'s sealed records, from the page to the server and back', () =
     /* What the chain can vouch for is filed again by a seated signer: `fileTheChainsSecretAsTheNewest` reads every version as filed. */
     expect((await adas.versionsAsFiled(vault)).map((v) => v.sealed.filedBy?.publicKey), 'RED WHEN: the versions as filed are checked or dropped')
       .toEqual([BOB.publicKey]);
+  });
+
+  it('A VERSION FILED FROM THE PAGE IS ENTERED IN ITS COMPANY\'S RECORDS ONCE THE STORE HAS IT, AND ONE REFUSED IS NOT', async () => {
+    const entered = enteredHere();
+    const store = new HttpSealedPoolStore('payment-journal', sendAs('ada'), ADA.secret, roster, entered);
+    const next = (await store.versions(VAULT)).length + 1;
+    await store.put(VAULT, sealPool(VAULT, { attempts: [] } as never, await signers(), next, 'payment-journal'));
+    const filed = sealedOf((await store.versions(VAULT)).at(-1)!);
+    /* RED WHEN: a version the store kept is not entered, or is entered as other bytes than what this seat signed. */
+    expect(entered.filed).toEqual([[vaultRecordEntry('payment-journal', filed)]]);
+    /* RED WHEN: a version the store refused is entered - an entry for a filing nobody holds stops every device's fold. */
+    await expect(store.put(VAULT, sealPool(VAULT, { attempts: [] } as never, await signers(), next, 'payment-journal'))).rejects.toThrow();
+    expect(entered.filed).toHaveLength(1);
   });
 
   it('A JOURNAL PAST A MEGABYTE IS STILL FILED: a fifty-person payroll passes that in under two years', async () => {
@@ -333,7 +348,7 @@ describe('a vault\'s sealed records, from the page to the server and back', () =
   });
 
   it('the page\'s store cannot be made without a signing key to file with', () => {
-    expect(() => new HttpSealedPoolStore('pool', sendAs('ada'), '' as Hex, roster), 'RED WHEN: a store that would file unsigned records can be built').toThrow(/no signing key/);
+    expect(() => new HttpSealedPoolStore('pool', sendAs('ada'), '' as Hex, roster, enteredHere()), 'RED WHEN: a store that would file unsigned records can be built').toThrow(/no signing key/);
   });
 
   it('the page sends only to its own server, with its cookie and the person it was prepared for', async () => {

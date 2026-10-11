@@ -25,7 +25,7 @@
  * after `startJobWorker` returns, which is after `serveJobs` has registered.
  */
 import { startJobWorker } from './prover-worker.js';
-import { provingRunner, type ProvingCapability, type SendProven } from './proving-runner.js';
+import { provenPathOf, provingRunner, type ProvingCapability, type SendProven } from './proving-runner.js';
 import { httpKeyMaterialSource, IndexedDbArtefactCache } from './key-material.js';
 import { configFromWorkerName } from './proving-session.js';
 import { NothingWasSent, type Job, type JobRunner } from '../../../src/core/jobs.js';
@@ -109,7 +109,7 @@ const base64Of = (bytes: Uint8Array): string => {
  * application's, and the path is relative.
  */
 export const sendOver = (fetchImpl: typeof fetch): SendProven => async (job, proven) => {
-  const res = await fetchImpl(`/api/accounts/${encodeURIComponent(job.accountId)}/proven`, {
+  const res = await fetchImpl(provenPathOf(job.accountId), {
     method: 'POST',
     headers: { 'content-type': 'application/json' },
     body: JSON.stringify({ tx: base64Of(proven) }),

@@ -8,6 +8,7 @@ import { MemorySealedPoolStore, SealedNotePool } from '../../../src/midnight/vau
 import { recordsKeypairFrom } from '../../../src/midnight/company-nonce-secret.js';
 import type { DirectoryFiling } from '../../../src/midnight/seat-directory.js';
 import { deviceSignerFrom, directoryHere, readersIn } from './vault-page-doors.js';
+import { anchoredEntering } from '../../../src/testing/record-tree-double.js';
 
 /*
  * A VAULT'S POOL AND JOURNALS ARE WRAPPED TO THE RECORDS KEY IN EACH SIGNER'S
@@ -45,6 +46,8 @@ const directory = (o: { seats?: string[]; committee?: (typeof ADA.committeeKey)[
     seats: o.seats ?? [ADA.seat, BO.seat, CY.seat], committee: o.committee ?? [ADA.committeeKey, BO.committeeKey, CY.committeeKey],
   }),
   attested: async () => o.attested ?? [ADA.attested, BO.attested, CY.attested],
+  /* Who records are wrapped to reads no record: the company's records hold no entry. */
+  anchored: anchoredEntering(CO),
 });
 
 describe('who a vault\'s records are wrapped to', () => {

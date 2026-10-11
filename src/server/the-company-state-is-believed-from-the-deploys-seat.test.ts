@@ -1,21 +1,26 @@
 /**
- * **THE COMPANY STATE IS BELIEVED FROM THE SEAT THE ACCOUNT'S DEPLOY SEATED,
- * WHOEVER HOLDS THE ACCOUNT LATER.**
+ * **THE COMPANY STATE IS BELIEVED FROM THE SEAT THE COMPANY'S FIRST ANCHOR
+ * NAMES, WHOEVER HOLDS THE ACCOUNT LATER.**
  *
  * The account here is the compiled account, run by the simulator with every
  * assert live: founded by F, seated with B and C, then F removed and D put into
- * the slot F left - the first slot. What the person's wallet reads is read by
- * the wallet's own reader over that account's state now and its deploy; the
- * run is read for approval by the page's own reader, and the approval is
- * checked by the worker's own check against the account's ledger as it is.
+ * the slot F left - the first slot. F's founding device anchored the company's
+ * first batch - its first state, and F's own directory entry - while F's seat
+ * was the account's only one (`heldEntering` with what it was founded with).
+ * What the person's wallet reads is read by the wallet's own reader over that
+ * account's state now; the run is read for approval by the page's own reader,
+ * and the approval is checked by the worker's own check against the account's
+ * ledger as it is.
  *
  * **WHAT THIS DOES NOT SHOW:** no proof is made and no indexer or network is
- * reached. The first three cases give the directory as a device would hold it
- * once replayed; the last replays it from the seats' own filings, on this
- * server against its own read of the account and on the device against its
- * wallet's, over one state of the account.
+ * reached, and the first anchor is the test's, not one proved. The first two
+ * cases give the directory as a device would hold it once replayed; the last
+ * two replay it from the seats' own filings - on this server against its own
+ * read of the account, and on the device against its wallet's and the first
+ * anchor - over one state of the account.
  */
 import { describe, expect, it } from 'vitest';
+import { vouchedFreshOf } from '../midnight/record-tree.js';
 import {
   createConstructorContext, ContractMaintenanceAuthority as RuntimeMaintenanceAuthority, ContractState as RuntimeContractState,
 } from '@midnight-ntwrk/compact-runtime';
@@ -43,7 +48,7 @@ import { signRunFiling } from '../core/run-filing.js';
 import { newStateBlinding, sealState } from '../core/account.js';
 import { openStateRecord, signedFoundingState } from '../core/founding-state.js';
 import { factsOfThePaid, runLegOf } from '../core/run-legs.js';
-import { signCompanyFiling } from '../midnight/sealed-record-wire.js';
+import { signCompanyFiling, type SealedCompanyRecord } from '../midnight/sealed-record-wire.js';
 import { buildRun } from '../midnight/payout-tree.js';
 import { sealPayKeyTo } from '../midnight/run-keys.js';
 import { payKeyCommitmentOf, payKeyPayloadOf } from '../midnight/pay-key-commitment.js';
@@ -51,6 +56,9 @@ import type { PayrollRun, RosterEmployee, SealedRun } from '../core/types.js';
 import { payeeFor } from '../testing/payees.js';
 import { vaultDetails } from '../testing/vault-details.js';
 import { TEST_TOKEN, registryWithTestPrivateForms } from '../testing/assets.js';
+import { anchoredEntering, everyRunAndProposalEntered, heldEntering, type FoundedWith } from '../testing/record-tree-double.js';
+import { directoryChangeMessage } from '../midnight/seat-directory.js';
+import { sign } from '../core/crypto.js';
 
 const [F, B, C, D] = [privateStateFor(1), privateStateFor(2), privateStateFor(3), privateStateFor(4)];
 const ACCOUNT = 'dbe119a304f8e7ea882353435c1d536cf2faf4298236a9aae77670e750af65c8' as AccountAddress;
@@ -79,6 +87,9 @@ const PEOPLE = [person('p1', 'a1'), person('p2', 'a2')];
 const EMPLOYEES = PEOPLE.map((p, i) => ({ id: p.id, name: p.name, wrappingPublicKey: null, asset: TEST_TOKEN, amount: BigInt(100 + i), form: 'shielded' }));
 /* What the leg records it pays, as the device that raised it worked it out from the people it believed. */
 const RECORDED = factsOfThePaid(EMPLOYEES as never, (id) => PEOPLE.find((p) => p.id === id), registryWithTestPrivateForms());
+/** What the run's proposal filing keeps beside its salt - the head its raiser checked and a random value - and the fresh half made from them. */
+const VOUCHED = { head: '1a'.repeat(32) as Hex, r: 'f6'.repeat(32) as Hex };
+const FRESH = vouchedFreshOf(VOUCHED.head, VOUCHED.r);
 const sealedRun = (): SealedRun => {
   const run = {
     id: 'run_bbbbbbbbbbb1', accountId: CO, period: '2026-09', status: 'proposed',
@@ -137,38 +148,50 @@ const deployOf = async (): Promise<string> => {
   return hex(state.serialize());
 };
 
+/** What F's founding device anchored as the company's first batch, while F's seat was the account's only one: the first state. */
+const foundedByF = (leaf: string, more: Partial<FoundedWith> = {}): FoundedWith => ({ seat: leaf, signingSecret: signing.F.secret, records: [STATE], committee: [COMMITTEES.F], ...more });
+
 /**
- * The directory as a device holds it: every seat's entry, the founding signer's kept after it left, and what the wallet
- * read. `forged` puts an entry for F's seat under another committee key in place of F's own.
+ * The directory as a device holds it: every seat's entry, the founding signer's kept after it left, what the wallet
+ * read, and the company's records with F's founding batch first.
  */
-const directory = (sim: AccountSimulator, holders: DirectoryHere['holders'], forged = false): DirectoryHere => ({
+const directory = (sim: AccountSimulator, holders: DirectoryHere['holders']): DirectoryHere => ({
   dir: { company: CO, version: 4, seats: ([['F', F], ['B', B], ['C', C], ['D', D]] as const).map(([n, d], i) => ({
     seat: hex(sim.leafOf(d)), person: n, signingKey: signing[n].publicKey, wrappingKey: `${i + 1}b`.repeat(32) as Hex,
-    committeeKey: forged && n === 'F' ? committeeOf(59) : COMMITTEES[n], role: 'admin' as const, retired: null,
+    committeeKey: COMMITTEES[n], role: 'admin' as const, retired: null,
   })) },
   /* B's committee key is on the committee as B's own seating put it there: B files the company's runs. */
-  holders: { ...holders, committee: [...holders.committee, COMMITTEES.B] }, another: new Set(),
+  holders: { ...holders, committee: [...holders.committee, COMMITTEES.B] }, another: new Set(), at: () => null,
+  records: heldEntering(CO, [], foundedByF(hex(sim.leafOf(F)))),
 });
 
-const recordsOver = (here: DirectoryHere, state: unknown): CompanyRecordsHere => ({
-  directory: async () => here,
-  people: async () => ({ people: PEOPLE.map((p) => ({ person: p, version: 1, handedOver: true })), notBelieved: [], notPayable: [] }),
-  state: async (id) => (id === '0' ? state as never : null),
-  runs: async () => [sealedRun()],
-  proposals: async () => [],
-  registry: registryWithTestPrivateForms(),
-  policy: async () => ({ threshold: 1, limitsByRole: {} }) as never,
-  /* What the person's own wallet reads off the account: its own parser, over the chain's bytes as the test left them. */
-  payments: {
-    paidOnceOf: pureCircuits.paidOnceOf, paidMovementOf: pureCircuits.paidMovementOf,
-    read: async (entries) => paymentsInAccountState((onTheChain!.contractStateForCall as { serialize(): Uint8Array }).serialize(), entries),
-  },
-});
+/** The company's records a device reads a run from, its first state served as `state` and anchored first as `founding`. */
+const recordsOver = (here: DirectoryHere, state: unknown, founding: SealedCompanyRecord = STATE): CompanyRecordsHere => {
+  /* Sealed once: every read of the company's runs is served the same bytes, as the store serves what it keeps. */
+  const runs = [sealedRun()];
+  return everyRunAndProposalEntered({
+    directory: async () => here,
+    people: async () => ({ people: PEOPLE.map((p) => ({ person: p, version: 1, handedOver: true })), notBelieved: [], notPayable: [] }),
+    state: async (id) => (id === '0' ? state as never : null),
+    runs: async () => runs,
+    proposals: async () => [],
+    registry: registryWithTestPrivateForms(),
+    policy: async () => ({ threshold: 1, limitsByRole: {} }) as never,
+    roundIdentity: pureCircuits,
+    /* What the person's own wallet reads off the account: its own parser, over the chain's bytes as the test left them. */
+    payments: {
+      paidOnceOf: pureCircuits.paidOnceOf, paidMovementOf: pureCircuits.paidMovementOf,
+      read: async (entries) => paymentsInAccountState((onTheChain!.contractStateForCall as { serialize(): Uint8Array }).serialize(), entries),
+    },
+  }, CO, Object.values(signing).map((s) => s.secret), foundedByF(here.records.firstSeats![0]!, {
+    records: [founding], ...(here.records.deployed === undefined ? {} : { deployed: here.records.deployed }),
+  }));
+};
 let onTheChain: Awaited<ReturnType<typeof founderReplaced>> | null = null;
 
-const gateDeps = { runPayload: pureCircuits.runPayload, vaultDetails, payKeyCommitmentOf: pureCircuits.payKeyCommitmentOf };
+const gateDeps = { runPayload: pureCircuits.runPayload, vaultDetails, payKeyCommitmentOf: pureCircuits.payKeyCommitmentOf, retrySaltOf: pureCircuits.retrySaltOf };
 
-describe('THE FOUNDING SEAT IS THE DEPLOY\'S, WHOEVER HOLDS THE FIRST SLOT LATER', () => {
+describe('THE FOUNDING SEAT IS THE ONE THE FIRST ANCHOR NAMES, WHOEVER HOLDS THE FIRST SLOT LATER', () => {
   it('A FOUNDER REMOVED AND A NEW SEAT IN THE FIRST SLOT LEAVE A RUN\'S APPROVAL WORKING', async () => {
     const sim = await founderReplaced();
     onTheChain = sim;
@@ -186,11 +209,12 @@ describe('THE FOUNDING SEAT IS THE DEPLOY\'S, WHOEVER HOLDS THE FIRST SLOT LATER
     /* The run raised as the device rebuilt it, held open by the chain, approved by D in the founding signer's slot. */
     const built = buildRun([...made.seeds], made.identity, [...made.facts], vaultDetails, { key: made.payKey as Hex, records: [...made.records] }, made.asset);
     const payload = pureCircuits.runPayload(fromHex(built.tree.root), built.tree.payees, OPENS, CLOSES, 0n);
-    const c = change(0n, 621);
+    /* Raised as every device raises a run of its own: over no leg and the fresh salt its proposal filing keeps. */
+    const c = { ...change(0n, 621), salt: pureCircuits.retrySaltOf(new Uint8Array(32), fromHex(FRESH)) };
     await sim.as(sim.applying(B, c)).proposeRun({ root: fromHex(built.tree.root), payees: built.tree.payees, from: OPENS, until: CLOSES, vault: VAULT });
     const id = hex(sim.proposalId(payload, c.salt, VAULT));
     /* RED WHEN: the worker's check refuses, after the founding signer left, the run this device made again. */
-    expect(() => refuseWhatThisDeviceDidNotMake(gateDeps, { chainId: id, digest: hex(payload), made }, sim.ledger as unknown as AccountLedgerView))
+    expect(() => refuseWhatThisDeviceDidNotMake(gateDeps, { chainId: id, digest: hex(payload), salt: hex(c.salt), made, vouched: { ...VOUCHED, checkedHere: true } }, sim.ledger as unknown as AccountLedgerView))
       .not.toThrow();
     await sim.as(D).approve(fromHex(id));
     expect(sim.ledger.approvalCounts.lookup(fromHex(id))).toBe(1n);
@@ -210,17 +234,9 @@ describe('THE FOUNDING SEAT IS THE DEPLOY\'S, WHOEVER HOLDS THE FIRST SLOT LATER
       .rejects.toThrow(/signed by a seat other than the founding signer's/);
   });
 
-  it('AN ENTRY FOR THE FOUNDING SEAT UNDER ANY COMMITTEE KEY BUT THE ONE THE DEPLOY WAS HELD BY DOES NOT SPEAK FOR IT', async () => {
-    const sim = await founderReplaced();
-    const read = await holdersOnChain(ACCOUNT, LABEL, async () => bytesOf(sim.contractStateForCall as never), deployOf);
-    if (read.of !== 'read') throw new Error('the wallet did not read the account');
-    /* RED WHEN: whoever files a claim for the founding seat first, under a key they made, makes a first state they signed believed. */
-    await expect(runRebuiltHere(recordsOver(directory(sim, { ...read.holders, account: ACCOUNT }, true), STATE), CO, 'prp_1', KEY))
-      .rejects.toThrow(/not signed by the committee key the company's account was deployed with/);
-  });
 });
 
-describe('THE DIRECTORY REPLAYED FROM THE SEATS\' FILINGS NAMES THE FOUNDING SIGNER AT THE LEAF THE ACCOUNT\'S DEPLOY SEATED', () => {
+describe('THE DIRECTORY REPLAYED FROM THE SEATS\' FILINGS NAMES THE FOUNDING SIGNER AT THE LEAF THE FIRST ANCHOR NAMES', () => {
   /* Each seat's wallet, and the committee key it holds the account by for this company. */
   const wallets = { F: identityFromSecret(new Uint8Array(32).fill(81)), B: identityFromSecret(new Uint8Array(32).fill(82)), C: identityFromSecret(new Uint8Array(32).fill(83)) };
   const committee = (n: keyof typeof wallets) => committeeKeyFor(wallets[n], LABEL) as { tag: string; value: string };
@@ -283,15 +299,20 @@ describe('THE DIRECTORY REPLAYED FROM THE SEATS\' FILINGS NAMES THE FOUNDING SIG
     const here = await directoryHere({
       accountId: CO, label: LABEL, filings: async () => store.directoryFilingsOf(CO),
       holders: async () => ({ ...read.holders, account: ACCOUNT }), attested: async () => [],
-    });
+      /* F's founding batch anchored F's entry with the first state, judged by the committee F's wallet alone held then. */
+      anchored: anchoredEntering(CO, () => [], foundedByF(hex(sim.leafOf(F)), {
+        directory: store.directoryFilingsOf(CO).slice(0, 1), committee: [committee('F')],
+      })),
+    }, { founding: true });
     const founding = foundingSeatHere(here);
-    /* RED WHEN: the seat the device takes the first state from is not the leaf the deploy seated, which the server keeps the founding signer's claim at. */
+    /* RED WHEN: the seat the device takes the first state from is not the leaf the first anchor names, which the server keeps the founding signer's claim at. */
     expect(typeof founding === 'string' ? founding : founding.seat).toBe(hex(sim.leafOf(F)));
     expect(typeof founding === 'string' ? founding : founding.signingKey).toBe(signing.F.publicKey);
     expect(atF?.signingKey).toBe(signing.F.publicKey);
     /* And the first state F's seat signed is the one read: its pay-record key is the company's. */
-    const records: CompanyRecordsHere = { ...recordsOver(here, STATE), runs: async () => [] };
-    await expect(runRebuiltHere(records, CO, 'prp_1', KEY)).rejects.toThrow(/No payroll run of this company raised this proposal/);
+    /* Every run the company's records name is listed, and none raised this proposal. */
+    const records: CompanyRecordsHere = recordsOver(here, STATE);
+    await expect(runRebuiltHere(records, CO, 'prp_2', KEY)).rejects.toThrow(/No payroll run of this company raised this proposal/);
     const { signedStateHere } = await import('../../packages/web-shared/src/run-rebuilt-here.js');
     expect((await signedStateHere(recordsOver(here, STATE), CO, KEY)).payKey).toBe(PAY_KEY);
 
@@ -300,6 +321,54 @@ describe('THE DIRECTORY REPLAYED FROM THE SEATS\' FILINGS NAMES THE FOUNDING SIG
       .rejects.toThrow(/cannot open the company's state with the key it holds/);
     /* RED WHEN: a first state F's seat signed with no pay-record key in it gives nonces made with no key. */
     const keyless = signedFoundingState(CO, sealState({ entries: [] }, { ...blinding, payRecordKey: undefined } as never, KEY, 0), signing.F.secret);
-    await expect(signedStateHere(recordsOver(here, keyless), CO, KEY)).rejects.toThrow(/carries no pay-record key/);
+    await expect(signedStateHere(recordsOver(here, keyless, keyless), CO, KEY)).rejects.toThrow(/carries no pay-record key/);
+  });
+
+  it('A SECOND CLAIM TO THE FOUNDING SEAT, FILED FIRST BY ANOTHER WALLET ON THE COMMITTEE NOW, IS NEVER BELIEVED; F RETIRED LATER STILL FOUNDED IT', async () => {
+    const sim = await AccountSimulator.liveAccount([F, B, C], 2n);
+    sim.at(NOW);
+    /* X's wallet is on the account's committee now - seated or not - and files a claim to F's leaf before F's own. */
+    const X = identityFromSecret(new Uint8Array(32).fill(89));
+    const xCommittee = committeeKeyFor(X, LABEL) as { tag: string; value: string };
+    const xSigning = newSigningKeypair();
+    const claim = (version: number, person: string, committeeKey: { tag: string; value: string }, statement: unknown): DirectoryFiling =>
+      ({ company: CO, version, change: { kind: 'claim', entry: { person, committeeKey, statement } } }) as DirectoryFiling;
+    const leafOf = (d: typeof F) => hex(sim.leafOf(d));
+    const filings: DirectoryFiling[] = [
+      claim(1, 'x', xCommittee, signDirectoryEntry(X, LABEL, ACCOUNT, new Uint8Array(32).fill(99), xSigning.publicKey, leafOf(F))),
+      claim(2, 'f', committee('F'), signDirectoryEntry(wallets.F, LABEL, ACCOUNT, new Uint8Array(32).fill(90), signing.F.publicKey, leafOf(F))),
+      claim(3, 'b', committee('B'), signDirectoryEntry(wallets.B, LABEL, ACCOUNT, new Uint8Array(32).fill(91), signing.B.publicKey, leafOf(B))),
+      claim(4, 'c', committee('C'), signDirectoryEntry(wallets.C, LABEL, ACCOUNT, new Uint8Array(32).fill(92), signing.C.publicKey, leafOf(C))),
+    ];
+    /* F retires, by two of three as the account requires: B and C sign. */
+    const unsigned = { kind: 'retire', seat: leafOf(F), threshold: 2, filedUpTo: {}, signatures: [] } as const;
+    const message = directoryChangeMessage(CO, 5, unsigned as never);
+    filings.push({ company: CO, version: 5, change: { ...unsigned, signatures: [
+      { publicKey: signing.B.publicKey, signature: sign(message, signing.B.secret) }, { publicKey: signing.C.publicKey, signature: sign(message, signing.C.secret) },
+    ] } } as never);
+    /* The wallet's read of the account now: its seats, and a committee holding X's wallet beside the three seats'. */
+    const now = RuntimeContractState.deserialize((sim.contractStateForCall as { serialize(): Uint8Array }).serialize());
+    now.maintenanceAuthority = new RuntimeMaintenanceAuthority([committee('F'), committee('B'), committee('C'), xCommittee] as never, 2, 0n);
+    const read = await holdersOnChain(ACCOUNT, LABEL, async () => hex(now.serialize()), deployed);
+    if (read.of !== 'read') throw new Error(`the wallet did not read the account: ${JSON.stringify(read)}`);
+    const here = await directoryHere({
+      accountId: CO, label: LABEL, filings: async () => filings,
+      holders: async () => ({ ...read.holders, account: ACCOUNT }), attested: async () => [],
+      /* F's founding device witnessed both claims in the first batch, judged by the committee F's wallet alone held then. */
+      anchored: anchoredEntering(CO, () => [], foundedByF(leafOf(F), { directory: filings.slice(0, 2), committee: [committee('F')] })),
+    }, { founding: true });
+    /* RED WHEN: a claim anchored with the first batch is judged by the committee now - X's claim, filed first, takes F's seat. */
+    expect(here.dir.seats.find((x) => x.person === 'x')).toBeUndefined();
+    const founding = foundingSeatHere(here);
+    if (typeof founding === 'string') throw new Error(founding);
+    expect([founding.person, founding.signingKey]).toEqual(['f', signing.F.publicKey]);
+    /* RED WHEN: F's retirement, believed through the replay, takes the company's founding seat away with it. */
+    expect(founding.retired).not.toBeNull();
+    const { signedStateHere } = await import('../../packages/web-shared/src/run-rebuilt-here.js');
+    expect((await signedStateHere(recordsOver(here, STATE), CO, KEY)).payKey).toBe(PAY_KEY);
+    /* RED WHEN: a first state X signed is believed through the claim X filed first. */
+    const { filedBy: _f, ...unsignedState } = STATE;
+    await expect(signedStateHere(recordsOver(here, signCompanyFiling(unsignedState, xSigning.secret)), CO, KEY))
+      .rejects.toThrow(/signed by a seat other than the founding signer's/);
   });
 });

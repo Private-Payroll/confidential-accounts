@@ -31,6 +31,8 @@ const kr = vi.hoisted(() => ({
   readHere: [] as string[],
   /* The vaults the company's account has adopted, as the wallet reads the chain. */
   adopted: [] as string[],
+  /* Each company this page entered and started the one-a-day anchor for, with the keys it was handed. */
+  anchoring: [] as Array<{ company: string; signerId: string }>,
 }));
 vi.mock('./vault-builder.js', () => ({
   theVaultBuilder: async () => ({
@@ -41,6 +43,14 @@ vi.mock('./vault-builder.js', () => ({
       return v;
     },
   }),
+}));
+/* The one-a-day anchor as entering a company starts it: recorded, and never finished, so a read that waited on it would never answer. */
+vi.mock('./filing-judge.js', async (real) => ({
+  ...(await real<typeof import('./filing-judge.js')>()),
+  anchoredOnTheWayInFor: (sealed: { id: string }, keys: { signerId: string }) => {
+    kr.anchoring.push({ company: sealed.id, signerId: keys.signerId });
+    return new Promise(() => undefined);
+  },
 }));
 vi.mock('vaults-web-shared/keyring.js', async (real) => ({
   ...(await real<typeof import('vaults-web-shared/keyring.js')>()),
@@ -150,7 +160,7 @@ function strings(value: unknown, at = 'answer'): string[] {
   return [];
 }
 
-beforeEach(() => { kr.answers = {}; kr.asked = []; kr.keys = true; kr.canOpen = true; kr.user = 'u1'; kr.opened = 0; everything(); });
+beforeEach(() => { kr.anchoring = []; kr.answers = {}; kr.asked = []; kr.keys = true; kr.canOpen = true; kr.user = 'u1'; kr.opened = 0; everything(); });
 afterEach(() => { vi.unstubAllEnvs(); });
 
 describe('opening a company', () => {
@@ -161,6 +171,17 @@ describe('opening a company', () => {
     expect(c.of).toBe('open');
     if (c.of !== 'open') return;
     expect([c.name, c.signers.map((s) => s.name), c.approvalsNeeded]).toEqual(['Northwind', ['Priya', 'Sam'], 2]);
+  });
+
+  it('ENTERING THE COMPANY STARTS THE ONE-A-DAY ANCHOR WITH THIS SEAT\'S OWN KEYS, AND THE READ DOES NOT WAIT ON IT', async () => {
+    const { readCompany } = await load();
+    /* RED WHEN: the read waits on the anchor's proof, or entering the company starts no anchor, so between raises nothing is ever anchored. */
+    expect((await readCompany('u1', 'c1')).of).toBe('open');
+    expect(kr.anchoring).toEqual([{ company: 'c1', signerId: 's1' }]);
+    kr.anchoring = []; kr.keys = false; kr.canOpen = false;
+    /* RED WHEN: a device with no keys for the company starts an anchor it cannot sign. */
+    expect(await readCompany('u1', 'c1')).toEqual({ of: 'locked' });
+    expect(kr.anchoring).toEqual([]);
   });
 
   /*

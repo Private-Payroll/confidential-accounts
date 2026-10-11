@@ -79,6 +79,7 @@ import type {
 import type { AssetId } from '../core/assets.js';
 import type { AccountPrivateState } from '../../contracts/src/witnesses.js';
 import { periodWindowOf, policyCommitmentOf, policyBarKey, type PolicyOpening } from './spending-policy.js';
+import { retryArgsOf } from './spending-policy-record.js';
 import { viewDigestOf } from '../core/ledger.js';
 import { assetIdBytes, NO_ASSET } from '../core/assets.js';
 import { MidnightCommitments } from './commitments.js';
@@ -212,7 +213,7 @@ export type PreparedStep =
    * device and never leave it.
    */
   | {
-    kind: 'clearRun'; proposalId: Hex; run: RunProposal; salt: Hex; asset: AssetId;
+    kind: 'clearRun'; proposalId: Hex; run: RunProposal; salt: Hex; fresh: Hex; asset: AssetId;
     top: bigint; total: bigint; period: bigint; policy: PolicyOpening; spent: bigint;
   };
 
@@ -1544,18 +1545,20 @@ export class MidnightLedger implements Ledger {
    * **CHARGES AN APPROVED RUN TO ITS VAULT'S PERIOD**, once, inside its window.
    * `tree` is the run's own payout tree, whose total and top node the root
    * commits to; `spent` is what the period has been charged already, which the
-   * account's stored total must open to.
+   * account's stored total must open to. `fresh` is the fresh half of the run's
+   * salt, `retrySaltOf(no leg, fresh)`: this charges a run of its own, never a
+   * retry against its leg.
    */
   async clearRun(
     accountId: string,
     args: {
-      proposalId: Hex; run: RunProposal; salt: Hex; asset: AssetId;
+      proposalId: Hex; run: RunProposal; salt: Hex; fresh: Hex; asset: AssetId;
       tree: { top: bigint; total: bigint }; period: bigint; policy: PolicyOpening; spent: bigint;
     },
     by: SignerRef,
   ): Promise<TxRef> {
     const call = await this.prepare(accountId, {
-      kind: 'clearRun', proposalId: args.proposalId, run: args.run, salt: args.salt, asset: args.asset,
+      kind: 'clearRun', proposalId: args.proposalId, run: args.run, salt: args.salt, fresh: args.fresh, asset: args.asset,
       top: args.tree.top, total: args.tree.total, period: args.period, policy: args.policy, spent: args.spent,
     });
     return this.txRef(await this.buildCall(call.address, call.circuit, call.args, call.privateStateId), by);
@@ -2067,7 +2070,7 @@ export class MidnightLedger implements Ledger {
           args: [
             fromHex(step.proposalId), fromHex(step.run.vault), fromHex(step.run.root), step.run.payees,
             step.run.opensAt, step.run.closesAt, step.run.required ?? 0n, fromHex(step.salt),
-            step.top, step.total, step.period,
+            step.top, step.total, step.period, ...retryArgsOf(fromHex(step.fresh)),
           ],
         };
       }

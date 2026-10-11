@@ -4,8 +4,12 @@ import { committeeKeyFor } from 'midnight-identity/profile/committee-key';
 import { recordsPublicKeyOf, signDirectoryEntry, signRecordsKey } from 'midnight-identity/profile/records-key';
 import type { AccountAddress, CompanyLabel } from 'midnight-identity/profile/company-label';
 import { newSigningKeypair, sign, type Hex } from '../core/crypto.js';
+import { directoryWithItsRecordsHere, passedOverSaid, type RecordsHeldHere } from 'vaults-web-shared/vault-page-doors.js';
+import { directoryEntry, recordKeyOf } from './record-manifest.js';
+import { DIRECTORY } from './records-held.js';
+import { GENESIS } from './record-tree.js';
 import {
-  applyFiling, believedDirectory, directoryChangeMessage, DirectoryRefused, emptyDirectory, filerSeatOf, filingRefusalOf,
+  applyFiling, believedDirectory, directoryChangeMessage, directoryReplayed, DirectoryRefused, emptyDirectory, filerSeatOf, filingRefusalOf,
   MAY_FILE, seatsWithAnotherRecordsKey, vaultRecordKey,
   type ChainHolders, type Directory, type DirectoryChange, type DirectoryEntry, type DirectoryFiling,
 } from './seat-directory.js';
@@ -238,6 +242,50 @@ describe('WHAT A DEVICE BELIEVES (CHECK S, ON THE DEVICE)', () => {
     expect(listed.seats.find((x) => x.seat === ADA.seat)!.role).toBe('viewer');
   });
 
+  it('A CHANGE THE ANCHOR HOLDS IS COUNTED AGAINST WHO HELD THE ACCOUNT AS IT WAS ANCHORED; ONE ANCHORED WITH NOBODY KNOWN TO HOLD IT IS NOT BELIEVED', () => {
+    const claims = [claim(ADA, 1), claim(BO, 2), claim(CY, 3)];
+    const three = withAll([ADA, BO, CY]);
+    const committee = [ADA, BO, CY].map((x) => x.committeeKey);
+    const promote = quorum(three, { kind: 'role', seat: CY.seat, role: 'viewer', threshold: 2 }, [ADA, BO]);
+    const now = { approvals: 2, seats: [ADA.seat, CY.seat], committee };
+    const then = { approvals: 2, seats: [ADA.seat, BO.seat, CY.seat], committee };
+    /* RED WHEN: a change the anchor holds is counted against who holds the account now - Bo, who signed it, has left. */
+    expect(believedDirectory(CO, [...claims, promote], LABEL, ACCOUNT, now, (v) => (v === 4 ? then : undefined))
+      .seats.find((x) => x.seat === CY.seat)!.role).toBe('viewer');
+    /* RED WHEN: a change anchored with nobody known to hold the account then is believed on the account now, or on anything. */
+    expect(believedDirectory(CO, [...claims, promote], LABEL, ACCOUNT, then, (v) => (v === 4 ? null : undefined))
+      .seats.find((x) => x.seat === CY.seat)!.role).toBeNull();
+    /* RED WHEN: a claim a batch the fold cannot read may first name (null: not known) is believed on the account now. */
+    expect(believedDirectory(CO, [...claims, promote], LABEL, ACCOUNT, then, () => null).seats).toEqual([]);
+  });
+
+  it('AN ANCHORED CHANGE IS COUNTED AGAINST THE SEATS ITS BATCH NAMED, WHATEVER THEIR COMMITTEE KEYS; AN ANCHORED CLAIM AGAINST THE COMMITTEE AT ITS BLOCK', () => {
+    const claims = [claim(ADA, 1), claim(BO, 2), claim(CY, 3)];
+    const three = withAll([ADA, BO, CY]);
+    const promote = quorum(three, { kind: 'role', seat: CY.seat, role: 'viewer', threshold: 2 }, [ADA, BO]);
+    const all = [ADA, BO, CY].map((x) => x.committeeKey);
+    /* Bo's wallet is no longer on the committee the anchoring block shows, but his seat is in the signer tree the batch named. */
+    const anchored = { approvals: 2, seats: [ADA.seat, BO.seat, CY.seat], committee: [ADA.committeeKey, CY.committeeKey] };
+    const asAnchored = (v: number) => (v <= 3 ? { ...anchored, committee: all } : v === 4 ? anchored : undefined);
+    /* RED WHEN: an anchored change's quorum asks the committee: Bo's signature would not count, and the promotion is lost. */
+    expect(believedDirectory(CO, [...claims, promote], LABEL, ACCOUNT, undefined, asAnchored)
+      .seats.find((x) => x.seat === CY.seat)!.role).toBe('viewer');
+    /* RED WHEN: an anchored change counts a seat the signer tree its batch named did not hold. */
+    const withoutBo = (v: number) => (v <= 3 ? { ...anchored, committee: all } : v === 4 ? { ...anchored, seats: [ADA.seat, CY.seat] } : undefined);
+    expect(believedDirectory(CO, [...claims, promote], LABEL, ACCOUNT, undefined, withoutBo)
+      .seats.find((x) => x.seat === CY.seat)!.role).toBeNull();
+    /* RED WHEN: an anchored change's floor of approvals is the account's now: the threshold rose to 3 after it was anchored at 2. */
+    expect(believedDirectory(CO, [...claims, promote], LABEL, ACCOUNT, { approvals: 3, seats: [ADA.seat, BO.seat, CY.seat], committee: all }, asAnchored)
+      .seats.find((x) => x.seat === CY.seat)!.role).toBe('viewer');
+    /* RED WHEN: an anchored change is not held to the approvals the account required as it was anchored: signed for 2, anchored at 3. */
+    const atThree = (v: number) => (v <= 3 ? { ...anchored, committee: all } : v === 4 ? { ...anchored, approvals: 3 } : undefined);
+    expect(believedDirectory(CO, [...claims, promote], LABEL, ACCOUNT, undefined, atThree)
+      .seats.find((x) => x.seat === CY.seat)!.role).toBeNull();
+    /* RED WHEN: an anchored claim is believed though its committee key is not on the committee at the block that anchored it. */
+    const boOff = (v: number) => (v === 2 ? anchored : { ...anchored, committee: all });
+    expect(believedDirectory(CO, claims, LABEL, ACCOUNT, undefined, boOff).seats.map((x) => x.seat)).toEqual([ADA.seat, CY.seat]);
+  });
+
   it('A DEVICE REPLAYING THE DIRECTORY LEAVES OUT AN ENTRY THE SERVER ADDED WITHOUT A VALID WALLET SIGNATURE', () => {
     const forged: DirectoryEntry = { ...BO.entry, statement: { ...BO.entry.statement, signingKey: newSigningKeypair().publicKey } };
     const filings: DirectoryFiling[] = [claim(ADA, 1), { company: CO, version: 2, change: { kind: 'claim', entry: forged } }, claim(BO, 3)];
@@ -321,5 +369,176 @@ describe('WHO MAY FILE, ON THE SERVER (CHECK S)', () => {
         expect(typeof server === 'string' ? server : null).toBe(filingRefusalOf(dir, chain, seat.signing.publicKey, 'pool', 'k', 1));
       }
     }
+  });
+});
+
+describe('A QUORUM\'S CHANGE PASSED OVER IS FILED AGAIN UNDER ITS OWN SIGNATURES, AND BELIEVED ONLY AS THE CHAIN AND THE CHANGES AFTER IT ALLOW', () => {
+  /* Who holds the account now, as a device's own wallet reads it: Ada and Bo, one approval. */
+  const both = { approvals: 1, seats: [ADA.seat, BO.seat], committee: [ADA.committeeKey, BO.committeeKey] };
+  /** A quorum's change signed by `signers` for `version`, filed at `version`, or filed again at `filedAt` under those signatures. */
+  const signedFor = (version: number, change: Parameters<typeof quorum>[1], signers: readonly Seat[] = [ADA], filedAt?: number): DirectoryFiling => {
+    const f = quorum({ ...emptyDirectory(CO), version: version - 1 }, change, signers, version);
+    return filedAt === undefined ? f : { ...f, version: filedAt, signedAt: version };
+  };
+  const boApprover = { kind: 'role', seat: BO.seat, role: 'approver', threshold: 1 } as const;
+  /** The replay of `filings`, versions in `passed` passed over by the company's records, against `now`. */
+  const replay = (filings: readonly DirectoryFiling[], passed: readonly number[] = [], now = both) =>
+    directoryReplayed(CO, filings, LABEL, ACCOUNT, now, (v) => (passed.includes(v) ? null : undefined));
+  const roleOf = (r: ReturnType<typeof replay>, s: Seat) => r.dir.seats.find((x) => x.seat === s.seat)?.role;
+
+  it('A ROLE PASSED OVER, FILED AGAIN AS A NEW VERSION CARRYING THE VERSION ITS SIGNATURES WERE MADE FOR, IS APPLIED', () => {
+    const r = replay([claim(ADA, 1), claim(BO, 2), signedFor(3, boApprover), signedFor(3, boApprover, [ADA], 4)], [3]);
+    /* RED WHEN: the signatures of a change filed again are checked against the version it is filed at, or a change filed again is never believed. */
+    expect(roleOf(r, BO)).toBe('approver');
+    expect(r.refused.get(4)).toBeUndefined();
+  });
+
+  it('ITS SIGNATURES BIND THE VERSION IT NAMES, AND ONLY A QUORUM\'S CHANGE NAMES ONE', () => {
+    /* RED WHEN: a change filed again is believed under signatures made for the version it is filed at, not the one it names. */
+    const signedAtFour = { ...signedFor(4, boApprover), signedAt: 3 };
+    expect(replay([claim(ADA, 1), claim(BO, 2), signedFor(3, boApprover), signedAtFour], [3]).refused.get(4)).toBe('not-signed');
+    /* RED WHEN: an entry may carry the version it was signed for: a seat's own entry names none. */
+    expect(replay([claim(ADA, 1), { ...claim(BO, 2), signedAt: 1 }]).refused.get(2)).toBe('not-a-change');
+    expect(refusal(() => applyFiling(withAll([ADA]), { ...claim(BO, 2), signedAt: 1 }, { label: LABEL, account: ACCOUNT, chain: chainOf([ADA, BO]), who: who('bo') }))).toBe('not-a-change');
+  });
+
+  it('REFUSED, WITH WHY: A VERSION APPLIED AT ITS OWN VERSION', () => {
+    /* RED WHEN: a change applied at its own version may be filed again - a second application of one quorum's signatures. */
+    expect(replay([claim(ADA, 1), claim(BO, 2), signedFor(3, boApprover), signedFor(3, boApprover, [ADA], 4)]).refused.get(4)).toBe('signed-at-applied');
+  });
+
+  it('REFUSED, WITH WHY: A CHANGE ALREADY FILED AGAIN AND APPLIED', () => {
+    /* RED WHEN: a change filed again once may be filed again a second time and applied twice. */
+    const twice = replay([claim(ADA, 1), claim(BO, 2), signedFor(3, boApprover), signedFor(3, boApprover, [ADA], 4), signedFor(3, boApprover, [ADA], 5)], [3]);
+    expect([twice.refused.get(4), twice.refused.get(5)]).toEqual([undefined, 'signed-at-applied']);
+  });
+
+  it('REFUSED, WITH WHY: A CHANGE NEITHER PASSED OVER NOR RESTING ON ONE', () => {
+    /* Cy's role signed before his entry, refused at its own version; nothing was passed over. */
+    const cy = { kind: 'role', seat: CY.seat, role: 'approver', threshold: 1 } as const;
+    const withCy = { ...both, seats: [...both.seats, CY.seat], committee: [...both.committee, CY.committeeKey] };
+    /* RED WHEN: any change refused at its own version may be filed again - a change refused for its own sake revived later. */
+    expect(replay([claim(ADA, 1), signedFor(2, cy), claim(CY, 3), signedFor(2, cy, [ADA], 4)], [], withCy).refused.get(4)).toBe('signed-at-not-passed-over');
+  });
+
+  it('A CHANGE RESTING ON A SEAT A PASSED-OVER VERSION CLAIMED IS FILED AGAIN ONCE THAT SEAT\'S ENTRY IS', () => {
+    /* Bo's entry (2) passed over; his role (3) anchored, refused for want of his seat; his entry filed again (4); his role filed again (5). */
+    const r = replay([claim(ADA, 1), claim(BO, 2), signedFor(3, boApprover), claim(BO, 4), signedFor(3, boApprover, [ADA], 5)], [2]);
+    expect(r.refused.get(3)).toBe('no-such-seat');
+    /* RED WHEN: only a version itself passed over may be filed again - a change resting on a passed-over entry would be lost for good. */
+    expect(roleOf(r, BO)).toBe('approver');
+  });
+
+  it('ORDERED PER SEAT: A CHANGE PASSED OVER ONCE MORE IS NEVER REFUSED FOR ANOTHER SEAT\'S CHANGE FILED AGAIN AFTER IT', () => {
+    const adaAdmin = { kind: 'role', seat: ADA.seat, role: 'admin', threshold: 1 } as const;
+    /* Bo's role (3) and Ada's (4) passed over; filed again (5, 6); the service passes over Bo's again (5) and anchors Ada's (6); Bo's filed a third time (7). */
+    const r = replay([claim(ADA, 1), claim(BO, 2), signedFor(3, boApprover), signedFor(4, adaAdmin), signedFor(3, boApprover, [ADA], 5),
+      signedFor(4, adaAdmin, [ADA], 6), signedFor(3, boApprover, [ADA], 7)], [3, 4, 5]);
+    expect(r.refused.get(6)).toBeUndefined();
+    /* RED WHEN: changes filed again are ordered across every seat - Bo's role refused for good as out of order, his seats signing it again. */
+    expect(r.refused.get(7)).toBeUndefined();
+    expect(roleOf(r, BO)).toBe('approver');
+    expect(roleOf(r, ADA)).toBe('admin');
+    /* RED WHEN: another seat's change filed again first holds this one back - filed in any order across seats, each is applied. */
+    const across = replay([claim(ADA, 1), claim(BO, 2), signedFor(3, boApprover), signedFor(4, adaAdmin), signedFor(4, adaAdmin, [ADA], 5),
+      signedFor(3, boApprover, [ADA], 6)], [3, 4]);
+    expect([across.refused.get(5), across.refused.get(6), roleOf(across, BO)]).toEqual([undefined, undefined, 'approver']);
+  });
+
+  it('ORDERED PER SEAT: ONE SEAT\'S CHANGE SIGNED FOR AN EARLIER VERSION, FILED AGAIN AFTER A LATER ONE TO THAT SEAT, IS REFUSED', () => {
+    const boViewer = { kind: 'role', seat: BO.seat, role: 'viewer', threshold: 1 } as const;
+    /* Bo's approver role (3) and viewer role (4) both passed over; the later filed again first (5), then the earlier (6). */
+    const r = replay([claim(ADA, 1), claim(BO, 2), signedFor(3, boApprover), signedFor(4, boViewer), signedFor(4, boViewer, [ADA], 5),
+      signedFor(3, boApprover, [ADA], 6)], [3, 4]);
+    expect(r.refused.get(5)).toBeUndefined();
+    /* RED WHEN: a change filed again is judged only against changes applied at their own version - one seat's changes filed again in any order. */
+    expect(r.refused.get(6)).toBe('reverses-a-later-change');
+    expect(roleOf(r, BO)).toBe('viewer');
+  });
+
+  it('A CHANGE FILED AGAIN THAT WOULD UNDO A LATER CHANGE TO THE SAME SEAT IS REFUSED', () => {
+    const boViewer = { kind: 'role', seat: BO.seat, role: 'viewer', threshold: 1 } as const;
+    const r = replay([claim(ADA, 1), claim(BO, 2), signedFor(3, boApprover), signedFor(4, boViewer), signedFor(3, boApprover, [ADA], 5)], [3]);
+    /* RED WHEN: a change filed again reverses a change to its seat applied for a later version. */
+    expect(r.refused.get(5)).toBe('reverses-a-later-change');
+    expect(roleOf(r, BO)).toBe('viewer');
+  });
+
+  it('A CHANGE SIGNED BY A SEAT WHOSE OWN ENTRY WAS PASSED OVER RESTS ON IT; ONE PASSED OVER ONLY AFTER IT DOES NOT', () => {
+    const adaAdmin = { kind: 'role', seat: ADA.seat, role: 'admin', threshold: 1 } as const;
+    /* Bo's entry (2) passed over; Ada's role signed by Bo (3), refused for want of his seat; his entry again (4); the role again (5). */
+    const r = replay([claim(ADA, 1), claim(BO, 2), signedFor(3, adaAdmin, [BO]), claim(BO, 4), signedFor(3, adaAdmin, [BO], 5)], [2]);
+    expect(r.refused.get(3)).toBe('below-quorum');
+    /* RED WHEN: only a change naming a passed-over seat rests on it, not one signed by that seat's key. */
+    expect(r.refused.get(5)).toBeUndefined();
+    expect(roleOf(r, ADA)).toBe('admin');
+    /* RED WHEN: a version passed over after the change is taken as one it rests on. */
+    const after = replay([claim(ADA, 1), signedFor(2, adaAdmin, [BO]), claim(BO, 3), claim(BO, 4), signedFor(2, adaAdmin, [BO], 5)], [3]);
+    expect(after.refused.get(5)).toBe('signed-at-not-passed-over');
+  });
+
+  it('NOT YET ANCHORED, A CHANGE FILED AGAIN IS SIGNED AGAINST THE APPROVALS THE ACCOUNT REQUIRES NOW, AS THE SERVICE FILES IT; ANCHORED, AS ANY VERSION', () => {
+    const two = { kind: 'role', seat: BO.seat, role: 'approver', threshold: 2 } as const;
+    const filings = [claim(ADA, 1), claim(BO, 2), signedFor(3, two, [ADA, BO]), signedFor(3, two, [ADA, BO], 4)];
+    /* RED WHEN: a device files again a change signed against more approvals than the account requires now, which the service refuses for ever. */
+    expect(replay(filings, [3]).refused.get(4)).toBe('threshold-not-the-chains');
+    /* RED WHEN: an anchored change filed again is judged by the chain now - a later change of the account undoing it on every device. */
+    const held = { approvals: 1, seats: [ADA.seat, BO.seat], committee: both.committee };
+    const anchored = directoryReplayed(CO, filings, LABEL, ACCOUNT, { ...both, seats: [ADA.seat] }, (v) => (v === 3 ? null : v === 4 ? held : undefined));
+    expect(anchored.refused.get(4)).toBeUndefined();
+    expect(anchored.dir.seats.find((x) => x.seat === BO.seat)?.role).toBe('approver');
+  });
+
+  describe('ON A DEVICE: WHAT IT FILES AGAIN, IN WHAT ORDER, AND WHAT IT HOLDS BACK', () => {
+    const committee = [ADA.committeeKey, BO.committeeKey, CY.committeeKey];
+    const adaAdmin = { kind: 'role', seat: ADA.seat, role: 'admin', threshold: 1 } as const;
+    /** A device's read of `filings`, the company's records having anchored versions 1 and `last` and passed over those between. */
+    const readOf = (filings: readonly DirectoryFiling[], last: number) => {
+      const atAnchor = { approvals: 1, seats: [ADA.seat, CY.seat], committee: [ADA.committeeKey, CY.committeeKey] };
+      const leaf = (v: number) => ({ version: v, digest: directoryEntry(filings[v - 1]!).digest, filedBy: ADA.signing.publicKey, batch: v === 1 ? 0 : 1, dirVersion: v });
+      const holders = { seats: [ADA.seat, CY.seat], approvals: 1, signerRoot: '00'.repeat(32) as Hex, signers: [ADA.seat as Hex, CY.seat as Hex] };
+      const records = {
+        head: '11'.repeat(32), reached: GENESIS, stopped: null, asked: { records: new Set<string>(), kinds: new Set<string>() },
+        history: new Map([[recordKeyOf(DIRECTORY), [leaf(1), leaf(last)]]]), notYetAnchored: [],
+        directory: new Map([1, last].map((v) => [v, { digest: leaf(v).digest, batch: leaf(v).batch, held: holders }])),
+        held: (v: number) => (v === 1 || v === last ? atAnchor : v < last ? null : undefined),
+      } as unknown as RecordsHeldHere;
+      return directoryWithItsRecordsHere({
+        accountId: CO, label: LABEL, filings: async () => filings, attested: async () => [], anchored: async () => records,
+        holders: async () => ({ account: ACCOUNT, seats: [ADA.seat, BO.seat, CY.seat], committee, approvals: 1 }) as never,
+      } as never);
+    };
+    for (const [name, signers] of [['naming the seat', [ADA]], ['signed by the seat', [BO]]] as const) {
+      it(`ONE RESTING ON A SEAT WHOSE ENTRY WAS PASSED OVER (${name.toUpperCase()}) HOLDS BACK EVERY LATER CHANGE TO ITS OWN SEAT ONLY, AND ONCE THE ENTRY IS FILED AGAIN THEY ARE FILED IN THEIR FIRST ORDER`, async () => {
+        const first = name === 'naming the seat' ? boApprover : adaAdmin;
+        const sameSeat = name === 'naming the seat' ? { kind: 'role', seat: BO.seat, role: 'viewer', threshold: 1 } as const : { ...adaAdmin, role: 'viewer' } as const;
+        const another = { kind: 'role', seat: CY.seat, role: 'approver', threshold: 1 } as const;
+        const filings = [claim(ADA, 1), claim(BO, 2), signedFor(3, first, signers), signedFor(4, another, [ADA]), signedFor(5, sameSeat, [ADA]), claim(CY, 6)];
+        const here = await readOf(filings, 6);
+        expect(here.notApplied?.map((n) => n.signedAt)).toEqual([3, 4, 5]);
+        const held = here.refiled!(here.notApplied!);
+        /* RED WHEN: a change to its own seat passed over after one that waits for a seat's entry is filed first, the waiting one then undoing it. */
+        expect([...held.waiting]).toEqual([3, 5]);
+        /* RED WHEN: a change to another seat waits behind it - every seat held back by one seat's missing entry. */
+        expect(held.filed.map((f) => [f.version, f.signedAt])).toEqual([[7, 4]]);
+        expect(passedOverSaid(here)).toMatch(/the change signed for version 3, 4, 5 is filed again, .* once the entry of the seat it rests on is filed again/u);
+        /* Bo's entry filed again (7): all are filed again, oldest first. RED WHEN: they are filed in another order. */
+        const again = await readOf([...filings, claim(BO, 7)], 6);
+        expect(again.refiled!(again.notApplied!).filed.map((f) => [f.version, f.signedAt])).toEqual([[8, 3], [9, 4], [10, 5]]);
+      });
+    }
+  });
+
+  it('A CHANGE FILED AGAIN IS BELIEVED ONLY WHERE IT AGREES WITH WHO HOLDS THE ACCOUNT ON CHAIN NOW', () => {
+    const filings = [claim(ADA, 1), claim(BO, 2), signedFor(3, boApprover), signedFor(3, boApprover, [ADA], 4)];
+    const adaAlone = { approvals: 1, seats: [ADA.seat], committee: [ADA.committeeKey] };
+    /* RED WHEN: a role is filed again for a seat the account no longer holds on chain. */
+    expect(replay(filings, [3], adaAlone).refused.get(4)).toBe('not-as-the-chain-holds');
+    const retireBo = { kind: 'retire', seat: BO.seat, filedUpTo: {}, threshold: 1 } as const;
+    const retiring = [claim(ADA, 1), claim(BO, 2), signedFor(3, retireBo), signedFor(3, retireBo, [ADA], 4)];
+    /* RED WHEN: a retirement is filed again for a seat the account still holds on chain. */
+    expect(replay(retiring, [3]).refused.get(4)).toBe('not-as-the-chain-holds');
+    /* RED WHEN: the rule is turned round - a retirement of a seat the chain no longer holds is refused. */
+    expect(replay(retiring, [3], { ...adaAlone, committee: both.committee }).dir.seats.find((x) => x.seat === BO.seat)?.retired).toEqual({});
   });
 });

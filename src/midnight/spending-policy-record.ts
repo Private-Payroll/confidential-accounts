@@ -31,6 +31,40 @@ import { paddedToABucket, type PoolSigner } from './vault-pool.js';
 import type { SealedCompanyRecord } from './sealed-record-wire.js';
 import type { PolicyOpening } from '../../contracts/src/witnesses.js';
 
+/**
+ * **THE LEG A RUN OF ITS OWN NAMES: NONE.** Every run is raised with the salt
+ * `retrySaltOf(leg, fresh)`; a run that pays nobody again names this leg, and a
+ * retry names the root of the leg whose people it pays again. The one place
+ * that says what "no leg" is.
+ */
+export const NO_LEG = (): Uint8Array => new Uint8Array(32);
+
+/**
+ * **WHAT A CHARGE NAMES ABOUT THE RUN IT RETRIES.** A retry pays some of its
+ * leg's people again, and its salt is `retrySaltOf(leg, fresh)`, so the id every
+ * signer approved commits to the leg. While the leg's charge stands in the
+ * retry's own period under the vault's policy today, the retry is charged
+ * nothing and what the leg's retries take together is kept against the leg's
+ * total; otherwise it is charged as a run of its own.
+ */
+export interface RetryOfALeg {
+  /** The leg's root. */
+  leg: Uint8Array;
+  /** The leg's top node and total, which its root commits to. */
+  legTop: bigint;
+  legTotal: bigint;
+}
+
+/**
+ * `clearRun`'s last four arguments, in its order: the leg (none for a run that
+ * is not a retry), the fresh half of the run's salt, and the leg's top node and
+ * total. This is the one place that says how.
+ */
+export const retryArgsOf = (fresh: Uint8Array, retry?: RetryOfALeg): [Uint8Array, Uint8Array, bigint, bigint] =>
+  retry === undefined
+    ? [NO_LEG(), fresh, 0n, 0n]
+    : [retry.leg, fresh, retry.legTop, retry.legTotal];
+
 /** How many bands a policy has. The contract's `Vector<4, Band>`. */
 export const POLICY_BANDS = 4;
 

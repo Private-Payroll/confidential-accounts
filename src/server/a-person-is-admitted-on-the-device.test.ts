@@ -23,16 +23,17 @@ import {
   admitHere, makeMyselfPayableHere, PersonNotChanged, readPeopleHere, setStatusHere, type PeopleDevice, type PeopleHere, type PersonHere,
 } from 'vaults-web-shared/people-on-device.js';
 import {
-  aCompanyOfTwoSeats, acmeDirectory, ACME, ADA, aVersionNoSeatSigned, BO, CO, fromAda, KEY, LABEL, newestPerson, OTHER_LABEL, ORIGIN,
+  aCompanyOfTwoSeats, acmeDirectory, acmeDirectoryAttestedBy, ACME, ADA, aVersionNoSeatSigned, BO, CO, fromAda, KEY, LABEL, newestPerson, OTHER_LABEL, ORIGIN,
   peopleRecords, sendAs, store,
 } from './a-company-of-two-seats.test-support.js';
+import { companyRecordEntry } from '../midnight/record-manifest.js';
 
 aCompanyOfTwoSeats();
 
 const NETWORK = theNetwork();
 const adasDevice = (over: Partial<PeopleDevice> = {}): PeopleDevice => ({
   company: ACME as InvitingCompany, signingSecret: ADA.signingSecret, signedInAs: 'ada', send: fromAda,
-  directory: acmeDirectory, network: NETWORK, ...over,
+  directory: acmeDirectory, network: NETWORK, entered: ADA.entered, ...over,
 });
 const pay = (n: number) => ({ name: `Payee ${n}`, email: `payee${n}@acme.co`, title: 'Engineer', asset: TEST_SETTLEMENT_ASSET, baseAmount: 500000n, startDate: '2026-10-01' });
 const addressOf = (n: number) => payeeFor(n.toString(16).padStart(2, '0').repeat(32), NETWORK).bech32;
@@ -70,6 +71,9 @@ describe('THE PEOPLE ARE READ AS THEIR SIGNED RECORDS, WITH NO KEY IN ANY REQUES
     /* Ada files the next version of that person from her own device, and the payroll is one she believes again. */
     const refiled = signCompanyFiling(sealPerson({ ...dana.person, status: 'leaver' }, 3, 0, KEY), ADA.signingSecret);
     expect((await fromAda(`/api/people/${w.id}/status`, { method: 'POST', body: JSON.stringify({ person: toCompanyWire(refiled) }) })).status).toBe(201);
+    /* RED WHEN: a version filed and never entered in the company's records is believed - its newest may have been withheld. */
+    expect((await readPeopleHere(adasDevice())).notBelieved).toEqual([w.id]);
+    await ADA.entered.enter([companyRecordEntry(refiled)]);
     expect((await readPeopleHere(adasDevice())).notBelieved).toEqual([]);
     /* RED WHEN: the read is served to somebody who is not a member. */
     expect((await sendAs('eve')(`/api/accounts/${CO}/people`, { method: 'GET' })).status).toBe(404);
@@ -205,7 +209,10 @@ describe('ADMITTING: THE DECISION THAT MAKES SOMEBODY PAYABLE, MADE ON THE ADMIT
     /* RED WHEN: somebody who is not a member of the company reaches the person at all (the ownsPerson gate). */
     /* The person gate's own answer, not a route that is not there. */
     expect(await post('eve', wire('active'))).toMatchObject({ status: 404, body: { error: 'not found' } });
-    expect((await post('ada', wire('active'))).status).toBe(201);
+    const admitted = signCompanyFiling(sealPerson({ ...here.person, status: 'active' }, 2, 0, KEY), ADA.signingSecret);
+    expect((await post('ada', toCompanyWire(admitted))).status).toBe(201);
+    /* Entered in the company's records once kept, as a seat's device enters what it files. */
+    await ADA.entered.enter([companyRecordEntry(admitted)]);
     /* RED WHEN: a person is admitted again once nothing waits. */
     expect((await post('ada', toCompanyWire(signCompanyFiling(sealPerson({ ...here.person, status: 'active' }, 3, 0, KEY), ADA.signingSecret)))).body).toMatchObject({ refused: 'nothing-handed-over' });
     /*
@@ -249,15 +256,19 @@ describe('ADMITTING: THE DECISION THAT MAKES SOMEBODY PAYABLE, MADE ON THE ADMIT
     ] as const) {
       const version = (await readPeopleHere(adasDevice())).people.find((p) => p.person.id === w.id)?.version
         ?? (await readPeopleHere(adasDevice())).notPayable.find((x) => x.here.person.id === w.id)!.here.version;
-      /* A seat files a status version with the payee's details changed inside the seal; the service checks only the status and the version. */
-      const filed = await sendAs('ada')(`/api/people/${w.id}/status`, { method: 'POST', body: JSON.stringify({ person: toCompanyWire(signCompanyFiling(sealPerson(swapped as never, version + 1, 0, KEY), ADA.signingSecret)) }) });
+      /* A seat files a status version with the payee's details changed inside the seal, and enters it; the service checks only the status and the version. */
+      const changed = signCompanyFiling(sealPerson(swapped as never, version + 1, 0, KEY), ADA.signingSecret);
+      const filed = await sendAs('ada')(`/api/people/${w.id}/status`, { method: 'POST', body: JSON.stringify({ person: toCompanyWire(changed) }) });
       expect(filed.status, what).toBe(201);
+      await ADA.entered.enter([companyRecordEntry(changed)]);
       /* RED WHEN: a version whose address, payslip key or code is not the payee's own is read as payable. */
       const read = await readPeopleHere(adasDevice());
       expect(read.people.some((p) => p.person.id === w.id), what).toBe(false);
       expect(read.notPayable.find((x) => x.here.person.id === w.id)?.why, what).toMatch(why);
-      /* Put back as it was, signed, for the next case. */
-      await sendAs('ada')(`/api/people/${w.id}/status`, { method: 'POST', body: JSON.stringify({ person: toCompanyWire(signCompanyFiling(sealPerson(now.person, version + 2, 0, KEY), ADA.signingSecret)) }) });
+      /* Put back as it was, signed and entered, for the next case. */
+      const asItWas = signCompanyFiling(sealPerson(now.person, version + 2, 0, KEY), ADA.signingSecret);
+      await sendAs('ada')(`/api/people/${w.id}/status`, { method: 'POST', body: JSON.stringify({ person: toCompanyWire(asItWas) }) });
+      await ADA.entered.enter([companyRecordEntry(asItWas)]);
     }
     await setStatusHere(adasDevice(), (await hereOf(w.id)), 'leaver');
   });
@@ -276,7 +287,7 @@ describe('A RECORD WITH NO EMAIL IS RAISED AND REDEEMED BY ONE WALLET', () => {
      * this device does not believe as a seat - here, one whose records key her
      * wallet has not attested - rather than by the one rule for a seat.
      */
-    await expect(admitHere(adasDevice({ directory: () => acmeDirectory([BO]) }), await hereOf(mine.id), mine.fingerprint)).rejects.toThrow(/one wallet raised it and redeemed it/);
+    await expect(admitHere(adasDevice({ directory: acmeDirectoryAttestedBy([BO]) }), await hereOf(mine.id), mine.fingerprint)).rejects.toThrow(/one wallet raised it and redeemed it/);
     const admitted = await admitHere(adasDevice(), await hereOf(mine.id), mine.fingerprint);
     /* RED WHEN: a record raised and redeemed by one wallet is not marked as raised by the person it pays. */
     expect(admitted.selfRaised).toBe(true);

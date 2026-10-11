@@ -1,4 +1,5 @@
 import { signingPublicKeyOf, type Hex } from '../../../../src/core/crypto.js';
+import { recordsEnteredOver } from 'vaults-web-shared/record-entered-here.js';
 import type { Account } from '../../../../src/core/types.js';
 import {
   api, companyKeysForVaults, currentUser, directoryEntryOwed, invitedByForTheWallet, oweDirectoryEntry, recordsKeyFromTheWallet,
@@ -83,6 +84,7 @@ export async function giveTheVaultKeys(
     await foldOffersHere({
       api, accountId: companyId, viewingKey, signingSecret: signer.signingSecret, label: released.company, account: released.account,
       reads: rosterReadsFor(companyId, released.company, released.account),
+      entered: recordsEnteredOver(api, companyId, signer.signingSecret),
     });
   } catch {
     /* Not believed yet, or the roster moved meanwhile: the offer stays open for the next press or another seat. */

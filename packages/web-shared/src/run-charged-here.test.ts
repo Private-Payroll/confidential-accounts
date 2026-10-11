@@ -21,6 +21,8 @@ import type { PayrollRun } from '../../../src/core/types.js';
 import { assetIdHex } from '../../../src/core/assets.js';
 import { TEST_TOKEN, OTHER_TEST_TOKEN } from '../../../src/testing/assets.js';
 import type { PrivatePaymentOrderOnTheWire } from '../../../src/midnight/private-payment-wire.js';
+import type { Hex } from '../../../src/core/crypto.js';
+import { vouchedFreshOf } from '../../../src/midnight/record-tree.js';
 
 const T = assetIdHex(TEST_TOKEN).toLowerCase();
 const VAULT = 'a1'.repeat(32);
@@ -46,11 +48,14 @@ const OPENING = {
 
 let standing: { state: 'none' | 'not-for-this-currency' | 'set' } = { state: 'set' };
 let runs: PayrollRun[] = [];
+/* The identity on chain of every proposal the device believes, by the company's name for it. */
+let onChain = new Map<string, string>();
 vi.mock('./spending-policy-here.js', () => ({
   spendingPolicyHere: async () => (standing.state === 'set' ? { state: 'set', policy: POLICY, opening: OPENING, keys: {}, commitment: '', version: 1 } : standing),
 }));
 vi.mock('./run-rebuilt-here.js', () => ({
   believedRunsHere: async () => runs,
+  believedProposalIdsOnChainHere: async () => onChain,
   signedStateHere: async () => ({ seeds: [], payKey: '', assetBlinding: 'b1'.repeat(32) }),
 }));
 vi.mock('./vault-operation.js', async (real) => ({
@@ -66,20 +71,27 @@ const leaf = (n: number) => n.toString(16).padStart(2, '0').repeat(32);
 const at = (day: bigint) => day * DAY;
 /** A run of one leg in `asset` from `vault`, over `leaves` at `amounts`, in `[opens, closes)` days, with retries. */
 const aRun = (id: string, o: {
-  vault?: string; asset?: string; amounts: number[]; opens: bigint; closes: bigint;
-  retries?: Array<{ indices: number[]; vault?: string; opens: bigint; closes: bigint; root: string }>;
+  vault?: string; asset?: string; amounts: number[]; opens: bigint; closes: bigint; proposal?: string;
+  retries?: Array<{ indices: number[]; vault?: string; opens: bigint; closes: bigint; root: string; proposal?: string }>;
 }): PayrollRun => ({
-  id, accountId: 'acc', payout: {
+  id, accountId: 'acc', proposalIds: o.proposal === undefined ? {} : { [`${o.asset ?? TEST_TOKEN}:shielded`]: o.proposal }, payout: {
     [`${o.asset ?? TEST_TOKEN}:shielded`]: {
       root: `${id}-root`, payees: BigInt(o.amounts.length), opensAt: at(o.opens), closesAt: at(o.closes), vault: o.vault ?? VAULT,
       leaves: o.amounts.map((_, i) => leaf(i + 1)), facts: o.amounts.map((a) => ({ amount: BigInt(a) })),
       retries: (o.retries ?? []).map((r) => ({
         originalIndices: r.indices, root: r.root, payees: BigInt(r.indices.length), opensAt: at(r.opens), closesAt: at(r.closes),
         vault: r.vault ?? VAULT, proposedBy: 's', at: '',
+        ...(r.proposal === undefined ? {} : { proposalId: r.proposal }),
       })),
     },
   },
 } as unknown as PayrollRun);
+
+/** The run every charge below charges, as the company's records hold it: its leg raised as the proposal charged. */
+const V1 = { head: '1a'.repeat(32) as Hex, r: 'f3'.repeat(32) as Hex };
+/** The fresh half of its salt, made from what its proposal's filing seals: the head its raiser checked and a random value. */
+const FRESH = vouchedFreshOf(V1.head, V1.r);
+const theRun = () => aRun('r0', { amounts: [30, 40], opens: 103n, closes: 104n, proposal: 'prp_theRunAAAAAA' });
 
 const anOrder = (opens: bigint, closes: bigint, required?: string): PrivatePaymentOrderOnTheWire => ({
   asset: T, form: 'shielded', symbol: 'T', vault: VAULT as never, proposal: '0f'.repeat(32) as never, salt: '5a'.repeat(32) as never,
@@ -122,7 +134,7 @@ const doors = (withCharge = true, withKept = true) => ({
 });
 
 beforeEach(() => {
-  standing = { state: 'set' }; runs = []; asked = []; sent.length = 0; answer = { tx: 'TX', spent: '700' };
+  standing = { state: 'set' }; runs = [theRun()]; onChain = new Map(); asked = []; sent.length = 0; answer = { tx: 'TX', spent: '700' };
   lag = 0; chainHolds = new Map(); relayed = null; readsOfTheCharge = []; relayFails = null; now = 1_000_000;
   store = inFlightInMemory(); kept = sealedOnThisDevice<ChargeInFlight>(store, me, 'charge');
 });
@@ -160,17 +172,19 @@ describe('THE RUNS A PERIOD\'S TOTAL IS WORKED OUT FROM', () => {
 
 describe('CHARGING AN APPROVED RUN BEFORE IT IS PAID', () => {
   it('BUILDS THE CHARGE OF EXACTLY THE RUN THE DEVICE OPENED, AGAINST THE RUNS OF ITS PERIOD AND ONE BLOCK\'S STATE, AND RELAYS IT AS ITS PROPOSAL', async () => {
-    runs = [aRun('r1', { amounts: [100], opens: 101n, closes: 102n }), aRun('r9', { amounts: [100], opens: 111n, closes: 112n })];
-    const r = await chargeTheRunHere(doors(), { order: anOrder(103n, 104n, '2'), proposalId: 'prp_theRunAAAAAA' });
+    runs = [aRun('r1', { amounts: [100], opens: 101n, closes: 102n }), aRun('r9', { amounts: [100], opens: 111n, closes: 112n }), theRun()];
+    const r = await chargeTheRunHere(doors(), { order: anOrder(103n, 104n, '2'), proposalId: 'prp_theRunAAAAAA', vouched: V1 });
     /* RED WHEN: what is charged is not the leg as the paying device opened it - its identity, salt, window, the approvals its order carries, or tree. */
     expect(asked).toEqual([{
       account: 'cc'.repeat(32),
       run: {
         proposal: '0f'.repeat(32), vault: VAULT, salt: '5a'.repeat(32), required: '2', opensAt: String(at(103n)), closesAt: String(at(104n)),
         asset: T, assetBlinding: 'b1'.repeat(32), policy: OPENING, root: '9a'.repeat(32), leaves: [leaf(7), leaf(8)], amounts: ['30', '40'],
+        /* RED WHEN: the fresh half of the run's salt is not the one its proposal's filing seals. */
+        fresh: FRESH,
       },
       /* RED WHEN: the total is summed over runs outside the run's own period. */
-      runs: [{ root: 'r1-root', leaves: [leaf(1)], amounts: ['100'] }],
+      runs: [{ root: 'r1-root', leaves: [leaf(1)], amounts: ['100'] }, { root: 'r0-root', leaves: [leaf(1), leaf(2)], amounts: ['30', '40'] }],
       /* RED WHEN: the charge is built on any state but the one block the device read at the wallet's indexer. */
       chain: { accountState: 'STATE', parameters: 'PARAMS' },
     }]);
@@ -178,7 +192,8 @@ describe('CHARGING AN APPROVED RUN BEFORE IT IS PAID', () => {
     expect(sent).toEqual([['prp_theRunAAAAAA', { tx: 'TX' }]]);
     expect(r).toEqual({ state: 'charged', spentBefore: 700n });
     /* RED WHEN: the run is answered charged without the chain the wallet reads being asked about its own proposal. */
-    expect(readsOfTheCharge).toEqual(['0f'.repeat(32)]);
+    /* Asked once before the charge is built, whether the chain already holds it charged, and once after it is relayed. */
+    expect(readsOfTheCharge).toEqual(['0f'.repeat(32), '0f'.repeat(32)]);
     /* RED WHEN: a charge the chain shows is still kept as on its way, so the next charge from the vault waits on it. */
     expect(store.kept.size).toBe(0);
   });
@@ -186,43 +201,118 @@ describe('CHARGING AN APPROVED RUN BEFORE IT IS PAID', () => {
   it('A VAULT WITH NO POLICY IS PAID AS IT ALWAYS WAS: NOTHING IS BUILT OR SENT', async () => {
     standing = { state: 'none' };
     /* RED WHEN: a run from a vault with no policy is charged - the chain refuses it, after a fee. */
-    expect(await chargeTheRunHere(doors(), { order: anOrder(103n, 104n), proposalId: 'p' })).toEqual({ state: 'no-policy' });
+    expect(await chargeTheRunHere(doors(), { order: anOrder(103n, 104n), proposalId: 'prp_theRunAAAAAA', vouched: V1 })).toEqual({ state: 'no-policy' });
     expect([asked, sent]).toEqual([[], []]);
   });
 
   it('A RUN THE CHAIN ALREADY HOLDS AS CHARGED IS NOT CHARGED AGAIN', async () => {
     answer = { tx: null, spent: null };
     /* RED WHEN: a run already charged is relayed again. */
-    expect(await chargeTheRunHere(doors(), { order: anOrder(103n, 104n), proposalId: 'p' })).toEqual({ state: 'already-charged' });
+    expect(await chargeTheRunHere(doors(), { order: anOrder(103n, 104n), proposalId: 'prp_theRunAAAAAA', vouched: V1 })).toEqual({ state: 'already-charged' });
     expect(sent).toEqual([]);
   });
 
   it('REFUSES, SENDING NOTHING: A POLICY FOR ANOTHER CURRENCY ONLY, A PAGE THAT CANNOT RELAY A CHARGE, OR A CHARGE THE WORKER REFUSED', async () => {
     standing = { state: 'not-for-this-currency' };
     /* RED WHEN: a run the chain will never charge is let through to be paid. */
-    await expect(chargeTheRunHere(doors(), { order: anOrder(103n, 104n), proposalId: 'p' })).rejects.toThrow(/none for the currency it pays in/u);
+    await expect(chargeTheRunHere(doors(), { order: anOrder(103n, 104n), proposalId: 'prp_theRunAAAAAA', vouched: V1 })).rejects.toThrow(/none for the currency it pays in/u);
     standing = { state: 'set' };
     /* RED WHEN: a policy vault's run goes on to be paid uncharged because the page has no route for the charge. */
-    await expect(chargeTheRunHere(doors(false), { order: anOrder(103n, 104n), proposalId: 'p' })).rejects.toThrow(RunNotChargedHere);
+    await expect(chargeTheRunHere(doors(false), { order: anOrder(103n, 104n), proposalId: 'prp_theRunAAAAAA', vouched: V1 })).rejects.toThrow(RunNotChargedHere);
     /* RED WHEN: a charge is built on a page with nowhere to keep it while it lands, so paying again could charge twice. */
-    await expect(chargeTheRunHere(doors(true, false), { order: anOrder(103n, 104n), proposalId: 'p' })).rejects.toThrow(RunNotChargedHere);
+    await expect(chargeTheRunHere(doors(true, false), { order: anOrder(103n, 104n), proposalId: 'prp_theRunAAAAAA', vouched: V1 })).rejects.toThrow(RunNotChargedHere);
     expect(asked).toEqual([]);
     answer = new Error('the company\'s records do not account for everything the chain has charged. Nothing was proved or sent.');
     /* RED WHEN: a refused charge is relayed anyway, or its words are lost. */
-    await expect(chargeTheRunHere(doors(), { order: anOrder(103n, 104n), proposalId: 'p' }))
+    await expect(chargeTheRunHere(doors(), { order: anOrder(103n, 104n), proposalId: 'prp_theRunAAAAAA', vouched: V1 }))
       .rejects.toThrow(/^the company's records do not account for everything the chain has charged\. Nothing was sent\.$/u);
     expect(sent).toEqual([]);
   });
 });
 
+describe('A RUN IS CHARGED AS WHAT ITS PROPOSAL WAS RAISED AS, READ FROM THE COMPANY\'S RUNS THIS DEVICE BELIEVES', () => {
+  const V2 = { head: '1a'.repeat(32) as Hex, r: 'f4'.repeat(32) as Hex };
+  const F2 = vouchedFreshOf(V2.head, V2.r);
+  const leg = () => aRun('l1', { amounts: [10, 20, 30], opens: 101n, closes: 102n, proposal: 'prp_theLegAAAAAA', retries: [
+    { indices: [1], opens: 103n, closes: 104n, root: 'the-retry', proposal: 'prp_theRetryAAAA' },
+    { indices: [2, 0], opens: 105n, closes: 106n, root: 'an-earlier-retry', proposal: 'prp_earlierAAAAA' },
+    { indices: [0], vault: OTHER_VAULT, opens: 103n, closes: 104n, root: 'another-vault' },
+    { indices: [0], opens: 111n, closes: 112n, root: 'a-later-period' },
+  ] });
+
+  it('A RETRY NAMES ITS FRESH SALT, ITS LEG, AND THE LEG\'S OTHER RETRIES IN ITS VAULT AND PERIOD, EACH OVER ITS OWN PEOPLE', async () => {
+    runs = [leg()];
+    await chargeTheRunHere(doors(), { order: anOrder(103n, 104n), proposalId: 'prp_theRetryAAAA', vouched: V2 });
+    const charged = (asked[0] as { run: { fresh: string; retry: unknown } }).run;
+    /* RED WHEN: a retry is charged with another fresh half than the one its proposal's filing seals. */
+    expect(charged.fresh).toBe(F2);
+    /* RED WHEN: a retry is charged without its leg, or with the leg's retries from another vault or period, or itself among them. */
+    expect(charged.retry).toEqual({
+      leg: { root: 'l1-root', leaves: [leaf(1), leaf(2), leaf(3)], amounts: ['10', '20', '30'] },
+      others: [{ root: 'an-earlier-retry', leaves: [leaf(3), leaf(1)], amounts: ['30', '10'], proposal: null }],
+    });
+  });
+
+  it('EACH OF THE LEG\'S OTHER RETRIES NAMES ITS PROPOSAL ON CHAIN WHEN THE DEVICE BELIEVES THE PROPOSAL, SO ONE NEVER CLEARED CAN BE LEFT OUT', async () => {
+    runs = [leg()];
+    onChain = new Map([['prp_earlierAAAAA', 'e0'.repeat(32)]]);
+    await chargeTheRunHere(doors(), { order: anOrder(103n, 104n), proposalId: 'prp_theRetryAAAA', vouched: V2 });
+    const charged = (asked[0] as { run: { retry: { others: Array<{ root: string; proposal: string | null }> } } }).run;
+    /* RED WHEN: an earlier retry the device believes is charged naming no proposal, so a retry the chain never cleared counts as taken. */
+    expect(charged.retry.others.map((o) => [o.root, o.proposal])).toEqual([['an-earlier-retry', 'e0'.repeat(32)]]);
+  });
+
+  it('A RETRY WHOSE PROPOSAL THE DEVICE DOES NOT BELIEVE IS CHARGED NAMING NO PROPOSAL, SO IT CANNOT PASS FOR ONE THE CHAIN HOLDS OPEN', async () => {
+    runs = [leg()];
+    await chargeTheRunHere(doors(), { order: anOrder(103n, 104n), proposalId: 'prp_theRetryAAAA', vouched: V2 });
+    /* RED WHEN: a retry whose proposal the device does not believe is named by a proposal anyway - the service's word for which one it was. */
+    expect((asked[0] as { run: { retry: { others: Array<{ proposal: string | null }> } } }).run.retry.others.map((o) => o.proposal)).toEqual([null]);
+  });
+
+  it('A LEG NAMES ITS OWN FRESH SALT AND NO LEG', async () => {
+    runs = [leg()];
+    await chargeTheRunHere(doors(), { order: anOrder(101n, 102n), proposalId: 'prp_theLegAAAAAA', vouched: V1 });
+    const charged = (asked[0] as { run: { fresh: string; retry?: unknown } }).run;
+    /* RED WHEN: a leg is charged as a retry, or with another fresh half than its proposal's. */
+    expect([charged.fresh, charged.retry]).toEqual([FRESH, undefined]);
+  });
+
+  it('A RUN NO BELIEVED RUN RAISED, OR WHOSE PROPOSAL DOES NOT SAY HOW ITS SALT WAS MADE, IS NOT CHARGED, AND NOTHING IS BUILT OR SENT', async () => {
+    runs = [leg()];
+    /* RED WHEN: a proposal no run this device believes raised is charged on what the service says it is. */
+    await expect(chargeTheRunHere(doors(), { order: anOrder(103n, 104n), proposalId: 'prp_unknownAAAAA', vouched: V1 })).rejects.toThrow(/no payroll run of this company that this device believes raised this proposal/u);
+    /* RED WHEN: a run whose proposal seals nothing its salt is made from, or a value not thirty-two bytes, is sent to be charged, which the chain refuses after a fee. */
+    await expect(chargeTheRunHere(doors(), { order: anOrder(101n, 102n), proposalId: 'prp_theLegAAAAAA' })).rejects.toThrow(/does not say how its salt was made/u);
+    await expect(chargeTheRunHere(doors(), { order: anOrder(101n, 102n), proposalId: 'prp_theLegAAAAAA', vouched: { head: V1.head, r: 'f3' as Hex } })).rejects.toThrow(/does not say how its salt was made/u);
+    expect([asked, sent]).toEqual([[], []]);
+  });
+
+  it('A RUN THE CHAIN ALREADY HOLDS AS CHARGED IS ANSWERED SO FIRST: NEITHER ITS FRESH HALF NOR ITS RUN IS NEEDED TO PAY IT', async () => {
+    runs = [];
+    chainHolds.set('0f'.repeat(32), 'charged');
+    /* RED WHEN: a run already charged is refused for want of what only charging it needs - its people are then never paid. */
+    expect(await chargeTheRunHere(doors(), { order: anOrder(103n, 104n), proposalId: 'prp_theRunAAAAAA' })).toEqual({ state: 'already-charged' });
+    expect([asked, sent]).toEqual([[], []]);
+  });
+
+  it('A RETRY WHOSE LEG IS IN ANOTHER CURRENCY IS NOT CHARGED AGAINST IT', async () => {
+    runs = [aRun('l2', { asset: OTHER_TEST_TOKEN, amounts: [10], opens: 101n, closes: 102n, retries: [
+      { indices: [0], opens: 103n, closes: 104n, root: 'cross', proposal: 'prp_crossAAAAAAA' },
+    ] })];
+    /* RED WHEN: a retry is charged against a leg paying in another currency. */
+    await expect(chargeTheRunHere(doors(), { order: anOrder(103n, 104n), proposalId: 'prp_crossAAAAAAA', vouched: V2 })).rejects.toThrow(/in another currency than the retry/u);
+    expect(asked).toEqual([]);
+  });
+});
+
 describe('A CHARGE IS SEEN TO LAND BEFORE THE RUN IS PAID, AND PAYING AGAIN ON A STALE READ NEVER CHARGES TWICE', () => {
-  const run = { order: anOrder(103n, 104n, '2'), proposalId: 'prp_theRunAAAAAA' };
+  const run = { order: anOrder(103n, 104n, '2'), proposalId: 'prp_theRunAAAAAA', vouched: V1 };
 
   it('WAITS AFTER THE RELAY UNTIL THE CHAIN THE WALLET READS HOLDS THE RUN AS CHARGED, AND ONLY THEN ANSWERS CHARGED', async () => {
     lag = 3;
     /* RED WHEN: the run is answered charged - and its first payment built - while the wallet's indexer does not show the charge. */
     expect(await chargeTheRunHere(doors(), run)).toEqual({ state: 'charged', spentBefore: 700n });
-    expect(readsOfTheCharge).toHaveLength(4);
+    expect(readsOfTheCharge).toHaveLength(5);
     expect(store.kept.size).toBe(0);
   });
 
@@ -261,7 +351,8 @@ describe('A CHARGE IS SEEN TO LAND BEFORE THE RUN IS PAID, AND PAYING AGAIN ON A
     now += DEPOSIT_TIME_TO_LIVE_MS + 1;
     /* RED WHEN: a charge that can no longer land keeps every run from the vault from being charged and paid for good. */
     expect(await chargeTheRunHere(doors(), run)).toEqual({ state: 'charged', spentBefore: 700n });
-    expect(readsOfTheCharge).toEqual(['0f'.repeat(32)]);
+    /* Asked once before the charge is built, whether the chain already holds it charged, and once after it is relayed. */
+    expect(readsOfTheCharge).toEqual(['0f'.repeat(32), '0f'.repeat(32)]);
   });
 
   it('A CHARGE ANOTHER TAB OF THIS BROWSER IS SENDING FROM THE VAULT STOPS THIS ONE BEFORE IT IS RELAYED', async () => {

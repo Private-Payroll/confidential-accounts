@@ -32,12 +32,14 @@ import { openRecord } from '../../../src/core/sealed-records.js';
 import type { StateChange } from '../../../src/core/ledger.js';
 import type { PayrollRun, RunLeg, SealedProposal } from '../../../src/core/types.js';
 import { paymentChecked, paymentsOnTheWire } from '../../../src/core/device-raise.js';
-import { isLiveRound, payrollRoundOf } from '../../../src/core/retry-cover.js';
+import { isLiveRound } from '../../../src/core/retry-cover.js';
 import {
   assetOfLeg, legChoiceOf, legEmployees, legFieldsOf, legName, legOf, legOfRound, legsOfRun, raisedLegOf,
 } from '../../../src/core/run-legs.js';
 import type { PaymentFacts } from '../../../src/midnight/payout-tree.js';
-import { openedRunHere, payableFactsHere, signedStateHere, type CompanyRecordsHere } from './run-rebuilt-here.js';
+import {
+  openedRunHere, payableFactsHere, payrollRoundsHere, proposalsListedHere, signedStateHere, type CompanyRecordsHere, type RoundIdentity,
+} from './run-rebuilt-here.js';
 import type { GovernedCallOrder, OpenedRound } from './governed-call-builder.js';
 import type { LegPaymentsOnTheWire, RaiseOrderOnTheWire, RetryOrderOnTheWire } from './governed-call-on-device.js';
 
@@ -80,7 +82,7 @@ const proposalsOf = async (records: CompanyRecordsHere): Promise<readonly Sealed
     throw new NotMadeHere('This page cannot read the company\'s proposals, so it cannot make this here. Reload the page to '
       + 'get the current version.');
   }
-  return records.proposals();
+  return proposalsListedHere({ ...records, proposals: records.proposals });
 };
 
 /** One of the company's proposals, opened here with the viewing key. */
@@ -123,25 +125,25 @@ export async function legsHere(records: CompanyRecordsHere, accountId: string, r
 
 /**
  * **WHETHER A LEG IS RAISED FROM WHAT IT WAS RAISED OVER.** A leg with a
- * proposal written down is, unless that proposal was withdrawn; and so is a leg
- * raised once and since withdrawn from the run whose earlier round may still be
- * on chain, so raising it again raises the same round.
+ * proposal written down is, unless the chain shows that proposal withdrawn, or
+ * never held it and its window has closed; and so is a leg raised once and since
+ * withdrawn from the run whose earlier round may still be on chain, so raising
+ * it again raises the same round. Where each round stands is the chain's
+ * (`proposalsListedHere`, `payrollRoundsHere`), judged by this device's clock.
  */
 const raisedFromItsRecord = (
   run: PayrollRun, leg: RunLeg, proposals: readonly SealedProposal[], accountId: string, viewingKey: Hex,
+  identity: RoundIdentity,
 ): boolean => {
   if (run.payout?.[leg] === undefined) return false;
   const pointed = run.proposalIds[leg];
+  const at = { identity, nowInSeconds: BigInt(Math.floor(Date.now() / 1000)) };
   if (pointed !== undefined) {
-    const rec = proposals.find((p) => p.id === pointed);
-    return rec !== undefined && rec.status !== 'cancelled';
+    const round = payrollRoundsHere(proposals.filter((p) => p.id === pointed), accountId, viewingKey, at)[0];
+    return round !== undefined && round.status !== 'cancelled';
   }
-  return proposals.some((p) => {
-    if (p.accountId !== accountId) return false;
-    const opened = openedProposal(p, accountId, viewingKey);
-    const round = payrollRoundOf({ id: p.id, kind: opened.kind, status: p.status, chainId: p.chainId, sealedPayload: opened.sealedPayload }, viewingKey);
-    return round !== null && round.runId === run.id && legOfRound(round) === leg && round.retry === undefined && isLiveRound(round);
-  });
+  return payrollRoundsHere(proposals, accountId, viewingKey, at)
+    .some((round) => round.runId === run.id && legOfRound(round) === leg && round.retry === undefined && isLiveRound(round));
 };
 
 /**
@@ -156,7 +158,7 @@ export async function legPaymentsHere(
   const run = await openedRunHere(records, accountId, runId, viewingKey);
   const leg = legOf(run, legChoiceOf(which ?? {}), registryOf(records));
   let facts: readonly PaymentFacts[];
-  if (raisedFromItsRecord(run, leg, await proposalsOf(records), accountId, viewingKey)) {
+  if (raisedFromItsRecord(run, leg, await proposalsOf(records), accountId, viewingKey, records.roundIdentity)) {
     facts = run.payout![leg]!.facts;
   } else {
     facts = await payableFactsHere(records, legEmployees(run, leg), 'Put their record right before this run is raised.',

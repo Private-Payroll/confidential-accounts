@@ -26,8 +26,10 @@ import { seatDirectoryRoutes, directoryOf, type DirectoryChainRead } from './sea
 import { companyRecordsRoutes, fileCompanyRecord, MemoryCompanyRecordStore, movePeopleToTheirRecords, withTheRosterIn } from './company-records-route.js';
 import type { ChainHolders, DirectoryEntry, DirectoryFiling } from '../midnight/seat-directory.js';
 import { fromCompanyWire, signCompanyFiling, toCompanyWire, type SealedCompanyRecord } from '../midnight/sealed-record-wire.js';
-import { HttpCompanyRecordStore, FilingNotBelieved, type WireSend } from 'vaults-web-shared/http-sealed-pool-store.js';
+import { HttpCompanyRecordStore, FilingNotBelieved, RecordWithheld, type WireSend } from 'vaults-web-shared/http-sealed-pool-store.js';
 import { directoryJudge } from 'vaults-web-shared/vault-page-doors.js';
+import { heldEntering } from '../testing/record-tree-double.js';
+import { companyRecordEntry } from '../midnight/record-manifest.js';
 
 const CO = 'acc_people';
 const OTHER = 'acc_people_other';
@@ -179,15 +181,31 @@ describe('A PERSON IS FILED FROM A SEAT\'S DEVICE, AND THE SERVICE KEEPS THAT ON
       committeeKey: s.committeeKey,
       statement: signRecordsKey(identityFromSecret(new Uint8Array(32).fill(s.n)), LABEL, ADDRESS, new Uint8Array(32).fill(s.n + 100), s.seat),
     }));
-    const device = new HttpCompanyRecordStore(CO, sendAs('ada'), ADA.signing.secret, directoryJudge({
+    const judge = directoryJudge({
       accountId: CO, label: LABEL, holders: holders as never, attested, filings: async () => store.directoryFilingsOf(CO),
-    }));
+      /* Every version Ada's seat filed, entered by her seat; nothing anchored yet. */
+      anchored: async () => heldEntering(CO, (await records.versions(CO, 'person', 'emp_dana'))
+        .filter((r) => r.filedBy?.publicKey === ADA.signing.publicKey).map((r) => ({ entry: companyRecordEntry(r), signingSecret: ADA.signing.secret }))),
+    });
+    const device = new HttpCompanyRecordStore(CO, sendAs('ada'), ADA.signing.secret, judge);
     expect((await device.get('person', 'emp_dana'))!.version).toBe(2);
     /* The service writes a version with no seat's signature. */
     const { filedBy: _signature, ...unsigned } = (await records.get(CO, 'person', 'emp_dana'))!;
     await records.put({ ...unsigned, version: 3, facts: { ...unsigned.facts!, status: 'leaver' } });
     /* RED WHEN: a person version no seat signed is believed because the service served it. */
     await expect(device.get('person', 'emp_dana')).rejects.toBeInstanceOf(FilingNotBelieved);
+    /* The service answers that it holds no version of Dana, and no list of her versions, while her seat's entries name two. */
+    const withholding: WireSend = async (path, init) => (path.includes('emp_dana')
+      ? { status: 200, body: path.endsWith('/versions') ? { versions: [] } : { kind: 'person', id: 'emp_dana', filed: null } }
+      : sendAs('ada')(path, init));
+    const withheld = new HttpCompanyRecordStore(CO, withholding, ADA.signing.secret, judge);
+    /* RED WHEN: a person the company's records name, answered as never filed, is read as absent. */
+    await expect(withheld.get('person', 'emp_dana')).rejects.toBeInstanceOf(RecordWithheld);
+    await expect(withheld.versions('person', 'emp_dana')).rejects.toThrow(/name version 2 of it and the service did not give it/u);
+    /* RED WHEN: a person nothing names is refused as withheld - a record never filed could never be read. */
+    const nobody: WireSend = async (path) => ({ status: 200, body: path.endsWith('/versions') ? { versions: [] } : { kind: 'person', id: 'emp_nobody', filed: null } });
+    await expect(new HttpCompanyRecordStore(CO, nobody, ADA.signing.secret, judge).get('person', 'emp_nobody')).resolves.toBeNull();
+    await expect(new HttpCompanyRecordStore(CO, nobody, ADA.signing.secret, judge).versions('person', 'emp_nobody')).resolves.toEqual([]);
   });
 });
 

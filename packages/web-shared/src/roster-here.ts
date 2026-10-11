@@ -24,8 +24,7 @@
  */
 import type { AccountAddress, CompanyLabel } from 'midnight-identity/profile/company-label';
 import type { DirectoryEntryStatement, RecordsKeyStatement } from 'midnight-identity/profile/records-key';
-import { sha256 } from '@noble/hashes/sha2.js';
-import { canonical, fromHex, signingPublicKeyOf, toHex, utf8, wrapKey, type Hex } from '../../../src/core/crypto.js';
+import { fromHex, signingPublicKeyOf, wrapKey, type Hex } from '../../../src/core/crypto.js';
 import { openFromInbox } from '../../../src/core/sealed-records.js';
 import { openAccount } from '../../../src/core/account.js';
 import {
@@ -38,10 +37,14 @@ import {
 } from '../../../src/core/vault-keys.js';
 import type { Account, PendingSignerPayload, SealedAccount } from '../../../src/core/types.js';
 import { signCompanyFiling, toCompanyWire, verifiedCompanyFiler, type SealedCompanyRecord } from '../../../src/midnight/sealed-record-wire.js';
+import { companyRecordEntry } from '../../../src/midnight/record-manifest.js';
+import type { RecordsEntered } from './record-entered-here.js';
 import { companyRecordKey, seatsWithAnotherRecordsKey } from '../../../src/midnight/seat-directory.js';
 import { recordsKeypairFrom } from '../../../src/midnight/company-nonce-secret.js';
 import { refuseASeatWhoseFingerprintIsNotTheJoiners } from './invitation-on-device.js';
-import { attestedIn, directoryHere, foundingSeatHere, judgeIn, type DirectoryHereDeps } from './vault-page-doors.js';
+import {
+  attestedIn, directoryHere, foundingRecordRefusalHere, judgeIn, newerNamedRefusal, passedOverSaid, type DirectoryHereDeps,
+} from './vault-page-doors.js';
 
 type Api = (path: string, init?: RequestInit) => Promise<any>;
 
@@ -56,35 +59,17 @@ export interface RosterDoors {
   readonly account: AccountAddress;
   /** What this device reads, afresh for each read, to believe the roster and each entry in it. */
   readonly reads: RosterReads;
+  /** The one filing call, bound to this company and this seat: a roster filed here is entered in the company's records. */
+  readonly entered: RecordsEntered;
 }
 
 /**
- * The company's directory filings and the chain as the person's own wallet
- * reads it, what a roster is believed against; and what this person's devices
- * believed of the company's roster before, which a later read may not go back
- * on.
+ * The company's directory filings, the chain as the person's own wallet reads
+ * it, and the company's records as the head on chain holds them: what a roster
+ * is believed against. Nothing a device believed before is kept or read: an
+ * older version, or other bytes under a version, is refused by the anchor.
  */
-export type RosterReads = Pick<DirectoryHereDeps, 'filings' | 'holders'> & { readonly believed: RosterBelievedBefore };
-
-/**
- * **WHAT THIS PERSON'S DEVICES BELIEVED OF A COMPANY'S ROSTER BEFORE**: the
- * newest version, the digest of that version as filed, and for each seat the
- * wallet its entry was believed on. Kept sealed with the person's own keys,
- * in the bundle the service stores and cannot open: a service that serves an
- * older bundle takes this device back to what it believed then.
- */
-export interface RosterSeenBefore {
-  readonly version: number;
-  readonly digest: string;
-  /** Seat (64 hex) to the wallet its entry was believed on (`tag:value`). */
-  readonly wallets: Readonly<Record<string, string>>;
-}
-
-/** The doors over what was believed before: read it, and keep what a read now believes. */
-export interface RosterBelievedBefore {
-  readonly read: () => RosterSeenBefore | null;
-  readonly keep: (now: RosterSeenBefore) => Promise<void>;
-}
+export type RosterReads = Pick<DirectoryHereDeps, 'filings' | 'holders' | 'anchored'>;
 
 /**
  * The company as this device believes it, with every seat the chain holds that
@@ -117,9 +102,6 @@ interface RosterRead {
   readonly witnesses: RosterWitnesses;
 }
 
-/** The digest of a roster version as filed: what a version this device believed is known by. */
-const digestOf = (roster: SealedCompanyRecord): string => toHex(sha256(utf8(canonical(roster))));
-
 /**
  * The seats people waiting for one were invited to, read from the company's
  * inbox and held to the proof each invitation gave: a seat the chain holds
@@ -141,51 +123,23 @@ const seatsWaitedFor = (sealed: SealedAccount, viewingKey: Hex): Set<string> => 
 };
 
 /**
- * Why this device does not believe a roster version against what this
- * person's devices believed before, or null when it may: no older version, no
- * other record under the version believed, and no seat the chain still holds
- * whose signer was believed before and is not now, or is now on another
- * wallet. A roster a believed seat filed without another signer's entry, or
- * with the entry their wallet signed stripped, is refused here by every device
- * that believed it before.
- */
-const goesBackOn = (
-  before: RosterSeenBefore | null, version: number, digest: string,
-  wallets: Readonly<Record<string, string>>, seatsOnTheChain: readonly string[],
-): string | null => {
-  if (before === null) return null;
-  if (version < before.version) {
-    return `it is version ${version} and this device already believed version ${before.version}, so it is an older roster than one already read`;
-  }
-  if (version === before.version && digest !== before.digest) {
-    return `it is not the version ${version} this device already believed`;
-  }
-  const held = new Set(seatsOnTheChain.map((x) => x.toLowerCase()));
-  const lost = Object.entries(before.wallets).filter(([seat, wallet]) => held.has(seat) && wallets[seat] !== wallet);
-  return lost.length === 0 ? null
-    : `it no longer shows, as this device believed before, the signer${lost.length === 1 ? '' : 's'} at ${lost.length} `
-      + 'seat(s) the chain still holds';
-};
-
-/**
  * **THE COMPANY'S ROSTER AS THIS DEVICE BELIEVES IT, FROM ITS FILED RECORD
  * ONLY.** Refused, with `NO_ROSTER_RECORD`, for a company whose signers were
  * never filed as a roster record: the unsigned list on its account record is
  * never read. Refused when the version is not filed by a seat this device
- * believes (check S), or, for the first version, by the founding seat
- * (`firstRosterRefusal`). Then each entry is held to its own signer's witnesses
+ * believes (check S), or, for the first version, as the company was founded
+ * with it (`firstRosterRefusal`). Then each entry is held to its own signer's witnesses
  * (`believedSigners`): the directory this device believes, read afresh with
  * the chain as the person's own wallet reads it, and this device's own key.
  * The records-key statements the directory is read with are taken only from
  * the entries believed.
  *
  * Refused whole, so nothing is built from it, when it has no entry for a seat
- * the chain holds that nobody invited to it is waiting for, or when it goes
- * back on what this person's devices believed before: an older version,
- * another record under the version believed, or a seat the chain still holds
- * whose signer was believed before and is not now. What is read is kept for
- * the next read. A seat the chain holds that no believed entry names is
- * returned in `notBelieved`, and no committee is built while there is one.
+ * the chain holds that nobody invited to it is waiting for. An older version,
+ * or another record under a version, is refused by the anchor on chain like
+ * any record read as the newest; nothing a device believed before is kept. A
+ * seat the chain holds that no believed entry names is returned in
+ * `notBelieved`, and no committee is built while there is one.
  */
 export async function rosterBelievedHere(
   sealed: SealedAccount & { readonly roster?: SealedCompanyRecord | null }, viewingKey: Hex,
@@ -206,7 +160,9 @@ export async function rosterBelievedHere(
   let read: Awaited<ReturnType<typeof directoryHere>>;
   try {
     /* The statements are taken below from the entries this device believes, never from the roster as filed. */
-    read = await directoryHere({ accountId: d.accountId, label: d.label, ...pickReads(d.reads), attested: async () => [] });
+    read = await directoryHere({ accountId: d.accountId, label: d.label, ...d.reads, attested: async () => [] }, {
+      records: [{ store: 'company', kind: 'roster', id: ROSTER_ID }], founding: roster.version === 1,
+    });
   } catch (e) {
     throw new RosterNotBelieved(`This device could not check who filed the company's roster (${(e as Error)?.message ?? String(e)}). Reload the page and try again.`);
   }
@@ -215,28 +171,21 @@ export async function rosterBelievedHere(
     directory: read.dir.seats.map((x) => ({ seat: x.seat, signingKey: x.signingKey, committeeKey: x.committeeKey })),
     own: d.own ?? null,
   };
-  const { believed, refused, wallets } = believedSigners(opened.signers, witnesses);
+  const { believed, refused } = believedSigners(opened.signers, witnesses);
   const here = { ...read, another: seatsWithAnotherRecordsKey(read.dir, d.label, read.holders.account, attestedIn({ signers: believed })) };
   const why = roster.version === 1 ? firstRosterRefusal(here, roster, d.accountId, d.own ?? null)
-    : judgeIn(here)(verifiedCompanyFiler(roster), 'roster', companyRecordKey('roster', ROSTER_ID), roster.version);
+    : judgeIn(here)(verifiedCompanyFiler(roster), 'roster', companyRecordKey('roster', ROSTER_ID), companyRecordEntry(roster), true);
   if (why !== null) throw new RosterNotBelieved(`This device does not believe the company's roster it was given (${why}).`);
   /* Every seat the chain holds is in the roster, or waited for by someone the company invited to it. */
   const waited = seatsWaitedFor(sealed, viewingKey);
   const missing = [...new Set(read.holders.seats.map((x) => x.toLowerCase()))].filter((seat) => !waited.has(seat)
     && !opened.signers.some((x) => x.status === 'active' && (x.leafCommitment ?? '').toLowerCase() === seat));
   if (missing.length > 0) {
+    const over = passedOverSaid(read);
     throw new RosterNotBelieved(`This device does not believe the company's roster it was given (it has no entry for `
       + `${missing.length} seat(s) the company's account holds on the chain, so it leaves a signer out). Nothing is `
-      + 'built from it. Ask a signer of the company to open it on their own device.');
+      + `built from it. ${over === null ? 'Ask a signer of the company to open it on their own device.' : `The way past it: ${over}.`}`);
   }
-  const digest = digestOf(roster);
-  const before = d.reads.believed.read();
-  const back = goesBackOn(before, roster.version, digest, wallets, read.holders.seats);
-  if (back !== null) {
-    throw new RosterNotBelieved(`This device does not believe the company's roster it was given (${back}). Nothing is `
-      + 'built from it. Ask a signer of the company to open it on their own device.');
-  }
-  await keepWhatIsBelieved(d.reads.believed, before, roster.version, digest, wallets, read.holders.seats);
   return {
     account: { ...opened, signers: believed, notBelieved: seatsNotBelieved(believed, read.holders.seats) },
     opened, version: roster.version, refused, witnesses,
@@ -244,42 +193,26 @@ export async function rosterBelievedHere(
 }
 
 /**
- * Keeps what a read now believes, when it is newer than what was kept: the
- * version, its digest, and every seat's wallet, those the chain still holds
- * from before carried on.
- */
-const keepWhatIsBelieved = async (
-  believed: RosterBelievedBefore, before: RosterSeenBefore | null, version: number, digest: string,
-  wallets: Readonly<Record<string, string>>, seatsOnTheChain: readonly string[],
-): Promise<void> => {
-  const held = new Set(seatsOnTheChain.map((x) => x.toLowerCase()));
-  const carried = Object.fromEntries(Object.entries(before?.wallets ?? {}).filter(([seat]) => held.has(seat)));
-  const next: RosterSeenBefore = { version, digest, wallets: { ...carried, ...wallets } };
-  if (before !== null && before.version === version && canonical(before.wallets) === canonical(next.wallets)) return;
-  await believed.keep(next);
-};
-
-const pickReads = (r: RosterReads): Pick<DirectoryHereDeps, 'filings' | 'holders'> => ({ filings: r.filings, holders: r.holders });
-
-/**
  * Why this device does not believe a company's first roster, or null when it
- * does. It is filed with the company by its founding signer's device, before
- * any seat has a directory entry, so it is believed by the rule the first
- * state is: signed by the founding seat the deploy carried, whose entry is
- * signed by the committee key the deploy held the account by
- * (`foundingSeatHere`); and on the founding signer's own device, on its own
- * signing key, until that entry is filed.
+ * does. It is filed with the company by its founding signer's device and
+ * anchored in the company's first batch, so it is believed by the rule the
+ * first state is (`foundingRecordRefusalHere`), and only while no newer version
+ * is named. On the founding signer's own device, on its own signing key, it is
+ * believed before that first anchor too, while nothing is anchored and no newer
+ * version is named: that device made it.
  */
 const firstRosterRefusal = (
   here: Awaited<ReturnType<typeof directoryHere>>, roster: SealedCompanyRecord, accountId: string,
   own: { readonly signingPublicKey: string } | null,
 ): string | null => {
   const filer = verifiedCompanyFiler(roster);
-  if (filer !== null && own !== null && filer.toLowerCase() === own.signingPublicKey.toLowerCase()) {
-    return foundingRosterRefusal(roster, accountId, own.signingPublicKey);
+  const read = { ...companyRecordEntry(roster), version: roster.version };
+  const nothingAnchored = here.records.reached.seq < 0 && here.records.stopped === null;
+  if (nothingAnchored && filer !== null && own !== null && filer.toLowerCase() === own.signingPublicKey.toLowerCase()) {
+    return foundingRosterRefusal(roster, accountId, own.signingPublicKey) ?? newerNamedRefusal(here, read);
   }
-  const seat = foundingSeatHere(here);
-  return typeof seat === 'string' ? seat : foundingRosterRefusal(roster, accountId, seat.signingKey);
+  return foundingRecordRefusalHere(here, roster, (key) => foundingRosterRefusal(roster, accountId, key))
+    ?? newerNamedRefusal(here, read);
 };
 
 /** Why the roster was not read or not filed from this device. Nothing was filed. */
@@ -307,12 +240,19 @@ export async function rosterHere(d: RosterDoors): Promise<RosterRead & { sealed:
   }
 }
 
-/** The roster's next version, sealed and signed here, with the index of the company's vault keys made from it. */
+/**
+ * The roster's next version, sealed and signed here, with the index of the
+ * company's vault keys made from it, and the entry the one filing call makes
+ * of it once the service has kept it.
+ */
 const nextFiling = (d: RosterDoors, keyEpoch: number, next: RosterSecrets, version: number) => {
   const rec = signCompanyFiling(sealRoster(d.accountId, next, version + 1, keyEpoch, d.viewingKey), d.signingSecret);
   return {
-    roster: { version: version + 1, message: toCompanyWire(rec) },
-    index: vaultKeyIndexOf({ id: d.accountId, signers: next.signers }),
+    filing: {
+      roster: { version: version + 1, message: toCompanyWire(rec) },
+      index: vaultKeyIndexOf({ id: d.accountId, signers: next.signers }),
+    },
+    entry: companyRecordEntry(rec),
   };
 };
 
@@ -363,10 +303,12 @@ export async function admitSignerHere(d: RosterDoors, input: { signerId: string;
   const seated = seatedOf(opened);
   const next: RosterSecrets = { name: seated.name, signers: [...seated.signers, { ...pending, status: 'active', leafCommitment: payload.leafCommitment }] };
   const wrap = wrapKey(d.viewingKey, payload.wrappingPublicKey);
+  const { filing, entry } = nextFiling(d, sealed.keyEpoch, next, version);
   await d.api(route(d.accountId, `/signers/${encodeURIComponent(input.signerId)}/admit`), {
     method: 'POST',
-    body: JSON.stringify({ ...nextFiling(d, sealed.keyEpoch, next, version), leaf: payload.leafCommitment.toLowerCase(), wrap }),
+    body: JSON.stringify({ ...filing, leaf: payload.leafCommitment.toLowerCase(), wrap }),
   });
+  await d.entered.enter([entry]);
 }
 
 /**
@@ -456,7 +398,8 @@ export async function foldOffersHere(d: RosterDoors): Promise<Folded> {
    * offer refused here stays open until its own signer offers again, for this or another seat's device to fold.
    */
   if (folded.length === 0) return { folded, refused };
-  const filing = nextFiling(d, sealed.keyEpoch, roster, version);
+  const { filing, entry } = nextFiling(d, sealed.keyEpoch, roster, version);
   await d.api(route(d.accountId, '/roster'), { method: 'POST', body: JSON.stringify({ ...filing, folded }) });
+  await d.entered.enter([entry]);
   return { folded, refused };
 }

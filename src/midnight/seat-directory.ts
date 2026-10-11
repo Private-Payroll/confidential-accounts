@@ -57,9 +57,10 @@ export type FiledKind = CompanyRecordKind | WireRecord;
  */
 export const MAY_FILE: Readonly<Record<Role | 'unset', readonly FiledKind[]>> = Object.freeze({
   admin: Object.freeze([...COMPANY_RECORD_KINDS, ...WIRE_RECORDS]),
-  approver: Object.freeze(['proposal', ...WIRE_RECORDS] as FiledKind[]),
-  initiator: Object.freeze(['run', 'proposal', ...WIRE_RECORDS] as FiledKind[]),
-  viewer: Object.freeze([] as FiledKind[]),
+  approver: Object.freeze(['proposal', 'opening', ...WIRE_RECORDS] as FiledKind[]),
+  initiator: Object.freeze(['run', 'proposal', 'opening', ...WIRE_RECORDS] as FiledKind[]),
+  /* Every seat files the opening of its own leaf, whatever its role, so the company's members can tell whose anchor each is. */
+  viewer: Object.freeze(['opening'] as FiledKind[]),
   unset: Object.freeze([...COMPANY_RECORD_KINDS, ...WIRE_RECORDS]),
 });
 
@@ -103,6 +104,15 @@ export interface DirectoryFiling {
   readonly company: string;
   readonly version: number;
   readonly change: DirectoryChange;
+  /**
+   * **A QUORUM'S CHANGE FILED AGAIN**: the earlier version its signatures were
+   * made over, when the company's records passed that version over - or it
+   * rested on a seat one passed over - so its change was never applied. Its
+   * signatures still bind that version, so the change is filed again as a new
+   * version carrying them unchanged, and is believed only as
+   * `refiledRefusalOf` allows. Absent on every other filing.
+   */
+  readonly signedAt?: number;
 }
 
 const QUORUM_DOMAIN = 'confidential-accounts/seat-directory-change/v1';
@@ -155,6 +165,10 @@ export const DIRECTORY_REFUSAL = {
   'twice-by-one-seat': 'one seat signed that change twice, and a seat counts once.',
   'below-quorum': 'not enough of the company\'s seats signed that change: it needs as many as the company\'s account requires on the chain.',
   'not-a-change': 'that is not a change to a company\'s directory.',
+  'signed-at-applied': 'that change is filed again under signatures made for a version of the directory that was applied, or was already filed again, so there is nothing to file again. Read the directory again.',
+  'signed-at-not-passed-over': 'that change is filed again under signatures made for a version of the directory the company\'s records did not pass over, and that rests on no seat a passed-over version claimed or changed, so it is not filed again. If the change is still wanted, the seats sign it again as the directory stands now.',
+  'reverses-a-later-change': 'that change, filed again, would undo a change to the same seat applied after the version it was signed for, so it is not applied. If it is still wanted, the seats sign it again as the directory stands now.',
+  'not-as-the-chain-holds': 'that change, filed again, does not agree with who holds the company\'s account on the chain now: a seat it gives a role is not seated there, or a seat it retires still is. It is not applied; if it is still wanted, the seats sign it again as the account stands now.',
 } as const;
 export type DirectoryRefusalCode = keyof typeof DIRECTORY_REFUSAL;
 
@@ -252,6 +266,14 @@ export const applyFiling = (
      * that have left, or signed by an entry the server made up, is not believed.
      */
     readonly now?: { readonly approvals: number; readonly seats: readonly string[]; readonly committee: readonly CommitteeKey[] };
+    /**
+     * Replayed only, for a version the company's records anchor: who held the account as the anchor call that first
+     * anchored it ran - the approvals it required and the seats its signer tree held, both checked by that call - and
+     * the committee the account's history shows after that call's block. A change is then believed only when it names at
+     * least those approvals, counting only seats that tree held; a claim, only when its committee key is on that
+     * committee. Nothing of the account now enters into it.
+     */
+    readonly anchored?: AccountHeld;
   },
 ): Directory => {
   if (typeof filing !== 'object' || filing === null || typeof filing.change !== 'object' || filing.change === null) {
@@ -260,6 +282,9 @@ export const applyFiling = (
   if (filing.company !== dir.company) throw new DirectoryRefused('not-this-company');
   if (filing.version !== dir.version + 1) throw new DirectoryRefused('not-the-next-version');
   const change = filing.change;
+  /* A change filed again names an earlier version, and only a quorum's change carries one: an entry names no version. */
+  if (filing.signedAt !== undefined && (change.kind === 'claim' || !Number.isSafeInteger(filing.signedAt)
+    || filing.signedAt < 1 || filing.signedAt >= filing.version)) throw new DirectoryRefused('not-a-change');
   if (change.kind === 'claim') {
     const entry = change.entry;
     if (typeof entry !== 'object' || entry === null || typeof entry.person !== 'string' || entry.person.length === 0) {
@@ -271,6 +296,9 @@ export const applyFiling = (
     }
     const refused = entryRefusalOf(ctx.label, ctx.account, entry, ctx.chain);
     if (refused !== null) throw new DirectoryRefused(refused);
+    if (ctx.chain === null && ctx.anchored !== undefined && !ctx.anchored.committee.some((k) => sameKey(k, entry.committeeKey))) {
+      throw new DirectoryRefused('not-on-the-committee');
+    }
     const s = entry.statement;
     if (dir.seats.some((x) => x.seat === s.seat)) throw new DirectoryRefused('seat-taken');
     if (dir.seats.some((x) => [x.signingKey, x.wrappingKey].some((k) => k === s.signingKey || k === s.wrappingKey))
@@ -293,13 +321,16 @@ export const applyFiling = (
   if (!Number.isSafeInteger(change.threshold) || change.threshold < 1) throw new DirectoryRefused('not-a-change');
   if (ctx.chain !== null && change.threshold !== ctx.chain.approvals) throw new DirectoryRefused('threshold-not-the-chains');
   const now = ctx.now;
-  if (ctx.chain === null && now !== undefined && change.threshold < now.approvals) throw new DirectoryRefused('threshold-not-the-chains');
+  const anchored = ctx.anchored;
+  const against = anchored ?? now;
+  if (ctx.chain === null && against !== undefined && change.threshold < against.approvals) throw new DirectoryRefused('threshold-not-the-chains');
   if (change.kind === 'role' && !ROLES.includes(change.role)) throw new DirectoryRefused('not-a-change');
   if (change.kind === 'retire' && (typeof change.filedUpTo !== 'object' || change.filedUpTo === null
     || !Object.values(change.filedUpTo).every((v) => Number.isSafeInteger(v) && v >= 0))) throw new DirectoryRefused('not-a-change');
   const chain = ctx.chain;
-  const n = quorumOf(dir, change, filing.version, (x) => (chain !== null ? chain.seats.seats.includes(x.seat)
-    : now === undefined || (now.seats.includes(x.seat) && now.committee.some((k) => sameKey(k, x.committeeKey)))));
+  const n = quorumOf(dir, change, filing.signedAt ?? filing.version, (x) => (chain !== null ? chain.seats.seats.includes(x.seat)
+    : anchored !== undefined ? anchored.seats.includes(x.seat)
+      : now === undefined || (now.seats.includes(x.seat) && now.committee.some((k) => sameKey(k, x.committeeKey)))));
   if (typeof n === 'string') throw new DirectoryRefused(n);
   if (n < change.threshold) throw new DirectoryRefused('below-quorum');
   return {
@@ -311,31 +342,153 @@ export const applyFiling = (
 };
 
 /**
+ * Who held the company's account: the approvals it required, its seats and its
+ * committee. Read now from the person's own wallet; for a version the
+ * company's records anchor, the approvals and seats the anchor call that first
+ * anchored it checked, and the committee the account's history shows at that
+ * call's block.
+ */
+export interface AccountHeld { readonly approvals: number; readonly seats: readonly string[]; readonly committee: readonly CommitteeKey[] }
+
+/**
  * **THE DIRECTORY A DEVICE BELIEVES**, replayed from every filing the server
  * served. Versions must run 1, 2, 3 without a gap. **An entry whose signature
  * does not verify is left out, not fatal**: it is a seat this device does not
  * believe, and a filing signed by its key is refused when it is read. A change
  * a quorum did not sign is left out the same way. Whether a seat is on the
  * committee and seated now is asked of every filing as it is read, against
- * this device's own wallet's read of the chain (`filingRefusalOf`). With `now`,
- * a role or retirement change is believed only at the account's approval
- * threshold now, signed by that many seats seated now.
+ * this device's own wallet's read of the chain (`filingRefusalOf`).
+ *
+ * **A VERSION THE COMPANY'S RECORDS ANCHOR IS COUNTED AGAINST WHO HELD THE
+ * ACCOUNT WHEN IT WAS ANCHORED**, never against who holds it now: `asAnchored`
+ * gives, for such a version, the approvals and seats the anchor call that
+ * first anchored it checked as it ran, and the committee the account's history
+ * shows after that call's block. A role or retirement change needs that many of
+ * those seats, whatever their committee keys; a claim needs its committee key
+ * on that committee. So a signer of the change who leaves later, or a
+ * threshold that rises later, changes nothing about it. Null there means the
+ * version may be anchored and who held the account then is not known, and the
+ * filing is not believed. A version not yet anchored is counted against `now`:
+ * the account's approval threshold now, signed by that many seats seated now
+ * whose committee key the committee lists now.
  */
 export const believedDirectory = (
   company: string, filings: readonly DirectoryFiling[], label: CompanyLabel, account: AccountAddress,
-  now?: { readonly approvals: number; readonly seats: readonly string[]; readonly committee: readonly CommitteeKey[] },
-): Directory => {
+  now?: AccountHeld,
+  asAnchored?: (version: number) => AccountHeld | null | undefined,
+): Directory => directoryReplayed(company, filings, label, account, now, asAnchored).dir;
+
+/**
+ * What a replay of the directory keeps, to judge a quorum's change filed again
+ * (`refiledRefusalOf`): which versions were applied, which the company's
+ * records passed over, and the latest version each seat was changed at.
+ */
+export interface DirectoryReplay {
+  readonly filings: readonly DirectoryFiling[];
+  /** Every version whose change was applied: by its own version, and a change filed again by the version it was signed for too. */
+  readonly applied: ReadonlySet<number>;
+  /** Every version the company's records passed over (never entered while a later one was anchored), or past a header not checked. */
+  readonly passed: ReadonlySet<number>;
+  /** Per seat, the latest version a role or retirement applied to it was signed for. */
+  readonly changed: ReadonlyMap<string, number>;
+}
+
+/** The directory as replayed, every version not applied with why, and what the replay kept. */
+export interface DirectoryReplayed {
+  readonly dir: Directory;
+  readonly refused: ReadonlyMap<number, DirectoryRefusalCode>;
+  readonly replay: DirectoryReplay;
+}
+
+/** The seats a filing claims or changes. */
+const seatsOf = (f: DirectoryFiling | undefined): readonly string[] => {
+  const c = f?.change;
+  if (c === undefined || c === null || typeof c !== 'object') return [];
+  if (c.kind === 'claim') return typeof c.entry?.statement?.seat === 'string' ? [c.entry.statement.seat] : [];
+  return typeof c.seat === 'string' ? [c.seat] : [];
+};
+
+/**
+ * **WHETHER A QUORUM'S CHANGE FILED AGAIN IS BELIEVED, AFTER `replay`**, or why
+ * not. Its signatures bind the version it was signed for (`signedAt`), checked
+ * as any change's by `applyFiling`; on top of that, it is believed only when:
+ *   · that version's change was not applied, nor filed again and applied before;
+ *   · that version was passed over by the company's records, or rests on one
+ *     that was - it changes a seat, or is signed by a seat's key, that a
+ *     passed-over version below it claimed or changed;
+ *   · no role or retirement of the same seat was applied for a later version -
+ *     so one seat's changes are filed again in the order they were first
+ *     filed, and a change to another seat never holds it back;
+ *   · with `now`, who holds the account on chain now - given while the change
+ *     filed again is not yet anchored, never after, since an anchored version is
+ *     counted against who held the account as it was anchored: it is signed
+ *     against the approvals the account requires now (as the service files it),
+ *     a seat it gives a role is seated there, and a seat it retires is not.
+ */
+export const refiledRefusalOf = (
+  replay: DirectoryReplay, filing: DirectoryFiling, now?: Pick<AccountHeld, 'approvals' | 'seats'>,
+): DirectoryRefusalCode | null => {
+  const v = filing.signedAt;
+  const change = filing.change;
+  if (v === undefined) return null;
+  if ((change?.kind !== 'role' && change?.kind !== 'retire') || !Number.isSafeInteger(v) || v < 1 || v >= filing.version) return 'not-a-change';
+  if (replay.applied.has(v)) return 'signed-at-applied';
+  if (!replay.passed.has(v)) {
+    const signers = new Set((Array.isArray(change.signatures) ? change.signatures : []).map((x) => String(x?.publicKey).toLowerCase()));
+    const restsOnOne = [...replay.passed].some((p) => p < v && (seatsOf(replay.filings[p - 1]).includes(change.seat)
+      || (replay.filings[p - 1]?.change.kind === 'claim'
+        && signers.has(String((replay.filings[p - 1]!.change as { entry: DirectoryEntry }).entry.statement.signingKey).toLowerCase()))));
+    if (!restsOnOne) return 'signed-at-not-passed-over';
+  }
+  if ((replay.changed.get(change.seat) ?? 0) > v) return 'reverses-a-later-change';
+  if (now !== undefined && change.threshold !== now.approvals) return 'threshold-not-the-chains';
+  if (now !== undefined && (change.kind === 'role') !== now.seats.includes(change.seat)) return 'not-as-the-chain-holds';
+  return null;
+};
+
+/**
+ * **THE DIRECTORY REPLAYED**, as `believedDirectory` describes it, with every
+ * version not applied and why, and what the replay kept. A quorum's change
+ * filed again (`signedAt`) is believed only as `refiledRefusalOf` allows, the
+ * chain now being `now`'s seats where it is given. The one replay a device and
+ * this product's server both make.
+ */
+export const directoryReplayed = (
+  company: string, filings: readonly DirectoryFiling[], label: CompanyLabel, account: AccountAddress,
+  now?: AccountHeld,
+  asAnchored?: (version: number) => AccountHeld | null | undefined,
+): DirectoryReplayed => {
   let dir = emptyDirectory(company);
+  const refused = new Map<number, DirectoryRefusalCode>();
+  const applied = new Set<number>();
+  const passed = new Set<number>();
+  const changed = new Map<string, number>();
   filings.forEach((f, i) => {
     if (f?.version !== i + 1) throw new DirectoryRefused('not-the-next-version');
     try {
-      dir = applyFiling(dir, f, { label, account, chain: null, ...(now === undefined ? {} : { now }) });
+      const held = asAnchored?.(f.version);
+      if (held === null) {
+        passed.add(f.version);
+        throw new DirectoryRefused('below-quorum');
+      }
+      /* Who holds the account now judges a change filed again only until it is anchored. */
+      const again = refiledRefusalOf({ filings, applied, passed, changed }, f, held === undefined ? now : undefined);
+      if (again !== null) throw new DirectoryRefused(again);
+      dir = applyFiling(dir, f, {
+        label, account, chain: null,
+        ...(held !== undefined ? { anchored: held } : now === undefined ? {} : { now }),
+      });
+      applied.add(f.version);
+      const at = f.signedAt ?? f.version;
+      if (f.signedAt !== undefined) applied.add(f.signedAt);
+      if (f.change.kind !== 'claim') changed.set(f.change.seat, Math.max(changed.get(f.change.seat) ?? 0, at));
     } catch (e) {
       if (!(e instanceof DirectoryRefused)) throw e;
+      refused.set(f.version, e.code);
       dir = { ...dir, version: f.version };
     }
   });
-  return dir;
+  return { dir, refused, replay: { filings, applied, passed, changed } };
 };
 
 /** Why a device does not believe a filing signed by `publicKey`, or null when it does. */
@@ -395,6 +548,43 @@ export const filerSeatOf = (
   if (!MAY_FILE[seat.role ?? 'unset'].includes(kind)) return 'role-may-not-file';
   if (chain === null) return 'not-on-the-committee';
   return notOnTheChainNow(seat, chain) ?? seat;
+};
+
+/**
+ * **CHECK S, ON THE SERVER, FOR SOMETHING A SEAT SIGNED, WHOEVER HANDS IT IN**:
+ * the seat holding the key that signed it, judged by what that signature and
+ * the seat's standing say - its role may file that kind, within a retired
+ * seat's boundary, on the chain now - and never by who is signed in to hand it
+ * in. A device that kept another seat's signed entry files it again this way.
+ */
+export const signerSeatOf = (
+  dir: Directory, chain: AccountSeats | null, publicKey: Hex, kind: FiledKind, recordKey: string, version: number,
+): DirectorySeat | FilingRefusal => {
+  const seat = filerSeatIn(dir, publicKey, kind, recordKey, version);
+  if (typeof seat === 'string' || seat.retired !== null) return seat;
+  if (chain === null) return 'not-on-the-committee';
+  return notOnTheChainNow(seat, chain) ?? seat;
+};
+
+/**
+ * **THE SEAT THAT MAY FILE A VERSION OF A RECORD, IN ONE DIRECTORY**: the seat
+ * holding the key that signed it, whose role may file that kind, and, for a
+ * retired seat, only within its boundary. What the chain says of the seat is
+ * not asked here: `signerSeatOf` asks it of the directory now, and a version
+ * judged as the directory stood when it was anchored is judged against the
+ * holders that batch names, by each device.
+ */
+export const filerSeatIn = (
+  dir: Directory, publicKey: Hex, kind: FiledKind, recordKey: string, version: number,
+): DirectorySeat | FilingRefusal => {
+  const seat = dir.seats.find((x) => x.signingKey === publicKey.toLowerCase());
+  if (seat === undefined) return 'no-entry';
+  if (!MAY_FILE[seat.role ?? 'unset'].includes(kind)) return 'role-may-not-file';
+  if (seat.retired !== null) {
+    const last = seat.retired[recordKey];
+    return last !== undefined && version <= last ? seat : 'past-its-boundary';
+  }
+  return seat;
 };
 
 /**

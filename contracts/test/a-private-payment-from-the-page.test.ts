@@ -70,6 +70,10 @@ import { rosterVaultKeys, signVaultKeys } from '../../src/core/vault-keys.js';
 import { seatsInAccountState, vaultInState } from '../../apps/wallet/src/chain/company-label-on-chain.js';
 import { directoryChainOver, fileOwnEntry, judgeOver, mayFileUnderOver, walletReadsOver } from './the-chain-as-a-wallet-reads-it.js';
 import { seatDirectoryRoutes } from '../../src/server/seat-directory-route.js';
+import { filedAsIn, recordManifestRoutes } from '../../src/server/record-manifest-route.js';
+import { MemoryCompanyRecordStore } from '../../src/server/company-records-route.js';
+import { companyRecordEntry } from '../../src/midnight/record-manifest.js';
+import { manifestServiceFor, recordsEnteredFor } from 'vaults-web-shared/record-entered-here.js';
 import { ChainLedger } from '../../src/wiring/chain.js';
 import { companyVaultRoutes, type VaultChain } from '../../src/server/company-vaults.js';
 import { mountVaultRecords, vaultAccountFromTheIndexer } from '../../src/server/vault-records-authority.js';
@@ -139,6 +143,7 @@ import type { LegRaiseDoors } from 'vaults-web-shared/run-raised-here.js';
 import type { CompanyRecordsHere } from 'vaults-web-shared/run-rebuilt-here.js';
 import type { PeopleHere } from 'vaults-web-shared/people-on-device.js';
 import { payAnApprovedLeg } from 'vaults-web-shared/leg-paid-here.js';
+import { A_HEAD_CHECKED, anchoredOver, headsCheckedHere, roundsOnATestChain } from '../../src/testing/record-tree-double.js';
 
 /** Deposits or payments on their way, kept for the length of one test, sealed as the page keeps them. */
 const keptOnThisDevice = <T,>(kind: 'deposit' | 'payment'): KeptOnThisDevice<T> =>
@@ -259,6 +264,8 @@ describe.skipIf(!KEYS_ON_DISK)('A PRIVATE PAYMENT OUT OF A COMPANY VAULT, FROM T
   let serverStores: Map<WireRecord, MemorySealedPoolStore>;
   /* The company's records of every vault's spending policy, as the seats filed them. */
   let policyRecords: SealedCompanyRecord[] = [];
+  /* The company's records the service keeps, as the product's records mount keeps them: what an entry is checked against. */
+  let companyRecords: MemoryCompanyRecordStore;
   /* The company's first state, as its founding seat signed it, made once per test. */
   let firstStateKept: ReturnType<typeof signedFoundingState> | undefined;
 
@@ -367,6 +374,7 @@ describe.skipIf(!KEYS_ON_DISK)('A PRIVATE PAYMENT OUT OF A COMPANY VAULT, FROM T
     setNetworkId(NET as never);
     chain = new Chain();
     policyRecords = [];
+    companyRecords = new MemoryCompanyRecordStore();
     firstStateKept = undefined;
     /* The depositor's wallet holds its own private coins before anything else is on the chain. */
     depositor = aWalletThatPaysPrivately(NET);
@@ -547,6 +555,15 @@ describe.skipIf(!KEYS_ON_DISK)('A PRIVATE PAYMENT OUT OF A COMPANY VAULT, FROM T
       companies: () => store.listAccounts().map((a) => ({ id: a.id, contractAddress: company, memberUserIds: a.memberUserIds })),
       mayFileUnder: mayFileUnderOver(store, directoryChainOver(() => chain.contract(company))),
     });
+    /* The company's records: every filing entered and every header kept, as the whole server serves them. */
+    app.use(recordManifestRoutes({
+      signedIn, member, store, directoryOf: directoryNow,
+      filedAs: filedAsIn({
+        company: companyRecords,
+        vault: { of: (r) => serverStores.get(r)! },
+        runs: (c) => store.listRuns(c), proposals: (c) => store.listProposals(c),
+      }),
+    }));
     await new Promise<void>((resolve) => { server = app.listen(0, '127.0.0.1', () => resolve()); });
     base = `http://127.0.0.1:${(server.address() as AddressInfo).port}`;
   });
@@ -609,11 +626,13 @@ describe.skipIf(!KEYS_ON_DISK)('A PRIVATE PAYMENT OUT OF A COMPANY VAULT, FROM T
   /* The page's own requests, as `api` makes them. */
   const api = async (path: string, init?: RequestInit) =>
     http(path, { method: String(init?.method ?? 'GET'), ...(init?.body === undefined ? {} : { body: JSON.parse(String(init.body)) }) });
+  /* The page's one filing call over the service's own manifest route, signed by this device's seat. */
+  const enteredThrough = () => recordsEnteredFor(manifestServiceFor(api), ACCOUNT_ID, signing.secret as Hex);
   /* Who filed each version, judged afresh for every read: the directory read again and the account read off the chain. */
   const records = (record: WireRecord) => new HttpSealedPoolStore(record, wire, signing.secret, judgeOver({
     api, accountId: ACCOUNT_ID, label: LABEL, account: company, accountState: () => chain.contract(company), deployed: () => deployed,
     roster: async () => openAccount(store.getAccount(ACCOUNT_ID)!, viewingKey),
-  }));
+  }), enteredThrough());
   /* Who holds the company and which vaults it adopted, as the signer's own wallet reads them off the chain for each step. */
   const walletReads = walletReadsOver(() => chain.contract(company), { state: () => deployed, label: () => LABEL });
   const signers = async () => [{ id: 'ada', wrappingPublicKey: wrapping.publicKey }];
@@ -875,21 +894,42 @@ describe.skipIf(!KEYS_ON_DISK)('A PRIVATE PAYMENT OUT OF A COMPANY VAULT, FROM T
     } as unknown as RosterEmployee;
   };
   /** The company's records as the founding signer's device opens them: the directory, the people, the first state, the runs and proposals, and the wallet's read of the account. */
+  /* Where each proposal stands, as the wallet's indexer shows this file's chain to every device: each proposal the account holds, with its approvals. */
+  const watching = roundsOnATestChain(async () => {
+    const l = accountLedgerOf(chain.contract(company));
+    return [...l.openProposals].map(([id]: [Uint8Array]) => ({ id: hex(id), approvals: Number(l.approvalCounts.member(id) ? l.approvalCounts.lookup(id) : 0n) }));
+  });
   const recordsHere = (people: readonly RosterEmployee[]): CompanyRecordsHere & { proposals: () => Promise<ReturnType<typeof store.listProposals>> } => {
     const registry = new StaticAssetRegistry([PAY_ROW]);
     /* One first state per company: every device reads the same blinding the founding seat signed. */
     const firstState = firstStateKept ??= signedFoundingState(ACCOUNT_ID, sealState({ entries: [] }, newStateBlinding(), viewingKey, 0), signing.secret);
     return {
-      directory: () => directoryHere({
+      directory: (asked) => directoryHere({
         accountId: ACCOUNT_ID, label: LABEL, filings: () => directoryFilingsFrom(api, ACCOUNT_ID),
         holders: async () => ({ ...(await walletReads()).holders, account: company as never }),
         attested: async () => attestedIn(openAccount(store.getAccount(ACCOUNT_ID)!, viewingKey)),
-      }),
+        /*
+         * The company's records over the service's own manifest route, after the batch the founding device anchored
+         * while its seat was the account's only one: its entry and its first state.
+         */
+        anchored: anchoredOver(api, ACCOUNT_ID, undefined, undefined, {
+          seat: hex(leafOfDevice(founder)), signingSecret: signing.secret as Hex, records: [firstState],
+          committee: [committeeKeyFor(identityFromWords(words), LABEL)], directory: store.directoryFilingsOf(ACCOUNT_ID).slice(0, 1),
+        }),
+      }, asked),
       people: async () => ({ people: people.map((person) => ({ person, version: 1, handedOver: true })), notBelieved: [], notPayable: [] }) as unknown as PeopleHere,
       state: async (id) => (id === '0' ? firstState : null),
       runs: async () => store.listRuns(ACCOUNT_ID),
       proposals: async () => store.listProposals(ACCOUNT_ID),
+      /*
+       * The heads of the company's records this device checked: the raiser seals its latest, an approver approves over one of them.
+       * **A STAND-IN, NAMED**: a fixed head, not one this file's read reached; what this file proves is the payment, not
+       * which head a run is raised over.
+       */
+      checked: async () => headsCheckedHere(A_HEAD_CHECKED),
+      roundsOnChain: watching,
       registry,
+      roundIdentity: accountCircuits,
       payments: {
         paidOnceOf: accountCircuits.paidOnceOf, paidMovementOf: accountCircuits.paidMovementOf,
         /* What the person's own wallet reads off the account: the entries it holds, its open proposals, how many entries in all. */
@@ -914,7 +954,13 @@ describe.skipIf(!KEYS_ON_DISK)('A PRIVATE PAYMENT OUT OF A COMPANY VAULT, FROM T
        */
       spendingPolicies: {
         versions: async (id) => policyRecords.filter((r) => r.id === id),
-        file: async (rec) => { policyRecords = [...policyRecords, signCompanyFiling(rec, signing.secret as Hex)]; },
+        /* Filed as the product's records mount files one: kept, then entered in the company's records by this device's seat. */
+        file: async (rec) => {
+          const signed = signCompanyFiling(rec, signing.secret as Hex);
+          policyRecords = [...policyRecords, signed];
+          await companyRecords.put(signed);
+          await enteredThrough().enter([companyRecordEntry(signed)]);
+        },
         me: { signerId: hex(leafOfDevice(founder)), wrappingSecret: recordsKeypairFrom(me.companyKey).secret as Hex },
         keys: async (input) => spendingPolicyKeysOf({ accountPure: accountCircuits as never }, input),
         onChain: chainReadThroughTheWallet(async (asked) => ({ roles: rolesInAccountState(chain.contract(company).serialize(), asked) })),
@@ -948,10 +994,12 @@ describe.skipIf(!KEYS_ON_DISK)('A PRIVATE PAYMENT OUT OF A COMPANY VAULT, FROM T
     company: { account: company, label: LABEL },
     runs: {
       detailsOf: vaultDetails, runPayload: accountCircuits.runPayload, proposalIdOf: accountCircuits.proposalIdOf, noVault: accountCircuits.noVault,
-      buildRun, buildRetryRun, rootOfPayments,
+      retrySaltOf: accountCircuits.retrySaltOf, buildRun, buildRetryRun, rootOfPayments,
     },
     assets: here.registry!,
     waitMs: 50, everyMs: 10, sleep: async () => undefined,
+    /* The filings entered where this file watches them, and the anchor recorded, never proved here. */
+    recorded: { entered: enteredThrough(), anchor: async () => ({ anchored: 0, head: '00'.repeat(32) }) },
   });
 
   it('A RUN DRAWN AND RAISED ON A SIGNER\'S DEVICE AND APPROVED BY THE BAR IS PAID FROM THE VAULT, MERGING FIRST FOR THE PERSON NO TWO NOTES COVER: EVERY PERSON RECORDED PAID, EVERY STEP JOURNALLED, AND PAYING AGAIN PAYS NOBODY', async () => {
@@ -968,7 +1016,7 @@ describe.skipIf(!KEYS_ON_DISK)('A PRIVATE PAYMENT OUT OF A COMPANY VAULT, FROM T
     /* ---- drawn on the device and filed signed by its seat ---- */
     const drawn: PayrollRun = await drawRunHere({
       api, accountId: ACCOUNT_ID, viewingKey, keyEpoch: 0, signingSecret: signing.secret as Hex, company: { account: company, label: LABEL },
-      records: here, by: 'ada', registry: here.registry!,
+      records: here, by: 'ada', registry: here.registry!, entered: enteredThrough(),
     }, { period: '2026-10' });
     /* ---- raised on the device, and the chain holds it ---- */
     const now = Math.floor(Date.now() / 1000);
@@ -1053,7 +1101,7 @@ describe.skipIf(!KEYS_ON_DISK)('A PRIVATE PAYMENT OUT OF A COMPANY VAULT, FROM T
     builder: builder(),
     material: { signingSecret: hex(founder.secretKey), blinding: hex(founder.blinding), scope: hex(founder.scope) },
     accountId: ACCOUNT_ID, records: here,
-    filing: { seat: hex(leafOfDevice(founder)), keyEpoch: 0, salt: () => toHex(new Uint8Array(randomBytes(32))), newId: () => newProposalId() },
+    filing: { seat: hex(leafOfDevice(founder)), keyEpoch: 0, salt: () => toHex(new Uint8Array(randomBytes(32))), newId: () => newProposalId(), entered: enteredThrough() },
     approvers: pacing.approvers, vaultName: (v: Hex) => v, sleep: async () => {}, waitMs: 50, everyMs: 1,
   });
   /** A second device of the signer: its own worker, its own reads, its own store for a charge on its way, and the routes. */
@@ -1072,7 +1120,7 @@ describe.skipIf(!KEYS_ON_DISK)('A PRIVATE PAYMENT OUT OF A COMPANY VAULT, FROM T
     const here = recordsHere(people);
     const drawn: PayrollRun = await drawRunHere({
       api, accountId: ACCOUNT_ID, viewingKey, keyEpoch: 0, signingSecret: signing.secret as Hex, company: { account: company, label: LABEL },
-      records: here, by: 'ada', registry: here.registry!,
+      records: here, by: 'ada', registry: here.registry!, entered: enteredThrough(),
     }, { period });
     const round = raiseRunOnDevice(raisingOn(here), { runId: drawn.id, viewingKey, vault, opensAt: String(opensAt), closesAt: String(closesAt) });
     return { drawn, round };
@@ -1088,7 +1136,12 @@ describe.skipIf(!KEYS_ON_DISK)('A PRIVATE PAYMENT OUT OF A COMPANY VAULT, FROM T
     return proposal;
   };
 
-  it('A SPENDING POLICY SET FROM ONE DEVICE: A RUN RAISED AT ITS BAND, APPROVED, CHARGED ON A SECOND DEVICE THAT DID NOT SET IT, AND PAID; A RUN ACROSS THE PERIOD\'S END REFUSED AT RAISE, AND A RUN PAST THE PERIOD\'S LIMIT REFUSED BEFORE ANY FEE', async () => {
+  it('A SPENDING POLICY SET FROM ONE DEVICE: A RUN RAISED AT ITS BAND, APPROVED, CHARGED ON A SECOND DEVICE THAT DID NOT SET IT, AND PAID; A RUN ACROSS THE PERIOD\'S END REFUSED AT RAISE, AND A RUN PAST THE PERIOD\'S LIMIT REFUSED BEFORE ANY FEE',
+    /*
+     * Its own time: it sets a policy, raises and approves two runs, charges, pays and deposits, every one a proven call
+     * on the real ledger - 23 seconds on its own, and past the suite's 30 while every other file runs beside it.
+     */
+    { timeout: 90_000 }, async () => {
     const { vault } = await aFundedVault();
     const now = BigInt(Math.floor(Date.now() / 1000));
     const dana = aPersonPaidPrivately(1, 'Dana', 600n);

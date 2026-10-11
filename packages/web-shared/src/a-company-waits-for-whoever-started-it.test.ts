@@ -5,7 +5,7 @@ import { READY_PING } from 'midnight-identity/profile/channel';
 import { parseAsk } from 'midnight-identity/profile/request';
 import type { KeyringRequest } from 'midnight-identity/profile/request';
 import { keyringKeyFor, keyringReleaseFor } from 'midnight-identity/profile/unlock';
-import { toHex, unseal } from '../../../src/core/crypto.js';
+import { seal, toHex, unseal } from '../../../src/core/crypto.js';
 import { keyringAsk, KEYRING_PURPOSE } from '../../../src/core/wallet-unlock.js';
 import * as keyring from './keyring.js';
 import type { Openable } from './wallet-sign-in.js';
@@ -281,5 +281,21 @@ describe('a sign-in picked up after a reload', () => {
       await keyring.resumeSession(bad);
       expect(keyring.signedInWallet()).toBeNull();
     }
+  });
+});
+
+describe('what a person\'s devices once kept of each company\'s roster', () => {
+  /* RED WHEN: what devices believed of a roster before is written into the saved keys again - kept where the service can serve it older. */
+  it('is not written into their saved keys again: the anchor on chain is what a later read is held to', async () => {
+    const service = aService({ signedIn: () => A });
+    service.replaceSaved(A.id, seal(JSON.stringify({
+      accounts: {}, rostersBelieved: { acc_old: { version: 3, digest: 'ab'.repeat(32), wallets: {} } },
+    }), keyringHexFor(A.id) as never));
+    keyring.signedInByAnotherScreen(answerFor(A, ADDRESS_A));
+    await keyring.openKeysWithWallet(WALLET, new WalletAtTheOtherEnd(ADDRESS_A), US);
+    expect(await keyring.createCompanyWithWallet(A_COMPANY, WALLET, new WalletAtTheOtherEnd(ADDRESS_A), US)).toEqual({ accountId: 'acc_new' });
+    const written = JSON.parse(unseal(service.savedFor(A.id) as never, keyringHexFor(A.id)));
+    expect(Object.keys(written.accounts)).toEqual(['acc_new']);
+    expect(written).not.toHaveProperty('rostersBelieved');
   });
 });

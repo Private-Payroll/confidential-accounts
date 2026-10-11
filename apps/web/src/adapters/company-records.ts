@@ -6,7 +6,7 @@ import { openRecord } from '../../../../src/core/sealed-records.js';
 import { onlyPayableWhenActive, openPerson, peopleOnTheWire } from '../../../../src/core/person-record.js';
 import type { Account, PayrollRun, Proposal, ProposalKind, ProposalStatus, SealedAccount, SealedProposal, SealedRun } from '../../../../src/core/types.js';
 import { api, canOpenCompanies, holdersFromTheWallet, openKeysWithWallet, viewingKeyFor } from 'vaults-web-shared/keyring.js';
-import { openedHere, walletIndexerFor } from './filing-judge.js';
+import { anchoredOnTheWayInFor, openedHere, walletIndexerFor } from './filing-judge.js';
 import { theVaultBuilder } from './vault-builder.js';
 import type { AccountAddress, CompanyLabel } from 'midnight-identity/profile/company-label';
 import { paidPublicly } from 'vaults-web-shared/public-payment.js';
@@ -382,10 +382,13 @@ export async function readCompany(personId: string, companyId: string): Promise<
     if (!(await keyringFor(personId))) return { of: OPENED.refused, why: ACT_REFUSAL.notSignedIn };
     sealed = await ask(SERVICE.company + companyId) as SealedAccount;
     /* Keys saved in another tab since are read first, so a person who opened them there is not asked again here, and a seat this device did not finish is finished. */
-    if (await keysOnTheWayIn(companyId, async () => sealed) === null) return { of: canOpenCompanies() ? OPENED.noKeysHere : OPENED.locked };
+    const keys = await keysOnTheWayIn(companyId, async () => sealed);
+    if (keys === null) return { of: canOpenCompanies() ? OPENED.noKeysHere : OPENED.locked };
     const opened = await openedHere(sealed);
     if (opened === null) return { of: OPENED.noKeysHere };
     account = opened;
+    /* The one-a-day anchor, not waited on: entering the company never waits on a proof, and one not made is made by the next. */
+    void anchoredOnTheWayInFor(sealed, keys, async () => opened);
     viewingKey = viewingKeyFor(sealed);
   } catch (e) {
     return { of: OPENED.refused, why: refusalOf(e) };

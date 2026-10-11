@@ -76,6 +76,7 @@ export const EXTRA_ARGUMENTS: Record<WitnessName, readonly unknown[]> = {
   withdrawSecret: [new Uint8Array(32).fill(0x2a)],
   policyOpening: [],
   periodSpent: [],
+  legTaken: [],
 };
 
 /**

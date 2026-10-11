@@ -43,7 +43,7 @@ import {
   currentDepositNonceKey, openNonceSecrets, recordsKeypairFrom, refileNonceSecret, startNonceSecret, startNonceSecretAgain,
   type NonceSecretReader,
 } from '../../../src/midnight/company-nonce-secret.js';
-import type { FiledPoolVersion } from '../../../src/midnight/vault-pool.js';
+import type { FiledPoolVersion, PassedOverVersion } from '../../../src/midnight/vault-pool.js';
 import type { WireRecord } from '../../../src/midnight/sealed-record-wire.js';
 
 /** The signer this device acts for, with what their device holds. */
@@ -168,9 +168,12 @@ export async function fileTheChainsSecretAsTheNewest(input: {
   if (all.length === 0) return 'none-names-it';
   const newestVersion = all[all.length - 1]!.version;
   for (let i = all.length - 1; i >= 0; i -= 1) {
-    const s = newestSecretOf(all[i]!.sealed);
+    /* A version the company's records passed over carries no bytes here. */
+    const v: FiledPoolVersion | PassedOverVersion = all[i]!;
+    if (v.neverEntered === true) continue;
+    const s = newestSecretOf(v.sealed);
     if (s === null || !(await input.secretIsTheVaults(s))) continue;
-    await store.put(input.vault, refileNonceSecret(all[i]!.sealed, input.vault, opener, newestVersion + 1));
+    await store.put(input.vault, refileNonceSecret(v.sealed, input.vault, opener, newestVersion + 1));
     return 'filed-again';
   }
   return 'none-names-it';

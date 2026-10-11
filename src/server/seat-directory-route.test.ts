@@ -20,6 +20,8 @@ import {
   companyRecordKey, directoryChangeMessage, FILING_REFUSAL, type ChainHolders, type DirectoryChange, type DirectoryEntry, type DirectoryFiling,
 } from '../midnight/seat-directory.js';
 import { signCompanyFiling, toCompanyWire, verifiedCompanyFiler, type SealedCompanyRecord } from '../midnight/sealed-record-wire.js';
+import { companyRecordEntry } from '../midnight/record-manifest.js';
+import { heldFiledBy } from '../testing/record-tree-double.js';
 import { HttpCompanyRecordStore, FilingNotBelieved, type FreshJudge, type WireSend } from 'vaults-web-shared/http-sealed-pool-store.js';
 import { directoryJudge, fileTheOwedDirectoryEntry, type OwedDirectoryEntry, type OwedEntryFiled } from 'vaults-web-shared/vault-page-doors.js';
 
@@ -56,6 +58,9 @@ let base = '';
 let server: ReturnType<express.Express['listen']>;
 const store = new MemoryStore();
 const records = new MemoryCompanyRecordStore();
+/** Every version of the proposals the device reads here, entered by the seat that filed it: nothing anchored yet. */
+const filedHere = async () => heldFiledBy(CO, (await Promise.all(['p1', 'p3', 'p4', 'p9'].map((id) => records.versions(CO, 'proposal', id)))).flat(),
+  [ADA, BO, CY].map((s) => s.signing.secret));
 /* The chain as the server reads it: the test sets who is seated and the approvals. */
 let chain: ChainHolders | null = null;
 /** Whether the server's read of the chain fails, as an indexer that is down does. */
@@ -207,7 +212,7 @@ describe('A COMPANY\'S OWN RECORDS, FILED BY ITS SEATS (CHECK S)', () => {
     const holders = async () => { reads += 1; const c = seated([ADA, BO]); return { ...c.seats, approvals: c.approvals, adoptedVaults: [], founding: ADA.seat, foundingCommittee: [ADA.committeeKey], account: ADDRESS }; };
     const judge = directoryJudge({
       accountId: CO, label: LABEL, holders, attested: everySeatAttested,
-      filings: async () => store.directoryFilingsOf(CO),
+      filings: async () => store.directoryFilingsOf(CO), anchored: filedHere,
     });
     const device = new HttpCompanyRecordStore(CO, sendAs('ada'), ADA.signing.secret, judge);
     expect((await device.get('proposal', 'p1'))!.version).toBe(1);
@@ -221,14 +226,14 @@ describe('A COMPANY\'S OWN RECORDS, FILED BY ITS SEATS (CHECK S)', () => {
     /* RED WHEN: a version is believed from a seat whose own wallet has not attested the records key its entry names. */
     const boUnattested: FreshJudge = directoryJudge({
       accountId: CO, label: LABEL, holders, attested: async () => (await everySeatAttested()).filter((x) => x.statement.seat !== BO.seat),
-      filings: async () => store.directoryFilingsOf(CO),
+      filings: async () => store.directoryFilingsOf(CO), anchored: filedHere,
     });
     await expect(new HttpCompanyRecordStore(CO, sendAs('ada'), ADA.signing.secret, boUnattested).get('proposal', 'p3')).rejects.toBeInstanceOf(FilingNotBelieved);
     expect((await new HttpCompanyRecordStore(CO, sendAs('ada'), ADA.signing.secret, judge).get('proposal', 'p3'))!.version).toBe(1);
     /* RED WHEN: a check made without a fresh answer from the wallet believes anything. */
     const noAnswer: FreshJudge = directoryJudge({
       accountId: CO, label: LABEL, holders: async () => { throw new Error('the wallet did not answer'); }, attested: everySeatAttested,
-      filings: async () => store.directoryFilingsOf(CO),
+      filings: async () => store.directoryFilingsOf(CO), anchored: filedHere,
     });
     await expect(new HttpCompanyRecordStore(CO, sendAs('ada'), ADA.signing.secret, noAnswer).get('proposal', 'p1')).rejects.toThrow(/could not be checked/);
     /* RED WHEN: bytes changed after filing are believed. */
@@ -237,6 +242,21 @@ describe('A COMPANY\'S OWN RECORDS, FILED BY ITS SEATS (CHECK S)', () => {
       return { status: 200, body: { kind: 'proposal', id: 'p1', filed: { ...w, body: w.body.replace('"version":1', '"version":1 ') } } };
     };
     await expect(new HttpCompanyRecordStore(CO, tampered, ADA.signing.secret, judge).get('proposal', 'p1')).rejects.toThrow(/digest/);
+  });
+
+  it('EACH READ ASKS ITS JUDGE FOR THE ONE RECORD IT READS, SO THAT RECORD IS WHAT IS PROVEN AGAINST THE ANCHOR', async () => {
+    const holders = async () => { const c = seated([ADA, BO]); return { ...c.seats, approvals: c.approvals, adoptedVaults: [], founding: ADA.seat, foundingCommittee: [ADA.committeeKey], account: ADDRESS }; };
+    const judge = directoryJudge({ accountId: CO, label: LABEL, holders, attested: everySeatAttested, filings: async () => store.directoryFilingsOf(CO), anchored: filedHere });
+    const asked: unknown[] = [];
+    const asking: FreshJudge = async (a) => { asked.push(a); return judge(a); };
+    const device = new HttpCompanyRecordStore(CO, sendAs('ada'), ADA.signing.secret, asking);
+    await device.get('proposal', 'p1');
+    await device.versions('proposal', 'p3');
+    /* RED WHEN: a read asks for nothing, or for another record than the one it reads - what it judges was never proven for it. */
+    expect(asked).toEqual([
+      { records: [{ store: 'company', kind: 'proposal', id: 'p1' }] },
+      { records: [{ store: 'company', kind: 'proposal', id: 'p3' }] },
+    ]);
   });
 });
 
@@ -256,11 +276,14 @@ describe('THE SERVER BELIEVES THE DIRECTORY A DEVICE BELIEVES, AGAINST THE CHAIN
   /** What a device whose wallet reads the chain as the server does now says of a version `seat` filed. */
   const deviceSays = async (seat: Seat, rec: SealedCompanyRecord): Promise<string | null> => {
     const c = chain!;
+    const signed = signCompanyFiling(rec, seat.signing.secret);
     const judge = await directoryJudge({
       accountId: CO, label: LABEL, attested: everySeatAttested, filings: async () => store.directoryFilingsOf(CO),
       holders: async () => ({ ...c.seats, approvals: c.approvals, adoptedVaults: [], founding: ADA.seat, foundingCommittee: [ADA.committeeKey], account: ADDRESS }),
+      /* The version as the seat filed it, entered by that seat: what is asked is only who may file it. */
+      anchored: async () => heldFiledBy(CO, [signed], [seat.signing.secret]),
     })();
-    return judge(seat.signing.publicKey, rec.kind, companyRecordKey(rec.kind, rec.id), rec.version);
+    return judge(seat.signing.publicKey, rec.kind, companyRecordKey(rec.kind, rec.id), companyRecordEntry(signed));
   };
   const before = () => chain;
   let kept: ChainHolders | null = null;

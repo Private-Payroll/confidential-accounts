@@ -21,6 +21,7 @@ import { storedSignerLeaf } from '../../../src/core/signer-leaf.js';
 import { MidnightCommitments } from '../../../src/midnight/commitments.js';
 import { WalletDidNotSign } from './wallet-committee.js';
 import type { Openable } from './wallet-sign-in.js';
+import { anchoredEntering } from '../../../src/testing/record-tree-double.js';
 
 /**
  * **A COMPANY ON A CHAIN IS CREATED FROM ITS FOUNDING SIGNER'S BROWSER IN TWO
@@ -516,7 +517,7 @@ describe('THE COMPANY\'S SIGNERS ARE READ ON THIS DEVICE FROM ITS ROSTER RECORD 
 
   it('THE FOUNDING SIGNER\'S DEVICE READS THE FIRST ROSTER ON ITS OWN SIGNING KEY, BEFORE ITS DIRECTORY ENTRY IS FILED', async () => {
     const { made, served } = await servedAfterTheFirstPress();
-    const opened = await keyring.openAccount(served, holders());
+    const opened = await keyring.openAccount(served, holders(), (id) => anchoredEntering(id));
     /* RED WHEN: the founding signer cannot read their own company before their entry is filed - they could then never set up their vault keys. */
     expect(opened?.signers.map((x) => [x.id, x.leafCommitment])).toEqual([[made.founding.seat.signerId, LEAF]]);
     expect(opened?.name).toBe('Acme Ltd');
@@ -529,8 +530,8 @@ describe('THE COMPANY\'S SIGNERS ARE READ ON THIS DEVICE FROM ITS ROSTER RECORD 
     /* The signers as an account record carried them before they were a record: a list that opens with the company's key. */
     const unsigned = sealAccount(openAccount(made.founding.account, viewingKey, made.founding.roster), viewingKey, []).sealedRoster!;
     /* RED WHEN: a device reads a company's signers from anything but a roster record a seat signed. */
-    await expect(keyring.openAccount({ ...withoutIt, sealedRoster: unsigned }, holders())).rejects.toThrow(NO_ROSTER_RECORD);
-    await expect(keyring.openAccount(withoutIt, holders())).rejects.toThrow(NO_ROSTER_RECORD);
+    await expect(keyring.openAccount({ ...withoutIt, sealedRoster: unsigned }, holders(), (id) => anchoredEntering(id))).rejects.toThrow(NO_ROSTER_RECORD);
+    await expect(keyring.openAccount(withoutIt, holders(), (id) => anchoredEntering(id))).rejects.toThrow(NO_ROSTER_RECORD);
   });
 
   it('A FIRST ROSTER NOT SIGNED BY THE FOUNDING SEAT IS REFUSED', async () => {
@@ -538,6 +539,6 @@ describe('THE COMPANY\'S SIGNERS ARE READ ON THIS DEVICE FROM ITS ROSTER RECORD 
     const { filedBy: _was, ...unsigned } = served.roster;
     const another = signCompanyFiling(unsigned, newSigningKeypair().secret);
     /* RED WHEN: a first roster signed by a key other than this device's own, with no founding entry to hold it to, is believed. */
-    await expect(keyring.openAccount({ ...served, roster: another }, holders())).rejects.toThrow(/does not believe the company's roster/u);
+    await expect(keyring.openAccount({ ...served, roster: another }, holders(), (id) => anchoredEntering(id))).rejects.toThrow(/does not believe the company's roster/u);
   });
 });

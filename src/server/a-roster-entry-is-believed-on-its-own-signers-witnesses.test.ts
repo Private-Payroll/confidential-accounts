@@ -25,11 +25,17 @@ import { signCompanyFiling, toCompanyWire, type SealedCompanyRecord } from '../m
 import { rosterBelievedHere, rosterHere, type RosterDoors, type RosterReads } from 'vaults-web-shared/roster-here.js';
 import { COMMITTEE_CHANGE_REFUSAL, committeeChangeRefusal, type CommitteeChangeView } from 'vaults-web-shared/committee-change-on-device.js';
 import { whyNotWhole } from 'vaults-web-shared/handover-check.js';
-import { aDevicesRosterMemory } from '../testing/a-roster-a-seat-filed.js';
 import { signerRoutes } from './signer-routes.js';
 import {
-  aCompanyOfTwoSeats, acmeReads, ADA, ADDRESS, BO, chains, CO, KEY, LABEL, sendAs, store, type Seat,
+  aCompanyOfTwoSeats, acmeChain, acmeDirectoryWithItsFold, acmeReads, ADA, ADDRESS, apiAs, BO, chains, CO, EVE, KEY, LABEL, OTHER, OTHER_ADDRESS, OTHER_LABEL, sendAs, store,
+  type Seat,
 } from './a-company-of-two-seats.test-support.js';
+import { anchoredOver, anchorFunctions, anchorSentInATest } from '../testing/record-tree-double.js';
+import { sign } from '../core/crypto.js';
+import { directoryChangeMessage, type DirectoryChange, type DirectoryFiling } from '../midnight/seat-directory.js';
+import { manifestServiceFor, treeServiceFor } from 'vaults-web-shared/record-entered-here.js';
+import { anchorServiceFor, anchorTheRecordsHere } from 'vaults-web-shared/records-anchored-here.js';
+import { companyRecordEntry } from '../midnight/record-manifest.js';
 
 const ID: Record<string, string> = { ada: 'sgn_ada', bo: 'sgn_bo' };
 
@@ -42,7 +48,8 @@ aCompanyOfTwoSeats((app, deps) => {
     signedIn: deps.signedIn, member: deps.member, store, records: () => deps.records, directoryOf: deps.directoryOf,
     ledger: { status: async () => null, holdsSigner: async (_a, seat) => (chains.get(CO)?.seats.seats ?? []).includes(String(seat)) },
   }));
-});
+/* The founding device filed the first roster with the company, and anchored it first: Ada's seat founded it. */
+}, { roster: () => signedFoundingRoster(CO, HONEST, KEY, ADA.signingSecret as Hex) });
 
 /** A seat's own vault keys, signed with its own signing key, with its wallet's statement over its records key. */
 const keysOf = (s: Seat, signerId: string, signingSecret = s.signingSecret as Hex) => {
@@ -65,8 +72,6 @@ beforeAll(() => {
     recovery: { signerIds: [], threshold: 1 }, contractAddress: ADDRESS, companyLabel: LABEL,
   } as unknown as Account;
   store.putAccount(sealAccount(account, KEY, [], 0));
-  /* The founding device filed the first roster with the company: Ada's seat is the one the account was deployed with. */
-  expect(store.fileRoster(signedFoundingRoster(CO, HONEST, KEY, ADA.signingSecret as Hex))).toBeNull();
 });
 
 /** The company as the service serves it now. */
@@ -87,6 +92,7 @@ const doorsOf = (s: Seat): RosterDoors => ({
     return r.body;
   },
   accountId: CO, viewingKey: KEY, signingSecret: s.signingSecret as Hex, label: LABEL, account: ADDRESS, reads: acmeReads,
+  entered: s.entered,
 });
 
 /** Ada's device files the roster's next version as `next` says, through the service's own roster route, which takes it from her believed seat. */
@@ -99,6 +105,8 @@ const adaFiles = async (next: RosterSecrets) => {
   });
   /* The service files it: Ada's seat may file the roster, and it cannot open the roster to see what she changed. */
   expect(r.status).toBe(201);
+  /* Her device enters it in the company's records, as it enters everything it files. */
+  await ADA.entered.enter([companyRecordEntry(rec)]);
 };
 const withBo = (edit: (bo: Signer) => Signer): RosterSecrets => ({ name: 'Acme', signers: HONEST.signers.map((x) => (x.id === ID.bo ? edit(x) : x)) });
 const shown = (a: Account) => a.signers.map((x) => x.id).sort();
@@ -301,6 +309,61 @@ describe('EACH ROSTER ENTRY IS BELIEVED ON ITS OWN SIGNER\'S WITNESSES, NOT ON W
       .rejects.toThrow(/signed by a seat other than the founding signer's/u);
   });
 
+  it('A FIRST ROSTER IS BELIEVED ONLY AS THE COMPANY\'S FIRST ANCHOR HOLDS IT, ON THE FOUNDING SEAT\'S OWN DEVICE TOO, AND ONLY WHILE NOTHING NEWER IS NAMED', async () => {
+    const readServed = async (s: Seat, roster: SealedCompanyRecord) => rosterBelievedHere({ ...(await served()), roster }, KEY, {
+      accountId: CO, label: LABEL, account: ADDRESS, reads: acmeReads,
+      own: { signerId: ID[s.person]!, signingPublicKey: signingPublicKeyOf(s.signingSecret as Hex) },
+    });
+    /* Ada's seat signs a first roster again: the same signers, sealed again, so other bytes than the first anchor holds. */
+    const again = signCompanyFiling(sealRoster(CO, HONEST, 1, 0, KEY), ADA.signingSecret as Hex);
+    for (const s of [ADA, BO]) {
+      /* RED WHEN: a first roster the founding seat signed is believed though the company's first anchor holds another - on her own device too. */
+      await expect(readServed(s, again), s.person).rejects.toThrow(/not the bytes the company's records anchor on chain/u);
+    }
+    const first = store.rosterVersions(CO)[0]!;
+    if ((await served()).roster!.version === 1) await adaFiles(HONEST);
+    for (const s of [ADA, BO]) {
+      /* RED WHEN: the first roster is read as the newest while the company's records name a newer one. */
+      await expect(readServed(s, first), s.person).rejects.toThrow(/a newer version of it is in the company's records and the service did not give it/u);
+    }
+  });
+
+  it('ON THE FOUNDING SIGNER\'S OWN DEVICE, BEFORE ANYTHING IS ANCHORED, ITS FIRST ROSTER IS READ ONLY WHILE NO NEWER VERSION IS NAMED', async () => {
+    /* Eve's company, kept sealed under the company's key, nothing of it anchored on its chain: what her own device reads of it. */
+    store.putAccount({ ...store.getAccount(OTHER)!, ...sealAccount({
+      id: OTHER, name: 'Other', createdAt: 'now', signers: [], policy: { threshold: 1 }, wrappedKeys: [],
+      recovery: { signerIds: [], threshold: 1 }, contractAddress: OTHER_ADDRESS, companyLabel: OTHER_LABEL,
+    } as unknown as Account, KEY, [], 0), memberUserIds: store.getAccount(OTHER)!.memberUserIds });
+    const otherReads = {
+      anchored: anchoredOver(apiAs('eve'), OTHER),
+      filings: async () => store.directoryFilingsOf(OTHER),
+      holders: async () => ({ ...chains.get(OTHER)!.seats, approvals: 1, adoptedVaults: [], account: OTHER_ADDRESS }) as never,
+    };
+    const eveFiles = async (version: number) => {
+      const eve: Signer = {
+        id: 'sgn_eve', leafCommitment: EVE.seat as Hex, userId: 'eve', name: 'eve', status: 'active',
+        signingPublicKey: EVE.statement.signingKey as Hex, wrappingPublicKey: 'ab'.repeat(32) as Hex, role: 'admin',
+      };
+      const rec = signCompanyFiling(sealRoster(OTHER, { name: 'Other', signers: [eve] }, version, 0, KEY), EVE.signingSecret as Hex);
+      expect(store.fileRoster(rec)).toBeNull();
+      await EVE.entered.enter([companyRecordEntry(rec)]);
+      return rec;
+    };
+    const readOnHers = async (roster: SealedCompanyRecord) => {
+      const account = (await sendAs('eve')(`/api/accounts/${OTHER}`, { method: 'GET' })).body as SealedAccount;
+      return rosterBelievedHere({ ...account, roster } as never, KEY, {
+        accountId: OTHER, label: OTHER_LABEL, account: OTHER_ADDRESS, reads: otherReads,
+        own: { signerId: 'sgn_eve', signingPublicKey: signingPublicKeyOf(EVE.signingSecret as Hex) },
+      });
+    };
+    const first = await eveFiles(1);
+    /* Her device made it, and nothing newer is named: read before anything is anchored. */
+    await expect(readOnHers(first)).resolves.toBeDefined();
+    await eveFiles(2);
+    /* RED WHEN: on the founding signer's own device, before the first anchor, a first roster is read as the newest while the company's records name a newer one. */
+    await expect(readOnHers(first)).rejects.toThrow(/a newer version of it is in the company's records and the service did not give it/u);
+  });
+
   it('A VERSION FILED BY A SEAT THE DEVICE DOES NOT BELIEVE IS REFUSED WHOLE', async () => {
     const now = await served();
     const forged = signCompanyFiling(sealRoster(CO, HONEST, now.roster!.version + 1, 0, KEY), newSigningKeypair().secret);
@@ -327,17 +390,16 @@ describe('A ROSTER THAT LEAVES OUT A SIGNER THE CHAIN SEATS IS REFUSED, AND NO C
     directoryEntry: cysEntry,
   };
   const WITH_CY: RosterSecrets = { name: 'Acme', signers: [...HONEST.signers, CY] };
-  /* Each person's device keeps what it believed of the roster between its reads, as the keyring keeps it with their keys. */
-  const kept = { ada: aDevicesRosterMemory(), bo: aDevicesRosterMemory(), cy: aDevicesRosterMemory() };
+  /* Each person's device, reading the roster with nothing kept from an earlier read: the anchor on chain is what a later read is held to. */
   const devices = [
-    { who: 'ada', own: { signerId: ID.ada!, signingPublicKey: signingPublicKeyOf(ADA.signingSecret as Hex) }, memory: kept.ada },
-    { who: 'bo', own: { signerId: ID.bo!, signingPublicKey: signingPublicKeyOf(BO.signingSecret as Hex) }, memory: kept.bo },
-    { who: 'cy', own: { signerId: 'sgn_cy', signingPublicKey: cy.publicKey }, memory: kept.cy },
+    { who: 'ada', own: { signerId: ID.ada!, signingPublicKey: signingPublicKeyOf(ADA.signingSecret as Hex) } },
+    { who: 'bo', own: { signerId: ID.bo!, signingPublicKey: signingPublicKeyOf(BO.signingSecret as Hex) } },
+    { who: 'cy', own: { signerId: 'sgn_cy', signingPublicKey: cy.publicKey } },
   ];
-  const readsWith = (memory: RosterReads['believed']): RosterReads => ({ filings: acmeReads.filings, holders: acmeReads.holders, believed: memory });
-  const readKeeping = async (d: (typeof devices)[number], rec?: SealedCompanyRecord) =>
+  const reads: RosterReads = { filings: acmeReads.filings, holders: acmeReads.holders, anchored: acmeReads.anchored };
+  const readOn = async (d: (typeof devices)[number], rec?: SealedCompanyRecord) =>
     rosterBelievedHere({ ...(await served()), ...(rec === undefined ? {} : { roster: rec }) }, KEY, {
-      accountId: CO, label: LABEL, account: ADDRESS, reads: readsWith(d.memory), own: d.own,
+      accountId: CO, label: LABEL, account: ADDRESS, reads, own: d.own,
     });
   /* The change that would bring the company's account to a committee of Ada's and Bo's keys alone, threshold two. */
   const toAdaAndBo: CommitteeChangeView = {
@@ -352,7 +414,7 @@ describe('A ROSTER THAT LEAVES OUT A SIGNER THE CHAIN SEATS IS REFUSED, AND NO C
     await adaFiles(WITH_CY);
     first = (await served()).roster!;
     for (const d of devices) {
-      const read = await readKeeping(d);
+      const read = await readOn(d);
       /* RED WHEN: an honest roster with a signer witnessed only by the entry his wallet signed is not read whole. */
       expect(read.refused).toEqual([]);
       expect(read.account.notBelieved).toEqual([]);
@@ -361,30 +423,28 @@ describe('A ROSTER THAT LEAVES OUT A SIGNER THE CHAIN SEATS IS REFUSED, AND NO C
 
   it('A VERSION WITHOUT ANOTHER SIGNER\'S ENTRY IS REFUSED ON EVERY DEVICE, ONE THAT READ IT BEFORE OR NOT', async () => {
     await adaFiles({ name: 'Acme', signers: WITH_CY.signers.filter((x) => x.id !== ID.bo) });
-    for (const d of [...devices, { ...devices[0]!, memory: aDevicesRosterMemory() }]) {
+    for (const d of devices) {
       /* RED WHEN: a device reads a roster that has no entry for a seat the account holds on the chain. */
-      await expect(readKeeping(d), d.who).rejects.toThrow(/has no entry for 1 seat\(s\) the company's account holds on the chain/u);
+      await expect(readOn(d), d.who).rejects.toThrow(/has no entry for 1 seat\(s\) the company's account holds on the chain/u);
     }
     await adaFiles(WITH_CY);
-    for (const d of devices) expect((await readKeeping(d)).refused).toEqual([]);
+    for (const d of devices) expect((await readOn(d)).refused).toEqual([]);
   });
 
-  it('A VERSION WITH THE ENTRY CY\'S WALLET SIGNED STRIPPED IS REFUSED ON EVERY DEVICE THAT BELIEVED HIM', async () => {
+  it('A VERSION WITH THE ENTRY CY\'S WALLET SIGNED STRIPPED BUILDS NO COMMITTEE WITHOUT HIM ON ANY OTHER SEAT\'S DEVICE', async () => {
     await adaFiles({ name: 'Acme', signers: WITH_CY.signers.map((x) => (x.id === 'sgn_cy' ? { ...x, directoryEntry: null } : x)) });
     try {
-      for (const d of devices) {
-        /* RED WHEN: a device that believed Cy on his own wallet's entry reads a later version that no longer shows him so. */
-        await expect(readKeeping(d), d.who).rejects.toThrow(/no longer shows, as this device believed before, the signer at 1 seat/u);
+      for (const d of devices.filter((x) => x.who !== 'cy')) {
+        /* Every other seat's device shows Ada and Bo, whether it read the roster with Cy before or not. */
+        const read = await readOn(d);
+        expect(read.refused.map((r) => r.why), d.who).toEqual(['no-entry-of-their-own']);
+        /* RED WHEN: a seat the chain holds with no believed signer is not reported, so nothing stops a committee without Cy. */
+        expect(read.account.notBelieved, d.who).toEqual([CY_SEAT]);
+        const got = committeeChangeRefusal(toAdaAndBo, ADA.committeeKey, read.account, { signerId: ID.ada! });
+        /* RED WHEN: the wallet would be asked to sign a committee of Ada and Bo alone while the chain still seats Cy. */
+        expect(got?.code, d.who).toBe(COMMITTEE_CHANGE_REFUSAL.refused);
+        expect(got?.why, d.who).toContain(whyNotWhole(read.account)!);
       }
-      /* A device that never read the roster before shows Ada and Bo, and no committee is built from what it shows. */
-      const fresh = await readKeeping({ ...devices[0]!, memory: aDevicesRosterMemory() });
-      expect(fresh.refused.map((r) => r.why)).toEqual(['no-entry-of-their-own']);
-      /* RED WHEN: a seat the chain holds with no believed signer is not reported, so nothing stops a committee without Cy. */
-      expect(fresh.account.notBelieved).toEqual([CY_SEAT]);
-      const got = committeeChangeRefusal(toAdaAndBo, ADA.committeeKey, fresh.account, { signerId: ID.ada! });
-      /* RED WHEN: the wallet would be asked to sign a committee of Ada and Bo alone while the chain still seats Cy. */
-      expect(got?.code).toBe(COMMITTEE_CHANGE_REFUSAL.refused);
-      expect(got?.why).toContain(whyNotWhole(fresh.account)!);
     } finally {
       await adaFiles(WITH_CY);
     }
@@ -392,17 +452,66 @@ describe('A ROSTER THAT LEAVES OUT A SIGNER THE CHAIN SEATS IS REFUSED, AND NO C
 
   it('AN OLDER VERSION, OR ANOTHER RECORD UNDER A VERSION ALREADY BELIEVED, IS REFUSED ON A DEVICE THAT READ THE NEWER ONE', async () => {
     for (const d of devices) {
-      /* RED WHEN: a device reads a version older than one it already believed. */
-      await expect(readKeeping(d, first), d.who).rejects.toThrow(/this device already believed version/u);
+      /* RED WHEN: a device reads a version older than the newest the company's records name - the service withholding the newest.
+       * The anchor, and nothing a device kept, is what refuses it. */
+      await expect(readOn(d, first), d.who).rejects.toThrow(/a newer version of it is in the company's records and the service did not give it/u);
     }
     const now = (await served()).roster!;
     /* Bo's device reads the version now served, and is then served another record under that version. */
-    expect((await readKeeping(devices[1]!)).version).toBe(now.version);
+    expect((await readOn(devices[1]!)).version).toBe(now.version);
     const twin = signCompanyFiling(sealRoster(CO, WITH_CY, now.version, 0, KEY), ADA.signingSecret as Hex);
-    /* RED WHEN: a second record under the version a device believed is read as that version. */
-    await expect(readKeeping(devices[1]!, twin)).rejects.toThrow(/is not the version \d+ this device already believed/u);
+    /* RED WHEN: a second record under the version a device believed is read as that version - bytes no entry names. */
+    await expect(readOn(devices[1]!, twin)).rejects.toThrow(/no entry in the company's records names it/u);
     /* The committee as the roster names it, with Cy, is not refused for want of a signer. */
-    const whole = await readKeeping(devices[0]!);
+    const whole = await readOn(devices[0]!);
     expect(whyNotWhole(whole.account)).toBeNull();
+  });
+});
+
+describe('A ROSTER SHORT OF A SEAT THE CHAIN HOLDS, WHILE A DIRECTORY VERSION IS PASSED OVER', () => {
+  /** Ada's device anchoring the company's records, the service handing it every directory filing but `without`. */
+  const anchorAsAda = (without: number) => anchorTheRecordsHere({
+    accountId: CO,
+    material: { signingSecret: ADA.signingSecret as Hex, blinding: '22'.repeat(32) as Hex, scope: '33'.repeat(32) as Hex } as never,
+    manifest: manifestServiceFor(apiAs('ada')),
+    tree: treeServiceFor(apiAs('ada')),
+    directory: () => acmeDirectoryWithItsFold(),
+    directoryFilings: async () => store.directoryFilingsOf(CO).filter((f) => f.version !== without),
+    onChain: acmeChain.onChain,
+    service: {
+      callState: async () => ({ account: ADDRESS }) as never,
+      sendProven: async (_c, tx) => {
+        const { previous, batch, held, tag } = JSON.parse(tx) as { previous: Hex; batch: Hex; held: { approvals: number; signerRoot: Hex }; tag: Hex };
+        acmeChain.move(previous, batch, held, tag);
+      },
+      sealedProposals: async (c) => store.listProposals(c),
+      foundingRecords: anchorServiceFor(apiAs('ada')).foundingRecords,
+    },
+    builder: { ...anchorFunctions, anchor: anchorSentInATest },
+  });
+  /** Ada's role set again by her own quorum of one, as the directory's next version. */
+  const adaAdmin = async (): Promise<number> => {
+    const version = store.directoryFilingsOf(CO).length + 1;
+    const unsigned = { kind: 'role', seat: ADA.seat, role: 'admin', threshold: 1, signatures: [] } as unknown as DirectoryChange;
+    const signature = sign(directoryChangeMessage(CO, version, unsigned), ADA.signingSecret);
+    const filing = { company: CO, version, change: { ...unsigned, signatures: [{ publicKey: ADA.statement.signingKey as Hex, signature }] } } as DirectoryFiling;
+    expect((await sendAs('ada')(`/api/accounts/${CO}/directory/${version}`, { method: 'POST', body: JSON.stringify(filing) })).status).toBe(201);
+    return version;
+  };
+
+  it('IS REFUSED WHOLE, SAYING THE WAY PAST THE VERSION PASSED OVER RATHER THAN ONLY ASKING A SIGNER TO OPEN IT', async () => {
+    const passed = await adaAdmin();
+    await adaAdmin();
+    await anchorAsAda(passed);
+    const seat = 'c3'.repeat(32);
+    const was = chains.get(CO)!;
+    /* The chain holds a seat nobody invited and the roster has no entry for. */
+    chains.set(CO, { seats: { ...was.seats, seats: [...was.seats.seats, seat] }, approvals: was.approvals });
+    try {
+      /* RED WHEN: the refusal for a roster short of a seat leaves out the way past a directory version passed over. */
+      await expect(readOn(ADA)).rejects.toThrow(new RegExp(`it has no entry for 1 seat\\(s\\) .* The way past it: the company's records passed over version ${passed} of its directory`, 'u'));
+    } finally {
+      chains.set(CO, was);
+    }
   });
 });

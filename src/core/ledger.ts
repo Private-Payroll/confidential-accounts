@@ -62,6 +62,7 @@
  *   - there is no DUST accounting. Fee sponsorship for contract-owned accounts is
  *     one of the two unresolved questions and is deliberately not faked here.
  */
+import type { Vouched } from '../midnight/record-tree.js';
 import { hmac } from '@noble/hashes/hmac.js';
 import type { CompanyLabel } from 'midnight-identity/profile/company-label';
 import type { WiringName } from './provenance.js';
@@ -210,6 +211,15 @@ export interface StateChange {
    * secret moves here.
    */
   salt: Hex;
+  /**
+   * **WHAT A PAYROLL RUN'S SALT IS MADE FROM**, sealed beside the salt: the head
+   * of the company's records its raiser checked and a random value. Every
+   * payroll run's salt is the account's `retrySaltOf(leg, fresh)`, its fresh
+   * half made from these wherever it is needed (`vouchedFreshOf`), the leg none
+   * for a leg of a run and the root of the leg it pays again for a retry. The
+   * proposal is the one record that holds them. Absent on every other proposal.
+   */
+  vouched?: Vouched;
 }
 
 /**

@@ -24,7 +24,8 @@ import type { VaultKeysOffer } from '../core/vault-keys.js';
 import type { ChainHolders } from '../midnight/seat-directory.js';
 import { foldOffersHere, offerVaultKeysHere, type RosterDoors } from 'vaults-web-shared/roster-here.js';
 import { sealRoster, signedFoundingRoster } from '../core/roster-record.js';
-import { signCompanyFiling, toCompanyWire } from '../midnight/sealed-record-wire.js';
+import { signCompanyFiling, toCompanyWire, type SealedCompanyRecord } from '../midnight/sealed-record-wire.js';
+import { companyRecordEntry } from '../midnight/record-manifest.js';
 import { signerRoutes } from './signer-routes.js';
 import {
   aCompanyOfTwoSeats, acmeReads, ADA, ADDRESS, BO, chains, CO, KEY, LABEL, seatOf, sendAs, store, type Seat,
@@ -45,27 +46,38 @@ aCompanyOfTwoSeats((app, deps) => {
     /* The chain holds every seat the company's directory chain does. */
     ledger: { status: async () => null, holdsSigner: async (_a, seat) => (chains.get(CO)?.seats.seats ?? []).includes(String(seat)) },
   }));
-});
+}, { roster: () => acmesFirstRoster() });
 
-/** Acme's account, and its first roster, filed by Ada's founding seat: Ada, Bo and Cy, each under the filing key their wallet's entry names. */
-beforeAll(async () => {
+/** Acme's signers: Ada, Bo and Cy, each under the filing key their wallet's entry names. */
+function acmesSigners() {
   const signer = (s: Seat) => ({
     id: ID[s.person]!, leafCommitment: s.seat as Hex, userId: s.person, name: s.person, status: 'active' as const,
     signingPublicKey: s.statement.signingKey as Hex, wrappingPublicKey: 'ab'.repeat(32) as Hex, role: 'admin' as const,
   });
-  const account = {
-    id: CO, name: 'Acme', createdAt: 'now', signers: [ADA, BO, CY].map(signer), policy: { threshold: 1 }, wrappedKeys: [],
-    recovery: { signerIds: [], threshold: 1 }, contractAddress: ADDRESS, companyLabel: LABEL,
-  } as unknown as Account;
-  store.putAccount(sealAccount(account, KEY, [], 0));
-  /* Ada has given her vault keys: her own wallet's statement over her records key is in her entry, which is what her filings are believed by. */
+  return [ADA, BO, CY].map(signer);
+}
+
+/**
+ * Acme's first roster, filed and anchored by Ada's founding seat. Ada has given her vault keys: her own wallet's
+ * statement over her records key is in her entry, which is what her filings are believed by.
+ */
+function acmesFirstRoster() {
   const adas = walletOf(ADA).recordsKey;
-  const withAdasKeys = account.signers.map((x) => (x.id !== ID.ada ? x : {
+  const withAdasKeys = acmesSigners().map((x) => (x.id !== ID.ada ? x : {
     ...x, vaultKeys: signVaultKeys(CO, ID.ada!, {
       committeeKey: ADA.committeeKey as never, recordsKey: adas.recordsKey as Hex, recordsKeyStatement: adas.signature as Hex, recordsKeySeat: ADA.seat as Hex,
     }, ADA.signingSecret as Hex),
   }));
-  expect(store.fileRoster(signedFoundingRoster(CO, { name: 'Acme', signers: withAdasKeys }, KEY, ADA.signingSecret as Hex))).toBeNull();
+  return signedFoundingRoster(CO, { name: 'Acme', signers: withAdasKeys }, KEY, ADA.signingSecret as Hex);
+}
+
+/** Acme's account, its first roster filed with it by Ada's founding seat. */
+beforeAll(async () => {
+  const account = {
+    id: CO, name: 'Acme', createdAt: 'now', signers: acmesSigners(), policy: { threshold: 1 }, wrappedKeys: [],
+    recovery: { signerIds: [], threshold: 1 }, contractAddress: ADDRESS, companyLabel: LABEL,
+  } as unknown as Account;
+  store.putAccount(sealAccount(account, KEY, [], 0));
   /* Cy files his entry while the chain holds his seat, and then it holds it no longer. */
   chains.set(CO, seated([ADA, BO, CY]));
   expect((await sendAs('cy')(`/api/accounts/${CO}/directory/4`, { method: 'POST', body: JSON.stringify({ company: CO, version: 4, change: { kind: 'claim', entry: CY.entry } }) })).status).toBe(201);
@@ -80,7 +92,7 @@ const api = (person: string) => async (path: string, init?: RequestInit) => {
 /** One seat's device, reading and filing the roster under the filing key its entry names. */
 const deviceOf = (s: Seat): RosterDoors => ({
   api: api(s.person), accountId: CO, viewingKey: KEY, signingSecret: s.signingSecret as Hex, label: LABEL, account: ADDRESS,
-  reads: acmeReads,
+  reads: acmeReads, entered: s.entered,
 });
 /** What a seat's wallet released for this company, and the statement it signed over the records key. */
 const walletOf = (s: Seat) => ({
@@ -97,6 +109,16 @@ const rosterNow = async () => {
   return { account: openAccount(rec as never, KEY), version: rec.roster?.version ?? 0 };
 };
 const keysOf = async (s: Seat) => rosterVaultKeys((await rosterNow()).account).find((r) => r.signerId === ID[s.person])!.keys;
+
+
+/** Ada's device files the roster's next version through the service's own roster route, and enters it once kept: the service's answer. */
+const rosterFiledByAda = async (rec: SealedCompanyRecord, rest: { folded: string[]; index: unknown }) => {
+  const r = await sendAs('ada')(`/api/accounts/${CO}/roster`, {
+    method: 'POST', body: JSON.stringify({ roster: { version: rec.version, message: toCompanyWire(rec) }, ...rest }),
+  });
+  if (r.status === 201) await ADA.entered.enter([companyRecordEntry(rec)]);
+  return r;
+};
 
 describe('A NEW SIGNER\'S VAULT KEYS, OFFERED', () => {
   it('AN OFFER SIGNED BY A DIFFERENT KEY THAN THE ONE THE SEAT\'S OWN DIRECTORY ENTRY NAMES IS REFUSED, AND NOTHING IS KEPT', async () => {
@@ -157,6 +179,11 @@ describe('OFFERS, FOLDED BY A SEAT THE COMPANY BELIEVES', () => {
     expect((await keysOf(ADA))?.committeeKey).toEqual(ADA.committeeKey);
     /* The roster's next version is a record Ada's seat filed, and the index of the company's vault keys is the one made from it. */
     expect((await rosterNow()).version).toBe(2);
+    /* RED WHEN: a roster filed from a device is not entered in the company's records, or as other bytes than the one kept. */
+    /* The first roster was entered as Acme was founded; the version filed here is entered beside it. */
+    const entered = store.manifestOf(CO).entries.filter((e) => e.store === 'company' && e.kind === 'roster' && e.version > 1);
+    expect(entered.map(({ filedBy: _f, ...body }) => body)).toEqual([companyRecordEntry(store.newestRoster(CO)!)]);
+    expect(entered[0]!.filedBy.publicKey).toBe(ADA.statement.signingKey);
     /* Bo's entry keeps the directory entry his own wallet signed, beside his keys. */
     const bo = (await rosterNow()).account.signers.find((x) => x.id === ID.bo)!;
     expect(bo.directoryEntry?.statement).toEqual(BO.statement);
@@ -242,9 +269,7 @@ describe('OFFERS, FOLDED BY A SEAT THE COMPANY BELIEVES', () => {
     const file = async (index: ReturnType<typeof vaultKeyIndexOf>) => {
       const version = store.newestRoster(CO)!.version + 1;
       const rec = signCompanyFiling(sealRoster(CO, { name: 'Acme', signers: now.account.signers }, version, 0, KEY), ADA.signingSecret as Hex);
-      const r = await sendAs('ada')(`/api/accounts/${CO}/roster`, {
-        method: 'POST', body: JSON.stringify({ roster: { version, message: toCompanyWire(rec) }, folded: [BO.seat], index }),
-      });
+      const r = await rosterFiledByAda(rec, { folded: [BO.seat], index });
       expect(r.status).toBe(201);
     };
     /* A filing that names Bo's offer as folded, with an index that does not hold his keys. */
@@ -286,9 +311,7 @@ describe('OFFERS, FOLDED BY A SEAT THE COMPANY BELIEVES', () => {
     const version = store.newestRoster(CO)!.version + 1;
     const signers = now.account.signers.map((x) => (x.id === ID.bo ? { ...x, rights: { mayApprove: false, everyVault: false, onVaults: [] } } : x));
     const rec = signCompanyFiling(sealRoster(CO, { name: 'Acme', signers }, version, 0, KEY), ADA.signingSecret as Hex);
-    expect((await sendAs('ada')(`/api/accounts/${CO}/roster`, {
-      method: 'POST', body: JSON.stringify({ roster: { version, message: toCompanyWire(rec) }, folded: [], index: vaultKeyIndexOf({ id: CO, signers }) }),
-    })).status).toBe(201);
+    expect((await rosterFiledByAda(rec, { folded: [], index: vaultKeyIndexOf({ id: CO, signers }) })).status).toBe(201);
     await offer(BO);
     const folded = await foldOffersHere(deviceOf(ADA));
     /* RED WHEN: a device folds an offer into an entry it does not believe, and files that entry on as if it did. */
@@ -303,18 +326,14 @@ describe('OFFERS, FOLDED BY A SEAT THE COMPANY BELIEVES', () => {
     }, ADA.signingSecret as Hex) } : x));
     const v2 = version + 1;
     const rec2 = signCompanyFiling(sealRoster(CO, { name: 'Acme', signers: rewritten }, v2, 0, KEY), ADA.signingSecret as Hex);
-    expect((await sendAs('ada')(`/api/accounts/${CO}/roster`, {
-      method: 'POST', body: JSON.stringify({ roster: { version: v2, message: toCompanyWire(rec2) }, folded: [], index: vaultKeyIndexOf({ id: CO, signers: rewritten }) }),
-    })).status).toBe(201);
+    expect((await rosterFiledByAda(rec2, { folded: [], index: vaultKeyIndexOf({ id: CO, signers: rewritten }) })).status).toBe(201);
     /* RED WHEN: a fold writes into an entry the device refuses for anything but the witness the offer brings. */
     expect((await foldOffersHere(deviceOf(ADA))).folded).toEqual([]);
     expect(store.newestRoster(CO)!.version).toBe(v2);
     /* The honest roster filed again, for the cases after this one. */
     const v3 = v2 + 1;
     const rec3 = signCompanyFiling(sealRoster(CO, { name: 'Acme', signers: now.account.signers }, v3, 0, KEY), ADA.signingSecret as Hex);
-    expect((await sendAs('ada')(`/api/accounts/${CO}/roster`, {
-      method: 'POST', body: JSON.stringify({ roster: { version: v3, message: toCompanyWire(rec3) }, folded: [BO.seat], index: vaultKeyIndexOf({ id: CO, signers: now.account.signers }) }),
-    })).status).toBe(201);
+    expect((await rosterFiledByAda(rec3, { folded: [BO.seat], index: vaultKeyIndexOf({ id: CO, signers: now.account.signers }) })).status).toBe(201);
     expect(await offers()).toEqual([]);
   });
 
@@ -329,9 +348,7 @@ describe('OFFERS, FOLDED BY A SEAT THE COMPANY BELIEVES', () => {
     const rec = signCompanyFiling(sealRoster(CO, { name: 'Acme', signers }, version, 0, KEY), ADA.signingSecret as Hex);
     chains.set(CO, seated([ADA, BO, DEE]));
     try {
-      expect((await sendAs('ada')(`/api/accounts/${CO}/roster`, {
-        method: 'POST', body: JSON.stringify({ roster: { version, message: toCompanyWire(rec) }, folded: [], index: vaultKeyIndexOf({ id: CO, signers }) }),
-      })).status).toBe(201);
+      expect((await rosterFiledByAda(rec, { folded: [], index: vaultKeyIndexOf({ id: CO, signers }) })).status).toBe(201);
       /* An offer for Dee's seat signed by Bo's wallet, which already signed Bo's entry: a service that kept it, as one could. */
       const bos = identityFromSecret(new Uint8Array(32).fill(BO.n));
       const entry = signDirectoryEntry(bos, LABEL, ADDRESS, new Uint8Array(32).fill(BO.n + 100), DEE.statement.signingKey, DEE.seat);

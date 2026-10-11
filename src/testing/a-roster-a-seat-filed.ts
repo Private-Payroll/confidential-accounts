@@ -20,18 +20,7 @@ import type { SealedAccount } from '../core/types.js';
 import { signCompanyFiling, type SealedCompanyRecord } from '../midnight/sealed-record-wire.js';
 import type { DirectoryFiling } from '../midnight/seat-directory.js';
 import { directorySeats } from './directory-seats.js';
-
-/** What one device keeps of a company's roster between reads: in memory, for a test's device. */
-export interface ADevicesRosterMemory {
-  read(): { readonly version: number; readonly digest: string; readonly wallets: Readonly<Record<string, string>> } | null;
-  keep(now: { readonly version: number; readonly digest: string; readonly wallets: Readonly<Record<string, string>> }): Promise<void>;
-}
-
-/** A device's memory of a company's roster, empty at first, as the keyring keeps it with a person's keys. */
-export const aDevicesRosterMemory = (): ADevicesRosterMemory => {
-  let kept: ReturnType<ADevicesRosterMemory['read']> = null;
-  return { read: () => kept, keep: async (now) => { kept = structuredClone(now); } };
-};
+import { aCompanysRecords } from './record-tree-double.js';
 
 interface RosterStore {
   getAccount(accountId: string): SealedAccount | null;
@@ -72,14 +61,24 @@ export function aRosterASeatFiled(
     seats[0]!.signingSecret as Hex,
   );
   const rec = store.getAccount(accountId)!;
+  /*
+   * The company's records: what each seat files is entered here by that seat, and every read folds it, after the
+   * first batch the first seat anchored with the roster in it, founding the company on the test's chain.
+   */
+  /* The first seat's own committee key, which held the account from its deploy on that seat's device. */
+  const foundingCommittee = committeeKeyFor(identityFromSecret(new Uint8Array(32).fill(seats[0]!.n)), rec0.companyLabel as never) as { tag: string; value: string };
+  const records = aCompanysRecords(accountId, {
+    seat: held[0]!, signingSecret: seats[0]!.signingSecret as Hex, records: [roster], committee: [foundingCommittee],
+  });
   return {
+    records,
     /** The company as the service serves it to a page: its account record, and its roster record beside it. */
     served: (): SealedAccount & { roster: SealedCompanyRecord } => ({ ...store.getAccount(accountId)!, roster }),
     roster,
     seats: held,
     /** The directory as filed, and the stand-in for the chain's read: the account holds every seat claimed. */
     reads: {
-      believed: aDevicesRosterMemory(),
+      anchored: records.anchored,
       filings: async () => store.directoryFilingsOf(accountId),
       holders: async () => {
         const c = (await dir.directoryChain(accountId, held))!;

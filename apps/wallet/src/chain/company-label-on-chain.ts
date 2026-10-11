@@ -2,6 +2,9 @@ import { ContractState } from '@midnightntwrk/ledger-v9';
 import { PAY_KEY_COMMITMENT_ENTRY } from 'midnight-identity/profile/records-key';
 import type { AccountHolders, AccountPaymentFacts, AccountRoleEntry, AccountSeats, VaultHolders } from 'midnight-identity/profile/records-key';
 import { COMPANY_LABEL_ENTRY, companyLabelOf, readAccountAddress, readVaultAddress } from 'midnight-identity/profile/company-label';
+import {
+  ACCOUNT_THRESHOLD_FIELD, ADOPTED_VAULTS_FIELD, as32, holdersInAccountState, ROLES_FIELD, SIGNER_LEAVES_FIELD, seatsInAccountState,
+} from 'midnight-identity/profile/account-state';
 import type { AccountAddress, CompanyLabel, VaultAddress } from 'midnight-identity/profile/company-label';
 
 /**
@@ -24,23 +27,14 @@ import type { AccountAddress, CompanyLabel, VaultAddress } from 'midnight-identi
  * address, as it learns from any read; the label is not sent.
  */
 
-/** Where the account's shared map of roles sits among the fields of its public state. */
-export const ROLES_FIELD = 13;
-
-/** Where the account's set of seated signers' leaves sits among the fields of its public state. */
-export const SIGNER_LEAVES_FIELD = 9;
-
-/** Where the account's own approval threshold sits among the fields of its public state. */
-export const ACCOUNT_THRESHOLD_FIELD = 5;
+/* Read off an account's state where the wallet and a device both read them (`midnight-identity/profile/account-state`). */
+export { ACCOUNT_THRESHOLD_FIELD, ADOPTED_VAULTS_FIELD, holdersInAccountState, ROLES_FIELD, SIGNER_LEAVES_FIELD, seatsInAccountState };
 
 /** Where the account's record of payments sits among the fields of its public state. */
 export const MOVEMENTS_FIELD = 4;
 
 /** Where the account's map of the proposals it holds open sits among the fields of its public state. */
 export const OPEN_PROPOSALS_FIELD = 2;
-
-/** Where the account's set of adopted vaults sits among the fields of its public state. */
-export const ADOPTED_VAULTS_FIELD = 7;
 
 /** Where a vault's public state names the account it is pinned to: written once, by its constructor. */
 export const VAULT_ACCOUNT_FIELD = 0;
@@ -70,14 +64,6 @@ export type LabelOnAccount =
 const bytesOf = (hex: string): Uint8Array => Uint8Array.from(hex.match(/../gu) ?? [], (x) => Number.parseInt(x, 16));
 const ENTRY = bytesOf(COMPANY_LABEL_ENTRY);
 
-/* A field's bytes as the state holds them may have had trailing zero bytes
- * dropped; thirty-two bytes are put back by padding at the end. */
-const as32 = (value: unknown): Uint8Array | null => {
-  if (!(value instanceof Uint8Array) || value.length > 32) return null;
-  const out = new Uint8Array(32);
-  out.set(value);
-  return out;
-};
 const same = (a: Uint8Array, b: Uint8Array): boolean => a.length === b.length && a.every((x, i) => x === b[i]);
 
 /**
@@ -105,59 +91,6 @@ export function labelInAccountState(serialized: Uint8Array): CompanyLabel | null
     return companyLabelOf(value);
   }
   return null;
-}
-
-/**
- * **WHO HOLDS AN ACCOUNT, FROM ITS SERIALISED STATE.** Throws when the bytes
- * are not a contract's state laid out as a company's account is.
- */
-export function seatsInAccountState(serialized: Uint8Array): SeatsOnChain {
-  const state = ContractState.deserialize(serialized);
-  const fields = state.data.state.asArray();
-  const leaves = fields === undefined || fields.length <= SIGNER_LEAVES_FIELD ? undefined : fields[SIGNER_LEAVES_FIELD]!.asMap();
-  if (leaves === undefined) throw new Error('that contract\'s state is not laid out as a company\'s account.');
-  const seats: string[] = [];
-  for (const key of leaves.keys()) {
-    const leaf = as32(key.value[0]);
-    if (leaf === null) throw new Error('that contract\'s state is not laid out as a company\'s account.');
-    seats.push(Array.from(leaf, (b) => b.toString(16).padStart(2, '0')).join(''));
-  }
-  const authority = state.maintenanceAuthority;
-  return Object.freeze({
-    committee: Object.freeze(authority.committee.map((k) => Object.freeze({ tag: String(k.tag), value: String(k.value).toLowerCase() }))),
-    threshold: authority.threshold,
-    seats: Object.freeze(seats),
-  });
-}
-
-/**
- * **WHO HOLDS AN ACCOUNT AND WHAT IT HAS ADOPTED, FROM ITS SERIALISED STATE**:
- * everything `seatsInAccountState` reads, the account's own approval threshold
- * (a number the state holds as little-endian bytes with trailing zeros
- * dropped) and every vault in its set of adopted vaults. Throws when the bytes
- * are not a contract's state laid out as a company's account is.
- */
-export function holdersInAccountState(serialized: Uint8Array): Omit<AccountHolders, 'founding' | 'foundingCommittee'> {
-  const seats = seatsInAccountState(serialized);
-  const fields = ContractState.deserialize(serialized).data.state.asArray();
-  const notAnAccount = 'that contract\'s state is not laid out as a company\'s account.';
-  if (fields === undefined || fields.length <= ROLES_FIELD) throw new Error(notAnAccount);
-  const thresholdField = fields[ACCOUNT_THRESHOLD_FIELD]!;
-  const cell = thresholdField.asCell() as ReturnType<typeof thresholdField.asCell> | undefined;
-  const raw = cell === undefined || cell.value.length !== 1 ? null : cell.value[0];
-  if (!(raw instanceof Uint8Array) || raw.length > 8) throw new Error(notAnAccount);
-  let approvals = 0;
-  for (let i = raw.length - 1; i >= 0; i -= 1) approvals = approvals * 256 + raw[i]!;
-  if (!Number.isSafeInteger(approvals) || approvals < 1) throw new Error(notAnAccount);
-  const adopted = fields[ADOPTED_VAULTS_FIELD]!.asMap();
-  if (adopted === undefined) throw new Error(notAnAccount);
-  const vaults: string[] = [];
-  for (const key of adopted.keys()) {
-    const v = as32(key.value[0]);
-    if (v === null) throw new Error(notAnAccount);
-    vaults.push(Array.from(v, (b) => b.toString(16).padStart(2, '0')).join(''));
-  }
-  return Object.freeze({ ...seats, approvals, adoptedVaults: Object.freeze(vaults) });
 }
 
 /**

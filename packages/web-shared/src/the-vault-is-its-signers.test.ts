@@ -1,4 +1,5 @@
 import { describe, expect, it } from 'vitest';
+import { aCompanysRecords } from '../../../src/testing/record-tree-double.js';
 import { identityFromSecret } from 'midnight-identity';
 import { committeeKeyFor } from 'midnight-identity/profile/committee-key';
 import { signDirectoryEntry, signRecordsKey, type AccountHoldersRead, type RecordsKeyStatement } from 'midnight-identity/profile/records-key';
@@ -83,11 +84,14 @@ type Attested = { committeeKey: { tag: string; value: string }; statement: Recor
 const attestedBy = (s: Signer, n: number): Attested =>
   ({ committeeKey: s.committeeKey, statement: signRecordsKey(identityFromSecret(new Uint8Array(32).fill(n)), LABEL, ACCOUNT, s.companyKey, s.seat) });
 const everySeatAttested: Attested[] = [attestedBy(ADA, 1), attestedBy(BO, 2)];
+/** The company's records beside each set of stores: every version filed entered by its filer. */
+const booksOf = new WeakMap<Map<WireRecord, MemorySealedPoolStore>, ReturnType<typeof aCompanysRecords>>();
+const bookOf = (kept: Map<WireRecord, MemorySealedPoolStore>) => booksOf.get(kept) ?? booksOf.set(kept, aCompanysRecords(CO)).get(kept)!;
 const deviceOf = (who: Signer, kept: Map<WireRecord, MemorySealedPoolStore>, seated: () => AccountHoldersRead, reads: { n: number }, attested: Attested[] = everySeatAttested, served: readonly DirectoryFiling[] = filings) =>
   (record: WireRecord) => new HttpSealedPoolStore(record, routeOver(kept), who.signing.secret, directoryJudge({
-    accountId: CO, label: LABEL, filings: async () => served, attested: async () => attested,
+    accountId: CO, label: LABEL, filings: async () => served, attested: async () => attested, anchored: bookOf(kept).anchored,
     holders: async () => { reads.n += 1; return seated(); },
-  }));
+  }), bookOf(kept).enteredBy(who.signing.secret));
 const recordsReader = (s: Signer) => ({ publicKey: recordsKeypairFrom(s.companyKey).publicKey });
 const newestSecret = (rec: SealedPool, s: Signer) => {
   const o = openNonceSecrets(rec, VAULT, recordsKeypairFrom(s.companyKey));

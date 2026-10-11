@@ -65,7 +65,9 @@ vi.mock('../adapters/hand-over.js', () => ({
 }));
 vi.mock('../adapters/create-company.js', () => ({
   createCompany: vi.fn(async (...args: unknown[]) => { state.acted.push(JSON.stringify(['create', ...args])); return state.created; }),
-  finishCreating: vi.fn(async () => { state.acted.push('finish'); return state.created; }),
+  finishCreating: vi.fn(async (...args: unknown[]) => { state.acted.push(JSON.stringify(['finish', ...args])); return state.created; }),
+  CREATION_WAITS: 'waiting',
+  CREATION: { waits: 'waiting', notSent: 'not-created' },
   waitingToBeFinished: () => state.waiting,
 }));
 
@@ -781,7 +783,26 @@ describe('creating the company', () => {
     fireEvent.change(container.querySelector('input')!, { target: { value: 'Acme' } });
     expect((q(container, '[data-action=create]') as HTMLButtonElement).disabled).toBe(true);
     await act(async () => { fireEvent.click(q(container, '[data-action=finish-company]')!); await settle(); });
-    expect(state.acted).toEqual(['finish']);
+    /* RED WHEN: Finish does not carry on for the person signed in. */
+    expect(state.acted).toEqual([JSON.stringify(['finish', 'u1'])]);
+  });
+
+  /* RED WHEN: a company started here and not yet finished on the network is shown as created, or its next step is not said. */
+  it('says a company made here waits for Finish, and one the network does not show finished waits for the next press', async () => {
+    const companiesChanged = vi.fn(async () => {});
+    state.created = { of: 'waiting', companyId: 'c-new', state: 'not-created' };
+    const { container } = await draw(<CreateCompany leadTo={() => {}} onChanged={() => {}} />, sessionWith({ companiesChanged }));
+    fireEvent.change(container.querySelector('input')!, { target: { value: 'Acme' } });
+    await act(async () => { fireEvent.click(q(container, '[data-action=create]')!); await settle(); });
+    expect(q(container, '[data-creation-waits]')!.textContent).toBe(EN['setup.createCompany.started']);
+    expect(q(container, '[data-created]')).toBeNull();
+    expect(companiesChanged).not.toHaveBeenCalled();
+    state.waiting = 'c-new';
+    state.created = { of: 'waiting', companyId: 'c-new', state: 'deploy-sent' };
+    const again = await draw(<CreateCompany leadTo={() => {}} onChanged={() => {}} />, sessionWith({ companiesChanged }));
+    await act(async () => { fireEvent.click(q(again.container, '[data-action=finish-company]')!); await settle(); });
+    expect(q(again.container, '[data-creation-waits]')!.textContent).toBe(EN['setup.createCompany.chainWaits']);
+    expect(companiesChanged).not.toHaveBeenCalled();
   });
 
   /* RED WHEN: a refusal is not shown, or is shown in words that are not the language file's. */

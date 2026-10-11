@@ -1,5 +1,7 @@
 import { describe, it, expect } from 'vitest';
-import { aRunMadeHere, aLedgerHolding } from './a-run-made-here.test-support.js';
+import { aRunMadeHere, aLedgerHolding, RUN_FRESH, RUN_VOUCHED } from './a-run-made-here.test-support.js';
+import { vouchedFreshOf } from '../../../src/midnight/record-tree.js';
+import type { Hex } from '../../../src/core/crypto.js';
 import { answerVaultAsk } from './vault-worker-entry.js';
 import { vaultDetails } from '../../../src/testing/vault-details.js';
 import { createHash } from 'node:crypto';
@@ -17,7 +19,9 @@ import {
 const ACCOUNT = 'c0'.repeat(32);
 const material = { signingSecret: '11'.repeat(32), blinding: '22'.repeat(32), scope: '33'.repeat(32) };
 const half = {
-  assetId: '44'.repeat(32), assetBlinding: '55'.repeat(32), proposalSalt: '66'.repeat(32),
+  assetId: '44'.repeat(32), assetBlinding: '55'.repeat(32),
+  /* A run of its own's salt, as the stand-in `retrySaltOf` below makes it: over no leg and the run's fresh salt. */
+  proposalSalt: createHash('sha256').update(Buffer.concat([Buffer.from('retry-salt'), Buffer.alloc(32), Buffer.from(RUN_FRESH, 'hex')])).digest('hex'),
   changeAmount: '30000', changeBatchDigest: '77'.repeat(32),
 };
 /* A real run of three, made the way the approving device makes it again (`a-run-made-here.test-support.ts`). */
@@ -31,6 +35,7 @@ const sha = (...parts: Array<Uint8Array | bigint>) => Uint8Array.from(createHash
 const accountPure = {
   runPayload: (root: Uint8Array, payees: bigint, opensAt: bigint, closesAt: bigint) => sha(root, payees, opensAt, closesAt),
   proposalIdOf: (payload: Uint8Array, vault: Uint8Array, salt: Uint8Array) => sha(payload, vault, salt),
+  retrySaltOf: (leg: Uint8Array, fresh: Uint8Array) => sha(Buffer.from('retry-salt'), leg, fresh),
   signerAddPayload: (leaf: Uint8Array) => sha(Buffer.from('seat'), leaf),
   setThresholdPayload: (t: bigint) => sha(Buffer.from('threshold'), t),
   setVaultThresholdPayload: (vault: Uint8Array, t: bigint) => sha(Buffer.from('vault-threshold'), vault, t),
@@ -77,6 +82,8 @@ const openedFor = (order: GovernedCallOrder): OpenedRound => {
     return {
       ...recordOf(accountPure.runPayload(bytes(r.root), BigInt(r.payees), BigInt(r.opensAt), BigInt(r.closesAt)),
         bytes(r.vault), o.half.proposalSalt),
+      /* What the raising device sealed beside the salt, its head one this device checked. */
+      vouched: { ...RUN_VOUCHED, checkedHere: true },
       half: halfOf(o.half),
       made: { ...RUN_MADE.made, raising: RAISING },
     };
@@ -276,12 +283,16 @@ describe('ONE GOVERNED CALL', () => {
         return { private: { nextPrivateState: r, unprovenTx: 'U' } };
       },
     });
-    const second = { ...raise, half: { ...half, proposalSalt: 'bb'.repeat(32) }, proposal: idOf(run, 'bb'.repeat(32)) };
+    /* A second run, raised with a fresh salt of its own. */
+    const vouched = { head: RUN_VOUCHED.head, r: 'bb'.repeat(32) as Hex, checkedHere: true };
+    const salt = hex(accountPure.retrySaltOf(new Uint8Array(32), bytes(vouchedFreshOf(vouched.head, vouched.r))));
+    const second = { ...raise, half: { ...half, proposalSalt: salt }, proposal: idOf(run, salt) };
     for (const order of [raise, approve, second, approve]) {
-      await build(deps, { account: ACCOUNT, order, material, chain });
+      const opened = order === second ? { ...openedFor(second), vouched, made: { ...RUN_MADE.made, raising: RAISING } } : undefined;
+      await build(deps, { account: ACCOUNT, order, material, chain, ...(opened === undefined ? {} : { opened }) });
     }
     /* RED WHEN: a record is kept between calls - the second raise then starts from what the first left behind. */
-    expect(saltsAtTheStart).toEqual(['66'.repeat(32), 'bb'.repeat(32)]);
+    expect(saltsAtTheStart).toEqual([half.proposalSalt, salt]);
     expect(new Set(handed.map((h) => h.options.initialPrivateState)).size).toBe(4);
   });
 

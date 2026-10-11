@@ -31,9 +31,10 @@ export interface StartStandingOnTheWire {
   };
 }
 import type {
-  GovernanceOnTheWire, GovernedCallOrder, OpenedRound, ProposalIdentity, SignerMaterial, SpendingPolicyKeys,
+  AnchorPlacement, AnchorsOnChain, GovernanceOnTheWire, GovernedCallOrder, HeadStepAsked, OpenedRound, ProposalIdentity, RoundOnChain, SignerMaterial, SpendingPolicyKeys, VouchedRunOnTheWire,
 } from './governed-call-builder.js';
 import type { PolicyOpeningOnTheWire } from '../../../src/midnight/spending-policy-record.js';
+import type { BatchHolders } from '../../../src/midnight/record-manifest.js';
 import type { PeriodTotalAskOnTheWire, RunChargeStanding, RunToChargeOnTheWire, RunTreeOnTheWire } from './run-charge-builder.js';
 
 export interface SigningKeyOnTheWire { readonly tag: string; readonly value: string }
@@ -181,6 +182,9 @@ export type VaultAsk =
   | {
     id: number; network: string; ask: 'proposal-identity'; change: GovernanceOnTheWire; salt: string;
   }
+  | {
+    id: number; network: string; ask: 'vouched-run-identity'; run: VouchedRunOnTheWire;
+  }
   | { id: number; network: string; ask: 'company-wide' }
   | { id: number; network: string; ask: 'policy-bar-key' }
   | {
@@ -196,9 +200,39 @@ export type VaultAsk =
     runs: readonly RunTreeOnTheWire[]; chain: { accountState: string; parameters: string };
   }
   | { id: number; network: string; ask: 'period-total'; accountState: string; total: PeriodTotalAskOnTheWire }
-  | { id: number; network: string; ask: 'run-charged'; accountState: string; proposal: string };
+  | { id: number; network: string; ask: 'run-charged'; accountState: string; proposal: string }
+  | { id: number; network: string; ask: 'anchor-heads'; after: readonly HeadStepAsked[]; holders?: readonly BatchHolders[] }
+  /* The tag this signer's seat anchors under in the account, by the account's own functions. */
+  | { id: number; network: string; ask: 'anchor-tag'; account: string; material: SignerMaterial }
+  /* What each seat's opening opens and the tag it anchors under, and this signer's own, by the account's own functions. */
+  | {
+    id: number; network: string; ask: 'seat-openings'; account: string;
+    openings: ReadonlyArray<{ publicKey: string; scope: string; blinding: string }>; own?: SignerMaterial;
+  }
+  /* Every head the account's history shows, one per block, read in the worker at the indexer the wallet names. */
+  | { id: number; network: string; ask: 'anchors-on-chain'; account: string; indexer: { indexerUri: string; indexerWsUri: string } }
+  /* Where each proposal asked about stands, read in the worker from the account's history at the indexer the wallet names. */
+  | { id: number; network: string; ask: 'rounds-on-chain'; account: string; indexer: { indexerUri: string; indexerWsUri: string }; chainIds: readonly string[] }
+  | {
+    id: number; network: string; ask: 'anchor'; account: string; material: SignerMaterial; chain: AccountCallChainOnTheWire;
+    previous: string; batch: string; held: Pick<BatchHolders, 'approvals' | 'signerRoot'>;
+  }
+  /* A recovery of the record anchor under its approved proposal: as an anchor, resuming from a head its quorum approved. */
+  | {
+    id: number; network: string; ask: 'recover-anchor'; account: string; material: SignerMaterial; chain: AccountCallChainOnTheWire;
+    previous: string; batch: string; held: Pick<BatchHolders, 'approvals' | 'signerRoot'>;
+    resumesFrom: string; latest: string; proposal: string; proposalSalt: string;
+  }
+  /* What a call to the account alone is built on, at one block, read in the worker at the indexer the wallet names. */
+  | { id: number; network: string; ask: 'account-call-chain'; account: string; indexer: { indexerUri: string; indexerWsUri: string } };
 
 type Answered<A extends VaultAsk['ask'], T> = { id: number; ok: true; ask: A } & T;
+
+/** What each seat's opening opens and the tag it anchors under, and this signer's own (`seatOpeningsIn`). */
+export interface SeatOpeningsAnswer {
+  readonly openings: ReadonlyArray<{ readonly leaf: string | null; readonly tag: string | null }>;
+  readonly own?: { readonly publicKey: string; readonly leaf: string; readonly tag: string };
+}
 
 export type VaultAnswer =
   | Answered<'deploy', { vault: string; temporaryKey: SigningKeyOnTheWire; tx: string }>
@@ -232,7 +266,16 @@ export type VaultAnswer =
   | Answered<'clear-run', { tx: string | null; spent: string | null }>
   | Answered<'period-total', { spent: string }>
   | Answered<'run-charged', { standing: RunChargeStanding }>
+  | Answered<'anchor-heads', { after: string[]; seats: (string[] | null)[]; holderSeats: (string[] | null)[] }>
+  | Answered<'anchor-tag', { tag: string }>
+  | Answered<'seat-openings', SeatOpeningsAnswer>
+  | Answered<'anchors-on-chain', AnchorsOnChain>
+  | Answered<'rounds-on-chain', { rounds: Record<string, RoundOnChain> }>
+  | Answered<'anchor', { tx: string }>
+  | Answered<'recover-anchor', { tx: string; placement: AnchorPlacement }>
+  | Answered<'account-call-chain', { chain: AccountCallChainOnTheWire | null }>
   | Answered<'proposal-identity', { identity: ProposalIdentity }>
+  | Answered<'vouched-run-identity', { chainId: string | null }>
   | Answered<'company-wide', { value: string }>
   | Answered<'spending-policy-keys', { keys: SpendingPolicyKeys }>
   | Answered<'policy-bar-key', { value: string }>
@@ -415,6 +458,12 @@ export interface VaultBuilderClient {
    * chain under the salt given and no vault.
    */
   proposalIdentity(change: GovernanceOnTheWire, salt: string): Promise<ProposalIdentity>;
+  /**
+   * **THE IDENTITY ON CHAIN A LEG'S RUN WOULD HAVE, RAISED OVER THE HEAD IT
+   * SEALS**, made here with the contract's own functions (`vouchedRunIdentityOf`);
+   * null for a run of no vault.
+   */
+  vouchedRunIdentity(run: VouchedRunOnTheWire): Promise<string | null>;
   /** The value a company-wide run names in place of a vault, made with the account's own function. */
   companyWide(): Promise<string>;
   /**
@@ -456,6 +505,73 @@ export interface VaultBuilderClient {
    * charged, or not open.
    */
   runCharged(input: { accountState: string; proposal: string }): Promise<RunChargeStanding>;
+  /**
+   * The head after each batch asked about, each made with the account's own `anchorHeadOf` over `anchorHeldOf` of the
+   * batch and the holders its header names, and the seats those holders' leaves name when they make the root they name
+   * (null when they do not); and the same seats for each of `holders`, as a directory version's leaf names them. Hex.
+   * Reads no chain.
+   */
+  anchorHeads(input: {
+    after: readonly HeadStepAsked[]; holders?: readonly BatchHolders[];
+  }): Promise<{ after: string[]; seats: (string[] | null)[]; holderSeats: (string[] | null)[] }>;
+  /**
+   * The tag this signer's seat anchors under in `account` (hex), made with the account's own `anchorTagOf` over the
+   * seat's public key and blinding, as the account's call works it out: what this device's headers name. Reads no chain.
+   */
+  anchorTag(input: { account: string; material: SignerMaterial }): Promise<string>;
+  /**
+   * What each seat's opening opens - the leaf its public key, blinding and scope make, null for one that is not one - and
+   * the tag that seat anchors under in `account`; with `own`, this signer's own opening, leaf and tag. Hex. Reads no chain.
+   */
+  seatOpenings(input: {
+    account: string; openings: ReadonlyArray<{ publicKey: string; scope: string; blinding: string }>; own?: SignerMaterial;
+  }): Promise<SeatOpeningsAnswer>;
+  /**
+   * **EVERY HEAD THE ACCOUNT'S HISTORY SHOWS, OLDEST FIRST, AND WHO HOLDS THE
+   * ACCOUNT IN ITS LATEST STATE**, read in this worker from the account's
+   * history at the indexer the person's own wallet names (`indexer`), and from
+   * nowhere else: the head the last anchor call of each block left, the
+   * committee after that block, and the block; the last is the head the account
+   * holds. `now` is who holds it in the history's latest state, as a batch's
+   * header names them, and `seatsNow` the seats it names.
+   */
+  anchorsOnChain(input: { account: string; indexer: { indexerUri: string; indexerWsUri: string } }): Promise<AnchorsOnChain>;
+  /**
+   * **WHERE EACH PROPOSAL ASKED ABOUT STANDS ON THE CHAIN**, by its identity on
+   * chain, read in this worker from the same history at the indexer the
+   * person's own wallet names (`indexer`), and from nowhere else.
+   */
+  roundsOnChain(input: {
+    account: string; indexer: { indexerUri: string; indexerWsUri: string }; chainIds: readonly string[];
+  }): Promise<Record<string, RoundOnChain>>;
+  /**
+   * One batch folded into the head this device read, built and proved with this signer's own material, naming who held
+   * the account as the batch was judged; the account refuses it unless they still do.
+   */
+  anchor(input: {
+    account: string; material: SignerMaterial; chain: AccountCallChainOnTheWire; previous: string; batch: string;
+    held: Pick<BatchHolders, 'approvals' | 'signerRoot'>;
+  }): Promise<{ tx: string }>;
+  /**
+   * **A RECOVERY OF THE RECORD ANCHOR, BUILT AND PROVED HERE**, as an anchor
+   * call: the recovery's batch folded into the head this device read, resuming
+   * from the head `resumesFrom` its quorum approved under `proposal`, raised
+   * with `proposalSalt`, before `latest`; refused unless that proposal is
+   * approved and the holders named still hold the account. `placement` is the
+   * section of its transaction the call lands in, read off it: in the fallible
+   * one, a carrying out another anchor beats pays its fee.
+   */
+  recoverAnchor(input: {
+    account: string; material: SignerMaterial; chain: AccountCallChainOnTheWire; previous: string; batch: string;
+    held: Pick<BatchHolders, 'approvals' | 'signerRoot'>; resumesFrom: string; latest: string; proposal: string; proposalSalt: string;
+  }): Promise<{ tx: string; placement: AnchorPlacement }>;
+  /**
+   * **WHAT A CALL TO THE ACCOUNT ALONE IS BUILT ON**, read in this worker at one
+   * block from the indexer the person's own wallet names (`indexer`), and never
+   * from the company's service: the account's state and the ledger's
+   * parameters. Null while the indexer holds the account at no block.
+   */
+  accountCallChain(input: { account: string; indexer: { indexerUri: string; indexerWsUri: string } }): Promise<AccountCallChainOnTheWire | null>;
   /**
    * Where a vault's start stands, read off both contracts' states at one block
    * (base64), and with `secret` the first secret run made from it. `now` is
@@ -571,7 +687,28 @@ export function vaultBuilderOver(worker: WorkerLike, network: string): VaultBuil
     },
     periodTotal: async (input) => (await ask({ ask: 'period-total', ...input })).spent,
     runCharged: async (input) => (await ask({ ask: 'run-charged', ...input })).standing,
+    anchorHeads: async (input) => {
+      const a = await ask({ ask: 'anchor-heads', ...input });
+      return { after: a.after, seats: a.seats, holderSeats: a.holderSeats };
+    },
+    anchorsOnChain: async (input) => {
+      const a = await ask({ ask: 'anchors-on-chain', ...input });
+      return { landed: a.landed, now: a.now, seatsNow: a.seatsNow, deployed: a.deployed, vouching: a.vouching };
+    },
+    roundsOnChain: async (input) => (await ask({ ask: 'rounds-on-chain', ...input })).rounds,
+    anchor: async (input) => ({ tx: (await ask({ ask: 'anchor', ...input })).tx }),
+    recoverAnchor: async (input) => {
+      const a = await ask({ ask: 'recover-anchor', ...input });
+      return { tx: a.tx, placement: a.placement };
+    },
+    accountCallChain: async (input) => (await ask({ ask: 'account-call-chain', ...input })).chain,
+    anchorTag: async (input) => (await ask({ ask: 'anchor-tag', ...input })).tag,
+    seatOpenings: async (input) => {
+      const a = await ask({ ask: 'seat-openings', ...input });
+      return a.own === undefined ? { openings: a.openings } : { openings: a.openings, own: a.own };
+    },
     proposalIdentity: async (change, salt) => (await ask({ ask: 'proposal-identity', change, salt })).identity,
+    vouchedRunIdentity: async (run) => (await ask({ ask: 'vouched-run-identity', run })).chainId,
     companyWide: async () => (await ask({ ask: 'company-wide' })).value,
     spendingPolicyKeys: async (input) => (await ask({ ask: 'spending-policy-keys', ...input })).keys,
     policyBarKey: async () => (await ask({ ask: 'policy-bar-key' })).value,

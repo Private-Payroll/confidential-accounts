@@ -18,6 +18,7 @@ import { RAISE_CHECKS, type FactsHere, type RoundToCheck } from './raise-checks-
 import { refuseARetryOfALegNeverOnChain, refuseARetryWhileItsLegCanPay } from '../../../src/core/run-raising.js';
 import type { RunMadeHere } from './what-this-device-made.js';
 import type { PeopleHere } from './people-on-device.js';
+import { heldEntering } from '../../../src/testing/record-tree-double.js';
 
 const CO = 'acc_1';
 const LEG = runLegOf(TEST_TOKEN, 'shielded');
@@ -45,7 +46,7 @@ const roundOf = (run: PayrollRun, recordedFrom: readonly RosterEmployee[], retry
 });
 const factsOf = (people: readonly RosterEmployee[]): FactsHere => ({
   people: { people: people.map((p) => ({ person: p, version: 1, handedOver: true })), notBelieved: [], notPayable: [] } as unknown as PeopleHere,
-  directory: { dir: { company: CO, version: 1, seats: [] }, holders: {} as never, another: new Set() },
+  directory: { dir: { company: CO, version: 1, seats: [] }, holders: {} as never, another: new Set(), at: () => null, records: heldEntering(CO) },
   policy: { threshold: 1, limitsByRole: {} } as never,
   others: [], live: new Set(), registry: REGISTRY, rounds: [], standingOf: () => undefined, nowInSeconds: 0n,
   spendingPolicy: { state: 'none' },

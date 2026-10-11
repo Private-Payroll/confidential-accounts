@@ -28,6 +28,7 @@
  * filed. The spend uses index 0, because the simulator keeps no commitment
  * tree. Nothing here reaches a real chain, a real indexer or a browser.
  */
+import { enteredHere } from '../../src/testing/records-entered.js';
 import { describe, it, expect, beforeEach, afterEach } from 'vitest';
 import express from 'express';
 import type { AddressInfo } from 'node:net';
@@ -239,7 +240,7 @@ describe('a deposit whose record is made on the device', () => {
    */
   const judge = async () => (filer: string | null) =>
     (filer !== null && [ada, bo, carol].some((p) => p.signing.publicKey === filer) ? null : 'it is signed by nobody of this company');
-  const recordsOf = (p: Person) => (record: WireRecord) => new HttpSealedPoolStore(record, sendAs(p), p.signing.secret, judge);
+  const recordsOf = (p: Person) => (record: WireRecord) => new HttpSealedPoolStore(record, sendAs(p), p.signing.secret, judge, enteredHere());
 
   beforeEach(async () => {
     sim = await AccountSimulator.liveAccount([A, B], 2n);

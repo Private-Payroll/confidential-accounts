@@ -63,7 +63,7 @@ describe('the two steps, as lists', () => {
 
   it('the second step inserts the rest, the payment steps and the vault change step among them', () => {
     expect([...SECOND_STEP_CIRCUITS]).toEqual([
-      'approveVaultChange', 'clearRun', 'holdRun', 'recordBatchFromVault', 'recordPaymentFromVault', 'releaseHold',
+      'anchor', 'approveVaultChange', 'clearRun', 'holdRun', 'recordBatchFromVault', 'recordPaymentFromVault', 'recoverAnchor', 'releaseHold',
       'reseatSigner', 'retireVault',
       'sealPayKey', 'setPolicy', 'setPolicyBar', 'setVaultThreshold',
     ]);

@@ -1,5 +1,6 @@
 // @vitest-environment jsdom
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import { EMPTY_ROOT } from '../../../../src/midnight/record-tree.js';
 import { newSigningKeypair, signingPublicKeyOf, type Hex } from '../../../../src/core/crypto.js';
 import { signVaultKeys } from '../../../../src/core/vault-keys.js';
 import { MemorySealedPoolStore, SealedNotePool } from '../../../../src/midnight/vault-pool.js';
@@ -148,6 +149,10 @@ vi.mock('vaults-web-shared/vault-page-doors.js', async (real) => ({
 vi.mock('vaults-web-shared/vault-worker-client.js', () => ({
   startVaultBuilder: async () => ({
     ownSeat: async (material: { blinding: string }) => { kr.log.push(`own seat from ${material.blinding}`); return kr.ownSeat; },
+    /* The account's own heads, and its history at the wallet's indexer: the stand-in chain holds no anchor. */
+    anchorHeads: async (i: { after: unknown[] }) => ({ after: i.after.map(() => '00'.repeat(32)), seats: i.after.map(() => null) }),
+    /* A chain holding no anchor: no head landed, and who holds the account named for an anchor nobody here sends. */
+    anchorsOnChain: async () => ({ landed: [], now: { approvals: 1, signerRoot: '00'.repeat(32), signers: ['00'.repeat(32)] }, seatsNow: ['00'.repeat(32)] }),
     /* The value a company-wide run names, which the vault check counts as one of the company's vaults. */
     companyWide: async () => 'cc'.repeat(32),
     deploy: async (account: string) => { kr.log.push(`built for ${account}`); return { vault: VAULT, temporaryKey: K(0x77), tx: 'deploy-tx' }; },
@@ -258,6 +263,11 @@ beforeEach(() => {
   kr.roster = rosterWith(MINE);
   kr.answers[ROUTE()] = { id: 'c1' };
   kr.answers[ROUTE('/directory')] = { filings: [{ company: 'c1', version: 1, change: { kind: 'claim', entry: ENTRY } }] };
+  /* The company's records hold no entry, and the stand-in chain no anchor: creating a vault reads no record through them. */
+  kr.answers[`GET ${ROUTE(`/manifest/tree/pending?root=${EMPTY_ROOT}`)}`] = { entries: [] };
+  kr.answers[`POST ${ROUTE('/manifest/tree/proofs')}`] = (b: { records: unknown[]; kinds: unknown[] }) =>
+    ({ records: b.records.map(() => null), kinds: b.kinds.map(() => []), older: [], proof: { siblings: [] } });
+  kr.answers[ROUTE('/call-state')] = { account: 'c0'.repeat(32), accountState: '00'.repeat(32), parameters: '', blockHash: 'b' };
   kr.answers[`PUT ${ROUTE('/vault-keys')}`] = { given: true };
   kr.answers[`GET ${ROUTE('/vault-keys')}`] = { committee: COMMITTEE, why: null, readers: [MY_RECORDS_KEY] };
   /* The approvals the account and its vaults need, as the chain holds them: one, everywhere. */
@@ -287,7 +297,7 @@ describe('creating a vault', () => {
     /* RED WHEN: any step of creating, starting or opening the vault asks the service what the chain holds for it. */
     expect(kr.log.filter((l) => l.endsWith('/chain'))).toEqual([]);
     const HERE = `vault read here at ${WALLET_INDEXER}`;
-    expect(kr.log.filter((l) => !l.startsWith('GET /api/accounts/c1'))
+    expect(kr.log.filter((l) => !l.startsWith('GET /api/accounts/c1') && l !== `POST ${ROUTE('/manifest/tree/proofs')}`)
       .filter((l, i, all) => !(l === HERE && all[i - 1] === HERE))).toEqual([
       /* The seat is worked out on this device before the account is asked for anything. */
       'own seat from cc', 'account asked', 'records key signed for 5a5a', 'keys offered', 'offers folded',

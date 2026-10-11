@@ -42,7 +42,7 @@
  */
 import {
   sealPool, openPool, assertNoSignerWouldLoseAccess,
-  type PoolSigner, type SealedPoolStore, type FiledPoolVersion,
+  type PoolSigner, type SealedPoolStore, type FiledPoolVersion, type PassedOverVersion,
 } from './vault-pool.js';
 import type {
   DepositAttempt, DepositJournal, PaymentAttempt, PaymentJournal,
@@ -309,17 +309,19 @@ export const attemptKey = (a: AttemptedStep): string =>
  * several versions is one attempt, not several.
  *
  * No versions is an empty journal. Nothing was journalled, so nothing is
- * claimed, which is the one case where absent and empty agree.
+ * claimed, which is the one case where absent and empty agree. A version the
+ * company's records passed over carries no bytes and is not read: its lines
+ * are in no record the company's records hold.
  */
 export const attemptsFromJournalVersions = (input: {
-  deposits: readonly FiledPoolVersion[];
-  payments: readonly FiledPoolVersion[];
+  deposits: readonly (FiledPoolVersion | PassedOverVersion)[];
+  payments: readonly (FiledPoolVersion | PassedOverVersion)[];
   opener: JournalOpener;
   /** `accept` only for versions read from a store that kept records before they were labelled. */
   unlabelled?: 'accept' | 'refuse';
 }): AttemptedVaultCalls & { versionsRead: { deposits: number; payments: number } } => {
-  const open = (filed: readonly FiledPoolVersion[], record: 'deposit-journal' | 'payment-journal'): unknown[] =>
-    filed.map((v) => openPool(v.sealed, input.opener.id, input.opener.wrappingSecret, {
+  const open = (filed: readonly (FiledPoolVersion | PassedOverVersion)[], record: 'deposit-journal' | 'payment-journal'): unknown[] =>
+    filed.filter((v): v is FiledPoolVersion => v.neverEntered !== true).map((v) => openPool(v.sealed, input.opener.id, input.opener.wrappingSecret, {
       record, unlabelled: input.unlabelled ?? 'refuse',
     }));
 

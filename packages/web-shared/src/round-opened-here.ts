@@ -17,10 +17,12 @@ import type { PendingSignerPayload, SealedAccount } from '../../../src/core/type
 import type { StateChange } from '../../../src/core/ledger.js';
 import { paysCommitmentOf, proposalFilingRefusal } from '../../../src/core/proposal-filing.js';
 import { companyRecordKey } from '../../../src/midnight/seat-directory.js';
+import { proposalEntry } from '../../../src/midnight/record-manifest.js';
+import { vouchedRefusal } from '../../../src/midnight/record-tree.js';
 import type { SealedCompanyRecord } from '../../../src/midnight/sealed-record-wire.js';
 import type { GovernanceOnTheWire, OpenedRound } from './governed-call-builder.js';
 import type { GovernedCallService } from './governed-call-on-device.js';
-import { judgeIn } from './vault-page-doors.js';
+import { judgeIn, kindAsked, listedHere } from './vault-page-doors.js';
 import { NO_ROSTER_RECORD } from './roster-here.js';
 import { runRebuiltHere, type CompanyRecordsHere } from './run-rebuilt-here.js';
 import { RoundRefusedHere, refuseWhatNoRoundMay } from './raise-checks-here.js';
@@ -76,7 +78,10 @@ export async function openTheRoundHere(
     throw new NotOpenedOnThisDevice('This page cannot read the company\'s records, so it cannot check this proposal. Reload '
       + 'the page to get the current version.');
   }
-  const rec = (await service.sealedProposals(accountId)).find((r) => r.id === proposalId);
+  /* A proposal the company's records name and the service leaves out of its list is withheld, not withdrawn (`listedHere`). */
+  const served = await service.sealedProposals(accountId);
+  const listed = records === undefined ? served : listedHere(await records.directory(kindAsked('proposal')), 'proposal', served, 'proposal');
+  const rec = listed.find((r) => r.id === proposalId);
   if (!rec || rec.accountId !== accountId) {
     throw new NotOpenedOnThisDevice('This company\'s records hold no proposal by that name. It may have been withdrawn. '
       + 'Reload the page to see where it stands.');
@@ -204,8 +209,8 @@ export async function openTheRoundHere(
       throw new NotOpenedOnThisDevice('This page cannot read the company\'s directory, so it cannot check who wrote this '
         + 'proposal down. Reload the page to get the current version.');
     }
-    const why = proposalFilingRefusal(accountId, rec) ?? judgeIn(await records.directory())(
-      rec.filedBy.publicKey, 'proposal', companyRecordKey('proposal', rec.id), 1);
+    const why = proposalFilingRefusal(accountId, rec) ?? judgeIn(await records.directory({ records: [{ store: 'proposal', kind: 'proposal', id: rec.id }] }))(
+      rec.filedBy.publicKey, 'proposal', companyRecordKey('proposal', rec.id), proposalEntry(accountId, rec), true);
     if (why !== null) {
       throw new NotOpenedOnThisDevice(`This device does not believe the company's record of this proposal (${why}). Do not `
         + 'act on it.');
@@ -254,6 +259,18 @@ export async function openTheRoundHere(
         + 'raised it.', { cause: e });
     }
   }
+  /*
+   * **WHAT A PAYROLL RUN'S SALT WAS MADE FROM**, as its proposal seals it, and
+   * whether this device checked that head itself: its own database of the heads
+   * it checked is asked, never the service. A proposal sealing none is left
+   * without, and the approval refuses it (`refuseWhatThisDeviceDidNotMake`).
+   */
+  let vouched: OpenedRound['vouched'];
+  if (envelope.kind === 'payroll' && vouchedRefusal(change.vouched) === null) {
+    const head = change.vouched!.head.toLowerCase();
+    const kept = await records?.checked?.() ?? null;
+    vouched = { head: head as Hex, r: change.vouched!.r.toLowerCase() as Hex, checkedHere: kept !== null && kept.heads.some((h) => h.toLowerCase() === head) };
+  }
   let half: OpenedRound['half'];
   if (forARaise) {
     /* The account's own name for the asset, which is what the asset witness answers with. */
@@ -262,6 +279,7 @@ export async function openTheRoundHere(
   }
   return {
     chainId: rec.chainId, digest: rec.digest, vault: envelope.vault, salt: change.salt, summary: envelope.summary,
+    ...(vouched === undefined ? {} : { vouched }),
     ...(governance === undefined ? {} : { governance }), ...(half === undefined ? {} : { half }),
     ...(made === undefined ? {} : { made }),
   };

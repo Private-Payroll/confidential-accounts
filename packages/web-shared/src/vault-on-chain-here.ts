@@ -23,7 +23,7 @@ import { assertVaultLedgerIsThisBuilds } from '../../../src/midnight/vault-ledge
 import { authorityOfState, startingLedgerFrom } from '../../../src/midnight/vault-circuits.js';
 import type { Hex } from '../../../src/core/crypto.js';
 import { publicHoldingsOf } from '../../../src/midnight/public-balance.js';
-import type { PayoutChainOnTheWire, VaultOnChainOnTheWire } from './vault-worker-client.js';
+import type { AccountCallChainOnTheWire, PayoutChainOnTheWire, VaultOnChainOnTheWire } from './vault-worker-client.js';
 
 /** Where the chain is read from: one contract's state now, a vault's transactions, and each transaction's events. */
 export interface VaultChainSource {
@@ -43,6 +43,16 @@ export interface VaultChainSource {
     readonly vault: { serialize(): Uint8Array };
     readonly parameters: { serialize(): Uint8Array };
     readonly account: { serialize(): Uint8Array };
+  } | null>;
+  /**
+   * The newest block the indexer holds, named first, and as of it the
+   * account's state and the ledger's parameters: what a call to the account
+   * alone is built on. Null while the account is not held at that block.
+   */
+  accountAtOneBlock?(account: string): Promise<{
+    readonly blockHash: string;
+    readonly account: { serialize(): Uint8Array };
+    readonly parameters: { serialize(): Uint8Array };
   } | null>;
 }
 
@@ -68,6 +78,24 @@ export async function atOneBlockOver(
   return { blockHash: block.hash, zswap, vault: vaultState, parameters, account: accountState };
 }
 
+/**
+ * **ONE BLOCK, NAMED FIRST, AND THE ACCOUNT READ AS OF IT, WITH THE LEDGER'S
+ * PARAMETERS THE SAME READ GIVES**: what a call to the account alone - a
+ * recovery of its record anchor, its proposal and approvals - is built on,
+ * from the indexer the person's own wallet names. Null when the indexer names
+ * no block, or holds the account at none.
+ */
+export async function accountAtOneBlockOver(
+  r: BlockReader, account: string,
+): Promise<NonNullable<Awaited<ReturnType<NonNullable<VaultChainSource['accountAtOneBlock']>>>> | null> {
+  const block = await r.queryBlock();
+  if (block === null) return null;
+  const read = await r.queryZSwapAndContractState(account, { type: 'blockHash' as const, blockHash: block.hash });
+  if (read === null || read === undefined) return null;
+  const [, state, parameters] = read;
+  return { blockHash: block.hash, account: state, parameters };
+}
+
 /** The chain as the indexer the wallet names serves it. */
 export const vaultChainSourceAt = (indexer: IndexerEndpoints): VaultChainSource => {
   refuseEndpointsThatCannotWork(indexer);
@@ -84,6 +112,7 @@ export const vaultChainSourceAt = (indexer: IndexerEndpoints): VaultChainSource 
      * the chain keeps only a window of past roots a spend may prove against.
      */
     atOneBlock: async (vault, account) => atOneBlockOver(await reader, vault, account),
+    accountAtOneBlock: async (account) => accountAtOneBlockOver(await reader, account),
   };
 };
 
@@ -173,6 +202,21 @@ export async function readChainAtOneBlock(
     parameters: toBase64(at.parameters.serialize()),
     accountState: toBase64(at.account.serialize()),
   };
+}
+
+/**
+ * **WHAT A CALL TO THE ACCOUNT ALONE IS BUILT ON, READ AT ONE BLOCK** at the
+ * indexer the person's own wallet names: the account's state and the ledger's
+ * parameters, each as base64 of its bytes. Null while the indexer holds the
+ * account at no block. Nothing of it passes through the company's service.
+ */
+export async function readAccountCallChain(source: VaultChainSource, account: string): Promise<AccountCallChainOnTheWire | null> {
+  if (source.accountAtOneBlock === undefined) {
+    throw new Error('this page cannot read the company\'s account at the indexer your wallet names. Reload the page to use the current build');
+  }
+  const at = await source.accountAtOneBlock(account);
+  if (at === null) return null;
+  return { blockHash: at.blockHash, accountState: toBase64(at.account.serialize()), parameters: toBase64(at.parameters.serialize()) };
 }
 
 /** Every zswap event the chain holds for one transaction, as it crosses back to the page. */

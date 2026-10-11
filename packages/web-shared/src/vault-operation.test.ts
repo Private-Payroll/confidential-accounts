@@ -153,12 +153,21 @@ const nothingToCheck = async (): Promise<void> => {};
 const builder = (log: string[]): VaultBuilderClient => ({
   /* What a governance proposal is called, and the value a company-wide run names: no vault operation asks either. */
   proposalIdentity: async () => { throw new Error('a vault operation never names a governance proposal'); },
+  vouchedRunIdentity: async () => { throw new Error('a vault operation never asks what a run vouches for'); },
   companyWide: async () => { throw new Error('a vault operation never asks what a company-wide run names'); },
   spendingPolicyKeys: async () => { throw new Error('a vault operation never asks for a spending policy\'s keys'); },
   policyBarKey: async () => { throw new Error('a vault operation never asks for the policy bar\'s key'); },
   clearRun: async () => { throw new Error('a vault operation never charges a run to its period'); },
   periodTotal: async () => { throw new Error('a vault operation never works out a period\'s total'); },
   runCharged: async () => { throw new Error('a vault operation never asks whether a run is charged'); },
+  anchorHeads: async () => { throw new Error('a vault operation never reads the record anchor'); },
+  anchorTag: async () => { throw new Error('a vault operation never anchors the company\'s records'); },
+  seatOpenings: async () => { throw new Error('a vault operation never reads whose anchor is whose'); },
+  recoverAnchor: async () => { throw new Error('a vault operation never recovers the company\'s records'); },
+  accountCallChain: async () => { throw new Error('a vault operation reads both contracts at one block, never the account alone'); },
+  anchorsOnChain: async () => { throw new Error('a vault operation never reads the account\'s anchors'); },
+  roundsOnChain: async () => { throw new Error('a vault operation never reads where the company\'s proposals stand'); },
+  anchor: async () => { throw new Error('a vault operation never anchors the company\'s records'); },
   /* The old temporary-key deploy and hand-over: creating a vault never asks for either. */
   deploy: async () => { log.push('build deploy'); return { vault: VAULT, temporaryKey: { tag: 'schnorr', value: '77'.repeat(32) }, tx: 'D' }; },
   handover: async (i) => { log.push(`build handover at ${i.counter}`); return { tx: 'H' }; },

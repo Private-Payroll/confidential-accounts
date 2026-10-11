@@ -170,6 +170,12 @@ export interface AccountPrivateState {
    * nothing has been charged to the period yet.
    */
   periodSpent?: bigint;
+  /**
+   * What earlier retries of a leg have taken without a charge, which the
+   * account's stored total for that leg must open to. Zero before the leg's
+   * first retry, and unread for a run that is not a retry.
+   */
+  legTaken?: bigint;
 }
 
 /**
@@ -439,4 +445,8 @@ export const witnesses = {
   /** What the vault has already been charged in the run's period. */
   periodSpent: ({ privateState }: WitnessContext<Ledger, AccountPrivateState>):
     [AccountPrivateState, bigint] => [same(privateState), privateState.periodSpent ?? 0n],
+
+  /** What a retry's leg's earlier retries have taken without a charge. */
+  legTaken: ({ privateState }: WitnessContext<Ledger, AccountPrivateState>):
+    [AccountPrivateState, bigint] => [same(privateState), privateState.legTaken ?? 0n],
 };

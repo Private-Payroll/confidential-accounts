@@ -14,7 +14,7 @@ import * as vaultModule from '../../../contracts/managed-vault/contract/index.js
 import { identityFromSecret } from 'midnight-identity';
 import { committeeKeyFor } from 'midnight-identity/profile/committee-key';
 import type { CompanyLabel } from 'midnight-identity/profile/company-label';
-import { atOneBlockOver, readVaultOnChain, vaultChainSourceAt, type BlockReader, type VaultChainSource } from './vault-on-chain-here.js';
+import { accountAtOneBlockOver, atOneBlockOver, readAccountCallChain, readVaultOnChain, vaultChainSourceAt, type BlockReader, type VaultChainSource } from './vault-on-chain-here.js';
 import { answerVaultAsk, vaultAsDeployed } from './vault-worker-entry.js';
 import { vaultBuilderOver, type VaultAnswer } from './vault-worker-client.js';
 
@@ -214,6 +214,34 @@ describe('THE VAULT, READ ON THIS DEVICE', () => {
       .toEqual(['b7'.repeat(32), 'zswap', 'vault', 'parameters', 'account']);
     /* RED WHEN: a block, a vault or an account the indexer does not hold is answered as anything but not read yet. */
     for (const o of [{ block: false }, { vault: false }, { account: false }]) expect(await atOneBlockOver(reader(o), VAULT, ACCOUNT), JSON.stringify(o)).toBeNull();
+  });
+
+  it('WHAT A CALL TO THE ACCOUNT ALONE IS BUILT ON - ITS STATE AND THE LEDGER\'S PARAMETERS AT ONE BLOCK - IS READ AT THE WALLET\'S INDEXER', async () => {
+    const asked: string[] = [];
+    type AtBlock = { readonly blockHash: string };
+    const reader = (o: { block?: boolean; account?: boolean } = {}): BlockReader => ({
+      queryBlock: async () => { asked.push('block'); return o.block === false ? null : { hash: 'b7'.repeat(32) }; },
+      queryZSwapAndContractState: async (address: string, at: AtBlock) => {
+        asked.push(`tree, state and parameters of ${address.slice(0, 4)} at ${at.blockHash.slice(0, 4)}`);
+        return o.account === false ? null : [bytesOf('zswap'), bytesOf('account'), bytesOf('parameters')];
+      },
+      queryContractState: async () => { asked.push('a state alone'); return null; },
+    }) as unknown as BlockReader;
+    const read = await accountAtOneBlockOver(reader(), ACCOUNT);
+    /* RED WHEN: the account is read at any moment but the block named first, or its parameters from another read. */
+    expect(asked).toEqual(['block', `tree, state and parameters of ${ACCOUNT.slice(0, 4)} at b7b7`]);
+    expect([read!.blockHash, ...[read!.account, read!.parameters].map((b) => new TextDecoder().decode(b.serialize()))])
+      .toEqual(['b7'.repeat(32), 'account', 'parameters']);
+    /* RED WHEN: a block or an account the indexer does not hold is answered as anything but not read yet. */
+    for (const o of [{ block: false }, { account: false }]) expect(await accountAtOneBlockOver(reader(o), ACCOUNT), JSON.stringify(o)).toBeNull();
+    const b64 = (u: Uint8Array) => Buffer.from(u).toString('base64');
+    const source = { accountAtOneBlock: (a: string) => accountAtOneBlockOver(reader(), a) } as unknown as VaultChainSource;
+    /* RED WHEN: the call state crosses as anything but the block and base64 of the two it was read as. */
+    expect(await readAccountCallChain(source, ACCOUNT)).toEqual({
+      blockHash: 'b7'.repeat(32), accountState: b64(bytesOf('account').serialize()), parameters: b64(bytesOf('parameters').serialize()),
+    });
+    /* RED WHEN: a source that cannot read the account alone is answered as an account at no block. */
+    await expect(readAccountCallChain({} as VaultChainSource, ACCOUNT)).rejects.toThrow(/cannot read the company's account/);
   });
 
   it('A TRANSACTION\'S EVENTS AND THE ONE THAT CREATED AN OUTPUT ARE READ BY THE WORKER AT THE WALLET\'S INDEXER, ONLY THE VAULT\'S OWN', async () => {

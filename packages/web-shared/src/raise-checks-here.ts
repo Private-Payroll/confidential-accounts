@@ -35,7 +35,9 @@ import type { PeopleHere } from './people-on-device.js';
 import type { DirectoryHere } from './vault-page-doors.js';
 import type { RunMadeHere } from './what-this-device-made.js';
 import { knownEntriesOf } from './payment-entries.js';
-import { payableFactsOf, payrollRoundsHere, type CompanyRecordsHere } from './run-rebuilt-here.js';
+import {
+  payableFactsOf, payrollRoundsHere, proposalsListedHere, runsListedHere, type CompanyRecordsHere,
+} from './run-rebuilt-here.js';
 import { policyForARunHere, type PolicyForARun } from './spending-policy-here.js';
 
 /** A round of a run, as this device made it: the run, the leg, and the payments it makes, with what they are checked against. */
@@ -350,15 +352,17 @@ export async function factsHere(
       + 'the current version');
   }
   const [people, directory, policy, proposals, runs, spendingPolicy] = await Promise.all([
-    records.people(), records.directory(), records.policy(), read.proposals ?? readProposals(), records.runs(),
+    records.people(), records.directory(), records.policy(), proposalsListedHere({ ...records, proposals: readProposals }, read.proposals),
+    runsListedHere(records),
     read.spendingPolicy ?? policyOfTheRound(records, accountId, viewingKey, round)]);
-  const rounds = payrollRoundsHere(proposals, accountId, viewingKey);
+  const nowInSeconds = BigInt(Math.floor(now.getTime() / 1000));
+  const rounds = payrollRoundsHere(proposals, accountId, viewingKey, { identity: records.roundIdentity, nowInSeconds });
   const live = new Set(rounds.filter(isLiveRound).map((r) => r.runId));
   const others = runs.filter((r) => r.accountId === accountId && r.id !== run.id && live.has(r.id)).map((r) => openSealedRun(r, viewingKey));
   return {
     people, directory, policy, others, live, circuits: records.payments, registry: records.registry ?? theAssets, rounds,
     standingOf: (id) => proposals.find((p) => p.id === id && p.accountId === accountId),
-    nowInSeconds: BigInt(Math.floor(now.getTime() / 1000)), spendingPolicy,
+    nowInSeconds, spendingPolicy,
   };
 }
 

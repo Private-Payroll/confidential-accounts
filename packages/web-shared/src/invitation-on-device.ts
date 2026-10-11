@@ -31,6 +31,8 @@ import {
 import type { PendingSignerPayload, Role, RosterEmployee } from '../../../src/core/types.js';
 import type { AssetId } from '../../../src/core/assets.js';
 import { signCompanyFiling, toCompanyWire } from '../../../src/midnight/sealed-record-wire.js';
+import { companyRecordEntry } from '../../../src/midnight/record-manifest.js';
+import type { RecordsEntered } from './record-entered-here.js';
 import type { LeafScheme } from '../../../src/core/signer-leaf.js';
 import type { SealedHandover } from '../../../src/core/invite-handover.js';
 import type { AccountAddress, CompanyLabel } from 'midnight-identity/profile/company-label';
@@ -57,6 +59,8 @@ export interface InvitingCompany {
 /** This device's seat: the filing key it signs with, and the directory entry its wallet signed for it. */
 export interface InvitingSeat extends Inviter {
   readonly signingSecret: Hex;
+  /** The one filing call, bound to this company and this seat: a person record filed here is entered in the company's records. */
+  readonly entered: RecordsEntered;
 }
 
 /** An invitation made: the link to send the person, and the ids the service knows it by. */
@@ -122,9 +126,11 @@ async function filePayeeInvitation(
   };
   const token = newInvitationToken();
   const invitation = filed(company, seat, 'employee', token, signOffer(offered(company, seat, offer), seat.signingSecret), person.id);
+  const signed = signCompanyFiling(record, seat.signingSecret);
   answered(await send(`/api/accounts/${encodeURIComponent(company.id)}/people`, {
-    method: 'POST', body: JSON.stringify({ person: toCompanyWire(signCompanyFiling(record, seat.signingSecret)), invitation }),
+    method: 'POST', body: JSON.stringify({ person: toCompanyWire(signed), invitation }),
   }), 201);
+  await seat.entered.enter([companyRecordEntry(signed)]);
   return { token, id: invitation.id, person: person.id };
 }
 

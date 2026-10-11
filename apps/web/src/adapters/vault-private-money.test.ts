@@ -1,4 +1,5 @@
 // @vitest-environment jsdom
+import { enteredHere } from '../../../../src/testing/records-entered.js';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { newSigningKeypair, newWrappingKeypair, type Hex } from '../../../../src/core/crypto.js';
 import type { Asset, AssetRegistry } from '../../../../src/core/assets.js';
@@ -37,6 +38,8 @@ const kr = vi.hoisted(() => ({
   roster: null as unknown,
   view: null as unknown,
   filed: null as unknown,
+  /* The signing secret of the seat that filed the pool, which entered it in the company's records. */
+  filedBy: null as string | null,
   asked: [] as string[],
   /* The company key this tab's wallet released, and the seat this signer's own key material makes. */
   companyKey: null as string | null,
@@ -62,10 +65,24 @@ vi.mock('vaults-web-shared/keyring.js', async (real) => ({
     /* The indexer the wallet reads through: the vault is read there on this device, and nowhere else. */
     indexer: kr.indexer,
   }),
-  api: async (path: string) => {
+  api: async (path: string, init?: RequestInit) => {
     kr.asked.push(path);
     if (path === '/api/accounts/c1') return { id: 'c1', companyLabel: `co_${'c1'.repeat(32)}`, contractAddress: 'c0'.repeat(32) };
     if (path === '/api/accounts/c1/directory') return { filings: kr.filings };
+    /* The company's records: the pool filed, entered by the seat that filed it, and the chain holding no anchor yet. */
+    if (path.startsWith('/api/accounts/c1/manifest/tree/pending?root=')) {
+      if (kr.filed === null || kr.filedBy === null) return { entries: [] };
+      const { fromWire } = await import('../../../../src/midnight/sealed-record-wire.js');
+      const { signManifestEntry, vaultRecordEntry } = await import('../../../../src/midnight/record-manifest.js');
+      const pool = fromWire(kr.filed, { vault: 'ab'.repeat(32), record: 'pool' }).sealed;
+      return { entries: [signManifestEntry('c1', vaultRecordEntry('pool', pool), kr.filedBy as never)] };
+    }
+    /* Nothing anchored: every record proven absent from the empty tree. */
+    if (path === '/api/accounts/c1/manifest/tree/proofs') {
+      const b = JSON.parse(String(init?.body)) as { records: unknown[]; kinds: unknown[] };
+      return { records: b.records.map(() => null), kinds: b.kinds.map(() => []), older: [], proof: { siblings: [] } };
+    }
+    if (path === '/api/accounts/c1/call-state') return { account: 'c0'.repeat(32), accountState: '00'.repeat(32), parameters: '', blockHash: 'b' };
     throw new Error(`no answer for ${path}`);
   },
 }));
@@ -75,6 +92,10 @@ vi.mock('./vault-builder.js', () => ({
     commitments: async (i: { vault: string; coin: { nonce: string; token: string; value: string } }) => ({ output: '', held: `h${i.vault.slice(0, 2)}${i.coin.nonce.slice(2)}` }),
     paymentsFit: async () => ({ of: 'fits' }),
     ownSeat: async () => kr.ownSeat,
+    /* The account's own heads, and its history at the wallet's indexer: the stand-in chain holds no anchor. */
+    anchorHeads: async (i: { after: unknown[] }) => ({ after: i.after.map(() => '00'.repeat(32)), seats: i.after.map(() => null) }),
+    /* A chain holding no anchor: no head landed, and who holds the account named for an anchor nobody here sends. */
+    anchorsOnChain: async () => ({ landed: [], now: { approvals: 1, signerRoot: '00'.repeat(32), signers: ['00'.repeat(32)] }, seatsNow: ['00'.repeat(32)] }),
     /* The vault as this device's worker reads it, at the indexer it is handed: the stand-in chain. */
     vaultOnChain: async (i: { vault: string; indexer: { indexerUri: string } }) => {
       kr.readHere.push(`${i.vault} at ${i.indexer.indexerUri}`);
@@ -123,7 +144,8 @@ const RECORDS = recordsKeypairFrom(new Uint8Array(32).fill(0x11));
 
 /** The pool filed by `filer`, wrapped under `seat` to `to`, holding `notes`. */
 async function filePool(notes: Array<{ nonce: Hex; token: Hex; value: bigint }>, filer = SIGNING, to = RECORDS.publicKey, seat = SEAT) {
-  const store = new HttpSealedPoolStore('pool', pageWireSend(() => 'u1'), filer.secret, async () => () => null);
+  const store = new HttpSealedPoolStore('pool', pageWireSend(() => 'u1'), filer.secret, async () => () => null, enteredHere());
+  kr.filedBy = filer.secret;
   await new SealedNotePool(store, { signerId: seat, wrappingSecret: RECORDS.secret }, async () => [{ id: seat, wrappingPublicKey: to }]).create(VAULT, { notes });
 }
 

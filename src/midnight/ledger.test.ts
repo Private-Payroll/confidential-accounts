@@ -3950,10 +3950,13 @@ describe('a spending policy, set and charged through the client', () => {
     });
   });
 
+  /** The fresh half of a run's salt. */
+  const FRESH = 'f1'.repeat(32);
+
   it("clearRun: the run's parts, its tree and its period in the slots the contract names, and the policy staged", async () => {
     const { ledger, staged } = harness({});
     const step = {
-      kind: 'clearRun' as const, proposalId: PROPOSAL_ID, run: RUN, salt: CHANGE.salt, asset: TEST_TOKEN,
+      kind: 'clearRun' as const, proposalId: PROPOSAL_ID, run: RUN, salt: CHANGE.salt, fresh: FRESH, asset: TEST_TOKEN,
       top: 77n, total: 4_321n, period: 0n, policy: POLICY, spent: 1_234n,
     };
     const call = await ledger.prepare('acct', step);
@@ -3967,6 +3970,9 @@ describe('a spending policy, set and charged through the client', () => {
     expect([at('payees'), at('opensAt'), at('closesAt'), at('required')]).toEqual([3n, RUN.opensAt, RUN.closesAt, 2n]);
     expect(argHex(at('salt'))).toBe(CHANGE.salt);
     expect([at('top'), at('total'), at('period')]).toEqual([77n, 4_321n, 0n]);
+    /* A run of its own: no leg, and the fresh half of its salt. RED WHEN the service charges a run with another fresh salt, or names a leg. */
+    expect(argHex(at('fresh'))).toBe(FRESH);
+    expect(argHex(at('leg'))).toBe('00'.repeat(32));
     expect(call.args).toHaveLength(slots.length);
     /* RED WHEN the policy's opening, what the period has been charged, or the token is not staged. */
     expect(staged.at(-1)?.value).toMatchObject({ policy: POLICY, periodSpent: 1_234n, assetId: assetIdBytes(TEST_TOKEN) });
@@ -3977,17 +3983,17 @@ describe('a spending policy, set and charged through the client', () => {
     const before = staged.length;
     /* RED WHEN the client stops comparing the window with the period before a fee. */
     await expect(ledger.prepare('acct', {
-      kind: 'clearRun', proposalId: PROPOSAL_ID, run: { ...RUN, closesAt: 1_801_592_001n }, salt: CHANGE.salt,
+      kind: 'clearRun', proposalId: PROPOSAL_ID, run: { ...RUN, closesAt: 1_801_592_001n }, salt: CHANGE.salt, fresh: FRESH,
       asset: TEST_TOKEN, top: 1n, total: 1n, period: 0n, policy: POLICY, spent: 0n,
     })).rejects.toThrow(/does not lie inside the period 2027-01-03 to 2027-02-02/);
     /* RED WHEN the client stops comparing the window's start with the period's. */
     await expect(ledger.prepare('acct', {
-      kind: 'clearRun', proposalId: PROPOSAL_ID, run: { ...RUN, opensAt: 1_798_999_999n }, salt: CHANGE.salt,
+      kind: 'clearRun', proposalId: PROPOSAL_ID, run: { ...RUN, opensAt: 1_798_999_999n }, salt: CHANGE.salt, fresh: FRESH,
       asset: TEST_TOKEN, top: 1n, total: 1n, period: 0n, policy: POLICY, spent: 0n,
     })).rejects.toThrow(/does not lie inside the period/);
     /* RED WHEN the client reads a later period's start as the first period's: this window lies in period 0. */
     await expect(ledger.prepare('acct', {
-      kind: 'clearRun', proposalId: PROPOSAL_ID, run: RUN, salt: CHANGE.salt,
+      kind: 'clearRun', proposalId: PROPOSAL_ID, run: RUN, salt: CHANGE.salt, fresh: FRESH,
       asset: TEST_TOKEN, top: 1n, total: 1n, period: 1n, policy: POLICY, spent: 0n,
     })).rejects.toThrow(/does not lie inside the period 2027-02-02 to 2027-03-04/);
     expect(staged.length).toBe(before);

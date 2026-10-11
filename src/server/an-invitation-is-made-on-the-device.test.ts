@@ -6,6 +6,7 @@
  * (`invitation-on-device.ts`), talking to it over real HTTP. Every request is
  * recorded, so what crosses the wire is asserted, not assumed.
  */
+import { enteredHere } from '../testing/records-entered.js';
 import { describe, it, expect } from 'vitest';
 import { identityFromSecret } from 'midnight-identity';
 import type { CompanyLabel } from 'midnight-identity/profile/company-label';
@@ -61,7 +62,8 @@ describe('A PAYEE IS INVITED FROM A SIGNER\'S DEVICE', () => {
   it('REFUSES AN UNSIGNED INVITATION, ONE SIGNED IN ANOTHER\'S SESSION, A ROLE THAT MAY NOT INVITE, AND A PERSON THAT IS NOT NEW', async () => {
     const filingFrom = async (seat: Seat, over: Partial<InvitationFiling> = {}): Promise<{ person: unknown; invitation: InvitationFiling }> => {
       let caught: { person: unknown; invitation: InvitationFiling } | null = null;
-      await invitePayeeHere(ACME, seat, DANA, ORIGIN, async (_p, init) => { caught = JSON.parse(init.body!); return { status: 201, body: {} }; });
+      /* Only caught here, never filed, so it is not entered either. */
+      await invitePayeeHere(ACME, { ...seat, entered: enteredHere() }, DANA, ORIGIN, async (_p, init) => { caught = JSON.parse(init.body!); return { status: 201, body: {} }; });
       return { person: caught!.person, invitation: { ...caught!.invitation, ...over } };
     };
     const post = (who: string, body: unknown, company = CO) => sendAs(who)(`/api/accounts/${company}/people`, { method: 'POST', body: JSON.stringify(body) });

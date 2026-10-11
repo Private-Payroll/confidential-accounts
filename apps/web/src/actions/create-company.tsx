@@ -1,20 +1,19 @@
 import { useId, useState } from 'react';
 import { Alert, AlertDescription, AlertTitle, Button, Input, Label, useText } from 'vaults-ui';
 import { ACTED } from '../adapters/refusals.js';
-import { createCompany, finishCreating, waitingToBeFinished, type Created } from '../adapters/create-company.js';
+import { CREATION, CREATION_WAITS, createCompany, finishCreating, waitingToBeFinished, type Created } from '../adapters/create-company.js';
 import { ActRefused } from '../act-refused.js';
 import { useSession } from '../session.js';
 import type { StepProps } from '../setup/step-ids.js';
 
 /**
- * CREATE A COMPANY: its name, then the person's account is asked for the key
- * their keys are saved under, the company is created with them as its one
- * signer, and their keys for it are saved beside the others. The step's one
- * component, shown by the setup wizard.
+ * CREATE A COMPANY: its name, then the company and its keys are made on this
+ * device, held by the person's own wallet key from its first transaction, with
+ * them as its one signer. The step's one component, shown by the setup wizard.
  *
- * A company created whose keys could not be saved is shown first, with
- * Finish, and nothing else can be started until it is: its keys are only in
- * this tab.
+ * A company started here and not finished is shown first, with Finish, which
+ * carries it on as far as the chain allows each time it is pressed; nothing
+ * else can be started until it is finished.
  */
 export function CreateCompany({ onChanged }: StepProps) {
   const t = useText();
@@ -36,7 +35,7 @@ export function CreateCompany({ onChanged }: StepProps) {
   };
   const finish = async (): Promise<void> => {
     setBusy(true);
-    await after(await finishCreating());
+    await after(await finishCreating(person.id));
     setBusy(false);
   };
 
@@ -63,6 +62,11 @@ export function CreateCompany({ onChanged }: StepProps) {
       </div>
       <p className="text-xs text-muted-foreground">{t('setup.createCompany.how')}</p>
       {result?.of === ACTED.done ? <p className="text-sm" data-created={result.companyId}>{t('setup.createCompany.created')}</p> : null}
+      {result?.of === CREATION_WAITS ? (
+        <p className="text-sm" data-creation-waits={result.state}>
+          {result.state === CREATION.notSent ? t('setup.createCompany.started') : t('setup.createCompany.chainWaits')}
+        </p>
+      ) : null}
       {result?.of === ACTED.refused ? <ActRefused why={result.why} /> : null}
     </section>
   );

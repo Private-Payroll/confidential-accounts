@@ -30,6 +30,7 @@ import { assemblePrivatePayments } from '../../../src/midnight/private-payment-w
 import { runPayments } from '../../../src/midnight/run-status.js';
 import { vaultDetails } from '../../../src/testing/vault-details.js';
 import { runsFiledBy } from '../../../src/testing/runs-a-seat-filed.js';
+import { everyRunAndProposalEntered, heldServing, roundsOnATestChain } from '../../../src/testing/record-tree-double.js';
 import { openSealedRun, sealedRunOf } from '../../../src/core/run-legs.js';
 import { registryWithTestPrivateForms, aVaultHolding, TEST_TOKEN } from '../../../src/testing/assets.js';
 import type { CompanyRecordsHere } from './run-rebuilt-here.js';
@@ -65,14 +66,17 @@ const aRaisedRun = async (o: { sent?: boolean } = {}) => {
   const records: CompanyRecordsHere = {
     directory: async () => ({
       dir: { company: account, version: 1, seats: [{ seat: SEAT, person: 'ada', signingKey: founder.publicKey, wrappingKey: 'ab'.repeat(32), committeeKey: COMMITTEE, role: 'admin', retired: null }] },
-      holders: { committee: [COMMITTEE], seats: [SEAT], approvals: 1, adoptedVaults: [], founding: SEAT, foundingCommittee: [COMMITTEE], account: 'ac'.repeat(32) } as never,
-      another: new Set(),
+      holders: { committee: [COMMITTEE], seats: [SEAT], approvals: 1, adoptedVaults: [], account: 'ac'.repeat(32) } as never,
+      another: new Set(), at: () => null, records: heldServing(account, {}, []),
     }),
     people: async () => ({ people: hired.map((e) => ({ person: payroll.person(e.id, viewingKey)!, version: 1, handedOver: true })), notBelieved: [], notPayable: [] }),
     state: async (id) => (id === '0' ? state : null),
     runs: async () => runsFiledBy(store.listRuns(account), account, founder.secret),
     proposals: async () => store.listProposals(account),
+    /* Where each proposal stands, as the person's own wallet reads this file's chain. */
+    roundsOnChain: roundsOnATestChain(async () => (await ledger.status(account))?.openProposals ?? []),
     registry,
+    roundIdentity: pureCircuits,
     /* Paying reads neither what the wallet says of payments nor the company's ceilings. */
     payments: { paidOnceOf: () => { throw new Error('not read here'); }, paidMovementOf: () => { throw new Error('not read here'); }, read: async () => { throw new Error('not read here'); } },
     policy: async () => { throw new Error('not read here'); },
@@ -81,7 +85,12 @@ const aRaisedRun = async (o: { sent?: boolean } = {}) => {
     detailsOf: vaultDetails, runPayload: pureCircuits.runPayload, proposalIdOf: pureCircuits.proposalIdOf,
     paidAmong: (leaves) => ledger.paidAmong(account, [...leaves]),
   };
-  return { store, ledger, accounts, payroll, account, viewingKey, runId: run.id, records, deps, founder: founder.secret };
+  /* Founded on the chain by the founding seat, its first anchor holding the first state. */
+  const founded = { seat: SEAT, signingSecret: founder.secret, records: [state], committee: [COMMITTEE] };
+  return {
+    store, ledger, accounts, payroll, account, viewingKey, runId: run.id, records: everyRunAndProposalEntered(records, account, [founder.secret], founded),
+    deps, founder: founder.secret, founded,
+  };
 };
 
 /** The company's records with the run's own record of its leg saying it was raised needing `required` approvals, filed again by its seat. */
@@ -91,7 +100,7 @@ const recordedNeeding = (c: Awaited<ReturnType<typeof aRaisedRun>>, required: bi
   const leg = Object.keys(opened.payout!)[0] as keyof NonNullable<typeof opened.payout>;
   const barred = { ...opened, payout: { ...opened.payout, [leg]: { ...opened.payout![leg]!, required } } };
   const resealed = { ...kept, ...sealedRunOf(barred as never, c.viewingKey, kept.keyEpoch) };
-  return { ...c.records, runs: async () => runsFiledBy([resealed as never], c.account, c.founder) };
+  return everyRunAndProposalEntered({ ...c.records, runs: async () => runsFiledBy([resealed as never], c.account, c.founder) }, c.account, [c.founder], c.founded);
 };
 
 describe('AN APPROVED LEG, PAID FROM WHAT THIS DEVICE MADE', () => {
@@ -139,6 +148,14 @@ describe('AN APPROVED LEG, PAID FROM WHAT THIS DEVICE MADE', () => {
     const c = await aRaisedRun({ sent: false });
     /* RED WHEN: a round no chain was seen to hold is handed to a vault to pay. */
     await expect(privatePaymentsHere(c.records, c.account, c.runId, c.viewingKey, c.deps)).rejects.toThrow(/no round on the chain a vault can pay yet/u);
+    /* The service writes that the chain holds it, plain on its record and sealed inside it, as a record written before kept it. */
+    const said = async () => (await c.records.proposals!()).map((p) => ({
+      ...p, raisedAt: '2026-10-09T00:00:00.000Z',
+      sealed: sealRecord('proposals', p.accountId, { ...openRecord<object>('proposals', p.accountId, p.sealed, c.viewingKey as Hex), raisedAt: '2026-10-09T00:00:00.000Z' }, c.viewingKey as Hex),
+    }));
+    /* RED WHEN: when the chain first held a round is taken from anything the service wrote rather than from the chain. */
+    await expect(privatePaymentsHere({ ...c.records, proposals: said }, c.account, c.runId, c.viewingKey, c.deps))
+      .rejects.toThrow(/no round on the chain a vault can pay yet/u);
   });
 
   it('WHO THE LEG HAS PAID IS READ OVER ITS OWN LEAVES, VERIFIED AGAINST THE PROPOSAL, AS THE SERVICE READ IT', async () => {

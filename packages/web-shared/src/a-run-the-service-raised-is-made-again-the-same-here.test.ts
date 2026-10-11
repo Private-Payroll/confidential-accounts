@@ -21,9 +21,11 @@ import { MidnightCommitments } from '../../../src/midnight/commitments.js';
 import { runMaterialFor } from '../../../src/midnight/run-material.js';
 import { vaultDetails } from '../../../src/testing/vault-details.js';
 import { runsFiledBy } from '../../../src/testing/runs-a-seat-filed.js';
+import { everyRunAndProposalEntered, heldEntering, roundsOnATestChain } from '../../../src/testing/record-tree-double.js';
 import { registryWithTestPrivateForms, aVaultHolding, TEST_TOKEN } from '../../../src/testing/assets.js';
 import { runRebuiltHere, type CompanyRecordsHere } from './run-rebuilt-here.js';
 import { refuseWhatThisDeviceDidNotMake } from './what-this-device-made.js';
+import { vouchedFreshOf } from '../../../src/midnight/record-tree.js';
 
 const VAULT = toHex(new Uint8Array(32).fill(0xa1));
 const NOW = Math.floor(Date.now() / 1000);
@@ -54,17 +56,20 @@ describe('A RUN THE SERVICE RAISED', () => {
     /* The company's first state, as its founding seat would have signed it. */
     const founder = newSigningKeypair();
     const state = signedFoundingState(account, { keyEpoch: 0, sealed: (await ledger.fetch(account, 0))!.sealedState }, founder.secret);
-    const records: CompanyRecordsHere = {
+    const records: CompanyRecordsHere = everyRunAndProposalEntered({
       directory: async () => ({
         dir: { company: account, version: 1, seats: [{ seat: SEAT, person: 'ada', signingKey: founder.publicKey, wrappingKey: 'ab'.repeat(32), committeeKey: COMMITTEE, role: 'admin', retired: null }] },
-        holders: { committee: [COMMITTEE], seats: [SEAT], approvals: 1, adoptedVaults: [], founding: SEAT, foundingCommittee: [COMMITTEE], account: 'ac'.repeat(32) } as never,
-        another: new Set(),
+        holders: { committee: [COMMITTEE], seats: [SEAT], approvals: 1, adoptedVaults: [], account: 'ac'.repeat(32) } as never,
+        another: new Set(), at: () => null, records: heldEntering(account),
       }),
       people: async () => ({ people: hired.map((e) => ({ person: payroll.person(e.id, viewingKey)!, version: 1, handedOver: true })), notBelieved: [], notPayable: [] }),
       state: async (id) => (id === '0' ? state : null),
       runs: async () => runsFiledBy(store.listRuns(account), account, founder.secret),
       proposals: async () => store.listProposals(account),
+      /* Where each proposal stands, as the person's own wallet reads this file's chain. */
+      roundsOnChain: roundsOnATestChain(async () => (await ledger.status(account))?.openProposals ?? []),
       registry,
+      roundIdentity: pureCircuits,
       /* The person's own wallet reads nobody paid, the commitment to the pay-record key the service holds, and the proposal open. */
       payments: {
         paidOnceOf: pureCircuits.paidOnceOf, paidMovementOf: pureCircuits.paidMovementOf,
@@ -74,7 +79,8 @@ describe('A RUN THE SERVICE RAISED', () => {
         }),
       },
       policy: async () => ({ threshold: 1, limitsByRole: {} }) as never,
-    };
+    /* Founded on the chain by the founding seat, its first anchor holding the first state. */
+    }, account, [founder.secret], { seat: SEAT, signingSecret: founder.secret, records: [state], committee: [COMMITTEE] });
     const { made } = await runRebuiltHere(records, account, proposal.id, viewingKey);
     const payKey = await accounts.payRecordKeyOf(account, viewingKey);
     const chain = {
@@ -86,12 +92,22 @@ describe('A RUN THE SERVICE RAISED', () => {
         lookup: () => pureCircuits.payKeyCommitmentOf(fromHex(payKey)),
       },
     };
+    const deps = {
+      runPayload: pureCircuits.runPayload, vaultDetails, payKeyCommitmentOf: pureCircuits.payKeyCommitmentOf, retrySaltOf: pureCircuits.retrySaltOf,
+    };
+    /*
+     * The service raises with a salt of its own and seals no fresh half in its proposal, so no device approves what it raised:
+     * every run's salt is retrySaltOf(leg or none, fresh), and a device raises it. RED WHEN: a run whose record does not
+     * say how its salt was made is approved.
+     */
+    expect(() => refuseWhatThisDeviceDidNotMake(deps, { chainId: proposal.chainId, digest: proposal.digest, made }, chain))
+      .toThrow(/does not say how its salt was made/);
+    /* What the run pays is made the same: given a salt made as a device makes one, the payload is the service's. */
+    const vouched = { head: '1a'.repeat(32) as Hex, r: 'f8'.repeat(32) as Hex, checkedHere: true };
+    const salt = toHex(pureCircuits.retrySaltOf(new Uint8Array(32), fromHex(vouchedFreshOf(vouched.head, vouched.r))));
     /* RED WHEN: the device makes any leaf, the month, the order or the payload other than the service raised it. */
-    expect(() => refuseWhatThisDeviceDidNotMake(
-      {
-        runPayload: pureCircuits.runPayload, vaultDetails, payKeyCommitmentOf: pureCircuits.payKeyCommitmentOf,
-      },
-      { chainId: proposal.chainId, digest: proposal.digest, made }, chain)).not.toThrow();
+    expect(() => refuseWhatThisDeviceDidNotMake(deps, { chainId: proposal.chainId, digest: proposal.digest, salt, vouched, made }, chain))
+      .not.toThrow();
     expect(made.facts.map((f) => f.amount)).toEqual([10000n, 10001n, 10002n]);
   });
 });
