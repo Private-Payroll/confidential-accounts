@@ -412,7 +412,31 @@ describe('the real sources', () => {
     // ruled-public batch size already shows, and the same two marks a single
     // payment writes (3). The checks both payment steps share moved into one
     // circuit with the same sites, so a single payment's count is unchanged.
-    expect(sites(account)).toBe(168);
+    // 168 -> 173. The record anchor (+2): `anchor` discloses the head its caller
+    // read and the batch it covers, which the chain shows anyway: the head it
+    // writes is public, and the batch is what any device folds to reach it.
+    // A retry charged against its leg (+3 net): `clearRun` discloses the leg it
+    // names, whether its salt is the one that leg's retries are raised with
+    // (the salt itself is already public, in the id it rebuilds), and the period
+    // the leg was charged in; the run's own period is now disclosed once for
+    // both its key and its blinding where it was disclosed twice (-1). So a
+    // retry's charge shows which charged leg it counts against.
+    // 173 -> 175. The anchor names who held the account as its batch was
+    // judged (+2): the approvals the account requires and its signer tree's
+    // root, each disclosed once. Both are already public: the ledger holds the
+    // threshold and the tree, and the call is refused unless they match it.
+    // 175 -> 183. Each anchor names its seat (+1): its tag, worked out in the
+    // circuit from the seat it proves, published beside the head - one
+    // company's anchors by one seat link to each other, and to nothing else,
+    // since the tag hashes the account and the seat's blinding, which only the
+    // company's members hold. A recovery (+7): the proposal it carries out, the
+    // head it resumes from and whether the proposal is for that head (the
+    // approval binds it, and the head is public), and, as an anchor, the head
+    // its caller read, the batch, the approvals and the signer root.
+    // 183 -> 184. A recovery's latest time (+1): the last time it may be
+    // carried out, compared with the block time as a run's window is; the
+    // approval binds it, so the chain already holds it in the proposal's id.
+    expect(sites(account)).toBe(184);
     // THE VAULT, 104 -> 110, all in `setNonceSecret`. The commitment it replaces
     // is disclosed once and reused (three sites become one, -2). New (+8): the
     // answer to whether the tree shows nothing past its count; whether the
@@ -445,14 +469,14 @@ describe('the real sources', () => {
     }
   });
 
-  it('`seat` discloses the signer root, and FOURTEEN circuits inherit it', () => {
-    // A DISCLOSES column for any of those fourteen that omits it says the circuit
+  it('`openedSeat` discloses the signer root, and SIXTEEN circuits inherit it', () => {
+    // A DISCLOSES column for any of those sixteen that omits it says the circuit
     // reveals nothing when it reveals the root of the signer tree.
     const account = scanSourceFile(ROOT, 'contracts/src/ConfidentialAccount.compact');
-    expect(own(account, 'seat')).toHaveLength(1);
-    const inheritors = account.filter((c) => c.exported && c.discloses.some((d) => d.via.includes('seat')));
+    expect(own(account, 'openedSeat')).toHaveLength(1);
+    const inheritors = account.filter((c) => c.exported && c.discloses.some((d) => d.via.includes('openedSeat')));
     expect(inheritors.map((c) => c.name).sort()).toEqual(
-      ['adopt', 'amendSigner', 'approve', 'cancel', 'holdRun', 'propose', 'releaseHold', 'removeSignerAndSetThreshold',
+      ['adopt', 'amendSigner', 'anchor', 'approve', 'cancel', 'holdRun', 'propose', 'recoverAnchor', 'releaseHold', 'removeSignerAndSetThreshold',
         'reseatSigner', 'sealPayKey', 'setPolicy', 'setPolicyBar', 'setThreshold', 'setVaultThreshold'],
     );
   });
@@ -522,20 +546,20 @@ describe('the real sources', () => {
       return found[0].line;
     };
 
-    // THE ACCOUNT. `seat` is the circuit every exported circuit that checks its
-    // caller inherits its signer-root disclosure from, which is why it is the
+    // THE ACCOUNT. `openedSeat` is the circuit every exported circuit that checks
+    // its caller inherits its signer-root disclosure from, which is why it is the
     // one read here.
     const ACCOUNT = 'contracts/src/ConfidentialAccount.compact';
-    const rsLine = discloseLineIn(ACCOUNT, 'circuit seat(');
-    const rs = own(scanSourceFile(ROOT, ACCOUNT), 'seat');
+    const rsLine = discloseLineIn(ACCOUNT, 'circuit openedSeat(');
+    const rs = own(scanSourceFile(ROOT, ACCOUNT), 'openedSeat');
     expect(rs).toHaveLength(1);
     expect(rs[0].line,
-      'the scanner reports a different line for `seat`\'s disclose than the file has '
+      'the scanner reports a different line for `openedSeat`\'s disclose than the file has '
       + 'it on. An off-by-one here moves every generated `file:line` citation and nothing else '
       + 'in this repository refuses it — the citation check only asks whether the file is long '
       + 'enough to have the line.').toBe(rsLine);
     expect(rs[0].text,
-      'the scanner reports the wrong expression for `seat`\'s disclose. Dropping or '
+      'the scanner reports the wrong expression for `openedSeat`\'s disclose. Dropping or '
       + 'adding one character here is the defect this test was written for, and it changes what '
       + 'a published privacy document says a circuit reveals.').toBe('root');
 

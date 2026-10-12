@@ -54,6 +54,7 @@ import {
   buildPayoutTree, rootOfLeaves, type PayoutLeafInput, type PayoutTree,
 } from '../../src/midnight/payout-tree.js';
 import { toHex } from '../../src/core/crypto.js';
+import { retryArgsOf, type RetryOfALeg } from '../../src/midnight/spending-policy-record.js';
 import { assetIdBytes } from '../../src/core/assets.js';
 import { OTHER_TEST_TOKEN, TEST_TOKEN } from '../../src/testing/assets.js';
 
@@ -725,10 +726,14 @@ export class AccountSimulator {
     return this.ledger.signerRoles.member(at) ? this.ledger.signerRoles.lookup(at) : undefined;
   }
 
+  /** The account's own address as the circuits read it (`kernel.self().bytes`). */
+  selfBytes(): Uint8Array {
+    return Uint8Array.from(this.address.replace(/^0x/, '').match(/../g)!.map((b) => parseInt(b, 16)));
+  }
+
   /** The four entries of one signer's sealed copy, as the chain holds them, or undefined. */
   sealedPayKeyOf(state: AccountPrivateState): Uint8Array[] | undefined {
-    const self = Uint8Array.from(
-      this.address.replace(/^0x/, '').match(/../g)!.map((b) => parseInt(b, 16)));
+    const self = this.selfBytes();
     const keys = [0n, 1n, 2n, 3n].map((i) => pureCircuits.payKeyWrapKeyOf(self, state.secretKey, i));
     if (!this.ledger.signerRoles.member(keys[0]!)) return undefined;
     return keys.map((k) => this.ledger.signerRoles.lookup(k));
@@ -737,6 +742,62 @@ export class AccountSimulator {
   /** How many entries the account's shared map holds. */
   signerRolesSize(): bigint {
     return this.ledger.signerRoles.size();
+  }
+
+  /** Who holds the account now, as an anchoring device names it: the approvals it requires and its signer tree's root. */
+  heldNow(): { approvals: bigint; signerRoot: { field: bigint } } {
+    return { approvals: this.ledger.threshold, signerRoot: this.ledger.signers.root() };
+  }
+
+  /**
+   * Moves the company's record anchor on by one batch, naming the head this device read and who
+   * held the account as it judged the batch (by default, who holds it now).
+   */
+  anchor(previous: Uint8Array, batch: Uint8Array, held = this.heldNow()) {
+    return this.run('anchor', (c) => this.contract.impureCircuits.anchor(c, previous, batch, held.approvals, held.signerRoot));
+  }
+
+  /** The company's record anchor as the chain holds it, or undefined before the first. */
+  anchorHead(): Uint8Array | undefined {
+    return this.roleEntry(pureCircuits.anchorKey());
+  }
+
+  /** The tag of the seat that moved the record anchor last, as the chain holds it, or undefined before the first anchor. */
+  anchorSeat(): Uint8Array | undefined {
+    return this.roleEntry(pureCircuits.anchorSeatKey());
+  }
+
+  /** The tag `state`'s seat anchors under in this account, as a member works it out from the seat's leaf opening. */
+  anchorTagOf(state: AccountPrivateState): Uint8Array {
+    return pureCircuits.anchorTagOf(this.selfBytes(), pureCircuits.signerPublicKey(state.secretKey), state.blinding);
+  }
+
+  /**
+   * Carries out an approved recovery of the record anchor: on from `previous`, by one batch resuming
+   * from `resumesFrom`, before `latest`, under `proposal`. The device carries the salt the recovery
+   * was raised with.
+   */
+  recoverAnchor(
+    previous: Uint8Array, batch: Uint8Array, resumesFrom: Uint8Array, latest: bigint, proposal: Uint8Array, held = this.heldNow(),
+  ) {
+    return this.run('recoverAnchor', (c) => this.contract.impureCircuits.recoverAnchor(
+      c, previous, batch, held.approvals, held.signerRoot, resumesFrom, latest, proposal));
+  }
+
+  /**
+   * Raises a recovery of the record anchor resuming from `resumesFrom`, to be carried out before
+   * `latest` (an hour after the block time by default), and has `approvers` approve it; returns its
+   * identity, its latest time and the change its raiser's device carries, which carrying it out needs.
+   */
+  async approvedRecovery(
+    resumesFrom: Uint8Array, approvers: AccountPrivateState[], seed = 461, latest = BigInt(this.blockTime + 3600),
+  ): Promise<{ id: Uint8Array; c: Change; latest: bigint }> {
+    const c = change(0n, seed);
+    const payload = pureCircuits.recoverAnchorPayload(resumesFrom, latest);
+    await this.as(this.applying(approvers[0]!, c)).propose(payload);
+    const id = this.proposalId(payload, c.salt);
+    for (const a of approvers) await this.as(a).approve(id);
+    return { id, c, latest };
   }
 
   /** Changes M in M of N, through an approved round. */
@@ -844,11 +905,15 @@ export class AccountSimulator {
     top: bigint;
     total: bigint;
     period: bigint;
+    /** The fresh half of the run's salt. */
+    fresh: Uint8Array;
+    /** The leg it retries, for a retry; none for any other run. */
+    retry?: RetryOfALeg;
   }) {
     return this.run('clearRun',
       (c) => this.contract.impureCircuits.clearRun(
         c, args.proposal, args.vault, args.root, args.payees, args.from, args.until,
-        args.required ?? 0n, args.salt, args.top, args.total, args.period));
+        args.required ?? 0n, args.salt, args.top, args.total, args.period, ...retryArgsOf(args.fresh, args.retry)));
   }
 
   /** What the account's shared map holds under `key`, or undefined. */

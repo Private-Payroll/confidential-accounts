@@ -30,6 +30,8 @@ import { mkdtempSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import type { Server } from 'node:http';
+import { everyRunAndProposalEntered, heldEntering, roundsOnATestChain } from '../testing/record-tree-double.js';
+import { pureCircuits } from '../../contracts/managed/contract/index.js';
 
 useOnlyTheseSettings({
   ALLOW_SIMULATED_COMPANY_ADDRESS: '1',
@@ -224,18 +226,21 @@ const onTheDevice = async (c: { account: string; runId: string; viewingKey: stri
   const committee = { tag: 'schnorr', value: '7a'.repeat(32) };
   const unread = async (): Promise<never> => { throw new Error('a leg\'s payments are made from the company\'s runs and proposals'); };
   const kept = () => new FileStore(process.env.DATA_PATH!);
-  return legPaymentsHere({
+  return legPaymentsHere(everyRunAndProposalEntered({
     directory: async () => ({
       dir: { company: c.account, version: 1, seats: [{ seat: '4e'.repeat(32), person: USER, signingKey: founder.publicKey, wrappingKey: 'ab'.repeat(32), committeeKey: committee, role: 'admin', retired: null }] },
-      holders: { committee: [committee], seats: ['4e'.repeat(32)], approvals: 1, adoptedVaults: [], founding: '4e'.repeat(32), foundingCommittee: [committee], account: 'ac'.repeat(32) } as never,
-      another: new Set(),
+      holders: { committee: [committee], seats: ['4e'.repeat(32)], approvals: 1, adoptedVaults: [], account: 'ac'.repeat(32) } as never,
+      another: new Set(), at: () => null, records: heldEntering(c.account),
     }),
     people: unread, state: unread, policy: unread,
+    roundIdentity: pureCircuits,
     payments: { paidOnceOf: () => { throw new Error('not read here'); }, paidMovementOf: () => { throw new Error('not read here'); }, read: unread },
     runs: async () => runsFiledBy(kept().listRuns(c.account), c.account, founder.secret),
     proposals: async () => kept().listProposals(c.account),
+    /* Where each proposal stands, as the person's own wallet reads this file's chain. */
+    roundsOnChain: roundsOnATestChain(async () => (await ledger.status(c.account))?.openProposals ?? []),
     registry: productAssets,
-  }, c.account, c.runId, c.viewingKey as Hex);
+  }, c.account, [founder.secret]), c.account, c.runId, c.viewingKey as Hex);
 };
 
 /*

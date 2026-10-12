@@ -52,7 +52,12 @@ export const SERVED_FROM = [
  * was measured when it was set; a test holds it within a kilobyte of what is built, so when the
  * download falls the budget is lowered with it.
  */
-export const FIRST_DOWNLOAD_BUDGET = 681_429;
+/*
+ * 682,030 bytes, measured from the built application: the language file, which
+ * the first page loads whole, carries every page's words, so the words added
+ * for creating a company and for its records' anchor are in the first download.
+ */
+export const FIRST_DOWNLOAD_BUDGET = 682_030;
 
 /**
  * THE WORKERS THIS APPLICATION STARTS, by their entry's path from this folder,

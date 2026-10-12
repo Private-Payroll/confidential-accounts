@@ -524,8 +524,75 @@ const SCHEMES: Entry[] = [
   {
     circuit: 'anchorKey',
     contractOnly:
-      'a key reserved in signerRoles for a later anchor entry, derived inside the contract. No ' +
-      'circuit writes it and no client computes it; key-collisions.test.ts pins it apart.',
+      'where the company\'s record anchor sits in signerRoles, derived inside the contract and ' +
+      'never taken from a caller; only anchor writes it. key-collisions.test.ts pins it apart.',
+  },
+  {
+    circuit: 'anchorHeadOf',
+    contractOnly:
+      'the head one batch of records moves the anchor to, from the head before it. anchor computes ' +
+      'it inside the proof, and whoever folds the company\'s records calls this circuit off ' +
+      'pureCircuits; no TypeScript copy exists.',
+  },
+  {
+    circuit: 'anchorHeldOf',
+    contractOnly:
+      'what one anchor call folds into the head: the batch, who held the account as it was judged, ' +
+      'and the anchoring seat\'s tag. anchor computes it inside the proof, and whoever folds the ' +
+      'company\'s records calls this circuit off pureCircuits in the worker; no TypeScript copy exists.',
+  },
+  {
+    circuit: 'anchorSeatKey',
+    contractOnly:
+      'where the tag of the seat that moved the record anchor last sits in signerRoles, derived inside ' +
+      'the contract; only anchor and recoverAnchor write it. key-collisions.test.ts pins it apart.',
+  },
+  {
+    circuit: 'anchorTagOf',
+    contractOnly:
+      'the tag one seat anchors under in one account, from its key and its leaf\'s blinding. anchor ' +
+      'and recoverAnchor work it out inside the proof from the seat they prove, and a member maps a ' +
+      'tag to a seat by calling this circuit off pureCircuits; no TypeScript copy exists.',
+  },
+  {
+    circuit: 'anchorRecoveredOf',
+    contractOnly:
+      'what one recovery folds into the head, under its own tag: as anchorHeldOf, with the head it ' +
+      'resumes from. recoverAnchor computes it inside the proof, and whoever folds the company\'s ' +
+      'records calls this circuit off pureCircuits; no TypeScript copy exists.',
+  },
+  {
+    circuit: 'recoverAnchorPayload',
+    contractOnly:
+      'what signers approve to recover the record anchor from a head their devices checked; the ' +
+      'raising device calls this circuit off pureCircuits, and recoverAnchor checks the proposal ' +
+      'against it; no TypeScript copy exists.',
+  },
+  {
+    circuit: 'periodTotalTag',
+    contractOnly:
+      'the tag a period\'s running total is committed under; periodTotalOf and clearRun take it from ' +
+      'this circuit, and no client spells it.',
+  },
+  {
+    circuit: 'legTakenTag',
+    contractOnly:
+      'the tag what a charged leg\'s retries have taken is committed under, so it never shows as equal ' +
+      'to a period\'s total of the same amount; legTakenOf and clearRun take it from this circuit.',
+  },
+  {
+    circuit: 'legTakenOf',
+    contractOnly:
+      'what a charged leg\'s retries have taken, committed under the leg\'s period\'s blinding. clearRun ' +
+      'commits it inside the proof, and whoever opens it calls this circuit off pureCircuits; no ' +
+      'TypeScript copy exists.',
+  },
+  {
+    circuit: 'retrySaltOf',
+    contractOnly:
+      'a retry\'s salt, binding its leg\'s root into the id its signers approve. clearRun recomputes ' +
+      'it inside the proof, and whoever raises a retry calls this circuit off pureCircuits; no ' +
+      'TypeScript copy exists.',
   },
   {
     circuit: 'paymentReceiptTag',
@@ -911,12 +978,12 @@ describe('one definition: the contract and the client agree', () => {
       + 'governance payloads are — do not write a second derivation. If it is a passthrough '
       + 'that reads the circuit, declare it as one in SCHEME_MEMBERS and say so.',
     ).toEqual([
-      'adoptVaultPayload', 'anchorKey', 'bandApprovals', 'batchLeafOf', 'changeReceiptTag', 'changesUsedKeyOf', 'chargedKeyOf', 'chargedMark', 'clearedMark',
-      'companyLabelKey', 'companyWide', 'companyWideDetailsOf', 'coversVault', 'holderKeyOf',
+      'adoptVaultPayload', 'anchorHeadOf', 'anchorHeldOf', 'anchorKey', 'anchorRecoveredOf', 'anchorSeatKey', 'anchorTagOf', 'bandApprovals', 'batchLeafOf', 'changeReceiptTag', 'changesUsedKeyOf', 'chargedKeyOf', 'chargedMark', 'clearedMark',
+      'companyLabelKey', 'companyWide', 'companyWideDetailsOf', 'coversVault', 'holderKeyOf', 'legTakenOf', 'legTakenTag',
       'paidFromMark', 'paidMovementOf', 'paidOnceOf', 'payKeyCommitmentKey', 'payKeyCommitmentOf', 'payKeyPayload',
-      'payKeyWrapKeyOf', 'paymentReceiptTag', 'periodBlindingOf', 'periodKeyOf', 'periodTotalOf',
+      'payKeyWrapKeyOf', 'paymentReceiptTag', 'periodBlindingOf', 'periodKeyOf', 'periodTotalOf', 'periodTotalTag',
       'policyBarKey', 'policyCommitmentOf', 'policyKeyOf', 'policyOnKeyOf', 'policyOnMark',
-      'releasedMark', 'removalCountKey', 'removeAndSetThresholdPayload', 'reseatPayload', 'retireVaultPayload',
+      'recoverAnchorPayload', 'releasedMark', 'removalCountKey', 'removeAndSetThresholdPayload', 'reseatPayload', 'retireVaultPayload', 'retrySaltOf',
       'rightsScopeOf', 'setPolicyBarPayload', 'setPolicyPayload', 'slotOf',
       'sumInnerNode', 'sumLeafNode', 'sumRootOf', 'vacantSlot', 'withdrawKeyOf', 'withdrawSecretOf',
     ]);

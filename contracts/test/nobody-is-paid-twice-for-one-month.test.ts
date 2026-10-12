@@ -24,6 +24,7 @@ import { openSealedPayKey, payKeyCommitmentOf, payKeyPayloadOf } from '../../src
 import { vaultDetails } from '../../src/testing/vault-details.js';
 import { alreadyPaidOf, alreadyPaidSentence } from '../../src/midnight/ledger.js';
 import { newWrappingKeypair, toHex, fromHex, type Hex } from '../../src/core/crypto.js';
+import { vouchedFreshOf } from '../../src/midnight/record-tree.js';
 import { buildRun, type PaymentFacts } from '../../src/midnight/payout-tree.js';
 import { payeeFor, payFor } from '../../src/testing/payees.js';
 import { TEST_TOKEN, registryWithTestPrivateForms } from '../../src/testing/assets.js';
@@ -370,11 +371,15 @@ describe('what the client refuses before anybody signs, and what the approving d
     const runOf = (runId: string, salt: number) => {
       const identity = { accountId: 'acc_1', runId, epoch: 0 };
       const run = buildRun(seeds, identity, facts, vaultDetails, pay, TEST_TOKEN);
+      /* Raised as every device raises a run of its own: over no leg and the fresh half made from what its proposal seals beside the salt. */
+      const vouched = { head: '1a'.repeat(32) as Hex, r: toHex(Uint8Array.from({ length: 32 }, (_, j) => (salt * 7 + j) & 0xff)) as Hex, checkedHere: true };
+      const fresh = vouchedFreshOf(vouched.head, vouched.r);
       const made: RunMadeHere = {
         kind: 'payroll', seeds, payKey, identity, facts, records: pay.records, asset: TEST_TOKEN,
         opensAt: String(OPENS), closesAt: String(CLOSES), required: '0',
       };
-      return { run, made, c: change(0n, salt), payload: pureCircuits.runPayload(fromHex(run.tree.root), run.tree.payees, OPENS, CLOSES, 0n) };
+      const c = { ...change(0n, salt), salt: pureCircuits.retrySaltOf(new Uint8Array(32), fromHex(fresh)) };
+      return { run, made, c, vouched, payload: pureCircuits.runPayload(fromHex(run.tree.root), run.tree.payees, OPENS, CLOSES, 0n) };
     };
     const raised = async (r: ReturnType<typeof runOf>) => {
       await sim.as(carrying(sim, A, r.c)).proposeRun({ root: fromHex(r.run.tree.root), payees: r.run.tree.payees, from: OPENS, until: CLOSES, vault: PAYROLL });
@@ -387,8 +392,8 @@ describe('what the client refuses before anybody signs, and what the approving d
       return { ...made, wallet: { payKeyCommitment: read.payKeyCommitment, asked, held: [...read.held], openRounds: [...read.openRounds], entries: read.entries } };
     };
     const check = (r: ReturnType<typeof runOf>, id: Uint8Array) => () => refuseWhatThisDeviceDidNotMake({
-      runPayload: pureCircuits.runPayload, vaultDetails, payKeyCommitmentOf: pureCircuits.payKeyCommitmentOf,
-    }, { chainId: toHex(id), digest: toHex(r.payload), made: walletRead(r.made) }, sim.ledger as unknown as AccountLedgerView, 'approve');
+      runPayload: pureCircuits.runPayload, vaultDetails, payKeyCommitmentOf: pureCircuits.payKeyCommitmentOf, retrySaltOf: pureCircuits.retrySaltOf,
+    }, { chainId: toHex(id), digest: toHex(r.payload), salt: toHex(r.c.salt), vouched: r.vouched, made: walletRead(r.made) }, sim.ledger as unknown as AccountLedgerView, 'approve');
 
     const first = runOf('run_sep:leg', 62);
     const firstId = await raised(first);

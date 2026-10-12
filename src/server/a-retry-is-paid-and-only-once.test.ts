@@ -22,6 +22,7 @@ import { mkdtempSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import type { Server } from 'node:http';
+import { everyRunAndProposalEntered, heldEntering, roundsOnATestChain } from '../testing/record-tree-double.js';
 
 useOnlyTheseSettings({
   ALLOW_SIMULATED_COMPANY_ADDRESS: '1',
@@ -209,26 +210,30 @@ const retriesOf = (c: Company) => {
 /** Paying a run reads neither what the wallet says of payments nor the company's ceilings. */
 const notReadHere = (): never => { throw new Error('paying reads neither what the wallet says of payments nor the company\'s ceilings'); };
 /** The directory a device holds for a company the service made: one seat, the founding signer's, holding the account. */
+/** The founding seat's own committee key, which held its account from its deploy. */
+const COMMITTEE = { tag: 'schnorr', value: '7a'.repeat(32) };
 const aDirectoryOf = (account: string, signingKey: string) => {
   const SEAT = '4e'.repeat(32);
-  const COMMITTEE = { tag: 'schnorr', value: '7a'.repeat(32) };
   return {
     dir: { company: account, version: 1, seats: [{ seat: SEAT, person: 'ada', signingKey, wrappingKey: 'ab'.repeat(32), committeeKey: COMMITTEE, role: 'admin' as const, retired: null }] },
-    holders: { committee: [COMMITTEE], seats: [SEAT], approvals: 1, adoptedVaults: [], founding: SEAT, foundingCommittee: [COMMITTEE], account: 'ac'.repeat(32) } as never,
-    another: new Set<string>(),
+    holders: { committee: [COMMITTEE], seats: [SEAT], approvals: 1, adoptedVaults: [], account: 'ac'.repeat(32) } as never,
+    another: new Set<string>(), at: () => null, records: heldEntering(account),
   };
 };
 const viewHere = (c: Company) => {
   const api = async (path: string) => (await call('GET', path, { token })).body;
   const unread = async (): Promise<never> => { throw new Error('a payment view reads only the company\'s runs, its proposals and who filed them'); };
   const founder = newSigningKeypair();
-  return paymentViewHere({
+  return paymentViewHere(everyRunAndProposalEntered({
     directory: async () => aDirectoryOf(c.account, founder.publicKey), people: unread, state: unread,
     runs: async () => runsFiledBy(await api(`/api/accounts/${c.account}/runs`), c.account, founder.secret),
     proposals: () => api(`/api/accounts/${c.account}/proposals`),
+    /* Where each proposal stands, as the person's own wallet reads this file's chain. */
+    roundsOnChain: roundsOnATestChain(async () => (await ledger.status(c.account))?.openProposals ?? []),
     registry: productAssets,
+    roundIdentity: pureCircuits,
     payments: { paidOnceOf: notReadHere, paidMovementOf: notReadHere, read: async () => notReadHere() }, policy: async () => notReadHere(),
-  }, c.account, c.runId, c.viewingKey, {
+  }, c.account, [founder.secret]), c.account, c.runId, c.viewingKey, {
     detailsOf: vaultDetails, runPayload: pureCircuits.runPayload, proposalIdOf: pureCircuits.proposalIdOf,
     paidAmong: (leaves) => ledger.paidAmong(c.account, [...leaves]),
   });
@@ -242,15 +247,19 @@ const paysHere = async (c: Company, retry?: string) => {
   const api = async (path: string) => (await call('GET', path, { token })).body;
   const founder = newSigningKeypair();
   const state = signedFoundingState(c.account, { keyEpoch: 0, sealed: (await ledger.fetch(c.account, 0))!.sealedState }, founder.secret);
-  return privatePaymentsHere({
+  return privatePaymentsHere(everyRunAndProposalEntered({
     directory: async () => aDirectoryOf(c.account, founder.publicKey),
     people: async () => ({ people: [], notBelieved: [], notPayable: [] }),
     state: async (id: string) => (id === '0' ? state : null),
     runs: async () => runsFiledBy(await api(`/api/accounts/${c.account}/runs`), c.account, founder.secret),
     proposals: () => api(`/api/accounts/${c.account}/proposals`),
+    /* Where each proposal stands, as the person's own wallet reads this file's chain. */
+    roundsOnChain: roundsOnATestChain(async () => (await ledger.status(c.account))?.openProposals ?? []),
     registry: productAssets,
+    roundIdentity: pureCircuits,
     payments: { paidOnceOf: notReadHere, paidMovementOf: notReadHere, read: async () => notReadHere() }, policy: async () => notReadHere(),
-  }, c.account, c.runId, c.viewingKey, {
+  /* Founded on the chain by that seat, its first anchor holding the first state. */
+  }, c.account, [founder.secret], { seat: '4e'.repeat(32), signingSecret: founder.secret, records: [state], committee: [COMMITTEE] }), c.account, c.runId, c.viewingKey, {
     detailsOf: vaultDetails, runPayload: pureCircuits.runPayload, proposalIdOf: pureCircuits.proposalIdOf,
     paidAmong: (leaves) => ledger.paidAmong(c.account, [...leaves]),
   }, undefined, retry);

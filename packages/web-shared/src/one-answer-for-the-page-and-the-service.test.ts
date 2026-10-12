@@ -33,6 +33,7 @@ import type { OpenedRound } from './governed-call-builder.js';
 import type { CompanyRecordsHere } from './run-rebuilt-here.js';
 import { paysCommitmentOf } from '../../../src/core/proposal-filing.js';
 import { opensAs } from '../../../src/testing/sealed-records.js';
+import { everyRoundHeldOpen } from '../../../src/testing/record-tree-double.js';
 
 /*
  * What this device makes a raise or a retry from, and the proposal it opens, stand in for the company's records here
@@ -277,7 +278,8 @@ const aSender = (order: RaiseOrderOnTheWire) => {
   } as unknown as GovernedCallService;
   const pool = [coin(1, 1_000n)];
   const doors: RaiseDoors = {
-    service, records: {} as CompanyRecordsHere, holdings: theDevice(pool, pool), assets: registryWithTestPrivateForms(),
+    /* The person's own wallet reads the chain holding every proposal sent. */
+    service, records: { roundsOnChain: everyRoundHeldOpen } as unknown as CompanyRecordsHere, holdings: theDevice(pool, pool), assets: registryWithTestPrivateForms(),
     builder: { governedCall: async () => { log.push('build'); return { tx: 'TX' }; } },
     material: { signingSecret: '11'.repeat(32), blinding: '22'.repeat(32), scope: '33'.repeat(32) },
     accountId: 'acc_1', sleep: async () => {}, waitMs: 2, everyMs: 1,

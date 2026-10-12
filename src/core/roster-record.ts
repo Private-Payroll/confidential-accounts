@@ -159,18 +159,7 @@ const seatedWithEveryRight = (rights: Signer['rights']): boolean =>
  * `others` is every other entry of the same roster, for the one-wallet rule.
  */
 export function rosterEntryRefusal(s: Signer, w: RosterWitnesses, others: readonly Signer[] = []): RosterEntryRefusal | null {
-  return rosterEntryJudged(s, w, others).why;
-}
-
-/**
- * `rosterEntryRefusal`, with the wallet the entry was believed on: the one
- * that signed its signer's entry, or null when the entry is believed on this
- * device's own key alone. Null `why` means believed.
- */
-const rosterEntryJudged = (
-  s: Signer, w: RosterWitnesses, others: readonly Signer[],
-): { readonly why: RosterEntryRefusal | null; readonly wallet: string | null } => {
-  const no = (why: RosterEntryRefusal) => ({ why, wallet: null });
+  const no = (why: RosterEntryRefusal) => why;
   const seat = typeof s.leafCommitment === 'string' ? s.leafCommitment.toLowerCase() : null;
   if (seat === null || !w.seatsOnTheChain.some((x) => low(x) === seat)) return no('seat-not-on-the-chain');
   const key = low(s.signingPublicKey);
@@ -204,8 +193,8 @@ const rosterEntryJudged = (
     if (wallet !== null && walletOf(s.vaultKeys.committeeKey) !== wallet) return no('vault-keys-not-theirs');
   }
   if (!seatedWithEveryRight(s.rights)) return no('rights-not-the-chains');
-  return { why: null, wallet };
-};
+  return null;
+}
 
 /** One roster entry a device did not believe: who it names, and why. */
 export interface RefusedEntry { readonly signerId: string; readonly name: string; readonly why: RosterEntryRefusal }
@@ -218,19 +207,17 @@ export interface RefusedEntry { readonly signerId: string; readonly name: string
  */
 export function believedSigners(
   signers: readonly Signer[], w: RosterWitnesses,
-): { readonly believed: Signer[]; readonly refused: RefusedEntry[]; readonly wallets: Readonly<Record<string, string>> } {
+): { readonly believed: Signer[]; readonly refused: RefusedEntry[] } {
   const seated = signers.filter((s) => s.status === 'active');
   const believed: Signer[] = [];
   const refused: RefusedEntry[] = [];
-  const wallets: Record<string, string> = {};
   for (const s of signers) {
     if (s.status !== 'active') { believed.push(s); continue; }
-    const { why, wallet } = rosterEntryJudged(s, w, seated);
+    const why = rosterEntryRefusal(s, w, seated);
     if (why !== null) { refused.push({ signerId: s.id, name: s.name, why }); continue; }
     believed.push(s);
-    if (wallet !== null) wallets[low(s.leafCommitment)] = wallet;
   }
-  return { believed, refused, wallets };
+  return { believed, refused };
 }
 
 /**

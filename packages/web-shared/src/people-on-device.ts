@@ -31,13 +31,15 @@ import type { Invite, RosterEmployee } from '../../../src/core/types.js';
 import type { Payee } from '../../../src/midnight/payee-address.js';
 import type { NetworkName } from '../../../src/midnight/network.js';
 import {
-  signCompanyFiling, toCompanyWire, verifiedCompanyFiler, type CompanyWireVersion,
+  signCompanyFiling, toCompanyWire, verifiedCompanyFiler,
 } from '../../../src/midnight/sealed-record-wire.js';
 import { companyRecordKey } from '../../../src/midnight/seat-directory.js';
+import { companyRecordEntry } from '../../../src/midnight/record-manifest.js';
+import type { RecordsEntered } from './record-entered-here.js';
 import { joinCodeSignedBy, type JoinCode, type PayeeParts } from 'midnight-identity/profile/join-code';
 import { payeeCodeFingerprint, tidyFingerprint } from 'midnight-identity/profile/fingerprint';
 import { checkShieldedAddress, checkUnshieldedAddress } from 'midnight-identity/wallet/address-shape';
-import { judgeIn, seatNotBelievedHere, type DirectoryHere } from './vault-page-doors.js';
+import { judgeIn, kindAsked, namedHere, seatNotBelievedHere, type DirectoryRead } from './vault-page-doors.js';
 import { InvitationRefused, type InvitationSend, type InvitingCompany } from './invitation-on-device.js';
 
 /** What a device acting on a company's people needs: the company opened, its seat, and how it reaches the service. */
@@ -49,9 +51,11 @@ export interface PeopleDevice {
   readonly signedInAs: string;
   readonly send: InvitationSend;
   /** The company's directory as this device believes it, read afresh for every step (`directoryHere`): who filed a version, and whose wallet a seat's is. */
-  readonly directory: () => Promise<DirectoryHere>;
+  readonly directory: DirectoryRead;
   readonly network: NetworkName;
   readonly registry?: AssetRegistry;
+  /** The one filing call, bound to this company and this seat: every version filed here is entered in the company's records. */
+  readonly entered: RecordsEntered;
 }
 
 /** A person as this device read them: the whole entry, the version it is, and whether something waits to be admitted. */
@@ -90,19 +94,28 @@ export interface PeopleHere {
 /**
  * **EVERY PERSON ON THE COMPANY'S PAYROLL, OPENED HERE.** A version no seat
  * this device believes filed is not opened: it is named in `notBelieved`, so a
- * screen never shows it as a person and never hides that it is there. An
+ * screen never shows it as a person and never hides that it is there. So is a
+ * person the company's records name whom the service did not give at all. An
  * active person whose address or payslip key is not their own code's is not
  * read as a person either, whoever filed them: they are named in `notPayable`,
  * with why.
  */
 export async function readPeopleHere(d: PeopleDevice): Promise<PeopleHere> {
   const answer = answered(await d.send(at(d, '/people'), { method: 'GET' }), 200);
-  const judge = judgeIn(await d.directory());
+  const here = await d.directory(kindAsked('company', 'person'));
+  const judge = judgeIn(here);
   const people: PersonHere[] = [];
   const notBelieved: string[] = [];
   const notPayable: { here: PersonHere; why: string }[] = [];
-  for (const { rec, handedOver } of peopleOnTheWire(answer, d.company.id)) {
-    if (judge(verifiedCompanyFiler(rec), 'person', companyRecordKey('person', rec.id), rec.version) !== null) { notBelieved.push(rec.id); continue; }
+  const served = peopleOnTheWire(answer, d.company.id);
+  /* A person the company's records name and the service did not give is not believed, never left out unseen. */
+  const given = new Set(served.map(({ rec }) => rec.id));
+  for (const id of namedHere(here, 'company', 'person')) if (!given.has(id)) notBelieved.push(id);
+  for (const { rec, handedOver } of served) {
+    if (judge(verifiedCompanyFiler(rec), 'person', companyRecordKey('person', rec.id), companyRecordEntry(rec), true) !== null) {
+      notBelieved.push(rec.id);
+      continue;
+    }
     const here: PersonHere = { person: openPerson(rec, d.company.viewingKey), version: rec.version, handedOver };
     const why = here.person.status === 'active' ? whyNotPayable(here.person, d.company.label) : null;
     if (why !== null) { notPayable.push({ here, why }); continue; }
@@ -111,9 +124,16 @@ export async function readPeopleHere(d: PeopleDevice): Promise<PeopleHere> {
   return { people, notBelieved, notPayable };
 }
 
-/** The next version of `here`, sealed and signed on this device, as it crosses the wire. */
-const nextVersion = (d: PeopleDevice, person: RosterEmployee, version: number): CompanyWireVersion =>
-  toCompanyWire(signCompanyFiling(sealPerson(person, version, d.company.keyEpoch, d.company.viewingKey), d.signingSecret));
+/**
+ * **A VERSION OF A PERSON, SEALED AND SIGNED ON THIS DEVICE, FILED AT `path`
+ * AND ENTERED IN THE COMPANY'S RECORDS** - the one filing call - once the
+ * service has kept it.
+ */
+const filedAndEntered = async (d: PeopleDevice, path: string, person: RosterEmployee, version: number): Promise<void> => {
+  const rec = signCompanyFiling(sealPerson(person, version, d.company.keyEpoch, d.company.viewingKey), d.signingSecret);
+  answered(await d.send(path, { method: 'POST', body: JSON.stringify({ person: toCompanyWire(rec) }) }), 201);
+  await d.entered.enter([companyRecordEntry(rec)]);
+};
 
 /**
  * **WHERE A PERSON STANDS**: active only for somebody with somewhere to be
@@ -126,9 +146,7 @@ export async function setStatusHere(d: PeopleDevice, here: PersonHere, status: '
     throw new PersonNotChanged(`${here.person.name} has no address on file, so there is nowhere to pay them and nothing to make active. An address comes from their own wallet when they accept, and becomes payable when it is admitted.`);
   }
   const next: RosterEmployee = { ...here.person, status };
-  answered(await d.send(`/api/people/${encodeURIComponent(here.person.id)}/status`, {
-    method: 'POST', body: JSON.stringify({ person: nextVersion(d, next, here.version + 1) }),
-  }), 201);
+  await filedAndEntered(d, `/api/people/${encodeURIComponent(here.person.id)}/status`, next, here.version + 1);
   return next;
 }
 
@@ -216,9 +234,7 @@ export async function admitHere(d: PeopleDevice, here: PersonHere, readOut: stri
     handedOverBy: code.committeeKey.value, admittedBy: d.signedInAs, admittedAt: new Date().toISOString(),
     selfRaised: raisedBy === code.committeeKey.value, payeeCode: code,
   };
-  answered(await d.send(`/api/employees/${encodeURIComponent(id)}/admit`, {
-    method: 'POST', body: JSON.stringify({ person: nextVersion(d, admitted, here.version + 1) }),
-  }), 201);
+  await filedAndEntered(d, `/api/employees/${encodeURIComponent(id)}/admit`, admitted, here.version + 1);
   return admitted;
 }
 
@@ -263,6 +279,6 @@ export async function makeMyselfPayableHere(d: PeopleDevice, code: JoinCode, pay
     ...person, address, wrappingPublicKey: (code.parts as PayeeParts).payslipKey, payslipKeyFrom: code.company,
     handedOverBy: code.committeeKey.value, admittedBy: d.signedInAs, admittedAt: new Date().toISOString(), payeeCode: code,
   };
-  answered(await d.send(at(d, '/self-payee'), { method: 'POST', body: JSON.stringify({ person: nextVersion(d, payable, 1) }) }), 201);
+  await filedAndEntered(d, at(d, '/self-payee'), payable, 1);
   return payable;
 }

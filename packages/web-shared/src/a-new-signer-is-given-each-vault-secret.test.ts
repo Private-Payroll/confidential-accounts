@@ -8,6 +8,7 @@ import { MemorySealedPoolStore, type SealedPoolStore } from '../../../src/midnig
 import { openNonceSecrets, recordsKeypairFrom, startNonceSecret } from '../../../src/midnight/company-nonce-secret.js';
 import type { DirectoryFiling } from '../../../src/midnight/seat-directory.js';
 import { directoryHere, giveEachVaultSecretHere, type DirectoryHere, type DirectoryHereDeps } from './vault-page-doors.js';
+import { anchoredEntering } from '../../../src/testing/record-tree-double.js';
 import { recordsReaderOf, type DeviceSigner } from './deposit-on-device.js';
 
 /*
@@ -46,6 +47,8 @@ const company = (o: { filings?: DirectoryFiling[]; seats?: string[]; attested?: 
     filings: async () => o.filings ?? [ADA.claim(1), CAROL.claim(2)],
     holders: async () => ({ account: ACCOUNT, approvals: 1, threshold: 1, adoptedVaults: VAULTS, founding: ADA.seat, foundingCommittee: [ADA.committeeKey], seats: o.seats ?? [ADA.seat, CAROL.seat], committee: [ADA.committeeKey, CAROL.committeeKey] }),
     attested: async () => o.attested ?? [ADA.attested, CAROL.attested],
+    /* Nothing here reads a record through the anchor: the company's records hold no entry. */
+    anchored: anchoredEntering(CO),
   };
   const directory = (): Promise<DirectoryHere> => directoryHere(deps);
   return { records, directory };

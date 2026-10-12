@@ -53,6 +53,11 @@ describe('no route reads a viewing key from an address', () => {
       'invitations-route.ts: reported req.originalUrl',
       /* A relay of a proven call refused or failed, written down as every other is. */
       'proposal-relays.ts: reported req.originalUrl',
+      /* `GET .../tree/headers?after=…&limit=…`: the batch to read after and how many, two whole numbers. */
+      'record-manifest-route.ts: after',
+      'record-manifest-route.ts: limit',
+      /* `GET .../tree/pending?root=…`: a root of the company's records, which every member already reads. */
+      'record-manifest-route.ts: root',
       /* The refusal report saying, in its own words, that it writes the address down redacted. */
       'refusal-log.ts: req.originalUrl',
     ]);

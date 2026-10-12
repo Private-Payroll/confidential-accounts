@@ -34,5 +34,6 @@ export const sameGovernance = (a: RoundChangeOnTheWire, b: RoundChangeOnTheWire)
     }
     case 'policy-bar': return sameNumber(a.bar, (b as typeof a).bar);
     case 'threshold': return sameNumber(a.threshold, (b as typeof a).threshold);
+    case 'recover-anchor': return same(a.resumesFrom, (b as typeof a).resumesFrom) && sameNumber(a.latest, (b as typeof a).latest);
   }
 };

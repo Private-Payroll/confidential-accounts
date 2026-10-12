@@ -9,7 +9,7 @@
  * about them taken on trust. The one value the device takes from the service,
  * the account's asset blinding, is pinned as exactly that.
  */
-import { aRunMadeHere, aLedgerHolding } from './a-run-made-here.test-support.js';
+import { aRunMadeHere, aLedgerHolding, RUN_FRESH, RUN_VOUCHED } from './a-run-made-here.test-support.js';
 import { vaultDetails } from '../../../src/testing/vault-details.js';
 import { NO_ASSET } from '../../../src/core/assets.js';
 import { describe, it, expect } from 'vitest';
@@ -42,8 +42,10 @@ const sha = (...parts: Array<Uint8Array | bigint>) => Uint8Array.from(createHash
 const accountPure = {
   runPayload: (root: Uint8Array, payees: bigint, opensAt: bigint, closesAt: bigint) => sha(root, payees, opensAt, closesAt),
   proposalIdOf: (payload: Uint8Array, vault: Uint8Array, salt: Uint8Array) => sha(payload, vault, salt),
+  retrySaltOf: (leg: Uint8Array, fresh: Uint8Array) => sha(Buffer.from('retry-salt'), leg, fresh),
   signerAddPayload: (leaf: Uint8Array) => sha(Buffer.from('seat'), leaf),
   setThresholdPayload: (t: bigint) => sha(Buffer.from('threshold'), t),
+  recoverAnchorPayload: (resumesFrom: Uint8Array, latest: bigint) => sha(Buffer.from('recover'), resumesFrom, latest),
   noVault: () => new Uint8Array(32).fill(0xfe),
   /* What an approval of a run also reads: the pay-record key's commitment and where it is kept. */
   payKeyCommitmentOf: (key: Uint8Array) => sha(Buffer.from('pay-key-commitment'), key),
@@ -56,7 +58,8 @@ const ACCOUNT = 'c0'.repeat(32);
 const material = { signingSecret: '11'.repeat(32), blinding: '22'.repeat(32), scope: '33'.repeat(32) };
 const chain = { accountState: new Uint8Array([1]), parameters: new Uint8Array([2]) };
 
-const SALT = '66'.repeat(32);
+/* A run of its own's salt, over no leg and the run's fresh salt; the seat and the threshold change are raised with it too. */
+const SALT = hex(accountPure.retrySaltOf(new Uint8Array(32), bytes(RUN_FRESH)));
 const LEAF = 'ab'.repeat(32);
 /* A real run of three, made the way the approving device makes it again (`a-run-made-here.test-support.ts`). */
 const RUN_MADE = aRunMadeHere({ opensAt: '100', closesAt: '200' }, (key) => accountPure.payKeyCommitmentOf(key));
@@ -76,10 +79,17 @@ const three = { kind: 'threshold', threshold: '3' } as const;
 const MADE = RUN_MADE.made;
 const RUN: OpenedRound = {
   ...record(accountPure.runPayload(bytes(run.root), 3n, 100n, 200n), bytes(run.vault)), half,
+  /* What its proposal seals beside the salt, its head one this device checked. */
+  vouched: { ...RUN_VOUCHED, checkedHere: true },
   /* A run is raised only as this device made it again, with what the company's records account for on the chain. */
   made: { ...RUN_MADE.made, raising: { period: '2026-09', knownRounds: [], knownLeaves: [], knownNonces: [] } },
 };
 const SEAT: OpenedRound = { ...record(payloadOf(seat), accountPure.noVault()), governance: seat, half: { ...half, changeAmount: '0' } };
+const recovery = { kind: 'recover-anchor', resumesFrom: LEAF, latest: '1800003600' } as const;
+const RECOVERY: OpenedRound = {
+  ...record(accountPure.recoverAnchorPayload(bytes(LEAF), 1800003600n), accountPure.noVault()), governance: recovery, half: { ...half, changeAmount: '0' },
+};
+const approveRecovery: GovernedCallOrder = { circuit: 'approve', proposal: RECOVERY.chainId, of: { governance: recovery, proposalSalt: SALT } };
 const THREE: OpenedRound = { ...record(payloadOf(three), accountPure.noVault()), governance: three, half: { ...half, changeAmount: '0' } };
 
 /* And what an honest service hands over for each. */
@@ -121,7 +131,7 @@ const OTHER = 'ee'.repeat(32);
 const SAYS: Record<string, string> = {
   'proposal identity': 'proposal', salt: 'proposal', vault: 'proposal', leaf: 'person being given access',
   threshold: 'number of approvals required', run: 'payroll run', 'run vault': 'account this run pays from',
-  asset: 'token', amount: 'amount', 'payments digest': 'list of payments',
+  asset: 'token', amount: 'amount', 'payments digest': 'list of payments', recovery: 'recovery of the company\'s records',
 };
 const noHalf = (o: OpenedRound): OpenedRound => { const { half: _h, ...r } = o; return r; };
 
@@ -158,7 +168,7 @@ describe('THE BUILDER PROVES ONLY WHAT THIS DEVICE READ', () => {
     const log: string[] = [];
     await buildGovernedCall(depsWith(log, true), { account: ACCOUNT, order: raiseRun, material, chain, opened: RUN });
     /* RED WHEN: the blinding stops being the service's, or the salt stops being the sealed one - either is then undocumented. */
-    expect(log).toContain('with blinding 5555 salt 6666');
+    expect(log).toContain(`with blinding 5555 salt ${SALT.slice(0, 4)}`);
   });
 
   it.each([
@@ -180,6 +190,9 @@ describe('THE BUILDER PROVES ONLY WHAT THIS DEVICE READ', () => {
     ['leaf', 'amendSigner', { ...seatIt, proposal: RUN.chainId }, noHalf(RUN)],
     ['leaf', 'approve', { ...approveSeat, proposal: RUN.chainId }, noHalf(RUN)],
     ['threshold', 'setThreshold', { ...setIt, threshold: '2' }, noHalf(THREE)],
+    /* A recovery from another head, or with another last time, than the company's record of it: never called a leaf. */
+    ['recovery', 'approve', { ...approveRecovery, of: { governance: { ...recovery, resumesFrom: OTHER }, proposalSalt: SALT } }, noHalf(RECOVERY)],
+    ['recovery', 'approve', { ...approveRecovery, of: { governance: { ...recovery, latest: '1800003601' }, proposalSalt: SALT } }, noHalf(RECOVERY)],
     ['run', 'propose', { ...raiseRun, run: { ...run, root: OTHER } }, RUN],
     ['run vault', 'propose', { ...raiseRun, run: { ...run, vault: OTHER } }, RUN],
     ['asset', 'propose', { ...raiseRun, half: { ...raiseRun.half, assetId: OTHER } }, RUN],

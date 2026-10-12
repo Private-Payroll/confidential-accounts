@@ -14,7 +14,7 @@
  * and the directory and the wallet's read of the chain are given as a device
  * would hold them.
  */
-import { describe, expect, it } from 'vitest';
+import { describe, expect, it, vi } from 'vitest';
 import { drawCompanyLabel } from 'midnight-identity/profile/company-label';
 import { mkdtempSync } from 'node:fs';
 import { tmpdir } from 'node:os';
@@ -33,12 +33,15 @@ import { MidnightCommitments } from '../../../src/midnight/commitments.js';
 import { runMaterialFor } from '../../../src/midnight/run-material.js';
 import { vaultDetails } from '../../../src/testing/vault-details.js';
 import { runsFiledBy } from '../../../src/testing/runs-a-seat-filed.js';
+import { everyRunAndProposalEntered, heldEntering, roundsOnATestChain } from '../../../src/testing/record-tree-double.js';
+import type { RoundOnChain } from './governed-call-builder.js';
 import { registryWithTestPrivateForms, aVaultHolding, OTHER_TEST_TOKEN, TEST_TOKEN } from '../../../src/testing/assets.js';
 import type { SealedProposal, SealedRun } from '../../../src/core/types.js';
 import type { CompanyRecordsHere } from './run-rebuilt-here.js';
 import {
   carryOrderHere, legPaymentsHere, legsHere, NotMadeHere, raiseOrderHere, retryOrderHere, retryPaymentsHere,
 } from './material-made-here.js';
+import { pureCircuits } from '../../../contracts/managed/contract/index.js';
 
 const VAULT = toHex(new Uint8Array(32).fill(0xa1));
 const NOW = Math.floor(Date.now() / 1000);
@@ -80,26 +83,38 @@ const aCompany = async (o: { writtenDown: boolean; alsoAnotherToken?: true }) =>
     const rec = store.getProposal(proposalId)!;
     const leg = runLegOf(TEST_TOKEN, 'shielded');
     const recorded = payroll.requireRun(run.id, viewingKey).payout![leg]!.facts;
-    store.putProposal({ ...rec, pays: paysCommitmentOf({ vault: VAULT, asset: legFieldsOf(leg).asset, payments: recorded.map(paymentChecked) }, saltOf(rec, account, viewingKey)) });
+    /* And the run's own window, sealed beside what its identity is made from, as a seat's device seals it. */
+    const envelope = openRecord<Record<string, unknown> & { sealedPayload: Sealed }>('proposals', account, rec.sealed, viewingKey);
+    const payload = parseCanonical<Record<string, unknown>>(unseal(envelope.sealedPayload, viewingKey));
+    const window = { root: material.run.root, payees: String(material.run.payees), opensAt: String(material.run.opensAt), closesAt: String(material.run.closesAt) };
+    const sealedWithItsWindow = sealRecord('proposals', account, { ...envelope, sealedPayload: seal(canonical({ ...payload, window }), viewingKey) }, viewingKey);
+    store.putProposal({
+      ...rec, sealed: sealedWithItsWindow,
+      pays: paysCommitmentOf({ vault: VAULT, asset: legFieldsOf(leg).asset, payments: recorded.map(paymentChecked) }, saltOf(rec, account, viewingKey)),
+    });
   }
   const founder = newSigningKeypair();
   const state = signedFoundingState(account, { keyEpoch: 0, sealed: (await ledger.fetch(account, 0))!.sealedState }, founder.secret);
-  const records = (over: Partial<CompanyRecordsHere> = {}): CompanyRecordsHere => ({
+  const records = (over: Partial<CompanyRecordsHere> = {}): CompanyRecordsHere => everyRunAndProposalEntered({
     directory: async () => ({
       dir: { company: account, version: 1, seats: [{ seat: SEAT, person: 'ada', signingKey: founder.publicKey, wrappingKey: 'ab'.repeat(32), committeeKey: COMMITTEE, role: 'admin', retired: null }] },
-      holders: { committee: [COMMITTEE], seats: [SEAT], approvals: 1, adoptedVaults: [], founding: SEAT, foundingCommittee: [COMMITTEE], account: 'ac'.repeat(32) } as never,
-      another: new Set(),
+      holders: { committee: [COMMITTEE], seats: [SEAT], approvals: 1, adoptedVaults: [], account: 'ac'.repeat(32) } as never,
+      another: new Set(), at: () => null, records: heldEntering(account),
     }),
     people: async () => ({ people: hired.map((e) => ({ person: payroll.person(e.id, viewingKey)!, version: 1, handedOver: true })), notBelieved: [], notPayable: [] }),
     state: async (id) => (id === '0' ? state : null),
     runs: async () => runsFiledBy(store.listRuns(account), account, founder.secret),
     proposals: async () => store.listProposals(account),
+    /* Where each proposal stands, as the person's own wallet reads this file's chain. */
+    roundsOnChain: roundsOnATestChain(async () => (await ledger.status(account))?.openProposals ?? []),
     registry,
+    roundIdentity: pureCircuits,
     /* Nothing made here reads what the wallet says of payments, or the company's ceilings. */
     payments: { paidOnceOf: () => { throw new Error('not read here'); }, paidMovementOf: () => { throw new Error('not read here'); }, read: async () => { throw new Error('not read here'); } },
     policy: async () => { throw new Error('not read here'); },
     ...over,
-  });
+  /* Founded on the chain by the founding seat, its first anchor holding the first state. */
+  }, account, [founder.secret], { seat: SEAT, signingSecret: founder.secret, records: [state], committee: [COMMITTEE] });
   return { store, accounts, payroll, account, viewingKey, runId: run.id, proposalId, records, hired, founder };
 };
 
@@ -167,18 +182,23 @@ describe('WHAT A RAISE IS BUILT FROM, MADE HERE FROM THE COMPANY\'S RECORDS', ()
   it('A PROPOSAL ALREADY SENT, OR WITHDRAWN, HAS NO ORDER TO BUILD; AND A PAGE WITHOUT THE COMPANY\'S PROPOSALS MAKES NONE', async () => {
     const c = await aCompany({ writtenDown: true });
     const rec = c.store.getProposal(c.proposalId!)!;
-    const withStatus = (status: SealedProposal['status']) => c.records({ proposals: async () => [{ ...rec, status }] });
-    /* RED WHEN: a withdrawn proposal is handed over to be built and sent. */
-    await expect(raiseOrderHere(withStatus('cancelled'), c.account, c.runId, c.viewingKey)).rejects.toThrow(/waiting to be sent/u);
-    /* RED WHEN: a proposal the chain is seen to hold, as the record now keeps that in plain text, is handed over to be sent again. */
-    const held = c.records({ proposals: async () => [{ ...rec, raisedAt: '2026-10-07T00:00:00.000Z' }] });
-    await expect(raiseOrderHere(held, c.account, c.runId, c.viewingKey)).rejects.toThrow(/waiting to be sent/u);
+    /* Where the proposal stands, as the person's own wallet reads the chain: held open, or closed by the call that withdrew it. */
+    const chainSays = (round: RoundOnChain) => async (ids: readonly string[]) => Object.fromEntries(ids.map((id) => [id.toLowerCase(), round]));
+    const WITHDRAWN: RoundOnChain = { held: 'closed', approvals: 0, raisedAt: 1_800_000_000_000, txRef: 'ab'.repeat(32), closedBy: ['cancel'] };
+    const HELD: RoundOnChain = { held: 'open', approvals: 0, raisedAt: 1_800_000_000_000, txRef: 'ab'.repeat(32) };
+    /* RED WHEN: a proposal the chain shows withdrawn is handed over to be built and sent. */
+    await expect(raiseOrderHere(c.records({ roundsOnChain: chainSays(WITHDRAWN) }), c.account, c.runId, c.viewingKey)).rejects.toThrow(/waiting to be sent/u);
+    /* RED WHEN: a proposal the chain holds is handed over to be sent again. */
+    await expect(raiseOrderHere(c.records({ roundsOnChain: chainSays(HELD) }), c.account, c.runId, c.viewingKey)).rejects.toThrow(/waiting to be sent/u);
+    /* RED WHEN: the service's word that a proposal the chain never held was withdrawn, or was raised, is believed - its proof may still be sent. */
+    const servedSo = c.records({ proposals: async () => [{ ...rec, status: 'cancelled' as const, raisedAt: '2026-10-07T00:00:00.000Z' }] });
+    await expect(raiseOrderHere(servedSo, c.account, c.runId, c.viewingKey)).resolves.toMatchObject({ proposalId: c.proposalId });
     /* RED WHEN: a proposal written down with no commitment to what it pays is handed over to be sent, with nothing to hold the send to. */
     const silent = c.records({ proposals: async () => [{ ...rec, pays: undefined }] });
     await expect(raiseOrderHere(silent, c.account, c.runId, c.viewingKey)).rejects.toThrow(/does not say what it pays/u);
     /* RED WHEN: a withdrawn proposal's payments are taken as the leg's, so the device checks what will never be sent. */
     const doubting = { people: async () => ({ ...(await c.records().people()), notBelieved: [c.hired[1]!.id] }) };
-    const cancelled = c.records({ ...doubting, proposals: async () => [{ ...rec, status: 'cancelled' as const }] });
+    const cancelled = c.records({ ...doubting, roundsOnChain: chainSays(WITHDRAWN) });
     await expect(legPaymentsHere(cancelled, c.account, c.runId, c.viewingKey)).rejects.toThrow(/does not believe their record/u);
     expect((await legPaymentsHere(c.records(doubting), c.account, c.runId, c.viewingKey)).payments).toHaveLength(3);
     /* A leg the run no longer names a proposal for, raised once and whose round may still be on chain: raised again as itself. */
@@ -186,12 +206,25 @@ describe('WHAT A RAISE IS BUILT FROM, MADE HERE FROM THE COMPANY\'S RECORDS', ()
     const sealed = c.store.listRuns(c.account).find((x) => x.id === c.runId)!;
     const { employees, totals, payout, skips, repeats } = run;
     const unnamed = { ...sealed, proposalIds: [], sealed: sealRecord('payroll', c.account, { employees, totals, proposalIds: {}, payout, skips, repeats }, c.viewingKey) };
-    const earlier = (status: SealedProposal['status']) =>
-      c.records({ ...doubting, runs: async () => runsFiledBy([unnamed as SealedRun], c.account, c.founder.secret), proposals: async () => [{ ...rec, status }] });
+    const earlier = (round: RoundOnChain) =>
+      c.records({ ...doubting, runs: async () => runsFiledBy([unnamed as SealedRun], c.account, c.founder.secret), roundsOnChain: chainSays(round) });
     /* RED WHEN: a leg whose earlier round may be on chain is checked against the people now, so raising it again raises another round. */
-    expect((await legPaymentsHere(earlier('open'), c.account, c.runId, c.viewingKey)).payments).toHaveLength(3);
-    /* RED WHEN: an earlier round that was withdrawn still decides what the leg pays. */
-    await expect(legPaymentsHere(earlier('cancelled'), c.account, c.runId, c.viewingKey)).rejects.toThrow(/does not believe their record/u);
+    expect((await legPaymentsHere(earlier(HELD), c.account, c.runId, c.viewingKey)).payments).toHaveLength(3);
+    /* The leg's own round, which the chain never held: its proof may still be sent while its window is open, and nothing can pay against it after. */
+    const NEVER: RoundOnChain = { held: 'never', approvals: 0 };
+    const unheld = c.records({ ...doubting, roundsOnChain: chainSays(NEVER) });
+    /* RED WHEN: a round the chain never held is taken as withdrawn while its window is still open. */
+    expect((await legPaymentsHere(unheld, c.account, c.runId, c.viewingKey)).payments).toHaveLength(3);
+    vi.useFakeTimers({ toFake: ['Date'] });
+    vi.setSystemTime((NOW + 3_600) * 1000);
+    try {
+      /* RED WHEN: a round the chain never held still decides what the leg pays once its window has closed. */
+      await expect(legPaymentsHere(unheld, c.account, c.runId, c.viewingKey)).rejects.toThrow(/does not believe their record/u);
+    } finally {
+      vi.useRealTimers();
+    }
+    /* RED WHEN: an earlier round the chain shows withdrawn still decides what the leg pays. */
+    await expect(legPaymentsHere(earlier(WITHDRAWN), c.account, c.runId, c.viewingKey)).rejects.toThrow(/does not believe their record/u);
     await expect(raiseOrderHere(c.records({ proposals: undefined }), c.account, c.runId, c.viewingKey)).rejects.toThrow(/cannot read the company's proposals/u);
   });
 });

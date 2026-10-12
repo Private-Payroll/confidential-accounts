@@ -8,7 +8,7 @@
 import { describe, it, expect } from 'vitest';
 import { newWrappingKeypair, type Hex } from '../core/crypto.js';
 import {
-  openSpendingPolicy, policyOpeningFor, policyOpeningFromWire, sealSpendingPolicy, type PolicyOpeningOnTheWire,
+  openSpendingPolicy, policyOpeningFor, policyOpeningFromWire, retryArgsOf, sealSpendingPolicy, type PolicyOpeningOnTheWire,
 } from './spending-policy-record.js';
 
 const ada = newWrappingKeypair();
@@ -64,5 +64,20 @@ describe('A VAULT\'S SPENDING POLICY, KEPT AS A RECORD OF THE COMPANY\'S', () =>
     /* RED WHEN: periods of no length are sealed - no run could ever be charged to one. */
     expect(() => policyOpeningFromWire({ ...OPENING, terms: { ...OPENING.terms, periodLength: '0' } })).toThrow(/at least one second/u);
     expect(() => policyOpeningFromWire({ ...OPENING, blinding: 'zz' })).toThrow(/thirty-two bytes/u);
+  });
+});
+
+describe('WHAT A CHARGE NAMES ABOUT THE RUN IT RETRIES', () => {
+  const fresh = new Uint8Array(32).fill(2);
+
+  it('a run that is not a retry names no leg and its own fresh salt, so it is charged to its own period', () => {
+    /* RED WHEN the arguments for a run that is not a retry name a leg: clearRun would then take every run for a retry and refuse its charge. */
+    expect(retryArgsOf(fresh)).toEqual([new Uint8Array(32), fresh, 0n, 0n]);
+  });
+
+  it('a retry names its leg, the fresh half of its salt, and its leg\'s top and total, in clearRun\'s order', () => {
+    const leg = new Uint8Array(32).fill(1);
+    /* RED WHEN the four arguments leave clearRun's order: leg, fresh, legTop, legTotal. */
+    expect(retryArgsOf(fresh, { leg, legTop: 3n, legTotal: 4n })).toEqual([leg, fresh, 3n, 4n]);
   });
 });

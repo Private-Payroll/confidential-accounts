@@ -7,6 +7,7 @@
  */
 import { buildRun, type PaymentFacts } from '../../../src/midnight/payout-tree.js';
 import { fromHex, toHex, type Hex } from '../../../src/core/crypto.js';
+import { vouchedFreshOf } from '../../../src/midnight/record-tree.js';
 import { pureCircuits } from '../../../contracts/managed/contract/index.js';
 import { paymentEntriesOf } from './payment-entries.js';
 import { payeeFor, payFor } from '../../../src/testing/payees.js';
@@ -14,6 +15,11 @@ import { vaultDetails } from '../../../src/testing/vault-details.js';
 import { TEST_TOKEN, registryWithTestPrivateForms } from '../../../src/testing/assets.js';
 import { ledgerTokenOf } from '../../../src/core/assets.js';
 import type { AccountLedgerView, RunMadeHere } from './what-this-device-made.js';
+
+/** What the run's proposal's filing seals beside its salt: the head its raiser checked and a random value. */
+export const RUN_VOUCHED = { head: '1a'.repeat(32) as Hex, r: '6d'.repeat(32) as Hex };
+/** The fresh half of the run's salt, made from them: the run's salt is `retrySaltOf(no leg, RUN_FRESH)`. */
+export const RUN_FRESH = vouchedFreshOf(RUN_VOUCHED.head, RUN_VOUCHED.r);
 
 /**
  * A run of three, in a window, made the way the approving device makes it,

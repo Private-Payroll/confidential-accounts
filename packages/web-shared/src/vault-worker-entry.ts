@@ -20,7 +20,10 @@ import {
   firstSecretRunOf, startStandingOf, type AccountLedgerForAStart, type AccountStartPure, type SecretRun,
   type StartStanding, type VaultLedgerForAStart, type VaultStartPure,
 } from '../../../src/midnight/vault-start.js';
-import { buildGovernedCall, identityOfAChange, spendingPolicyKeysOf, type GovernedCallDeps } from './governed-call-builder.js';
+import {
+  accountDeployedIn, anchorHeadsAfter, anchorsLandedIn, anchorTagIn, seatOpeningsIn, batchHoldersIn, buildAnchorCall, buildRecoverAnchorCall, seatsNamedBy, buildGovernedCall, identityOfAChange, roundsOnChainIn, vouchingRunsIn, vouchedRunIdentityOf,
+  spendingPolicyKeysOf, type AnchorsOnChain, type GovernedCallDeps, type RoundOnChain,
+} from './governed-call-builder.js';
 import { buildClearRun, periodTotalOf, runChargeStandingOf } from './run-charge-builder.js';
 import { detailsOfKind } from '../../../src/midnight/vault-details.js';
 import { circuitOf, httpKeyMaterialSource, IndexedDbArtefactCache, type ArtefactSource } from './key-material.js';
@@ -135,7 +138,80 @@ export type WorkerDeps = Omit<VaultBuilderDeps, 'network'> & { vault: any; accou
     vaultKeys: { getVerifierKey(c: string): Promise<Uint8Array>; getVerifierKeys(cs: readonly string[]): Promise<Array<[string, Uint8Array]>> };
     /** Where a vault is read from, at the indexer the wallet names; absent, the indexer itself. A test hands its own. */
     chainSourceAt?: (indexer: { indexerUri: string; indexerWsUri: string }) => import('./vault-on-chain-here.js').VaultChainSource;
+    /** Where an account's history is read from, at the indexer the wallet names; absent, the indexer itself. A test hands its own. */
+    historyAt?: (indexer: { indexerUri: string; indexerWsUri: string }) => import('../../../src/midnight/contract-history.js').ContractHistory;
   };
+
+/*
+ * An account's history as last read, per indexer and account, with the latest
+ * transaction it was read up to and the anchors read off it: read again in
+ * full only when the account has acted since, because a history only ever
+ * grows.
+ */
+type HistorySteps = Awaited<ReturnType<import('../../../src/midnight/contract-history.js').ContractHistory['of']>>;
+const historiesRead = new Map<string, { readonly latest: string; readonly steps: HistorySteps; anchors?: AnchorsOnChain }>();
+
+/**
+ * **THE ACCOUNT'S HISTORY, READ HERE AT THE INDEXER THE PERSON'S OWN WALLET
+ * NAMES**, every step oldest first: the one read the anchors and where the
+ * company's proposals stand are both made from.
+ */
+async function historyHere(
+  d: Pick<WorkerDeps, 'historyAt'>,
+  ask: { readonly account: string; readonly indexer: { indexerUri: string; indexerWsUri: string } },
+  what: string,
+): Promise<{ readonly latest: string; readonly steps: HistorySteps; anchors?: AnchorsOnChain }> {
+  const account = String(ask.account).toLowerCase();
+  if (!/^[0-9a-f]{64}$/u.test(account)) throw new Error(`${what} not read: that is not a company account this device can name.`);
+  const { indexerContractHistory } = await import('../../../src/midnight/contract-history.js');
+  const history = (d.historyAt ?? ((i) => indexerContractHistory(i.indexerUri, i.indexerWsUri)))(ask.indexer);
+  const key = `${ask.indexer.indexerUri}|${account}`;
+  const latest = await history.latest(account);
+  const known = historiesRead.get(key);
+  if (known !== undefined && known.latest === latest) return known;
+  const steps = await history.of(account);
+  if (steps.length === 0) throw new Error(`${what} not read: its history at the indexer your wallet names is empty.`);
+  const read = { latest, steps };
+  historiesRead.set(key, read);
+  return read;
+}
+
+/**
+ * **EVERY HEAD THE ACCOUNT'S HISTORY SHOWS, ONE PER BLOCK, AND WHO HOLDS IT NOW, READ
+ * HERE** from its history at the indexer the person's own wallet names, each
+ * state read with the account's own functions, its committee read the one way
+ * a wallet reads it (`seatsInAccountState`), who holds it in the latest
+ * state as a batch's header names them (`batchHoldersIn`), and how it was
+ * deployed (`accountDeployedIn`).
+ */
+async function anchorsOnChainHere(
+  d: Pick<WorkerDeps, 'accountPure' | 'accountLedger' | 'runtimeState' | 'historyAt'>,
+  ask: { readonly account: string; readonly indexer: { indexerUri: string; indexerWsUri: string } },
+): Promise<AnchorsOnChain> {
+  const history = await historyHere(d, ask, 'the account\'s anchors were');
+  if (history.anchors !== undefined) return history.anchors;
+  const { steps } = history;
+  const { seatsInAccountState } = await import('midnight-identity/profile/account-state');
+  const landed = anchorsLandedIn(d, steps, (state) => seatsInAccountState(state).committee);
+  const now = batchHoldersIn(d, steps[steps.length - 1]!.state);
+  const deployed = accountDeployedIn(d, steps, seatsInAccountState);
+  const read: AnchorsOnChain = { landed, now, seatsNow: seatsNamedBy(d, now.signers), deployed, vouching: vouchingRunsIn(d, steps) };
+  history.anchors = read;
+  return read;
+}
+
+/**
+ * **WHERE EACH OF THE COMPANY'S PROPOSALS STANDS ON THE CHAIN, READ HERE** from
+ * the account's history at the indexer the person's own wallet names
+ * (`roundsOnChainIn`), never from the company's service.
+ */
+async function roundsOnChainHere(
+  d: Pick<WorkerDeps, 'accountPure' | 'accountLedger' | 'runtimeState' | 'historyAt'>,
+  ask: { readonly account: string; readonly indexer: { indexerUri: string; indexerWsUri: string }; readonly chainIds: readonly string[] },
+): Promise<Record<string, RoundOnChain>> {
+  const { steps } = await historyHere(d, ask, 'where the company\'s proposals stand on the chain was');
+  return Object.fromEntries(roundsOnChainIn(d, steps, ask.chainIds));
+}
 
 /**
  * **A CONTRACT'S VERIFYING KEYS, EACH CHECKED AGAINST THE DIGEST ITS COMPILED
@@ -257,6 +333,12 @@ const loadDeps = (scope: any) => {
         ledger,
         vault,
         runtimeState: (runtime as any).ContractState,
+        /* The signer-tree pieces a batch's holders are read off, and checked against the root they name, with. */
+        accountTree: {
+          StateBoundedMerkleTree: (runtime as any).StateBoundedMerkleTree,
+          CompactTypeBytes: (runtime as any).CompactTypeBytes,
+          CompactTypeMerkleTreeDigest: (runtime as any).CompactTypeMerkleTreeDigest,
+        },
         contracts: contracts as any,
         compiled,
         /* A payment out is the one transaction built here that spends a note, and it hands in the one it chose. */
@@ -457,6 +539,8 @@ export const answerVaultAsk = async (
       };
     case 'proposal-identity':
       return { id: ask.id, ok: true, ask: 'proposal-identity', identity: identityOfAChange(d, ask.change, ask.salt) };
+    case 'vouched-run-identity':
+      return { id: ask.id, ok: true, ask: 'vouched-run-identity', chainId: vouchedRunIdentityOf(d, ask.run) };
     case 'governed-call': {
       const built = await buildGovernedCall(d, {
         account: ask.account,
@@ -483,6 +567,37 @@ export const answerVaultAsk = async (
         id: ask.id, ok: true, ask: 'period-total',
         spent: periodTotalOf(d, { accountState: fromBase64(ask.accountState), ask: ask.total }).toString(),
       };
+    case 'anchor-heads':
+      return { id: ask.id, ok: true, ask: 'anchor-heads', ...anchorHeadsAfter(d, { after: ask.after, holders: ask.holders ?? [] }) };
+    case 'seat-openings':
+      return { id: ask.id, ok: true, ask: 'seat-openings', ...seatOpeningsIn(d, { account: ask.account, openings: ask.openings, ...(ask.own === undefined ? {} : { own: ask.own }) }) };
+    case 'anchor-tag':
+      return { id: ask.id, ok: true, ask: 'anchor-tag', tag: anchorTagIn(d, ask.account, ask.material) };
+    case 'anchors-on-chain':
+      return { id: ask.id, ok: true, ask: 'anchors-on-chain', ...(await anchorsOnChainHere(d, ask)) };
+    case 'rounds-on-chain':
+      return { id: ask.id, ok: true, ask: 'rounds-on-chain', rounds: await roundsOnChainHere(d, ask) };
+    case 'anchor': {
+      const built = await buildAnchorCall(d, {
+        account: ask.account, material: ask.material, previous: ask.previous, batch: ask.batch, held: ask.held,
+        chain: { accountState: fromBase64(ask.chain.accountState), parameters: fromBase64(ask.chain.parameters) },
+      });
+      return { id: ask.id, ok: true, ask: 'anchor', tx: toBase64(built.proven) };
+    }
+    case 'recover-anchor': {
+      const built = await buildRecoverAnchorCall(d, {
+        account: ask.account, material: ask.material, previous: ask.previous, batch: ask.batch, held: ask.held,
+        resumesFrom: ask.resumesFrom, latest: ask.latest, proposal: ask.proposal, proposalSalt: ask.proposalSalt,
+        chain: { accountState: fromBase64(ask.chain.accountState), parameters: fromBase64(ask.chain.parameters) },
+      });
+      return { id: ask.id, ok: true, ask: 'recover-anchor', tx: toBase64(built.proven), placement: built.placement };
+    }
+    case 'account-call-chain': {
+      /* What a call to the account alone is built on, at one block, from the indexer the wallet names: never the service's. */
+      const { readAccountCallChain, vaultChainSourceAt } = await import('./vault-on-chain-here.js');
+      const source = (d.chainSourceAt ?? vaultChainSourceAt)(ask.indexer);
+      return { id: ask.id, ok: true, ask: 'account-call-chain', chain: await readAccountCallChain(source, ask.account) };
+    }
     case 'run-charged':
       return {
         id: ask.id, ok: true, ask: 'run-charged',

@@ -39,7 +39,7 @@ export const signRunFiling = (company: string, r: RunToFile, signingSecret: Hex)
   filedBy: { publicKey: signingPublicKeyOf(signingSecret), signature: sign(runFilingMessage(company, keptPart(r)), signingSecret) },
 });
 
-const RUN_ID = /^run_[A-Za-z0-9_-]{12}$/u;
+export const RUN_ID = /^run_[A-Za-z0-9_-]{12}$/u;
 
 /**
  * Why `f` is not a run a seat of `company` filed whole, or null when it is:

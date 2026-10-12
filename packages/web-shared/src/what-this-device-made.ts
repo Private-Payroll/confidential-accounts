@@ -32,6 +32,16 @@ import { buildRetryRun, buildRun, paidOnceOfNonce, type DetailsOfKind, type Paym
 import { payRecordNonceOf, type PayoutSeed, type PayRecord, type RunIdentity } from '../../../src/midnight/run-keys.js';
 import { fromHex, toHex, type Hex } from '../../../src/core/crypto.js';
 import { firstSecretRunOf, type AccountStartPure, type VaultStartPure } from '../../../src/midnight/vault-start.js';
+import { NO_LEG } from '../../../src/midnight/spending-policy-record.js';
+import { vouchedFreshOf, vouchedRefusal, type Vouched } from '../../../src/midnight/record-tree.js';
+
+/**
+ * What a payroll run's salt was made from, as its proposal seals it, and
+ * whether this device checked that head itself: true only where the proposal
+ * was opened or raised on this device and its own database of the heads it
+ * checked holds that head.
+ */
+export type VouchedHere = Vouched & { readonly checkedHere?: boolean };
 
 /** A payroll run, as this device rebuilt it from the company's records. */
 export interface RunMadeHere {
@@ -122,6 +132,8 @@ interface MadeHereDeps {
   readonly secretRun?: { readonly vault: VaultStartPure; readonly account: AccountStartPure };
   /** The vault's two details circuits, without which no payee's leaf can be made here. */
   readonly vaultDetails?: DetailsOfKind;
+  /** The account's own salt of a run: `retrySaltOf(leg, fresh)`, the leg none unless the run pays a leg's people again. */
+  readonly retrySaltOf?: (leg: Uint8Array, fresh: Uint8Array) => Uint8Array;
 }
 
 /** Why an approval was not built: this device could not make again what the proposal pays. */
@@ -144,7 +156,19 @@ const digits = (what: string, v: string): bigint => {
  * again, whose payload is `digest`, and the chain holds `chainId` open.
  */
 export function refuseWhatThisDeviceDidNotMake(
-  deps: MadeHereDeps, opened: { readonly chainId: string; readonly digest: string; readonly vault?: string; readonly made?: MadeHere },
+  deps: MadeHereDeps,
+  opened: {
+    readonly chainId: string; readonly digest: string; readonly vault?: string; readonly salt?: string;
+    /**
+     * For a payroll run: the head of the company's records its raiser checked
+     * and the random value, sealed in its proposal beside the salt, which the
+     * fresh half of the salt is made from (`vouchedFreshOf`); and whether this
+     * device checked that head itself, as its own database of the heads it
+     * checked holds it - set where the proposal is opened on this device.
+     */
+    readonly vouched?: VouchedHere;
+    readonly made?: MadeHere;
+  },
   ledger: AccountLedgerView | null,
   /** An approval is of a proposal the chain holds open; a raise is of one it does not hold yet. */
   when: 'approve' | 'raise' = 'approve',
@@ -238,6 +262,46 @@ export function refuseWhatThisDeviceDidNotMake(
     }
     /* A retry is raised over a tree of its own, of only the people it names. */
     const raised = made.retry === undefined ? built : buildRetryRun(built, [...made.retry]);
+    /*
+     * **WHAT THE PROPOSAL'S SALT SAYS IT IS, AND WHAT THE RECORD SAYS, AGREE.**
+     * The account charges a run as what its salt was made as: a run whose salt
+     * names a leg is charged nothing while that leg's charge stands. So the salt
+     * is made again here, from the fresh half sealed in the proposal beside its
+     * salt and, for a retry, the root of the leg built again above, and must be
+     * the proposal's.
+     * A run that looks like a first payment but whose salt names a leg, or a
+     * retry whose salt names another leg, is refused.
+     */
+    if (deps.retrySaltOf === undefined) {
+      throw new NotMadeOnThisDevice('This page cannot make a run\'s salt again, so it cannot tell whether the run pays somebody '
+        + 'again without a charge. Reload the page to get the current version.');
+    }
+    const vouched = opened.vouched;
+    if (vouched === undefined || vouchedRefusal(vouched) !== null) {
+      throw new NotMadeOnThisDevice('The company\'s record of this proposal does not say how its salt was made, so this '
+        + 'device cannot tell whether it pays somebody again without a charge. It was raised before this version: withdraw '
+        + 'it and raise it again.');
+    }
+    /*
+     * **AN APPROVAL VOUCHES FOR THE HEAD ITS RUN WAS RAISED OVER**, since the
+     * salt the chain approves is made from it: so it is given only over a head
+     * this device checked itself, never over one only its raiser read.
+     */
+    if (vouched.checkedHere !== true) {
+      throw new NotMadeOnThisDevice('This run was raised over the company\'s records as they stood at a point this device has '
+        + 'not checked itself, so it will not approve it. Reload the page so this device reads the company\'s records, then '
+        + 'approve it again; if it is still refused, this device began checking the records after that point: check them '
+        + 'from the first and approve it again.');
+    }
+    const fresh = vouchedFreshOf(vouched.head as Hex, vouched.r as Hex);
+    const leg = made.retry === undefined ? NO_LEG() : fromHex(built.tree.root);
+    if (opened.salt === undefined || !same(toHex(deps.retrySaltOf(leg, fromHex(fresh))), opened.salt)) {
+      throw new NotMadeOnThisDevice(made.retry === undefined
+        ? 'This proposal\'s salt says it pays a leg\'s people again, while the company\'s record says it is a first payment, '
+          + `so the chain would charge it nothing against that leg's charge. ${DO_NOT}`
+        : 'This retry\'s salt was not made over the leg it pays again, so the chain would charge it as some other leg\'s '
+          + `retry. ${DO_NOT}`);
+    }
     root = raised.tree.root;
     payees = raised.tree.payees;
     for (const i of positions) {

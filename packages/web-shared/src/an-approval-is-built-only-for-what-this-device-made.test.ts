@@ -16,6 +16,7 @@ import { TEST_TOKEN } from '../../../src/testing/assets.js';
 import {
   NotMadeOnThisDevice, refuseWhatThisDeviceDidNotMake, type AccountLedgerView, type MadeHere, type RunMadeHere, type WalletReadFacts,
 } from './what-this-device-made.js';
+import { vouchedFreshOf } from '../../../src/midnight/record-tree.js';
 import { paymentEntriesOf } from './payment-entries.js';
 
 const NET = 'undeployed' as const;
@@ -26,12 +27,23 @@ const facts: PaymentFacts[] = [
 ];
 const pay = payFor(facts, { people: ['p1', 'p2', 'p3'] });
 const WINDOW = { opensAt: 1_800_000_000n, closesAt: 1_800_600_000n };
+/** What the proposal's filing seals beside its salt: the head its raiser checked and a random value, checked here too. */
+const VOUCHED = { head: '1a'.repeat(32), r: 'f2'.repeat(32), checkedHere: true };
+/** The fresh half of the proposal's salt, made from them. */
+const FRESH = vouchedFreshOf(VOUCHED.head as Hex, VOUCHED.r as Hex);
 
 const made = (over: Partial<RunMadeHere> = {}): RunMadeHere => ({
   kind: 'payroll', seeds: [{ epoch: 0, seed: '6e'.repeat(32) as Hex }], payKey: pay.key,
   identity: { accountId: 'acc_1', runId: 'run_1:leg', epoch: 0 }, facts, records: pay.records, asset: TEST_TOKEN,
   opensAt: String(WINDOW.opensAt), closesAt: String(WINDOW.closesAt), required: '0', ...over,
 });
+
+/** The root of the leg the run was made from: what a retry's salt names. */
+const legRootOf = (m: RunMadeHere): Uint8Array =>
+  fromHex(buildRun([...m.seeds], m.identity, [...m.facts], vaultDetails, { key: m.payKey as Hex, records: [...m.records] }, m.asset).tree.root);
+/** The salt the raising device made the proposal's identity with: the account's own, over the leg a retry pays again or none. */
+const saltOf = (m: RunMadeHere, leg: Uint8Array = m.retry === undefined ? new Uint8Array(32) : legRootOf(m)): string =>
+  toHex(pureCircuits.retrySaltOf(leg, fromHex(FRESH)));
 
 /** The payload of the run as the raising device made it: what the chain's proposal commits to. */
 const payloadOf = (m: RunMadeHere): string => {
@@ -71,13 +83,21 @@ const walletRead = (m: RunMadeHere, o: ChainSays): WalletReadFacts => {
 };
 
 const deps = {
-  runPayload: pureCircuits.runPayload, vaultDetails, payKeyCommitmentOf: pureCircuits.payKeyCommitmentOf,
+  runPayload: pureCircuits.runPayload, vaultDetails, payKeyCommitmentOf: pureCircuits.payKeyCommitmentOf, retrySaltOf: pureCircuits.retrySaltOf,
   secretRun: { vault: vaultCircuits as never, account: pureCircuits as never },
 };
 /* Unless a case says otherwise, the wallet reads the same chain the ledger is: a run carries what it read. */
-const check = (m: MadeHere | undefined, digest: string, ledger: (AccountLedgerView & { says?: ChainSays }) | null = chain(), d: object = deps) => {
+const check = (
+  m: MadeHere | undefined, digest: string, ledger: (AccountLedgerView & { says?: ChainSays }) | null = chain(), d: object = deps,
+  salt: string | undefined = m?.kind === 'payroll' ? saltOf(m) : undefined,
+  /** What the proposal's filing seals beside its salt, as this device opened it; null for a filing that seals none. */
+  vouched: object | null = VOUCHED,
+) => {
   const read = m?.kind === 'payroll' && m.wallet === undefined ? { ...m, wallet: walletRead(m, ledger?.says ?? {}) } : m;
-  return () => refuseWhatThisDeviceDidNotMake(d as never, { chainId: CHAIN_ID, digest, ...(read === undefined ? {} : { made: read }) }, ledger);
+  return () => refuseWhatThisDeviceDidNotMake(d as never, {
+    chainId: CHAIN_ID, digest, ...(salt === undefined ? {} : { salt }), ...(vouched === null ? {} : { vouched } as never),
+    ...(read === undefined ? {} : { made: read }),
+  }, ledger);
 };
 const nonceOf = (i: number, occurrence = 0) => payRecordNonceOf(pay.key, { ...pay.records[i]!, occurrence });
 
@@ -189,6 +209,53 @@ describe('AN APPROVAL OF A PAYROLL RUN', () => {
       const m = made({ retry: bad });
       expect(check(m, payloadOf(m)), JSON.stringify(bad)).toThrow(/names people who are not on the run it retries/);
     }
+  });
+});
+
+describe('WHAT THE PROPOSAL\'S SALT SAYS IT IS: A FIRST PAYMENT NAMES NO LEG, AND A RETRY NAMES THE LEG IT PAYS AGAIN', () => {
+  const OTHER_LEG = fromHex('0b'.repeat(32));
+  const retry = made({ retry: [2], closesAt: String(WINDOW.closesAt + 600n) });
+
+  it('A FIRST PAYMENT WHOSE SALT NAMES A LEG IS REFUSED: THE CHAIN WOULD CHARGE IT NOTHING AGAINST THAT LEG', () => {
+    /* RED WHEN: an approver takes a run as a first payment without making its salt again, so a retry passes as one. */
+    expect(check(made(), payloadOf(made()), chain(), deps, saltOf(made(), OTHER_LEG))).toThrow(/salt says it pays a leg's people again/);
+  });
+
+  it('A RETRY WHOSE SALT NAMES ANOTHER LEG, OR NONE, IS REFUSED', () => {
+    /* RED WHEN: a retry's salt is not made over the root of the leg rebuilt here. */
+    expect(check(retry, payloadOfRetry(retry), chain(), deps, saltOf(retry, OTHER_LEG))).toThrow(/salt was not made over the leg it pays again/);
+    /* RED WHEN: a retry raised as a first payment is approved, so the chain would charge its people whole as a run of their own. */
+    expect(check(retry, payloadOfRetry(retry), chain(), deps, saltOf(retry, new Uint8Array(32)))).toThrow(/salt was not made over the leg it pays again/);
+    /* Over its own leg, it is approved. */
+    expect(check(retry, payloadOfRetry(retry))).not.toThrow();
+  });
+
+  it('A PROPOSAL WHOSE FILING DOES NOT SAY HOW ITS SALT WAS MADE, OR A PAGE THAT CANNOT MAKE ONE, IS REFUSED', () => {
+    /* RED WHEN: a run whose proposal seals no fresh half beside its salt is approved with nothing to make its salt from. */
+    expect(check(made(), payloadOf(made()), chain(), deps, saltOf(made()), null)).toThrow(/does not say how its salt was made/);
+    /* RED WHEN: the fresh half is not made from the sealed head and value - another value, or another head, makes another salt. */
+    expect(check(made(), payloadOf(made()), chain(), deps, saltOf(made()), { ...VOUCHED, r: 'f3'.repeat(32) })).toThrow(/salt says it pays a leg's people again/);
+    expect(check(made(), payloadOf(made()), chain(), deps, saltOf(made()), { ...VOUCHED, head: '1b'.repeat(32) })).toThrow(/salt says it pays a leg's people again/);
+    /* RED WHEN: a proposal that seals the old fresh half alone, from a page before this version, is approved. */
+    expect(check(made(), payloadOf(made()), chain(), deps, saltOf(made()), null)).toThrow(/raised before this version: withdraw it and raise it again/);
+    /* RED WHEN: a sealed pair that names the empty head, or no value, is made into a salt. */
+    expect(check(made(), payloadOf(made()), chain(), deps, saltOf(made()), { ...VOUCHED, head: '00'.repeat(32) })).toThrow(/does not say how its salt was made/);
+    /* RED WHEN: a proposal opened with no salt is approved, its salt never made again. */
+    expect(() => refuseWhatThisDeviceDidNotMake(deps as never, { chainId: CHAIN_ID, digest: payloadOf(made()), vouched: VOUCHED, made: { ...made(), wallet: walletRead(made(), {}) } } as never, chain()))
+      .toThrow(/salt says it pays a leg's people again/);
+    /* RED WHEN: the salt is taken as checked where the page holds no account function to make it. */
+    expect(check(made(), payloadOf(made()), chain(), { ...deps, retrySaltOf: undefined })).toThrow(/cannot make a run's salt again/);
+  });
+
+  it('A RUN RAISED OVER A HEAD OF THE COMPANY\'S RECORDS THIS DEVICE HAS NOT CHECKED ITSELF IS NOT APPROVED HERE', () => {
+    /* RED WHEN: an approver approves over a head it never checked, so its approval vouches for records nobody honest read. */
+    expect(check(made(), payloadOf(made()), chain(), deps, saltOf(made()), { ...VOUCHED, checkedHere: false }))
+      .toThrow(/raised over the company's records as they stood at a point this device has not checked itself/);
+    /* RED WHEN: the check is skipped when nothing says whether it was checked. */
+    expect(check(made(), payloadOf(made()), chain(), deps, saltOf(made()), { head: VOUCHED.head, r: VOUCHED.r }))
+      .toThrow(/a point this device has not checked itself/);
+    /* Over a head it checked, the same run is approved. */
+    expect(check(made(), payloadOf(made()))).not.toThrow();
   });
 });
 

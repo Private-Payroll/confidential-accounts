@@ -19,6 +19,8 @@ import type { CompanyRecordsHere } from './run-rebuilt-here.js';
 import {
   chainReadThroughTheWallet, setPolicyBarOnDevice, setSpendingPolicyOnDevice, spendingPolicyHere, type PolicyGovernanceDoors,
 } from './spending-policy-here.js';
+import { heldFiledBy } from '../../../src/testing/record-tree-double.js';
+import { pureCircuits } from '../../../contracts/managed/contract/index.js';
 
 const COMPANY = 'acme';
 const VAULT = 'fa'.repeat(32);
@@ -63,11 +65,14 @@ const recordsWith = (chain: Map<string, string>, filed: SealedCompanyRecord[], s
   return {
     directory: async () => ({
       dir: { company: COMPANY, version: 1, seats },
-      holders: { committee: [COMMITTEE, COMMITTEE2], seats: onChain, approvals: 1, adoptedVaults: [VAULT], founding: SEAT, foundingCommittee: [COMMITTEE], account: 'ac'.repeat(32) },
-      another: new Set(),
+      holders: { committee: [COMMITTEE, COMMITTEE2], seats: onChain, approvals: 1, adoptedVaults: [VAULT], account: 'ac'.repeat(32) },
+      another: new Set(), at: () => null,
+      /* Every version filed, entered by the seat whose key signed it; nothing anchored yet but the first state, as the company was founded. */
+      records: heldFiledBy(COMPANY, filed, [founder, stranger, second].map((k) => k.secret), { seat: SEAT, signingSecret: founder.secret, records: [state], committee: [COMMITTEE] }),
     }) as never,
     people: notHere as never, runs: notHere as never, policy: notHere as never,
     state: async (id) => (id === '0' ? state : null),
+    roundIdentity: pureCircuits,
     payments: { paidOnceOf: () => { throw new Error('not read here'); }, paidMovementOf: () => { throw new Error('not read here'); }, read: notHere as never },
     spendingPolicies: {
       versions: async (id) => filed.filter((r) => r.id === id),

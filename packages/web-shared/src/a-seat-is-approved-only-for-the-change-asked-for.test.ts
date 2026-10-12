@@ -16,6 +16,12 @@ import {
   changeThresholdOnDevice, changeVaultThresholdOnDevice, governOnDevice, type GovernanceDoors, type RoundOnThePage,
 } from './governed-call-on-device.js';
 import type { GovernanceOnTheWire, GovernedCallOrder, OpenedRound } from './governed-call-builder.js';
+import { FiledNotEntered } from './record-entered-here.js';
+import { signProposalFiling, type SignedProposalFiling } from '../../../src/core/proposal-filing.js';
+import { heldEntering } from '../../../src/testing/record-tree-double.js';
+import type { RoundOnChain } from './governed-call-builder.js';
+import { RecordWithheld } from './http-sealed-pool-store.js';
+import { pureCircuits } from '../../../contracts/managed/contract/index.js';
 
 /*
  * What each proposal opens as on this device stands in for the company's records here, through the module that opens
@@ -50,27 +56,46 @@ const THREE: GovernanceOnTheWire = { kind: 'threshold', threshold: '3' };
  * written down in `log`.
  */
 const aDevice = (o: {
-  held?: Array<{ id: string; opened: OpenedRound; raised?: boolean; count?: number }>;
+  /** `served` is the status the service writes for it, whatever the chain holds. */
+  held?: Array<{ id: string; opened: OpenedRound; raised?: boolean; count?: number; served?: 'cancelled' }>;
   bar?: number; alreadyApproved?: boolean; refuseAt?: number;
+  /** How many times the company's records refuse an entry before they keep one. */
+  refuseEntries?: number;
+  /** Proposals the company's records name, entered by the founding seat, whether or not the service lists them. */
+  named?: readonly string[];
 } = {}) => {
   const log: string[] = [];
   const rounds = new Map<string, RoundOnThePage & { opened: OpenedRound }>();
+  /* Each proposal as it was written down, signed by the seat that wrote it: what the company serves back. */
+  const filings = new Map<string, SignedProposalFiling>();
+  let refusals = o.refuseEntries ?? 0;
   for (const h of o.held ?? []) {
-    rounds.set(h.id, { id: h.id, chainId: h.opened.chainId, status: 'open', approvalCount: h.count ?? 0, opened: h.opened,
+    rounds.set(h.id, { id: h.id, chainId: h.opened.chainId, status: h.served ?? 'open', approvalCount: h.count ?? 0, opened: h.opened,
       ...(h.raised ? { raisedAt: 'then' } : {}) });
   }
   const page = (id: string): RoundOnThePage => { const { opened: _o, ...r } = rounds.get(id)!; return r; };
   let checks = 0;
-  seams.opens = async (id) => rounds.get(id)!.opened;
+  /* Each proposal whose entry the company's records keep. */
+  const entered = new Set<string>();
+  /*
+   * As a device opens a proposal from the company's records: one this device wrote down whose entry was never kept is
+   * refused, as the real opener refuses a proposal no entry names (`judgeIn`, round-opened-here.ts).
+   */
+  seams.opens = async (id) => {
+    if (filings.has(id) && !entered.has(id)) throw new Error('no entry in the company\'s records names it');
+    return rounds.get(id)!.opened;
+  };
   const doors: GovernanceDoors = {
     service: {
       callState: async () => ({ account: 'ac'.repeat(32), blockHash: 'b', accountState: 'AS', parameters: 'PP' }),
       sealedProposals: async () => [...rounds.values()].map((r) => ({
-        id: r.id, accountId: ACC, status: r.status, chainId: r.chainId, approvalCount: r.approvalCount ?? 0, createdAt: '2026-10-01',
+        ...(filings.get(r.id) ?? { createdAt: '2026-10-01' }),
+        id: r.id, accountId: ACC, status: r.status, chainId: r.chainId, approvalCount: r.approvalCount ?? 0,
         ...(r.raisedAt ? { raisedAt: r.raisedAt } : {}),
       }) as unknown as SealedProposal),
       file: async (_acc, body) => {
         log.push(`file ${body.proposal.chainId === ID ? 'ID' : body.proposal.chainId}`);
+        filings.set(body.proposal.id, body.proposal);
         rounds.set(body.proposal.id, { id: body.proposal.id, chainId: body.proposal.chainId, status: 'open', approvalCount: 0, raisedAt: 'now',
           opened: { chainId: ID, digest: '', vault: '', salt: SALT, summary: '', governance: THREE } });
         return page(body.proposal.id);
@@ -101,16 +126,42 @@ const aDevice = (o: {
     records: {
       directory: async () => ({
         dir: { company: ACC, version: 1, seats: [{ seat: SEAT, person: 'ada', signingKey: founder.publicKey, wrappingKey: 'ab'.repeat(32), committeeKey: COMMITTEE, role: 'admin', retired: null }] },
-        holders: { committee: [COMMITTEE], seats: [SEAT], approvals: 1, adoptedVaults: [], founding: SEAT, foundingCommittee: [COMMITTEE], account: 'ac'.repeat(32) },
+        holders: { committee: [COMMITTEE], seats: [SEAT], approvals: 1, adoptedVaults: [], account: 'ac'.repeat(32) },
         another: new Set(),
+        records: heldEntering(ACC, (o.named ?? []).map((id) => ({
+          entry: { store: 'proposal' as const, kind: 'proposal', id, version: 1, digest: 'ab'.repeat(32) }, signingSecret: founder.secret,
+        })), { seat: SEAT, signingSecret: founder.secret, records: [STATE], committee: [COMMITTEE] }),
       }) as never,
       people: async () => { throw new Error('no person here'); },
       state: async (id) => (id === '0' ? STATE : null),
       runs: async () => [],
+      roundIdentity: pureCircuits,
       payments: { paidOnceOf: () => { throw new Error('no payment here'); }, paidMovementOf: () => { throw new Error('no payment here'); }, read: async () => { throw new Error('no payment here'); } },
       policy: async () => { throw new Error('no payroll here'); },
+      /* The test's chain, as the person's own wallet reads it: a round this double sent is held, with the approvals it counted, until carried out. */
+      roundsOnChain: async (ids) => Object.fromEntries(ids.map((id) => {
+        const r = [...rounds.values()].find((x) => x.chainId.toLowerCase() === id.toLowerCase());
+        const round: RoundOnChain = r?.raisedAt === undefined ? { held: 'never', approvals: 0 }
+          : r.status === 'executed' ? { held: 'closed', approvals: 0, raisedAt: 1, txRef: id, closedBy: ['setThreshold'] }
+            : { held: 'open', approvals: r.approvalCount ?? 0, raisedAt: 1, txRef: id };
+        return [id.toLowerCase(), round];
+      })),
     },
-    filing: { seat: SEAT, keyEpoch: 0, salt: () => SALT, newId: () => 'prp_newproposal1' },
+    filing: {
+      seat: SEAT, keyEpoch: 0, salt: () => SALT, newId: () => 'prp_newproposal1',
+      /* The one filing call, as the log reads it: which record, at which version. */
+      entered: {
+        enter: async (filed) => {
+          if (refusals > 0) {
+            refusals -= 1;
+            log.push('entry refused');
+            throw new FiledNotEntered('the service could not read the chain');
+          }
+          for (const f of filed) if ('id' in f && f.store === 'proposal') entered.add(f.id);
+          log.push(`entered ${filed.map((f) => ('id' in f ? `${f.store} ${f.id} ${f.version}` : f.store)).join(',')}`);
+        },
+      },
+    },
     approvers: async () => {
       checks += 1;
       log.push(`vault check ${checks}`);
@@ -123,7 +174,7 @@ const aDevice = (o: {
     vaultName: () => 'company-wide runs',
     sleep: async () => {}, waitMs: 3, everyMs: 1,
   };
-  return { doors, log, rounds };
+  return { doors, log, rounds, filings, entered };
 };
 /* What each call was built for, short enough to read in a list. */
 function describe_(order: GovernedCallOrder): string {
@@ -143,6 +194,8 @@ describe('A GOVERNANCE CHANGE, FROM THIS DEVICE', () => {
       'vault check 1',
       `build propose {"kind":"threshold","threshold":"3"} salt=SALT blinding=founding`,
       'file ID',
+      /* RED WHEN: a proposal written down from a device is not entered in the company's records once the service has it. */
+      'entered proposal prp_newproposal1 1',
       'vault check 2',
       `build approve of={"governance":{"kind":"threshold","threshold":"3"},"proposalSalt":"${SALT}"}`,
       'approve prp_newproposal1',
@@ -150,6 +203,13 @@ describe('A GOVERNANCE CHANGE, FROM THIS DEVICE', () => {
       `build setThreshold {"threshold":"3","proposal":"ID","proposalSalt":"${SALT}"}`,
       'carry prp_newproposal1 setThreshold',
     ]);
+  });
+
+  it('A PROPOSAL THE COMPANY\'S RECORDS NAME AND THE SERVICE LEAVES OUT OF ITS LIST: NOTHING IS WRITTEN DOWN OR RAISED, AND IT IS SAID AS WITHHELD', async () => {
+    const d = aDevice({ named: ['prp_heldbutgone1'] });
+    /* RED WHEN: the change's proposal the service withholds is read as none held, and a second proposal is written down for it. */
+    await expect(changeThresholdOnDevice(d.doors, { viewingKey: KEY, newThreshold: 3, seated: 4 })).rejects.toBeInstanceOf(RecordWithheld);
+    expect(d.log.filter((l) => !l.startsWith('vault check'))).toEqual([]);
   });
 
   it('A PROPOSAL ALREADY HELD FOR THIS CHANGE IS USED, AND ONE HELD FOR ANOTHER CHANGE IS LEFT ALONE', async () => {
@@ -161,6 +221,16 @@ describe('A GOVERNANCE CHANGE, FROM THIS DEVICE', () => {
     expect(out.state).toBe('waiting-for-approvals');
     expect(d.log.filter((l) => !l.startsWith('vault check'))).toEqual([
       `build propose {"kind":"threshold","threshold":"3"} salt=SALT blinding=founding`, 'send prp_same',
+      `build approve of={"governance":{"kind":"threshold","threshold":"3"},"proposalSalt":"${SALT}"}`, 'approve prp_same',
+    ]);
+  });
+
+  it('A PROPOSAL THE CHAIN HOLDS FOR THIS CHANGE IS USED THOUGH THE SERVICE WRITES IT WITHDRAWN', async () => {
+    const same: OpenedRound = { chainId: ID, digest: '', vault: '', salt: SALT, summary: '', governance: THREE };
+    const d = aDevice({ held: [{ id: 'prp_same', opened: same, raised: true, count: 1, served: 'cancelled' }], bar: 3 });
+    await changeThresholdOnDevice(d.doors, { viewingKey: KEY, newThreshold: 3, seated: 4 });
+    /* RED WHEN: where the proposal stands is read from the service's plain fields - a second proposal is written down beside the live one. */
+    expect(d.log.filter((l) => !l.startsWith('vault check'))).toEqual([
       `build approve of={"governance":{"kind":"threshold","threshold":"3"},"proposalSalt":"${SALT}"}`, 'approve prp_same',
     ]);
   });
@@ -189,6 +259,57 @@ describe('A GOVERNANCE CHANGE, FROM THIS DEVICE', () => {
     /* A vault's approvals are refused before anything is asked when no seated signers could give them. */
     await expect(changeVaultThresholdOnDevice(aDevice().doors, { viewingKey: KEY, vault: VAULT, newThreshold: 5, seated: 4 }))
       .rejects.toThrow(/cannot need more approvals than the 4 signers/u);
+  });
+
+  it('A PROPOSAL WHOSE ENTRY IS REFUSED ONCE: THE PERSON IS TOLD TO MAKE THE CHANGE AGAIN, AND THE SECOND ATTEMPT ENTERS IT AND RAISES NOTHING TWICE', async () => {
+    const d = aDevice({ refuseEntries: 1 });
+    const said = await changeThresholdOnDevice(d.doors, { viewingKey: KEY, newThreshold: 3, seated: 4 }).then(() => null, (e: unknown) => e);
+    /* RED WHEN: the person is told to reload and do it again in words that do not say the proposal is already raised, or what enters it. */
+    expect(said).toBeInstanceOf(FiledNotEntered);
+    expect((said as Error).message).toMatch(/The proposal is written down and raised\. Make this change again from this page: this device finds the proposal it wrote down and enters it, and nothing is raised twice\./u);
+    expect(d.log.filter((l) => /^(file|entry|entered)/u.test(l))).toEqual(['file ID', 'entry refused']);
+    d.log.length = 0;
+    const out = await changeThresholdOnDevice(d.doors, { viewingKey: KEY, newThreshold: 3, seated: 4 });
+    expect(out.state).toBe('done');
+    /* RED WHEN: a second attempt resumes the proposal without entering it - it is never anchored, and no other device believes it. */
+    expect(d.log.filter((l) => !l.startsWith('vault check') && !l.startsWith('build'))).toEqual([
+      'entered proposal prp_newproposal1 1', 'approve prp_newproposal1', 'carry prp_newproposal1 setThreshold',
+    ]);
+  });
+
+  it('AN ENTRY REFUSED AGAIN ON THE SECOND ATTEMPT IS SAID AGAIN, AND NOTHING IS WRITTEN DOWN OR RAISED A SECOND TIME', async () => {
+    const d = aDevice({ refuseEntries: 2 });
+    await changeThresholdOnDevice(d.doors, { viewingKey: KEY, newThreshold: 3, seated: 4 }).catch(() => undefined);
+    d.log.length = 0;
+    const said = await changeThresholdOnDevice(d.doors, { viewingKey: KEY, newThreshold: 3, seated: 4 }).then(() => null, (e: unknown) => e);
+    /* RED WHEN: a proposal this device cannot open because its entry is still not kept is passed over, and a second one is written down and raised. */
+    expect(d.log.filter((l) => /^(file|send|entry|entered)/u.test(l))).toEqual(['entry refused']);
+    expect((said as Error).message).toMatch(/Make this change again from this page/u);
+  });
+
+  it('A PROPOSAL ANOTHER SEAT WROTE DOWN IS NOT ENTERED FROM THIS DEVICE: IT IS ITS OWN FILER\'S TO ENTER', async () => {
+    const same: OpenedRound = { chainId: ID, digest: '', vault: '', salt: SALT, summary: '', governance: THREE };
+    const d = aDevice({ held: [{ id: 'prp_same', opened: same, raised: true }] });
+    /* Bo's device wrote it down, signed by Bo's seat. */
+    d.filings.set('prp_same', signProposalFiling(ACC, {
+      id: 'prp_same', digest: 'dd'.repeat(32) as never, chainId: ID as never, keyEpoch: 0, createdAt: '2026-10-01', sealed: { iv: '', tag: '', body: '' },
+    }, newSigningKeypair().secret));
+    /* And entered by Bo's device. */
+    d.entered.add('prp_same');
+    expect((await changeThresholdOnDevice(d.doors, { viewingKey: KEY, newThreshold: 3, seated: 4 })).state).toBe('done');
+    /* RED WHEN: a device enters a proposal it did not file - the service refuses it, and the change stops on a refusal it cannot fix. */
+    expect(d.log.filter((l) => l.startsWith('entered'))).toEqual([]);
+  });
+
+  it('A PROPOSAL ANOTHER SEAT WROTE DOWN AND NEVER ENTERED IS NOT ENTERED FROM THIS DEVICE EITHER, THOUGH IT CANNOT BE OPENED', async () => {
+    const same: OpenedRound = { chainId: ID, digest: '', vault: '', salt: SALT, summary: '', governance: THREE };
+    const d = aDevice({ held: [{ id: 'prp_sameBoSeat01', opened: same, raised: true }] });
+    d.filings.set('prp_sameBoSeat01', signProposalFiling(ACC, {
+      id: 'prp_sameBoSeat01', digest: 'dd'.repeat(32) as never, chainId: ID as never, keyEpoch: 0, createdAt: '2026-10-01', sealed: { iv: '', tag: '', body: '' },
+    }, newSigningKeypair().secret));
+    await changeThresholdOnDevice(d.doors, { viewingKey: KEY, newThreshold: 3, seated: 4 }).catch(() => undefined);
+    /* RED WHEN: a device enters a proposal another seat filed because it could not open it - the anchor would vouch for what the service made up. */
+    expect(d.log.filter((l) => l.includes('prp_sameBoSeat01') && l.startsWith('entered'))).toEqual([]);
   });
 
   it('THE VAULT CHECK AND THE CALLER\'S OWN CHECK ARE MADE AGAIN BEFORE THE APPROVAL AND BEFORE THE CARRYING OUT, AND EITHER STOPS IT', async () => {

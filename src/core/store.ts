@@ -8,6 +8,8 @@ import { employeeRowOf, personRecordFromRow, rowChangesThePerson } from './perso
 import type { CompanyVaultKeyIndex, VaultKeysOffer } from './vault-keys.js';
 import { provenanceOf, type Marked, type WiringName } from './provenance.js';
 import { ROSTER_ID } from './roster-record.js';
+import { entryIdOf, recordKeyOf, type ManifestEntry } from '../midnight/record-manifest.js';
+import { treeHeaderFilingRefusal, treeKeyOf, TreeKept, type TreeHeader } from '../midnight/record-tree.js';
 
 export interface Shape {
   accounts: Record<string, SealedAccount>;
@@ -69,6 +71,23 @@ export interface Shape {
    */
   directories: Record<string, DirectoryFiling[]>;
   /**
+   * **EACH COMPANY'S MANIFEST: AN ENTRY FOR EVERY FILING**, keyed by account,
+   * in the order each arrived. Plain text: record names, versions and digests,
+   * each signed by the seat that filed it (`record-manifest.ts`). Nothing is
+   * believed because it is here: a device believes an entry only as a leaf of
+   * the record tree whose root the head on chain binds. Absent from files
+   * written before it existed.
+   */
+  manifests?: Record<string, CompanyManifest>;
+  /**
+   * **EVERY HEADER OF A COMPANY'S RECORD TREE, AS EACH WAS FILED.** Signed by
+   * the seat that anchored it (`record-tree.ts`); the leaves and nodes the
+   * service proves from are worked out from these headers as each is kept
+   * (`keptTreeOf`), so nothing else is stored. Nothing is
+   * believed because it is here. Absent from files written before it existed.
+   */
+  trees?: Record<string, { readonly headers: readonly TreeHeader[] }>;
+  /**
    * The signatures collected so far for one committee change of one contract,
    * keyed by the contract's address. Each was made in its signer's own wallet
    * and is good for that one change only; no key is ever kept here.
@@ -111,6 +130,11 @@ export interface CollectedCommitteeSignatures {
   readonly counter: string;
   readonly to: { readonly committee: ReadonlyArray<{ readonly tag: string; readonly value: string }>; readonly threshold: number };
   readonly signatures: ReadonlyArray<{ readonly seat: number; readonly signature: { readonly tag: string; readonly value: string } }>;
+}
+
+/** One company's manifest, as it is kept and served. */
+export interface CompanyManifest {
+  readonly entries: readonly ManifestEntry[];
 }
 
 export const emptyShape = (): Shape =>
@@ -183,6 +207,46 @@ export const inviteKeyOf = (token: string): string =>
  */
 export const walletKeyOf = (address: string): string =>
   bytesToHex(sha256(utf8(address.trim())));
+
+/** One company's entries, looked up by id and by record, for the data they were built from (`MemoryStore.entriesOf`). */
+class EntriesKept {
+  readonly byId = new Map<string, ManifestEntry>();
+  /** The newest version entered of each record. */
+  readonly newest = new Map<string, number>();
+  /** Every record, version and digest entered. */
+  readonly held = new Set<string>();
+  /** Every record and digest entered: bytes a newer version may not name again. */
+  readonly named = new Set<string>();
+  /** Each record's entries, by its key in the tree, each with the place it was entered at. */
+  private readonly byKey = new Map<Hex, { readonly e: ManifestEntry; readonly at: number }[]>();
+  private count = 0;
+  /** Every record, by its key in the tree, with an entry newer than any header kept anchors. */
+  readonly waiting = new Set<Hex>();
+  constructor(entries: readonly ManifestEntry[], private readonly anchoredVersion: (key: Hex) => number) { for (const e of entries) this.add(e); }
+  add(e: ManifestEntry): void {
+    const key = recordKeyOf(e);
+    this.byId.set(entryIdOf(e), e);
+    this.newest.set(key, Math.max(this.newest.get(key) ?? 0, e.version));
+    this.held.add(`${key}@${e.version}@${e.digest}`);
+    this.named.add(`${key}@${e.digest}`);
+    const tk = treeKeyOf(e);
+    const all = this.byKey.get(tk) ?? [];
+    all.push({ e, at: this.count++ });
+    this.byKey.set(tk, all);
+    if (e.version > this.anchoredVersion(tk)) this.waiting.add(tk);
+  }
+  /** A header kept: a record it anchors up to its newest entry waits no longer. */
+  anchored(h: TreeHeader): void {
+    for (const c of h.changes) {
+      const tk = treeKeyOf(c.leaf);
+      if (Math.max(0, ...(this.byKey.get(tk) ?? []).map((x) => x.e.version)) <= this.anchoredVersion(tk)) this.waiting.delete(tk);
+    }
+  }
+  /** Every entry of these records, in the order entered. */
+  of(keys: Iterable<Hex>): ManifestEntry[] {
+    return [...keys].flatMap((k) => this.byKey.get(k) ?? []).sort((a, b) => a.at - b.at).map((x) => x.e);
+  }
+}
 
 /**
  * **WHERE A PAYSLIP LOOKUP LOOKS, SO IT DOES NOT READ EVERY RECORD TO ANSWER.**
@@ -782,6 +846,152 @@ export class MemoryStore {
     this.data.directories[accountId] = [...filed, filing];
     this.flush();
     return true;
+  }
+  /** A company's manifest: every entry, in the order each arrived. */
+  manifestOf(accountId: string): CompanyManifest {
+    const m = this.data.manifests?.[accountId];
+    return { entries: [...(m?.entries ?? [])] };
+  }
+  /**
+   * **ENTERS THESE ENTRIES, EACH NEWER THAN EVERY VERSION OF ITS RECORD ALREADY
+   * ENTERED, OR NONE OF THEM.** Checked and written in one step, so two entries
+   * of one version cannot both land, and an older version is never entered after
+   * a newer one. A version past a gap is entered: a record whose earlier versions
+   * were filed before the company kept entries - a company's first state and
+   * roster among them - goes on from where it is. An entry already held - the
+   * same record, version and digest - is entered already, so a filer that sends
+   * it again is answered as before. One below a version already entered was
+   * superseded, and its filer is told so. **An entry naming the bytes an earlier
+   * version of its record already names is a record rolled back**, and is not
+   * entered. Null when they are entered; otherwise the first that is not, why,
+   * and nothing is kept.
+   */
+  enterInManifest(accountId: string, entries: readonly ManifestEntry[]): { readonly entry: ManifestEntry; readonly why: 'not-newer' | 'superseded' | 'rolled-back'; readonly newest: number } | null {
+    const kept = this.entriesOf(accountId);
+    /* This request's own entries, over what is kept, so none of it is kept unless all of it is. */
+    const newest = new Map<string, number>();
+    const named = new Set<string>();
+    const fresh: ManifestEntry[] = [];
+    for (const e of entries) {
+      const key = recordKeyOf(e);
+      if (kept.held.has(`${key}@${e.version}@${e.digest}`)) continue;
+      const above = newest.get(key) ?? kept.newest.get(key) ?? 0;
+      if (e.version < above) return { entry: e, why: 'superseded', newest: above };
+      if (e.version === above) return { entry: e, why: 'not-newer', newest: above };
+      if (named.has(`${key}@${e.digest}`) || kept.named.has(`${key}@${e.digest}`)) return { entry: e, why: 'rolled-back', newest: above };
+      newest.set(key, e.version);
+      named.add(`${key}@${e.digest}`);
+      fresh.push(e);
+    }
+    if (fresh.length === 0) return null;
+    this.data.manifests = { ...(this.data.manifests ?? {}), [accountId]: { entries: [...(this.data.manifests?.[accountId]?.entries ?? []), ...fresh] } };
+    for (const e of fresh) kept.add(e);
+    this.flush();
+    return null;
+  }
+  /**
+   * Each company's entries as kept for the data as it is now: by id, and the
+   * newest version and every digest of each record, so an entry is looked up
+   * rather than found by reading every entry the company filed. Built from the
+   * manifest the first time a company's is asked for, grown as entries are
+   * entered, built again only when the data is replaced - see `PayslipIndex`.
+   */
+  private entriesKept: { readonly builtFrom: Shape; readonly of: Map<string, EntriesKept> } | null = null;
+  private entriesOf(accountId: string): EntriesKept {
+    if (this.entriesKept?.builtFrom !== this.data) this.entriesKept = { builtFrom: this.data, of: new Map() };
+    let kept = this.entriesKept.of.get(accountId);
+    if (kept === undefined) {
+      const tree = this.keptTreeOf(accountId);
+      kept = new EntriesKept(this.data.manifests?.[accountId]?.entries ?? [], (key) => tree.anchoredVersion(key));
+      this.entriesKept.of.set(accountId, kept);
+    }
+    return kept;
+  }
+  /** The newest version of a record any entry names, 0 for none. */
+  newestEntered(accountId: string, recordKey: string): number {
+    return this.entriesOf(accountId).newest.get(recordKey) ?? 0;
+  }
+  /**
+   * The record trees as kept for the data as it is now, one per company that
+   * filed a header: built from the headers the first time a company's is
+   * asked for, grown as each header is kept, and built again only when the
+   * data is replaced (a reset, a load, a write put back) - see `PayslipIndex`.
+   */
+  private treesKept: { readonly builtFrom: Shape; readonly of: Map<string, TreeKept> } | null = null;
+
+  /**
+   * **A COMPANY'S RECORD TREE AS KEPT HERE**: every header filed, every leaf
+   * they name and every node of the tree at every root kept, so a page of
+   * headers or one read's proofs is looked up, never rebuilt from the first
+   * header.
+   */
+  keptTreeOf(accountId: string): TreeKept {
+    if (this.treesKept?.builtFrom !== this.data) this.treesKept = { builtFrom: this.data, of: new Map() };
+    let kept = this.treesKept.of.get(accountId);
+    if (kept === undefined) {
+      kept = new TreeKept(this.data.trees?.[accountId]?.headers ?? []);
+      this.treesKept.of.set(accountId, kept);
+    }
+    return kept;
+  }
+  /**
+   * The directory versions the company's record headers kept here passed over:
+   * below the newest directory version any header anchors, anchored by none -
+   * filed, never entered, a later version anchored past them.
+   */
+  directoryPassedOver(accountId: string): ReadonlySet<number> {
+    const anchored = this.keptTreeOf(accountId).directoryAnchored;
+    const out = new Set<number>();
+    for (let v = 1; v < Math.max(0, ...anchored); v += 1) if (!anchored.has(v)) out.add(v);
+    return out;
+  }
+  /**
+   * **THE ENTRIES OF EVERY RECORD OPEN AT `root`**, in the order entered: those
+   * of the records with an entry no header kept anchors, and of the records a
+   * header after that root, or one that raced, changes (`TreeKept.openAt`) -
+   * never every entry the company filed. Null for a root no header kept makes.
+   */
+  entriesOpenAt(accountId: string, root: Hex): ManifestEntry[] | null {
+    const kept = this.entriesOf(accountId);
+    const open = this.keptTreeOf(accountId).openAt(root, kept.waiting);
+    return open === null ? null : kept.of(open);
+  }
+  /** An entry of a company's manifest by its id, or undefined. */
+  manifestEntryOf(accountId: string, id: string): ManifestEntry | undefined {
+    return this.entriesOf(accountId).byId.get(id);
+  }
+  /**
+   * **KEEPS A HEADER OF A COMPANY'S RECORD TREE**, when it follows a header
+   * kept here and every check that needs no key holds (`treeHeaderFilingRefusal`);
+   * a header kept already is kept once. Null when it is kept; why not otherwise.
+   *
+   * `given` are entries its changes name, handed in with it by a device that
+   * kept them: each is kept with the header where this service no longer holds
+   * it - the header's signature binds it, so it needs no record bytes kept here.
+   * A record whose bytes are gone is then named and withheld, never a header
+   * every device stops at. An entry its changes do not name is never kept.
+   */
+  fileTreeHeader(accountId: string, header: TreeHeader, given: readonly ManifestEntry[] = []): string | null {
+    const kept = this.keptTreeOf(accountId);
+    const named = new Set(header.changes.map((c) => c.leaf.entryId as string));
+    const handed = new Map(given.map((e) => [entryIdOf(e), e] as const).filter(([id]) => named.has(id)));
+    const why = treeHeaderFilingRefusal(kept, (id) => this.manifestEntryOf(accountId, id) ?? handed.get(id), header);
+    if (why !== null) return why;
+    const entries = this.entriesOf(accountId);
+    const missing = [...handed].filter(([id]) => this.manifestEntryOf(accountId, id) === undefined).map(([, e]) => e);
+    if (missing.length > 0) {
+      this.data.manifests = { ...(this.data.manifests ?? {}), [accountId]: { entries: [...(this.data.manifests?.[accountId]?.entries ?? []), ...missing] } };
+      for (const e of missing) entries.add(e);
+    }
+    if (kept.headersAt(header.seq).some((h) => canonical(h) === canonical(header))) {
+      if (missing.length > 0) this.flush();
+      return null;
+    }
+    kept.keep(header);
+    entries.anchored(header);
+    this.data.trees = { ...(this.data.trees ?? {}), [accountId]: { headers: [...(this.data.trees?.[accountId]?.headers ?? []), header] } };
+    this.flush();
+    return null;
   }
   putCommitteeSignatures(c: CollectedCommitteeSignatures) {
     this.data.committeeSignatures[c.address.toLowerCase()] = c; this.flush();

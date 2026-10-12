@@ -31,6 +31,9 @@
  *     chain, where a device reads it at one block through the indexer the
  *     person's own wallet names.
  */
+import { heldEntering, roundsOnATestChain, type FiledBy } from '../../src/testing/record-tree-double.js';
+import { companyRecordEntry, type ManifestEntryBody } from '../../src/midnight/record-manifest.js';
+import type { RecordsEntered } from 'vaults-web-shared/record-entered-here.js';
 import { describe, it, expect, beforeEach } from 'vitest';
 import { readFileSync } from 'node:fs';
 import * as L from '@midnightntwrk/ledger-v9';
@@ -51,7 +54,7 @@ import type { GovernedCallService } from 'vaults-web-shared/governed-call-on-dev
 import { setSpendingPolicyOnDevice, setPolicyBarOnDevice, spendingPolicyHere } from 'vaults-web-shared/spending-policy-here.js';
 import type { CompanyRecordsHere } from 'vaults-web-shared/run-rebuilt-here.js';
 import { refusalForProven } from '../../src/wiring/proven-submission.js';
-import { canonical, newWrappingKeypair, seal, signingPublicKeyOf } from '../../src/core/crypto.js';
+import { canonical, newWrappingKeypair, seal, signingPublicKeyOf, type Hex } from '../../src/core/crypto.js';
 import { signedFoundingState } from '../../src/core/founding-state.js';
 import { newProposalId } from '../../src/core/proposal-filing.js';
 import type { SealedProposal } from '../../src/core/types.js';
@@ -216,6 +219,21 @@ describe.skipIf(!KEYS.ok)('A VAULT\'S SPENDING POLICY, SET FROM SIGNERS\' DEVICE
   };
 
   /* ── the company's records, as each signer's device reads them ── */
+  /*
+   * Every filing entered in the company's records, with the key of the seat that entered it: what every device's read is
+   * proven over. **A STAND-IN, NAMED**: this file mounts no manifest route, so the entries are kept here and every kind is
+   * proven whole (`heldEntering`); the route's own checks and a read refused for a record it did not ask are tested over
+   * real HTTP in `src/server/record-manifest-route.test.ts` and `src/server/a-read-is-proven-for-what-it-asks.test.ts`.
+   */
+  let enteredBy: FiledBy[] = [];
+  /* Where each proposal stands, as the wallet's indexer shows this file's chain to every device: each proposal the account holds, with its approvals. */
+  const watching = roundsOnATestChain(async () => {
+    const l = ledgerNow();
+    return [...l.openProposals].map(([id]: [Uint8Array]) => ({ id: hex(id), approvals: Number(l.approvalCounts.member(id) ? l.approvalCounts.lookup(id) : 0n) }));
+  });
+  const enteredAs = (who: AccountPrivateState): RecordsEntered => ({
+    enter: async (filed) => { for (const e of filed) enteredBy.push({ entry: e as ManifestEntryBody, signingSecret: hex(who.secretKey) as Hex }); },
+  });
   const seatOf = (s: AccountPrivateState, person: 'ada' | 'blake') => ({
     seat: hex(leafOfDevice(s)), person, signingKey: signingPublicKeyOf(hex(s.secretKey)), wrappingKey: wrapping[person].publicKey,
     committeeKey: { tag: 'ed25519', value: person.repeat(8) }, role: 'admin' as const, retired: null,
@@ -234,18 +252,26 @@ describe.skipIf(!KEYS.ok)('A VAULT\'S SPENDING POLICY, SET FROM SIGNERS\' DEVICE
           committee: seats.map((s) => s.committeeKey), seats: seats.map((s) => s.seat), approvals: 1, adoptedVaults: [VAULT],
           founding: seats[0]!.seat, foundingCommittee: [seats[0]!.committeeKey], account: company,
         } as never,
-        another: new Set(),
+        another: new Set(), at: () => null,
+        /* Every filing entered by the seat whose key signed it, after the batch the founding seat anchored with the first state. */
+        records: heldEntering(company, enteredBy, {
+          seat: seats[0]!.seat, signingSecret: hex(founder.secretKey) as Hex, records: [state], committee: [seats[0]!.committeeKey],
+        }),
       }) as never,
       people: notHere as never, runs: notHere as never, policy: notHere as never,
+      roundsOnChain: watching,
       state: async (id) => (id === '0' ? state : null),
       proposals: async () => proposals,
+      roundIdentity: accountModule.pureCircuits,
       payments: { paidOnceOf: () => { throw new Error('not read here'); }, paidMovementOf: () => { throw new Error('not read here'); }, read: notHere as never },
       spendingPolicies: {
         versions: async (id) => policies.filter((r) => r.id === id),
         file: async (rec) => {
           const newest = policies.filter((r) => r.id === rec.id).reduce((n, r) => Math.max(n, r.version), 0);
           if (rec.version !== newest + 1) throw new Error(`version ${rec.version} is not the next`);
-          policies.push(signCompanyFiling(rec, hex(who.secretKey)));
+          const signed = signCompanyFiling(rec, hex(who.secretKey));
+          policies.push(signed);
+          await enteredAs(who).enter([companyRecordEntry(signed)]);
         },
         me: { signerId: hex(leafOfDevice(who)), wrappingSecret: wrapping[person].secret },
         keys: (input) => builder().spendingPolicyKeys(input),
@@ -256,7 +282,7 @@ describe.skipIf(!KEYS.ok)('A VAULT\'S SPENDING POLICY, SET FROM SIGNERS\' DEVICE
   };
   const doorsFor = (who: AccountPrivateState, person: 'ada' | 'blake'): PolicyGovernanceDoors => ({
     service, builder: builder(), material: keyringOf(who), accountId: company, records: recordsFor(who, person),
-    filing: { seat: hex(leafOfDevice(who)), keyEpoch: 0, salt: () => hex(crypto.getRandomValues(new Uint8Array(32))), newId: () => newProposalId() },
+    filing: { seat: hex(leafOfDevice(who)), keyEpoch: 0, salt: () => hex(crypto.getRandomValues(new Uint8Array(32))), newId: () => newProposalId(), entered: enteredAs(who) },
     approvers: async () => { throw new Error('a spending policy changes no seat and no vault\'s threshold'); },
     vaultName: () => 'the vault',
     sleep: async () => {}, waitMs: 10, everyMs: 1,
@@ -268,6 +294,7 @@ describe.skipIf(!KEYS.ok)('A VAULT\'S SPENDING POLICY, SET FROM SIGNERS\' DEVICE
     setNetworkId(NET as never);
     chain = new Chain();
     proposals = [];
+    enteredBy = [];
     policies = [];
     founder = privateStateFor(1);
     blake = privateStateFor(2);
@@ -443,7 +470,9 @@ describe.skipIf(!KEYS.ok)('A VAULT\'S SPENDING POLICY, SET FROM SIGNERS\' DEVICE
     const leaves = amounts.map((_, i) => hex(Uint8Array.from({ length: 32 }, (_, j) => (seed * 31 + i * 7 + j) & 0xff)));
     const tree = sumTreeOfLeaves(leaves as never, amounts, ASSET as never);
     const w = windowNow();
-    const c = change(0n, seed);
+    /* Raised as every device raises a run of its own: its salt is retrySaltOf(no leg, fresh). */
+    const fresh = Uint8Array.from({ length: 32 }, (_, j) => (seed * 13 + j) & 0xff);
+    const c = { ...change(0n, seed), salt: circuits.retrySaltOf(new Uint8Array(32), fresh) };
     const root = Buffer.from(tree.root, 'hex');
     const vault = Buffer.from(VAULT, 'hex');
     const payload = circuits.runPayload(root, BigInt(leaves.length), w.opensAt, w.closesAt, required);
@@ -457,7 +486,7 @@ describe.skipIf(!KEYS.ok)('A VAULT\'S SPENDING POLICY, SET FROM SIGNERS\' DEVICE
     const run: RunToChargeOnTheWire = {
       proposal: hex(id), vault: VAULT, salt: hex(c.salt), required: required.toString(), opensAt: w.opensAt.toString(), closesAt: w.closesAt.toString(),
       asset: ASSET, assetBlinding: hex(founder.assetBlinding), policy: { terms: CHARGED_TERMS, blinding: '' }, root: tree.root, leaves,
-      amounts: amounts.map(String),
+      amounts: amounts.map(String), fresh: hex(fresh),
     };
     return { run, tree: { root: tree.root, leaves, amounts: amounts.map(String) } as RunTreeOnTheWire, total: tree.total };
   };

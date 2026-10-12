@@ -26,12 +26,29 @@ const HEX = /^([0-9a-f]{2})*$/u;
 export interface ContractHistoryEntry {
   readonly kind: 'deploy' | 'call' | 'update';
   readonly transaction: string;
-  /** The contract's state after this step, as its bytes. */
+  /**
+   * The contract's state as the indexer holds it for this step, as its bytes:
+   * the state after the whole block the step is in, the same for every step of
+   * this contract in that block. Steps of transactions that failed are listed too.
+   */
   readonly state: Uint8Array;
+  /** The block the step's transaction is in: its height, and the time its author set for it, in milliseconds. */
+  readonly block: { readonly height: number; readonly at: number };
+  /** For a call, the name of the circuit it called, as the indexer names the call's entry point; absent for a deploy or an update. */
+  readonly entryPoint?: string;
+  /**
+   * Whether the step's transaction succeeded in full, as the indexer records
+   * its result: false for one that failed, one that succeeded only in part (the
+   * indexer does not say in which part each step is), and one whose result it
+   * does not give.
+   */
+  readonly succeeded: boolean;
 }
 
 export interface ContractHistory {
   of(address: string): Promise<ContractHistoryEntry[]>;
+  /** The hash of the contract's latest transaction, as the indexer names it: a history read again only when it moves. */
+  latest(address: string): Promise<string>;
 }
 
 const KINDS: Readonly<Record<string, ContractHistoryEntry['kind']>> = {
@@ -99,6 +116,7 @@ export function indexerContractHistory(
   };
 
   return {
+    latest: newest,
     async of(address) {
       const last = await newest(address);
       return new Promise<ContractHistoryEntry[]>((resolve, reject) => {
@@ -143,7 +161,8 @@ export function indexerContractHistory(
               type: 'subscribe',
               payload: {
                 query: 'subscription ($a: HexEncoded!, $o: BlockOffset) { contractActions(address: $a, offset: $o) '
-                  + '{ __typename state transaction { hash } } }',
+                  + '{ __typename state transaction { hash block { height timestamp } ... on RegularTransaction { transactionResult { status } } } '
+                  + '... on ContractCall { entryPoint } } }',
                 /* From the first block: a contract is not acted on before it is created. */
                 variables: { a: bare(address), o: { height: 0 } },
               },
@@ -168,7 +187,16 @@ export function indexerContractHistory(
             if (!HEX_HASH.test(hash)) { short('a step without a transaction hash of sixty-four hex characters'); return; }
             if (kind === undefined) { short(`a step of a kind this does not know (${String(action?.__typename)})`); return; }
             if (state === '' || !HEX.test(state)) { short('a step whose state is not hex'); return; }
-            seen.push({ kind, transaction: hash, state: fromHex(state) });
+            const height = action?.transaction?.block?.height;
+            const at = action?.transaction?.block?.timestamp;
+            if (!Number.isSafeInteger(height) || height < 0 || !Number.isSafeInteger(at) || at < 0) {
+              short('a step whose block has no height or time');
+              return;
+            }
+            const entryPoint = action?.entryPoint;
+            if (kind === 'call' && (typeof entryPoint !== 'string' || entryPoint === '')) { short('a call whose entry point is not named'); return; }
+            const succeeded = action?.transaction?.transactionResult?.status === 'SUCCESS';
+            seen.push({ kind, transaction: hash, state: fromHex(state), block: { height, at }, ...(kind === 'call' ? { entryPoint } : {}), succeeded });
             /*
              * One transaction can act on a contract more than once, and the
              * latest may be such a one, so the list is closed a moment after the

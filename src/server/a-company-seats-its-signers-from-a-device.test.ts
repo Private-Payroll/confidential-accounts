@@ -27,13 +27,17 @@
  * The real circuits are driven by the device's own builder in
  * `contracts/test/a-company-seats-its-signers-from-the-page.test.ts`.
  */
+import type { RecordsAsked } from '../midnight/records-held.js';
 import { describe, it, expect, beforeAll, afterAll } from 'vitest';
 import { drawCompanyLabel } from 'midnight-identity/profile/company-label';
 import { importTheServer, useOnlyTheseSettings } from '../testing/server-under-test.js';
+import { anchoredOver, roundsOnATestChain } from '../testing/record-tree-double.js';
 import { mkdtempSync } from 'node:fs';
 import { tmpdir } from 'node:os';
+import type { ManifestEntry } from '../midnight/record-manifest.js';
 import { join } from 'node:path';
 import type { Server } from 'node:http';
+import { standingOnChainHere } from 'vaults-web-shared/run-rebuilt-here.js';
 
 useOnlyTheseSettings({
   ALLOW_SIMULATED_COMPANY_ADDRESS: '1',
@@ -65,13 +69,15 @@ const { signVaultKeys } = await import('../core/vault-keys.js');
 const { invitePayeeHere, inviteSignerHere, openInvitationHere, acceptAsSignerHere, FingerprintsDiffer } = await import('vaults-web-shared/invitation-on-device.js');
 const { admitSignerHere, foldOffersHere, offerVaultKeysHere, rosterHere } = await import('vaults-web-shared/roster-here.js');
 const { directoryHere } = await import('vaults-web-shared/vault-page-doors.js');
-const { aDevicesRosterMemory } = await import('../testing/a-roster-a-seat-filed.js');
 const { identityFromSecret } = await import('midnight-identity');
 const { committeeKeyFor } = await import('midnight-identity/profile/committee-key');
 const { signDirectoryEntry, signRecordsKey } = await import('midnight-identity/profile/records-key');
 type CompanyLabel = import('midnight-identity/profile/company-label').CompanyLabel;
 type PendingSeat = import('vaults-web-shared/keyring.js').PendingSeat;
 const device = await import('vaults-web-shared/governed-call-on-device.js');
+const { recordsEnteredOver, treeServiceFor } = await import('vaults-web-shared/record-entered-here.js');
+const { EMPTY_ROOT } = await import('../midnight/record-tree.js');
+const { companyRecordEntry } = await import('../midnight/record-manifest.js');
 const { refuseARaiseThatIsNotTheRecordedOne, refuseWhatThisDeviceDidNotOpen, recordForOneCall, identityOfAChange } =
   await import('vaults-web-shared/governed-call-builder.js');
 const { pureCircuits } = await import('../../contracts/managed/contract/index.js');
@@ -92,6 +98,10 @@ const ledger = new SimulatedLedger(MidnightCommitments);
 /** Each signer's leaf on the simulated chain, by company and roster id: what the door acts as. */
 const leaves = new Map<string, Hex>();
 const sent: Array<{ circuit: string; signer: string }> = [];
+/** The circuit of the call this file's chain took that closed each proposal, by its identity on chain. */
+const closedWith = new Map<string, string>();
+/** Set by a case: a raise sent through the door reaches no chain. */
+let raisesLandNowhere = false;
 let throughTheDoor = false;
 const refusedHere: string[] = [];
 for (const name of ['propose', 'approve', 'addSigner', 'setThreshold', 'setVaultThreshold', 'cancel'] as const) {
@@ -111,15 +121,23 @@ Object.assign(ledger, {
     if (o.circuit !== circuit) throw new Error(`the door was told ${circuit} and handed ${o.circuit}`);
     sent.push({ circuit, signer: built.signer });
     const by = { signerId: built.signer, leaf: leaves.get(`${accountId} ${built.signer}`)! };
+    /* A call that closed a proposal, kept once the chain took it: what this file's chain names as the call that closed it. */
+    const closing = async <T>(call: Promise<T>): Promise<T> => {
+      const done = await call;
+      closedWith.set(String((o as { proposal?: unknown }).proposal).toLowerCase(), o.circuit);
+      return done;
+    };
     throughTheDoor = true;
     try {
       if (o.circuit === 'approve') return await ledger.approve(accountId, o.proposal as Hex, by);
-      if (o.circuit === 'cancel') return await ledger.cancel(accountId, o.proposal as Hex, by);
-      if (o.circuit === 'amendSigner') return await ledger.addSigner(accountId, o.leaf as Hex, o.proposal as Hex, by);
-      if (o.circuit === 'setThreshold') return await ledger.setThreshold(accountId, Number(o.threshold), o.proposal as Hex, by);
+      if (o.circuit === 'cancel') return await closing(ledger.cancel(accountId, o.proposal as Hex, by));
+      if (o.circuit === 'amendSigner') return await closing(ledger.addSigner(accountId, o.leaf as Hex, o.proposal as Hex, by));
+      if (o.circuit === 'setThreshold') return await closing(ledger.setThreshold(accountId, Number(o.threshold), o.proposal as Hex, by));
       if (o.circuit === 'setVaultThreshold') {
-        return await ledger.setVaultThreshold(accountId, o.vault as Hex, Number(o.threshold), o.proposal as Hex, by);
+        return await closing(ledger.setVaultThreshold(accountId, o.vault as Hex, Number(o.threshold), o.proposal as Hex, by));
       }
+      /* A raise the chain did not take: the transaction lands nowhere, though the door answered. */
+      if (o.circuit === 'propose' && raisesLandNowhere) return { ref: `tx_nowhere_${sent.length}`, at: new Date().toISOString() };
       if (o.circuit === 'propose' && 'governance' in o) {
         const g = o.governance;
         const payload = g.kind === 'add-signer' ? MidnightCommitments.signerAddPayload(g.leaf as Hex)
@@ -209,6 +227,7 @@ holds(company, wallets.ada);
  * with the company: her entry, with the vault keys and records-key statement her wallet signed, which is what her
  * later filings are believed by.
  */
+let foundingRoster: import('../midnight/sealed-record-wire.js').SealedCompanyRecord;
 {
   const w = wallets.ada;
   const statement = signRecordsKey(w.identity, LABEL, ACCOUNT, w.companyKey, w.seat);
@@ -219,7 +238,8 @@ holds(company, wallets.ada);
       committeeKey: w.committeeKey, recordsKey: statement.recordsKey as Hex, recordsKeyStatement: statement.signature as Hex, recordsKeySeat: w.seat as Hex,
     }, w.signing.secret),
   }));
-  expect(store.fileRoster(signedFoundingRoster(company, { name: opened.name, signers }, viewingKey, w.signing.secret))).toBeNull();
+  foundingRoster = signedFoundingRoster(company, { name: opened.name, signers }, viewingKey, w.signing.secret);
+  expect(store.fileRoster(foundingRoster)).toBeNull();
 }
 
 /** The state the founding seat signed, as the company's records hold it: the asset blinding every raise is composed with. */
@@ -236,7 +256,9 @@ const adaInJoined = (() => {
   const statement = entryOf(w, label, account);
   store.fileDirectory(joined.account.id, { company: joined.account.id, version: 1, change: { kind: 'claim', entry: { person: USERS.ada, committeeKey: w.committeeKey, statement } } });
   holds(joined.account.id, w);
-  return { committeeKey: w.committeeKey, statement, signingSecret: w.signing.secret, label, account, wallet: w };
+  /* Entered over the service as Ada's device enters: the page's own calls, made when a filing is made. */
+  const entered = { enter: (filed: never) => recordsEnteredOver(apiAs('ada'), joined.account.id, w.signing.secret).enter(filed) };
+  return { committeeKey: w.committeeKey, statement, signingSecret: w.signing.secret, label, account, wallet: w, entered };
 })();
 
 handInWiring({
@@ -297,29 +319,49 @@ const sendAs = (who: Who) => async (path: string, init: { method: string; body?:
 const blindingsProvedWith: string[] = [];
 const COMPANY_WIDE = 'cc'.repeat(32);
 
-/** The company's records as one person's device reads them: the directory against their wallet's read of the chain. */
+/**
+ * Where each of the company's proposals stands on this file's chain, as every person's own wallet reads it: what the
+ * simulated ledger holds open, and a proposal it no longer holds closed by the call the chain took that closed it -
+ * never by what the service's record says.
+ */
+const theChainWatched = roundsOnATestChain(async () => (await ledger.status(company))?.openProposals ?? [],
+  (chainId) => { const c = closedWith.get(chainId); return c === undefined ? [] : [c]; });
+/** Set by a case: the chain shows none of the rounds this file sends but these, whatever the service answers. */
+let theChainShowsOnly: ReadonlySet<string> | null = null;
+const theChain = async (ids: readonly string[]) => {
+  const read = await theChainWatched(ids);
+  if (theChainShowsOnly !== null) for (const id of Object.keys(read)) if (!theChainShowsOnly.has(id)) read[id] = { held: 'never', approvals: 0 };
+  return read;
+};
+/** Whether the test's chain holds the batch Ada's founding device anchored: set false, the company is not founded on chain yet. */
+let foundedOnChain = true;
 /** What one person's device reads to believe the company's records: its directory, and their wallet's read of the chain. */
-/** What each person's device keeps of the roster between its reads. */
-const memories = new Map<Who, ReturnType<typeof aDevicesRosterMemory>>();
-const memoryOf = (who: Who) => memories.get(who) ?? memories.set(who, aDevicesRosterMemory()).get(who)!;
 const readsOf = (who: Who) => ({
-  believed: memoryOf(who),
+  /*
+   * The company's records over the service's own manifest route, after the batch Ada's founding device anchored
+   * while her seat was the account's only one: her entry, her first roster and the first state.
+   */
+  anchored: (foundedOnChain ? anchoredOver(apiAs(who), company, undefined, undefined, {
+    seat: wallets.ada.seat, signingSecret: wallets.ada.signing.secret, records: [foundingRoster, foundingState], committee: [wallets.ada.committeeKey],
+    directory: store.directoryFilingsOf(company).slice(0, 1),
+  }) : anchoredOver(apiAs(who), company)),
   filings: async () => (await call('GET', `/api/accounts/${company}/directory`, { token: tokens[who] })).body.filings,
   holders: async () => {
     const h = holding.get(company)!;
-    return { committee: [...h.committee], threshold: 1, seats: [...h.seats], approvals: 1, adoptedVaults: [], founding: wallets.ada.seat,
-      foundingCommittee: [wallets.ada.committeeKey], account: ACCOUNT } as never;
+    return { committee: [...h.committee], threshold: 1, seats: [...h.seats], approvals: 1, adoptedVaults: [], account: ACCOUNT } as never;
   },
 });
 const recordsOf = (who: Who) => ({
-  directory: () => directoryHere({
+  directory: (asked?: RecordsAsked) => directoryHere({
     accountId: company, label: LABEL,
     ...readsOf(who),
     attested: async () => (Object.values(wallets)).map((w) => ({ committeeKey: w.committeeKey, statement: signRecordsKey(w.identity, LABEL, ACCOUNT, w.companyKey, w.seat) })),
-  }),
+  }, asked),
   state: async (id: string) => (id === '0' ? foundingState : null),
   people: async () => { throw new Error('no person is read in this test'); },
   runs: async () => { throw new Error('no run is read in this test'); },
+  /* Where each proposal stands, as the person's own wallet reads this file's chain. */
+  roundsOnChain: theChain,
 });
 
 /**
@@ -338,6 +380,7 @@ const aDevice = (who: Who, signerId: string, o: { refuse?: string[]; adopted?: s
   const roster = {
     api: apiAs(who), accountId: company, viewingKey, signingSecret: w.signing.secret, label: LABEL, account: ACCOUNT,
     reads: readsOf(who),
+    entered: recordsEnteredOver(apiAs(who), company, w.signing.secret),
   };
   return {
     service: o.service ? o.service(service) : service,
@@ -355,7 +398,7 @@ const aDevice = (who: Who, signerId: string, o: { refuse?: string[]; adopted?: s
     material: { signingSecret: w.signing.secret, blinding: '22'.repeat(32), scope: '33'.repeat(32) },
     accountId: company,
     records: records as never,
-    filing: { seat: w.seat, keyEpoch: 0, salt: () => newBlinding(), newId: () => newProposalId() },
+    filing: { seat: w.seat, keyEpoch: 0, salt: () => newBlinding(), newId: () => newProposalId(), entered: roster.entered },
     approvers: async () => {
       const status = (await ledger.status(company))!;
       const { account } = await rosterHere(roster);
@@ -377,7 +420,7 @@ const invited = async (who: 'blake' | 'cleo' | 'dora' | 'vic', as: Who = who, pe
   const made = await inviteSignerHere({
     id: company, name: 'Seats', label: LABEL, account: ACCOUNT, inboxPublicKey: opened.body.inboxPublicKey,
     keyEpoch: opened.body.keyEpoch, viewingKey,
-  }, { committeeKey: wallets.ada.committeeKey as never, statement: entryOf(wallets.ada, LABEL, ACCOUNT), signingSecret: wallets.ada.signing.secret }, { name: who, role: 'approver' }, ORIGIN, sendAs('ada'));
+  }, { committeeKey: wallets.ada.committeeKey as never, statement: entryOf(wallets.ada, LABEL, ACCOUNT), signingSecret: wallets.ada.signing.secret, entered: recordsEnteredOver(apiAs('ada'), company, wallets.ada.signing.secret) }, { name: who, role: 'approver' }, ORIGIN, sendAs('ada'));
   const sealedThere: PendingSeat[] = [];
   const accepted = await acceptAsSignerHere(await openInvitationHere(made.link, sendAs(as)), MidnightCommitments, {
     /* The keys this person's device makes: its filing key is the one their wallet's directory entry names. */
@@ -448,6 +491,20 @@ describe('A COMPANY SEATS ITS SIGNERS FROM THEIR OWN DEVICES, ON THE PRODUCT\'S 
     expect(sent).toEqual([]);
   });
 
+  it('NO SECOND SIGNER IS RAISED, APPROVED OR SEATED BEFORE THE RECORDS THE COMPANY WAS FOUNDED WITH ARE ANCHORED ON CHAIN', async () => {
+    sent.length = 0;
+    foundedOnChain = false;
+    try {
+      /* RED WHEN: a seat beside the founding signer's is raised while nothing of the company is anchored - its founding seat would then be one of two. */
+      await expect(device.seatSignerOnDevice(aDevice('ada', ada.signerId), { viewingKey, signerId: blake.signerId, readOut: blake.fingerprint }))
+        .rejects.toThrow(/No signer is added before the records the company was founded with are anchored on chain \(the company's founding records are not anchored on chain yet/u);
+    } finally {
+      foundedOnChain = true;
+    }
+    expect(circuits()).toEqual([]);
+    expect((await ledger.status(company))!.signerCount).toBe(1);
+  });
+
   it('THE SECOND SIGNER, ONE BEYOND A THRESHOLD OF ONE, IS SEATED AND ADMITTED FROM THE FIRST SIGNER\'S DEVICE', async () => {
     sent.length = 0;
     const out = await device.seatSignerOnDevice(aDevice('ada', ada.signerId), { viewingKey, signerId: blake.signerId, readOut: blake.fingerprint });
@@ -461,6 +518,9 @@ describe('A COMPANY SEATS ITS SIGNERS FROM THEIR OWN DEVICES, ON THE PRODUCT\'S 
     /* RED WHEN: the company's key is wrapped to anything but the key made on Blake's own device. */
     const rec = (await call('GET', `/api/accounts/${company}`, { token: tokens.blake }));
     expect(rec.status).toBe(200);
+    /* RED WHEN: the roster version an admission files from a device is not entered in the company's records, as the bytes kept. */
+    const rosters = ((await treeServiceFor(apiAs('ada')).pending(company, EMPTY_ROOT))! as ManifestEntry[]).filter((e) => e.store === 'company' && e.kind === 'roster');
+    expect(rosters.at(-1)).toMatchObject(companyRecordEntry(rec.body.roster));
     expect(unwrapKey(rec.body.wrappedKeys.find((k: any) => k.signerId === blake.signerId), blake.seat.wrappingSecret)).toBe(viewingKey);
     /* The roster is a record the company's seats file, and no longer part of the account record. */
     expect(rec.body.sealedRoster).toBeUndefined();
@@ -527,8 +587,8 @@ describe('A COMPANY SEATS ITS SIGNERS FROM THEIR OWN DEVICES, ON THE PRODUCT\'S 
     /* The service hands Ada's device Blake's proposal under another identity than the one he signed. */
     const altered = aDevice('ada', ada.signerId, { service: (s) => ({ ...s, sealedProposals: async (id: string) =>
       (await s.sealedProposals(id)).map((p: any) => (p.status === 'open' ? { ...p, chainId: 'ee'.repeat(32) } : p)) }) });
-    /* RED WHEN: a device approves a proposal whose filing does not verify for the seat that signed it. */
-    await expect(device.changeThresholdOnDevice(altered, { viewingKey, newThreshold: 3, seated: 3 })).rejects.toThrow(/already holds proposal/u);
+    /* RED WHEN: a device approves a proposal served under its id as other bytes than the company's records name - refused at the list, before it is read. */
+    await expect(device.changeThresholdOnDevice(altered, { viewingKey, newThreshold: 3, seated: 3 })).rejects.toThrow(/the service gave it as other bytes than the company's records name/u);
     expect(sent).toEqual([]);
 
     /* RED WHEN: an honest company cannot finish a change a late signer raised. */
@@ -544,13 +604,43 @@ describe('A COMPANY SEATS ITS SIGNERS FROM THEIR OWN DEVICES, ON THE PRODUCT\'S 
     const raised = await device.changeThresholdOnDevice(adaDevice, { viewingKey, newThreshold: 2, seated: 3 });
     expect(raised.state).toBe('waiting-for-approvals');
     const round = raised.round!;
+    /* Read while the chain holds it, as a device watching the chain has: this file's chain then knows the block that raised it. */
+    expect((await standingOnChainHere(recordsOf('ada'), [round]))[0]!.status).toBe('open');
     /* RED WHEN: a proposal the chain holds cannot be withdrawn from the device that raised it, or is withdrawn with no call. */
     expect((await device.withdrawOnDevice(adaDevice, { round, viewingKey })).status).toBe('cancelled');
     expect(circuits()).toEqual(['propose', 'approve', 'cancel']);
+    /* The service's record of it says carried out: where it stands is read from the chain, which took the withdrawal. */
+    const kept = new FileStore(process.env.DATA_PATH!).getProposal(round.id)!;
+    new FileStore(process.env.DATA_PATH!).putProposal({ ...kept, status: 'executed' });
+    /* RED WHEN: a device reads where a proposal stands from the service's record, or this file's chain names a close the chain did not take. */
+    expect((await standingOnChainHere(recordsOf('ada'), [new FileStore(process.env.DATA_PATH!).getProposal(round.id)!]))[0]!.status).toBe('cancelled');
+    new FileStore(process.env.DATA_PATH!).putProposal(kept);
     expect((await ledger.status(company))!.openProposals.map((p) => p.id)).not.toContain(round.chainId);
     expect(refusedHere).toEqual([]);
   });
 
+
+  it('A CHANGE THE SERVICE SAYS THE CHAIN HOLDS, AND THE CHAIN DOES NOT SHOW, IS SENT AND NOT YET SEEN, FIRST AND WHEN SENT AGAIN', async () => {
+    sent.length = 0;
+    const adaDevice = aDevice('ada', ada.signerId);
+    /* The chain shows every round raised before this case, and none this case sends. */
+    theChainShowsOnly = new Set(new FileStore(process.env.DATA_PATH!).listProposals(company).map((p) => p.chainId.toLowerCase()));
+    try {
+      /* RED WHEN: a change's raise is taken as seen on the chain because the service's answer to its filing says so. */
+      await expect(device.changeThresholdOnDevice(adaDevice, { viewingKey, newThreshold: 2, seated: 3 })).rejects.toBeInstanceOf(device.SentAndNotYetSeen);
+      expect(circuits()).toEqual(['propose']);
+      /* Another change, whose first send reaches no chain: it is written down and not sent. */
+      raisesLandNowhere = true;
+      await expect(device.changeThresholdOnDevice(adaDevice, { viewingKey, newThreshold: 1, seated: 3 })).rejects.toBeInstanceOf(device.SentAndNotYetSeen);
+      raisesLandNowhere = false;
+      /* RED WHEN: a change sent again is taken as seen on the chain because the service's answer to the send says so, or cannot be sent again at all. */
+      await expect(device.changeThresholdOnDevice(adaDevice, { viewingKey, newThreshold: 1, seated: 3 })).rejects.toBeInstanceOf(device.SentAndNotYetSeen);
+    } finally {
+      theChainShowsOnly = null;
+      raisesLandNowhere = false;
+    }
+    expect(circuits()).toEqual(['propose', 'propose', 'propose']);
+  });
   it('SOMEBODY WHO IS NOT A MEMBER IS NOT ANSWERED ON ANY ROUTE A DEVICE SEATS OR RELAYS THROUGH, AND A PERSON NOT WAITING IS NOT ADMITTED', async () => {
     const tx = Buffer.from('{}').toString('base64');
     const proposal = (await call('GET', `/api/accounts/${company}/proposals`, { token: tokens.ada })).body[0].id;
@@ -622,13 +712,14 @@ describe('A COMPANY SEATS ITS SIGNERS FROM THEIR OWN DEVICES, ON THE PRODUCT\'S 
     /* Ada's device: the directory as she believes it, her wallet's read of the chain, and her wallet's statement of her records key. */
     const seatOfAda = adaInJoined.statement.seat;
     const device = {
-      company, signingSecret: adaInJoined.signingSecret, signedInAs: USERS.ada, send: sendAs('ada'), network: NETWORK,
-      directory: () => directoryHere({
+      company, signingSecret: adaInJoined.signingSecret, signedInAs: USERS.ada, send: sendAs('ada'), network: NETWORK, entered: adaInJoined.entered,
+      directory: (asked?: RecordsAsked) => directoryHere({
         accountId: at, label: adaInJoined.label,
         filings: async () => (await call('GET', `/api/accounts/${at}/directory`, { token: tokens.ada })).body.filings,
         holders: async () => ({ committee: [adaInJoined.committeeKey], threshold: 1, seats: [seatOfAda], approvals: 1, adoptedVaults: [], founding: seatOfAda, foundingCommittee: [adaInJoined.committeeKey], account: adaInJoined.account }),
         attested: async () => [{ committeeKey: adaInJoined.committeeKey, statement: signRecordsKey(adaInJoined.wallet.identity, adaInJoined.label, adaInJoined.account, adaInJoined.wallet.companyKey, seatOfAda) }],
-      }),
+        anchored: anchoredOver(apiAs('ada'), at),
+      }, asked),
     };
     const here = (await readPeopleHere(device)).people.find((p) => p.person.id === made.person)!;
     expect(here.handedOver).toBe(true);

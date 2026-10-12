@@ -23,7 +23,7 @@
  * reads the record makes that check.
  */
 import express from 'express';
-import type { SealedPoolStore } from '../midnight/vault-pool.js';
+import { sealedOf, type SealedPoolStore } from '../midnight/vault-pool.js';
 import type { Hex } from '../core/crypto.js';
 import {
   assertWireRecord, assertWireVault, assertWireVersionNumber,
@@ -107,7 +107,7 @@ export const vaultRecordsRoutes = (deps: {
     if (!g) return;
     try {
       const filed = await g.store.versions(g.vault);
-      res.status(200).json({ record: g.record, versions: filed.map((v) => toWire(g.record, v.sealed)) });
+      res.status(200).json({ record: g.record, versions: filed.map((v) => toWire(g.record, sealedOf(v))) });
     } catch (e) { unreadable(res, e); }
   });
 

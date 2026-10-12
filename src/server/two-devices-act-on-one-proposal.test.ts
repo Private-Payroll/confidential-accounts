@@ -38,6 +38,8 @@ import { join } from 'node:path';
 import type { Server } from 'node:http';
 
 import { TEST_TOKEN } from '../testing/assets.js';
+import { everyRunAndProposalEntered, heldEntering, roundsOnATestChain } from '../testing/record-tree-double.js';
+import { standingOnChainHere } from 'vaults-web-shared/run-rebuilt-here.js';
 useOnlyTheseSettings({
   ALLOW_SIMULATED_COMPANY_ADDRESS: '1',
   ALLOW_MEMORY_SESSIONS: '1',
@@ -85,6 +87,8 @@ const VAULT = toHex(new Uint8Array(32).fill(0xa1));
 const ledger = new SimulatedLedger(MidnightCommitments);
 const leaves = new Map<string, Hex>();
 const sent: Array<{ circuit: string; signer: string }> = [];
+/** The circuit of the call this file's chain took that closed each proposal, by its identity on chain. */
+const closedWith = new Map<string, string>();
 /** What the door does with a call it was handed; `land` carries it out on the chain. */
 let door: (circuit: string, land: () => Promise<{ ref: string; at: string }>) => Promise<{ ref: string; at: string }> =
   (_c, land) => land();
@@ -104,7 +108,11 @@ Object.assign(ledger, {
     const land = async () => {
       const o = built.order;
       if (o.circuit === 'approve') return ledger.approve(accountId, o.proposal, by);
-      if (o.circuit === 'cancel') return ledger.cancel(accountId, o.proposal, by);
+      if (o.circuit === 'cancel') {
+        const done = await ledger.cancel(accountId, o.proposal, by);
+        closedWith.set(String(o.proposal).toLowerCase(), 'cancel');
+        return done;
+      }
       const r = await ledger.proposeRun(accountId, {
         root: o.run.root, payees: BigInt(o.run.payees), opensAt: BigInt(o.run.opensAt),
         closesAt: BigInt(o.run.closesAt), vault: o.run.vault,
@@ -188,17 +196,22 @@ const seeded = await (async () => {
     const state = signedFoundingState(account, { keyEpoch: 0, sealed: (await ledger.fetch(account, 0))!.sealedState }, founder.secret);
     const people = payroll.listPeople(account, viewingKey);
     const committee = { tag: 'schnorr', value: '7a'.repeat(32) };
-    const records: import('vaults-web-shared/run-rebuilt-here.js').CompanyRecordsHere = {
+    const records: import('vaults-web-shared/run-rebuilt-here.js').CompanyRecordsHere = everyRunAndProposalEntered({
       directory: async () => ({
         dir: { company: account, version: 1, seats: [{ seat: '4e'.repeat(32), person: USERS.ada, signingKey: founder.publicKey, wrappingKey: 'ab'.repeat(32), committeeKey: committee, role: 'admin', retired: null }] },
-        holders: { committee: [committee], seats: ['4e'.repeat(32)], approvals: 1, adoptedVaults: [], founding: '4e'.repeat(32), foundingCommittee: [committee], account: 'ac'.repeat(32) } as never,
-        another: new Set(),
+        holders: { committee: [committee], seats: ['4e'.repeat(32)], approvals: 1, adoptedVaults: [], account: 'ac'.repeat(32) } as never,
+        another: new Set(), at: () => null, records: heldEntering(account),
       }),
       people: async () => ({ people: people.map((person) => ({ person, version: 1, handedOver: true })), notBelieved: [], notPayable: [] }),
       state: async (id) => (id === '0' ? state : null),
       runs: async () => runsFiledBy(new FileStore(process.env.DATA_PATH!).listRuns(account), account, founder.secret),
       proposals: async () => new FileStore(process.env.DATA_PATH!).listProposals(account),
+      /* Where each proposal stands, as the person's own wallet reads this file's chain. */
+      roundsOnChain: roundsOnATestChain(async () => (await ledger.status(account))?.openProposals ?? [],
+        /* One the ledger no longer holds was closed by the call this file's chain took for it - never by the service's record. */
+        (chainId) => { const c = closedWith.get(chainId); return c === undefined ? [] : [c]; }),
       registry,
+      roundIdentity: pureCircuits,
       /* The person's own wallet over this file's chain: the pay-record key the service holds, nobody paid, the rounds it holds open. */
       payments: {
         paidOnceOf: pureCircuits.paidOnceOf, paidMovementOf: pureCircuits.paidMovementOf,
@@ -221,7 +234,8 @@ const seeded = await (async () => {
         keys: async (input) => spendingPolicyKeysOf({ accountPure: pureCircuits as never }, input),
         onChain: chainReadThroughTheWallet(async (asked) => ({ roles: asked.map((key) => ({ key, value: null })) })),
       },
-    };
+    /* Founded on the chain by that seat, its first anchor holding the first state. */
+    }, account, [founder.secret], { seat: '4e'.repeat(32), signingSecret: founder.secret, records: [state], committee: [committee] });
     return {
       account, viewingKey, runId: run.id, proposalId: proposal.id,
       ada: created.secrets[0]!, blake: created.secrets[1]!, records,
@@ -418,6 +432,11 @@ describe('TWO DEVICES, ONE PROPOSAL, THE SERVED ROUTES', () => {
     /* Ada raised it; the chain lets the signer who raised a proposal withdraw it, from any device of theirs. */
     const withdrawn = await device.withdrawOnDevice(aDevice('ada', c, c.ada.signerId).doors, { round, viewingKey: c.viewingKey });
     expect(withdrawn.status).toBe('cancelled');
+    /* RED WHEN: a device reads where a proposal stands from the service's record, or this file's chain names a close the chain did not take. */
+    const kept = new FileStore(process.env.DATA_PATH!).listProposals(c.account).find((p) => p.id === round.id)!;
+    new FileStore(process.env.DATA_PATH!).putProposal({ ...kept, status: 'executed' });
+    expect((await standingOnChainHere(c.records, await c.records.proposals!()).then((all) => all.filter((p) => p.id === round.id)))[0]!.status).toBe('cancelled');
+    new FileStore(process.env.DATA_PATH!).putProposal(kept);
     gate.open();
     await until(() => approving.done);
     /* RED WHEN: the approval relay's write puts back the open record it read before the withdrawal. */

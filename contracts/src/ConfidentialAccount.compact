@@ -231,6 +231,9 @@ witness policyOpening(): Policy;
 // What the vault has already been charged in the run's period, which the stored total opens to.
 witness periodSpent(): Uint<128>;
 
+// What earlier retries of a leg have taken without a charge, which the stored total opens to.
+witness legTaken(): Uint<128>;
+
 // A signer's public identity: a domain-tagged hash of their secret key.
 export circuit signerPublicKey(sk: Bytes<32>): Bytes<32> {
   return persistentHash<Vector<2, Bytes<32>>>([
@@ -573,11 +576,31 @@ export circuit periodBlindingOf(blinding: Bytes<32>, period: Uint<64>): Bytes<32
   ]);
 }
 
+// A running total, committed under its blinding behind its own tag: what a period has been
+// charged, or what a charged leg's retries have taken. A leg's retries are kept under its
+// period's blinding, so the tag is what keeps equal amounts from showing as equal.
+circuit runningTotalOf(tag: Bytes<32>, total: Uint<128>, blinding: Bytes<32>): Bytes<32> {
+  return persistentCommit<Vector<2, Bytes<32>>>([tag, total as Field as Bytes<32>], blinding);
+}
+
+// The tag a period's running total is committed under.
+export circuit periodTotalTag(): Bytes<32> {
+  return pad(32, "midnight-accounts:period-total:");
+}
+
+// The tag what a charged leg's retries have taken is committed under.
+export circuit legTakenTag(): Bytes<32> {
+  return pad(32, "midnight-accounts:leg-taken:");
+}
+
 // One period's running total, committed under that period's blinding.
 export circuit periodTotalOf(total: Uint<128>, blinding: Bytes<32>): Bytes<32> {
-  return persistentCommit<Vector<2, Bytes<32>>>([
-    pad(32, "midnight-accounts:period-total:"), total as Field as Bytes<32>
-  ], blinding);
+  return runningTotalOf(periodTotalTag(), total, blinding);
+}
+
+// What a charged leg's retries have taken, committed under the leg's period's blinding.
+export circuit legTakenOf(total: Uint<128>, blinding: Bytes<32>): Bytes<32> {
+  return runningTotalOf(legTakenTag(), total, blinding);
 }
 
 // Where the record that a run's root was charged in a period sits. A run raised again over
@@ -585,6 +608,14 @@ export circuit periodTotalOf(total: Uint<128>, blinding: Bytes<32>): Bytes<32> {
 export circuit chargedKeyOf(periodKey: Bytes<32>, root: Bytes<32>): Bytes<32> {
   return persistentHash<Vector<3, Bytes<32>>>([
     pad(32, "midnight-accounts:roles:charged:"), periodKey, root
+  ]);
+}
+
+// A retry's salt: its leg's root and a fresh salt, so the proposal id every signer approves
+// commits to the leg the retry pays again.
+export circuit retrySaltOf(legRoot: Bytes<32>, fresh: Bytes<32>): Bytes<32> {
+  return persistentHash<Vector<3, Bytes<32>>>([
+    pad(32, "midnight-accounts:retry-salt:"), legRoot, fresh
   ]);
 }
 
@@ -664,9 +695,42 @@ export circuit companyLabelKey(): Bytes<32> {
   return persistentHash<Bytes<32>>(pad(32, "midnight-accounts:roles:label"));
 }
 
-// Reserved: where a later anchor entry will sit in `signerRoles`. No circuit writes it yet.
+// Where the company's record anchor sits in `signerRoles`: one head, written only by `anchor`.
 export circuit anchorKey(): Bytes<32> {
   return persistentHash<Bytes<32>>(pad(32, "midnight-accounts:roles:anchor"));
+}
+
+// The key the account keeps the tag of the seat that moved the record anchor last under, beside the
+// head, so the account's history shows which seat moved it each time.
+export circuit anchorSeatKey(): Bytes<32> {
+  return persistentHash<Bytes<32>>(pad(32, "midnight-accounts:roles:anchorer"));
+}
+
+// The tag one seat anchors under in one account: its key and its leaf's blinding, in that account.
+// Only someone who holds the seat's blinding can work it out - the company's own members, from each
+// seat's leaf opening - and the account's address makes one person's tags in two companies unlinked.
+export circuit anchorTagOf(account: Bytes<32>, pk: Bytes<32>, blinding: Bytes<32>): Bytes<32> {
+  return persistentHash<Vector<4, Bytes<32>>>([
+    pad(32, "midnight-accounts:anchor:seat:"), account, pk, blinding
+  ]);
+}
+
+// What signers approve to move the record anchor past a batch nobody can check: on from a header
+// their own devices checked, whose head is `resumesFrom`, before the time `latest`. Past it the
+// approval is spent, so it cannot be carried out long after the records have moved on.
+export circuit recoverAnchorPayload(resumesFrom: Bytes<32>, latest: Uint<64>): Bytes<32> {
+  return persistentHash<Vector<3, Bytes<32>>>([
+    pad(32, "midnight-accounts:recover:"), resumesFrom, latest as Field as Bytes<32>
+  ]);
+}
+
+// The head after one batch: the head before it and the digest of the records the batch covers,
+// in the order they were filed. Every device folds what it reads through this, from the empty
+// head, and believes a record only when the fold reaches the head on chain.
+export circuit anchorHeadOf(previous: Bytes<32>, batch: Bytes<32>): Bytes<32> {
+  return persistentHash<Vector<3, Bytes<32>>>([
+    pad(32, "midnight-accounts:anchor:"), previous, batch
+  ]);
 }
 
 // The tag a vault mints its payment receipt under: the token `tokenType(tag, vault)`,
@@ -721,11 +785,21 @@ struct Seat {
   scope: Bytes<32>;
 }
 
-// Proves the caller is a signer without saying which, and returns their key and scope.
-circuit seat(): Seat {
+// A proved seat with the blinding its leaf is made with, which a seat's anchor tag is worked out from.
+struct OpenedSeat {
+  sk: Bytes<32>;
+  pk: Bytes<32>;
+  scope: Bytes<32>;
+  blinding: Bytes<32>;
+}
+
+// Proves the caller is a signer without saying which, and returns their secret and public keys, scope and blinding.
+circuit openedSeat(): OpenedSeat {
   const sk = localSecretKey();
   const scope = signerScope();
-  const leaf = signerLeaf(signerPublicKey(sk), signerBlinding(), scope);
+  const pk = signerPublicKey(sk);
+  const blinding = signerBlinding();
+  const leaf = signerLeaf(pk, blinding, scope);
   const path = signerPath(leaf);
 
   // The path must lead to the caller's own leaf.
@@ -733,7 +807,13 @@ circuit seat(): Seat {
 
   const root = merkleTreePathRoot<10, Bytes<32>>(path);
   assert(signers.checkRoot(disclose(root)), "not a signer on this account");
-  return Seat { sk: sk, scope: scope };
+  return OpenedSeat { sk: sk, pk: pk, scope: scope, blinding: blinding };
+}
+
+// Proves the caller is a signer without saying which, and returns their key and scope.
+circuit seat(): Seat {
+  const opened = openedSeat();
+  return Seat { sk: opened.sk, scope: opened.scope };
 }
 
 // Proves the caller is a signer without saying which. Refuses anyone else.
@@ -1702,6 +1782,14 @@ export circuit setPolicy(
 // vault has no policy for, needing more approvals than it was raised with, whose window
 // leaves the period, or taking the period past its limit. A run raised again over the same
 // tree in the same period is marked cleared without being charged again.
+//
+// Every run is raised with the salt retrySaltOf(leg, fresh): no leg for a run of its own, and
+// for a retry the root of the run whose people it pays again, so the id every signer approved
+// says which it is, and a run is cleared only as what it was raised as. A retry is charged
+// nothing while its leg's charge stands in the retry's own period under the vault's policy
+// today, and never pays more than its leg's total, counting the retries of that leg before it.
+// A retry of a leg charged in another period or under an earlier policy, or never charged, is
+// charged as a run of its own.
 export circuit clearRun(
   proposal: Bytes<32>,
   vault: Bytes<32>,
@@ -1714,6 +1802,10 @@ export circuit clearRun(
   top: Field,
   total: Uint<128>,
   period: Uint<64>,
+  leg: Bytes<32>,
+  fresh: Bytes<32>,
+  legTop: Field,
+  legTotal: Uint<128>,
 ): [] {
   const id = disclose(proposal);
   const forVault = disclose(vault);
@@ -1723,6 +1815,8 @@ export circuit clearRun(
       runPayload(forRoot, disclose(payees), disclose(opensAt), disclose(closesAt), disclose(required)),
       forVault, disclose(salt)) == id),
     "that is not this run, or you were not given it");
+  const forLeg = disclose(leg);
+  const isRetry = forLeg != default<Bytes<32>>;
 
   // Only once its window has opened, so a run that can still be withdrawn is never charged.
   assert(blockTimeGte(disclose(opensAt)), "that run has not started yet, so it cannot be charged to a period");
@@ -1736,6 +1830,16 @@ export circuit clearRun(
   const asset = assetId();
   assert(sumRootOf(top, total, asset) == forRoot,
          "that total or currency is not the one the signers approved for this run");
+
+  // The run is cleared as what it was raised as: a run of its own with no leg, a retry with
+  // the leg its id was raised over. A retry's leg is in the same currency, and what the leg
+  // pays bounds the retry below, with the retries before it.
+  assert(disclose(retrySaltOf(forLeg, fresh) == disclose(salt)),
+         "that run was not raised as a retry of that leg, or was raised as a retry and names none; charge it as it was raised, naming the leg its proposal was raised over or none");
+  if (isRetry) {
+    assert(sumRootOf(legTop, legTotal, asset) == forLeg,
+           "that total or currency is not the one the leg's signers approved; get the leg's run again and retry");
+  }
 
   const policyKey = disclose(policyKeyOf(forVault, assetKeyOf(asset, assetBlinding())));
   assert(signerRoles.member(policyKey),
@@ -1754,24 +1858,133 @@ export circuit clearRun(
   assert(!(starts + policy.terms.periodLength < disclose(closesAt)),
          "that run's window ends after the period it is charged to; if its window crosses two periods, raise the run again inside one");
 
-  const periodKey = disclose(periodKeyOf(policyKey, commitment, disclose(period)));
-  const blinding = periodBlindingOf(policy.blinding, disclose(period));
-  const spent = periodSpent();
-  if (signerRoles.member(periodKey)) {
-    assert(signerRoles.lookup(periodKey) == periodTotalOf(spent, blinding),
-           "that is not what this vault has spent in the period; refresh the total for the period on this device and try again");
-  } else {
-    assert(spent == 0, "this device says the vault has spent something this period, but the account has nothing charged to it; refresh the total for the period and try again");
-  }
-
+  // A retry is free when its leg was charged in the retry's own period under the policy the
+  // vault has today: that charge already counted its people. What the leg's retries take
+  // together is then kept against the leg's total, under the record that the leg was charged
+  // and that period's blinding. Any other run, a retry of a leg charged elsewhere among them,
+  // is charged to its own period and its tree marked charged there.
+  const inPeriod = disclose(period);
+  const periodKey = disclose(periodKeyOf(policyKey, commitment, inPeriod));
+  const legCharged = disclose(chargedKeyOf(periodKey, forLeg));
+  const free = isRetry && signerRoles.member(legCharged);
   const charged = disclose(chargedKeyOf(periodKey, forRoot));
-  if (!signerRoles.member(charged)) {
-    const after = (spent + total) as Uint<128>;
-    assert(!(policy.terms.periodLimit < after),
+
+  const totalKey = free ? legCharged : periodKey;
+  const totalTag = free ? legTakenTag() : periodTotalTag();
+  const blinding = periodBlindingOf(policy.blinding, inPeriod);
+  const before = free ? legTaken() : periodSpent();
+  const stored = signerRoles.member(totalKey) ? signerRoles.lookup(totalKey) : default<Bytes<32>>;
+  const untouched = stored == default<Bytes<32>> || (free && stored == chargedMark());
+  const opens = untouched ? before == 0 : stored == runningTotalOf(totalTag, before, blinding);
+  assert(opens || !untouched || free,
+         "this device says the vault has spent something this period, but the account has nothing charged to it; refresh the total for the period and try again");
+  assert(opens || untouched || free,
+         "that is not what this vault has spent in the period; refresh the total for the period on this device and try again");
+  assert(opens || !untouched || !free,
+         "this device says the leg's retries have taken something, but the account has nothing kept for them; refresh the leg's retries and try again");
+  assert(opens || untouched || !free,
+         "that is not what this leg's retries have taken so far; refresh the leg's retries on this device and try again");
+
+  if (free || !signerRoles.member(charged)) {
+    const after = (before + total) as Uint<128>;
+    assert(free || !(policy.terms.periodLimit < after),
            "this run would take the vault past its limit for the period; pay it in a later period, pay less, or raise the limit for the period");
-    signerRoles.insert(periodKey, disclose(periodTotalOf(after, blinding)));
-    signerRoles.insert(charged, chargedMark());
+    assert(!free || !(legTotal < after),
+           "this retry would pay the leg's people more than the leg's total, counting the retries before it; raise a run of its own for the difference");
+    signerRoles.insert(totalKey, disclose(runningTotalOf(totalTag, after, blinding)));
+    if (!free) {
+      signerRoles.insert(charged, chargedMark());
+    }
   }
 
   openProposals.insert(id, clearedMark());
+}
+
+// What one anchor call folds into the head: the batch's digest, who held the account as the
+// anchoring device judged the batch - the approvals the account requires and the root of its signer
+// tree - and the tag of the seat that anchored it. A device folding the records works this out from
+// what the batch's header names, so a header naming any other holders or seat than the call checked
+// never folds to the head on chain.
+export circuit anchorHeldOf(batch: Bytes<32>, approvals: Uint<64>, signerRoot: MerkleTreeDigest, tag: Bytes<32>): Bytes<32> {
+  return persistentHash<Vector<5, Bytes<32>>>([
+    pad(32, "midnight-accounts:anchor:held:"), batch, approvals as Field as Bytes<32>, signerRoot.field as Bytes<32>, tag
+  ]);
+}
+
+// What one recovery folds into the head, under its own tag so that no plain anchor reads as one: as
+// anchorHeldOf, and the head of the header it resumes from.
+export circuit anchorRecoveredOf(
+  batch: Bytes<32>, approvals: Uint<64>, signerRoot: MerkleTreeDigest, tag: Bytes<32>, resumesFrom: Bytes<32>,
+): Bytes<32> {
+  return persistentHash<Vector<6, Bytes<32>>>([
+    pad(32, "midnight-accounts:recovered:"), batch, approvals as Field as Bytes<32>, signerRoot.field as Bytes<32>, tag,
+    resumesFrom
+  ]);
+}
+
+// Checks one batch may move the anchor on from `previous`: it covers something, the account's
+// holders are the ones it was judged against, and `previous` is the head the chain holds. Returns
+// the caller's tag, disclosed.
+circuit anchorMayMove(previous: Bytes<32>, batch: Bytes<32>, approvals: Uint<64>, signerRoot: MerkleTreeDigest, caller: OpenedSeat): Bytes<32> {
+  assert(batch != default<Bytes<32>>, "that batch covers no records; file a record first, then anchor it");
+  assert(threshold == approvals,
+         "the approvals the account requires changed after this device judged the batch; read the account again and anchor again");
+  assert(signers.checkRoot(signerRoot),
+         "the account's signers changed after this device judged the batch; read the account again and anchor again");
+  if (signerRoles.member(anchorKey())) {
+    assert(signerRoles.lookup(anchorKey()) == previous,
+           "another device anchored the company's records first; read the anchor again and anchor what it does not yet cover");
+  } else {
+    assert(previous == default<Bytes<32>>,
+           "this company's records have never been anchored, so the first anchor follows the empty head; read the anchor again and retry");
+  }
+  return disclose(anchorTagOf(kernel.self().bytes, caller.pk, caller.blinding));
+}
+
+// Moves the company's record anchor on by one batch of records. Any signer may, and nobody else.
+// The caller names the head they read; if another anchor landed first the call is refused, so
+// two devices anchoring at once never lose a batch. The first head follows the empty one.
+// The caller also names who held the account as they judged the batch: the approvals it requires
+// and the root of its signer tree. If either is not the account's as the call runs, the call is
+// refused and nothing changes, so a batch lands only while what it was judged against still holds.
+// The anchor also names the seat that moved it: its tag, written beside the head under its own key
+// and folded into the head, so a header naming another seat's key never folds to it.
+export circuit anchor(previous: Bytes<32>, batch: Bytes<32>, approvals: Uint<64>, signerRoot: MerkleTreeDigest): [] {
+  const caller = openedSeat();
+  const before = disclose(previous);
+  const records = disclose(batch);
+  const judged = disclose(approvals);
+  const root = disclose(signerRoot);
+  const tag = anchorMayMove(before, records, judged, root, caller);
+  signerRoles.insert(anchorKey(), anchorHeadOf(before, anchorHeldOf(records, judged, root, tag)));
+  signerRoles.insert(anchorSeatKey(), tag);
+}
+
+// Moves the company's record anchor past a batch nobody can check - a header nobody kept, or one
+// whose own message is false - to a header resuming from `resumesFrom`, the head of a header the
+// approvers' own devices checked. Only under a proposal approved at the bar for changing who is
+// seated, raised since the latest removal, for exactly that head, and only before the latest time
+// it was approved with; any signer carries it out, from the head the chain holds, as an anchor is.
+// The batches after `resumesFrom` are given up, and their filers file them again.
+export circuit recoverAnchor(
+  previous: Bytes<32>, batch: Bytes<32>, approvals: Uint<64>, signerRoot: MerkleTreeDigest, resumesFrom: Bytes<32>,
+  latest: Uint<64>, proposal: Bytes<32>,
+): [] {
+  const caller = openedSeat();
+  const id = disclose(proposal);
+  requireApproved(id);
+  requireSeatBar(id);
+  const resumed = disclose(resumesFrom);
+  const until = disclose(latest);
+  assert(disclose(proposalIdOf(recoverAnchorPayload(resumed, until), noVault(), proposalSalt()) == proposal),
+    "that proposal is not a recovery of the company's records from that head before that time; carry out the recovery the signers approved, from the head and before the time it names");
+  assert(blockTimeLt(until), "the time to carry out this recovery has passed; raise it again, with a later time, and have it approved");
+  const before = disclose(previous);
+  const records = disclose(batch);
+  const judged = disclose(approvals);
+  const root = disclose(signerRoot);
+  const tag = anchorMayMove(before, records, judged, root, caller);
+  signerRoles.insert(anchorKey(), anchorHeadOf(before, anchorRecoveredOf(records, judged, root, tag, resumed)));
+  signerRoles.insert(anchorSeatKey(), tag);
+  closeProposal(id);
 }

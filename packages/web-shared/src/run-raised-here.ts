@@ -12,6 +12,8 @@
 import { assetIdBytes, assets as theAssets, sumChangeAmount, type AssetId, type LedgerForm } from '../../../src/core/assets.js';
 import { randomBytes, signingPublicKeyOf, type Hex } from '../../../src/core/crypto.js';
 import { batchDigestOf, paysCommitmentOf, sealPayrollProposal, signProposalFiling } from '../../../src/core/proposal-filing.js';
+import { proposalEntry } from '../../../src/midnight/record-manifest.js';
+import type { Filed, RecordsEntered } from './record-entered-here.js';
 import { signRunFiling } from '../../../src/core/run-filing.js';
 import {
   receiptsOf, refuseARetryOfALegNeverOnChain, refuseARetryOfNobody, refuseARunNoVaultCanPay, refuseMaterialThatIsNotThisLeg,
@@ -25,12 +27,14 @@ import { refuseWhatTheVaultCannotPay } from '../../../src/core/vault-holdings.js
 import type { Employee, PayrollRun, Role, RunLeg, SealedProposal, ShieldedEntry } from '../../../src/core/types.js';
 import type { buildRetryRun, buildRun, rootOfPayments, DetailsOfKind } from '../../../src/midnight/payout-tree.js';
 import { currentPayoutSeed } from '../../../src/midnight/run-keys.js';
+import { NO_LEG } from '../../../src/midnight/spending-policy-record.js';
 import type { CompanyLabel } from 'midnight-identity/profile/company-label';
 import type { OpenedRound, RaiseRunOrder } from './governed-call-builder.js';
-import type { RunMadeHere } from './what-this-device-made.js';
+import type { RunMadeHere, VouchedHere } from './what-this-device-made.js';
+import { vouchedFreshOf, vouchedRefusal } from '../../../src/midnight/record-tree.js';
 import type { RaiseDoors, RoundOnThePage } from './governed-call-on-device.js';
 import {
-  checkedAgainstTheRecordsAndTheWallet, keptRunHere, payableFactsHere, signedStateHere, type CompanyRecordsHere,
+  checkedAgainstTheRecordsAndTheWallet, keptRunHere, payableFactsHere, proposalsListedHere, signedStateHere, type CompanyRecordsHere,
 } from './run-rebuilt-here.js';
 import { RoundRefusedHere, refuseWhatNoRoundMay, type ReadForTheRound, type RoundToCheck } from './raise-checks-here.js';
 import { policyForARunHere, type PolicyForARun } from './spending-policy-here.js';
@@ -56,17 +60,29 @@ interface RunIdentityDeps {
   readonly rootOfPayments: typeof rootOfPayments;
   readonly runPayload: (root: Uint8Array, payees: bigint, opensAt: bigint, closesAt: bigint, required: bigint) => Uint8Array;
   readonly proposalIdOf: (payload: Uint8Array, vault: Uint8Array, salt: Uint8Array) => Uint8Array;
+  /** A run's salt: the leg it pays again (none for a leg of the run) and its fresh half (`vouchedFreshOf`). */
+  readonly retrySaltOf: (legRoot: Uint8Array, fresh: Uint8Array) => Uint8Array;
   readonly noVault: () => Uint8Array;
 }
 
 export interface LegRaiseDoors extends RaiseDoors {
   readonly records: CompanyRecordsHere & { readonly proposals: () => Promise<readonly SealedProposal[]> };
-  /** This device's seat as the company's directory names it, the key epoch now, and a fresh salt and proposal name. */
+  /**
+   * This device's seat as the company's directory names it, the key epoch now,
+   * and a random value and proposal name. A run's random value is sealed beside
+   * the head this device checked last, and the fresh half of its proposal's
+   * salt, `retrySaltOf(leg, fresh)`, is made from the two (`vouchedFreshOf`).
+   */
   readonly filing: { readonly seat: string; readonly keyEpoch: number; readonly salt: () => string; readonly newId: () => string };
   /** The company's account and label, which each payslip's receipt names. */
   readonly company: { readonly account: string | null; readonly label: CompanyLabel | null };
   readonly runs: RunIdentityDeps;
   readonly now?: () => Date;
+  /**
+   * The one filing call, bound to this company and seat, and the anchor this
+   * device moves on once a run is raised: at most one anchor per run raised.
+   */
+  readonly recorded: { readonly entered: RecordsEntered; readonly anchor: () => Promise<unknown> };
 }
 
 const DIGITS = /^[0-9]+$/u;
@@ -163,8 +179,10 @@ export async function raiseLegHere(
     doors.runs.rootOfPayments as never, registry));
 
   /* What the raise is decided on is read once: the company's proposals, and the vault's policy for this proposal. */
-  const proposals = await records.proposals();
+  const proposals = await proposalsListedHere(records);
   const { required, policy } = await approvalsItsBandNeeds(doors, key, { vault, asset, total: facts.reduce((a, f) => a + f.amount, 0n), window });
+  /* What the proposal's salt is made from: a leg pays nobody again, so its salt names no leg. */
+  const vouched = await vouchedHere(doors);
   const made = await checkedAgainstTheRecordsAndTheWallet(records, accountId, run, key, {
     kind: 'payroll', seeds: state.seeds, payKey: state.payKey, identity, facts, records: payRecords, asset,
     opensAt: input.opensAt, closesAt: input.closesAt, required,
@@ -181,7 +199,7 @@ export async function raiseLegHere(
 
   return writtenProvedAndFiled(doors, key, {
     run, leg, entries: paid.map((e) => ({ e, at: now.toISOString() })), root, payees, window, vault, role, asset,
-    summary: `Payroll ${run.period}, ${paid.length} recipients`, payments,
+    summary: `Payroll ${run.period}, ${paid.length} recipients`, payments, vouched, legRoot: hex(NO_LEG()),
     raisedRun: (proposalId) => ({
       ...run,
       payslips: receiptsOf(run, [...state.seeds], state.payKey as Hex, {
@@ -203,6 +221,28 @@ export async function raiseLegHere(
   });
 }
 
+/**
+ * **WHAT THIS RUN'S SALT IS MADE FROM**: the head of the company's records this
+ * device checked last, as its own database keeps it, and a random value from
+ * this device, refused unless each is thirty-two bytes and the head is one an
+ * anchor left. The fresh half of the salt is made from them (`vouchedFreshOf`),
+ * so the identity the run's approvers approve binds that head.
+ */
+const vouchedHere = async (doors: LegRaiseDoors): Promise<VouchedHere> => {
+  if (doors.records.checked === undefined) {
+    throw new LegNotRaisedHere('This page cannot read which of the company\'s records this device has checked. Reload the page to get the current version');
+  }
+  const kept = await doors.records.checked();
+  if (kept === null || kept.latest.seq < 0) {
+    throw new LegNotRaisedHere('this device has not checked the company\'s records against the anchor on the chain yet. Reload the page, '
+      + 'wait for the company\'s records to be read, and raise it again');
+  }
+  const vouched = { head: kept.latest.head.toLowerCase() as Hex, r: doors.filing.salt().toLowerCase() as Hex };
+  const why = vouchedRefusal(vouched);
+  if (why !== null) throw new LegNotRaisedHere(`this device could not make this run's salt: ${why}`);
+  return { ...vouched, checkedHere: true };
+};
+
 /** The role this device's seat holds, as the company's directory reads it, written on the proposal as its raiser's. */
 const roleOfThisSeat = async (doors: LegRaiseDoors): Promise<Role | undefined> =>
   ((await doors.records.directory()).dir.seats.find((s) => s.seat === doors.filing.seat)?.role ?? undefined) as Role | undefined;
@@ -219,6 +259,9 @@ async function writtenProvedAndFiled(doors: LegRaiseDoors, key: Hex, r: {
   readonly vault: Hex; readonly role: Role | undefined; readonly asset: AssetId; readonly summary: string;
   readonly payments: ReadonlyArray<ReturnType<typeof paymentChecked>>;
   readonly retry?: readonly number[];
+  /** What the proposal's salt is made from, and the root of the leg it pays again: none for a leg of the run. */
+  readonly vouched: VouchedHere;
+  readonly legRoot: Hex;
   readonly raisedRun: (proposalId: string) => PayrollRun;
   /** The proposal as made here, with what it was checked against before anything was written down. */
   readonly made: RunMadeHere;
@@ -230,8 +273,13 @@ async function writtenProvedAndFiled(doors: LegRaiseDoors, key: Hex, r: {
     id: entryId(), kind: 'payroll', asset: e.asset, amount: e.amount, counterparty: e.name, memo: `${r.run.period} salary`,
     at, runId: r.run.id, recipientId: e.id,
   }));
-  const salt = doors.filing.salt().toLowerCase() as Hex;
-  const change = { asset: r.asset, amount: sumChangeAmount(entries.map((e) => e.amount), 'this run\'s change'), batchDigest: batchDigestOf(entries), salt };
+  /* Every run's salt names the leg it pays again, or none, so the id every signer approves says which it is. */
+  const salt = hex(doors.runs.retrySaltOf(bytes(r.legRoot), bytes(vouchedFreshOf(r.vouched.head, r.vouched.r))));
+  /* What the salt is made from, sealed beside it: the proposal is the one record that holds both. */
+  const change = {
+    asset: r.asset, amount: sumChangeAmount(entries.map((e) => e.amount), 'this run\'s change'), batchDigest: batchDigestOf(entries), salt,
+    vouched: { head: r.vouched.head, r: r.vouched.r },
+  };
   /* The approvals the run was made needing, which its band under its vault's spending policy may require, bound into its identity. */
   const required = r.made.required;
   if (!DIGITS.test(required)) throw new LegNotRaisedHere('the approvals this run needs are not a whole number');
@@ -244,7 +292,11 @@ async function writtenProvedAndFiled(doors: LegRaiseDoors, key: Hex, r: {
     id: proposalId, digest, chainId, keyEpoch: doors.filing.keyEpoch, createdAt, pays: paysCommitmentOf(pays, salt),
     sealed: sealPayrollProposal({
       accountId, viewingKey: key, vault: r.vault, summary: r.summary,
-      payload: { runId: r.run.id, form: formOfLeg(r.leg), entries, ...(r.retry === undefined ? {} : { retry: [...r.retry] }) }, change,
+      payload: {
+        runId: r.run.id, form: formOfLeg(r.leg), entries, ...(r.retry === undefined ? {} : { retry: [...r.retry] }),
+        /* The run's own window, beside what its identity is made from with it: read back only as that identity holds it. */
+        window: { root: r.root, payees: String(r.payees), opensAt: String(r.window.opensAt), closesAt: String(r.window.closesAt) },
+      }, change,
       /*
        * The approvals bound into its identity, sealed beside its change for the
        * service's own reading of the run; a device reads them from the run's
@@ -258,7 +310,7 @@ async function writtenProvedAndFiled(doors: LegRaiseDoors, key: Hex, r: {
   /* The account's own name for the asset, which is what the asset witness answers with. */
   const named = { assetId: assetIdBytes(r.asset) };
   const opened: OpenedRound = {
-    chainId, digest, vault: r.vault, salt, summary: r.summary,
+    chainId, digest, vault: r.vault, salt, vouched: r.vouched, summary: r.summary,
     half: { assetId: hex(named.assetId), changeAmount: String(change.amount), changeBatchDigest: change.batchDigest },
     made: r.made,
   };
@@ -278,9 +330,39 @@ async function writtenProvedAndFiled(doors: LegRaiseDoors, key: Hex, r: {
   doors.progress?.('building');
   const { tx } = await doors.builder.governedCall({ account: chain.account, material: doors.material, chain, opened, order });
   doors.progress?.('sending');
-  return service.file!(accountId, {
-    proposal, tx, version: DEVICE_RAISE_VERSION, salt, run: runFiling, pays,
-  });
+  const filed: readonly Filed[] = [{ store: 'run', run: runFiling }, proposalEntry(accountId, proposal)];
+  let round: RoundOnThePage;
+  try {
+    round = await service.file!(accountId, { proposal, tx, version: DEVICE_RAISE_VERSION, salt, run: runFiling, pays });
+  } catch (e) {
+    /*
+     * **WRITTEN DOWN AND NOT SENT IS STILL WRITTEN DOWN.** A send that failed
+     * after the service kept the proposal and the run leaves both to be sent
+     * again, and a send again reads them from the company's records: so this
+     * device, their filer, enters them now. One the service did not keep is
+     * refused as not filed, and nothing is entered; the raise's own failure is
+     * what the person is told.
+     */
+    await doors.recorded.entered.enter(filed).catch(() => undefined);
+    throw e;
+  }
+  return enteredAndAnchored(doors, round, filed);
+}
+
+/**
+ * **WHAT A RAISE ENDS WITH ONCE THE SERVICE HAS IT**: the run as raised and its
+ * proposal entered in the company's records, and the records anchored from
+ * here. Neither undoes the raise, which the chain already holds: a filing not
+ * entered or not anchored stays not yet anchored, and the raise says why.
+ */
+async function enteredAndAnchored(doors: LegRaiseDoors, round: RoundOnThePage, filed: readonly Filed[]): Promise<RoundOnThePage> {
+  try {
+    await doors.recorded.entered.enter(filed);
+    await doors.recorded.anchor();
+    return { ...round, recordsAnchored: true };
+  } catch (e) {
+    return { ...round, recordsAnchored: (e as Error)?.message ?? String(e) };
+  }
 }
 
 /**
@@ -315,19 +397,24 @@ export async function raiseRetryHere(
   const { run } = await keptRunHere(records, accountId, input.runId, key);
   const leg = raised(() => legOf(run, legChoiceOf(input), registry));
   /* What the retry is decided on is read once: every refusal below, and the raise checks, judge this one read of the proposals. */
-  const proposals = await records.proposals();
+  const proposals = await proposalsListedHere(records);
   const legRound = run.payout?.[leg] === undefined ? undefined : proposals.find((p) => p.id === run.proposalIds[leg]);
   /* Before anything is built from the leg's record; the raise checks below judge it again, as every approver does. */
   raised(() => refuseARetryOfALegNeverOnChain(run, leg, legRound, registry));
   const recorded = run.payout![leg]!;
   raised(() => refuseARetryOfNobody(run, leg, recorded.leaves.length, indices, registry));
-  /* A retry of exactly these people written down and not yet seen on the chain is sent as itself, not raised again. */
-  const unsent = (recorded.retries ?? []).find((r) => r.proposalId !== undefined
+  /*
+   * A retry of exactly these people written down that the chain has never held is sent as itself, not raised again,
+   * until its window closes: its proof may still be sent, so withdrawing it on the service's word frees nobody.
+   */
+  const nowInSeconds = BigInt(Math.floor(now.getTime() / 1000));
+  const unsent = (recorded.retries ?? []).find((r) => r.proposalId !== undefined && nowInSeconds < BigInt(r.closesAt)
     && r.originalIndices.length === indices.length && r.originalIndices.every((i, at) => i === indices[at])
     && proposals.some((p) => p.id === r.proposalId && p.status === 'open' && !p.raisedAt));
   if (unsent !== undefined) {
-    throw new LegNotRaisedHere(`a retry of these people is already written down, as ${unsent.proposalId}, and has not reached the `
-      + 'chain. Send that one, or withdraw it first');
+    throw new LegNotRaisedHere(`a retry of these people is already written down, as ${unsent.proposalId}, and the chain has never `
+      + `held it. Send that one; until its window closes at ${new Date(Number(unsent.closesAt) * 1000).toISOString()} it may still `
+      + 'be sent, so no other retry of them is raised');
   }
   const onTheLeg = legEmployees(run, leg);
   if (onTheLeg.length !== recorded.leaves.length) {
@@ -353,6 +440,8 @@ export async function raiseRetryHere(
     doors.runs.rootOfPayments as never));
 
   const { required, policy } = await approvalsItsBandNeeds(doors, key, { vault, asset, total: retry.facts.reduce((a, f) => a + f.amount, 0n), window });
+  /* What the proposal's salt is made from, beside the root of the leg it pays again. */
+  const vouched = await vouchedHere(doors);
   const made = await checkedAgainstTheRecordsAndTheWallet(records, accountId, run, key, {
     kind: 'payroll', seeds: state.seeds, payKey: state.payKey, identity, facts: recorded.facts, records: payRecords, asset,
     opensAt: input.opensAt, closesAt: input.closesAt, required, retry: indices,
@@ -373,6 +462,7 @@ export async function raiseRetryHere(
   return writtenProvedAndFiled(doors, key, {
     run, leg, entries: indices.map((i) => ({ e: onTheLeg[i]!, at })), root, payees, window, vault, role, asset,
     summary: `Payroll ${run.period}, retry for ${indices.length} recipients`, payments, retry: indices,
+    vouched, legRoot: whole.tree.root.toLowerCase() as Hex,
     raisedRun: (proposalId) => {
       const withRetry: PayrollRun = {
         ...run,

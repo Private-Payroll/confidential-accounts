@@ -13,7 +13,7 @@ import {
   type NotePool, type VaultPayment, type PaymentAttempt, type PaymentJournal,
   type DepositAttempt, type DepositJournal,
 } from './vault-ledger.js';
-import { VaultPoolAdvancedSinceRead, VaultPoolVersionAlreadyFiled } from './vault-pool.js';
+import { sealedOf, VaultPoolAdvancedSinceRead, VaultPoolVersionAlreadyFiled } from './vault-pool.js';
 import {
   DepositCoinAlreadyMade, depositNonceAt, depositNonceKeyFor, type VaultOutputHistory,
 } from './deposit-nonce.js';
@@ -2797,7 +2797,7 @@ const STORE_DB = process.env.TEST_DATABASE_URL;
         versions.map((v) => v.version),
         'RED WHEN: the pool the client created, deposited into and paid from is not the record the database holds - one version per write',
       ).toEqual([1, 2, 3]);
-      const now = openPool(versions[2]!.sealed, 'kc', k.secret);
+      const now = openPool(sealedOf(versions[2]!), 'kc', k.secret);
       expect(now.notes.map((n) => [n.value, n.createdIn]),
         'RED WHEN: the change note the payment made is not what the store now says the vault holds').toEqual([[300n, payHash(1)]]);
 
@@ -2816,7 +2816,7 @@ const STORE_DB = process.env.TEST_DATABASE_URL;
       const rebuilt = reconcileVaultPool({
         vault: VAULT as never,
         chain: [commitmentForNote(vaultCircuits as never, VAULT as never, change)],
-        versions: versions.map((v) => ({ version: v.version, notes: openPool(v.sealed, 'kc', k.secret).notes })),
+        versions: versions.map((v) => ({ version: v.version, notes: openPool(sealedOf(v), 'kc', k.secret).notes })),
         attempted,
         circuits: vaultCircuits as never,
       });

@@ -12,6 +12,7 @@
  * The honest entry is read first, through the same doors, so a refusal below is
  * a refusal of the swap and not of every seat.
  */
+import { enteredHere } from '../../../src/testing/records-entered.js';
 import { describe, it, expect } from 'vitest';
 import { drawCompanyLabel } from 'midnight-identity/profile/company-label';
 import { mkdtempSync } from 'node:fs';
@@ -32,7 +33,7 @@ import {
   approveOnDevice, openTheRoundHere, seatSignerOnDevice, type GovernedCallDoors, type GovernedCallService,
 } from './governed-call-on-device.js';
 import { rosterBelievedHere, type RosterDoors, type RosterReads } from './roster-here.js';
-import { aDevicesRosterMemory, aRosterASeatFiled } from '../../../src/testing/a-roster-a-seat-filed.js';
+import { aRosterASeatFiled } from '../../../src/testing/a-roster-a-seat-filed.js';
 
 const scope = MidnightCommitments.allVaults();
 const keysOf = () => {
@@ -70,6 +71,7 @@ const honestRecord = structuredClone(store.getAccount(company)!);
 const adasRoster = (api: RosterDoors['api']): RosterDoors => ({
   api, accountId: company, viewingKey: viewingKey as Hex, signingSecret: ada.signingSecret as Hex,
   label: honestRecord.companyLabel as never, account: honestRecord.contractAddress as never, reads: filed.reads,
+  entered: filed.records.enteredBy(ada.signingSecret as Hex),
 });
 
 /** A writer with the stored record and nothing else: it seals a new entry to the inbox's public key. */
@@ -174,7 +176,7 @@ describe('A KEY THAT DID NOT COME FROM THE INVITED PERSON IS NOT SEATED', () => 
         throw new Error(`this device asked the service for ${path}`);
       });
       const out = seatSignerOnDevice({
-        ...doors, roster, filing: { seat: '41'.repeat(32), keyEpoch: 0, salt: () => '66'.repeat(32), newId: () => 'prp_swappedseat1' },
+        ...doors, roster, filing: { seat: '41'.repeat(32), keyEpoch: 0, salt: () => '66'.repeat(32), newId: () => 'prp_swappedseat1', entered: enteredHere() },
         approvers: async () => { throw new Error('the vault check was reached'); }, vaultName: (v) => v,
       }, { viewingKey, signerId: waiting.id, readOut: 'read out by Dana' });
       /* RED WHEN: the device raises, approves, carries out or admits a seat before it has checked the key in the inbox. */
@@ -202,7 +204,7 @@ describe('A KEY THAT DID NOT COME FROM THE INVITED PERSON IS NOT SEATED', () => 
         throw new Error(path);
       });
       await expect(seatSignerOnDevice({
-        ...aDevice(built), roster, filing: { seat: '41'.repeat(32), keyEpoch: 0, salt: () => '66'.repeat(32), newId: () => 'prp_copiedseat01' },
+        ...aDevice(built), roster, filing: { seat: '41'.repeat(32), keyEpoch: 0, salt: () => '66'.repeat(32), newId: () => 'prp_copiedseat01', entered: enteredHere() },
         approvers: async () => { throw new Error('the vault check was reached'); }, vaultName: (v) => v,
       }, { viewingKey, signerId: 'sgn_copy', readOut: 'read out by Dana' })).rejects.toThrow(/already belong to another signer/u);
       expect(built).toEqual([]);
@@ -358,11 +360,11 @@ describe('A SEAT THE CHAIN HOLDS BEFORE ITS SIGNER IS ADMITTED', () => {
   const readsWithDanasSeat: RosterReads = {
     filings: filed.reads.filings,
     holders: async () => { const h = await filed.reads.holders(); return { ...h, seats: [...h.seats, dana.leafCommitment] }; },
-    believed: aDevicesRosterMemory(),
+    anchored: filed.reads.anchored,
   };
   const readHere = () => rosterBelievedHere({ ...store.getAccount(company)!, roster: filed.roster }, viewingKey as Hex, {
     accountId: company, label: honestRecord.companyLabel as never, account: honestRecord.contractAddress as never,
-    reads: { ...readsWithDanasSeat, believed: aDevicesRosterMemory() },
+    reads: readsWithDanasSeat,
   });
 
   it('is read while the person invited to it waits in the inbox, and nothing for a committee is built from it', async () => {

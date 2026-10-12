@@ -26,15 +26,16 @@
  * wallet's indexer lags waits for it rather than charging the run, or another
  * run of the vault, on a read that does not show it yet.
  */
+import { vouchedFreshOf, vouchedRefusal, type Vouched } from '../../../src/midnight/record-tree.js';
 import { assetIdHex, type AssetId } from '../../../src/core/assets.js';
 import type { Hex } from '../../../src/core/crypto.js';
 import { assetOfLeg } from '../../../src/core/run-legs.js';
 import type { PayrollRun } from '../../../src/core/types.js';
 import { periodOf, periodWindowOf } from '../../../src/midnight/spending-policy-record.js';
 import type { PrivatePaymentOrderOnTheWire } from '../../../src/midnight/private-payment-wire.js';
-import type { RunTreeOnTheWire } from './run-charge-builder.js';
+import type { RunToChargeOnTheWire, RunTreeOnTheWire } from './run-charge-builder.js';
 import type { VaultBuilderClient } from './vault-worker-client.js';
-import { believedRunsHere, signedStateHere, type CompanyRecordsHere } from './run-rebuilt-here.js';
+import { believedProposalIdsOnChainHere, believedRunsHere, signedStateHere, type CompanyRecordsHere } from './run-rebuilt-here.js';
 import { spendingPolicyHere } from './spending-policy-here.js';
 import type { KeptOnThisDevice } from './in-flight-on-this-device.js';
 import {
@@ -116,6 +117,49 @@ async function earlierChargeSettled(doors: ChargeDoors, kept: ChargesInFlight, v
       + 'reads does not show it yet, so no run from this vault is charged or paid from here until it does.');
   }
   await kept.forget(vault, earlier.claim);
+}
+
+/**
+ * **FOR A RETRY, THE LEG IT PAYS AGAIN, FROM THE COMPANY'S RUNS THIS DEVICE
+ * BELIEVES**: the leg's tree and the leg's other retries in the vault,
+ * currency and period - what the charge works out the leg's take from. Nothing
+ * for a run of its own. Refused when no believed run raised the proposal.
+ */
+function raisedAsHere(
+  runs: readonly PayrollRun[], proposalId: string,
+  input: {
+    readonly vault: string; readonly asset: string; readonly window: { readonly from: bigint; readonly until: bigint } | null;
+    /** The identity on chain of every proposal this device believes, by the company's name for it. */
+    readonly chainIds: ReadonlyMap<string, string>;
+  },
+): Pick<RunToChargeOnTheWire, 'retry'> {
+  const vault = input.vault.toLowerCase();
+  const inside = (w: { opensAt: bigint; closesAt: bigint }) =>
+    input.window !== null && w.opensAt >= input.window.from && w.closesAt <= input.window.until;
+  for (const run of runs) {
+    for (const [leg, payout] of Object.entries(run.payout ?? {})) {
+      if (payout === undefined) continue;
+      const amounts = payout.facts.map((f) => f.amount.toString());
+      const treeOfRetry = (r: NonNullable<typeof payout.retries>[number]): RunTreeOnTheWire | null =>
+        r.originalIndices.some((i) => payout.leaves[i] === undefined || amounts[i] === undefined) ? null
+          : { root: r.root, leaves: r.originalIndices.map((i) => payout.leaves[i]!), amounts: r.originalIndices.map((i) => amounts[i]!) };
+      if (run.proposalIds[leg as keyof typeof run.proposalIds] === proposalId) return {};
+      const retry = payout.retries?.find((r) => r.proposalId === proposalId);
+      if (retry === undefined) continue;
+      if (assetIdHex(assetOfLeg(leg as never)).toLowerCase() !== input.asset.toLowerCase()) {
+        throw new RunNotChargedHere('the leg this retry pays again is in another currency than the retry, so it cannot be charged against it');
+      }
+      const others = (payout.retries ?? [])
+        .filter((r) => r !== retry && r.vault.toLowerCase() === vault && inside(r))
+        .flatMap((r) => {
+          const tree = treeOfRetry(r);
+          return tree === null ? [] : [{ ...tree, proposal: r.proposalId === undefined ? null : input.chainIds.get(r.proposalId) ?? null }];
+        });
+      return { retry: { leg: { root: payout.root, leaves: [...payout.leaves], amounts }, others } };
+    }
+  }
+  throw new RunNotChargedHere('no payroll run of this company that this device believes raised this proposal, so this device cannot '
+    + 'say what it pays. Reload the page and try again');
 }
 
 /**
@@ -212,7 +256,11 @@ type RunCharged =
  */
 export async function chargeTheRunHere(
   doors: RecordsHereDoors & ChargeDoors,
-  run: { readonly order: PrivatePaymentOrderOnTheWire; readonly proposalId: string },
+  run: {
+    readonly order: PrivatePaymentOrderOnTheWire; readonly proposalId: string;
+    /** What the proposal's salt was made from, as its filing seals it beside the salt (`legToPayHere`). */
+    readonly vouched?: Vouched;
+  },
 ): Promise<RunCharged> {
   const { order } = run;
   const vault = order.vault.toLowerCase() as Hex;
@@ -232,9 +280,23 @@ export async function chargeTheRunHere(
     signedStateHere(doors.records, doors.accountId, doors.viewingKey),
     chainAtOneBlockHere(doors, vault),
   ]);
+  /*
+   * **A RUN THE CHAIN ALREADY HOLDS AS CHARGED IS NOT CHARGED AGAIN**, and is
+   * asked about first: nothing the charge alone needs - what its salt was made
+   * from, its leg - can then stop a run already charged from being paid.
+   */
+  if (await doors.builder.runCharged({ accountState: chain.accountState, proposal: order.proposal }) === 'charged') {
+    return { state: 'already-charged' };
+  }
+  if (run.vouched === undefined || vouchedRefusal(run.vouched) !== null) {
+    throw new RunNotChargedHere('the company\'s record of this run\'s proposal does not say how its salt was made, so the chain will '
+      + 'not charge it and this device cannot. It was raised before this version: withdraw it and raise it again');
+  }
   /* The runs that may share the run's period; a run in no single period is refused by the worker, with nothing summed. */
   const period = periodOf(standing.policy, { opensAt, closesAt });
   const window = period === null ? null : periodWindowOf(standing.policy, period);
+  /* What its proposal was raised as: a run of its own, or a retry of a leg. */
+  const raisedAs = raisedAsHere(runs, run.proposalId, { vault, asset, window, chainIds: await believedProposalIdsOnChainHere(doors.records, doors.accountId) });
   let built: { tx: string | null; spent: string | null };
   try {
     built = await doors.builder.clearRun({
@@ -244,6 +306,8 @@ export async function chargeTheRunHere(
         opensAt: opensAt.toString(), closesAt: closesAt.toString(), asset, assetBlinding: state.assetBlinding,
         policy: standing.opening, root: order.root,
         leaves: order.payments.map((p) => p.leaf), amounts: order.payments.map((p) => p.amount),
+        /* The fresh half of its salt, made from what its raiser sealed beside it. */
+        fresh: vouchedFreshOf(run.vouched.head, run.vouched.r), ...raisedAs,
       },
       runs: window === null ? [] : runsInThePeriod(runs, { vault, asset, ...window }),
       chain: { accountState: chain.accountState, parameters: chain.parameters },

@@ -32,6 +32,7 @@ import {
 } from '../../../src/midnight/spending-policy-record.js';
 import { verifiedCompanyFiler, type SealedCompanyRecord } from '../../../src/midnight/sealed-record-wire.js';
 import { companyRecordKey } from '../../../src/midnight/seat-directory.js';
+import { companyRecordEntry } from '../../../src/midnight/record-manifest.js';
 import type { PolicyOpening } from '../../../contracts/src/witnesses.js';
 import type { AccountRoleEntry } from 'midnight-identity/profile/records-key';
 import { MOST_ROLES_ASKED } from 'midnight-identity/profile/request';
@@ -90,11 +91,11 @@ const keysHere = async (
  */
 async function believedVersions(doors: SpendingPolicyDoors, id: string): Promise<readonly SealedCompanyRecord[]> {
   const policies = policiesOf(doors.records);
-  const [served, here] = await Promise.all([policies.versions(id), doors.records.directory()]);
+  const [served, here] = await Promise.all([policies.versions(id), doors.records.directory({ records: [{ store: 'company', kind: SPENDING_POLICY_KIND, id }] })]);
   const judge = judgeIn(here);
   const seats = new Set(here.dir.seats.map((x) => x.seat.toLowerCase()));
   return served.filter((rec) => rec.company === doors.accountId && rec.kind === SPENDING_POLICY_KIND && rec.id === id
-    && judge(verifiedCompanyFiler(rec), SPENDING_POLICY_KIND, companyRecordKey(SPENDING_POLICY_KIND, id), rec.version) === null
+    && judge(verifiedCompanyFiler(rec), SPENDING_POLICY_KIND, companyRecordKey(SPENDING_POLICY_KIND, id), companyRecordEntry(rec)) === null
     && rec.wrapped.length > 0 && rec.wrapped.every((w) => seats.has(String(w.signerId).toLowerCase())));
 }
 

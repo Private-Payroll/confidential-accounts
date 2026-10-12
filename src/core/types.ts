@@ -210,6 +210,16 @@ export interface Signer {
    * that one slot, and nobody is re-seated — so no leaf but the departing one
    * ever has to be recomputed, and nothing off the device is needed to do it.
    * The concession is undone rather than merely regretted.
+   *
+   * **AMENDED, NOT BROKEN: A BLINDING IS SHARED WITH THE COMPANY'S OWN MEMBERS,
+   * AND STILL NEVER WITH THE SERVICE OR THE CHAIN.** Each seat files the
+   * opening of its own leaf - its public key on the account, scope and
+   * blinding - as a record of its own, sealed under the company's roster key
+   * (`sealSeatOpening`), so a member can tell which seat moved the company's
+   * record anchor. A member already holds every seat's leaf beside its name in
+   * this roster, so the blinding tells them nothing new about who is who; the
+   * service, which opens no roster, and the chain still never see one. It is
+   * not kept here: the roster still holds no blinding.
    */
 }
 

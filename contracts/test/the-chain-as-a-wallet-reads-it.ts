@@ -15,6 +15,7 @@ import { directoryOf, filerSeatNow, type DirectoryChainRead, type DirectoryStore
 import type { MayFileUnder } from '../../src/server/vault-records-authority.js';
 import type { FreshJudge } from 'vaults-web-shared/http-sealed-pool-store.js';
 import { attestedIn, directoryFilingsFrom, directoryJudge, fileTheOwedDirectoryEntry, type OwedDirectoryEntry } from 'vaults-web-shared/vault-page-doors.js';
+import { anchoredOver } from '../../src/testing/record-tree-double.js';
 
 type StateOf = () => { serialize(): Uint8Array } | null;
 type Api = (path: string, init?: RequestInit) => Promise<any>;
@@ -56,6 +57,8 @@ export const judgeOver = (deps: {
     ...holdersAsTheWalletReads(deps.accountState, { state: deps.deployed, label: () => deps.label }), account: deps.account.toLowerCase() as never,
   }),
   attested: async () => attestedIn(await deps.roster()),
+  /* The company's records over the service's own manifest route; the account here has anchored nothing. */
+  anchored: anchoredOver(deps.api, deps.accountId),
 });
 
 /** A seat's own entry, signed by its wallet for its filing key and filed from its device, as the page files one; a refusal is thrown. */

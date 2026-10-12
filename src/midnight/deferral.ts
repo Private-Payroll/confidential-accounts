@@ -14,8 +14,8 @@
  *
  * `S23` SHED `credit` AND `attestSolvency` FROM THE CONTRACT ITSELF, which is
  * the reason this file no longer needs a deferred list. The contract has since
- * grown again, to the twenty circuits `DEPLOYED_CIRCUITS` names, and the
- * deployment carries all twenty: eight in its deploy and twelve in the one
+ * grown again, to the twenty-two circuits `DEPLOYED_CIRCUITS` names, and the
+ * deployment carries all twenty-two: eight in its deploy and fourteen in the one
  * update that finishes it (below). **THE FIGURES IN THE NEXT PARAGRAPH ARE AN
  * ELEVEN-CIRCUIT MEASUREMENT AND ARE STALE**; what decides a deploy now is
  * `PER_TRANSACTION_CEILING`, read below from the derivation, and the two-step
@@ -64,7 +64,7 @@
 import { BYTES_WRITTEN_LIMIT, extrinsicCeiling } from '../../scripts/dispatch-ceiling.js';
 
 /**
- * The twenty circuits a finished company account carries — every circuit the
+ * The twenty-two circuits a finished company account carries — every circuit the
  * contract has. **They do not fit one deploy**: the whole account in one deploy
  * is over the per-transaction ceiling (`PER_TRANSACTION_CEILING`, measured by
  * `a-company-is-created-in-two-steps.test.ts`). So a company is created in two steps, a
@@ -85,6 +85,7 @@ import { BYTES_WRITTEN_LIMIT, extrinsicCeiling } from '../../scripts/dispatch-ce
 export const DEPLOYED_CIRCUITS = [
   'adopt',
   'amendSigner',
+  'anchor',
   'approve',
   'approveVaultChange',
   'cancel',
@@ -94,6 +95,7 @@ export const DEPLOYED_CIRCUITS = [
   'propose',
   'recordBatchFromVault',
   'recordPaymentFromVault',
+  'recoverAnchor',
   'releaseHold',
   'removeSignerAndSetThreshold',
   'reseatSigner',
@@ -156,19 +158,24 @@ export const FIRST_STEP_CIRCUITS = [
  * THE SECOND STEP: THE CIRCUITS ONE MAINTENANCE UPDATE INSERTS, straight after
  * the deploy, signed by the maintenance authority the deploy installed. It only
  * inserts: it never removes a key and never replaces the authority. Measured the
- * same way: 25,777 bytes written for the twelve keys, 80.6% of the ceiling. The
+ * same way: 30,050 bytes written for the fourteen keys, 93.9% of the ceiling. The
  * step that approves a change to a vault, `approveVaultChange`, the
  * spending policy's circuits, `setPolicy`, `setPolicyBar` and `clearRun`, the
  * hold and its release, and the re-seat that changes a signer's rights are here
  * with the other circuits that move money or depend on a vault, and so is the
- * batch's receipt, `recordBatchFromVault`.
+ * batch's receipt, `recordBatchFromVault`. So is `anchor`, which moves the
+ * company's record anchor on, and `recoverAnchor`, by which a quorum moves it past
+ * a batch nobody can check: the deploy has no room for them, and nothing a
+ * company does before its second step lands needs its records anchored.
  */
 export const SECOND_STEP_CIRCUITS = [
+  'anchor',
   'approveVaultChange',
   'clearRun',
   'holdRun',
   'recordBatchFromVault',
   'recordPaymentFromVault',
+  'recoverAnchor',
   'releaseHold',
   'reseatSigner',
   'retireVault',

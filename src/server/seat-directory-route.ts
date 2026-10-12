@@ -26,9 +26,10 @@ import { readAccountAddress, type CompanyLabel } from 'midnight-identity/profile
 import type { SealedAccount } from '../core/types.js';
 import { fromHex, type Hex } from '../core/crypto.js';
 import { readContractAuthority } from '../midnight/ledger.js';
+import { WITNESSED_AS } from '../midnight/record-manifest.js';
 import {
-  applyFiling, believedDirectory, DirectoryRefused, emptyDirectory, filerSeatOf,
-  type ChainHolders, type Directory, type DirectoryFiling, type DirectorySeat, type FiledKind, type FilingRefusal,
+  applyFiling, believedDirectory, directoryReplayed, DirectoryRefused, emptyDirectory, filerSeatOf, MAY_FILE, refiledRefusalOf, signerSeatOf,
+  type ChainHolders, type Directory, type DirectoryFiling, type DirectoryRefusalCode, type DirectorySeat, type FiledKind, type FilingRefusal,
 } from '../midnight/seat-directory.js';
 
 /** What the chain says of a company's account, read by this server: null when it has no contract this server can read. */
@@ -78,13 +79,30 @@ export interface DirectoryStore {
   getAccount(accountId: string): SealedAccount | null;
   directoryFilingsOf(accountId: string): readonly DirectoryFiling[];
   fileDirectory(accountId: string, filing: DirectoryFiling): boolean;
+  /**
+   * The directory versions the company's record headers kept here passed over:
+   * below the newest version any of them anchors, anchored by none. Absent, none.
+   */
+  directoryPassedOver?(accountId: string): ReadonlySet<number>;
 }
 
 /** A company's seat directory as this server believes it now, and the read of the chain it was believed against. */
 export interface DirectoryNow {
   readonly dir: Directory;
+  /**
+   * The directory as filed up to `version`, replayed with no read of the chain
+   * and with every version the company's records passed over left out: who a
+   * seat was when a header naming that directory version was signed.
+   */
+  readonly at?: (version: number) => Directory;
   /** What the chain said of the account for this read; null when it has no account on a chain this server can read. */
   readonly chain: ChainHolders | null;
+  /**
+   * Whether a quorum's change filed again as the next version is believed after
+   * every filing held here, against who holds the account on chain now, or why not
+   * (`refiledRefusalOf`): the same rule a device's replay applies.
+   */
+  readonly refiledRefusal?: (filing: DirectoryFiling) => DirectoryRefusalCode | null;
 }
 
 /**
@@ -109,19 +127,45 @@ export const directoryOf = async (
   /* No label, or no account on a chain: no entry can have been signed for it. */
   if (label === null || address === null) return { dir: emptyDirectory(accountId), chain: null };
   const filings = store.directoryFilingsOf(accountId);
-  const named = believedDirectory(accountId, filings, label as CompanyLabel, address).seats.map((x) => x.seat);
+  /* A version the company's records passed over is replayed as no change here too, so its seat may file its entry again. */
+  const passed = store.directoryPassedOver?.(accountId) ?? new Set<number>();
+  const skipped = (v: number) => (passed.has(v) ? null : undefined);
+  const named = believedDirectory(accountId, filings, label as CompanyLabel, address, undefined, skipped).seats.map((x) => x.seat);
   const read = await chain(accountId, [...new Set([...named, ...also])]);
   if (read === null) return { dir: emptyDirectory(accountId), chain: null };
+  const at = (version: number) => believedDirectory(accountId, filings.slice(0, Math.max(0, version)), label as CompanyLabel, address, undefined, skipped);
+  const replayed = directoryReplayed(accountId, filings, label as CompanyLabel, address,
+    { approvals: read.approvals, seats: read.seats.seats, committee: read.seats.committee }, skipped);
   return {
-    dir: believedDirectory(accountId, filings, label as CompanyLabel, address,
-      { approvals: read.approvals, seats: read.seats.seats, committee: read.seats.committee }),
+    at,
+    dir: replayed.dir,
     chain: read,
+    refiledRefusal: (filing) => refiledRefusalOf(replayed.replay, filing, { approvals: read.approvals, seats: read.seats.seats }),
   };
 };
 
 /** Check S against `now`: the seat the signed-in person files under, or why they may not. */
 export const filerSeatNow = (now: DirectoryNow, person: string, filer: Hex, kind: FiledKind): DirectorySeat | FilingRefusal =>
   filerSeatOf(now.dir, now.chain?.seats ?? null, person, filer, kind);
+
+/** The seat whose key signed an entry, judged by that signature and the seat's standing, never by who hands it in (`signerSeatOf`). */
+export const signerSeatNow = (now: DirectoryNow, signer: Hex, kind: FiledKind, recordKey: string, version: number): DirectorySeat | FilingRefusal =>
+  signerSeatOf(now.dir, now.chain?.seats ?? null, signer, kind, recordKey, version);
+
+/**
+ * **THE SEAT THAT ANCHORED A HEADER, AS THE DIRECTORY STOOD WHEN IT WAS SIGNED**:
+ * the seat holding the header's anchoring key in the directory as filed up to
+ * the version the header names, whose role then could anchor and which had not
+ * retired - whoever hands the header in. The chain then is each device's to
+ * judge, against the holders the header names.
+ */
+export const anchoringSeatThen = (now: DirectoryNow, anchoredBy: Hex, dirVersion: number): DirectorySeat | FilingRefusal => {
+  const then = now.at?.(dirVersion) ?? now.dir;
+  const seat = then.seats.find((x) => x.signingKey === anchoredBy.toLowerCase());
+  if (seat === undefined) return 'no-entry';
+  if (seat.retired !== null) return 'past-its-boundary';
+  return MAY_FILE[seat.role ?? 'unset'].includes(WITNESSED_AS) ? seat : 'role-may-not-file';
+};
 
 /** What a route answers when the chain could not be read, so who may file could not be decided. */
 export const CHAIN_UNREAD = (e: unknown): string =>
@@ -181,6 +225,9 @@ export const seatDirectoryRoutes = (deps: {
     try {
       const address = readAccountAddress(account.contractAddress ?? null);
       if (address === null) throw new DirectoryRefused('not-on-the-committee');
+      /* A quorum's change filed again is filed only as a device's replay would believe it. */
+      const again = filing.signedAt === undefined ? null : now.refiledRefusal === undefined ? 'not-a-change' : now.refiledRefusal(filing);
+      if (again !== null) throw new DirectoryRefused(again);
       applyFiling(dir, filing, { label: label as CompanyLabel, account: address, chain, who: { person, members: account.memberUserIds } });
     } catch (e) {
       if (!(e instanceof DirectoryRefused)) throw e;

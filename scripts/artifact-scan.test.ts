@@ -48,7 +48,7 @@ describe('the scanner survives the strings the generated code actually contains'
     // 'contract Acct[recordPayment(Bytes<32>, ...): Bytes<32>, retireVault(...)]'
     // as a type-error message. A paren counter that is not string-aware closes
     // on its parens and takes the rest of the method with it.
-    // THE FIXTURE MUST DISCRIMINATE. An auditor showed that the obvious one
+    // THE FIXTURE MUST DISCRIMINATE. The obvious one
     // does not: in `f('contract Acct[recordPayment(Bytes<32>)]', second)` the
     // brackets inside the string are BALANCED, so a counter with no string
     // handling returns the identical index and the test passes either way. So
@@ -88,7 +88,7 @@ describe('CONTRACT LEDGER ACCESS is read as contract ledger access', () => {
   it('A MAP WRITE IS A WRITE, THOUGH IT ALSO WALKS IN', () => {
     // `ins` is the discriminator and NOT the absence of `idx`. A map write
     // carries both, and reading it as a read is how a WRITER goes missing from
-    // the table SC8 reads — the one thing this round was told to get right.
+    // the table of writers — the one thing that table must get right.
     const ops = `{ idx: { cached: false, pushPath: true, path: [ { tag: 'value', value: { value: ${D}.toValue(2n) } }] } }, { push: { storage: true, value: newCell({}) } }, { ins: { cached: true, n: 1 } }`;
     expect(classifyQuery(array(ops), D)).toEqual({ root: 'contract', kind: 'writes', index: 2 });
   });
@@ -130,7 +130,7 @@ describe('KERNEL ACCESS IS NOT READ AS A LEDGER FIELD — the trap this file exi
 
 describe('an unrecognised shape is a REFUSAL, not a default branch', () => {
   it('refuses rather than bucketing something it has not seen', () => {
-    // C238 one level up: a classifier with a default branch cannot report that
+    // A classifier with a default branch cannot report that
     // it did not know. A compiler change must stop the generator, not be folded
     // into whichever bucket the code fell through to.
     expect(() => classifyQuery(array(`{ neverSeen: { n: 7 } }, { popeq: {} }`), D)).toThrow(/does not recognise/);
@@ -184,11 +184,9 @@ describe('the real artifacts, read end to end', () => {
     const account = await readContract(ROOT, ARTIFACTS[0]);
     const vault = await readContract(ROOT, ARTIFACTS[1]);
     expect(account.fields.map((f) => f.name)).toEqual([
-      // S35c fixed this table for ever. Slots 0-13, in declaration order; slot
-      // 14 is deliberately empty and is the guard's margin, not inventory
-      //. `runStart`+`runEnd` became `runWindow` and `signerCount` was
-      // deleted as derivable from `signerLeaves.size()`; the last four are
-      // reserved, and three of them have no circuit anywhere.
+      // Slots 0-13, in declaration order; slot 14 is deliberately empty and is
+      // the guard's margin, not inventory. The compiled contract reads each
+      // field by its slot, so a field added, moved or removed turns this red.
       'signers', 'approvals', 'openProposals', 'approvalCounts', 'movements', 'threshold',
       'thresholds', 'vaults', 'runWindow', 'signerLeaves', 'retiredAt', 'proposalHolds',
       'successor', 'signerRoles',
@@ -248,15 +246,15 @@ describe('the real artifacts, read end to end', () => {
   it('THE CONSTRUCTOR IS EXTRACTED — it writes fields no circuit writes', async () => {
     // `contract-info.json` has no constructor entry and the emitted body is
     // `initialState`, which does not match `_<name>_<n>`. A scan over circuits
-    // alone reported that `Vault.account` has NO WRITER — which is `C286`'s
-    // corrected sentence coming back as machine-written fact.
+    // alone would report that `Vault.account` has NO WRITER, a false sentence
+    // printed as fact.
     const vault = await readContract(ROOT, ARTIFACTS[1]);
     expect(vault.ctor).not.toBeNull();
     expect(vault.ctor?.writes.map((w) => w.field).sort()).toEqual([
       'account', 'nonceCommitment', 'notes', 'payments', 'reserved0', 'reserved1', 'reserved2',
       'reserved3', 'reserved4', 'reserved5', 'reserved6', 'secretCopies', 'splitJournal', 'unshieldedTokens',
     ]);
-    // And no CIRCUIT writes `account`, which is the property C286 is about.
+    // And no CIRCUIT writes `account`: only the constructor sets the vault's account.
     expect(vault.circuits.filter((c) => c.writes.some((w) => w.field === 'account'))).toEqual([]);
     // Its signature is read off its own type checks, not invented.
     const account = await readContract(ROOT, ARTIFACTS[0]);
@@ -268,11 +266,16 @@ describe('the real artifacts, read end to end', () => {
     expect(account.ctor?.writes).toHaveLength(account.fields.length);
   });
 
-  it('the helper chain printed is the SHORTEST one, because it is a claim about the route', async () => {
+  it('the helper chain printed is the contract\'s own route to the read, because it is a claim about the route', async () => {
     const account = await readContract(ROOT, ARTIFACTS[0]);
     const approve = account.circuits.find((c) => c.name === 'approve');
     const signers = approve?.reads.find((r) => r.field === 'signers');
-    expect(signers?.via).toEqual(['_seat_0']);
+    /*
+     * `approve` reaches the signers' root only through `seat`, which opens the
+     * seat in `openedSeat`, where the read itself sits; so the route names both.
+     * RED WHEN: the scan prints a route that is not the contract's - a step left out, or one added.
+     */
+    expect(signers?.via).toEqual(['_seat_0', '_openedSeat_0']);
   });
 
   it('an assert carries its MESSAGE, not the first string in its expression', async () => {
@@ -294,8 +297,8 @@ describe('the real artifacts, read end to end', () => {
     const vault = await readContract(ROOT, ARTIFACTS[1]);
     expect(account.circuits.reduce((n, c) => n + c.asserts.length, 0)).toBeGreaterThan(20);
     expect(vault.circuits.reduce((n, c) => n + c.asserts.length, 0)).toBeGreaterThan(5);
-    // And the column earning its place: the vault's `deposit` once had NO
-    // assert (`C285`). It now has three, two of them reached through a helper.
+    // And the column earning its place: the vault's `deposit` has three
+    // asserts, two of them reached through a helper.
     expect(vault.circuits.find((c) => c.name === 'deposit')?.asserts.map((a) => a.message)).toEqual([
       'a deposit of nothing is not a deposit',
       'this vault takes no money yet: the company\'s account has not adopted it and approved its first nonce secret',
@@ -304,7 +307,7 @@ describe('the real artifacts, read end to end', () => {
     expect(vault.circuits.find((c) => c.name === 'depositUnshielded')?.asserts.length).toBeGreaterThan(0);
   });
 
-  it('`maxval` KEEPS ITS DIGITS — JSON.parse rounds it and rule 9 forbids that', async () => {
+  it('`maxval` KEEPS ITS DIGITS — JSON.parse rounds it, and a number printed must be the one the compiler wrote', async () => {
     // Parsed as a JavaScript number, 18446744073709551615 comes back as
     // 18446744073709552000, and a signature rendered from that is a number no
     // instrument read off anything.

@@ -26,9 +26,10 @@ import {
   refuseAPeriodAlreadyRaised, samePeriod, withNumberedExtras,
 } from '../../../src/core/run-drawing.js';
 import { signRunFiling } from '../../../src/core/run-filing.js';
+import type { RecordsEntered } from './record-entered-here.js';
 import type { CompanyLabel } from 'midnight-identity/profile/company-label';
 import type { PeopleHere } from './people-on-device.js';
-import { payrollRoundsHere, type CompanyRecordsHere } from './run-rebuilt-here.js';
+import { payrollRoundsHere, proposalsListedHere, runsListedHere, type CompanyRecordsHere } from './run-rebuilt-here.js';
 
 type Api = (path: string, init?: RequestInit) => Promise<any>;
 
@@ -44,11 +45,13 @@ export interface RunDrawDoors {
   /** The company's account on the chain and its label, as its record names them: what each payslip names. */
   readonly company: { readonly account: string | null; readonly label: CompanyLabel | null };
   /** The company's records, read afresh: its people as this device believes them, its runs and its proposals. */
-  readonly records: Pick<CompanyRecordsHere, 'people' | 'runs'> & { readonly proposals: () => Promise<readonly SealedProposal[]> };
+  readonly records: Pick<CompanyRecordsHere, 'people' | 'runs' | 'directory' | 'roundsOnChain' | 'roundIdentity'> & { readonly proposals: () => Promise<readonly SealedProposal[]> };
   /** Who is confirming what the run leaves out or repeats: the signed-in person's name. */
   readonly by: string;
   readonly registry?: AssetRegistry;
   readonly now?: () => string;
+  /** The one filing call, bound to this company and this seat: the run drawn here is entered in the company's records. */
+  readonly entered: RecordsEntered;
 }
 
 /** What the person drawing the run asked for. */
@@ -159,13 +162,15 @@ export async function drawRunHere(doors: RunDrawDoors, asked: RunAsked): Promise
   const period = drawn(() => canonicalPeriod(asked.period));
   const at = (doors.now ?? (() => new Date().toISOString()))();
   const assets = doors.registry ?? theAssets;
-  const [here, sealedRuns, proposals] = await Promise.all([doors.records.people(), doors.records.runs(), doors.records.proposals()]);
+  const [here, sealedRuns, proposals] = await Promise.all([doors.records.people(), runsListedHere(doors.records), proposalsListedHere(doors.records)]);
   const { all, handedOver } = peopleToDrawOver(here, asked);
   const skip = asked.skipPending === undefined ? undefined
     : { employeeIds: [...asked.skipPending.employeeIds], reason: asked.skipPending.reason, by: doors.by };
   const { roster, leftOut } = drawn(() => peopleDrawn(all, asked.employeeIds, skip, (e) => handedOver.has(e.id)));
   const runs = sealedRuns.filter((r) => r.accountId === doors.accountId).map((r) => openSealedRun(r, doors.viewingKey));
-  const rounds = payrollRoundsHere(proposals, doors.accountId, doors.viewingKey);
+  const rounds = payrollRoundsHere(proposals, doors.accountId, doors.viewingKey, {
+    identity: doors.records.roundIdentity, nowInSeconds: BigInt(Math.floor(Date.parse(at) / 1000)),
+  });
   const repeated = asked.repeats === undefined ? undefined
     : confirmedRepeatHere(period, runs, rounds, asked.repeats, doors.by, at);
   if (repeated === undefined) {
@@ -186,5 +191,6 @@ export async function drawRunHere(doors: RunDrawDoors, asked: RunAsked): Promise
   });
   const filing = signRunFiling(doors.accountId, sealedRunOf(run, doors.viewingKey, doors.keyEpoch), doors.signingSecret);
   await doors.api(`/api/accounts/${encodeURIComponent(doors.accountId)}/runs`, { method: 'POST', body: JSON.stringify({ run: filing }) });
+  await doors.entered.enter([{ store: 'run', run: filing }]);
   return run;
 }

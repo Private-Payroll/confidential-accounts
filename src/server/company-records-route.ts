@@ -197,6 +197,13 @@ export const fileCompanyRecord = async (
       : '';
     return { status: 403, body: { refused: seat, error: `this record was not filed, because ${FILING_REFUSAL[seat]}.${remedy}` } };
   }
+  /* A seat files the opening of its own leaf, and no other: its id is the seat. */
+  if (n.kind === 'opening' && n.id !== seat.seat) {
+    return { status: 403, body: {
+      refused: 'not-its-own-opening',
+      error: 'a seat files the opening of its own leaf only, under its own seat, and this one names another seat. Nothing was filed.',
+    } };
+  }
   if (rec.keyEpoch !== account.keyEpoch) {
     return { status: 422, body: {
       refused: 'not-the-current-epoch',

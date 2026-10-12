@@ -24,7 +24,7 @@
 import type { AccountPrivateState, PolicyOpening } from '../../../contracts/src/witnesses.js';
 import { fromHex } from '../../../src/core/crypto.js';
 import { sumTreeOfLeaves } from '../../../src/midnight/payout-tree.js';
-import { periodOf, policyOpeningFromWire, type PolicyOpeningOnTheWire } from '../../../src/midnight/spending-policy-record.js';
+import { NO_LEG, periodOf, policyOpeningFromWire, retryArgsOf, type PolicyOpeningOnTheWire } from '../../../src/midnight/spending-policy-record.js';
 import type { AccountCallChain, GovernedCallDeps } from './governed-call-builder.js';
 
 const HEX64 = /^[0-9a-f]{64}$/u;
@@ -54,7 +54,21 @@ export interface RunToChargeOnTheWire extends RunTreeOnTheWire {
   readonly assetBlinding: string;
   /** The opening of its vault's policy for that token, opened on this device. */
   readonly policy: PolicyOpeningOnTheWire;
+  /** The fresh half of its salt, from its record: every run's salt is `retrySaltOf(leg or none, fresh)`. */
+  readonly fresh: string;
+  /**
+   * For a retry: the leg it pays again, as its record holds it, and the leg's
+   * other retries, from which what the leg's retries have taken is worked out.
+   */
+  readonly retry?: { readonly leg: RunTreeOnTheWire; readonly others: readonly OtherRetryOnTheWire[] };
 }
+
+/**
+ * Another retry of the same leg: its tree, and the identity the chain holds
+ * its proposal under, or null when no proposal record this device believes
+ * names it.
+ */
+type OtherRetryOnTheWire = RunTreeOnTheWire & { readonly proposal: string | null };
 
 /** What the period's running total is worked out for: a vault's policy for one token, one period, and the company's runs. */
 export interface PeriodTotalAskOnTheWire {
@@ -86,11 +100,23 @@ type ChargePure = GovernedCallDeps['accountPure'] & {
   periodTotalOf(total: bigint, blinding: Uint8Array): Uint8Array;
   chargedKeyOf(periodKey: Uint8Array, root: Uint8Array): Uint8Array;
   clearedMark(): Uint8Array;
+  chargedMark(): Uint8Array;
+  legTakenOf(total: bigint, blinding: Uint8Array): Uint8Array;
+  retrySaltOf(legRoot: Uint8Array, fresh: Uint8Array): Uint8Array;
 };
 
 const CHARGE_FUNCTIONS = [
   'assetKeyOf', 'policyKeyOf', 'policyCommitmentOf', 'periodKeyOf', 'periodBlindingOf', 'periodTotalOf', 'chargedKeyOf', 'clearedMark',
+  'chargedMark', 'legTakenOf', 'retrySaltOf',
 ] as const;
+
+/**
+ * The most other retries of one leg what its retries have taken is worked out
+ * over. A bound chosen here, not measured: every total some of them make is
+ * tried, so the work doubles with each retry, and twenty keeps it to about a
+ * million totals. A leg retried more often than that is refused, not charged.
+ */
+const MOST_RETRIES_OF_A_LEG = 20;
 
 const pureOf = (deps: Pick<GovernedCallDeps, 'accountPure'>): ChargePure => {
   const P = deps.accountPure as Partial<ChargePure>;
@@ -195,6 +221,66 @@ function periodTotalIn(
 }
 
 /**
+ * **WHAT A LEG'S RETRIES HAVE TAKEN, WORKED OUT AGAIN ON THIS DEVICE.** A retry
+ * is charged nothing while its leg was charged in the retry's own period under
+ * the vault's policy today; then the chain keeps, under the record that the leg
+ * was charged, a commitment to what the leg's retries have taken together. The
+ * chain names no retry in it, so this device finds the total among the leg's
+ * other retries in the company's records - in the same vault, currency and
+ * period - that opens the commitment: none taken while the chain holds only the
+ * mark that the leg was charged. A retry of a leg not charged in its period is
+ * charged as a run of its own, and takes nothing from its leg.
+ *
+ * **WHEN NO TOTAL OF THE RECORDS OPENS IT, NOTHING IS CHARGED IN ANY OTHER WAY.**
+ * A retry of this leg that the chain counted is missing from the records this
+ * device believes; the device says so and what charging these people as a run
+ * of their own would cost, and builds nothing.
+ */
+function legTakenHere(
+  P: ChargePure, view: ChargeLedgerView,
+  input: {
+    readonly keys: PeriodKeys; readonly policy: PolicyOpening; readonly period: bigint; readonly asset: string;
+    readonly leg: { readonly root: string; readonly total: bigint }; readonly run: { readonly root: string; readonly total: bigint };
+    readonly others: readonly OtherRetryOnTheWire[];
+  },
+): bigint {
+  const chargedLeg = P.chargedKeyOf(input.keys.periodKey, fromHex(input.leg.root));
+  if (!view.signerRoles.member(chargedLeg)) return 0n;
+  const stored = view.signerRoles.lookup(chargedLeg);
+  if (same(stored, P.chargedMark())) return 0n;
+  const blinding = P.periodBlindingOf(input.policy.blinding, input.period);
+  /*
+   * **A RETRY THE CHAIN HOLDS OPEN AND NEVER CLEARED HAS TAKEN NOTHING**, so it
+   * is left out of the totals tried: a seat's spare retries raised and never
+   * approved do not crowd out the ones that were. A retry the chain no longer
+   * holds open stays among the totals tried: this device does not read from the
+   * chain whether it was cleared before it closed, and a total tried that it did
+   * not take only widens the search, never the charge.
+   */
+  const others = input.others
+    .filter((o) => o.proposal === null || standingIn(P, view, bytesOf('a retry\'s identity', o.proposal.toLowerCase())) !== 'open')
+    .map((o) => treeOf(o, input.asset)).filter((t): t is NonNullable<typeof t> => t !== null);
+  const missing = (why: string): never => {
+    throw new ChargeNotBuilt(`what the chain keeps for the earlier retries of this run's leg is not ${why}, so a retry of this leg `
+      + 'that was charged is missing from the company\'s records this device believes. This retry was not charged as a run of its '
+      + `own instead: that would charge its whole ${input.run.total} to the period, counting its people a second time. Reload the `
+      + 'page and try again; if it happens again, find the missing retry\'s record before paying these people');
+  };
+  if (others.length > MOST_RETRIES_OF_A_LEG) missing(`worked out over more than ${MOST_RETRIES_OF_A_LEG} retries of one leg`);
+  /* Every total some of the other retries make together, up to the leg's own total, which the chain never lets them pass. */
+  let totals = new Set<bigint>([0n]);
+  for (const o of others) {
+    const next = new Set(totals);
+    for (const t of totals) if (t + o.total <= input.leg.total) next.add(t + o.total);
+    totals = next;
+  }
+  for (const t of [...totals].sort((a, b) => (a < b ? -1 : a > b ? 1 : 0))) {
+    if (same(stored, P.legTakenOf(t, blinding))) return t;
+  }
+  return missing('any total of the leg\'s other retries in the company\'s records');
+}
+
+/**
  * Where the chain holds a run's proposal: open and charged to its period,
  * open and not charged yet, or not open at all.
  */
@@ -231,7 +317,7 @@ export function periodTotalOf(
  * The charge reads nothing else, and any other field it read would be a
  * refusal rather than a value.
  */
-const recordForACharge = (fields: Pick<AccountPrivateState, 'assetId' | 'assetBlinding' | 'policy' | 'periodSpent'>): AccountPrivateState => {
+const recordForACharge = (fields: Pick<AccountPrivateState, 'assetId' | 'assetBlinding' | 'policy' | 'periodSpent' | 'legTaken'>): AccountPrivateState => {
   const record = {} as AccountPrivateState;
   for (const [field, value] of Object.entries(fields)) Object.defineProperty(record, field, { enumerable: true, value });
   for (const field of ['secretKey', 'blinding', 'scope', 'rights', 'runOpenings', 'proposalSalt', 'changeAmount', 'changeBatchDigest', 'pinnedPath', 'pinAnyLeaf']) {
@@ -310,12 +396,31 @@ export async function buildClearRun(
     throw new ChargeNotBuilt('the chain holds no open proposal for this run, so there is nothing to charge');
   }
   if (standing === 'charged') return { proven: null, spent: null };
-  const { spent } = periodTotalIn(deps, view, {
+  const { spent, keys: periodKeys } = periodTotalIn(deps, view, {
     vault, asset, assetBlinding: r.assetBlinding, policy: r.policy, period: period.toString(), runs: input.runs,
   });
+  /*
+   * **THE RUN IS CHARGED AS WHAT IT WAS RAISED AS.** Its salt is made again
+   * from the fresh half its record holds and the leg it pays again, or none;
+   * a salt that is not that is a run this device cannot charge.
+   */
+  const fresh = bytesOf('run\'s fresh salt', String(r.fresh ?? '').toLowerCase());
+  const leg = r.retry === undefined ? null : treeOf(r.retry.leg, asset);
+  if (r.retry !== undefined && leg === null) {
+    throw new ChargeNotBuilt('the leg this retry pays again does not make the root its record names, so this device cannot say what '
+      + 'the retry may take without a charge. Reload the page and try again; if it happens again, do not pay it');
+  }
+  if (!same(P.retrySaltOf(leg === null ? NO_LEG() : fromHex(leg.root), fresh), bytesOf('proposal\'s salt', String(r.salt).toLowerCase()))) {
+    throw new ChargeNotBuilt(leg === null
+      ? 'this run\'s proposal was not raised as a run of its own with the salt its record holds, so the chain will not charge it. If it '
+        + 'was raised before this version, withdraw it and raise it again'
+      : 'this retry\'s proposal was not raised over the leg its record names, so the chain will not charge it. If it was raised '
+        + 'before this version, withdraw it and raise it again');
+  }
+  const taken = leg === null ? 0n : legTakenHere(P, view, { keys: periodKeys, policy: opening, period, leg, run: tree, others: r.retry!.others, asset });
   const record = recordForACharge({
     assetId: bytesOf('currency', asset), assetBlinding: bytesOf('account\'s asset blinding', String(r.assetBlinding).toLowerCase()),
-    policy: opening, periodSpent: spent,
+    policy: opening, periodSpent: spent, legTaken: taken,
   });
   const L = deps.ledger;
   const seed = (deps.random ?? ((n) => crypto.getRandomValues(new Uint8Array(n))))(32);
@@ -337,7 +442,8 @@ export async function buildClearRun(
       ledgerParameters: L.LedgerParameters.deserialize(input.chain.parameters),
       initialPrivateState: record,
       args: [id, fromHex(vault), fromHex(tree.root), payees, window.opensAt, window.closesAt, required,
-        fromHex(String(r.salt).toLowerCase()), tree.top, tree.total, period],
+        fromHex(String(r.salt).toLowerCase()), tree.top, tree.total, period,
+        ...retryArgsOf(fresh, leg === null ? undefined : { leg: fromHex(leg.root), legTop: leg.top, legTotal: leg.total })],
     }, encryptionPublicKey);
   } catch (e) {
     if (e instanceof ChargeNotBuilt) throw e;

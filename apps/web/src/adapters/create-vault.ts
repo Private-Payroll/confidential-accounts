@@ -1,4 +1,5 @@
 import type { SealedAccount } from '../../../../src/core/types.js';
+import { recordsEnteredOver } from 'vaults-web-shared/record-entered-here.js';
 import type { BelievedAccount } from 'vaults-web-shared/roster-here.js';
 import { rosterVaultKeys } from '../../../../src/core/vault-keys.js';
 import { approverRosterFrom } from '../../../../src/core/vault-approvers.js';
@@ -259,7 +260,7 @@ async function run(personId: string, companyId: string, onStage: (stage: Creatin
       myRecordsKey: recordsKeypairFrom(fromHex(released.companyKey)).publicKey as Hex,
       signers: readers.signers,
       records: deviceRecordsFor(o.keys.signingSecret, filingJudgeFor(companyId, released.company, released.account, o.roster),
-        () => currentUser()?.id ?? null),
+        () => currentUser()?.id ?? null, recordsEnteredOver(api, companyId, o.keys.signingSecret)),
       material: { signingSecret: o.keys.signingSecret, blinding: o.keys.blinding, scope: (o.keys as { scope?: Hex }).scope },
       /* The vault's company account as this person's own wallet reads it for each step, with no press. */
       onChain: async () => ({

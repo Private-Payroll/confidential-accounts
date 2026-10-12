@@ -296,7 +296,9 @@ describe('the reserved signer scope', () => {
     expect(code).toMatch(/witness signerScope\(\)\s*:\s*Bytes<32>;/);
     expect(code).toContain('const scope = signerScope();');
     /* RED WHEN the seat proves membership of a leaf built from anything but the scope it read. */
-    expect(code).toContain('const leaf = signerLeaf(signerPublicKey(sk), signerBlinding(), scope);');
+    expect(code).toContain('const leaf = signerLeaf(pk, blinding, scope);');
+    expect(code).toContain('const pk = signerPublicKey(sk);');
+    expect(code).toContain('const blinding = signerBlinding();');
 
     /* RED WHEN a seat with every right stops being granted everything without a record. */
     expect(code).toMatch(/return scope == allVaults\(\) \|\|/);

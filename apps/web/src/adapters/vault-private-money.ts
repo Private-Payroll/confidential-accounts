@@ -1,4 +1,5 @@
 import { privateAmount, type PrivateAmount } from 'vaults-ui';
+import { recordsEnteredOver } from 'vaults-web-shared/record-entered-here.js';
 import { assets, type AssetRegistry } from '../../../../src/core/assets.js';
 import type { SealedAccount } from '../../../../src/core/types.js';
 import type { Hex } from '../../../../src/core/crypto.js';
@@ -77,7 +78,7 @@ export async function readVaultPrivateMoney(
     /* Believed only when a seat the directory names filed it, checked against a fresh read by this person's own wallet. */
     const judge = filingJudgeFor(companyId, label as CompanyLabel, address as AccountAddress, async () => account);
     const readers = readersIn(directoryHereFor(companyId, label as CompanyLabel, address as AccountAddress, async () => account));
-    const records = deviceRecordsFor(me.signingSecret, judge, () => currentUser()?.id ?? null);
+    const records = deviceRecordsFor(me.signingSecret, judge, () => currentUser()?.id ?? null, recordsEnteredOver(api, companyId, me.signingSecret));
     const pool = new SealedNotePool(records(LEDGER.pool), { signerId: mine.signerId, wrappingSecret: mine.wrappingSecret }, readers.signers);
     const holdings = deviceVaultHoldings({
       /* The vault's notes as the chain holds them, read in this device's vault worker at the indexer this person's own wallet names. */

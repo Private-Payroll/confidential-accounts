@@ -58,6 +58,7 @@ import { invitationRoutes } from './invitations-route.js';
 import { ownsPersonIn, peopleRoutes } from './people-route.js';
 import { proposalRelayRoutes } from './proposal-relays.js';
 import { runRoutes } from './run-routes.js';
+import { filedAsIn, recordManifestRoutes } from './record-manifest-route.js';
 import { signerRoutes } from './signer-routes.js';
 import { MemorySealedPoolStore, type SealedPoolStore } from '../midnight/vault-pool.js';
 import type { CompanyRecordStore, PeopleRecords, WireRecord } from '../midnight/sealed-record-wire.js';
@@ -647,6 +648,19 @@ app.use(cors());
     member: (req, res, next) => member(req, res, next),
     store,
     chain: directoryChain,
+  }));
+  /*
+   * A COMPANY'S MANIFEST: an entry for every filing and a header for every batch a seat anchored, each signed by its
+   * seat and served whole, for every device to fold into the anchor the chain holds.
+   */
+  app.use(recordManifestRoutes({
+    signedIn: (req, res, next) => authed(req, res, next),
+    member: (req, res, next) => member(req, res, next),
+    store, directoryOf: directoryNow,
+    filedAs: filedAsIn({
+      company: companyRecordStore, vault: records,
+      runs: (company) => store.listRuns(company), proposals: (company) => store.listProposals(company),
+    }),
   }));
   /*
    * A COMPANY'S ACCOUNT, deployed by its founding signer's device held by their own key, and paid for here: read

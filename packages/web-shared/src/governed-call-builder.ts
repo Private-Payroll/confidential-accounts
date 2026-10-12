@@ -71,16 +71,20 @@
  * call builder asks for are made from randomness nobody keeps.
  */
 import type { AccountPrivateState } from '../../../contracts/src/witnesses.js';
-import { fromHex } from '../../../src/core/crypto.js';
+import { fromHex, type Hex } from '../../../src/core/crypto.js';
+import { vouchedFreshOf, vouchedRefusal } from '../../../src/midnight/record-tree.js';
 import { CIRCUITS_THAT_READ_NO_WITNESS } from '../../../src/midnight/governed-call.js';
 import { ACCOUNT_CIRCUITS_A_DEVICE_GOVERNS } from '../../../src/midnight/vault-contract.js';
+import { CREATION_STEPS } from '../../../src/midnight/deferral.js';
 import { PAY_KEY_PARTS } from '../../../src/midnight/pay-key-round.js';
+import type { BatchHolders } from '../../../src/midnight/record-manifest.js';
+import type { CommitteeKey } from '../../../src/midnight/seat-directory.js';
 import { signerHalfOf, type SignerMaterial } from './private-state.js';
-import { refuseWhatThisDeviceDidNotMake, type AccountLedgerView, type MadeHere } from './what-this-device-made.js';
+import { refuseWhatThisDeviceDidNotMake, type AccountLedgerView, type MadeHere, type VouchedHere } from './what-this-device-made.js';
 import { sameGovernance } from './governance-compared.js';
 import type { DetailsOfKind } from '../../../src/midnight/payout-tree.js';
 import type { AccountStartPure, VaultStartPure } from '../../../src/midnight/vault-start.js';
-import { policyOpeningFromWire, type PolicyOpeningOnTheWire } from '../../../src/midnight/spending-policy-record.js';
+import { NO_LEG, policyOpeningFromWire, type PolicyOpeningOnTheWire } from '../../../src/midnight/spending-policy-record.js';
 import type { PolicyOpening } from '../../../contracts/src/witnesses.js';
 
 export type { SignerMaterial } from './private-state.js';
@@ -131,7 +135,14 @@ export type GovernanceOnTheWire =
    */
   | { readonly kind: 'spending-policy'; readonly vault: string; readonly assetKey: string; readonly commitment: string }
   /** The approvals any change to a spending policy needs. */
-  | { readonly kind: 'policy-bar'; readonly bar: string };
+  | { readonly kind: 'policy-bar'; readonly bar: string }
+  /**
+   * The company's record anchor moved past a batch nobody can check, resuming
+   * from the header whose head is `resumesFrom` (`recoverAnchor`), before
+   * `latest`, the last time it may be carried out, in whole seconds since
+   * 1970 as the chain's block time counts them.
+   */
+  | { readonly kind: 'recover-anchor'; readonly resumesFrom: string; readonly latest: string };
 
 /**
  * **THE COMPANY'S ACCOUNT TAKING A NEW VAULT AS ITS OWN**, named by the vault's
@@ -246,6 +257,12 @@ export interface OpenedRound {
   readonly vault: string;
   /** The salt sealed inside the proposal. */
   readonly salt: string;
+  /**
+   * For a payroll run: what its salt was made from, sealed inside the proposal
+   * beside it - the head its raiser checked and a random value - and whether
+   * this device checked that head itself (`refuseWhatThisDeviceDidNotMake`).
+   */
+  readonly vouched?: VouchedHere;
   /** What the person is shown for this proposal. */
   readonly summary: string;
   /**
@@ -271,6 +288,7 @@ const SAID: Readonly<Record<string, string>> = {
   run: 'payroll run', asset: 'token', amount: 'amount',
   'payments digest': 'list of payments', policy: 'spending policy',
   'policy bar': 'number of approvals a change to a spending policy needs',
+  recovery: 'recovery of the company\'s records',
 };
 /** What not to do if the refusal comes back, for each call a device makes. */
 const IF_AGAIN: Readonly<Record<string, string>> = {
@@ -341,6 +359,8 @@ export interface GovernedCallDeps {
   readonly accountPure: {
     runPayload(root: Uint8Array, payees: bigint, opensAt: bigint, closesAt: bigint, required: bigint): Uint8Array;
     proposalIdOf(payload: Uint8Array, vault: Uint8Array, salt: Uint8Array): Uint8Array;
+    /** A run's salt, `retrySaltOf(leg, fresh)`: asked for where a payroll run is raised, approved or charged. */
+    retrySaltOf?(legRoot: Uint8Array, fresh: Uint8Array): Uint8Array;
     signerAddPayload(leaf: Uint8Array): Uint8Array;
     setThresholdPayload(threshold: bigint): Uint8Array;
     /** Present where a vault's own approvals needed are changed; asked for only then. */
@@ -365,6 +385,41 @@ export interface GovernedCallDeps {
     /** The approvals a run of a total needs under a policy's bands: the first band its total fits. */
     bandApprovals?(bands: PolicyOpening['terms']['bands'], total: bigint): bigint;
     noVault(): Uint8Array;
+    /** Where the account keeps its record anchor, and the head after one batch; asked for only where records are anchored. */
+    anchorKey?(): Uint8Array;
+    anchorHeadOf?(previous: Uint8Array, batch: Uint8Array): Uint8Array;
+    /** What one anchor call folds into the head: the batch, who held the account as it was judged, and the anchoring seat's tag. */
+    anchorHeldOf?(batch: Uint8Array, approvals: bigint, signerRoot: { field: bigint }, tag: Uint8Array): Uint8Array;
+    /** What one recovery folds into the head: as `anchorHeldOf`, and the head it resumes from. */
+    anchorRecoveredOf?(batch: Uint8Array, approvals: bigint, signerRoot: { field: bigint }, tag: Uint8Array, resumesFrom: Uint8Array): Uint8Array;
+    /** The tag a seat anchors under in an account, and the key the account keeps the last one under. */
+    anchorTagOf?(account: Uint8Array, pk: Uint8Array, blinding: Uint8Array): Uint8Array;
+    anchorSeatKey?(): Uint8Array;
+    /** What a quorum approves to recover the record anchor from a head its devices checked, before a latest time. */
+    recoverAnchorPayload?(resumesFrom: Uint8Array, latest: bigint): Uint8Array;
+    /** A seat's public key on the account, from its secret, and the leaf its key, blinding and scope make. */
+    signerPublicKey?(sk: Uint8Array): Uint8Array;
+    signerLeaf?(pk: Uint8Array, blinding: Uint8Array, scope: Uint8Array): Uint8Array;
+    /** The leaf a removed signer's slot holds, and the slot a signer's path leads to. */
+    vacantSlot?(): Uint8Array;
+    slotOf?(path: unknown): bigint;
+    /** What a run's entry among the open proposals is overwritten with once it is charged to its period. */
+    clearedMark?(): Uint8Array;
+    /** The mark a run's hold carries once a payment or a change from it has landed (`markPaidFrom`). */
+    paidFromMark?(): Uint8Array;
+    /** The key the account's count of signers removed is held under, among its proposals' holds. */
+    removalCountKey?(): Uint8Array;
+  };
+  /**
+   * `@midnight-ntwrk/compact-runtime`'s signer-tree pieces: a blank tree, a leaf's encoding and a root's reading.
+   * Asked for only where who held the account is named in, or read off, a batch's header.
+   */
+  readonly accountTree?: {
+    readonly StateBoundedMerkleTree: new (height: number) => {
+      update(index: bigint, leaf: unknown): unknown; rehash(): { root(): { value: unknown } | undefined };
+    };
+    readonly CompactTypeBytes: new (length: number) => { toValue(v: Uint8Array): unknown; alignment(): unknown };
+    readonly CompactTypeMerkleTreeDigest: { fromValue(v: unknown): { field: bigint } };
   };
   /** Reads the account's ledger out of its contract state's data; what an approval is checked against on the chain. */
   readonly accountLedger?: (data: unknown) => unknown;
@@ -611,6 +666,13 @@ export function governancePayloadOf(deps: Pick<GovernedCallDeps, 'accountPure'>,
   if (g.kind === 'pay-key') return payKeyPayloadOf(deps, g.commitment);
   if (g.kind === 'spending-policy') return spendingPolicyPayloadOf(deps, g.vault, g.assetKey, g.commitment);
   if (g.kind === 'policy-bar') return policyBarPayloadOf(deps, g.bar);
+  if (g.kind === 'recover-anchor') {
+    if (typeof deps.accountPure.recoverAnchorPayload !== 'function') {
+      throw new Error('this device was not given the account\'s function for a recovery of its record anchor. Reload the page to use the current build.');
+    }
+    return deps.accountPure.recoverAnchorPayload(
+      bytesOf('head it resumes from', String(g.resumesFrom).toLowerCase()), digitsOf('recovery\'s last time', g.latest));
+  }
   throw new Error('this proposal is neither a seat nor a threshold, nor a vault adopted, nor the pay-record key, nor a spending '
     + 'policy, so nothing was built.');
 }
@@ -798,7 +860,8 @@ const hexOf = (b: Uint8Array): string => Array.from(b, (x) => x.toString(16).pad
 const same = (a: unknown, b: unknown): boolean => String(a).toLowerCase() === String(b).toLowerCase();
 const changeNamed = (g: RoundChangeOnTheWire | undefined): string =>
   (g?.kind === 'threshold' || g?.kind === 'vault-threshold' ? 'threshold' : g?.kind === 'adopt-vault' ? 'vault adopted'
-    : g?.kind === 'pay-key' ? 'pay-record key' : g?.kind === 'spending-policy' ? 'policy' : g?.kind === 'policy-bar' ? 'policy bar' : 'leaf');
+    : g?.kind === 'pay-key' ? 'pay-record key' : g?.kind === 'spending-policy' ? 'policy' : g?.kind === 'policy-bar' ? 'policy bar'
+      : g?.kind === 'recover-anchor' ? 'recovery' : 'leaf');
 
 /**
  * **NOTHING IS PROVED WITH A VALUE THIS DEVICE DID NOT READ ITSELF, BUT TWO.**
@@ -960,6 +1023,7 @@ export async function buildGovernedCall(
     refuseWhatThisDeviceDidNotMake({
       runPayload: deps.accountPure.runPayload, vaultDetails: deps.vaultDetails,
       payKeyCommitmentOf: deps.accountPure.payKeyCommitmentOf,
+      ...(deps.accountPure.retrySaltOf === undefined ? {} : { retrySaltOf: deps.accountPure.retrySaltOf }),
       ...(deps.vaultPure === undefined ? {} : { secretRun: { vault: deps.vaultPure, account: deps.accountPure as unknown as AccountStartPure } }),
     }, input.opened, view, raisingARun ? 'raise' : 'approve');
   }
@@ -994,5 +1058,705 @@ export async function buildGovernedCall(
     return { proven: proven.serialize() };
   } finally {
     wipe(record as AccountPrivateState);
+  }
+}
+
+/* ── THE COMPANY'S RECORD ANCHOR, MOVED ON FROM THIS DEVICE ──────────────────── */
+
+/** Thrown, with nothing built or sent, when an anchor call - or a recovery, `recovery` - cannot be made as this device would send it. */
+export class AnchorNotBuilt extends Error {
+  constructor(why: string, options?: { cause?: unknown; recovery?: boolean }) {
+    super(`${options?.recovery === true ? 'the recovery of the company\'s records was not carried out' : 'the company\'s records were not anchored'}: ${why}. `
+      + 'Nothing was built or sent.', options);
+    this.name = 'AnchorNotBuilt';
+  }
+}
+
+const anchorPure = (deps: Pick<GovernedCallDeps, 'accountPure'>) => {
+  const { anchorKey, anchorHeadOf, anchorHeldOf, anchorRecoveredOf, anchorTagOf, anchorSeatKey, signerPublicKey, vacantSlot, slotOf } = deps.accountPure;
+  if (typeof anchorKey !== 'function' || typeof anchorHeadOf !== 'function' || typeof anchorHeldOf !== 'function'
+    || typeof anchorRecoveredOf !== 'function' || typeof anchorTagOf !== 'function' || typeof anchorSeatKey !== 'function'
+    || typeof signerPublicKey !== 'function' || typeof vacantSlot !== 'function' || typeof slotOf !== 'function') {
+    throw new AnchorNotBuilt('this device was not given the account\'s functions for its record anchor. Reload the page to use the '
+      + 'current build');
+  }
+  return { anchorKey, anchorHeadOf, anchorHeldOf, anchorRecoveredOf, anchorTagOf, anchorSeatKey, signerPublicKey, vacantSlot, slotOf };
+};
+
+/** A signer tree's root as a header names it: the field, as 64 hex digits, big-endian. */
+const rootHexOf = (field: bigint): string => field.toString(16).padStart(64, '0');
+const rootOfHex = (hex: string): { field: bigint } => {
+  const h = String(hex).toLowerCase();
+  if (!HEX64.test(h)) throw new AnchorNotBuilt('the batch does not name the root of the account\'s signers as it was judged');
+  return { field: BigInt(`0x${h}`) };
+};
+
+/**
+ * The root of a signer tree holding `signers`, slot by slot from slot 0, as a
+ * header names a root; the tree the account's own signer tree is, a tree of
+ * height ten with each leaf hashed as the chain hashes it.
+ */
+export function signerRootOf(deps: Pick<GovernedCallDeps, 'accountTree'>, signers: readonly string[]): string {
+  const T = deps.accountTree;
+  if (T === undefined) throw new AnchorNotBuilt('this device was not given the account\'s signer tree. Reload the page to use the current build');
+  const bytes = new T.CompactTypeBytes(32);
+  let tree = new T.StateBoundedMerkleTree(10) as { update(index: bigint, leaf: unknown): unknown };
+  signers.forEach((leaf, slot) => {
+    const b = bytesOf('leaf', String(leaf).toLowerCase());
+    tree = tree.update(BigInt(slot), { value: bytes.toValue(b), alignment: bytes.alignment() }) as typeof tree;
+  });
+  const root = (tree as unknown as { rehash(): { root(): { value: unknown } | undefined } }).rehash().root();
+  if (root === undefined) throw new AnchorNotBuilt('the root of the account\'s signers could not be worked out');
+  return rootHexOf(T.CompactTypeMerkleTreeDigest.fromValue(root.value).field);
+}
+
+/** Whether a header's leaves, slot by slot, make the signer-tree root it names: only then are they the account's. */
+export function signersMakeTheirRoot(deps: Pick<GovernedCallDeps, 'accountTree'>, held: BatchHolders): boolean {
+  if (deps.accountTree === undefined) signerRootOf(deps, []);
+  try {
+    return signerRootOf(deps, held.signers) === String(held.signerRoot).toLowerCase();
+  } catch {
+    return false;
+  }
+}
+
+/**
+ * **WHO HOLDS THE ACCOUNT IN ONE OF ITS STATES, AS A BATCH'S HEADER NAMES
+ * THEM**: the approvals it requires, its signer tree's root, and the leaf in
+ * each slot up to the tree's first free one - a seated signer's leaf where its
+ * path leads, the account's vacant-slot leaf in every other.
+ */
+export function batchHoldersIn(
+  deps: Pick<GovernedCallDeps, 'accountPure' | 'accountLedger' | 'runtimeState'>, accountState: Uint8Array,
+): BatchHolders {
+  const P = anchorPure(deps);
+  if (deps.accountLedger === undefined) throw new AnchorNotBuilt('this device was not given the account\'s reader');
+  const view = deps.accountLedger((deps.runtimeState.deserialize(accountState) as { data: unknown }).data) as {
+    threshold: bigint;
+    signers: { root(): { field: bigint } | undefined; firstFree(): bigint; findPathForLeaf(leaf: Uint8Array): unknown };
+    signerLeaves: Iterable<Uint8Array>;
+  };
+  const root = view.signers.root();
+  if (root === undefined) throw new AnchorNotBuilt('the account\'s signers could not be read from its state');
+  const free = Number(view.signers.firstFree());
+  const vacant = hexOf(P.vacantSlot());
+  const signers: string[] = Array.from({ length: free }, () => vacant);
+  for (const leaf of view.signerLeaves) {
+    const path = view.signers.findPathForLeaf(leaf);
+    const slot = path === undefined ? -1 : Number(P.slotOf(path));
+    if (!(slot >= 0 && slot < free)) throw new AnchorNotBuilt('a seated signer\'s slot could not be read from the account\'s state');
+    signers[slot] = hexOf(leaf);
+  }
+  return { approvals: Number(view.threshold), signerRoot: rootHexOf(root.field), signers };
+}
+
+/**
+ * The head an account's state holds under the anchor's own key - the empty
+ * head, thirty-two zero bytes, before its first anchor - and the tag of the
+ * seat that moved it there, null before the first.
+ */
+const headInState = (
+  deps: Pick<GovernedCallDeps, 'accountPure' | 'accountLedger' | 'runtimeState'>, accountState: Uint8Array,
+): { readonly head: string; readonly tag: string | null } => {
+  const P = anchorPure(deps);
+  if (deps.accountLedger === undefined) throw new AnchorNotBuilt('this device was not given the account\'s reader');
+  const view = deps.accountLedger((deps.runtimeState.deserialize(accountState) as { data: unknown }).data) as {
+    signerRoles: { member(key: Uint8Array): boolean; lookup(key: Uint8Array): Uint8Array };
+  };
+  const key = P.anchorKey();
+  const seat = P.anchorSeatKey();
+  return {
+    head: view.signerRoles.member(key) ? hexOf(view.signerRoles.lookup(key)) : hexOf(ZERO_32),
+    tag: view.signerRoles.member(seat) ? hexOf(view.signerRoles.lookup(seat)) : null,
+  };
+};
+
+/**
+ * **WHAT EACH SEAT'S OPENING OPENS, AND THE TAG IT ANCHORS UNDER IN `account`**,
+ * by the account's own `signerLeaf` and `anchorTagOf`: a device believes an
+ * opening only where the leaf it makes is the seat's. With `own`, this device's
+ * own opening too - its public key from its secret - which it files for the
+ * company's members. Reads no chain.
+ */
+export function seatOpeningsIn(
+  deps: Pick<GovernedCallDeps, 'accountPure'>,
+  input: {
+    readonly account: string;
+    readonly openings: ReadonlyArray<{ readonly publicKey: string; readonly scope: string; readonly blinding: string }>;
+    readonly own?: Pick<SignerMaterial, 'signingSecret' | 'blinding' | 'scope'>;
+  },
+): { openings: Array<{ leaf: string | null; tag: string | null }>; own?: { publicKey: string; leaf: string; tag: string } } {
+  const P = anchorPure(deps);
+  if (typeof deps.accountPure.signerLeaf !== 'function') {
+    throw new AnchorNotBuilt('this device was not given the account\'s functions for its seats. Reload the page to use the current build');
+  }
+  const leafOf = deps.accountPure.signerLeaf.bind(deps.accountPure);
+  const account = String(input.account).toLowerCase();
+  if (!HEX64.test(account)) throw new AnchorNotBuilt('this call is not for a company account this device can name');
+  const a = bytesOf('account', account);
+  const openings = input.openings.map((o) => {
+    try {
+      const pk = bytesOf('public key', String(o.publicKey).toLowerCase());
+      const blinding = bytesOf('blinding', String(o.blinding).toLowerCase());
+      return { leaf: hexOf(leafOf(pk, blinding, bytesOf('scope', String(o.scope).toLowerCase()))), tag: hexOf(P.anchorTagOf(a, pk, blinding)) };
+    } catch {
+      return { leaf: null, tag: null };
+    }
+  });
+  if (input.own === undefined) return { openings };
+  if (input.own.scope === undefined) throw new AnchorNotBuilt('this seat\'s material names no scope, so its leaf cannot be opened');
+  const pk = P.signerPublicKey(bytesOf('signing secret', String(input.own.signingSecret).toLowerCase()));
+  const blinding = bytesOf('blinding', String(input.own.blinding).toLowerCase());
+  return {
+    openings,
+    own: {
+      publicKey: hexOf(pk), leaf: hexOf(leafOf(pk, blinding, bytesOf('scope', String(input.own.scope).toLowerCase()))),
+      tag: hexOf(P.anchorTagOf(a, pk, blinding)),
+    },
+  };
+}
+
+/**
+ * **THE TAG THIS DEVICE'S SEAT ANCHORS UNDER IN `account`**, made with the
+ * account's own `anchorTagOf` over the seat's public key and its leaf's
+ * blinding, as the account's call works it out from the seat it proves: what
+ * this device's headers name, and what the head they make binds.
+ */
+export function anchorTagIn(deps: Pick<GovernedCallDeps, 'accountPure'>, account: string, material: Pick<SignerMaterial, 'signingSecret' | 'blinding'>): string {
+  const P = anchorPure(deps);
+  const a = String(account).toLowerCase();
+  if (!HEX64.test(a)) throw new AnchorNotBuilt('this call is not for a company account this device can name');
+  return hexOf(P.anchorTagOf(bytesOf('account', a), P.signerPublicKey(bytesOf('signing secret', String(material.signingSecret).toLowerCase())),
+    bytesOf('blinding', String(material.blinding).toLowerCase())));
+}
+
+/** The seats a header's leaves name: every leaf but the account's vacant-slot one. */
+export function seatsNamedBy(deps: Pick<GovernedCallDeps, 'accountPure'>, signers: readonly string[]): string[] {
+  const vacant = hexOf(anchorPure(deps).vacantSlot());
+  return signers.map((l) => String(l).toLowerCase()).filter((l) => l !== vacant);
+}
+
+/**
+ * One step of the account's head as asked: the head before, a header's digest,
+ * who held the account as it was judged, the anchoring seat's tag, and - for a
+ * recovery - the head it resumes from.
+ */
+export interface HeadStepAsked {
+  readonly previous: string; readonly batch: string; readonly held: BatchHolders; readonly tag: string; readonly resumesFrom?: string;
+}
+
+/**
+ * **THE HEAD AFTER EACH BATCH ASKED ABOUT**, each made with the account's own
+ * `anchorHeadOf` over `anchorHeldOf` (a recovery's, `anchorRecoveredOf`) of the batch, the tag and the holders its header
+ * names; and the seats those holders' leaves name - every leaf but the
+ * vacant-slot one - when they make the root the header names, null when they
+ * do not; and the same seats for each of `holders`, as a directory version's
+ * leaf names who held the account. Reads no chain.
+ */
+export function anchorHeadsAfter(
+  deps: Pick<GovernedCallDeps, 'accountPure' | 'accountTree'>,
+  input: {
+    readonly after: readonly HeadStepAsked[];
+    readonly holders?: readonly BatchHolders[];
+  },
+): { after: string[]; seats: (string[] | null)[]; holderSeats: (string[] | null)[] } {
+  const P = anchorPure(deps);
+  /* A batch whose holders the account's own functions refuse - a root that is no field element - folds to the empty head, which no batch on the chain's path ever leaves, so it is passed over and never believed. */
+  const seatsOf = (held: BatchHolders): string[] | null => (signersMakeTheirRoot(deps, held) ? seatsNamedBy(deps, held.signers) : null);
+  const headAfter = (x: HeadStepAsked): string => {
+    try {
+      const previous = bytesOf('head', String(x.previous).toLowerCase());
+      const batch = bytesOf('batch', String(x.batch).toLowerCase());
+      const tag = bytesOf('tag', String(x.tag).toLowerCase());
+      const approvals = BigInt(x.held.approvals);
+      const root = rootOfHex(x.held.signerRoot);
+      return hexOf(P.anchorHeadOf(previous, x.resumesFrom === undefined
+        ? P.anchorHeldOf(batch, approvals, root, tag)
+        : P.anchorRecoveredOf(batch, approvals, root, tag, bytesOf('head', String(x.resumesFrom).toLowerCase()))));
+    } catch {
+      return hexOf(ZERO_32);
+    }
+  };
+  return {
+    after: input.after.map(headAfter),
+    seats: input.after.map((x) => seatsOf(x.held)),
+    holderSeats: (input.holders ?? []).map(seatsOf),
+  };
+}
+
+/**
+ * **ONE HEAD THE ACCOUNT'S HISTORY SHOWS**: the head the last anchor call of a
+ * block left, the committee the account's state after that block lists, and
+ * the block - its height and the time its author set, in milliseconds. A head
+ * another anchor of the same block moved on from is never shown, and the next
+ * head shown is that block's. The approvals and seats a batch was judged
+ * against are never read off these states: they are what the batch's header
+ * names, which the call checked. The committee no call can check, so it is the
+ * block's, and is used only to judge a directory claim anchored in it.
+ */
+export interface AnchorLanded {
+  readonly head: string;
+  /** The tag of the seat that moved the head there, as the account wrote it beside the head; absent where a test's chain names none. */
+  readonly tag?: string;
+  readonly committee: readonly CommitteeKey[];
+  readonly height: number;
+  readonly at: number;
+  /**
+   * How many calls to move the anchor - `anchor` or `recoverAnchor` - this
+   * head's block held, whatever their transactions' results, where the history
+   * names its calls. The indexer keeps one state a block, so with more
+   * than one the tag is the block's last anchoring seat's, not surely the one
+   * that moved the head past any one head of that block.
+   */
+  readonly anchorsInBlock?: number;
+  /** A recovery the quorum approved moved the anchor in this head's block, where the history names its calls. */
+  readonly recovered?: boolean;
+}
+
+/**
+ * **WHAT A DEVICE READS OF THE ACCOUNT'S HISTORY**: every head it shows,
+ * oldest first, and who holds the account in its latest state as a batch's
+ * header names them - what an anchoring device judges its batch against.
+ */
+export interface AnchorsOnChain {
+  readonly landed: readonly AnchorLanded[];
+  readonly now: BatchHolders;
+  /** The seats `now` names: every leaf but the vacant-slot one. */
+  readonly seatsNow: readonly string[];
+  /** How the account was deployed (`accountDeployedIn`); null when its history does not open with its deploy. */
+  readonly deployed: AccountDeployed | null;
+  /** Every payroll run whose approvals vouch for the head its raiser sealed (`vouchingRunsIn`), oldest first. */
+  readonly vouching: readonly VouchingRun[];
+}
+
+/**
+ * **HOW THE ACCOUNT WAS DEPLOYED, AS THE FIRST STEP OF ITS HISTORY SHOWS IT**:
+ * the seats, the maintenance committee, its threshold and its update counter
+ * that step's state lists, and whether the account already ran a circuit the
+ * second creation step inserts - the record anchor among them. An account
+ * deployed held by one key alone at a threshold of one, with no second-step
+ * circuit, gains `anchor` only through an update that key signs. The state is
+ * the one after the whole block the deploy is in: an update in that block
+ * shows here as a counter above zero, read as not deployed so.
+ */
+export interface AccountDeployed {
+  readonly seats: readonly string[];
+  readonly committee: readonly CommitteeKey[];
+  readonly threshold: number;
+  /** How many updates the maintenance committee had made by then: zero for the deploy's own state. */
+  readonly updates: number;
+  readonly ranSecondStep: boolean;
+}
+
+/**
+ * **HOW THE ACCOUNT WAS DEPLOYED**, from the first step of its history (oldest
+ * first): null unless that step is the deploy. Who held it is read the one way
+ * a wallet reads it (`authorityIn`); its operations and update counter with the
+ * contract runtime's own reader; the second step's circuits from the one list
+ * of them (`CREATION_STEPS`).
+ */
+export function accountDeployedIn(
+  deps: Pick<GovernedCallDeps, 'runtimeState'>,
+  steps: ReadonlyArray<{ readonly kind: string; readonly state: Uint8Array }>,
+  authorityIn: (state: Uint8Array) => { readonly seats: readonly string[]; readonly committee: readonly CommitteeKey[]; readonly threshold: number },
+): AccountDeployed | null {
+  const first = steps[0];
+  if (first === undefined || first.kind !== 'deploy') return null;
+  const held = authorityIn(first.state);
+  const state = deps.runtimeState.deserialize(first.state) as {
+    operations(): Array<string | Uint8Array>; readonly maintenanceAuthority: { readonly counter: bigint };
+  };
+  const second = new Set<string>(CREATION_STEPS.second);
+  const ranSecondStep = state.operations().some((op) => second.has(typeof op === 'string' ? op : new TextDecoder().decode(op)));
+  return {
+    seats: held.seats.map((s) => String(s).toLowerCase()),
+    committee: held.committee.map((k) => ({ tag: String(k.tag), value: String(k.value).toLowerCase() })),
+    threshold: Number(held.threshold),
+    updates: Number(state.maintenanceAuthority.counter),
+    ranSecondStep,
+  };
+}
+
+/**
+ * **EVERY HEAD THE ACCOUNT'S HISTORY SHOWS, OLDEST FIRST**: each step of the
+ * history whose state holds a head other than the step before it, with the
+ * head, the committee that state lists (`committeeIn`, the one reading of that
+ * field) and its block; where the history names each step's call, how many
+ * calls moved the anchor in that block and whether a recovery was one of them.
+ * The head before the first step is the empty head.
+ */
+export function anchorsLandedIn(
+  deps: Pick<GovernedCallDeps, 'accountPure' | 'accountLedger' | 'runtimeState'>,
+  steps: ReadonlyArray<{
+    readonly state: Uint8Array; readonly block: { readonly height: number; readonly at: number };
+    readonly entryPoint?: string; readonly succeeded?: boolean;
+  }>,
+  committeeIn: (state: Uint8Array) => readonly CommitteeKey[],
+): AnchorLanded[] {
+  const landed: AnchorLanded[] = [];
+  const blocks = new Map<number, (typeof steps)[number][]>();
+  for (const x of steps) blocks.set(x.block.height, [...(blocks.get(x.block.height) ?? []), x]);
+  let before = hexOf(ZERO_32);
+  for (const step of steps) {
+    const { head, tag } = headInState(deps, step.state);
+    if (head === before) continue;
+    const committee = committeeIn(step.state).map((k) => ({ tag: k.tag, value: k.value.toLowerCase() }));
+    /*
+     * One state a block. Every call to move the anchor in it is counted, whatever its transaction's result - one in a
+     * guaranteed section moves the head even where the transaction succeeded only in part - so the count errs only on
+     * the side of naming no seat; a recovery is read only from a call whose transaction succeeded in full.
+     */
+    const block = blocks.get(step.block.height)!;
+    const named = block.some((x) => x.entryPoint !== undefined);
+    const calls = block.filter((x) => x.entryPoint === 'anchor' || x.entryPoint === 'recoverAnchor');
+    landed.push({
+      head, ...(tag === null ? {} : { tag }), committee, height: step.block.height, at: step.block.at,
+      ...(named ? { anchorsInBlock: calls.length, recovered: calls.some((x) => x.entryPoint === 'recoverAnchor' && x.succeeded === true) } : {}),
+    });
+    before = head;
+  }
+  return landed;
+}
+
+/**
+ * **WHERE ONE PROPOSAL STANDS ON THE CHAIN**, as the account's history at the
+ * indexer the person's own wallet names shows it:
+ *
+ *   - `held`: `open` while the account's latest state holds it among its open
+ *     proposals, `cleared` once that entry is the mark `clearRun` writes, `closed`
+ *     once a state held it and the latest no longer does, `never` when no state
+ *     the history shows held it - withdrawn before it reached the chain, refused
+ *     by the service, sent and not yet seen, or opened and closed within one
+ *     block, which no block's state shows: the chain cannot tell them apart.
+ *     An identity held again after it closed is read from its latest time held;
+ *   - `approvals`: the account's count of approvals for it now, 0 when not held;
+ *   - `raisedAt`: the time, in milliseconds, the author of the first block of
+ *     that time whose state held it set for that block;
+ *   - `txRef`: the transaction of the one call to `propose` in that block whose
+ *     transaction succeeded in full - absent when the block holds more than
+ *     one, since a state is a whole block's;
+ *   - `closedBy`: the circuits called by every call of a transaction that
+ *     succeeded in full in the first block whose state no longer held it -
+ *     the call that closed it among them, beside any other proposal's calls of
+ *     that block; a failed call closes nothing, so none is named;
+ *   - `failedCalls`: while it is held, the circuits called by every call whose
+ *     transaction landed without succeeding in full in a block since it was
+ *     raised - a call in its transaction's fallible section that the account
+ *     refused, its fee paid and nothing of it written. A state names no
+ *     proposal a call was for, so a failed call is any proposal's of those
+ *     blocks.
+ */
+export interface RoundOnChain {
+  readonly held: 'open' | 'cleared' | 'closed' | 'never';
+  readonly approvals: number;
+  readonly raisedAt?: number;
+  readonly txRef?: string;
+  readonly closedBy?: readonly string[];
+  readonly failedCalls?: readonly string[];
+}
+
+/**
+ * **WHERE EACH PROPOSAL ASKED ABOUT STANDS, FROM THE ACCOUNT'S HISTORY**: every
+ * block's state read once with the account's own ledger reader, oldest first.
+ * `chainIds` are the proposals' identities on chain, as 64 hex digits.
+ */
+export function roundsOnChainIn(
+  deps: Pick<GovernedCallDeps, 'accountPure' | 'accountLedger' | 'runtimeState'>,
+  steps: ReadonlyArray<{
+    readonly kind: string; readonly transaction: string; readonly state: Uint8Array; readonly entryPoint?: string;
+    readonly block: { readonly height: number; readonly at: number }; readonly succeeded: boolean;
+  }>,
+  chainIds: readonly string[],
+): ReadonlyMap<string, RoundOnChain> {
+  const cleared = deps.accountPure.clearedMark;
+  if (deps.accountLedger === undefined || typeof cleared !== 'function') {
+    throw new Error('this device was not given the account\'s reader, so where its proposals stand on the chain was not read. Reload the page');
+  }
+  type View = { openProposals: { member(id: Uint8Array): boolean; lookup(id: Uint8Array): Uint8Array }; approvalCounts: { member(id: Uint8Array): boolean; lookup(id: Uint8Array): bigint } };
+  const viewOf = (state: Uint8Array) => deps.accountLedger!((deps.runtimeState.deserialize(state) as { data: unknown }).data) as View;
+  /* One state per block: every step of a block shows the state after the whole block. */
+  const blocks: Array<{ readonly at: number; readonly steps: typeof steps[number][]; readonly view: View }> = [];
+  for (const step of steps) {
+    const last = blocks[blocks.length - 1];
+    if (last !== undefined && last.steps[0]!.block.height === step.block.height) last.steps.push(step);
+    else blocks.push({ at: step.block.at, steps: [step], view: viewOf(step.state) });
+  }
+  const callsIn = (b: (typeof blocks)[number]) => b.steps.filter((x) => x.kind === 'call');
+  const out = new Map<string, RoundOnChain>();
+  for (const asked of chainIds) {
+    const hex = String(asked).toLowerCase();
+    if (!HEX64.test(hex)) throw new Error('a proposal was asked about by an identity that is not thirty-two bytes');
+    const id = bytesOf('proposal', hex);
+    let first = -1;
+    let gone = -1;
+    /* The latest time it was held: an identity proposed again after it closed is read from that second time on. */
+    blocks.forEach((b, i) => {
+      const held = b.view.openProposals.member(id);
+      if (held && (first < 0 || gone >= 0)) { first = i; gone = -1; }
+      if (!held && first >= 0 && gone < 0) gone = i;
+    });
+    if (first < 0) { out.set(hex, { held: 'never', approvals: 0 }); continue; }
+    const raised = blocks[first]!;
+    const proposes = callsIn(raised).filter((x) => x.entryPoint === 'propose' && x.succeeded);
+    const base = { raisedAt: raised.at, ...(proposes.length === 1 ? { txRef: proposes[0]!.transaction } : {}) };
+    if (gone >= 0) {
+      const closing = callsIn(blocks[gone]!).filter((x) => x.succeeded);
+      out.set(hex, { held: 'closed', approvals: 0, ...base, closedBy: [...new Set(closing.map((x) => x.entryPoint ?? ''))] });
+      continue;
+    }
+    const now = blocks[blocks.length - 1]!.view;
+    const approvals = now.approvalCounts.member(id) ? Number(now.approvalCounts.lookup(id)) : 0;
+    const failedCalls = blocks.slice(first).flatMap(callsIn).filter((x) => !x.succeeded).map((x) => x.entryPoint ?? '');
+    out.set(hex, {
+      held: hexOf(now.openProposals.lookup(id)) === hexOf(cleared()) ? 'cleared' : 'open', approvals, ...base,
+      ...(failedCalls.length === 0 ? {} : { failedCalls }),
+    });
+  }
+  return out;
+}
+
+/** What a payroll run's identity on chain is made from, as its sealed proposal holds them, with the head its raiser checked: decimal and hexadecimal. */
+export interface VouchedRunOnTheWire {
+  readonly root: string; readonly payees: string; readonly opensAt: string; readonly closesAt: string; readonly required: string;
+  readonly vault: string; readonly head: string; readonly r: string;
+}
+
+/**
+ * **THE IDENTITY ON CHAIN A LEG'S RUN WOULD HAVE, RAISED OVER THE HEAD IT
+ * SEALS**, by the account's own functions: `proposalIdOf(runPayload(..), vault,
+ * retrySaltOf(no leg, vouchedFreshOf(head, r)))`. A device that finds it is the
+ * run's own identity knows the run's approvers approved that head. Null for a
+ * run of no vault, which vouches for nothing.
+ */
+export function vouchedRunIdentityOf(deps: Pick<GovernedCallDeps, 'accountPure'>, run: VouchedRunOnTheWire): string | null {
+  const P = deps.accountPure;
+  if (P.retrySaltOf === undefined) throw new Error('this device was not given the account\'s functions a run\'s salt is made with. Reload the page');
+  const whole = (what: string, v: string): bigint => {
+    if (!/^(0|[1-9][0-9]*)$/u.test(String(v))) throw new Error(`a vouching run's ${what} is not a whole number`);
+    return BigInt(v);
+  };
+  if (vouchedRefusal({ head: run.head, r: run.r }) !== null) return null;
+  const vault = bytesOf('vault', String(run.vault).toLowerCase());
+  if (hexOf(vault) === hexOf(P.noVault())) return null;
+  const payload = P.runPayload(bytesOf('run root', String(run.root).toLowerCase()), whole('payee count', run.payees),
+    whole('window', run.opensAt), whole('window', run.closesAt), whole('approvals', run.required));
+  const salt = P.retrySaltOf(NO_LEG(), bytesOf('fresh', vouchedFreshOf(run.head.toLowerCase() as Hex, run.r.toLowerCase() as Hex)));
+  return hexOf(P.proposalIdOf(payload, vault, salt));
+}
+
+/** A payroll run that vouches for the head its raiser sealed: its identity on chain, and the block of the last state showing it paid or charged. */
+export interface VouchingRun { readonly chainId: string; readonly height: number; readonly at: number }
+
+/**
+ * **EVERY RUN WHOSE APPROVALS VOUCH FOR WHAT IT WAS RAISED OVER, FROM THE
+ * ACCOUNT'S HISTORY**: each proposal a state holds charged to its period (the
+ * mark `clearRun` writes) or paid from (the mark `markPaidFrom` writes on its
+ * hold), read at the last state that shows it so, and kept only when that
+ * state counts at least the account's threshold of approvals for it, plus one
+ * for every signer removed since it was raised - as the account counts them
+ * before it pays from a vault. A run approved only to a vault's lower threshold
+ * does not reach it. Only payroll runs carry either mark. A run whose hold was
+ * released before it was paid keeps the released mark, not the paid one, and
+ * vouches nothing unless the account charged it. Oldest first.
+ */
+export function vouchingRunsIn(
+  deps: Pick<GovernedCallDeps, 'accountPure' | 'accountLedger' | 'runtimeState'>,
+  steps: ReadonlyArray<{ readonly state: Uint8Array; readonly block: { readonly height: number; readonly at: number } }>,
+): VouchingRun[] {
+  const P = deps.accountPure;
+  if (deps.accountLedger === undefined || P.clearedMark === undefined || P.paidFromMark === undefined || P.removalCountKey === undefined) {
+    throw new Error('this device was not given the account\'s reader, so which runs vouch for the company\'s records was not read. Reload the page');
+  }
+  const cleared = hexOf(P.clearedMark());
+  const paidFrom = hexOf(P.paidFromMark());
+  const removalKey = P.removalCountKey();
+  type Hold = { readonly removals: bigint; readonly runHold: { readonly placedBy: Uint8Array } };
+  type View = {
+    readonly threshold: bigint;
+    readonly openProposals: Iterable<[Uint8Array, Uint8Array]>;
+    readonly approvalCounts: { member(id: Uint8Array): boolean; lookup(id: Uint8Array): bigint };
+    readonly proposalHolds: { member(id: Uint8Array): boolean; lookup(id: Uint8Array): Hold };
+  };
+  /* The last state showing each run marked, and whether it counted enough approvals then. */
+  const last = new Map<string, { readonly vouches: boolean; readonly height: number; readonly at: number }>();
+  let height = Number.NaN;
+  for (const step of steps) {
+    /* One state per block: every step of a block shows the state after the whole block. */
+    if (step.block.height === height) continue;
+    height = step.block.height;
+    const view = deps.accountLedger((deps.runtimeState.deserialize(step.state) as { data: unknown }).data) as View;
+    const removals = view.proposalHolds.member(removalKey) ? BigInt(view.proposalHolds.lookup(removalKey).removals) : 0n;
+    for (const [id, change] of view.openProposals) {
+      const hold = view.proposalHolds.member(id) ? view.proposalHolds.lookup(id) : null;
+      const marked = hexOf(change) === cleared || (hold !== null && hexOf(hold.runHold.placedBy) === paidFrom);
+      if (!marked) continue;
+      const needed = BigInt(view.threshold) + (hold === null ? 0n : removals - BigInt(hold.removals));
+      const approvals = view.approvalCounts.member(id) ? BigInt(view.approvalCounts.lookup(id)) : 0n;
+      last.set(hexOf(id), { vouches: hold !== null && approvals >= needed, height: step.block.height, at: step.block.at });
+    }
+  }
+  return [...last].filter(([, l]) => l.vouches).map(([chainId, l]) => ({ chainId, height: l.height, at: l.at }))
+    .sort((a, b) => a.height - b.height);
+}
+
+/**
+ * **WHERE THE ANCHOR CALL LANDS IN ITS TRANSACTION.** A call in the guaranteed
+ * section that reads a head another device has since moved fails the whole
+ * transaction, so nothing is applied and no fee is paid; in the fallible
+ * section the transaction would land, its fee paid, with the anchor not
+ * written. So it is read off the transaction, never assumed.
+ */
+export function anchorPlacementOf(unproven: unknown, circuit: 'anchor' | 'recoverAnchor' = 'anchor'): 'guaranteed' | 'fallible' | 'unread' {
+  const intents = (unproven as { intents?: unknown } | null)?.intents;
+  if (!(intents instanceof Map)) return 'unread';
+  const calls: Array<{ guaranteedTranscript?: unknown; fallibleTranscript?: unknown }> = [];
+  for (const intent of intents.values()) {
+    const actions = (intent as { actions?: unknown } | null)?.actions;
+    if (!Array.isArray(actions)) return 'unread';
+    for (const a of actions) {
+      const name = (a as { entryPoint?: unknown } | null)?.entryPoint;
+      const named = name instanceof Uint8Array ? new TextDecoder().decode(name) : String(name);
+      if (named !== circuit) return 'unread';
+      calls.push(a as { guaranteedTranscript?: unknown; fallibleTranscript?: unknown });
+    }
+  }
+  if (calls.length !== 1) return 'unread';
+  const c = calls[0]!;
+  if (c.fallibleTranscript !== undefined && c.fallibleTranscript !== null) return 'fallible';
+  return c.guaranteedTranscript !== undefined && c.guaranteedTranscript !== null ? 'guaranteed' : 'unread';
+}
+
+/**
+ * **WHERE EACH ANCHOR CALL MAY BE BUILT IN ITS TRANSACTION.** `anchor` only in
+ * the guaranteed section, where a call another device's anchor beat costs
+ * nothing. `recoverAnchor` wherever it lands: at the ledger's initial
+ * parameters its checks are over the guaranteed section's budget, so it lands
+ * in the fallible one, and a carrying out another anchor beats pays its fee,
+ * writes nothing and leaves the recovery open - read off the transaction once
+ * it is on the chain (`RoundOnChain.failedCalls`) and said, with the recovery
+ * carried out again within its window.
+ */
+const ANCHOR_CALL_MAY_LAND_IN: Readonly<Record<'anchor' | 'recoverAnchor', readonly ('guaranteed' | 'fallible')[]>> = {
+  anchor: ['guaranteed'],
+  recoverAnchor: ['guaranteed', 'fallible'],
+};
+
+/** Where an anchor call this device built lands in its transaction, as read off it. */
+export type AnchorPlacement = 'guaranteed' | 'fallible';
+
+/**
+ * **ONE ANCHOR CALL, BUILT AND PROVED HERE**: the batch folded into the head
+ * this device read, with this signer's own material proving they are a signer.
+ * The record composed for it holds the signer's three and answers nothing
+ * else. Refused before it is proved when the call would not land in the
+ * transaction's guaranteed section (`ANCHOR_CALL_MAY_LAND_IN`), and when the head
+ * this device read is not the one the state it was given holds - the
+ * contract's own refusal, read here before anything is sent.
+ */
+export async function buildAnchorCall(
+  deps: GovernedCallDeps,
+  input: {
+    readonly account: string; readonly material: SignerMaterial; readonly chain: AccountCallChain;
+    readonly previous: string; readonly batch: string;
+    /** Who held the account as this device judged the batch, as its header names them; the call is refused unless they still do. */
+    readonly held: Pick<BatchHolders, 'approvals' | 'signerRoot'>;
+  },
+): Promise<{ proven: Uint8Array }> {
+  return { proven: (await buildAnAnchorCall(deps, input, 'anchor', [], {})).proven };
+}
+
+/**
+ * **ONE RECOVERY OF THE RECORD ANCHOR, BUILT AND PROVED HERE**: as an anchor
+ * call (`buildAnchorCall`), moving the head on from the one this device read by
+ * the recovery's batch, resuming from the head `resumesFrom` names, before the
+ * time `latest` names, under the
+ * approved proposal `proposal` raised with `proposalSalt` - the one thing of
+ * the account's half its record answers. Built in whichever section of its
+ * transaction it lands in (`ANCHOR_CALL_MAY_LAND_IN`), which is handed back: in
+ * the fallible one, a carrying out another anchor beats pays its fee.
+ */
+export async function buildRecoverAnchorCall(
+  deps: GovernedCallDeps,
+  input: {
+    readonly account: string; readonly material: SignerMaterial; readonly chain: AccountCallChain;
+    readonly previous: string; readonly batch: string; readonly held: Pick<BatchHolders, 'approvals' | 'signerRoot'>;
+    readonly resumesFrom: string; readonly latest: string; readonly proposal: string; readonly proposalSalt: string;
+  },
+): Promise<{ proven: Uint8Array; placement: AnchorPlacement }> {
+  const resumesFrom = bytesOf('head it resumes from', String(input.resumesFrom).toLowerCase());
+  const latest = digitsOf('recovery\'s last time', input.latest);
+  const proposal = bytesOf('proposal', String(input.proposal).toLowerCase());
+  return buildAnAnchorCall(deps, input, 'recoverAnchor', [resumesFrom, latest, proposal], { proposalSalt: bytesOf('proposal\'s salt', String(input.proposalSalt).toLowerCase()) });
+}
+
+/** An anchor call or a recovery, as the two builders above take them: the anchor's arguments first, then `more`. */
+async function buildAnAnchorCall(
+  deps: GovernedCallDeps,
+  input: {
+    readonly account: string; readonly material: SignerMaterial; readonly chain: AccountCallChain;
+    readonly previous: string; readonly batch: string; readonly held: Pick<BatchHolders, 'approvals' | 'signerRoot'>;
+  },
+  circuit: 'anchor' | 'recoverAnchor', more: readonly (Uint8Array | bigint)[], answers: { readonly proposalSalt?: Uint8Array },
+): Promise<{ proven: Uint8Array; placement: AnchorPlacement }> {
+  const recovery = circuit === 'recoverAnchor';
+  const account = String(input.account).toLowerCase();
+  if (!HEX64.test(account)) throw new AnchorNotBuilt('this call is not for a company account this device can name', { recovery });
+  anchorPure(deps);
+  const previous = bytesOf('head', String(input.previous).toLowerCase());
+  const batch = bytesOf('batch', String(input.batch).toLowerCase());
+  if (!Number.isSafeInteger(input.held?.approvals) || input.held.approvals < 1) {
+    throw new AnchorNotBuilt('the batch does not name the approvals the account required as it was judged', { recovery });
+  }
+  const approvals = BigInt(input.held.approvals);
+  const signerRoot = rootOfHex(input.held.signerRoot);
+  const record = { ...signerHalfOf(input.material), pinnedPath: null, ...answers } as AccountPrivateState;
+  for (const field of ACCOUNT_FIELDS) {
+    if (field in answers) continue;
+    Object.defineProperty(record, field, {
+      enumerable: false,
+      get: () => { throw new AnchorNotBuilt(`the ${circuit === 'anchor' ? 'anchor' : 'recovery'} call read "${field}" from this device, and it has never needed it. The company's contract is not the one this page was built for; reload the page`, { recovery }); },
+    });
+  }
+  Object.freeze(record);
+  try {
+    const L = deps.ledger;
+    const seed = (deps.random ?? ((n) => crypto.getRandomValues(new Uint8Array(n))))(32);
+    const keys = L.ZswapSecretKeys.fromSeed(seed);
+    const coinPublicKey = keys.coinPublicKey;
+    const encryptionPublicKey = keys.encryptionPublicKey;
+    seed.fill(0);
+    try { keys.clear?.(); } catch { /* nothing to clear */ }
+    let built: any;
+    try {
+      built = await deps.contracts.createUnprovenCallTxFromInitialStates(deps.accountZkConfig, {
+        compiledContract: deps.accountCompiled,
+        circuitId: circuit,
+        contractAddress: account,
+        coinPublicKey,
+        initialContractState: deps.runtimeState.deserialize(input.chain.accountState),
+        /* An anchor moves no coin. */
+        initialZswapChainState: new L.ZswapChainState(),
+        ledgerParameters: L.LedgerParameters.deserialize(input.chain.parameters),
+        initialPrivateState: record,
+        args: [previous, batch, approvals, signerRoot, ...more],
+      }, encryptionPublicKey);
+    } catch (e) {
+      if (e instanceof AnchorNotBuilt) throw e;
+      const said = theWitnessSaid(circuit, e);
+      throw new AnchorNotBuilt((said as Error)?.message ?? String(said), { cause: e, recovery });
+    }
+    if (built?.private?.nextPrivateState !== record) throw new RecordChangedByTheCall(circuit);
+    const placement = anchorPlacementOf(built.private.unprovenTx, circuit);
+    if (placement === 'unread') {
+      throw new AnchorNotBuilt('the transaction built is not one anchor call this device can read. Reload the page to use the current build', { recovery });
+    }
+    if (!ANCHOR_CALL_MAY_LAND_IN[circuit].includes(placement)) {
+      throw new AnchorNotBuilt('the call would land where, if another device anchored first, its fee would be paid and nothing written. Reload the '
+        + 'page and anchor again', { recovery });
+    }
+    const proven = await deps.prove(built.private.unprovenTx, circuit);
+    return { proven: proven.serialize(), placement };
+  } finally {
+    wipe(record);
   }
 }

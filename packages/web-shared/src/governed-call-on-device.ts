@@ -16,6 +16,8 @@
  * signer; **the screen does not yet say the first of the three any differently
  * from any other failure.**
  */
+import { proposalEntry, type ManifestEntryBody } from '../../../src/midnight/record-manifest.js';
+import { FiledNotEntered, type RecordsEntered } from './record-entered-here.js';
 import { assets as theAssets, symbolOf, type AssetId, type AssetRegistry, type LedgerForm } from '../../../src/core/assets.js';
 import { refuseWhatTheVaultCannotPay, type PaymentAsked, type VaultHoldings } from '../../../src/core/vault-holdings.js';
 import {
@@ -25,7 +27,7 @@ import type {
   SignerMaterial, OpenedRound, RaiseRunOrder, GovernanceOnTheWire, GovernedCallOrder,
 } from './governed-call-builder.js';
 import { sameGovernance } from './governance-compared.js';
-import { commit, type Hex, type Sealed } from '../../../src/core/crypto.js';
+import { commit, signingPublicKeyOf, type Hex, type Sealed } from '../../../src/core/crypto.js';
 import {
   EVERY_RIGHT, refuseLeavingAVaultShort, type ApproverRoster, type GovernanceChange as VaultCheckChange,
 } from '../../../src/core/vault-approvers.js';
@@ -33,14 +35,15 @@ import { assetIdBytes, NO_ASSET } from '../../../src/core/assets.js';
 import type { SealedAccount, SealedProposal } from '../../../src/core/types.js';
 import { payrollRoundOf, sameList, untoldRetryRounds } from '../../../src/core/retry-cover.js';
 import type { AccountCallChainOnTheWire, VaultBuilderClient } from './vault-worker-client.js';
-import { signedStateHere, type CompanyRecordsHere } from './run-rebuilt-here.js';
+import { signedStateHere, standingOnChainHere, type CompanyRecordsHere } from './run-rebuilt-here.js';
 import { NotOpenedOnThisDevice, openTheRoundHere } from './round-opened-here.js';
 import { raiseLegHere, raiseRetryHere, type LegRaiseDoors } from './run-raised-here.js';
 import type { SignedRunFiling } from '../../../src/core/run-filing.js';
 import {
-  paysCommitmentOf, sealGovernanceProposal, signProposalFiling, type GovernancePayloadBody, type SignedProposalFiling,
+  paysCommitmentOf, proposalFilingRefusal, sealGovernanceProposal, signProposalFiling, type GovernancePayloadBody, type SignedProposalFiling,
 } from '../../../src/core/proposal-filing.js';
 import { admitSignerHere, rosterHere, waitingHere, type RosterDoors } from './roster-here.js';
+import { FOUNDING_ASKED, foundedOnChainHere, kindAsked, listedHere } from './vault-page-doors.js';
 import {
   carryOrderHere, legPaymentsHere, raiseOrderHere, retryOrderHere, retryPaymentsHere, NotMadeHere,
 } from './material-made-here.js';
@@ -77,6 +80,13 @@ export interface RoundOnThePage {
   readonly approvalCount?: number;
   /** What the person is shown for it, when the page shows it. */
   readonly summary?: string;
+  /**
+   * Where a raise from this device left the company's records: `true` when what
+   * it filed was entered and anchored from here, and otherwise why not. What it
+   * filed is NOT YET ANCHORED until a device anchors it, which the next anchor
+   * from any seat does for an entered filing.
+   */
+  readonly recordsAnchored?: true | string;
 }
 
 /**
@@ -216,7 +226,26 @@ export function refuseAnOrderThatIsNotThisRaise(order: RaiseOrderOnTheWire): voi
   }
 }
 
-/** Asks where a proposal stands until `seen` says so, or until the wait is over. */
+/**
+ * **WHERE A PROPOSAL STANDS, AS THE CHAIN SAYS** (`standingOnChainHere`): what the
+ * service answers names the proposal, and every field of where it stands - open,
+ * withdrawn or carried out, its approvals, when the chain first held it and the
+ * call that raised it - is replaced by the chain's, read at the indexer the
+ * person's own wallet names.
+ */
+const onChainHere = async (doors: GovernedCallDoors, round: RoundOnThePage): Promise<RoundOnThePage> => {
+  if (doors.records === undefined) {
+    throw new NotOpenedOnThisDevice('This page cannot read the company\'s records, so it cannot say where this proposal stands on '
+      + 'the chain. Reload the page to get the current version.');
+  }
+  return (await standingOnChainHere(doors.records, [round]))[0]!;
+};
+
+/** The proposal the service names by `proposalId`, standing where the chain says. */
+const standingHere = async (doors: GovernedCallDoors, proposalId: string): Promise<RoundOnThePage> =>
+  onChainHere(doors, await doors.service.standing(proposalId));
+
+/** Asks where a proposal stands, on the chain, until `seen` says so, or until the wait is over. */
 const waitFor = async (
   doors: GovernedCallDoors, what: string, proposalId: string,
   seen: (r: RoundOnThePage) => boolean, last: RoundOnThePage,
@@ -229,7 +258,7 @@ const waitFor = async (
   for (let waited = 0; waited < waitMs; waited += everyMs) {
     await sleep(everyMs);
     try {
-      now = await doors.service.standing(proposalId);
+      now = await standingHere(doors, proposalId);
     } catch {
       /* A read that failed says nothing about what was sent; ask again. */
       continue;
@@ -278,7 +307,7 @@ async function buildAndSend(
     account: chain.account, order: order.order, material: doors.material, chain, opened,
   });
   doors.progress?.('sending');
-  const sent = await send(tx);
+  const sent = await onChainHere(doors, await send(tx));
   if (sent.raisedAt) return sent;
   return waitFor(doors, 'this proposal', order.proposalId, (r) => Boolean(r.raisedAt), sent);
 }
@@ -396,7 +425,7 @@ export async function raiseRunOnDevice(
   doors: LegRaiseDoors,
   input: { runId: string; viewingKey: string; asset?: string; form?: LedgerForm; vault: string; opensAt: string; closesAt: string },
 ): Promise<RoundOnThePage> {
-  const sent = await raiseLegHere(doors, input);
+  const sent = await onChainHere(doors, await raiseLegHere(doors, input));
   if (sent.raisedAt) return sent;
   return waitFor(doors, 'this proposal', sent.id, (r) => Boolean(r.raisedAt), sent);
 }
@@ -593,7 +622,7 @@ export async function raiseRetryOnDevice(
     vault: string; opensAt: string; closesAt: string;
   },
 ): Promise<RoundOnThePage> {
-  const sent = await raiseRetryHere(doors, input);
+  const sent = await onChainHere(doors, await raiseRetryHere(doors, input));
   if (sent.raisedAt) return sent;
   return waitFor(doors, 'this retry', sent.id, (r) => Boolean(r.raisedAt), sent);
 }
@@ -640,9 +669,9 @@ async function approveHere(
   aChangeCheckedHere: boolean,
 ): Promise<RoundOnThePage> {
   const { service } = doors;
-  const before = await service.standing(input.round.id);
+  const named = await service.standing(input.round.id);
   /* The proposal proved is the one the person was shown, or nothing is built. */
-  if (String(before.chainId).toLowerCase() !== String(input.round.chainId).toLowerCase()) {
+  if (String(named.chainId).toLowerCase() !== String(input.round.chainId).toLowerCase()) {
     throw new Error('the company now names another proposal than the one shown here. Nothing was built or sent.');
   }
   const opened = await opensFor(doors)(input.round.id, input.viewingKey, false);
@@ -659,6 +688,8 @@ async function approveHere(
       + 'is approved where it is made, where this device first checks what it does. Nothing was built or sent.');
   }
   doors.progress?.('reading-the-chain');
+  /* The approvals counted before this one are the chain's, never the service's count. */
+  const before = await onChainHere(doors, named);
   const chain = await service.callState(doors.accountId);
   doors.progress?.('building');
   const { tx } = await doors.builder.governedCall({
@@ -667,7 +698,7 @@ async function approveHere(
     material: doors.material, chain, opened,
   });
   doors.progress?.('sending');
-  const sent = await service.approve(input.round.id, { tx });
+  const sent = await onChainHere(doors, await service.approve(input.round.id, { tx }));
   const wanted = counted(before) + 1;
   const seen = (r: RoundOnThePage) => counted(r) >= wanted || r.status === 'cancelled';
   const now = seen(sent) ? sent : await waitFor(doors, 'your approval', input.round.id, seen, sent);
@@ -699,10 +730,11 @@ export async function withdrawOnDevice(
   if (service.cancel === undefined) {
     throw new Error('This page cannot withdraw proposals. Reload the page to get the current version. Nothing was sent.');
   }
-  const now = await service.standing(input.round.id);
+  const now = await standingHere(doors, input.round.id);
   if (String(now.chainId).toLowerCase() !== String(input.round.chainId).toLowerCase()) {
     throw new Error('the company now names another proposal than the one shown here. Nothing was built or sent.');
   }
+  /* The chain never held it: the service marks it withdrawn, and no device takes that as withdrawn while its window is open. */
   if (!now.raisedAt) return service.cancel(input.round.id, {});
   const opened = await opensFor(doors)(input.round.id, input.viewingKey, false);
   doors.progress?.('reading-the-chain');
@@ -762,15 +794,23 @@ export type GovernedOutcome =
   | { readonly state: 'waiting-for-approvals'; readonly round: RoundOnThePage };
 
 
+/**
+ * The changes this device raises, approves and carries out through the company's
+ * records (`governOnDevice`). A recovery of the record anchor never is: it runs
+ * while those records are stopped, from the chain and a file its raiser hands
+ * over (`records-recovered-here.ts`).
+ */
+type GovernedThroughTheRecords = Exclude<GovernanceOnTheWire, { readonly kind: 'recover-anchor' }>;
+
 /** Each change's kind, as a proposal's sealed record names it. */
-const KIND_OF: Readonly<Record<GovernanceOnTheWire['kind'],
+const KIND_OF: Readonly<Record<GovernedThroughTheRecords['kind'],
   'add-signer' | 'set-threshold' | 'set-vault-threshold' | 'set-spending-policy' | 'set-policy-bar'>> = {
   'add-signer': 'add-signer', threshold: 'set-threshold', 'vault-threshold': 'set-vault-threshold',
   'spending-policy': 'set-spending-policy', 'policy-bar': 'set-policy-bar',
 };
 
 /** The circuit that carries each change out. */
-const CARRIED_BY: Readonly<Record<GovernanceOnTheWire['kind'], CarryCircuit>> = {
+const CARRIED_BY: Readonly<Record<GovernedThroughTheRecords['kind'], CarryCircuit>> = {
   'add-signer': 'amendSigner', threshold: 'setThreshold', 'vault-threshold': 'setVaultThreshold',
   'spending-policy': 'setPolicy', 'policy-bar': 'setPolicyBar',
 };
@@ -782,28 +822,55 @@ const CARRIED_BY: Readonly<Record<GovernanceOnTheWire['kind'], CarryCircuit>> = 
  * is none, and a new one is written down.
  */
 async function liveRoundHere(
-  doors: GovernedCallDoors, viewingKey: string, change: GovernanceOnTheWire,
-): Promise<{ round: RoundOnThePage; opened: OpenedRound } | null> {
+  doors: GovernanceDoors, viewingKey: string, change: GovernanceOnTheWire,
+): Promise<{ round: RoundOnThePage; opened: OpenedRound; filed: SealedProposal; enteredNow: boolean } | null> {
   const { service } = doors;
   if (!service.sealedProposals) {
     throw new NotOpenedOnThisDevice('This page cannot read the company\'s records, so it cannot find this change. Reload the '
       + 'page to get the current version.');
   }
-  const candidates = (await service.sealedProposals(doors.accountId))
+  if (doors.records === undefined) {
+    throw new NotOpenedOnThisDevice('This page cannot read the company\'s records, so it cannot find this change. Reload the '
+      + 'page to get the current version.');
+  }
+  /*
+   * Every proposal the company's records name must be in the list: one withheld is never a change with no proposal yet
+   * (`listedHere`); and each stands where the chain says it does, never where the service's plain fields say.
+   */
+  const served = await service.sealedProposals(doors.accountId);
+  const listed = await standingOnChainHere(doors.records, listedHere(await doors.records.directory(kindAsked('proposal')), 'proposal', served, 'proposal'));
+  const candidates = listed
     .filter((p) => p.accountId === doors.accountId && p.status === 'open')
     .sort((a, b) => (a.raisedAt ? 0 : 1) - (b.raisedAt ? 0 : 1) || b.createdAt.localeCompare(a.createdAt));
+  const own = signingPublicKeyOf(doors.material.signingSecret as Hex);
+  /* An entry of this seat's own that the company's records would not keep: said rather than raising the change twice. */
+  let notEntered: unknown = null;
   for (const p of candidates) {
     let opened: OpenedRound;
+    let enteredNow = false;
     try {
       opened = await opensFor(doors)(p.id, viewingKey, false);
     } catch {
-      continue;
+      /*
+       * A proposal this seat wrote down is not opened while no entry names it, so one whose entry was not kept is
+       * entered here, by its filer, and opened again. Another seat's is its own filer's to enter.
+       */
+      if (p.filedBy?.publicKey.toLowerCase() !== own || proposalFilingRefusal(doors.accountId, p) !== null) continue;
+      try {
+        await proposalEntered(doors, proposalEntry(doors.accountId, p));
+        enteredNow = true;
+        opened = await opensFor(doors)(p.id, viewingKey, false);
+      } catch (e) {
+        notEntered ??= e;
+        continue;
+      }
     }
     if (opened.governance === undefined || !('kind' in opened.governance)) continue;
     if (!sameGovernance(opened.governance as GovernanceOnTheWire, change)) continue;
     return { round: { id: p.id, chainId: p.chainId, status: p.status, approvalCount: p.approvalCount,
-      ...(p.txRef === undefined ? {} : { txRef: p.txRef }), ...(p.raisedAt === undefined ? {} : { raisedAt: p.raisedAt }) }, opened };
+      ...(p.txRef === undefined ? {} : { txRef: p.txRef }), ...(p.raisedAt === undefined ? {} : { raisedAt: p.raisedAt }) }, opened, filed: p, enteredNow };
   }
+  if (notEntered !== null) throw notEntered;
   return null;
 }
 
@@ -838,6 +905,25 @@ const meetsTheBar = async (
 };
 
 /**
+ * **NO SIGNER IS SEATED BESIDE THE FOUNDING SIGNER BEFORE THE COMPANY IS
+ * FOUNDED ON CHAIN** (`foundedOnChainHere`): the company's founding seat is read
+ * from its first anchor, which must be made while that seat is the account's
+ * only one and must hold the company's first state and first roster. Refused,
+ * saying what resolves it, before a seat is raised, approved or carried out.
+ */
+async function refuseASecondSignerBeforeTheFounding(doors: GovernanceDoors): Promise<void> {
+  if (doors.records === undefined) {
+    throw new NotOpenedOnThisDevice('This page cannot read the company\'s records, so it cannot seat a signer. Reload the page to '
+      + 'get the current version.');
+  }
+  const why = foundedOnChainHere(await doors.records.directory(FOUNDING_ASKED));
+  if (why !== null) {
+    throw new Error(`No signer is added before the records the company was founded with are anchored on chain (${why}). `
+      + 'Nothing was sent. Open the company on its founding signer\'s device to anchor them, then add the signer again.');
+  }
+}
+
+/**
  * **A GOVERNANCE CHANGE TAKEN AS FAR AS THIS DEVICE CAN TAKE IT.** The
  * proposal the company already holds for it is used; with none, one is written
  * down here - sealed under the company's viewing key and signed by this seat -
@@ -850,7 +936,7 @@ const meetsTheBar = async (
 async function governOnDevice(
   doors: GovernanceDoors,
   input: {
-    viewingKey: string; change: GovernanceOnTheWire; summary: string; body: GovernancePayloadBody;
+    viewingKey: string; change: GovernedThroughTheRecords; summary: string; body: GovernancePayloadBody;
     before?: () => Promise<void>;
     /** For a change carried out at a bar other than the account's threshold: that bar, from what the chain holds. */
     bar?: (bars: BarsOnTheChain) => number;
@@ -867,6 +953,7 @@ async function governOnDevice(
   const check = async (): Promise<void> => {
     const counts = changeCounted(input.change);
     if (counts !== null) refuseLeavingAVaultShort(await doors.approvers(), counts, doors.vaultName);
+    if (input.change.kind === 'add-signer') await refuseASecondSignerBeforeTheFounding(doors);
     await input.before?.();
   };
   const key = input.viewingKey as Hex;
@@ -876,7 +963,17 @@ async function governOnDevice(
   }
   const records = doors.records;
   const blinding = async (): Promise<string> => (await signedStateHere(records, doors.accountId, key)).assetBlinding;
-  let live = await liveRoundHere(doors, input.viewingKey, input.change);
+  const found = await liveRoundHere(doors, input.viewingKey, input.change);
+  /*
+   * **A PROPOSAL THIS SEAT WROTE DOWN IS ENTERED BY THIS SEAT, ON EVERY
+   * ATTEMPT.** An entry not kept the first time is made again here, so making
+   * the change again is what puts it in the company's records; one kept already
+   * is answered as entered. Another seat's proposal is its own filer's to enter.
+   */
+  if (found !== null && !found.enteredNow && found.filed.filedBy?.publicKey.toLowerCase() === signingPublicKeyOf(doors.material.signingSecret as Hex)) {
+    await proposalEntered(doors, proposalEntry(doors.accountId, found.filed));
+  }
+  let live: { round: RoundOnThePage; opened: OpenedRound } | null = found;
   if (live === null) {
     if (!service.file) throw new Error('This page cannot write proposals down. Reload the page to get the current version. Nothing was sent.');
     await check();
@@ -906,11 +1003,14 @@ async function governOnDevice(
       order: { circuit: 'propose', governance: input.change, half: governanceHalf(salt, opened, await blinding()), proposal: identity.chainId },
     });
     doors.progress?.('sending');
-    const sent = await service.file(doors.accountId, { proposal: filing, tx, version: DEVICE_RAISE_VERSION, salt });
+    const sent = await onChainHere(doors, await service.file(doors.accountId, { proposal: filing, tx, version: DEVICE_RAISE_VERSION, salt }));
+    await proposalEntered(doors, proposalEntry(doors.accountId, filing));
     const round = sent.raisedAt ? sent : await waitFor(doors, 'this proposal', filing.id, (r) => Boolean(r.raisedAt), sent);
     live = { round, opened };
   } else if (!live.round.raisedAt) {
-    const { round, opened } = live;
+    /* Opened again for a send: the half of its raise, the change it seals, is read only for one. */
+    const { round } = live;
+    const opened = await opensFor(doors)(round.id, input.viewingKey, true);
     doors.progress?.('reading-the-chain');
     const chain = await service.callState(doors.accountId);
     doors.progress?.('building');
@@ -919,7 +1019,7 @@ async function governOnDevice(
       order: { circuit: 'propose', governance: input.change, half: governanceHalf(opened.salt, opened, await blinding()), proposal: opened.chainId },
     });
     doors.progress?.('sending');
-    const sent = await service.send(round.id, { tx, version: DEVICE_RAISE_VERSION });
+    const sent = await onChainHere(doors, await service.send(round.id, { tx, version: DEVICE_RAISE_VERSION }));
     live = { round: sent.raisedAt ? sent : await waitFor(doors, 'this proposal', round.id, (r) => Boolean(r.raisedAt), sent), opened };
   }
   let { round } = live;
@@ -931,7 +1031,7 @@ async function governOnDevice(
       round = await approveHere(doors, { round, viewingKey: input.viewingKey, of }, true);
     } catch (e) {
       if (!approvedAlready(e)) throw e;
-      round = await service.standing(round.id);
+      round = await standingHere(doors, round.id);
     }
   }
   if (!(await meetsTheBar(doors, round, input.bar))) return { state: 'waiting-for-approvals', round };
@@ -953,6 +1053,24 @@ async function governOnDevice(
   return { state: 'done', round: done };
 }
 
+/**
+ * **THIS SEAT'S PROPOSAL ENTERED IN THE COMPANY'S RECORDS**, or refused in the
+ * words that fix it: the proposal is written down and raised, and making the
+ * change again from this page enters it.
+ */
+async function proposalEntered(doors: GovernanceDoors, entry: ManifestEntryBody): Promise<void> {
+  try {
+    await doors.filing.entered.enter([entry]);
+  } catch (e) {
+    if (!(e instanceof FiledNotEntered)) throw e;
+    throw new FiledNotEntered(e.why, {
+      cause: e,
+      again: 'The proposal is written down and raised. Make this change again from this page: this device finds the proposal it '
+        + 'wrote down and enters it, and nothing is raised twice.',
+    });
+  }
+}
+
 /** What writing a governance proposal down needs of this device: its seat, the company's key epoch, and fresh names. */
 interface GovernanceFilingDoors {
   /** This device's seat on the company, as its directory entry names it. */
@@ -960,6 +1078,8 @@ interface GovernanceFilingDoors {
   readonly keyEpoch: number;
   readonly salt: () => string;
   readonly newId: () => string;
+  /** The one filing call, bound to this company and this seat: a proposal written down here is entered in the company's records. */
+  readonly entered: RecordsEntered;
 }
 
 /**
@@ -979,7 +1099,7 @@ export type GovernanceDoors = GovernedCallDoors & {
  * policy change needs change no seat and no vault's threshold, so they are not
  * counted.
  */
-const changeCounted = (change: GovernanceOnTheWire): VaultCheckChange | null => {
+const changeCounted = (change: GovernedThroughTheRecords): VaultCheckChange | null => {
   if (change.kind === 'add-signer') return { kind: 'seat', leaf: change.leaf.toLowerCase() as Hex, rights: EVERY_RIGHT };
   if (change.kind === 'threshold') return { kind: 'threshold', threshold: Number(change.threshold) };
   if (change.kind === 'spending-policy' || change.kind === 'policy-bar') return null;

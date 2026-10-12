@@ -7,14 +7,19 @@
  * company. Every entry is signed by a real wallet's committee key, and every
  * request a device sends is recorded.
  */
-import { aDevicesRosterMemory } from '../testing/a-roster-a-seat-filed.js';
 import { expect, beforeAll, afterAll } from 'vitest';
 import express from 'express';
 import type { AddressInfo } from 'node:net';
 import { identityFromSecret } from 'midnight-identity';
 import { committeeKeyFor } from 'midnight-identity/profile/committee-key';
 import { signDirectoryEntry, signRecordsKey } from 'midnight-identity/profile/records-key';
-import { directoryHere, type DirectoryHere } from 'vaults-web-shared/vault-page-doors.js';
+import { directoryHere, directoryWithItsRecordsHere, type DirectoryHere, type DirectoryHereDeps, type DirectoryRead } from 'vaults-web-shared/vault-page-doors.js';
+import type { RecordsAsked } from '../midnight/records-held.js';
+import { aChainAnchor, anchoredOver, anchorFunctions, heldBy, anchorSentInATest } from '../testing/record-tree-double.js';
+import { anchorServiceFor, anchorTheRecordsHere } from 'vaults-web-shared/records-anchored-here.js';
+import { sealRoster } from '../core/roster-record.js';
+import { signedFoundingState } from '../core/founding-state.js';
+import { newStateBlinding, sealState } from '../core/account.js';
 import type { CompanyLabel } from 'midnight-identity/profile/company-label';
 import { signJoinCode, type JoinCode } from 'midnight-identity/profile/join-code';
 import { newSigningKeypair, newSymmetricKey, sign, type Hex } from '../core/crypto.js';
@@ -23,12 +28,18 @@ import { inboxPublicKey } from '../core/sealed-records.js';
 import type { SealedAccount } from '../core/types.js';
 import { seatDirectoryRoutes, directoryOf, type DirectoryChainRead } from './seat-directory-route.js';
 import { companyRecordsRoutes, MemoryCompanyRecordStore, withTheRosterIn } from './company-records-route.js';
-import type { PersonStanding, SealedCompanyRecord } from '../midnight/sealed-record-wire.js';
+import {
+  signCompanyFiling, toCompanyWire, type CompanyRecordKind, type PersonStanding, type SealedCompanyRecord, type WireRecord,
+} from '../midnight/sealed-record-wire.js';
+import { companyRecordEntry, type ManifestEntryBody } from '../midnight/record-manifest.js';
 import { invitationRoutes } from './invitations-route.js';
 import { ownsPersonIn, peopleRoutes } from './people-route.js';
 import type { ChainHolders, DirectoryEntry, DirectoryFiling } from '../midnight/seat-directory.js';
 import { directoryChangeMessage } from '../midnight/seat-directory.js';
 import type { InvitationSend, InvitingCompany, InvitingSeat } from 'vaults-web-shared/invitation-on-device.js';
+import { manifestServiceFor, recordsEnteredFor, treeServiceFor } from 'vaults-web-shared/record-entered-here.js';
+import { filedAsIn, recordManifestRoutes } from './record-manifest-route.js';
+import { MemorySealedPoolStore, type SealedPoolStore } from '../midnight/vault-pool.js';
 
 export const CO = 'acc_invites';
 export const OTHER = 'acc_invites_other';
@@ -40,17 +51,31 @@ export const KEY = newSymmetricKey();
 export const ORIGIN = 'https://payroll.example';
 
 export interface Seat extends InvitingSeat { person: string; seat: string; entry: DirectoryEntry; n: number }
-export const seatOf = (person: string, n: number, label = LABEL, address = ADDRESS): Seat => {
+/**
+ * A device signed in as `person`, reading the service's answers as the page's
+ * own `api` does: a refusal throws, with the service's words.
+ */
+export const apiAs = (person: string) => async (path: string, init?: RequestInit): Promise<any> => {
+  const r = await sendAs(person)(path, { method: (init?.method ?? 'GET') as never, ...(init?.body === undefined ? {} : { body: String(init.body) }) });
+  if (r.status >= 300) throw Object.assign(new Error(String((r.body as { error?: string }).error ?? r.status)), { status: r.status, body: r.body });
+  return r.body;
+};
+
+export const seatOf = (person: string, n: number, label = LABEL, address = ADDRESS, company = CO): Seat => {
   const identity = identityFromSecret(new Uint8Array(32).fill(n));
   const signing = newSigningKeypair();
   const seat = n.toString(16).padStart(2, '0').repeat(32);
   const committeeKey = committeeKeyFor(identity, label) as { tag: string; value: string };
   const statement = signDirectoryEntry(identity, label, address, new Uint8Array(32).fill(n + 100), signing.publicKey, seat);
-  return { n, person, seat, signingSecret: signing.secret, committeeKey, statement, entry: { person, committeeKey, statement } };
+  return {
+    n, person, seat, signingSecret: signing.secret, committeeKey, statement, entry: { person, committeeKey, statement },
+    /* Every filing this seat makes is entered in its company's records, over the manifest route mounted below. */
+    entered: recordsEnteredFor(manifestServiceFor(apiAs(person)), company, signing.secret),
+  };
 };
 export const ADA = seatOf('ada', 1);
 export const BO = seatOf('bo', 2);
-export const EVE = seatOf('eve', 9, OTHER_LABEL, OTHER_ADDRESS);
+export const EVE = seatOf('eve', 9, OTHER_LABEL, OTHER_ADDRESS, OTHER);
 
 const accountOf = (id: string, members: string[], label: CompanyLabel, address: string): SealedAccount => ({
   id, createdAt: 'now', keyEpoch: 0, threshold: 1, signerCount: 2, memberUserIds: members, pendingSigners: [], wrappedKeys: [],
@@ -73,12 +98,39 @@ export const personVersions = async (id: string): Promise<readonly SealedCompany
   const company = await peopleRecords.companyOfPerson(id);
   return company === null ? [] : peopleRecords.versions(company, 'person', id);
 };
+/**
+ * **A COMPANY RECORD FILED BY `seat`, AS ITS DEVICE FILES ONE**: the next
+ * version of `id`, signed by the seat and kept where the service keeps the
+ * company's records, and the entry that names it for the seat to enter. A
+ * `policy` by default, which an admin files; an approver files a `proposal`.
+ */
+export const aRecordFiledBy = async (seat: Seat, id: string, kind: CompanyRecordKind = 'policy', company = CO): Promise<ManifestEntryBody> => {
+  const version = (await peopleRecords.versions(company, kind, id)).length + 1;
+  const rec = signCompanyFiling({
+    company, kind, id, version, keyEpoch: 0, sealed: { iv: id, tag: String(version), body: seat.person }, wrapped: [],
+  }, seat.signingSecret as Hex);
+  await peopleRecords.put(rec);
+  return companyRecordEntry(rec);
+};
+/**
+ * **A VERSION OF A PERSON A SEAT'S DEVICE FILES AT `path` AND ENTERS** in the
+ * company's records once the service keeps it, as a device's own filing does:
+ * the service's answer.
+ */
+export const personFiledBy = async (seat: Seat, path: string, rec: SealedCompanyRecord) => {
+  const r = await sendAs(seat.person)(path, { method: 'POST', body: JSON.stringify({ person: toCompanyWire(rec) }) });
+  if (r.status === 201) await seat.entered.enter([companyRecordEntry(rec)]);
+  return r;
+};
 /** The next version of the person `id`, written by the service itself and signed by no seat: what no device may believe. */
 export const aVersionNoSeatSigned = async (id: string, status: PersonStanding): Promise<void> => {
   const newest = (await newestPerson(id))!;
   const { filedBy: _signature, ...unsigned } = newest;
   await peopleRecords.put({ ...unsigned, version: newest.version + 1, facts: { ...newest.facts!, status } });
 };
+/** Each vault's records as the server keeps them, one store per kind of vault record. */
+const vaultStores = new Map<WireRecord, SealedPoolStore>();
+export const vaultRecords = { of: (record: WireRecord): SealedPoolStore => vaultStores.get(record) ?? vaultStores.set(record, new MemorySealedPoolStore()).get(record)! };
 export const metered: string[] = [];
 export const refusals: string[] = [];
 /** Every request any device sent: its method, its path and its body. */
@@ -104,14 +156,44 @@ export function sendAs(person: string | null): InvitationSend {
 export const fromAda = sendAs('ada');
 
 /**
+ * The anchor Acme's account holds on the test's chain: one head, moved on by
+ * the account's own `anchorHeadOf`, each call kept with who held the account
+ * as the test's chain holds it when the call lands.
+ */
+export const acmeHeldNow = () => {
+  const c = chains.has(CO) ? chains.get(CO)! : chain;
+  if (c === null) throw new Error('the test has the company on no chain');
+  return heldBy(c);
+};
+/**
+ * **ACME HELD BY MORE THAN ONE KEY WHILE `go` RUNS**: its account requiring two
+ * approvals, and none of its runs vouching for a head, so a device new to it
+ * checks its records from the first header. Put back as it was after.
+ */
+export const heldByMoreThanOneKey = async <T>(go: () => Promise<T>): Promise<T> => {
+  const was = chains.get(CO)!;
+  chains.set(CO, { ...was, approvals: 2 });
+  try {
+    return await go();
+  } finally {
+    chains.set(CO, was);
+  }
+};
+/** The time the test's chain sets for the next block: the test's own clock unless a test sets another. */
+export const acmeClock = { now: (): number => Date.now() };
+export const acmeChain = aChainAnchor(acmeHeldNow, () => acmeClock.now());
+/** Acme's records as a seat's device holds them: the test chain's anchors, and the tree the service serves. */
+const acmeAnchored: DirectoryHereDeps['anchored'] = (directory, asked) => anchoredOver(apiAs('ada'), CO, acmeChain.read)(directory, asked);
+
+/**
  * What a seat's device reads of Acme, afresh at each call, to believe its
  * records: every directory filing the service holds, and the chain as the test
  * sets it, read in place of the person's own wallet. Ada's seat is the one the
  * account was deployed with.
  */
 export const acmeReads = {
-  /** A device that has read none of Acme's roster before: a fresh memory at every read. */
-  get believed() { return aDevicesRosterMemory(); },
+  /** Acme's records as the head the test's chain holds them, over the tree routes mounted below. */
+  get anchored() { return acmeAnchored; },
   filings: async () => store.directoryFilingsOf(CO),
   holders: async () => {
     const c = await chainRead(CO, [ADA.seat, BO.seat]);
@@ -125,14 +207,21 @@ export const acmeReads = {
  * call: every filing the service holds, the chain as the test sets it, and Ada's
  * and Bo's wallets' own statements of their records keys.
  */
-export const acmeDirectory = (attestedBy: readonly Seat[] = [ADA, BO]): Promise<DirectoryHere> => directoryHere({
+export const acmeDirectoryDeps = (attestedBy: readonly Seat[] = [ADA, BO]): DirectoryHereDeps => ({
   accountId: CO, label: LABEL,
   ...acmeReads,
+  anchored: acmeAnchored,
   attested: async () => attestedBy.map((s) => ({
     committeeKey: s.committeeKey,
     statement: signRecordsKey(identityFromSecret(new Uint8Array(32).fill(s.n)), LABEL, ADDRESS, new Uint8Array(32).fill(s.n + 100), s.seat),
   })),
 });
+/** Acme's directory, with its records for what a read asks, as a device whose roster carries the statements of `attestedBy` reads it. */
+export const acmeDirectoryAttestedBy = (attestedBy: readonly Seat[]): DirectoryRead => (asked) => directoryHere(acmeDirectoryDeps(attestedBy), asked);
+export const acmeDirectory: DirectoryRead = acmeDirectoryAttestedBy([ADA, BO]);
+/** Acme's directory with the records it was replayed with, stopped or not: what an anchoring device reads (`directoryWithItsRecordsHere`). */
+export const acmeDirectoryWithItsFold = (asked?: RecordsAsked, attestedBy: readonly Seat[] = [ADA, BO]): Promise<DirectoryHere> =>
+  directoryWithItsRecordsHere(acmeDirectoryDeps(attestedBy), asked);
 
 export const DANAS_ADDRESS = `mn_shield-addr_test1${'q'.repeat(60)}`;
 /** Dana's payee code, as her own wallet signs it for a company. */
@@ -148,12 +237,56 @@ export interface MountedBeside {
   readonly directoryOf: (accountId: string) => ReturnType<typeof directoryOf>;
 }
 
+/** What Acme is founded with: its first roster and first state, each signed by Ada's seat; a file may give its own of either. */
+export interface AcmeFounding {
+  readonly roster?: () => SealedCompanyRecord;
+  readonly state?: () => SealedCompanyRecord;
+}
+
+/** Acme's first state, as Ada's founding device made and signed it. */
+export const ACME_STATE = signedFoundingState(CO, sealState({ entries: [] }, newStateBlinding(), KEY, 0), ADA.signingSecret as Hex);
+
+/**
+ * **ACME FOUNDED ON THE TEST'S CHAIN FROM ADA'S DEVICE**, while her seat is
+ * the account's only one: her first roster and first state kept where the
+ * service keeps them, entered by her seat with her directory entry, and
+ * anchored as the company's first batch, as her device anchors on its way in.
+ */
+const foundAcme = async (founding: AcmeFounding): Promise<void> => {
+  const roster = founding.roster?.() ?? signCompanyFiling(sealRoster(CO, {
+    name: 'Acme',
+    signers: [{ id: 'sig_ada', leafCommitment: ADA.seat as Hex, userId: 'ada', name: 'ada', status: 'active', signingPublicKey: ADA.statement.signingKey as Hex, wrappingPublicKey: 'ab'.repeat(32) as Hex, role: 'admin' } as never],
+  }, 1, 0, KEY), ADA.signingSecret as Hex);
+  expect(store.fileRoster(roster)).toBeNull();
+  await peopleRecords.put(founding.state?.() ?? ACME_STATE);
+  await anchorTheRecordsHere({
+    accountId: CO,
+    material: { signingSecret: ADA.signingSecret as Hex, blinding: '22'.repeat(32) as Hex, scope: '33'.repeat(32) as Hex } as never,
+    manifest: manifestServiceFor(apiAs('ada')),
+    tree: treeServiceFor(apiAs('ada')),
+    directory: () => acmeDirectoryWithItsFold({}, [ADA]),
+    directoryFilings: async () => store.directoryFilingsOf(CO),
+    onChain: acmeChain.onChain,
+    service: {
+      foundingRecords: anchorServiceFor(apiAs('ada')).foundingRecords,
+      sealedProposals: async (company) => store.listProposals(company),
+      callState: async () => ({ account: ADDRESS }) as never,
+      sendProven: async (_company, tx) => {
+        const { previous, batch, held, tag } = JSON.parse(tx) as { previous: Hex; batch: Hex; held: { approvals: number; signerRoot: Hex }; tag: Hex };
+        acmeChain.move(previous, batch, held, tag);
+      },
+    },
+    builder: { ...anchorFunctions, anchor: anchorSentInATest },
+  });
+};
+
 /**
  * Mounts the routes before the file's tests run, enters the three seats, and
  * closes the server after. `beside` mounts a file's own routes on the same app,
- * behind the same gates.
+ * behind the same gates. Acme is founded from Ada's device before Bo's seat is
+ * held (`foundAcme`), with `founding`'s roster when a file gives one.
  */
-export function aCompanyOfTwoSeats(beside?: (app: express.Express, deps: MountedBeside) => void): void {
+export function aCompanyOfTwoSeats(beside?: (app: express.Express, deps: MountedBeside) => void, founding: AcmeFounding = {}): void {
   let server: ReturnType<express.Express['listen']>;
   beforeAll(async () => {
     store.putAccount(accountOf(CO, ['ada', 'bo'], LABEL, ADDRESS));
@@ -181,14 +314,20 @@ export function aCompanyOfTwoSeats(beside?: (app: express.Express, deps: Mounted
     app.get('/api/accounts/:id/invites', signedIn, member, (req, res) => {
       res.json(store.listInvites(String(req.params.id)).map(({ token: _t, acceptanceHash: _a, offer: _o, handover: _h, ...rest }) => rest));
     });
+    app.use(recordManifestRoutes({
+      signedIn, member, store, directoryOf: (id) => directoryOf(store, chainRead, id),
+      filedAs: filedAsIn({ company: records, vault: vaultRecords, runs: (c) => store.listRuns(c), proposals: (c) => store.listProposals(c) }),
+    }));
     beside?.(app, { signedIn, member, records, directoryOf: (id) => directoryOf(store, chainRead, id) });
     await new Promise<void>((resolve) => { server = app.listen(0, '127.0.0.1', () => resolve()); });
     base = `http://127.0.0.1:${(server.address() as AddressInfo).port}`;
     const seated = (seats: Seat[]): ChainHolders => ({ seats: { committee: seats.map((s) => s.committeeKey), threshold: 1, seats: seats.map((s) => s.seat) }, approvals: 1 });
+    /* Ada founds Acme alone: her entry, then her first roster and state anchored while hers is the account's only seat. */
+    chain = seated([ADA]);
+    expect((await sendAs('ada')(`/api/accounts/${CO}/directory/1`, { method: 'POST', body: JSON.stringify({ company: CO, version: 1, change: { kind: 'claim', entry: ADA.entry } } satisfies DirectoryFiling) })).status).toBe(201);
+    await foundAcme(founding);
     chain = seated([ADA, BO]);
-    for (const [s, v] of [[ADA, 1], [BO, 2]] as const) {
-      expect((await sendAs(s.person)(`/api/accounts/${CO}/directory/${v}`, { method: 'POST', body: JSON.stringify({ company: CO, version: v, change: { kind: 'claim', entry: s.entry } } satisfies DirectoryFiling) })).status).toBe(201);
-    }
+    expect((await sendAs('bo')(`/api/accounts/${CO}/directory/2`, { method: 'POST', body: JSON.stringify({ company: CO, version: 2, change: { kind: 'claim', entry: BO.entry } } satisfies DirectoryFiling) })).status).toBe(201);
     /* Bo is an approver: a quorum of one, the chain's approvals, names his role. */
     const unsigned = { kind: 'role', seat: BO.seat, role: 'approver', threshold: 1, signatures: [] } as const;
     const message = directoryChangeMessage(CO, 3, unsigned as never);
