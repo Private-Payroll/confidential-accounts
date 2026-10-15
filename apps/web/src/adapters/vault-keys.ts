@@ -17,13 +17,14 @@ import { theVaultBuilder } from './vault-builder.js';
  * them: the company's keys released by the person's account first, then their
  * records key signed by their account for the seat their own key makes - with
  * the invitation they joined by, for an account that has not kept the company
- * yet - then this signer's vault keys, signed with their own key, offered to
- * the service with the directory entry their account signed in the same press.
+ * yet - then the directory entry their account signed in the same press, filed
+ * as soon as the directory takes it, then this signer's vault keys, signed with
+ * their own key and sealed, offered to the service.
  * The offer waits until a seat the company already believes folds it into the
  * roster from its own device: this one, once the company's directory believes
- * it, which it tries at every press. The entry is kept with their keys and
- * filed as soon as the directory takes it: now, or on a later way into the
- * company, unless the directory already holds exactly that entry.
+ * it, which it tries at every press. The entry is kept with their keys until
+ * the directory takes it: now, or on a later way into the company, unless the
+ * directory already holds exactly that entry.
  */
 
 /** What giving the keys hands back: the account's release, and its signed statement with who holds the company. */
@@ -64,18 +65,21 @@ export async function giveTheVaultKeys(
   const signed = await recordsKeyFromTheWallet(ACCOUNT_ORIGIN, {
     company: released.company, account: released.account, seat, signingKey, ...invitedByForTheWallet(signer.invitedBy),
   });
-  await offerVaultKeysHere(api, companyId, {
-    signerId: signer.signerId, signingSecret: signer.signingSecret, companyKey: released.companyKey,
-    committeeKey: released.committeeKey, recordsKey: signed.statement, entry: signed.entry!,
-  });
   /*
    * The answer was read against this filing key, so it carries the entry; a wallet that signed none is refused there.
-   * An entry is believed only once the account is held by a committee that lists this signer's key, which may be after
-   * this press, so it is kept with this person's keys and filed now and on every way into the company until the
-   * directory holds it (`fileTheOwedDirectoryEntry`): seating files it, with no later press needed.
+   * The entry is filed first: the service keeps an offer only for a person who has filed an entry for the seat, or
+   * while nobody has, so a claim another member filed on this seat first would refuse an offer made before it. An
+   * entry is believed on its sealed opening and its seat's leaf alone, but it can be filed only once this device
+   * holds its seat's opening and can open the company's key, which may be after this press, so it is kept with this
+   * person's keys and filed now and on every way into the company until the directory holds it
+   * (`fileTheOwedDirectoryEntry`): seating files it, with no later press needed.
    */
   await oweDirectoryEntry(companyId, { person, company: released.company, signed: { committeeKey: signed.committeeKey, entry: signed.entry! } });
-  await fileTheOwedDirectoryEntry(api, companyId, directoryEntryOwed(companyId));
+  await fileTheOwedDirectoryEntry(api, companyId, directoryEntryOwed(companyId), async () => ({ signingSecret: signer.signingSecret, viewingKey }));
+  await offerVaultKeysHere(api, companyId, {
+    signerId: signer.signerId, signingSecret: signer.signingSecret, companyKey: released.companyKey,
+    committeeKey: released.committeeKey, recordsKey: signed.statement, entry: signed.entry!, viewingKey,
+  });
   /*
    * Every open offer, this signer's own included, folded into the roster from this device - which the service files
    * only once the company's directory believes this seat. Until then the offer waits for a seat it does believe.

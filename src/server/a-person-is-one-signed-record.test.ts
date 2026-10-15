@@ -6,6 +6,7 @@
  * waits on their invitation. A person the service's main store still held from
  * before is moved there, and let go of here.
  */
+import { leavesOfTheContract, seatOpenedFor } from '../testing/directory-seats.js';
 import { describe, it, expect, beforeAll, afterAll } from 'vitest';
 import express from 'express';
 import type { AddressInfo } from 'node:net';
@@ -25,6 +26,7 @@ import { openPerson, sealPerson } from '../core/person-record.js';
 import { seatDirectoryRoutes, directoryOf, type DirectoryChainRead } from './seat-directory-route.js';
 import { companyRecordsRoutes, fileCompanyRecord, MemoryCompanyRecordStore, movePeopleToTheirRecords, withTheRosterIn } from './company-records-route.js';
 import type { ChainHolders, DirectoryEntry, DirectoryFiling } from '../midnight/seat-directory.js';
+import { directoryEntryMade } from '../midnight/seat-directory.js';
 import { fromCompanyWire, signCompanyFiling, toCompanyWire, type SealedCompanyRecord } from '../midnight/sealed-record-wire.js';
 import { HttpCompanyRecordStore, FilingNotBelieved, RecordWithheld, type WireSend } from 'vaults-web-shared/http-sealed-pool-store.js';
 import { directoryJudge } from 'vaults-web-shared/vault-page-doors.js';
@@ -41,16 +43,18 @@ const KEY = newSymmetricKey();
 const OTHER_KEY = newSymmetricKey();
 
 interface Seat { person: string; seat: string; signing: { secret: Hex; publicKey: Hex }; entry: DirectoryEntry; committeeKey: { tag: string; value: string }; n: number }
-const seatOf = (person: string, n: number, label = LABEL, address = ADDRESS): Seat => {
+const seatOf = (person: string, n: number, label = LABEL, address = ADDRESS, company = CO, viewingKey = KEY): Seat => {
   const identity = identityFromSecret(new Uint8Array(32).fill(n));
   const signing = newSigningKeypair();
-  const seat = n.toString(16).padStart(2, '0').repeat(32);
   const committeeKey = committeeKeyFor(identity, label) as { tag: string; value: string };
-  return { n, person, seat, signing, committeeKey, entry: { person, committeeKey, statement: signDirectoryEntry(identity, label, address, new Uint8Array(32).fill(n + 100), signing.publicKey, seat) } };
+  /* The seat as a seating device makes it: its leaf commits to this wallet key, and its opening shows that. */
+  const { seat, opening } = seatOpenedFor(committeeKey, n);
+  const signed = signDirectoryEntry(identity, label, address, new Uint8Array(32).fill(n + 100), signing.publicKey, seat);
+  return { n, person, seat, signing, committeeKey, entry: directoryEntryMade({ company, person, committeeKey, signed, opening, signingSecret: signing.secret, viewingKey }) };
 };
 const ADA = seatOf('ada', 1);
 const BO = seatOf('bo', 2);
-const EVE = seatOf('eve', 9, OTHER_LABEL, OTHER_ADDRESS);
+const EVE = seatOf('eve', 9, OTHER_LABEL, OTHER_ADDRESS, OTHER, OTHER_KEY);
 
 const accountOf = (id: string, members: string[], label: CompanyLabel, address: string): SealedAccount => ({
   id, createdAt: 'now', keyEpoch: 0, threshold: 1, signerCount: 2, memberUserIds: members, pendingSigners: [], wrappedKeys: [],
@@ -83,7 +87,9 @@ beforeAll(async () => {
   }));
   await new Promise<void>((resolve) => { server = app.listen(0, '127.0.0.1', () => resolve()); });
   base = `http://127.0.0.1:${(server.address() as AddressInfo).port}`;
-  const seated = (seats: Seat[]): ChainHolders => ({ seats: { committee: seats.map((s) => s.committeeKey), threshold: 1, seats: seats.map((s) => s.seat) }, approvals: 1 });
+  const seated = (seats: Seat[]): ChainHolders => ({
+    seats: { committee: seats.map((s) => s.committeeKey), threshold: 1, seats: seats.map((s) => s.seat) }, approvals: 1,
+  });
   chain = seated([ADA, BO]);
   for (const [s, v] of [[ADA, 1], [BO, 2]] as const) {
     const r = await sendAs(s.person)(`/api/accounts/${CO}/directory/${v}`, { method: 'PUT', body: JSON.stringify({ company: CO, version: v, change: { kind: 'claim', entry: s.entry } } satisfies DirectoryFiling) });
@@ -182,7 +188,7 @@ describe('A PERSON IS FILED FROM A SEAT\'S DEVICE, AND THE SERVICE KEEPS THAT ON
       statement: signRecordsKey(identityFromSecret(new Uint8Array(32).fill(s.n)), LABEL, ADDRESS, new Uint8Array(32).fill(s.n + 100), s.seat),
     }));
     const judge = directoryJudge({
-      accountId: CO, label: LABEL, holders: holders as never, attested, filings: async () => store.directoryFilingsOf(CO),
+      accountId: CO, label: LABEL, viewingKey: KEY, holders: holders as never, attested, filings: async () => store.directoryFilingsOf(CO), leaves: leavesOfTheContract,
       /* Every version Ada's seat filed, entered by her seat; nothing anchored yet. */
       anchored: async () => heldEntering(CO, (await records.versions(CO, 'person', 'emp_dana'))
         .filter((r) => r.filedBy?.publicKey === ADA.signing.publicKey).map((r) => ({ entry: companyRecordEntry(r), signingSecret: ADA.signing.secret }))),

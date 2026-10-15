@@ -12,7 +12,8 @@ import type { UnlockRequest } from './request.js';
 import {
   DIRECTORY_ENTRY_STATEMENT_TAG, HOLDERS_ANSWER_SCHEMA, RECORDS_KEY_ANSWER_SCHEMA, RECORDS_KEY_STATEMENT_TAG, RecordsKeyRefused,
   INVITATION_REFUSAL, directoryEntrySignedBy, directoryEntryStatementBytes, whyTheInvitationDoesNotNameIt, holdersAnswerFor, readHoldersAnswer, readRecordsKeyAnswer, recordsKeyAnswerFor,
-  recordsKeySignedBy, recordsKeyStatementBytes, recordsPublicKeyOf, signDirectoryEntry, signRecordsKey,
+  recordsKeySignedBy, recordsKeyStatementBytes, recordsPublicKeyOf, seatBlinding, signDirectoryEntry, signRecordsKey, walletKeyProvedBy,
+  SEAT_BLINDING_DOMAIN, type LeafOf, type SeatOpening,
 } from './records-key.js';
 
 /*
@@ -30,6 +31,56 @@ const ANOTHER_SEAT = '6f'.repeat(32);
 const companyKey = new Uint8Array(32).fill(4);
 const hex = (b: Uint8Array): string => Buffer.from(b).toString('hex');
 const flip = (h: string, at = 0): string => h.slice(0, at) + (h[at] === '0' ? '1' : '0') + h.slice(at + 1);
+/*
+ * The leaf an opening makes is the account's own `signerLeaf`, which the caller supplies; any function of the
+ * opening's public key, blinding and scope stands for it here, since only whether it matches the seat is read.
+ */
+const leafOf: LeafOf = (o) => hex(sha256(new TextEncoder().encode(`${o.publicKey}:${o.blinding}:${o.scope}`)));
+/** A seat made for `walletKey` under `salt`, as a seating device makes one, with the leaf `leafOf` makes of it. */
+const seatMadeFor = (walletKey: { tag: string; value: string }, salt: string): { seat: string; opening: SeatOpening } => {
+  const opening: SeatOpening = {
+    publicKey: '2c'.repeat(32), scope: '3d'.repeat(32), blinding: seatBlinding(walletKey, salt), walletKey: { tag: 'schnorr', value: walletKey.value }, salt,
+  };
+  return { seat: leafOf(opening)!, opening };
+};
+
+describe('A SEAT\'S OPENING PROVES THE WALLET KEY ITS LEAF WAS MADE FOR, AND NO OTHER', () => {
+  const mine = committeeKeyFor(me, CO) as { tag: string; value: string };
+  const theirs = committeeKeyFor(somebodyElse, CO) as { tag: string; value: string };
+  const { seat, opening } = seatMadeFor(mine, '11'.repeat(32));
+
+  it('the blinding is the hash of the key and the salt, under its own domain', () => {
+    /* RED WHEN: the blinding is made any other way: without the domain, the key or the salt. */
+    const enc = new TextEncoder();
+    const bytes = new Uint8Array([...enc.encode(SEAT_BLINDING_DOMAIN), 0, ...enc.encode('schnorr'), 0,
+      ...Buffer.from(mine.value, 'hex'), ...Buffer.from('11'.repeat(32), 'hex')]);
+    expect(opening.blinding).toBe(hex(sha256(bytes)));
+    /* RED WHEN: two salts, or two keys, give one blinding. */
+    expect(seatBlinding(mine, '12'.repeat(32))).not.toBe(opening.blinding);
+    expect(seatBlinding(theirs, '11'.repeat(32))).not.toBe(opening.blinding);
+    /* RED WHEN: a key that is not a schnorr key, or a salt that is not 32 bytes, makes a blinding. */
+    expect(() => seatBlinding({ tag: 'ecdsa', value: mine.value }, '11'.repeat(32))).toThrow(/Nothing was made/);
+    expect(() => seatBlinding(mine, '11'.repeat(31))).toThrow(/Nothing was made/);
+  });
+
+  it('proves the key for the seat its leaf is, and nothing for any other key or seat', () => {
+    expect(walletKeyProvedBy(opening, seat, leafOf)).toEqual({ tag: 'schnorr', value: mine.value });
+    /* RED WHEN: the opening names another key, its leaf unchanged: the blinding is not that key's. */
+    expect(walletKeyProvedBy({ ...opening, walletKey: theirs }, seat, leafOf)).toBeNull();
+    /* RED WHEN: an opening for another seat proves a key for this one. */
+    expect(walletKeyProvedBy(seatMadeFor(theirs, '11'.repeat(32)).opening, seat, leafOf)).toBeNull();
+    /* RED WHEN: the leaf is not checked: another salt, its blinding true to it, makes another leaf. */
+    const again = seatMadeFor(mine, '13'.repeat(32)).opening;
+    expect(walletKeyProvedBy(again, seat, leafOf)).toBeNull();
+    /* RED WHEN: an opening proves anything with no leaf worked out, or with a leaf that could not be. */
+    expect(walletKeyProvedBy(opening, seat, null)).toBeNull();
+    expect(walletKeyProvedBy(opening, seat, () => null)).toBeNull();
+    expect(walletKeyProvedBy(opening, seat, () => { throw new Error('no'); })).toBeNull();
+    /* RED WHEN: something that is not an opening proves anything. */
+    expect(walletKeyProvedBy({ ...opening, salt: 'zz' }, seat, leafOf)).toBeNull();
+    expect(walletKeyProvedBy(null, seat, leafOf)).toBeNull();
+  });
+});
 
 describe('A RECORDS KEY AND A SEAT, SIGNED BY THE WALLET WITH THE COMMITTEE KEY', () => {
   const statement = signRecordsKey(me, CO, ACCOUNT, companyKey, SEAT);
@@ -119,39 +170,59 @@ describe('THE RECORDS-KEY ASK: SIGNED ONLY FOR A SEAT THE ACCOUNT HOLDS NOW, AND
   });
 
   it('A WALLET THAT KEPT NO ACCOUNT SIGNS NOTHING; THE INVITATION IS ONLY READ, AND EACH WAY IT CAN BE WRONG IS SAID', () => {
-    /* The inviting signer: their committee key and the entry their wallet signed, as the invitation carries them. */
-    const INVITER_SEAT = '7a'.repeat(32);
+    /* The inviting signer: their wallet key, the entry their wallet signed and their own seat's opening, as the invitation carries them. */
     const inviterKey = committeeKeyFor(somebodyElse, CO) as { tag: 'schnorr'; value: string };
+    const { seat: INVITER_SEAT, opening } = seatMadeFor(inviterKey, '7a'.repeat(32));
     const entry = signDirectoryEntry(somebodyElse, CO, ACCOUNT, new Uint8Array(32).fill(6), '2b'.repeat(32), INVITER_SEAT);
-    const invitedBy = { committeeKey: inviterKey, statement: entry };
-    const onChain = { committee: [...seats.committee, inviterKey], threshold: 1, seats: [...seats.seats, INVITER_SEAT] };
+    const invitedBy = { committeeKey: inviterKey, statement: entry, opening };
+    /* The inviter is no super admin: the committee holds only this person's key. */
+    const onChain = { committee: seats.committee, threshold: 1, seats: [...seats.seats, INVITER_SEAT] };
     /* An invitation that checks out still sets nothing: the person's fingerprint confirmation does, on the screen. */
-    expect(whyTheInvitationDoesNotNameIt(ask({ invitedBy }), onChain)).toBeNull();
+    /* RED WHEN: an inviter whose wallet key is not on the committee is refused. */
+    expect(whyTheInvitationDoesNotNameIt(ask({ invitedBy }), onChain, leafOf)).toBeNull();
     /* RED WHEN: a wallet with no account kept signs for an account the page named, with or without an invitation. */
-    expect(() => recordsKeyAnswerFor(me, ask({ invitedBy }), onChain, NOW)).toThrow(/Compare the company's fingerprint/);
-    expect(() => recordsKeyAnswerFor(me, ask(), onChain, NOW)).toThrow(INVITATION_REFUSAL['no-invitation']);
+    expect(() => recordsKeyAnswerFor(me, ask({ invitedBy }), onChain, NOW, undefined, null, leafOf)).toThrow(/Compare the company's fingerprint/);
+    expect(() => recordsKeyAnswerFor(me, ask(), onChain, NOW, undefined, null, leafOf)).toThrow(INVITATION_REFUSAL['no-invitation']);
     const signed = recordsKeyAnswerFor(me, ask({ invitedBy }), onChain, NOW, undefined, ACCOUNT);
     expect(recordsKeySignedBy(CO, ACCOUNT, signed.committeeKey, signed.statement)).toBe(true);
+    /* Mal's key is on the committee; her wallet signs an entry for the inviter's seat. */
+    const malKey = committeeKeyFor(identityFromSecret(new Uint8Array(32).fill(12)), CO) as { tag: 'schnorr'; value: string };
+    const byMal = {
+      committeeKey: malKey, opening,
+      statement: signDirectoryEntry(identityFromSecret(new Uint8Array(32).fill(12)), CO, ACCOUNT, new Uint8Array(32).fill(13), '2b'.repeat(32), INVITER_SEAT),
+    };
+    const malOnIt = { ...onChain, committee: [...seats.committee, malKey] };
     for (const [why, bent, chain, code] of [
       ['an entry for another account', { ...invitedBy, statement: signDirectoryEntry(somebodyElse, CO, 'a8'.repeat(32) as AccountAddress, new Uint8Array(32).fill(6), '2b'.repeat(32), INVITER_SEAT) }, onChain, 'other-account'],
       ['an entry signed by a key it does not name', { ...invitedBy, committeeKey: committeeKeyFor(me, CO) as { tag: 'schnorr'; value: string } }, onChain, 'not-signed'],
-      ['an inviter whose key is not on the account', invitedBy, { ...onChain, committee: seats.committee }, 'inviter-not-on-account'],
       ['an inviter whose seat is not on the account', invitedBy, { ...onChain, seats: seats.seats }, 'inviter-not-on-account'],
-      ['the same key value under another tag on the chain', invitedBy, { ...onChain, committee: [...seats.committee, { tag: 'ecdsa', value: inviterKey.value }] }, 'inviter-not-on-account'],
+      /* RED WHEN: a key on the committee but not the one the inviter's seat was made for is accepted. */
+      ['a key on the committee that the seat was not made for', byMal, malOnIt, 'not-the-inviters-seat'],
+      ['an opening that names the other key but still makes the inviter\'s seat', { ...byMal, opening: { ...opening, walletKey: malKey } }, malOnIt, 'not-the-inviters-seat'],
+      ['an opening of another leaf', { ...invitedBy, opening: seatMadeFor(inviterKey, '7b'.repeat(32)).opening }, onChain, 'not-the-inviters-seat'],
     ] as const) {
       /* RED WHEN: the named invitation is read as naming the account, so the screen offers to keep it. */
-      expect(whyTheInvitationDoesNotNameIt(ask({ invitedBy: bent }), chain as never), why).toBe(code);
+      expect(whyTheInvitationDoesNotNameIt(ask({ invitedBy: bent }), chain as never, leafOf), why).toBe(code);
       /* RED WHEN: what the person is told is anything but the sentence for that defect, which says what to do. */
-      expect(() => recordsKeyAnswerFor(me, ask({ invitedBy: bent }), chain as never, NOW), why).toThrow(INVITATION_REFUSAL[code]);
+      expect(() => recordsKeyAnswerFor(me, ask({ invitedBy: bent }), chain as never, NOW, undefined, null, leafOf), why).toThrow(INVITATION_REFUSAL[code]);
     }
-    /* RED WHEN: the tag or the value is compared in one spelling only, so a key the chain writes in upper case is not found. */
-    expect(whyTheInvitationDoesNotNameIt(ask({ invitedBy }), { ...onChain, committee: [{ tag: 'SCHNORR', value: inviterKey.value.toUpperCase() }] })).toBeNull();
-    for (const code of ['other-account', 'not-signed', 'inviter-not-on-account'] as const) {
-      /* RED WHEN: an invitation that cannot be repaired by opening it again is told to be opened again. */
+    /* RED WHEN: with no leaf worked out, the inviter's opening is believed. */
+    expect(whyTheInvitationDoesNotNameIt(ask({ invitedBy }), onChain, null)).toBe('not-the-inviters-seat');
+    for (const code of ['other-account', 'not-signed', 'not-the-inviters-seat'] as const) {
+      /* RED WHEN: a refusal that opening the invitation again cannot repair does not say to ask the inviter for a new invitation. */
       expect(INVITATION_REFUSAL[code]).toMatch(/ask the person who invited you for a new invitation, and compare the company's fingerprint with them/i);
+      expect(INVITATION_REFUSAL[code]).not.toMatch(/open this again/i);
     }
+    /* RED WHEN: an inviter whose seat may only be on the chain a minute later is not told to wait and open it again. */
+    expect(INVITATION_REFUSAL['inviter-not-on-account']).toMatch(/wait a minute and open this again/i);
     /* RED WHEN: an invitation is read anywhere but on a records-key ask, or a malformed one is taken. */
     expect(() => ask({ invitedBy: { ...invitedBy, statement: { ...entry, signature: 'zz' } } })).toThrow(/is not a signer's committee key/);
+    /* RED WHEN: an invitation without the inviter's own opening, or with one of another shape, is read. */
+    const { opening: _none, ...noOpening } = invitedBy;
+    expect(() => ask({ invitedBy: noOpening })).toThrow(/their own seat's opening/);
+    expect(() => ask({ invitedBy: { ...invitedBy, opening: { ...opening, walletKey: { tag: 'ecdsa', value: inviterKey.value } } } })).toThrow(/their own seat's opening/);
+    /* RED WHEN: the opening is read and not handed on to the check whole. */
+    expect(ask({ invitedBy }).invitedBy?.opening).toEqual(opening);
     expect(() => parseAsk({
       schema: 'midnight-identity/disclosure-request/v1', kind: 'holders', requester: { name: 'Payroll', rdns: 'example.payroll' },
       purpose: 'x', nonce: 'h1', expiresAt: NOW + 60_000, company: CO, account: ACCOUNT, invitedBy,

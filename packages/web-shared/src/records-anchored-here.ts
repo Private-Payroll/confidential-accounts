@@ -52,8 +52,8 @@ import {
   proposalEntry, recordKeyOf, signManifestEntry, supersededSaid, WITNESSED_AS,
   type BatchHolders, type DirectoryAsAnchored, type ManifestEntry, type ManifestEntryBody,
 } from '../../../src/midnight/record-manifest.js';
-import { filingRefusalOf, MAY_FILE, type AccountHeld, type DirectoryFiling } from '../../../src/midnight/seat-directory.js';
-import type { DirectoryBelieved, HeldAsAnchored, RecordsHeldHere } from './vault-page-doors.js';
+import { filingRefusalOf, mayFile, type AccountHeld, type DirectoryFiling, type SignedChange } from '../../../src/midnight/seat-directory.js';
+import { directoryNotYetAnchored, type DirectoryBelieved, type HeldAsAnchored, type RecordsHeldHere } from './vault-page-doors.js';
 import type { AnchorLanded, AnchorsOnChain, VouchedRunOnTheWire } from './governed-call-builder.js';
 import { enteredOnThisPage, letGoOfEntered, type ManifestService, type TreeService } from './record-entered-here.js';
 import type { AccountCallChainOnTheWire, VaultBuilderClient } from './vault-worker-client.js';
@@ -135,14 +135,12 @@ export interface AnchorDoors {
   };
   readonly builder: Pick<VaultBuilderClient, 'anchorHeads' | 'anchor' | 'anchorTag'>;
   /**
-   * **WHICH SEAT EACH TAG IS**, from the openings of their leaves the company's
-   * seats filed for its members (`tagSeatsHere`): a header naming one seat's
+   * **WHICH SEAT EACH TAG IS**, from the openings in the entries of the
+   * directory this device believes (`tagSeatsHere`): a header naming one seat's
    * key and another seat's tag is false, and a head nobody gave a header for is
    * said with the seat that moved it. Absent, no tag is mapped.
    */
-  readonly tagSeats?: () => Promise<ReadonlyMap<string, string>>;
-  /** Files this seat's own opening for the company's members where it is not already (`ownOpeningFiled`); absent, none is filed. */
-  readonly ownOpening?: () => Promise<boolean>;
+  readonly tagSeats?: (here: DirectoryBelieved) => Promise<ReadonlyMap<string, string>>;
   readonly now?: () => Date;
   /**
    * How often the account's history is read again while a send has not
@@ -239,7 +237,7 @@ const ANCHOR_ATTEMPTS = 3;
  * was served is replayed up to the version anchored with the batch, and every
  * version of it must be the bytes the anchor holds for that version. The seat
  * holding the key is then judged by the role it held and whether it had
- * retired, at that version: what a seat may file is `MAY_FILE`'s. The chain's
+ * retired, at that version: what a seat may file is `mayFile`'s. The chain's
  * own check when the batch landed is only that a signer sent the call; nothing
  * on chain ties the header's filing key to that signer. Each version of that
  * directory is counted against who held the account as the batch that first
@@ -256,7 +254,7 @@ export const seatAsAnchoredHere = (
   }
   const seat = then.dir.seats.find((x) => x.signingKey === publicKey.toLowerCase());
   if (seat === undefined) return null;
-  const may = MAY_FILE[seat.role ?? 'unset'];
+  const may = mayFile(seat);
   if (entry === undefined) return seat.retired === null && may.includes(WITNESSED_AS) ? seat.seat : null;
   if (!may.includes(filedKindOfEntry(entry))) return null;
   if (seat.retired === null) return seat.seat;
@@ -268,11 +266,11 @@ export const seatAsAnchoredHere = (
  * **WHICH SEAT THIS DEVICE BELIEVES SIGNED, AS IT BELIEVES EVERY FILING.** In a
  * batch already anchored, by the directory as it was anchored with the batch
  * (`seatAsAnchoredHere`). An entry not yet anchored: the seat holding the key,
- * if it may file that record at that version now (check S). Whether that
+ * if it may file that record at that version now (`filingRefusalOf`). Whether that
  * seat's own wallet attested its records key is asked of the record when it is
  * read, by the reader that knows which statements it holds.
  */
-export const seatOfHere = (here: DirectoryBelieved, held: HeldAsAnchored) => {
+const seatOfHere = (here: DirectoryBelieved, held: HeldAsAnchored) => {
   /* The directory now, each version anchored counted against who held the account as it was anchored. */
   const now = here.at(here.dir.version, held)?.dir ?? here.dir;
   return (publicKey: Hex, entry?: ManifestEntryBody, asAnchored?: DirectoryAsAnchored): string | null => {
@@ -413,8 +411,8 @@ async function* startsHere(doors: HeldDoors, now: AnchorsOnChain): AsyncGenerato
  * the company's directory as anchored with it, each version of which is
  * counted against who held the account as the batch that first anchored it
  * named them - the approvals and the seats its signer tree's leaves name,
- * which the call checked - and, for a claim, the committee the account's
- * history shows after that call's block. Then, in one request each, the
+ * which the call checked; a claim is believed by its own opening, never by the
+ * committee. Then, in one request each, the
  * entries not yet anchored at the root reached, and the leaves of every record
  * and kind asked - with the directory always, and the founding records when
  * founding is asked - proven against that root, each with every older version.
@@ -470,19 +468,15 @@ async function heldFrom(
     }
     missing.forEach((h, i) => seatsByHeld.set(heldKey(h), a.holderSeats[i] ?? null));
   };
-  /** The committee in the state after the block a batch landed in: the first head the history shows from that batch on. */
-  const committeeAfter = (batch: number): AccountHeld['committee'] | null => {
-    for (let k = batch; headsBySeq.has(k); k += 1) {
-      const l = landedBy.get(headsBySeq.get(k)!);
-      if (l !== undefined) return l.committee;
-    }
-    return null;
+  /** Whether the account's history shows a head from the batch on: a batch whose header no landed head follows was never anchored as shown. */
+  const landedFrom = (batch: number): boolean => {
+    for (let k = batch; headsBySeq.has(k); k += 1) if (landedBy.has(headsBySeq.get(k)!)) return true;
+    return false;
   };
   const accountHeldOf = (d: Pick<DirectoryVersionHeld, 'held' | 'batch'>): AccountHeld | null => {
     const seats = seatsByHeld.get(heldKey(d.held));
-    const committee = committeeAfter(d.batch);
-    if (seats === undefined || seats === null || committee === null) return null;
-    return { approvals: d.held.approvals, seats, committee };
+    if (seats === undefined || seats === null || !landedFrom(d.batch)) return null;
+    return { approvals: d.held.approvals, seats };
   };
   const directoryOfLeaf = async (root: Hex): Promise<void> => {
     const given = await doors.tree.proofs(company, { root, records: [DIRECTORY], kinds: [] });
@@ -566,11 +560,11 @@ async function heldFrom(
   const givenLeaves = new Map<Hex, TreeLeaf>();
   let lastChecked: TreeHeader | undefined;
   /*
-   * Which seat each tag is, read only when the chain holds a head to map: an
-   * opening this device could not read leaves its tag unmapped, as for a seat
-   * that never filed one, and the check goes on without it.
+   * Which seat each tag is, read only when the chain holds a head to map: a
+   * seat whose entry this device did not believe leaves its tag unmapped, and
+   * the check goes on without it.
    */
-  const tagged = doors.tagSeats === undefined || landed.length === 0 ? undefined : await doors.tagSeats().catch(() => undefined);
+  const tagged = doors.tagSeats === undefined || landed.length === 0 ? undefined : await doors.tagSeats(here).catch(() => undefined);
   /* A head this device checked before the one it checks from, whole: what a recovery the quorum approved may resume from. */
   const earlier = (h: Hex): CheckedHead | undefined => kept?.recent?.find((r) => r.head === h.toLowerCase());
   const forwardFrom = (start: CheckedHead) => checkForward({
@@ -737,9 +731,9 @@ async function heldFrom(
  * **WHAT IS NOT YET ANCHORED**, of the entries a service lists as waiting: each
  * of a record the read asked, newer than its leaf (`history`), entered by a seat
  * `seatNow` says may file it now, naming no older version's bytes - the first
- * at each version. The one rule a read and a test's double of it hold.
+ * at each version.
  */
-export const waitingAmong = (
+const waitingAmong = (
   pending: readonly ManifestEntry[], history: ReadonlyMap<string, readonly HeldVersion[]>,
   ofAsked: (e: ManifestEntryBody) => boolean, seatNow: (publicKey: Hex, entry: ManifestEntryBody) => string | null,
 ): ManifestEntry[] => {
@@ -1013,9 +1007,12 @@ export const ANCHORED_AT_LEAST_EVERY_MS = 24 * 60 * 60 * 1000;
  * not wait on the anchor, and a filing left waiting is anchored by the next.
  */
 export type OnTheWayIn =
-  | Anchored
-  | { readonly waits: 'anchored-within-a-day' | 'this-seat-does-not-anchor' | 'own-entry-filed-again' | 'directory-changes-filed-again' }
-  | { readonly notAnchored: string };
+  | (Anchored & FiledAgainOnTheWayIn)
+  | { readonly waits: 'anchored-within-a-day' | 'this-seat-does-not-anchor' }
+  | ({ readonly notAnchored: string } & FiledAgainOnTheWayIn);
+
+/** What the way in filed again before it anchored at once: this seat's own entry, or signed changes passed over. */
+interface FiledAgainOnTheWayIn { readonly filedAgain?: 'own-entry' | 'directory-changes' }
 
 /**
  * **THIS SEAT'S OWN DIRECTORY ENTRY, PASSED OVER BY THE COMPANY'S RECORDS, FILED
@@ -1037,7 +1034,43 @@ async function ownEntryFiledAgain(doors: AnchorDoors, here: DirectoryBelieved): 
 }
 
 /**
- * **EVERY QUORUM'S CHANGE TO THE DIRECTORY NOT APPLIED, FILED AGAIN UNDER ITS
+ * **A SIGNED CHANGE TO THE COMPANY'S DIRECTORY, FILED FROM THIS DEVICE AND
+ * ANCHORED AT ONCE** - a quorum's role or retirement - carrying its
+ * signatures over `signedFor`, the version it was signed for. It is kept in this device's database before it is
+ * filed, and let go of only once a version carrying it is anchored, so a
+ * change the service drops, passes over or stops serving is filed again from
+ * here on a later way in (`quorumChangesFiledAgain`) without being signed
+ * again. Refused, with nothing filed or kept, when the directory already holds
+ * that version: the signatures bind it, so the change is signed again as the
+ * directory stands. The anchor is said, not thrown: a change filed and not yet
+ * anchored is anchored by the next anchor, and is kept until it is.
+ */
+export async function directoryChangeFiledHere(
+  doors: AnchorDoors, change: SignedChange, signedFor: number,
+): Promise<{ readonly version: number; readonly anchor: Anchored | { readonly notAnchored: string } }> {
+  if (doors.fileDirectory === undefined) {
+    throw new AnchorNotMade('this page cannot file a change to the company\'s directory. Nothing was filed. Reload the page to get the '
+      + 'current version');
+  }
+  const filings = await doors.directoryFilings();
+  if (filings.length + 1 !== signedFor) {
+    throw new AnchorNotMade(`the change was signed for version ${signedFor} of the company's directory, and the directory holds `
+      + `${filings.length} version${filings.length === 1 ? '' : 's'} now, so its signatures do not fit the next one. Nothing was filed. `
+      + 'Have it signed again as the directory stands now');
+  }
+  /* Kept before it is filed, so a filing that fails, or that the service later drops, is filed again from here. */
+  await doors.changes?.keep(doors.accountId, { signedAt: signedFor, change });
+  await doors.fileDirectory({ company: doors.accountId, version: signedFor, change });
+  try {
+    return { version: signedFor, anchor: await anchorTheRecordsHere(doors) };
+  } catch (e) {
+    if (!(e instanceof AnchorNotMade)) throw e;
+    return { version: signedFor, anchor: { notAnchored: e.message } };
+  }
+}
+
+/**
+ * **EVERY SIGNED CHANGE TO THE DIRECTORY NOT APPLIED, FILED AGAIN UNDER ITS
  * OWN SIGNATURES**, by a device whose seat may anchor: each change the company's
  * records passed over - or that rests on a seat one passed over - and each this
  * device kept from filing it again before, oldest version signed for first, as
@@ -1049,8 +1082,15 @@ async function ownEntryFiledAgain(doors: AnchorDoors, here: DirectoryBelieved): 
  */
 async function quorumChangesFiledAgain(doors: AnchorDoors, here: DirectoryBelieved): Promise<number> {
   if (doors.fileDirectory === undefined || here.refiled === undefined) return 0;
-  const kept = await doors.changes?.all(doors.accountId) ?? [];
-  for (const k of kept) if (here.anchoredAgain?.has(k.signedAt) === true) await doors.changes!.letGo(doors.accountId, k.signedAt);
+  const all = await doors.changes?.all(doors.accountId) ?? [];
+  for (const k of all) if (here.anchoredAgain?.has(k.signedAt) === true) await doors.changes!.letGo(doors.accountId, k.signedAt);
+  const kept = all.filter((k) => here.anchoredAgain?.has(k.signedAt) !== true);
+  /* One kept before its first filing reached the service: its version is still the next, so it is filed as that version. */
+  const next = kept.find((k) => k.signedAt === here.dir.version + 1);
+  if (next !== undefined) {
+    try { await doors.fileDirectory({ company: doors.accountId, version: next.signedAt, change: next.change }); } catch { return 0; }
+    return 1;
+  }
   const waiting = new Map<number, KeptDirectoryChange>((here.notApplied ?? []).map((n) => [n.signedAt, n]));
   /* A change this device kept is a candidate too - one the service no longer serves included; the replay refuses one already applied. */
   for (const k of kept) if (!waiting.has(k.signedAt)) waiting.set(k.signedAt, k);
@@ -1065,13 +1105,24 @@ async function quorumChangesFiledAgain(doors: AnchorDoors, here: DirectoryBeliev
   return n;
 }
 
+/** Anchors what the way in just filed again, saying what it filed; a refusal is said, never thrown. */
+async function anchoredAtOnce(doors: AnchorDoors, filedAgain: NonNullable<FiledAgainOnTheWayIn['filedAgain']>): Promise<OnTheWayIn> {
+  try {
+    return { ...(await anchorTheRecordsHere(doors)), filedAgain };
+  } catch (e) {
+    return { notAnchored: (e as Error)?.message ?? String(e), filedAgain };
+  }
+}
+
 /* One anchor on the way in at a time per company, on this page: a second read of the company while one runs waits on it. */
 const onTheWayIn = new Map<string, Promise<OnTheWayIn>>();
 
 /**
  * **THE ONE-A-DAY ANCHOR, ON THE WAY INTO THE COMPANY.** A seat whose role may
  * anchor, entering the company, anchors every filing not yet anchored when the
- * account's last anchor call landed a day ago or more - or never. When it
+ * account's last anchor call landed a day ago or more - or never - and at once
+ * whenever a directory version is applied and not yet anchored, since a rise
+ * of the account's threshold waits for it (`directoryNotYetAnchored`). When it
  * landed is the time the author of its block set, as the account's history at
  * the indexer the person's own wallet names holds it, never a time a seat
  * wrote; a time ahead of this device's clock holds nothing off. A directory version
@@ -1087,29 +1138,25 @@ export function anchoredOnTheWayIn(doors: AnchorDoors): Promise<OnTheWayIn> {
   const attempt = (async (): Promise<OnTheWayIn> => {
     try {
       const here = await doors.directory();
-      if (await ownEntryFiledAgain(doors, here)) return { waits: 'own-entry-filed-again' };
-      /*
-       * Every seat, whatever its role, files its own opening for the company's members, so they can tell which seat
-       * each anchor is: one not filed now leaves only this seat's tag unmapped until the next way in.
-       */
-      try { await doors.ownOpening?.(); } catch { /* filed on a later way in */ }
+      /* A change filed is anchored at once by the device that filed it, so a later change of who holds the account cannot leave it unanchored under a threshold it was not signed at. */
+      if (await ownEntryFiledAgain(doors, here)) return await anchoredAtOnce(doors, 'own-entry');
       const mine = signingPublicKeyOf(doors.material.signingSecret as Hex);
       const seat = here.dir.seats.find((x) => x.signingKey === mine);
-      if (seat === undefined || seat.retired !== null || !MAY_FILE[seat.role ?? 'unset'].includes(WITNESSED_AS)) {
+      if (seat === undefined || seat.retired !== null || !mayFile(seat).includes(WITNESSED_AS)) {
         return { waits: 'this-seat-does-not-anchor' };
       }
       /*
        * Filing changes again holds nothing back: the way in goes on to anchor when one is due, with the directory read
        * again, so a service that passes a change over again and again cannot put the company's anchor off with it.
        */
-      const refiled = await quorumChangesFiledAgain(doors, here) > 0;
-      const read = refiled ? await doors.directory() : here;
-      const { landed, records } = await recordsHeldHere({ ...doors, directory: async () => read }, {});
+      if (await quorumChangesFiledAgain(doors, here) > 0) return await anchoredAtOnce(doors, 'directory-changes');
+      const { landed, records } = await recordsHeldHere({ ...doors, directory: async () => here }, {});
       /* When the account's last anchor call landed: the time its block's author set, as the account's history holds it. */
       const last = landed.length === 0 ? Number.NaN : landed[landed.length - 1]!.at;
       const since = now().getTime() - last;
-      if (records.stopped === null && Number.isFinite(since) && since >= 0 && since < ANCHORED_AT_LEAST_EVERY_MS) {
-        return { waits: refiled ? 'directory-changes-filed-again' : 'anchored-within-a-day' };
+      if (records.stopped === null && Number.isFinite(since) && since >= 0 && since < ANCHORED_AT_LEAST_EVERY_MS
+        && directoryNotYetAnchored({ dir: here.dir, records, refusedAt: here.refusedAt }).length === 0) {
+        return { waits: 'anchored-within-a-day' };
       }
       return await anchorTheRecordsHere(doors);
     } catch (e) {

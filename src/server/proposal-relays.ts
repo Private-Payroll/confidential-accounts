@@ -9,7 +9,8 @@
  * it checks what it can without a key:
  *
  *   · the signed-in person is a member of the company the proposal is for, and
- *     holds a seat on it now that may act (`actingSeatOf`, check S);
+ *     holds a seat on it the chain holds now (`actingSeatOf`); whether its role
+ *     may raise or approve is each member's device's to judge as it reads;
  *   · the proposal is one that may take the call, as its plain status says;
  *   · the transaction is exactly one call, to the named circuit, on this
  *     company's own contract, moving no coin (the ledger's door for a proven
@@ -33,7 +34,6 @@ import type { SealedAccount, SealedProposal, SealedRun } from '../core/types.js'
 import { runFilingRefusal, type SignedRunFiling } from '../core/run-filing.js';
 import type { PaymentChecked } from '../core/device-raise.js';
 import { paysCommitmentOf, proposalFilingRefusal, type SignedProposalFiling } from '../core/proposal-filing.js';
-import { MAY_FILE } from '../midnight/seat-directory.js';
 import { NothingWasSent, saysNothingWasSent } from '../core/jobs.js';
 import { DEVICE_RAISE_VERSION, reloadThePage } from '../core/device-raise.js';
 import {
@@ -42,6 +42,7 @@ import {
 } from '../core/proposal-standing.js';
 import { ACTING_REFUSAL, actingSeatOf, type DirectorySeat } from '../midnight/seat-directory.js';
 import { CHAIN_UNREAD, type DirectoryNow } from './seat-directory-route.js';
+import type { Hex } from '../core/crypto.js';
 
 /** What these routes need of the service's store: the plain half of each proposal, and nothing sealed is read. */
 export interface RelayStore {
@@ -99,6 +100,8 @@ export interface ProposalRelayDeps {
 
 /** A vault, an asset or a token: thirty-two bytes as sixty-four lower-case hexadecimal characters. */
 const HEX64 = /^[0-9a-f]{64}$/u;
+/** The filing key of the seat a device acts from, which it sends with every relay: the seat is found by its person and this key. */
+const FILER = z.string().regex(HEX64);
 
 /** One proven transaction, as base64, held under the body limit. */
 const TX = z.string().min(1).max(1_000_000);
@@ -145,15 +148,19 @@ export const proposalRelayRoutes = (deps: ProposalRelayDeps): express.Router => 
     return p;
   };
 
-  /** The seat the signed-in person acts from on this company now, or a refusal that sent nothing. */
-  const actingSeat = async (accountId: string, person: unknown): Promise<DirectorySeat> => {
+  /**
+   * The seat the signed-in person acts from on this company now - their entry under the filing key their device sent - or a
+   * refusal that sent nothing. `noEntry` is the words for a key none of that person's entries names, where a route has its own.
+   */
+  const actingSeat = async (accountId: string, person: unknown, filer: string, noEntry?: string): Promise<DirectorySeat> => {
     let now: DirectoryNow;
     try {
       now = await deps.directoryOf(accountId);
     } catch (e) {
       throw new NothingWasSent(`${CHAIN_UNREAD(e)}. Nothing was sent.`);
     }
-    const seat = actingSeatOf(now.dir, now.chain?.seats ?? null, String(person));
+    const seat = actingSeatOf(now.dir, now.chain?.seats ?? null, String(person), filer as Hex);
+    if (seat === 'no-entry' && noEntry !== undefined) throw new NothingWasSent(noEntry);
     if (typeof seat === 'string') throw new NothingWasSent(`${ACTING_REFUSAL[seat]}. Nothing was sent.`);
     return seat;
   };
@@ -208,13 +215,13 @@ export const proposalRelayRoutes = (deps: ProposalRelayDeps): express.Router => 
    * back is where the proposal stands once the chain was read.
    */
   router.post('/api/proposals/:id/approve', deps.signedIn, json, deps.refuseSigningSecret, deps.ownsProposal, async (req, res) => {
-    const b = parsed(res, z.object({ tx: TX }).strict(), req.body, 'an approval to send');
+    const b = parsed(res, z.object({ tx: TX, filer: FILER }).strict(), req.body, 'an approval to send');
     if (b === null) return;
     await answerASend(req, res, async () => {
       const id = String(req.params.id);
       const { proposal, release } = await beforeSending(async () => {
         const p = requireProposal(id);
-        const seat = await actingSeat(p.accountId, (req as { userId?: unknown }).userId);
+        const seat = await actingSeat(p.accountId, (req as { userId?: unknown }).userId, b.filer);
         if (p.status === 'executed') throw new NothingWasSent('this proposal has been carried out, so it takes no approvals. Nothing was sent.');
         if (p.status === 'blocked') throw new NothingWasSent('this company\'s own policy stopped this proposal, so it takes no approvals. Nothing was sent.');
         if (p.status === 'cancelled') {
@@ -253,13 +260,13 @@ export const proposalRelayRoutes = (deps: ProposalRelayDeps): express.Router => 
    * the chain nothing here can withdraw.
    */
   router.post('/api/proposals/:id/cancel', deps.signedIn, json, deps.ownsProposal, async (req, res) => {
-    const b = parsed(res, z.object({ tx: TX.optional() }).strict(), req.body, 'a withdrawal');
+    const b = parsed(res, z.object({ tx: TX.optional(), filer: FILER }).strict(), req.body, 'a withdrawal');
     if (b === null) return;
     await answerASend(req, res, async () => {
       const id = String(req.params.id);
       const { proposal, hold } = await beforeSending(async () => {
         const p = requireProposal(id);
-        await actingSeat(p.accountId, (req as { userId?: unknown }).userId);
+        await actingSeat(p.accountId, (req as { userId?: unknown }).userId, b.filer);
         if (p.status === 'executed') throw new Error('this proposal has been carried out, so there is nothing to withdraw');
         if (p.status === 'cancelled') throw new Error('this proposal is already withdrawn');
         const status = p.status === 'blocked' ? null : await readTheChain(p.accountId);
@@ -345,13 +352,13 @@ export const proposalRelayRoutes = (deps: ProposalRelayDeps): express.Router => 
   };
 
   router.post('/api/proposals/:id/send', deps.signedIn, json, deps.ownsProposal, async (req, res) => {
-    const b = parsed(res, z.object({ tx: TX, version: z.unknown().optional() }).strict(), req.body, 'a proposal to send');
+    const b = parsed(res, z.object({ tx: TX, version: z.unknown().optional(), filer: FILER }).strict(), req.body, 'a proposal to send');
     if (b === null) return;
     await answerASend(req, res, async () => {
       const id = String(req.params.id);
       await beforeSending(async () => {
         if (b.version !== DEVICE_RAISE_VERSION) throw new NothingWasSent(reloadThePage(b.version, 'Nothing was sent.'));
-        await actingSeat(requireProposal(id).accountId, (req as { userId?: unknown }).userId);
+        await actingSeat(requireProposal(id).accountId, (req as { userId?: unknown }).userId, b.filer);
       });
       return sendTheRaise(id, b.tx);
     }, deps.recordRefusal);
@@ -366,14 +373,14 @@ export const proposalRelayRoutes = (deps: ProposalRelayDeps): express.Router => 
    * once the chain no longer holds it open.
    */
   router.post('/api/proposals/:id/carry', deps.signedIn, json, deps.ownsProposal, async (req, res) => {
-    const b = parsed(res, z.object({ tx: TX, circuit: z.enum(['amendSigner', 'setThreshold', 'setVaultThreshold', 'setPolicy', 'setPolicyBar']) }).strict(),
+    const b = parsed(res, z.object({ tx: TX, circuit: z.enum(['amendSigner', 'setThreshold', 'setVaultThreshold', 'setPolicy', 'setPolicyBar']), filer: FILER }).strict(),
       req.body, 'a change to carry out');
     if (b === null) return;
     await answerASend(req, res, async () => {
       const id = String(req.params.id);
       const { proposal, release } = await beforeSending(async () => {
         const p = requireProposal(id);
-        await actingSeat(p.accountId, (req as { userId?: unknown }).userId);
+        await actingSeat(p.accountId, (req as { userId?: unknown }).userId, b.filer);
         if (p.status !== 'open' && p.status !== 'approved') throw new NothingWasSent(notSentBecauseItIs(p.status));
         const h = chainHoldsIt(p, p.raisedAt ? null : await readTheChain(p.accountId));
         if (h !== 'present') {
@@ -406,13 +413,13 @@ export const proposalRelayRoutes = (deps: ProposalRelayDeps): express.Router => 
    * where the chain was read to hold it.
    */
   router.post('/api/proposals/:id/charge', deps.signedIn, json, deps.ownsProposal, async (req, res) => {
-    const b = parsed(res, z.object({ tx: TX }).strict(), req.body, 'a run to charge to its period');
+    const b = parsed(res, z.object({ tx: TX, filer: FILER }).strict(), req.body, 'a run to charge to its period');
     if (b === null) return;
     await answerASend(req, res, async () => {
       const id = String(req.params.id);
       const { proposal, release } = await beforeSending(async () => {
         const p = requireProposal(id);
-        await actingSeat(p.accountId, (req as { userId?: unknown }).userId);
+        await actingSeat(p.accountId, (req as { userId?: unknown }).userId, b.filer);
         if (p.status !== 'open' && p.status !== 'approved') throw new NothingWasSent(notSentBecauseItIs(p.status));
         const h = chainHoldsIt(p, p.raisedAt ? null : await readTheChain(p.accountId));
         if (h !== 'present') {
@@ -433,15 +440,15 @@ export const proposalRelayRoutes = (deps: ProposalRelayDeps): express.Router => 
    * **A PROPOSAL A SIGNER'S DEVICE WROTE DOWN, FILED, AND ITS RAISE SENT.** The
    * device sealed it under the company's viewing key and signed the filing with
    * its seat's filing key; this files it only when that key is the one the
-   * company's directory holds for the signed-in person's seat, whose role may
-   * file a proposal (check S), at the company's key epoch now. A proposal the
+   * company's directory holds for the signed-in person's seat, held now
+   * (`actingSeatOf`), at the company's key epoch now. A proposal the
    * company already holds open for the same change is not filed beside it: the
    * device raises that one instead.
    */
   /*
    * **A PAYROLL RUN RAISED FROM A DEVICE IS FILED WITH ITS PROPOSAL, OR NOT AT
    * ALL.** The run is re-filed signed by the same seat that signed the
-   * proposal, whose role may file a run; it is the company's run kept here,
+   * proposal; it is the company's run kept here,
    * under the key it uses now, still unpaid, and the raise adds exactly this
    * proposal to the ones the run names, letting go only of a withdrawn one, and
    * it says what it pays.
@@ -449,16 +456,13 @@ export const proposalRelayRoutes = (deps: ProposalRelayDeps): express.Router => 
   const runRaisedWith = (
     company: string, filing: SignedProposalFiling, given: unknown,
     pays: { vault: string; asset: string; payments: Array<PaymentChecked<string, string>> } | undefined,
-    seat: DirectorySeat, keyEpoch: number, salt: string,
+    keyEpoch: number, salt: string,
   ): { run: SignedRunFiling; kept: SealedRun } => {
     const why = runFilingRefusal(company, given);
     if (why !== null) throw new NothingWasSent(`this is not a run this company can keep: ${why}. Nothing was written down or sent.`);
     const run = given as SignedRunFiling;
     if (run.filedBy.publicKey.toLowerCase() !== filing.filedBy.publicKey.toLowerCase()) {
       throw new NothingWasSent('this run and its proposal are signed by two different keys. Nothing was written down or sent.');
-    }
-    if (!MAY_FILE[seat.role ?? 'unset'].includes('run')) {
-      throw new NothingWasSent('your seat on this company may not raise payroll runs. Nothing was written down or sent.');
     }
     if (deps.store.getRun === undefined || deps.store.putRaisedRunAndProposal === undefined || deps.publicMoney === undefined) {
       throw new NothingWasSent('this service does not keep payroll runs raised from a device. Nothing was written down or sent.');
@@ -519,13 +523,9 @@ export const proposalRelayRoutes = (deps: ProposalRelayDeps): express.Router => 
         if (b.tx !== undefined && b.version !== DEVICE_RAISE_VERSION) throw new NothingWasSent(reloadThePage(b.version, 'Nothing was sent.'));
         const why = proposalFilingRefusal(company, filing);
         if (why !== null) throw new NothingWasSent(`this is not a proposal this company can write down: ${why}. Nothing was written down or sent.`);
-        const seat = await actingSeat(company, (req as { userId?: unknown }).userId);
-        if (seat.signingKey !== filing.filedBy.publicKey.toLowerCase()) {
-          throw new NothingWasSent('this proposal is signed by a key that is not your seat\'s in the company\'s directory. Nothing was written down or sent.');
-        }
-        if (!MAY_FILE[seat.role ?? 'unset'].includes('proposal')) {
-          throw new NothingWasSent('your seat on this company may not raise proposals. Nothing was written down or sent.');
-        }
+        /* The seat whose filing key signed the proposal, among every entry the signed-in person filed. */
+        await actingSeat(company, (req as { userId?: unknown }).userId, filing.filedBy.publicKey,
+          'this proposal is signed by a key that is not your seat\'s in the company\'s directory. Nothing was written down or sent.');
         const account = deps.store.getAccount(company);
         if (account === null || filing.keyEpoch !== account.keyEpoch) {
           throw new NothingWasSent('this proposal is sealed under a key the company no longer uses. Reload the page and raise it '
@@ -550,7 +550,7 @@ export const proposalRelayRoutes = (deps: ProposalRelayDeps): express.Router => 
           throw new NothingWasSent('a payroll proposal is written down only with the run it raises, and this one comes with none. '
             + 'Raise it from the run. Nothing was written down or sent.');
         }
-        const raised = b.run === undefined ? undefined : runRaisedWith(company, filing, b.run, b.pays, seat, account.keyEpoch, b.salt);
+        const raised = b.run === undefined ? undefined : runRaisedWith(company, filing, b.run, b.pays, account.keyEpoch, b.salt);
         const proposal: SealedProposal = {
           id: filing.id, accountId: company, status: 'open', createdAt: filing.createdAt, digest: filing.digest,
           chainId: filing.chainId, approvalCount: 0, keyEpoch: filing.keyEpoch, sealed: filing.sealed,

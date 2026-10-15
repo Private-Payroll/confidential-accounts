@@ -25,9 +25,12 @@ const kr = vi.hoisted(() => ({
   owed: {} as Record<string, { person: string; signed: unknown }>,
   /** When set, why folding the open offers into the roster fails, as the service's refusal of an unbelieved seat would. */
   foldFails: null as string | null,
+  /* Another member has filed a claim on this person's seat first: the service keeps an offer only for a person whose own entry is filed. */
+  squatted: false,
   /** The inviter the last records-key ask carried. */
   invitedBy: undefined as unknown,
-  /** The account's threshold as this person's wallet reads it off the chain. */
+  /** The account's committee and threshold as this person's wallet reads them off the chain. */
+  chainCommittee: null as { tag: string; value: string }[] | null,
   chainThreshold: 1,
 }));
 vi.mock('./vault-builder.js', () => ({ theVaultBuilder: async () => ({ ownSeat: async () => kr.ownSeat }) }));
@@ -60,7 +63,7 @@ vi.mock('vaults-web-shared/keyring.js', async (real) => ({
     entry: ask.signingKey === undefined ? null : { signingKey: ask.signingKey, wrappingKey: '33'.repeat(32), seat: ask.seat, signature: '55'.repeat(64) },
   }),
   signCommitteeChangeFromTheWallet: async () => kr.signed,
-  holdersFromTheWallet: async () => ({ holders: { threshold: kr.chainThreshold } }),
+  holdersFromTheWallet: async () => ({ holders: { committee: kr.chainCommittee ?? [K(1)], threshold: kr.chainThreshold } }),
   oweDirectoryEntry: async (id: string, owed: { person: string; signed: unknown }) => { kr.owed[id] = owed; },
   directoryEntryOwed: (id: string) => ({ read: () => kr.owed[id] ?? null, settle: async () => { delete kr.owed[id]; } }),
   api: async (path: string, opts?: RequestInit) => {
@@ -74,7 +77,12 @@ vi.mock('vaults-web-shared/keyring.js', async (real) => ({
 }));
 /* Offering and folding vault keys are their own tests' (`vault-keys-are-offered-and-folded.test.ts`); here each is written down. */
 vi.mock('vaults-web-shared/roster-here.js', () => ({
-  offerVaultKeysHere: async (_api: unknown, id: string, keys: unknown) => { kr.calls.push({ path: `offer ${id}`, method: 'PUT', body: keys }); },
+  offerVaultKeysHere: async (_api: unknown, id: string, keys: unknown) => {
+    if (kr.squatted && !kr.calls.some((c) => c.path === `entry ${id} ${kr.user}`)) {
+      throw Object.assign(new Error('the company\'s directory holds no entry of yours for this seat'), { status: 403 });
+    }
+    kr.calls.push({ path: `offer ${id}`, method: 'PUT', body: keys });
+  },
   foldOffersHere: async (d: { accountId: string }) => {
     kr.calls.push({ path: `fold ${d.accountId}`, method: 'FOLD', body: undefined });
     if (kr.foldFails !== null) throw new Error(kr.foldFails);
@@ -108,33 +116,32 @@ async function load() {
 }
 
 const AUTHORITY = (over: Record<string, unknown> = {}) => ({
-  company: { address: 'a', threshold: 1, signerCount: 1 }, committee: { committee: [K(1)], threshold: 1 }, why: null, everySignerNeeded: null,
+  company: { address: 'a', label: null }, committee: { committee: [K(1)], threshold: 1 }, why: null,
   contracts: [{ contract: 'account', address: 'a', read: 'read', seats: [], threshold: 1, changes: '0', shape: 'one-key', heldByTheCompany: false }],
-  handover: { possible: true, why: null }, change: { possible: false, why: 'x' }, ...over,
+  change: { possible: false, why: 'x' }, ...over,
 });
 
-beforeEach(() => { kr.chainThreshold = 1; kr.foldFails = null; kr.owed = {}; kr.accountHeld = true; kr.ownSeat = '5a'.repeat(32); kr.walletAsked = []; kr.released = 0; kr.check = undefined; kr.seat = false; kr.user = 'u1'; kr.calls = []; kr.answers = {}; kr.keys = { signerId: 's1', signingSecret: 'aa'.repeat(32), wrappingSecret: 'bb', blinding: 'cc' }; kr.opened = 0; kr.walletKey = K(1); kr.roster = null; kr.signed = null; });
+beforeEach(() => { kr.squatted = false; kr.chainCommittee = null; kr.chainThreshold = 1; kr.foldFails = null; kr.owed = {}; kr.accountHeld = true; kr.ownSeat = '5a'.repeat(32); kr.walletAsked = []; kr.released = 0; kr.check = undefined; kr.seat = false; kr.user = 'u1'; kr.calls = []; kr.answers = {}; kr.keys = { signerId: 's1', signingSecret: 'aa'.repeat(32), wrappingSecret: 'bb', blinding: 'cc' }; kr.opened = 0; kr.walletKey = K(1); kr.roster = null; kr.signed = null; });
 afterEach(() => { vi.unstubAllEnvs(); });
 
 describe('where a company stands, from the shape of the service\'s answer', () => {
-  /* RED WHEN: a state is read wrongly from the answer: a company held taken for one to hand over, a change owed missed, or one signer who can approve alone let through as ready. */
-  it('reads each state from the answer alone', async () => {
+  /* RED WHEN: a state is read wrongly from the answer: a company held taken for one not held, a change owed missed, or any state decided by the signers. */
+  it('reads each state from the answer alone, and reads nothing of the signers', async () => {
     const { state } = await load();
     const f = state.handoverFrom;
     const account = (o: Record<string, unknown>) => [{ ...AUTHORITY().contracts[0], ...o }];
     expect(f(AUTHORITY({ company: null }) as never, null)).toEqual({ of: 'not-on-chain' });
-    expect(f(AUTHORITY({ committee: null, handover: { possible: false } }) as never, null)).toEqual({ of: 'vault-keys-missing', signers: 1 });
-    expect(f(AUTHORITY() as never, null)).toEqual({ of: 'ready', everySignerNeeded: false, signers: 1 });
-    expect(f(AUTHORITY({ everySignerNeeded: 'x' }) as never, null)).toEqual({ of: 'ready', everySignerNeeded: true, signers: 1 });
-    expect(f(AUTHORITY({ contracts: account({ heldByTheCompany: true }), handover: { possible: false } }) as never, null)).toEqual({ of: 'held' });
-    expect(f(AUTHORITY({ change: { possible: true }, contracts: account({ changes: '1', shape: 'committee' }), handover: { possible: false } }) as never, { contracts: [{ signedSeats: [0], required: 2 }] }))
+    expect(f(AUTHORITY({ contracts: account({ heldByTheCompany: true }) }) as never, null)).toEqual({ of: 'held' });
+    expect(f(AUTHORITY({ change: { possible: true }, contracts: account({ changes: '1', shape: 'committee' }) }) as never, { contracts: [{ signedIndexes: [0], required: 2 }] }))
       .toEqual({ of: 'change-owed', signed: [{ have: 1, required: 2 }] });
-    expect(f(AUTHORITY({ company: { threshold: 1, signerCount: 3 }, handover: { possible: false } }) as never, null)).toEqual({ of: 'too-few-approvals', signers: 3, needed: 1 });
-    /* Two of three must approve: enough, so a handover not offered is waiting, not too few approvals. */
-    expect(f(AUTHORITY({ company: { threshold: 2, signerCount: 3 }, handover: { possible: false } }) as never, null)).toEqual({ of: 'waiting' });
-    expect(f(AUTHORITY({ handover: { possible: false } }) as never, null)).toEqual({ of: 'waiting' });
-    expect(f(AUTHORITY({ contracts: account({ read: 'unreadable' }), handover: { possible: false } }) as never, null)).toEqual({ of: 'unreadable' });
-    expect(f(AUTHORITY({ contracts: account({ changes: '2', shape: 'committee' }), handover: { possible: false } }) as never, null)).toEqual({ of: 'held-by-other-keys' });
+    expect(f(AUTHORITY({ contracts: account({ read: 'unreadable' }) }) as never, null)).toEqual({ of: 'unreadable' });
+    expect(f(AUTHORITY({ contracts: account({ changes: '2', shape: 'committee' }) }) as never, null)).toEqual({ of: 'held-by-other-keys' });
+    /* An account no committee holds - the service's temporary key, say - is held by other keys, whatever the signers are. */
+    expect(f(AUTHORITY({ committee: null }) as never, null)).toEqual({ of: 'held-by-other-keys' });
+    /* RED WHEN: the signers' count, threshold or a warning made from them changes the state. */
+    const signersAside = { company: { address: 'a', threshold: 1, signerCount: 3 }, everySignerNeeded: 'x' };
+    expect(f(AUTHORITY({ ...signersAside, contracts: account({ heldByTheCompany: true }) }) as never, null)).toEqual({ of: 'held' });
+    expect(f(AUTHORITY(signersAside) as never, null)).toEqual({ of: 'held-by-other-keys' });
   });
 
   /*
@@ -166,42 +173,17 @@ describe('where a company stands, from the shape of the service\'s answer', () =
 });
 
 describe('handing it over', () => {
-  /* RED WHEN: the service is asked to install any committee but the one this device checked (one read again after the check, say), or is asked at all when the roster does not name the committee. */
-  it('sends exactly the committee checked against the roster, and nothing when the roster does not agree', async () => {
+  /* RED WHEN: a press hands the company's account over again - no target for one exists, and any member could name their own key. */
+  it('offers no press that hands the company\'s account over', async () => {
     const { acts } = await load();
-    const authority = AUTHORITY();
-    /* Read again after the check, the service would name another committee: what is sent must be the one checked. */
-    kr.answers['/api/accounts/c1/authority'] = [authority, AUTHORITY({ committee: { committee: [K(9)], threshold: 1 } })];
-    kr.answers['/api/accounts/c1'] = {};
-    kr.answers['/api/accounts/c1/authority/handover'] = { txRef: 't' };
-    kr.roster = rosterWith(K(1));
-    expect(await acts.handOver('u1', 'c1')).toEqual({ of: 'done' });
-    const sent = kr.calls.filter((c) => c.method === 'POST');
-    expect(sent).toEqual([{ path: '/api/accounts/c1/authority/handover', method: 'POST', body: { committee: authority.committee } }]);
-    kr.calls = [];
-    kr.answers['/api/accounts/c1/authority'] = authority;
-    kr.roster = rosterWith(K(2));
-    kr.walletKey = K(2);
-    expect(await acts.handOver('u1', 'c1')).toEqual({ of: 'refused', why: 'roster-disagrees' });
-    expect(kr.calls.filter((c) => c.method === 'POST')).toEqual([]);
+    expect(Object.keys(acts).sort()).toEqual(['giveMyVaultKeys', 'signChange']);
   });
 
-  /* RED WHEN: the company is handed over although the key this person's account gives is not the one their own roster entry carries. */
-  it('sends nothing when this person\'s account gives a key their roster entry does not carry', async () => {
-    const { acts } = await load();
-    kr.answers['/api/accounts/c1/authority'] = AUTHORITY();
-    kr.answers['/api/accounts/c1'] = {};
-    kr.roster = rosterWith(K(1));
-    kr.walletKey = K(2);
-    expect(await acts.handOver('u1', 'c1')).toEqual({ of: 'refused', why: 'roster-disagrees' });
-    expect(kr.calls.filter((c) => c.method === 'POST')).toEqual([]);
-  });
-
-  /* RED WHEN: this person's keys for the company are missing and something is sent anyway, or the keys saved for them are not opened with their account first. */
-  it('opens the saved keys first, and refuses when they hold none for the company', async () => {
+  /* RED WHEN: this person's keys for the company are missing and their vault keys are given anyway, or the keys saved for them are not opened with their account first. */
+  it('opens the saved keys first before vault keys are given, and refuses when they hold none for the company', async () => {
     const { acts } = await load();
     kr.keys = null;
-    expect(await acts.handOver('u1', 'c1')).toEqual({ of: 'refused', why: 'no-keys-here' });
+    expect(await acts.giveMyVaultKeys('u1', 'c1')).toEqual({ of: 'refused', why: 'no-keys-here' });
     expect(kr.opened).toBe(1);
     expect(kr.calls).toEqual([]);
   });
@@ -245,6 +227,16 @@ describe('handing it over', () => {
     expect(kr.walletAsked).toEqual(['5a'.repeat(32)]);
   });
 
+  /* RED WHEN: the keys are offered before this person's own directory entry is filed: a claim another member filed on the seat first then refuses the offer at every press. */
+  it('files this person\'s own entry before offering the keys, so a claim filed first on their seat does not keep them out', async () => {
+    const { acts } = await load();
+    kr.answers['/api/accounts/c1'] = {};
+    kr.roster = rosterWith(K(1));
+    kr.squatted = true;
+    expect(await acts.giveMyVaultKeys('u1', 'c1')).toEqual({ of: 'done' });
+    expect(kr.calls.filter((c) => c.path.startsWith('entry') || c.path.startsWith('offer')).map((c) => c.path)).toEqual(['entry c1 u1', 'offer c1']);
+  });
+
   /* RED WHEN: the vault keys given are not this person's own, from their own entry, with the key their account gives. */
   it('gives this person\'s own vault keys', async () => {
     const { acts } = await load();
@@ -253,13 +245,15 @@ describe('handing it over', () => {
     expect(await acts.giveMyVaultKeys('u1', 'c1')).toEqual({ of: 'done' });
     const entry = { signingKey: signingPublicKeyOf('aa'.repeat(32)), wrappingKey: '33'.repeat(32), seat: '5a'.repeat(32), signature: '55'.repeat(64) };
     expect(kr.calls.slice(-3)).toEqual([
+      /* RED WHEN: this person's directory entry, signed by their account in the same press for their own filing key, is not filed before the keys are offered, so a claim another member filed on this seat first keeps the offer out. */
+      { path: 'entry c1 u1', method: 'PUT', body: { committeeKey: K(1), entry } },
       /* RED WHEN: the keys are offered without the account's statement for the seat this person holds, or without the entry it signed in the same press, which the service holds the offer's signature to. */
       { path: 'offer c1', method: 'PUT', body: {
         signerId: 's1', signingSecret: 'aa'.repeat(32), companyKey: '11'.repeat(32), committeeKey: K(1),
         recordsKey: { recordsKey: '33'.repeat(32), seat: '5a'.repeat(32), signature: '44'.repeat(64) }, entry,
+        /* RED WHEN: the offer is not sealed under the company's roster key, so the service would hold this person's wallet key. */
+        viewingKey: 'vk',
       } },
-      /* RED WHEN: this person's directory entry, signed by their account in the same press for their own filing key, is not filed after the keys are offered. */
-      { path: 'entry c1 u1', method: 'PUT', body: { committeeKey: K(1), entry } },
       /* RED WHEN: the open offers are not folded from this device once its entry is filed, so its own keys wait for another seat. */
       { path: 'fold c1', method: 'FOLD', body: undefined },
     ]);
@@ -274,10 +268,13 @@ describe('handing it over', () => {
     kr.answers['/api/accounts/c1'] = {};
     kr.roster = rosterWith(K(1));
     const statement = { account: 'a0'.repeat(32), signingKey: '2b'.repeat(32), wrappingKey: '2c'.repeat(32), seat: '2d'.repeat(32), signature: '2e'.repeat(64) };
-    kr.keys = { ...kr.keys!, invitedBy: { committeeKey: K(3), statement } as never };
+    /* The inviter's own seat's opening travels with its entry, and nothing of any other seat. */
+    const opening = { publicKey: '2f'.repeat(32), scope: '30'.repeat(32), blinding: '31'.repeat(32), walletKey: K(3), salt: '32'.repeat(32) };
+    kr.keys = { ...kr.keys!, invitedBy: { committeeKey: K(3), statement, opening } as never };
     expect(await acts.giveMyVaultKeys('u1', 'c1')).toEqual({ of: 'done' });
-    expect(kr.invitedBy).toEqual({ committeeKey: K(3), statement });
-    kr.keys = { ...kr.keys!, invitedBy: { committeeKey: { tag: 'ecdsa', value: K(3).value }, statement } as never };
+    /* RED WHEN: the inviter's opening is not handed to the account with the entry, so the account cannot judge the inviter's seat. */
+    expect(kr.invitedBy).toEqual({ committeeKey: K(3), statement, opening });
+    kr.keys = { ...kr.keys!, invitedBy: { committeeKey: { tag: 'ecdsa', value: K(3).value }, statement, opening } as never };
     expect(await acts.giveMyVaultKeys('u1', 'c1')).toEqual({ of: 'done' });
     expect(kr.invitedBy).toBeUndefined();
   });
@@ -309,14 +306,14 @@ describe('handing it over', () => {
 describe('signing a change', () => {
   const OWED = {
     company: 'a0'.repeat(32), label: 'co_' + 'a1'.repeat(32), to: { committee: [K(1)], threshold: 1 }, why: null, notChangeable: [],
-    contracts: [{ contract: 'account', address: 'a0'.repeat(32), counter: '3', now: { committee: [K(1), K(9)], threshold: 2 }, signedSeats: [] as number[], required: 2 }],
+    contracts: [{ contract: 'vault', address: 'b0'.repeat(32), counter: '3', now: { committee: [K(1), K(9)], threshold: 2 }, signedIndexes: [] as number[], required: 2 }],
   };
 
   /* RED WHEN: a change this person has already signed is asked of their account again, or said as a failure rather than nothing to sign. */
   it('says there is nothing to sign, and asks the account nothing, when this person has signed', async () => {
     const { acts } = await load();
     kr.answers['/api/accounts/c1'] = {};
-    kr.answers['/api/accounts/c1/committee-change'] = { ...OWED, contracts: [{ ...OWED.contracts[0], signedSeats: [0] }] };
+    kr.answers['/api/accounts/c1/committee-change'] = { ...OWED, contracts: [{ ...OWED.contracts[0], signedIndexes: [0] }] };
     kr.roster = rosterWith(K(1));
     expect(await acts.signChange('u1', 'c1')).toEqual({ of: 'refused', why: 'nothing-to-sign' });
     expect(kr.calls.filter((c) => c.method === 'POST')).toEqual([]);
@@ -329,7 +326,7 @@ describe('signing a change', () => {
     kr.answers['/api/accounts/c1'] = {};
     kr.answers['/api/accounts/c1/committee-change'] = OWED;
     kr.roster = rosterWith(K(1));
-    const signed = { ...OWED, contracts: [{ ...OWED.contracts[0]!, signedSeats: [0] }] } as never;
+    const signed = { ...OWED, contracts: [{ ...OWED.contracts[0]!, signedIndexes: [0] }] } as never;
     kr.check = { code: COMMITTEE_CHANGE_REFUSAL.nothingToSign, why: 'words no sentence of the check has ever been' };
     expect(await acts.signChange('u1', 'c1')).toEqual({ of: 'refused', why: 'nothing-to-sign' });
     kr.check = { code: COMMITTEE_CHANGE_REFUSAL.refused, why: nothingForMe(signed, K(1)) };
@@ -337,8 +334,25 @@ describe('signing a change', () => {
     expect(kr.calls.filter((c) => c.method === 'POST')).toEqual([]);
   });
 
-  /* RED WHEN: a change is signed and sent when the roster does not name the committee to install, or the signatures the account gave are not what is sent. */
-  it('sends the account\'s signatures, and nothing when the roster does not agree', async () => {
+  /* RED WHEN: the device stops asking the service to send a contract whose kept signatures reach its threshold - the service sends nothing on its own. */
+  it('asks the service to send each contract whose kept signatures reach its threshold, and no other', async () => {
+    const { acts } = await load();
+    kr.answers['/api/accounts/c1'] = {};
+    kr.answers['/api/accounts/c1/committee-change'] = OWED;
+    const VAULT_BEHIND = OWED.contracts[0]!.address;
+    kr.answers['/api/accounts/c1/committee-change/signatures'] = { results: [{ address: VAULT_BEHIND, state: 'kept', have: 2, required: 2 }] };
+    kr.answers['/api/accounts/c1/committee-change/send'] = { state: 'sent' };
+    kr.roster = rosterWith(K(1));
+    kr.signed = { signer: K(1), signatures: [{ address: VAULT_BEHIND, counter: '3', seat: 0, signature: K(7) }] };
+    expect(await acts.signChange('u1', 'c1')).toEqual({ of: 'done' });
+    expect(kr.calls.filter((c) => c.method === 'POST').map((c) => [c.path, c.body])).toEqual([
+      ['/api/accounts/c1/committee-change/signatures', { to: OWED.to, signatures: [{ address: VAULT_BEHIND, counter: '3', index: 0, signature: K(7) }] }],
+      ['/api/accounts/c1/committee-change/send', { address: VAULT_BEHIND, counter: '3', to: OWED.to }],
+    ]);
+  });
+
+  /* RED WHEN: a change is signed and sent when the key this person's wallet gives holds no place on any contract behind, or the signatures the account gave are not what is sent. */
+  it('sends the account\'s signatures, and nothing when the wallet\'s key holds no place on any contract behind', async () => {
     const { acts } = await load();
     kr.answers['/api/accounts/c1'] = {};
     kr.answers['/api/accounts/c1/committee-change'] = OWED;
@@ -347,37 +361,42 @@ describe('signing a change', () => {
     kr.signed = { signer: K(1), signatures: [{ address: 'a', counter: '3', seat: 0, signature: K(7) }] };
     expect(await acts.signChange('u1', 'c1')).toEqual({ of: 'done' });
     expect(kr.calls.filter((c) => c.method === 'POST')).toEqual([{ path: '/api/accounts/c1/committee-change/signatures', method: 'POST',
-      body: { to: OWED.to, signatures: [{ address: 'a', counter: '3', seat: 0, signature: K(7) }] } }]);
-    for (const [roster, wallet] of [[K(5), K(1)], [K(1), K(2)]] as const) {
-      kr.calls = [];
-      kr.roster = rosterWith(roster);
-      kr.walletKey = wallet;
-      expect(await acts.signChange('u1', 'c1')).toEqual({ of: 'refused', why: 'roster-disagrees' });
-      expect(kr.calls.filter((c) => c.method === 'POST')).toEqual([]);
-    }
+      body: { to: OWED.to, signatures: [{ address: 'a', counter: '3', index: 0, signature: K(7) }] } }]);
+    kr.calls = [];
+    kr.walletKey = K(2);
+    expect(await acts.signChange('u1', 'c1')).toEqual({ of: 'refused', why: 'nothing-to-sign' });
+    expect(kr.calls.filter((c) => c.method === 'POST')).toEqual([]);
   });
 
-  /* RED WHEN: a change is signed on a roster the open offers were not folded into first, or a fold that failed is passed over. */
-  it('folds every open offer of vault keys before it reads the change, and signs nothing when the fold fails', async () => {
+  /* RED WHEN: the change reads this person's roster entry, their seat or their keys for the company: a super admin with none cannot sign. */
+  it('a super admin with no seat, no roster entry and no keys for the company on this device signs the change', async () => {
+    const { acts } = await load();
+    kr.answers['/api/accounts/c1/committee-change'] = OWED;
+    kr.answers['/api/accounts/c1/committee-change/signatures'] = { results: [] };
+    kr.keys = null;
+    kr.roster = null;
+    kr.signed = { signer: K(1), signatures: [{ address: 'a', counter: '3', seat: 0, signature: K(7) }] };
+    expect(await acts.signChange('u1', 'c1')).toEqual({ of: 'done' });
+    expect(kr.calls.filter((c) => c.method === 'POST')).toEqual([{ path: '/api/accounts/c1/committee-change/signatures', method: 'POST',
+      body: { to: OWED.to, signatures: [{ address: 'a', counter: '3', index: 0, signature: K(7) }] } }]);
+  });
+
+  /* RED WHEN: the signers' open vault-key offers are folded on the way to the change, so one the fold cannot take stops the super admins signing. */
+  it('a signer\'s vault-key offer the fold cannot take does not stop the super admins signing', async () => {
     const { acts } = await load();
     kr.answers['/api/accounts/c1'] = {};
     kr.answers['/api/accounts/c1/committee-change'] = OWED;
     kr.answers['/api/accounts/c1/committee-change/signatures'] = { results: [] };
     kr.roster = rosterWith(K(1));
     kr.signed = { signer: K(1), signatures: [{ address: 'a', counter: '3', seat: 0, signature: K(7) }] };
+    kr.foldFails = 'the offer did not verify';
     expect(await acts.signChange('u1', 'c1')).toEqual({ of: 'done' });
-    const order = kr.calls.map((c) => c.path).filter((p) => p === 'fold c1' || p.includes('committee-change'));
-    expect(order[0]).toBe('fold c1');
-    expect(order.indexOf('fold c1')).toBeLessThan(order.indexOf('/api/accounts/c1/committee-change'));
-    kr.calls = [];
-    kr.foldFails = 'the roster moved while it was being filed';
-    expect((await acts.signChange('u1', 'c1')).of).toBe('refused');
-    expect(kr.calls.filter((c) => c.method === 'POST')).toEqual([]);
-    expect(kr.calls.some((c) => c.path.includes('committee-change'))).toBe(false);
+    expect(kr.calls.some((c) => c.method === 'FOLD')).toBe(false);
+    expect(kr.calls.filter((c) => c.method === 'POST').map((c) => c.path)).toEqual(['/api/accounts/c1/committee-change/signatures']);
   });
 
-  /* RED WHEN: the threshold a change needs is taken from the copy on the company's record rather than the chain's, as the wallet reads it - a threshold changed from a device would then refuse every committee change after it. */
-  it('holds the threshold of the change to the chain\'s, as this person\'s wallet reads it, and not to a copy on the company\'s record', async () => {
+  /* RED WHEN: the committee a change installs is judged against anything but the one holding the account on the chain, as the wallet reads it: a threshold on the company's record or the roster is never read. */
+  it('holds the change to the committee holding the account on the chain, as this person\'s wallet reads it, and to nothing on the company\'s record', async () => {
     const { acts } = await load();
     kr.answers['/api/accounts/c1'] = {};
     kr.answers['/api/accounts/c1/committee-change'] = OWED;
@@ -386,9 +405,16 @@ describe('signing a change', () => {
     /* The company's record still says 5 from before a change carried out on the chain; the chain says 1. */
     kr.roster = { ...rosterWith(K(1)), policy: { threshold: 5 } };
     expect(await acts.signChange('u1', 'c1')).toEqual({ of: 'done' });
-    /* And a service naming another threshold than the chain's is refused, whatever the record says. */
+    /* And a service naming another committee than the chain's is refused, whatever the record says. */
     kr.calls = [];
     kr.roster = { ...rosterWith(K(1)), policy: { threshold: 1 } };
+    kr.chainCommittee = [K(1), K(2)];
+    kr.chainThreshold = 2;
+    expect(await acts.signChange('u1', 'c1')).toEqual({ of: 'refused', why: 'roster-disagrees' });
+    expect(kr.calls.filter((c) => c.method === 'POST')).toEqual([]);
+    /* RED WHEN: the threshold is taken from anywhere but the chain: the chain holds the service's one key at two. */
+    kr.calls = [];
+    kr.chainCommittee = [K(1)];
     kr.chainThreshold = 2;
     expect(await acts.signChange('u1', 'c1')).toEqual({ of: 'refused', why: 'roster-disagrees' });
     expect(kr.calls.filter((c) => c.method === 'POST')).toEqual([]);

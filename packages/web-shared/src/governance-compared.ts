@@ -4,7 +4,7 @@
  * The one comparison, made by the device that looks for the proposal the
  * company already holds for a change and by the worker that builds a call over
  * an opened proposal. Two changes are the same when they are of one kind, over
- * the same seat, vault, key or commitment, at the same number. A number that is
+ * the same seat, vault, key, commitment or head, at the same number. A number that is
  * not a whole number of at least one is never the same as anything: no change
  * carries one.
  *
@@ -34,6 +34,9 @@ export const sameGovernance = (a: RoundChangeOnTheWire, b: RoundChangeOnTheWire)
     }
     case 'policy-bar': return sameNumber(a.bar, (b as typeof a).bar);
     case 'threshold': return sameNumber(a.threshold, (b as typeof a).threshold);
-    case 'recover-anchor': return same(a.resumesFrom, (b as typeof a).resumesFrom) && sameNumber(a.latest, (b as typeof a).latest);
+    case 'recover-anchor': {
+      const o = b as typeof a;
+      return same(a.resumesFrom, o.resumesFrom) && sameNumber(a.latest, o.latest) && same(a.lastRecovery, o.lastRecovery);
+    }
   }
 };

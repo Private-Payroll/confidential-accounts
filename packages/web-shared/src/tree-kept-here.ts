@@ -17,7 +17,7 @@
  */
 import type { Hex } from '../../../src/core/crypto.js';
 import { manifestEntryRefusal, type ManifestEntry } from '../../../src/midnight/record-manifest.js';
-import type { DirectoryChange } from '../../../src/midnight/seat-directory.js';
+import type { SignedChange } from '../../../src/midnight/seat-directory.js';
 import {
   leafHashOf, treeHeaderReadable, treeLeafRefusal, ZERO, type CheckedHead, type TreeHeader, type TreeLeaf,
 } from '../../../src/midnight/record-tree.js';
@@ -96,14 +96,15 @@ export interface HeadersKeptStore {
 }
 
 /**
- * **A QUORUM'S CHANGE TO THE COMPANY'S DIRECTORY THIS DEVICE FILED AGAIN**, by
- * the version its signatures were made for: kept until a version carrying it is
- * anchored, so a change the service passes over again, or no longer serves, is
- * filed again by this device rather than lost.
+ * **A SIGNED CHANGE TO THE COMPANY'S DIRECTORY THIS DEVICE FILED** - a
+ * quorum's role or retirement - by the version its signatures were made
+ * for: kept from before it is first filed until a version carrying it is
+ * anchored, so a change the service passes over, or no longer serves, is filed
+ * again by this device rather than lost.
  */
 export interface KeptDirectoryChange {
   readonly signedAt: number;
-  readonly change: Exclude<DirectoryChange, { kind: 'claim' }>;
+  readonly change: SignedChange;
 }
 
 /** Where a device keeps the directory changes it filed again, one company at a time. */

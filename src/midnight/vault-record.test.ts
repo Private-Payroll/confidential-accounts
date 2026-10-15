@@ -736,6 +736,23 @@ describe('nothing resolves a vault name to a vault outside this module', () => {
   const withoutTheAllowedReading = (text: string): string =>
     text.replace(/Object\.keys\([^()]*\.vaults\)/g, '');
 
+  /**
+   * **A FILE WHOSE `vaults` IS NOT THE VAULT RECORD'S MAP, BY THE EXACT
+   * READINGS THAT SAY SO.** In `committee-here.ts`, `view` is the company
+   * account's ledger and its `vaults` the account's own set of adopted vault
+   * addresses, iterated beside the vaults it retired: no name is turned into a
+   * vault there. Only these readings are taken out, so any other reach into a
+   * map of vaults in that file is still a lookup.
+   */
+  const READINGS_THAT_ARE_NOT_THE_MAP: Readonly<Record<string, readonly string[]>> = {
+    'packages/web-shared/src/committee-here.ts': ['view?.vaults === undefined', 'for (const v of view.vaults)'],
+  };
+  const withoutReadingsThatAreNotTheMap = (file: string, text: string): string =>
+    Object.entries(READINGS_THAT_ARE_NOT_THE_MAP)
+      .filter(([f]) => file.endsWith(f))
+      .flatMap(([, readings]) => readings)
+      .reduce((t, r) => t.split(r).join(''), text);
+
   const offenders = (rx: RegExp, allowed: readonly string[]): string[] => {
     for (const a of allowed) {
       /*
@@ -750,7 +767,7 @@ describe('nothing resolves a vault name to a vault outside this module', () => {
     }
     return sourceFiles()
       .filter((f) => !allowed.some((a) => f.endsWith(a)))
-      .filter((f) => rx.test(withoutTheAllowedReading(readFileSync(f, 'utf8'))))
+      .filter((f) => rx.test(withoutReadingsThatAreNotTheMap(f, withoutTheAllowedReading(readFileSync(f, 'utf8')))))
       .map((f) => f.slice(root.length + 1));
   };
 

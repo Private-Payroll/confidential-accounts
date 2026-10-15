@@ -72,7 +72,7 @@ describe.skipIf(!KEYS)('A VAULT READ AS IT WAS BORN [needs contracts/managed-vau
     const held = /held from its first transaction by the company's committee/;
     /* RED WHEN: the deploy's own committee is believed rather than compared with the company's. */
     expect(await vaultAsDeployed(reader(), ask({ vault: other.address }), chain())).toMatch(held);
-    expect(await vaultAsDeployed(reader(), ask({ holders: { ...committee, threshold: 1 } }), chain())).toMatch(/could change them alone|held from/);
+    expect(await vaultAsDeployed(reader(), ask({ holders: { ...committee, threshold: 1 } }), chain())).toMatch(held);
     expect(await vaultAsDeployed(reader(), ask({ holders: { committee: [...committee.committee].reverse(), threshold: 2 } }), chain())).toMatch(held);
     /* RED WHEN: the account the vault is pinned to is not compared. */
     expect(await vaultAsDeployed(reader(), ask({ account: 'd0'.repeat(32) }), chain())).toMatch(/pinned to a different company's account/);
@@ -85,9 +85,12 @@ describe.skipIf(!KEYS)('A VAULT READ AS IT WAS BORN [needs contracts/managed-vau
     expect(await vaultAsDeployed(reader(), ask(), chainHolding({}))).toMatch(/the chain holds no deploy at this vault's address/);
   });
 
-  it('IS NEVER BUILT FOR A COMMITTEE ANY ONE OF WHOSE KEYS COULD CHANGE IT ALONE', async () => {
-    /* RED WHEN: the device builds a vault whose rules one key of several could change alone. */
-    await expect(buildVaultBornHeld(deps(), { account: ACCOUNT, holders: { ...committee, threshold: 1 } })).rejects.toThrow(/could change them alone/);
+  it('IS NEVER BUILT FOR A COMMITTEE THE ONE INSTALL RULE REFUSES', async () => {
+    /* RED WHEN: the device builds a vault whose committee lists a key twice, or whose threshold is outside its keys. */
+    const [first] = committee.committee;
+    await expect(buildVaultBornHeld(deps(), { account: ACCOUNT, holders: { committee: [first!, first!], threshold: 2 } })).rejects.toThrow(/are the same key/);
+    await expect(buildVaultBornHeld(deps(), { account: ACCOUNT, holders: { ...committee, threshold: 0 } })).rejects.toThrow(/not a whole number of at least one/);
+    await expect(buildVaultBornHeld(deps(), { account: ACCOUNT, holders: { ...committee, threshold: committee.committee.length + 1 } })).rejects.toThrow(/can never be met/);
   });
 
   it('IS READ AGAINST THIS BUILD\'S KEYS ONLY: A SERVED KEY THAT IS NOT THIS BUILD\'S STOPS THE READ', async () => {

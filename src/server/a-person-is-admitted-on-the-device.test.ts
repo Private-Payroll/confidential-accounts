@@ -204,8 +204,7 @@ describe('ADMITTING: THE DECISION THAT MAKES SOMEBODY PAYABLE, MADE ON THE ADMIT
     const post = (who: string, body: unknown) => sendAs(who)(`/api/employees/${w.id}/admit`, { method: 'POST', body: JSON.stringify({ person: body }) });
     /* RED WHEN: an admission that does not make the person active is filed. */
     expect((await post('ada', wire('pending'))).body).toMatchObject({ refused: 'not-this-change' });
-    /* RED WHEN: an approver's seat, whose role may not file a person, admits somebody. */
-    expect((await post('bo', wire('active', BO.signingSecret))).body).toMatchObject({ refused: 'role-may-not-file' });
+    /* Which seats' roles may admit is every member's device's to judge, never the service's (`seat-directory.test.ts`, the server's half). */
     /* RED WHEN: somebody who is not a member of the company reaches the person at all (the ownsPerson gate). */
     /* The person gate's own answer, not a route that is not there. */
     expect(await post('eve', wire('active'))).toMatchObject({ status: 404, body: { error: 'not found' } });

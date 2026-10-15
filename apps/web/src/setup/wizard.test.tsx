@@ -18,7 +18,7 @@ import { untilPageShown } from '../page-shown.test-support.js';
  * from the screen.
  */
 const state = vi.hoisted(() => ({
-  handover: { of: 'vault-keys-missing', signers: 1 } as Record<string, unknown>,
+  handover: { of: 'held-by-other-keys' } as Record<string, unknown>,
   acted: [] as string[],
   gaveKeys: { of: 'done' } as unknown,
   created: { of: 'done', companyId: 'c-new' } as Record<string, unknown>,
@@ -59,7 +59,6 @@ vi.mock('../adapters/handover-state.js', async (real) => ({
   readHandover: vi.fn(async () => state.handover),
 }));
 vi.mock('../adapters/hand-over.js', () => ({
-  handOver: vi.fn(async () => { state.acted.push('hand-over'); return { of: 'done' }; }),
   signChange: vi.fn(async () => { state.acted.push('sign-change'); return { of: 'done' }; }),
   giveMyVaultKeys: vi.fn(async () => { state.acted.push('give-keys'); return { of: 'done' }; }),
 }));
@@ -116,7 +115,7 @@ const pick = async (c: HTMLElement, step: string) => { await act(async () => { f
 
 beforeEach(() => {
   vi.spyOn(console, 'error').mockImplementation(() => {});
-  state.handover = { of: 'vault-keys-missing', signers: 1 }; state.acted = []; state.gaveKeys = { of: 'done' }; state.waiting = null; state.created = { of: 'done', companyId: 'c-new' };
+  state.handover = { of: 'held-by-other-keys' }; state.acted = []; state.gaveKeys = { of: 'done' }; state.waiting = null; state.created = { of: 'done', companyId: 'c-new' };
   state.vaults = []; state.ready = { of: 'ready' }; state.vaultCreated = { of: 'done', vault: 'v-new' }; state.owed = []; state.opened = [];
   /* What a tab remembers between showings of the wizard starts empty for every test. */
   for (const c of [null, 'c-1']) skippedFor(c).clear();
@@ -206,7 +205,7 @@ describe('a step that cannot be undone', () => {
     expect(q(container, '[data-action=create-company]')).toBeNull();
   });
 
-  /* RED WHEN: once the company is held by its signers, the handover step can be opened again, or does not say done. */
+  /* RED WHEN: once the company is held by its super admins, the handover step can be opened again, or does not say done. */
   it('closes the handover once the company is held, and moves on', async () => {
     state.handover = { of: 'held' };
     startSetupAt(STEP.handOver);
@@ -317,49 +316,25 @@ describe('skipping', () => {
   });
 });
 
-describe('handing the company over: every action shown, disabled with why, leading to the step that fixes it', () => {
-  /* RED WHEN: with no company the handover is hidden, enabled, says no reason, or does not lead to creating the company. */
+describe('who holds the company: what the step says, and what it offers', () => {
+  /* RED WHEN: with no company the step says no reason, or does not lead to creating the company. */
   it('before the company exists', async () => {
     const leadTo = vi.fn();
     const { container } = await draw(<HandOver leadTo={leadTo} onChanged={() => {}} />, sessionWith());
-    expect((q(container, '[data-action=hand-over-now]') as HTMLButtonElement).disabled).toBe(true);
     expect(q(container, '[data-why]')!.textContent).toBe(EN['setup.handOver.why.noCompany']);
     fireEvent.click(q(container, `[data-lead-to=${STEP.createCompany}]`)!);
     expect(leadTo).toHaveBeenCalledWith(STEP.createCompany);
   });
 
-  /* RED WHEN: with any one signer able to approve alone, the handover is enabled or hidden, or does not lead to setting approvals. */
-  it('with too few approvals', async () => {
-    state.handover = { of: 'too-few-approvals', signers: 3, needed: 1 };
-    const leadTo = vi.fn();
-    const { container } = await draw(<HandOver leadTo={leadTo} onChanged={() => {}} />, sessionWith({ company: 'c-1' }));
-    expect((q(container, '[data-action=hand-over-now]') as HTMLButtonElement).disabled).toBe(true);
-    expect(q(container, '[data-why]')!.getAttribute('data-why')).toBe('too-few-approvals');
-    expect(q(container, '[data-why]')!.textContent).toBe(EN['setup.handOver.why.tooFewApprovals_other']!.replace('{count}', '3'));
-    fireEvent.click(q(container, `[data-lead-to=${STEP.signers}]`)!);
-    expect(leadTo).toHaveBeenCalledWith(STEP.signers);
-  });
-
-  /* RED WHEN: with vault keys missing the handover is enabled, or there is no way to give this person's keys from the step. */
-  it('with vault keys missing, offers to give them', async () => {
-    const { container } = await draw(<HandOver leadTo={() => {}} onChanged={() => {}} />, sessionWith({ company: 'c-1' }));
-    expect((q(container, '[data-action=hand-over-now]') as HTMLButtonElement).disabled).toBe(true);
-    await act(async () => { fireEvent.click(q(container, '[data-action=give-vault-keys]')!); await settle(); });
-    expect(state.acted).toEqual(['give-keys']);
-  });
-
-  /* RED WHEN: the handover is sent without the "Confirm in your account" step in front of it, or is sent when that step is cancelled. */
-  it('when ready, asks to confirm in the account before anything is sent', async () => {
-    state.handover = { of: 'ready', everySignerNeeded: false, signers: 1 };
-    const { container } = await draw(<HandOver leadTo={() => {}} onChanged={() => {}} />, sessionWith({ company: 'c-1' }));
-    await act(async () => { fireEvent.click(q(container, '[data-action=hand-over-now]')!); await settle(); });
-    expect(state.acted).toEqual([]);
-    expect(q(container, '[data-slot=confirm-in-your-account]')).not.toBeNull();
-    await act(async () => { fireEvent.click([...container.querySelectorAll('button')].find((b) => b.textContent === EN['kit.confirm.cancel'])!); await settle(); });
-    expect(state.acted).toEqual([]);
-    await act(async () => { fireEvent.click(q(container, '[data-action=hand-over-now]')!); await settle(); });
-    await act(async () => { fireEvent.click([...container.querySelectorAll('button')].find((b) => b.textContent === EN['kit.confirm.confirm'])!); await settle(); });
-    expect(state.acted).toEqual(['hand-over']);
+  /* RED WHEN: the step offers to hand the company over, or to give vault keys ahead of it - no handover is the signers' to wait on. */
+  it('offers no handover and no vault keys, in any state', async () => {
+    for (const of of Object.values(HANDOVER)) {
+      state.handover = of === HANDOVER.changeOwed ? { of, signed: [] } : { of };
+      const { container } = await draw(<HandOver leadTo={() => {}} onChanged={() => {}} />, sessionWith({ company: 'c-1' }));
+      expect(q(container, '[data-action=hand-over-now]'), of).toBeNull();
+      expect(q(container, '[data-action=give-vault-keys]'), of).toBeNull();
+      cleanup();
+    }
   });
 });
 
@@ -376,19 +351,15 @@ describe('signing a change owed', () => {
     expect(q(container, '[data-acted]')!.textContent).toBe(EN['setup.handOver.done.signChange']);
   });
 
-  /* RED WHEN: a line saying something was sent is shown after giving vault keys, or beside a company already held. */
-  it('says what each action did, and nothing pending once the company is held', async () => {
+  /* RED WHEN: a line saying something was sent is shown beside a company already held. */
+  it('says nothing pending once the company is held', async () => {
+    state.handover = { of: 'change-owed', signed: [{ have: 1, required: 2 }] };
     const { container } = await draw(<HandOver leadTo={() => {}} onChanged={() => {}} />, sessionWith({ company: 'c-1' }));
-    await act(async () => { fireEvent.click(q(container, '[data-action=give-vault-keys]')!); await settle(); });
-    expect(q(container, '[data-acted]')!.textContent).toBe(EN['setup.handOver.done.giveKeys']);
-    cleanup();
-    state.handover = { of: 'ready', everySignerNeeded: false, signers: 1 };
-    const again = await draw(<HandOver leadTo={() => {}} onChanged={() => {}} />, sessionWith({ company: 'c-1' }));
     state.handover = { of: 'held' };
-    await act(async () => { fireEvent.click(q(again.container, '[data-action=hand-over-now]')!); await settle(); });
-    await act(async () => { fireEvent.click([...again.container.querySelectorAll('button')].find((b) => b.textContent === EN['kit.confirm.confirm'])!); await settle(); });
-    expect(q(again.container, '[data-acted]')).toBeNull();
-    expect(q(again.container, '[data-why]')!.textContent).toBe(EN['setup.handOver.why.held']);
+    await act(async () => { fireEvent.click(q(container, '[data-action=sign-change]')!); await settle(); });
+    await act(async () => { fireEvent.click([...container.querySelectorAll('button')].find((b) => b.textContent === EN['kit.confirm.confirm'])!); await settle(); });
+    expect(q(container, '[data-acted]')).toBeNull();
+    expect(q(container, '[data-why]')!.textContent).toBe(EN['setup.handOver.why.held']);
   });
 });
 
@@ -396,8 +367,8 @@ describe('creating a vault: one component, on the step and on the Vaults page', 
   const HELD = { vault: 'v-1', createdAt: '2026-09-01T00:00:00.000Z', standing: 'held-by-committee' };
   const OWED = { vault: 'v-2', createdAt: '2026-09-02T00:00:00.000Z', standing: 'handover-owed' };
 
-  /* RED WHEN: once a vault is held by the signers the vault step can be opened again or does not say done; or a vault sent and not handed over is taken for done. */
-  it('closes the vault step once a vault is held by the signers, and only then', async () => {
+  /* RED WHEN: once a vault is held by the super admins the vault step can be opened again or does not say done; or a vault sent and not handed over is taken for done. */
+  it('closes the vault step once a vault is held by the super admins, and only then', async () => {
     state.handover = { of: 'held' };
     state.vaults = [OWED];
     startSetupAt(STEP.vault);
@@ -443,7 +414,6 @@ describe('creating a vault: one component, on the step and on the Vaults page', 
     const cases: [Record<string, unknown>, string][] = [
       [{ of: 'yours-missing' }, 'createVault.why.yoursMissing'],
       [{ of: 'others-missing' }, 'createVault.why.othersMissing'],
-      [{ of: 'roster-disagrees' }, 'createVault.why.rosterDisagrees'],
       [{ of: 'not-on-chain' }, 'createVault.why.notOnChain'],
     ];
     for (const [ready, why] of cases) {
@@ -501,7 +471,7 @@ describe('creating a vault: one component, on the step and on the Vaults page', 
     expect(state.acted).toEqual([JSON.stringify(['create-vault', 'u1', 'c-1'])]);
     expect(q(container, '[data-created]')!.textContent).toBe(`${EN['createVault.done']} ${EN['createVault.done.notHandedOver']}`);
     expect(onChanged).toHaveBeenCalled();
-    for (const [result, key] of [[{ of: 'handover-owed', vault: 'v-3' }, 'createVault.owed.now'], [{ of: 'handover-owed-elsewhere', vault: 'v-3' }, 'createVault.owed.elsewhere'], [{ of: 'handover-owed-roster-disagrees', vault: 'v-3' }, 'createVault.owed.rosterDisagrees']] as const) {
+    for (const [result, key] of [[{ of: 'handover-owed', vault: 'v-3' }, 'createVault.owed.now'], [{ of: 'handover-owed-elsewhere', vault: 'v-3' }, 'createVault.owed.elsewhere']] as const) {
       state.vaultCreated = result;
       await act(async () => { fireEvent.click(q(container, '[data-action=create-vault-now]')!); await settle(); });
       await act(async () => { fireEvent.click([...container.querySelectorAll('button')].find((b) => b.textContent === EN['kit.confirm.confirm'])!); await settle(); });
@@ -514,26 +484,23 @@ describe('creating a vault: one component, on the step and on the Vaults page', 
   });
 
   /*
-   * RED WHEN: the vault-created line says this app puts money in only once the
-   * company is handed over while the company is held by its signers as they
-   * stand now; or leaves that out in any other state, a change owed and a
-   * state that could not be read among them.
+   * RED WHEN: the vault-created line says the company's account is not held by
+   * its super admins in any state but the one where none of them holds it - a
+   * change of the super admins owed is not that state - or leaves it out when
+   * none does.
    */
-  it('says money goes in only once the company is handed over, in every state but held', async () => {
-    const extra: Record<string, Record<string, unknown>> = {
-      [HANDOVER.vaultKeysMissing]: { signers: 1 }, [HANDOVER.tooFewApprovals]: { signers: 3, needed: 1 },
-      [HANDOVER.ready]: { everySignerNeeded: false, signers: 1 }, [HANDOVER.changeOwed]: { signed: [{ have: 1, required: 2 }] },
-    };
+  it('says the account is not held by its super admins, only when it is not', async () => {
+    const extra: Record<string, Record<string, unknown>> = { [HANDOVER.changeOwed]: { signed: [{ have: 1, required: 2 }] } };
     const both = `${EN['createVault.done']} ${EN['createVault.done.notHandedOver']}`;
     for (const of of Object.values(HANDOVER)) {
       state.handover = { of, ...extra[of] };
       const { container } = await draw(<CreateVault leadTo={() => {}} onChanged={() => {}} />, sessionWith({ company: 'c-1' }));
       await act(async () => { fireEvent.click(q(container, '[data-action=create-vault-now]')!); await settle(); });
       await act(async () => { fireEvent.click([...container.querySelectorAll('button')].find((b) => b.textContent === EN['kit.confirm.confirm'])!); await settle(); });
-      expect(q(container, '[data-created]')!.textContent, of).toBe(of === HANDOVER.held ? EN['createVault.done'] : both);
+      expect(q(container, '[data-created]')!.textContent, of).toBe(of === HANDOVER.heldByOtherKeys ? both : EN['createVault.done']);
       cleanup();
     }
-    expect(Object.values(HANDOVER).length).toBe(12);
+    expect(Object.values(HANDOVER).length).toBe(8);
   });
 
   /*
@@ -575,8 +542,7 @@ describe('creating a vault: one component, on the step and on the Vaults page', 
   it('says what resolves a set up that stopped before its secret was approved', async () => {
     const { container } = await draw(<CreateVault leadTo={() => {}} onChanged={() => {}} />, sessionWith({ company: 'c-1' }));
     for (const [stopped, key] of [
-      ['wallet', 'createVault.stopped.wallet'], ['hand-over', 'createVault.stopped.handOver'], ['vault', 'createVault.stopped.vault'],
-      ['signers', 'createVault.stopped.signers'], ['mismatch', 'createVault.stopped.mismatch'],
+      ['wallet', 'createVault.stopped.wallet'], ['signers', 'createVault.stopped.signers'], ['mismatch', 'createVault.stopped.mismatch'],
     ] as const) {
       state.vaultCreated = { of: 'start-owed', vault: 'v-5', stopped } as never;
       await act(async () => { fireEvent.click(q(container, '[data-action=create-vault-now]')!); await settle(); });
@@ -587,53 +553,21 @@ describe('creating a vault: one component, on the step and on the Vaults page', 
   });
 
   /*
-   * RED WHEN: a set up that stopped offers anything but the one action that resolves its own stop: the company not yet
-   * held leads to handing it over; a vault not held by the signers as they stand finishes its handover from the device
-   * holding its key, and otherwise leads to the change; signers' keys that do not match offer no blind retry; the
-   * wallet and the signers carry on.
+   * RED WHEN: a set up that stopped offers anything but the one action that resolves its own stop: signers' keys that do
+   * not match offer no blind retry; the wallet and the signers carry on.
    */
   it('a set up that stopped offers the action that resolves its own stop, and no other', async () => {
-    const led: string[] = [];
     const press = async (container: HTMLElement) => {
       await act(async () => { fireEvent.click(q(container, '[data-action=create-vault-now]')!); await settle(); });
       await act(async () => { fireEvent.click([...container.querySelectorAll('button')].find((b) => b.textContent === EN['kit.confirm.confirm'])!); await settle(); });
     };
     const offered = (c: HTMLElement) => [...c.querySelectorAll('[data-result] button')].map((b) => b.getAttribute('data-action') ?? `lead-to ${b.getAttribute('data-lead-to')}`);
-    const { container } = await draw(<CreateVault leadTo={(step) => led.push(step)} onChanged={() => {}} />, sessionWith({ company: 'c-1' }));
-    for (const [stopped, actions] of [
-      ['wallet', ['finish-start']], ['signers', ['finish-start']], ['mismatch', []],
-      ['hand-over', ['lead-to handOver']], ['vault', ['lead-to handOver']],
-    ] as const) {
+    const { container } = await draw(<CreateVault leadTo={() => {}} onChanged={() => {}} />, sessionWith({ company: 'c-1' }));
+    for (const [stopped, actions] of [['wallet', ['finish-start']], ['signers', ['finish-start']], ['mismatch', []]] as const) {
       state.vaultCreated = { of: 'start-owed', vault: 'v-5', stopped } as never;
       await press(container);
       expect(offered(container), stopped).toEqual(actions);
     }
-    /* The company not held leads to handing it over, said as that; a vault not held, to the change its signers sign. */
-    state.vaultCreated = { of: 'start-owed', vault: 'v-5', stopped: 'hand-over' } as never;
-    await press(container);
-    expect(q(container, '[data-result] [data-lead-to]')!.textContent).toBe(EN['createVault.goHandOver']);
-    await act(async () => { fireEvent.click(q(container, '[data-result] [data-lead-to]')!); await settle(); });
-    expect(led).toEqual(['handOver']);
-    state.vaultCreated = { of: 'start-owed', vault: 'v-5', stopped: 'vault' } as never;
-    await press(container);
-    expect(q(container, '[data-result] [data-lead-to]')!.textContent).toBe(EN['createVault.goSignChange']);
-    /* RED WHEN: the vault's own stop tells a person to hand over a company that is already handed over. */
-    expect(EN['createVault.stopped.vault']).not.toMatch(/hand your company/iu);
-    cleanup();
-    /* The vault was created on this device and is not handed over yet: finishing its handover is what resolves it. */
-    state.owed = [{ vault: 'v-5', number: 1, here: true }];
-    const here = await draw(<CreateVault leadTo={() => {}} onChanged={() => {}} />, sessionWith({ company: 'c-1' }));
-    state.vaultCreated = { of: 'start-owed', vault: 'v-5', stopped: 'vault' } as never;
-    await press(here.container);
-    expect(offered(here.container)).toEqual(['finish-handover']);
-    await act(async () => { fireEvent.click(q(here.container, '[data-result] [data-action=finish-handover]')!); await settle(); });
-    expect(q(here.container, '[data-slot=confirm-in-your-account]')!.textContent).toContain(EN['createVault.confirmFinish']);
-    cleanup();
-    /* RED WHEN: a vault waiting on the device it was created on leads to a step with nothing to do there. */
-    state.owed = [{ vault: 'v-5', number: 1, here: false }];
-    const elsewhere = await draw(<CreateVault leadTo={() => {}} onChanged={() => {}} />, sessionWith({ company: 'c-1' }));
-    await press(elsewhere.container);
-    expect(offered(elsewhere.container)).toEqual([]);
   });
 
   /* RED WHEN: opened to carry a vault on, the confirm opens again after every read of the company - the blind retry back. */
@@ -746,10 +680,10 @@ describe('creating a vault: one component, on the step and on the Vaults page', 
     await act(async () => { fireEvent.click(q(held.container, '[data-action=finish-handover]')!); await settle(); });
     await act(async () => { fireEvent.click([...held.container.querySelectorAll('button')].find((b) => b.textContent === EN['kit.confirm.confirm'])!); await settle(); });
     expect(q(held.container, '[data-created]')!.textContent).toBe(EN['createVault.done']);
-    /* RED WHEN the vault's words say money goes in once the signers hold it, before it is set up, or call it done without saying it is set up. */
+    /* RED WHEN the vault's words say money goes in before it is set up, say the signers hold it, or call it done without saying it is set up and who holds it. */
     expect([held.container.querySelector('[data-action=create-vault] > p')?.textContent, q(held.container, '[data-created]')!.textContent]).toEqual([
-      expect.stringContaining('Until your signers hold it and it is set up, this app puts no money into it.'),
-      'The vault is created and set up, and your signers hold it.',
+      expect.stringContaining('held from the start by your company\'s super admins. It is then added to your company\'s account and set up. Until it is set up, this app puts no money into it.'),
+      'The vault is created and set up, and your company\'s super admins hold it.',
     ]);
   });
 });

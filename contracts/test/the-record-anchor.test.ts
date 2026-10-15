@@ -23,7 +23,9 @@
  * Where a batch can never be checked - its header lost by everyone, or its own message false - a
  * quorum at the bar for changing who is seated approves a recovery from a head their devices checked,
  * to be carried out before a time the approval names, and any signer carries it out from the head the
- * chain holds, under the recovery's own tag. A removal after the approval voids it.
+ * chain holds, under the recovery's own tag. A removal after the approval voids it, and so does
+ * another recovery carried out after it: each approval names the head the latest recovery carried
+ * out wrote, and each recovery carried out writes its own there.
  *
  * The one to read first is "a device that read an older head is refused".
  */
@@ -288,6 +290,49 @@ describe('a recovery of the record anchor', () => {
     expect(hex(sim.anchorHead())).toBe(hex(pureCircuits.anchorHeadOf(moved,
       pureCircuits.anchorRecoveredOf(batch(9), held.approvals, held.signerRoot, sim.anchorTagOf(A), resumes))));
     expect(sim.isOpen(id)).toBe(false);
+  });
+
+  it('a recovery approved before another was carried out is refused; one raised after it is carried out', async () => {
+    const { resumes, now } = await twoAnchors();
+    const first = await sim.approvedRecovery(resumes, [A, B], 501);
+    const second = await sim.approvedRecovery(resumes, [A, B], 502);
+    /* Before any recovery is carried out, each approval names 32 zero bytes as the latest recovery's head. */
+    expect(hex(first.lastRecovery)).toBe(hex(ZERO_32));
+    await sim.as(sim.applying(A, first.c)).recoverAnchor(now, batch(9), resumes, first.latest, first.id, held, first.lastRecovery);
+    const recovered = sim.anchorHead()!;
+    /* RED WHEN a recovery carried out does not write the head it moved the anchor to as the latest recovery's head. */
+    expect(hex(sim.lastRecovery())).toBe(hex(recovered));
+    expect(hex(recovered)).toBe(hex(pureCircuits.anchorHeadOf(now,
+      pureCircuits.anchorRecoveredOf(batch(9), held.approvals, held.signerRoot, sim.anchorTagOf(A), resumes))));
+    /* RED WHEN recoverAnchor stops checking the latest recovery its approval names against the chain's: one seat could use a second approval to give up batches anchored since the first. */
+    await expect(sim.as(sim.applying(B, second.c)).recoverAnchor(recovered, batch(8), resumes, second.latest, second.id, held, second.lastRecovery))
+      .rejects.toThrow(/this recovery names a latest recovery that is no longer the latest one carried out, so it is void; raise it again and have it approved/);
+    /* RED WHEN the approval does not bind the latest recovery it names: a carrying-out device could name the chain's instead. */
+    await expect(sim.as(sim.applying(B, second.c)).recoverAnchor(recovered, batch(8), resumes, second.latest, second.id, held, recovered))
+      .rejects.toThrow(/that proposal is not a recovery of the company's records from that head before that time/);
+    expect(hex(sim.anchorHead())).toBe(hex(recovered));
+    expect(sim.isOpen(second.id)).toBe(true);
+    /* A plain anchor after it leaves the latest recovery's head where the recovery wrote it. */
+    await sim.as(B).anchor(recovered, batch(3));
+    const moved = sim.anchorHead()!;
+    /* RED WHEN a plain anchor writes the latest recovery's head: any seat could void every recovery approved by anchoring once. */
+    expect(hex(sim.lastRecovery())).toBe(hex(recovered));
+    /* Raised again after it, against the head the first recovery wrote, the same quorum carries it out. */
+    const again = await sim.approvedRecovery(recovered, [A, B], 503);
+    expect(hex(again.lastRecovery)).toBe(hex(recovered));
+    await sim.as(sim.applying(A, again.c)).recoverAnchor(moved, batch(8), recovered, again.latest, again.id, held, again.lastRecovery);
+    expect(sim.isOpen(again.id)).toBe(false);
+    expect(hex(sim.lastRecovery())).toBe(hex(sim.anchorHead()!));
+  });
+
+  it('before any recovery is carried out, an approval naming a recovery\'s head is refused', async () => {
+    const { resumes, now } = await twoAnchors();
+    const named = await sim.approvedRecovery(resumes, [A, B], 504, undefined, now);
+    /* RED WHEN the account reads an absent latest recovery as anything but 32 zero bytes: an approval naming a head no recovery wrote would pass. */
+    await expect(sim.as(sim.applying(A, named.c)).recoverAnchor(now, batch(9), resumes, named.latest, named.id, held, named.lastRecovery))
+      .rejects.toThrow(/this recovery names a latest recovery that is no longer the latest one carried out, so it is void; raise it again and have it approved/);
+    expect(hex(sim.anchorHead())).toBe(hex(now));
+    expect(sim.isOpen(named.id)).toBe(true);
   });
 
   it('a removal after it was approved voids it, even once enough others approve', async () => {

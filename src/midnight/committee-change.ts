@@ -1,13 +1,14 @@
 /**
  * **A COMMITTEE CHANGE: WHO JOINS, WHO LEAVES, THE NEW THRESHOLD, AND WHICH OF
- * A COMPANY'S CONTRACTS STILL CARRY THE OLD COMMITTEE.**
+ * A COMPANY'S CONTRACTS STILL CARRY ANOTHER COMMITTEE.**
  *
- * A company's committee is one key per signer at the company's threshold, and
+ * A company's committee is its super admins' keys at their own threshold, and
  * every contract the company has - its account and each vault - holds its own
- * copy of that list on the chain. When a signer joins or leaves, or the
- * threshold moves, every copy has to be replaced, and each replacement must be
- * signed by enough of the keys that copy holds NOW: the chain checks the
- * signatures against the committee on chain, not the one being installed.
+ * copy of that list on the chain, the account's being the one the others must
+ * equal. When the super admins change, every copy has to be replaced, and each
+ * replacement must be signed by enough of the keys that copy holds NOW: the
+ * chain checks the signatures against the committee on chain, not the one
+ * being installed. No signer, threshold or bar of the signers moves it.
  *
  * This file only reads. It builds nothing, signs nothing and holds no key, and
  * it loads no WebAssembly, so a page, a wallet and the service can all ask it
@@ -15,6 +16,7 @@
  */
 import type { AuthorityRead } from './ledger.js';
 import type { Committee, CommitteeKey } from './vault-committee.js';
+import { whyNotInstallable } from 'midnight-identity/profile/request';
 
 const idOf = (k: CommitteeKey): string => `${k.tag.toLowerCase()}:${k.value.toLowerCase()}`;
 
@@ -61,35 +63,45 @@ export interface ContractNotChangeable {
 }
 
 /**
- * **WHICH OF THE COMPANY'S CONTRACTS CARRY A COMMITTEE OTHER THAN THE COMPANY'S
- * NOW, AND CAN BE CHANGED BY THE KEYS THAT HOLD THEM.**
+ * **WHICH OF THE COMPANY'S CONTRACTS CARRY A COMMITTEE OTHER THAN `target`,
+ * AND CAN BE CHANGED BY THE KEYS THAT HOLD THEM.** `target` is the committee
+ * every contract must hold: the account's as the chain holds it, or the super
+ * admins' change in progress (`superAdminsHere` reads both). A target the one
+ * install rule refuses (`whyNotInstallable`) is never offered: every contract
+ * the chain could be asked about is named as not changeable, with the rule's
+ * reason.
  *
- * A contract already holding exactly the company's committee owes nothing. One
+ * A contract already holding exactly the target owes nothing. One
  * the chain could not be asked about is not changeable, because a change is
  * signed against the counter on the chain and nobody has read it. One the
- * service's record does not hold as born held by the company's committee is
- * named and not offered: a change signed by whoever holds it would not make it
- * the company's. A born-held contract still held by its founding signer's one
- * key, never changed, is offered like any other: that is a one-signer company
- * seating its second signer. One whose rules need no signature at all, or can
- * never be changed, is named and not offered.
+ * company's records do not hold as born held by its committee is named and
+ * not offered: a change signed by whoever holds it would not make it the
+ * company's. A born-held contract still held by the founding seat's one key,
+ * never changed, is offered like any other: that is the super admins' first
+ * change. One whose rules need no signature at all, or can never be changed,
+ * is named and not offered.
  */
 export function contractsOwingAChange(
   reads: ReadonlyArray<{ readonly contract: 'account' | 'vault'; readonly read: AuthorityRead; readonly bornHeld: boolean }>,
-  company: Committee,
+  target: Committee,
 ): { readonly owed: ContractOwingAChange[]; readonly notChangeable: ContractNotChangeable[] } {
   const owed: ContractOwingAChange[] = [];
   const notChangeable: ContractNotChangeable[] = [];
-  const target = company.committee.map(idOf);
+  const notInstallable = whyNotInstallable(target);
+  const keys = notInstallable === null ? target.committee.map(idOf) : [];
   for (const { contract, read, bornHeld } of reads) {
     const noun = contract === 'account' ? 'the company\'s account' : 'this vault';
     if (read.state !== 'read') {
       notChangeable.push({ contract, address: read.address, why: `the chain could not be asked who holds ${noun}'s rules: ${read.why}` });
       continue;
     }
+    if (notInstallable !== null) {
+      notChangeable.push({ contract, address: read.address, why: `${noun} is not changed to that committee: ${notInstallable}` });
+      continue;
+    }
     const a = read.authority;
-    const same = a.threshold === company.threshold && a.committee.length === target.length
-      && a.committee.every((k, i) => idOf(k) === target[i]);
+    const same = a.threshold === target.threshold && a.committee.length === keys.length
+      && a.committee.every((k, i) => idOf(k) === keys[i]);
     if (same) continue;
     if (!bornHeld) {
       notChangeable.push({

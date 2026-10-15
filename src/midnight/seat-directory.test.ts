@@ -1,46 +1,86 @@
 import { describe, expect, it } from 'vitest';
 import { identityFromSecret } from 'midnight-identity';
 import { committeeKeyFor } from 'midnight-identity/profile/committee-key';
-import { recordsPublicKeyOf, signDirectoryEntry, signRecordsKey } from 'midnight-identity/profile/records-key';
+import { recordsPublicKeyOf, signDirectoryEntry, signRecordsKey, type DirectoryEntryStatement } from 'midnight-identity/profile/records-key';
 import type { AccountAddress, CompanyLabel } from 'midnight-identity/profile/company-label';
-import { newSigningKeypair, sign, type Hex } from '../core/crypto.js';
+import { newSigningKeypair, seal, sign, type Hex } from '../core/crypto.js';
 import { directoryWithItsRecordsHere, passedOverSaid, type RecordsHeldHere } from 'vaults-web-shared/vault-page-doors.js';
-import { directoryEntry, recordKeyOf } from './record-manifest.js';
+import { directoryEntry, recordKeyOf, WITNESSED_AS } from './record-manifest.js';
 import { DIRECTORY } from './records-held.js';
 import { GENESIS } from './record-tree.js';
 import {
-  applyFiling, believedDirectory, directoryChangeMessage, directoryReplayed, DirectoryRefused, emptyDirectory, filerSeatOf, filingRefusalOf,
-  MAY_FILE, seatsWithAnotherRecordsKey, vaultRecordKey,
-  type ChainHolders, type Directory, type DirectoryChange, type DirectoryEntry, type DirectoryFiling,
+  applyFiling as applyWith, asAMember, AT_THE_SERVER, believedDirectory as believedWith, directoryChangeMessage, directoryEntryMade,
+  directoryReplayed as replayedWith, DirectoryRefused, emptyDirectory, entryFilingMessage, filerSeatIn, filerSeatOf, filingRefusalOf, MAY_FILE, proofsOpenedWith,
+  actingSeatOf, mayFile, signerSeatOf,
+  seatsWithAnotherRecordsKey, vaultRecordKey,
+  type AccountHeld, type ChainHolders, type Directory, type DirectoryChange, type DirectoryEntry, type DirectoryFiling,
 } from './seat-directory.js';
+import { leafOfTheContract, leavesOfTheContract, seatOpenedFor } from '../testing/directory-seats.js';
+import type { LeafOf, SeatOpening } from '../core/seat-opening.js';
 
 /*
- * A company's seat directory: what the server files and what a device believes.
+ * A company's seat directory: what the server keeps and what a member's device believes.
  * Every entry here is signed by a real wallet's committee key, as the wallet signs
- * one; every quorum's change by real seat keys.
+ * one, sealed under the company's roster key and signed by its seat's filing key;
+ * every quorum's change by real seat keys.
  */
 const CO = 'acc_dir';
 const LABEL = `co_${'c1'.repeat(32)}` as CompanyLabel;
 /** The company's account, as every wallet here reads it and signs for it. */
 const ACCOUNT = 'ac'.repeat(32) as AccountAddress;
+/** The company's viewing key, which a member's device holds and the server never does. */
+const VIEWING = '5e'.repeat(32) as Hex;
+/** A member's device: every entry's proof opened with the viewing key, its opening checked against the account's own compiled `signerLeaf`. */
+const asMember = (leafOf: LeafOf = leafOfTheContract) => asAMember(proofsOpenedWith(CO, VIEWING), leafOf);
 
-interface Seat { person: string; seat: string; signing: { secret: Hex; publicKey: Hex }; entry: DirectoryEntry; committeeKey: { tag: string; value: string } }
+/* Every filing here is applied, and every replay made, as a member's device judges it, unless a case says the server does. */
+const applyFiling = (dir: Directory, filing: DirectoryFiling, ctx: Omit<Parameters<typeof applyWith>[2], 'judge'> & { judge?: Parameters<typeof applyWith>[2]['judge'] }): Directory =>
+  applyWith(dir, filing, { judge: asMember(), ...ctx });
+const atTheServer = (dir: Directory, filing: DirectoryFiling, ctx: Omit<Parameters<typeof applyWith>[2], 'judge'>): Directory =>
+  applyWith(dir, filing, { ...ctx, judge: AT_THE_SERVER });
+const believedDirectory = (
+  company: string, filings: readonly DirectoryFiling[], label: CompanyLabel, account: AccountAddress,
+  now?: AccountHeld, asAnchored?: (version: number) => AccountHeld | null | undefined,
+): Directory => believedWith(company, filings, label, account, asMember(), now, asAnchored);
+const directoryReplayed = (
+  company: string, filings: readonly DirectoryFiling[], label: CompanyLabel, account: AccountAddress,
+  now?: AccountHeld, asAnchored?: (version: number) => AccountHeld | null | undefined,
+) => replayedWith(company, filings, label, account, asMember(), now, asAnchored);
+
+/** An entry as a seat's own device makes it, sealed under `viewingKey` and signed by the filing key `signingSecret`. */
+const entryFor = (o: {
+  person: string; committeeKey: { tag: string; value: string }; statement: DirectoryEntryStatement; opening: SeatOpening; signingSecret: Hex; viewingKey?: Hex;
+}): DirectoryEntry => directoryEntryMade({
+  company: CO, person: o.person, committeeKey: o.committeeKey, signed: o.statement, opening: o.opening, signingSecret: o.signingSecret, viewingKey: o.viewingKey ?? VIEWING,
+});
+
+interface Seat {
+  person: string; seat: string; signing: { secret: Hex; publicKey: Hex }; entry: DirectoryEntry; committeeKey: { tag: string; value: string };
+  opening: SeatOpening; statement: DirectoryEntryStatement;
+}
 const seatOf = (person: string, n: number, label: CompanyLabel = LABEL): Seat => {
   const identity = identityFromSecret(new Uint8Array(32).fill(n));
   const signing = newSigningKeypair();
-  const seat = n.toString(16).padStart(2, '0').repeat(32);
   const committeeKey = committeeKeyFor(identity, label) as { tag: string; value: string };
+  /* The seat as a seating device makes it: its leaf commits to this wallet key, and its opening shows that. */
+  const { seat, opening } = seatOpenedFor(committeeKey, n);
   const statement = signDirectoryEntry(identity, label, ACCOUNT, new Uint8Array(32).fill(n + 100), signing.publicKey, seat);
-  return { person, seat, signing, committeeKey, entry: { person, committeeKey, statement } };
+  return { person, seat, signing, committeeKey, opening, statement, entry: entryFor({ person, committeeKey, statement, opening, signingSecret: signing.secret }) };
 };
 const ADA = seatOf('ada', 1);
 const BO = seatOf('bo', 2);
 const CY = seatOf('cy', 3);
+/** Mal's wallet signs an entry for `seat` with her own filing key, carrying `opening`. */
+const malFor = (mal: Seat, seat: string, opening: SeatOpening): DirectoryEntry => entryFor({
+  person: 'mal', committeeKey: mal.committeeKey, opening, signingSecret: mal.signing.secret,
+  statement: signDirectoryEntry(identityFromSecret(new Uint8Array(32).fill(7)), LABEL, ACCOUNT, new Uint8Array(32).fill(107), mal.signing.publicKey, seat),
+});
 const chainOf = (seats: readonly Seat[], approvals = 1, extra: readonly Seat[] = []): ChainHolders => ({
   seats: { committee: [...seats, ...extra].map((s) => s.committeeKey), threshold: seats.length, seats: seats.map((s) => s.seat) },
   approvals,
 });
 const claim = (s: Seat, version: number): DirectoryFiling => ({ company: CO, version, change: { kind: 'claim', entry: s.entry } });
+const claimOf = (entry: DirectoryEntry, version: number): DirectoryFiling => ({ company: CO, version, change: { kind: 'claim', entry } });
 const who = (person: string, members = ['ada', 'bo', 'cy']) => ({ person, members });
 const refusal = (f: () => unknown): string => {
   try { f(); } catch (e) { if (e instanceof DirectoryRefused) return e.code; throw e; }
@@ -55,80 +95,258 @@ const quorum = (dir: Directory, change: Omit<Extract<DirectoryChange, { kind: 'r
   return { company: CO, version, change: { ...unsigned, signatures: signers.map((s) => ({ publicKey: s.signing.publicKey, signature: sign(message, s.signing.secret) })) } as DirectoryChange };
 };
 
-describe('AN ENTRY, AS THE SERVER FILES IT: SIGNED BY THE SEAT\'S OWN WALLET, FOR A SEAT THE CHAIN HOLDS', () => {
+describe('AN ENTRY, AS THE SERVER KEEPS IT: IN ITS SHAPE, SIGNED BY ITS FILING KEY, FOR A SEAT THE CHAIN HOLDS - AND NOTHING OPENED', () => {
   const chain = chainOf([ADA, BO]);
-  it('an entry its own wallet signed, for a seat seated now, by the person it names, is filed', () => {
-    const dir = applyFiling(emptyDirectory(CO), claim(ADA, 1), { label: LABEL, account: ACCOUNT, chain, who: who('ada') });
+  const server = (dir: Directory, f: DirectoryFiling, person = 'ada', members = ['ada', 'bo', 'cy', 'mal']) =>
+    refusal(() => atTheServer(dir, f, { label: LABEL, account: ACCOUNT, chain, who: who(person, members) }));
+
+  it('an entry for a seat seated now, by the person it names, is kept, and the server holds neither its wallet key nor its opening', () => {
+    const dir = atTheServer(emptyDirectory(CO), claim(ADA, 1), { label: LABEL, account: ACCOUNT, chain, who: who('ada') });
     expect(dir.seats.map((s) => [s.person, s.seat, s.signingKey, s.role])).toEqual([['ada', ADA.seat, ADA.signing.publicKey, null]]);
+    /* RED WHEN: the server's directory holds a seat's wallet key or opening, so the server would learn them. */
+    expect(dir.seats.map((s) => [s.committeeKey, s.opening])).toEqual([[undefined, undefined]]);
+    /* RED WHEN: an entry carries its wallet key, the wallet's signature or its opening where the server can read them. */
+    const filed = JSON.stringify(ADA.entry);
+    expect(filed).not.toContain(ADA.committeeKey.value);
+    expect(filed).not.toContain(ADA.opening.blinding);
+    expect(filed).not.toContain(ADA.statement.signature);
   });
 
-  it('REFUSES an entry the server made up: its signature is not the seat wallet\'s', () => {
-    /* RED WHEN: an entry is filed without its statement verifying against its committee key. */
-    const forged: DirectoryEntry = { ...ADA.entry, statement: { ...ADA.entry.statement, signingKey: newSigningKeypair().publicKey } };
-    expect(refusal(() => applyFiling(emptyDirectory(CO), { ...claim(ADA, 1), change: { kind: 'claim', entry: forged } }, { label: LABEL, account: ACCOUNT, chain, who: who('ada') }))).toBe('entry-not-signed');
-    /* RED WHEN: a statement signed for another company's label is taken for this one. */
-    const elsewhere = seatOf('ada', 1, `co_${'d2'.repeat(32)}` as CompanyLabel);
-    expect(refusal(() => applyFiling(emptyDirectory(CO), claim({ ...ADA, entry: elsewhere.entry }, 1), { label: LABEL, account: ACCOUNT, chain: chainOf([ADA, BO], 1, [elsewhere]), who: who('ada') }))).toBe('entry-not-signed');
+  it('keeps an entry whose sealed proof it cannot open, and one whose proof proves nothing: the server opens nothing', () => {
+    /* RED WHEN: the server needs an entry's proof opened to keep it - sealed under a key it does not hold, or under none. */
+    const sealedElsewhere = entryFor({ ...ADA, person: 'ada', signingSecret: ADA.signing.secret, viewingKey: '6e'.repeat(32) as Hex });
+    expect(server(emptyDirectory(CO), claimOf(sealedElsewhere, 1))).toBe('applied');
+    const unsigned = { person: 'ada', statement: sealedElsewhere.statement, proof: seal('{}', '77'.repeat(32)) };
+    const opensNothing = { ...unsigned, signature: sign(entryFilingMessage(CO, unsigned), ADA.signing.secret) };
+    expect(server(emptyDirectory(CO), claimOf(opensNothing, 1))).toBe('applied');
+    /* RED WHEN: the server judges whose wallet key a seat holds: Mal's entry for Ada's seat is kept, first come; a member's device refuses it. */
+    const MAL = seatOf('mal', 7);
+    expect(server(emptyDirectory(CO), claimOf(malFor(MAL, ADA.seat, ADA.opening), 1), 'mal')).toBe('applied');
   });
 
-  it('REFUSES an entry its own wallet signed for another account carrying the same label', () => {
+  it('REFUSES an entry that carries a seat\'s wallet key, its wallet\'s signature or its opening in the open', () => {
+    const { proof: _proof, ...rest } = ADA.entry;
+    /* RED WHEN: an entry is kept with anything beside its statement, proof, filing signature and person - a wallet key or an opening in the open. */
+    expect(server(emptyDirectory(CO), claimOf({ ...ADA.entry, committeeKey: ADA.committeeKey } as never, 1))).toBe('not-a-change');
+    expect(server(emptyDirectory(CO), claimOf({ ...ADA.entry, opening: ADA.opening } as never, 1))).toBe('not-a-change');
+    expect(server(emptyDirectory(CO), claimOf({ ...ADA.entry, statement: { ...ADA.entry.statement, signature: ADA.statement.signature } } as never, 1))).toBe('not-a-change');
+    expect(server(emptyDirectory(CO), claimOf(rest as never, 1))).toBe('not-a-change');
+  });
+
+  it('REFUSES an entry not signed by the filing key it names, and one for another account', () => {
+    /* RED WHEN: an entry is kept that its own filing key did not sign: anyone could enter a seat under another seat's key. */
+    const otherKey = { ...ADA.entry, signature: BO.entry.signature };
+    expect(server(emptyDirectory(CO), claimOf(otherKey, 1))).toBe('entry-not-filed-by-its-key');
+    const swapped = { ...ADA.entry, proof: BO.entry.proof };
+    expect(server(emptyDirectory(CO), claimOf(swapped, 1))).toBe('entry-not-filed-by-its-key');
+    /* RED WHEN: an entry naming another account is kept for this company. */
     const identity = identityFromSecret(new Uint8Array(32).fill(1));
-    const forElsewhere: DirectoryEntry = { ...ADA.entry, statement: signDirectoryEntry(identity, LABEL, 'ad'.repeat(32) as AccountAddress, new Uint8Array(32).fill(101), ADA.signing.publicKey, ADA.seat) };
-    /* RED WHEN: an entry signed for one account is filed, or believed, for another that carries the label. */
-    expect(refusal(() => applyFiling(emptyDirectory(CO), { ...claim(ADA, 1), change: { kind: 'claim', entry: forElsewhere } }, { label: LABEL, account: ACCOUNT, chain, who: who('ada') }))).toBe('entry-not-signed');
-    expect(believedDirectory(CO, [{ ...claim(ADA, 1), change: { kind: 'claim', entry: forElsewhere } }], LABEL, ACCOUNT).seats).toEqual([]);
-    /* RED WHEN: an entry is believed for an account its statement does not name, even with the signature over that one. */
-    const relabelled: DirectoryEntry = { ...forElsewhere, statement: { ...forElsewhere.statement, account: ACCOUNT } };
-    expect(refusal(() => applyFiling(emptyDirectory(CO), { ...claim(ADA, 1), change: { kind: 'claim', entry: relabelled } }, { label: LABEL, account: ACCOUNT, chain, who: who('ada') }))).toBe('entry-not-signed');
-  });
-
-  it('REFUSES a company with no committee of its signers on the chain, and a key the committee does not list', () => {
-    /* RED WHEN: an entry is filed for a company whose account is still held by another key. */
-    const temporary: ChainHolders = { seats: { committee: [{ tag: 'schnorr', value: '77'.repeat(32) }], threshold: 1, seats: [ADA.seat] }, approvals: 1 };
-    expect(refusal(() => applyFiling(emptyDirectory(CO), claim(ADA, 1), { label: LABEL, account: ACCOUNT, chain: temporary, who: who('ada') }))).toBe('not-on-the-committee');
+    const forElsewhere = entryFor({ ...ADA, person: 'ada', signingSecret: ADA.signing.secret,
+      statement: signDirectoryEntry(identity, LABEL, 'ad'.repeat(32) as AccountAddress, new Uint8Array(32).fill(101), ADA.signing.publicKey, ADA.seat) });
+    expect(server(emptyDirectory(CO), claimOf(forElsewhere, 1))).toBe('entry-not-for-this-account');
   });
 
   it('REFUSES an entry for a seat the account does not hold now', () => {
     /* RED WHEN: the seat is not checked against the seats the chain holds now. */
-    expect(refusal(() => applyFiling(emptyDirectory(CO), claim(CY, 1), { label: LABEL, account: ACCOUNT, chain: chainOf([ADA, BO], 1, [CY]), who: who('cy') }))).toBe('seat-not-seated');
+    expect(refusal(() => atTheServer(emptyDirectory(CO), claim(CY, 1), { label: LABEL, account: ACCOUNT, chain: chainOf([ADA, BO], 1, [CY]), who: who('cy') }))).toBe('seat-not-seated');
   });
 
-  it('REFUSES a second entry for one seat, for one key, or for one person, and an entry filed by somebody else', () => {
-    const dir = applyFiling(emptyDirectory(CO), claim(ADA, 1), { label: LABEL, account: ACCOUNT, chain, who: who('ada') });
-    /* RED WHEN: a seat can be entered twice. */
+  it('KEEPS every claim on a seat - a second for one seat, one key or one person - and refuses an entry filed by somebody else', () => {
+    const dir = atTheServer(emptyDirectory(CO), claim(ADA, 1), { label: LABEL, account: ACCOUNT, chain, who: who('ada') });
+    /* RED WHEN: the server picks between claims on a seat, so whoever files first can keep the true holder out. */
     const sameSeat = seatOf('bo', 1);
-    expect(refusal(() => applyFiling(dir, claim({ ...sameSeat, entry: { ...sameSeat.entry, person: 'bo' } }, 2), { label: LABEL, account: ACCOUNT, chain: chainOf([ADA, BO]), who: who('bo') }))).toBe('seat-taken');
-    /* RED WHEN: one filing key can stand for two seats. */
+    expect(server(dir, claimOf({ ...sameSeat.entry }, 2), 'bo')).toBe('applied');
+    /* RED WHEN: the server refuses a claim for a filing key another claim names: only a member's device picks between them. */
     const identity = identityFromSecret(new Uint8Array(32).fill(2));
-    const boSameKey: DirectoryEntry = { person: 'bo', committeeKey: BO.committeeKey, statement: signDirectoryEntry(identity, LABEL, ACCOUNT, new Uint8Array(32).fill(102), ADA.signing.publicKey, BO.seat) };
-    expect(refusal(() => applyFiling(dir, { company: CO, version: 2, change: { kind: 'claim', entry: boSameKey } }, { label: LABEL, account: ACCOUNT, chain, who: who('bo') }))).toBe('key-taken');
-    /* RED WHEN: one records key can stand for two seats, so what is wrapped to one opens for the other. */
-    const boSameWrapping: DirectoryEntry = { person: 'bo', committeeKey: BO.committeeKey, statement: signDirectoryEntry(identity, LABEL, ACCOUNT, new Uint8Array(32).fill(101), newSigningKeypair().publicKey, BO.seat) };
-    expect(refusal(() => applyFiling(dir, { company: CO, version: 2, change: { kind: 'claim', entry: boSameWrapping } }, { label: LABEL, account: ACCOUNT, chain, who: who('bo') }))).toBe('key-taken');
+    const boSameKey = entryFor({ person: 'bo', committeeKey: BO.committeeKey, opening: BO.opening, signingSecret: ADA.signing.secret,
+      statement: signDirectoryEntry(identity, LABEL, ACCOUNT, new Uint8Array(32).fill(102), ADA.signing.publicKey, BO.seat) });
+    expect(server(dir, claimOf(boSameKey, 2), 'bo')).toBe('applied');
+    /* RED WHEN: the server refuses a claim for a records key another claim names. */
+    const fresh = newSigningKeypair();
+    const boSameWrapping = entryFor({ person: 'bo', committeeKey: BO.committeeKey, opening: BO.opening, signingSecret: fresh.secret,
+      statement: signDirectoryEntry(identity, LABEL, ACCOUNT, new Uint8Array(32).fill(101), fresh.publicKey, BO.seat) });
+    expect(server(dir, claimOf(boSameWrapping, 2), 'bo')).toBe('applied');
     /* RED WHEN: a seat's filing key is its own records key. */
-    const boOneKey: DirectoryEntry = { person: 'bo', committeeKey: BO.committeeKey, statement: signDirectoryEntry(identity, LABEL, ACCOUNT, new Uint8Array(32).fill(102), recordsPublicKeyOf(new Uint8Array(32).fill(102)), BO.seat) };
-    expect(refusal(() => applyFiling(dir, { company: CO, version: 2, change: { kind: 'claim', entry: boOneKey } }, { label: LABEL, account: ACCOUNT, chain, who: who('bo') }))).toBe('key-taken');
-    /* RED WHEN: one wallet signs entries for two seats, so its committee key stands for two signers. */
-    const adasWallet = identityFromSecret(new Uint8Array(32).fill(1));
-    const boByAda: DirectoryEntry = { person: 'bo', committeeKey: ADA.committeeKey, statement: signDirectoryEntry(adasWallet, LABEL, ACCOUNT, new Uint8Array(32).fill(150), newSigningKeypair().publicKey, BO.seat) };
-    expect(refusal(() => applyFiling(dir, { company: CO, version: 2, change: { kind: 'claim', entry: boByAda } }, { label: LABEL, account: ACCOUNT, chain, who: who('bo') }))).toBe('key-taken');
-    /* RED WHEN: a person may hold two entries. */
-    expect(refusal(() => applyFiling(dir, claim({ ...BO, entry: { ...BO.entry, person: 'ada' } }, 2), { label: LABEL, account: ACCOUNT, chain, who: who('ada') }))).toBe('person-has-a-seat');
+    const records = new Uint8Array(32).fill(102);
+    const boOneKey = { ...BO.entry, statement: { ...BO.entry.statement, signingKey: recordsPublicKeyOf(records), wrappingKey: recordsPublicKeyOf(records) } };
+    expect(server(dir, claimOf(boOneKey, 2), 'bo')).toBe('not-a-change');
+    /* RED WHEN: the server refuses a person's second claim. */
+    const boAsAda = entryFor({ ...BO, person: 'ada', signingSecret: BO.signing.secret });
+    expect(server(dir, claimOf(boAsAda, 2), 'ada')).toBe('applied');
     /* RED WHEN: one signed-in person can file the entry of another. */
-    expect(refusal(() => applyFiling(dir, claim(BO, 2), { label: LABEL, account: ACCOUNT, chain, who: who('ada') }))).toBe('not-your-entry');
+    expect(server(dir, claim(BO, 2), 'ada')).toBe('not-your-entry');
     /* RED WHEN: somebody who is not a member can enter a seat. */
-    expect(refusal(() => applyFiling(dir, claim(BO, 2), { label: LABEL, account: ACCOUNT, chain, who: who('bo', ['ada']) }))).toBe('not-a-member');
+    expect(server(dir, claim(BO, 2), 'bo', ['ada'])).toBe('not-a-member');
   });
 
   it('REFUSES a version that is not the next, and a filing for another company', () => {
     /* RED WHEN: a version is filed out of order. */
-    expect(refusal(() => applyFiling(emptyDirectory(CO), claim(ADA, 2), { label: LABEL, account: ACCOUNT, chain, who: who('ada') }))).toBe('not-the-next-version');
+    expect(server(emptyDirectory(CO), claim(ADA, 2))).toBe('not-the-next-version');
     /* RED WHEN: a filing names one company and is filed in another's directory. */
-    expect(refusal(() => applyFiling(emptyDirectory('acc_other'), claim(ADA, 1), { label: LABEL, account: ACCOUNT, chain, who: who('ada') }))).toBe('not-this-company');
+    expect(refusal(() => atTheServer(emptyDirectory('acc_other'), claim(ADA, 1), { label: LABEL, account: ACCOUNT, chain, who: who('ada') }))).toBe('not-this-company');
   });
 });
 
-describe('A CHANGE TO THE DIRECTORY IS SIGNED BY AS MANY SEATS AS THE CHAIN\'S THRESHOLD (CHECK Q)', () => {
+describe('EVERY CLAIM ON A SEAT IS KEPT; A MEMBER\'S DEVICE BELIEVES THE FIRST WHOSE PROOF PROVES, SO NO MEMBER AND NO SERVER CAN KEEP A TRUE SEAT OUT', () => {
+  const MAL = seatOf('mal', 7);
+  const members = ['ada', 'bo', 'cy', 'mal'];
+  const everyone = [ADA, BO, CY, MAL];
+  const chain = chainOf(everyone, 2);
+  const now = { approvals: 2, seats: everyone.map((s) => s.seat) };
+  /* Mal claims every other seat first, each with that seat's own opening; then the true holders file, then Mal her own. */
+  const squats = [ADA, BO, CY].map((s, i) => claimOf(malFor(MAL, s.seat, s.opening), i + 1));
+  const claims = [...squats, claim(ADA, 4), claim(BO, 5), claim(CY, 6), claim(MAL, 7)];
+  const atServer = (filings: readonly DirectoryFiling[]) => filings.reduce((d, f) => {
+    const person = f.change.kind === 'claim' ? f.change.entry.person : 'mal';
+    return atTheServer(d, f, { label: LABEL, account: ACCOUNT, chain, who: who(person, members) });
+  }, emptyDirectory(CO));
+
+  it('a member\'s claims on every seat, filed before the true holders\', and a retirement signed by that member alone, still leave each true seat believed on a member\'s device', () => {
+    const kept = atServer(claims);
+    const retireBo = quorum(kept, { kind: 'retire', seat: BO.seat, filedUpTo: {}, threshold: 2 }, [MAL]);
+    /* RED WHEN: the server refuses a true holder's claim because a squatter claimed the seat first, or counts a quorum for the retirement. */
+    const after = atServer([...claims, retireBo]);
+    expect(after.seats.map((x) => [x.seat, x.person])).toEqual([
+      [ADA.seat, 'mal'], [BO.seat, 'mal'], [CY.seat, 'mal'], [ADA.seat, 'ada'], [BO.seat, 'bo'], [CY.seat, 'cy'], [MAL.seat, 'mal'],
+    ]);
+    const believed = directoryReplayed(CO, [...claims, retireBo], LABEL, ACCOUNT, now);
+    /* RED WHEN: a member's device believes a squatter's claim, or believes a seat's second claim over the first that proves. */
+    expect(believed.dir.seats.map((x) => [x.seat, x.person, x.signingKey, x.retired])).toEqual([
+      [ADA.seat, 'ada', ADA.signing.publicKey, null], [BO.seat, 'bo', BO.signing.publicKey, null],
+      [CY.seat, 'cy', CY.signing.publicKey, null], [MAL.seat, 'mal', MAL.signing.publicKey, null],
+    ]);
+    /* RED WHEN: a member's device counts one member's lone signature as a quorum of two. */
+    expect(believed.refused.get(8)).toBe('below-quorum');
+    expect([1, 2, 3].map((v) => believed.refused.get(v))).toEqual(['key-not-in-its-leaf', 'key-not-in-its-leaf', 'key-not-in-its-leaf']);
+  });
+
+  it('the server keeps a role or retirement change without counting a quorum, and refuses a threshold that is not the chain\'s now, a bad signature, a bad shape and a wrong version', () => {
+    const kept = atServer(claims);
+    const server = (f: DirectoryFiling) => refusal(() => atTheServer(kept, f, { label: LABEL, account: ACCOUNT, chain, who: who('mal', members) }));
+    const stranger = seatOf('eve', 9);
+    /* RED WHEN: the server counts a quorum: one signature, by a key with no claim, on a seat with no claim of its own. */
+    expect(server(quorum(kept, { kind: 'role', seat: BO.seat, role: 'viewer', threshold: 2 }, [stranger]))).toBe('applied');
+    expect(server(quorum(kept, { kind: 'retire', seat: 'ee'.repeat(32), filedUpTo: {}, threshold: 2 }, [MAL]))).toBe('applied');
+    /* RED WHEN: the server keeps a change signed against a number of approvals that is not the account's now. */
+    expect(server(quorum(kept, { kind: 'retire', seat: BO.seat, filedUpTo: {}, threshold: 1 }, [MAL]))).toBe('threshold-not-the-chains');
+    /* RED WHEN: the server keeps a change one of whose signatures does not verify. */
+    const good = quorum(kept, { kind: 'retire', seat: BO.seat, filedUpTo: {}, threshold: 2 }, [MAL, ADA]);
+    const sigs = (good.change as { readonly signatures: readonly { publicKey: Hex; signature: Hex }[] }).signatures;
+    const broken = { ...good, change: { ...good.change, signatures: [sigs[0], { ...sigs[1]!, publicKey: BO.signing.publicKey }] } } as DirectoryFiling;
+    expect(server(broken)).toBe('not-signed');
+    /* RED WHEN: the server keeps a change out of its shape. */
+    expect(server(quorum(kept, { kind: 'role', seat: BO.seat, role: 'owner' as never, threshold: 2 }, [MAL]))).toBe('not-a-change');
+    expect(server(quorum(kept, { kind: 'retire', seat: BO.seat, filedUpTo: { k: -1 }, threshold: 2 }, [MAL]))).toBe('not-a-change');
+    expect(server({ ...good, change: { ...good.change, signatures: 'none' } } as never)).toBe('not-a-change');
+    /* RED WHEN: the server keeps a change at a version that is not the next. */
+    expect(server({ ...good, version: kept.version + 2 })).toBe('not-the-next-version');
+  });
+
+  it('the server reads no retirement: whether a seat files is the chain\'s read alone', () => {
+    const kept = atServer([claim(ADA, 1), claim(BO, 2)]);
+    const retired = atTheServer(kept, quorum(kept, { kind: 'retire', seat: BO.seat, filedUpTo: {}, threshold: 2 }, [ADA, BO]),
+      { label: LABEL, account: ACCOUNT, chain, who: who('ada', members) });
+    /* RED WHEN: the server stops a seat the chain still holds because its directory names a retirement. */
+    expect(typeof filerSeatOf(retired, chain.seats, 'bo', BO.signing.publicKey)).toBe('object');
+    expect(typeof signerSeatOf(retired, chain.seats, BO.signing.publicKey)).toBe('object');
+    expect(typeof filerSeatIn(retired, BO.signing.publicKey)).toBe('object');
+    expect(filerSeatOf(retired, chainOf([ADA], 2, [BO]).seats, 'bo', BO.signing.publicKey)).toBe('seat-not-seated');
+  });
+
+  it('a lookup by person alone no longer picks a seat when the person filed under two filing keys', () => {
+    /* Bo claims a seat the chain later stops holding, then enters his own seat again under a new filing key. */
+    const gone = seatOpenedFor(BO.committeeKey, 61);
+    const fresh = newSigningKeypair();
+    const bosWallet = identityFromSecret(new Uint8Array(32).fill(2));
+    const elsewhere = entryFor({ person: 'bo', committeeKey: BO.committeeKey, opening: gone.opening, signingSecret: BO.signing.secret,
+      statement: signDirectoryEntry(bosWallet, LABEL, ACCOUNT, new Uint8Array(32).fill(161), BO.signing.publicKey, gone.seat) });
+    const again = entryFor({ person: 'bo', committeeKey: BO.committeeKey, opening: BO.opening, signingSecret: fresh.secret,
+      statement: signDirectoryEntry(bosWallet, LABEL, ACCOUNT, new Uint8Array(32).fill(162), fresh.publicKey, BO.seat) });
+    const held = chainOf([ADA, BO], 2);
+    const then = { ...held, seats: { ...held.seats, seats: [...held.seats.seats, gone.seat] } };
+    const kept = [claimOf(elsewhere, 1), claim(BO, 2), claimOf(again, 3)].reduce(
+      (d, f) => atTheServer(d, f, { label: LABEL, account: ACCOUNT, chain: then, who: who('bo') }), emptyDirectory(CO));
+    /* RED WHEN: the person's first claim is taken for them, so their filing under the key their seat holds now is refused. */
+    expect(filerSeatOf(kept, held.seats, 'bo', BO.signing.publicKey)).toMatchObject({ seat: BO.seat, signingKey: BO.signing.publicKey });
+    expect(filerSeatOf(kept, held.seats, 'bo', fresh.publicKey)).toMatchObject({ seat: BO.seat, signingKey: fresh.publicKey });
+    expect(signerSeatOf(kept, held.seats, BO.signing.publicKey)).toMatchObject({ seat: BO.seat });
+    /* RED WHEN: a filing key is taken for a person who did not file it. */
+    expect(filerSeatOf(kept, held.seats, 'ada', fresh.publicKey)).toBe('no-entry');
+  });
+});
+
+describe('AN ENTRY, AS A MEMBER\'S DEVICE BELIEVES IT: ITS PROOF OPENED, ITS WALLET\'S SIGNATURE CHECKED, AND ITS OPENING PROVING ITS KEY FOR ITS SEAT', () => {
+  const chain = chainOf([ADA, BO]);
+  const believed = (...filings: DirectoryFiling[]) => believedDirectory(CO, filings, LABEL, ACCOUNT).seats.map((x) => x.seat);
+
+  it('a seat\'s entry is believed by the wallet key its leaf was made for, and holds that key and its opening', () => {
+    const dir = believedDirectory(CO, [claim(ADA, 1)], LABEL, ACCOUNT, { approvals: 1, seats: [ADA.seat] });
+    /* RED WHEN: a device believes a seat's entry by anything but its opening, or keeps no key for it. */
+    expect(dir.seats.map((x) => [x.seat, x.committeeKey?.value, x.opening?.blinding])).toEqual([[ADA.seat, ADA.committeeKey.value, ADA.opening.blinding]]);
+  });
+
+  it('LEAVES OUT an entry the server made up, or one its wallet signed for another label or account', () => {
+    /* RED WHEN: an entry is believed without its statement verifying against its wallet key: a fresh filing key for Ada's seat. */
+    const fresh = newSigningKeypair();
+    const forged = entryFor({ ...ADA, person: 'ada', signingSecret: fresh.secret, statement: { ...ADA.statement, signingKey: fresh.publicKey } });
+    expect(believed(claimOf(forged, 1))).toEqual([]);
+    expect(refusal(() => applyFiling(emptyDirectory(CO), claimOf(forged, 1), { label: LABEL, account: ACCOUNT, chain: null }))).toBe('entry-not-signed');
+    /* RED WHEN: a statement signed for another company's label is taken for this one. */
+    const elsewhere = seatOf('ada', 1, `co_${'d2'.repeat(32)}` as CompanyLabel);
+    expect(refusal(() => applyFiling(emptyDirectory(CO), claim(elsewhere, 1), { label: LABEL, account: ACCOUNT, chain: null }))).toBe('entry-not-signed');
+    /* RED WHEN: an entry is believed for an account its wallet did not sign for, its statement relabelled to this one. */
+    const identity = identityFromSecret(new Uint8Array(32).fill(1));
+    const signedElsewhere = signDirectoryEntry(identity, LABEL, 'ad'.repeat(32) as AccountAddress, new Uint8Array(32).fill(101), ADA.signing.publicKey, ADA.seat);
+    const relabelled = entryFor({ ...ADA, person: 'ada', signingSecret: ADA.signing.secret, statement: { ...signedElsewhere, account: ACCOUNT } });
+    expect(refusal(() => applyFiling(emptyDirectory(CO), claimOf(relabelled, 1), { label: LABEL, account: ACCOUNT, chain: null }))).toBe('entry-not-signed');
+  });
+
+  it('LEAVES OUT an entry whose proof is not sealed under the company\'s key as this device holds it', () => {
+    const sealedElsewhere = entryFor({ ...ADA, person: 'ada', signingSecret: ADA.signing.secret, viewingKey: '6e'.repeat(32) as Hex });
+    /* RED WHEN: a device believes an entry whose proof it could not open. */
+    expect(refusal(() => applyFiling(emptyDirectory(CO), claimOf(sealedElsewhere, 1), { label: LABEL, account: ACCOUNT, chain: null }))).toBe('entry-not-opened');
+    expect(believed(claimOf(sealedElsewhere, 1))).toEqual([]);
+  });
+
+  it('LEAVES OUT an entry whose wallet key is on the committee but is not the one its seat\'s leaf was made for', () => {
+    /* Mal's wallet key is on the committee; her wallet signs an entry for Ada's seat, kept by the server first. */
+    const MAL = seatOf('mal', 7);
+    const device = (entry: DirectoryEntry) => refusal(() => applyFiling(emptyDirectory(CO), claimOf(entry, 1),
+      { label: LABEL, account: ACCOUNT, chain: chainOf([ADA, BO], 1, [MAL]), who: who('mal', ['ada', 'bo', 'mal']) }));
+    /* RED WHEN: a key on the committee but not in its seat's leaf is believed, carrying the seat's own opening. */
+    expect(device(malFor(MAL, ADA.seat, ADA.opening))).toBe('key-not-in-its-leaf');
+    /*
+     * RED WHEN: an opening naming Mal's key, whose blinding is not the hash of that key under its salt, is believed: its
+     * public key, blinding and scope are Ada's, so its leaf is her seat and only the blinding check stands between them.
+     */
+    const named = { ...ADA.opening, walletKey: { tag: 'schnorr', value: MAL.committeeKey.value } };
+    expect(leafOfTheContract(named)).toBe(ADA.seat);
+    expect(device(malFor(MAL, ADA.seat, named))).toBe('key-not-in-its-leaf');
+    /* RED WHEN: a device believes it, replaying the same filing - and so a squatter the server kept first takes the seat. */
+    expect(believed(claimOf(malFor(MAL, ADA.seat, ADA.opening), 1), claim(ADA, 2))).toEqual([ADA.seat]);
+  });
+
+  it('LEAVES OUT every entry where nothing worked out the leaf its opening makes', () => {
+    /* RED WHEN: an entry is believed with no leaf to check its opening against. */
+    expect(believedWith(CO, [claim(ADA, 1)], LABEL, ACCOUNT, asMember(() => null)).seats).toEqual([]);
+  });
+
+  it('LEAVES OUT a second entry under one wallet key, though each opening proves its own seat', () => {
+    /* RED WHEN: one wallet enters two seats, each made for its key, so its key stands for two signers. */
+    const adasWallet = identityFromSecret(new Uint8Array(32).fill(1));
+    const adasSecond = seatOpenedFor(ADA.committeeKey, 51);
+    const fresh = newSigningKeypair();
+    const boByAda = entryFor({ person: 'bo', committeeKey: ADA.committeeKey, opening: adasSecond.opening, signingSecret: fresh.secret,
+      statement: signDirectoryEntry(adasWallet, LABEL, ACCOUNT, new Uint8Array(32).fill(150), fresh.publicKey, adasSecond.seat) });
+    const dir = applyFiling(emptyDirectory(CO), claim(ADA, 1), { label: LABEL, account: ACCOUNT, chain: null });
+    expect(refusal(() => applyFiling(dir, claimOf(boByAda, 2), { label: LABEL, account: ACCOUNT, chain: null }))).toBe('key-taken');
+    /* The server, which holds no wallet key, keeps it; the device does not believe it. */
+    const kept = atTheServer(emptyDirectory(CO), claim(ADA, 1), { label: LABEL, account: ACCOUNT, chain: { ...chain, seats: { ...chain.seats, seats: [...chain.seats.seats, adasSecond.seat] } }, who: who('ada') });
+    expect(refusal(() => atTheServer(kept, claimOf(boByAda, 2), { label: LABEL, account: ACCOUNT, chain: { ...chain, seats: { ...chain.seats, seats: [...chain.seats.seats, adasSecond.seat] } }, who: who('bo') }))).toBe('applied');
+  });
+});
+
+describe('A CHANGE TO THE DIRECTORY IS SIGNED BY AS MANY SEATS AS THE CHAIN\'S THRESHOLD', () => {
   const chain = chainOf([ADA, BO, CY], 2);
   const dir = withAll([ADA, BO, CY], 2);
   const toViewer = { kind: 'role' as const, seat: CY.seat, role: 'viewer' as const, threshold: 2 };
@@ -163,7 +381,7 @@ describe('A CHANGE TO THE DIRECTORY IS SIGNED BY AS MANY SEATS AS THE CHAIN\'S T
   });
 });
 
-describe('WHAT A DEVICE BELIEVES (CHECK S, ON THE DEVICE)', () => {
+describe('WHICH FILINGS A MEMBER\'S DEVICE BELIEVES: BY A SEAT IT BELIEVES, WHOSE ROLE MAY FILE THEM, HELD BY THE ACCOUNT NOW', () => {
   const dir = withAll([ADA, BO]);
   const seated = chainOf([ADA, BO]).seats;
   const POOL = vaultRecordKey('ab'.repeat(32), 'pool');
@@ -172,14 +390,14 @@ describe('WHAT A DEVICE BELIEVES (CHECK S, ON THE DEVICE)', () => {
     expect(filingRefusalOf(dir, seated, ADA.signing.publicKey, 'pool', POOL, 7)).toBeNull();
   });
 
-  it('REFUSES a key with no entry, a seat that has left, a key no longer on the committee, and a role that may not file it', () => {
+  it('REFUSES a key with no entry, a seat that has left, and a role that may not file it; a seat whose key is on no committee files', () => {
     /* RED WHEN: a filing by a key no entry names is believed. */
     expect(filingRefusalOf(dir, seated, newSigningKeypair().publicKey, 'pool', POOL, 1)).toBe('no-entry');
     /* RED WHEN: a version signed by a seat the account no longer holds is believed, with no retirement naming it. */
     const left = chainOf([ADA], 1, [BO]).seats;
     expect(filingRefusalOf(dir, left, BO.signing.publicKey, 'pool', POOL, 1)).toBe('seat-not-seated');
-    /* RED WHEN: an entry whose committee key the chain no longer lists is believed. */
-    expect(filingRefusalOf(dir, { ...seated, committee: [ADA.committeeKey] }, BO.signing.publicKey, 'pool', POOL, 1)).toBe('not-on-the-committee');
+    /* RED WHEN: a signer whose wallet key is not on the committee is refused: the committee holds only the super admins' keys. */
+    expect(filingRefusalOf(dir, { ...seated, committee: [ADA.committeeKey] }, BO.signing.publicKey, 'pool', POOL, 1)).toBeNull();
     /* RED WHEN: a limited seat's filing is believed. */
     const limited = { ...dir, seats: dir.seats.map((s) => (s.seat === BO.seat ? { ...s, role: 'viewer' as const } : s)) };
     expect(filingRefusalOf(limited, seated, BO.signing.publicKey, 'pool', POOL, 1)).toBe('role-may-not-file');
@@ -201,7 +419,7 @@ describe('WHAT A DEVICE BELIEVES (CHECK S, ON THE DEVICE)', () => {
     const three = withAll([ADA, BO, CY]);
     /* Bo signs his own retirement, at a threshold of one, naming a boundary far ahead. */
     const selfSigned = quorum(three, { kind: 'retire', seat: BO.seat, filedUpTo: { [POOL]: 99 }, threshold: 1 }, [BO]);
-    const now = { approvals: 2, seats: [ADA.seat, CY.seat], committee: [ADA, BO, CY].map((x) => x.committeeKey) };
+    const now = { approvals: 2, seats: [ADA.seat, CY.seat] };
     const left = chainOf([ADA, CY], 2, [BO]).seats;
     const replayed = believedDirectory(CO, [...claims, selfSigned], LABEL, ACCOUNT, now);
     /* RED WHEN: a device believes a change at the threshold it names rather than the account's threshold now. */
@@ -221,34 +439,39 @@ describe('WHAT A DEVICE BELIEVES (CHECK S, ON THE DEVICE)', () => {
     expect(filingRefusalOf(retired, left, BO.signing.publicKey, 'pool', POOL, 4)).toBe('past-its-boundary');
   });
 
-  it('A REPLAYED CHANGE COUNTS ONLY SEATS SEATED NOW WHOSE COMMITTEE KEY THE CHAIN LISTS NOW', () => {
+  it('A REPLAYED CHANGE COUNTS ONLY SEATS SEATED NOW WHOSE ENTRY\'S OPENING PROVES ITS KEY', () => {
     const claims = [claim(ADA, 1), claim(BO, 2), claim(CY, 3)];
     const three = withAll([ADA, BO, CY]);
-    const committee = [ADA, BO, CY].map((x) => x.committeeKey);
     /* RED WHEN: a promotion is believed though one of its signers has left and the rest are below the threshold now. */
     const promote = quorum(three, { kind: 'role', seat: CY.seat, role: 'viewer', threshold: 2 }, [ADA, BO]);
-    const left = believedDirectory(CO, [...claims, promote], LABEL, ACCOUNT, { approvals: 2, seats: [ADA.seat, CY.seat], committee });
+    const left = believedDirectory(CO, [...claims, promote], LABEL, ACCOUNT, { approvals: 2, seats: [ADA.seat, CY.seat] });
     expect(left.seats.find((x) => x.seat === CY.seat)!.role).toBeNull();
-    /* An entry the server made up for a seat it seats itself, with a committee key the chain does not list. */
+    /* An entry the server made up: Eve's wallet signs for Dan's seat, which the chain holds, with her own seat's opening. */
     const EVE = seatOf('eve', 9);
-    const withEve = [...claims, claim(EVE, 4)];
-    const eveDir = believedDirectory(CO, withEve, LABEL, ACCOUNT);
-    const demote = quorum(eveDir, { kind: 'role', seat: ADA.seat, role: 'viewer', threshold: 1 }, [EVE]);
-    const replayed = believedDirectory(CO, [...withEve, demote], LABEL, ACCOUNT, { approvals: 1, seats: [ADA.seat, BO.seat, CY.seat, EVE.seat], committee });
-    /* RED WHEN: a change signed by an entry whose committee key the chain does not list counts toward its quorum. */
+    const DAN = seatOf('dan', 8);
+    const madeUp = entryFor({
+      person: 'eve', committeeKey: EVE.committeeKey, opening: EVE.opening, signingSecret: EVE.signing.secret,
+      statement: signDirectoryEntry(identityFromSecret(new Uint8Array(32).fill(9)), LABEL, ACCOUNT, new Uint8Array(32).fill(109), EVE.signing.publicKey, DAN.seat),
+    });
+    const withMadeUp: DirectoryFiling[] = [...claims, { company: CO, version: 4, change: { kind: 'claim', entry: madeUp } }];
+    const demoteBy = (filings: readonly DirectoryFiling[]) => quorum(believedDirectory(CO, filings, LABEL, ACCOUNT), { kind: 'role', seat: ADA.seat, role: 'viewer', threshold: 1 }, [EVE]);
+    const everyone = { approvals: 1, seats: [ADA.seat, BO.seat, CY.seat, DAN.seat, EVE.seat] };
+    const replayed = believedDirectory(CO, [...withMadeUp, demoteBy(withMadeUp)], LABEL, ACCOUNT, everyone);
+    /* RED WHEN: a change signed by an entry whose opening does not make its seat's leaf counts toward its quorum. */
     expect(replayed.seats.find((x) => x.seat === ADA.seat)!.role).toBeNull();
-    /* The control: with that key on the committee the chain lists, the same change is believed. */
-    const listed = believedDirectory(CO, [...withEve, demote], LABEL, ACCOUNT, { approvals: 1, seats: [ADA.seat, BO.seat, CY.seat, EVE.seat], committee: [...committee, EVE.committeeKey] });
-    expect(listed.seats.find((x) => x.seat === ADA.seat)!.role).toBe('viewer');
+    /* The control: Eve's own seat, which her opening proves: the same change is believed. */
+    const withEve = [...claims, claim(EVE, 4)];
+    const own = believedDirectory(CO, [...withEve, demoteBy(withEve)], LABEL, ACCOUNT, everyone);
+    /* RED WHEN: a signer whose opening proves their seat is not counted. */
+    expect(own.seats.find((x) => x.seat === ADA.seat)!.role).toBe('viewer');
   });
 
   it('A CHANGE THE ANCHOR HOLDS IS COUNTED AGAINST WHO HELD THE ACCOUNT AS IT WAS ANCHORED; ONE ANCHORED WITH NOBODY KNOWN TO HOLD IT IS NOT BELIEVED', () => {
     const claims = [claim(ADA, 1), claim(BO, 2), claim(CY, 3)];
     const three = withAll([ADA, BO, CY]);
-    const committee = [ADA, BO, CY].map((x) => x.committeeKey);
     const promote = quorum(three, { kind: 'role', seat: CY.seat, role: 'viewer', threshold: 2 }, [ADA, BO]);
-    const now = { approvals: 2, seats: [ADA.seat, CY.seat], committee };
-    const then = { approvals: 2, seats: [ADA.seat, BO.seat, CY.seat], committee };
+    const now = { approvals: 2, seats: [ADA.seat, CY.seat] };
+    const then = { approvals: 2, seats: [ADA.seat, BO.seat, CY.seat] };
     /* RED WHEN: a change the anchor holds is counted against who holds the account now - Bo, who signed it, has left. */
     expect(believedDirectory(CO, [...claims, promote], LABEL, ACCOUNT, now, (v) => (v === 4 ? then : undefined))
       .seats.find((x) => x.seat === CY.seat)!.role).toBe('viewer');
@@ -259,31 +482,29 @@ describe('WHAT A DEVICE BELIEVES (CHECK S, ON THE DEVICE)', () => {
     expect(believedDirectory(CO, [...claims, promote], LABEL, ACCOUNT, then, () => null).seats).toEqual([]);
   });
 
-  it('AN ANCHORED CHANGE IS COUNTED AGAINST THE SEATS ITS BATCH NAMED, WHATEVER THEIR COMMITTEE KEYS; AN ANCHORED CLAIM AGAINST THE COMMITTEE AT ITS BLOCK', () => {
+  it('AN ANCHORED CHANGE IS COUNTED AGAINST THE SEATS ITS BATCH NAMED, AND AN ANCHORED CLAIM BELIEVED BY ITS OPENING', () => {
     const claims = [claim(ADA, 1), claim(BO, 2), claim(CY, 3)];
     const three = withAll([ADA, BO, CY]);
     const promote = quorum(three, { kind: 'role', seat: CY.seat, role: 'viewer', threshold: 2 }, [ADA, BO]);
-    const all = [ADA, BO, CY].map((x) => x.committeeKey);
-    /* Bo's wallet is no longer on the committee the anchoring block shows, but his seat is in the signer tree the batch named. */
-    const anchored = { approvals: 2, seats: [ADA.seat, BO.seat, CY.seat], committee: [ADA.committeeKey, CY.committeeKey] };
-    const asAnchored = (v: number) => (v <= 3 ? { ...anchored, committee: all } : v === 4 ? anchored : undefined);
-    /* RED WHEN: an anchored change's quorum asks the committee: Bo's signature would not count, and the promotion is lost. */
+    /* Bo's seat is in the signer tree the batch named. */
+    const anchored = { approvals: 2, seats: [ADA.seat, BO.seat, CY.seat] };
+    const asAnchored = (v: number) => (v <= 4 ? anchored : undefined);
+    /* RED WHEN: an anchored change's quorum is not counted over the seats its batch named: Bo's signature would not count, and the promotion is lost. */
     expect(believedDirectory(CO, [...claims, promote], LABEL, ACCOUNT, undefined, asAnchored)
       .seats.find((x) => x.seat === CY.seat)!.role).toBe('viewer');
     /* RED WHEN: an anchored change counts a seat the signer tree its batch named did not hold. */
-    const withoutBo = (v: number) => (v <= 3 ? { ...anchored, committee: all } : v === 4 ? { ...anchored, seats: [ADA.seat, CY.seat] } : undefined);
+    const withoutBo = (v: number) => (v <= 3 ? anchored : v === 4 ? { ...anchored, seats: [ADA.seat, CY.seat] } : undefined);
     expect(believedDirectory(CO, [...claims, promote], LABEL, ACCOUNT, undefined, withoutBo)
       .seats.find((x) => x.seat === CY.seat)!.role).toBeNull();
     /* RED WHEN: an anchored change's floor of approvals is the account's now: the threshold rose to 3 after it was anchored at 2. */
-    expect(believedDirectory(CO, [...claims, promote], LABEL, ACCOUNT, { approvals: 3, seats: [ADA.seat, BO.seat, CY.seat], committee: all }, asAnchored)
+    expect(believedDirectory(CO, [...claims, promote], LABEL, ACCOUNT, { approvals: 3, seats: [ADA.seat, BO.seat, CY.seat] }, asAnchored)
       .seats.find((x) => x.seat === CY.seat)!.role).toBe('viewer');
     /* RED WHEN: an anchored change is not held to the approvals the account required as it was anchored: signed for 2, anchored at 3. */
-    const atThree = (v: number) => (v <= 3 ? { ...anchored, committee: all } : v === 4 ? { ...anchored, approvals: 3 } : undefined);
+    const atThree = (v: number) => (v <= 3 ? anchored : v === 4 ? { ...anchored, approvals: 3 } : undefined);
     expect(believedDirectory(CO, [...claims, promote], LABEL, ACCOUNT, undefined, atThree)
       .seats.find((x) => x.seat === CY.seat)!.role).toBeNull();
-    /* RED WHEN: an anchored claim is believed though its committee key is not on the committee at the block that anchored it. */
-    const boOff = (v: number) => (v === 2 ? anchored : { ...anchored, committee: all });
-    expect(believedDirectory(CO, claims, LABEL, ACCOUNT, undefined, boOff).seats.map((x) => x.seat)).toEqual([ADA.seat, CY.seat]);
+    /* RED WHEN: an anchored claim is refused though its opening proves its seat. */
+    expect(believedDirectory(CO, claims, LABEL, ACCOUNT, undefined, asAnchored).seats.map((x) => x.seat)).toEqual([ADA.seat, BO.seat, CY.seat]);
   });
 
   it('A DEVICE REPLAYING THE DIRECTORY LEAVES OUT AN ENTRY THE SERVER ADDED WITHOUT A VALID WALLET SIGNATURE', () => {
@@ -335,46 +556,126 @@ describe('WHAT A DEVICE BELIEVES (CHECK S, ON THE DEVICE)', () => {
   });
 });
 
-describe('WHO MAY FILE, ON THE SERVER (CHECK S)', () => {
+describe('WHO MAY FILE, ON THE SERVER: A SEAT THE ACCOUNT HOLDS NOW, AND NO ROLE JUDGED', () => {
   const dir = withAll([ADA, BO]);
   /** The chain read now: both seats' committee keys listed and both seats held. */
   const both = { committee: [ADA.committeeKey, BO.committeeKey], threshold: 2, seats: [ADA.seat, BO.seat] };
-  it('only the signed-in person\'s own seat key, for a kind its role files, and never a retired seat', () => {
-    expect(typeof filerSeatOf(dir, both, 'ada', ADA.signing.publicKey, 'run')).toBe('object');
+  it('only the signed-in person\'s own seat key, while the chain holds its seat, whatever the directory says of a retirement', () => {
+    expect(typeof filerSeatOf(dir, both, 'ada', ADA.signing.publicKey)).toBe('object');
     /* RED WHEN: a filing signed by one person is accepted in another's session. */
-    expect(filerSeatOf(dir, both, 'ada', BO.signing.publicKey, 'pool')).toBe('no-entry');
+    expect(filerSeatOf(dir, both, 'ada', BO.signing.publicKey)).toBe('no-entry');
     /* RED WHEN: a person with no entry may file. */
-    expect(filerSeatOf(dir, both, 'cy', CY.signing.publicKey, 'pool')).toBe('no-entry');
-    const roles = { ...dir, seats: dir.seats.map((s) => (s.person === 'bo' ? { ...s, role: 'approver' as const } : s)) };
-    /* RED WHEN: a role files a kind it may not. */
-    expect(filerSeatOf(roles, both, 'bo', BO.signing.publicKey, 'run')).toBe('role-may-not-file');
+    expect(filerSeatOf(dir, both, 'cy', CY.signing.publicKey)).toBe('no-entry');
     const retired = { ...dir, seats: dir.seats.map((s) => (s.person === 'bo' ? { ...s, retired: {} } : s)) };
-    /* RED WHEN: a retired seat may file again. */
-    expect(filerSeatOf(retired, both, 'bo', BO.signing.publicKey, 'pool')).toBe('past-its-boundary');
+    /* RED WHEN: the server stops a seat the chain holds because its directory names a retirement. */
+    expect(typeof filerSeatOf(retired, both, 'bo', BO.signing.publicKey)).toBe('object');
   });
 
-  it('only while the chain lists the seat\'s committee key and holds its seat now - the rule a device reads by', () => {
+  it('judges no role: a limited seat files and relays at the server; a member\'s device judges the role', () => {
+    const viewer = { ...dir, seats: dir.seats.map((s) => (s.person === 'bo' ? { ...s, role: 'viewer' as const } : s)) };
+    /* RED WHEN: the server refuses a seat's filing, its anchoring or its relay for its role. */
+    expect(typeof filerSeatOf(viewer, both, 'bo', BO.signing.publicKey)).toBe('object');
+    expect(typeof signerSeatOf(viewer, both, BO.signing.publicKey)).toBe('object');
+    expect(typeof filerSeatIn(viewer, BO.signing.publicKey)).toBe('object');
+    expect(typeof actingSeatOf(viewer, both, 'bo', BO.signing.publicKey)).toBe('object');
+    /* RED WHEN: a member's device stops judging the role: the limited seat's run is not believed there. */
+    expect(filingRefusalOf(viewer, both, BO.signing.publicKey, 'run', 'k', 1)).toBe('role-may-not-file');
+  });
+
+  it('only while the chain holds its seat now, whatever keys the committee lists - the rule a device reads by', () => {
     const notListed = { ...both, committee: [ADA.committeeKey] };
     const notHeld = { ...both, seats: [ADA.seat] };
-    /* RED WHEN: the server keeps a filing by a seat whose committee key the chain no longer lists. */
-    expect(filerSeatOf(dir, notListed, 'bo', BO.signing.publicKey, 'pool')).toBe('not-on-the-committee');
+    /* RED WHEN: the server refuses a filing by a seated signer whose wallet key is on no committee. */
+    expect(typeof filerSeatOf(dir, notListed, 'bo', BO.signing.publicKey)).toBe('object');
     /* RED WHEN: the server keeps a filing by a seat the account no longer holds. */
-    expect(filerSeatOf(dir, notHeld, 'bo', BO.signing.publicKey, 'pool')).toBe('seat-not-seated');
+    expect(filerSeatOf(dir, notHeld, 'bo', BO.signing.publicKey)).toBe('seat-not-seated');
     /* RED WHEN: a company with no account on a chain the server can read lets a seat file. */
-    expect(filerSeatOf(dir, null, 'ada', ADA.signing.publicKey, 'pool')).toBe('not-on-the-committee');
-    /* One rule: the server says of the filer what a device says of the filing. */
+    expect(filerSeatOf(dir, null, 'ada', ADA.signing.publicKey)).toBe('no-account');
+    /* One rule: for a seat whose role may file, the server says of the filer what a device says of the filing. */
     for (const chain of [both, notListed, notHeld]) {
       for (const seat of [ADA, BO]) {
-        const server = filerSeatOf(dir, chain, seat.person, seat.signing.publicKey, 'pool');
+        const server = filerSeatOf(dir, chain, seat.person, seat.signing.publicKey);
         expect(typeof server === 'string' ? server : null).toBe(filingRefusalOf(dir, chain, seat.signing.publicKey, 'pool', 'k', 1));
       }
     }
   });
 });
 
+describe('A DEMOTION OR A RETIREMENT IS AN ORDINARY CHANGE, COUNTED OVER EVERY SEATED SIGNER', () => {
+  it('AT AS MANY APPROVALS AS SEATS, A DEMOTION WITHOUT THE DEMOTED SEAT\'S OWN APPROVAL IS REFUSED; WITH IT, IT IS MADE', () => {
+    const chain = chainOf([ADA, BO], 2);
+    const two = withAll([ADA, BO], 2);
+    const demoteBo = { kind: 'role' as const, seat: BO.seat, role: 'viewer' as const, threshold: 2 };
+    /* RED WHEN: the other seats alone reach a demotion where the chain needs every seat, the demoted one too. */
+    expect(refusal(() => applyFiling(two, quorum(two, demoteBo, [ADA]), { label: LABEL, account: ACCOUNT, chain }))).toBe('below-quorum');
+    /* RED WHEN: the demoted seat's own approval does not count toward its demotion. */
+    expect(applyFiling(two, quorum(two, demoteBo, [ADA, BO]), { label: LABEL, account: ACCOUNT, chain }).seats.find((x) => x.seat === BO.seat)!.role).toBe('viewer');
+  });
+
+  it('A LONE SEAT DOES NOT RETIRE ITSELF, AND NO RETIREMENT LEAVES FEWER SEATED SIGNERS THAN THE THRESHOLD, AS THE CHAIN REFUSES BOTH', () => {
+    const alone = withAll([ADA], 1);
+    const retireAda = { kind: 'retire' as const, seat: ADA.seat, filedUpTo: {}, threshold: 1 };
+    /* RED WHEN: the directory retires the last seated signer, which the chain never removes. */
+    expect(refusal(() => applyFiling(alone, quorum(alone, retireAda, [ADA]), { label: LABEL, account: ACCOUNT, chain: chainOf([ADA], 1) }))).toBe('leaves-too-few-signers');
+    expect(believedDirectory(CO, [claim(ADA, 1), quorum(alone, retireAda, [ADA])], LABEL, ACCOUNT).seats[0]!.retired).toBeNull();
+    const three = withAll([ADA, BO, CY], 3);
+    const retireCy = { kind: 'retire' as const, seat: CY.seat, filedUpTo: {}, threshold: 3 };
+    /* RED WHEN: a retirement leaves two seated signers under a threshold of three. */
+    expect(refusal(() => applyFiling(three, quorum(three, retireCy, [ADA, BO, CY]), { label: LABEL, account: ACCOUNT, chain: chainOf([ADA, BO, CY], 3) }))).toBe('leaves-too-few-signers');
+    const atTwo = withAll([ADA, BO, CY], 2);
+    expect(applyFiling(atTwo, quorum(atTwo, { ...retireCy, threshold: 2 }, [ADA, CY]), { label: LABEL, account: ACCOUNT, chain: chainOf([ADA, BO, CY], 2) })
+      .seats.find((x) => x.seat === CY.seat)!.retired).toEqual({});
+    /* RED WHEN: a change counted against no approvals at all is filed. */
+    expect(refusal(() => applyFiling(alone, quorum(alone, { ...retireAda, threshold: 0 }, [ADA]), { label: LABEL, account: ACCOUNT, chain: null }))).toBe('not-a-change');
+  });
+});
+
+describe('TO THE SIGNERS, A SEAT WHOSE WALLET KEY IS ON THE COMMITTEE IS A SIGNER LIKE ANY OTHER', () => {
+  /* Every seat here has its wallet key on the account's committee as the chain holds it: each is a super admin there. */
+  const committee = [ADA.committeeKey, BO.committeeKey, CY.committeeKey];
+  const held = (approvals: number): ChainHolders => ({
+    seats: { committee: committee.map((k) => ({ ...k })), threshold: 2, seats: [ADA.seat, BO.seat, CY.seat] }, approvals,
+  });
+
+  it('a demotion and a retirement of a seat whose key is on the committee are made, and the committee stays as the chain holds it', () => {
+    const chain = held(2);
+    const before = JSON.stringify(chain);
+    const three = withAll([ADA, BO, CY], 2);
+    const demoteBo = quorum(three, { kind: 'role', seat: BO.seat, role: 'viewer', threshold: 2 }, [ADA, CY]);
+    /* RED WHEN: the signers' change of a seat's role is refused, or held back, because the seat's key is on the committee. */
+    const demoted = applyFiling(three, demoteBo, { label: LABEL, account: ACCOUNT, chain });
+    expect(demoted.seats.find((x) => x.seat === BO.seat)!.role).toBe('viewer');
+    const retireCy = quorum(demoted, { kind: 'retire', seat: CY.seat, filedUpTo: {}, threshold: 2 }, [ADA, BO]);
+    /* RED WHEN: the signers' retirement of a seat is refused because the seat's key is on the committee. */
+    const retired = applyFiling(demoted, retireCy, { label: LABEL, account: ACCOUNT, chain });
+    expect(retired.seats.find((x) => x.seat === CY.seat)!.retired).toEqual({});
+    /* The same changes, replayed on a member's device against the chain now, are believed. */
+    const now: AccountHeld = { approvals: 2, seats: [ADA.seat, BO.seat, CY.seat] };
+    const replayed = directoryReplayed(CO, [claim(ADA, 1), claim(BO, 2), claim(CY, 3), demoteBo, retireCy], LABEL, ACCOUNT, now);
+    expect([...replayed.refused]).toEqual([]);
+    expect(replayed.dir.seats.map((x) => [x.person, x.role, x.retired])).toEqual([['ada', null, null], ['bo', 'viewer', null], ['cy', null, {}]]);
+    /* What the signers changed is their own seats: the committee is the chain's, and nothing here holds or moves it. */
+    expect(JSON.stringify(chain)).toBe(before);
+    expect(Object.keys(retired).sort()).toEqual(['company', 'seats', 'version']);
+  });
+
+  it('a seat whose key is on the committee, with the signer role viewer, files no run and anchors nothing', () => {
+    const dir = withAll([ADA, BO]);
+    const viewer = { ...dir, seats: dir.seats.map((s) => (s.seat === BO.seat ? { ...s, role: 'viewer' as const } : s)) };
+    const bo = viewer.seats.find((s) => s.seat === BO.seat)!;
+    /* Its entry's opening proved the very key the committee holds. */
+    expect(bo.committeeKey?.value).toBe(BO.committeeKey.value.toLowerCase());
+    /* RED WHEN: what a seat may file reads the super admin role, or its key on the committee, beside its signer role. */
+    expect(filingRefusalOf(viewer, held(1).seats, BO.signing.publicKey, 'run', 'k', 1)).toBe('role-may-not-file');
+    expect(mayFile(bo)).toEqual([]);
+    /* RED WHEN: a seat whose signer role files nothing may still anchor the company's records. */
+    expect(mayFile(bo)).not.toContain(WITNESSED_AS);
+  });
+});
+
 describe('A QUORUM\'S CHANGE PASSED OVER IS FILED AGAIN UNDER ITS OWN SIGNATURES, AND BELIEVED ONLY AS THE CHAIN AND THE CHANGES AFTER IT ALLOW', () => {
   /* Who holds the account now, as a device's own wallet reads it: Ada and Bo, one approval. */
-  const both = { approvals: 1, seats: [ADA.seat, BO.seat], committee: [ADA.committeeKey, BO.committeeKey] };
+  const both = { approvals: 1, seats: [ADA.seat, BO.seat] };
   /** A quorum's change signed by `signers` for `version`, filed at `version`, or filed again at `filedAt` under those signatures. */
   const signedFor = (version: number, change: Parameters<typeof quorum>[1], signers: readonly Seat[] = [ADA], filedAt?: number): DirectoryFiling => {
     const f = quorum({ ...emptyDirectory(CO), version: version - 1 }, change, signers, version);
@@ -391,6 +692,18 @@ describe('A QUORUM\'S CHANGE PASSED OVER IS FILED AGAIN UNDER ITS OWN SIGNATURES
     /* RED WHEN: the signatures of a change filed again are checked against the version it is filed at, or a change filed again is never believed. */
     expect(roleOf(r, BO)).toBe('approver');
     expect(r.refused.get(4)).toBeUndefined();
+  });
+
+  it('A DEMOTION LOST TO THE SERVICE IS FILED AGAIN WITH ITS ORIGINAL SIGNATURES, AND NOBODY SIGNS AGAIN', () => {
+    const atTwo = { ...both, approvals: 2 };
+    const demoteAda = { kind: 'role', seat: ADA.seat, role: 'viewer', threshold: 2 } as const;
+    const lost = signedFor(3, demoteAda, [ADA, BO]);
+    const again = { ...lost, version: 4, signedAt: 3 };
+    const r = replay([claim(ADA, 1), claim(BO, 2), lost, again], [3], atTwo);
+    /* RED WHEN: a demotion filed again under the signatures it was first filed with is refused, or needs a new one. */
+    expect(r.refused.get(4)).toBeUndefined();
+    expect(roleOf(r, ADA)).toBe('viewer');
+    expect(again.change).toBe(lost.change);
   });
 
   it('ITS SIGNATURES BIND THE VERSION IT NAMES, AND ONLY A QUORUM\'S CHANGE NAMES ONE', () => {
@@ -416,7 +729,7 @@ describe('A QUORUM\'S CHANGE PASSED OVER IS FILED AGAIN UNDER ITS OWN SIGNATURES
   it('REFUSED, WITH WHY: A CHANGE NEITHER PASSED OVER NOR RESTING ON ONE', () => {
     /* Cy's role signed before his entry, refused at its own version; nothing was passed over. */
     const cy = { kind: 'role', seat: CY.seat, role: 'approver', threshold: 1 } as const;
-    const withCy = { ...both, seats: [...both.seats, CY.seat], committee: [...both.committee, CY.committeeKey] };
+    const withCy = { ...both, seats: [...both.seats, CY.seat] };
     /* RED WHEN: any change refused at its own version may be filed again - a change refused for its own sake revived later. */
     expect(replay([claim(ADA, 1), signedFor(2, cy), claim(CY, 3), signedFor(2, cy, [ADA], 4)], [], withCy).refused.get(4)).toBe('signed-at-not-passed-over');
   });
@@ -483,7 +796,7 @@ describe('A QUORUM\'S CHANGE PASSED OVER IS FILED AGAIN UNDER ITS OWN SIGNATURES
     /* RED WHEN: a device files again a change signed against more approvals than the account requires now, which the service refuses for ever. */
     expect(replay(filings, [3]).refused.get(4)).toBe('threshold-not-the-chains');
     /* RED WHEN: an anchored change filed again is judged by the chain now - a later change of the account undoing it on every device. */
-    const held = { approvals: 1, seats: [ADA.seat, BO.seat], committee: both.committee };
+    const held = { approvals: 1, seats: [ADA.seat, BO.seat] };
     const anchored = directoryReplayed(CO, filings, LABEL, ACCOUNT, { ...both, seats: [ADA.seat] }, (v) => (v === 3 ? null : v === 4 ? held : undefined));
     expect(anchored.refused.get(4)).toBeUndefined();
     expect(anchored.dir.seats.find((x) => x.seat === BO.seat)?.role).toBe('approver');
@@ -493,8 +806,8 @@ describe('A QUORUM\'S CHANGE PASSED OVER IS FILED AGAIN UNDER ITS OWN SIGNATURES
     const committee = [ADA.committeeKey, BO.committeeKey, CY.committeeKey];
     const adaAdmin = { kind: 'role', seat: ADA.seat, role: 'admin', threshold: 1 } as const;
     /** A device's read of `filings`, the company's records having anchored versions 1 and `last` and passed over those between. */
-    const readOf = (filings: readonly DirectoryFiling[], last: number) => {
-      const atAnchor = { approvals: 1, seats: [ADA.seat, CY.seat], committee: [ADA.committeeKey, CY.committeeKey] };
+    const readOf = (filings: readonly DirectoryFiling[], last: number, leaves = leavesOfTheContract) => {
+      const atAnchor = { approvals: 1, seats: [ADA.seat, CY.seat] };
       const leaf = (v: number) => ({ version: v, digest: directoryEntry(filings[v - 1]!).digest, filedBy: ADA.signing.publicKey, batch: v === 1 ? 0 : 1, dirVersion: v });
       const holders = { seats: [ADA.seat, CY.seat], approvals: 1, signerRoot: '00'.repeat(32) as Hex, signers: [ADA.seat as Hex, CY.seat as Hex] };
       const records = {
@@ -504,10 +817,20 @@ describe('A QUORUM\'S CHANGE PASSED OVER IS FILED AGAIN UNDER ITS OWN SIGNATURES
         held: (v: number) => (v === 1 || v === last ? atAnchor : v < last ? null : undefined),
       } as unknown as RecordsHeldHere;
       return directoryWithItsRecordsHere({
-        accountId: CO, label: LABEL, filings: async () => filings, attested: async () => [], anchored: async () => records,
+        accountId: CO, label: LABEL, viewingKey: VIEWING, filings: async () => filings, attested: async () => [], anchored: async () => records, leaves,
         holders: async () => ({ account: ACCOUNT, seats: [ADA.seat, BO.seat, CY.seat], committee, approvals: 1 }) as never,
       } as never);
     };
+    it('AN ENTRY IS BELIEVED ONLY AS THIS DEVICE\'S VAULT WORKER WORKED OUT ITS OPENING\'S LEAF', async () => {
+      const filings = [claim(ADA, 1), claim(BO, 2)];
+      expect((await readOf(filings, 2)).dir.seats.map((x) => x.seat)).toEqual([ADA.seat, BO.seat]);
+      /* The worker says Bo's opening makes Ada's leaf. RED WHEN: the replay believes an entry the worker's leaf does not match. */
+      const crossed = async (os: readonly SeatOpening[]) => os.map((o) => (o.publicKey === BO.opening.publicKey ? ADA.seat : leafOfTheContract(o)));
+      expect((await readOf(filings, 2, crossed)).dir.seats.map((x) => x.seat)).toEqual([ADA.seat]);
+      /* RED WHEN: a worker answer that leaves an opening out is read as if it had answered for each. */
+      await expect(readOf(filings, 2, async (os) => os.slice(1).map(leafOfTheContract))).rejects.toThrow(/could not work out the leaves/u);
+    });
+
     for (const [name, signers] of [['naming the seat', [ADA]], ['signed by the seat', [BO]]] as const) {
       it(`ONE RESTING ON A SEAT WHOSE ENTRY WAS PASSED OVER (${name.toUpperCase()}) HOLDS BACK EVERY LATER CHANGE TO ITS OWN SEAT ONLY, AND ONCE THE ENTRY IS FILED AGAIN THEY ARE FILED IN THEIR FIRST ORDER`, async () => {
         const first = name === 'naming the seat' ? boApprover : adaAdmin;
@@ -531,7 +854,7 @@ describe('A QUORUM\'S CHANGE PASSED OVER IS FILED AGAIN UNDER ITS OWN SIGNATURES
 
   it('A CHANGE FILED AGAIN IS BELIEVED ONLY WHERE IT AGREES WITH WHO HOLDS THE ACCOUNT ON CHAIN NOW', () => {
     const filings = [claim(ADA, 1), claim(BO, 2), signedFor(3, boApprover), signedFor(3, boApprover, [ADA], 4)];
-    const adaAlone = { approvals: 1, seats: [ADA.seat], committee: [ADA.committeeKey] };
+    const adaAlone = { approvals: 1, seats: [ADA.seat] };
     /* RED WHEN: a role is filed again for a seat the account no longer holds on chain. */
     expect(replay(filings, [3], adaAlone).refused.get(4)).toBe('not-as-the-chain-holds');
     const retireBo = { kind: 'retire', seat: BO.seat, filedUpTo: {}, threshold: 1 } as const;
@@ -539,6 +862,6 @@ describe('A QUORUM\'S CHANGE PASSED OVER IS FILED AGAIN UNDER ITS OWN SIGNATURES
     /* RED WHEN: a retirement is filed again for a seat the account still holds on chain. */
     expect(replay(retiring, [3]).refused.get(4)).toBe('not-as-the-chain-holds');
     /* RED WHEN: the rule is turned round - a retirement of a seat the chain no longer holds is refused. */
-    expect(replay(retiring, [3], { ...adaAlone, committee: both.committee }).dir.seats.find((x) => x.seat === BO.seat)?.retired).toEqual({});
+    expect(replay(retiring, [3], adaAlone).dir.seats.find((x) => x.seat === BO.seat)?.retired).toEqual({});
   });
 });

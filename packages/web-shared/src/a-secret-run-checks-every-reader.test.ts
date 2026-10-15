@@ -12,6 +12,7 @@ import { newWrappingKeypair, toHex } from '../../../src/core/crypto.js';
 import { openNonceSecrets, recordsKeypairFrom } from '../../../src/midnight/company-nonce-secret.js';
 import { sealSecretCopy } from '../../../src/midnight/sealed-secret-copy.js';
 import type { RosterVaultKeys } from '../../../src/core/vault-keys.js';
+import { leafOfTheContract, seatOpenedFor } from '../../../src/testing/directory-seats.js';
 
 /*
  * **THE PRESS THAT STARTS A VAULT CHECKS EVERY READER OF ITS FIRST SECRET
@@ -41,7 +42,8 @@ const signer = (n: number, name: string) => {
   const identity = identityFromSecret(new Uint8Array(32).fill(n));
   const companyKey = new Uint8Array(32).fill(n + 100);
   const committeeKey = committeeKeyFor(identity, CO) as { tag: string; value: string };
-  const seat = (0x40 + n).toString(16).repeat(32);
+  /* The seat as a seating device makes it: its leaf commits to this wallet key, and its opening shows that. */
+  const { seat, opening } = seatOpenedFor(committeeKey, n);
   const statement = signRecordsKey(identity, CO, ACCOUNT, companyKey, seat);
   const entry: RosterVaultKeys = {
     signerId: name.toLowerCase(), userId: name.toLowerCase(), name, filingKey: '00'.repeat(32) as never,
@@ -50,7 +52,7 @@ const signer = (n: number, name: string) => {
       recordsKeyStatement: statement.signature as never, recordsKeySeat: statement.seat as never,
     },
   };
-  return { companyKey, committeeKey, recordsKey: statement.recordsKey, entry, seat };
+  return { companyKey, committeeKey, recordsKey: statement.recordsKey, entry, seat, opening };
 };
 const ada = signer(1, 'Ada');
 const bo = signer(2, 'Bo');
@@ -139,13 +141,15 @@ const press = async (o: {
     signers: async () => [{ id: 'ada', wrappingPublicKey: wrapping.publicKey }],
     material: { signingSecret: '11'.repeat(32), blinding: '22'.repeat(32), scope: '33'.repeat(32) },
     secretReaders: {
-      company: CO, committeeKey: ada.committeeKey,
+      company: CO,
       /* Who holds the account and the vault, as Ada's own wallet read them for this check: the vault read off the vault itself. */
       read: async () => ({
         committee, threshold: 2, seats: o.seatsOnRead?.(++reads) ?? o.seats ?? [ada.seat, bo.seat],
         vault: { vault: VAULT, account: ACCOUNT, committee: o.vaultHeldBy ?? committee, threshold: 2 },
       }),
       roster: async () => o.roster ?? [ada.entry, bo.entry],
+      /* The company's directory as Ada's device believes it: each seat's entry with its opening, and the compiled `signerLeaf`. */
+      directory: async () => ({ seats: [ada, bo].map((s) => ({ seat: s.seat, opening: s.opening, retired: null })), leafOf: leafOfTheContract }),
     },
   }, VAULT as never).catch((e: unknown) => e);
   return { result, asked };
@@ -202,14 +206,16 @@ describe('A SECRET RUN IS CHECKED, READER BY READER, BEFORE THIS DEVICE RAISES O
     expect((result as Error).message).toMatch(/does not open with the key your own recovery words give/);
   });
 
-  it('A VAULT THE SIGNER\'S OWN WALLET READS HELD BY ANY OTHER COMMITTEE THAN THE ACCOUNT\'S IS REFUSED, WHATEVER THE SERVICE REPORTS', async () => {
+  it('WHICH COMMITTEE THE SIGNER\'S OWN WALLET READS HOLDING THE VAULT IS NOT THE READERS\' CHECK: IT IS THE SUPER ADMINS\' OWN SYSTEM', async () => {
     const temporary = { tag: 'schnorr', value: '77'.repeat(32) };
-    const { result, asked } = await press({
+    const held = await press({
       readers: [ada.recordsKey, bo.recordsKey], copies: run(ada.recordsKey, bo.recordsKey), vaultHeldBy: [ada.committeeKey, temporary],
     });
-    /* RED WHEN: the vault's own committee, as the chain shows it, is not what the account's committee is held to. */
-    expect(asked).toEqual([]);
-    expect((result as Error).message).toMatch(/vault is not held by the same committee/);
+    const asTheAccount = await press({ readers: [ada.recordsKey, bo.recordsKey], copies: run(ada.recordsKey, bo.recordsKey) });
+    /* RED WHEN: the reader check reads the vault's committee and stops a run its readers check out for. */
+    expect((held.result as { stoppedAt?: string } | undefined)?.stoppedAt).toBeUndefined();
+    expect(asTheAccount.asked.length).toBeGreaterThan(0);
+    expect(held.asked).toEqual(asTheAccount.asked);
   });
 
   it('A SIGNER REPLACED AT THE SAME COUNT, WHOSE OLD STATEMENT THE SERVICE SERVES, IS REFUSED, AND NOTHING IS RAISED', async () => {
@@ -222,10 +228,11 @@ describe('A SECRET RUN IS CHECKED, READER BY READER, BEFORE THIS DEVICE RAISES O
     expect((result as { stoppedAt?: string }).stoppedAt).toBe('seat-not-held');
   });
 
-  it('a committee still holding a seat for somebody who has left is refused', async () => {
+  it('a signer who has left is refused as a reader, whatever the committee still lists', async () => {
     const { result, asked } = await press({ readers: [ada.recordsKey, bo.recordsKey], copies: run(ada.recordsKey, bo.recordsKey), seats: [ada.seat] });
+    /* RED WHEN: a reader is held to the committee rather than to the seats the account holds now. */
     expect(asked).toEqual([]);
-    expect((result as Error).message).toMatch(/committee on the chain has 2 keys and its account seats 1 signer/);
+    expect((result as Error).message).toMatch(/the seat Bo's wallet signed their records key for is not one the company's account holds now/);
   });
 });
 

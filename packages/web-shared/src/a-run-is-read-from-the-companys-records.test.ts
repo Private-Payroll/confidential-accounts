@@ -101,18 +101,21 @@ const later = newSigningKeypair();
 /** Founded on the chain by Ada's seat, its first anchor holding the first state the founding signer's device made. */
 const FOUNDED: FoundedWith = { seat: SEAT, signingSecret: founder.secret, records: [STATE], committee: [COMMITTEE] };
 interface Founding { readonly founderRemoved?: boolean; readonly founded?: FoundedWith; readonly firstSeats?: readonly string[] }
-const here = (o: Founding = {}): DirectoryHere => ({
-  dir: { company: CO, version: 2, seats: [
-    { seat: SEAT, person: 'ada', signingKey: founder.publicKey, wrappingKey: 'ab'.repeat(32), committeeKey: COMMITTEE, role: 'admin', retired: null },
-    { seat: LATER, person: 'ben', signingKey: later.publicKey, wrappingKey: 'ac'.repeat(32), committeeKey: { tag: 'schnorr', value: '7b'.repeat(32) }, role: 'admin', retired: null },
-  ] },
-  /* What the person's own wallet read: who holds the account now. */
-  holders: {
-    committee: [COMMITTEE, { tag: 'schnorr', value: '7b'.repeat(32) }], seats: o.founderRemoved === true ? [LATER] : [SEAT, LATER], approvals: 1, adoptedVaults: [],
-    account: 'ac'.repeat(32),
-  } as never,
-  another: new Set(), at: () => null, records: heldEntering(CO, [], o.founded ?? FOUNDED),
-});
+const here = async (o: Founding = {}): Promise<DirectoryHere> => {
+  const believed = {
+    dir: { company: CO, version: 2, seats: [
+      { seat: SEAT, person: 'ada', signingKey: founder.publicKey, wrappingKey: 'ab'.repeat(32), committeeKey: COMMITTEE, role: 'admin' as const, retired: null, opening: {} as never },
+      { seat: LATER, person: 'ben', signingKey: later.publicKey, wrappingKey: 'ac'.repeat(32), committeeKey: { tag: 'schnorr', value: '7b'.repeat(32) }, role: 'admin' as const, retired: null, opening: {} as never },
+    ] },
+    /* What the person's own wallet read: who holds the account now. */
+    holders: {
+      committee: [COMMITTEE, { tag: 'schnorr', value: '7b'.repeat(32) }], seats: o.founderRemoved === true ? [LATER] : [SEAT, LATER], approvals: 1, adoptedVaults: [],
+      account: 'ac'.repeat(32),
+    } as never,
+    another: new Set<string>(), at: () => null, leafOf: () => null,
+  };
+  return { ...believed, records: await heldEntering(CO, [], o.founded ?? FOUNDED, believed) };
+};
 const peopleOf = (o: Partial<PeopleHere> = {}): PeopleHere => ({
   people: [ALI, BEA].map((p) => ({ person: p, version: 1, handedOver: true })), notBelieved: [], notPayable: [], ...o,
 });
@@ -204,7 +207,10 @@ describe('A RUN READ HERE FOR APPROVAL', () => {
     /* RED WHEN: a founding seat is said for a company nothing of which is anchored - from the wallet's deploy, or from whoever holds slot 0. */
     const r = records();
     const unanchored = {
-      ...r, directory: async (asked?: RecordsAsked) => ({ ...(await r.directory(asked)), records: heldServing(CO, { runs: await r.runs() }, [founder.secret]) }),
+      ...r, directory: async (asked?: RecordsAsked) => {
+        const read = await r.directory(asked);
+        return { ...read, records: await heldServing(CO, { runs: await r.runs() }, [founder.secret], undefined, read) };
+      },
     };
     await expect(runRebuiltHere(unanchored, CO, 'prp_1', KEY)).rejects.toThrow(/founding records are not anchored on chain yet/);
   });
@@ -212,9 +218,11 @@ describe('A RUN READ HERE FOR APPROVAL', () => {
   it('THE SEATS OF THE FIRST ANCHOR ARE READ OFF ITS HEADER ONLY WHEN ITS LEAVES MAKE THE ROOT ITS CALL CHECKED', async () => {
     /* A service keeping nothing of its own: the founding batch is the test chain's, served beside it. */
     const nothingKept = async () => ({ entries: [], batches: [] });
-    const foldedWith = (founded: FoundedWith) =>
+    const foldedWith = async (founded: FoundedWith) => {
+      const base = await here();
       /* The directory as anchored with that batch: Ada's seat, an admin, which may anchor. */
-      anchoredOver(nothingKept, CO, undefined, undefined, { ...founded, committee: [COMMITTEE] })({ ...here(), at: () => ({ dir: here().dir, digests: [] }) }, { founding: true });
+      return anchoredOver(nothingKept, CO, undefined, undefined, { ...founded, committee: [COMMITTEE] })({ ...base, at: () => ({ dir: base.dir, digests: [] }) }, { founding: true });
+    };
     expect((await foldedWith(FOUNDED)).firstSeats).toEqual([SEAT]);
     /* RED WHEN: the seats a founding header names are taken though they are not the signer tree its anchor call checked. */
     expect((await foldedWith({ ...FOUNDED, leaves: [SEAT, LATER] })).firstSeats).toBeNull();
@@ -280,22 +288,22 @@ describe('A RUN READ HERE FOR APPROVAL', () => {
     expect(payrollRoundsHere([read!], CO, KEY, at)[0]!.status).toBe('cancelled');
   });
 
-  it('A COMPANY IS FOUNDED ON CHAIN ONLY WHEN ITS FIRST ANCHOR HOLDS ITS FIRST STATE AND ITS FIRST ROSTER, ENTERED BY ITS FOUNDING SEAT', () => {
+  it('A COMPANY IS FOUNDED ON CHAIN ONLY WHEN ITS FIRST ANCHOR HOLDS ITS FIRST STATE AND ITS FIRST ROSTER, ENTERED BY ITS FOUNDING SEAT', async () => {
     const roster = signCompanyFiling({
       company: CO, kind: 'roster', id: 'signers', version: 1, keyEpoch: 0, sealed: { iv: '00', tag: '00', body: '00' }, wrapped: [],
     }, founder.secret);
     /* RED WHEN: a company whose first anchor holds no first roster is founded, so a signer may be added beside its founder. */
-    expect(foundedOnChainHere(here())).toMatch(/does not hold its first state and its first roster/);
-    expect(foundedOnChainHere(here({ founded: { ...FOUNDED, records: [roster] } }))).toMatch(/does not hold its first state and its first roster/);
+    expect(foundedOnChainHere(await here())).toMatch(/does not hold its first state and its first roster/);
+    expect(foundedOnChainHere(await here({ founded: { ...FOUNDED, records: [roster] } }))).toMatch(/does not hold its first state and its first roster/);
     /* RED WHEN: the two records entered by another seat found the company. */
-    expect(foundedOnChainHere(here({ founded: { ...FOUNDED, records: [STATE, roster], enteredBy: later.secret } })))
+    expect(foundedOnChainHere(await here({ founded: { ...FOUNDED, records: [STATE, roster], enteredBy: later.secret } })))
       .toMatch(/does not hold its first state and its first roster/);
     /* RED WHEN: a later version of the roster in the first batch is taken as the first roster the company was founded with. */
     const later2 = signCompanyFiling({
       company: CO, kind: 'roster', id: 'signers', version: 2, keyEpoch: 0, sealed: { iv: '00', tag: '00', body: '00' }, wrapped: [],
     }, founder.secret);
-    expect(foundedOnChainHere(here({ founded: { ...FOUNDED, records: [STATE, later2] } }))).toMatch(/does not hold its first state and its first roster/);
-    expect(foundedOnChainHere(here({ founded: { ...FOUNDED, records: [STATE, roster] } }))).toBeNull();
+    expect(foundedOnChainHere(await here({ founded: { ...FOUNDED, records: [STATE, later2] } }))).toMatch(/does not hold its first state and its first roster/);
+    expect(foundedOnChainHere(await here({ founded: { ...FOUNDED, records: [STATE, roster] } }))).toBeNull();
   });
 
   it('A FOUNDING STATE IS BELIEVED ONLY AS THE COMPANY\'S FIRST ANCHOR HOLDS IT: NOT ANOTHER COPY, AND NOT ONE ANCHORED LATER', async () => {
@@ -413,7 +421,10 @@ describe('WHICH PROPOSAL ON CHAIN EACH OF THE COMPANY\'S PROPOSALS IS, AS THIS D
   it('A PROPOSAL A SEAT FILED BUT NO ENTRY IN THE COMPANY\'S RECORDS NAMES, OR FILED FOR ANOTHER COMPANY, NAMES NOTHING', async () => {
     const ours = filed('prp_believedAAAA', 'e1'.repeat(32), founder.secret);
     const kept = records({ proposals: [ours] });
-    const notEntered: CompanyRecordsHere = { ...kept, directory: async (asked) => ({ ...(await kept.directory(asked)), records: heldEntering(CO) }) };
+    const notEntered: CompanyRecordsHere = { ...kept, directory: async (asked) => {
+      const read = await kept.directory(asked);
+      return { ...read, records: await heldEntering(CO, [], undefined, read) };
+    } };
     /* RED WHEN: a proposal is believed without its entry, so a retry the service made up is charged as one the chain may have cleared. */
     expect([...await believedProposalIdsOnChainHere(notEntered, CO)]).toEqual([]);
     /* RED WHEN: another company's proposal, signed for it or served as its, names a proposal of this company's on chain. */

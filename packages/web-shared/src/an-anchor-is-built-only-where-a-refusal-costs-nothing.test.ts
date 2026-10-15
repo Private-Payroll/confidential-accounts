@@ -17,9 +17,10 @@
 import { describe, expect, it } from 'vitest';
 import { CompactTypeBytes, CompactTypeMerkleTreeDigest, StateBoundedMerkleTree } from '@midnight-ntwrk/compact-runtime';
 import { anchorServiceFor } from './records-anchored-here.js';
+import { CREATION_STEPS } from '../../../src/midnight/deferral.js';
 import { pureCircuits } from '../../../contracts/managed/contract/index.js';
 import {
-  anchorHeadsAfter, anchorsLandedIn, anchorPlacementOf, AnchorNotBuilt, buildAnchorCall, buildRecoverAnchorCall, signerRootOf, type GovernedCallDeps,
+  accountDeployedIn, anchorHeadsAfter, anchorsLandedIn, anchorPlacementOf, AnchorNotBuilt, buildAnchorCall, buildRecoverAnchorCall, lastRecoveryIn, signerRootOf, type GovernedCallDeps,
 } from './governed-call-builder.js';
 
 const ACCOUNT = 'c0'.repeat(32);
@@ -132,24 +133,27 @@ describe('ONE RECOVERY OF THE RECORD ANCHOR', () => {
   const PROPOSAL = '2b'.repeat(32);
   const SALT = '3c'.repeat(32);
   const LATEST = '1800003600';
-  it('is built as an anchor call is, naming the head it resumes from, its last time and its approved proposal, with the proposal\'s salt the one thing answered', async () => {
+  const LAST = '4d'.repeat(32);
+  it('is built as an anchor call is, naming the head it resumes from, its last time, the latest recovery\'s head and its approved proposal, with the proposal\'s salt the one thing answered', async () => {
     const log: string[] = [];
     const handed: any[] = [];
     const out = await buildRecoverAnchorCall(depsWith(log, txOf({ entryPoint: 'recoverAnchor' }), handed), {
-      account: ACCOUNT, material, chain, previous: PREVIOUS, batch: BATCH, held: HELD, resumesFrom: RESUMES.toUpperCase(), latest: LATEST, proposal: PROPOSAL, proposalSalt: SALT,
+      account: ACCOUNT, material, chain, previous: PREVIOUS, batch: BATCH, held: HELD, resumesFrom: RESUMES.toUpperCase(), latest: LATEST,
+      lastRecovery: LAST.toUpperCase(), proposal: PROPOSAL, proposalSalt: SALT,
     });
     expect(out.proven).toEqual(new Uint8Array([9]));
     expect(out.placement).toBe('guaranteed');
     /* RED WHEN: the recovery is built or proved as another circuit - an anchor call would never resume from anything. */
     expect(log).toEqual(['built recoverAnchor', 'proved recoverAnchor']);
     const options = handed[0]!;
-    /* RED WHEN: the head it resumes from, its last time and the proposal change places, or any is not the one handed in. */
+    /* RED WHEN: the head it resumes from, its last time, the latest recovery's head and the proposal change places, or any is not the one handed in. */
     expect(options.args.slice(0, 2).map(hex)).toEqual([PREVIOUS, BATCH]);
     expect(options.args.slice(2, 4)).toEqual([2n, { field: BigInt(`0x${HELD.signerRoot}`) }]);
     expect(hex(options.args[4])).toBe(RESUMES);
     expect(options.args[5]).toBe(BigInt(LATEST));
-    expect(hex(options.args[6])).toBe(PROPOSAL);
-    expect(options.args).toHaveLength(7);
+    expect(hex(options.args[6])).toBe(LAST);
+    expect(hex(options.args[7])).toBe(PROPOSAL);
+    expect(options.args).toHaveLength(8);
     /* RED WHEN: the proposal's salt is not answered: the account could not make the identity of the proposal it carries out. */
     expect(hex(options.initialPrivateState.proposalSalt)).toBe(SALT);
     /* RED WHEN: the record answers anything else the recovery never needs. */
@@ -157,7 +161,9 @@ describe('ONE RECOVERY OF THE RECORD ANCHOR', () => {
   });
   it('is proved where it lands in the fallible section, saying so, and never where the transaction is an anchor call instead', async () => {
     const log: string[] = [];
-    const input = { account: ACCOUNT, material, chain, previous: PREVIOUS, batch: BATCH, held: HELD, resumesFrom: RESUMES, latest: LATEST, proposal: PROPOSAL, proposalSalt: SALT };
+    const input = {
+      account: ACCOUNT, material, chain, previous: PREVIOUS, batch: BATCH, held: HELD, resumesFrom: RESUMES, latest: LATEST, lastRecovery: LAST, proposal: PROPOSAL, proposalSalt: SALT,
+    };
     /* RED WHEN: a recovery landing in the fallible section is refused - at the ledger's initial parameters it always does, so no recovery could be carried out. */
     const fallible = await buildRecoverAnchorCall(depsWith(log, txOf({ entryPoint: 'recoverAnchor', fallible: true })), input);
     /* RED WHEN: where it landed is not handed back, so a beaten carrying out could not say its fee was paid. */
@@ -169,6 +175,9 @@ describe('ONE RECOVERY OF THE RECORD ANCHOR', () => {
     /* RED WHEN: a head it resumes from, or a proposal, that is not thirty-two bytes is built. */
     await expect(buildRecoverAnchorCall(depsWith(log, txOf({ entryPoint: 'recoverAnchor' })), { ...input, resumesFrom: 'ab' })).rejects.toThrow();
     await expect(buildRecoverAnchorCall(depsWith(log, txOf({ entryPoint: 'recoverAnchor' })), { ...input, proposal: 'ab' })).rejects.toThrow();
+    /* RED WHEN: a latest recovery's head that is not thirty-two bytes is built. */
+    await expect(buildRecoverAnchorCall(depsWith(log, txOf({ entryPoint: 'recoverAnchor' })), { ...input, lastRecovery: 'ab' }))
+      .rejects.toThrow(/the latest recovery's head this proposal was handed is not thirty-two bytes/u);
     /* RED WHEN: a last time that is not a whole number is built. */
     await expect(buildRecoverAnchorCall(depsWith(log, txOf({ entryPoint: 'recoverAnchor' })), { ...input, latest: 'soon' }))
       .rejects.toThrow(/the recovery's last time this proposal was handed is not a whole number/u);
@@ -188,16 +197,13 @@ describe('THE HEADS, MADE WITH THE ACCOUNT\'S OWN FUNCTIONS', () => {
     }),
   });
   it('reads the head under the anchor\'s own key, the empty head before the first anchor, and the head after each batch', () => {
-    const committee = [{ tag: 'schnorr', value: 'C0'.repeat(32) }];
     const step = { state: new Uint8Array([1]), block: { height: 4, at: 4_000 } };
     /* RED WHEN: an account with no anchor yet is read as holding a head - the empty head is not one anchor call that landed. */
-    expect(anchorsLandedIn(at(null), [step], () => committee)).toEqual([]);
-    /* RED WHEN: the head an anchor call left is read from anywhere but the state under the anchor's own key, or the committee
-     * or the block is not the step's own. */
-    expect(anchorsLandedIn(at(PREVIOUS), [step], () => committee)).toEqual([{
-      head: PREVIOUS, committee: [{ tag: 'schnorr', value: 'c0'.repeat(32) }], height: 4, at: 4_000,
-    }]);
-    /* The committee is read off each landing's own state: three states, two anchors, the committee changing between them. */
+    expect(anchorsLandedIn(at(null), [step])).toEqual([]);
+    /* RED WHEN: the head an anchor call left is read from anywhere but the state under the anchor's own key, or the block is
+     * not the step's own. */
+    expect(anchorsLandedIn(at(PREVIOUS), [step])).toEqual([{ head: PREVIOUS, height: 4, at: 4_000 }]);
+    /* Three states, two anchors: each landing is read off its own state and block. */
     const heads = ['', 'a1'.repeat(32), 'a2'.repeat(32)];
     const tags = ['', 'c1'.repeat(32), 'c2'.repeat(32)];
     const seatKey = hex(pureCircuits.anchorSeatKey());
@@ -211,15 +217,30 @@ describe('THE HEADS, MADE WITH THE ACCOUNT\'S OWN FUNCTIONS', () => {
         },
       }),
     };
-    const committees = [1, 2, 3].map((n) => [{ tag: 'schnorr', value: `${n}`.repeat(64) }]);
-    const landed = anchorsLandedIn(each, [0, 1, 1, 2].map((n, i) => ({ state: new Uint8Array([n]), block: { height: i, at: i } })),
-      (state) => committees[state[0]!]!);
-    /* RED WHEN: a landing's committee is any state's but its own block's. */
-    expect(landed.map((l) => [l.head, l.committee[0]!.value, l.height])).toEqual([[heads[1], '2'.repeat(64), 1], [heads[2], '3'.repeat(64), 3]]);
+    const landed = anchorsLandedIn(each, [0, 1, 1, 2].map((n, i) => ({ state: new Uint8Array([n]), block: { height: i, at: i } })));
+    /* RED WHEN: a landing's head or block is any state's but its own. */
+    expect(landed.map((l) => [l.head, l.height])).toEqual([[heads[1], 1], [heads[2], 3]]);
     /* RED WHEN: a landing does not carry the tag the account wrote beside its head - the seat that moved it read from nowhere. */
     expect(landed.map((l) => l.tag)).toEqual([tags[1], tags[2]]);
     /* RED WHEN: a history that names no call is read as naming how many anchors a block held. */
     expect(landed.every((l) => l.anchorsInBlock === undefined && l.recovered === undefined)).toBe(true);
+  });
+
+  it('reads the head the latest recovery carried out wrote under its own key, thirty-two zero bytes before any, and refuses without the account\'s key', () => {
+    const roles = (entries: Record<string, string>): Pick<GovernedCallDeps, 'accountPure' | 'accountLedger' | 'runtimeState'> => ({
+      accountPure: pureCircuits as any,
+      runtimeState: { deserialize: () => ({ data: 'DATA' }) },
+      accountLedger: () => ({ signerRoles: { member: (k: Uint8Array) => hex(k) in entries, lookup: (k: Uint8Array) => Buffer.from(entries[hex(k)]!, 'hex') } }),
+    });
+    const recoveryKey = hex(pureCircuits.lastRecoveryKey());
+    const anchorKey = hex(pureCircuits.anchorKey());
+    /* RED WHEN: an account no recovery was carried out on reads as holding a head - an approval naming it would be refused. */
+    expect(lastRecoveryIn(roles({ [anchorKey]: PREVIOUS }), new Uint8Array([1]))).toBe('00'.repeat(32));
+    /* RED WHEN: the latest recovery is read from anywhere but its own key: the anchor's head moves on with every anchor. */
+    expect(lastRecoveryIn(roles({ [anchorKey]: PREVIOUS, [recoveryKey]: BATCH }), new Uint8Array([1]))).toBe(BATCH);
+    /* RED WHEN: a device not given the account's key reads the latest recovery some other way. */
+    const { lastRecoveryKey: _, ...without } = pureCircuits;
+    expect(() => lastRecoveryIn({ ...roles({}), accountPure: without as any }, new Uint8Array([1]))).toThrow(/not given the account's reader for its latest recovery.*Reload the page/su);
   });
 
   it('counts the calls that moved the anchor in each landing\'s block, and whether a recovery was one, from the calls the history names', () => {
@@ -236,7 +257,7 @@ describe('THE HEADS, MADE WITH THE ACCOUNT\'S OWN FUNCTIONS', () => {
       step(1, 2, 'anchor'), step(1, 2, 'anchor'), step(1, 2, 'recoverAnchor', false),
       /* The next block: a recovery that landed. */
       step(2, 3, 'recoverAnchor'), step(2, 3, 'approve'),
-    ], () => []);
+    ]);
     /*
      * RED WHEN: a block's calls to move the anchor are not all counted - a seat would be named for a head another call of that block
      * may have moved, an anchor in a guaranteed section moving it even where its transaction succeeded only in part.
@@ -284,5 +305,42 @@ describe('THE ANCHOR\'S ROUTES, OVER THIS PAGE\'S OWN SIGN-IN', () => {
       ['/api/accounts/acct%20one/call-state', undefined],
       ['/api/accounts/acct%20one/proven', { method: 'POST', body: JSON.stringify({ tx: 'beef' }) }],
     ]);
+  });
+});
+
+describe('HOW THE ACCOUNT WAS DEPLOYED, AS ITS FIRST STEP SHOWS IT', () => {
+  const SEAT = 'A1'.repeat(32);
+  const KEY = { tag: 'schnorr', value: 'EF'.repeat(32) };
+  /** Who holds the account, as its seats reader reads that step's bytes. */
+  const seatsIn = () => ({ seats: [SEAT], committee: [KEY], threshold: 1 });
+  /** The contract runtime's reading of the deploy's state: the authority it carries and the circuits it already ran. */
+  const reading = (maintenanceAuthority: unknown, ops: string[] = []): Pick<GovernedCallDeps, 'runtimeState'> => ({
+    runtimeState: { deserialize: () => ({ maintenanceAuthority, operations: () => ops }) } as any,
+  });
+  const held = (counter: unknown) => ({ committee: [KEY], threshold: 1, counter });
+  const deploy = [{ kind: 'deploy', state: new Uint8Array([1]) }];
+
+  it('reads the seats, the committee, its threshold, its updates and the second step off the deploy', () => {
+    /* RED WHEN: a deploy is read with its seats or its committee key in any case but lower, or its updates from anywhere but its own counter. */
+    expect(accountDeployedIn(reading(held(0n)), deploy, seatsIn)).toEqual({
+      seats: ['a1'.repeat(32)], committee: [{ tag: 'schnorr', value: 'ef'.repeat(32) }], threshold: 1, updates: 0, ranSecondStep: false,
+    });
+    /* RED WHEN: an account its committee had already updated by the end of the deploy's block reads as deployed with no update. */
+    expect(accountDeployedIn(reading(held(2n)), deploy, seatsIn)?.updates).toBe(2);
+    /* RED WHEN: an account that already ran a circuit of the second creation step reads as not having run one. */
+    expect(accountDeployedIn(reading(held(0n), [CREATION_STEPS.second[0]!]), deploy, seatsIn)?.ranSecondStep).toBe(true);
+    /* RED WHEN: a history that does not open with the deploy is read as how the account was deployed. */
+    expect(accountDeployedIn(reading(held(0n)), [{ kind: 'call', state: new Uint8Array([1]) }], seatsIn)).toBeNull();
+  });
+
+  it('does not believe a deploy whose maintenance authority cannot be read', () => {
+    /*
+     * RED WHEN: a deploy whose update counter is not a bigint of at least zero is believed - a counter of "0" would read as an
+     * account no update had touched, and its founding seat would be believed.
+     */
+    expect(() => accountDeployedIn(reading(held('0')), deploy, seatsIn)).toThrow(/how the company's account was deployed cannot be read.*counter is not a bigint of at least zero/su);
+    expect(() => accountDeployedIn(reading(held(-1n)), deploy, seatsIn)).toThrow(/counter is not a bigint of at least zero/u);
+    /* RED WHEN: a deploy whose state carries no maintenance authority at all is believed. */
+    expect(() => accountDeployedIn(reading(undefined), deploy, seatsIn)).toThrow(/carries no maintenance authority/u);
   });
 });

@@ -205,10 +205,14 @@ describe('A RUN, READ AT ITS NEWEST VERSION', () => {
 describe('A PROPOSAL THE COMPANY\'S RECORDS NAME, LEFT OUT OF THE LIST', () => {
   const PROPOSAL = 'prp_withheld0001';
   /* The company's records name this proposal, entered by Ada's seat and waiting for the next anchor. */
-  const named = async () => ({
-    ...(await acmeDirectory()),
-    records: heldEntering(CO, [{ entry: { store: 'proposal', kind: 'proposal', id: PROPOSAL, version: 1, digest: 'ab'.repeat(32) }, signingSecret: ADA.signingSecret as Hex }]),
-  });
+  const named = async () => {
+    const here = await acmeDirectory();
+    return {
+      ...here,
+      records: await heldEntering(CO, [{ entry: { store: 'proposal', kind: 'proposal', id: PROPOSAL, version: 1, digest: 'ab'.repeat(32) }, signingSecret: ADA.signingSecret as Hex }],
+        undefined, here),
+    };
+  };
   it('IS REFUSED AS WITHHELD WHERE IT IS OPENED, AND IN EVERY LIST A DECISION IS MADE FROM, NOT READ AS WITHDRAWN', async () => {
     const records = { directory: named, proposals: async () => [] } as unknown as CompanyRecordsHere;
     const service = { sealedProposals: async () => [] } as never;

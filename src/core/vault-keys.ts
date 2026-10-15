@@ -2,11 +2,12 @@
  * **WHICH VAULT KEYS BELONG TO WHICH SIGNER IS SAID BY THE SEALED ROSTER, AND BY
  * NOTHING ELSE.**
  *
- * A signer gives two public keys for a company's vaults: the committee key they
- * sit on every vault's committee with, and the records key a vault's nonce
- * secret is wrapped to for them. The third, the filing key every sealed record
- * they file is signed with, is their roster signing key itself, so it needs no
- * statement of its own.
+ * A signer gives two public keys for a company's vaults: the key their wallet
+ * gives for the company, which their wallet signs their records key with, and
+ * the records key a vault's nonce secret is wrapped to for them. Neither puts
+ * them on any contract's committee: that is the super admins' own matter. The
+ * third, the filing key every sealed record they file is signed with, is their
+ * roster signing key itself, so it needs no statement of its own.
  *
  * The two are kept in the signer's own entry in the sealed roster, signed with
  * that signer's roster signing key. So:
@@ -19,16 +20,17 @@
  *     holds that key can rewrite an entry whole, its signing key included, and
  *     nothing here can tell;
  *   - what the service keeps outside the roster is an index with no names in it
- *     - every committee key, every records key and every filing key of the
- *     company's seated signers, each list sorted by value - which is enough to
- *     assemble a committee and to refuse a filing from a key the company never
- *     gave, and says nothing about who holds which.
+ *     - every records key and every filing key of the company's seated
+ *     signers, each list sorted by value - and never a wallet key: which
+ *     committee holds the company's contracts is read from the chain, and a
+ *     signer's wallet key is sealed wherever the service keeps it.
  *
  * Pure, so the page and the service ask the same questions of the same record.
  */
 import { recordsKeySignedBy, directoryEntrySignedBy, type DirectoryEntryStatement } from 'midnight-identity/profile/records-key';
 import type { AccountAddress, CompanyLabel } from 'midnight-identity/profile/company-label';
-import { sign, verify, type Hex } from './crypto.js';
+import { sign, verify, type Hex, type Sealed } from './crypto.js';
+import { openRecord, sealRecord } from './sealed-records.js';
 import type { Account, Signer } from './types.js';
 
 export type VaultKey = { readonly tag: string; readonly value: string };
@@ -37,8 +39,8 @@ export type VaultKey = { readonly tag: string; readonly value: string };
  * One signer's vault keys as the roster keeps them: the two public keys and
  * that signer's signature over them, and the signer's wallet's own signature
  * by the committee key over the records key and the seat the signer holds
- * (`recordsKeyStatement`, `recordsKeySeat`), which a device checks against the
- * committee and the seats the chain lists.
+ * (`recordsKeyStatement`, `recordsKeySeat`), which a device checks against
+ * that key and the seat the chain holds for the signer (`recordsKeyIsForTheSeat`).
  */
 export interface SignedVaultKeys {
   readonly committeeKey: VaultKey;
@@ -49,12 +51,11 @@ export interface SignedVaultKeys {
   readonly recordsKeySeat?: Hex | null;
 }
 
-/** What the service keeps about a company's vault keys, with nobody's name on any of it. */
+/** What the service keeps about a company's vault keys, with nobody's name on any of it and no wallet key in it. */
 export interface CompanyVaultKeyIndex {
   readonly accountId: string;
-  /** How many seated signers the index was made from, and how many of them had given keys. */
+  /** How many seated signers the index was made from. */
   readonly signerCount: number;
-  readonly committeeKeys: readonly VaultKey[];
   readonly readers: readonly Hex[];
   readonly filers: readonly Hex[];
 }
@@ -121,53 +122,15 @@ export function vaultKeyIndexOf(account: Pick<Account, 'id' | 'signers'>): Compa
   return {
     accountId: account.id,
     signerCount: roster.length,
-    committeeKeys: given.map((k) => k.committeeKey).sort((a, b) => byValue(a.value, b.value)),
     readers: given.map((k) => k.recordsKey).sort(byValue),
     filers: roster.map((r) => r.filingKey).sort(byValue),
   };
 }
 
-const idOf = (k: VaultKey): string => `${fold(k.tag)}:${fold(k.value)}`;
-
-/**
- * **WHY A COMMITTEE THE SERVICE REPORTS IS NOT THE ONE THE ROSTER NAMES**, or
- * null when it is. Every seated signer must have given keys the roster says are
- * theirs, and the committee must be exactly those keys: none missing, none
- * added, none twice.
- */
-export function whyNotTheRostersCommittee(
-  committee: readonly VaultKey[], roster: readonly RosterVaultKeys[],
-): string | null {
-  const unsigned = roster.filter((r) => r.keys === null).length;
-  if (unsigned > 0) {
-    return `${unsigned} of this company's ${roster.length} signers ${unsigned === 1 ? 'has' : 'have'} not set up vault `
-      + 'keys that the company\'s own roster says are theirs. Each of them opens Vaults on their own device and sets '
-      + 'them up; until then no vault is created, funded or handed over.';
-  }
-  const named = new Set(roster.map((r) => idOf(r.keys!.committeeKey)));
-  const reported = committee.map(idOf);
-  if (new Set(reported).size !== reported.length) {
-    return 'the committee this service reports names one key twice, so it is not the company\'s. Nothing was '
-      + 'created or funded; reload the page, and if it happens again, contact support.';
-  }
-  const stranger = reported.filter((k) => !named.has(k)).length;
-  if (stranger > 0) {
-    return `the committee this service reports carries ${stranger} key(s) the company's own roster does not name, so it `
-      + 'is not the company\'s. Nothing was created or funded; reload the page, and if it happens again, contact support.';
-  }
-  if (reported.length !== named.size) {
-    return `the committee this service reports has ${reported.length} key(s) and the company's own roster names `
-      + `${named.size}, so it is not the company's. Reload the page; if a signer has just joined or left, wait for `
-      + 'them to set up their vault keys.';
-  }
-  return null;
-}
-
 /**
  * Why the records keys the service reports are not exactly the ones the roster
- * names, or null when they are: none the roster does not name, and - once the
- * service reports a complete committee, which is when the vault's secret is
- * wrapped to them - none it names left out.
+ * names, or null when they are: none the roster does not name, and - unless
+ * `complete` is false - none it names left out.
  */
 export function whyNotTheRostersReaders(
   readers: readonly Hex[], roster: readonly RosterVaultKeys[], opts: { complete: boolean } = { complete: true },
@@ -288,42 +251,97 @@ export function rosterWithVaultKeys<R extends { readonly signers: readonly Signe
 
 /**
  * **A NEW SIGNER'S VAULT KEYS, OFFERED BEFORE THEY CAN FILE THE ROSTER
- * THEMSELVES.** Public keys and signatures only: the keys signed with the
- * signer's own signing key for their roster entry, and the directory entry their
- * own wallet signed for their seat, which names that signing key. It is a
- * waiting slot, never the roster: a seat the company already believes folds it
- * into the roster from its own device, after checking it against the roster it
- * opened (`rosterWithVaultKeys`).
+ * THEMSELVES, AS THEIR DEVICE MAKES THEM AND A MEMBER'S DEVICE OPENS THEM.**
+ * Public keys and signatures only: the keys signed with the signer's own
+ * signing key for their roster entry, and the directory entry their own wallet
+ * signed for their seat, which names that signing key. It is a waiting slot,
+ * never the roster: a seat the company already believes folds it into the
+ * roster from its own device, after checking it against the roster it opened
+ * (`rosterWithVaultKeys`).
  */
-export interface VaultKeysOffer {
+export interface OpenedVaultKeysOffer {
   /** The roster entry the keys are signed for. */
   readonly signerId: string;
-  /** The signed-in person who offered them. The service's attribution, checked against who is signed in. */
-  readonly person: string;
   readonly entry: { readonly committeeKey: VaultKey; readonly statement: DirectoryEntryStatement };
   readonly keys: SignedVaultKeys;
 }
 
 /**
- * **AN OFFER AS THE COMPANY KEEPS IT**: the fields an offer has and nothing
- * else a client sent beside them, so what every member is handed back is only
- * what was checked.
+ * **AN OFFER AS THE SERVICE KEEPS IT: THE WALLET KEY SEALED.** The seat it is
+ * for, the filing key its keys are signed with and the records key it gives -
+ * none of them a wallet key - stand beside it so the service can attribute it
+ * and let it go once a roster filing's index holds its keys; everything the
+ * wallet signed, and the wallet key itself, is sealed under the company's
+ * roster key, which only a member's device holds. Whether any of it is true
+ * is each member's device's to judge (`openVaultKeysOffer`, then
+ * `vaultKeysOfferRefusal`).
  */
-export const offerAsKept = (o: VaultKeysOffer): VaultKeysOffer => {
-  const st = o.entry.statement;
-  const k = o.keys;
+export interface VaultKeysOffer {
+  /** The signed-in person who offered it. The service's attribution, checked against who is signed in. */
+  readonly person: string;
+  readonly seat: Hex;
+  readonly signingKey: Hex;
+  readonly recordsKey: Hex;
+  readonly sealed: Sealed;
+}
+
+const HEX64 = /^[0-9a-f]{64}$/u;
+const HEX = /^[0-9a-f]{0,65536}$/u;
+
+/** An offer's own content sealed for the service to keep: the plain fields read off it, the rest sealed under the roster key. */
+export const sealVaultKeysOffer = (company: string, offer: OpenedVaultKeysOffer, viewingKey: Hex): Omit<VaultKeysOffer, 'person'> => ({
+  seat: fold(String(offer.entry.statement.seat)) as Hex,
+  signingKey: fold(String(offer.entry.statement.signingKey)) as Hex,
+  recordsKey: fold(offer.keys.recordsKey) as Hex,
+  sealed: sealRecord<OpenedVaultKeysOffer>('roster', company, {
+    signerId: offer.signerId,
+    entry: { committeeKey: { tag: offer.entry.committeeKey.tag, value: offer.entry.committeeKey.value }, statement: offer.entry.statement },
+    keys: offer.keys,
+  }, viewingKey),
+});
+
+/**
+ * **AN OFFER AS THE COMPANY KEEPS IT**: the fields a kept offer has and
+ * nothing else a client sent beside them, so what every member is handed back
+ * is only what is kept; null when it is not one in its shape. Nothing in it is
+ * believed.
+ */
+export const offerAsKept = (o: unknown, person: string): VaultKeysOffer | null => {
+  if (typeof o !== 'object' || o === null) return null;
+  const x = o as Partial<VaultKeysOffer>;
+  const sealed = x.sealed as Partial<Sealed> | undefined;
+  const hex64 = (v: unknown): v is string => typeof v === 'string' && HEX64.test(v.toLowerCase());
+  if (!hex64(x.seat) || !hex64(x.signingKey) || !hex64(x.recordsKey) || typeof sealed !== 'object' || sealed === null
+    || typeof sealed.iv !== 'string' || typeof sealed.tag !== 'string' || typeof sealed.body !== 'string'
+    || !HEX.test(sealed.iv) || !HEX.test(sealed.tag) || !HEX.test(sealed.body)) return null;
   return {
-    signerId: o.signerId, person: o.person,
-    entry: {
-      committeeKey: { tag: o.entry.committeeKey.tag, value: o.entry.committeeKey.value } as VaultKey,
-      statement: { account: st.account, signingKey: st.signingKey, wrappingKey: st.wrappingKey, seat: st.seat, signature: st.signature },
-    },
-    keys: {
-      committeeKey: { tag: k.committeeKey.tag, value: k.committeeKey.value } as VaultKey, recordsKey: k.recordsKey, signature: k.signature,
-      ...(k.recordsKeyStatement === undefined ? {} : { recordsKeyStatement: k.recordsKeyStatement }),
-      ...(k.recordsKeySeat === undefined ? {} : { recordsKeySeat: k.recordsKeySeat }),
-    },
+    person, seat: fold(x.seat) as Hex, signingKey: fold(x.signingKey) as Hex, recordsKey: fold(x.recordsKey) as Hex,
+    sealed: { iv: sealed.iv as Hex, tag: sealed.tag as Hex, body: sealed.body as Hex },
   };
+};
+
+/**
+ * **A KEPT OFFER, OPENED ON A MEMBER'S DEVICE**, or why it is not one: it does
+ * not open under the company's roster key, or the seat, filing key or records
+ * key the service kept beside it are not the ones sealed inside it. Whether
+ * what it says is true is `vaultKeysOfferRefusal`'s.
+ */
+export const openVaultKeysOffer = (company: string, kept: VaultKeysOffer, viewingKey: Hex): OpenedVaultKeysOffer | string => {
+  let o: Partial<OpenedVaultKeysOffer>;
+  try {
+    o = openRecord<Partial<OpenedVaultKeysOffer>>('roster', company, kept.sealed, viewingKey);
+  } catch {
+    return 'it does not open under the company\'s roster key';
+  }
+  const st = o?.entry?.statement;
+  if (typeof o !== 'object' || o === null || typeof st !== 'object' || st === null || typeof o.keys !== 'object' || o.keys === null) {
+    return 'it is not an offer of vault keys';
+  }
+  if (fold(String(st.seat)) !== fold(kept.seat) || fold(String(st.signingKey)) !== fold(kept.signingKey)
+    || fold(String(o.keys.recordsKey)) !== fold(kept.recordsKey)) {
+    return 'the seat or keys kept beside it are not the ones sealed in it';
+  }
+  return o as OpenedVaultKeysOffer;
 };
 
 /**
@@ -338,9 +356,9 @@ export const vaultKeysOfferRefusal = (
   label: CompanyLabel, account: AccountAddress, accountId: string, offer: unknown,
 ): string | null => {
   if (typeof offer !== 'object' || offer === null) return 'it is not an offer of vault keys';
-  const o = offer as Partial<VaultKeysOffer>;
+  const o = offer as Partial<OpenedVaultKeysOffer>;
   if (typeof o.signerId !== 'string' || o.signerId.length === 0 || o.signerId.length > 64) return 'it names no signer';
-  const e = o.entry as Partial<VaultKeysOffer['entry']> | undefined;
+  const e = o.entry as Partial<OpenedVaultKeysOffer['entry']> | undefined;
   const k = o.keys as Partial<SignedVaultKeys> | undefined;
   if (typeof e !== 'object' || e === null || typeof e.statement !== 'object' || e.statement === null || typeof e.committeeKey !== 'object') {
     return 'it carries no directory entry signed by the signer\'s wallet';

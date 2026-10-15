@@ -6,14 +6,14 @@
  * (`COMPANY_RECORD_KINDS`) and id has versions in order, every version sealed on
  * a device under a fresh key wrapped to each signer, and signed by the seat
  * that filed it (`signCompanyFiling`). Before it files one, this server checks
- * what it can without a key (check S):
+ * what it can without a key:
  *
  *   · the person is signed in and a member of the company;
  *   · the signature covers exactly this company, kind, id, version, key epoch
  *     and bytes;
  *   · the key that signed is the one the company's seat directory holds for
- *     this person, in an entry their own wallet signed, and their seat's role
- *     may file this kind (`filerSeatOf`);
+ *     this person, for a seat the account holds now (`filerSeatOf`). Whether
+ *     that seat's role may file this kind is each member's device's to judge;
  *   · the key epoch is the company's current one, so a device still holding a
  *     key rotated away cannot file a record nobody can open;
  *   · the version is the next.
@@ -162,8 +162,8 @@ export interface FilingDeps {
 }
 
 /**
- * **ONE COMPANY RECORD VERSION, CHECKED AND FILED, OR REFUSED** - check S, the
- * key epoch and the next version, as the record route makes them. Every route
+ * **ONE COMPANY RECORD VERSION, CHECKED AND FILED, OR REFUSED** - the filing
+ * seat, the key epoch and the next version, as the record route makes them. Every route
  * that files a company record files it through here, so there is one check.
  */
 export const fileCompanyRecord = async (
@@ -190,19 +190,12 @@ export const fileCompanyRecord = async (
   }
   let now: DirectoryNow;
   try { now = await deps.directoryOf(n.company); } catch (e) { return { status: 503, body: { error: CHAIN_UNREAD(e) } }; }
-  const seat = filerSeatNow(now, person, filer, n.kind);
+  const seat = filerSeatNow(now, person, filer);
   if (typeof seat === 'string') {
     const remedy = seat === 'no-entry'
       ? ' Set up your vault keys again on your own device: that enters your seat in the company\'s directory.'
       : '';
     return { status: 403, body: { refused: seat, error: `this record was not filed, because ${FILING_REFUSAL[seat]}.${remedy}` } };
-  }
-  /* A seat files the opening of its own leaf, and no other: its id is the seat. */
-  if (n.kind === 'opening' && n.id !== seat.seat) {
-    return { status: 403, body: {
-      refused: 'not-its-own-opening',
-      error: 'a seat files the opening of its own leaf only, under its own seat, and this one names another seat. Nothing was filed.',
-    } };
   }
   if (rec.keyEpoch !== account.keyEpoch) {
     return { status: 422, body: {

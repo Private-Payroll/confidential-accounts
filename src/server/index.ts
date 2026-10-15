@@ -71,7 +71,7 @@ import { ledger as readAccountLedger } from '../../contracts/managed/contract/in
 import { vaultArtefactPlaces, vaultArtefactRoutes } from './vault-artefacts.js';
 import { parameterSources, startProvingParameters } from './proving-parameters.js';
 import {
-  accountCreationExpectationsIn, accountHandoverWith, accountTemporaryVerifyingKey, accountVerifierKeysIn, committeeChangeWith, vaultChainFromTheIndexer,
+  accountCreationExpectationsIn, accountTemporaryVerifyingKey, accountVerifierKeysIn, committeeChangeWith, vaultChainFromTheIndexer,
   vaultVerifierKeysIn,
 } from './vault-chain.js';
 import { DEPLOYED_CIRCUITS } from '../midnight/deferral.js';
@@ -568,8 +568,8 @@ app.use(cors());
   mountVaultRecords(app, {
     signedIn: (req, res, next) => authed(req, res, next),
     records, accountOf, companies: () => store.listAccounts(),
-    mayFileUnder: async (companyId, person, filer, record) =>
-      typeof filerSeatNow(await directoryNow(companyId), person, filer, record) !== 'string',
+    mayFileUnder: async (companyId, person, filer) =>
+      typeof filerSeatNow(await directoryNow(companyId), person, filer) !== 'string',
   });
 
   app.use(companyRecordsRoutes({
@@ -693,16 +693,14 @@ app.use(cors());
     ledger,
     chain: theChain,
     verifierKeys: vaultVerifierKeysIn(process.cwd()),
-    /* A company account is handed to its committee with the temporary key this deployment recorded, and no
-     * money goes into a vault until the chain shows the account held by the committee. */
+    /* The temporary key this deployment once created accounts under, so a seat it still holds is named as this service's. */
     account: {
       circuits: DEPLOYED_CIRCUITS,
       verifierKeys: accountVerifierKeysIn(process.cwd()),
-      handover: startup.started ? accountHandoverWith(writeCapability?.maintenanceAuthority, NETWORK) : undefined,
       temporaryKey: startup.started ? await accountTemporaryVerifyingKey(writeCapability?.maintenanceAuthority) : undefined,
     },
     readers: { proven: readProvenTransaction, finished: readFinishedTransaction },
-    /* A committee change is put together from its signers' own signatures; this deployment signs none of it. */
+    /* A change of the super admins is signed on their own devices; this deployment signs none of it. */
     committeeChange: startup.started ? committeeChangeWith(NETWORK) : undefined,
   }));
 }

@@ -21,7 +21,7 @@ import {
   type StartStanding, type VaultLedgerForAStart, type VaultStartPure,
 } from '../../../src/midnight/vault-start.js';
 import {
-  accountDeployedIn, anchorHeadsAfter, anchorsLandedIn, anchorTagIn, seatOpeningsIn, batchHoldersIn, buildAnchorCall, buildRecoverAnchorCall, seatsNamedBy, buildGovernedCall, identityOfAChange, roundsOnChainIn, vouchingRunsIn, vouchedRunIdentityOf,
+  accountDeployedIn, anchorHeadsAfter, anchorsLandedIn, anchorTagIn, seatOpeningsIn, batchHoldersIn, buildAnchorCall, buildRecoverAnchorCall, lastRecoveryIn, seatsNamedBy, buildGovernedCall, identityOfAChange, roundsOnChainIn, vouchingRunsIn, vouchedRunIdentityOf,
   spendingPolicyKeysOf, type AnchorsOnChain, type GovernedCallDeps, type RoundOnChain,
 } from './governed-call-builder.js';
 import { buildClearRun, periodTotalOf, runChargeStandingOf } from './run-charge-builder.js';
@@ -179,10 +179,10 @@ async function historyHere(
 /**
  * **EVERY HEAD THE ACCOUNT'S HISTORY SHOWS, ONE PER BLOCK, AND WHO HOLDS IT NOW, READ
  * HERE** from its history at the indexer the person's own wallet names, each
- * state read with the account's own functions, its committee read the one way
- * a wallet reads it (`seatsInAccountState`), who holds it in the latest
+ * state read with the account's own functions: who holds it in the latest
  * state as a batch's header names them (`batchHoldersIn`), and how it was
- * deployed (`accountDeployedIn`).
+ * deployed, its committee then read the one way a wallet reads it
+ * (`accountDeployedIn`, `seatsInAccountState`).
  */
 async function anchorsOnChainHere(
   d: Pick<WorkerDeps, 'accountPure' | 'accountLedger' | 'runtimeState' | 'historyAt'>,
@@ -192,7 +192,7 @@ async function anchorsOnChainHere(
   if (history.anchors !== undefined) return history.anchors;
   const { steps } = history;
   const { seatsInAccountState } = await import('midnight-identity/profile/account-state');
-  const landed = anchorsLandedIn(d, steps, (state) => seatsInAccountState(state).committee);
+  const landed = anchorsLandedIn(d, steps);
   const now = batchHoldersIn(d, steps[steps.length - 1]!.state);
   const deployed = accountDeployedIn(d, steps, seatsInAccountState);
   const read: AnchorsOnChain = { landed, now, seatsNow: seatsNamedBy(d, now.signers), deployed, vouching: vouchingRunsIn(d, steps) };
@@ -587,7 +587,7 @@ export const answerVaultAsk = async (
     case 'recover-anchor': {
       const built = await buildRecoverAnchorCall(d, {
         account: ask.account, material: ask.material, previous: ask.previous, batch: ask.batch, held: ask.held,
-        resumesFrom: ask.resumesFrom, latest: ask.latest, proposal: ask.proposal, proposalSalt: ask.proposalSalt,
+        resumesFrom: ask.resumesFrom, latest: ask.latest, lastRecovery: ask.lastRecovery, proposal: ask.proposal, proposalSalt: ask.proposalSalt,
         chain: { accountState: fromBase64(ask.chain.accountState), parameters: fromBase64(ask.chain.parameters) },
       });
       return { id: ask.id, ok: true, ask: 'recover-anchor', tx: toBase64(built.proven), placement: built.placement };
@@ -598,6 +598,8 @@ export const answerVaultAsk = async (
       const source = (d.chainSourceAt ?? vaultChainSourceAt)(ask.indexer);
       return { id: ask.id, ok: true, ask: 'account-call-chain', chain: await readAccountCallChain(source, ask.account) };
     }
+    case 'last-recovery':
+      return { id: ask.id, ok: true, ask: 'last-recovery', head: lastRecoveryIn(d, fromBase64(ask.accountState)) };
     case 'run-charged':
       return {
         id: ask.id, ok: true, ask: 'run-charged',
@@ -673,7 +675,9 @@ export const answerVaultAsk = async (
       }
       const scope = MidnightCommitments.allVaults().toLowerCase();
       const seat = storedSignerLeaf({ signingSecret: m.signingSecret, blinding: m.blinding, scope }, MidnightCommitments).toLowerCase();
-      return { id: ask.id, ok: true, ask: 'founding-seat', seat, scope };
+      /* The public key the leaf is made over: the seat's opening names it beside the blinding and the scope. */
+      const publicKey = MidnightCommitments.signerPublicKey(m.signingSecret.toLowerCase() as Hex).toLowerCase();
+      return { id: ask.id, ok: true, ask: 'founding-seat', seat, scope, publicKey };
     }
     case 'creation-again': {
       const again = await creationCarriedAgain(withNetwork, { deploy: fromBase64(ask.deploy), insert: fromBase64(ask.insert) });

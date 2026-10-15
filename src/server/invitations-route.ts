@@ -9,11 +9,14 @@
  * stops being acceptable. It checks what it can without a key:
  *
  *   · **making one**: the invitation is signed by the signed-in person's own
- *     seat in the company's directory, whose role may file an offer (check S);
+ *     seat in the company's directory, held now (`filerSeatOf`); whether its
+ *     role may invite is each member's device's to judge;
  *     a payee's first person record goes through the same filing as every
  *     company record (`fileCompanyRecord`), signed by the same seat;
  *   · **reading one**: only by its lookup id, metered by who is asking, and
- *     answered with the ciphertext;
+ *     answered with the ciphertext; the company it was made for is named only
+ *     to whoever holds the proof the link gives, so an invitee's device can
+ *     check the offer is for the company its seat request would go to;
  *   · **accepting one**: only with the proof the link's token gives, whose
  *     hash is all this service holds, and only while it is open. What is
  *     handed over is sealed on the invitee's own device to the company's inbox
@@ -27,6 +30,7 @@ import express from 'express';
 import { z } from 'zod';
 import { nanoid } from 'nanoid';
 import type { Invite, SealedAccount } from '../core/types.js';
+import type { Hex } from '../core/crypto.js';
 import {
   acceptsTheInvitation, INVITATION_LIFETIME_MS, INVITATION_REFUSAL, verifiedInvitationFiler, whyThisInvitationIsClosed,
   whyThisIsNotAnInvitation, type InvitationFiling, type InvitationRefusal,
@@ -92,7 +96,7 @@ export const invitationRoutes = (deps: {
     }
     let now: DirectoryNow;
     try { now = await deps.directoryOf(company); } catch (e) { return { status: 503, body: { error: CHAIN_UNREAD(e) } }; }
-    const seat = filerSeatNow(now, person, filer, 'offer');
+    const seat = filerSeatNow(now, person, filer);
     if (typeof seat === 'string') {
       return { status: 403, body: { refused: seat, error: `this invitation was not filed, because ${FILING_REFUSAL[seat]}.` } };
     }
@@ -107,7 +111,7 @@ export const invitationRoutes = (deps: {
     const now = Date.now();
     deps.store.putInvite({
       token: invitation.id, accountId: company, kind: invitation.kind,
-      createdAt: new Date(now).toISOString(), createdBy: person,
+      createdAt: new Date(now).toISOString(), createdBy: person, createdByKey: verifiedInvitationFiler(invitation),
       expiresAt: new Date(now + INVITATION_LIFETIME_MS).toISOString(),
       ...(invitation.person === undefined ? {} : { subjectId: invitation.person }),
       offer: invitation.offer, acceptanceHash: invitation.acceptanceHash, handover: null,
@@ -191,6 +195,28 @@ export const invitationRoutes = (deps: {
   });
 
   /*
+   * **THE COMPANY A SIGNER'S INVITATION WAS FILED TO**, asked with the proof
+   * the link gives: its id, label and account as this service holds them. The
+   * invitee's device refuses an offer naming another company before it makes
+   * its leaf, so a seat request never goes to a company the offer did not name.
+   * Without the proof a lookup id names no company.
+   */
+  router.post('/api/invites/:id/filed-to', logged, json, async (req, res) => {
+    if (!(await deps.meterOffer(req, res))) return;
+    const b = z.object({ acceptance: z.string() }).strict().safeParse(req.body);
+    if (!b.success) {
+      res.status(400).json({ refused: 'not-an-acceptance', error: 'this is asked with the proof the link gives, and nothing else.' });
+      return;
+    }
+    const invite = accepting(req, 'signer', b.data.acceptance);
+    if (isAnswer(invite)) { res.status(invite.status).json(invite.body); return; }
+    const rec = deps.store.getAccount(invite.accountId);
+    res.status(200).json({
+      company: rec === null ? null : { id: invite.accountId, label: rec.companyLabel ?? null, account: rec.contractAddress ?? null },
+    });
+  });
+
+  /*
    * **A PAYEE ACCEPTS.** Signed in. What they hand over is sealed on their own
    * device to the company's inbox key; a field that would carry it in the clear
    * is refused by name rather than ignored, so a sender is never left believing
@@ -233,16 +259,16 @@ export const invitationRoutes = (deps: {
     /*
      * **A SEAT REQUEST FOR SOMEBODY ELSE, FROM THE CODE THEY GAVE.** Only the
      * seat that made this invitation may accept it for the person a pasted code
-     * names, and only while its role may invite: that is the person who pasted
-     * the code. Anybody else accepts for themselves.
+     * names, while the account holds it: that is the person who pasted the
+     * code. Anybody else accepts for themselves.
      */
     if (b.data.for !== undefined) {
       let now: DirectoryNow;
       try { now = await deps.directoryOf(invite.accountId); } catch (e) { res.status(503).json({ error: CHAIN_UNREAD(e) }); return; }
-      /* The rule check S makes of the seat inviting, under the key its own entry names. */
-      const seat = now.dir.seats.find((x) => x.person === signedIn);
-      if (invite.createdBy !== signedIn || seat === undefined
-        || typeof filerSeatOf(now.dir, now.chain?.seats ?? null, signedIn, seat.signingKey, 'offer') === 'string') {
+      /* The seat that made the invitation: its person and the filing key it signed the invitation with (`filerSeatOf`). */
+      const key = invite.createdByKey;
+      if (invite.createdBy !== signedIn || typeof key !== 'string'
+        || typeof filerSeatOf(now.dir, now.chain?.seats ?? null, signedIn, key as Hex) === 'string') {
         res.status(403).json({ refused: 'not-yours-to-accept-for', error: 'a seat request is filed for somebody else only by the seat that made the invitation for their code. Nothing was sent.' });
         return;
       }

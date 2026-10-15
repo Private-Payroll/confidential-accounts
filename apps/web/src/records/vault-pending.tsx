@@ -12,8 +12,8 @@ import { HandOver } from '../actions/hand-over.js';
 
 /*
  * A VAULT WAITING ON SOMETHING, AND THE ACTIONS THAT OPEN IN THE RIGHT-HAND
- * PANEL: creating a vault, finishing handing one over, and handing the
- * company to its signers. Each opens the one component the setup wizard's
+ * PANEL: creating a vault, finishing handing one over, and seeing who holds
+ * the company. Each opens the one component the setup wizard's
  * step shows too, in the panel, and leaves the page where it was.
  */
 
@@ -24,7 +24,7 @@ type Does = (typeof DOES)[keyof typeof DOES];
 /** The standings a vault is pending in, each with what its pill does. Any other standing is not pending. */
 const PENDING: Partial<Record<VaultStanding, Does>> = {
   [VAULT.handoverOwed]: DOES.finish,
-  /* Held by the signers and not set up: any signer carries it on from their own device, approving what is theirs to approve. */
+  /* Held by the super admins and not set up: any signer carries it on from their own device, approving what is theirs to approve. */
   [VAULT.startOwed]: DOES.start,
   [VAULT.accountNotHandedOver]: DOES.handOver,
   [VAULT.notFundable]: DOES.explain,

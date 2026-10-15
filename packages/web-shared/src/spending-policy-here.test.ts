@@ -63,13 +63,16 @@ const recordsWith = (chain: Map<string, string>, filed: SealedCompanyRecord[], s
   } as never, founder.secret);
   const notHere = async () => { throw new Error('not read here'); };
   return {
-    directory: async () => ({
-      dir: { company: COMPANY, version: 1, seats },
-      holders: { committee: [COMMITTEE, COMMITTEE2], seats: onChain, approvals: 1, adoptedVaults: [VAULT], account: 'ac'.repeat(32) },
-      another: new Set(), at: () => null,
+    directory: async () => {
+      const believed = {
+        dir: { company: COMPANY, version: 1, seats },
+        holders: { committee: [COMMITTEE, COMMITTEE2], seats: onChain, approvals: 1, adoptedVaults: [VAULT], account: 'ac'.repeat(32) },
+        another: new Set<string>(), at: () => null,
+      };
       /* Every version filed, entered by the seat whose key signed it; nothing anchored yet but the first state, as the company was founded. */
-      records: heldFiledBy(COMPANY, filed, [founder, stranger, second].map((k) => k.secret), { seat: SEAT, signingSecret: founder.secret, records: [state], committee: [COMMITTEE] }),
-    }) as never,
+      const records = await heldFiledBy(COMPANY, filed, [founder, stranger, second].map((k) => k.secret), { seat: SEAT, signingSecret: founder.secret, records: [state], committee: [COMMITTEE] }, believed as never);
+      return { ...believed, records } as never;
+    },
     people: notHere as never, runs: notHere as never, policy: notHere as never,
     state: async (id) => (id === '0' ? state : null),
     roundIdentity: pureCircuits,
@@ -148,7 +151,7 @@ describe('A VAULT\'S SPENDING POLICY, READ AND SET ON THIS DEVICE', () => {
   it('A VERSION IS BELIEVED ONLY WHEN A SEAT THIS DEVICE BELIEVES SIGNED ITS FILING, AND ONLY WHEN IT IS SEALED TO SEATS IN THE DIRECTORY', async () => {
     const B = 'b1'.repeat(32);
     const read = (filed: SealedCompanyRecord[]) => spendingPolicyHere(reader(chainHolding(B), filed), { vault: VAULT, asset: TEST_TOKEN });
-    /* The control: the same version, signed by the founder's seat and sealed to it, is the vault's policy. */
+    /* The control: the same version, signed by the founding seat and sealed to it, is the vault's policy. */
     await expect(read([versionOf(1, B, [ME], founder)])).resolves.toMatchObject({ state: 'set', version: 1 });
     /* RED WHEN: a version with no filing signature is believed - the service could write any opening it chose. */
     await expect(read([versionOf(1, B, [ME], null)])).rejects.toThrow(/None of the company's records/u);
@@ -203,7 +206,7 @@ describe('A VAULT\'S SPENDING POLICY, READ AND SET ON THIS DEVICE', () => {
     expect(opened(filed2[1]!).blinding).not.toBe('c2'.repeat(32));
     expect(filed2[1]!.version).toBe(2);
 
-    /* A believed version sealed to the founder alone, after a second seat is seated: a new version, sealed to both. */
+    /* A believed version sealed to the founding seat alone, after a second seat is seated: a new version, sealed to both. */
     const filed3 = [versionOf(1, 'c3'.repeat(32), [ME], founder, NEW_TERMS)];
     await set(govern(new Map(), filed3, true));
     /* RED WHEN: a version that a seat believed now cannot open is reused - that signer could never pay under the policy. */

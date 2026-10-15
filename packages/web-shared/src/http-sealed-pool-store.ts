@@ -18,7 +18,7 @@
  * IS BELIEVED ONLY IF A SEAT THE COMPANY'S DIRECTORY NAMES SIGNED IT**, checked
  * on this device against the chain as the person's own wallet read it for this
  * read (`FilingJudge`, made fresh for every read by `seat-directory.ts`'s
- * check S): an entry the seat's own wallet signed, for a seat the account holds
+ * `filingRefusalOf`): an entry the seat's own wallet signed, for a seat the account holds
  * now, whose role may file this record. A version signed by a seat that has
  * left is refused unless a quorum's retirement names it, and the server's word
  * is never what makes a version believed.

@@ -19,9 +19,10 @@
  *
  * ── THE ORDER IS THE POINT AND IT IS THE THING TESTED ────────────────────
  *
- *   1. make the key material
+ *   1. make the key material, the blinding the hash of the person's own wallet
+ *      key under a fresh salt (`newSeatBlinding`)
  *   2. compute the leaf FROM it, through `storedSignerLeaf` — the one
- *      definition every writer shares
+ *      definition every writer shares — and the seat's opening beside it
  *   3. SEAL it, so it is durable
  *   4. publish the leaf
  *   5. promote the sealed material to the seat the server named
@@ -31,8 +32,9 @@
  * be finished later by `finishPendingSeat`, which proves the seat carries this
  * device's own public key before it binds anything.
  */
-import { newBlinding, newSigningKeypair, newWrappingKeypair, type Hex } from '../../../src/core/crypto.js';
+import { newSigningKeypair, newWrappingKeypair, type Hex } from '../../../src/core/crypto.js';
 import { storedSignerLeaf, type LeafScheme } from '../../../src/core/signer-leaf.js';
+import { newSeatBlinding, type SeatOpening, type WalletKey } from '../../../src/core/seat-opening.js';
 import type { PendingSeat } from './keyring.js';
 import { proveSeatKeys, type SeatInvitation, type SeatProof } from '../../../src/core/seat-invite-proof.js';
 
@@ -42,24 +44,32 @@ export interface NewSeatKeys {
   signingPublicKey: Hex;
   wrappingSecret: Hex;
   wrappingPublicKey: Hex;
+  /** The hash of the wallet key the seat is made for under `salt` (`seatBlinding`). */
   blinding: Hex;
+  /** Thirty-two fresh random bytes, made for this leaf alone. */
+  salt: Hex;
 }
 
-/** Three secrets and the public halves of two of them, made on this device. */
-export function newSeatKeys(): NewSeatKeys {
+/**
+ * Two secrets and their public halves, made on this device, with a blinding
+ * that commits the seat's leaf to `walletKey`, the person's own wallet key for
+ * the company, under a salt made for this leaf alone.
+ */
+export function newSeatKeys(walletKey: WalletKey): NewSeatKeys {
   const sk = newSigningKeypair();
   const wk = newWrappingKeypair();
+  const { salt, blinding } = newSeatBlinding(walletKey);
   return {
     signingSecret: sk.secret, signingPublicKey: sk.publicKey,
     wrappingSecret: wk.secret, wrappingPublicKey: wk.publicKey,
-    blinding: newBlinding(),
+    blinding, salt,
   };
 }
 
 /** What this function is allowed to do, and nothing else. */
 export interface SeatDoors {
-  /** Three secrets, generated where the randomness is. */
-  newKeys(): NewSeatKeys;
+  /** The seat's secrets for `walletKey`, generated where the randomness is. */
+  newKeys(walletKey: WalletKey): NewSeatKeys;
   /** Makes the material durable. Step 3. */
   seal(seat: PendingSeat): Promise<void>;
   /**
@@ -94,6 +104,8 @@ export async function acceptSeatOnThisDevice(
   accountId: string,
   commitments: LeafScheme,
   doors: SeatDoors,
+  /** The person's own wallet key for the company, as their wallet gave it: the key the seat's leaf commits to. */
+  walletKey: WalletKey,
   /**
    * What the invitee's link carried. With it, the keys go out with the proof
    * every signer's device asks for before it gives this person access; without
@@ -104,7 +116,7 @@ export async function acceptSeatOnThisDevice(
   if (invitation && invitation.accountId !== accountId) {
     throw new Error('this invitation is for a different company from the one being joined. Nothing was sent.');
   }
-  const keys = doors.newKeys();
+  const keys = doors.newKeys(walletKey);
   /*
    * Read once from the scheme and used for both the leaf and the material that
    * has to reproduce it. The scope is the leaf's third argument, it
@@ -112,6 +124,12 @@ export async function acceptSeatOnThisDevice(
    * and a writer that took it from somewhere else is a seat nobody can prove.
    */
   const scope = commitments.allVaults();
+  /* The seat's opening, kept with its secrets: what shows the company's members that the leaf was made for this wallet key. */
+  const opening: SeatOpening = {
+    publicKey: String(commitments.signerPublicKey(keys.signingSecret)).toLowerCase(),
+    scope: String(scope).toLowerCase(), blinding: String(keys.blinding).toLowerCase(),
+    walletKey: { tag: walletKey.tag, value: walletKey.value.toLowerCase() }, salt: String(keys.salt).toLowerCase(),
+  };
   const seat: PendingSeat = {
     accountId,
     signingPublicKey: keys.signingPublicKey,
@@ -119,6 +137,7 @@ export async function acceptSeatOnThisDevice(
     wrappingSecret: keys.wrappingSecret,
     blinding: keys.blinding,
     scope,
+    opening,
   };
 
   /*

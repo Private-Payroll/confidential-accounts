@@ -10,18 +10,25 @@
  * **THE MECHANISM OUTLIVED THE DOOR IT WAS BUILT FOR, AND OTHERS USE IT.**
  * `WalletIdentityService` counts every challenge and every sign-in attempt on
  * the `ip` scope; `GET /api/invites/:id/offer`, a METERED door that answers
- * a stranger, counts on `invite-offer`; and the three doors a payee asks for
+ * a stranger, counts on `invite-offer`, and so does `POST
+ * /api/invites/:id/filed-to`; and the three doors a payee asks for
  * their own payslips by, which answer a signed-in person only, share
  * `payslips`. None is a guessing oracle the way login was; what a limit buys
  * them is that an attempt is BOUNDED and therefore visible.
  *
- * **THE WORD `METERED` IS DOING REAL WORK AND USED TO BE MISSING.** This
- * sentence once said *the one door that answers a stranger*, flat, and that is
- * FALSE at source: **twelve routes in `src/server/index.ts` carry no
- * `authed`**, nine of them wrapped by `wrap` and three registered bare. Read
- * as written it would say the unauthenticated surface is one endpoint wide and
- * metered, when it is twelve wide: one is metered in the route itself, and the
- * two wallet sign-in doors are metered inside the service.
+ * **THE WORD `METERED` IS DOING REAL WORK.** The invitation doors are not
+ * the only doors that answer a stranger: **six routes in `src/server/index.ts`
+ * and the invitation router carry no sign-in**. Four are in `index.ts` - the
+ * two wallet sign-in doors, metered inside the service, the health check and
+ * the development console - and two are the invitation router's: the offer,
+ * and the company a signer's invitation was filed to. Both of those are
+ * metered in the route itself, and the second answers only with the proof the
+ * link gives and only with the company's id, label and account, which the
+ * opened offer already names. Beside them, the vault artefacts door
+ * (`GET /artefacts/vault/*`, `vaultArtefactRoutes`) answers anybody too, and is
+ * not metered: it serves only the public files a device proves with, each
+ * public parameter file compared with the digest Midnight publishes before it
+ * is sent.
  *
  * ONE MECHANISM, A SCOPE PER DOOR. Each is the same bucket with a different
  * `scope`, so there is one rule to get right rather than one per caller.
@@ -90,11 +97,12 @@ export const DEFAULT_POLICY: Record<string, LimitPolicy> = {
    * **THE UNAUTHENTICATED OFFER ENDPOINT.** `docs/NEXT.md` `X11` §6,
    * `docs/scope-invitations.md` §8.
    *
-   * `GET /api/invites/:id/offer` is the one door in this product that
-   * answers a stranger AND COUNTS THE ANSWER, and it was made reachable by a
-   * real screen for the first time. **It is not the only unauthenticated
-   * door.** Twelve routes carry no `authed`; what is unique here is the meter,
-   * which is what the paragraph was always about and what it did not say. The
+   * `GET /api/invites/:id/offer` and `POST /api/invites/:id/filed-to` are the
+   * doors in this product that answer a stranger holding an invitation's link
+   * AND COUNT THE ANSWER. **They are not the only unauthenticated doors.** Six
+   * routes in `src/server/index.ts` and the invitation router carry no sign-in,
+   * and the vault artefacts door serves public files to anybody; what sets
+   * these two apart is the meter. The
    * scope's own words: *"about a hundred bits of token is the only thing
    * between a guesser and a salary."*
    *

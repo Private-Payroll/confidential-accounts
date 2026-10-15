@@ -182,13 +182,15 @@ describe('A SIGNER\'S VAULT KEYS LIVE IN THEIR OWN ROSTER ENTRY', () => {
   });
 });
 
-describe('OUTSIDE THE ROSTER, A COMMITTEE KEY APPEARS ONLY IN AN INDEX WITH NOBODY\'S NAME ON IT', () => {
+describe('OUTSIDE THE ROSTER, A SIGNER\'S KEYS APPEAR ONLY IN AN INDEX WITH NOBODY\'S NAME ON IT, AND NEVER A WALLET KEY', () => {
   it('THE INDEX MADE FROM THE ROSTER IS SORTED BY VALUE AND CARRIES NO PERSON, SEAT OR NAME', () => {
     give(ada.signerId, signed(ada, 0x42));
     give(bo.signerId, signed(bo, 0x17));
     const index = vaultKeyIndexOf(roster);
+    /* RED WHEN: the index carries a signer's wallet key, which the service would then hold. */
+    expect(index).not.toHaveProperty('committeeKeys');
+    expect(JSON.stringify(index)).not.toContain(key(0x42).value);
     /* RED WHEN: the index keeps the order the keys were given in, so it says who gave which. */
-    expect(index.committeeKeys).toEqual([key(0x17), key(0x42)]);
     expect(index.readers).toEqual([hex(0x27), hex(0x52)]);
     expect(index.signerCount).toBe(2);
     /* RED WHEN: the index carries a person, a seat or a name. */

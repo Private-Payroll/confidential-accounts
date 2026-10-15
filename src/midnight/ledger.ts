@@ -86,12 +86,12 @@ import { MidnightCommitments } from './commitments.js';
 import type { Sealed, Hex } from '../core/crypto.js';
 import { toHex, fromHex, randomBytes } from '../core/crypto.js';
 import { companyLabelBytes, readCompanyLabel, type CompanyLabel } from 'midnight-identity/profile/company-label';
+import { authorityIn } from 'midnight-identity/profile/contract-authority';
 /*
  * A contract's verifier keys - what a write of one must be and whether a contract
  * carries this build's - are one module the wallet, the page and this service
  * share, re-exported here so every existing caller keeps its import.
  */
-import { verifierKeyRefusals, type VerifierKeyWrite } from 'midnight-identity/profile/contract-keys';
 export {
   compareVerifierKeys, operationsFromContractState, verifierKeyRefusals,
   type OnChainOperation, type OperationsRead, type VerifierKeyComparison, type VerifierKeyVerdict, type VerifierKeyWrite,
@@ -104,10 +104,7 @@ import { refuseACallWithoutItsPrivateState } from './governed-call.js';
 import { payRecordNonceOf, type PayRecord } from './run-keys.js';
 import type { MaintenanceAuthorityChoice } from './partial-contract.js';
 import { paysNoFees } from './fee-seat.js';
-import {
-  authorityValueRefusals, isAuthorityKey, replaceAuthorityOf, requireBuildableAuthority,
-  type AuthorityReplacementPrimitives, type MaintenanceRefusal,
-} from './authority-replacement.js';
+import { authorityValueRefusals, type MaintenanceRefusal } from './authority-replacement.js';
 export {
   authorityValueRefusals, replaceAuthorityOf, requireBuildableAuthority,
   type AuthorityReplacementPrimitives, type MaintenanceRefusal,
@@ -3374,34 +3371,22 @@ export function authorityShapeOf(
 /**
  * The authority off a `ContractState`, or a refusal naming what was missing.
  *
- * Structural rather than typed against the runtime class, for the reason
- * `TaggedKey` gives one file over: this boundary states what it relies on, and
- * `tsconfig.scripts.json` has `strict: false` and would let an `any` flow
- * through a mismatch unnoticed.
+ * What counts as a readable authority is `authorityIn`'s to say, once; this adds
+ * the shape and whether a key is listed twice. Every key's digits come back in
+ * lower case, so a comparison against a key written in another case folds that
+ * side. Structural rather than typed against the runtime class, so this boundary
+ * states what it relies on and a mismatch cannot flow through as an `any`.
  */
 export function authorityFromContractState(
   state: unknown,
 ): OnChainAuthority | { why: string } {
-  if (!state || typeof state !== 'object') return { why: 'contract state was not an object' };
-  const a = (state as { maintenanceAuthority?: unknown }).maintenanceAuthority;
-  if (!a || typeof a !== 'object') {
-    return { why: 'contract state carries no `maintenanceAuthority` field' };
-  }
-  const raw = a as { committee?: unknown; threshold?: unknown; counter?: unknown };
-  if (!Array.isArray(raw.committee) || !raw.committee.every(isAuthorityKey)) {
-    return { why: '`maintenanceAuthority.committee` is not a list of {tag,value} keys' };
-  }
-  if (typeof raw.threshold !== 'number' || !Number.isInteger(raw.threshold)) {
-    return { why: '`maintenanceAuthority.threshold` is not an integer' };
-  }
-  if (typeof raw.counter !== 'bigint') {
-    return { why: '`maintenanceAuthority.counter` is not a bigint' };
-  }
-  const committee = raw.committee.map((k) => ({ tag: k.tag, value: k.value }));
-  const distinct = new Set(committee.map((k) => `${k.tag.toLowerCase()}:${k.value.toLowerCase()}`));
+  const read = authorityIn(state);
+  if ('why' in read) return { why: read.why };
+  const committee = read.committee.map((k) => ({ tag: k.tag, value: k.value }));
+  const distinct = new Set(committee.map((k) => `${k.tag.toLowerCase()}:${k.value}`));
   return {
-    committee, threshold: raw.threshold, counter: raw.counter,
-    shape: authorityShapeOf(committee, raw.threshold),
+    committee, threshold: read.threshold, counter: read.counter,
+    shape: authorityShapeOf(committee, read.threshold),
     hasDuplicateMembers: distinct.size !== committee.length,
   };
 }
@@ -3608,8 +3593,9 @@ export function compareAuthority(
  * THE MACHINERY THAT BUILDS A MAINTENANCE UPDATE, BECAUSE THE FOUNDER'S RULING
  * SWITCHES THE SDK's OFF. `C351` build limb, `C354` second limb.
  *
- * The founder ruled on 5 Sep that the COMPANY's OWN SIGNERS hold the maintenance
- * authority, for the account and for the vaults, and that we hold nothing. That
+ * The founder ruled on 5 Sep that the COMPANY'S OWN SUPER ADMINS - a committee
+ * of their own wallet keys - hold the maintenance authority, for the account and
+ * for the vaults, and that we hold nothing. That
  * is the same rule as everything else here — we never custody funds and never
  * hold the wallet key — applied to the key that can replace a contract's
  * verifier keys, which `C353` establishes is a drain key on every vault's
@@ -3623,8 +3609,8 @@ export function compareAuthority(
  * `:470-471`, `:547-548`). And it would not help if it were there:
  * `createSignedMaintenanceUpdate` always signs at `DEFAULT_SIGNATURE_INDEX = 0`
  * (`ContractExecutable.js:269`, `:31`), a 1-of-N vote the chain refuses at any
- * threshold above one. **So every maintenance instruction this product will ever
- * issue is built here, from `ledger-v9`'s own primitives.**
+ * threshold above one. **So every committee update this product will ever issue
+ * is built from `ledger-v9`'s own primitives, by `committeeUpdateOf`.**
  *
  * **IT BUILDS. IT DOES NOT SUBMIT.** Nothing in this block sends a transaction,
  * pays a fee, or contacts a chain. Constructing, checking and assembling
@@ -3704,8 +3690,8 @@ export function compareAuthority(
  *     says and not as the claim `S61` withdrew said.
  *   - **THE NEW AUTHORITY'S OWN COUNTER MUST BE `updateCounter + 1`, AND IT IS
  *     NOT THE CALLER'S TO CHOOSE.** Measured: any other value is refused as *"not
- *     in normal form"*, including `0`. So `buildMaintenanceInstruction` derives
- *     it and takes no parameter for it.
+ *     in normal form"*, including `0`. So `committeeUpdateOf` derives it and
+ *     takes no parameter for it.
  *   - **`wellFormed` DOES NOT CHECK THE UPDATE's COUNTER AGAINST THE CHAIN.**
  *     Measured: an update built against counter 1 for a contract sitting at
  *     counter 0 is WELL-FORMED, and fails at APPLY with *"the signed counter …
@@ -3967,263 +3953,6 @@ export function checkEndState(
  * which is why this API accepts one and accepts no signing key anywhere.
  */
 export type MaintenanceSignature = AuthorityKey;
-
-/**
- * The `ledger-v9` pieces this builder needs, PASSED IN rather than imported.
- *
- * The same reason `intendedAuthorityValue` takes `deriveVerifyingKey`: this
- * module must stay loadable without ten megabytes of WebAssembly, because the web
- * bundle imports it and `C-` rows already exist about dragging `ledger-v9` into
- * the page. **A named interface rather than `any`, so a change in the runtime is
- * a compile error HERE** — `tsconfig.scripts.json` has `strict: false` and would
- * let an `any` flow through a mismatch unnoticed.
- *
- * Line references are `node_modules/@midnightntwrk/ledger-v9/ledger-v9.d.ts`,
- * read this round: `:779`, `:2251`, `:2276`, `:2238`, `:2312`, `:457`.
- */
-export interface MaintenanceUpdateLike {
-  readonly dataToSign: Uint8Array;
-  readonly counter: bigint;
-  readonly signatures: [bigint, MaintenanceSignature][];
-  addSignature(idx: bigint, signature: MaintenanceSignature): MaintenanceUpdateLike;
-}
-
-export interface MaintenancePrimitives {
-  ContractMaintenanceAuthority: new (
-    committee: AuthorityKey[], threshold: number, counter?: bigint,
-  ) => object;
-  ReplaceAuthority: new (authority: object) => object;
-  VerifierKeyInsert: new (operation: string, vk: object) => object;
-  ContractOperationVersionedVerifierKey: new (
-    version: 'v3' | 'v4', rawVk: Uint8Array,
-  ) => object;
-  MaintenanceUpdate: new (address: string, updates: object[], counter: bigint) => MaintenanceUpdateLike;
-  verifySignature: (
-    vk: AuthorityKey, data: Uint8Array, signature: MaintenanceSignature,
-  ) => boolean;
-}
-
-
-/** A built, unsigned-or-partly-signed maintenance instruction, with everything a signer needs. */
-export interface BuiltMaintenanceInstruction {
-  address: string;
-  /** The runtime object. Free-standing and portable: build here, sign on M other machines, submit from a third. */
-  update: MaintenanceUpdateLike;
-  /** Exactly what each signer signs. Bound to (address, updates, counter) and to nothing else. */
-  dataToSign: Uint8Array;
-  /** The committee that must sign THIS update: the one on chain NOW, not the one being installed. */
-  signWith: AuthorityKey[];
-  /** How many of `signWith` must sign. The chain's CURRENT threshold. */
-  signaturesRequired: number;
-  /**
-   * **WHAT THE CONTRACT'S AUTHORITY LOOKS LIKE RIGHT NOW, CARRIED SO A PERSON SEES
-   * IT BEFORE SIGNING.** `S61` built `shape` and `hasDuplicateMembers` for exactly
-   * this and the first draft of this function read the committee and the threshold
-   * and threw both away — found by this round's own money-safety pass, which
-   * also named the silent case: **a contract already at threshold ZERO gives
-   * `signaturesRequired: 0`, so `signatureProgress` reports `complete` on NO
-   * signatures at all, with nothing anywhere saying why.** Repairing such a contract
-   * is exactly the right thing to do; doing it without being told what you are
-   * repairing is not.
-   */
-  currentShape: AuthorityShape;
-  /** Whether the committee that must sign THIS update lists one key more than once. */
-  currentHasDuplicateMembers: boolean;
-  /**
-   * True when the contract's current authority means this update needs NO signatures
-   * — the `anyone` state. **Not a refusal: refusing would strand a contract that can
-   * only be repaired this way.** It is a warning, and a door that does not print it
-   * is a door that shows a normal-looking instruction for a contract anybody in the
-   * world could already have rewritten.
-   */
-  needsNoSignatures: boolean;
-  /** What this update leaves behind, ready to be written down before anything is submitted. */
-  endState: MaintenanceEndStateRecord;
-}
-
-/**
- * BUILD ONE CONTRACT'S MAINTENANCE UPDATE. **It builds. It does not submit.**
- *
- * **THE COMMITTEE THAT SIGNS IS THE ONE ON CHAIN NOW, NOT THE ONE BEING
- * INSTALLED**, and this is the mistake worth naming because it reads backwards.
- * A 2-of-3 being replaced by a 5-of-7 is signed by two of the OLD three: the
- * ledger verifies each signature against the CURRENT committee (`verify.rs:1843-1856`)
- * and counts against the CURRENT threshold (`:1857-1863`). `signWith` and
- * `signaturesRequired` are therefore taken off the chain read and never off the
- * intended value.
- *
- * **THE NEW AUTHORITY'S OWN COUNTER IS DERIVED AND IS NOT A PARAMETER.** MEASURED
- * on ledger 9: a `ReplaceAuthority` payload whose authority does not carry
- * exactly `updateCounter + 1` is refused as *"transaction is not in normal
- * form"* — including the obvious `0`. There is no reason to let a caller supply
- * a value that has exactly one correct answer.
- *
- * **THE REFUSALS RUN HERE TOO, ON EVERY BUILD — AND THEY NOW COVER BOTH KINDS OF
- * INSTRUCTION AND NOT ONLY THE AUTHORITY.** `planAuthorityReplacement` already ran
- * the authority half, and the recovery path rebuilds against a freshly read counter
- * without necessarily re-planning. `2.6`: a check that ran once when a person
- * pressed something is a check the recovery path walks around. **The verifier-key
- * half exists because the first draft of this function had none at all — five
- * refusals about who may change the contract and nothing whatever about the change
- * that moves the money. Its own money-safety pass said so first and loudest.**
- *
- * **AND THE CURRENT AUTHORITY IS DERIVED FROM THE PLAN RATHER THAN PASSED
- * ALONGSIDE IT.** The first draft took it as a second parameter, so a caller could
- * hand a plan for one contract and an authority from another and nothing would
- * notice — and a `signaturesRequired` lower than the chain's real bar makes
- * `signatureProgress` report `complete` below it, which is a fee spent on a recorded
- * on-chain failure. Every `build` plan already carries `comparison.onChain`, so
- * there was never a second value to disagree with.
- *
- * **NO SIGNING KEY IS A PARAMETER OF THIS FUNCTION OR OF ANYTHING IT CALLS.** It
- * returns the bytes to be signed; signing happens on the machine that holds the
- * key, which is not this one.
- */
-export function buildMaintenanceInstruction(
-  P: MaintenancePrimitives,
-  plan: Extract<MaintenancePlan, { action: 'build' }>,
-  opts: {
-    label: string;
-    emptyCommitteeIsDeliberate: boolean;
-    verifierKeys?: readonly VerifierKeyWrite[];
-    now?: () => Date;
-  },
-): BuiltMaintenanceInstruction {
-  const chainNow = plan.comparison.onChain;
-  if (!chainNow) {
-    throw new Error(
-      'this plan carries no on-chain authority, so there is nothing to say who must sign the ' +
-        'update it describes. A `build` plan always carries one; a plan that does not is a ' +
-        'defect in this module rather than a fact about the contract, and building anyway ' +
-        'would produce an instruction nobody can be told how to sign.',
-    );
-  }
-
-  const { committee, threshold } = requireBuildableAuthority(
-    plan.intended.committee, plan.intended.threshold,
-    { emptyCommitteeIsDeliberate: opts.emptyCommitteeIsDeliberate },
-  );
-  const keyRefusals = verifierKeyRefusals(opts.verifierKeys ?? []);
-  if (keyRefusals.length > 0) {
-    throw new Error(
-      'these verifier-key writes will not be built:\n' +
-        keyRefusals.map((r) => `  - [${r.code}] ${r.why}`).join('\n'),
-    );
-  }
-
-  const updates: object[] = [
-    replaceAuthorityOf(P as unknown as AuthorityReplacementPrimitives, {
-      committee, threshold, updateCounter: plan.updateCounter,
-      emptyCommitteeIsDeliberate: opts.emptyCommitteeIsDeliberate,
-    }),
-  ];
-  for (const vk of opts.verifierKeys ?? []) {
-    updates.push(new P.VerifierKeyInsert(
-      vk.operation,
-      new P.ContractOperationVersionedVerifierKey(vk.version, vk.verifierKey),
-    ));
-  }
-
-  const update = new P.MaintenanceUpdate(plan.address, updates, plan.updateCounter);
-
-  return {
-    address: plan.address,
-    update,
-    dataToSign: update.dataToSign,
-    signWith: chainNow.committee.map((k) => ({ tag: k.tag, value: k.value })),
-    signaturesRequired: chainNow.threshold,
-    currentShape: chainNow.shape,
-    currentHasDuplicateMembers: chainNow.hasDuplicateMembers,
-    needsNoSignatures: chainNow.threshold < 1,
-    endState: {
-      address: plan.address,
-      label: opts.label,
-      committee,
-      threshold,
-      builtAgainstCounter: plan.updateCounter,
-      expectedCounter: plan.expectedCounter,
-      verifierKeyInserts: (opts.verifierKeys ?? []).map((v) => ({
-        operation: v.operation, version: v.version, fingerprint: toHex(v.verifierKey.slice(0, 8)),
-      })),
-      builtAt: (opts.now ?? (() => new Date()))().toISOString(),
-    },
-  };
-}
-
-/**
- * ATTACH ONE SIGNATURE, HAVING CHECKED IT AGAINST THE SEAT IT CLAIMS.
- *
- * Three refusals, each of which the chain would also make — **and making them
- * here is the difference between a person being told and a fee being spent on a
- * recorded on-chain failure.** Maintenance applies in the fallible segment only,
- * so a refused update lands as `partialSuccess` with the fee already taken.
- *
- *   - **an index outside the current committee.** MEASURED: *"declared signture
- *     for key id 5 does not correspond to a committee member"* (the runtime's own
- *     spelling).
- *   - **an index already signed.** MEASURED: *"transaction is not in normal
- *     form"* — the ascending-index guard, which DOES reach ledger 9. This is the
- *     one place `T-357`'s bypass does not work, and it is why that row is about
- *     the committee list and not the signature list.
- *   - **a signature that does not verify against that seat's key.** MEASURED:
- *     *"signature for key id 0 invalid"*.
- *
- * **A REPEATED KEY IN THE CURRENT COMMITTEE IS NOT REFUSED HERE, DELIBERATELY,
- * AND THE REASON MATTERS.** If the chain already carries `[K, K, K]` then signing
- * it at three seats is the only way to satisfy it, and refusing would leave a
- * contract nobody can fix. **The refusal belongs where such a committee is
- * BUILT** — `authorityValueRefusals` — **and the state is REPORTED instead, on
- * `BuiltMaintenanceInstruction.currentHasDuplicateMembers`, so a person sees it
- * before signing rather than being quietly allowed past it.** An earlier version of
- * this paragraph promised that reporting and nothing carried it; found by this
- * round's own money-safety pass, which is the second time in two rounds that a
- * sentence here was ahead of the code beneath it.
- */
-export function attachMaintenanceSignature(
-  P: MaintenancePrimitives,
-  built: BuiltMaintenanceInstruction,
-  index: number,
-  signature: MaintenanceSignature,
-): BuiltMaintenanceInstruction {
-  if (!Number.isInteger(index) || index < 0 || index >= built.signWith.length) {
-    throw new Error(
-      `seat ${index} is not a seat on the committee that currently maintains ${built.address}: ` +
-        `it holds ${built.signWith.length} seat(s), numbered 0 to ${built.signWith.length - 1}. ` +
-        'The signatures on a maintenance update are checked against the CURRENT committee, not ' +
-        'the one being installed.',
-    );
-  }
-  if (built.update.signatures.some(([i]) => i === BigInt(index))) {
-    throw new Error(
-      `seat ${index} has already signed this update. A second signature at the same index is ` +
-        'refused by the chain as a malformed transaction, and attaching it here would waste a ' +
-        'submission rather than add a vote.',
-    );
-  }
-  const seat = built.signWith[index]!;
-  if (!P.verifySignature(seat, built.dataToSign, signature)) {
-    throw new Error(
-      `this signature does not verify against the key in seat ${index} of ${built.address}'s ` +
-        'current committee. Either it was made by a different key, or it was made over ' +
-        'different data — a signature is bound to (contract address, exact update list, ' +
-        'counter), so one collected for another contract, or before the counter moved, is dead.',
-    );
-  }
-  return { ...built, update: built.update.addSignature(BigInt(index), signature) };
-}
-
-/** How far along the signing is, without asking anything of a chain. */
-export function signatureProgress(
-  built: BuiltMaintenanceInstruction,
-): { have: number; required: number; complete: boolean; seatsSigned: number[] } {
-  const seatsSigned = built.update.signatures.map(([i]) => Number(i)).sort((a, b) => a - b);
-  return {
-    have: seatsSigned.length,
-    required: built.signaturesRequired,
-    complete: seatsSigned.length >= built.signaturesRequired,
-    seatsSigned,
-  };
-}
 
 /* ── `T-359` — READING THE VERIFIER KEYS BACK, WHICH IS THE THING `C353`
  *              ACTUALLY SWAPS ──────────────────────────────────────────────

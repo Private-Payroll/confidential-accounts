@@ -10,12 +10,13 @@ import { CREATION_STEPS, DEPLOYED_CIRCUITS } from '../midnight/deferral.js';
 import { heldStateFromTheStart } from '../midnight/held-from-the-start.js';
 import { payKeyCommitmentIn } from '../midnight/pay-key-round.js';
 import { buildCreationInsert } from 'midnight-identity/profile/contract-keys';
+import { vaultsInAccountState } from 'midnight-identity/profile/account-state';
 import type { AccountOpeningRecord } from '../core/types.js';
 import type { AuthorityRead } from '../midnight/ledger.js';
 import type { MaintenanceAuthorityChoice } from '../midnight/partial-contract.js';
 import type { Committee } from '../midnight/vault-committee.js';
 import {
-  buildAccountHandover, buildCommitteeChange, type AccountHandoverLedger, type CommitteeChangeLedger, type SeatSignature,
+  buildCommitteeChange, type CommitteeChangeLedger, type PlaceSignature,
 } from '../midnight/company-authority.js';
 import { assertVaultLedgerIsThisBuilds } from '../midnight/vault-ledger-shape.js';
 
@@ -54,6 +55,16 @@ export async function vaultChainFromTheIndexer(indexer: { url: string; wsUrl: st
   return {
     contractState: async (address) => (await provider.queryContractState(address)) ?? null,
     serialize: (state) => (state as { serialize(): Uint8Array }).serialize(),
+    accountVaults: async (account) => {
+      let state: Serialisable | null | undefined;
+      try {
+        state = await provider.queryContractState(account);
+      } catch (e) {
+        throw new Error(`the chain could not be asked which vaults the company's account lists: ${(e as Error)?.message ?? String(e)}`);
+      }
+      if (state === null || state === undefined) throw new Error('the chain does not hold the company\'s account, so it lists no vaults.');
+      return vaultsInAccountState(state.serialize());
+    },
     notesOf: (state) => [...readLedger(asRuntime(state).data).notes].map(hex),
     /* The gate the vault client reads the same notes behind, over the state as the reader above takes it. */
     ledgerIsThisBuilds: (state) => assertVaultLedgerIsThisBuilds(asRuntime(state)),
@@ -227,63 +238,42 @@ const neverAsked = {
   lookupKey: async () => undefined,
 };
 
-/**
- * **THE COMPANY ACCOUNT'S HANDOVER, SIGNED BY THIS DEPLOYMENT'S TEMPORARY KEY.**
- * `undefined` - and so refused by name - unless the recorded authority is that
- * one temporary key: a deployment that recorded anything else has nothing it
- * may sign with. The key is read here and handed only to the builder; nothing
- * here puts it in a response or in a record this service keeps.
- */
-export function accountHandoverWith(
-  choice: MaintenanceAuthorityChoice | undefined,
-  network: string,
-  now: () => number = Date.now,
-): ((input: { read: AuthorityRead; to: Committee; strictestBar: number }) => Promise<Uint8Array>) | undefined {
-  if (choice === undefined || choice.kind !== 'single-key') return undefined;
-  const temporaryKey = { tag: choice.signingKey.tag, value: choice.signingKey.value };
-  return async ({ read, to, strictestBar }) => {
-    const L = await import('@midnightntwrk/ledger-v9');
-    const { unproven } = buildAccountHandover(L as unknown as AccountHandoverLedger, {
-      read, to, strictestBar, temporaryKey, network, ttl: new Date(now() + 30 * 60_000),
-    });
-    const proven = await (unproven as { prove(p: unknown, c: unknown): Promise<{ serialize(): Uint8Array }> })
-      .prove(neverAsked, (L as unknown as { CostModel: { initialCostModel(): unknown } }).CostModel.initialCostModel());
-    return proven.serialize();
-  };
-}
-
 /** What assembling one committee change leaves: how far the signing is, and the transaction once it is complete. */
 export interface CommitteeChangeAssembled {
   readonly have: number;
   readonly required: number;
-  readonly seatsSigned: number[];
+  /** The places on the committee holding the contract now whose signatures verify, in increasing order. */
+  readonly indexesSigned: number[];
+  /** The signatures that count, one per place, in increasing order of place: the only ones worth keeping. */
+  readonly counted: readonly PlaceSignature[];
   /** The proven transaction, once enough of the committee holding the contract now has signed. */
   readonly proven: Uint8Array | null;
 }
 
 /**
- * **A CONTRACT'S COMMITTEE CHANGE, PUT TOGETHER FROM SIGNATURES ITS SIGNERS'
- * WALLETS MADE.** Every signature is checked against the seat it claims before
- * it is used, and a transaction comes back only once enough of the committee
- * holding the contract now have signed. It is signed by nobody here: this
- * service holds no committee key, and the builder takes none.
+ * **A CONTRACT'S COMMITTEE CHANGE, PUT TOGETHER FROM SIGNATURES ITS
+ * COMMITTEE'S WALLETS MADE.** Only a signature that verifies under the key at
+ * the place it names on the committee holding the contract now counts, and a
+ * transaction comes back only once those reach that committee's threshold on
+ * the chain (`buildCommitteeChange`). It is signed by nobody here: this service
+ * holds no committee key, and the builder takes none.
  */
 export function committeeChangeWith(
   network: string,
   now: () => number = Date.now,
 ): (input: {
-  read: AuthorityRead; to: Committee; strictestBar: number; signatures: readonly SeatSignature[]; label: string;
+  read: AuthorityRead; to: Committee; signatures: readonly PlaceSignature[]; label: string;
 }) => Promise<CommitteeChangeAssembled> {
-  return async ({ read, to, strictestBar, signatures, label }) => {
+  return async ({ read, to, signatures, label }) => {
     const L = await import('@midnightntwrk/ledger-v9');
     const built = buildCommitteeChange(L as unknown as CommitteeChangeLedger, {
-      read, to, strictestBar, signatures, network, label, ttl: new Date(now() + 30 * 60_000),
+      read, to, signatures, network, label, ttl: new Date(now() + 30 * 60_000),
     });
     if (built.unproven === null) {
-      return { have: built.have, required: built.required, seatsSigned: built.seatsSigned, proven: null };
+      return { have: built.have, required: built.required, indexesSigned: built.indexesSigned, counted: built.counted, proven: null };
     }
     const proven = await (built.unproven as { prove(p: unknown, c: unknown): Promise<{ serialize(): Uint8Array }> })
       .prove(neverAsked, (L as unknown as { CostModel: { initialCostModel(): unknown } }).CostModel.initialCostModel());
-    return { have: built.have, required: built.required, seatsSigned: built.seatsSigned, proven: proven.serialize() };
+    return { have: built.have, required: built.required, indexesSigned: built.indexesSigned, counted: built.counted, proven: proven.serialize() };
   };
 }

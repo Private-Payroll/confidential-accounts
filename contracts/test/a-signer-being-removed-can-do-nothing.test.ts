@@ -183,6 +183,54 @@ describe('a proposal needs the higher of its bar when raised and the bar now', (
   });
 });
 
+describe('the bar a run is paid at is stated once, in the account, and a device reads it from the same circuits', () => {
+  it('a vault with no threshold of its own takes the account\'s, and one with its own takes that', () => {
+    /* RED WHEN: vaultBarOf reads a vault the account holds no threshold for as zero, or as the row it was not given. */
+    expect(pureCircuits.vaultBarOf(false, 0n, 2n)).toBe(2n);
+    expect(pureCircuits.vaultBarOf(false, 5n, 2n)).toBe(2n);
+    /* RED WHEN: vaultBarOf ignores a vault's own threshold, lower or higher than the account's. */
+    expect(pureCircuits.vaultBarOf(true, 1n, 2n)).toBe(1n);
+    expect(pureCircuits.vaultBarOf(true, 3n, 2n)).toBe(3n);
+  });
+
+  it('a run needs the higher of its bar when raised and its vault\'s now, plus one for every signer removed since it was raised', () => {
+    /* RED WHEN: runApprovalsNeeded drops the run's bar when raised: a vault bar that falls would release it. */
+    expect(pureCircuits.runApprovalsNeeded(3n, 2n, 0n, 0n)).toBe(3n);
+    /* RED WHEN: runApprovalsNeeded drops the vault's bar now: a vault bar that rises would not apply to a waiting run. */
+    expect(pureCircuits.runApprovalsNeeded(2n, 3n, 0n, 0n)).toBe(3n);
+    /* RED WHEN: runApprovalsNeeded stops adding the removals since the run was raised, or counts the removals before it. */
+    expect(pureCircuits.runApprovalsNeeded(2n, 2n, 2n, 0n)).toBe(4n);
+    expect(pureCircuits.runApprovalsNeeded(2n, 2n, 3n, 1n)).toBe(4n);
+  });
+
+  it('the bar the pure circuits give, from what the chain holds, is the bar the account pays at', async () => {
+    const sim = await live([A, B, C, D], 2n);
+    /* Raised while the vault has no bar of its own, so the run's own bar is the account's two. */
+    const run = await raiseRun(sim, A, govChange(62), 0x58);
+    const up = govChange(61);
+    const vid = await raise(sim, A, up, pureCircuits.setVaultThresholdPayload(VAULT, 3n));
+    for (const d of [A, B, C]) await sim.as(d).approve(vid);
+    await sim.as(carrying(sim, A, up)).setVaultThreshold(VAULT, 3n, vid);
+    /* D approves the run, then is removed: its approval may be among those given. */
+    await sim.as(D).approve(run.id);
+    await removeAndSet(sim, D, 2n, A, [A, B, C], 63);
+    const hold = sim.holdOf(run.id)!;
+    expect(hold.needed).toBe(2n);
+    const hasRow = sim.ledger.thresholds.member(VAULT);
+    const vaultBar = pureCircuits.vaultBarOf(hasRow, hasRow ? sim.ledger.thresholds.lookup(VAULT) : 0n, sim.ledger.threshold);
+    const needed = pureCircuits.runApprovalsNeeded(hold.needed, vaultBar, sim.removals(), hold.removals);
+    /* The vault's three, risen since the run was raised, and one for the signer removed since: only the vault's own row gives the three. */
+    expect(needed).toBe(4n);
+    for (const d of [A, B]) await sim.as(d).approve(run.id);
+    expect(sim.approvalsFor(run.id)).toBe(needed - 1n);
+    /* RED WHEN: requireApprovedForVault asks for fewer approvals than runApprovalsNeeded gives, or takes the account's threshold as the vault's bar. */
+    await expect(run.pay()).rejects.toThrow(/not enough approvals yet/);
+    await sim.as(C).approve(run.id);
+    /* RED WHEN: requireApprovedForVault asks for more approvals than runApprovalsNeeded gives. */
+    await expect(run.pay()).resolves.toBeDefined();
+  });
+});
+
 describe('a governance proposal is withdrawn only by the signer who raised it', () => {
   it('M1c: the signer being removed cannot cancel their own removal, nor can another signer; its proposer can', async () => {
     const sim = await live([A, B, C], 2n);

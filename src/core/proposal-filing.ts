@@ -8,7 +8,7 @@
  * the chain shows anyway: its identity there, the payload that identity is
  * made from, and the key epoch it was sealed at. The whole filing is signed by
  * the raising seat's filing key, so the service can check it was a seat of the
- * company that wrote it (check S) and every device can check the same.
+ * company that wrote it (`filerSeatOf`) and every device can check the same.
  *
  * Pure: the page and the service both import it, and it loads nothing else.
  */

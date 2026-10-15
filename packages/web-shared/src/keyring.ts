@@ -55,6 +55,7 @@ import type { GovernedCallOrder, OpenedRound, SignerMaterial } from './governed-
 
 export type { CompanyCreationState } from '../../../src/core/company-founding.js';
 import { newSeatKeys } from './accept-seat.js';
+import type { SeatOpening } from '../../../src/core/seat-opening.js';
 import { clobberRefusal, seatToPromote } from './seat-repair.js';
 import type { SealedAccount } from '../../../src/core/types.js';
 import {
@@ -101,6 +102,15 @@ export interface AccountKeys {
    * against the inviter's. Absent for a seat taken without an invitation.
    */
   invitedBy?: Inviter;
+  /**
+   * **THIS SEAT'S OPENING OF ITS OWN LEAF**, made on this device when the seat
+   * was taken: its public key on the account, scope and blinding, and the
+   * wallet key and salt the blinding was made from. Carried in the seat's own
+   * directory entry, which other devices believe only through it. Absent for a
+   * seat taken on a device that made none, whose entry is then never believed:
+   * that seat is taken again.
+   */
+  opening?: SeatOpening;
 }
 
 /** An entry as a saved bundle may hold it: material saved before scopes were recorded has no scope. */
@@ -159,6 +169,8 @@ export interface PendingSeat {
   scope: Hex;
   /** The seat that invited this signer, as the invitation carried it; promoted with the material. */
   invitedBy?: Inviter;
+  /** This seat's opening of its own leaf, made here with the leaf; promoted with the material. */
+  opening?: SeatOpening;
 }
 
 /**
@@ -940,10 +952,14 @@ async function openKeysOnceOpen(
     /* A company key given beside keys opened for the first time here has
      * nothing to be checked against, so it is not kept. */
   }
-  /* The key the person sits on the new company's committee with, given beside the label the wallet drew for it. */
+  /*
+   * The key the person holds a seat on the company with: for a new company, given beside the label the wallet drew
+   * for it; for a named company, the key the wallet works out from that company's label - asked on a first open too,
+   * so an invitee's device can make its seat's leaf for it.
+   */
   return company === 'new'
     ? { drawn: released.company, committeeKey: released.committeeKey }
-    : { drawn: null, committeeKey: null };
+    : { drawn: null, committeeKey: company === null ? null : released.committeeKey };
 }
 
 /**
@@ -1017,6 +1033,36 @@ export async function companyKeysForVaults(
 }
 
 /**
+ * **THE WALLET KEY THIS PERSON WILL HOLD A SEAT ON AN INVITING COMPANY WITH**,
+ * from their own wallet, asked with the company's label and account as the
+ * invitation they opened names them: the key the wallet works out from that
+ * label, which the seat's leaf is then made to commit to on this device.
+ * Asked in the press, on a first open too. Nothing is checked against it here:
+ * the wallet checks the invitation itself when it is first asked to sign for
+ * the company.
+ */
+export async function walletKeyForAnInvitation(
+  company: { readonly accountId: string; readonly label: CompanyLabel; readonly account: AccountAddress },
+  walletOrigin: string,
+  view: Openable = walletInThisPage(window),
+  atOrigin: string = window.location.origin,
+): Promise<{ tag: 'schnorr'; value: string }> {
+  if (!sessionLive) throw new Error('not signed in');
+  const dialog = openTheWallet(view, walletOrigin);
+  try {
+    const { committeeKey } = await openKeysOnceOpen(walletOrigin, view, atOrigin, dialog, { ...company });
+    const key = schnorrKeyOf(committeeKey);
+    if (key === null) throw new Error('your wallet gave no key for this company, so no seat was made. Update your wallet and try again.');
+    return key;
+  } catch (e) {
+    putAway(dialog);
+    throw e;
+  } finally {
+    doneWaiting();
+  }
+}
+
+/**
  * **ASKS THIS PERSON'S WALLET TO PUT IN THE COINS A DEPOSIT NEEDS.** Opened in
  * the press, like every wallet journey; see `wallet-balance.ts`.
  */
@@ -1068,13 +1114,20 @@ export async function signCommitteeChangeFromTheWallet(
 }
 
 /**
- * **THE SEAT THAT INVITED THIS SIGNER, AS A RECORDS-KEY ASK CARRIES IT.** The
- * wallet checks an inviter's signed entry against a schnorr committee key, so
- * an inviter named under any other is left out and the ask is made without one.
+ * **THE SEAT THAT INVITED THIS SIGNER, AS A RECORDS-KEY ASK CARRIES IT**: its
+ * wallet key, its signed entry and its own seat's opening, and nothing of any
+ * other seat. The wallet checks the entry against a schnorr key and the
+ * opening against the inviter's seat on the chain, so an inviter named under
+ * any other kind of key is left out and the ask is made without one.
  */
 export const invitedByForTheWallet = (inviter: Inviter | undefined): Pick<RecordsKeyAsked, 'invitedBy'> =>
-  inviter === undefined || inviter.committeeKey.tag !== 'schnorr' ? {}
-    : { invitedBy: { committeeKey: { tag: 'schnorr', value: inviter.committeeKey.value }, statement: inviter.statement } };
+  inviter === undefined || inviter.committeeKey.tag !== 'schnorr' || inviter.opening?.walletKey?.tag !== 'schnorr' ? {}
+    : {
+      invitedBy: {
+        committeeKey: { tag: 'schnorr', value: inviter.committeeKey.value }, statement: inviter.statement,
+        opening: { ...inviter.opening, walletKey: { tag: 'schnorr', value: inviter.opening.walletKey.value } },
+      },
+    };
 
 /**
  * **THIS PERSON'S RECORDS KEY FOR THEIR SEAT, SIGNED BY THEIR OWN WALLET, AND WHO
@@ -1355,8 +1408,11 @@ export async function sealPendingSeat(seat: PendingSeat) {
  * DIRECTORY HOLDS IT**, and hands back the doors that read it and let it go.
  * Saved with the keys, so another of this person's devices files it too.
  */
-export async function oweDirectoryEntry(accountId: string, owed: OwedDirectoryEntry): Promise<void> {
-  await putBundle({ ...keyring, directoryEntriesOwed: { ...keyring.directoryEntriesOwed, [accountId]: owed } });
+export async function oweDirectoryEntry(accountId: string, owed: Omit<OwedDirectoryEntry, 'opening'>): Promise<void> {
+  /* The entry is filed with this seat's own opening, made on this device when the seat was taken. */
+  const opening = keyring.accounts[accountId]?.opening;
+  const kept: OwedDirectoryEntry = opening === undefined ? owed : { ...owed, opening };
+  await putBundle({ ...keyring, directoryEntriesOwed: { ...keyring.directoryEntriesOwed, [accountId]: kept } });
 }
 
 /** The doors over this person's owed directory entry for `accountId`: read it, and let it go once it is filed. */
@@ -1395,6 +1451,7 @@ export async function promotePendingSeat(signingPublicKey: Hex, signerId: string
     blinding: seat.blinding,
     scope: seat.scope,
     ...(seat.invitedBy === undefined ? {} : { invitedBy: seat.invitedBy }),
+    ...(seat.opening === undefined ? {} : { opening: seat.opening }),
   };
   refuseToClobber(seat.accountId, keys);
   const { [signingPublicKey]: _gone, ...rest } = keyring.pendingSeats ?? {};
@@ -1805,13 +1862,18 @@ async function foundTheCompanyOnThisDevice(
   spec: Parameters<typeof createCompanyWithWallet>[0], label: CompanyLabel, foundingKey: { tag: 'schnorr'; value: string },
   builder: AccountCreationBuilder, person: string,
 ): Promise<Founded> {
-  const keys = newSeatKeys();
+  /* The founding seat's blinding commits to the key that holds the account from its deploy, as every seat's does to its holder's. */
+  const keys = newSeatKeys(foundingKey);
   const seat = await builder.foundingSeat({ signingSecret: keys.signingSecret, blinding: keys.blinding });
   const leaf = String(seat?.seat ?? '').toLowerCase();
   const scope = String(seat?.scope ?? '').toLowerCase();
-  if (!HEX64_KEY.test(leaf) || !HEX64_KEY.test(scope)) {
+  const publicKey = String(seat?.publicKey ?? '').toLowerCase();
+  if (!HEX64_KEY.test(leaf) || !HEX64_KEY.test(scope) || !HEX64_KEY.test(publicKey)) {
     throw new Error('your seat in the new company could not be worked out on this device, so nothing was created.');
   }
+  const opening: SeatOpening = {
+    publicKey, scope, blinding: keys.blinding, walletKey: { tag: 'schnorr', value: foundingKey.value.toLowerCase() }, salt: keys.salt,
+  };
   const founded = foundTheCompanyHere({
     name: spec.name, signer: spec.signers[0]!, userId: person, label,
     seat: { signingPublicKey: keys.signingPublicKey, wrappingPublicKey: keys.wrappingPublicKey, leaf },
@@ -1822,7 +1884,7 @@ async function foundTheCompanyOnThisDevice(
   if (me === null || me.id !== person) throw new CompanyStartedBySomebodyElse(STARTED_BY_SOMEBODY_ELSE);
   const mine: AccountKeys = {
     signerId: founded.seat.signerId, signingSecret: keys.signingSecret, wrappingSecret: keys.wrappingSecret,
-    blinding: keys.blinding, scope,
+    blinding: keys.blinding, scope, opening,
   };
   refuseToClobber(accountId, mine);
   const saved: SavedCreation = {
@@ -1867,7 +1929,7 @@ export interface AccountCreationBuilder {
    * The leaf the account seats for the keys made on this device, and the scope
    * it was made under, worked out with the chain's own function.
    */
-  foundingSeat(material: { signingSecret: string; blinding: string }): Promise<{ seat: string; scope: string }>;
+  foundingSeat(material: { signingSecret: string; blinding: string }): Promise<{ seat: string; scope: string; publicKey: string }>;
   accountDeploy(input: { foundingLeaf: string; label: string; foundingKey: { tag: string; value: string } }): Promise<{
     account: string; tx: string; insert: ReadonlyArray<{ circuit: string; key: string }>;
   }>;
@@ -2180,6 +2242,8 @@ export async function openAccount(
   holders: (company: CompanyLabel, account: AccountAddress) => Promise<AccountHoldersRead>,
   /** The company's records as the head on chain holds them, for the company `accountId` and its account (`heldFor`). */
   anchored: (accountId: string, company: CompanyLabel, account: AccountAddress) => DirectoryHereDeps['anchored'],
+  /** The leaf each directory entry's opening makes, worked out in the page's vault worker. */
+  leaves: (company: CompanyLabel, account: AccountAddress) => DirectoryHereDeps['leaves'],
 ): Promise<BelievedAccount | null> {
   const keys = keysFor(rec.id);
   let viewingKey: Hex;
@@ -2196,6 +2260,7 @@ export async function openAccount(
     accountId: rec.id, label, account,
     reads: {
       filings: () => directoryFilingsFrom(api, rec.id), holders: () => holders(label, account), anchored: anchored(rec.id, label, account),
+      leaves: leaves(label, account),
     },
     own: { signerId: keys.signerId, signingPublicKey: signingPublicKeyOf(keys.signingSecret) },
   });

@@ -5,6 +5,7 @@ import type { RecordsKeyRequest } from 'midnight-identity/profile/request';
 import type { Channel } from 'midnight-identity/profile/channel';
 import {
   INVITATION_REFUSAL, RecordsKeyRefused, recordsKeyAnswerFor, recordsKeyFor, whyTheInvitationDoesNotNameIt,
+  type LeafOf, type SeatOpening,
 } from 'midnight-identity/profile/records-key';
 import { CompanyOnChain, accountCarriesTheLabel, liveLabelReader, useCompanyCheck } from './company-on-chain.js';
 import type { LabelReader } from './company-on-chain.js';
@@ -33,6 +34,12 @@ import type { Consent } from '../framing.js';
  * committee, its threshold and every seat - which the page checks a vault's
  * secret against, and which no service handed over.
  *
+ * **WHEN THIS WALLET HAS KEPT NO ACCOUNT FOR THE COMPANY**, the invitation the
+ * person joined by must name this account: the inviter's seat on it, and the
+ * inviter's own opening of that seat, whose leaf this wallet works out itself
+ * with the account's own `signerLeaf` (`liveLeafReader`), so the seat is shown
+ * to be the inviter's wallet key's and not any key a page names.
+ *
  * **WHEN THE PAGE NAMES ONE OF THE COMPANY'S VAULTS, THIS WALLET READS THAT
  * VAULT TOO** (`vaultOnChain`): who holds it and which account it is pinned
  * to, over the same connection, and the answer carries what it read. A page
@@ -53,6 +60,48 @@ export type VaultReader = (vault: VaultAddress) => Promise<VaultOnChain>;
 export const liveVaultReader: VaultReader = (vault) => vaultOnChain(vault, fromIndexerAt(INDEXER_HTTP_URL));
 
 type VaultCheck = { readonly of: 'none' } | { readonly of: 'checking' } | VaultOnChain;
+
+/**
+ * How this screen works out the leaf a seat's opening makes: the account's own
+ * `signerLeaf`, from the compiled contract this wallet already loads. Replaceable
+ * so a test can answer. Resolves to lower-case hex.
+ */
+export type LeafReader = (opening: SeatOpening) => Promise<string>;
+
+const hexBytes = (h: string): Uint8Array => Uint8Array.from(h.match(/../gu) ?? [], (x) => Number.parseInt(x, 16));
+
+/** The account's own `signerLeaf`, run in this wallet. */
+export const liveLeafReader: LeafReader = async (opening) => {
+  const account = await import('../../../../contracts/managed/contract/index.js') as unknown as {
+    pureCircuits: { signerLeaf(pk: Uint8Array, blinding: Uint8Array, scope: Uint8Array): Uint8Array };
+  };
+  const leaf = account.pureCircuits.signerLeaf(hexBytes(opening.publicKey), hexBytes(opening.blinding), hexBytes(opening.scope));
+  return Array.from(leaf, (b) => b.toString(16).padStart(2, '0')).join('');
+};
+
+type LeafCheck = { readonly of: 'none' } | { readonly of: 'checking' } | { readonly of: 'read'; readonly leafOf: LeafOf };
+
+/**
+ * The leaf the inviter's own opening makes, worked out once per invitation; with
+ * no invitation there is nothing to work out. A leaf that could not be worked
+ * out proves nothing, so the invitation is then refused as not the inviter's seat.
+ */
+function useInviterLeaf(opening: SeatOpening | undefined, read: LeafReader): LeafCheck {
+  const [found, setFound] = useState<{ opening: SeatOpening; leaf: string | null } | null>(null);
+  useEffect(() => {
+    if (opening === undefined) return undefined;
+    let alive = true;
+    read(opening).then(
+      (leaf) => { if (alive) setFound({ opening, leaf: leaf.toLowerCase() }); },
+      () => { if (alive) setFound({ opening, leaf: null }); },
+    );
+    return () => { alive = false; };
+  }, [opening, read]);
+  if (opening === undefined) return { of: 'none' };
+  if (found === null || found.opening !== opening) return { of: 'checking' };
+  const { leaf } = found;
+  return { of: 'read', leafOf: (o) => (o.publicKey === opening.publicKey && o.blinding === opening.blinding && o.scope === opening.scope ? leaf : null) };
+}
 
 /** Reads the vault the page names once per vault; with none named there is nothing to read. */
 function useVaultCheck(vault: VaultAddress | undefined, read: VaultReader): VaultCheck {
@@ -77,7 +126,7 @@ const short = (hex: string): string => `${hex.slice(0, 12)}…${hex.slice(-8)}`;
 
 export function ApproveRecordsKey({
   request, identity, channel, consent, whoIsAsking, onDecline, now = Date.now, readLabel = liveLabelReader,
-  readVault = liveVaultReader, pinned = null, onPin,
+  readVault = liveVaultReader, readLeaf = liveLeafReader, pinned = null, onPin,
 }: {
   readonly request: RecordsKeyRequest;
   readonly identity: Identity;
@@ -88,6 +137,7 @@ export function ApproveRecordsKey({
   readonly now?: () => number;
   readonly readLabel?: LabelReader;
   readonly readVault?: VaultReader;
+  readonly readLeaf?: LeafReader;
   /** The account this wallet kept for the company, or null when it kept none: nothing is signed for another. */
   readonly pinned?: AccountAddress | null;
   /**
@@ -107,14 +157,18 @@ export function ApproveRecordsKey({
   /* With no vault named there is none to read; with one named, it must be read and pinned to this account. */
   const vaultOk = request.vault === undefined || (vaultRead !== null && vaultRead.account === request.account);
   /* With no account kept for the company, the invitation must name this one, checked against the account as read. */
-  const notInvited = pinned === null && seats !== null ? whyTheInvitationDoesNotNameIt(request, seats) : null;
+  const inviterLeaf = useInviterLeaf(request.invitedBy?.opening, readLeaf);
+  const leafOf = inviterLeaf.of === 'read' ? inviterLeaf.leafOf : null;
+  const inviterChecking = pinned === null && inviterLeaf.of === 'checking';
+  const notInvited = pinned === null && seats !== null && !inviterChecking ? whyTheInvitationDoesNotNameIt(request, seats, leafOf) : null;
   /* The joiner's own comparison with the inviter, on its own press: the only way the account is kept. */
   const [keeping, setKeeping] = useState<'idle' | 'keeping' | 'failed'>('idle');
   const confirm = useCallback((): void => {
-    if (!consent.ok || pinned !== null || !onChain || seats === null || notInvited !== null || onPin === undefined || keeping === 'keeping') return;
+    if (!consent.ok || pinned !== null || !onChain || seats === null || inviterChecking || notInvited !== null || onPin === undefined
+      || keeping === 'keeping') return;
     setKeeping('keeping');
     void onPin(request.account, now()).then(() => setKeeping('idle'), () => setKeeping('failed'));
-  }, [consent, pinned, onChain, seats, notInvited, onPin, keeping, request.account, now]);
+  }, [consent, pinned, onChain, seats, inviterChecking, notInvited, onPin, keeping, request.account, now]);
   /* The key the press signs, shown before it is pressed. */
   const recordsKey = useMemo(() => recordsKeyFor(identity, request), [identity, request]);
 
@@ -123,13 +177,13 @@ export function ApproveRecordsKey({
     try {
       const at = now();
       /* With no account kept, this refuses: the account is kept only on the fingerprint confirmation below. */
-      channel.answer(recordsKeyAnswerFor(identity, request, seats, at, vaultRead ?? undefined, pinned));
+      channel.answer(recordsKeyAnswerFor(identity, request, seats, at, vaultRead ?? undefined, pinned, leafOf));
       setStage({ of: 'sent', at });
     } catch (e) {
       /* Only the wallet's own sentences reach the person; anything else is said plainly. */
       setStage({ of: 'refused', says: e instanceof RecordsKeyRefused ? e.message : 'Nothing has been signed. Close this window and try again from the page.' });
     }
-  }, [consent, stage, channel, onChain, seats, seated, vaultOk, vaultRead, now, identity, request, pinned]);
+  }, [consent, stage, channel, onChain, seats, seated, vaultOk, vaultRead, now, identity, request, pinned, leafOf]);
 
   if (stage.of === 'sent') {
     return (
@@ -220,7 +274,10 @@ export function ApproveRecordsKey({
       <Section list={false} box={false} aria-label="The company, as the page names it" title="The company, as the page names it" description="This wallet signs with the key it holds for this company and no other.">
         <CompanyOnChain label={request.company} account={request.account} check={check} doing="signed" compareWith={COMPARE_WITH_THE_INVITER} />
       </Section>
-      {pinned === null && seats !== null && (notInvited !== null ? (
+      {pinned === null && seats !== null && inviterChecking && (
+        <p className="m-0 text-sm text-muted-foreground" data-inviter-checking>Checking the seat of the person who invited you&hellip;</p>
+      )}
+      {pinned === null && seats !== null && !inviterChecking && (notInvited !== null ? (
         <StatusAlert tone="danger" title="This wallet will not sign for this company">
           <p className="m-0" data-invitation-does-not-name-it>{INVITATION_REFUSAL[notInvited]}</p>
         </StatusAlert>

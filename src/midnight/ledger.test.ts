@@ -2684,6 +2684,50 @@ describe('reading a deployed contract\'s maintenance authority back off the chai
     expect(a.threshold).toBe(1);
     expect(a.shape).toBe('one-key');
   });
+
+  it('reads every committee key in lower case, whatever case the chain\'s state carries it in', async () => {
+    /* RED WHEN: the authority is read by anything but `authorityIn`, so a key's digits are kept as the state wrote them. */
+    const { authorityFromContractState } = await import('./ledger.js');
+    const a = authorityFromContractState(stateWith([authKey(LIVE_ACCOUNT_KEY.value.toUpperCase())], 1, 0n));
+    expect('why' in a).toBe(false);
+    if ('why' in a) return;
+    expect(a.committee).toEqual([LIVE_ACCOUNT_KEY]);
+  });
+
+  it.each([
+    ['a committee key that is not hex digits', [authKey('not-a-key')], 1, 0n],
+    ['a committee key written with a 0x prefix', [authKey('0x' + LIVE_ACCOUNT_KEY.value)], 1, 0n],
+    ['a threshold below zero', [LIVE_ACCOUNT_KEY], -1, 0n],
+    ['a threshold too large to be a whole number the chain could hold', [LIVE_ACCOUNT_KEY], 2 ** 60, 0n],
+    ['a counter below zero', [LIVE_ACCOUNT_KEY], 1, -1n],
+  ])('refuses %s instead of reading it as an authority', async (_name, committee, threshold, counter) => {
+    /* RED WHEN: the authority is read by anything but `authorityIn`, so a key, a threshold or a counter it refuses is accepted. */
+    const { authorityFromContractState, readContractAuthority } = await import('./ledger.js');
+    expect('why' in authorityFromContractState(stateWith(committee, threshold, counter))).toBe(true);
+    expect((await readContractAuthority(async () => stateWith(committee, threshold, counter), 'a')).state).toBe('unreadable');
+  });
+
+  it('still counts a key listed twice when only the case of its kind differs', async () => {
+    /* RED WHEN: the duplicate check stops folding the kind of key, so a committee listing one key twice reads as two members. */
+    const { authorityFromContractState } = await import('./ledger.js');
+    const a = authorityFromContractState(stateWith([
+      { tag: 'Schnorr', value: LIVE_ACCOUNT_KEY.value }, LIVE_ACCOUNT_KEY,
+    ], 2, 0n));
+    expect('why' in a).toBe(false);
+    if ('why' in a) return;
+    expect(a.hasDuplicateMembers).toBe(true);
+  });
+
+  it('keeps two members with the same digits and a different kind of key apart', async () => {
+    /* RED WHEN: the duplicate check ignores the kind of key, so two kinds of key sharing digits read as one member listed twice. */
+    const { authorityFromContractState } = await import('./ledger.js');
+    const a = authorityFromContractState(stateWith([
+      { tag: 'schnorr', value: LIVE_ACCOUNT_KEY.value }, { tag: 'other', value: LIVE_ACCOUNT_KEY.value },
+    ], 2, 0n));
+    expect('why' in a).toBe(false);
+    if ('why' in a) return;
+    expect(a.hasDuplicateMembers).toBe(false);
+  });
 });
 
 describe('comparing the chain against the maintenance authority chosen on disk', () => {
@@ -2909,7 +2953,7 @@ describe('S74: what a maintenance authority may not be, refused before anything 
     const r = authorityValueRefusals([K1, K2, K3], 0, strict);
     expect(r.map((x) => x.code)).toContain('threshold-below-one');
     expect(r.find((x) => x.code === 'threshold-below-one')!.why)
-      .toMatch(/WORLD-WRITABLE.*NO SIGNATURES AT ALL/s);
+      .toMatch(/at zero anybody could change the contract's rules with no signature at all/);
     expect(authorityValueRefusals([K1], -1, strict).map((x) => x.code))
       .toContain('threshold-below-one');
     expect(authorityValueRefusals([K1, K2], 1.5, strict).map((x) => x.code))
@@ -2939,7 +2983,7 @@ describe('S74: what a maintenance authority may not be, refused before anything 
     const r = authorityValueRefusals([K1, K2, K1], 3, strict);
     expect(r.map((x) => x.code)).toContain('repeated-committee-member');
     expect(r.find((x) => x.code === 'repeated-committee-member')!.why)
-      .toMatch(/seats \[0\] and \[2\] hold the SAME key/);
+      .toMatch(/keys 1 and 3 are the same key/);
     /* Case-folded, because a committee is compared case-insensitively everywhere
      * else in this module and a duplicate that differs only in case is a
      * duplicate. */
@@ -3192,15 +3236,7 @@ describe('S74/T-360: what ledger 9 actually accepts, measured rather than read o
       try { tx.wellFormed(ls, strictness(), NOW); return 'WELL-FORMED'; }
       catch (e) { return String((e as Error).message ?? e); }
     };
-    const primitives = {
-      ContractMaintenanceAuthority: L.ContractMaintenanceAuthority,
-      ReplaceAuthority: L.ReplaceAuthority,
-      VerifierKeyInsert: L.VerifierKeyInsert,
-      ContractOperationVersionedVerifierKey: L.ContractOperationVersionedVerifierKey,
-      MaintenanceUpdate: L.MaintenanceUpdate,
-      verifySignature: L.verifySignature,
-    };
-    return { L, sks, vks, strictness, blockContext, deployWith, wellFormed, primitives };
+    return { L, sks, vks, strictness, blockContext, deployWith, wellFormed };
   };
 
   const chainAuthority = (committee: unknown[], threshold: number, counter: bigint) => ({
@@ -3211,38 +3247,28 @@ describe('S74/T-360: what ledger 9 actually accepts, measured rather than read o
   it('builds a committee update the chain accepts, signed by the OLD committee at the OLD threshold', async () => {
     /* The mistake that reads backwards: a 2-of-3 being replaced is signed by two
      * of the OLD three. `verify.rs:1843-1856` verifies each signature against the
-     * CURRENT committee and `:1857-1863` counts against the CURRENT threshold. */
-    const { L, sks, vks, deployWith, wellFormed, primitives } = await load();
-    const { planAuthorityReplacement, buildMaintenanceInstruction, attachMaintenanceSignature,
-      signatureProgress } = await import('./ledger.js');
+     * CURRENT committee and `:1857-1863` counts against the CURRENT threshold.
+     * RED WHEN: `buildCommitteeChange` counts against the threshold being installed. */
+    const { L, sks, vks, deployWith, wellFormed } = await load();
+    const { committeeUpdateOf } = await import('midnight-identity/profile/committee-sign');
+    const { buildCommitteeChange } = await import('./company-authority.js');
     const { ls, address } = deployWith([vks[0], vks[1], vks[2]], 2);
-
-    const now = chainAuthority([vks[0], vks[1], vks[2]], 2, 0n);
-    const plan = planAuthorityReplacement(
-      { state: 'read', address, authority: now as never },
-      { committee: [vks[0]], threshold: 1 }, { emptyCommitteeIsDeliberate: false });
-    expect(plan.action).toBe('build');
-    if (plan.action !== 'build') throw new Error('unreachable');
-
-    let built = buildMaintenanceInstruction(primitives as never, plan,
-      { label: 'ACCOUNT', emptyCommitteeIsDeliberate: false });
-    expect(built.signaturesRequired).toBe(2);
-    expect(built.signWith).toHaveLength(3);
-    expect(signatureProgress(built).complete).toBe(false);
-    expect(wellFormed(ls, built.update)).toMatch(/does not meet required threshold \(0\/2/);
-
-    built = attachMaintenanceSignature(primitives as never, built, 0,
-      L.signData(sks[0], built.dataToSign));
-    expect(signatureProgress(built).complete).toBe(false);
-    expect(wellFormed(ls, built.update)).toMatch(/does not meet required threshold \(1\/2/);
-
-    built = attachMaintenanceSignature(primitives as never, built, 2,
-      L.signData(sks[2], built.dataToSign));
-    expect(signatureProgress(built)).toEqual(
-      { have: 2, required: 2, complete: true, seatsSigned: [0, 2] });
-    expect(wellFormed(ls, built.update)).toBe('WELL-FORMED');
-    expect(built.endState.builtAgainstCounter).toBe(0n);
-    expect(built.endState.expectedCounter).toBe(1n);
+    const read = { state: 'read' as const, address, authority: chainAuthority([vks[0], vks[1], vks[2]], 2, 0n) as never };
+    const to = { committee: [vks[0]], threshold: 1 };
+    const update = committeeUpdateOf(L, { address, counter: 0n, to });
+    expect(wellFormed(ls, update)).toMatch(/does not meet required threshold \(0\/2/);
+    const one = update.addSignature(0n, L.signData(sks[0], update.dataToSign));
+    expect(wellFormed(ls, one)).toMatch(/does not meet required threshold \(1\/2/);
+    expect(wellFormed(ls, one.addSignature(2n, L.signData(sks[2], update.dataToSign)))).toBe('WELL-FORMED');
+    const counted = (signatures: { index: number; signature: unknown }[]) => buildCommitteeChange(L, {
+      read, to, signatures: signatures as never, network: NET, ttl: ttl(), label: 'ACCOUNT',
+    });
+    expect(counted([{ index: 0, signature: L.signData(sks[0], update.dataToSign) }])).toMatchObject({ have: 1, required: 2, unproven: null });
+    const both = counted([
+      { index: 2, signature: L.signData(sks[2], update.dataToSign) }, { index: 0, signature: L.signData(sks[0], update.dataToSign) },
+    ]);
+    expect(both).toMatchObject({ have: 2, required: 2, indexesSigned: [0, 2] });
+    expect(both.unproven).not.toBeNull();
   });
 
   it('gives the new authority exactly `updateCounter + 1`, which is the only value the chain accepts', async () => {
@@ -3250,20 +3276,11 @@ describe('S74/T-360: what ledger 9 actually accepts, measured rather than read o
      * *"transaction is not in normal form"*. There is one correct answer, so the
      * builder derives it and takes no parameter for it. This is the assertion
      * that goes red if that derivation is ever made a caller's business. */
-    const { L, sks, vks, deployWith, wellFormed, primitives } = await load();
-    const { planAuthorityReplacement, buildMaintenanceInstruction,
-      attachMaintenanceSignature } = await import('./ledger.js');
+    const { L, sks, vks, deployWith, wellFormed } = await load();
+    const { committeeUpdateOf } = await import('midnight-identity/profile/committee-sign');
     const { ls, address } = deployWith([vks[0]], 1);
-    const now = chainAuthority([vks[0]], 1, 0n);
-    const plan = planAuthorityReplacement(
-      { state: 'read', address, authority: now as never },
-      { committee: [vks[0], vks[1]], threshold: 2 }, { emptyCommitteeIsDeliberate: false });
-    if (plan.action !== 'build') throw new Error('unreachable');
-    let built = buildMaintenanceInstruction(primitives as never, plan,
-      { label: 'ACCOUNT', emptyCommitteeIsDeliberate: false });
-    built = attachMaintenanceSignature(primitives as never, built, 0,
-      L.signData(sks[0], built.dataToSign));
-    expect(wellFormed(ls, built.update)).toBe('WELL-FORMED');
+    const update = committeeUpdateOf(L, { address, counter: 0n, to: { committee: [vks[0], vks[1]], threshold: 2 } });
+    expect(wellFormed(ls, update.addSignature(0n, L.signData(sks[0], update.dataToSign)))).toBe('WELL-FORMED');
 
     /* The same update with a hand-built authority at the WRONG counter, to show
      * the value is load-bearing and not decoration. */
@@ -3273,35 +3290,20 @@ describe('S74/T-360: what ledger 9 actually accepts, measured rather than read o
     expect(wellFormed(ls, signedWrong)).toMatch(/not in normal form/);
   });
 
-  it('refuses a seat outside the committee, a seat that already signed, and a signature that does not verify', async () => {
-    /* Each of the three is a refusal the chain would also make. Making it here is
-     * the difference between a person being told and a fee being spent: a refused
-     * maintenance update lands as `partialSuccess` with the fee already taken. */
-    const { L, sks, vks, deployWith, primitives } = await load();
-    const { planAuthorityReplacement, buildMaintenanceInstruction,
-      attachMaintenanceSignature } = await import('./ledger.js');
-    const { address } = deployWith([vks[0], vks[1]], 2);
-    const now = chainAuthority([vks[0], vks[1]], 2, 0n);
-    const plan = planAuthorityReplacement(
-      { state: 'read', address, authority: now as never },
-      { committee: [vks[2]], threshold: 1 }, { emptyCommitteeIsDeliberate: false });
-    if (plan.action !== 'build') throw new Error('unreachable');
-    const built = buildMaintenanceInstruction(primitives as never, plan,
-      { label: 'ACCOUNT', emptyCommitteeIsDeliberate: false });
-
-    expect(() => attachMaintenanceSignature(primitives as never, built, 5,
-      L.signData(sks[0], built.dataToSign))).toThrow(/is not a seat on the committee/);
-    expect(() => attachMaintenanceSignature(primitives as never, built, -1,
-      L.signData(sks[0], built.dataToSign))).toThrow(/is not a seat on the committee/);
-    /* Seat 1 holds key 2, so key 1's signature must not be accepted there —
-     * and the ONLY reason it can be caught locally is that we hold the committee. */
-    expect(() => attachMaintenanceSignature(primitives as never, built, 1,
-      L.signData(sks[0], built.dataToSign))).toThrow(/does not verify against the key in seat 1/);
-
-    const once = attachMaintenanceSignature(primitives as never, built, 0,
-      L.signData(sks[0], built.dataToSign));
-    expect(() => attachMaintenanceSignature(primitives as never, once, 0,
-      L.signData(sks[0], built.dataToSign))).toThrow(/has already signed/);
+  it('counts nothing at a place outside the committee, nothing twice at one place, and no signature that does not verify', async () => {
+    /* Each of the three is a refusal the chain would also make, after the fee: a
+     * refused maintenance update lands as `partialSuccess` with the fee already taken.
+     * RED WHEN: `signaturesThatCount` keeps any of the three. */
+    const { L, sks, vks } = await load();
+    const { signaturesThatCount } = await import('./company-authority.js');
+    const data = new Uint8Array([7, 7, 7]);
+    const holders = [vks[0], vks[1]];
+    const by0 = L.signData(sks[0], data);
+    expect(signaturesThatCount(L, data, holders, [
+      { index: 5, signature: by0 }, { index: -1, signature: by0 }, { index: 1, signature: by0 },
+    ])).toEqual([]);
+    expect(signaturesThatCount(L, data, holders, [{ index: 0, signature: by0 }, { index: 0, signature: by0 }]))
+      .toEqual([{ index: 0, signature: by0 }]);
   });
 
   it('`T-360`(b): a committee holding one key at three seats IS satisfied by that one holder — MEASURED, on ledger 9', async () => {
@@ -3549,42 +3551,6 @@ describe('reading a state that cannot be read: never `agree`, and never a partia
  * state that nothing carried.
  */
 describe('S74: the verifier-key half of the builder, which the first draft refused nothing about', () => {
-  const key = (v: string) => ({ tag: 'schnorr', value: v });
-  const K1 = key('79be667ef9dcbbac55a06295ce870b07029bfcdb2dce28d959f2815b16f81798');
-  const K2 = key('c6047f9441ed7d6d3045406e95c07cd85c778e4b8cef3ca7abac09b95c709ee5');
-  const strict = { emptyCommitteeIsDeliberate: false };
-  const readOf = (
-    committee: { tag: string; value: string }[], threshold: number, counter: bigint,
-    extra: { shape?: 'anyone' | 'no-one' | 'one-key' | 'committee'; dup?: boolean } = {},
-  ) => ({
-    state: 'read' as const, address: 'addr',
-    authority: {
-      committee, threshold, counter,
-      shape: extra.shape ?? ('committee' as const), hasDuplicateMembers: extra.dup ?? false,
-    },
-  });
-  const stubs = {
-    ContractMaintenanceAuthority: class { constructor(..._a: unknown[]) {} },
-    ReplaceAuthority: class { constructor(..._a: unknown[]) {} },
-    VerifierKeyInsert: class { constructor(..._a: unknown[]) {} },
-    ContractOperationVersionedVerifierKey: class { constructor(..._a: unknown[]) {} },
-    MaintenanceUpdate: class {
-      dataToSign = new Uint8Array([1, 2, 3]); counter = 0n;
-      signatures: [bigint, { tag: string; value: string }][] = [];
-      constructor(..._a: unknown[]) {}
-      addSignature() { return this; }
-    },
-    verifySignature: () => true,
-  };
-  const planFor = async (
-    read: ReturnType<typeof readOf>, committee: { tag: string; value: string }[], threshold: number,
-  ) => {
-    const { planAuthorityReplacement } = await import('./ledger.js');
-    const p = planAuthorityReplacement(read, { committee, threshold }, strict);
-    if (p.action !== 'build') throw new Error(`expected a build plan, got ${p.action}`);
-    return p;
-  };
-
   it('refuses an unnamed entry point, empty key bytes, and a version the runtime does not have', async () => {
     /* `C353`'s drain is a VERIFIER KEY SWAP performed using the authority, so a
      * builder that refuses five things about who may change a contract and nothing
@@ -3602,72 +3568,6 @@ describe('S74: the verifier-key half of the builder, which the first draft refus
      * `midnight:verifier-key[v6]:` header and `v4` wants `[v7]` — and it throws on a
      * mismatch. It is not a label, so a free-form string is not an option. */
     expect(verifierKeyRefusals([{ ...good, version: 'v4' as const }])).toEqual([]);
-  });
-
-  it('the builder throws on a bad verifier-key write rather than handing it to the runtime', async () => {
-    const { buildMaintenanceInstruction } = await import('./ledger.js');
-    const plan = await planFor(readOf([K1], 1, 0n), [K1, K2], 2);
-    expect(() => buildMaintenanceInstruction(stubs as never, plan, {
-      label: 'x', emptyCommitteeIsDeliberate: false,
-      verifierKeys: [{ operation: '', version: 'v3', verifierKey: new Uint8Array([1]) }],
-    })).toThrow(/unnamed-verifier-key-operation/);
-  });
-
-  it('records WHICH key was written and not only that one was, because the name is what a swap leaves alone', async () => {
-    /* A record saying *we wrote `recordPayment`* cannot afterwards say which key
-     * went in, so `checkEndState` could report `settled` over an update that also
-     * rewrote the thing `C353` is about. Eight bytes is an identifier for a person;
-     * the proof is `compareVerifierKeys` over full bytes. */
-    const { buildMaintenanceInstruction } = await import('./ledger.js');
-    const plan = await planFor(readOf([K1], 1, 3n), [K1, K2], 2);
-    const built = buildMaintenanceInstruction(stubs as never, plan, {
-      label: 'ACCOUNT', emptyCommitteeIsDeliberate: false,
-      verifierKeys: [{
-        operation: 'recordPayment', version: 'v3',
-        verifierKey: new Uint8Array([0xde, 0xad, 0xbe, 0xef, 1, 2, 3, 4, 5, 6]),
-      }],
-    });
-    expect(built.endState.verifierKeyInserts).toEqual([
-      { operation: 'recordPayment', version: 'v3', fingerprint: 'deadbeef0102030405'.slice(0, 16) },
-    ]);
-    expect(built.endState.expectedCounter).toBe(4n);
-  });
-
-  it('takes the committee that must sign FROM THE PLAN, so no second value can disagree with it', async () => {
-    /* The first draft took it as a separate parameter, so a caller could hand a plan
-     * for one contract and an authority from another and nothing would notice — and
-     * a `signaturesRequired` below the chain's real bar makes `signatureProgress`
-     * report `complete` under it, which is a fee spent on a recorded on-chain
-     * failure. Every build plan already carries `comparison.onChain`. */
-    const { buildMaintenanceInstruction } = await import('./ledger.js');
-    const plan = await planFor(readOf([K1, K2], 2, 0n), [K1], 1);
-    const built = buildMaintenanceInstruction(stubs as never, plan,
-      { label: 'x', emptyCommitteeIsDeliberate: false });
-    expect(built.signWith).toEqual([K1, K2]);
-    expect(built.signaturesRequired).toBe(2);
-    expect(buildMaintenanceInstruction.length).toBe(3);
-  });
-
-  it('carries the CURRENT authority\'s shape and duplicates, and flags a contract that needs no signatures', async () => {
-    /* `S61` built `shape` and `hasDuplicateMembers` for exactly this and the first
-     * draft read the committee and the threshold and threw both away. The silent
-     * case is the one that matters: a contract already at threshold ZERO gives
-     * `signaturesRequired: 0`, so signing is `complete` on nothing at all. Repairing
-     * such a contract is right; doing it without being told is not. */
-    const { buildMaintenanceInstruction, signatureProgress } = await import('./ledger.js');
-    const dup = await planFor(readOf([K1, K1], 2, 0n, { dup: true }), [K1, K2], 2);
-    const onDup = buildMaintenanceInstruction(stubs as never, dup,
-      { label: 'x', emptyCommitteeIsDeliberate: false });
-    expect(onDup.currentHasDuplicateMembers).toBe(true);
-    expect(onDup.needsNoSignatures).toBe(false);
-
-    const anyone = await planFor(readOf([K1, K2], 0, 0n, { shape: 'anyone' }), [K1, K2], 2);
-    const onAnyone = buildMaintenanceInstruction(stubs as never, anyone,
-      { label: 'x', emptyCommitteeIsDeliberate: false });
-    expect(onAnyone.currentShape).toBe('anyone');
-    expect(onAnyone.needsNoSignatures).toBe(true);
-    expect(signatureProgress(onAnyone).complete).toBe(true);
-    expect(signatureProgress(onAnyone).have).toBe(0);
   });
 
   it('compareVerifierKeys answers UNKNOWN over an empty comparison rather than agreeing about nothing', async () => {
@@ -3997,5 +3897,27 @@ describe('a spending policy, set and charged through the client', () => {
       asset: TEST_TOKEN, top: 1n, total: 1n, period: 1n, policy: POLICY, spent: 0n,
     })).rejects.toThrow(/does not lie inside the period 2027-02-02 to 2027-03-04/);
     expect(staged.length).toBe(before);
+  });
+});
+
+describe('the modules that must load without the ledger read a contract\'s authority through the reader that imports nothing', () => {
+  const importsOf = async (path: string): Promise<string[]> => {
+    const { readFileSync } = await import('node:fs');
+    const text = readFileSync(new URL(path, import.meta.url), 'utf8');
+    const found: string[] = [];
+    for (const m of text.matchAll(/^(?:import|export)\s+(?!type\b)[^;]*?\bfrom\s*['"]([^'"]+)['"]/gmu)) found.push(m[1]!);
+    for (const m of text.matchAll(/^import\s*['"]([^'"]+)['"]/gmu)) found.push(m[1]!);
+    return found;
+  };
+  const LEDGER_PACKAGES = /^@midnight-?ntwrk\//u;
+  const READER = 'midnight-identity/profile/contract-authority';
+
+  it.each(['./ledger.ts', './account-deploy.ts'])('%s reads a contract\'s authority from the reader that imports nothing', async (file) => {
+    /* RED WHEN: the authority reader loads the ledger, or either module stops reading a contract's authority through `authorityIn`. */
+    const own = await importsOf(file);
+    expect(own.filter((s) => LEDGER_PACKAGES.test(s)), `${file} loads a ledger package`).toEqual([]);
+    expect(own, `${file} reads the authority through authorityIn`).toContain(READER);
+    expect(await importsOf('../../packages/identity/src/profile/contract-authority.ts'),
+      'the reader loads something, so it can load the ledger').toEqual([]);
   });
 });

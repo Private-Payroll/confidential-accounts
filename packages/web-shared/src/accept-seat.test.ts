@@ -24,7 +24,8 @@ import { describe, it, expect } from 'vitest';
 import { SimulatedCommitments } from '../../../src/core/ledger.js';
 import { ownLeafReading, storedSignerLeaf } from '../../../src/core/signer-leaf.js';
 import { newSigningKeypair, newWrappingKeypair, newBlinding, type Hex } from '../../../src/core/crypto.js';
-import { acceptSeatOnThisDevice, type NewSeatKeys, type SeatDoors } from './accept-seat.js';
+import { acceptSeatOnThisDevice, newSeatKeys, type NewSeatKeys, type SeatDoors } from './accept-seat.js';
+import { seatBlinding, walletKeyProvedBy } from '../../../src/core/seat-opening.js';
 import type { PendingSeat } from './keyring.js';
 
 /** The item at a place in a list; an item that is not there fails the test here rather than being read through. */
@@ -36,13 +37,17 @@ const itemAt = <T,>(xs: readonly T[], i: number): T => {
 
 const ACCOUNT = 'acc_northwind';
 
+/* The joining person's own wallet key for the company, as their wallet gave it. */
+const WALLET = { tag: 'schnorr', value: '4c'.repeat(32) };
+
 /* Fixed, so a failure is reproducible from the output alone. */
 const KEYS: NewSeatKeys = {
   signingSecret: '11'.repeat(32),
   signingPublicKey: 'aa'.repeat(32),
   wrappingSecret: '33'.repeat(32),
   wrappingPublicKey: 'bb'.repeat(32),
-  blinding: '22'.repeat(32),
+  salt: '55'.repeat(32),
+  blinding: seatBlinding(WALLET, '55'.repeat(32)),
 };
 
 /** Every door, recording the order it was called in. */
@@ -61,10 +66,10 @@ const doorsThat = (over: Partial<SeatDoors> = {}) => {
   return { doors, order, sealed, published, promoted };
 };
 
-describe('C329 — a leaf cannot reach a roster before its key material is durable', () => {
+describe('A leaf cannot reach a roster before its key material is durable', () => {
   it('SEALS BEFORE IT PUBLISHES, and promotes only after', async () => {
     const d = doorsThat();
-    await acceptSeatOnThisDevice(ACCOUNT, SimulatedCommitments, d.doors);
+    await acceptSeatOnThisDevice(ACCOUNT, SimulatedCommitments, d.doors, WALLET);
     /* The whole property, as a sequence rather than as four separate facts:
      * `indexOf` on two of them would pass for an order with a publish in
      * between. */
@@ -76,7 +81,7 @@ describe('C329 — a leaf cannot reach a roster before its key material is durab
      * as it was and rethrows, and the point of the new order is that at this
      * moment no leaf exists anywhere. */
     const d = doorsThat({ seal: async () => { throw new Error('bundle version conflict'); } });
-    await expect(acceptSeatOnThisDevice(ACCOUNT, SimulatedCommitments, d.doors))
+    await expect(acceptSeatOnThisDevice(ACCOUNT, SimulatedCommitments, d.doors, WALLET))
       .rejects.toThrow(/version conflict/);
     expect(d.published).toHaveLength(0);
     expect(d.promoted).toHaveLength(0);
@@ -88,7 +93,7 @@ describe('C329 — a leaf cannot reach a roster before its key material is durab
      * material for the published leaf is durable. `finishPendingSeat` is the
      * door, and it is named in the refusal path rather than implied. */
     const d = doorsThat({ promote: async () => { throw new Error('bundle version conflict'); } });
-    await expect(acceptSeatOnThisDevice(ACCOUNT, SimulatedCommitments, d.doors))
+    await expect(acceptSeatOnThisDevice(ACCOUNT, SimulatedCommitments, d.doors, WALLET))
       .rejects.toThrow(/version conflict/);
     expect(d.sealed).toHaveLength(1);
     expect(d.published).toHaveLength(1);
@@ -101,7 +106,7 @@ describe('C329 — a leaf cannot reach a roster before its key material is durab
      * assertion above and produce exactly the state this round exists to
      * prevent. So the two are tied together by the check that reads them. */
     const d = doorsThat();
-    await acceptSeatOnThisDevice(ACCOUNT, SimulatedCommitments, d.doors);
+    await acceptSeatOnThisDevice(ACCOUNT, SimulatedCommitments, d.doors, WALLET);
     const stored = itemAt(d.published, 0).leafCommitment as Hex;
     const reading = ownLeafReading(
       { id: 'sgn_new', leafCommitment: stored }, itemAt(d.sealed, 0), SimulatedCommitments);
@@ -109,10 +114,10 @@ describe('C329 — a leaf cannot reach a roster before its key material is durab
   });
 });
 
-describe('C328 — the leaf this path publishes', () => {
+describe('The leaf this path publishes', () => {
   it('is the one definition every writer shares, not a second spelling', async () => {
     const d = doorsThat();
-    await acceptSeatOnThisDevice(ACCOUNT, SimulatedCommitments, d.doors);
+    await acceptSeatOnThisDevice(ACCOUNT, SimulatedCommitments, d.doors, WALLET);
     expect(itemAt(d.published, 0).leafCommitment).toBe(
       storedSignerLeaf(
         { signingSecret: KEYS.signingSecret, blinding: KEYS.blinding,
@@ -135,10 +140,10 @@ describe('C328 — the leaf this path publishes', () => {
     const d = doorsThat({
       newKeys: () => ({
         signingSecret: sk.secret, signingPublicKey: sk.publicKey,
-        wrappingSecret: wk.secret, wrappingPublicKey: wk.publicKey, blinding,
+        wrappingSecret: wk.secret, wrappingPublicKey: wk.publicKey, blinding, salt: newBlinding(),
       }),
     });
-    await acceptSeatOnThisDevice(ACCOUNT, SimulatedCommitments, d.doors);
+    await acceptSeatOnThisDevice(ACCOUNT, SimulatedCommitments, d.doors, WALLET);
 
     const theOldWay = SimulatedCommitments.signerLeaf(
       sk.publicKey, blinding, SimulatedCommitments.allVaults());
@@ -154,7 +159,7 @@ describe('C328 — the leaf this path publishes', () => {
      * fourth field is the promise broken, and `toMatchObject` would not see
      * one. */
     const d = doorsThat();
-    await acceptSeatOnThisDevice(ACCOUNT, SimulatedCommitments, d.doors);
+    await acceptSeatOnThisDevice(ACCOUNT, SimulatedCommitments, d.doors, WALLET);
     expect(Object.keys(itemAt(d.published, 0)).sort())
       .toEqual(['leafCommitment', 'signingPublicKey', 'wrappingPublicKey']);
     expect(JSON.stringify(itemAt(d.published, 0))).not.toContain(KEYS.blinding);
@@ -167,7 +172,7 @@ describe('C328 — the leaf this path publishes', () => {
      * seat written on the day a per-vault scope arrives becomes unreproducible
      * on its own device. */
     const d = doorsThat();
-    await acceptSeatOnThisDevice(ACCOUNT, SimulatedCommitments, d.doors);
+    await acceptSeatOnThisDevice(ACCOUNT, SimulatedCommitments, d.doors, WALLET);
     expect(itemAt(d.sealed, 0).scope).toBe(SimulatedCommitments.allVaults());
     expect(itemAt(d.sealed, 0).accountId).toBe(ACCOUNT);
     expect(d.promoted[0]).toEqual([KEYS.signingPublicKey, 'sgn_new']);
@@ -179,8 +184,36 @@ describe('an invitation carried in a link is for one company', () => {
     const d = doorsThat();
     const other = { accountId: 'acc_elsewhere', nonce: '01'.repeat(32), secret: '02'.repeat(32) };
     /* RED WHEN: keys are made and published for a company the link does not name - the proof is then refused everywhere, after the fact. */
-    await expect(acceptSeatOnThisDevice(ACCOUNT, SimulatedCommitments, d.doors, other))
+    await expect(acceptSeatOnThisDevice(ACCOUNT, SimulatedCommitments, d.doors, WALLET, other))
       .rejects.toThrow(/for a different company/u);
     expect(d.order).toEqual([]);
+  });
+});
+
+describe('a seat\'s leaf commits to the wallet key of the person taking it', () => {
+  const leafOf = (o: { publicKey: string; blinding: string; scope: string }) =>
+    SimulatedCommitments.signerLeaf(o.publicKey as Hex, o.blinding as Hex, o.scope as Hex);
+
+  it('the leaf published is made with the hash of the wallet key under a fresh salt, and the sealed opening proves that key for it', async () => {
+    const d = doorsThat({ newKeys: newSeatKeys });
+    await acceptSeatOnThisDevice(ACCOUNT, SimulatedCommitments, d.doors, WALLET);
+    const sealed = itemAt(d.sealed, 0);
+    const opening = sealed.opening!;
+    /* RED WHEN: an invitee's leaf is made with a blinding that does not commit to its wallet key. */
+    expect(sealed.blinding).toBe(seatBlinding(WALLET, opening.salt));
+    expect(opening.blinding).toBe(sealed.blinding);
+    expect(opening.walletKey).toEqual(WALLET);
+    /* RED WHEN: the opening kept is not of the leaf published, so it proves nothing on any other device. */
+    expect(walletKeyProvedBy(opening, itemAt(d.published, 0).leafCommitment as string, leafOf)).toEqual(WALLET);
+    expect(opening.publicKey).toBe(SimulatedCommitments.signerPublicKey(sealed.signingSecret));
+    expect(opening.scope).toBe(sealed.scope);
+  });
+
+  it('every seat gets its own salt, so two seats for one wallet key are two unlinkable leaves', () => {
+    /* RED WHEN: the salt is fixed or derived, so a leaf says whose key it commits to to anybody who guesses the key. */
+    const [a, b] = [newSeatKeys(WALLET), newSeatKeys(WALLET)];
+    expect(a.salt).not.toBe(b.salt);
+    expect(a.blinding).not.toBe(b.blinding);
+    expect(a.blinding).toBe(seatBlinding(WALLET, a.salt));
   });
 });

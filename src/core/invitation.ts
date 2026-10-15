@@ -16,10 +16,11 @@
  *
  * **THE OFFER IS SIGNED BY THE SEAT THAT INVITED**, with the filing key its
  * directory entry names, and carries that entry: the company's label and
- * account, the inviter's committee key and the entry its wallet signed. So the
- * invitee's device can tell which company's account the invitation is for from
- * the invitation itself, and check the inviter's committee key against that
- * account on the chain, without taking the service's word for either.
+ * account, the inviter's wallet key, the entry its wallet signed and the
+ * inviter's own seat's opening. So the invitee's device can tell which
+ * company's account the invitation is for from the invitation itself, and its
+ * wallet can check that the inviter's seat on that account was made for that
+ * wallet key, without taking the service's word for either.
  *
  * Pure: the service and the page both import it.
  */
@@ -34,6 +35,7 @@ import {
 } from './crypto.js';
 import type { AssetId } from './assets.js';
 import type { Role } from './types.js';
+import { seatOpeningRefusal, type SeatOpening } from './seat-opening.js';
 
 /** How long an invitation can be accepted for, from when it is filed. */
 export const INVITATION_LIFETIME_MS = 14 * 24 * 60 * 60 * 1000;
@@ -98,10 +100,15 @@ export interface SignerOffer {
   readonly seat: { readonly nonce: Hex; readonly secret: Hex };
 }
 
-/** The seat that invited: its committee key, and the directory entry its wallet signed. */
+/**
+ * The seat that invited: its wallet key, the directory entry its wallet
+ * signed, and its own seat's opening, which shows the invitee's wallet that
+ * the seat was made for that key. Nothing of any other seat.
+ */
 export interface Inviter {
   readonly committeeKey: { readonly tag: string; readonly value: string };
   readonly statement: DirectoryEntryStatement;
+  readonly opening: SeatOpening;
 }
 
 /** An invitation's offer, as its invitee reads it. */
@@ -138,9 +145,10 @@ export const signOffer = (offer: InvitationOffer, signingSecret: Hex): SignedOff
 /**
  * **WHY AN OFFER IS NOT ONE ITS INVITER SIGNED**, or null when it is: signed by
  * the filing key the inviter's entry names, and that entry signed by the
- * inviter's committee key for this company's label and account. Whether that
- * committee key is on the account's committee is the chain's to say, and the
- * invitee's wallet asks it.
+ * inviter's committee key for this company's label and account, with the
+ * inviter's own seat's opening in its shape. Whether that seat is on the
+ * account, and its opening proves that key for it, is the chain's leaf to say,
+ * and the invitee's wallet asks it.
  */
 export const whyThisOfferIsNotSigned = (signed: SignedOffer): string | null => {
   const o = signed?.offer;
@@ -153,6 +161,7 @@ export const whyThisOfferIsNotSigned = (signed: SignedOffer): string | null => {
   const s = o.inviter?.statement;
   if (typeof s !== 'object' || s === null || s.account !== o.account) return 'the seat that invited is not on the account it names';
   if (!directoryEntrySignedBy(o.label, o.account, o.inviter.committeeKey, s)) return 'the seat that invited did not sign its entry for this company';
+  if (seatOpeningRefusal(o.inviter.opening) !== null) return 'the seat that invited did not hand over its own seat\'s opening';
   if (!verify(offerMessage(o), signed.signature, s.signingKey)) return 'the seat that invited did not sign this offer';
   const f = o.for;
   if (f?.kind === 'signer') {

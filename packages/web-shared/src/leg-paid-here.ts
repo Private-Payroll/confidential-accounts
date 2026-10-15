@@ -41,6 +41,8 @@ export interface LegDoors extends PayoutDoors {
    * relayed by. A run from a vault under a spending policy is not paid without it.
    */
   readonly charge?: ChargeDoors['charge'];
+  /** The filing key of the seat this device files under, sent with the charge. */
+  readonly filer: ChargeDoors['filer'];
   /** Where this device keeps a charge it relayed until the chain shows it; a run from a policy vault is not paid without it. */
   readonly chargesInFlight?: ChargeDoors['chargesInFlight'];
   /**

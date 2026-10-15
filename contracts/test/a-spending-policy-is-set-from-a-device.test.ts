@@ -246,18 +246,21 @@ describe.skipIf(!KEYS.ok)('A VAULT\'S SPENDING POLICY, SET FROM SIGNERS\' DEVICE
     } as never, hex(founder.secretKey));
     const notHere = async () => { throw new Error('not read here'); };
     return {
-      directory: async () => ({
-        dir: { company, version: 1, seats },
-        holders: {
-          committee: seats.map((s) => s.committeeKey), seats: seats.map((s) => s.seat), approvals: 1, adoptedVaults: [VAULT],
-          founding: seats[0]!.seat, foundingCommittee: [seats[0]!.committeeKey], account: company,
-        } as never,
-        another: new Set(), at: () => null,
+      directory: async () => {
+        const believed = {
+          dir: { company, version: 1, seats },
+          holders: {
+            committee: seats.map((s) => s.committeeKey), seats: seats.map((s) => s.seat), approvals: 1, adoptedVaults: [VAULT],
+            founding: seats[0]!.seat, foundingCommittee: [seats[0]!.committeeKey], account: company,
+          } as never,
+          another: new Set<string>(), at: () => null,
+        };
         /* Every filing entered by the seat whose key signed it, after the batch the founding seat anchored with the first state. */
-        records: heldEntering(company, enteredBy, {
+        const records = await heldEntering(company, enteredBy, {
           seat: seats[0]!.seat, signingSecret: hex(founder.secretKey) as Hex, records: [state], committee: [seats[0]!.committeeKey],
-        }),
-      }) as never,
+        }, believed as never);
+        return { ...believed, records } as never;
+      },
       people: notHere as never, runs: notHere as never, policy: notHere as never,
       roundsOnChain: watching,
       state: async (id) => (id === '0' ? state : null),

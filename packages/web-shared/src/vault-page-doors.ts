@@ -7,18 +7,19 @@
 import type { StartedFrom } from './tree-kept-here.js';
 import type { Hex } from '../../../src/core/crypto.js';
 import { fromHex } from '../../../src/core/crypto.js';
-import { whyNotTheCommittee, whyNotTheReaders, type Roster } from './handover-check.js';
+import { whyNotTheReaders, type Roster } from './handover-check.js';
 import type { Account, SealedProposal, SealedRun } from '../../../src/core/types.js';
 import type { WireRecord } from '../../../src/midnight/sealed-record-wire.js';
 import type { PoolSigner } from '../../../src/midnight/vault-pool.js';
 import { admitToNonceSecret, openNonceSecrets, recordsKeypairFrom } from '../../../src/midnight/company-nonce-secret.js';
 import { HttpSealedPoolStore, pageWireSend, RecordWithheld, type FilingJudge, type FreshJudge } from './http-sealed-pool-store.js';
 import {
-  believedDirectory, DIRECTORY_REFUSAL, directoryReplayed, FILING_REFUSAL, filingRefusalOf, notOnTheChainNow, seatsWithAnotherRecordsKey,
-  type AccountHeld, type DirectoryChange, type DirectoryRefusalCode, type CommitteeKey, type Directory, type DirectoryEntry, type DirectoryFiling, type DirectorySeat, type FiledKind,
+  asAMember, believedDirectory, DIRECTORY_REFUSAL, directoryEntryMade, directoryReplayed, FILING_REFUSAL, proofsOpenedWith, type EntryJudge, filingRefusalOf, notOnTheChainNow, seatsChangedBy, seatsWithAnotherRecordsKey,
+  type AccountHeld, type DirectoryRefusalCode, type SignedChange, type CommitteeKey, type Directory, type DirectoryEntry, type DirectoryFiling, type DirectorySeat, type FiledKind,
 } from '../../../src/midnight/seat-directory.js';
 import type { AccountHoldersRead, DirectoryEntryStatement, RecordsKeyStatement } from 'midnight-identity/profile/records-key';
-import type { AccountAddress, CompanyLabel } from 'midnight-identity/profile/company-label';
+import type { LeafOf, SeatOpening } from '../../../src/core/seat-opening.js';
+import type { CompanyLabel } from 'midnight-identity/profile/company-label';
 import type { DeviceRecords, DeviceSigner } from './deposit-on-device.js';
 import type {
   DepositInFlight, DepositsInFlight, PaymentInFlight, PaymentsInFlight, TemporaryKeys, VaultService,
@@ -48,15 +49,16 @@ export const marked = async <T>(call: () => Promise<T>): Promise<T> => {
 };
 
 /**
- * **THE COMPANY'S VAULT ROUTES, AS THE PAGE CALLS THEM, WITH EVERY COMMITTEE
- * AND EVERY RECORDS KEY THEY REPORT CHECKED AGAINST THE SEALED ROSTER.**
+ * **THE COMPANY'S VAULT ROUTES, AS THE PAGE CALLS THEM, WITH EVERY RECORDS KEY
+ * THEY REPORT CHECKED AGAINST THE SEALED ROSTER.**
  *
- * `roster` opens the company's roster on this device. A committee the service
- * reports that is not exactly the keys the roster names is refused before a
- * vault is built for it, and a records key the roster does not name is refused
- * before the vault's secret is wrapped to it. A vault the service reads as held
- * by its committee is read as not held when the committee on the chain is not
- * the roster's, so no pool is opened and no money goes in.
+ * `roster` opens the company's roster on this device. A records key the roster
+ * does not name is refused before the vault's secret is wrapped to it. A
+ * committee is never checked against the roster: it is the super admins' keys,
+ * the company's own choice, and a key no signer holds is as good as any. Nor
+ * does the committee turn the check of the readers on or off: that check is the
+ * signers' own, from the roster, and always made. Who holds a vault, and
+ * whether money may move, each device reads off the chain itself.
  */
 export const vaultServiceFor = (api: Api, accountId: string, roster: () => Promise<Roster>): VaultService => {
   const base = `/api/accounts/${encodeURIComponent(accountId)}`;
@@ -64,24 +66,13 @@ export const vaultServiceFor = (api: Api, accountId: string, roster: () => Promi
   return {
     keys: async () => {
       const [served, named] = await Promise.all([api(`${base}/vault-keys`), roster()]);
-      const refused = (served.committee === null ? null : whyNotTheCommittee(served.committee.committee, named))
-        ?? whyNotTheReaders(served.readers ?? [], named, served.committee !== null);
+      const refused = whyNotTheReaders(served.readers ?? [], named);
       if (refused !== null) throw new Error(`${refused} Nothing was built or sent.`);
       return served;
     },
     deploy: (tx) => post(`${base}/vaults`, tx),
     handover: (vault, tx) => post(`${base}/vaults/${vault}/handover`, tx),
-    chain: async (vault) => {
-      const view = await api(`${base}/vaults/${vault}/chain`);
-      const heldBy = view.heldByCommittee === true && view.authority ? view.authority.committee : null;
-      if (!view.committee && heldBy === null) return view;
-      const named = await roster();
-      const offered = view.committee ? whyNotTheCommittee(view.committee.committee, named) : null;
-      const held = heldBy === null ? null : whyNotTheCommittee(heldBy, named);
-      const refused = offered ?? held;
-      return refused === null ? view
-        : { ...view, committee: null, heldByCommittee: false, fundable: false, why: refused };
-    },
+    chain: (vault) => api(`${base}/vaults/${vault}/chain`),
     deposit: (vault, tx) => post(`${base}/vaults/${vault}/deposit`, tx),
     depositPublicly: (vault, tx, money) => marked(() => api(`${base}/vaults/${vault}/public-deposit`, {
       method: 'POST', body: JSON.stringify({ tx, token: money.token, amount: money.amount }),
@@ -109,8 +100,8 @@ export const deviceSignerFrom = (seat: string, companyKey: Hex): DeviceSigner =>
 /**
  * **WHO A VAULT'S POOL AND JOURNALS ARE WRAPPED TO: EVERY SEAT THIS DEVICE
  * BELIEVES NOW**, read afresh for each write - an entry its own wallet signed,
- * for a records key that wallet attested, not retired, its committee key on
- * the account's committee and its seat held - each under its seat, to the
+ * whose opening proves that wallet's key for its seat, for a records key that
+ * wallet attested, not retired, and its seat held - each under its seat, to the
  * records key its entry names. A seat with no entry yet is given no copy; it
  * is wrapped in on the first write after its entry is filed.
  */
@@ -146,10 +137,19 @@ export interface DirectoryHereDeps {
   readonly filings: () => Promise<readonly DirectoryFiling[]>;
   readonly label: CompanyLabel;
   readonly accountId: string;
+  /** The company's viewing key, from which the roster key every entry's proof is sealed under is worked out. */
+  readonly viewingKey: Hex;
   /** Who holds the account now and its approval threshold, as the person's own wallet read it for this read. */
   readonly holders: () => Promise<AccountHoldersRead>;
   /** The records-key statements in the roster this device opened. */
   readonly attested: () => Promise<readonly { committeeKey: CommitteeKey; statement: RecordsKeyStatement }[]>;
+  /**
+   * **THE LEAF EACH OPENING MAKES, WORKED OUT IN THIS DEVICE'S VAULT WORKER**
+   * with the account's own `signerLeaf`, in the order asked, null where one
+   * could not be: what every directory entry's opening is checked against
+   * before the directory is replayed. Never the service's word.
+   */
+  readonly leaves: (openings: readonly SeatOpening[]) => Promise<readonly (string | null)[]>;
   /**
    * **THE COMPANY'S RECORDS AS THE HEAD ON CHAIN HOLDS THEM, FOR WHAT THIS READ
    * ASKED** (`recordsHeldHere`), read with the directory just believed: every
@@ -164,8 +164,7 @@ export interface DirectoryHereDeps {
 /**
  * Per version of the company's directory: who held the account as the batch
  * that anchored it named them - the approvals it required and the seats its
- * signer tree's leaves name, which that batch's anchor call checked as it ran -
- * with the committee the account's history shows after that call's block;
+ * signer tree's leaves name, which that batch's anchor call checked as it ran;
  * null when it may be anchored and that is not known (past a header this
  * device could not check, or the leaves do not make the root the header
  * names); undefined while it is not yet anchored. What a filing of that
@@ -225,6 +224,12 @@ export interface DirectoryHere {
   readonly records: RecordsHeld & FirstAnchorSeats & Pick<RecordsHeldHere, 'checkedFrom'>;
   readonly dir: Directory;
   readonly holders: AccountHoldersRead;
+  /**
+   * What this device's vault worker made of every entry's opening for this
+   * read: the leaf the account's own `signerLeaf` makes of it, null for one it
+   * was not asked. What a seat's wallet key is proved against here.
+   */
+  readonly leafOf: LeafOf;
   /** The seats whose entry names a wrapping key their own wallet did not attest. */
   readonly another: ReadonlySet<string>;
   /**
@@ -245,9 +250,10 @@ export interface DirectoryHere {
    */
   readonly passedOver?: readonly DirectoryFiling[];
   /**
-   * **EVERY QUORUM'S CHANGE NOT APPLIED**, by the version its signatures were
-   * made for, oldest first, with its change: what a device files again
-   * (`refiled`) when the replay would believe it filed as the next version.
+   * **EVERY SIGNED CHANGE NOT APPLIED** - a quorum's role or retirement - by
+   * the version its signatures were made for, oldest first, with its change:
+   * what a device files again (`refiled`) when the replay would believe it
+   * filed as the next version.
    */
   readonly notApplied?: readonly KeptChange[];
   /** Each quorum's change filed again and not applied, with why (`refiledRefusalOf`): said by `passedOverSaid`. */
@@ -263,16 +269,54 @@ export interface DirectoryHere {
     /** The changes held back, by the version each was signed for: the first waits for a seat's own entry to be filed again. */
     readonly waiting: ReadonlySet<number>;
   };
-  /** The versions a change filed again was signed for whose filing again is applied and anchored. */
+  /**
+   * The versions a signed change was signed for whose filing - as that version,
+   * or filed again later - is applied and anchored: what a device that kept it
+   * lets go of.
+   */
   readonly anchoredAgain?: ReadonlySet<number>;
+  /** The directory versions this read's replay refused: filed, and never applied, so nothing waits for their anchor. */
+  readonly refusedAt?: ReadonlySet<number>;
 }
 
-/** A quorum's change, by the version its signatures were made for. */
-type KeptChange = { readonly signedAt: number; readonly change: Exclude<DirectoryChange, { kind: 'claim' }> };
+/** A signed change, by the version its signatures were made for. */
+type KeptChange = { readonly signedAt: number; readonly change: SignedChange };
 
 /** Said wherever a read meets a header it could not check: nothing past it is believed. */
 const pastAStop = (stop: TransitionStop): string =>
   `the company's records cannot be read past a batch this device cannot open: ${transitionStopSaid(stop)}`;
+
+/** The parts of an opening its leaf is made from, as one key. */
+const leafKeyOf = (o: Pick<SeatOpening, 'publicKey' | 'blinding' | 'scope'>): string =>
+  `${String(o.publicKey).toLowerCase()}:${String(o.blinding).toLowerCase()}:${String(o.scope).toLowerCase()}`;
+
+/**
+ * **HOW THIS DEVICE JUDGES EVERY ENTRY, AS A MEMBER**: each entry's proof
+ * opened with the company's viewing key, and what this device's vault worker
+ * makes of every opening in them, asked once for the whole read, before the
+ * directory is replayed: the replay stays synchronous and checks each opening
+ * against these leaves, so the leaf of an opening the worker was not asked
+ * about is null and proves nothing. A worker answer of the wrong length is
+ * refused.
+ */
+const memberHere = async (
+  deps: Pick<DirectoryHereDeps, 'leaves' | 'accountId' | 'viewingKey'>, filings: readonly DirectoryFiling[],
+): Promise<{ judge: EntryJudge; leafOf: LeafOf }> => {
+  const proofOf = proofsOpenedWith(deps.accountId, deps.viewingKey);
+  const openings = new Map<string, SeatOpening>();
+  for (const f of filings) {
+    const o = f?.change?.kind === 'claim' ? proofOf(f.change.entry)?.opening : undefined;
+    if (o !== undefined) openings.set(leafKeyOf(o), o);
+  }
+  const asked = [...openings.values()];
+  const leaves = asked.length === 0 ? [] : await deps.leaves(asked);
+  if (!Array.isArray(leaves) || leaves.length !== asked.length) {
+    throw new Error('this device could not work out the leaves of its company\'s seats, so no seat in its directory is believed. Reload the page');
+  }
+  const made = new Map(asked.map((o, i) => [leafKeyOf(o), typeof leaves[i] === 'string' ? leaves[i]!.toLowerCase() : null]));
+  const leafOf: LeafOf = (o) => made.get(leafKeyOf(o)) ?? null;
+  return { judge: asAMember(proofOf, leafOf), leafOf };
+};
 
 /**
  * **THE DIRECTORY THIS DEVICE BELIEVES, READ AFRESH, WITH THE COMPANY'S RECORDS
@@ -301,19 +345,20 @@ export const directoryHere = async (deps: DirectoryHereDeps, asked: RecordsAsked
  */
 export const directoryWithItsRecordsHere = async (deps: DirectoryHereDeps, asked: RecordsAsked = {}): Promise<DirectoryHere> => {
   const [filings, holders, attested] = await Promise.all([deps.filings(), deps.holders(), deps.attested()]);
-  const now = { approvals: holders.approvals, seats: holders.seats, committee: holders.committee };
+  const { judge, leafOf } = await memberHere(deps, filings);
+  const now: AccountHeld = { approvals: holders.approvals, seats: holders.seats };
   const believedAs = (asAnchored?: HeldAsAnchored): DirectoryBelieved => {
-    const dir: Directory = believedDirectory(deps.accountId, filings, deps.label, holders.account, now, asAnchored);
+    const dir: Directory = believedDirectory(deps.accountId, filings, deps.label, holders.account, judge, now, asAnchored);
     const at = (version: number, held: HeldAsAnchored | undefined = asAnchored) => (version < 0 || version > filings.length ? null : {
-      dir: believedDirectory(deps.accountId, filings.slice(0, version), deps.label, holders.account, now, held),
+      dir: believedDirectory(deps.accountId, filings.slice(0, version), deps.label, holders.account, judge, now, held),
       digests: filings.slice(0, version).map((f) => directoryEntry(f).digest),
     });
-    return { dir, holders, another: seatsWithAnotherRecordsKey(dir, deps.label, holders.account, attested), at };
+    return { dir, holders, leafOf, another: seatsWithAnotherRecordsKey(dir, deps.label, holders.account, attested), at };
   };
   const { held, directoryServed, ...records } = await deps.anchored(believedAs(), asked);
   /* Every version the anchor holds counted against who held the account as it was anchored, never who holds it now. */
   const believed = believedAs(held);
-  const replayed = directoryReplayed(deps.accountId, filings, deps.label, holders.account, now, held);
+  const replayed = directoryReplayed(deps.accountId, filings, deps.label, holders.account, judge, now, held);
   /*
    * **THE DIRECTORY SERVED IS AT LEAST THE ONE ANCHORED, BYTE FOR BYTE.** A
    * service serving it older than a version the anchor holds, or other bytes at
@@ -329,7 +374,7 @@ export const directoryWithItsRecordsHere = async (deps: DirectoryHereDeps, asked
   }
   const passedOver = neverEnteredIn(records, DIRECTORY).flatMap((v) => (filings[v - 1] === undefined ? [] : [filings[v - 1]!]));
   /* A quorum's change not applied, by the version it was signed for: filed again only as this replay would believe it. */
-  const notApplied = new Map<number, Exclude<DirectoryChange, { kind: 'claim' }>>();
+  const notApplied = new Map<number, SignedChange>();
   for (const f of filings) {
     const at = f.signedAt ?? f.version;
     if (f.change.kind !== 'claim' && !replayed.replay.applied.has(at) && !notApplied.has(at)) notApplied.set(at, f.change);
@@ -341,8 +386,9 @@ export const directoryWithItsRecordsHere = async (deps: DirectoryHereDeps, asked
   });
   /* A change resting on a seat whose own entry was passed over: it names that seat, or that seat's key signed it. */
   const passedClaims = passedOver.flatMap((f) => (f.change.kind === 'claim' ? [f.change.entry.statement] : []));
-  const restsOnAnEntry = (c: KeptChange) => passedClaims.some((st) => st.seat === c.change.seat
-    || (Array.isArray(c.change.signatures) && c.change.signatures.some((x) => x?.publicKey?.toLowerCase() === st.signingKey.toLowerCase())));
+  const restsOnAnEntry = (c: KeptChange) => passedClaims.some((st) => seatsChangedBy(c.change).includes(st.seat)
+    || (Array.isArray(c.change.signatures)
+      && c.change.signatures.some((x) => x?.publicKey?.toLowerCase() === st.signingKey.toLowerCase())));
   const refiled = (changes: readonly KeptChange[]) => {
     const filed: DirectoryFiling[] = [];
     const refused = new Map<number, DirectoryRefusalCode>();
@@ -355,12 +401,13 @@ export const directoryWithItsRecordsHere = async (deps: DirectoryHereDeps, asked
        * seat's changes are filed again in their first order once it is: filed past it, the waiting one would undo a later
        * change to its seat. A change to another seat is never held back by it.
        */
-      if (heldBack.has(c.change.seat)) { waiting.add(c.signedAt); continue; }
+      const seats = seatsChangedBy(c.change);
+      if (seats.some((x) => heldBack.has(x))) { waiting.add(c.signedAt); continue; }
       const f: DirectoryFiling = { company: deps.accountId, version: filings.length + filed.length + 1, change: c.change, signedAt: c.signedAt };
-      const why = directoryReplayed(deps.accountId, [...filings, ...filed, f], deps.label, holders.account, now, held).refused.get(f.version);
+      const why = directoryReplayed(deps.accountId, [...filings, ...filed, f], deps.label, holders.account, judge, now, held).refused.get(f.version);
       if (why === undefined) { filed.push(f); continue; }
       if ((why === 'no-such-seat' || why === 'below-quorum') && restsOnAnEntry(c)) {
-        heldBack.add(c.change.seat);
+        for (const x of seats) heldBack.add(x);
         waiting.add(c.signedAt);
         continue;
       }
@@ -368,10 +415,10 @@ export const directoryWithItsRecordsHere = async (deps: DirectoryHereDeps, asked
     }
     return { filed, refused, waiting };
   };
-  const anchoredAgain = new Set(filings.flatMap((f) => (f.signedAt !== undefined && replayed.replay.applied.has(f.version)
-    && records.directory.has(f.version) ? [f.signedAt] : [])));
+  const anchoredAgain = new Set(filings.flatMap((f) => (f.change.kind !== 'claim' && replayed.replay.applied.has(f.version)
+    && records.directory.has(f.version) ? [f.signedAt ?? f.version] : [])));
   return {
-    ...believed, records, passedOver, refiledRefused, refiled, anchoredAgain,
+    ...believed, records, passedOver, refiledRefused, refiled, anchoredAgain, refusedAt: new Set(replayed.refused.keys()),
     notApplied: [...notApplied].sort(([a], [b]) => a - b).map(([signedAt, change]) => ({ signedAt, change })),
   };
 };
@@ -430,9 +477,8 @@ export const FOUNDING_ASKED: RecordsAsked = Object.freeze({ founding: true });
  * seat that signed it. That batch is anchored by the founding signer's device
  * before a second signer can be seated, so a first header naming more than one
  * seat names no founding seat. Its entry is the one the directory believes for
- * that seat: a claim anchored with the first batch is counted against the
- * committee the account held after that anchor's block, which holds the
- * founding signer's wallet alone, so a claim to that seat signed by any other
+ * that seat: a claim is believed only on an opening that proves the wallet key
+ * the seat's leaf commits to, so a claim to that seat signed by any other
  * wallet is never believed, whenever it was filed. The entry is kept whether
  * the seat is held now or not. And the account must have been held by that
  * seat's own wallet alone from its deploy (`heldFromTheStartRefusal`): one held
@@ -481,8 +527,9 @@ const heldFromTheStartRefusal = (deployed: AccountDeployed | null | undefined, s
     + 'seat this device believes. Create the company again from its founding signer\'s device';
   if (deployed === undefined || deployed === null) return none;
   const key = deployed.committee[0];
-  const heldByTheSeat = deployed.committee.length === 1 && deployed.threshold === 1 && key !== undefined
-    && key.tag.toLowerCase() === seat.committeeKey.tag.toLowerCase() && key.value.toLowerCase() === seat.committeeKey.value.toLowerCase();
+  const own = seat.committeeKey;
+  const heldByTheSeat = deployed.committee.length === 1 && deployed.threshold === 1 && key !== undefined && own !== undefined
+    && key.tag.toLowerCase() === own.tag.toLowerCase() && key.value.toLowerCase() === own.value.toLowerCase();
   const seatedAlone = deployed.seats.length === 1 && deployed.seats[0]!.toLowerCase() === seat.seat;
   return heldByTheSeat && seatedAlone && deployed.updates === 0 && !deployed.ranSecondStep ? null : none;
 };
@@ -618,9 +665,24 @@ const refusalHere = (
 };
 
 /**
+ * **THE DIRECTORY VERSIONS FILED, APPLIED AND NOT YET ANCHORED**, as this read
+ * holds the company's records: every version above the newest the anchor
+ * holds that the replay applied. A version below it that the anchor does not
+ * hold was passed over, and is filed again rather than anchored; one the replay
+ * refused changes nothing, so a service filing such versions holds nothing
+ * back. What a rise of the account's threshold, and the way into the company,
+ * wait for.
+ */
+export const directoryNotYetAnchored = (here: Pick<DirectoryHere, 'dir' | 'records' | 'refusedAt'>): readonly number[] => {
+  const newest = Math.max(0, ...here.records.directory.keys());
+  return Array.from({ length: Math.max(0, here.dir.version - newest) }, (_, i) => newest + i + 1)
+    .filter((v) => here.refusedAt?.has(v) !== true);
+};
+
+/**
  * **WHETHER THIS DEVICE BELIEVES A SEAT NOW, AS A SEAT**: its entry's records
- * key attested by its own wallet, not retired, its committee key on the
- * account's committee and the seat held. The one rule for who a vault's
+ * key attested by its own wallet, not retired, and the seat held - its wallet
+ * key was proved for it by its entry's opening. The one rule for who a vault's
  * records are wrapped to, who is given a vault's secret, and whose wallet
  * raised an invitation. Null when it does; the reason when it does not.
  */
@@ -804,21 +866,27 @@ export const deviceRecordsFor = (
 /**
  * **THIS SIGNER'S OWN ENTRY IN THE COMPANY'S SEAT DIRECTORY, FILED FROM THIS
  * DEVICE** with the statement their wallet signed in the same press as their
- * records key. Filed as the next version; an entry already there for this seat
- * with these keys is left alone, so it can run on every press.
+ * records key, its wallet key, signature and opening sealed under the
+ * company's roster key and the whole signed by this seat's filing key
+ * (`directoryEntryMade`). Filed as the next version; an entry already there for
+ * this seat with these keys is left alone, so it can run on every press.
  */
 const fileOwnDirectoryEntry = async (
-  api: Api, accountId: string, person: string, label: CompanyLabel,
-  signed: { readonly committeeKey: CommitteeKey; readonly entry: DirectoryEntryStatement },
+  api: Api, accountId: string, person: string,
+  signed: { readonly committeeKey: CommitteeKey; readonly entry: DirectoryEntryStatement }, opening: SeatOpening,
+  keys: { readonly signingSecret: Hex; readonly viewingKey: Hex },
 ): Promise<'filed' | 'already-there'> => {
   const filings = await directoryFilingsFrom(api, accountId);
-  /* The account this person's own wallet signed the entry for. */
-  const dir = believedDirectory(accountId, filings, label, signed.entry.account as AccountAddress);
-  const mine = dir.seats.find((x) => x.seat === signed.entry.seat);
-  if (mine !== undefined && mine.signingKey === signed.entry.signingKey && mine.wrappingKey === signed.entry.wrappingKey) {
-    return 'already-there';
-  }
-  const entry: DirectoryEntry = { person, committeeKey: { ...signed.committeeKey }, statement: { ...signed.entry } };
+  /*
+   * Already filed for this seat with these keys: the service refuses a second entry for a seat or for a key, so
+   * filing again would be refused.
+   */
+  const there = filings.some((f) => f?.change?.kind === 'claim' && f.change.entry?.statement?.seat === signed.entry.seat
+    && f.change.entry.statement.signingKey === signed.entry.signingKey && f.change.entry.statement.wrappingKey === signed.entry.wrappingKey);
+  if (there) return 'already-there';
+  const entry: DirectoryEntry = directoryEntryMade({
+    company: accountId, person, committeeKey: signed.committeeKey, signed: signed.entry, opening, ...keys,
+  });
   const filing: DirectoryFiling = { company: accountId, version: filings.length + 1, change: { kind: 'claim', entry } };
   await fileDirectoryFiling(api, accountId, filing);
   return 'filed';
@@ -834,12 +902,18 @@ export const fileDirectoryFiling = async (api: Api, accountId: string, filing: D
   await api(`/api/accounts/${encodeURIComponent(accountId)}/directory/${filing.version}`, { method: 'PUT', body: JSON.stringify(filing) });
 };
 
-/** A directory entry this signer's own wallet signed, kept on their device until the company's directory holds it. */
+/**
+ * A directory entry this signer's own wallet signed, kept on their device until
+ * the company's directory holds it, with the seat's opening made when the seat
+ * was taken on this device.
+ */
 export interface OwedDirectoryEntry {
   /** The signed-in person the entry names: only they may file it. */
   readonly person: string;
   readonly company: CompanyLabel;
   readonly signed: { readonly committeeKey: CommitteeKey; readonly entry: DirectoryEntryStatement };
+  /** Absent where the seat was taken on a device that made no opening: such an entry is never filed. */
+  readonly opening?: SeatOpening;
 }
 
 /** What became of an owed entry: filed now, found already there, nothing owed, or not yet taken, and why. */
@@ -848,21 +922,31 @@ export type OwedEntryFiled = 'filed' | 'already-there' | 'nothing-owed' | { read
 /**
  * **A SIGNER'S DIRECTORY ENTRY, FILED FROM THEIR OWN DEVICE AS SOON AS THE
  * DIRECTORY WILL TAKE IT.** The entry is signed by their wallet in the press
- * that gives their vault keys at seating; it is believed only while the
- * account's committee lists the wallet that signed it and the account holds
- * the seat, which may be later. So it is kept (`owed`) and filed again on
+ * that gives their vault keys at seating, and filed with the opening of their
+ * seat this device made when it took the seat, sealed under the company's
+ * roster key and signed by the seat's filing key (`keys`), so it is filed only
+ * once this device can open the company's key; it is believed only while the
+ * account holds the seat, which may be later. So it is kept (`owed`) and filed again on
  * every way into the company until the directory holds it, and let go then.
  * A refusal is not an error here: it leaves the entry owed, and says why.
  */
 export const fileTheOwedDirectoryEntry = async (
   api: Api, accountId: string,
   owed: { read(): OwedDirectoryEntry | null; settle(): Promise<void> },
+  keys: () => Promise<{ readonly signingSecret: Hex; readonly viewingKey: Hex } | null>,
 ): Promise<OwedEntryFiled> => {
   const now = owed.read();
   if (now === null) return 'nothing-owed';
   let done: 'filed' | 'already-there';
   try {
-    done = await fileOwnDirectoryEntry(api, accountId, now.person, now.company, now.signed);
+    if (now.opening === undefined) {
+      return { notYet: 'this device holds no opening of its seat, so its entry cannot be filed. Take the seat again on this device' };
+    }
+    const held = await keys();
+    if (held === null) {
+      return { notYet: 'this device cannot open the company\'s key yet, so its entry cannot be sealed for the company\'s members. It is filed once you are admitted' };
+    }
+    done = await fileOwnDirectoryEntry(api, accountId, now.person, now.signed, now.opening, held);
   } catch (e) {
     return { notYet: (e as Error)?.message ?? String(e) };
   }

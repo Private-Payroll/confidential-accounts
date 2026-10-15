@@ -1,4 +1,5 @@
 import type { AccountAddress, CompanyLabel } from 'midnight-identity/profile/company-label';
+import type { Hex } from '../../../../src/core/crypto.js';
 import type { AccountHoldersRead } from 'midnight-identity/profile/records-key';
 import type { Account, SealedAccount } from '../../../../src/core/types.js';
 import { api, holdersFromTheWallet, openAccount, viewingKeyFor, type AccountKeys } from 'vaults-web-shared/keyring.js';
@@ -10,12 +11,12 @@ import {
   type DirectoryRead,
 } from 'vaults-web-shared/vault-page-doors.js';
 import type { FreshJudge } from 'vaults-web-shared/http-sealed-pool-store.js';
-import { manifestServiceFor, recordsEnteredFor, treeServiceFor } from 'vaults-web-shared/record-entered-here.js';
+import { manifestServiceFor, treeServiceFor } from 'vaults-web-shared/record-entered-here.js';
 import { treeKeptHere } from 'vaults-web-shared/tree-kept-here.js';
 import {
   anchoredOnTheWayIn, anchorsOnChainAt, anchorServiceFor, heldFor, type AnchorDoors, type OnTheWayIn,
 } from 'vaults-web-shared/records-anchored-here.js';
-import { ownOpeningFiled, tagSeatsHere, type SeatOpeningsDoors } from 'vaults-web-shared/seat-openings-here.js';
+import { tagSeatsHere } from 'vaults-web-shared/seat-openings-here.js';
 import { companyRoute } from './handover-state.js';
 import { ACT_REFUSAL } from './refusals.js';
 import { ACCOUNT_ORIGIN } from './session.js';
@@ -67,15 +68,9 @@ const vouchingFor = (companyId: string): NonNullable<AnchorDoors['vouching']> =>
   identity: async (run) => (await theVaultBuilder()).vouchedRunIdentity(run),
 });
 
-/** What reading and filing the seats' openings asks of this page: the company's viewing key and epoch, and the page's vault worker. */
-const openingDoorsFor = async (companyId: string, account: AccountAddress): Promise<SeatOpeningsDoors> => {
-  const sealed = await api(companyRoute(companyId)) as SealedAccount;
-  return { accountId: companyId, account, viewingKey: viewingKeyFor(sealed), keyEpoch: sealed.keyEpoch, api, builder: await theVaultBuilder() };
-};
-
-/** Which seat each tag is, for the seats who hold the account now as the person's own wallet reads it (`tagSeatsHere`). */
-const tagSeatsFor = (companyId: string, company: CompanyLabel, account: AccountAddress): NonNullable<AnchorDoors['tagSeats']> => async () =>
-  tagSeatsHere(await openingDoorsFor(companyId, account), (await holdersHere(company, account)).seats);
+/** Which seat each tag is, for the believed seats who hold the account now as the person's own wallet read it (`tagSeatsHere`). */
+const tagSeatsFor = (account: AccountAddress): NonNullable<AnchorDoors['tagSeats']> => async (here) =>
+  tagSeatsHere({ account, builder: await theVaultBuilder() }, here.dir.seats, here.holders.seats);
 
 /**
  * **THE COMPANY'S RECORDS AS THE HEAD ON CHAIN HOLDS THEM**, for what each
@@ -88,42 +83,55 @@ const tagSeatsFor = (companyId: string, company: CompanyLabel, account: AccountA
  */
 const anchoredHere = (companyId: string, company: CompanyLabel, account: AccountAddress): DirectoryHereDeps['anchored'] => async (directory, asked) => heldFor({
   accountId: companyId, tree: treeServiceFor(api), manifest: manifestServiceFor(api), ...treeKeptHere(), onChain: anchorsOnChainFor(company, account),
-  builder: await theVaultBuilder(), vouching: vouchingFor(companyId), tagSeats: tagSeatsFor(companyId, company, account),
+  builder: await theVaultBuilder(), vouching: vouchingFor(companyId), tagSeats: tagSeatsFor(account),
 })(directory, asked);
+
+/**
+ * The leaf the account's own `signerLeaf` makes of each directory entry's
+ * opening, worked out in the page's vault worker: what every seat's wallet key
+ * is proved against.
+ */
+const leavesFor = (account: AccountAddress): DirectoryHereDeps['leaves'] => async (openings) =>
+  (await (await theVaultBuilder()).seatOpenings({
+    account, openings: openings.map((o) => ({ publicKey: o.publicKey, scope: o.scope, blinding: o.blinding })),
+  })).openings.map((o) => o.leaf);
 
 /** What this page reads, afresh for each read, to believe a company's roster and each entry in it. */
 export const rosterReadsFor = (companyId: string, company: CompanyLabel, account: AccountAddress): RosterReads => ({
   filings: () => directoryFilingsFrom(api, companyId),
   holders: () => holdersHere(company, account),
   anchored: anchoredHere(companyId, company, account),
+  leaves: leavesFor(account),
 });
 
 /** The company as this page believes it (`openAccount`), its signers read from its roster record only. */
-export const openedHere = (sealed: SealedAccount): Promise<BelievedAccount | null> => openAccount(sealed, holdersHere, anchoredHere);
+export const openedHere = (sealed: SealedAccount): Promise<BelievedAccount | null> =>
+  openAccount(sealed, holdersHere, anchoredHere, (_company, account) => leavesFor(account));
 
 /** What this page reads to believe a company's directory, the one way every screen asks it. */
 const directoryDeps = (
-  companyId: string, company: CompanyLabel, account: AccountAddress, roster: () => Promise<Pick<Account, 'signers'>>,
+  companyId: string, company: CompanyLabel, account: AccountAddress, viewingKey: Hex, roster: () => Promise<Pick<Account, 'signers'>>,
 ): DirectoryHereDeps => ({
   accountId: companyId,
   label: company,
+  viewingKey,
   ...rosterReadsFor(companyId, company, account),
   attested: async () => attestedIn(await roster()),
 });
 
 export const filingJudgeFor = (
-  companyId: string, company: CompanyLabel, account: AccountAddress, roster: () => Promise<Pick<Account, 'signers'>>,
-): FreshJudge => directoryJudge(directoryDeps(companyId, company, account, roster));
+  companyId: string, company: CompanyLabel, account: AccountAddress, viewingKey: Hex, roster: () => Promise<Pick<Account, 'signers'>>,
+): FreshJudge => directoryJudge(directoryDeps(companyId, company, account, viewingKey, roster));
 
 /** The company's directory as this page believes it, read afresh at each call by the same reads: who a vault's records are wrapped to. */
 export const directoryHereFor = (
-  companyId: string, company: CompanyLabel, account: AccountAddress, roster: () => Promise<Pick<Account, 'signers'>>,
-): DirectoryRead => (asked) => directoryHere(directoryDeps(companyId, company, account, roster), asked);
+  companyId: string, company: CompanyLabel, account: AccountAddress, viewingKey: Hex, roster: () => Promise<Pick<Account, 'signers'>>,
+): DirectoryRead => (asked) => directoryHere(directoryDeps(companyId, company, account, viewingKey, roster), asked);
 
 /** The same directory with the records it was replayed with, stopped or not: what anchoring reads, to refuse on a stop in its own words. */
 const directoryWithItsRecordsFor = (
-  companyId: string, company: CompanyLabel, account: AccountAddress, roster: () => Promise<Pick<Account, 'signers'>>,
-): DirectoryRead => (asked) => directoryWithItsRecordsHere(directoryDeps(companyId, company, account, roster), asked);
+  companyId: string, company: CompanyLabel, account: AccountAddress, viewingKey: Hex, roster: () => Promise<Pick<Account, 'signers'>>,
+): DirectoryRead => (asked) => directoryWithItsRecordsHere(directoryDeps(companyId, company, account, viewingKey, roster), asked);
 
 /**
  * Why the one-a-day anchor did not run, where this page decides it rather than
@@ -152,17 +160,13 @@ export const anchoredOnTheWayInFor = async (
       manifest: manifestServiceFor(api),
       tree: treeServiceFor(api),
       ...treeKeptHere(),
-      directory: directoryWithItsRecordsFor(sealed.id, company, account, roster),
+      /* The viewing key is worked out only when the directory is read, so a company this device cannot open yet refuses there. */
+      directory: () => directoryWithItsRecordsFor(sealed.id, company, account, viewingKeyFor(sealed), roster)(),
       directoryFilings: () => directoryFilingsFrom(api, sealed.id),
       fileDirectory: (filing) => fileDirectoryFiling(api, sealed.id, filing),
       onChain: anchorsOnChainFor(company, account),
       vouching: vouchingFor(sealed.id),
-      tagSeats: tagSeatsFor(sealed.id, company, account),
-      ownOpening: async () => ownOpeningFiled({
-        ...(await openingDoorsFor(sealed.id, account)),
-        material: { signingSecret: keys.signingSecret, blinding: keys.blinding, scope: keys.scope },
-        entered: recordsEnteredFor(manifestServiceFor(api), sealed.id, keys.signingSecret),
-      }),
+      tagSeats: tagSeatsFor(account),
       service: anchorServiceFor(api),
       builder: await theVaultBuilder(),
     });

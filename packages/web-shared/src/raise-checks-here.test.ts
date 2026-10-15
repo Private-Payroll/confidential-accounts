@@ -44,9 +44,11 @@ const roundOf = (run: PayrollRun, recordedFrom: readonly RosterEmployee[], retry
     asset: TEST_TOKEN, opensAt: '1', closesAt: '2', required: '0', ...(retry === undefined ? {} : { retry }),
   } as RunMadeHere,
 });
+/** The company's records as a device reads them with nothing filed and nothing anchored: read once, as every case reads the same. */
+const NO_RECORDS = await heldEntering(CO);
 const factsOf = (people: readonly RosterEmployee[]): FactsHere => ({
   people: { people: people.map((p) => ({ person: p, version: 1, handedOver: true })), notBelieved: [], notPayable: [] } as unknown as PeopleHere,
-  directory: { dir: { company: CO, version: 1, seats: [] }, holders: {} as never, another: new Set(), at: () => null, records: heldEntering(CO) },
+  directory: { dir: { company: CO, version: 1, seats: [] }, holders: {} as never, another: new Set(), at: () => null, leafOf: () => null, records: NO_RECORDS },
   policy: { threshold: 1, limitsByRole: {} } as never,
   others: [], live: new Set(), registry: REGISTRY, rounds: [], standingOf: () => undefined, nowInSeconds: 0n,
   spendingPolicy: { state: 'none' },
@@ -93,7 +95,7 @@ describe('THE ONE LIST OF RAISE CHECKS', () => {
     expect(() => policyCheck(raisedNeeding('1'), under(set()))).toThrow(/raised needing 1 approvals, and its band .* needs 2/u);
     expect(() => policyCheck(raisedNeeding('0'), under(set()))).toThrow(/raised needing 0 approvals/u);
     expect(() => policyCheck(raisedNeeding('two'), under(set()))).toThrow(/raised needing two approvals/u);
-    /* RED WHEN: a proposal raised needing more than its band is refused - that is the raiser's own choice (the founder's rule on extra approvals). */
+    /* RED WHEN: a proposal raised needing more than its band is refused - that is the raiser's own choice (the company's rule on extra approvals). */
     expect(() => policyCheck(raisedNeeding('2'), under(set()))).not.toThrow();
     expect(() => policyCheck(raisedNeeding('3'), under(set()))).not.toThrow();
   });

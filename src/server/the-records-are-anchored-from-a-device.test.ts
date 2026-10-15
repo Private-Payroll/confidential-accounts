@@ -13,6 +13,7 @@
  *
  * The one to read first is "ANOTHER DEVICE ANCHORING FIRST".
  */
+import { leavesOfTheContract } from '../testing/directory-seats.js';
 import { beforeEach, describe, expect, it } from 'vitest';
 import { aChainAnchor, anchoredOver, anchorFunctions, headAfter, heldBy, holdersOf, onChainOf, tagInATest, anchorSentInATest } from '../testing/record-tree-double.js';
 import { directoryWithItsRecordsHere, foundedOnChainHere } from 'vaults-web-shared/vault-page-doors.js';
@@ -579,8 +580,9 @@ describe('A COMPANY\'S FIRST ANCHOR HOLDS THE RECORDS IT WAS FOUNDED WITH, ENTER
   /* Eve's company, on a chain of its own: her seat alone holds its account, and nothing of it is anchored yet. */
   const otherChain = aChainAnchor(() => heldBy(chains.get(OTHER)!));
   const otherDirectory = (asked?: RecordsAsked) => directoryWithItsRecordsHere({
-    accountId: OTHER, label: OTHER_LABEL, filings: async () => store.directoryFilingsOf(OTHER), attested: async () => [],
+    accountId: OTHER, label: OTHER_LABEL, viewingKey: KEY, filings: async () => store.directoryFilingsOf(OTHER), attested: async () => [],
     holders: async () => ({ ...chains.get(OTHER)!.seats, approvals: 1, adoptedVaults: [], account: OTHER_ADDRESS }) as never,
+    leaves: leavesOfTheContract,
     anchored: anchoredOver(apiAs('eve'), OTHER, otherChain.read),
   }, asked);
   const evesDoors = (over: Partial<AnchorDoors['service']> = {}): AnchorDoors => ({
@@ -664,8 +666,9 @@ describe('A COMPANY\'S FIRST ANCHOR HOLDS THE RECORDS IT WAS FOUNDED WITH, ENTER
     /* Eve's company as the test before this one founded it: anchored first by her seat with her first state and roster. */
     expect(otherChain.landed.length).toBeGreaterThan(0);
     const deployedAs = (deployed: AccountDeployed | null) => directoryWithItsRecordsHere({
-      accountId: OTHER, label: OTHER_LABEL, filings: async () => store.directoryFilingsOf(OTHER), attested: async () => [],
+      accountId: OTHER, label: OTHER_LABEL, viewingKey: KEY, filings: async () => store.directoryFilingsOf(OTHER), attested: async () => [],
       holders: async () => ({ ...chains.get(OTHER)!.seats, approvals: 1, adoptedVaults: [], account: OTHER_ADDRESS }) as never,
+      leaves: leavesOfTheContract,
       anchored: anchoredOver(apiAs('eve'), OTHER, () => ({ ...otherChain.read(), deployed })),
     }, { founding: true });
     const onHerDevice = otherChain.read().deployed!;

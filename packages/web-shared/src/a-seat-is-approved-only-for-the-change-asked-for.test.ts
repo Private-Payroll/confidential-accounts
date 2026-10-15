@@ -17,6 +17,7 @@ import {
 } from './governed-call-on-device.js';
 import type { GovernanceOnTheWire, GovernedCallOrder, OpenedRound } from './governed-call-builder.js';
 import { FiledNotEntered } from './record-entered-here.js';
+import { directoryNotYetAnchored } from './vault-page-doors.js';
 import { signProposalFiling, type SignedProposalFiling } from '../../../src/core/proposal-filing.js';
 import { heldEntering } from '../../../src/testing/record-tree-double.js';
 import type { RoundOnChain } from './governed-call-builder.js';
@@ -63,8 +64,17 @@ const aDevice = (o: {
   refuseEntries?: number;
   /** Proposals the company's records name, entered by the founding seat, whether or not the service lists them. */
   named?: readonly string[];
+  /** How many versions of the company's directory are filed and not yet anchored; none unless a test says. */
+  waiting?: number;
+  /** Whether this device may anchor the company's records itself, which anchors every version waiting. */
+  anchors?: boolean;
+  /** The versions among those waiting that the directory's replay refused. */
+  refused?: readonly number[];
+  /** The approvals the account requires now; one unless a test says. */
+  approvals?: number;
 } = {}) => {
   const log: string[] = [];
+  let waiting = o.waiting ?? 0;
   const rounds = new Map<string, RoundOnThePage & { opened: OpenedRound }>();
   /* Each proposal as it was written down, signed by the seat that wrote it: what the company serves back. */
   const filings = new Map<string, SignedProposalFiling>();
@@ -124,14 +134,21 @@ const aDevice = (o: {
     material: { signingSecret: founder.secret, blinding: '22'.repeat(32), scope: '33'.repeat(32) },
     accountId: ACC,
     records: {
-      directory: async () => ({
-        dir: { company: ACC, version: 1, seats: [{ seat: SEAT, person: 'ada', signingKey: founder.publicKey, wrappingKey: 'ab'.repeat(32), committeeKey: COMMITTEE, role: 'admin', retired: null }] },
-        holders: { committee: [COMMITTEE], seats: [SEAT], approvals: 1, adoptedVaults: [], account: 'ac'.repeat(32) },
-        another: new Set(),
-        records: heldEntering(ACC, (o.named ?? []).map((id) => ({
-          entry: { store: 'proposal' as const, kind: 'proposal', id, version: 1, digest: 'ab'.repeat(32) }, signingSecret: founder.secret,
-        })), { seat: SEAT, signingSecret: founder.secret, records: [STATE], committee: [COMMITTEE] }),
-      }) as never,
+      directory: async () => {
+        const believed = {
+          /* The directory's versions past the newest the anchor holds, which holds none: each one filed and not yet anchored. */
+          dir: { company: ACC, version: waiting, seats: [{ seat: SEAT, person: 'ada', signingKey: founder.publicKey, wrappingKey: 'ab'.repeat(32), committeeKey: COMMITTEE, role: 'admin' as const, retired: null }] },
+          holders: { committee: [COMMITTEE], seats: [SEAT], approvals: o.approvals ?? 1, adoptedVaults: [], account: 'ac'.repeat(32) },
+          another: new Set<string>(),
+          refusedAt: new Set(o.refused ?? []),
+        };
+        return {
+          ...believed,
+          records: await heldEntering(ACC, (o.named ?? []).map((id) => ({
+            entry: { store: 'proposal' as const, kind: 'proposal', id, version: 1, digest: 'ab'.repeat(32) }, signingSecret: founder.secret,
+          })), { seat: SEAT, signingSecret: founder.secret, records: [STATE], committee: [COMMITTEE] }, believed as never),
+        } as never;
+      },
       people: async () => { throw new Error('no person here'); },
       state: async (id) => (id === '0' ? STATE : null),
       runs: async () => [],
@@ -173,6 +190,7 @@ const aDevice = (o: {
     },
     vaultName: () => 'company-wide runs',
     sleep: async () => {}, waitMs: 3, everyMs: 1,
+    ...(o.anchors ? { anchorDirectory: async () => { log.push('anchor the records'); waiting = 0; } } : {}),
   };
   return { doors, log, rounds, filings, entered };
 };
@@ -333,5 +351,46 @@ describe('A GOVERNANCE CHANGE, FROM THIS DEVICE', () => {
     /* RED WHEN: the caller's check is skipped before the carrying out. */
     expect(asked).toEqual(['before 1', 'before 2', 'before 3']);
     expect(d.log.filter((l) => /^carry/u.test(l))).toEqual([]);
+  });
+});
+
+describe('A RISE OF THE ACCOUNT\'S THRESHOLD AND THE COMPANY\'S DIRECTORY', () => {
+  it('A RISE IS REFUSED, WITH NOTHING BUILT, WHILE A DIRECTORY CHANGE IS FILED AND NOT YET ANCHORED', async () => {
+    const d = aDevice({ waiting: 1 });
+    /* RED WHEN: the threshold rises while a directory change waits for the anchor, which would then count it at the higher threshold. */
+    await expect(changeThresholdOnDevice(d.doors, { viewingKey: KEY, newThreshold: 3, seated: 4 }))
+      .rejects.toThrow(/version 1 of the company's directory is filed and not yet anchored/u);
+    expect(d.log.filter((l) => l.startsWith('build'))).toEqual([]);
+  });
+
+  it('A DEVICE THAT MAY ANCHOR ANCHORS THE WAITING CHANGES FIRST, THEN RAISES; A LOWER THRESHOLD WAITS FOR NOTHING', async () => {
+    const d = aDevice({ waiting: 2, anchors: true });
+    expect((await changeThresholdOnDevice(d.doors, { viewingKey: KEY, newThreshold: 3, seated: 4 })).state).toBe('done');
+    /* RED WHEN: the device raises without anchoring what waits first. */
+    expect(d.log.slice(0, 3)).toEqual(['vault check 1', 'anchor the records', `build propose {"kind":"threshold","threshold":"3"} salt=SALT blinding=founding`]);
+    const same = aDevice({ waiting: 1 });
+    /* RED WHEN: a threshold that does not rise is held back by the directory. */
+    expect((await changeThresholdOnDevice(same.doors, { viewingKey: KEY, newThreshold: 1, seated: 4 })).state).toBe('done');
+    const lower = aDevice({ waiting: 1, approvals: 3 });
+    /* RED WHEN: a threshold lowered from three to two is held back by a directory change waiting for the anchor. */
+    expect((await changeThresholdOnDevice(lower.doors, { viewingKey: KEY, newThreshold: 2, seated: 4 })).state).toBe('done');
+    expect(lower.log).not.toContain('anchor the records');
+  });
+
+  it('VERSIONS THE DIRECTORY REFUSED HOLD NO RISE BACK, SO A SERVICE FILING THEM CANNOT KEEP THE THRESHOLD WHERE IT IS', async () => {
+    const d = aDevice({ waiting: 2, refused: [1, 2] });
+    /* RED WHEN: a version the replay refused is counted as waiting for the anchor. */
+    expect((await changeThresholdOnDevice(d.doors, { viewingKey: KEY, newThreshold: 3, seated: 4 })).state).toBe('done');
+    const one = aDevice({ waiting: 2, refused: [1] });
+    await expect(changeThresholdOnDevice(one.doors, { viewingKey: KEY, newThreshold: 3, seated: 4 }))
+      .rejects.toThrow(/version 2 of the company's directory is filed and not yet anchored/u);
+  });
+
+  it('WHAT WAITS FOR THE ANCHOR IS EVERY APPLIED VERSION ABOVE THE NEWEST ANCHORED, NEVER ONE PASSED OVER BELOW IT', () => {
+    const anchoredAt = (versions: number[]) => ({ directory: new Map(versions.map((v) => [v, { digest: 'ab'.repeat(32) }])) }) as never;
+    /* RED WHEN: how many versions the anchor holds is taken for the newest it holds, so version 2, passed over, is waited for. */
+    expect(directoryNotYetAnchored({ dir: { version: 4 } as never, records: anchoredAt([1, 3]) })).toEqual([4]);
+    expect(directoryNotYetAnchored({ dir: { version: 4 } as never, records: anchoredAt([1, 3]), refusedAt: new Set([4]) })).toEqual([]);
+    expect(directoryNotYetAnchored({ dir: { version: 2 } as never, records: anchoredAt([]) })).toEqual([1, 2]);
   });
 });

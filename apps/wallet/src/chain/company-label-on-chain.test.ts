@@ -1,4 +1,4 @@
-import { describe, expect, it } from 'vitest';
+import { afterEach, describe, expect, it, vi } from 'vitest';
 import { createConstructorContext } from '@midnight-ntwrk/compact-runtime';
 import { COMPANY_LABEL_ENTRY, companyLabelOf } from 'midnight-identity/profile/company-label';
 import type { AccountAddress } from 'midnight-identity/profile/company-label';
@@ -9,11 +9,24 @@ import { Contract as VaultContract, ledger as vaultLedger } from '../../../../co
 import type { VaultAddress } from 'midnight-identity/profile/company-label';
 import { ChargedState, ContractMaintenanceAuthority, ContractState, StateValue } from '@midnightntwrk/ledger-v9';
 import { schnorr } from '@noble/curves/secp256k1.js';
-import {
+
+vi.mock('midnight-identity/profile/contract-authority', async (original) => {
+  const real = await original<typeof import('midnight-identity/profile/contract-authority')>();
+  return { ...real, authorityIn: vi.fn(real.authorityIn) };
+});
+const { authorityIn } = await import('midnight-identity/profile/contract-authority');
+const { authorityIn: realAuthorityIn } = await vi.importActual<typeof import('midnight-identity/profile/contract-authority')>('midnight-identity/profile/contract-authority');
+/* A value queued for one test never reaches the next: the reader goes back to the real one. */
+afterEach(() => {
+  vi.mocked(authorityIn).mockReset();
+  vi.mocked(authorityIn).mockImplementation(realAuthorityIn);
+});
+const {
   ACCOUNT_THRESHOLD_FIELD, ADOPTED_VAULTS_FIELD, MOVEMENTS_FIELD, OPEN_PROPOSALS_FIELD, ROLES_FIELD, SIGNER_LEAVES_FIELD, VAULT_ACCOUNT_FIELD,
   accountCarries, deployFromIndexerAt, foundingInDeployState, fromIndexerAt, holdersInAccountState, holdersOnChain,
   labelInAccountState, labelOnAccount, paymentsInAccountState, rolesInAccountState, seatsInAccountState, vaultInState, vaultOnChain,
-} from './company-label-on-chain.js';
+  contractsOnChain, contractInState,
+} = await import('./company-label-on-chain.js');
 import { PAY_KEY_COMMITMENT_ENTRY } from 'midnight-identity/profile/records-key';
 
 /*
@@ -169,6 +182,28 @@ describe('WHO HOLDS A VAULT, READ OFF THE VAULT ITSELF', () => {
     expect(vaultInState(VAULT, await vaultState(trailing, null)).account).toBe(trailing);
   });
 
+  it('reads who holds the vault through the one reader of a contract\'s authority', async () => {
+    const bytes = await vaultState(ACCOUNT, [key(1)], 1);
+    const asked = vi.mocked(authorityIn);
+    asked.mockClear();
+    asked.mockReturnValueOnce(Object.freeze({
+      committee: Object.freeze([Object.freeze({ tag: 'schnorr', value: key(9) })]), threshold: 5, counter: 0n,
+    }));
+    const read = vaultInState(VAULT, bytes);
+    /* RED WHEN: the wallet reads who holds a vault its own way, so there are two readings of who holds a contract. */
+    expect(asked).toHaveBeenCalledTimes(1);
+    expect(read.committee).toEqual([{ tag: 'schnorr', value: key(9) }]);
+    expect(read.threshold).toBe(5);
+  });
+
+  it('refuses a vault whose authority cannot be read, saying what was missing', async () => {
+    const bytes = await vaultState(ACCOUNT, [key(1)], 1);
+    vi.mocked(authorityIn).mockReturnValueOnce({ why: 'the contract\'s threshold is not a whole number of at least zero.' });
+    /* RED WHEN: an authority the reader refused is read anyway, or is refused without saying why. */
+    expect(() => vaultInState(VAULT, bytes))
+      .toThrow(/not laid out as a company's vault: the contract's threshold is not a whole number/);
+  });
+
   it('a vault still held by the key it was deployed with reads as that, and an account read as a vault is no answer', async () => {
     const deployedWith = vaultInState(VAULT, await vaultState(ACCOUNT, [key(7)], 1));
     /* RED WHEN: the temporary key's committee is read as anything but its one key. */
@@ -198,6 +233,64 @@ describe('WHO HOLDS A VAULT, READ OFF THE VAULT ITSELF', () => {
     const asked: string[] = [];
     expect((await vaultOnChain('co_x' as VaultAddress, async (a) => { asked.push(a); return good; })).of).toBe('unreadable');
     expect(asked).toEqual([]);
+  });
+  it('READS EACH CONTRACT A COMMITTEE ASK NAMES AT THE WALLET\'S OWN INDEXER: WHO HOLDS IT, ITS COUNTER, AND THE ACCOUNT A VAULT IS PINNED TO', async () => {
+    const account = ContractState.deserialize(await deployedState(LABEL_BYTES));
+    account.maintenanceAuthority = new ContractMaintenanceAuthority([{ tag: 'schnorr', value: key(3) }] as never, 1, 6n);
+    const accountHex = hexOf(account.serialize());
+    const vault = ContractState.deserialize(await vaultState(ACCOUNT, [key(1), key(2)], 2));
+    vault.maintenanceAuthority = new ContractMaintenanceAuthority([key(1), key(2)].map((value) => ({ tag: 'schnorr', value })) as never, 2, 4n);
+    const OTHER_VAULT = '9b'.repeat(32);
+    const FOREIGN = '9c'.repeat(32);
+    const states: Record<string, string | null> = {
+      [ACCOUNT]: accountHex, [VAULT]: hexOf(vault.serialize()), [OTHER_VAULT]: null,
+      [FOREIGN]: hexOf(await vaultState('ee'.repeat(32), [key(1)], 1)),
+    };
+    const asked: string[] = [];
+    const read = await contractsOnChain(ACCOUNT, [ACCOUNT, VAULT, OTHER_VAULT, FOREIGN, '9d'.repeat(32)], async (a) => {
+      asked.push(a);
+      if (a === '9d'.repeat(32)) throw new Error('offline');
+      return states[a] ?? null;
+    });
+    expect(asked.sort()).toEqual([ACCOUNT, VAULT, OTHER_VAULT, FOREIGN, '9d'.repeat(32)].sort());
+    /* RED WHEN: the counter is not the contract's own, so an update would be signed against a counter the chain does not hold. */
+    expect(read.get(ACCOUNT)).toEqual({ of: 'read', committee: [{ tag: 'schnorr', value: key(3) }], threshold: 1, counter: 6n, pinnedTo: null, vaults: [] });
+    expect(read.get(VAULT)).toEqual({
+      of: 'read', committee: [key(1), key(2)].map((value) => ({ tag: 'schnorr', value })), threshold: 2, counter: 4n, pinnedTo: ACCOUNT,
+    });
+    /* RED WHEN: the account a vault is pinned to is not read from the vault, so a foreign vault passes as this company's. */
+    expect(read.get(FOREIGN)).toMatchObject({ of: 'read', pinnedTo: 'ee'.repeat(32) });
+    /* RED WHEN: no contract, or a failed read, is taken as an answer. */
+    expect(read.get(OTHER_VAULT)!.of).toBe('unreadable');
+    expect(read.get('9d'.repeat(32))!.of).toBe('unreadable');
+    /* RED WHEN: a company's account read at a vault's address is taken as a vault. */
+    const swapped = await contractsOnChain(ACCOUNT, [VAULT], async () => accountHex);
+    expect(swapped.get(VAULT)!.of).toBe('unreadable');
+  });
+});
+
+describe('THE VAULTS AN ACCOUNT LISTS, READ WITH WHO HOLDS IT', () => {
+  it('reads every vault the account adopted and every vault it retired, as the account\'s own decoder lists them', async () => {
+    const [A, B] = [privateStateFor(1), privateStateFor(2)];
+    const sim = await AccountSimulator.liveAccount([A, B], 2n);
+    const kept = Uint8Array.from({ length: 32 }, (_, i) => i + 1);
+    const gone = Uint8Array.from({ length: 32 }, (_, i) => (i < 31 ? 0x60 + i : 0));
+    for (const v of [kept, gone]) await sim.adoptVault(v, [A, B], 391 + v[0]!);
+    const rc = change(0n, 92);
+    const retire = pureCircuits.retireVaultPayload(gone);
+    await sim.as(sim.applying(A, rc)).propose(retire);
+    const rid = sim.proposalId(retire, rc.salt);
+    await sim.as(A).approve(rid);
+    await sim.as(B).approve(rid);
+    await sim.retireVault(rid, gone, rc.salt);
+    const bytes = (sim.contractStateForCall as { serialize(): Uint8Array }).serialize();
+    const listed = [...[...sim.ledger.vaults].map((v: Uint8Array) => hexOf(v)), ...[...sim.ledger.retiredAt].map(([v]: [Uint8Array, bigint]) => hexOf(v))];
+    expect(listed).toContain(hexOf(gone));
+    /* RED WHEN: a retired vault is not read, so a change leaving it out is signed as if it named every contract. */
+    const read = contractInState(ACCOUNT, ACCOUNT, bytes);
+    expect(read.of === 'read' && [...(read.vaults ?? [])].sort()).toEqual([...new Set(listed)].sort());
+    expect(read.of === 'read' && read.vaults).toContain(hexOf(gone));
+    expect(read.of === 'read' && read.vaults).toContain(hexOf(kept));
   });
 });
 

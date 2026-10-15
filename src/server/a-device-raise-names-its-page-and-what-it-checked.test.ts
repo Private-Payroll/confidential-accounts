@@ -57,7 +57,7 @@ const { vaultDetails } = await import('../testing/vault-details.js');
 const { aVaultHolding } = await import('../testing/assets.js');
 const { addressOfSlot, signInWithAWallet } = await import('../testing/wallet-session.js');
 const { theNetwork } = await import('../midnight/network.js');
-const { toHex, newSigningKeypair } = await import('../core/crypto.js');
+const { toHex, newSigningKeypair, signingPublicKeyOf } = await import('../core/crypto.js');
 const { legPaymentsHere } = await import('vaults-web-shared/material-made-here.js');
 const { runsFiledBy } = await import('../testing/runs-a-seat-filed.js');
 const { directorySeats } = await import('../testing/directory-seats.js');
@@ -143,7 +143,9 @@ const seeded = await (async () => {
       proposalId = proposal.id;
       if (withdrawn) await accounts.cancel(proposal.id, viewingKey);
     }
-    return { account, viewingKey, runId: run.id, signer: created.secrets[0]!.signerId, proposalId };
+    /* The filing key of Ada's seat, which her device sends with every relay. */
+    const filer = signingPublicKeyOf(created.secrets[0]!.signingSecret as Hex);
+    return { account, viewingKey, runId: run.id, signer: created.secrets[0]!.signerId, proposalId, filer };
   };
   return {
     /* One company per refusal, so a refusal that failed to refuse cannot turn the next case red for it. */
@@ -228,9 +230,9 @@ const onTheDevice = async (c: { account: string; runId: string; viewingKey: stri
   const kept = () => new FileStore(process.env.DATA_PATH!);
   return legPaymentsHere(everyRunAndProposalEntered({
     directory: async () => ({
-      dir: { company: c.account, version: 1, seats: [{ seat: '4e'.repeat(32), person: USER, signingKey: founder.publicKey, wrappingKey: 'ab'.repeat(32), committeeKey: committee, role: 'admin', retired: null }] },
+      dir: { company: c.account, version: 1, seats: [{ seat: '4e'.repeat(32), person: USER, signingKey: founder.publicKey, wrappingKey: 'ab'.repeat(32), committeeKey: committee, role: 'admin', retired: null, opening: {} as never }] },
       holders: { committee: [committee], seats: ['4e'.repeat(32)], approvals: 1, adoptedVaults: [], account: 'ac'.repeat(32) } as never,
-      another: new Set(), at: () => null, records: heldEntering(c.account),
+      another: new Set(), at: () => null, leafOf: () => null, records: await heldEntering(c.account),
     }),
     people: unread, state: unread, policy: unread,
     roundIdentity: pureCircuits,
@@ -250,8 +252,8 @@ const onTheDevice = async (c: { account: string; runId: string; viewingKey: stri
  */
 
 describe('A SEND FROM A DEVICE NAMES ITS PAGE, AND CARRIES ONLY THE CALL IT PROVED', () => {
-  const send = async (c: { runId: string; viewingKey: string }, more: Record<string, unknown>) =>
-    post(`/api/proposals/${(await writtenDown(c))!.proposalId}/send`, { tx: Buffer.from('{}').toString('base64'), ...more });
+  const send = async (c: { runId: string; viewingKey: string; filer: string }, more: Record<string, unknown>) =>
+    post(`/api/proposals/${(await writtenDown(c))!.proposalId}/send`, { tx: Buffer.from('{}').toString('base64'), filer: c.filer, ...more });
 
   it('3. A SEND THAT NAMES NO VERSION, OR ANOTHER, IS REFUSED, AND NOTHING IS SENT', async () => {
     const c = seeded.written;
@@ -299,7 +301,7 @@ describe('A SEND FROM A DEVICE NAMES ITS PAGE, AND CARRIES ONLY THE CALL IT PROV
     /* RED WHEN: what the service wrote down is not what a signer's device makes the leg's payments from the company's records - every good send is then refused on the device. */
     expect(order.paymentsChecked).toBe(digestOf((await onTheDevice(c)).payments));
     const built = Buffer.from(JSON.stringify({ signer: c.signer, order: order.order })).toString('base64');
-    const ok = await post(`/api/proposals/${order.proposalId}/send`, { tx: built, version: DEVICE_RAISE_VERSION });
+    const ok = await post(`/api/proposals/${order.proposalId}/send`, { tx: built, version: DEVICE_RAISE_VERSION, filer: c.filer });
     expect(ok.status, JSON.stringify(ok.body)).toBe(200);
     expect(sent).toEqual(['propose']);
   });
@@ -307,7 +309,7 @@ describe('A SEND FROM A DEVICE NAMES ITS PAGE, AND CARRIES ONLY THE CALL IT PROV
   it('A SEND OF A WITHDRAWN PROPOSAL IS REFUSED AS WITHDRAWN', async () => {
     const c = seeded.withdrawn;
     const id = c.proposalId!;
-    const r = await post(`/api/proposals/${id}/send`, { tx: Buffer.from('{}').toString('base64'), version: DEVICE_RAISE_VERSION });
+    const r = await post(`/api/proposals/${id}/send`, { tx: Buffer.from('{}').toString('base64'), version: DEVICE_RAISE_VERSION, filer: c.filer });
     /* RED WHEN: a withdrawn proposal is sent, or refused as anything a send again would mend. */
     expect(r.status).toBe(422);
     expect(r.body?.nothingWasSent).toBe(true);

@@ -10,14 +10,16 @@
  * believes: every device checks every header against the one before it, up to
  * the head the chain holds, and every leaf against the root that head binds.
  * Before it keeps an entry or a header it makes the checks it can without a
- * key (check S):
+ * key:
  *
  *   · the person is signed in and a member of the company;
  *   · the signature covers exactly that entry, or that header, for this company;
- *   · the key that signed is a seat's in the company's directory whose role may
- *     file that record - or, for a header, could anchor as the directory stood
- *     at the version the header names - whoever hands it in: a device files
- *     again a header or an entry another seat signed, judged by its signature;
+ *   · the key that signed is one an entry in the company's directory names,
+ *     for a seat the chain holds now - or, for a header, in the directory as it
+ *     stood at the version the header names - whoever hands it in: a device
+ *     files again a header or an entry another seat signed, judged by its
+ *     signature. Whether its role may file that record, or anchor, and a
+ *     retired seat's boundary, are each member's device's to judge;
  *   · **an entry is the record's own filer's, for the bytes kept**: the record it
  *     names is kept here at that version (a run, kept whole, as it is kept now),
  *     its digest is the digest of what that record's filer signed, and the key
@@ -37,7 +39,7 @@
 import express from 'express';
 import { z } from 'zod';
 import {
-  boundaryKeyOfEntry, companyRecordEntry, directoryEntry, ENTRIES_AT_ONCE, entryIdOf, filedKindOfEntry, MANIFEST_STORES,
+  companyRecordEntry, directoryEntry, ENTRIES_AT_ONCE, entryIdOf, MANIFEST_STORES,
   manifestEntryRefusal, proposalEntry, recordKeyOf, runEntry, supersededSaid, vaultRecordEntry,
   type FiledAs, type ManifestEntry, type ManifestEntryBody,
 } from '../midnight/record-manifest.js';
@@ -147,7 +149,7 @@ export const recordManifestRoutes = (deps: {
     const filings = deps.store.directoryFilingsOf(company);
     for (const e of entries) {
       /* Judged by the entry's own signature and its signer's standing, whoever hands it in: a device files again what another seat signed. */
-      const seat = signerSeatNow(now, e.filedBy.publicKey, filedKindOfEntry(e), boundaryKeyOfEntry(e), e.version);
+      const seat = signerSeatNow(now, e.filedBy.publicKey);
       if (typeof seat === 'string') {
         res.status(403).json({ refused: seat, error: `this entry is not entered: ${FILING_REFUSAL[seat]}. Nothing was entered.` });
         return;
@@ -244,7 +246,7 @@ export const recordManifestRoutes = (deps: {
      */
     const then = now.at?.(header.dirVersion) ?? now.dir;
     for (const e of given) {
-      const filer = filerSeatIn(then, e.filedBy.publicKey, filedKindOfEntry(e), boundaryKeyOfEntry(e), e.version);
+      const filer = filerSeatIn(then, e.filedBy.publicKey);
       if (typeof filer === 'string') {
         res.status(403).json({ refused: filer, error: `an entry handed in with this header is not kept: ${FILING_REFUSAL[filer]}. Nothing was kept.` });
         return;

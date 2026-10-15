@@ -19,18 +19,18 @@ describe('A FILING IS FROM THE KEY ITS FILER\'S OWN SEAT ENTRY NAMES', () => {
   const given: Record<string, string> = { ada: MINE, bo: THEIRS };
   const asked: unknown[] = [];
   const may = signersOfTheVaultsCompany({
-    accountOf, companies, mayFileUnder: (company, person, filer, record) => {
-      asked.push([company, person, filer, record]);
+    accountOf, companies, mayFileUnder: (company, person, filer) => {
+      asked.push([company, person, filer]);
       return company === 'acc_1' && given[person] === filer;
     },
   });
 
-  it('files under the key the person\'s entry names, in any spelling, and asks about the company, the person, the key and the record', async () => {
+  it('files under the key the person\'s entry names, in any spelling, and asks about the company, the person and the key - never the record\'s kind', async () => {
     asked.length = 0;
     expect(await may('ada', VAULT, 'pool', 'file', MINE)).toBe(true);
     expect(await may('ada', VAULT, 'pool', 'file', MINE.toUpperCase() as never)).toBe(true);
-    /* RED WHEN: the record kind is not handed on, so a role that may not file it is never asked about. */
-    expect(asked).toEqual([['acc_1', 'ada', MINE, 'pool'], ['acc_1', 'ada', MINE, 'pool']]);
+    /* RED WHEN: the record's kind is handed on, so the server could judge which kinds a seat's role may file. */
+    expect(asked).toEqual([['acc_1', 'ada', MINE], ['acc_1', 'ada', MINE]]);
   });
 
   it('REFUSES a filing signed with another member\'s key, or with a key nobody gave', async () => {

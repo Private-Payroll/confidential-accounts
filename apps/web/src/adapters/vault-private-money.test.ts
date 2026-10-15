@@ -1,9 +1,11 @@
 // @vitest-environment jsdom
+import { seatOpenedFor } from '../../../../src/testing/directory-seats.js';
 import { enteredHere } from '../../../../src/testing/records-entered.js';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { newSigningKeypair, newWrappingKeypair, type Hex } from '../../../../src/core/crypto.js';
 import type { Asset, AssetRegistry } from '../../../../src/core/assets.js';
 import { SealedNotePool } from '../../../../src/midnight/vault-pool.js';
+import { directoryEntryMade } from '../../../../src/midnight/seat-directory.js';
 import { recordsKeypairFrom } from '../../../../src/midnight/company-nonce-secret.js';
 import { HttpSealedPoolStore, pageWireSend } from 'vaults-web-shared/http-sealed-pool-store.js';
 import { identityFromSecret } from 'midnight-identity';
@@ -59,6 +61,8 @@ vi.mock('vaults-web-shared/keyring.js', async (real) => ({
   keysFor: () => kr.keys,
   openAccount: () => kr.roster,
   companyKeyReleasedFor: () => kr.companyKey,
+  /* The company's viewing key, which opens every directory entry's proof here. */
+  viewingKeyFor: () => '5e'.repeat(32),
   holdersFromTheWallet: async () => ({
     holders: { committee: kr.committee, threshold: 1, seats: kr.seated, approvals: 1, adoptedVaults: [], founding: '5a'.repeat(32), foundingCommittee: [{ tag: 'schnorr', value: '11'.repeat(32) }], account: 'c0'.repeat(32) },
     vault: null,
@@ -92,6 +96,11 @@ vi.mock('./vault-builder.js', () => ({
     commitments: async (i: { vault: string; coin: { nonce: string; token: string; value: string } }) => ({ output: '', held: `h${i.vault.slice(0, 2)}${i.coin.nonce.slice(2)}` }),
     paymentsFit: async () => ({ of: 'fits' }),
     ownSeat: async () => kr.ownSeat,
+    /* The leaf each directory entry's opening makes, as the worker works it out with the account's own compiled `signerLeaf`. */
+    seatOpenings: async (input: { openings: readonly { publicKey: string; scope: string; blinding: string }[] }) => {
+      const { leafOfTheContract } = await import('../../../../src/testing/directory-seats.js');
+      return { openings: input.openings.map((o) => ({ leaf: leafOfTheContract(o as never), tag: null })) };
+    },
     /* The account's own heads, and its history at the wallet's indexer: the stand-in chain holds no anchor. */
     anchorHeads: async (i: { after: unknown[] }) => ({ after: i.after.map(() => '00'.repeat(32)), seats: i.after.map(() => null) }),
     /* A chain holding no anchor: no head landed, and who holds the account named for an anchor nobody here sends. */
@@ -130,10 +139,15 @@ const stubRecords = () => vi.stubGlobal('fetch', async (path: string, init: { me
 
 /* Priya's seat, and her entry in the directory, signed by her own wallet's committee key. */
 const LABEL = `co_${'c1'.repeat(32)}` as CompanyLabel;
-const SEAT = '5a'.repeat(32);
 const PRIYA = identityFromSecret(new Uint8Array(32).fill(1));
 const COMMITTEE_KEY = committeeKeyFor(PRIYA, LABEL) as { tag: string; value: string };
-const ENTRY = { person: 'u1', committeeKey: COMMITTEE_KEY, statement: signDirectoryEntry(PRIYA, LABEL, 'c0'.repeat(32) as never, new Uint8Array(32).fill(0x11), SIGNING.publicKey, SEAT) };
+/* Her seat, made for her wallet's key, and the opening her entry carries. */
+const { seat: SEAT, opening: OPENING } = seatOpenedFor(COMMITTEE_KEY, 1);
+/* Its proof sealed under the company's viewing key, which this device unwraps. */
+const ENTRY = directoryEntryMade({
+  company: 'c1', person: 'u1', committeeKey: COMMITTEE_KEY, opening: OPENING, signingSecret: SIGNING.secret, viewingKey: '5e'.repeat(32) as Hex,
+  signed: signDirectoryEntry(PRIYA, LABEL, 'c0'.repeat(32) as never, new Uint8Array(32).fill(0x11), SIGNING.publicKey, SEAT),
+});
 /* Her records key for her seat, as her wallet signed it in the same press: the roster carries it. */
 const ATTESTED = signRecordsKey(PRIYA, LABEL, 'c0'.repeat(32) as never, new Uint8Array(32).fill(0x11), SEAT);
 const VAULT_KEYS = { committeeKey: COMMITTEE_KEY, recordsKey: ATTESTED.recordsKey, recordsKeySeat: SEAT, recordsKeyStatement: ATTESTED.signature };

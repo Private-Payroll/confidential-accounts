@@ -5,8 +5,9 @@
  * and each signer's sealed copy of it, each vault's spending policy per token,
  * the marker that a vault is under a policy, each period's running total, and
  * the record that a run's tree was charged in a period, under which a charged
- * leg's retries keep what they have taken, and the company's record anchor, one
- * head under its own fixed key. `proposalHolds` holds each open proposal's hold and, under one fixed key,
+ * leg's retries keep what they have taken, the company's record anchor, one
+ * head under its own fixed key, and beside it the head the latest recovery
+ * carried out wrote, under another. `proposalHolds` holds each open proposal's hold and, under one fixed key,
  * the account's removal count. In a shared map every writer is a boundary: a key
  * two derivations could both produce would let one writer overwrite the other's
  * entry.
@@ -58,6 +59,7 @@ const SIGNER_ROLES_WRITES = [
   'anchorSeatKey()',
   'anchorKey()',
   'anchorSeatKey()',
+  'lastRecoveryKey()',
 ];
 /*
  * `propose` writes each proposal's hold; `holdRun`, `releaseHold` and the receipt step (which marks
@@ -86,7 +88,7 @@ const insertsInto = (map: string): string[] => {
 };
 
 describe('every insert into the two shared maps is one this file knows', () => {
-  it("signerRoles: the label, the pay-record key's commitment, four parts of each signer's copy, the policy's keys, and the anchor and its seat from anchor and recoverAnchor, and nothing else", () => {
+  it("signerRoles: the label, the pay-record key's commitment, four parts of each signer's copy, the policy's keys, the anchor and its seat from anchor and recoverAnchor, and the latest recovery's head, and nothing else", () => {
     /* RED WHEN a new writer of signerRoles appears: it must be listed here, and its key checked below. */
     expect(insertsInto('signerRoles')).toEqual(SIGNER_ROLES_WRITES);
     /* `first` is the copy's first part, derived the same way as the other three. */
@@ -108,8 +110,11 @@ describe('every insert into the two shared maps is one this file knows', () => {
   it('the anchor and a recovery write one head and one seat under their fixed keys, each derived in the circuit', () => {
     /* RED WHEN the anchor or a recovery writes under a key or a value taken from its caller. */
     expect(SRC).toContain('signerRoles.insert(anchorKey(), anchorHeadOf(before, anchorHeldOf(records, judged, root, tag)));');
-    expect(SRC).toContain('signerRoles.insert(anchorKey(), anchorHeadOf(before, anchorRecoveredOf(records, judged, root, tag, resumed)));');
+    expect(bodyOf('recoverAnchor')).toContain('const head = anchorHeadOf(before, anchorRecoveredOf(records, judged, root, tag, resumed));');
+    expect(bodyOf('recoverAnchor')).toContain('signerRoles.insert(anchorKey(), head);');
     expect(SRC.match(/signerRoles\.insert\(anchorSeatKey\(\), tag\);/g)).toHaveLength(2);
+    /* RED WHEN a recovery writes anything but the head it moved the anchor to as the latest recovery's head. */
+    expect(bodyOf('recoverAnchor')).toContain('signerRoles.insert(lastRecoveryKey(), head);');
     /* RED WHEN the seat's tag is taken from the caller rather than worked out from the seat the circuit proved. */
     const mayMove = SRC.slice(SRC.indexOf('circuit anchorMayMove('), SRC.indexOf('\n}\n', SRC.indexOf('circuit anchorMayMove(')));
     expect(mayMove).toContain('return disclose(anchorTagOf(kernel.self().bytes, caller.pk, caller.blinding));');
@@ -149,7 +154,7 @@ describe('the derivations are separated by their tags', () => {
     'removalCountKey', 'proposalIdOf',
     'policyKeyOf', 'policyOnKeyOf', 'periodKeyOf', 'chargedKeyOf', 'changesUsedKeyOf',
     'anchorHeadOf', 'anchorHeldOf', 'retrySaltOf', 'periodTotalTag', 'legTakenTag',
-    'anchorSeatKey', 'anchorTagOf', 'anchorRecoveredOf', 'recoverAnchorPayload',
+    'anchorSeatKey', 'anchorTagOf', 'anchorRecoveredOf', 'recoverAnchorPayload', 'lastRecoveryKey',
   ];
 
   it("every derivation has its own tag, and the anchor's is the one ruled", () => {
@@ -162,7 +167,7 @@ describe('the derivations are separated by their tags', () => {
   });
 
   it('the fixed keys hash their tag alone, and the derived ones hash their tag FIRST', () => {
-    for (const fixed of ['companyLabelKey', 'payKeyCommitmentKey', 'anchorKey', 'anchorSeatKey']) {
+    for (const fixed of ['companyLabelKey', 'payKeyCommitmentKey', 'anchorKey', 'anchorSeatKey', 'lastRecoveryKey']) {
       /* RED WHEN a fixed key is derived from anything but its own tag. */
       expect(bodyOf(fixed)).toMatch(/return persistentHash<Bytes<32>>\(pad\(32, "[^"]+"\)\);/);
     }
@@ -179,6 +184,8 @@ describe('the derivations are separated by their tags', () => {
     expect(bodyOf('anchorHeldOf')).toMatch(/persistentHash<Vector<5, Bytes<32>>>\(\[\s*pad\(32, "midnight-accounts:anchor:held:"\), batch, approvals as Field as Bytes<32>, signerRoot\.field as Bytes<32>, tag/);
     /* RED WHEN what a recovery folds stops hashing its own tag first, then as an anchor does, then the head it resumes from. */
     expect(bodyOf('anchorRecoveredOf')).toMatch(/persistentHash<Vector<6, Bytes<32>>>\(\[\s*pad\(32, "midnight-accounts:recovered:"\), batch, approvals as Field as Bytes<32>, signerRoot\.field as Bytes<32>, tag,\s*resumesFrom/);
+    /* RED WHEN what a recovery is approved for stops hashing its own tag first, then the head it resumes from, its latest time and the latest recovery's head. */
+    expect(bodyOf('recoverAnchorPayload')).toMatch(/persistentHash<Vector<4, Bytes<32>>>\(\[\s*pad\(32, "midnight-accounts:recover:"\), resumesFrom, latest as Field as Bytes<32>, lastRecovery/);
     /* RED WHEN a seat's tag stops hashing its own tag first, then the account, the seat's key and its blinding. */
     expect(bodyOf('anchorTagOf')).toMatch(/persistentHash<Vector<4, Bytes<32>>>\(\[\s*pad\(32, "midnight-accounts:anchor:seat:"\), account, pk, blinding/);
     /* RED WHEN a retry's salt stops hashing its own tag first, then its leg's root. */
@@ -197,6 +204,7 @@ describe('and computed for real inputs, every key differs', () => {
       pureCircuits.payKeyCommitmentKey(),
       pureCircuits.anchorKey(),
       pureCircuits.anchorSeatKey(),
+      pureCircuits.lastRecoveryKey(),
     ];
     for (const account of [bytes(0xa0), bytes(0xa1)]) {
       for (const sk of [bytes(1), bytes(2)]) {
@@ -225,11 +233,11 @@ describe('and computed for real inputs, every key differs', () => {
     expect(new Set(all.map(hex)).size).toBe(all.length);
   });
 
-  it('and nothing in one map is keyed like the other: the fixed keys of both are five distinct values', () => {
+  it('and nothing in one map is keyed like the other: the fixed keys of both are six distinct values', () => {
     const fixed = [
       pureCircuits.companyLabelKey(), pureCircuits.payKeyCommitmentKey(),
-      pureCircuits.anchorKey(), pureCircuits.anchorSeatKey(), pureCircuits.removalCountKey(),
+      pureCircuits.anchorKey(), pureCircuits.anchorSeatKey(), pureCircuits.lastRecoveryKey(), pureCircuits.removalCountKey(),
     ];
-    expect(new Set(fixed.map(hex)).size).toBe(5);
+    expect(new Set(fixed.map(hex)).size).toBe(6);
   });
 });

@@ -39,6 +39,7 @@ import type { AccountAddress, CompanyLabel } from 'midnight-identity/profile/com
 import { readJoinCode, writeJoinCode, JOIN_CODE_REFUSAL, type JoinCode, type PayeeParts, type SignerParts } from 'midnight-identity/profile/join-code';
 import { payeeCodeFingerprint, seatKeyFingerprint, tidyFingerprint } from 'midnight-identity/profile/fingerprint';
 import { acceptSeatOnThisDevice, type AcceptedSeat, type SeatDoors } from './accept-seat.js';
+import type { WalletKey } from '../../../src/core/seat-opening.js';
 
 /** How this device reaches the service: a path and a JSON body, an answer with its status. */
 export type InvitationSend = (
@@ -56,7 +57,7 @@ export interface InvitingCompany {
   readonly viewingKey: Hex;
 }
 
-/** This device's seat: the filing key it signs with, and the directory entry its wallet signed for it. */
+/** This device's seat: the filing key it signs with, the directory entry its wallet signed for it, and its own seat's opening. */
 export interface InvitingSeat extends Inviter {
   readonly signingSecret: Hex;
   /** The one filing call, bound to this company and this seat: a person record filed here is entered in the company's records. */
@@ -90,7 +91,9 @@ const answered = (r: { status: number; body: unknown }, ok: number): Record<stri
 
 const offered = (company: InvitingCompany, seat: InvitingSeat, forWhom: InvitationOffer['for']): InvitationOffer => ({
   company: company.id, companyName: company.name, label: company.label, account: company.account,
-  inboxPublicKey: company.inboxPublicKey, for: forWhom, inviter: { committeeKey: seat.committeeKey, statement: seat.statement },
+  inboxPublicKey: company.inboxPublicKey, for: forWhom,
+  /* The inviter's own seat's opening, so the invitee's wallet can tell the seat was made for its key; nothing of any other seat. */
+  inviter: { committeeKey: seat.committeeKey, statement: seat.statement, opening: seat.opening },
 });
 
 const filed = (company: InvitingCompany, seat: InvitingSeat, kind: 'employee' | 'signer', token: Hex, signed: SignedOffer, person?: string): InvitationFiling =>
@@ -178,8 +181,9 @@ interface OpenedInvitation {
 /**
  * **AN INVITATION OPENED ON THE INVITEE'S DEVICE.** Believed only when the seat
  * that invited signed the offer, for the company's label and account it names.
- * Whether that seat's committee key is on that account's committee is asked of
- * the chain by the invitee's own wallet before anything is signed for it.
+ * Whether that seat is on that account, and its opening shows it was made for
+ * the inviter's wallet key, is asked of the chain by the invitee's own wallet
+ * before anything is signed for it.
  */
 export async function openInvitationHere(link: string, send: InvitationSend): Promise<OpenedInvitation> {
   const token = tokenOfLink(link);
@@ -211,9 +215,40 @@ export async function acceptAsPayeeHere(opened: OpenedInvitation, code: JoinCode
   return { fingerprint: payeeCodeFingerprint(code as JoinCode & { parts: PayeeParts }) };
 }
 
+/** The company a signer's invitation was filed to, as the service holds it; null when it holds none. */
+type FiledTo = { readonly id: string; readonly label: string | null; readonly account: string | null } | null;
+
+/**
+ * **WHY THIS DEVICE MAKES NO SEAT FOR AN OFFER**: the offer names another
+ * company id, label or account than the company its seat request would be
+ * filed to, so the leaf would be made for one company and the request sent to
+ * another. Null when they are the same.
+ */
+const offerNotForTheCompanyRefusal = (o: SignedOffer['offer'], filedTo: FiledTo): string | null =>
+  filedTo !== null && filedTo.id === o.company && filedTo.label === o.label
+    && typeof filedTo.account === 'string' && filedTo.account.toLowerCase() === String(o.account).toLowerCase()
+    ? null
+    : 'this invitation names another company account or label than the company its seat request would be filed to, so no seat was made '
+      + 'and nothing was sent. Ask the person who invited you for a new invitation.';
+
+/** The company the service says this invitation was filed to, asked with the proof only the link gives. */
+const filedToOf = async (opened: OpenedInvitation, send: InvitationSend): Promise<FiledTo> => {
+  const b = answered(await send(`/api/invites/${invitationIdOf(opened.token)}/filed-to`, {
+    method: 'POST', body: JSON.stringify({ acceptance: acceptanceProofOf(opened.token) }),
+  }), 200);
+  const c = b.company as Record<string, unknown> | null | undefined;
+  return typeof c === 'object' && c !== null && typeof c.id === 'string'
+    ? { id: c.id, label: typeof c.label === 'string' ? c.label : null, account: typeof c.account === 'string' ? c.account : null }
+    : null;
+};
+
 /**
  * **A SIGNER ACCEPTS, THROUGH THE ONE SEAT PATH.** Their keys are made and kept
- * on this device (`doors.newKeys`, `doors.seal`); the public halves, the leaf,
+ * on this device (`doors.newKeys`, `doors.seal`), the leaf committing to the
+ * wallet key their own wallet gives for the company the offer names
+ * (`walletKey`, asked with the offer's label and account) - once the company
+ * the seat request is filed to is the one the offer names
+ * (`offerNotForTheCompanyRefusal`); the public halves, the leaf,
  * the proof of their keys, and the name and role the offer gave them are
  * sealed here to the company's inbox key and filed as the seat request.
  * Returns, with the seat, the fingerprint of the keys for the person to read
@@ -223,9 +258,14 @@ export async function acceptAsSignerHere(
   opened: OpenedInvitation, commitments: LeafScheme, doors: Omit<SeatDoors, 'publish'>, send: InvitationSend,
   /** The sign-in accepting it: sealed into the request, and held to the member the company would make of it when it is seated. */
   person: string,
+  /** The person's own wallet key for the company, asked of their wallet with the offer's label and account. */
+  walletKey: (company: { readonly accountId: string; readonly label: CompanyLabel; readonly account: AccountAddress }) => Promise<WalletKey>,
 ): Promise<AcceptedSeat & { readonly fingerprint: string }> {
   const o = opened.signed.offer;
   if (o.for.kind !== 'signer') throw new Error('that invitation offers pay, not a seat, so it is not accepted as a signer.');
+  const notThisCompany = offerNotForTheCompanyRefusal(o, await filedToOf(opened, send));
+  if (notThisCompany !== null) throw new Error(notThisCompany);
+  const key = await walletKey({ accountId: o.company, label: o.label, account: o.account });
   const offer = o.for;
   let fingerprint = '';
   const seated = await acceptSeatOnThisDevice(o.company, commitments, {
@@ -241,7 +281,7 @@ export async function acceptAsSignerHere(
       if (typeof b.id !== 'string') throw new Error('the service did not say which seat request it filed, so this device cannot finish it.');
       return { id: b.id };
     },
-  }, { accountId: o.company, nonce: offer.seat.nonce, secret: offer.seat.secret });
+  }, key, { accountId: o.company, nonce: offer.seat.nonce, secret: offer.seat.secret });
   return { ...seated, fingerprint };
 }
 
@@ -282,6 +322,8 @@ export const payeeHandoverOf = (code: JoinCode, inboxPublicKey: Hex): SealedHand
 export async function makeSignerCodeHere(
   accountId: string, commitments: LeafScheme, doors: Omit<SeatDoors, 'publish' | 'promote'>,
   sign: (parts: SignerParts) => Promise<JoinCode>,
+  /** The person's own wallet key for the company, as their wallet gave it: the key the seat's leaf commits to. */
+  walletKey: WalletKey,
 ): Promise<{ readonly code: string; readonly fingerprint: string }> {
   let made: JoinCode | null = null;
   await acceptSeatOnThisDevice(accountId, commitments, {
@@ -291,7 +333,7 @@ export async function makeSignerCodeHere(
       return { id: null };
     },
     promote: async () => { throw new Error('a seat made for a code is bound to its seat once that seat is filed, not here.'); },
-  });
+  }, walletKey);
   const code = made as JoinCode | null;
   if (code === null || code.parts.kind !== 'signer') throw new Error('the wallet made no code, so there is nothing to give.');
   return { code: writeJoinCode(code), fingerprint: seatKeyFingerprint(code.parts) };

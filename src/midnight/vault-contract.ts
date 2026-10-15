@@ -622,9 +622,9 @@ export async function findDeployedVaultContract(
  * exactly that slot and asserting it (`index.mjs:398-399`, `:470-471`,
  * `:547-548`). **So adopting a committee removes the second custody surface and
  * the SDK's whole maintenance interface in the same act.** What replaces the
- * latter is `buildMaintenanceInstruction` in `src/midnight/ledger.ts`; what
- * replaces the read-back is `readContractAuthority` in the same file. Neither
- * consults a stored key.
+ * latter is `committeeUpdateOf`, the one builder of a committee update; what
+ * replaces the read-back is `readContractAuthority`. Neither consults a stored
+ * key.
  *
  * ------------------------------------------------------------------------
  * THE NINE DEPENDENCIES, RE-DERIVED RATHER THAN INHERITED
@@ -728,8 +728,8 @@ export interface VaultContractStateLike {
 /**
  * The runtime pieces this path needs, PASSED IN rather than imported.
  *
- * The same reason `MaintenancePrimitives` in `src/midnight/ledger.ts` takes
- * them: this module must stay loadable without ten megabytes of WebAssembly,
+ * The same reason `buildCommitteeChange` takes the ledger's classes as a
+ * parameter: this module must stay loadable without ten megabytes of WebAssembly,
  * and a named interface makes a runtime change a compile error HERE rather than
  * an `any` flowing through a mismatch unnoticed under
  * `tsconfig.scripts.json`'s `strict: false`.
