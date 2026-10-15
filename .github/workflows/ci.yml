@@ -58,7 +58,7 @@ jobs:
     # every machine in the matrix, and the first anybody knows is the bill.
     timeout-minutes: 20
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
         # A CHANGE FROM OUTSIDE BRINGS ITS OWN FILES, AND SOME OF THEM RUN HERE.
         # Nothing in this workflow pushes anything, so the token this action
         # would otherwise leave in the working copy has no use except to
@@ -91,7 +91,7 @@ jobs:
           - what: ui
             run: npm run typecheck:ui
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
         # A CHANGE FROM OUTSIDE BRINGS ITS OWN FILES, AND SOME OF THEM RUN HERE.
         # Nothing in this workflow pushes anything, so the token this action
         # would otherwise leave in the working copy has no use except to
@@ -106,7 +106,7 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 30
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
         # A CHANGE FROM OUTSIDE BRINGS ITS OWN FILES, AND SOME OF THEM RUN HERE.
         # Nothing in this workflow pushes anything, so the token this action
         # would otherwise leave in the working copy has no use except to
@@ -136,7 +136,7 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 30
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
         with:
           persist-credentials: false
       - uses: ./.github/actions/build
@@ -162,7 +162,7 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 5
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
         # A CHANGE FROM OUTSIDE BRINGS ITS OWN FILES, AND SOME OF THEM RUN HERE.
         # Nothing in this workflow pushes anything, so the token this action
         # would otherwise leave in the working copy has no use except to
@@ -190,7 +190,7 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 5
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
         # A CHANGE FROM OUTSIDE BRINGS ITS OWN FILES, AND SOME OF THEM RUN HERE.
         # Nothing in this workflow pushes anything, so the token this action
         # would otherwise leave in the working copy has no use except to
