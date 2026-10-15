@@ -12,7 +12,42 @@
  * the account's marks; the proving is the checks the worker runs before it builds.
  */
 import type { RecordsAsked } from '../midnight/records-held.js';
-import { describe, it, expect, beforeAll, beforeEach, afterEach, vi } from 'vitest';
+/*
+ * A signature check answers the same for the same key, signature and message, and a test reads the company's directory and
+ * records dozens of times, each read checking every filing again. These two doors keep each answer the first time it is
+ * worked out; a filing changed in any byte is a different question and is checked afresh.
+ */
+vi.mock('../core/crypto.js', async (importOriginal) => {
+  const real = await importOriginal<typeof import('../core/crypto.js')>();
+  const answered = new Map<string, boolean>();
+  return { ...real, verify: (message: string, signature: Hex, publicKey: Hex): boolean => {
+    const key = `${publicKey}|${signature}|${message}`;
+    let ok = answered.get(key);
+    if (ok === undefined) { ok = real.verify(message, signature, publicKey); answered.set(key, ok); }
+    return ok;
+  } };
+});
+vi.mock('midnight-identity/profile/records-key', async (importOriginal) => {
+  const real = await importOriginal<typeof import('midnight-identity/profile/records-key')>();
+  const answered = new Map<string, boolean>();
+  return {
+    ...real,
+    directoryEntrySignedBy: (...args: Parameters<typeof real.directoryEntrySignedBy>): boolean => {
+      const key = `entry|${JSON.stringify(args)}`;
+      let ok = answered.get(key);
+      if (ok === undefined) { ok = real.directoryEntrySignedBy(...args); answered.set(key, ok); }
+      return ok;
+    },
+    recordsKeySignedBy: (...args: Parameters<typeof real.recordsKeySignedBy>): boolean => {
+      const key = `records|${JSON.stringify(args)}`;
+      let ok = answered.get(key);
+      if (ok === undefined) { ok = real.recordsKeySignedBy(...args); answered.set(key, ok); }
+      return ok;
+    },
+  };
+});
+import { AsyncLocalStorage } from 'node:async_hooks';
+import { describe, it as runnerIt, expect, beforeAll, beforeEach, afterEach, vi } from 'vitest';
 import express from 'express';
 import { identityFromSecret } from 'midnight-identity';
 import { signJoinCode, type JoinCode } from 'midnight-identity/profile/join-code';
@@ -125,9 +160,22 @@ const NETWORK = theNetwork();
 const VAULT = 'c5'.repeat(32) as Hex;
 /* Whole seconds since the Unix epoch: 12:00 UTC on 15 October 2026, after the payees' start date, so every window is a fixed distance from it. */
 const NOW = 1792065600;
+/**
+ * The test a piece of work belongs to, followed through every await it makes. A test the runner gave up on at its timeout
+ * keeps running; once it has ended it may not move the shared clock under the test that follows.
+ */
+const running = new AsyncLocalStorage<{ ended: boolean }>();
+const it = (name: string, body: () => Promise<void>): void => {
+  runnerIt(name, async (context) => {
+    const run = { ended: false };
+    context.onTestFinished(() => { run.ended = true; });
+    await running.run(run, body);
+  });
+};
 /** Where the fake clock stands, in whole seconds: every device here reads the clock the test sets, never the real one. */
 let clockStands = NOW;
 const setClock = (at: number): void => {
+  if (running.getStore()?.ended === true) throw new Error('the test that asked to move the clock has ended: the clock now belongs to the next test');
   clockStands = at;
   vi.setSystemTime(at * 1000);
 };
@@ -750,7 +798,7 @@ const atTime = async <T>(at: number, act: () => Promise<T>): Promise<T> => {
   try {
     return await act();
   } finally {
-    setClock(was);
+    if (running.getStore()?.ended !== true) setClock(was);
   }
 };
 const legOf = (id: string) => {
