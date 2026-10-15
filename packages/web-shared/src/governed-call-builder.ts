@@ -82,6 +82,7 @@ import type { CommitteeKey } from '../../../src/midnight/seat-directory.js';
 import { signerHalfOf, type SignerMaterial } from './private-state.js';
 import { refuseWhatThisDeviceDidNotMake, type AccountLedgerView, type MadeHere, type VouchedHere } from './what-this-device-made.js';
 import { sameGovernance } from './governance-compared.js';
+import { authorityIn } from 'midnight-identity/profile/contract-authority';
 import type { DetailsOfKind } from '../../../src/midnight/payout-tree.js';
 import type { AccountStartPure, VaultStartPure } from '../../../src/midnight/vault-start.js';
 import { NO_LEG, policyOpeningFromWire, type PolicyOpeningOnTheWire } from '../../../src/midnight/spending-policy-record.js';
@@ -140,9 +141,12 @@ export type GovernanceOnTheWire =
    * The company's record anchor moved past a batch nobody can check, resuming
    * from the header whose head is `resumesFrom` (`recoverAnchor`), before
    * `latest`, the last time it may be carried out, in whole seconds since
-   * 1970 as the chain's block time counts them.
+   * 1970 as the chain's block time counts them. `lastRecovery` is the head the
+   * latest recovery carried out wrote, thirty-two zero bytes before any: the
+   * account carries this one out only while that is still its latest, so a
+   * recovery approved before another is carried out can never be used after it.
    */
-  | { readonly kind: 'recover-anchor'; readonly resumesFrom: string; readonly latest: string };
+  | { readonly kind: 'recover-anchor'; readonly resumesFrom: string; readonly latest: string; readonly lastRecovery: string };
 
 /**
  * **THE COMPANY'S ACCOUNT TAKING A NEW VAULT AS ITS OWN**, named by the vault's
@@ -395,8 +399,13 @@ export interface GovernedCallDeps {
     /** The tag a seat anchors under in an account, and the key the account keeps the last one under. */
     anchorTagOf?(account: Uint8Array, pk: Uint8Array, blinding: Uint8Array): Uint8Array;
     anchorSeatKey?(): Uint8Array;
-    /** What a quorum approves to recover the record anchor from a head its devices checked, before a latest time. */
-    recoverAnchorPayload?(resumesFrom: Uint8Array, latest: bigint): Uint8Array;
+    /**
+     * What a quorum approves to recover the record anchor from a head its devices checked, before a latest time,
+     * while the head the latest recovery carried out wrote is `lastRecovery`.
+     */
+    recoverAnchorPayload?(resumesFrom: Uint8Array, latest: bigint, lastRecovery: Uint8Array): Uint8Array;
+    /** Where the account keeps the head the latest recovery carried out wrote. */
+    lastRecoveryKey?(): Uint8Array;
     /** A seat's public key on the account, from its secret, and the leaf its key, blinding and scope make. */
     signerPublicKey?(sk: Uint8Array): Uint8Array;
     signerLeaf?(pk: Uint8Array, blinding: Uint8Array, scope: Uint8Array): Uint8Array;
@@ -409,6 +418,12 @@ export interface GovernedCallDeps {
     paidFromMark?(): Uint8Array;
     /** The key the account's count of signers removed is held under, among its proposals' holds. */
     removalCountKey?(): Uint8Array;
+    /**
+     * The approvals a run needs before a vault pays or charges it: the higher of its bar when raised
+     * and the vault's bar now, plus one for every signer removed since it was raised. This is the
+     * account's own count; a device does not recompute it.
+     */
+    runApprovalsNeeded?(neededWhenRaised: bigint, vaultBar: bigint, removalsNow: bigint, removalsWhenRaised: bigint): bigint;
   };
   /**
    * `@midnight-ntwrk/compact-runtime`'s signer-tree pieces: a blank tree, a leaf's encoding and a root's reading.
@@ -659,6 +674,10 @@ const NO_VAULT = Symbol('no vault');
 
 /** The payload a governance round commits to, made by the contract's own function from the change named. */
 export function governancePayloadOf(deps: Pick<GovernedCallDeps, 'accountPure'>, g: RoundChangeOnTheWire): Uint8Array {
+  /* The super admins' changes are their own kind, signed by their wallets on each contract: never a proposal the account holds or counts. */
+  if ((g as { readonly kind: string }).kind === 'super-admins') {
+    throw new Error('a change of the super admins is never raised, approved or counted on the company\'s account as a signers\' proposal, so nothing was built.');
+  }
   if (g.kind === 'add-signer') return deps.accountPure.signerAddPayload(bytesOf('signer\'s leaf', g.leaf));
   if (g.kind === 'threshold') return deps.accountPure.setThresholdPayload(thresholdOf(g.threshold));
   if (g.kind === 'vault-threshold') return vaultThresholdPayloadOf(deps, g.vault, g.threshold);
@@ -671,7 +690,8 @@ export function governancePayloadOf(deps: Pick<GovernedCallDeps, 'accountPure'>,
       throw new Error('this device was not given the account\'s function for a recovery of its record anchor. Reload the page to use the current build.');
     }
     return deps.accountPure.recoverAnchorPayload(
-      bytesOf('head it resumes from', String(g.resumesFrom).toLowerCase()), digitsOf('recovery\'s last time', g.latest));
+      bytesOf('head it resumes from', String(g.resumesFrom).toLowerCase()), digitsOf('recovery\'s last time', g.latest),
+      bytesOf('latest recovery\'s head', String(g.lastRecovery).toLowerCase()));
   }
   throw new Error('this proposal is neither a seat nor a threshold, nor a vault adopted, nor the pay-record key, nor a spending '
     + 'policy, so nothing was built.');
@@ -1172,6 +1192,29 @@ const headInState = (
 };
 
 /**
+ * **THE HEAD THE LATEST RECOVERY CARRIED OUT WROTE, AS ONE STATE OF THE ACCOUNT
+ * HOLDS IT** (hex): thirty-two zero bytes before any recovery is carried out.
+ * Read with the account's own reader and key, from a state the caller read at
+ * the indexer the person's own wallet names. A recovery is raised naming it and
+ * carried out only while the account still holds the head it names, since the
+ * account refuses any other - and that refusal lands after the fee is paid.
+ */
+export function lastRecoveryIn(
+  deps: Pick<GovernedCallDeps, 'accountPure' | 'accountLedger' | 'runtimeState'>, accountState: Uint8Array,
+): string {
+  const key = deps.accountPure.lastRecoveryKey;
+  if (deps.accountLedger === undefined || typeof key !== 'function') {
+    throw new Error('this device was not given the account\'s reader for its latest recovery, so no recovery was raised or carried out. '
+      + 'Reload the page to use the current build');
+  }
+  const view = deps.accountLedger((deps.runtimeState.deserialize(accountState) as { data: unknown }).data) as {
+    signerRoles: { member(key: Uint8Array): boolean; lookup(key: Uint8Array): Uint8Array };
+  };
+  const at = key.call(deps.accountPure);
+  return view.signerRoles.member(at) ? hexOf(view.signerRoles.lookup(at)) : hexOf(ZERO_32);
+}
+
+/**
  * **WHAT EACH SEAT'S OPENING OPENS, AND THE TAG IT ANCHORS UNDER IN `account`**,
  * by the account's own `signerLeaf` and `anchorTagOf`: a device believes an
  * opening only where the leaf it makes is the seat's. With `own`, this device's
@@ -1286,19 +1329,16 @@ export function anchorHeadsAfter(
 
 /**
  * **ONE HEAD THE ACCOUNT'S HISTORY SHOWS**: the head the last anchor call of a
- * block left, the committee the account's state after that block lists, and
- * the block - its height and the time its author set, in milliseconds. A head
- * another anchor of the same block moved on from is never shown, and the next
- * head shown is that block's. The approvals and seats a batch was judged
- * against are never read off these states: they are what the batch's header
- * names, which the call checked. The committee no call can check, so it is the
- * block's, and is used only to judge a directory claim anchored in it.
+ * block left, and the block - its height and the time its author set, in
+ * milliseconds. A head another anchor of the same block moved on from is never
+ * shown, and the next head shown is that block's. The approvals and seats a
+ * batch was judged against are never read off these states: they are what the
+ * batch's header names, which the call checked.
  */
 export interface AnchorLanded {
   readonly head: string;
   /** The tag of the seat that moved the head there, as the account wrote it beside the head; absent where a test's chain names none. */
   readonly tag?: string;
-  readonly committee: readonly CommitteeKey[];
   readonly height: number;
   readonly at: number;
   /**
@@ -1350,29 +1390,34 @@ export interface AccountDeployed {
 
 /**
  * **HOW THE ACCOUNT WAS DEPLOYED**, from the first step of its history (oldest
- * first): null unless that step is the deploy. Who held it is read the one way
- * a wallet reads it (`authorityIn`); its operations and update counter with the
- * contract runtime's own reader; the second step's circuits from the one list
- * of them (`CREATION_STEPS`).
+ * first): null unless that step is the deploy. Who held it is read with the
+ * account's seats reader the caller hands in (`seatsIn`, the one way a wallet
+ * reads them); its operations with the contract runtime's own reader; its
+ * update counter through the one reader of a contract's authority
+ * (`authorityIn`); the second step's circuits from the one list of them
+ * (`CREATION_STEPS`). Throws when that reader refuses the deploy's authority:
+ * a counter that cannot be read is not one no update touched, and a null here
+ * would say the history does not open with a deploy, which is not what was
+ * found, so the device refuses the whole reading rather than believe either.
  */
 export function accountDeployedIn(
   deps: Pick<GovernedCallDeps, 'runtimeState'>,
   steps: ReadonlyArray<{ readonly kind: string; readonly state: Uint8Array }>,
-  authorityIn: (state: Uint8Array) => { readonly seats: readonly string[]; readonly committee: readonly CommitteeKey[]; readonly threshold: number },
+  seatsIn: (state: Uint8Array) => { readonly seats: readonly string[]; readonly committee: readonly CommitteeKey[]; readonly threshold: number },
 ): AccountDeployed | null {
   const first = steps[0];
   if (first === undefined || first.kind !== 'deploy') return null;
-  const held = authorityIn(first.state);
-  const state = deps.runtimeState.deserialize(first.state) as {
-    operations(): Array<string | Uint8Array>; readonly maintenanceAuthority: { readonly counter: bigint };
-  };
+  const held = seatsIn(first.state);
+  const state = deps.runtimeState.deserialize(first.state) as { operations(): Array<string | Uint8Array> };
+  const authority = authorityIn(state);
+  if ('why' in authority) throw new Error(`how the company's account was deployed cannot be read: ${authority.why}`);
   const second = new Set<string>(CREATION_STEPS.second);
   const ranSecondStep = state.operations().some((op) => second.has(typeof op === 'string' ? op : new TextDecoder().decode(op)));
   return {
     seats: held.seats.map((s) => String(s).toLowerCase()),
     committee: held.committee.map((k) => ({ tag: String(k.tag), value: String(k.value).toLowerCase() })),
     threshold: Number(held.threshold),
-    updates: Number(state.maintenanceAuthority.counter),
+    updates: Number(authority.counter),
     ranSecondStep,
   };
 }
@@ -1380,8 +1425,7 @@ export function accountDeployedIn(
 /**
  * **EVERY HEAD THE ACCOUNT'S HISTORY SHOWS, OLDEST FIRST**: each step of the
  * history whose state holds a head other than the step before it, with the
- * head, the committee that state lists (`committeeIn`, the one reading of that
- * field) and its block; where the history names each step's call, how many
+ * head and its block; where the history names each step's call, how many
  * calls moved the anchor in that block and whether a recovery was one of them.
  * The head before the first step is the empty head.
  */
@@ -1391,7 +1435,6 @@ export function anchorsLandedIn(
     readonly state: Uint8Array; readonly block: { readonly height: number; readonly at: number };
     readonly entryPoint?: string; readonly succeeded?: boolean;
   }>,
-  committeeIn: (state: Uint8Array) => readonly CommitteeKey[],
 ): AnchorLanded[] {
   const landed: AnchorLanded[] = [];
   const blocks = new Map<number, (typeof steps)[number][]>();
@@ -1400,7 +1443,6 @@ export function anchorsLandedIn(
   for (const step of steps) {
     const { head, tag } = headInState(deps, step.state);
     if (head === before) continue;
-    const committee = committeeIn(step.state).map((k) => ({ tag: k.tag, value: k.value.toLowerCase() }));
     /*
      * One state a block. Every call to move the anchor in it is counted, whatever its transaction's result - one in a
      * guaranteed section moves the head even where the transaction succeeded only in part - so the count errs only on
@@ -1410,7 +1452,7 @@ export function anchorsLandedIn(
     const named = block.some((x) => x.entryPoint !== undefined);
     const calls = block.filter((x) => x.entryPoint === 'anchor' || x.entryPoint === 'recoverAnchor');
     landed.push({
-      head, ...(tag === null ? {} : { tag }), committee, height: step.block.height, at: step.block.at,
+      head, ...(tag === null ? {} : { tag }), height: step.block.height, at: step.block.at,
       ...(named ? { anchorsInBlock: calls.length, recovered: calls.some((x) => x.entryPoint === 'recoverAnchor' && x.succeeded === true) } : {}),
     });
     before = head;
@@ -1552,25 +1594,28 @@ export interface VouchingRun { readonly chainId: string; readonly height: number
  * ACCOUNT'S HISTORY**: each proposal a state holds charged to its period (the
  * mark `clearRun` writes) or paid from (the mark `markPaidFrom` writes on its
  * hold), read at the last state that shows it so, and kept only when that
- * state counts at least the account's threshold of approvals for it, plus one
- * for every signer removed since it was raised - as the account counts them
- * before it pays from a vault. A run approved only to a vault's lower threshold
- * does not reach it. Only payroll runs carry either mark. A run whose hold was
- * released before it was paid keeps the released mark, not the paid one, and
- * vouches nothing unless the account charged it. Oldest first.
+ * state counts the approvals the account's `runApprovalsNeeded` gives for it,
+ * with the account's threshold standing as the vault's bar: the higher of its
+ * bar when raised and that threshold, plus one for every signer removed since it
+ * was raised. A run approved only to a vault's lower threshold does not reach it. Only payroll
+ * runs carry either mark. A run whose hold was released before it was paid
+ * keeps the released mark, not the paid one, and vouches nothing unless the
+ * account charged it. Oldest first.
  */
 export function vouchingRunsIn(
   deps: Pick<GovernedCallDeps, 'accountPure' | 'accountLedger' | 'runtimeState'>,
   steps: ReadonlyArray<{ readonly state: Uint8Array; readonly block: { readonly height: number; readonly at: number } }>,
 ): VouchingRun[] {
   const P = deps.accountPure;
-  if (deps.accountLedger === undefined || P.clearedMark === undefined || P.paidFromMark === undefined || P.removalCountKey === undefined) {
+  if (deps.accountLedger === undefined || P.clearedMark === undefined || P.paidFromMark === undefined || P.removalCountKey === undefined
+    || P.runApprovalsNeeded === undefined) {
     throw new Error('this device was not given the account\'s reader, so which runs vouch for the company\'s records was not read. Reload the page');
   }
   const cleared = hexOf(P.clearedMark());
   const paidFrom = hexOf(P.paidFromMark());
   const removalKey = P.removalCountKey();
-  type Hold = { readonly removals: bigint; readonly runHold: { readonly placedBy: Uint8Array } };
+  const neededFor = P.runApprovalsNeeded;
+  type Hold = { readonly needed: bigint; readonly removals: bigint; readonly runHold: { readonly placedBy: Uint8Array } };
   type View = {
     readonly threshold: bigint;
     readonly openProposals: Iterable<[Uint8Array, Uint8Array]>;
@@ -1590,9 +1635,10 @@ export function vouchingRunsIn(
       const hold = view.proposalHolds.member(id) ? view.proposalHolds.lookup(id) : null;
       const marked = hexOf(change) === cleared || (hold !== null && hexOf(hold.runHold.placedBy) === paidFrom);
       if (!marked) continue;
-      const needed = BigInt(view.threshold) + (hold === null ? 0n : removals - BigInt(hold.removals));
       const approvals = view.approvalCounts.member(id) ? BigInt(view.approvalCounts.lookup(id)) : 0n;
-      last.set(hexOf(id), { vouches: hold !== null && approvals >= needed, height: step.block.height, at: step.block.at });
+      const vouches = hold !== null
+        && approvals >= BigInt(neededFor(BigInt(hold.needed), BigInt(view.threshold), removals, BigInt(hold.removals)));
+      last.set(hexOf(id), { vouches, height: step.block.height, at: step.block.at });
     }
   }
   return [...last].filter(([, l]) => l.vouches).map(([chainId, l]) => ({ chainId, height: l.height, at: l.at }))
@@ -1669,9 +1715,10 @@ export async function buildAnchorCall(
  * **ONE RECOVERY OF THE RECORD ANCHOR, BUILT AND PROVED HERE**: as an anchor
  * call (`buildAnchorCall`), moving the head on from the one this device read by
  * the recovery's batch, resuming from the head `resumesFrom` names, before the
- * time `latest` names, under the
- * approved proposal `proposal` raised with `proposalSalt` - the one thing of
- * the account's half its record answers. Built in whichever section of its
+ * time `latest` names, while the head the latest recovery carried out wrote
+ * is still `lastRecovery`, under the approved proposal `proposal` raised with
+ * `proposalSalt` - the one thing of the account's half its record answers.
+ * Built in whichever section of its
  * transaction it lands in (`ANCHOR_CALL_MAY_LAND_IN`), which is handed back: in
  * the fallible one, a carrying out another anchor beats pays its fee.
  */
@@ -1680,13 +1727,15 @@ export async function buildRecoverAnchorCall(
   input: {
     readonly account: string; readonly material: SignerMaterial; readonly chain: AccountCallChain;
     readonly previous: string; readonly batch: string; readonly held: Pick<BatchHolders, 'approvals' | 'signerRoot'>;
-    readonly resumesFrom: string; readonly latest: string; readonly proposal: string; readonly proposalSalt: string;
+    readonly resumesFrom: string; readonly latest: string; readonly lastRecovery: string;
+    readonly proposal: string; readonly proposalSalt: string;
   },
 ): Promise<{ proven: Uint8Array; placement: AnchorPlacement }> {
   const resumesFrom = bytesOf('head it resumes from', String(input.resumesFrom).toLowerCase());
   const latest = digitsOf('recovery\'s last time', input.latest);
+  const lastRecovery = bytesOf('latest recovery\'s head', String(input.lastRecovery).toLowerCase());
   const proposal = bytesOf('proposal', String(input.proposal).toLowerCase());
-  return buildAnAnchorCall(deps, input, 'recoverAnchor', [resumesFrom, latest, proposal], { proposalSalt: bytesOf('proposal\'s salt', String(input.proposalSalt).toLowerCase()) });
+  return buildAnAnchorCall(deps, input, 'recoverAnchor', [resumesFrom, latest, lastRecovery, proposal], { proposalSalt: bytesOf('proposal\'s salt', String(input.proposalSalt).toLowerCase()) });
 }
 
 /** An anchor call or a recovery, as the two builders above take them: the anchor's arguments first, then `more`. */

@@ -97,6 +97,7 @@ import {
   assertKnownCircuitSet,
 } from './deferral.js';
 import { buildCreationInsert, type CreationInsertPrimitives } from 'midnight-identity/profile/contract-keys';
+import { authorityIn } from 'midnight-identity/profile/contract-authority';
 
 /** The circuit names a call interface for this deployment carries. */
 const DEPLOYED: ReadonlySet<string> = new Set<string>(DEPLOYED_CIRCUITS);
@@ -458,10 +459,11 @@ export async function submitCreationInsertTx(
 
   const state: any = await providers.publicDataProvider.queryContractState(options.contractAddress);
   if (!state) throw new Error(`no contract is deployed at '${options.contractAddress}'`);
-  const counter = state.maintenanceAuthority?.counter;
-  if (typeof counter !== 'bigint') {
-    throw new Error(`the account at '${options.contractAddress}' reports no maintenance counter; nothing was built.`);
+  const held = authorityIn(state);
+  if ('why' in held) {
+    throw new Error(`the account at '${options.contractAddress}' carries a maintenance authority that cannot be read (${held.why.replace(/\.$/u, '')}); nothing was built.`);
   }
+  const counter = held.counter;
   // Already landed, for instance by an earlier attempt whose answer was lost: nothing to do.
   // `verifyContractState` in the read-back still compares every key byte for byte.
   if (SECOND_STEP_CIRCUITS.every((name) => opNames(state).includes(name))) {

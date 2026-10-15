@@ -21,7 +21,7 @@ import {
   creationStepOf,
 } from './deferral.js';
 import {
-  buildCreationInsert, requireCreatableAuthority, type CreationInsertPrimitives,
+  buildCreationInsert, requireCreatableAuthority, submitCreationInsertTx, type CreationInsertPrimitives,
 } from './partial-contract.js';
 import { BYTES_WRITTEN_LIMIT, extrinsicCeiling } from '../../scripts/dispatch-ceiling.js';
 
@@ -96,6 +96,27 @@ describe('who can create a company', () => {
     expect(() => requireCreatableAuthority({
       kind: 'committee', committee: [{ tag: 'schnorr', value: 'cd'.repeat(32) }], threshold: 1,
     })).toThrow(/holds\s+none of their signing keys/);
+  });
+});
+
+describe('the second step, before anything is built', () => {
+  const signingKey = { tag: 'schnorr', value: 'ab'.repeat(32) };
+  const choice = { kind: 'single-key' as const, signingKey, temporary: { fixedBy: 'a later deployment' } };
+  const ADDRESS = 'an-account-address-that-is-not-a-real-one';
+  const heldBy = (authority: Record<string, unknown>) => ({
+    publicDataProvider: { queryContractState: async () => ({ maintenanceAuthority: authority }) },
+  });
+  const key = { tag: 'schnorr', value: 'cd'.repeat(32) };
+
+  it.each([
+    ['a counter that is not a number of changes at all', { committee: [key], threshold: 1, counter: '0' }, 'counter is not a bigint of at least zero'],
+    ['a counter below zero', { committee: [key], threshold: 1, counter: -1n }, 'counter is not a bigint of at least zero'],
+    ['a committee that is not a list of hex keys', { committee: [{ tag: 'schnorr', value: 'not-hex' }], threshold: 1, counter: 0n }, 'key is not hex digits'],
+    ['a state with no committee', { threshold: 1, counter: 0n }, 'committee is not a list'],
+  ])('an account reporting %s is refused before any update is built', async (_name, authority, why) => {
+    /* RED WHEN: the account's authority is read by anything but `authorityIn`, or a refusal does not say why the authority cannot be read. */
+    await expect(submitCreationInsertTx(heldBy(authority), { contractAddress: ADDRESS, maintenanceAuthority: choice }))
+      .rejects.toThrow(new RegExp(`the account at '${ADDRESS}' carries a maintenance authority that cannot be read \\(.*${why}.*\\); nothing was built\\.$`, 'u'));
   });
 });
 

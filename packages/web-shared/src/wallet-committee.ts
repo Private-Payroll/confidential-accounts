@@ -21,8 +21,8 @@ import { askWallet, type Openable, type WalletDialog } from './wallet-sign-in.js
 export const COMMITTEE_WINDOW_MS = 10 * 60_000;
 
 export const COMMITTEE_PURPOSE =
-  'To bring your company\'s account and vaults up to date with its current signers. This screen shows who joins, who '
-  + 'leaves and how many must sign after the change.';
+  'To bring your company\'s account and vaults up to date with its super admins as the chain holds them. This screen '
+  + 'shows who joins, who leaves and how many must sign after the change.';
 
 export class WalletDidNotSign extends Error {
   constructor(readonly code: string, message: string) {

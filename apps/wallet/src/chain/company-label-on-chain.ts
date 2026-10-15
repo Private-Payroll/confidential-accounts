@@ -4,7 +4,11 @@ import type { AccountHolders, AccountPaymentFacts, AccountRoleEntry, AccountSeat
 import { COMPANY_LABEL_ENTRY, companyLabelOf, readAccountAddress, readVaultAddress } from 'midnight-identity/profile/company-label';
 import {
   ACCOUNT_THRESHOLD_FIELD, ADOPTED_VAULTS_FIELD, as32, holdersInAccountState, ROLES_FIELD, SIGNER_LEAVES_FIELD, seatsInAccountState,
+  vaultsInAccountState,
 } from 'midnight-identity/profile/account-state';
+import { authorityIn } from 'midnight-identity/profile/contract-authority';
+import type { ContractAuthority } from 'midnight-identity/profile/contract-authority';
+import type { ChainRead, ContractOnTheChain } from 'midnight-identity/profile/committee-sign';
 import type { AccountAddress, CompanyLabel, VaultAddress } from 'midnight-identity/profile/company-label';
 
 /**
@@ -169,17 +173,21 @@ export function rolesInAccountState(serialized: Uint8Array, asked: readonly stri
   return Object.freeze(asked.map((key) => Object.freeze({ key, value: held.get(key) ?? null })));
 }
 
-const committeeOf = (state: ContractState): VaultHolders['committee'] =>
-  Object.freeze(state.maintenanceAuthority.committee.map((k) => Object.freeze({ tag: String(k.tag), value: String(k.value).toLowerCase() })));
-
 /**
  * **WHO HOLDS A VAULT, AND WHICH ACCOUNT IT IS PINNED TO, FROM ITS SERIALISED
  * STATE.** The committee and threshold are the vault's own maintenance
  * authority, read exactly as an account's are; the account is the one its
  * constructor wrote. Throws when the bytes are not a contract's state laid out
- * as a vault is.
+ * as a vault is, and when `authorityIn` refuses the state's authority, saying
+ * why.
  */
 export function vaultInState(vault: VaultAddress, serialized: Uint8Array): VaultHolders {
+  const { account, authority } = vaultPartsIn(serialized);
+  return Object.freeze({ vault: String(vault), account, committee: authority.committee, threshold: authority.threshold });
+}
+
+/** The account a vault's state is pinned to and its authority, each read once; throws as `vaultInState` says. */
+function vaultPartsIn(serialized: Uint8Array): { readonly account: string; readonly authority: ContractAuthority } {
   const state = ContractState.deserialize(serialized);
   const fields = state.data.state.asArray();
   const notAVault = 'that contract\'s state is not laid out as a company\'s vault.';
@@ -189,12 +197,53 @@ export function vaultInState(vault: VaultAddress, serialized: Uint8Array): Vault
   /* The account is a reference to a contract: one thirty-two byte address, which is all the cell holds. */
   const account = cell === undefined || cell.value.length !== 1 ? null : as32(cell.value[0]);
   if (account === null || account.every((b) => b === 0)) throw new Error(notAVault);
-  return Object.freeze({
-    vault: String(vault),
-    account: Array.from(account, (b) => b.toString(16).padStart(2, '0')).join(''),
-    committee: committeeOf(state),
-    threshold: state.maintenanceAuthority.threshold,
-  });
+  const authority = authorityIn(state);
+  if ('why' in authority) throw new Error(notAVault.slice(0, -1) + ': ' + authority.why);
+  return { account: Array.from(account, (b) => b.toString(16).padStart(2, '0')).join(''), authority };
+}
+
+/**
+ * **ONE CONTRACT A COMMITTEE ASK NAMES, FROM ITS SERIALISED STATE**: who holds
+ * it, its counter, for a vault the account its constructor pinned it to, and
+ * for the account every vault it lists, adopted and retired.
+ * The company's account is the contract at `account`'s address and every
+ * other address is read as a vault, so which rules a contract is judged by
+ * comes from its address and never from what a page calls it. Throws when the
+ * bytes are not laid out as that contract is.
+ */
+export function contractInState(address: string, account: AccountAddress, serialized: Uint8Array): ContractOnTheChain {
+  if (address === account) {
+    const authority = authorityIn(ContractState.deserialize(serialized));
+    if ('why' in authority) throw new Error('that contract\'s state is not laid out as a company\'s account: ' + authority.why);
+    return Object.freeze({
+      of: 'read', committee: authority.committee, threshold: authority.threshold, counter: authority.counter, pinnedTo: null,
+      vaults: vaultsInAccountState(serialized),
+    });
+  }
+  const { account: pinnedTo, authority } = vaultPartsIn(serialized);
+  return Object.freeze({ of: 'read', committee: authority.committee, threshold: authority.threshold, counter: authority.counter, pinnedTo });
+}
+
+/**
+ * Reads every contract at `addresses` through `read`, the indexer this wallet
+ * reads its own balance from, for a committee ask about `account`. Never
+ * throws: a failed read, no contract, or a state that does not read is
+ * `unreadable`, and nothing is signed for it.
+ */
+export async function contractsOnChain(account: AccountAddress, addresses: readonly string[], read: ContractStateHex): Promise<ChainRead> {
+  const out = new Map<string, ContractOnTheChain>();
+  await Promise.all(addresses.map(async (raw) => {
+    const address = raw.toLowerCase();
+    try {
+      const hex = await read(address as AccountAddress);
+      out.set(address, hex === null
+        ? { of: 'unreadable', why: 'the indexer holds no contract at that address.' }
+        : contractInState(address, account, bytesOf(hex)));
+    } catch (e) {
+      out.set(address, { of: 'unreadable', why: e instanceof Error ? e.message : 'the read did not come back.' });
+    }
+  }));
+  return out;
 }
 
 export type VaultOnChain =

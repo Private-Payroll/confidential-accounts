@@ -293,7 +293,7 @@ describe('home', () => {
     expect(q(table, 'tbody tr [data-action=view-proposal]')!.getAttribute('href')).toBe(PAGES.proposals.path);
   });
 
-  /* RED WHEN: a step the application knows is done stays on the card; or a vault not yet held by the signers, or vaults that could not be read, take the vault step off it. */
+  /* RED WHEN: a step the application knows is done stays on the card; or a vault not yet held by the super admins, or vaults that could not be read, take the vault step off it. */
   it('leaves a done step off the card', async () => {
     state.handover = { of: 'held' };
     const c = await draw('home');
@@ -825,7 +825,7 @@ describe('vaults and a vault', () => {
   });
 
   /*
-   * RED WHEN: a vault its signers hold and that is not set up is shown as held by them, is not marked pending, or
+   * RED WHEN: a vault its super admins hold and that is not set up is shown as set up, is not marked pending, or
    * its pill and its row do not open carrying its set up on in the panel - which any signer does from their own device.
    */
   it('marks a vault held and not set up as pending, says so, and opens carrying its set up on', async () => {
@@ -847,13 +847,23 @@ describe('vaults and a vault', () => {
     expect(document.querySelector('[data-panel] [data-action=create-vault] [data-slot=confirm-in-your-account]')?.textContent).toContain(EN['createVault.confirmStart']);
   });
 
-  /* RED WHEN: a standing phrase says as a fact about the vault that no money can go in, or the vault-created line's second sentence stops saying this app puts money in only once the company is handed over. */
-  it('says only that this app puts no money in, and says the company account must be handed over too', () => {
-    for (const k of ['notFundable', 'accountNotHandedOver', 'accountNotFundable', 'heldByOtherKeys']) {
+  /*
+   * RED WHEN: a standing phrase says as a fact about the vault that no money can go in; a standing a gate of this
+   * app refuses money for stops saying this app puts none in; a standing no gate stands behind - who holds the
+   * account or the vault, which no payment reads - says anything about money, as does the vault-created line on
+   * the account; or any string says the signers hold the company or a vault, which its super admins hold.
+   */
+  it('says this app puts no money in only where a gate refuses it, and never that the signers hold anything', () => {
+    for (const k of ['notFundable', 'accountNotFundable', 'startOwed', 'handoverOwed']) {
       expect(EN[`vaults.standing.${k}`], k).not.toMatch(/no money can go/i);
       expect(EN[`vaults.standing.${k}`], k).toMatch(/this app puts no money|it puts no money/i);
     }
-    expect(EN['createVault.done.notHandedOver']).toMatch(/only once your company is handed to its signers/);
+    for (const k of ['vaults.standing.accountNotHandedOver', 'vaults.standing.heldByOtherKeys', 'createVault.done.notHandedOver']) {
+      expect(EN[k], k).not.toMatch(/money/i);
+      expect(EN[k], k).toMatch(/super admins/);
+    }
+    expect(Object.entries(EN).filter(([, v]) => /(held by|handed to|hand(ed)? over to) (your|its|the) signers|signers (hold|do not hold)/i.test(String(v)))).toEqual([]);
+    expect(EN['setup.handOver.what']).toMatch(/without the signers, they can change any of those rules, and so take money out of any vault/i);
   });
 
   /* RED WHEN: a vault's payouts are not the runs that pay out of it, or the tiles lead anywhere but the vault's own page. */

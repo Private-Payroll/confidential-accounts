@@ -695,7 +695,8 @@ export circuit companyLabelKey(): Bytes<32> {
   return persistentHash<Bytes<32>>(pad(32, "midnight-accounts:roles:label"));
 }
 
-// Where the company's record anchor sits in `signerRoles`: one head, written only by `anchor`.
+// Where the company's record anchor sits in `signerRoles`: one head, written by `anchor` and by
+// `recoverAnchor`, and by nothing else.
 export circuit anchorKey(): Bytes<32> {
   return persistentHash<Bytes<32>>(pad(32, "midnight-accounts:roles:anchor"));
 }
@@ -715,12 +716,21 @@ export circuit anchorTagOf(account: Bytes<32>, pk: Bytes<32>, blinding: Bytes<32
   ]);
 }
 
+// Where the account keeps the head the latest recovery carried out wrote, in `signerRoles`. Absent
+// until the first recovery is carried out; written only by `recoverAnchor`.
+export circuit lastRecoveryKey(): Bytes<32> {
+  return persistentHash<Bytes<32>>(pad(32, "midnight-accounts:roles:recovery"));
+}
+
 // What signers approve to move the record anchor past a batch nobody can check: on from a header
-// their own devices checked, whose head is `resumesFrom`, before the time `latest`. Past it the
-// approval is spent, so it cannot be carried out long after the records have moved on.
-export circuit recoverAnchorPayload(resumesFrom: Bytes<32>, latest: Uint<64>): Bytes<32> {
-  return persistentHash<Vector<3, Bytes<32>>>([
-    pad(32, "midnight-accounts:recover:"), resumesFrom, latest as Field as Bytes<32>
+// their own devices checked, whose head is `resumesFrom`, before the time `latest`, after the
+// recovery whose head is `lastRecovery` (32 zero bytes before any) and no other. Past `latest` the
+// approval is spent, so it cannot be carried out long after the records have moved on; once another
+// recovery is carried out it is spent too, so a second approval can never give up batches anchored
+// since the first.
+export circuit recoverAnchorPayload(resumesFrom: Bytes<32>, latest: Uint<64>, lastRecovery: Bytes<32>): Bytes<32> {
+  return persistentHash<Vector<4, Bytes<32>>>([
+    pad(32, "midnight-accounts:recover:"), resumesFrom, latest as Field as Bytes<32>, lastRecovery
   ]);
 }
 
@@ -874,9 +884,27 @@ circuit holdOf(proposal: Bytes<32>): Hold {
   return proposalHolds.lookup(proposal);
 }
 
+// The approvals a vault's runs need at least: its own threshold `row` when the account holds one
+// for it, otherwise the account's `threshold`. Pure, so whatever reads the account can work out the
+// same bar the account enforces, its fallback included.
+export circuit vaultBarOf(hasRow: Boolean, row: Uint<64>, threshold: Uint<64>): Uint<64> {
+  return hasRow ? row : threshold;
+}
+
+// The approvals one run needs before a vault pays or charges it: the higher of its bar when it was
+// raised and its vault's bar now, plus one for every signer removed since it was raised, because
+// each removed signer's approval may be among those given. Pure, so a device judging whether a
+// run's approvals vouch for anything counts them exactly as the account does.
+export circuit runApprovalsNeeded(
+  neededWhenRaised: Uint<64>, vaultBar: Uint<64>, removalsNow: Uint<64>, removalsWhenRaised: Uint<64>,
+): Uint<64> {
+  return (higher(neededWhenRaised, vaultBar) + (removalsNow - removalsWhenRaised)) as Uint<64>;
+}
+
 // A vault's own threshold if it has one, otherwise the account's.
 circuit thresholdFor(vault: Bytes<32>): Uint<64> {
-  return thresholds.member(vault) ? thresholds.lookup(vault) : threshold;
+  const hasRow = thresholds.member(vault);
+  return vaultBarOf(hasRow, hasRow ? thresholds.lookup(vault) : 0, threshold);
 }
 
 // Refuses a change of who is seated short of the higher of the account's threshold and the
@@ -919,9 +947,7 @@ circuit requireApprovedForVault(proposal: Bytes<32>, vault: Bytes<32>): Bytes<32
   const hold = holdOf(proposal);
   assert(!isHeld(hold.runHold),
     "a signer has held that run, so it cannot be charged or paid; the signer who held it can release it, or enough signers can agree to release it");
-  const bar = higher(hold.needed, thresholdFor(vault));
-  // Each removed signer's approval may be among those given, so one more is needed for each.
-  const needed = (bar + (removalsSoFar() - hold.removals)) as Uint<64>;
+  const needed = runApprovalsNeeded(hold.needed, thresholdFor(vault), removalsSoFar(), hold.removals);
   assert(!(approvalCounts.lookup(proposal) < needed), "not enough approvals yet");
   return openProposals.lookup(proposal);
 }
@@ -1966,9 +1992,13 @@ export circuit anchor(previous: Bytes<32>, batch: Bytes<32>, approvals: Uint<64>
 // seated, raised since the latest removal, for exactly that head, and only before the latest time
 // it was approved with; any signer carries it out, from the head the chain holds, as an anchor is.
 // The batches after `resumesFrom` are given up, and their filers file them again.
+// The approval also names `lastRecovery`, the head the latest recovery carried out wrote (32 zero
+// bytes before any), and is refused once another has been carried out: each recovery carried out
+// writes its own head there, so every recovery approved before it is void, and one seat can never
+// use a second approval to give up batches anchored since. A new one can always be raised.
 export circuit recoverAnchor(
   previous: Bytes<32>, batch: Bytes<32>, approvals: Uint<64>, signerRoot: MerkleTreeDigest, resumesFrom: Bytes<32>,
-  latest: Uint<64>, proposal: Bytes<32>,
+  latest: Uint<64>, lastRecovery: Bytes<32>, proposal: Bytes<32>,
 ): [] {
   const caller = openedSeat();
   const id = disclose(proposal);
@@ -1976,15 +2006,21 @@ export circuit recoverAnchor(
   requireSeatBar(id);
   const resumed = disclose(resumesFrom);
   const until = disclose(latest);
-  assert(disclose(proposalIdOf(recoverAnchorPayload(resumed, until), noVault(), proposalSalt()) == proposal),
+  const after = disclose(lastRecovery);
+  assert(disclose(proposalIdOf(recoverAnchorPayload(resumed, until, after), noVault(), proposalSalt()) == proposal),
     "that proposal is not a recovery of the company's records from that head before that time; carry out the recovery the signers approved, from the head and before the time it names");
   assert(blockTimeLt(until), "the time to carry out this recovery has passed; raise it again, with a later time, and have it approved");
+  const latestCarriedOut = signerRoles.member(lastRecoveryKey()) ? signerRoles.lookup(lastRecoveryKey()) : default<Bytes<32>>;
+  assert(after == latestCarriedOut,
+    "this recovery names a latest recovery that is no longer the latest one carried out, so it is void; raise it again and have it approved");
   const before = disclose(previous);
   const records = disclose(batch);
   const judged = disclose(approvals);
   const root = disclose(signerRoot);
   const tag = anchorMayMove(before, records, judged, root, caller);
-  signerRoles.insert(anchorKey(), anchorHeadOf(before, anchorRecoveredOf(records, judged, root, tag, resumed)));
+  const head = anchorHeadOf(before, anchorRecoveredOf(records, judged, root, tag, resumed));
+  signerRoles.insert(anchorKey(), head);
   signerRoles.insert(anchorSeatKey(), tag);
+  signerRoles.insert(lastRecoveryKey(), head);
   closeProposal(id);
 }

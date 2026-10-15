@@ -27,7 +27,7 @@
  * landed and never sends anywhere; the note a payment spends and the pool after
  * it, which it files only sealed; and a payment's confirmed hash.
  */
-import { committeeReplacement, whyOneKeyCouldActAlone, type Committee } from '../../../src/midnight/vault-committee.js';
+import { committeeReplacement, type Committee } from '../../../src/midnight/vault-committee.js';
 import { VAULT_CIRCUITS } from '../../../src/midnight/vault-contract.js';
 import { heldStateFromTheStart, type HeldStateDeps } from '../../../src/midnight/held-from-the-start.js';
 import { CREATION_STEPS, overTheCeiling } from '../../../src/midnight/deferral.js';
@@ -168,15 +168,14 @@ async function deployHeldFromTheStart(
  * COMPANY'S THRESHOLD FROM ITS FIRST TRANSACTION**, pinned to the company's
  * account. No key outside the committee ever holds it, so there is nothing to
  * hand over and nothing to forget. Refused before anything is built for a
- * committee one of whose keys could change it alone.
+ * committee `committeeInstallRefusals` refuses, which `heldStateFromTheStart`
+ * asks for every contract born held.
  */
 export async function buildVaultBornHeld(
   deps: VaultBuilderDeps, input: { readonly account: string; readonly holders: Committee },
 ): Promise<HeldDeploy> {
   const account = input.account.toLowerCase();
   if (!HEX64.test(account)) throw new Error('a vault is pinned to its company\'s account address, and this is not one.');
-  const alone = whyOneKeyCouldActAlone(input.holders);
-  if (alone !== null) throw new Error(`no vault was built: ${alone}.`);
   const built = await deployHeldFromTheStart(deps, {
     compiled: deps.compiled, zkConfig: deps.zkConfig, args: [{ bytes: fromHex(account) }], circuits: VAULT_CIRCUITS,
     holders: { committee: input.holders.committee.map((k) => ({ tag: k.tag, value: k.value.toLowerCase() })), threshold: input.holders.threshold },

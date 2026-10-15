@@ -19,7 +19,7 @@ import { signManifestEntry, type ManifestEntryBody } from '../../../src/midnight
 import { nextTreeHeader, signTreeHeader, type TreeHeader } from '../../../src/midnight/record-tree.js';
 import { anchorFunctions, aTreeCompany, headAfterStep, headsByTheAccount, ACCOUNT_IN_A_TEST, tagInATest } from '../../../src/testing/record-tree-double.js';
 import { pureCircuits } from '../../../contracts/managed/contract/index.js';
-import { buildGovernedCall, identityOfAChange, type GovernanceOnTheWire, type GovernedCallDeps } from './governed-call-builder.js';
+import { buildGovernedCall, identityOfAChange, lastRecoveryIn, type GovernanceOnTheWire, type GovernedCallDeps } from './governed-call-builder.js';
 import type { BatchHolders } from '../../../src/midnight/record-manifest.js';
 import type { VaultBuilderClient } from './vault-worker-client.js';
 import { fullCheckHere } from './records-anchored-here.js';
@@ -54,14 +54,21 @@ const LATEST_SECONDS = String(LATEST.getTime() / 1000);
  * the recovery that carries one out. A recovery naming another head than the
  * one the chain holds lands refused, as one in its transaction's fallible
  * section does - its fee paid, nothing written, its proposal left open and the
- * refused call in the history - and so does one past its last time; one for
- * other holders is refused whole. `bar` is the approvals a recovery needs, as the account
- * counts them (the higher of its threshold and its policy bar).
+ * refused call in the history - and so do one past its last time and one naming
+ * another latest recovery than the account holds; one for other holders is
+ * refused whole. `bar` is the approvals a recovery needs, as the account
+ * counts them (the higher of its threshold and its policy bar). The account's
+ * state, as the wallet's indexer hands it over, holds its record anchor's head
+ * and the head the latest recovery carried out wrote, under the account's own
+ * keys; `handed` is every state it handed over.
  */
 const aChain = (c: ReturnType<typeof aTreeCompany>) => {
   const proposals = new Map<string, { held: 'open' | 'closed'; approvals: number; by: Set<string>; failed: string[] }>();
   const sent: string[] = [];
   const bar = { needed: HELD.approvals };
+  /* The head the latest recovery carried out wrote: none before the first. */
+  const latest: { recovery: string | null } = { recovery: null };
+  const handed = new Set<string>();
   /* The chain's block time, in seconds: the recovery is refused from its latest time on, as the account's circuit refuses it. */
   const time = { now: NOW.getTime() / 1000 };
   const takes = (tx: string): void => {
@@ -86,13 +93,36 @@ const aChain = (c: ReturnType<typeof aTreeCompany>) => {
     if (p.approvals < bar.needed) throw new Error('not approved');
     const head = c.landed.length === 0 ? '00'.repeat(32) : c.landed[c.landed.length - 1]!.head;
     /* Landed refused: its fee paid, nothing written, the proposal still open. */
-    if (t.previous !== head || !(Number(t.latest) > time.now)) { for (const q of proposals.values()) if (q.held === 'open') q.failed.push('recoverAnchor'); return; }
+    if (t.previous !== head || !(Number(t.latest) > time.now) || t.lastRecovery !== (latest.recovery ?? '00'.repeat(32))) {
+      for (const q of proposals.values()) if (q.held === 'open') q.failed.push('recoverAnchor');
+      return;
+    }
     if (t.held.approvals !== HELD.approvals || t.held.signerRoot !== HELD.signerRoot) throw new Error('the account\'s signers changed');
     const next = headAfterStep({ previous: t.previous, batch: t.batch, held: HELD, tag: t.tag, resumesFrom: t.resumesFrom });
-    c.landed.push({ head: next, tag: t.tag, committee: [], height: c.landed.length + 1, at: 0 });
+    c.landed.push({ head: next, tag: t.tag, height: c.landed.length + 1, at: 0 });
+    latest.recovery = next;
     p.held = 'closed';
   };
-  return { proposals, sent, takes, time, bar };
+  /* The account's state now, as the indexer the wallet names hands it over. */
+  const state = (): string => {
+    const s = b64(JSON.stringify({ anchor: c.landed.length === 0 ? '00'.repeat(32) : c.landed[c.landed.length - 1]!.head, lastRecovery: latest.recovery }));
+    handed.add(s);
+    return s;
+  };
+  return { proposals, sent, takes, time, bar, latest, state, handed };
+};
+
+const hexOfBytes = (b: Uint8Array): string => Buffer.from(b).toString('hex');
+/** The account's own reader of a test chain's state: its roles, under the account's own keys for the anchor and the latest recovery. */
+const stateReader = {
+  accountPure: pureCircuits as unknown as GovernedCallDeps['accountPure'],
+  runtimeState: { deserialize: (b: Uint8Array) => ({ data: b }) },
+  accountLedger: (data: unknown) => {
+    const o = JSON.parse(Buffer.from(data as Uint8Array).toString()) as { anchor: string; lastRecovery: string | null };
+    const roles = new Map<string, string>([[hexOfBytes(pureCircuits.anchorKey()), o.anchor]]);
+    if (o.lastRecovery !== null) roles.set(hexOfBytes(pureCircuits.lastRecoveryKey()), o.lastRecovery);
+    return { signerRoles: { member: (k: Uint8Array) => roles.has(hexOfBytes(k)), lookup: (k: Uint8Array) => Buffer.from(roles.get(hexOfBytes(k))!, 'hex') } };
+  },
 };
 
 /** A device's worker, as a test builds it: the account's own functions, and the real builder of a raise and an approval with no proof. */
@@ -124,7 +154,11 @@ const workerFor = (chain: ReturnType<typeof aChain>): RecoveryDoors['builder'] =
     return [id.toLowerCase(), p === undefined ? { held: 'never' as const, approvals: 0 }
       : { held: p.held, approvals: p.approvals, ...(p.failed.length === 0 ? {} : { failedCalls: [...p.failed] }) }];
   })),
-  accountCallChain: async () => ({ blockHash: 'b1'.repeat(32), accountState: '', parameters: '' }),
+  /* The account's state, only at the indexer the person's own wallet names. */
+  accountCallChain: async (q: { account: string; indexer: typeof INDEXER }) => (q.account === ACCOUNT && q.indexer.indexerUri === INDEXER.indexerUri
+    && q.indexer.indexerWsUri === INDEXER.indexerWsUri ? { blockHash: 'b1'.repeat(32), accountState: chain.state(), parameters: '' } : null),
+  /* The account's own reader and key over the state given. */
+  lastRecovery: async ({ accountState }: { accountState: string }) => lastRecoveryIn(stateReader, Buffer.from(accountState, 'base64')),
   /* The account's own check of the approvals, as building the call runs it: the real one is held by the keyed test on the chain. */
   recoverAnchor: async (input: Parameters<VaultBuilderClient['recoverAnchor']>[0]) => {
     if ((chain.proposals.get(String(input.proposal).toLowerCase())?.approvals ?? 0) < chain.bar.needed) {
@@ -185,7 +219,7 @@ describe('A RECOVERY ON THE SIGNERS\' OWN DEVICES', () => {
     const c = await aCompany();
     const chain = aChain(c);
     /* Batch 1 lands with a header nobody kept: every device's read stops there. */
-    c.landed.push({ head: 'ee'.repeat(32), tag: tagInATest(C.secret), committee: [], height: c.landed.length + 1, at: 0 });
+    c.landed.push({ head: 'ee'.repeat(32), tag: tagInATest(C.secret), height: c.landed.length + 1, at: 0 });
     const a = aDevice(c, chain, A);
     const b = aDevice(c, chain, B);
     for (const d of [a, b]) expect((await readTo(d)).stop).toMatchObject({ stop: 'not-given', seq: 1 });
@@ -193,8 +227,11 @@ describe('A RECOVERY ON THE SIGNERS\' OWN DEVICES', () => {
     const { file } = await raiseRecoveryHere(a.doors, { latest: LATEST });
     /* RED WHEN: the recovery resumes from anything but the last header the raiser checked, or names another head than its file's. */
     expect(file.resumesFrom).toEqual({ seq: 0, head: c.checkedAt(0).head, root: c.checkedAt(0).root });
-    /* RED WHEN: the recovery's change does not carry the last time it may be carried out, which the approvals bind. */
-    expect(file.change).toEqual({ kind: 'recover-anchor', resumesFrom: c.checkedAt(0).head, latest: LATEST_SECONDS });
+    /*
+     * RED WHEN: the recovery's change does not carry the last time it may be carried out, or names anything but
+     * thirty-two zero bytes as the latest recovery on an account that has carried none out: the approvals bind both.
+     */
+    expect(file.change).toEqual({ kind: 'recover-anchor', resumesFrom: c.checkedAt(0).head, latest: LATEST_SECONDS, lastRecovery: '00'.repeat(32) });
     /* Handed over as a file: what B's device reads is the text A saved. */
     const handed = proposalFileRead(proposalFileText(file));
     expect(handed).toEqual(file);
@@ -232,7 +269,7 @@ describe('A RECOVERY ON THE SIGNERS\' OWN DEVICES', () => {
     const b0 = aDevice(c, chain, B);
     await readTo(a0);
     await readTo(b0);
-    c.landed.push({ head: 'ee'.repeat(32), tag: tagInATest(C.secret), committee: [], height: c.landed.length + 1, at: 0 });
+    c.landed.push({ head: 'ee'.repeat(32), tag: tagInATest(C.secret), height: c.landed.length + 1, at: 0 });
     /* Then the service is gone: the same devices, keeping what they kept, with nothing of the service. */
     const gone = (d: typeof a0, who: typeof A, asked: string[]) => {
       const g = aDevice(c, chain, who, { serviceGone: true, asked });
@@ -288,7 +325,7 @@ describe('A RECOVERY ON THE SIGNERS\' OWN DEVICES', () => {
   it('A DEVICE WHOSE OWN READ IS NOT STOPPED RIGHT AFTER THE HEADER A RECOVERY RESUMES FROM RAISES, APPROVES AND CARRIES OUT NOTHING, AND SENDS NOTHING', async () => {
     const c = await aCompany();
     const chain = aChain(c);
-    c.landed.push({ head: 'ee'.repeat(32), tag: tagInATest(C.secret), committee: [], height: c.landed.length + 1, at: 0 });
+    c.landed.push({ head: 'ee'.repeat(32), tag: tagInATest(C.secret), height: c.landed.length + 1, at: 0 });
     const a = aDevice(c, chain, A);
     const b = aDevice(c, chain, B);
     /* A device whose read reaches the head the chain holds: here, the same read with nothing stopped. */
@@ -332,7 +369,7 @@ describe('A RECOVERY ON THE SIGNERS\' OWN DEVICES', () => {
   it('A RECOVERY IS RAISED TO BE CARRIED OUT BY A TIME; PAST IT, NO DEVICE APPROVES OR CARRIES IT OUT, AND NOTHING IS KEPT OR SENT', async () => {
     const c = await aCompany();
     const chain = aChain(c);
-    c.landed.push({ head: 'ee'.repeat(32), tag: tagInATest(C.secret), committee: [], height: c.landed.length + 1, at: 0 });
+    c.landed.push({ head: 'ee'.repeat(32), tag: tagInATest(C.secret), height: c.landed.length + 1, at: 0 });
     const a = aDevice(c, chain, A);
     const b = aDevice(c, chain, B);
     await readTo(b);
@@ -358,7 +395,7 @@ describe('A RECOVERY ON THE SIGNERS\' OWN DEVICES', () => {
     const head = c.landed[c.landed.length - 1]!.head;
     /* RED WHEN: a carrying out the chain took and refused - read off its transaction - is believed, or said as never sent. */
     await expect(carryOutRecoveryHere(a.doors, file)).rejects
-      .toThrow(/account refused this carrying out as the chain took it - its time had passed, or who holds the account changed, since it was built - so it wrote nothing and its fee was paid/u);
+      .toThrow(/account refused this carrying out as the chain took it - its time had passed, who holds the account changed, or another recovery was carried out, since it was built - so it wrote nothing and its fee was paid/u);
     expect(c.landed[c.landed.length - 1]!.head).toBe(head);
     /* RED WHEN: the person is offered their own wallet for a call the chain already took. */
     expect(a.asked).not.toContain('the person chose their own wallet');
@@ -367,7 +404,7 @@ describe('A RECOVERY ON THE SIGNERS\' OWN DEVICES', () => {
   it('A RECOVERY\'S LAST TIME IS AT MOST SEVEN DAYS AHEAD: THE RAISING DEVICE AND EVERY APPROVING DEVICE REFUSE ONE FURTHER', async () => {
     const c = await aCompany();
     const chain = aChain(c);
-    c.landed.push({ head: 'ee'.repeat(32), tag: tagInATest(C.secret), committee: [], height: c.landed.length + 1, at: 0 });
+    c.landed.push({ head: 'ee'.repeat(32), tag: tagInATest(C.secret), height: c.landed.length + 1, at: 0 });
     const a = aDevice(c, chain, A);
     const b = aDevice(c, chain, B);
     await readTo(b);
@@ -391,7 +428,7 @@ describe('A RECOVERY ON THE SIGNERS\' OWN DEVICES', () => {
   it('A FILE IS BELIEVED IN NOTHING: ANOTHER COMPANY\'S, ONE WHOSE SALT MAKES ANOTHER PROPOSAL, OR ONE THE CHAIN DOES NOT HOLD OPEN, IS REFUSED BEFORE ANYTHING IS SENT', async () => {
     const c = await aCompany();
     const chain = aChain(c);
-    c.landed.push({ head: 'ee'.repeat(32), tag: tagInATest(C.secret), committee: [], height: c.landed.length + 1, at: 0 });
+    c.landed.push({ head: 'ee'.repeat(32), tag: tagInATest(C.secret), height: c.landed.length + 1, at: 0 });
     const a = aDevice(c, chain, A);
     const b = aDevice(c, chain, B);
     await readTo(b);
@@ -410,7 +447,13 @@ describe('A RECOVERY ON THE SIGNERS\' OWN DEVICES', () => {
     /* RED WHEN: a file whose last time was moved later is approved: the identity made again from the change refuses it. */
     await refused({ ...file, change: { ...file.change, latest: String(Number(LATEST_SECONDS) + 1) } }, /make another proposal/u);
     /* RED WHEN: a recovery file that names no last time is read at all. */
-    await refused({ ...file, change: { kind: 'recover-anchor', resumesFrom: file.resumesFrom!.head } }, /until when the recovery may be carried out/u);
+    await refused({ ...file, change: { kind: 'recover-anchor', resumesFrom: file.resumesFrom!.head, lastRecovery: '00'.repeat(32) } }, /until when the recovery may be carried out/u);
+    /* RED WHEN: a recovery file that names no latest recovery carried out, or one that is not thirty-two bytes, is read at all. */
+    await refused({ ...file, change: { kind: 'recover-anchor', resumesFrom: file.resumesFrom!.head, latest: LATEST_SECONDS } },
+      /which recovery of the company's records was the latest carried out when it was raised/u);
+    await refused({ ...file, change: { ...file.change, lastRecovery: '00'.repeat(31) } }, /which recovery of the company's records was the latest carried out/u);
+    /* RED WHEN: a file naming another latest recovery than the one its approvals bind is approved: the identity made again from the change refuses it. */
+    await refused({ ...file, change: { ...file.change, lastRecovery: '11'.repeat(32) } }, /make another proposal/u);
     await refused({ ...file, format: 'something-else' }, /not a proposal/u);
     /* RED WHEN: a proposal the chain does not hold open is approved: one closed already, or never raised. */
     chain.proposals.get(file.chainId)!.held = 'closed';
@@ -425,7 +468,7 @@ describe('A RECOVERY ON THE SIGNERS\' OWN DEVICES', () => {
   it('A CARRYING OUT ANOTHER ANCHOR BEATS WRITES NOTHING AND LEAVES THE RECOVERY OPEN; THE DEVICE SAYS SO, AND IT IS CARRIED OUT AGAIN', async () => {
     const c = await aCompany();
     const chain = aChain(c);
-    c.landed.push({ head: 'ee'.repeat(32), tag: tagInATest(C.secret), committee: [], height: c.landed.length + 1, at: 0 });
+    c.landed.push({ head: 'ee'.repeat(32), tag: tagInATest(C.secret), height: c.landed.length + 1, at: 0 });
     const a = aDevice(c, chain, A);
     const b = aDevice(c, chain, B);
     await readTo(b);
@@ -436,7 +479,7 @@ describe('A RECOVERY ON THE SIGNERS\' OWN DEVICES', () => {
     const beaten = {
       ...a.doors,
       send: { ...a.doors.send, service: async (tx: string) => {
-        c.landed.push({ head: 'e1'.repeat(32), tag: tagInATest(C.secret), committee: [], height: c.landed.length + 1, at: 0 });
+        c.landed.push({ head: 'e1'.repeat(32), tag: tagInATest(C.secret), height: c.landed.length + 1, at: 0 });
         chain.takes(tx);
       } },
     };
@@ -460,7 +503,7 @@ describe('A RECOVERY ON THE SIGNERS\' OWN DEVICES', () => {
   it('TWO DEVICES CARRY OUT ONE RECOVERY AT ONCE: THE ONE THE CHAIN TOOK SECOND IS TOLD ANOTHER CARRIED IT OUT, AND BELIEVES NOTHING OF ITS OWN', async () => {
     const c = await aCompany();
     const chain = aChain(c);
-    c.landed.push({ head: 'ee'.repeat(32), tag: tagInATest(C.secret), committee: [], height: c.landed.length + 1, at: 0 });
+    c.landed.push({ head: 'ee'.repeat(32), tag: tagInATest(C.secret), height: c.landed.length + 1, at: 0 });
     const a = aDevice(c, chain, A);
     const b = aDevice(c, chain, B);
     await readTo(b);
@@ -487,7 +530,7 @@ describe('A RECOVERY ON THE SIGNERS\' OWN DEVICES', () => {
   it('ITS OWN CARRYING OUT LANDING BETWEEN TWO READS OF THE CHAIN IS READ AS LANDED, NEVER AS BEATEN', async () => {
     const c = await aCompany();
     const chain = aChain(c);
-    c.landed.push({ head: 'ee'.repeat(32), tag: tagInATest(C.secret), committee: [], height: c.landed.length + 1, at: 0 });
+    c.landed.push({ head: 'ee'.repeat(32), tag: tagInATest(C.secret), height: c.landed.length + 1, at: 0 });
     const a = aDevice(c, chain, A);
     const b = aDevice(c, chain, B);
     await readTo(b);
@@ -511,7 +554,7 @@ describe('A RECOVERY ON THE SIGNERS\' OWN DEVICES', () => {
   it('A SERVICE THAT SAYS IT SENT A CALL AND DID NOT IS NOT BELIEVED: THE PERSON IS TOLD AND CHOOSES THEIR OWN WALLET, OR DECLINES AND NOTHING MORE IS SENT', async () => {
     const c = await aCompany();
     const chain = aChain(c);
-    c.landed.push({ head: 'ee'.repeat(32), tag: tagInATest(C.secret), committee: [], height: c.landed.length + 1, at: 0 });
+    c.landed.push({ head: 'ee'.repeat(32), tag: tagInATest(C.secret), height: c.landed.length + 1, at: 0 });
     const liar = (d: ReturnType<typeof aDevice>) => ({ ...d.doors, send: { ...d.doors.send, service: async () => { d.asked.push('service said sent'); } } });
     const a = aDevice(c, chain, A);
     const b = aDevice(c, chain, B);
@@ -542,7 +585,7 @@ describe('A RECOVERY ON THE SIGNERS\' OWN DEVICES', () => {
     const chain = aChain(c);
     /* The account asks three approvals for a change of who is seated: its policy bar above its threshold of two. */
     chain.bar.needed = 3;
-    c.landed.push({ head: 'ee'.repeat(32), tag: tagInATest(C.secret), committee: [], height: c.landed.length + 1, at: 0 });
+    c.landed.push({ head: 'ee'.repeat(32), tag: tagInATest(C.secret), height: c.landed.length + 1, at: 0 });
     const a = aDevice(c, chain, A);
     const b = aDevice(c, chain, B);
     await readTo(b);
@@ -554,6 +597,141 @@ describe('A RECOVERY ON THE SIGNERS\' OWN DEVICES', () => {
     expect(await a.kept.headers.at(COMPANY, 1)).toEqual([]);
     expect(a.asked).not.toContain('service kept a header');
     expect(chain.sent).toEqual(['propose', 'approve', 'approve']);
+  });
+
+  it('A RECOVERY NAMES THE HEAD THE LATEST ONE CARRIED OUT WROTE, READ OFF THE ACCOUNT\'S STATE AT THE WALLET\'S INDEXER, AND IS CARRIED OUT FROM THERE', async () => {
+    const c = await aCompany();
+    const chain = aChain(c);
+    c.landed.push({ head: 'ee'.repeat(32), tag: tagInATest(C.secret), height: c.landed.length + 1, at: 0 });
+    const a = aDevice(c, chain, A);
+    const b = aDevice(c, chain, B);
+    await readTo(b);
+    const { file: first } = await raiseRecoveryHere(a.doors, { latest: LATEST });
+    await approveRecoveryHere(b.doors, first);
+    await approveRecoveryHere(a.doors, first);
+    const done = await carryOutRecoveryHere(a.doors, first);
+    expect(chain.latest.recovery).toBe(done.head);
+    /* Then batch 2 lands with a header nobody kept: the anchor's head moves on past the one the recovery wrote. */
+    c.landed.push({ head: 'ef'.repeat(32), tag: tagInATest(C.secret), height: c.landed.length + 1, at: 0 });
+    const asked: string[] = [];
+    const watched = { ...b.doors, builder: { ...b.doors.builder, lastRecovery: async (q: { accountState: string }) => { asked.push(q.accountState); return b.doors.builder.lastRecovery(q); } } };
+    const { file } = await raiseRecoveryHere(watched, { latest: LATEST });
+    /* RED WHEN: a recovery is raised naming anything but the head the latest recovery carried out wrote - none, or the anchor's head now. */
+    expect(file.change).toMatchObject({ kind: 'recover-anchor', resumesFrom: done.head, lastRecovery: done.head });
+    /* RED WHEN: the latest recovery is read off anything but a state of the account that the indexer the person's own wallet names handed over. */
+    expect(asked.length).toBeGreaterThan(0);
+    expect(asked.every((x) => chain.handed.has(x))).toBe(true);
+    await approveRecoveryHere(a.doors, file);
+    await approveRecoveryHere(b.doors, file);
+    /* RED WHEN: a recovery naming the latest one carried out is not carried out with it - the account would refuse it. */
+    const second = await carryOutRecoveryHere(b.doors, file);
+    expect(c.landed[c.landed.length - 1]!.head).toBe(second.head);
+    expect(chain.latest.recovery).toBe(second.head);
+  });
+
+  it('ONCE ONE RECOVERY IS CARRIED OUT, EVERY OTHER APPROVED BEFORE IT IS VOID: NO DEVICE APPROVES OR CARRIES ONE OUT, AND NOTHING IS BUILT, KEPT OR SENT', async () => {
+    const c = await aCompany();
+    const chain = aChain(c);
+    c.landed.push({ head: 'ee'.repeat(32), tag: tagInATest(C.secret), height: c.landed.length + 1, at: 0 });
+    const a = aDevice(c, chain, A);
+    const b = aDevice(c, chain, B);
+    const third = aDevice(c, chain, C);
+    await readTo(b);
+    await readTo(third);
+    const { file: one } = await raiseRecoveryHere(a.doors, { latest: LATEST });
+    const { file: two } = await raiseRecoveryHere(b.doors, { latest: LATEST });
+    for (const f of [one, two]) {
+      await approveRecoveryHere(a.doors, f);
+      await approveRecoveryHere(b.doors, f);
+    }
+    await carryOutRecoveryHere(a.doors, one);
+    const sent = [...chain.sent];
+    /* What the refusal says: the head the file names, the head this device read, and what resolves it. */
+    const voided = (step: string) => new RegExp(`^this recovery names ${'00'.repeat(32)} as the head the latest recovery carried out wrote, `
+      + `and the account at your wallet's indexer holds ${chain.latest.recovery}, so as this device reads it, it is void and the account would refuse it; `
+      + `${step} could only spend a fee\\. Nothing was built or sent\\. .*raise it again, and have it approved, once this device's read of the account is current`, 'u');
+    /* RED WHEN: a device approves a recovery another carried out since has voided - the account would refuse it, and the approval only spends a fee. */
+    /* RED WHEN: the refusal does not show the head the file names next to the head this device read, so nobody can tell which device is behind. */
+    await expect(approveRecoveryHere(third.doors, two)).rejects.toThrow(voided('approving it'));
+    let built = 0;
+    const counted = { ...b.doors, builder: { ...b.doors.builder, recoverAnchor: async (i: Parameters<VaultBuilderClient['recoverAnchor']>[0]) => { built += 1; return b.doors.builder.recoverAnchor(i); } } };
+    /* RED WHEN: a device carries out a recovery another carried out since has voided: the account refuses it after its fee is paid. */
+    await expect(carryOutRecoveryHere(counted, two)).rejects.toThrow(voided('carrying it out'));
+    expect(built).toBe(0);
+    expect(chain.sent).toEqual(sent);
+    expect(chain.proposals.get(two.chainId)).toMatchObject({ held: 'open', failed: [] });
+    expect(await b.kept.headers.at(COMPANY, 1)).toEqual([]);
+  });
+
+  it('A RECOVERY CARRIED OUT BY ANOTHER DEVICE WHILE THIS ONE BUILDS ITS OWN IS READ OFF THE STATE ITS CALL IS BUILT ON, AND NOTHING IS BUILT OR SENT', async () => {
+    const c = await aCompany();
+    const chain = aChain(c);
+    c.landed.push({ head: 'ee'.repeat(32), tag: tagInATest(C.secret), height: c.landed.length + 1, at: 0 });
+    const a = aDevice(c, chain, A);
+    const b = aDevice(c, chain, B);
+    await readTo(b);
+    const { file: one } = await raiseRecoveryHere(a.doors, { latest: LATEST });
+    const { file: two } = await raiseRecoveryHere(b.doors, { latest: LATEST });
+    for (const f of [one, two]) {
+      await approveRecoveryHere(a.doors, f);
+      await approveRecoveryHere(b.doors, f);
+    }
+    /* B's device carries out the first after A's device has checked its own read and while it makes its header. */
+    let once = true;
+    let built = 0;
+    const racing = {
+      ...a.doors,
+      builder: {
+        ...a.doors.builder,
+        anchorHeads: async (q: Parameters<VaultBuilderClient['anchorHeads']>[0]) => {
+          if (once) { once = false; await carryOutRecoveryHere(b.doors, one); }
+          return a.doors.builder.anchorHeads(q);
+        },
+        recoverAnchor: async (i: Parameters<VaultBuilderClient['recoverAnchor']>[0]) => { built += 1; return a.doors.builder.recoverAnchor(i); },
+      },
+    };
+    /* RED WHEN: the call is built on a state other than the one the latest recovery was last read off - it would be sent, refused, and its fee paid. */
+    await expect(carryOutRecoveryHere(racing, two)).rejects.toThrow(/as the head the latest recovery carried out wrote, .* so as this device reads it, it is void .*carrying it out could only spend a fee/su);
+    expect(once).toBe(false);
+    expect(built).toBe(0);
+    expect(chain.sent.filter((x) => x === 'recoverAnchor')).toHaveLength(1);
+    expect(await a.kept.headers.at(COMPANY, 1)).toEqual([]);
+  });
+
+  it('A RECOVERY\'S CALL IS BUILT ON THE VERY STATE OF THE ACCOUNT ITS LATEST RECOVERY WAS LAST READ OFF', async () => {
+    const c = await aCompany();
+    const chain = aChain(c);
+    c.landed.push({ head: 'ee'.repeat(32), tag: tagInATest(C.secret), height: c.landed.length + 1, at: 0 });
+    const a = aDevice(c, chain, A);
+    const b = aDevice(c, chain, B);
+    await readTo(b);
+    const { file } = await raiseRecoveryHere(a.doors, { latest: LATEST });
+    await approveRecoveryHere(b.doors, file);
+    await approveRecoveryHere(a.doors, file);
+    /* Every read of the account's state is told apart by its turn, so two reads of an unchanged account are not taken for one. */
+    let reads = 0;
+    const read: string[] = [];
+    let builtOn: string | undefined;
+    const watched = {
+      ...a.doors,
+      builder: {
+        ...a.doors.builder,
+        accountCallChain: async (q: Parameters<VaultBuilderClient['accountCallChain']>[0]) => {
+          const got = await a.doors.builder.accountCallChain(q);
+          if (got === null) return got;
+          reads += 1;
+          const accountState = b64(JSON.stringify({ ...JSON.parse(Buffer.from(got.accountState, 'base64').toString()), read: reads }));
+          chain.handed.add(accountState);
+          return { ...got, accountState };
+        },
+        lastRecovery: async (q: { accountState: string }) => { read.push(q.accountState); return a.doors.builder.lastRecovery(q); },
+        recoverAnchor: async (i: Parameters<VaultBuilderClient['recoverAnchor']>[0]) => { builtOn = i.chain.accountState; return a.doors.builder.recoverAnchor(i); },
+      },
+    };
+    await carryOutRecoveryHere(watched, file);
+    /* RED WHEN: the call is built on a read of the account other than the one its latest recovery was last checked against: a recovery carried out between the two would be sent, refused, and its fee paid. */
+    expect(read.length).toBeGreaterThan(1);
+    expect(builtOn).toBe(read[read.length - 1]);
   });
 
   it('A CALL IS BELIEVED SENT ONLY WHEN THE CHAIN SHOWS IT; WHERE THE SERVICE IS GONE, REFUSES, OR SAYS IT SENT IT AND IT DOES NOT SHOW, THE PERSON CHOOSES THEIR OWN WALLET; NONE, AND IT SAYS SO', async () => {

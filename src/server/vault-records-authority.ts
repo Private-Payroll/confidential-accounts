@@ -52,9 +52,10 @@ const fold = (h: string): string => h.trim().toLowerCase().replace(/^0x/u, '');
 
 /**
  * Whether the seat directory of `companyId` holds, for `person`, a seat whose
- * filing key is `filer` and whose role may file `record` (`filerSeatOf`).
+ * filing key is `filer`, held now (`filerSeatOf`). Which records a role may
+ * file is each member's device's to judge as it reads them.
  */
-export type MayFileUnder = (companyId: string, person: string, filer: Hex, record: WireRecord) => boolean | Promise<boolean>;
+export type MayFileUnder = (companyId: string, person: string, filer: Hex) => boolean | Promise<boolean>;
 
 /**
  * **THE ANSWER TO WHO MAY TOUCH WHICH VAULT'S RECORDS**, from the chain's pin,
@@ -97,7 +98,7 @@ export const signersOfTheVaultsCompany = (deps: {
   const company = matches[0]!;
   if (!company.memberUserIds.includes(person)) return false;
   if (act !== 'file') return true;
-  return deps.mayFileUnder(company.id, person, fold(filer!) as Hex, record);
+  return deps.mayFileUnder(company.id, person, fold(filer!) as Hex);
 };
 
 /** A contract state the chain holds and the vault's ledger cannot read: not a vault. */

@@ -6,7 +6,9 @@
  * the one check, in one place.
  */
 import { VAULT_CIRCUITS } from './vault-contract.js';
-import { sameCommittee, whyOneKeyCouldActAlone, type Committee } from './vault-committee.js';
+import { sameCommittee, type Committee } from './vault-committee.js';
+import { whyNotInstallable } from 'midnight-identity/profile/request';
+import { authorityIn } from 'midnight-identity/profile/contract-authority';
 
 const nameOf = (entryPoint: unknown): string =>
   entryPoint instanceof Uint8Array ? new TextDecoder().decode(entryPoint) : String(entryPoint);
@@ -130,9 +132,27 @@ export interface VaultBornHeldExpectations {
 const bare = (h: unknown): string => String(h).trim().toLowerCase().replace(/^0x/u, '');
 
 /**
+ * **WHO HOLDS A CONTRACT, AS ITS STATE SAYS**: the committee and threshold of
+ * its maintenance authority, and how many times that authority has changed;
+ * null when `authorityIn` refuses the state's authority (a key that is not
+ * plain hex digits, a threshold that is not a whole number, a counter that is
+ * not a bigint of at least zero); the caller gets only the null, not the
+ * reason `authorityIn` gave. Every key's digits are lower-case.
+ */
+export function authorityOfState(contractState: unknown): (Committee & { readonly counter: bigint }) | null {
+  const authority = authorityIn(contractState);
+  if ('why' in authority) return null;
+  return {
+    committee: authority.committee.map((k) => ({ tag: k.tag, value: k.value })),
+    threshold: authority.threshold,
+    counter: authority.counter,
+  };
+}
+
+/**
  * **A VAULT AS IT WAS DEPLOYED IS BORN HELD, OR THE SENTENCE THAT SAYS IT IS
  * NOT.** Held by exactly the company's committee at the company's threshold,
- * never changed, a committee no one of whose keys could change it alone; no
+ * never changed, a committee `whyNotInstallable` accepts; no
  * money; this build's circuits; pinned to this company's account; and nothing
  * written that only the company's approved runs write - no note, payment,
  * secret, sealed copy, copies-written mark, split or reserved entry.
@@ -144,23 +164,6 @@ const bare = (h: unknown): string => String(h).trim().toLowerCase().replace(/^0x
  * committee's signatures, and its state changes only through those circuits,
  * so nothing later is read for it.
  */
-/**
- * **WHO HOLDS A CONTRACT, AS ITS STATE SAYS**: the committee and threshold of
- * its maintenance authority, and how many times that authority has changed;
- * null when the state carries no authority this can read.
- */
-export function authorityOfState(contractState: unknown): (Committee & { readonly counter: unknown }) | null {
-  const authority = (contractState as {
-    maintenanceAuthority?: { committee?: unknown[]; threshold?: unknown; counter?: unknown };
-  } | null)?.maintenanceAuthority;
-  if (!Array.isArray(authority?.committee) || typeof authority?.threshold !== 'number') return null;
-  return {
-    committee: authority.committee.map((k) => ({ tag: String((k as { tag?: unknown }).tag), value: bare((k as { value?: unknown }).value) })),
-    threshold: authority.threshold,
-    counter: authority.counter,
-  };
-}
-
 export function vaultBornHeldRefusal(initialState: unknown, expect: VaultBornHeldExpectations, what: string): string | null {
   const state = initialState as Record<string, unknown> | null;
   const authority = authorityOfState(state);
@@ -169,8 +172,8 @@ export function vaultBornHeldRefusal(initialState: unknown, expect: VaultBornHel
     return `this is not ${what}: a vault is held from its first transaction by the company's committee, at the `
       + 'company\'s threshold, and this one is held by other keys, at another threshold, or was changed. Nothing was sent.';
   }
-  const alone = whyOneKeyCouldActAlone(expect.holders);
-  if (alone !== null) return `this is not ${what}: ${alone}. Nothing was sent.`;
+  const notInstallable = whyNotInstallable(expect.holders);
+  if (notInstallable !== null) return `this is not ${what}: ${notInstallable} Nothing was sent.`;
   const money = startsHoldingMoney(state, `this is not ${what}`);
   if (money !== null) return money;
   const circuits = circuitsRefusal(state, expect.verifierKeys, `this is not ${what}`);

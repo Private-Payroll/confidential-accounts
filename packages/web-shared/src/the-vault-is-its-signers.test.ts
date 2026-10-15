@@ -1,4 +1,6 @@
 import { describe, expect, it } from 'vitest';
+import { leavesOfTheContract, seatOpenedFor } from '../../../src/testing/directory-seats.js';
+import type { SeatOpening } from '../../../src/core/seat-opening.js';
 import { aCompanysRecords } from '../../../src/testing/record-tree-double.js';
 import { identityFromSecret } from 'midnight-identity';
 import { committeeKeyFor } from 'midnight-identity/profile/committee-key';
@@ -12,7 +14,7 @@ import { MemorySealedPoolStore, SealedNotePool, type SealedPool } from '../../..
 import { toWire, type WireRecord } from '../../../src/midnight/sealed-record-wire.js';
 import { newSigningKeypair, newWrappingKeypair, sign, type Hex } from '../../../src/core/crypto.js';
 import { openNonceSecrets, recordsKeypairFrom, startNonceSecret, startNonceSecretAgain } from '../../../src/midnight/company-nonce-secret.js';
-import { directoryChangeMessage, vaultRecordKey, type DirectoryChange, type DirectoryFiling } from '../../../src/midnight/seat-directory.js';
+import { directoryChangeMessage, directoryEntryMade, vaultRecordKey, type DirectoryChange, type DirectoryFiling } from '../../../src/midnight/seat-directory.js';
 
 /*
  * A VAULT IS ONE ITS COMPANY'S SIGNERS HOLD AS THE CHAIN SHOWS IT, AND WHAT A
@@ -26,6 +28,8 @@ const CO = 'acc_signers';
 const LABEL = `co_${'c1'.repeat(32)}` as CompanyLabel;
 /** The company's account, as each signer's wallet reads it and signs for it. */
 const ACCOUNT = 'ac'.repeat(32) as never;
+/** The company's viewing key, which a member's device holds and opens every entry's proof with. */
+const VIEWING = '5e'.repeat(32) as Hex;
 
 describe('THE VAULT IS ONE ITS COMPANY\'S ACCOUNT ADOPTED, AS THE SIGNER\'S OWN WALLET READS THE CHAIN', () => {
   const holders = { committee: [{ tag: 'schnorr', value: '11'.repeat(32) }], threshold: 2, seats: ['4a'.repeat(32)], approvals: 1, adoptedVaults: [VAULT as string], founding: '4a'.repeat(32), foundingCommittee: [{ tag: 'schnorr', value: '11'.repeat(32) }] };
@@ -49,11 +53,17 @@ describe('THE VAULT IS ONE ITS COMPANY\'S ACCOUNT ADOPTED, AS THE SIGNER\'S OWN 
 
 /* ------------------------------------------------------------------ the records, believed and filed again */
 
-interface Signer { person: string; seat: string; signing: { secret: Hex; publicKey: Hex }; committeeKey: { tag: string; value: string }; companyKey: Uint8Array }
+interface Signer {
+  person: string; seat: string; signing: { secret: Hex; publicKey: Hex }; committeeKey: { tag: string; value: string }; companyKey: Uint8Array;
+  opening: SeatOpening;
+}
 const signerOf = (person: string, n: number): Signer => {
   const identity = identityFromSecret(new Uint8Array(32).fill(n));
   const companyKey = new Uint8Array(32).fill(n + 100);
-  return { person, seat: n.toString(16).padStart(2, '0').repeat(32), signing: newSigningKeypair(), committeeKey: committeeKeyFor(identity, LABEL) as never, companyKey };
+  const committeeKey = committeeKeyFor(identity, LABEL) as { tag: string; value: string };
+  /* The seat as a seating device makes it: its leaf commits to this wallet key, and its opening shows that. */
+  const { seat, opening } = seatOpenedFor(committeeKey, n);
+  return { person, seat, signing: newSigningKeypair(), committeeKey, companyKey, opening };
 };
 const ADA = signerOf('ada', 1);
 const BO = signerOf('bo', 2);
@@ -61,7 +71,10 @@ const filings: DirectoryFiling[] = [ADA, BO].map((s, i) => {
   const identity = identityFromSecret(new Uint8Array(32).fill(i + 1));
   return {
     company: CO, version: i + 1,
-    change: { kind: 'claim', entry: { person: s.person, committeeKey: s.committeeKey, statement: signDirectoryEntry(identity, LABEL, ACCOUNT, s.companyKey, s.signing.publicKey, s.seat) } },
+    change: { kind: 'claim', entry: directoryEntryMade({
+      company: CO, person: s.person, committeeKey: s.committeeKey, opening: s.opening, signingSecret: s.signing.secret, viewingKey: VIEWING,
+      signed: signDirectoryEntry(identity, LABEL, ACCOUNT, s.companyKey, s.signing.publicKey, s.seat),
+    }) },
   };
 });
 const seatsNow = (...seated: Signer[]): AccountHoldersRead => ({ committee: [ADA, BO].map((s) => s.committeeKey), threshold: 2, seats: seated.map((s) => s.seat), approvals: 1, adoptedVaults: [], founding: ADA.seat, foundingCommittee: [ADA.committeeKey], account: ACCOUNT });
@@ -89,7 +102,7 @@ const booksOf = new WeakMap<Map<WireRecord, MemorySealedPoolStore>, ReturnType<t
 const bookOf = (kept: Map<WireRecord, MemorySealedPoolStore>) => booksOf.get(kept) ?? booksOf.set(kept, aCompanysRecords(CO)).get(kept)!;
 const deviceOf = (who: Signer, kept: Map<WireRecord, MemorySealedPoolStore>, seated: () => AccountHoldersRead, reads: { n: number }, attested: Attested[] = everySeatAttested, served: readonly DirectoryFiling[] = filings) =>
   (record: WireRecord) => new HttpSealedPoolStore(record, routeOver(kept), who.signing.secret, directoryJudge({
-    accountId: CO, label: LABEL, filings: async () => served, attested: async () => attested, anchored: bookOf(kept).anchored,
+    accountId: CO, label: LABEL, viewingKey: VIEWING, filings: async () => served, attested: async () => attested, anchored: bookOf(kept).anchored, leaves: leavesOfTheContract,
     holders: async () => { reads.n += 1; return seated(); },
   }), bookOf(kept).enteredBy(who.signing.secret));
 const recordsReader = (s: Signer) => ({ publicKey: recordsKeypairFrom(s.companyKey).publicKey });

@@ -41,6 +41,13 @@ describe('THE CHAIN READER\'S CHECK OF A VAULT\'S SHAPE', () => {
   });
 });
 
+describe('THE CHAIN READER\'S LIST OF THE VAULTS A COMPANY\'S ACCOUNT HOLDS', () => {
+  it('SAYS THE CHAIN COULD NOT BE ASKED, NEVER THAT THE ACCOUNT LISTS NO VAULT', async () => {
+    /* RED WHEN: an indexer that does not answer is read as an account listing no vault. */
+    await expect(chain.accountVaults!('ab'.repeat(32) as never)).rejects.toThrow(/could not be asked which vaults/);
+  });
+});
+
 describe('THE CHAIN READER\'S LOOKUP OF THE TRANSACTION THAT CREATED AN OUTPUT', () => {
   it('SAYS THE CHAIN COULD NOT BE ASKED, NEVER THAT NO TRANSACTION CREATED IT', async () => {
     /* RED WHEN: an indexer that does not answer is read as an empty history - a payment on its way is then let go. */

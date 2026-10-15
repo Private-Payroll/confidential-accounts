@@ -5,31 +5,42 @@
  * The directory says which key each seat files the company's records under
  * (`seat-directory.ts`). This server keeps every filing that made it and
  * serves them all, so a device replays and checks them itself rather than
- * taking a table this server computed. Before it files one it makes the same
- * checks a device makes, against its own read of the chain:
+ * taking a table this server computed. **It is a store**: it holds no roster
+ * key, so it never opens an entry's proof, never learns a seat's wallet key,
+ * and judges no seat's role and no quorum. Before it files a filing it checks:
  *
  *   · **an entry** must be filed by the signed-in person it names, who is a
- *     member of the company; signed by that seat's own wallet with a key the
- *     account lists on its committee now; for a seat the account holds now;
- *     and the first for that seat, that key and that person.
+ *     member of the company; in its shape, for this company's account, and
+ *     signed by the filing key it names; for a seat the account holds now.
+ *     Whether the wallet that signed an entry is the one the seat was made for
+ *     is judged by each member's device, which opens the entry with the
+ *     company's key and believes the first claim whose proof proves; this
+ *     server keeps every claim and judges none.
  *   · **a change by a quorum** - a role, or a retirement with the last version
- *     of each record the seat filed - must be signed against the account's
- *     approval threshold as the chain holds it now, by that many seats the
- *     account holds now.
+ *     of each record the seat filed - must be in its shape, every signature
+ *     verifying, signed against the account's approval threshold as the chain
+ *     holds it now. Who signed it, and whether enough did, each member's device
+ *     counts; this server counts nothing and keeps no role or retirement.
  *
- * A company whose account is not held by its signers' committee is refused
- * with words saying what resolves it. Nothing here opens a record or holds a
- * key that could.
+ * The super admins are not filed here: they are the keys on the account's
+ * committee as the chain holds it, and this server judges no one by them.
+ *
+ * A change filed again under the signatures of an earlier version is filed
+ * only as a device's replay would believe it (`refiledRefusalOf`): the same
+ * one rule, so this server decides nothing a device does not decide again.
+ *
+ * A company with no account on a chain this server can read is refused with
+ * words saying what resolves it. Nothing here opens a record or holds a key
+ * that could.
  */
 import express from 'express';
 import { readAccountAddress, type CompanyLabel } from 'midnight-identity/profile/company-label';
 import type { SealedAccount } from '../core/types.js';
 import { fromHex, type Hex } from '../core/crypto.js';
 import { readContractAuthority } from '../midnight/ledger.js';
-import { WITNESSED_AS } from '../midnight/record-manifest.js';
 import {
-  applyFiling, believedDirectory, directoryReplayed, DirectoryRefused, emptyDirectory, filerSeatOf, MAY_FILE, refiledRefusalOf, signerSeatOf,
-  type ChainHolders, type Directory, type DirectoryFiling, type DirectoryRefusalCode, type DirectorySeat, type FiledKind, type FilingRefusal,
+  applyFiling, AT_THE_SERVER, believedDirectory, DIRECTORY_REFUSAL, directoryReplayed, DirectoryRefused, emptyDirectory, filerSeatOf, refiledRefusalOf, signerSeatOf,
+  type ChainHolders, type Directory, type DirectoryFiling, type DirectoryRefusalCode, type DirectorySeat, type ServerSeatRefusal,
 } from '../midnight/seat-directory.js';
 
 /** What the chain says of a company's account, read by this server: null when it has no contract this server can read. */
@@ -44,8 +55,8 @@ export interface AccountHolds {
 /**
  * **THIS SERVER'S OWN READ OF THE CHAIN FOR A COMPANY'S DIRECTORY**, from one
  * read of the account's contract state: its committee and that committee's
- * threshold as the state's maintenance authority holds them, which of the seats
- * asked about its signers' set holds, and how many approvals it needs. Null when
+ * threshold as the state's maintenance authority holds them, which of the
+ * seats asked about its signers' set holds, and how many approvals it needs. Null when
  * the company has no account on a chain, or the chain holds no state there; a
  * read that fails, or a state with no committee this server can read, throws.
  */
@@ -109,11 +120,13 @@ export interface DirectoryNow {
  * **THE DIRECTORY AS EVERY FILING THIS SERVER HOLDS MAKES IT, AGAINST THE
  * CHAIN NOW**: the one place this server reads a seat from. It is replayed the
  * way a device replays it (`vault-page-doors.ts` `directoryJudge`): against
- * this server's own read of the account's committee, the seats it holds and
- * its approval threshold, made afresh for every call, where a device uses its
- * wallet's read. So a role or retirement is believed only at the account's
- * threshold now, and check S (`filerSeatOf`) asks the committee and the seat
- * of the chain as a device's `filingRefusalOf` does: one rule for both. The
+ * this server's own read of the seats the account holds and its approval
+ * threshold, made afresh for every call, where a device uses its wallet's
+ * read. Each entry is kept on what this server can read of it
+ * (`AT_THE_SERVER`), every entry for a seat beside the others, where a device
+ * opens its proof and believes the first that proves. No role or retirement is
+ * kept here, and the seat a filing is kept under (`filerSeatOf`) is asked of
+ * the chain alone. The
  * read covers every seat a filing names, and `also`, so a route can ask of a
  * seat being claimed in the same read. A read that fails throws; nothing is
  * decided on a directory the chain was not asked about.
@@ -130,12 +143,16 @@ export const directoryOf = async (
   /* A version the company's records passed over is replayed as no change here too, so its seat may file its entry again. */
   const passed = store.directoryPassedOver?.(accountId) ?? new Set<number>();
   const skipped = (v: number) => (passed.has(v) ? null : undefined);
-  const named = believedDirectory(accountId, filings, label as CompanyLabel, address, undefined, skipped).seats.map((x) => x.seat);
+  /* Every seat an entry names, believed or not: which seats the chain is asked about, and nothing more. */
+  const named = filings.flatMap((f) => (f?.change?.kind === 'claim' && typeof f.change.entry?.statement?.seat === 'string'
+    ? [f.change.entry.statement.seat] : []));
   const read = await chain(accountId, [...new Set([...named, ...also])]);
   if (read === null) return { dir: emptyDirectory(accountId), chain: null };
-  const at = (version: number) => believedDirectory(accountId, filings.slice(0, Math.max(0, version)), label as CompanyLabel, address, undefined, skipped);
-  const replayed = directoryReplayed(accountId, filings, label as CompanyLabel, address,
-    { approvals: read.approvals, seats: read.seats.seats, committee: read.seats.committee }, skipped);
+  const at = (version: number) => believedDirectory(
+    accountId, filings.slice(0, Math.max(0, version)), label as CompanyLabel, address, AT_THE_SERVER, undefined, skipped);
+  const replayed = directoryReplayed(accountId, filings, label as CompanyLabel, address, AT_THE_SERVER, {
+    approvals: read.approvals, seats: read.seats.seats,
+  }, skipped);
   return {
     at,
     dir: replayed.dir,
@@ -144,28 +161,23 @@ export const directoryOf = async (
   };
 };
 
-/** Check S against `now`: the seat the signed-in person files under, or why they may not. */
-export const filerSeatNow = (now: DirectoryNow, person: string, filer: Hex, kind: FiledKind): DirectorySeat | FilingRefusal =>
-  filerSeatOf(now.dir, now.chain?.seats ?? null, person, filer, kind);
+/** The seat the signed-in person files under against `now`, or why not (`filerSeatOf`). No role is judged. */
+export const filerSeatNow = (now: DirectoryNow, person: string, filer: Hex): DirectorySeat | ServerSeatRefusal =>
+  filerSeatOf(now.dir, now.chain?.seats ?? null, person, filer);
 
-/** The seat whose key signed an entry, judged by that signature and the seat's standing, never by who hands it in (`signerSeatOf`). */
-export const signerSeatNow = (now: DirectoryNow, signer: Hex, kind: FiledKind, recordKey: string, version: number): DirectorySeat | FilingRefusal =>
-  signerSeatOf(now.dir, now.chain?.seats ?? null, signer, kind, recordKey, version);
+/** The seat whose key signed an entry, judged by that signature and the chain now, never by who hands it in (`signerSeatOf`). */
+export const signerSeatNow = (now: DirectoryNow, signer: Hex): DirectorySeat | ServerSeatRefusal =>
+  signerSeatOf(now.dir, now.chain?.seats ?? null, signer);
 
 /**
  * **THE SEAT THAT ANCHORED A HEADER, AS THE DIRECTORY STOOD WHEN IT WAS SIGNED**:
- * the seat holding the header's anchoring key in the directory as filed up to
- * the version the header names, whose role then could anchor and which had not
- * retired - whoever hands the header in. The chain then is each device's to
- * judge, against the holders the header names.
+ * an entry kept for the header's anchoring key in the directory as filed up to
+ * the version the header names - whoever hands the header in. Whether its role
+ * could anchor, whether it had retired, and the chain then, are each device's
+ * to judge, against the holders the header names.
  */
-export const anchoringSeatThen = (now: DirectoryNow, anchoredBy: Hex, dirVersion: number): DirectorySeat | FilingRefusal => {
-  const then = now.at?.(dirVersion) ?? now.dir;
-  const seat = then.seats.find((x) => x.signingKey === anchoredBy.toLowerCase());
-  if (seat === undefined) return 'no-entry';
-  if (seat.retired !== null) return 'past-its-boundary';
-  return MAY_FILE[seat.role ?? 'unset'].includes(WITNESSED_AS) ? seat : 'role-may-not-file';
-};
+export const anchoringSeatThen = (now: DirectoryNow, anchoredBy: Hex, dirVersion: number): DirectorySeat | ServerSeatRefusal =>
+  (now.at?.(dirVersion) ?? now.dir).seats.find((x) => x.signingKey === anchoredBy.toLowerCase()) ?? 'no-entry';
 
 /** What a route answers when the chain could not be read, so who may file could not be decided. */
 export const CHAIN_UNREAD = (e: unknown): string =>
@@ -206,6 +218,11 @@ export const seatDirectoryRoutes = (deps: {
       res.status(400).json({ refused: 'not-a-change', error: 'the version in the path and the version filed are not the same.' });
       return;
     }
+    const address = readAccountAddress(account.contractAddress ?? null);
+    if (address === null) {
+      res.status(409).json({ refused: 'no-account', error: DIRECTORY_REFUSAL['no-account'] });
+      return;
+    }
     const claimed = filing.change?.kind === 'claim' && typeof filing.change.entry?.statement?.seat === 'string' ? [filing.change.entry.statement.seat] : [];
     let now: DirectoryNow;
     try {
@@ -217,18 +234,17 @@ export const seatDirectoryRoutes = (deps: {
     const { dir, chain } = now;
     if (chain === null) {
       res.status(409).json({
-        refused: 'not-on-the-committee',
-        error: 'this company has no account on the chain this server can read, so no seat can be entered. Create a new company.',
+        refused: 'no-account',
+        error: 'this server could not read this company\'s account on the chain just now, so no seat can be entered. Try again in a minute; '
+          + 'if it keeps happening, contact support.',
       });
       return;
     }
     try {
-      const address = readAccountAddress(account.contractAddress ?? null);
-      if (address === null) throw new DirectoryRefused('not-on-the-committee');
       /* A quorum's change filed again is filed only as a device's replay would believe it. */
       const again = filing.signedAt === undefined ? null : now.refiledRefusal === undefined ? 'not-a-change' : now.refiledRefusal(filing);
       if (again !== null) throw new DirectoryRefused(again);
-      applyFiling(dir, filing, { label: label as CompanyLabel, account: address, chain, who: { person, members: account.memberUserIds } });
+      applyFiling(dir, filing, { label: label as CompanyLabel, account: address, chain, judge: AT_THE_SERVER, who: { person, members: account.memberUserIds } });
     } catch (e) {
       if (!(e instanceof DirectoryRefused)) throw e;
       res.status(e.code === 'not-the-next-version' ? 409 : 422).json({ refused: e.code, error: e.message });

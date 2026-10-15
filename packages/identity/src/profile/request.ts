@@ -1,3 +1,4 @@
+import { schnorr } from '@noble/curves/secp256k1.js';
 import type { AttributeName } from './definition.js';
 import { usableOrigin, whyNotUsable } from './origin.js';
 import { RECEIVING_ADDRESS } from './attributes.js';
@@ -409,25 +410,27 @@ export interface CommitteeChangeOfAContract {
  * **THE ONE KIND THAT SIGNS WITH A COMMITTEE KEY.** Every contract a company
  * has - its account and each vault - carries a list of keys and a threshold
  * that decide who may change the contract's rules, and this wallet holds one of
- * those keys for each company its person signs for. When a signer joins or
- * leaves, or the threshold changes, each contract's list must be replaced, and
- * the replacement must be signed by enough of the keys on the list now.
+ * those keys for each company whose super admin its person is. The kind carries
+ * three presses, told apart by exactly which fields arrive, and an ask mixing
+ * the fields of two is refused:
  *
- * **THE WALLET BUILDS WHAT IT SIGNS.** Nothing in this ask is bytes to sign.
- * It names, for each contract, the address, the counter and the committee that
- * holds it now, and once, the committee to install. The wallet makes the one
- * change that replaces the whole list with that committee and signs that, so
- * what it signs can only be what the screen showed: who joins, who leaves and
- * the new threshold. There is no field on this type for anything else a change
- * to a contract's rules could do.
+ * - a hand-over (`to`, `contracts`): a contract brought to the committee that
+ *   holds the company's account on the chain, and to nothing else, so no key
+ *   enters the company this way;
+ * - a change of the super admins (`change`, `salt`, `changeBytes`, `joined`,
+ *   `contracts`): the change whole, the bytes the page says it is, and every
+ *   joining key's own signature over those bytes;
+ * - a joining key's signature (`change`, `salt`, `changeBytes`, `joining`).
  *
- * **EVERYTHING HERE IS CLAIMED.** A page could name a committee that is not the
- * company's, or say a contract is held by keys it is not held by. The first is
- * shown whole and is exactly what would be installed; the second only changes
- * who the screen says leaves, because the chain checks the signature against
- * the committee that really holds the contract.
+ * **THE WALLET BUILDS WHAT IT SIGNS.** Nothing in an ask is signed as it
+ * arrives: each contract's update is built here from the committee shown, and
+ * a change's bytes are rebuilt here from the change and compared with the
+ * page's. **EVERYTHING HERE IS CLAIMED.** Who holds each contract now, its
+ * counter and the account a vault is pinned to are read from the chain at this
+ * wallet's own indexer before anything is shown; a contract's `now` on the wire
+ * is the page's word and is never used.
  */
-export interface CommitteeRequest extends Asking {
+interface CommitteeAsking extends Asking {
   readonly kind: 'committee';
   /** The company's label. It selects the key that signs. */
   readonly company: CompanyLabel;
@@ -437,11 +440,66 @@ export interface CommitteeRequest extends Asking {
    * the ask names.
    */
   readonly account: AccountAddress;
+}
+
+/** A hand-over: each contract named brought to the committee `to`, which must be the one holding the account on the chain. */
+export interface HandOverRequest extends CommitteeAsking {
+  readonly press: 'hand-over';
   /** The committee to install, the same on every contract. */
   readonly to: CommitteeOnTheWire;
   /** Never empty, and no address twice. */
   readonly contracts: readonly CommitteeChangeOfAContract[];
 }
+
+/**
+ * A CHANGE OF THE SUPER ADMINS AS ITS BYTES COVER IT: the committee and
+ * threshold holding the account when it was raised, the committee and
+ * threshold it installs, and each contract it moves, the account first, with
+ * its counter then. Its bytes are `superAdminChangeBytes`.
+ */
+export interface SuperAdminChangeOnTheWire {
+  readonly kind: 'super-admins';
+  readonly from: { readonly committee: readonly { readonly tag: string; readonly value: string }[]; readonly threshold: number };
+  readonly committee: readonly { readonly tag: string; readonly value: string }[];
+  readonly threshold: number;
+  readonly contracts: ReadonlyArray<{ readonly contract: 'account' | 'vault'; readonly address: string; readonly counter: string }>;
+}
+
+/** A joining key's own signature over a change's bytes: the key, and the signature's sixty-four bytes in hex. */
+export interface JoiningSignatureOnTheWire {
+  readonly key: CommitteeKeyOnTheWire;
+  readonly signature: string;
+}
+
+/** One contract a change of the super admins asks this wallet to sign: one the change names, at its counter on the chain now. */
+export interface ContractToSign {
+  readonly contract: 'account' | 'vault';
+  readonly address: AccountAddress | VaultAddress;
+  readonly counter: string;
+}
+
+/** A change of the super admins, to be signed on each contract named. `to` is the change's committee, read from it. */
+export interface SuperAdminsRequest extends CommitteeAsking {
+  readonly press: 'super-admins';
+  readonly change: SuperAdminChangeOnTheWire;
+  readonly salt: string;
+  /** The change's bytes as the page says they are, lower-case hex. Never signed: compared with the bytes rebuilt here. */
+  readonly changeBytes: string;
+  readonly joined: readonly JoiningSignatureOnTheWire[];
+  readonly to: CommitteeOnTheWire;
+  readonly contracts: readonly ContractToSign[];
+}
+
+/** A joining key's holder asked to sign a change of the super admins with that key. */
+export interface CommitteeJoinRequest extends CommitteeAsking {
+  readonly press: 'join';
+  readonly change: SuperAdminChangeOnTheWire;
+  readonly salt: string;
+  readonly changeBytes: string;
+  readonly to: CommitteeOnTheWire;
+}
+
+export type CommitteeRequest = HandOverRequest | SuperAdminsRequest | CommitteeJoinRequest;
 
 /**
  * ASKING THIS WALLET TO SIGN ONE SIGNER'S RECORDS KEY FOR THEIR SEAT ON A
@@ -484,16 +542,23 @@ export interface RecordsKeyRequest extends Asking {
   readonly signingKey?: string;
   /**
    * The invitation this person joined by, when this wallet has kept no account
-   * for the company yet: the inviting signer's committee key and the directory
-   * entry their wallet signed, as the signed invitation carries them. The
-   * wallet keeps the account that entry names, after checking the signature and
-   * reading off the chain that the key and its seat are on that account, and
-   * signs for no other account from then on. Never the service's word.
+   * for the company yet: the inviting signer's committee key, the directory
+   * entry their wallet signed and their own seat's opening, as the signed
+   * invitation carries them. The wallet keeps the account that entry names,
+   * after checking the signature, reading off the chain that the seat is on
+   * that account and that the opening proves the key for that seat, and signs
+   * for no other account from then on. Never the service's word.
    */
   readonly invitedBy?: InvitedBy;
 }
 
-/** The inviting signer, as a signed invitation names them: their committee key and the entry their wallet signed. */
+/**
+ * The inviting signer, as a signed invitation names them: their committee key,
+ * the entry their wallet signed, and their own seat's opening - what their
+ * seat's leaf is made from, its blinding the hash of that committee key under
+ * a salt - so the invitee's wallet can tell that seat was made for that key.
+ * Nothing of any other seat.
+ */
 export interface InvitedBy {
   readonly committeeKey: { readonly tag: 'schnorr'; readonly value: string };
   readonly statement: {
@@ -502,6 +567,13 @@ export interface InvitedBy {
     readonly wrappingKey: string;
     readonly seat: string;
     readonly signature: string;
+  };
+  readonly opening: {
+    readonly publicKey: string;
+    readonly scope: string;
+    readonly blinding: string;
+    readonly walletKey: { readonly tag: 'schnorr'; readonly value: string };
+    readonly salt: string;
   };
 }
 
@@ -1045,13 +1117,129 @@ const accountIn = (value: unknown, asks: string, nothing: string): AccountAddres
 const accountMaybeIn = (value: unknown, asks: string, nothing: string): AccountAddress | null =>
   value === undefined || value === null ? null : accountIn(value, asks, nothing);
 
+/** One reason a committee may not be installed on a contract: a code a caller compares and the sentence a person reads. */
+export interface CommitteeInstallRefusal {
+  readonly code:
+    | 'malformed-committee-key'
+    | 'repeated-committee-member'
+    | 'threshold-below-one'
+    | 'threshold-above-committee'
+    | 'committee-emptied';
+  /** Starts in lower case and ends with a full stop, so a caller can put its own words in front of it. */
+  readonly why: string;
+}
+
+/**
+ * Whether `value` is a key the chain builds a committee with and a wallet
+ * derives: a schnorr key, thirty-two bytes of hex that name a point on the
+ * curve. The chain refuses any other length, and an x with no point, when the
+ * authority is built; it would take an ecdsa key too, but no wallet derives
+ * one, so no wallet could sign for it or for a committee holding it.
+ */
+const isWalletCommitteeKey = (tag: string, value: string): boolean => {
+  if (tag !== 'schnorr' || !COMMITTEE_KEY.test(value)) return false;
+  try {
+    schnorr.utils.lift_x(BigInt(`0x${value}`));
+    return true;
+  } catch {
+    return false;
+  }
+};
+
+/**
+ * **THE ONE RULE FOR WHICH COMMITTEE MAY BE INSTALLED ON A CONTRACT.** This
+ * wallet asks it before it signs a committee change, and every device and
+ * service door that builds, checks or pays for a change of who holds a
+ * contract asks it too, so no door installs or funds what another refuses.
+ *
+ * A committee may be installed when every key is a schnorr key a wallet
+ * derives (sixty-four hex digits naming a point on the curve), no key appears
+ * twice (compared by digits, case folded), and the threshold is a whole number
+ * from one to the number of keys. Several keys at a threshold of one are allowed:
+ * which of the company's super admins may act alone is the company's choice.
+ *
+ * The chain checks none of this but the key's length and point when it
+ * installs a committee: at a threshold of zero anybody can change the contract
+ * with no signature at all; at a threshold above the number of keys nobody ever
+ * can again; and a key listed twice signs once and counts at every place it
+ * holds. Returns every reason at once, so a person fixes them
+ * together, and an empty list when the committee may be installed. Anything at
+ * all may be passed: a value that is not a list of keys, or a key that is not
+ * a pair of strings, is a refusal and never a thrown error.
+ */
+export function committeeInstallRefusals(committee: unknown, threshold: unknown): readonly CommitteeInstallRefusal[] {
+  const out: CommitteeInstallRefusal[] = [];
+  const keys: readonly unknown[] = Array.isArray(committee) ? committee : [];
+  if (!Array.isArray(committee)) {
+    out.push({ code: 'malformed-committee-key', why: 'the committee is not a list of keys. Name the keys that are to hold the contract.' });
+  }
+  const seen = new Map<string, number>();
+  keys.forEach((k, i) => {
+    const key = k as { tag?: unknown; value?: unknown } | null;
+    const tag = typeof key === 'object' && key !== null && typeof key.tag === 'string' ? key.tag : null;
+    const value = typeof key === 'object' && key !== null && typeof key.value === 'string' ? key.value : null;
+    if (tag === null || value === null || !isWalletCommitteeKey(tag, value)) {
+      out.push({
+        code: 'malformed-committee-key',
+        why: `key ${i + 1} is not a schnorr key a wallet derives - sixty-four hex digits naming a point on the curve - so `
+          + 'nobody could sign for that place. Name it by the key its holder\'s wallet gives.',
+      });
+    }
+    if (tag === null || value === null) return;
+    const id = `${tag.toLowerCase()}:${value.toLowerCase()}`;
+    const first = seen.get(id);
+    if (first === undefined) { seen.set(id, i); return; }
+    out.push({
+      code: 'repeated-committee-member',
+      why: `keys ${first + 1} and ${i + 1} are the same key, so its holder would sign once and count at both places, and `
+        + 'the threshold would need fewer people than it reads as. Name each key once.',
+    });
+  });
+  const whole = typeof threshold === 'number' && Number.isInteger(threshold);
+  if (!whole || (threshold as number) < 1) {
+    out.push({
+      code: 'threshold-below-one',
+      why: `a threshold of ${String(threshold)} is not a whole number of at least one, and at zero anybody could change the `
+        + 'contract\'s rules with no signature at all. Choose a whole number from 1 to the number of keys.',
+    });
+  }
+  if (keys.length === 0) {
+    out.push({
+      code: 'committee-emptied',
+      why: 'the committee holds no keys, so nobody could ever change the contract\'s rules again. Name at least one key.',
+    });
+  }
+  if (whole && (threshold as number) > keys.length) {
+    out.push({
+      code: 'threshold-above-committee',
+      why: `a threshold of ${threshold as number} over ${keys.length} key${keys.length === 1 ? '' : 's'} can never be met, so nobody `
+        + `could ever change the contract's rules again. Choose a threshold from 1 to ${keys.length}.`,
+    });
+  }
+  return out;
+}
+
+/**
+ * **THE FIRST REASON `committeeInstallRefusals` GIVES FOR A COMMITTEE VALUE**, or
+ * null when it may be installed: `committeeInstallRefusals` for a door that
+ * puts one sentence in front of a person and stops.
+ */
+export const whyNotInstallable = (c: { readonly committee: unknown; readonly threshold: unknown }): string | null =>
+  committeeInstallRefusals(c.committee, c.threshold)[0]?.why ?? null;
+
 const notACommitteeChange = (why: string): RequestError => new RequestError(
   'not-a-committee-change',
   `this asks your wallet to sign a change to who holds a company's rules, and ${why}. Nothing has been shown to `
   + 'them and nothing has been signed.');
 
-/** A committee as this wire carries it, folded to lower case, or the refusal. */
-function committeeOnTheWire(value: unknown, which: string): CommitteeOnTheWire {
+/**
+ * A committee as this wire carries it, folded to lower case: keys a wallet
+ * derives, judged by `committeeInstallRefusals`, or the refusal. `heldNow` is a
+ * committee a contract holds on the chain now rather than one to install: a key
+ * the chain lists twice there is read, not refused, and signs at every place it
+ * holds.
+ */
+function committeeOnTheWire(value: unknown, which: string, heldNow = false): CommitteeOnTheWire {
   if (typeof value !== 'object' || value === null) throw notACommitteeChange(`${which} is not a committee`);
   const v = value as Record<string, unknown>;
   const keys = v['committee'];
@@ -1059,25 +1247,148 @@ function committeeOnTheWire(value: unknown, which: string): CommitteeOnTheWire {
   if (!Array.isArray(keys) || keys.length === 0 || keys.length > MAX_COMMITTEE) {
     throw notACommitteeChange(`${which} lists no keys, or more than ${MAX_COMMITTEE}`);
   }
-  const committee = keys.map((k: unknown) => {
-    const key = k as Record<string, unknown> | null;
-    if (typeof key !== 'object' || key === null || key['tag'] !== 'schnorr'
-      || typeof key['value'] !== 'string' || !COMMITTEE_KEY.test(key['value'] as string)) {
-      throw notACommitteeChange(`${which} lists a key that is not a committee key a wallet derives`);
-    }
-    return Object.freeze({ tag: 'schnorr' as const, value: (key['value'] as string).toLowerCase() });
-  });
-  if (typeof threshold !== 'number' || !Number.isInteger(threshold) || threshold < 1 || threshold > committee.length) {
-    throw notACommitteeChange(`${which}'s threshold is not a whole number from one to the number of its keys`);
+  /* The one rule judges every key, so this wallet signs exactly what every other door would install. */
+  const refused = committeeInstallRefusals(keys, threshold)
+    .filter((r) => !(heldNow && r.code === 'repeated-committee-member'))[0];
+  if (refused !== undefined) throw notACommitteeChange(`${which} is not a committee a contract may hold: ${refused.why.replace(/\.$/u, '')}`);
+  const committee = keys.map((k: { value: string }) => Object.freeze({ tag: 'schnorr' as const, value: k.value.toLowerCase() }));
+  return Object.freeze({ committee: Object.freeze(committee), threshold: threshold as number });
+}
+
+const SALT_HEX = /^[0-9a-fA-F]{64}$/u;
+const BYTES_HEX = /^(?:[0-9a-f]{2})+$/u;
+const SIGNATURE_HEX = /^[0-9a-fA-F]{128}$/u;
+/** The longest change of the super admins, in bytes, this wallet reads; one naming the most contracts and keys is far shorter. */
+const MOST_CHANGE_BYTES = 64 * 1024;
+
+/** The fields that say which press a committee ask is. Each press carries exactly its own, and an ask carrying any other mixture is refused. */
+const PRESS_FIELDS = ['to', 'change', 'salt', 'changeBytes', 'joined', 'joining'] as const;
+const PRESSES: Readonly<Record<CommitteeRequest['press'], readonly (typeof PRESS_FIELDS)[number][]>> = {
+  'hand-over': ['to'],
+  'super-admins': ['change', 'salt', 'changeBytes', 'joined'],
+  join: ['change', 'salt', 'changeBytes', 'joining'],
+};
+
+function pressOf(body: Record<string, unknown>): CommitteeRequest['press'] {
+  const present = PRESS_FIELDS.filter((f) => body[f] !== undefined);
+  const found = (Object.keys(PRESSES) as CommitteeRequest['press'][])
+    .find((p) => PRESSES[p].length === present.length && PRESSES[p].every((f) => present.includes(f)));
+  if (found === undefined) {
+    throw notACommitteeChange('it is none of the three things this wallet signs for a committee - a hand-over, a change of the '
+      + 'super admins, or a joining key\'s own signature - but a mixture of them, or one with a part missing');
   }
-  return Object.freeze({ committee: Object.freeze(committee), threshold });
+  return found;
+}
+
+/** A list read whole: refused when it is not a list, is longer than `most`, or has a gap in it. */
+function denseList(value: unknown, most: number, which: string): readonly unknown[] {
+  if (!Array.isArray(value) || value.length > most) throw notACommitteeChange(`${which} are not a list of at most ${most}`);
+  for (let i = 0; i < value.length; i += 1) {
+    if (!(i in value)) throw notACommitteeChange(`${which} have a gap in them`);
+  }
+  return value;
+}
+
+/*
+ * One contract as an ask names it. A vault is born held by the company's
+ * committee and sits at counter 0 until its first committee change, so 0 is a
+ * counter it can be at. The account is at 1 once the second step of its
+ * creation has landed: an account at 0 is a creation not finished, which
+ * nothing here changes. Which rule applies is decided by the address: an entry
+ * calling the account's own address a vault is refused, so the account's rule
+ * cannot be skipped by the name an entry gives itself.
+ */
+function contractEntryOf(c: unknown, account: AccountAddress, seen: Set<string>): {
+  contract: 'account' | 'vault'; address: AccountAddress | VaultAddress; counter: string; entry: Record<string, unknown>;
+} {
+  const entry = c as Record<string, unknown> | null;
+  if (typeof entry !== 'object' || entry === null) throw notACommitteeChange('one of the contracts is not readable');
+  const contract = entry['contract'];
+  const address = entry['address'];
+  const counter = entry['counter'];
+  if (contract !== 'account' && contract !== 'vault') {
+    throw notACommitteeChange('one of the contracts is neither the company\'s account nor one of its vaults');
+  }
+  if (typeof address !== 'string' || !CONTRACT_ADDRESS.test(address)) {
+    throw notACommitteeChange('one of the contracts is not named by a sixty-four character address');
+  }
+  const folded = address.toLowerCase();
+  /* The company's account is the one the ask names beside the label, and no
+   * other: the label is read off that account before anything is signed. */
+  if (contract === 'account' && folded !== account) {
+    throw notACommitteeChange('the account it changes is not the account it names as carrying the company\'s label');
+  }
+  if (contract === 'vault' && folded === account) {
+    throw notACommitteeChange('it calls the company\'s account a vault, so the account\'s own rules would be skipped');
+  }
+  if (typeof counter !== 'string' || !COUNTER.test(counter) || BigInt(counter) < (contract === 'vault' ? 0n : 1n)) {
+    throw notACommitteeChange(contract === 'vault'
+      ? 'one of the vaults names no counter it can be at'
+      : 'the company\'s account is not finished being created, so who holds it cannot be changed yet');
+  }
+  if (seen.has(folded)) throw notACommitteeChange('it names one contract twice');
+  seen.add(folded);
+  return {
+    contract,
+    address: (contract === 'account' ? readAccountAddress(folded) : readVaultAddress(folded)) as AccountAddress | VaultAddress,
+    counter: BigInt(counter).toString(),
+    entry,
+  };
+}
+
+/** The contracts a hand-over or a change of the super admins asks to be signed: never empty, no address twice, at most one account. */
+function contractsAskedOf<T>(value: unknown, account: AccountAddress, read: (e: ReturnType<typeof contractEntryOf>) => T): readonly T[] {
+  if (!Array.isArray(value) || value.length === 0) throw notACommitteeChange(`it names no contract to change, or more than ${MAX_CONTRACTS}`);
+  const seen = new Set<string>();
+  const parsed = denseList(value, MAX_CONTRACTS, 'the contracts it names').map((c) => contractEntryOf(c, account, seen));
+  if (parsed.filter((c) => c.contract === 'account').length > 1) throw notACommitteeChange('it names more than one company account');
+  return Object.freeze(parsed.map(read));
+}
+
+/** A change of the super admins, read whole: both committees, and each contract it moves, the account first and only first. */
+function superAdminChangeOf(value: unknown, account: AccountAddress): { change: SuperAdminChangeOnTheWire; to: CommitteeOnTheWire } {
+  if (typeof value !== 'object' || value === null) throw notACommitteeChange('the change it names is not readable');
+  const v = value as Record<string, unknown>;
+  if (v['kind'] !== 'super-admins') throw notACommitteeChange('the change it names is not a change of the super admins');
+  const from = committeeOnTheWire(v['from'], 'the committee the change replaces', true);
+  const to = committeeOnTheWire({ committee: v['committee'], threshold: v['threshold'] }, 'the committee the change installs');
+  if (!Array.isArray(v['contracts']) || v['contracts'].length === 0) throw notACommitteeChange('the change names no contract it moves');
+  const seen = new Set<string>();
+  const contracts = denseList(v['contracts'], MAX_CONTRACTS, 'the contracts the change moves').map((c, i) => {
+    const e = contractEntryOf(c, account, seen);
+    if ((e.contract === 'account') !== (i === 0)) throw notACommitteeChange('the change does not name the company\'s account first, and only first');
+    return Object.freeze({ contract: e.contract, address: e.address as string, counter: e.counter });
+  });
+  return {
+    change: Object.freeze({ kind: 'super-admins' as const, from, committee: to.committee, threshold: to.threshold, contracts: Object.freeze(contracts) }),
+    to,
+  };
+}
+
+/** Every joining key's own signature an ask carries: a schnorr key and sixty-four bytes of signature, no key twice. */
+function joinedOf(value: unknown): readonly JoiningSignatureOnTheWire[] {
+  const seen = new Set<string>();
+  return Object.freeze(denseList(value, MAX_COMMITTEE, 'its joining keys\' signatures').map((j) => {
+    const e = j as { key?: { tag?: unknown; value?: unknown } | null; signature?: unknown } | null;
+    const key = typeof e === 'object' && e !== null ? e.key : null;
+    if (typeof key !== 'object' || key === null || key.tag !== 'schnorr' || typeof key.value !== 'string' || !COMMITTEE_KEY.test(key.value)
+      || typeof e!.signature !== 'string' || !SIGNATURE_HEX.test(e!.signature)) {
+      throw notACommitteeChange('one of its joining keys\' signatures is not a schnorr key and a signature');
+    }
+    const folded = key.value.toLowerCase();
+    if (seen.has(folded)) throw notACommitteeChange('it carries two signatures for one joining key');
+    seen.add(folded);
+    return Object.freeze({ key: Object.freeze({ tag: 'schnorr' as const, value: folded }), signature: (e!.signature as string).toLowerCase() });
+  }));
 }
 
 /**
- * **A COMMITTEE CHANGE, READ WHOLE.** The committee to install lists no key
- * twice, because a key listed twice would make the threshold read as more
- * people than it is; every contract names its address once, a counter, and the
- * committee on it now.
+ * **A COMMITTEE ASK, READ WHOLE**, as exactly one of its three presses. Every
+ * committee in it is one `committeeInstallRefusals` allows, but for the one a
+ * contract or the account is held by now, which may list a key twice; every
+ * contract names its address once and a counter; a change of the super admins
+ * names the account first; nothing in it is believed until the wallet reads
+ * the chain.
  */
 function committeeChangeOf(body: Record<string, unknown>, asking: Asking): CommitteeRequest {
   if ('wants' in body) {
@@ -1098,89 +1409,72 @@ function committeeChangeOf(body: Record<string, unknown>, asking: Asking): Commi
   const committeeNothing = 'Nothing has been shown to them and nothing has been signed.';
   const company = labelIn(body['company'], committeeAsks, committeeNothing);
   const account = accountIn(body['account'], committeeAsks, committeeNothing);
-  const to = committeeOnTheWire(body['to'], 'the committee to install');
-  if (new Set(to.committee.map((k) => k.value)).size !== to.committee.length) {
-    throw notACommitteeChange('the committee to install lists one key twice, so its threshold is not what it reads as');
+  const press = pressOf(body);
+  if ((press === 'join') !== (body['contracts'] === undefined)) {
+    throw notACommitteeChange(press === 'join'
+      ? 'a joining key\'s own signature names no contract to sign, and this one does'
+      : `it names no contract to change, or more than ${MAX_CONTRACTS}`);
   }
-  const contracts = body['contracts'];
-  if (!Array.isArray(contracts) || contracts.length === 0 || contracts.length > MAX_CONTRACTS) {
-    throw notACommitteeChange(`it names no contract to change, or more than ${MAX_CONTRACTS}`);
+  const head = { ...asking, kind: 'committee' as const, company, account };
+  if (press === 'hand-over') {
+    const to = committeeOnTheWire(body['to'], 'the committee to install');
+    const contracts = contractsAskedOf(body['contracts'], account, (e) => Object.freeze({
+      contract: e.contract, address: e.address, counter: e.counter,
+      now: committeeOnTheWire(e.entry['now'], 'the committee a contract is held by now', true),
+    }));
+    return Object.freeze({ ...head, press, to, contracts });
   }
-  const seen = new Set<string>();
-  const parsed = contracts.map((c: unknown) => {
-    const entry = c as Record<string, unknown> | null;
-    if (typeof entry !== 'object' || entry === null) throw notACommitteeChange('one of the contracts is not readable');
-    const contract = entry['contract'];
-    const address = entry['address'];
-    const counter = entry['counter'];
-    if (contract !== 'account' && contract !== 'vault') {
-      throw notACommitteeChange('one of the contracts is neither the company\'s account nor one of its vaults');
-    }
-    if (typeof address !== 'string' || !CONTRACT_ADDRESS.test(address)) {
-      throw notACommitteeChange('one of the contracts is not named by a sixty-four character address');
-    }
-    /*
-     * A vault is born held by the company's committee and sits at counter 0
-     * until its first committee change, so 0 is a counter it can be at. The
-     * account is at 1 once the second step of its creation has landed: an
-     * account at 0 is a creation not finished, which nothing here changes.
-     */
-    if (typeof counter !== 'string' || !COUNTER.test(counter) || BigInt(counter) < (contract === 'vault' ? 0n : 1n)) {
-      throw notACommitteeChange(contract === 'vault'
-        ? 'one of the vaults names no counter it can be at'
-        : 'the company\'s account is not finished being created, so who holds it cannot be changed yet');
-    }
-    const folded = address.toLowerCase();
-    if (seen.has(folded)) throw notACommitteeChange('it names one contract twice');
-    seen.add(folded);
-    /* The company's account is the one the ask names beside the label, and no
-     * other: the label is read off that account before anything is signed, so
-     * an account entry naming a different contract would be signed for a
-     * company nobody checked. */
-    if (contract === 'account' && folded !== account) {
-      throw notACommitteeChange('the account it changes is not the account it names as carrying the company\'s label');
-    }
-    return Object.freeze({
-      contract,
-      address: (contract === 'account' ? readAccountAddress(folded) : readVaultAddress(folded)) as AccountAddress | VaultAddress,
-      counter: BigInt(counter).toString(),
-      now: committeeOnTheWire(entry['now'], 'the committee a contract is held by now'),
-    });
-  });
-  if (parsed.filter((c) => c.contract === 'account').length > 1) {
-    throw notACommitteeChange('it names more than one company account');
+  const { change, to } = superAdminChangeOf(body['change'], account);
+  const salt = body['salt'];
+  if (typeof salt !== 'string' || !SALT_HEX.test(salt)) throw notACommitteeChange('the change\'s salt is not thirty-two bytes of hex');
+  const changeBytes = typeof body['changeBytes'] === 'string' ? body['changeBytes'].toLowerCase() : null;
+  if (changeBytes === null || !BYTES_HEX.test(changeBytes) || changeBytes.length > 2 * MOST_CHANGE_BYTES) {
+    throw notACommitteeChange('the change\'s bytes are not bytes in hex');
   }
-  return Object.freeze({
-    ...asking,
-    kind: 'committee' as const,
-    company,
-    account,
-    to,
-    contracts: Object.freeze(parsed),
-  });
+  const named = { ...head, change, salt: salt.toLowerCase(), changeBytes, to };
+  if (press === 'join') {
+    if (body['joining'] !== true) throw notACommitteeChange('it does not say plainly that it asks for a joining key\'s own signature');
+    return Object.freeze({ ...named, press });
+  }
+  const joined = joinedOf(body['joined']);
+  const contracts = contractsAskedOf(body['contracts'], account, (e) => Object.freeze({ contract: e.contract, address: e.address, counter: e.counter }));
+  if (contracts.some((c) => !change.contracts.some((n) => n.address === c.address && n.contract === c.contract))) {
+    throw notACommitteeChange('it asks for a signature on a contract the change does not name');
+  }
+  return Object.freeze({ ...named, press, joined, contracts });
 }
 
 const SEAT = /^[0-9a-f]{64}$/u;
 
 const HEX128 = /^[0-9a-f]{128}$/u;
 
-/** The inviting signer an ask hands over, read whole: a schnorr committee key and a signed entry, every part lower-case hex. */
+/** The inviting signer an ask hands over, read whole: a schnorr committee key, a signed entry and the inviter's own opening, every part lower-case hex. */
 function invitedByIn(value: unknown, asks: string, nothing: string): InvitedBy {
-  const v = value as { committeeKey?: { tag?: unknown; value?: unknown }; statement?: Record<string, unknown> } | null;
+  const v = value as {
+    committeeKey?: { tag?: unknown; value?: unknown }; statement?: Record<string, unknown>; opening?: Record<string, unknown>;
+  } | null;
   const s = v?.statement;
+  const o = v?.opening;
   const hex64 = (x: unknown): x is string => typeof x === 'string' && SEAT.test(x);
+  const wallet = o?.['walletKey'] as { tag?: unknown; value?: unknown } | undefined;
   if (typeof v !== 'object' || v === null || v.committeeKey?.tag !== 'schnorr' || !hex64(v.committeeKey.value)
     || typeof s !== 'object' || s === null || !hex64(s['account']) || !hex64(s['signingKey']) || !hex64(s['wrappingKey'])
-    || !hex64(s['seat']) || typeof s['signature'] !== 'string' || !HEX128.test(s['signature'])) {
+    || !hex64(s['seat']) || typeof s['signature'] !== 'string' || !HEX128.test(s['signature'])
+    || typeof o !== 'object' || o === null || !hex64(o['publicKey']) || !hex64(o['scope']) || !hex64(o['blinding'])
+    || !hex64(o['salt']) || typeof wallet !== 'object' || wallet === null || wallet.tag !== 'schnorr' || !hex64(wallet.value)) {
     throw new RequestError(
       'malformed-field',
-      `${asks} and what it hands over as the invitation you joined by is not a signer's committee key and the entry their `
-      + `wallet signed. ${nothing}`);
+      `${asks} and what it hands over as the invitation you joined by is not a signer's committee key, the entry their `
+      + `wallet signed and their own seat's opening. ${nothing}`);
   }
   return Object.freeze({
     committeeKey: Object.freeze({ tag: 'schnorr' as const, value: v.committeeKey.value }),
     statement: Object.freeze({
       account: s['account'], signingKey: s['signingKey'], wrappingKey: s['wrappingKey'], seat: s['seat'], signature: s['signature'],
+    }),
+    opening: Object.freeze({
+      publicKey: o['publicKey'], scope: o['scope'], blinding: o['blinding'], salt: o['salt'],
+      walletKey: Object.freeze({ tag: 'schnorr' as const, value: wallet.value }),
     }),
   });
 }
@@ -1436,7 +1730,7 @@ export function parseAsk(raw: unknown, observedOrigin: string, now: number): Ask
    * COMMITTEE CHANGE AND TO NOTHING ELSE**, refused by presence on every other
    * kind for the keyring fields' reason.
    */
-  if (kind !== 'committee' && ('to' in body || 'contracts' in body)) {
+  if (kind !== 'committee' && ['to', 'contracts', 'change', 'salt', 'changeBytes', 'joined', 'joining'].some((f) => f in body)) {
     throw new RequestError(
       'committee-fields-on-another-kind',
       `this is a '${kind}' and it names a committee or the contracts a committee holds. Those belong only to a `

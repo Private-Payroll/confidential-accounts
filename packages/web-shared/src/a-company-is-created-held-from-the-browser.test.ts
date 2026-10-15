@@ -22,6 +22,8 @@ import { MidnightCommitments } from '../../../src/midnight/commitments.js';
 import { WalletDidNotSign } from './wallet-committee.js';
 import type { Openable } from './wallet-sign-in.js';
 import { anchoredEntering } from '../../../src/testing/record-tree-double.js';
+import { leavesOfTheContract } from '../../../src/testing/directory-seats.js';
+import { seatBlinding } from '../../../src/core/seat-opening.js';
 
 /**
  * **A COMPANY ON A CHAIN IS CREATED FROM ITS FOUNDING SIGNER'S BROWSER IN TWO
@@ -111,7 +113,7 @@ const builder = (payKeySteps: PayKeyStandingOnTheWire[] = [payKeyAt()]): keyring
       return payKeySteps[Math.min(step++, payKeySteps.length - 1)]!;
     },
     governedCall: async (input: any) => { calls.push(['call', input]); return { tx: `TX-${String(input.order.circuit)}` }; },
-    foundingSeat: async (material: unknown) => { calls.push(['seat', material]); return { seat: LEAF.toUpperCase(), scope: 'cd'.repeat(32) }; },
+    foundingSeat: async (material: unknown) => { calls.push(['seat', material]); return { seat: LEAF.toUpperCase(), scope: 'cd'.repeat(32), publicKey: 'EF'.repeat(32) }; },
     accountDeploy: async (input: unknown) => {
       calls.push(['deploy', input]);
       return { account: ACCOUNT, tx: 'REVQTE9Z', insert: [{ circuit: 'payout', key: 'S0VZ' }] };
@@ -204,6 +206,12 @@ describe('THE FIRST PRESS', () => {
     expect(mine.signerId).toBe(made.founding.seat.signerId);
     expect(made.founding.seat.leaf).toBe(LEAF);
     expect(mine.scope).toBe('cd'.repeat(32));
+    /* RED WHEN: the founding seat's leaf is made with a blinding that does not commit to the key the account is born held by. */
+    const salt = mine.opening?.salt ?? '';
+    expect(mine.blinding).toBe(seatBlinding(made.foundingKey, salt));
+    /* RED WHEN: the opening kept beside the keys is not of the leaf they make, so the founding seat's entry would prove nothing. */
+    expect(mine.opening).toEqual({ publicKey: 'ef'.repeat(32), scope: 'cd'.repeat(32), blinding: mine.blinding, walletKey: made.foundingKey, salt });
+    expect(salt).toMatch(/^[0-9a-f]{64}$/u);
     /* RED WHEN: the leaf is worked out from anything but the keys kept here. */
     expect(b.calls[0]).toEqual(['seat', { signingSecret: mine.signingSecret, blinding: mine.blinding }]);
     /* RED WHEN: the viewing key is wrapped to anybody but this seat, or the record does not open with it. */
@@ -517,7 +525,7 @@ describe('THE COMPANY\'S SIGNERS ARE READ ON THIS DEVICE FROM ITS ROSTER RECORD 
 
   it('THE FOUNDING SIGNER\'S DEVICE READS THE FIRST ROSTER ON ITS OWN SIGNING KEY, BEFORE ITS DIRECTORY ENTRY IS FILED', async () => {
     const { made, served } = await servedAfterTheFirstPress();
-    const opened = await keyring.openAccount(served, holders(), (id) => anchoredEntering(id));
+    const opened = await keyring.openAccount(served, holders(), (id) => anchoredEntering(id), () => leavesOfTheContract);
     /* RED WHEN: the founding signer cannot read their own company before their entry is filed - they could then never set up their vault keys. */
     expect(opened?.signers.map((x) => [x.id, x.leafCommitment])).toEqual([[made.founding.seat.signerId, LEAF]]);
     expect(opened?.name).toBe('Acme Ltd');
@@ -530,8 +538,8 @@ describe('THE COMPANY\'S SIGNERS ARE READ ON THIS DEVICE FROM ITS ROSTER RECORD 
     /* The signers as an account record carried them before they were a record: a list that opens with the company's key. */
     const unsigned = sealAccount(openAccount(made.founding.account, viewingKey, made.founding.roster), viewingKey, []).sealedRoster!;
     /* RED WHEN: a device reads a company's signers from anything but a roster record a seat signed. */
-    await expect(keyring.openAccount({ ...withoutIt, sealedRoster: unsigned }, holders(), (id) => anchoredEntering(id))).rejects.toThrow(NO_ROSTER_RECORD);
-    await expect(keyring.openAccount(withoutIt, holders(), (id) => anchoredEntering(id))).rejects.toThrow(NO_ROSTER_RECORD);
+    await expect(keyring.openAccount({ ...withoutIt, sealedRoster: unsigned }, holders(), (id) => anchoredEntering(id), () => leavesOfTheContract)).rejects.toThrow(NO_ROSTER_RECORD);
+    await expect(keyring.openAccount(withoutIt, holders(), (id) => anchoredEntering(id), () => leavesOfTheContract)).rejects.toThrow(NO_ROSTER_RECORD);
   });
 
   it('A FIRST ROSTER NOT SIGNED BY THE FOUNDING SEAT IS REFUSED', async () => {
@@ -539,6 +547,21 @@ describe('THE COMPANY\'S SIGNERS ARE READ ON THIS DEVICE FROM ITS ROSTER RECORD 
     const { filedBy: _was, ...unsigned } = served.roster;
     const another = signCompanyFiling(unsigned, newSigningKeypair().secret);
     /* RED WHEN: a first roster signed by a key other than this device's own, with no founding entry to hold it to, is believed. */
-    await expect(keyring.openAccount({ ...served, roster: another }, holders(), (id) => anchoredEntering(id))).rejects.toThrow(/does not believe the company's roster/u);
+    await expect(keyring.openAccount({ ...served, roster: another }, holders(), (id) => anchoredEntering(id), () => leavesOfTheContract)).rejects.toThrow(/does not believe the company's roster/u);
+  });
+});
+
+describe('AN INVITEE\'S DEVICE ASKS ITS OWN WALLET FOR ITS KEY FOR THE COMPANY ITS INVITATION NAMES', () => {
+  it('the key comes back on a first open, the one the wallet works out from the invitation\'s label, so the seat\'s leaf can commit to it', async () => {
+    aService();
+    signIn();
+    const label = `co_${'d4'.repeat(32)}` as CompanyLabel;
+    const wallet = new Wallet();
+    const key = await keyring.walletKeyForAnInvitation({ accountId: 'acc_invited', label, account: ACCOUNT as never }, WALLET, wallet, US);
+    /* RED WHEN: on a first open the wallet's key for a named company is not handed back, so no invitee's leaf could commit to it. */
+    expect(key).toEqual({ tag: 'schnorr', value: committeeKeyFor(identity, label).value.toLowerCase() });
+    /* RED WHEN: the wallet is asked for any company but the one the invitation names. */
+    expect(wallet.asks.map((a) => [a.kind, (a.body as { company?: unknown }).company, (a.body as { account?: unknown }).account]))
+      .toEqual([['keyring', label, ACCOUNT]]);
   });
 });

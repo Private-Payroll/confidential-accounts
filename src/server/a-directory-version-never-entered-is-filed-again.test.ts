@@ -91,7 +91,8 @@ describe('A DIRECTORY VERSION NEVER ENTERED', () => {
   it('IS FILED AGAIN AS A NEW VERSION BY ITS OWN SEAT\'S DEVICE ON THE WAY IN, AND ANCHORED, SO ITS SEAT IS BELIEVED', async () => {
     const before = store.directoryFilingsOf(CO).length;
     /* RED WHEN: the seat's device does not file its own passed-over entry again, or the service refuses it as a seat taken. */
-    expect(await anchoredOnTheWayIn(doorsOf(BO))).toEqual({ waits: 'own-entry-filed-again' });
+    /* RED WHEN: the entry filed again waits for a later anchor, so a change of who holds the account can lose it first. */
+    expect(await anchoredOnTheWayIn(doorsOf(BO))).toMatchObject({ filedAgain: 'own-entry', anchored: 1 });
     const again = store.directoryFilingsOf(CO);
     expect(again.length).toBe(before + 1);
     expect(again.at(-1)!.change).toEqual(again[1]!.change);
@@ -101,7 +102,8 @@ describe('A DIRECTORY VERSION NEVER ENTERED', () => {
     /* RED WHEN: the entry filed again is never anchored, so the seat stays unbelieved for good. */
     expect(here.dir.seats.map((x) => x.seat)).toContain(BO.seat);
     /* Filed again once: a second way in files nothing. */
-    expect(await anchoredOnTheWayIn(doorsOf(BO, (all) => all, bos))).not.toEqual({ waits: 'own-entry-filed-again' });
+    /* The service hands Bo's anchor every filing but the change his device files again, so that change is left unanchored. */
+    expect(await anchoredOnTheWayIn(doorsOf(BO, (all) => all.filter((f) => f.signedAt === undefined), bos))).toMatchObject({ filedAgain: 'directory-changes' });
   });
 
   it('A QUORUM\'S CHANGE PASSED OVER IS FILED AGAIN UNDER ITS OWN SIGNATURES BY A DEVICE THAT MAY ANCHOR, KEPT THERE UNTIL ANCHORED, AND APPLIED', async () => {
@@ -140,8 +142,9 @@ describe('A DIRECTORY VERSION NEVER ENTERED', () => {
     const failing = { ...doorsOf(BO, (all) => all, fresh), fileDirectory: async () => { throw new Error('the service is away'); } };
     expect(await anchoredOnTheWayIn(failing)).not.toHaveProperty('notAnchored');
     expect((await fresh.changes.all(CO)).map((k) => k.signedAt)).toEqual([3]);
-    const servedNone = { ...doorsOf(BO, (all) => all, bos), directory: async () => ({ ...(await acmeDirectoryWithItsFold()), notApplied: [] }) };
-    expect(await anchoredOnTheWayIn(servedNone)).toEqual({ waits: 'directory-changes-filed-again' });
+    const servedNone = { ...doorsOf(BO, (all) => all.filter((f) => f.signedAt === undefined), bos), directory: async () => ({ ...(await acmeDirectoryWithItsFold()), notApplied: [] }) };
+    /* RED WHEN: a change filed again from what the device kept is not anchored at once by that device. */
+    expect(await anchoredOnTheWayIn(servedNone)).toMatchObject({ filedAgain: 'directory-changes' });
     expect(store.directoryFilingsOf(CO).at(-1)).toMatchObject({ change: filings[2]!.change, signedAt: 3 });
     const pending = store.directoryFilingsOf(CO).at(-1)!.version;
     /* Not yet anchored, Bo's seat leaves the chain: the role filed again no longer agrees with it, and is said not applied, with why. */
@@ -155,7 +158,7 @@ describe('A DIRECTORY VERSION NEVER ENTERED', () => {
     /* RED WHEN: the change filed again and anchored is not applied. */
     expect((await acmeDirectory()).dir.seats.find((x) => x.seat === BO.seat)?.role).toBe('approver');
     /* RED WHEN: a change anchored at last is kept and filed again for ever. */
-    expect(await anchoredOnTheWayIn(doorsOf(BO, (all) => all, bos))).not.toEqual({ waits: 'directory-changes-filed-again' });
+    expect(await anchoredOnTheWayIn(doorsOf(BO, (all) => all, bos))).not.toHaveProperty('filedAgain');
     expect(await bos.changes.all(CO)).toEqual([]);
     /*
      * Anchored, it is counted against who held the account as it was anchored, like any version: RED WHEN Bo's seat leaving the
@@ -183,7 +186,7 @@ describe('A DIRECTORY VERSION NEVER ENTERED', () => {
     await anchorTheRecordsHere(doorsOf(ADA));
     const filings = store.directoryFilingsOf(CO);
     /* RED WHEN: a device files again a change that would reverse a later one. */
-    expect(await anchoredOnTheWayIn(doorsOf(ADA))).not.toEqual({ waits: 'directory-changes-filed-again' });
+    expect(await anchoredOnTheWayIn(doorsOf(ADA))).not.toHaveProperty('filedAgain');
     expect(store.directoryFilingsOf(CO).length).toBe(filings.length);
     /* RED WHEN: the service files it anyway: one rule for the service and every device. */
     const r = await sendAs('ada')(`/api/accounts/${CO}/directory/${filings.length + 1}`, {

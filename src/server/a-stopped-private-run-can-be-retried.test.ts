@@ -53,7 +53,7 @@ const { vaultDetails } = await import('../testing/vault-details.js');
 const { aVaultHolding } = await import('../testing/assets.js');
 const { addressOfSlot, signInWithAWallet } = await import('../testing/wallet-session.js');
 const { theNetwork } = await import('../midnight/network.js');
-const { toHex } = await import('../core/crypto.js');
+const { toHex, signingPublicKeyOf } = await import('../core/crypto.js');
 const { directorySeats } = await import('../testing/directory-seats.js');
 const { DEVICE_RAISE_VERSION, paymentsCheckedDigest, paymentsOnTheWire } = await import('../core/device-raise.js');
 type Hex = import('../core/crypto.js').Hex;
@@ -161,7 +161,9 @@ const aStoppedRun = async (name: string, retryWrittenDown = false, legOnChain = 
     });
     retryId = (await payroll.proposeRetry(run.id, viewingKey, signer, m, undefined, { onDevice: true })).id;
   }
-  return { account, viewingKey, runId: run.id, signer, addresses, leg: leg.id, retryId };
+  /* The filing key of Ada's seat, which her device sends with every relay. */
+  const filer = signingPublicKeyOf(created.secrets[0]!.signingSecret as Hex);
+  return { account, viewingKey, runId: run.id, signer, addresses, leg: leg.id, retryId, filer };
 };
 
 const seeded = {
@@ -233,8 +235,8 @@ const digestOf = (payments: Array<{ kind: string; token: string; amount: string 
  */
 
 describe('A RETRY WRITTEN DOWN ON A DEVICE IS SENT ONLY FROM THE CURRENT PAGE, AS THE CALL IT PROVED', () => {
-  const send = (c: Company & { retryId?: string }, more: Record<string, unknown>) =>
-    post(`/api/proposals/${c.retryId}/send`, { tx: Buffer.from('{}').toString('base64'), ...more });
+  const send = (c: Company & { retryId?: string; filer: string }, more: Record<string, unknown>) =>
+    post(`/api/proposals/${c.retryId}/send`, { tx: Buffer.from('{}').toString('base64'), filer: c.filer, ...more });
 
   it('3c. A RETRY SEND FROM AN OUT-OF-DATE PAGE, OR CARRYING WHAT THE DEVICE CHECKED, IS REFUSED, AND NOTHING IS SENT', async () => {
     const c = seeded.written;

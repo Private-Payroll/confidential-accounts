@@ -767,6 +767,11 @@ export class AccountSimulator {
     return this.roleEntry(pureCircuits.anchorSeatKey());
   }
 
+  /** The head the latest recovery carried out wrote, as the chain holds it, or 32 zero bytes before any. */
+  lastRecovery(): Uint8Array {
+    return this.roleEntry(pureCircuits.lastRecoveryKey()) ?? ZERO_32;
+  }
+
   /** The tag `state`'s seat anchors under in this account, as a member works it out from the seat's leaf opening. */
   anchorTagOf(state: AccountPrivateState): Uint8Array {
     return pureCircuits.anchorTagOf(this.selfBytes(), pureCircuits.signerPublicKey(state.secretKey), state.blinding);
@@ -774,30 +779,34 @@ export class AccountSimulator {
 
   /**
    * Carries out an approved recovery of the record anchor: on from `previous`, by one batch resuming
-   * from `resumesFrom`, before `latest`, under `proposal`. The device carries the salt the recovery
-   * was raised with.
+   * from `resumesFrom`, before `latest`, after the recovery whose head is `lastRecovery` (the chain's
+   * by default), under `proposal`. The device carries the salt the recovery was raised with.
    */
   recoverAnchor(
     previous: Uint8Array, batch: Uint8Array, resumesFrom: Uint8Array, latest: bigint, proposal: Uint8Array, held = this.heldNow(),
+    lastRecovery = this.lastRecovery(),
   ) {
     return this.run('recoverAnchor', (c) => this.contract.impureCircuits.recoverAnchor(
-      c, previous, batch, held.approvals, held.signerRoot, resumesFrom, latest, proposal));
+      c, previous, batch, held.approvals, held.signerRoot, resumesFrom, latest, lastRecovery, proposal));
   }
 
   /**
    * Raises a recovery of the record anchor resuming from `resumesFrom`, to be carried out before
-   * `latest` (an hour after the block time by default), and has `approvers` approve it; returns its
-   * identity, its latest time and the change its raiser's device carries, which carrying it out needs.
+   * `latest` (an hour after the block time by default), after the recovery whose head is
+   * `lastRecovery` (the latest carried out, as the chain holds it now, by default), and has
+   * `approvers` approve it; returns its identity, its latest time, the head of the recovery it
+   * follows and the change its raiser's device carries, which carrying it out needs.
    */
   async approvedRecovery(
     resumesFrom: Uint8Array, approvers: AccountPrivateState[], seed = 461, latest = BigInt(this.blockTime + 3600),
-  ): Promise<{ id: Uint8Array; c: Change; latest: bigint }> {
+    lastRecovery = this.lastRecovery(),
+  ): Promise<{ id: Uint8Array; c: Change; latest: bigint; lastRecovery: Uint8Array }> {
     const c = change(0n, seed);
-    const payload = pureCircuits.recoverAnchorPayload(resumesFrom, latest);
+    const payload = pureCircuits.recoverAnchorPayload(resumesFrom, latest, lastRecovery);
     await this.as(this.applying(approvers[0]!, c)).propose(payload);
     const id = this.proposalId(payload, c.salt);
     for (const a of approvers) await this.as(a).approve(id);
-    return { id, c, latest };
+    return { id, c, latest, lastRecovery };
   }
 
   /** Changes M in M of N, through an approved round. */

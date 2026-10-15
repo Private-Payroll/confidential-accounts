@@ -1,6 +1,6 @@
 import { describe, it, expect } from 'vitest';
 import * as L from '@midnightntwrk/ledger-v9';
-import { LARGEST_COMMITTEE, authorityValueRefusals } from './authority-replacement.js';
+import { LARGEST_COMMITTEE, authorityValueRefusals, replaceAuthorityOf } from './authority-replacement.js';
 
 /*
  * **WHAT A NEW MAINTENANCE AUTHORITY MUST NOT BE**, read against the ledger's
@@ -44,5 +44,28 @@ describe('A NEW AUTHORITY', () => {
     /* RED WHEN the refusal is removed or moved by one. */
     expect(codes(keys(LARGEST_COMMITTEE + 1), 2)).toContain('committee-over-the-metadata-limit');
     expect(codes(keys(LARGEST_COMMITTEE), 2)).not.toContain('committee-over-the-metadata-limit');
+  });
+
+  it('IS NEVER HELD BY AN ECDSA KEY, WHOSE LARGER SIZE THE LIMIT ABOVE DOES NOT COUNT', () => {
+    const limit = metadataLimit();
+    const ecdsa = (n: number) => keys(n).map((k) => ({ tag: 'ecdsa', value: `02${k.value}` }));
+    const sized = (committee: { tag: string; value: string }[]) => {
+      const bytes = new L.ContractMaintenanceAuthority(committee as never, 2 ** 32 - 1, 2n ** 32n - 1n).serialize();
+      return bytes.length - (new TextDecoder().decode(bytes).indexOf(':', 'midnight:'.length) + 1);
+    };
+    /* The ledger takes ecdsa keys, and fewer of them than LARGEST_COMMITTEE already pass its limit. */
+    expect(sized(ecdsa(1471))).toBeGreaterThan(limit);
+    /* RED WHEN: an ecdsa key is installed, so a committee under LARGEST_COMMITTEE is refused by the chain after its fee. */
+    expect(codes(ecdsa(1), 1)).toContain('malformed-committee-key');
+  });
+});
+
+describe('A REPLACEMENT', () => {
+  const build = (updateCounter: bigint) => replaceAuthorityOf(L as never, { committee: keys(1), threshold: 1, updateCounter, emptyCommitteeIsDeliberate: false });
+
+  it('IS NOT BUILT AT THE LARGEST COUNTER THE CHAIN HOLDS, WHICH HAS NO NEXT ONE', () => {
+    expect(build(2n ** 32n - 2n)).toBeDefined();
+    /* RED WHEN: a replacement is built for a contract at the chain's largest counter, failing inside the ledger instead of saying why. */
+    expect(() => build(2n ** 32n - 1n)).toThrow(/is 4294967295, the largest the chain holds, and a contract at it never moves past it, so a signature on any of its updates would stay good for ever\. Nothing was built\./u);
   });
 });

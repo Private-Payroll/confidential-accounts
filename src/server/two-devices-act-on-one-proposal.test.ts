@@ -198,9 +198,9 @@ const seeded = await (async () => {
     const committee = { tag: 'schnorr', value: '7a'.repeat(32) };
     const records: import('vaults-web-shared/run-rebuilt-here.js').CompanyRecordsHere = everyRunAndProposalEntered({
       directory: async () => ({
-        dir: { company: account, version: 1, seats: [{ seat: '4e'.repeat(32), person: USERS.ada, signingKey: founder.publicKey, wrappingKey: 'ab'.repeat(32), committeeKey: committee, role: 'admin', retired: null }] },
+        dir: { company: account, version: 1, seats: [{ seat: '4e'.repeat(32), person: USERS.ada, signingKey: founder.publicKey, wrappingKey: 'ab'.repeat(32), committeeKey: committee, role: 'admin', retired: null, opening: {} as never }] },
         holders: { committee: [committee], seats: ['4e'.repeat(32)], approvals: 1, adoptedVaults: [], account: 'ac'.repeat(32) } as never,
-        another: new Set(), at: () => null, records: heldEntering(account),
+        another: new Set(), at: () => null, leafOf: () => null, records: await heldEntering(account),
       }),
       people: async () => ({ people: people.map((person) => ({ person, version: 1, handedOver: true })), notBelieved: [], notPayable: [] }),
       state: async (id) => (id === '0' ? state : null),
@@ -304,7 +304,8 @@ const apiAs = (who: keyof typeof USERS) => async (path: string, init?: RequestIn
   return body;
 };
 
-const aDevice = (who: keyof typeof USERS, company: { account: string; records: import('vaults-web-shared/run-rebuilt-here.js').CompanyRecordsHere }, signer: string) => {
+/** A signer's device: `signingSecret` is its seat's filing secret, whose public key it sends with every relay. */
+const aDevice = (who: keyof typeof USERS, company: { account: string; records: import('vaults-web-shared/run-rebuilt-here.js').CompanyRecordsHere }, signer: string, signingSecret: string) => {
   const stages: string[] = [];
   const doors: import('vaults-web-shared/governed-call-on-device.js').RaiseDoors = {
     service: {
@@ -320,7 +321,7 @@ const aDevice = (who: keyof typeof USERS, company: { account: string; records: i
         return { tx: Buffer.from(JSON.stringify({ signer, order: order as Built['order'] } satisfies Built)).toString('base64') };
       },
     },
-    material: { signingSecret: '11'.repeat(32), blinding: '22'.repeat(32), scope: '33'.repeat(32) },
+    material: { signingSecret, blinding: '22'.repeat(32), scope: '33'.repeat(32) },
     /* The device's read of the vault is a stand-in too: every send asks it first, and here it can pay. */
     holdings: aVaultHolding(), assets: registryWithTestPrivateForms(),
     accountId: company.account,
@@ -363,8 +364,8 @@ describe('TWO DEVICES, ONE PROPOSAL, THE SERVED ROUTES', () => {
     const c = seeded.raisedTwice;
     const gate = aGate();
     door = async (_c, land) => { await gate.opened; return land(); };
-    const one = aDevice('ada', c, c.ada.signerId);
-    const two = aDevice('ada', c, c.ada.signerId);
+    const one = aDevice('ada', c, c.ada.signerId, c.ada.signingSecret);
+    const two = aDevice('ada', c, c.ada.signerId, c.ada.signingSecret);
     const first = settle(device.sendRaiseFromDevice(one.doors, { runId: c.runId, viewingKey: c.viewingKey, asset: TEST_TOKEN }));
     const second = settle(device.sendRaiseFromDevice(two.doors, { runId: c.runId, viewingKey: c.viewingKey, asset: TEST_TOKEN }));
     await until(() => sent.length >= 2 || (sent.length === 1 && (first.done || second.done)));
@@ -386,8 +387,8 @@ describe('TWO DEVICES, ONE PROPOSAL, THE SERVED ROUTES', () => {
     const round = await standing('ada', c);
     const gate = aGate();
     door = async (_c, land) => { const r = await land(); await gate.opened; return r; };
-    const ada = aDevice('ada', c, c.ada.signerId);
-    const blake = aDevice('blake', c, c.blake.signerId);
+    const ada = aDevice('ada', c, c.ada.signerId, c.ada.signingSecret);
+    const blake = aDevice('blake', c, c.blake.signerId, c.blake.signingSecret);
     const both = Promise.all([
       device.approveOnDevice(ada.doors, { round, viewingKey: c.viewingKey }),
       device.approveOnDevice(blake.doors, { round, viewingKey: c.viewingKey }),
@@ -408,8 +409,8 @@ describe('TWO DEVICES, ONE PROPOSAL, THE SERVED ROUTES', () => {
     const round = await standing('ada', c);
     const gate = aGate();
     door = async (_c, land) => { await gate.opened; return land(); };
-    const first = settle(device.approveOnDevice(aDevice('ada', c, c.ada.signerId).doors, { round, viewingKey: c.viewingKey }));
-    const second = settle(device.approveOnDevice(aDevice('ada', c, c.ada.signerId).doors, { round, viewingKey: c.viewingKey }));
+    const first = settle(device.approveOnDevice(aDevice('ada', c, c.ada.signerId, c.ada.signingSecret).doors, { round, viewingKey: c.viewingKey }));
+    const second = settle(device.approveOnDevice(aDevice('ada', c, c.ada.signerId, c.ada.signingSecret).doors, { round, viewingKey: c.viewingKey }));
     await until(() => sent.length >= 2 || (sent.length === 1 && (first.done || second.done)));
     gate.open();
     await until(() => first.done && second.done);
@@ -427,10 +428,10 @@ describe('TWO DEVICES, ONE PROPOSAL, THE SERVED ROUTES', () => {
     const round = await standing('ada', c);
     const gate = aGate();
     door = async (circuit, land) => { const r = await land(); if (circuit === 'approve') await gate.opened; return r; };
-    const approving = settle(device.approveOnDevice(aDevice('ada', c, c.ada.signerId).doors, { round, viewingKey: c.viewingKey }));
+    const approving = settle(device.approveOnDevice(aDevice('ada', c, c.ada.signerId, c.ada.signingSecret).doors, { round, viewingKey: c.viewingKey }));
     await until(() => sent.length === 1);
     /* Ada raised it; the chain lets the signer who raised a proposal withdraw it, from any device of theirs. */
-    const withdrawn = await device.withdrawOnDevice(aDevice('ada', c, c.ada.signerId).doors, { round, viewingKey: c.viewingKey });
+    const withdrawn = await device.withdrawOnDevice(aDevice('ada', c, c.ada.signerId, c.ada.signingSecret).doors, { round, viewingKey: c.viewingKey });
     expect(withdrawn.status).toBe('cancelled');
     /* RED WHEN: a device reads where a proposal stands from the service's record, or this file's chain names a close the chain did not take. */
     const kept = new FileStore(process.env.DATA_PATH!).listProposals(c.account).find((p) => p.id === round.id)!;

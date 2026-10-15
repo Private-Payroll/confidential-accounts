@@ -7,6 +7,7 @@
  * account held after each of its actions.
  */
 import { ContractState } from '@midnightntwrk/ledger-v9';
+import { authorityIn } from './contract-authority.js';
 import type { AccountHolders, AccountSeats } from './records-key.js';
 
 /** Where the account's shared map of roles sits among the fields of its public state. */
@@ -21,6 +22,9 @@ export const ACCOUNT_THRESHOLD_FIELD = 5;
 /** Where the account's set of adopted vaults sits among the fields of its public state. */
 export const ADOPTED_VAULTS_FIELD = 7;
 
+/** Where the account's map of retired vaults, each to the time it was retired, sits among the fields of its public state. */
+export const RETIRED_VAULTS_FIELD = 10;
+
 /* A field's bytes as the state holds them may have had trailing zero bytes
  * dropped; thirty-two bytes are put back by padding at the end. */
 export const as32 = (value: unknown): Uint8Array | null => {
@@ -31,8 +35,10 @@ export const as32 = (value: unknown): Uint8Array | null => {
 };
 
 /**
- * **WHO HOLDS AN ACCOUNT, FROM ITS SERIALISED STATE.** Throws when the bytes
- * are not a contract's state laid out as a company's account is.
+ * **WHO HOLDS AN ACCOUNT, FROM ITS SERIALISED STATE.** The seats come from the
+ * account's own set of seated signers; the committee and threshold from
+ * `authorityIn`. Throws when the bytes are not laid out as a company's
+ * account, or when `authorityIn` refuses the authority, saying why.
  */
 export function seatsInAccountState(serialized: Uint8Array): AccountSeats {
   const state = ContractState.deserialize(serialized);
@@ -45,12 +51,9 @@ export function seatsInAccountState(serialized: Uint8Array): AccountSeats {
     if (leaf === null) throw new Error('that contract\'s state is not laid out as a company\'s account.');
     seats.push(Array.from(leaf, (b) => b.toString(16).padStart(2, '0')).join(''));
   }
-  const authority = state.maintenanceAuthority;
-  return Object.freeze({
-    committee: Object.freeze(authority.committee.map((k) => Object.freeze({ tag: String(k.tag), value: String(k.value).toLowerCase() }))),
-    threshold: authority.threshold,
-    seats: Object.freeze(seats),
-  });
+  const authority = authorityIn(state);
+  if ('why' in authority) throw new Error('that contract\'s state is not laid out as a company\'s account: ' + authority.why);
+  return Object.freeze({ committee: authority.committee, threshold: authority.threshold, seats: Object.freeze(seats) });
 }
 
 /**
@@ -72,13 +75,31 @@ export function holdersInAccountState(serialized: Uint8Array): Omit<AccountHolde
   let approvals = 0;
   for (let i = raw.length - 1; i >= 0; i -= 1) approvals = approvals * 256 + raw[i]!;
   if (!Number.isSafeInteger(approvals) || approvals < 1) throw new Error(notAnAccount);
-  const adopted = fields[ADOPTED_VAULTS_FIELD]!.asMap();
-  if (adopted === undefined) throw new Error(notAnAccount);
+  return Object.freeze({ ...seats, approvals, adoptedVaults: Object.freeze(vaultsInField(fields, ADOPTED_VAULTS_FIELD)) });
+}
+
+/** Every vault address a set or map field of the account's state lists, in the order the state holds them. */
+function vaultsInField(fields: readonly { asMap(): unknown }[], index: number): string[] {
+  const notAnAccount = 'that contract\'s state is not laid out as a company\'s account.';
+  const map = fields[index]?.asMap() as { keys(): Iterable<{ value: unknown[] }> } | undefined;
+  if (map === undefined) throw new Error(notAnAccount);
   const vaults: string[] = [];
-  for (const key of adopted.keys()) {
+  for (const key of map.keys()) {
     const v = as32(key.value[0]);
     if (v === null) throw new Error(notAnAccount);
     vaults.push(Array.from(v, (b) => b.toString(16).padStart(2, '0')).join(''));
   }
-  return Object.freeze({ ...seats, approvals, adoptedVaults: Object.freeze(vaults) });
+  return vaults;
+}
+
+/**
+ * **EVERY VAULT A COMPANY'S ACCOUNT LISTS, FROM ITS SERIALISED STATE**: each it
+ * adopted and each it retired, once. These are the company's contracts beside
+ * the account itself, as the chain holds them. Throws when the bytes are not a
+ * contract's state laid out as a company's account is.
+ */
+export function vaultsInAccountState(serialized: Uint8Array): readonly string[] {
+  const fields = ContractState.deserialize(serialized).data.state.asArray();
+  if (fields === undefined || fields.length <= ROLES_FIELD) throw new Error('that contract\'s state is not laid out as a company\'s account.');
+  return Object.freeze([...new Set([...vaultsInField(fields, ADOPTED_VAULTS_FIELD), ...vaultsInField(fields, RETIRED_VAULTS_FIELD)])]);
 }

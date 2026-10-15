@@ -521,4 +521,69 @@ describe.skipIf(!ON_DISK)('A CREATION CARRIED ON PAST WHAT RUNS OUT, JUDGED BY I
     /* RED WHEN: the account deploy's own check of its starting balance is removed. */
     expect(readAccountDeploy(startingWith(new Map([['x', 1n]])), expect_)).toMatchObject({ refusal: expect.stringMatching(/start holding money/) });
   });
+
+  it('AN ACCOUNT\'S DEPLOY HELD BY THE FOUNDING KEY IS READ, WRITTEN IN LOWER CASE OR IN UPPER CASE', async () => {
+    const made = await createdOnTheDevice();
+    const tx = await readProvenTransaction(new Uint8Array(Buffer.from(made.deploy, 'base64'))) as any;
+    const d = [...tx.intents.values()][0].actions[0];
+    const state = d.initialState;
+    const expectations = accountCreationExpectationsIn(ROOT);
+    const expect_ = {
+      foundingKey, verifierKeys: await expectations.firstKeys(), circuits: CREATION_STEPS.first,
+      expectedState: await expectations.stateOf({ accountId: 'acc_1', foundingKey, foundingLeaf: LEAF, companyLabel: LABEL }),
+    };
+    const held = (key: (k: { tag: string; value: string }) => unknown, authority: Record<string, unknown> = {}) => ({
+      intents: new Map([[1, { actions: [{
+        address: d.address,
+        initialState: {
+          maintenanceAuthority: {
+            committee: [key(state.maintenanceAuthority.committee[0])], threshold: state.maintenanceAuthority.threshold,
+            counter: state.maintenanceAuthority.counter, ...authority,
+          },
+          balance: new Map(), serialize: () => state.serialize(),
+          operations: () => state.operations(), operation: (n: string) => state.operation(n),
+        },
+      }] }]]),
+    });
+    const plain = (k: { tag: string; value: string }) => ({ tag: k.tag, value: k.value });
+    /* The control: the same key written as plain strings is the founding signer's account. */
+    expect(readAccountDeploy(held(plain), expect_)).toEqual({ vault: made.address });
+    /* RED WHEN: the digits of a key are compared as written, so the founding key in upper case is not the founding key. */
+    expect(readAccountDeploy(held((k) => ({ tag: k.tag, value: k.value.toUpperCase() })), expect_)).toEqual({ vault: made.address });
+  });
+});
+
+/* These refuse before any verifying key or compiled state is looked at, so they run on a checkout with no keys. */
+describe('AN ACCOUNT\'S DEPLOY IS REFUSED UNLESS ITS AUTHORITY IS THE FOUNDING SIGNER\'S KEY ALONE, NEVER CHANGED', () => {
+  const KEY = { tag: 'schnorr', value: '79be667ef9dcbbac55a06295ce870b07029bfcdb2dce28d959f2815b16f81798' };
+  const expect_ = { foundingKey: KEY, verifierKeys: new Map<string, Uint8Array>(), circuits: [], expectedState: new Uint8Array() };
+  const refusedAsAuthority = /held by its founding signer's own key alone/;
+  const deployHeldBy = (committee: unknown[], counter: unknown = 0n, threshold = 1) => ({
+    intents: new Map([[1, { actions: [{
+      address: 'ab'.repeat(32),
+      initialState: { maintenanceAuthority: { committee, threshold, counter }, balance: new Map(), serialize: () => new Uint8Array() },
+    }] }]]),
+  });
+  const refusal = (tx: unknown): string => {
+    const r = readAccountDeploy(tx, expect_ as never);
+    return 'refusal' in r ? r.refusal : '';
+  };
+
+  it('refuses a founding key whose kind or digits are not plain strings, and a counter that is not a bigint of zero', () => {
+    /* RED WHEN: the account's authority is read by anything but `authorityIn`, so a key whose parts are not plain strings is taken. */
+    expect(refusal(deployHeldBy([{ tag: new String(KEY.tag), value: KEY.value }]))).toMatch(refusedAsAuthority);
+    expect(refusal(deployHeldBy([{ tag: KEY.tag, value: new String(KEY.value) }]))).toMatch(refusedAsAuthority);
+    /* RED WHEN: a counter that is not a bigint of zero is taken for an account never changed. */
+    expect(refusal(deployHeldBy([KEY], 1n))).toMatch(refusedAsAuthority);
+    expect(refusal(deployHeldBy([KEY], 0))).toMatch(refusedAsAuthority);
+    /* RED WHEN: a key written with a prefix, or a threshold other than one, is taken for the founding key alone. */
+    expect(refusal(deployHeldBy([{ tag: KEY.tag, value: '0x' + KEY.value }]))).toMatch(refusedAsAuthority);
+    expect(refusal(deployHeldBy([KEY], 0n, 2))).toMatch(refusedAsAuthority);
+  });
+
+  it('does not refuse the founding key written in upper case as another authority', () => {
+    /* RED WHEN: the digits of a key are compared as written, so the founding key in upper case is not the founding key. */
+    expect(refusal(deployHeldBy([KEY]))).not.toMatch(refusedAsAuthority);
+    expect(refusal(deployHeldBy([{ tag: KEY.tag, value: KEY.value.toUpperCase() }]))).not.toMatch(refusedAsAuthority);
+  });
 });

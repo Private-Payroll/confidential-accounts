@@ -4,7 +4,7 @@ import { committeeKeyFor } from 'midnight-identity/profile/committee-key';
 import { signDirectoryEntry, signRecordsKey } from 'midnight-identity/profile/records-key';
 import type { CompanyLabel } from 'midnight-identity/profile/company-label';
 import { newSigningKeypair, toHex } from '../../../src/core/crypto.js';
-import { vaultKeysAreTheSigners, vaultKeysOfferRefusal, type VaultKeysOffer } from '../../../src/core/vault-keys.js';
+import { openVaultKeysOffer, vaultKeysAreTheSigners, vaultKeysOfferRefusal, type OpenedVaultKeysOffer, type VaultKeysOffer } from '../../../src/core/vault-keys.js';
 import { recordsKeypairFrom } from '../../../src/midnight/company-nonce-secret.js';
 import { offerVaultKeysHere } from './roster-here.js';
 import { answerVaultAsk } from './vault-worker-entry.js';
@@ -37,12 +37,20 @@ describe('A SIGNER\'S RECORDS KEY IS OFFERED AS THEIR WALLET SIGNED IT', () => {
   it('offers the wallet\'s statement beside the two keys, signed into this signer\'s own roster entry, with the entry the wallet signed', async () => {
     const { sent, api } = giving();
     const statement = signRecordsKey(me, CO, 'c0'.repeat(32) as never, companyKey, SEAT);
+    const viewingKey = '5e'.repeat(32) as never;
     await offerVaultKeysHere(api, 'acc_1', {
       committeeKey: committeeKey as never, companyKey: toHex(companyKey), signingSecret: signing.secret, signerId: 's1',
-      recordsKey: statement, entry: ENTRY,
+      recordsKey: statement, entry: ENTRY, viewingKey,
     });
     expect(sent.map((x) => `${x.method} ${x.path}`)).toEqual(['PUT /api/accounts/acc_1/vault-keys']);
-    const { offer } = sent[0]!.body;
+    const kept = sent[0]!.body.offer;
+    /* RED WHEN: the offer carries the wallet key, or anything only the wallet key checks, where the service can read it. */
+    const plain = JSON.stringify(kept);
+    expect(plain).not.toContain((committeeKey as { value: string }).value.toLowerCase());
+    expect(plain).not.toContain(statement.signature);
+    expect(plain).not.toContain(ENTRY.signature);
+    expect(Object.keys(kept).sort()).toEqual(['recordsKey', 'sealed', 'seat', 'signingKey']);
+    const offer = openVaultKeysOffer('acc_1', { ...kept, person: 'p' } as VaultKeysOffer, viewingKey) as OpenedVaultKeysOffer;
     /* RED WHEN: the statement is left behind, so no other signer's device can check this signer's key. */
     expect(offer.keys.recordsKeyStatement).toBe(statement.signature);
     /* RED WHEN: the seat the statement is signed for is left behind, so no device can hold it to the seats held now. */
@@ -61,7 +69,7 @@ describe('A SIGNER\'S RECORDS KEY IS OFFERED AS THEIR WALLET SIGNED IT', () => {
     /* RED WHEN: a statement for a key other than the one the company key opens is offered as this signer's. */
     await expect(offerVaultKeysHere(api, 'acc_1', {
       committeeKey: committeeKey as never, companyKey: toHex(companyKey), signingSecret: signing.secret, signerId: 's1',
-      recordsKey: forAnother, entry: ENTRY,
+      recordsKey: forAnother, entry: ENTRY, viewingKey: '5e'.repeat(32) as never,
     })).rejects.toThrow(/not the one your company key gives/);
     expect(sent).toEqual([]);
   });

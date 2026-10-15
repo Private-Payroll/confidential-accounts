@@ -6,32 +6,34 @@
  * signature keys and how many of them must sign a change to the vault's rules.
  * No circuit can read it, so no vault can refuse anything on the strength of
  * who holds it. What this product can do is make sure that the list is the
- * company's, and this file is the product's one statement of what "the
- * company's" means:
- *
- *   - one key per active signer of the company, each derived by that signer's
- *     own wallet (`midnight-identity/profile/committee-key`);
- *   - at the company's own approval threshold;
- *   - in one order, sorted by key, so the device that builds the update and the
- *     service that checks it compare one value and not two orderings of it.
+ * company's. `whyNoCommittee` and `committeeOf` make a committee value from
+ * keys each derived by a wallet (`midnight-identity/profile/committee-key`), in
+ * one order, sorted by key, so the device that builds the update and the
+ * service that checks it compare one value and not two orderings of it. The
+ * company's committee itself is its super admins', read from the account on
+ * the chain (`superAdminsHere`), never one key per signer.
  *
  * **A VAULT IS DEPLOYED WITH A TEMPORARY KEY AND THEN HANDED TO THIS
  * COMMITTEE.** A deploy and a maintenance update cannot share a transaction:
  * the update is checked against the chain as it stood before the transaction,
- * where the vault does not exist yet. So there are two transactions, at least
- * one block apart, and the temporary key is made on the device that deploys,
+ * where the vault does not exist yet. So there are two transactions, the deploy
+ * first and the update after it, and the temporary key is made on the device that deploys,
  * never leaves it, and signs exactly one update: this one.
  *
  * **THE RULE ABOUT WHICH COMMITTEE MAY BE INSTALLED IS NOT WRITTEN HERE.** It is
- * `authorityValueRefusals`, the refusal every replacement of a contract's
- * authority goes through, and the replacement itself is made by
- * `replaceAuthorityOf` and nowhere else. (An authority written at DEPLOY is
+ * `committeeInstallRefusals`, which `authorityValueRefusals` asks for every
+ * replacement of a contract's authority. The update that installs a committee
+ * on a contract is built by `committeeUpdateOf`, the one builder a wallet signs
+ * with, so the bytes a device counts signatures over are the bytes a wallet
+ * signed. (An authority written at DEPLOY is
  * checked by `requireMaintenanceAuthority` instead.) What this file adds is only what is particular to a company:
- * every signer has given a key, and each key is one a wallet derives.
+ * each key is one a wallet derives, and a committee value is complete only when every key it is made from is present.
+ * `whyNoCommittee` is the signers' roster check - every signer has given a key - and not the committee of the contracts.
  *
  * Imports nothing that loads WebAssembly: the ledger's classes are handed in.
  */
-import { authorityValueRefusals, replaceAuthorityOf, type MaintenanceRefusal } from './authority-replacement.js';
+import { committeeUpdateOf } from 'midnight-identity/profile/committee-sign';
+import { authorityValueRefusals, type MaintenanceRefusal } from './authority-replacement.js';
 
 export interface CommitteeKey {
   readonly tag: string;
@@ -113,27 +115,6 @@ export function committeeOf(
   return { committee, threshold };
 }
 
-/**
- * **NEVER A COMMITTEE ANY ONE OF SEVERAL KEYS COULD CHANGE ALONE.** A signer
- * who leaves a company keeps their seat on every contract until the others
- * change its committee, so on a committee of several at a threshold of one,
- * the one who left could change the rules on their own before the others do -
- * and for the account, those are the rules every vault pays out by.
- *
- * One rule, asked by every door that installs a committee and by both doors of
- * the money gate, so no door installs or funds what another refuses. A single
- * key at a threshold of one is a company with one signer and is not this. The
- * sentence says what is wrong and what resolves it; each door puts its own
- * refusal in front of it.
- */
-export function whyOneKeyCouldActAlone(c: { readonly committee: readonly unknown[]; readonly threshold: number }): string | null {
-  return c.committee.length > 1 && c.threshold < 2
-    ? `any one of the ${c.committee.length} keys holding these rules could change them alone, and a signer who `
-      + 'leaves keeps their seat until the others change the committee. Raise the company\'s threshold to at least '
-      + 'two first'
-    : null;
-}
-
 /** Two committee values are the same value: same keys, same order, same threshold. */
 export const sameCommittee = (a: Committee, b: Committee): boolean =>
   a.threshold === b.threshold
@@ -155,6 +136,8 @@ export interface ReplacementPrimitives {
  * with the committee. `counter` is the vault's counter as the chain reports it
  * now; the new authority carries the next one, and a signature over this update
  * is worthless against any other counter, any other vault or any other list.
+ * Built by `committeeUpdateOf` once `whyNoCommittee` passes, so it is the very
+ * update a wallet signs for the same contract, counter and committee.
  */
 export function committeeReplacement<P extends ReplacementPrimitives>(
   P: P,
@@ -168,9 +151,5 @@ export function committeeReplacement<P extends ReplacementPrimitives>(
     keys: input.to.committee, threshold: input.to.threshold, signerCount: input.to.committee.length,
   });
   if (again !== null) throw new Error(again);
-  const replace = replaceAuthorityOf(P, {
-    committee: input.to.committee, threshold: input.to.threshold, updateCounter: input.counter,
-    emptyCommitteeIsDeliberate: false,
-  });
-  return new P.MaintenanceUpdate(input.vault.toLowerCase(), [replace as never], input.counter) as InstanceType<P['MaintenanceUpdate']>;
+  return committeeUpdateOf(P as never, { address: input.vault, counter: input.counter, to: input.to }) as InstanceType<P['MaintenanceUpdate']>;
 }

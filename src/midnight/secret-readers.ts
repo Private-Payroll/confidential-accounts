@@ -15,21 +15,21 @@
  *     their records key for the company, and the seat they hold on its account,
  *     with their committee key (`records-key.ts` in the identity library), a
  *     key whose secret half never leaves that wallet;
- *   - **is that committee key on the company's account, on the chain?** The
- *     committee is read by this signer's own wallet, from the chain, just
- *     before the secret run, never taken from the service;
- *   - **is its signer one of the company's signers now?** A signer who has left
- *     keeps their seat on every contract nobody has changed since, so a seat on
- *     the committee is never enough by itself: the seat their wallet signed for
- *     must be one the account holds now, as the same wallet read it, each seat
- *     signed for once, and the committee must have exactly one key per seat.
+ *   - **is that wallet key the one its seat was made for?** A seat's leaf
+ *     commits to the wallet key of the person who holds it, and the seat's own
+ *     entry in the company's directory carries the opening that shows it
+ *     (`walletKeyProvedBy`, against the leaf the account holds);
+ *   - **is its signer one of the company's signers now?** The seat their
+ *     wallet signed for must be one the account holds now, as this signer's
+ *     own wallet read it just before the secret run, each seat signed for
+ *     once, and every seat the account holds must have a reader.
  *
- * It also refuses outright while the company's own committee does not hold the
- * account - while the service's temporary key still does, before the handover -
- * and while the vault is not held by that same committee with the same
- * threshold: nothing either signed is accepted until then. Who holds the vault,
- * and which account it is pinned to, is what the same signer's wallet read off
- * the vault itself, never the service's report of it.
+ * **NO COMMITTEE IS READ HERE.** The account's committee, and a vault's,
+ * holds the super admins' keys, and a reader need not be one: who may read a
+ * secret is the seats the account holds and what each one's wallet signed,
+ * never who holds the account's or the vault's maintenance. The vault itself
+ * must be pinned to this company's account, as the same signer's wallet read
+ * it off the vault, never the service's report of it.
  *
  * Every refusal is a sentence a person can act on. Pure: it reads nothing and
  * sends nothing.
@@ -37,6 +37,7 @@
 import { recordsKeySignedBy } from 'midnight-identity/profile/records-key';
 import type { AccountAddress, CompanyLabel } from 'midnight-identity/profile/company-label';
 import type { RosterVaultKeys } from '../core/vault-keys.js';
+import { walletKeyProvedBy, type LeafOf, type SeatOpening } from '../core/seat-opening.js';
 
 type Key = { readonly tag: string; readonly value: string };
 
@@ -46,14 +47,20 @@ export interface VaultAsTheWalletRead {
   readonly vault: string;
   /** The account the vault's own state says it is pinned to, 64 hex characters. */
   readonly account: string;
-  readonly committee: readonly Key[];
-  readonly threshold: number;
 }
 
-/** Who holds the company's account, as this signer's own wallet read it from the chain: its committee and every seat. */
+/**
+ * The company's directory as this device believes it: each seat's entry with
+ * the opening this device opened from it, and what this device's vault worker
+ * made of each opening with the account's own `signerLeaf`.
+ */
+export interface DirectoryAsBelieved {
+  readonly seats: readonly { readonly seat: string; readonly opening?: SeatOpening; readonly retired: unknown }[];
+  readonly leafOf: LeafOf | null;
+}
+
+/** Who holds the company's account, as this signer's own wallet read it from the chain: every seat. */
 export interface SeatsAsTheWalletRead {
-  readonly committee: readonly Key[];
-  readonly threshold: number;
   /** Every seat the account holds now, 64 lower-case hex characters each. */
   readonly seats: readonly string[];
   /** Who holds the vault being approved, as the same wallet read it; null or absent when it read none. */
@@ -69,8 +76,8 @@ export interface SecretReadersToCheck {
   readonly roster: readonly RosterVaultKeys[];
   /** Who holds the account, as this signer's wallet read it; null when it read nothing. */
   readonly seats: SeatsAsTheWalletRead | null;
-  /** This signer's own committee key, from their wallet. */
-  readonly mine: Key;
+  /** The company's directory as this device believes it: where each reader's seat's opening comes from. */
+  readonly directory: DirectoryAsBelieved | null;
   /** The vault whose secret this is, 64 hex characters: the wallet's read must be of this one. */
   readonly vault: string;
   /** The company's account, 64 hex characters: the vault must be pinned to it. */
@@ -84,14 +91,12 @@ const plural = (n: number, one: string, many: string): string => `${n} ${n === 1
 /**
  * **WHAT KIND OF THING STOPPED A SECRET RUN**, so a screen can say it in a
  * person's own language and point at what resolves it: the wallet reading the
- * account again, the company's account or vault being handed to its
- * committee, the committee being brought up to date, a signer giving their
- * keys from their own wallet, or nothing a person here can do.
+ * account again, a signer giving their keys from their own wallet, or nothing
+ * a person here can do.
  */
 /** Why a set of readers is refused, one of a fixed set a screen turns into its own words. */
 export const READER_REFUSAL = {
-  walletReadNothing: 'wallet-read-nothing', accountNotHeld: 'account-not-held', vaultNotHeld: 'vault-not-held',
-  committeeOutOfDate: 'committee-out-of-date', keysNotGiven: 'keys-not-given', notSigned: 'not-signed',
+  walletReadNothing: 'wallet-read-nothing', keysNotGiven: 'keys-not-given', notSigned: 'not-signed',
   seatNotHeld: 'seat-not-held', rosterNotTheChains: 'roster-not-the-chains', readerNotASigner: 'reader-not-a-signer',
   signerLeftOut: 'signer-left-out', vaultNotTheCompanys: 'vault-not-the-companys',
 } as const;
@@ -119,16 +124,17 @@ export function readerRefusalOf(input: SecretReadersToCheck): ReaderRefusal | nu
     return refused('wallet-read-nothing', 'your wallet has not read who holds this company\'s account on the chain, so the people this vault\'s '
       + 'secret is sealed to cannot be checked. Open the company with your wallet again, then try again.');
   }
-  const committee = seats.committee.map(idOf);
-  const onCommittee = new Set(committee);
-  if (onCommittee.size !== committee.length) {
-    return refused('committee-out-of-date', 'the committee on the chain lists one key twice, so it is not one key per signer. Nothing is approved '
-      + 'until the company\'s committee is put right.');
+  const directory = input.directory;
+  if (directory === null) {
+    return refused('wallet-read-nothing', 'the company\'s directory could not be read, so whose seat each of the people this vault\'s secret is '
+      + 'sealed to holds cannot be checked. Reload the page, then try again.');
   }
-  if (!onCommittee.has(idOf(input.mine))) {
-    return refused('account-not-held', 'the company\'s account is not held by its own committee yet - the chain does not list your key on it - '
-      + 'so nobody\'s key can be checked against it. Finish handing the company\'s account to its committee first; if it '
-      + 'has been handed over since you opened the company, open the company with your wallet again.');
+  /* The wallet key each seat's opening proves for it, by seat: the one place a reader's wallet key is read from. */
+  const provedBySeat = new Map<string, string>();
+  for (const x of directory.seats) {
+    if (x.retired !== null || x.opening === undefined) continue;
+    const proved = walletKeyProvedBy(x.opening, x.seat, directory.leafOf);
+    if (proved !== null) provedBySeat.set(fold(x.seat), idOf(proved));
   }
   const held = seats.vault ?? null;
   if (held === null || fold(held.vault) !== fold(input.vault)) {
@@ -139,18 +145,7 @@ export function readerRefusalOf(input: SecretReadersToCheck): ReaderRefusal | nu
     return refused('vault-not-the-companys', 'this vault, as your wallet read it on the chain, belongs to a different company account '
       + 'from this one, so its secret is not approved from here. Nothing is approved; contact support.');
   }
-  const vault = held.committee.map(idOf);
-  if (vault.length !== committee.length || vault.some((k) => !onCommittee.has(k))
-    || new Set(vault).size !== vault.length || held.threshold !== seats.threshold) {
-    return refused('vault-not-held', 'this vault is not held by the same committee as the company\'s account, so its secret is not approved '
-      + 'from here. Finish handing the vault to the company\'s committee first.');
-  }
   const seated = new Set(seats.seats.map(fold));
-  if (committee.length !== seated.size) {
-    return refused('committee-out-of-date', `the company's committee on the chain has ${plural(committee.length, 'key', 'keys')} and its account seats `
-      + `${plural(seated.size, 'signer', 'signers')}, so somebody who has left still holds a seat or somebody new `
-      + 'has none yet. Bring the committee up to date with the signers before approving a secret.');
-  }
 
   /* The roster's seated signers, each with the wallet's statement over their records key and seat checked here. */
   const byCommittee = new Map<string, { recordsKey: string; name: string }>();
@@ -183,9 +178,11 @@ export function readerRefusalOf(input: SecretReadersToCheck): ReaderRefusal | nu
     }
     seatsSigned.add(fold(keys.recordsKeySeat));
     const id = idOf(keys.committeeKey);
-    if (!onCommittee.has(id)) {
-      return refused('committee-out-of-date', `${entry.name}'s wallet key is not on the company's committee on the chain, so their copy of the secret `
-        + 'cannot be checked. Bring the committee up to date with the signers before approving a secret.');
+    if (provedBySeat.get(fold(keys.recordsKeySeat)) !== id) {
+      return refused('not-signed', `the wallet key that signed ${entry.name}'s records key is not the one their seat on the company's account `
+        + 'was made for, as the opening in their entry in the company\'s directory shows it, so their copy of the secret may not be theirs. '
+        + 'Nothing is approved. They open the company\'s vaults on their own device once to enter their seat again; if it still fails, '
+        + 'contact support.');
     }
     if (byCommittee.has(id)) {
       return refused('roster-not-the-chains', 'two seated signers give the same wallet key, so the list of signers is not one this device can trust. '

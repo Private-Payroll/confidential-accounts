@@ -569,6 +569,25 @@ const SCHEMES: Entry[] = [
       'against it; no TypeScript copy exists.',
   },
   {
+    circuit: 'lastRecoveryKey',
+    contractOnly:
+      'where the head the latest recovery carried out wrote sits in signerRoles, derived inside the ' +
+      'contract; only recoverAnchor writes it. key-collisions.test.ts pins it apart.',
+  },
+  {
+    circuit: 'vaultBarOf',
+    contractOnly:
+      'the approvals a vault\'s runs need at least: its own threshold, or the account\'s when it has ' +
+      'none. thresholdFor computes it inside the proof; no TypeScript copy exists.',
+  },
+  {
+    circuit: 'runApprovalsNeeded',
+    contractOnly:
+      'the approvals a run needs before a vault pays or charges it, removals since it was raised ' +
+      'included. requireApprovedForVault computes it inside the proof, and vouchingRunsIn calls this ' +
+      'circuit off pureCircuits; no TypeScript copy exists.',
+  },
+  {
     circuit: 'periodTotalTag',
     contractOnly:
       'the tag a period\'s running total is committed under; periodTotalOf and clearRun take it from ' +
@@ -979,13 +998,13 @@ describe('one definition: the contract and the client agree', () => {
       + 'that reads the circuit, declare it as one in SCHEME_MEMBERS and say so.',
     ).toEqual([
       'adoptVaultPayload', 'anchorHeadOf', 'anchorHeldOf', 'anchorKey', 'anchorRecoveredOf', 'anchorSeatKey', 'anchorTagOf', 'bandApprovals', 'batchLeafOf', 'changeReceiptTag', 'changesUsedKeyOf', 'chargedKeyOf', 'chargedMark', 'clearedMark',
-      'companyLabelKey', 'companyWide', 'companyWideDetailsOf', 'coversVault', 'holderKeyOf', 'legTakenOf', 'legTakenTag',
+      'companyLabelKey', 'companyWide', 'companyWideDetailsOf', 'coversVault', 'holderKeyOf', 'lastRecoveryKey', 'legTakenOf', 'legTakenTag',
       'paidFromMark', 'paidMovementOf', 'paidOnceOf', 'payKeyCommitmentKey', 'payKeyCommitmentOf', 'payKeyPayload',
       'payKeyWrapKeyOf', 'paymentReceiptTag', 'periodBlindingOf', 'periodKeyOf', 'periodTotalOf', 'periodTotalTag',
       'policyBarKey', 'policyCommitmentOf', 'policyKeyOf', 'policyOnKeyOf', 'policyOnMark',
       'recoverAnchorPayload', 'releasedMark', 'removalCountKey', 'removeAndSetThresholdPayload', 'reseatPayload', 'retireVaultPayload', 'retrySaltOf',
-      'rightsScopeOf', 'setPolicyBarPayload', 'setPolicyPayload', 'slotOf',
-      'sumInnerNode', 'sumLeafNode', 'sumRootOf', 'vacantSlot', 'withdrawKeyOf', 'withdrawSecretOf',
+      'rightsScopeOf', 'runApprovalsNeeded', 'setPolicyBarPayload', 'setPolicyPayload', 'slotOf',
+      'sumInnerNode', 'sumLeafNode', 'sumRootOf', 'vacantSlot', 'vaultBarOf', 'withdrawKeyOf', 'withdrawSecretOf',
     ]);
   });
 

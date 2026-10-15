@@ -6,8 +6,9 @@
  * keys their device made, the leaf the chain holds for them and the vault keys
  * they gave - sealed under the company's roster key, which every signer's
  * device works out from the viewing key, and signed by the seat that filed the
- * version. The service files a version only for a seat of the company whose
- * role may file a roster (check S), and opens none.
+ * version. The service files a version only for a seat of the company held
+ * now, judges no role, and opens none; each member's device judges whether
+ * that seat's role may file a roster as it reads it.
  *
  * Pure: the page and the service both import it.
  */

@@ -1,8 +1,10 @@
 /**
- * **THE PAGE ACCEPTS NO COMMITTEE KEY AND NO RECORDS KEY THE ROSTER IT OPENED
- * DOES NOT NAME.** The page's own vault routes, `vaultServiceFor`, over a
- * stand-in for the service's answers and a real roster: each signer's keys
- * signed with their own roster signing key.
+ * **THE PAGE ACCEPTS NO RECORDS KEY THE ROSTER IT OPENED DOES NOT NAME, AND
+ * JUDGES NO COMMITTEE BY THE ROSTER.** The committee is the super admins' keys,
+ * the company's own choice, so a key no signer holds is as good as any. The
+ * page's own vault routes, `vaultServiceFor`, over a stand-in for the
+ * service's answers and a real roster: each signer's keys signed with their
+ * own roster signing key.
  */
 import { describe, it, expect } from 'vitest';
 import { newSigningKeypair, type Hex } from '../../../src/core/crypto.js';
@@ -28,50 +30,32 @@ const serviceAnswering = (answers: Record<string, unknown>) => vaultServiceFor(a
 }, 'acc_1', async () => roster);
 
 describe('A COMMITTEE THE SERVICE REPORTS', () => {
-  it('is accepted when it is exactly the keys the roster names', async () => {
-    const keys = { committee: { committee: [k(1), k(2)], threshold: 2 }, why: null, readers: [r(0x11), r(0x12)] };
+  it('is taken as it is, a key no roster entry names among its keys', async () => {
+    /* RED WHEN: `keys()` compares the committee with the roster's keys - a company whose super admins hold a key no signer does could then build no vault. */
+    const keys = { committee: { committee: [k(1), k(9)], threshold: 2 }, why: null, readers: [r(0x11), r(0x12)] };
     expect(await serviceAnswering({ '/vault-keys': keys }).keys()).toEqual(keys);
   });
 
-  it('IS REFUSED BEFORE A VAULT IS BUILT FOR IT WHEN IT CARRIES A KEY THE ROSTER DOES NOT NAME', async () => {
-    /* RED WHEN: `keys()` hands the service's committee on without asking the roster - a vault is then built for keys the service chose. */
-    await expect(serviceAnswering({
-      '/vault-keys': { committee: { committee: [k(1), k(9)], threshold: 2 }, why: null, readers: [r(0x11), r(0x12)] },
-    }).keys()).rejects.toThrow(/roster does not name.*Nothing was built or sent/u);
-  });
-
-  it('A VAULT THE SERVICE READS AS HELD BY ITS COMMITTEE IS READ AS NOT HELD WHEN THE CHAIN\'S KEYS ARE NOT THE ROSTER\'S', async () => {
+  it('A VAULT HELD BY A COMMITTEE WITH A KEY NO ROSTER ENTRY NAMES IS READ AS IT IS SERVED, AND ITS SET-UP FINISHES', async () => {
     const held = {
       vault: VAULT, onChain: true, heldByCommittee: true, fundable: true, why: null,
-      committee: { committee: [k(1), k(2)], threshold: 2 },
+      committee: { committee: [k(1), k(9)], threshold: 2 },
       authority: { committee: [k(1), k(9)], threshold: 2, counter: '1', shape: 'committee' },
     };
-    const view = await serviceAnswering({ [`/vaults/${VAULT}/chain`]: held }).chain(VAULT);
-    /* RED WHEN: the page believes the service's word that the vault is held - a pool is then opened and money put in a vault another key can change. */
-    expect(view).toMatchObject({ heldByCommittee: false, fundable: false, committee: null });
-    expect(view.why).toMatch(/roster does not name/u);
-    const honest = await serviceAnswering({
-      [`/vaults/${VAULT}/chain`]: { ...held, authority: { ...held.authority, committee: [k(2), k(1)] } },
-    }).chain(VAULT);
-    expect(honest.heldByCommittee).toBe(true);
+    /* RED WHEN: the page reads such a vault as not held - its set-up then never finishes. */
+    expect(await serviceAnswering({ [`/vaults/${VAULT}/chain`]: held }).chain(VAULT)).toEqual(held);
   });
 });
 
 describe('THE COMMITTEE A NEW VAULT IS HANDED TO', () => {
-  it('IS TAKEN AWAY WHEN IT CARRIES A KEY THE ROSTER DOES NOT NAME, SO THE VAULT IS NOT HANDED TO IT', async () => {
+  it('IS THE ONE OFFERED, A KEY NO ROSTER ENTRY NAMES AMONG ITS KEYS', async () => {
     const owed = {
       vault: VAULT, onChain: true, heldByCommittee: false, fundable: false, why: null,
       committee: { committee: [k(1), k(9)], threshold: 2 },
       authority: { committee: [k(5)], threshold: 1, counter: '0', shape: 'one-key' },
     };
-    const view = await serviceAnswering({ [`/vaults/${VAULT}/chain`]: owed }).chain(VAULT);
-    /* RED WHEN: the committee the service offers for the handover is passed on unchecked - the vault is then handed to it. */
-    expect(view.committee).toBeNull();
-    expect(view.why).toMatch(/roster does not name/u);
-    const honest = await serviceAnswering({
-      [`/vaults/${VAULT}/chain`]: { ...owed, committee: { committee: [k(1), k(2)], threshold: 2 } },
-    }).chain(VAULT);
-    expect(honest.committee).toEqual({ committee: [k(1), k(2)], threshold: 2 });
+    /* RED WHEN: the committee offered for the handover is taken away for a key no signer holds - the vault is then never handed over. */
+    expect((await serviceAnswering({ [`/vaults/${VAULT}/chain`]: owed }).chain(VAULT)).committee).toEqual({ committee: [k(1), k(9)], threshold: 2 });
   });
 });
 
@@ -83,14 +67,17 @@ describe('A RECORDS KEY THE SERVICE REPORTS', () => {
     }).keys()).rejects.toThrow(/1 records key\(s\) the company's own roster does not name/u);
   });
 
-  it('IS REFUSED WHEN THE SERVICE LEAVES OUT A RECORDS KEY THE ROSTER NAMES, ONCE THE COMMITTEE IS COMPLETE', async () => {
+  it('IS REFUSED WHEN THE SERVICE LEAVES OUT A RECORDS KEY THE ROSTER NAMES, WHATEVER IT SAYS OF THE COMMITTEE', async () => {
     /* RED WHEN: only a stranger's key is refused and a missing one is not - a signer is then left out of the vault's
      * readers and cannot read its records. */
     await expect(serviceAnswering({
       '/vault-keys': { committee: { committee: [k(1), k(2)], threshold: 2 }, why: null, readers: [r(0x11)] },
     }).keys()).rejects.toThrow(/left 1 records key the company's own roster names out of the vault/u);
-    /* While the committee is not complete, no secret is wrapped yet, and the answer is taken as it is. */
-    const incomplete = { committee: null, why: 'a signer has not opened the company yet', readers: [] };
-    await expect(serviceAnswering({ '/vault-keys': incomplete }).keys()).resolves.toEqual(incomplete);
+    /* RED WHEN: the signers' check of the readers is turned off by the service reporting no committee - the super
+     * admins' side would then decide whom a vault's secret is wrapped to. */
+    const noCommittee = { committee: null, why: 'no committee holds this company\'s account yet', readers: [] };
+    await expect(serviceAnswering({ '/vault-keys': noCommittee }).keys()).rejects.toThrow(/left 2 records keys the company's own roster names out of the vault/u);
+    const whole = { committee: null, why: 'no committee holds this company\'s account yet', readers: [r(0x11), r(0x12)] };
+    await expect(serviceAnswering({ '/vault-keys': whole }).keys()).resolves.toEqual(whole);
   });
 });

@@ -9,10 +9,14 @@ import { parseAsk } from 'midnight-identity/profile/request';
 import type { CommitteeRequest } from 'midnight-identity/profile/request';
 import type { Channel, ChannelWindow } from 'midnight-identity/profile/channel';
 import { committeeKeyFor } from 'midnight-identity/profile/committee-key';
-import type { CommitteeSignatures, CommitteeSigningLedger } from 'midnight-identity/profile/committee-sign';
+import { joinedBy, superAdminChangeBytes } from 'midnight-identity/profile/committee-sign';
+import type {
+  ChainRead, CommitteeJoinSignature, CommitteeUpdateSignatures, CommitteeSigningLedger, ContractOnTheChain,
+} from 'midnight-identity/profile/committee-sign';
+import { committeeSigningKeyFor } from 'midnight-identity/profile/committee-key';
 import { watchedStore } from '../testing/settled-store.js';
 import { settled, watchedOpener } from '../testing/settled-channel.js';
-import { ApproveCommittee } from './approve-committee.js';
+import { ApproveCommittee, type ChainReader } from './approve-committee.js';
 import type { AccountAddress, CompanyLabel } from 'midnight-identity/profile/company-label';
 import { companyFingerprint } from 'midnight-identity/profile/fingerprint';
 import type { LabelReader } from './company-on-chain.js';
@@ -42,6 +46,15 @@ const leaving = committeeKeyFor(identityFromWords(newWords().join(' ')), CO);
 const joining = committeeKeyFor(identityFromWords(newWords().join(' ')), CO);
 const sorted = (...ks: { value: string }[]) => ks.map((k) => ({ tag: 'schnorr', value: k.value })).sort((a, b) => (a.value < b.value ? -1 : 1));
 const short = (v: string) => `${v.slice(0, 12)}…${v.slice(-8)}`;
+type Key = { tag: string; value: string };
+const FOREIGN = 'ee'.repeat(32);
+
+/* The chain as this wallet reads it at its own indexer: the account holds the committee a hand-over installs; the vault is behind. */
+const held = (committee: Key[], threshold: number, counter: bigint, pinnedTo: string | null = ACCOUNT): ContractOnTheChain =>
+  ({ of: 'read', committee, threshold, counter, pinnedTo });
+const chainOf = (over: Record<string, ContractOnTheChain> = {}): ChainReader => async () => new Map(Object.entries({
+  [ACCOUNT]: held(sorted(mine, joining), 1, 1n, null), [VAULT]: held(sorted(mine, leaving), 2, 3n), ...over,
+})) as ChainRead;
 
 const wire = (over: Record<string, unknown> = {}) => ({
   schema: 'midnight-identity/disclosure-request/v1',
@@ -66,11 +79,12 @@ const consented = { ok: true } as never;
 const ledger = async () => L as unknown as CommitteeSigningLedger;
 const renderWith = (
   request: CommitteeRequest, answers: unknown[], consent = consented, declined: string[] = [], readLabel: LabelReader = carries,
+  readChain: ChainReader = chainOf(),
 ) => render(
   <ApproveCommittee
     request={request} identity={identity} channel={channelFor(answers)} consent={consent}
     whoIsAsking={<p>asker</p>} onDecline={() => declined.push('declined')} ledger={ledger} now={() => NOW}
-    readLabel={readLabel} />);
+    readLabel={readLabel} readChain={readChain} />);
 
 afterEach(() => { cleanup(); });
 
@@ -101,13 +115,15 @@ describe('THE SCREEN FOR SIGNING A CHANGE TO WHO HOLDS A COMPANY\'S RULES', () =
     expect(answers).toEqual([]);
     fireEvent.click(button);
     expect(answers).toHaveLength(1);
-    const answer = answers[0] as CommitteeSignatures;
+    const answer = answers[0] as CommitteeUpdateSignatures;
     expect(answer.schema).toBe('midnight-identity/committee-signatures/v1');
     const exact = new L.MaintenanceUpdate(VAULT, [new L.ReplaceAuthority(new L.ContractMaintenanceAuthority(
-      request.to.committee.map((k) => ({ ...k })) as never, 1, 4n))], 3n);
+      sorted(mine, joining) as never, 1, 4n))], 3n);
     /* RED WHEN: what the press signs is anything but the change the screen showed. */
     expect(L.verifySignature(mine as never, exact.dataToSign, answer.signatures[0]!.signature as never)).toBe(true);
     expect(await screen.findByText(/You signed a change to who holds this company's rules/)).toBeTruthy();
+    /* RED WHEN: the screen says the change took effect when it reached the chain; it can reach the chain and change nothing. */
+    expect(document.querySelector('[data-signed]')!.textContent).toMatch(/only once the chain shows that contract held by the new committee/);
   });
 
   it('SHOWS EVERY CONTRACT IT WILL SIGN FOR, THE COMPANY ACCOUNT INCLUDED, AND EVERY KEY OF THE NEW COMMITTEE', async () => {
@@ -127,7 +143,7 @@ describe('THE SCREEN FOR SIGNING A CHANGE TO WHO HOLDS A COMPANY\'S RULES', () =
     const listed = container.querySelector('[data-new-committee]')!.textContent!;
     for (const k of [mine, joining]) expect(listed).toContain(short(k.value));
     fireEvent.click(screen.getByText('Sign this change'));
-    expect((answers[0] as CommitteeSignatures).signatures.map((x) => x.address)).toEqual([ACCOUNT, VAULT]);
+    expect((answers[0] as CommitteeUpdateSignatures).signatures.map((x) => x.address)).toEqual([ACCOUNT, VAULT]);
   });
 
   it('SHOWS THE FINGERPRINT OF THE LABEL AND THE ACCOUNT TOGETHER, ONCE THE ACCOUNT HAS BEEN READ', async () => {
@@ -164,22 +180,52 @@ describe('THE SCREEN FOR SIGNING A CHANGE TO WHO HOLDS A COMPANY\'S RULES', () =
   });
 
   it('SAYS SO WHEN THIS PERSON\'S OWN KEY LEAVES', async () => {
-    const { container } = renderWith(ask({ to: { committee: sorted(joining), threshold: 1 } }), []);
+    const { container } = renderWith(ask({ to: { committee: sorted(joining), threshold: 1 } }), [], consented, [], carries,
+      chainOf({ [ACCOUNT]: held(sorted(joining), 1, 1n, null) }));
     await screen.findByText('Sign this change');
     await settled(5);
     expect(container.querySelector('[data-you-leave]')).not.toBeNull();
   });
 
-  it('REFUSES A CONTRACT THIS PERSON HOLDS NO SEAT ON, AND THE BUTTON STAYS SHUT', async () => {
+  it('REFUSES A CONTRACT WHOSE COMMITTEE ON THE CHAIN DOES NOT HOLD THIS PERSON\'S KEY, WHATEVER THE PAGE SAYS, AND THE BUTTON STAYS SHUT', async () => {
     const answers: unknown[] = [];
-    const contracts = [{ contract: 'vault', address: VAULT, counter: '3', now: { committee: sorted(leaving), threshold: 1 } }];
-    const { container } = renderWith(ask({ contracts }), answers);
+    /* The page says this person holds the vault; the chain says only the leaving key does. */
+    const { container } = renderWith(ask(), answers, consented, [], carries, chainOf({ [VAULT]: held(sorted(leaving), 1, 3n) }));
     await screen.findByText('This wallet will not sign this');
-    expect(container.querySelector('[data-committee-refused]')!.textContent).toMatch(/not on the committee that holds vault/);
+    /* RED WHEN: the page's word on who holds a contract now is believed over the chain. */
+    expect(container.querySelector('[data-committee-refused]')!.textContent).toMatch(/not on the committee that holds vault .* on the chain/);
     expect((screen.getByText('Sign this change') as HTMLButtonElement).disabled).toBe(true);
     fireEvent.click(screen.getByText('Sign this change'));
     expect(answers).toEqual([]);
   });
+
+  it('SHOWS WHO HOLDS EACH CONTRACT AS THE CHAIN SAYS, NEVER AS THE PAGE SAYS', async () => {
+    /* The page says only this person's key holds the vault, at one; the chain says the leaving key does too, at two. */
+    const contracts = [{ contract: 'vault', address: VAULT, counter: '3', now: { committee: sorted(mine), threshold: 1 } }];
+    const { container } = renderWith(ask({ contracts }), []);
+    await screen.findByText('Sign this change');
+    await settled(5);
+    /* RED WHEN: the page's false `now` is shown: the leaving key would be hidden and the threshold misstated. */
+    expect(container.querySelector('[data-leaves]')!.textContent).toContain(short(leaving.value));
+    expect(container.querySelector('[data-threshold-change]')!.textContent).toBe('Threshold: 2 before, 1 after.');
+  });
+
+  for (const [name, chain, says] of [
+    ['A HAND-OVER INSTALLING A COMMITTEE OTHER THAN THE ACCOUNT\'S ON THE CHAIN', chainOf({ [ACCOUNT]: held(sorted(mine), 1, 1n, null) }), /not the committee holding the company's account on the chain/],
+    ['A VAULT PINNED TO ANOTHER ACCOUNT', chainOf({ [VAULT]: held(sorted(mine, leaving), 2, 3n, FOREIGN) }), /pinned to another account/],
+    ['A CONTRACT THE CHAIN COULD NOT BE READ FOR', chainOf({ [VAULT]: { of: 'unreadable', why: 'offline.' } }), /could not read who holds vault/],
+  ] as [string, ChainReader, RegExp][]) {
+    it(`REFUSES ${name}, AND THE BUTTON STAYS SHUT`, async () => {
+      const answers: unknown[] = [];
+      const { container } = renderWith(ask(), answers, consented, [], carries, chain);
+      await screen.findByText('This wallet will not sign this');
+      /* RED WHEN: the screen signs what the chain, read at this wallet's own indexer, says it must not. */
+      expect(container.querySelector('[data-committee-refused]')!.textContent).toMatch(says);
+      expect((screen.getByText('Sign this change') as HTMLButtonElement).disabled).toBe(true);
+      fireEvent.click(screen.getByText('Sign this change'));
+      expect(answers).toEqual([]);
+    });
+  }
 
   it('a press the framing refuses does nothing, and declining is its own button', async () => {
     const answers: unknown[] = []; const declined: string[] = [];
@@ -190,6 +236,79 @@ describe('THE SCREEN FOR SIGNING A CHANGE TO WHO HOLDS A COMPANY\'S RULES', () =
     fireEvent.click(screen.getByText('Do not sign'));
     expect(declined).toEqual(['declined']);
     expect(answers).toEqual([]);
+  });
+});
+
+describe('A CHANGE OF THE SUPER ADMINS, AND A JOINING KEY\'S OWN SIGNATURE, ON THE SAME SCREEN', () => {
+  const SALT = '5a'.repeat(32);
+  /* The joining key's holder: its key is the one this change adds. */
+  const joiner = identityFromWords(newWords().join(' '));
+  const joinerKey = committeeKeyFor(joiner, CO);
+  const CHANGE = {
+    kind: 'super-admins', from: { committee: sorted(mine, leaving), threshold: 2 }, committee: sorted(mine, joinerKey), threshold: 2,
+    contracts: [{ contract: 'account', address: ACCOUNT, counter: '1' }, { contract: 'vault', address: VAULT, counter: '3' }],
+  };
+  const bytes = superAdminChangeBytes(CO, ACCOUNT, SALT, CHANGE as never);
+  const hexOf = (b: Uint8Array) => PolyfillBuffer.from(b).toString('hex');
+  const joinedSig = (L.signData(committeeSigningKeyFor(joiner, CO) as never, bytes) as unknown as Key).value;
+  const before = chainOf({ [ACCOUNT]: held(sorted(mine, leaving), 2, 1n, null) });
+  const superAdmins = (over: Record<string, unknown> = {}) => ask({
+    to: undefined, change: CHANGE, salt: SALT, changeBytes: hexOf(bytes),
+    joined: [{ key: { tag: 'schnorr', value: joinerKey.value }, signature: joinedSig }], contracts: CHANGE.contracts, ...over,
+  });
+
+  it('SHOWS THE JOINS AND LEAVES FROM THE CHAIN AND SIGNS EVERY CONTRACT ONCE EACH JOINING KEY HAS SIGNED THE CHANGE', async () => {
+    const answers: unknown[] = [];
+    const { container } = renderWith(superAdmins(), answers, consented, [], carries, before);
+    const button = await screen.findByText('Sign this change');
+    await settled(5);
+    expect(container.querySelector('[data-joins-signed]')).not.toBeNull();
+    expect(container.querySelector('[data-joins]')!.textContent).toContain(short(joinerKey.value));
+    expect(container.querySelector('[data-leaves]')!.textContent).toContain(short(leaving.value));
+    fireEvent.click(button);
+    expect((answers[0] as CommitteeUpdateSignatures).signatures.map((x) => [x.address, x.counter])).toEqual([[ACCOUNT, '1'], [VAULT, '3']]);
+  });
+
+  it('REFUSES WHILE A JOINING KEY HAS NOT SIGNED THE CHANGE, AND BYTES THAT ARE NOT THE CHANGE', async () => {
+    for (const [over, says] of [
+      [{ joined: [] }, /has not signed the change with its own key/],
+      [{ changeBytes: hexOf(superAdminChangeBytes(CO, ACCOUNT, SALT, { ...CHANGE, threshold: 1 } as never)) }, /not the change it asks/],
+    ] as [Record<string, unknown>, RegExp][]) {
+      const answers: unknown[] = [];
+      const { container } = renderWith(superAdmins(over), answers, consented, [], carries, before);
+      await screen.findByText('This wallet will not sign this');
+      /* RED WHEN: the screen lets a press sign an update putting an unsigned key on the company, or bytes it did not rebuild. */
+      expect(container.querySelector('[data-committee-refused]')!.textContent).toMatch(says);
+      fireEvent.click(screen.getByText('Sign this change'));
+      expect(answers).toEqual([]);
+      cleanup();
+    }
+  });
+
+  it('A JOINING KEY SIGNS THE CHANGE ITSELF, AND A KEY THE CHANGE DOES NOT INSTALL IS REFUSED', async () => {
+    const joinAsk = ask({ to: undefined, contracts: undefined, change: CHANGE, salt: SALT, changeBytes: hexOf(bytes), joining: true });
+    const answers: unknown[] = [];
+    const { container } = render(
+      <ApproveCommittee
+        request={joinAsk} identity={joiner} channel={channelFor(answers)} consent={consented}
+        whoIsAsking={<p>asker</p>} onDecline={() => {}} ledger={ledger} now={() => NOW} readLabel={carries} readChain={before} />);
+    const button = await screen.findByText('Sign this change');
+    await settled(5);
+    expect(container.querySelector('[data-joining]')).not.toBeNull();
+    fireEvent.click(button);
+    const answer = answers[0] as CommitteeJoinSignature;
+    expect(answer.schema).toBe('midnight-identity/committee-join/v1');
+    /* RED WHEN: the joining signature is over anything but the change's bytes, by anything but this key. */
+    expect(joinedBy(L as never, bytes, joinerKey, answer.signature)).toBe(true);
+    cleanup();
+    /* A key the change never names is not one it installs. */
+    const stranger = identityFromWords(newWords().join(' '));
+    const leaver = render(
+      <ApproveCommittee
+        request={joinAsk} identity={stranger} channel={channelFor([])} consent={consented}
+        whoIsAsking={<p>asker</p>} onDecline={() => {}} ledger={ledger} now={() => NOW} readLabel={carries} readChain={before} />);
+    await screen.findByText('This wallet will not sign this');
+    expect(leaver.container.querySelector('[data-committee-refused]')!.textContent).toMatch(/not one this change installs/);
   });
 });
 

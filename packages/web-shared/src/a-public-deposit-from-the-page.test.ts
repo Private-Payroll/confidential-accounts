@@ -35,6 +35,11 @@ const PUBLIC_TOKEN = 'cd'.repeat(32);
 const BOTH_TOKEN = '6e'.repeat(32);
 const BOTH_PRIVATE = BOTH_TOKEN;
 const BOTH_PUBLIC = BOTH_TOKEN;
+/* The keys that hold the company's account: three signers, any two of whom act. Distinct, in the one order the product keeps them. */
+const COMMITTEE_KEYS = [
+  { tag: 'schnorr', value: '21'.repeat(32) }, { tag: 'schnorr', value: '22'.repeat(32) }, { tag: 'schnorr', value: '23'.repeat(32) },
+];
+const COMMITTEE_THRESHOLD = 2;
 const PARAMS = btoa('midnight:ledger-parameters[v8]:stand-in');
 
 /** A row for a token, named `symbol`, in the forms given: each form is the token itself or absent. */
@@ -51,7 +56,11 @@ const paid = (amount: string, token = PUBLIC_TOKEN) => async (ask: DepositAsk): 
   ({ transaction: `${ask.transaction}+public-coins`, leaves: [{ token, amount, kind: 'unshielded' }] });
 
 /** A stood-in service and worker, the page's doors, and every call to them written down. */
-const setUp = (over: { view?: Partial<VaultChainView>; send?: VaultService['depositPublicly']; noBuilder?: boolean } = {}) => {
+const setUp = (over: {
+  view?: Partial<VaultChainView>; send?: VaultService['depositPublicly']; noBuilder?: boolean;
+  /* The keys and threshold the vault's own state names, in place of the account's committee. */
+  authority?: { committee: { tag: string; value: string }[]; threshold: number } | null;
+} = {}) => {
   const log: string[] = [];
   const view = (): VaultChainView => ({
     vault: VAULT, onChain: true, committee: null, heldByCommittee: true, fundable: true, state: 'AAAA', notes: [], everCreated: [],
@@ -69,16 +78,19 @@ const setUp = (over: { view?: Partial<VaultChainView>; send?: VaultService['depo
   };
   const builder = {
     /*
-     * The vault as this device's worker reads it at the wallet's indexer: held by the keys that hold the account as the
-     * wallet reads it when the view says the committee holds it, by another key when it says not, started when money may
-     * go in. The read of a real state is `vault-on-chain-here.test.ts`'s.
+     * The vault as this device's worker reads it at the wallet's indexer: held by the very keys, at the very threshold,
+     * that hold the account as the wallet reads it when the view says the committee holds it, by another committee when
+     * it says not, started when money may go in. The product compares the two; this stand-in only supplies them. The read
+     * of a real state is `vault-on-chain-here.test.ts`'s.
      */
     vaultOnChain: async (i: { vault: string; indexer: unknown }) => {
       log.push('read here');
       const v = view();
       return {
         onChain: v.onChain, state: v.state ?? '', notes: v.notes, notesFromThisBuild: true, everCreated: v.everCreated ?? [],
-        authority: v.heldByCommittee === true ? { committee: [], threshold: 1 } : { committee: [{ tag: 'schnorr', value: '99'.repeat(32) }], threshold: 1 },
+        authority: over.authority !== undefined ? over.authority
+          : v.heldByCommittee === true ? { committee: COMMITTEE_KEYS.map((k) => ({ ...k })), threshold: COMMITTEE_THRESHOLD }
+            : { committee: [{ tag: 'schnorr', value: '99'.repeat(32) }], threshold: 1 },
         account: ACCOUNT, started: v.fundable === true,
       };
     },
@@ -111,7 +123,7 @@ const setUp = (over: { view?: Partial<VaultChainView>; send?: VaultService['depo
     indexer: async () => ({ indexerUri: 'https://indexer.example/api/v3/graphql', indexerWsUri: 'wss://indexer.example/api/v3/graphql/ws' }),
     /* The wallet's read: the account has adopted the vault. */
     onChain: async (v: string) => ({
-      holders: { committee: [], threshold: 1, seats: [], approvals: 1, adoptedVaults: [v], founding: '4a'.repeat(32), foundingCommittee: [{ tag: 'schnorr', value: '11'.repeat(32) }] },
+      holders: { committee: COMMITTEE_KEYS.map((k) => ({ ...k })), threshold: COMMITTEE_THRESHOLD, seats: [], approvals: 1, adoptedVaults: [v], founding: '4a'.repeat(32), foundingCommittee: [{ tag: 'schnorr', value: '11'.repeat(32) }] },
     }),
     inFlight: sealedOnThisDevice<DepositInFlight>(inFlightInMemory(inFlight), { signerId: 'ada', wrappingSecret: wrapping.secret }, 'deposit') as DepositsInFlight,
   };
@@ -171,7 +183,6 @@ describe('A PUBLIC DEPOSIT FROM THE PAGE', () => {
 
   it('A VAULT THAT TAKES NO MONEY, OR A PAGE THAT CANNOT BUILD OR SEND A PUBLIC DEPOSIT, BUILDS NOTHING AND ASKS THE WALLET FOR NOTHING', async () => {
     for (const [why, over, says] of [
-      ['not held by the committee', { view: { heldByCommittee: false } }, /^this vault is not held by the keys that hold your company's account/],
       ['not started', { view: { fundable: false } }, /^this vault has not been started/],
       ['no public build in the worker', { noBuilder: true }, /cannot build a public deposit/],
     ] as const) {
@@ -186,6 +197,32 @@ describe('A PUBLIC DEPOSIT FROM THE PAGE', () => {
     await expect(depositFromSource(withoutTheRoute, VAULT, publicTokenFromTheWallet(paid('40'), REGISTRY), { code: PUBLIC_TOKEN, value: 40n }))
       .rejects.toThrow(/cannot send a public deposit/);
     expect(log).toEqual([]);
+  });
+
+  it('A PUBLIC DEPOSIT GOES INTO A VAULT PINNED TO THE ACCOUNT WHATEVER COMMITTEE HOLDS IT: ANOTHER KEY, ORDER OR THRESHOLD THAN THE ACCOUNT\'S, OR NONE', async () => {
+    const [a, b, c] = COMMITTEE_KEYS as [typeof COMMITTEE_KEYS[0], typeof COMMITTEE_KEYS[0], typeof COMMITTEE_KEYS[0]];
+    const other = { tag: 'schnorr', value: '24'.repeat(32) };
+    const mine = (threshold = COMMITTEE_THRESHOLD, committee = [a, b, c]) => ({ committee: committee.map((k) => ({ ...k })), threshold });
+    for (const [why, authority] of [
+      ['one key swapped for another', mine(COMMITTEE_THRESHOLD, [a, b, other])],
+      /* A signature on a committee names its key by position, so the same keys in another order are another committee. */
+      ['the same keys in another order', mine(COMMITTEE_THRESHOLD, [b, a, c])],
+      ['one key short', mine(COMMITTEE_THRESHOLD, [a, b])],
+      ['one key more', mine(COMMITTEE_THRESHOLD, [a, b, c, other])],
+      ['a higher threshold over the same keys', mine(COMMITTEE_THRESHOLD + 1)],
+      ['a lower threshold over the same keys', mine(COMMITTEE_THRESHOLD - 1)],
+      ['the same keys under another tag', mine(COMMITTEE_THRESHOLD, [a, b, { ...c, tag: 'other' }])],
+      ['no keys at all', mine(COMMITTEE_THRESHOLD, [])],
+      ['no authority in the state', null],
+    ] as const) {
+      const { log, doors } = setUp({ authority });
+      /* RED WHEN: a public deposit reads who holds the vault - a committee change the service leaves half done would then stop every deposit. */
+      await depositFromSource(doors, VAULT, publicTokenFromTheWallet(paid('40'), REGISTRY), { code: PUBLIC_TOKEN, value: 40n });
+      expect(log.some((l) => l.startsWith('sent PROVEN')), why).toBe(true);
+    }
+    const { log, doors } = setUp({ authority: mine() });
+    await depositFromSource(doors, VAULT, publicTokenFromTheWallet(paid('40'), REGISTRY), { code: PUBLIC_TOKEN, value: 40n });
+    expect(log.some((l) => l.startsWith('sent PROVEN'))).toBe(true);
   });
 
   it('A WALLET ANSWER THAT NAMES ANYTHING BUT THIS TOKEN AND THIS AMOUNT, PUBLICLY, IS NOT SENT', async () => {

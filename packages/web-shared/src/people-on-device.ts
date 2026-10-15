@@ -246,7 +246,7 @@ export async function admitHere(d: PeopleDevice, here: PersonHere, readOut: stri
 async function raisingWalletOf(d: PeopleDevice, person: string): Promise<string | null> {
   const here = await d.directory();
   const seat = here.dir.seats.find((x) => x.person === person && seatNotBelievedHere(here, x) === null);
-  return seat === undefined ? null : seat.committeeKey.value.toLowerCase();
+  return seat?.committeeKey?.value.toLowerCase() ?? null;
 }
 
 /** What a signer making themselves payable enters about their pay. */

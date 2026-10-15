@@ -112,7 +112,10 @@ let now = 1_000_000;
 const me = { signerId: 'ada', wrappingSecret: '11'.repeat(32) as never };
 let store = inFlightInMemory();
 let kept = sealedOnThisDevice<ChargeInFlight>(store, me, 'charge');
+/** The filing key of the seat this device files under, which it sends with the charge. */
+const FILER = 'f1'.repeat(32);
 const doors = (withCharge = true, withKept = true) => ({
+  filer: FILER as never,
   records: {} as never, accountId: 'acc', viewingKey: '00'.repeat(32) as never, account: 'cc'.repeat(32) as never, indexer: async () => null,
   builder: {
     clearRun: async (i: unknown) => { asked.push(i); if (answer instanceof Error) throw answer; return answer; },
@@ -124,7 +127,7 @@ const doors = (withCharge = true, withKept = true) => ({
     },
   } as never,
   ...(withCharge ? {
-    charge: async (id: string, body: { tx: string }) => {
+    charge: async (id: string, body: { tx: string; filer: string }) => {
       if (relayFails !== null) throw relayFails;
       sent.push([id, body]); relayed = '0f'.repeat(32);
     },
@@ -188,8 +191,8 @@ describe('CHARGING AN APPROVED RUN BEFORE IT IS PAID', () => {
       /* RED WHEN: the charge is built on any state but the one block the device read at the wallet's indexer. */
       chain: { accountState: 'STATE', parameters: 'PARAMS' },
     }]);
-    /* RED WHEN: the proven charge is not relayed, or relayed as another proposal. */
-    expect(sent).toEqual([['prp_theRunAAAAAA', { tx: 'TX' }]]);
+    /* RED WHEN: the proven charge is not relayed, or relayed as another proposal, or without the seat's own filing key. */
+    expect(sent).toEqual([['prp_theRunAAAAAA', { tx: 'TX', filer: FILER }]]);
     expect(r).toEqual({ state: 'charged', spentBefore: 700n });
     /* RED WHEN: the run is answered charged without the chain the wallet reads being asked about its own proposal. */
     /* Asked once before the charge is built, whether the chain already holds it charged, and once after it is relayed. */

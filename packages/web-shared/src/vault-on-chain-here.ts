@@ -1,8 +1,9 @@
 /**
  * **A VAULT AS THE CHAIN HOLDS IT, READ ON THIS DEVICE FROM THE INDEXER THE
  * PERSON'S OWN WALLET NAMES** - its state, the notes it holds, every coin ever
- * made for it, who holds it, whether it is started, what it holds in public
- * money, and the state its deploy left; and what a step into or out of it is
+ * made for it, whether it is started, what it holds in public money, and
+ * the state its deploy left - never who holds it, since money going in or out
+ * waits on no committee; and what a step into or out of it is
  * built on and judged by: one block's view of the vault, the commitment tree,
  * the ledger's parameters and the company's account, each transaction's
  * events, and which of its transactions created an output. Nothing of it
@@ -20,7 +21,7 @@ import {
 } from '../../../src/midnight/note-index.js';
 import { vaultOutputHistoryFrom } from '../../../src/midnight/deposit-nonce.js';
 import { assertVaultLedgerIsThisBuilds } from '../../../src/midnight/vault-ledger-shape.js';
-import { authorityOfState, startingLedgerFrom } from '../../../src/midnight/vault-circuits.js';
+import { startingLedgerFrom } from '../../../src/midnight/vault-circuits.js';
 import type { Hex } from '../../../src/core/crypto.js';
 import { publicHoldingsOf } from '../../../src/midnight/public-balance.js';
 import type { AccountCallChainOnTheWire, PayoutChainOnTheWire, VaultOnChainOnTheWire } from './vault-worker-client.js';
@@ -160,7 +161,6 @@ export async function readVaultOnChain(
   } catch { /* a state that is not a vault's is not started, and pinned to nothing */ }
   const everCreated = [...await vaultOutputHistoryFrom({ transactions: source.transactions, events: source.events })
     .everCreated(vault as Hex)];
-  const authority = authorityOfState(state);
   /* The one reader of a contract's public balance, over the state the indexer served now. */
   let publicBalances: Array<{ token: string; amount: string }> | undefined;
   let publicBalancesWhy: string | undefined;
@@ -177,7 +177,6 @@ export async function readVaultOnChain(
     notesFromThisBuild,
     ...(notesWhy === undefined ? {} : { notesWhy }),
     everCreated,
-    authority: authority === null ? null : { committee: authority.committee, threshold: authority.threshold },
     account,
     started,
     ...(publicBalances === undefined ? { publicBalancesWhy: publicBalancesWhy! } : { publicBalances }),

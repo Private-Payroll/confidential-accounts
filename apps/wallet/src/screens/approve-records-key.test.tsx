@@ -8,13 +8,15 @@ import { parseAsk } from 'midnight-identity/profile/request';
 import type { RecordsKeyRequest } from 'midnight-identity/profile/request';
 import type { Channel } from 'midnight-identity/profile/channel';
 import { committeeKeyFor } from 'midnight-identity/profile/committee-key';
-import { INVITATION_REFUSAL, recordsKeySignedBy, signDirectoryEntry, type RecordsKeyAnswer } from 'midnight-identity/profile/records-key';
+import {
+  INVITATION_REFUSAL, recordsKeySignedBy, seatBlinding, signDirectoryEntry, type RecordsKeyAnswer, type SeatOpening,
+} from 'midnight-identity/profile/records-key';
 import { companyFingerprint } from 'midnight-identity/profile/fingerprint';
 import { pinnedAccountOf } from 'midnight-identity/profile/model';
 import { load } from 'midnight-identity/profile/store';
 import type { AccountAddress, CompanyLabel } from 'midnight-identity/profile/company-label';
 import type { LabelReader } from './company-on-chain.js';
-import { ApproveRecordsKey, type VaultReader } from './approve-records-key.js';
+import { ApproveRecordsKey, liveLeafReader, type VaultReader } from './approve-records-key.js';
 import { Approve } from './approve.js';
 import { secretFromWords } from 'midnight-identity/keys/derivation';
 import type { ChannelWindow } from 'midnight-identity/profile/channel';
@@ -47,6 +49,15 @@ const ask = (over: Record<string, unknown> = {}) => parseAsk({
   requester: { name: 'Payroll A', rdns: 'example.payroll-a' }, purpose: 'To check your records key.',
   nonce: 'r1', expiresAt: NOW + 600_000, company: CO, account: ACCOUNT, seat: SEAT, ...over,
 }, ORIGIN, NOW) as RecordsKeyRequest;
+/* A seat made for `key` as a seating device makes one; its leaf is the account's own `signerLeaf`, run as this wallet runs it. */
+const seatMadeFor = async (key: { tag: 'schnorr'; value: string }, salt: string): Promise<{ seat: string; opening: SeatOpening }> => {
+  const opening: SeatOpening = { publicKey: '2c'.repeat(32), scope: '3d'.repeat(32), blinding: seatBlinding(key, salt), walletKey: key, salt };
+  return { seat: await liveLeafReader(opening), opening };
+};
+/* The signer who invited this person: their wallet key, and their seat on the account. */
+const inviter = identityFromSecret(new Uint8Array(32).fill(9));
+const inviterKey = committeeKeyFor(inviter, CO) as { tag: 'schnorr'; value: string };
+const { seat: INVITER_SEAT, opening: inviterOpening } = await seatMadeFor(inviterKey, '7c'.repeat(32));
 const channelFor = (answers: unknown[]): Channel => ({
   answer: (a) => { answers.push(a); }, refuse: (r) => { answers.push({ refused: r }); }, stop: () => {},
 } as Channel);
@@ -170,11 +181,12 @@ describe('THE SCREEN FOR SIGNING A RECORDS KEY FOR A SEAT', () => {
 
   describe('A JOINING SIGNER\'S WALLET KEEPS THE ACCOUNT ITS SIGNED INVITATION NAMES, AND NO OTHER', () => {
     /* The signer who invited this person, as the signed invitation carries them, and as the chain holds them. */
-    const inviter = identityFromSecret(new Uint8Array(32).fill(9));
-    const INVITER_SEAT = '7c'.repeat(32);
-    const inviterKey = committeeKeyFor(inviter, CO) as { tag: 'schnorr'; value: string };
-    const invitedBy = { committeeKey: inviterKey, statement: signDirectoryEntry(inviter, CO, ACCOUNT, new Uint8Array(32).fill(6), '2b'.repeat(32), INVITER_SEAT) };
-    const joined = chain({ committee: [mine, inviterKey], seats: ['6b'.repeat(32), SEAT, INVITER_SEAT] });
+    const invitedBy = {
+      committeeKey: inviterKey, opening: inviterOpening,
+      statement: signDirectoryEntry(inviter, CO, ACCOUNT, new Uint8Array(32).fill(6), '2b'.repeat(32), INVITER_SEAT),
+    };
+    /* The inviter is no super admin: the committee holds only this person's key. */
+    const joined = chain({ committee: [mine], seats: ['6b'.repeat(32), SEAT, INVITER_SEAT] });
     const drawUnpinned = async (answers: unknown[], request: RecordsKeyRequest, onPin: (a: AccountAddress, at: number) => Promise<void>) => {
       const r = render(
         <ApproveRecordsKey request={request} identity={identity} channel={channelFor(answers)} consent={consented}
@@ -199,6 +211,45 @@ describe('THE SCREEN FOR SIGNING A RECORDS KEY FOR A SEAT', () => {
       expect(pinned).toEqual([]);
     });
 
+    it('an invitation whose seat was not made for the key that signed it is refused, though that key is on the committee', async () => {
+      const mal = identityFromSecret(new Uint8Array(32).fill(12));
+      const malKey = committeeKeyFor(mal, CO) as { tag: 'schnorr'; value: string };
+      const byMal = { committeeKey: malKey, opening: inviterOpening, statement: signDirectoryEntry(mal, CO, ACCOUNT, new Uint8Array(32).fill(13), '2b'.repeat(32), INVITER_SEAT) };
+      const answers: unknown[] = []; const pinned: string[] = [];
+      const r = render(
+        <ApproveRecordsKey request={ask({ invitedBy: byMal })} identity={identity} channel={channelFor(answers)} consent={consented}
+          whoIsAsking={<p>asker</p>} onDecline={() => {}} now={() => NOW} pinned={null} onPin={async (a) => { pinned.push(a); }}
+          readLabel={chain({ committee: [mine, malKey], seats: ['6b'.repeat(32), SEAT, INVITER_SEAT] })} />);
+      await vi.waitFor(() => expect(r.container.querySelector('[data-invitation-does-not-name-it]')).not.toBeNull());
+      /* RED WHEN: a key on the committee but not in the inviter's seat's leaf is accepted, and the account offered to keep. */
+      expect(r.container.querySelector('[data-invitation-does-not-name-it]')?.textContent).toBe(INVITATION_REFUSAL['not-the-inviters-seat']);
+      expect(confirmButton(r.container)).toBeNull();
+      expect(pinned).toEqual([]);
+    });
+
+    it('while the inviter\'s seat is being worked out, nothing can be kept; a seat that cannot be worked out is refused', async () => {
+      let answer: (leaf: string) => void = () => {};
+      const r = render(
+        <ApproveRecordsKey request={ask({ invitedBy })} identity={identity} channel={channelFor([])} consent={consented}
+          whoIsAsking={<p>asker</p>} onDecline={() => {}} now={() => NOW} readLabel={joined} pinned={null} onPin={async () => {}}
+          readLeaf={() => new Promise<string>((resolve) => { answer = resolve; })} />);
+      await settle();
+      /* RED WHEN: the account can be kept before the inviter's opening is checked against its seat. */
+      expect(r.container.querySelector('[data-inviter-checking]')).not.toBeNull();
+      expect(confirmButton(r.container)).toBeNull();
+      await act(async () => { answer(INVITER_SEAT); });
+      await settle();
+      expect(confirmButton(r.container)).not.toBeNull();
+      cleanup();
+      const failed = render(
+        <ApproveRecordsKey request={ask({ invitedBy })} identity={identity} channel={channelFor([])} consent={consented}
+          whoIsAsking={<p>asker</p>} onDecline={() => {}} now={() => NOW} readLabel={joined} pinned={null} onPin={async () => {}}
+          readLeaf={async () => { throw new Error('the contract did not load'); }} />);
+      await settle();
+      /* RED WHEN: an opening whose leaf could not be worked out is believed. */
+      expect(failed.container.querySelector('[data-invitation-does-not-name-it]')?.textContent).toBe(INVITATION_REFUSAL['not-the-inviters-seat']);
+    });
+
     it('an invitation that names another account, or is not signed by its inviter, says what is wrong and what to do, and offers nothing to keep', async () => {
       const answers: unknown[] = []; const pinned: string[] = [];
       const other = { ...invitedBy, statement: signDirectoryEntry(inviter, CO, 'a8'.repeat(32) as AccountAddress, new Uint8Array(32).fill(6), '2b'.repeat(32), INVITER_SEAT) };
@@ -216,9 +267,10 @@ describe('THE SCREEN FOR SIGNING A RECORDS KEY FOR A SEAT', () => {
       const SECOND = 'ad'.repeat(32) as AccountAddress;
       const service = identityFromSecret(new Uint8Array(32).fill(11));
       const serviceKey = committeeKeyFor(service, CO) as { tag: 'schnorr'; value: string };
-      const forged = { committeeKey: serviceKey, statement: signDirectoryEntry(service, CO, SECOND, new Uint8Array(32).fill(6), '2b'.repeat(32), INVITER_SEAT) };
+      const { seat: SERVICE_SEAT, opening: serviceOpening } = await seatMadeFor(serviceKey, '7d'.repeat(32));
+      const forged = { committeeKey: serviceKey, opening: serviceOpening, statement: signDirectoryEntry(service, CO, SECOND, new Uint8Array(32).fill(6), '2b'.repeat(32), SERVICE_SEAT) };
       const secondChain: LabelReader = async (account) => (account === SECOND
-        ? { of: 'carries', label: CO, seats: { committee: [mine, serviceKey], threshold: 1, seats: [SEAT, INVITER_SEAT] } }
+        ? { of: 'carries', label: CO, seats: { committee: [mine, serviceKey], threshold: 1, seats: [SEAT, SERVICE_SEAT] } }
         : { of: 'no-account' });
       const answers: unknown[] = []; const pinned: string[] = []; const declined: string[] = [];
       const { container } = render(

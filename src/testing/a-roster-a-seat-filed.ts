@@ -19,7 +19,7 @@ import { sealRoster } from '../core/roster-record.js';
 import type { SealedAccount } from '../core/types.js';
 import { signCompanyFiling, type SealedCompanyRecord } from '../midnight/sealed-record-wire.js';
 import type { DirectoryFiling } from '../midnight/seat-directory.js';
-import { directorySeats } from './directory-seats.js';
+import { directorySeats, leavesOfTheContract } from './directory-seats.js';
 import { aCompanysRecords } from './record-tree-double.js';
 
 interface RosterStore {
@@ -39,7 +39,8 @@ export function aRosterASeatFiled(
   seats: ReadonlyArray<{ readonly signerId: string; readonly person: string; readonly signingSecret: string; readonly n: number }>,
 ) {
   const dir = directorySeats();
-  const held = seats.map((s) => dir.claim(store, accountId, s.person, s.signingSecret, s.n));
+  /* Each entry's proof sealed under the company's own viewing key, which every member's device here opens it with. */
+  const held = seats.map((s) => dir.claim(store, accountId, s.person, s.signingSecret, s.n, viewingKey));
   const rec0 = store.getAccount(accountId)!;
   const opened = openAccount(rec0, viewingKey, null);
   const signers = opened.signers.map((x) => {
@@ -69,6 +70,8 @@ export function aRosterASeatFiled(
   const foundingCommittee = committeeKeyFor(identityFromSecret(new Uint8Array(32).fill(seats[0]!.n)), rec0.companyLabel as never) as { tag: string; value: string };
   const records = aCompanysRecords(accountId, {
     seat: held[0]!, signingSecret: seats[0]!.signingSecret as Hex, records: [roster], committee: [foundingCommittee],
+    /* The first seat's own entry, the directory version anchored with that batch: the one that lets a device judge who anchored it. */
+    directory: store.directoryFilingsOf(accountId).slice(0, 1),
   });
   return {
     records,
@@ -80,6 +83,8 @@ export function aRosterASeatFiled(
     reads: {
       anchored: records.anchored,
       filings: async () => store.directoryFilingsOf(accountId),
+      /* What a device's vault worker makes of each entry's opening, with the account's own compiled `signerLeaf`. */
+      leaves: leavesOfTheContract,
       holders: async () => {
         const c = (await dir.directoryChain(accountId, held))!;
         return {

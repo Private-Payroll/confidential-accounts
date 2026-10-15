@@ -65,9 +65,9 @@ const aRaisedRun = async (o: { sent?: boolean } = {}) => {
   const state = signedFoundingState(account, { keyEpoch: 0, sealed: (await ledger.fetch(account, 0))!.sealedState }, founder.secret);
   const records: CompanyRecordsHere = {
     directory: async () => ({
-      dir: { company: account, version: 1, seats: [{ seat: SEAT, person: 'ada', signingKey: founder.publicKey, wrappingKey: 'ab'.repeat(32), committeeKey: COMMITTEE, role: 'admin', retired: null }] },
+      dir: { company: account, version: 1, seats: [{ seat: SEAT, person: 'ada', signingKey: founder.publicKey, wrappingKey: 'ab'.repeat(32), committeeKey: COMMITTEE, role: 'admin', retired: null, opening: {} as never }] },
       holders: { committee: [COMMITTEE], seats: [SEAT], approvals: 1, adoptedVaults: [], account: 'ac'.repeat(32) } as never,
-      another: new Set(), at: () => null, records: heldServing(account, {}, []),
+      another: new Set(), at: () => null, leafOf: () => null, records: await heldServing(account, {}, []),
     }),
     people: async () => ({ people: hired.map((e) => ({ person: payroll.person(e.id, viewingKey)!, version: 1, handedOver: true })), notBelieved: [], notPayable: [] }),
     state: async (id) => (id === '0' ? state : null),

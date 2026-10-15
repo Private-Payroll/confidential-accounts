@@ -48,6 +48,10 @@
       "types": "./lib/profile/account-state.d.ts",
       "default": "./lib/profile/account-state.js"
     },
+    "./profile/contract-authority": {
+      "types": "./lib/profile/contract-authority.d.ts",
+      "default": "./lib/profile/contract-authority.js"
+    },
     "./profile/join-code": {
       "types": "./lib/profile/join-code.d.ts",
       "default": "./lib/profile/join-code.js"

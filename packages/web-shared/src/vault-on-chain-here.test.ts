@@ -99,15 +99,15 @@ const aClient = (source: () => VaultChainSource, at: unknown[]) => {
 };
 
 describe('THE VAULT, READ ON THIS DEVICE', () => {
-  it('READS THE STATE, THE NOTES, EVERY COIN EVER MADE FOR IT, WHO HOLDS IT AND WHETHER IT IS STARTED, OFF THE STATE THE INDEXER SERVES', async () => {
+  it('READS THE STATE, THE NOTES, EVERY COIN EVER MADE FOR IT AND WHETHER IT IS STARTED, OFF THE STATE THE INDEXER SERVES, AND NEVER WHO HOLDS IT', async () => {
     const served = aVault({ notes: [NOTE], started: true });
     const read = await readVaultOnChain(d, anIndexer(served), VAULT);
     if (!read.onChain) throw new Error('read as absent');
     /* RED WHEN: the notes are read off another field, or not read at all. */
     expect(read.notes).toEqual([NOTE]);
     expect(read.notesFromThisBuild).toBe(true);
-    /* RED WHEN: who holds the vault is not read off the state's own maintenance authority. */
-    expect(read.authority).toEqual({ committee: [{ tag: KEY.tag, value: KEY.value.toLowerCase() }], threshold: 1 });
+    /* RED WHEN: the read money goes in and out on carries who holds the vault, which no payment or deposit waits on. */
+    expect(Object.keys(read)).not.toContain('authority');
     /* RED WHEN: a vault whose secret is set and every copy written reads as not started. */
     expect(read.started).toBe(true);
     expect(read.account).toBe(ACCOUNT);

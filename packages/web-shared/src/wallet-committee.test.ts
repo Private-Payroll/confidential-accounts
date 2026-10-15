@@ -5,7 +5,7 @@ import { TEST_MNEMONIC } from '@midnight-ntwrk/testkit-js';
 import { identityFromWords } from 'midnight-identity';
 import { parseAsk, type CommitteeRequest } from 'midnight-identity/profile/request';
 import { committeeKeyFor } from 'midnight-identity/profile/committee-key';
-import { committeeSignaturesFor } from 'midnight-identity/profile/committee-sign';
+import { committeeSignaturesFor, type ChainRead } from 'midnight-identity/profile/committee-sign';
 import { READY_PING } from 'midnight-identity/profile/channel';
 import { askWalletToSignCommittee, committeeAsk, WalletDidNotSign } from './wallet-committee.js';
 import type { Openable, WalletWindow } from './wallet-sign-in.js';
@@ -45,8 +45,13 @@ const walletAnswering = (answer: (ask: unknown) => unknown): { view: Openable; a
 const to = { committee: [mine, other].sort((a, b) => (a.value < b.value ? -1 : 1)), threshold: 2 };
 const contracts = [{ contract: 'vault' as const, address: VAULT, counter: '2', now: { committee: [mine], threshold: 1 } }];
 const input = { company: CO, account: ACCOUNT, to, contracts, atOrigin: US, name: 'Us', rdns: 'example.us', nonce: 'n1', now: () => 1_000 };
+/* The chain as the wallet reads it: the account holds the committee the hand-over installs; the vault is pinned to it. */
+const chain: ChainRead = new Map([
+  [ACCOUNT, { of: 'read', committee: to.committee, threshold: 2, counter: 1n, pinnedTo: null }],
+  [VAULT, { of: 'read', committee: [mine], threshold: 1, counter: 2n, pinnedTo: ACCOUNT }],
+]);
 /** The wallet's own parser and signer, answering the ask as it arrives. */
-const honestly = (ask: unknown) => committeeSignaturesFor(L as never, identity, parseAsk(ask, US, 1_000) as CommitteeRequest, 1_000);
+const honestly = (ask: unknown) => committeeSignaturesFor(L as never, identity, parseAsk(ask, US, 1_000) as CommitteeRequest, chain, 1_000);
 
 describe('ASKING THE PERSON\'S WALLET TO SIGN A COMMITTEE CHANGE', () => {
   it('sends an ask with no bytes to sign in it, which the wallet\'s own parser accepts', () => {

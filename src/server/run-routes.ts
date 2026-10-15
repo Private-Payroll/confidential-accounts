@@ -6,8 +6,9 @@
  * key, and carries a payslip for each person sealed to their own payslip key.
  * The device that draws it seals it, mints nothing for anybody, and signs it
  * with its seat's filing key. This keeps it only for a seat the company's
- * directory believes may file a run (check S), opens none of it, and makes no
- * payslip and no key for anybody.
+ * directory holds for the signed-in person under that key, held now
+ * (`filerSeatOf`); whether its role may file a run is each member's device's
+ * to judge. It opens none of it, and makes no payslip and no key for anybody.
  */
 import express from 'express';
 import { z } from 'zod';
@@ -59,7 +60,7 @@ export const runRoutes = (deps: {
       res.status(503).json({ error: CHAIN_UNREAD(e) });
       return;
     }
-    const seat = filerSeatNow(now, String((req as { userId?: unknown }).userId), run.filedBy.publicKey, 'run');
+    const seat = filerSeatNow(now, String((req as { userId?: unknown }).userId), run.filedBy.publicKey);
     if (typeof seat === 'string') {
       res.status(403).json({ refused: seat, error: `this run is not kept: ${FILING_REFUSAL[seat]}. Nothing was kept.` });
       return;

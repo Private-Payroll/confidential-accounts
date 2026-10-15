@@ -12,7 +12,7 @@
  * the account's marks; the proving is the checks the worker runs before it builds.
  */
 import type { RecordsAsked } from '../midnight/records-held.js';
-import { describe, it, expect, beforeAll, beforeEach, vi } from 'vitest';
+import { describe, it, expect, beforeAll, beforeEach, afterEach, vi } from 'vitest';
 import express from 'express';
 import { identityFromSecret } from 'midnight-identity';
 import { signJoinCode, type JoinCode } from 'midnight-identity/profile/join-code';
@@ -34,6 +34,7 @@ import { buildRetryRun, buildRun, paidMovementOfLeaf, paidOnceOfNonce, rootOfPay
 import { theNetwork } from '../midnight/network.js';
 import { payeeFor, unshieldedPayeeFor } from '../testing/payees.js';
 import { vaultDetails } from '../testing/vault-details.js';
+import { checkedHeadsInMemory } from 'vaults-web-shared/tree-kept-here.js';
 import { acceptAsPayeeHere, invitePayeeHere, openInvitationHere, type InvitingCompany } from 'vaults-web-shared/invitation-on-device.js';
 import { admitHere, readPeopleHere, setStatusHere, type PeopleDevice } from 'vaults-web-shared/people-on-device.js';
 import { drawRunHere, type RunDrawDoors } from 'vaults-web-shared/run-drawn-here.js';
@@ -61,7 +62,7 @@ import {
   aCompanyOfTwoSeats, acmeChain, acmeDirectory, acmeDirectoryDeps, ACME, ADA, ADDRESS, apiAs, BO, CO, fromAda, KEY, LABEL, ORIGIN, OTHER,
   sendAs, store, wire, type Seat,
 } from './a-company-of-two-seats.test-support.js';
-import { anchoredOver, A_HEAD_CHECKED, headsCheckedHere, heldServing, roundsOnATestChain } from '../testing/record-tree-double.js';
+import { anchoredOver, headsCheckedHere, heldServing, roundsOnATestChain } from '../testing/record-tree-double.js';
 import { vouchedFreshOf } from '../midnight/record-tree.js';
 
 /* The chain, as the test keeps it: the proposals it holds open, the payment entries it counts, and the account's marks. */
@@ -96,7 +97,7 @@ const ledger = {
     const o = JSON.parse(Buffer.from(bytes).toString('utf8')) as { circuit: string; proposal: string };
     if (o.circuit !== circuit) throw new NothingWasSent(`the door was told ${circuit} and handed ${o.circuit}. Nothing was sent.`);
     if (circuit === 'propose') open.set(o.proposal, 0);
-    return { ref: `ref-${open.size}`, at: new Date().toISOString() };
+    return { ref: `ref-${open.size}`, at: new Date(clockStands * 1000).toISOString() };
   },
 };
 
@@ -122,7 +123,19 @@ aCompanyOfTwoSeats((app, deps) => {
 
 const NETWORK = theNetwork();
 const VAULT = 'c5'.repeat(32) as Hex;
-const NOW = Math.floor(Date.now() / 1000);
+/* Whole seconds since the Unix epoch: 12:00 UTC on 15 October 2026, after the payees' start date, so every window is a fixed distance from it. */
+const NOW = 1792065600;
+/** Where the fake clock stands, in whole seconds: every device here reads the clock the test sets, never the real one. */
+let clockStands = NOW;
+const setClock = (at: number): void => {
+  clockStands = at;
+  vi.setSystemTime(at * 1000);
+};
+/** Installs the clock a test runs on: only the date is faked, so waits on the real timers still happen. */
+const installClock = (): void => {
+  vi.useFakeTimers({ toFake: ['Date'] });
+  setClock(NOW);
+};
 const WINDOW = { opensAt: String(NOW + 3600), closesAt: String(NOW + 7200) };
 const addressOf = (n: number) => payeeFor(n.toString(16).padStart(2, '0').repeat(32), NETWORK).bech32;
 const pay = (n: number) => ({ name: `Payee ${n}`, email: `payee${n}@acme.co`, title: 'Engineer', asset: TEST_SETTLEMENT_ASSET, baseAmount: 700000n + BigInt(n), startDate: '2026-10-01' });
@@ -146,9 +159,10 @@ const api = (s: Seat) => async (path: string, init?: RequestInit) => {
 /** What the person's own wallet reads off the chain about payments: the chain as the test keeps it, never what is served. */
 const walletReads: string[][] = [];
 /** Acme's directory with every spending policy version the test filed entered beside the service's manifest, as its seat entered it. */
+const checkedHere = checkedHeadsInMemory();
 const withThePolicies = (asked?: RecordsAsked) => directoryHere({
   ...acmeDirectoryDeps(), anchored: anchoredOver(apiAs('ada'), CO, acmeChain.read,
-    () => policyVersions.map((r) => ({ entry: companyRecordEntry(r), signingSecret: ADA.signingSecret as Hex }))),
+    () => policyVersions.map((r) => ({ entry: companyRecordEntry(r), signingSecret: ADA.signingSecret as Hex })), undefined, checkedHere),
 }, asked);
 /**
  * This file's chain as every person's own wallet reads it: a round it no longer holds was closed by withdrawing it, the
@@ -173,7 +187,7 @@ const recordsOn = (s: Seat): CompanyRecordsHere & { proposals: () => Promise<Ret
   /* Where each proposal stands, as the person's own wallet reads this file's chain: what it holds open, and one it held and no longer does withdrawn. */
   roundsOnChain: theChain,
   /* The heads of the company's records this device checked: the raiser seals its latest, an approver approves over one of them. */
-  checked: async () => headsCheckedHere('19'.repeat(32) as Hex, A_HEAD_CHECKED),
+  checked: async () => { await withThePolicies(); return checkedHere.read(CO); },
   roundIdentity: pureCircuits,
   payments: {
     paidOnceOf: pureCircuits.paidOnceOf, paidMovementOf: pureCircuits.paidMovementOf,
@@ -260,10 +274,16 @@ let month = 0;
 let period = '';
 const nextPeriod = (): string => { month += 1; return `${2030 + Math.floor((month - 1) / 12)}-${String(((month - 1) % 12) + 1).padStart(2, '0')}`; };
 beforeAll(async () => {
-  await aPayee(61);
-  await aPayee(62);
+  installClock();
+  try {
+    await aPayee(61);
+    await aPayee(62);
+  } finally {
+    vi.useRealTimers();
+  }
 });
 beforeEach(async () => {
+  installClock();
   open.clear(); movements.clear(); roles.clear(); policyVersions.length = 0; rolesAsked.length = 0; publicAsks.length = 0; publicRefuses = null; proved.length = 0; dropTheSend = false;
   servedLies = false; walletReads.length = 0; theChainTookOnly = null;
   holdThePublicMoney = null;
@@ -271,9 +291,15 @@ beforeEach(async () => {
   period = nextPeriod();
   runId = (await drawRunHere(drawingOn(ADA), { period })).id;
 });
+afterEach(() => {
+  vi.useRealTimers();
+});
 
 describe('A LEG IS RAISED ON THE SIGNER\'S DEVICE, AND THE SERVICE FILES AND RELAYS IT', () => {
   it('THE RUN AS RAISED AND ITS PROPOSAL ARE FILED SIGNED BY ADA\'S SEAT, THE RAISE IS RELAYED, AND ANOTHER SIGNER\'S DEVICE BUILDS IT AGAIN', async () => {
+    /* The head Ada's device reaches reading the company's records: the one it raises over. */
+    await withThePolicies();
+    const reached = (await checkedHere.read(CO))!.latest.head;
     const round = await raiseRunOnDevice(raisingOn(ADA), { runId, ...RAISE });
     const kept = store.getRun(runId)!;
     const proposal = store.getProposal(round.id)!;
@@ -300,7 +326,7 @@ describe('A LEG IS RAISED ON THE SIGNER\'S DEVICE, AND THE SERVICE FILES AND REL
     /* RED WHEN: a leg is raised with a salt that names a leg, or that is not made from the fresh half its proposal seals. */
     const { vouched } = await openTheRoundHere(storedFor(BO), CO, round.id, KEY, false, recordsOn(BO));
     /* RED WHEN: the raiser seals another head than the one it checked last. */
-    expect(vouched).toMatchObject({ head: A_HEAD_CHECKED, checkedHere: true });
+    expect(vouched).toMatchObject({ head: reached, checkedHere: true });
     expect(salt).toBe(toHex(pureCircuits.retrySaltOf(new Uint8Array(32), fromHex(vouchedFreshOf(vouched!.head, vouched!.r)))));
     /* RED WHEN: the fresh half, or what it is made from, is written on the run's record too: one fact, held in two records that could disagree. */
     const legKept = read.run.payout?.[Object.keys(read.run.payout!)[0] as never]!;
@@ -603,7 +629,7 @@ describe('A LEG IS RAISED ON THE SIGNER\'S DEVICE, AND THE SERVICE FILES AND REL
     expect(proved).toHaveLength(sends + 1);
   });
 
-  it('THE FILING ROUTE FILES NOTHING FOR A SEAT THAT MAY NOT FILE A RUN, A RUN IT DOES NOT KEEP OR KEEPS FOR ANOTHER COMPANY, ANOTHER KEY OR MONTH, OR A RUN NOT RAISED', async () => {
+  it('THE FILING ROUTE FILES NOTHING FOR A RUN IT DOES NOT KEEP OR KEEPS FOR ANOTHER COMPANY, ANOTHER KEY OR MONTH, OR A RUN NOT RAISED', async () => {
     const [body] = await twoRaisesHeld();
     const raisedRun = openSealedRun(body!.run as never, KEY);
     const asFiled = (r: Record<string, unknown>, by: Seat = ADA) =>
@@ -612,10 +638,9 @@ describe('A LEG IS RAISED ON THE SIGNER\'S DEVICE, AND THE SERVICE FILES AND REL
     const kept = store.getRun(runId)!;
     /* Another company keeps a run under a name this one's filing names. */
     store.putRun({ ...kept, id: 'run_heldbyothers', accountId: OTHER });
-    const bosProposal = signProposalFiling(CO, filingOf(body!), BO.signingSecret as Hex);
     const before = filedNow();
     for (const [why, b, as, says] of [
-      ['a seat whose role may not file a run', { ...body, proposal: bosProposal, run: asFiled({}, BO) }, 'bo', /your seat on this company may not raise payroll runs/u],
+      /* Whether a seat's role may raise a run is every member's device's to judge, never the service's: `seat-directory.test.ts`. */
       ['a run this company does not keep', { ...body, run: asFiled({ id: 'run_notkepthere1' }) }, 'ada', /keeps no payroll run by that name/u],
       ['a run kept for another company', { ...body, run: asFiled({ id: 'run_heldbyothers' }) }, 'ada', /keeps no payroll run by that name/u],
       ['another key epoch', { ...body, run: asFiled({ keyEpoch: 1 }) }, 'ada', /not the run this company keeps under that name, under the key it uses now/u],
@@ -688,13 +713,13 @@ describe('A LEG IS RAISED ON THE SIGNER\'S DEVICE, AND THE SERVICE FILES AND REL
     /* RED WHEN: a filing of the proposal other than the one its raiser entered is opened - the anchor would vouch for neither. */
     await expect(openTheRoundHere(storedFor(BO), CO, round.id, KEY, false, recordsOn(BO))).rejects.toThrow(/no entry in the company's records names it/u);
     /* The company's records as though its raiser had filed and entered this filing from the start: what the approver checks then. */
-    const founded = { seat: ADA.seat, signingSecret: ADA.signingSecret as Hex, records: [(await records.get(CO, 'state', '0'))!], committee: [ADA.committeeKey] };
+    const founded = { seat: ADA.seat, signingSecret: ADA.signingSecret as Hex, records: [(await records.get(CO, 'state', '0'))!], directory: store.directoryFilingsOf(CO).slice(0, 1), committee: [ADA.committeeKey] };
     const asFiledSo = (): CompanyRecordsHere => ({
       ...recordsOn(BO),
-      directory: async () => ({
-        ...(await acmeDirectory()),
-        records: heldServing(CO, { runs: store.listRuns(CO), proposals: store.listProposals(CO) }, [ADA.signingSecret as Hex], founded),
-      }),
+      directory: async () => {
+        const here = await acmeDirectory();
+        return { ...here, records: await heldServing(CO, { runs: store.listRuns(CO), proposals: store.listProposals(CO) }, [ADA.signingSecret as Hex], founded, here) };
+      },
     });
     /* RED WHEN: an approver's device does not hold the filing's commitment to the run it builds again. */
     await expect(openTheRoundHere(storedFor(BO), CO, round.id, KEY, false, asFiledSo()))
@@ -720,12 +745,12 @@ const RETRY = { viewingKey: KEY, vault: VAULT, opensAt: String(NOW + 8000), clos
  * only once its leg's own round can no longer pay everybody on it.
  */
 const atTime = async <T>(at: number, act: () => Promise<T>): Promise<T> => {
-  vi.useFakeTimers({ toFake: ['Date'] });
-  vi.setSystemTime(at * 1000);
+  const was = clockStands;
+  setClock(at);
   try {
     return await act();
   } finally {
-    vi.useRealTimers();
+    setClock(was);
   }
 };
 const legOf = (id: string) => {
@@ -1146,22 +1171,10 @@ describe('EVERY APPROVER OF A ROUND RUNS THE CHECKS ITS RAISER RAN ON THE LEG\'S
     /* After its window, the leg is raised again: the run's record of the leg now names only the second round and its window. */
     const again = await raiseRunOnDevice(raisingOn(ADA, AFTER), { runId, ...LATER });
     expect(again.id).not.toBe(first.id);
-    vi.useFakeTimers({ toFake: ['Date'] });
-    vi.setSystemTime((AFTER + 200) * 1000);
-    try {
-      /* RED WHEN: the earlier round's window is read from the run's record of the leg, which no longer names it - it would stay live for good, and no approver would approve the leg's next round. */
-      await expect(approvingOn(recordsOn(BO), again.id)).resolves.toMatchObject({ vault: VAULT });
-    } finally {
-      vi.useRealTimers();
-    }
+    /* RED WHEN: the earlier round's window is read from the run's record of the leg, which no longer names it - it would stay live for good, and no approver would approve the leg's next round. */
+    await atTime(AFTER + 200, () => expect(approvingOn(recordsOn(BO), again.id)).resolves.toMatchObject({ vault: VAULT }));
     /* RED WHEN: the earlier round is taken as past its window before that window closes - its proof could still be sent. */
-    vi.useFakeTimers({ toFake: ['Date'] });
-    vi.setSystemTime((NOW + 7_000) * 1000);
-    try {
-      await expect(approvingOn(recordsOn(BO), again.id)).rejects.toThrow(new RegExp(`is written down as ${first.id}, which may be on the chain`, 'u'));
-    } finally {
-      vi.useRealTimers();
-    }
+    await atTime(NOW + 7_000, () => expect(approvingOn(recordsOn(BO), again.id)).rejects.toThrow(new RegExp(`is written down as ${first.id}, which may be on the chain`, 'u')));
   });
 
   it('A RETRY IS REFUSED BY AN APPROVER WHILE ITS LEG\'S OWN ROUND CAN STILL PAY, OR WAS NEVER SEEN ON THE CHAIN', async () => {

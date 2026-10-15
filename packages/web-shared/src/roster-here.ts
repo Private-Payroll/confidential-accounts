@@ -17,8 +17,8 @@
  *     seat: their keys are held to the proof their invitation gave them, to the
  *     fingerprint they read out, and to the sign-in their request was sealed
  *     for; the company's key is wrapped to the key they gave;
- *   · a new signer **offers** their vault keys, before the company's committee
- *     holds their key and they can file the roster themselves;
+ *   · a new signer **offers** their vault keys, sealed under the company's
+ *     roster key, before they file the roster themselves;
  *   · every open offer is **folded** into the roster by a seat already believed,
  *     each checked against the signing key the roster holds for that signer.
  */
@@ -33,7 +33,8 @@ import {
 } from '../../../src/core/roster-record.js';
 import { refuseASeatKeyNotFromTheInvitee, SeatKeyNotFromTheInvitee } from '../../../src/core/seat-invite-proof.js';
 import {
-  rosterWithVaultKeys, signVaultKeys, vaultKeyIndexOf, vaultKeysOfferRefusal, type VaultKey, type VaultKeysOffer,
+  openVaultKeysOffer, rosterWithVaultKeys, sealVaultKeysOffer, signVaultKeys, vaultKeyIndexOf, vaultKeysOfferRefusal,
+  type VaultKey, type VaultKeysOffer,
 } from '../../../src/core/vault-keys.js';
 import type { Account, PendingSignerPayload, SealedAccount } from '../../../src/core/types.js';
 import { signCompanyFiling, toCompanyWire, verifiedCompanyFiler, type SealedCompanyRecord } from '../../../src/midnight/sealed-record-wire.js';
@@ -65,11 +66,12 @@ export interface RosterDoors {
 
 /**
  * The company's directory filings, the chain as the person's own wallet reads
- * it, and the company's records as the head on chain holds them: what a roster
- * is believed against. Nothing a device believed before is kept or read: an
+ * it, the company's records as the head on chain holds them, and the leaf this
+ * device's vault worker makes of each entry's opening: what a roster is
+ * believed against. Nothing a device believed before is kept or read: an
  * older version, or other bytes under a version, is refused by the anchor.
  */
-export type RosterReads = Pick<DirectoryHereDeps, 'filings' | 'holders' | 'anchored'>;
+export type RosterReads = Pick<DirectoryHereDeps, 'filings' | 'holders' | 'anchored' | 'leaves'>;
 
 /**
  * The company as this device believes it, with every seat the chain holds that
@@ -127,7 +129,7 @@ const seatsWaitedFor = (sealed: SealedAccount, viewingKey: Hex): Set<string> => 
  * ONLY.** Refused, with `NO_ROSTER_RECORD`, for a company whose signers were
  * never filed as a roster record: the unsigned list on its account record is
  * never read. Refused when the version is not filed by a seat this device
- * believes (check S), or, for the first version, as the company was founded
+ * believes, whose role may file it (`filingRefusalOf`), or, for the first version, as the company was founded
  * with it (`firstRosterRefusal`). Then each entry is held to its own signer's witnesses
  * (`believedSigners`): the directory this device believes, read afresh with
  * the chain as the person's own wallet reads it, and this device's own key.
@@ -160,7 +162,7 @@ export async function rosterBelievedHere(
   let read: Awaited<ReturnType<typeof directoryHere>>;
   try {
     /* The statements are taken below from the entries this device believes, never from the roster as filed. */
-    read = await directoryHere({ accountId: d.accountId, label: d.label, ...d.reads, attested: async () => [] }, {
+    read = await directoryHere({ accountId: d.accountId, label: d.label, viewingKey, ...d.reads, attested: async () => [] }, {
       records: [{ store: 'company', kind: 'roster', id: ROSTER_ID }], founding: roster.version === 1,
     });
   } catch (e) {
@@ -168,7 +170,8 @@ export async function rosterBelievedHere(
   }
   const witnesses: RosterWitnesses = {
     accountId: d.accountId, label: d.label, account: d.account, seatsOnTheChain: read.holders.seats,
-    directory: read.dir.seats.map((x) => ({ seat: x.seat, signingKey: x.signingKey, committeeKey: x.committeeKey })),
+    /* Only a seat whose entry this device opened and believed carries a wallet key to witness with. */
+    directory: read.dir.seats.flatMap((x) => (x.committeeKey === undefined ? [] : [{ seat: x.seat, signingKey: x.signingKey, committeeKey: x.committeeKey }])),
     own: d.own ?? null,
   };
   const { believed, refused } = believedSigners(opened.signers, witnesses);
@@ -312,18 +315,19 @@ export async function admitSignerHere(d: RosterDoors, input: { signerId: string;
 }
 
 /**
- * **THIS SIGNER'S OWN VAULT KEYS, OFFERED**: the two public keys signed with
- * their own signing key for their roster entry, the statement their wallet
- * signed over the records key and their seat, and the directory entry their
- * wallet signed in the same press. Refused here when the statement is not for
- * the records key this device works out from the company key the wallet
- * released.
+ * **THIS SIGNER'S OWN VAULT KEYS, OFFERED, SEALED**: the two public keys signed
+ * with their own signing key for their roster entry, the statement their
+ * wallet signed over the records key and their seat, and the directory entry
+ * their wallet signed in the same press, all sealed under the company's roster
+ * key (`viewingKey`), so the service never holds their wallet key. Refused
+ * here when the statement is not for the records key this device works out
+ * from the company key the wallet released.
  */
 export async function offerVaultKeysHere(
   api: Api, accountId: string,
   keys: {
     readonly signerId: string; readonly signingSecret: Hex; readonly companyKey: Hex; readonly committeeKey: VaultKey;
-    readonly recordsKey: RecordsKeyStatement; readonly entry: DirectoryEntryStatement;
+    readonly recordsKey: RecordsKeyStatement; readonly entry: DirectoryEntryStatement; readonly viewingKey: Hex;
   },
 ): Promise<void> {
   const recordsKey = recordsKeypairFrom(fromHex(keys.companyKey)).publicKey;
@@ -335,7 +339,7 @@ export async function offerVaultKeysHere(
     committeeKey: keys.committeeKey, recordsKey,
     recordsKeyStatement: keys.recordsKey.signature as Hex, recordsKeySeat: keys.recordsKey.seat as Hex,
   }, keys.signingSecret);
-  const offer: Omit<VaultKeysOffer, 'person'> = { signerId: keys.signerId, entry: { committeeKey: keys.committeeKey, statement: keys.entry }, keys: signed };
+  const offer = sealVaultKeysOffer(accountId, { signerId: keys.signerId, entry: { committeeKey: keys.committeeKey, statement: keys.entry }, keys: signed }, keys.viewingKey);
   await api(route(accountId, '/vault-keys'), { method: 'PUT', body: JSON.stringify({ offer }) });
 }
 
@@ -347,7 +351,8 @@ export interface Folded {
 
 /**
  * **EVERY OPEN OFFER OF VAULT KEYS, FOLDED INTO THE ROSTER FROM THIS DEVICE.**
- * Each is checked against the roster this device opened (`rosterWithVaultKeys`):
+ * Each is opened under the company's roster key (`openVaultKeysOffer`) and
+ * checked against the roster this device opened (`rosterWithVaultKeys`):
  * signed for its signer's entry by the signing key that entry holds, and its
  * records-key statement verifying for the seat that entry holds. An offer is
  * folded only when the entry it makes is one this device believes. An offer that fails is left out, never folded, and stays
@@ -363,9 +368,11 @@ export async function foldOffersHere(d: RosterDoors): Promise<Folded> {
   let roster = seatedOf(opened);
   const folded: string[] = [];
   const refused: { seat: string; why: string }[] = [];
-  for (const offer of offers) {
-    const seat = String(offer.entry?.statement?.seat ?? '').toLowerCase();
+  for (const kept of offers) {
+    const seat = String(kept?.seat ?? '').toLowerCase();
     try {
+      const offer = openVaultKeysOffer(d.accountId, kept, d.viewingKey);
+      if (typeof offer === 'string') throw new Error(`the offer is refused: ${offer}.`);
       /* The entry its own wallet signed: for this company, naming the keys it gives, for the seat and signing key the roster holds. */
       const notKept = vaultKeysOfferRefusal(d.label, d.account, d.accountId, offer);
       if (notKept !== null) throw new Error(`the offer is refused: ${notKept}.`);

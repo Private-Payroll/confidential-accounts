@@ -94,13 +94,13 @@ describe('A SIGNER REMOVED, RETIRED OR GIVEN ANOTHER ROLE AFTER IT ANCHORED AND 
     await changed({ kind: 'role', seat: BO.seat, role: 'viewer' }, ADA);
     await opensBoth('Bo given a role that may not anchor');
 
+    /* RED WHEN: a retired seat's filings are judged by its boundary now - Ada retires naming no last version of anything, Bo still seated beside her. */
+    await changed({ kind: 'retire', seat: ADA.seat, filedUpTo: {} }, ADA);
+    await opensBoth('Ada retired');
+
     /* RED WHEN: a batch is judged by whether its seat is on the account now - Bo is removed from it. */
     chains.set(CO, { ...chains.get(CO)!, seats: { ...chains.get(CO)!.seats, committee: [ADA.committeeKey], seats: [ADA.seat] } });
     await opensBoth('Bo removed from the account');
-
-    /* RED WHEN: a retired seat's filings are judged by its boundary now - Ada retires naming no last version of anything. */
-    await changed({ kind: 'retire', seat: ADA.seat, filedUpTo: {} }, ADA);
-    await opensBoth('Ada retired');
   });
 
   it('A DIRECTORY SERVED WITH OTHER BYTES THAN THE VERSION ANCHORED WITH A BATCH STOPS THE CHECK AT THAT BATCH, AS NOT GIVEN', async () => {

@@ -77,7 +77,9 @@ export interface ChargeDoors extends BuiltOnHereDoors, Pacing {
    * The company's service's route a proven charge is relayed by: it sends the
    * call and takes the run's proposal, still open on the chain, as charged.
    */
-  readonly charge?: (proposalId: string, body: { tx: string }) => Promise<unknown>;
+  readonly charge?: (proposalId: string, body: { tx: string; filer: string }) => Promise<unknown>;
+  /** The filing key of the seat this device files under, sent with the charge so the service pays for that seat. */
+  readonly filer: Hex;
   /** Where this device keeps a charge it relayed until the chain shows it. A vault under a policy pays nothing without it. */
   readonly chargesInFlight?: ChargesInFlight;
   readonly now?: () => Date;
@@ -322,7 +324,7 @@ export async function chargeTheRunHere(
     throw new RunNotChargedHere('another charge from this vault is being sent from this browser. Try again in a minute');
   }
   try {
-    await doors.charge(run.proposalId, { tx: built.tx });
+    await doors.charge(run.proposalId, { tx: built.tx, filer: doors.filer });
   } catch (e) {
     if (sentNothing(e)) await kept.forget(vault, claim);
     throw e;

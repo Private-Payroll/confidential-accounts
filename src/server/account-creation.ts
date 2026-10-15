@@ -116,7 +116,7 @@ export function serverCreationRefusal(wiring: string, foundingKey: unknown): { c
  * refuses any field it does not name in any case; this says why.
  */
 const SECRETS_BY_NAME = [
-  'signingSecret', 'wrappingSecret', 'blinding', 'viewingKey', 'assetBlinding', 'payoutSeeds', 'payRecordKey',
+  'signingSecret', 'wrappingSecret', 'blinding', 'salt', 'viewingKey', 'assetBlinding', 'payoutSeeds', 'payRecordKey',
   'secrets', 'seed',
 ] as const;
 

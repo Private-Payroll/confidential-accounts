@@ -212,12 +212,12 @@ const notReadHere = (): never => { throw new Error('paying reads neither what th
 /** The directory a device holds for a company the service made: one seat, the founding signer's, holding the account. */
 /** The founding seat's own committee key, which held its account from its deploy. */
 const COMMITTEE = { tag: 'schnorr', value: '7a'.repeat(32) };
-const aDirectoryOf = (account: string, signingKey: string) => {
+const aDirectoryOf = async (account: string, signingKey: string) => {
   const SEAT = '4e'.repeat(32);
   return {
-    dir: { company: account, version: 1, seats: [{ seat: SEAT, person: 'ada', signingKey, wrappingKey: 'ab'.repeat(32), committeeKey: COMMITTEE, role: 'admin' as const, retired: null }] },
+    dir: { company: account, version: 1, seats: [{ seat: SEAT, person: 'ada', signingKey, wrappingKey: 'ab'.repeat(32), committeeKey: COMMITTEE, role: 'admin' as const, retired: null, opening: {} as never }] },
     holders: { committee: [COMMITTEE], seats: [SEAT], approvals: 1, adoptedVaults: [], account: 'ac'.repeat(32) } as never,
-    another: new Set<string>(), at: () => null, records: heldEntering(account),
+    another: new Set<string>(), at: () => null, leafOf: () => null, records: await heldEntering(account),
   };
 };
 const viewHere = (c: Company) => {

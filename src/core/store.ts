@@ -56,8 +56,9 @@ export interface Shape {
   vaultKeyIndex: Record<string, CompanyVaultKeyIndex>;
   /**
    * **A NEW SIGNER'S VAULT KEYS, OFFERED AND NOT YET FOLDED INTO THE ROSTER**,
-   * keyed by account and then by seat: at most one per seat, a new offer
-   * replacing the old. Public keys and signatures only, and never read as the
+   * keyed by account and then by seat and person: every person's own offer for
+   * a seat, each replaced only by them. The wallet key and what the wallet
+   * signed are sealed under the company's roster key; never read as the
    * roster: a seat the company believes folds one in from its own device, and it
    * goes in the same filing. Absent from files written before it existed.
    */
@@ -118,18 +119,25 @@ export interface Shape {
 }
 
 /**
- * **SIGNATURES FOR ONE COMMITTEE CHANGE OF ONE CONTRACT, AS THEY ARRIVE FROM
- * EACH SIGNER'S WALLET.** Everything here is public the moment the change
- * reaches the chain, and every signature is bound to this contract, this whole
- * new committee and this counter, so none of it can be put to any other use.
+ * **SIGNATURES ON ONE CONTRACT'S COMMITTEE UPDATES AT ONE COUNTER, AS THEY
+ * ARRIVE FROM EACH WALLET.** Everything here is public the moment an update
+ * reaches the chain, and every signature is bound to this contract, the whole
+ * committee it installs and this counter, so none of it can be put to any
+ * other use. Each signature is kept by its place on the committee holding the
+ * contract at that counter, and nothing here says whose key that place is.
  */
 export interface CollectedCommitteeSignatures {
   readonly accountId: string;
   readonly address: string;
-  /** The counter the change is signed against, in decimal. */
+  /** The counter every update here is signed against, in decimal. */
   readonly counter: string;
-  readonly to: { readonly committee: ReadonlyArray<{ readonly tag: string; readonly value: string }>; readonly threshold: number };
-  readonly signatures: ReadonlyArray<{ readonly seat: number; readonly signature: { readonly tag: string; readonly value: string } }>;
+  /** Each committee proposed for the contract at this counter, with the signatures kept for it. */
+  readonly proposed: ReadonlyArray<{
+    readonly to: { readonly committee: ReadonlyArray<{ readonly tag: string; readonly value: string }>; readonly threshold: number };
+    readonly signatures: ReadonlyArray<{ readonly index: number; readonly signature: { readonly tag: string; readonly value: string } }>;
+  }>;
+  /** When an update at this counter was last sent from here, ISO; null when none was. */
+  readonly sentAt: string | null;
 }
 
 /** One company's manifest, as it is kept and served. */
@@ -817,18 +825,24 @@ export class MemoryStore {
       .sort((a, b) => a.deployedAt.localeCompare(b.deployedAt));
   }
   putVaultKeyIndex(k: CompanyVaultKeyIndex) { this.data.vaultKeyIndex[k.accountId] = k; this.flush(); }
-  /** The vault keys offered for `accountId` and not yet folded into its roster, one per seat. */
-  vaultKeysOffersOf(accountId: string): VaultKeysOffer[] { return Object.values(this.data.vaultKeysOffers?.[accountId] ?? {}); }
-  /** Keeps one offer for `seat`, replacing any open offer for it. */
-  putVaultKeysOffer(accountId: string, seat: string, offer: VaultKeysOffer) {
+  /**
+   * The vault keys offered for `accountId` and not yet folded into its roster:
+   * every person's own, one per seat and person. An offer kept before offers
+   * were sealed is not one, and is not handed on.
+   */
+  vaultKeysOffersOf(accountId: string): VaultKeysOffer[] {
+    return Object.values(this.data.vaultKeysOffers?.[accountId] ?? {}).filter((o) => typeof o?.seat === 'string' && typeof o?.sealed === 'object');
+  }
+  /** Keeps `offer` for its seat and its person, replacing only that person's own open offer for that seat. */
+  putVaultKeysOffer(accountId: string, offer: VaultKeysOffer) {
     const all = this.data.vaultKeysOffers ?? {};
-    this.data.vaultKeysOffers = { ...all, [accountId]: { ...(all[accountId] ?? {}), [seat.toLowerCase()]: offer } };
+    this.data.vaultKeysOffers = { ...all, [accountId]: { ...(all[accountId] ?? {}), [`${offer.seat.toLowerCase()} ${offer.person}`]: offer } };
     this.flush();
   }
-  /** Lets go of the offers for `seats`, once the roster that folds them in is filed. */
-  dropVaultKeysOffers(accountId: string, seats: readonly string[]) {
+  /** Lets go of `offers`, by their seat and person, once the roster that folds them in is filed. */
+  dropVaultKeysOffers(accountId: string, offers: ReadonlyArray<Pick<VaultKeysOffer, 'seat' | 'person'>>) {
     const mine = { ...(this.data.vaultKeysOffers?.[accountId] ?? {}) };
-    for (const seat of seats) delete mine[seat.toLowerCase()];
+    for (const o of offers) delete mine[`${o.seat.toLowerCase()} ${o.person}`];
     this.data.vaultKeysOffers = { ...(this.data.vaultKeysOffers ?? {}), [accountId]: mine };
     this.flush();
   }
@@ -993,11 +1007,16 @@ export class MemoryStore {
     this.flush();
     return null;
   }
+  /** Kept by company and contract, so two companies naming one address never read or replace each other's. */
   putCommitteeSignatures(c: CollectedCommitteeSignatures) {
-    this.data.committeeSignatures[c.address.toLowerCase()] = c; this.flush();
+    this.data.committeeSignatures[`${c.accountId} ${c.address.toLowerCase()}`] = c; this.flush();
   }
-  getCommitteeSignatures(address: string): CollectedCommitteeSignatures | null {
-    return this.data.committeeSignatures[address.toLowerCase()] ?? null;
+  getCommitteeSignatures(accountId: string, address: string): CollectedCommitteeSignatures | null {
+    return this.data.committeeSignatures[`${accountId} ${address.toLowerCase()}`] ?? null;
+  }
+  /** Every contract's kept committee signatures for one company. */
+  listCommitteeSignatures(accountId: string): CollectedCommitteeSignatures[] {
+    return Object.values(this.data.committeeSignatures).filter((c) => c.accountId === accountId);
   }
 
   /**

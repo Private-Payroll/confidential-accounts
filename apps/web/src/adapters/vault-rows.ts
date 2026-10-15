@@ -15,7 +15,7 @@ import { keyringFor } from './keyring-person.js';
  */
 
 /**
- * A VAULT HANDED TO THE COMPANY'S SIGNERS: the chain shows the committee
+ * A VAULT HANDED TO THE COMPANY'S SUPER ADMINS: the chain shows the committee
  * holding it. Whether money can go in is another matter, said by its
  * standing. A vault held by keys that are not the committee now, not yet on
  * the chain, not finished, or of a standing not known, is not one.
@@ -25,7 +25,7 @@ const HANDED_OVER: ReadonlySet<VaultStanding> = new Set([VAULT.held, VAULT.notFu
 /** Whether `vault` was handed over when it was created. */
 export const wasHandedOver = (vault: Pick<VaultRow, 'standing'>): boolean => HANDED_OVER.has(vault.standing);
 
-/** Whether `vault` was sent and is not yet held by the company's signers, so creating it is not finished. */
+/** Whether `vault` was sent and is not yet held by the company's super admins, so creating it is not finished. */
 export const handoverOwed = (vault: Pick<VaultRow, 'standing'>): boolean => vault.standing === VAULT.handoverOwed;
 
 /** The company `companyId`'s vaults, for the person `personId`, or null when they could not be read. */

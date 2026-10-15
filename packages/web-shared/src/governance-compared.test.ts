@@ -18,7 +18,7 @@ const EVERY: RoundChangeOnTheWire[] = [
   { kind: 'pay-key', commitment: A },
   { kind: 'spending-policy', vault: A, assetKey: B, commitment: C },
   { kind: 'policy-bar', bar: '2' },
-  { kind: 'recover-anchor', resumesFrom: A, latest: '1800000000' },
+  { kind: 'recover-anchor', resumesFrom: A, latest: '1800000000', lastRecovery: C },
 ] as RoundChangeOnTheWire[];
 
 describe('THE SAME GOVERNANCE CHANGE', () => {
@@ -45,8 +45,9 @@ describe('THE SAME GOVERNANCE CHANGE', () => {
       [{ kind: 'spending-policy', vault: A, assetKey: B, commitment: C }, { kind: 'spending-policy', vault: A, assetKey: A, commitment: C }],
       [{ kind: 'spending-policy', vault: A, assetKey: B, commitment: C }, { kind: 'spending-policy', vault: A, assetKey: B, commitment: A }],
       [{ kind: 'policy-bar', bar: '2' }, { kind: 'policy-bar', bar: '3' }],
-      [{ kind: 'recover-anchor', resumesFrom: A, latest: '1800000000' }, { kind: 'recover-anchor', resumesFrom: B, latest: '1800000000' }],
-      [{ kind: 'recover-anchor', resumesFrom: A, latest: '1800000000' }, { kind: 'recover-anchor', resumesFrom: A, latest: '1800000001' }],
+      [{ kind: 'recover-anchor', resumesFrom: A, latest: '1800000000', lastRecovery: C }, { kind: 'recover-anchor', resumesFrom: B, latest: '1800000000', lastRecovery: C }],
+      [{ kind: 'recover-anchor', resumesFrom: A, latest: '1800000000', lastRecovery: C }, { kind: 'recover-anchor', resumesFrom: A, latest: '1800000001', lastRecovery: C }],
+      [{ kind: 'recover-anchor', resumesFrom: A, latest: '1800000000', lastRecovery: C }, { kind: 'recover-anchor', resumesFrom: A, latest: '1800000000', lastRecovery: B }],
     ] as Array<[RoundChangeOnTheWire, RoundChangeOnTheWire]>;
     /* RED WHEN: any one field is left out of the comparison - an approval is built for, or a proposal found for, another change. */
     for (const [a, b] of other) expect(sameGovernance(a, b), JSON.stringify(b)).toBe(false);

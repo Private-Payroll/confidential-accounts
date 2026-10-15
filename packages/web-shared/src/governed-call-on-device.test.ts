@@ -1,11 +1,11 @@
 import { describe, it, expect, vi } from 'vitest';
 import {
-  approveOnDevice, governedCallServiceFor, nothingWasSentBy, SentAndNotYetSeen,
-  sendRaiseFromDevice, sendRetryFromDevice, withdrawOnDevice,
-  type GovernedCallService, type LegPaymentsOnTheWire, type RaiseDoors, type RaiseOrderOnTheWire,
+  approveOnDevice, changeThresholdOnDevice, governedCallServiceFor, nothingWasSentBy, raiseRetryOnDevice, raiseRunOnDevice,
+  SentAndNotYetSeen, sendRaiseFromDevice, sendRetryFromDevice, withdrawOnDevice,
+  type GovernanceDoors, type GovernedCallService, type LegPaymentsOnTheWire, type RaiseDoors, type RaiseOrderOnTheWire,
   type RetryOrderOnTheWire, type RoundOnThePage,
 } from './governed-call-on-device.js';
-import type { OpenedRound, RoundOnChain } from './governed-call-builder.js';
+import type { GovernanceOnTheWire, OpenedRound, RoundOnChain } from './governed-call-builder.js';
 import type { CompanyRecordsHere } from './run-rebuilt-here.js';
 import { paysCommitmentOf } from '../../../src/core/proposal-filing.js';
 
@@ -20,6 +20,8 @@ import { paysCommitmentOf } from '../../../src/core/proposal-filing.js';
 const seams = vi.hoisted(() => ({
   made: undefined as unknown as MadeHereDoors,
   opens: undefined as unknown as (proposalId: string, viewingKey: string, forARaise: boolean) => Promise<OpenedRound>,
+  raiseLeg: undefined as unknown as () => Promise<RoundOnThePage>,
+  raiseRetry: undefined as unknown as () => Promise<RoundOnThePage>,
 }));
 vi.mock('./material-made-here.js', async (importOriginal) => {
   const real = await importOriginal<typeof import('./material-made-here.js')>();
@@ -34,6 +36,12 @@ vi.mock('./material-made-here.js', async (importOriginal) => {
       seams.made.retryOrder(runId, viewingKey, proposalId, which),
   };
 });
+/* A leg or a retry raised from the records is the subject of its own file; here only what the device does with the service's answer to it. */
+vi.mock('./run-raised-here.js', async (importOriginal) => ({
+  ...(await importOriginal<typeof import('./run-raised-here.js')>()),
+  raiseLegHere: () => seams.raiseLeg(),
+  raiseRetryHere: () => seams.raiseRetry(),
+}));
 vi.mock('./round-opened-here.js', async (importOriginal) => ({
   ...(await importOriginal<typeof import('./round-opened-here.js')>()),
   openTheRoundHere: (_s: unknown, _a: string, proposalId: string, viewingKey: string, forARaise: boolean) =>
@@ -50,7 +58,13 @@ import type { LedgerForm } from '../../../src/core/assets.js';
 import { deviceVaultHoldings, type PoolNote } from './device-vault-holdings.js';
 import { paymentsFitNotes } from './vault-builder.js';
 import { registryWithTestPrivateForms, TEST_TOKEN } from '../../../src/testing/assets.js';
-import type { Hex } from '../../../src/core/crypto.js';
+import { canonical, newSigningKeypair, newSymmetricKey, seal, signingPublicKeyOf, type Hex } from '../../../src/core/crypto.js';
+import { signedFoundingState } from '../../../src/core/founding-state.js';
+import { approverRosterFrom } from '../../../src/core/vault-approvers.js';
+import type { SealedProposal } from '../../../src/core/types.js';
+import { heldEntering } from '../../../src/testing/record-tree-double.js';
+import type { LegRaiseDoors } from './run-raised-here.js';
+import { pureCircuits } from '../../../contracts/managed/contract/index.js';
 import { DEVICE_RAISE_VERSION, WRITTEN_DOWN_IS_NOT_WHAT_IS_CHECKED } from '../../../src/core/device-raise.js';
 import { opensAs } from '../../../src/testing/sealed-records.js';
 
@@ -164,11 +178,17 @@ const aDevice = (over: Partial<GovernedCallService> & MadeOver & {
     retryPayments: (runId, viewingKey, indices, which) => asked.retryPayments(runId, { viewingKey, ...which, indices: [...indices] }),
     retryOrder: (runId, viewingKey, proposalId, which) => asked.retryOrder(runId, { viewingKey, ...which, proposalId }),
   };
+  /* The filing key each relay carried, kept apart from the log, which says what was relayed. */
+  const filers: string[] = [];
   const served: GovernedCallService = {
-    send: async (id, body) => { log.push(`send ${id} ${body.tx} ${body.version}`); return round({ id, txRef: 't1' }); },
+    /* The service names the proposal it was asked to send, as the company's records name it. */
+    send: async (id, body) => {
+      filers.push(`send ${body.filer}`); log.push(`send ${id} ${body.tx} ${body.version}`);
+      return round({ id, chainId: id === RETRY_ORDER.proposalId ? RETRY_ORDER.chainId : ORDER.chainId, txRef: 't1' });
+    },
     callState: async (id) => { log.push(`state ${id}`); return { account: 'ac'.repeat(32), blockHash: 'b', accountState: 'AS', parameters: 'PP' }; },
-    approve: async (id, body) => { log.push(`approve ${id} ${body.tx}`); return round(); },
-    cancel: async (id, body) => { log.push(`cancel ${id} ${JSON.stringify(body)}`); return round({ status: 'cancelled' }); },
+    approve: async (id, body) => { filers.push(`approve ${body.filer}`); log.push(`approve ${id} ${body.tx}`); return round(); },
+    cancel: async (id, { filer, ...body }) => { filers.push(`cancel ${filer}`); log.push(`cancel ${id} ${JSON.stringify(body)}`); return round({ status: 'cancelled' }); },
     standing: async (id) => { log.push(`standing ${id}`); return standings.shift() ?? round(); },
     ...over,
   };
@@ -182,18 +202,26 @@ const aDevice = (over: Partial<GovernedCallService> & MadeOver & {
   const lastServed = new Map<string, RoundOnThePage>();
   const kept = <A extends unknown[]>(f: ((...a: A) => Promise<RoundOnThePage>) | undefined) => (f === undefined ? undefined
     : async (...a: A) => { const r = await f(...a); lastServed.set(String(r.chainId).toLowerCase(), r); return r; });
-  /* A call this device sent: the chain takes it as its proven transaction lands, whatever the service answers. */
-  const landing = <A extends unknown[]>(f: ((...a: A) => Promise<RoundOnThePage>) | undefined, lands: (r: RoundOnThePage) => void) =>
-    (f === undefined ? undefined : async (...a: A) => {
-      const r = await f(...a);
-      if ((a[1] as { tx?: unknown } | undefined)?.tx !== undefined) lands(r);
-      return r;
-    });
+  /* The proposal each kind of call was last built for: what the chain takes when that call lands. */
+  const proven = new Map<string, string>();
+  /*
+   * A call this device sent: the chain takes the proposal its proven transaction was built for, whatever identity the
+   * service answers with.
+   */
+  const landing = <A extends unknown[]>(
+    f: ((...a: A) => Promise<RoundOnThePage>) | undefined, circuit: string, lands: (chainId: string) => void,
+  ) => (f === undefined ? undefined : async (...a: A) => {
+    const r = await f(...a);
+    const built = proven.get(circuit);
+    if ((a[1] as { tx?: unknown } | undefined)?.tx !== undefined && built !== undefined) lands(built);
+    return r;
+  });
   const service: GovernedCallService = {
     ...served,
-    send: kept(landing(served.send, (r) => onChain.raised(r.chainId)))!,
-    approve: kept(landing(served.approve, (r) => onChain.approved(r.chainId)))!,
-    cancel: kept(landing(served.cancel, (r) => onChain.withdrawn(r.chainId))),
+    send: kept(landing(served.send, 'propose', (id) => onChain.raised(id)))!,
+    approve: kept(landing(served.approve, 'approve', (id) => onChain.approved(id)))!,
+    cancel: kept(landing(served.cancel, 'cancel', (id) => onChain.withdrawn(id))),
+    ...(served.file === undefined ? {} : { file: kept(landing(served.file, 'propose', (id) => onChain.raised(id)))! }),
     standing: kept(served.standing)!,
   };
   const chainSays = over.chainSays ?? onChain.says;
@@ -223,6 +251,7 @@ const aDevice = (over: Partial<GovernedCallService> & MadeOver & {
     builder: {
       governedCall: async (input) => {
         log.push(`build ${input.order.circuit} for ${input.account} on ${input.chain.accountState}`);
+        proven.set(input.order.circuit, String((input.order as { proposal?: unknown }).proposal));
         if (JSON.stringify(input.material) !== JSON.stringify(material)) throw new Error('not this signer\'s material');
         if (over.buildFails) throw over.buildFails;
         return { tx: `TX-${input.order.circuit}` };
@@ -232,7 +261,7 @@ const aDevice = (over: Partial<GovernedCallService> & MadeOver & {
     progress: (s) => log.push(`stage ${s}`),
     sleep: async () => {}, waitMs: 3, everyMs: 1,
   };
-  return { log, doors };
+  return { log, doors, filers };
 };
 
 describe('RAISING A LEG FROM THIS DEVICE', () => {
@@ -273,6 +302,23 @@ describe('RAISING A LEG FROM THIS DEVICE', () => {
     expect(late).toBeInstanceOf(SentAndNotYetSeen);
     expect(late.message).toMatch(/was sent and the chain has not shown it yet\. Do not send it again/u);
     expect(nothingWasSentBy(late)).toBe(false);
+  });
+});
+
+describe('EVERY RELAY CARRIES THIS DEVICE\'S OWN FILING KEY', () => {
+  it('a raise, an approval and both withdrawals name the seat this device files under, so the service pays for that seat and no other', async () => {
+    const own = signingPublicKeyOf(material.signingSecret as Hex);
+    const raised = aDevice();
+    await sendRaiseFromDevice(raised.doors, { runId: 'run_1', viewingKey: 'vk', asset: TOKEN });
+    const approved = aDevice({ chainSays: () => ({ held: 'open', approvals: 2, raisedAt: 1 }) });
+    await approveOnDevice(approved.doors, { round: round(), viewingKey: 'vk' }).catch(() => undefined);
+    const writtenOnly = aDevice({ standings: [round()] });
+    await withdrawOnDevice(writtenOnly.doors, { round: round(), viewingKey: 'vk' });
+    const held = aDevice({ standings: [round({ raisedAt: 'then', txRef: 't1' })], heldBefore: { ['cc'.repeat(32)]: 0 } });
+    await withdrawOnDevice(held.doors, { round: round(), viewingKey: 'vk' });
+    /* RED WHEN: a relay carries no filing key, or another than this device's own, so the service cannot tell which of the person's seats acts. */
+    expect([...raised.filers, ...approved.filers, ...writtenOnly.filers, ...held.filers])
+      .toEqual([`send ${own}`, `approve ${own}`, `cancel ${own}`, `cancel ${own}`]);
   });
 });
 
@@ -343,22 +389,22 @@ describe('APPROVING FROM THIS DEVICE', () => {
     };
     const service = governedCallServiceFor(api);
     /* RED WHEN: the mark is dropped - a refusal then reads as maybe sent, and a failure at the send as nothing sent. */
-    expect(nothingWasSentBy(await service.approve('p 1', { tx: 'T' }).catch((e) => e))).toBe(true);
-    expect(nothingWasSentBy(await service.send('p 1', { tx: 'T', version: DEVICE_RAISE_VERSION }).catch((e) => e))).toBe(false);
+    expect(nothingWasSentBy(await service.approve('p 1', { tx: 'T', filer: 'F' }).catch((e) => e))).toBe(true);
+    expect(nothingWasSentBy(await service.send('p 1', { tx: 'T', version: DEVICE_RAISE_VERSION, filer: 'F' }).catch((e) => e))).toBe(false);
     await service.callState('acc 1');
     await service.standing('p 1');
-    await service.cancel!('p 1', {});
-    await service.cancel!('p 1', { tx: 'T' });
-    await service.carry!('p 1', { tx: 'T', circuit: 'setThreshold' });
-    /* RED WHEN: a relay names a route the service no longer has, carries a key or a signature, or an id is not escaped. */
+    await service.cancel!('p 1', { filer: 'F' });
+    await service.cancel!('p 1', { tx: 'T', filer: 'F' });
+    await service.carry!('p 1', { tx: 'T', circuit: 'setThreshold', filer: 'F' });
+    /* RED WHEN: a relay names a route the service no longer has, carries a secret or a signature, drops its filing key, or an id is not escaped. */
     expect(calls).toEqual([
-      'POST /api/proposals/p%201/approve {"tx":"T"}',
-      `POST /api/proposals/p%201/send {"tx":"T","version":${DEVICE_RAISE_VERSION}}`,
+      'POST /api/proposals/p%201/approve {"tx":"T","filer":"F"}',
+      `POST /api/proposals/p%201/send {"tx":"T","version":${DEVICE_RAISE_VERSION},"filer":"F"}`,
       'GET /api/accounts/acc%201/call-state ',
       'POST /api/proposals/p%201/standing {}',
-      'POST /api/proposals/p%201/cancel {}',
-      'POST /api/proposals/p%201/cancel {"tx":"T"}',
-      'POST /api/proposals/p%201/carry {"tx":"T","circuit":"setThreshold"}',
+      'POST /api/proposals/p%201/cancel {"filer":"F"}',
+      'POST /api/proposals/p%201/cancel {"tx":"T","filer":"F"}',
+      'POST /api/proposals/p%201/carry {"tx":"T","circuit":"setThreshold","filer":"F"}',
     ]);
     expect(calls.join('\n')).not.toMatch(/viewingKey|signature|signerId/u);
   });
@@ -504,9 +550,9 @@ describe('THE VAULT\'S PRIVATE MONEY IS ASKED ON THIS DEVICE BEFORE A RAISE WRIT
     }
     expect(sent).not.toContain((987_654_321n + 123_456_789n).toString());
     expect(sent).not.toMatch(/notes|nonce|pool|balance|held/u);
-    /* And the send carries only the version beside the proven transaction: no key, and nothing the vault was checked with. */
+    /* And the send carries only the version and its seat's public filing key beside the proven transaction: no secret, and nothing the vault was checked with. */
     const sendBody = bodies.map((b) => JSON.parse(b.startsWith('{') ? b : '{}')).find((b) => 'tx' in b);
-    expect(Object.keys(sendBody).sort()).toEqual(['id', 'tx', 'version']);
+    expect(Object.keys(sendBody).sort()).toEqual(['filer', 'id', 'tx', 'version']);
     expect(vaultReads).toEqual(Array(2).fill(`vault read ${'99'.repeat(32)}`));
   });
 
@@ -556,7 +602,7 @@ describe('EVERY SEND IS CHECKED AGAINST THE VAULT ON THIS DEVICE FIRST, AND SAYS
     });
     await sendRaiseFromDevice(d.doors, { runId: 'run_1', viewingKey: 'vk', asset: TOKEN, form: 'unshielded' });
     /* RED WHEN: the send carries no version, or a stale one. */
-    expect(bodies).toEqual([{ tx: 'TX-propose', version: DEVICE_RAISE_VERSION }]);
+    expect(bodies).toEqual([{ tx: 'TX-propose', version: DEVICE_RAISE_VERSION, filer: signingPublicKeyOf(material.signingSecret as Hex) }]);
     /* RED WHEN: a proposal written down for the same amounts of the other kind is sent on this check. */
     const kindSwapped = aDevice({
       legPayments: async () => other,
@@ -646,5 +692,196 @@ describe('WITHDRAWING A PROPOSAL FROM THIS DEVICE', () => {
     /* RED WHEN: a page without the relay sends a withdrawal some other way. */
     await expect(withdrawOnDevice({ ...old.doors, service: noCancel }, { round: round(), viewingKey: 'vk' }))
       .rejects.toThrow(/cannot withdraw proposals/u);
+  });
+});
+
+describe('A PROPOSAL STANDS WHERE THE CHAIN SAYS, NEVER WHERE THE SERVICE ANSWERS: A LEG AND A RETRY RAISED HERE', () => {
+  const NEVER: RoundOnChain = { held: 'never', approvals: 0 };
+  const HELD: RoundOnChain = { held: 'open', approvals: 0, raisedAt: 1 };
+  const LEG_RAISE = { runId: 'run_1', viewingKey: 'vk', vault: VAULT, opensAt: '1', closesAt: '2' };
+  const RETRY_RAISE = { ...LEG_RAISE, indices: [1, 2] };
+  /* The company's answer to the raise this device filed with its proven call. */
+  const filedWith = (d: ReturnType<typeof aDevice>) => () =>
+    d.doors.service.file!('acc_1', { proposal: {} as never, tx: 'TX-propose', version: DEVICE_RAISE_VERSION, salt: SALT });
+
+  it('a leg raised from this device is raised only when the chain holds it, whatever the service answers', async () => {
+    const claimed = aDevice({ file: async () => round({ raisedAt: 'now', txRef: 't1' }), chainSays: () => NEVER });
+    seams.raiseLeg = filedWith(claimed);
+    /* RED WHEN: a leg is reported raised on the service's word that the chain holds it - a person is told it is raised when it is not. */
+    await expect(raiseRunOnDevice(claimed.doors as unknown as LegRaiseDoors, LEG_RAISE)).rejects.toThrow(/^this proposal was sent and the chain has not shown it yet/u);
+
+    const unsaid = aDevice({ file: async () => round(), chainSays: () => HELD });
+    seams.raiseLeg = filedWith(unsaid);
+    const seen = await raiseRunOnDevice(unsaid.doors as unknown as LegRaiseDoors, LEG_RAISE);
+    /* RED WHEN: a leg the chain holds is waited on because the service did not say so - the device asks again for what it already knows. */
+    expect(seen.raisedAt).toBeDefined();
+    expect(unsaid.log.filter((l) => l.startsWith('standing'))).toEqual([]);
+  });
+
+  it('a retry raised from this device is raised only when the chain holds it, whatever the service answers', async () => {
+    const claimed = aDevice({ file: async () => round({ raisedAt: 'now', txRef: 't1' }), chainSays: () => NEVER });
+    seams.raiseRetry = filedWith(claimed);
+    /* RED WHEN: a retry is reported raised on the service's word that the chain holds it - the people it pays are told it is on its way when it is not. */
+    await expect(raiseRetryOnDevice(claimed.doors as unknown as LegRaiseDoors, RETRY_RAISE)).rejects.toThrow(/^this retry was sent and the chain has not shown it yet/u);
+
+    const unsaid = aDevice({ file: async () => round(), chainSays: () => HELD });
+    seams.raiseRetry = filedWith(unsaid);
+    const seen = await raiseRetryOnDevice(unsaid.doors as unknown as LegRaiseDoors, RETRY_RAISE);
+    /* RED WHEN: a retry the chain holds is waited on because the service did not say so. */
+    expect(seen.raisedAt).toBeDefined();
+    expect(unsaid.log.filter((l) => l.startsWith('standing'))).toEqual([]);
+  });
+});
+
+describe('A RAISE UNDER ANOTHER PROPOSAL\'S IDENTITY IS NEVER HELD BY THE CHAIN', () => {
+  it('a raise handed over under another proposal\'s identity is neither built nor sent, so the chain holds neither', async () => {
+    const other = 'ee'.repeat(32);
+    const d = aDevice({ raiseOrder: async () => ({ ...ORDER, order: { ...ORDER.order, proposal: other } as never }) });
+    /* RED WHEN: a raise built for one proposal is sent as another's - the chain then holds a proposal nobody wrote down. */
+    await expect(sendRaiseFromDevice(d.doors, { runId: 'run_1', viewingKey: 'vk' })).rejects.toThrow(/not the proposal it wrote down/u);
+    expect(d.log.filter((l) => /^(build|send|state)/u.test(l))).toEqual([]);
+  });
+
+  it('a send answered under another proposal\'s identity does not put that proposal on the chain, and the raise is read as its own', async () => {
+    const other = 'ee'.repeat(32);
+    const d = aDevice({ send: async (id) => round({ id, chainId: other, raisedAt: 'now', txRef: 't1' }) });
+    const raised = await sendRaiseFromDevice(d.doors, { runId: 'run_1', viewingKey: 'vk' });
+    /* RED WHEN: the chain this file stands for holds whatever proposal the service names, so a raise answered as another proposal reads as raised. */
+    expect(raised.chainId).toBe(ORDER.chainId);
+  });
+});
+
+/*
+ * A governance change over a service that answers what a case tells it to and a builder that writes down what it is asked
+ * for. The company's records are the ones the founding seat signed; what a proposal opens as is the one change asked for.
+ */
+const GOVERNED_ID = 'aa'.repeat(32);
+const GOVERNED_SALT = 'cd'.repeat(32);
+const GOVERNED_KEY = newSymmetricKey();
+const founder = newSigningKeypair();
+const FOUNDING_SEAT = '41'.repeat(32);
+const COMMITTEE = { tag: 'schnorr', value: '7a'.repeat(32) };
+const FOUNDING_STATE = signedFoundingState('acc_1', {
+  keyEpoch: 0, sealed: seal(canonical({ state: {}, blinding: { assetBlinding: '55'.repeat(32), payRecordKey: 'ab'.repeat(32) } }), GOVERNED_KEY),
+}, founder.secret);
+const THREE: GovernanceOnTheWire = { kind: 'threshold', threshold: '3' };
+
+const aGovernedDevice = (o: {
+  /** Whether the company already holds a proposal for the change, written down and listed by the service. */
+  held?: boolean;
+  /** What the service answers to the filing of a new proposal, to the send of one written down, and to a question of where one stands. */
+  filed?: Partial<RoundOnThePage>; sent?: Partial<RoundOnThePage>; standing?: Partial<RoundOnThePage>;
+  /** What the chain shows of the proposal, given whether the builder has refused an approval as made already. */
+  chain: (refused: boolean) => RoundOnChain;
+  /** The approvals the account needs. */
+  bar?: number;
+  /** The builder refuses an approval as made already. */
+  alreadyApproved?: boolean;
+}) => {
+  const log: string[] = [];
+  let refused = false;
+  const opened: OpenedRound = { chainId: GOVERNED_ID, digest: '', vault: '', salt: GOVERNED_SALT, summary: '', governance: THREE };
+  seams.opens = async () => opened;
+  const page = (over: Partial<RoundOnThePage> = {}): RoundOnThePage => ({ id: 'prp_gov', chainId: GOVERNED_ID, status: 'open', ...over });
+  const doors: GovernanceDoors = {
+    service: {
+      callState: async () => ({ account: 'ac'.repeat(32), blockHash: 'b', accountState: 'AS', parameters: 'PP' }),
+      sealedProposals: async () => (o.held ? [{
+        createdAt: '2026-10-01', id: 'prp_gov', accountId: 'acc_1', status: 'open', chainId: GOVERNED_ID, approvalCount: 0,
+      }] as unknown as SealedProposal[] : []),
+      file: async () => { log.push('file'); return page(o.filed); },
+      send: async (id) => { log.push(`send ${id}`); return page(o.sent); },
+      approve: async (id) => { log.push(`approve ${id}`); return page(); },
+      standing: async (id) => { log.push(`standing ${id}`); return page(o.standing); },
+      carry: async (id, body) => { log.push(`carry ${id} ${body.circuit}`); return page({ status: 'executed' }); },
+      bars: async () => ({ threshold: o.bar ?? 2, vaultThresholds: [] }),
+    },
+    builder: {
+      governedCall: async ({ order }) => {
+        log.push(`build ${order.circuit}`);
+        if (order.circuit === 'approve' && o.alreadyApproved) {
+          refused = true;
+          throw Object.assign(new Error('you have already approved this proposal'), { name: 'CallNotBuilt' });
+        }
+        return { tx: `TX-${order.circuit}` };
+      },
+      proposalIdentity: async () => ({ digest: 'dd'.repeat(32), chainId: GOVERNED_ID, noVault: '00'.repeat(32) }),
+    },
+    material: { signingSecret: founder.secret, blinding: '22'.repeat(32), scope: '33'.repeat(32) },
+    accountId: 'acc_1',
+    records: {
+      directory: async () => {
+        const believed = {
+          dir: { company: 'acc_1', version: 0, seats: [{ seat: FOUNDING_SEAT, person: 'ada', signingKey: founder.publicKey, wrappingKey: 'ab'.repeat(32), committeeKey: COMMITTEE, role: 'admin' as const, retired: null }] },
+          holders: { committee: [COMMITTEE], seats: [FOUNDING_SEAT], approvals: 1, adoptedVaults: [], account: 'ac'.repeat(32) },
+          another: new Set<string>(),
+          refusedAt: new Set<number>(),
+        };
+        return {
+          ...believed,
+          records: await heldEntering('acc_1', [], { seat: FOUNDING_SEAT, signingSecret: founder.secret, records: [FOUNDING_STATE], committee: [COMMITTEE] }, believed as never),
+        } as never;
+      },
+      state: async (id: string) => (id === '0' ? FOUNDING_STATE : null),
+      roundIdentity: pureCircuits,
+      roundsOnChain: async (ids: readonly string[]) => Object.fromEntries(ids.map((id) => [id.toLowerCase(), o.chain(refused)])),
+    } as unknown as CompanyRecordsHere,
+    filing: {
+      seat: FOUNDING_SEAT, keyEpoch: 0, salt: () => GOVERNED_SALT, newId: () => 'prp_gov',
+      entered: { enter: async () => undefined },
+    },
+    approvers: async () => approverRosterFrom({
+      threshold: 1, vaultThresholds: [], seated: [1, 2, 3, 4].map((n) => ({ leaf: `e${n}` })), adoptedVaults: [], companyWide: 'cc'.repeat(32),
+    }),
+    vaultName: () => 'company-wide runs',
+    sleep: async () => {}, waitMs: 3, everyMs: 1,
+  };
+  return { doors, log };
+};
+
+describe('A GOVERNANCE PROPOSAL STANDS WHERE THE CHAIN SAYS, NEVER WHERE THE SERVICE ANSWERS', () => {
+  const NEVER: RoundOnChain = { held: 'never', approvals: 0 };
+  const change = { viewingKey: GOVERNED_KEY, newThreshold: 3, seated: 4 };
+
+  it('a change written down here is raised only when the chain holds it, whatever the service answers', async () => {
+    const d = aGovernedDevice({ filed: { raisedAt: 'now' }, chain: () => NEVER });
+    const refused = await changeThresholdOnDevice(d.doors, change).catch((e) => e);
+    /* RED WHEN: a proposal is taken as raised on the service's word that the chain holds it - it is approved and carried out before it is there. */
+    expect(refused).toBeInstanceOf(SentAndNotYetSeen);
+    expect(String(refused.message)).toMatch(/^this proposal was sent and the chain has not shown it yet/u);
+    expect(d.log.filter((l) => /^(approve|carry)/u.test(l))).toEqual([]);
+  });
+
+  it('a change written down earlier and sent now is raised only when the chain holds it, whatever the service answers', async () => {
+    const d = aGovernedDevice({ held: true, sent: { raisedAt: 'now' }, chain: () => NEVER });
+    const refused = await changeThresholdOnDevice(d.doors, change).catch((e) => e);
+    /* RED WHEN: a proposal sent again is taken as raised on the service's word that the chain holds it. */
+    expect(refused).toBeInstanceOf(SentAndNotYetSeen);
+    expect(String(refused.message)).toMatch(/^this proposal was sent and the chain has not shown it yet/u);
+    expect(d.log.filter((l) => /^(approve|carry)/u.test(l))).toEqual([]);
+  });
+
+  it('an approval the builder refuses as made already leaves the proposal where the chain counts it: enough approvals, and it is carried out', async () => {
+    /* The service still counts one; the chain counts the approval this signer already made, and the bar is two. */
+    const d = aGovernedDevice({
+      held: true, bar: 2, alreadyApproved: true, standing: { approvalCount: 1 },
+      chain: (refused) => ({ held: 'open', approvals: refused ? 2 : 1, raisedAt: 1 }),
+    });
+    const out = await changeThresholdOnDevice(d.doors, change);
+    /* RED WHEN: the count after "already approved" is the service's - a proposal the chain has enough approvals for is left waiting. */
+    expect(out.state).toBe('done');
+    expect(d.log.filter((l) => /^(approve|carry)/u.test(l))).toEqual(['carry prp_gov setThreshold']);
+  });
+
+  it('an approval the builder refuses as made already leaves the proposal where the chain counts it: too few approvals, and it is left for the others', async () => {
+    /* The service says the bar is met; the chain counts one of the two needed. */
+    const d = aGovernedDevice({
+      held: true, bar: 2, alreadyApproved: true, standing: { approvalCount: 2 },
+      chain: () => ({ held: 'open', approvals: 1, raisedAt: 1 }),
+    });
+    const out = await changeThresholdOnDevice(d.doors, change);
+    /* RED WHEN: the count after "already approved" is the service's - a proposal short of approvals on the chain is carried out. */
+    expect(out.state).toBe('waiting-for-approvals');
+    expect(d.log.filter((l) => /^(approve|carry)/u.test(l))).toEqual([]);
   });
 });

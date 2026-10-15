@@ -201,6 +201,8 @@ export type VaultAsk =
   }
   | { id: number; network: string; ask: 'period-total'; accountState: string; total: PeriodTotalAskOnTheWire }
   | { id: number; network: string; ask: 'run-charged'; accountState: string; proposal: string }
+  /* The head the latest recovery carried out wrote, read off one state of the account by its own reader and key. */
+  | { id: number; network: string; ask: 'last-recovery'; accountState: string }
   | { id: number; network: string; ask: 'anchor-heads'; after: readonly HeadStepAsked[]; holders?: readonly BatchHolders[] }
   /* The tag this signer's seat anchors under in the account, by the account's own functions. */
   | { id: number; network: string; ask: 'anchor-tag'; account: string; material: SignerMaterial }
@@ -221,7 +223,7 @@ export type VaultAsk =
   | {
     id: number; network: string; ask: 'recover-anchor'; account: string; material: SignerMaterial; chain: AccountCallChainOnTheWire;
     previous: string; batch: string; held: Pick<BatchHolders, 'approvals' | 'signerRoot'>;
-    resumesFrom: string; latest: string; proposal: string; proposalSalt: string;
+    resumesFrom: string; latest: string; lastRecovery: string; proposal: string; proposalSalt: string;
   }
   /* What a call to the account alone is built on, at one block, read in the worker at the indexer the wallet names. */
   | { id: number; network: string; ask: 'account-call-chain'; account: string; indexer: { indexerUri: string; indexerWsUri: string } };
@@ -250,7 +252,7 @@ export type VaultAnswer =
   | Answered<'events-of', { events: EventOnTheWire[] }>
   | Answered<'created-by', { found: { transactionHash: string; events: EventOnTheWire[] } | null }>
   | Answered<'own-seat', { seat: string }>
-  | Answered<'founding-seat', { seat: string; scope: string }>
+  | Answered<'founding-seat', { seat: string; scope: string; publicKey: string }>
   | Answered<'creation-again', { account: string; deploy: string; insert: string }>
   | Answered<'pay-key-standing', { standing: PayKeyStandingOnTheWire }>
   | Answered<'secret-is-the-vaults', { matches: boolean }>
@@ -266,6 +268,7 @@ export type VaultAnswer =
   | Answered<'clear-run', { tx: string | null; spent: string | null }>
   | Answered<'period-total', { spent: string }>
   | Answered<'run-charged', { standing: RunChargeStanding }>
+  | Answered<'last-recovery', { head: string }>
   | Answered<'anchor-heads', { after: string[]; seats: (string[] | null)[]; holderSeats: (string[] | null)[] }>
   | Answered<'anchor-tag', { tag: string }>
   | Answered<'seat-openings', SeatOpeningsAnswer>
@@ -292,8 +295,8 @@ export type VaultRequest = Without<VaultAsk>;
  * **A VAULT AS THE CHAIN HOLDS IT, AS THIS DEVICE READ IT.** `onChain: false`
  * when the indexer holds no state for the address. `notes` and `everCreated`
  * are commitments, 64 hex characters each; `notes` is absent when the state was
- * not laid out the way this build's vault is (`notesWhy` says why). `authority`
- * is who holds the vault; `account` the company account it is pinned to;
+ * not laid out the way this build's vault is (`notesWhy` says why). `account`
+ * is the company account it is pinned to;
  * `started` whether its first secret is set and every sealed copy written.
  */
 export type VaultOnChainOnTheWire =
@@ -305,7 +308,6 @@ export type VaultOnChainOnTheWire =
     readonly notesFromThisBuild: boolean;
     readonly notesWhy?: string;
     readonly everCreated: readonly string[];
-    readonly authority: { readonly committee: ReadonlyArray<{ readonly tag: string; readonly value: string }>; readonly threshold: number } | null;
     readonly account: string | null;
     readonly started: boolean;
     /** What it holds in public money, read off its state; absent, with why, when that could not be read. */
@@ -391,7 +393,7 @@ export interface VaultBuilderClient {
    * the account seats, and the scope it was made under, both worked out with
    * the chain's own function.
    */
-  foundingSeat?(material: { signingSecret: string; blinding: string }): Promise<{ seat: string; scope: string }>;
+  foundingSeat?(material: { signingSecret: string; blinding: string }): Promise<{ seat: string; scope: string; publicKey: string }>;
   /** A company's deploy and its signed second step carried again in fresh transactions, as base64. */
   creationAgain?(input: { deploy: string; insert: string }): Promise<{ account: string; deploy: string; insert: string }>;
   /** Where the pay-record key stands on the account (its state as base64) for the signer whose secret is given. */
@@ -506,6 +508,12 @@ export interface VaultBuilderClient {
    */
   runCharged(input: { accountState: string; proposal: string }): Promise<RunChargeStanding>;
   /**
+   * The head the latest recovery carried out wrote (hex), thirty-two zero bytes before any, read off the account's
+   * state (base64) by the account's own reader and key. Reads no chain: the caller reads the state at the indexer the
+   * person's own wallet names.
+   */
+  lastRecovery(input: { accountState: string }): Promise<string>;
+  /**
    * The head after each batch asked about, each made with the account's own `anchorHeadOf` over `anchorHeldOf` of the
    * batch and the holders its header names, and the seats those holders' leaves name when they make the root they name
    * (null when they do not); and the same seats for each of `holders`, as a directory version's leaf names them. Hex.
@@ -556,14 +564,16 @@ export interface VaultBuilderClient {
    * **A RECOVERY OF THE RECORD ANCHOR, BUILT AND PROVED HERE**, as an anchor
    * call: the recovery's batch folded into the head this device read, resuming
    * from the head `resumesFrom` its quorum approved under `proposal`, raised
-   * with `proposalSalt`, before `latest`; refused unless that proposal is
+   * with `proposalSalt`, before `latest`, while the head the latest recovery
+   * carried out wrote is still `lastRecovery`; refused unless that proposal is
    * approved and the holders named still hold the account. `placement` is the
    * section of its transaction the call lands in, read off it: in the fallible
    * one, a carrying out another anchor beats pays its fee.
    */
   recoverAnchor(input: {
     account: string; material: SignerMaterial; chain: AccountCallChainOnTheWire; previous: string; batch: string;
-    held: Pick<BatchHolders, 'approvals' | 'signerRoot'>; resumesFrom: string; latest: string; proposal: string; proposalSalt: string;
+    held: Pick<BatchHolders, 'approvals' | 'signerRoot'>; resumesFrom: string; latest: string; lastRecovery: string;
+    proposal: string; proposalSalt: string;
   }): Promise<{ tx: string; placement: AnchorPlacement }>;
   /**
    * **WHAT A CALL TO THE ACCOUNT ALONE IS BUILT ON**, read in this worker at one
@@ -658,7 +668,7 @@ export function vaultBuilderOver(worker: WorkerLike, network: string): VaultBuil
     ownSeat: async (material) => (await ask({ ask: 'own-seat', material })).seat,
     foundingSeat: async (material) => {
       const a = await ask({ ask: 'founding-seat', material });
-      return { seat: a.seat, scope: a.scope };
+      return { seat: a.seat, scope: a.scope, publicKey: a.publicKey };
     },
     creationAgain: async (input) => {
       const a = await ask({ ask: 'creation-again', ...input });
@@ -687,6 +697,7 @@ export function vaultBuilderOver(worker: WorkerLike, network: string): VaultBuil
     },
     periodTotal: async (input) => (await ask({ ask: 'period-total', ...input })).spent,
     runCharged: async (input) => (await ask({ ask: 'run-charged', ...input })).standing,
+    lastRecovery: async (input) => (await ask({ ask: 'last-recovery', ...input })).head,
     anchorHeads: async (input) => {
       const a = await ask({ ask: 'anchor-heads', ...input });
       return { after: a.after, seats: a.seats, holderSeats: a.holderSeats };

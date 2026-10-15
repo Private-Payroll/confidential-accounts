@@ -71,7 +71,12 @@ describe('ASKING THE PERSON\'S WALLET TO SIGN THEIR RECORDS KEY, AND TO SAY WHO 
   });
 
   it('HANDS THE WALLET THE INVITATION IT IS GIVEN, WHOLE, SO A WALLET THAT KEPT NO ACCOUNT CAN KEEP THE ONE IT NAMES', async () => {
-    const invitedBy = { committeeKey: { tag: 'schnorr' as const, value: '1d'.repeat(32) }, statement: { account: ACCOUNT as string, signingKey: '2b'.repeat(32), wrappingKey: '3c'.repeat(32), seat: '7c'.repeat(32), signature: '4d'.repeat(64) } };
+    const invitedBy = {
+      committeeKey: { tag: 'schnorr' as const, value: '1d'.repeat(32) },
+      statement: { account: ACCOUNT as string, signingKey: '2b'.repeat(32), wrappingKey: '3c'.repeat(32), seat: '7c'.repeat(32), signature: '4d'.repeat(64) },
+      /* The inviter's own seat's opening travels whole too: the wallet checks it against the inviter's seat. */
+      opening: { publicKey: '5e'.repeat(32), scope: '6f'.repeat(32), blinding: '7a'.repeat(32), walletKey: { tag: 'schnorr' as const, value: '1d'.repeat(32) }, salt: '8b'.repeat(32) },
+    };
     const w = walletAnswering(honestly);
     await askWalletToSignRecordsKey(w.view, WALLET, { ...input, invitedBy });
     /* RED WHEN: the invitation is dropped or changed on the way, and the wallet cannot tell which account the inviter named. */

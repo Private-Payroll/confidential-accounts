@@ -34,6 +34,7 @@ import { newSigningKeypair, newWrappingKeypair, newBlinding, type Hex } from '..
 import { storedSignerLeaf } from '../../../src/core/signer-leaf.js';
 import { sealedProposalFor } from '../../../src/testing/sealed-records.js';
 import { newSeatInvitation, proveSeatKeys } from '../../../src/core/seat-invite-proof.js';
+import { pureCircuits } from '../../../contracts/managed/contract/index.js';
 
 /* ── the builder, over stand-ins for the contract's pure functions ─────────── */
 
@@ -45,7 +46,11 @@ const accountPure = {
   retrySaltOf: (leg: Uint8Array, fresh: Uint8Array) => sha(Buffer.from('retry-salt'), leg, fresh),
   signerAddPayload: (leaf: Uint8Array) => sha(Buffer.from('seat'), leaf),
   setThresholdPayload: (t: bigint) => sha(Buffer.from('threshold'), t),
-  recoverAnchorPayload: (resumesFrom: Uint8Array, latest: bigint) => sha(Buffer.from('recover'), resumesFrom, latest),
+  /* Asked of the account's own function first, so a call with other arguments than the account takes is refused as the account refuses it. */
+  recoverAnchorPayload: (...args: [Uint8Array, bigint, Uint8Array]) => {
+    pureCircuits.recoverAnchorPayload(...args);
+    return sha(Buffer.from('recover'), ...args);
+  },
   noVault: () => new Uint8Array(32).fill(0xfe),
   /* What an approval of a run also reads: the pay-record key's commitment and where it is kept. */
   payKeyCommitmentOf: (key: Uint8Array) => sha(Buffer.from('pay-key-commitment'), key),
@@ -85,9 +90,9 @@ const RUN: OpenedRound = {
   made: { ...RUN_MADE.made, raising: { period: '2026-09', knownRounds: [], knownLeaves: [], knownNonces: [] } },
 };
 const SEAT: OpenedRound = { ...record(payloadOf(seat), accountPure.noVault()), governance: seat, half: { ...half, changeAmount: '0' } };
-const recovery = { kind: 'recover-anchor', resumesFrom: LEAF, latest: '1800003600' } as const;
+const recovery = { kind: 'recover-anchor', resumesFrom: LEAF, latest: '1800003600', lastRecovery: '00'.repeat(32) } as const;
 const RECOVERY: OpenedRound = {
-  ...record(accountPure.recoverAnchorPayload(bytes(LEAF), 1800003600n), accountPure.noVault()), governance: recovery, half: { ...half, changeAmount: '0' },
+  ...record(accountPure.recoverAnchorPayload(bytes(LEAF), 1800003600n, new Uint8Array(32)), accountPure.noVault()), governance: recovery, half: { ...half, changeAmount: '0' },
 };
 const approveRecovery: GovernedCallOrder = { circuit: 'approve', proposal: RECOVERY.chainId, of: { governance: recovery, proposalSalt: SALT } };
 const THREE: OpenedRound = { ...record(payloadOf(three), accountPure.noVault()), governance: three, half: { ...half, changeAmount: '0' } };
@@ -190,9 +195,10 @@ describe('THE BUILDER PROVES ONLY WHAT THIS DEVICE READ', () => {
     ['leaf', 'amendSigner', { ...seatIt, proposal: RUN.chainId }, noHalf(RUN)],
     ['leaf', 'approve', { ...approveSeat, proposal: RUN.chainId }, noHalf(RUN)],
     ['threshold', 'setThreshold', { ...setIt, threshold: '2' }, noHalf(THREE)],
-    /* A recovery from another head, or with another last time, than the company's record of it: never called a leaf. */
+    /* A recovery from another head, with another last time, or after another latest recovery, than the company's record of it: never called a leaf. */
     ['recovery', 'approve', { ...approveRecovery, of: { governance: { ...recovery, resumesFrom: OTHER }, proposalSalt: SALT } }, noHalf(RECOVERY)],
     ['recovery', 'approve', { ...approveRecovery, of: { governance: { ...recovery, latest: '1800003601' }, proposalSalt: SALT } }, noHalf(RECOVERY)],
+    ['recovery', 'approve', { ...approveRecovery, of: { governance: { ...recovery, lastRecovery: OTHER }, proposalSalt: SALT } }, noHalf(RECOVERY)],
     ['run', 'propose', { ...raiseRun, run: { ...run, root: OTHER } }, RUN],
     ['run vault', 'propose', { ...raiseRun, run: { ...run, vault: OTHER } }, RUN],
     ['asset', 'propose', { ...raiseRun, half: { ...raiseRun.half, assetId: OTHER } }, RUN],

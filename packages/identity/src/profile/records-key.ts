@@ -291,6 +291,95 @@ export function directoryEntrySignedBy(
   }
 }
 
+/* ------------------------------------------------------------ the seat's opening */
+
+/**
+ * The domain a seat's blinding is hashed in. Changing it changes the blinding
+ * every new seat is made with, so no opening made before would prove its key.
+ */
+export const SEAT_BLINDING_DOMAIN = 'confidential-accounts/seat-blinding/v1';
+
+/** A person's wallet key for one company, as the company's account lists such keys: a schnorr key's 32 bytes. */
+export interface WalletKey { readonly tag: string; readonly value: string }
+
+/**
+ * **A SEAT'S OPENING OF ITS OWN LEAF**: the leaf is the account's own
+ * `signerLeaf(publicKey, blinding, scope)`, and the blinding is
+ * `seatBlinding(walletKey, salt)`. So the leaf the signers approved when they
+ * seated it commits to the wallet key of the person who holds it, and the
+ * opening shows which key that is to whoever holds the opening, which only
+ * the company's members are given. Every part is lower-case hex.
+ */
+export interface SeatOpening {
+  readonly publicKey: string;
+  readonly scope: string;
+  readonly blinding: string;
+  readonly walletKey: WalletKey;
+  readonly salt: string;
+}
+
+/**
+ * The leaf the account's own `signerLeaf` makes of an opening's public key,
+ * blinding and scope, as lower-case hex; null where it was not worked out.
+ * Supplied by whoever can run the account's compiled functions: the service,
+ * a device's vault worker, the wallet.
+ */
+export type LeafOf = (opening: SeatOpening) => string | null;
+
+const schnorrKey = (k: unknown): k is WalletKey => typeof k === 'object' && k !== null
+  && (k as WalletKey).tag === 'schnorr' && typeof (k as WalletKey).value === 'string' && HEX64.test((k as WalletKey).value);
+
+/**
+ * **A SEAT'S BLINDING: THE HASH OF ITS WALLET KEY UNDER A FRESH SALT.** The one
+ * statement of how a blinding is made; every device that seats a person makes
+ * it here, with a salt of 32 random bytes made on that device for that leaf
+ * alone. The salt keeps the leaf hiding: without it nobody can tell from the
+ * leaf whose key it commits to. Throws on a key that is not a schnorr key or a
+ * salt that is not 32 bytes of lower-case hex.
+ */
+export function seatBlinding(walletKey: WalletKey, salt: string): string {
+  if (!schnorrKey(walletKey) || typeof salt !== 'string' || !HEX64.test(salt)) {
+    throw new Error('a seat\'s blinding is made from a schnorr wallet key and a 32-byte salt, and this is not both. Nothing was made.');
+  }
+  const enc = new TextEncoder();
+  const domain = enc.encode(SEAT_BLINDING_DOMAIN);
+  const tag = enc.encode(walletKey.tag);
+  const out = new Uint8Array(domain.length + 1 + tag.length + 1 + KEY_BYTES * 2);
+  out.set(domain, 0);
+  out.set(tag, domain.length + 1);
+  out.set(fromHex(walletKey.value), domain.length + 1 + tag.length + 1);
+  out.set(fromHex(salt), domain.length + 1 + tag.length + 1 + KEY_BYTES);
+  return toHex(sha256(out));
+}
+
+/**
+ * **THE WALLET KEY A SEAT'S OPENING PROVES FOR THAT SEAT, OR NULL.** The one
+ * statement every reader of a seat's wallet key asks: the opening is believed
+ * only where its blinding is `seatBlinding` of the wallet key it names and its
+ * salt, and the account's own `signerLeaf` over it (`leafOf`) is `seat`, the
+ * leaf the account holds. The signers approved that leaf when they seated it,
+ * so the key it proves is the one they seated, whoever hands the opening over;
+ * an opening for any other key or any other seat proves nothing. Whether the
+ * account holds the seat now is the caller's question. Never throws.
+ */
+export function walletKeyProvedBy(opening: unknown, seat: string, leafOf: LeafOf | null | undefined): WalletKey | null {
+  const o = opening as Partial<SeatOpening> | null | undefined;
+  if (typeof leafOf !== 'function' || typeof seat !== 'string' || typeof o !== 'object' || o === null) return null;
+  if (![o.publicKey, o.scope, o.blinding, o.salt].every((x) => typeof x === 'string' && HEX64.test(x)) || !schnorrKey(o.walletKey)) return null;
+  const opened: SeatOpening = {
+    publicKey: o.publicKey!, scope: o.scope!, blinding: o.blinding!, salt: o.salt!,
+    walletKey: { tag: 'schnorr', value: o.walletKey.value },
+  };
+  try {
+    if (seatBlinding(opened.walletKey, opened.salt) !== opened.blinding) return null;
+    const leaf = leafOf(opened);
+    return typeof leaf === 'string' && leaf.toLowerCase() === seat.toLowerCase()
+      ? Object.freeze({ tag: 'schnorr', value: opened.walletKey.value }) : null;
+  } catch {
+    return null;
+  }
+}
+
 /* ------------------------------------------------------------------ the ask */
 
 /** What this wallet hands back for a records-key ask. Everything in it is public. */
@@ -340,13 +429,14 @@ const frozenKeys = (keys: readonly { readonly tag: string; readonly value: strin
   Object.freeze(keys.map((k) => Object.freeze({ tag: k.tag, value: k.value.toLowerCase() })));
 
 /** What can be wrong with the invitation a page hands over for a wallet that has kept no account for the company. */
-export type InvitationRefusal = 'no-invitation' | 'other-account' | 'not-signed' | 'inviter-not-on-account';
+export type InvitationRefusal = 'no-invitation' | 'other-account' | 'not-signed' | 'inviter-not-on-account' | 'not-the-inviters-seat';
 
 /**
  * **WHAT A PERSON IS TOLD FOR EACH, AND WHAT TO DO.** A missing invitation is
- * opened again; one that does not match cannot be repaired by opening it again,
- * so the person asks the inviter for a new one and compares the company's
- * fingerprint with them.
+ * opened again, and so is an inviter whose seat is not on the chain yet; one
+ * that does not match cannot be repaired by opening it again, so the person
+ * asks the inviter for a new one and compares the company's fingerprint with
+ * them.
  */
 export const INVITATION_REFUSAL: Readonly<Record<InvitationRefusal, string>> = Object.freeze({
   'no-invitation':
@@ -363,32 +453,40 @@ export const INVITATION_REFUSAL: Readonly<Record<InvitationRefusal, string>> = O
     'The signer the invitation names is not on this company\'s account, as this wallet read it from the network, so nothing '
     + 'has been signed. If they joined only a minute ago, wait a minute and open this again; otherwise ask the person who '
     + 'invited you for a new invitation, and compare the company\'s fingerprint with them when you open it.',
+  'not-the-inviters-seat':
+    'This invitation does not prove that the seat it names was made for the signer who invited you, so nothing has been '
+    + 'signed. Ask the person who invited you for a new invitation, and compare the company\'s fingerprint with them when you '
+    + 'open it. If this keeps happening, update your wallet.',
 });
 
 /**
  * **WHY THE INVITATION A PAGE HANDED OVER DOES NOT NAME THIS ACCOUNT**, as this
  * wallet reads it, or null when it does. The inviting signer's entry must name
- * the account the ask names, be signed by the committee key the invitation
- * names for this company's label and that account, and that key and the
- * inviter's seat must both be on the account as this wallet read it off the
- * chain (`seats`).
+ * the account the ask names and be signed by the wallet key the invitation
+ * names for this company's label and that account; the inviter's seat must be
+ * on the account as this wallet read it off the chain (`seats`); and the
+ * inviter's own opening, carried in the invitation, must prove that wallet key
+ * for that seat (`walletKeyProvedBy`, with `leafOf` the account's own
+ * `signerLeaf` as this wallet runs it). The account's committee is not asked:
+ * it holds the super admins' keys, and an inviter need not be one.
  *
  * **IT NEVER SETS THE ACCOUNT ON ITS OWN.** Everything it checks reaches the
  * wallet through the page, and a service could deploy a second account
- * carrying the label under a committee of its own. What decides is the person:
- * the screen shows the company's fingerprint, read off the chain, and the
- * account is kept only when they confirm it matches the one the inviter gave
- * them directly.
+ * carrying the label under seats of its own. What decides is the person: the
+ * screen shows the company's fingerprint, read off the chain, and the account
+ * is kept only when they confirm it matches the one the inviter gave them
+ * directly.
  */
-export function whyTheInvitationDoesNotNameIt(request: RecordsKeyRequest, seats: AccountSeats): InvitationRefusal | null {
+export function whyTheInvitationDoesNotNameIt(
+  request: RecordsKeyRequest, seats: AccountSeats, leafOf: LeafOf | null | undefined,
+): InvitationRefusal | null {
   const invited = request.invitedBy;
   if (invited === undefined) return 'no-invitation';
   if (invited.statement.account !== request.account) return 'other-account';
   if (!directoryEntrySignedBy(request.company, request.account, invited.committeeKey, invited.statement)) return 'not-signed';
-  const sameKey = (k: { readonly tag: string; readonly value: string }): boolean =>
-    k.tag.toLowerCase() === invited.committeeKey.tag.toLowerCase()
-    && k.value.toLowerCase() === invited.committeeKey.value.toLowerCase();
-  if (!seats.committee.some(sameKey) || !seats.seats.includes(invited.statement.seat)) return 'inviter-not-on-account';
+  if (!seats.seats.includes(invited.statement.seat)) return 'inviter-not-on-account';
+  const proved = walletKeyProvedBy(invited.opening, invited.statement.seat, leafOf);
+  if (proved === null || proved.value !== invited.committeeKey.value.toLowerCase()) return 'not-the-inviters-seat';
   return null;
 }
 
@@ -404,6 +502,8 @@ export function recordsKeyAnswerFor(
   identity: Identity, request: RecordsKeyRequest, seats: AccountSeats, at: number, vault?: VaultHolders,
   /** The account this wallet pinned for the company when it created it, or null when it pinned none. */
   pinned: AccountAddress | null = null,
+  /** The account's own `signerLeaf`, as this wallet runs it: what the inviter's opening is checked against. */
+  leafOf: LeafOf | null = null,
 ): RecordsKeyAnswer {
   if (!usableOrigin(request.requester.origin)) {
     throw new RecordsKeyRefused('This wallet could not tell who asked, so nothing has been signed.');
@@ -420,7 +520,7 @@ export function recordsKeyAnswerFor(
    * then is anything signed for it.
    */
   if (pinned === null) {
-    const why = whyTheInvitationDoesNotNameIt(request, seats);
+    const why = whyTheInvitationDoesNotNameIt(request, seats, leafOf);
     throw new RecordsKeyRefused(why === null
       ? 'This wallet has not kept an account for this company yet, so nothing has been signed. Compare the company\'s '
         + 'fingerprint with the one the person who invited you gave you, and confirm it first.'

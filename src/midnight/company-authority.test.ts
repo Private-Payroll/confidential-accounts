@@ -4,13 +4,12 @@ import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import * as L from '@midnightntwrk/ledger-v9';
 import {
-  authorityView, buildAccountHandover, committeeLooserThanItsContract, everySignerNeeded,
-  type AccountHandoverLedger,
+  authorityView, buildCommitteeChange, type CommitteeChangeLedger,
 } from './company-authority.js';
 import { readContractAuthority, replaceAuthorityOf, type AuthorityRead } from './ledger.js';
-import { committeeReplacement, type Committee, type CommitteeKey } from './vault-committee.js';
-import { readProvenTransaction } from '../wiring/proven-submission.js';
-import { refusalForHandover, refusalToPutMoneyIn } from '../wiring/vault-submission.js';
+import { committeeReplacement, type Committee } from './vault-committee.js';
+import { committeeUpdateOf, type CommitteeUpdateLedger } from 'midnight-identity/profile/committee-sign';
+import { refusalToPutMoneyIn, type ContractAnswer } from '../wiring/vault-submission.js';
 
 /*
  * **THE ONE GATE, ASKED ABOUT THE ACCOUNT.** The vault half is handed a read
@@ -19,27 +18,17 @@ import { refusalForHandover, refusalToPutMoneyIn } from '../wiring/vault-submiss
  * the same rule; it is now the function every door actually asks.
  */
 const moneyIn = (
-  accountRead: AuthorityRead, to: Committee, circuits: string | null, heldHere: CommitteeKey[] = [],
-  accountBornHeld = true,
+  accountRead: ContractAnswer, _to: Committee, circuits: string | null, accountBornHeld = true,
 ): string | null => refusalToPutMoneyIn({
   label: 'v',
   what: 'no money goes in',
-  vault: {
-    state: 'read',
-    address: 'v',
-    authority: {
-      committee: to.committee.map((k) => ({ ...k })), threshold: to.threshold,
-      counter: 1n, shape: 'committee', hasDuplicateMembers: false,
-    },
-  },
+  vault: { state: 'answered' },
   vaultCircuits: null,
   pinnedAccount: 'acc',
   started: true,
   companyAccount: 'acc',
   account: accountRead,
   accountCircuits: circuits,
-  committee: to,
-  heldHere,
   bornHeld: { vault: true, account: accountBornHeld },
 })?.why ?? null;
 
@@ -56,7 +45,6 @@ const be = (n: number) => { const b = new Uint8Array(32); b[31] = n; return b; }
 const sk = (n: number) => L.signingKeyFromBip340(be(n));
 const vk = (n: number) => L.signatureVerifyingKey(sk(n));
 const sorted = (ks: { tag: string; value: string }[]) => [...ks].sort((a, b) => (a.value < b.value ? -1 : 1));
-const Lh = L as unknown as AccountHandoverLedger;
 
 const NOW = new Date();
 const NOW_SECONDS = BigInt(Math.floor(NOW.getTime() / 1000));
@@ -140,9 +128,9 @@ describe('ONE REFUSAL FOR EVERY REPLACEMENT OF A CONTRACT\'S RULES', () => {
 
   it('NO SHIPPING FILE MAKES A REPLACEMENT OF A CONTRACT\'S RULES ANYWHERE BUT THE ONE PLACE', () => {
     /* RED WHEN: any file the product ships constructs `ReplaceAuthority` anywhere but inside `replaceAuthorityOf`
-     * and, in the wallet, inside `committeeSignaturesFor` - reverting `committeeReplacement` or
-     * `buildMaintenanceInstruction` to their own construction makes a third - or names the class in code anywhere
-     * but the four files listed below, which is how an alias would reach it.
+     * and, in the wallet's package, inside `committeeUpdateOf` - reverting `committeeReplacement` or
+     * any other builder to its own construction makes a third - or names the class in code anywhere but the three
+     * files listed below, which is how an alias would reach it.
      * WHAT IT CANNOT SEE: a name assembled at run time, or a construction in a helper that is not exported and is
      * declared after the named function. It reads source text, and says so. */
     const roots = ['src', 'scripts', 'packages/identity/src', 'packages/web-shared/src', 'apps/wallet/src'];
@@ -190,7 +178,7 @@ describe('ONE REFUSAL FOR EVERY REPLACEMENT OF A CONTRACT\'S RULES', () => {
      */
     expect(named.sort()).toEqual([
       'packages/identity/src/profile/committee-sign.ts',
-      'src/midnight/authority-replacement.ts', 'src/midnight/ledger.ts', 'src/midnight/vault-committee.ts',
+      'src/midnight/authority-replacement.ts', 'src/midnight/vault-committee.ts',
     ]);
     expect(sdk).toEqual([]);
     expect(hits).toHaveLength(2);
@@ -199,7 +187,7 @@ describe('ONE REFUSAL FOR EVERY REPLACEMENT OF A CONTRACT\'S RULES', () => {
     const walletText = readFileSync(join(REPO, 'packages/identity/src/profile/committee-sign.ts'), 'utf8');
     const walletAt = Number(hits.find((h) => h.startsWith('packages/'))!.split(':')[1]);
     const walletBefore = walletText.split('\n').slice(0, walletAt).join('\n');
-    expect(walletBefore.lastIndexOf('export function committeeSignaturesFor'))
+    expect(walletBefore.lastIndexOf('export function committeeUpdateOf'))
       .toBeGreaterThan(walletBefore.lastIndexOf('\nexport function '));
     hits.splice(hits.findIndex((h) => h.startsWith('packages/')), 1);
     const builderText = readFileSync(join(REPO, 'src/midnight/authority-replacement.ts'), 'utf8');
@@ -209,10 +197,110 @@ describe('ONE REFUSAL FOR EVERY REPLACEMENT OF A CONTRACT\'S RULES', () => {
   });
 });
 
-describe('A COMPANY ACCOUNT HANDED FROM THE TEMPORARY KEY TO ITS COMMITTEE, ON THE LEDGER\'S OWN STATE MACHINE', () => {
-  const temporary = sk(9);
-  const committee = { committee: sorted([vk(1), vk(2)]), threshold: 2 };
+describe('A COMMITTEE UPDATE HAS ONE BUILDER', () => {
+  const P = L as never;
+  const three = [vk(1), vk(2), vk(3)];
+  it('the update a vault is handed over with is the one a wallet signs: built by the same function, never a second', () => {
+    /* RED WHEN: `committeeReplacement` builds its own update again rather than through `committeeUpdateOf`, which the
+     * wallet signs with, so the bytes a device counts and the bytes a wallet signs could drift apart. */
+    const code = readFileSync(join(REPO, 'src/midnight/vault-committee.ts'), 'utf8')
+      .replace(/\/\*[\s\S]*?\*\//gu, '').replace(/(^|[^:])\/\/.*$/gmu, '$1');
+    expect(code).toMatch(/committeeUpdateOf\(/u);
+    expect(code).not.toMatch(/new\s+[\w.]*\b(MaintenanceUpdate|ReplaceAuthority|ContractMaintenanceAuthority)\s*\(/u);
+    const vault = 'ab'.repeat(32);
+    const to = { committee: sorted(three), threshold: 2 };
+    const device = (committeeReplacement(P, { vault, counter: 7n, to }) as unknown as { dataToSign: Uint8Array }).dataToSign;
+    const wallet = committeeUpdateOf(L as unknown as CommitteeUpdateLedger, { address: vault, counter: 7n, to }).dataToSign;
+    expect(Buffer.from(device).equals(Buffer.from(wallet))).toBe(true);
+  });
+});
 
+describe('THE SERVICE PUTS A CONTRACT\'S UPDATE TOGETHER FROM THE SIGNATURES THAT VERIFY, ON THE WALLET\'S OWN BYTES', () => {
+  const Lc = L as unknown as CommitteeChangeLedger;
+  const walletBytes = (address: string, counter: bigint, to: Committee): Uint8Array =>
+    committeeUpdateOf(L as unknown as CommitteeUpdateLedger, { address, counter, to }).dataToSign;
+  const applied = async (ls: L.LedgerState, unproven: unknown): Promise<L.LedgerState> => {
+    const proven = await (unproven as L.UnprovenTransaction).prove(neverAsked as never, L.CostModel.initialCostModel());
+    const [after, result] = ls.apply(proven.bind().wellFormed(ls, strictness(), NOW), new L.TransactionContext(ls, blockContext));
+    expect(result.type).toBe('success');
+    return after;
+  };
+
+  it('no shipping file outside the wallet\'s own package builds a maintenance update', () => {
+    /* RED WHEN: a builder of a committee update other than `committeeUpdateOf` comes back anywhere the service, the
+     * page or a script ships - a third builder could sign or count different bytes from the ones a wallet signs. */
+    const roots = ['src', 'scripts', 'packages/web-shared/src', 'apps/web/src'];
+    const hits: string[] = [];
+    const walk = (dir: string) => {
+      for (const name of readdirSync(dir)) {
+        if (name === 'node_modules' || name === 'lib' || name === 'dist') continue;
+        const path = join(dir, name);
+        if (statSync(path).isDirectory()) { walk(path); continue; }
+        if (!/\.(ts|tsx|mjs|js)$/u.test(name) || /\.test\.(ts|tsx)$/u.test(name)) continue;
+        const code = readFileSync(path, 'utf8').replace(/\/\*[\s\S]*?\*\//gu, '').replace(/(^|[^:])\/\/.*$/gmu, '$1');
+        if (/new\s+[\w.]*\bMaintenanceUpdate\s*\(/u.test(code)) hits.push(path.slice(REPO.length));
+      }
+    };
+    for (const r of roots) walk(join(REPO, r));
+    expect(hits).toEqual([]);
+  });
+
+  it('counts each place once, only where its signature verifies under that place\'s key, and sends what the ledger accepts', async () => {
+    /* RED WHEN: a signature that does not verify under the key at the place it names counts - `have` is then 3 and the
+     * fee is paid for an update the chain refuses; or one place counts twice. */
+    const now = [vk(1), vk(2), vk(3)];
+    const { ls, address } = deployedUnder(now, 2);
+    const read = await readFrom(ls, address);
+    const to = { committee: sorted([vk(4), vk(5)]), threshold: 2 };
+    const bytes = walletBytes(address, 0n, to);
+    const good0 = L.signData(sk(1), bytes);
+    const built = buildCommitteeChange(Lc, {
+      read, to, label: 'vault', network: NET, ttl: ttl(),
+      signatures: [
+        { index: 1, signature: L.signData(sk(3), bytes) },
+        { index: 0, signature: good0 },
+        { index: 0, signature: good0 },
+        { index: 7, signature: good0 },
+        { index: 2, signature: L.signData(sk(3), walletBytes(address, 1n, to)) },
+        { index: 2, signature: L.signData(sk(3), bytes) },
+      ],
+    });
+    expect(built).toMatchObject({ have: 2, required: 2, indexesSigned: [0, 2] });
+    expect(built.unproven).not.toBeNull();
+    const after = await readFrom(await applied(ls, built.unproven), address);
+    expect(after).toMatchObject({ state: 'read', authority: { threshold: 2, counter: 1n } });
+    expect(after.state === 'read' && sorted(after.authority.committee.map((k) => ({ ...k })))).toEqual(to.committee);
+  });
+
+  it('puts nothing together below the threshold of the committee holding the contract now', async () => {
+    /* RED WHEN: the threshold counted is the one being installed rather than the one on the chain now. */
+    const { ls, address } = deployedUnder([vk(1), vk(2), vk(3)], 2);
+    const read = await readFrom(ls, address);
+    const to = { committee: sorted([vk(4)]), threshold: 1 };
+    const built = buildCommitteeChange(Lc, {
+      read, to, label: 'vault', network: NET, ttl: ttl(),
+      signatures: [{ index: 1, signature: L.signData(sk(2), walletBytes(address, 0n, to)) }],
+    });
+    expect(built).toMatchObject({ have: 1, required: 2, indexesSigned: [1], unproven: null });
+  });
+
+  it('builds the update of a contract that already holds the committee it installs, so its counter moves too', async () => {
+    /* RED WHEN: a contract already at the committee asked for is refused - a change then leaves its counter where an
+     * older signed update can still land on it. */
+    const committee = sorted([vk(1), vk(2)]);
+    const { ls, address } = deployedUnder(committee, 1);
+    const read = await readFrom(ls, address);
+    const to = { committee, threshold: 1 };
+    const built = buildCommitteeChange(Lc, {
+      read, to, label: 'vault', network: NET, ttl: ttl(),
+      signatures: [{ index: 0, signature: L.signData(committee[0]!.value === vk(1).value ? sk(1) : sk(2), walletBytes(address, 0n, to)) }],
+    });
+    expect(built.unproven).not.toBeNull();
+    expect(await readFrom(await applied(ls, built.unproven), address)).toMatchObject({ state: 'read', authority: { counter: 1n } });
+  });
+});
+
+describe('A COMPANY ACCOUNT\'S ADDRESS, ON THE LEDGER\'S OWN STATE MACHINE', () => {
   it('THE ACCOUNT CANNOT BE DEPLOYED HOLDING KEYS WORKED OUT FROM ITS OWN ADDRESS: THE ADDRESS DEPENDS ON THE AUTHORITY', () => {
     /* Why the account takes the same two steps as a vault. A committee key is derived from the company's address,
      * and the address is a hash over the deploy, authority included - measured here by changing only the
@@ -233,86 +321,6 @@ describe('A COMPANY ACCOUNT HANDED FROM THE TEMPORARY KEY TO ITS COMMITTEE, ON T
     expect(moved).toBe(true);
     const control = L.Transaction.deserialize('signature', 'pre-proof', 'pre-binding', tx.serialize());
     expect(([...control.intents!.values()][0]!.actions[0] as unknown as { address: string }).address).toBe(dep.address);
-  });
-
-  it('IS BUILT, SIGNED ONCE, READ BY THE SERVICE AS A STRANGER\'S, ACCEPTED BY THE LEDGER, AND READ BACK AS THE COMMITTEE', async () => {
-    /* RED WHEN: `buildAccountHandover` signs at another seat, installs another value, or leaves the counter out -
-     * the ledger then refuses it or the read-back disagrees; or when the service's reading of an account handover
-     * refuses a correct one. */
-    const { ls, address } = deployedUnder([L.signatureVerifyingKey(temporary)], 1);
-    const before = await readFrom(ls, address);
-    expect(before).toMatchObject({ state: 'read', authority: { shape: 'one-key', counter: 0n } });
-    expect(moneyIn(before, committee, null, [L.signatureVerifyingKey(temporary)]))
-      .toMatch(/still held by the temporary key/);
-
-    const built = buildAccountHandover(Lh, { read: before, to: committee, strictestBar: 1, temporaryKey: temporary, network: NET, ttl: ttl() });
-    expect(built.endState).toMatchObject({ address, threshold: 2, builtAgainstCounter: 0n, expectedCounter: 1n });
-    const proven = await (built.unproven as L.UnprovenTransaction).prove(neverAsked as never, L.CostModel.initialCostModel());
-    const asTheServiceReadsIt = await readProvenTransaction(proven.serialize());
-    if (before.state !== 'read') throw new Error('unreachable');
-    expect(refusalForHandover(asTheServiceReadsIt, { vault: address, to: committee, onChain: before.authority, contract: 'account' })).toBeNull();
-    expect(refusalForHandover(asTheServiceReadsIt, {
-      vault: address, to: { ...committee, threshold: 1 }, onChain: before.authority, contract: 'account',
-    })).toMatch(/not this company's committee/);
-    /* RED WHEN: the account's branch of the first-change-only rule in `refusalForHandover` is skipped. */
-    expect(refusalForHandover(asTheServiceReadsIt, {
-      vault: address, to: committee, onChain: { ...before.authority, counter: 1n }, contract: 'account',
-    })).toMatch(/company's account has already had its rules changed/);
-
-    const bound = (asTheServiceReadsIt as L.Transaction<L.SignatureEnabled, L.Proof, L.PreBinding>).bind();
-    const [after] = ls.apply(bound.wellFormed(ls, strictness(), NOW), new L.TransactionContext(ls, blockContext));
-    const now = await readFrom(after, address);
-    expect(now).toMatchObject({ state: 'read', authority: { shape: 'committee', threshold: 2, counter: 1n } });
-    expect(moneyIn(now, committee, null)).toBeNull();
-    /* RED WHEN: an account handed over from another key, which the record does not hold as born held, is funded. */
-    expect(moneyIn(now, committee, null, [], false)).toMatch(/not read by this service at their creation as held by the company's committee/);
-    expect(moneyIn(now, committee, 'its circuits are not this build\'s')).toBe('its circuits are not this build\'s');
-    expect(authorityView('account', now, committee, new Map([[`schnorr:${vk(1).value}`, 'ada']]))).toMatchObject({
-      heldByTheCompany: true, seatsOutsideTheCommittee: 0, changes: '1',
-    });
-
-    /* And once is all: the same key cannot hand it over again, whoever asks. */
-    expect(() => buildAccountHandover(Lh, { read: now, to: committee, strictestBar: 1, temporaryKey: temporary, network: NET, ttl: ttl() }))
-      .toThrow(/no longer held by one key/);
-  });
-
-  it('A HANDOVER TO A COMMITTEE ANYBODY COULD CHANGE IS REFUSED BEFORE IT IS SIGNED', async () => {
-    /* RED WHEN: `buildAccountHandover` signs before the plan's refusal - `signed` is then true. */
-    const { ls, address } = deployedUnder([L.signatureVerifyingKey(temporary)], 1);
-    const read = await readFrom(ls, address);
-    let signed = false;
-    const spy = { ...Lh, signData: (k: never, d: Uint8Array) => { signed = true; return Lh.signData(k, d); } } as AccountHandoverLedger;
-    expect(() => buildAccountHandover(spy, { read, to: { committee: committee.committee, threshold: 0 }, strictestBar: 1, temporaryKey: temporary, network: NET, ttl: ttl() }))
-      .toThrow(/threshold-below-one/);
-    expect(() => buildAccountHandover(spy, { read, to: { committee: [], threshold: 1 }, strictestBar: 1, temporaryKey: temporary, network: NET, ttl: ttl() }))
-      .toThrow(/committee-emptied/);
-    expect(signed).toBe(false);
-  });
-
-  it('A HANDOVER TO A COMMITTEE LOOSER THAN THE ACCOUNT\'S STRICTEST BAR IS BUILT, AND SAYS SO', async () => {
-    const { ls, address } = deployedUnder([L.signatureVerifyingKey(temporary)], 1);
-    const read = await readFrom(ls, address);
-    /* Reported, not refused, until committees can be built above the company's threshold.
-     * RED WHEN: `buildAccountHandover` stops asking `committeeLooserThanItsContract`, or asks it with another bar. */
-    const looser = buildAccountHandover(Lh, { read, to: committee, strictestBar: 3, temporaryKey: temporary, network: NET, ttl: ttl() });
-    expect(looser.looserThanItsContract).toMatch(/needs 3 approvals for some payments/);
-    expect(looser.unproven).toBeTruthy();
-    const meets = buildAccountHandover(Lh, { read, to: committee, strictestBar: 2, temporaryKey: temporary, network: NET, ttl: ttl() });
-    expect(meets.looserThanItsContract).toBeNull();
-  });
-
-  it('IS REFUSED FOR AN ACCOUNT THE TEMPORARY KEY HAS ALREADY CHANGED, OR ONE ANOTHER KEY HOLDS', async () => {
-    /* RED WHEN: the counter or key comparison at the top of `buildAccountHandover` is removed. */
-    const { ls, address } = deployedUnder([L.signatureVerifyingKey(temporary)], 1);
-    const read = await readFrom(ls, address);
-    if (read.state !== 'read') throw new Error('unreachable');
-    const changed: AuthorityRead = { ...read, authority: { ...read.authority, counter: 1n } };
-    expect(() => buildAccountHandover(Lh, { read: changed, to: committee, strictestBar: 1, temporaryKey: temporary, network: NET, ttl: ttl() }))
-      .toThrow(/already had its rules changed/);
-    expect(() => buildAccountHandover(Lh, { read, to: committee, strictestBar: 1, temporaryKey: sk(8), network: NET, ttl: ttl() }))
-      .toThrow(/a key this service does not keep/);
-    expect(() => buildAccountHandover(Lh, { read: { state: 'unreachable', address, why: 'down' }, to: committee, strictestBar: 1, temporaryKey: temporary, network: NET, ttl: ttl() }))
-      .toThrow(/could not be asked/);
   });
 });
 
@@ -340,19 +348,6 @@ describe('A SIGNER WHO LOST THEIR DEVICES AND KEPT THEIR RECOVERY PIECES', () =>
 });
 
 describe('WHAT A COMPANY IS TOLD', () => {
-  it('WHEN LOSING ONE PERSON STRANDS THE MONEY, AND ONLY THEN', () => {
-    /* RED WHEN: `everySignerNeeded` stops answering for a threshold equal to the signers - the 1-of-1 and 2-of-2
-     * sentences are then null. */
-    expect(everySignerNeeded(1, 1)).toMatch(/only signer.*the money stays there for good/s);
-    expect(everySignerNeeded(2, 2)).toMatch(/Every one of this company's 2 signers.*recovery pieces/s);
-    /* RED WHEN: the sentence stops naming the saved keys - losing this service's sealed copy of them strands the
-     * money with the words intact. */
-    expect(everySignerNeeded(1, 1)).toMatch(/or if your saved keys are lost, nobody can ever pay out/);
-    expect(everySignerNeeded(2, 2)).toMatch(/or their saved keys are lost/);
-    expect(everySignerNeeded(3, 2)).toBeNull();
-    expect(everySignerNeeded(0, 1)).toBeNull();
-  });
-
   it('A CONTRACT ANYBODY CAN CHANGE IS SAID IN THOSE WORDS, AND AN UNREADABLE ONE IS NEVER SHOWN AS HELD', () => {
     /* RED WHEN: `authorityView` drops its `anyone` sentence, or reports an unreachable read as held. */
     const anyone: AuthorityRead = {
@@ -367,36 +362,7 @@ describe('WHAT A COMPANY IS TOLD', () => {
     expect(ours.seats[0]).toMatchObject({ thisService: true, holder: null, onTheCompanysCommittee: false });
     expect(ours.why).toMatch(/THIS SERVICE'S temporary key holds this account's rules/);
     expect(down).toMatchObject({ heldByTheCompany: false, seats: [], read: 'unreachable' });
-    expect(moneyIn({ state: 'unreachable', address: 'a', why: 'down' }, { committee: [vk(1)], threshold: 1 }, null))
+    expect(moneyIn({ state: 'unreachable', why: 'down' }, { committee: [vk(1)], threshold: 1 }, null))
       .toMatch(/could not be asked/);
-  });
-});
-
-describe('A COMMITTEE IS NEVER LOOSER THAN THE CONTRACT IT HOLDS', () => {
-  const keys = (n: number) => Array.from({ length: n }, (_, i) => ({ tag: 'schnorr', value: String(i).padStart(2, '0') }));
-
-  it('accepts a committee at or above the strictest bar, and no stricter than the keys it holds', () => {
-    expect(committeeLooserThanItsContract({ committee: keys(3), threshold: 2 }, 2, 'the vault')).toBeNull();
-    expect(committeeLooserThanItsContract({ committee: keys(3), threshold: 3 }, 2, 'the vault')).toBeNull();
-  });
-
-  it('refuses a committee below the bar, and says the two ways out', () => {
-    /* RED WHEN: the `to.threshold < strictestBar` refusal is removed. */
-    expect(committeeLooserThanItsContract({ committee: keys(3), threshold: 2 }, 3, 'the vault'))
-      .toMatch(/the vault needs 3 approvals for some payments, and this committee could change its rules with 2 of its keys\. Its committee needs at least 3, or that bar is lowered to 2 first/);
-  });
-
-  it('refuses a bar no committee of these keys can reach, and names the most it may be', () => {
-    /* RED WHEN: the `strictestBar > to.committee.length` refusal is removed - the check then asks for a committee
-     * threshold above the keys, which the authority builder refuses with no word about the bar. */
-    expect(committeeLooserThanItsContract({ committee: keys(2), threshold: 2 }, 3, 'the account'))
-      .toMatch(/the account needs 3 approvals for some payments and its committee would hold 2 key\(s\).*Lower that bar to at most 2 first/);
-  });
-
-  it('refuses when the bar could not be read, rather than treating it as no bar', () => {
-    /* RED WHEN: a bar of zero or a fraction is taken as satisfied. */
-    for (const bar of [0, 1.5, Number.NaN]) {
-      expect(committeeLooserThanItsContract({ committee: keys(2), threshold: 1 }, bar, 'the vault')).toMatch(/could not be read/);
-    }
   });
 });

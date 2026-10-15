@@ -29,7 +29,7 @@ import { admitHere, readPeopleHere, type PeopleDevice } from 'vaults-web-shared/
 import { drawRunHere, RunNotDrawnHere, type RunDrawDoors } from 'vaults-web-shared/run-drawn-here.js';
 import { runRoutes } from './run-routes.js';
 import {
-  aCompanyOfTwoSeats, acmeDirectory, ACME, ADA, ADDRESS, aVersionNoSeatSigned, BO, CO, fromAda, KEY, LABEL, newestPerson, ORIGIN, OTHER, personVersions,
+  aCompanyOfTwoSeats, acmeDirectory, ACME, ADA, ADDRESS, aVersionNoSeatSigned, CO, fromAda, KEY, LABEL, newestPerson, ORIGIN, OTHER, personVersions,
   personFiledBy, sendAs, store, type Seat,
 } from './a-company-of-two-seats.test-support.js';
 import { enteredHere } from '../testing/records-entered.js';
@@ -268,7 +268,7 @@ describe('A RUN IS NOT DRAWN OVER ONE THAT MAY BE ON THE CHAIN, AND A REPEAT OR 
   });
 });
 
-describe('THE SERVICE KEEPS A RUN ONLY AS A SEAT THAT MAY FILE ONE SIGNED IT, WHOLE', () => {
+describe('THE SERVICE KEEPS A RUN ONLY AS THE SIGNED-IN PERSON\'S OWN SEAT SIGNED IT, WHOLE', () => {
   const aDrawnRun = async () => {
     /* Drawn and sealed here, kept nowhere: so nothing of it is entered either. */
     const run = await drawRunHere({ ...drawingOn(ADA), api: async () => ({}), entered: enteredHere() }, { period: '2027-03' });
@@ -290,8 +290,7 @@ describe('THE SERVICE KEEPS A RUN ONLY AS A SEAT THAT MAY FILE ONE SIGNED IT, WH
       ['signed for another company', 'ada', { run: signRunFiling(OTHER, { ...sealed, accountId: OTHER }, ADA.signingSecret as Hex) }, 422, 'not-a-run'],
       /* RED WHEN: a run that names another company is kept here because it was signed for this one. */
       ['another company\'s run, signed for this one', 'ada', { run: signRunFiling(CO, { ...sealed, accountId: OTHER }, ADA.signingSecret as Hex) }, 422, 'not-a-run'],
-      /* RED WHEN: a seat whose role may not file a run has one kept. */
-      ['signed by an approver\'s seat', 'bo', { run: signRunFiling(CO, sealed, BO.signingSecret as Hex) }, 403, 'role-may-not-file'],
+      /* Whether a seat's role may file a run is every member's device's to judge, never the service's: `seat-directory.test.ts`. */
       /* RED WHEN: a run signed with Ada's key is kept for somebody else signed in. */
       ['Ada\'s run, sent by Bo', 'bo', { run: signRunFiling(CO, sealed, ADA.signingSecret as Hex) }, 403, 'no-entry'],
       /* RED WHEN: a month typed another way is kept, so two runs for one month would not be seen as one. */

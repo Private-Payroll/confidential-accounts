@@ -111,7 +111,7 @@ describe('ENTERING A FILING', () => {
     expect(store.manifestOf(CO).entries.filter((e) => e.id === run.id).map((e) => e.version)).toEqual([1, 2]);
   });
 
-  it('takes an entry another seat signed from any member, judged by its own signature; refuses one no seat signed, one whose signature does not cover it, and one the seat\'s role may not file', async () => {
+  it('takes an entry another seat signed from any member, judged by its own signature; refuses one no seat signed, and one whose signature does not cover it; judges no role', async () => {
     /* RED WHEN: an entry is judged by who hands it in, not by who signed it - a device keeping another seat's entry could never file it again. */
     const adas = byAda(await aRecordFiledBy(ADA, 'emp_manifest4'));
     expect((await enter('bo', [adas])).status).toBe(201);
@@ -120,9 +120,12 @@ describe('ENTERING A FILING', () => {
     expect((await enter('bo', [signManifestEntry(CO, person('emp_manifest3', 1), STRANGER.secret)])).body).toMatchObject({ refused: 'no-entry' });
     const bent = { ...byAda(person('emp_manifest3', 1)), version: 2 };
     expect((await enter('ada', [bent])).body).toMatchObject({ refused: 'not-an-entry' });
-    /* Bo is an approver: a roster is not his to file. */
+    /*
+     * Bo is an approver, and a roster is not his to file: RED WHEN the service refuses his entry for his role rather than
+     * for what it can check - here, that no roster of that digest is kept. Only a member's device judges his role.
+     */
     const roster = signManifestEntry(CO, { store: 'company', kind: 'roster', id: 'roster', version: 1, digest: 'c3'.repeat(32) }, BO.signingSecret as Hex);
-    expect((await enter('bo', [roster])).body).toMatchObject({ refused: 'role-may-not-file' });
+    expect((await enter('bo', [roster])).body).not.toMatchObject({ refused: 'role-may-not-file' });
     /* RED WHEN: somebody who is not a member of the company reaches its manifest at all. */
     expect((await sendAs('eve')(`/api/accounts/${CO}/manifest`, { method: 'GET' })).status).toBe(404);
     expect((await enter('eve', [signManifestEntry(CO, person('emp_manifest3', 1), EVE.signingSecret as Hex)])).status).toBe(404);

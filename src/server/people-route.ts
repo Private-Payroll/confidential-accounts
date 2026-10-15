@@ -11,7 +11,7 @@
  * (`fileCompanyRecord`):
  *
  *   · the person is the company's (`ownsPerson`) and the signed-in person's
- *     seat in the company's directory signed the version (check S);
+ *     seat in the company's directory signed the version (`filerSeatOf`);
  *   · the plain fact the change is about says what the route is for: a person
  *     admitted, or one made payable from their own sign-in, stands active; a
  *     status change sets active or leaver;

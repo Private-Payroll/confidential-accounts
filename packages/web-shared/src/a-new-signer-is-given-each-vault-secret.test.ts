@@ -6,9 +6,11 @@ import type { AccountAddress, CompanyLabel } from 'midnight-identity/profile/com
 import { newSigningKeypair } from '../../../src/core/crypto.js';
 import { MemorySealedPoolStore, type SealedPoolStore } from '../../../src/midnight/vault-pool.js';
 import { openNonceSecrets, recordsKeypairFrom, startNonceSecret } from '../../../src/midnight/company-nonce-secret.js';
-import type { DirectoryFiling } from '../../../src/midnight/seat-directory.js';
+import { directoryEntryMade, type DirectoryFiling } from '../../../src/midnight/seat-directory.js';
+import type { Hex } from '../../../src/core/crypto.js';
 import { directoryHere, giveEachVaultSecretHere, type DirectoryHere, type DirectoryHereDeps } from './vault-page-doors.js';
 import { anchoredEntering } from '../../../src/testing/record-tree-double.js';
+import { leavesOfTheContract, seatOpenedFor } from '../../../src/testing/directory-seats.js';
 import { recordsReaderOf, type DeviceSigner } from './deposit-on-device.js';
 
 /*
@@ -20,17 +22,22 @@ import { recordsReaderOf, type DeviceSigner } from './deposit-on-device.js';
 const LABEL = `co_${'c1'.repeat(32)}` as CompanyLabel;
 const ACCOUNT = 'c0'.repeat(32) as AccountAddress;
 const CO = 'acc_given';
+/** The company's viewing key, which a member's device holds and opens every entry's proof with. */
+const VIEWING = '5e'.repeat(32) as Hex;
 const VAULTS = ['ab'.repeat(32), 'cd'.repeat(32)];
 
 const signer = (n: number) => {
   const identity = identityFromSecret(new Uint8Array(32).fill(n));
   const companyKey = new Uint8Array(32).fill(n + 100);
-  const seat = n.toString(16).padStart(2, '0').repeat(32);
   const committeeKey = committeeKeyFor(identity, LABEL) as { tag: string; value: string };
-  const statement = signDirectoryEntry(identity, LABEL, ACCOUNT, companyKey, newSigningKeypair().publicKey, seat);
+  /* The seat as a seating device makes it: its leaf commits to this wallet key, and its opening shows that. */
+  const { seat, opening } = seatOpenedFor(committeeKey, n);
+  const filing = newSigningKeypair();
+  const statement = signDirectoryEntry(identity, LABEL, ACCOUNT, companyKey, filing.publicKey, seat);
+  const entry = directoryEntryMade({ company: CO, person: `p${n}`, committeeKey, signed: statement, opening, signingSecret: filing.secret, viewingKey: VIEWING });
   return {
     seat, companyKey, committeeKey,
-    claim: (version: number): DirectoryFiling => ({ company: CO, version, change: { kind: 'claim', entry: { person: `p${n}`, committeeKey, statement } } }),
+    claim: (version: number): DirectoryFiling => ({ company: CO, version, change: { kind: 'claim', entry } }),
     attested: { committeeKey, statement: signRecordsKey(identity, LABEL, ACCOUNT, companyKey, seat) },
     device: { signerId: `s${n}`, wrappingSecret: '00'.repeat(32), companyKey } as DeviceSigner,
   };
@@ -43,12 +50,13 @@ const company = (o: { filings?: DirectoryFiling[]; seats?: string[]; attested?: 
   const stores = new Map<string, SealedPoolStore>();
   const records = (record: string) => stores.get(record) ?? stores.set(record, new MemorySealedPoolStore()).get(record)!;
   const deps: DirectoryHereDeps = {
-    accountId: CO, label: LABEL,
+    accountId: CO, label: LABEL, viewingKey: VIEWING,
     filings: async () => o.filings ?? [ADA.claim(1), CAROL.claim(2)],
     holders: async () => ({ account: ACCOUNT, approvals: 1, threshold: 1, adoptedVaults: VAULTS, founding: ADA.seat, foundingCommittee: [ADA.committeeKey], seats: o.seats ?? [ADA.seat, CAROL.seat], committee: [ADA.committeeKey, CAROL.committeeKey] }),
     attested: async () => o.attested ?? [ADA.attested, CAROL.attested],
     /* Nothing here reads a record through the anchor: the company's records hold no entry. */
     anchored: anchoredEntering(CO),
+    leaves: leavesOfTheContract,
   };
   const directory = (): Promise<DirectoryHere> => directoryHere(deps);
   return { records, directory };

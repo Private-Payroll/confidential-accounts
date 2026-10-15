@@ -5,27 +5,26 @@
  * The roster - who holds a seat, their keys, their leaf, their vault keys - is
  * one of the company's own records, sealed and signed on a seat's device. It
  * changes in three ways, each a route here, each filed through the one
- * company-record filing (`fileCompanyRecord`, check S):
+ * company-record filing (`fileCompanyRecord`):
  *
  *   · **a signer admitted** once the chain holds their seat: the admitting
  *     seat's device files the roster with them in it and wraps the company's key
  *     to them; this keeps, in plain text, what the member gate needs.
- *   · **vault keys offered** by a new signer, who cannot file the roster until
- *     the company's committee holds their key: public keys and signatures,
- *     checked against the directory entry their own wallet signed, kept as one
- *     waiting offer per seat, for the person who made it, and never read as
- *     the roster.
+ *   · **vault keys offered** by a new signer before they file the roster
+ *     themselves: sealed under the company's roster key, with only the seat,
+ *     the filing key and the records key beside it, kept for the person who
+ *     made it - every person's own offer for a seat, none first come - and
+ *     never read as the roster. No wallet key reaches this service in one.
  *   · **the roster filed** by a seat the company already believes, folding in
  *     the offers it checked against the roster it opened; an offer goes only
  *     once the index the filing makes holds its keys.
  */
 import express from 'express';
 import { z } from 'zod';
-import { readAccountAddress, type CompanyLabel } from 'midnight-identity/profile/company-label';
 import type { Ledger } from '../core/ledger.js';
 import type { SealedAccount } from '../core/types.js';
 import { ROSTER_ID } from '../core/roster-record.js';
-import { offerAsKept, vaultKeysOfferRefusal, type CompanyVaultKeyIndex, type VaultKeysOffer } from '../core/vault-keys.js';
+import { offerAsKept, type CompanyVaultKeyIndex, type VaultKeysOffer } from '../core/vault-keys.js';
 import type { CompanyRecordStore } from '../midnight/sealed-record-wire.js';
 import { fileCompanyRecord, type FilingAnswer } from './company-records-route.js';
 import type { DirectoryNow } from './seat-directory-route.js';
@@ -35,22 +34,21 @@ export interface SignerRouteStore {
   putAccount(a: SealedAccount): void;
   putVaultKeyIndex(k: CompanyVaultKeyIndex): void;
   vaultKeysOffersOf(accountId: string): VaultKeysOffer[];
-  putVaultKeysOffer(accountId: string, seat: string, offer: VaultKeysOffer): void;
-  dropVaultKeysOffers(accountId: string, seats: readonly string[]): void;
+  putVaultKeysOffer(accountId: string, offer: VaultKeysOffer): void;
+  dropVaultKeysOffers(accountId: string, offers: ReadonlyArray<Pick<VaultKeysOffer, 'seat' | 'person'>>): void;
 }
 
 const HEX64 = /^[0-9a-f]{64}$/u;
 const low = (h: unknown): string => String(h ?? '').toLowerCase();
 
-/** Whether the index a roster filing makes holds an offer's keys: its committee key, its records key and its signing key. */
+/** Whether the index a roster filing makes holds an offer's keys: its records key and its signing key. */
 const offerIsIn = (index: CompanyVaultKeyIndex, o: VaultKeysOffer): boolean =>
-  index.committeeKeys.some((k) => low(k.tag) === low(o.keys.committeeKey.tag) && low(k.value) === low(o.keys.committeeKey.value))
-  && index.readers.some((r) => low(r) === low(o.keys.recordsKey))
-  && index.filers.some((f) => low(f) === low(o.entry.statement.signingKey));
+  index.readers.some((r) => low(r) === low(o.recordsKey))
+  && index.filers.some((f) => low(f) === low(o.signingKey));
 const FILED = z.object({ version: z.number().int().min(1), message: z.unknown() }).strict();
+/* The index a roster filing makes: records keys and filing keys, and never a wallet key. */
 const INDEX = z.object({
   accountId: z.string(), signerCount: z.number().int().min(0),
-  committeeKeys: z.array(z.object({ tag: z.string(), value: z.string() }).strict()),
   readers: z.array(z.string()), filers: z.array(z.string()),
 }).strict();
 
@@ -77,38 +75,25 @@ export const signerRoutes = (deps: {
   };
 
   /*
-   * **A NEW SIGNER'S VAULT KEYS, OFFERED.** Kept only when the directory entry
-   * their own wallet signed verifies for this company, names the signing key the
-   * keys are signed with and the records key they give, and is for a seat the
-   * account holds now; and only for the person whose own entry names that seat:
-   * not for a person the directory already believes at another seat, nor for a
-   * seat the directory believes is another person's. One offer per seat, which
-   * only the person who made it replaces.
+   * **A NEW SIGNER'S VAULT KEYS, OFFERED, AND KEPT SEALED.** The offer is
+   * sealed under the company's roster key on the signer's device, so the
+   * service holds no wallet key and checks only its shape; that the account
+   * holds the seat now, read from the chain; and, once the directory holds an
+   * entry for that seat, that this person filed one of them. Every person's
+   * own offer for a seat is kept, each replaced only by them, so nobody's offer
+   * keeps another's out. Whether an offer is true is each member's device's to
+   * judge as it folds it in.
    */
   router.put('/api/accounts/:id/vault-keys', deps.signedIn, deps.member, json, async (req, res) => {
     const b = z.object({ offer: z.unknown() }).strict().safeParse(req.body ?? {});
-    if (!b.success) {
-      res.status(400).json({ error: 'this is not an offer of a signer\'s vault keys. Vault keys are offered with the directory entry your own wallet signed, and never with a key that opens the company.' });
+    const person = String(personOf(req));
+    const offer = b.success ? offerAsKept(b.data.offer, person) : null;
+    if (offer === null) {
+      res.status(400).json({ error: 'this is not an offer of a signer\'s vault keys. Vault keys are offered sealed under the company\'s roster key, with the seat and the filing and records keys beside them, and never with a key that opens the company. Nothing was kept.' });
       return;
     }
     const company = String(req.params.id);
-    const account = deps.store.getAccount(company)!;
-    const label = account.companyLabel ?? null;
-    const address = readAccountAddress(account.contractAddress ?? null);
-    if (label === null || address === null) {
-      res.status(409).json({ error: 'this company has no account on the chain that a wallet could sign for, so no vault keys are taken. Nothing was kept.' });
-      return;
-    }
-    const offer = { ...(b.data.offer as VaultKeysOffer), person: String(personOf(req)) };
-    const why = vaultKeysOfferRefusal(label as CompanyLabel, address, company, offer);
-    if (why !== null) { res.status(403).json({ refused: 'not-your-keys', error: `these vault keys are not kept: ${why}. Nothing was kept.` }); return; }
-    const seat = String(offer.entry.statement.seat).toLowerCase();
-    const person = String(personOf(req));
-    const open = deps.store.vaultKeysOffersOf(company).find((o) => low(o.entry.statement.seat) === seat) ?? null;
-    if (open !== null && open.person !== person) {
-      res.status(409).json({ refused: 'not-your-seat', error: 'another person has offered vault keys for this seat, and only they replace them. Nothing was kept. If this seat is yours, ask the company\'s signers to check who holds it.' });
-      return;
-    }
+    const seat = offer.seat;
     let directory: DirectoryNow;
     try {
       directory = await deps.directoryOf(company);
@@ -116,9 +101,14 @@ export const signerRoutes = (deps: {
       res.status(503).json({ error: `whose seat this is could not be read, so your vault keys are not kept yet: ${(e as Error)?.message ?? String(e)}. Nothing was kept. Try again.` });
       return;
     }
-    const entered = directory.dir.seats.find((x) => x.seat === seat) ?? null;
-    if ((entered !== null && entered.person !== person) || directory.dir.seats.some((x) => x.person === person && x.seat !== seat)) {
-      res.status(403).json({ refused: 'not-your-seat', error: 'the company\'s directory names another person at this seat, or names you at another seat, so these vault keys are not kept for it. Nothing was kept.' });
+    /*
+     * Kept for any entry this person filed for the seat. The service keeps every entry for a seat and judges none, so it
+     * never takes the first as the seat's holder: an entry another member filed first keeps nobody's keys out, and an
+     * entry a person filed on another seat says nothing of this one.
+     */
+    const forThisSeat = directory.dir.seats.filter((x) => x.seat === seat);
+    if (forThisSeat.length > 0 && !forThisSeat.some((x) => x.person === person)) {
+      res.status(403).json({ refused: 'not-your-seat', error: 'the company\'s directory holds no entry of yours for this seat, so these vault keys are not kept for it. Nothing was kept.' });
       return;
     }
     const held = await holds(company, seat);
@@ -128,7 +118,7 @@ export const signerRoutes = (deps: {
         : 'the company\'s account does not hold the seat these vault keys are for, so they are not kept. Nothing was kept.' });
       return;
     }
-    deps.store.putVaultKeysOffer(company, seat, offerAsKept(offer));
+    deps.store.putVaultKeysOffer(company, offer);
     res.status(201).json({ offered: true });
   });
 
@@ -139,11 +129,13 @@ export const signerRoutes = (deps: {
 
   /*
    * **THE ROSTER, FILED BY A SEAT THE COMPANY BELIEVES**, with the offers it
-   * folded in and the index of the company's vault keys it makes. Check S
-   * decides who may file it: a seat whose wallet the company's committee does
-   * not hold yet cannot. With the filing go, of the offers it says it folded,
-   * only those whose keys the filing's index holds: every other offer stays
-   * open, for its own signer to replace or the next fold to take.
+   * folded in and the index of the company's vault keys it makes. It is kept
+   * as every company record is (`fileCompanyRecord`): from the signed-in
+   * person's own seat, held by the account now; whether that seat's role may
+   * file a roster is each member's device's to judge. With the filing go, of
+   * the offers for the seats it says it folded, only those whose records key and
+   * filing key the filing's index holds: every other offer stays open, for its
+   * own signer to replace or the next fold to take.
    */
   router.post('/api/accounts/:id/roster', deps.signedIn, deps.member, json, async (req, res) => {
     const b = z.object({
@@ -157,10 +149,8 @@ export const signerRoutes = (deps: {
     const answer = await fileRoster(req, company, b.data.roster);
     if (answer.status === 201) {
       const index = b.data.index as CompanyVaultKeyIndex;
-      const held = new Set(deps.store.vaultKeysOffersOf(company)
-        .filter((o) => b.data.folded.includes(String(o.entry.statement.seat).toLowerCase()) && offerIsIn(index, o))
-        .map((o) => String(o.entry.statement.seat).toLowerCase()));
-      deps.store.dropVaultKeysOffers(company, [...held]);
+      deps.store.dropVaultKeysOffers(company, deps.store.vaultKeysOffersOf(company)
+        .filter((o) => b.data.folded.includes(o.seat.toLowerCase()) && offerIsIn(index, o)));
       deps.store.putVaultKeyIndex(index);
     }
     res.status(answer.status).json(answer.body);

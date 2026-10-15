@@ -8,11 +8,13 @@
  *
  * ── CREATING A VAULT IS ONE OPERATION WITH NO SUCCESS STATE UNTIL THE END ──
  *
- *   1. the company's committee must already be complete: every signer's wallet
- *      has given its committee key, and the company's account is held by that
- *      committee as this signer's own wallet reads it. No committee, no deploy;
- *   2. the vault is built here held by that committee, at its threshold, from
- *      its first transaction: there is no temporary key and no hand-over;
+ *   1. the committee the vault is born held by is the one holding the
+ *      company's account, at its threshold, as this signer's own wallet reads
+ *      it off the chain: the super admins, whoever they are. No signer's key
+ *      is asked for it, and a committee no contract may be held by builds no
+ *      vault;
+ *   2. the vault is built here held by that committee from its first
+ *      transaction: there is no temporary key and no hand-over;
  *   3. the deploy is sent;
  *   4. as soon as the chain has the vault, this device reads it as it was born,
  *      from the deploy its address was made from, and refuses it unless it was
@@ -59,7 +61,8 @@
  */
 import { refuseLeavingAVaultShort, type ApproverRoster } from '../../../src/core/vault-approvers.js';
 import type { Hex } from '../../../src/core/crypto.js';
-import { sameCommittee, whyOneKeyCouldActAlone, type Committee } from '../../../src/midnight/vault-committee.js';
+import type { Committee } from '../../../src/midnight/vault-committee.js';
+import { whyNotInstallable } from 'midnight-identity/profile/request';
 import type { DepositMoney } from '../../../src/midnight/deposit-nonce.js';
 import { SealedNotePool, isALostPoolRace, type PoolSigner, type SealedPool } from '../../../src/midnight/vault-pool.js';
 import { afterDeposit } from '../../../src/midnight/vault-note-deposit.js';
@@ -71,7 +74,7 @@ import type { EventOnTheWire, NoteOnTheWire } from './vault-builder.js';
 import { openNonceSecrets, recordsKeypairFrom, type NonceSecretReader } from '../../../src/midnight/company-nonce-secret.js';
 import { openSecretCopy, sealSecretCopy } from '../../../src/midnight/sealed-secret-copy.js';
 import {
-  READER_REFUSAL, readerRefusalOf, type ReaderRefusalCode, type SeatsAsTheWalletRead,
+  READER_REFUSAL, readerRefusalOf, type DirectoryAsBelieved, type ReaderRefusalCode, type SeatsAsTheWalletRead,
 } from '../../../src/midnight/secret-readers.js';
 import type { RosterVaultKeys } from '../../../src/core/vault-keys.js';
 import { fromHex, toHex } from '../../../src/core/crypto.js';
@@ -255,10 +258,9 @@ async function notesAsThisDeviceReadsThem(
 
 /**
  * **THE VAULT AS ITS START READS IT, ON THIS DEVICE**: its notes and every coin
- * ever made for it, and whether it is held by the keys that hold the company's
- * account and pinned to that account, as this device's worker and the person's
- * own wallet read them. Whether it is started is not asked: this is the read a
- * start is carried on from.
+ * ever made for it, and whether it is pinned to the company's account, as this
+ * device's worker and the person's own wallet read them. Whether it is started
+ * is not asked: this is the read a start is carried on from.
  */
 async function theVaultReadForItsStart(doors: ChainHereDoors, vault: Hex): Promise<VaultChainView> {
   try {
@@ -269,27 +271,30 @@ async function theVaultReadForItsStart(doors: ChainHereDoors, vault: Hex): Promi
   }
 }
 
+/**
+ * **THE VAULT AS THIS DEVICE READS IT**: its notes, whether it is pinned to the
+ * company's account the person's own wallet reads, and whether it is started.
+ * Money goes in or out only while it is pinned to that account, since a vault
+ * pays out on the approvals of the account it is pinned to. Who holds the
+ * vault or the account is never read here: which keys hold each contract is
+ * the super admins' own choice, and a change of them left half done stops no
+ * payment and no deposit. The wallet is asked only whether the account adopted
+ * the vault.
+ */
 async function vaultAsThisDeviceReadsIt(doors: ChainHereDoors, vault: Hex, mustBeStarted = true): Promise<VaultChainView> {
   const read = await readHere(doors, vault);
   if (!read.onChain) return notesOfARead(vault, read);
-  const holders = await theVaultAsItsSignersHoldIt(doors, vault);
-  const heldByCommittee = read.authority !== null
-    && sameCommittee({ committee: [...read.authority.committee], threshold: read.authority.threshold },
-      { committee: holders.committee, threshold: holders.threshold });
+  await theVaultAsItsSignersHoldIt(doors, vault);
   /* A vault pays out on the approvals of the account it is pinned to; a state that names none is not a vault's. */
   const pinnedHere = read.account !== null && read.account.toLowerCase() === String(doors.account).toLowerCase();
-  const why = !heldByCommittee
-    ? 'this vault is not held by the keys that hold your company\'s account, as the chain shows both, so no money goes in '
-      + 'or out of it.'
-    : !pinnedHere
-      ? 'this vault is not pinned to your company\'s account, or its state is not a vault\'s, as the chain shows it, so '
-        + 'money in it would be paid out on somebody else\'s approvals; no money goes in or out of it.'
+  const why = !pinnedHere
+    ? 'this vault is not pinned to your company\'s account, or its state is not a vault\'s, as the chain shows it, so '
+      + 'money in it would be paid out on somebody else\'s approvals; no money goes in or out of it.'
     : mustBeStarted && !read.started
       ? 'this vault has not been started: its first secret is not set, or not every signer\'s sealed copy is written.'
       : null;
   return {
     ...notesOfARead(vault, read),
-    heldByCommittee,
     /* A read made for a start does not ask whether it is started, so it never says money may go in or out. */
     fundable: mustBeStarted && why === null,
     why,
@@ -311,13 +316,14 @@ export interface VaultChainView {
     readonly shape: string;
   } | null;
   readonly committee?: Committee | null;
+  /** Whether the vault is held by the same keys, at the same threshold, as the company's account: shown, never a gate on money. */
   readonly heldByCommittee?: boolean;
   /** Base64 of the deploy the vault's address was made from, as the service kept it when it sent it. */
   readonly deployed?: string | null;
   /**
-   * Whether money may go in or out now. Read on this device: the vault held
-   * by the keys that hold the company's account, pinned to that account, and
-   * started. As the service says it, the service's own checks of the account.
+   * Whether money may go in or out now. Read on this device: the vault pinned
+   * to the company's account and started. As the service says it, the
+   * service's own checks of the account.
    */
   readonly fundable?: boolean;
   readonly why?: string | null;
@@ -456,14 +462,15 @@ export interface CreateVaultDoors extends PoolDoors {
 
 /**
  * **WHAT A SECRET'S READERS ARE CHECKED AGAINST**, none of it the service's
- * word alone: the company's label and this signer's committee key as their own
- * wallet gave them, who holds the account and the vault as their own wallet
- * read them off the chain, and the roster this device opened, whose every
- * records key carries its signer's wallet's signature.
+ * word alone: the company's label, the seats the account holds and the
+ * account the vault is pinned to as this signer's own wallet read them off the
+ * chain, the roster this device opened, whose every records key carries its
+ * signer's wallet's signature, and the company's directory as this device
+ * believes it, whose entries this device opened for each seat's opening. No
+ * committee is read.
  */
 export interface SecretReaderSources {
   readonly company: CompanyLabel;
-  readonly committeeKey: { readonly tag: string; readonly value: string };
   /**
    * Who holds the company's account and `vault`, asked of this signer's own
    * wallet afresh every time a set of readers is checked, so no check rests on
@@ -471,6 +478,8 @@ export interface SecretReaderSources {
    */
   readonly read: (vault: Hex) => Promise<SeatsAsTheWalletRead | null>;
   readonly roster: () => Promise<readonly RosterVaultKeys[]>;
+  /** The company's directory as this device believes it, read afresh for each check: each reader's seat's opening. */
+  readonly directory: () => Promise<DirectoryAsBelieved>;
 }
 
 /** Where the press ended: the vault started, or a round of its start waiting for other signers' approvals. */
@@ -503,16 +512,14 @@ export class VaultStartOwed extends Error {
 }
 
 /**
- * **THE COMMITTEE A NEW VAULT IS BORN HELD BY**: the company's, as the service
- * reports it and the roster this device opened names it (`vaultServiceFor`),
- * and the very committee, at the very threshold, that holds the company's
- * account as this signer's own wallet reads it off the chain. A company whose
- * account is not yet held by its current committee changes that first, so no
- * vault is ever held by keys its account is not.
+ * **THE COMMITTEE A NEW VAULT IS BORN HELD BY**: the very committee, at the
+ * very threshold, that holds the company's account as this signer's own wallet
+ * reads it off the chain - the super admins, whoever they are. Neither the
+ * service's word nor the signers' keys are asked: a key no signer holds is as
+ * good as any. Refused only when the chain's committee is one a contract may
+ * not be held by.
  */
 async function theCommitteeAVaultIsBornHeldBy(doors: CreateVaultDoors): Promise<Committee> {
-  const { committee, why } = await doors.service.keys();
-  if (committee === null) throw new Error(why ?? 'this company has no committee yet, so no vault is created.');
   let holders: AccountHolders;
   try {
     /* Read before the vault exists, so the wallet is asked about the account the vault will be pinned to. */
@@ -520,12 +527,11 @@ async function theCommitteeAVaultIsBornHeldBy(doors: CreateVaultDoors): Promise<
   } catch (e) {
     throw new Error(`your wallet could not say who holds your company's account (${(e as Error)?.message ?? e}), so no vault was built.`);
   }
-  if (!sameCommittee(committee, { committee: holders.committee, threshold: holders.threshold })) {
-    throw new Error('your company\'s account is not held by its current committee yet, as your own wallet read it, so a '
-      + 'vault held by that committee would not match it. Change the account\'s committee in Settings first. Nothing was built.');
-  }
-  const alone = whyOneKeyCouldActAlone(committee);
-  if (alone !== null) throw new Error(`no vault was built: ${alone}.`);
+  const committee: Committee = {
+    committee: holders.committee.map((k) => ({ tag: k.tag, value: k.value })), threshold: holders.threshold,
+  };
+  const notInstallable = whyNotInstallable(committee);
+  if (notInstallable !== null) throw new Error(`no vault was built: ${notInstallable}`);
   return committee;
 }
 
@@ -1003,10 +1009,10 @@ function thisSignersCopyOpens(
 
 /**
  * **EVERY KEY THE RUN SEALS A COPY TO, CHECKED BEFORE THIS DEVICE RAISES OR
- * APPROVES IT** (`secret-readers.ts`): signed by its signer's own wallet with a
- * key the chain lists on the company's committee, one per signer seated now,
- * none missing and none extra, and the vault held by that committee and pinned
- * to the company's account, as the same wallet read the vault. It runs on the
+ * APPROVES IT** (`readerRefusalOf`): signed by its signer's own wallet with the
+ * wallet key their seat's opening proves for that seat, one per signer seated now,
+ * none missing and none extra, and the vault pinned to the company's account,
+ * as the same wallet read the vault. It runs on the
  * keys the service names, before a nonce secret is filed and wrapped to them,
  * and on the keys the run itself holds, before it is raised or approved, not a
  * list beside it; each time with a read of its own.
@@ -1027,8 +1033,14 @@ async function everyReaderChecksOut(doors: CreateVaultDoors, vault: Hex, readers
   } catch (e) {
     throw new VaultStartOwed(vault, `who its secret is sealed to could not be checked (${(e as Error)?.message ?? e}). Nothing was approved.`);
   }
+  let directory: DirectoryAsBelieved;
+  try {
+    directory = await sources.directory();
+  } catch (e) {
+    throw new VaultStartOwed(vault, `whose seat each reader holds could not be checked (${(e as Error)?.message ?? e}). Nothing was approved.`);
+  }
   const refused = readerRefusalOf({
-    company: sources.company, readers, roster, seats, mine: sources.committeeKey, vault, account: doors.account,
+    company: sources.company, readers, roster, seats, vault, account: doors.account, directory,
   });
   if (refused !== null) throw new VaultStartOwed(vault, refused.says, refused.code);
 }
@@ -1172,8 +1184,8 @@ async function startTheSecretAgain(
 
 /**
  * **THE VAULT'S NOTE POOL AND NONCE SECRET, FILED THROUGH THE COMPANY'S RECORDS
- * ROUTE**. Only for a vault its committee holds and the chain has never paid
- * into. Each half is skipped when it is already filed, so it can be run again.
+ * ROUTE**. Only for a vault pinned to the company's account, as this device
+ * reads it, that the chain has never paid into. Each half is skipped when it is already filed, so it can be run again.
  * A secret made here is handed back as made here, opened from the record this
  * device made; one already filed is read back and handed back as that.
  * `beforeFiling` is handed the keys a new nonce secret would be wrapped to,
@@ -1185,16 +1197,16 @@ export async function openCompanyVaultPool(
 ): Promise<SecretReadBack> {
   doors.progress?.('opening the pool');
   const view = await theVaultReadForItsStart(doors, vault);
-  /* Held by the keys that hold the company's account and pinned to it, as this device read both. */
-  if (!view.onChain || view.heldByCommittee !== true || (view.why ?? null) !== null) {
-    throw new Error(view.why ?? 'this vault is not held by the company\'s committee yet, so its pool is not opened.');
+  /* Pinned to the company's account, as this device read it. */
+  if (!view.onChain || (view.why ?? null) !== null) {
+    throw new Error(view.why ?? 'the chain does not show this vault yet, so its pool is not opened.');
   }
   const everCreated = new Set(view.everCreated ?? []);
   const pool = new SealedNotePool(doors.records('pool'),
     { signerId: doors.me.signerId, wrappingSecret: doors.me.wrappingSecret }, doors.signers);
   /*
-   * The keys a new nonce secret would be wrapped to are checked before either half is filed: the service files
-   * nothing for an account its own committee does not hold, and that check says so in words a person can act on.
+   * The keys a new nonce secret would be wrapped to are checked before either half is filed, one per signer seated
+   * now, so a reader that is not a seated signer's stops it here in words a person can act on.
    */
   const secretOwed = await doors.records('nonce-secret').get(vault) === null;
   const readers = secretOwed ? (await doors.service.keys()).readers : [];
@@ -1563,8 +1575,8 @@ export async function depositIntoCompanyVault(
 } & DepositRecorded> {
   /* Read on this device, with the vault one the company's account adopted as this signer's own wallet reads the chain. */
   const view = await vaultAsThisDeviceReadsIt(doors, vault);
-  if (!view.onChain || view.heldByCommittee !== true || view.state === undefined) {
-    throw new Error(view.why ?? 'this vault is not held by the company\'s committee, so no money goes in.');
+  if (!view.onChain || view.state === undefined) {
+    throw new Error(view.why ?? 'the chain does not show this vault\'s state, so no money goes in.');
   }
   /* Asked before a coin is chosen or the wallet is asked, so a deposit into a vault not yet started books nothing. */
   if (view.fundable !== true) {
@@ -1733,8 +1745,8 @@ export async function depositPubliclyIntoCompanyVault(
     throw new Error('this page cannot send a public deposit, so nothing was built or sent. No money moved. Reload the page and try again; if it happens again, the service needs attention.');
   }
   const view = await vaultAsThisDeviceReadsIt(doors, vault);
-  if (!view.onChain || view.heldByCommittee !== true || view.state === undefined) {
-    throw new Error(view.why ?? 'this vault is not held by the company\'s committee, so no money goes in.');
+  if (!view.onChain || view.state === undefined) {
+    throw new Error(view.why ?? 'the chain does not show this vault\'s state, so no money goes in.');
   }
   /* Asked before the wallet is, so a deposit into a vault not yet started asks the wallet for nothing. */
   if (view.fundable !== true) {
@@ -2264,30 +2276,25 @@ const heldOfANote = async (doors: Pick<PayoutDoors, 'builder'>, vault: Hex, n: N
   (await doors.builder.commitments({ vault, coin: { nonce: n.nonce, token: n.token, value: n.value } })).held.toLowerCase();
 
 /**
- * **THE VAULT OPENED FOR A STEP OUT OF IT, ON THIS DEVICE**: held by the
- * company's committee and pinned to its account as the chain shows both, money
- * allowed out, any earlier step from this browser settled first, and its pool
- * as the company's records hold it.
+ * **THE VAULT OPENED FOR A STEP OUT OF IT, ON THIS DEVICE**: pinned to the
+ * company's account as the chain shows it, money allowed out, any earlier step
+ * from this browser settled first, and its pool as the company's records hold
+ * it. Who holds the vault is not asked: no payment waits on the super admins.
  */
 async function openedForAStepOut(
   doors: PayoutDoors, vault: Hex,
 ): Promise<{ readonly view: VaultChainView; readonly pool: Awaited<ReturnType<SealedNotePool['load']>> }> {
   doors.progress?.('opening the pool');
   const view = await vaultAsThisDeviceReadsIt(doors, vault);
-  if (!view.onChain || view.heldByCommittee !== true) {
-    throw new Error('the chain, as this device read it, does not show this vault held by the company\'s committee, so its '
-      + `record is not opened here and nothing is paid out of it. Nothing was sent.${view.why ? ` Reason: ${view.why}` : ''} `
-      + 'Where the cause is that a signer joined or left, or the threshold changed, since the vault was handed over, '
-      + 'the signers who hold it now sign the change in Settings, and payments out of it are made again once the chain '
-      + 'shows it.');
+  if (!view.onChain) {
+    throw new Error('the chain, as this device read it, does not show this vault, so its record is not opened here and '
+      + `nothing is paid out of it. Nothing was sent.${view.why ? ` Reason: ${view.why}` : ''}`);
   }
   /*
-   * **AND THE WHOLE QUESTION THE SERVICE ASKS BEFORE IT SENDS, NOT HALF OF IT.**
-   * The committee holding the vault is what opening the record waits on; the
-   * service also refuses a payment out while the company's account is not
-   * held by its committee, and it says so here, before the pool is opened, a
-   * line is written or two minutes are spent proving a payment it would not
-   * send.
+   * **WHETHER MONEY MAY GO OUT NOW, ASKED BEFORE ANYTHING ELSE.** The vault
+   * pinned to the company's account and started, said here before the pool is
+   * opened, a line is written or two minutes are spent proving a payment that
+   * could not be sent.
    */
   if (view.fundable !== true) {
     throw new Error('No payment can be made out of this vault yet, so none was prepared or recorded. Nothing was '
@@ -2740,9 +2747,9 @@ export async function payPubliclyFromCompanyVault(
   }
   doors.progress?.('reading the chain');
   const view = await vaultAsThisDeviceReadsIt(doors, vault);
-  if (!view.onChain || view.heldByCommittee !== true) {
-    throw new Error('the chain, as this device read it, does not show this vault held by the company\'s committee, so '
-      + `nothing is paid out of it. Nothing was sent.${view.why ? ` Reason: ${view.why}` : ''}`);
+  if (!view.onChain) {
+    throw new Error('the chain, as this device read it, does not show this vault, so nothing is paid out of it. Nothing was '
+      + `sent.${view.why ? ` Reason: ${view.why}` : ''}`);
   }
   if (view.fundable !== true) {
     throw new Error('No payment can be made out of this vault yet, so none was prepared or recorded. Nothing was '

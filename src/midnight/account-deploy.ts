@@ -14,6 +14,7 @@
  * Pure, and loads no WebAssembly: the ledger's objects are handed in.
  */
 import type { CommitteeKey } from './vault-committee.js';
+import { authorityIn } from 'midnight-identity/profile/contract-authority';
 import { sameCommittee } from './vault-committee.js';
 import { circuitsRefusal, startsHoldingMoney } from './vault-circuits.js';
 
@@ -101,15 +102,11 @@ export function readAccountDeploy(tx: unknown, expect: AccountDeployExpectations
   if (deploy.initialState === undefined || deploy.address === undefined || deploy.entryPoint !== undefined) {
     return { refusal: `this is not ${what}: it does something other than deploy a contract. Nothing was sent.` };
   }
-  const state = deploy.initialState as {
-    maintenanceAuthority?: { committee?: unknown[]; threshold?: unknown; counter?: unknown };
-    serialize?: () => Uint8Array;
-  };
-  const authority = state.maintenanceAuthority;
-  const keys = Array.isArray(authority?.committee) ? (authority!.committee as CommitteeKey[]) : null;
-  if (keys === null || typeof authority?.threshold !== 'number' || authority.counter !== 0n
+  const state = deploy.initialState as { serialize?: () => Uint8Array };
+  const authority = authorityIn(state);
+  if ('why' in authority || authority.counter !== 0n
     || !sameCommittee(
-      { committee: keys.map((k) => ({ tag: String(k.tag), value: String(k.value).toLowerCase() })), threshold: authority.threshold },
+      { committee: authority.committee, threshold: authority.threshold },
       { committee: [{ tag: expect.foundingKey.tag, value: expect.foundingKey.value.toLowerCase() }], threshold: 1 })) {
     return {
       refusal: `this is not ${what}: a company's account is created held by its founding signer's own key alone, at a `

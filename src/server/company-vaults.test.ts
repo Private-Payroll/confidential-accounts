@@ -1,10 +1,11 @@
+import { schnorr } from '@noble/curves/secp256k1.js';
 import { describe, it, expect, beforeEach, afterEach } from 'vitest';
 import express from 'express';
 import type { AddressInfo } from 'node:net';
 import { MemoryStore } from '../core/store.js';
 import type { SealedAccount } from '../core/types.js';
 import { NothingWasSent } from '../core/jobs.js';
-import { companyCommittee, companyVaultRoutes, vaultState, type CompanyVaultDeps } from './company-vaults.js';
+import { companyVaultRoutes, vaultState, type CompanyVaultDeps } from './company-vaults.js';
 import type { VaultKey } from '../core/vault-keys.js';
 
 /*
@@ -12,7 +13,8 @@ import type { VaultKey } from '../core/vault-keys.js';
  * stood in. The whole path, with the ledger's own state machine, is
  * `contracts/test/a-company-vault-from-the-page.test.ts`.
  */
-const key = (n: number) => ({ tag: 'schnorr' as const, value: n.toString(16).padStart(2, '0').repeat(32) });
+/** Wallet key `n`: the x-only public key of a secret made of one repeated byte, a key the chain builds a committee with. */
+const key = (n: number) => ({ tag: 'schnorr' as const, value: Buffer.from(schnorr.getPublicKey(new Uint8Array(32).fill(n))).toString('hex') });
 const hex = (n: number) => n.toString(16).padStart(2, '0').repeat(32);
 const VAULT = hex(0xab);
 
@@ -27,6 +29,8 @@ let deployShape = false;
 let circuitKeys: (c: string) => Uint8Array;
 /* The account the vault's ledger names on the chain now. */
 let pinnedNow: string;
+/* The vaults the company's account lists on the chain now, adopted or retired. */
+let listedNow: string[];
 /* Whether the vault's state on the chain fails to read as a vault's at all. */
 let startingLedgerUnreadable: boolean;
 const CIRCUITS = ['batchPayout', 'deposit', 'depositUnshielded', 'forgetUnshielded', 'mergeNotes', 'payout', 'payoutUnshielded', 'retire', 'setNonceSecret', 'splitNote', 'writeSecretCopy'];
@@ -39,11 +43,9 @@ let accountUnreachable = false;
 /* How many times the vault's state has been read in this test, and which of those reads the indexer does not answer. */
 let vaultReads = 0;
 let vaultReadFails: (n: number) => boolean = () => false;
-let handoverDep: CompanyVaultDeps['account']['handover'];
 let serviceKey: { tag: string; value: string } | undefined;
 let acc1Threshold = 2;
 let acc1VaultThresholds: Array<{ vault: string; threshold: number }> = [];
-let handoverShape: unknown;
 let payoutShape: unknown;
 /* What a step of a vault's start reads as, and the vault's secret and start as its ledger shows them. */
 let startShape: unknown;
@@ -57,6 +59,8 @@ let asked: string[];
 /* Whether the vault's ledger is this build's shape, as the chain reader answers it; `undefined` for a reader with no such check. */
 let ledgerIsThisBuilds: CompanyVaultDeps['chain']['ledgerIsThisBuilds'];
 let assembleDep: CompanyVaultDeps['committeeChange'];
+/* The routes' own dependencies, so a test can start a second process of the same service over the same store. */
+let routeDeps: CompanyVaultDeps;
 /* The vault's public balance as its state carries it; absent unless a test sets it. */
 let vaultBalance: unknown;
 /*
@@ -105,11 +109,9 @@ beforeEach(async () => {
   accountUnreachable = false;
   vaultReads = 0;
   vaultReadFails = () => false;
-  handoverDep = undefined;
   serviceKey = undefined;
   acc1Threshold = 2;
   acc1VaultThresholds = [];
-  handoverShape = {};
   payoutShape = {};
   startShape = {};
   secretNow = '00'.repeat(32);
@@ -131,13 +133,14 @@ beforeEach(async () => {
     return { blockHash: 'B', accountState: 'YQ==', parameters: 'cA==' };
   };
   pinnedNow = hex(0xc0);
+  listedNow = [VAULT];
   startingLedgerUnreadable = false;
   ledgerIsThisBuilds = async () => {};
   assembleDep = undefined;
   vaultBalance = undefined;
   sendVault = async (_a, what) => { sent.push(what); return { ref: 'r', at: 'now', transactionHash: 'h' }; };
   const app = express();
-  app.use(companyVaultRoutes({
+  app.use(companyVaultRoutes(routeDeps = {
     signedIn: (req, res, next) => {
       const p = req.headers['x-test-person'];
       if (typeof p !== 'string') { res.status(401).json({ error: 'not signed in' }); return; }
@@ -171,6 +174,10 @@ beforeEach(async () => {
         };
       },
       serialize: (s) => (s as { serialize(): Uint8Array }).serialize(),
+      accountVaults: async (address) => {
+        if (accountUnreachable) throw new Error('the indexer did not answer');
+        return address === hex(0xc0) ? listedNow : [];
+      },
       notesOf: () => [hex(0x5a)],
       get ledgerIsThisBuilds() { return ledgerIsThisBuilds; },
       startingLedgerOf: () => {
@@ -187,11 +194,10 @@ beforeEach(async () => {
     account: {
       circuits: ACCOUNT_CIRCUITS,
       verifierKeys: async () => new Map(ACCOUNT_CIRCUITS.map((c) => [c, vkOf(c)])),
-      get handover() { return handoverDep; },
       get temporaryKey() { return serviceKey; },
     },
     readers: {
-      proven: async (b) => (b[0] === 0xee ? handoverShape : b[0] === 0xdd ? payoutShape : b[0] === 0xcc ? startShape : deployShape ? aDeploy() : {}),
+      proven: async (b) => (b[0] === 0xdd ? payoutShape : b[0] === 0xcc ? startShape : deployShape ? aDeploy() : {}),
       finished: async () => ({}),
     },
     get committeeChange() { return assembleDep; },
@@ -210,19 +216,18 @@ const call = async (path: string, as: string | null, method = 'GET', body?: unkn
   return { status: r.status, body: await r.json().catch(() => ({})) };
 };
 /**
- * **AN ACCOUNT CREATED THE OLD WAY**, under this service's temporary key and handed over later: the record holds no
- * deploy from its founding signer's browser. Only the handover's own tests, which go with the handover, use this.
+ * **AN ACCOUNT CREATED THE OLD WAY**, under this service's temporary key: the record holds no deploy from its
+ * founding signer's browser, so nothing is funded on it.
  */
 const accountNotBornHeld = () => {
   delete (store as unknown as { data: { accountDeploys: Record<string, unknown> } }).data.accountDeploys['acc_1'];
 };
-/** A member's vault keys, folded into the roster as a seat's device folds them, and the index filed with it. */
+/** A member's vault keys, folded into the roster as a seat's device folds them, and the index filed with it: records keys only. */
 const give = async (as: string, n: number): Promise<void> => {
   roster.set(`acc_1:${as}`, { committeeKey: key(n), recordsKey: hex(n + 0x10) });
   const mine = [...roster.values()];
   store.putVaultKeyIndex({
     accountId: 'acc_1', signerCount: store.getAccount('acc_1')!.signerCount,
-    committeeKeys: mine.map((k) => k.committeeKey).sort((a, b) => (a.value < b.value ? -1 : 1)),
     readers: mine.map((k) => k.recordsKey).sort(), filers: [],
   });
 };
@@ -235,37 +240,39 @@ describe('A SIGNER\'S VAULT KEYS', () => {
     })).status).toBe(404);
   });
 
-  it('the committee is complete only when every signer has given a key', async () => {
-    await give('ada', 1);
+  it('the committee is the one holding the company\'s account on the chain, whoever has given vault keys', async () => {
+    /* RED WHEN: the committee is made from the signers' vault keys again - a signer joining or leaving would then change
+     * which committee a vault is born held by. */
     let k = await call('/api/accounts/acc_1/vault-keys', 'ada');
-    expect(k.body.committee).toBeNull();
-    expect(k.body.why).toMatch(/1 of this company's 2 signers has not/);
+    expect(k.body.committee).toEqual({ committee: [key(1), key(2)], threshold: 2 });
     /* RED WHEN: the answer says which key is whose - the service then tells anybody who asks. */
     expect(Object.keys(k.body).sort()).toEqual(['committee', 'readers', 'why']);
-    await give('bo', 2);
+    await give('ada', 1); await give('bo', 2);
+    accountAuthority = { committee: [key(7)], threshold: 1, counter: 4n };
     k = await call('/api/accounts/acc_1/vault-keys', 'ada');
-    expect(k.body.committee).toEqual({ committee: [key(1), key(2)], threshold: 2 });
+    expect(k.body.committee).toEqual({ committee: [key(7)], threshold: 1 });
     expect(k.body.readers.sort()).toEqual([hex(0x11), hex(0x12)]);
+    /* RED WHEN: an account the chain does not answer for is given a committee anyway. */
+    accountUnreachable = true;
+    k = await call('/api/accounts/acc_1/vault-keys', 'ada');
+    expect(k.body.committee).toBeNull();
+    expect(k.body.why).toMatch(/could not be asked who holds this company's account/);
   });
 
-  it('a seeded signer with no person behind them leaves the committee incomplete', () => {
-    const r = companyCommittee(account({ memberUserIds: ['ada'], signerCount: 2 }), 1, {
-      accountId: 'acc_1', signerCount: 2, committeeKeys: [key(1)], readers: [hex(1)], filers: [hex(1)],
-    });
-    expect(r.committee).toBeNull();
-    expect(r.why).toMatch(/1 of this company's 2 signers/);
-    /* RED WHEN: an index made when the company had another number of signers is taken as this company's committee. */
-    const stale = companyCommittee(account({ signerCount: 3 }), 1, {
-      accountId: 'acc_1', signerCount: 2, committeeKeys: [key(1), key(2)], readers: [], filers: [],
-    });
-    expect(stale.committee).toBeNull();
-    expect(stale.why).toMatch(/3 of this company's 3 signers/);
+  it('an account still held by this service\'s temporary key has no committee', async () => {
+    /* RED WHEN: the service's own key is offered as the committee a vault is born held by. */
+    serviceKey = key(9);
+    accountAuthority = { committee: [key(9)], threshold: 1, counter: 0n };
+    const k = await call('/api/accounts/acc_1/vault-keys', 'ada');
+    expect(k.body.committee).toBeNull();
+    expect(k.body.why).toMatch(/still held by the temporary key/);
   });
 });
 
 describe('A VAULT\'S ROUTES', () => {
   it('NO COMMITTEE, NO DEPLOY: refused before anything is read or sent', async () => {
-    await give('ada', 1);
+    /* RED WHEN: a vault is deployed while no committee holds the company's account on the chain. */
+    accountUnreachable = true;
     const r = await call('/api/accounts/acc_1/vaults', 'ada', 'POST', { tx: 'AAAA' });
     expect(r).toMatchObject({ status: 409, body: { nothingWasSent: true } });
     expect(sent).toEqual([]);
@@ -287,24 +294,58 @@ describe('A VAULT\'S ROUTES', () => {
     expect(sent).toEqual([]);
   });
 
-  it('NO DEPOSIT WHILE THE CHAIN SAYS THE COMMITTEE DOES NOT HOLD THE VAULT, whatever the record says', async () => {
-    await give('ada', 1); await give('bo', 2);
+  it('WHOEVER HOLDS THE VAULT ON THE CHAIN, A DEPOSIT GOES IN; A VAULT THE CHAIN DOES NOT ANSWER FOR TAKES NONE', async () => {
     store.putCompanyVault({ accountId: 'acc_1', vault: VAULT, deployedAt: '', deployRef: 'r', intended: { committee: [key(1), key(2)], threshold: 2 }, bornHeld: true });
-    const refused = await call(`/api/accounts/acc_1/vaults/${VAULT}/deposit`, 'ada', 'POST', { tx: 'AAAA' });
-    expect(refused).toMatchObject({ status: 409, body: { nothingWasSent: true } });
-    expect(refused.body.error).toMatch(/its committee is changed to match in Settings/);
-    /* A vault is born held, so one the committee does not hold has nothing owed to it: it is held by other keys. */
-    expect((await call('/api/accounts/acc_1/vaults', 'ada')).body.rows).toEqual([
-      expect.objectContaining({ vault: VAULT, state: 'held-by-other-keys' }),
-    ]);
-    authority = { committee: [key(1), key(2)], threshold: 2, counter: 1n };
+    /* RED WHEN: the funding gate compares who holds the vault with any committee - a change of the super admins that has
+     * not reached this vault yet would then stop money. */
     const paid = await call(`/api/accounts/acc_1/vaults/${VAULT}/deposit`, 'ada', 'POST', { tx: 'AAAA' });
     expect(paid).toMatchObject({ status: 200, body: { txRef: 'r', transactionHash: 'h' } });
     expect(sent).toEqual(['a deposit into a vault']);
+    expect((await call('/api/accounts/acc_1/vaults', 'ada')).body.rows).toEqual([
+      expect.objectContaining({ vault: VAULT, state: 'held-by-committee' }),
+    ]);
+    /* RED WHEN: the gate reads who holds the vault or the account - a contract whose maintenance authority cannot be
+     * read would then stop money. */
     authority = undefined;
+    accountAuthority = undefined;
+    const unheld = await call(`/api/accounts/acc_1/vaults/${VAULT}/deposit`, 'ada', 'POST', { tx: 'AAAA' });
+    expect(unheld).toMatchObject({ status: 200, body: { txRef: 'r' } });
+    expect((await call('/api/accounts/acc_1/vaults', 'ada')).body.rows[0].state).toBe('held-by-committee');
+    vaultReadFails = () => true;
     const unread = await call(`/api/accounts/acc_1/vaults/${VAULT}/deposit`, 'ada', 'POST', { tx: 'AAAA' });
     expect(unread).toMatchObject({ status: 409, body: { nothingWasSent: true } });
+    expect(unread.body.error).toMatch(/could not be asked/);
     expect((await call('/api/accounts/acc_1/vaults', 'ada')).body.rows[0].state).toBe('unknown');
+  });
+
+  it('A SIGNER JOINING OR LEAVING STOPS NO PAYMENT, IN OR OUT', async () => {
+    store.putCompanyVault({ accountId: 'acc_1', vault: VAULT, deployedAt: '', deployRef: 'r', intended: { committee: [key(1), key(2)], threshold: 2 }, bornHeld: true });
+    authority = { committee: [key(1), key(2)], threshold: 2, counter: 1n };
+    await give('ada', 1); await give('bo', 2);
+    /* A third signer seated: the roster's index no longer has every signer's keys. */
+    store.putAccount(account({ signerCount: 3 }));
+    /* RED WHEN: a payment reads the signers or their vault keys - a signer joining then stops it. */
+    expect((await call(`/api/accounts/acc_1/vaults/${VAULT}/deposit`, 'ada', 'POST', { tx: 'AAAA' })).status).toBe(200);
+    expect((await call(`/api/accounts/acc_1/vaults/${VAULT}/payout`, 'ada', 'POST', { tx: '3Q==' })).status).toBe(200);
+    /* And one leaving. */
+    store.putAccount(account({ signerCount: 1 }));
+    expect((await call(`/api/accounts/acc_1/vaults/${VAULT}/merge`, 'ada', 'POST', { tx: '3Q==' })).status).toBe(200);
+    expect((await call(`/api/accounts/acc_1/vaults/${VAULT}/chain`, 'ada')).body).toMatchObject({ fundable: true, why: null });
+  });
+
+  it('A CHANGE OF THE SUPER ADMINS LANDED ON THE ACCOUNT AND NOT YET ON THE VAULT STOPS NO PAYMENT', async () => {
+    store.putCompanyVault({ accountId: 'acc_1', vault: VAULT, deployedAt: '', deployRef: 'r', intended: { committee: [key(1), key(2)], threshold: 2 }, bornHeld: true });
+    accountAuthority = { committee: [key(3), key(4)], threshold: 2, counter: 2n };
+    authority = { committee: [key(1), key(2)], threshold: 2, counter: 1n };
+    /* RED WHEN: the funding or payout gate compares the vault's committee with the account's. */
+    for (const [path, tx] of [['deposit', 'AAAA'], ['payout', '3Q=='], ['merge', '3Q=='], ['public-payout', '3Q==']] as const) {
+      expect((await call(`/api/accounts/acc_1/vaults/${VAULT}/${path}`, 'ada', 'POST', { tx })).status, path).toBe(200);
+    }
+    const view = (await call(`/api/accounts/acc_1/vaults/${VAULT}/chain`, 'ada')).body;
+    expect(view).toMatchObject({ fundable: true, why: null });
+    /* RED WHEN: the view a device reads before a deposit, a payment out or a vault's start reads who holds the vault or
+     * the account. */
+    expect(Object.keys(view).filter((k) => ['authority', 'committee', 'committeeWhy', 'heldByCommittee'].includes(k))).toEqual([]);
   });
 
   it('NO DEPOSIT INTO A VAULT WHOSE PROOFS ON THE CHAIN ARE NOT THIS BUILD\'S, even when the committee holds it', async () => {
@@ -317,7 +358,7 @@ describe('A VAULT\'S ROUTES', () => {
     expect(refused).toMatchObject({ status: 409, body: { nothingWasSent: true } });
     expect(refused.body.error).toMatch(/'payout' circuit is not the one this service's build compiled/);
     const view = await call(`/api/accounts/acc_1/vaults/${VAULT}/chain`, 'ada');
-    expect(view.body).toMatchObject({ heldByCommittee: false });
+    expect(view.body).toMatchObject({ fundable: false });
     expect(view.body.why).toMatch(/'payout' circuit/);
     expect(sent).toEqual([]);
   });
@@ -330,7 +371,7 @@ describe('A VAULT\'S ROUTES', () => {
       expect(refused).toMatchObject({ status: 409, body: { nothingWasSent: true } });
       expect(refused.body.error).toMatch(pattern);
       const view = await call(`/api/accounts/acc_1/vaults/${VAULT}/chain`, 'ada');
-      expect(view.body).toMatchObject({ heldByCommittee: false });
+      expect(view.body).toMatchObject({ fundable: false });
       expect(view.body.why).toMatch(pattern);
       expect((await call('/api/accounts/acc_1/vaults', 'ada')).body.rows).toEqual([
         expect.objectContaining({ vault: VAULT, state: 'not-fundable', why: expect.stringMatching(pattern) }),
@@ -354,21 +395,21 @@ describe('A VAULT\'S ROUTES', () => {
   });
 
   /*
-   * **A HICCUP BETWEEN TWO READS IS NOT AN ALARM.** The list reads who holds
-   * the vault, then reads the vault's state for everything else the gate asks.
-   * When the second read fails, the chain has not said anything is wrong with
-   * the vault: the screen shows that it could not be asked, and the doors still
-   * refuse. RED WHEN: a failed state read is answered as a refusal about the
-   * vault rather than put to the gate as a read that went unanswered.
+   * **A STATE READ THAT FAILS IS NOT AN ALARM.** The list and every door read
+   * the vault's state once, for everything the gate asks. When that read
+   * fails, the chain has not said anything is wrong with the vault: the screen
+   * shows that it could not be asked, and the doors still refuse. RED WHEN: a
+   * failed state read is answered as a refusal about the vault rather than put
+   * to the gate as a read that went unanswered.
    */
-  it('A STATE READ THAT FAILS AFTER THE RULES WERE READ SHOWS AS UNKNOWN, NOT AS AN ALARM, AND STILL SENDS NOTHING', async () => {
+  it('A STATE READ THAT FAILS SHOWS AS UNKNOWN, NOT AS AN ALARM, AND STILL SENDS NOTHING', async () => {
     await give('ada', 1); await give('bo', 2);
     store.putCompanyVault({ accountId: 'acc_1', vault: VAULT, deployedAt: '', deployRef: 'r', intended: { committee: [key(1), key(2)], threshold: 2 }, bornHeld: true });
     authority = { committee: [key(1), key(2)], threshold: 2, counter: 1n };
     expect((await call('/api/accounts/acc_1/vaults', 'ada')).body.rows[0].state).toBe('held-by-committee');
-    /* Every second read of the vault fails: the rules are read, the state that follows is not. */
+    /* Every read of the vault's state fails. */
     vaultReads = 0;
-    vaultReadFails = (n) => n % 2 === 0;
+    vaultReadFails = () => true;
     const rows = (await call('/api/accounts/acc_1/vaults', 'ada')).body.rows;
     expect(rows).toEqual([expect.objectContaining({ vault: VAULT, state: 'unknown', why: expect.stringMatching(/could not be asked/) })]);
     vaultReads = 0;
@@ -391,14 +432,16 @@ describe('A VAULT\'S ROUTES', () => {
   it('THE CHAIN VIEW\'S REASON IS TRUE OF A PAYMENT OUT AS WELL AS A DEPOSIT', async () => {
     await give('ada', 1); await give('bo', 2);
     store.putCompanyVault({ accountId: 'acc_1', vault: VAULT, deployedAt: '', deployRef: 'r', intended: { committee: [key(1), key(2)], threshold: 2 }, bornHeld: true });
-    const notHeld = await call(`/api/accounts/acc_1/vaults/${VAULT}/chain`, 'ada');
-    expect(notHeld.body).toMatchObject({ heldByCommittee: false, fundable: false });
-    expect(notHeld.body.why).toMatch(/^no money goes into or out of this vault: /);
+    startedNow = false;
+    const notStarted = await call(`/api/accounts/acc_1/vaults/${VAULT}/chain`, 'ada');
+    expect(notStarted.body).toMatchObject({ fundable: false });
+    expect(notStarted.body.why).toMatch(/^no money goes into or out of this vault: /);
+    startedNow = true;
     authority = { committee: [key(1), key(2)], threshold: 2, counter: 1n };
     /* The vault is the committee's; the account it pays out on is not one the record holds as born held. */
     accountNotBornHeld();
     const unvouched = await call(`/api/accounts/acc_1/vaults/${VAULT}/chain`, 'ada');
-    expect(unvouched.body).toMatchObject({ heldByCommittee: true, fundable: false });
+    expect(unvouched.body).toMatchObject({ fundable: false });
     expect(unvouched.body.why).toMatch(/^no money goes into or out of this vault: /);
   });
 
@@ -465,73 +508,45 @@ describe('NO VAULT UNTIL THE COMPANY\'S ACCOUNT IS FINISHED', () => {
 
 describe('THE COMPANY ACCOUNT STANDS BEHIND EVERY VAULT', () => {
   const vaultHeld = async () => {
-    await give('ada', 1); await give('bo', 2);
     store.putCompanyVault({ accountId: 'acc_1', vault: VAULT, deployedAt: '', deployRef: 'r', intended: { committee: [key(1), key(2)], threshold: 2 }, bornHeld: true });
     authority = { committee: [key(1), key(2)], threshold: 2, counter: 1n };
   };
   const deposit = () => call(`/api/accounts/acc_1/vaults/${VAULT}/deposit`, 'ada', 'POST', { tx: 'AAAA' });
 
-  it('NO MONEY GOES INTO A VAULT THE COMMITTEE HOLDS WHILE THE ACCOUNT IS STILL HELD BY ITS TEMPORARY KEY', async () => {
-    /* RED WHEN: the account check at the end of `whyNotFunded` is removed - the first deposit is then paid for,
-     * `sent` carries it, and the row reads 'held-by-committee' over an account one machine's key can drain. */
+  it('NO MONEY GOES IN ON AN ACCOUNT THIS SERVICE DID NOT READ AT ITS CREATION AS HELD FROM ITS FIRST TRANSACTION', async () => {
+    /* RED WHEN: the account's half of the gate stops asking this service's record of the account's creation - an
+     * account this service's own temporary key holds is then funded. */
     await vaultHeld();
-    /* The key the chain shows on the account is THIS SERVICE'S: a door that keeps none cannot say whose it is. */
+    accountNotBornHeld();
     serviceKey = key(9);
     accountAuthority = { committee: [key(9)], threshold: 1, counter: 0n };
     const refused = await deposit();
     expect(refused).toMatchObject({ status: 409, body: { nothingWasSent: true } });
-    expect(refused.body.error).toMatch(/account is still held by the temporary key it was created with/);
+    expect(refused.body.error).toMatch(/account, which every vault pays out on, were not read by this service at their creation/);
     expect((await call('/api/accounts/acc_1/vaults', 'ada')).body.rows).toEqual([
-      expect.objectContaining({ vault: VAULT, state: 'account-not-handed-over', why: expect.stringMatching(/temporary key/) }),
+      expect.objectContaining({ vault: VAULT, state: 'account-not-fundable' }),
     ]);
-    /* The vault's own handover is finished, and a device waiting on it must be told so; the money is what waits. */
+    /* No committee holds the account, so the vault is held by none the account has, and no money moves. */
     const view = await call(`/api/accounts/acc_1/vaults/${VAULT}/chain`, 'ada');
-    expect(view.body).toMatchObject({ heldByCommittee: true, fundable: false });
-    expect(view.body.why).toMatch(/temporary key/);
+    expect(view.body).toMatchObject({ fundable: false });
     expect(sent).toEqual([]);
   });
 
-  it('NOR WHILE THE ACCOUNT IS HELD BY OTHER KEYS, RUNS OTHER CIRCUITS, OR CANNOT BE READ; A BORN-HELD ONE CHANGED TWICE IS FUNDED', async () => {
-    /* RED WHEN, one per step, all inside the one gate: `committeeHoldsIt` answers `null` on a disagreeing
-     * authority; the account's circuits stop being compared; an unreachable account is read as ready. */
+  it('A BORN-HELD ACCOUNT IS FUNDED WHOEVER HOLDS IT NOW; NOT WHILE IT RUNS OTHER CIRCUITS OR CANNOT BE READ', async () => {
     await vaultHeld();
+    /* RED WHEN: the gate compares who holds the account with any committee - a change of the super admins then stops money. */
     accountAuthority = { committee: [key(1), key(3)], threshold: 2, counter: 1n };
-    expect((await deposit()).body.error).toMatch(/not held by the company's committee on the chain/);
-    /* RED WHEN: a born-held account is refused for having been changed more than once. */
+    expect((await deposit()).status).toBe(200);
     accountAuthority = { committee: [key(1), key(2)], threshold: 2, counter: 2n };
     expect((await deposit()).status).toBe(200);
     sent.length = 0;
-    accountAuthority = { committee: [key(1), key(2)], threshold: 2, counter: 1n };
+    /* RED WHEN: the account's circuits stop being compared. */
     accountKeys = (c) => (c === 'recordPaymentFromVault' ? new TextEncoder().encode('vk:drain') : vkOf(c));
     expect((await deposit()).body.error).toMatch(/'recordPaymentFromVault' circuit is not the one this service's build compiled/);
-    /* An account as deployed but running circuits this build did not compile is an alarm, not a step not yet taken. */
-    serviceKey = key(9);
-    accountAuthority = { committee: [key(9)], threshold: 1, counter: 0n };
-    expect((await deposit()).body.error).toMatch(/temporary key/);
     expect((await call('/api/accounts/acc_1/vaults', 'ada')).body.rows[0].state).toBe('account-not-fundable');
-    accountAuthority = { committee: [key(1), key(2)], threshold: 2, counter: 2n };
     accountKeys = vkOf;
     expect((await call('/api/accounts/acc_1/vaults', 'ada')).body.rows[0].state).toBe('held-by-committee');
-    /*
-     * **A DOOR THAT KEEPS NO KEY OF ITS OWN CANNOT SAY WHOSE SINGLE KEY THAT IS.**
-     * RED WHEN: `accountAsDeployed` treats an empty `heldHere` as a match, which makes every one-key,
-     * never-changed account read as OUR temporary key - so a screen offers the handover button, and the
-     * sentence claims custody the door has not checked, while a stranger holds the account.
-     */
-    serviceKey = undefined;
-    accountAuthority = { committee: [key(9)], threshold: 1, counter: 0n };
-    expect((await call('/api/accounts/acc_1/vaults', 'ada')).body.rows[0].state).toBe('account-not-fundable');
-    expect((await deposit()).body.error).not.toMatch(/temporary key it was created with/);
-
-    /* One key, never changed, and not this service's: somebody else holds the account, which is not a step not yet taken.
-     * RED WHEN: the "as deployed" test stops comparing the key with this service's own. */
-    serviceKey = key(9);
-    accountAuthority = { committee: [key(8)], threshold: 1, counter: 0n };
-    expect((await call('/api/accounts/acc_1/vaults', 'ada')).body.rows[0].state).toBe('account-not-fundable');
-    accountAuthority = { committee: [key(9)], threshold: 1, counter: 0n };
-    expect((await call('/api/accounts/acc_1/vaults', 'ada')).body.rows[0].state).toBe('account-not-handed-over');
-    serviceKey = undefined;
-    accountAuthority = { committee: [key(1), key(2)], threshold: 2, counter: 1n };
+    /* RED WHEN: an unreachable account is read as ready. */
     accountUnreachable = true;
     expect((await deposit()).body.error).toMatch(/could not be (asked|read)/);
     expect((await call('/api/accounts/acc_1/vaults', 'ada')).body.rows[0].state).toBe('unknown');
@@ -541,18 +556,14 @@ describe('THE COMPANY ACCOUNT STANDS BEHIND EVERY VAULT', () => {
     expect(sent).toEqual(['a deposit into a vault']);
   });
 
-  it('A VAULT HELD BY A COMMITTEE THE COMPANY NO LONGER HAS IS NOT SHOWN AS A HANDOVER ANYBODY HERE CAN FINISH', async () => {
-    /* RED WHEN: `vaultState` answers 'handover-owed' for any authority - the row then offers a button the service
-     * refuses, and says nothing about who still holds the vault. */
+  it('A VAULT HELD BY KEYS THE ACCOUNT DOES NOT HAVE TAKES MONEY, AND THE WORD FOR A VAULT READS THE CHAIN FIRST', async () => {
+    /* RED WHEN: the list's word for a vault is decided by who holds it rather than by the gate. */
     await vaultHeld();
     authority = { committee: [key(1)], threshold: 1, counter: 1n };
-    expect((await call('/api/accounts/acc_1/vaults', 'ada')).body.rows[0].state).toBe('held-by-other-keys');
+    expect((await call('/api/accounts/acc_1/vaults', 'ada')).body.rows[0].state).toBe('held-by-committee');
     const read = (a: { committee: { tag: string; value: string }[]; threshold: number; counter: bigint; shape: string }) =>
       ({ state: 'read', address: VAULT, authority: { ...a, hasDuplicateMembers: false } }) as never;
-    /* RED WHEN: a vault held by one key outside the committee is still offered as a handover: a vault is born held, and nothing is handed over. */
     expect(vaultState(read({ committee: [key(9)], threshold: 1, counter: 0n, shape: 'one-key' }), { heldByOthers: true })).toBe('held-by-other-keys');
-    expect(vaultState(read({ committee: [key(9)], threshold: 1, counter: 1n, shape: 'one-key' }), { heldByOthers: true })).toBe('held-by-other-keys');
-    expect(vaultState(read({ committee: [key(1), key(3)], threshold: 2, counter: 1n, shape: 'committee' }), { heldByOthers: true })).toBe('held-by-other-keys');
     expect(vaultState({ state: 'absent', address: VAULT, why: '' }, { heldByOthers: true })).toBe('not-on-chain-yet');
     /*
      * **WHAT THE CHAIN SAID IS READ BEFORE THE REFUSAL'S FLAGS.**
@@ -563,175 +574,60 @@ describe('THE COMPANY ACCOUNT STANDS BEHIND EVERY VAULT', () => {
     expect(vaultState({ state: 'absent', address: VAULT, why: '' }, { heldByOthers: false })).toBe('not-on-chain-yet');
   });
 
-  it('SETTINGS SHOWS EVERY CONTRACT\'S SEATS FROM THE CHAIN, AND A SEAT HELD BY SOMEBODY NOT ON THE COMPANY - AND NEVER WHOSE EACH SEAT IS', async () => {
-    /* RED WHEN: `authorityView` stops counting seats outside the committee - `seatsOutsideTheCommittee` reads 0 for
-     * the vault and its sentence stops naming the seat - or the service names whose key a seat is, which only the
-     * sealed roster may say. */
+  it('SETTINGS SHOWS EVERY CONTRACT\'S SEATS FROM THE CHAIN AGAINST THE ACCOUNT\'S COMMITTEE - AND NEVER WHOSE EACH SEAT IS', async () => {
+    /* RED WHEN: `authorityView` stops counting seats outside the committee holding the account - `seatsOutsideTheCommittee`
+     * reads 0 for the vault - or the service names whose key a seat is, which only the sealed roster may say. */
     await vaultHeld();
-    accountNotBornHeld();
     authority = { committee: [key(1), key(3)], threshold: 2, counter: 1n };
-    accountAuthority = { committee: [key(9)], threshold: 1, counter: 0n };
-    handoverDep = async () => new Uint8Array([0xee]);
-    serviceKey = key(9);
     const r = await call('/api/accounts/acc_1/authority', 'ada');
     expect(r.status).toBe(200);
     /* RED WHEN the label is left out: a signer's wallet would have nothing to derive its committee key from. */
-    expect(r.body.company).toEqual({ address: hex(0xc0), label: LABEL, threshold: 2, signerCount: 2 });
+    expect(r.body.company).toEqual({ address: hex(0xc0), label: LABEL });
+    expect(r.body.committee).toEqual({ committee: [key(1), key(2)], threshold: 2 });
     const [acct, vault] = r.body.contracts;
-    expect(acct).toMatchObject({ contract: 'account', heldByTheCompany: false, shape: 'one-key', changes: '0', seatsOutsideTheCommittee: 1 });
+    expect(acct).toMatchObject({ contract: 'account', heldByTheCompany: true, seatsOutsideTheCommittee: 0 });
     expect(vault).toMatchObject({ contract: 'vault', heldByTheCompany: false, threshold: 2, seatsOutsideTheCommittee: 1 });
     expect(vault.seats).toEqual([
       { key: key(1), holder: null, thisService: false, onTheCompanysCommittee: true },
       { key: key(3), holder: null, thisService: false, onTheCompanysCommittee: false },
     ]);
-    expect(vault.why).toMatch(/1 seat\(s\) on this vault are held by a key that is not on the company's committee/);
-    /* RED WHEN: the service's own key is not passed to the view - the seat then reads as nobody's. */
-    expect(acct.seats[0]).toMatchObject({ key: key(9), thisService: true });
-    expect(acct.why).toMatch(/THIS SERVICE'S temporary key holds this account's rules/);
-    expect(r.body.handover).toMatchObject({ possible: true, why: null });
-    expect(r.body.handover.permanent).toMatch(/A signer who has left keeps their seat until then/);
-    /* RED WHEN: a handed-over vault held by a committee that is not the company's is not offered a change - it is
-     * the one thing that brings it back, and the screen would offer nothing. */
+    /* RED WHEN: a screen says a change owed stops payments - it stops none. */
     expect(r.body.change.possible).toBe(true);
-    expect(r.body.change.why).toMatch(/^1 vault is still held by the committee from before/);
-    expect(r.body.change.why).toMatch(/no money goes into or out of that vault/);
-    expect(r.body.change.why).toMatch(/sign the change in their own wallets/);
-    /* Two signers at a threshold of two: losing either one strands the money, and the company is told. */
-    expect(r.body.everySignerNeeded).toMatch(/Every one of this company's 2 signers/);
+    expect(r.body.change.why).toMatch(/^1 vault is still held by the super admins from before/);
+    expect(r.body.change.why).toMatch(/Payments into and out of it go on as before/);
+    expect(r.body.change.why).not.toMatch(/no money/i);
     expect((await call('/api/accounts/acc_1/authority', 'carol')).status).toBe(404);
     expect(sent).toEqual([]);
   });
 
-  it('THE ACCOUNT IS HANDED OVER ONLY WHEN THE CHECK THE SERVICE APPLIES TO A STRANGER PASSES', async () => {
-    /* RED WHEN: the handover route sends without `refusalForHandover` - the wrong-committee transaction is then
-     * paid for and `sent` carries it. */
-    await give('ada', 1); await give('bo', 2);
+  it('AN ACCOUNT STILL HELD BY THIS SERVICE\'S TEMPORARY KEY NAMES THAT SEAT AS THE SERVICE\'S, AND NOTHING HANDS IT OVER', async () => {
     accountNotBornHeld();
+    serviceKey = key(9);
     accountAuthority = { committee: [key(9)], threshold: 1, counter: 0n };
-    const path = '/api/accounts/acc_1/authority/handover';
-    const checked = { committee: { committee: [key(1), key(2)], threshold: 2 } };
-    expect(await call(path, 'ada', 'POST', checked)).toMatchObject({ status: 503, body: { nothingWasSent: true } });
-    handoverDep = async () => new Uint8Array([0xee]);
-    sendVault = async (_a, what, _arr, bytes, check, readBytes) => {
-      const refusal = await check(await readBytes(bytes));
-      if (refusal !== null) throw new NothingWasSent(refusal);
-      sent.push(what);
-      return { ref: 'r', at: 'now', transactionHash: 'h' };
-    };
-    const handoverTo = (committee: unknown[], threshold: number) => ({
-      intents: new Map([[1, { actions: [{
-        address: hex(0xc0), counter: 0n, signatures: [[0n, key(7)]],
-        updates: [{ authority: { committee, threshold, counter: 1n } }],
-      }] }]]),
-    });
-    handoverShape = handoverTo([key(1), key(3)], 2);
-    /* RED WHEN: the route installs its own committee instead of refusing one the device did not check. */
-    const unchecked = await call(path, 'ada', 'POST', { committee: { committee: [key(1), key(3)], threshold: 2 } });
-    expect(unchecked).toMatchObject({ status: 409, body: { nothingWasSent: true } });
-    expect(unchecked.body.error).toMatch(/committee your device checked is not the one/);
-    expect((await call(path, 'ada', 'POST', {})).body.error).toMatch(/committee your device checked/);
-    const wrong = await call(path, 'ada', 'POST', checked);
-    expect(wrong).toMatchObject({ status: 422, body: { nothingWasSent: true } });
-    expect(wrong.body.error).toMatch(/not this company's committee/);
-    expect(sent).toEqual([]);
-    /* A builder that refuses sends nothing. */
-    const builds = handoverDep;
-    handoverDep = async () => { throw new Error('this company\'s account has already had its rules changed'); };
-    expect(await call(path, 'ada', 'POST', checked)).toMatchObject({ status: 409, body: { nothingWasSent: true } });
-    handoverDep = builds;
-    handoverShape = handoverTo([key(1), key(2)], 2);
-    expect(await call(path, 'ada', 'POST', checked)).toMatchObject({ status: 200, body: { state: 'handover-sent' } });
-    expect(sent).toEqual(['handing the company account to its committee']);
-    /* RED WHEN: the pending-handover guard is removed - a second copy is then paid for and `sent` holds two. */
-    const again = await call(path, 'bo', 'POST', checked);
-    expect(again).toMatchObject({ status: 409, body: { nothingWasSent: true } });
-    expect(again.body.error).toMatch(/has not shown it yet/);
-    expect((await call('/api/accounts/acc_1/authority', 'ada')).body.handover).toMatchObject({ possible: false, why: expect.stringMatching(/has not shown it yet/) });
-    expect(sent).toHaveLength(1);
-  });
-
-  it('THE ACCOUNT\'S HANDOVER CARRIES THE HIGHEST BAR THE ACCOUNT ENFORCES, ITS VAULTS\' INCLUDED', async () => {
-    await give('ada', 1); await give('bo', 2);
-    accountAuthority = { committee: [key(9)], threshold: 1, counter: 0n };
-    acc1VaultThresholds = [{ vault: hex(0xdd), threshold: 3 }];
-    let bar: number | null = null;
-    handoverDep = async ({ strictestBar }) => { bar = strictestBar; throw new Error('stopped before anything was built'); };
-    const r = await call('/api/accounts/acc_1/authority/handover', 'ada', 'POST', { committee: { committee: [key(1), key(2)], threshold: 2 } });
-    expect(r.body).toMatchObject({ nothingWasSent: true });
-    /* RED WHEN: the handover is built with the company's threshold alone as its bar. */
-    expect(bar).toBe(3);
-  });
-
-  it('TWO PRESSES AT ONCE ARE ONE HANDOVER, AND ONE THAT MAY HAVE LANDED IS NOT SENT AGAIN', async () => {
-    /* RED WHEN: the pending mark is set after the first wait instead of before it - both presses are then paid for;
-     * or when a send that may have landed does not keep the mark - the second press is then paid for. */
-    await give('ada', 1); await give('bo', 2);
-    accountAuthority = { committee: [key(9)], threshold: 1, counter: 0n };
-    const checked = { committee: { committee: [key(1), key(2)], threshold: 2 } };
-    const path = '/api/accounts/acc_1/authority/handover';
-    handoverDep = async () => { await new Promise((r) => setTimeout(r, 40)); return new Uint8Array([0xee]); };
-    handoverShape = {
-      intents: new Map([[1, { actions: [{
-        address: hex(0xc0), counter: 0n, signatures: [[0n, key(7)]],
-        updates: [{ authority: { committee: [key(1), key(2)], threshold: 2, counter: 1n } }],
-      }] }]]),
-    };
-    sendVault = async (_a, what, _arr, bytes, check, readBytes) => {
-      const refusal = await check(await readBytes(bytes));
-      if (refusal !== null) throw new NothingWasSent(refusal);
-      sent.push(what);
-      throw new Error('the node did not answer');
-    };
-    const both = await Promise.all([call(path, 'ada', 'POST', checked), call(path, 'bo', 'POST', checked)]);
-    expect(both.map((r) => r.status).sort()).toEqual([409, 502]);
-    expect(sent).toHaveLength(1);
-    const later = await call(path, 'ada', 'POST', checked);
-    expect(later).toMatchObject({ status: 409, body: { nothingWasSent: true } });
-    expect(later.body.error).toMatch(/has not shown it yet/);
-    expect(sent).toHaveLength(1);
-  });
-
-  it('NOT WHILE ONE SIGNER COULD ACT ALONE AND ANOTHER COULD LEAVE, ON EVERY DOOR THAT INSTALLS A COMMITTEE', async () => {
-    /* RED WHEN: `whyNotYet` is removed from the route or from the settings answer. */
-    await give('ada', 1); await give('bo', 2);
-    accountNotBornHeld();
-    acc1Threshold = 1;
-    accountAuthority = { committee: [key(9)], threshold: 1, counter: 0n };
-    handoverDep = async () => { throw new Error('must not be reached'); };
-    const r = await call('/api/accounts/acc_1/authority/handover', 'ada', 'POST', { committee: { committee: [key(1), key(2)], threshold: 1 } });
-    expect(r).toMatchObject({ status: 409, body: { nothingWasSent: true } });
-    expect(r.body.error).toMatch(/could change them alone.*Raise the company's threshold to at least two/s);
-    expect((await call('/api/accounts/acc_1/authority', 'ada')).body.handover).toMatchObject({
-      possible: false, why: expect.stringMatching(/could change them alone/),
-    });
+    const r = (await call('/api/accounts/acc_1/authority', 'ada')).body;
+    /* RED WHEN: the service's own key is passed off as the company's committee. */
+    expect(r.committee).toBeNull();
+    /* RED WHEN: the service's own key is not passed to the view - the seat then reads as nobody's. */
+    expect(r.contracts[0].seats[0]).toMatchObject({ key: key(9), thisService: true });
+    expect(r.contracts[0].why).toMatch(/THIS SERVICE'S temporary key holds this account's rules/);
+    /* RED WHEN: the handover route comes back - any member could then install a committee of their own key alone. */
+    expect((await call('/api/accounts/acc_1/authority/handover', 'ada', 'POST', { committee: { committee: [key(1)], threshold: 1 } })).status).toBe(404);
+    /* RED WHEN: the super admins' view carries the signers' threshold, count or a judgement made from them. */
+    expect(Object.keys(r).sort()).toEqual(['change', 'committee', 'company', 'contracts', 'why']);
+    expect(Object.keys(r.company).sort()).toEqual(['address', 'label']);
     expect(sent).toEqual([]);
   });
 
-  it('A BORN-HELD ONE-SIGNER COMPANY\'S FIRST CHANGE IS OFFERED, AND NEVER ONE THAT LEAVES A KEY ABLE TO ACT ALONE', async () => {
-    await give('ada', 1); await give('bo', 2);
+  it('A VAULT BEHIND THE ACCOUNT\'S COMMITTEE IS OFFERED A CHANGE TO IT, WITH ITS COUNTER; THE ACCOUNT ITSELF NEVER IS', async () => {
     store.putCompanyVault({ accountId: 'acc_1', vault: VAULT, deployedAt: '', deployRef: 'r', intended: { committee: [key(1)], threshold: 1 }, bornHeld: true });
-    /* The founding signer alone holds the account and the vault, never changed; a second signer is now seated. */
-    accountAuthority = { committee: [key(1)], threshold: 1, counter: 0n };
+    accountAuthority = { committee: [key(1), key(2)], threshold: 1, counter: 1n };
     authority = { committee: [key(1)], threshold: 1, counter: 0n };
     const settings = (await call('/api/accounts/acc_1/authority', 'ada')).body;
-    /* RED WHEN: a one-key contract at counter 0 is left out of the contracts behind, or offered a handover instead. */
     expect(settings.change).toMatchObject({ possible: true });
-    expect(settings.change.why).toMatch(/^The company account and 1 vault are still held by the committee from before/);
-    expect(settings.handover).toMatchObject({ possible: false, why: expect.stringMatching(/created held by its committee, so there is nothing to hand over/) });
     const owed = (await call('/api/accounts/acc_1/committee-change', 'ada')).body;
-    expect(owed.contracts.map((c: { contract: string; counter: string }) => [c.contract, c.counter])).toEqual([['account', '0'], ['vault', '0']]);
-    /* The same company at a threshold of one: two keys either of which could act alone, so nothing is offered. */
-    acc1Threshold = 1;
-    const loose = (await call('/api/accounts/acc_1/authority', 'ada')).body;
-    expect(loose.change).toMatchObject({ possible: false, why: expect.stringMatching(/could change them alone/) });
-  });
-
-  it('NO COMMITTEE, NO ACCOUNT HANDOVER', async () => {
-    await give('ada', 1);
-    handoverDep = async () => { throw new Error('must not be reached'); };
-    const r = await call('/api/accounts/acc_1/authority/handover', 'ada', 'POST', {});
-    expect(r).toMatchObject({ status: 409, body: { nothingWasSent: true } });
-    expect(r.body.error).toMatch(/1 of this company's 2 signers has not/);
+    /* RED WHEN: the change offered is to anything but the committee holding the account on the chain now. */
+    expect(owed.to).toEqual({ committee: [key(1), key(2)], threshold: 1 });
+    expect(owed.contracts.map((c: { contract: string; counter: string }) => [c.contract, c.counter])).toEqual([['vault', '0']]);
   });
 });
 
@@ -781,7 +677,7 @@ describe('A PRIVATE PAYMENT OUT OF A VAULT', () => {
 
   it('NO FEE IS PAID FOR A PAYMENT OUT OF A VAULT THE SERVICE CANNOT VOUCH FOR, READ FROM THE CHAIN NOW', async () => {
     /* RED WHEN: the route stops asking what the chain shows of the vault before it pays the fee. */
-    authority = { committee: [key(9)], threshold: 1, counter: 0n };
+    startedNow = false;
     expect(await call(`/api/accounts/acc_1/vaults/${VAULT}/payout`, 'ada', 'POST', { tx: PAYOUT_TX }))
       /* RED WHEN: the payout door quotes the deposit gate's wording, so a person paying money OUT is told about
        * money going IN. The cause is the one gate's; the consequence belongs to the door that asked. */
@@ -796,8 +692,8 @@ describe('A PRIVATE PAYMENT OUT OF A VAULT', () => {
       (await call(`/api/accounts/acc_1/vaults/${VAULT}/payout`, 'ada', 'POST', { tx: PAYOUT_TX })).body.error,
       'RED WHEN: a payout refusal tells the reader that no money goes IN',
     ).not.toMatch(/money goes in|goes into this vault/);
-    /* The committee holds it now, and the record does not hold it as born held. */
-    authority = { committee: [key(1), key(2)], threshold: 2, counter: 1n };
+    /* Started now, and the record does not hold it as born held. */
+    startedNow = true;
     const record = store.getCompanyVault(VAULT)!;
     store.putCompanyVault({ ...record, bornHeld: undefined });
     expect((await call(`/api/accounts/acc_1/vaults/${VAULT}/payout`, 'ada', 'POST', { tx: PAYOUT_TX })).status).toBe(409);
@@ -851,10 +747,10 @@ describe('A PRIVATE PAYMENT OUT OF A VAULT', () => {
       .toMatchObject({ status: 422, body: { nothingWasSent: true } });
     /* RED WHEN: the route stops asking what the chain shows of the vault before it pays the fee. */
     payoutShape = aMerge();
-    authority = { committee: [key(9)], threshold: 1, counter: 0n };
+    startedNow = false;
     expect(await call(`/api/accounts/acc_1/vaults/${VAULT}/merge`, 'ada', 'POST', { tx: PAYOUT_TX }))
       .toMatchObject({ status: 409, body: { nothingWasSent: true, error: expect.stringMatching(/^this service pays no fee for a merge of this vault's notes:/) } });
-    authority = { committee: [key(1), key(2)], threshold: 2, counter: 1n };
+    startedNow = true;
     expect((await call(`/api/accounts/acc_1/vaults/${VAULT}/merge`, 'carol', 'POST', { tx: PAYOUT_TX })).status).toBe(404);
     expect(sent).toEqual([]);
   });
@@ -1009,208 +905,321 @@ describe('THE VAULT\'S VIEW SAYS WHAT IT HOLDS IN PUBLIC MONEY', () => {
   });
 });
 
-describe('A COMMITTEE CHANGED AFTER A SIGNER JOINS OR LEAVES', () => {
-  /* The vault and the account held by the committee the company had: ada alone. bo has since joined. */
-  const behind = async () => {
-    await give('ada', 1); await give('bo', 2);
+describe('A CHANGE OF WHO HOLDS THE CONTRACTS: KEPT AND HANDED BACK, AND SENT ONLY ON A DEVICE\'S REQUEST', () => {
+  const ACCOUNT = hex(0xc0);
+  const to = { committee: [key(1), key(2)], threshold: 2 };
+  /* A change to key 1 and key 2 has landed on the account; the vault is still held by key 1 alone. */
+  const behind = () => {
     store.putCompanyVault({ accountId: 'acc_1', vault: VAULT, deployedAt: '', deployRef: 'r', intended: { committee: [key(1)], threshold: 1 }, bornHeld: true });
     authority = { committee: [key(1)], threshold: 1, counter: 1n };
-    accountAuthority = { committee: [key(1)], threshold: 1, counter: 1n };
+    accountAuthority = { ...to, counter: 2n };
   };
-  const to = { committee: [key(1), key(2)], threshold: 2 };
-  let assembled: Array<{ address: string; seats: number[] }>;
-  /* The builder stood in: it checks nothing but counts seats, and a signature spelled 'bad' is one that does not verify. */
+  let assembled: Array<{ address: string; indexes: number[] }>;
+  /* The builder stood in: a signature spelled 'bad' is one that does not verify, and a place past the committee counts for nothing. */
   const standIn = () => {
     assembled = [];
     assembleDep = async ({ read, signatures }) => {
-      if (signatures.some((x) => x.signature.value === 'bad')) throw new Error('this signature does not verify against the key in seat 0.');
+      const holders = read.state === 'read' ? read.authority.committee : [];
+      const byPlace = new Map<number, (typeof signatures)[number]>();
+      for (const x of signatures) if (x.signature.value !== 'bad' && x.index < holders.length && !byPlace.has(x.index)) byPlace.set(x.index, x);
+      const counted = [...byPlace.values()].sort((m, n) => m.index - n.index);
       const required = read.state === 'read' ? read.authority.threshold : 99;
-      assembled.push({ address: read.address, seats: signatures.map((x) => x.seat) });
-      return { have: signatures.length, required, seatsSigned: signatures.map((x) => x.seat), proven: signatures.length >= required ? new Uint8Array([0xcc]) : null };
+      assembled.push({ address: read.address, indexes: counted.map((x) => x.index) });
+      return { have: counted.length, required, indexesSigned: counted.map((x) => x.index), counted, proven: counted.length >= required ? new Uint8Array([0xcc]) : null };
     };
   };
-  const sig = (address: string, counter = '1', seat = 0, value = 'ab') => ({ address, counter, seat, signature: { tag: 'schnorr', value } });
-  const post = (as: string, body: unknown) => call('/api/accounts/acc_1/committee-change/signatures', as, 'POST', body);
+  /* What the fee payer reads the sent bytes as: one update of `address` at `counter`, installing `to`, signed once. */
+  const updateOf = (address: string, counter: bigint, installs = to) => ({
+    intents: new Map([[1, { actions: [{ address, counter, updates: [{ authority: { ...installs, counter: counter + 1n } }], signatures: [[0n, {}]] }] }]]),
+  });
+  let checked: Array<string | null>;
+  const paying = () => {
+    checked = [];
+    sendVault = async (_a, what, _arrival, bytes, check, readBytes) => {
+      const refusal = await check(await readBytes(bytes));
+      checked.push(refusal);
+      if (refusal !== null) throw new NothingWasSent(refusal);
+      sent.push(what);
+      return { ref: 'r', at: 'now', transactionHash: 'h' };
+    };
+  };
+  const sig = (address: string, counter = '1', index = 0, value = 'ab') => ({ address, counter, index, signature: { tag: 'schnorr', value } });
+  const keep = (as: string, body: unknown) => call('/api/accounts/acc_1/committee-change/signatures', as, 'POST', body);
+  const sendNow = (as: string, body: unknown) => call('/api/accounts/acc_1/committee-change/send', as, 'POST', body);
 
-  it('LISTS EVERY HANDED-OVER CONTRACT WHOSE COMMITTEE IS NOT THE COMPANY\'S, WITH THE COUNTER AND THE COMMITTEE THAT MUST SIGN', async () => {
-    await behind();
+  it('LISTS EVERY VAULT NOT HOLDING THE COMMITTEE THAT HOLDS THE ACCOUNT ON THE CHAIN, AND NEVER THE ACCOUNT ITSELF', async () => {
+    behind();
     const r = await call('/api/accounts/acc_1/committee-change', 'ada');
     expect(r.status).toBe(200);
-    /* RED WHEN: the account is left out - every vault pays out on it, so its committee must change too. */
+    /* RED WHEN: the committee offered is made anywhere but from the account's on the chain. */
     expect(r.body).toEqual({
-      company: hex(0xc0), label: LABEL, to, why: null, notChangeable: [],
-      contracts: [
-        { contract: 'account', address: hex(0xc0), counter: '1', now: { committee: [key(1)], threshold: 1 }, signedSeats: [], required: 1 },
-        { contract: 'vault', address: VAULT, counter: '1', now: { committee: [key(1)], threshold: 1 }, signedSeats: [], required: 1 },
-      ],
+      company: ACCOUNT, label: LABEL, to, why: null, notChangeable: [],
+      contracts: [{ contract: 'vault', address: VAULT, counter: '1', now: { committee: [key(1)], threshold: 1 }, signedIndexes: [], required: 1 }],
     });
     expect((await call('/api/accounts/acc_1/committee-change', 'carol')).status).toBe(404);
   });
 
-  it('SENDS EACH CHANGE ONCE ENOUGH HAVE SIGNED, READING IT AS A STRANGER\'S FIRST, AND KEEPS NOTHING BUT THE SIGNATURES', async () => {
-    await behind();
+  it('KEEPS WHAT VERIFIES, BY ITS PLACE ON THE COMMITTEE, NAMES NO SEAT, AND SENDS NOTHING', async () => {
+    behind();
     standIn();
-    const checked: Array<string | null> = [];
-    sendVault = async (_a, what, _arrival, _bytes, check) => {
-      checked.push(await check({ intents: new Map([[1, { actions: [{ address: VAULT, counter: 1n, updates: [{ authority: { ...to, counter: 2n } }], signatures: [[0n, {}]] }] }]]) }));
-      sent.push(what);
-      return { ref: 'r', at: 'now', transactionHash: 'h' };
-    };
-    const r = await post('ada', { to, signatures: [sig(hex(0xc0)), sig(VAULT)] });
-    expect(r.status).toBe(200);
-    expect(r.body.results.map((x: { address: string; state: string }) => [x.address, x.state])).toEqual([[hex(0xc0), 'sent'], [VAULT, 'sent']]);
-    expect(sent).toEqual(['changing the company\'s account\'s committee to the company\'s', `changing vault ${VAULT}'s committee to the company's`]);
-    /* RED WHEN: the fee is paid without `refusalForCommitteeChange` reading the transaction - the account's check then
-     * reads the vault's shape as another contract's and must refuse it. */
-    expect(checked[0]).toMatch(/changes a different contract/);
-    expect(checked[1]).toBeNull();
-    /* RED WHEN: anything but the seat and the signature is kept. */
-    expect(store.getCommitteeSignatures(VAULT)).toEqual({
-      accountId: 'acc_1', address: VAULT, counter: '1', to, signatures: [{ seat: 0, signature: { tag: 'schnorr', value: 'ab' } }],
+    const r = await keep('ada', { to, signatures: [sig(VAULT, '1', 0), sig(VAULT, '1', 3)] });
+    expect(r.body.results).toEqual([{ address: VAULT, state: 'kept', have: 1, required: 1, indexesSigned: [0] }]);
+    /* RED WHEN: keeping a signature sends the update - a send is a device's to ask for. */
+    expect(sent).toEqual([]);
+    /* RED WHEN: anything but the place and the signature is kept, or a signature that counts for nothing is kept. */
+    expect(store.getCommitteeSignatures('acc_1', VAULT)).toEqual({
+      accountId: 'acc_1', address: VAULT, counter: '1', sentAt: null,
+      proposed: [{ to, signatures: [{ index: 0, signature: { tag: 'schnorr', value: 'ab' } }] }],
     });
-    /* A second press while the change could still land sends nothing. */
-    const again = await post('ada', { to, signatures: [sig(VAULT)] });
-    expect(again.body.results[0].state).toBe('sent');
-    expect(sent).toHaveLength(2);
+    expect(JSON.stringify(store.getCommitteeSignatures('acc_1', VAULT))).not.toMatch(/seat/);
+    expect((await call('/api/accounts/acc_1/committee-change', 'ada')).body.contracts[0].signedIndexes).toEqual([0]);
   });
 
-  it('KEEPS NO SIGNATURE AND SENDS NOTHING FOR A CONTRACT THE RECORD DOES NOT HOLD AS BORN HELD', async () => {
-    await behind();
+  it('NO SIGNATURE IS REFUSED FOR A ROLE, A SEAT OR A SIGNER, AND ANY COMMITTEE THE INSTALL RULE ALLOWS IS TAKEN', async () => {
+    behind();
     standIn();
-    store.putCompanyVault({ accountId: 'acc_1', vault: VAULT, deployedAt: '', deployRef: 'r', intended: { committee: [key(1)], threshold: 1 } });
-    accountNotBornHeld();
-    const r = await post('ada', { to, signatures: [sig(hex(0xc0)), sig(VAULT)] });
-    /* RED WHEN: a change to a contract created under some other key is collected and paid for. */
-    expect(r.body.results.map((x: { state: string }) => x.state)).toEqual(['refused', 'refused']);
-    expect(r.body.results[1].error).toMatch(/was not created here held by the company's committee/);
-    expect(assembled).toEqual([]);
-    expect(store.getCommitteeSignatures(VAULT)).toBeNull();
+    /* No member has given vault keys, and a different committee is proposed: a change of the super admins in progress. */
+    const proposed = { committee: [key(4), key(5)], threshold: 1 };
+    /* RED WHEN: a signature is kept only from a seat, a signer, or for the committee the service would have chosen. */
+    const r = await keep('bo', { to: proposed, signatures: [sig(VAULT, '1', 0)] });
+    expect(r.body.results[0]).toMatchObject({ state: 'kept', have: 1 });
+    expect(store.getCommitteeSignatures('acc_1', VAULT)!.proposed.map((x) => x.to)).toEqual([proposed]);
+    /* And signatures for two committees at one counter are kept apart. */
+    await keep('ada', { to, signatures: [sig(VAULT, '1', 0, 'cd')] });
+    expect(store.getCommitteeSignatures('acc_1', VAULT)!.proposed.map((x) => x.to)).toEqual([proposed, to]);
+  });
+
+  it('HANDS BACK EVERY SIGNATURE KEPT FOR THE COMPANY, WITH THE COMMITTEE IT IS OVER, TO A MEMBER', async () => {
+    behind();
+    standIn();
+    await keep('ada', { to, signatures: [sig(VAULT, '1', 0)] });
+    /* RED WHEN: the route stops handing signatures back - a device then has only its own file to count from. */
+    expect((await call('/api/accounts/acc_1/committee-change/signatures', 'bo')).body).toEqual({
+      signatures: [{ address: VAULT, counter: '1', index: 0, signature: { tag: 'schnorr', value: 'ab' }, to }],
+    });
+    expect((await call('/api/accounts/acc_1/committee-change/signatures', 'carol')).status).toBe(404);
+  });
+
+  it('TWO COMPANIES NAMING ONE ADDRESS KEEP THEIR SIGNATURES APART, AND NEITHER LISTS OR REPLACES THE OTHER\'S', async () => {
+    behind();
+    standIn();
+    await keep('ada', { to, signatures: [sig(VAULT, '1', 0)] });
+    /* Another company's record of signatures at the same address, at the same counter. */
+    store.putCommitteeSignatures({
+      accountId: 'acc_2', address: VAULT, counter: '1', sentAt: null,
+      proposed: [{ to: { committee: [key(7)], threshold: 1 }, signatures: [{ index: 0, signature: { tag: 'schnorr', value: 'ef' } }] }],
+    });
+    /* RED WHEN: signatures are kept by address alone - the other company's write then replaces this one's, and moves them out of its list. */
+    expect(store.getCommitteeSignatures('acc_1', VAULT)!.proposed.map((x) => x.to)).toEqual([to]);
+    expect((await call('/api/accounts/acc_1/committee-change/signatures', 'ada')).body.signatures).toEqual([
+      { address: VAULT, counter: '1', index: 0, signature: { tag: 'schnorr', value: 'ab' }, to },
+    ]);
+    expect((await call('/api/accounts/acc_1/committee-change', 'ada')).body.contracts[0].signedIndexes).toEqual([0]);
+  });
+
+  it('KEEPS NOTHING FOR A COMMITTEE NO CONTRACT CAN HOLD, A CONTRACT NOT THE COMPANY\'S, OR A COUNTER THE CHAIN HAS MOVED PAST', async () => {
+    behind();
+    standIn();
+    /* RED WHEN: a committee the one install rule refuses is kept for. */
+    const twice = await keep('ada', { to: { committee: [key(1), key(1)], threshold: 1 }, signatures: [sig(VAULT)] });
+    expect(twice).toMatchObject({ status: 409, body: { nothingWasSent: true } });
+    /* RED WHEN: a vault is taken as this company's because its deployer pinned it to the account, which the account's
+     * own list of vaults on the chain does not bear out. */
+    const theirs = await keep('ada', { to, signatures: [sig(hex(0xee))] });
+    expect(theirs.body.results[0]).toMatchObject({ state: 'refused', error: expect.stringMatching(/does not list a vault there/) });
+    expect((await sendNow('ada', { address: hex(0xee), counter: '1', to })).body.error).toMatch(/does not list a vault there/);
+    const moved = await keep('ada', { to, signatures: [sig(VAULT, '0')] });
+    expect(moved.body.results[0].error).toMatch(/has been changed since these signatures were made/);
+    expect(store.getCommitteeSignatures('acc_1', VAULT)).toBeNull();
+    expect((await keep('ada', { to, signatures: [{ ...sig(VAULT), seat: 0 }] })).status).toBe(400);
+    expect((await keep('carol', { to, signatures: [sig(VAULT)] })).status).toBe(404);
+  });
+
+  it('SENDS ONLY WHEN A DEVICE ASKS, AND ONLY ONCE THE SIGNATURES THAT VERIFY REACH THE THRESHOLD ON THE CHAIN', async () => {
+    behind();
+    standIn();
+    paying();
+    startShape = updateOf(VAULT, 1n);
+    /* RED WHEN: the fee is paid before the verifying signatures reach the threshold of the committee holding the vault. */
+    const short = await sendNow('ada', { address: VAULT, counter: '1', to, signatures: [sig(VAULT, '1', 0, 'bad')].map(({ index, signature }) => ({ index, signature })) });
+    expect(short).toMatchObject({ status: 409, body: { nothingWasSent: true } });
+    expect(short.body.error).toMatch(/0 of the 1 signatures/);
     expect(sent).toEqual([]);
-    /* And the list of contracts owed a change names them as not changeable, never as owed. */
-    const listed = (await call('/api/accounts/acc_1/committee-change', 'ada')).body;
-    expect(listed.contracts).toEqual([]);
-    expect(listed.notChangeable.map((c: { contract: string }) => c.contract)).toEqual(['account', 'vault']);
+    await keep('ada', { to, signatures: [sig(VAULT, '1', 0)] });
+    const r = await sendNow('bo', { address: VAULT, counter: '1', to });
+    expect(r).toMatchObject({ status: 200, body: { state: 'sent', txRef: 'r', have: 1, required: 1 } });
+    /* RED WHEN: the fee is paid without `refusalForCommitteeChange` reading the transaction. */
+    expect(checked).toEqual([null]);
+    expect(sent).toEqual([`changing the committee holding vault ${VAULT}`]);
+    /* RED WHEN: a counter the chain is not at is sent at. */
+    expect((await sendNow('ada', { address: VAULT, counter: '0', to })).body.error).toMatch(/is at counter 1 on the chain, not 0/);
   });
 
-  it('EACH CHANGE CARRIES THE STRICTEST BAR ITS CONTRACT ENFORCES: A VAULT ITS OWN, THE ACCOUNT THE HIGHEST OF ALL', async () => {
-    await behind();
-    const bars: Array<[string, number]> = [];
-    assembleDep = async ({ read, strictestBar }) => {
-      bars.push([read.address, strictestBar]);
-      return { have: 0, required: 1, seatsSigned: [], proven: null };
-    };
-    acc1VaultThresholds = [{ vault: VAULT, threshold: 3 }, { vault: hex(0xdd), threshold: 4 }];
-    await post('ada', { to, signatures: [sig(hex(0xc0)), sig(VAULT)] });
-    /* RED WHEN: the account's bar ignores the vaults' own thresholds, or a vault's ignores its own row. */
-    expect(bars).toEqual([[hex(0xc0), 4], [VAULT, 3]]);
-    /* A vault with no row of its own needs the company's threshold, and so does the account. */
-    acc1VaultThresholds = [];
-    bars.length = 0;
-    await post('ada', { to, signatures: [sig(hex(0xc0)), sig(VAULT)] });
-    expect(bars).toEqual([[hex(0xc0), 2], [VAULT, 2]]);
-  });
-
-  it('WAITS FOR MORE SIGNERS, KEEPING EACH SEAT ONCE, AND SAYS HOW MANY HAVE SIGNED', async () => {
-    await behind();
-    authority = { committee: [key(1), key(3)], threshold: 2, counter: 4n };
+  it('SENDS AT ONE COUNTER ONCE, WHICH A SECOND PROCESS OF THE SERVICE SEES TOO; A SEND THAT SENT NOTHING FREES IT', async () => {
+    behind();
     standIn();
-    const first = await post('ada', { to, signatures: [sig(VAULT, '4', 0)] });
-    expect(first.body.results[0]).toMatchObject({ state: 'waiting', have: 1, required: 2 });
-    expect(sent).toEqual([]);
-    const listed = await call('/api/accounts/acc_1/committee-change', 'ada');
-    expect(listed.body.contracts.find((c: { contract: string }) => c.contract === 'vault').signedSeats).toEqual([0]);
-    /* The same seat again replaces its own signature rather than counting twice. */
-    await post('ada', { to, signatures: [sig(VAULT, '4', 0, 'cd')] });
-    expect(assembled.at(-1)).toEqual({ address: VAULT, seats: [0] });
-    const second = await post('bo', { to, signatures: [sig(VAULT, '4', 1)] });
-    expect(second.body.results[0].state).toBe('sent');
-    expect(assembled.at(-1)!.seats.sort()).toEqual([0, 1]);
-  });
-
-  it('REFUSES A COMMITTEE THAT IS NOT THE COMPANY\'S, A CONTRACT THAT IS NOT ITS, A COUNTER THE CHAIN HAS MOVED PAST, AND A SIGNATURE THAT DOES NOT VERIFY', async () => {
-    await behind();
-    standIn();
-    /* RED WHEN: the service installs whatever committee the request names. */
-    const other = await post('ada', { to: { committee: [key(1), key(3)], threshold: 2 }, signatures: [sig(VAULT)] });
-    expect(other.status).toBe(409);
-    expect(other.body).toMatchObject({ nothingWasSent: true });
-    const results = (await post('ada', { to, signatures: [sig(hex(0xee)), sig(VAULT, '0'), sig(hex(0xc0), '1', 0, 'bad')] })).body.results;
-    expect(results.map((x: { state: string }) => x.state)).toEqual(['refused', 'refused', 'refused']);
-    expect(results[0].error).toMatch(/no contract at that address/);
-    expect(results[1].error).toMatch(/has been changed since these signatures were made/);
-    expect(results[2].error).toMatch(/does not verify/);
-    /* Nothing kept, nothing sent. */
-    expect(store.getCommitteeSignatures(VAULT)).toBeNull();
-    expect(store.getCommitteeSignatures(hex(0xc0))).toBeNull();
-    expect(sent).toEqual([]);
-    expect((await post('ada', { to, signatures: [{ ...sig(VAULT), signingKey: 'ab' }] })).status).toBe(400);
-    expect((await post('carol', { to, signatures: [sig(VAULT)] })).status).toBe(404);
-  });
-
-  it('SIGNATURES KEPT FOR A COUNTER THE CHAIN HAS MOVED PAST ARE NEVER REPORTED OR USED', async () => {
-    await behind();
-    authority = { committee: [key(1), key(3)], threshold: 2, counter: 4n };
-    standIn();
-    await post('ada', { to, signatures: [sig(VAULT, '4', 0)] });
-    authority = { committee: [key(1), key(3)], threshold: 2, counter: 5n };
-    const listed = await call('/api/accounts/acc_1/committee-change', 'ada');
-    expect(listed.body.contracts.find((c: { contract: string }) => c.contract === 'vault')).toMatchObject({ counter: '5', signedSeats: [] });
-    await post('bo', { to, signatures: [sig(VAULT, '5', 1)] });
-    /* RED WHEN: a signature made against counter 4 is put on the change against counter 5. */
-    expect(assembled.at(-1)).toEqual({ address: VAULT, seats: [1] });
-  });
-
-  it('SIGNATURES KEPT FOR A COMMITTEE THE COMPANY NO LONGER HAS ARE NEVER REPORTED OR USED', async () => {
-    await behind();
-    authority = { committee: [key(1), key(3)], threshold: 2, counter: 4n };
-    standIn();
-    await post('ada', { to, signatures: [sig(VAULT, '4', 0)] });
-    /* Another signer joins before the change is sent: same counter, a different committee to install. */
-    store.putAccount(account({ signerCount: 3, memberUserIds: ['ada', 'bo', 'cy'] }));
-    await give('cy', 5);
-    acc1Threshold = 2;
-    const next = { committee: [key(1), key(2), key(5)], threshold: 2 };
-    const listed = await call('/api/accounts/acc_1/committee-change', 'ada');
-    expect(listed.body.to).toEqual(next);
-    /* RED WHEN: ada's signature on the old committee is reported as given - her device would never be asked again,
-     * and it can never verify against the new change, so the contract would wait for good. */
-    expect(listed.body.contracts.find((c: { contract: string }) => c.contract === 'vault').signedSeats).toEqual([]);
-    await post('bo', { to: next, signatures: [sig(VAULT, '4', 1)] });
-    expect(assembled.at(-1)).toEqual({ address: VAULT, seats: [1] });
-  });
-
-  it('A VAULT ANOTHER COMPANY HOLDS IS NOT THIS COMPANY\'S, AND A SEND THAT SENT NOTHING FREES THE CONTRACT FOR ANOTHER', async () => {
-    await behind();
-    standIn();
-    store.putCompanyVault({ accountId: 'acc_2', vault: hex(0xaa), deployedAt: '', deployRef: 'r', intended: to, bornHeld: true });
-    /* RED WHEN: a vault is taken as this company's because it is some company's. */
-    const theirs = await post('ada', { to, signatures: [sig(hex(0xaa))] });
-    expect(theirs.body.results[0]).toMatchObject({ state: 'refused', error: 'this company has no contract at that address.' });
+    startShape = updateOf(VAULT, 1n);
+    await keep('ada', { to, signatures: [sig(VAULT, '1', 0)] });
     sendVault = async () => { throw new NothingWasSent('the fee payer could not pay. Nothing was sent.'); };
-    expect((await post('ada', { to, signatures: [sig(VAULT)] })).body.results[0]).toMatchObject({ state: 'refused', nothingWasSent: true });
-    sendVault = async (_a, what) => { sent.push(what); return { ref: 'r', at: 'now', transactionHash: 'h' }; };
-    /* RED WHEN: a send that sent nothing leaves the contract marked as sent, and the next press does nothing. */
-    expect((await post('ada', { to, signatures: [sig(VAULT)] })).body.results[0]).toMatchObject({ state: 'sent', txRef: 'r' });
+    expect(await sendNow('ada', { address: VAULT, counter: '1', to })).toMatchObject({ status: 422, body: { nothingWasSent: true } });
+    /* RED WHEN: a send that sent nothing leaves the counter marked as sent, and the next request does nothing. */
+    sendVault = async (_a, what) => { sent.push(what); throw new Error('the node did not answer'); };
+    expect(await sendNow('ada', { address: VAULT, counter: '1', to })).toMatchObject({ status: 502, body: { nothingWasSent: false } });
+    expect(sent).toHaveLength(1);
+    /* RED WHEN: an update that may have landed is sent again at the same counter - the chain charges for the second and refuses it. */
+    expect((await sendNow('bo', { address: VAULT, counter: '1', to })).body.error).toMatch(/was sent and the chain has not shown it yet/);
+    /* A second process of the same service, over the same store, refuses it too: the mark is kept with the signatures. */
+    const other = express().use(companyVaultRoutes(routeDeps));
+    const second = await new Promise<ReturnType<express.Express['listen']>>((resolve) => { const s2 = other.listen(0, '127.0.0.1', () => resolve(s2)); });
+    try {
+      const r = await fetch(`http://127.0.0.1:${(second.address() as AddressInfo).port}/api/accounts/acc_1/committee-change/send`, {
+        method: 'POST', headers: { 'content-type': 'application/json', 'x-test-person': 'ada' }, body: JSON.stringify({ address: VAULT, counter: '1', to }),
+      });
+      expect(r.status).toBe(409);
+      expect((await r.json()).error).toMatch(/was sent and the chain has not shown it yet/);
+    } finally {
+      await new Promise<void>((resolve) => second.close(() => resolve()));
+    }
     expect(sent).toHaveLength(1);
   });
 
-  it('TWO SIGNERS WHOSE SIGNATURES EACH COMPLETE THE CHANGE, ARRIVING TOGETHER, SEND IT ONCE', async () => {
-    await behind();
-    authority = { committee: [key(1), key(2)], threshold: 1, counter: 1n };
+  it('TWO REQUESTS AT ONCE FOR ONE CONTRACT SEND IT ONCE', async () => {
+    behind();
     standIn();
     const slow = assembleDep!;
-    /* The builder takes a moment, as proving does, so both requests are inside it at once. */
     assembleDep = async (input) => { await new Promise((r) => setTimeout(r, 20)); return slow(input); };
-    const [a, b] = await Promise.all([
-      post('ada', { to, signatures: [sig(VAULT, '1', 0)] }), post('bo', { to, signatures: [sig(VAULT, '1', 1)] }),
-    ]);
-    /* RED WHEN: the two are put together and sent side by side - the chain charges for the second and refuses it. */
-    expect(sent.filter((w) => w.includes(VAULT))).toHaveLength(1);
-    expect([a.body.results[0].state, b.body.results[0].state]).toEqual(['sent', 'sent']);
+    await keep('ada', { to, signatures: [sig(VAULT, '1', 0)] });
+    sendVault = async (_a, what) => { sent.push(what); return { ref: 'r', at: 'now', transactionHash: 'h' }; };
+    const both = await Promise.all([sendNow('ada', { address: VAULT, counter: '1', to }), sendNow('bo', { address: VAULT, counter: '1', to })]);
+    /* RED WHEN: the two are put together and sent side by side. */
+    expect(both.map((r) => r.status).sort()).toEqual([200, 409]);
+    expect(sent).toHaveLength(1);
   });
 
+  it('WITHOUT A CHANGE OF THE SUPER ADMINS, AN UPDATE IS SENT ONLY TO THE COMMITTEE HOLDING THE ACCOUNT ON THE CHAIN', async () => {
+    behind();
+    standIn();
+    const other = { committee: [key(1), key(3)], threshold: 2 };
+    await keep('ada', { to: other, signatures: [sig(VAULT, '1', 0)] });
+    /* RED WHEN: a key enters a contract by an update no change of the super admins carries. */
+    const r = await sendNow('ada', { address: VAULT, counter: '1', to: other });
+    expect(r).toMatchObject({ status: 409, body: { nothingWasSent: true } });
+    expect(r.body.error).toMatch(/only to the committee holding the company's account on the chain now/);
+    expect(sent).toEqual([]);
+  });
+
+  describe('WITH A CHANGE OF THE SUPER ADMINS', () => {
+    const L = () => import('@midnightntwrk/ledger-v9');
+    const secret = (n: number) => new Uint8Array(32).fill(n);
+    const SALT = 'a5'.repeat(32);
+    /* The change from key 1 alone to key 1 and key 2, raised with the account at counter 1, naming the account and the vault. */
+    const change = { kind: 'super-admins' as const, from: { committee: [key(1)], threshold: 1 }, ...to, contracts: [
+      { contract: 'account' as const, address: ACCOUNT, counter: '1' }, { contract: 'vault' as const, address: VAULT, counter: '1' },
+    ] };
+    const joinedBy2 = async () => {
+      const { superAdminChangeBytes } = await import('midnight-identity/profile/committee-sign');
+      const l = await L();
+      const sk = l.signingKeyFromBip340(secret(2));
+      expect(l.signatureVerifyingKey(sk).value).toBe(key(2).value);
+      return { key: key(2), signature: l.signData(sk, superAdminChangeBytes(LABEL, ACCOUNT, SALT, change)).value };
+    };
+    const withChange = (joined: unknown[]) => ({ company: LABEL, salt: SALT, change, joined });
+
+    it('A VAULT\'S UPDATE GOES ONLY ONCE THE ACCOUNT HOLDS THE CHANGE\'S COMMITTEE ON THE CHAIN, PAST THE COUNTER IT WAS RAISED AT', async () => {
+      behind();
+      standIn();
+      accountAuthority = { committee: [key(1)], threshold: 1, counter: 1n };
+      await keep('ada', { to, signatures: [sig(VAULT, '1', 0)] });
+      const joined = [await joinedBy2()];
+      /* RED WHEN: a vault's update is sent before the account's has landed. */
+      const early = await sendNow('ada', { address: VAULT, counter: '1', to, change: withChange(joined) });
+      expect(early.body.error).toMatch(/does not yet hold this committee on the chain/);
+      expect(sent).toEqual([]);
+      accountAuthority = { ...to, counter: 2n };
+      expect((await sendNow('ada', { address: VAULT, counter: '1', to, change: withChange(joined) })).body).toMatchObject({ state: 'sent' });
+    });
+
+    it('A VAULT\'S UPDATE IS NOT SENT WHILE THE ACCOUNT IS PAST THE RAISE ON ANOTHER COMMITTEE', async () => {
+      behind();
+      standIn();
+      /* Another change moved the account past the counter this one was raised at, to a committee that is not this one. */
+      accountAuthority = { committee: [key(1), key(3)], threshold: 2, counter: 2n };
+      await keep('ada', { to, signatures: [sig(VAULT, '1', 0)] });
+      /* RED WHEN: the account's committee is not compared with the one the change installs. */
+      const r = await sendNow('ada', { address: VAULT, counter: '1', to, change: withChange([await joinedBy2()]) });
+      expect(r).toMatchObject({ status: 409, body: { nothingWasSent: true } });
+      expect(r.body.error).toMatch(/does not yet hold this committee on the chain/);
+      expect(sent).toEqual([]);
+    });
+
+    it('A VAULT\'S UPDATE IS NOT SENT WHILE THE ACCOUNT HOLDS THE CHANGE\'S COMMITTEE AT A COUNTER NOT PAST THE RAISE', async () => {
+      behind();
+      standIn();
+      /* The account holds the committee the change installs, at the counter the change was raised at: not the change landing. */
+      accountAuthority = { ...to, counter: 1n };
+      await keep('ada', { to, signatures: [sig(VAULT, '1', 0)] });
+      /* RED WHEN: the account's counter is not compared with the counter the change was raised at. */
+      const r = await sendNow('ada', { address: VAULT, counter: '1', to, change: withChange([await joinedBy2()]) });
+      expect(r).toMatchObject({ status: 409, body: { nothingWasSent: true } });
+      expect(r.body.error).toMatch(/does not yet hold this committee on the chain/);
+      expect(sent).toEqual([]);
+    });
+
+    it('REFUSES AN UPDATE WHOSE JOINING KEYS HAVE NOT ALL SIGNED THE CHANGE, PER CONTRACT, AGAINST ITS COMMITTEE ON THE CHAIN', async () => {
+      behind();
+      standIn();
+      await keep('ada', { to, signatures: [sig(VAULT, '1', 0)] });
+      /* Key 2 is not on the vault's committee, so it joins the vault, whatever the account holds. RED WHEN: joins are not checked. */
+      const unsigned = await sendNow('ada', { address: VAULT, counter: '1', to, change: withChange([]) });
+      expect(unsigned.body.error).toMatch(/1 key this update puts on vault .* has not signed the change with its own key/);
+      /* RED WHEN: a joining signature over other bytes is taken. */
+      const forged = { key: key(2), signature: (await joinedBy2()).signature.replace(/^./u, (c) => (c === '0' ? '1' : '0')) };
+      expect((await sendNow('ada', { address: VAULT, counter: '1', to, change: withChange([forged]) })).body.error).toMatch(/has not signed the change/);
+      expect(sent).toEqual([]);
+      expect((await sendNow('ada', { address: VAULT, counter: '1', to, change: withChange([await joinedBy2()]) })).body).toMatchObject({ state: 'sent' });
+    });
+
+    it('SENDS THE UPDATE OF A CONTRACT ALREADY HOLDING THE COMMITTEE, SO EVERY COUNTER MOVES', async () => {
+      behind();
+      standIn();
+      authority = { ...to, counter: 1n };
+      await keep('ada', { to, signatures: [sig(VAULT, '1', 0), sig(VAULT, '1', 1)] });
+      /* RED WHEN: a contract already at the change's committee is refused - an older signed update could then still land on it. */
+      const r = await sendNow('ada', { address: VAULT, counter: '1', to, change: withChange([]) });
+      expect(r.body).toMatchObject({ state: 'sent', have: 2, required: 2 });
+    });
+
+    it('REFUSES A CHANGE THAT DOES NOT NAME THE CONTRACT, OR DOES NOT NAME THE ACCOUNT FIRST, OR INSTALLS ANOTHER COMMITTEE', async () => {
+      behind();
+      standIn();
+      const joined = [await joinedBy2()];
+      const named = (contracts: typeof change.contracts) => ({ ...withChange(joined), change: { ...change, contracts } });
+      expect((await sendNow('ada', { address: VAULT, counter: '1', to, change: named([change.contracts[0]!]) })).body.error).toMatch(/does not name vault/);
+      expect((await sendNow('ada', { address: VAULT, counter: '1', to, change: named([change.contracts[1]!, change.contracts[0]!]) })).body.error)
+        .toMatch(/does not name the company's account first/);
+      expect((await sendNow('ada', { address: VAULT, counter: '1', to: { committee: [key(1), key(3)], threshold: 2 }, change: withChange(joined) })).body.error)
+        .toMatch(/not the one this change installs/);
+      expect(sent).toEqual([]);
+    });
+  });
+
+  it('NO CHANGE CARRIES A BAR: NO VAULT\'S THRESHOLD OR BAND REACHES WHAT A CHANGE IS PUT TOGETHER FROM', async () => {
+    behind();
+    const given: Array<[string, string[]]> = [];
+    assembleDep = async (input) => {
+      given.push([input.read.address, Object.keys(input).sort()]);
+      return { have: 0, required: 1, indexesSigned: [], counted: [], proven: null };
+    };
+    acc1VaultThresholds = [{ vault: VAULT, threshold: 3 }, { vault: hex(0xdd), threshold: 4 }];
+    await keep('ada', { to, signatures: [sig(ACCOUNT, '2'), sig(VAULT)] });
+    /* RED WHEN: a vault's threshold, the account's highest bar or a band is handed to what puts the change together. */
+    expect(given).toEqual([[ACCOUNT, ['label', 'read', 'signatures', 'to']], [VAULT, ['label', 'read', 'signatures', 'to']]]);
+  });
+});
+
+describe('WHO HOLDS A CONTRACT IS NOT ASKED BEFORE MONEY GOES IN; HOW IT WAS CREATED IS', () => {
+  const to = { committee: [key(1), key(2)], threshold: 2 };
   it('A CONTRACT BORN HELD IS FUNDED AT ANY COUNTER, AND ONE THE RECORD DOES NOT HOLD AS BORN HELD AT NONE', async () => {
-    await give('ada', 1); await give('bo', 2);
     const rows = async () => (await call('/api/accounts/acc_1/vaults', 'ada')).body.rows[0];
     /* Changed twice since its deploy, every change signed by the committee then holding it: no history is read. */
     store.putCompanyVault({ accountId: 'acc_1', vault: VAULT, deployedAt: '', deployRef: 'r', intended: to, bornHeld: true });
@@ -1252,23 +1261,22 @@ describe('A PUBLIC DEPOSIT\'S ROUTE', () => {
   const publicDeposit = (body: Record<string, unknown> = { tx: 'AAAA', token: TOKEN_ASKED, amount: '900' }) =>
     call(`/api/accounts/acc_1/vaults/${VAULT}/public-deposit`, 'ada', 'POST', body);
 
-  it('IS SENT ONLY FOR A VAULT AND AN ACCOUNT THE COMMITTEE HOLDS ON THE CHAIN NOW, AND READ AS A PUBLIC DEPOSIT OF THE TOKEN AND AMOUNT ASKED', async () => {
+  it('IS SENT ONLY THROUGH THE ONE GATE, WHOEVER HOLDS THE VAULT, AND READ AS A PUBLIC DEPOSIT OF THE TOKEN AND AMOUNT ASKED', async () => {
     const checks: Array<(tx: unknown) => unknown> = [];
     sendVault = async (_a, what, _arrival, _bytes, check) => { sent.push(what); checks.push(check); return { ref: 'r', at: 'now', transactionHash: 'h' }; };
-    await give('ada', 1); await give('bo', 2);
     store.putCompanyVault({ accountId: 'acc_1', vault: VAULT, deployedAt: '', deployRef: 'r', intended: { committee: [key(1), key(2)], threshold: 2 }, bornHeld: true });
-    /* RED WHEN: the route stops reading the vault's authority from the chain before it pays a fee. */
-    const notHeld = await publicDeposit();
-    expect(notHeld).toMatchObject({ status: 409, body: { nothingWasSent: true } });
-    expect(notHeld.body.error).toMatch(/its committee is changed to match in Settings/);
-    /* RED WHEN: the route stops asking whether the company's account is held by the committee too. */
-    authority = { committee: [key(1), key(2)], threshold: 2, counter: 1n };
-    serviceKey = key(9);
-    accountAuthority = { committee: [key(9)], threshold: 1, counter: 0n };
+    /* RED WHEN: the route stops asking the gate before it pays a fee. */
+    startedNow = false;
+    const notStarted = await publicDeposit();
+    expect(notStarted).toMatchObject({ status: 409, body: { nothingWasSent: true } });
+    expect(notStarted.body.error).toMatch(/has not yet adopted it/);
+    /* RED WHEN: the route stops asking about the company's account too. */
+    startedNow = true;
+    accountNotBornHeld();
     expect(await publicDeposit()).toMatchObject({ status: 409, body: { nothingWasSent: true } });
     expect(sent).toEqual([]);
-    serviceKey = undefined;
-    accountAuthority = { committee: [key(1), key(2)], threshold: 2, counter: 1n };
+    store.recordAccountDeploy({ accountId: 'acc_1', address: hex(0xc0), foundingKey: key(1), deploy: 'ZA==', insert: 'aQ==', recordedAt: 'then' });
+    /* Held by keys the account does not have: a payment goes ahead all the same. */
     expect(await publicDeposit()).toMatchObject({ status: 200, body: { txRef: 'r', transactionHash: 'h' } });
     expect(sent).toEqual(['a public deposit into a vault']);
     /* RED WHEN: the route sends with any reader but the public deposit's, or one not told the token and amount asked. */
@@ -1321,14 +1329,18 @@ describe('A VAULT\'S START', () => {
     checked();
   };
 
-  it('IS SENT ONLY FOR A VAULT THIS COMPANY\'S COMMITTEE HOLDS, READ FROM THE CHAIN NOW', async () => {
+  it('IS SENT ONLY FOR A VAULT THAT IS THIS COMPANY\'S AS THE CHAIN AND THE RECORD SHOW IT NOW, WHOEVER HOLDS IT', async () => {
     await heldVault();
-    authority = { committee: [key(9)], threshold: 1, counter: 0n };
     startShape = oneCall(hex(0xc0), 'adopt');
+    pinnedNow = hex(0xc1);
     const r = await call(at('account'), 'ada', 'POST', { tx: START, step: 'adoption', call: 'adopt' });
-    /* RED WHEN: a step of a start is paid for on a vault its temporary key still holds. */
+    /* RED WHEN: a step of a start is paid for on a vault pinned to another account. */
     expect(r).toMatchObject({ status: 409, body: { nothingWasSent: true } });
     expect(sent).toEqual([]);
+    /* RED WHEN: a step of a start, which is the signers' own, waits on who holds the vault. */
+    pinnedNow = hex(0xc0);
+    authority = { committee: [key(9)], threshold: 1, counter: 0n };
+    expect((await call(at('account'), 'ada', 'POST', { tx: START, step: 'adoption', call: 'adopt' })).status).toBe(200);
   });
 
   it('SENDS EACH STEP ONCE: A SECOND COPY WHILE THE FIRST MAY STILL LAND IS REFUSED, AN APPROVAL ONCE PER PERSON', async () => {
@@ -1385,7 +1397,7 @@ describe('A VAULT\'S START', () => {
     await heldVault();
     const view = await call(`/api/accounts/acc_1/vaults/${VAULT}/chain`, 'ada');
     /* RED WHEN: a vault not started is read as not held, so its handover would be sent again. */
-    expect(view.body).toMatchObject({ heldByCommittee: true, started: false, fundable: false });
+    expect(view.body).toMatchObject({ started: false, fundable: false });
     expect((await call('/api/accounts/acc_1/vaults', 'ada')).body.rows).toEqual([expect.objectContaining({ vault: VAULT, state: 'start-owed' })]);
     expect(await call(`/api/accounts/acc_1/vaults/${VAULT}/deposit`, 'ada', 'POST', { tx: 'AAAA' }))
       .toMatchObject({ status: 409, body: { nothingWasSent: true } });

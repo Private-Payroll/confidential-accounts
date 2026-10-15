@@ -14,7 +14,8 @@
  */
 import { describe, it, expect, beforeAll, beforeEach } from 'vitest';
 import express from 'express';
-import { aCompanyOfTwoSeats, store, CO, OTHER, ADA, BO, sendAs } from './a-company-of-two-seats.test-support.js';
+import { aCompanyOfTwoSeats, store, chains, CO, OTHER, ADA, BO, EVE, seatOf, sendAs } from './a-company-of-two-seats.test-support.js';
+import { signingPublicKeyOf } from '../core/crypto.js';
 import { proposalRelayRoutes } from './proposal-relays.js';
 import { signProposalFiling, type ProposalFiling } from '../core/proposal-filing.js';
 import { NothingWasSent } from '../core/jobs.js';
@@ -83,8 +84,15 @@ beforeEach(() => {
   store.putProposal(proposal());
 });
 
-const post = (who: string | null, path: string, body: unknown) =>
-  sendAs(who)(path, { method: 'POST', body: JSON.stringify(body) }) as Promise<{ status: number; body: any }>;
+/** The filing key each person's device sends with a relay: its own seat's, or, for one with no seat here, a key no entry names. */
+const FILER: Readonly<Record<string, string>> = { ada: ADA.statement.signingKey, bo: BO.statement.signingKey, eve: EVE.statement.signingKey };
+const RELAYS = /\/(approve|cancel|send|carry|charge)$/u;
+/** A request as the person's device sends it: a relay carries the device's filing key unless the body names its own. */
+const post = (who: string | null, path: string, body: unknown) => {
+  const carried = RELAYS.test(path) && typeof body === 'object' && body !== null && !('filer' in body)
+    ? { filer: FILER[who ?? ''] ?? 'cc'.repeat(32), ...body } : body;
+  return sendAs(who)(path, { method: 'POST', body: JSON.stringify(carried) }) as Promise<{ status: number; body: any }>;
+};
 
 describe('A PROPOSAL IS RELAYED WITH NO KEY, FOR A SEAT THAT MAY ACT', () => {
   it('AN APPROVAL A SEAT\'S DEVICE PROVED IS RELAYED AS AN APPROVAL, AND THE CHAIN\'S COUNT IS WRITTEN DOWN', async () => {
@@ -331,3 +339,69 @@ describe('A PROPOSAL A SEAT\'S DEVICE WROTE DOWN IS FILED ONLY AS THAT SEAT SIGN
   });
 });
 
+describe('A RELAY IS PAID FOR THE SEAT WHOSE FILING KEY THE DEVICE SENDS, AMONG EVERY ENTRY ITS PERSON FILED', () => {
+  /* Ada is seated a second time, and enters that seat under a new filing key. */
+  const AGAIN = seatOf('ada', 11);
+  const againKey = signingPublicKeyOf(AGAIN.signingSecret as Hex);
+  /** The chain holding `seats` of Acme's, as the service reads it. */
+  const holding = (seats: readonly string[]) => {
+    const now = chains.get(CO)!;
+    chains.set(CO, { ...now, seats: { ...now.seats, seats: [...seats] } });
+  };
+  beforeAll(async () => {
+    holding([ADA.seat, BO.seat, AGAIN.seat]);
+    const version = store.directoryFilingsOf(CO).length + 1;
+    const r = await sendAs('ada')(`/api/accounts/${CO}/directory/${version}`, {
+      method: 'POST', body: JSON.stringify({ company: CO, version, change: { kind: 'claim', entry: AGAIN.entry } }),
+    });
+    expect(r.status).toBe(201);
+  });
+
+  it('a person with two entries under two filing keys acts under the seat whose key their device sends', async () => {
+    open.set(CHAIN, 0);
+    /* The chain no longer holds Ada's first seat, and holds her second. */
+    holding([BO.seat, AGAIN.seat]);
+    /* RED WHEN the relay takes the person's first entry whatever key the device sends: its seat is not held, and nothing is relayed. */
+    expect((await post('ada', `/api/proposals/${P}/approve`, { tx: tx('approve', CHAIN), filer: againKey })).status).toBe(200);
+    /* And under the first entry's key, its seat not held, nothing is relayed. */
+    expect((await post('ada', `/api/proposals/${P}/approve`, { tx: tx('approve', CHAIN), filer: ADA.statement.signingKey })).status).toBe(422);
+    const SALT = '0a'.repeat(32);
+    const digest = '3c'.repeat(32) as Hex;
+    const f = signProposalFiling(CO, {
+      id: 'prp_secondKeyAAA', digest, chainId: MidnightCommitments.proposalId(digest, SALT as Hex, undefined), keyEpoch: 0,
+      createdAt: '2026-10-07T00:00:00.000Z', sealed: { iv: 'aa', tag: 'bb', body: 'cc' } as never,
+    }, AGAIN.signingSecret as Hex);
+    /* RED WHEN a proposal signed under the person's second filing key is refused as not their seat's. */
+    const r = await post('ada', `/api/accounts/${CO}/proposals`, { proposal: f, tx: tx('propose', f.chainId), version: DEVICE_RAISE_VERSION, salt: SALT });
+    expect(r.status).toBe(200);
+    holding([ADA.seat, BO.seat, AGAIN.seat]);
+  });
+
+  it('a relay that carries no filing key is refused at its shape, and nothing is sent', async () => {
+    open.set(CHAIN, 2);
+    for (const [path, body] of [
+      [`/api/proposals/${P}/approve`, { tx: tx('approve', CHAIN) }],
+      [`/api/proposals/${P}/cancel`, { tx: tx('cancel', CHAIN) }],
+      [`/api/proposals/${P}/send`, { tx: tx('propose', CHAIN), version: DEVICE_RAISE_VERSION }],
+      [`/api/proposals/${P}/carry`, { tx: tx('setThreshold', CHAIN), circuit: 'setThreshold' }],
+      [`/api/proposals/${P}/charge`, { tx: tx('clearRun', CHAIN) }],
+    ] as const) {
+      /* RED WHEN a relay is paid for with no filing key, so its seat is found by person alone. */
+      const r = await post('ada', path, { ...body, filer: undefined });
+      expect(r.status, path).toBe(400);
+      expect(r.body.nothingWasSent, path).toBe(true);
+    }
+    expect(sent).toEqual([]);
+  });
+
+  it('a filing key that is not one of that person\'s entries is refused, and nothing is sent', async () => {
+    open.set(CHAIN, 0);
+    /* RED WHEN the relay pays for a person under another person's filing key, or under a key no entry names. */
+    for (const filer of [BO.statement.signingKey, 'cc'.repeat(32)]) {
+      const r = await post('ada', `/api/proposals/${P}/approve`, { tx: tx('approve', CHAIN), filer });
+      expect(r.status, filer).toBe(422);
+      expect(r.body.error, filer).toMatch(/you hold no seat on this company/u);
+    }
+    expect(sent).toEqual([]);
+  });
+});

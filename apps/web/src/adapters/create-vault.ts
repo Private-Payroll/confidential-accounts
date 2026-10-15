@@ -4,7 +4,6 @@ import type { BelievedAccount } from 'vaults-web-shared/roster-here.js';
 import { rosterVaultKeys } from '../../../../src/core/vault-keys.js';
 import { approverRosterFrom } from '../../../../src/core/vault-approvers.js';
 import { READER_REFUSAL, type ReaderRefusalCode } from '../../../../src/midnight/secret-readers.js';
-import { whyNotTheCommittee } from 'vaults-web-shared/handover-check.js';
 import {
   api, canOpenCompanies, currentUser, holdersFromTheWallet, openKeysWithWallet, recordsKeyFromTheWallet, viewingKeyFor,
 } from 'vaults-web-shared/keyring.js';
@@ -86,7 +85,7 @@ const STAGE: Partial<Record<VaultStage, Creating>> = {
 /** What creating a vault, or finishing handing one over, came to. `done` is a vault started. */
 export type VaultCreated =
   | { of: typeof ACTED.done; vault: string }
-  | { of: typeof OWED.here | typeof OWED.elsewhere | typeof OWED.rosterDisagrees; vault: string }
+  | { of: typeof OWED.here | typeof OWED.elsewhere; vault: string }
   /**
    * Handed to the committee and not started: creating it again carries on.
    * `stopped` when it stopped at the check of who its secret is sealed to, and what resolves it.
@@ -101,18 +100,14 @@ export const STARTING = { owed: 'start-owed', awaiting: 'awaiting-approvals' } a
 
 /**
  * **WHAT RESOLVES A START THAT STOPPED BEFORE ITS SECRET WAS APPROVED**, said
- * on the screen in its own words: the wallet reading the company again, the
- * company handed to its signers, the vault handed to the signers as they stand
- * now, every signer set up for vaults, or nothing a person here can do because
- * what the service sent did not check out.
+ * on the screen in its own words: the wallet reading the company again, every
+ * signer set up for vaults, or nothing a person here can do because what the
+ * service sent did not check out.
  */
-export const STOPPED = { wallet: 'wallet', handOver: 'hand-over', vault: 'vault', signers: 'signers', mismatch: 'mismatch' } as const;
+export const STOPPED = { wallet: 'wallet', signers: 'signers', mismatch: 'mismatch' } as const;
 export type StartStopped = (typeof STOPPED)[keyof typeof STOPPED];
 export const STOPPED_BY: Record<ReaderRefusalCode, StartStopped> = {
   [READER_REFUSAL.walletReadNothing]: STOPPED.wallet,
-  [READER_REFUSAL.accountNotHeld]: STOPPED.handOver,
-  [READER_REFUSAL.vaultNotHeld]: STOPPED.vault,
-  [READER_REFUSAL.committeeOutOfDate]: STOPPED.signers,
   [READER_REFUSAL.keysNotGiven]: STOPPED.signers,
   [READER_REFUSAL.notSigned]: STOPPED.mismatch,
   [READER_REFUSAL.seatNotHeld]: STOPPED.signers,
@@ -123,25 +118,21 @@ export const STOPPED_BY: Record<ReaderRefusalCode, StartStopped> = {
 };
 
 /**
- * A VAULT SENT AND NOT YET HELD BY THE COMMITTEE: this app puts no money into
- * it until it is. `here` when the key it was created with is in this browser,
+ * A VAULT SENT AND NOT YET HELD BY THE SUPER ADMINS: it is not set up, so this
+ * app puts no money into it. `here` when the key it was created with is in this browser,
  * so it can be finished from here; `elsewhere` when it is not, so only the
- * device that created it can finish handing it over; `rosterDisagrees` when
- * the committee the service reports for it is not the one the roster this
- * device opened names, so it is not handed over from here at all.
+ * device that created it can finish handing it over.
  */
-export const OWED = { here: 'handover-owed', elsewhere: 'handover-owed-elsewhere', rosterDisagrees: 'handover-owed-roster-disagrees' } as const;
+export const OWED = { here: 'handover-owed', elsewhere: 'handover-owed-elsewhere' } as const;
 
 /** Whether a vault can be created now, and if not, why, each said on the screen in its own words. */
 export const READY = {
-  /** Every signer has given their vault keys and the committee is the one the roster names. */
+  /** The service reports a committee: every signer has given their vault keys. */
   ready: 'ready',
   /** This person has not given their vault keys yet. */
   yoursMissing: 'yours-missing',
   /** This person has; not every other signer has yet. */
   othersMissing: 'others-missing',
-  /** The committee the service reports is not the one the roster this device opened names. */
-  rosterDisagrees: 'roster-disagrees',
   /** The company has no contract on the chain the service can read yet. */
   notOnChain: 'not-on-chain',
   /** The keys saved for this person are not open in this tab: their account opens them when they approve. */
@@ -201,9 +192,10 @@ async function opened(personId: string, companyId: string, open: boolean): Promi
 
 /**
  * WHETHER A VAULT CAN BE CREATED NOW for the company `companyId`, read as the
- * legacy page reads it: the committee the service reports, checked against
- * the roster this device opens, and whether this person's own roster entry
- * carries their vault keys. Nothing is asked of the account.
+ * legacy page reads it: whether the service reports a committee, and whether
+ * this person's own roster entry carries their vault keys. The committee is
+ * the super admins', never compared with the roster. Nothing is asked of the
+ * account.
  */
 export async function readVaultReadiness(personId: string, companyId: string): Promise<Readiness> {
   try {
@@ -213,9 +205,7 @@ export async function readVaultReadiness(personId: string, companyId: string): P
     const [served, named] = await Promise.all([api(companyRoute(companyId, SERVICE.vaultKeys)), o.roster()]) as [
       { committee: { committee: { tag: string; value: string }[] } | null }, Awaited<ReturnType<Opened['roster']>>,
     ];
-    if (served.committee !== null) {
-      return { of: whyNotTheCommittee(served.committee.committee, named) === null ? READY.ready : READY.rosterDisagrees };
-    }
+    if (served.committee !== null) return { of: READY.ready };
     /* No committee: the company is not on the chain yet, or not every signer has given their vault keys. */
     const authority = await api(companyRoute(companyId, SERVICE.authority)) as { company?: unknown } | null;
     if (authority?.company === null) return { of: READY.notOnChain };
@@ -244,22 +234,22 @@ const createRefusalOf = (e: unknown): ActRefusal =>
  * page does on every press.
  */
 async function run(personId: string, companyId: string, onStage: (stage: Creating) => void, resume?: string): Promise<VaultCreated> {
-  let service: VaultService | null = null;
   try {
     const o = await opened(personId, companyId, true);
     if (typeof o === 'string') return { of: ACTED.refused, why: o === LOCKED ? ACT_REFUSAL.didNotFinish : o };
     const released = await giveTheVaultKeys(companyId, o.keys, viewingKeyFor(o.sealed), o.roster);
     if (released.of === ACTED.refused) return released;
-    service = withTheStart(companyId, vaultServiceFor(api, companyId, o.roster));
+    const service = withTheStart(companyId, vaultServiceFor(api, companyId, o.roster));
     /* This signer's own pool, journals and records, over the records route, wrapped to the seats the directory names now. */
-    const readers = readersIn(directoryHereFor(companyId, released.company, released.account, o.roster));
+    const directoryRead = directoryHereFor(companyId, released.company, released.account, viewingKeyFor(o.sealed), o.roster);
+    const readers = readersIn(directoryRead);
     const done = await createCompanyVault({
       ...pacing(onStage), account: released.account, service,
       builder: await theVaultBuilder(), keys: browserTemporaryKeys(),
       me: deviceSignerFrom(released.signed.statement.seat, released.companyKey),
       myRecordsKey: recordsKeypairFrom(fromHex(released.companyKey)).publicKey as Hex,
       signers: readers.signers,
-      records: deviceRecordsFor(o.keys.signingSecret, filingJudgeFor(companyId, released.company, released.account, o.roster),
+      records: deviceRecordsFor(o.keys.signingSecret, filingJudgeFor(companyId, released.company, released.account, viewingKeyFor(o.sealed), o.roster),
         () => currentUser()?.id ?? null, recordsEnteredOver(api, companyId, o.keys.signingSecret)),
       material: { signingSecret: o.keys.signingSecret, blinding: o.keys.blinding, scope: (o.keys as { scope?: Hex }).scope },
       /* The vault's company account as this person's own wallet reads it for each step, with no press. */
@@ -269,7 +259,7 @@ async function run(personId: string, companyId: string, onStage: (stage: Creatin
       /* The vault itself is read in this device's vault worker, at the indexer this person's own wallet names. */
       indexer: () => walletIndexerFor(released.company, released.account),
       secretReaders: {
-        company: released.company, committeeKey: released.signed.committeeKey,
+        company: released.company,
         /*
          * Who holds the company and the vault, asked of this signer's account afresh for every check, so a check
          * after a wait never rests on what was read before it; the vault is read by the account itself.
@@ -281,6 +271,11 @@ async function run(personId: string, companyId: string, onStage: (stage: Creatin
           return { ...now.seats, vault: now.vault };
         },
         roster: async () => rosterVaultKeys(await o.roster()),
+        /* Each reader's seat's opening, from the company's directory as this device believes it, read afresh. */
+        directory: async () => {
+          const here = await directoryRead();
+          return { seats: here.dir.seats, leafOf: here.leafOf };
+        },
       },
       /*
        * The company as this device counts it before the adoption is raised, approved or carried out: the bars the chain
@@ -313,7 +308,6 @@ async function run(personId: string, companyId: string, onStage: (stage: Creatin
       return e.stoppedAt === undefined ? { of: STARTING.owed, vault: e.vault } : { of: STARTING.owed, vault: e.vault, stopped: STOPPED_BY[e.stoppedAt] };
     }
     if (e instanceof VaultHandoverOwed) {
-      if (service !== null && await rosterRefusedItsCommittee(companyId, e.vault, service)) return { of: OWED.rosterDisagrees, vault: e.vault };
       /* Only the key it was created with can hand it over, and it is kept only in the browser that created it. */
       return { of: (await keyHere(e.vault)) ? OWED.here : OWED.elsewhere, vault: e.vault };
     }
@@ -321,26 +315,7 @@ async function run(personId: string, companyId: string, onStage: (stage: Creatin
   }
 }
 
-/**
- * WHETHER THE ROSTER THIS DEVICE OPENED REFUSED THE COMMITTEE THE SERVICE
- * REPORTS FOR `vault`: the service's own view names a committee, or says the
- * committee holds the vault, and the same view checked against the roster
- * (`vaultServiceFor`'s own check) does not. Then finishing the handover from
- * here can never work, and that is said rather than "not finished yet". A read
- * that fails is taken as no.
- */
-async function rosterRefusedItsCommittee(companyId: string, vault: string, service: VaultService): Promise<boolean> {
-  try {
-    const served = await api(companyRoute(companyId, SERVICE.vaults + SERVICE.slash + vault + SERVICE.chain)) as { committee?: unknown; heldByCommittee?: unknown } | null;
-    const checked = await service.chain(vault as Parameters<VaultService['chain']>[0]);
-    return ((served?.committee ?? null) !== null && (checked.committee ?? null) === null)
-      || (served?.heldByCommittee === true && checked.heldByCommittee !== true);
-  } catch {
-    return false;
-  }
-}
-
-/** A vault sent and not yet held by the company's signers, with its number among the company's vaults and whether this browser holds the key that can finish handing it over. */
+/** A vault sent and not yet held by the company's super admins, with its number among the company's vaults and whether this browser holds the key that can finish handing it over. */
 export interface OwedVault { vault: string; number: number; here: boolean }
 
 /** Whether this browser holds the key `vault` was created with; false when it does not, or when its store cannot be read. */
@@ -352,7 +327,7 @@ const keyHere = async (vault: string): Promise<boolean> => {
   }
 };
 
-/** The company's vaults sent and not yet held by its signers, each with whether it can be finished from this browser; none when they could not be read. */
+/** The company's vaults sent and not yet held by its super admins, each with whether it can be finished from this browser; none when they could not be read. */
 export async function readOwedVaults(personId: string, companyId: string): Promise<readonly OwedVault[]> {
   const rows = await readVaultRows(personId, companyId);
   const owed = (rows ?? []).map((row, i) => ({ row, number: i + 1 })).filter((x) => handoverOwed(x.row));

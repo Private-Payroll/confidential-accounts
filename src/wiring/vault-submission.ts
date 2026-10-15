@@ -39,10 +39,11 @@
  * refuse it. What this service refuses is paying for, or carrying, any deposit
  * into such a vault.
  */
-import type { AuthorityRead, OnChainAuthority } from '../midnight/ledger.js';
-import { compareAuthority } from '../midnight/ledger.js';
+import type { OnChainAuthority } from '../midnight/ledger.js';
 import type { Committee, CommitteeKey } from '../midnight/vault-committee.js';
-import { sameCommittee, whyOneKeyCouldActAlone } from '../midnight/vault-committee.js';
+import { sameCommittee } from '../midnight/vault-committee.js';
+import { authorityIn, type ContractAuthority } from 'midnight-identity/profile/contract-authority';
+import { whyNotInstallable } from 'midnight-identity/profile/request';
 import { vaultBornHeldRefusal, type VaultBornHeldExpectations } from '../midnight/vault-circuits.js';
 import { bare, emptyOffer, nameOf, theOnlyIntent, type DeployVerdict, type IntentShape, type TxShape } from '../midnight/account-deploy.js';
 import { STEP_LIMITS } from '../midnight/payment-plan.js';
@@ -121,6 +122,26 @@ export function refusalForCreationInsert(
 /* ---------------------------------------------------------- 2. the handover */
 
 /**
+ * **WHO A CHANGE OF A CONTRACT'S RULES WOULD INSTALL**, read from the one
+ * update it carries by the one reader of an authority (`authorityIn`) and
+ * judged by `whyNotInstallable`, or the sentence that
+ * refuses it. A key that is not a tagged string of hex digits, or a threshold
+ * that is not a whole number, is refused by name rather than thrown.
+ */
+function installedBy(
+  update: unknown, what: string, its: string,
+): { readonly authority: ContractAuthority; readonly installs: Committee } | string {
+  const read = authorityIn({ maintenanceAuthority: (update as { authority?: unknown } | null)?.authority });
+  if ('why' in read) {
+    return `this is not ${what}: it changes something other than who holds ${its} rules, because ${read.why.replace(/^the contract's /u, 'its ').replace(/\.$/u, '')}. `
+      + 'Nothing was sent.';
+  }
+  const notInstallable = whyNotInstallable(read);
+  if (notInstallable !== null) return `this is not a change of who holds the contract: ${notInstallable} Nothing was sent.`;
+  return { authority: read, installs: { committee: read.committee.map((k) => ({ tag: k.tag, value: k.value })), threshold: read.threshold } };
+}
+
+/**
  * **A CONTRACT HANDED FROM ITS TEMPORARY KEY TO THE COMPANY'S COMMITTEE.** The
  * same reading serves a vault, whose temporary key a signer's device made, and
  * the company account, whose temporary key this service keeps: either way it is
@@ -166,27 +187,20 @@ export function refusalForHandover(
   }
   if (update.counter !== expect.onChain.counter) {
     return `this change was built against counter ${String(update.counter)} and ${noun} is at `
-      + `${expect.onChain.counter}, so the chain would refuse it after charging the fee. Nothing was sent; `
+      + `${expect.onChain.counter}, so the chain would refuse it: after charging the fee when its signatures still verify under `
+      + 'the committee holding it now, and with no fee when they do not. Nothing was sent; '
       + 'build it again from what the chain holds now.';
   }
   if (update.updates.length !== 1) {
     return `this is not ${what}: it makes more than one change. Nothing was sent.`;
   }
-  const authority = (update.updates[0] as { authority?: { committee?: unknown; threshold?: unknown; counter?: unknown } })
-    .authority;
-  if (!authority || !Array.isArray(authority.committee) || typeof authority.threshold !== 'number') {
-    return `this is not ${what}: it changes something other than who holds ${its} rules. Nothing was sent.`;
-  }
-  const installs: Committee = {
-    committee: (authority.committee as CommitteeKey[]).map((k) => ({ tag: k.tag, value: k.value })),
-    threshold: authority.threshold,
-  };
+  const installed = installedBy(update.updates[0], what, its);
+  if (typeof installed === 'string') return installed;
+  const { authority, installs } = installed;
   if (!sameCommittee(installs, expect.to)) {
     return `this is not ${what}: the keys or the threshold it installs are not this company's committee. `
       + 'Nothing was sent.';
   }
-  const alone = whyOneKeyCouldActAlone(expect.to);
-  if (alone !== null) return `${noun} is not handed over: ${alone}. Nothing was sent.`;
   if (authority.counter !== expect.onChain.counter + 1n) {
     return `this is not ${what}: the authority it installs carries the wrong counter. Nothing was sent.`;
   }
@@ -199,27 +213,29 @@ export function refusalForHandover(
 /* ------------------------------------------ 2a. a committee changed after */
 
 /**
- * **A CONTRACT OF THIS COMPANY'S CHANGED TO THE COMPANY'S COMMITTEE AS IT
- * STANDS NOW, SIGNED BY THE COMMITTEE THAT HOLDS IT.** Read as a stranger's
- * transaction, whoever assembled it: one maintenance update and nothing else,
- * replacing the whole authority with exactly the company's committee, against
- * the counter the chain holds now, carrying at least as many signatures as the
- * committee on chain requires. Only a contract this service's record holds as
- * born held is changed this way: its first change, when a one-signer company
- * seats its second signer, is the same change as every later one.
+ * **ONE CONTRACT'S COMMITTEE CHANGED, SIGNED BY THE COMMITTEE THAT HOLDS IT.**
+ * Read as a stranger's transaction, whoever assembled it: one maintenance
+ * update and nothing else, at the address asked for, replacing the whole
+ * authority with exactly the committee asked for, against the counter the
+ * chain holds now, carrying at least as many signatures as the committee on
+ * the chain requires. The chain refuses a counter other than its own after the
+ * transaction is included, and charges its fee, when its signatures still
+ * verify under the committee holding the contract now; when they do not, it is
+ * refused before inclusion with no fee. It refuses the rest - another
+ * contract, too few signatures, a signature that does not verify, the wrong
+ * installed counter - before inclusion, with no fee. Nothing here judges which
+ * committee may be installed.
  */
 export function refusalForCommitteeChange(
   tx: unknown,
   expect: {
     readonly address: string; readonly to: Committee; readonly onChain: OnChainAuthority;
     readonly contract: 'vault' | 'account';
-    /** Whether this service's record holds the contract as born held by the company's committee. */
-    readonly bornHeld: boolean;
   },
 ): string | null {
   const noun = expect.contract === 'account' ? 'the company\'s account' : 'this vault';
   const its = expect.contract === 'account' ? 'the account\'s' : 'the vault\'s';
-  const what = `${noun}'s committee changed to the company's`;
+  const what = `${noun}'s committee changed`;
   const only = theOnlyIntent(tx, what);
   if ('refusal' in only) return only.refusal;
   const update = (only.intent.actions as unknown[])[0] as {
@@ -231,37 +247,26 @@ export function refusalForCommitteeChange(
   if (bare(update.address) !== bare(expect.address)) {
     return `this is not ${what}: it changes a different contract. Nothing was sent.`;
   }
-  if (!expect.bornHeld) {
-    return `${noun} was not created here held by the company's committee, so a change to its committee is not paid `
-      + 'for: it would not make the contract the company\'s. Nothing was sent.';
-  }
-  const alone = whyOneKeyCouldActAlone(expect.to);
-  if (alone !== null) return `this change is not sent: ${alone}. Nothing was sent.`;
   if (update.counter !== expect.onChain.counter) {
     return `this change was built against counter ${String(update.counter)} and ${noun} is at `
-      + `${expect.onChain.counter}, so the chain would refuse it after charging the fee. Nothing was sent; `
+      + `${expect.onChain.counter}, so the chain would refuse it: after charging the fee when its signatures still verify under `
+      + 'the committee holding it now, and with no fee when they do not. Nothing was sent; '
       + 'build it again from what the chain holds now.';
   }
   if (update.updates.length !== 1) {
     return `this is not ${what}: it makes more than one change. Nothing was sent.`;
   }
-  const authority = (update.updates[0] as { authority?: { committee?: unknown; threshold?: unknown; counter?: unknown } })
-    .authority;
-  if (!authority || !Array.isArray(authority.committee) || typeof authority.threshold !== 'number') {
-    return `this is not ${what}: it changes something other than who holds ${its} rules. Nothing was sent.`;
-  }
-  const installs: Committee = {
-    committee: (authority.committee as CommitteeKey[]).map((k) => ({ tag: k.tag, value: k.value })),
-    threshold: authority.threshold,
-  };
+  const installed = installedBy(update.updates[0], what, its);
+  if (typeof installed === 'string') return installed;
+  const { authority, installs } = installed;
   if (!sameCommittee(installs, expect.to)) {
-    return `this is not ${what}: the keys or the threshold it installs are not this company's committee. `
+    return `this is not ${what}: the keys or the threshold it installs are not the committee asked for. `
       + 'Nothing was sent.';
   }
   if (authority.counter !== expect.onChain.counter + 1n) {
     return `this is not ${what}: the authority it installs carries the wrong counter. Nothing was sent.`;
   }
-  if (!Array.isArray(update.signatures) || update.signatures.length < Math.max(1, expect.onChain.threshold)) {
+  if (!Array.isArray(update.signatures) || update.signatures.length < expect.onChain.threshold) {
     return `this is not ${what}: it carries fewer signatures than the ${expect.onChain.threshold} the committee `
       + 'holding it now needs, so the chain would refuse it. Nothing was sent.';
   }
@@ -966,9 +971,13 @@ export function refusalForPublicPayout(tx: unknown, expect: PayoutExpectations):
 
 /**
  * **EVERYTHING A DOOR MUST HAVE READ BEFORE IT MAY ANSWER WHETHER MONEY GOES
- * INTO A VAULT.** Every field is a read of the chain as it is now, made by the
- * door: never a record this product keeps, because a check against our own
- * record is a check against our own claim.
+ * INTO A VAULT.** Every field but the record of how each contract was created
+ * is a read of the chain as it is now, made by the door.
+ *
+ * **NO COMMITTEE IS AMONG THEM.** Who holds a contract's rules is the super
+ * admins' own matter: a signer joining or leaving, or a change of the super
+ * admins that has reached some contracts and not others, never stops money
+ * going in or out. A vault is the company's by the account it is pinned to.
  *
  * A read that failed is carried as the read's own four states rather than as a
  * boolean, so a door cannot turn *could not be asked* into *no*.
@@ -984,8 +993,8 @@ export interface FundingFacts {
    * here. For example: `no money goes into vault 'x'`.
    */
   readonly what: string;
-  /** Who holds the vault's rules. */
-  readonly vault: AuthorityRead;
+  /** Whether the chain answered for the vault's state. Who holds its rules is never asked. */
+  readonly vault: ContractAnswer;
   /** The reading of the vault's circuits against this build's; `null` when they are this build's. */
   readonly vaultCircuits: string | null;
   /**
@@ -999,50 +1008,43 @@ export interface FundingFacts {
    * and when its state could not be read.
    */
   readonly started: boolean;
-  /** Who holds the rules of the account that vault pays out on. */
-  readonly account: AuthorityRead;
+  /** Whether the chain answered for the state of the account that vault pays out on. Who holds its rules is never asked. */
+  readonly account: ContractAnswer;
   /** The reading of that account's circuits against this build's. */
   readonly accountCircuits: string | null;
   /** The account this vault must be pinned to for its money to be the company's. */
   readonly companyAccount: string;
   /**
-   * **THE COMMITTEE THE COMPANY'S SIGNERS MAKE UP NOW, WHEN THE DOOR KNOWS IT.**
-   *
-   * `null` is the one deliberate difference between the doors and it is a
-   * difference in what can be READ, not in what is required. A door serving a
-   * signed-in person can open the company's roster and compare the chain against
-   * it exactly. An operator tool has no roster, so it cannot tell a company that
-   * deliberately has one signer from a vault nobody has handed over yet, and it
-   * asks the stricter structural question instead: rules held by a committee of
-   * at least two distinct keys, none of them this machine's. A vault a company
-   * deliberately keeps at one key is therefore funded from the product and not
-   * from an operator tool, and that is the stricter answer in both places.
-   */
-  readonly committee: Committee | null;
-  /** The verifying keys of every maintenance key the door's own machine keeps. */
-  readonly heldHere: readonly CommitteeKey[];
-  /**
    * **WHETHER THIS SERVICE'S OWN RECORD HOLDS EACH CONTRACT AS BORN HELD**: its
    * deploy read, before this service paid for it, by the reader for its kind,
-   * and found holding exactly the company's committee at counter 0, running
-   * this build's circuits and starting from the constructor's own state. From
-   * that first transaction on, every change to its rules needed the
-   * committee's own signatures, so nothing about its history is read: that one
-   * read is the whole of what vouches for it.
+   * and found holding the company's committee at counter 0, running this
+   * build's circuits and starting from the constructor's own state. From that
+   * first transaction on, every change to its rules needed its committee's own
+   * signatures, so nothing about its history is read: that one read is the
+   * whole of what vouches for it.
    *
-   * `null` at a door that keeps no such record - an operator tool - and then
-   * nothing is funded, whoever the chain says holds it. It is never inferred
-   * from the chain: a stranger can deploy a contract pinned to the company's
-   * account and held by keys of their own, and only the record tells the two
-   * apart.
+   * `null` at a door that keeps no such record, and then nothing is funded,
+   * whoever the chain says holds it. It is never inferred from the chain: a
+   * stranger can deploy a contract pinned to the company's account and held by
+   * keys of their own, and only the record tells the two apart.
    */
   readonly bornHeld: { readonly vault: boolean; readonly account: boolean } | null;
 }
 
+/**
+ * **WHETHER THE CHAIN ANSWERED FOR A CONTRACT'S STATE**, and nothing about who
+ * holds its rules: the gate is handed this, never a read of a contract's
+ * maintenance authority. `absent` when the chain answered and holds nothing
+ * there; `unreachable` when it could not be asked.
+ */
+export type ContractAnswer =
+  | { readonly state: 'answered' }
+  | { readonly state: 'absent' | 'unreachable'; readonly why: string };
+
 /** Why no money goes in, and what kind of thing is in the way. */
 export interface FundingRefusal {
   readonly why: string;
-  /** The rules are held by keys that are not the company's: the handover is what resolves it. */
+  /** Always false: no refusal here is about who holds a contract, so none is resolved by a handover. */
   readonly heldByOthers: boolean;
   /** Set when the thing in the way is the account rather than the vault. */
   readonly accountNotReady?: 'not-handed-over' | 'not-vouched' | 'unknown';
@@ -1054,59 +1056,10 @@ export interface FundingRefusal {
   readonly notStarted?: true;
 }
 
-const holdsOneOf = (authority: OnChainAuthority, held: readonly CommitteeKey[]): boolean => {
-  const ids = new Set(held.map((k) => `${k.tag.toLowerCase()}:${k.value.toLowerCase()}`));
-  return authority.committee.some((k) => ids.has(`${k.tag.toLowerCase()}:${k.value.toLowerCase()}`));
-};
-
-/**
- * **THE QUESTION AN OPERATOR TOOL ASKS INSTEAD OF COMPARING WITH A ROSTER IT
- * CANNOT READ.** `null` only when the chain answers and shows rules held by a
- * committee of at least two distinct keys, none of them one this machine keeps.
- */
-const structuralRefusal = (
-  read: AuthorityRead, held: readonly CommitteeKey[], what: string, label: string, refusing: string,
-): string | null => {
-  if (read.state !== 'read') {
-    return `${refusing}: the chain could not be asked who holds ${what} of '${label}' (${read.why}). `
-      + 'Nothing was sent.';
-  }
-  const ours = holdsOneOf(read.authority, held);
-  if (ours || read.authority.shape === 'one-key' || read.authority.shape === 'anyone') {
-    return `${refusing}: ${what} of '${label}' are still held by `
-      + `${ours ? 'a key this machine keeps' : 'a single key'} on the chain `
-      + `(${read.authority.committee.length} key(s), threshold ${read.authority.threshold}), and whoever holds `
-      + 'that key can change which proofs it accepts. Hand it to a committee nobody here holds a key of first. '
-      + 'Nothing was sent.';
-  }
-  if (read.authority.shape !== 'committee' || read.authority.threshold < 2 || read.authority.hasDuplicateMembers) {
-    const why = read.authority.shape === 'no-one'
-      ? 'nobody can ever change its rules, so it could never be repaired or retired'
-      : read.authority.hasDuplicateMembers
-        ? 'its committee lists one key more than once, so its threshold is not what it reads as'
-        : 'any one member of its committee can change which proofs it accepts';
-    return `${refusing}: ${why}, for ${what} (${read.authority.committee.length} key(s), threshold `
-      + `${read.authority.threshold}). Nothing was sent.`;
-  }
-  return null;
-};
-
-/** Held by exactly the committee the door read from the company's roster, or the sentence that says it is not. */
-export const committeeHoldsIt = (
-  read: AuthorityRead, to: Committee, what: string, whose: string, refusing = 'no money goes in',
-): string | null => {
-  const verdict = compareAuthority(read, {
-    committee: to.committee.map((k) => ({ ...k })), threshold: to.threshold,
-  });
-  if (verdict.verdict === 'agree') return null;
-  if (verdict.verdict === 'unknown') {
-    return `${refusing}: the chain could not be asked who holds ${what}. Nothing was sent; try again when the `
-      + 'chain answers.';
-  }
-  return `${refusing}: ${what} are not held by the company's committee on the chain. ${verdict.why} `
-    + `If ${whose} was created here and the company's signers or threshold have changed since, its committee is `
-    + 'changed to match in Settings, signed by the signers who hold it now. Nothing was sent.';
-};
+/** Why a contract the chain did not answer for is not funded, or null when it answered. */
+const unansweredRefusal = (read: ContractAnswer, what: string, refusing: string): string | null =>
+  read.state === 'answered' ? null
+    : `${refusing}: the chain could not be asked about ${what} (${read.why}). Nothing was sent; try again when the chain answers.`;
 
 /**
  * **BORN HELD BY THE COMPANY'S COMMITTEE, AS THIS SERVICE'S OWN RECORD SAYS.**
@@ -1131,35 +1084,22 @@ const bornHeldRefusal = (
 
 /**
  * **THE ONE ANSWER TO WHETHER MONEY MAY GO INTO A VAULT, AND EVERY DOOR ASKS
- * IT.** The product's deposit route, the record a payment out is vouched
- * against, and the operator funding tools all reach this function and nothing
- * else answers the question anywhere.
- *
- * **IT IS ONE LIST AND BOTH DOORS RUN ALL OF IT.** Before this existed the
- * operator tools asked about the vault's rules and nothing else, so a vault
- * handed to its committee while the account it pays out on was still held by a
- * temporary key on this machine was funded by a script and refused by the
- * screen. The account is what every vault pays out on, so every door now reads
- * it.
+ * IT.** The product's deposit route and the fee on every payment out reach this
+ * function, and nothing else answers the question anywhere.
  *
  * **A VAULT IS FUNDED ONLY WHEN ALL OF THIS IS TRUE AT ONCE**, read from the
  * chain except where it says the record:
  *
- *   1. the vault's rules are the company's committee, or, where no roster can
- *      be read, a committee of at least two keys none of which this machine
- *      holds; and never a committee any one of several keys could change alone;
- *   2. this service's record holds the vault as born held: its deploy read
- *      before it was paid for, holding the company's committee from its first
- *      transaction, so every change since needed that committee's signatures;
+ *   1. the chain answered for the vault;
+ *   2. this service's record holds the vault as born held;
  *   3. the vault runs this build's circuits, byte for byte;
  *   4. the vault is pinned to the company's own account;
  *   5. the vault is started: its account adopted it and approved a secret,
  *      and every signer's sealed copy of that secret is on the chain;
- *   6. all of 1 to 3 again, of that account.
+ *   6. 1 to 3 again, of that account.
  *
- * The order is the order a person can act on: who holds it, then how it was
- * created, then what it runs, then which account it answers to, then the same
- * of the account. A refusal names the first thing in the way and stops.
+ * Who holds either contract's rules is not among them (`FundingFacts`). A
+ * refusal names the first thing in the way and stops.
  */
 export function refusalToPutMoneyIn(facts: FundingFacts): FundingRefusal | null {
   return asFarAsTheVault(facts) ?? andTheAccount(facts);
@@ -1170,30 +1110,19 @@ export function refusalToPutMoneyIn(facts: FundingFacts): FundingRefusal | null 
  * a door carrying money asks, and every such door calls `refusalToPutMoneyIn`.
  */
 export function asFarAsTheVault(facts: FundingFacts): FundingRefusal | null {
-  return committeeHoldsTheVault(facts) ?? notStartedRefusal(facts);
+  return vaultIsTheCompanys(facts) ?? notStartedRefusal(facts);
 }
 
 /**
- * **THE FIRST FOUR: THE COMPANY'S COMMITTEE HOLDS THIS VAULT, CHANGED AS IT
- * SHOULD BE, RUNNING THIS BUILD'S CIRCUITS AND PINNED TO THIS COMPANY'S
- * ACCOUNT.** Separate because one caller asks exactly this and says so: a
- * device's handover waits on it, and the vault's start is raised only once it
- * is true. Whether the vault is started is the fifth question, and the start
- * itself is what answers it, so a handover never waits on it.
+ * **THE FIRST FOUR: THE VAULT IS THE COMPANY'S** - answered for on the chain,
+ * born held as this service's record says, running this build's circuits and
+ * pinned to this company's account. Separate because a vault's start is raised
+ * only once it is true, and the start itself is what answers the fifth.
  */
-export function committeeHoldsTheVault(facts: FundingFacts): FundingRefusal | null {
+export function vaultIsTheCompanys(facts: FundingFacts): FundingRefusal | null {
   const vaultRules = `the rules of vault '${facts.label}'`;
-  const held = facts.committee === null
-    ? structuralRefusal(facts.vault, facts.heldHere, 'the maintenance rules', facts.label, facts.what)
-    : committeeHoldsIt(facts.vault, facts.committee, vaultRules, 'the vault', facts.what);
-  /*
-   * `heldByOthers` says the handover is what resolves this. A chain that could
-   * not be asked is not resolved by a handover, so it is not that.
-   */
-  if (held !== null) return { why: held, heldByOthers: facts.vault.state === 'read' };
-  /* The structural question above already refuses one key in several; a roster is asked the same here. */
-  const alone = facts.committee === null ? null : whyOneKeyCouldActAlone(facts.committee);
-  if (alone !== null) return { why: `${facts.what}: ${alone}. Nothing was sent.`, heldByOthers: false };
+  const unanswered = unansweredRefusal(facts.vault, vaultRules, facts.what);
+  if (unanswered !== null) return { why: unanswered, heldByOthers: false };
 
   const born = bornHeldRefusal(facts.bornHeld === null ? null : facts.bornHeld.vault, vaultRules, facts.what);
   if (born !== null) return { why: born, heldByOthers: false };
@@ -1229,70 +1158,18 @@ function notStartedRefusal(facts: FundingFacts): FundingRefusal | null {
 }
 
 /**
- * **THE ACCOUNT, WHICH IS WHAT EVERY VAULT PAYS OUT ON.** A vault held by the
- * company's committee is still paid out of by whoever holds the account's
- * rules, so a door that stops at the vault has asked half the question.
+ * **THE ACCOUNT, WHICH IS WHAT EVERY VAULT PAYS OUT ON**: answered for on the
+ * chain, born held as this service's record says, and running this build's
+ * circuits. An account the chain could not be asked about is `unknown`.
  */
 function andTheAccount(facts: FundingFacts): FundingRefusal | null {
   const accountRules = 'the rules of this company\'s account, which every vault pays out on,';
-  const kind = kindOfAccountTrouble(facts);
-  const accountHeld = facts.committee === null
-    ? structuralRefusal(
-      facts.account, facts.heldHere, 'the rules of the account it pays out on', facts.label, facts.what)
-    : committeeHoldsIt(facts.account, facts.committee, accountRules, 'the account', facts.what);
-  if (accountHeld !== null) {
-    /*
-     * **AN ACCOUNT EXACTLY AS DEPLOYED IS NAMED AS THAT, AND NOT AS A
-     * DISAGREEMENT**, because what resolves it is one press in the settings and
-     * the person cannot act on a threshold comparison.
-     */
-    return {
-      why: accountAsDeployed(facts)
-        ? `${facts.what}: this company's account is still held by the temporary key it was created with, and a `
-          + 'vault pays out on the account\'s approval. Hand the account to the company\'s committee in Settings '
-          + 'first. Nothing was sent.'
-        : accountHeld,
-      heldByOthers: false,
-      accountNotReady: kind,
-    };
-  }
+  const unanswered = unansweredRefusal(facts.account, accountRules, facts.what);
+  if (unanswered !== null) return { why: unanswered, heldByOthers: false, accountNotReady: 'unknown' };
   const accountBorn = bornHeldRefusal(facts.bornHeld === null ? null : facts.bornHeld.account, accountRules, facts.what);
-  if (accountBorn !== null) return { why: accountBorn, heldByOthers: false, accountNotReady: kind };
+  if (accountBorn !== null) return { why: accountBorn, heldByOthers: false, accountNotReady: 'not-vouched' };
   if (facts.accountCircuits !== null) {
-    return { why: facts.accountCircuits, heldByOthers: false, accountNotReady: kind };
+    return { why: facts.accountCircuits, heldByOthers: false, accountNotReady: 'not-vouched' };
   }
   return null;
 }
-
-/**
- * **WHICH OF THE THREE THINGS IS WRONG WITH THE ACCOUNT**, so a screen can
- * offer the handover rather than only reporting that money cannot go in. An
- * account the chain could not be asked about is `unknown`, and `unknown`
- * refuses like the rest.
- */
-const kindOfAccountTrouble = (facts: FundingFacts): 'not-handed-over' | 'not-vouched' | 'unknown' =>
-  facts.account.state !== 'read'
-    ? 'unknown'
-    : accountAsDeployed(facts) && facts.accountCircuits === null ? 'not-handed-over' : 'not-vouched';
-
-/**
- * **THE ACCOUNT IS EXACTLY AS THIS SERVICE DEPLOYED IT**: one key, THIS
- * SERVICE'S OWN, never changed. What resolves that is one press in the
- * settings, so the refusal says so rather than quoting a threshold comparison
- * nobody can act on.
- *
- * **A DOOR THAT KEEPS NO KEY OF ITS OWN ANSWERS `false` HERE, AND MUST.** It
- * cannot tell whose single key the chain is showing, and *still held by the
- * temporary key it was created with* is a statement about custody. Answering
- * `true` on an empty list would tell a person their own handover is the missing
- * step while a stranger holds the account, and would show the screen the state
- * that offers the button rather than the one that raises an alarm.
- */
-const accountAsDeployed = (facts: FundingFacts): boolean =>
-  facts.account.state === 'read'
-  && facts.account.authority.shape === 'one-key'
-  && facts.account.authority.counter === 0n
-  && facts.heldHere.length > 0
-  && facts.account.authority.committee.every(
-    (k) => facts.heldHere.some((h) => h.tag.toLowerCase() === k.tag.toLowerCase()
-      && h.value.toLowerCase() === k.value.toLowerCase()));

@@ -146,7 +146,7 @@ describe('A COMPANY ITS FOUNDING SIGNER\'S DEVICE MADE', () => {
   });
 
   it('EVERY SECRET THE DEVICE MAKES AT A FOUNDING IS ONE THE SERVICE REFUSES BY NAME', () => {
-    const seat = newSeatKeys();
+    const seat = newSeatKeys({ tag: 'schnorr', value: '4c'.repeat(32) });
     const secretOfTheSeat = Object.keys(seat).filter((k) => !k.endsWith('PublicKey'));
     /* RED WHEN: the device makes a secret under a name the service's refusal does not know, so it would be carried as an unknown field and not refused as a secret. */
     for (const name of [...secretOfTheSeat, ...Object.keys(newStateBlinding()), 'viewingKey']) {

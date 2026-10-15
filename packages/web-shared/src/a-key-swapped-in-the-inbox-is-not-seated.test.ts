@@ -361,6 +361,7 @@ describe('A SEAT THE CHAIN HOLDS BEFORE ITS SIGNER IS ADMITTED', () => {
     filings: filed.reads.filings,
     holders: async () => { const h = await filed.reads.holders(); return { ...h, seats: [...h.seats, dana.leafCommitment] }; },
     anchored: filed.reads.anchored,
+    leaves: filed.reads.leaves,
   };
   const readHere = () => rosterBelievedHere({ ...store.getAccount(company)!, roster: filed.roster }, viewingKey as Hex, {
     accountId: company, label: honestRecord.companyLabel as never, account: honestRecord.contractAddress as never,

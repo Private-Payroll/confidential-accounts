@@ -148,14 +148,14 @@ describe('WHERE A PROPOSAL STANDS, READ FROM THE ACCOUNT\'S HISTORY IN THE WORKE
 describe('A PAYROLL RUN VOUCHES FOR THE HEAD IT WAS RAISED OVER ONLY ONCE PAID OR CHARGED WITH THE ACCOUNT\'S THRESHOLD OF APPROVALS', () => {
   const RUN = 'a1'.repeat(32);
   const OTHER = 'a2'.repeat(32);
-  type Held = { change: Uint8Array; approvals: bigint; raisedAtRemovals: bigint; paid?: boolean };
+  type Held = { change: Uint8Array; approvals: bigint; raisedAtRemovals: bigint; paid?: boolean; needed?: bigint; noHold?: boolean };
   /** One block's state, as a ledger view of the test's: the account's threshold, its removals so far, and each proposal it holds. */
   type State = { threshold: bigint; removals: bigint; held: Record<string, Held> };
   const COMMITMENT = new Uint8Array(32).fill(7);
   const viewOf = (st: State) => {
     const ids = Object.keys(st.held);
     const hold = (h: Held | undefined, removals: bigint) => ({
-      needed: 0n, withdrawKey: new Uint8Array(32), removals,
+      needed: h?.needed ?? 0n, withdrawKey: new Uint8Array(32), removals,
       runHold: { placedBy: h?.paid === true ? pureCircuits.paidFromMark() : new Uint8Array(32), releaseNeeded: 0n, releaseApprovals: 0n, releaseRemovals: 0n },
     });
     return {
@@ -166,13 +166,13 @@ describe('A PAYROLL RUN VOUCHES FOR THE HEAD IT WAS RAISED OVER ONLY ONCE PAID O
       },
       approvalCounts: { member: (id: Uint8Array) => hex(id) in st.held, lookup: (id: Uint8Array) => st.held[hex(id)]!.approvals },
       proposalHolds: {
-        member: (id: Uint8Array) => hex(id) in st.held || hex(id) === hex(pureCircuits.removalCountKey()),
+        member: (id: Uint8Array) => (hex(id) in st.held && st.held[hex(id)]!.noHold !== true) || hex(id) === hex(pureCircuits.removalCountKey()),
         lookup: (id: Uint8Array) => (hex(id) === hex(pureCircuits.removalCountKey()) ? hold(undefined, st.removals) : hold(st.held[hex(id)], st.held[hex(id)]!.raisedAtRemovals)),
       },
     };
   };
-  const vouching = (states: readonly State[]) => vouchingRunsIn({
-    accountPure: pureCircuits, accountLedger: (data: unknown) => viewOf(states[data as number]!),
+  const vouching = (states: readonly State[], accountPure: Partial<typeof pureCircuits> = pureCircuits) => vouchingRunsIn({
+    accountPure, accountLedger: (data: unknown) => viewOf(states[data as number]!),
     runtimeState: { deserialize: (state: Uint8Array) => ({ data: state[0] }) },
   } as never, states.map((_, i) => ({ state: Uint8Array.of(i), block: { height: 30 + i, at: 3000 + i } })));
   const cleared = (approvals: bigint, raisedAtRemovals = 0n): Held => ({ change: pureCircuits.clearedMark(), approvals, raisedAtRemovals });
@@ -202,6 +202,29 @@ describe('A PAYROLL RUN VOUCHES FOR THE HEAD IT WAS RAISED OVER ONLY ONCE PAID O
     expect(vouching([{ threshold: 2n, removals: 0n, held: { [RUN]: paid(2n) } }, { threshold: 2n, removals: 1n, held: { [RUN]: paid(2n) } }])).toEqual([]);
     /* RED WHEN: an open proposal, approved but neither paid nor charged, vouches. */
     expect(vouching([{ threshold: 1n, removals: 0n, held: { [RUN]: open(5n), [OTHER]: cleared(1n) } }])).toEqual([{ chainId: OTHER, height: 30, at: 3000 }]);
+    /* RED WHEN: a run the account charged but holds no hold for vouches, or stops the read: its bar when raised cannot be known. */
+    expect(vouching([{ threshold: 1n, removals: 0n, held: { [RUN]: { ...cleared(5n), noHold: true }, [OTHER]: cleared(1n) } }]))
+      .toEqual([{ chainId: OTHER, height: 30, at: 3000 }]);
+  });
+
+  it('A RUN RAISED NEEDING MORE THAN THE ACCOUNT\'S THRESHOLD VOUCHES ONLY AT THE BAR IT WAS RAISED AT, AS THE ACCOUNT COUNTS IT', () => {
+    /* RED WHEN: the device counts a run against the account's threshold alone, below the bar the run was raised at. */
+    expect(vouching([{ threshold: 2n, removals: 0n, held: { [RUN]: { ...paid(2n), needed: 3n } } }])).toEqual([]);
+    expect(vouching([{ threshold: 2n, removals: 0n, held: { [RUN]: { ...paid(3n), needed: 3n } } }])).toEqual([{ chainId: RUN, height: 30, at: 3000 }]);
+    /* RED WHEN: the device adds the removals to the account's threshold instead of to the higher of it and the run's bar. */
+    expect(vouching([{ threshold: 2n, removals: 1n, held: { [RUN]: { ...cleared(3n), needed: 3n } } }])).toEqual([]);
+    expect(vouching([{ threshold: 2n, removals: 1n, held: { [RUN]: { ...cleared(4n), needed: 3n } } }])).toEqual([{ chainId: RUN, height: 30, at: 3000 }]);
+  });
+
+  it('THE BAR IS THE ACCOUNT\'S OWN COUNT: A DEVICE NOT GIVEN IT REFUSES TO READ RATHER THAN COUNTING FOR ITSELF', () => {
+    const { runApprovalsNeeded: _, ...without } = pureCircuits;
+    /* RED WHEN: vouchingRunsIn counts a run's approvals by a sum of its own when the account's circuit is missing. */
+    expect(() => vouching([{ threshold: 2n, removals: 0n, held: { [RUN]: paid(2n) } }], without)).toThrow(/was not read. Reload the page/);
+    /* RED WHEN: vouchingRunsIn stops asking the account's circuit, so a bar the account sets is not the one a run vouches at. */
+    const asked: bigint[][] = [];
+    const counting = { ...pureCircuits, runApprovalsNeeded: (...a: [bigint, bigint, bigint, bigint]) => { asked.push(a); return 9n; } };
+    expect(vouching([{ threshold: 2n, removals: 1n, held: { [RUN]: { ...paid(5n, 0n), needed: 3n } } }], counting)).toEqual([]);
+    expect(asked).toEqual([[3n, 2n, 1n, 0n]]);
   });
 });
 

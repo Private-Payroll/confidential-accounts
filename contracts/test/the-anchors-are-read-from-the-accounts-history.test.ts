@@ -8,7 +8,7 @@
  * and reads who held the account the one way a wallet reads it. What is the
  * test's: the indexer, which serves those states as the account's history.
  *
- * The head a device folds to, the committee as each anchor landed, and who
+ * The head a device folds to, the block each anchor landed in, and who
  * holds the account now as a batch's header names them, come from this history
  * at the indexer the person's own wallet names - never from the company's
  * service.
@@ -76,8 +76,6 @@ describe('THE ACCOUNT\'S ANCHORS, READ FROM ITS HISTORY IN THE WORKER', () => {
       [hex(foldOn(sim, [A, batch(1)])), 11, 1_800_000_000_001],
       [hex(foldOn(sim, [A, batch(1)], [B, batch(2)])), 13, 1_800_000_000_003],
     ]);
-    /* RED WHEN: the committee is not read off the state each anchor left. */
-    for (const l of answer.landed) expect(Array.isArray(l.committee)).toBe(true);
     /* RED WHEN: who holds the account now is not read off the history's latest state as a header names them: the approvals the
      * account requires, the root of its signer tree as the account's own ledger holds it, and each slot's leaf. */
     expect(answer.now.approvals).toBe(2);

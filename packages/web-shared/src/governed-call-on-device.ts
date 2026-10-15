@@ -43,7 +43,7 @@ import {
   paysCommitmentOf, proposalFilingRefusal, sealGovernanceProposal, signProposalFiling, type GovernancePayloadBody, type SignedProposalFiling,
 } from '../../../src/core/proposal-filing.js';
 import { admitSignerHere, rosterHere, waitingHere, type RosterDoors } from './roster-here.js';
-import { FOUNDING_ASKED, foundedOnChainHere, kindAsked, listedHere } from './vault-page-doors.js';
+import { directoryNotYetAnchored, FOUNDING_ASKED, foundedOnChainHere, kindAsked, listedHere } from './vault-page-doors.js';
 import {
   carryOrderHere, legPaymentsHere, raiseOrderHere, retryOrderHere, retryPaymentsHere, NotMadeHere,
 } from './material-made-here.js';
@@ -110,13 +110,13 @@ export interface BarsOnTheChain {
 export interface GovernedCallService {
   callState(accountId: string): Promise<AccountCallChainOnTheWire & { readonly account: string }>;
   /** A proposal's raise this device proved, sent. */
-  send(proposalId: string, body: { tx: string; version: typeof DEVICE_RAISE_VERSION }): Promise<RoundOnThePage>;
+  send(proposalId: string, body: { tx: string; version: typeof DEVICE_RAISE_VERSION; filer: string }): Promise<RoundOnThePage>;
   /** An approval this device proved, sent. */
-  approve(proposalId: string, body: { tx: string }): Promise<RoundOnThePage>;
+  approve(proposalId: string, body: { tx: string; filer: string }): Promise<RoundOnThePage>;
   /** Where a proposal stands on the chain now. Sends nothing. */
   standing(proposalId: string): Promise<RoundOnThePage>;
   /** A withdrawal: the call this device proved when the chain holds the proposal, none when it was only written down. */
-  cancel?(proposalId: string, body: { tx?: string }): Promise<RoundOnThePage>;
+  cancel?(proposalId: string, body: { tx?: string; filer: string }): Promise<RoundOnThePage>;
   /** A governance proposal this device sealed and signed, written down, and its raise sent with it. */
   file?(accountId: string, body: {
     proposal: SignedProposalFiling; tx: string; version: typeof DEVICE_RAISE_VERSION;
@@ -127,12 +127,12 @@ export interface GovernedCallService {
     pays?: { vault: string; asset: string; payments: ReadonlyArray<{ kind: 'shielded' | 'unshielded'; token: string; amount: string }> };
   }): Promise<RoundOnThePage>;
   /** An approved governance proposal carried out by the call this device proved. */
-  carry?(proposalId: string, body: { tx: string; circuit: CarryCircuit }): Promise<RoundOnThePage>;
+  carry?(proposalId: string, body: { tx: string; circuit: CarryCircuit; filer: string }): Promise<RoundOnThePage>;
   /**
    * An approved run charged to its vault's period by the call this device
    * proved. The run's proposal stays open on the chain, to be paid.
    */
-  charge?(proposalId: string, body: { tx: string }): Promise<RoundOnThePage>;
+  charge?(proposalId: string, body: { tx: string; filer: string }): Promise<RoundOnThePage>;
   /** The approvals the account and each vault need, as the chain holds them now. */
   bars?(accountId: string): Promise<BarsOnTheChain>;
   /** The company's own records, sealed as they are stored, for this device to open itself. */
@@ -291,10 +291,16 @@ export async function sendRaiseFromDevice(
   await refuseALegTheVaultCannotPay(doors, {
     runId: input.runId, viewingKey: input.viewingKey, ...asked, vault: order.order.run.vault, order,
   });
-  return buildAndSend(doors, order, input.viewingKey, (tx) => service.send(order.proposalId, { tx, version: DEVICE_RAISE_VERSION }));
+  return buildAndSend(doors, order, input.viewingKey, (tx) => service.send(order.proposalId, { tx, version: DEVICE_RAISE_VERSION, filer: filerHere(doors) }));
 }
 
 /** Builds and proves what the service wrote down, hands it to `send`, and waits for the chain to hold it. */
+/**
+ * The filing key of the seat this device files under, made from the signing secret it holds: sent with every relay so
+ * the service pays for that seat, among every entry the person filed. It is a public key; no secret leaves the device.
+ */
+const filerHere = (doors: Pick<GovernedCallDoors, 'material'>): string => signingPublicKeyOf(doors.material.signingSecret as Hex);
+
 async function buildAndSend(
   doors: GovernedCallDoors, order: RaiseOrderOnTheWire, viewingKey: string,
   send: (tx: string) => Promise<RoundOnThePage>,
@@ -606,7 +612,7 @@ export async function sendRetryFromDevice(
   doors.progress?.('checking-the-vault');
   await refusePaymentsTheVaultCannotPay(doors,
     await madeFor(doors).retryPayments(input.runId, input.viewingKey, order.indices, asked), { ...asked, vault: order.order.run.vault, order });
-  return buildAndSend(doors, order, input.viewingKey, (tx) => service.send(order.proposalId, { tx, version: DEVICE_RAISE_VERSION }));
+  return buildAndSend(doors, order, input.viewingKey, (tx) => service.send(order.proposalId, { tx, version: DEVICE_RAISE_VERSION, filer: filerHere(doors) }));
 }
 
 /**
@@ -698,7 +704,7 @@ async function approveHere(
     material: doors.material, chain, opened,
   });
   doors.progress?.('sending');
-  const sent = await onChainHere(doors, await service.approve(input.round.id, { tx }));
+  const sent = await onChainHere(doors, await service.approve(input.round.id, { tx, filer: filerHere(doors) }));
   const wanted = counted(before) + 1;
   const seen = (r: RoundOnThePage) => counted(r) >= wanted || r.status === 'cancelled';
   const now = seen(sent) ? sent : await waitFor(doors, 'your approval', input.round.id, seen, sent);
@@ -735,7 +741,7 @@ export async function withdrawOnDevice(
     throw new Error('the company now names another proposal than the one shown here. Nothing was built or sent.');
   }
   /* The chain never held it: the service marks it withdrawn, and no device takes that as withdrawn while its window is open. */
-  if (!now.raisedAt) return service.cancel(input.round.id, {});
+  if (!now.raisedAt) return service.cancel(input.round.id, { filer: filerHere(doors) });
   const opened = await opensFor(doors)(input.round.id, input.viewingKey, false);
   doors.progress?.('reading-the-chain');
   const chain = await service.callState(doors.accountId);
@@ -744,7 +750,7 @@ export async function withdrawOnDevice(
     account: chain.account, order: { circuit: 'cancel', proposal: opened.chainId }, material: doors.material, chain, opened,
   });
   doors.progress?.('sending');
-  return service.cancel(input.round.id, { tx });
+  return service.cancel(input.round.id, { tx, filer: filerHere(doors) });
 }
 
 type Api = (path: string, init?: RequestInit) => Promise<any>;
@@ -759,7 +765,7 @@ const marked = async <T>(call: () => Promise<T>): Promise<T> => {
   }
 };
 
-/** The service's routes, over this page's own sign-in. No key travels in any of them. */
+/** The service's routes, over this page's own sign-in. No secret travels in any of them: a relay names only its seat's public filing key. */
 export const governedCallServiceFor = (api: Api): GovernedCallService => {
   const post = (path: string, body: unknown) => api(path, { method: 'POST', body: JSON.stringify(body) });
   const proposal = (id: string) => `/api/proposals/${encodeURIComponent(id)}`;
@@ -1019,7 +1025,7 @@ async function governOnDevice(
       order: { circuit: 'propose', governance: input.change, half: governanceHalf(opened.salt, opened, await blinding()), proposal: opened.chainId },
     });
     doors.progress?.('sending');
-    const sent = await onChainHere(doors, await service.send(round.id, { tx, version: DEVICE_RAISE_VERSION }));
+    const sent = await onChainHere(doors, await service.send(round.id, { tx, version: DEVICE_RAISE_VERSION, filer: filerHere(doors) }));
     live = { round: sent.raisedAt ? sent : await waitFor(doors, 'this proposal', round.id, (r) => Boolean(r.raisedAt), sent), opened };
   }
   let { round } = live;
@@ -1049,7 +1055,7 @@ async function governOnDevice(
   doors.progress?.('building');
   const { tx } = await doors.builder.governedCall({ account: chain.account, order, material: doors.material, chain, opened });
   doors.progress?.('sending');
-  const done = await service.carry(round.id, { tx, circuit: CARRIED_BY[input.change.kind] });
+  const done = await service.carry(round.id, { tx, circuit: CARRIED_BY[input.change.kind], filer: filerHere(doors) });
   return { state: 'done', round: done };
 }
 
@@ -1091,7 +1097,41 @@ export type GovernanceDoors = GovernedCallDoors & {
   readonly filing: GovernanceFilingDoors;
   readonly approvers: () => Promise<ApproverRoster>;
   readonly vaultName: (vault: Hex) => string;
+  /**
+   * Anchors every filing of the company not yet anchored, from this device
+   * (`anchorTheRecordsHere`); absent, a change that waits for the anchor is
+   * refused until another device has anchored.
+   */
+  readonly anchorDirectory?: () => Promise<unknown>;
 };
+
+/**
+ * **A RISE OF THE ACCOUNT'S THRESHOLD WAITS FOR EVERY DIRECTORY CHANGE FILED
+ * TO BE ANCHORED.** A change not yet anchored is counted against who holds the
+ * account when it is anchored, so a rise that lands first has it counted at
+ * the higher threshold, where it could be lost for good. This device anchors them
+ * first, where it can, and refuses while any is still not anchored, saying
+ * what resolves it. A lowered or unchanged threshold waits for nothing.
+ */
+async function riseWaitsForTheDirectory(doors: GovernanceDoors, threshold: number): Promise<void> {
+  if (doors.records === undefined) {
+    throw new NotOpenedOnThisDevice('This page cannot read the company\'s records, so it cannot raise the threshold. Reload the page to '
+      + 'get the current version.');
+  }
+  let here = await doors.records.directory();
+  if (threshold <= here.holders.approvals) return;
+  if (directoryNotYetAnchored(here).length > 0 && doors.anchorDirectory !== undefined) {
+    await doors.anchorDirectory();
+    here = await doors.records.directory();
+  }
+  const left = directoryNotYetAnchored(here);
+  if (left.length > 0) {
+    throw new Error(`The approval threshold is not raised while ${left.length > 1 ? 'versions' : 'version'} ${left.join(', ')} of the `
+      + `company's directory ${left.length > 1 ? 'are' : 'is'} filed and not yet anchored: raised first, a change not yet anchored `
+      + 'would be counted at the higher threshold and could be lost. Nothing was sent. Open the company on the device of a seat '
+      + 'that may anchor, which anchors them at once, then raise the threshold again.');
+  }
+}
 
 /**
  * A governance change, as the vault check counts it. A seat is given every
@@ -1118,6 +1158,7 @@ export function changeThresholdOnDevice(
     change: { kind: 'threshold', threshold: String(input.newThreshold) },
     summary: `Change the approval threshold to ${input.newThreshold} of ${input.seated}`,
     body: { newThreshold: input.newThreshold },
+    before: () => riseWaitsForTheDirectory(doors, input.newThreshold),
   });
 }
 

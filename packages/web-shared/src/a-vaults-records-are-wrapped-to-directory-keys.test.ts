@@ -6,9 +6,11 @@ import type { AccountAddress, CompanyLabel } from 'midnight-identity/profile/com
 import { newSigningKeypair, newWrappingKeypair, toHex } from '../../../src/core/crypto.js';
 import { MemorySealedPoolStore, SealedNotePool } from '../../../src/midnight/vault-pool.js';
 import { recordsKeypairFrom } from '../../../src/midnight/company-nonce-secret.js';
-import type { DirectoryFiling } from '../../../src/midnight/seat-directory.js';
+import { directoryEntryMade, type DirectoryFiling } from '../../../src/midnight/seat-directory.js';
+import type { Hex } from '../../../src/core/crypto.js';
 import { deviceSignerFrom, directoryHere, readersIn } from './vault-page-doors.js';
 import { anchoredEntering } from '../../../src/testing/record-tree-double.js';
+import { leavesOfTheContract, seatOpenedFor } from '../../../src/testing/directory-seats.js';
 
 /*
  * A VAULT'S POOL AND JOURNALS ARE WRAPPED TO THE RECORDS KEY IN EACH SIGNER'S
@@ -19,17 +21,22 @@ import { anchoredEntering } from '../../../src/testing/record-tree-double.js';
 const LABEL = `co_${'c1'.repeat(32)}` as CompanyLabel;
 const ACCOUNT = 'c0'.repeat(32) as AccountAddress;
 const CO = 'acc_wrapped';
+/** The company's viewing key, which a member's device holds and opens every entry's proof with. */
+const VIEWING = '5e'.repeat(32) as Hex;
 const VAULT = 'ab'.repeat(32);
 
 const signer = (n: number) => {
   const identity = identityFromSecret(new Uint8Array(32).fill(n));
   const companyKey = new Uint8Array(32).fill(n + 100);
-  const seat = n.toString(16).padStart(2, '0').repeat(32);
   const committeeKey = committeeKeyFor(identity, LABEL) as { tag: string; value: string };
-  const statement = signDirectoryEntry(identity, LABEL, ACCOUNT, companyKey, newSigningKeypair().publicKey, seat);
+  /* The seat as a seating device makes it: its leaf commits to this wallet key, and its opening shows that. */
+  const { seat, opening } = seatOpenedFor(committeeKey, n);
+  const filing = newSigningKeypair();
+  const statement = signDirectoryEntry(identity, LABEL, ACCOUNT, companyKey, filing.publicKey, seat);
+  const entry = directoryEntryMade({ company: CO, person: `p${n}`, committeeKey, signed: statement, opening, signingSecret: filing.secret, viewingKey: VIEWING });
   return {
     seat, committeeKey, statement,
-    claim: (version: number): DirectoryFiling => ({ company: CO, version, change: { kind: 'claim', entry: { person: `p${n}`, committeeKey, statement } } }),
+    claim: (version: number): DirectoryFiling => ({ company: CO, version, change: { kind: 'claim', entry } }),
     attested: { committeeKey, statement: signRecordsKey(identity, LABEL, ACCOUNT, companyKey, seat) },
     device: deviceSignerFrom(seat, toHex(companyKey)),
   };
@@ -39,7 +46,7 @@ const BO = signer(2);
 const CY = signer(3);
 
 const directory = (o: { seats?: string[]; committee?: (typeof ADA.committeeKey)[]; attested?: (typeof ADA.attested)[] } = {}) => () => directoryHere({
-  accountId: CO, label: LABEL,
+  accountId: CO, label: LABEL, viewingKey: VIEWING,
   filings: async () => [ADA.claim(1), BO.claim(2), CY.claim(3)],
   holders: async () => ({
     account: ACCOUNT, approvals: 1, threshold: 1, adoptedVaults: [VAULT], founding: ADA.seat, foundingCommittee: [ADA.committeeKey],
@@ -48,6 +55,7 @@ const directory = (o: { seats?: string[]; committee?: (typeof ADA.committeeKey)[
   attested: async () => o.attested ?? [ADA.attested, BO.attested, CY.attested],
   /* Who records are wrapped to reads no record: the company's records hold no entry. */
   anchored: anchoredEntering(CO),
+  leaves: leavesOfTheContract,
 });
 
 describe('who a vault\'s records are wrapped to', () => {
@@ -58,11 +66,12 @@ describe('who a vault\'s records are wrapped to', () => {
     for (const s of [ADA, BO, CY]) expect(s.statement.wrappingKey).toBe(recordsKeypairFrom(s.device.companyKey).publicKey);
   });
 
-  /* RED WHEN: a copy is wrapped to a seat the account no longer holds, whose wallet the committee no longer lists, or whose entry names a records key its own wallet did not attest. */
-  it('leaves out a seat not held now, one whose wallet is off the committee, and one whose records key is not attested', async () => {
+  /* RED WHEN: a copy is wrapped to a seat the account no longer holds, or whose entry names a records key its own wallet did not attest. */
+  it('leaves out a seat not held now and one whose records key is not attested; a seat whose wallet is on no committee is wrapped to', async () => {
     const without = async (o: Parameters<typeof directory>[0]) => (await readersIn(directory(o)).signers()).map((r) => r.id);
     expect(await without({ seats: [ADA.seat, BO.seat] })).toEqual([ADA.seat, BO.seat]);
-    expect(await without({ committee: [ADA.committeeKey, CY.committeeKey] })).toEqual([ADA.seat, CY.seat]);
+    /* RED WHEN: a signer whose wallet key is not on the committee is left out of the vault's records. */
+    expect(await without({ committee: [ADA.committeeKey, CY.committeeKey] })).toEqual([ADA.seat, BO.seat, CY.seat]);
     expect(await without({ attested: [ADA.attested, BO.attested] })).toEqual([ADA.seat, BO.seat]);
   });
 

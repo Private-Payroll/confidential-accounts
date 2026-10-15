@@ -73,6 +73,7 @@ const BARE: Record<string, Record<string, unknown>> = {
   'clear-run': { account: 'cd'.repeat(32), run: {}, runs: [], chain: { accountState: '', parameters: '' } },
   'period-total': { accountState: '', total: {} },
   'run-charged': { accountState: '', proposal: '0f'.repeat(32) },
+  'last-recovery': { accountState: '' },
   'anchor-heads': { after: [] },
   'seat-openings': { account: 'cd'.repeat(32), openings: [] },
   'anchor-tag': { account: 'cd'.repeat(32), material: { signingSecret: 'ef'.repeat(32), blinding: '01'.repeat(32) } },
@@ -81,7 +82,7 @@ const BARE: Record<string, Record<string, unknown>> = {
   anchor: { account: 'cd'.repeat(32), material: {}, chain: {}, previous: '00'.repeat(32), batch: 'ab'.repeat(32) },
   'recover-anchor': {
     account: 'cd'.repeat(32), material: {}, chain: {}, previous: '00'.repeat(32), batch: 'ab'.repeat(32),
-    resumesFrom: '1a'.repeat(32), latest: '1800003600', proposal: '2b'.repeat(32), proposalSalt: '3c'.repeat(32),
+    resumesFrom: '1a'.repeat(32), latest: '1800003600', lastRecovery: '00'.repeat(32), proposal: '2b'.repeat(32), proposalSalt: '3c'.repeat(32),
   },
   'account-call-chain': { account: 'cd'.repeat(32), indexer: { indexerUri: 'https://indexer.invalid/api', indexerWsUri: 'wss://indexer.invalid/ws' } },
   'proposal-identity': { change: { kind: 'threshold', threshold: '1' }, salt: '00'.repeat(32) },

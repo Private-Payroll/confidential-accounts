@@ -436,7 +436,10 @@ describe('the real sources', () => {
     // 183 -> 184. A recovery's latest time (+1): the last time it may be
     // carried out, compared with the block time as a run's window is; the
     // approval binds it, so the chain already holds it in the proposal's id.
-    expect(sites(account)).toBe(184);
+    // A recovery also compares the head the latest recovery carried out wrote
+    // with the one the account holds (+1). The approval binds it and the
+    // account holds it in the open, so nothing new is published.
+    expect(sites(account)).toBe(185);
     // THE VAULT, 104 -> 110, all in `setNonceSecret`. The commitment it replaces
     // is disclosed once and reused (three sites become one, -2). New (+8): the
     // answer to whether the tree shows nothing past its count; whether the
