@@ -439,7 +439,8 @@ describe('THE PAGE READS THE ANSWER AGAINST WHAT IT ASKED', () => {
     expect(readCommitteeSignatures({ ...answer, signatures: [s, , { ...s, seat: 1 }] }, expecting)).toMatchObject({ ok: false, code: 'other-change' });
     expect(readCommitteeSignatures({ ...answer, signatures: [s, s] }, expecting)).toMatchObject({ ok: false, code: 'other-change' });
     expect(readCommitteeSignatures({ ...answer, signatures: [{ ...s, seat: 1 }, s] }, expecting)).toMatchObject({ ok: false, code: 'other-change' });
-    expect(readCommitteeSignatures({ ...answer, signatures: [s, { ...s, seat: 1 }] }, expecting)).toMatchObject({ ok: true });
+    /* The places are set here, not taken from s: this wallet's key sorts first or second against a fresh key, at random. */
+    expect(readCommitteeSignatures({ ...answer, signatures: [{ ...s, seat: 0 }, { ...s, seat: 1 }] }, expecting)).toMatchObject({ ok: true });
   });
 
   it('REFUSES ANOTHER ORIGIN, ANOTHER NONCE, ANOTHER COMMITTEE, AND A SIGNATURE FOR A CONTRACT OR COUNTER IT DID NOT ASK ABOUT', () => {
