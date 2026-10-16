@@ -441,7 +441,8 @@ describe('ANCHORING FROM A DEVICE', () => {
 
 });
 
-describe('THE ONE-A-DAY ANCHOR, ON THE WAY INTO THE COMPANY', () => {
+/* Each test here builds and anchors whole batches; on a shared CI runner one took longer than the 30 s default. */
+describe('THE ONE-A-DAY ANCHOR, ON THE WAY INTO THE COMPANY', { timeout: 120_000 }, () => {
   const HOUR = 60 * 60 * 1000;
   /* A clock well past every batch earlier tests anchored, so the last of those was more than a day ago. */
   const T = Date.now() + 30 * 24 * HOUR;
