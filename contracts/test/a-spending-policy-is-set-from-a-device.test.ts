@@ -66,6 +66,7 @@ import { sumTreeOfLeaves } from '../../src/midnight/payout-tree.js';
 import { periodOf, type PolicyOpeningOnTheWire } from '../../src/midnight/spending-policy-record.js';
 import type { RunToChargeOnTheWire, RunTreeOnTheWire } from 'vaults-web-shared/run-charge-builder.js';
 import { keysOnDisk } from './keys-on-disk.js';
+import { governanceInAccountState } from 'midnight-identity/profile/account-state';
 
 const NET = 'undeployed';
 const hex = (b: Uint8Array): string => Buffer.from(b).toString('hex');
@@ -211,10 +212,6 @@ describe.skipIf(!KEYS.ok)('A VAULT\'S SPENDING POLICY, SET FROM SIGNERS\' DEVICE
       proposals.push(p);
       return round(counted(p));
     },
-    bars: async () => ({
-      threshold: Number(ledgerNow().threshold),
-      vaultThresholds: [...ledgerNow().thresholds].map(([k, v]: [Uint8Array, bigint]) => ({ vault: hex(k), threshold: Number(v) })),
-    }),
     sealedProposals: async () => proposals.map(counted),
   };
 
@@ -250,7 +247,9 @@ describe.skipIf(!KEYS.ok)('A VAULT\'S SPENDING POLICY, SET FROM SIGNERS\' DEVICE
         const believed = {
           dir: { company, version: 1, seats },
           holders: {
-            committee: seats.map((s) => s.committeeKey), seats: seats.map((s) => s.seat), approvals: 1, adoptedVaults: [VAULT],
+            /* The approvals the account asks for, as a wallet reads them off this chain's state with the account's own key for the bar. */
+            ...governanceInAccountState(chain.contract(company).serialize(), hex(accountModule.pureCircuits.policyBarKey())),
+            committee: seats.map((s) => s.committeeKey), seats: seats.map((s) => s.seat), adoptedVaults: [VAULT],
             founding: seats[0]!.seat, foundingCommittee: [seats[0]!.committeeKey], account: company,
           } as never,
           another: new Set<string>(), at: () => null,

@@ -31,6 +31,7 @@ import type { DirectoryBelieved, DirectoryHereDeps, RecordsHeldHere } from 'vaul
 import { treeServiceFor } from 'vaults-web-shared/record-entered-here.js';
 import { heldFor, recordsHeldHere } from 'vaults-web-shared/records-anchored-here.js';
 import type { AccountHeld, CommitteeKey, DirectoryFiling } from '../midnight/seat-directory.js';
+import { seatBarOf } from 'midnight-identity/profile/records-key';
 import {
   type AccountDeployed, anchorHeadsAfter, anchorTagIn, seatOpeningsIn, signerRootOf, type AnchorLanded, type HeadStepAsked, type SignerMaterial, type AnchorsOnChain, type GovernedCallDeps, type RoundOnChain, type VouchingRun,
 } from 'vaults-web-shared/governed-call-builder.js';
@@ -64,6 +65,17 @@ export const holdersOf = (h: Pick<AccountHeld, 'approvals' | 'seats'>): BatchHol
   return { approvals: h.approvals, signerRoot: signerRootOf(accountHere, signers) as Hex, signers };
 };
 
+/**
+ * The approvals a change of who is seated needs on a test's chain, as it holds
+ * them: refused where the test names none, never read as no bar.
+ */
+export const barOnATestChain = (held: { readonly seatBar?: number }): number => {
+  if (!Number.isSafeInteger(held.seatBar) || (held.seatBar as number) < 1) {
+    throw new Error('the test\'s chain names no seat bar: a test says what its chain holds');
+  }
+  return held.seatBar as number;
+};
+
 /** One filing, as the entry naming it and the signing secret of the seat that filed it. */
 export interface FiledBy { readonly entry: ManifestEntryBody; readonly signingSecret: Hex }
 
@@ -90,7 +102,7 @@ export interface FoundedWith {
   /** How the account was deployed, when not on the founding signer's device (`deployedOnTheDevice`): what founds nothing. */
   readonly deployed?: AccountDeployed | null;
   /** Who holds the account now, as the wallet's read of the chain shows it; absent, the founding seat alone at one approval. */
-  readonly account?: Pick<AccountHeld, 'approvals' | 'seats'>;
+  readonly account?: AccountHeld;
 }
 
 /** Every kind a company's records hold: what a test's records are proven for when a read names none of its own. */
@@ -157,23 +169,20 @@ const foundedTree = (company: string, f?: FoundedWith) => {
 };
 
 /**
- * **A STAND-IN, NAMED: THE DIRECTORY A READ IS JUDGED BY WHERE A TEST HANDS NONE.** Every key a test names as a filer
- * (and the founding seat's) is an admin seat the account holds, at every version, with the digests of the directory
- * versions the company was founded with. A test that hands its directory over passes it instead (`reader`), and the read
- * judges each filing by that directory's own rules.
+ * **THE DIRECTORY A READ IS JUDGED BY WHERE A TEST HANDS NONE: NOBODY'S.** A read with no filing and no founded
+ * company has nothing to judge, so an empty directory serves it. A read that has either is refused here: the double
+ * never invents the seats that filed (it once made every named filer an admin), so a test hands the directory the
+ * real reader built (`reader`), and the read judges each filing by that directory's own rules.
  */
-const readerOfFilers = (company: string, founded: FoundedWith | undefined, filers: readonly Hex[]): DirectoryBelieved => {
-  const founding = founded === undefined ? [] : [{ seat: founded.seat.toLowerCase(), key: signingPublicKeyOf(founded.signingSecret) }];
-  const keys = [...new Set([...founding.map((f) => f.key), ...filers.map((k) => k.toLowerCase() as Hex)])];
-  const seats = keys.map((key, i) => ({
-    seat: founding.find((f) => f.key === key)?.seat ?? key, person: `person_${i}`, signingKey: key, wrappingKey: key, role: 'admin' as const, retired: null,
-  }));
-  const digests = (founded?.directory ?? []).map((d) => directoryEntry(d).digest as Hex);
-  const holders = { seats: seats.map((x) => x.seat), committee: founded?.committee ?? [], approvals: 1, adoptedVaults: [], account: ACCOUNT_IN_A_TEST };
-  return {
-    dir: { company, version: digests.length, seats }, holders: holders as never, another: new Set(), leafOf: () => null,
-    at: (version) => (version < 0 || version > digests.length ? null : { dir: { company, version, seats }, digests: digests.slice(0, version) }),
+const directoryOfNobody = (company: string, founded: FoundedWith | undefined, filed: readonly FiledBy[]): DirectoryBelieved => {
+  if (founded !== undefined || filed.length > 0) {
+    throw new Error('a read of filings, or of a founded company, hands its directory: the double judges them by no directory of its own');
+  }
+  const dir = { company, version: 0, seats: [] };
+  const holders = {
+    seats: [], committee: [], approvals: 1, vaultThresholds: [], policyBar: null, seatBar: seatBarOf(1, null), adoptedVaults: [], account: ACCOUNT_IN_A_TEST,
   };
+  return { dir, holders: holders as never, another: new Set(), leafOf: () => null, at: (version) => (version === 0 ? { dir, digests: [] } : null) };
 };
 
 /**
@@ -223,10 +232,11 @@ const heldAsAsked = async (
   /* **A STAND-IN, NAMED**: who holds the account now is the founding seat alone at one approval, unless the test names others (`account`). */
   const now = holdersOf(founded?.account ?? { approvals: 1, seats: founded === undefined ? [] : [founded.seat] });
   const onChain = async (): Promise<AnchorsOnChain> => ({
-    landed: built.headers.map((h, i) => ({ head: built.heads[i]!, tag: h.tag, height: i + 1, at: Date.parse(h.at) })),
+    /* Each founding header landed while the founding seat alone held the account, with no policy bar stored. */
+    landed: built.headers.map((h, i) => ({ head: built.heads[i]!, seatBar: seatBarOf(h.held.approvals, null), tag: h.tag, height: i + 1, at: Date.parse(h.at) })),
     now, seatsNow: [...now.signers], deployed: founded === undefined ? null : deployedAs(founded), vouching: [],
   });
-  const directory = reader === undefined ? readerOfFilers(company, founded, filed.map((f) => signingPublicKeyOf(f.signingSecret)))
+  const directory = reader === undefined ? directoryOfNobody(company, founded, filed)
     : handMade(reader, (founded?.directory ?? []).map((d) => directoryEntry(d).digest as Hex));
   const read = await recordsHeldHere({
     accountId: company, tree, onChain, builder: anchorFunctions, directory: async () => directory, ...(checked === undefined ? {} : { checked }),
@@ -377,7 +387,7 @@ export const aChainAnchor = (
       const now = holdersOf(h);
       if (named.approvals !== now.approvals) throw new Error('the approvals the account requires changed after this device judged the batch');
       if (named.signerRoot !== now.signerRoot) throw new Error('the account\'s signers changed after this device judged the batch');
-      landed.push({ head: headAfter(previous, batch, now, tag), tag: tag.toLowerCase(), height: landed.length + 1, at: clock() });
+      landed.push({ head: headAfter(previous, batch, now, tag), seatBar: barOnATestChain(h), tag: tag.toLowerCase(), height: landed.length + 1, at: clock() });
     },
     /**
      * One approved recovery carried out by the seat whose tag is `tag`: refused as `move` refuses, its head folded as a
@@ -388,11 +398,11 @@ export const aChainAnchor = (
       const h = held();
       const now = holdersOf(h);
       if (named.approvals !== now.approvals || named.signerRoot !== now.signerRoot) throw new Error('the account\'s signers changed after this device judged the batch');
-      landed.push({ head: headAfterStep({ previous, batch, held: now, tag, resumesFrom }), tag: tag.toLowerCase(), height: landed.length + 1, at: clock() });
+      landed.push({ head: headAfterStep({ previous, batch, held: now, tag, resumesFrom }), seatBar: barOnATestChain(h), tag: tag.toLowerCase(), height: landed.length + 1, at: clock() });
     },
     /** A call that lands at `next` whatever head it names: what a test's signer outside the device's rules does. */
     landAt: (next: string): void => {
-      landed.push({ head: next, height: landed.length + 1, at: clock() });
+      landed.push({ head: next, seatBar: barOnATestChain(held()), height: landed.length + 1, at: clock() });
     },
     /** The account's history now, as a wallet's indexer shows it. */
     read: (): AnchorsOnChain => onChainOf([...landed], held(), deployedNow(), [...vouching]),
@@ -417,8 +427,10 @@ export const onChainOf = (
 export type HeldOnATestChain = AccountHeld & { readonly committee: readonly CommitteeKey[] };
 
 /** Who held a test company's account, as its wallet's read of the chain holds it. */
-export const heldBy = (chain: { readonly seats: { readonly seats: readonly string[]; readonly committee: readonly CommitteeKey[] }; readonly approvals: number }): HeldOnATestChain =>
-  ({ approvals: chain.approvals, seats: [...chain.seats.seats], committee: [...chain.seats.committee] });
+export const heldBy = (chain: {
+  readonly seats: { readonly seats: readonly string[]; readonly committee: readonly CommitteeKey[] }; readonly approvals: number; readonly seatBar: number;
+}): HeldOnATestChain =>
+  ({ approvals: chain.approvals, seats: [...chain.seats.seats], committee: [...chain.seats.committee], seatBar: barOnATestChain(chain) });
 
 /**
  * **THE COMPANY'S RECORDS AS A DEVICE READS THEM OVER A SERVICE'S OWN TREE
@@ -469,7 +481,7 @@ export const anchoredOver = (
       const read = onChain();
       return first === null ? read
         : {
-          ...read, landed: [{ head: first.head, height: 0, at: 0 }, ...read.landed],
+          ...read, landed: [{ head: first.head, seatBar: seatBarOf(first.header.held.approvals, null), height: 0, at: 0 }, ...read.landed],
           deployed: deployedAs(founded!),
         };
     },
@@ -567,7 +579,11 @@ export const HELD_IN_A_TEST: BatchHolders = { approvals: 1, signerRoot: '0a'.rep
 export const headsByTheAccount = async (steps: readonly HeadStep[]): Promise<readonly Hex[]> =>
   (await anchorFunctions.anchorHeads({ after: steps })).after as Hex[];
 
-export const aTreeCompany = (company: string, held: BatchHolders = HELD_IN_A_TEST) => {
+export const aTreeCompany = (
+  company: string, held: BatchHolders = HELD_IN_A_TEST,
+  /** The approvals a policy change needs as the test's chain stores them; none stored, the threshold stands in. */
+  policyBar: number | null = null,
+) => {
   const headers: TreeHeader[] = [];
   const entries = new Map<Hex, ManifestEntry>();
   const landed: AnchorLanded[] = [];
@@ -597,7 +613,7 @@ export const aTreeCompany = (company: string, held: BatchHolders = HELD_IN_A_TES
     tree.keep(h);
     head = checkedAfter(h, next!);
     checked.push(head);
-    landed.push({ head: next!, tag: h.tag, height: landed.length + 1, at: at.getTime() });
+    landed.push({ head: next!, seatBar: seatBarOf(held.approvals, policyBar), tag: h.tag, height: landed.length + 1, at: at.getTime() });
     return h;
   };
 

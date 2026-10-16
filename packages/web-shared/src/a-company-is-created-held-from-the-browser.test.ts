@@ -221,7 +221,9 @@ describe('THE FIRST PRESS', () => {
     expect(verifiedCompanyFiler(made.founding.roster)).toBe(signingPublicKeyOf(mine.signingSecret));
     const opened = openAccount(made.founding.account, viewingKey, made.founding.roster);
     expect(opened.signers.map((x) => [x.id, x.userId, x.leafCommitment])).toEqual([[mine.signerId, A.id, LEAF]]);
-    expect(opened.policy.threshold).toBe(1);
+    /* RED WHEN: the founding record carries a threshold of its own, readable or sealed. */
+    expect(Object.keys(opened.policy)).toEqual(['limitsByRole']);
+    expect(Object.keys(made.founding.account)).not.toContain('threshold');
     /* RED WHEN: the first state is not sealed under the same viewing key, or carries no asset blinding, payout seed or pay-record key. */
     const state = parseCanonical<{ blinding: Record<string, unknown> }>(unseal(made.founding.state.sealed, viewingKey));
     expect(Object.keys(state.blinding).sort()).toEqual(['assetBlinding', 'payRecordKey', 'payoutSeeds']);
@@ -563,5 +565,25 @@ describe('AN INVITEE\'S DEVICE ASKS ITS OWN WALLET FOR ITS KEY FOR THE COMPANY I
     /* RED WHEN: the wallet is asked for any company but the one the invitation names. */
     expect(wallet.asks.map((a) => [a.kind, (a.body as { company?: unknown }).company, (a.body as { account?: unknown }).account]))
       .toEqual([['keyring', label, ACCOUNT]]);
+  });
+});
+
+describe('AN INVITATION RE-ISSUED FOR A SEAT IS KEPT WITH ITS KEYS, IN PLACE OF THE ONE IT JOINED BY', () => {
+  it('KEEPS THE SEAT THAT RE-ISSUED IT AND THE INVITATION TOGETHER, FOR THE WALLET AND FOR THE ENTRY STILL OWED', async () => {
+    const service = aService();
+    signIn();
+    await keyring.startCompanyHeldFromTheStart(A_COMPANY, WALLET, builder(), new Wallet(), US);
+    const id = madeOf(service).founding.account.id as string;
+    const signed = { committeeKey: { tag: 'schnorr', value: 'aa'.repeat(32) }, entry: { seat: LEAF } } as never;
+    await keyring.oweDirectoryEntry(id, { person: A.id, company: A_COMPANY as never, signed });
+    const inviter = { committeeKey: { tag: 'schnorr', value: 'bb'.repeat(32) }, statement: { seat: 'cc'.repeat(32) }, opening: { salt: 'dd'.repeat(32) } } as never;
+    const invited = { terms: { person: A.id, leaf: LEAF }, signedBy: 'ee'.repeat(32), signature: 'ff'.repeat(64) } as never;
+    await keyring.keepTheReissuedInvitation(id, { inviter, invited });
+    /* RED WHEN: the device keeps the re-issued invitation without the seat that signed it, or the other way round, so the wallet and the entry name two inviters. */
+    expect([keyring.keysFor(id)!.invitedBy, keyring.keysFor(id)!.invited]).toEqual([inviter, invited]);
+    /* RED WHEN: an entry still owed is filed under the invitation of the inviter who left. */
+    expect(keyring.directoryEntryOwed(id).read()!.invited).toEqual(invited);
+    /* RED WHEN: a re-issue is kept for a company this device holds no seat's keys for. */
+    await expect(keyring.keepTheReissuedInvitation('acc_nobodyhere1', { inviter, invited })).rejects.toThrow(/holds no seat of yours/u);
   });
 });

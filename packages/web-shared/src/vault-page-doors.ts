@@ -14,12 +14,14 @@ import type { PoolSigner } from '../../../src/midnight/vault-pool.js';
 import { admitToNonceSecret, openNonceSecrets, recordsKeypairFrom } from '../../../src/midnight/company-nonce-secret.js';
 import { HttpSealedPoolStore, pageWireSend, RecordWithheld, type FilingJudge, type FreshJudge } from './http-sealed-pool-store.js';
 import {
-  asAMember, believedDirectory, DIRECTORY_REFUSAL, directoryEntryMade, directoryReplayed, FILING_REFUSAL, proofsOpenedWith, type EntryJudge, filingRefusalOf, notOnTheChainNow, seatsChangedBy, seatsWithAnotherRecordsKey,
+  asAMember, believedDirectory, DIRECTORY_REFUSAL, directoryEntryMade, directoryReplayed, FILING_REFUSAL, proofsOpenedWith, type EntryJudge, filingRefusalOf, notOnTheChainNow, seatsChangedBy, seatsWithAnotherRecordsKey, statementsCountedFor,
   type AccountHeld, type DirectoryRefusalCode, type SignedChange, type CommitteeKey, type Directory, type DirectoryEntry, type DirectoryFiling, type DirectorySeat, type FiledKind,
 } from '../../../src/midnight/seat-directory.js';
 import type { AccountHoldersRead, DirectoryEntryStatement, RecordsKeyStatement } from 'midnight-identity/profile/records-key';
-import type { LeafOf, SeatOpening } from '../../../src/core/seat-opening.js';
-import type { CompanyLabel } from 'midnight-identity/profile/company-label';
+import { openSeatProof, type LeafOf, type SeatOpening } from '../../../src/core/seat-opening.js';
+import type { SignedSeatInvitation } from '../../../src/core/invitation.js';
+import { seatInvitationIn } from '../../../src/core/proposal-filing.js';
+import type { AccountAddress, CompanyLabel } from 'midnight-identity/profile/company-label';
 import type { DeviceRecords, DeviceSigner } from './deposit-on-device.js';
 import type {
   DepositInFlight, DepositsInFlight, PaymentInFlight, PaymentsInFlight, TemporaryKeys, VaultService,
@@ -125,6 +127,25 @@ export const attestedIn = (account: Pick<Account, 'signers'>): { committeeKey: C
     }];
   });
 
+/**
+ * **THE STATEMENT A RETIREMENT CARRIES FOR ITS LEAVING SEAT**, taken from the
+ * roster this device opened (`attestedIn`) when the retirement is raised: the
+ * records-key statement the seat's own wallet signed for that seat, exactly as
+ * signed, naming the records key its directory entry wraps to. Null for a seat
+ * already retired, and where no statement counts for it or one names another
+ * key: then no retirement can carry it, and none is raised.
+ */
+export const leaversStatementIn = (
+  attested: readonly { committeeKey: CommitteeKey; statement: RecordsKeyStatement }[],
+  seat: DirectorySeat, label: CompanyLabel, account: AccountAddress,
+): RecordsKeyStatement | null => {
+  if (seat.retired !== null) return null;
+  const counted = statementsCountedFor(seat, label, account, attested);
+  if (counted.length === 0 || counted.some((st) => String(st.recordsKey).toLowerCase() !== seat.wrappingKey)) return null;
+  const st = counted[0]!;
+  return Object.freeze({ recordsKey: st.recordsKey, seat: st.seat, signature: st.signature });
+};
+
 /** The company's seat directory as the server serves it: every filing, in order, for this device to replay. */
 export const directoryFilingsFrom = async (api: Api, accountId: string): Promise<readonly DirectoryFiling[]> => {
   const answer = await api(`/api/accounts/${encodeURIComponent(accountId)}/directory`) as { filings?: unknown } | null;
@@ -206,7 +227,37 @@ export type RecordsHeldHere = RecordsHeld & {
    * this device had checked that the quorum gave up (`recoveredSaid`).
    */
   readonly recovered?: { readonly resumedFrom: CheckedHead; readonly gaveUpTo: number };
+  /**
+   * The filing keys of the seats a raised removal is about, each with the boundary its retirement keeps, as the read
+   * was given them (`AnchorDoors.leaving`); absent where it was given none. No version such a seat files past its
+   * boundary is anchored or believed (`pastTheRaisedBoundary`).
+   */
+  readonly leaving?: LeavingBoundaries;
+  /**
+   * The batch whose anchor left `head`, among the heads this device checked itself (-1 for the empty head); null for a
+   * head it did not check. What a removal's boundary is judged at: the anchored head its raise names.
+   */
+  readonly seqOfHead?: (head: string) => number | null;
 } & FirstAnchorSeats;
+
+/**
+ * **THE SEATS UNDER A RAISED REMOVAL, BY FILING KEY, EACH WITH THE BOUNDARY
+ * ITS RETIREMENT KEEPS**: the last version of each record it filed, as the
+ * removal's own raise names them. The boundary signed at the raise is final.
+ */
+export type LeavingBoundaries = ReadonlyMap<string, Readonly<Record<string, number>>>;
+
+/**
+ * Whether `version` of the record counted under `recordKey`, filed by
+ * `filer`, is past the boundary a raised removal of `filer`'s seat keeps: one
+ * no device anchors or believes. False for a seat no raised removal is about.
+ */
+export const pastTheRaisedBoundary = (
+  leaving: LeavingBoundaries | undefined, filer: string, recordKey: string, version: number,
+): boolean => {
+  const boundary = leaving?.get(filer.toLowerCase());
+  return boundary !== undefined && version > (boundary[recordKey] ?? 0);
+};
 
 /** **THE DIRECTORY, AND THE COMPANY'S RECORDS FOR WHAT A READ ASKS, READ AFRESH** (`directoryHere`): the door every reader is given. */
 export type DirectoryRead = (asked?: RecordsAsked) => Promise<DirectoryHere>;
@@ -221,7 +272,7 @@ export type DirectoryBelieved = Omit<DirectoryHere, 'records'>;
  */
 export interface DirectoryHere {
   /** The company's records as the head on chain holds them for this read: what every record read here is believed by. */
-  readonly records: RecordsHeld & FirstAnchorSeats & Pick<RecordsHeldHere, 'checkedFrom'>;
+  readonly records: RecordsHeld & FirstAnchorSeats & Pick<RecordsHeldHere, 'checkedFrom' | 'leaving' | 'seqOfHead'>;
   readonly dir: Directory;
   readonly holders: AccountHoldersRead;
   /**
@@ -301,6 +352,8 @@ const leafKeyOf = (o: Pick<SeatOpening, 'publicKey' | 'blinding' | 'scope'>): st
  */
 const memberHere = async (
   deps: Pick<DirectoryHereDeps, 'leaves' | 'accountId' | 'viewingKey'>, filings: readonly DirectoryFiling[],
+  /** The seat the account's deploy seated, as the person's own wallet read it: the one entry believed without an invitation. */
+  founding: string | null,
 ): Promise<{ judge: EntryJudge; leafOf: LeafOf }> => {
   const proofOf = proofsOpenedWith(deps.accountId, deps.viewingKey);
   const openings = new Map<string, SeatOpening>();
@@ -315,7 +368,7 @@ const memberHere = async (
   }
   const made = new Map(asked.map((o, i) => [leafKeyOf(o), typeof leaves[i] === 'string' ? leaves[i]!.toLowerCase() : null]));
   const leafOf: LeafOf = (o) => made.get(leafKeyOf(o)) ?? null;
-  return { judge: asAMember(proofOf, leafOf), leafOf };
+  return { judge: asAMember(proofOf, leafOf, founding), leafOf };
 };
 
 /**
@@ -345,8 +398,9 @@ export const directoryHere = async (deps: DirectoryHereDeps, asked: RecordsAsked
  */
 export const directoryWithItsRecordsHere = async (deps: DirectoryHereDeps, asked: RecordsAsked = {}): Promise<DirectoryHere> => {
   const [filings, holders, attested] = await Promise.all([deps.filings(), deps.holders(), deps.attested()]);
-  const { judge, leafOf } = await memberHere(deps, filings);
-  const now: AccountHeld = { approvals: holders.approvals, seats: holders.seats };
+  const { judge, leafOf } = await memberHere(deps, filings, typeof holders.founding === 'string' ? holders.founding : null);
+  /* Who holds the account now, and the approvals a change of who is seated needs on it, as the person's own wallet read them. */
+  const now: AccountHeld = { approvals: holders.approvals, seats: holders.seats, seatBar: holders.seatBar };
   const believedAs = (asAnchored?: HeldAsAnchored): DirectoryBelieved => {
     const dir: Directory = believedDirectory(deps.accountId, filings, deps.label, holders.account, judge, now, asAnchored);
     const at = (version: number, held: HeldAsAnchored | undefined = asAnchored) => (version < 0 || version > filings.length ? null : {
@@ -606,6 +660,21 @@ const filingRefusalNow = (
   return refused === null ? null : FILING_REFUSAL[refused];
 };
 
+/**
+ * **NO VERSION A LEAVING SEAT FILED PAST ITS BOUNDARY IS BELIEVED, HOWEVER IT
+ * WAS ANCHORED**: a seat retired in the directory now, past the last version
+ * of that record its retirement keeps, and a seat a raised removal is about,
+ * past the boundary the raise names (`pastTheRaisedBoundary`). A version
+ * anchored before its seat's removal was raised is within the boundary, so
+ * what this refuses is only what the seat filed after the raise. Null
+ * otherwise.
+ */
+const pastItsBoundaryHere = (here: DirectoryHere, filer: Hex, recordKey: string, version: number): string | null => {
+  const seat = here.dir.seats.find((x) => x.signingKey === filer.toLowerCase());
+  const pastRetired = seat !== undefined && seat.retired !== null && !(version <= (seat.retired[recordKey] ?? 0));
+  return pastRetired || pastTheRaisedBoundary(here.records.leaving, filer, recordKey, version) ? FILING_REFUSAL['past-its-boundary'] : null;
+};
+
 /** Why a record read is not what the head on chain holds, in words a person can act on. */
 const ANCHOR_REFUSAL = Object.freeze({
   'older-than-anchored': 'it is an older version than the one the company\'s records anchor on chain, so the service served a '
@@ -642,6 +711,8 @@ const refusalHere = (
   if (filer === null) return 'it carries no valid signature for this record';
   const s = heldStandingOf(here.records, read, filer);
   if (s.standing === 'not-asked') return ANCHOR_REFUSAL['not-asked'];
+  const past = pastItsBoundaryHere(here, filer, recordKey, s.version ?? read.version ?? 1);
+  if (past !== null) return past;
   if (s.standing !== 'anchored') {
     const why = filingRefusalNow(here, filer, kind, recordKey, s.version ?? read.version ?? 1);
     if (why !== null) return why;
@@ -656,12 +727,28 @@ const refusalHere = (
     case 'past-a-stop':
       return pastAStop(here.records.stopped!);
     case 'older-than-anchored':
-      if (s.version === null || newest) return ANCHOR_REFUSAL['older-than-anchored'];
+      if (s.version === null || (newest && !onlyPassedOverAbove(here, recordKey, read, s.version))) return ANCHOR_REFUSAL['older-than-anchored'];
+      if (newest && here.records.stopped !== null) return pastAStop(here.records.stopped);
       break;
     default:
       return ANCHOR_REFUSAL[s.standing];
   }
-  return newest && s.newest > s.version! ? ANCHOR_REFUSAL['newer-withheld'] : null;
+  return newest && s.newest > s.version! && !onlyPassedOverAbove(here, recordKey, read, s.version!) ? ANCHOR_REFUSAL['newer-withheld'] : null;
+};
+
+/**
+ * Whether every version of the record `read` names above `version`, anchored
+ * or entered, was filed past the boundary its seat's leaving keeps: passed
+ * over, so `version` stands as the record's newest.
+ */
+const onlyPassedOverAbove = (here: DirectoryHere, recordKey: string, read: RecordRead, version: number): boolean => {
+  const key = recordKeyOf(read);
+  const above = [
+    ...(here.records.history.get(key) ?? []).filter((v) => v.version > version).map((v) => ({ filer: v.filedBy, version: v.version })),
+    ...here.records.notYetAnchored.filter((e) => recordKeyOf(e) === key && e.version > version)
+      .map((e) => ({ filer: e.filedBy.publicKey, version: e.version })),
+  ];
+  return above.every((v) => pastItsBoundaryHere(here, v.filer.toLowerCase() as Hex, recordKey, v.version) !== null);
 };
 
 /**
@@ -713,6 +800,8 @@ const withheldRefusal = (here: DirectoryHere, read: Pick<RecordRead, 'store' | '
 export const judgeIn = (here: DirectoryHere): FilingJudge => Object.assign(
   (filer: Hex | null, kind: FiledKind, recordKey: string, read: RecordRead, newest = false) => refusalHere(here, filer, kind, recordKey, read, newest),
   {
+    pastItsBoundary: (filer: Hex | null, recordKey: string, version: number) =>
+      filer !== null && pastItsBoundaryHere(here, filer, recordKey, version) !== null,
     withheld: (read: Pick<RecordRead, 'store' | 'kind' | 'id'>) => withheldRefusal(here, read),
     neverEntered: (read: Pick<RecordRead, 'store' | 'kind' | 'id'> & { readonly version: number }) =>
       askedFor(here.records, read) && neverEnteredIn(here.records, read).includes(read.version),
@@ -866,26 +955,30 @@ export const deviceRecordsFor = (
 /**
  * **THIS SIGNER'S OWN ENTRY IN THE COMPANY'S SEAT DIRECTORY, FILED FROM THIS
  * DEVICE** with the statement their wallet signed in the same press as their
- * records key, its wallet key, signature and opening sealed under the
- * company's roster key and the whole signed by this seat's filing key
- * (`directoryEntryMade`). Filed as the next version; an entry already there for
- * this seat with these keys is left alone, so it can run on every press.
+ * records key, its wallet key, signature, opening and the invitation a seat
+ * signed for them (`invited`) sealed under the company's roster key, and the
+ * whole signed by this seat's filing key (`directoryEntryMade`). Filed as the
+ * next version; an entry already there for this seat with these keys is left
+ * alone, so it can run on every press, unless it carries another invitation
+ * than the one this device now holds, or none.
  */
 const fileOwnDirectoryEntry = async (
   api: Api, accountId: string, person: string,
   signed: { readonly committeeKey: CommitteeKey; readonly entry: DirectoryEntryStatement }, opening: SeatOpening,
-  keys: { readonly signingSecret: Hex; readonly viewingKey: Hex },
+  keys: { readonly signingSecret: Hex; readonly viewingKey: Hex }, invited: SignedSeatInvitation | null,
 ): Promise<'filed' | 'already-there'> => {
   const filings = await directoryFilingsFrom(api, accountId);
   /*
-   * Already filed for this seat with these keys: the service refuses a second entry for a seat or for a key, so
-   * filing again would be refused.
+   * Already filed for this seat with these keys, and carrying the very invitation this device holds: an entry filed
+   * under one whose inviter has left since is filed again under the one re-issued for it.
    */
   const there = filings.some((f) => f?.change?.kind === 'claim' && f.change.entry?.statement?.seat === signed.entry.seat
-    && f.change.entry.statement.signingKey === signed.entry.signingKey && f.change.entry.statement.wrappingKey === signed.entry.wrappingKey);
+    && f.change.entry.statement.signingKey === signed.entry.signingKey && f.change.entry.statement.wrappingKey === signed.entry.wrappingKey
+    && (invited === null || openSeatProof(accountId, f.change.entry.proof, keys.viewingKey)?.invited?.signature === invited.signature));
   if (there) return 'already-there';
   const entry: DirectoryEntry = directoryEntryMade({
     company: accountId, person, committeeKey: signed.committeeKey, signed: signed.entry, opening, ...keys,
+    ...(invited === null ? {} : { invited }),
   });
   const filing: DirectoryFiling = { company: accountId, version: filings.length + 1, change: { kind: 'claim', entry } };
   await fileDirectoryFiling(api, accountId, filing);
@@ -914,26 +1007,54 @@ export interface OwedDirectoryEntry {
   readonly signed: { readonly committeeKey: CommitteeKey; readonly entry: DirectoryEntryStatement };
   /** Absent where the seat was taken on a device that made no opening: such an entry is never filed. */
   readonly opening?: SeatOpening;
+  /**
+   * Who the seat is for, as the seat that invited signed it, kept from the
+   * invitation this device accepted. It names no leaf, so the entry carries
+   * the one the proposal that seated it holds; absent for the founding seat
+   * and for a seat added from a code.
+   */
+  readonly invited?: SignedSeatInvitation;
 }
 
-/** What became of an owed entry: filed now, found already there, nothing owed, or not yet taken, and why. */
-export type OwedEntryFiled = 'filed' | 'already-there' | 'nothing-owed' | { readonly notYet: string };
+/**
+ * What became of an owed entry: filed now, found already there, nothing owed, not yet taken and why, or held back
+ * because this device cannot read the invitation behind its seat yet (`waitingForItsInvitation`, said in words the
+ * person can act on). Only the first two let the entry go.
+ */
+export type OwedEntryFiled = 'filed' | 'already-there' | 'nothing-owed' | { readonly notYet: string } | { readonly waitingForItsInvitation: string };
+
+/** Said while a seat's own entry waits for the invitation behind it: what is waited for, and what happens next. */
+export const WAITING_FOR_ITS_INVITATION = 'your seat\'s entry in the company\'s directory is not filed yet: it must carry the invitation a '
+  + 'seat of the company signed for you, and this device could not read it from the company\'s proposals. Until it is filed '
+  + 'no device believes your seat, so you cannot approve or file anything. It is tried again each time you open the company; '
+  + 'if this stays, ask the signer who added you to open the company, or to invite you again';
 
 /**
  * **A SIGNER'S DIRECTORY ENTRY, FILED FROM THEIR OWN DEVICE AS SOON AS THE
  * DIRECTORY WILL TAKE IT.** The entry is signed by their wallet in the press
  * that gives their vault keys at seating, and filed with the opening of their
- * seat this device made when it took the seat, sealed under the company's
- * roster key and signed by the seat's filing key (`keys`), so it is filed only
- * once this device can open the company's key; it is believed only while the
- * account holds the seat, which may be later. So it is kept (`owed`) and filed again on
- * every way into the company until the directory holds it, and let go then.
+ * seat this device made when it took the seat and the invitation a seat signed
+ * for them, sealed under the company's roster key and signed by the seat's
+ * filing key (`keys`), so it is filed only once this device can open the
+ * company's key; it is believed only while the account holds the seat, which
+ * may be later. So it is kept (`owed`) and filed again on every way into the
+ * company until the directory holds it, and let go then.
+ *
+ * **NO ENTRY BUT THE FOUNDING SEAT'S IS FILED WITHOUT ITS INVITATION.** Every
+ * member's device refuses one, so filing it would leave the seat on the chain
+ * and believed by nobody. The invitation is kept from the link this device
+ * accepted where it names the seat's leaf, and otherwise read from the
+ * company's proposal that seated it, which names the leaf on every path; while it cannot be read the entry stays owed and the answer
+ * says so (`waitingForItsInvitation`). The founding seat is the one the
+ * account's deploy seated, as the person's own wallet reads it (`founding`).
  * A refusal is not an error here: it leaves the entry owed, and says why.
  */
 export const fileTheOwedDirectoryEntry = async (
   api: Api, accountId: string,
   owed: { read(): OwedDirectoryEntry | null; settle(): Promise<void> },
   keys: () => Promise<{ readonly signingSecret: Hex; readonly viewingKey: Hex } | null>,
+  /** The seat the account's deploy seated, as the person's own wallet reads it; null where it cannot be read. */
+  founding: () => Promise<string | null>,
 ): Promise<OwedEntryFiled> => {
   const now = owed.read();
   if (now === null) return 'nothing-owed';
@@ -946,7 +1067,21 @@ export const fileTheOwedDirectoryEntry = async (
     if (held === null) {
       return { notYet: 'this device cannot open the company\'s key yet, so its entry cannot be sealed for the company\'s members. It is filed once you are admitted' };
     }
-    done = await fileOwnDirectoryEntry(api, accountId, now.person, now.signed, now.opening, held);
+    /* An invitation kept from a link names no leaf; the one an entry carries names it, and is read from the proposal that seated it. */
+    const seat = now.signed.entry.seat.toLowerCase();
+    let invited = now.invited?.terms.leaf?.toLowerCase() === seat ? now.invited : null;
+    if (invited === null) {
+      /* A list the service will not give is a wait, never a reason to file the entry without its invitation. */
+      let listed: unknown = [];
+      try { listed = await api(`/api/accounts/${encodeURIComponent(accountId)}/proposals`); } catch { listed = []; }
+      invited = seatInvitationIn(Array.isArray(listed) ? listed as SealedProposal[] : [], accountId, held.viewingKey, seat);
+    }
+    if (invited === null) {
+      let first: string | null = null;
+      try { first = await founding(); } catch { first = null; }
+      if (first === null || first.toLowerCase() !== seat) return { waitingForItsInvitation: WAITING_FOR_ITS_INVITATION };
+    }
+    done = await fileOwnDirectoryEntry(api, accountId, now.person, now.signed, now.opening, held, invited);
   } catch (e) {
     return { notYet: (e as Error)?.message ?? String(e) };
   }

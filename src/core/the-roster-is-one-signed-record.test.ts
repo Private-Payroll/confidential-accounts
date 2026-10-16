@@ -76,8 +76,8 @@ describe('THE SIGNER ROSTER IS ONE SIGNED RECORD', () => {
     expect(() => save({ ...now, signers: now.signers.filter((s) => s.name === 'Ada') })).toThrow(RosterIsASignedRecord);
     expect(c.accounts.open(c.company, c.key).signers.map((s) => s.name)).toEqual(['Ada', 'Bo Two']);
     /* RED WHEN: a write that leaves the signers as the record says puts a copy of them back on the account record. */
-    save({ ...now, policy: { ...now.policy, threshold: 2 } });
+    save({ ...now, policy: { ...now.policy, limitsByRole: { admin: {} } } });
     expect(c.store.getAccount(c.company)!.sealedRoster).toBeUndefined();
-    expect(c.accounts.open(c.company, c.key).policy.threshold).toBe(2);
+    expect(c.accounts.open(c.company, c.key).policy.limitsByRole).toEqual({ admin: {} });
   });
 });

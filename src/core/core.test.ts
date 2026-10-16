@@ -212,7 +212,7 @@ describe('account layer', () => {
   it('creates a 2 of 3 account and every signer can recover the viewing key', async () => {
     const { account, viewingKey, secrets } = await h.accounts.create('Acme', THREE_SIGNERS, 2, undefined, drawCompanyLabel());
     expect(account.signers).toHaveLength(3);
-    expect(account.policy.threshold).toBe(2);
+    expect((await h.accounts.ledgerStatus(account.id))!.threshold).toBe(2);
     for (const s of secrets) {
       expect(h.accounts.recoverViewingKey(account.id, s.signerId, s.wrappingSecret)).toBe(viewingKey);
     }
@@ -601,7 +601,7 @@ describe('onboarding', () => {
       ...h.accounts.require(account.id), memberUserIds: [founder, 'usr_second'],
     });
 
-    /* The founder invites themselves, through the ordinary employee flow. */
+    /* The company's founding signer invites themselves, through the ordinary employee flow. */
     const { employee, sentTo } = h.payroll.invite(account.id, {
       name: 'Founder', email: 'founder@acme.co', title: 'CEO', asset: TEST_TOKEN, baseAmount: 500_00n,
     }, viewingKey, founder);
@@ -1629,7 +1629,7 @@ describe('identity', () => {
    * is the one value a derived seat still stores, so the membership it recorded
    * became unreachable.
    */
-  it('A CLIENT CAN WRITE THE BUNDLE IT JUST READ — the round trip', async () => {
+  it('A CLIENT CAN WRITE THE BUNDLE IT JUST READ — written back and read again', async () => {
     /*
      * Reproduces what a real client does and nothing else: arrive with a
      * bundle, then save something. That was refused for ever, and no test
@@ -1701,8 +1701,8 @@ describe('identity', () => {
   /*
    * **NINE RECOVERY TESTS WERE DELETED HERE, NOT REWRITTEN.**
    *
-   * They covered a flow that could not serve a wallet account and had no client
-   * — see `docs/reports/PI4a-proof-of-death.md`, written before the deletion.
+   * They covered a flow that could not serve a wallet account and had no client,
+   * so they proved nothing about a registration that no longer exists.
    * **A test kept alive against a system nobody can reach is a green tick that
    * means nothing**, so they went with it rather than being pointed somewhere
    * else.
@@ -2205,7 +2205,7 @@ describe('the approval round, as the chain enforces it', () => {
     /*
      * WAS 'cancel unwedges the account, and burns the approvals already given'.
      *
-     * Cancelling used to rotate the round: it closed the one proposal an
+     * Cancelling used to rotate the proposal: it closed the one proposal an
      * account was allowed to have and burned every approval on the account,
      * including approvals given to something else. It existed because a single
      * proposal that would never reach its threshold wedged the account
@@ -2411,7 +2411,7 @@ describe('granting access puts the signer in the on-chain set', () => {
 
   it('refuses to seat a signer on a round that has not reached the threshold', async () => {
     /*
-     * Proposing is not approving. Without this the round is theatre: anyone who
+     * Proposing is not approving. Without this the proposal is theatre: anyone who
      * can open a proposal could seat a signer of their choosing immediately,
      * which is the same hole again with one extra step.
      *
@@ -2863,8 +2863,7 @@ describe('what the ACCOUNTS table leaves in the store', () => {
     const { h, c } = await company();
     const rec = h.accounts.require(c.account.id);
     const open = h.accounts.open(c.account.id, c.viewingKey);
-    // Both are public on chain, which is the only reason they are outside.
-    expect(rec.threshold).toBe(open.policy.threshold);
+    // The count is public on chain, which is the only reason it is outside. The threshold is not copied at all.
     expect(rec.signerCount).toBe(open.signers.filter(s => s.status === 'active').length);
     // A pending signer is not in the count and not a member.
     expect(rec.signerCount).toBe(2);
@@ -2932,7 +2931,7 @@ describe('changing the locks', () => {
     // And all of it still reads under the new one.
     const opened = h.accounts.open(c.account.id, next);
     expect(opened.name).toBe('Northwind Ltd');
-    expect(opened.policy.threshold).toBe(2);
+    expect((await h.accounts.ledgerStatus(c.account.id))!.threshold).toBe(2);
     expect(h.payroll.listPeople(c.account.id, next).map(e => e.baseAmount)).toEqual([6_200_00n]);
     // `total` USED TO BE ONE NUMBER, replaced by a subtotal per
     // asset, because one figure across mixed currencies means nothing.
@@ -3053,13 +3052,27 @@ describe('removing a signer', () => {
     return { h, c, ada: c.secrets[0], blake: c.secrets[1], cleo: c.secrets[2] };
   }
 
+  /**
+   * What a removal leaves, with the removal itself made on the chain double. The service no longer carries a removal
+   * out (it is the devices', pinned in packages/web-shared/src/a-signer-is-removed-from-the-devices.test.ts): the
+   * chain takes the leaf off the tree and the roster record drops the row, and nothing rotates the key.
+   */
+  async function carryOut(h: ReturnType<typeof harness>, c: any, p: { chainId: string }, leaving: number) {
+    const account = h.accounts.open(c.account.id, c.viewingKey);
+    const leaver = account.signers.find((s) => s.id === c.secrets[leaving].signerId)!;
+    const by = { signerId: account.signers[0]!.id, leaf: account.signers[0]!.leafCommitment! };
+    await h.ledger.removeSigner(c.account.id, leaver.leafCommitment!, p.chainId as never, by);
+    const left = editAccount(h, c.account.id, c.viewingKey, (a) => { a.signers = a.signers.filter((s) => s.id !== leaver.id); });
+    return { account: left, viewingKey: c.viewingKey as string, keyEpoch: 0 };
+  }
+
   /** Runs the whole round: propose, reach the threshold, remove. */
   async function removeCleo(h: ReturnType<typeof harness>, c: any) {
     const p = await h.accounts.proposeRemoval(
       c.account.id, c.viewingKey, c.secrets[2].signerId, c.secrets[0].signerId);
     await h.accounts.approve(p.id, c.secrets[0].signerId, sign(approvalMessage(p), c.secrets[0].signingSecret), c.viewingKey);
     await h.accounts.approve(p.id, c.secrets[1].signerId, sign(approvalMessage(p), c.secrets[1].signingSecret), c.viewingKey);
-    return h.accounts.removeSigner(c.account.id, c.viewingKey, c.secrets[2].signerId);
+    return carryOut(h, c, p, 2);
   }
 
   it('the removed signer can no longer act on chain, which changing the locks alone could not do', async () => {
@@ -3081,80 +3094,27 @@ describe('removing a signer', () => {
     })).rejects.toThrow(/not a signer/);
   });
 
-  it('removes their access to the data in the same operation — revoke, then rotate', async () => {
-    /*
-     * The ORDER matters and is the reason this is one method rather than two
-     * calls a screen makes in sequence. Rotating first would leave a window in
-     * which the leaver can still act on chain and still read, because they hold
-     * the old viewing key until the new records are written.
-     */
-    const { h, c, cleo, ada } = await threeSigners();
-    const old = c.viewingKey;
-    const out = await removeCleo(h, c);
-
-    expect(out.viewingKey).not.toBe(old);
-    expect(out.keyEpoch).toBe(1);
-    expect(() => h.accounts.open(c.account.id, old)).toThrow(/will not open/);
-    // No wrapped copy for them, so their own secret reaches nothing.
-    expect(() => h.accounts.recoverViewingKey(c.account.id, present(cleo).signerId, present(cleo).wrappingSecret))
-      .toThrow(/no wrapped key/);
-    // And the people who stayed reach the new key from their own secrets.
-    expect(h.accounts.recoverViewingKey(c.account.id, present(ada).signerId, present(ada).wrappingSecret))
-      .toBe(out.viewingKey);
-  });
-
-  it('refuses a removal that has not reached the threshold', async () => {
+  it('the ledger refuses a removal that has not reached the threshold', async () => {
     const { h, c } = await threeSigners();
     const p = await h.accounts.proposeRemoval(
       c.account.id, c.viewingKey, present(c.secrets[2]).signerId, present(c.secrets[0]).signerId);
     await h.accounts.approve(p.id, present(c.secrets[0]).signerId, sign(approvalMessage(p), present(c.secrets[0]).signingSecret), c.viewingKey);
 
-    await expect(h.accounts.removeSigner(c.account.id, c.viewingKey, present(c.secrets[2]).signerId))
-      .rejects.toThrow(/not enough approvals/);
-    // Nothing moved: they are still a signer and the key has not rotated.
+    await expect(carryOut(h, c, p, 2)).rejects.toThrow(/approv/);
+    // Nothing moved: they are still a signer on the chain and in the roster.
+    expect((await h.accounts.ledgerStatus(c.account.id))!.signerCount).toBe(3);
     expect(h.accounts.open(c.account.id, c.viewingKey).signers).toHaveLength(3);
-    expect(h.accounts.require(c.account.id).keyEpoch).toBe(0);
   });
 
-  it('refuses a removal with no approved round at all', async () => {
+  it('the ledger refuses a removal with no approved round at all', async () => {
     const { h, c } = await threeSigners();
-    /*
-     * The refusal moved up a layer. `Ledger.removeSigner` takes a proposal id
-     * now — an account holds several open proposals at once and the contract
-     * has to be told which one is being spent — so `removeSigner` has to find
-     * that approved round before it can call the chain, and finds nothing.
-     * The ledger's own guard is pinned separately below.
-     */
-    await expect(h.accounts.removeSigner(c.account.id, c.viewingKey, present(c.secrets[2]).signerId))
-      .rejects.toThrow(/no open proposal on this account for that change/);
-  });
-
-  it('refuses a removal approved for somebody else', async () => {
-    /*
-     * The round commits to the exact leaf. Without that, one approved removal
-     * would authorise removing anyone — the same hole that was closed for
-     * additions.
-     */
-    const { h, c } = await threeSigners();
-    const p = await h.accounts.proposeRemoval(
-      c.account.id, c.viewingKey, present(c.secrets[2]).signerId, present(c.secrets[0]).signerId);
-    await h.accounts.approve(p.id, present(c.secrets[0]).signerId, sign(approvalMessage(p), present(c.secrets[0]).signingSecret), c.viewingKey);
-    await h.accounts.approve(p.id, present(c.secrets[1]).signerId, sign(approvalMessage(p), present(c.secrets[1]).signingSecret), c.viewingKey);
-
-    /*
-     * Approved to remove Cleo; try to remove Blake instead. The round is
-     * matched on its digest — `signerRemovePayload(leaf)` — so a round raised
-     * for Cleo's leaf is simply not a round for Blake's, and there is nothing
-     * to hand the contract. The LEDGER's version of this check is the one that
-     * counts against somebody calling the chain directly, and is pinned below.
-     */
-    await expect(h.accounts.removeSigner(c.account.id, c.viewingKey, present(c.secrets[1]).signerId))
-      .rejects.toThrow(/no open proposal on this account for that change/);
+    await expect(carryOut(h, c, { chainId: 'ab'.repeat(32) }, 2)).rejects.toThrow();
+    expect((await h.accounts.ledgerStatus(c.account.id))!.signerCount).toBe(3);
   });
 
   it('refuses to strand the account below its own threshold, at the earliest point', async () => {
     /*
-     * Refused when the round is PROPOSED, not when it is performed. A removal
+     * Refused when the proposal is PROPOSED, not when it is performed. A removal
      * that can never legally settle should not be able to collect approvals
      * first — three people would sign something that was always going to be
      * refused, and the fee would be paid to find out.
@@ -3180,7 +3140,7 @@ describe('removing a signer', () => {
      * Under the generation design the proposal digest covered the whole
      * survivor list, so anything that changed the signer set between proposing
      * and removing made the approved digest describe something that would no
-     * longer happen — the round reached its threshold and was then refused by
+     * longer happen — the proposal reached its threshold and was then refused by
      * the chain with the fee paid. The digest is one leaf now, so the only
      * thing that can invalidate it is a change to WHO is leaving.
      */
@@ -3198,7 +3158,7 @@ describe('removing a signer', () => {
       invite.token, null, sk.publicKey, wk.publicKey, LEAF);
     expect(pending.status).toBe('pending');
     // Pending signers are not seated, so the set is unchanged and it still works.
-    const out = await h.accounts.removeSigner(c.account.id, c.viewingKey, present(c.secrets[2]).signerId);
+    const out = await carryOut(h, c, p, 2);
     expect(out.account.signers.map(s => s.id)).not.toContain(present(c.secrets[2]).signerId);
     expect((await h.accounts.ledgerStatus(c.account.id))!.signerCount).toBe(2);
   });
@@ -3225,7 +3185,7 @@ describe('removing a signer', () => {
      * It derives a perfectly valid map key that can never appear in
      * `assetBalances`, because no governance circuit writes to the map — and
      * naming a real asset would be a lie in the ledger a client could read as
-     * "this round concerns pounds".
+     * "this proposal concerns pounds".
      */
     const change = { asset: NO_ASSET, amount: 0n, batchDigest: 'bb'.repeat(32), salt: 'cc'.repeat(32) };
 
@@ -3299,8 +3259,9 @@ describe('removing a signer', () => {
      */
     const { h, c } = await threeSigners();
     const chainThreshold = (await h.accounts.ledgerStatus(c.account.id))!.threshold;
-    expect(h.accounts.open(c.account.id, c.viewingKey).policy.threshold).toBe(chainThreshold);
-    expect(h.accounts.require(c.account.id).threshold).toBe(chainThreshold);
+    expect(chainThreshold).toBe(2);
+    expect(Object.keys(h.accounts.open(c.account.id, c.viewingKey).policy)).toEqual(['limitsByRole']);
+    expect(Object.keys(h.accounts.require(c.account.id))).not.toContain('threshold');
     /*
      * A THIRD ASSERTION STOOD HERE — the same read again, after an operation
      * that rewrote the sealed account. The operation was `accounts.deposit`,
@@ -3325,7 +3286,7 @@ describe('removing a signer', () => {
      * turned that from costly into permanent:** the approval is durable by the
      * time this runs, so the reconcile re-entered on Blake's every later call
      * and threw the same `TypeError` again — Blake never reached the honest
-     * `already approved`, and the round could never reach `'approved'`.
+     * `already approved`, and the proposal could never reach `'approved'`.
      *
      * **THE ASSERTION IS THE ABSENCE OF A THROW, AND THEN THAT THE STANDING
      * WAS ACTUALLY RECORDED** — a `catch` that swallowed the failure would
@@ -3407,20 +3368,15 @@ describe('removing a signer', () => {
     await h.accounts.approve(p.id, present(blake).signerId, sign(approvalMessage(p), present(blake).signingSecret), c.viewingKey);
     await h.accounts.setThreshold(c.account.id, c.viewingKey, 3);
 
-    // Both, and they are read from different places on purpose.
+    // The chain moved, and the service holds no number to move with it.
     expect((await h.accounts.ledgerStatus(c.account.id))!.threshold).toBe(3);
-    expect(h.accounts.open(c.account.id, c.viewingKey).policy.threshold).toBe(3);
-    expect(h.accounts.require(c.account.id).threshold).toBe(3);
+    expect(Object.keys(h.accounts.open(c.account.id, c.viewingKey).policy)).toEqual(['limitsByRole']);
   });
 
-  it('THE LIE IT USED TO TELL: our copy does not move when the chain refuses', async () => {
+  it('a threshold change the chain refuses changes nothing', async () => {
     /*
-     * The regression that matters, written as the original failure. The old
-     * method wrote `policy.threshold` unconditionally; if the chain would not
-     * take the change, the product said one thing and the chain did another.
-     *
-     * Here the round is never approved, so the ledger refuses — and the sealed
-     * account must be untouched.
+     * The proposal is never approved, so the ledger refuses, and the threshold
+     * stays the chain's.
      */
     const { h, c, ada } = await threeSigners();
     const p = await h.accounts.proposeThresholdChange(
@@ -3430,7 +3386,6 @@ describe('removing a signer', () => {
     await expect(h.accounts.setThreshold(c.account.id, c.viewingKey, 3))
       .rejects.toThrow(/not enough approvals/);
 
-    expect(h.accounts.open(c.account.id, c.viewingKey).policy.threshold).toBe(2);
     expect((await h.accounts.ledgerStatus(c.account.id))!.threshold).toBe(2);
   });
 
@@ -3442,7 +3397,7 @@ describe('removing a signer', () => {
      * the same hole reopened by a feature that looks like it only makes the
      * account stricter.
      *
-     * Refused when the round is PROPOSED, so nobody signs something that was
+     * Refused when the proposal is PROPOSED, so nobody signs something that was
      * always going to be rejected. The chain refuses it too, which is the test
      * in signer-governance.test.ts.
      */
@@ -3452,7 +3407,7 @@ describe('removing a signer', () => {
     )).rejects.toThrow(/cannot exceed the 3 signers/);
 
     expect((await h.accounts.ledgerStatus(c.account.id))!.openProposals).toEqual([]);
-    expect(h.accounts.open(c.account.id, c.viewingKey).policy.threshold).toBe(2);
+    expect((await h.accounts.ledgerStatus(c.account.id))!.threshold).toBe(2);
   });
 
   it('refuses zero, a fraction, and a change to what it already is', async () => {
@@ -3489,7 +3444,7 @@ describe('removing a signer', () => {
     const by = { signerId: present(ada).signerId, leaf: present(account.signers[0]).leafCommitment! };
 
     /*
-     * The round is opened ON THE LEDGER DIRECTLY, deliberately going around
+     * The proposal is opened ON THE LEDGER DIRECTLY, deliberately going around
      * `proposeRemoval`, which now refuses this at the door. That refusal is a
      * courtesy in our own code; this test is about what the thing underneath
      * does when our code is not in the way, which is the only guard that counts

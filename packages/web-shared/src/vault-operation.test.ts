@@ -38,7 +38,7 @@ import { sealSecretCopy } from '../../../src/midnight/sealed-secret-copy.js';
 import { toHex } from '../../../src/core/crypto.js';
 import { identityFromSecret } from 'midnight-identity';
 import { committeeKeyFor } from 'midnight-identity/profile/committee-key';
-import { signRecordsKey } from 'midnight-identity/profile/records-key';
+import { seatBarOf, signRecordsKey } from 'midnight-identity/profile/records-key';
 import { leafOfTheContract, seatOpenedFor } from '../../../src/testing/directory-seats.js';
 
 /** Wallet key `n`: the x-only public key of a secret made of one repeated byte, a key the chain builds a committee with. */
@@ -96,7 +96,7 @@ const walletReadsTheVault = {
   /* The indexer the wallet names, behind which stands the chain of the stand-in service made last (`serviceFrom`). */
   indexer: async () => ({ indexerUri: CURRENT_CHAIN, indexerWsUri: 'wss://indexer.current.example/ws' }),
   onChain: async (v: string) => ({
-    holders: { committee: [{ tag: 'schnorr', value: walletKey(0x11) }], threshold: 1, seats: ['4a'.repeat(32)], approvals: 1, adoptedVaults: [v], founding: '4a'.repeat(32), foundingCommittee: [{ tag: 'schnorr', value: walletKey(0x11) }] },
+    holders: { committee: [{ tag: 'schnorr', value: walletKey(0x11) }], threshold: 1, seats: ['4a'.repeat(32)], approvals: 1, vaultThresholds: [], policyBar: null, seatBar: seatBarOf(1, null), adoptedVaults: [v], founding: '4a'.repeat(32), foundingCommittee: [{ tag: 'schnorr', value: walletKey(0x11) }] },
   }),
 };
 /* Stand-in ledger parameters: the header the ledger writes them under, and nothing a ledger could read. */
@@ -1674,7 +1674,7 @@ describe('A PRIVATE PAYMENT OUT', () => {
 
   it('A PAYMENT OUT OF A VAULT THE ACCOUNT HAS NOT ADOPTED, AS THE SIGNER\'S OWN WALLET READS IT, IS REFUSED BEFORE ANYTHING IS WRITTEN DOWN', async () => {
     const t = await setUp();
-    const b = { ...t.doors(landsWhenSent()), onChain: async (v: string) => ({ holders: { committee: [], threshold: 1, seats: [], approvals: 1, adoptedVaults: [], founding: '4a'.repeat(32), foundingCommittee: [{ tag: 'schnorr', value: walletKey(0x11) }] } }) };
+    const b = { ...t.doors(landsWhenSent()), onChain: async (v: string) => ({ holders: { committee: [], threshold: 1, seats: [], approvals: 1, vaultThresholds: [], policyBar: null, seatBar: seatBarOf(1, null), adoptedVaults: [], founding: '4a'.repeat(32), foundingCommittee: [{ tag: 'schnorr', value: walletKey(0x11) }] } }) };
     const e = await payPrivatelyFromCompanyVault(b, order()).catch((x: Error) => x);
     /* RED WHEN: a payment is made out of a vault the service named and the account never adopted. */
     expect((e as Error).message).toMatch(/not one your company's account has adopted/);
@@ -2561,7 +2561,7 @@ describe('A PUBLIC PAYMENT OUT', () => {
     const log: string[] = [];
     const d = {
       ...doorsFor(log, [false]),
-      onChain: async (v: string) => ({ holders: { committee: [], threshold: 1, seats: [], approvals: 1, adoptedVaults: [], founding: '4a'.repeat(32), foundingCommittee: [{ tag: 'schnorr', value: walletKey(0x11) }] } }),
+      onChain: async (v: string) => ({ holders: { committee: [], threshold: 1, seats: [], approvals: 1, vaultThresholds: [], policyBar: null, seatBar: seatBarOf(1, null), adoptedVaults: [], founding: '4a'.repeat(32), foundingCommittee: [{ tag: 'schnorr', value: walletKey(0x11) }] } }),
     };
     /* RED WHEN: public money is paid out of a vault the service named and the account never adopted. */
     await expect(payPubliclyFromCompanyVault(d, order())).rejects.toThrow(/not one your company's account has adopted/);

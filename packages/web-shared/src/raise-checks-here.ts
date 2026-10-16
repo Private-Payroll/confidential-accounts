@@ -241,7 +241,8 @@ const spendingPolicy: RaiseCheck = {
     if (p.state === 'none') return;
     if (p.state === 'unread') {
       throw new Error(`this device could not read the spending policy of the vault this run is paid from (${p.why}), so it `
-        + 'cannot say the vault would pay it. Reload the page and try again');
+        + 'cannot say the vault would pay it. Reload the page and try again. If it is still unread, a signer who may set spending '
+        + 'policies and can read it re-seals it from their own device, or changes its terms');
     }
     if (p.state === 'not-for-this-currency') {
       throw new Error('the vault this run is paid from has a spending policy, but none for the currency this run pays in, so the '

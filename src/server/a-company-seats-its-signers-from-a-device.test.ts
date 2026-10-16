@@ -34,8 +34,11 @@
  * `contracts/test/a-company-seats-its-signers-from-the-page.test.ts`.
  */
 import { leavesOfTheContract } from '../testing/directory-seats.js';
+import { seatBarOf } from 'midnight-identity/profile/records-key';
+import { policyBarKey } from '../midnight/spending-policy.js';
 import { newSeatBlinding, type SeatOpening } from '../core/seat-opening.js';
 import type { RecordsAsked } from '../midnight/records-held.js';
+import type { DirectoryFiling } from '../midnight/seat-directory.js';
 import { describe, it, expect, beforeAll, afterAll } from 'vitest';
 import { drawCompanyLabel } from 'midnight-identity/profile/company-label';
 import { importTheServer, useOnlyTheseSettings } from '../testing/server-under-test.js';
@@ -72,12 +75,15 @@ const { theNetwork } = await import('../midnight/network.js');
 const { newSigningKeypair, newWrappingKeypair, newBlinding, newSymmetricKey, wrapKey, signingPublicKeyOf, toHex, unwrapKey, unseal, parseCanonical } = await import('../core/crypto.js');
 const { storedSignerLeaf } = await import('../core/signer-leaf.js');
 const { directoryEntryMade } = await import('../midnight/seat-directory.js');
+const { invitationIdOf, newInvitationToken, signSeatInvitation } = await import('../core/invitation.js');
 const { newProposalId } = await import('../core/proposal-filing.js');
 const { approverRosterFrom } = await import('../core/vault-approvers.js');
 const { signedFoundingState } = await import('../core/founding-state.js');
 const { signedFoundingRoster } = await import('../core/roster-record.js');
 const { signVaultKeys } = await import('../core/vault-keys.js');
-const { invitePayeeHere, inviteSignerHere, openInvitationHere, acceptAsSignerHere, FingerprintsDiffer } = await import('vaults-web-shared/invitation-on-device.js');
+const {
+  invitePayeeHere, inviteSignerHere, openInvitationHere, acceptAsSignerHere, FingerprintsDiffer, makeSignerCodeHere, addSignerFromCodeHere,
+} = await import('vaults-web-shared/invitation-on-device.js');
 const { admitSignerHere, foldOffersHere, offerVaultKeysHere, rosterHere } = await import('vaults-web-shared/roster-here.js');
 const { directoryHere } = await import('vaults-web-shared/vault-page-doors.js');
 const { identityFromSecret } = await import('midnight-identity');
@@ -97,9 +103,9 @@ type Order = import('vaults-web-shared/governed-call-builder.js').GovernedCallOr
 type Doors = import('vaults-web-shared/governed-call-on-device.js').GovernanceDoors & { roster: import('vaults-web-shared/roster-here.js').RosterDoors };
 
 const NETWORK = theNetwork();
-const SLOTS = { ada: 81, blake: 82, cleo: 83, vic: 84, dora: 85 } as const;
+const SLOTS = { ada: 81, blake: 82, cleo: 83, vic: 84, dora: 85, gil: 86 } as const;
 const USERS = {
-  ada: 'usr_seats_ada', blake: 'usr_seats_blake', cleo: 'usr_seats_cleo', vic: 'usr_seats_vic', dora: 'usr_seats_dora',
+  ada: 'usr_seats_ada', blake: 'usr_seats_blake', cleo: 'usr_seats_cleo', vic: 'usr_seats_vic', dora: 'usr_seats_dora', gil: 'usr_seats_gil',
 } as const;
 type Who = keyof typeof USERS;
 
@@ -279,11 +285,18 @@ leaves.set(`${company} ${ada.signerId}`, created.account.signers[0]!.leafCommitm
 const wallets = {
   ada: walletOf(0x41, LABEL, ada.signingSecret as Hex, { seat: created.account.signers[0]!.leafCommitment as string, opening: ada.opening }),
   blake: walletOf(0x42, LABEL), cleo: walletOf(0x43, LABEL), dora: walletOf(0x45, LABEL), vic: walletOf(0x44, LABEL),
+  /* Gil joins from a code his own wallet signs, so his entry is filed only from his own device, once he is seated. */
+  gil: walletOf(0x46, LABEL),
 };
 for (const [i, who] of (['ada', 'blake', 'cleo', 'dora', 'vic'] as const).entries()) {
   const w = wallets[who];
+  /* Ada's is the founding seat; everybody else's entry carries the invitation her seat signed for them. */
+  const invited = who === 'ada' ? undefined : signSeatInvitation({
+    company, invitation: invitationIdOf(newInvitationToken()), person: USERS[who], name: who, role: 'admin', leaf: w.seat as Hex,
+  }, wallets.ada.signing.secret as Hex);
   store.fileDirectory(company, { company, version: i + 1, change: { kind: 'claim', entry: directoryEntryMade({
     company, person: USERS[who], committeeKey: w.committeeKey, signed: entryOf(w, LABEL, ACCOUNT), opening: w.opening, signingSecret: w.signing.secret, viewingKey,
+    ...(invited === undefined ? {} : { invited }),
   }) } });
 }
 holds(company, wallets.ada);
@@ -337,7 +350,7 @@ handInWiring({
   directoryChain: async (accountId, seats) => {
     const h = holding.get(accountId);
     return h === undefined ? null : {
-      seats: { committee: [...h.committee], threshold: 1, seats: seats.filter((x) => h.seats.has(x)) }, approvals: 1,
+      seats: { committee: [...h.committee], threshold: 1, seats: seats.filter((x) => h.seats.has(x)) }, approvals: 1, seatBar: 1,
     };
   },
 });
@@ -346,7 +359,7 @@ const { app } = await importTheServer();
 
 let server: Server;
 let base: string;
-const tokens: Record<Who, string> = { ada: '', blake: '', cleo: '', vic: '', dora: '' };
+const tokens: Record<Who, string> = { ada: '', blake: '', cleo: '', vic: '', dora: '', gil: '' };
 
 const call = async (method: string, path: string, opts: { token?: string; body?: unknown } = {}) => {
   const r = await fetch(base + path, {
@@ -420,7 +433,15 @@ const readsOf = (who: Who) => ({
   leaves: leavesOfTheContract,
   holders: async () => {
     const h = holding.get(company)!;
-    return { committee: [...h.committee], threshold: 1, seats: [...h.seats], approvals: 1, adoptedVaults: [], account: ACCOUNT } as never;
+    /* The approvals the account asks for, as the person's own wallet reads them off this test's simulated chain. */
+    const status = await ledger.status(company);
+    if (status === null) throw new Error('the test\'s chain holds no account for the company');
+    const bar = status.vaultThresholds.find((v) => v.vault === policyBarKey())?.threshold ?? null;
+    return {
+      committee: [...h.committee], threshold: 1, seats: [...h.seats], approvals: status.threshold,
+      vaultThresholds: status.vaultThresholds.filter((v) => v.vault !== policyBarKey()), policyBar: bar, seatBar: seatBarOf(status.threshold, bar),
+      adoptedVaults: [], account: ACCOUNT, founding: wallets.ada.seat,
+    } as never;
   },
 });
 const recordsOf = (who: Who) => ({
@@ -509,7 +530,7 @@ const invited = async (who: 'blake' | 'cleo' | 'dora' | 'vic', as: Who = who, pe
   const made = await inviteSignerHere({
     id: company, name: 'Seats', label: LABEL, account: ACCOUNT, inboxPublicKey: opened.body.inboxPublicKey,
     keyEpoch: opened.body.keyEpoch, viewingKey,
-  }, { committeeKey: wallets.ada.committeeKey as never, statement: entryOf(wallets.ada, LABEL, ACCOUNT), opening: wallets.ada.opening, signingSecret: wallets.ada.signing.secret, entered: recordsEnteredOver(apiAs('ada'), company, wallets.ada.signing.secret) }, { name: who, role: 'approver' }, ORIGIN, sendAs('ada'));
+  }, { committeeKey: wallets.ada.committeeKey as never, statement: entryOf(wallets.ada, LABEL, ACCOUNT), opening: wallets.ada.opening, signingSecret: wallets.ada.signing.secret, held: { role: 'admin', retired: false }, entered: recordsEnteredOver(apiAs('ada'), company, wallets.ada.signing.secret) }, { name: who, role: 'approver', person: USERS[who] }, ORIGIN, sendAs('ada'));
   const sealedThere: PendingSeat[] = [];
   const accepted = await acceptAsSignerHere(await openInvitationHere(made.link, sendAs(as)), MidnightCommitments, {
     /* The keys this person's device makes: its filing key is the one their wallet's directory entry names. */
@@ -614,6 +635,12 @@ describe('A COMPANY SEATS ITS SIGNERS FROM THEIR OWN DEVICES, ON THE PRODUCT\'S 
     /* The roster is a record the company's seats file, and no longer part of the account record. */
     expect(rec.body.sealedRoster).toBeUndefined();
     expect(rec.body.roster.kind).toBe('roster');
+    /* RED WHEN: the proposal that seated Blake, who came by link, carries no invitation naming his leaf for his own entry to carry. */
+    const { seatInvitationIn } = await import('../core/proposal-filing.js');
+    const listed = (await call('GET', `/api/accounts/${company}/proposals`, { token: tokens.ada })).body;
+    const carried = seatInvitationIn(listed, company, viewingKey, wallets.blake.seat);
+    expect(carried?.terms).toMatchObject({ company, person: USERS.blake, name: 'blake', role: 'approver', leaf: wallets.blake.seat.toLowerCase() });
+    expect(carried?.signedBy).toBe(signingPublicKeyOf(wallets.ada.signing.secret));
     /* Blake's wallet joins the company's committee, and he gives his vault keys from his own device. */
     holds(company, wallets.blake);
     await givesVaultKeys('blake', blake.signerId);
@@ -805,7 +832,7 @@ describe('A COMPANY SEATS ITS SIGNERS FROM THEIR OWN DEVICES, ON THE PRODUCT\'S 
       directory: (asked?: RecordsAsked) => directoryHere({
         accountId: at, label: adaInJoined.label, viewingKey: joined.viewingKey as Hex,
         filings: async () => (await call('GET', `/api/accounts/${at}/directory`, { token: tokens.ada })).body.filings,
-        holders: async () => ({ committee: [adaInJoined.committeeKey], threshold: 1, seats: [seatOfAda], approvals: 1, adoptedVaults: [], founding: seatOfAda, foundingCommittee: [adaInJoined.committeeKey], account: adaInJoined.account }),
+        holders: async () => ({ committee: [adaInJoined.committeeKey], threshold: 1, seats: [seatOfAda], approvals: 1, vaultThresholds: [], policyBar: null, seatBar: 1, adoptedVaults: [], founding: seatOfAda, foundingCommittee: [adaInJoined.committeeKey], account: adaInJoined.account }),
         attested: async () => [{ committeeKey: adaInJoined.committeeKey, statement: signRecordsKey(adaInJoined.wallet.identity, adaInJoined.label, adaInJoined.account, adaInJoined.wallet.companyKey, seatOfAda) }],
         anchored: anchoredOver(apiAs('ada'), at),
         leaves: leavesOfTheContract,
@@ -818,5 +845,82 @@ describe('A COMPANY SEATS ITS SIGNERS FROM THEIR OWN DEVICES, ON THE PRODUCT\'S 
     expect(admitted).toMatchObject({ status: 'active', address: { bech32: address }, wrappingPublicKey: 'cd'.repeat(32) });
     const after = (await readPeopleHere(device)).people.find((p) => p.person.id === made.person)!;
     expect([after.person.status, after.handedOver]).toEqual(['active', false]);
+  });
+  it('A SIGNER ADDED FROM A CODE FILES THEIR OWN ENTRY WITH THE INVITATION THE PROPOSAL TO SEAT THEM CARRIED, AND EVERY DEVICE BELIEVES IT FOR THEM', async () => {
+    const { signJoinCode } = await import('midnight-identity/profile/join-code');
+    const { fileTheOwedDirectoryEntry, fileDirectoryFiling, WAITING_FOR_ITS_INVITATION } = await import('vaults-web-shared/vault-page-doors.js');
+    const w = wallets.gil;
+    /* Gil's device makes his seat's keys and his wallet signs them into a code, for his own sign-in. */
+    const sealedThere: PendingSeat[] = [];
+    const made = await makeSignerCodeHere(company, MidnightCommitments, {
+      newKeys: () => {
+        const wrapping = newWrappingKeypair();
+        return { signingSecret: w.signing.secret, signingPublicKey: w.signing.publicKey, wrappingSecret: wrapping.secret, wrappingPublicKey: wrapping.publicKey, blinding: w.blinding, salt: w.salt };
+      },
+      seal: async (seat) => { sealedThere.push(seat as PendingSeat); },
+    }, async (parts) => signJoinCode(w.identity, LABEL, USERS.gil, parts), w.committeeKey);
+    /* Ada pastes it: the invitation her seat signs names Gil and the leaf his code carries. */
+    const opened = await call('GET', `/api/accounts/${company}`, { token: tokens.ada });
+    const added = await addSignerFromCodeHere({
+      id: company, name: 'Seats', label: LABEL, account: ACCOUNT, inboxPublicKey: opened.body.inboxPublicKey, keyEpoch: opened.body.keyEpoch, viewingKey,
+    }, { committeeKey: wallets.ada.committeeKey as never, statement: entryOf(wallets.ada, LABEL, ACCOUNT), opening: wallets.ada.opening, signingSecret: wallets.ada.signing.secret, held: { role: 'admin', retired: false }, entered: recordsEnteredOver(apiAs('ada'), company, wallets.ada.signing.secret) },
+    made.code, { name: 'gil', role: 'approver' }, sendAs('ada'), leavesOfTheContract);
+    leaves.set(`${company} ${added.id}`, w.seat);
+    /* Seated at the company's threshold of three: Ada raises and approves, Blake approves, Cleo approves, carries it out and admits Gil. */
+    /* Ada raises it carrying her own seat as an inviter record, for Gil's wallet, which kept no inviter from a code. */
+    const adaAsInviter = { committeeKey: wallets.ada.committeeKey as never, statement: entryOf(wallets.ada, LABEL, ACCOUNT), opening: wallets.ada.opening };
+    expect((await device.seatSignerOnDevice(aDevice('ada', ada.signerId), { viewingKey, signerId: added.id, readOut: made.fingerprint, inviter: adaAsInviter })).state).toBe('waiting-for-approvals');
+    {
+      const { seatInviterIn } = await import('../core/proposal-filing.js');
+      const { inviterForTheWallet } = await import('vaults-web-shared/invitation-on-device.js');
+      const listed = (await call('GET', `/api/accounts/${company}/proposals`, { token: tokens.ada })).body;
+      /* RED WHEN: the proposal adding a person from a code carries no seat for their wallet to keep the company's account on. */
+      expect(seatInviterIn(listed, company, viewingKey, w.seat)).toEqual(adaAsInviter);
+      /* Gil's device kept none, so his wallet is handed Ada's while the account holds her seat. */
+      expect(inviterForTheWallet(undefined, seatInviterIn(listed, company, viewingKey, w.seat), [wallets.ada.seat])).toEqual(adaAsInviter);
+      /* RED WHEN: a kept inviter whose seat the account no longer holds is handed over in place of one it holds, so the wallet refuses. */
+      const left = { ...adaAsInviter, statement: { ...adaAsInviter.statement, seat: 'ee'.repeat(32) } };
+      expect(inviterForTheWallet(left, adaAsInviter, [wallets.ada.seat])).toEqual(adaAsInviter);
+      expect(inviterForTheWallet(adaAsInviter, left, [wallets.ada.seat])).toEqual(adaAsInviter);
+    }
+    const seatedNow = (await companyNow()).signers;
+    const idOf = (name: string) => seatedNow.find((x) => x.name === name)!.id;
+    expect((await device.seatSignerOnDevice(aDevice('blake', idOf('blake')), { viewingKey, signerId: added.id, readOut: made.fingerprint })).state).toBe('waiting-for-approvals');
+    expect((await device.seatSignerOnDevice(aDevice('cleo', idOf('cleo')), { viewingKey, signerId: added.id, readOut: made.fingerprint })).state).toBe('done');
+    holds(company, w);
+    /* Gil's device, once admitted, files the entry it owes, with the invitation it never held itself. */
+    let owed: import('vaults-web-shared/vault-page-doors.js').OwedDirectoryEntry | null = {
+      person: USERS.gil, company: LABEL, signed: { committeeKey: w.committeeKey as never, entry: entryOf(w, LABEL, ACCOUNT) }, opening: sealedThere[0]!.opening!,
+    };
+    const gilsOwed = { read: () => owed, settle: async () => { owed = null; } };
+    const gilsKeys = async () => ({ signingSecret: w.signing.secret, viewingKey });
+    const adaFounded = async () => wallets.ada.seat;
+    const filingsServed = async (): Promise<DirectoryFiling[]> => (await call('GET', `/api/accounts/${company}/directory`, { token: tokens.ada })).body.filings;
+    const gilsClaims = async () => (await filingsServed()).filter((f) => f.change.kind === 'claim' && f.change.entry.statement.seat === w.seat);
+    /* The service will not list the company's proposals to Gil's device, once. */
+    const listsNothing = async (path: string, init?: RequestInit) => {
+      if (path.endsWith('/proposals')) throw Object.assign(new Error('forbidden'), { status: 403 });
+      return apiAs('gil')(path, init);
+    };
+    const waiting = await fileTheOwedDirectoryEntry(listsNothing, company, gilsOwed, gilsKeys, adaFounded);
+    /* RED WHEN: a seat's entry is filed without its invitation, so no device ever believes it, or the device says it was filed. */
+    expect(waiting).toEqual({ waitingForItsInvitation: WAITING_FOR_ITS_INVITATION });
+    expect(await gilsClaims()).toEqual([]);
+    /* RED WHEN: an entry not filed is let go, so it is never tried again. */
+    expect(owed).not.toBeNull();
+    /* An entry for Gil's seat already filed without its invitation, as an older page filed it: believed by nobody. */
+    const { directoryEntryMade: madeHere } = await import('../midnight/seat-directory.js');
+    const filingsNow = (await filingsServed()).length;
+    await fileDirectoryFiling(apiAs('gil'), company, { company, version: filingsNow + 1, change: { kind: 'claim', entry: madeHere({
+      company, person: USERS.gil, committeeKey: w.committeeKey, signed: entryOf(w, LABEL, ACCOUNT), opening: sealedThere[0]!.opening!, signingSecret: w.signing.secret, viewingKey,
+    }) } });
+    expect((await recordsOf('ada').directory()).dir.seats.find((x) => x.seat === w.seat)).toBeUndefined();
+    /* On the next way in the list is given: the entry is filed again, this time with its invitation. */
+    const filed = await fileTheOwedDirectoryEntry(apiAs('gil'), company, gilsOwed, gilsKeys, adaFounded);
+    /* RED WHEN: an entry already there without its invitation is taken as filed, so the seat stays believed by nobody. */
+    expect(filed).toBe('filed');
+    expect(await gilsClaims()).toHaveLength(2);
+    const here = await recordsOf('ada').directory();
+    expect(here.dir.seats.find((x) => x.seat === w.seat)?.person).toBe(USERS.gil);
   });
 });

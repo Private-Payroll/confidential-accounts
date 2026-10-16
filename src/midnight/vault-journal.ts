@@ -41,7 +41,7 @@
  * line's shape can read a payment as a deposit.
  */
 import {
-  sealPool, openPool, assertNoSignerWouldLoseAccess,
+  sealPool, openPool, assertNoSignerWouldLoseAccess, passedOverAbove,
   type PoolSigner, type SealedPoolStore, type FiledPoolVersion, type PassedOverVersion,
 } from './vault-pool.js';
 import type {
@@ -94,11 +94,17 @@ export class SealedJournal<Line> {
    * for. An absent record is an empty journal at version 0, wrapped for nobody --
    * the one place in this product where absent and empty are the same thing,
    * because a journal that has never been written to records exactly nothing and
-   * claims exactly nothing.
+   * claims exactly nothing. `passedOver` says how many versions filed above the
+   * one read were passed over - filed by a seat past the boundary its leaving
+   * keeps - so a reader is told the journal holds lines it did not read, and no
+   * line is appended until the journal is filed again from what the chain
+   * vouches for.
    */
-  async open(): Promise<{ lines: readonly Line[]; version: number; wrappedFor: readonly string[] }> {
+  async open(): Promise<{ lines: readonly Line[]; version: number; wrappedFor: readonly string[]; passedOver: number }> {
     const rec = await this.store.get(this.vault);
-    if (!rec) return { lines: [], version: 0, wrappedFor: [] };
+    const filed = this.store.filedPast?.(this.vault);
+    const passedOver = filed !== undefined && filed > (rec?.version ?? 0) ? filed - (rec?.version ?? 0) : 0;
+    if (!rec) return { lines: [], version: 0, wrappedFor: [], passedOver };
     const opened = openPool(rec, this.me.id, this.me.wrappingSecret, {
       record: this.page.record, unlabelled: this.store.unlabelledRecordsFiled === true ? 'accept' : 'refuse',
     }) as unknown as Record<string, unknown>;
@@ -109,7 +115,7 @@ export class SealedJournal<Line> {
         + 'an empty journal: it is a record something other than this journal wrote, and nothing '
         + 'is added to a record that cannot be read back.');
     }
-    return { lines: lines as Line[], version: rec.version, wrappedFor: rec.wrapped.map((w) => w.signerId) };
+    return { lines: lines as Line[], version: rec.version, wrappedFor: rec.wrapped.map((w) => w.signerId), passedOver };
   }
 
   /**
@@ -146,6 +152,7 @@ export class SealedJournal<Line> {
       assertNoSignerWouldLoseAccess(now.wrappedFor, to.map((s) => s.id), this.page.called);
       const refused = refuse?.(now.lines) ?? null;
       if (refused !== null) throw refused;
+      passedOverAbove(this.store, this.vault, this.page.record, now.version);
       const version = now.version + 1;
       const line = lineAt(version);
       const page = { [this.page.lines]: [...now.lines, line] };
@@ -194,9 +201,9 @@ export class PaymentJournalInStore implements PaymentJournal {
     });
   }
 
-  async open(): Promise<{ attempts: readonly PaymentAttempt[]; version: number }> {
+  async open(): Promise<{ attempts: readonly PaymentAttempt[]; version: number; passedOver: number }> {
     const now = await this.journal.open();
-    return { attempts: now.lines, version: now.version };
+    return { attempts: now.lines, version: now.version, passedOver: now.passedOver };
   }
 
   async record(vaultAddress: string, attempt: PaymentAttempt): Promise<void> {
@@ -241,9 +248,9 @@ export class DepositJournalInStore implements DepositJournal {
     });
   }
 
-  async open(): Promise<{ attempts: readonly DepositLine[]; version: number }> {
+  async open(): Promise<{ attempts: readonly DepositLine[]; version: number; passedOver: number }> {
     const now = await this.journal.open();
-    return { attempts: now.lines, version: now.version };
+    return { attempts: now.lines, version: now.version, passedOver: now.passedOver };
   }
 
   nonceAt(_vaultAddress: string, money: DepositMoney, slot: number): Hex {
@@ -309,9 +316,10 @@ export const attemptKey = (a: AttemptedStep): string =>
  * several versions is one attempt, not several.
  *
  * No versions is an empty journal. Nothing was journalled, so nothing is
- * claimed, which is the one case where absent and empty agree. A version the
- * company's records passed over carries no bytes and is not read: its lines
- * are in no record the company's records hold.
+ * claimed, which is the one case where absent and empty agree. A version a
+ * device passes over carries no bytes and is not read: no device believes its
+ * lines. Each is counted in `passedOver`, so a caller is told the journal held
+ * lines it did not read.
  */
 export const attemptsFromJournalVersions = (input: {
   deposits: readonly (FiledPoolVersion | PassedOverVersion)[];
@@ -319,7 +327,7 @@ export const attemptsFromJournalVersions = (input: {
   opener: JournalOpener;
   /** `accept` only for versions read from a store that kept records before they were labelled. */
   unlabelled?: 'accept' | 'refuse';
-}): AttemptedVaultCalls & { versionsRead: { deposits: number; payments: number } } => {
+}): AttemptedVaultCalls & { versionsRead: { deposits: number; payments: number }; passedOver: { deposits: number; payments: number } } => {
   const open = (filed: readonly (FiledPoolVersion | PassedOverVersion)[], record: 'deposit-journal' | 'payment-journal'): unknown[] =>
     filed.filter((v): v is FiledPoolVersion => v.neverEntered !== true).map((v) => openPool(v.sealed, input.opener.id, input.opener.wrappingSecret, {
       record, unlabelled: input.unlabelled ?? 'refuse',
@@ -387,5 +395,9 @@ export const attemptsFromJournalVersions = (input: {
     deposits: [...deposits.values()],
     payments: [...payments.values()],
     versionsRead: { deposits: depositPages.length, payments: paymentPages.length },
+    passedOver: {
+      deposits: input.deposits.filter((v) => v.neverEntered === true).length,
+      payments: input.payments.filter((v) => v.neverEntered === true).length,
+    },
   };
 };

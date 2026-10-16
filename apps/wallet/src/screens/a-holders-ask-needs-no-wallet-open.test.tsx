@@ -32,7 +32,7 @@ const ASKER = 'https://payroll.example';
 const CO = 'co_1f2e3d4c5b6a79880a1b2c3d4e5f60718293a4b5c6d7e8f90a1b2c3d4e5f6071' as CompanyLabel;
 const ACCOUNT = 'dbe119a304f8e7ea882353435c1d536cf2faf4298236a9aae77670e750af65c8' as AccountAddress;
 const HOLDERS = {
-  committee: [{ tag: 'schnorr', value: '11'.repeat(32) }], threshold: 1, seats: ['5a'.repeat(32)], approvals: 1, adoptedVaults: [],
+  committee: [{ tag: 'schnorr', value: '11'.repeat(32) }], threshold: 1, seats: ['5a'.repeat(32)], approvals: 1, vaultThresholds: [], policyBar: null, seatBar: 1, adoptedVaults: [],
   founding: '5a'.repeat(32), foundingCommittee: [{ tag: 'schnorr', value: '11'.repeat(32) }],
 };
 const reader: HoldersReader = async () => ({ of: 'read', holders: HOLDERS });

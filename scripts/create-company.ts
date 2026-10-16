@@ -278,7 +278,7 @@ async function main() {
   good(`company     ${created.account.id}  "${created.account.name}"`);
   good(`contract    ${record!.contractAddress}`);
   good(`recorded by ${record!.wiring}, from ${record!.addressSource}`);
-  good(`signers     ${created.account.signers.length} at threshold ${created.account.policy.threshold}`);
+  good(`signers     ${created.account.signers.length}`);
   line();
   line(`  ${CREATED}`);
   line();

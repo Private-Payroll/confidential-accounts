@@ -14,6 +14,7 @@
  * person chooses it. The one to read first is "A HEADER NOBODY KEPT".
  */
 import { describe, expect, it } from 'vitest';
+import { seatBarOf } from 'midnight-identity/profile/records-key';
 import { newSigningKeypair, type Hex } from '../../../src/core/crypto.js';
 import { signManifestEntry, type ManifestEntryBody } from '../../../src/midnight/record-manifest.js';
 import { nextTreeHeader, signTreeHeader, type TreeHeader } from '../../../src/midnight/record-tree.js';
@@ -99,7 +100,7 @@ const aChain = (c: ReturnType<typeof aTreeCompany>) => {
     }
     if (t.held.approvals !== HELD.approvals || t.held.signerRoot !== HELD.signerRoot) throw new Error('the account\'s signers changed');
     const next = headAfterStep({ previous: t.previous, batch: t.batch, held: HELD, tag: t.tag, resumesFrom: t.resumesFrom });
-    c.landed.push({ head: next, tag: t.tag, height: c.landed.length + 1, at: 0 });
+    c.landed.push({ head: next, seatBar: seatBarOf(HELD.approvals, null), tag: t.tag, height: c.landed.length + 1, at: 0 });
     latest.recovery = next;
     p.held = 'closed';
   };
@@ -219,7 +220,7 @@ describe('A RECOVERY ON THE SIGNERS\' OWN DEVICES', () => {
     const c = await aCompany();
     const chain = aChain(c);
     /* Batch 1 lands with a header nobody kept: every device's read stops there. */
-    c.landed.push({ head: 'ee'.repeat(32), tag: tagInATest(C.secret), height: c.landed.length + 1, at: 0 });
+    c.landed.push({ head: 'ee'.repeat(32), seatBar: seatBarOf(HELD.approvals, null), tag: tagInATest(C.secret), height: c.landed.length + 1, at: 0 });
     const a = aDevice(c, chain, A);
     const b = aDevice(c, chain, B);
     for (const d of [a, b]) expect((await readTo(d)).stop).toMatchObject({ stop: 'not-given', seq: 1 });
@@ -269,7 +270,7 @@ describe('A RECOVERY ON THE SIGNERS\' OWN DEVICES', () => {
     const b0 = aDevice(c, chain, B);
     await readTo(a0);
     await readTo(b0);
-    c.landed.push({ head: 'ee'.repeat(32), tag: tagInATest(C.secret), height: c.landed.length + 1, at: 0 });
+    c.landed.push({ head: 'ee'.repeat(32), seatBar: seatBarOf(HELD.approvals, null), tag: tagInATest(C.secret), height: c.landed.length + 1, at: 0 });
     /* Then the service is gone: the same devices, keeping what they kept, with nothing of the service. */
     const gone = (d: typeof a0, who: typeof A, asked: string[]) => {
       const g = aDevice(c, chain, who, { serviceGone: true, asked });
@@ -325,7 +326,7 @@ describe('A RECOVERY ON THE SIGNERS\' OWN DEVICES', () => {
   it('A DEVICE WHOSE OWN READ IS NOT STOPPED RIGHT AFTER THE HEADER A RECOVERY RESUMES FROM RAISES, APPROVES AND CARRIES OUT NOTHING, AND SENDS NOTHING', async () => {
     const c = await aCompany();
     const chain = aChain(c);
-    c.landed.push({ head: 'ee'.repeat(32), tag: tagInATest(C.secret), height: c.landed.length + 1, at: 0 });
+    c.landed.push({ head: 'ee'.repeat(32), seatBar: seatBarOf(HELD.approvals, null), tag: tagInATest(C.secret), height: c.landed.length + 1, at: 0 });
     const a = aDevice(c, chain, A);
     const b = aDevice(c, chain, B);
     /* A device whose read reaches the head the chain holds: here, the same read with nothing stopped. */
@@ -369,7 +370,7 @@ describe('A RECOVERY ON THE SIGNERS\' OWN DEVICES', () => {
   it('A RECOVERY IS RAISED TO BE CARRIED OUT BY A TIME; PAST IT, NO DEVICE APPROVES OR CARRIES IT OUT, AND NOTHING IS KEPT OR SENT', async () => {
     const c = await aCompany();
     const chain = aChain(c);
-    c.landed.push({ head: 'ee'.repeat(32), tag: tagInATest(C.secret), height: c.landed.length + 1, at: 0 });
+    c.landed.push({ head: 'ee'.repeat(32), seatBar: seatBarOf(HELD.approvals, null), tag: tagInATest(C.secret), height: c.landed.length + 1, at: 0 });
     const a = aDevice(c, chain, A);
     const b = aDevice(c, chain, B);
     await readTo(b);
@@ -404,7 +405,7 @@ describe('A RECOVERY ON THE SIGNERS\' OWN DEVICES', () => {
   it('A RECOVERY\'S LAST TIME IS AT MOST SEVEN DAYS AHEAD: THE RAISING DEVICE AND EVERY APPROVING DEVICE REFUSE ONE FURTHER', async () => {
     const c = await aCompany();
     const chain = aChain(c);
-    c.landed.push({ head: 'ee'.repeat(32), tag: tagInATest(C.secret), height: c.landed.length + 1, at: 0 });
+    c.landed.push({ head: 'ee'.repeat(32), seatBar: seatBarOf(HELD.approvals, null), tag: tagInATest(C.secret), height: c.landed.length + 1, at: 0 });
     const a = aDevice(c, chain, A);
     const b = aDevice(c, chain, B);
     await readTo(b);
@@ -428,7 +429,7 @@ describe('A RECOVERY ON THE SIGNERS\' OWN DEVICES', () => {
   it('A FILE IS BELIEVED IN NOTHING: ANOTHER COMPANY\'S, ONE WHOSE SALT MAKES ANOTHER PROPOSAL, OR ONE THE CHAIN DOES NOT HOLD OPEN, IS REFUSED BEFORE ANYTHING IS SENT', async () => {
     const c = await aCompany();
     const chain = aChain(c);
-    c.landed.push({ head: 'ee'.repeat(32), tag: tagInATest(C.secret), height: c.landed.length + 1, at: 0 });
+    c.landed.push({ head: 'ee'.repeat(32), seatBar: seatBarOf(HELD.approvals, null), tag: tagInATest(C.secret), height: c.landed.length + 1, at: 0 });
     const a = aDevice(c, chain, A);
     const b = aDevice(c, chain, B);
     await readTo(b);
@@ -468,7 +469,7 @@ describe('A RECOVERY ON THE SIGNERS\' OWN DEVICES', () => {
   it('A CARRYING OUT ANOTHER ANCHOR BEATS WRITES NOTHING AND LEAVES THE RECOVERY OPEN; THE DEVICE SAYS SO, AND IT IS CARRIED OUT AGAIN', async () => {
     const c = await aCompany();
     const chain = aChain(c);
-    c.landed.push({ head: 'ee'.repeat(32), tag: tagInATest(C.secret), height: c.landed.length + 1, at: 0 });
+    c.landed.push({ head: 'ee'.repeat(32), seatBar: seatBarOf(HELD.approvals, null), tag: tagInATest(C.secret), height: c.landed.length + 1, at: 0 });
     const a = aDevice(c, chain, A);
     const b = aDevice(c, chain, B);
     await readTo(b);
@@ -479,7 +480,7 @@ describe('A RECOVERY ON THE SIGNERS\' OWN DEVICES', () => {
     const beaten = {
       ...a.doors,
       send: { ...a.doors.send, service: async (tx: string) => {
-        c.landed.push({ head: 'e1'.repeat(32), tag: tagInATest(C.secret), height: c.landed.length + 1, at: 0 });
+        c.landed.push({ head: 'e1'.repeat(32), seatBar: seatBarOf(HELD.approvals, null), tag: tagInATest(C.secret), height: c.landed.length + 1, at: 0 });
         chain.takes(tx);
       } },
     };
@@ -503,7 +504,7 @@ describe('A RECOVERY ON THE SIGNERS\' OWN DEVICES', () => {
   it('TWO DEVICES CARRY OUT ONE RECOVERY AT ONCE: THE ONE THE CHAIN TOOK SECOND IS TOLD ANOTHER CARRIED IT OUT, AND BELIEVES NOTHING OF ITS OWN', async () => {
     const c = await aCompany();
     const chain = aChain(c);
-    c.landed.push({ head: 'ee'.repeat(32), tag: tagInATest(C.secret), height: c.landed.length + 1, at: 0 });
+    c.landed.push({ head: 'ee'.repeat(32), seatBar: seatBarOf(HELD.approvals, null), tag: tagInATest(C.secret), height: c.landed.length + 1, at: 0 });
     const a = aDevice(c, chain, A);
     const b = aDevice(c, chain, B);
     await readTo(b);
@@ -530,7 +531,7 @@ describe('A RECOVERY ON THE SIGNERS\' OWN DEVICES', () => {
   it('ITS OWN CARRYING OUT LANDING BETWEEN TWO READS OF THE CHAIN IS READ AS LANDED, NEVER AS BEATEN', async () => {
     const c = await aCompany();
     const chain = aChain(c);
-    c.landed.push({ head: 'ee'.repeat(32), tag: tagInATest(C.secret), height: c.landed.length + 1, at: 0 });
+    c.landed.push({ head: 'ee'.repeat(32), seatBar: seatBarOf(HELD.approvals, null), tag: tagInATest(C.secret), height: c.landed.length + 1, at: 0 });
     const a = aDevice(c, chain, A);
     const b = aDevice(c, chain, B);
     await readTo(b);
@@ -554,7 +555,7 @@ describe('A RECOVERY ON THE SIGNERS\' OWN DEVICES', () => {
   it('A SERVICE THAT SAYS IT SENT A CALL AND DID NOT IS NOT BELIEVED: THE PERSON IS TOLD AND CHOOSES THEIR OWN WALLET, OR DECLINES AND NOTHING MORE IS SENT', async () => {
     const c = await aCompany();
     const chain = aChain(c);
-    c.landed.push({ head: 'ee'.repeat(32), tag: tagInATest(C.secret), height: c.landed.length + 1, at: 0 });
+    c.landed.push({ head: 'ee'.repeat(32), seatBar: seatBarOf(HELD.approvals, null), tag: tagInATest(C.secret), height: c.landed.length + 1, at: 0 });
     const liar = (d: ReturnType<typeof aDevice>) => ({ ...d.doors, send: { ...d.doors.send, service: async () => { d.asked.push('service said sent'); } } });
     const a = aDevice(c, chain, A);
     const b = aDevice(c, chain, B);
@@ -585,7 +586,7 @@ describe('A RECOVERY ON THE SIGNERS\' OWN DEVICES', () => {
     const chain = aChain(c);
     /* The account asks three approvals for a change of who is seated: its policy bar above its threshold of two. */
     chain.bar.needed = 3;
-    c.landed.push({ head: 'ee'.repeat(32), tag: tagInATest(C.secret), height: c.landed.length + 1, at: 0 });
+    c.landed.push({ head: 'ee'.repeat(32), seatBar: seatBarOf(HELD.approvals, chain.bar.needed), tag: tagInATest(C.secret), height: c.landed.length + 1, at: 0 });
     const a = aDevice(c, chain, A);
     const b = aDevice(c, chain, B);
     await readTo(b);
@@ -602,7 +603,7 @@ describe('A RECOVERY ON THE SIGNERS\' OWN DEVICES', () => {
   it('A RECOVERY NAMES THE HEAD THE LATEST ONE CARRIED OUT WROTE, READ OFF THE ACCOUNT\'S STATE AT THE WALLET\'S INDEXER, AND IS CARRIED OUT FROM THERE', async () => {
     const c = await aCompany();
     const chain = aChain(c);
-    c.landed.push({ head: 'ee'.repeat(32), tag: tagInATest(C.secret), height: c.landed.length + 1, at: 0 });
+    c.landed.push({ head: 'ee'.repeat(32), seatBar: seatBarOf(HELD.approvals, null), tag: tagInATest(C.secret), height: c.landed.length + 1, at: 0 });
     const a = aDevice(c, chain, A);
     const b = aDevice(c, chain, B);
     await readTo(b);
@@ -612,7 +613,7 @@ describe('A RECOVERY ON THE SIGNERS\' OWN DEVICES', () => {
     const done = await carryOutRecoveryHere(a.doors, first);
     expect(chain.latest.recovery).toBe(done.head);
     /* Then batch 2 lands with a header nobody kept: the anchor's head moves on past the one the recovery wrote. */
-    c.landed.push({ head: 'ef'.repeat(32), tag: tagInATest(C.secret), height: c.landed.length + 1, at: 0 });
+    c.landed.push({ head: 'ef'.repeat(32), seatBar: seatBarOf(HELD.approvals, null), tag: tagInATest(C.secret), height: c.landed.length + 1, at: 0 });
     const asked: string[] = [];
     const watched = { ...b.doors, builder: { ...b.doors.builder, lastRecovery: async (q: { accountState: string }) => { asked.push(q.accountState); return b.doors.builder.lastRecovery(q); } } };
     const { file } = await raiseRecoveryHere(watched, { latest: LATEST });
@@ -632,7 +633,7 @@ describe('A RECOVERY ON THE SIGNERS\' OWN DEVICES', () => {
   it('ONCE ONE RECOVERY IS CARRIED OUT, EVERY OTHER APPROVED BEFORE IT IS VOID: NO DEVICE APPROVES OR CARRIES ONE OUT, AND NOTHING IS BUILT, KEPT OR SENT', async () => {
     const c = await aCompany();
     const chain = aChain(c);
-    c.landed.push({ head: 'ee'.repeat(32), tag: tagInATest(C.secret), height: c.landed.length + 1, at: 0 });
+    c.landed.push({ head: 'ee'.repeat(32), seatBar: seatBarOf(HELD.approvals, null), tag: tagInATest(C.secret), height: c.landed.length + 1, at: 0 });
     const a = aDevice(c, chain, A);
     const b = aDevice(c, chain, B);
     const third = aDevice(c, chain, C);
@@ -666,7 +667,7 @@ describe('A RECOVERY ON THE SIGNERS\' OWN DEVICES', () => {
   it('A RECOVERY CARRIED OUT BY ANOTHER DEVICE WHILE THIS ONE BUILDS ITS OWN IS READ OFF THE STATE ITS CALL IS BUILT ON, AND NOTHING IS BUILT OR SENT', async () => {
     const c = await aCompany();
     const chain = aChain(c);
-    c.landed.push({ head: 'ee'.repeat(32), tag: tagInATest(C.secret), height: c.landed.length + 1, at: 0 });
+    c.landed.push({ head: 'ee'.repeat(32), seatBar: seatBarOf(HELD.approvals, null), tag: tagInATest(C.secret), height: c.landed.length + 1, at: 0 });
     const a = aDevice(c, chain, A);
     const b = aDevice(c, chain, B);
     await readTo(b);
@@ -701,7 +702,7 @@ describe('A RECOVERY ON THE SIGNERS\' OWN DEVICES', () => {
   it('A RECOVERY\'S CALL IS BUILT ON THE VERY STATE OF THE ACCOUNT ITS LATEST RECOVERY WAS LAST READ OFF', async () => {
     const c = await aCompany();
     const chain = aChain(c);
-    c.landed.push({ head: 'ee'.repeat(32), tag: tagInATest(C.secret), height: c.landed.length + 1, at: 0 });
+    c.landed.push({ head: 'ee'.repeat(32), seatBar: seatBarOf(HELD.approvals, null), tag: tagInATest(C.secret), height: c.landed.length + 1, at: 0 });
     const a = aDevice(c, chain, A);
     const b = aDevice(c, chain, B);
     await readTo(b);

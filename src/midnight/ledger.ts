@@ -87,6 +87,7 @@ import type { Sealed, Hex } from '../core/crypto.js';
 import { toHex, fromHex, randomBytes } from '../core/crypto.js';
 import { companyLabelBytes, readCompanyLabel, type CompanyLabel } from 'midnight-identity/profile/company-label';
 import { authorityIn } from 'midnight-identity/profile/contract-authority';
+import { seatBarOf } from 'midnight-identity/profile/records-key';
 /*
  * A contract's verifier keys - what a write of one must be and whether a contract
  * carries this build's - are one module the wallet, the page and this service
@@ -4036,8 +4037,9 @@ export const alreadyPaidSentence = (a: AlreadyPaid, name: string): string | null
 
 /**
  * The approvals a change of who is seated, a policy change, or a change to the
- * number a policy change needs, asks for: the higher of the threshold and that
- * number, which reads as the threshold while none is stored.
+ * number a policy change needs, asks for (`bar`, the one rule `seatBarOf`), and
+ * that number itself (`policyBar`), which reads as the threshold while none is
+ * stored.
  */
 export function seatBarParts(state: {
   threshold: bigint;
@@ -4045,6 +4047,6 @@ export function seatBarParts(state: {
 }): { bar: bigint; policyBar: bigint } {
   const key = policyBarKey();
   const stored = state.vaultThresholds.find(v => v.vault === key);
-  const policyBar = stored ? BigInt(stored.threshold) : state.threshold;
-  return { bar: policyBar > state.threshold ? policyBar : state.threshold, policyBar };
+  const storedBar = stored ? BigInt(stored.threshold) : null;
+  return { bar: seatBarOf(state.threshold, storedBar), policyBar: storedBar ?? state.threshold };
 }

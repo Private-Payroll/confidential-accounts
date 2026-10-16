@@ -1,31 +1,16 @@
 /**
- * **ACCEPTING A SEAT, AS A FUNCTION A TEST CAN DRIVE.** `C329`, `C328`,
+ * **ACCEPTING A SEAT, ON THE JOINER'S OWN DEVICE: THE ONE SEAT PATH EVERY WAY
+ * OF JOINING USES**, a link's acceptance and a code alike.
  *
- *
- * ── WHY THIS IS NOT STILL A CLOSURE INSIDE A SCREEN ──────────────────────
- *
- * It was. The screen it lived in had no test file, so the whole of `C329`'s
- * premise — **that the material is durable before the leaf is published** —
- * lived in the order of two lines nothing could execute, and the leaf that path
- * writes was the second of `C328`'s two wrong writers with no guard of any
- * kind. `S34`'s test-coverage pass measured both: restoring the old ed25519 writer
- * at that line left 187 tests green.
- *
- * A source pin is not the answer — `S34` deleted the last one, because a pin
- * cannot see semantics and its own round's auditor defeated it three ways with
- * the text intact. So the sequence moved out of the screen instead, whole, and
- * `packages/web-shared/src/accept-seat.test.ts` drives it. What is left in `App.tsx` is the
- * four doors and the call.
- *
- * ── THE ORDER IS THE POINT AND IT IS THE THING TESTED ────────────────────
+ * The order is the point, and it is what the tests drive:
  *
  *   1. make the key material, the blinding the hash of the person's own wallet
  *      key under a fresh salt (`newSeatBlinding`)
- *   2. compute the leaf FROM it, through `storedSignerLeaf` — the one
- *      definition every writer shares — and the seat's opening beside it
+ *   2. compute the leaf FROM it, through `storedSignerLeaf` - the one
+ *      definition every writer shares - and the seat's opening beside it
  *   3. SEAL it, so it is durable
- *   4. publish the leaf
- *   5. promote the sealed material to the seat the server named
+ *   4. publish the leaf, its public keys and its opening
+ *   5. promote the sealed material to the seat the service named
  *
  * Nothing that is not durable reaches a roster. If 3 refuses, no leaf has left
  * this machine. If 5 refuses, the material is already sealed and the seat can
@@ -73,14 +58,18 @@ export interface SeatDoors {
   /** Makes the material durable. Step 3. */
   seal(seat: PendingSeat): Promise<void>;
   /**
-   * Hands the SERVER the public halves and the leaf. Step 4.
+   * Hands over the public halves, the leaf and the leaf's opening. Step 4.
    *
-   * **THE BLINDING IS NOT A PARAMETER AND MUST NEVER BECOME ONE.** M-106,
-   * decision 0003: it briefly travelled, and the server has had no field to put
-   * it in since. The type is the promise.
+   * **THE OPENING GOES ONLY WHERE A MEMBER OPENS IT**: sealed to the company's
+   * inbox in a seat request, or in the code the person's own wallet signed,
+   * which already names their wallet key beside the leaf. It is what lets
+   * every device that approves the seat see the leaf is made for this person's
+   * wallet. The secrets are never a field.
    */
   publish(payload: {
     signingPublicKey: Hex; wrappingPublicKey: Hex; leafCommitment: Hex;
+    /** The leaf's opening: the wallet key and salt its blinding is made from, with the public key and scope it is made over. */
+    opening: SeatOpening;
     /** The nonce and the proof. The invitation's secret is not a field either. */
     seatProof?: SeatProof;
   }): Promise<{ id: string | null }>;
@@ -143,16 +132,15 @@ export async function acceptSeatOnThisDevice(
   /*
    * **THE LEAF, FROM THE SECRET AND NOT FROM THE CURVE.**
    *
-   * This line passed `sk.publicKey` — the raw ed25519 key — while the
-   * contract's `requireSigner()` looks in the tree for a leaf over
-   * `signerPublicKey(sk)`, a domain-separated hash of the SECRET. Different,
-   * uncorrelated 32 bytes, so the seat this path created was one its own device
-   * could never prove. `storedSignerLeaf` is the one definition, shared with
-   * `AccountService.create` and with the check that reads it back.
+   * The contract's `requireSigner()` looks in the tree for a leaf over
+   * `signerPublicKey(sk)`, a domain-separated hash of the SECRET, never over
+   * the raw ed25519 public key: a leaf made over that would be a seat its own
+   * device could never prove. `storedSignerLeaf` is the one definition, shared
+   * with `AccountService.create` and with the check that reads it back.
    */
   const leafCommitment = storedSignerLeaf(seat, commitments);
 
-  /* Durable BEFORE published. The whole of `C329` is this order. */
+  /* Durable BEFORE published: a leaf that left this device with its material lost is a seat nobody can prove. */
   await doors.seal(seat);
 
   const published = {
@@ -161,8 +149,8 @@ export async function acceptSeatOnThisDevice(
     leafCommitment,
   };
   const signer = await doors.publish(invitation
-    ? { ...published, seatProof: proveSeatKeys(invitation, published) }
-    : published);
+    ? { ...published, opening, seatProof: proveSeatKeys(invitation, published) }
+    : { ...published, opening });
 
   if (signer.id !== null) await doors.promote(keys.signingPublicKey, signer.id);
   return { signerId: signer.id, wrappingSecret: keys.wrappingSecret };

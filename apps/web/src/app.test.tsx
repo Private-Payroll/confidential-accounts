@@ -15,6 +15,11 @@ import { Root } from './root.js';
  * shows them.
  */
 (globalThis as { ResizeObserver?: unknown }).ResizeObserver ??= class { observe() {} unobserve() {} disconnect() {} };
+vi.mock('./adapters/session.js', async (real) => ({
+  ...(await real<typeof import('./adapters/session.js')>()),
+  /* What the person's own wallet reads off the chain for the companies listed below. */
+  approvalsNeededFor: async () => new Map([['c-2', 2], ['c-3', 1], ['c-1', 3]]),
+}));
 const EN = JSON.parse(readFileSync(resolve(dirname(fileURLToPath(import.meta.url)), 'locales/en.json'), 'utf8')) as Record<string, string>;
 
 let me: () => Response;

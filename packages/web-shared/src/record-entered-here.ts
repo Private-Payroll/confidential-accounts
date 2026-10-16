@@ -139,9 +139,20 @@ const why = (e: unknown): string => (e as Error)?.message ?? String(e);
  * kept whole and changed in place, so its version is read from the manifest:
  * the one after the newest entry the run has.
  */
-export const recordsEnteredFor = (manifest: ManifestService, accountId: string, signingSecret: Hex): RecordsEntered => ({
+export const recordsEnteredFor = (
+  manifest: ManifestService, accountId: string, signingSecret: Hex,
+  /**
+   * Why this seat files nothing more, or null: a removal of its own seat is raised (`ownRemovalRaisedHere`), so what
+   * it would enter now falls past the boundary its retirement keeps. Absent, nothing stops it.
+   */
+  stops?: () => Promise<string | null>,
+): RecordsEntered => ({
   enter: async (filed) => {
     if (filed.length === 0) return;
+    const stopped = stops === undefined ? null : await stops();
+    if (stopped !== null) {
+      throw new FiledNotEntered(stopped, { again: 'A signer who stays files it again under their own seat.' });
+    }
     let bodies: ManifestEntryBody[];
     try {
       const runs = filed.filter((f): f is { store: 'run'; run: RunToFile } => 'run' in f);
@@ -170,5 +181,5 @@ export const recordsEnteredFor = (manifest: ManifestService, accountId: string, 
 });
 
 /** The one filing call over this page's own sign-in, for a company and the seat filing for it. */
-export const recordsEnteredOver = (api: Api, accountId: string, signingSecret: Hex): RecordsEntered =>
-  recordsEnteredFor(manifestServiceFor(api), accountId, signingSecret);
+export const recordsEnteredOver = (api: Api, accountId: string, signingSecret: Hex, stops?: () => Promise<string | null>): RecordsEntered =>
+  recordsEnteredFor(manifestServiceFor(api), accountId, signingSecret, stops);

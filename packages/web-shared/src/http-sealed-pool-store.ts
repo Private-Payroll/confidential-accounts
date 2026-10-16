@@ -61,6 +61,14 @@ export type FilingJudge = ((filer: Hex | null, kind: FiledKind, recordKey: strin
    * handed no company records says no.
    */
   readonly neverEntered?: (read: Pick<RecordRead, 'store' | 'kind' | 'id'> & { readonly version: number }) => boolean;
+  /**
+   * **WHETHER THIS VERSION IS PAST THE BOUNDARY ITS SEAT'S LEAVING KEEPS**: a
+   * seat retired, or under a raised removal, whose boundary is final, past the
+   * last version of `recordKey` it keeps. Such a version is passed over: never
+   * believed, never opened, and never in the way of the version below it being
+   * read as the newest. A judge handed no company records says no.
+   */
+  readonly pastItsBoundary?: (filer: Hex | null, recordKey: string, version: number) => boolean;
 };
 
 /**
@@ -117,7 +125,33 @@ export class HttpSealedPoolStore implements SealedPoolStore {
     if (b?.record !== this.record || !('filed' in (b ?? {}))) this.refuse('read', r.status, { error: 'the answer is not about this record' });
     const judge = await this.judge(this.asked(vault));
     if (b!.filed === null) return this.absent(vault, judge);
-    return this.believed(fromWire(b!.filed, { vault, record: this.record }).sealed, judge, true);
+    const newest = fromWire(b!.filed, { vault, record: this.record }).sealed;
+    if (!this.pastItsBoundary(newest, judge)) {
+      this.passedTo.delete(vault);
+      return this.believed(newest, judge, true);
+    }
+    /* The newest version filed is one no device believes: the newest below it that stands is this record's newest. */
+    const all = await this.versions(vault);
+    for (let i = all.length - 1; i >= 0; i -= 1) {
+      const v = all[i]!;
+      if (v.neverEntered !== true) return v.sealed;
+    }
+    return null;
+  }
+
+  /**
+   * For each vault whose last read passed over versions no device believes, the newest version filed: no write is
+   * built on that read until the record is filed again from what the chain vouches for (`passedOverAbove`).
+   */
+  private readonly passedTo = new Map<string, number>();
+
+  filedPast(vault: string): number | undefined {
+    return this.passedTo.get(vault);
+  }
+
+  /** Whether `rec` was filed by a seat past the boundary its leaving keeps (`FilingJudge.pastItsBoundary`). */
+  private pastItsBoundary(rec: SealedPool, judge: FilingJudge): boolean {
+    return judge.pastItsBoundary?.(verifiedFiler(this.record, rec), vaultRecordKey(rec.vault, this.record), rec.version) === true;
   }
 
   /** What a read of one vault's record asks to have proven: that record. */
@@ -161,12 +195,19 @@ export class HttpSealedPoolStore implements SealedPoolStore {
     /* No version given, where the company's records name one, is a list withheld, not an empty one. */
     if (filed.length === 0) return this.absent(vault, judge) ?? [];
     /*
-     * Every version as one the anchor holds, and the last as the newest: a list the service cut short is refused.
-     * A version the company's records passed over is said as such, without its bytes; never the newest.
+     * Every version as one the anchor holds, and the last that stands as the newest: a list the service cut short is
+     * refused. A version the company's records passed over is said as such, without its bytes; never the newest. So is
+     * one filed past the boundary its seat's leaving keeps, wherever it is in the list; no write is built on a read
+     * that passed one over above the newest it answered.
      */
-    return filed.map((f, i): FiledPoolVersion | PassedOverVersion => (i < filed.length - 1 && judge.neverEntered?.({ store: 'vault', kind: this.record, id: vault, version: f.wire.version }) === true
+    const passed = filed.map((f, i) => (i < filed.length - 1 && judge.neverEntered?.({ store: 'vault', kind: this.record, id: vault, version: f.wire.version }) === true)
+      || this.pastItsBoundary(f.sealed, judge));
+    const newest = passed.lastIndexOf(false);
+    if (newest < filed.length - 1) this.passedTo.set(vault, filed[filed.length - 1]!.wire.version);
+    else this.passedTo.delete(vault);
+    return filed.map((f, i): FiledPoolVersion | PassedOverVersion => (passed[i]
       ? { version: f.wire.version, neverEntered: true as const }
-      : { version: f.wire.version, sealed: this.believed(f.sealed, judge, i === filed.length - 1) }));
+      : { version: f.wire.version, sealed: this.believed(f.sealed, judge, i === newest) }));
   }
 
   private async listed(vault: string) {

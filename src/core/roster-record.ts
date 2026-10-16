@@ -17,7 +17,7 @@ import type { AccountAddress, CompanyLabel } from 'midnight-identity/profile/com
 import type { Hex } from './crypto.js';
 import { canonical } from './crypto.js';
 import { openRecord, sealRecord } from './sealed-records.js';
-import type { Signer } from './types.js';
+import type { Role, Signer } from './types.js';
 import { vaultKeysAreTheSigners } from './vault-keys.js';
 import {
   signCompanyFiling, verifiedCompanyFiler, whyThisIsNotACompanyRecord, type SealedCompanyRecord,
@@ -98,14 +98,16 @@ export class RosterIsASignedRecord extends Error {
  */
 export const ROSTER_ENTRY_REFUSAL = Object.freeze({
   'seat-not-on-the-chain': 'the seat it names is not one the company\'s account holds on the chain now',
-  'no-entry-of-their-own': 'no entry their own wallet signed for that seat names a key yet. They are shown once they open the '
-    + 'company on their own device and set up their vault keys',
+  'no-entry-of-their-own': 'the company\'s directory holds no entry of their own for that seat yet, whose opening shows the '
+    + 'wallet the seat was made for. They are shown once they open the company on their own device',
   'not-their-signing-key': 'the signing key it gives is not the one their own wallet signed for that seat',
-  'wallet-taken': 'the wallet that signed its entry already signed another signer\'s entry, and a wallet holds one seat',
   'vault-keys-not-theirs': 'its vault keys are not signed by that signer\'s own signing key, or name another wallet than '
-    + 'the one that signed their entry',
+    + 'the one their seat was made for',
   'rights-not-the-chains': 'it gives rights the chain did not seat it with: every seat the company makes is seated with '
     + 'every right',
+  'seat-named-twice': 'another entry of this roster already stands for the seat it names, and a seat has one entry',
+  'seat-retired': 'the seat it names has been retired from the company, as the company\'s records anchor it, so it is no longer '
+    + 'one of its signers',
 } as const);
 export type RosterEntryRefusal = keyof typeof ROSTER_ENTRY_REFUSAL;
 
@@ -114,6 +116,12 @@ export interface DirectoryWitness {
   readonly seat: string;
   readonly signingKey: string;
   readonly committeeKey: { readonly tag: string; readonly value: string };
+  /** Whether a quorum has retired the seat: a retired seat invites nobody. */
+  readonly retired: boolean;
+  /** The seat's signer role, as the directory holds it: only a role that may file a proposal invites (`mayInvite`). */
+  readonly role: Role | null;
+  /** The sign-in the seat's own entry names: a person holds one seat not retired. */
+  readonly person: string;
 }
 
 /** What a device holds each roster entry to: the chain its own wallet read, the directory it believes, its own key. */
@@ -132,6 +140,11 @@ export interface RosterWitnesses {
    * their vault keys.
    */
   readonly own?: { readonly signerId?: string | null; readonly signingPublicKey: string } | null;
+  /**
+   * The seats a retirement the company's records anchor has retired, whether or not the chain still holds them: no
+   * entry stands for one, and no count of the roster's signers includes one.
+   */
+  readonly retired?: readonly string[];
 }
 
 const low = (h: unknown): string => String(h ?? '').toLowerCase();
@@ -146,22 +159,26 @@ const seatedWithEveryRight = (rights: Signer['rights']): boolean =>
  * **WHY THIS DEVICE DOES NOT BELIEVE ONE ROSTER ENTRY, OR NULL WHEN IT DOES.**
  *
  * An entry is believed only when:
- *   · the seat it names is one the company's account holds now;
- *   · the signing key it gives is the one its signer's own wallet signed for
- *     that seat: the believed directory's entry for the seat, else the entry
- *     the signer's wallet signed and the roster keeps beside their vault keys,
- *     made by a wallet that signed no other signer's entry (else, for this
- *     device's own entry only, the key its own secret makes);
+ *   · the seat it names is not one an anchored retirement retired, and is one
+ *     the company's account holds now;
+ *   · the signing key it gives is the one the believed directory's entry for
+ *     that seat names, and its wallet is the one that entry's opening proves
+ *     the seat's leaf was made for (else, for this device's own entry only,
+ *     the key its own secret makes). An entry its signer's wallet signed, kept
+ *     beside their vault keys, is held to that wallet and never stands in for
+ *     the opening: any wallet can sign one for any seat. One wallet holds one
+ *     seat by the directory's own rule, so no entry here can take a wallet
+ *     from another;
  *   · its vault keys, where it has them, are signed by that signing key and
- *     name the wallet that signed the entry;
+ *     name that wallet;
  *   · it gives the rights the chain seated it with, which for every seat the
  *     company makes is every right: the chain holds a leaf, and the leaf of
  *     every seat raised is made under the scope of all vaults.
- * `others` is every other entry of the same roster, for the one-wallet rule.
  */
-export function rosterEntryRefusal(s: Signer, w: RosterWitnesses, others: readonly Signer[] = []): RosterEntryRefusal | null {
+export function rosterEntryRefusal(s: Signer, w: RosterWitnesses): RosterEntryRefusal | null {
   const no = (why: RosterEntryRefusal) => why;
   const seat = typeof s.leafCommitment === 'string' ? s.leafCommitment.toLowerCase() : null;
+  if (seat !== null && (w.retired ?? []).some((x) => low(x) === seat)) return no('seat-retired');
   if (seat === null || !w.seatsOnTheChain.some((x) => low(x) === seat)) return no('seat-not-on-the-chain');
   const key = low(s.signingPublicKey);
   const inDirectory = w.directory.find((d) => low(d.seat) === seat) ?? null;
@@ -176,13 +193,6 @@ export function rosterEntryRefusal(s: Signer, w: RosterWitnesses, others: readon
     if (typeof st !== 'object' || st === null || low(st.seat) !== seat || low(st.signingKey) !== key
       || !directoryEntrySignedBy(w.label, w.account, kept.committeeKey, st)) return no('not-their-signing-key');
     if (wallet !== null && wallet !== walletOf(kept.committeeKey)) return no('not-their-signing-key');
-    if (wallet === null) {
-      const mine = walletOf(kept.committeeKey);
-      const taken = w.directory.some((d) => low(d.seat) !== seat && walletOf(d.committeeKey) === mine)
-        || others.some((o) => o.id !== s.id && (walletOf(o.directoryEntry?.committeeKey) === mine || walletOf(o.vaultKeys?.committeeKey) === mine));
-      if (taken) return no('wallet-taken');
-      wallet = mine;
-    }
   }
   if (wallet === null) {
     const isOwn = w.own !== undefined && w.own !== null && typeof w.own.signerId === 'string' && w.own.signerId === s.id
@@ -197,29 +207,63 @@ export function rosterEntryRefusal(s: Signer, w: RosterWitnesses, others: readon
   return null;
 }
 
+/**
+ * **ONE ENTRY PER SEAT**: of the seated entries of one roster that name the
+ * same seat, the one that stands for it, every other left out. An entry this
+ * device believes stands before one it does not, and then the one whose
+ * sign-in is the person the seat's own directory entry names; else the first.
+ * Entries waiting for a seat, and seated entries naming no seat, are kept as
+ * they are. The order of `signers` is kept.
+ */
+export function oneEntryPerSeat(signers: readonly Signer[], w: RosterWitnesses): Signer[] {
+  const rank = (s: Signer): number => {
+    const person = w.directory.find((d) => low(d.seat) === low(s.leafCommitment))?.person;
+    return (rosterEntryRefusal(s, w) === null ? 2 : 0) + (person !== undefined && s.userId === person ? 1 : 0);
+  };
+  const standing = new Map<string, Signer>();
+  for (const s of signers) {
+    if (s.status !== 'active' || typeof s.leafCommitment !== 'string') continue;
+    const seat = low(s.leafCommitment);
+    const was = standing.get(seat);
+    if (was === undefined || rank(s) > rank(was)) standing.set(seat, s);
+  }
+  const kept = new Set(standing.values());
+  return signers.filter((s) => s.status !== 'active' || typeof s.leafCommitment !== 'string' || kept.has(s));
+}
+
 /** One roster entry a device did not believe: who it names, and why. */
 export interface RefusedEntry { readonly signerId: string; readonly name: string; readonly why: RosterEntryRefusal }
 
 /**
  * **THE ROSTER AS A DEVICE BELIEVES IT**: every seated entry that passes
- * `rosterEntryRefusal`, and each one that does not, with why. A refused entry
- * is not shown and nothing is built on it; a person waiting for a seat is not
- * a roster entry and is left as it is.
+ * `rosterEntryRefusal`, and each one that does not, with why; a second entry
+ * for a seat another entry stands for (`oneEntryPerSeat`) is refused as
+ * `seat-named-twice`. A refused entry is not shown and nothing is built on it;
+ * a person waiting for a seat is not a roster entry and is left as it is.
  */
 export function believedSigners(
   signers: readonly Signer[], w: RosterWitnesses,
 ): { readonly believed: Signer[]; readonly refused: RefusedEntry[] } {
-  const seated = signers.filter((s) => s.status === 'active');
   const believed: Signer[] = [];
   const refused: RefusedEntry[] = [];
+  const standing = new Set(oneEntryPerSeat(signers, w));
   for (const s of signers) {
     if (s.status !== 'active') { believed.push(s); continue; }
-    const why = rosterEntryRefusal(s, w, seated);
+    const why = rosterEntryRefusal(s, w) ?? (standing.has(s) ? null : 'seat-named-twice');
     if (why !== null) { refused.push({ signerId: s.id, name: s.name, why }); continue; }
     believed.push(s);
   }
   return { believed, refused };
 }
+
+/**
+ * **THE SEATS THE CHAIN HOLDS THAT STAY**: every one but those an anchored
+ * retirement retired, whose removal the chain may not have carried out yet.
+ * What a roster is counted against: no entry stands for a retired seat, so one
+ * is never a signer left out.
+ */
+export const seatsStaying = (w: Pick<RosterWitnesses, 'seatsOnTheChain' | 'retired'>): string[] =>
+  w.seatsOnTheChain.filter((x) => !(w.retired ?? []).some((r) => low(r) === low(x)));
 
 /**
  * **THE SEATS THE CHAIN HOLDS THAT NO BELIEVED ENTRY OF A ROSTER NAMES.** A

@@ -66,6 +66,8 @@ const kr = vi.hoisted(() => ({
   chain: null as unknown,
   /* Vaults the account adopted before this test's own, as the wallet reads the chain. */
   adoptedAlso: [] as string[],
+  /* Each vault's own approvals needed, as the wallet reads the account's map of thresholds: none set unless a test says. */
+  vaultThresholds: [] as { vault: string; threshold: number }[],
 }));
 vi.mock('vaults-web-shared/keyring.js', async (real) => ({
   ...(await real<typeof import('vaults-web-shared/keyring.js')>()),
@@ -116,7 +118,7 @@ vi.mock('vaults-web-shared/keyring.js', async (real) => ({
     const { committeeKeyFor: committeeOf } = await import('midnight-identity/profile/committee-key');
     const committeeKey = committeeOf(fromSecret(new Uint8Array(32).fill(1)), ask.company as never);
     return {
-      holders: { committee: [committeeKey], threshold: 1, seats: [kr.ownSeat], approvals: 1, adoptedVaults: [...kr.adoptedAlso, ...(kr.start.adopted ? ['ab'.repeat(32)] : [])], founding: kr.ownSeat, foundingCommittee: [{ tag: 'schnorr', value: '11'.repeat(32) }], account: 'c0'.repeat(32) },
+      holders: { committee: [committeeKey], threshold: 1, seats: [kr.ownSeat], approvals: 1, vaultThresholds: kr.vaultThresholds, policyBar: null, seatBar: 1, adoptedVaults: [...kr.adoptedAlso, ...(kr.start.adopted ? ['ab'.repeat(32)] : [])], founding: kr.ownSeat, foundingCommittee: [{ tag: 'schnorr', value: '11'.repeat(32) }], account: 'c0'.repeat(32) },
       /* The indexer the wallet reads through, which the page reads the vault through too. */
       indexer: { indexerUri: 'https://indexer.wallet.example/api/v3/graphql', indexerWsUri: 'wss://indexer.wallet.example/api/v3/graphql/ws' },
     };
@@ -281,8 +283,8 @@ beforeEach(() => {
   kr.answers[ROUTE('/call-state')] = { account: 'c0'.repeat(32), accountState: '00'.repeat(32), parameters: '', blockHash: 'b' };
   kr.answers[`PUT ${ROUTE('/vault-keys')}`] = { given: true };
   kr.answers[`GET ${ROUTE('/vault-keys')}`] = { committee: COMMITTEE, why: null, readers: [MY_RECORDS_KEY] };
-  /* The approvals the account and its vaults need, as the chain holds them: one, everywhere. */
-  kr.answers[ROUTE('/ledger')] = { threshold: 1, vaultThresholds: [] };
+  /* The approvals the account and its vaults need, as the wallet reads the account: one, everywhere. */
+  kr.vaultThresholds = [];
 });
 afterEach(() => { vi.unstubAllEnvs(); });
 
@@ -460,9 +462,12 @@ describe('a vault whose start is not finished', () => {
   it('takes no step to adopt a vault that would join the company unable to pay', async () => {
     const m = await load();
     kr.chain = onChain(true);
-    kr.answers[ROUTE('/ledger')] = { threshold: 1, vaultThresholds: [{ vault: VAULT, threshold: 2 }] };
+    /* The vault's own threshold of two, as the person's own wallet reads it off the account; the service is asked for no bar. */
+    kr.vaultThresholds = [{ vault: VAULT, threshold: 2 }];
     expect(await m.finishHandingOver('u1', 'c1', VAULT, () => {})).toEqual({ of: 'start-owed', vault: VAULT });
     expect(kr.log.filter((l) => l.endsWith(' proved') || l.startsWith('POST'))).toEqual([]);
+    /* RED WHEN: the approvals a vault and the account need are read from the service's read of the chain, not the wallet's. */
+    expect(kr.log.filter((l) => l.endsWith('/ledger'))).toEqual([]);
   });
 
   /* RED WHEN: a round waiting on other signers is said as done, or as a failure, or without what it waits for. */

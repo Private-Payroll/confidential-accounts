@@ -6,10 +6,11 @@ import { act, cleanup, fireEvent, render, within } from '@testing-library/react'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { KitProvider, languagesFrom } from 'vaults-ui';
 import { untilPageShown } from '../page-shown.test-support.js';
-const names = vi.hoisted(() => ({ opened: new Map<string, string>() }));
+const names = vi.hoisted(() => ({ opened: new Map<string, string>(), approvals: new Map<string, number>() }));
 vi.mock('../adapters/session.js', async (real) => ({
   ...(await real<typeof import('../adapters/session.js')>()),
   companyNamesFor: async () => names.opened,
+  approvalsNeededFor: async () => names.approvals,
 }));
 vi.mock('../adapters/company-records.js', async (real) => ({
   ...(await real<typeof import('../adapters/company-records.js')>()),
@@ -45,9 +46,9 @@ const TEST_LANGUAGES = languagesFrom({ './locales/en.json': EN, './locales/de.js
 
 /* In an order no natural key gives: neither by date, id or how many sign, either way. */
 const COMPANIES: Company[] = [
-  { id: 'c-2', createdAt: '2026-09-01T10:00:00.000Z', signers: 3, approvalsNeeded: 2 },
-  { id: 'c-3', createdAt: '2026-09-20T10:00:00.000Z', signers: 1, approvalsNeeded: 1 },
-  { id: 'c-1', createdAt: '2026-08-01T10:00:00.000Z', signers: 5, approvalsNeeded: 3 },
+  { id: 'c-2', createdAt: '2026-09-01T10:00:00.000Z', signers: 3 },
+  { id: 'c-3', createdAt: '2026-09-20T10:00:00.000Z', signers: 1 },
+  { id: 'c-1', createdAt: '2026-08-01T10:00:00.000Z', signers: 5 },
 ];
 
 const signer: Viewer = { signedIn: true, view: VIEWS.company, signs: true };
@@ -239,10 +240,12 @@ describe('the company switcher', () => {
    * creating one or joining one is shown as if it worked when it is Coming
    * soon; a company is shown by the day it was created, or by anything but its
    * name or the word for a company and its approvals as M/N Approval; or the
-   * line on what anyone can look up is still in the menu.
+   * line on what anyone can look up is still in the menu; or a company's approvals are shown that the person's own
+   * wallet has not read off the chain (the second test below), or are the list's own number.
    */
   it('lists the companies in the order the service gave, with no amounts, and says where their names open', async () => {
     names.opened = new Map();
+    names.approvals = new Map([['c-2', 2], ['c-3', 1], ['c-1', 3]]);
     await draw(sessionFor(signer), 'settingsAppearance');
     await press({ key: '.', code: 'Period', metaKey: true });
     const menu = document.querySelector('[data-company-switcher]') as HTMLElement;
@@ -259,6 +262,15 @@ describe('the company switcher', () => {
     expect([...menu.querySelectorAll('[data-company]')].map((c) => c.textContent)).toEqual(['Company2/3 Approval', 'Company1/1 Approval', 'Company3/5 Approval']);
     expect(document.querySelector('[data-action=company-switcher]')!.textContent).toBe('Company2/3 Approval');
     expect(document.body.textContent).not.toMatch(/2026|created/i);
+  });
+
+  it('shows no approvals for a company until the chain has said, and never the list\'s own number', async () => {
+    names.opened = new Map();
+    names.approvals = new Map([['c-3', 1]]);
+    await draw(sessionFor(signer), 'settingsAppearance');
+    await press({ key: '.', code: 'Period', metaKey: true });
+    const menu = document.querySelector('[data-company-switcher]') as HTMLElement;
+    expect([...menu.querySelectorAll('[data-company]')].map((c) => c.textContent)).toEqual(['Company', 'Company1/1 Approval', 'Company']);
   });
 
   /*

@@ -53,8 +53,9 @@ const THREE: GovernanceOnTheWire = { kind: 'threshold', threshold: '3' };
 /**
  * A device over a service holding `held` - proposals already written down, as
  * this device opens them - and counting approvals as the chain would. `bar` is
- * the account's threshold. Every call asked of the service or the builder is
- * written down in `log`.
+ * the account's threshold, as the person's own wallet reads it with no policy
+ * bar stored. Every call asked of the service or the builder is written down
+ * in `log`.
  */
 const aDevice = (o: {
   /** `served` is the status the service writes for it, whatever the chain holds. */
@@ -119,7 +120,6 @@ const aDevice = (o: {
       },
       standing: async (id) => page(id),
       carry: async (id, body) => { log.push(`carry ${id} ${body.circuit}`); rounds.set(id, { ...rounds.get(id)!, status: 'executed' }); return page(id); },
-      bars: async () => ({ threshold: o.bar ?? 1, vaultThresholds: [] }),
     },
     builder: {
       governedCall: async ({ order }) => {
@@ -138,7 +138,10 @@ const aDevice = (o: {
         const believed = {
           /* The directory's versions past the newest the anchor holds, which holds none: each one filed and not yet anchored. */
           dir: { company: ACC, version: waiting, seats: [{ seat: SEAT, person: 'ada', signingKey: founder.publicKey, wrappingKey: 'ab'.repeat(32), committeeKey: COMMITTEE, role: 'admin' as const, retired: null }] },
-          holders: { committee: [COMMITTEE], seats: [SEAT], approvals: o.approvals ?? 1, adoptedVaults: [], account: 'ac'.repeat(32) },
+          holders: {
+            committee: [COMMITTEE], seats: [SEAT], approvals: o.approvals ?? o.bar ?? 1, vaultThresholds: [], policyBar: null,
+            seatBar: o.approvals ?? o.bar ?? 1, adoptedVaults: [], account: 'ac'.repeat(32),
+          },
           another: new Set<string>(),
           refusedAt: new Set(o.refused ?? []),
         };
@@ -372,8 +375,9 @@ describe('A RISE OF THE ACCOUNT\'S THRESHOLD AND THE COMPANY\'S DIRECTORY', () =
     /* RED WHEN: a threshold that does not rise is held back by the directory. */
     expect((await changeThresholdOnDevice(same.doors, { viewingKey: KEY, newThreshold: 1, seated: 4 })).state).toBe('done');
     const lower = aDevice({ waiting: 1, approvals: 3 });
-    /* RED WHEN: a threshold lowered from three to two is held back by a directory change waiting for the anchor. */
-    expect((await changeThresholdOnDevice(lower.doors, { viewingKey: KEY, newThreshold: 2, seated: 4 })).state).toBe('done');
+    /* RED WHEN: a threshold lowered from three to two is held back by a directory change waiting for the anchor. It is raised and
+     * approved here, and waits for the others: the account's threshold of three, as the wallet reads it, carries it out. */
+    expect((await changeThresholdOnDevice(lower.doors, { viewingKey: KEY, newThreshold: 2, seated: 4 })).state).toBe('waiting-for-approvals');
     expect(lower.log).not.toContain('anchor the records');
   });
 

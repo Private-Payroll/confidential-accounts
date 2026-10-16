@@ -88,7 +88,7 @@ beforeAll(async () => {
   await new Promise<void>((resolve) => { server = app.listen(0, '127.0.0.1', () => resolve()); });
   base = `http://127.0.0.1:${(server.address() as AddressInfo).port}`;
   const seated = (seats: Seat[]): ChainHolders => ({
-    seats: { committee: seats.map((s) => s.committeeKey), threshold: 1, seats: seats.map((s) => s.seat) }, approvals: 1,
+    seats: { committee: seats.map((s) => s.committeeKey), threshold: 1, seats: seats.map((s) => s.seat) }, approvals: 1, seatBar: 1,
   });
   chain = seated([ADA, BO]);
   for (const [s, v] of [[ADA, 1], [BO, 2]] as const) {
@@ -97,7 +97,7 @@ beforeAll(async () => {
   }
   chain = seated([EVE]);
   expect((await sendAs('eve')(`/api/accounts/${OTHER}/directory/1`, { method: 'PUT', body: JSON.stringify({ company: OTHER, version: 1, change: { kind: 'claim', entry: EVE.entry } }) })).status).toBe(201);
-  /* Bo is an approver: a quorum of one names his role. */
+  /* Bo is seated on the chain; his claim carries no invitation, so no device believes his seat. */
   chain = seated([ADA, BO]);
   chains.set(CO, seated([ADA, BO]));
   chains.set(OTHER, seated([EVE]));
@@ -181,18 +181,38 @@ describe('A PERSON IS FILED FROM A SEAT\'S DEVICE, AND THE SERVICE KEEPS THAT ON
     expect(() => openPerson(rec, OTHER_KEY)).toThrow(/will not open/);
   });
 
-  it('THE DEVICE BELIEVES A PERSON A SEAT IT BELIEVES FILED, AND NOT ONE THE SERVICE WROTE', async () => {
+  /** A device's judge of the company's people: `named` are the entries it holds besides every version Ada's seat filed, each entered by its own filer. */
+  const personJudge = (named: readonly { readonly entry: ReturnType<typeof companyRecordEntry>; readonly signingSecret: string }[] = []) => {
     const holders = async () => ({ committee: [ADA.committeeKey, BO.committeeKey], threshold: 1, seats: [ADA.seat, BO.seat], approvals: 1, adoptedVaults: [], founding: ADA.seat, foundingCommittee: [ADA.committeeKey], account: ADDRESS });
     const attested = async () => [ADA, BO].map((s) => ({
       committeeKey: s.committeeKey,
       statement: signRecordsKey(identityFromSecret(new Uint8Array(32).fill(s.n)), LABEL, ADDRESS, new Uint8Array(32).fill(s.n + 100), s.seat),
     }));
-    const judge = directoryJudge({
+    return directoryJudge({
       accountId: CO, label: LABEL, viewingKey: KEY, holders: holders as never, attested, filings: async () => store.directoryFilingsOf(CO), leaves: leavesOfTheContract,
-      /* Every version Ada's seat filed, entered by her seat; nothing anchored yet. */
-      anchored: async () => heldEntering(CO, (await records.versions(CO, 'person', 'emp_dana'))
-        .filter((r) => r.filedBy?.publicKey === ADA.signing.publicKey).map((r) => ({ entry: companyRecordEntry(r), signingSecret: ADA.signing.secret }))),
+      /* Every version Ada's seat filed, entered by her seat; nothing anchored yet. Each is judged by the directory this device reads. */
+      anchored: async (directory) => heldEntering(CO, [
+        ...(await records.versions(CO, 'person', 'emp_dana'))
+          .filter((r) => r.filedBy?.publicKey === ADA.signing.publicKey).map((r) => ({ entry: companyRecordEntry(r), signingSecret: ADA.signing.secret })),
+        ...named,
+      ] as never, undefined, directory),
     });
+  };
+
+  it('AN ENTRY FOR A PERSON FROM A SEAT NO DEVICE BELIEVES IS NOT THE COMPANY NAMING A VERSION; ONE FROM A SEAT THAT IS BELIEVED IS', async () => {
+    const v2 = (await records.get(CO, 'person', 'emp_dana'))!;
+    const next = (body: string): SealedCompanyRecord => ({ ...v2, version: v2.version + 1, sealed: { ...v2.sealed, body } });
+    /* Bo's claim carries no invitation from a seat the directory holds, so no device believes his seat; the service serves nothing past version 2. */
+    const byBo = [{ entry: companyRecordEntry(next('bo')), signingSecret: BO.signing.secret }];
+    /* RED WHEN: the entries a device holds are judged by a directory that makes every filer a believed, seated admin, so an entry of a seat nobody believes counts as the company naming a version the service withheld. */
+    expect((await new HttpCompanyRecordStore(CO, sendAs('ada'), ADA.signing.secret, personJudge(byBo)).get('person', 'emp_dana'))!.version).toBe(2);
+    /* RED WHEN: Ada's seat, an admin who may file a person, naming a version the service does not give is read as the newest. */
+    const byAda = [{ entry: companyRecordEntry(next('ada')), signingSecret: ADA.signing.secret }];
+    await expect(new HttpCompanyRecordStore(CO, sendAs('ada'), ADA.signing.secret, personJudge(byAda)).get('person', 'emp_dana')).rejects.toThrow(/a newer version of it is in the company's records and the service did not give it/u);
+  });
+
+  it('THE DEVICE BELIEVES A PERSON A SEAT IT BELIEVES FILED, AND NOT ONE THE SERVICE WROTE', async () => {
+    const judge = personJudge();
     const device = new HttpCompanyRecordStore(CO, sendAs('ada'), ADA.signing.secret, judge);
     expect((await device.get('person', 'emp_dana'))!.version).toBe(2);
     /* The service writes a version with no seat's signature. */

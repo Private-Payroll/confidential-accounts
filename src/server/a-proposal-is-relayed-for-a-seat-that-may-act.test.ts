@@ -86,7 +86,7 @@ beforeEach(() => {
 
 /** The filing key each person's device sends with a relay: its own seat's, or, for one with no seat here, a key no entry names. */
 const FILER: Readonly<Record<string, string>> = { ada: ADA.statement.signingKey, bo: BO.statement.signingKey, eve: EVE.statement.signingKey };
-const RELAYS = /\/(approve|cancel|send|carry|charge)$/u;
+const RELAYS = /\/(approve|cancel|send|carry|charge|retirement)$/u;
 /** A request as the person's device sends it: a relay carries the device's filing key unless the body names its own. */
 const post = (who: string | null, path: string, body: unknown) => {
   const carried = RELAYS.test(path) && typeof body === 'object' && body !== null && !('filer' in body)
@@ -235,6 +235,44 @@ describe('A PROPOSAL IS RELAYED WITH NO KEY, FOR A SEAT THAT MAY ACT', () => {
     expect(r.body).toMatchObject({ status: 'executed' });
     /* RED WHEN a circuit the route does not carry is relayed. */
     expect((await post('ada', `/api/proposals/${P}/carry`, { tx: tx('approve', CHAIN), circuit: 'approve' })).status).toBe(400);
+  });
+
+  it('A RETIREMENT SIGNATURE IS KEPT BESIDE ITS PROPOSAL AS THE SEAT HANDED IT IN, WITH ITS APPROVAL OR SIGNED AGAIN, AND SERVED UNJUDGED', async () => {
+    open.set(CHAIN, 0);
+    const adas = { signedFor: 4, publicKey: FILER.ada, signature: 'a1'.repeat(64) };
+    expect((await post('ada', `/api/proposals/${P}/approve`, { tx: tx('approve', CHAIN), retirement: adas })).status).toBe(200);
+    /* RED WHEN: a retirement signature an approval carries is not kept beside its proposal. */
+    expect(store.getProposal(P)!.retirementSignatures).toEqual([adas]);
+    const bos = { signedFor: 5, publicKey: FILER.bo, signature: 'b1'.repeat(64) };
+    expect((await post('bo', `/api/proposals/${P}/retirement`, { signature: bos })).status).toBe(200);
+    /* RED WHEN: one seat's signature for a version replaces another's, or a second for the same version is kept beside the first. */
+    const adasAgain = { ...adas, signature: 'a2'.repeat(64) };
+    expect((await post('ada', `/api/proposals/${P}/retirement`, { signature: adasAgain })).status).toBe(200);
+    const adasFor6 = { ...adas, signedFor: 6, signature: 'a3'.repeat(64) };
+    expect((await post('ada', `/api/proposals/${P}/retirement`, { signature: adasFor6 })).status).toBe(200);
+    expect(store.getProposal(P)!.retirementSignatures).toEqual([bos, adasAgain, adasFor6]);
+    expect(sent.map((x) => x.circuit)).toEqual(['approve']);
+    /* RED WHEN: a seat hands in a signature under another seat's key, with an approval or alone. */
+    expect((await post('ada', `/api/proposals/${P}/retirement`, { signature: { ...bos, signature: 'c1'.repeat(64) } })).status).toBe(422);
+    expect((await post('ada', `/api/proposals/${P}/approve`, { tx: tx('approve', CHAIN), retirement: bos })).status).toBe(422);
+    expect(sent).toHaveLength(1);
+    expect((await post('ada', `/api/proposals/${P}/retirement`, { signature: { ...adas, signature: 'zz' } })).status).toBe(400);
+    /* RED WHEN: one seat handing in signature after signature crowds another seat's out, or is kept without end. */
+    for (let v = 10; v < 20; v += 1) {
+      expect((await post('bo', `/api/proposals/${P}/retirement`, { signature: { ...bos, signedFor: v, signature: 'b2'.repeat(64) } })).status).toBe(200);
+    }
+    const kept = store.getProposal(P)!.retirementSignatures!;
+    expect(kept.filter((x) => x.publicKey === FILER.bo).map((x) => x.signedFor)).toEqual([16, 17, 18, 19]);
+    expect(kept.filter((x) => x.publicKey === FILER.ada)).toEqual([adasAgain, adasFor6]);
+    /* RED WHEN: an approval's signature is kept only after the approval was relayed, so a refused keep follows a counted approval. */
+    refuseAtTheDoor = 'the chain refused it. Nothing was sent.';
+    const adasFor7 = { ...adas, signedFor: 7, signature: 'a4'.repeat(64) };
+    expect((await post('ada', `/api/proposals/${P}/approve`, { tx: tx('approve', CHAIN), retirement: adasFor7 })).status).toBe(422);
+    expect(store.getProposal(P)!.retirementSignatures!.some((x) => x.signedFor === 7)).toBe(true);
+    refuseAtTheDoor = null;
+    /* RED WHEN: a withdrawn proposal still takes retirement signatures. */
+    store.putProposal(proposal({ status: 'cancelled' }));
+    expect((await post('ada', `/api/proposals/${P}/retirement`, { signature: adas })).status).toBe(422);
   });
 
   it('A VAULT\'S SPENDING POLICY AND THE APPROVALS A POLICY CHANGE NEEDS ARE CARRIED OUT BY THE SAME ROUTE, AS THEIR OWN CIRCUITS', async () => {

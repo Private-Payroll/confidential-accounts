@@ -37,6 +37,7 @@ const accountPure = {
   proposalIdOf: (payload: Uint8Array, vault: Uint8Array, salt: Uint8Array) => sha(payload, vault, salt),
   retrySaltOf: (leg: Uint8Array, fresh: Uint8Array) => sha(Buffer.from('retry-salt'), leg, fresh),
   signerAddPayload: (leaf: Uint8Array) => sha(Buffer.from('seat'), leaf),
+  removeSignerPayload: (leaf: Uint8Array) => sha(Buffer.from('remove'), leaf),
   setThresholdPayload: (t: bigint) => sha(Buffer.from('threshold'), t),
   setVaultThresholdPayload: (vault: Uint8Array, t: bigint) => sha(Buffer.from('vault-threshold'), vault, t),
   adoptVaultPayload: (vault: Uint8Array) => sha(Buffer.from('adopt'), vault),
@@ -64,6 +65,7 @@ const hex = (b: Uint8Array) => Buffer.from(b).toString('hex');
  */
 const payloadOf = (g: RoundChangeOnTheWire) => (g.kind === 'add-signer'
   ? accountPure.signerAddPayload(bytes(g.leaf))
+  : g.kind === 'remove-signer' ? accountPure.removeSignerPayload(bytes(g.leaf))
   : g.kind === 'adopt-vault' ? accountPure.adoptVaultPayload(bytes(g.vault))
     : g.kind === 'pay-key' ? accountPure.payKeyPayload(bytes(g.commitment))
       : g.kind === 'vault-threshold' ? accountPure.setVaultThresholdPayload(bytes(g.vault), BigInt(g.threshold))
@@ -93,7 +95,7 @@ const openedFor = (order: GovernedCallOrder): OpenedRound => {
     return { ...recordOf(payloadOf(g), accountPure.noVault(), o.half.proposalSalt), governance: g, half: halfOf(o.half) };
   }
   if (o.circuit === 'amendSigner') {
-    const g = { kind: 'add-signer', leaf: o.leaf } as const;
+    const g = { kind: o.removing === true ? 'remove-signer' : 'add-signer', leaf: o.leaf } as const;
     return { ...recordOf(payloadOf(g), accountPure.noVault(), o.proposalSalt), governance: g };
   }
   if (o.circuit === 'setThreshold') {
@@ -432,6 +434,21 @@ describe('A SEAT AND A THRESHOLD, BUILT ON THE DEVICE', () => {
     expect(handed[0]!.options.circuitId).toBe('amendSigner');
   });
 
+  it('a removal is amendSigner on its removing branch, for the leaf named and the proposal its removal payload makes', async () => {
+    const removalId = hexOf(accountPure.proposalIdOf(accountPure.removeSignerPayload(bytes(LEAF)), accountPure.noVault(), bytes(SALT)));
+    const removeIt: GovernedCallOrder = { circuit: 'amendSigner', leaf: LEAF, proposal: removalId, proposalSalt: SALT, removing: true };
+    const handed: Handed[] = [];
+    await build(depsWith([], handed), { account: ACCOUNT, order: removeIt, material, chain });
+    /* RED WHEN: a removal is built as a seating, or into a vacated slot. */
+    expect(handed[0]!.options.args).toEqual([bytes(LEAF), bytes(removalId), false, true]);
+    /* RED WHEN: a removal is built for a proposal that seats the leaf, or a seating for a removal's proposal. */
+    expect(() => refuseARaiseThatIsNotTheRecordedOne({ accountPure }, { ...removeIt, proposal: seatRoundId(LEAF, SALT) })).toThrow(/not the one the company wrote down|not for this change/u);
+    expect(() => refuseARaiseThatIsNotTheRecordedOne({ accountPure }, { ...seatIt, proposal: removalId })).toThrow(/not the one the company wrote down|not for this change/u);
+    /* RED WHEN: a removal is carried out from a proposal this device opened as a seating. */
+    await expect(build(depsWith([], []), { account: ACCOUNT, order: removeIt, material, chain, opened: openedFor(seatIt) }))
+      .rejects.toThrow(/does not match the company's own record of this proposal/u);
+  });
+
   it('a threshold change is setThreshold with the number and the proposal', async () => {
     const handed: Handed[] = [];
     await build(depsWith([], handed), { account: ACCOUNT, order: setIt, material, chain });
@@ -473,7 +490,7 @@ describe('A SEAT AND A THRESHOLD, BUILT ON THE DEVICE', () => {
   it('a governance round that is neither a seat nor a threshold is not built', async () => {
     const log: string[] = [];
     await expect(build(depsWith(log, []), {
-      account: ACCOUNT, order: { ...seatRaise, governance: { kind: 'remove-signer', leaf: LEAF } } as unknown as GovernedCallOrder,
+      account: ACCOUNT, order: { ...seatRaise, governance: { kind: 'rotate-signer', leaf: LEAF } } as unknown as GovernedCallOrder,
       material, chain, opened: openedFor(seatRaise),
     })).rejects.toThrow(/neither a seat nor a threshold/u);
     expect(log).toEqual([]);

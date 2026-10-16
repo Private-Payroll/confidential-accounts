@@ -25,6 +25,7 @@ export const sameGovernance = (a: RoundChangeOnTheWire, b: RoundChangeOnTheWire)
   if (a.kind !== b.kind) return false;
   switch (a.kind) {
     case 'add-signer': return same(a.leaf, (b as typeof a).leaf);
+    case 'remove-signer': return same(a.leaf, (b as typeof a).leaf);
     case 'vault-threshold': return same(a.vault, (b as typeof a).vault) && sameNumber(a.threshold, (b as typeof a).threshold);
     case 'adopt-vault': return same(a.vault, (b as typeof a).vault);
     case 'pay-key': return same(a.commitment, (b as typeof a).commitment);

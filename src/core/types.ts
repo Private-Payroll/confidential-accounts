@@ -10,6 +10,8 @@ export type { PayoutSeed };
 import type { AssetId, LedgerForm } from './assets.js';
 import type { AddressSource } from './ledger.js';
 import type { WiringName } from './provenance.js';
+import type { SeatOpening } from './seat-opening.js';
+import type { SignedSeatInvitation } from './invitation.js';
 
 export type Role = 'admin' | 'approver' | 'initiator' | 'viewer';
 
@@ -99,7 +101,6 @@ export interface User {
    */
   /**
    * **WHO THIS PERSON IS: A SUBWALLET, HASHED.**
-   * `docs/scope-payroll-identity.md` §2, `docs/NEXT.md` PI1 §3.
    *
    * `sha256` of the bech32 address that answered a sign-in — `walletKeyOf` in
    * `store.ts`, which carries the reason the address itself is not here.
@@ -127,9 +128,6 @@ export interface User {
  * nowhere else. So there is no copy to cut off, and removing a device is
  * revoking its SESSION — which is a different system, still here, and always
  * was the thing that closes the door.
- *
- * The proof that nothing reachable still depended on this is in
- * `docs/reports/PI4a-proof-of-death.md`, written before the deletion.
  */
 
 export interface Signer {
@@ -252,12 +250,11 @@ export type PerAsset<T> = Partial<Record<AssetId, T>>;
 /**
  * **EVERYTHING IN HERE IS OURS, AND NONE OF IT IS AUTHORITY.**
  *
- * `threshold` is a COPY. The number that decides whether a round may settle is
- * the contract's, read back through `LedgerStatus.threshold`; this field exists
- * so a screen can render a bar without a round trip and so `sealAccount` has
- * something to write into the readable part of the stored record. **Nothing may
- * decide anything from it.** If the two ever disagree, the chain is right and
- * this is stale — see `evaluatePolicy` in `core/account.ts`.
+ * **THE ACCOUNT'S THRESHOLD IS NOT HERE.** The number that decides whether a
+ * round may settle is the contract's, read back through `LedgerStatus.threshold`
+ * and, on a device, through the person's own wallet. This type once carried a
+ * copy and so did the stored record; both are deleted, so there is nothing
+ * to disagree with the chain.
  *
  * `limitsByRole` is an ADVISORY CEILING THIS SERVICE APPLIES. The contract
  * knows nothing about it. A ceiling here stops us relaying a proposal, which we
@@ -299,17 +296,12 @@ export type PerAsset<T> = Partial<Record<AssetId, T>>;
  * carry neither identifier, not even as a tombstone.
  */
 export interface Policy {
-  /**
-   * M of N, as WE last recorded it. Rendered, never decided from.
-   *
-   * **AND IT IS THE ACCOUNT'S NUMBER ONLY.** There is no per-vault
-   * counterpart of this field and there must not be: a vault's threshold is
-   * absent-means-inherit on chain, so a stored copy would have to represent
-   * "no row" as well as a number, and a copy that got that wrong is a screen
-   * telling a company a vault has its own rule when it does not. The exceptions
-   * are read from `LedgerStatus.vaultThresholds` at the moment they are shown.
+  /*
+   * There is no account threshold here and no per-vault one: a vault's
+   * threshold is absent-means-inherit on chain, so a stored copy would have
+   * to represent "no row" as well as a number. Every threshold is read from
+   * the chain at the moment it is shown (`LedgerStatus.vaultThresholds`).
    */
-  threshold: number;
   /**
    * OURS. A per-role, per-asset ceiling above which this service declines to
    * relay a proposal at all. Applied here; unknown to the contract.
@@ -423,11 +415,22 @@ export interface PendingSignerPayload {
    * the company would make a member to it. Absent is refused there.
    */
   person?: string;
-  /*
-   * No `blinding`. See `Signer` above: one was needed here so a removal could
-   * re-seat this person later, and the re-seating is gone, so the invitee's
-   * blinding never leaves their device again.
+  /**
+   * **THE JOINER'S OPENING OF THE LEAF ABOVE**: the wallet key and salt its
+   * blinding is made from (`newSeatKeys`). It is not a second copy of the
+   * wallet key: it is what the leaf commits to, so every approving device sees
+   * the leaf is made for that wallet before it approves it
+   * (`walletKeyProvedBy`). Sealed to the company's inbox with the rest, so only
+   * a holder of the company's viewing key opens it. Absent is refused there.
    */
+  opening?: SeatOpening;
+  /**
+   * **WHO THE SEAT IS FOR, AS THE SEAT THAT INVITED SIGNED IT**, copied from
+   * the offer the joiner opened, or made by the seat that pasted their code.
+   * Every approving device holds this request to it: its person, name, role and,
+   * for a code, its leaf. Absent is refused there.
+   */
+  invited?: SignedSeatInvitation;
 }
 
 /**
@@ -438,16 +441,14 @@ export interface PendingSignerPayload {
  * and nowhere else. There is no field on this type through which any of them
  * could be written in the clear.
  *
- * Six things stay readable, and each is here for a reason that survives being
+ * Five things stay readable, and each is here for a reason that survives being
  * written down:
  *
  * - `id`, `createdAt` — Tier 4. Routing and ordering. They say nothing.
- * - `threshold`, `signerCount` — **already public on chain** (Tier 1). "How many
- *   people may approve, and how many must" is what makes M-of-N auditable, and
- *   the contract publishes both. Repeating them costs nothing and lets the
- *   account picker render before anything is unlocked.
+ * - `signerCount` — **already public on chain** (Tier 1). The threshold is
+ *   not repeated here: it is read from the chain, never from this record.
  * - `memberUserIds` — opaque ids, no names, no roles, **no `leafCommitment`**.
- *   The server decides whether a session may touch an account BEFORE any key is
+ *   The server decides whether a signed-in person may touch an account BEFORE any key is
  *   supplied; that is the multi-tenancy check and there is no key at that point.
  *   It reveals that a user is on an account, which the access pattern reveals
  *   anyway, and it does not reveal the pairing the sealing exists for.
@@ -460,8 +461,6 @@ export interface SealedAccount {
   createdAt: string;
   /** Which viewing key sealed this. Advances on rotation. */
   keyEpoch: number;
-  /** Public on chain. Written from the sealed policy, which is the one copy. */
-  threshold: number;
   /** Public on chain. Written from the sealed roster, which is the one copy. */
   signerCount: number;
   /** Opaque ids of ACTIVE signers who are also users. All `membership` reads. */
@@ -675,7 +674,7 @@ export interface Approval {
  * Three distinct facts, and they are three rather than one because a caller
  * that has to act on them acts differently on each:
  *
- * - `not-yet-proposed` — we have not submitted this round. Known by
+ * - `not-yet-proposed` — we have not submitted this proposal. Known by
  *   construction at propose time, not by asking, and the only one of the three
  *   that is ordinary.
  * - `no-status` — the ledger returned no status for this account at all. Either
@@ -724,10 +723,10 @@ export interface Proposal {
    */
   chainId: Hex;
   /**
-   * **WHICH VAULT THIS ROUND CONCERNS.** `noVault()` where it
-   * concerns none, which is every round this product raises today.
+   * **WHICH VAULT THIS PROPOSAL CONCERNS.** `noVault()` where it
+   * concerns none, which is every proposal this product raises today.
    *
-   * It decides how many approvals the round needs — `thresholdFor(vault)`,
+   * It decides how many approvals the proposal needs — `thresholdFor(vault)`,
    * `contracts/src/ConfidentialAccount.compact:1358` — so it is not a label. It
    * is also committed INSIDE `chainId` (`proposalIdOf`, `compact:874`), which
    * is what makes the on-chain APPROVAL NULLIFIER collected for one vault
@@ -736,9 +735,9 @@ export interface Proposal {
    * binding lives.**
    *
    * **SEALED, NOT READABLE, AND THE CONTRACT MAKES THE SAME CHOICE.** The chain
-   * learns the vault only when a payment is recorded against the round
+   * learns the vault only when a payment is recorded against the proposal
    * (`recordPaymentFromVault` discloses it, `compact:2639`); at propose time it holds a
-   * commitment and nothing more. Which pot of money an OPEN round is reaching
+   * commitment and nothing more. Which pot of money an OPEN proposal is reaching
    * into is a live signal about a pending payment — the same reason `propose`
    * refuses to disclose the asset key (`compact:2105`). Every path that needs it
    * already opens the sealed blob to read the amount.
@@ -749,7 +748,7 @@ export interface Proposal {
   summary: string;
   /** Sealed under the account viewing key. */
   sealedPayload: Sealed;
-  /** Public: the round's CONTENT. Binds kind and payload, NOT the account. */
+  /** Public: the proposal's CONTENT. Binds kind and payload, NOT the account. */
   digest: Hex;
   proposedBy: string;
   /**
@@ -765,7 +764,7 @@ export interface Proposal {
   approvals: Approval[];
   status: ProposalStatus;
   /**
-   * **WHAT THE LEDGER SAID ABOUT THIS ROUND, LAST TIME WE ASKED.**
+   * **WHAT THE LEDGER SAID ABOUT THIS PROPOSAL, LAST TIME WE ASKED.**
    *
    * Undefined on a proposal nothing has asked about yet. Written by `approve`
    * from a single `status()` read taken after the ledger accepted the approval,
@@ -787,6 +786,9 @@ export interface Proposal {
 }
 
 /** A person on the payroll, held at account level rather than inside a run. */
+/** One seat's signature over a removal's retirement, for the directory version it names. */
+export interface RetirementSignature { signedFor: number; publicKey: Hex; signature: Hex }
+
 /**
  * A proposal as the SERVER holds it.
  *
@@ -836,6 +838,13 @@ export interface SealedProposal {
   /** kind, summary, sealedPayload, proposedBy, approvals[], blockedReason. */
   sealed: Sealed;
   /**
+   * **THE SIGNATURES OVER A REMOVAL'S RETIREMENT, AS EACH APPROVING SEAT'S
+   * DEVICE SENT THEM**: the directory version each was made over, the seat's
+   * filing key and its signature. Stored and served as handed in, never
+   * judged here: every device checks each against the retirement it opened.
+   */
+  retirementSignatures?: RetirementSignature[];
+  /**
    * **WHICH LEDGER WROTE THIS RECORD.** Written once, when the record first
    * appeared, by the ledger that wrote it - never afterwards, and never onto a
    * record whose writing nothing observed.
@@ -853,7 +862,6 @@ export interface RosterEmployee {
   name: string;
   /**
    * **NULL FOR SOMEBODY WHO IS NOT IDENTIFIED BY AN EMAIL AT ALL.**
-   * `docs/how-money-can-be-lost.md` `C153`.
    *
    * This was a required `string`, and a wallet sign-in has no email — so making
    * a wallet-signed-in founder payable meant either refusing — which is what
@@ -1431,7 +1439,7 @@ export interface RunPayout {
   company?: string | null;
 }
 
-/** What an auditor receives. Proves a statement without carrying the underlying data. */
+/** What a person checking a statement receives. Proves the statement without carrying the underlying data. */
 /**
  * A payroll run as the SERVER holds it.
  *
@@ -1481,31 +1489,31 @@ export interface SealedRun {
 }
 
 /**
- * **WHAT WAS REFUSED AT THIS ROUND'S DOOR, KEPT.**
+ * **WHAT WAS REFUSED AT THIS PROPOSAL'S DOOR, KEPT.**
  *
  * ── THE ROW THIS EXISTS FOR ──────────────────────────────────────────────
  *
- * An approval signature is bound to the round it approves, so a signature made
- * for round A no longer verifies against round B. **That makes a replay FAIL.
+ * An approval signature is bound to the proposal it approves, so a signature made
+ * for proposal A no longer verifies against proposal B. **That makes a replay FAIL.
  * It does not make one VISIBLE**, and a rejected approval that leaves nothing
  * behind is an investigation with no evidence: the only durable record of who
  * consented is `Proposal.approvals`, and a refused attempt never reaches it.
  *
  * **WHAT ONE ENTRY IS, AND WHAT IT DELIBERATELY IS NOT.** The seat that was
  * named, the moment, and — where the submitted bytes are a signature already
- * STANDING on another round of this same account — the `chainId` of that
- * round. **The signature bytes themselves are NOT stored here.** They are
- * already stored, once, on the round they legitimately approve
+ * STANDING on another proposal of this same account — the `chainId` of that
+ * proposal. **The signature bytes themselves are NOT stored here.** They are
+ * already stored, once, on the proposal they legitimately approve
  * (`Approval.signature`), and a second copy would be a second thing to keep
  * safe for no new fact: ed25519 is deterministic, so equality of the bytes is
  * the whole of the evidence and `replayOf` records the conclusion rather than
  * the material.
  *
  * **`replayOf` IS PROOF AND ITS ABSENCE IS NOT AN ACQUITTAL.** Present, it says
- * these exact bytes are the consent this signer gave to a DIFFERENT round of
+ * these exact bytes are the consent this signer gave to a DIFFERENT proposal of
  * this account, which is a replay and nothing else. Absent, it says only that
  * the comparison found nothing — an ordinary wrong key, a stale client, or a
- * replay whose source round was CANCELLED, because `cancel` clears `approvals`
+ * replay whose source proposal was CANCELLED, because `cancel` clears `approvals`
  * (`src/core/account.ts`, `cancel`) and takes the evidence with it. **That last
  * case is a known gap and this record cannot close it**; closing it needs a
  * per-account index of signature digests that survives cancellation, which is a
@@ -1514,7 +1522,7 @@ export interface SealedRun {
  *
  * **BOUNDED, BECAUSE A MEMBER CAN CAUSE THESE — AND BOTH FIELDS ARE BOUNDED,
  * WHICH THIS SENTENCE USED TO DENY.** It said *`count` is every attempt ever
- * refused against this round*, and that is FALSE at source: `refuseApproval`
+ * refused against this proposal*, and that is FALSE at source: `refuseApproval`
  * returns at `REFUSED_APPROVALS_KEPT` without writing, and the increment sits
  * past that return, so **`count` freezes with `recent` at
  * `REFUSED_APPROVALS_KEPT`.**
@@ -1529,7 +1537,7 @@ export interface SealedRun {
  * **SEALED, LIKE THE APPROVALS IT SITS BESIDE.** `putProposal` seals every
  * field it does not name explicitly, and this one is not named, so `signerId`
  * here is under the account viewing key exactly as `Approval.signerId` is — the
- * same sealing reason, unchanged: a seat id beside a round is the deanonymised
+ * same sealing reason, unchanged: a seat id beside a proposal is the deanonymised
  * form of the chain's nullifiers. **No new key, no new blast radius.**
  */
 export interface RefusedApproval {
@@ -1537,7 +1545,7 @@ export interface RefusedApproval {
   signerId: string;
   at: string;
   /**
-   * The `chainId` of the round these exact bytes are a standing approval of.
+   * The `chainId` of the proposal these exact bytes are a standing approval of.
    * Set only when the comparison found one; see the note above on what its
    * absence does and does not mean.
    */
@@ -1558,45 +1566,45 @@ export interface RefusedApproval {
  */
 export interface Proposal {
   /**
-   * **REFUSED APPROVAL ATTEMPTS AGAINST THIS ROUND.** Undefined until
-   * the first one, so an untouched round carries nothing rather than an empty
+   * **REFUSED APPROVAL ATTEMPTS AGAINST THIS PROPOSAL.** Undefined until
+   * the first one, so an untouched proposal carries nothing rather than an empty
    * shape that reads like a checked-and-clean result.
    */
   refusedApprovals?: { count: number; recent: RefusedApproval[] };
   /**
-   * **WHEN THIS SERVICE ESTABLISHED THAT THE ROUND IS ON CHAIN.**
+   * **WHEN THIS SERVICE ESTABLISHED THAT THE PROPOSAL IS ON CHAIN.**
    * The ledger's own `TxRef.at` when the propose call returned;
-   * the moment of the read when a later `confirmRaised` found the round in
+   * the moment of the read when a later `confirmRaised` found the proposal in
    * `openProposals` instead.
    *
    * **UNDEFINED MEANS *NOT CONFIRMED*, NOT *NOT RAISED*, AND THE DIFFERENCE IS
    * THE WHOLE POINT.** The durable record is now written BEFORE the chain call
    * (`AccountService.raise`), because it is the half that cannot be rebuilt —
    * the salt is 32 bytes of fresh randomness and the payload is sealed with a
-   * key the caller supplied for that one call, while a chain round can be
+   * key the caller supplied for that one call, while a chain proposal can be
    * raised again for another fee. So a record with no `raisedAt` is either a
-   * round the chain refused, or one it accepted and whose answer was lost, and
+   * proposal the chain refused, or one it accepted and whose answer was lost, and
    * only the chain can say which. `approve` and `cancel` ask it.
    *
    * **A PROPOSAL WRITTEN BEFORE THIS FIELD HAS NONE**, and self-heals the first
-   * time either door touches it: the round is still in `openProposals` if it is
+   * time either door touches it: the proposal is still in `openProposals` if it is
    * still open, which is the only state in which it matters.
    */
   raisedAt?: string;
   /**
-   * **THE ROLE THIS ROUND'S CEILING IS EVALUATED AGAINST, WRITTEN DOWN WHERE
+   * **THE ROLE THIS PROPOSAL'S CEILING IS EVALUATED AGAINST, WRITTEN DOWN WHERE
    * REMOVING THE PROPOSER CANNOT TAKE IT AWAY.**
    *
    * `evaluatePolicy` is given the PROPOSER's role, and the only place that role
    * used to exist was the live `signers` row — which
-   * `AccountService.removeSigner` DELETES rather than marks, with nothing
+   * a removal (once the service's, now the devices') DELETES rather than marks, with nothing
    * closing that proposer's still-open rounds. **So an ordinary governed
    * removal, followed by an ordinary approval, made the reconcile read
    * `undefined.role`**; the approval was already durable by then, and the retry
    * repeated the same throw for ever.
    *
    * **IT IS THE ROLE AT PROPOSE TIME AND THAT IS THE CORRECT ONE, NOT A
-   * CONVENIENT ONE.** The ceiling asks what authority this round was raised
+   * CONVENIENT ONE.** The ceiling asks what authority this proposal was raised
    * under. A role read later is a different question, and one that has no
    * answer at all once the seat is gone.
    *
@@ -1617,7 +1625,7 @@ export interface Proposal {
    * product. **The day one exists, a round raised by an admin who has since
    * been demoted will be judged at the ADMIN ceiling for ever, where the live
    * lookup would have used the new one.** That is the correct answer — the
-   * ceiling asks what authority the round was raised under — but it is a
+   * ceiling asks what authority the proposal was raised under — but it is a
    * behaviour change nobody has decided, so it is written here rather than
    * discovered.
    *

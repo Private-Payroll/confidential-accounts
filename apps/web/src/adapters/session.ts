@@ -76,8 +76,6 @@ export interface Company {
   createdAt: string;
   /** How many sign for it. Public, as the chain publishes it. */
   signers: number;
-  /** How many of them must approve. Public, as the chain publishes it. */
-  approvalsNeeded: number;
 }
 
 /**
@@ -141,9 +139,9 @@ export function companiesFrom(rows: unknown): Company[] {
   if (!Array.isArray(rows)) return [];
   const out: Company[] = [];
   for (const row of rows as unknown[]) {
-    const r = (row ?? {}) as { id?: unknown; createdAt?: unknown; signerCount?: unknown; threshold?: unknown };
-    if (typeof r.id !== 'string' || typeof r.createdAt !== 'string' || !Number.isSafeInteger(r.signerCount) || !Number.isSafeInteger(r.threshold)) continue;
-    out.push({ id: r.id, createdAt: r.createdAt, signers: r.signerCount as number, approvalsNeeded: r.threshold as number });
+    const r = (row ?? {}) as { id?: unknown; createdAt?: unknown; signerCount?: unknown };
+    if (typeof r.id !== 'string' || typeof r.createdAt !== 'string' || !Number.isSafeInteger(r.signerCount)) continue;
+    out.push({ id: r.id, createdAt: r.createdAt, signers: r.signerCount as number });
   }
   return out;
 }
@@ -168,6 +166,7 @@ export async function whoIsSignedIn(): Promise<WhoIsSignedIn> {
   const { currentUser, forgetLocally } = await keyring();
   if (currentUser()?.id !== person.id) forgetLocally();
   listed = { person: person.id, rows: Array.isArray(r.body.accounts) ? r.body.accounts as unknown[] : [] };
+  approvalsRead = null;
   return { of: OF.signedIn, person, companies: companiesFrom(r.body.accounts) };
 }
 
@@ -195,6 +194,42 @@ export async function companyNamesFor(personId: string): Promise<ReadonlyMap<str
     }
   } catch { /* a name not opened is not shown */ }
   return out;
+}
+
+/** The one read of the approvals each company needs, for the list as last asked for; dropped when the list is asked for again. */
+let approvalsRead: { person: string; map: Promise<ReadonlyMap<string, number>> } | null = null;
+
+/**
+ * HOW MANY MUST APPROVE FOR EACH COMPANY IN THE ONE LIST, by id, as the person's own wallet reads it off the chain
+ * (the answer's `approvals`; its `threshold` is the committee's and is never read). The service's row carries no such
+ * number that is read here. A company whose account the wallet cannot read, or that names no account yet, has none, and
+ * so does every company when the list was asked for somebody else. The list is not asked for again, and the wallet is
+ * asked once for each company however many screens ask.
+ */
+export function approvalsNeededFor(personId: string): Promise<ReadonlyMap<string, number>> {
+  if (listed.person !== personId) return Promise.resolve(new Map());
+  if (approvalsRead !== null && approvalsRead.person === personId) return approvalsRead.map;
+  const rows = listed.rows;
+  const map = (async (): Promise<ReadonlyMap<string, number>> => {
+    const out = new Map<string, number>();
+    try {
+      const [{ keyringFor }, { holdersFromTheWallet }] = await Promise.all([import('./keyring-person.js'), import('vaults-web-shared/keyring.js')]);
+      if (!(await keyringFor(personId))) return out;
+      await Promise.all(rows.map(async (row) => {
+        const r = (row ?? {}) as { id?: unknown; companyLabel?: unknown; contractAddress?: unknown };
+        if (typeof r.id !== 'string' || typeof r.companyLabel !== 'string' || typeof r.contractAddress !== 'string') return;
+        try {
+          const { holders } = await holdersFromTheWallet(ACCOUNT_ORIGIN, { company: r.companyLabel as never, account: r.contractAddress as never });
+          if (Number.isSafeInteger(holders.approvals) && holders.approvals >= 1) out.set(r.id, holders.approvals);
+        } catch { /* a company the wallet cannot read has no figure shown */ }
+      }));
+    } catch { /* no figure is shown */ }
+    return out;
+  })();
+  approvalsRead = { person: personId, map };
+  /* Nothing read is not kept, so a list read while the keys were still locked is read again. */
+  void map.then((m) => { if (m.size === 0 && approvalsRead?.map === map) approvalsRead = null; });
+  return map;
 }
 
 /** What the account is told about who is asking. The account shows these as the asker's own words, beside the address it saw. */

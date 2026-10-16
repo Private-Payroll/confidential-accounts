@@ -69,7 +69,7 @@ const doorsOf = (s: Seat): AnchorDoors => ({
 
 /** The account held, on the test's chain, by these seats alone, at the approvals it requires. */
 const heldBy = (seats: readonly Seat[]) =>
-  chains.set(CO, { seats: { committee: seats.map((s) => s.committeeKey), threshold: 1, seats: seats.map((s) => s.seat) }, approvals: 1 });
+  chains.set(CO, { seats: { committee: seats.map((s) => s.committeeKey), threshold: 1, seats: seats.map((s) => s.seat) }, approvals: 1, seatBar: 1 });
 
 /** The next directory version: a change of `seat`'s role signed by `by` as a quorum of one, the account's approvals. */
 const roleSetBy = async (seat: Seat, role: Role, by: Seat) => {
@@ -124,6 +124,33 @@ describe('A CHANGE IS COUNTED AGAINST WHO HELD THE ACCOUNT WHEN IT WAS ANCHORED,
     expect(newestOf(f, 'company:proposal:prp_bo_promoted_p1')).toEqual({ version: 1, digest: bos.digest });
     /* RED WHEN: the directory a device acts on is replayed against the account now - Bo's anchored promotion is forgotten. */
     expect(await roleOf(BO)).toBe('approver');
+  });
+
+  it('A DEMOTION SIGNED AT THE THRESHOLD, ANCHORED IN A BLOCK WHOSE STATE HOLDS A HIGHER POLICY BAR, IS NOT BELIEVED, THOUGH THE BAR FALLS AFTER', async () => {
+    heldBy([ADA, BO]);
+    const before = await roleOf(BO);
+    await roleSetBy(BO, 'viewer', ADA);
+    /* The account stores a policy bar of two before the demotion is anchored: a change of who is seated then needs two. */
+    chains.set(CO, { ...chains.get(CO)!, seatBar: 2 });
+    expect((await anchorTheRecordsHere(doorsOf(ADA))).anchored).toBeGreaterThan(0);
+    expect(acmeChain.landed.at(-1)?.seatBar).toBe(2);
+    /* The bar falls back to the threshold afterwards. */
+    chains.set(CO, { ...chains.get(CO)!, seatBar: 1 });
+    /* RED WHEN: an anchored demotion is held to the threshold its batch's header names, not the seat bar of the block it landed in. */
+    expect(await roleOf(BO)).toBe(before);
+    expect(before).not.toBe('viewer');
+  });
+
+  it('A DEMOTION SIGNED AT THE THRESHOLD AND NOT YET ANCHORED IS NOT BELIEVED WHILE THE WALLET READS A HIGHER POLICY BAR ON THE ACCOUNT', async () => {
+    heldBy([ADA, BO]);
+    const before = await roleOf(BO);
+    await roleSetBy(BO, 'viewer', ADA);
+    expect(await roleOf(BO)).toBe('viewer');
+    /* The account now stores a policy bar of two, as the person's own wallet reads it. */
+    chains.set(CO, { ...chains.get(CO)!, seatBar: 2 });
+    /* RED WHEN: a device judges a demotion not yet anchored against the account's threshold, as its wallet read it, below its seat bar. */
+    expect(await roleOf(BO)).toBe(before);
+    chains.set(CO, { ...chains.get(CO)!, seatBar: 1 });
   });
 
   it('TWO ANCHORS IN ONE BLOCK: A CHANGE FIRST ANCHORED AT A HEAD THE HISTORY NEVER SHOWS IS COUNTED AGAINST THE HOLDERS ITS BATCH NAMED', async () => {
@@ -183,7 +210,7 @@ describe('A CHANGE IS COUNTED AGAINST WHO HELD THE ACCOUNT WHEN IT WAS ANCHORED,
     await ADA.entered.enter([await aRecordFiledBy(ADA, 'pol_approvals_race')]);
     refused.length = 0;
     /* Before Ada's anchor lands, the account's threshold changes from 1 to 2: the same seats, other approvals. */
-    meanwhile = () => { chains.set(CO, { ...chains.get(CO)!, approvals: 2 }); };
+    meanwhile = () => { chains.set(CO, { ...chains.get(CO)!, approvals: 2, seatBar: 2 }); };
     expect((await anchorTheRecordsHere(doorsOf(ADA))).anchored).toBeGreaterThan(0);
     /* RED WHEN: a refusal whose head did not move is not read again - the approvals moved, and the device must anchor again. */
     expect(refused).toEqual(['the approvals the account requires changed after this device judged the batch']);

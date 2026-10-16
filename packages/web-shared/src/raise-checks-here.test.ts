@@ -80,6 +80,10 @@ describe('THE ONE LIST OF RAISE CHECKS', () => {
     /* RED WHEN: a round is raised or approved on a policy this device could not read - it would be raised on a guess. */
     expect(() => policyCheck(raisedNeeding('2'), under({ state: 'unread', why: 'the wallet did not answer' })))
       .toThrow(/could not read the spending policy of the vault this run is paid from \(the wallet did not answer\)/u);
+    /* RED WHEN: a policy nobody here can read is said to be fixed by setting it again, which a re-set of the same terms is refused for. */
+    expect(() => policyCheck(raisedNeeding('2'), under({ state: 'unread', why: 'the wallet did not answer' })))
+      .toThrow(/a signer who may set spending policies and can read it re-seals it from their own device, or changes its terms\.?$/u);
+    expect(() => policyCheck(raisedNeeding('2'), under({ state: 'unread', why: 'x' }))).not.toThrow(/opening the company/u);
     /* RED WHEN: a round from a vault with a policy for another currency only is raised - the chain charges it to nothing and never pays it. */
     expect(() => policyCheck(raisedNeeding('2'), under({ state: 'not-for-this-currency' }))).toThrow(/none for the currency this run pays in/u);
     /* RED WHEN: a round whose window crosses from one period into the next is raised - the chain would never charge it (fees spent for nothing). */

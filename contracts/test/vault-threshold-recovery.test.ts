@@ -35,7 +35,7 @@
  * `ContractStateProvider`, so the vault's cross-contract call into the account
  * executes in this process. No node, no proof server, no wallet, no deploy.
  *
- * WHAT THIS DOES NOT SHOW, stated in the same terms the round asked for: it
+ * WHAT THIS DOES NOT SHOW, stated plainly: it
  * does not show that a proof is produced for any of these circuits, that a node
  * accepts the resulting transaction, or that a person can drive the recovery
  * from a screen. It shows that the compiled circuits, executed in order, refuse
@@ -53,6 +53,7 @@ import { carryTheAccount, startTheVault, TEST_VAULT_SECRET } from './start-a-vau
 import { type PayoutLeafInput } from '../../src/midnight/payout-tree.js';
 import { toHex, fromHex } from '../../src/core/crypto.js';
 import { noFurtherNote } from '../../src/midnight/vault-step-notes.js';
+import { seatBarOf } from 'midnight-identity/profile/records-key';
 
 /* The clock and the run's window, pinned for the reason the simulator's own
  * comment gives: nothing here measures real time. */
@@ -142,7 +143,7 @@ describe('a vault whose threshold nobody can meet is recovered, and pays', () =>
    *
    * Propose, then approve as each named signer, and answer the id the chain
    * filed it under. Nothing here reaches into the ledger and writes a value:
-   * step 3 of the recovery is only meaningful if the round is real, and a
+   * step 3 of the recovery is only meaningful if the proposal is real, and a
    * helper that shortcut it would be testing a path no signer has.
    */
   const governedRound = async (
@@ -256,7 +257,7 @@ describe('a vault whose threshold nobody can meet is recovered, and pays', () =>
 
     /* --- 3. LOWER IT BY A GOVERNED ROUND, AT THE SEAT BAR -------------------
      *
-     * The round that undoes it needs TWO approvals — the higher of the
+     * The proposal that undoes it needs TWO approvals — the higher of the
      * account's number and the approvals a policy change needs, both two —
      * while the vault it concerns demands three. That asymmetry is the
      * recovery. `setVaultThresholdTo` asserts the count it settled at, and the
@@ -299,8 +300,8 @@ describe('a vault whose threshold nobody can meet is recovered, and pays', () =>
   it('THE CHAIN REFUSES A VAULT THRESHOLD ABOVE THE SIGNERS SEATED, as ours does',
     async () => {
     /*
-     * BOTH REFUSALS NOW, pinned so a later round cannot delete one believing
-     * the other covers it.
+     * BOTH REFUSALS NOW, pinned so that neither can be deleted in the belief
+     * that the other covers it.
      *
      *   THE CHAIN     `setVaultThreshold` refuses a number above the signers
      *                 seated, as `setPolicy` refuses such a band: a vault
@@ -494,6 +495,75 @@ describe("a vault's own threshold guards who is seated", () => {
     await expect(sim.as(carrying(sim, A, out)).removeSigner(sim.leafOf(C), oid))
       .rejects.toThrow(/seating, removing or re-seating a signer needs as many approvals as a policy change needs/);
     expect(sim.ledger.signerLeaves.size()).toBe(3n);
+  });
+
+  it('THE SEAT BAR seatBarOf WORKS OUT IS THE ONE THE ACCOUNT HOLDS A SEATING AND A REMOVAL BY amendSigner TO', async () => {
+    const SEAT_BAR = /seating, removing or re-seating a signer needs as many approvals as a policy change needs/;
+    const THRESHOLD_GATE = /not enough approvals yet/;
+    /* The number `seatBarOf` makes of the account's threshold and its stored bar. */
+    const neededOf = (sim: AccountSimulator) => Number(seatBarOf(sim.ledger.threshold as bigint, bar(sim) ?? null));
+    const seat = async (sim: AccountSimulator, who: Who, by: Who[], seed: number) => {
+      const c = govChange(seed);
+      const id = await round(sim, pureCircuits.signerAddPayload(sim.leafOf(who)), c, by);
+      return sim.as(carrying(sim, A, c)).addSigner(sim.leafOf(who), id);
+    };
+    const remove = async (sim: AccountSimulator, who: Who, by: Who[], seed: number) => {
+      const c = govChange(seed);
+      const id = await round(sim, pureCircuits.removeSignerPayload(sim.leafOf(who)), c, by);
+      return sim.as(carrying(sim, A, c)).removeSigner(sim.leafOf(who), id);
+    };
+    const holds = (sim: AccountSimulator, who: Who) => sim.ledger.signerLeaves.member(sim.leafOf(who));
+
+    /* A stored bar of three above a threshold of two: the only case where the account's own bar sits above the threshold
+     * gate, so short approvals pass `requireApproved` and reach `requireSeatBar`. */
+    const above = await live(2n);
+    await setVault(above, VAULT, 3n, 163, [A, B, C]);
+    expect(bar(above)).toBe(3n);
+    /* RED WHEN: seatBarOf is the threshold alone, below the stored bar. */
+    expect(neededOf(above)).toBe(3);
+    /* RED WHEN: the account holds a seating to its threshold alone, below the stored bar: two of three seat a fourth. */
+    await expect(seat(above, D, [A, B], 164)).rejects.toThrow(SEAT_BAR);
+    await seat(above, D, [A, B, C].slice(0, neededOf(above)), 165);
+    expect(holds(above, D)).toBe(true);
+    /* RED WHEN: the account holds a removal by amendSigner to its threshold alone, below the stored bar: two of four remove one. */
+    await expect(remove(above, D, [A, B], 166)).rejects.toThrow(SEAT_BAR);
+    await remove(above, D, [A, B, C].slice(0, neededOf(above)), 167);
+    expect(holds(above, D)).toBe(false);
+    /* RED WHEN: a removal by amendSigner may leave fewer seated than the stored bar: three of three leave two under a bar of three. */
+    await expect(remove(above, C, [A, B, C], 168)).rejects.toThrow(/that would leave fewer signers than a policy change needs/);
+    expect(holds(above, C)).toBe(true);
+
+    /*
+     * Where the stored bar is none, or below the threshold, the seat bar is the threshold, which `requireApproved` already
+     * demands: approvals short of it never reach `requireSeatBar`, so its own max over the two is not observable here.
+     * These cases pin that seatBarOf asks for no more than the account does, and the gate a short count meets.
+     */
+    const unset = await live(2n);
+    expect(bar(unset)).toBeUndefined();
+    /* RED WHEN: seatBarOf asks for other than the threshold where no bar is stored. */
+    expect(neededOf(unset)).toBe(2);
+    /* RED WHEN: a seating short of the threshold is refused by anything but the account's threshold gate, or is not refused. */
+    await expect(seat(unset, D, [A], 171)).rejects.toThrow(THRESHOLD_GATE);
+    /* RED WHEN: the account demands more than the threshold, seating or removing, where no bar is stored. */
+    await seat(unset, D, [A, B], 172);
+    await remove(unset, D, [A, B], 173);
+    expect(holds(unset, D)).toBe(false);
+
+    const below = await live(2n);
+    await setVault(below, VAULT, 2n, 166, [A, B]);
+    expect(bar(below)).toBe(2n);
+    const up = govChange(167);
+    const uid = await round(below, pureCircuits.setThresholdPayload(3n), up, [A, B]);
+    await below.as(carrying(below, A, up)).setThreshold(3n, uid);
+    expect(below.ledger.threshold).toBe(3n);
+    /* RED WHEN: seatBarOf is the stored bar alone, below a threshold raised past it. */
+    expect(neededOf(below)).toBe(3);
+    /* RED WHEN: a seating short of the raised threshold is refused by anything but the account's threshold gate, or is not refused. */
+    await expect(seat(below, D, [A, B], 174)).rejects.toThrow(THRESHOLD_GATE);
+    /* RED WHEN: the account demands more than the higher of its threshold and its stored bar, seating or removing. */
+    await seat(below, D, [A, B, C], 175);
+    await remove(below, D, [A, B, C], 176);
+    expect(holds(below, D)).toBe(false);
   });
 
   it('a vault threshold above the bar raises it, and a lower later one never lowers it', async () => {

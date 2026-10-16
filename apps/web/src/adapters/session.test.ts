@@ -198,7 +198,7 @@ describe('who is signed in', () => {
   /*
    * RED WHEN: nobody signed in, the service out of reach, and companies that
    * cannot be listed together are not told apart; or a company is read for
-   * more than the chain publishes of it, or a row that is not one is kept.
+   * more than the chain publishes of it (the list carries no approvals: the figure is the wallet's), or a row that is not one is kept.
    */
   it('tells nobody, out of reach and records kept apart from a person, and reads each company for what may be shown', async () => {
     const m = await load();
@@ -217,7 +217,7 @@ describe('who is signed in', () => {
     });
     expect(await m.whoIsSignedIn()).toEqual({
       of: m.OF.signedIn, person: { id: 'u1', name: 'Priya' },
-      companies: [{ id: 'c1', createdAt: '2026-09-01T00:00:00.000Z', signers: 3, approvalsNeeded: 2 }],
+      companies: [{ id: 'c1', createdAt: '2026-09-01T00:00:00.000Z', signers: 3 }],
     });
   });
 });
@@ -461,7 +461,7 @@ describe('who holds a company, asked of the account with nothing shown', () => {
     fromTheQuietFrame({
       schema: 'midnight-identity/holders-answer/v1', origin: window.location.origin, company, account, nonce: quietPosted[0]!.nonce, at: 1,
       holders: {
-        committee: [{ tag: 'schnorr', value: '11'.repeat(32) }], threshold: 1, seats: ['5a'.repeat(32)], approvals: 1, adoptedVaults: [],
+        committee: [{ tag: 'schnorr', value: '11'.repeat(32) }], threshold: 1, seats: ['5a'.repeat(32)], approvals: 1, vaultThresholds: [], policyBar: null, seatBar: 1, adoptedVaults: [],
         founding: '5a'.repeat(32), foundingCommittee: [{ tag: 'schnorr', value: '11'.repeat(32) }],
       },
     });

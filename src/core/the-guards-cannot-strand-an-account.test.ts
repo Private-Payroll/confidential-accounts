@@ -16,28 +16,30 @@ function present<T>(value: T | undefined): T {
 }
 
 /**
- * **THE GUARDS AGAINST STRANDING AN ACCOUNT STOP TRUSTING OUR OWN NUMBER,
+ * **THE GUARDS AGAINST STRANDING AN ACCOUNT DECIDE FROM THE CHAIN'S NUMBERS,
  * AND A GUARD THAT CANNOT READ THE CHAIN REFUSES.**
  *
  * Three sites, one class. `departing()` and the multi-removal guard refuse a
  * removal that would leave too few signers; `proposeThresholdChange` refuses a
- * threshold above the seats. All three compared against `account.policy.threshold`
- * and a count of our own roster — OUR COPIES of two numbers the contract owns.
+ * threshold above the seats. All three measure against the threshold and the
+ * seated count the ledger holds, never against the stored record.
  *
- * **THE DANGEROUS DIRECTION IS DRIFT BELOW THE CHAIN'S VALUE.** Our copy saying
- * 2 where the contract says 3 makes the guard permit a removal leaving two
- * signers where three are required, and from that moment every proposal on the
- * account is unapprovable and the money in it is unspendable by anybody.
- * **Nothing goes wrong when the signer is removed.** It goes wrong the next time
- * somebody tries to approve something, which may be a month later.
+ * **THE DANGEROUS DIRECTION IS A NUMBER BELOW THE CONTRACT'S.** A threshold
+ * written into the stored record by anyone who holds the key is not read: were
+ * it read, a stored 2 against the contract's 3 would make the guard permit a
+ * removal leaving two signers where three are required, and from that moment
+ * every proposal on the account is unapprovable and the money in it is
+ * unspendable by anybody. **Nothing goes wrong when the signer is removed.** It
+ * goes wrong the next time somebody tries to approve something, which may be a
+ * month later.
  *
  * Two claims are under test, and they fail in opposite directions, which is why
  * they are in one file:
  *
- * 1. **The numbers come off `LedgerStatus`.** Each test below puts a DIFFERENT
- *    value in our stored copy from the one the ledger holds, and requires the
- *    outcome to follow the ledger's. Both directions appear: a refusal our copy
- *    would not have made, and a permission our copy would have refused.
+ * 1. **The numbers come off `LedgerStatus`.** Each test below writes a DIFFERENT
+ *    value into the stored record from the one the ledger holds, and requires
+ *    the outcome to follow the ledger's. Both directions appear: a refusal the
+ *    stored record would not have made, and a permission it would have refused.
  * 2. **"We do not know" must not become "go ahead".** A status we cannot read
  *    is a third outcome; in an approval, not knowing means not proceeding.
  *    **In a guard the conservative direction is the opposite one** — a guard
@@ -97,10 +99,11 @@ function harness(bend?: Bend) {
 /**
  * Opens, edits and re-seals the account the way a key holder would.
  *
- * This is how our copy is made to disagree with the chain WITHOUT touching the
- * chain: the ledger goes on holding what it was opened with, and the sealed
- * record — the only thing an operator can reach — says something else. It is
- * precisely the authority a key holder has, and the drift under test here.
+ * This is how the stored record is made to disagree with the chain WITHOUT
+ * touching the chain: the ledger goes on holding what it was opened with, and
+ * the sealed record — the only thing an operator can reach — says something
+ * else. It is precisely the authority a key holder has, and the disagreement
+ * under test here.
  */
 function editAccount(
   h: ReturnType<typeof harness>,
@@ -114,8 +117,8 @@ function editAccount(
   h.store.putAccount(sealAccount(account, viewingKey, rec.pendingSigners, rec.keyEpoch));
 }
 
-describe('the bar and the seats are the ledger\'s, and our copy cannot move either', () => {
-  it('refuses a removal our stale copy of the threshold would have allowed', async () => {
+describe('the bar and the seats are the ledger\'s, whatever the stored record says', () => {
+  it('refuses a removal that leaves fewer signers than the ledger\'s threshold, with a lower threshold written into the stored record', async () => {
     /*
      * **SITE 1 — `departing()`.** The ledger is opened at 3 of 3 and stays
      * there. Our sealed copy is edited to 2, which is drift in the dangerous
@@ -128,7 +131,7 @@ describe('the bar and the seats are the ledger\'s, and our copy cannot move eith
      */
     const h = harness();
     const c = await h.accounts.create('Northwind Ltd', THREE, 3, undefined, drawCompanyLabel());
-    editAccount(h, c.account.id, c.viewingKey, a => { a.policy.threshold = 2; });
+    editAccount(h, c.account.id, c.viewingKey, a => { (a.policy as unknown as { threshold: number }).threshold = 2; });
 
     /*
      * THE REFUSAL ITSELF IS THE FIRST ASSERTION, and that is not stylistic. A
@@ -144,14 +147,15 @@ describe('the bar and the seats are the ledger\'s, and our copy cannot move eith
 
     const err = await attempt.catch((e: Error) => e) as Error;
     expect(err.message).toMatch(/could never approve anything again/);
-    expect(err.message).toMatch(/our stored copy of the threshold says 2/);
+    /* A threshold written into the stored record is not read, so the refusal does not name it. */
+    expect(err.message).not.toMatch(/our stored copy/);
 
     /* And nothing was opened: a round that can never settle collects no signatures. */
     expect((await h.accounts.ledgerStatus(c.account.id))!.openProposals).toEqual([]);
     expect(h.accounts.open(c.account.id, c.viewingKey).signers).toHaveLength(3);
   });
 
-  it('refuses a rotation our stale copy of the threshold would have allowed', async () => {
+  it('refuses a rotation that leaves fewer signers than the ledger\'s threshold, with a lower threshold written into the stored record', async () => {
     /*
      * **SITE 2 — the multi-removal guard, whose own comment already said this
      * plainly.** Same drift, one layer over: excluding Cleo from a rotation
@@ -163,13 +167,14 @@ describe('the bar and the seats are the ledger\'s, and our copy cannot move eith
      */
     const h = harness();
     const c = await h.accounts.create('Northwind Ltd', THREE, 3, undefined, drawCompanyLabel());
-    editAccount(h, c.account.id, c.viewingKey, a => { a.policy.threshold = 2; });
+    editAccount(h, c.account.id, c.viewingKey, a => { (a.policy as unknown as { threshold: number }).threshold = 2; });
 
     const attempt = h.accounts.rotate(c.account.id, c.viewingKey, [present(c.secrets[2]).signerId]);
     await expect(attempt).rejects.toThrow(/would leave 2 active of a threshold of 3/);
 
     const err = await attempt.catch((e: Error) => e) as Error;
-    expect(err.message).toMatch(/our stored copy of the threshold says 2/);
+    /* A threshold written into the stored record is not read, so the refusal does not name it. */
+    expect(err.message).not.toMatch(/our stored copy/);
     /* Nothing moved: the old key still opens the account at the old epoch. */
     expect(h.accounts.require(c.account.id).keyEpoch).toBe(0);
     expect(h.accounts.open(c.account.id, c.viewingKey).name).toBe('Northwind Ltd');
@@ -202,21 +207,19 @@ describe('the bar and the seats are the ledger\'s, and our copy cannot move eith
     expect((await h.accounts.ledgerStatus(c.account.id))!.openProposals).toEqual([]);
   });
 
-  it('allows the change our stale copy would have called a no-op', async () => {
+  it('allows lowering the threshold to a number the stored record already names', async () => {
     /*
-     * **THE SAME SITE, THE OTHER DIRECTION, AND THE SECOND READ OF OUR COPY IN
-     * THAT METHOD.** `docs/how-money-can-be-lost.md` names `:867` — the
-     * "already that number" check — as the third site, where the heading above
-     * it names the seated count. Both were ours; both are the ledger's now, and
-     * this is the one that shows the second.
+     * **THE SAME SITE, THE OTHER DIRECTION: THE "ALREADY THAT NUMBER" CHECK.**
+     * The seated count and that check both read the ledger.
      *
-     * The contract is at 3 and our copy says 2. Lowering the threshold to 2 is
-     * a real change that a stale copy calls "already 2" and refuses — a round
-     * the company is entitled to raise, blocked by a number we alone hold.
+     * The contract is at 3 and the stored record says 2. Lowering the threshold
+     * to 2 is a real change that a check reading the stored record would call
+     * "already 2" and refuse — a proposal the company is entitled to raise,
+     * blocked by a number the ledger does not hold.
      */
     const h = harness();
     const c = await h.accounts.create('Northwind Ltd', THREE, 3, undefined, drawCompanyLabel());
-    editAccount(h, c.account.id, c.viewingKey, a => { a.policy.threshold = 2; });
+    editAccount(h, c.account.id, c.viewingKey, a => { (a.policy as unknown as { threshold: number }).threshold = 2; });
 
     const p = await h.accounts.proposeThresholdChange(
       c.account.id, c.viewingKey, 2, present(c.secrets[0]).signerId);

@@ -20,7 +20,7 @@ import type { SealedAccount } from '../core/types.js';
 import { signCompanyFiling, type SealedCompanyRecord } from '../midnight/sealed-record-wire.js';
 import type { DirectoryFiling } from '../midnight/seat-directory.js';
 import { directorySeats, leavesOfTheContract } from './directory-seats.js';
-import { aCompanysRecords } from './record-tree-double.js';
+import { aCompanysRecords, barOnATestChain } from './record-tree-double.js';
 
 interface RosterStore {
   getAccount(accountId: string): SealedAccount | null;
@@ -87,8 +87,14 @@ export function aRosterASeatFiled(
       leaves: leavesOfTheContract,
       holders: async () => {
         const c = (await dir.directoryChain(accountId, held))!;
+        /*
+         * The approvals a change of who is seated needs, as the test's chain holds them: refused where it names none. A bar
+         * above the threshold is the policy bar the chain stores; at the threshold, none is stored.
+         */
+        const seatBar = barOnATestChain(c);
         return {
-          ...c.seats, approvals: c.approvals, adoptedVaults: [], founding: held[0]!,
+          ...c.seats, approvals: c.approvals, vaultThresholds: [], policyBar: seatBar > c.approvals ? seatBar : null, seatBar,
+          adoptedVaults: [], founding: held[0]!,
           foundingCommittee: [c.seats.committee[0]!], account: rec.contractAddress as never,
         };
       },

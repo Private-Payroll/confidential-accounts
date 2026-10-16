@@ -292,6 +292,6 @@ export const policyOpeningFor = async (
     return { ...opened, version: rec.version };
   }
   throw new PolicyNotOpenedHere('None of the company\'s records of this vault\'s spending policy opens the policy the chain '
-    + 'holds for it, so this device cannot say what the policy is. Ask a signer who set it to set it again from their device.'
+    + 'holds for it, so this device cannot say what the policy is. A signer who may set spending policies and can read it re-seals it from their own device, or changes its terms.'
     + (reasons.length === 0 ? '' : ` (${reasons[0]})`));
 };

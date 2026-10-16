@@ -13,6 +13,11 @@
  * opening and its wallet key sealed under the company's roster key
  * (`directoryEntryMade`). The salt and public key are drawn from `n` so a
  * test's seats are the same on every run.
+ *
+ * **EVERY SEAT BUT A COMPANY'S FIRST IS INVITED**: the first seat claimed is
+ * the one the account's deploy seated, and each later entry carries an
+ * invitation that first seat signed for its person, as a member's device
+ * requires (`applyFiling`).
  */
 import { identityFromSecret } from 'midnight-identity';
 import { committeeKeyFor } from 'midnight-identity/profile/committee-key';
@@ -21,6 +26,7 @@ import { sha256 } from '@noble/hashes/sha2.js';
 import { signingPublicKeyOf, toHex, utf8, type Hex } from '../core/crypto.js';
 import type { SealedAccount } from '../core/types.js';
 import { directoryEntryMade, type DirectoryFiling } from '../midnight/seat-directory.js';
+import { signSeatInvitation } from '../core/invitation.js';
 import { seatBlinding, type LeafOf, type SeatOpening, type WalletKey } from '../core/seat-opening.js';
 import { MidnightCommitments } from '../midnight/commitments.js';
 
@@ -55,7 +61,7 @@ interface DirectoryStore {
 
 /** Who holds each company's account, as the chain answers the server: one entry per seat claimed. */
 export const directorySeats = () => {
-  const holding = new Map<string, { committee: Array<{ tag: string; value: string }>; seats: string[] }>();
+  const holding = new Map<string, { committee: Array<{ tag: string; value: string }>; seats: string[]; inviter: Hex }>();
   return {
     /**
      * Files `person`'s entry in `account`'s directory, signed by a wallet made
@@ -70,10 +76,17 @@ export const directorySeats = () => {
       const { seat, opening } = seatOpenedFor(committeeKey, n);
       const statement = signDirectoryEntry(identity, rec.companyLabel as never, rec.contractAddress as never,
         new Uint8Array(32).fill((n + 100) % 256), signingPublicKeyOf(signingSecret as Hex), seat);
-      const h = holding.get(account) ?? { committee: [], seats: [] };
+      const h = holding.get(account) ?? { committee: [], seats: [], inviter: signingSecret as Hex };
+      /* The first seat is the founding one, which nobody invited; every later one is invited by it. */
+      const invited = h.seats.length === 0 ? undefined : signSeatInvitation({
+        company: account, invitation: toHex(sha256(utf8(`a test invitation:${account}:${person}`))), person, name: person, role: 'admin', leaf: seat as Hex,
+      }, h.inviter);
       if (!store.fileDirectory(account, {
         company: account, version: h.seats.length + 1,
-        change: { kind: 'claim', entry: directoryEntryMade({ company: account, person, committeeKey, signed: statement, opening, signingSecret: signingSecret as Hex, viewingKey }) },
+        change: { kind: 'claim', entry: directoryEntryMade({
+          company: account, person, committeeKey, signed: statement, opening, signingSecret: signingSecret as Hex, viewingKey,
+          ...(invited === undefined ? {} : { invited }),
+        }) },
       })) {
         throw new Error(`the directory of ${account} did not take ${person}'s entry`);
       }
@@ -86,7 +99,7 @@ export const directorySeats = () => {
     directoryChain: async (accountId: string, seats: readonly string[]) => {
       const h = holding.get(accountId);
       return h === undefined ? null : {
-        seats: { committee: [...h.committee], threshold: 1, seats: seats.filter((x) => h.seats.includes(x)) }, approvals: 1,
+        seats: { committee: [...h.committee], threshold: 1, seats: seats.filter((x) => h.seats.includes(x)) }, approvals: 1, seatBar: 1,
       };
     },
   };

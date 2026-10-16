@@ -5,6 +5,7 @@ import type { SealedAccount } from '../../../../src/core/types.js';
 import type { Hex } from '../../../../src/core/crypto.js';
 import { SealedNotePool } from '../../../../src/midnight/vault-pool.js';
 import { deviceVaultHoldings } from 'vaults-web-shared/device-vault-holdings.js';
+import { fileThePoolTheChainHolds } from 'vaults-web-shared/deposit-on-device.js';
 import { api, companyKeyReleasedFor, currentUser, viewingKeyFor } from 'vaults-web-shared/keyring.js';
 import { deviceRecordsFor, deviceSignerFrom, readersIn } from 'vaults-web-shared/vault-page-doors.js';
 import { wireOf } from 'vaults-web-shared/vault-operation.js';
@@ -90,6 +91,8 @@ export async function readVaultPrivateMoney(
       },
       pool: async (v) => (await pool.load(v)).notes,
       heldCommitmentOf: async (v, note) => (await builder.commitments({ vault: v, coin: wireOf(note) })).held,
+      /* A pool a seat that left filed past its boundary, which the chain vouches for, is filed again under this signer's own seat. */
+      fileAgain: (v, held) => fileThePoolTheChainHolds({ vault: v, me: mine, records, signers: readers.signers, held }),
       /* Only what the vault holds is read here; whether payments fit is asked where a payment is made. */
       paymentsFit: () => { throw new Fault(FAULT.vaultPaymentsNotAsked); },
     });

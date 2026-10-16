@@ -10,17 +10,23 @@
  * `walletKeyProvedBy` says the opening makes that seat's leaf on the chain.
  * Without the salt nobody can tell from the leaf whose key it holds.
  *
- * **THE SERVICE NEVER SEES IT.** The opening travels in one place only: the
- * seat's own entry in the company's directory, sealed with the wallet key and
- * the wallet's signature under the company's roster key (`sealSeatProof`), so
- * only a member's device opens it (`openSeatProof`). The service keeps the
- * entry as it is handed in and can tell from it neither which wallet key a seat
- * holds nor which seat moved an anchor; the chain holds only the leaf.
+ * **WHERE IT TRAVELS.** In the seat's own entry in the company's directory,
+ * sealed with the wallet key and the wallet's signature under the company's
+ * roster key (`sealSeatProof`), so only a member's device opens it
+ * (`openSeatProof`); and, before the seat is approved, in the seat request
+ * sealed to the company's inbox, which only a holder of the company's viewing
+ * key opens. A signer's join code carries it in the clear beside the leaf and
+ * the wallet key the code already names together, so it tells whoever carries
+ * the code nothing about whose seat it is that the code does not. The service
+ * keeps the entry and the request as they are handed in and can tell from them
+ * neither which wallet key a seat holds nor which seat moved an anchor; the
+ * chain holds only the leaf.
  *
  * Pure: the page and the service both import it.
  */
 import { newBlinding, type Hex, type Sealed } from './crypto.js';
 import { openRecord, sealRecord } from './sealed-records.js';
+import type { SignedSeatInvitation } from './invitation.js';
 import {
   seatBlinding, walletKeyProvedBy, type LeafOf, type SeatOpening, type WalletKey,
 } from 'midnight-identity/profile/records-key';
@@ -62,13 +68,20 @@ const onlyTheOpening = (o: SeatOpening): SeatOpening => ({
  * **WHAT A SEAT'S DIRECTORY ENTRY SEALS FROM THE SERVICE**: the seat's wallet
  * key, the wallet's signature over the entry's statement (which only that key
  * checks, so it would name the key to anyone holding a list of keys to try),
- * and the seat's opening of its own leaf.
+ * the seat's opening of its own leaf, and the invitation a seat signed for it.
  */
 export interface SeatProof {
   readonly committeeKey: WalletKey;
   /** The wallet's BIP-340 signature over the entry's statement, 128 lower-case hex characters. */
   readonly signature: string;
   readonly opening: SeatOpening;
+  /**
+   * Who the seat is for, as the seat that invited signed it: what a member's
+   * device holds the entry's person, and on the code path its leaf, to. Sealed
+   * with the rest, so the service never reads the name or role it gives.
+   * Absent only for the founding seat, which nobody invited.
+   */
+  readonly invited?: SignedSeatInvitation;
 }
 
 const HEX128 = /^[0-9a-f]{128}$/u;
@@ -79,6 +92,7 @@ export const sealSeatProof = (company: string, proof: SeatProof, viewingKey: Hex
     committeeKey: { tag: proof.committeeKey.tag, value: proof.committeeKey.value.toLowerCase() },
     signature: proof.signature.toLowerCase(),
     opening: onlyTheOpening(proof.opening),
+    ...(proof.invited === undefined ? {} : { invited: proof.invited }),
   }, viewingKey);
 
 /**
@@ -96,5 +110,9 @@ export const openSeatProof = (company: string, sealed: Sealed, viewingKey: Hex):
   if (typeof p !== 'object' || p === null || seatOpeningRefusal(p.opening) !== null || typeof p.signature !== 'string'
     || !HEX128.test(p.signature) || typeof p.committeeKey !== 'object' || p.committeeKey === null
     || p.committeeKey.tag !== 'schnorr' || typeof p.committeeKey.value !== 'string' || !HEX64.test(p.committeeKey.value)) return null;
-  return { committeeKey: { tag: 'schnorr', value: p.committeeKey.value }, signature: p.signature, opening: onlyTheOpening(p.opening!) };
+  /* Who the seat is for is carried as sealed, and judged where the entry is (`applyFiling`). */
+  return {
+    committeeKey: { tag: 'schnorr', value: p.committeeKey.value }, signature: p.signature, opening: onlyTheOpening(p.opening!),
+    ...(p.invited === undefined ? {} : { invited: p.invited }),
+  };
 };

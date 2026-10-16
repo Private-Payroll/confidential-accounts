@@ -1,6 +1,8 @@
 import { signingPublicKeyOf, type Hex } from '../../../../src/core/crypto.js';
 import { recordsEnteredOver } from 'vaults-web-shared/record-entered-here.js';
-import type { Account } from '../../../../src/core/types.js';
+import type { Account, SealedProposal } from '../../../../src/core/types.js';
+import { seatInviterIn } from '../../../../src/core/proposal-filing.js';
+import { inviterForTheWallet } from 'vaults-web-shared/invitation-on-device.js';
 import {
   api, companyKeysForVaults, currentUser, directoryEntryOwed, invitedByForTheWallet, oweDirectoryEntry, recordsKeyFromTheWallet,
 } from 'vaults-web-shared/keyring.js';
@@ -8,6 +10,7 @@ import { fileTheOwedDirectoryEntry } from 'vaults-web-shared/vault-page-doors.js
 import { foldOffersHere, offerVaultKeysHere } from 'vaults-web-shared/roster-here.js';
 import type { Inviter } from '../../../../src/core/invitation.js';
 import { rosterReadsFor } from './filing-judge.js';
+import { SERVICE } from './company-records.js';
 import { ACT_REFUSAL, ACTED, type ActRefusal } from './refusals.js';
 import { ACCOUNT_ORIGIN } from './session.js';
 import { theVaultBuilder } from './vault-builder.js';
@@ -62,8 +65,23 @@ export async function giveTheVaultKeys(
   if (person === null) return { of: ACTED.refused, why: ACT_REFUSAL.notSignedIn };
   const released = await companyKeysForVaults(companyId, ACCOUNT_ORIGIN);
   const signingKey = signingPublicKeyOf(signer.signingSecret).toLowerCase();
+  /*
+   * The inviter handed to the wallet: the one kept from the invitation (or its re-issue), or the seat that raised the
+   * proposal seating this person, whichever the account holds now as their own wallet reads it (`inviterForTheWallet`).
+   * A list or a read that cannot be had leaves the kept one, and the wallet says what is wrong with it.
+   */
+  let carried: Inviter | null = null;
+  let onTheChain: readonly string[] = [];
+  try {
+    const listed: unknown = await api(SERVICE.company + companyId + SERVICE.proposals);
+    carried = seatInviterIn(Array.isArray(listed) ? listed as SealedProposal[] : [], companyId, viewingKey, seat);
+    onTheChain = (await rosterReadsFor(companyId, released.company, released.account).holders()).seats;
+  } catch {
+    /* Nothing better than what this device kept. */
+  }
   const signed = await recordsKeyFromTheWallet(ACCOUNT_ORIGIN, {
-    company: released.company, account: released.account, seat, signingKey, ...invitedByForTheWallet(signer.invitedBy),
+    company: released.company, account: released.account, seat, signingKey,
+    ...invitedByForTheWallet(inviterForTheWallet(signer.invitedBy, carried, onTheChain)),
   });
   /*
    * The answer was read against this filing key, so it carries the entry; a wallet that signed none is refused there.
@@ -75,7 +93,9 @@ export async function giveTheVaultKeys(
    * (`fileTheOwedDirectoryEntry`): seating files it, with no later press needed.
    */
   await oweDirectoryEntry(companyId, { person, company: released.company, signed: { committeeKey: signed.committeeKey, entry: signed.entry! } });
-  await fileTheOwedDirectoryEntry(api, companyId, directoryEntryOwed(companyId), async () => ({ signingSecret: signer.signingSecret, viewingKey }));
+  await fileTheOwedDirectoryEntry(api, companyId, directoryEntryOwed(companyId), async () => ({ signingSecret: signer.signingSecret, viewingKey }),
+    /* The founding seat, as the person's own wallet reads the account: the only entry filed without an invitation. */
+    async () => (await rosterReadsFor(companyId, released.company, released.account).holders()).founding ?? null);
   await offerVaultKeysHere(api, companyId, {
     signerId: signer.signerId, signingSecret: signer.signingSecret, companyKey: released.companyKey,
     committeeKey: released.committeeKey, recordsKey: signed.statement, entry: signed.entry!, viewingKey,

@@ -79,6 +79,7 @@ import { CREATION_STEPS } from '../../../src/midnight/deferral.js';
 import { PAY_KEY_PARTS } from '../../../src/midnight/pay-key-round.js';
 import type { BatchHolders } from '../../../src/midnight/record-manifest.js';
 import type { CommitteeKey } from '../../../src/midnight/seat-directory.js';
+import type { RetirementTerms } from '../../../src/core/proposal-filing.js';
 import { signerHalfOf, type SignerMaterial } from './private-state.js';
 import { refuseWhatThisDeviceDidNotMake, type AccountLedgerView, type MadeHere, type VouchedHere } from './what-this-device-made.js';
 import { sameGovernance } from './governance-compared.js';
@@ -126,6 +127,8 @@ export interface RunOnTheWire {
  */
 export type GovernanceOnTheWire =
   | { readonly kind: 'add-signer'; readonly leaf: string }
+  /** A seated signer's leaf, taken off the account. */
+  | { readonly kind: 'remove-signer'; readonly leaf: string }
   | { readonly kind: 'threshold'; readonly threshold: string }
   /** One vault's own approvals needed: the vault's address, and the number. */
   | { readonly kind: 'vault-threshold'; readonly vault: string; readonly threshold: string }
@@ -210,7 +213,8 @@ export type GovernedCallOrder =
      */
     readonly of?: { readonly governance: RoundChangeOnTheWire; readonly proposalSalt: string };
   }
-  | { readonly circuit: 'amendSigner'; readonly leaf: string; readonly proposal: string; readonly proposalSalt: string }
+  /** Seating a signer, or, with `removing`, taking a seated signer's leaf off the account. */
+  | { readonly circuit: 'amendSigner'; readonly leaf: string; readonly proposal: string; readonly proposalSalt: string; readonly removing?: true }
   | { readonly circuit: 'setThreshold'; readonly threshold: string; readonly proposal: string; readonly proposalSalt: string }
   /** Carrying out an approved change of one vault's own approvals needed. */
   | {
@@ -277,6 +281,8 @@ export interface OpenedRound {
   readonly governance?: RoundChangeOnTheWire;
   /** For a raise: the change sealed inside the proposal. */
   readonly half?: Omit<RaiseHalfOnTheWire, 'proposalSalt' | 'assetBlinding'>;
+  /** For a signer's removal: the retirement of its seat the proposal carries, which each approving device signs. */
+  readonly retirement?: RetirementTerms;
   /**
    * For an approval that changes no seat or setting: what the proposal pays, as
    * this device made it again from the company's records (`refuseWhatThisDeviceDidNotMake`).
@@ -366,6 +372,8 @@ export interface GovernedCallDeps {
     /** A run's salt, `retrySaltOf(leg, fresh)`: asked for where a payroll run is raised, approved or charged. */
     retrySaltOf?(legRoot: Uint8Array, fresh: Uint8Array): Uint8Array;
     signerAddPayload(leaf: Uint8Array): Uint8Array;
+    /** Present where a signer's removal is built; asked for only then. */
+    removeSignerPayload?(leaf: Uint8Array): Uint8Array;
     setThresholdPayload(threshold: bigint): Uint8Array;
     /** Present where a vault's own approvals needed are changed; asked for only then. */
     setVaultThresholdPayload?(vault: Uint8Array, threshold: bigint): Uint8Array;
@@ -563,8 +571,8 @@ const policyBarOf = (value: string): bigint => {
 export function argumentsFor(order: GovernedCallOrder): unknown[] {
   if (order.circuit === 'approve' || order.circuit === 'cancel') return [bytesOf('proposal\'s identity', order.proposal)];
   if (order.circuit === 'amendSigner') {
-    /* Seating, never removing, and appended rather than put into a vacated slot. */
-    return [bytesOf('signer\'s leaf', order.leaf), bytesOf('proposal\'s identity', order.proposal), false, false];
+    /* Seating appends rather than reusing a vacated slot; a removal marks the leaf's own slot vacant. */
+    return [bytesOf('signer\'s leaf', order.leaf), bytesOf('proposal\'s identity', order.proposal), false, order.removing === true];
   }
   if (order.circuit === 'setThreshold') {
     return [thresholdOf(order.threshold), bytesOf('proposal\'s identity', order.proposal)];
@@ -607,6 +615,14 @@ export function argumentsFor(order: GovernedCallOrder): unknown[] {
   const required = digitsOf('approvals the run needs', r.required ?? '0');
   return [ZERO_32, bytesOf('payout root', r.root), payees, opensAt, closesAt, required, true, bytesOf('vault', r.vault)];
 }
+
+/** The contract's own payload for taking `leaf` off the account, refused by name where this device was not given the function. */
+const removalPayloadOf = (deps: Pick<GovernedCallDeps, 'accountPure'>, leaf: string): Uint8Array => {
+  if (typeof deps.accountPure.removeSignerPayload !== 'function') {
+    throw new Error('this device was not given the account\'s function for removing a signer, so nothing was built. Reload the page to use the current build.');
+  }
+  return deps.accountPure.removeSignerPayload(bytesOf('signer\'s leaf', leaf));
+};
 
 /** The contract's own payload for adopting `vault`, refused by name where this device was not given the function. */
 const adoptionPayloadOf = (deps: Pick<GovernedCallDeps, 'accountPure'>, vault: string): Uint8Array => {
@@ -679,6 +695,7 @@ export function governancePayloadOf(deps: Pick<GovernedCallDeps, 'accountPure'>,
     throw new Error('a change of the super admins is never raised, approved or counted on the company\'s account as a signers\' proposal, so nothing was built.');
   }
   if (g.kind === 'add-signer') return deps.accountPure.signerAddPayload(bytesOf('signer\'s leaf', g.leaf));
+  if (g.kind === 'remove-signer') return removalPayloadOf(deps, g.leaf);
   if (g.kind === 'threshold') return deps.accountPure.setThresholdPayload(thresholdOf(g.threshold));
   if (g.kind === 'vault-threshold') return vaultThresholdPayloadOf(deps, g.vault, g.threshold);
   if (g.kind === 'adopt-vault') return adoptionPayloadOf(deps, g.vault);
@@ -844,8 +861,8 @@ export function refuseARaiseThatIsNotTheRecordedOne(deps: Pick<GovernedCallDeps,
   } else if (order.circuit === 'propose') {
     made = P.proposalIdOf(governancePayloadOf(deps, raisedChange(order)), P.noVault(), bytesOf('proposal\'s salt', order.half.proposalSalt));
   } else if (order.circuit === 'amendSigner') {
-    made = P.proposalIdOf(P.signerAddPayload(bytesOf('signer\'s leaf', order.leaf)), P.noVault(),
-      bytesOf('proposal\'s salt', order.proposalSalt));
+    made = P.proposalIdOf(order.removing === true ? removalPayloadOf(deps, order.leaf) : P.signerAddPayload(bytesOf('signer\'s leaf', order.leaf)),
+      P.noVault(), bytesOf('proposal\'s salt', order.proposalSalt));
   } else if (order.circuit === 'adopt') {
     made = P.proposalIdOf(adoptionPayloadOf(deps, order.vault), P.noVault(), bytesOf('proposal\'s salt', order.proposalSalt));
   } else if (order.circuit === 'sealPayKey') {
@@ -932,7 +949,7 @@ export function refuseWhatThisDeviceDidNotOpen(
   /* A withdrawal names only the proposal, and the proposal is the one this device opened. */
   if (order.circuit === 'cancel') return;
   if (order.circuit === 'amendSigner') {
-    if (g?.kind !== 'add-signer' || !same(order.leaf, g.leaf)) refuse('leaf');
+    if (g?.kind !== (order.removing === true ? 'remove-signer' : 'add-signer') || !same(order.leaf, (g as { leaf: string }).leaf)) refuse('leaf');
     return;
   }
   if (order.circuit === 'setThreshold') {
@@ -1337,6 +1354,12 @@ export function anchorHeadsAfter(
  */
 export interface AnchorLanded {
   readonly head: string;
+  /**
+   * The approvals a change of who is seated needed in the state this head's
+   * block left (`seatBarOf`): what a demotion or retirement the batch anchored
+   * is held to. A bar changed in the same block shows here as changed.
+   */
+  readonly seatBar: number;
   /** The tag of the seat that moved the head there, as the account wrote it beside the head; absent where a test's chain names none. */
   readonly tag?: string;
   readonly height: number;
@@ -1427,7 +1450,9 @@ export function accountDeployedIn(
  * history whose state holds a head other than the step before it, with the
  * head and its block; where the history names each step's call, how many
  * calls moved the anchor in that block and whether a recovery was one of them.
- * The head before the first step is the empty head.
+ * The head before the first step is the empty head. Each head's seat bar is
+ * read from that step's state with `seatBarIn`, the one reader of the
+ * account's approvals a wallet reads them with.
  */
 export function anchorsLandedIn(
   deps: Pick<GovernedCallDeps, 'accountPure' | 'accountLedger' | 'runtimeState'>,
@@ -1435,6 +1460,7 @@ export function anchorsLandedIn(
     readonly state: Uint8Array; readonly block: { readonly height: number; readonly at: number };
     readonly entryPoint?: string; readonly succeeded?: boolean;
   }>,
+  seatBarIn: (state: Uint8Array) => number,
 ): AnchorLanded[] {
   const landed: AnchorLanded[] = [];
   const blocks = new Map<number, (typeof steps)[number][]>();
@@ -1451,8 +1477,10 @@ export function anchorsLandedIn(
     const block = blocks.get(step.block.height)!;
     const named = block.some((x) => x.entryPoint !== undefined);
     const calls = block.filter((x) => x.entryPoint === 'anchor' || x.entryPoint === 'recoverAnchor');
+    const seatBar = seatBarIn(step.state);
+    if (!Number.isSafeInteger(seatBar) || seatBar < 1) throw new AnchorNotBuilt('the approvals a change of who is seated needs could not be read from the account\'s state');
     landed.push({
-      head, ...(tag === null ? {} : { tag }), height: step.block.height, at: step.block.at,
+      head, seatBar, ...(tag === null ? {} : { tag }), height: step.block.height, at: step.block.at,
       ...(named ? { anchorsInBlock: calls.length, recovered: calls.some((x) => x.entryPoint === 'recoverAnchor' && x.succeeded === true) } : {}),
     });
     before = head;
@@ -1495,6 +1523,11 @@ export interface RoundOnChain {
   readonly txRef?: string;
   readonly closedBy?: readonly string[];
   readonly failedCalls?: readonly string[];
+  /**
+   * Open, and a signer was removed or replaced since it was raised: the account's count of removals is no longer the
+   * one its hold took at the raise, so the account will never carry it out (`requireApproved`). It is raised again.
+   */
+  readonly outrun?: true;
 }
 
 /**
@@ -1514,7 +1547,15 @@ export function roundsOnChainIn(
   if (deps.accountLedger === undefined || typeof cleared !== 'function') {
     throw new Error('this device was not given the account\'s reader, so where its proposals stand on the chain was not read. Reload the page');
   }
-  type View = { openProposals: { member(id: Uint8Array): boolean; lookup(id: Uint8Array): Uint8Array }; approvalCounts: { member(id: Uint8Array): boolean; lookup(id: Uint8Array): bigint } };
+  type View = {
+    openProposals: { member(id: Uint8Array): boolean; lookup(id: Uint8Array): Uint8Array };
+    approvalCounts: { member(id: Uint8Array): boolean; lookup(id: Uint8Array): bigint };
+    proposalHolds?: { member(id: Uint8Array): boolean; lookup(id: Uint8Array): { readonly removals: bigint } };
+  };
+  /* The account's own count of signers removed, where this device was given where it keeps it. */
+  const removalKey = deps.accountPure.removalCountKey?.();
+  const removalsIn = (v: View, id: Uint8Array): bigint | null =>
+    (v.proposalHolds !== undefined && v.proposalHolds.member(id) ? BigInt(v.proposalHolds.lookup(id).removals) : null);
   const viewOf = (state: Uint8Array) => deps.accountLedger!((deps.runtimeState.deserialize(state) as { data: unknown }).data) as View;
   /* One state per block: every step of a block shows the state after the whole block. */
   const blocks: Array<{ readonly at: number; readonly steps: typeof steps[number][]; readonly view: View }> = [];
@@ -1549,9 +1590,11 @@ export function roundsOnChainIn(
     const now = blocks[blocks.length - 1]!.view;
     const approvals = now.approvalCounts.member(id) ? Number(now.approvalCounts.lookup(id)) : 0;
     const failedCalls = blocks.slice(first).flatMap(callsIn).filter((x) => !x.succeeded).map((x) => x.entryPoint ?? '');
+    const atRaise = removalKey === undefined ? null : removalsIn(now, id);
+    const outrun = atRaise !== null && removalKey !== undefined && atRaise !== (removalsIn(now, removalKey) ?? 0n);
     out.set(hex, {
       held: hexOf(now.openProposals.lookup(id)) === hexOf(cleared()) ? 'cleared' : 'open', approvals, ...base,
-      ...(failedCalls.length === 0 ? {} : { failedCalls }),
+      ...(failedCalls.length === 0 ? {} : { failedCalls }), ...(outrun ? { outrun: true as const } : {}),
     });
   }
   return out;

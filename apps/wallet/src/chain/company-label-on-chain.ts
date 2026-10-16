@@ -382,8 +382,24 @@ export type HoldersOnChain =
   | { readonly of: 'unreadable'; readonly why: string };
 
 /**
+ * The key the account keeps the approvals a policy change needs under, as 64
+ * lower-case hex characters: what the account's own `policyBarKey` makes.
+ */
+export type PolicyBarKeyRead = () => Promise<string>;
+
+/** The account's own `policyBarKey`, run in this wallet from the compiled contract it already loads. */
+export const barKeyOfTheContract: PolicyBarKeyRead = async () => {
+  const account = await import('../../../../contracts/managed/contract/index.js') as unknown as {
+    pureCircuits: { policyBarKey(): Uint8Array };
+  };
+  return hexOf32(account.pureCircuits.policyBarKey());
+};
+
+/**
  * Reads who holds the account at `account`, which must carry `label`, and the
- * seat its deploy seated (`readDeploy`). Never throws.
+ * seat its deploy seated (`readDeploy`), with the approvals it asks for, the
+ * policy bar's row found under the key `barKey` reads off the compiled
+ * contract. Never throws.
  */
 export async function holdersOnChain(
   account: AccountAddress, label: CompanyLabel, read: ContractStateHex, readDeploy: DeployStateHex,
@@ -391,12 +407,14 @@ export async function holdersOnChain(
   movements?: readonly string[],
   /** Entries of the account's map of roles to say what it holds under, read in the same answer. */
   roles?: readonly string[],
+  barKey: PolicyBarKeyRead = barKeyOfTheContract,
 ): Promise<HoldersOnChain> {
   if (readAccountAddress(account) === null) return { of: 'unreadable', why: 'that is not an account\'s address.' };
   let hex: string | null;
   let deployHex: string | null;
+  let key: string;
   try {
-    [hex, deployHex] = await Promise.all([read(account), readDeploy(account)]);
+    [hex, deployHex, key] = await Promise.all([read(account), readDeploy(account), barKey()]);
   } catch (e) {
     return { of: 'unreadable', why: e instanceof Error ? e.message : 'the read did not come back.' };
   }
@@ -407,7 +425,7 @@ export async function holdersOnChain(
     /* An account the indexer holds a state for and no deploy is not one this wallet can say who founded. */
     if (deployHex === null) return { of: 'unreadable', why: 'the indexer holds no deploy for that account.' };
     const founding = foundingInDeployState(bytesOf(deployHex), label);
-    const holders = { ...holdersInAccountState(bytes), founding: founding.seat, foundingCommittee: founding.committee };
+    const holders = { ...holdersInAccountState(bytes, key), founding: founding.seat, foundingCommittee: founding.committee };
     return {
       of: 'read', holders,
       ...(movements === undefined ? {} : { payments: paymentsInAccountState(bytes, movements) }),

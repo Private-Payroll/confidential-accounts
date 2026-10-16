@@ -6,12 +6,13 @@
  * entries.
  */
 import { describe, it, expect } from 'vitest';
+import { seatBarOf } from 'midnight-identity/profile/records-key';
 import { newSigningKeypair } from '../core/crypto.js';
 import type { RunToFile } from '../core/run-filing.js';
 import { companyRecordEntry, signManifestEntry } from '../midnight/record-manifest.js';
 import { pendingAt, TreeKept } from '../midnight/record-tree.js';
 import type { SealedCompanyRecord } from '../midnight/sealed-record-wire.js';
-import { aCompanysRecords, anchoredEntering, firstBatchOf, heldEntering, type FoundedWith } from './record-tree-double.js';
+import { aCompanysRecords, anchoredEntering, firstBatchOf, heldEntering, heldFiledBy, heldServing, type FoundedWith } from './record-tree-double.js';
 import type { DirectoryBelieved } from 'vaults-web-shared/vault-page-doors.js';
 
 const CO = 'acct_tree_double';
@@ -64,7 +65,7 @@ describe('WHO HOLDS THE ACCOUNT NOW IS READ FROM THE CHAIN', () => {
     const byOneKey = await heldEntering(CO, [], two, READER);
     expect(byOneKey.checkedFrom).toMatchObject({ by: 'latest' });
     /* RED WHEN: a read ignores the seats and approvals the account is held by, so a company of two seats trusts its latest header as one key does. */
-    const bySeats = await heldEntering(CO, [], { ...two, account: { approvals: 2, seats: [SEAT, 'cd'.repeat(32)] } }, READER);
+    const bySeats = await heldEntering(CO, [], { ...two, account: { approvals: 2, seatBar: seatBarOf(2, null), seats: [SEAT, 'cd'.repeat(32)] } }, READER);
     expect(bySeats.checkedFrom).toBeUndefined();
     expect(bySeats.reached.seq).toBe(1);
   });
@@ -73,7 +74,7 @@ describe('WHO HOLDS THE ACCOUNT NOW IS READ FROM THE CHAIN', () => {
 describe('WHAT A TEST\'S RECORDS HOLD AS WAITING FOR THE NEXT ANCHOR', () => {
   it('a version the tree already anchors, filed again with other bytes, does not wait; a newer one does', async () => {
     /* RED WHEN: the tree stops leaving out an entry at or below its record's anchored version, so version 1 waits beside its leaf. */
-    const held = await heldEntering(CO, [byFounder(person(1, 'b1')), byFounder(person(2, 'a2'))], FOUNDED);
+    const held = await heldEntering(CO, [byFounder(person(1, 'b1')), byFounder(person(2, 'a2'))], FOUNDED, READER);
     expect(held.history.get('company:person:emp_1')?.map((v) => v.version)).toEqual([1]);
     expect(held.notYetAnchored.map((e) => [e.id, e.version])).toEqual([['emp_1', 2]]);
   });
@@ -130,5 +131,31 @@ describe('WHAT A TEST\'S RECORDS HOLD AS WAITING FOR THE NEXT ANCHOR', () => {
     const later = [byFounder(person(3, 'a3')), byFounder(person(2, 'a2'))];
     expect((await anchoredEntering(CO, () => later, FOUNDED)(READER, { records: [{ store: 'company', kind: 'person', id: 'emp_1' }] }))
       .notYetAnchored.map((e) => e.version)).toEqual([3, 2]);
+  });
+});
+
+describe('THE DIRECTORY A READ IS JUDGED BY IS THE ONE A TEST HANDS, NEVER ONE THE DOUBLE MAKES', () => {
+  it('A READ OF FILINGS, OR OF A FOUNDED COMPANY, WITH NO DIRECTORY IS REFUSED; A READ WITH NEITHER NEEDS NONE', async () => {
+    /* RED WHEN: the double again makes up a directory for filings it was handed no directory to judge - every filer an admin, seated, believed. */
+    await expect(heldEntering(CO, [byFounder(person(2, 'a2'))])).rejects.toThrow(/hands its directory/u);
+    await expect(heldEntering(CO, [byFounder(person(2, 'a2'))], FOUNDED)).rejects.toThrow(/hands its directory/u);
+    await expect(heldFiledBy(CO, [], [], FOUNDED)).rejects.toThrow(/hands its directory/u);
+    await expect(heldServing(CO, {}, [], FOUNDED)).rejects.toThrow(/hands its directory/u);
+    /* RED WHEN: a read with no filing and no founded company is refused too - the records of a test with nothing in them. */
+    const none = await heldEntering(CO);
+    expect([none.stopped, none.notYetAnchored, none.reached.seq]).toEqual([null, [], -1]);
+  });
+
+  it('A FILING WAITS ONLY WHEN ITS SEAT\'S ROLE IN THE HANDED DIRECTORY MAY FILE ITS KIND', async () => {
+    const asRole = (role: 'admin' | 'approver'): DirectoryBelieved => {
+      const seats = READER_DIR.dir.seats.map((x) => ({ ...x, role }));
+      return { ...READER, dir: { ...READER_DIR.dir, seats }, at: (version) => (version < 0 || version > 1 ? null : { dir: { ...READER_DIR.dir, version, seats }, digests: [] }) };
+    };
+    const filed = [byFounder(person(2, 'a2'))];
+    const waiting = async (role: 'admin' | 'approver') => (await heldEntering(CO, filed, FOUNDED, asRole(role))).notYetAnchored.map((e) => e.id);
+    /* RED WHEN: the double judges every filer an admin whatever role the directory it was handed gives the seat - an approver's person waits. */
+    expect(await waiting('approver')).toEqual([]);
+    /* RED WHEN: the double leaves out a filing its seat's role may file. */
+    expect(await waiting('admin')).toEqual(['emp_1']);
   });
 });

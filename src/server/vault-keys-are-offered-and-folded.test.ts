@@ -33,7 +33,7 @@ import {
 
 const CY = seatOf('cy', 3);
 const ID: Record<string, string> = { ada: 'sgn_ada', bo: 'sgn_bo', cy: 'sgn_cy' };
-const seated = (seats: Seat[]): ChainHolders => ({ seats: { committee: seats.map((s) => s.committeeKey), threshold: 1, seats: seats.map((s) => s.seat) }, approvals: 1 });
+const seated = (seats: Seat[]): ChainHolders => ({ seats: { committee: seats.map((s) => s.committeeKey), threshold: 1, seats: seats.map((s) => s.seat) }, approvals: 1, seatBar: 1 });
 
 aCompanyOfTwoSeats((app, deps) => {
   /* The company as a page reads it: the account record, with its newest roster record beside it. */
@@ -309,40 +309,39 @@ describe('OFFERS, FOLDED BY A SEAT THE COMPANY BELIEVES', () => {
     store.dropVaultKeysOffers(CO, [{ seat: ADA.seat, person: 'bo' }]);
   });
 
-  it('AN OFFER IS NOT FOLDED INTO AN ENTRY THE DEVICE REFUSES FOR ANYTHING BUT A MISSING WITNESS, AND STAYS OPEN', async () => {
-    /* Ada's seat files Bo's entry with rights the chain did not seat him with: every device refuses that entry. */
+  it('AN OFFER IS NEVER FOLDED INTO AN ENTRY REFUSED FOR GOOD: THE VERSION FILED NEXT TAKES THE SIGNER\'S ENTRY FROM AN OLDER VERSION', async () => {
+    /* Ada's seat files Bo's entry with rights the chain did not seat him with: every device refuses that entry, for good. */
     const now = await rosterNow();
+    const honestBo = now.account.signers.find((x) => x.id === ID.bo)!;
     const version = store.newestRoster(CO)!.version + 1;
     const signers = now.account.signers.map((x) => (x.id === ID.bo ? { ...x, rights: { mayApprove: false, everyVault: false, onVaults: [] } } : x));
     const rec = signCompanyFiling(sealRoster(CO, { name: 'Acme', signers }, version, 0, KEY), ADA.signingSecret as Hex);
     expect((await rosterFiledByAda(rec, { folded: [], index: vaultKeyIndexOf({ id: CO, signers }) })).status).toBe(201);
     await offer(BO);
     const folded = await foldOffersHere(deviceOf(ADA));
+    expect(folded.folded).toEqual([BO.seat]);
+    const bo = () => rosterNow().then((r) => r.account.signers.filter((x) => x.id === ID.bo));
     /* RED WHEN: a device folds an offer into an entry it does not believe, and files that entry on as if it did. */
-    expect(folded.folded).toEqual([]);
-    expect(folded.refused.map((r) => r.seat)).toEqual([BO.seat]);
-    expect((await offers()).map((o) => o.person)).toEqual(['bo']);
-    expect(store.newestRoster(CO)!.version).toBe(version);
-    /* Bo's vault keys rewritten by Ada's seat: his own honest offer would make the entry believed again, and is still not folded into it. */
+    expect((await bo()).map((x) => x.rights)).toEqual([honestBo.rights]);
+    expect(store.newestRoster(CO)!.version).toBe(version + 1);
+    expect(await offers()).toEqual([]);
+    /* Bo's vault keys rewritten by Ada's seat: the fold that follows carries his own keys from the version before, never Ada's. */
     const adas = walletOf(ADA).recordsKey;
-    const rewritten = now.account.signers.map((x) => (x.id === ID.bo ? { ...x, vaultKeys: signVaultKeys(CO, ID.bo!, {
+    const rewritten = (await rosterNow()).account.signers.map((x) => (x.id === ID.bo ? { ...x, vaultKeys: signVaultKeys(CO, ID.bo!, {
       committeeKey: BO.committeeKey as never, recordsKey: adas.recordsKey as Hex, recordsKeyStatement: adas.signature as Hex, recordsKeySeat: BO.seat as Hex,
     }, ADA.signingSecret as Hex) } : x));
-    const v2 = version + 1;
+    const v2 = version + 2;
     const rec2 = signCompanyFiling(sealRoster(CO, { name: 'Acme', signers: rewritten }, v2, 0, KEY), ADA.signingSecret as Hex);
     expect((await rosterFiledByAda(rec2, { folded: [], index: vaultKeyIndexOf({ id: CO, signers: rewritten }) })).status).toBe(201);
+    await offer(BO);
+    expect((await foldOffersHere(deviceOf(ADA))).folded).toEqual([BO.seat]);
     /* RED WHEN: a fold writes into an entry the device refuses for anything but the witness the offer brings. */
-    expect((await foldOffersHere(deviceOf(ADA))).folded).toEqual([]);
-    expect(store.newestRoster(CO)!.version).toBe(v2);
-    /* The honest roster filed again, for the cases after this one. */
-    const v3 = v2 + 1;
-    const rec3 = signCompanyFiling(sealRoster(CO, { name: 'Acme', signers: now.account.signers }, v3, 0, KEY), ADA.signingSecret as Hex);
-    expect((await rosterFiledByAda(rec3, { folded: [BO.seat], index: vaultKeyIndexOf({ id: CO, signers: now.account.signers }) })).status).toBe(201);
+    expect((await bo()).map((x) => x.vaultKeys?.signature)).not.toContain(rewritten.find((x) => x.id === ID.bo)!.vaultKeys!.signature);
     expect(await offers()).toEqual([]);
   });
 
   it('AN OFFER FOR A NEW SIGNER IS NOT FOLDED WHEN THE ENTRY IT WOULD MAKE IS NOT ONE THE DEVICE BELIEVES', async () => {
-    /* Dee is admitted at a seat the chain holds; her wallet is on no committee yet, so only an offer can witness her entry. */
+    /* Dee is admitted at a seat the chain holds; her own device has not filed her directory entry, so nothing proves her wallet yet. */
     const DEE = seatOf('dee', 4);
     const now = await rosterNow();
     const deeEntry = { ...now.account.signers.find((x) => x.id === ID.bo)!, id: 'sgn_dee', name: 'dee', userId: 'dee', leafCommitment: DEE.seat as Hex,
@@ -364,7 +363,7 @@ describe('OFFERS, FOLDED BY A SEAT THE COMPANY BELIEVES', () => {
       });
       store.putVaultKeysOffer(CO, { ...sent!.offer, person: 'dee' });
       const folded = await foldOffersHere(deviceOf(ADA));
-      /* RED WHEN: a fold makes an entry the device itself would refuse - one wallet behind two signers - and files it. */
+      /* RED WHEN: a fold makes an entry the device itself would refuse - a wallet no opening proves for her seat - and files it. */
       expect(folded.folded).toEqual([]);
       expect(folded.refused.map((r) => r.seat)).toEqual([DEE.seat]);
       expect(store.newestRoster(CO)!.version).toBe(version);

@@ -179,8 +179,8 @@ export interface CompanyRecords {
   id: string;
   name: string;
   signers: readonly SignerRow[];
-  /** How many signers must approve, as the company's record says. Public: the chain publishes it. */
-  approvalsNeeded: number;
+  /** How many signers must approve, as the person's own wallet reads it off the chain; not readable when the wallet cannot say. */
+  approvalsNeeded: Read<number>;
   proposals: Read<readonly ProposalRow[]>;
   runs: Read<readonly RunRow[]>;
   people: Read<readonly PersonRow[]>;
@@ -349,25 +349,38 @@ export const vaultsAsTheChainHoldsThem = (served: readonly ServedVault[], adopte
 };
 
 /**
+ * WHAT THE PERSON'S OWN WALLET READS OF THE COMPANY'S ACCOUNT IN ONE ASK, with the service's list of its vaults: the
+ * vaults the account has adopted, each with the service's row for it, and how many signers must approve. The approvals
+ * are the answer's `approvals`, never its `threshold`, which is the account's maintenance committee's. Each is
+ * unreadable when the company names no account yet or the read it rests on fails; the approvals do not wait on the
+ * service's list, and the vaults do not rest on a wallet answer that carries no approvals.
+ */
+async function chainOfTheCompany(
+  companyId: string, sealed: Pick<SealedAccount, 'companyLabel' | 'contractAddress'>, read: (path: string) => Promise<unknown> = api,
+): Promise<{ vaults: Read<readonly VaultRow[]>; approvals: Read<number> }> {
+  const label = sealed.companyLabel ?? null;
+  const address = sealed.contractAddress ?? null;
+  if (label === null || address === null) return { vaults: { of: READ.unreadable }, approvals: { of: READ.unreadable } };
+  const [answer, wallet] = await Promise.all([
+    (read(SERVICE.company + companyId + SERVICE.vaults) as Promise<{ rows?: unknown }>).catch(() => null),
+    holdersFromTheWallet(ACCOUNT_ORIGIN, { company: label as CompanyLabel, account: address as AccountAddress }).catch(() => null),
+  ]);
+  if (wallet === null) return { vaults: { of: READ.unreadable }, approvals: { of: READ.unreadable } };
+  const needed = wallet.holders.approvals;
+  const approvals: Read<number> = Number.isSafeInteger(needed) && needed >= 1 ? { of: READ.read, value: needed } : { of: READ.unreadable };
+  const vaults: Read<readonly VaultRow[]> = Array.isArray(answer?.rows)
+    ? vaultsAsTheChainHoldsThem(answer.rows as ServedVault[], wallet.holders.adoptedVaults) : { of: READ.unreadable };
+  return { vaults, approvals };
+}
+
+/**
  * The vaults of the company `companyId`, whose record is `sealed`: the account's own, as the person's own wallet reads
  * them, each with the service's row for it; unreadable when the company names no account yet, or either read fails.
  */
 export async function vaultListOf(
   companyId: string, sealed: Pick<SealedAccount, 'companyLabel' | 'contractAddress'>, read: (path: string) => Promise<unknown> = api,
 ): Promise<Read<readonly VaultRow[]>> {
-  try {
-    const label = sealed.companyLabel ?? null;
-    const address = sealed.contractAddress ?? null;
-    if (label === null || address === null) return { of: READ.unreadable };
-    const [answer, wallet] = await Promise.all([
-      read(SERVICE.company + companyId + SERVICE.vaults) as Promise<{ rows?: unknown }>,
-      holdersFromTheWallet(ACCOUNT_ORIGIN, { company: label as CompanyLabel, account: address as AccountAddress }),
-    ]);
-    if (!Array.isArray(answer?.rows)) return { of: READ.unreadable };
-    return vaultsAsTheChainHoldsThem(answer.rows as ServedVault[], wallet.holders.adoptedVaults);
-  } catch {
-    return { of: READ.unreadable };
-  }
+  return (await chainOfTheCompany(companyId, sealed, read)).vaults;
 }
 
 /**
@@ -400,7 +413,7 @@ export async function readCompany(personId: string, companyId: string): Promise<
   const runs = opened.then((read) => (read.of === READ.read
     ? alone(async () => read.value.map((r) => runRow(r)).sort((a, b) => b.period.localeCompare(a.period)))
     : read));
-  const [rows, proposals, people, vaults, invitations] = await Promise.all([
+  const [rows, proposals, people, chain, invitations] = await Promise.all([
     runs,
     alone(async () => {
       const read = await opened;
@@ -411,12 +424,12 @@ export async function readCompany(personId: string, companyId: string): Promise<
       .map(({ rec, handedOver }) => ({ ...openPerson(rec, viewingKey), handedOver })), sealed.companyLabel ?? '')]
       .sort((a, b) => a.name.localeCompare(b.name))
       .map((p) => personRow(p))),
-    vaultListOf(companyId, sealed, ask),
+    chainOfTheCompany(companyId, sealed, ask),
     alone(async () => invitationRows(await ask(route(SERVICE.invites)) as InviteRow[], Date.now())),
   ]);
   return {
-    of: OPENED.open, id: companyId, name: account.name, signers, approvalsNeeded: sealed.threshold,
-    proposals, runs: rows, people, vaults, invitations,
+    of: OPENED.open, id: companyId, name: account.name, signers, approvalsNeeded: chain.approvals,
+    proposals, runs: rows, people, vaults: chain.vaults, invitations,
   };
 }
 

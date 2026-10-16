@@ -22,7 +22,8 @@ import { refuseASeatKeyNotFromTheInvitee } from '../core/seat-invite-proof.js';
 import { openPerson } from '../core/person-record.js';
 import type { PendingSignerPayload } from '../core/types.js';
 import {
-  acceptanceHashOf, acceptanceProofOf, invitationIdOf, InvitationNotOpened, offerKeyOf, openOffer, sealOffer, signInvitationFiling, signOffer, tokenOfLink,
+  acceptanceHashOf, acceptanceProofOf, invitationIdOf, InvitationNotOpened, newInvitationToken, offerKeyOf, openOffer, sealOffer, signInvitationFiling, signOffer,
+  signSeatInvitation, tokenOfLink,
   type InvitationFiling,
 } from '../core/invitation.js';
 import {
@@ -31,13 +32,16 @@ import {
   type InvitationSend,
 } from 'vaults-web-shared/invitation-on-device.js';
 import { newSeatKeys, type NewSeatKeys } from 'vaults-web-shared/accept-seat.js';
-import { signJoinCode, writeJoinCode, type JoinCode, type SignerParts } from 'midnight-identity/profile/join-code';
+import { readJoinCode, signJoinCode, writeJoinCode, type JoinCode, type SignerParts } from 'midnight-identity/profile/join-code';
 import {
   aCompanyOfTwoSeats, ACME, ADA, ADDRESS, BO, chains, CO, DANA, danasCode, EVE, fromAda, KEY, LABEL, metered, ORIGIN, OTHER, OTHER_ADDRESS, OTHER_LABEL, refusals,
   type Seat,
   newestPerson, peopleRecords, personVersions, sendAs, store, wire,
 } from './a-company-of-two-seats.test-support.js';
 import { payeeCodeFingerprint } from 'midnight-identity/profile/fingerprint';
+/* The leaf each opening makes, as a device's vault worker works it out with the account's own scheme. */
+const LEAVES = async (openings: readonly { publicKey: string; blinding: string; scope: string }[]) =>
+  openings.map((o) => SimulatedCommitments.signerLeaf(o.publicKey as Hex, o.blinding as Hex, o.scope as Hex));
 /* The key Cleo's wallet gives for the company her invitation names: the key her seat's leaf commits to. */
 const CLEOS_KEY = { tag: 'schnorr', value: '4c'.repeat(32) };
 
@@ -93,7 +97,7 @@ describe('A PAYEE IS INVITED FROM A SIGNER\'S DEVICE', () => {
       expect(store.invitationById(unseated.invitation.id)).toBeNull();
       /* A signer's invitation files no person beside it, so its own check is the only one. */
       const before = store.listInvites(CO).length;
-      await expect(inviteSignerHere(ACME, ADA, { name: 'Zed', role: 'admin' }, ORIGIN, fromAda)).rejects.toMatchObject({ refused: 'seat-not-seated', status: 403 });
+      await expect(inviteSignerHere(ACME, ADA, { name: 'Zed', role: 'admin', person: 'zed' }, ORIGIN, fromAda)).rejects.toMatchObject({ refused: 'seat-not-seated', status: 403 });
       expect(store.listInvites(CO).length).toBe(before);
     } finally {
       chains.set(CO, now);
@@ -105,7 +109,7 @@ describe('A PAYEE IS INVITED FROM A SIGNER\'S DEVICE', () => {
     expect((await post('ada', { ...good, invitation: { ...good.invitation, name: 'Dana' } })).body).toMatchObject({ refused: 'not-an-invitation' });
     /* RED WHEN: a signer's invitation is filed as a payee's. */
     let signerFiling: InvitationFiling | null = null;
-    await inviteSignerHere(ACME, ADA, { name: 'Zed', role: 'admin' }, ORIGIN, async (_p, init) => { signerFiling = JSON.parse(init.body!).invitation; return { status: 201, body: {} }; });
+    await inviteSignerHere(ACME, ADA, { name: 'Zed', role: 'admin', person: 'zed' }, ORIGIN, async (_p, init) => { signerFiling = JSON.parse(init.body!).invitation; return { status: 201, body: {} }; });
     expect((await post('ada', { person: good.person, invitation: signerFiling })).body).toMatchObject({ refused: 'not-an-invitation' });
     /* RED WHEN: an invitation is kept although the person filed with it was refused. */
     const tampered = { ...(good.person as Record<string, unknown>), digest: '0'.repeat(64) };
@@ -171,6 +175,27 @@ describe('THE INVITEE OPENS THE OFFER WITH THE LINK, AND ACCEPTS WITH WHAT ONLY 
     expect(() => openOffer(sealOffer(signed, token), '6'.repeat(64))).toThrow(InvitationNotOpened);
   });
 
+  it('A SEAT OFFERED IS FOR THE INVITATION ITS LINK NAMES, SIGNED BY THE SEAT THAT SIGNED THE OFFER', () => {
+    const token = newInvitationToken();
+    const invited = { company: CO, invitation: invitationIdOf(token), person: 'usr_kit', name: 'Kit', role: 'approver' as const };
+    const offerFor = (signedInvitation: ReturnType<typeof signSeatInvitation>) => ({
+      company: CO, companyName: 'Acme', label: LABEL, account: ADDRESS, inboxPublicKey: ACME.inboxPublicKey,
+      for: { kind: 'signer' as const, name: 'Kit', role: 'approver' as const, seat: { nonce: '01'.repeat(32), secret: '02'.repeat(32) }, invited: signedInvitation },
+      inviter: { committeeKey: ADA.committeeKey, statement: ADA.statement, opening: ADA.opening } });
+    const opens = (signedInvitation: ReturnType<typeof signSeatInvitation>) => () => openOffer(sealOffer(signOffer(offerFor(signedInvitation), ADA.signingSecret), token), token);
+    expect(opens(signSeatInvitation(invited, ADA.signingSecret as Hex))().offer.for).toMatchObject({ invited: { terms: invited } });
+    /* RED WHEN: a link opens a seat signed for another invitation, so one invitation's seat could be carried under another's link. */
+    expect(opens(signSeatInvitation({ ...invited, invitation: invitationIdOf(newInvitationToken()) }, ADA.signingSecret as Hex))).toThrow(/signed for another invitation than this link/);
+    /* RED WHEN: a link's seat names a leaf before the joiner's device has made one. */
+    expect(opens(signSeatInvitation({ ...invited, leaf: '7c'.repeat(32) as Hex }, ADA.signingSecret as Hex))).toThrow(/signed for another invitation than this link/);
+    /* RED WHEN: who the seat is for is signed by another seat than the one that signed the offer. */
+    expect(opens(signSeatInvitation(invited, BO.signingSecret as Hex))).toThrow(/not signed by the seat that invited/);
+    /* RED WHEN: the role signed for the seat is not the role offered. */
+    expect(opens(signSeatInvitation({ ...invited, role: 'admin' }, ADA.signingSecret as Hex))).toThrow(/not signed by the seat that invited/);
+    /* RED WHEN: an offer of a seat that says nothing of who it is for is opened. */
+    expect(opens(undefined as never)).toThrow(/does not say who the seat is for/);
+  });
+
   it('A PAYEE ACCEPTS ONLY WITH THE PROOF THE LINK GIVES, ONCE, AND WHAT THEY HAND OVER WAITS ON THE INVITATION UNOPENED', async () => {
     const made = await invitePayeeHere(ACME, ADA, DANA, ORIGIN, fromAda);
     const opened = await openInvitationHere(made.link, sendAs(null));
@@ -214,7 +239,7 @@ describe('THE INVITEE OPENS THE OFFER WITH THE LINK, AND ACCEPTS WITH WHAT ONLY 
 describe('A SIGNER IS INVITED AND ACCEPTS THROUGH THE ONE SEAT PATH', () => {
   it('THE SEAT REQUEST IS SEALED ON THE INVITEE\'S DEVICE WITH THE NAME AND ROLE THE OFFER GAVE, AND ITS KEYS ARE PROVED', async () => {
     wire.length = 0;
-    const made = await inviteSignerHere(ACME, ADA, { name: 'Cleo', role: 'approver' }, ORIGIN, fromAda);
+    const made = await inviteSignerHere(ACME, ADA, { name: 'Cleo', role: 'approver', person: 'cleo' }, ORIGIN, fromAda);
     const opened = await openInvitationHere(made.link, sendAs(null));
     expect(opened.signed.offer.for).toMatchObject({ kind: 'signer', name: 'Cleo', role: 'approver' });
     /* The service names the company a seat request through it is filed to, to the proof the link gives and to nothing less. */
@@ -259,6 +284,8 @@ describe('A SIGNER IS INVITED AND ACCEPTS THROUGH THE ONE SEAT PATH', () => {
     expect(kept[0]!.blinding).toBe(seatBlinding(CLEOS_KEY, opening.salt));
     /* RED WHEN: the inviter's seat - its wallet key, signed entry and opening - is not kept with the seat for the invitee's first records-key ask. */
     expect(kept[0]!.invitedBy).toEqual({ committeeKey: ADA.committeeKey, statement: ADA.statement, opening: ADA.opening });
+    /* RED WHEN: who the seat is for is not kept with the seat, so the person's own directory entry could not carry it. */
+    expect(kept[0]!.invited).toEqual((opened.signed.offer.for as { invited: unknown }).invited);
     expect(walletKeyProvedBy(opening, storedSignerLeaf(kept[0]!, SimulatedCommitments), (o) => SimulatedCommitments.signerLeaf(o.publicKey as Hex, o.blinding as Hex, o.scope as Hex)))
       .toEqual(CLEOS_KEY);
     const pending = store.getAccount(CO)!.pendingSigners.find((p) => p.id === seat.signerId)!;
@@ -276,7 +303,7 @@ describe('A SIGNER IS INVITED AND ACCEPTS THROUGH THE ONE SEAT PATH', () => {
     for (const secret of [opened.token, (opened.signed.offer.for as { seat: { secret: string } }).seat.secret, 'Cleo']) expect(sent).not.toContain(secret);
     expect(store.invitationById(made.id)).toMatchObject({ acceptedAt: expect.any(String), subjectId: seat.signerId });
     /* RED WHEN: a signer invitation is accepted by somebody already on the company. */
-    const again = await inviteSignerHere(ACME, ADA, { name: 'Ada again', role: 'admin' }, ORIGIN, fromAda);
+    const again = await inviteSignerHere(ACME, ADA, { name: 'Ada again', role: 'admin', person: 'ada' }, ORIGIN, fromAda);
     await expect(acceptAsSignerHere(await openInvitationHere(again.link, sendAs(null)), SimulatedCommitments, {
       newKeys: newSeatKeys, seal: async () => {}, promote: async () => {},
     }, sendAs('ada'), 'ada', async () => CLEOS_KEY)).rejects.toMatchObject({ refused: 'already-on-this-account' });
@@ -289,17 +316,29 @@ describe('A SIGNER IS INVITED AND ACCEPTS THROUGH THE ONE SEAT PATH', () => {
     expect((await sendAs('zed')(`/api/invites/${payee.id}/accept-signer`, { method: 'POST', body: JSON.stringify({ acceptance: acceptanceProofOf(tokenOfLink(payee.link)!), waiting: sealToInbox({}, ACME.inboxPublicKey) }) })).status).toBe(404);
   });
 
+  it('A LINK OPENED UNDER ANOTHER SIGN-IN THAN THE PERSON INVITED MAKES NO SEAT AND SENDS NOTHING', async () => {
+    const made = await inviteSignerHere(ACME, ADA, { name: 'Lou', role: 'approver', person: 'lou' }, ORIGIN, fromAda);
+    const madeHere: PendingSeat[] = [];
+    const asked: unknown[] = [];
+    /* RED WHEN: somebody holding Lou's link makes a seat, or asks their wallet for a key, under their own sign-in. */
+    await expect(acceptAsSignerHere(await openInvitationHere(made.link, sendAs(null)), SimulatedCommitments, {
+      newKeys: newSeatKeys, seal: async (x) => { madeHere.push(x as PendingSeat); }, promote: async () => {},
+    }, sendAs('mallory'), 'mallory', async (company) => { asked.push(company); return CLEOS_KEY; })).rejects.toThrow(/for somebody else/);
+    expect([madeHere, asked]).toEqual([[], []]);
+    expect(store.invitationById(made.id)!.acceptedAt).toBeUndefined();
+  });
+
   it('A SIGNER\'S INVITATION IS KEPT FOR THE INVITING PERSON\'S OWN SEAT, WHATEVER ITS ROLE, AND A REFUSAL IS SAID IN THE SERVICE\'S WORDS', async () => {
     /* RED WHEN: the service judges a role: an approver's seat's signer invitation is refused there. */
-    expect((await inviteSignerHere(ACME, BO, { name: 'Zed', role: 'admin' }, ORIGIN, sendAs('bo'))).id).toMatch(/^[0-9a-f]{64}$/);
+    expect((await inviteSignerHere(ACME, BO, { name: 'Zed', role: 'admin', person: 'zed' }, ORIGIN, sendAs('bo'))).id).toMatch(/^[0-9a-f]{64}$/);
     /* RED WHEN: an invitation signed by one seat is kept in another person's session. */
-    const refused = inviteSignerHere(ACME, BO, { name: 'Zed', role: 'admin' }, ORIGIN, sendAs('ada'));
+    const refused = inviteSignerHere(ACME, BO, { name: 'Zed', role: 'admin', person: 'zed' }, ORIGIN, sendAs('ada'));
     await expect(refused).rejects.toMatchObject({ refused: 'no-entry', status: 403 });
     /* A screen tells a refusal the service gave apart from any other failure, and says the service's words. */
     await expect(refused).rejects.toBeInstanceOf(InvitationRefused);
     /* RED WHEN: a signer invitation is kept with no seat's signature. */
     let caught: { invitation: InvitationFiling } | null = null;
-    await inviteSignerHere(ACME, ADA, { name: 'Zed', role: 'admin' }, ORIGIN, async (_p, init) => { caught = JSON.parse(init.body!); return { status: 201, body: {} }; });
+    await inviteSignerHere(ACME, ADA, { name: 'Zed', role: 'admin', person: 'zed' }, ORIGIN, async (_p, init) => { caught = JSON.parse(init.body!); return { status: 201, body: {} }; });
     const { filedBy: _f, ...unsigned } = caught!.invitation;
     expect((await fromAda(`/api/accounts/${CO}/invites/signer`, { method: 'POST', body: JSON.stringify({ invitation: unsigned }) })).body).toMatchObject({ refused: 'not-signed' });
   });
@@ -317,24 +356,30 @@ describe('A CODE ENDS WHERE A LINK DOES: THE SAME PACKAGE, THE SAME SEAT REQUEST
   const pendingOf = (id: string) => store.getAccount(CO)!.pendingSigners.find((p) => p.id === id)!;
 
   it('A SIGNER\'S CODE AND A SIGNER\'S LINK END IN THE SAME SEAT REQUEST, EACH WITH ITS OWN SPENT INVITATION', async () => {
-    const keys = keysOf();
+    /* One wallet's keys, used both ways in, so the leaf's opening is the same in both requests. */
+    const keys = newSeatKeys(keyOf(31));
     /* By link: Dee's device accepts and files the seat request. */
-    const viaLink = await inviteSignerHere(ACME, ADA, { name: 'Dee', role: 'approver' }, ORIGIN, fromAda);
+    const viaLink = await inviteSignerHere(ACME, ADA, { name: 'Dee', role: 'approver', person: 'dee' }, ORIGIN, fromAda);
     const linked = await acceptAsSignerHere(await openInvitationHere(viaLink.link, sendAs(null)), SimulatedCommitments, {
       newKeys: () => keys, seal: async () => {}, promote: async () => {},
-    }, sendAs('dee'), 'dee', async () => CLEOS_KEY);
+    }, sendAs('dee'), 'dee', async () => keyOf(31));
     /* By code: Fen's device makes the same keys into a code her wallet signs; Ada pastes it. */
     const sealedForCode: unknown[] = [];
     const made = await makeSignerCodeHere(CO, SimulatedCommitments, { newKeys: () => keys, seal: async (x) => { sealedForCode.push(x); } }, walletOf(31, 'fen'), keyOf(31));
     /* RED WHEN: the keys of a code are not made and kept on the joiner's own device. */
     expect(sealedForCode).toHaveLength(1);
     const listedBefore = store.listInvites(CO).length;
-    const added = await addSignerFromCodeHere(ACME, ADA, made.code, { name: 'Dee', role: 'approver' }, fromAda);
+    const added = await addSignerFromCodeHere(ACME, ADA, made.code, { name: 'Dee', role: 'approver' }, fromAda, LEAVES);
     const a = opened(pendingOf(linked.signerId!));
     const b = opened(pendingOf(added.id));
-    /* RED WHEN: a code and a link end in seat requests that differ in anything but the invitation each was proved under and the sign-in it was sealed for. */
-    const { seatProof: proofA, person: personA, ...restA } = a;
-    const { seatProof: proofB, person: personB, ...restB } = b;
+    /* RED WHEN: a code and a link end in seat requests that differ in anything but the invitation each was proved and signed under and the sign-in it was sealed for. */
+    const { seatProof: proofA, person: personA, invited: invitedA, ...restA } = a;
+    const { seatProof: proofB, person: personB, invited: invitedB, ...restB } = b;
+    /* RED WHEN: a code's invitation does not name the leaf the code carries and the person its wallet signed for, so another leaf could be seated under it. */
+    expect(invitedB!.terms).toMatchObject({ company: CO, person: 'fen', name: 'Dee', role: 'approver', leaf: b.leafCommitment.toLowerCase() });
+    /* RED WHEN: a link's invitation names a leaf, or another person than the one it was made for. */
+    expect(invitedA!.terms.leaf).toBeUndefined();
+    expect(invitedA!.terms.person).toBe('dee');
     expect(restB).toEqual(restA);
     /* RED WHEN: either request is not sealed for the sign-in its seat request is filed under, so no device would seat it. */
     expect([personA, personB]).toEqual([pendingOf(linked.signerId!).userId, pendingOf(added.id).userId]);
@@ -355,9 +400,9 @@ describe('A CODE ENDS WHERE A LINK DOES: THE SAME PACKAGE, THE SAME SEAT REQUEST
 
   it('A CODE SWAPPED ON THE WAY IS CAUGHT BY THE FINGERPRINT THE JOINER READS OUT', async () => {
     /* Gus makes his code; somebody else makes theirs, and theirs is what reaches Ada. */
-    const gus = await makeSignerCodeHere(CO, SimulatedCommitments, { newKeys: keysOf, seal: async () => {} }, walletOf(41, 'gus'), keyOf(41));
-    const theirs = await makeSignerCodeHere(CO, SimulatedCommitments, { newKeys: keysOf, seal: async () => {} }, walletOf(42, 'gus'), keyOf(42));
-    const added = await addSignerFromCodeHere(ACME, ADA, theirs.code, { name: 'Gus', role: 'approver' }, fromAda);
+    const gus = await makeSignerCodeHere(CO, SimulatedCommitments, { newKeys: newSeatKeys, seal: async () => {} }, walletOf(41, 'gus'), keyOf(41));
+    const theirs = await makeSignerCodeHere(CO, SimulatedCommitments, { newKeys: newSeatKeys, seal: async () => {} }, walletOf(42, 'gus'), keyOf(42));
+    const added = await addSignerFromCodeHere(ACME, ADA, theirs.code, { name: 'Gus', role: 'approver' }, fromAda, LEAVES);
     const waiting = opened(pendingOf(added.id));
     /* A swapped code verifies: it is a real signature, by somebody else's wallet. */
     expect(() => refuseASeatKeyNotFromTheInvitee(KEY, CO, waiting)).not.toThrow();
@@ -372,19 +417,38 @@ describe('A CODE ENDS WHERE A LINK DOES: THE SAME PACKAGE, THE SAME SEAT REQUEST
     const code = await walletOf(51, 'hal')({ kind: 'signer', signingPublicKey: k.signingPublicKey, wrappingPublicKey: k.wrappingPublicKey, leafCommitment: '7c'.repeat(32) });
     const before = store.listInvites(CO).length;
     /* RED WHEN: a code whose keys were changed after the wallet signed it is taken. */
-    await expect(addSignerFromCodeHere(ACME, ADA, writeJoinCode({ ...code, parts: { ...(code.parts as SignerParts), signingPublicKey: '99'.repeat(32) } }), { name: 'Hal', role: 'approver' }, fromAda))
+    await expect(addSignerFromCodeHere(ACME, ADA, writeJoinCode({ ...code, parts: { ...(code.parts as SignerParts), signingPublicKey: '99'.repeat(32) } }), { name: 'Hal', role: 'approver' }, fromAda, LEAVES))
       .rejects.toThrow(/not signed by the wallet it names/);
     /* RED WHEN: a code made for another company is taken. */
     const other = await makeSignerCodeHere(OTHER, SimulatedCommitments, { newKeys: keysOf, seal: async () => {} }, walletOf(52, 'hal', OTHER_LABEL), keyOf(52, OTHER_LABEL));
-    await expect(addSignerFromCodeHere(ACME, ADA, other.code, { name: 'Hal', role: 'approver' }, fromAda)).rejects.toThrow(/another company/);
+    await expect(addSignerFromCodeHere(ACME, ADA, other.code, { name: 'Hal', role: 'approver' }, fromAda, LEAVES)).rejects.toThrow(/another company/);
     /* RED WHEN: a payee's code is taken as a signer's. */
-    await expect(addSignerFromCodeHere(ACME, ADA, writeJoinCode(danasCode()), { name: 'Hal', role: 'approver' }, fromAda)).rejects.toBeInstanceOf(CodeNotTaken);
+    await expect(addSignerFromCodeHere(ACME, ADA, writeJoinCode(danasCode()), { name: 'Hal', role: 'approver' }, fromAda, LEAVES)).rejects.toBeInstanceOf(CodeNotTaken);
     /* RED WHEN: a refused code still files an invitation. */
     expect(store.listInvites(CO).length).toBe(before);
   });
 
+  it('A CODE IS TAKEN ONLY WITH THE OPENING THAT MAKES ITS LEAF FOR THE WALLET THAT SIGNED IT', async () => {
+    const mo = await makeSignerCodeHere(CO, SimulatedCommitments, { newKeys: newSeatKeys, seal: async () => {} }, walletOf(61, 'mo'), keyOf(61));
+    const nan = await makeSignerCodeHere(CO, SimulatedCommitments, { newKeys: newSeatKeys, seal: async () => {} }, walletOf(62, 'nan'), keyOf(62));
+    const code = (text: string) => readJoinCode(text, LABEL) as JoinCode;
+    const before = store.listInvites(CO).length;
+    const { opening: _none, ...bare } = code(mo.code);
+    /* RED WHEN: a code with no opening is taken, so no approving device could see whose wallet its leaf is made for. */
+    await expect(addSignerFromCodeHere(ACME, ADA, writeJoinCode(bare as JoinCode), { name: 'Mo', role: 'approver' }, fromAda, LEAVES)).rejects.toThrow(/does not show that its seat is made for the wallet that signed it/);
+    /* RED WHEN: a code is taken on an opening of another wallet's leaf. */
+    await expect(addSignerFromCodeHere(ACME, ADA, writeJoinCode({ ...code(mo.code), opening: code(nan.code).opening }), { name: 'Mo', role: 'approver' }, fromAda, LEAVES)).rejects.toBeInstanceOf(CodeNotTaken);
+    /* RED WHEN: a code is taken on an opening that makes its leaf for another wallet than the one that signed it. */
+    const forNan = makeSignerCodeHere(CO, SimulatedCommitments, { newKeys: newSeatKeys, seal: async () => {} }, walletOf(61, 'mo'), keyOf(62));
+    await expect(addSignerFromCodeHere(ACME, ADA, (await forNan).code, { name: 'Mo', role: 'approver' }, fromAda, LEAVES)).rejects.toThrow(/does not show that its seat is made for the wallet that signed it/);
+    /* RED WHEN: a refused code still files an invitation. */
+    expect(store.listInvites(CO).length).toBe(before);
+    /* RED WHEN: a payee's code carrying an opening is read as a code at all. */
+    expect(readJoinCode(writeJoinCode({ ...danasCode(), opening: code(mo.code).opening }), LABEL)).toBe('not-a-code');
+  });
+
   it('ONLY THE SEAT THAT MADE THE INVITATION FILES A SEAT REQUEST FOR SOMEBODY ELSE', async () => {
-    const made = await inviteSignerHere(ACME, ADA, { name: 'Ivy', role: 'approver' }, ORIGIN, fromAda);
+    const made = await inviteSignerHere(ACME, ADA, { name: 'Ivy', role: 'approver', person: 'ivy' }, ORIGIN, fromAda);
     const token = tokenOfLink(made.link)!;
     const body = (forWhom: string) => JSON.stringify({ acceptance: acceptanceProofOf(token), waiting: sealToInbox({}, ACME.inboxPublicKey), for: forWhom });
     /* RED WHEN: somebody who holds a link files a seat request under another person's sign-in. */

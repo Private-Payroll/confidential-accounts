@@ -1,6 +1,6 @@
 import { describe, it, expect, vi } from 'vitest';
 import {
-  approveOnDevice, changeThresholdOnDevice, governedCallServiceFor, nothingWasSentBy, raiseRetryOnDevice, raiseRunOnDevice,
+  approveOnDevice, changeThresholdOnDevice, governOnDevice, governedCallServiceFor, nothingWasSentBy, raiseRetryOnDevice, raiseRunOnDevice,
   SentAndNotYetSeen, sendRaiseFromDevice, sendRetryFromDevice, withdrawOnDevice,
   type GovernanceDoors, type GovernedCallService, type LegPaymentsOnTheWire, type RaiseDoors, type RaiseOrderOnTheWire,
   type RetryOrderOnTheWire, type RoundOnThePage,
@@ -67,6 +67,9 @@ import type { LegRaiseDoors } from './run-raised-here.js';
 import { pureCircuits } from '../../../contracts/managed/contract/index.js';
 import { DEVICE_RAISE_VERSION, WRITTEN_DOWN_IS_NOT_WHAT_IS_CHECKED } from '../../../src/core/device-raise.js';
 import { opensAs } from '../../../src/testing/sealed-records.js';
+import { seatBarOf } from 'midnight-identity/profile/records-key';
+import { sealRoster } from '../../../src/core/roster-record.js';
+import { signCompanyFiling } from '../../../src/midnight/sealed-record-wire.js';
 
 /* The page's side, over a service and a worker that write down what they were asked, in order. */
 const material = { signingSecret: '11'.repeat(32), blinding: '22'.repeat(32), scope: '33'.repeat(32) };
@@ -765,6 +768,8 @@ const FOUNDING_STATE = signedFoundingState('acc_1', {
   keyEpoch: 0, sealed: seal(canonical({ state: {}, blinding: { assetBlinding: '55'.repeat(32), payRecordKey: 'ab'.repeat(32) } }), GOVERNED_KEY),
 }, founder.secret);
 const THREE: GovernanceOnTheWire = { kind: 'threshold', threshold: '3' };
+/* The company's first roster, which its founding seat anchored with the first state: no signer is seated beside it before. */
+const FOUNDING_ROSTER = signCompanyFiling(sealRoster('acc_1', { name: 'Acme', signers: [] }, 1, 0, GOVERNED_KEY), founder.secret);
 
 const aGovernedDevice = (o: {
   /** Whether the company already holds a proposal for the change, written down and listed by the service. */
@@ -775,12 +780,18 @@ const aGovernedDevice = (o: {
   chain: (refused: boolean) => RoundOnChain;
   /** The approvals the account needs. */
   bar?: number;
+  /** The approvals a policy change needs, as the account stores them; absent, none is stored. */
+  policyBar?: number;
+  /** The change the proposal the company holds opens as; absent, the threshold raised to three. */
+  governance?: GovernanceOnTheWire;
+  /** The person's wallet read the account without its seat bar. */
+  noSeatBar?: boolean;
   /** The builder refuses an approval as made already. */
   alreadyApproved?: boolean;
 }) => {
   const log: string[] = [];
   let refused = false;
-  const opened: OpenedRound = { chainId: GOVERNED_ID, digest: '', vault: '', salt: GOVERNED_SALT, summary: '', governance: THREE };
+  const opened: OpenedRound = { chainId: GOVERNED_ID, digest: '', vault: '', salt: GOVERNED_SALT, summary: '', governance: o.governance ?? THREE };
   seams.opens = async () => opened;
   const page = (over: Partial<RoundOnThePage> = {}): RoundOnThePage => ({ id: 'prp_gov', chainId: GOVERNED_ID, status: 'open', ...over });
   const doors: GovernanceDoors = {
@@ -794,8 +805,9 @@ const aGovernedDevice = (o: {
       approve: async (id) => { log.push(`approve ${id}`); return page(); },
       standing: async (id) => { log.push(`standing ${id}`); return page(o.standing); },
       carry: async (id, body) => { log.push(`carry ${id} ${body.circuit}`); return page({ status: 'executed' }); },
-      bars: async () => ({ threshold: o.bar ?? 2, vaultThresholds: [] }),
-    },
+      /* A door to the service's read of the chain's bars that a device must never take: asking it fails the case. */
+      bars: async () => { log.push('bars'); throw new Error('the device asked the service for the account\'s bars'); },
+    } as GovernanceDoors['service'],
     builder: {
       governedCall: async ({ order }) => {
         log.push(`build ${order.circuit}`);
@@ -813,13 +825,17 @@ const aGovernedDevice = (o: {
       directory: async () => {
         const believed = {
           dir: { company: 'acc_1', version: 0, seats: [{ seat: FOUNDING_SEAT, person: 'ada', signingKey: founder.publicKey, wrappingKey: 'ab'.repeat(32), committeeKey: COMMITTEE, role: 'admin' as const, retired: null }] },
-          holders: { committee: [COMMITTEE], seats: [FOUNDING_SEAT], approvals: 1, adoptedVaults: [], account: 'ac'.repeat(32) },
+          /* The account as the person's own wallet read it: its threshold, the policy bar it stores, and the seat bar of the two. */
+          holders: {
+            committee: [COMMITTEE], seats: [FOUNDING_SEAT], approvals: o.bar ?? 2, vaultThresholds: [], policyBar: o.policyBar ?? null,
+            ...(o.noSeatBar ? {} : { seatBar: seatBarOf(o.bar ?? 2, o.policyBar ?? null) }), adoptedVaults: [], account: 'ac'.repeat(32),
+          },
           another: new Set<string>(),
           refusedAt: new Set<number>(),
         };
         return {
           ...believed,
-          records: await heldEntering('acc_1', [], { seat: FOUNDING_SEAT, signingSecret: founder.secret, records: [FOUNDING_STATE], committee: [COMMITTEE] }, believed as never),
+          records: await heldEntering('acc_1', [], { seat: FOUNDING_SEAT, signingSecret: founder.secret, records: [FOUNDING_STATE, FOUNDING_ROSTER], committee: [COMMITTEE] }, believed as never),
         } as never;
       },
       state: async (id: string) => (id === '0' ? FOUNDING_STATE : null),
@@ -883,5 +899,34 @@ describe('A GOVERNANCE PROPOSAL STANDS WHERE THE CHAIN SAYS, NEVER WHERE THE SER
     /* RED WHEN: the count after "already approved" is the service's - a proposal short of approvals on the chain is carried out. */
     expect(out.state).toBe('waiting-for-approvals');
     expect(d.log.filter((l) => /^(approve|carry)/u.test(l))).toEqual([]);
+  });
+});
+
+describe('THE BAR A PROPOSAL IS CARRIED OUT AT IS READ FROM THE PERSON\'S OWN WALLET, NEVER FROM THE SERVICE', () => {
+  const SEAT_ADDED: GovernanceOnTheWire = { kind: 'add-signer', leaf: 'e5'.repeat(32) };
+  const seatAdded = { viewingKey: GOVERNED_KEY, change: SEAT_ADDED, summary: 'Add a signer', body: { signerId: 'sig_1' } } as Parameters<typeof governOnDevice>[1];
+
+  it('a signer seated is carried out only at the seat bar: two approvals at a threshold of two wait while the account stores a policy bar of three', async () => {
+    const d = aGovernedDevice({ held: true, bar: 2, policyBar: 3, governance: SEAT_ADDED, alreadyApproved: true, chain: () => ({ held: 'open', approvals: 2, raisedAt: 1 }) });
+    /* RED WHEN: adding a signer is counted against the account's threshold, below the seat bar the chain's own seating holds it to. */
+    expect((await governOnDevice(d.doors, seatAdded)).state).toBe('waiting-for-approvals');
+    expect(d.log.filter((l) => /^carry/u.test(l))).toEqual([]);
+    /* At the seat bar it is carried out. */
+    const met = aGovernedDevice({ held: true, bar: 2, policyBar: 3, governance: SEAT_ADDED, alreadyApproved: true, chain: () => ({ held: 'open', approvals: 3, raisedAt: 1 }) });
+    expect((await governOnDevice(met.doors, seatAdded)).state).toBe('done');
+    expect(met.log.filter((l) => /^carry/u.test(l))).toEqual(['carry prp_gov amendSigner']);
+  });
+
+  it('no device asks the service for the account\'s bars, and a wallet read without the seat bar is refused, never taken as met', async () => {
+    const d = aGovernedDevice({ held: true, bar: 2, alreadyApproved: true, chain: () => ({ held: 'open', approvals: 2, raisedAt: 1 }) });
+    expect((await changeThresholdOnDevice(d.doors, { viewingKey: GOVERNED_KEY, newThreshold: 3, seated: 4 })).state).toBe('done');
+    /* RED WHEN: a device takes the bar a proposal is carried out at from the service's read of the chain rather than its own wallet's. */
+    expect(d.log).not.toContain('bars');
+    /* RED WHEN: the service's routes still give a device a read of the chain's bars. */
+    expect('bars' in governedCallServiceFor(async () => { throw new Error('no route is asked'); })).toBe(false);
+    const blind = aGovernedDevice({ held: true, bar: 2, noSeatBar: true, governance: SEAT_ADDED, alreadyApproved: true, chain: () => ({ held: 'open', approvals: 2, raisedAt: 1 }) });
+    /* RED WHEN: a wallet read with no seat bar is taken as a bar met, and a signer is seated short of it. */
+    await expect(governOnDevice(blind.doors, seatAdded)).rejects.toThrow(/did not say how many approvals a change of who is seated needs/u);
+    expect(blind.log.filter((l) => /^carry/u.test(l))).toEqual([]);
   });
 });

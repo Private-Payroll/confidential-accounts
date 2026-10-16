@@ -28,6 +28,7 @@ const {
   contractsOnChain, contractInState,
 } = await import('./company-label-on-chain.js');
 import { PAY_KEY_COMMITMENT_ENTRY } from 'midnight-identity/profile/records-key';
+import { THRESHOLDS_FIELD, governanceInAccountState } from 'midnight-identity/profile/account-state';
 
 /*
  * The label a company's account carries, read the way this wallet reads it:
@@ -313,7 +314,7 @@ describe('WHO HOLDS THE ACCOUNT, ITS OWN THRESHOLD AND THE VAULTS IT HAS ADOPTED
     const vaults = [Uint8Array.from({ length: 32 }, (_, i) => i + 1), Uint8Array.from({ length: 32 }, (_, i) => (i < 31 ? 0x40 + i : 0))];
     for (const v of vaults) await sim.adoptVault(v, [privateStateFor(1), privateStateFor(2)], 391 + v[0]!);
     const bytes = (sim.contractStateForCall as { serialize(): Uint8Array }).serialize();
-    const read = holdersInAccountState(bytes);
+    const read = holdersInAccountState(bytes, hexOf(pureCircuits.policyBarKey()));
     /* RED WHEN: the threshold is read from another field, or its trimmed little-endian bytes are read wrong. */
     expect(read.approvals).toBe(Number(sim.ledger.threshold));
     expect(read.approvals).toBe(2);
@@ -323,6 +324,40 @@ describe('WHO HOLDS THE ACCOUNT, ITS OWN THRESHOLD AND THE VAULTS IT HAS ADOPTED
     expect([ACCOUNT_THRESHOLD_FIELD, ADOPTED_VAULTS_FIELD]).toEqual([5, 7]);
     /* And everything a seats read gives is in it, read in the same answer. */
     expect(read.seats).toEqual(seatsInAccountState(bytes).seats);
+  });
+
+  it('reads each vault\'s own approvals, the approvals a policy change needs, and the seat bar, as the account holds them', async () => {
+    const [A, B, C] = [privateStateFor(1), privateStateFor(2), privateStateFor(3)];
+    const sim = await AccountSimulator.liveAccount([A, B, C], 2n);
+    const vault = Uint8Array.from({ length: 32 }, (_, i) => i + 1);
+    await sim.adoptVault(vault, [A, B], 391);
+    const barKey = hexOf(pureCircuits.policyBarKey());
+    const state = () => (sim.contractStateForCall as { serialize(): Uint8Array }).serialize();
+    /* RED WHEN: an account with no policy bar stored is read with one, or with a seat bar other than its threshold. */
+    expect(governanceInAccountState(state(), barKey)).toEqual({ approvals: 2, vaultThresholds: [], policyBar: null, seatBar: 2 });
+    /* A vault's threshold set above the bar raises the bar the account stores to it. */
+    const c = change(0n, 401);
+    const payload = pureCircuits.setVaultThresholdPayload(vault, 3n);
+    await sim.as(sim.applying(A, c)).propose(payload);
+    const id = sim.proposalId(payload, c.salt);
+    for (const who of [A, B, C]) await sim.as(sim.applying(who, c)).approve(id);
+    await sim.as(sim.applying(A, c)).setVaultThreshold(vault, 3n, id);
+    const read = governanceInAccountState(state(), barKey);
+    /* RED WHEN: the map of thresholds is read from another field, or the policy bar's row is read as a vault's. */
+    expect(read.vaultThresholds).toEqual([{ vault: hexOf(vault), threshold: 3 }]);
+    expect(read.policyBar).toBe(Number(sim.ledger.thresholds.lookup(pureCircuits.policyBarKey())));
+    expect(read.policyBar).toBe(3);
+    /* RED WHEN: the seat bar is the threshold alone, below the bar the account holds a seating or a removal to. */
+    expect(read.seatBar).toBe(3);
+    expect(THRESHOLDS_FIELD).toBe(6);
+    /* RED WHEN: a read with no key for the policy bar's row reads every row as a vault's and the seat bar as the threshold. */
+    expect(() => governanceInAccountState(state(), '')).toThrow(/key the approvals a policy change needs are kept under was not given/);
+    /* RED WHEN: the wallet's answer is not read under the key the account's own compiled contract makes. */
+    const deployed = hexOf(state());
+    const label = companyLabelOf(sim.companyLabel());
+    const held = await holdersOnChain(ACCOUNT, label, async () => deployed, async () => hexOf(await deployHeld(sim.companyLabel())));
+    if (held.of !== 'read') throw new Error(`not read: ${JSON.stringify(held)}`);
+    expect([held.holders.policyBar, held.holders.seatBar]).toEqual([3, 3]);
   });
 
   it('a read for an account carrying another label is not an answer, and no account is not unreadable', async () => {

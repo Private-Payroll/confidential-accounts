@@ -41,6 +41,9 @@ export const madeForTheWallet = <D extends { secretKey: Uint8Array; blinding: Ui
 };
 
 type StateOf = () => { serialize(): Uint8Array } | null;
+
+/** The key the account keeps the approvals a policy change needs under, as its own compiled `policyBarKey` makes it. */
+const BAR_KEY = Array.from(pureCircuits.policyBarKey(), (b) => b.toString(16).padStart(2, '0')).join('');
 type Api = (path: string, init?: RequestInit) => Promise<any>;
 
 /** The account's deploy as the wallet reads it: the state its deploy left, and the company's label it is read for. */
@@ -51,17 +54,17 @@ const holdersAsTheWalletReads = (accountState: StateOf, deploy: DeployRead) => {
   const state = accountState();
   if (state === null) throw new Error('the wallet read no company account');
   const founding = foundingInDeployState(deploy.state().serialize(), deploy.label());
-  return { ...holdersInAccountState(state.serialize()), founding: founding.seat, foundingCommittee: founding.committee };
+  return { ...holdersInAccountState(state.serialize(), BAR_KEY), founding: founding.seat, foundingCommittee: founding.committee };
 };
 
 /** The server's own read of the company's account, for a seat filing in its directory. */
 export const directoryChainOver = (accountState: StateOf): DirectoryChainRead => async (_id, seats) => {
   const state = accountState();
   if (state === null) return null;
-  const read = holdersInAccountState(state.serialize());
+  const read = holdersInAccountState(state.serialize(), BAR_KEY);
   return {
     seats: { committee: read.committee, threshold: read.threshold, seats: seats.filter((x) => read.seats.includes(x.toLowerCase())) },
-    approvals: read.approvals,
+    approvals: read.approvals, seatBar: read.seatBar,
   };
 };
 
@@ -105,6 +108,8 @@ export const fileOwnEntry = async (deps: {
   companyKey: Uint8Array; signingKey: Hex; seat: string; opening: SeatOpening;
   /** The seat's filing key's secret and the company's viewing key: what the entry is signed with and its proof sealed under. */
   signingSecret: Hex; viewingKey: Hex;
+  /** The seat the account was deployed with, as the person's own wallet reads it: an entry for any other seat needs its invitation. */
+  founding: string;
 }) => {
   let owed: OwedDirectoryEntry | null = {
     person: deps.person, company: deps.label, opening: deps.opening,
@@ -114,8 +119,8 @@ export const fileOwnEntry = async (deps: {
     },
   };
   const done = await fileTheOwedDirectoryEntry(deps.api, deps.accountId, { read: () => owed, settle: async () => { owed = null; } },
-    async () => ({ signingSecret: deps.signingSecret, viewingKey: deps.viewingKey }));
-  if (typeof done === 'object') throw new Error(done.notYet);
+    async () => ({ signingSecret: deps.signingSecret, viewingKey: deps.viewingKey }), async () => deps.founding);
+  if (typeof done === 'object') throw new Error('notYet' in done ? done.notYet : done.waitingForItsInvitation);
   return done;
 };
 

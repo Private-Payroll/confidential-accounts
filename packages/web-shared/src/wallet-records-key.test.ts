@@ -138,7 +138,7 @@ describe('ASKING THE PERSON\'S WALLET WHERE IT RECEIVES AND WHAT IT HOLDS', () =
 });
 
 describe('ASKING THE PERSON\'S WALLET WHAT THE COMPANY\'S ACCOUNT HOLDS UNDER SOME OF ITS ROLES', () => {
-  const HOLDERS = { ...SEATS, approvals: 1, adoptedVaults: [], founding: SEAT, foundingCommittee: [mine] };
+  const HOLDERS = { ...SEATS, approvals: 1, vaultThresholds: [], policyBar: null, seatBar: 1, adoptedVaults: [], founding: SEAT, foundingCommittee: [mine] };
   const asked = ['d4'.repeat(32), 'a1'.repeat(32)];
   const held = (key: string) => (key === asked[0] ? 'ee'.repeat(32) : null);
   const answering = (withRoles: boolean) => (ask: unknown) => {

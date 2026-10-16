@@ -594,7 +594,7 @@ describe.skipIf(!KEYS_ON_DISK)('A VAULT\'S COMMITTEE STAYS THE SUPER ADMINS\' WH
     /* The founding signer's own directory entry, filed from their device: the account is the committee's from its first transaction. */
     await fileOwnEntry({ viewingKey, signingSecret: signing.secret,
       api, accountId: ACCOUNT_ID, person: 'ada', identity: identityFromWords(words), label: LABEL, account: company,
-      companyKey: me.companyKey, signingKey: signing.publicKey, seat: hex(leafOfDevice(founder)), opening: founderOpening,
+      companyKey: me.companyKey, signingKey: signing.publicKey, seat: hex(leafOfDevice(founder)), opening: founderOpening, founding: hex(leafOfDevice(founder)),
     });
     /* Deployed born held, read as it was born, adopted and started by one press. */
     const created = await press();

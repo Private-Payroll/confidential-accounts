@@ -6,6 +6,7 @@ import {
   seal, unseal, wrapKey, unwrapKey, verify, commit, canonical, parseCanonical,
   type Hex, type Sealed,
 } from './crypto.js';
+import { alreadyOnTheCompany } from './invitation.js';
 import type {
   Account, SealedAccount, PendingSigner, PendingSignerPayload,
   Signer, Policy, Proposal, SealedProposal, ProposalKind, Role,
@@ -131,13 +132,6 @@ export interface RaiseHalf {
 
 const hexOfBytes = (b: Uint8Array): Hex => Array.from(b, (x) => x.toString(16).padStart(2, '0')).join('');
 
-/** The first signer a removal leaves seated, who acts for it when nobody else is named. */
-const firstStaying = <T>(staying: readonly T[]): T => {
-  const first = staying[0];
-  if (first === undefined) throw new Error('this removal leaves nobody seated to act for it');
-  return first;
-};
-
 export interface SignerSpec { name: string; role: Role; userId?: string | null; }
 
 /** Vault keys that are not signed with the giver's own roster signing key. */
@@ -206,11 +200,10 @@ export interface CreatedAccount {
 }
 
 /**
- * `threshold` here is OUR COPY of the number the account was opened with on the
- * ledger. It is rendered; it is not the bar.
+ * A policy with no ceilings. The account's threshold is not in it: the chain
+ * holds that number and nothing here does.
  */
-export const defaultPolicy = (threshold: number): Policy => ({
-  threshold,
+export const defaultPolicy = (): Policy => ({
   limitsByRole: {},
 });
 
@@ -221,12 +214,10 @@ export const defaultPolicy = (threshold: number): Policy => ({
  * company set a ceiling and asked us to apply it. Nobody's money moves and
  * nobody is misled, provided the product says whose rule it is.
  *
- * `approval` is THE CHAIN'S, passed in rather than computed. There is no
- * `satisfied: boolean` and no `requiredApprovals: number` on this type any
- * more, and their absence is the point: a boolean is a place to put an answer
- * this process is not entitled to give, and `requiredApprovals` was that
- * answer's justification, taken from our own copy of the threshold. The number
- * of approvals required lives inside `approval` when the ledger told us, and
+ * `approval` is THE CHAIN'S, passed in rather than computed. This type carries
+ * no `satisfied` boolean and no `requiredApprovals` number: a boolean is a
+ * place to put an answer this process is not entitled to give. The number of
+ * approvals required lives inside `approval` when the ledger told us, and
  * nowhere at all when it did not.
  */
 export interface PolicyVerdict {
@@ -349,10 +340,10 @@ export type SeatingUnknown = 'no-status' | 'unreadable' | 'incomplete';
  *
  * `threshold` is the bar the contract holds and `signerCount` is how many seats
  * it holds. Both are public on chain by design (decision 0003), so carrying
- * them here is not a leak. Neither is ever `account.policy.threshold` or a
- * count of our own roster: those are COPIES, and a copy that has drifted BELOW
- * the contract's value turns a guard whose whole job is to be conservative into
- * permission to strand the account.
+ * them here is not a leak. Neither is ever a number this service stores or a
+ * count of our own roster: a copy that has drifted BELOW the contract's value
+ * turns a guard whose whole job is to be conservative into permission to
+ * strand the account.
  */
 export type ChainSeating =
   | { state: 'read'; threshold: number; signerCount: number }
@@ -387,30 +378,28 @@ export function seatingOnChain(status: LedgerStatus | null): ChainSeating {
 }
 
 /**
- * **WHAT OUR STORED COPY SAYS, WHERE IT DISAGREES WITH THE CHAIN.**
+ * **WHAT OUR ROSTER SAYS, WHERE IT DISAGREES WITH THE CHAIN.**
  *
- * The guards below no longer read our copy, so drift can no longer change one
- * of their outcomes. It is still worth saying out loud when one of them
- * refuses: a refusal naming only the contract's number invites the reader to
- * check it against a screen rendering ours, find they differ, and conclude the
- * guard is wrong. The clause says which number was used and which is stale.
+ * The guards below decide from the chain's numbers alone, so a stale roster
+ * cannot change one of their outcomes. It is still worth saying out loud when
+ * one of them refuses: a refusal naming only the contract's number invites the
+ * reader to check it against a screen rendering ours, find they differ, and
+ * conclude the guard is wrong. The clause says which number was used and which
+ * is stale.
  *
  * Returns a clause for a message, or the empty string when the two agree.
  *
  * **IT DOES NOT THROW AND IT DOES NOT REPAIR.** Not throwing, because
- * `Policy.threshold` already documents which side wins — the chain is right and
- * ours is stale — so refusing an operation the contract would accept would be
- * inventing a rule out of our own staleness. Not repairing, because writing the
- * chain's value into the sealed policy from inside a guard is exactly the shape
- * `CLAUDE.md` says to be suspicious of: a method that writes `policy.threshold`
- * with no round behind it. Healing the copy is a round of its own.
+ * the chain is right and our roster is stale, so refusing an operation the
+ * contract would accept would be inventing a rule out of our own staleness. Not
+ * repairing, because writing the chain's value into our records from inside a
+ * guard is exactly the shape `CLAUDE.md` says to be suspicious of. The
+ * threshold is not in this clause: the service keeps no copy of it.
  */
 export function seatingDrift(account: Account, seating: ChainSeating): string {
   if (seating.state !== 'read') return '';
-  const ourBar = account.policy.threshold;
   const ourSeats = account.signers.filter(s => s.status === 'active').length;
   const parts: string[] = [];
-  if (ourBar !== seating.threshold) parts.push(`our stored copy of the threshold says ${ourBar}`);
   if (ourSeats !== seating.signerCount) {
     parts.push(`our roster holds ${ourSeats} active signer${ourSeats === 1 ? '' : 's'}`);
   }
@@ -424,7 +413,7 @@ export function seatingDrift(account: Account, seating: ChainSeating): string {
  * THE APPROVAL PATH AND IT IS NOT A CONTRADICTION.**
  *
  * A status we cannot read is a distinct outcome from a threshold that is not
- * met, and on the approval path not knowing means not proceeding — the round
+ * met, and on the approval path not knowing means not proceeding — the proposal
  * stays open and somebody looks again. **Here the conservative direction is the
  * other one.** These guards stand in front of an operation that REMOVES the
  * account's ability to approve; permitting one because the chain could not be
@@ -465,8 +454,9 @@ export function requireSeating(
  * `seatsDropped` is how many seats the operation removes ON CHAIN, which is not
  * how many rows it drops from our roster. A removal drops one leaf. **A
  * rotation drops none** — it changes the locks and leaves the signer tree
- * exactly as it was, because there is no revocation circuit (see `rotate`), so
- * a rotation excluding two people still leaves both of them able to act. Their
+ * exactly as it was, because a rotation calls no circuit that takes a leaf off
+ * (see `rotate`), so a rotation excluding two people still leaves both of them
+ * able to act. Their
  * seats therefore cannot be counted as freed, and cannot rescue a roster that
  * has fallen below the bar.
  */
@@ -519,7 +509,7 @@ export function companyAtItsFounding(input: {
     id: input.id,
     name: input.name,
     signers: input.signers,
-    policy: defaultPolicy(input.threshold),
+    policy: defaultPolicy(),
     wrappedKeys: input.wrappedKeys,
     recovery: {
       signerIds: input.signers.map(s => s.id),
@@ -614,13 +604,12 @@ export function sealAccount(
   keyEpoch = 0,
 ): SealedAccount {
   // `openAccount` composes pending signers into `signers` so callers see one
-  // list. Filtering them back out is what makes the round trip lossless.
+  // list. Filtering them back out is what makes the trip there and back lossless.
   const roster = account.signers.filter(s => s.status !== 'pending');
   return {
     id: account.id,
     createdAt: account.createdAt,
     keyEpoch,
-    threshold: account.policy.threshold,
     signerCount: roster.length,
     memberUserIds: roster.filter(s => s.userId).map(s => s.userId!),
     pendingSigners,
@@ -638,8 +627,8 @@ export function sealAccount(
      * write, so a readable field this function does not copy is written once at
      * creation and gone by the next roster edit. The key that opens this
      * company's keyring is derived from this string: dropping it is dropping
-     * the data, not a column. `openAccount` is the other half of the round
-     * trip and `wallet-unlock.test.ts` watches it survive one.
+     * the data, not a column. `openAccount` is the other half of that trip
+     * there and back and `wallet-unlock.test.ts` watches it survive one.
      */
     contractAddress: account.contractAddress ?? null,
     /*
@@ -730,7 +719,6 @@ export function openAccount(
    * they were already getting.
    */
   const policy: Policy = {
-    threshold: stored.threshold,
     limitsByRole: stored.limitsByRole ?? {},
   };
   const pending: Signer[] = rec.pendingSigners.map(p => {
@@ -1036,7 +1024,7 @@ export class AccountService {
    * Is this user allowed to act on this account at all? Multi-tenancy hinges on it.
    *
    * **This has to answer with no viewing key**, and that is what forced the
-   * shape of `SealedAccount`. The server decides whether a session may touch an
+   * shape of `SealedAccount`. The server decides whether a caller may touch an
    * account before any key is supplied — the key arrives in the body of the
    * request this gate is protecting. Sealing `signers[]` removed the only thing
    * it used to read, which is exactly why sealing was reverted the first time
@@ -1161,8 +1149,7 @@ export class AccountService {
     // One seat per user. Two seats would mean two votes towards the threshold
     // from one person, which quietly defeats M of N. Pending seats count: the
     // check has to cover somebody who has accepted but not yet been granted.
-    if (userId && (rec.memberUserIds.includes(userId)
-      || rec.pendingSigners.some(p => p.userId === userId))) {
+    if (userId && alreadyOnTheCompany(rec, userId)) {
       throw new Error('you are already on this account');
     }
 
@@ -1451,9 +1438,10 @@ export class AccountService {
       sealedPayload: seal(canonical({ signerId, entries: [], __change: change }), viewingKey),
       digest,
       proposedBy,
-      /* Kept because removing the proposer deletes their row, and
-       * `recordStanding` would then have no role to judge the round by. Undefined
-       * where the proposer is not seated, which is what this door already tolerates. */
+      /* Kept because the proposer may no longer be seated when the proposal is
+       * judged, and `recordStanding` would then have no role to judge it by.
+       * Undefined where the proposer is not seated, which is what this door
+       * already tolerates. */
       proposerRole: account.signers.find(sg => sg.id === proposedBy)?.role,
       approvals: [],
       status: 'open',
@@ -1476,7 +1464,7 @@ export class AccountService {
   }
 
   /**
-   * Opens the round that authorises changing the threshold.
+   * Opens the proposal that authorises changing the threshold.
    *
    * A round, and not a setting, because the threshold is the rule every other
    * operation on the account is measured against. Changing it with less
@@ -1505,16 +1493,15 @@ export class AccountService {
     }
 
     /*
-     * **THE SEATED COUNT IS THE LEDGER'S, AND SO IS THE THRESHOLD BELOW IT.**
-     * It was `account.signers.filter(active).length` and
-     * `account.policy.threshold` — both OUR copies of numbers the contract
-     * owns.
+     * **THE SEATED COUNT AND THE THRESHOLD BELOW IT ARE THE CHAIN'S.** Our
+     * roster's count is used only to say where it disagrees (`seatingDrift`),
+     * never to decide.
      *
      * This is the mirror image of the two removal guards: they refuse to put
      * the threshold above the seats by taking seats away, and this one refuses
      * to do it by raising the threshold. The stranded account is identical
-     * either way, and so is the mechanism — a local number, drifted, inside a
-     * guard that is supposed to be the conservative one.
+     * either way, and so is the mechanism a guard has to be proof against: a
+     * number that differs from the contract's.
      */
     const seating = await this.chainSeating(accountId);
     const onChain = requireSeating(
@@ -1555,9 +1542,10 @@ export class AccountService {
       sealedPayload: seal(canonical({ newThreshold, entries: [], __change: change }), viewingKey),
       digest,
       proposedBy,
-      /* Kept because removing the proposer deletes their row, and
-       * `recordStanding` would then have no role to judge the round by. Undefined
-       * where the proposer is not seated, which is what this door already tolerates. */
+      /* Kept because the proposer may no longer be seated when the proposal is
+       * judged, and `recordStanding` would then have no role to judge it by.
+       * Undefined where the proposer is not seated, which is what this door
+       * already tolerates. */
       proposerRole: account.signers.find(sg => sg.id === proposedBy)?.role,
       approvals: [],
       status: 'open',
@@ -1580,13 +1568,11 @@ export class AccountService {
   }
 
   /**
-   * Changes the threshold once the round has reached it.
+   * Changes the threshold once the proposal has reached it.
    *
-   * ON CHAIN FIRST, then our own copy — the same order as every other
-   * governance operation here, and for the same reason. If the chain refuses,
-   * nothing local has changed and the two still agree. Writing our copy first
-   * is exactly the failure this method was deleted for: a product that says
-   * three while the chain settles at two.
+   * The change is made on the chain only: the service holds no threshold of
+   * its own, so there is nothing local to write and nothing to drift. If the
+   * chain refuses, nothing has changed anywhere.
    */
   async setThreshold(
     accountId: string,
@@ -1594,7 +1580,7 @@ export class AccountService {
     newThreshold: number,
     by?: string,
   ): Promise<Account> {
-    const { rec, account } = this.load(accountId, viewingKey);
+    const { account } = this.load(accountId, viewingKey);
 
     await this.ledger.setThreshold(
       accountId,
@@ -1603,26 +1589,20 @@ export class AccountService {
       by ? this.refFor(account, by) : this.anyActiveSigner(account),
     );
 
-    this.save(
-      rec,
-      { ...account, policy: { ...account.policy, threshold: newThreshold } },
-      viewingKey,
-      rec.pendingSigners,
-    );
     return this.open(accountId, viewingKey);
   }
 
   /* ---------------- one vault's own threshold ---------------- */
 
   /**
-   * **OPENS THE ROUND THAT GIVES ONE VAULT ITS OWN THRESHOLD.**
+   * **OPENS THE PROPOSAL THAT GIVES ONE VAULT ITS OWN THRESHOLD.**
    *
    * `proposeThresholdChange`'s shape, applied to one vault instead of the
    * account, with one refusal added and one deliberately not added.
    *
    * **ZERO IS REFUSED HERE, BEFORE ANYTHING IS SIGNED**, which is the whole of
    * the first trap. The contract refuses it too (`:2712`, *"a vault threshold
-   * of zero would authorise anything"*) and a product that let the round be
+   * of zero would authorise anything"*) and a product that let the proposal be
    * raised, approved by every signer, and then rejected by the chain would have
    * told nobody anything until the fee was paid. **The refusal a person needs
    * is the one they get before they sign.**
@@ -1635,16 +1615,16 @@ export class AccountService {
    * number again. **That is recoverable and it is still not a state this
    * application will help a company reach.** The seats are the LEDGER's, read
    * once through `requireSeating`, and the reason is that our own roster is a
-   * copy: a copy that has drifted HIGH would wave through exactly the round
+   * copy: a copy that has drifted HIGH would wave through exactly the proposal
    * this refuses.
    *
    * The refusal is labelled as ours where it is ours. The chain would accept
-   * this round; we decline to raise it, which §4.3 item 3 of
+   * this proposal; we decline to raise it, which §4.3 item 3 of
    * `docs/scope-the-real-chain.md` permits and requires us to say.
    *
    * **NOTHING LOCAL IS WRITTEN BY EITHER METHOD.** There is no stored copy of a
-   * vault's threshold anywhere in this service — see `Policy.threshold` — so
-   * there is no second place for it to drift and no row-per-vault to write. The
+   * vault's threshold anywhere in this service, so there is no second place
+   * for it to drift and no row-per-vault to write. The
    * number lives on chain and is read back through `LedgerStatus`.
    */
   async proposeVaultThresholdChange(
@@ -1732,15 +1712,15 @@ export class AccountService {
     const proposal: Proposal = {
       id: 'prp_' + nanoid(12),
       /*
-       * **`noVault()`, AND NOT THE VAULT THIS ROUND IS ABOUT.** It is the one
+       * **`noVault()`, AND NOT THE VAULT THIS PROPOSAL IS ABOUT.** It is the one
        * place the distinction bites. The contract computes the same id the same
        * way — `proposalIdOf(setVaultThresholdPayload(vault, newThreshold),
-       * noVault(), proposalSalt())`, `:2706-2708` — because the round is
+       * noVault(), proposalSalt())`, `:2706-2708` — because the proposal is
        * GOVERNANCE and must be measured against the account's threshold. Naming
        * the vault here would let a vault whose threshold is already 1 authorise
        * its own further changes with one signature.
        *
-       * The vault is in the PAYLOAD, which is what binds the round to it.
+       * The vault is in the PAYLOAD, which is what binds the proposal to it.
        */
       chainId: this.commitments.proposalId(digest, change.salt, this.commitments.noVault()),
       vault: this.commitments.noVault(),
@@ -1753,9 +1733,10 @@ export class AccountService {
       sealedPayload: seal(canonical({ vault, newThreshold, entries: [] }), viewingKey),
       digest,
       proposedBy,
-      /* Kept because removing the proposer deletes their row, and
-       * `recordStanding` would then have no role to judge the round by. Undefined
-       * where the proposer is not seated, which is what this door already tolerates. */
+      /* Kept because the proposer may no longer be seated when the proposal is
+       * judged, and `recordStanding` would then have no role to judge it by.
+       * Undefined where the proposer is not seated, which is what this door
+       * already tolerates. */
       proposerRole: account.signers.find(sg => sg.id === proposedBy)?.role,
       approvals: [],
       status: 'open',
@@ -1769,12 +1750,11 @@ export class AccountService {
   }
 
   /**
-   * **APPLIES IT, ONCE THE ROUND HAS REACHED THE ACCOUNT'S THRESHOLD.**
+   * **APPLIES IT, ONCE THE PROPOSAL HAS REACHED THE ACCOUNT'S THRESHOLD.**
    *
-   * ON CHAIN AND NOWHERE ELSE. `setThreshold` writes our copy afterwards
-   * because `Policy.threshold` exists to be rendered; there is no copy of a
-   * vault's threshold to write, deliberately, so this method has no second half
-   * and cannot have one that drifts.
+   * ON CHAIN AND NOWHERE ELSE. Neither this method nor `setThreshold` writes a
+   * threshold locally, because the service keeps none, so this method has no
+   * second half and cannot have one that drifts.
    *
    * The zero refusal is repeated at the boundary rather than trusted from the
    * propose path, because the two are reachable independently: a round raised
@@ -1835,34 +1815,11 @@ export class AccountService {
   }
 
   /*
-   * THE VERSION THAT USED TO BE HERE WAS A LIE, AND THE REASON IS WORTH KEEPING.
-   *
-   * It wrote `policy.threshold` into the sealed account. The contract declares
-   *
-   *     export sealed ledger threshold: Uint<64>;
-   *
-   * and `sealed` means writable once, in the constructor. There is no circuit
-   * that can move it. So raising a 2-of-3 account to 3-of-3 changed our copy and
-   * nothing else — and the product would then tell a customer that three
-   * approvals were required while the chain went on settling at two.
-   *
-   * **That is the dangerous direction.** An off-chain rule that is merely
-   * bypassable is a known limitation, stated in `docs/accounts-and-identity.md`.
-   * This one claimed MORE safety than existed: a signer calling the contract
-   * directly, or any client reading the real threshold, would execute with fewer
-   * approvals than the account's owner believed were needed.
-   *
-   * Found because a mutation survived — removing the ledger's own strand-check
-   * did not fail a test that had raised the threshold to 3 first, because the
-   * ledger was still enforcing 2.
-   *
-   * It was removed rather than fixed, and the honest version is the pair of
-   * methods above: the ledger field is no longer `sealed`, there is a
-   * `setThreshold` circuit gated on an approved round, and our copy is only
-   * written after the chain has accepted the change.
-   *
-   * **Do not reintroduce a local-only setter.** The shape to be suspicious of
-   * is any method that writes `policy.threshold` without a round behind it.
+   * Do not add a local-only setter. The threshold is sealed on the chain at the
+   * constructor and moves only through the `setThreshold` circuit gated on an
+   * approved round, so a method that changed a number without a round behind
+   * it would have the product tell a customer that three approvals are
+   * required while the chain settles at two.
    */
 
   /**
@@ -1900,13 +1857,10 @@ export class AccountService {
       throw new Error('that signer has no leaf commitment, so they are not in the on-chain tree');
     }
     /*
-     * **THE BAR IS THE CONTRACT'S.** This read
-     * `account.policy.threshold`, which is OUR copy of a number the contract
-     * owns, and the dangerous direction is drift BELOW the chain's value: our
-     * copy saying 2 where the contract says 3 lets this guard wave through a
-     * removal leaving two signers where three are needed, after which every
-     * proposal is unapprovable and the money in the account is unspendable by
-     * anybody, permanently.
+     * **THE BAR IS THE CONTRACT'S.** A guard that measured the removal against
+     * a stale number could wave through a removal that leaves two signers where
+     * three are needed, after which no proposal can be approved and the
+     * account's money is unspendable by anybody.
      *
      * The status arrives as a value because the caller took the decision and
      * captured it once; see `chainSeating`.
@@ -1925,7 +1879,7 @@ export class AccountService {
   }
 
   /**
-   * Opens the round that authorises removing a signer.
+   * Opens the proposal that authorises removing a signer.
    *
    * A removal is a round for the same reason adding one is: a single
    * key that could drop other signers unilaterally could reduce an account to
@@ -1958,9 +1912,10 @@ export class AccountService {
       sealedPayload: seal(canonical({ signerId, entries: [] }), viewingKey),
       digest,
       proposedBy,
-      /* Kept because removing the proposer deletes their row, and
-       * `recordStanding` would then have no role to judge the round by. Undefined
-       * where the proposer is not seated, which is what this door already tolerates. */
+      /* Kept because the proposer may no longer be seated when the proposal is
+       * judged, and `recordStanding` would then have no role to judge it by.
+       * Undefined where the proposer is not seated, which is what this door
+       * already tolerates. */
       proposerRole: account.signers.find(sg => sg.id === proposedBy)?.role,
       approvals: [],
       status: 'open',
@@ -1982,73 +1937,6 @@ export class AccountService {
     return proposal;
   }
 
-  /**
-   * Removes a signer once the round has reached its threshold, then changes the
-   * locks, in that order and not the other.
-   *
-   * **Revoke first, rotate second.** Rotating first would leave a window in
-   * which the departing signer can still act on chain AND still read, because
-   * they hold the old viewing key until the new records are written. Doing it
-   * this way, the moment they lose the ability to act is the moment before they
-   * lose the ability to read.
-   *
-   * Returns the new viewing key. Every remaining signer can derive it from
-   * their own wrapping secret; the person removed cannot, because no wrapped
-   * copy is issued to them.
-   */
-  async removeSigner(
-    accountId: string,
-    viewingKey: Hex,
-    signerId: string,
-    by?: string,
-  ): Promise<{ account: Account; viewingKey: Hex; keyEpoch: number }> {
-    const { rec, account } = this.load(accountId, viewingKey);
-    /*
-     * **READ AGAIN HERE, AND THAT IS NOT A SECOND READ OF ONE DECISION.**
-     * `proposeRemoval` asked whether a round MAY BE OPENED, possibly days ago
-     * and possibly with a different signer set on chain. This asks whether the
-     * removal MAY BE PERFORMED, now. Two decisions, one capture each, which is
-     * that rule rather than an exception to it.
-     */
-    const plan = this.departing(account, signerId, await this.chainSeating(accountId));
-
-    /*
-     * On chain first. If this is refused — not enough approvals, wrong
-     * proposal, too few signers left — nothing local has changed and the
-     * account is exactly as it was.
-     */
-    await this.ledger.removeSigner(
-      accountId,
-      plan.leaf,
-      this.approvedFor(accountId, viewingKey, this.commitments.signerRemovePayload(plan.leaf)).chainId,
-      this.refFor(account, by ?? firstStaying(plan.staying).id),
-    );
-
-    /*
-     * The roster now has to match the tree, and that means dropping one row
-     * rather than rewriting every one of them. Nobody who stayed had their leaf
-     * changed, so nobody who stayed can be got wrong here.
-     */
-    this.save(
-      rec,
-      {
-        ...account,
-        signers: account.signers.filter(s => s.id !== signerId),
-        wrappedKeys: account.wrappedKeys.filter(w => w.signerId !== signerId),
-      },
-      viewingKey,
-      rec.pendingSigners.filter(p => p.id !== signerId),
-    );
-
-    // And now the locks, which is what stops them READING anything further.
-    const rotated = await this.rotate(accountId, viewingKey);
-    return {
-      account: this.open(accountId, rotated.viewingKey),
-      viewingKey: rotated.viewingKey,
-      keyEpoch: rotated.keyEpoch,
-    };
-  }
-
   /* ---------------- rotation ---------------- */
 
   /**
@@ -2063,27 +1951,11 @@ export class AccountService {
    * the only meaning "revoke access" can have.
    *
    * It does NOT: take away a departing signer's authority on chain. Every
-   * circuit begins with `requireSigner()`, which proves a Merkle path into an
-   * append-only tree with no revocation circuit. **A signer excluded here can
-   * still APPROVE — measured against the compiled circuits in
-   * `contracts/test/signer-governance.test.ts`, twelve times and every one an
-   * `.approve(...)`.** That needs a contract change, and **no "remove signer"
-   * screen should exist until it lands.**
-   *
-   * **THE SENTENCE SAID *propose, approve, and spend* AND ONE INSTRUMENT WAS
-   * CREDITED FOR ALL THREE.** Measured at source: `sim.as(FB)` appears twelve
-   * times in that file and every one approves; there is no
-   * `sim.as(FB).propose(...)` anywhere in the repository; and `spend` names an
-   * operation THIS CONTRACT DOES NOT HAVE — the account's spend circuit is
-   * deleted, and the compact says so itself at `:1367-1368`. **`propose` is
-   * still true and is true BY CONSTRUCTION rather than by measurement** —
-   * `requireSigner()` is `propose`'s first line exactly as it is `approve`'s —
-   * and it is written as construction here rather than folded back into a *not
-   * assumed*. **`not assumed` is what made this a checkable claim rather than
-   * loose prose, and the screen it governs is why the narrowing matters rather
-   * than being tidy.** When it does, the order is revoke on chain first, then
-   * rotate: the other way round leaves a window where the leaver can both read
-   * and act.
+   * circuit begins with `requireSigner()`, which proves a Merkle path into the
+   * tree of signer leaves, and a rotation calls no circuit that takes a leaf
+   * off. **A signer excluded here can still APPROVE and PROPOSE** until a
+   * removal (`amendSigner`) takes their leaf off. Remove first, then rotate:
+   * the other way round leaves a window where the leaver can both read and act.
    *
    * It also does not reach the past. The state as it stood at rotation is still
    * sealed under the old key at the old epoch, and is deliberately kept — the
@@ -2136,12 +2008,10 @@ export class AccountService {
      * can never approve anything again — including a proposal to add somebody
      * back — so the account is finished, with its money in it.
      *
-     * **AND THE THRESHOLD IT IS MEASURED AGAINST IS THE CONTRACT'S.**
-     * It was `account.policy.threshold`. A guard whose entire job is to
-     * be conservative, deciding from a copy that can silently drift below the
-     * number the contract will actually apply, is the one shape that turns this
-     * check into permission to strand the account — and the damage is invisible
-     * at the moment it is done.
+     * **AND THE THRESHOLD IT IS MEASURED AGAINST IS THE CONTRACT'S**, read at
+     * the moment of the removal. A guard whose whole job is to be conservative
+     * must not decide from a number that can differ from the one the contract
+     * applies, because the damage is invisible when it is done.
      *
      * The seat count cannot rescue it, and `survivorsAfter` says why in full:
      * this rotation frees no seat on chain, so the excluded signers stay in the
@@ -2152,8 +2022,8 @@ export class AccountService {
      * DROPS NOBODY IS NOT IT.** This exemption is load-bearing rather than an
      * optimisation.
      *
-     * `removeSigner` calls this with an empty `exclude`, AFTER the chain has
-     * accepted the removal, and that call is what takes the departing signer's
+     * A removal used to call this with an empty `exclude`, AFTER the chain had
+     * accepted it, and that call is what took the departing signer's
      * ability to READ. Guarding it would mean an unreachable indexer could
      * refuse the second half of a removal whose first half has already settled
      * — the signer gone from the tree and the roster, still holding a viewing
@@ -2538,7 +2408,7 @@ export class AccountService {
     accountId: string; viewingKey: Hex; kind: ProposalKind;
     summary: string; payload: Record<string, unknown>;
     /**
-     * Which asset this round moves, and how much of it.
+     * Which asset this proposal moves, and how much of it.
      *
      * Both are derived from the entries where there are any — passing them
      * separately as well would be the same figure written twice, which is this
@@ -2578,7 +2448,7 @@ export class AccountService {
      * be the proposer's; that reader is gone, and the salt is still the
      * proposer's because the PROPOSAL'S OWN ID is derived from it and every
      * governance circuit and `recordPaymentFromVault` recompute the id to prove they
-     * were handed the round the signers approved. Sealed rather than stored in
+     * were handed the proposal the signers approved. Sealed rather than stored in
      * the clear because the amount is exactly what this product exists to hide.
      *
      * Note what is NOT read here any more: the current state. A change does not
@@ -2615,7 +2485,7 @@ export class AccountService {
     /*
      * **AND THE VAULT IS IN IT.** `proposalIdOf(payload, vault, salt)` —
      * `contracts/src/ConfidentialAccount.compact:874` — so the vault is part of
-     * what the round IS rather than a label on it. Two rounds identical but for
+     * what the proposal IS rather than a label on it. Two proposals identical but for
      * their vault are two different ids, and an approval collected against one
      * matches nothing at the other.
      */
@@ -2626,7 +2496,7 @@ export class AccountService {
      * **NO CHAIN READ HERE, AND THAT IS THE DELIBERATE HANDLING OF THE
      * ASYNCHRONY RATHER THAN A GAP.**
      *
-     * `this.ledger.propose` is thirty lines below. At this instant the round
+     * `this.ledger.propose` is thirty lines below. At this instant the proposal
      * does not exist on chain, so a `status()` call could only ever answer "not
      * among the open proposals" — a round trip to be told something guaranteed
      * by the line that follows it. We state the fact we already hold instead,
@@ -2883,14 +2753,10 @@ export class AccountService {
    * this argument being a `signature` is the whole of the fix: there is no
    * longer a value this method could sign with, and `sign` is not imported.
    *
-   * **AND THE THRESHOLD DECISION IS NOT OURS EITHER, NOT ANY MORE.**
-   *
-   * This paragraph used to say the opposite, and it was the honest half of a
-   * half-closed defect: `evaluatePolicy` ran in this process against a policy
-   * this process held, so a service that could not forge an approval could
-   * still ignore the rule. It no longer counts. `approvals` and `threshold` are
-   * both read off `LedgerStatus` below, reduced once, and compared to each
-   * other; `account.policy.threshold` is not consulted on this path at all.
+   * **AND THE THRESHOLD DECISION IS NOT THIS PROCESS'S.** `approvals` and
+   * `threshold` are both read off `LedgerStatus` below, reduced once, and
+   * compared to each other; the service holds no threshold to consult, so a
+   * service that could not forge an approval cannot ignore the rule either.
    *
    * **SAID PLAINLY BECAUSE IT WOULD OTHERWISE OVERSTATE ITSELF: the ledger here
    * is `SimulatedLedger`, so today this is a read of a simulator running in
@@ -2976,7 +2842,7 @@ export class AccountService {
     /*
      * **THE RECONCILE, AND ITS TRIGGER IS THE LINE BELOW.**
      *
-     * This signer's approval is already on the record and the round still reads
+     * This signer's approval is already on the record and the proposal still reads
      * `open`. That is the state a half-completed approval leaves behind: the
      * burn landed, the write below it landed, and the SECOND write — the one
      * that needed a chain read — did not. Nothing else in this service can move
@@ -3060,7 +2926,7 @@ export class AccountService {
      *
      * The chain is the thing that decides whether this approval counts — it
      * holds the nullifier set, and it is the only party that can tell us this
-     * signer has already approved *this round* rather than this proposal. If it
+     * signer has already approved this proposal. If it
      * refuses, nothing local should say it happened. Writing the local record
      * first and the chain second is how a UI comes to show two approvals where
      * the chain holds one.
@@ -3083,7 +2949,7 @@ export class AccountService {
        *
        * The rule is stated at `src/core/ledger.ts:1511` — *"an operation with
        * two halves is one transaction or it refuses"* — and the two halves here
-       * are **this signature counts** and **this round now stands at N of M**.
+       * are **this signature counts** and **this proposal now stands at N of M**.
        * There is no transaction spanning a chain and a disk, so the halves are
        * ordered by what each costs to lose: the approval cannot be recovered by
        * anybody, and the standing can be re-read from the chain by the one
@@ -3104,7 +2970,7 @@ export class AccountService {
 
     /*
      * **AND THE STANDING, WHICH IS THE HALF THAT NEEDS THE CHAIN.** A throw
-     * from here costs the round's recorded position and costs nothing else; the
+     * from here costs the proposal's recorded position and costs nothing else; the
      * reconcile above recovers it on this signer's next call. ONE definition,
      * used by both the first pass and the recovery, so the two can never come
      * to disagree about what the standing is: two derivations of one fact.
@@ -3497,8 +3363,6 @@ export class AccountService {
 
   private recordTheThreshold(accountId: string, viewingKey: Hex, newThreshold: number, round: Proposal | null): Account {
     if (round) this.markCarriedOut(round.id, viewingKey);
-    const { rec, account } = this.load(accountId, viewingKey);
-    this.save(rec, { ...account, policy: { ...account.policy, threshold: newThreshold } }, viewingKey, rec.pendingSigners);
     return this.open(accountId, viewingKey);
   }
 
@@ -3586,13 +3450,13 @@ export class AccountService {
   }
 
   /**
-   * **WHAT THE CHAIN SAYS THIS ROUND NOW STANDS AT, WRITTEN DOWN.**
+   * **WHAT THE CHAIN SAYS THIS PROPOSAL NOW STANDS AT, WRITTEN DOWN.**
    * Extracted whole out of `approve`, unchanged in what it
    * does, so that the recovery path and the ordinary path are the same code.
    *
    * **ONE READ, AFTER THE LEDGER ACCEPTED THE APPROVAL, AND ONE ONLY.**
    * It is after `this.ledger.approve` because a status captured before it would
-   * be missing the approval that call just made, and the round would appear one
+   * be missing the approval that call just made, and the proposal would appear one
    * short for ever. It is a single `await` whose result is reduced once by
    * `approvalsOnChain`, because two reads inside one verdict is a race that
    * leaves no trace: the count could come from one moment and the threshold
@@ -3607,7 +3471,7 @@ export class AccountService {
    * **REDUCED AGAINST THIS PROPOSAL'S OWN VAULT.** The bar is
    * `thresholdFor(proposal.vault)` — the vault's own number where the chain
    * holds one, the account's where it does not — and `proposal.vault` is the
-   * value this round's id was computed from, so it cannot be a different
+   * value this proposal's id was computed from, so it cannot be a different
    * vault's than the one the contract will apply. **That is the PAYMENT rule
    * and it is right here; the GOVERNANCE rule is the account's threshold and
    * lives at `src/core/ledger.ts`'s `requireApproved`. The two
@@ -3620,7 +3484,7 @@ export class AccountService {
    * record afterwards.
    *
    * **AND WHAT IT STILL DOES NOT DO.** It cannot be reached by anything but
-   * `approve`. If the last approver never comes back, the round stays `open`
+   * `approve`. If the last approver never comes back, the proposal stays `open`
    * with two approvals the chain can see and this record cannot — a smaller
    * residual than the half-completed-approval failure described above, and not
    * nothing. What would close it is a caller on a read or a job, and the only
@@ -3679,25 +3543,19 @@ export class AccountService {
 
     const { asset, amount } = this.changeOf(proposal, viewingKey);
     /*
-     * **THE ROLE, AND IT IS NOT A NON-NULL ASSERTION ANY MORE.**
-     * This line was
-     * `account.signers.find(s => s.id === proposal.proposedBy)!` and the `!`
-     * was reachable by a sequence with no failure in it: A raises a round, A is
-     * removed by a properly governed round, B approves. `removeSigner` DELETES
-     * the row (`signers.filter(...)`) rather than marking it, and nothing
-     * closes a removed proposer's still-open rounds — so the lookup returned
-     * `undefined` and `.role` threw a `TypeError`.
+     * **THE PROPOSER'S ROLE MAY NOT BE ON THE ROSTER.** A raises a proposal, A
+     * is removed by a governed removal, B approves: nothing closes a removed
+     * proposer's still-open proposals, so a lookup on the roster finds no row.
+     * The approval is durable by the time this runs, so the reconcile in
+     * `approve` re-enters here on every later call by B; a lookup that threw
+     * would throw each time, B would never reach the honest `already approved`
+     * and the proposal could never reach `'approved'`, the only status this
+     * file writes.
      *
-     * **AND THE REORDER ABOVE MADE THAT PERMANENT RATHER THAN COSTLY.** By the
-     * time this runs the approval is durable, so the reconcile in `approve`
-     * re-enters here on B's every later call and throws the same `TypeError`
-     * again: B never reaches the honest `already approved` and the round can
-     * never reach `'approved'`, which is the only status this file writes.
-     *
-     * **THE ROUND'S OWN RECORD FIRST, THE LIVE ROSTER SECOND.** The stored role
-     * is the one the ceiling was evaluated against when the round was raised,
-     * which is the right question; the lookup is the fallback for rounds
-     * written before the role was stored, which carry none.
+     * **THE PROPOSAL'S OWN RECORD FIRST, THE LIVE ROSTER SECOND.** The stored
+     * role is the one the ceiling was evaluated against when the proposal was
+     * raised, which is the right question; the roster lookup is the fallback
+     * for a proposal written before the role was stored, which carries none.
      */
     const proposerRole = proposal.proposerRole
       ?? account.signers.find(s => s.id === proposal.proposedBy)?.role;
@@ -3759,9 +3617,9 @@ export class AccountService {
   }
 
   /*
-   * THE ROUND HAS NO LAST STEP AT THE ACCOUNT ANY MORE.
+   * THE PROPOSAL HAS NO LAST STEP AT THE ACCOUNT ANY MORE.
    *
-   * `execute` stood here. It read the account's balance, checked the round
+   * `execute` stood here. It read the account's balance, checked the proposal
    * against it, and asked the ledger to move it — every line of it was the
    * balance book, which is why it went with the book rather than being pointed
    * somewhere else. Its circuit is gone from the contract too.
@@ -3830,18 +3688,13 @@ export class AccountService {
     }
     latest.status = 'cancelled';
     /*
-     * The local record must not keep claiming approvals for a round that is
+     * The local record must not keep claiming approvals for a proposal that is
      * dead — nothing may be re-derived from them, and a re-proposal takes a
      * fresh salt and is a different id.
      *
-     * **THE JUSTIFICATION THAT STOOD HERE WAS FALSE AND LOAD-BEARING IN ONE
-     * DIRECTION.** It read *"rotating the round burns every approval already
-     * given"*, contradicted by `src/core/ledger.ts:639-642`: *"It no longer
-     * rotates a round or burns anybody else's approvals — there is no round,
-     * and every other proposal on the account is untouched."* Nullifiers
-     * already spent on THIS proposal stay spent; nobody else's are touched.
-     * **The line below is harmless and stays; the sentence was not, because a
-     * reader could add ceremony around `cancel` that nothing requires.**
+     * Cancelling burns nobody else's approvals: nullifiers already spent on
+     * THIS proposal stay spent, and every other proposal on the account is
+     * untouched, so `cancel` needs no ceremony beyond this line.
      */
     latest.approvals = [];
     this.putProposal(latest, viewingKey);
@@ -4122,7 +3975,7 @@ export class AccountService {
    *
    * With several proposals open at once the contract has to be told WHICH one a
    * removal or a threshold change is spending, and the honest source for that is
-   * our own record of the round that was raised for it — matched on `digest`,
+   * our own record of the proposal that was raised for it — matched on `digest`,
    * which is the domain-separated payload the chain committed to. Matching on
    * anything looser would let an approved addition authorise a removal, which is
    * the hole the domain separators exist to close.
@@ -4148,31 +4001,17 @@ export class AccountService {
       );
     }
     /*
-     * **APPROVED BEFORE OPEN, CONFIRMED BEFORE UNCONFIRMED, THEN NEWEST.** The
-     * line here said *newest first: a re-proposal after a failed attempt is the
-     * live one*, and that was true BECAUSE A FAILED ATTEMPT LEFT NO RECORD.
-     * That premise is now inverted — a round the chain never held is a durable
-     * `open` record with a later `createdAt` — and a governance digest is a
-     * pure function of the change, so it collides with the genuinely APPROVED
-     * round for the same change and would win. **A change made a sentence
-     * somewhere else false, and that sentence would never have been re-read.**
+     * **APPROVED BEFORE OPEN, CONFIRMED BEFORE UNCONFIRMED, THEN NEWEST.** A
+     * proposal the chain never held is a durable `open` record with a later
+     * `createdAt`, and a governance digest is a pure function of the change, so
+     * it shares the digest of the genuinely APPROVED proposal for the same
+     * change and would win a newest-first sort.
      *
-     * **AND IT POINTS AT FOUR CALLERS, NOT ONE.** This paragraph named
-     * `removeSigner` alone; a second description named it with `setThreshold`;
-     * a third named it alone again. **The callers are `grantAccess`,
-     * `setThreshold`, `setVaultThreshold` and `removeSigner`, and every one of
-     * them is order-dependent** — each takes the `chainId` of whatever this
-     * sort puts first, and each digest has exactly one builder taking only the
-     * change, so a collision is reachable on all four.
-     *
-     * **THE THREE DESCRIPTIONS AGREED ON THE WRONG SUBSET FOR A READABLE
-     * REASON, AND IT IS THE OPPOSITE OF THE ONE A READER WOULD GUESS:**
-     * `setThreshold` and `removeSigner` are the two with NO product route
-     * today, so they were named as *the recovery path*, and the two that a
-     * screen can actually reach — `grantAccess` (`src/server/index.ts`, and the
-     * standalone client) and `setVaultThreshold` — went unnamed. **The
-     * reachable callers were the ones left out of the description of the
-     * hazard.** `grantAccess` is the only one with two entry points.
+     * **EVERY CALLER IS ORDER-DEPENDENT.** Each caller (`grantAccess`,
+     * `setThreshold`, `setVaultThreshold` and the device-order reads) takes the
+     * `chainId` of whatever this sort puts first, and each digest has exactly
+     * one builder taking only the change, so a collision is reachable on all
+     * of them.
      */
     const best = found.sort((a, b) =>
       (a.status === 'approved' ? 0 : 1) - (b.status === 'approved' ? 0 : 1)
@@ -4216,7 +4055,7 @@ export class AccountService {
    * REFUSED, NOT PREFERRED.** `POST /api/proposals/:id/approve` takes
    * `signerId` from the request body (`src/server/index.ts:809-813`) behind
    * `ownsProposal`, which checks account MEMBERSHIP and not identity. Binding
-   * that `signerId` to the session's own seat looks obvious and is not
+   * that `signerId` to the caller's own seat looks obvious and is not
    * available: **`POST /api/accounts` seats the creator at index 0 and gives
    * every other seat `userId: null` (`src/server/index.ts:766`)**, a seat with
    * no `userId` is not in `memberUserIds` (`account.ts:504`) and so can never call this
@@ -4226,10 +4065,10 @@ export class AccountService {
    * refuse the ordinary case rather than an abuse.
    *
    * **THE DISTINCTION THIS MUST NOT BE READ WITHOUT.** An outsider cannot reach
-   * this at all: they need a session, membership, and the account's viewing
-   * key. A MEMBER can submit another seat's bytes — but those bytes are now
-   * round-specific, so what a member can relay is a genuine consent that signer
-   * gave to THIS round. **The route lets a member choose the moment; it does
+   * this at all: they need to be signed in, be a member, and hold the
+   * account's viewing key. A MEMBER can submit another seat's bytes — but those
+   * bytes are now proposal-specific, so what a member can relay is a genuine consent that signer
+   * gave to THIS proposal. **The route lets a member choose the moment; it does
    * not let anyone manufacture the consent.**
    *
    * ── WHAT IT COSTS, PRICED BEFORE IT WAS BUILT ────────────────────────────
@@ -4296,7 +4135,7 @@ export class AccountService {
    * The first write throws — nothing on chain, no fee, and the store rolls
    * back, so nothing changed. The chain call throws — a record the product can
    * list and cancel, with `raisedAt` unset saying the chain has not confirmed
-   * it. The second write throws — the same, and the round is live. **There is
+   * it. The second write throws — the same, and the proposal is live. **There is
    * no longer a state in which a paid-for round exists and this product has no
    * record of it at all.**
    *
@@ -4494,13 +4333,13 @@ export class AccountService {
      * ed25519 is deterministic, so one signature standing on two rounds of one
      * account is not evidence of a replay, it IS one. Matched against every
      * OTHER round of this account, not against this one — a signature already
-     * on this round is the `already approved` case above and never reaches
+     * on this proposal is the `already approved` case above and never reaches
      * here.
      *
      * **WHY THE ORDER IS THE SECURITY-RELEVANT ONE.** The cap used to return
      * before this line, which put the detector behind a switch held by the
      * party it detects: **a member who wanted a replay to go unrecorded spent
-     * twenty invalid signatures against the round first, and from the
+     * twenty invalid signatures against the proposal first, and from the
      * twenty-first attempt onward every replay got the bare `mismatch` sentence
      * with no `replayOf` — silent for exactly the case the record above was
      * built to catch.** A false negative inside the detector, and nothing said
@@ -4747,7 +4586,7 @@ export class AccountService {
 }
 
 /**
- * **THE ROUND'S PROPOSER IS NOT ON THIS ACCOUNT ANY MORE, SO ITS POLICY
+ * **THE PROPOSAL'S PROPOSER IS NOT ON THIS ACCOUNT ANY MORE, SO ITS POLICY
  * STANDING CANNOT BE RECOMPUTED.**
  *
  * **A NAMED CLASS RATHER THAN A SENTENCE, BECAUSE ONE CALLER HAS TO TELL IT
