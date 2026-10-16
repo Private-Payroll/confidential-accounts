@@ -21,10 +21,10 @@ import type { AccountDeployed } from 'vaults-web-shared/governed-call-builder.js
 import { signCompanyFiling } from '../midnight/sealed-record-wire.js';
 import { sealRoster } from '../core/roster-record.js';
 import { signedFoundingState } from '../core/founding-state.js';
-import { newSigningKeypair } from '../core/crypto.js';
+import { newSigningKeypair, signingPublicKeyOf } from '../core/crypto.js';
 import { newStateBlinding, sealState } from '../core/account.js';
 import type { Hex } from '../core/crypto.js';
-import { EMPTY_HEAD, entryIdOf, proposalEntry, signManifestEntry, type ManifestEntry, type ManifestEntryBody } from '../midnight/record-manifest.js';
+import { boundaryKeyOfEntry, EMPTY_HEAD, entryIdOf, proposalEntry, signManifestEntry, type ManifestEntry, type ManifestEntryBody } from '../midnight/record-manifest.js';
 import { treeBatchOf, type TreeHeader } from '../midnight/record-tree.js';
 import type { RecordsAsked, RecordsHeld } from '../midnight/records-held.js';
 import { signProposalFiling } from '../core/proposal-filing.js';
@@ -36,7 +36,7 @@ import {
 } from 'vaults-web-shared/records-anchored-here.js';
 import {
   aCompanyOfTwoSeats, acmeChain, acmeDirectoryWithItsFold, acmeClock, acmeHeldNow, acmeDirectory, ADA, ADDRESS, apiAs, aRecordFiledBy, BO, chains, CO, EVE,
-  heldByMoreThanOneKey, KEY, OTHER, OTHER_ADDRESS, OTHER_LABEL, peopleRecords, store, type Seat,
+  heldByMoreThanOneKey, KEY, OTHER, OTHER_ADDRESS, OTHER_LABEL, peopleRecords, seatOf, store, type Seat,
 } from './a-company-of-two-seats.test-support.js';
 
 aCompanyOfTwoSeats();
@@ -183,6 +183,29 @@ describe('ANCHORING FROM A DEVICE', () => {
     /* RED WHEN: a device anchors an entry its own directory says that seat may not file - every other device then stops there. */
     expect(anchoredIn).not.toContain(entryIdOf(bos));
     expect(anchoredIn).toContain(entryIdOf(store.manifestOf(CO).entries.find((e) => e.id === 'emp_with_a_lie_d1')!));
+  });
+
+  it('AN ENTRY A SEAT UNDER A RAISED REMOVAL FILED PAST THE BOUNDARY THE RAISE SIGNED IS NEITHER WAITING NOR ANCHORED ON A DEVICE TOLD OF THE REMOVAL', async () => {
+    const bos = await enter(BO, 'prp_after_bos_removal_raised');
+    const adas = await enter(ADA, 'emp_beside_a_removal_raised');
+    const bo = signingPublicKeyOf(BO.signingSecret as Hex);
+    /* A removal of Bo's seat is raised, its boundary keeping nothing of this record. */
+    const told = { ...doorsOf(ADA), leaving: async () => new Map([[bo, {}]]) };
+    const waiting = (await heldNow(told)).notYetAnchored.map(entryIdOf);
+    /* RED WHEN: a read told of a raised removal holds what the leaving seat filed past its boundary as waiting to be anchored. */
+    expect(waiting).not.toContain(entryIdOf(store.manifestOf(CO).entries.find((e) => e.id === bos.id)!));
+    expect(waiting).toContain(entryIdOf(store.manifestOf(CO).entries.find((e) => e.id === adas.id)!));
+    await anchorTheRecordsHere(told);
+    const anchoredIn = headers().at(-1)!.changes.map((c) => c.leaf.entryId);
+    /* RED WHEN: the batch a head this device checked was left by is not read back, so a removal's boundary cannot be judged at the head its raise names. */
+    const held = await heldNow(doorsOf(ADA));
+    expect([held.seqOfHead?.(head()), held.seqOfHead?.('ab'.repeat(32))]).toEqual([headers().at(-1)!.seq, null]);
+    /* RED WHEN: a staying device anchors a version a seat under a raised removal filed past the boundary the raise signed. */
+    expect(anchoredIn).not.toContain(entryIdOf(store.manifestOf(CO).entries.find((e) => e.id === bos.id)!));
+    expect(anchoredIn).toContain(entryIdOf(store.manifestOf(CO).entries.find((e) => e.id === adas.id)!));
+    /* The control: a boundary that keeps the version, as one raised after it was anchored would, anchors it. */
+    await anchorTheRecordsHere({ ...doorsOf(ADA), leaving: async () => new Map([[bo, { [boundaryKeyOfEntry(bos)]: bos.version }]]) });
+    expect(headers().at(-1)!.changes.map((c) => c.leaf.entryId)).toContain(entryIdOf(store.manifestOf(CO).entries.find((e) => e.id === bos.id)!));
   });
 
   it('A PROPOSAL WHOSE ENTRY WAS NOT KEPT IS ENTERED AGAIN BY THE DEVICE THAT FILED IT WHEN IT ANCHORS, AND BY NO OTHER SEAT', async () => {
@@ -581,7 +604,7 @@ describe('A COMPANY\'S FIRST ANCHOR HOLDS THE RECORDS IT WAS FOUNDED WITH, ENTER
   const otherChain = aChainAnchor(() => heldBy(chains.get(OTHER)!));
   const otherDirectory = (asked?: RecordsAsked) => directoryWithItsRecordsHere({
     accountId: OTHER, label: OTHER_LABEL, viewingKey: KEY, filings: async () => store.directoryFilingsOf(OTHER), attested: async () => [],
-    holders: async () => ({ ...chains.get(OTHER)!.seats, approvals: 1, adoptedVaults: [], account: OTHER_ADDRESS }) as never,
+    holders: async () => ({ ...chains.get(OTHER)!.seats, approvals: 1, adoptedVaults: [], account: OTHER_ADDRESS, founding: EVE.seat }) as never,
     leaves: leavesOfTheContract,
     anchored: anchoredOver(apiAs('eve'), OTHER, otherChain.read),
   }, asked);
@@ -627,6 +650,36 @@ describe('A COMPANY\'S FIRST ANCHOR HOLDS THE RECORDS IT WAS FOUNDED WITH, ENTER
     expect(otherChain.landed).toEqual([]);
   });
 
+  it('NO FIRST ANCHOR IS MADE FROM A FIRST STATE AND ROSTER ANOTHER BELIEVED SEAT ENTERED, THOUGH EACH IS THE FIRST VERSION', async () => {
+    /* Fay's seat, which the directory Eve's device believes holds beside Eve's and whose role (none set) may file a state and a roster. */
+    const fay = seatOf('fay', 10, OTHER_LABEL, OTHER_ADDRESS, OTHER, EVE);
+    const fayKey = signingPublicKeyOf(fay.signingSecret as Hex);
+    const withFay = async () => {
+      const here = await otherDirectory();
+      const eve = here.dir.seats.find((x) => x.seat === EVE.seat)!;
+      const seat = { ...eve, seat: fay.seat, person: 'fay', signingKey: fayKey, wrappingKey: fay.statement.wrappingKey as Hex, committeeKey: fay.committeeKey, role: null };
+      const plus = <D extends { readonly seats: readonly unknown[] }>(dir: D): D => ({ ...dir, seats: [...dir.seats, seat] });
+      return {
+        ...here, dir: plus(here.dir), holders: { ...here.holders, seats: [...here.holders.seats, fay.seat] },
+        at: (version: number, held?: Parameters<typeof here.at>[1]) => { const at = here.at(version, held); return at === null ? null : { ...at, dir: plus(at.dir) }; },
+      } as typeof here;
+    };
+    const entryBy = (kind: 'state' | 'roster', id: string, secret: string) => signManifestEntry(OTHER, {
+      store: 'company', kind, id, version: 1, digest: (kind === 'state' ? 'a1' : 'a2').repeat(32),
+    } as ManifestEntryBody, secret as Hex);
+    const serving = (secret: string): AnchorDoors => ({
+      ...evesDoors({ foundingRecords: async () => ({ state: null, roster: null }) }),
+      directory: withFay,
+      tree: {
+        ...treeServiceFor(apiAs('eve')),
+        pending: async (c, root) => { const m = await treeServiceFor(apiAs('eve')).pending(c, root); return m === null ? null : [...m, entryBy('state', '0', secret), entryBy('roster', 'signers', secret)]; },
+      },
+    });
+    /* RED WHEN: a first anchor is made from a first state and roster, both of version 1, that another seat of the directory entered - the founding signer's device did not enter them. */
+    await expect(anchorTheRecordsHere(serving(fay.signingSecret))).rejects.toThrow(/first anchor holds the records it was founded with/u);
+    expect(otherChain.landed).toEqual([]);
+  });
+
   it('NO FIRST ANCHOR IS MADE WITHOUT THEM, NONE FROM RECORDS ANOTHER KEY SIGNED, AND THE ONE MADE WITH THEM FOUNDS THE COMPANY', async () => {
     const pol = await aRecordFiledBy(EVE, 'pol_eves_first', 'policy', OTHER);
     await EVE.entered.enter([pol]);
@@ -667,7 +720,7 @@ describe('A COMPANY\'S FIRST ANCHOR HOLDS THE RECORDS IT WAS FOUNDED WITH, ENTER
     expect(otherChain.landed.length).toBeGreaterThan(0);
     const deployedAs = (deployed: AccountDeployed | null) => directoryWithItsRecordsHere({
       accountId: OTHER, label: OTHER_LABEL, viewingKey: KEY, filings: async () => store.directoryFilingsOf(OTHER), attested: async () => [],
-      holders: async () => ({ ...chains.get(OTHER)!.seats, approvals: 1, adoptedVaults: [], account: OTHER_ADDRESS }) as never,
+      holders: async () => ({ ...chains.get(OTHER)!.seats, approvals: 1, adoptedVaults: [], account: OTHER_ADDRESS, founding: EVE.seat }) as never,
       leaves: leavesOfTheContract,
       anchored: anchoredOver(apiAs('eve'), OTHER, () => ({ ...otherChain.read(), deployed })),
     }, { founding: true });

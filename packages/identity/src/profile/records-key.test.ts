@@ -443,6 +443,7 @@ describe('THE HOLDERS ASK: PUBLIC CHAIN FACTS, NO PRESS, AND NOTHING ELSE', () =
   }, PAGE, NOW) as HoldersRequest;
   const holders = {
     committee: [committeeKeyFor(me, CO) as { tag: string; value: string }], threshold: 1, seats: [SEAT], approvals: 2, adoptedVaults: [VAULT],
+    vaultThresholds: [{ vault: VAULT, threshold: 3 }], policyBar: 3, seatBar: 3,
     founding: FOUNDING, foundingCommittee: [committeeKeyFor(me, CO) as { tag: string; value: string }],
   };
   const expecting = { atOrigin: PAGE, expectingNonce: 'h1', company: CO, account: ACCOUNT };
@@ -452,12 +453,12 @@ describe('THE HOLDERS ASK: PUBLIC CHAIN FACTS, NO PRESS, AND NOTHING ELSE', () =
     expect(answer.schema).toBe(HOLDERS_ANSWER_SCHEMA);
     /* RED WHEN: the answer carries any field but the public chain facts and the echo of the ask. */
     expect(Object.keys(answer).sort()).toEqual(['account', 'at', 'company', 'holders', 'nonce', 'origin', 'schema']);
-    expect(Object.keys(answer.holders).sort()).toEqual(['adoptedVaults', 'approvals', 'committee', 'founding', 'foundingCommittee', 'seats', 'threshold']);
+    expect(Object.keys(answer.holders).sort()).toEqual(['adoptedVaults', 'approvals', 'committee', 'founding', 'foundingCommittee', 'policyBar', 'seatBar', 'seats', 'threshold', 'vaultThresholds']);
     /* RED WHEN: the founding seat the wallet read from the deploy is not handed on as read. */
     expect(answer.holders.founding).toBe(FOUNDING);
     /* RED WHEN: whatever else the wallet's read carries is passed on rather than only the five facts named. */
     const carrying = holdersAnswerFor(ask(), { ...holders, companyKey: 'aa'.repeat(32) } as typeof holders, NOW);
-    expect(Object.keys(carrying.holders).sort()).toEqual(['adoptedVaults', 'approvals', 'committee', 'founding', 'foundingCommittee', 'seats', 'threshold']);
+    expect(Object.keys(carrying.holders).sort()).toEqual(['adoptedVaults', 'approvals', 'committee', 'founding', 'foundingCommittee', 'policyBar', 'seatBar', 'seats', 'threshold', 'vaultThresholds']);
     /* RED WHEN: a key the wallet holds crosses: no committee secret, no company key, no signature. */
     const said = JSON.stringify(answer);
     expect(said).not.toContain(committeeSigningKeyFor(me, CO).value);
@@ -487,6 +488,18 @@ describe('THE HOLDERS ASK: PUBLIC CHAIN FACTS, NO PRESS, AND NOTHING ELSE', () =
     expect(code({ ...answer, holders: { ...holders, founding: 'AB'.repeat(32) } }, expecting)).toBe('not-an-answer');
     /* RED WHEN: holders with no committee the deploy held the account by are taken: the founding seat's entry could then be anybody's. */
     expect(code({ ...answer, holders: { ...holders, foundingCommittee: [] } }, expecting)).toBe('not-an-answer');
+    /* RED WHEN: holders with no seat bar are taken, so a page would judge a change of who is seated against no bar. */
+    const { seatBar: _b, ...noBar } = holders;
+    expect(code({ ...answer, holders: noBar }, expecting)).toBe('not-an-answer');
+    /* RED WHEN: a seat bar below the account's stored policy bar is taken, so a removal short of the chain's bar would pass. */
+    expect(code({ ...answer, holders: { ...holders, seatBar: 2 } }, expecting)).toBe('not-an-answer');
+    /* RED WHEN: a seat bar below the account's threshold is taken where no policy bar is stored. */
+    expect(code({ ...answer, holders: { ...holders, policyBar: null, seatBar: 1 } }, expecting)).toBe('not-an-answer');
+    expect(code({ ...answer, holders: { ...holders, policyBar: null, seatBar: 2 } }, expecting)).toBe('accepted');
+    /* RED WHEN: a vault's own approvals in a shape no wallet writes are taken. */
+    expect(code({ ...answer, holders: { ...holders, vaultThresholds: [{ vault: VAULT }] } }, expecting)).toBe('not-an-answer');
+    /* RED WHEN: a wallet whose read carries no seat bar answers anyway. */
+    expect(() => holdersAnswerFor(ask(), noBar as typeof holders, NOW)).toThrow(/did not read the approvals the account asks for/);
     expect(code({ ...answer, holders: { ...holders, foundingCommittee: [{ tag: 'schnorr' }] } }, expecting)).toBe('not-an-answer');
   });
 

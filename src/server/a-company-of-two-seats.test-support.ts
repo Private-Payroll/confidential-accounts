@@ -36,6 +36,7 @@ import { invitationRoutes } from './invitations-route.js';
 import { ownsPersonIn, peopleRoutes } from './people-route.js';
 import type { ChainHolders, DirectoryEntry, DirectoryFiling } from '../midnight/seat-directory.js';
 import { directoryChangeMessage, directoryEntryMade } from '../midnight/seat-directory.js';
+import { invitationIdOf, newInvitationToken, signSeatInvitation } from '../core/invitation.js';
 import type { InvitationSend, InvitingCompany, InvitingSeat } from 'vaults-web-shared/invitation-on-device.js';
 import { manifestServiceFor, recordsEnteredFor, treeServiceFor } from 'vaults-web-shared/record-entered-here.js';
 import { filedAsIn, recordManifestRoutes } from './record-manifest-route.js';
@@ -62,7 +63,8 @@ export const apiAs = (person: string) => async (path: string, init?: RequestInit
   return r.body;
 };
 
-export const seatOf = (person: string, n: number, label = LABEL, address = ADDRESS, company = CO): Seat => {
+/** A seat of `company`, invited by the seat `invitedBy` signs with; a company's founding seat is invited by nobody. */
+export const seatOf = (person: string, n: number, label = LABEL, address = ADDRESS, company = CO, invitedBy?: { readonly signingSecret: string }): Seat => {
   const identity = identityFromSecret(new Uint8Array(32).fill(n));
   const signing = newSigningKeypair();
   const committeeKey = committeeKeyFor(identity, label) as { tag: string; value: string };
@@ -70,15 +72,20 @@ export const seatOf = (person: string, n: number, label = LABEL, address = ADDRE
   const { seat, opening } = seatOpenedFor(committeeKey, n);
   const statement = signDirectoryEntry(identity, label, address, new Uint8Array(32).fill(n + 100), signing.publicKey, seat);
   return {
-    n, person, seat, signingSecret: signing.secret, committeeKey, statement, opening,
+    n, person, seat, signingSecret: signing.secret, committeeKey, statement, opening, held: { role: 'admin', retired: false },
     /* Its proof sealed under the company's viewing key, which every member's device here holds. */
-    entry: directoryEntryMade({ company, person, committeeKey, signed: statement, opening, signingSecret: signing.secret, viewingKey: KEY }),
+    entry: directoryEntryMade({
+      company, person, committeeKey, signed: statement, opening, signingSecret: signing.secret, viewingKey: KEY,
+      ...(invitedBy === undefined ? {} : { invited: signSeatInvitation({
+        company, invitation: invitationIdOf(newInvitationToken()), person, name: person, role: 'admin', leaf: seat as Hex,
+      }, invitedBy.signingSecret as Hex) }),
+    }),
     /* Every filing this seat makes is entered in its company's records, over the manifest route mounted below. */
     entered: recordsEnteredFor(manifestServiceFor(apiAs(person)), company, signing.secret),
   };
 };
 export const ADA = seatOf('ada', 1);
-export const BO = seatOf('bo', 2);
+export const BO = seatOf('bo', 2, LABEL, ADDRESS, CO, ADA);
 export const EVE = seatOf('eve', 9, OTHER_LABEL, OTHER_ADDRESS, OTHER);
 
 const accountOf = (id: string, members: string[], label: CompanyLabel, address: string): SealedAccount => ({
@@ -180,7 +187,7 @@ export const acmeHeldNow = () => {
  */
 export const heldByMoreThanOneKey = async <T>(go: () => Promise<T>): Promise<T> => {
   const was = chains.get(CO)!;
-  chains.set(CO, { ...was, approvals: 2 });
+  chains.set(CO, { ...was, approvals: 2, seatBar: 2 });
   try {
     return await go();
   } finally {
@@ -210,7 +217,10 @@ export const acmeReads = {
   holders: async () => {
     const c = await chainRead(CO, [ADA.seat, BO.seat]);
     if (c === null) throw new Error('the test has the company on no chain');
-    return { ...c.seats, approvals: c.approvals, adoptedVaults: [], founding: ADA.seat, foundingCommittee: [ADA.committeeKey], account: ADDRESS };
+    return {
+      ...c.seats, approvals: c.approvals, vaultThresholds: [], policyBar: c.seatBar > c.approvals ? c.seatBar : null, seatBar: c.seatBar,
+      adoptedVaults: [], founding: ADA.seat, foundingCommittee: [ADA.committeeKey], account: ADDRESS,
+    };
   },
 };
 
@@ -345,7 +355,7 @@ export function aCompanyOfTwoSeats(beside?: (app: express.Express, deps: Mounted
     await new Promise<void>((resolve) => { server = app.listen(0, '127.0.0.1', () => resolve()); });
     base = `http://127.0.0.1:${(server.address() as AddressInfo).port}`;
     const seated = (seats: Seat[]): ChainHolders => ({
-      seats: { committee: seats.map((s) => s.committeeKey), threshold: 1, seats: seats.map((s) => s.seat) }, approvals: 1,
+      seats: { committee: seats.map((s) => s.committeeKey), threshold: 1, seats: seats.map((s) => s.seat) }, approvals: 1, seatBar: 1,
     });
     /* Ada founds Acme alone: her entry, then her first roster and state anchored while hers is the account's only seat. */
     chain = seated([ADA]);

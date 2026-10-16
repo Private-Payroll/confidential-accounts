@@ -18,13 +18,21 @@
  *     salt, and the account's own `signerLeaf` over it is the seat's leaf - the
  *     leaf the signers approved when they seated it. So the account's committee
  *     is never asked who a seat is. Anyone may claim any seat; a device
- *     believes, per seat, the first claim whose proof proves, and one claim per
- *     filing, records or wallet key.
+ *     believes, per seat, the first claim whose proof proves, one claim per
+ *     leaf and per filing key ever, and one per person and per records or
+ *     wallet key among the seats not retired: a retired seat gives up its
+ *     person, wallet and records key, so the same person can be seated again
+ *     under a new leaf, while its leaf and filing key stay its own, since its
+ *     versions inside its boundary are judged by them.
  *   · **a change to an entry** - a role, or a seat retired with the last
- *     version of each record it filed - is believed on a device when as many
- *     seats as the account's approval threshold, read from the chain, signed
- *     it. The seat a demotion or a retirement is about counts like any other,
- *     and neither may leave fewer seated signers than that threshold.
+ *     version of each record it filed and the records-key statement its own
+ *     wallet signed - is believed on a device when as many
+ *     seats as a change of who is seated needs on the account (`seatBarOf`:
+ *     the higher of its threshold and the approvals a policy change needs),
+ *     read from the chain, signed it. The seat a demotion or a retirement is
+ *     about counts like any other, seated still or already removed, and
+ *     neither may leave fewer seated signers than that bar, as the chain's
+ *     removal by `amendSigner` never does.
  *   · **the super admins are not here.** They are the keys on the account's
  *     committee as the chain holds it, and only the chain says who they are;
  *     nothing in the directory names, gives or takes that role, and no change
@@ -41,8 +49,9 @@
  * entry from a signed-in member for a seat the chain holds now, signed by the
  * filing key it names, as the next version and in its shape, and picks
  * between none (`EntryJudge`). It keeps a role or retirement change in its
- * shape, every signature verifying, signed against the chain's threshold now,
- * as the next version - and counts no quorum and keeps no retirement. So no
+ * shape, every signature verifying, signed against at least the approvals a
+ * change of who is seated needs on the chain now (`seatBarOf`), as the next
+ * version - and counts no quorum and keeps no retirement. So no
  * member's claim and no server can keep a true seat out: each member's device
  * believes the first claim whose proof proves and counts every quorum itself.
  *
@@ -62,6 +71,7 @@ import type { AccountAddress, CompanyLabel } from 'midnight-identity/profile/com
 import { canonical, sign, verify, type Hex, type Sealed } from '../core/crypto.js';
 import { openSeatProof, sealSeatProof, walletKeyProvedBy, type LeafOf, type SeatOpening, type SeatProof } from '../core/seat-opening.js';
 import type { Role } from '../core/types.js';
+import { replacedBy, seatInvitationRefusal, type SignedSeatInvitation } from '../core/invitation.js';
 import { COMPANY_RECORD_KINDS, WIRE_RECORDS, type CompanyRecordKind, type WireRecord } from './sealed-record-wire.js';
 
 /* ------------------------------------------------------------------ kinds */
@@ -92,6 +102,14 @@ export const MAY_FILE: Readonly<Record<Role | 'unset', readonly FiledKind[]>> = 
  * runs or anchoring the company's records comes from a signer role alone.
  */
 export const mayFile = (seat: { readonly role: Role | null }): readonly FiledKind[] => MAY_FILE[seat.role ?? 'unset'];
+
+/**
+ * **WHETHER A SEAT MAY INVITE, RE-ISSUE AN INVITATION OR WITHDRAW SOMEBODY
+ * WAITING FOR A SEAT**: only a seat whose signer role may file a proposal. The
+ * one rule the signing device, the directory judge and every approving device
+ * hold an invitation's signer to; a viewer seats and turns away nobody.
+ */
+export const mayInvite = (seat: { readonly role: Role | null }): boolean => mayFile(seat).includes('proposal');
 
 /** The key one record's versions are counted under, in a retirement record's boundary. */
 export const vaultRecordKey = (vault: string, record: WireRecord): string => `vault:${vault}:${record}`;
@@ -140,6 +158,8 @@ export const directoryEntryMade = (input: {
   /** The statement the seat's wallet signed. */
   readonly signed: DirectoryEntryStatement;
   readonly opening: SeatOpening;
+  /** Who the seat is for, as the seat that invited signed it; absent only for the founding seat. */
+  readonly invited?: SignedSeatInvitation;
   readonly signingSecret: Hex;
   readonly viewingKey: Hex;
 }): DirectoryEntry => {
@@ -148,7 +168,9 @@ export const directoryEntryMade = (input: {
     account: statement.account.toLowerCase(), signingKey: statement.signingKey.toLowerCase(),
     wrappingKey: statement.wrappingKey.toLowerCase(), seat: statement.seat.toLowerCase(),
   };
-  const proof = sealSeatProof(input.company, { committeeKey: input.committeeKey, signature, opening: input.opening }, input.viewingKey);
+  const proof = sealSeatProof(input.company, {
+    committeeKey: input.committeeKey, signature, opening: input.opening, ...(input.invited === undefined ? {} : { invited: input.invited }),
+  }, input.viewingKey);
   const unsigned = { person: input.person, statement: lower, proof };
   return { ...unsigned, signature: sign(entryFilingMessage(input.company, unsigned), input.signingSecret) };
 };
@@ -192,10 +214,18 @@ export type DirectoryChange =
   /**
    * A seat retired by a quorum, with the last version of each record it filed:
    * a version it filed up to that boundary is still believed, anything after
-   * is refused.
+   * is refused. `statement` is the leaving seat's records-key statement exactly
+   * as its own wallet signed it, taken from its roster entry when the
+   * retirement is raised: once the roster drops the seat, this is where a
+   * device reads which records key its versions inside the boundary were
+   * sealed with, so they stay readable. A seat no roster entry holds a
+   * statement for is retired without one, and then no version it filed is
+   * believed, as none was while it was seated: a missing statement never
+   * keeps a signer from being removed.
    */
   | {
     readonly kind: 'retire'; readonly seat: string; readonly filedUpTo: Readonly<Record<string, number>>;
+    readonly statement?: RecordsKeyStatement;
     readonly threshold: number; readonly signatures: readonly SeatSignature[];
   };
 /** A change a quorum of seats signs with their filing keys: a role, or a retirement. */
@@ -250,6 +280,8 @@ export interface DirectorySeat {
   readonly role: Role | null;
   /** Null while the seat is not retired; its last versions once a quorum has retired it. */
   readonly retired: Readonly<Record<string, number>> | null;
+  /** Once retired: the records-key statement its own wallet signed, as its retirement carries it. */
+  readonly retiredStatement?: RecordsKeyStatement;
 }
 
 export interface Directory {
@@ -276,18 +308,25 @@ export const DIRECTORY_REFUSAL = {
   'seat-taken': 'this device already believes an earlier entry for that seat, and believes one entry per seat.',
   'key-taken': 'that filing, records or committee key is already an entry\'s this device believes, and a key belongs to one entry.',
   'person-has-a-seat': 'this device already believes an entry by that person in this company\'s directory.',
+  'not-invited': 'that entry carries no invitation a seat of this company signed for it, so it is not believed. A seated signer invites the person again, and their device files its entry again.',
+  'invited-someone-else': 'the invitation that entry carries is for another person than the one the entry names, so it is not believed.',
+  'inviter-not-seated': 'the invitation that entry carries was not signed by a seat this directory holds and has not retired, so it is not believed. A seated signer invites the person again.',
+  'not-the-invitation-it-replaces': 'that entry carries a re-issued invitation that is not the one a seat of this company signed when that seat was proposed, for the same person, name, role and seat, so it is not believed. A seated signer re-issues it again from the proposal that seated it.',
+  'inviter-may-not-invite': 'the invitation that entry carries was signed by a seat whose role may not file a proposal, and only such a seat invites anybody, so it is not believed. A seated signer whose role may file one invites the person again.',
+  'invited-another-leaf': 'the invitation that entry carries names no seat, or another seat than the one the entry names, so it is not believed. Open the company again on the device that holds the seat: it files the entry with the invitation the proposal that seated it carries.',
   'no-such-seat': 'that change names a seat the directory has no entry for.',
   'seat-retired': 'that seat has been retired, so it cannot be changed or sign a change.',
-  'threshold-not-the-chains': 'that change was signed against a number of approvals that is not the one the company\'s account requires on the chain now. Have it signed again against the chain\'s.',
+  'statement-not-the-leavers': 'that retirement does not carry the records-key statement the leaving seat\'s own wallet signed for that seat, so the records it filed could not be read once it leaves. Raise the retirement again with the statement its roster entry holds.',
+  'threshold-not-the-chains': 'that change was signed against fewer approvals than a change of who is seated needs on the company\'s account: the higher of its threshold and the approvals a policy change needs. Have it signed again against the chain\'s.',
   'not-signed': 'one of the signatures on that change does not verify. Have the change signed again.',
   'twice-by-one-seat': 'one seat signed that change twice, and a seat counts once.',
-  'below-quorum': 'not enough of the company\'s seats signed that change: it needs as many as the company\'s account requires on the chain.',
+  'below-quorum': 'not enough of the company\'s seats signed that change: it needs as many as a change of who is seated needs on the company\'s account, the higher of its threshold and the approvals a policy change needs.',
   'not-a-change': 'that is not a change to a company\'s directory.',
-  'leaves-too-few-signers': 'that change would leave fewer seated signers than the approvals the company\'s account requires, so the account could never approve again and the chain refuses the same. Seat another signer or lower the threshold first, then sign it again.',
+  'leaves-too-few-signers': 'that change would leave fewer seated signers than a change of who is seated needs on the company\'s account - the higher of its threshold and the approvals a policy change needs - and the chain refuses the same. Seat another signer, or lower the threshold or the approvals a policy change needs, first, then sign it again.',
   'signed-at-applied': 'that change is filed again under signatures made for a version of the directory that was applied, or was already filed again, so there is nothing to file again. Read the directory again.',
   'signed-at-not-passed-over': 'that change is filed again under signatures made for a version of the directory the company\'s records did not pass over, and that rests on no seat a passed-over version claimed or changed, so it is not filed again. If the change is still wanted, the seats sign it again as the directory stands now.',
   'reverses-a-later-change': 'that change, filed again, would undo a change to the same seat applied after the version it was signed for, so it is not applied. If it is still wanted, the seats sign it again as the directory stands now.',
-  'not-as-the-chain-holds': 'that change, filed again, does not agree with who holds the company\'s account on the chain now: a seat it gives a role is not seated there, or a seat it retires still is. It is not applied; if it is still wanted, the seats sign it again as the account stands now.',
+  'not-as-the-chain-holds': 'that change, filed again, does not agree with who holds the company\'s account on the chain now: a seat it gives a role is not seated there. It is not applied; if it is still wanted, the seats sign it again as the account stands now.',
 } as const;
 export type DirectoryRefusalCode = keyof typeof DIRECTORY_REFUSAL;
 
@@ -308,6 +347,8 @@ export interface ChainHolders {
   readonly seats: AccountSeats;
   /** The approvals the account requires. */
   readonly approvals: number;
+  /** The approvals a change of who is seated needs on the account (`seatBarOf`). */
+  readonly seatBar: number;
 }
 
 /**
@@ -324,7 +365,11 @@ export interface ChainHolders {
  */
 export type EntryJudge =
   | { readonly by: 'the-server' }
-  | { readonly by: 'a-member'; readonly proofOf: (entry: DirectoryEntry) => SeatProof | null; readonly leafOf: LeafOf };
+  | {
+    readonly by: 'a-member'; readonly proofOf: (entry: DirectoryEntry) => SeatProof | null; readonly leafOf: LeafOf;
+    /** The seat the account's deploy seated, as the person's own wallet read it: the one entry believed without an invitation. */
+    readonly founding: string | null;
+  };
 
 export const AT_THE_SERVER: EntryJudge = Object.freeze({ by: 'the-server' });
 
@@ -342,9 +387,46 @@ export const proofsOpenedWith = (company: string, viewingKey: Hex): ((entry: Dir
   };
 };
 
-/** A member's device's judge: each entry's proof as `proofOf` opens it, checked against `leafOf`. */
-export const asAMember = (proofOf: (entry: DirectoryEntry) => SeatProof | null, leafOf: LeafOf): EntryJudge =>
-  ({ by: 'a-member', proofOf, leafOf });
+/**
+ * A member's device's judge: each entry's proof as `proofOf` opens it, checked
+ * against `leafOf`, and every entry but the founding seat's (`founding`, the
+ * seat the account's deploy seated as the person's own wallet read it) held to
+ * the invitation it carries.
+ */
+export const asAMember = (proofOf: (entry: DirectoryEntry) => SeatProof | null, leafOf: LeafOf, founding: string | null): EntryJudge =>
+  ({ by: 'a-member', proofOf, leafOf, founding: typeof founding === 'string' ? founding.toLowerCase() : null });
+
+/**
+ * **WHY A MEMBER'S DEVICE DOES NOT BELIEVE THE INVITATION AN ENTRY CARRIES**,
+ * or null when it does: signed by the filing key of a seat `dir` holds and has
+ * not retired and whose role may invite (`mayInvite`), for this company,
+ * naming the entry's person and the entry's seat; a re-issue only as exactly
+ * the invitation it replaces, signed by a seat it holds (`replacedBy`). Every invitation an entry carries names its leaf, so one person's
+ * invitation seats one leaf and no other seat can be entered under it. The
+ * founding seat needs none.
+ */
+const invitationRefusalOf = (
+  dir: Directory, entry: DirectoryEntry, proof: SeatProof, founding: string | null,
+): DirectoryRefusalCode | null => {
+  if (founding !== null && entry.statement.seat.toLowerCase() === founding) return null;
+  const invited = proof.invited;
+  if (invited === undefined || seatInvitationRefusal(invited) !== null || invited.terms.company !== dir.company) return 'not-invited';
+  if (invited.terms.person !== entry.person) return 'invited-someone-else';
+  if (invited.terms.leaf === undefined || invited.terms.leaf.toLowerCase() !== entry.statement.seat.toLowerCase()) return 'invited-another-leaf';
+  const inviter = dir.seats.find((x) => x.signingKey.toLowerCase() === invited.signedBy.toLowerCase());
+  if (inviter === undefined || inviter.retired !== null) return 'inviter-not-seated';
+  if (!mayInvite(inviter)) return 'inviter-may-not-invite';
+  /*
+   * A re-issue gives the seat nothing the invitation it replaces did not: that one must verify over the same person,
+   * name, role and seat, signed by a seat this directory holds - retired or not, since its leaving is why it was
+   * re-issued - whose role may invite.
+   */
+  const original = replacedBy(invited);
+  if (original === null) return null;
+  const first = seatInvitationRefusal(original) === null
+    ? dir.seats.find((x) => x.signingKey.toLowerCase() === original.signedBy.toLowerCase()) : undefined;
+  return first !== undefined && mayInvite(first) ? null : 'not-the-invitation-it-replaces';
+};
 
 const sameKey = (a: CommitteeKey, b: CommitteeKey): boolean =>
   a.tag === b.tag && a.value.toLowerCase() === b.value.toLowerCase();
@@ -403,6 +485,18 @@ const quorumOf = (dir: Directory, change: QuorumChange, version: number, counts:
 
 const ROLES: readonly Role[] = ['admin', 'approver', 'initiator', 'viewer'];
 
+/** Whether a read of who holds the account carries a seat bar the chain could hold: a whole number, at least one. */
+const barReadable = (held: { readonly seatBar?: number }): boolean => Number.isSafeInteger(held.seatBar) && (held.seatBar as number) >= 1;
+
+const STATEMENT_KEYS = ['recordsKey', 'seat', 'signature'];
+/** Whether a retirement's statement is a records-key statement in its shape, for the seat it retires. Signatures are not checked here. */
+const statementShapedFor = (statement: unknown, seat: string): boolean => {
+  const st = statement as Partial<RecordsKeyStatement> | null | undefined;
+  return typeof st === 'object' && st !== null && exactly(st, STATEMENT_KEYS)
+    && typeof st.recordsKey === 'string' && HEX64.test(st.recordsKey) && st.seat === seat
+    && typeof st.signature === 'string' && HEX128.test(st.signature);
+};
+
 /**
  * **ONE FILING, APPLIED TO THE DIRECTORY AS IT STANDS, OR REFUSED.**
  *
@@ -410,19 +504,24 @@ const ROLES: readonly Role[] = ['admin', 'approver', 'initiator', 'viewer'];
  * read of the chain now. An entry must be in its shape, for this account,
  * signed by the filing key it names, and its seat seated; it is kept beside
  * every other entry for that seat. A quorum's change must be in its shape,
- * every signature verifying, signed against the chain's threshold now: the
- * server counts no quorum and keeps no role or retirement, which each
- * member's device judges as it replays. `who` is the signed-in person filing
+ * every signature verifying, signed against at least the approvals a change of
+ * who is seated needs on the chain now: the server counts no quorum and keeps
+ * no role or retirement, which each member's device judges as it replays. `who` is the signed-in person filing
  * and the company's members: an entry names its filer, who must be a member.
  *
  * Replayed (`chain` null): reading back every filing. An entry is judged as
  * `judge` says (`EntryJudge`): on a member's device, its proof is opened and
- * must prove its wallet key for its seat, and it is believed only as the
- * first such entry for its seat and for its keys. With `now`, a change's
- * quorum is counted against the account's approval threshold now, over seats
- * not retired that are seated now, one per wallet; without it,
- * against the threshold the change names. Whether a seat is held NOW is asked
- * of each filing when it is read (`filingRefusalOf`), because a seat retired
+ * must prove its wallet key for its seat and, for every seat but the founding
+ * one, carry the invitation a seat it holds signed for its person and its seat
+ * (`invitationRefusalOf`), which gives it its role, and it is believed only as the first such entry for
+ * its seat and for its keys. With `now`, a change must
+ * name at least the approvals a change of who is seated needs now, and its
+ * quorum is counted against that bar, over seats not retired that are seated
+ * now, one per wallet, and it may leave no fewer seated and not retired than
+ * that bar; a retirement's records-key statement, where it carries one, must be
+ * the leaving seat's, signed by the wallet its entry proved; without
+ * it, against the threshold the change names. Whether a seat is held NOW is
+ * asked of each filing when it is read (`filingRefusalOf`), because a seat retired
  * later was seated when it filed.
  */
 export const applyFiling = (
@@ -435,16 +534,17 @@ export const applyFiling = (
     readonly who?: { readonly person: string; readonly members: readonly string[] };
     /**
      * Replayed only: the chain as this device's own wallet read it for this read. A change is then believed only
-     * when it names at least the account's approval threshold now, counting only seats seated now whose entry was
-     * believed, so a change the server stored under a lower threshold, signed by seats that have left, or signed by
-     * an entry the server made up, is not believed.
+     * when it names at least the approvals a change of who is seated needs now, counting only seats seated now whose
+     * entry was believed, so a change the server stored under a lower threshold, signed by seats that have left, or
+     * signed by an entry the server made up, is not believed.
      */
     readonly now?: AccountHeld;
     /**
      * Replayed only, for a version the company's records anchor: who held the account as the anchor call that first
-     * anchored it ran - the approvals it required and the seats its signer tree held, both checked by that call. A
-     * change is then believed only when it names at least those approvals, counting only seats that tree held. Nothing
-     * of the account now enters into it.
+     * anchored it ran - the approvals it required and the seats its signer tree held, both checked by that call, and
+     * the approvals a change of who is seated needed in the state the block that call landed in left. A change is then
+     * believed only when it names at least that bar, counting only seats that tree held. Nothing of the account now
+     * enters into it.
      */
     readonly anchored?: AccountHeld;
     /** Who is judging each entry: the server, which never opens its proof, or a member's device, which must. */
@@ -479,19 +579,30 @@ export const applyFiling = (
       const proved = proofRefusalOf(ctx.label, ctx.account, entry, ctx.judge);
       if (typeof proved === 'string') throw new DirectoryRefused(proved);
       proof = proved.proof;
+      /* A seat goes to the person a seat of this company invited: every entry but the founding seat's carries that invitation. */
+      const uninvited = invitationRefusalOf(dir, entry, proof, ctx.judge.founding);
+      if (uninvited !== null) throw new DirectoryRefused(uninvited);
+      /*
+       * A retired seat holds no person, wallet or records key any more: who left can be seated again under a new leaf.
+       * Its leaf and its filing key stay its own for good, since its versions inside its boundary are judged by them,
+       * and a leaf the chain has not removed yet must never be entered again as a seat not retired.
+       */
+      const holding = dir.seats.filter((x) => x.retired === null);
       if (dir.seats.some((x) => x.seat === s.seat)) throw new DirectoryRefused('seat-taken');
       const p = proof;
-      if (dir.seats.some((x) => [x.signingKey, x.wrappingKey].some((k) => k === s.signingKey || k === s.wrappingKey))
+      if (dir.seats.some((x) => x.signingKey === s.signingKey || x.signingKey === s.wrappingKey)
+        || holding.some((x) => x.wrappingKey === s.signingKey || x.wrappingKey === s.wrappingKey)
         /* One wallet holds one seat: a second entry whose proof names a wallet key another entry's proves is refused. */
-        || dir.seats.some((x) => x.committeeKey !== undefined && sameKey(x.committeeKey, p.committeeKey))) {
+        || holding.some((x) => x.committeeKey !== undefined && sameKey(x.committeeKey, p.committeeKey))) {
         throw new DirectoryRefused('key-taken');
       }
-      if (dir.seats.some((x) => x.person === entry.person)) throw new DirectoryRefused('person-has-a-seat');
+      if (holding.some((x) => x.person === entry.person)) throw new DirectoryRefused('person-has-a-seat');
     }
     return {
       ...dir, version: filing.version,
       seats: [...dir.seats, {
-        seat: s.seat, person: entry.person, signingKey: s.signingKey as Hex, wrappingKey: s.wrappingKey as Hex, role: null, retired: null,
+        /* Entered at the role its invitation gives, which a quorum's role change may change later; the founding seat's is unset. */
+        seat: s.seat, person: entry.person, signingKey: s.signingKey as Hex, wrappingKey: s.wrappingKey as Hex, role: proof?.invited?.terms.role ?? null, retired: null,
         ...(proof === undefined ? {} : {
           committeeKey: { tag: proof.committeeKey.tag, value: proof.committeeKey.value.toLowerCase() },
           opening: Object.freeze({ ...proof.opening, walletKey: Object.freeze({ ...proof.opening.walletKey }) }),
@@ -502,7 +613,7 @@ export const applyFiling = (
   if (change.kind !== 'role' && change.kind !== 'retire') throw new DirectoryRefused('not-a-change');
   /*
    * The server keeps no role and no retirement, and counts no quorum: it checks what anyone can of the change - its
-   * shape, every signature, and the chain's threshold now - so neither it nor a member can stop a true change.
+   * shape, every signature, and the chain's seat bar now - so neither it nor a member can stop a true change.
    */
   const atTheServer = ctx.judge.by === 'the-server';
   const target = dir.seats.find((x) => x.seat === change.seat);
@@ -510,40 +621,75 @@ export const applyFiling = (
   if (!atTheServer && target!.retired !== null) throw new DirectoryRefused('seat-retired');
   if (typeof change.seat !== 'string' || !HEX64.test(change.seat)) throw new DirectoryRefused('not-a-change');
   if (!Number.isSafeInteger(change.threshold) || change.threshold < 1) throw new DirectoryRefused('not-a-change');
-  if (ctx.chain !== null && change.threshold !== ctx.chain.approvals) throw new DirectoryRefused('threshold-not-the-chains');
   const now = ctx.now;
   const anchored = ctx.anchored;
   const against = anchored ?? now;
-  if (!atTheServer && ctx.chain === null && against !== undefined && change.threshold < against.approvals) throw new DirectoryRefused('threshold-not-the-chains');
+  /*
+   * The approvals a change of who is seated needs, from the chain's read, the account as the change was anchored, or the
+   * account now, in that order: the same bar the chain holds a removal by `amendSigner` to. A read without it is
+   * refused, never taken as no bar, since a change judged against none would pass below the chain's.
+   */
+  const heldBy = ctx.chain ?? against;
+  if (heldBy !== undefined && !barReadable(heldBy)) {
+    throw new Error('who holds the company\'s account was read without the approvals a change of who is seated needs, so no '
+      + 'change to its directory is judged. Reload the page.');
+  }
+  const bar = heldBy?.seatBar;
+  if (bar !== undefined && change.threshold < bar && (ctx.chain !== null || !atTheServer)) throw new DirectoryRefused('threshold-not-the-chains');
   if (change.kind === 'role' && !ROLES.includes(change.role)) throw new DirectoryRefused('not-a-change');
   if (change.kind === 'retire' && (typeof change.filedUpTo !== 'object' || change.filedUpTo === null
     || !Object.values(change.filedUpTo).every((v) => Number.isSafeInteger(v) && v >= 0))) throw new DirectoryRefused('not-a-change');
+  if (change.kind === 'retire' && change.statement !== undefined && !statementShapedFor(change.statement, change.seat)) {
+    throw new DirectoryRefused('statement-not-the-leavers');
+  }
   if (atTheServer) {
     const bad = signaturesRefusal(dir.company, change, filing.signedAt ?? filing.version);
     if (bad !== null) throw new DirectoryRefused(bad);
     return { ...dir, version: filing.version };
   }
+  /*
+   * The statement a retirement carries is believed only as the leaving seat's own wallet signed it, under the wallet
+   * key its entry's opening proved, naming the records key its entry wraps to: no quorum can put another records key
+   * in its place, and a stale statement the same wallet once signed would leave the leaver's versions unread for good.
+   * A retirement carrying none retires the seat with no statement, so nothing it filed is read as sealed by it.
+   */
+  if (change.kind === 'retire' && change.statement !== undefined && (target!.committeeKey === undefined || change.statement.recordsKey !== target!.wrappingKey
+    || !recordsKeySignedBy(ctx.label, ctx.account, target!.committeeKey, change.statement))) {
+    throw new DirectoryRefused('statement-not-the-leavers');
+  }
   const chain = ctx.chain;
-  const held = (x: DirectorySeat): boolean => (chain !== null ? chain.seats.seats.includes(x.seat)
+  /*
+   * The seat a demotion or retirement is about counts like any other, whether it is still seated or the chain has
+   * already removed it, as the chain counted its approval of its own removal; no other seat off the account counts.
+   */
+  const held = (x: DirectorySeat): boolean => x.seat === change.seat || (chain !== null ? chain.seats.seats.includes(x.seat)
     : anchored !== undefined ? anchored.seats.includes(x.seat)
       : now === undefined || now.seats.includes(x.seat));
   /*
-   * The chain never removes a signer when fewer would stay seated than the
-   * threshold, since the account could then never approve again; a directory
-   * that retired the seat anyway would hold a company the chain does not.
+   * The chain's removal by `amendSigner` never leaves fewer seated than the
+   * approvals a change of who is seated needs, since the account could then
+   * never approve again; a directory that retired the seat anyway would hold a
+   * company the chain does not. The bar, not the threshold the change was
+   * signed at, is what the chain checks.
    */
   const seated = chain !== null ? chain.seats.seats : anchored !== undefined ? anchored.seats : now !== undefined ? now.seats
     : dir.seats.filter((x) => x.retired === null).map((x) => x.seat);
-  const staying = change.kind === 'retire' ? seated.filter((x) => x !== change.seat) : seated;
-  if (staying.length < change.threshold) throw new DirectoryRefused('leaves-too-few-signers');
+  /*
+   * Staying means seated and not retired: a seat this directory has retired, whose removal the chain has not carried
+   * out yet, is leaving all the same, so it does not hold a second retirement up.
+   */
+  const retiredHere = (seat: string): boolean => dir.seats.some((x) => x.seat === seat && x.retired !== null);
+  const staying = seated.filter((x) => !retiredHere(x) && (change.kind !== 'retire' || x !== change.seat));
+  if (staying.length < (bar ?? change.threshold)) throw new DirectoryRefused('leaves-too-few-signers');
   const n = quorumOf(dir, change, filing.signedAt ?? filing.version, held);
   if (typeof n === 'string') throw new DirectoryRefused(n);
-  if (n < change.threshold) throw new DirectoryRefused('below-quorum');
+  if (n < Math.max(change.threshold, bar ?? 0)) throw new DirectoryRefused('below-quorum');
   return {
     ...dir, version: filing.version,
-    seats: dir.seats.map((x) => (x.seat !== change.seat ? x : change.kind === 'role'
+    seats: dir.seats.map((x) => (x !== target ? x : change.kind === 'role'
       ? { ...x, role: change.role }
-      : { ...x, retired: Object.freeze({ ...change.filedUpTo }) })),
+      : { ...x, retired: Object.freeze({ ...change.filedUpTo }),
+        ...(change.statement === undefined ? {} : { retiredStatement: Object.freeze({ ...change.statement }) }) })),
   };
 };
 
@@ -557,6 +703,13 @@ export const applyFiling = (
 export interface AccountHeld {
   readonly approvals: number;
   readonly seats: readonly string[];
+  /**
+   * The approvals a change of who is seated needed on the account then: the
+   * higher of its threshold and the approvals a policy change needs
+   * (`seatBarOf`). A demotion or retirement is held to it, as the chain holds a
+   * removal by `amendSigner` to it.
+   */
+  readonly seatBar: number;
 }
 
 /**
@@ -573,12 +726,14 @@ export interface AccountHeld {
  * **A VERSION THE COMPANY'S RECORDS ANCHOR IS COUNTED AGAINST WHO HELD THE
  * ACCOUNT WHEN IT WAS ANCHORED**, never against who holds it now: `asAnchored`
  * gives, for such a version, the approvals and seats the anchor call that
- * first anchored it checked as it ran. A role or retirement change needs that many of
- * those seats, whatever their wallet keys. So a signer of the change who leaves later, or a
+ * first anchored it checked as it ran, and the seat bar of the state its block
+ * left. A role or retirement change needs that bar of those seats, whatever
+ * their wallet keys. So a signer of the change who leaves later, or a
  * threshold that rises later, changes nothing about it. Null there means the
  * version may be anchored and who held the account then is not known, and the
  * filing is not believed. A version not yet anchored is counted against `now`:
- * the account's approval threshold now, signed by that many seats seated now.
+ * the approvals a change of who is seated needs now, signed by that many seats
+ * seated now.
  */
 export const believedDirectory = (
   company: string, filings: readonly DirectoryFiling[], label: CompanyLabel, account: AccountAddress,
@@ -631,11 +786,14 @@ const seatsOf = (f: DirectoryFiling | undefined): readonly string[] => {
  *   · with `now`, who holds the account on chain now - given while the change
  *     filed again is not yet anchored, never after, since an anchored version is
  *     counted against who held the account as it was anchored: it is signed
- *     against the approvals the account requires now (as the service files it),
- *     a seat it gives a role is seated there, and a seat it retires is not.
+ *     against at least the approvals a change of who is seated needs now (as the
+ *     service files it), and a seat it gives a role is seated there. A
+ *     retirement is believed whether its seat is still seated or already off
+ *     the chain: the chain may remove the seat before or after its retirement
+ *     is filed, and the retirement is the same either way.
  */
 export const refiledRefusalOf = (
-  replay: DirectoryReplay, filing: DirectoryFiling, now?: Pick<AccountHeld, 'approvals' | 'seats'>,
+  replay: DirectoryReplay, filing: DirectoryFiling, now?: AccountHeld,
 ): DirectoryRefusalCode | null => {
   const v = filing.signedAt;
   const change = filing.change;
@@ -652,8 +810,12 @@ export const refiledRefusalOf = (
     if (!restsOnOne) return 'signed-at-not-passed-over';
   }
   if ((replay.changed.get(change.seat) ?? 0) > v) return 'reverses-a-later-change';
-  if (now !== undefined && change.threshold !== now.approvals) return 'threshold-not-the-chains';
-  if (now !== undefined && (change.kind === 'role') !== now.seats.includes(change.seat)) return 'not-as-the-chain-holds';
+  if (now !== undefined && !barReadable(now)) {
+    throw new Error('who holds the company\'s account was read without the approvals a change of who is seated needs, so no '
+      + 'change filed again is judged. Reload the page.');
+  }
+  if (now !== undefined && change.threshold < now.seatBar) return 'threshold-not-the-chains';
+  if (now !== undefined && change.kind === 'role' && !now.seats.includes(change.seat)) return 'not-as-the-chain-holds';
   return null;
 };
 
@@ -807,13 +969,16 @@ export const filerSeatIn = (dir: Directory, publicKey: Hex): DirectorySeat | Ser
  * **THE SEATS WHOSE WRAPPING KEY IS NOT THE RECORDS KEY THEIR OWN WALLET
  * ATTESTED.** Every seat in the directory is checked, not only those a
  * statement is held for. `attested` is every records-key statement this device
- * holds; a statement counts for a seat only when it verifies under the
- * wallet key the seat's entry proved, so a statement under any other key
- * decides nothing, and none counts for a seat whose entry this device did not
- * open. A seat is refused, and its filings are not believed, when no statement
- * counts for it or one that counts names a different key than its entry's
- * wrapping key. This adds no reader to any secret, and takes the statement as
- * the one word on whose a records key is.
+ * holds from the roster; a retired seat is judged by the statement its
+ * retirement carries instead, and by no roster statement, so its versions
+ * inside its boundary stay believed once the roster drops it. A statement
+ * counts for a seat only when it verifies under the wallet key the seat's
+ * entry proved, so a statement under any other key decides nothing, and none
+ * counts for a seat whose entry this device did not open. A seat is refused,
+ * and its filings are not believed, when no statement counts for it or one
+ * that counts names a different key than its entry's wrapping key. This adds
+ * no reader to any secret, and takes the statement as the one word on whose a
+ * records key is.
  */
 export const seatsWithAnotherRecordsKey = (
   dir: Directory, label: CompanyLabel, account: AccountAddress,
@@ -821,14 +986,29 @@ export const seatsWithAnotherRecordsKey = (
 ): ReadonlySet<string> => {
   const refused = new Set<string>();
   for (const seat of dir.seats) {
-    const key = seat.committeeKey;
-    const counted = key === undefined ? [] : attested.filter((a) => String(a.statement.seat).toLowerCase() === seat.seat
-      && recordsKeySignedBy(label, account, key, a.statement));
-    if (counted.length === 0 || counted.some((a) => String(a.statement.recordsKey).toLowerCase() !== seat.wrappingKey)) {
+    const counted = statementsCountedFor(seat, label, account, attested);
+    if (counted.length === 0 || counted.some((a) => String(a.recordsKey).toLowerCase() !== seat.wrappingKey)) {
       refused.add(seat.seat);
     }
   }
   return refused;
+};
+
+/**
+ * **THE RECORDS-KEY STATEMENTS THAT COUNT FOR ONE SEAT**: of `attested` (the
+ * roster's) for a seat not retired, or only the one its retirement carries for
+ * a retired seat; each for that seat, verifying under the wallet key its
+ * entry proved. None for a seat whose entry this device did not open.
+ */
+export const statementsCountedFor = (
+  seat: DirectorySeat, label: CompanyLabel, account: AccountAddress,
+  attested: readonly { readonly committeeKey: CommitteeKey; readonly statement: RecordsKeyStatement }[],
+): readonly RecordsKeyStatement[] => {
+  const key = seat.committeeKey;
+  if (key === undefined) return [];
+  const held = seat.retired === null ? attested.map((a) => a.statement)
+    : seat.retiredStatement === undefined ? [] : [seat.retiredStatement];
+  return held.filter((st) => String(st.seat).toLowerCase() === seat.seat && recordsKeySignedBy(label, account, key, st));
 };
 
 /** Why a signed-in person may not act on the company's proposals now. */

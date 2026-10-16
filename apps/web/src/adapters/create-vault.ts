@@ -9,7 +9,6 @@ import {
 } from 'vaults-web-shared/keyring.js';
 import type { VaultAddress } from 'midnight-identity/profile/company-label';
 import { createCompanyVault, VaultHandoverOwed, VaultStartOwed, type VaultStage } from 'vaults-web-shared/vault-operation.js';
-import { governedCallServiceFor } from 'vaults-web-shared/governed-call-on-device.js';
 import {
   browserTemporaryKeys, deviceRecordsFor, deviceSignerFrom, marked, readersIn, vaultServiceFor,
 } from 'vaults-web-shared/vault-page-doors.js';
@@ -278,20 +277,19 @@ async function run(personId: string, companyId: string, onStage: (stage: Creatin
         },
       },
       /*
-       * The company as this device counts it before the adoption is raised, approved or carried out: the bars the chain
-       * holds, the seated signers and the rights the roster records for them, and the vaults the account holds as this
-       * person's own wallet reads it.
+       * The company as this device counts it before the adoption is raised, approved or carried out: the account's
+       * threshold, each vault's own and the vaults it holds, all as this person's own wallet reads the account, and the
+       * seated signers with the rights the roster records for them.
        */
       approvers: async () => {
-        const [status, account, held, wide] = await Promise.all([
-          /* Refused, with what was not read, when the chain's account could not be read. */
-          governedCallServiceFor(api).bars!(companyId),
+        const [account, held, wide] = await Promise.all([
           o.roster(),
+          /* Refused, with what was not read, when the wallet could not read the account. */
           holdersFromTheWallet(ACCOUNT_ORIGIN, { company: released.company, account: released.account }),
           (await theVaultBuilder()).companyWide(),
         ]);
         return approverRosterFrom({
-          threshold: status.threshold, vaultThresholds: status.vaultThresholds,
+          threshold: held.holders.approvals, vaultThresholds: held.holders.vaultThresholds,
           seated: account.signers.filter((x) => x.status === 'active' && x.leafCommitment !== null)
             .map((x) => ({ leaf: x.leafCommitment!, ...(x.rights === undefined ? {} : { rights: x.rights }) })),
           adoptedVaults: held.holders.adoptedVaults, companyWide: wide,

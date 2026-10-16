@@ -88,7 +88,7 @@ const PEOPLE: PersonRow[] = [
   { id: 'e5', name: 'Eve', title: 'Writer', standing: 'waiting-for-check', pay: NIGHT(1n, 'public'), paid: 'not-set-up', startedAt: '2026-03-01' },
 ];
 const records = (over: Partial<CompanyRecords> = {}): Company => ({
-  of: 'open', id: 'c-1', name: 'Northwind', signers: [{ id: 's1', name: 'Priya' }], approvalsNeeded: 1,
+  of: 'open', id: 'c-1', name: 'Northwind', signers: [{ id: 's1', name: 'Priya' }], approvalsNeeded: { of: 'read', value: 1 },
   proposals: { of: 'read', value: PROPOSALS }, runs: { of: 'read', value: [RUN, PAID_RUN] }, people: { of: 'read', value: PEOPLE },
   vaults: { of: 'read', value: [{ vault: VAULT, createdAt: '2026-09-01T00:00:00.000Z', standing: 'held-by-committee' }] },
   invitations: { of: 'read', value: [{ kind: 'signer', name: 'Tom', sentAt: '2026-09-10T00:00:00.000Z', expiresAt: null }, { kind: 'employee', name: null, sentAt: '2026-09-11T00:00:00.000Z', expiresAt: '2026-10-11T00:00:00.000Z' }] },
@@ -100,7 +100,7 @@ type Id = keyof typeof PAGES;
 function drawNow(id: Id, params: Record<string, string> = {}) {
   window.history.replaceState(null, '', addressOf(id, params));
   const session = {
-    person: { id: 'u1', name: 'Priya' }, companies: [{ id: 'c-1', createdAt: '2026-09-01T00:00:00.000Z', signers: 1, approvalsNeeded: 1 }], company: 'c-1',
+    person: { id: 'u1', name: 'Priya' }, companies: [{ id: 'c-1', createdAt: '2026-09-01T00:00:00.000Z', signers: 1 }], company: 'c-1',
     chooseCompany: vi.fn(), viewer: { signedIn: true, view: VIEWS.company, signs: true }, chooseView: vi.fn(), preferences: DEFAULT_PREFERENCES,
     choose: vi.fn(), signOut: vi.fn(), mac: true, companiesChanged: vi.fn(async () => {}),
   };

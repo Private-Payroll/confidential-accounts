@@ -36,6 +36,7 @@
  * chain sees is read here off proof-erased, unbound bytes.
  */
 import { describe, it, expect, beforeAll } from 'vitest';
+import { seatBarOf } from 'midnight-identity/profile/records-key';
 import type { AccountAddress, CompanyLabel } from 'midnight-identity/profile/company-label';
 import * as L from '@midnightntwrk/ledger-v9';
 import * as runtime from '@midnight-ntwrk/compact-runtime';
@@ -383,7 +384,7 @@ describe.skipIf(!KEYS_ON_DISK)('A DEPOSIT FROM THE PAGE, BUILT ON THE DEVICE [ne
       /* The wallet's read: the account has adopted this vault. */
       account: ACCOUNT,
       onChain: async (v: string) => ({
-        holders: { committee: [], threshold: 1, seats: [], approvals: 1, adoptedVaults: [v], founding: '4a'.repeat(32), foundingCommittee: [{ tag: 'schnorr', value: '11'.repeat(32) }] },
+        holders: { committee: [], threshold: 1, seats: [], approvals: 1, vaultThresholds: [], policyBar: null, seatBar: seatBarOf(1, null), adoptedVaults: [v], founding: '4a'.repeat(32), foundingCommittee: [{ tag: 'schnorr', value: '11'.repeat(32) }] },
       }),
       myRecordsKey: recordsKeypairFrom(companyKey).publicKey,
       signers: async () => [{ id: 'ada', wrappingPublicKey: wrapping.publicKey }],

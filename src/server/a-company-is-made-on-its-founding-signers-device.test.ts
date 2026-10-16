@@ -233,6 +233,7 @@ describe('A COMPANY ITS FOUNDING SIGNER\'S DEVICE MADE', () => {
         return { ...f, state: { ...unsigned, company: 'acc_another', filedBy: f.state.filedBy } };
       })(), 422, 'the-company-does-not-fit'],
       ['a record already given an address', changed(madeHere(), (x) => { x.account.contractAddress = 'aa'.repeat(32); }), 400, 'not-a-company-made-on-the-device'],
+      ['a threshold carried on the record', changed(madeHere(), (x) => { x.account.threshold = 1; }), 400, 'not-a-company-made-on-the-device'],
       ['two seats on the record', changed(madeHere(), (x) => { x.account.signerCount = 2; }), 400, 'not-a-company-made-on-the-device'],
       ['a field nobody named', changed(madeHere(), (x) => { x.seat.extra = 'aa'; }), 400, 'not-a-company-made-on-the-device'],
       ['an id this service would not make', changed(madeHere(), (x) => { x.account.id = 'acc_../../x'; }), 400, 'not-a-company-made-on-the-device'],

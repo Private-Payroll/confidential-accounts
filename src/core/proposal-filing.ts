@@ -13,9 +13,10 @@
  * Pure: the page and the service both import it, and it loads nothing else.
  */
 import type { Vouched } from '../midnight/record-tree.js';
-import { canonical, commit, seal, sign, signingPublicKeyOf, verify, type Hex, type Sealed } from './crypto.js';
-import { sealRecord } from './sealed-records.js';
-import type { ProposalKind, Role, ShieldedEntry } from './types.js';
+import { canonical, commit, parseCanonical, seal, sign, signingPublicKeyOf, unseal, verify, type Hex, type Sealed } from './crypto.js';
+import { openRecord, sealRecord } from './sealed-records.js';
+import type { ProposalKind, Role, SealedProposal, ShieldedEntry } from './types.js';
+import { seatInvitationRefusal, type Inviter, type SignedSeatInvitation } from './invitation.js';
 import { paymentsCheckedDigest, type PaymentChecked } from './device-raise.js';
 
 const DOMAIN = 'confidential-accounts/proposal-filing/v1';
@@ -110,12 +111,40 @@ export const paysCommitmentOf = (pays: ProposalPays, salt: string): Hex => commi
 
 /** What a governance proposal changes, as its sealed payload holds it. */
 export type GovernancePayloadBody =
-  | { readonly signerId: string }
+  /**
+   * A seat: the person waiting for it, the invitation naming its leaf, carried to their own entry once seated, and
+   * the seat raising it as an inviter record (`inviter`), handed to the person's wallet on its first records-key ask.
+   */
+  | { readonly signerId: string; readonly invited?: SignedSeatInvitation; readonly inviter?: Inviter }
   | { readonly newThreshold: number }
   | { readonly vault: Hex; readonly newThreshold: number }
   /** A vault's spending policy for one currency: the currency's blinded key, never the currency, and the policy's commitment. */
   | { readonly vault: Hex; readonly assetKey: Hex; readonly commitment: Hex }
-  | { readonly newPolicyBar: number };
+  | { readonly newPolicyBar: number }
+  /**
+   * A signer removed: the leaf the chain takes off, and the retirement of its seat in the company's directory that
+   * every approving device signs with its approval. None for a leaf the company's directory holds no entry for.
+   */
+  | { readonly leaf: Hex; readonly retirement?: RetirementTerms };
+
+/**
+ * **WHAT A REMOVAL'S RETIREMENT SAYS, AS ITS PROPOSAL CARRIES IT**: the last
+ * version of each record the leaving seat filed, its records-key statement as
+ * its own wallet signed it where one exists, and the approvals it is signed
+ * at. Every approving device signs exactly these, over the directory version
+ * next when it signs, and refuses terms it would not have made itself.
+ */
+export interface RetirementTerms {
+  readonly filedUpTo: Readonly<Record<string, number>>;
+  /**
+   * The anchored head `filedUpTo` was taken at, as the anchor names it: what every approving device judges the
+   * boundary against, so what the leaving seat anchors after it voids nothing. Absent on terms raised before heads were
+   * named, which no device approves.
+   */
+  readonly atHead?: string;
+  readonly statement?: { readonly recordsKey: string; readonly seat: string; readonly signature: string };
+  readonly threshold: number;
+}
 
 /**
  * The governance kinds a device seals. A vault's spending policy and the
@@ -123,7 +152,7 @@ export type GovernancePayloadBody =
  * the company's proposal list says in words, which reads either as a change to
  * the company.
  */
-type GovernanceKind = Extract<ProposalKind, 'add-signer' | 'set-threshold' | 'set-vault-threshold'> | 'set-spending-policy' | 'set-policy-bar';
+type GovernanceKind = Extract<ProposalKind, 'add-signer' | 'remove-signer' | 'set-threshold' | 'set-vault-threshold'> | 'set-spending-policy' | 'set-policy-bar';
 
 /**
  * **A GOVERNANCE PROPOSAL'S ENVELOPE, SEALED ON THE DEVICE RAISING IT**, in the
@@ -145,10 +174,90 @@ export const sealGovernanceProposal = (input: {
   approvals: [],
 }, input.viewingKey);
 
+/**
+ * **THE INVITATION BEHIND A SEAT, AS THE COMPANY'S PROPOSAL TO ADD IT CARRIES
+ * IT**: the one whose seat is `seat`, opened from the company's proposals with
+ * its viewing key; null when none carries one for that seat. The proposal
+ * carries the invitation naming the seat's leaf, which the person's own
+ * directory entry must carry, on every way in. Nothing here is believed: a
+ * member's device judges the invitation where it judges the entry.
+ */
+export const seatInvitationIn = (
+  proposals: readonly Pick<SealedProposal, 'accountId' | 'sealed'>[], accountId: string, viewingKey: Hex, seat: string,
+): SignedSeatInvitation | null => seatAddedIn(proposals, accountId, viewingKey, seat)?.invited ?? null;
+
+/**
+ * **THE SEAT THAT RAISED THE PROPOSAL ADDING `seat`, AS AN INVITER RECORD**:
+ * its wallet key, the directory entry its wallet signed and its own seat's
+ * opening, as the proposal carries them; null when none carries one. Handed to
+ * the person's own wallet on its first records-key ask, which believes it only
+ * where that seat is on the account as the wallet reads it, and its opening
+ * proves that key for it; nothing here is believed.
+ */
+export const seatInviterIn = (
+  proposals: readonly Pick<SealedProposal, 'accountId' | 'sealed'>[], accountId: string, viewingKey: Hex, seat: string,
+): Inviter | null => seatAddedIn(proposals, accountId, viewingKey, seat)?.inviter ?? null;
+
+/** What one opened proposal to add a seat carries: its request id, its invitation, and the seat that raised it. */
+interface AddSignerOpened {
+  readonly rec: Pick<SealedProposal, 'accountId' | 'sealed'> & Partial<Pick<SealedProposal, 'chainId'>>;
+  readonly signerId: unknown;
+  readonly invited?: SignedSeatInvitation;
+  readonly inviter?: Inviter;
+}
+
+/** Every proposal to add a seat this key opens, with what it carries; one this key does not open names nothing. */
+const addSignersOpened = (
+  proposals: readonly (Pick<SealedProposal, 'accountId' | 'sealed'> & Partial<Pick<SealedProposal, 'chainId'>>)[], accountId: string, viewingKey: Hex,
+): AddSignerOpened[] => proposals.flatMap((rec) => {
+  try {
+    const envelope = openRecord<{ kind: string; sealedPayload: Sealed }>('proposals', accountId, rec.sealed, viewingKey);
+    if (envelope.kind !== 'add-signer') return [];
+    const body = parseCanonical<{ signerId?: unknown; invited?: unknown; inviter?: unknown }>(unseal(envelope.sealedPayload, viewingKey));
+    const invited = seatInvitationRefusal(body.invited) === null ? body.invited as SignedSeatInvitation : undefined;
+    const inviter = body.inviter as Inviter | undefined;
+    return [{ rec, signerId: body.signerId, ...(invited === undefined ? {} : { invited }), ...(typeof inviter === 'object' && inviter !== null ? { inviter } : {}) }];
+  } catch {
+    /* A record this key does not open names no seat of this company's. */
+    return [];
+  }
+});
+
+/**
+ * The proposal adding `seat`: the one whose invitation names that leaf, read by
+ * the leaf and never by the order the service lists them in. Where proposals
+ * carry two different invitations for one leaf, none is taken: which one the
+ * signers approved is not this list's to say.
+ */
+const seatAddedIn = (
+  proposals: readonly Pick<SealedProposal, 'accountId' | 'sealed'>[], accountId: string, viewingKey: Hex, seat: string,
+): AddSignerOpened | null => {
+  const named = addSignersOpened(proposals, accountId, viewingKey).filter((x) => x.invited?.terms.leaf?.toLowerCase() === seat.toLowerCase());
+  return new Set(named.map((x) => x.invited!.signature.toLowerCase())).size === 1 ? named[0]! : null;
+};
+
+/**
+ * **WHETHER THE CHAIN HOLDS A PROPOSAL TO SEAT THE REQUEST `signerId` OPEN**:
+ * one this key opens, for that request, whose id is among the proposals the
+ * chain holds open (`openOnTheChain`, as the device's own read of the chain
+ * gives them) - approved or not - or one whose id on the chain the seat that
+ * raised it did not sign. A request is not withdrawn while one is: the chain
+ * could still seat its leaf. What the service writes of a proposal's standing
+ * is never asked.
+ */
+export const seatStillProposedFor = (
+  proposals: readonly SealedProposal[], accountId: string, viewingKey: Hex, signerId: string, openOnTheChain: readonly string[],
+): boolean => addSignersOpened(proposals, accountId, viewingKey).some((x) => {
+  if (x.signerId !== signerId) return false;
+  /* Its id on the chain counts only as the seat that raised it signed it; one nobody signed could be any proposal. */
+  if (proposalFilingRefusal(accountId, x.rec) !== null) return true;
+  return openOnTheChain.some((id) => id.toLowerCase() === String(x.rec.chainId).toLowerCase());
+});
+
 /** Whether a value names a proposal kind this file seals. */
 export const isGovernanceKind = (kind: unknown): kind is GovernanceKind =>
-  kind === 'add-signer' || kind === 'set-threshold' || kind === 'set-vault-threshold' || kind === 'set-spending-policy'
-  || kind === 'set-policy-bar';
+  kind === 'add-signer' || kind === 'remove-signer' || kind === 'set-threshold' || kind === 'set-vault-threshold'
+  || kind === 'set-spending-policy' || kind === 'set-policy-bar';
 
 /** What a round's entries commit to, folded into the change its proposal seals. */
 export const batchDigestOf = (entries: readonly ShieldedEntry[]): Hex => commit(canonical(entries), '');

@@ -192,7 +192,7 @@ describe('a small payment is still a payment', () => {
      */
     const h = harness();
     const { account, viewingKey, secrets } = await openAccountAt2of3(h);
-    editAccount(h, account.id, viewingKey, a => { a.policy.threshold = 1; });
+    editAccount(h, account.id, viewingKey, a => { (a.policy as unknown as { threshold: number }).threshold = 1; });
 
     const p = await h.accounts.propose({
       accountId: account.id, viewingKey, kind: 'transfer',

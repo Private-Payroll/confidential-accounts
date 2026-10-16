@@ -105,6 +105,16 @@ const FILER = z.string().regex(HEX64);
 
 /** One proven transaction, as base64, held under the body limit. */
 const TX = z.string().min(1).max(1_000_000);
+/** One seat's signature over a removal's retirement: the directory version it was made over, the seat's filing key and the signature. */
+const RETIREMENT_SIGNATURE = z.object({
+  signedFor: z.number().int().min(1).max(1_000_000), publicKey: z.string().regex(HEX64), signature: z.string().regex(/^[0-9a-f]{128}$/u),
+}).strict();
+/**
+ * The most directory versions one seat's retirement signatures are kept for, beside one proposal: its newest. One seat
+ * signs again only when another change took the version it signed for, so a few cover every honest case, and no seat
+ * can crowd out another's.
+ */
+const VERSIONS_KEPT_PER_SEAT = 4;
 
 /**
  * **A SEND IS ANSWERED WITH WHETHER ANYTHING WAS SENT.** A refusal before the
@@ -165,6 +175,21 @@ export const proposalRelayRoutes = (deps: ProposalRelayDeps): express.Router => 
     return seat;
   };
 
+  /**
+   * **A RETIREMENT SIGNATURE KEPT BESIDE ITS PROPOSAL**, as the signed-in seat's device handed it in, under that seat's
+   * own filing key - a seat this service's own read of the chain holds (`actingSeat`) - in place of any it handed in
+   * for the same directory version, and only for that seat's newest few versions, so no seat can take another's
+   * place. Kept and served as given: this service holds none of what the retirement says, so it judges no signature;
+   * every device checks each one.
+   */
+  const keepRetirementSignature = (id: string, kept: z.infer<typeof RETIREMENT_SIGNATURE>): void => {
+    const p = requireProposal(id);
+    const all = [...(p.retirementSignatures ?? []).filter((x) => x.signedFor !== kept.signedFor || x.publicKey !== kept.publicKey),
+      { ...kept, publicKey: kept.publicKey as Hex, signature: kept.signature as Hex }];
+    const newest = all.filter((x) => x.publicKey === kept.publicKey).map((x) => x.signedFor).sort((a, b) => b - a).slice(0, VERSIONS_KEPT_PER_SEAT);
+    deps.store.putProposal({ ...p, retirementSignatures: all.filter((x) => x.publicKey !== kept.publicKey || newest.includes(x.signedFor)) });
+  };
+
   /** The proposal as it is now with what `status` says of it, written down when that is news. */
   const written = (id: string, status: LedgerStatus | null): SealedProposal => {
     const latest = requireProposal(id);
@@ -215,19 +240,24 @@ export const proposalRelayRoutes = (deps: ProposalRelayDeps): express.Router => 
    * back is where the proposal stands once the chain was read.
    */
   router.post('/api/proposals/:id/approve', deps.signedIn, json, deps.refuseSigningSecret, deps.ownsProposal, async (req, res) => {
-    const b = parsed(res, z.object({ tx: TX, filer: FILER }).strict(), req.body, 'an approval to send');
+    const b = parsed(res, z.object({ tx: TX, filer: FILER, retirement: RETIREMENT_SIGNATURE.optional() }).strict(), req.body, 'an approval to send');
     if (b === null) return;
     await answerASend(req, res, async () => {
       const id = String(req.params.id);
       const { proposal, release } = await beforeSending(async () => {
         const p = requireProposal(id);
         const seat = await actingSeat(p.accountId, (req as { userId?: unknown }).userId, b.filer);
+        if (b.retirement !== undefined && b.retirement.publicKey !== b.filer) {
+          throw new NothingWasSent('the retirement signature this approval carries is not under the key of the seat sending it. Nothing was sent.');
+        }
         if (p.status === 'executed') throw new NothingWasSent('this proposal has been carried out, so it takes no approvals. Nothing was sent.');
         if (p.status === 'blocked') throw new NothingWasSent('this company\'s own policy stopped this proposal, so it takes no approvals. Nothing was sent.');
         if (p.status === 'cancelled') {
           throw new NothingWasSent('this proposal was withdrawn, so it takes no approvals - including if it has since appeared on '
             + 'chain, because what replaced it may pay the same people. Nothing was sent.');
         }
+        /* Kept before the approval is relayed: an approval the chain counted is never answered as refused for its signature. */
+        if (b.retirement !== undefined) keepRetirementSignature(id, b.retirement);
         return { proposal: p, release: held(`approve ${id} ${seat.seat}`, 'this approval') };
       });
       try {
@@ -236,6 +266,31 @@ export const proposalRelayRoutes = (deps: ProposalRelayDeps): express.Router => 
         release();
       }
       return standingOf(written(id, await readTheChain(proposal.accountId)));
+    }, deps.recordRefusal);
+  });
+
+  /*
+   * **A RETIREMENT SIGNED AGAIN, WITH NO APPROVAL SENT**: a seat whose approval
+   * the chain already counts signs the removal's retirement over the directory
+   * version that is next now, when the version its first signature named was
+   * taken by another change. Kept beside the proposal, whatever its status: a
+   * removal the chain carried out first still needs its retirement filed.
+   */
+  router.post('/api/proposals/:id/retirement', deps.signedIn, json, deps.ownsProposal, async (req, res) => {
+    const b = parsed(res, z.object({ signature: RETIREMENT_SIGNATURE, filer: FILER }).strict(), req.body, 'a retirement signature');
+    if (b === null) return;
+    await answerASend(req, res, async () => {
+      const id = String(req.params.id);
+      await beforeSending(async () => {
+        const p = requireProposal(id);
+        await actingSeat(p.accountId, (req as { userId?: unknown }).userId, b.filer);
+        if (b.signature.publicKey !== b.filer) {
+          throw new NothingWasSent('this retirement signature is not under the key of the seat sending it. Nothing was sent.');
+        }
+        if (p.status === 'cancelled') throw new NothingWasSent('this proposal was withdrawn, so its retirement is not signed. Nothing was sent.');
+      });
+      keepRetirementSignature(id, b.signature);
+      return standingOf(requireProposal(id));
     }, deps.recordRefusal);
   });
 

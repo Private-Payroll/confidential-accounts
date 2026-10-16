@@ -64,7 +64,7 @@ vi.mock('vaults-web-shared/keyring.js', async (real) => ({
   /* The company's viewing key, which opens every directory entry's proof here. */
   viewingKeyFor: () => '5e'.repeat(32),
   holdersFromTheWallet: async () => ({
-    holders: { committee: kr.committee, threshold: 1, seats: kr.seated, approvals: 1, adoptedVaults: [], founding: '5a'.repeat(32), foundingCommittee: [{ tag: 'schnorr', value: '11'.repeat(32) }], account: 'c0'.repeat(32) },
+    holders: { committee: kr.committee, threshold: 1, seats: kr.seated, approvals: 1, adoptedVaults: [], founding: SEAT, foundingCommittee: [{ tag: 'schnorr', value: '11'.repeat(32) }], account: 'c0'.repeat(32) },
     vault: null,
     /* The indexer the wallet reads through: the vault is read there on this device, and nowhere else. */
     indexer: kr.indexer,

@@ -680,7 +680,7 @@ describe.skipIf(!KEYS_ON_DISK)('ONE RUN, RAISED, APPROVED, CHARGED AND PAID ON T
   const holdersRead = () => {
     const at = deployRead();
     if (at === null) throw new Error('the account\'s history does not open with its deploy, so its founding seat cannot be said');
-    return { ...holdersInAccountState(chain.contract(company).serialize()), founding: at.seats[0]!, foundingCommittee: at.committee };
+    return { ...holdersInAccountState(chain.contract(company).serialize(), hex(accountCircuits.policyBarKey())), founding: at.seats[0]!, foundingCommittee: at.committee };
   };
   /**
    * How the account was deployed, read as a device reads it from the account's history at the indexer its wallet
@@ -731,7 +731,7 @@ describe.skipIf(!KEYS_ON_DISK)('ONE RUN, RAISED, APPROVED, CHARGED AND PAID ON T
     /* The founding signer's own directory entry, filed from their device: the account is the committee's from its first transaction. */
     await fileOwnEntry({ viewingKey, signingSecret: signing.secret,
       api, accountId: ACCOUNT_ID, person: 'ada', identity: identityFromWords(words), label: LABEL, account: company,
-      companyKey: me.companyKey, signingKey: signing.publicKey, seat: hex(leafOfDevice(founder)), opening: founderOpening,
+      companyKey: me.companyKey, signingKey: signing.publicKey, seat: hex(leafOfDevice(founder)), opening: founderOpening, founding: hex(leafOfDevice(founder)),
     });
     /* Deployed born held, read as it was born, adopted and started by one press: its secret set and every copy written. */
     const created = await press();
@@ -946,8 +946,9 @@ describe.skipIf(!KEYS_ON_DISK)('ONE RUN, RAISED, APPROVED, CHARGED AND PAID ON T
    * WHAT IS A STAND-IN, SAID HERE, beyond what is said above:
    *   · the policy's governance calls are built by the device's own worker (`governedCall`) from the founding signer's
    *     private state and filed, approved and carried out through the product's own routes; what the account's state is
-   *     when the service hands it to the device to build a call on (`callState`), the bars it counts approvals against
-   *     (`bars`) and the proposals it serves (`sealedProposals`) are read here straight off this chain and the store;
+   *     when the service hands it to the device to build a call on (`callState`) and the proposals it serves
+   *     (`sealedProposals`) are read here straight off this chain and the store; the bars a device counts approvals
+   *     against are its wallet's read of this chain;
    *   · the company has one seat, so the second device is a second device of the same signer, made afresh: its own
    *     worker, its own reads of the company's records, nothing kept on it, and it never set the policy;
    *   · each run is approved by the founding signer's own `approve` call, with the run's opening, after the approving
@@ -967,10 +968,6 @@ describe.skipIf(!KEYS_ON_DISK)('ONE RUN, RAISED, APPROVED, CHARGED AND PAID ON T
         account: company, blockHash: '00'.repeat(32), accountState: base64FromBytes(chain.contract(company).serialize()),
         parameters: base64FromBytes(L.LedgerParameters.initialParameters().serialize()),
       }),
-      bars: async () => {
-        const l = accountLedgerOf(chain.contract(company));
-        return { threshold: Number(l.threshold), vaultThresholds: [...l.thresholds].map(([k, v]: [Uint8Array, bigint]) => ({ vault: hex(k), threshold: Number(v) })) };
-      },
       sealedProposals: async () => store.listProposals(ACCOUNT_ID),
     },
     builder: builder(),

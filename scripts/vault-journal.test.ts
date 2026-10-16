@@ -159,7 +159,7 @@ describe('the reader takes every filed version of both journals, as the rebuild 
       paymentJournalFile: paymentJournalFile(d, 'stagenet', 'payroll-test-1'),
       vault: VAULT, opener: opener(s),
     });
-    expect(r).toEqual({ deposits: [], payments: [], versionsRead: { deposits: 0, payments: 0 } });
+    expect(r).toEqual({ deposits: [], payments: [], versionsRead: { deposits: 0, payments: 0 }, passedOver: { deposits: 0, payments: 0 } });
   });
 
   it('reads the deposit journal the deposit door writes -- coins under `notes` -- and the payment journal', async () => {

@@ -1,12 +1,13 @@
 import { describe, expect, it } from 'vitest';
 import { identityFromSecret } from 'midnight-identity';
 import { committeeKeyFor } from 'midnight-identity/profile/committee-key';
-import { signDirectoryEntry, signRecordsKey } from 'midnight-identity/profile/records-key';
+import { seatBarOf, signDirectoryEntry, signRecordsKey } from 'midnight-identity/profile/records-key';
 import type { AccountAddress, CompanyLabel } from 'midnight-identity/profile/company-label';
 import { newSigningKeypair, newWrappingKeypair, toHex } from '../../../src/core/crypto.js';
 import { MemorySealedPoolStore, SealedNotePool } from '../../../src/midnight/vault-pool.js';
 import { recordsKeypairFrom } from '../../../src/midnight/company-nonce-secret.js';
 import { directoryEntryMade, type DirectoryFiling } from '../../../src/midnight/seat-directory.js';
+import { invitationIdOf, newInvitationToken, signSeatInvitation } from '../../../src/core/invitation.js';
 import type { Hex } from '../../../src/core/crypto.js';
 import { deviceSignerFrom, directoryHere, readersIn } from './vault-page-doors.js';
 import { anchoredEntering } from '../../../src/testing/record-tree-double.js';
@@ -25,7 +26,8 @@ const CO = 'acc_wrapped';
 const VIEWING = '5e'.repeat(32) as Hex;
 const VAULT = 'ab'.repeat(32);
 
-const signer = (n: number) => {
+/** A seat; every seat but the founding one carries the invitation the seat `invitedBy` signed for its person. */
+const signer = (n: number, invitedBy?: { readonly filingSecret: Hex }) => {
   const identity = identityFromSecret(new Uint8Array(32).fill(n));
   const companyKey = new Uint8Array(32).fill(n + 100);
   const committeeKey = committeeKeyFor(identity, LABEL) as { tag: string; value: string };
@@ -33,8 +35,14 @@ const signer = (n: number) => {
   const { seat, opening } = seatOpenedFor(committeeKey, n);
   const filing = newSigningKeypair();
   const statement = signDirectoryEntry(identity, LABEL, ACCOUNT, companyKey, filing.publicKey, seat);
-  const entry = directoryEntryMade({ company: CO, person: `p${n}`, committeeKey, signed: statement, opening, signingSecret: filing.secret, viewingKey: VIEWING });
+  const entry = directoryEntryMade({
+    company: CO, person: `p${n}`, committeeKey, signed: statement, opening, signingSecret: filing.secret, viewingKey: VIEWING,
+    ...(invitedBy === undefined ? {} : { invited: signSeatInvitation({
+      company: CO, invitation: invitationIdOf(newInvitationToken()), person: `p${n}`, name: `p${n}`, role: 'admin', leaf: seat as Hex,
+    }, invitedBy.filingSecret) }),
+  });
   return {
+    filingSecret: filing.secret,
     seat, committeeKey, statement,
     claim: (version: number): DirectoryFiling => ({ company: CO, version, change: { kind: 'claim', entry } }),
     attested: { committeeKey, statement: signRecordsKey(identity, LABEL, ACCOUNT, companyKey, seat) },
@@ -42,14 +50,14 @@ const signer = (n: number) => {
   };
 };
 const ADA = signer(1);
-const BO = signer(2);
-const CY = signer(3);
+const BO = signer(2, ADA);
+const CY = signer(3, ADA);
 
 const directory = (o: { seats?: string[]; committee?: (typeof ADA.committeeKey)[]; attested?: (typeof ADA.attested)[] } = {}) => () => directoryHere({
   accountId: CO, label: LABEL, viewingKey: VIEWING,
   filings: async () => [ADA.claim(1), BO.claim(2), CY.claim(3)],
   holders: async () => ({
-    account: ACCOUNT, approvals: 1, threshold: 1, adoptedVaults: [VAULT], founding: ADA.seat, foundingCommittee: [ADA.committeeKey],
+    account: ACCOUNT, approvals: 1, vaultThresholds: [], policyBar: null, seatBar: seatBarOf(1, null), threshold: 1, adoptedVaults: [VAULT], founding: ADA.seat, foundingCommittee: [ADA.committeeKey],
     seats: o.seats ?? [ADA.seat, BO.seat, CY.seat], committee: o.committee ?? [ADA.committeeKey, BO.committeeKey, CY.committeeKey],
   }),
   attested: async () => o.attested ?? [ADA.attested, BO.attested, CY.attested],

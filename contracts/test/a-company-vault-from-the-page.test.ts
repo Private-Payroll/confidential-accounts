@@ -540,7 +540,7 @@ describe.skipIf(!KEYS_ON_DISK)('A COMPANY VAULT, FROM THE SIGNER\'S DEVICE [need
   /* The founding signer's own directory entry, signed by their wallet and filed from their device once the account is the committee's. */
   const fileEntry = () => fileOwnEntry({ viewingKey, signingSecret: signing.secret,
     api: apiAs(), accountId: ACCOUNT_ID, person: 'ada', identity: identityFromWords(words), label, account: company,
-    companyKey: me.companyKey, signingKey: signing.publicKey, seat: hex(leafOfDevice(founder)), opening: founderOpening,
+    companyKey: me.companyKey, signingKey: signing.publicKey, seat: hex(leafOfDevice(founder)), opening: founderOpening, founding: hex(leafOfDevice(founder)),
   });
   const signers = async () => [{ id: 'ada', wrappingPublicKey: wrapping.publicKey }];
   /** The founding signer's three, as their keyring hands them to the page. */

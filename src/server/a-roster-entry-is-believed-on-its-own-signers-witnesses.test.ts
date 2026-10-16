@@ -27,12 +27,13 @@ import { rosterBelievedHere, rosterHere, type RosterDoors, type RosterReads } fr
 import { whyNotWhole } from 'vaults-web-shared/handover-check.js';
 import { signerRoutes } from './signer-routes.js';
 import {
-  aCompanyOfTwoSeats, acmeChain, acmeDirectoryWithItsFold, acmeReads, ADA, ADDRESS, apiAs, BO, chains, CO, EVE, KEY, LABEL, OTHER, OTHER_ADDRESS, OTHER_LABEL, sendAs, store,
+  aCompanyOfTwoSeats, acmeChain, acmeDirectoryWithItsFold, acmeReads, ADA, ADDRESS, apiAs, BO, chains, CO, EVE, KEY, LABEL, OTHER, OTHER_ADDRESS, OTHER_LABEL, seatOf, sendAs, store,
   type Seat,
 } from './a-company-of-two-seats.test-support.js';
 import { anchoredOver, anchorFunctions, anchorSentInATest } from '../testing/record-tree-double.js';
 import { sign } from '../core/crypto.js';
 import { directoryChangeMessage, directoryEntryMade, type DirectoryChange, type DirectoryFiling } from '../midnight/seat-directory.js';
+import { invitationIdOf, newInvitationToken, signSeatInvitation } from '../core/invitation.js';
 import { manifestServiceFor, treeServiceFor } from 'vaults-web-shared/record-entered-here.js';
 import { anchorServiceFor, anchorTheRecordsHere } from 'vaults-web-shared/records-anchored-here.js';
 import { companyRecordEntry } from '../midnight/record-manifest.js';
@@ -183,7 +184,7 @@ describe('EACH ROSTER ENTRY IS BELIEVED ON ITS OWN SIGNER\'S WITNESSES, NOT ON W
     const seat = '0c'.repeat(32);
     const cyEntry: Signer = { ...signerOf(BO), id: 'sgn_cy', name: 'cy', userId: 'cy', leafCommitment: seat as Hex, signingPublicKey: cy.publicKey, vaultKeys: null };
     await adaFiles({ name: 'Acme', signers: [...HONEST.signers, cyEntry] });
-    chains.set(CO, { seats: { ...chains.get(CO)!.seats, seats: [ADA.seat, BO.seat, seat] }, approvals: 1 });
+    chains.set(CO, { seats: { ...chains.get(CO)!.seats, seats: [ADA.seat, BO.seat, seat] }, approvals: 1, seatBar: 1 });
     try {
       /* RED WHEN: an entry no wallet signed for is believed on any device but the one whose own key it names. */
       expect((await readOn(ADA)).refused).toEqual([{ signerId: 'sgn_cy', name: 'cy', why: 'no-entry-of-their-own' }]);
@@ -193,11 +194,11 @@ describe('EACH ROSTER ENTRY IS BELIEVED ON ITS OWN SIGNER\'S WITNESSES, NOT ON W
       expect(own.refused).toEqual([]);
       expect(own.account.signers.map((x) => x.id)).toContain('sgn_cy');
     } finally {
-      chains.set(CO, { seats: { ...chains.get(CO)!.seats, seats: [ADA.seat, BO.seat] }, approvals: 1 });
+      chains.set(CO, { seats: { ...chains.get(CO)!.seats, seats: [ADA.seat, BO.seat] }, approvals: 1, seatBar: 1 });
     }
   });
 
-  it('A NEW SIGNER\'S ENTRY IS BELIEVED ON THE ENTRY THEIR OWN WALLET SIGNED, KEPT BESIDE IT, AND ON NO OTHER WALLET\'S', async () => {
+  it('A NEW SIGNER\'S ENTRY IS NOT BELIEVED ON THE ENTRY A WALLET SIGNED, KEPT BESIDE IT, WHOSEVER WALLET IT IS', async () => {
     const cy = newSigningKeypair();
     const seat = '0c'.repeat(32);
     const wallet = identityFromSecret(new Uint8Array(32).fill(12));
@@ -208,24 +209,24 @@ describe('EACH ROSTER ENTRY IS BELIEVED ON ITS OWN SIGNER\'S WITNESSES, NOT ON W
     const cyWith = (directoryEntry: Signer['directoryEntry']): Signer => ({
       ...signerOf(BO), id: 'sgn_cy', name: 'cy', userId: 'cy', leafCommitment: seat as Hex, signingPublicKey: cy.publicKey, vaultKeys: null, directoryEntry,
     });
-    chains.set(CO, { seats: { ...chains.get(CO)!.seats, seats: [ADA.seat, BO.seat, seat] }, approvals: 1 });
+    chains.set(CO, { seats: { ...chains.get(CO)!.seats, seats: [ADA.seat, BO.seat, seat] }, approvals: 1, seatBar: 1 });
     try {
       await adaFiles({ name: 'Acme', signers: [...HONEST.signers, cyWith(own)] });
-      /* RED WHEN: a new signer's entry, kept with the entry their own wallet signed, is not believed before the directory holds one. */
-      expect((await readOn(BO)).refused).toEqual([]);
+      /* RED WHEN: a new signer's entry is believed on a kept entry before the directory holds their seat's own entry, whose opening proves the wallet. */
+      expect((await readOn(BO)).refused).toEqual([{ signerId: 'sgn_cy', name: 'cy', why: 'no-entry-of-their-own' }]);
       await adaFiles({ name: 'Acme', signers: [...HONEST.signers, cyWith(byAda)] });
-      /* RED WHEN: one wallet is believed for two signers' entries. */
-      expect((await readOn(BO)).refused).toEqual([{ signerId: 'sgn_cy', name: 'cy', why: 'wallet-taken' }]);
+      /* RED WHEN: a kept entry signed by a wallet that already holds another seat is believed. */
+      expect((await readOn(BO)).refused).toEqual([{ signerId: 'sgn_cy', name: 'cy', why: 'no-entry-of-their-own' }]);
       await adaFiles({ name: 'Acme', signers: [...HONEST.signers, cyWith({ ...own, statement: { ...own.statement, signature: byAda.statement.signature } })] });
       /* RED WHEN: a kept entry is believed without its wallet's signature verifying. */
       expect((await readOn(BO)).refused).toEqual([{ signerId: 'sgn_cy', name: 'cy', why: 'not-their-signing-key' }]);
     } finally {
-      chains.set(CO, { seats: { ...chains.get(CO)!.seats, seats: [ADA.seat, BO.seat] }, approvals: 1 });
+      chains.set(CO, { seats: { ...chains.get(CO)!.seats, seats: [ADA.seat, BO.seat] }, approvals: 1, seatBar: 1 });
       await adaFiles(HONEST);
     }
   });
 
-  it('A KEPT ENTRY IS HELD TO ITS OWN SEAT, ITS OWN SIGNING KEY AND ONE WALLET, AND THE KEYS IN IT TO THAT WALLET', async () => {
+  it('A KEPT ENTRY IS HELD TO ITS OWN SEAT AND SIGNING KEY, AND NEVER SEATS A WALLET ON ITS OWN', async () => {
     const seat = '0c'.repeat(32);
     const seat2 = '0d'.repeat(32);
     const cy = newSigningKeypair();
@@ -243,14 +244,14 @@ describe('EACH ROSTER ENTRY IS BELIEVED ON ITS OWN SIGNER\'S WITNESSES, NOT ON W
       ['an entry Cy\'s wallet signed for another seat', [entry('cy', seat, cy.publicKey, entryFor(cy.publicKey, seat2))], [{ signerId: 'cy', why: 'not-their-signing-key' }]],
       /* RED WHEN: one wallet that signed no directory entry is believed for two signers' kept entries. */
       ['one new wallet behind two entries', [entry('cy', seat, cy.publicKey, entryFor(cy.publicKey, seat)), entry('dee', seat2, held.publicKey, entryFor(held.publicKey, seat2))],
-        [{ signerId: 'cy', why: 'wallet-taken' }, { signerId: 'dee', why: 'wallet-taken' }]],
+        [{ signerId: 'cy', why: 'no-entry-of-their-own' }, { signerId: 'dee', why: 'no-entry-of-their-own' }]],
       /* RED WHEN: a wallet that signed another seat's directory entry is believed for a kept entry, though no roster entry names it. */
       ['an entry signed by the wallet of a seat the directory holds', [entry('cy', seat, cy.publicKey, (() => {
         const other = identityFromSecret(new Uint8Array(32).fill(14));
         return { committeeKey: committeeKeyFor(other, LABEL) as never, statement: signDirectoryEntry(other, LABEL, ADDRESS, new Uint8Array(32).fill(114), cy.publicKey, seat) };
-      })())], [{ signerId: 'cy', why: 'wallet-taken' }]],
-      /* RED WHEN: vault keys naming another wallet than the one that signed a kept entry are believed. */
-      ['vault keys under another wallet, signed by Cy\'s own key', [entry('cy', seat, cy.publicKey, entryFor(cy.publicKey, seat), keysOf(ADA, 'cy', cy.secret))], [{ signerId: 'cy', why: 'vault-keys-not-theirs' }]],
+      })())], [{ signerId: 'cy', why: 'no-entry-of-their-own' }]],
+      /* RED WHEN: vault keys naming another wallet, beside a kept entry, are believed. */
+      ['vault keys under another wallet, signed by Cy\'s own key', [entry('cy', seat, cy.publicKey, entryFor(cy.publicKey, seat), keysOf(ADA, 'cy', cy.secret))], [{ signerId: 'cy', why: 'no-entry-of-their-own' }]],
     ];
     /* A fourth seat's entry in the directory, signed by a wallet no roster entry names. */
     const other = identityFromSecret(new Uint8Array(32).fill(14));
@@ -259,16 +260,18 @@ describe('EACH ROSTER ENTRY IS BELIEVED ON ITS OWN SIGNER\'S WITNESSES, NOT ON W
     expect(store.fileDirectory(CO, { company: CO, version: store.directoryFilingsOf(CO).length + 1, change: { kind: 'claim', entry: directoryEntryMade({
       company: CO, person: 'eli', committeeKey: committeeKeyFor(other, LABEL) as never, opening: elisOpening, signingSecret: elisFiling.secret, viewingKey: KEY,
       signed: signDirectoryEntry(other, LABEL, ADDRESS, new Uint8Array(32).fill(114), elisFiling.publicKey, seat3),
+      /* Invited by Ada's seat, as every seat but the founding one is. */
+      invited: signSeatInvitation({ company: CO, invitation: invitationIdOf(newInvitationToken()), person: 'eli', name: 'eli', role: 'admin', leaf: seat3 as Hex }, ADA.signingSecret as Hex),
     }) } })).toBe(true);
     try {
       for (const [what, added, refused] of cases) {
         /* The chain holds every seat the roster names, so no seat is left without an entry. */
-        chains.set(CO, { seats: { ...chains.get(CO)!.seats, seats: [ADA.seat, BO.seat, ...added.map((x) => x.leafCommitment!)] }, approvals: 1 });
+        chains.set(CO, { seats: { ...chains.get(CO)!.seats, seats: [ADA.seat, BO.seat, ...added.map((x) => x.leafCommitment!)] }, approvals: 1, seatBar: 1 });
         await adaFiles({ name: 'Acme', signers: [...HONEST.signers, ...added] });
         expect((await readOn(BO)).refused.map((r) => ({ signerId: r.signerId, why: r.why })), what).toEqual(refused);
       }
       /* Cy's own device, with a key that is not his, and with his key under another entry's name. */
-      chains.set(CO, { seats: { ...chains.get(CO)!.seats, seats: [ADA.seat, BO.seat, seat] }, approvals: 1 });
+      chains.set(CO, { seats: { ...chains.get(CO)!.seats, seats: [ADA.seat, BO.seat, seat] }, approvals: 1, seatBar: 1 });
       await adaFiles({ name: 'Acme', signers: [...HONEST.signers, entry('cy', seat, cy.publicKey, null)] });
       for (const own of [{ signerId: 'cy', signingPublicKey: held.publicKey }, { signerId: 'sgn_ada', signingPublicKey: cy.publicKey }]) {
         const read = await rosterBelievedHere(await served(), KEY, { accountId: CO, label: LABEL, account: ADDRESS, reads: acmeReads, own });
@@ -276,7 +279,7 @@ describe('EACH ROSTER ENTRY IS BELIEVED ON ITS OWN SIGNER\'S WITNESSES, NOT ON W
         expect(read.refused.map((r) => r.why)).toEqual(['no-entry-of-their-own']);
       }
     } finally {
-      chains.set(CO, { seats: { ...chains.get(CO)!.seats, seats: [ADA.seat, BO.seat] }, approvals: 1 });
+      chains.set(CO, { seats: { ...chains.get(CO)!.seats, seats: [ADA.seat, BO.seat] }, approvals: 1, seatBar: 1 });
       await adaFiles(HONEST);
     }
   });
@@ -338,7 +341,7 @@ describe('EACH ROSTER ENTRY IS BELIEVED ON ITS OWN SIGNER\'S WITNESSES, NOT ON W
     const otherReads = {
       anchored: anchoredOver(apiAs('eve'), OTHER),
       filings: async () => store.directoryFilingsOf(OTHER),
-      holders: async () => ({ ...chains.get(OTHER)!.seats, approvals: 1, adoptedVaults: [], account: OTHER_ADDRESS }) as never,
+      holders: async () => ({ ...chains.get(OTHER)!.seats, approvals: 1, adoptedVaults: [], account: OTHER_ADDRESS, founding: EVE.seat }) as never,
       leaves: leavesOfTheContract,
     };
     const eveFiles = async (version: number) => {
@@ -376,13 +379,13 @@ describe('EACH ROSTER ENTRY IS BELIEVED ON ITS OWN SIGNER\'S WITNESSES, NOT ON W
 });
 
 describe('A ROSTER THAT LEAVES OUT A SIGNER THE CHAIN SEATS IS REFUSED, AND NO COMMITTEE IS BUILT FROM IT', () => {
-  /* Cy is seated on the chain; his wallet is not on the committee yet, so only the entry it signed, kept beside his keys, witnesses him. */
-  const cy = newSigningKeypair();
-  const CY_SEAT = '0c'.repeat(32);
-  const cysWallet = identityFromSecret(new Uint8Array(32).fill(12));
-  const cysCommitteeKey = committeeKeyFor(cysWallet, LABEL) as { tag: string; value: string };
-  const cysEntry = { committeeKey: cysCommitteeKey as never, statement: signDirectoryEntry(cysWallet, LABEL, ADDRESS, new Uint8Array(32).fill(112), cy.publicKey, CY_SEAT) };
-  const cysStatement = signRecordsKey(cysWallet, LABEL, ADDRESS, new Uint8Array(32).fill(112), CY_SEAT);
+  /* Cy is seated on the chain, and his own device filed his seat's entry: its opening proves his wallet, whatever the roster keeps. */
+  const CYS = seatOf('cy', 12, LABEL, ADDRESS, CO, ADA);
+  const cy = { publicKey: CYS.statement.signingKey as Hex, secret: CYS.signingSecret as Hex };
+  const CY_SEAT = CYS.seat;
+  const cysCommitteeKey = CYS.committeeKey as { tag: string; value: string };
+  const cysEntry = { committeeKey: cysCommitteeKey as never, statement: CYS.statement };
+  const cysStatement = signRecordsKey(identityFromSecret(new Uint8Array(32).fill(12)), LABEL, ADDRESS, new Uint8Array(32).fill(112), CY_SEAT);
   const CY: Signer = {
     ...signerOf(BO), id: 'sgn_cy', name: 'cy', userId: 'cy', leafCommitment: CY_SEAT as Hex, signingPublicKey: cy.publicKey,
     vaultKeys: signVaultKeys(CO, 'sgn_cy', {
@@ -406,12 +409,13 @@ describe('A ROSTER THAT LEAVES OUT A SIGNER THE CHAIN SEATS IS REFUSED, AND NO C
   let first: SealedCompanyRecord;
 
   beforeAll(async () => {
-    chains.set(CO, { seats: { ...chains.get(CO)!.seats, seats: [ADA.seat, BO.seat, CY_SEAT] }, approvals: 1 });
+    chains.set(CO, { seats: { ...chains.get(CO)!.seats, seats: [ADA.seat, BO.seat, CY_SEAT] }, approvals: 1, seatBar: 1 });
+    expect(store.fileDirectory(CO, { company: CO, version: store.directoryFilingsOf(CO).length + 1, change: { kind: 'claim', entry: CYS.entry } })).toBe(true);
     await adaFiles(WITH_CY);
     first = (await served()).roster!;
     for (const d of devices) {
       const read = await readOn(d);
-      /* RED WHEN: an honest roster with a signer witnessed only by the entry his wallet signed is not read whole. */
+      /* RED WHEN: an honest roster with a signer whose seat's own directory entry proves his wallet is not read whole. */
       expect(read.refused).toEqual([]);
       expect(read.account.notBelieved).toEqual([]);
     }
@@ -427,15 +431,14 @@ describe('A ROSTER THAT LEAVES OUT A SIGNER THE CHAIN SEATS IS REFUSED, AND NO C
     for (const d of devices) expect((await readOn(d)).refused).toEqual([]);
   });
 
-  it('A VERSION WITH THE ENTRY CY\'S WALLET SIGNED STRIPPED IS REPORTED ON EVERY OTHER SEAT\'S DEVICE', async () => {
+  it('A VERSION WITH THE ENTRY CY\'S WALLET SIGNED STRIPPED STILL SHOWS HIM ON EVERY DEVICE, ONE THAT READ IT BEFORE OR NOT', async () => {
     await adaFiles({ name: 'Acme', signers: WITH_CY.signers.map((x) => (x.id === 'sgn_cy' ? { ...x, directoryEntry: null } : x)) });
     try {
-      for (const d of devices.filter((x) => x.who !== 'cy')) {
-        /* Every other seat's device shows Ada and Bo, whether it read the roster with Cy before or not. */
+      for (const d of devices) {
         const read = await readOn(d);
-        expect(read.refused.map((r) => r.why), d.who).toEqual(['no-entry-of-their-own']);
-        /* RED WHEN: a seat the chain holds with no believed signer is not reported. */
-        expect(read.account.notBelieved, d.who).toEqual([CY_SEAT]);
+        /* RED WHEN: stripping the entry kept beside a signer's keys hides a signer whose seat's own directory entry proves his wallet. */
+        expect(read.refused, d.who).toEqual([]);
+        expect(read.account.notBelieved, d.who).toEqual([]);
       }
     } finally {
       await adaFiles(WITH_CY);
@@ -498,7 +501,7 @@ describe('A ROSTER SHORT OF A SEAT THE CHAIN HOLDS, WHILE A DIRECTORY VERSION IS
     const seat = 'c3'.repeat(32);
     const was = chains.get(CO)!;
     /* The chain holds a seat nobody invited and the roster has no entry for. */
-    chains.set(CO, { seats: { ...was.seats, seats: [...was.seats.seats, seat] }, approvals: was.approvals });
+    chains.set(CO, { seats: { ...was.seats, seats: [...was.seats.seats, seat] }, approvals: was.approvals, seatBar: was.seatBar });
     try {
       /* RED WHEN: the refusal for a roster short of a seat leaves out the way past a directory version passed over. */
       await expect(readOn(ADA)).rejects.toThrow(new RegExp(`it has no entry for 1 seat\\(s\\) .* The way past it: the company's records passed over version ${passed} of its directory`, 'u'));

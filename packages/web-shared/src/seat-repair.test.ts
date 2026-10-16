@@ -1,13 +1,10 @@
 /**
- * **THE TWO DECISIONS THAT KEEP A SIGNER'S BLINDING ALIVE.** `C329`, `C325`,
- *
- *
- * Both were written this round and both were found by `S34`'s own auditors —
- * the clobber by a money-safety pass, the fact that the whole of the new
- * keyring code had no test at all by a test-coverage pass. A blinding lives on one
- * device and nowhere else (decision 0003), so a function that can overwrite one
- * or bind material to the wrong seat decides whether an M-of-N account can
- * still reach its threshold.
+ * **THE TWO DECISIONS THAT KEEP A SIGNER'S BLINDING ALIVE**: a write that
+ * would replace another seat's signing secret is refused, and a published seat
+ * is bound to this device only on proof. A blinding lives on one device and
+ * nowhere else (decision 0003), so a function that can overwrite one or bind
+ * material to the wrong seat decides whether an M-of-N account can still reach
+ * its threshold.
  *
  * **THE ROSTER HERE IS A REAL SEALED ROSTER.** `sealAccount` seals it and
  * `wrapKey` wraps the viewing key exactly as the product does, so the forgery
@@ -35,7 +32,7 @@ const accountWith = (signers: Signer[], wrapTo: Array<{ signerId: string; pub: H
   const viewingKey = newSymmetricKey();
   const account: Account = {
     id: 'acc_northwind', name: 'Northwind', signers,
-    policy: defaultPolicy(1), wrappedKeys: [],
+    policy: defaultPolicy(), wrappedKeys: [],
     recovery: { signerIds: signers.map(s => s.id), threshold: 1 },
     createdAt: new Date().toISOString(),
   };
@@ -53,11 +50,11 @@ describe('nothing silently replaces key material that is already here', () => {
     const refusal = clobberRefusal(held, { signerId: 'sgn_other', signingSecret: '33'.repeat(32) });
     expect(refusal).toBeTruthy();
     /* It names BOTH seats, because the person has to be able to tell which one
-     * they are about to lose — `C320`'s rule that a refusal mistakable for its
-     * neighbour is the defect. */
+     * they are about to lose: a refusal mistakable for its neighbour is the
+     * defect. */
     expect(refusal).toContain('sgn_mine');
     expect(refusal).toContain('sgn_other');
-    /* Rule 19: a door, and not a file to edit. */
+    /* The refusal names a door the person can use, not a file to edit. */
     expect(refusal).toMatch(/different device or in a different\s+browser profile/);
     expect(refusal).toMatch(/NOTHING WAS PROVED, NOTHING WAS SUBMITTED AND NOTHING WAS WRITTEN/);
     /* And it does not leak the secret it is protecting. */
@@ -75,7 +72,7 @@ describe('nothing silently replaces key material that is already here', () => {
 
   it('compares the SECRET and not the seat id, in either case', () => {
     /* Two facts in one: a bundle written elsewhere may spell hex in upper case
-     * (`S31`'s finding, one file along), and a server that renamed the seat
+     * (one file along), and a server that renamed the seat
      * must not be able to make a clobber look like a retry. */
     expect(clobberRefusal(held, { signerId: 'x', signingSecret: '11'.repeat(32).toUpperCase() }))
       .toBeNull();
@@ -102,9 +99,8 @@ describe('a published seat is bound to this device only on proof, never on a lab
 
   it('REFUSES a forged wrapped key that names somebody else’s seat', () => {
     /*
-     * **THE FINDING THIS FUNCTION WAS REWRITTEN FOR.** `S34`'s
-     * money-safety pass, rule 14: the first version said a substituted
-     * roster could not forge a match. `wrapKey` is PUBLIC-key sealing, and this
+     * **THE HAZARD THIS FUNCTION GUARDS:** a substituted roster can forge a
+     * match. `wrapKey` is PUBLIC-key sealing, and this
      * device published its wrapping public key one step earlier — so anybody
      * can produce a ciphertext that opens under this device's secret, and the
      * `signerId` beside it is plaintext the server chooses. A pending entry is
@@ -161,7 +157,7 @@ describe('a published seat is bound to this device only on proof, never on a lab
   });
 
   it('DERIVES this device’s public key rather than reading it off the pending entry', () => {
-    /* `C323`: the pending entry is stored in the same bundle as everything else
+    /* The pending entry is stored in the same bundle as everything else
      * this device holds, so its `signingPublicKey` is a claim. A tampered entry
      * whose stored public key names a stranger's seat must not bind to it. */
     const stranger = newSigningKeypair();

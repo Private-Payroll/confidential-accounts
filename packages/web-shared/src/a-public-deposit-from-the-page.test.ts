@@ -9,6 +9,7 @@
  * `contracts/test/a-private-payment-from-the-page.test.ts`.
  */
 import { describe, it, expect } from 'vitest';
+import { seatBarOf } from 'midnight-identity/profile/records-key';
 import type { AccountAddress, CompanyLabel, VaultAddress } from 'midnight-identity/profile/company-label';
 import { StaticAssetRegistry, type Asset } from '../../../src/core/assets.js';
 import type { WireRecord } from '../../../src/midnight/sealed-record-wire.js';
@@ -123,7 +124,7 @@ const setUp = (over: {
     indexer: async () => ({ indexerUri: 'https://indexer.example/api/v3/graphql', indexerWsUri: 'wss://indexer.example/api/v3/graphql/ws' }),
     /* The wallet's read: the account has adopted the vault. */
     onChain: async (v: string) => ({
-      holders: { committee: COMMITTEE_KEYS.map((k) => ({ ...k })), threshold: COMMITTEE_THRESHOLD, seats: [], approvals: 1, adoptedVaults: [v], founding: '4a'.repeat(32), foundingCommittee: [{ tag: 'schnorr', value: '11'.repeat(32) }] },
+      holders: { committee: COMMITTEE_KEYS.map((k) => ({ ...k })), threshold: COMMITTEE_THRESHOLD, seats: [], approvals: 1, vaultThresholds: [], policyBar: null, seatBar: seatBarOf(1, null), adoptedVaults: [v], founding: '4a'.repeat(32), foundingCommittee: [{ tag: 'schnorr', value: '11'.repeat(32) }] },
     }),
     inFlight: sealedOnThisDevice<DepositInFlight>(inFlightInMemory(inFlight), { signerId: 'ada', wrappingSecret: wrapping.secret }, 'deposit') as DepositsInFlight,
   };

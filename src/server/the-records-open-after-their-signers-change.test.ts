@@ -11,6 +11,8 @@
  * head it holds, with the account's own `anchorHeadOf`.
  */
 import { describe, expect, it } from 'vitest';
+import { identityFromSecret } from 'midnight-identity';
+import { signRecordsKey, type RecordsKeyStatement } from 'midnight-identity/profile/records-key';
 import { sign, type Hex } from '../core/crypto.js';
 import type { Role } from '../core/types.js';
 import type { ManifestEntryBody } from '../midnight/record-manifest.js';
@@ -53,7 +55,7 @@ const filed = async (s: Seat, id: string): Promise<ManifestEntryBody> => {
 };
 /** The next directory version: a change signed by `by` as a quorum of one, the account's approvals. */
 const changed = async (
-  change: { kind: 'role'; seat: string; role: Role } | { kind: 'retire'; seat: string; filedUpTo: Record<string, number> }, by: Seat,
+  change: { kind: 'role'; seat: string; role: Role } | { kind: 'retire'; seat: string; filedUpTo: Record<string, number>; statement: RecordsKeyStatement }, by: Seat,
 ) => {
   const version = store.directoryFilingsOf(CO).length + 1;
   const unsigned = { ...change, threshold: 1, signatures: [] } as unknown as DirectoryChange;
@@ -95,7 +97,8 @@ describe('A SIGNER REMOVED, RETIRED OR GIVEN ANOTHER ROLE AFTER IT ANCHORED AND 
     await opensBoth('Bo given a role that may not anchor');
 
     /* RED WHEN: a retired seat's filings are judged by its boundary now - Ada retires naming no last version of anything, Bo still seated beside her. */
-    await changed({ kind: 'retire', seat: ADA.seat, filedUpTo: {} }, ADA);
+    const adasStatement = signRecordsKey(identityFromSecret(new Uint8Array(32).fill(ADA.n)), LABEL, ADDRESS, new Uint8Array(32).fill(ADA.n + 100), ADA.seat);
+    await changed({ kind: 'retire', seat: ADA.seat, filedUpTo: {}, statement: adasStatement }, ADA);
     await opensBoth('Ada retired');
 
     /* RED WHEN: a batch is judged by whether its seat is on the account now - Bo is removed from it. */

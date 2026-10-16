@@ -2,8 +2,7 @@
  * The client half of identity.
  *
  * Everything that can decrypt lives here, in the browser, and nowhere else. The
- * server holds a sealed blob it cannot open, and — since `PI4b` — no credential
- * of any kind. That is the entire trust model, and this file is where it is
+ * server holds a sealed blob it cannot open, and no credential of any kind. That is the entire trust model, and this file is where it is
  * either honoured or quietly broken, so it is deliberately small.
  *
  * What is in memory while signed in:
@@ -19,7 +18,7 @@
  * wallet again**, because keeping it in storage would put it where any script
  * on the page can read it.
  */
-import type { Inviter } from '../../../src/core/invitation.js';
+import type { Inviter, SignedSeatInvitation } from '../../../src/core/invitation.js';
 import type { DirectoryHereDeps, OwedDirectoryEntry } from './vault-page-doors.js';
 import { readAccountAddress, readCompanyLabel } from 'midnight-identity/profile/company-label';
 import type { AccountAddress, CompanyLabel, VaultAddress } from 'midnight-identity/profile/company-label';
@@ -103,6 +102,13 @@ export interface AccountKeys {
    */
   invitedBy?: Inviter;
   /**
+   * **WHO THE SEAT IS FOR, AS THE SEAT THAT INVITED SIGNED IT**, kept from the
+   * invitation this person accepted until their own directory entry carries it,
+   * which every member's device holds it to. Absent for the founding seat and
+   * for a seat added from a code.
+   */
+  invited?: SignedSeatInvitation;
+  /**
    * **THIS SEAT'S OPENING OF ITS OWN LEAF**, made on this device when the seat
    * was taken: its public key on the account, scope and blinding, and the
    * wallet key and salt the blinding was made from. Carried in the seat's own
@@ -144,19 +150,16 @@ function keysToActWith(accountId: string, saved: SavedAccountKeys | undefined | 
 }
 
 /**
- * **KEY MATERIAL THAT IS DURABLE BEFORE ITS LEAF IS PUBLISHED.** `C329`,
+ * **KEY MATERIAL THAT IS DURABLE BEFORE ITS LEAF IS PUBLISHED.**
  *
+ * A leaf published before its material is sealed, followed by a refused bundle
+ * write, seats a signer whose key material never survived - a seat that counts
+ * towards N and can never approve, which is the state `ownLeafReading` detects.
  *
- * The invite path used to POST the leaf and then seal the keyring. A refused
- * bundle write rethrows, and the secrets were only ever in that closure, so a
- * conflict at the wrong moment seated a signer whose key material never survived — a seat that counts towards N and can never approve,
- * which is precisely the state `ownLeafReading` was built to detect. **`S33`
- * built the detector; this is one of the factories.**
- *
- * So the order is inverted: the material is sealed HERE first, under the
+ * So the material is sealed HERE first, under the
  * account it is for, and only then does a leaf leave the machine. The entry
- * carries no `signerId` because the server has not assigned one yet — which is
- * the whole reason the old order existed — and `signingPublicKey` is what
+ * carries no `signerId` because the server has not assigned one yet, and
+ * `signingPublicKey` is what
  * matches it back to a seat on the roster afterwards.
  */
 export interface PendingSeat {
@@ -171,6 +174,8 @@ export interface PendingSeat {
   invitedBy?: Inviter;
   /** This seat's opening of its own leaf, made here with the leaf; promoted with the material. */
   opening?: SeatOpening;
+  /** Who the seat is for, as the seat that invited signed it; promoted with the material and carried into the seat's own entry. */
+  invited?: SignedSeatInvitation;
 }
 
 /**
@@ -222,16 +227,16 @@ export interface Keyring {
    * it makes, and it survives until the seat it belongs to is on the roster and
    * has been promoted into `accounts`.
    *
-   * **KEYED BY THE KEY BECAUSE KEYING BY ACCOUNT DESTROYS MATERIAL.** `S34`'s
-   * money-safety pass: if a POST succeeds and the promotion then fails, an
-   * entry here holds the ONLY copy of the blinding for a leaf that is already
-   * on a roster. Under an account-keyed map a second accepted invite for the
-   * same account overwrites it, and that is `C325` manufactured by the fix for
+   * **KEYED BY THE KEY BECAUSE KEYING BY ACCOUNT DESTROYS MATERIAL.** If a
+   * POST succeeds and the promotion then fails, an entry here holds the ONLY
+   * copy of the blinding for a leaf that is already on a roster. Under an
+   * account-keyed map a second accepted invite for the same account overwrites
+   * it, and that loses the material for good, made by the fix for
    * A signing public key is unique per seat and is the one half of this
    * material the server was given, so it names the seat without naming a
    * secret.
    *
-   * **Optional, because a bundle sealed before `S34` has no such field** and
+   * **Optional, because an older bundle has no such field** and
    * `JSON.parse` of one must keep working.
    */
   pendingSeats?: Record<string, PendingSeat>;
@@ -302,7 +307,7 @@ let walletAddress: string | null = null;
  * apart, **which is deliberate and is exactly why a second variable is needed
  * here.** Deriving a payslip keypair from a password-derived key would produce
  * a perfectly usable keypair that no wallet, no second device and no recovery
- * can ever work out again — `C135` reopened by a road nobody would notice,
+ * can ever work out again - payslips sealed to a key nobody can rebuild,
  * because every test of the sealing would still pass.
  *
  * So the ACCOUNT ID travels with the bytes. A payslip key may be derived only
@@ -687,7 +692,7 @@ const US_TO_A_WALLET = {
  * answer back for the server to check.
  *
  * **NOTHING IS BELIEVED HERE.** The signature is checked on the server, which
- * is the thing that mints a session; a check made by the page being persuaded
+ * is the thing that signs a person in; a check made by the page being persuaded
  * is not a check. What this function decides is only which window it will
  * listen to.
  *
@@ -838,8 +843,8 @@ export async function resumeSession(carried: SignInCarried | null = null): Promi
  *
  * One press on the wallet's own screen, and a password appears nowhere:
  *
- *   1. **ask the wallet for the keyring key**, naming the person this session
- *      is and - when this tab signed them in - the address it signed in as. The
+ *   1. **ask the wallet for the keyring key**, naming the person signed in
+ *      here and - when this tab signed them in - the address it signed in as. The
  *      wallet derives the key from its seed and the person, and gives it only if
  *      one of its own accounts has that address (`wallet-unlock.ts`);
  *   2. **read the keys saved for this person and open them with it.** Keys that
@@ -1214,9 +1219,9 @@ export async function reopenSavedKeys(): Promise<void> {
 }
 
 /**
- * Forgets everything this tab holds. LOCAL ONLY — it does not end the session
- * on the server, and it must not: it is also the 401 handler above, where the
- * session is already gone and calling the API again would recurse.
+ * Forgets everything this tab holds. LOCAL ONLY — it does not sign the person
+ * out on the server, and it must not: it is also the 401 handler above, where
+ * the sign-in is already gone and calling the API again would recurse.
  *
  * Use `signOut()` for the button.
  */
@@ -1224,30 +1229,27 @@ export function forgetLocally() {
   sessionLive = false; encKey = null; keyring = { accounts: {} }; me = null; walletAddress = null;
   releasedCompanyKey = null; savedKeys = null; keyCheckedAgainstSignIn = false;
   /*
-   * **AND THE FOUNDER'S UNSEALED SECRETS.**
+   * **AND THE FOUNDING SEAT'S UNSEALED SECRETS.**
    *
-   * `pendingCompany` holds the only copy in existence of a founder's signing
+   * `pendingCompany` holds the only copy in existence of the founding seat's signing
    * secret, wrapping secret and blinding, between the company being created and
    * the keyring being sealed. Everything else on this line is dropped on the
    * way out; leaving these behind would leave the most valuable thing this tab
    * ever holds alive past the moment the person said stop. **Dropping them
    * loses the company if the sealing never happened** — which is the correct
    * outcome for a person who signed out mid-way and the honest one, rather than
-   * keeping their secrets against a session that no longer exists.
+   * keeping their secrets against a sign-in that no longer exists.
    */
   pendingCompany = null;
 }
 
 /**
- * S-3: signing out for real.
- *
- * Until now this function was `forgetLocally` and nothing else, which is the
- * bug S-3 names — the tab dropped the token and the token stayed valid until
- * it expired, so "sign out" on a shared or stolen machine did nothing an
- * attacker would notice. The server call is the whole fix.
+ * Signing out for real: the service ends the sign-in, so a token dropped by
+ * this tab is not left valid until it expires, which on a shared or stolen
+ * machine would make "sign out" do nothing an attacker would notice.
  *
  * The local clear happens either way. If the network is down we still must not
- * leave the keys sitting in this tab, and a session we failed to end is a
+ * leave the keys sitting in this tab, and a sign-in we failed to end is a
  * smaller problem than a keyring left open on somebody's screen.
  */
 export async function signOut(): Promise<{ ended: boolean; anotherPerson: boolean }> {
@@ -1353,8 +1355,7 @@ export async function bringCompaniesThatPayYouAcross(
 }
 
 /**
- * **NOTHING MAY SILENTLY REPLACE KEY MATERIAL THAT IS ALREADY HERE.** `S34`'s
- * money-safety pass, and it is the worst thing that audit found.
+ * **NOTHING MAY SILENTLY REPLACE KEY MATERIAL THAT IS ALREADY HERE.**
  *
  * `keyring.accounts` holds ONE entry per account and every writer used to
  * assign into it unconditionally. The field that is destroyed is the
@@ -1408,11 +1409,33 @@ export async function sealPendingSeat(seat: PendingSeat) {
  * DIRECTORY HOLDS IT**, and hands back the doors that read it and let it go.
  * Saved with the keys, so another of this person's devices files it too.
  */
-export async function oweDirectoryEntry(accountId: string, owed: Omit<OwedDirectoryEntry, 'opening'>): Promise<void> {
-  /* The entry is filed with this seat's own opening, made on this device when the seat was taken. */
-  const opening = keyring.accounts[accountId]?.opening;
-  const kept: OwedDirectoryEntry = opening === undefined ? owed : { ...owed, opening };
+export async function oweDirectoryEntry(accountId: string, owed: Omit<OwedDirectoryEntry, 'opening' | 'invited'>): Promise<void> {
+  /* The entry is filed with this seat's own opening, made on this device when the seat was taken, and its invitation. */
+  const { opening, invited } = keyring.accounts[accountId] ?? {};
+  const kept: OwedDirectoryEntry = {
+    ...owed, ...(opening === undefined ? {} : { opening }), ...(invited === undefined ? {} : { invited }),
+  };
   await putBundle({ ...keyring, directoryEntriesOwed: { ...keyring.directoryEntriesOwed, [accountId]: kept } });
+}
+
+/**
+ * **AN INVITATION RE-ISSUED FOR THIS PERSON'S SEAT, KEPT IN PLACE OF THE ONE
+ * THEY JOINED BY**: the seat that signed it as their inviter, for their
+ * wallet's first records-key ask, and the invitation itself, for their own
+ * directory entry - both replaced in one write, so the wallet and the entry
+ * never name two different inviters. An entry still owed carries the new one.
+ * Refused for a company this device holds no seat's keys for.
+ */
+export async function keepTheReissuedInvitation(accountId: string, reissued: { readonly inviter: Inviter; readonly invited: SignedSeatInvitation }): Promise<void> {
+  if (!encKey) throw new Error('not signed in');
+  const keys = keyring.accounts[accountId];
+  if (keys === undefined) throw new Error('this device holds no seat of yours for that company, so the invitation was not kept.');
+  const owed = keyring.directoryEntriesOwed?.[accountId];
+  await putBundle({
+    ...keyring,
+    accounts: { ...keyring.accounts, [accountId]: { ...keys, invitedBy: reissued.inviter, invited: reissued.invited } },
+    ...(owed === undefined ? {} : { directoryEntriesOwed: { ...keyring.directoryEntriesOwed, [accountId]: { ...owed, invited: reissued.invited } } }),
+  });
 }
 
 /** The doors over this person's owed directory entry for `accountId`: read it, and let it go once it is filed. */
@@ -1432,8 +1455,8 @@ export const pendingSeatsFor = (accountId: string): PendingSeat[] =>
  * KEYS.** One `putBundle`, so the promotion and the removal cannot half happen.
  *
  * **WHAT HAPPENS TO A LEAF ALREADY SENT WHEN THIS FAILS**, which is the
- * question `C329` asks and the reason the order was inverted rather than the
- * publish made retractable: the leaf stands, the seat is on the roster, and
+ * reason the material is sealed first rather than the publish made
+ * retractable: the leaf stands, the seat is on the roster, and
  * **the material it was made from is already sealed in the bundle** — this call
  * only moves it. So the failure is recoverable on this device or any other that
  * opens the same bundle, and `finishPendingSeat` below is the door. A
@@ -1452,6 +1475,7 @@ export async function promotePendingSeat(signingPublicKey: Hex, signerId: string
     scope: seat.scope,
     ...(seat.invitedBy === undefined ? {} : { invitedBy: seat.invitedBy }),
     ...(seat.opening === undefined ? {} : { opening: seat.opening }),
+    ...(seat.invited === undefined ? {} : { invited: seat.invited }),
   };
   refuseToClobber(seat.accountId, keys);
   const { [signingPublicKey]: _gone, ...rest } = keyring.pendingSeats ?? {};
@@ -1470,11 +1494,10 @@ export async function promotePendingSeat(signingPublicKey: Hex, signerId: string
  *
  * ── WHAT IT PROVES BEFORE IT PROMOTES, AND WHY THE FIRST VERSION DID NOT ──
  *
- * The first version trial-unwrapped each wrapped viewing key with the pending
- * wrapping secret, took the `signerId` written beside whichever ciphertext
- * opened, and said in its own comment that a substituted roster could not forge
- * one. **That was false and `S34`'s money-safety pass caught it (rule
- * 14).** `wrapKey` is public-key sealing: anyone holding the wrapping PUBLIC
+ * Trial-unwrapping each wrapped viewing key with the pending wrapping secret
+ * and taking the `signerId` written beside whichever ciphertext opened is not
+ * enough, though a substituted roster may seem unable to forge one: `wrapKey`
+ * is public-key sealing: anyone holding the wrapping PUBLIC
  * key — which this device POSTed to the server one step earlier — can produce a
  * ciphertext that opens under the matching secret, and the `signerId` beside it
  * is unauthenticated plaintext the server chooses.
@@ -2220,7 +2243,7 @@ export function viewingKeyFor(account: { id: string; wrappedKeys: any[] }): Hex 
 /**
  * Opens an account the server just served us.
  *
- * The server sends ciphertext because since M-96 that is all it has: the company
+ * The server sends ciphertext because that is all it has: the company
  * name, the signer list, the roles and the spending limits are sealed under a
  * key it never sees. Opening happens here, on the device that can, using exactly
  * the same code the server used to seal it.

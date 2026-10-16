@@ -198,11 +198,13 @@ describe('THE HEADS, MADE WITH THE ACCOUNT\'S OWN FUNCTIONS', () => {
   });
   it('reads the head under the anchor\'s own key, the empty head before the first anchor, and the head after each batch', () => {
     const step = { state: new Uint8Array([1]), block: { height: 4, at: 4_000 } };
+    /* The seat bar each state holds, as a test's reader of the account's approvals answers it: two more than the state's first byte. */
+    const barOf = (state: Uint8Array) => 2 + state[0]!;
     /* RED WHEN: an account with no anchor yet is read as holding a head - the empty head is not one anchor call that landed. */
-    expect(anchorsLandedIn(at(null), [step])).toEqual([]);
+    expect(anchorsLandedIn(at(null), [step], barOf)).toEqual([]);
     /* RED WHEN: the head an anchor call left is read from anywhere but the state under the anchor's own key, or the block is
      * not the step's own. */
-    expect(anchorsLandedIn(at(PREVIOUS), [step])).toEqual([{ head: PREVIOUS, height: 4, at: 4_000 }]);
+    expect(anchorsLandedIn(at(PREVIOUS), [step], barOf)).toEqual([{ head: PREVIOUS, seatBar: 3, height: 4, at: 4_000 }]);
     /* Three states, two anchors: each landing is read off its own state and block. */
     const heads = ['', 'a1'.repeat(32), 'a2'.repeat(32)];
     const tags = ['', 'c1'.repeat(32), 'c2'.repeat(32)];
@@ -217,9 +219,13 @@ describe('THE HEADS, MADE WITH THE ACCOUNT\'S OWN FUNCTIONS', () => {
         },
       }),
     };
-    const landed = anchorsLandedIn(each, [0, 1, 1, 2].map((n, i) => ({ state: new Uint8Array([n]), block: { height: i, at: i } })));
+    const landed = anchorsLandedIn(each, [0, 1, 1, 2].map((n, i) => ({ state: new Uint8Array([n]), block: { height: i, at: i } })), barOf);
     /* RED WHEN: a landing's head or block is any state's but its own. */
     expect(landed.map((l) => [l.head, l.height])).toEqual([[heads[1], 1], [heads[2], 3]]);
+    /* RED WHEN: a landing's seat bar is read from any state but the one its block left. */
+    expect(landed.map((l) => l.seatBar)).toEqual([3, 4]);
+    /* RED WHEN: a state whose seat bar cannot be read is landed with none, so a change it anchored would be judged against no bar. */
+    expect(() => anchorsLandedIn(at(PREVIOUS), [step], () => Number.NaN)).toThrow(/approvals a change of who is seated needs could not be read/);
     /* RED WHEN: a landing does not carry the tag the account wrote beside its head - the seat that moved it read from nowhere. */
     expect(landed.map((l) => l.tag)).toEqual([tags[1], tags[2]]);
     /* RED WHEN: a history that names no call is read as naming how many anchors a block held. */
@@ -257,7 +263,7 @@ describe('THE HEADS, MADE WITH THE ACCOUNT\'S OWN FUNCTIONS', () => {
       step(1, 2, 'anchor'), step(1, 2, 'anchor'), step(1, 2, 'recoverAnchor', false),
       /* The next block: a recovery that landed. */
       step(2, 3, 'recoverAnchor'), step(2, 3, 'approve'),
-    ]);
+    ], () => 1);
     /*
      * RED WHEN: a block's calls to move the anchor are not all counted - a seat would be named for a head another call of that block
      * may have moved, an anchor in a guaranteed section moving it even where its transaction succeeded only in part.

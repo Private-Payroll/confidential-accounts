@@ -20,7 +20,13 @@
  *   · **accepting one**: only with the proof the link's token gives, whose
  *     hash is all this service holds, and only while it is open. What is
  *     handed over is sealed on the invitee's own device to the company's inbox
- *     key, and kept unopened.
+ *     key, and kept unopened;
+ *   · **withdrawing somebody waiting for a seat**: only on a withdrawal signed
+ *     by the filing key of a seat the chain holds now (`signerSeatNow`); the
+ *     request is let go and its invitation's link reads as withdrawn, so the
+ *     same person can accept a new invitation. Whether that seat's role may
+ *     withdraw anybody is the signing device's to refuse; nothing here judges
+ *     a role.
  *
  * No route here takes a token, an offer key or a company key, and nothing
  * here decides who is paid or seated: that is the admitting and seating
@@ -32,11 +38,11 @@ import { nanoid } from 'nanoid';
 import type { Invite, SealedAccount } from '../core/types.js';
 import type { Hex } from '../core/crypto.js';
 import {
-  acceptsTheInvitation, INVITATION_LIFETIME_MS, INVITATION_REFUSAL, verifiedInvitationFiler, whyThisInvitationIsClosed,
-  whyThisIsNotAnInvitation, type InvitationFiling, type InvitationRefusal,
+  acceptsTheInvitation, alreadyOnTheCompany, INVITATION_LIFETIME_MS, INVITATION_REFUSAL, verifiedInvitationFiler, whyThisInvitationIsClosed,
+  whyThisIsNotAnInvitation, withdrawalRefusal, type InvitationFiling, type InvitationRefusal, type WaitingSignerWithdrawal,
 } from '../core/invitation.js';
 import { FILING_REFUSAL, filerSeatOf } from '../midnight/seat-directory.js';
-import { CHAIN_UNREAD, filerSeatNow, type DirectoryNow } from './seat-directory-route.js';
+import { CHAIN_UNREAD, filerSeatNow, signerSeatNow, type DirectoryNow } from './seat-directory-route.js';
 import type { CompanyRecordStore } from '../midnight/sealed-record-wire.js';
 import { fileCompanyRecord } from './company-records-route.js';
 
@@ -276,7 +282,7 @@ export const invitationRoutes = (deps: {
     const who = b.data.for ?? signedIn;
     const rec = deps.store.getAccount(invite.accountId);
     if (rec === null) { const a = closedAnswer('not-found'); res.status(a.status).json(a.body); return; }
-    if (rec.memberUserIds.includes(who) || rec.pendingSigners.some((p) => p.userId === who)) {
+    if (alreadyOnTheCompany(rec, who)) {
       res.status(409).json({ refused: 'already-on-this-account', error: 'that person is already on this company, so this invitation is not theirs to accept. Nothing was sent.' });
       return;
     }
@@ -284,6 +290,51 @@ export const invitationRoutes = (deps: {
     deps.store.putAccount({ ...rec, pendingSigners: [...rec.pendingSigners, pending] });
     deps.store.putInvite({ ...invite, acceptedAt: pending.createdAt, subjectId: pending.id });
     res.status(201).json({ id: pending.id });
+  });
+
+  /*
+   * **SOMEBODY WAITING FOR A SEAT, WITHDRAWN.** A store and a relay only: the
+   * withdrawal is held to its shape, its signature, and a seat the chain holds
+   * now for the key that signed it, whoever hands it in, and never while this
+   * service's own read of the chain shows the leaf it names seated. The seat
+   * request it names is let go, and the invitation it answered is marked
+   * withdrawn. Which leaf the sealed request is for is not this service's to
+   * see: the signing device names it, and refuses while the chain holds that
+   * leaf or a proposal to seat it.
+   */
+  router.post('/api/accounts/:id/signers/:signerId/withdraw', logged, deps.signedIn, deps.member, json, async (req, res) => {
+    const company = String(req.params.id);
+    const withdrawal = (req.body as { withdrawal?: unknown } | null)?.withdrawal as WaitingSignerWithdrawal | undefined;
+    const why = withdrawalRefusal(withdrawal, company);
+    if (why !== null || withdrawal!.signerId !== String(req.params.signerId)) {
+      res.status(403).json({ refused: 'not-signed', error: `nobody was withdrawn: ${why ?? 'the withdrawal names another seat request than this one'}.` });
+      return;
+    }
+    let now: DirectoryNow;
+    try { now = await deps.directoryOf(company); } catch (e) { res.status(503).json({ error: CHAIN_UNREAD(e) }); return; }
+    const seat = signerSeatNow(now, withdrawal!.signedBy);
+    if (typeof seat === 'string') {
+      res.status(403).json({ refused: seat, error: `nobody was withdrawn, because ${FILING_REFUSAL[seat]}.` });
+      return;
+    }
+    /* The chain's own add decides: a request whose leaf this service's read of the chain shows seated is admitted, never let go. */
+    if ((now.chain?.seats.seats ?? []).some((x) => x.toLowerCase() === withdrawal!.leaf.toLowerCase())) {
+      res.status(409).json({ refused: 'seated-on-the-chain', error: 'the chain already holds the seat this withdrawal names, so that person is admitted, not withdrawn. Nobody was withdrawn.' });
+      return;
+    }
+    const rec = deps.store.getAccount(company);
+    const invite = deps.store.invitationById(withdrawal!.invitation);
+    if (rec === null || !rec.pendingSigners.some((p) => p.id === withdrawal!.signerId)) {
+      res.status(409).json({ refused: 'not-waiting', error: 'that person is not waiting for a seat on this company. Reload the page. Nobody was withdrawn.' });
+      return;
+    }
+    if (invite === null || invite.accountId !== company || invite.subjectId !== withdrawal!.signerId) {
+      res.status(409).json({ refused: 'not-its-invitation', error: 'the withdrawal names another invitation than the one that seat request answered. Nobody was withdrawn.' });
+      return;
+    }
+    deps.store.putAccount({ ...rec, pendingSigners: rec.pendingSigners.filter((p) => p.id !== withdrawal!.signerId) });
+    if (!invite.revokedAt) deps.store.putInvite({ ...invite, revokedAt: new Date().toISOString() });
+    res.status(200).json({ withdrawn: withdrawal!.signerId });
   });
 
   return router;

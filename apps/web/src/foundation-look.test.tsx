@@ -61,7 +61,7 @@ async function draw(id: PageId, viewer: Viewer) {
   const params = Object.fromEntries([...page.path.matchAll(/:(\w+)/g)].map((m) => [m[1]!, 'x1']));
   window.history.replaceState(null, '', addressOf(id, params));
   const session = {
-    person: { id: 'u1', name: 'Priya' }, companies: viewer.signs ? [{ id: 'c-1', createdAt: '2026-09-01T00:00:00.000Z', signers: 1, approvalsNeeded: 1 }] : [],
+    person: { id: 'u1', name: 'Priya' }, companies: viewer.signs ? [{ id: 'c-1', createdAt: '2026-09-01T00:00:00.000Z', signers: 1 }] : [],
     company: viewer.signs ? 'c-1' : null, chooseCompany: vi.fn(), viewer, chooseView: vi.fn(), preferences: DEFAULT_PREFERENCES,
     choose: vi.fn(), signOut: vi.fn(), mac: true, companiesChanged: vi.fn(async () => {}),
   };

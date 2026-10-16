@@ -1,6 +1,5 @@
 /**
  * WHERE THE NOTE POOL LIVES, AND WHY IT IS NOT SEALED LIKE EVERYTHING ELSE.
- * `C202`, `S6d`, and `docs/scope-the-vault-system.md` §3.3.
  *
  * `vault-notes.ts` holds what a vault can spend: which notes exist, what they
  * are worth, which one to spend. **None of that is on chain and none of it is
@@ -38,8 +37,8 @@
  * WHAT FALLS OUT, INCLUDING THE ONE NOBODY LOOKED FOR
  *
  *   1. **The server holds the ciphertext and cannot read it.** It can still
- *      withhold it or serve an old one — that is `decision 0002` and `M-91`,
- *      unchanged and not fixed here — but it cannot learn a balance.
+ *      withhold it or serve an old one — the company's records, anchored on
+ *      chain, are what catch that, not this file — but it cannot learn a balance.
  *   2. **Every signer can open it**, because whoever runs a payout needs it and
  *      a device-local pool means a lost laptop is a frozen vault.
  *   3. **Viewing-key rotation is not a vault event.** `rotate` re-seals every
@@ -167,14 +166,13 @@ export class VaultPoolUnreadable extends Error {
       'nothing and reports a balance of zero; the notes stay on chain and nobody can say what ' +
       'they are. Rebuild it from the chain and the history with replayVault.' +
       /*
-       * **THE VAULT IS NOT NAMED HERE. `C236`, and see the same note in
-       * `vault-ledger.ts`.** It used to end `(vault <64 hex>)`. An error
-       * message is a screen, and an instrument's failure block deliberately
-       * does not go through the screen guard, so this was a route the address
-       * reached a person by. It stays as this error's `vault` property.
+       * **THE VAULT IS NOT NAMED HERE.** An error message is a screen, and an
+       * instrument's failure block deliberately does not go through the screen
+       * guard, so naming the address here would put it in front of a person. It
+       * stays as this error's `vault` property.
        */
       ' (the vault is not named here — its address is the one value that destroys money when ' +
-      'somebody pastes it into a wallet, C236. It is this error\'s `vault` property, and an ' +
+      'somebody pastes it into a wallet. It is this error\'s `vault` property, and an ' +
       'instrument names the vault by the NAME it was deployed under.)');
     this.name = 'VaultPoolUnreadable';
   }
@@ -421,8 +419,8 @@ export const openPool = (
  *
  * **The pool is not re-encrypted and its version does not move**, because
  * nothing about what the vault holds has changed — only who can read it. That
- * matters for the reason `M-73`/`M-74` give about the sealed state: a rewrite
- * of the money is a chance to write half of it, and adding a reader is not a
+ * matters for the same reason it does for the sealed state: a rewrite of the
+ * money is a chance to write half of it, and adding a reader is not a
  * good enough reason to take that chance.
  *
  * It needs an existing signer's secret because there is no other way: the key
@@ -465,10 +463,11 @@ export interface FiledPoolVersion {
 }
 
 /**
- * **A VERSION THE COMPANY'S RECORDS PASSED OVER**, as a device reading them
- * says it: filed, its entry never entered, and a later version anchored past
- * it. It is said, so a list of versions never skips one silently, and its bytes
- * are not given, so nothing opens it as a version the records hold.
+ * **A VERSION A DEVICE PASSES OVER**: one the company's records never
+ * entered, with a later version anchored past it, or one filed by a seat past
+ * the boundary its leaving keeps. It is said, so a list of versions never
+ * skips one silently, and its bytes are not given, so nothing opens it.
+ * (`neverEntered` is the field's name for both.)
  */
 export interface PassedOverVersion {
   readonly version: number;
@@ -479,7 +478,7 @@ export interface PassedOverVersion {
 /** The bytes of a version a store filed; refused for a version the company's records passed over, which carries none. */
 export const sealedOf = (v: FiledPoolVersion | PassedOverVersion): SealedPool => {
   if (v.neverEntered === true) {
-    throw new Error(`version ${v.version} of this record was passed over by the company's records - its entry was never entered - so it is not read`);
+    throw new Error(`version ${v.version} of this record is one a device passes over - never entered in the company's records, or filed by a seat past the boundary its leaving keeps - so it is not read`);
   }
   return v.sealed;
 };
@@ -533,7 +532,39 @@ export interface SealedPoolStore {
   versions(vault: string): Promise<readonly (FiledPoolVersion | PassedOverVersion)[]>;
   /** One filed version, or `null` when that version is not filed. Optional; `versions` answers it otherwise. */
   at?(vault: string, version: number): Promise<SealedPool | null>;
+  /**
+   * The newest version filed for this vault, where this store's last read of it
+   * passed over versions above the one it answered as the newest: versions
+   * filed by a seat past the boundary its leaving keeps. No write is built on
+   * such a read (`passedOverAbove`). Undefined where the last read passed over
+   * nothing above what it answered.
+   */
+  filedPast?(vault: string): number | undefined;
 }
+
+/**
+ * **NO WRITE IS FILED ON TOP OF A VERSION A DEVICE PASSED OVER.** Such a
+ * version is filed by a seat that left, past the boundary its leaving keeps,
+ * and may hold what the chain did after its removal was raised - a payment's
+ * change. A write built on the version below it and filed above it would leave
+ * that out of every later version. Refused, with nothing written, until the
+ * record is filed again from what the chain vouches for
+ * (`fileThePoolTheChainHolds`).
+ */
+export class VaultRecordPassedOverAbove extends Error {
+  constructor(readonly vault: string, readonly record: string, readonly read: number, readonly filed: number) {
+    super(`version ${filed} of this vault's ${record} is filed above version ${read}, which this write was built on, by a seat `
+      + 'past the boundary its leaving keeps, and no device believes it. Nothing has been written. What resolves it: open the '
+      + 'vault on this device, which files the record again from what the chain holds, then make this change again.');
+    this.name = 'VaultRecordPassedOverAbove';
+  }
+}
+
+/** Refuses a write built on version `read` of `vault`'s record when the store's read passed over a version above it. */
+export const passedOverAbove = (store: SealedPoolStore, vault: string, record: string, read: number): void => {
+  const filed = store.filedPast?.(vault);
+  if (filed !== undefined && filed > read) throw new VaultRecordPassedOverAbove(vault, record, read, filed);
+};
 
 /**
  * **WHY A STORED RECORD CANNOT BE USED AS A SEALED POOL, OR `null` WHEN IT CAN.**
@@ -643,8 +674,8 @@ export class SealedNotePool implements NotePool {
   ) {}
 
   /**
-   * **AN ABSENT RECORD IS A REFUSAL, NOT AN EMPTY POOL.** `C197`'s rule, on the
-   * pool rather than on a Zswap state.
+   * **AN ABSENT RECORD IS A REFUSAL, NOT AN EMPTY POOL.** The same rule a
+   * Zswap state is read by, on the pool.
    *
    * A vault with no pool record and a vault with no money are the same bytes
    * from here and opposite facts about a company's treasury. Answering `{notes:
@@ -705,6 +736,7 @@ export class SealedNotePool implements NotePool {
     if (builtOn.version !== rec.version) {
       throw new VaultPoolAdvancedSinceRead(vaultAddress, builtOn.version, rec.version);
     }
+    passedOverAbove(this.store, vaultAddress, 'pool', rec.version);
     /*
      * **WHAT A REBUILD WORKED OUT ABOUT A CONTRADICTED NOTE IS SEALED INTO THE
      * VERSION IT FILES.** The chain can settle which description of a nonce is

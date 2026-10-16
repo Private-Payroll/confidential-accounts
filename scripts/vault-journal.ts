@@ -118,14 +118,16 @@ export class SealedDepositJournal extends DepositJournalInStore {
  * **EVERYTHING THE JOURNALS ON THIS MACHINE SAY WAS ATTEMPTED AGAINST ONE
  * VAULT**, in the shape the rebuild takes. Every filed version of each journal
  * file is read; what is done with them is `attemptsFromJournalVersions`, the
- * same reader the product's store is read with.
+ * same reader the product's store is read with, in the same shape. A file on
+ * this machine is not read against the company's records, so it passes no
+ * version over and `passedOver` is always zero here.
  */
 export const journalledAttempts = (input: {
   depositJournalFile: string;
   paymentJournalFile: string;
   vault: string;
   opener: JournalOpener;
-}): AttemptedVaultCalls & { versionsRead: { deposits: number; payments: number } } =>
+}): AttemptedVaultCalls & { versionsRead: { deposits: number; payments: number }; passedOver: { deposits: number; payments: number } } =>
   attemptsFromJournalVersions({
     deposits: everyVersionFiled(input.depositJournalFile, input.vault),
     payments: everyVersionFiled(input.paymentJournalFile, input.vault),

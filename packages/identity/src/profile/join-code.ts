@@ -21,10 +21,20 @@
  *
  * The same code is what a person's device hands over when they accept a link
  * instead, so the two ways in end in one package.
+ *
+ * **A SIGNER'S CODE ALSO CARRIES THE SEAT'S OPENING** (`opening`): the wallet
+ * key and salt the leaf's blinding is made from. It is not under the
+ * signature and needs not be: it proves itself, because it either makes the
+ * leaf the signature covers for the wallet key that signed or it does not
+ * (`walletKeyProvedBy`). With it, every device that approves the seat sees the
+ * leaf is made for the wallet that signed the code. The code already names
+ * that wallet's key beside the leaf, so the opening tells its reader nothing
+ * about whose seat it is that the code does not.
  */
 import { sha256 } from '@noble/hashes/sha2.js';
 import { schnorr } from '@noble/curves/secp256k1.js';
 import type { Identity } from '../keys/derivation.js';
+import type { SeatOpening } from './records-key.js';
 import { committeeKeyFor, committeeSigningKeyFor } from './committee-key.js';
 import { readCompanyLabel, type CompanyLabel } from './company-label.js';
 import { usableOrigin } from './origin.js';
@@ -53,6 +63,8 @@ export interface JoinCode {
   readonly committeeKey: { readonly tag: string; readonly value: string };
   /** By that key, over everything above. */
   readonly signature: string;
+  /** A signer's code only: the opening of the leaf its parts carry, made on the joiner's device beside the leaf. */
+  readonly opening?: SeatOpening;
 }
 
 /** The bytes a code's signature covers, or null when any part is not one. */
@@ -129,8 +141,12 @@ export function readJoinCode(text: string, company: CompanyLabel): JoinCode | Jo
   } catch {
     return 'not-a-code';
   }
+  const fields = typeof code === 'object' && code !== null ? Object.keys(code).sort().join(',') : '';
   if (typeof code !== 'object' || code === null || code.schema !== JOIN_CODE_SCHEMA
-    || Object.keys(code).sort().join(',') !== 'committeeKey,company,parts,person,schema,signature') return 'not-a-code';
+    || (fields !== 'committeeKey,company,parts,person,schema,signature'
+      /* Only a signer's code carries an opening; whether it opens the leaf is for the device that takes the code to see. */
+      && !(fields === 'committeeKey,company,opening,parts,person,schema,signature' && (code.parts as { kind?: unknown })?.kind === 'signer'
+        && typeof code.opening === 'object' && code.opening !== null))) return 'not-a-code';
   if (!joinCodeSignedBy(code)) return 'not-signed';
   if (code.company !== company) return 'another-company';
   return Object.freeze({ ...code, parts: readJoinParts(code.parts)! });

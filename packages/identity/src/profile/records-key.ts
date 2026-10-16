@@ -9,6 +9,10 @@ import type { AccountAddress, CompanyLabel } from './company-label.js';
 import { unlockKeyFor, walletIndexerOf, type WalletIndexer } from './unlock.js';
 import { usableOrigin } from './origin.js';
 import type { HoldersRequest, RecordsKeyRequest, UnlockRequest } from './request.js';
+import { seatBarOf } from './seat-bar.js';
+
+/* The one rule for the approvals a change of who is seated needs, reached here by every reader that loads no ledger. */
+export { seatBarOf };
 
 /**
  * **A SIGNER'S RECORDS KEY FOR ONE COMPANY AND THE SEAT THEY HOLD ON ITS
@@ -433,7 +437,8 @@ export type InvitationRefusal = 'no-invitation' | 'other-account' | 'not-signed'
 
 /**
  * **WHAT A PERSON IS TOLD FOR EACH, AND WHAT TO DO.** A missing invitation is
- * opened again, and so is an inviter whose seat is not on the chain yet; one
+ * opened again, and so is an inviter whose seat is not on the chain yet; an
+ * inviter who has left is replaced by any signer re-issuing the invitation; one
  * that does not match cannot be repaired by opening it again, so the person
  * asks the inviter for a new one and compares the company's fingerprint with
  * them.
@@ -451,8 +456,8 @@ export const INVITATION_REFUSAL: Readonly<Record<InvitationRefusal, string>> = O
     + 'Ask the person who invited you for a new invitation, and compare the company\'s fingerprint with them when you open it.',
   'inviter-not-on-account':
     'The signer the invitation names is not on this company\'s account, as this wallet read it from the network, so nothing '
-    + 'has been signed. If they joined only a minute ago, wait a minute and open this again; otherwise ask the person who '
-    + 'invited you for a new invitation, and compare the company\'s fingerprint with them when you open it.',
+    + 'has been signed. If they joined only a minute ago, wait a minute and open this again. If they have left the company, '
+    + 'ask any signer of it to re-issue your invitation, and compare the company\'s fingerprint with them when you open it.',
   'not-the-inviters-seat':
     'This invitation does not prove that the seat it names was made for the signer who invited you, so nothing has been '
     + 'signed. Ask the person who invited you for a new invitation, and compare the company\'s fingerprint with them when you '
@@ -693,14 +698,30 @@ export function readRecordsKeyAnswer(
 export const HOLDERS_ANSWER_SCHEMA = 'midnight-identity/holders-answer/v1';
 
 /**
- * **WHO HOLDS A COMPANY'S ACCOUNT, AS A WALLET READ IT OFF THE CHAIN ITSELF,
- * WITH THE ACCOUNT'S OWN RULES BESIDE IT**: everything in `AccountSeats`, the
- * number of approvals the account itself requires, and every vault it has
- * adopted. Public chain facts only.
+ * **HOW MANY APPROVALS THE ACCOUNT ASKS FOR, AS ITS OWN STATE HOLDS THEM**:
+ * its approval threshold, the rows of its map of thresholds - each vault's own,
+ * and the approvals a policy change needs - and the approvals a change of who
+ * is seated needs, worked out from those two by `seatBarOf`. Public chain
+ * facts only, all read from one state.
  */
-export interface AccountHolders extends AccountSeats {
+export interface AccountGovernance {
   /** The approvals the account requires, as its own state holds it. */
   readonly approvals: number;
+  /** Each vault's own approvals needed, as the account's map of thresholds holds them: every row but the policy bar's. */
+  readonly vaultThresholds: readonly { readonly vault: string; readonly threshold: number }[];
+  /** The approvals a policy change needs as the account stores them, or null where none is stored and the threshold stands in. */
+  readonly policyBar: number | null;
+  /** The approvals a change of who is seated needs: `seatBarOf(approvals, policyBar)`. */
+  readonly seatBar: number;
+}
+
+/**
+ * **WHO HOLDS A COMPANY'S ACCOUNT, AS A WALLET READ IT OFF THE CHAIN ITSELF,
+ * WITH THE ACCOUNT'S OWN RULES BESIDE IT**: everything in `AccountSeats`, the
+ * approvals the account asks for (`AccountGovernance`), and every vault it has
+ * adopted. Public chain facts only.
+ */
+export interface AccountHolders extends AccountSeats, AccountGovernance {
   /** Every vault the account has adopted and not retired, each 64 lower-case hex characters. */
   readonly adoptedVaults: readonly string[];
   /**
@@ -784,6 +805,8 @@ const readHolders = (value: unknown): AccountHolders | null => {
   if (seats === null || v === null || typeof v !== 'object' || !Number.isSafeInteger(v.approvals)
     || (v.approvals as number) < 1 || !Array.isArray(v.adoptedVaults)) return null;
   if (!v.adoptedVaults.every((x) => typeof x === 'string' && HEX64.test(x)) || new Set(v.adoptedVaults).size !== v.adoptedVaults.length) return null;
+  const governance = readGovernance(v);
+  if (governance === null) return null;
   if (typeof v.founding !== 'string' || !HEX64.test(v.founding)) return null;
   if (!Array.isArray(v.foundingCommittee) || v.foundingCommittee.length === 0) return null;
   const foundingCommittee: { tag: string; value: string }[] = [];
@@ -793,9 +816,32 @@ const readHolders = (value: unknown): AccountHolders | null => {
     foundingCommittee.push({ tag: key.tag, value: key.value });
   }
   return Object.freeze({
-    ...seats, approvals: v.approvals as number, adoptedVaults: Object.freeze([...v.adoptedVaults as string[]]), founding: v.founding,
+    ...seats, ...governance, adoptedVaults: Object.freeze([...v.adoptedVaults as string[]]), founding: v.founding,
     foundingCommittee: Object.freeze(foundingCommittee),
   });
+};
+
+/**
+ * The approvals an account asks for, as an answer carries them, or null for a
+ * shape no wallet writes. A seat bar that is missing, or is not the one its
+ * threshold and stored policy bar make, is refused: it is never read as no bar.
+ */
+const readGovernance = (v: Partial<AccountGovernance>): AccountGovernance | null => {
+  const approvals = v.approvals;
+  if (!Number.isSafeInteger(approvals) || (approvals as number) < 1 || !Array.isArray(v.vaultThresholds)) return null;
+  const rows: { vault: string; threshold: number }[] = [];
+  for (const r of v.vaultThresholds as unknown[]) {
+    const row = r as Partial<{ vault: unknown; threshold: unknown }> | null;
+    if (row === null || typeof row !== 'object' || typeof row.vault !== 'string' || !HEX64.test(row.vault)
+      || !Number.isSafeInteger(row.threshold) || (row.threshold as number) < 0) return null;
+    rows.push(Object.freeze({ vault: row.vault, threshold: row.threshold as number }));
+  }
+  if (new Set(rows.map((r) => r.vault)).size !== rows.length) return null;
+  const policyBar = v.policyBar;
+  if (policyBar !== null && (!Number.isSafeInteger(policyBar) || (policyBar as number) < 0)) return null;
+  const seatBar = seatBarOf(approvals as number, policyBar as number | null);
+  if (v.seatBar !== seatBar) return null;
+  return { approvals: approvals as number, vaultThresholds: Object.freeze(rows), policyBar: policyBar as number | null, seatBar };
 };
 
 /**
@@ -814,6 +860,9 @@ export function holdersAnswerFor(
     || (payments !== undefined && readPayments(payments, asked!) === null)) {
     throw new RecordsKeyRefused('This wallet did not read the payments the page asked about, so nothing has been handed back.');
   }
+  if (readGovernance(holders) === null) {
+    throw new RecordsKeyRefused('This wallet did not read the approvals the account asks for, so nothing has been handed back.');
+  }
   const rolesAsked = request.roles;
   if ((rolesAsked === undefined) !== (roles === undefined)
     || (roles !== undefined && readRoles(roles, rolesAsked!) === null)) {
@@ -828,7 +877,9 @@ export function holdersAnswerFor(
     at,
     holders: Object.freeze({
       committee: frozenKeys(holders.committee), threshold: holders.threshold, seats: Object.freeze([...holders.seats]),
-      approvals: holders.approvals, adoptedVaults: Object.freeze([...holders.adoptedVaults]), founding: holders.founding,
+      approvals: holders.approvals, vaultThresholds: Object.freeze(holders.vaultThresholds.map((r) => Object.freeze({ vault: r.vault, threshold: r.threshold }))),
+      policyBar: holders.policyBar, seatBar: holders.seatBar,
+      adoptedVaults: Object.freeze([...holders.adoptedVaults]), founding: holders.founding,
       foundingCommittee: frozenKeys(holders.foundingCommittee),
     }),
     ...(payments === undefined ? {} : { payments: readPayments(payments, asked!)! }),

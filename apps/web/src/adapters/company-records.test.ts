@@ -31,6 +31,8 @@ const kr = vi.hoisted(() => ({
   readHere: [] as string[],
   /* The vaults the company's account has adopted, as the wallet reads the chain. */
   adopted: [] as string[],
+  /* The approvals the company's account asks for, as the wallet reads the chain; undefined when the wallet cannot say. */
+  approvals: 2 as number | undefined,
   /* Each company this page entered and started the one-a-day anchor for, with the keys it was handed. */
   anchoring: [] as Array<{ company: string; signerId: string }>,
 }));
@@ -67,7 +69,8 @@ vi.mock('vaults-web-shared/keyring.js', async (real) => ({
   viewingKeyFor: () => VK,
   openKeysWithWallet: async () => { kr.opened += 1; },
   /* Who holds the company, as the person's own wallet reads it with no press: the vaults its account has adopted, and its indexer. */
-  holdersFromTheWallet: async () => ({ holders: { adoptedVaults: kr.adopted }, indexer: kr.indexer }),
+  /* `threshold` on this answer is the account's maintenance committee's, never the approvals the account asks for. */
+  holdersFromTheWallet: async () => ({ holders: { adoptedVaults: kr.adopted, threshold: 1, ...(kr.approvals === undefined ? {} : { approvals: kr.approvals }) }, indexer: kr.indexer }),
   api: async (path: string) => {
     kr.asked.push(path);
     const a = kr.answers[path];
@@ -104,6 +107,7 @@ const sealedProposal = (id: string, status: string, secrets: Record<string, unkn
 function everything() {
   kr.answers[ROUTE()] = { id: 'c1', threshold: 2, signerCount: 2, wrappedKeys: [], companyLabel: LABEL, contractAddress: 'c0'.repeat(32) };
   kr.adopted = ['ab'.repeat(32), 'cd'.repeat(32)];
+  kr.approvals = 2;
   kr.answers[ROUTE('/runs')] = [
     sealedRun('r1', '2026-10', 'draft', [
       { id: 'e1', name: 'Ana', asset: NIGHT.code, amount: 5_000_000n, paidTo: PRIVATE_ADDRESS },
@@ -164,13 +168,24 @@ beforeEach(() => { kr.anchoring = []; kr.answers = {}; kr.asked = []; kr.keys = 
 afterEach(() => { vi.unstubAllEnvs(); });
 
 describe('opening a company', () => {
-  /* RED WHEN: the name or signers are not the opened record's, or how many must approve is not the service's public count. */
+  /* RED WHEN: the name or signers are not the opened record's, or how many must approve is not what the wallet read off the chain. */
   it('opens the company with the keys saved for the person', async () => {
     const { readCompany } = await load();
     const c = await readCompany('u1', 'c1');
     expect(c.of).toBe('open');
     if (c.of !== 'open') return;
-    expect([c.name, c.signers.map((s) => s.name), c.approvalsNeeded]).toEqual(['Northwind', ['Priya', 'Sam'], 2]);
+    expect([c.name, c.signers.map((s) => s.name), c.approvalsNeeded]).toEqual(['Northwind', ['Priya', 'Sam'], { of: 'read', value: 2 }]);
+  });
+
+  /* RED WHEN: how many must approve is read off the service's record (which says 2 here), or off the wallet's committee threshold (1), or something is shown when the wallet could not say. */
+  it('says how many must approve as the wallet read it off the chain, and nothing when the wallet cannot say', async () => {
+    const { readCompany } = await load();
+    kr.approvals = 3;
+    const read = await readCompany('u1', 'c1');
+    expect(read.of === 'open' && read.approvalsNeeded).toEqual({ of: 'read', value: 3 });
+    kr.approvals = undefined;
+    const unsaid = await readCompany('u1', 'c1');
+    expect(unsaid.of === 'open' && unsaid.approvalsNeeded).toEqual({ of: 'unreadable' });
   });
 
   it('ENTERING THE COMPANY STARTS THE ONE-A-DAY ANCHOR WITH THIS SEAT\'S OWN KEYS, AND THE READ DOES NOT WAIT ON IT', async () => {
@@ -436,6 +451,25 @@ describe('proposals, vaults and invitations', () => {
     kr.readHere = [];
     expect(await readVaultPublicMoney('u1', 'c1', 'ab'.repeat(32))).toBeNull();
     expect(kr.readHere).toEqual([]);
+  });
+});
+
+describe('how many must approve, in the one list of companies', () => {
+  /* RED WHEN: a company's approvals are the service's row (which says 1 here) rather than what the person's wallet read off the chain, or are named for a company the wallet could not read, or are asked for somebody else's list. */
+  it('gives each company\'s approvals as the wallet read them, leaves out one it could not, and ignores the row\'s own number', async () => {
+    vi.resetModules();
+    const row = (id: string, over: object = {}) => ({ id, createdAt: 'x', signerCount: 1, threshold: 1, companyLabel: LABEL, contractAddress: 'c0'.repeat(32), ...over });
+    vi.stubGlobal('fetch', vi.fn(async () => new Response(JSON.stringify({
+      user: { id: 'u1', name: 'Priya' }, accounts: [row('c1'), row('c2', { contractAddress: null })],
+    }), { status: 200 })));
+    const session = await import('./session.js');
+    expect((await session.approvalsNeededFor('u1')).size).toBe(0);
+    const listed = await session.whoIsSignedIn();
+    expect(JSON.stringify(listed)).not.toContain('approvalsNeeded');
+    expect([...(await session.approvalsNeededFor('u1')).entries()]).toEqual([['c1', 2]]);
+    kr.approvals = undefined;
+    expect([...(await session.approvalsNeededFor('somebody else')).entries()]).toEqual([]);
+    vi.unstubAllGlobals();
   });
 });
 

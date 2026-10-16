@@ -17,10 +17,13 @@
  *     company's key and believes the first claim whose proof proves; this
  *     server keeps every claim and judges none.
  *   · **a change by a quorum** - a role, or a retirement with the last version
- *     of each record the seat filed - must be in its shape, every signature
- *     verifying, signed against the account's approval threshold as the chain
- *     holds it now. Who signed it, and whether enough did, each member's device
- *     counts; this server counts nothing and keeps no role or retirement.
+ *     of each record the seat filed and, where it carries one, the leaving
+ *     seat's records-key statement - must be in its shape, every signature
+ *     verifying, signed against at least the approvals a change of who is seated needs as the
+ *     chain holds the account now (`seatBarOf`). Who signed it, whether enough
+ *     did, and whether the statement is the leaving seat's own wallet's, each
+ *     member's device judges: this server holds no seat's wallet key, counts
+ *     nothing and keeps no role or retirement.
  *
  * The super admins are not filed here: they are the keys on the account's
  * committee as the chain holds it, and this server judges no one by them.
@@ -35,9 +38,11 @@
  */
 import express from 'express';
 import { readAccountAddress, type CompanyLabel } from 'midnight-identity/profile/company-label';
+import { seatBarOf } from 'midnight-identity/profile/records-key';
 import type { SealedAccount } from '../core/types.js';
 import { fromHex, type Hex } from '../core/crypto.js';
 import { readContractAuthority } from '../midnight/ledger.js';
+import { policyBarKey } from '../midnight/spending-policy.js';
 import {
   applyFiling, AT_THE_SERVER, believedDirectory, DIRECTORY_REFUSAL, directoryReplayed, DirectoryRefused, emptyDirectory, filerSeatOf, refiledRefusalOf, signerSeatOf,
   type ChainHolders, type Directory, type DirectoryFiling, type DirectoryRefusalCode, type DirectorySeat, type ServerSeatRefusal,
@@ -50,13 +55,16 @@ export type DirectoryChainRead = (accountId: string, seats: readonly string[]) =
 export interface AccountHolds {
   readonly signerLeaves: { member(leaf: Uint8Array): boolean };
   readonly threshold: bigint;
+  /** Each vault's own approvals, and the approvals a policy change needs under the account's own `policyBarKey`. */
+  readonly thresholds: { member(key: Uint8Array): boolean; lookup(key: Uint8Array): bigint };
 }
 
 /**
  * **THIS SERVER'S OWN READ OF THE CHAIN FOR A COMPANY'S DIRECTORY**, from one
  * read of the account's contract state: its committee and that committee's
  * threshold as the state's maintenance authority holds them, which of the
- * seats asked about its signers' set holds, and how many approvals it needs. Null when
+ * seats asked about its signers' set holds, how many approvals it needs, and
+ * how many a change of who is seated needs (`seatBarOf`). Null when
  * the company has no account on a chain, or the chain holds no state there; a
  * read that fails, or a state with no committee this server can read, throws.
  */
@@ -75,13 +83,16 @@ export const directoryChainFromTheContract = (deps: {
   if (read.state === 'absent') return null;
   if (read.state !== 'read') throw new Error(read.why);
   const holds = deps.readLedger((state as { data: unknown }).data);
+  const barKey = fromHex(policyBarKey());
+  const approvals = Number(holds.threshold);
   return {
     seats: {
       committee: read.authority.committee.map((k) => ({ tag: k.tag, value: k.value.toLowerCase() })),
       threshold: read.authority.threshold,
       seats: seats.filter((seat) => holds.signerLeaves.member(fromHex(seat as Hex))),
     },
-    approvals: Number(holds.threshold),
+    approvals,
+    seatBar: seatBarOf(approvals, holds.thresholds.member(barKey) ? Number(holds.thresholds.lookup(barKey)) : null),
   };
 };
 
@@ -120,8 +131,8 @@ export interface DirectoryNow {
  * **THE DIRECTORY AS EVERY FILING THIS SERVER HOLDS MAKES IT, AGAINST THE
  * CHAIN NOW**: the one place this server reads a seat from. It is replayed the
  * way a device replays it (`vault-page-doors.ts` `directoryJudge`): against
- * this server's own read of the seats the account holds and its approval
- * threshold, made afresh for every call, where a device uses its wallet's
+ * this server's own read of the seats the account holds, its approval
+ * threshold and its seat bar, made afresh for every call, where a device uses its wallet's
  * read. Each entry is kept on what this server can read of it
  * (`AT_THE_SERVER`), every entry for a seat beside the others, where a device
  * opens its proof and believes the first that proves. No role or retirement is
@@ -150,14 +161,13 @@ export const directoryOf = async (
   if (read === null) return { dir: emptyDirectory(accountId), chain: null };
   const at = (version: number) => believedDirectory(
     accountId, filings.slice(0, Math.max(0, version)), label as CompanyLabel, address, AT_THE_SERVER, undefined, skipped);
-  const replayed = directoryReplayed(accountId, filings, label as CompanyLabel, address, AT_THE_SERVER, {
-    approvals: read.approvals, seats: read.seats.seats,
-  }, skipped);
+  const now = { approvals: read.approvals, seats: read.seats.seats, seatBar: read.seatBar };
+  const replayed = directoryReplayed(accountId, filings, label as CompanyLabel, address, AT_THE_SERVER, now, skipped);
   return {
     at,
     dir: replayed.dir,
     chain: read,
-    refiledRefusal: (filing) => refiledRefusalOf(replayed.replay, filing, { approvals: read.approvals, seats: read.seats.seats }),
+    refiledRefusal: (filing) => refiledRefusalOf(replayed.replay, filing, now),
   };
 };
 

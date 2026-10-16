@@ -33,8 +33,9 @@
  */
 import type { Hex } from '../../../src/core/crypto.js';
 import {
-  SealedNotePool, type PoolSigner, type SealedPool, type SealedPoolStore,
+  assertNoSignerWouldLoseAccess, openPool, sealPool, SealedNotePool, type PoolSigner, type SealedPool, type SealedPoolStore,
 } from '../../../src/midnight/vault-pool.js';
+import type { Note } from '../../../src/midnight/vault-notes.js';
 import { DepositJournalInStore } from '../../../src/midnight/vault-journal.js';
 import {
   claimNewDepositCoin, type DepositCoin, type DepositMoney,
@@ -177,6 +178,204 @@ export async function fileTheChainsSecretAsTheNewest(input: {
     return 'filed-again';
   }
   return 'none-names-it';
+}
+
+/** What became of the vault's pool against the notes the chain holds for it. */
+export interface PoolTheChainHolds {
+  readonly answer:
+    /** The pool this device believes agrees with the chain, and no version filed above it was passed over: nothing filed. */
+    | 'the-newest'
+    /** The pool was filed again as the newest, under this device's own seat, from what the chain vouches for. */
+    | 'filed-again'
+    /** The pool this device believes holds a note the chain does not, and no version passed over names anything to file. */
+    | 'none-vouched';
+  /** The journals filed again, each carrying forward every passed-over line the chain vouches for. */
+  readonly journals: readonly ('payment-journal' | 'deposit-journal')[];
+  /**
+   * What this device could not take from a passed-over version, in words a person can act on: a version that is not a
+   * pool, or a payment the chain shows landed whose change no version this device can take holds. Never empty when a
+   * landed payment's change is missing from what was filed.
+   */
+  readonly said: readonly string[];
+}
+
+/** One step a payment journal line names, with every note it spends. */
+type JournalStep = { readonly spent: Note; readonly further?: readonly Note[]; readonly step?: string; readonly amount: bigint };
+
+const noteKey = (n: Pick<Note, 'nonce' | 'token' | 'value'>): string => `${n.nonce.toLowerCase()}:${n.token.toLowerCase()}:${n.value}`;
+const stepKey = (a: JournalStep): string => `${[a.spent, ...(a.further ?? [])].map(noteKey).join('+')}:${a.step === 'merge' ? 'merge' : 'pays'}:${a.amount}`;
+
+/**
+ * **THE CHAIN WINS: THE VAULT'S POOL AND JOURNALS, FILED AGAIN UNDER THIS
+ * DEVICE'S OWN SEAT FROM WHAT THE CHAIN VOUCHES FOR, OVER EVERY VERSION A
+ * DEVICE PASSES OVER.** A seat that leaves may have carried out a payment
+ * after its removal was raised, so a version it filed then - past the boundary
+ * its leaving keeps - holds the payment's change and its journal line, and no
+ * device believes it. No pool or journal write is built on top of such a
+ * version (`passedOverAbove`); this is what lets the next one be made.
+ *
+ * - **The pool**, when the pool this device believes holds a note the chain no
+ *   longer holds or a version filed above it was passed over: every note the
+ *   chain holds, from the pool believed and from every passed-over version
+ *   (wherever it sits) this signer's own key opens. A version naming a note
+ *   twice is not a pool, and nothing is taken from it. Where `changeOf` is
+ *   given, the change a passed-over payment line keeps, worked out with the
+ *   vault's own functions, is taken when the chain holds it. A payment the
+ *   chain shows landed - every note it spent gone - whose change none of these
+ *   holds is said, never passed by. Filed as the next version.
+ * - **Each journal**, when a version filed above the one believed was passed
+ *   over: the lines believed, and every passed-over line the chain vouches for
+ *   - a payment whose notes are all gone from the chain, a deposit whose coin
+ *   it holds. A line the chain does not vouch for is not believed or carried.
+ *
+ * Nothing the chain does not hold is filed, and nothing is built on a version
+ * no device believes except what the chain itself vouches for.
+ */
+export async function fileThePoolTheChainHolds(input: {
+  readonly vault: Hex;
+  readonly me: Pick<DeviceSigner, 'signerId' | 'wrappingSecret'>;
+  readonly records: DeviceRecords;
+  /** Everybody who must be able to open what this files: the pool's signers. */
+  readonly signers: () => Promise<readonly PoolSigner[]>;
+  /** Whether the chain holds the vault's commitment to `note`, as this device's vault worker reads it. */
+  readonly held: (note: Note) => Promise<boolean>;
+  /** The coin a payment line keeps as change, worked out with the vault's own functions and secret; null for none. */
+  readonly changeOf?: (step: JournalStep) => Promise<Note | null>;
+}): Promise<PoolTheChainHolds> {
+  const said: string[] = [];
+  const journals: ('payment-journal' | 'deposit-journal')[] = [];
+  const opened = (rec: SealedPool, record: 'pool' | 'payment-journal' | 'deposit-journal', store: SealedPoolStore): Record<string, unknown> | null => {
+    try {
+      return openPool(rec, input.me.signerId, input.me.wrappingSecret, {
+        record, unlabelled: store.unlabelledRecordsFiled === true ? 'accept' : 'refuse',
+      }) as unknown as Record<string, unknown>;
+    } catch {
+      return null;
+    }
+  };
+  /** The version of `record` this device believes, and whether a version filed above it was passed over: one read. */
+  const believedOf = async (record: 'pool' | 'payment-journal' | 'deposit-journal') => {
+    const store = input.records(record);
+    const believed = await store.get(input.vault);
+    const filed = store.filedPast?.(input.vault);
+    return { store, believed, above: filed !== undefined && filed > (believed?.version ?? 0) };
+  };
+  /** Every version of a record a device passes over, wherever it sits, with its bytes as filed, and the newest version filed. */
+  const passedOverIn = async (store: SealedPoolStore) => {
+    const judged = await store.versions(input.vault);
+    const passed = new Set(judged.filter((v) => v.neverEntered === true).map((v) => v.version));
+    const lister = store as SealedPoolStore & Partial<ListsAsFiled>;
+    const asFiled = passed.size === 0 || typeof lister.versionsAsFiled !== 'function' ? [] : await lister.versionsAsFiled(input.vault);
+    return { passed: asFiled.filter((v) => passed.has(v.version)), newest: judged.length === 0 ? 0 : judged[judged.length - 1]!.version };
+  };
+  const heldAll = async (notes: readonly Note[]): Promise<boolean> => {
+    for (const n of notes) if (!(await input.held(n))) return false;
+    return true;
+  };
+  const goneAll = async (notes: readonly Note[]): Promise<boolean> => {
+    for (const n of notes) if (await input.held(n)) return false;
+    return true;
+  };
+  const refile = async (store: SealedPoolStore, believed: SealedPool | null, page: Record<string, unknown>, version: number,
+    record: 'pool' | 'payment-journal' | 'deposit-journal'): Promise<void> => {
+    const to = await input.signers();
+    if (believed !== null) assertNoSignerWouldLoseAccess(believed.wrapped.map((w) => w.signerId), to.map((x) => x.id));
+    await store.put(input.vault, sealPool(input.vault, page as never, to, version, record));
+  };
+
+  /* The payment lines passed over that the chain shows landed - every note each spent is gone - read once, when asked. */
+  let landedLines: JournalStep[] | undefined;
+  const landed = async (): Promise<JournalStep[]> => {
+    if (landedLines !== undefined) return landedLines;
+    const out: JournalStep[] = [];
+    try {
+      const store = input.records('payment-journal');
+      for (const v of (await passedOverIn(store)).passed) {
+        const lines = opened(v.sealed, 'payment-journal', store)?.attempts;
+        if (!Array.isArray(lines)) continue;
+        for (const line of lines as JournalStep[]) {
+          if (await goneAll([line.spent, ...(line.further ?? [])]) && !out.some((l) => stepKey(l) === stepKey(line))) out.push(line);
+        }
+      }
+    } catch {
+      /* A journal this device cannot list names no payment here; every change found is still checked against the chain. */
+    }
+    landedLines = out;
+    return out;
+  };
+  /*
+   * Each journal with a version passed over above the one believed is filed again; a journal this device cannot read
+   * now is left as it is, and no line is appended to it until it is (`passedOverAbove`).
+   */
+  try {
+    const payments = await believedOf('payment-journal');
+    if (payments.above) {
+      const believedLines = (payments.believed === null ? [] : opened(payments.believed, 'payment-journal', payments.store)?.attempts ?? []) as JournalStep[];
+      const carried = [...believedLines, ...(await landed()).filter((l) => !believedLines.some((b) => stepKey(b) === stepKey(l)))];
+      await refile(payments.store, payments.believed, { attempts: carried }, (await passedOverIn(payments.store)).newest + 1, 'payment-journal');
+      journals.push('payment-journal');
+    }
+  } catch { /* said to whoever appends next, by the refusal itself */ }
+  try {
+    const deposits = await believedOf('deposit-journal');
+    if (deposits.above) {
+      const believedCoins = (deposits.believed === null ? [] : opened(deposits.believed, 'deposit-journal', deposits.store)?.notes ?? []) as Note[];
+      const carried = [...believedCoins];
+      const { passed, newest } = await passedOverIn(deposits.store);
+      for (const v of passed) {
+        const coins = opened(v.sealed, 'deposit-journal', deposits.store)?.notes;
+        if (!Array.isArray(coins)) continue;
+        for (const c of coins as Note[]) {
+          if (!carried.some((b) => noteKey(b) === noteKey(c)) && await input.held(c)) carried.push(c);
+        }
+      }
+      await refile(deposits.store, deposits.believed, { notes: carried }, newest + 1, 'deposit-journal');
+      journals.push('deposit-journal');
+    }
+  } catch { /* said to whoever appends next, by the refusal itself */ }
+
+  const believedPool = await believedOf('pool');
+  const believedNotes = (believedPool.believed === null ? [] : opened(believedPool.believed, 'pool', believedPool.store)?.notes ?? []) as Note[];
+  const contradicted = !(await heldAll(believedNotes));
+  if (!contradicted && !believedPool.above) return { answer: 'the-newest', journals, said };
+  const pool = { ...believedPool, ...(await passedOverIn(believedPool.store)) };
+  if (pool.passed.length === 0) return { answer: contradicted ? 'none-vouched' : 'the-newest', journals, said };
+  const taken = new Map<string, Note>();
+  for (const n of believedNotes) if (await input.held(n)) taken.set(noteKey(n), n);
+  for (const v of pool.passed) {
+    const notes = opened(v.sealed, 'pool', pool.store)?.notes;
+    if (!Array.isArray(notes)) {
+      said.push(`version ${v.version} of this vault's pool, filed by a seat past the boundary its leaving keeps, does not open `
+        + 'with this signer\'s key, so none of its notes is taken');
+      continue;
+    }
+    if (new Set((notes as Note[]).map((n) => n.nonce.toLowerCase())).size !== notes.length) {
+      said.push(`version ${v.version} of this vault's pool, filed by a seat past the boundary its leaving keeps, names a note `
+        + 'more than once, so it is not a pool and none of its notes is taken');
+      continue;
+    }
+    for (const n of notes as Note[]) if (!taken.has(noteKey(n)) && await input.held(n)) taken.set(noteKey(n), n);
+  }
+  /* Each landed payment's change: from the line, where the chain holds it; said where nothing taken holds it. */
+  for (const line of await landed()) {
+    const spentValue = [line.spent, ...(line.further ?? [])].reduce((a, n) => a + n.value, 0n);
+    const keeps = spentValue - (line.step === 'merge' ? 0n : line.amount);
+    if (keeps <= 0n) continue;
+    const change = input.changeOf === undefined ? null : await input.changeOf(line);
+    if (change !== null && !taken.has(noteKey(change)) && await input.held(change)) {
+      taken.set(noteKey(change), change);
+      said.push(`a payment a seat that left carried out after its removal was raised kept ${keeps} as change, and no pool it `
+        + 'filed holds that change; the chain holds it, so it is taken from the payment journal\'s line');
+      continue;
+    }
+    if (![...taken.values()].some((n) => n.token.toLowerCase() === line.spent.token.toLowerCase() && n.value === keeps)) {
+      said.push(`a payment a seat that left carried out after its removal was raised landed - every note it spent is gone from the `
+        + `chain - and kept ${keeps} as change, which no pool this device can take holds. The chain holds that change: a `
+        + 'rebuild of the vault from its journals and the chain names it');
+    }
+  }
+  await refile(pool.store, pool.believed, { notes: [...taken.values()] }, pool.newest + 1, 'pool');
+  return { answer: 'filed-again', journals, said };
 }
 
 /**

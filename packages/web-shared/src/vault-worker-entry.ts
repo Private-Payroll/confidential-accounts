@@ -180,9 +180,11 @@ async function historyHere(
  * **EVERY HEAD THE ACCOUNT'S HISTORY SHOWS, ONE PER BLOCK, AND WHO HOLDS IT NOW, READ
  * HERE** from its history at the indexer the person's own wallet names, each
  * state read with the account's own functions: who holds it in the latest
- * state as a batch's header names them (`batchHoldersIn`), and how it was
+ * state as a batch's header names them (`batchHoldersIn`), how it was
  * deployed, its committee then read the one way a wallet reads it
- * (`accountDeployedIn`, `seatsInAccountState`).
+ * (`accountDeployedIn`, `seatsInAccountState`), and the seat bar in each
+ * head's state read the one way a wallet reads it (`governanceInAccountState`,
+ * under the key the account's own `policyBarKey` makes).
  */
 async function anchorsOnChainHere(
   d: Pick<WorkerDeps, 'accountPure' | 'accountLedger' | 'runtimeState' | 'historyAt'>,
@@ -191,8 +193,13 @@ async function anchorsOnChainHere(
   const history = await historyHere(d, ask, 'the account\'s anchors were');
   if (history.anchors !== undefined) return history.anchors;
   const { steps } = history;
-  const { seatsInAccountState } = await import('midnight-identity/profile/account-state');
-  const landed = anchorsLandedIn(d, steps);
+  const { governanceInAccountState, seatsInAccountState } = await import('midnight-identity/profile/account-state');
+  const { policyBarKey } = d.accountPure as unknown as { policyBarKey?: () => Uint8Array };
+  if (typeof policyBarKey !== 'function') {
+    throw new Error('this device was not given the account\'s function for the key its policy bar is kept under, so its anchors were not read.');
+  }
+  const barKey = Array.from(policyBarKey(), (b) => b.toString(16).padStart(2, '0')).join('');
+  const landed = anchorsLandedIn(d, steps, (state) => governanceInAccountState(state, barKey).seatBar);
   const now = batchHoldersIn(d, steps[steps.length - 1]!.state);
   const deployed = accountDeployedIn(d, steps, seatsInAccountState);
   const read: AnchorsOnChain = { landed, now, seatsNow: seatsNamedBy(d, now.signers), deployed, vouching: vouchingRunsIn(d, steps) };

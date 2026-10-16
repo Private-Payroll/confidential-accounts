@@ -55,7 +55,7 @@ const VISITOR: Viewer = { signedIn: false, view: VIEWS.employee, signs: false };
 
 /** A company whose records opened, with one of each record, so what a page draws from them is drawn too. */
 const OPEN: Company = {
-  of: 'open', id: 'c-1', name: 'Northwind', signers: [{ id: 's1', name: 'Priya' }], approvalsNeeded: 1,
+  of: 'open', id: 'c-1', name: 'Northwind', signers: [{ id: 's1', name: 'Priya' }], approvalsNeeded: { of: 'read', value: 1 },
   proposals: { of: 'read', value: [{ id: 'p1', kind: 'payroll', status: 'open', raisedBy: 'Sam', approvals: 0, needed: 1, raisedAt: '2026-09-21T00:00:00.000Z', pays: { run: 'x1', period: '2026-10', asset: '00'.repeat(32), symbol: 'NIGHT', paid: 'privately' } }] },
   runs: { of: 'read', value: [{
     id: 'x1', period: '2026-10', status: 'proposed', settledAt: null,
@@ -82,7 +82,7 @@ function drawNow(id: PageId) {
   const params = Object.fromEntries([...page.path.matchAll(/:(\w+)/g)].map((m) => [m[1]!, 'x1']));
   window.history.replaceState(null, '', addressOf(id, params));
   const session = {
-    person: { id: 'u1', name: 'Priya' }, companies: viewer.signs ? [{ id: 'c-1', createdAt: '2026-09-01T00:00:00.000Z', signers: 1, approvalsNeeded: 1 }] : [],
+    person: { id: 'u1', name: 'Priya' }, companies: viewer.signs ? [{ id: 'c-1', createdAt: '2026-09-01T00:00:00.000Z', signers: 1 }] : [],
     company: viewer.signs ? 'c-1' : null, chooseCompany: vi.fn(), viewer, chooseView: vi.fn(), preferences: DEFAULT_PREFERENCES,
     choose: vi.fn(), signOut: vi.fn(), mac: true, companiesChanged: vi.fn(async () => {}),
   };

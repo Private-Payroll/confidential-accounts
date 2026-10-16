@@ -53,7 +53,9 @@ import {
   type BatchHolders, type DirectoryAsAnchored, type ManifestEntry, type ManifestEntryBody,
 } from '../../../src/midnight/record-manifest.js';
 import { filingRefusalOf, mayFile, type AccountHeld, type DirectoryFiling, type SignedChange } from '../../../src/midnight/seat-directory.js';
-import { directoryNotYetAnchored, type DirectoryBelieved, type HeldAsAnchored, type RecordsHeldHere } from './vault-page-doors.js';
+import {
+  directoryNotYetAnchored, pastTheRaisedBoundary, type DirectoryBelieved, type HeldAsAnchored, type LeavingBoundaries, type RecordsHeldHere,
+} from './vault-page-doors.js';
 import type { AnchorLanded, AnchorsOnChain, VouchedRunOnTheWire } from './governed-call-builder.js';
 import { enteredOnThisPage, letGoOfEntered, type ManifestService, type TreeService } from './record-entered-here.js';
 import type { AccountCallChainOnTheWire, VaultBuilderClient } from './vault-worker-client.js';
@@ -102,6 +104,15 @@ export interface AnchorDoors {
   };
   /** The company's directory as this device believes it, read afresh. */
   readonly directory: () => Promise<DirectoryBelieved>;
+  /**
+   * **THE SEATS UNDER A RAISED REMOVAL AND THE BOUNDARY EACH KEEPS**, read
+   * afresh for each read (`leavingBoundariesHere`, from a read of the company's
+   * records that is not given this door): no entry such a seat filed past its
+   * boundary is anchored from this device or believed by it. Absent, no
+   * removal raised is known to this read, and only a retirement anchored stops
+   * a seat's filings.
+   */
+  readonly leaving?: () => Promise<LeavingBoundaries>;
   /** Every filing of the company's directory, as the service serves them. */
   readonly directoryFilings: () => Promise<readonly DirectoryFiling[]>;
   /** Files a change to the company's directory at the version it names; absent, this device files none. */
@@ -297,7 +308,7 @@ interface ReadHere {
 const headOn = (landed: readonly AnchorLanded[]): Hex => (landed.length === 0 ? EMPTY_HEAD : landed[landed.length - 1]!.head.toLowerCase() as Hex);
 
 /** What reading the company's records asks of this device. */
-type HeldDoors = Pick<AnchorDoors, 'accountId' | 'directory' | 'builder' | 'onChain' | 'tree' | 'checked' | 'headers'> & Partial<Pick<AnchorDoors, 'manifest' | 'vouching' | 'tagSeats'>>;
+type HeldDoors = Pick<AnchorDoors, 'accountId' | 'directory' | 'builder' | 'onChain' | 'tree' | 'checked' | 'headers'> & Partial<Pick<AnchorDoors, 'manifest' | 'vouching' | 'tagSeats' | 'leaving'>>;
 
 /** A holders list as one key, so the seats it names are read once. */
 const heldKey = (h: BatchHolders): string => `${h.approvals}|${h.signerRoot}|${h.signers.join(',')}`;
@@ -468,15 +479,30 @@ async function heldFrom(
     }
     missing.forEach((h, i) => seatsByHeld.set(heldKey(h), a.holderSeats[i] ?? null));
   };
-  /** Whether the account's history shows a head from the batch on: a batch whose header no landed head follows was never anchored as shown. */
-  const landedFrom = (batch: number): boolean => {
-    for (let k = batch; headsBySeq.has(k); k += 1) if (landedBy.has(headsBySeq.get(k)!)) return true;
-    return false;
+  /**
+   * The first head the account's history shows from the batch on: the block the batch's anchor landed in. Null for a
+   * batch whose header no landed head follows, which was never anchored as shown.
+   */
+  const landedFrom = (batch: number): AnchorLanded | null => {
+    for (let k = batch; headsBySeq.has(k); k += 1) {
+      const l = landedBy.get(headsBySeq.get(k)!);
+      if (l !== undefined) return l;
+    }
+    return null;
   };
+  /*
+   * Who held the account as a version was anchored: the approvals and seats its batch's header names, which the anchor
+   * call checked, and the seat bar of the state the block that call landed in left. A bar that was not read is refused.
+   */
   const accountHeldOf = (d: Pick<DirectoryVersionHeld, 'held' | 'batch'>): AccountHeld | null => {
     const seats = seatsByHeld.get(heldKey(d.held));
-    if (seats === undefined || seats === null || !landedFrom(d.batch)) return null;
-    return { approvals: d.held.approvals, seats };
+    const landedIn = landedFrom(d.batch);
+    if (seats === undefined || seats === null || landedIn === null) return null;
+    if (!Number.isSafeInteger(landedIn.seatBar) || landedIn.seatBar < 1) {
+      throw new AnchorNotMade('this device could not read the approvals a change of who is seated needed as the company\'s records '
+        + 'were anchored. Reload the page');
+    }
+    return { approvals: d.held.approvals, seats, seatBar: landedIn.seatBar };
   };
   const directoryOfLeaf = async (root: Hex): Promise<void> => {
     const given = await doors.tree.proofs(company, { root, records: [DIRECTORY], kinds: [] });
@@ -701,7 +727,8 @@ async function heldFrom(
     return stop !== null && version > maxAnchored ? null : undefined;
   };
 
-  const notYetAnchored = waitingAmong(pending, history, ofAsked, seatOfHere(here, held));
+  const leaving = await doors.leaving?.();
+  const notYetAnchored = waitingAmong(pending, history, ofAsked, seatOfHere(here, held), leaving);
 
   /* Who founded the company: the first header, checked against the empty tree and folded to the first head this device checked. */
   let founding: { first?: TreeHeader | null; firstSeats?: readonly string[] | null } = {};
@@ -722,6 +749,13 @@ async function heldFrom(
     head, reached, stopped: stop,
     asked: { records: wanted, kinds: kindKeys },
     history, notYetAnchored, directory, held, deployed: now.deployed ?? null, ...founding,
+    ...(leaving === undefined ? {} : { leaving }),
+    seqOfHead: (h: string) => {
+      const asked = h.toLowerCase();
+      if (asked === EMPTY_HEAD) return -1;
+      for (const [seq, checked] of headsBySeq) if (checked === asked) return seq;
+      return null;
+    },
     ...(stop !== null && servedShort !== undefined ? { directoryServed: servedShort } : {}),
   };
   return { landed, now, here, records, pending: new Set(pending.map(entryIdOf)) };
@@ -731,11 +765,14 @@ async function heldFrom(
  * **WHAT IS NOT YET ANCHORED**, of the entries a service lists as waiting: each
  * of a record the read asked, newer than its leaf (`history`), entered by a seat
  * `seatNow` says may file it now, naming no older version's bytes - the first
- * at each version.
+ * at each version. An entry a seat under a raised removal filed past the
+ * boundary the raise names (`leaving`) is never one: no device anchors it. A
+ * directory version is judged by its own replay, never by a boundary.
  */
 const waitingAmong = (
   pending: readonly ManifestEntry[], history: ReadonlyMap<string, readonly HeldVersion[]>,
   ofAsked: (e: ManifestEntryBody) => boolean, seatNow: (publicKey: Hex, entry: ManifestEntryBody) => string | null,
+  leaving?: LeavingBoundaries,
 ): ManifestEntry[] => {
   const out: ManifestEntry[] = [];
   const named = new Set<string>();
@@ -746,6 +783,7 @@ const waitingAmong = (
     const anchored = at === undefined || at.length === 0 ? 0 : at[at.length - 1]!.version;
     if (!ofAsked(e) || anchored >= e.version || named.has(`${key}@${e.version}`)) continue;
     if (seatNow(e.filedBy.publicKey, e) === null || (seen.get(key) ?? []).includes(e.digest)) continue;
+    if (e.store !== 'directory' && pastTheRaisedBoundary(leaving, e.filedBy.publicKey, boundaryKeyOfEntry(e), e.version)) continue;
     named.add(`${key}@${e.version}`);
     seen.set(key, [...(seen.get(key) ?? []), e.digest]);
     out.push(e);

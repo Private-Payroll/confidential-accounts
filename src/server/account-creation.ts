@@ -150,7 +150,6 @@ const FOUNDED = z.object({
     id: z.string().refine(isAccountId),
     createdAt: z.iso.datetime(),
     keyEpoch: z.literal(0),
-    threshold: z.literal(1),
     signerCount: z.literal(1),
     memberUserIds: z.array(z.string()).length(1),
     pendingSigners: z.tuple([]),

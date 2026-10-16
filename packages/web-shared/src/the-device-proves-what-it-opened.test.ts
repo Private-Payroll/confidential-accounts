@@ -34,6 +34,13 @@ import { newSigningKeypair, newWrappingKeypair, newBlinding, type Hex } from '..
 import { storedSignerLeaf } from '../../../src/core/signer-leaf.js';
 import { sealedProposalFor } from '../../../src/testing/sealed-records.js';
 import { newSeatInvitation, proveSeatKeys } from '../../../src/core/seat-invite-proof.js';
+import { seatBlinding } from '../../../src/core/seat-opening.js';
+import { invitationIdOf, newInvitationToken, signSeatInvitation } from '../../../src/core/invitation.js';
+import { sealToInbox } from '../../../src/core/sealed-records.js';
+import type { PendingSignerPayload } from '../../../src/core/types.js';
+import { aRosterASeatFiled } from '../../../src/testing/a-roster-a-seat-filed.js';
+import { directoryHere } from './vault-page-doors.js';
+import type { CompanyRecordsHere } from './run-rebuilt-here.js';
 import { pureCircuits } from '../../../contracts/managed/contract/index.js';
 
 /* ── the builder, over stand-ins for the contract's pure functions ─────────── */
@@ -72,7 +79,7 @@ const run = { root: RUN_MADE.root, payees: '3', opensAt: '100', closesAt: '200',
 const half = { assetId: '44'.repeat(32), changeAmount: '30000', changeBatchDigest: '77'.repeat(32) };
 const BLINDING = '55'.repeat(32);
 const record = (digest: Uint8Array, vault: Uint8Array, salt = SALT) => ({
-  chainId: hex(accountPure.proposalIdOf(digest, vault, bytes(salt))), digest: hex(digest), vault: hex(vault), salt, summary: 'the round',
+  chainId: hex(accountPure.proposalIdOf(digest, vault, bytes(salt))), digest: hex(digest), vault: hex(vault), salt, summary: 'the proposal',
 });
 const payloadOf = (g: GovernanceOnTheWire) => (g.kind === 'add-signer'
   ? accountPure.signerAddPayload(bytes(g.leaf)) : accountPure.setThresholdPayload(BigInt((g as { threshold: string }).threshold)));
@@ -271,13 +278,29 @@ const created = await accounts.create('Opened', [{ name: 'Ada', role: 'admin' },
 const company = created.account.id;
 const viewingKey = created.viewingKey;
 const ada = created.secrets[0]!;
-const late = { ...newSigningKeypair(), wrapping: newWrappingKeypair(), blinding: newBlinding() };
+/* Late's leaf is made for her own wallet key under a fresh salt, as her device makes it. */
+const lateWallet = { tag: 'schnorr', value: newBlinding() };
+const lateSalt = newBlinding();
+const late = { ...newSigningKeypair(), wrapping: newWrappingKeypair(), blinding: seatBlinding(lateWallet, lateSalt) as Hex };
 const lateLeaf = storedSignerLeaf({ signingSecret: late.secret, blinding: late.blinding, scope: MidnightCommitments.allVaults() }, MidnightCommitments);
 const invite = accounts.inviteSigner(company, 'Late', 'late@opened.example', 'approver');
 /* Accepted as a person's own device accepts: with the proof its link let it make. */
 const lateKeys = { signingPublicKey: late.publicKey, wrappingPublicKey: late.wrapping.publicKey, leafCommitment: lateLeaf };
 const lateSeat = accounts.acceptSignerInvite(invite.token, 'usr_late', late.publicKey, late.wrapping.publicKey, lateLeaf,
   proveSeatKeys(newSeatInvitation(viewingKey, company, 'Late', 'approver'), lateKeys));
+/* Her request as her device seals it: with her leaf's opening, her sign-in, and the invitation Ada's seat signed for her. */
+{
+  const rec = store.getAccount(company)!;
+  const request: PendingSignerPayload = {
+    name: 'Late', role: 'approver', ...lateKeys, seatProof: proveSeatKeys(newSeatInvitation(viewingKey, company, 'Late', 'approver'), lateKeys), person: 'usr_late',
+    opening: {
+      publicKey: MidnightCommitments.signerPublicKey(late.secret).toLowerCase(), scope: MidnightCommitments.allVaults().toLowerCase(),
+      blinding: late.blinding, walletKey: lateWallet, salt: lateSalt,
+    },
+    invited: signSeatInvitation({ company, invitation: invitationIdOf(newInvitationToken()), person: 'usr_late', name: 'Late', role: 'approver' }, ada.signingSecret as Hex),
+  };
+  store.putAccount({ ...rec, pendingSigners: rec.pendingSigners.map((x) => (x.id === lateSeat.id ? { ...x, sealed: sealToInbox(request, rec.inboxPublicKey) } : x)) });
+}
 const seatRound = await accounts.seatRound(company, viewingKey, lateSeat.id, ada.signerId);
 const thresholdRound = await accounts.thresholdRound(company, viewingKey, 2, ada.signerId);
 /* A device reads the signers only from a roster record a seat filed: Ada's seat files the company's, as it stands. */
@@ -285,6 +308,18 @@ const roster = (() => {
   const { name, signers } = openAccount(accounts.require(company), viewingKey as Hex, null);
   return signedFoundingRoster(company, { name, signers }, viewingKey as Hex, ada.signingSecret as Hex);
 })();
+
+/* The directory a member's device believes, with Ada's and Bo's entries their wallets signed, and its vault worker's leaves. */
+const filed = aRosterASeatFiled(store, company, viewingKey as Hex, [
+  { signerId: ada.signerId, person: 'ada', signingSecret: ada.signingSecret, n: 1 },
+  { signerId: created.secrets[1]!.signerId, person: 'bo', signingSecret: created.secrets[1]!.signingSecret, n: 2 },
+]);
+const recordsHere = {
+  directory: (asked?: Parameters<typeof directoryHere>[1]) => directoryHere({
+    accountId: company, label: accounts.require(company).companyLabel as never, viewingKey: viewingKey as Hex, ...filed.reads, attested: async () => [],
+  }, asked),
+} as unknown as CompanyRecordsHere;
+const leaves = filed.reads.leaves;
 
 /** The company's records, served as they are stored - the service a device reads them through - with any extra given. */
 const honest = (extra: ReturnType<typeof sealedProposalFor>[] = []): GovernedCallService => ({
@@ -296,7 +331,7 @@ const aRecord = (id: string, over: Partial<Parameters<typeof sealedProposalFor>[
 
 describe('THE PAGE READS THE COMPANY\'S OWN RECORDS WITH THE VIEWING KEY', () => {
   it('1. a seat for a person accepted after the company was created is read here: the salt sealed in it, their leaf, and the change it commits to', async () => {
-    const opened = await openTheRoundHere(honest(), company, seatRound.id, viewingKey, true);
+    const opened = await openTheRoundHere(honest(), company, seatRound.id, viewingKey, true, recordsHere, leaves);
     const asked = accounts.governanceAsked(seatRound.id, viewingKey);
     const served = (await accounts.governanceOrderOf(seatRound.id, viewingKey)).half;
     /* RED WHEN: any of these is not the company's own - the device then proves a value it did not read. */
@@ -311,7 +346,7 @@ describe('THE PAGE READS THE COMPANY\'S OWN RECORDS WITH THE VIEWING KEY', () =>
     /* The same identity the contract's own function makes from what was read. */
     expect(MidnightCommitments.proposalId(opened.digest as Hex, opened.salt as Hex, opened.vault as Hex)).toBe(opened.chainId);
     /* An approval reads no account half. */
-    expect((await openTheRoundHere(honest(), company, seatRound.id, viewingKey, false)).half).toBeUndefined();
+    expect((await openTheRoundHere(honest(), company, seatRound.id, viewingKey, false, recordsHere, leaves)).half).toBeUndefined();
   });
 
   it('a threshold change is read with the threshold it sets', async () => {
@@ -322,7 +357,7 @@ describe('THE PAGE READS THE COMPANY\'S OWN RECORDS WITH THE VIEWING KEY', () =>
   });
 
   it.each([
-    ['a kind this page does not act on', 'prp_x', [aRecord('prp_x', { kind: 'remove-signer', payload: { __change: undefined, signerId: 's' } })],
+    ['a kind this page does not act on', 'prp_x', [aRecord('prp_x', { kind: 'change-policy', payload: { __change: undefined, signerId: 's' } })],
       /none of those, so it cannot be approved from this device yet\. Leave it unapproved\./u],
     ['a record with no salt sealed in it', 'prp_x', [aRecord('prp_x', { payload: { __change: undefined } })],
       /record is incomplete, so this device cannot check it\. Withdraw the proposal and raise it again\./u],
@@ -331,6 +366,13 @@ describe('THE PAGE READS THE COMPANY\'S OWN RECORDS WITH THE VIEWING KEY', () =>
     /* RED WHEN: a seat is raised or approved at a leaf read from a roster entry, which any seat files whole, instead of a waiting person's proof. */
     ['a seat for somebody already on the roster', 'prp_x', [aRecord('prp_x', { kind: 'add-signer', payload: { signerId: created.secrets[1]!.signerId } })],
       /not waiting for a seat on the company's list of signers\. Withdraw this proposal, then grant access again\./u],
+    /* RED WHEN: a removal is raised or approved for a leaf, or with a retirement, its record does not hold in its shape. */
+    ['a removal that names no leaf', 'prp_x', [aRecord('prp_x', { kind: 'remove-signer', payload: { leaf: 'ab'.repeat(31) } })],
+      /does not say which signer it removes/u],
+    ['a removal whose retirement names no boundary', 'prp_x', [aRecord('prp_x', { kind: 'remove-signer', payload: { leaf: 'ab'.repeat(32), retirement: { threshold: 2 } } })],
+      /retirement of the leaving signer is not in its shape/u],
+    ['a removal whose retirement is signed at no approvals', 'prp_x', [aRecord('prp_x', { kind: 'remove-signer', payload: { leaf: 'ab'.repeat(32), retirement: { filedUpTo: {}, threshold: 0 } } })],
+      /retirement of the leaving signer is not in its shape/u],
     ['a threshold change that names no threshold', 'prp_x', [aRecord('prp_x', { kind: 'set-threshold' })],
       /does not say how many approvals it requires/u],
     /* RED WHEN: a spending policy's vault, currency key or commitment is taken from its record unchecked - or a policy bar that is not a whole number of at least one. */
@@ -362,6 +404,14 @@ describe('THE PAGE READS THE COMPANY\'S OWN RECORDS WITH THE VIEWING KEY', () =>
       expect(refused.message).toMatch(says);
       expect(refused.message).toMatch(/Nothing was built or sent\.$/u);
     });
+
+  it('a removal is read with the leaf it takes off and the retirement it carries, exactly as sealed', async () => {
+    const retirement = { filedUpTo: { 'roster:signers': 3 }, threshold: 2, statement: { recordsKey: 'b2'.repeat(32), seat: 'ab'.repeat(32), signature: '9b'.repeat(64) } };
+    const opened = await openTheRoundHere(honest([aRecord('prp_x', { kind: 'remove-signer', payload: { leaf: 'AB'.repeat(32), retirement } })]), company, 'prp_x', viewingKey, false);
+    /* RED WHEN: a removal's leaf or retirement is read from anywhere but the proposal's own sealed payload. */
+    expect(opened.governance).toEqual({ kind: 'remove-signer', leaf: 'ab'.repeat(32) });
+    expect(opened.retirement).toEqual(retirement);
+  });
 
   it('a spending policy and a policy bar written whole are not refused for what their records say', async () => {
     for (const r of [aRecord('prp_x', { kind: 'set-spending-policy', payload: { vault: 'aa'.repeat(32), assetKey: 'bb'.repeat(32), commitment: 'cc'.repeat(32) } }), aRecord('prp_x', { kind: 'set-policy-bar', payload: { newPolicyBar: 1 } })]) {
@@ -406,7 +456,7 @@ describe('3. WHAT THE PERSON IS SHOWN AND WHAT THE DEVICE PROVES COME FROM THE S
       approve: async () => ({ id: seatRound.id, chainId: seatRound.chainId, status: 'open', approvalCount: 1 }),
     } as unknown as GovernedCallService,
     builder: { governedCall: async ({ order, opened }) => { built.push({ order, opened }); return { tx: 'TX' }; } },
-    material, accountId: company, sleep: async () => {}, waitMs: 2, everyMs: 1,
+    material, accountId: company, sleep: async () => {}, waitMs: 2, everyMs: 1, records: recordsHere, leaves,
   });
   const shown = { id: seatRound.id, chainId: seatRound.chainId, status: 'open', summary: seatRound.summary };
 

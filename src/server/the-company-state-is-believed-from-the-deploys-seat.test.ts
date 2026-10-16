@@ -36,7 +36,7 @@ import { refuseWhatThisDeviceDidNotMake, type AccountLedgerView } from '../../pa
 import { directoryHere, foundingSeatHere, type DirectoryHere } from '../../packages/web-shared/src/vault-page-doors.js';
 import { identityFromSecret } from 'midnight-identity';
 import { committeeKeyFor } from 'midnight-identity/profile/committee-key';
-import { signDirectoryEntry } from 'midnight-identity/profile/records-key';
+import { signDirectoryEntry, signRecordsKey } from 'midnight-identity/profile/records-key';
 import { ledger as readAccountLedger } from '../../contracts/managed/contract/index.js';
 import { MemoryStore } from '../core/store.js';
 import type { SealedAccount } from '../core/types.js';
@@ -60,6 +60,7 @@ import { anchoredEntering, everyRunAndProposalEntered, heldEntering, type Founde
 import { leavesOfTheContract } from '../testing/directory-seats.js';
 import { seatBlinding, type SeatOpening } from '../core/seat-opening.js';
 import { directoryChangeMessage, directoryEntryMade } from '../midnight/seat-directory.js';
+import { invitationIdOf, newInvitationToken, signSeatInvitation } from '../core/invitation.js';
 import type { DirectoryEntryStatement } from 'midnight-identity/profile/records-key';
 import { sign } from '../core/crypto.js';
 
@@ -303,7 +304,24 @@ describe('THE DIRECTORY REPLAYED FROM THE SEATS\' FILINGS NAMES THE FOUNDING SIG
     expect(now.chain?.seats.committee).toEqual([committee('F'), committee('B'), committee('C')].map((k) => ({ tag: k.tag, value: k.value.toLowerCase() })));
     expect(now.chain?.seats.threshold).toBe(2);
     expect(now.chain?.approvals).toBe(2);
+    /* RED WHEN: the server's read gives no seat bar, or one other than the account's threshold where the account stores no policy bar. */
+    expect(now.chain?.seatBar).toBe(2);
     expect(asked).toEqual([ACCOUNT]);
+    /* RED WHEN: the server's read takes the threshold alone as the seat bar, below the policy bar the account stores under its own key. */
+    const barKey = pureCircuits.policyBarKey();
+    const isBar = (k: Uint8Array) => k.length === barKey.length && k.every((b, i) => b === barKey[i]);
+    const withABar = directoryChainFromTheContract({
+      addressOf: async (id) => (id === CO ? ACCOUNT : null),
+      contractState: async () => served(sim),
+      readLedger: (data) => {
+        const real = readAccountLedger(data as never) as unknown as AccountHolds;
+        return {
+          signerLeaves: real.signerLeaves, threshold: real.threshold,
+          thresholds: { member: (k) => isBar(k) || real.thresholds.member(k), lookup: (k) => (isBar(k) ? 3n : real.thresholds.lookup(k)) },
+        };
+      },
+    });
+    expect((await withABar(CO, []))?.seatBar).toBe(3);
     /* RED WHEN: the server's read does not hold the seats the account's signers' set holds, so it keeps no claim at all. */
     const atF = now.dir.seats.find((x) => x.person === 'f');
     /* RED WHEN: the server's directory holds a seat's wallet key or opening: it keeps each claim without opening it. */
@@ -352,9 +370,15 @@ describe('THE DIRECTORY REPLAYED FROM THE SEATS\' FILINGS NAMES THE FOUNDING SIG
     const X = identityFromSecret(new Uint8Array(32).fill(89));
     const xCommittee = committeeKeyFor(X, LABEL) as { tag: string; value: string };
     const xSigning = newSigningKeypair();
+    /* F's is the founding seat; B's and C's entries carry the invitation F's seat signed for them. */
     const claim = (
       version: number, person: string, committeeKey: { tag: string; value: string }, signed: DirectoryEntryStatement, opening: SeatOpening, signingSecret: Hex,
-    ): DirectoryFiling => ({ company: CO, version, change: { kind: 'claim', entry: directoryEntryMade({ company: CO, person, committeeKey, signed, opening, signingSecret, viewingKey: KEY }) } });
+    ): DirectoryFiling => ({ company: CO, version, change: { kind: 'claim', entry: directoryEntryMade({
+      company: CO, person, committeeKey, signed, opening, signingSecret, viewingKey: KEY,
+      ...(person === 'b' || person === 'c' ? { invited: signSeatInvitation({
+        company: CO, invitation: invitationIdOf(newInvitationToken()), person, name: person, role: 'admin', leaf: signed.seat as Hex,
+      }, signing.F.secret) } : {}),
+    }) } });
     const leafOf = (d: typeof F) => hex(sim.leafOf(d));
     const filings: DirectoryFiling[] = [
       /* X hands over F's own opening: F's leaf, which was made for F's key and not X's. */
@@ -363,8 +387,11 @@ describe('THE DIRECTORY REPLAYED FROM THE SEATS\' FILINGS NAMES THE FOUNDING SIG
       claim(3, 'b', committee('B'), signDirectoryEntry(wallets.B, LABEL, ACCOUNT, new Uint8Array(32).fill(91), signing.B.publicKey, leafOf(B)), openingOf('B', B), signing.B.secret),
       claim(4, 'c', committee('C'), signDirectoryEntry(wallets.C, LABEL, ACCOUNT, new Uint8Array(32).fill(92), signing.C.publicKey, leafOf(C)), openingOf('C', C), signing.C.secret),
     ];
-    /* F retires, by two of three as the account requires: B and C sign. */
-    const unsigned = { kind: 'retire', seat: leafOf(F), threshold: 2, filedUpTo: {}, signatures: [] } as const;
+    /* F retires, by two of three as the account requires: B and C sign, carrying the records-key statement F's own wallet signed. */
+    const unsigned = {
+      kind: 'retire', seat: leafOf(F), threshold: 2, filedUpTo: {},
+      statement: signRecordsKey(wallets.F, LABEL, ACCOUNT, new Uint8Array(32).fill(90), leafOf(F)), signatures: [],
+    } as const;
     const message = directoryChangeMessage(CO, 5, unsigned as never);
     filings.push({ company: CO, version: 5, change: { ...unsigned, signatures: [
       { publicKey: signing.B.publicKey, signature: sign(message, signing.B.secret) }, { publicKey: signing.C.publicKey, signature: sign(message, signing.C.secret) },

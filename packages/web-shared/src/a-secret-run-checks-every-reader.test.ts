@@ -2,7 +2,7 @@ import { describe, expect, it } from 'vitest';
 import { approverRosterFrom } from '../../../src/core/vault-approvers.js';
 import { identityFromSecret } from 'midnight-identity';
 import { committeeKeyFor } from 'midnight-identity/profile/committee-key';
-import { signRecordsKey } from 'midnight-identity/profile/records-key';
+import { seatBarOf, signRecordsKey } from 'midnight-identity/profile/records-key';
 import type { AccountAddress, CompanyLabel } from 'midnight-identity/profile/company-label';
 import { createCompanyVault, VaultStartOwed, type VaultChainView, type VaultService } from './vault-operation.js';
 import type { VaultBuilderClient } from './vault-worker-client.js';
@@ -134,7 +134,7 @@ const press = async (o: {
     indexer: async () => ({ indexerUri: 'https://indexer.example/api/v3/graphql', indexerWsUri: 'wss://indexer.example/api/v3/graphql/ws' }),
     onChain: async (v: string) => ({
       /* The account held by the company's committee, which the vault was born held by. */
-      holders: { committee, threshold: 2, seats: [], approvals: 1, adoptedVaults: [v], founding: '4a'.repeat(32), foundingCommittee: [{ tag: 'schnorr', value: '11'.repeat(32) }] },
+      holders: { committee, threshold: 2, seats: [], approvals: 1, vaultThresholds: [], policyBar: null, seatBar: seatBarOf(1, null), adoptedVaults: [v], founding: '4a'.repeat(32), foundingCommittee: [{ tag: 'schnorr', value: '11'.repeat(32) }] },
     }),
     keys: { put: async () => {}, get: async () => null, forget: async () => {} },
     me, myRecordsKey: ada.recordsKey as never, records,

@@ -120,7 +120,8 @@ describe('A DIRECTORY VERSION NEVER ENTERED', () => {
     await adaRoleAgain();
     await anchorTheRecordsHere(doorsOf(ADA, (all) => all.filter((f) => f.version !== at)));
     expect((await acmeDirectory()).passedOver?.map((f) => f.version)).toContain(at);
-    expect((await acmeDirectory()).dir.seats.find((x) => x.seat === BO.seat)?.role).toBeNull();
+    /* Bo keeps the role his invitation gave him until the change is applied. */
+    expect((await acmeDirectory()).dir.seats.find((x) => x.seat === BO.seat)?.role).toBe('admin');
     /*
      * RED WHEN: a change filed again and passed over again is not filed again from what its device kept, so a service
      * that no longer serves it - here, serving none of the changes not applied - drops it for good.
@@ -128,7 +129,7 @@ describe('A DIRECTORY VERSION NEVER ENTERED', () => {
     /** Acme's directory read while Bo's seat has left the account on chain. */
     const withoutBo = async <T>(read: () => Promise<T>): Promise<T> => {
       const was = chains.get(CO)!;
-      chains.set(CO, { seats: { ...was.seats, seats: was.seats.seats.filter((x) => x !== BO.seat) }, approvals: was.approvals });
+      chains.set(CO, { seats: { ...was.seats, seats: was.seats.seats.filter((x) => x !== BO.seat) }, approvals: was.approvals, seatBar: was.seatBar });
       try { return await read(); } finally { chains.set(CO, was); }
     };
     /* RED WHEN: the service files a change again that disagrees with who holds the account now: one rule for the service and every device. */

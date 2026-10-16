@@ -179,6 +179,18 @@ describe('A PAYROLL RUN VOUCHES FOR THE HEAD IT WAS RAISED OVER ONLY ONCE PAID O
   const paid = (approvals: bigint, raisedAtRemovals = 0n): Held => ({ change: COMMITMENT, approvals, raisedAtRemovals, paid: true });
   const open = (approvals: bigint): Held => ({ change: COMMITMENT, approvals, raisedAtRemovals: 0n });
 
+  it('AN OPEN PROPOSAL RAISED BEFORE A SIGNER WAS REMOVED IS READ AS ONE THE ACCOUNT WILL NEVER CARRY OUT', () => {
+    const standing = (states: readonly State[]) => roundsOnChainIn({
+      accountPure: pureCircuits, accountLedger: (data: unknown) => viewOf(states[data as number]!),
+      runtimeState: { deserialize: (state: Uint8Array) => ({ data: state[0] }) },
+    } as never, states.map((_, i) => ({
+      kind: 'call', transaction: `3${i}`.repeat(32), entryPoint: 'propose', state: Uint8Array.of(i), block: { height: 30 + i, at: 3000 + i }, succeeded: true,
+    })), [RUN]).get(RUN);
+    /* RED WHEN: a proposal whose hold took a count of removals the account has since moved past is read as one it can still carry out. */
+    expect(standing([{ threshold: 2n, removals: 0n, held: { [RUN]: open(2n) } }, { threshold: 2n, removals: 1n, held: { [RUN]: open(2n) } }])?.outrun).toBe(true);
+    expect(standing([{ threshold: 2n, removals: 1n, held: { [RUN]: { ...open(2n), raisedAtRemovals: 1n } } }])?.outrun).toBeUndefined();
+  });
+
   it('A RUN CHARGED, OR PAID, WITH AT LEAST THE ACCOUNT\'S THRESHOLD VOUCHES, AS OF THE LAST BLOCK THAT SHOWS IT SO', () => {
     /* RED WHEN: a run the account charged to its period with its threshold of approvals vouches for nothing. */
     expect(vouching([{ threshold: 2n, removals: 0n, held: { [RUN]: open(1n) } }, { threshold: 2n, removals: 0n, held: { [RUN]: cleared(2n) } }]))
