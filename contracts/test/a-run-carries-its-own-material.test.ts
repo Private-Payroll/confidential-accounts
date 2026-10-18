@@ -27,7 +27,6 @@ import { SimulatedLedger } from '../../src/core/ledger.js';
 import { MidnightCommitments } from '../../src/midnight/commitments.js';
 import { buildRun, rootOfPayments } from '../../src/midnight/payout-tree.js';
 import { runMaterialFor } from '../../src/midnight/run-material.js';
-import { currentPayoutSeed } from '../../src/midnight/run-keys.js';
 import { runPayments } from '../../src/midnight/run-status.js';
 import { vaultDetails } from '../../src/testing/vault-details.js';
 import { registryWithTestPrivateForms, aVaultHolding, OTHER_TEST_TOKEN, TEST_TOKEN } from '../../src/testing/assets.js';
@@ -93,53 +92,6 @@ async function raise(
 }
 
 describe('a run carries what it takes to rebuild it', () => {
-  /**
-   * **THE ONE THAT COSTS A WHOLE PAYROLL: THE SEED GENERATION.**
-   *
-   * Payout seeds are APPENDED when a signer is removed, never replaced, so that
-   * a run already approved stays payable across the removal. That only works
-   * while the rebuild asks for the generation the run was RAISED under. Ask for
-   * the current one instead and every leaf is different, the root is different,
-   * and every payment of the approved run is refused as *"that payee is not in
-   * the approved run"* — after the signatures are in and the fee is spent, with
-   * nothing naming the cause.
-   *
-   * **THE CHANGE THAT TURNS THIS RED:** drop `epoch` from what the run stores,
-   * or have the rebuild take `currentPayoutSeed(seeds).epoch` instead of the
-   * stored number. The second half of this test IS that change, run
-   * side by side with the first, so the two cannot both be green.
-   */
-  it('rebuilds the same root after a rotation, and a different one from the current seed',
-    async () => {
-      const { accounts, payroll, created, run } = await aPayroll([{ asset: TEST_TOKEN, amount: 100_00n }]);
-      const { material } = await raise(
-        payroll, run.id, created.viewingKey, created.secrets[0]!.signerId);
-
-      /* A signer leaves. The account is resealed under a new key and a NEW
-       * payout seed is appended at a new epoch. */
-      const rotated = await accounts.rotate(created.account.id, created.viewingKey);
-      const rebuild = (await payroll.payoutRebuildOf(run.id, rotated.viewingKey))!;
-      expect(rebuild).not.toBeNull();
-      expect(rebuild.seeds.length).toBe(2);
-      const stored = rebuild.identity;
-
-      /* THE RIGHT WAY: the generation the run recorded. */
-      const rebuilt = buildRun(rebuild.seeds, stored, rebuild.facts, vaultDetails, rebuild.pay, rebuild.asset);
-      expect(rebuilt.tree.root).toBe(material.run.root);
-      expect(rebuilt.tree.leaves).toEqual(material.leaves);
-
-      /* THE WRONG WAY, RUN BESIDE IT: the generation in force today. This is the
-       * only difference between the two calls. */
-      const fromCurrent = buildRun(
-        rebuild.seeds,
-        { ...stored, epoch: currentPayoutSeed(rebuild.seeds).epoch },
-        rebuild.facts,
-        vaultDetails, rebuild.pay, TEST_TOKEN,
-      );
-      expect(currentPayoutSeed(rebuild.seeds).epoch).not.toBe(stored.epoch);
-      expect(fromCurrent.tree.root).not.toBe(material.run.root);
-    });
-
   /**
    * **A PAYROLL THAT SETTLES IN TWO TOKENS IS TWO RUNS, AND THEY MUST NOT
    * SHARE THEIR PAYEES' SECRETS.**

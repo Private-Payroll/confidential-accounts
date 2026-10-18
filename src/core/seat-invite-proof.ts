@@ -30,19 +30,20 @@
  *
  *  - It rests on the viewing key. Somebody who can write to the store and does
  *    not hold that key cannot work out any invitation's secret, so cannot make
- *    a proof for a key of their own. The service is handed the viewing key
- *    when a signer asks it to prepare a governed call, so a service that KEPT
- *    it could make a passing proof; the same is already true of every record
- *    sealed under that key, and this does not change it.
+ *    a proof for a key of their own. No device hands the service that key, so
+ *    the service cannot make one either. Anybody who holds the key can, which
+ *    is why a request is also held to the invitation a seat signed for it.
  *  - The name and the role are part of the secret, so a waiting signer whose
  *    role was changed in the inbox is refused too.
  *  - Whoever holds the link holds the invitation. That was already true of the
  *    token, and the secret beside it does not make it worse.
  *  - A secret is worked out under the viewing key that was current when the
- *    invitation was made. If the company changes its viewing key before the
- *    seat is granted, the waiting signer is refused and has to be invited again.
- *    That fails closed, deliberately: a person removed from the company still
- *    holds the old key.
+ *    invitation was made, and the request is sealed to the inbox of that same
+ *    key. So the proof is checked under the key whose inbox opened the request.
+ *    After the company changes its key, a request sealed to the old inbox is
+ *    believed only when the change named it as waiting; any other is refused
+ *    and the person is invited again. A person removed from the company still
+ *    holds the old key, so a proof made with it alone seats nobody.
  */
 import { hmac } from '@noble/hashes/hmac.js';
 import { sha256 } from '@noble/hashes/sha2.js';
@@ -117,7 +118,9 @@ const sameHex = (a: string, b: string): boolean => {
 
 /**
  * **CHECKED ON EVERY SIGNER'S DEVICE BEFORE A SEAT IS RAISED, APPROVED OR
- * CARRIED OUT.** Throws `SeatKeyNotFromTheInvitee`, naming what is wrong.
+ * CARRIED OUT.** `viewingKey` is the company key whose inbox the request opened
+ * under: the invitation's secret was made under that same key. Throws
+ * `SeatKeyNotFromTheInvitee`, naming what is wrong.
  */
 export function refuseASeatKeyNotFromTheInvitee(
   viewingKey: Hex,
@@ -127,8 +130,7 @@ export function refuseASeatKeyNotFromTheInvitee(
   const given = waiting.seatProof as Partial<SeatProof> | undefined;
   const refused = 'This person\'s keys could not be confirmed as coming from the person you invited. They may have '
     + 'been swapped, or the company\'s keys changed after the invitation was sent. Access was not granted and nothing '
-    + 'was sent. Do not give this person access: they need a new invitation, and this page cannot yet withdraw the '
-    + 'old one.';
+    + 'was sent. Do not give this person access: withdraw this request and invite them again.';
   if (!given || typeof given.nonce !== 'string' || typeof given.proof !== 'string'
     || !HEX64.test(given.nonce) || !HEX64.test(given.proof.toLowerCase())) {
     throw new SeatKeyNotFromTheInvitee(refused);

@@ -18,6 +18,7 @@
  * wallet again**, because keeping it in storage would put it where any script
  * on the page can read it.
  */
+import type { KeysHeld } from '../../../src/core/company-key.js';
 import type { Inviter, SignedSeatInvitation } from '../../../src/core/invitation.js';
 import type { DirectoryHereDeps, OwedDirectoryEntry } from './vault-page-doors.js';
 import { readAccountAddress, readCompanyLabel } from 'midnight-identity/profile/company-label';
@@ -42,7 +43,7 @@ import {
  * a test hands in a window of its own and drives the same conversation. */
 import { walletInThisPage, walletQuietlyInThisPage } from './wallet-frame.js';
 import { approvalMessage } from '../../../src/core/account.js';
-import { rosterBelievedHere, RosterNotBelieved, type BelievedAccount } from './roster-here.js';
+import { rosterBelievedHere, RosterNotBelieved, seatsAdmittedHere, type BelievedAccount } from './roster-here.js';
 import { directoryFilingsFrom } from './vault-page-doors.js';
 import type { SealedCompanyRecord } from '../../../src/midnight/sealed-record-wire.js';
 import {
@@ -289,7 +290,7 @@ let me: Me | null = null;
  */
 let bundleVersion = 0;
 /**
- * THE SUBWALLET THIS TAB SIGNED IN AS, or null for a password sign-in.
+ * THE SUBWALLET THIS TAB SIGNED IN AS, or null while this tab has not signed in with a wallet.
  *
  * This module keeps it in memory only, like `encKey`, and writes it nowhere. The
  * server holds only a hash of it (`walletKeyOf`), so after a reload it is back
@@ -302,13 +303,12 @@ let walletAddress: string | null = null;
  *
  *
  * `encKey` alone cannot answer this. It means *"the key that opens the bundle,
- * however this tab came by it"* — a password-derived key and a wallet-released
- * company key are both assigned to it and nothing downstream can tell them
- * apart, **which is deliberate and is exactly why a second variable is needed
- * here.** Deriving a payslip keypair from a password-derived key would produce
- * a perfectly usable keypair that no wallet, no second device and no recovery
- * can ever work out again - payslips sealed to a key nobody can rebuild,
- * because every test of the sealing would still pass.
+ * however this tab came by it"*, and nothing downstream can tell which unlock
+ * gave it, **which is exactly why a second variable is needed here.** A payslip
+ * keypair made from any key but the one the wallet released for this company
+ * would be a perfectly usable keypair that no wallet, no second device and no
+ * recovery can ever work out again - payslips sealed to a key nobody can
+ * rebuild, because every test of the sealing would still pass.
  *
  * So the ACCOUNT ID travels with the bytes. A payslip key may be derived only
  * when this says the bytes came from the wallet **for that same company**, and
@@ -372,8 +372,8 @@ export const signedInWallet = () => walletAddress;
 /**
  * **THE COMPANY KEY THIS TAB HOLDS FOR `accountId`, OR NULL.**
  *
- * Null is the ordinary answer and is never an error to paper over: a password
- * sign-in has no released key at all, and a tab that unlocked a DIFFERENT
+ * Null is the ordinary answer and is never an error to paper over: a tab whose
+ * wallet has released no key for a company holds none, and a tab that unlocked a DIFFERENT
  * company holds one that would derive the wrong payslip keypair. The caller
  * refuses by name; nothing here substitutes.
  */
@@ -583,20 +583,10 @@ export const api = async (path: string, opts?: RequestInit) => {
 /* ---------------- sign in and out ---------------- */
 
 /*
- * **`register` AND `signIn` ARE DELETED.**
- *
- * They were the client half of the password: `derive` stretched it with
- * argon2id, the `authKey` half went to `/api/auth/register` or
- * `/api/auth/login`, and the `encKey` half stayed here and opened the bundle.
- * **Both routes are gone and so is the derivation** — `deriveAuthMaterial`,
- * `KDF` and the argon2id import with them, so nothing in this module can
- * produce a key from a typed secret any more.
- *
  * **`signInWithWallet` BELOW IS THE ONLY WAY IN**, and `openKeysWithWallet` is
- * what sets `encKey`. The comment on `canOpenCompanies` already said the
- * important half of this: `encKey` does not mean *from a password*, it means
- * *the key that opens the bundle, however this tab came by it* — and there is
- * now exactly one way it can come by it.
+ * what sets `encKey`, the key that opens the bundle. Nothing in this module
+ * produces a key from a typed secret: every key it holds was released by the
+ * person's wallet.
  */
 
 /* ---------------- the wallet dialog, and the page behind it ---------------- */
@@ -2224,13 +2214,13 @@ const randomHex32 = (): string => toHex(randomBytes(32));
 
 /**
  * Derives the viewing key from the account's wrapped keys and this user's own
- * wrapping secret. It is not stored on this device: it is recomputed per
- * session from material only this device holds. It is not kept by the server
- * either, and no read hands it over: the page opens what it reads, the people
- * included, and no route reads it from an address. But the page still hands
- * it to the service in the body of the run, proposal and governance writes
- * that open a company's sealed records there (`governed-call-on-device.ts`,
- * `vault-page-doors.ts`), so it is not yet a key the service never sees.
+ * wrapping secret: the company's key at epoch 0, opened from the copy the
+ * account record holds for this seat. It is not stored on this device: it is
+ * opened again from material only this device holds. A key
+ * the company changed to after a signer left is never opened here: it is
+ * opened from the company's directory (`companyKeyHere`), which takes this
+ * key as epoch 0's. Throws when this device holds no keys for the company, or
+ * the record holds no copy for its seat.
  */
 export function viewingKeyFor(account: { id: string; wrappedKeys: any[] }): Hex {
   const keys = keysFor(account.id);
@@ -2256,6 +2246,9 @@ export function viewingKeyFor(account: { id: string; wrappedKeys: any[] }): Hex 
  * no roster record is refused with `NO_ROSTER_RECORD`; the unsigned list on
  * its account record is never read. A refusal throws `RosterNotBelieved`.
  *
+ * The roster opens under the company's key of the epoch it was sealed at,
+ * from `companyKeys`.
+ *
  * Returns null rather than throwing when this device holds no keys for the
  * account. That is a real state — you are a member, on a machine you have not
  * enrolled — and the account picker has to render something for it.
@@ -2267,27 +2260,58 @@ export async function openAccount(
   anchored: (accountId: string, company: CompanyLabel, account: AccountAddress) => DirectoryHereDeps['anchored'],
   /** The leaf each directory entry's opening makes, worked out in the page's vault worker. */
   leaves: (company: CompanyLabel, account: AccountAddress) => DirectoryHereDeps['leaves'],
+  /**
+   * The company's keys as this device reads them from its directory (`companyKeyHere`), every epoch it can reach; a
+   * page always gives them. Without them, this seat's served copy is the one key, as for a company never changed.
+   */
+  companyKeys?: (rec: SealedAccount) => Promise<KeysHeld>,
 ): Promise<BelievedAccount | null> {
+  const read = await rosterReadFor(rec, holders, anchored, leaves, companyKeys);
+  return read === null ? null : (await rosterBelievedHere(...read)).account;
+}
+
+/**
+ * **THE SEATS THE COMPANY'S ROSTER ADMITTED** (`seatsAdmittedHere`), read with the same doors as `openAccount`, for a
+ * change of the company's key only. Throws, so the change waits, when this device holds no keys for the account or
+ * the roster is not believed.
+ */
+export async function seatsAdmittedFor(
+  rec: SealedAccount & { readonly roster?: SealedCompanyRecord | null },
+  holders: Parameters<typeof openAccount>[1], anchored: Parameters<typeof openAccount>[2], leaves: Parameters<typeof openAccount>[3],
+  companyKeys?: Parameters<typeof openAccount>[4],
+): Promise<ReadonlySet<string>> {
+  const read = await rosterReadFor(rec, holders, anchored, leaves, companyKeys);
+  if (read === null) throw new Error('this device holds no keys for the company, so it cannot read who its roster admitted.');
+  return seatsAdmittedHere(...read);
+}
+
+/** What `rosterBelievedHere` is asked with for `rec` on this page, or null when this device holds no keys for it. */
+async function rosterReadFor(
+  rec: SealedAccount & { readonly roster?: SealedCompanyRecord | null },
+  holders: Parameters<typeof openAccount>[1], anchored: Parameters<typeof openAccount>[2], leaves: Parameters<typeof openAccount>[3],
+  companyKeys?: Parameters<typeof openAccount>[4],
+): Promise<Parameters<typeof rosterBelievedHere> | null> {
   const keys = keysFor(rec.id);
-  let viewingKey: Hex;
+  let served: Hex;
   try {
     if (keys === null) return null;
-    viewingKey = viewingKeyFor(rec);
+    served = viewingKeyFor(rec);
   } catch {
     return null;
   }
   const label = readCompanyLabel(rec.companyLabel ?? null);
   const account = readAccountAddress(rec.contractAddress ?? null);
   if (label === null || account === null) throw new RosterNotBelieved(NO_ACCOUNT_TO_READ_SIGNERS_BY);
-  const read = await rosterBelievedHere(rec, viewingKey, {
+  const viewingKey = companyKeys === undefined ? served : await companyKeys(rec);
+  return [rec, viewingKey, {
     accountId: rec.id, label, account,
     reads: {
       filings: () => directoryFilingsFrom(api, rec.id), holders: () => holders(label, account), anchored: anchored(rec.id, label, account),
       leaves: leaves(label, account),
     },
     own: { signerId: keys.signerId, signingPublicKey: signingPublicKeyOf(keys.signingSecret) },
-  });
-  return read.account;
+    proposals: async () => api(`/api/accounts/${encodeURIComponent(rec.id)}/proposals`),
+  }];
 }
 
 /** The fixed sentence for a company with no account on the chain: nothing names who holds its seats, so its signers are not read. */

@@ -97,8 +97,8 @@ export interface Shape {
   /**
    * **EVERY LEDGER OBSERVED WRITING HERE, IN THE ORDER IT WAS FIRST SEEN.**
    *
-   * Appended to by every write below that carries a marker, including the
-   * rotation that writes several collections at once. Never removed, never
+   * Appended to by every write below that carries a marker, including one that
+   * writes several records at once. Never removed, never
    * inferred, and never a claim about the records themselves - those carry
    * their own markers and are the authority.
    *
@@ -1017,49 +1017,6 @@ export class MemoryStore {
   /** Every contract's kept committee signatures for one company. */
   listCommitteeSignatures(accountId: string): CollectedCommitteeSignatures[] {
     return Object.values(this.data.committeeSignatures).filter((c) => c.accountId === accountId);
-  }
-
-  /**
-   * The flip, and the only reason this method exists.
-   *
-   * A rotation re-seals every record an account owns under a new viewing key.
-   * Written one `put` at a time it would go through `flush` once per record,
-   * and a crash partway would leave an account whose roster opens under the new
-   * key and whose payroll opens under the old — with only one of the two
-   * wrapped key sets still issued. **Half of it would be unreadable by
-   * everybody, permanently.**
-   *
-   * So it is one call that writes everything and flushes once. `FileStore`
-   * rewrites the whole file, so on this implementation the swap is as atomic as
-   * the filesystem allows; under Postgres it becomes one transaction, and this
-   * signature is what makes that a change of one method rather than of every
-   * caller.
-   *
-   * The shielded state is NOT here, because it is not ours — it lives behind
-   * the ledger and is written first, alongside the old epoch rather than over
-   * it. That ordering is the whole design; see `AccountService.rotate`.
-   */
-  commitRotation(set: {
-    account: SealedAccount;
-    employees: SealedEmployee[];
-    runs: SealedRun[];
-    proposals: SealedProposal[];
-  }): void {
-    this.data.accounts[set.account.id] = set.account;
-    for (const e of set.employees) this.putRow(e);
-    for (const r of set.runs) this.data.runs[r.id] = r;
-    for (const p of set.proposals) this.data.proposals[p.id] = p;
-    this.indexed(ix => {
-      ix.account(set.account);
-      for (const r of set.runs) ix.run(r);
-    });
-    /* This writes records without going through the three methods above, so it
-     * has to observe what it wrote itself - a write the envelope does not see
-     * is a ledger the envelope does not know has been here. */
-    this.observe(set.account);
-    for (const r of set.runs) this.observe(r);
-    for (const p of set.proposals) this.observe(p);
-    this.flush();
   }
 }
 

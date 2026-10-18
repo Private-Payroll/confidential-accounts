@@ -11,7 +11,8 @@ import { identityFromSecret } from 'midnight-identity';
 import { committeeKeyFor } from 'midnight-identity/profile/committee-key';
 import { signDirectoryEntry, signRecordsKey, type DirectoryEntryStatement } from 'midnight-identity/profile/records-key';
 import type { CompanyLabel } from 'midnight-identity/profile/company-label';
-import { newSigningKeypair, newSymmetricKey, newWrappingKeypair, seal, sign, wrapKey, type Hex } from '../core/crypto.js';
+import { newSigningKeypair, newSymmetricKey, newWrappingKeypair, randomBytes, seal, sign, toHex, wrapKey, type Hex } from '../core/crypto.js';
+import { keyCheckOf, sealedPrevious, sealedSeed, wrapsFor } from '../core/company-key.js';
 import { MemoryStore } from '../core/store.js';
 import type { SealedAccount } from '../core/types.js';
 import { seatDirectoryRoutes, directoryOf, type DirectoryChainRead } from './seat-directory-route.js';
@@ -164,7 +165,7 @@ describe('THE SEAT DIRECTORY ROUTE', () => {
     /* RED WHEN: the server refuses the true holder's claim because another claim on the seat came first. */
     expect((await file('ada', { company: SQUAT, version: 2, change: { kind: 'claim', entry: adas } })).status).toBe(201);
     /* RED WHEN: a member's device believes the squatter, or does not believe the true holder filed after it. */
-    const member = asAMember(proofsOpenedWith(SQUAT, VIEWING), leafOfTheContract, ADA.seat);
+    const member = asAMember(proofsOpenedWith(SQUAT, [VIEWING]), leafOfTheContract, ADA.seat);
     expect(believedDirectory(SQUAT, store.directoryFilingsOf(SQUAT), LABEL, ADDRESS, member).seats.map((x) => [x.seat, x.person])).toEqual([[ADA.seat, 'ada']]);
   });
 
@@ -199,7 +200,7 @@ describe('THE SEAT DIRECTORY ROUTE', () => {
     expect((await file('ada', change(3, 'approver', [ADA, BO]))).status).toBe(201);
     /* RED WHEN: the server counts a quorum: one seat's change where the chain requires two is refused there. */
     expect((await file('ada', change(4, 'viewer', [ADA]))).status).toBe(201);
-    const member = asAMember(proofsOpenedWith(CO, VIEWING), leafOfTheContract, ADA.seat);
+    const member = asAMember(proofsOpenedWith(CO, [VIEWING]), leafOfTheContract, ADA.seat);
     const now = { approvals: 2, seatBar: 2, seats: [ADA.seat, BO.seat], committee: [ADA.committeeKey] };
     /* RED WHEN: a member's device believes one seat's change where the chain requires two. */
     expect(believedDirectory(CO, store.directoryFilingsOf(CO), LABEL, ADDRESS, member, now).seats.find((s) => s.seat === BO.seat)!.role).toBe('approver');
@@ -241,6 +242,47 @@ describe('THE SEAT DIRECTORY ROUTE', () => {
     /* The control: the server holds no wallet key, so a statement in its shape is filed whoever signed it, and each member's device judges that. */
     expect((await file('ada', retirement(signedBy(1, BO.seat)))).status).toBe(201);
   });
+
+  it('THE SERVER KEEPS A CHANGE OF THE COMPANY\'S KEY IN ITS SHAPE, SIGNED BY ONE SEAT THE CHAIN HOLDS, AT THE NEXT VERSION, AND JUDGES NO EPOCH', async () => {
+    /* A company of its own, so no other case reads its directory. */
+    const ROT = 'acc_rotate';
+    store.putAccount(accountOf(ROT, ['ada', 'bo', 'mal']));
+    chain = seated([ADA, BO], 1);
+    const entryIn = (s: Seat) => directoryEntryMade({
+      company: ROT, person: s.person, committeeKey: s.committeeKey, signed: s.statement, opening: s.opening, signingSecret: s.signing.secret, viewingKey: VIEWING,
+    });
+    expect((await file('ada', { company: ROT, version: 1, change: { kind: 'claim', entry: entryIn(ADA) } })).status).toBe(201);
+    expect((await file('bo', { company: ROT, version: 2, change: { kind: 'claim', entry: entryIn(BO) } })).status).toBe(201);
+    const key = newSymmetricKey();
+    /* An epoch and a retirement no device would believe: the server judges neither. */
+    const rotate = (by: Seat[], over: object = {}, signedFor = 3): DirectoryFiling => {
+      const unsigned = {
+        kind: 'rotate', epoch: 7, keyCheck: keyCheckOf(ROT, 7, key), after: 1,
+        wraps: wrapsFor(key, [ADA, BO].map((s) => ({ seat: s.seat, wrappingKey: s.statement.wrappingKey as Hex }))),
+        previous: sealedPrevious(key, VIEWING), seed: { epoch: 7, sealed: sealedSeed(key, toHex(randomBytes(32))) }, waiting: [],
+        ...over, signatures: [],
+      } as unknown as DirectoryChange;
+      const message = directoryChangeMessage(ROT, signedFor, unsigned);
+      return { company: ROT, version: 3, change: { ...unsigned, signatures: by.map((s) => ({ publicKey: s.signing.publicKey, signature: sign(message, s.signing.secret) })) } as DirectoryChange };
+    };
+    /* RED WHEN: the server keeps a change of key whose signature is over another version. */
+    expect((await file('ada', rotate([ADA], {}, 4))).body).toMatchObject({ refused: 'not-signed' });
+    /* RED WHEN: the server keeps a change of key not in its shape, or signed by more than its one filer. */
+    expect((await file('ada', rotate([ADA], { keyCheck: 'zz' }))).body).toMatchObject({ refused: 'not-a-change' });
+    expect((await file('ada', rotate([ADA, BO]))).body).toMatchObject({ refused: 'not-a-change' });
+    /* RED WHEN: the server keeps a change of key signed by a key that holds no entry, or by a seat the chain no longer holds. */
+    expect((await file('mal', rotate([seatOf('mal', 7)]))).body).toMatchObject({ refused: 'filer-not-seated' });
+    chain = seated([ADA], 1);
+    expect((await file('bo', rotate([BO]))).body).toMatchObject({ refused: 'filer-not-seated' });
+    chain = seated([ADA, BO], 1);
+    /* RED WHEN: the server has no branch for a change of key, or judges its epoch or the retirement it follows. */
+    const kept = await file('bo', rotate([BO]));
+    expect(kept.status).toBe(201);
+    expect(store.directoryFilingsOf(ROT).map((f) => f.change.kind)).toEqual(['claim', 'claim', 'rotate']);
+    /* RED WHEN: a change of key is filed again under the signatures of an earlier version. */
+    const again = { ...rotate([ADA]), version: 4, signedAt: 3 };
+    expect((await file('ada', again)).body).toMatchObject({ refused: 'not-a-change' });
+  });
 });
 
 describe('A COMPANY\'S OWN RECORDS, FILED BY ITS SEATS', () => {
@@ -257,18 +299,20 @@ describe('A COMPANY\'S OWN RECORDS, FILED BY ITS SEATS', () => {
       method: 'PUT', body: JSON.stringify(toCompanyWire(signCompanyFiling(rec, signer))),
     });
 
-  it('A SEAT FILES A RECORD AT THE NEXT VERSION AND THE CURRENT KEY EPOCH', async () => {
+  it('A SEAT FILES A RECORD AT THE NEXT VERSION, AND THE SERVER JUDGES NO KEY EPOCH', async () => {
     expect((await put('ada', record(), ADA.signing.secret)).status).toBe(201);
     /* RED WHEN: a version that is not the next is filed. */
     /* RED WHEN: a refusal's reason is carried in a field the page's store does not read, so the person sees no reason. */
     expect((await put('ada', record({ version: 3 }), ADA.signing.secret)).body).toMatchObject({ refused: 'not-the-next-version', error: expect.stringMatching(/next version of this record is 2/) });
     expect((await put('ada', record({ version: 1 }), ADA.signing.secret)).body).toMatchObject({ refused: 'version-already-filed', error: expect.stringMatching(/already filed/) });
-    /* RED WHEN: a record sealed under a key epoch the company has not reached is filed. */
-    expect((await put('ada', record({ version: 2, keyEpoch: 1 }), ADA.signing.secret)).body).toMatchObject({ refused: 'not-the-current-epoch' });
-    /* RED WHEN: a record sealed under a key epoch the company has left is filed. */
+    /*
+     * The server judges no change of the company's key, so its own count of the company's key epoch decides nothing.
+     * RED WHEN: a record sealed under a key epoch other than the one the server holds for the company is refused.
+     */
     store.putAccount(accountOf(CO, ['ada', 'bo', 'cy'], 2));
     try {
-      expect((await put('ada', record({ version: 2, keyEpoch: 1 }), ADA.signing.secret)).body).toMatchObject({ refused: 'not-the-current-epoch' });
+      expect((await put('ada', record({ id: 'p7', keyEpoch: 1 }), ADA.signing.secret)).status).toBe(201);
+      expect((await put('ada', record({ id: 'p7', version: 2, keyEpoch: 3 }), ADA.signing.secret)).status).toBe(201);
     } finally {
       store.putAccount(accountOf(CO, ['ada', 'bo', 'cy']));
     }

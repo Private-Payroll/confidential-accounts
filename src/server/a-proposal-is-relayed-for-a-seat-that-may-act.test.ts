@@ -335,22 +335,26 @@ describe('A PROPOSAL A SEAT\'S DEVICE WROTE DOWN IS FILED ONLY AS THAT SEAT SIGN
     expect(store.getProposal('prp_filedByAdaAA')).toMatchObject({ accountId: CO, status: 'open', approvalCount: 0, filedBy: f.filedBy });
   });
 
-  it('REFUSED WHEN SIGNED BY ANOTHER SEAT\'S KEY, CHANGED AFTER SIGNING, AT ANOTHER KEY EPOCH, OR BESIDE AN OPEN ONE FOR THE SAME CHANGE', async () => {
+  it('REFUSED WHEN SIGNED BY ANOTHER SEAT\'S KEY, CHANGED AFTER SIGNING, OR BESIDE AN OPEN ONE FOR THE SAME CHANGE, AND FILED AT ANY KEY EPOCH', async () => {
     const send = (who: string, p: unknown) => post(who, `/api/accounts/${CO}/proposals`, { proposal: p, salt: SALT });
     /* RED WHEN the filer's key is not held to the signed-in person's seat. */
     expect((await send('ada', signProposalFiling(CO, filing('prp_notYoursAAAA'), BO.signingSecret as Hex))).body.error).toMatch(/not your seat/u);
     /* RED WHEN the signature is not checked over the whole filing. */
     const tampered = { ...signProposalFiling(CO, filing('prp_tamperedAAAA'), ADA.signingSecret as Hex), digest: '55'.repeat(32) };
     expect((await send('ada', tampered)).body.error).toMatch(/signature does not cover/u);
-    /* RED WHEN a filing sealed under a key epoch the company no longer uses is filed. */
-    expect((await send('ada', signProposalFiling(CO, filing('prp_oldEpochAAAA', '66'.repeat(32), 1), ADA.signingSecret as Hex))).body.error)
-      .toMatch(/no longer uses/u);
+    /*
+     * The service judges no change of the company's key, so its own count of the key epoch refuses nothing.
+     * RED WHEN a filing is refused for the key epoch it names.
+     */
+    const atAnotherEpoch = await send('ada', signProposalFiling(CO, filing('prp_oldEpochAAAA', '66'.repeat(32), 1), ADA.signingSecret as Hex));
+    expect(atAnotherEpoch.status).toBe(200);
+    expect(store.getProposal('prp_oldEpochAAAA')).toMatchObject({ keyEpoch: 1, status: 'open' });
     /* RED WHEN a second open proposal for the same change is filed beside the first. */
     expect((await send('ada', signProposalFiling(CO, filing('prp_besideAAAAAA', '11'.repeat(32)), ADA.signingSecret as Hex))).body.error)
       .toMatch(/already holds proposal prp_relayedAAAAA open/u);
     /* RED WHEN a member with no seat may write one down. */
     expect((await send('cy', signProposalFiling(CO, filing('prp_noSeatAAAAAA'), ADA.signingSecret as Hex))).status).toBe(422);
-    for (const id of ['prp_notYoursAAAA', 'prp_tamperedAAAA', 'prp_oldEpochAAAA', 'prp_besideAAAAAA', 'prp_noSeatAAAAAA']) expect(store.getProposal(id)).toBeNull();
+    for (const id of ['prp_notYoursAAAA', 'prp_tamperedAAAA', 'prp_besideAAAAAA', 'prp_noSeatAAAAAA']) expect(store.getProposal(id)).toBeNull();
     expect(sent).toEqual([]);
   });
 

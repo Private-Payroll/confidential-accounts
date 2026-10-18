@@ -50,6 +50,11 @@ const kr = vi.hoisted(() => ({
   indexer: null as { indexerUri: string; indexerWsUri: string } | null,
   readHere: [] as string[],
 }));
+vi.mock('./filing-judge.js', async (real) => ({
+  ...(await real<typeof import('./filing-judge.js')>()),
+  /* The company's keys as its directory gives them (`companyKeysFor`), stood in for by the one key of a company never changed. */
+  companyKeysFor: async () => ({ epoch: 0, newest: 0, key: '5e'.repeat(32), keyAt: () => '5e'.repeat(32), sealing: () => ({ key: '5e'.repeat(32), epoch: 0 }) }),
+}));
 vi.mock('vaults-web-shared/keyring.js', async (real) => ({
   ...(await real<typeof import('vaults-web-shared/keyring.js')>()),
   currentUser: () => (kr.signedIn === null ? null : { id: kr.signedIn }),

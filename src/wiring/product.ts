@@ -225,7 +225,6 @@ export function unconfiguredLedger(refusal: string, _name: Wiring['name']): Ledg
     paidAmong: () => no('what has been paid among a set of signers'),
     paidOnceAmong: () => no('who has been paid for which month'),
     fetch: () => no('a stored record'),
-    reseal: () => no('filing an account\'s sealed state'),
     propose: () => no('raising a round'),
     proposeRun: () => no('raising a payroll round'),
     approve: () => no('approving a round'),

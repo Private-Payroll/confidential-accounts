@@ -10,6 +10,7 @@ import { fileTheOwedDirectoryEntry } from 'vaults-web-shared/vault-page-doors.js
 import { foldOffersHere, offerVaultKeysHere } from 'vaults-web-shared/roster-here.js';
 import type { Inviter } from '../../../../src/core/invitation.js';
 import { rosterReadsFor } from './filing-judge.js';
+import type { CompanyKeys } from '../../../../src/core/company-key.js';
 import { SERVICE } from './company-records.js';
 import { ACT_REFUSAL, ACTED, type ActRefusal } from './refusals.js';
 import { ACCOUNT_ORIGIN } from './session.js';
@@ -49,7 +50,7 @@ interface SignerKeys {
  * own key does not make (`notYourSeat`).
  */
 export async function giveTheVaultKeys(
-  companyId: string, signer: SignerKeys, viewingKey: Hex, roster: () => Promise<Pick<Account, 'signers'>>,
+  companyId: string, signer: SignerKeys, viewingKey: CompanyKeys, roster: () => Promise<Pick<Account, 'signers'>>,
 ): Promise<{ of: typeof ACTED.refused; why: ActRefusal } | (Given & { of: typeof ACTED.done })> {
   /*
    * This signer's seat, worked out from their own key material and not taken from the records the service serves:

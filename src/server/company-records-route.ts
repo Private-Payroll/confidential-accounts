@@ -14,9 +14,11 @@
  *   · the key that signed is the one the company's seat directory holds for
  *     this person, for a seat the account holds now (`filerSeatOf`). Whether
  *     that seat's role may file this kind is each member's device's to judge;
- *   · the key epoch is the company's current one, so a device still holding a
- *     key rotated away cannot file a record nobody can open;
  *   · the version is the next.
+ *
+ * Which company key a record is sealed under is not judged here: this server
+ * judges no change of the company's key, so its own count of the key's epoch
+ * decides nothing.
  *
  * **A DEVICE MAKES ITS OWN CHECK ON EVERY READ** (`HttpCompanyRecordStore`),
  * against the chain its own wallet read: this server is not taken at its word.
@@ -163,7 +165,7 @@ export interface FilingDeps {
 
 /**
  * **ONE COMPANY RECORD VERSION, CHECKED AND FILED, OR REFUSED** - the filing
- * seat, the key epoch and the next version, as the record route makes them. Every route
+ * seat and the next version, as the record route makes them. Every route
  * that files a company record files it through here, so there is one check.
  */
 export const fileCompanyRecord = async (
@@ -196,12 +198,6 @@ export const fileCompanyRecord = async (
       ? ' Set up your vault keys again on your own device: that enters your seat in the company\'s directory.'
       : '';
     return { status: 403, body: { refused: seat, error: `this record was not filed, because ${FILING_REFUSAL[seat]}.${remedy}` } };
-  }
-  if (rec.keyEpoch !== account.keyEpoch) {
-    return { status: 422, body: {
-      refused: 'not-the-current-epoch',
-      error: `this record is sealed under key epoch ${rec.keyEpoch} and the company's key is at epoch ${account.keyEpoch}, so nobody could open it with the company's current key. Nothing was filed. Open the company again and file it under its current key.`,
-    } };
   }
   const unreadable = (e: unknown): FilingAnswer => ({ status: 502, body: { error: `the record could not be read: ${(e as Error)?.message ?? String(e)}` } });
   let next: number;

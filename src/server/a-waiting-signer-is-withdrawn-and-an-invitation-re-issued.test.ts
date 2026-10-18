@@ -16,7 +16,7 @@
  *     wallet keeps the company's account and their own entry is filed again.
  */
 import { describe, it, expect } from 'vitest';
-import { newSigningKeypair, type Hex } from '../core/crypto.js';
+import { newSigningKeypair, newSymmetricKey, type Hex } from '../core/crypto.js';
 import { SimulatedCommitments } from '../core/ledger.js';
 import { openSeatProof, seatOpeningRefusal } from '../core/seat-opening.js';
 import {
@@ -36,7 +36,7 @@ import { fileTheOwedDirectoryEntry, type OwedDirectoryEntry } from 'vaults-web-s
 import { newSeatKeys } from 'vaults-web-shared/accept-seat.js';
 import { leafOfTheContract } from '../testing/directory-seats.js';
 import {
-  aCompanyOfTwoSeats, ACME, ADA, ADDRESS, BO, chains, CO, fromAda, KEY, LABEL, ORIGIN, OTHER, seatOf, sendAs, store, wire, type Seat,
+  aCompanyOfTwoSeats, ACME, ACME_INBOX, ADA, ADDRESS, BO, chains, CO, fromAda, KEY, LABEL, ORIGIN, OTHER, seatOf, sendAs, store, wire, type Seat,
 } from './a-company-of-two-seats.test-support.js';
 
 aCompanyOfTwoSeats();
@@ -95,6 +95,15 @@ describe('SOMEBODY WAITING FOR A SEAT IS WITHDRAWN, AND THE SAME PERSON INVITED 
     /* RED WHEN: a person whose request was withdrawn cannot accept a new invitation. */
     const seat = await acceptAgain();
     expect(isWaiting(seat.signerId!)).toBe(true);
+  });
+
+  it('a request sealed before the company\'s key changed is still withdrawn, so the person can be invited again', async () => {
+    const lin = await waitingFor('lin');
+    const key1 = newSymmetricKey() as Hex;
+    const after = { epoch: 1, key: key1, newest: 1, keyAt: (e: number) => (e === 0 ? KEY : key1), sealing: () => ({ key: key1, epoch: 1 }), answered: new Map() };
+    await withdrawWaitingSignerHere({ id: CO, viewingKey: after as never }, ADA, lin.signerId, adasReads(), fromAda);
+    /* RED WHEN: a request no change of key named, sealed to the old inbox, cannot be withdrawn, so its person stays locked out. */
+    expect(isWaiting(lin.signerId)).toBe(false);
   });
 
   it('a withdrawal signed by a key whose seat the chain does not hold now withdraws nobody', async () => {
@@ -273,7 +282,7 @@ describe('A PERSON WHOSE INVITER LEFT IS GIVEN THEIR INVITATION AGAIN', () => {
     /* RED WHEN: a re-issue signed for one link is opened under another, or one naming no seat opens at all. */
     const token = newInvitationToken();
     const offerOf = (invited: SignedSeatInvitation) => sealOffer(signOffer({
-      company: CO, companyName: 'Acme', label: LABEL, account: ADDRESS, inboxPublicKey: ACME.inboxPublicKey,
+      company: CO, companyName: 'Acme', label: LABEL, account: ADDRESS, inboxPublicKey: ACME_INBOX, expiresAt: Date.now() + 3_600_000,
       for: { kind: 'reissue', name: invited.terms.name, role: invited.terms.role, invited }, inviter: asInviter(ADA),
     }, ADA.signingSecret), token);
     expect(() => openOffer(offerOf(signSeatInvitation({ ...original.terms, invitation: invitationIdOf(newInvitationToken()) }, ADA.signingSecret)), token)).toThrow(InvitationNotOpened);

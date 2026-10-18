@@ -5,7 +5,6 @@ import {
 } from 'vaults-web-shared/committee-change-on-device.js';
 import {
   api, canOpenCompanies, companyKeysForVaults, holdersFromTheWallet, openKeysWithWallet, signCommitteeChangeFromTheWallet,
-  viewingKeyFor,
   type AccountKeys,
 } from 'vaults-web-shared/keyring.js';
 import { companyRoute, SERVICE } from './handover-state.js';
@@ -14,7 +13,8 @@ import { ACT_REFUSAL, ACTED, refusalOf, type ActRefusal } from './refusals.js';
 import { ACCOUNT_ORIGIN } from './session.js';
 import { Fault, FAULT } from '../faults.js';
 import { giveTheVaultKeys } from './vault-keys.js';
-import { openedHere } from './filing-judge.js';
+import { companyKeysFor, openedHere } from './filing-judge.js';
+import type { CompanyKeyHere } from 'vaults-web-shared/company-key-here.js';
 
 /*
  * TWO PRESSES FOR A COMPANY, EACH ITS OWN SYSTEM, NEITHER WAITING ON THE OTHER.
@@ -61,7 +61,7 @@ async function signedInHere(personId: string): Promise<ActRefusal | null> {
  * a seat this device did not finish is finished first. Only a signer's own
  * steps need these; the super admins' steps never do.
  */
-async function opened(personId: string, companyId: string): Promise<{ keys: AccountKeys; roster: () => Promise<BelievedAccount>; viewingKey: ReturnType<typeof viewingKeyFor> } | ActRefusal> {
+async function opened(personId: string, companyId: string): Promise<{ keys: AccountKeys; roster: () => Promise<BelievedAccount>; viewingKey: CompanyKeyHere } | ActRefusal> {
   const notHere = await signedInHere(personId);
   if (notHere !== null) return notHere;
   if (!canOpenCompanies()) await openKeysWithWallet(ACCOUNT_ORIGIN);
@@ -74,7 +74,7 @@ async function opened(personId: string, companyId: string): Promise<{ keys: Acco
     if (account === null) throw new Fault(FAULT.companyDidNotOpen);
     return account;
   };
-  return { keys, roster, viewingKey: viewingKeyFor(sealed) };
+  return { keys, roster, viewingKey: await companyKeysFor(companyId, sealed as SealedAccount, keys) };
 }
 
 /** The committee key this person's account gives for the company. */

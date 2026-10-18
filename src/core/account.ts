@@ -1,10 +1,12 @@
 import { nanoid } from 'nanoid';
+import { keyOf, openedWithAnyKey, type KeysHeld } from './company-key.js';
+import { answerOpenedWith } from './answer-opened.js';
 import { readCompanyLabel } from 'midnight-identity/profile/company-label';
 import type { CompanyLabel } from 'midnight-identity/profile/company-label';
 import {
   newSigningKeypair, newWrappingKeypair, newSymmetricKey, newProposalSalt, newBlinding,
   seal, unseal, wrapKey, unwrapKey, verify, commit, canonical, parseCanonical,
-  type Hex, type Sealed,
+  type Hex,
 } from './crypto.js';
 import { alreadyOnTheCompany } from './invitation.js';
 import type {
@@ -440,34 +442,6 @@ export function requireSeating(
   );
 }
 
-/**
- * **HOW MANY SIGNERS COULD STILL APPROVE AFTERWARDS, TAKING THE SMALLER OF THE
- * TWO ACCOUNTS OF IT.**
- *
- * The BAR is the chain's and is never ours. The survivor COUNT is a different
- * question and it is not one the chain can answer alone: who is leaving is a
- * row in our roster, and the contract cannot be asked about a removal that has
- * not happened yet. So both are computed and the SMALLER is used — if our
- * roster claims more active signers than the ledger holds seats for, the extra
- * ones cannot approve anything and must not be counted as if they could.
- *
- * `seatsDropped` is how many seats the operation removes ON CHAIN, which is not
- * how many rows it drops from our roster. A removal drops one leaf. **A
- * rotation drops none** — it changes the locks and leaves the signer tree
- * exactly as it was, because a rotation calls no circuit that takes a leaf off
- * (see `rotate`), so a rotation excluding two people still leaves both of them
- * able to act. Their
- * seats therefore cannot be counted as freed, and cannot rescue a roster that
- * has fallen below the bar.
- */
-export function survivorsAfter(
-  seating: { threshold: number; signerCount: number },
-  ourSurvivors: number,
-  seatsDropped: number,
-): number {
-  return Math.min(ourSurvivors, Math.max(0, seating.signerCount - seatsDropped));
-}
-
 export { evaluatePolicy } from './company-policy.js';
 
 /* ---------------- a company as it is founded ---------------- */
@@ -531,7 +505,8 @@ export function companyAtItsFounding(input: {
 export function newStateBlinding(): StateBlinding {
   return {
     /*
-     * Made once, at creation, and never made again, not even by a rotation:
+     * Made once, at creation, and never made again, not even by a change of the
+     * company's key:
      * every change commitment already approved names an asset through it, so
      * changing it would make an approval in flight unspendable. See
      * `StateBlinding.assetBlinding`.
@@ -540,15 +515,15 @@ export function newStateBlinding(): StateBlinding {
     /*
      * The account's first payout seed, made now so that a run raised on the
      * very first day is already rebuildable by every signer rather than by
-     * whoever happened to raise it. A rotation appends later generations;
-     * nothing ever removes one, so an approved run stays payable across a
-     * signer leaving.
+     * whoever happened to raise it. A change of the company's key on the
+     * devices carries a later seed in that change; nothing ever removes this
+     * one, so an approved run stays payable across a signer leaving.
      */
     payoutSeeds: [{ epoch: GENESIS_KEY_EPOCH, seed: newBlinding() }],
     /*
      * The key every payment's nonce is derived from, with who is paid and for
-     * which month. Made once and carried unchanged through every rotation, so a
-     * month already paid keeps its nonce when a signer leaves.
+     * which month. Made once and kept through every change of the company's
+     * key, so a month already paid keeps its nonce when a signer leaves.
      */
     payRecordKey: newBlinding(),
   };
@@ -556,8 +531,8 @@ export function newStateBlinding(): StateBlinding {
 
 /**
  * **A COMPANY'S STATE, SEALED UNDER ITS VIEWING KEY.** The one sealing of it:
- * this service calls it for the simulated ledger and for a rotation, and the
- * founding signer's device calls it when it makes a company on a chain.
+ * this service calls it for the simulated ledger, and the founding signer's
+ * device calls it when it makes a company on a chain.
  *
  * The blob carries the entry log and the blindings, `assetBlinding` among
  * them, which every proposal needs and which cannot be recomputed from
@@ -660,33 +635,36 @@ export function sealAccount(
  * has one, and the account record's own envelope until then. There is never
  * both: the roster's first version moves them off the account record.
  */
-const rosterOf = (rec: SealedAccount, roster: SealedCompanyRecord | null, viewingKey: Hex): RosterSecrets => {
+const rosterOf = (rec: SealedAccount, roster: SealedCompanyRecord | null, viewingKey: KeysHeld): RosterSecrets => {
   if (roster !== null) {
     if (roster.company !== rec.id || roster.kind !== 'roster' || roster.id !== ROSTER_ID) {
       throw new Error('the roster served with this company is another company\'s, so its signers cannot be read.');
     }
-    return openRoster(roster, viewingKey);
+    return openRoster(roster, keyOf(viewingKey, roster.keyEpoch));
   }
   if (rec.sealedRoster === undefined) throw new Error('this company\'s signers could not be found, so they cannot be read.');
-  return openRecord<RosterSecrets>('roster', rec.id, rec.sealedRoster, viewingKey);
+  return openedWithAnyKey(viewingKey, (key) => openRecord<RosterSecrets>('roster', rec.id, rec.sealedRoster!, key));
 };
 
 /**
- * Opens a stored account. Needs the viewing key, and nothing about the account
- * beyond its id and ciphertext.
+ * Opens a stored account. Needs the company's keys, and nothing about the
+ * account beyond its id and ciphertext: the roster record opens under the key
+ * of its own epoch, and the account's own envelopes, which no change of the key
+ * seals again, under whichever key held opens them, newest first.
  *
  * Pending signers are opened from the account inbox and appear in `signers`
- * with `status: 'pending'`, which is where they have always been. Callers that
+ * with `status: 'pending'`, which is where they have always been; a request
+ * this device does not believe (`answerOpenedWith`) is left out. Callers that
  * only wanted to know who is on an account cannot tell the difference; the
  * difference is that we can no longer read any of it.
  */
 export function openAccount(
-  rec: SealedAccount & { readonly roster?: SealedCompanyRecord | null }, viewingKey: Hex,
+  rec: SealedAccount & { readonly roster?: SealedCompanyRecord | null }, viewingKey: KeysHeld,
   /** The company's roster record, newest version; the one served with the account when not given. */
   roster: SealedCompanyRecord | null = rec.roster ?? null,
 ): Account {
   const { name, signers } = rosterOf(rec, roster, viewingKey);
-  const { policy: stored, recovery } = openRecord<PolicySecrets>('policy', rec.id, rec.sealedPolicy, viewingKey);
+  const { policy: stored, recovery } = openedWithAnyKey(viewingKey, (key) => openRecord<PolicySecrets>('policy', rec.id, rec.sealedPolicy, key));
   /*
    * **THE POLICY IS REBUILT FIELD BY FIELD, NOT PASSED THROUGH.**
    *
@@ -721,13 +699,16 @@ export function openAccount(
   const policy: Policy = {
     limitsByRole: stored.limitsByRole ?? {},
   };
-  const pending: Signer[] = rec.pendingSigners.map(p => {
-    const q = openFromInbox<PendingSignerPayload>(p.sealed, rec.id, viewingKey);
-    return {
+  /* A request this device does not believe (sealed to an old inbox the change of key did not name, or to no inbox of
+     this company) is no pending signer here: it is left out, and the rest of the company still reads. */
+  const pending: Signer[] = rec.pendingSigners.flatMap(p => {
+    let q: PendingSignerPayload;
+    try { q = answerOpenedWith<PendingSignerPayload>(viewingKey, p.sealed, rec.id).value; } catch { return []; }
+    return [{
       id: p.id, userId: p.userId, name: q.name, role: q.role, status: 'pending',
       signingPublicKey: q.signingPublicKey, wrappingPublicKey: q.wrappingPublicKey,
       leafCommitment: q.leafCommitment,
-    };
+    } as Signer];
   });
   return {
     id: rec.id,
@@ -744,32 +725,6 @@ export function openAccount(
     /* Public, never sealed, and carried so `sealAccount` can write it back. */
     wiring: rec.wiring ?? null,
   };
-}
-
-/**
- * **MOVES A DROP BOX TO A NEW INBOX KEY, BOTH ENVELOPES.**
- *
- * Written as its own function rather than inline because it is two nested
- * `openFromInbox` calls and one nested `sealToInbox`, and the shape of that
- * nesting is the thing a future reader has to get right.
- */
-function resealDropBox(
-  sealed: { ephemeral: Hex } & Sealed,
-  accountId: string,
-  viewingKey: Hex,
-  nextInbox: Hex,
-): { ephemeral: Hex } & Sealed {
-  const box = openFromInbox<{
-    byUserId?: string | null; handover?: ({ ephemeral: Hex } & Sealed);
-  }>(sealed, accountId, viewingKey);
-  /* A box written before the inner envelope existed has none. It moves as it
-   * is, so a handover made under the old shape is not stranded by an
-   * upgrade. */
-  if (!box.handover) return sealToInbox(box, nextInbox);
-  const inner = openFromInbox<unknown>(box.handover, accountId, viewingKey);
-  return sealToInbox(
-    { byUserId: box.byUserId ?? null, handover: sealToInbox(inner, nextInbox) },
-    nextInbox);
 }
 
 
@@ -1836,393 +1791,6 @@ export class AccountService {
     return unwrapKey(wrapped, wrappingSecret);
   }
 
-  /* ---------------- removing a signer ---------------- */
-
-  /**
-   * Who is leaving, and nothing else.
-   *
-   * This used to compute a whole new signer set: the next generation, every
-   * survivor's re-derived leaf, and a refusal for anybody whose blinding factor
-   * the roster did not hold. All of that existed because a removal invalidated
-   * every leaf at once and had to re-seat the people who stayed.
-   *
-   * A removal now clears one slot in the tree. Nobody else's leaf changes, so
-   * there is nothing to recompute, nothing to get wrong, and no reason for this
-   * account to hold anybody's blinding factor.
-   */
-  private departing(account: Account, signerId: string, seating: ChainSeating) {
-    const going = account.signers.find(s => s.id === signerId);
-    if (!going) throw new Error('signer not found');
-    if (!going.leafCommitment) {
-      throw new Error('that signer has no leaf commitment, so they are not in the on-chain tree');
-    }
-    /*
-     * **THE BAR IS THE CONTRACT'S.** A guard that measured the removal against
-     * a stale number could wave through a removal that leaves two signers where
-     * three are needed, after which no proposal can be approved and the
-     * account's money is unspendable by anybody.
-     *
-     * The status arrives as a value because the caller took the decision and
-     * captured it once; see `chainSeating`.
-     */
-    const bar = requireSeating(seating, `remove ${going.name} as a signer`);
-    const staying = account.signers.filter(s => s.id !== signerId && s.status === 'active');
-    const survivors = survivorsAfter(bar, staying.length, 1);
-    if (survivors < bar.threshold) {
-      throw new Error(
-        `removing ${going.name} would leave ${survivors} signers against a threshold of ` +
-          `${bar.threshold}, and the account could never approve anything again.` +
-          seatingDrift(account, seating),
-      );
-    }
-    return { going, leaf: going.leafCommitment, staying };
-  }
-
-  /**
-   * Opens the proposal that authorises removing a signer.
-   *
-   * A removal is a round for the same reason adding one is: a single
-   * key that could drop other signers unilaterally could reduce an account to
-   * itself and then approve anything alone.
-   */
-  async proposeRemoval(
-    accountId: string,
-    viewingKey: Hex,
-    signerId: string,
-    proposedBy: string,
-  ): Promise<Proposal> {
-    const account = this.open(accountId, viewingKey);
-    const plan = this.departing(account, signerId, await this.chainSeating(accountId));
-    const digest = this.commitments.signerRemovePayload(plan.leaf);
-    const change: StateChange = {
-      asset: NO_ASSET, amount: 0n, batchDigest: commit('', ''), salt: newProposalSalt(),
-    };
-
-    const proposal: Proposal = {
-      id: 'prp_' + nanoid(12),
-      /* `noVault()`: a removal concerns no vault. */
-      chainId: this.commitments.proposalId(digest, change.salt, this.commitments.noVault()),
-      vault: this.commitments.noVault(),
-      accountId,
-      kind: 'remove-signer',
-      summary: `Remove ${plan.going.name} as a signer`,
-      // Sealed under the account key for the same reason `proposeSigner`'s is:
-      // every approval path opens this blob, so one nobody can decrypt makes
-      // the proposal unapprovable.
-      sealedPayload: seal(canonical({ signerId, entries: [] }), viewingKey),
-      digest,
-      proposedBy,
-      /* Kept because the proposer may no longer be seated when the proposal is
-       * judged, and `recordStanding` would then have no role to judge it by.
-       * Undefined where the proposer is not seated, which is what this door
-       * already tolerates. */
-      proposerRole: account.signers.find(sg => sg.id === proposedBy)?.role,
-      approvals: [],
-      status: 'open',
-      createdAt: new Date().toISOString(),
-    };
-
-    /*
-     * A governance proposal moves no money, so its change is zero and its asset
-     * is the reserved "none". See `NO_ASSET`: it derives a valid asset key that
-     * named no entry in `assetBalances`, because no governance circuit wrote to
-     * that map. The map has since been removed, so the key names nothing at all
-     * — the reserved value is kept because `changeCommitmentOf` still takes an
-     * asset key on every proposal and a real asset code in that slot would be a
-     * governance round claiming to move money.
-     */
-    await this.raise(proposal, viewingKey, MOVES_NO_MONEY, () => this.ledger.propose(
-      accountId, digest, change,
-      this.refFor(account, proposedBy), this.commitments.noVault()));
-    return proposal;
-  }
-
-  /* ---------------- rotation ---------------- */
-
-  /**
-   * Changes the locks. A new viewing key, everything re-sealed under it, and
-   * re-wrapped to whoever is left.
-   *
-   * WHAT THIS DOES AND DOES NOT DO, because the difference is the product's
-   * most important claim and it is easy to overstate.
-   *
-   * It does: make every record an account owns unreadable to anyone holding the
-   * old key, from this moment on. Nobody can be un-taught a secret, so this is
-   * the only meaning "revoke access" can have.
-   *
-   * It does NOT: take away a departing signer's authority on chain. Every
-   * circuit begins with `requireSigner()`, which proves a Merkle path into the
-   * tree of signer leaves, and a rotation calls no circuit that takes a leaf
-   * off. **A signer excluded here can still APPROVE and PROPOSE** until a
-   * removal (`amendSigner`) takes their leaf off. Remove first, then rotate:
-   * the other way round leaves a window where the leaver can both read and act.
-   *
-   * It also does not reach the past. The state as it stood at rotation is still
-   * sealed under the old key at the old epoch, and is deliberately kept — the
-   * blob store never deletes, because a deleted opening is an attestation that
-   * can never be verified again. A leaver can therefore still read what they
-   * could already read. They cannot read anything that happens next, which is
-   * the whole of what revocation can mean.
-   *
-   * THE ORDERING IS THE RISK, and the rule is:
-   *
-   *   1. re-seal the shielded state and write it at epoch n+1 **alongside** n
-   *   2. compute the complete new record set — nothing written yet
-   *   3. one atomic store write, which flips `keyEpoch` and re-issues the
-   *      wrapped keys in the same breath
-   *
-   * A crash after 1 leaves the account fully readable at epoch n, with an
-   * orphan blob nobody points at. A crash after 3 leaves it fully readable at
-   * n+1. **There is no interleaved state**, which is the only property that
-   * matters: every other ordering has a window in which the records and the
-   * state disagree about which key is current, and both halves of that are
-   * unrecoverable.
-   */
-  async rotate(
-    accountId: string,
-    viewingKey: Hex,
-    /**
-     * Signers who do not receive the new key. Their seat is dropped from the
-     * roster and no wrapped copy is issued.
-     *
-     * Read the note above before building anything on this: it stops them
-     * reading, not acting.
-     */
-    exclude: string[] = [],
-  ): Promise<{ viewingKey: Hex; keyEpoch: number }> {
-    const rec = this.require(accountId);
-    // Opening it is what proves the caller holds the current key. A rotation
-    // driven by someone who does not would seal the account to nobody.
-    const account = openAccount(rec, viewingKey, this.store.newestRoster(rec.id));
-    const nextEpoch = rec.keyEpoch + 1;
-    const nextKey = newSymmetricKey();
-
-    const staying = account.signers.filter(s => !exclude.includes(s.id));
-    const stayingActive = staying.filter(s => s.status === 'active');
-    const unknown = exclude.filter(id => !account.signers.some(s => s.id === id));
-    if (unknown.length) {
-      throw new Error(`not a signer on this account: ${unknown.join(', ')}`);
-    }
-    /*
-     * Refusing to strand the account is not politeness. Below the threshold it
-     * can never approve anything again — including a proposal to add somebody
-     * back — so the account is finished, with its money in it.
-     *
-     * **AND THE THRESHOLD IT IS MEASURED AGAINST IS THE CONTRACT'S**, read at
-     * the moment of the removal. A guard whose whole job is to be conservative
-     * must not decide from a number that can differ from the one the contract
-     * applies, because the damage is invisible when it is done.
-     *
-     * The seat count cannot rescue it, and `survivorsAfter` says why in full:
-     * this rotation frees no seat on chain, so the excluded signers stay in the
-     * tree and the smaller of the two counts is the roster's.
-     */
-    /*
-     * **THE GUARD RUNS WHEN THERE IS SOMETHING TO GUARD, AND A ROTATION THAT
-     * DROPS NOBODY IS NOT IT.** This exemption is load-bearing rather than an
-     * optimisation.
-     *
-     * A removal used to call this with an empty `exclude`, AFTER the chain had
-     * accepted it, and that call is what took the departing signer's
-     * ability to READ. Guarding it would mean an unreachable indexer could
-     * refuse the second half of a removal whose first half has already settled
-     * — the signer gone from the tree and the roster, still holding a viewing
-     * key that opens everything. **Refusing there protects nothing:** dropping
-     * nobody changes no survivor count and no rule, so the only refusal it
-     * could produce is about a condition this operation did not cause and
-     * cannot make worse. The conservative direction and the safe direction
-     * point the same way only where the operation removes somebody.
-     */
-    if (exclude.length) {
-      const seating = await this.chainSeating(accountId);
-      const rule = requireSeating(
-        seating,
-        `change the locks on this account without ${exclude.length} of its signers`,
-      );
-      const stillSeated = survivorsAfter(rule, stayingActive.length, 0);
-      if (stillSeated < rule.threshold) {
-        throw new Error(
-          `removing those signers would leave ${stillSeated} active of a threshold of ` +
-            `${rule.threshold}, so the account could never approve anything again. ` +
-            'Lower the threshold first.' + seatingDrift(account, seating),
-        );
-      }
-    }
-
-    /* 1. the state, at the new epoch, ALONGSIDE the old. */
-    const current = await this.readSealed(accountId, viewingKey, rec.keyEpoch);
-    /*
-     * `current.blinding` IS CARRIED THROUGH UNCHANGED, and that is not laziness.
-     *
-     * A rotation re-encrypts what the account already holds; it does not move
-     * anything. The entry log and — above all — the ASSET BLINDING are the same
-     * values, so every commitment on chain still describes the account exactly
-     * and there is nothing to submit. Generating a new asset blinding here
-     * would change the asset key inside every change commitment already
-     * approved, so a run one signature from settling could never be presented
-     * at a vault. See `StateBlinding.assetBlinding`.
-     *
-     * ONE THING IS ADDED RATHER THAN CARRIED: a new payout seed.
-     *
-     * APPENDED, never replacing. The point of rotating it is that a removed
-     * signer must learn nothing about payrolls raised after they left; the
-     * point of keeping the old ones is that a run already approved must stay
-     * payable. Replacing the list would make removing a signer strand every
-     * open run — a new way to lose access to money, introduced by the fix for
-     * one — and it would do it silently, at the moment an account is already
-     * dealing with somebody leaving.
-     *
-     * A leaver keeps what they had already read, exactly as they do for the
-     * state itself; see the note above this method.
-     */
-    const nextBlinding: StateBlinding = {
-      ...current.blinding,
-      // `?? []` guards data, not types: the sealed state is JSON out of a store,
-      // and a record written before this field existed would otherwise fail
-      // here with a message about spreading undefined.
-      payoutSeeds: [...(current.blinding.payoutSeeds ?? []),
-                    { epoch: nextEpoch, seed: newBlinding() }],
-    };
-    await this.ledger.reseal(
-      accountId,
-      sealState(current.state, nextBlinding, nextKey, nextEpoch),
-    );
-
-    /* 2. the complete new set, computed and not yet written. */
-    const rotated: Account = {
-      ...account,
-      signers: staying,
-      wrappedKeys: stayingActive.map(s => ({
-        signerId: s.id, ...wrapKey(nextKey, s.wrappingPublicKey),
-      })),
-    };
-
-    /*
-     * The inbox moves with the key, so anything sitting in a drop box has to be
-     * opened and re-posted in the same pass. Missing this would leave a pending
-     * signer's details sealed to an inbox whose secret no longer exists —
-     * unopenable by anyone, and only discovered when somebody tried to grant
-     * them access.
-     */
-    const nextInbox = inboxPublicKey(nextKey, accountId);
-    const pendingSigners: PendingSigner[] = rec.pendingSigners
-      .filter(p => !exclude.includes(p.id))
-      .map(p => ({
-        ...p,
-        sealed: sealToInbox(
-          openFromInbox<PendingSignerPayload>(p.sealed, accountId, viewingKey), nextInbox),
-      }));
-
-    const employees = this.store.listEmployees(accountId).map(e => ({
-      ...e,
-      keyEpoch: nextEpoch,
-      /*
-       * AN EMPLOYEE'S DROP BOX MOVES WITH THE KEY, EXACTLY AS A PENDING
-       * SIGNER'S DOES. Found by audit 17 Aug; this line was missing and the
-       * whole record was copied through with `...e`.
-       *
-       * What it cost: a handover left unadmitted across a rotation became
-       * unopenable by ANY key — the old one opens the box and not the roster
-       * entry, which has been re-sealed at the new epoch; the new one opens the
-       * roster entry and not the box. The invite refuses a second handover as
-       * "already used", so the person could never be admitted, and because a
-       * run refuses to build while anybody is pending, **the whole company's
-       * payroll froze** behind one new hire. Rotation is what happens when a
-       * signer leaves and onboarding never stops, so the two overlap by
-       * default rather than by bad luck.
-       *
-       * The identical property for a pending signer is asserted twelve lines
-       * above and was green throughout.
-       */
-      /*
-       * **THERE ARE TWO ENVELOPES NOW, SO BOTH MOVE.**
-       *
-       * The invitee seals their own address to the inbox key on their own
-       * device and this service seals `byUserId` around it. **The inbox key is
-       * derived from the viewing key**, so a rotation that re-sealed only the
-       * outer one would leave the inner sealed to a secret that no longer
-       * exists — exactly the freeze this line was added to prevent, one layer
-       * further in, and invisible until somebody tried to admit.
-       *
-       * **THE COST, SAID RATHER THAN LEFT TO BE FOUND:** re-sealing means
-       * opening, so the receiving address exists in this process for the length
-       * of this expression. The open concern about plaintext addresses is not
-       * reopened by that — it is about the address arriving in a REQUEST BODY,
-       * and rotation carries no address at all — but it is the second of
-       * exactly two moments where we hold the plaintext, the other being
-       * `admit`. **Both are moments where an admin has handed us the account's
-       * viewing key anyway**, which is the trade `scope-server-trust.md`
-       * already records; neither is an acceptance.
-       *
-       * The inner value is moved as an OPAQUE one. Nothing here checks its
-       * shape: `openHandover` does that at `admit`, and a rotation that refused
-       * a handover it could not understand would strand the person it belongs
-       * to for a reason that has nothing to do with rotating a key.
-       */
-      inbox: e.inbox ? resealDropBox(e.inbox, accountId, viewingKey, nextInbox) : null,
-      sealed: sealRecord('payroll', accountId,
-        openRecord('payroll', accountId, e.sealed, viewingKey), nextKey),
-    }));
-
-    const runs = this.store.listRuns(accountId).map(r => ({
-      ...r,
-      keyEpoch: nextEpoch,
-      // `payslips` are NOT touched. Each is sealed to one employee's own key and
-      // deliberately not readable with the account's, so the account viewing key
-      // could not re-seal them and must not appear able to.
-      sealed: sealRecord('payroll', accountId,
-        openRecord('payroll', accountId, r.sealed, viewingKey), nextKey),
-    }));
-
-    const proposals = this.store.listProposals(accountId).map(p => {
-      const opened = this.openProposal(p, viewingKey);
-      /*
-       * `sealedPayload` is sealed under the RAW viewing key, inside a record
-       * that is itself sealed under a subkey. Re-sealing only the outer
-       * envelope leaves an inner blob nobody can open, and it would not surface
-       * here — it would surface at the next approval, as `aes-gcm: invalid tag`
-       * on a round with a fee already paid.
-       *
-       * Re-sealed as bytes rather than parsed and re-serialised, so a change in
-       * canonical form can never alter a payload the chain has committed to.
-       */
-      const rewrapped: Proposal = {
-        ...opened,
-        sealedPayload: seal(unseal(opened.sealedPayload, viewingKey), nextKey),
-      };
-      const { id, accountId: aid, status, createdAt, executedAt, digest, txRef, chainId,
-        wiring: _notSealed, ...secrets } = rewrapped as Proposal & { wiring?: unknown };
-      return {
-        id, accountId: aid, status, createdAt, executedAt, digest, txRef, chainId,
-        approvalCount: rewrapped.approvals.length,
-        keyEpoch: nextEpoch,
-        sealed: sealRecord('proposals', aid, secrets, nextKey),
-        /*
-         * **TAKEN FROM THE STORED RECORD, BECAUSE THIS ARM REBUILDS A RECORD
-         * FIELD BY FIELD AND A FIELD NOT NAMED HERE IS A FIELD DELETED.**
-         *
-         * The runs arm above spreads the whole record and keeps everything by
-         * default; this one lists what it keeps, so every readable field has
-         * to be listed. Which ledger wrote a round cannot be established
-         * afterwards, so losing it here would erase the provenance of every
-         * governance round a company has ever raised - and removing a signer
-         * is the ordinary operation that runs this.
-         */
-        wiring: p.wiring ?? null,
-      };
-    });
-
-    /* 3. one write. */
-    this.store.commitRotation({
-      account: sealAccount(rotated, nextKey, pendingSigners, nextEpoch),
-      employees,
-      runs,
-      proposals,
-    });
-
-    return { viewingKey: nextKey, keyEpoch: nextEpoch };
-  }
-
   /* ---------------- shielded state ---------------- */
 
   /*
@@ -3193,17 +2761,6 @@ export class AccountService {
     return live ?? this.proposeSigner(accountId, viewingKey, signerId, by, { onDevice: true });
   }
 
-  /** The same, for a change of the account's threshold. */
-  async thresholdRound(accountId: string, viewingKey: Hex, newThreshold: number, by: string): Promise<Proposal> {
-    const digest = this.commitments.signerThresholdPayload(newThreshold);
-    const live = this.liveRoundFor(accountId, viewingKey, digest);
-    if (live && (await this.ledger.status(accountId))?.threshold === newThreshold) {
-      this.recordTheThreshold(accountId, viewingKey, newThreshold, live);
-      return this.requireProposal(live.id, viewingKey);
-    }
-    return live ?? this.proposeThresholdChange(accountId, viewingKey, newThreshold, by, { onDevice: true });
-  }
-
   /**
    * A live proposal for this change, newest first. **One written down without
    * the salt its identity was made with is passed over**, because no device can
@@ -3359,11 +2916,6 @@ export class AccountService {
     if (now.status === 'executed') return;
     now.status = 'executed';
     this.putProposal(now, viewingKey);
-  }
-
-  private recordTheThreshold(accountId: string, viewingKey: Hex, newThreshold: number, round: Proposal | null): Account {
-    if (round) this.markCarriedOut(round.id, viewingKey);
-    return this.open(accountId, viewingKey);
   }
 
   private holdARaise(proposalId: string, viewingKey: Hex, asked: Proposal): () => void {
@@ -3727,10 +3279,11 @@ export class AccountService {
    * Which viewing key is current for this account.
    *
    * Every sealed record an account owns is stamped with this, and the stamp has
-   * to be the account's rather than a literal `0` at the call site — otherwise
-   * an employee hired after a rotation is filed at epoch 0 while sealed under
-   * the epoch-1 key, and the NEXT rotation re-seals it from the wrong key and
-   * destroys it. One reader, so there is one answer.
+   * to be the account's rather than a literal `0` at the call site, so a
+   * record is never stamped with an epoch other than the one it is sealed
+   * under. This service never changes the company's key, so the answer is the
+   * founding epoch; the devices read later epochs from the company's records.
+   * One reader, so there is one answer.
    */
   keyEpochOf(accountId: string): number {
     return this.require(accountId).keyEpoch;
@@ -3741,9 +3294,9 @@ export class AccountService {
    *
    * What a payroll run's per-payee secrets are derived from. They live in the
    * account's sealed shielded state rather than under the viewing key itself,
-   * because the viewing key ROTATES when a signer is removed and a run's leaves
-   * are fixed the moment the signers approve them — derive from a key that
-   * rotates and removing a signer strands every approved, unpaid run.
+   * because the company's key CHANGES when a signer is removed and a run's
+   * leaves are fixed the moment the signers approve them: derive from a key
+   * that changes and removing a signer strands every approved, unpaid run.
    *
    * **EVERY GENERATION AND NOT THE CURRENT ONE, DELIBERATELY.** A run raised
    * last month was raised under the seed in force last month, and rebuilding it
@@ -4597,12 +4150,11 @@ export class AccountService {
  * chain-unreachable case it must never swallow.
  *
  * **REACHABLE ONLY ON A ROUND RAISED BEFORE THE ROLE WAS RECORDED**, which
- * every round raised since records it: all SIX propose doors write
+ * every round raised since records it: every propose door writes
  * `proposerRole`. **IT ONCE SAID SO WHILE ONLY TWO DOORS WROTE IT.** `propose`
- * and `proposeRun` were covered; `proposeSigner`, `proposeThresholdChange`,
- * `proposeVaultThresholdChange` and `proposeRemoval` were not — the four
- * GOVERNANCE doors, which is where a proposer being removed is most ordinary.
- * They record it now.
+ * and `proposeRun` were covered; `proposeSigner`, `proposeThresholdChange` and
+ * `proposeVaultThresholdChange` were not, the GOVERNANCE doors, which is where
+ * a proposer being removed is most ordinary. They record it now.
  *
  * Records written before that carry no role, are sealed, and are not backfilled
  * — a migration that guessed one would be writing exactly the value this

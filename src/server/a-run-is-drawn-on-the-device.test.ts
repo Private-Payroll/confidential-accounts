@@ -295,8 +295,6 @@ describe('THE SERVICE KEEPS A RUN ONLY AS THE SIGNED-IN PERSON\'S OWN SEAT SIGNE
       ['Ada\'s run, sent by Bo', 'bo', { run: signRunFiling(CO, sealed, ADA.signingSecret as Hex) }, 403, 'no-entry'],
       /* RED WHEN: a month typed another way is kept, so two runs for one month would not be seen as one. */
       ['a month not written as a month', 'ada', { run: signRunFiling(CO, { ...sealed, period: '2027-3' }, ADA.signingSecret as Hex) }, 422, 'not-a-run'],
-      /* RED WHEN: a run sealed under a key the company no longer uses is kept. */
-      ['sealed at another key epoch', 'ada', { run: signRunFiling(CO, { ...sealed, keyEpoch: 7 }, ADA.signingSecret as Hex) }, 409, 'not-the-current-key'],
       /* RED WHEN: a run is kept already raised, with proposals nothing here wrote down. */
       ['already raised', 'ada', { run: signRunFiling(CO, { ...sealed, status: 'proposed', proposalIds: ['prp_aaaaaaaaaaaa'] }, ADA.signingSecret as Hex) }, 422, 'not-a-drawn-run'],
       /* RED WHEN: a run is kept as anything but drawn: raised with no proposal named, settled, a draft naming a proposal, or a draft already paid. */
@@ -311,6 +309,14 @@ describe('THE SERVICE KEEPS A RUN ONLY AS THE SIGNED-IN PERSON\'S OWN SEAT SIGNE
       if (refused !== '') expect((r.body as { refused?: string }).refused, what).toBe(refused);
     }
     expect(runsKept()).toBe(before);
+    /*
+     * The service judges no change of the company's key, so a run sealed at a key epoch the service does not hold for
+     * the company is kept.
+     * RED WHEN: the service refuses a run for its key epoch.
+     */
+    const atAnotherEpoch = signRunFiling(CO, { ...(await aDrawnRun()), keyEpoch: 7 }, ADA.signingSecret as Hex);
+    expect((await keep('ada', { run: atAnotherEpoch })).status).toBe(201);
+    expect(runsKept()).toBe(before + 1);
     /* The run as Ada's seat signed it is kept once, and not twice. */
     const signed = signRunFiling(CO, sealed, ADA.signingSecret as Hex);
     expect((await keep('ada', { run: signed })).status).toBe(201);
@@ -324,7 +330,7 @@ describe('THE SERVICE KEEPS A RUN ONLY AS THE SIGNED-IN PERSON\'S OWN SEAT SIGNE
     const down = await keep('ada', { run: another });
     directoryDown = false;
     expect([down.status, String((down.body as { error?: string }).error)]).toEqual([503, expect.stringMatching(/the indexer did not answer/u)]);
-    expect(runsKept()).toBe(before + 1);
+    expect(runsKept()).toBe(before + 2);
   });
 
   it('A RUN THE COMPANY\'S RECORDS NAME AND THE SERVICE LEAVES OUT OF ITS LIST STOPS A NEW RUN BEING DRAWN, AND NOTHING IS KEPT', async () => {

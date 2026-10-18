@@ -78,12 +78,10 @@ const SEALED_BYTES = { iv: '00', ct: '11', tag: '22' } as unknown as Sealed;
  * only thing that ever wrote it down. `SEALED_BYTES` survives because the blob
  * store below still has to answer a `get`.
  *
- * K-4 IS NOT REPEALED. `MidnightLedger.reseal` and `.fetch` are the methods
- * that carry it and both survive this round untouched. **Neither is covered by
- * any test in this file, and neither was before this round** — the only
- * `reseal` in the suite is `core.test.ts:2985`, against the SIMULATED ledger.
- * That gap is older than `C292` and is not made by it; it is stated here rather
- * than left to be inferred from a deleted constant.
+ * The state is still filed under its key epoch: `MidnightLedger.fetch` reads
+ * it back by epoch, and nothing in this service files a state at a later one.
+ * **`fetch` is not covered by any test in this file**; that is stated here
+ * rather than left to be inferred from a deleted constant.
  */
 const OTHER = 'bb'.repeat(32) as Hex;
 const PAYLOAD_HASH = 'cc'.repeat(32) as Hex;

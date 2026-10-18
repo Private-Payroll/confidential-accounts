@@ -54,7 +54,7 @@ import {
 } from './proven-submission.js';
 import type {
   Ledger, LedgerAddress, LedgerStatus, LedgerRecord, PaymentsAmong,
-  AccountOpening, SealedStateAt, TxRef, SignerRef, WriteInFlight, VaultTxArrival, VaultTxSent,
+  AccountOpening, TxRef, SignerRef, WriteInFlight, VaultTxArrival, VaultTxSent,
 } from '../core/ledger.js';
 import type { Hex } from '../core/crypto.js';
 import type { Deployment } from './deployment.js';
@@ -353,18 +353,6 @@ export class ChainLedger implements Ledger {
 
   fetch(accountId: string, keyEpoch: number): Promise<LedgerRecord | null> {
     return this.inner.fetch(accountId, keyEpoch);
-  }
-
-  /**
-   * Delegated, and the ground is narrower than it first looks: resealing READS
-   * the chain — it resolves the address and the contract state before it files
-   * anything — but it WRITES only to this deployment's own blob storage. It
-   * stages no private state and builds no transaction, so it is safe here.
-   * Refusing it would stop an account being read back at all, which is a loss
-   * with no safety bought.
-   */
-  reseal(accountId: string, next: SealedStateAt): Promise<void> {
-    return this.inner.reseal(accountId, next);
   }
 
   /** Delegated: a property of this deployment, which sends nothing. */

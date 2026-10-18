@@ -20,6 +20,7 @@
  * A leg paid in public money spends no note, so it is not planned: each person
  * still owed is paid through `payPubliclyFromCompanyVault`.
  */
+import type { KeysHeld } from '../../../src/core/company-key.js';
 import type { Hex } from '../../../src/core/crypto.js';
 import { planRun, type PlanStep } from '../../../src/midnight/payment-plan.js';
 import { SealedNotePool } from '../../../src/midnight/vault-pool.js';
@@ -33,6 +34,7 @@ import { legToPayHere, type PaymentsHereDeps } from './payments-made-here.js';
 import { chargeTheRunHere, type ChargeDoors } from './run-charged-here.js';
 import type { CompanyRecordsHere } from './run-rebuilt-here.js';
 import type { LegNamed } from './material-made-here.js';
+import { refuseARunALeaverRaisedHere } from './governed-call-on-device.js';
 
 /** What paying a leg is done with: the doors every step out of the vault takes, and the account's record of a payment. */
 export interface LegDoors extends PayoutDoors {
@@ -58,7 +60,7 @@ export interface LegHere {
   readonly records: CompanyRecordsHere;
   readonly accountId: string;
   readonly runId: string;
-  readonly viewingKey: Hex;
+  readonly viewingKey: KeysHeld;
   readonly deps: PaymentsHereDeps;
   readonly which?: LegNamed;
   /** The proposal a retry on the leg was raised as; absent for the leg itself. */
@@ -115,7 +117,7 @@ const A_BATCH_IS_NOT_PAID_YET = 'This leg\'s plan has a batch step, and paying a
  */
 async function sendStep(
   doors: LegDoors, order: PrivatePaymentOrderOnTheWire, owed: readonly PrivatePaymentOnTheWire[],
-  step: PlanStep, notes: readonly NoteOnTheWire[],
+  step: PlanStep, notes: readonly NoteOnTheWire[], beforeAPayment: () => Promise<void>,
 ): Promise<{ readonly sent: LegStepSent; readonly kept: NoteOnTheWire | null }> {
   switch (step.kind) {
     case 'merge': {
@@ -123,6 +125,7 @@ async function sendStep(
       return { sent: { kind: 'merge', spent: r.spent, kept: r.kept, transactionHash: r.transactionHash }, kept: r.kept };
     }
     case 'payment': {
+      await beforeAPayment();
       const payment = owed[step.unit]!;
       const r = await payPrivatelyFromCompanyVault(doors, { order, payment, notes });
       return { sent: { kind: 'payment', index: payment.index, transactionHash: r.transactionHash, seenAs: r.seenAs }, kept: r.change };
@@ -143,6 +146,9 @@ async function sendStep(
  * planner refuses is refused before any charge or fee. The run is charged at
  * most once here, not again when the leg is planned again, and not at all
  * when the chain already holds it as charged or its vault has no policy.
+ * Before each person is paid, a run its seat raised after its own removal was
+ * raised, or one whose raiser this device cannot say, is refused
+ * (`refuseARunALeaverRaisedHere`), and nothing more is sent.
  */
 export async function payAnApprovedLeg(doors: LegDoors, leg: LegHere): Promise<LegPaid> {
   const steps: LegStepSent[] = [];
@@ -161,6 +167,7 @@ export async function payAnApprovedLeg(doors: LegDoors, leg: LegHere): Promise<L
   for (let plans = 1; ; plans += 1) {
     const toPay = await legToPayHere(leg.records, leg.accountId, leg.runId, leg.viewingKey, leg.deps, leg.which, leg.retry);
     const { order } = toPay;
+    const beforeAPayment = () => refuseARunALeaverRaisedHere(leg.records, leg.accountId, leg.viewingKey, toPay.proposalId);
     alreadyPaid ??= order.payments.filter((p) => p.paid === true).map((p) => p.index);
     /* Nobody this loop has already sent a payment to is planned again, whatever the account's read says yet. */
     const sentTo = new Set([...paid, ...sentNotNamed]);
@@ -171,6 +178,7 @@ export async function payAnApprovedLeg(doors: LegDoors, leg: LegHere): Promise<L
     if (order.form === 'unshielded') {
       await chargedFirst(toPay);
       for (const payment of owed) {
+        await beforeAPayment();
         const r = await payPubliclyFromCompanyVault({ ...doors, paidYet: () => doors.paidYet(payment) }, { order, payment });
         paid.push(payment.index);
         steps.push({ kind: 'public-payment', index: payment.index, txRef: r.txRef });
@@ -200,7 +208,7 @@ export async function payAnApprovedLeg(doors: LegDoors, leg: LegHere): Promise<L
           if (note === undefined) throw new LegNotPayable('A step of this leg\'s plan spends a coin no earlier step kept.');
           return note;
         });
-        const { sent, kept } = await sendStep(doors, order, owed, step, notes);
+        const { sent, kept } = await sendStep(doors, order, owed, step, notes, beforeAPayment);
         steps.push(sent);
         if (sent.kind === 'payment') (sent.seenAs === 'its-own-transaction' ? paid : sentNotNamed).push(sent.index);
         if (kept !== null) made.set(i, kept);

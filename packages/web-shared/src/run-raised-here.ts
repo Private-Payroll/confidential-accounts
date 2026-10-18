@@ -9,6 +9,7 @@
  * the raise. The service files the two and relays the proven call; it is
  * given no key and builds nothing.
  */
+import { sealingWith, type KeysHeld } from '../../../src/core/company-key.js';
 import { assetIdBytes, assets as theAssets, sumChangeAmount, type AssetId, type LedgerForm } from '../../../src/core/assets.js';
 import { randomBytes, signingPublicKeyOf, type Hex } from '../../../src/core/crypto.js';
 import { batchDigestOf, paysCommitmentOf, sealPayrollProposal, signProposalFiling } from '../../../src/core/proposal-filing.js';
@@ -68,7 +69,7 @@ interface RunIdentityDeps {
 export interface LegRaiseDoors extends RaiseDoors {
   readonly records: CompanyRecordsHere & { readonly proposals: () => Promise<readonly SealedProposal[]> };
   /**
-   * This device's seat as the company's directory names it, the key epoch now,
+   * This device's seat as the company's directory names it, the key epoch a bare key seals at,
    * and a random value and proposal name. A run's random value is sealed beside
    * the head this device checked last, and the fresh half of its proposal's
    * salt, `retrySaltOf(leg, fresh)`, is made from the two (`vouchedFreshOf`).
@@ -108,7 +109,7 @@ const raised = <T>(make: () => T): T => {
  * that can no longer pay its people and names nobody another retry can. They
  * decide on what this raise already read (`read`), never on a second read.
  */
-const checkedHere = async (doors: LegRaiseDoors, key: Hex, round: Omit<RoundToCheck, 'filedBy'>, read: ReadForTheRound): Promise<void> => {
+const checkedHere = async (doors: LegRaiseDoors, key: KeysHeld, round: Omit<RoundToCheck, 'filedBy'>, read: ReadForTheRound): Promise<void> => {
   try {
     await refuseWhatNoRoundMay(doors.records, doors.accountId, key, {
       ...round, filedBy: signingPublicKeyOf(doors.material.signingSecret as Hex),
@@ -128,7 +129,7 @@ const checkedHere = async (doors: LegRaiseDoors, key: Hex, round: Omit<RoundToCh
  * the policy, which is returned with it.
  */
 const approvalsItsBandNeeds = async (
-  doors: LegRaiseDoors, key: Hex, round: { vault: Hex; asset: AssetId; total: bigint; window: { opensAt: bigint; closesAt: bigint } },
+  doors: LegRaiseDoors, key: KeysHeld, round: { vault: Hex; asset: AssetId; total: bigint; window: { opensAt: bigint; closesAt: bigint } },
 ): Promise<{ readonly required: string; readonly policy: PolicyForARun }> => {
   const policy = await policyForARunHere({ records: doors.records, accountId: doors.accountId, viewingKey: key }, {
     vault: round.vault, asset: round.asset, total: round.total, ...round.window,
@@ -146,9 +147,9 @@ const approvalsItsBandNeeds = async (
  */
 export async function raiseLegHere(
   doors: LegRaiseDoors,
-  input: { runId: string; viewingKey: string; asset?: string; form?: LedgerForm; vault: string; opensAt: string; closesAt: string },
+  input: { runId: string; viewingKey: KeysHeld; asset?: string; form?: LedgerForm; vault: string; opensAt: string; closesAt: string },
 ): Promise<RoundOnThePage> {
-  const key = input.viewingKey as Hex;
+  const key = input.viewingKey;
   const { records, accountId, service } = doors;
   const registry = doors.assets ?? records.registry ?? theAssets;
   if (!DIGITS.test(input.opensAt) || !DIGITS.test(input.closesAt)) {
@@ -253,7 +254,7 @@ const roleOfThisSeat = async (doors: LegRaiseDoors): Promise<Role | undefined> =
  * run built again where it is proved and checked against the chain; and the
  * three filed and relayed in one request.
  */
-async function writtenProvedAndFiled(doors: LegRaiseDoors, key: Hex, r: {
+async function writtenProvedAndFiled(doors: LegRaiseDoors, key: KeysHeld, r: {
   readonly run: PayrollRun; readonly leg: RunLeg; readonly entries: ReadonlyArray<{ readonly e: Employee; readonly at: string }>;
   readonly root: Hex; readonly payees: bigint; readonly window: { readonly opensAt: bigint; readonly closesAt: bigint };
   readonly vault: Hex; readonly role: Role | undefined; readonly asset: AssetId; readonly summary: string;
@@ -268,6 +269,8 @@ async function writtenProvedAndFiled(doors: LegRaiseDoors, key: Hex, r: {
   readonly assetBlinding: string;
 }): Promise<RoundOnThePage> {
   const { accountId, service } = doors;
+  /* The key the run and its proposal are both sealed under: the one in force, refused while sealing is paused. */
+  const sealing = sealingWith(key, doors.filing.keyEpoch);
   doors.progress?.('writing-down');
   const entries: ShieldedEntry[] = r.entries.map(({ e, at }) => ({
     id: entryId(), kind: 'payroll', asset: e.asset, amount: e.amount, counterparty: e.name, memo: `${r.run.period} salary`,
@@ -289,9 +292,9 @@ async function writtenProvedAndFiled(doors: LegRaiseDoors, key: Hex, r: {
   const createdAt = (doors.now ?? (() => new Date()))().toISOString();
   const pays = { vault: r.vault, asset: r.asset, payments: paymentsOnTheWire(r.payments as ReadonlyArray<PaymentChecked<'shielded' | 'unshielded'>>) };
   const proposal = signProposalFiling(accountId, {
-    id: proposalId, digest, chainId, keyEpoch: doors.filing.keyEpoch, createdAt, pays: paysCommitmentOf(pays, salt),
+    id: proposalId, digest, chainId, keyEpoch: sealing.epoch, createdAt, pays: paysCommitmentOf(pays, salt),
     sealed: sealPayrollProposal({
-      accountId, viewingKey: key, vault: r.vault, summary: r.summary,
+      accountId, viewingKey: sealing.key, vault: r.vault, summary: r.summary,
       payload: {
         runId: r.run.id, form: formOfLeg(r.leg), entries, ...(r.retry === undefined ? {} : { retry: [...r.retry] }),
         /* The run's own window, beside what its identity is made from with it: read back only as that identity holds it. */
@@ -306,7 +309,7 @@ async function writtenProvedAndFiled(doors: LegRaiseDoors, key: Hex, r: {
       proposedBy: doors.filing.seat, ...(r.role === undefined ? {} : { proposerRole: r.role }),
     }),
   }, doors.material.signingSecret as Hex);
-  const runFiling = signRunFiling(accountId, sealedRunOf(r.raisedRun(proposalId), key, doors.filing.keyEpoch), doors.material.signingSecret as Hex);
+  const runFiling = signRunFiling(accountId, sealedRunOf(r.raisedRun(proposalId), sealing.key, sealing.epoch), doors.material.signingSecret as Hex);
   /* The account's own name for the asset, which is what the asset witness answers with. */
   const named = { assetId: assetIdBytes(r.asset) };
   const opened: OpenedRound = {
@@ -378,11 +381,11 @@ async function enteredAndAnchored(doors: LegRaiseDoors, round: RoundOnThePage, f
 export async function raiseRetryHere(
   doors: LegRaiseDoors,
   input: {
-    runId: string; viewingKey: string; asset?: string; form?: LedgerForm; indices: readonly number[];
+    runId: string; viewingKey: KeysHeld; asset?: string; form?: LedgerForm; indices: readonly number[];
     vault: string; opensAt: string; closesAt: string;
   },
 ): Promise<RoundOnThePage> {
-  const key = input.viewingKey as Hex;
+  const key = input.viewingKey;
   const { records, accountId, service } = doors;
   const registry = doors.assets ?? records.registry ?? theAssets;
   if (!DIGITS.test(input.opensAt) || !DIGITS.test(input.closesAt)) {

@@ -466,6 +466,28 @@ describe('A RECOVERY ON THE SIGNERS\' OWN DEVICES', () => {
     expect(PROPOSAL_FILE_FORMAT).toBe(file.format);
   });
 
+  it('AN APPROVED RECOVERY IS CARRIED OUT ONLY FROM ITS OWN FILE: THE FILE\'S CHANGE AND SALT ARE MADE INTO ITS IDENTITY AGAIN, AND ONE THAT MAKES ANOTHER PROPOSAL IS REFUSED BEFORE ANYTHING IS BUILT OR SENT', async () => {
+    const c = await aCompany();
+    const chain = aChain(c);
+    c.landed.push({ head: 'ee'.repeat(32), seatBar: seatBarOf(HELD.approvals, null), tag: tagInATest(C.secret), height: c.landed.length + 1, at: 0 });
+    const a = aDevice(c, chain, A);
+    const b = aDevice(c, chain, B);
+    await readTo(b);
+    const { file } = await raiseRecoveryHere(a.doors, { latest: LATEST });
+    await approveRecoveryHere(b.doors, file);
+    await approveRecoveryHere(a.doors, file);
+    const before = [...chain.sent];
+    for (const f of [{ ...file, salt: '00'.repeat(32) }, { ...file, change: { ...file.change, latest: String(Number(LATEST_SECONDS) + 1) } }]) {
+      /* RED WHEN: the carrying out does not make the file's identity again from its change and salt before building, so a file that names another proposal reaches the call builder. */
+      await expect(carryOutRecoveryHere(a.doors, f as ProposalFile)).rejects.toThrow(/make another proposal/u);
+      expect(chain.sent).toEqual(before);
+      expect(await a.kept.headers.at(COMPANY, 1)).toEqual([]);
+    }
+    /* And from its own file it is carried out. */
+    await carryOutRecoveryHere(a.doors, file);
+    expect(chain.sent.at(-1)).toBe('recoverAnchor');
+  });
+
   it('A CARRYING OUT ANOTHER ANCHOR BEATS WRITES NOTHING AND LEAVES THE RECOVERY OPEN; THE DEVICE SAYS SO, AND IT IS CARRIED OUT AGAIN', async () => {
     const c = await aCompany();
     const chain = aChain(c);

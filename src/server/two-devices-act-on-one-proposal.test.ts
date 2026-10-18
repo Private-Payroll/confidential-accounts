@@ -67,7 +67,7 @@ const { toHex, fromHex, newSigningKeypair } = await import('../core/crypto.js');
 const { pureCircuits } = await import('../../contracts/managed/contract/index.js');
 const { directorySeats } = await import('../testing/directory-seats.js');
 const { signedFoundingState } = await import('../core/founding-state.js');
-const { paysCommitmentOf } = await import('../core/proposal-filing.js');
+const { paysCommitmentOf, signProposalFiling } = await import('../core/proposal-filing.js');
 const { paymentChecked } = await import('../core/device-raise.js');
 const { runLegOf } = await import('../core/run-legs.js');
 const device = await import('vaults-web-shared/governed-call-on-device.js');
@@ -193,6 +193,12 @@ const seeded = await (async () => {
      * the runs and proposals as it stores them now.
      */
     const founder = newSigningKeypair();
+    /*
+     * The run's proposal as the founding seat's device filed it, signed by that seat over what it pays: who every device
+     * believes raised it.
+     */
+    const kept = { ...store.getProposal(proposal.id)!, pays: paysCommitmentOf({ vault: VAULT, asset: TEST_TOKEN, payments: recorded.map(paymentChecked) }, written.half.proposalSalt) };
+    store.putProposal({ ...kept, ...signProposalFiling(account, kept as never, founder.secret) });
     const state = signedFoundingState(account, { keyEpoch: 0, sealed: (await ledger.fetch(account, 0))!.sealedState }, founder.secret);
     const people = payroll.listPeople(account, viewingKey);
     const committee = { tag: 'schnorr', value: '7a'.repeat(32) };

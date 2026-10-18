@@ -204,6 +204,17 @@ describe('A ROSTER ENTRY\'S WALLET IS THE ONE ITS SEAT\'S OWN OPENING PROVES', (
     const before = (await served()).roster!.version;
     await adaFiles({ name: 'Acme', signers: [...HONEST.signers, entryOf(DEE), junk] });
     expect((await readOn(BO)).refused.map((r) => r.why)).toEqual(['no-entry-of-their-own']);
+    /* While the company's key is being changed, nobody is admitted: neither the key handed to them nor the roster is sealed. */
+    const { CompanyKeyBeingChanged } = await import('vaults-web-shared/company-key-here.js');
+    const paused = {
+      epoch: 0, key: KEY, newest: 0, keyAt: (): Hex => KEY,
+      sealing: () => { throw new CompanyKeyBeingChanged('the company\'s key is being changed'); },
+    };
+    const waitingBefore = store.getAccount(CO)!.pendingSigners.length;
+    /* RED WHEN: an admission seals the roster, or wraps the company's key to the person, without asking whether sealing is paused. */
+    await expect(admitSignerHere({ ...doorsOf(ADA), viewingKey: paused }, { signerId: 'sgn_cy', readOut: seatRequestFingerprint(theirs) }))
+      .rejects.toThrow(CompanyKeyBeingChanged);
+    expect([store.newestRoster(CO)!.version, store.getAccount(CO)!.pendingSigners.length]).toEqual([before + 1, waitingBefore]);
     /* RED WHEN: an entry this device does not believe holds the keys of the person waiting, so they can never be admitted. */
     await admitSignerHere(doorsOf(ADA), { signerId: 'sgn_cy', readOut: seatRequestFingerprint(theirs) });
     const filed = store.newestRoster(CO)!;
@@ -220,9 +231,9 @@ describe('A ROSTER ENTRY\'S WALLET IS THE ONE ITS SEAT\'S OWN OPENING PROVES', (
 
   it('A SECOND ENTRY FOR A SEAT ALREADY NAMED IS REFUSED, WHICHEVER COMES FIRST, AND THE NEXT FILING DROPS IT', async () => {
     onChain(ADA, BO, DEE, CY);
-    /* Ada's seat files a second entry at Dee's leaf, under her filing key, ahead of hers: on its own it passes every check an entry has. */
-    const twin: Signer = { ...entryOf(DEE, 'sgn_twin'), name: 'twin', userId: 'twin', vaultKeys: null };
-    await adaFiles({ name: 'Acme', signers: [entryOf(ADA), entryOf(BO), twin, entryOf(DEE), entryOf(CY)] });
+    /* Ada's seat files a second entry at Dee's leaf, for the same person and under her filing key, after hers: on its own it passes every check an entry has. */
+    const twin: Signer = { ...entryOf(DEE, 'sgn_twin'), name: 'twin', userId: DEE.person, vaultKeys: null };
+    await adaFiles({ name: 'Acme', signers: [entryOf(ADA), entryOf(BO), entryOf(DEE), twin, entryOf(CY)] });
     const read = await readOn(BO);
     /* RED WHEN: one seat is believed under two entries, or the one its own directory entry names is the one refused. */
     expect(read.refused).toEqual([{ signerId: 'sgn_twin', name: 'twin', why: 'seat-named-twice' }]);

@@ -25,7 +25,8 @@ import { beforeAll, expect } from 'vitest';
 import type express from 'express';
 import { identityFromSecret } from 'midnight-identity';
 import { signRecordsKey } from 'midnight-identity/profile/records-key';
-import { newBlinding, sign, toHex, type Hex } from '../core/crypto.js';
+import type { SealedAnswer } from '../core/answer-opened.js';
+import { newBlinding, sign, signingPublicKeyOf, toHex, type Hex } from '../core/crypto.js';
 import { openAccount, sealAccount } from '../core/account.js';
 import { signVaultKeys } from '../core/vault-keys.js';
 import { approverRosterFrom } from '../core/vault-approvers.js';
@@ -55,7 +56,7 @@ import {
   anchorServiceFor, anchorTheRecordsHere, directoryChangeFiledHere, recordsHeldHere, type AnchorDoors,
 } from 'vaults-web-shared/records-anchored-here.js';
 import { attestedIn, directoryHere, directoryWithItsRecordsHere, leaversStatementIn, type DirectoryHere } from 'vaults-web-shared/vault-page-doors.js';
-import { foldOffersHere, offerVaultKeysHere, rosterHere, type RosterDoors } from 'vaults-web-shared/roster-here.js';
+import { foldOffersHere, offerVaultKeysHere, rosterHere, seatsAdmittedHere, type RosterDoors } from 'vaults-web-shared/roster-here.js';
 import { treeKeptInMemory } from 'vaults-web-shared/tree-kept-here.js';
 import { governedCallServiceFor, type RemovalDoors } from 'vaults-web-shared/governed-call-on-device.js';
 import type { GovernedCallOrder } from 'vaults-web-shared/governed-call-builder.js';
@@ -86,6 +87,10 @@ const closedWith = new Map<string, string>();
  * removing <leaf>`).
  */
 export const events: string[] = [];
+
+/** What the anchor stand-in is handed for each anchor a device sends: the stand-in builder's output, not a proven transaction. The service never sees these in this test world, so a check of what a device sends reads them here. */
+export const sentToTheChain: string[] = [];
+
 /** The committee key the chain seats each new leaf with, as the joining wallet gives it. */
 export const committeeKeyOfLeaf = new Map<string, CommitteeKey>();
 
@@ -108,7 +113,12 @@ const status = async (accountId: string): Promise<LedgerStatus | null> => {
   } as unknown as LedgerStatus;
 };
 
-/** The one door a device's proven call reaches the chain through: what each call does to the account, as its circuit does. */
+/**
+ * The one door a device's governed call reaches the chain through. It keeps only the open proposals, their approvals and
+ * the seats and bars, and applies a call's effect on those. It runs none of the contract's circuits, so it leaves out
+ * the count of removals a proposal was raised under, the vacant slot a removal leaves in the signers' tree (the list of
+ * seats just shortens), and the circuit's limits on a new threshold and its effect on the policy bar.
+ */
 const submitProvenCall = async (_accountId: string, bytes: Uint8Array, circuit: string) => {
   const { signer, order } = JSON.parse(Buffer.from(bytes).toString('utf8')) as { signer: string; order: GovernedCallOrder };
   if (order.circuit !== circuit) throw new Error(`the door was told ${circuit} and handed ${order.circuit}`);
@@ -142,6 +152,13 @@ const submitProvenCall = async (_accountId: string, bytes: Uint8Array, circuit: 
     }
     open.delete(proposal);
     closedWith.set(proposal, 'amendSigner');
+  } else if (order.circuit === 'setThreshold') {
+    const o = open.get(proposal);
+    if (o === undefined) throw new Error('there is no open proposal with that id');
+    if (o.approvedBy.size < h.approvals) throw new Error('not enough approvals');
+    chains.set(CO, { ...h, approvals: Number(order.threshold), seatBar: Math.max(h.seatBar, Number(order.threshold)) });
+    open.delete(proposal);
+    closedWith.set(proposal, 'setThreshold');
   } else if (order.circuit === 'cancel') {
     open.delete(proposal);
     closedWith.set(proposal, 'cancel');
@@ -212,6 +229,7 @@ export const anchorDoorsOf = (s: Pick<Seat, 'person' | 'signingSecret' | 'entere
   service: {
     callState: async () => ({ account: ADDRESS, accountState: acmeChain.head(), parameters: '', blockHash: 'b' }) as never,
     sendProven: async (_c, tx) => {
+      sentToTheChain.push(tx);
       const { previous, batch, held, tag } = JSON.parse(tx) as { previous: Hex; batch: Hex; held: { approvals: number; signerRoot: Hex }; tag: Hex };
       acmeChain.move(previous, batch, held, tag);
       events.push('anchored');
@@ -225,12 +243,40 @@ export const anchorDoorsOf = (s: Pick<Seat, 'person' | 'signingSecret' | 'entere
 /** Every batch of the company's records `s`'s device reads, judged from the company's first header: where the check stopped, if it did. */
 export const recordsReadBy = (s: Pick<Seat, 'person' | 'signingSecret' | 'entered'>, asked: RecordsAsked) => recordsHeldHere(anchorDoorsOf(s), asked);
 
-/** The device of a seat - a removal's and a seating's doors - with what it keeps across opens. */
-export const deviceOf = (s: Pick<Seat, 'person' | 'signingSecret' | 'entered' | 'seat'>): RemovalDoors => {
+/**
+ * What `s`'s device changes the company's key through: the key its wallet released for the company, its served copy of
+ * the company's first key, the directory's filings as the service serves them, the seat requests waiting, the seats the
+ * roster admitted, and its filing of the change.
+ */
+export const companyKeyDoorsOf = (
+  s: Pick<Seat, 'person' | 'signingSecret' | 'entered' | 'n' | 'seat'>, anchor: AnchorDoors = anchorDoorsOf(s),
+): NonNullable<RemovalDoors['companyKey']> => ({
+  filings: async () => store.directoryFilingsOf(CO),
+  served: async () => KEY,
+  released: () => walletOf(s).companyKey,
+  askTheWallet: async () => walletOf(s).companyKey,
+  /* Every seat request the service holds, sealed to the company's inbox, and the seats the roster this device believes admitted. */
+  waiting: async () => (store.getAccount(CO)?.pendingSigners ?? []).map((p) => p.sealed as SealedAnswer),
+  admitted: async () => {
+    const d = rosterDoorsOf(s);
+    return seatsAdmittedHere(await d.api(`/api/accounts/${CO}`), d.viewingKey, {
+      accountId: CO, label: LABEL, account: ADDRESS, reads: d.reads, own: { signingPublicKey: signingPublicKeyOf(s.signingSecret as Hex) },
+      proposals: async () => d.api(`/api/accounts/${CO}/proposals`),
+    });
+  },
+  file: (change, signedFor) => directoryChangeFiledHere(anchor, change, signedFor),
+});
+
+/**
+ * The device of a seat - a removal's and a seating's doors - with what it keeps across opens. With `changesTheKey`,
+ * its wallet has released the company's key in this tab, and a removal it finishes changes the company's key.
+ */
+export const deviceOf = (s: Pick<Seat, 'person' | 'signingSecret' | 'entered' | 'seat' | 'n'>, o: { changesTheKey?: boolean } = {}): RemovalDoors => {
   const kept = treeKeptInMemory();
   const signatures = new Map<string, RetirementSignature[]>();
   const anchor = anchorDoorsOf(s, kept);
   return {
+    ...(o.changesTheKey === true ? { companyKey: companyKeyDoorsOf(s, anchor) } : {}),
     service: { ...governedCallServiceFor(api(s.person)), callState: async () => ({ account: ADDRESS, blockHash: 'b', accountState: 'AS', parameters: 'PP' }) as never },
     builder: {
       governedCall: async ({ order, opened }) => {
@@ -342,7 +388,7 @@ const TERMS = {
 /** What the account's map of roles holds for the vault's policy, by key: its marker and its commitment. */
 const policyOnChain = new Map<string, string>();
 /** The secret a seat's device opens what is sealed to its records key with, from what its wallet released for the company. */
-const recordsSecretOf = (s: { n: number }): Hex => toHex(hkdf(sha256, new Uint8Array(32).fill(s.n + 100),
+export const recordsSecretOf = (s: { n: number }): Hex => toHex(hkdf(sha256, new Uint8Array(32).fill(s.n + 100),
   new TextEncoder().encode('confidential-accounts/company-records-wrapping/v1'), new Uint8Array(0), 32)) as Hex;
 /** The contract's own keys for the vault's policy and the commitment `opening` makes, with the account's blinding from its signed state. */
 const policyKeys = async (records: CompanyRecordsHere, opening?: { terms: typeof TERMS; blinding: string }) => spendingPolicyKeysOf(
@@ -383,8 +429,9 @@ export const aPolicyFiledBy = async (by: Seat, to: readonly Seat[]): Promise<num
   return version;
 };
 /** The vault's policy as `s`'s device reads it, with its own seat's records key (`spendingPolicyHere`). */
-export const policyReadBy = (s: Pick<Seat, 'person' | 'signingSecret' | 'entered' | 'seat' | 'n'>) =>
-  spendingPolicyHere({ records: policyRecordsOf(s), accountId: CO, viewingKey: KEY }, { vault: VAULT, asset: TEST_TOKEN });
+export const policyReadBy = (
+  s: Pick<Seat, 'person' | 'signingSecret' | 'entered' | 'seat' | 'n'>, viewingKey: Parameters<typeof spendingPolicyHere>[0]['viewingKey'] = KEY,
+) => spendingPolicyHere({ records: policyRecordsOf(s), accountId: CO, viewingKey }, { vault: VAULT, asset: TEST_TOKEN });
 
 /** The company as the service holds it now, opened with the viewing key. */
 export const companyNow = (): ReturnType<typeof openAccount> => openAccount(store.getAccount(CO) as SealedAccount, KEY, store.newestRoster(CO) as never);

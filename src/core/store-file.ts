@@ -93,9 +93,9 @@ export class FileStore extends MemoryStore {
    * whole product.
    *
    * `rename` within a directory is atomic on every filesystem this runs on: the
-   * old file is complete until the instant the new one replaces it. That is
-   * also what makes `commitRotation`'s claim of being "as atomic as the
-   * filesystem allows" true, which it had not been since it was written.
+   * old file is complete until the instant the new one replaces it, so a call
+   * that writes several records and flushes once, such as
+   * `putRaisedRunAndProposal`, lands all of them or none.
    *
    * **And a failed write must not leave the process serving a change it
    * reported as failed.** The mutation has already happened in memory by the

@@ -28,7 +28,7 @@ import { directoryHere, directoryJudge, foundingSeatHere, namedHere, type Direct
 import { anchorFunctions, anchorSentInATest } from '../testing/record-tree-double.js';
 import { companyRecordKey } from '../midnight/seat-directory.js';
 import {
-  aCompanyOfTwoSeats, acmeChain, acmeDirectoryDeps, acmeDirectoryWithItsFold, ADA, ADDRESS, BO, apiAs, aRecordFiledBy, CO, heldByMoreThanOneKey, KEY,
+  aCompanyOfTwoSeats, acmeChain, acmeClock, acmeDirectoryDeps, acmeDirectoryWithItsFold, ADA, ADDRESS, BO, apiAs, aRecordFiledBy, CO, heldByMoreThanOneKey, KEY,
   peopleRecords, store, type Seat,
 } from './a-company-of-two-seats.test-support.js';
 
@@ -461,6 +461,34 @@ describe('A DEVICE NEW TO THE COMPANY STARTS FROM THE NEWEST HEAD A PAYROLL RUN\
     expect(read.records.checkedFrom).toEqual({ by: 'latest', seq: latest - 1, head: acmeChain.landed[latest - 1]!.head });
     expect(await kept.read(CO)).toMatchObject({ base: latest - 1, heads: [acmeChain.landed[latest - 1]!.head, acmeChain.head()] });
     expect(read.records.reached.head).toBe(acmeChain.head());
+  });
+
+  it('A DEVICE THAT STARTED PAST AN OLDER HEAD ANSWERS NONE FOR IT: THE NEWEST HEAD LANDED BY A TIME IS ONE IT CHECKED, OR OLDER THAN WHERE IT STARTED', async () => {
+    const was = acmeClock.now;
+    const HOUR = 60 * 60 * 1000;
+    /* A clock past every batch anchored before: four batches, an hour of block time apart. */
+    const X = Date.now() + 40 * 24 * HOUR;
+    try {
+      for (const [i, t] of [X, X + HOUR, X + 2 * HOUR, X + 3 * HOUR].entries()) {
+        await ADA.entered.enter([await aRecordFiledBy(ADA, `pol_landed_from_s${i}`)]);
+        acmeClock.now = () => t;
+        await anchorTheRecordsHere(doorsOf(ADA));
+      }
+      const read = await recordsHeldHere(doorsOf(ADA, treeServiceFor(apiAs('ada')), checkedHeadsInMemory()), {});
+      /*
+       * Held by one key, a device new to the company starts at the header before the latest, the batch landed at X plus
+       * two hours, and checks from there; the batch landed at X plus an hour is older than where it started, and not
+       * among the heads it checked.
+       */
+      expect(read.records.checkedFrom?.by).toBe('latest');
+      const start = read.records.seqOfHead?.(read.records.checkedFrom!.head);
+      expect(typeof start).toBe('number');
+      expect(read.records.seqOfHead?.(acmeChain.landed.at(-3)!.head)).toBeNull();
+      /* RED WHEN: a head older than where this device started is answered as one it did not check, so every honest raise over a newer head is refused. */
+      expect([read.records.newestLandedBy?.(X + HOUR + HOUR / 2), read.records.newestLandedBy?.(X + 2 * HOUR)]).toEqual(['none', { seq: start }]);
+    } finally {
+      acmeClock.now = was;
+    }
   });
 
   it('A DEVICE THAT STARTED PAST THE FIRST HEADER FINDS IT AMONG EVERY ANCHOR OF THE ACCOUNT\'S FIRST BLOCK, WHOSE HISTORY SHOWS ONLY THE LAST', async () => {

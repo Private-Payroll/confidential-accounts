@@ -14,10 +14,13 @@
  * A database this browser will not open keeps nothing: every read then checks
  * from the company's first header, which costs time and believes nothing it
  * should not.
+ *
+ * Replays of a company's directory are kept too, in this page's memory only and
+ * never in the database (`directoryReplaysInMemory`).
  */
 import type { Hex } from '../../../src/core/crypto.js';
 import { manifestEntryRefusal, type ManifestEntry } from '../../../src/midnight/record-manifest.js';
-import type { SignedChange } from '../../../src/midnight/seat-directory.js';
+import type { DirectoryReplayKept, SignedChange } from '../../../src/midnight/seat-directory.js';
 import {
   leafHashOf, treeHeaderReadable, treeLeafRefusal, ZERO, type CheckedHead, type TreeHeader, type TreeLeaf,
 } from '../../../src/midnight/record-tree.js';
@@ -100,7 +103,8 @@ export interface HeadersKeptStore {
  * quorum's role or retirement - by the version its signatures were made
  * for: kept from before it is first filed until a version carrying it is
  * anchored, so a change the service passes over, or no longer serves, is filed
- * again by this device rather than lost.
+ * again by this device rather than lost. A change of the company's key is
+ * never kept, and none is read back.
  */
 export interface KeptDirectoryChange {
   readonly signedAt: number;
@@ -117,7 +121,10 @@ export interface DirectoryChangesKeptStore {
   letGo(company: string, signedAt: number): Promise<void>;
 }
 
-/** A kept change as read back: believed in its shape only, and judged like any filing when it is filed again. */
+/**
+ * A kept change as read back: believed in its shape only, and judged like any filing when it is filed again. Only a
+ * quorum's role or retirement is read back: a change of the company's key is never kept or filed again.
+ */
 const keptChangeOf = (x: unknown): KeptDirectoryChange | null => {
   const k = x as Partial<KeptDirectoryChange> | null;
   return k !== null && typeof k === 'object' && Number.isSafeInteger(k.signedAt) && (k.signedAt as number) >= 1
@@ -358,4 +365,54 @@ export const keptWith = (header: TreeHeader, entries: (id: Hex) => ManifestEntry
     }
   }
   return { header, entries: named, leaves: [...leaves.values()] };
+};
+
+/**
+ * **A REPLAY OF A COMPANY'S DIRECTORY KEPT IN MEMORY**, under what it was replayed
+ * from: `judged`, a digest of the judge's inputs (the company, its label and
+ * account, its founding seat and every key this device opened entries with);
+ * and `marks`, one per version replayed, naming that filing's digest, who held
+ * the account as it was judged, and the leaf this device worked out for an
+ * entry's opening. A replay that differs in any of them is never answered
+ * from it.
+ */
+export interface KeptReplay {
+  readonly judged: string;
+  readonly marks: readonly string[];
+  readonly state: DirectoryReplayKept;
+}
+
+/** Where a page keeps replays of each company's directory, a few per company, the most recently used first. */
+export interface DirectoryReplaysKept {
+  /** The kept replay going furthest whose `judged` is this one and whose marks begin `marks`, or null. */
+  longest(company: string, judged: string, marks: readonly string[]): KeptReplay | null;
+  /** Keeps a replay, in place of one kept under the same judge's inputs and marks. */
+  keep(company: string, kept: KeptReplay): void;
+}
+
+/** How many replays a page keeps of one company's directory: each reader of it, before and after its records are read. */
+const REPLAYS_KEPT = 4;
+
+/**
+ * **REPLAYS OF EACH COMPANY'S DIRECTORY KEPT IN THIS PAGE'S MEMORY**, never on
+ * disk: a page loaded again replays the whole directory once. At most
+ * `REPLAYS_KEPT` per company; the one used least recently goes first.
+ */
+export const directoryReplaysInMemory = (): DirectoryReplaysKept => {
+  const kept = new Map<string, KeptReplay[]>();
+  const begins = (marks: readonly string[], k: KeptReplay): boolean =>
+    k.marks.length <= marks.length && k.marks.every((m, i) => m === marks[i]);
+  return {
+    longest: (company, judged, marks) => {
+      const all = kept.get(company) ?? [];
+      let best: KeptReplay | null = null;
+      for (const k of all) if (k.judged === judged && begins(marks, k) && (best === null || k.marks.length > best.marks.length)) best = k;
+      if (best !== null) kept.set(company, [best, ...all.filter((k) => k !== best)]);
+      return best;
+    },
+    keep: (company, k) => {
+      const others = (kept.get(company) ?? []).filter((x) => x.judged !== k.judged || x.marks.length !== k.marks.length || !begins(k.marks, x));
+      kept.set(company, [k, ...others].slice(0, REPLAYS_KEPT));
+    },
+  };
 };

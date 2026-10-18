@@ -6,13 +6,13 @@ import type { Hex } from '../../../../src/core/crypto.js';
 import { SealedNotePool } from '../../../../src/midnight/vault-pool.js';
 import { deviceVaultHoldings } from 'vaults-web-shared/device-vault-holdings.js';
 import { fileThePoolTheChainHolds } from 'vaults-web-shared/deposit-on-device.js';
-import { api, companyKeyReleasedFor, currentUser, viewingKeyFor } from 'vaults-web-shared/keyring.js';
+import { api, companyKeyReleasedFor, currentUser } from 'vaults-web-shared/keyring.js';
 import { deviceRecordsFor, deviceSignerFrom, readersIn } from 'vaults-web-shared/vault-page-doors.js';
 import { wireOf } from 'vaults-web-shared/vault-operation.js';
 import { Fault, FAULT } from '../faults.js';
 import { companyRoute } from './handover-state.js';
 import { keyringFor, keysOnTheWayIn } from './keyring-person.js';
-import { directoryHereFor, filingJudgeFor, openedHere, walletIndexerFor } from './filing-judge.js';
+import { companyKeysFor, directoryHereFor, filingJudgeFor, openedHere, walletIndexerFor } from './filing-judge.js';
 import type { AccountAddress, CompanyLabel } from 'midnight-identity/profile/company-label';
 import { theVaultBuilder } from './vault-builder.js';
 
@@ -77,7 +77,7 @@ export async function readVaultPrivateMoney(
     const seat = await builder.ownSeat({ signingSecret: me.signingSecret, blinding: me.blinding, ...(scope === undefined ? {} : { scope }) });
     const mine = deviceSignerFrom(seat, companyKey);
     /* Believed only when a seat the directory names filed it, checked against a fresh read by this person's own wallet. */
-    const viewingKey = viewingKeyFor(sealed);
+    const viewingKey = await companyKeysFor(companyId, sealed, me);
     const judge = filingJudgeFor(companyId, label as CompanyLabel, address as AccountAddress, viewingKey, async () => account);
     const readers = readersIn(directoryHereFor(companyId, label as CompanyLabel, address as AccountAddress, viewingKey, async () => account));
     const records = deviceRecordsFor(me.signingSecret, judge, () => currentUser()?.id ?? null, recordsEnteredOver(api, companyId, me.signingSecret));

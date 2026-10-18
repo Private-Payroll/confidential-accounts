@@ -677,8 +677,8 @@ describe('a leg is raised only with its payments in its people\'s order', () => 
   });
 });
 
-describe('the payslip index follows a rotation written after it was built', () => {
-  it('A ROTATION THAT MOVES A SLIP\'S KEY AND THE COMPANY\'S ADDRESS IS FOLLOWED BY BOTH LOOKUPS', async () => {
+describe('the payslip index follows a run and an account written again after it was built', () => {
+  it('A SLIP WRITTEN AGAIN TO ANOTHER KEY AND THE COMPANY WRITTEN AGAIN AT ANOTHER ADDRESS ARE FOLLOWED BY BOTH LOOKUPS', async () => {
     const h = harness();
     const c = await company(h);
     const dana = hire(h, c, 'Dana');
@@ -687,23 +687,15 @@ describe('the payslip index follows a rotation written after it was built', () =
     expect(h.payroll.payslipsFor(dana.keys.publicKey)).toHaveLength(1);
     expect(h.payroll.payslipAddressesOf(c.label)).toEqual([{ label: c.label, account: c.address }]);
 
-    /* A real rotation of the company's key, which leaves every slip where it was. */
-    await h.accounts.rotate(c.accountId, c.viewingKey);
-    expect(h.payroll.payslipsFor(dana.keys.publicKey)).toHaveLength(1);
-
-    /* A rotation that writes the slip to another key and the company at another address. */
+    /* The slip written again to another key, and the company at another address. */
     const renewed = payslipKeypairForWallet(newWords(), c.label, ORIGIN);
     const moved = 'cd'.repeat(32);
     const stored = h.store.getRun(run.id)!;
-    h.store.commitRotation({
-      account: { ...h.accounts.require(c.accountId), contractAddress: moved },
-      employees: [],
-      runs: [{ ...stored, payslips: stored.payslips.map(p => ({ ...p, sealedTo: renewed.publicKey })) }],
-      proposals: [],
-    });
+    h.store.putAccount({ ...h.accounts.require(c.accountId), contractAddress: moved });
+    h.store.putRun({ ...stored, payslips: stored.payslips.map(p => ({ ...p, sealedTo: renewed.publicKey })) });
     /*
-     * RED WHEN the rotation's writes are not applied to the index: the old key
-     * goes on finding the slip, and the company's account now is not known.
+     * RED WHEN the writes are not applied to the index: the old key goes on
+     * finding the slip, and the company's account now is not known.
      */
     expect(h.payroll.payslipsFor(dana.keys.publicKey)).toEqual([]);
     expect(h.payroll.payslipsFor(renewed.publicKey)).toHaveLength(1);

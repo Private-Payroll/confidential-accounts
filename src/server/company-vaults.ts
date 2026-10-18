@@ -169,9 +169,9 @@ export interface CompanyVaultDeps {
     /** Every contract's kept signatures for one company. */
     listCommitteeSignatures(accountId: string): CollectedCommitteeSignatures[];
   };
-  /** The company's account contract address, its approval threshold and every vault's own, as the chain holds them. */
+  /** The company's account contract address, its approval threshold, how many seats it holds and every vault's own, as the chain holds them. */
   readonly company: (accountId: string) => Promise<{
-    address: Hex; threshold: number; vaultThresholds: ReadonlyArray<{ vault: Hex; threshold: number }>;
+    address: Hex; threshold: number; seats: number; vaultThresholds: ReadonlyArray<{ vault: Hex; threshold: number }>;
   } | null>;
   readonly ledger: Pick<Ledger, 'sendVault'>;
   readonly chain: VaultChain;
@@ -440,9 +440,9 @@ export function companyVaultRoutes(deps: CompanyVaultDeps): express.Router {
    */
   r.get('/api/accounts/:id/vault-keys', ...guard, async (req, res) => {
     const account = accountOf(req);
-    const { committee, why } = await accountCommittee(account);
+    const { company, committee, why } = await accountCommittee(account);
     const index = deps.store.getVaultKeyIndex(account.id);
-    const readers = index !== null && index.signerCount === account.signerCount ? [...index.readers] : [];
+    const readers = index !== null && company !== null && index.signerCount === company.seats ? [...index.readers] : [];
     res.json({ committee, why, readers });
   });
 

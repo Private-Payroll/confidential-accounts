@@ -4,7 +4,7 @@
  *
  * Nothing in this file asks the company's service for anything but its sealed
  * records. Each answer is worked out on this device from the records it opened
- * with the viewing key it holds:
+ * with the company's keys it holds, each record under the key of its own epoch:
  *
  *   the legs of a run    one per token and form, each with who is on it, its
  *                        total and the proposal it was raised as;
@@ -25,9 +25,10 @@
  * What is built from these is checked again where the call is built
  * (`refuseWhatThisDeviceDidNotOpen`).
  */
+import { keyOf, type KeysHeld } from '../../../src/core/company-key.js';
 import type { AssetRegistry, LedgerForm } from '../../../src/core/assets.js';
 import { assetIdBytes, symbolOf } from '../../../src/core/assets.js';
-import { parseCanonical, unseal, type Hex, type Sealed } from '../../../src/core/crypto.js';
+import { parseCanonical, unseal, type Sealed } from '../../../src/core/crypto.js';
 import { openRecord } from '../../../src/core/sealed-records.js';
 import type { StateChange } from '../../../src/core/ledger.js';
 import type { PayrollRun, RunLeg, SealedProposal } from '../../../src/core/types.js';
@@ -85,14 +86,15 @@ const proposalsOf = async (records: CompanyRecordsHere): Promise<readonly Sealed
   return proposalsListedHere({ ...records, proposals: records.proposals });
 };
 
-/** One of the company's proposals, opened here with the viewing key. */
-const openedProposal = (rec: SealedProposal, accountId: string, viewingKey: Hex): ProposalHere => {
+/** One of the company's proposals, opened here with the company's key of the epoch it was sealed at. */
+const openedProposal = (rec: SealedProposal, accountId: string, viewingKey: KeysHeld): ProposalHere => {
   if (rec.accountId !== accountId) throw new NotMadeHere('A proposal this run names belongs to another company.');
   let envelope: { kind: string; raisedAt?: string; sealedPayload: Sealed };
   let change: StateChange | undefined;
   try {
-    envelope = openRecord('proposals', rec.accountId, rec.sealed, viewingKey);
-    change = parseCanonical<{ __change?: StateChange }>(unseal(envelope.sealedPayload, viewingKey)).__change;
+    const key = keyOf(viewingKey, rec.keyEpoch);
+    envelope = openRecord('proposals', rec.accountId, rec.sealed, key);
+    change = parseCanonical<{ __change?: StateChange }>(unseal(envelope.sealedPayload, key)).__change;
   } catch {
     throw new NotMadeHere('This device cannot read the company\'s record of a proposal this run names. Reload the page and '
       + 'try again.');
@@ -109,7 +111,7 @@ const openedProposal = (rec: SealedProposal, accountId: string, viewingKey: Hex)
 };
 
 /** The legs of a run, side by side, each with its token, form, symbol, people, total and proposal. */
-export async function legsHere(records: CompanyRecordsHere, accountId: string, runId: string, viewingKey: Hex): Promise<LegHere[]> {
+export async function legsHere(records: CompanyRecordsHere, accountId: string, runId: string, viewingKey: KeysHeld): Promise<LegHere[]> {
   const run = await openedRunHere(records, accountId, runId, viewingKey);
   return legsOfRun(run).map((leg) => {
     const people = legEmployees(run, leg);
@@ -132,7 +134,7 @@ export async function legsHere(records: CompanyRecordsHere, accountId: string, r
  * (`proposalsListedHere`, `payrollRoundsHere`), judged by this device's clock.
  */
 const raisedFromItsRecord = (
-  run: PayrollRun, leg: RunLeg, proposals: readonly SealedProposal[], accountId: string, viewingKey: Hex,
+  run: PayrollRun, leg: RunLeg, proposals: readonly SealedProposal[], accountId: string, viewingKey: KeysHeld,
   identity: RoundIdentity,
 ): boolean => {
   if (run.payout?.[leg] === undefined) return false;
@@ -153,7 +155,7 @@ const raisedFromItsRecord = (
  * from the people it believes and would pay.
  */
 export async function legPaymentsHere(
-  records: CompanyRecordsHere, accountId: string, runId: string, viewingKey: Hex, which?: LegNamed,
+  records: CompanyRecordsHere, accountId: string, runId: string, viewingKey: KeysHeld, which?: LegNamed,
 ): Promise<LegPaymentsOnTheWire> {
   const run = await openedRunHere(records, accountId, runId, viewingKey);
   const leg = legOf(run, legChoiceOf(which ?? {}), registryOf(records));
@@ -172,7 +174,7 @@ export async function legPaymentsHere(
  * leg's recorded payment of each person it names, in the order it names them.
  */
 export async function retryPaymentsHere(
-  records: CompanyRecordsHere, accountId: string, runId: string, viewingKey: Hex, indices: readonly number[], which?: LegNamed,
+  records: CompanyRecordsHere, accountId: string, runId: string, viewingKey: KeysHeld, indices: readonly number[], which?: LegNamed,
 ): Promise<LegPaymentsOnTheWire> {
   const run = await openedRunHere(records, accountId, runId, viewingKey);
   const leg = legOf(run, legChoiceOf(which ?? {}), registryOf(records));
@@ -196,7 +198,7 @@ export async function retryPaymentsHere(
 }
 
 /** The account's half of a raise: the change sealed in the proposal, and the asset blinding of the state its founding seat signed. */
-const halfOf = async (records: CompanyRecordsHere, accountId: string, viewingKey: Hex, p: ProposalHere) => {
+const halfOf = async (records: CompanyRecordsHere, accountId: string, viewingKey: KeysHeld, p: ProposalHere) => {
   const state = await signedStateHere(records, accountId, viewingKey);
   /* The account's own name for the asset, which is what the asset witness answers with. */
   const named = { assetId: assetIdBytes(p.change.asset) };
@@ -228,7 +230,7 @@ const writtenDownPays = (rec: SealedProposal): string => {
  * account's half of the call.
  */
 export async function raiseOrderHere(
-  records: CompanyRecordsHere, accountId: string, runId: string, viewingKey: Hex, which?: LegNamed,
+  records: CompanyRecordsHere, accountId: string, runId: string, viewingKey: KeysHeld, which?: LegNamed,
 ): Promise<RaiseOrderOnTheWire> {
   const run = await openedRunHere(records, accountId, runId, viewingKey);
   const leg = raisedLegOf(run, legChoiceOf(which ?? {}), registryOf(records));
@@ -262,7 +264,7 @@ export async function raiseOrderHere(
  * in the leg.
  */
 export async function retryOrderHere(
-  records: CompanyRecordsHere, accountId: string, runId: string, viewingKey: Hex, proposalId: string, which?: LegNamed,
+  records: CompanyRecordsHere, accountId: string, runId: string, viewingKey: KeysHeld, proposalId: string, which?: LegNamed,
 ): Promise<RetryOrderOnTheWire> {
   const run = await openedRunHere(records, accountId, runId, viewingKey);
   const leg = raisedLegOf(run, legChoiceOf(which ?? {}), registryOf(records));

@@ -2,14 +2,16 @@ import type { SealedAccount } from '../../../../src/core/types.js';
 import type { Hex } from '../../../../src/core/crypto.js';
 import {
   api, canOpenCompanies, currentUser, directoryEntryOwed, finishPendingSeat, forgetLocally, keysFor, pendingSeatsFor, reopenSavedKeys, resumeSession,
-  viewingKeyFor, type AccountKeys,
+  type AccountKeys,
 } from 'vaults-web-shared/keyring.js';
 import { fileTheOwedDirectoryEntry } from 'vaults-web-shared/vault-page-doors.js';
 import { fileTheRosterFollowedHere } from 'vaults-web-shared/roster-here.js';
 import { recordsEnteredOver } from 'vaults-web-shared/record-entered-here.js';
 import { sealPoliciesToNewSignersHere, type PolicyResealDoors } from 'vaults-web-shared/spending-policy-here.js';
+import { rotateTheCompanyKeyHere } from 'vaults-web-shared/company-key-here.js';
 import type { AccountAddress, CompanyLabel } from 'midnight-identity/profile/company-label';
-import { rosterReadsFor } from './filing-judge.js';
+import { companyKeysFor, rosterReadsFor, rotationDoorsFor } from './filing-judge.js';
+import type { CompanyKeys } from '../../../../src/core/company-key.js';
 import { readSignIn } from './kept-sign-in.js';
 import { tabStorage } from './kept-skips.js';
 
@@ -45,7 +47,9 @@ export async function keyringFor(personId: string): Promise<boolean> {
  * nothing is written. A directory entry this person's wallet signed and the
  * directory did not take yet is filed again (`fileTheOwedDirectoryEntry`),
  * sealed with the company's key once this device can open it; a refusal
- * leaves it owed and stops nothing. Where this device holds keys, a roster
+ * leaves it owed and stops nothing. Where this device holds keys, the
+ * company's key is changed from here when a signer's removal is carried out
+ * and no change of the key has followed it (`rotateOnTheWayIn`), a roster
  * version every device refuses is followed from here
  * (`followTheRosterOnTheWayIn`), and every spending policy in force is sealed
  * to the signers seated since it was set (`sealPoliciesOnTheWayIn`), where the
@@ -61,10 +65,27 @@ export async function keysOnTheWayIn(
   const owed = directoryEntryOwed(companyId);
   if (owed.read() !== null) await fileTheOwedDirectoryEntry(api, companyId, owed, ownKeysFor(companyId, sealed), foundingSeatFor(companyId, sealed));
   const keys = keysFor(companyId);
+  if (keys !== null) await rotateOnTheWayIn(companyId, sealed, keys);
   if (keys !== null) await followTheRosterOnTheWayIn(companyId, sealed, keys);
   if (keys !== null && policies !== undefined) await sealPoliciesOnTheWayIn(keys, policies);
   return keys;
 }
+
+/**
+ * **THE COMPANY'S KEY CHANGED ON THE WAY INTO THE COMPANY** (`rotateTheCompanyKeyHere`)
+ * by any staying seat whose role may file a proposal, once a signer's removal
+ * is carried out on the chain and anchored, so no one device is needed for
+ * it. A read, a refusal or a filing that fails stops nothing: the next way in
+ * tries again.
+ */
+const rotateOnTheWayIn = async (companyId: string, sealed: () => Promise<SealedAccount>, keys: AccountKeys): Promise<void> => {
+  try {
+    const doors = await rotationDoorsFor(companyId, sealed, keys);
+    if (doors !== null) await rotateTheCompanyKeyHere(doors);
+  } catch {
+    /* Not changed now: the next way in reads it again. */
+  }
+};
 
 /**
  * **EVERY SPENDING POLICY IN FORCE, SEALED TO THE SIGNERS SEATED SINCE, ON THE
@@ -99,7 +120,7 @@ const followTheRosterOnTheWayIn = async (companyId: string, sealed: () => Promis
     const label = rec.companyLabel as CompanyLabel;
     const account = rec.contractAddress as AccountAddress;
     await fileTheRosterFollowedHere({
-      api, accountId: companyId, viewingKey: viewingKeyFor(rec), signingSecret: keys.signingSecret, label, account,
+      api, accountId: companyId, viewingKey: await companyKeysFor(companyId, rec, keys), signingSecret: keys.signingSecret, label, account,
       reads: rosterReadsFor(companyId, label, account), entered: recordsEnteredOver(api, companyId, keys.signingSecret),
     });
   } catch {
@@ -114,12 +135,12 @@ const foundingSeatFor = (companyId: string, sealed: () => Promise<SealedAccount>
   return (await rosterReadsFor(companyId, rec.companyLabel as CompanyLabel, rec.contractAddress as AccountAddress).holders()).founding ?? null;
 };
 
-/** This device's filing key for the company and the company's viewing key, or null while it cannot open the company's key. */
-const ownKeysFor = (companyId: string, sealed: () => Promise<SealedAccount>) => async (): Promise<{ signingSecret: Hex; viewingKey: Hex } | null> => {
+/** This device's filing key for the company and the company's keys its directory gives, or null while it cannot open the company's key. */
+const ownKeysFor = (companyId: string, sealed: () => Promise<SealedAccount>) => async (): Promise<{ signingSecret: Hex; viewingKey: CompanyKeys } | null> => {
   const keys = keysFor(companyId);
   if (keys === null) return null;
   try {
-    return { signingSecret: keys.signingSecret as Hex, viewingKey: viewingKeyFor(await sealed()) };
+    return { signingSecret: keys.signingSecret as Hex, viewingKey: await companyKeysFor(companyId, await sealed(), keys) };
   } catch {
     return null;
   }

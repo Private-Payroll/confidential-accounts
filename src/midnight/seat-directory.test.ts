@@ -3,10 +3,12 @@ import { identityFromSecret } from 'midnight-identity';
 import { committeeKeyFor } from 'midnight-identity/profile/committee-key';
 import { recordsPublicKeyOf, signDirectoryEntry, signRecordsKey, type DirectoryEntryStatement, type RecordsKeyStatement } from 'midnight-identity/profile/records-key';
 import type { AccountAddress, CompanyLabel } from 'midnight-identity/profile/company-label';
-import { newSigningKeypair, seal, sign, type Hex } from '../core/crypto.js';
+import { newSigningKeypair, newSymmetricKey, randomBytes, seal, sign, toHex, type Hex, type Sealed } from '../core/crypto.js';
+import { keyCheckOf, sealedPrevious, sealedSeed, wrapsFor } from '../core/company-key.js';
 import { directoryWithItsRecordsHere, leaversStatementIn, passedOverSaid, type RecordsHeldHere } from 'vaults-web-shared/vault-page-doors.js';
 import { directoryEntry, recordKeyOf, WITNESSED_AS } from './record-manifest.js';
 import { DIRECTORY } from './records-held.js';
+import { directoryReplaysInMemory, type DirectoryReplaysKept } from 'vaults-web-shared/tree-kept-here.js';
 import { GENESIS } from './record-tree.js';
 import {
   applyFiling as applyWith, asAMember, AT_THE_SERVER, believedDirectory as believedWith, directoryChangeMessage, directoryEntryMade,
@@ -35,7 +37,7 @@ const ACCOUNT = 'ac'.repeat(32) as AccountAddress;
 /** The company's viewing key, which a member's device holds and the server never does. */
 const VIEWING = '5e'.repeat(32) as Hex;
 /** A member's device: every entry's proof opened with the viewing key, its opening checked against the account's own compiled `signerLeaf`. */
-const asMember = (leafOf: LeafOf = leafOfTheContract) => asAMember(proofsOpenedWith(CO, VIEWING), leafOf, FOUNDING);
+const asMember = (leafOf: LeafOf = leafOfTheContract) => asAMember(proofsOpenedWith(CO, [VIEWING]), leafOf, FOUNDING);
 
 /* Every filing here is applied, and every replay made, as a member's device judges it, unless a case says the server does. */
 const applyFiling = (dir: Directory, filing: DirectoryFiling, ctx: Omit<Parameters<typeof applyWith>[2], 'judge'> & { judge?: Parameters<typeof applyWith>[2]['judge'] }): Directory =>
@@ -345,7 +347,7 @@ describe('A SEAT GOES TO THE PERSON A SEAT OF THE COMPANY INVITED: EVERY ENTRY B
   });
 
   it('a member\'s device given no founding seat believes no entry, the founding seat\'s own included', () => {
-    const noFounding = replayedWith(CO, [claim(ADA, 1), claim(BO, 2)], LABEL, ACCOUNT, asAMember(proofsOpenedWith(CO, VIEWING), leafOfTheContract, null));
+    const noFounding = replayedWith(CO, [claim(ADA, 1), claim(BO, 2)], LABEL, ACCOUNT, asAMember(proofsOpenedWith(CO, [VIEWING]), leafOfTheContract, null));
     /* RED WHEN: a judge that knows no founding seat takes some seat for it, and believes an entry no seat invited. */
     expect([noFounding.refused.get(1), noFounding.refused.get(2)]).toEqual(['not-invited', 'inviter-not-seated']);
     expect(noFounding.dir.seats).toEqual([]);
@@ -1082,6 +1084,27 @@ describe('A QUORUM\'S CHANGE PASSED OVER IS FILED AGAIN UNDER ITS OWN SIGNATURES
       expect((await readOf([claim(ADA, 1), claim(BO, 2)], 2, leavesOfTheContract, null)).dir.seats).toEqual([]);
     });
 
+    it('A CHANGE OF THE COMPANY\'S KEY PASSED OVER IS NOT OFFERED TO BE FILED AGAIN, WHILE THE RETIREMENT PASSED OVER WITH IT IS', async () => {
+      const retireBo = { kind: 'retire', seat: BO.seat, filedUpTo: {}, threshold: 1 } as const;
+      const key = newSymmetricKey();
+      const rotate = signedAsIs({ ...emptyDirectory(CO), version: 3 }, {
+        kind: 'rotate', epoch: 1, keyCheck: keyCheckOf(CO, 1, key), after: 3,
+        wraps: wrapsFor(key, [ADA].map((x) => ({ seat: x.seat, wrappingKey: x.statement.wrappingKey as Hex }))),
+        previous: sealedPrevious(key, VIEWING), seed: { epoch: 1, sealed: sealedSeed(key, toHex(randomBytes(32))) }, waiting: [],
+      }, [ADA], 4);
+      /* Versions 2 to 4 - Bo's entry, his retirement and the change of key after it - are passed over by the records. */
+      const filings = [claim(ADA, 1), claim(BO, 2), signedFor(3, retireBo, [ADA]), rotate, claim(CY, 5)];
+      const here = await readOf(filings, 5);
+      /* RED WHEN: a change of key passed over is offered to be filed again under its old signatures. */
+      expect(here.notApplied?.map((n) => [n.signedAt, n.change.kind])).toEqual([[3, 'retire']]);
+      expect(here.refiled!(here.notApplied!).filed.every((f) => f.change.kind !== 'rotate')).toBe(true);
+      /* RED WHEN: a change of key passed over is said to be filed again. */
+      const said = passedOverSaid(here)!;
+      expect(said).toMatch(/versions 2, 3, 4 of its directory/u);
+      expect(said).toMatch(/the change signed for version 3 is filed again/u);
+      expect(said).not.toMatch(/version 3, 4 is filed again/u);
+    });
+
     for (const [name, signers] of [['naming the seat', [ADA]], ['signed by the seat', [BO]]] as const) {
       it(`ONE RESTING ON A SEAT WHOSE ENTRY WAS PASSED OVER (${name.toUpperCase()}) HOLDS BACK EVERY LATER CHANGE TO ITS OWN SEAT ONLY, AND ONCE THE ENTRY IS FILED AGAIN THEY ARE FILED IN THEIR FIRST ORDER`, async () => {
         const first = name === 'naming the seat' ? boApprover : adaAdmin;
@@ -1294,5 +1317,347 @@ describe('A RETIRED SEAT GIVES UP ITS PERSON, WALLET AND RECORDS KEY, KEEPS ITS 
     const cyOut = applyFiling(four, quorum(four, retireCy, [ADA, BO]), { label: LABEL, account: ACCOUNT, chain: withDan });
     expect(applyFiling(cyOut, quorum(cyOut, retireBo, [ADA, BO]), { label: LABEL, account: ACCOUNT, chain: withDan })
       .seats.find((x) => x.seat === BO.seat)!.retired).toEqual({ [POOL]: 3 });
+  });
+});
+
+describe('A CHANGE OF THE COMPANY\'S KEY: FILED BY ONE SEAT AFTER A RETIREMENT, AND BELIEVED ONLY AS THE DIRECTORY SHOWS IT WHOLE', () => {
+  const three = withAll([ADA, BO, CY]);
+  const everyone = chainOf([ADA, BO, CY]);
+  /* Cy retired at version 4 by Ada at the bar of one, and taken off the chain. */
+  const retired = applyFiling(three, quorum(three, { kind: 'retire', seat: CY.seat, filedUpTo: {}, threshold: 1 }, [ADA]), { label: LABEL, account: ACCOUNT, chain: everyone });
+  const stayed = chainOf([ADA, BO]);
+  const onDevice = (chain: ChainHolders | null = stayed) => ({ label: LABEL, account: ACCOUNT, chain });
+  /** A change of key as a staying seat's device makes it: wrapped to `seats`, after `after`, with a new seed unless a case gives another. */
+  const rotation = (dir: Directory, o: {
+    epoch?: number; after?: number; seats?: readonly Seat[]; by?: Seat; key?: Hex; previous?: Hex;
+    seed?: { epoch: number; sealed: Sealed } | null; repairs?: number; replaces?: number | string; waiting?: readonly Hex[];
+  } = {}, version = dir.version + 1): DirectoryFiling => {
+    const epoch = o.epoch ?? ((dir.rotations ?? []).slice(-1)[0]?.epoch ?? 0) + 1;
+    const key = o.key ?? newSymmetricKey();
+    const seats = o.seats ?? [ADA, BO];
+    const seed = o.seed === null ? undefined : o.seed ?? { epoch, sealed: sealedSeed(key, toHex(randomBytes(32))) };
+    return signedAsIs(dir, {
+      kind: 'rotate', epoch, keyCheck: keyCheckOf(CO, epoch, key), after: o.after ?? 4,
+      wraps: wrapsFor(key, seats.map((x) => ({ seat: x.seat, wrappingKey: x.statement.wrappingKey as Hex }))),
+      previous: sealedPrevious(key, o.previous ?? VIEWING), waiting: o.waiting ?? [],
+      ...(seed === undefined ? {} : { seed }), ...(o.repairs === undefined ? {} : { repairs: o.repairs }),
+      ...(o.replaces === undefined ? {} : { replaces: o.replaces }),
+    }, [o.by ?? ADA], version);
+  };
+
+  it('a change of key after a retirement is believed, at the next epoch, recording the retirement it follows', () => {
+    expect(retired.seats.find((x) => x.seat === CY.seat)!.retiredAt).toBe(4);
+    const r = rotation(retired);
+    const after = applyFiling(retired, r, onDevice());
+    expect(after.version).toBe(5);
+    expect(after.rotations?.map((x) => [x.version, x.epoch, x.after, x.keyCheck])).toEqual([[5, 1, 4, (r.change as { keyCheck: Hex }).keyCheck]]);
+    /* Replayed from every filing against the account now, the same change of key is believed. */
+    const filings = [claim(ADA, 1), claim(BO, 2), claim(CY, 3), quorum(three, { kind: 'retire', seat: CY.seat, filedUpTo: {}, threshold: 1 }, [ADA]), r];
+    const replayed = directoryReplayed(CO, filings, LABEL, ACCOUNT, { approvals: 1, seatBar: 1, seats: [ADA.seat, BO.seat] });
+    expect(replayed.refused.size).toBe(0);
+    expect(replayed.dir.rotations?.map((x) => x.epoch)).toEqual([1]);
+    /* RED WHEN: the epoch step is unchecked, so a change of key can skip an epoch or name one already used. */
+    expect(refusal(() => applyFiling(retired, rotation(retired, { epoch: 2 }), onDevice()))).toBe('not-the-next-epoch');
+    expect(refusal(() => applyFiling(after, rotation(after, { epoch: 1, after: 4 }), onDevice()))).toBe('not-the-next-epoch');
+    /* RED WHEN: `after` is unchecked, so a change of key names a retirement other than the newest. */
+    expect(refusal(() => applyFiling(retired, rotation(retired, { after: 3 }), onDevice()))).toBe('no-retirement-since');
+    /* RED WHEN: the wrap set is unchecked: a change of key leaving out a staying seat, wrapping the retired one, or one seat twice. */
+    expect(refusal(() => applyFiling(retired, rotation(retired, { seats: [ADA] }), onDevice()))).toBe('wraps-not-the-seats');
+    expect(refusal(() => applyFiling(retired, rotation(retired, { seats: [ADA, BO, CY] }), onDevice()))).toBe('wraps-not-the-seats');
+    expect(refusal(() => applyFiling(retired, rotation(retired, { seats: [ADA, ADA] }), onDevice()))).toBe('wraps-not-the-seats');
+  });
+
+  it('a change of key filed by a retired seat, a viewer, a seat off the chain, a stranger, or with no retirement since the key last changed, is not believed', () => {
+    /* RED WHEN: a retired seat may change the key it was removed from. */
+    expect(refusal(() => applyFiling(retired, rotation(retired, { by: CY }), onDevice(everyone)))).toBe('seat-retired');
+    /* RED WHEN: a seat the account no longer holds changes the key. */
+    expect(refusal(() => applyFiling(retired, rotation(retired, { by: BO }), onDevice(chainOf([ADA]))))).toBe('filer-not-seated');
+    expect(refusal(() => applyFiling(retired, rotation(retired, { by: BO }), { label: LABEL, account: ACCOUNT, chain: null, now: { approvals: 1, seatBar: 1, seats: [ADA.seat] } }))).toBe('filer-not-seated');
+    /* RED WHEN: a key the directory holds no seat for changes the key. */
+    expect(refusal(() => applyFiling(retired, rotation(retired, { by: seatOf('mal', 7) }), onDevice()))).toBe('filer-not-seated');
+    /* Bo made a viewer at version 4, then Cy retired at version 5. */
+    const boViewer = applyFiling(three, quorum(three, { kind: 'role', seat: BO.seat, role: 'viewer', threshold: 1 }, [ADA]), onDevice(everyone));
+    const cyOut = applyFiling(boViewer, quorum(boViewer, { kind: 'retire', seat: CY.seat, filedUpTo: {}, threshold: 1 }, [ADA]), onDevice(everyone));
+    /* RED WHEN: a seat whose role may not file a proposal changes the key. */
+    expect(refusal(() => applyFiling(cyOut, rotation(cyOut, { by: BO, after: 5 }), onDevice()))).toBe('filer-may-not-rotate');
+    expect(applyFiling(cyOut, rotation(cyOut, { by: ADA, after: 5 }), onDevice()).rotations).toHaveLength(1);
+    /* RED WHEN: the key changes with no retirement filed since it last changed, or with none at all. */
+    const once = applyFiling(retired, rotation(retired), onDevice());
+    expect(refusal(() => applyFiling(once, rotation(once, { after: 4 }), onDevice()))).toBe('no-retirement-since');
+    expect(refusal(() => applyFiling(three, rotation(three, { seats: [ADA, BO, CY], after: 3 }), onDevice(everyone)))).toBe('no-retirement-since');
+  });
+
+  it('a change of key carries one seed of its own epoch, 32 bytes, not a copy of an earlier one, and names each waiting answer once', () => {
+    const key = newSymmetricKey();
+    /* RED WHEN: a seed sealed for another epoch is taken for this one. */
+    expect(refusal(() => applyFiling(retired, rotation(retired, { key, seed: { epoch: 2, sealed: sealedSeed(key, toHex(randomBytes(32))) } }), onDevice()))).toBe('seed-not-its-own');
+    /* RED WHEN: a seed of another length is taken, which would weaken every payment made with it. */
+    expect(refusal(() => applyFiling(retired, rotation(retired, { key, seed: { epoch: 1, sealed: seal(toHex(randomBytes(16)), key) } }), onDevice()))).toBe('seed-not-its-own');
+    /* RED WHEN: a change of key that is no repair carries no new seed. */
+    expect(refusal(() => applyFiling(retired, rotation(retired, { seed: null }), onDevice()))).toBe('seed-not-its-own');
+    /* Bo retired too, at version 6; the key changes a second time, for Ada alone. */
+    const r1 = rotation(retired);
+    const once = applyFiling(retired, r1, onDevice());
+    const boOut = applyFiling(once, quorum(once, { kind: 'retire', seat: BO.seat, filedUpTo: {}, threshold: 1 }, [ADA]), onDevice());
+    const earlier = (r1.change as { seed: { epoch: number; sealed: Sealed } }).seed;
+    /* RED WHEN: a change of key may carry the seed an earlier one did, so two epochs pay from one seed. */
+    expect(refusal(() => applyFiling(boOut, rotation(boOut, { seats: [ADA], after: 6, seed: { epoch: 2, sealed: earlier.sealed } }), onDevice(chainOf([ADA]))))).toBe('seed-not-its-own');
+    expect(applyFiling(boOut, rotation(boOut, { seats: [ADA], after: 6 }), onDevice(chainOf([ADA]))).rotations?.map((x) => x.epoch)).toEqual([1, 2]);
+    /* RED WHEN: the waiting answers are unchecked: one named twice, or one that is no digest. */
+    const d = 'd1'.repeat(32) as Hex;
+    expect(refusal(() => applyFiling(retired, rotation(retired, { waiting: [d, d] }), onDevice()))).toBe('not-a-change');
+    expect(refusal(() => applyFiling(retired, rotation(retired, { waiting: ['zz' as Hex] }), onDevice()))).toBe('not-a-change');
+    expect(applyFiling(retired, rotation(retired, { waiting: [d, 'd2'.repeat(32) as Hex] }), onDevice()).rotations).toHaveLength(1);
+  });
+
+  it('a repair of the newest key is believed with no new retirement and no seed, and a repair of any other is not', () => {
+    const k1 = newSymmetricKey();
+    const once = applyFiling(retired, rotation(retired, { key: k1 }), onDevice());
+    /* RED WHEN: a repair is held to the retirement rule, so a key whose copies did not open can never be replaced. */
+    const repaired = applyFiling(once, rotation(once, { repairs: 1, seed: null, previous: k1 }), onDevice());
+    expect(repaired.rotations?.map((x) => [x.epoch, x.repairs ?? null, x.after])).toEqual([[1, null, 4], [2, 1, 4]]);
+    /* RED WHEN: a repair may carry a new seed, or name a key other than the newest. */
+    expect(refusal(() => applyFiling(once, rotation(once, { repairs: 1, previous: k1 }), onDevice()))).toBe('not-a-repair');
+    expect(refusal(() => applyFiling(repaired, rotation(repaired, { repairs: 1, seed: null }), onDevice()))).toBe('not-a-repair');
+    expect(refusal(() => applyFiling(retired, rotation(retired, { repairs: 1, seed: null }), onDevice()))).toBe('not-a-repair');
+    /* RED WHEN: a repair may follow another retirement than the key it repairs. */
+    expect(refusal(() => applyFiling(once, rotation(once, { repairs: 1, seed: null, after: 3 }), onDevice()))).toBe('no-retirement-since');
+    /* Bo retired at version 6, after the key last changed: his leaving waits for a change of key with a new seed. */
+    const boRetire = quorum(once, { kind: 'retire', seat: BO.seat, filedUpTo: {}, threshold: 1 }, [ADA]);
+    const boOut = applyFiling(once, boRetire, onDevice());
+    const repairNow = rotation(boOut, { repairs: 1, seed: null, previous: k1, seats: [ADA] });
+    /* RED WHEN: a repair is believed while a retirement waits for its change of key, so the leaver keeps the newest seed. */
+    expect(refusal(() => applyFiling(boOut, repairNow, onDevice(chainOf([ADA]))))).toBe('no-retirement-since');
+    /* Replayed with the repair refused at 7, the change of key Bo's leaving needs is still believed at 8. */
+    const r1 = rotation(retired, { key: k1 }, 5);
+    const filings = [claim(ADA, 1), claim(BO, 2), claim(CY, 3), quorum(three, { kind: 'retire', seat: CY.seat, filedUpTo: {}, threshold: 1 }, [ADA]), r1,
+      boRetire, repairNow, rotation(boOut, { seats: [ADA], after: 6 }, 8)];
+    const replayed = directoryReplayed(CO, filings, LABEL, ACCOUNT, { approvals: 1, seatBar: 1, seats: [ADA.seat] });
+    expect(replayed.refused.get(7)).toBe('no-retirement-since');
+    expect(replayed.refused.has(8)).toBe(false);
+    expect(replayed.dir.rotations?.map((x) => [x.version, x.epoch, x.after, x.seed === undefined ? 'no seed' : 'seed'])).toEqual([[5, 1, 4, 'seed'], [8, 2, 6, 'seed']]);
+    /* A repair is still wrapped to exactly the seats not retired. */
+    expect(refusal(() => applyFiling(once, rotation(once, { repairs: 1, seed: null, seats: [ADA] }), onDevice()))).toBe('wraps-not-the-seats');
+  });
+
+  it('a change of key that replaces an older key than the newest is believed only once every newer change\'s filer is retired and off the chain', () => {
+    const k1 = newSymmetricKey();
+    /* Bo changed the key at version 5, then was retired at version 6. */
+    const byBo = applyFiling(retired, rotation(retired, { by: BO, key: k1 }), onDevice());
+    const retireBo = quorum(byBo, { kind: 'retire', seat: BO.seat, filedUpTo: {}, threshold: 1 }, [ADA]);
+    const boOut = applyFiling(byBo, retireBo, onDevice());
+    const fromZero = rotation(boOut, { seats: [ADA], after: 6, replaces: 0 });
+    /* RED WHEN: a seat that does not hold the newest key cannot change the key once the seat that changed it is removed. */
+    const after = applyFiling(boOut, fromZero, onDevice(chainOf([ADA])));
+    expect(after.rotations?.map((x) => [x.epoch, x.replaces ?? null, x.by])).toEqual([[1, null, BO.seat], [2, 0, ADA.seat]]);
+    /* RED WHEN: it is believed while the account still holds the seat that made the change it passes over. */
+    expect(refusal(() => applyFiling(boOut, fromZero, onDevice(stayed)))).toBe('replaces-a-change-still-held');
+    expect(refusal(() => applyFiling(boOut, fromZero, { label: LABEL, account: ACCOUNT, chain: null, now: { approvals: 1, seatBar: 1, seats: [ADA.seat, BO.seat] } }))).toBe('replaces-a-change-still-held');
+    /* RED WHEN: it is believed when the change it passes over was made by a seat that stays. */
+    const byAda = applyFiling(retired, rotation(retired, { key: k1 }), onDevice());
+    const boOutAfterAda = applyFiling(byAda, quorum(byAda, { kind: 'retire', seat: BO.seat, filedUpTo: {}, threshold: 1 }, [ADA]), onDevice());
+    expect(refusal(() => applyFiling(boOutAfterAda, rotation(boOutAfterAda, { seats: [ADA], after: 6, replaces: 0 }), onDevice(chainOf([ADA]))))).toBe('replaces-a-change-still-held');
+    /* Dan seated too; Cy retired at 5; Bo changed the key at 6; Dan retired at 7; Bo is off the chain and never retired. */
+    const DAN = seatOf('dan', 8);
+    const all4 = chainOf([ADA, BO, CY, DAN]);
+    const four = applyFiling(three, claim(DAN, 4), { label: LABEL, account: ACCOUNT, chain: all4 });
+    const cyOut4 = applyFiling(four, quorum(four, { kind: 'retire', seat: CY.seat, filedUpTo: {}, threshold: 1 }, [ADA]), onDevice(all4));
+    const boChanged = applyFiling(cyOut4, rotation(cyOut4, { by: BO, seats: [ADA, BO, DAN], after: 5 }), onDevice(chainOf([ADA, BO, DAN])));
+    const danOut = applyFiling(boChanged, quorum(boChanged, { kind: 'retire', seat: DAN.seat, filedUpTo: {}, threshold: 1 }, [ADA]), onDevice(chainOf([ADA, BO, DAN])));
+    /* RED WHEN: it is believed when the change it passes over was filed by a seat off the chain whose retirement the directory never took. */
+    expect(refusal(() => applyFiling(danOut, rotation(danOut, { seats: [ADA, BO], after: 7, replaces: 0 }), onDevice(chainOf([ADA]))))).toBe('replaces-a-change-still-held');
+    /* RED WHEN: it may name the newest key, a key not yet made, or be a repair: each is a looser form than the one ruled. */
+    expect(refusal(() => applyFiling(boOut, rotation(boOut, { seats: [ADA], after: 6, replaces: 1 }), onDevice(chainOf([ADA]))))).toBe('not-the-next-epoch');
+    expect(refusal(() => applyFiling(boOut, rotation(boOut, { seats: [ADA], after: 6, replaces: 2 }), onDevice(chainOf([ADA]))))).toBe('not-the-next-epoch');
+    expect(refusal(() => applyFiling(boOut, rotation(boOut, { seats: [ADA], after: 6, replaces: 0, repairs: 1, seed: null }), onDevice(chainOf([ADA]))))).toBe('not-the-next-epoch');
+    /* RED WHEN: a replaced epoch that is no whole number from 0 is taken. */
+    expect(refusal(() => applyFiling(boOut, rotation(boOut, { seats: [ADA], after: 6, replaces: -1 }), onDevice(chainOf([ADA]))))).toBe('not-a-change');
+    expect(refusal(() => applyFiling(boOut, rotation(boOut, { seats: [ADA], after: 6, replaces: '0' }), onDevice(chainOf([ADA]))))).toBe('not-a-change');
+    /* RED WHEN: it skips the other rules of a change of key: it still follows a retirement, and carries a new seed. */
+    expect(refusal(() => applyFiling(boOut, rotation(boOut, { seats: [ADA], after: 4, replaces: 0 }), onDevice(chainOf([ADA]))))).toBe('no-retirement-since');
+    expect(refusal(() => applyFiling(boOut, rotation(boOut, { seats: [ADA], after: 6, replaces: 0, seed: null }), onDevice(chainOf([ADA]))))).toBe('seed-not-its-own');
+    /* Replayed from every filing as each version was anchored (Bo held until version 7), the change from epoch 0 is believed at 7. */
+    const filings = [claim(ADA, 1), claim(BO, 2), claim(CY, 3), quorum(three, { kind: 'retire', seat: CY.seat, filedUpTo: {}, threshold: 1 }, [ADA]),
+      rotation(retired, { by: BO, key: k1 }, 5), retireBo, fromZero];
+    const replayed = directoryReplayed(CO, filings, LABEL, ACCOUNT, undefined,
+      (v: number) => ({ approvals: 1, seatBar: 1, seats: v < 7 ? [ADA.seat, BO.seat] : [ADA.seat] }));
+    expect([...replayed.refused]).toEqual([]);
+    expect(replayed.dir.rotations?.map((x) => [x.version, x.epoch, x.replaces ?? null])).toEqual([[5, 1, null], [7, 2, 0]]);
+  });
+
+  it('a change of key is never filed again under the signatures of an earlier version', () => {
+    const r = rotation(retired, {}, 5);
+    const again: DirectoryFiling = { ...r, version: 6, signedAt: 5 };
+    /* RED WHEN: a change of key passed over may be filed again under its old signatures. */
+    expect(refusal(() => applyFiling({ ...retired, version: 5 }, again, onDevice()))).toBe('not-a-change');
+    expect(refusal(() => atTheServer({ ...retired, version: 5 }, again, onDevice()))).toBe('not-a-change');
+  });
+
+  it('a seat sealed under a later company key is believed from the list of keys this device holds', () => {
+    const later = newSymmetricKey();
+    const DEE = seatOf('dee', 9);
+    const deesLater = entryFor({ person: 'dee', committeeKey: DEE.committeeKey, statement: DEE.statement, opening: DEE.opening, signingSecret: DEE.signing.secret, viewingKey: later });
+    const filings = [claim(ADA, 1), claim(BO, 2), claimOf(deesLater, 3)];
+    const both = asAMember(proofsOpenedWith(CO, [VIEWING, later]), leafOfTheContract, FOUNDING);
+    /* RED WHEN: only the first key is tried, so a seat seated after the key changed is never believed. */
+    expect(believedWith(CO, filings, LABEL, ACCOUNT, both).seats.map((x) => x.person)).toEqual(['ada', 'bo', 'dee']);
+    /* Holding the earlier key alone, the device cannot open it. */
+    expect(replayedWith(CO, filings, LABEL, ACCOUNT, asMember()).refused.get(3)).toBe('entry-not-opened');
+  });
+});
+
+describe('A DEVICE THAT READS THE DIRECTORY AGAIN REPLAYS ONLY WHAT FOLLOWS THE NEWEST VERSION ANCHORED', () => {
+  const atAnchor = { approvals: 1, seatBar: 1, seats: [ADA.seat, BO.seat] };
+  const holders = { seats: [ADA.seat, BO.seat], approvals: 1, signerRoot: '00'.repeat(32) as Hex, signers: [ADA.seat as Hex, BO.seat as Hex] };
+  const retireBo = (version: number) => quorum({ ...emptyDirectory(CO), version: version - 1 }, { kind: 'retire', seat: BO.seat, filedUpTo: {}, threshold: 1 }, [ADA], version);
+  /* A change of the company's key that skips an epoch: filed, and refused by every device. */
+  const skippedEpoch = (version: number) => {
+    const key = newSymmetricKey();
+    return signedAsIs({ ...emptyDirectory(CO), version: version - 1 }, {
+      kind: 'rotate', epoch: 2, keyCheck: keyCheckOf(CO, 2, key), after: 3,
+      wraps: wrapsFor(key, [ADA].map((x) => ({ seat: x.seat, wrappingKey: x.statement.wrappingKey as Hex }))),
+      previous: sealedPrevious(key, VIEWING), seed: { epoch: 2, sealed: sealedSeed(key, toHex(randomBytes(32))) }, waiting: [],
+    }, [ADA], version);
+  };
+  const FILINGS = [claim(ADA, 1), claim(BO, 2), retireBo(3), skippedEpoch(4), claim(CY, 5)];
+  /** A device's read of `filings`, the company's records anchoring versions 1 to `anchored` as `anchors` names them. */
+  const readWith = (
+    filings: readonly DirectoryFiling[], anchored: number, kept?: DirectoryReplaysKept,
+    o: {
+      anchors?: readonly DirectoryFiling[]; given?: (d: unknown) => void; heldAt?: (v: number) => AccountHeld;
+      leaves?: typeof leavesOfTheContract; founding?: string | null; viewingKey?: Hex;
+    } = {},
+  ) => {
+    const anchors = o.anchors ?? filings;
+    const leaf = (v: number) => ({ version: v, digest: directoryEntry(anchors[v - 1]!).digest, filedBy: ADA.signing.publicKey, batch: 0, dirVersion: v });
+    const versions = Array.from({ length: anchored }, (_, i) => i + 1);
+    const records = {
+      head: '11'.repeat(32), reached: GENESIS, stopped: null, asked: { records: new Set<string>(), kinds: new Set<string>() },
+      history: new Map([[recordKeyOf(DIRECTORY), versions.map(leaf)]]), notYetAnchored: [],
+      directory: new Map(versions.map((v) => [v, { digest: leaf(v).digest, batch: 0, held: holders }])),
+      held: (v: number) => (v <= anchored ? o.heldAt?.(v) ?? atAnchor : undefined),
+    } as unknown as RecordsHeldHere;
+    return directoryWithItsRecordsHere({
+      accountId: CO, label: LABEL, viewingKey: o.viewingKey ?? VIEWING, filings: async () => filings, attested: async () => [], leaves: o.leaves ?? leavesOfTheContract,
+      anchored: async (d: unknown) => { o.given?.(d); return records; },
+      holders: async () => ({ account: ACCOUNT, seats: [ADA.seat, BO.seat, CY.seat], committee: [ADA.committeeKey, BO.committeeKey, CY.committeeKey], approvals: 1, seatBar: 1, ...(o.founding === null ? {} : { founding: o.founding ?? FOUNDING }) }) as never,
+      ...(kept === undefined ? {} : { kept }),
+    } as never);
+  };
+  /** A store that keeps nothing: every read replays from version 1, as a full replay. */
+  const keepsNothing: DirectoryReplaysKept = { longest: () => null, keep: () => {} };
+  /** What a read answers: the directory, what it refused, what it would file again, and the directory at each version. */
+  const answers = (here: Awaited<ReturnType<typeof readWith>>) => ({
+    dir: here.dir, refusedAt: [...here.refusedAt!], notApplied: here.notApplied, refiledRefused: here.refiledRefused,
+    anchoredAgain: [...here.anchoredAgain!], passedOver: here.passedOver,
+    refiled: here.refiled!(here.notApplied!).filed,
+    at: Array.from({ length: here.dir.version + 2 }, (_, v) => here.at(v)),
+    atAsServed: Array.from({ length: here.dir.version + 1 }, (_, v) => here.at(v, () => undefined)?.dir),
+  });
+
+  it('A READ GOING ON FROM WHAT IT KEPT ANSWERS AS A FULL REPLAY, A REFUSED CHANGE OF THE KEY AMONG THE VERSIONS KEPT', async () => {
+    const full = answers(await readWith(FILINGS, 4, keepsNothing));
+    expect(full.refusedAt).toContain(4);
+    expect(full.dir.seats.find((x) => x.seat === BO.seat)?.retired).not.toBeNull();
+    const kept = directoryReplaysInMemory();
+    let found = 0;
+    const counted: DirectoryReplaysKept = { longest: (c, j, m) => { const k = kept.longest(c, j, m); if (k !== null) found += 1; return k; }, keep: kept.keep };
+    await readWith(FILINGS, 4, counted);
+    const before = found;
+    const again = answers(await readWith(FILINGS, 4, counted));
+    /* RED WHEN: a read never looks for a replay it kept, so every read replays the whole directory again. */
+    expect(found).toBeGreaterThan(before);
+    /* RED WHEN: a replay kept loses what it refused, applied or passed over, so a read going on from it answers otherwise. */
+    expect(again).toEqual(full);
+  });
+
+  it('A READ REPLAYS NOTHING AT OR BELOW THE NEWEST VERSION ANCHORED THAT IT KEPT, AND APPLIES EVERY FILING ABOVE IT', async () => {
+    const kept = directoryReplaysInMemory();
+    await readWith(FILINGS, 4, kept);
+    /* A mark only a kept replay carries: a seat no filing names, put in every replay kept. */
+    const marked = { seat: 'ab'.repeat(32), person: 'kept', signingKey: 'cd'.repeat(32) as Hex, wrappingKey: 'ef'.repeat(32) as Hex, role: null, retired: null };
+    const marking: DirectoryReplaysKept = {
+      longest: (c, j, m) => {
+        const k = kept.longest(c, j, m);
+        return k === null ? null : { ...k, state: { ...k.state, dir: { ...k.state.dir, seats: [...k.state.dir.seats, marked] } } };
+      },
+      keep: () => {},
+    };
+    let given: { dir: Directory } | undefined;
+    const here = await readWith(FILINGS, 4, marking, { given: (d) => { given = d as { dir: Directory }; } });
+    /* RED WHEN: a filing at or below the newest version anchored is replayed again although a replay of it was kept. */
+    expect(here.dir.seats.map((x) => x.seat)).toContain(marked.seat);
+    /* RED WHEN: the directory as served, before the records are read, is replayed again although nothing in it changed. */
+    expect(given!.dir.seats.map((x) => x.seat)).toContain(marked.seat);
+    /* RED WHEN: a filing above the newest version anchored is answered from the kept replay instead of applied. */
+    expect(here.dir.seats.map((x) => x.seat)).toContain(CY.seat);
+    expect(here.dir.version).toBe(5);
+  });
+
+  it('A DIRECTORY SERVED WITH OTHER BYTES AT A VERSION KEPT IS NEVER ANSWERED FROM WHAT WAS KEPT', async () => {
+    const kept = directoryReplaysInMemory();
+    await readWith(FILINGS, 4, kept);
+    /* Version 3 makes Bo an approver instead of retiring him, and the records anchor those bytes; every entry is the same. */
+    const boApprover = quorum({ ...emptyDirectory(CO), version: 2 }, { kind: 'role', seat: BO.seat, role: 'approver', threshold: 1 }, [ADA], 3);
+    const other = [FILINGS[0]!, FILINGS[1]!, boApprover, ...FILINGS.slice(3)];
+    const full = answers(await readWith(other, 4, keepsNothing));
+    expect(full.dir.seats.find((x) => x.seat === BO.seat)).toMatchObject({ role: 'approver', retired: null });
+    /* RED WHEN: a replay kept is gone on from for a version served with other bytes, so the directory holds a change nobody filed. */
+    expect(answers(await readWith(other, 4, kept))).toEqual(full);
+  });
+
+  it('A VERSION ANCHORED UNDER OTHER HOLDERS IS NEVER ANSWERED FROM A REPLAY KEPT UNDER THE FIRST', async () => {
+    const kept = directoryReplaysInMemory();
+    await readWith(FILINGS, 4, kept);
+    /* From version 3 the records name an account needing two approvals: Ada alone could not retire Bo. */
+    const two = { o: { heldAt: (v: number) => (v >= 3 ? { approvals: 2, seatBar: 2, seats: [ADA.seat, BO.seat] } : atAnchor) } };
+    const full = answers(await readWith(FILINGS, 4, keepsNothing, two.o));
+    expect(full.refusedAt).toContain(3);
+    /* RED WHEN: who held the account as each version was anchored is left out of what a kept replay is matched by. */
+    expect(answers(await readWith(FILINGS, 4, kept, two.o))).toEqual(full);
+    /* Versions 3 and 4 not anchored: judged against the chain now, never as a kept replay judged them as anchored. */
+    expect(answers(await readWith(FILINGS, 2, kept))).toEqual(answers(await readWith(FILINGS, 2, keepsNothing)));
+  });
+
+  it('A JUDGE GIVEN OTHER LEAVES, OTHER KEYS OR NO FOUNDING SEAT IS NEVER ANSWERED FROM A REPLAY KEPT UNDER THE FIRST', async () => {
+    const kept = directoryReplaysInMemory();
+    await readWith(FILINGS, 4, kept);
+    /* The worker says Bo's opening makes Ada's leaf. */
+    const crossed = async (os: readonly SeatOpening[]) => os.map((o) => (o.publicKey === BO.opening.publicKey ? ADA.seat : leafOfTheContract(o)));
+    /* RED WHEN: the leaf this device worked out for an entry's opening is left out of what a kept replay is matched by. */
+    expect(answers(await readWith(FILINGS, 4, kept, { leaves: crossed }))).toEqual(answers(await readWith(FILINGS, 4, keepsNothing, { leaves: crossed })));
+    /* RED WHEN: the founding seat the wallet read is left out of what a kept replay is matched by, so an uninvited entry is believed. */
+    expect((await readWith(FILINGS, 4, kept, { founding: null })).dir.seats).toEqual([]);
+    /* RED WHEN: the keys this device opens entries with are left out of what a kept replay is matched by. */
+    expect((await readWith(FILINGS, 4, kept, { viewingKey: '6f'.repeat(32) as Hex })).dir.seats).toEqual([]);
+  });
+
+  it('AT EVERY VERSION, A READ GOING ON FROM WHAT IT KEPT ANSWERS AS THE DIRECTORY REPLAYED FROM VERSION 1', async () => {
+    const kept = directoryReplaysInMemory();
+    const heldAt = (v: number) => (v >= 3 ? { approvals: 2, seatBar: 2, seats: [ADA.seat, BO.seat] } : atAnchor);
+    await readWith(FILINGS, 4, kept, { heldAt });
+    const here = await readWith(FILINGS, 4, kept, { heldAt });
+    const now = { approvals: 1, seatBar: 1, seats: [ADA.seat, BO.seat, CY.seat] };
+    const asAnchored = (v: number) => (v <= 4 ? heldAt(v) : undefined);
+    /* RED WHEN: a read answers otherwise than the directory replayed from version 1 against who held the account as each was anchored. */
+    expect(here.dir).toEqual(believedDirectory(CO, FILINGS, LABEL, ACCOUNT, now, asAnchored));
+    for (let v = 0; v <= FILINGS.length; v += 1) {
+      /* RED WHEN: the directory at an earlier version is not the first `v` filings replayed, or is answered for another version. */
+      expect(here.at(v)?.dir, `version ${v}`).toEqual(believedDirectory(CO, FILINGS.slice(0, v), LABEL, ACCOUNT, now, asAnchored));
+      /* RED WHEN: the directory at a version judged against the chain now is answered as judged against the records, or the other way. */
+      expect(here.at(v, () => undefined)?.dir, `version ${v} as served`).toEqual(believedDirectory(CO, FILINGS.slice(0, v), LABEL, ACCOUNT, now));
+      expect(here.at(v)?.digests).toEqual(FILINGS.slice(0, v).map((f) => directoryEntry(f).digest));
+    }
+    expect(here.at(FILINGS.length + 1)).toBeNull();
+    expect(here.at(-1)).toBeNull();
+  });
+
+  it('A DIRECTORY SERVED SHORT OF A VERSION THE RECORDS ANCHOR STILL THROWS AFTER A READ OF IT WAS KEPT', async () => {
+    const kept = directoryReplaysInMemory();
+    await readWith(FILINGS, 4, kept);
+    /* RED WHEN: a read answers from a replay kept of the whole directory while the service withholds a version the records anchor. */
+    await expect(readWith(FILINGS.slice(0, 3), 4, kept, { anchors: FILINGS })).rejects.toThrow(/served without version 4, which the company's records anchor/u);
+    /* RED WHEN: a version served with other bytes than the records anchor is believed from what was kept. */
+    await expect(readWith([...FILINGS.slice(0, 3), retireBo(4)], 4, kept, { anchors: FILINGS })).rejects.toThrow(/served with other bytes at version 4/u);
   });
 });

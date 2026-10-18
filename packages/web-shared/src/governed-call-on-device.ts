@@ -1,5 +1,8 @@
 /**
- * **RAISING A PAYROLL PROPOSAL AND APPROVING ONE, FROM THIS DEVICE.**
+ * **PROPOSALS RAISED, APPROVED AND CARRIED OUT FROM THIS DEVICE: PAYROLL RUNS
+ * AND THEIR RETRIES, AND CHANGES TO THE COMPANY - WHO IS SEATED, THE
+ * THRESHOLDS, AND A SIGNER'S REMOVAL WITH ITS RETIREMENT AND THE CHANGE OF THE
+ * COMPANY'S KEY AFTER IT.**
  *
  * The page's side of it. The company's service writes a proposal down and hands
  * over what the device needs to build it; the worker builds and proves the call
@@ -16,6 +19,7 @@
  * signer; **the screen does not yet say the first of the three any differently
  * from any other failure.**
  */
+import { openedWithAnyKey, sealingWith, type KeysHeld } from '../../../src/core/company-key.js';
 import { boundaryKeyOfEntry, proposalEntry, type ManifestEntryBody } from '../../../src/midnight/record-manifest.js';
 import { FiledNotEntered, type RecordsEntered } from './record-entered-here.js';
 import { assets as theAssets, symbolOf, type AssetId, type AssetRegistry, type LedgerForm } from '../../../src/core/assets.js';
@@ -24,7 +28,7 @@ import {
   DEVICE_RAISE_VERSION, WRITTEN_DOWN_IS_NOT_WHAT_IS_CHECKED, paymentsCheckedDigest, type PaymentChecked,
 } from '../../../src/core/device-raise.js';
 import type {
-  SignerMaterial, OpenedRound, RaiseRunOrder, GovernanceOnTheWire, GovernedCallOrder,
+  SignerMaterial, OpenedRound, RaiseRunOrder, GovernanceOnTheWire, GovernedCallOrder, RoundOnChain,
 } from './governed-call-builder.js';
 import { sameGovernance } from './governance-compared.js';
 import type { AccountGovernance } from 'midnight-identity/profile/records-key';
@@ -36,8 +40,8 @@ import { assetIdBytes, NO_ASSET } from '../../../src/core/assets.js';
 import type { RetirementSignature, SealedAccount, SealedProposal } from '../../../src/core/types.js';
 import { payrollRoundOf, sameList, untoldRetryRounds } from '../../../src/core/retry-cover.js';
 import type { AccountCallChainOnTheWire, VaultBuilderClient } from './vault-worker-client.js';
-import { signedStateHere, standingOnChainHere, type CompanyRecordsHere } from './run-rebuilt-here.js';
-import { NotOpenedOnThisDevice, openTheRoundHere } from './round-opened-here.js';
+import { proposalsListedHere, signedStateHere, standingOnChainHere, type CompanyRecordsHere } from './run-rebuilt-here.js';
+import { believedFilerHere, NotOpenedOnThisDevice, openTheRoundHere, type RecordsForTheRound } from './round-opened-here.js';
 import { raiseLegHere, raiseRetryHere, type LegRaiseDoors } from './run-raised-here.js';
 import type { SignedRunFiling } from '../../../src/core/run-filing.js';
 import {
@@ -49,11 +53,13 @@ import { COMPANY_RECORD_KINDS, WIRE_RECORDS } from '../../../src/midnight/sealed
 import type { RecordsAsked } from '../../../src/midnight/records-held.js';
 import type { RecordsKeyStatement } from 'midnight-identity/profile/records-key';
 import type { DirectoryChangesKeptStore } from './tree-kept-here.js';
+import { rotateTheCompanyKeyHere, type KeyRotated, type RotationDoors } from './company-key-here.js';
 import { removalBoundaryRefusal } from './spending-policy-here.js';
 import { admitSignerHere, rosterHere, seatingOf, waitingHere, type RosterDoors, type SeatingReads } from './roster-here.js';
 import { signSeatInvitation, type Inviter, type SignedSeatInvitation } from '../../../src/core/invitation.js';
 import {
-  directoryNotYetAnchored, FOUNDING_ASKED, foundedOnChainHere, kindAsked, listedHere, type DirectoryHere, type LeavingBoundaries,
+  directoryNotYetAnchored, FOUNDING_ASKED, foundedOnChainHere, kindAsked, listedHere, pastTheRaisedBoundary, refusedForItsKey,
+  type DirectoryHere, type LeavingBoundaries,
 } from './vault-page-doors.js';
 import {
   carryOrderHere, legPaymentsHere, raiseOrderHere, retryOrderHere, retryPaymentsHere, NotMadeHere,
@@ -177,18 +183,18 @@ export interface GovernedCallDoors {
 
 /** What a raise or a retry is built from and checked against, each made on this device. */
 interface MadeHereDoors {
-  legPayments(runId: string, viewingKey: string, which?: { asset?: string; form?: LedgerForm }): Promise<LegPaymentsOnTheWire>;
-  retryPayments(runId: string, viewingKey: string, indices: readonly number[], which?: { asset?: string; form?: LedgerForm }): Promise<LegPaymentsOnTheWire>;
-  raiseOrder(runId: string, viewingKey: string, which?: { asset?: string; form?: LedgerForm }): Promise<RaiseOrderOnTheWire>;
-  retryOrder(runId: string, viewingKey: string, proposalId: string, which?: { asset?: string; form?: LedgerForm }): Promise<RetryOrderOnTheWire>;
+  legPayments(runId: string, viewingKey: KeysHeld, which?: { asset?: string; form?: LedgerForm }): Promise<LegPaymentsOnTheWire>;
+  retryPayments(runId: string, viewingKey: KeysHeld, indices: readonly number[], which?: { asset?: string; form?: LedgerForm }): Promise<LegPaymentsOnTheWire>;
+  raiseOrder(runId: string, viewingKey: KeysHeld, which?: { asset?: string; form?: LedgerForm }): Promise<RaiseOrderOnTheWire>;
+  retryOrder(runId: string, viewingKey: KeysHeld, proposalId: string, which?: { asset?: string; form?: LedgerForm }): Promise<RetryOrderOnTheWire>;
 }
 
 /** Everything a raise or a retry is made from, from the company's records this device opens. */
 const madeFromTheRecords = (records: CompanyRecordsHere, accountId: string): MadeHereDoors => ({
-  legPayments: (runId, viewingKey, which) => legPaymentsHere(records, accountId, runId, viewingKey as Hex, which),
-  retryPayments: (runId, viewingKey, indices, which) => retryPaymentsHere(records, accountId, runId, viewingKey as Hex, indices, which),
-  raiseOrder: (runId, viewingKey, which) => raiseOrderHere(records, accountId, runId, viewingKey as Hex, which),
-  retryOrder: (runId, viewingKey, proposalId, which) => retryOrderHere(records, accountId, runId, viewingKey as Hex, proposalId, which),
+  legPayments: (runId, viewingKey, which) => legPaymentsHere(records, accountId, runId, viewingKey, which),
+  retryPayments: (runId, viewingKey, indices, which) => retryPaymentsHere(records, accountId, runId, viewingKey, indices, which),
+  raiseOrder: (runId, viewingKey, which) => raiseOrderHere(records, accountId, runId, viewingKey, which),
+  retryOrder: (runId, viewingKey, proposalId, which) => retryOrderHere(records, accountId, runId, viewingKey, proposalId, which),
 });
 
 /** What this device makes a raise or a retry from: the company's records, and nothing else. */
@@ -204,7 +210,7 @@ const HEX64 = /^[0-9a-f]{64}$/u;
 const hexOfBytes = (b: Uint8Array): string => Array.from(b, (x) => x.toString(16).padStart(2, '0')).join('');
 
 /** One proposal, opened on this device from the company's own records (`openTheRoundHere`), and from nowhere else. */
-const opensFor = (doors: GovernedCallDoors) => (proposalId: string, viewingKey: string, forARaise: boolean): Promise<OpenedRound> =>
+const opensFor = (doors: LeavingReads) => (proposalId: string, viewingKey: KeysHeld, forARaise: boolean): Promise<OpenedRound> =>
   openTheRoundHere(doors.service, doors.accountId, proposalId, viewingKey, forARaise, doors.records, doors.leaves);
 
 /** Sent, and the chain has not shown it yet. Not a failure, and not to be sent again. */
@@ -291,7 +297,7 @@ const waitFor = async (
 export async function sendRaiseFromDevice(
   doors: RaiseDoors,
   input: {
-    runId: string; viewingKey: string; asset?: string; form?: LedgerForm;
+    runId: string; viewingKey: KeysHeld; asset?: string; form?: LedgerForm;
   },
 ): Promise<RoundOnThePage> {
   const { service } = doors;
@@ -313,7 +319,7 @@ export async function sendRaiseFromDevice(
 const filerHere = (doors: Pick<GovernedCallDoors, 'material'>): string => signingPublicKeyOf(doors.material.signingSecret as Hex);
 
 async function buildAndSend(
-  doors: GovernedCallDoors, order: RaiseOrderOnTheWire, viewingKey: string,
+  doors: GovernedCallDoors, order: RaiseOrderOnTheWire, viewingKey: KeysHeld,
   send: (tx: string) => Promise<RoundOnThePage>,
 ): Promise<RoundOnThePage> {
   const opened = await opensFor(doors)(order.proposalId, viewingKey, true);
@@ -360,7 +366,7 @@ const legAsked = (input: { asset?: string; form?: LedgerForm }): { asset?: strin
  */
 async function refuseALegTheVaultCannotPay(
   doors: RaiseDoors,
-  input: { runId: string; viewingKey: string; asset?: string; form?: LedgerForm; vault: string; order?: RaiseOrderOnTheWire },
+  input: { runId: string; viewingKey: KeysHeld; asset?: string; form?: LedgerForm; vault: string; order?: RaiseOrderOnTheWire },
 ): Promise<string> {
   const leg = await madeFor(doors).legPayments(input.runId, input.viewingKey, legAsked(input));
   return refusePaymentsTheVaultCannotPay(doors, leg, input);
@@ -440,7 +446,7 @@ async function refusePaymentsTheVaultCannotPay(
  */
 export async function raiseRunOnDevice(
   doors: LegRaiseDoors,
-  input: { runId: string; viewingKey: string; asset?: string; form?: LedgerForm; vault: string; opensAt: string; closesAt: string },
+  input: { runId: string; viewingKey: KeysHeld; asset?: string; form?: LedgerForm; vault: string; opensAt: string; closesAt: string },
 ): Promise<RoundOnThePage> {
   const sent = await onChainHere(doors, await raiseLegHere(doors, input));
   if (sent.raisedAt) return sent;
@@ -512,22 +518,23 @@ interface RoundStanding {
 
 /**
  * **THE ROUNDS WRITTEN DOWN FOR ONE RUN'S LEG, WITH THE PEOPLE EACH RETRY
- * PAYS**, read out of each round's sealed payload with the account's viewing
- * key exactly as the company reads them. A round this page holds no payload
+ * PAYS**, read out of each round's sealed payload with the company's keys,
+ * newest first, exactly as the company reads them. A round this page holds no payload
  * for, or cannot open, is left out: it covers nobody here, and the company,
  * which opens every round, refuses a retry over its people all the same.
  */
 export function roundsOfTheLeg(
-  rounds: ReadonlyArray<RoundStanding>, viewingKey: string, runId: string, asset?: string,
+  rounds: ReadonlyArray<RoundStanding>, viewingKey: KeysHeld, runId: string, asset?: string,
 ): Array<{ readonly id: string; readonly status: string; readonly retry?: readonly number[] }> {
   return rounds.flatMap((r) => {
     if (r.kind === undefined || r.chainId === undefined || r.sealedPayload === undefined) return [];
     let opened: ReturnType<typeof payrollRoundOf>;
     try {
-      opened = payrollRoundOf({
+      const round = {
         id: r.id, kind: r.kind, status: r.status, chainId: r.chainId as Hex, sealedPayload: r.sealedPayload,
         ...(r.raisedAt ? { raisedAt: r.raisedAt } : {}),
-      }, viewingKey as Hex);
+      };
+      opened = openedWithAnyKey(viewingKey, (key) => payrollRoundOf(round, key));
     } catch {
       return [];
     }
@@ -609,7 +616,7 @@ export function mayWithdraw(
 export async function sendRetryFromDevice(
   doors: RaiseDoors,
   input: {
-    runId: string; viewingKey: string; asset?: string; form?: LedgerForm; proposalId: string;
+    runId: string; viewingKey: KeysHeld; asset?: string; form?: LedgerForm; proposalId: string;
   },
 ): Promise<RoundOnThePage> {
   const { service } = doors;
@@ -635,7 +642,7 @@ export async function sendRetryFromDevice(
 export async function raiseRetryOnDevice(
   doors: LegRaiseDoors,
   input: {
-    runId: string; viewingKey: string; asset?: string; form?: LedgerForm; indices: ReadonlyArray<number>;
+    runId: string; viewingKey: KeysHeld; asset?: string; form?: LedgerForm; indices: ReadonlyArray<number>;
     vault: string; opensAt: string; closesAt: string;
   },
 ): Promise<RoundOnThePage> {
@@ -668,9 +675,13 @@ const approvedAlready = (e: unknown): boolean =>
  * `seatSignerOnDevice`), which checks first that it leaves no vault unable to
  * pay and, for a seat, who is seated. Opened here, it is refused before
  * anything is built.
+ *
+ * **A RUN ITS SEAT RAISED AFTER ITS OWN REMOVAL WAS RAISED IS NOT APPROVED
+ * HERE** (`refuseWhatALeaverFiledHere`): its record is passed over once the
+ * removal is approved, so no approval rests on it.
  */
 export function approveOnDevice(
-  doors: GovernedCallDoors, input: { round: RoundOnThePage; viewingKey: string },
+  doors: GovernedCallDoors, input: { round: RoundOnThePage; viewingKey: KeysHeld },
 ): Promise<RoundOnThePage> {
   return approveHere(doors, input, false);
 }
@@ -679,7 +690,7 @@ export function approveOnDevice(
 async function approveHere(
   doors: GovernedCallDoors,
   input: {
-    round: RoundOnThePage; viewingKey: string;
+    round: RoundOnThePage; viewingKey: KeysHeld;
     /** For a governance change: what it changes and its salt, which the approval is refused unless it matches. */
     of?: { governance: GovernanceOnTheWire; proposalSalt: string };
     /** For a removal: this seat's signature over the retirement it carries, sent with the approval. */
@@ -706,6 +717,8 @@ async function approveHere(
     throw new Error('this proposal changes the company - who is seated, or how many approvals are needed - and such a change '
       + 'is approved where it is made, where this device first checks what it does. Nothing was built or sent.');
   }
+  /* A change is checked for who filed it where it is made (`governOnDevice`); a run is checked here. */
+  if (!aChangeCheckedHere) await refuseWhatALeaverFiledHere(doors, input.viewingKey, input.round.id, opened);
   doors.progress?.('reading-the-chain');
   /* The approvals counted before this one are the chain's, never the service's count. */
   const before = await onChainHere(doors, named);
@@ -745,7 +758,7 @@ export class WithdrawnWhileSent extends Error {
  * never sent, is withdrawn with no call.
  */
 export async function withdrawOnDevice(
-  doors: GovernedCallDoors, input: { round: RoundOnThePage; viewingKey: string },
+  doors: GovernedCallDoors, input: { round: RoundOnThePage; viewingKey: KeysHeld },
 ): Promise<RoundOnThePage> {
   const { service } = doors;
   if (service.cancel === undefined) {
@@ -836,7 +849,7 @@ const CARRIED_BY: Readonly<Record<GovernedThroughTheRecords['kind'], CarryCircui
  * is none, and a new one is written down.
  */
 async function liveRoundHere(
-  doors: GovernanceDoors, viewingKey: string, change: GovernanceOnTheWire,
+  doors: GovernanceDoors, viewingKey: KeysHeld, change: GovernanceOnTheWire,
 ): Promise<{ round: RoundOnThePage; opened: OpenedRound; filed: SealedProposal; enteredNow: boolean } | null> {
   const { service } = doors;
   if (!service.sealedProposals) {
@@ -949,7 +962,7 @@ async function refuseASecondSignerBeforeTheFounding(doors: GovernanceDoors): Pro
 /**
  * **A GOVERNANCE CHANGE TAKEN AS FAR AS THIS DEVICE CAN TAKE IT.** The
  * proposal the company already holds for it is used; with none, one is written
- * down here - sealed under the company's viewing key and signed by this seat -
+ * down here - sealed under the company's key in force and signed by this seat -
  * and raised. It is approved by this signer if they have not approved it, and
  * carried out once the chain counts the approvals it needs. A proposal still
  * short of approvals is left for the others to approve from their own devices,
@@ -959,7 +972,7 @@ async function refuseASecondSignerBeforeTheFounding(doors: GovernanceDoors): Pro
 async function governOnDevice(
   doors: GovernanceDoors,
   input: {
-    viewingKey: string; change: GovernedThroughTheRecords; summary: string; body: GovernancePayloadBody;
+    viewingKey: KeysHeld; change: GovernedThroughTheRecords; summary: string; body: GovernancePayloadBody;
     /** Given the proposal as this device opened it, at the approval and the carrying out; given nothing before a raise. */
     before?: (opened?: OpenedRound) => Promise<void>;
     /** For a removal: this seat's signature over the retirement the opened proposal carries, sent with its approval. */
@@ -981,16 +994,19 @@ async function governOnDevice(
   /*
    * **NO CHANGE THIS DEVICE RAISES, APPROVES OR CARRIES OUT LEAVES A VAULT
    * UNABLE TO PAY**: counted afresh before each, over the company as it stands
-   * then, as well as any check the caller makes.
+   * then, as well as any check the caller makes. Approved or carried out, it is
+   * also refused when its seat filed it after its own removal was raised
+   * (`refuseWhatALeaverFiledHere`).
    */
-  const check = async (opened?: OpenedRound): Promise<void> => {
+  const check = async (opened?: OpenedRound, proposalId?: string): Promise<void> => {
     const counts = changeCounted(input.change);
     if (counts !== null) refuseLeavingAVaultShort(await doors.approvers(), counts, doors.vaultName);
     if (input.change.kind === 'add-signer') await refuseASecondSignerBeforeTheFounding(doors);
     await refuseABarRaisedDuringARemoval(doors, input.viewingKey, input.change, input.highestBand);
+    if (opened !== undefined && proposalId !== undefined) await refuseWhatALeaverFiledHere(doors, input.viewingKey, proposalId, opened);
     await input.before?.(opened);
   };
-  const key = input.viewingKey as Hex;
+  const key = input.viewingKey;
   if (doors.records === undefined) {
     throw new NotOpenedOnThisDevice('This page cannot read the company\'s records, so it cannot raise or carry out this '
       + 'change. Reload the page to get the current version.');
@@ -1017,17 +1033,18 @@ async function governOnDevice(
     }
     const identity = await doors.builder.proposalIdentity(input.change, salt);
     const change = { asset: NO_ASSET, amount: 0n, batchDigest: commit('', ''), salt: salt as Hex };
+    const sealing = sealingWith(key, doors.filing.keyEpoch);
     const filing = signProposalFiling(doors.accountId, {
-      id: doors.filing.newId(), digest: identity.digest as Hex, chainId: identity.chainId as Hex, keyEpoch: doors.filing.keyEpoch,
+      id: doors.filing.newId(), digest: identity.digest as Hex, chainId: identity.chainId as Hex, keyEpoch: sealing.epoch,
       createdAt: new Date().toISOString(),
       sealed: sealGovernanceProposal({
-        accountId: doors.accountId, viewingKey: key, kind: KIND_OF[input.change.kind], summary: input.summary,
+        accountId: doors.accountId, viewingKey: sealing.key, kind: KIND_OF[input.change.kind], summary: input.summary,
         noVault: identity.noVault as Hex, body: input.body, change, proposedBy: doors.filing.seat,
       }),
     }, doors.material.signingSecret as Hex);
     const raisedRetirement = (input.body as { retirement?: RetirementTerms }).retirement;
     const opened: OpenedRound = {
-      chainId: identity.chainId, digest: identity.digest, vault: identity.noVault, salt, summary: input.summary,
+      chainId: identity.chainId, digest: identity.digest, vault: identity.noVault, salt, summary: input.summary, filedBy: filing.filedBy.publicKey,
       governance: input.change, half: { assetId: hexOfBytes(NO_ASSET_NAMED.assetId), changeAmount: '0', changeBatchDigest: change.batchDigest },
       ...(raisedRetirement === undefined ? {} : { retirement: raisedRetirement }),
     };
@@ -1062,7 +1079,7 @@ async function governOnDevice(
   const { opened } = live;
   const of = { governance: input.change, proposalSalt: opened.salt };
   if (!(await meetsTheBar(doors, round, input.change, input.bar))) {
-    await check(opened);
+    await check(opened, round.id);
     const retirement = await input.signs?.(opened, round);
     try {
       round = await approveHere(doors, { round, viewingKey: input.viewingKey, of, ...(retirement === undefined ? {} : { retirement }) }, true);
@@ -1073,7 +1090,7 @@ async function governOnDevice(
   }
   if (!(await meetsTheBar(doors, round, input.change, input.bar))) return { state: 'waiting-for-approvals', round };
   if (!service.carry) throw new Error('This page cannot carry out proposals. Reload the page to get the current version. Nothing was sent.');
-  await check(opened);
+  await check(opened, round.id);
   await input.beforeCarry?.(opened);
   /* What carries it out is made here, from the proposal as this device opened it. */
   const order = input.carry === undefined ? carryOrderHere(opened) : input.carry(opened);
@@ -1109,7 +1126,7 @@ async function proposalEntered(doors: GovernanceDoors, entry: ManifestEntryBody)
   }
 }
 
-/** What writing a governance proposal down needs of this device: its seat, the company's key epoch, and fresh names. */
+/** What writing a governance proposal down needs of this device: its seat, the key epoch a bare key seals at, and fresh names. */
 interface GovernanceFilingDoors {
   /** This device's seat on the company, as its directory entry names it. */
   readonly seat: string;
@@ -1181,7 +1198,7 @@ const changeCounted = (change: GovernedThroughTheRecords): VaultCheckChange | nu
 
 /** Changes the account's threshold, as far as this device can: see `governOnDevice`. */
 export function changeThresholdOnDevice(
-  doors: GovernanceDoors, input: { viewingKey: string; newThreshold: number; seated: number },
+  doors: GovernanceDoors, input: { viewingKey: KeysHeld; newThreshold: number; seated: number },
 ): Promise<GovernedOutcome> {
   if (!Number.isInteger(input.newThreshold) || input.newThreshold < 1) {
     return Promise.reject(new Error('the threshold must be a whole number, at least one. Nothing was sent.'));
@@ -1202,7 +1219,7 @@ export function changeThresholdOnDevice(
  */
 export function changeVaultThresholdOnDevice(
   doors: GovernanceDoors,
-  input: { viewingKey: string; vault: string; newThreshold: number; seated: number; before?: () => Promise<void> },
+  input: { viewingKey: KeysHeld; vault: string; newThreshold: number; seated: number; before?: () => Promise<void> },
 ): Promise<GovernedOutcome> {
   if (!Number.isInteger(input.newThreshold) || input.newThreshold < 1) {
     return Promise.reject(new Error('a vault\'s approvals needed must be a whole number, at least one. Nothing was sent.'));
@@ -1251,7 +1268,7 @@ const invitationForTheLeaf = (invited: SignedSeatInvitation, leaf: string, signi
 export async function seatSignerOnDevice(
   doors: GovernanceDoors & { readonly roster: RosterDoors },
   input: {
-    viewingKey: string; signerId: string; readOut: string;
+    viewingKey: KeysHeld; signerId: string; readOut: string;
     /**
      * This seat as an inviter record - its wallet key, the directory entry its wallet signed and its own seat's
      * opening - carried in the proposal for the person's wallet, which keeps the company's account only on a seat
@@ -1310,6 +1327,12 @@ export type RemovalDoors = GovernanceDoors & {
    * it signs, and each it believed among those the service served. A carrier counts them beside the service's.
    */
   readonly signatures?: RetirementSignaturesKept;
+  /**
+   * What changing the company's key needs once a removal is carried out on the chain and its retirement anchored: the
+   * key the wallet released, the copy the service serves this seat, the waiting answers, the seats the roster admitted,
+   * and the filing of the change (`rotateTheCompanyKeyHere`). Absent, this device changes no key.
+   */
+  readonly companyKey?: Pick<RotationDoors, 'filings' | 'served' | 'released' | 'askTheWallet' | 'waiting' | 'admitted' | 'file'>;
 };
 
 /** The retirement signatures one device keeps for each removal it signed or read. */
@@ -1331,11 +1354,34 @@ export class RemovalRaisedAgain extends Error {
   }
 }
 
-/** Where a removal stands after this device has done what it can. */
-export type RemovalOutcome =
+/**
+ * Where a removal stands after this device has done what it can, and, once it is done, what changing the company's key
+ * came to. A change of the key that fails leaves the removal done.
+ */
+export type RemovalOutcome = (
   | GovernedOutcome
   /** Approved on the chain, or carried out there, and its retirement not yet signed by enough seats to be filed. */
-  | { readonly state: 'waiting-for-the-retirement'; readonly round: RoundOnThePage | null; readonly signed: number; readonly needed: number };
+  | { readonly state: 'waiting-for-the-retirement'; readonly round: RoundOnThePage | null; readonly signed: number; readonly needed: number }
+) & { readonly rotation?: KeyRotated };
+
+/**
+ * **A REMOVAL DONE, AND THE COMPANY'S KEY CHANGED AFTER IT FROM THIS DEVICE** where this page can
+ * (`rotateTheCompanyKeyHere`): never from the leaving seat's device, nor one under an approved removal. Whatever the change
+ * of the key comes to, even a throw, the removal stays done.
+ */
+const rotatedAfter = async (doors: RemovalDoors, viewingKey: KeysHeld, leaf: string, outcome: RemovalOutcome): Promise<RemovalOutcome> => {
+  if (outcome.state !== 'done' || doors.companyKey === undefined || doors.records === undefined) return outcome;
+  let rotation: KeyRotated;
+  try {
+    rotation = await rotateTheCompanyKeyHere({
+      ...doors.companyKey, accountId: doors.accountId, material: doors.material, records: doors.records,
+      leaving: () => seatsLeavingHere(doors, viewingKey, true),
+    }, { leaf });
+  } catch (e) {
+    rotation = { state: 'not-rotated', why: (e as Error)?.message ?? String(e) };
+  }
+  return { ...outcome, rotation };
+};
 
 /** A removal's retirement is not yet signed by enough seats for the directory version next now. Nothing was sent to the chain. */
 export class RetirementNotYetSigned extends Error {
@@ -1444,10 +1490,11 @@ const retirementTermsHere = async (doors: RemovalDoors, here: DirectoryHere, sea
  * anchored at the head the raise names (`RetirementTerms.atHead`), which this
  * device must have checked itself: the boundary signed at the raise is final,
  * and what the leaving seat anchors after that head - before the raise lands
- * or after - voids nothing.
+ * or after - voids nothing. That head must also be recent at the raise
+ * (`anchoredHeadHere`, against `raise`, the proposal as the chain holds it).
  */
 const removalRefusalHere = async (
-  doors: RemovalDoors, here: DirectoryHere, leaf: string, terms: RetirementTerms | undefined, raised = false,
+  doors: RemovalDoors, here: DirectoryHere, leaf: string, terms: RetirementTerms | undefined, raised = false, raise?: RaiseRead,
 ): Promise<string | null> => {
   const inFlight = here.dir.seats.find((x) => x.seat !== leaf && x.retired !== null && here.holders.seats.includes(x.seat));
   if (inFlight !== undefined) {
@@ -1472,7 +1519,7 @@ const removalRefusalHere = async (
     return 'the leaving signer has filed versions the company\'s records do not anchor yet, and a retirement is judged only over '
       + 'what is anchored. Open the company on the device of a seat that may anchor, which anchors them, then try again';
   }
-  const atSeq = raised ? anchoredHeadHere(here, terms) : undefined;
+  const atSeq = raised ? anchoredHeadHere(here, terms, raise) : undefined;
   if (typeof atSeq === 'string') return atSeq;
   if (!sameBoundary(terms.filedUpTo, lastVersionsFiledBy(here, seat.signingKey, atSeq))) {
     return 'its retirement does not keep exactly the last version of each record the leaving signer filed, as the anchored records '
@@ -1483,10 +1530,37 @@ const removalRefusalHere = async (
 };
 
 /**
- * The batch the anchored head a removal's raise names (`RetirementTerms.atHead`) left, as this device checked the
- * company's records itself; or why it cannot be judged, in words that say what resolves it.
+ * **HOW OLD THE HEAD A REMOVAL'S RAISE NAMES MAY BE, IN BLOCK TIME, IN
+ * MILLISECONDS.** A raise naming a head older than the newest that landed at
+ * least this long before the raise's own block is refused, so a raiser cannot
+ * pick an old head whose boundary leaves out what the leaving seat filed since.
  */
-const anchoredHeadHere = (here: DirectoryHere, terms: RetirementTerms): number | string => {
+export const RECENT_HEAD_WINDOW = 10 * 60 * 1000;
+
+/** The proposal a removal's raise made, as the account's history at the wallet's indexer holds it; `no-history` where this page reads none. */
+type RaiseRead = RoundOnChain | 'no-history' | undefined;
+
+/** Why how recent a raise's head is cannot be judged here, each saying what resolves it. */
+const RECENT_HEAD_UNJUDGED = {
+  raiseNotRead: 'its raise was not read from the indexer your wallet names, so how recent the head it names is cannot be judged. '
+    + 'Read the chain again in a moment, then try again',
+  noHistory: 'this page cannot read the account\'s history at the indexer your wallet names, so how recent the head its raise '
+    + 'names is cannot be judged. Reload the page to get the current version, then try again',
+  checkedShort: 'this device has not checked the company\'s records as far as the newest head that landed ten minutes or more '
+    + 'before its raise, so how recent the head it names is cannot be judged here. Open the company again on this device so it '
+    + 'checks its records further, or approve from a device that has',
+} as const;
+
+/**
+ * The batch the anchored head a removal's raise names (`RetirementTerms.atHead`) left, as this device checked the
+ * company's records itself; or why it cannot be judged, in words that say what resolves it. The head must not be older
+ * than the newest head that landed `RECENT_HEAD_WINDOW` or more before the block the raise landed in. Both times are
+ * the blocks' own, read from the history of the account at the wallet's indexer, never from the service: the raise's
+ * from `raise` (`roundsOnChain`), the heads' from `newestLandedBy`. A raise not read there, a page that reads no
+ * history, and a reference head this device did not check each refuse with what resolves them (`RECENT_HEAD_UNJUDGED`);
+ * a raise the indexer gave no block time for is raised again.
+ */
+const anchoredHeadHere = (here: DirectoryHere, terms: RetirementTerms, raise: RaiseRead): number | string => {
   if (terms.atHead === undefined) {
     return 'its retirement does not name the anchored head its boundary was taken at, so what the leaving signer had filed by then '
       + 'cannot be said. Withdraw this removal and raise it again';
@@ -1496,6 +1570,20 @@ const anchoredHeadHere = (here: DirectoryHere, terms: RetirementTerms): number |
     return 'its retirement names an anchored head this device has not checked in the company\'s records, so its boundary cannot be '
       + 'judged here. Check the company\'s records on this device from its first header, or approve from a device that has; '
       + 'a head the company\'s records never held is refused on every device';
+  }
+  if (raise === 'no-history') return RECENT_HEAD_UNJUDGED.noHistory;
+  const at = raise?.raisedAt;
+  if (at === undefined) return RECENT_HEAD_UNJUDGED.raiseNotRead;
+  if (!Number.isSafeInteger(at) || at <= 0) {
+    return 'the indexer your wallet names gave no time for the block its raise landed in, so how recent the head it names is '
+      + 'cannot be judged. The signer who raised it withdraws it and raises this removal again';
+  }
+  const newest = here.records.newestLandedBy?.(at - RECENT_HEAD_WINDOW) ?? 'unread';
+  if (newest === 'unread') return RECENT_HEAD_UNJUDGED.checkedShort;
+  if (newest !== 'none' && seq < newest.seq) {
+    return `its retirement names an anchored head older than one the company's records held ${RECENT_HEAD_WINDOW / 60_000} minutes `
+      + 'or more before the raise landed, so its boundary could leave out what the leaving signer filed since. The signer who '
+      + 'raised it withdraws it and raises this removal again';
   }
   return seq;
 };
@@ -1588,24 +1676,60 @@ const keepSignaturesHere = async (doors: RemovalDoors, proposalId: string, signa
   if (signatures.length > 0) await doors.signatures?.keep(doors.accountId, proposalId, signatures);
 };
 
-/** Refuses, with nothing filed or sent, a removal the chain will never carry out (`RemovalRaisedAgain`), as its history reads now. */
-const refuseAnOutrunRemoval = async (doors: RemovalDoors, chainId: string): Promise<void> => {
-  const read = await doors.records!.roundsOnChain?.([chainId.toLowerCase()]);
-  if (read?.[chainId.toLowerCase()]?.outrun === true) throw new RemovalRaisedAgain();
+/**
+ * For a raised removal this device has judged: this seat signs the retirement again at the directory version next now
+ * only where the service serves a signature of this seat's that checks over these very terms at the version it named,
+ * so an entry the service lists under this seat's key and this seat never made triggers nothing. Then the signatures
+ * this device believes, served and kept, are kept here, and once they reach the quorum the retirement is kept whole,
+ * so this device can file it whatever the service later serves.
+ */
+const retirementGatheredHere = async (
+  doors: RemovalDoors, here: DirectoryHere, leaf: string, proposalId: string, terms: RetirementTerms,
+): Promise<void> => {
+  const mine = retirementSignedHere(doors, here, leaf, terms);
+  const served = await signaturesServed(doors, proposalId);
+  const signedBefore = mine !== undefined && served.some((x) => x.signedFor !== mine.signedFor && Number.isSafeInteger(x.signedFor)
+    && signaturesBelieved(doors, here, leaf, terms, x.signedFor, [x]).some((b) => b.publicKey === mine.publicKey));
+  if (doors.service.retire !== undefined && mine !== undefined && signedBefore && !served.some((x) => x.publicKey === mine.publicKey
+    && x.signedFor === mine.signedFor)) {
+    await doors.service.retire(proposalId, { signature: mine, filer: filerHere(doors) });
+  }
+  const signedFor = here.dir.version + 1;
+  const believed = signaturesBelieved(doors, here, leaf, terms, signedFor,
+    [...await signaturesServed(doors, proposalId), ...await signaturesKeptHere(doors, proposalId)]);
+  await keepSignaturesHere(doors, proposalId, believed.map((x) => ({ signedFor, ...x })));
+  if (believed.length >= Math.max(terms.threshold, here.holders.seatBar)) {
+    await doors.kept?.keep(doors.accountId, { signedAt: signedFor, change: { ...retirementOf(leaf, terms), signatures: believed } as SignedChange });
+  }
+};
+
+/**
+ * Refuses, with nothing filed or sent, a removal the chain will never carry out (`RemovalRaisedAgain`), as its history
+ * reads now; else the proposal as that history holds it (nothing where it holds none), or `no-history` where this page
+ * reads no history.
+ */
+const refuseAnOutrunRemoval = async (doors: RemovalDoors, chainId: string): Promise<RaiseRead> => {
+  if (doors.records!.roundsOnChain === undefined) return 'no-history';
+  const read = (await doors.records!.roundsOnChain([chainId.toLowerCase()]))?.[chainId.toLowerCase()];
+  if (read?.outrun === true) throw new RemovalRaisedAgain();
+  return read;
 };
 
 /**
  * **WHY A CHANGE THAT RAISES THE BAR ON CHANGING WHO IS SEATED WAITS FOR A
  * REMOVAL UNDER WAY, OR NULL**: a seat retired in the directory that the chain
- * still holds, or a removal raised and open. Raised now, the bar could rise
- * past the signers who stay, and the removal could then never be carried out.
+ * still holds, or a removal the chain holds approved (`removalsApprovedHere`).
+ * Raised now, the bar would take back the approvals that removal already has,
+ * and could rise past the signers who stay, so it could never be carried out.
+ * A removal raised and not yet approved holds no rise up: one that rises under
+ * it is refused at its next approval and raised again (`removalRefusalHere`).
  */
-const removalUnderWayHere = async (doors: GovernanceDoors, viewingKey: string): Promise<string | null> => {
+const removalUnderWayHere = async (doors: GovernanceDoors, viewingKey: KeysHeld): Promise<string | null> => {
   const here = await doors.records!.directory();
   if (here.dir.seats.some((x) => x.retired !== null && here.holders.seats.includes(x.seat))) {
     return 'a signer\'s seat is retired in the company\'s directory and the chain still holds it';
   }
-  return (await removalsRaisedHere(doors, viewingKey)).length > 0 ? 'a removal of a signer is raised and not yet carried out' : null;
+  return (await removalsApprovedHere(doors, viewingKey)).length > 0 ? 'a removal of a signer is approved and not yet carried out' : null;
 };
 
 /**
@@ -1621,7 +1745,7 @@ const removalUnderWayHere = async (doors: GovernanceDoors, viewingKey: string): 
  * key) raises no bar and waits for nothing here.
  */
 async function refuseABarRaisedDuringARemoval(
-  doors: GovernanceDoors, viewingKey: string, change: GovernedThroughTheRecords, highestBand?: number,
+  doors: GovernanceDoors, viewingKey: KeysHeld, change: GovernedThroughTheRecords, highestBand?: number,
 ): Promise<void> {
   const asked = change.kind === 'threshold' || change.kind === 'vault-threshold' ? Number(change.threshold)
     : change.kind === 'policy-bar' ? Number(change.bar)
@@ -1650,9 +1774,34 @@ const directoryAnchoredFirst = async (doors: RemovalDoors): Promise<void> => {
   }
 };
 
-/** The company's open removals, each opened on this device from its records: the leaf each takes off. */
-const removalsOpenHere = async (doors: GovernanceDoors, viewingKey: string, open = true): Promise<{ id: string; leaf: string; opened: OpenedRound }[]> => {
-  if (doors.records === undefined || !doors.service.sealedProposals) return [];
+/**
+ * What reading who is leaving needs: the service's proposals, the company's records and who the chain seats. Only the
+ * records' directory and the chain's standing of each proposal are read.
+ */
+export type LeavingReads = Pick<GovernedCallDoors, 'service' | 'accountId' | 'leaves'> & { readonly records?: RecordsForTheRound };
+
+/** Why who is leaving could not be read in full, so nothing that must exclude them goes ahead. */
+export class LeavingNotRead extends Error {
+  constructor(why: string) {
+    super(`who is under a removal could not be read in full: ${why}`);
+    this.name = 'LeavingNotRead';
+  }
+}
+
+/**
+ * The company's open removals, each opened on this device from its records: the leaf each takes off. With `strict`,
+ * a proposal this device cannot open, or records, proposals or the chain's standing it cannot read, refuse with
+ * `LeavingNotRead` instead of being passed over, so an answer that leaves a removal out is never given; one refused
+ * after its sealed record named another kind than a removal is no removal, and is passed over either way.
+ */
+const removalsOpenHere = async (
+  doors: LeavingReads, viewingKey: KeysHeld, open = true, strict = false,
+): Promise<{ id: string; leaf: string; opened: OpenedRound }[]> => {
+  if (doors.records === undefined || !doors.service.sealedProposals) {
+    if (strict) throw new LeavingNotRead('this page reads no proposals or records of the company');
+    return [];
+  }
+  if (strict && doors.records.roundsOnChain === undefined) throw new LeavingNotRead('this page cannot read where the company\'s proposals stand on the chain');
   const served = await doors.service.sealedProposals(doors.accountId);
   const listed = await standingOnChainHere(doors.records, listedHere(await doors.records.directory(kindAsked('proposal')), 'proposal', served, 'proposal'));
   const out: { id: string; leaf: string; opened: OpenedRound }[] = [];
@@ -1661,45 +1810,94 @@ const removalsOpenHere = async (doors: GovernanceDoors, viewingKey: string, open
     try {
       const opened = await opensFor(doors)(p.id, viewingKey, false);
       if (opened.governance?.kind === 'remove-signer') out.push({ id: p.id, leaf: opened.governance.leaf.toLowerCase(), opened });
-    } catch {
-      /* One this device cannot open names no removal it acts on. */
+    } catch (e) {
+      /*
+       * One this device cannot open names no removal it acts on, unless every removal must be known; one its sealed
+       * record names another kind than a removal is none, however it was refused after; so is one whose only refusal
+       * is that the seat that filed it has left the company and filed it past what its retirement kept, since no
+       * device acts on it and the chain no longer seats its filer.
+       */
+      if (e instanceof NotOpenedOnThisDevice && (e.passedOver === true || (e.kind !== undefined && e.kind !== 'remove-signer'))) continue;
+      if (strict) throw new LeavingNotRead(`proposal ${p.id} did not open on this device (${(e as Error)?.message ?? String(e)})`);
     }
   }
   return out;
 };
 
+type RemovalOnChain = { id: string; leaf: string; opened: OpenedRound; round: RoundOnChain };
+
 /**
  * **THE COMPANY'S REMOVALS THE CHAIN HOLDS AS RAISED**, of those open on this
- * device (`removalsOpenHere`), each read from the account's history at the
- * person's own wallet's indexer: one filed with the service and never raised
- * on the chain sets no boundary and holds no change up. None where this device
- * cannot read the chain's standing.
+ * device (`removalsOpenHere`), each with where it stands as read from the
+ * account's history at the person's own wallet's indexer: one filed with the
+ * service and never raised on the chain sets no boundary and holds no change
+ * up. None where this device cannot read the chain's standing; with `strict`,
+ * that refuses with `LeavingNotRead` (`removalsOpenHere`).
  */
-const removalsRaisedHere = async (doors: GovernanceDoors, viewingKey: string): Promise<{ id: string; leaf: string; opened: OpenedRound }[]> => {
-  const open = await removalsOpenHere(doors, viewingKey);
-  if (open.length === 0) return open;
+const removalsRaisedHere = async (doors: LeavingReads, viewingKey: KeysHeld, strict = false): Promise<RemovalOnChain[]> => {
+  const open = await removalsOpenHere(doors, viewingKey, true, strict);
+  if (open.length === 0) return [];
   const read = await doors.records?.roundsOnChain?.(open.map((r) => r.opened.chainId.toLowerCase()));
-  return open.filter((r) => {
+  return open.flatMap((r) => {
     const round = read?.[r.opened.chainId.toLowerCase()];
-    return round !== undefined && (round.held === 'open' || round.held === 'cleared') && round.raisedAt !== undefined;
+    return round !== undefined && (round.held === 'open' || round.held === 'cleared') && round.raisedAt !== undefined ? [{ ...r, round }] : [];
   });
 };
 
 /**
- * **THE SEATS A RAISED REMOVAL IS ABOUT, BY FILING KEY, EACH WITH THE BOUNDARY
- * THE RAISE SIGNED** - the retirement terms its proposal carries, final from
- * the raise; none where it carries none - and any seat retired whose removal
- * the chain has not carried out yet, with the boundary its retirement keeps,
- * as this device reads the company's records and the chain now. What no device
- * anchors or believes a version past (`AnchorDoors.leaving`). It reads the
- * company's records through `doors.records`, which must not be given this
- * answer back, or each read would ask for itself.
+ * **THE COMPANY'S REMOVALS THE CHAIN HOLDS AS APPROVED**: raised
+ * (`removalsRaisedHere`), raised since the chain's last removal (not
+ * `outrun`), and approved as many times as the account demands to carry it
+ * out - the higher of the approvals a change of who is seated needs now, as
+ * the person's own wallet reads the chain (`holders.seatBar`), and the
+ * approvals the chain recorded the removal as needing when it was raised
+ * (`RoundOnChain.needed`). The count is the chain's, over every seat, the
+ * leaving one's included. From here a seat is leaving: before it, a removal
+ * raised stops nothing. Approved does not mean the carrying out will pass:
+ * the account also keeps enough signers seated, and a refused carrying out is
+ * read again. A seat bar this device could not read counts every raised
+ * removal as approved, never as one leaving nobody; with `strict`, it refuses
+ * with `LeavingNotRead`.
  */
-export async function leavingBoundariesHere(doors: GovernanceDoors, viewingKey: string): Promise<LeavingBoundaries> {
+const removalsApprovedHere = async (doors: LeavingReads, viewingKey: KeysHeld, strict = false): Promise<RemovalOnChain[]> => {
+  const raised = await removalsRaisedHere(doors, viewingKey, strict);
+  if (raised.length === 0) return raised;
+  const bar = (await doors.records!.directory()).holders?.seatBar;
+  if (!Number.isSafeInteger(bar) || (bar as number) < 1) {
+    if (strict) throw new LeavingNotRead('your wallet\'s read of the company\'s account did not say how many approvals a change of who is seated needs');
+    return raised;
+  }
+  return raised.filter((r) => r.round.outrun !== true && r.round.approvals >= Math.max(bar as number, r.round.needed ?? 0));
+};
+
+/**
+ * **THE SEATS AN APPROVED REMOVAL IS ABOUT, BY FILING KEY, EACH WITH THE
+ * BOUNDARY THE RAISE SIGNED** - the retirement terms its proposal carries,
+ * final from the raise; none where it carries none - and any seat retired
+ * whose removal the chain has not carried out yet, with the boundary its
+ * retirement keeps, as this device reads the company's records and the chain
+ * now. What no device anchors or believes a version past
+ * (`AnchorDoors.leaving`): what the leaving seat filed after the raise and
+ * before the approval is anchored and believed until then, and passed over
+ * once the removal is approved. With `raised`, the seats a removal is only
+ * raised for are named too, but not those of an outrun removal
+ * (`seatsUnderARaisedRemovalHere`). It reads the
+ * company's records through `doors.records`, which must not be given this
+ * answer back, or each read would ask for itself. With `strict`, anything it
+ * cannot read refuses with `LeavingNotRead` rather than leave a seat out.
+ */
+export async function leavingBoundariesHere(
+  doors: LeavingReads, viewingKey: KeysHeld, strict = false, raised = false,
+): Promise<LeavingBoundaries> {
   const out = new Map<string, Readonly<Record<string, number>>>();
-  if (doors.records === undefined) return out;
+  if (doors.records === undefined) {
+    if (strict) throw new LeavingNotRead('this page cannot read the company\'s records');
+    return out;
+  }
   const here = await doors.records.directory();
-  for (const r of await removalsRaisedHere(doors, viewingKey)) {
+  const named = raised ? (await removalsRaisedHere(doors, viewingKey, strict)).filter((r) => r.round.outrun !== true)
+    : await removalsApprovedHere(doors, viewingKey, strict);
+  for (const r of named) {
     const seat = here.dir.seats.find((x) => x.seat === r.leaf);
     if (seat !== undefined) out.set(seat.signingKey.toLowerCase(), r.opened.retirement?.filedUpTo ?? {});
   }
@@ -1710,24 +1908,119 @@ export async function leavingBoundariesHere(doors: GovernanceDoors, viewingKey: 
 }
 
 /**
- * **THE FILING KEYS OF THE SEATS A RAISED REMOVAL IS ABOUT**, and of any seat
- * retired whose removal the chain has not carried out yet (`leavingBoundariesHere`):
- * what a spending policy's approval refuses a version filed by, so the terms
- * the company keeps are set by a signer who stays, and what a leaving seat's
- * own device stops filing under.
+ * **THE FILING KEYS OF THE SEATS AN APPROVED REMOVAL IS ABOUT**, and of any
+ * seat retired whose removal the chain has not carried out yet
+ * (`leavingBoundariesHere`): what a leaving seat's own device stops filing
+ * under, and what changes the company's key without that seat. With `strict`,
+ * as `leavingBoundariesHere`.
  */
-export async function seatsLeavingHere(doors: GovernanceDoors, viewingKey: string): Promise<ReadonlySet<string>> {
-  return new Set((await leavingBoundariesHere(doors, viewingKey)).keys());
+export async function seatsLeavingHere(doors: LeavingReads, viewingKey: KeysHeld, strict = false): Promise<ReadonlySet<string>> {
+  return new Set((await leavingBoundariesHere(doors, viewingKey, strict)).keys());
 }
 
 /**
- * Why this device's own seat files nothing more, or null: a removal of its seat is raised, so what it would file now
- * falls past the boundary the retirement keeps, and a signer who stays files it again under their own seat.
+ * **THE FILING KEYS OF THE SEATS A REMOVAL IS RAISED FOR**, approved or not
+ * and not outrun (the account will never carry an outrun one out), and of any
+ * seat retired that the chain still holds: whose spending policy a
+ * policy change is not approved or carried out under, and whose proposals and
+ * runs filed after the raise a staying device does not approve or carry out
+ * (`refuseWhatALeaverFiledHere`, from `leavingBoundariesHere` with `raised`),
+ * so nothing the chain acts on rests on a record that is passed over once the
+ * removal is approved. With `strict`, as `leavingBoundariesHere`.
  */
-export async function ownRemovalRaisedHere(doors: GovernanceDoors, viewingKey: string): Promise<string | null> {
+export async function seatsUnderARaisedRemovalHere(doors: LeavingReads, viewingKey: KeysHeld, strict = false): Promise<ReadonlySet<string>> {
+  return new Set((await leavingBoundariesHere(doors, viewingKey, strict, true)).keys());
+}
+
+/**
+ * **A PROPOSAL OR RUN A SEAT FILED AFTER ITS OWN REMOVAL WAS RAISED IS NOT
+ * APPROVED OR CARRIED OUT FROM A STAYING DEVICE.** Its record is past the
+ * boundary that removal's raise signed (`pastTheRaisedBoundary`): anchored and
+ * believed while the removal waits for its approvals, and passed over once it
+ * is approved, so nothing the chain does may rest on it. One the seat filed
+ * before its removal was raised is within that boundary, and goes ahead as
+ * any other; so does everything once the removal is outrun, since the account
+ * will never carry that removal out. The filer is the seat whose signed filing
+ * this device believed when it opened the proposal (`OpenedRound.filedBy`),
+ * never a second read of the service. Each refusal says what resolves it, and
+ * nothing is sent:
+ *   - no believed record names who raised it;
+ *   - who is under a raised removal could not be read in full (`LeavingNotRead`);
+ *   - its record is past the boundary its filer's raised removal signed.
+ * The one exception is a removal of a signer (`exemptFromWhoFiled`); a run is never exempt.
+ */
+const refuseWhatALeaverFiledHere = async (
+  doors: LeavingReads, viewingKey: KeysHeld, proposalId: string, opened: OpenedRound,
+): Promise<void> => {
+  const filer = typeof opened.filedBy === 'string' ? opened.filedBy.toLowerCase() : null;
+  if (filer === null) {
+    throw new Error('This device holds no signed filing of this proposal in the company\'s records, so who raised it cannot be '
+      + 'said, and a proposal raised by a signer on their way out is not approved or carried out. Nothing was sent. Reload the '
+      + 'page and open it again; if it happens again, whoever raised it raises it again from their own device.');
+  }
+  if (exemptFromWhoFiled(opened)) return;
+  let boundaries: LeavingBoundaries;
+  try {
+    boundaries = await leavingBoundariesHere(doors, viewingKey, true, true);
+  } catch (e) {
+    if (!(e instanceof LeavingNotRead)) throw e;
+    throw new Error(`This is not approved or carried out while ${e.message}. Nothing was sent. Read the chain again, then try again.`);
+  }
+  if (!pastTheRaisedBoundary(boundaries, filer, boundaryKeyOfEntry({ store: 'proposal', kind: 'proposal', id: proposalId, version: 1, digest: '' } as ManifestEntryBody), 1)) return;
+  throw new Error('This was raised by a signer whose removal is raised, after it was raised, and what they file now is passed over '
+    + 'once their removal is approved. Nothing was sent. Do not approve or carry it out; once the removal is carried out, a '
+    + 'signer who stays raises it again, or once it is withdrawn, approve it then.');
+};
+
+/**
+ * Whether a proposal goes ahead whoever filed it: every removal of a signer, so a seat that raises the removal of every
+ * other signer first can still be removed by one of them. Every other proposal, and every run, is judged by when its
+ * filer filed it (`refuseWhatALeaverFiledHere`).
+ */
+const exemptFromWhoFiled = (opened: OpenedRound): boolean => opened.governance?.kind === 'remove-signer';
+
+/**
+ * **A RUN ITS SEAT RAISED AFTER ITS OWN REMOVAL WAS RAISED IS NOT CHARGED OR
+ * PAID FROM A STAYING DEVICE** (`refuseWhatALeaverFiledHere`), however its
+ * approvals were given: carrying a run out is charging it to its period
+ * (`chargeTheRunHere`) and paying each person (`payAnApprovedLeg`), and each
+ * asks this first, before anything is built or sent. Who raised it is read
+ * from the run's proposal as the company's records believe it
+ * (`proposalsListedHere`, `believedFilerHere`). A page given no proposals,
+ * a run the records do not list, or one whose filing this device does not
+ * believe is refused, saying what resolves it.
+ */
+export async function refuseARunALeaverRaisedHere(
+  records: RecordsForTheRound, accountId: string, viewingKey: KeysHeld, proposalId: string,
+): Promise<void> {
+  const proposals = records.proposals;
+  if (proposals === undefined) {
+    throw new Error('This page cannot read the company\'s proposals, so it cannot say who raised this run, and a run raised by a '
+      + 'signer on their way out is not charged or paid. Nothing was sent. Reload the page to get the current version.');
+  }
+  const listed = await proposalsListedHere({ ...records, proposals });
+  const rec = listed.find((p) => p.id === proposalId && p.accountId === accountId);
+  if (rec === undefined) {
+    refusedForItsKey(listed, proposalId, 'proposal');
+    throw new Error('The company\'s records hold no proposal by that name, so who raised this run cannot be said, and it is not '
+      + 'charged or paid. Nothing was sent. Reload the page to see where it stands.');
+  }
+  const filedBy = await believedFilerHere(records, accountId, rec);
+  /* Only the company's proposals are read through this service: which removals are raised. */
+  const service = { sealedProposals: async () => proposals() } as unknown as GovernedCallService;
+  const opened = { filedBy: filedBy ?? undefined } as OpenedRound;
+  await refuseWhatALeaverFiledHere({ service, accountId, records }, viewingKey, proposalId, opened);
+}
+
+/**
+ * Why this device's own seat files nothing more, or null: a removal of its seat is approved, so what it would file now
+ * falls past the boundary the retirement keeps, and a signer who stays files it again under their own seat. While the
+ * removal is only raised, this seat files as before.
+ */
+export async function ownRemovalApprovedHere(doors: GovernanceDoors, viewingKey: KeysHeld): Promise<string | null> {
   const mine = signingPublicKeyOf(doors.material.signingSecret as Hex);
   return (await seatsLeavingHere(doors, viewingKey)).has(mine)
-    ? 'a removal of this signer\'s seat is raised, so this device files nothing more for the company: a signer who stays files it instead'
+    ? 'a removal of this signer\'s seat is approved, so this device files nothing more for the company: a signer who stays files it instead'
     : null;
 }
 
@@ -1737,9 +2030,14 @@ export async function ownRemovalRaisedHere(doors: GovernanceDoors, viewingKey: s
  * directory, filed with the signatures this device keeps or the service keeps
  * beside the removal's proposal - never signed by anyone again where a quorum
  * already signed it. A leaf the directory holds no entry for, or a seat
- * already retired, leaves nothing to do.
+ * already retired, leaves nothing to file. Once done, the company's key is
+ * changed from here (`rotatedAfter`).
  */
-async function removalFinishedHere(doors: RemovalDoors, viewingKey: string, leaf: string, here: DirectoryHere): Promise<RemovalOutcome> {
+const removalFinishedHere = async (doors: RemovalDoors, viewingKey: KeysHeld, leaf: string, here: DirectoryHere): Promise<RemovalOutcome> =>
+  rotatedAfter(doors, viewingKey, leaf, await retirementFinishedHere(doors, viewingKey, leaf, here));
+
+/** What finishing a removal the chain carried out leaves to file: the retirement, from this device. */
+async function retirementFinishedHere(doors: RemovalDoors, viewingKey: KeysHeld, leaf: string, here: DirectoryHere): Promise<RemovalOutcome> {
   const seat = here.dir.seats.find((x) => x.seat === leaf);
   if (seat === undefined || seat.retired !== null) return { state: 'done', round: null };
   const kept = ((await doors.kept?.all(doors.accountId)) ?? []).find((k) => k.change.kind === 'retire' && k.change.seat === leaf
@@ -1774,10 +2072,11 @@ async function removalFinishedHere(doors: RemovalDoors, viewingKey: string, leaf
  * is the chain asked to take the leaf off, by `amendSigner`. Whether that has
  * happened already is read from the chain, never from the service's words: a
  * removal the chain carried out first is finished here by filing its
- * retirement.
+ * retirement. Once the removal is done, the company's key is changed from
+ * here where this page can (`rotatedAfter`).
  */
 export async function removeSignerOnDevice(
-  doors: RemovalDoors, input: { viewingKey: string; leaf: string; name: string },
+  doors: RemovalDoors, input: { viewingKey: KeysHeld; leaf: string; name: string },
 ): Promise<RemovalOutcome> {
   if (doors.records === undefined) {
     throw new NotOpenedOnThisDevice('This page cannot read the company\'s records, so it cannot remove a signer. Reload the page to get '
@@ -1801,41 +2100,43 @@ export async function removeSignerOnDevice(
     seat = here.dir.seats.find((x) => x.seat === leaf);
   }
   const made = seat === undefined || seat.retired !== null ? undefined : await retirementTermsHere(doors, here, seat);
-  /* A seat whose approval the chain counted signs the retirement again where the version its signature named was taken. */
-  if (live?.opened.retirement !== undefined) {
-    const mine = retirementSignedHere(doors, here, leaf, live.opened.retirement);
-    const served = await signaturesServed(doors, live.id);
-    if (doors.service.retire !== undefined && mine !== undefined && served.some((x) => x.publicKey === mine.publicKey) && !served.some((x) => x.publicKey === mine.publicKey
-      && x.signedFor === mine.signedFor)) {
-      await doors.service.retire(live.id, { signature: mine, filer: filerHere(doors) });
-    }
-    /* A quorum's signatures read once are kept here, so this device can file the retirement whatever the service later serves. */
-    const signedFor = here.dir.version + 1;
-    const believed = signaturesBelieved(doors, here, leaf, live.opened.retirement, signedFor,
-      [...await signaturesServed(doors, live.id), ...await signaturesKeptHere(doors, live.id)]);
-    await keepSignaturesHere(doors, live.id, believed.map((x) => ({ signedFor, ...x })));
-    if (believed.length >= Math.max(live.opened.retirement.threshold, here.holders.seatBar)) {
-      await doors.kept?.keep(doors.accountId, { signedAt: signedFor, change: { ...retirementOf(leaf, live.opened.retirement), signatures: believed } as SignedChange });
-    }
-  }
-  const refuse = async (terms: RetirementTerms | undefined, raised = false): Promise<void> => {
-    const why = await removalRefusalHere(doors, await records.directory(EVERY_RECORD_ASKED), leaf, terms, raised);
-    if (why !== null) throw new Error(`This removal is not raised, approved or carried out from this device: ${why}. Nothing was sent.`);
+  /*
+   * Before a raise nothing has been sent. Once it is raised, the raise and anything this device sent before the check
+   * stand, and a refusal sends nothing more for the removal from here.
+   */
+  const refuse = async (terms: RetirementTerms | undefined, raised = false, raise?: RaiseRead): Promise<void> => {
+    const why = await removalRefusalHere(doors, await records.directory(EVERY_RECORD_ASKED), leaf, terms, raised, raise);
+    if (why === null) return;
+    throw new Error(raised
+      ? `This removal is raised, and this device does not approve it or carry it out: ${why}. Nothing more is sent for it from here.`
+      : `This removal is not raised from this device: ${why}. Nothing was sent.`);
   };
   try {
-    return await governOnDevice(doors, {
+    /*
+     * A removal raised on the chain is judged as its approval is - outrun, its terms, the head it names - before this
+     * seat signs its retirement again or keeps a quorum's signatures: a removal this device refuses gets neither, and
+     * one the wallet's indexer does not show raised gets neither until it does.
+     */
+    if (live?.opened.retirement !== undefined) {
+      const raise = await refuseAnOutrunRemoval(doors, live.opened.chainId);
+      if (raise !== 'no-history' && raise?.raisedAt !== undefined) {
+        await refuse(live.opened.retirement, true, raise);
+        await retirementGatheredHere(doors, here, leaf, live.id, live.opened.retirement);
+      }
+    }
+    return await rotatedAfter(doors, input.viewingKey, leaf, await governOnDevice(doors, {
       viewingKey: input.viewingKey,
       change: { kind: 'remove-signer', leaf },
       summary: `Remove ${input.name} as a signer`,
       body: { leaf: leaf as Hex, ...(made === undefined ? {} : { retirement: made }) },
       /*
        * Before a raise, the terms about to be raised; at an approval or the carrying out, the proposal's own, judged
-       * against what was anchored at the head the raise names.
+       * against what was anchored at the head the raise names, and that head against the block the raise landed in.
        */
       before: async (opened) => {
         if (opened === undefined) return refuse(made);
-        await refuseAnOutrunRemoval(doors, opened.chainId);
-        return refuse(opened.retirement, true);
+        const raise = await refuseAnOutrunRemoval(doors, opened.chainId);
+        return refuse(opened.retirement, true, raise);
       },
       /* This seat's own signature is kept here the moment it is made, whatever the service later serves. */
       signs: async (opened, round) => {
@@ -1855,7 +2156,7 @@ export async function removeSignerOnDevice(
         }
       },
       carry: (opened) => ({ circuit: 'amendSigner', leaf, proposal: opened.chainId, proposalSalt: opened.salt, removing: true }),
-    });
+    }));
   } catch (e) {
     if (!(e instanceof RetirementNotYetSigned)) {
       /* A carrying out that failed may have lost to another device's: whether the leaf is off is read from the chain again. */

@@ -554,7 +554,7 @@ describe.skipIf(!KEYS_ON_DISK)('ONE RUN, RAISED, APPROVED, CHARGED AND PAID ON T
         status: async (): Promise<LedgerStatus | null> => {
           const l = accountLedgerOf(chain.contract(company));
           return {
-            assets: [], vaultThresholds: [], signerCount: 1, threshold: Number(l.threshold),
+            assets: [], vaultThresholds: [], signerCount: Number(l.signerLeaves.size()), threshold: Number(l.threshold),
             openProposals: [...l.openProposals].map(([id, c]: [Uint8Array, Uint8Array]) => ({
               id: hex(id) as Hex, change: hex(c) as Hex, approvals: Number(l.approvalCounts.member(id) ? l.approvalCounts.lookup(id) : 0n) + (underWay ? 1 : 0),
             })),
@@ -573,7 +573,10 @@ describe.skipIf(!KEYS_ON_DISK)('ONE RUN, RAISED, APPROVED, CHARGED AND PAID ON T
     }));
     app.use(companyVaultRoutes({
       signedIn, member, store,
-      company: async () => ({ address: company, threshold: 1, vaultThresholds: [] }),
+      company: async () => ({
+        address: company, threshold: 1, vaultThresholds: [],
+        seats: Number(accountLedgerOf(chain.contract(company)).signerLeaves.size()),
+      }),
       ledger: watched, chain: vaultChain,
       verifierKeys: async () => new Map(await Promise.all(
         [...VAULT_CIRCUITS]

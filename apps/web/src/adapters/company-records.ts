@@ -1,12 +1,12 @@
 import { privateAmount, publicAmount, type TokenAmount } from 'vaults-ui';
 import { reviveBigints } from '../../../../src/core/crypto.js';
-import type { Hex } from '../../../../src/core/crypto.js';
 import { assets, type AssetRegistry } from '../../../../src/core/assets.js';
 import { openRecord } from '../../../../src/core/sealed-records.js';
 import { onlyPayableWhenActive, openPerson, peopleOnTheWire } from '../../../../src/core/person-record.js';
 import type { Account, PayrollRun, Proposal, ProposalKind, ProposalStatus, SealedAccount, SealedProposal, SealedRun } from '../../../../src/core/types.js';
-import { api, canOpenCompanies, holdersFromTheWallet, openKeysWithWallet, viewingKeyFor } from 'vaults-web-shared/keyring.js';
-import { anchoredOnTheWayInFor, openedHere, walletIndexerFor } from './filing-judge.js';
+import { api, canOpenCompanies, holdersFromTheWallet, openKeysWithWallet } from 'vaults-web-shared/keyring.js';
+import { anchoredOnTheWayInFor, companyKeysFor, openedHere, walletIndexerFor } from './filing-judge.js';
+import { keyOf, type CompanyKeys } from '../../../../src/core/company-key.js';
 import { theVaultBuilder } from './vault-builder.js';
 import type { AccountAddress, CompanyLabel } from 'midnight-identity/profile/company-label';
 import { paidPublicly } from 'vaults-web-shared/public-payment.js';
@@ -26,9 +26,10 @@ export { OPENED, READ, type Read };
  * The legacy application opens them the way
  * this file does: the shared keyring opens the keys saved for the person
  * (`openKeysWithWallet`, after the person approves in their account), derives
- * the company's viewing key from them, and opens the company's record
- * (`openAccount`); each run and proposal is opened with the same key and the
- * same `openRecord` the legacy application uses. Nothing here decides who may
+ * the company's keys from its directory (`companyKeysFor`), and opens the
+ * company's record (`openAccount`); each run, proposal and person is opened
+ * with the key of the epoch it was sealed at and the same `openRecord` the
+ * legacy application uses. Nothing here decides who may
  * read what: the service answers only a member, and only this device opens.
  *
  * NO READ SENDS THE VIEWING KEY TO THE SERVICE. The people on the payroll
@@ -57,7 +58,7 @@ export { OPENED, READ, type Read };
 /** The service's addresses, the purposes its records are sealed for, and the words of its answers: sent and compared, never shown. */
 export const SERVICE = {
   company: '/api/accounts/', proposals: '/proposals', runs: '/runs', people: '/people',
-  vaults: '/vaults', invites: '/invites',
+  vaults: '/vaults', invites: '/invites', employee: '/api/employees/', handover: '/handover',
   proposalsRecord: 'proposals', runsRecord: 'payroll',
   active: 'active', pending: 'pending', leaver: 'leaver', shielded: 'shielded', unshielded: 'unshielded',
 } as const;
@@ -236,15 +237,15 @@ function legOf(key: string): { asset: string; paid: Paid } {
 }
 
 /** A run as this device reads it: the service's plain fields and its sealed ones, opened, the marker the record carries kept. */
-function openRun(rec: SealedRun, viewingKey: Hex): PayrollRun {
-  const { sealed, keyEpoch: _epoch, proposalIds: _flat, ...operational } = rec;
-  return { ...operational, ...openRecord<Pick<PayrollRun, 'employees' | 'totals' | 'proposalIds'>>(SERVICE.runsRecord, rec.accountId, sealed, viewingKey) } as PayrollRun;
+function openRun(rec: SealedRun, viewingKey: CompanyKeys): PayrollRun {
+  const { sealed, keyEpoch, proposalIds: _flat, ...operational } = rec;
+  return { ...operational, ...openRecord<Pick<PayrollRun, 'employees' | 'totals' | 'proposalIds'>>(SERVICE.runsRecord, rec.accountId, sealed, keyOf(viewingKey, keyEpoch)) } as PayrollRun;
 }
 
 /** A proposal as this device reads it, the plain fields put back last so the envelope cannot override them. */
-function openProposal(rec: SealedProposal, viewingKey: Hex): Proposal {
-  const { sealed, keyEpoch: _epoch, approvalCount: _count, wiring: _wiring, ...open } = rec;
-  return { ...openRecord<Omit<Proposal, 'id' | 'accountId' | 'status' | 'createdAt' | 'executedAt' | 'digest' | 'txRef' | 'chainId'>>(SERVICE.proposalsRecord, rec.accountId, sealed, viewingKey), ...open } as Proposal;
+function openProposal(rec: SealedProposal, viewingKey: CompanyKeys): Proposal {
+  const { sealed, keyEpoch, approvalCount: _count, wiring: _wiring, ...open } = rec;
+  return { ...openRecord<Omit<Proposal, 'id' | 'accountId' | 'status' | 'createdAt' | 'executedAt' | 'digest' | 'txRef' | 'chainId'>>(SERVICE.proposalsRecord, rec.accountId, sealed, keyOf(viewingKey, keyEpoch)), ...open } as Proposal;
 }
 
 /** A run for a screen: its people and amounts, each token split by how it is paid. */
@@ -390,7 +391,7 @@ export async function vaultListOf(
 export async function readCompany(personId: string, companyId: string): Promise<Company> {
   let sealed: SealedAccount;
   let account: Account;
-  let viewingKey: Hex;
+  let viewingKey: CompanyKeys;
   try {
     if (!(await keyringFor(personId))) return { of: OPENED.refused, why: ACT_REFUSAL.notSignedIn };
     sealed = await ask(SERVICE.company + companyId) as SealedAccount;
@@ -402,7 +403,7 @@ export async function readCompany(personId: string, companyId: string): Promise<
     account = opened;
     /* The one-a-day anchor, not waited on: entering the company never waits on a proof, and one not made is made by the next. */
     void anchoredOnTheWayInFor(sealed, keys, async () => opened);
-    viewingKey = viewingKeyFor(sealed);
+    viewingKey = await companyKeysFor(companyId, sealed, keys);
   } catch (e) {
     return { of: OPENED.refused, why: refusalOf(e) };
   }
@@ -421,7 +422,7 @@ export async function readCompany(personId: string, companyId: string): Promise<
       return all.map((p) => proposalRow(p, signers, read.of === READ.read ? read.value : []));
     }),
     alone(async () => [...onlyPayableWhenActive(peopleOnTheWire(await ask(route(SERVICE.people)), companyId)
-      .map(({ rec, handedOver }) => ({ ...openPerson(rec, viewingKey), handedOver })), sealed.companyLabel ?? '')]
+      .map(({ rec, handedOver }) => ({ ...openPerson(rec, keyOf(viewingKey, rec.keyEpoch)), handedOver })), sealed.companyLabel ?? '')]
       .sort((a, b) => a.name.localeCompare(b.name))
       .map((p) => personRow(p))),
     chainOfTheCompany(companyId, sealed, ask),

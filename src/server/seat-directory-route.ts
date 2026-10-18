@@ -24,6 +24,11 @@
  *     did, and whether the statement is the leaving seat's own wallet's, each
  *     member's device judges: this server holds no seat's wallet key, counts
  *     nothing and keeps no role or retirement.
+ *   · **a change of the company's key** must be in its shape, signed by one
+ *     key that holds an entry here for a seat the account holds now
+ *     (`signerSeatOf`). Its epoch, the retirement it follows and the seats it
+ *     is wrapped to each member's device judges: this server judges no epoch
+ *     and holds no key that opens a copy.
  *
  * The super admins are not filed here: they are the keys on the account's
  * committee as the chain holds it, and this server judges no one by them.

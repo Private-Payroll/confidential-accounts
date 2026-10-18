@@ -4,18 +4,19 @@
  * company's records over the mounted records route, the roster this device
  * opened, and a place in this browser for a vault's temporary key.
  */
-import type { StartedFrom } from './tree-kept-here.js';
+import { directoryReplaysInMemory, type DirectoryReplaysKept, type KeptReplay, type StartedFrom } from './tree-kept-here.js';
 import type { Hex } from '../../../src/core/crypto.js';
-import { fromHex } from '../../../src/core/crypto.js';
+import { canonical, fromHex } from '../../../src/core/crypto.js';
+import { keyInForce, keysHeld, type KeysHeld } from '../../../src/core/company-key.js';
 import { whyNotTheReaders, type Roster } from './handover-check.js';
 import type { Account, SealedProposal, SealedRun } from '../../../src/core/types.js';
-import type { WireRecord } from '../../../src/midnight/sealed-record-wire.js';
+import { digestOfBody, type WireRecord } from '../../../src/midnight/sealed-record-wire.js';
 import type { PoolSigner } from '../../../src/midnight/vault-pool.js';
 import { admitToNonceSecret, openNonceSecrets, recordsKeypairFrom } from '../../../src/midnight/company-nonce-secret.js';
 import { HttpSealedPoolStore, pageWireSend, RecordWithheld, type FilingJudge, type FreshJudge } from './http-sealed-pool-store.js';
 import {
-  asAMember, believedDirectory, DIRECTORY_REFUSAL, directoryEntryMade, directoryReplayed, FILING_REFUSAL, proofsOpenedWith, type EntryJudge, filingRefusalOf, notOnTheChainNow, seatsChangedBy, seatsWithAnotherRecordsKey, statementsCountedFor,
-  type AccountHeld, type DirectoryRefusalCode, type SignedChange, type CommitteeKey, type Directory, type DirectoryEntry, type DirectoryFiling, type DirectorySeat, type FiledKind,
+  asAMember, DIRECTORY_REFUSAL, directoryEntryMade, directoryReplayed, FILING_REFUSAL, proofsOpenedWith, type EntryJudge, filingRefusalOf, notOnTheChainNow, seatsChangedBy, seatsWithAnotherRecordsKey, statementsCountedFor,
+  type AccountHeld, type DirectoryRefusalCode, type DirectoryReplayKept, type DirectoryReplayed, type QuorumChange, type CommitteeKey, type Directory, type DirectoryEntry, type DirectoryFiling, type DirectorySeat, type FiledKind,
 } from '../../../src/midnight/seat-directory.js';
 import type { AccountHoldersRead, DirectoryEntryStatement, RecordsKeyStatement } from 'midnight-identity/profile/records-key';
 import { openSeatProof, type LeafOf, type SeatOpening } from '../../../src/core/seat-opening.js';
@@ -158,8 +159,13 @@ export interface DirectoryHereDeps {
   readonly filings: () => Promise<readonly DirectoryFiling[]>;
   readonly label: CompanyLabel;
   readonly accountId: string;
-  /** The company's viewing key, from which the roster key every entry's proof is sealed under is worked out. */
-  readonly viewingKey: Hex;
+  /**
+   * The company's keys as this device holds them, from which the roster key every entry's proof is sealed under is
+   * worked out; a bare key is the one key of a company never changed. Each entry's proof is tried with every key held,
+   * which a page finds from the directory's own changes of the key before any is believed (`keysInTheFilings`); belief
+   * stays the replay's.
+   */
+  readonly viewingKey: KeysHeld;
   /** Who holds the account now and its approval threshold, as the person's own wallet read it for this read. */
   readonly holders: () => Promise<AccountHoldersRead>;
   /** The records-key statements in the roster this device opened. */
@@ -180,6 +186,11 @@ export interface DirectoryHereDeps {
    * the account as each directory version was anchored (`held`).
    */
   readonly anchored: (directory: DirectoryBelieved, asked: RecordsAsked) => Promise<RecordsHeldHere>;
+  /**
+   * Where this read finds and keeps replays of the directory, in memory only
+   * (`directoryReplaysInMemory`); absent, the page's own.
+   */
+  readonly kept?: DirectoryReplaysKept;
 }
 
 /**
@@ -228,7 +239,7 @@ export type RecordsHeldHere = RecordsHeld & {
    */
   readonly recovered?: { readonly resumedFrom: CheckedHead; readonly gaveUpTo: number };
   /**
-   * The filing keys of the seats a raised removal is about, each with the boundary its retirement keeps, as the read
+   * The filing keys of the seats an approved removal is about, each with the boundary its raise signed, as the read
    * was given them (`AnchorDoors.leaving`); absent where it was given none. No version such a seat files past its
    * boundary is anchored or believed (`pastTheRaisedBoundary`).
    */
@@ -238,19 +249,29 @@ export type RecordsHeldHere = RecordsHeld & {
    * head it did not check. What a removal's boundary is judged at: the anchored head its raise names.
    */
   readonly seqOfHead?: (head: string) => number | null;
+  /**
+   * The batch whose anchor left the newest head in the account's history at the wallet's indexer that landed in a
+   * block whose time is set and at or before `cutoff` (milliseconds of block time): `none` where no head landed by
+   * then, or where that head is older than every head this device checked; `unread` where it is one this device did
+   * not check because its check stopped short of it. A head superseded within its block, or landed in a block the
+   * indexer gives no time for, is never that head. What a removal's raise is held to: the head it names may not be older.
+   */
+  readonly newestLandedBy?: (cutoff: number) => { readonly seq: number } | 'none' | 'unread';
 } & FirstAnchorSeats;
 
 /**
- * **THE SEATS UNDER A RAISED REMOVAL, BY FILING KEY, EACH WITH THE BOUNDARY
- * ITS RETIREMENT KEEPS**: the last version of each record it filed, as the
- * removal's own raise names them. The boundary signed at the raise is final.
+ * **THE SEATS AN APPROVED REMOVAL IS ABOUT, BY FILING KEY, EACH WITH THE
+ * BOUNDARY ITS RETIREMENT KEEPS**: the last version of each record it filed,
+ * as the removal's own raise names them. The boundary signed at the raise is
+ * final; it binds once the removal is approved (`leavingBoundariesHere`).
  */
 export type LeavingBoundaries = ReadonlyMap<string, Readonly<Record<string, number>>>;
 
 /**
  * Whether `version` of the record counted under `recordKey`, filed by
- * `filer`, is past the boundary a raised removal of `filer`'s seat keeps: one
- * no device anchors or believes. False for a seat no raised removal is about.
+ * `filer`, is past the boundary the raise of `filer`'s removal signed, in
+ * `leaving`: one no device anchors or believes. False for a seat `leaving`
+ * does not name.
  */
 export const pastTheRaisedBoundary = (
   leaving: LeavingBoundaries | undefined, filer: string, recordKey: string, version: number,
@@ -272,7 +293,7 @@ export type DirectoryBelieved = Omit<DirectoryHere, 'records'>;
  */
 export interface DirectoryHere {
   /** The company's records as the head on chain holds them for this read: what every record read here is believed by. */
-  readonly records: RecordsHeld & FirstAnchorSeats & Pick<RecordsHeldHere, 'checkedFrom' | 'leaving' | 'seqOfHead'>;
+  readonly records: RecordsHeld & FirstAnchorSeats & Pick<RecordsHeldHere, 'checkedFrom' | 'leaving' | 'seqOfHead' | 'newestLandedBy'>;
   readonly dir: Directory;
   readonly holders: AccountHoldersRead;
   /**
@@ -289,7 +310,9 @@ export interface DirectoryHere {
    * filing's digest as its entry in the company's records names it. Each
    * version anchored is counted against who held the account as it was
    * anchored (`held`, or this read's own once its records are read). Null past
-   * the filings given.
+   * the filings given. The same version asked again with the same `held` in one
+   * read is answered from the first answer, and a replay kept of the same
+   * filings judged the same way is gone on from (`directoryWithItsRecordsHere`).
    */
   readonly at: (version: number, held?: HeldAsAnchored) => { readonly dir: Directory; readonly digests: readonly Hex[] } | null;
   /**
@@ -301,10 +324,11 @@ export interface DirectoryHere {
    */
   readonly passedOver?: readonly DirectoryFiling[];
   /**
-   * **EVERY SIGNED CHANGE NOT APPLIED** - a quorum's role or retirement - by
-   * the version its signatures were made for, oldest first, with its change:
-   * what a device files again (`refiled`) when the replay would believe it
-   * filed as the next version.
+   * **EVERY QUORUM'S CHANGE NOT APPLIED** - a role or retirement - by the
+   * version its signatures were made for, oldest first, with its change: what
+   * a device files again (`refiled`) when the replay would believe it filed as
+   * the next version. A change of the company's key is never here: one passed
+   * over is made again on the key the directory holds, never filed again.
    */
   readonly notApplied?: readonly KeptChange[];
   /** Each quorum's change filed again and not applied, with why (`refiledRefusalOf`): said by `passedOverSaid`. */
@@ -330,8 +354,8 @@ export interface DirectoryHere {
   readonly refusedAt?: ReadonlySet<number>;
 }
 
-/** A signed change, by the version its signatures were made for. */
-type KeptChange = { readonly signedAt: number; readonly change: SignedChange };
+/** A quorum's change, by the version its signatures were made for. */
+type KeptChange = { readonly signedAt: number; readonly change: QuorumChange };
 
 /** Said wherever a read meets a header it could not check: nothing past it is believed. */
 const pastAStop = (stop: TransitionStop): string =>
@@ -343,22 +367,25 @@ const leafKeyOf = (o: Pick<SeatOpening, 'publicKey' | 'blinding' | 'scope'>): st
 
 /**
  * **HOW THIS DEVICE JUDGES EVERY ENTRY, AS A MEMBER**: each entry's proof
- * opened with the company's viewing key, and what this device's vault worker
+ * opened with each of the company's keys this device holds, and what this device's vault worker
  * makes of every opening in them, asked once for the whole read, before the
  * directory is replayed: the replay stays synchronous and checks each opening
  * against these leaves, so the leaf of an opening the worker was not asked
  * about is null and proves nothing. A worker answer of the wrong length is
- * refused.
+ * refused. `leafAt` gives, per filing in order, the leaf of the opening its
+ * entry's proof opened to, and undefined for a filing with none.
  */
 const memberHere = async (
   deps: Pick<DirectoryHereDeps, 'leaves' | 'accountId' | 'viewingKey'>, filings: readonly DirectoryFiling[],
   /** The seat the account's deploy seated, as the person's own wallet read it: the one entry believed without an invitation. */
   founding: string | null,
-): Promise<{ judge: EntryJudge; leafOf: LeafOf }> => {
-  const proofOf = proofsOpenedWith(deps.accountId, deps.viewingKey);
+): Promise<{ judge: EntryJudge; leafOf: LeafOf; leafAt: (index: number) => string | null | undefined }> => {
+  const proofOf = proofsOpenedWith(deps.accountId, keysHeld(deps.viewingKey));
   const openings = new Map<string, SeatOpening>();
+  const openedAt: (string | undefined)[] = [];
   for (const f of filings) {
     const o = f?.change?.kind === 'claim' ? proofOf(f.change.entry)?.opening : undefined;
+    openedAt.push(o === undefined ? undefined : leafKeyOf(o));
     if (o !== undefined) openings.set(leafKeyOf(o), o);
   }
   const asked = [...openings.values()];
@@ -368,15 +395,22 @@ const memberHere = async (
   }
   const made = new Map(asked.map((o, i) => [leafKeyOf(o), typeof leaves[i] === 'string' ? leaves[i]!.toLowerCase() : null]));
   const leafOf: LeafOf = (o) => made.get(leafKeyOf(o)) ?? null;
-  return { judge: asAMember(proofOf, leafOf, founding), leafOf };
+  const leafAt = (i: number) => (openedAt[i] === undefined ? undefined : made.get(openedAt[i]!) ?? null);
+  return { judge: asAMember(proofOf, leafOf, founding), leafOf, leafAt };
 };
+
+/** The replays of each company's directory this page keeps, for a read given no `kept` of its own. */
+const replaysKeptHere = directoryReplaysInMemory();
 
 /**
  * **THE DIRECTORY THIS DEVICE BELIEVES, READ AFRESH, WITH THE COMPANY'S RECORDS
  * FOR WHAT THIS READ ASKED.** Replayed against the account this person's own
  * wallet read who holds, and the only one an entry or a statement is believed
- * for. Throws when anything it reads cannot be read, and while the company's
- * records cannot be read past a header this device could not check.
+ * for. Every filing, who holds the account and the records are read afresh;
+ * the replay goes on from one kept of the same filings judged the same way
+ * (`directoryWithItsRecordsHere`). Throws when anything it reads cannot be
+ * read, and while the company's records cannot be read past a header this
+ * device could not check.
  */
 export const directoryHere = async (deps: DirectoryHereDeps, asked: RecordsAsked = {}): Promise<DirectoryHere> => {
   const here = await directoryWithItsRecordsHere(deps, asked);
@@ -395,24 +429,76 @@ export const directoryHere = async (deps: DirectoryHereDeps, asked: RecordsAsked
  * OR NOT THEIR CHECK STOPPED.** For the one door that must see a stop to say
  * why: anchoring the company's records, which refuses on it in its own words
  * (`anchorTheRecordsHere`). Every reader acts on `directoryHere`.
+ *
+ * **A REPLAY IS KEPT, AND GONE ON FROM, ONLY FOR THE SAME FILINGS JUDGED THE
+ * SAME WAY.** The directory as served, judged against the chain now, is kept
+ * whole; the one judged against the company's records is kept up to the newest
+ * version they anchor. Each is kept under the judge's inputs and, per version,
+ * that filing's digest, who held the account as it was judged and the leaf of
+ * its entry's opening, so a read replays only what follows the longest kept
+ * replay all of these match. A directory served with other bytes, a judge given
+ * other keys or leaves, or a version anchored under other holders misses it
+ * and is replayed from version 1. A replay is kept only once the directory
+ * served is found to hold every version the records anchor.
  */
 export const directoryWithItsRecordsHere = async (deps: DirectoryHereDeps, asked: RecordsAsked = {}): Promise<DirectoryHere> => {
   const [filings, holders, attested] = await Promise.all([deps.filings(), deps.holders(), deps.attested()]);
-  const { judge, leafOf } = await memberHere(deps, filings, typeof holders.founding === 'string' ? holders.founding : null);
+  const founding = typeof holders.founding === 'string' ? holders.founding : null;
+  const { judge, leafOf, leafAt } = await memberHere(deps, filings, founding);
   /* Who holds the account now, and the approvals a change of who is seated needs on it, as the person's own wallet read them. */
   const now: AccountHeld = { approvals: holders.approvals, seats: holders.seats, seatBar: holders.seatBar };
-  const believedAs = (asAnchored?: HeldAsAnchored): DirectoryBelieved => {
-    const dir: Directory = believedDirectory(deps.accountId, filings, deps.label, holders.account, judge, now, asAnchored);
-    const at = (version: number, held: HeldAsAnchored | undefined = asAnchored) => (version < 0 || version > filings.length ? null : {
-      dir: believedDirectory(deps.accountId, filings.slice(0, version), deps.label, holders.account, judge, now, held),
-      digests: filings.slice(0, version).map((f) => directoryEntry(f).digest),
+  const kept = deps.kept ?? replaysKeptHere;
+  const judged = digestOfBody(canonical({
+    company: deps.accountId, label: deps.label, account: holders.account, founding, keys: keysHeld(deps.viewingKey),
+  }));
+  const digests: Hex[] = [];
+  const digestAt = (i: number): Hex => (digests[i] ??= directoryEntry(filings[i]!).digest as Hex);
+  /* What a version is judged by: its filing, who held the account as it was judged (or the chain now), and its entry's leaf. */
+  const markAt = (i: number, asAnchored: HeldAsAnchored | undefined): string => {
+    const h = asAnchored?.(i + 1);
+    return canonical([digestAt(i), h === null ? 'unknown' : h === undefined ? { now } : { held: h }, leafAt(i) ?? null]);
+  };
+  /*
+   * The first `n` filings replayed against `asAnchored`, gone on from the longest replay kept of them; `keep` keeps it as
+   * it stood after `keepAt`, called only once the directory served is found whole.
+   */
+  const replayOf = (n: number, asAnchored: HeldAsAnchored | undefined, keepAt?: number): { replayed: DirectoryReplayed; keep: () => void } => {
+    const marks = filings.slice(0, n).map((_, i) => markAt(i, asAnchored));
+    const from: KeptReplay | null = kept.longest(deps.accountId, judged, marks);
+    const replayed = directoryReplayed(deps.accountId, filings.slice(0, n), deps.label, holders.account, judge, now, asAnchored, {
+      ...(from === null ? {} : { from: from.state }), ...(keepAt === undefined || keepAt < 1 ? {} : { keepAt }),
     });
+    const state = replayed.kept;
+    return {
+      replayed,
+      keep: () => { if (state !== undefined && state.upTo > (from?.state.upTo ?? 0)) kept.keep(deps.accountId, { judged, marks: marks.slice(0, state.upTo), state }); },
+    };
+  };
+  /* `at`'s answers in this read, by version and what each version was judged by. */
+  const atThisRead = new Map<string, Directory>();
+  const believedAs = (dir: Directory, asAnchored?: HeldAsAnchored): DirectoryBelieved => {
+    const at = (version: number, held: HeldAsAnchored | undefined = asAnchored) => {
+      if (version < 0 || version > filings.length) return null;
+      const asked = canonical([version, filings.slice(0, version).map((_, i) => markAt(i, held))]);
+      let then = atThisRead.get(asked);
+      if (then === undefined) {
+        then = replayOf(version, held).replayed.dir;
+        atThisRead.set(asked, then);
+      }
+      return { dir: then, digests: filings.slice(0, version).map((_, i) => digestAt(i)) };
+    };
     return { dir, holders, leafOf, another: seatsWithAnotherRecordsKey(dir, deps.label, holders.account, attested), at };
   };
-  const { held, directoryServed, ...records } = await deps.anchored(believedAs(), asked);
-  /* Every version the anchor holds counted against who held the account as it was anchored, never who holds it now. */
-  const believed = believedAs(held);
-  const replayed = directoryReplayed(deps.accountId, filings, deps.label, holders.account, judge, now, held);
+  const asServed = replayOf(filings.length, undefined, filings.length);
+  const { held, directoryServed, ...records } = await deps.anchored(believedAs(asServed.replayed.dir), asked);
+  /*
+   * Every version the anchor holds counted against who held the account as it was anchored, never who holds it now:
+   * one replay, kept up to the newest version the anchor holds.
+   */
+  const newestAnchored = Math.max(0, ...records.directory.keys());
+  const asHeld = replayOf(filings.length, held, newestAnchored);
+  const replayed = asHeld.replayed;
+  const believed = believedAs(replayed.dir, held);
   /*
    * **THE DIRECTORY SERVED IS AT LEAST THE ONE ANCHORED, BYTE FOR BYTE.** A
    * service serving it older than a version the anchor holds, or other bytes at
@@ -426,12 +512,17 @@ export const directoryWithItsRecordsHere = async (deps: DirectoryHereDeps, asked
       + `version ${back.version}, which the company's records anchor on chain, so no seat in it is believed. Reload the page; if it `
       + 'happens again, the service is withholding the company\'s directory');
   }
+  asServed.keep();
+  asHeld.keep();
   const passedOver = neverEnteredIn(records, DIRECTORY).flatMap((v) => (filings[v - 1] === undefined ? [] : [filings[v - 1]!]));
-  /* A quorum's change not applied, by the version it was signed for: filed again only as this replay would believe it. */
-  const notApplied = new Map<number, SignedChange>();
+  /*
+   * A quorum's change not applied, by the version it was signed for: filed again only as this replay would believe it.
+   * A change of key is left out, since it is never filed again.
+   */
+  const notApplied = new Map<number, QuorumChange>();
   for (const f of filings) {
     const at = f.signedAt ?? f.version;
-    if (f.change.kind !== 'claim' && !replayed.replay.applied.has(at) && !notApplied.has(at)) notApplied.set(at, f.change);
+    if ((f.change.kind === 'role' || f.change.kind === 'retire') && !replayed.replay.applied.has(at) && !notApplied.has(at)) notApplied.set(at, f.change);
   }
   const refiledRefused = filings.flatMap((f) => {
     const why = replayed.refused.get(f.version);
@@ -443,8 +534,14 @@ export const directoryWithItsRecordsHere = async (deps: DirectoryHereDeps, asked
   const restsOnAnEntry = (c: KeptChange) => passedClaims.some((st) => seatsChangedBy(c.change).includes(st.seat)
     || (Array.isArray(c.change.signatures)
       && c.change.signatures.some((x) => x?.publicKey?.toLowerCase() === st.signingKey.toLowerCase())));
+  /* The replay judged against the records, as it stood after the last filing served: what each change filed again goes on from. */
+  const afterServed: DirectoryReplayKept = {
+    upTo: filings.length, dir: replayed.dir, refused: replayed.refused,
+    applied: replayed.replay.applied, passed: replayed.replay.passed, changed: replayed.replay.changed,
+  };
   const refiled = (changes: readonly KeptChange[]) => {
     const filed: DirectoryFiling[] = [];
+    let before = afterServed;
     const refused = new Map<number, DirectoryRefusalCode>();
     const waiting = new Set<number>();
     /* The seats a change waiting for a seat's own entry holds back. */
@@ -458,8 +555,9 @@ export const directoryWithItsRecordsHere = async (deps: DirectoryHereDeps, asked
       const seats = seatsChangedBy(c.change);
       if (seats.some((x) => heldBack.has(x))) { waiting.add(c.signedAt); continue; }
       const f: DirectoryFiling = { company: deps.accountId, version: filings.length + filed.length + 1, change: c.change, signedAt: c.signedAt };
-      const why = directoryReplayed(deps.accountId, [...filings, ...filed, f], deps.label, holders.account, judge, now, held).refused.get(f.version);
-      if (why === undefined) { filed.push(f); continue; }
+      const tried = directoryReplayed(deps.accountId, [...filings, ...filed, f], deps.label, holders.account, judge, now, held, { from: before, keepAt: f.version });
+      const why = tried.refused.get(f.version);
+      if (why === undefined) { filed.push(f); before = tried.kept!; continue; }
       if ((why === 'no-such-seat' || why === 'below-quorum') && restsOnAnEntry(c)) {
         for (const x of seats) heldBack.add(x);
         waiting.add(c.signedAt);
@@ -469,7 +567,7 @@ export const directoryWithItsRecordsHere = async (deps: DirectoryHereDeps, asked
     }
     return { filed, refused, waiting };
   };
-  const anchoredAgain = new Set(filings.flatMap((f) => (f.change.kind !== 'claim' && replayed.replay.applied.has(f.version)
+  const anchoredAgain = new Set(filings.flatMap((f) => ((f.change.kind === 'role' || f.change.kind === 'retire') && replayed.replay.applied.has(f.version)
     && records.directory.has(f.version) ? [f.signedAt ?? f.version] : [])));
   return {
     ...believed, records, passedOver, refiledRefused, refiled, anchoredAgain, refusedAt: new Set(replayed.refused.keys()),
@@ -492,7 +590,8 @@ export const passedOverSaid = (here: Pick<DirectoryHere, 'passedOver' | 'refiled
   const refused = here.refiledRefused ?? [];
   if (over.length === 0 && refused.length === 0) return null;
   const claims = over.filter((f) => f.change.kind === 'claim').map((f) => f.version);
-  const signed = [...new Set(over.filter((f) => f.change.kind !== 'claim').map((f) => f.signedAt ?? f.version))];
+  /* A quorum's change passed over is filed again; a change of key passed over is not, and is said only as passed over. */
+  const signed = [...new Set(over.filter((f) => f.change.kind === 'role' || f.change.kind === 'retire').map((f) => f.signedAt ?? f.version))];
   /* Whether each change passed over would be believed filed again now, or why not: the replay's own answer. */
   const answer = here.refiled?.(here.notApplied ?? []);
   const wouldNot = answer?.refused ?? new Map<number, DirectoryRefusalCode>();
@@ -664,10 +763,10 @@ const filingRefusalNow = (
  * **NO VERSION A LEAVING SEAT FILED PAST ITS BOUNDARY IS BELIEVED, HOWEVER IT
  * WAS ANCHORED**: a seat retired in the directory now, past the last version
  * of that record its retirement keeps, and a seat a raised removal is about,
- * past the boundary the raise names (`pastTheRaisedBoundary`). A version
- * anchored before its seat's removal was raised is within the boundary, so
- * what this refuses is only what the seat filed after the raise. Null
- * otherwise.
+ * past the boundary the raise names (`pastTheRaisedBoundary`) once the
+ * removal is approved. A version anchored before its seat's removal was
+ * raised is within the boundary, so what this refuses is only what the seat
+ * filed after the raise. Null otherwise.
  */
 const pastItsBoundaryHere = (here: DirectoryHere, filer: Hex, recordKey: string, version: number): string | null => {
   const seat = here.dir.seats.find((x) => x.signingKey === filer.toLowerCase());
@@ -695,8 +794,10 @@ const ANCHOR_REFUSAL = Object.freeze({
 
 /**
  * **THE ONE RULE FOR BELIEVING A RECORD READ ON THIS DEVICE.** The record must
- * be one this read asked for, and what the head on chain holds for it
- * (`heldStandingOf`), as the entry its own filer signed: anchored - its leaf
+ * be one this read asked for, filed within the boundary its seat's leaving
+ * keeps, and sealed under no key older than the one in force when its batch
+ * was anchored; both of those refuse first. Then what the head on chain holds
+ * for it (`heldStandingOf`), as the entry its own filer signed: anchored - its leaf
  * proven against the root the head binds, its filer judged by the directory
  * as anchored with it - or newer than its leaf and judged by the directory
  * now. Read as the newest, no newer version may be entered, and every header
@@ -706,13 +807,15 @@ const ANCHOR_REFUSAL = Object.freeze({
  * as that. Null when it is believed; the reason when it is not.
  */
 const refusalHere = (
-  here: DirectoryHere, filer: Hex | null, kind: FiledKind, recordKey: string, read: RecordRead, newest: boolean,
+  here: DirectoryHere, filer: Hex | null, kind: FiledKind, recordKey: string, read: RecordRead, newest: boolean, sealedAt?: number,
 ): string | null => {
   if (filer === null) return 'it carries no valid signature for this record';
   const s = heldStandingOf(here.records, read, filer);
   if (s.standing === 'not-asked') return ANCHOR_REFUSAL['not-asked'];
   const past = pastItsBoundaryHere(here, filer, recordKey, s.version ?? read.version ?? 1);
   if (past !== null) return past;
+  const stale = sealedUnderAnOlderKey(here, read, s.version ?? read.version ?? 1, sealedAt);
+  if (stale !== null) return stale;
   if (s.standing !== 'anchored') {
     const why = filingRefusalNow(here, filer, kind, recordKey, s.version ?? read.version ?? 1);
     if (why !== null) return why;
@@ -734,6 +837,44 @@ const refusalHere = (
       return ANCHOR_REFUSAL[s.standing];
   }
   return newest && s.newest > s.version! && !onlyPassedOverAbove(here, recordKey, read, s.version!) ? ANCHOR_REFUSAL['newer-withheld'] : null;
+};
+
+/**
+ * The company's key epoch in force when a batch was anchored: the newest change of the key the directory believes
+ * whose version was anchored in an earlier batch. For a record no batch has anchored yet (`batch` null), the newest
+ * change anchored at all.
+ */
+const epochInForceAtBatch = (here: Pick<DirectoryHere, 'dir' | 'records'>, batch: number | null): number => {
+  let epoch = 0;
+  for (const r of here.dir.rotations ?? []) {
+    const held = here.records.directory.get(r.version) as { readonly batch?: number } | undefined;
+    if (held === undefined) continue;
+    if (batch === null || (typeof held.batch === 'number' && held.batch < batch)) epoch = Math.max(epoch, r.epoch);
+  }
+  return epoch;
+};
+
+/**
+ * **A RECORD SEALED UNDER A KEY OLDER THAN THE ONE IN FORCE AT ITS BATCH IS REFUSED.** Once a change of the
+ * company's key is anchored, a signer who left holds only the older keys, so a record sealed under one of them
+ * afterwards is one they could read: no device believes it, and whoever filed it reads the directory again and
+ * seals it under the key in force. A record in the same batch as the change was sealed before it. `sealedAt` is the
+ * epoch the record names, given only for the kinds sealed under the company's key (state, roster, person, run,
+ * proposal); a spending policy or a pool, sealed to each reader's own key, names none.
+ */
+const sealedUnderAnOlderKey = (
+  here: Pick<DirectoryHere, 'dir' | 'records'>, read: Pick<RecordRead, 'store' | 'kind' | 'id'>, version: number, sealedAt: number | undefined,
+): string | null => {
+  if (typeof sealedAt !== 'number') return null;
+  const anchored = (here.records.history.get(recordKeyOf(read)) ?? []).find((x) => x.version === version);
+  const inForce = epochInForceAtBatch(here, anchored === undefined ? null : anchored.batch);
+  return sealedAt < inForce
+    ? `it is sealed under the company's key at epoch ${sealedAt}, and the key at epoch ${inForce} was already in force when `
+      + 'it was entered, so a signer who has left could read it and it is not believed. '
+      + (read.store === 'proposal'
+        ? 'A proposal is written down once only: whoever raised it raises it again from their own device, under the key in force'
+        : 'Whoever filed it reads the company again and files it under the key in force')
+    : null;
 };
 
 /**
@@ -798,7 +939,8 @@ const withheldRefusal = (here: DirectoryHere, read: Pick<RecordRead, 'store' | '
 
 /** Who this device believes filed a version, and whether it is what the head on chain holds, for one read; and what was withheld. */
 export const judgeIn = (here: DirectoryHere): FilingJudge => Object.assign(
-  (filer: Hex | null, kind: FiledKind, recordKey: string, read: RecordRead, newest = false) => refusalHere(here, filer, kind, recordKey, read, newest),
+  (filer: Hex | null, kind: FiledKind, recordKey: string, read: RecordRead, newest = false, sealedAt?: number) =>
+    refusalHere(here, filer, kind, recordKey, read, newest, sealedAt),
   {
     pastItsBoundary: (filer: Hex | null, recordKey: string, version: number) =>
       filer !== null && pastItsBoundaryHere(here, filer, recordKey, version) !== null,
@@ -820,12 +962,15 @@ export const judgeIn = (here: DirectoryHere): FilingJudge => Object.assign(
  * from the list - a period already raised, the rounds still live, what a raise
  * is checked against, the proposal already open for a change - is built on it.
  * A record the company's records do not name is left for its reader to
- * refuse. The list as served when nothing is withheld. The read must have
- * asked for the kind whole (`kindAsked`).
+ * refuse. One whose bytes are the ones named but sealed under an older company
+ * key than the one in force when it was entered is believed by no device: it
+ * is left out of the list and named in its `leftOut`, so it costs only itself
+ * (`refusedForItsKey`). The list as served when nothing is withheld or left
+ * out. The read must have asked for the kind whole (`kindAsked`).
  */
 export const listedHere = <T extends ListedRecord>(
   here: DirectoryHere, store: 'run' | 'proposal', listed: readonly T[], what: string,
-): readonly T[] => {
+): Listed<T> => {
   const given = new Set(listed.map((x) => x.id));
   const named = namedHere(here, store, store);
   const missing = named.filter((id) => !given.has(id));
@@ -836,12 +981,46 @@ export const listedHere = <T extends ListedRecord>(
     throw new RecordWithheld(`${what} (${id}${missing.length > 1 ? `, and ${missing.length - 1} more` : ''})`, why);
   }
   const names = new Set(named);
+  const leftOut = new Map<string, string>();
   for (const x of listed) {
     if (!names.has(x.id)) continue;
     const why = otherBytesRefusal(here, store, x);
     if (why !== null) throw new RecordWithheld(`${what} (${x.id})`, `the service gave it as other bytes than the company's records name: ${why}`);
+    const older = olderKeyRefusal(here, store, x);
+    if (older !== null) leftOut.set(x.id, older);
   }
-  return listed;
+  return withLeftOut(listed.filter((x) => !leftOut.has(x.id)), leftOut, listed.filter((x) => leftOut.has(x.id)));
+};
+
+/**
+ * **A LIST OF THE COMPANY'S RUNS OR PROPOSALS AS THIS DEVICE BELIEVES THEM**, with `leftOut`: each record the
+ * company's records name whose bytes are the ones they name, but sealed under an older company key than the one in
+ * force when it was entered, by id with why. No device believes such a record, so it is left out of the list rather
+ * than refusing every other record in it; a reader looking for that one record says why with `refusedForItsKey`.
+ * `setAside` holds those records as served, read for nothing but which record a reader was looking for.
+ */
+export type Listed<T> = readonly T[] & { readonly leftOut: ReadonlyMap<string, string>; readonly setAside: readonly T[] };
+
+/** `records` with the records left out of it beside them; a list kept or mapped from one keeps them with this. */
+export const withLeftOut = <T>(records: readonly T[], leftOut: ReadonlyMap<string, string>, setAside: readonly T[] = []): Listed<T> =>
+  Object.assign([...records], { leftOut, setAside }) as unknown as Listed<T>;
+
+/** A record looked for by id and left out of its list for the key it was sealed under, refused by name. */
+export class RecordSealedUnderAnOlderKey extends Error {
+  constructor(readonly record: string, readonly why: string) {
+    super(`this ${record} is not believed, because ${why}. Nothing is built on it.`);
+    this.name = 'RecordSealedUnderAnOlderKey';
+  }
+}
+
+/**
+ * Throws `RecordSealedUnderAnOlderKey` when the record `id` was left out of `listed` for the key it was sealed under,
+ * so a reader looking for it says that, not that the company holds no such record.
+ */
+export const refusedForItsKey = (listed: { readonly leftOut?: ReadonlyMap<string, string> }, id: string, what: string): undefined => {
+  const why = listed.leftOut?.get(id);
+  if (why !== undefined) throw new RecordSealedUnderAnOlderKey(`${what} (${id})`, why);
+  return undefined;
 };
 
 /**
@@ -868,7 +1047,18 @@ const otherBytesRefusal = (here: DirectoryHere, store: 'run' | 'proposal', x: Li
 };
 
 /** A run or a proposal as the service lists it: its id, and the key its filer signed it with. */
-interface ListedRecord { readonly id: string; readonly filedBy?: { readonly publicKey: string } }
+/**
+ * The one refusal a listed record is left out for, alone (`sealedUnderAnOlderKey`): its bytes are the ones the
+ * company's records name, and it was sealed under an older company key than the one in force when it was entered.
+ */
+const olderKeyRefusal = (here: DirectoryHere, store: 'run' | 'proposal', x: ListedRecord): string | null => {
+  const filer = typeof x.filedBy?.publicKey === 'string' ? x.filedBy.publicKey.toLowerCase() as Hex : null;
+  const entry = store === 'run' ? runEntry(here.dir.company, x as unknown as SealedRun, 1) : proposalEntry(here.dir.company, x as unknown as SealedProposal);
+  const s = heldStandingOf(here.records, { store, kind: store, id: x.id, digest: entry.digest, ...(store === 'proposal' ? { version: 1 } : {}) }, filer ?? undefined);
+  return sealedUnderAnOlderKey(here, { store, kind: store, id: x.id }, s.version ?? 1, x.keyEpoch);
+};
+
+interface ListedRecord { readonly id: string; readonly filedBy?: { readonly publicKey: string }; readonly keyEpoch?: number }
 
 /** What a read asks to have one store's records of one kind listed: the kind whole. */
 export const kindAsked = (store: RecordRead['store'], kind: string = store): RecordsAsked => ({ kinds: [{ store, kind }] });
@@ -965,7 +1155,7 @@ export const deviceRecordsFor = (
 const fileOwnDirectoryEntry = async (
   api: Api, accountId: string, person: string,
   signed: { readonly committeeKey: CommitteeKey; readonly entry: DirectoryEntryStatement }, opening: SeatOpening,
-  keys: { readonly signingSecret: Hex; readonly viewingKey: Hex }, invited: SignedSeatInvitation | null,
+  keys: { readonly signingSecret: Hex; readonly viewingKey: KeysHeld }, invited: SignedSeatInvitation | null,
 ): Promise<'filed' | 'already-there'> => {
   const filings = await directoryFilingsFrom(api, accountId);
   /*
@@ -974,10 +1164,15 @@ const fileOwnDirectoryEntry = async (
    */
   const there = filings.some((f) => f?.change?.kind === 'claim' && f.change.entry?.statement?.seat === signed.entry.seat
     && f.change.entry.statement.signingKey === signed.entry.signingKey && f.change.entry.statement.wrappingKey === signed.entry.wrappingKey
-    && (invited === null || openSeatProof(accountId, f.change.entry.proof, keys.viewingKey)?.invited?.signature === invited.signature));
+    && (invited === null || ((proof) => keysHeld(keys.viewingKey).some((k) => openSeatProof(accountId, proof, k)?.invited?.signature === invited.signature))(f.change.entry.proof)));
   if (there) return 'already-there';
   const entry: DirectoryEntry = directoryEntryMade({
-    company: accountId, person, committeeKey: signed.committeeKey, signed: signed.entry, opening, ...keys,
+    /*
+     * Sealed under the key in force even while sealing is paused: the change of the key that ends the pause can wait
+     * on this very entry, so refusing it here would hold the pause for ever.
+     */
+    company: accountId, person, committeeKey: signed.committeeKey, signed: signed.entry, opening,
+    signingSecret: keys.signingSecret, viewingKey: keyInForce(keys.viewingKey),
     ...(invited === null ? {} : { invited }),
   });
   const filing: DirectoryFiling = { company: accountId, version: filings.length + 1, change: { kind: 'claim', entry } };
@@ -1052,7 +1247,7 @@ export const WAITING_FOR_ITS_INVITATION = 'your seat\'s entry in the company\'s 
 export const fileTheOwedDirectoryEntry = async (
   api: Api, accountId: string,
   owed: { read(): OwedDirectoryEntry | null; settle(): Promise<void> },
-  keys: () => Promise<{ readonly signingSecret: Hex; readonly viewingKey: Hex } | null>,
+  keys: () => Promise<{ readonly signingSecret: Hex; readonly viewingKey: KeysHeld } | null>,
   /** The seat the account's deploy seated, as the person's own wallet reads it; null where it cannot be read. */
   founding: () => Promise<string | null>,
 ): Promise<OwedEntryFiled> => {

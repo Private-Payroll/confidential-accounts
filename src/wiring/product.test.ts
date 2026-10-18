@@ -211,7 +211,6 @@ describe('the set a process holds when it could not resolve one', () => {
       ['status', ledger.status('a')],
       ['paidAmong', ledger.paidAmong('a', [])],
       ['fetch', ledger.fetch('a', 0)],
-      ['reseal', ledger.reseal('a', {} as never)],
       ['propose', ledger.propose('a', '00' as never, {} as never, {} as never, '00' as never)],
       ['proposeRun', ledger.proposeRun('a', {} as never, {} as never, {} as never)],
       ['approve', ledger.approve('a', '00' as never, {} as never)],
@@ -224,7 +223,7 @@ describe('the set a process holds when it could not resolve one', () => {
     for (const [name, call] of calls) {
       await expect(call, `${name} did not refuse`).rejects.toThrow(REFUSAL);
     }
-    expect(calls).toHaveLength(14);
+    expect(calls).toHaveLength(13);
   });
 
   /**
@@ -241,7 +240,7 @@ describe('the set a process holds when it could not resolve one', () => {
     const ledger = unconfiguredLedger(REFUSAL, 'chain');
     /*
      * **LAZY, AND THAT IS THE WHOLE POINT OF THIS CASE.** The case above builds
-     * all fourteen promises in one array literal, so a member rewritten to
+     * all thirteen promises in one array literal, so a member rewritten to
      * `throw` synchronously fails it during construction - which means that
      * case, not this one, was carrying the pin. Called one at a time here, each
      * member is asked the two questions separately: did the call return, and
@@ -258,7 +257,6 @@ describe('the set a process holds when it could not resolve one', () => {
       ['status', () => ledger.status('a')],
       ['paidAmong', () => ledger.paidAmong('a', [])],
       ['fetch', () => ledger.fetch('a', 0)],
-      ['reseal', () => ledger.reseal('a', {} as never)],
       ['propose', () => ledger.propose('a', '00' as never, {} as never, {} as never, '00' as never)],
       ['proposeRun', () => ledger.proposeRun('a', {} as never, {} as never, {} as never)],
       ['approve', () => ledger.approve('a', '00' as never, {} as never)],
@@ -268,7 +266,7 @@ describe('the set a process holds when it could not resolve one', () => {
       ['setThreshold', () => ledger.setThreshold('a', 2, '00' as never, {} as never)],
       ['setVaultThreshold', () => ledger.setVaultThreshold('a', '00' as never, 2, '00' as never, {} as never)],
     ];
-    expect(calls, 'a member was added to the boundary and not to this list').toHaveLength(14);
+    expect(calls, 'a member was added to the boundary and not to this list').toHaveLength(13);
 
     for (const [name, call] of calls) {
       let returned: Promise<unknown> | undefined;

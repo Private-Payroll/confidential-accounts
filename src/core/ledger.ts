@@ -92,28 +92,10 @@ export interface LedgerRecord {
  * A sealed state, and which viewing key sealed it.
  *
  * The epoch travels with the ciphertext because **the commitment does not
- * identify it.** It never did: it was taken over the balance, the entry digest
- * and the salt — the PLAINTEXT — so re-sealing the same state under a rotated
- * key produced identical commitments and completely different bytes. That was
- * made sharper rather than softer, because the value a blob is filed under is
- * now `viewDigestOf([])`, ONE CONSTANT for every account and every state, so it
- * distinguishes nothing at all. Filing both under it alone means one silently
- * replaces the other.
- *
- * Which matters more than it sounds, because either order of a naive rotation
- * destroys the account:
- *
- *   - replace the blob first, then the records: a crash between them leaves the
- *     state sealed under a key that exists only in the rotating client's memory
- *     and was never wrapped to anybody. Unrecoverable.
- *   - replace the records first, then the blob: a crash between them leaves the
- *     records under the new key and the state under the old one, whose wrapped
- *     copies have just been thrown away. Also unrecoverable.
- *
- * Carrying the epoch is what lets both exist at once, so the rotation is a
- * single flip with a readable account either side of it. That is the rule —
- * write the complete new set, flip one pointer, then drop the old — and this
- * type is what makes the first step possible at all.
+ * identify it.** The value a blob is filed under is `viewDigestOf([])`, ONE
+ * CONSTANT for every account and every state, so it distinguishes nothing at
+ * all, and the same state sealed under two keys would be filed under one name.
+ * The epoch is what names the key a blob opens with.
  */
 export interface SealedStateAt {
   keyEpoch: number;
@@ -536,11 +518,10 @@ export interface AccountOpening {
    * set.
    */
   /**
-   * The account's asset blinding, generated once and never rotated.
+   * The account's asset blinding, generated once and never made again.
    *
-   * Not rotated when the locks change and this is the one exception to
-   * "rotation re-seals everything": every change commitment already approved
-   * names its asset as `assetKeyOf(assetId, this)`, so changing it would make a
+   * A change of the company's key keeps it: every change commitment already
+   * approved names its asset as `assetKeyOf(assetId, this)`, so changing it would make a
    * run one signature from settling impossible to present at a vault.
    */
   assetBlinding: Hex;
@@ -922,23 +903,6 @@ export interface Ledger {
    */
 
   /**
-   * Replaces the ciphertext of the CURRENT state without touching the chain.
-   *
-   * Rotation re-encrypts what the account already holds. The plaintext — the
-   * entry log and its blindings — is unchanged, so there is nothing for the
-   * chain to record and no approval round to run. That is the whole reason
-   * changing the locks is cheap. There is nothing on chain that describes the
-   * state in any case: the value a blob is filed under is `viewDigestOf([])`,
-   * one constant.
-   *
-   * It writes ALONGSIDE the existing epoch rather than over it. Nothing here
-   * decides when to start using the new one — that is one flip in the account
-   * record, and it belongs there because the account record is what says which
-   * epoch is current.
-   */
-  reseal(accountId: string, next: SealedStateAt): Promise<void>;
-
-  /**
    * **WHETHER THIS LEDGER TAKES COMPANIES MADE ON THEIR FOUNDING SIGNER'S
    * DEVICE.** True only on a deployment whose companies are made that way: the
    * device seals the first state, signs it as the company's state record, and
@@ -1274,8 +1238,6 @@ interface SimAccount {
    *
    * The same rule the real blob store keeps, and it is here rather than only
    * there so a test cannot pass against behaviour the file store does not have.
-   * A rotation needs the old and the new to exist at once, or a crash between
-   * the two writes ends the account.
    */
   sealedStates: Map<number, Sealed>;
   keyEpoch: number;
@@ -1933,29 +1895,15 @@ export class SimulatedLedger implements Ledger {
    */
 
 
-  async reseal(accountId: string, next: SealedStateAt): Promise<void> {
-    const a = this.accounts.get(accountId);
-    if (!a) throw new Error('account not found on this ledger');
-    // Alongside, never over. See `SealedStateAt`: replacing is what makes a
-    // crash mid-rotation unrecoverable.
-    if (a.sealedStates.has(next.keyEpoch)) {
-      throw new Error(
-        `the state for "${accountId}" is already sealed at key epoch ${next.keyEpoch}. ` +
-          'Re-sealing over an existing epoch would destroy the only copy under that key.',
-      );
-    }
-    a.sealedStates.set(next.keyEpoch, next.sealed);
-  }
-
   async fetch(accountId: string, keyEpoch: number): Promise<LedgerRecord | null> {
     const a = this.accounts.get(accountId);
     if (!a) return null;
     const sealedState = a.sealedStates.get(keyEpoch);
     if (!sealedState) {
       throw new Error(
-        `no sealed state for "${accountId}" at key epoch ${keyEpoch}. The account record and ` +
-          'the state store disagree about which viewing key is current, which is what a ' +
-          'half-finished rotation looks like.',
+        `no sealed state for "${accountId}" at key epoch ${keyEpoch}. The account record names ` +
+          'a key epoch the state store holds nothing under, so the two disagree about which ' +
+          'viewing key is current.',
       );
     }
     return { commitment: this.viewDigest(a), sealedState, updatedAt: a.updatedAt };

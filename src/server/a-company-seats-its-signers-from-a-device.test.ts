@@ -528,7 +528,7 @@ const aDevice = (who: Who, signerId: string, o: { refuse?: string[]; adopted?: s
 const invited = async (who: 'blake' | 'cleo' | 'dora' | 'vic', as: Who = who, person: string = USERS[as]) => {
   const opened = await call('GET', `/api/accounts/${company}`, { token: tokens.ada });
   const made = await inviteSignerHere({
-    id: company, name: 'Seats', label: LABEL, account: ACCOUNT, inboxPublicKey: opened.body.inboxPublicKey,
+    id: company, name: 'Seats', label: LABEL, account: ACCOUNT,
     keyEpoch: opened.body.keyEpoch, viewingKey,
   }, { committeeKey: wallets.ada.committeeKey as never, statement: entryOf(wallets.ada, LABEL, ACCOUNT), opening: wallets.ada.opening, signingSecret: wallets.ada.signing.secret, held: { role: 'admin', retired: false }, entered: recordsEnteredOver(apiAs('ada'), company, wallets.ada.signing.secret) }, { name: who, role: 'approver', person: USERS[who] }, ORIGIN, sendAs('ada'));
   const sealedThere: PendingSeat[] = [];
@@ -785,7 +785,7 @@ describe('A COMPANY SEATS ITS SIGNERS FROM THEIR OWN DEVICES, ON THE PRODUCT\'S 
     };
     const opened = await call('GET', `/api/accounts/${at}`, { token: tokens.ada });
     const made = await invitePayeeHere({
-      id: at, name: 'Joined', label: adaInJoined.label, account: adaInJoined.account, inboxPublicKey: opened.body.inboxPublicKey,
+      id: at, name: 'Joined', label: adaInJoined.label, account: adaInJoined.account,
       keyEpoch: opened.body.keyEpoch, viewingKey: joined.viewingKey,
     }, adaInJoined, { name: 'Eli', email: 'eli@joined.co', title: 'Engineer', asset: NO_ASSET as never, baseAmount: 1n, startDate: '2026-10-01' }, ORIGIN, sendAs('ada'));
     const person = made.person!;
@@ -812,7 +812,7 @@ describe('A COMPANY SEATS ITS SIGNERS FROM THEIR OWN DEVICES, ON THE PRODUCT\'S 
     };
     const opened = await call('GET', `/api/accounts/${at}`, { token: tokens.ada });
     const company = {
-      id: at, name: 'Joined', label: adaInJoined.label, account: adaInJoined.account, inboxPublicKey: opened.body.inboxPublicKey,
+      id: at, name: 'Joined', label: adaInJoined.label, account: adaInJoined.account,
       keyEpoch: opened.body.keyEpoch, viewingKey: joined.viewingKey,
     };
     const made = await invitePayeeHere(company, adaInJoined, { name: 'Fen', email: 'fen@joined.co', title: 'Engineer', asset: TEST_SETTLEMENT_ASSET, baseAmount: 1n, startDate: '2026-10-01' }, ORIGIN, sendAs('ada'));
@@ -862,7 +862,7 @@ describe('A COMPANY SEATS ITS SIGNERS FROM THEIR OWN DEVICES, ON THE PRODUCT\'S 
     /* Ada pastes it: the invitation her seat signs names Gil and the leaf his code carries. */
     const opened = await call('GET', `/api/accounts/${company}`, { token: tokens.ada });
     const added = await addSignerFromCodeHere({
-      id: company, name: 'Seats', label: LABEL, account: ACCOUNT, inboxPublicKey: opened.body.inboxPublicKey, keyEpoch: opened.body.keyEpoch, viewingKey,
+      id: company, name: 'Seats', label: LABEL, account: ACCOUNT, keyEpoch: opened.body.keyEpoch, viewingKey,
     }, { committeeKey: wallets.ada.committeeKey as never, statement: entryOf(wallets.ada, LABEL, ACCOUNT), opening: wallets.ada.opening, signingSecret: wallets.ada.signing.secret, held: { role: 'admin', retired: false }, entered: recordsEnteredOver(apiAs('ada'), company, wallets.ada.signing.secret) },
     made.code, { name: 'gil', role: 'approver' }, sendAs('ada'), leavesOfTheContract);
     leaves.set(`${company} ${added.id}`, w.seat);

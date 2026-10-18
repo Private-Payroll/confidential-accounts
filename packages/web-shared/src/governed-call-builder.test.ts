@@ -736,3 +736,54 @@ describe('A SPENDING POLICY AND ITS BAR, CARRIED OUT ONLY AS THE CHANGE THE COMP
     await expect(ask({})).rejects.toThrow(/not given the account's function for the key its policy bar is kept under/u);
   });
 });
+
+/* The other kinds a device builds are pinned for another salt elsewhere: a spending policy and its bar in 'A POLICY FOR ANOTHER VAULT ...', a run's raise in 'A RAISE WHOSE RUN AND SALT ...', and a recovery of the record anchor in an-anchor-is-built-only-where-a-refusal-costs-nothing.test.ts. */
+describe('A SEAT, A REMOVAL, A THRESHOLD, A VAULT\'S THRESHOLD, AN ADOPTION AND THE PAY-RECORD KEY, CARRIED OUT OR RAISED, REFUSE A SALT THAT DOES NOT MAKE THEIR PROPOSAL', () => {
+  const S = '6c'.repeat(32);
+  const OTHER_SALT = '6d'.repeat(32);
+  const V = 'ab'.repeat(32);
+  const C = 'cd'.repeat(32);
+  const L = '1e'.repeat(32);
+  const idFor = (g: RoundChangeOnTheWire) => hex(accountPure.proposalIdOf(payloadOf(g), accountPure.noVault(), bytes(S)));
+  const raised = { assetId: '44'.repeat(32), assetBlinding: '55'.repeat(32), proposalSalt: S, changeAmount: '0', changeBatchDigest: '77'.repeat(32) };
+  const seatG = { kind: 'add-signer', leaf: L } as const;
+  const removalG = { kind: 'remove-signer', leaf: L } as const;
+  const thresholdG = { kind: 'threshold', threshold: '2' } as const;
+  const vaultG = { kind: 'vault-threshold', vault: V, threshold: '2' } as const;
+  const adoptG = { kind: 'adopt-vault', vault: V } as const;
+  const payKeyG = { kind: 'pay-key', commitment: C } as const;
+  /* Each honest order, then the same order handed another salt. */
+  const kinds: Array<[string, GovernedCallOrder, (salt: string) => GovernedCallOrder]> = [
+    ['a seat carried out', { circuit: 'amendSigner', leaf: L, proposal: idFor(seatG), proposalSalt: S },
+      (salt) => ({ circuit: 'amendSigner', leaf: L, proposal: idFor(seatG), proposalSalt: salt })],
+    ['a removal carried out', { circuit: 'amendSigner', leaf: L, proposal: idFor(removalG), proposalSalt: S, removing: true },
+      (salt) => ({ circuit: 'amendSigner', leaf: L, proposal: idFor(removalG), proposalSalt: salt, removing: true })],
+    ['a threshold carried out', { circuit: 'setThreshold', threshold: '2', proposal: idFor(thresholdG), proposalSalt: S },
+      (salt) => ({ circuit: 'setThreshold', threshold: '2', proposal: idFor(thresholdG), proposalSalt: salt })],
+    ['a vault\'s threshold carried out', { circuit: 'setVaultThreshold', vault: V, threshold: '2', proposal: idFor(vaultG), proposalSalt: S },
+      (salt) => ({ circuit: 'setVaultThreshold', vault: V, threshold: '2', proposal: idFor(vaultG), proposalSalt: salt })],
+    ['a vault adopted', { circuit: 'adopt', vault: V, proposal: idFor(adoptG), proposalSalt: S },
+      (salt) => ({ circuit: 'adopt', vault: V, proposal: idFor(adoptG), proposalSalt: salt })],
+    ['the pay-record key sealed', { circuit: 'sealPayKey', wrap: ['01', '02', '03', '04'].map((x) => x.repeat(32)), commitment: C, proposal: idFor(payKeyG), proposalSalt: S },
+      (salt) => ({ circuit: 'sealPayKey', wrap: ['01', '02', '03', '04'].map((x) => x.repeat(32)), commitment: C, proposal: idFor(payKeyG), proposalSalt: salt })],
+    ['a change of the company raised', { circuit: 'propose', governance: thresholdG, half: raised, proposal: idFor(thresholdG) },
+      (salt) => ({ circuit: 'propose', governance: thresholdG, half: { ...raised, proposalSalt: salt }, proposal: idFor(thresholdG) })],
+    ['a vault\'s adoption raised', { circuit: 'propose', adoption: adoptG, half: raised, proposal: idFor(adoptG) },
+      (salt) => ({ circuit: 'propose', adoption: adoptG, half: { ...raised, proposalSalt: salt }, proposal: idFor(adoptG) })],
+    ['the pay-record key\'s proposal raised', { circuit: 'propose', payKey: payKeyG, half: raised, proposal: idFor(payKeyG) },
+      (salt) => ({ circuit: 'propose', payKey: payKeyG, half: { ...raised, proposalSalt: salt }, proposal: idFor(payKeyG) })],
+  ];
+
+  it.each(kinds)('%s is refused with another salt, by its own identity and against the record this device opened', async (_name, honest, withSalt) => {
+    /* The honest order passes: its parts and its salt make the proposal it names. */
+    expect(() => refuseARaiseThatIsNotTheRecordedOne({ accountPure }, honest)).not.toThrow();
+    const other = withSalt(OTHER_SALT);
+    /* RED WHEN: this kind's identity is not made again with the salt it was handed, so a call for another proposal than the one named reaches the account's circuit. */
+    expect(() => refuseARaiseThatIsNotTheRecordedOne({ accountPure }, other)).toThrow(/another identity|not the one the company wrote down|not for this change/u);
+    const log: string[] = [];
+    /* RED WHEN: a salt other than the one sealed in the record this device opened reaches the call. */
+    await expect(build(depsWith(log, []), { account: ACCOUNT, order: other, material, chain, opened: openedFor(honest) }))
+      .rejects.toThrow(/does not match the company's own record of this proposal/u);
+    expect(log).toEqual([]);
+  });
+});

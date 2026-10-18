@@ -23,7 +23,7 @@ import {
   admitHere, makeMyselfPayableHere, PersonNotChanged, readPeopleHere, setStatusHere, type PeopleDevice, type PeopleHere, type PersonHere,
 } from 'vaults-web-shared/people-on-device.js';
 import {
-  aCompanyOfTwoSeats, acmeDirectory, acmeDirectoryAttestedBy, ACME, ADA, aVersionNoSeatSigned, BO, CO, fromAda, KEY, LABEL, newestPerson, OTHER_LABEL, ORIGIN,
+  aCompanyOfTwoSeats, acmeDirectory, acmeDirectoryAttestedBy, ACME, ACME_INBOX, ADA, aVersionNoSeatSigned, BO, CO, fromAda, KEY, LABEL, newestPerson, OTHER_LABEL, ORIGIN,
   peopleRecords, sendAs, store,
 } from './a-company-of-two-seats.test-support.js';
 import { companyRecordEntry } from '../midnight/record-manifest.js';
@@ -187,7 +187,7 @@ describe('ADMITTING: THE DECISION THAT MAKES SOMEBODY PAYABLE, MADE ON THE ADMIT
     /* RED WHEN: the accept route takes a payslip key in the clear, or a body carrying more than an acceptance and a hand-over. */
     const clear = await invitePayeeHere(ACME, ADA, pay(23), ORIGIN, fromAda);
     const proof = acceptanceProofOf(tokenOfLink(clear.link)!);
-    const sealedFor = payeeHandoverOf(codeOf(63, addressOf(63)), ACME.inboxPublicKey);
+    const sealedFor = payeeHandoverOf(codeOf(63, addressOf(63)), ACME_INBOX);
     const post = (body: unknown) => sendAs('usr_63')(`/api/invites/${clear.id}/accept-employee`, { method: 'POST', body: JSON.stringify(body) });
     expect((await post({ acceptance: proof, handover: sealedFor, wrappingPublicKey: 'cd'.repeat(32) })).body).toMatchObject({ refused: 'handover-in-the-clear' });
     expect((await post({ acceptance: proof, handover: sealedFor, note: 'hi' })).body).toMatchObject({ refused: 'not-an-acceptance' });
@@ -337,5 +337,25 @@ describe('A SIGNER MAKES THEMSELVES PAYABLE FROM THEIR OWN DEVICE', () => {
     const added = await addPayeeFromCodeHere(ACME, ADA, (await import('midnight-identity/profile/join-code')).writeJoinCode(code), pay(12), fromAda);
     const admitted = await admitHere(adasDevice(), await hereOf(added.person), added.fingerprint);
     expect(admitted.status).toBe('active');
+  });
+});
+
+describe('A PAYEE WHO HANDED OVER BEFORE THE COMPANY\'S KEY CHANGED', () => {
+  it('is admitted only when the change of key named what they handed over', async () => {
+    const { newSymmetricKey } = await import('../core/crypto.js');
+    const { answerDigestOf } = await import('../core/answer-opened.js');
+    const KEY1 = newSymmetricKey() as never;
+    const keysNaming = (named: readonly unknown[]) => ({
+      epoch: 1, key: KEY1, newest: 1, keyAt: (e: number) => (e === 0 ? KEY : KEY1), sealing: () => ({ key: KEY1, epoch: 1 }),
+      answered: new Map([[0, new Set(named.map((x) => answerDigestOf(x as never)))]]),
+    });
+    const w = await waiting(70, codeOf(70, addressOf(70)));
+    const handedOver = store.handoverFor(w.id)!;
+    const after = (named: readonly unknown[]) => adasDevice({ company: { ...ACME, viewingKey: keysNaming(named) as never } });
+    /* RED WHEN: a hand-over sealed to the inbox before the change, which no change named, is admitted. */
+    await expect(admitHere(after([]), await hereOf(w.id), w.fingerprint)).rejects.toThrow(/from before it changed/u);
+    expect((await newestPerson(w.id))!.facts!.status).toBe('pending');
+    /* RED WHEN: a hand-over the change named, sealed before it, can no longer be opened to admit the payee. */
+    await expect(admitHere(after([handedOver]), await hereOf(w.id), 'not the fingerprint')).rejects.toThrow(/fingerprint this person read out/u);
   });
 });

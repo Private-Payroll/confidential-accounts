@@ -1,24 +1,24 @@
 import { addressFingerprint } from 'midnight-identity/profile/fingerprint';
 import type { Hex, Sealed } from '../../../src/core/crypto.js';
 import { openFromInbox } from '../../../src/core/sealed-records.js';
+import { keyInForce, type KeysHeld } from '../../../src/core/company-key.js';
 import { openHandover } from '../../../src/core/invite-handover.js';
 import type { SealedHandover } from '../../../src/core/invite-handover.js';
 
 /**
- * **OPENING THE DROP BOX ON THE ADMIN'S OWN MACHINE.** `docs/NEXT.md` `X12` §2,
- * `docs/scope-invitations.md` §5, `docs/how-money-can-be-lost.md` `C21`.
+ * **OPENING THE DROP BOX ON THE ADMIN'S OWN MACHINE.**
  *
  * ── WHY THIS IS IN THE BROWSER AND NOT ON THE SERVER ──────────────────────
  *
- * §5, decided 22 Aug: the fingerprint is **computed on the ADMIN'S machine,
+ * The fingerprint is **computed on the ADMIN'S machine,
  * not ours** — computing it here would require the address, and the leak
- * returns through the door this section builds. The whole point of
- * `C160` is that a receiving address never becomes readable to this service;
+ * returns through the door this file closes. The whole point is that a
+ * receiving address never becomes readable to this service;
  * a server-side comparison would hand it one for every pending hire, on a
  * schedule, in the name of privacy.
  *
  * So the route serves ciphertext (`GET /api/employees/:id/handover`), the
- * viewing key stays in this tab, and this file is where the two meet.
+ * company's key stays in this tab, and this file is where the two meet.
  *
  * ── AND IT CARRIES NO WEBASSEMBLY ────────────────────────────────────────
  *
@@ -26,7 +26,7 @@ import type { SealedHandover } from '../../../src/core/invite-handover.js';
  * else, and `addressFingerprint` is a hash and an alphabet. **The address is a
  * plain string here and is never rebuilt through `payeeAddress()`** — that
  * happens at `admit`, on the machine that writes the roster, exactly as it
- * always has (`A-1`, `C7`). This screen is not deciding whether an address is
+ * always has. This screen is not deciding whether an address is
  * payable; it is showing a person two codes.
  *
  * ── WHAT THE COMPARISON PROVES, AND WHAT IT DOES NOT ─────────────────────
@@ -71,12 +71,12 @@ interface Box {
 export function acceptedCodes(
   inbox: ({ ephemeral: Hex } & Sealed) | null,
   accountId: string,
-  viewingKey: Hex,
+  viewingKey: KeysHeld,
 ): Accepted | null {
   if (!inbox) return null;
   try {
-    const box = openFromInbox<Box>(inbox, accountId, viewingKey);
-    const handover = openHandover(box.handover, accountId, viewingKey);
+    const box = openFromInbox<Box>(inbox, accountId, keyInForce(viewingKey));
+    const handover = openHandover(box.handover, accountId, keyInForce(viewingKey));
     const ours = addressFingerprint(handover.address);
     return {
       of: 'opened',

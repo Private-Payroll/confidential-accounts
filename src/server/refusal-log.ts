@@ -12,7 +12,7 @@
  * same event in every artefact this project keeps.** Telling them apart took
  * reading two source files.
  *
- * Every defect since `X2` has been found by starting the thing and looking.
+ * Every defect found here has been found by starting the thing and looking.
  * **The looking is the slow part, and this is the one avoidable reason.**
  *
  * ── WHAT A LINE CARRIES, AND WHY THE CLASS NAME IS ON IT ─────────────────
@@ -27,22 +27,19 @@
  * ── IT REDACTS, AND THAT IS THE POINT RATHER THAN A PRECAUTION ───────────
  *
  * **A refusal about a key is exactly the kind of message that
- * quotes one** — *this viewing key does not open …* — and the path carries a
- * query string, which is where `viewingKey` travels. So the reason and the path
- * both go through `redactSecrets` before anything is written.
+ * quotes one** — *this viewing key does not open …* — and a path's query string
+ * could carry one whatever a client meant to send. So the reason and the path
+ * both go through `redactSecrets` before anything is written, so nothing rests
+ * on a client never sending one.
  *
- * **THE BROWSER GETS THE RAW SENTENCE AND THE DISK GETS THE REDACTED ONE, AND
- * THIS PARAGRAPH CLAIMED THE OPPOSITE UNTIL `S58`.** `T-326` records it.
- * The paragraph said *the same redactor answers the browser in
- * `wrap`, so the person's sentence and the line on disk are one string rather
- * than two that can drift*. **`wrap` calls no redactor** — it computes one
+ * **THE BROWSER GETS THE RAW SENTENCE AND THE DISK GETS THE REDACTED ONE.**
+ * **`wrap` calls no redactor** — it computes one
  * `reason` and forks it, sending it to the browser untouched
  * (`src/server/index.ts`, `res.status(400).json({ error: reason })`) and to
  * `appendRefusal`, which redacts. The path diverges too: the disk gets a
  * redacted `req.originalUrl` and the browser gets no path at all.
  *
- * **AND THE DIVERGENCE IS THE DESIGN, WHICH IS WHY THE SENTENCE IS CORRECTED
- * RATHER THAN THE CODE.** `src/server/index.ts`'s own note above `wrap` states
+ * **AND THE DIVERGENCE IS THE DESIGN.** `src/server/index.ts`'s own note above `wrap` states
  * it correctly and always has: *redacted at the boundary it crosses and not
  * here … `renderRefusal` redacts on the way to the disk; the page redacts on
  * the way to the wire. Redacting a third time here would mask both, so a
@@ -50,7 +47,7 @@
  * looked like it proved.* Two files said different things; **this was the
  * wrong one.**
  *
- * **`C148` HAD TO CLOSE FIRST AND IT DID, IN THIS ROUND.** This file sends more
+ * **THE REDACTOR COMES FIRST.** This file sends more
  * text to disk than this project has ever sent, from a browser, where somebody
  * may have typed anything into the wrong field. A redactor that a single
  * capital letter switches off would have turned this into a leak.
@@ -68,7 +65,7 @@
  * grows with the refusals. `RESET-DATA.command` does not clear it and should
  * not; a person who wants it gone deletes it, and a deployment that cannot
  * afford it sets `REFUSAL_LOG` somewhere it can. That is the same posture
- * `REPORT-WEB-CONSOLE.txt` has had since `X4`, taken deliberately rather than
+ * the web console report has, taken deliberately rather than
  * by default.
  */
 import { appendFileSync, existsSync, mkdirSync } from 'node:fs';

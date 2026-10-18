@@ -11,10 +11,11 @@
  * to the payslip key the person's signed code names. Nothing is minted for
  * anybody: a run drawn here pays only people on the roster.
  *
- * The run is sealed under the company's viewing key and signed with this
+ * The run is sealed under the company's key in force and signed with this
  * seat's filing key; the service keeps it only for a seat its directory
  * believes may file a run, and opens none of it.
  */
+import { keyOf, sealingWith, type KeysHeld } from '../../../src/core/company-key.js';
 import { randomBytes, type Hex } from '../../../src/core/crypto.js';
 import { assets as theAssets, type AssetRegistry } from '../../../src/core/assets.js';
 import { isLiveRound } from '../../../src/core/retry-cover.js';
@@ -37,8 +38,8 @@ type Api = (path: string, init?: RequestInit) => Promise<any>;
 export interface RunDrawDoors {
   readonly api: Api;
   readonly accountId: string;
-  readonly viewingKey: Hex;
-  /** The key epoch the company seals under now. */
+  readonly viewingKey: KeysHeld;
+  /** The key epoch a bare key seals under; the company's keys seal at the epoch in force. */
   readonly keyEpoch: number;
   /** This seat's filing key: the one its directory entry names. */
   readonly signingSecret: Hex;
@@ -167,7 +168,7 @@ export async function drawRunHere(doors: RunDrawDoors, asked: RunAsked): Promise
   const skip = asked.skipPending === undefined ? undefined
     : { employeeIds: [...asked.skipPending.employeeIds], reason: asked.skipPending.reason, by: doors.by };
   const { roster, leftOut } = drawn(() => peopleDrawn(all, asked.employeeIds, skip, (e) => handedOver.has(e.id)));
-  const runs = sealedRuns.filter((r) => r.accountId === doors.accountId).map((r) => openSealedRun(r, doors.viewingKey));
+  const runs = sealedRuns.filter((r) => r.accountId === doors.accountId).map((r) => openSealedRun(r, keyOf(doors.viewingKey, r.keyEpoch)));
   const rounds = payrollRoundsHere(proposals, doors.accountId, doors.viewingKey, {
     identity: doors.records.roundIdentity, nowInSeconds: BigInt(Math.floor(Date.parse(at) / 1000)),
   });
@@ -189,7 +190,8 @@ export async function drawRunHere(doors: RunDrawDoors, asked: RunAsked): Promise
     runId, accountId: doors.accountId, period, employees, payslips,
     ...(skips ? { skips } : {}), ...(repeats ? { repeats } : {}),
   });
-  const filing = signRunFiling(doors.accountId, sealedRunOf(run, doors.viewingKey, doors.keyEpoch), doors.signingSecret);
+  const sealing = sealingWith(doors.viewingKey, doors.keyEpoch);
+  const filing = signRunFiling(doors.accountId, sealedRunOf(run, sealing.key, sealing.epoch), doors.signingSecret);
   await doors.api(`/api/accounts/${encodeURIComponent(doors.accountId)}/runs`, { method: 'POST', body: JSON.stringify({ run: filing }) });
   await doors.entered.enter([{ store: 'run', run: filing }]);
   return run;

@@ -171,6 +171,22 @@ describe('EACH ROSTER ENTRY IS BELIEVED ON ITS OWN SIGNER\'S WITNESSES, NOT ON W
     }
   });
 
+  it('BO\'S ENTRY NAMING ANOTHER PERSON THAN THE ONE THE DIRECTORY HOLDS HIS SEAT FOR IS REFUSED', async () => {
+    await adaFiles(withBo((bo) => ({ ...bo, userId: 'ada' })));
+    for (const s of [ADA, BO]) {
+      const read = await readOn(s);
+      /* RED WHEN: a device believes an entry whose sign-in person is not the person the directory holds that seat for. */
+      expect(read.refused).toEqual([{ signerId: ID.bo, name: 'bo', why: 'not-their-person' }]);
+      expect(shown(read.account)).toEqual([ID.ada]);
+    }
+  });
+
+  it('AN ENTRY WITH NO SIGN-IN PERSON AT ALL IS REFUSED THE SAME WAY', async () => {
+    await adaFiles(withBo((bo) => ({ ...bo, userId: null })));
+    /* RED WHEN: an entry with no person is believed for a seat the directory holds for a person. */
+    expect((await readOn(ADA)).refused).toEqual([{ signerId: ID.bo, name: 'bo', why: 'not-their-person' }]);
+  });
+
   it('A SEAT THE CHAIN DOES NOT HOLD IS NOT SHOWN, AND THE HONEST ROSTER FILED AGAIN IS READ WHOLE AGAIN', async () => {
     await adaFiles({ name: 'Acme', signers: [...HONEST.signers, { ...signerOf(BO), id: 'sgn_dee', name: 'dee', userId: 'dee', leafCommitment: '7e'.repeat(32) as Hex }] });
     /* RED WHEN: an entry is believed for a seat the account does not hold. */

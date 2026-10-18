@@ -15,7 +15,27 @@
  * Over real HTTP: Ada, Bo and Cy are seated and believed; Ada's seat is an
  * admin, Bo's an approver, which files no roster. The chain's read is the test's.
  */
-import { describe, it, expect, beforeAll } from 'vitest';
+import { describe, it, expect, beforeAll, vi } from 'vitest';
+/*
+ * The company's one check as the roster's reader uses it, with one stand-in a case may set: the key epoch it holds in
+ * force (`inForce`). While set, a roster handed over as sealed at an older epoch is refused, as the check refuses one
+ * entered after a change of the key; a reader that hands over no epoch is never refused by it.
+ */
+const oneCheck = vi.hoisted(() => ({ inForce: null as number | null }));
+vi.mock('vaults-web-shared/vault-page-doors.js', async (importOriginal) => {
+  const real = await importOriginal<typeof import('vaults-web-shared/vault-page-doors.js')>();
+  return {
+    ...real,
+    judgeIn: (here: Parameters<typeof real.judgeIn>[0]) => {
+      const judge = real.judgeIn(here);
+      return Object.assign((...args: Parameters<typeof judge>) => {
+        const sealedAt = args[5];
+        if (oneCheck.inForce !== null && typeof sealedAt === 'number' && sealedAt < oneCheck.inForce) return 'it is sealed under an older key than the one in force';
+        return judge(...args);
+      }, judge);
+    },
+  };
+});
 import { identityFromSecret } from 'midnight-identity';
 import { signRecordsKey } from 'midnight-identity/profile/records-key';
 import { signingPublicKeyOf, toHex, type Hex } from '../core/crypto.js';
@@ -143,11 +163,11 @@ describe('A VERSION EVERY DEVICE REFUSES IS FOLLOWED', () => {
 });
 
 describe('A VERSION REFUSED FOR WHO FILED IT CARRIES ONLY WHAT EACH ENTRY BINDS', () => {
-  it('TAKES EACH SIGNER\'S NAME, SIGN-IN, ROLE AND WRAPPING KEY FROM THE NEWEST VERSION FILED BY A SEAT THAT MAY FILE ONE', async () => {
+  it('TAKES EACH SIGNER\'S NAME, ROLE AND WRAPPING KEY FROM THE NEWEST VERSION FILED BY A SEAT THAT MAY FILE ONE', async () => {
     const pick = (xs: readonly Signer[]) => xs.map((x) => ({ id: x.id, name: x.name, userId: x.userId, role: x.role, wrapping: x.wrappingPublicKey }));
     const believed = pick(newest().signers);
-    /* Bo's seat, whose role files no roster, renames Ada, takes her sign-in, makes Cy a viewer and gives him another wrapping key. */
-    const altered = newest().signers.map((x) => (x.id === 'sgn_ada' ? { ...x, name: 'mallory', userId: 'mallory' }
+    /* Bo's seat, whose role files no roster, renames Ada, makes Cy a viewer and gives him another wrapping key. */
+    const altered = newest().signers.map((x) => (x.id === 'sgn_ada' ? { ...x, name: 'mallory' }
       : x.id === 'sgn_cy' ? { ...x, role: 'viewer' as const, wrappingPublicKey: 'cd'.repeat(32) as Hex } : x));
     const bos = await files(BO, { name: 'Acme', signers: altered });
     for (const s of [ADA, BO, CY]) await expect(readOn(s), s.person).rejects.toThrow(/does not believe the company's roster/u);
@@ -158,10 +178,10 @@ describe('A VERSION REFUSED FOR WHO FILED IT CARRIES ONLY WHAT EACH ENTRY BINDS'
 });
 
 describe('THE VERSION FILED NEXT DROPS ONLY ENTRIES REFUSED FOR GOOD', () => {
-  it('CARRIES AN ENTRY WAITING FOR ITS SIGNER\'S OWN DIRECTORY ENTRY, AND DROPS ONE GIVING RIGHTS THE CHAIN NEVER GAVE', async () => {
+  it('CARRIES AN ENTRY WAITING FOR ITS SIGNER\'S OWN DIRECTORY ENTRY, AND DROPS ONE GIVING RIGHTS THE CHAIN NEVER GAVE OR NAMING ANOTHER PERSON', async () => {
     /* Dee is admitted: her entry is believed only on her own device until her own device files her directory entry. */
     onChain(ADA, BO, CY, DEE);
-    const junk: Signer = { ...entryOf(CY, 'sgn_junk'), name: 'junk', userId: 'junk', rights: { mayApprove: false, everyVault: false, onVaults: [] } as never };
+    const junk: Signer = { ...entryOf(CY, 'sgn_junk'), name: 'junk', rights: { mayApprove: false, everyVault: false, onVaults: [] } as never };
     await files(ADA, { name: 'Acme', signers: [entryOf(ADA), entryOf(BO), entryOf(CY), entryOf(DEE, 'sgn_dee', false), junk] });
     expect((await readOn(BO)).refused.map((r) => r.why)).toEqual(['no-entry-of-their-own', 'rights-not-the-chains']);
     /* Bo gives his vault keys again, and Ada's device folds them in: the one filing a fold makes. */
@@ -176,6 +196,13 @@ describe('THE VERSION FILED NEXT DROPS ONLY ENTRIES REFUSED FOR GOOD', () => {
     expect(ids).toContain('sgn_dee');
     /* RED WHEN: an entry refused for good is carried on by every honest filing. */
     expect(ids).not.toContain('sgn_junk');
+    /* Ada's seat then files Cy's seat under another sign-in's entry alone: the directory holds that seat for Cy. */
+    const stranger: Signer = { ...entryOf(CY, 'sgn_stranger'), name: 'stranger', userId: 'stranger' };
+    await files(ADA, { name: 'Acme', signers: [entryOf(ADA), entryOf(BO), stranger, entryOf(DEE, 'sgn_dee', false)] });
+    expect((await readOn(BO)).refused.map((r) => r.why)).toContain('not-their-person');
+    const carried = (await rosterHere(doorsOf(ADA))).carried.signers.filter((x) => x.leafCommitment === CY.seat).map((x) => x.id);
+    /* RED WHEN: an entry naming another person than the directory holds its seat for is carried on, in place of the entry an earlier version holds for that seat. */
+    expect(carried).toEqual(['sgn_cy']);
   });
 });
 
@@ -195,5 +222,58 @@ describe('A VERSION THE SERVICE SERVES SHORT, OR AS OTHER BYTES, IS NEVER FOLLOW
       await expect(fileTheRosterFollowedHere(doorsOf(ADA, serving)), what).rejects.toThrow(/Nothing was filed/u);
       expect(store.newestRoster(CO)!.version, what).toBe(top.version);
     }
+  });
+});
+
+describe('A VERSION FOLLOWED AFTER THE COMPANY\'S KEY CHANGES', () => {
+  it('IS HELD BY ITS READER TO THE KEY IN FORCE: ONE SEALED UNDER AN OLDER KEY IS REFUSED', async () => {
+    await files(ADA, { name: 'Acme', signers: [entryOf(ADA), entryOf(BO), entryOf(CY)] });
+    oneCheck.inForce = 1;
+    try {
+      /* RED WHEN: the roster's reader hands the check no epoch, so a roster sealed under the key the signer who left holds is believed. */
+      await expect(readOn(ADA)).rejects.toThrow(/sealed under an older key than the one in force/u);
+    } finally {
+      oneCheck.inForce = null;
+    }
+    /* The control: with no newer key in force, the same roster is not refused for its key. */
+    expect(await readOn(ADA).then(() => 'read', (e: Error) => e.message)).not.toMatch(/older key/u);
+  });
+
+  it('IS NOT FILED WHILE THE COMPANY\'S KEY IS BEING CHANGED', async () => {
+    const { CompanyKeyBeingChanged } = await import('vaults-web-shared/company-key-here.js');
+    /* The company's keys after a signer's removal is carried out on the chain, before the key they held is replaced. */
+    const paused = {
+      epoch: 0, key: KEY as Hex, newest: 0, keyAt: (): Hex => KEY as Hex,
+      sealing: () => { throw new CompanyKeyBeingChanged('the company\'s key is being changed'); },
+    };
+    await files(ADA, { name: 'Acme', signers: [entryOf(ADA), entryOf(BO), entryOf(CY)] });
+    const refused = await files(ADA, { name: 'Acme', signers: [entryOf(ADA), entryOf(CY)] });
+    /* RED WHEN: the roster's next version is sealed without asking whether sealing is paused. */
+    await expect(fileTheRosterFollowedHere({ ...doorsOf(ADA), viewingKey: paused })).rejects.toThrow(CompanyKeyBeingChanged);
+    expect(store.newestRoster(CO)!.version).toBe(refused);
+  });
+
+  it('IS SEALED UNDER THE KEY IN FORCE, AND EVERY OLDER VERSION IS STILL READ UNDER ITS OWN EPOCH\'S KEY', async () => {
+    const key1 = toHex(new Uint8Array(32).fill(0x7e)) as Hex;
+    /* A staying seat's keys after one change of the key: the new one in force, the founding key reached through it. */
+    const after = {
+      epoch: 1, key: key1, newest: 1,
+      keyAt: (e: number): Hex => { if (e === 0) return KEY; if (e === 1) return key1; throw new Error(`no key at epoch ${e}`); },
+      sealing: () => ({ key: key1, epoch: 1 }),
+    };
+    await files(ADA, { name: 'Acme', signers: [entryOf(ADA), entryOf(BO), entryOf(CY)] });
+    const refused = await files(ADA, { name: 'Acme', signers: [entryOf(ADA), entryOf(CY)] });
+    /* RED WHEN: a version sealed before the change is not read under the founding key it was sealed with, so nothing can follow it. */
+    expect(await fileTheRosterFollowedHere({ ...doorsOf(ADA), viewingKey: after })).toBe(refused + 1);
+    const rec = store.newestRoster(CO)!;
+    /* RED WHEN: the version followed after the change is sealed at the epoch of a key the signer who left still holds. */
+    expect(rec.keyEpoch).toBe(1);
+    expect(() => openAccount({ ...store.getAccount(CO)!, roster: rec } as never, KEY, rec)).toThrow();
+    /* RED WHEN: a device holding the company's keys does not read the new version under the key of its own epoch. */
+    const read = await rosterBelievedHere(await served(), after, {
+      accountId: CO, label: LABEL, account: ADDRESS, reads: acmeReads,
+      own: { signerId: 'sgn_ada', signingPublicKey: signingPublicKeyOf(ADA.signingSecret as Hex) },
+    });
+    expect(shown(read.account)).toEqual(['sgn_ada', 'sgn_bo', 'sgn_cy']);
   });
 });

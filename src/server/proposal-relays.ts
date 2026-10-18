@@ -49,7 +49,7 @@ export interface RelayStore {
   getProposal(id: string): SealedProposal | null;
   putProposal(p: SealedProposal): void;
   listProposals(accountId: string): SealedProposal[];
-  getAccount(accountId: string): Pick<SealedAccount, 'id' | 'keyEpoch'> | null;
+  getAccount(accountId: string): Pick<SealedAccount, 'id'> | null;
   getRun?(id: string): SealedRun | null;
   /**
    * Writes a raised run and its proposal in one write, only while the store
@@ -496,22 +496,23 @@ export const proposalRelayRoutes = (deps: ProposalRelayDeps): express.Router => 
    * device sealed it under the company's viewing key and signed the filing with
    * its seat's filing key; this files it only when that key is the one the
    * company's directory holds for the signed-in person's seat, held now
-   * (`actingSeatOf`), at the company's key epoch now. A proposal the
+   * (`actingSeatOf`). It judges no change of the company's key, so the key
+   * epoch a filing names refuses nothing here. A proposal the
    * company already holds open for the same change is not filed beside it: the
    * device raises that one instead.
    */
   /*
    * **A PAYROLL RUN RAISED FROM A DEVICE IS FILED WITH ITS PROPOSAL, OR NOT AT
    * ALL.** The run is re-filed signed by the same seat that signed the
-   * proposal; it is the company's run kept here,
-   * under the key it uses now, still unpaid, and the raise adds exactly this
+   * proposal; it is the company's run kept here, for the same period,
+   * still unpaid, and the raise adds exactly this
    * proposal to the ones the run names, letting go only of a withdrawn one, and
    * it says what it pays.
    */
   const runRaisedWith = (
     company: string, filing: SignedProposalFiling, given: unknown,
     pays: { vault: string; asset: string; payments: Array<PaymentChecked<string, string>> } | undefined,
-    keyEpoch: number, salt: string,
+    salt: string,
   ): { run: SignedRunFiling; kept: SealedRun } => {
     const why = runFilingRefusal(company, given);
     if (why !== null) throw new NothingWasSent(`this is not a run this company can keep: ${why}. Nothing was written down or sent.`);
@@ -526,8 +527,8 @@ export const proposalRelayRoutes = (deps: ProposalRelayDeps): express.Router => 
     if (kept === null || kept.accountId !== company) {
       throw new NothingWasSent('this company keeps no payroll run by that name. Nothing was written down or sent.');
     }
-    if (run.keyEpoch !== keyEpoch || run.period !== kept.period) {
-      throw new NothingWasSent('this run is not the run this company keeps under that name, under the key it uses now. Reload the '
+    if (run.period !== kept.period) {
+      throw new NothingWasSent('this run is not the run this company keeps under that name, for the period it keeps it for. Reload the '
         + 'page and raise it again. Nothing was written down or sent.');
     }
     if (kept.status === 'settled' || run.status !== 'proposed' || run.settledAt !== undefined) {
@@ -581,10 +582,8 @@ export const proposalRelayRoutes = (deps: ProposalRelayDeps): express.Router => 
         /* The seat whose filing key signed the proposal, among every entry the signed-in person filed. */
         await actingSeat(company, (req as { userId?: unknown }).userId, filing.filedBy.publicKey,
           'this proposal is signed by a key that is not your seat\'s in the company\'s directory. Nothing was written down or sent.');
-        const account = deps.store.getAccount(company);
-        if (account === null || filing.keyEpoch !== account.keyEpoch) {
-          throw new NothingWasSent('this proposal is sealed under a key the company no longer uses. Reload the page and raise it '
-            + 'again. Nothing was written down or sent.');
+        if (deps.store.getAccount(company) === null) {
+          throw new NothingWasSent('this service holds no company by that name. Nothing was written down or sent.');
         }
         if (deps.store.getProposal(filing.id) !== null) {
           throw new NothingWasSent('a proposal by this name is already written down. Nothing was written down or sent.');
@@ -605,7 +604,7 @@ export const proposalRelayRoutes = (deps: ProposalRelayDeps): express.Router => 
           throw new NothingWasSent('a payroll proposal is written down only with the run it raises, and this one comes with none. '
             + 'Raise it from the run. Nothing was written down or sent.');
         }
-        const raised = b.run === undefined ? undefined : runRaisedWith(company, filing, b.run, b.pays, account.keyEpoch, b.salt);
+        const raised = b.run === undefined ? undefined : runRaisedWith(company, filing, b.run, b.pays, b.salt);
         const proposal: SealedProposal = {
           id: filing.id, accountId: company, status: 'open', createdAt: filing.createdAt, digest: filing.digest,
           chainId: filing.chainId, approvalCount: 0, keyEpoch: filing.keyEpoch, sealed: filing.sealed,

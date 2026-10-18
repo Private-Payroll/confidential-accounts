@@ -10,6 +10,8 @@
  * paid is read off the account's own record of completed payments, through the
  * read this device is given, and reported against those same leaves.
  */
+import { refusedForItsKey } from './vault-page-doors.js';
+import { keyOf, type KeysHeld } from '../../../src/core/company-key.js';
 import { vouchedRefusal, type Vouched } from '../../../src/midnight/record-tree.js';
 import { fromHex, parseCanonical, toHex, unseal, type Hex, type Sealed } from '../../../src/core/crypto.js';
 import { openRecord } from '../../../src/core/sealed-records.js';
@@ -48,18 +50,21 @@ interface RoundHere {
   readonly vouched?: Vouched;
 }
 
-const roundOf = async (records: CompanyRecordsHere, accountId: string, proposalId: string, viewingKey: Hex): Promise<RoundHere | null> => {
+const roundOf = async (records: CompanyRecordsHere, accountId: string, proposalId: string, viewingKey: KeysHeld): Promise<RoundHere | null> => {
   if (records.proposals === undefined) {
     throw new NotMadeHere('This page cannot read the company\'s proposals, so it cannot make a payment here. Reload the page '
       + 'to get the current version.');
   }
-  const rec: SealedProposal | undefined = (await proposalsListedHere({ ...records, proposals: records.proposals })).find((p) => p.id === proposalId);
+  const listed = await proposalsListedHere({ ...records, proposals: records.proposals });
+  const rec: SealedProposal | undefined = listed.find((p) => p.id === proposalId);
+  if (rec === undefined) refusedForItsKey(listed, proposalId, 'proposal');
   if (rec === undefined || rec.accountId !== accountId) return null;
   let envelope: { kind: string; vault: Hex; sealedPayload: Sealed };
   let payload: { __change?: StateChange };
   try {
-    envelope = openRecord('proposals', rec.accountId, rec.sealed, viewingKey);
-    payload = parseCanonical(unseal(envelope.sealedPayload, viewingKey));
+    const key = keyOf(viewingKey, rec.keyEpoch);
+    envelope = openRecord('proposals', rec.accountId, rec.sealed, key);
+    payload = parseCanonical(unseal(envelope.sealedPayload, key));
   } catch {
     throw new NotMadeHere('This device cannot read the company\'s record of the proposal this leg was raised as. Reload the page '
       + 'and try again.');
@@ -84,7 +89,7 @@ const idFromFor = (deps: PaymentsHereDeps, round: RoundHere, required: bigint, f
     fromHex(round.vault), fromHex(round.salt)));
 
 /** The leg named, its record, and the run it is on. */
-const raisedLeg = async (records: CompanyRecordsHere, accountId: string, runId: string, viewingKey: Hex, which?: LegNamed) => {
+const raisedLeg = async (records: CompanyRecordsHere, accountId: string, runId: string, viewingKey: KeysHeld, which?: LegNamed) => {
   const run = await openedRunHere(records, accountId, runId, viewingKey);
   const leg = raisedLegOf(run, legChoiceOf(which ?? {}), records.registry);
   const payout = leg ? run.payout?.[leg] : undefined;
@@ -92,7 +97,7 @@ const raisedLeg = async (records: CompanyRecordsHere, accountId: string, runId: 
 };
 
 /** The leg built again here from its record and the state the founding seat signed. */
-const builtAgain = async (records: CompanyRecordsHere, accountId: string, viewingKey: Hex, deps: PaymentsHereDeps,
+const builtAgain = async (records: CompanyRecordsHere, accountId: string, viewingKey: KeysHeld, deps: PaymentsHereDeps,
   run: PayrollRun, leg: RunLeg) => {
   const payout = run.payout![leg]!;
   const state = await signedStateHere(records, accountId, viewingKey);
@@ -108,7 +113,7 @@ const NOTHING_TO_PAY = 'This run has no round on the chain a vault can pay yet. 
  * leg built again here is the one its signers approved.
  */
 export async function privatePaymentsHere(
-  records: CompanyRecordsHere, accountId: string, runId: string, viewingKey: Hex, deps: PaymentsHereDeps,
+  records: CompanyRecordsHere, accountId: string, runId: string, viewingKey: KeysHeld, deps: PaymentsHereDeps,
   which?: LegNamed, retry?: string,
 ): Promise<PrivatePaymentOrderOnTheWire> {
   return (await legToPayHere(records, accountId, runId, viewingKey, deps, which, retry)).order;
@@ -124,7 +129,7 @@ export async function privatePaymentsHere(
  * charged to its period with, before it is paid.
  */
 export async function legToPayHere(
-  records: CompanyRecordsHere, accountId: string, runId: string, viewingKey: Hex, deps: PaymentsHereDeps,
+  records: CompanyRecordsHere, accountId: string, runId: string, viewingKey: KeysHeld, deps: PaymentsHereDeps,
   which?: LegNamed, retry?: string,
 ): Promise<{
   readonly order: PrivatePaymentOrderOnTheWire; readonly proposalId: string;
@@ -176,7 +181,7 @@ export async function legToPayHere(
  * under, with every other attempt at the leg that can still pay somebody.
  */
 export async function paymentViewHere(
-  records: CompanyRecordsHere, accountId: string, runId: string, viewingKey: Hex, deps: PaymentsHereDeps, which?: LegNamed,
+  records: CompanyRecordsHere, accountId: string, runId: string, viewingKey: KeysHeld, deps: PaymentsHereDeps, which?: LegNamed,
 ): Promise<RunPayments> {
   const { run, leg, payout } = await raisedLeg(records, accountId, runId, viewingKey, which);
   if (leg === null || payout === undefined) return runPayments(null, null);

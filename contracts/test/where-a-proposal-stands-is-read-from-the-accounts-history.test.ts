@@ -69,7 +69,7 @@ describe('WHERE A PROPOSAL STANDS, READ FROM THE ACCOUNT\'S HISTORY IN THE WORKE
     expect(answer.ok).toBe(true);
     const r = answer.rounds as Record<string, unknown>;
     /* RED WHEN: a proposal the account holds is read with a count other than the account's, or raised at another block or by another call. */
-    expect(r[hex(kept.id)]).toEqual({ held: 'open', approvals: 1, raisedAt: 1_800_000_000_011, txRef: '11'.repeat(32) });
+    expect(r[hex(kept.id)]).toEqual({ held: 'open', approvals: 1, raisedAt: 1_800_000_000_011, txRef: '11'.repeat(32), needed: 2 });
     /* RED WHEN: a proposal the account held and no longer holds reads as open, or as closed by anything but the calls of the block that closed it. */
     expect(r[hex(withdrawn.id)]).toEqual({
       held: 'closed', approvals: 0, raisedAt: 1_800_000_000_012, txRef: '13'.repeat(32), closedBy: ['cancel', 'propose'],
@@ -77,7 +77,7 @@ describe('WHERE A PROPOSAL STANDS, READ FROM THE ACCOUNT\'S HISTORY IN THE WORKE
     /* RED WHEN: a proposal the account never held is given a time or a call it was raised by. */
     expect(r[hex(never.id)]).toEqual({ held: 'never', approvals: 0 });
     /* RED WHEN: one of two propose calls in a block is named as the call that raised it - a state is the whole block's. */
-    expect(r[hex(twice.id)]).toEqual({ held: 'open', approvals: 0, raisedAt: 1_800_000_000_013 });
+    expect(r[hex(twice.id)]).toEqual({ held: 'open', approvals: 0, raisedAt: 1_800_000_000_013, needed: 2 });
   });
 
   it('A CLOSE IS READ FROM THE CALLS THAT SUCCEEDED; AN IDENTITY HELD AGAIN IS READ FROM ITS LATEST TIME; ONE OPENED AND CLOSED IN A BLOCK IS NEVER SEEN', async () => {
@@ -121,7 +121,7 @@ describe('WHERE A PROPOSAL STANDS, READ FROM THE ACCOUNT\'S HISTORY IN THE WORKE
     /* RED WHEN: a propose whose transaction failed is counted beside the one that raised it, so the one that did is not named. */
     expect(r[hex(carried.id)].txRef).toBe('22'.repeat(32));
     /* RED WHEN: an identity held again after it closed is read from its first time held - closed, with that time's block and call. */
-    expect(r[hex(again.id)]).toEqual({ held: 'open', approvals: 0, raisedAt: 1_800_000_000_014 });
+    expect(r[hex(again.id)]).toEqual({ held: 'open', approvals: 0, raisedAt: 1_800_000_000_014, needed: 2 });
     /* What the chain cannot show: a proposal opened and closed within one block reads as never held. */
     expect(r[hex(quick.id)]).toEqual({ held: 'never', approvals: 0 });
   });
@@ -189,6 +189,19 @@ describe('A PAYROLL RUN VOUCHES FOR THE HEAD IT WAS RAISED OVER ONLY ONCE PAID O
     /* RED WHEN: a proposal whose hold took a count of removals the account has since moved past is read as one it can still carry out. */
     expect(standing([{ threshold: 2n, removals: 0n, held: { [RUN]: open(2n) } }, { threshold: 2n, removals: 1n, held: { [RUN]: open(2n) } }])?.outrun).toBe(true);
     expect(standing([{ threshold: 2n, removals: 1n, held: { [RUN]: { ...open(2n), raisedAtRemovals: 1n } } }])?.outrun).toBeUndefined();
+  });
+
+  it('AN OPEN PROPOSAL CARRIES THE APPROVALS THE ACCOUNT RECORDED IT AS NEEDING WHEN IT WAS RAISED, AND NONE WHERE IT HOLDS NO HOLD FOR IT', () => {
+    const standing = (states: readonly State[]) => roundsOnChainIn({
+      accountPure: pureCircuits, accountLedger: (data: unknown) => viewOf(states[data as number]!),
+      runtimeState: { deserialize: (state: Uint8Array) => ({ data: state[0] }) },
+    } as never, states.map((_, i) => ({
+      kind: 'call', transaction: `3${i}`.repeat(32), entryPoint: 'propose', state: Uint8Array.of(i), block: { height: 30 + i, at: 3000 + i }, succeeded: true,
+    })), [RUN]).get(RUN);
+    /* RED WHEN: the approvals the account's hold says a proposal needed when it was raised are not read off the chain, so a removal is counted against the seat bar now alone. */
+    expect(standing([{ threshold: 2n, removals: 0n, held: { [RUN]: { ...open(2n), needed: 3n } } }])?.needed).toBe(3);
+    /* RED WHEN: a proposal the account holds no hold for is given a number it needed. */
+    expect(standing([{ threshold: 2n, removals: 0n, held: { [RUN]: { ...open(2n), noHold: true } } }])?.needed).toBeUndefined();
   });
 
   it('A RUN CHARGED, OR PAID, WITH AT LEAST THE ACCOUNT\'S THRESHOLD VOUCHES, AS OF THE LAST BLOCK THAT SHOWS IT SO', () => {

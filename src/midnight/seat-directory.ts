@@ -33,6 +33,19 @@
  *     about counts like any other, seated still or already removed, and
  *     neither may leave fewer seated signers than that bar, as the chain's
  *     removal by `amendSigner` never does.
+ *   · **a change of the company's key**, filed by one seat once a seat is
+ *     retired, names the key's next epoch and a check of the new key
+ *     (`keyCheckOf`), wraps the key to every seat not retired, and carries the
+ *     key it replaces and a new payout seed sealed under it. A member's device
+ *     believes it only when its filer is held, not retired and may invite, its
+ *     epoch is the next, it follows the newest retirement since the key last
+ *     changed, its wraps are exactly the seats not retired and its seed has
+ *     the shape of one seed for its own epoch. Whether each copy opens to the
+ *     key its check names, and whether the seed is new, is not judged here,
+ *     since only a seat holding the key can open them. A
+ *     repair names the key it replaces because a copy of it did not open,
+ *     needs no new retirement, carries no seed, and is not believed while a
+ *     retirement still waits for its change of key.
  *   · **the super admins are not here.** They are the keys on the account's
  *     committee as the chain holds it, and only the chain says who they are;
  *     nothing in the directory names, gives or takes that role, and no change
@@ -51,7 +64,9 @@
  * between none (`EntryJudge`). It keeps a role or retirement change in its
  * shape, every signature verifying, signed against at least the approvals a
  * change of who is seated needs on the chain now (`seatBarOf`), as the next
- * version - and counts no quorum and keeps no retirement. So no
+ * version - and counts no quorum and keeps no retirement. It keeps a change
+ * of key in its shape, signed by one seat the chain holds now, as the next
+ * version, and judges no epoch. So no
  * member's claim and no server can keep a true seat out: each member's device
  * believes the first claim whose proof proves and counts every quorum itself.
  *
@@ -73,6 +88,7 @@ import { openSeatProof, sealSeatProof, walletKeyProvedBy, type LeafOf, type Seat
 import type { Role } from '../core/types.js';
 import { replacedBy, seatInvitationRefusal, type SignedSeatInvitation } from '../core/invitation.js';
 import { COMPANY_RECORD_KINDS, WIRE_RECORDS, type CompanyRecordKind, type WireRecord } from './sealed-record-wire.js';
+import { sealedSeedShaped, type SeatWrap } from '../core/company-key.js';
 
 /* ------------------------------------------------------------------ kinds */
 
@@ -227,15 +243,42 @@ export type DirectoryChange =
     readonly kind: 'retire'; readonly seat: string; readonly filedUpTo: Readonly<Record<string, number>>;
     readonly statement?: RecordsKeyStatement;
     readonly threshold: number; readonly signatures: readonly SeatSignature[];
+  }
+  /**
+   * The company's key changed by one seat, once a seat is retired: `epoch` is
+   * the next, `keyCheck` names the new key (`keyCheckOf`), `after` is the
+   * version of the newest retirement it follows, and `wraps` hold the new key
+   * for each seat not retired. `previous` is the key it replaces and `seed` the
+   * company's new payout seed, both sealed under the new key, so whoever holds
+   * it opens every older key and nothing opens a later one. `waiting` is the
+   * digest of every answer to an invitation the filing seat opened with the
+   * old key, so nothing added afterwards passes for one. A repair (`repairs`,
+   * the epoch whose copies did not open) carries no seed and needs no new
+   * retirement. A change that names `replaces` replaces an older key than the
+   * newest: the newest key its filer holds, when every newer change was filed
+   * by a seat retired since and off the chain, so a change a seat cannot hold
+   * never stops the company. `previous` is then that older key. Signed by its one filer alone.
+   */
+  | {
+    readonly kind: 'rotate'; readonly epoch: number; readonly keyCheck: Hex; readonly after: number;
+    readonly wraps: readonly SeatWrap[];
+    readonly previous: Sealed;
+    readonly seed?: { readonly epoch: number; readonly sealed: Sealed };
+    readonly waiting: readonly Hex[];
+    readonly repairs?: number;
+    readonly replaces?: number;
+    readonly signatures: readonly [SeatSignature];
   };
 /** A change a quorum of seats signs with their filing keys: a role, or a retirement. */
 export type QuorumChange = Extract<DirectoryChange, { kind: 'role' | 'retire' }>;
-/** A change signed for one version of the directory: a quorum's role or retirement. */
-export type SignedChange = QuorumChange;
+/** A change of the company's key, signed by the one seat that filed it. */
+export type RotateChange = Extract<DirectoryChange, { kind: 'rotate' }>;
+/** A change signed for one version of the directory: a quorum's role or retirement, or one seat's change of key. */
+export type SignedChange = QuorumChange | RotateChange;
 
-/** The seat a quorum's change is about, as a list: empty when the change names none in its shape. */
+/** The seat a quorum's change is about, as a list: empty for a change of key, and when the change names none in its shape. */
 export const seatsChangedBy = (change: SignedChange): readonly string[] =>
-  (typeof change.seat === 'string' ? [change.seat] : []);
+  (change.kind !== 'rotate' && typeof change.seat === 'string' ? [change.seat] : []);
 
 /** One version of a company's directory, as it is filed and served. */
 export interface DirectoryFiling {
@@ -255,7 +298,7 @@ export interface DirectoryFiling {
 
 const QUORUM_DOMAIN = 'confidential-accounts/seat-directory-change/v1';
 
-/** The exact text each seat of a quorum signs for a change: everything but the signatures. */
+/** The exact text each seat that signs a change signs for it, a quorum's or a change of key's: everything but the signatures. */
 export const directoryChangeMessage = (company: string, version: number, change: DirectoryChange): string => {
   if (change.kind === 'claim') throw new Error('an entry is signed by its own wallet, not by a quorum.');
   const { signatures: _signed, ...unsigned } = change;
@@ -282,12 +325,30 @@ export interface DirectorySeat {
   readonly retired: Readonly<Record<string, number>> | null;
   /** Once retired: the records-key statement its own wallet signed, as its retirement carries it. */
   readonly retiredStatement?: RecordsKeyStatement;
+  /** Once retired on a member's device: the directory version that retired it, which the next change of key follows. */
+  readonly retiredAt?: number;
+}
+
+/** A change of the company's key a member's device believed, at the directory version that carried it. */
+export interface DirectoryRotation {
+  readonly version: number;
+  readonly epoch: number;
+  readonly keyCheck: Hex;
+  readonly after: number;
+  readonly repairs?: number;
+  /** The older epoch whose key it replaces, when it is not the one just before. */
+  readonly replaces?: number;
+  readonly seed?: { readonly epoch: number; readonly sealed: Sealed };
+  /** The seat that filed it. */
+  readonly by?: string;
 }
 
 export interface Directory {
   readonly company: string;
   readonly version: number;
   readonly seats: readonly DirectorySeat[];
+  /** Every change of the company's key a member's device believed, oldest first; absent until one is. */
+  readonly rotations?: readonly DirectoryRotation[];
 }
 
 export const emptyDirectory = (company: string): Directory => ({ company, version: 0, seats: [] });
@@ -327,6 +388,14 @@ export const DIRECTORY_REFUSAL = {
   'signed-at-not-passed-over': 'that change is filed again under signatures made for a version of the directory the company\'s records did not pass over, and that rests on no seat a passed-over version claimed or changed, so it is not filed again. If the change is still wanted, the seats sign it again as the directory stands now.',
   'reverses-a-later-change': 'that change, filed again, would undo a change to the same seat applied after the version it was signed for, so it is not applied. If it is still wanted, the seats sign it again as the directory stands now.',
   'not-as-the-chain-holds': 'that change, filed again, does not agree with who holds the company\'s account on the chain now: a seat it gives a role is not seated there. It is not applied; if it is still wanted, the seats sign it again as the account stands now.',
+  'filer-not-seated': 'that change of the company\'s key is signed by a key that is no seat this directory holds on the company\'s account now, so it is not believed. A seat the account holds changes the key.',
+  'filer-may-not-rotate': 'that change of the company\'s key was filed by a seat whose role may not file a proposal, and only such a seat changes the key, so it is not believed. A seated signer whose role may file one changes the key again.',
+  'not-the-next-epoch': 'that change of the company\'s key does not move it on by exactly one from the key this directory holds now, so it is not believed. Read the directory again and change the key from the one it holds.',
+  'no-retirement-since': 'that change of the company\'s key does not follow the newest retirement filed since the key last changed, so it is not believed. The key changes after a seat is retired: read the directory again and change it after that retirement.',
+  'wraps-not-the-seats': 'that change of the company\'s key is not wrapped to exactly the seats this directory holds and has not retired, so it is not believed. Read the directory again and change the key for the seats it holds now.',
+  'seed-not-its-own': 'that change of the company\'s key does not carry one new 32-byte payout seed for its own key, so it is not believed. Change the key again with a new seed.',
+  'not-a-repair': 'that repair of the company\'s key does not name the newest key, or carries a payout seed, which a repair keeps as it was, so it is not believed. Read the directory again and repair the newest key without a new seed.',
+  'replaces-a-change-still-held': 'that change of the company\'s key replaces an older key than the newest, and a newer change it passes over was filed by a seat not retired since, or still held by the company\'s account, so it is not believed. Change the key from the newest key, or wait until the seat that filed the newer change is removed.',
 } as const;
 export type DirectoryRefusalCode = keyof typeof DIRECTORY_REFUSAL;
 
@@ -374,15 +443,24 @@ export type EntryJudge =
 export const AT_THE_SERVER: EntryJudge = Object.freeze({ by: 'the-server' });
 
 /**
- * **EVERY ENTRY'S PROOF, OPENED WITH THE COMPANY'S VIEWING KEY**, each once:
- * null for one that does not open under it or is not one in its shape.
+ * **EVERY ENTRY'S PROOF, OPENED WITH ANY COMPANY KEY THIS DEVICE HOLDS**, each
+ * once, trying each key in turn, since a seat seated after the key changed
+ * seals its proof under a later key than one seated before: null for one that
+ * opens under none of them or is not one in its shape.
  */
-export const proofsOpenedWith = (company: string, viewingKey: Hex): ((entry: DirectoryEntry) => SeatProof | null) => {
+export const proofsOpenedWith = (company: string, viewingKeys: readonly Hex[]): ((entry: DirectoryEntry) => SeatProof | null) => {
   const opened = new WeakMap<object, SeatProof | null>();
   return (entry) => {
     const sealed = entry?.proof;
     if (typeof sealed !== 'object' || sealed === null) return null;
-    if (!opened.has(sealed)) opened.set(sealed, openSeatProof(company, sealed, viewingKey));
+    if (!opened.has(sealed)) {
+      let proof: SeatProof | null = null;
+      for (const key of viewingKeys) {
+        proof = openSeatProof(company, sealed, key);
+        if (proof !== null) break;
+      }
+      opened.set(sealed, proof);
+    }
     return opened.get(sealed) ?? null;
   };
 };
@@ -449,12 +527,12 @@ export const proofRefusalOf = (
 };
 
 /**
- * Whether every signature on a quorum's change is in its shape, verifies under
+ * Whether every signature on a signed change is in its shape, verifies under
  * the key it names over the version it was signed for, and names a key once:
  * what anyone can check of a change, the server included. Who the keys are is
  * not asked here.
  */
-const signaturesRefusal = (company: string, change: QuorumChange, version: number): DirectoryRefusalCode | null => {
+const signaturesRefusal = (company: string, change: SignedChange, version: number): DirectoryRefusalCode | null => {
   if (!Array.isArray(change.signatures)) return 'not-a-change';
   const message = directoryChangeMessage(company, version, change);
   const seen = new Set<string>();
@@ -497,6 +575,119 @@ const statementShapedFor = (statement: unknown, seat: string): boolean => {
     && typeof st.signature === 'string' && HEX128.test(st.signature);
 };
 
+const HEX24 = /^[0-9a-f]{24}$/u;
+const SEALED_FIELDS = ['body', 'iv', 'tag'];
+const WRAP_FIELDS = ['body', 'ephemeral', 'iv', 'tag'];
+const ROTATE_FIELDS = ['after', 'epoch', 'keyCheck', 'kind', 'previous', 'signatures', 'waiting', 'wraps'];
+const ROTATE_OPTIONAL = ['repairs', 'replaces', 'seed'];
+
+const sealedShaped = (x: unknown, fields: readonly string[] = SEALED_FIELDS): boolean => {
+  const v = x as Partial<Sealed> & { ephemeral?: unknown } | null;
+  return typeof v === 'object' && v !== null && exactly(v, fields)
+    && typeof v.iv === 'string' && HEX24.test(v.iv) && typeof v.tag === 'string' && HEX_OR_EMPTY.test(v.tag)
+    && typeof v.body === 'string' && v.body.length > 0 && HEX_OR_EMPTY.test(v.body)
+    && (!fields.includes('ephemeral') || (typeof v.ephemeral === 'string' && HEX64.test(v.ephemeral)));
+};
+const whole = (n: unknown, from: number): boolean => Number.isSafeInteger(n) && (n as number) >= from;
+
+/** Whether a change of key is in its shape: what anyone can check of it without the key, the server included. */
+const rotateShaped = (c: RotateChange): boolean => {
+  const keys = Object.keys(c);
+  return ROTATE_FIELDS.every((k) => keys.includes(k)) && keys.every((k) => ROTATE_FIELDS.includes(k) || ROTATE_OPTIONAL.includes(k))
+    && whole(c.epoch, 1) && typeof c.keyCheck === 'string' && HEX64.test(c.keyCheck) && whole(c.after, 1)
+    && Array.isArray(c.wraps) && c.wraps.every((w) => typeof w === 'object' && w !== null && exactly(w, ['seat', 'wrap'])
+      && typeof w.seat === 'string' && HEX64.test(w.seat) && sealedShaped(w.wrap, WRAP_FIELDS))
+    && sealedShaped(c.previous)
+    && (c.seed === undefined || (typeof c.seed === 'object' && c.seed !== null && exactly(c.seed, ['epoch', 'sealed'])
+      && whole(c.seed.epoch, 1) && sealedShaped(c.seed.sealed)))
+    && Array.isArray(c.waiting) && c.waiting.every((d) => typeof d === 'string' && HEX64.test(d))
+    && (c.repairs === undefined || whole(c.repairs, 1))
+    && (c.replaces === undefined || whole(c.replaces, 0))
+    && Array.isArray(c.signatures) && c.signatures.length === 1;
+};
+
+/**
+ * **A CHANGE OF THE COMPANY'S KEY, APPLIED OR REFUSED.** Anyone checks its
+ * shape and its one signature over this version. The server then asks only
+ * that its signer holds an entry for a seat the chain holds now
+ * (`signerSeatOf`), and judges no epoch. A member's device judges what the
+ * directory itself can show, without the key: its filer is a seat it believes,
+ * held, not retired and allowed to invite; its epoch is the next; it follows
+ * the newest retirement, filed after the key last changed; it is wrapped to
+ * exactly the seats not retired; its seed is one sealed seed for its own epoch,
+ * not the sealed bytes an earlier change carried; its waiting digests are each
+ * named once. One that replaces an older key than the newest (`replaces`) is
+ * no repair, names an epoch below the newest, and is believed only when every
+ * change above that epoch was filed by a seat retired after filing it and no
+ * longer held by the account. A
+ * repair names the newest epoch, follows the same retirement that epoch did,
+ * carries no seed, and is refused while a retirement newer than the last
+ * change of key waits for its own change with a new seed. Whether the copies open to the key the check names, and
+ * the seed is new, is not judged here: only a seat holding the key opens them.
+ */
+const rotationApplied = (
+  dir: Directory, version: number, change: RotateChange, ctx: Parameters<typeof applyFiling>[2],
+): Directory => {
+  if (!rotateShaped(change)) throw new DirectoryRefused('not-a-change');
+  const bad = signaturesRefusal(dir.company, change, version);
+  if (bad !== null) throw new DirectoryRefused(bad);
+  const filer = change.signatures[0].publicKey.toLowerCase();
+  if (ctx.judge.by === 'the-server') {
+    const seat = signerSeatOf(dir, ctx.chain?.seats ?? null, filer);
+    if (seat === 'no-account') throw new DirectoryRefused('no-account');
+    if (typeof seat === 'string') throw new DirectoryRefused('filer-not-seated');
+    return { ...dir, version };
+  }
+  const by = dir.seats.find((x) => x.signingKey === filer);
+  if (by === undefined) throw new DirectoryRefused('filer-not-seated');
+  if (by.retired !== null) throw new DirectoryRefused('seat-retired');
+  const seatedBy = ctx.chain !== null ? ctx.chain.seats.seats : ctx.anchored?.seats ?? ctx.now?.seats;
+  if (seatedBy !== undefined && !seatedBy.includes(by.seat)) throw new DirectoryRefused('filer-not-seated');
+  if (!mayInvite(by)) throw new DirectoryRefused('filer-may-not-rotate');
+  const rotations = dir.rotations ?? [];
+  const last = rotations[rotations.length - 1];
+  const epoch = last?.epoch ?? 0;
+  if (change.epoch !== epoch + 1) throw new DirectoryRefused('not-the-next-epoch');
+  const retiredAt = dir.seats.flatMap((x) => (x.retired !== null && x.retiredAt !== undefined ? [x.retiredAt] : []));
+  const newest = retiredAt.length === 0 ? undefined : Math.max(...retiredAt);
+  if (change.replaces !== undefined) {
+    if (change.repairs !== undefined || change.replaces >= epoch) throw new DirectoryRefused('not-the-next-epoch');
+    const replaces = change.replaces;
+    const cleared = rotations.filter((r) => r.epoch > replaces).every((r) => {
+      const filer = dir.seats.find((x) => x.seat === r.by);
+      return filer !== undefined && filer.retired !== null && filer.retiredAt !== undefined && filer.retiredAt > r.version
+        && (seatedBy === undefined || !seatedBy.includes(filer.seat));
+    });
+    if (!cleared) throw new DirectoryRefused('replaces-a-change-still-held');
+  }
+  if (change.repairs !== undefined) {
+    if (change.repairs !== epoch || epoch < 1 || change.seed !== undefined) throw new DirectoryRefused('not-a-repair');
+    /* A retirement newer than the last change of key waits for a change with a new seed, which a repair would never let in. */
+    if (change.after !== last!.after || (newest !== undefined && newest > last!.version)) throw new DirectoryRefused('no-retirement-since');
+  } else {
+    if (newest === undefined || change.after !== newest || newest <= (last?.version ?? 0)) throw new DirectoryRefused('no-retirement-since');
+    const seed = change.seed;
+    if (seed === undefined || seed.epoch !== change.epoch || !sealedSeedShaped(seed.sealed)
+      || rotations.some((r) => r.seed !== undefined && r.seed.sealed.iv === seed.sealed.iv && r.seed.sealed.body === seed.sealed.body)) {
+      throw new DirectoryRefused('seed-not-its-own');
+    }
+  }
+  const staying = new Set(dir.seats.filter((x) => x.retired === null).map((x) => x.seat));
+  const wrapped = new Set(change.wraps.map((w) => w.seat));
+  if (wrapped.size !== change.wraps.length || wrapped.size !== staying.size || [...wrapped].some((x) => !staying.has(x))) {
+    throw new DirectoryRefused('wraps-not-the-seats');
+  }
+  if (new Set(change.waiting).size !== change.waiting.length) throw new DirectoryRefused('not-a-change');
+  const rotation: DirectoryRotation = Object.freeze({
+    version, epoch: change.epoch, keyCheck: change.keyCheck, after: change.after,
+    ...(change.repairs === undefined ? {} : { repairs: change.repairs }),
+    ...(change.replaces === undefined ? {} : { replaces: change.replaces }),
+    by: by.seat,
+    ...(change.seed === undefined ? {} : { seed: Object.freeze({ epoch: change.seed.epoch, sealed: Object.freeze({ ...change.seed.sealed }) }) }),
+  });
+  return { ...dir, version, rotations: Object.freeze([...rotations, rotation]) };
+};
+
 /**
  * **ONE FILING, APPLIED TO THE DIRECTORY AS IT STANDS, OR REFUSED.**
  *
@@ -522,7 +713,8 @@ const statementShapedFor = (statement: unknown, seat: string): boolean => {
  * the leaving seat's, signed by the wallet its entry proved; without
  * it, against the threshold the change names. Whether a seat is held NOW is
  * asked of each filing when it is read (`filingRefusalOf`), because a seat retired
- * later was seated when it filed.
+ * later was seated when it filed. A change of the company's key is judged by
+ * `rotationApplied`, filed or replayed, and is never filed again.
  */
 export const applyFiling = (
   dir: Directory, filing: DirectoryFiling,
@@ -557,8 +749,11 @@ export const applyFiling = (
   if (filing.company !== dir.company) throw new DirectoryRefused('not-this-company');
   if (filing.version !== dir.version + 1) throw new DirectoryRefused('not-the-next-version');
   const change = filing.change;
-  /* A change filed again names an earlier version, and only a quorum's change carries one: an entry names no version. */
-  if (filing.signedAt !== undefined && (change.kind === 'claim' || !Number.isSafeInteger(filing.signedAt)
+  /*
+   * A change filed again names an earlier version, and only a quorum's change carries one: an entry names no version,
+   * and a change of key is never filed again, since one passed over is made again on the key the directory holds.
+   */
+  if (filing.signedAt !== undefined && (change.kind === 'claim' || change.kind === 'rotate' || !Number.isSafeInteger(filing.signedAt)
     || filing.signedAt < 1 || filing.signedAt >= filing.version)) throw new DirectoryRefused('not-a-change');
   if (change.kind === 'claim') {
     const entry = change.entry;
@@ -610,6 +805,7 @@ export const applyFiling = (
       }],
     };
   }
+  if (change.kind === 'rotate') return rotationApplied(dir, filing.version, change, ctx);
   if (change.kind !== 'role' && change.kind !== 'retire') throw new DirectoryRefused('not-a-change');
   /*
    * The server keeps no role and no retirement, and counts no quorum: it checks what anyone can of the change - its
@@ -688,7 +884,7 @@ export const applyFiling = (
     ...dir, version: filing.version,
     seats: dir.seats.map((x) => (x !== target ? x : change.kind === 'role'
       ? { ...x, role: change.role }
-      : { ...x, retired: Object.freeze({ ...change.filedUpTo }),
+      : { ...x, retired: Object.freeze({ ...change.filedUpTo }), retiredAt: filing.version,
         ...(change.statement === undefined ? {} : { retiredStatement: Object.freeze({ ...change.statement }) }) })),
   };
 };
@@ -762,6 +958,24 @@ export interface DirectoryReplayed {
   readonly dir: Directory;
   readonly refused: ReadonlyMap<number, DirectoryRefusalCode>;
   readonly replay: DirectoryReplay;
+  /** The replay as it stood after the version `goOn.keepAt` names, when it was asked for and the replay reached it. */
+  readonly kept?: DirectoryReplayKept;
+}
+
+/**
+ * **A REPLAY AS IT STOOD AFTER ITS FIRST `upTo` FILINGS**: the directory, every
+ * version not applied and why, and what `refiledRefusalOf` reads. It depends on
+ * those filings, the judge, and for each of them who held the account as it was
+ * judged, and on nothing after them, so a replay of the same filings judged the
+ * same way goes on from it (`directoryReplayed`'s `goOn`).
+ */
+export interface DirectoryReplayKept {
+  readonly upTo: number;
+  readonly dir: Directory;
+  readonly refused: ReadonlyMap<number, DirectoryRefusalCode>;
+  readonly applied: ReadonlySet<number>;
+  readonly passed: ReadonlySet<number>;
+  readonly changed: ReadonlyMap<string, number>;
 }
 
 /** The seats a filing claims or changes. */
@@ -827,20 +1041,36 @@ export const refiledRefusalOf = (
  * `judge` says: on a member's device its proof is opened and checked, and the
  * server keeps it on what it can read (`EntryJudge`). The one replay a device
  * and this product's server both make.
+ *
+ * **`goOn.from` IS A REPLAY KEPT AFTER THE FIRST `upTo` OF THESE SAME FILINGS,
+ * JUDGED THE SAME WAY**: the replay goes on from it and applies only the filings
+ * after it. Whether it is that replay is the caller's to know: a device keeps
+ * one only under every filing's digest and who held the account for each
+ * (`directoryWithItsRecordsHere`). `goOn.keepAt` asks for the replay as it
+ * stood after that version (`kept`). Without `goOn` it replays from version 1.
  */
 export const directoryReplayed = (
   company: string, filings: readonly DirectoryFiling[], label: CompanyLabel, account: AccountAddress,
   judge: EntryJudge,
   now?: AccountHeld,
   asAnchored?: (version: number) => AccountHeld | null | undefined,
+  goOn: { readonly from?: DirectoryReplayKept; readonly keepAt?: number } = {},
 ): DirectoryReplayed => {
-  let dir = emptyDirectory(company);
-  const refused = new Map<number, DirectoryRefusalCode>();
-  const applied = new Set<number>();
-  const passed = new Set<number>();
-  const changed = new Map<string, number>();
+  const from = goOn.from !== undefined && goOn.from.upTo <= filings.length ? goOn.from : undefined;
+  let dir = from?.dir ?? emptyDirectory(company);
+  const refused = new Map<number, DirectoryRefusalCode>(from?.refused ?? []);
+  const applied = new Set<number>(from?.applied ?? []);
+  const passed = new Set<number>(from?.passed ?? []);
+  const changed = new Map<string, number>(from?.changed ?? []);
+  const upTo = from?.upTo ?? 0;
+  let kept: DirectoryReplayKept | undefined;
+  const keepHere = (at: number) => {
+    if (goOn.keepAt === at) kept = { upTo: at, dir, refused: new Map(refused), applied: new Set(applied), passed: new Set(passed), changed: new Map(changed) };
+  };
+  keepHere(upTo);
   filings.forEach((f, i) => {
     if (f?.version !== i + 1) throw new DirectoryRefused('not-the-next-version');
+    if (i < upTo) return;
     try {
       const held = asAnchored?.(f.version);
       if (held === null) {
@@ -863,8 +1093,9 @@ export const directoryReplayed = (
       refused.set(f.version, e.code);
       dir = { ...dir, version: f.version };
     }
+    keepHere(f.version);
   });
-  return { dir, refused, replay: { filings, applied, passed, changed } };
+  return { dir, refused, replay: { filings, applied, passed, changed }, ...(kept === undefined ? {} : { kept }) };
 };
 
 /** Why a device does not believe a filing signed by `publicKey`, or null when it does. */

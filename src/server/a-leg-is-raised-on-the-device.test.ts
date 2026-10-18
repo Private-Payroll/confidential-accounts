@@ -46,6 +46,26 @@ vi.mock('midnight-identity/profile/records-key', async (importOriginal) => {
     },
   };
 });
+/*
+ * The company's one check as every reader here uses it, with one stand-in a case may set: the key epoch it holds in
+ * force (`inForce`). While set, a record a reader hands over as sealed at an older epoch is refused, as the check
+ * refuses one entered after a change of the key; a reader that hands over no epoch is never refused by it.
+ */
+const oneCheck = vi.hoisted(() => ({ inForce: null as number | null }));
+vi.mock('vaults-web-shared/vault-page-doors.js', async (importOriginal) => {
+  const real = await importOriginal<typeof import('vaults-web-shared/vault-page-doors.js')>();
+  return {
+    ...real,
+    judgeIn: (here: Parameters<typeof real.judgeIn>[0]) => {
+      const judge = real.judgeIn(here);
+      return Object.assign((...args: Parameters<typeof judge>) => {
+        const sealedAt = args[5];
+        if (oneCheck.inForce !== null && typeof sealedAt === 'number' && sealedAt < oneCheck.inForce) return 'it is sealed under an older key than the one in force';
+        return judge(...args);
+      }, judge);
+    },
+  };
+});
 import { AsyncLocalStorage } from 'node:async_hooks';
 import { describe, it as runnerIt, expect, beforeAll, beforeEach, afterEach, vi } from 'vitest';
 import express from 'express';
@@ -77,7 +97,7 @@ import { openTheRoundHere, raiseRetryOnDevice, raiseRunOnDevice, SentAndNotYetSe
 import { WRITTEN_DOWN_IS_NOT_WHAT_IS_CHECKED } from '../core/device-raise.js';
 import { governedCallServiceFor } from 'vaults-web-shared/governed-call-on-device.js';
 import { LegNotRaisedHere, type LegRaiseDoors } from 'vaults-web-shared/run-raised-here.js';
-import { keptRunHere, runRebuiltHere, type CompanyRecordsHere } from 'vaults-web-shared/run-rebuilt-here.js';
+import { believedProposalIdsOnChainHere, keptRunHere, runRebuiltHere, signedStateHere, type CompanyRecordsHere } from 'vaults-web-shared/run-rebuilt-here.js';
 import { RAISE_CHECKS, type RaiseCheck } from 'vaults-web-shared/raise-checks-here.js';
 import {
   refuseARaiseThatIsNotTheRecordedOne, refuseWhatThisDeviceDidNotOpen, type GovernedCallOrder, type OpenedRound,
@@ -259,8 +279,18 @@ const recordsOn = (s: Seat): CompanyRecordsHere & { proposals: () => Promise<Ret
 });
 /** While set, the account state the service serves says nobody is paid and commits to another pay-record key. */
 let servedLies = false;
+/*
+ * The keys each case draws its run with: every key the company's records in this file are sealed under (the founding key,
+ * and the key a case that changes the company's key seals under at epoch 2), sealing at the founding epoch. A case that
+ * files a run under the changed key leaves a record every later draw still opens.
+ */
+const DRAWS_OVER_EVERY_EPOCH = {
+  epoch: 0, key: KEY, newest: 0, seeds: [],
+  keyAt: (e: number): Hex => (e === 2 ? KEY1 : KEY),
+  sealing: () => ({ key: KEY, epoch: 0 }),
+};
 const drawingOn = (s: Seat): RunDrawDoors => ({
-  api: api(s), accountId: CO, viewingKey: KEY, keyEpoch: 0, signingSecret: s.signingSecret as Hex, company: { account: ADDRESS, label: LABEL },
+  api: api(s), accountId: CO, viewingKey: DRAWS_OVER_EVERY_EPOCH, keyEpoch: 0, signingSecret: s.signingSecret as Hex, company: { account: ADDRESS, label: LABEL },
   records: recordsOn(s), by: s.person, entered: s.entered,
 });
 
@@ -677,7 +707,7 @@ describe('A LEG IS RAISED ON THE SIGNER\'S DEVICE, AND THE SERVICE FILES AND REL
     expect(proved).toHaveLength(sends + 1);
   });
 
-  it('THE FILING ROUTE FILES NOTHING FOR A RUN IT DOES NOT KEEP OR KEEPS FOR ANOTHER COMPANY, ANOTHER KEY OR MONTH, OR A RUN NOT RAISED', async () => {
+  it('THE FILING ROUTE FILES NOTHING FOR A RUN IT DOES NOT KEEP OR KEEPS FOR ANOTHER COMPANY OR MONTH, OR A RUN NOT RAISED, AND JUDGES NO KEY EPOCH', async () => {
     const [body] = await twoRaisesHeld();
     const raisedRun = openSealedRun(body!.run as never, KEY);
     const asFiled = (r: Record<string, unknown>, by: Seat = ADA) =>
@@ -691,8 +721,7 @@ describe('A LEG IS RAISED ON THE SIGNER\'S DEVICE, AND THE SERVICE FILES AND REL
       /* Whether a seat's role may raise a run is every member's device's to judge, never the service's: `seat-directory.test.ts`. */
       ['a run this company does not keep', { ...body, run: asFiled({ id: 'run_notkepthere1' }) }, 'ada', /keeps no payroll run by that name/u],
       ['a run kept for another company', { ...body, run: asFiled({ id: 'run_heldbyothers' }) }, 'ada', /keeps no payroll run by that name/u],
-      ['another key epoch', { ...body, run: asFiled({ keyEpoch: 1 }) }, 'ada', /not the run this company keeps under that name, under the key it uses now/u],
-      ['another month', { ...body, run: asFiled({ period: '2026-12' }) }, 'ada', /not the run this company keeps under that name, under the key it uses now/u],
+      ['another month', { ...body, run: asFiled({ period: '2026-12' }) }, 'ada', /not the run this company keeps under that name, for the period it keeps it for/u],
       ['a run not raised', { ...body, run: asFiled({ status: 'draft' }) }, 'ada', /a run is raised while it is unpaid, and is kept as raised/u],
     ] as const) {
       const r = await post(b, as);
@@ -706,9 +735,14 @@ describe('A LEG IS RAISED ON THE SIGNER\'S DEVICE, AND THE SERVICE FILES AND REL
     const settled = await post(body);
     expect([settled.status, String((settled.body as { error: string }).error)]).toEqual([422, expect.stringMatching(/a run is raised while it is unpaid/u)]);
     store.putRun(kept);
-    /* The raise as made is filed. */
-    expect((await post(body)).status).toBe(200);
-    await enteredAsTheDeviceEntersIt(body!);
+    /*
+     * The raise is filed with its run sealed under another key epoch than the service holds for the company: the
+     * service judges no change of the company's key, so its own count of the key epoch refuses nothing.
+     * RED WHEN: the filing route refuses a run for its key epoch.
+     */
+    const atAnotherEpoch = { ...body!, run: asFiled({ keyEpoch: 1 }) };
+    expect((await post(atAnotherEpoch)).status).toBe(200);
+    await enteredAsTheDeviceEntersIt(atAnotherEpoch);
   });
 
   it('A RAISE THAT DROPS A PROPOSAL STILL OPEN FROM ITS RUN IS NOT FILED, AND ONE THAT DROPS A WITHDRAWN ONE IS', async () => {
@@ -1299,5 +1333,149 @@ describe('A PUBLIC PAYEE IS RAISED FROM THE DEVICE AS PUBLIC', () => {
     /* The raise as made is filed, and the vault's public money asked for the public payment. */
     expect((await post(filed)).status).toBe(200);
     expect(JSON.parse(publicAsks.at(-1)!)).toMatchObject({ asset: NIGHT, payments: [{ kind: 'unshielded', amount: '700065' }] });
+    /* Entered in the company's records as the raising device enters it, so the cases after this one read a company whose records name every run. */
+    await enteredAsTheDeviceEntersIt(filed!);
+  });
+});
+
+/*
+ * The company's keys after a change of the key, as a staying seat's device holds them (`companyKeyHere`): the new key in
+ * force at epoch 2, the older ones reached through it, and the new payout seed the change carried. The signer who left
+ * holds only the founding key. A case above files a run naming epoch 1 under the founding key, so this device's key at
+ * epoch 1 is that one: every run the company's records name must open here.
+ */
+const KEY1 = toHex(randomBytes(32)) as Hex;
+const SEED1 = toHex(randomBytes(32));
+const AFTER_THE_CHANGE = Object.freeze({
+  epoch: 2, key: KEY1, newest: 2, seeds: [{ epoch: 2, seed: SEED1 }],
+  keyAt: (e: number): Hex => {
+    if (e === 0 || e === 1) return KEY;
+    if (e === 2) return KEY1;
+    throw new Error(`no key of the company at epoch ${e}`);
+  },
+  sealing: () => ({ key: KEY1, epoch: 2 }),
+});
+
+describe('AFTER THE COMPANY\'S KEY CHANGES, A RUN IS RAISED, BUILT AGAIN AND PAID ON EVERY STAYING DEVICE, AND THE SIGNER WHO LEFT OPENS NOTHING FILED AFTER', () => {
+  /* First, while every record of the company is still sealed under the founding key. */
+  it('EVERY OLDER RECORD STILL OPENS UNDER ITS OWN EPOCH\'S KEY ON A STAYING DEVICE', async () => {
+    const before = await raiseRunOnDevice(raisingOn(ADA), { runId, ...RAISE, asset: TEST_SETTLEMENT_ASSET });
+    /* RED WHEN: a proposal sealed before the change no longer opens on a device holding the new key. */
+    await expect(openTheRoundHere(storedFor(BO), CO, before.id, AFTER_THE_CHANGE, false, recordsOn(BO))).resolves.toMatchObject({ vault: VAULT });
+    /* RED WHEN: the people, the state or a run sealed before the change are opened with the key in force. */
+    expect((await readPeopleHere({ ...peopleOn(BO), company: { ...ACME, viewingKey: AFTER_THE_CHANGE } as never })).people.length).toBeGreaterThan(0);
+    expect((await keptRunHere(recordsOn(BO), CO, runId, AFTER_THE_CHANGE)).run.id).toBe(runId);
+  });
+
+  /* Still before any record is sealed under the new key: the pause stops every sealer, and nothing it holds back is filed. */
+  it('WHILE THE KEY IS BEING CHANGED, NO RUN IS DRAWN OR RAISED AND NO PERSON IS INVITED OR CHANGED, AND NOTHING IS FILED', async () => {
+    const { CompanyKeyBeingChanged } = await import('vaults-web-shared/company-key-here.js');
+    /* The company's keys after a signer's removal is carried out on the chain, before the key they held is replaced. */
+    const paused = {
+      epoch: 0, key: KEY, newest: 0, keyAt: (): Hex => KEY,
+      sealing: () => { throw new CompanyKeyBeingChanged('the company\'s key is being changed'); },
+    };
+    const before = filedNow();
+    /* RED WHEN: a run is drawn under the key in force without asking whether sealing is paused. */
+    await expect(drawRunHere({ ...drawingOn(ADA), viewingKey: paused }, { period: nextPeriod() })).rejects.toThrow(CompanyKeyBeingChanged);
+    /* RED WHEN: a run and its proposal are sealed while sealing is paused, readable by the signer who left. */
+    await expect(raiseRunOnDevice(raisingOn(ADA), { runId, ...RAISE, asset: TEST_SETTLEMENT_ASSET, viewingKey: paused })).rejects.toThrow(CompanyKeyBeingChanged);
+    expect(filedNow()).toEqual(before);
+    /* RED WHEN: a person invited while sealing is paused is sealed under the key the signer who left holds. */
+    await expect(invitePayeeHere({ ...ACME, viewingKey: paused } as InvitingCompany, ADA, pay(78), ORIGIN, fromAda)).rejects.toThrow(CompanyKeyBeingChanged);
+    /* RED WHEN: a person's record changed while sealing is paused is sealed under that key. */
+    const here = (await readPeopleHere({ ...peopleOn(ADA), company: { ...ACME, viewingKey: paused } as never })).people[0]!;
+    const kept = (await records.get(CO, 'person', here.person.id))!.version;
+    await expect(setStatusHere({ ...peopleOn(ADA), company: { ...ACME, viewingKey: paused } as never }, here, 'leaver')).rejects.toThrow(CompanyKeyBeingChanged);
+    expect((await records.get(CO, 'person', here.person.id))!.version).toBe(kept);
+  });
+
+  it('EVERY READER HANDS THE ONE CHECK THE EPOCH ITS RECORD WAS SEALED AT, SO ONE SEALED UNDER AN OLDER KEY THAN THE ONE IN FORCE IS REFUSED', async () => {
+    const round = await raiseRunOnDevice(raisingOn(ADA), { runId, ...RAISE, asset: TEST_SETTLEMENT_ASSET });
+    oneCheck.inForce = 1;
+    try {
+      /* RED WHEN: the people's reader hands the check no epoch, so a person sealed under the key the signer who left holds is believed. */
+      const read = await readPeopleHere(peopleOn(BO));
+      expect(read.people).toEqual([]);
+      /* RED WHEN: the run's reader hands the check no epoch. */
+      await expect(keptRunHere(recordsOn(BO), CO, runId, KEY)).rejects.toThrow(/sealed under an older key than the one in force/u);
+      /* RED WHEN: the reader of the proposals the chain holds hands the check no epoch. */
+      expect((await believedProposalIdsOnChainHere(recordsOn(BO), CO)).has(round.id)).toBe(false);
+      /* RED WHEN: a proposal opened to be approved is judged without its epoch. */
+      await expect(openTheRoundHere(storedFor(BO), CO, round.id, KEY, false, recordsOn(BO))).rejects.toThrow(/does not believe the company's record of this proposal \(it is sealed under an older key/u);
+    } finally {
+      oneCheck.inForce = null;
+    }
+    /* The control: with no newer key in force, the same records are believed. */
+    expect((await readPeopleHere(peopleOn(BO))).people.length).toBeGreaterThan(0);
+    expect((await believedProposalIdsOnChainHere(recordsOn(BO), CO)).has(round.id)).toBe(true);
+  });
+
+  it('A LEG RAISED BEFORE THE KEY CHANGED IS BUILT AGAIN AND RETRIED AFTER IT UNDER THE SEED IT WAS RAISED UNDER, AND THE PAY RECORD KEY STAYS THE SAME', async () => {
+    const before = await raiseRunOnDevice(raisingOn(ADA), { runId, ...RAISE, asset: TEST_SETTLEMENT_ASSET });
+    const leg = legOf(runId);
+    expect(leg.epoch).toBe(0);
+    /* RED WHEN: another staying device builds a leg raised before the change again under the seed in force now, so every leaf differs and no payment of the approved leg is accepted. */
+    const { made } = await runRebuiltHere(recordsOn(BO), CO, before.id, AFTER_THE_CHANGE);
+    expect(made.identity.epoch).toBe(0);
+    const rebuilt = buildRun([...made.seeds], made.identity, [...made.facts], vaultDetails, { key: made.payKey as Hex, records: [...made.records] }, made.asset);
+    expect(rebuilt.tree.root).toBe(leg.root);
+    expect(rebuilt.tree.leaves).toEqual(leg.leaves);
+    /* Its control: the same leg built under the seed the change carried is another tree. */
+    const underTheNewSeed = buildRun([...made.seeds], { ...made.identity, epoch: 2 }, [...made.facts], vaultDetails, { key: made.payKey as Hex, records: [...made.records] }, made.asset);
+    expect(underTheNewSeed.tree.root).not.toBe(leg.root);
+
+    /* RED WHEN: a change of the company's key brings a new pay record key, so a month paid before it would be paid again under another nonce. */
+    const was = await signedStateHere(recordsOn(BO), CO, KEY);
+    const now = await signedStateHere(recordsOn(BO), CO, AFTER_THE_CHANGE);
+    expect(now.payKey).toBe(was.payKey);
+    /* Its control: the change carried one more payout seed. */
+    expect(now.seeds.length).toBe(was.seeds.length + 1);
+
+    /*
+     * The retry is raised after the change and filed sealed at the epoch in force, so the leg's seed epoch and the epoch
+     * its record is sealed at differ.
+     * RED WHEN: a retry raised after the change derives its leaves from the seed in force now rather than from the leg's
+     * own, or a device building it again takes the seed epoch from the epoch the record is sealed at.
+     */
+    const round = await raiseRetryOnDevice(raisingOn(ADA, AFTER), { runId, ...RETRY, asset: TEST_SETTLEMENT_ASSET, viewingKey: AFTER_THE_CHANGE, indices: [1] });
+    expect(store.getRun(runId)!.keyEpoch).toBe(2);
+    const { made: again } = await runRebuiltHere(recordsOn(BO), CO, round.id, AFTER_THE_CHANGE);
+    expect(again.identity.epoch).toBe(0);
+    expect(again.retry).toEqual([1]);
+  });
+
+  it('A RUN DRAWN UNDER THE OLD KEY IS RAISED UNDER THE NEW ONE, ANOTHER STAYING DEVICE BUILDS IT AGAIN AND PAYS IT, THE OLD KEY OPENS NONE OF IT, AND A PERSON INVITED AFTER IS SEALED UNDER THE NEW KEY', async () => {
+    /* The run drawn before the change, under the founding key, as every older record is. */
+    expect(store.getRun(runId)!.keyEpoch).toBe(0);
+    const round = await raiseRunOnDevice(raisingOn(ADA), { runId, ...RAISE, asset: TEST_SETTLEMENT_ASSET, viewingKey: AFTER_THE_CHANGE });
+    const kept = store.getRun(runId)!;
+    const proposal = store.getProposal(round.id)!;
+    /* RED WHEN: a run or its proposal is sealed at the epoch of a key the signer who left still holds. */
+    expect([kept.keyEpoch, proposal.keyEpoch]).toEqual([2, 2]);
+    expect(openSealedRun(kept, KEY1).id).toBe(runId);
+    /* RED WHEN: the run as raised opens under the founding key, so the signer who left reads who it pays. */
+    expect(() => openSealedRun(kept, KEY)).toThrow();
+    /* RED WHEN: another staying device opens the run or its proposal with the key in force rather than the key of its own epoch, or misses the new seed. */
+    const { made } = await runRebuiltHere(recordsOn(BO), CO, round.id, AFTER_THE_CHANGE);
+    expect(made.identity.epoch).toBe(2);
+    await expect(openTheRoundHere(storedFor(BO), CO, round.id, AFTER_THE_CHANGE, false, recordsOn(BO))).resolves.toMatchObject({ vault: VAULT });
+    /* RED WHEN: the paying device cannot make the run again from the records after the change. */
+    await expect(privatePaymentsHere(recordsOn(BO), CO, runId, AFTER_THE_CHANGE, PAYING, { asset: TEST_SETTLEMENT_ASSET })).resolves.toMatchObject({ proposal: proposal.chainId });
+    /* RED WHEN: the signer who left, holding only the founding key, opens the proposal raised after the change. */
+    await expect(openTheRoundHere(storedFor(BO), CO, round.id, KEY, false, recordsOn(BO))).rejects.toThrow(/cannot read the company's record of this proposal/u);
+    /* RED WHEN: the company's keys cross to the service on any request of the raise. */
+    expect(wire.some((w) => w.includes(KEY1))).toBe(false);
+    /* RED WHEN: a run drawn after the change is sealed at the epoch of a key the signer who left still holds. */
+    const readsAfter = { ...recordsOn(ADA), people: () => readPeopleHere({ ...peopleOn(ADA), company: { ...ACME, viewingKey: AFTER_THE_CHANGE } as never }) };
+    const drawn = await drawRunHere({ ...drawingOn(ADA), viewingKey: AFTER_THE_CHANGE, records: readsAfter }, { period: nextPeriod() });
+    expect(store.getRun(drawn.id)!.keyEpoch).toBe(2);
+    /* A person invited after the change. Last in this file: a device holding only the founding key now reads no run. */
+    const invited = await invitePayeeHere({ ...ACME, viewingKey: AFTER_THE_CHANGE } as InvitingCompany, ADA, pay(77), ORIGIN, fromAda);
+    /* RED WHEN: a person's record made after the change is sealed at the epoch of a key the signer who left still holds. */
+    expect((await records.get(CO, 'person', invited.person!))!.keyEpoch).toBe(2);
+    /* RED WHEN: a staying device opens a person sealed after the change under the founding key. */
+    const read = await readPeopleHere({ ...peopleOn(BO), company: { ...ACME, viewingKey: AFTER_THE_CHANGE } as never });
+    expect(read.people.some((p) => p.person.id === invited.person)).toBe(true);
   });
 });
