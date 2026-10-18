@@ -26,7 +26,7 @@ import { planRun, type PlanStep } from '../../../src/midnight/payment-plan.js';
 import { SealedNotePool } from '../../../src/midnight/vault-pool.js';
 import type { PrivatePaymentOnTheWire, PrivatePaymentOrderOnTheWire } from '../../../src/midnight/private-payment-wire.js';
 import {
-  mergeNotesInCompanyVault, NotesMovedUnderAStep, payPrivatelyFromCompanyVault, payPubliclyFromCompanyVault, wireOf,
+  mergeNotesInCompanyVault, NotesMovedUnderAStep, payPrivatelyFromCompanyVault, payPubliclyFromCompanyVault, vaultNotesHere, wireOf,
   type PayoutDoors,
 } from './vault-operation.js';
 import type { NoteOnTheWire } from './vault-builder.js';
@@ -187,6 +187,11 @@ export async function payAnApprovedLeg(doors: LegDoors, leg: LegHere): Promise<L
     }
 
     /* ---- private money: planned once, over the vault's record and the people still owed ---- */
+    /*
+     * Every note the vault holds is brought into its record first, a deposit made from another signer's device among
+     * them; the leg is planned only from the record as filed (`vaultNotesHere` says, and never throws, what it could not do).
+     */
+    await vaultNotesHere(doors, order.vault);
     const pool = await new SealedNotePool(doors.records('pool'),
       { signerId: doors.me.signerId, wrappingSecret: doors.me.wrappingSecret }, doors.signers).load(order.vault);
     const first = owed[0]!;

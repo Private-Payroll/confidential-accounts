@@ -48,7 +48,7 @@ import { rosterVaultKeys, signVaultKeys } from '../../src/core/vault-keys.js';
 import { vaultInState } from '../../apps/wallet/src/chain/company-label-on-chain.js';
 import { holdersInAccountState, seatsInAccountState } from 'midnight-identity/profile/account-state';
 import {
-  directoryBelievedOver, directoryChainOver, fileOwnEntry, judgeOver, madeForTheWallet, mayFileUnderOver, walletReadsOver,
+  directoryBelievedOver, directoryChainOver, directoryHereOver, fileOwnEntry, judgeOver, madeForTheWallet, mayFileUnderOver, walletReadsOver,
 } from './the-chain-as-a-wallet-reads-it.js';
 import type { SeatOpening } from '../../src/core/seat-opening.js';
 import { leavesOfTheContract } from '../../src/testing/directory-seats.js';
@@ -490,6 +490,14 @@ describe.skipIf(!KEYS_ON_DISK)('ONE RUN, RAISED, APPROVED, CHARGED AND PAID ON T
           ...(e.content.mtIndex === undefined ? {} : { mtIndex: String(e.content.mtIndex) }),
         },
       })),
+      /* The account alone at the same moment: what a raise of the company's proposals is built on. */
+      accountCallState: async (account) => {
+        const as = chain.contract(account);
+        if (as === null) return null;
+        return {
+          blockHash: 'b1'.repeat(32), accountState: base64FromBytes(as.serialize()), parameters: base64FromBytes(chain.state.parameters.serialize()),
+        };
+      },
       /* As an indexer would answer it: the one applied transaction whose events carry this output, made for this vault. */
       createdBy: async (v, commitment) => {
         for (const [name, events] of chain.events) {
@@ -571,6 +579,8 @@ describe.skipIf(!KEYS_ON_DISK)('ONE RUN, RAISED, APPROVED, CHARGED AND PAID ON T
       proposalIdOf: (h, salt, v) => MidnightCommitments.proposalId(h as Hex, salt as Hex, v as Hex | undefined),
       publicMoney: async () => undefined,
     }));
+    /* The company's proposals as the service lists them, where a vault's start finds its own. */
+    app.get('/api/accounts/:id/proposals', signedIn, member, (req, res) => { res.json(store.listProposals(String(req.params.id))); });
     app.use(companyVaultRoutes({
       signedIn, member, store,
       company: async () => ({
@@ -717,6 +727,16 @@ describe.skipIf(!KEYS_ON_DISK)('ONE RUN, RAISED, APPROVED, CHARGED AND PAID ON T
     const press = (resume?: Hex) => createCompanyVault({
       ...poolDoors, account: readAccountAddress(company)!, builder: builder(), keys,
       material: { signingSecret: hex(founder.secretKey), blinding: hex(founder.blinding), scope: hex(founder.scope) },
+      /* Where the vault's adoption and first secret run are written down, by the founding seat under its own filing key. */
+      proposals: (({ callState, send, file, sealedProposals }) => ({
+        accountId: ACCOUNT_ID, companyKeys: viewingKey, signingSecret: signing.secret as Hex,
+        directory: directoryHereOver({ viewingKey,
+          api, accountId: ACCOUNT_ID, label: LABEL, account: company, accountState: () => chain.contract(company), deployed: () => deployed,
+          roster: async () => openAccount(store.getAccount(ACCOUNT_ID)!, viewingKey),
+        }),
+        entered: recordsEnteredFor(manifestServiceFor(api), ACCOUNT_ID, signing.secret as Hex),
+        service: { callState, send, file: file!, sealedProposals: sealedProposals! },
+      }))(governedCallServiceFor(api)),
       secretReaders: {
         company: LABEL,
         read: async (v: Hex) => ({

@@ -8,7 +8,9 @@ import {
   api, canOpenCompanies, currentUser, holdersFromTheWallet, openKeysWithWallet, recordsKeyFromTheWallet,
 } from 'vaults-web-shared/keyring.js';
 import type { VaultAddress } from 'midnight-identity/profile/company-label';
-import { createCompanyVault, VaultHandoverOwed, VaultStartOwed, type VaultStage } from 'vaults-web-shared/vault-operation.js';
+import { governedCallServiceFor } from 'vaults-web-shared/governed-call-on-device.js';
+import { createCompanyVault, VaultHandoverOwed, VaultStartOwed, type VaultInfoGiven, type VaultStage } from 'vaults-web-shared/vault-operation.js';
+import { vaultInfoRecordsFor } from 'vaults-web-shared/vault-info-here.js';
 import {
   browserTemporaryKeys, deviceRecordsFor, deviceSignerFrom, marked, readersIn, vaultServiceFor,
 } from 'vaults-web-shared/vault-page-doors.js';
@@ -29,18 +31,20 @@ import { handoverOwed, readVaultRows } from './vault-rows.js';
 /*
  * CREATING A COMPANY'S VAULT, OVER THE SHARED OPERATION, IN ITS ORDER.
  *
- * `createCompanyVault` is where the order lives: the committee is checked,
- * the vault is built and proved on this device with a key made here, that key
- * is kept in this browser before anything is sent, the vault is sent, and it
- * is handed to the company's committee as soon as the chain has it. The
- * operation then starts the vault - adopted by the company's account, its pool
+ * `createCompanyVault` is where the order lives: the committee the vault is
+ * born held by is read from the chain, the vault is built and proved on this
+ * device already held by it, and the deploy is sent. The operation then reads
+ * the vault back as it was born and starts it - adopted by the company's
+ * account, its adoption and first secret run written down as the company's
+ * proposals by this seat, its pool
  * and nonce secret filed (or read back and checked against the chain), its first secret set, every signer's
  * sealed copy written - and ends only when the chain shows it started, or
  * names the proposal that waits for other signers' approvals. This file brings it
  * the keys this person's account gives for the company, this signer's own
  * three and records, the company's vault routes checked against the roster
  * this device opens, the part of the page that builds vault transactions, and
- * this browser's store for the temporary key; and it turns the answer into a
+ * this browser's store for the key of a vault deployed with a temporary key and
+ * not yet handed over; and it turns the answer into a
  * fixed state or reason. It keeps nothing, and decides nothing the operation
  * does not.
  *
@@ -51,8 +55,8 @@ import { handoverOwed, readVaultRows } from './vault-rows.js';
 
 /**
  * Where creating a vault has got to, as the operation reports it, each said on
- * the screen in its own words: the vault built, sent and handed over, then
- * started, which is the company's account adopting it, its private records
+ * the screen in its own words: the vault built and sent (or, for one deployed
+ * with a temporary key, handed over), then started, which is the company's account adopting it, its private records
  * opened and read back, its secret set and a sealed copy written for each
  * signer, waiting for other signers' approvals wherever a round needs them.
  */
@@ -82,9 +86,13 @@ const STAGE: Partial<Record<VaultStage, Creating>> = {
   done: CREATING.done,
 };
 
-/** What creating a vault, or finishing handing one over, came to. `done` is a vault started. */
+/**
+ * What creating a vault, or finishing handing one over, came to. `done` is a vault started. `said`, on a vault
+ * started or waiting, is what the press could not leave in the company's records - its name, or a setup proposal -
+ * each in a sentence; the vault carries on without them.
+ */
 export type VaultCreated =
-  | { of: typeof ACTED.done; vault: string }
+  | { of: typeof ACTED.done; vault: string; said?: readonly string[] }
   | { of: typeof OWED.here | typeof OWED.elsewhere; vault: string }
   /**
    * Handed to the committee and not started: creating it again carries on.
@@ -92,7 +100,7 @@ export type VaultCreated =
    */
   | { of: typeof STARTING.owed; vault: string; stopped?: StartStopped }
   /** One round of its start waits for other signers' approvals: which, and how many it has and needs. */
-  | { of: typeof STARTING.awaiting; vault: string; round: 'adoption' | 'first-secret'; approvals: number; needed: number }
+  | { of: typeof STARTING.awaiting; vault: string; round: 'adoption' | 'first-secret'; approvals: number; needed: number; said?: readonly string[] }
   | { of: typeof ACTED.refused; why: ActRefusal };
 
 /** A vault handed to the committee whose start is not finished, or waits on other signers. */
@@ -143,7 +151,7 @@ export type Readiness = { of: Ready } | { of: typeof ACTED.refused; why: ActRefu
 
 /** The service's addresses and the words of its answers, compared and never shown. */
 const SERVICE = {
-  vaultKeys: '/vault-keys', authority: '/authority', vaults: '/vaults', slash: '/', chain: '/chain',
+  vaultKeys: '/vault-keys', authority: '/authority', vaults: '/vaults', slash: '/',
   startAccount: '/start/account', startSecret: '/start/secret', startCopy: '/start/copy', post: 'POST',
 } as const;
 
@@ -237,7 +245,9 @@ const createRefusalOf = (e: unknown): ActRefusal =>
  * keys are given with them (the service keeps the first set), as the legacy
  * page does on every press.
  */
-async function run(personId: string, companyId: string, onStage: (stage: Creating) => void, resume?: string): Promise<VaultCreated> {
+async function run(
+  personId: string, companyId: string, onStage: (stage: Creating) => void, resume?: string, info?: VaultInfoGiven,
+): Promise<VaultCreated> {
   try {
     const o = await opened(personId, companyId, true);
     if (typeof o === 'string') return { of: ACTED.refused, why: o === LOCKED ? ACT_REFUSAL.didNotFinish : o };
@@ -247,6 +257,9 @@ async function run(personId: string, companyId: string, onStage: (stage: Creatin
     /* This signer's own pool, journals and records, over the records route, wrapped to the seats the directory names now. */
     const directoryRead = directoryHereFor(companyId, released.company, released.account, o.companyKeys, o.roster);
     const readers = readersIn(directoryRead);
+    const entered = recordsEnteredOver(api, companyId, o.keys.signingSecret);
+    const proposalsService = governedCallServiceFor(api);
+    const companyKeys: CompanyKeyHere = o.companyKeys;
     const done = await createCompanyVault({
       ...pacing(onStage), account: released.account, service,
       builder: await theVaultBuilder(), keys: browserTemporaryKeys(),
@@ -254,7 +267,17 @@ async function run(personId: string, companyId: string, onStage: (stage: Creatin
       myRecordsKey: recordsKeypairFrom(fromHex(released.companyKey)).publicKey as Hex,
       signers: readers.signers,
       records: deviceRecordsFor(o.keys.signingSecret, filingJudgeFor(companyId, released.company, released.account, o.companyKeys, o.roster),
-        () => currentUser()?.id ?? null, recordsEnteredOver(api, companyId, o.keys.signingSecret)),
+        () => currentUser()?.id ?? null, entered),
+      vaultInfo: vaultInfoRecordsFor(companyId, o.keys.signingSecret,
+        filingJudgeFor(companyId, released.company, released.account, o.companyKeys, o.roster), () => currentUser()?.id ?? null),
+      /* The vault's adoption and first secret run, written down as the company's proposals by this seat and raised with them. */
+      proposals: {
+        accountId: companyId, directory: directoryRead, companyKeys, signingSecret: o.keys.signingSecret, entered,
+        service: {
+          callState: proposalsService.callState, send: proposalsService.send,
+          file: proposalsService.file!, sealedProposals: proposalsService.sealedProposals!,
+        },
+      },
       material: { signingSecret: o.keys.signingSecret, blinding: o.keys.blinding, scope: (o.keys as { scope?: Hex }).scope },
       /* The vault's company account as this person's own wallet reads it for each step, with no press. */
       onChain: async () => ({
@@ -301,11 +324,12 @@ async function run(personId: string, companyId: string, onStage: (stage: Creatin
         });
       },
       vaultName: (vault) => vault,
-    }, resume as Parameters<typeof createCompanyVault>[1]);
+    }, resume as Parameters<typeof createCompanyVault>[1], info);
+    const said = done.said === undefined ? {} : { said: done.said };
     if (done.state === 'awaiting-approvals') {
-      return { of: STARTING.awaiting, vault: done.vault, ...done.awaiting };
+      return { of: STARTING.awaiting, vault: done.vault, ...done.awaiting, ...said };
     }
-    return { of: ACTED.done, vault: done.vault };
+    return { of: ACTED.done, vault: done.vault, ...said };
   } catch (e) {
     if (e instanceof VaultStartOwed) {
       return e.stoppedAt === undefined ? { of: STARTING.owed, vault: e.vault } : { of: STARTING.owed, vault: e.vault, stopped: STOPPED_BY[e.stoppedAt] };
@@ -349,9 +373,12 @@ export async function openYourKeys(personId: string): Promise<{ of: typeof ACTED
   }
 }
 
-/** CREATE A VAULT for the company, and hand it to the company's committee. */
-export const createVault = (personId: string, companyId: string, onStage: (stage: Creating) => void): Promise<VaultCreated> =>
-  run(personId, companyId, onStage);
+/**
+ * CREATE A VAULT for the company, held by the company's committee from its deploy. `info`, when given, is the
+ * vault's name and description, filed in the company's records right after the deploy.
+ */
+export const createVault = (personId: string, companyId: string, onStage: (stage: Creating) => void, info?: VaultInfoGiven): Promise<VaultCreated> =>
+  run(personId, companyId, onStage, undefined, info);
 
 /**
  * FINISH HANDING OVER the vault `vault`, which this device sent and the committee does not hold yet, or CARRY ON

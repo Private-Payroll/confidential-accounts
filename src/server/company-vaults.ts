@@ -14,7 +14,8 @@
  *   POST /api/accounts/:id/vaults                       a vault deployed with a temporary key
  *   POST /api/accounts/:id/vaults/:vault/handover       that vault handed to the company's committee
  *   POST /api/accounts/:id/vaults/:vault/start/account  a step of its start on the account: the adoption round or the
- *                                                       first secret run raised or approved, or the adoption carried out
+ *                                                       first secret run approved, or the adoption carried out (each is
+ *                                                       raised with its record, through the proposals route)
  *   POST /api/accounts/:id/vaults/:vault/start/secret   its first secret set under the approved run
  *   POST /api/accounts/:id/vaults/:vault/start/copy     one signer's sealed copy of that secret written
  *   GET  /api/accounts/:id/vaults/:vault/chain          what the chain holds for one vault
@@ -555,7 +556,6 @@ export function companyVaultRoutes(deps: CompanyVaultDeps): express.Router {
   r.get('/api/accounts/:id/vaults/:vault/chain', ...guard, async (req, res) => {
     const record = theVault(req, res);
     if (record === null) return;
-    const account = accountOf(req);
     let state: unknown;
     try {
       state = await deps.chain.contractState(record.vault);
@@ -567,22 +567,14 @@ export function companyVaultRoutes(deps: CompanyVaultDeps): express.Router {
       res.json({ vault: record.vault, onChain: false });
       return;
     }
-    const company = await deps.company(account.id);
     /*
-     * **NOBODY WHO HOLDS A CONTRACT IS READ HERE.** A device reads this view
-     * before a deposit, a payment out and a vault's start, so it carries the
-     * vault's state, its notes and the gate's answer, and never the vault's or
-     * the account's maintenance authority.
+     * **NOBODY WHO HOLDS A CONTRACT IS READ HERE.** This view carries the
+     * vault's state and its notes, and never the vault's or the account's
+     * maintenance authority. It does not say whether money may go in or out:
+     * a device answers that itself, from the chain its own wallet reads. The
+     * service refuses a deposit or a payment on its own gate when it is asked
+     * to send one.
      */
-    /*
-     * **IN WORDS TRUE OF BOTH DIRECTIONS.** A device reads this view before a
-     * deposit and before a payment out, and the service refuses both on this
-     * same gate, so a person paying out is never told only about money going in.
-     */
-    const either = 'no money goes into or out of this vault';
-    const notFundable = company === null
-      ? NO_COMPANY
-      : (await whyNotFunded(record.vault, company.address, state, undefined, either))?.why ?? null;
     /*
      * **WHETHER THE NOTES BELOW WERE READ OFF A LEDGER OF THIS BUILD'S SHAPE**,
      * said beside them. A signer's device compares its own record of the notes
@@ -592,7 +584,7 @@ export function companyVaultRoutes(deps: CompanyVaultDeps): express.Router {
     let started = false;
     try {
       started = deps.chain.startingLedgerOf(state).started;
-    } catch { /* a state that is not a vault's is not started, and the gate above already says why */ }
+    } catch { /* a state that is not a vault's is not started */ }
     let notesFromThisBuild = false;
     let notesWhy: string | undefined;
     if (deps.chain.ledgerIsThisBuilds === undefined) {
@@ -643,8 +635,6 @@ export function companyVaultRoutes(deps: CompanyVaultDeps): express.Router {
       /* The deploy the vault's address was made from, for a signer's device to read the vault as it was born. */
       deployed: record.deploy ?? null,
       started,
-      fundable: notFundable === null,
-      why: notFundable,
     });
   });
 
@@ -784,7 +774,7 @@ export function companyVaultRoutes(deps: CompanyVaultDeps): express.Router {
     const body = z.object({
       tx: z.string().min(1).max(VAULT_TX_LIMIT),
       step: z.enum(['adoption', 'secret-run']),
-      call: z.enum(['propose', 'approve', 'adopt']),
+      call: z.enum(['approve', 'adopt']),
     }).strict().safeParse(req.body);
     if (!body.success || (body.data.step === 'secret-run' && body.data.call === 'adopt')) {
       res.status(400).json({ nothingWasSent: true, error: 'this is not a step of a vault\'s start on the company\'s account. Nothing was sent.' });
@@ -793,12 +783,11 @@ export function companyVaultRoutes(deps: CompanyVaultDeps): express.Router {
     const at = await startable(req, res);
     if (at === null) return;
     const { step, call } = body.data;
-    /* Raising and carrying out happen once per vault; an approval once per person. */
+    /* Carrying out happens once per vault; an approval once per person. */
     const key = `${at.record.vault}:${step}:${call}${call === 'approve' ? `:${personOf(req)}` : ''}`;
     const what = step === 'adoption'
-      ? (call === 'propose' ? 'raising the adoption of this vault' : call === 'approve' ? 'approving the adoption of this vault'
-        : 'adopting this vault')
-      : (call === 'propose' ? 'raising this vault\'s first secret' : 'approving this vault\'s first secret');
+      ? (call === 'approve' ? 'approving the adoption of this vault' : 'adopting this vault')
+      : 'approving this vault\'s first secret';
     await sendStep(res, key, at.account.id, what, new Uint8Array(Buffer.from(body.data.tx, 'base64')),
       (tx) => refusalForStartAccountCall(tx, { account: at.company.address, circuit: call }));
   });

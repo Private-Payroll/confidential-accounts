@@ -379,6 +379,31 @@ describe('A PROPOSAL A SEAT\'S DEVICE WROTE DOWN IS FILED ONLY AS THAT SEAT SIGN
     for (const id of ['prp_forAVaultAAA', 'prp_payingAAAAAA', 'prp_otherSaltAAA', 'prp_declaringAAA']) expect(store.getProposal(id)).toBeNull();
     expect(sent).toEqual([]);
   });
+
+  it('A RUN NAMED FOR A VAULT THAT PAYS NOBODY IS WRITTEN DOWN ONLY WHEN ITS IDENTITY NAMES THAT VAULT', async () => {
+    const send = (p: unknown, more: Record<string, unknown>) =>
+      post('ada', `/api/accounts/${CO}/proposals`, { proposal: p, salt: SALT, ...more });
+    const raised = (id: string, digest: string) => signProposalFiling(CO, filing(id, digest, 0, VAULT), ADA.signingSecret as Hex);
+    /* RED WHEN: a new vault's first secret run, named for its vault and paying nobody, cannot be written down and raised. */
+    const first = raised('prp_firstSecretA', '7b'.repeat(32));
+    const ok = await send(first, { vault: VAULT, tx: tx('propose', first.chainId), version: DEVICE_RAISE_VERSION });
+    expect(ok.status, JSON.stringify(ok.body)).toBe(200);
+    expect(sent).toEqual([{ accountId: CO, circuit: 'propose', proposal: first.chainId }]);
+    expect(store.getProposal('prp_firstSecretA')).toMatchObject({ chainId: first.chainId, status: 'open', filedBy: first.filedBy });
+    sent.length = 0;
+    /* RED WHEN: the vault beside the filing is not held to the identity the filing signs. */
+    const other = await send(raised('prp_otherVaultAA', '7c'.repeat(32)), { vault: 'c6'.repeat(32), tx: tx('propose', '44'.repeat(32)), version: DEVICE_RAISE_VERSION });
+    expect(other.status).toBe(422);
+    expect(other.body.error).toMatch(/not the vault its identity on the chain names/u);
+    /* RED WHEN: a vault named beside the filing lets one that says what it pays, or comes with a run, past the payroll rule. */
+    const paying = await send(signProposalFiling(CO, { ...filing('prp_payingVaultA', '7d'.repeat(32), 0, VAULT), pays: '99'.repeat(32) as Hex }, ADA.signingSecret as Hex), { vault: VAULT });
+    expect(paying.status).toBe(422);
+    const withARun = await send(raised('prp_withARunAAAA', '7e'.repeat(32)), { vault: VAULT, run: {} });
+    expect(withARun.status).toBe(422);
+    expect(withARun.body.error).toMatch(/names its vault in what it pays, never beside it/u);
+    for (const id of ['prp_otherVaultAA', 'prp_payingVaultA', 'prp_withARunAAAA']) expect(store.getProposal(id)).toBeNull();
+    expect(sent).toEqual([]);
+  });
 });
 
 describe('A RELAY IS PAID FOR THE SEAT WHOSE FILING KEY THE DEVICE SENDS, AMONG EVERY ENTRY ITS PERSON FILED', () => {

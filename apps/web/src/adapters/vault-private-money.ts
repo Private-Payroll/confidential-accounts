@@ -5,10 +5,11 @@ import type { SealedAccount } from '../../../../src/core/types.js';
 import type { Hex } from '../../../../src/core/crypto.js';
 import { SealedNotePool } from '../../../../src/midnight/vault-pool.js';
 import { deviceVaultHoldings } from 'vaults-web-shared/device-vault-holdings.js';
-import { fileThePoolTheChainHolds } from 'vaults-web-shared/deposit-on-device.js';
-import { api, companyKeyReleasedFor, currentUser } from 'vaults-web-shared/keyring.js';
-import { deviceRecordsFor, deviceSignerFrom, readersIn } from 'vaults-web-shared/vault-page-doors.js';
-import { wireOf } from 'vaults-web-shared/vault-operation.js';
+import { api, companyKeyReleasedFor, currentUser, holdersFromTheWallet } from 'vaults-web-shared/keyring.js';
+import { browserInFlightRecords, deviceRecordsFor, deviceSignerFrom, readersIn } from 'vaults-web-shared/vault-page-doors.js';
+import { seatHereIn, vaultNotesHere, wireOf } from 'vaults-web-shared/vault-operation.js';
+import { coinsKeptOnThisDevice } from 'vaults-web-shared/vault-coins-kept-here.js';
+import { ACCOUNT_ORIGIN } from './session.js';
 import { Fault, FAULT } from '../faults.js';
 import { companyRoute } from './handover-state.js';
 import { keyringFor, keysOnTheWayIn } from './keyring-person.js';
@@ -22,7 +23,7 @@ import { theVaultBuilder } from './vault-builder.js';
  *
  * A vault's private money is its notes, and the record of them is sealed so
  * that only a signer's own key opens it; so it is read here or nowhere. The
- * reader is the shared one the legacy page's payments use
+ * reader is the one the payments page uses
  * (`deviceVaultHoldings`), given the same doors: the vault's pool opened with
  * the records key this signer's wallet released for the company, filed under
  * their seat, the seats the company's directory names as the ones the pool is
@@ -30,9 +31,12 @@ import { theVaultBuilder } from './vault-builder.js';
  * at the indexer the person's own wallet names, and each note's commitment
  * worked out in the same worker. The pool is believed only when a seat the company's
  * directory names filed it, checked against a fresh read by the person's own
- * wallet. The notes are summed only when the pool and the chain agree both
- * ways. Nothing it reads leaves this device; the vault's address
- * goes out to ask the chain.
+ * wallet. Every read first rebuilds the vault's notes (`vaultNotesHere`): a
+ * note the chain holds that the vault's journals, the chain's split journal or
+ * the coins this device keeps name is counted and, where this seat may file,
+ * filed for every signer; a note nothing names is not counted. The notes are
+ * summed only when the pool and the chain agree both ways. Nothing it reads
+ * leaves this device; the vault's address goes out to ask the chain.
  *
  * Each amount is made with `privateAmount`, from the decimals and symbol of the
  * asset whose private token it is, so a screen never holds a number it could
@@ -40,7 +44,7 @@ import { theVaultBuilder } from './vault-builder.js';
  */
 
 /** The pool's record, and the form private money takes on the ledger: the shared code's names, passed and never shown. */
-const LEDGER = { pool: 'pool', shielded: 'shielded' } as const;
+const LEDGER = { pool: 'pool', shielded: 'shielded', theNewest: 'the-newest' } as const;
 
 /** What a vault holds privately, as a screen shows it: one amount for each token it holds any of, in the registry's order. */
 export interface VaultPrivateMoney {
@@ -79,7 +83,8 @@ export async function readVaultPrivateMoney(
     /* Believed only when a seat the directory names filed it, checked against a fresh read by this person's own wallet. */
     const viewingKey = await companyKeysFor(companyId, sealed, me);
     const judge = filingJudgeFor(companyId, label as CompanyLabel, address as AccountAddress, viewingKey, async () => account);
-    const readers = readersIn(directoryHereFor(companyId, label as CompanyLabel, address as AccountAddress, viewingKey, async () => account));
+    const directory = directoryHereFor(companyId, label as CompanyLabel, address as AccountAddress, viewingKey, async () => account);
+    const readers = readersIn(directory);
     const records = deviceRecordsFor(me.signingSecret, judge, () => currentUser()?.id ?? null, recordsEnteredOver(api, companyId, me.signingSecret));
     const pool = new SealedNotePool(records(LEDGER.pool), { signerId: mine.signerId, wrappingSecret: mine.wrappingSecret }, readers.signers);
     const holdings = deviceVaultHoldings({
@@ -91,8 +96,28 @@ export async function readVaultPrivateMoney(
       },
       pool: async (v) => (await pool.load(v)).notes,
       heldCommitmentOf: async (v, note) => (await builder.commitments({ vault: v, coin: wireOf(note) })).held,
-      /* A pool a seat that left filed past its boundary, which the chain vouches for, is filed again under this signer's own seat. */
-      fileAgain: (v, held) => fileThePoolTheChainHolds({ vault: v, me: mine, records, signers: readers.signers, held }),
+      /*
+       * The vault's notes rebuilt on this device before they are summed: a pool a seat that left filed past its boundary,
+       * which the chain vouches for, filed again under this signer's own seat; every note the chain holds that the
+       * journals, the chain's split journal or the coins this device keeps name, filed where this seat may file and
+       * counted either way; the vault read at the indexer and through the holders this person's own wallet names.
+       */
+      fileAgain: async (v) => {
+        const rebuilt = await vaultNotesHere({
+          account: address as AccountAddress, builder, me: mine, records, signers: readers.signers,
+          /* This signer's own seat as the directory this device believes holds it: a seat whose role files no vault record files nothing. */
+          seatHere: () => seatHereIn(directory, me.signingSecret),
+          indexer: () => walletIndexerFor(label as CompanyLabel, address as AccountAddress),
+          onChain: async () => ({
+            holders: (await holdersFromTheWallet(ACCOUNT_ORIGIN, { company: label as CompanyLabel, account: address as AccountAddress })).holders,
+          }),
+          /* The coins this device keeps, in this browser's own storage; a browser with none keeps nothing and the rest still reads. */
+          ...((globalThis as { indexedDB?: IDBFactory }).indexedDB === undefined ? {} : {
+            kept: coinsKeptOnThisDevice(browserInFlightRecords(), { signerId: mine.signerId, wrappingSecret: mine.wrappingSecret }),
+          }),
+        }, v);
+        return { answer: LEDGER.theNewest, said: rebuilt.leaver ?? [], ...(rebuilt.of === 'not-read' ? {} : { notes: rebuilt.notes }) };
+      },
       /* Only what the vault holds is read here; whether payments fit is asked where a payment is made. */
       paymentsFit: () => { throw new Fault(FAULT.vaultPaymentsNotAsked); },
     });

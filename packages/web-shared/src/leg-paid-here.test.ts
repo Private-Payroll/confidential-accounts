@@ -31,6 +31,9 @@ let unnamed = new Set<number>();
 /* The account's read of who is paid lags behind: a payment sent is not shown on it yet. */
 let accountLags = false;
 let poolOf: ((notes: Array<{ nonce: string; value: bigint }>) => Promise<void>) | null = null;
+/* What the vault's record holds once the rebuild before planning has filed what the chain holds; null, it files nothing. */
+let rebuiltTo: Array<{ nonce: string; value: bigint }> | null = null;
+let rebuilds = 0;
 vi.mock('./payments-made-here.js', () => ({
   legToPayHere: async () => ({
     order: { ...order, required: '2', payments: order.payments.map((p) => ({ ...p, paid: paidOnTheAccount.has(p.index) })) },
@@ -53,6 +56,11 @@ vi.mock('./vault-operation.js', async (real) => {
   const coin = (nonce: string, value: bigint) => ({ nonce, token: TOKEN, value: value.toString() });
   return {
     ...actual,
+    vaultNotesHere: async () => {
+      rebuilds += 1;
+      if (rebuiltTo !== null) await poolOf!(rebuiltTo);
+      return { of: rebuiltTo === null ? 'as-filed' : 'filed', notes: [], unexplained: 0, said: [] };
+    },
     mergeNotesInCompanyVault: async (_d: unknown, i: { notes: Array<{ nonce: string; value: string }> }) => {
       calls.push(`merge ${i.notes.map((n) => `${n.nonce.slice(0, 2)}:${n.value}`).join('+')}`);
       const value = i.notes.reduce((t, n) => t + BigInt(n.value), 0n);
@@ -130,6 +138,7 @@ beforeEach(() => {
   calls.length = 0; paidOnTheAccount = new Set(); moveOnce = null; planned = []; planAnswer = null;
   movedTo = null; movesEveryTime = 0; unnamed = new Set(); accountLags = false;
   charging = 'no-policy'; charges.length = 0; raisedByALeaver = false; askedInCalls = false;
+  rebuiltTo = null; rebuilds = 0;
 });
 
 describe('PAYING AN APPROVED LEG', () => {
@@ -146,6 +155,18 @@ describe('PAYING AN APPROVED LEG', () => {
     /* RED WHEN: the leg is planned more than once without its notes moving, or the planner is asked for batches. */
     expect(planned).toHaveLength(1);
     expect(planned[0]!.units.map((u) => u.kind)).toEqual(['payment', 'payment']);
+  });
+
+  it('A LEG IS PLANNED FROM EVERY NOTE THE VAULT HOLDS: THE RECORD IS REBUILT BEFORE THE PLAN, AND THE PLAN IS MADE FROM THE RECORD AS FILED', async () => {
+    order = anOrder([aPayment(0, 150)]);
+    /* This device's record holds one note of 100; the vault also holds a deposit another signer's device made. */
+    const doors = await aVault([{ nonce: 'a1'.repeat(32), value: 100n }]);
+    rebuiltTo = [{ nonce: 'a1'.repeat(32), value: 100n }, { nonce: 'a2'.repeat(32), value: 90n }];
+    const done = await payAnApprovedLeg(doors, leg);
+    /* RED WHEN: the leg is planned before the record is rebuilt, so the 90 is not seen and the leg is refused as unpayable. */
+    expect(rebuilds).toBe(1);
+    expect(calls).toEqual(['charge no-policy', 'pay 0 150 from a1:100+a2:90']);
+    expect(done).toMatchObject({ paid: [0] });
   });
 
   it('A BATCH STEP IS REFUSED BY NAME AS NOT BUILT YET, AND NOTHING IS SENT FOR IT', async () => {

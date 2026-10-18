@@ -30,6 +30,13 @@
  *           by this signer, and the secret set under it;
  *        d. every signer's sealed copy of the secret is written into the vault.
  *      The operation ends `started` when the chain shows every copy written.
+ *      The adoption and the first secret run are each written down as a
+ *      proposal of the company's, sealed and signed by this seat, in the same
+ *      request as their raise (`proposedAndWrittenDown`), and one the chain
+ *      holds with no record is written down on the next press, so the company's
+ *      proposals hold a record of each; the record of the run carries nothing
+ *      the vault's secret is made of. A seat whose role may not raise a
+ *      proposal sets up no vault.
  *
  * **ANYTHING SHORT OF THE END IS A FAILURE THAT NAMES THE VAULT**
  * (`VaultStartOwed`, or `VaultNotTheCompanys` for a vault not born held),
@@ -64,10 +71,14 @@ import type { Hex } from '../../../src/core/crypto.js';
 import type { Committee } from '../../../src/midnight/vault-committee.js';
 import { whyNotInstallable } from 'midnight-identity/profile/request';
 import type { DepositMoney } from '../../../src/midnight/deposit-nonce.js';
-import { SealedNotePool, isALostPoolRace, type PoolSigner, type SealedPool } from '../../../src/midnight/vault-pool.js';
+import {
+  SealedNotePool, assertNoSignerWouldLoseAccess, isALostPoolRace, openPool, passedOverAbove, sealPool,
+  type FiledPoolVersion, type PassedOverVersion, type PoolSigner, type SealedPool,
+} from '../../../src/midnight/vault-pool.js';
 import { afterDeposit } from '../../../src/midnight/vault-note-deposit.js';
 import type { Note } from '../../../src/midnight/vault-notes.js';
-import { PaymentJournalInStore, attemptKey } from '../../../src/midnight/vault-journal.js';
+import { PaymentJournalInStore, attemptKey, attemptsFromJournalVersions } from '../../../src/midnight/vault-journal.js';
+import { coinsFileRead, coinsFileText, type CoinKept, type CoinsFileCompany, type CoinsKeptHere } from './vault-coins-kept-here.js';
 import { STEP_LIMITS } from '../../../src/midnight/payment-plan.js';
 import type { PrivatePaymentOnTheWire, PrivatePaymentOrderOnTheWire } from '../../../src/midnight/private-payment-wire.js';
 import type { EventOnTheWire, NoteOnTheWire } from './vault-builder.js';
@@ -77,11 +88,26 @@ import {
   READER_REFUSAL, readerRefusalOf, type DirectoryAsBelieved, type ReaderRefusalCode, type SeatsAsTheWalletRead,
 } from '../../../src/midnight/secret-readers.js';
 import type { RosterVaultKeys } from '../../../src/core/vault-keys.js';
-import { fromHex, toHex } from '../../../src/core/crypto.js';
+import { fromHex, signingPublicKeyOf, toHex, type Sealed } from '../../../src/core/crypto.js';
+import { sealingWith, type KeysHeld } from '../../../src/core/company-key.js';
+import { DEVICE_RAISE_VERSION } from '../../../src/core/device-raise.js';
+import {
+  ADOPT_VAULT, newProposalId, proposalFilingRefusal, sealGovernanceProposal, sealVaultSecretProposal, signProposalFiling,
+} from '../../../src/core/proposal-filing.js';
+import { proposalEntry } from '../../../src/midnight/record-manifest.js';
+import { mayFile } from '../../../src/midnight/seat-directory.js';
+import { kindAsked, listedHere, seatNotBelievedHere, type DirectoryRead } from './vault-page-doors.js';
+import { believedFilerHere } from './round-opened-here.js';
+import { fileVaultInfoHere, VaultInfoChanged, VaultInfoRefused, type VaultInfoRecords } from './vault-info-here.js';
+import { vaultInfoTidied } from '../../../src/midnight/vault-info-record.js';
+import type { GovernedCallService } from './governed-call-on-device.js';
+import type { RecordsEntered } from './record-entered-here.js';
+import type { Role, SealedProposal } from '../../../src/core/types.js';
 import { NO_ASSET } from '../../../src/core/assets.js';
 import type { GovernedCallOrder, OpenedRound, SignerMaterial } from './governed-call-builder.js';
 import type { AccountAddress, CompanyLabel, VaultAddress } from 'midnight-identity/profile/company-label';
 import {
+  fileThePoolTheChainHolds,
   depositCoinOnThisDevice, fileTheChainsSecretAsTheNewest, startVaultNonceSecretAgainOnThisDevice,
   startVaultNonceSecretOnThisDevice, type DeviceRecords, type DeviceSigner,
 } from './deposit-on-device.js';
@@ -108,7 +134,11 @@ interface VaultOnChainDoors {
 
 /** A vault that is not one its company's account adopted as the chain shows it. Nothing is set up, put in or paid from it. */
 export class VaultNotTheCompanys extends Error {
-  constructor(readonly vault: Hex, why: string) {
+  /**
+   * `'not-adopted'`: the wallet read the account and the vault is not among the vaults it adopted. `'wallet-silent'`: the
+   * wallet could not say who holds the company, so nothing is known. `'other'`: a vault that was not set up as the company's.
+   */
+  constructor(readonly vault: Hex, why: string, readonly kind: 'not-adopted' | 'wallet-silent' | 'other' = 'other') {
     super(`${why} Nothing was sent.`);
     this.name = 'VaultNotTheCompanys';
   }
@@ -125,11 +155,11 @@ export async function theVaultAsItsSignersHoldIt(doors: VaultOnChainDoors, vault
   try {
     read = await doors.onChain(vault);
   } catch (e) {
-    throw new VaultNotTheCompanys(vault, `your wallet could not say who holds this vault's company (${(e as Error)?.message ?? e}).`);
+    throw new VaultNotTheCompanys(vault, `your wallet could not say who holds this vault's company (${(e as Error)?.message ?? e}).`, 'wallet-silent');
   }
   if (!read.holders.adoptedVaults.includes(String(vault).toLowerCase())) {
     throw new VaultNotTheCompanys(vault, 'this vault is not one your company\'s account has adopted, as your own wallet read the '
-      + 'chain, so nothing is put into or paid from it.');
+      + 'chain, so nothing is put into or paid from it.', 'not-adopted');
   }
   return read.holders;
 }
@@ -156,11 +186,10 @@ export class VaultNotReadHere extends Error {
 
 /**
  * **THE VAULT AS THE CHAIN HOLDS IT, READ ON THIS DEVICE**: its state, its
- * notes, every coin ever made for it and who holds it, read by this device's
- * vault worker at the indexer the person's own wallet names; whether the
- * company's committee holds it, against who holds the company's account as
- * the same wallet reads it. Nothing of it is the service's answer, and when the
- * wallet names no indexer nothing is read at all.
+ * notes, every coin ever made for it, the account it is pinned to and whether
+ * it is started, read by this device's vault worker at the indexer the
+ * person's own wallet names. Nothing of it is the service's answer, and when
+ * the wallet names no indexer nothing is read at all.
  */
 /** One read of the vault by this device's vault worker, at the indexer the person's own wallet names, or a refusal. */
 async function readHere(
@@ -239,6 +268,8 @@ function notesOfARead(vault: Hex, read: Awaited<ReturnType<VaultBuilderClient['v
   return {
     vault, onChain: true, state: read.state,
     ...(read.notes === undefined ? {} : { notes: read.notes as Hex[] }),
+    ...(read.nonceCommitment === undefined ? {} : { nonceCommitment: read.nonceCommitment }),
+    ...(read.splitJournal === undefined ? {} : { splitJournal: read.splitJournal }),
     notesFromThisBuild: read.notesFromThisBuild,
     ...(read.notesWhy === undefined ? {} : { notesWhy: read.notesWhy }),
     everCreated: read.everCreated,
@@ -248,7 +279,7 @@ function notesOfARead(vault: Hex, read: Awaited<ReturnType<VaultBuilderClient['v
 /**
  * **THE VAULT'S NOTES AS THE CHAIN HOLDS THEM, READ ON THIS DEVICE**, for a
  * step that only asks whether a note it sent or spent has landed: the same read
- * as `vaultAsThisDeviceReadsIt`, without asking the wallet who holds the vault.
+ * as `vaultStandingHere`, without asking the wallet who holds the vault.
  */
 async function notesAsThisDeviceReadsThem(
   doors: Pick<ChainHereDoors, 'builder' | 'indexer'>, vault: Hex,
@@ -258,54 +289,159 @@ async function notesAsThisDeviceReadsThem(
 
 /**
  * **THE VAULT AS ITS START READS IT, ON THIS DEVICE**: its notes and every coin
- * ever made for it, and whether it is pinned to the company's account, as this
- * device's worker and the person's own wallet read them. Whether it is started
- * is not asked: this is the read a start is carried on from.
+ * ever made for it, as this device's worker and the person's own wallet read
+ * them. Whether it is started is not asked: this is the read a start is carried
+ * on from. `refusal` says why the start goes no further from this read (the
+ * read cannot be relied on, or the vault is not pinned to the company's
+ * account), and is null when it can.
  */
-async function theVaultReadForItsStart(doors: ChainHereDoors, vault: Hex): Promise<VaultChainView> {
+async function theVaultReadForItsStart(
+  doors: ChainHereDoors, vault: Hex,
+): Promise<{ readonly view: VaultChainView; readonly refusal: string | null }> {
   try {
-    return await vaultAsThisDeviceReadsIt(doors, vault, false);
+    const standing = await vaultStandingHere(doors, vault);
+    return { view: standing.view, refusal: startRefusalFrom(standing) };
   } catch (e) {
     if (e instanceof VaultNotReadHere || e instanceof VaultNotTheCompanys) throw new VaultStartOwed(vault, (e as Error).message);
     throw e;
   }
 }
 
-/**
- * **THE VAULT AS THIS DEVICE READS IT**: its notes, whether it is pinned to the
- * company's account the person's own wallet reads, and whether it is started.
- * Money goes in or out only while it is pinned to that account, since a vault
- * pays out on the approvals of the account it is pinned to. Who holds the
- * vault or the account is never read here: which keys hold each contract is
- * the super admins' own choice, and a change of them left half done stops no
- * payment and no deposit. The wallet is asked only whether the account adopted
- * the vault.
- */
-async function vaultAsThisDeviceReadsIt(doors: ChainHereDoors, vault: Hex, mustBeStarted = true): Promise<VaultChainView> {
-  const read = await readHere(doors, vault);
-  if (!read.onChain) return notesOfARead(vault, read);
-  await theVaultAsItsSignersHoldIt(doors, vault);
-  /* A vault pays out on the approvals of the account it is pinned to; a state that names none is not a vault's. */
-  const pinnedHere = read.account !== null && read.account.toLowerCase() === String(doors.account).toLowerCase();
-  const why = !pinnedHere
-    ? 'this vault is not pinned to your company\'s account, or its state is not a vault\'s, as the chain shows it, so '
-      + 'money in it would be paid out on somebody else\'s approvals; no money goes in or out of it.'
-    : mustBeStarted && !read.started
-      ? 'this vault has not been started: its first secret is not set, or not every signer\'s sealed copy is written.'
-      : null;
-  return {
-    ...notesOfARead(vault, read),
-    /* A read made for a start does not ask whether it is started, so it never says money may go in or out. */
-    fundable: mustBeStarted && why === null,
-    why,
+const NOT_PINNED_WHY = 'this vault is not pinned to your company\'s account, or its state is not a vault\'s, as the chain shows it, so '
+  + 'money in it would be paid out on somebody else\'s approvals; no money goes in or out of it.';
+const ACCOUNT_UNREAD_WHY = 'this vault\'s state could not be read as a vault\'s, so which account it is pinned to and whether it is started '
+  + 'are not known; no money goes in or out of it.';
+const NOT_STARTED_WHY = 'this vault has not been started: its first secret is not set, or not every signer\'s sealed copy is written.';
+
+/** One read of a vault on this device, before any verdict on whether money may go in or out. */
+type VaultStandingHere =
+  | { readonly onChain: false; readonly view: VaultChainView }
+  | {
+    readonly onChain: true;
+    readonly view: VaultChainView;
+    /**
+     * Why the read cannot be relied on (the account or the start flag could not be read, or the ledger is not this build's), or
+     * null when it can: `says` is the answer's sentence, `refuses` the words the doors that move money and the start give.
+     */
+    readonly unread: { readonly says: string; readonly refuses: string } | null;
+    readonly pinned: boolean;
+    readonly started: boolean;
   };
+
+/**
+ * **THE ONE READ OF A VAULT ON THIS DEVICE**: its notes, whether it is pinned to
+ * the company's account the person's own wallet reads, and whether it is
+ * started, with no verdict. Who holds the vault or the account is never read
+ * here: which keys hold each contract is the super admins' own choice, and a
+ * change of them left half done stops no payment and no deposit. The wallet is
+ * asked only whether the account adopted the vault. A read that fails, or a
+ * wallet that cannot say, throws as it always has.
+ */
+async function vaultStandingHere(doors: ChainHereDoors, vault: Hex): Promise<VaultStandingHere> {
+  const read = await readHere(doors, vault);
+  if (!read.onChain) return { onChain: false, view: notesOfARead(vault, read) };
+  /* The worker reports no account when the vault's state could not be read as a vault's; that is not a vault pinned elsewhere. */
+  const layout = 'this vault is not laid out the way this version of the product reads one, so what it holds and whether it is started '
+    + `are not known; no money goes in or out of it${read.notesWhy === undefined ? '' : ` (${read.notesWhy})`}.`;
+  const unread = read.account === null
+    ? { says: ACCOUNT_UNREAD_WHY, refuses: NOT_PINNED_WHY }
+    : !read.notesFromThisBuild ? { says: layout, refuses: layout } : null;
+  /* A read that cannot be relied on is judged before the wallet is asked whether the account adopted the vault. */
+  if (unread === null) await theVaultAsItsSignersHoldIt(doors, vault);
+  /* A vault pays out on the approvals of the account it is pinned to; a state that names none is not a vault's. */
+  const pinned = read.account !== null && read.account.toLowerCase() === String(doors.account).toLowerCase();
+  return { onChain: true, view: notesOfARead(vault, read), unread, pinned, started: read.started };
 }
 
-/** What the chain holds for one vault: as the service says it, or as this device read it (`vaultAsThisDeviceReadsIt`). */
+/**
+ * **WHETHER MONEY MAY GO IN OR OUT OF A VAULT, AS THIS DEVICE READS IT.** One
+ * answer, every state a page can show, each with its sentence. `fundable`:
+ * adopted by the company's account as the person's own wallet reads it, pinned
+ * to that account and started, all of it from the chain at the wallet's
+ * indexer and never from the company's service. `not-on-chain`: that indexer
+ * holds no state for the address. `not-adopted`: the account has not adopted
+ * it. `unreadable`: the wallet or the indexer could not be read, or the read
+ * of the vault cannot be relied on (its ledger is not this build's, or its
+ * state could not be read as a vault's). `pinned-elsewhere`: pinned to another
+ * account. `not-started`: its first secret or a signer's sealed copy is missing.
+ */
+export type VaultFundableHere =
+  | { readonly of: 'fundable'; readonly view: VaultChainView }
+  | { readonly of: 'not-on-chain'; readonly why: string }
+  | { readonly of: 'not-adopted'; readonly why: string }
+  | { readonly of: 'unreadable'; readonly why: string }
+  | { readonly of: 'pinned-elsewhere'; readonly why: string; readonly view: VaultChainView }
+  | { readonly of: 'not-started'; readonly why: string; readonly view: VaultChainView };
+
+/** The verdict on one read; the only place that says whether a vault may take or pay out money. */
+function fundableFrom(standing: VaultStandingHere, forADoor = false): VaultFundableHere {
+  if (!standing.onChain) return { of: 'not-on-chain', why: standing.view.why ?? NO_VAULT_YET };
+  if (standing.unread !== null) return { of: 'unreadable', why: forADoor ? standing.unread.refuses : standing.unread.says };
+  if (!standing.pinned) return { of: 'pinned-elsewhere', why: NOT_PINNED_WHY, view: standing.view };
+  if (!standing.started) return { of: 'not-started', why: NOT_STARTED_WHY, view: standing.view };
+  return { of: 'fundable', view: standing.view };
+}
+
+/**
+ * The answer, for a step that goes on to refuse in its own words: a vault in
+ * any state but the readable ones is an answer, and a read that fails, or a
+ * wallet that cannot say, throws `VaultNotReadHere` or `VaultNotTheCompanys`.
+ */
+async function fundableOrThrow(doors: ChainHereDoors, vault: Hex, forADoor = true): Promise<VaultFundableHere> {
+  return fundableFrom(await vaultStandingHere(doors, vault), forADoor);
+}
+
+/** Why a start goes no further from this read: the same read as the answer, judged for the start, which does not ask whether it is started. */
+function startRefusalFrom(standing: VaultStandingHere): string | null {
+  if (!standing.onChain) return null;
+  if (standing.unread !== null) return standing.unread.refuses;
+  return standing.pinned ? null : NOT_PINNED_WHY;
+}
+
+/**
+ * **THE ONE ANSWER A SCREEN CALLS** for whether money may go in or out of a
+ * vault (`VaultFundableHere`). It does not throw for a vault that is not on the
+ * chain, not adopted, unreadable, pinned elsewhere or not started; each is a
+ * state. Read on this device from the chain at the wallet's indexer and the
+ * person's own wallet; the company's service is not asked.
+ */
+export async function vaultFundableHere(doors: ChainHereDoors, vault: Hex): Promise<VaultFundableHere> {
+  try {
+    return await fundableOrThrow(doors, vault, false);
+  } catch (e) {
+    if (e instanceof VaultNotTheCompanys) {
+      return { of: e.kind === 'not-adopted' ? 'not-adopted' : 'unreadable', why: e.message };
+    }
+    if (e instanceof VaultNotReadHere) return { of: 'unreadable', why: e.message };
+    throw e;
+  }
+}
+
+/** What the chain holds for one vault, as this device read it (`vaultStandingHere`); nothing of who holds it. */
 export interface VaultChainView {
   readonly vault: Hex;
   readonly onChain: boolean;
   /** Base64 of the vault's contract state. */
+  readonly state?: string;
+  readonly notes?: readonly Hex[];
+  readonly everCreated?: readonly string[];
+  /** The vault's secret's commitment and its split journal (nullifier, masked amount), read only with `notes`. */
+  readonly nonceCommitment?: string;
+  readonly splitJournal?: ReadonlyArray<readonly [string, string]>;
+  /** Why the chain shows no vault at the address; only when `onChain` is false. */
+  readonly why?: string;
+  /** `true` only when the notes were read off a ledger of the shape this build's vault has. */
+  readonly notesFromThisBuild?: boolean;
+  readonly notesWhy?: string;
+}
+
+/**
+ * What the company's service answers for one vault's chain route, as the hand-over of a vault deployed with a temporary
+ * key reads it: the service's own read, never an answer to whether money may go in or out (`vaultFundableHere` is that).
+ */
+export interface ServedVaultChain {
+  readonly vault: Hex;
+  readonly onChain: boolean;
   readonly state?: string;
   readonly notes?: readonly Hex[];
   readonly everCreated?: readonly string[];
@@ -320,14 +456,8 @@ export interface VaultChainView {
   readonly heldByCommittee?: boolean;
   /** Base64 of the deploy the vault's address was made from, as the service kept it when it sent it. */
   readonly deployed?: string | null;
-  /**
-   * Whether money may go in or out now. Read on this device: the vault pinned
-   * to the company's account and started. As the service says it, the
-   * service's own checks of the account.
-   */
-  readonly fundable?: boolean;
-  readonly why?: string | null;
-  /** `true` only when the notes were read off a ledger of the shape this build's vault has. */
+  /** Whether the service reads the vault's first secret as set with every sealed copy written. */
+  readonly started?: boolean;
   readonly notesFromThisBuild?: boolean;
   readonly notesWhy?: string;
 }
@@ -347,7 +477,7 @@ export interface VaultService {
   keys(): Promise<VaultKeysView>;
   deploy(tx: string): Promise<{ vault: Hex; txRef: string }>;
   handover(vault: Hex, tx: string): Promise<{ txRef: string }>;
-  chain(vault: Hex): Promise<VaultChainView>;
+  chain(vault: Hex): Promise<ServedVaultChain>;
   deposit(vault: Hex, tx: string): Promise<{ txRef: string; transactionHash: string | null }>;
   /**
    * Sends a public deposit into the vault, with the network fee paid for it.
@@ -371,10 +501,11 @@ export interface VaultService {
   payoutPublicly(vault: Hex, tx: string): Promise<{ txRef: string; transactionHash: string | null }>;
   /**
    * **A STEP OF THE VAULT'S START ON THE COMPANY'S ACCOUNT**, proved on this
-   * device: the adoption round or the first secret run raised or approved, or
-   * the adoption carried out. Creating a vault needs these three.
+   * device: the adoption round or the first secret run approved, or the
+   * adoption carried out. Each is raised with its record instead
+   * (`VaultStartProposals`).
    */
-  startAccountCall?(vault: Hex, body: { tx: string; step: 'adoption' | 'secret-run'; call: 'propose' | 'approve' | 'adopt' }): Promise<StartStepSent>;
+  startAccountCall?(vault: Hex, body: { tx: string; step: 'adoption' | 'secret-run'; call: 'approve' | 'adopt' }): Promise<StartStepSent>;
   /** The vault's first secret set under its approved run. */
   startSecret?(vault: Hex, tx: string): Promise<StartStepSent>;
   /** One signer's sealed copy of the secret written, by its place in the approved tree. */
@@ -458,6 +589,40 @@ export interface CreateVaultDoors extends PoolDoors {
   readonly vaultName: (vault: Hex) => string;
   /** The time now, in milliseconds. */
   readonly clock?: () => number;
+  /** Where the vault's adoption and first secret run are written down as the company's proposals, and raised. */
+  readonly proposals: VaultStartProposals;
+  /**
+   * Where the vault's name and description are filed, right after the deploy,
+   * when the press gives them: the company's records through the one check.
+   * The seat, keys and entry are the ones the proposals are filed with.
+   */
+  readonly vaultInfo?: VaultInfoRecords;
+}
+
+/** What a new vault is called and what it is for, as the person creating it gives them. */
+export interface VaultInfoGiven {
+  readonly name: string;
+  readonly description: string;
+}
+
+/**
+ * **WHERE A NEW VAULT'S TWO PROPOSALS ARE WRITTEN DOWN AND RAISED**: the
+ * company's proposals as the service keeps them, believed only through the
+ * company's directory as this device reads it (`listedHere`); the account's
+ * call state a raise is built on; the company's keys the record is sealed
+ * under; and the one call that enters what this seat files in the company's
+ * records.
+ */
+export interface VaultStartProposals {
+  /** The company's id at the service, which its proposals are kept under. */
+  readonly accountId: string;
+  readonly service: Required<Pick<GovernedCallService, 'callState' | 'file' | 'send' | 'sealedProposals'>>;
+  readonly directory: DirectoryRead;
+  /** The company's keys, as this device holds them: each record is sealed under the one in force. */
+  readonly companyKeys: KeysHeld;
+  /** This seat's filing key: what the company's directory names the seat by, and what signs each record and relay. */
+  readonly signingSecret: Hex;
+  readonly entered: RecordsEntered;
 }
 
 /**
@@ -483,7 +648,7 @@ export interface SecretReaderSources {
 }
 
 /** Where the press ended: the vault started, or a round of its start waiting for other signers' approvals. */
-export type VaultCreated =
+export type VaultCreated = (
   | { readonly vault: Hex; readonly state: 'started' }
   | {
     readonly vault: Hex; readonly state: 'awaiting-approvals';
@@ -492,7 +657,17 @@ export type VaultCreated =
       readonly round: 'adoption' | 'first-secret'; readonly proposal: Hex;
       readonly approvals: number; readonly needed: number;
     };
-  };
+  }
+) & {
+  /**
+   * What this press could not leave in the company's records, each said in a
+   * sentence: the vault's name and description when they were given and not
+   * filed, and each of the vault's two setup proposals the chain holds and that
+   * was not written down. The start carries on without them, since nothing it
+   * does reads those records.
+   */
+  readonly said?: readonly string[];
+};
 
 /**
  * **THE VAULT WAS HANDED TO THE COMMITTEE AND ITS START IS NOT FINISHED.**
@@ -577,13 +752,29 @@ async function readBornHeld(doors: CreateVaultDoors, vault: Hex): Promise<void> 
  * key, no hand-over, and nothing to forget. Then it is read as it was born and
  * started. With `resume`, a vault already sent is read as it was born and its
  * start carried on.
+ *
+ * With `info`, the vault's name and description are checked before anything is
+ * built, and filed right after the deploy (`fileVaultInfoHere`) by a seat that
+ * may file them; when they are not filed, the vault is still created and why is
+ * said. On a resume they are filed only if the vault has none yet.
  */
 export async function createCompanyVault(
-  doors: CreateVaultDoors, resume?: Hex,
+  doors: CreateVaultDoors, resume?: Hex, info?: VaultInfoGiven,
 ): Promise<VaultCreated> {
+  let tidied: VaultInfoGiven | undefined;
+  if (info !== undefined) {
+    try {
+      tidied = vaultInfoTidied(info);
+    } catch (e) {
+      throw new VaultInfoRefused(`No vault was built: ${(e as Error).message} Nothing was sent.`, { cause: e });
+    }
+  }
   let vault = resume;
   if (vault === undefined) {
     doors.progress?.('checking the committee');
+    /* Refused before the deploy, so a seat that could not raise the vault's adoption spends no fee on a vault it cannot start. */
+    const may = await seatMayRaise(doors);
+    if (may !== null) throw new Error(`No vault was built: ${may} Nothing was sent.`);
     const holders = await theCommitteeAVaultIsBornHeldBy(doors);
     if (doors.builder.bornHeldVault === undefined) {
       throw new Error('this page cannot build a vault held by the company from the start. Reload it to get the current version.');
@@ -603,13 +794,39 @@ export async function createCompanyVault(
         + 'nothing is carried on with that one.');
     }
   }
+  const notNamed = tidied === undefined ? null : await vaultInfoFiledAtTheDeploy(doors, vault, tidied);
   await readBornHeld(doors, vault);
-  return startCompanyVault(doors, vault);
+  const done = await startCompanyVault(doors, vault);
+  return notNamed === null ? done : { ...done, said: [notNamed, ...(done.said ?? [])] };
 }
 
 /**
- * **THE OLD HAND-OVER, LEFT UNUSED.** Nothing above calls it: a vault is born
- * held. It is removed with the rest of the hand-over.
+ * Files a new vault's name and description, as `fileVaultInfoHere` does, with
+ * the seat, keys and entry its proposals are filed with. Never throws: a name
+ * not filed is said, and the vault's creation carries on.
+ */
+async function vaultInfoFiledAtTheDeploy(doors: CreateVaultDoors, vault: Hex, info: VaultInfoGiven): Promise<string | null> {
+  const notFiled = (why: string): string => `This vault was created without its name and description: ${why} An admin names it later.`;
+  if (doors.vaultInfo === undefined) return notFiled('this page cannot file them. Reload it to get the current version.');
+  const p = doors.proposals;
+  try {
+    await fileVaultInfoHere(
+      { accountId: p.accountId, companyKeys: p.companyKeys, signingSecret: p.signingSecret, directory: p.directory, entered: p.entered, records: doors.vaultInfo },
+      { vault, name: info.name, description: info.description, over: null },
+    );
+    return null;
+  } catch (e) {
+    if (e instanceof VaultInfoChanged) return 'This vault already has a name, given before this press, so the one given here was not filed.';
+    const why = String((e as Error)?.message ?? e).replace(/^This vault's name was not filed: /u, '')
+      .replace(/\s*Nothing was filed\.\s*$/u, '').replace(/([^.])$/u, '$1.');
+    return notFiled(why);
+  }
+}
+
+/**
+ * **A VAULT DEPLOYED WITH A TEMPORARY KEY, THEN HANDED TO THE COMMITTEE.**
+ * Kept for vaults created that way; `createCompanyVault` deploys a vault
+ * already held and does not call it.
  */
 export async function createCompanyVaultByHandover(
   doors: CreateVaultDoors, resume?: Hex,
@@ -667,7 +884,7 @@ async function finishHandover(doors: CreateVaultDoors, vault: Hex): Promise<{ va
     }
     const authority = view.authority;
     if (!authority || authority.shape !== 'one-key' || !view.committee) {
-      throw new VaultHandoverOwed(vault, view.why ?? 'the chain shows an authority this device cannot hand over.');
+      throw new VaultHandoverOwed(vault, 'the chain shows an authority this device cannot hand over.');
     }
     const key = await doors.keys.get(vault);
     if (key === null) {
@@ -766,10 +983,10 @@ const nothingMoves = (asset: string, salt: string) => ({
   assetId: asset, assetBlinding: randomHex(), proposalSalt: salt, changeAmount: '0', changeBatchDigest: ZERO_HEX,
 });
 
-/** Builds one of the start's calls on the account here and sends it. */
+/** Builds one of the start's approvals or its adoption on the account here and sends it. */
 async function accountStep(
   doors: CreateVaultDoors, vault: Hex, chain: Awaited<ReturnType<VaultService['payoutState']>>,
-  step: 'adoption' | 'secret-run', order: GovernedCallOrder, opened: OpenedRound, what: string,
+  step: 'adoption' | 'secret-run', order: GovernedCallOrder & { readonly circuit: 'approve' | 'adopt' }, opened: OpenedRound, what: string,
 ): Promise<'sent' | 'already-approved'> {
   let tx: string;
   try {
@@ -780,9 +997,200 @@ async function accountStep(
     if (order.circuit === 'approve' && /you have already approved this proposal/u.test(why)) return 'already-approved';
     throw new VaultStartOwed(vault, `${what} could not be built on this device (${why}). Nothing was sent.`);
   }
-  await sent(vault, what, () => startDoorsOf(doors, vault).accountCall(vault, { tx, step, call: order.circuit as 'propose' | 'approve' | 'adopt' }));
+  await sent(vault, what, () => startDoorsOf(doors, vault).accountCall(vault, { tx, step, call: order.circuit }));
   return 'sent';
 }
+
+/**
+ * Why this seat may not raise a proposal of the company's, or null: its entry in
+ * the company's directory as this device reads it, a seat this device believes
+ * by the one rule every reader judges a filing by (`seatNotBelievedHere`), with a
+ * role that may file one (`mayFile`). A record filed by any other seat is believed by
+ * no device, so its raise is refused here before anything is sent.
+ */
+async function seatMayRaise(doors: CreateVaultDoors): Promise<string | null> {
+  const here = await doors.proposals.directory();
+  return seatMayRaiseIn(doors.proposals, here);
+}
+
+const seatMayRaiseIn = (p: Pick<VaultStartProposals, 'signingSecret'>, here: Awaited<ReturnType<DirectoryRead>>): string | null => {
+  const me = signingPublicKeyOf(p.signingSecret).toLowerCase();
+  const mine = here.dir.seats.find((x) => x.signingKey.toLowerCase() === me);
+  if (mine === undefined) return 'the company\'s directory, as this device reads it, holds no seat under your keys.';
+  const off = seatNotBelievedHere(here, mine);
+  if (off !== null) return `your seat is not one this device believes: ${off}.`;
+  if (!mayFile(mine).includes('proposal')) {
+    return 'your seat\'s role on this company may not raise proposals, and setting up a vault raises two. A signer whose role '
+      + 'may raise proposals sets it up.';
+  }
+  return null;
+};
+
+/** One of the two proposals a vault's start raises: its identity on the chain, and its record as this device seals it. */
+interface StartRound {
+  readonly what: string;
+  /** The proposal by name, as a sentence says it after "the vault's": "adoption". */
+  readonly called: string;
+  readonly chainId: string;
+  readonly digest: string;
+  readonly salt: string;
+  /** The vault the identity is made for, given only for the first secret run, whose one leaf pays a zero amount of no asset. */
+  readonly named?: string;
+  readonly seal: (key: Hex) => Sealed;
+}
+
+/**
+ * **A START'S PROPOSAL WRITTEN DOWN AS THE COMPANY'S, AND RAISED WITH IT.**
+ * Run on every pass, keyed by the proposal's identity on the chain: the record
+ * the company's proposals already hold for it, read only through the company's
+ * directory as this device believes it (`listedHere`), or none, in which case
+ * this seat seals and signs one. With `raise`, the chain does not hold the
+ * proposal yet: the call is built on the account's call state and sent with
+ * the record in one request, written down first and then relayed
+ * (`submitProvenCall`), or sent again under the record already there. Without
+ * it the chain holds it, and only the record is written down. What this seat
+ * filed is then entered in the company's records. A record served under the
+ * identity that this company could not have written down for this proposal -
+ * its filing signature does not hold, or it is over another payload - is
+ * refused by name and neither entered nor raised under, whatever key it names.
+ *
+ * The approvals, the adoption and the secret read nothing written here: they
+ * are made from the chain. So once the raise is sent, or with none to send,
+ * nothing here stops the start: a record the service will not give or keep,
+ * one this device cannot seal while the company's key is being changed, one
+ * not entered, or another seat's record that seat has not entered yet, is
+ * returned as a sentence for the press to say, and written down or entered on
+ * a later press. Null when the record is written down and believed.
+ */
+async function proposedAndWrittenDown(
+  doors: CreateVaultDoors, vault: Hex, round: StartRound,
+  raise?: { readonly order: GovernedCallOrder; readonly opened: OpenedRound },
+): Promise<string | null> {
+  const p = doors.proposals;
+  const own = signingPublicKeyOf(p.signingSecret).toLowerCase();
+  const notWrittenDown = (why: string): string => `The vault's ${round.called} is on the chain and is not written down in the `
+    + `company's records yet: ${why}. Setting the vault up carries on; pressing again writes it down.`;
+  const chainId = round.chainId.toLowerCase();
+  let found: SealedProposal | undefined;
+  let may: string | null;
+  try {
+    const [served, here] = await Promise.all([p.service.sealedProposals(p.accountId), p.directory(kindAsked('proposal'))]);
+    found = listedHere(here, 'proposal', served, 'proposal')
+      .find((r) => r.accountId === p.accountId && String(r.chainId).toLowerCase() === chainId);
+    may = seatMayRaiseIn(p, here);
+  } catch (e) {
+    if (raise === undefined) return notWrittenDown(`the company's proposals could not be read (${(e as Error)?.message ?? e})`);
+    throw new VaultStartOwed(vault, `the company's proposals could not be read, so ${round.what} was not sent (${(e as Error)?.message ?? e}).`);
+  }
+  /*
+   * A record served under this proposal's identity is acted on only if it is one the company could have written down
+   * for this very proposal: signed by the seat it names, for this company, over this proposal's payload. Anything else
+   * is not entered or sent under, whoever it names as its filer.
+   */
+  if (found !== undefined && (proposalFilingRefusal(p.accountId, found) !== null
+    || String(found.digest).toLowerCase() !== round.digest.toLowerCase())) {
+    throw new VaultStartOwed(vault, `the company's proposals hold a record, ${found.id}, under the identity of the vault's ${round.called} `
+      + 'that is not a record of it this company could have written down, so it is neither entered nor raised under. Nothing was sent.');
+  }
+  if (raise !== undefined && may !== null) throw new VaultStartOwed(vault, `${may} Nothing was sent.`);
+  if (found === undefined && may !== null) return notWrittenDown(may.replace(/\.$/u, ''));
+  let tx: string | undefined;
+  if (raise !== undefined) {
+    tx = (await buildOrOwe(vault, round.what, async () => {
+      const chain = await p.service.callState(p.accountId);
+      return doors.builder.governedCall({ account: chain.account, order: raise.order, material: doors.material, chain, opened: raise.opened });
+    })).tx;
+  }
+  let entry: ReturnType<typeof proposalEntry> | null = null;
+  if (found !== undefined) {
+    const id = found.id;
+    if (tx !== undefined) {
+      const body = { tx, version: DEVICE_RAISE_VERSION, filer: own };
+      await sent(vault, round.what, () => p.service.send(id, body));
+    }
+    if (found.filedBy?.publicKey.toLowerCase() === own) {
+      entry = proposalEntry(p.accountId, found);
+    } else {
+      /* Another seat's record is entered only by that seat's device; until then no device believes it, which is said. */
+      try {
+        await believedFilerHere({ directory: p.directory }, p.accountId, found);
+        return null;
+      } catch {
+        return notWrittenDown(`the record of it was written down by another signer, and is believed once that signer's device enters it`);
+      }
+    }
+  } else {
+    const filed = (): { readonly filing: ReturnType<typeof signProposalFiling>; readonly body: Parameters<VaultStartProposals['service']['file']>[1] } => {
+      const sealing = sealingWith(p.companyKeys, 0);
+      const filing = signProposalFiling(p.accountId, {
+        id: newProposalId(), digest: round.digest.toLowerCase() as Hex, chainId: chainId as Hex,
+        keyEpoch: sealing.epoch, createdAt: new Date().toISOString(), sealed: round.seal(sealing.key),
+      }, p.signingSecret);
+      return {
+        filing,
+        body: {
+          proposal: filing, salt: round.salt.toLowerCase(), ...(round.named === undefined ? {} : { vault: round.named.toLowerCase() }),
+          ...(tx === undefined ? {} : { tx, version: DEVICE_RAISE_VERSION }),
+        },
+      };
+    };
+    let made: ReturnType<typeof filed>;
+    if (tx === undefined) {
+      /* The chain holds it already: a record that cannot be sealed or kept now is written down on the next press. */
+      try {
+        made = filed();
+        await p.service.file(p.accountId, made.body);
+      } catch (e) {
+        return notWrittenDown(`${(e as Error)?.message ?? e}`.replace(/\.$/u, ''));
+      }
+    } else {
+      try {
+        made = filed();
+      } catch (e) {
+        throw new VaultStartOwed(vault, `${round.what} could not be sealed on this device (${(e as Error)?.message ?? e}). Nothing was sent.`);
+      }
+      await sent(vault, round.what, () => p.service.file(p.accountId, made.body));
+    }
+    entry = proposalEntry(p.accountId, made.filing);
+  }
+  if (entry === null) return null;
+  try {
+    await p.entered.enter([entry]);
+    return null;
+  } catch (e) {
+    /* Written down: entered on the next press, which finds it here again. */
+    return notWrittenDown(`it is written down and was not entered in the company's records (${(e as Error)?.message ?? e})`);
+  }
+}
+
+/** A new vault's adoption, as its record is sealed: a governance proposal for no vault, naming the vault it adopts. */
+const adoptionRound = (doors: CreateVaultDoors, vault: Hex, a: StartStandingOnTheWire['adoption'], summary: string): StartRound => ({
+  what: 'raising its adoption', called: 'adoption', chainId: a.proposal, digest: a.payload, salt: a.salt,
+  seal: (key) => sealGovernanceProposal({
+    accountId: doors.proposals.accountId, viewingKey: key, kind: ADOPT_VAULT, summary, noVault: a.named as Hex,
+    body: { vault }, change: { asset: NO_ASSET, amount: 0n, batchDigest: ZERO_HEX as Hex, salt: a.salt as Hex },
+    proposedBy: doors.me.signerId,
+  }),
+});
+
+/**
+ * A new vault's first secret run, as its record is sealed: its root, payee
+ * count and window, never the secret, the nonce or a copy of the secret
+ * (`sealVaultSecretProposal` takes none of them).
+ */
+const secretRunRound = (
+  doors: CreateVaultDoors, vault: Hex, run: SecretRunOnTheWire,
+  round: { readonly proposal: string; readonly payload: string; readonly named: string; readonly salt: string; readonly opensAt: string; readonly closesAt: string },
+  summary: string,
+): StartRound => ({
+  what: 'raising its first secret', called: 'first secret run', chainId: round.proposal, digest: round.payload, salt: round.salt, named: round.named,
+  seal: (key) => sealVaultSecretProposal({
+    accountId: doors.proposals.accountId, viewingKey: key, summary,
+    run: { vault, root: run.root as Hex, payees: String(run.payees), opensAt: String(round.opensAt), closesAt: String(round.closesAt) },
+    change: { asset: run.asset, amount: 0n, batchDigest: ZERO_HEX as Hex, salt: round.salt as Hex },
+    proposedBy: doors.me.signerId,
+  }),
+});
 
 /**
  * **STEP 5: THE VAULT STARTED, FROM WHAT THE CHAIN SHOWS.** Each step is raised
@@ -795,6 +1203,13 @@ async function startCompanyVault(doors: CreateVaultDoors, vault: Hex): Promise<V
   /* ---- a. the company's account adopts the vault ---- */
   doors.progress?.('adopting the vault');
   let at = await standingNow(doors, vault);
+  /* What this press could not leave written down of the two setup proposals, said with whatever the press comes to. */
+  const said: string[] = [];
+  const sayIt = (sentence: string | null): void => { if (sentence !== null && !said.includes(sentence)) said.push(sentence); };
+  const saying = (): { readonly said?: readonly string[] } => (said.length === 0 ? {} : { said: [...said] });
+  const adoption = adoptionRound(doors, vault, at.standing.adoption, 'Add a new vault to the company');
+  /* Whatever the chain shows, the adoption it holds is written down and entered. */
+  if (at.standing.adopted || at.standing.adoption.open) sayIt(await proposedAndWrittenDown(doors, vault, adoption));
   if (!at.standing.adopted) {
     const a = at.standing.adoption;
     const governance = { kind: 'adopt-vault', vault } as const;
@@ -803,8 +1218,9 @@ async function startCompanyVault(doors: CreateVaultDoors, vault: Hex): Promise<V
       summary: 'Add a new vault to the company', governance,
     };
     if (a.stale) {
-      throw new VaultStartOwed(vault, 'a signer left the company after its adoption was raised, so that round can no '
-        + 'longer be carried out. Create a new vault instead; this one holds nothing.');
+      throw new VaultStartOwed(vault, 'a signer was removed or replaced after its adoption was raised, so the chain will '
+        + 'not carry that round out. This app cannot withdraw it: the signer who raised it can withdraw it on the chain and it '
+        + 'can then be raised again, or a new vault can be created instead. This one holds nothing.');
     }
     /* No adoption this device raises, approves or carries out leaves the new vault, or any other, unable to pay. */
     try {
@@ -813,9 +1229,10 @@ async function startCompanyVault(doors: CreateVaultDoors, vault: Hex): Promise<V
       throw new VaultStartOwed(vault, `${(e as Error).message.replace(/ Nothing was approved\.$/u, '')} Nothing was sent.`);
     }
     if (!a.open) {
-      await accountStep(doors, vault, at.chain, 'adoption', {
-        circuit: 'propose', adoption: governance, half: nothingMoves(noAsset, a.salt), proposal: a.proposal,
-      }, { ...opened, half: { assetId: noAsset, changeAmount: '0', changeBatchDigest: ZERO_HEX } }, 'raising its adoption');
+      sayIt(await proposedAndWrittenDown(doors, vault, adoption, {
+        order: { circuit: 'propose', adoption: governance, half: nothingMoves(noAsset, a.salt), proposal: a.proposal },
+        opened: { ...opened, half: { assetId: noAsset, changeAmount: '0', changeBatchDigest: ZERO_HEX } },
+      }));
       at = await untilTheChainShows(doors, vault, 'raising its adoption', (n) => n.standing.adoption.open || n.standing.adopted);
     }
     if (!at.standing.adopted && at.standing.adoption.approvals < at.standing.adoption.needed) {
@@ -831,7 +1248,7 @@ async function startCompanyVault(doors: CreateVaultDoors, vault: Hex): Promise<V
       const now = at.standing.adoption;
       if (now.approvals < now.needed) {
         doors.progress?.('waiting for approvals');
-        return { vault, state: 'awaiting-approvals', awaiting: { round: 'adoption', proposal: a.proposal as Hex, approvals: now.approvals, needed: now.needed } };
+        return { vault, state: 'awaiting-approvals', awaiting: { round: 'adoption', proposal: a.proposal as Hex, approvals: now.approvals, needed: now.needed }, ...saying() };
       }
       await accountStep(doors, vault, at.chain, 'adoption',
         { circuit: 'adopt', vault, proposal: a.proposal, proposalSalt: a.salt }, opened, 'adopting it');
@@ -880,6 +1297,11 @@ async function startCompanyVault(doors: CreateVaultDoors, vault: Hex): Promise<V
     throw new VaultStartOwed(vault, 'it already holds a secret other than the one the company\'s records hold, so its '
       + 'first secret is not set again. Nothing was sent.');
   }
+  {
+    /* A first secret run the chain holds in its window for this secret is written down and entered, whatever else it shows. */
+    const held = at.standing.secret.run;
+    if (held !== null && held.inWindow) sayIt(await proposedAndWrittenDown(doors, vault, secretRunRound(doors, vault, run, held, 'Finish setting up a new vault')));
+  }
   if (!at.standing.secret.set) {
     thisSignersCopyOpens(doors, vault, secret, run, readers);
     await everyReaderChecksOut(doors, vault, run.copies.map((c) => String(c.reader)));
@@ -895,16 +1317,20 @@ async function startCompanyVault(doors: CreateVaultDoors, vault: Hex): Promise<V
       const raise = fresh.standing.secret?.raise;
       if (raise === undefined) throw new VaultStartOwed(vault, 'its first secret run could not be made.');
       await stillTheNewestFiled(doors, vault, secret, 'its first secret run');
-      await accountStep(doors, vault, fresh.chain, 'secret-run', {
-        circuit: 'propose',
-        run: { root: run.root, payees: run.payees, opensAt: raise.opensAt, closesAt: raise.closesAt, vault, required: '0' },
-        half: nothingMoves(run.asset, raise.salt), proposal: raise.proposal,
-      }, {
-        chainId: raise.proposal, digest: raise.payload, vault: raise.named, salt: raise.salt,
-        summary: 'Finish setting up a new vault',
-        half: { assetId: run.asset, changeAmount: '0', changeBatchDigest: ZERO_HEX },
-        made: { kind: 'vault-secret', vault, secret: secret.secret, readers: [...secret.readers], opensAt: raise.opensAt, closesAt: raise.closesAt },
-      }, 'raising its first secret');
+      /* The secret goes only to the call built here (`made`); the record is sealed from the run's public parts. */
+      sayIt(await proposedAndWrittenDown(doors, vault, secretRunRound(doors, vault, run, raise, 'Finish setting up a new vault'), {
+        order: {
+          circuit: 'propose',
+          run: { root: run.root, payees: run.payees, opensAt: raise.opensAt, closesAt: raise.closesAt, vault, required: '0' },
+          half: nothingMoves(run.asset, raise.salt), proposal: raise.proposal,
+        },
+        opened: {
+          chainId: raise.proposal, digest: raise.payload, vault: raise.named, salt: raise.salt,
+          summary: 'Finish setting up a new vault',
+          half: { assetId: run.asset, changeAmount: '0', changeBatchDigest: ZERO_HEX },
+          made: { kind: 'vault-secret', vault, secret: secret.secret, readers: [...secret.readers], opensAt: raise.opensAt, closesAt: raise.closesAt },
+        },
+      }));
       at = await untilTheChainShows(doors, vault, 'raising its first secret',
         (n) => n.standing.secret?.run?.proposal === raise.proposal || n.standing.secret?.set === true, secret);
       found = at.standing.secret!.run;
@@ -928,7 +1354,7 @@ async function startCompanyVault(doors: CreateVaultDoors, vault: Hex): Promise<V
       if (found === null) throw new VaultStartOwed(vault, 'its first secret run is not on the chain.');
       if (found.approvals < found.needed) {
         doors.progress?.('waiting for approvals');
-        return { vault, state: 'awaiting-approvals', awaiting: { round: 'first-secret', proposal: found.proposal as Hex, approvals: found.approvals, needed: found.needed } };
+        return { vault, state: 'awaiting-approvals', awaiting: { round: 'first-secret', proposal: found.proposal as Hex, approvals: found.approvals, needed: found.needed }, ...saying() };
       }
       await stillTheNewestFiled(doors, vault, secret, 'its first secret');
       /* Read afresh right before the secret is set, not only before the run was raised: a signer may have left since. */
@@ -969,7 +1395,7 @@ async function startCompanyVault(doors: CreateVaultDoors, vault: Hex): Promise<V
     at = await untilTheChainShows(doors, vault, 'the last sealed copy', (n) => n.standing.secret?.started === true, secret);
   }
   doors.progress?.('done');
-  return { vault, state: 'started' };
+  return { vault, state: 'started', ...saying() };
 }
 
 /**
@@ -1096,6 +1522,8 @@ export interface PoolDoors extends Pacing {
   readonly myRecordsKey: Hex;
   readonly signers: () => Promise<readonly PoolSigner[]>;
   readonly records: DeviceRecords;
+  /** The deposit coins this device has believed, kept sealed in this browser (`vault-coins-kept-here.ts`); absent, none are kept. */
+  readonly kept?: CoinsKeptHere;
 }
 
 /** The vault's nonce secret as this device holds it: made in this press, or read back from the company's records. */
@@ -1168,7 +1596,8 @@ const openNow = (run: { readonly open: boolean; readonly inWindow: boolean } | n
 async function startTheSecretAgain(
   doors: CreateVaultDoors, vault: Hex, filed: SealedPool, beforeFiling: (readers: readonly Hex[]) => Promise<void>,
 ): Promise<SecretReadBack> {
-  const view = await theVaultReadForItsStart(doors, vault);
+  const { view, refusal } = await theVaultReadForItsStart(doors, vault);
+  if (refusal !== null) throw new VaultStartOwed(vault, refusal);
   const { readers } = await doors.service.keys();
   await beforeFiling(readers);
   const others: NonceSecretReader[] = readers
@@ -1196,10 +1625,10 @@ export async function openCompanyVaultPool(
   doors: PoolDoors, vault: Hex, beforeFiling: (readers: readonly Hex[]) => Promise<void>,
 ): Promise<SecretReadBack> {
   doors.progress?.('opening the pool');
-  const view = await theVaultReadForItsStart(doors, vault);
-  /* Pinned to the company's account, as this device read it. */
-  if (!view.onChain || (view.why ?? null) !== null) {
-    throw new Error(view.why ?? 'the chain does not show this vault yet, so its pool is not opened.');
+  const { view, refusal } = await theVaultReadForItsStart(doors, vault);
+  /* A read that can be relied on, of a vault pinned to the company's account, as this device read it. */
+  if (!view.onChain || refusal !== null) {
+    throw new Error(refusal ?? view.why ?? 'the chain does not show this vault yet, so its pool is not opened.');
   }
   const everCreated = new Set(view.everCreated ?? []);
   const pool = new SealedNotePool(doors.records('pool'),
@@ -1382,7 +1811,7 @@ type CreatingTransactionFound =
  * worker that cannot answer yet, and asking again may answer it.
  */
 async function creatingTransactionOfOutput(
-  doors: { readonly builder: VaultBuilderClient; readonly indexer: ChainHereDoors['indexer'] },
+  doors: { readonly builder: Pick<VaultBuilderClient, 'creatingTransaction' | 'eventsOf' | 'createdBy'>; readonly indexer: ChainHereDoors['indexer'] },
   vault: Hex, output: string, transactionHash: string | null,
   /** What the output is, as a refusal names it. */
   what = 'this deposit',
@@ -1479,6 +1908,15 @@ async function recordLandedDeposit(
       if (!isALostPoolRace(cause) || attempt === ATTEMPTS) throw cause;
     }
   }
+  /*
+   * The coin is kept on this device before its record of the deposit on its way is let go, so a rebuild here finds
+   * it even when the company's service withholds the journal and the pool. A keep that fails loses nothing filed.
+   */
+  try {
+    await doors.kept?.keep(vault, [coin]);
+  } catch {
+    /* The deposit is recorded in the vault's pool; only this device's own extra copy of its coin is missing. */
+  }
   await letGo(doors, vault, d.claim);
   return { note, ...(found.state === 'unknown' ? { notYetSpendable: found.why } : {}) };
 }
@@ -1574,14 +2012,11 @@ export async function depositIntoCompanyVault(
   earlier?: Awaited<ReturnType<typeof settleDepositInFlight>>;
 } & DepositRecorded> {
   /* Read on this device, with the vault one the company's account adopted as this signer's own wallet reads the chain. */
-  const view = await vaultAsThisDeviceReadsIt(doors, vault);
-  if (!view.onChain || view.state === undefined) {
-    throw new Error(view.why ?? 'the chain does not show this vault\'s state, so no money goes in.');
-  }
+  const answer = await fundableOrThrow(doors, vault);
   /* Asked before a coin is chosen or the wallet is asked, so a deposit into a vault not yet started books nothing. */
-  if (view.fundable !== true) {
-    throw new Error(view.why ?? 'this vault cannot take money yet, so no money goes in.');
-  }
+  if (answer.of !== 'fundable') throw new Error(answer.why);
+  const view = answer.view;
+  if (view.state === undefined) throw new Error('the chain does not show this vault\'s state, so no money goes in.');
   /*
    * **AN EARLIER DEPOSIT FROM THIS DEVICE IS SETTLED FIRST.** Recorded if it has
    * landed, forgotten if it never can; while it still can, no coin is chosen
@@ -1744,14 +2179,11 @@ export async function depositPubliclyIntoCompanyVault(
   if (typeof doors.service.depositPublicly !== 'function') {
     throw new Error('this page cannot send a public deposit, so nothing was built or sent. No money moved. Reload the page and try again; if it happens again, the service needs attention.');
   }
-  const view = await vaultAsThisDeviceReadsIt(doors, vault);
-  if (!view.onChain || view.state === undefined) {
-    throw new Error(view.why ?? 'the chain does not show this vault\'s state, so no money goes in.');
-  }
+  const answer = await fundableOrThrow(doors, vault);
   /* Asked before the wallet is, so a deposit into a vault not yet started asks the wallet for nothing. */
-  if (view.fundable !== true) {
-    throw new Error(view.why ?? 'this vault cannot take money yet, so no money goes in.');
-  }
+  if (answer.of !== 'fundable') throw new Error(answer.why);
+  const view = answer.view;
+  if (view.state === undefined) throw new Error('the chain does not show this vault\'s state, so no money goes in.');
   const parameters = await chainParametersForADeposit(doors, vault);
   if (typeof doors.builder.publicDeposit !== 'function') {
     throw new Error('this page cannot build a public deposit, so nothing was built or sent. No money moved. Reload the page and try again; if it happens again, the service needs attention.');
@@ -1827,6 +2259,8 @@ export interface PayoutDoors extends PoolDoors {
   readonly now?: () => Date;
   /** Where this device keeps a payment it has sent until the vault's record shows it. */
   readonly inFlight: PaymentsInFlight;
+  /** This device's own seat as its believed directory holds it: a rebuild on the way to a payment files only what its role may file. */
+  readonly seatHere: RebuildDoors['seatHere'];
 }
 
 /**
@@ -2276,19 +2710,489 @@ const heldOfANote = async (doors: Pick<PayoutDoors, 'builder'>, vault: Hex, n: N
   (await doors.builder.commitments({ vault, coin: { nonce: n.nonce, token: n.token, value: n.value } })).held.toLowerCase();
 
 /**
+ * **WHAT A REBUILD OF A VAULT'S NOTES NEEDS**: the vault read on this device at
+ * the wallet's indexer, this signer's keys and the company's records through
+ * the one check every reader uses, the worker that rebuilds, and the coins this
+ * device keeps. Every payment's and deposit's doors carry all of it.
+ */
+export interface RebuildDoors extends ChainHereDoors {
+  readonly builder: Pick<VaultBuilderClient, 'vaultOnChain' | 'commitments' | 'creatingTransaction' | 'eventsOf' | 'createdBy'>
+    & Partial<Pick<VaultBuilderClient, 'vaultRebuilt'>>;
+  readonly me: DeviceSigner;
+  readonly records: DeviceRecords;
+  readonly signers: () => Promise<readonly PoolSigner[]>;
+  readonly kept?: CoinsKeptHere;
+  /**
+   * This device's own seat as its believed directory holds it (`seatHereIn`), or null when the directory holds no seat
+   * of this device's that it believes. The rebuild files a vault record only where that seat's role may file it
+   * (`mayFile`); a seat this device cannot name files nothing, and what was found is returned in memory.
+   */
+  readonly seatHere: () => Promise<{ readonly role: Role | null; readonly retired: unknown } | null>;
+}
+
+/**
+ * This device's own seat in the directory it believes, found by the key it files with, or null when it holds none
+ * or holds one this device does not believe (`seatNotBelievedHere`: not attested by its own wallet, retired, or not on
+ * the chain now) - the one rule every reader of a seat keeps.
+ */
+export const seatHereIn = async (
+  directory: DirectoryRead, signingSecret: Hex,
+): Promise<{ readonly role: Role | null; readonly retired: unknown } | null> => {
+  const me = signingPublicKeyOf(signingSecret).toLowerCase();
+  const here = await directory();
+  const mine = here.dir.seats.find((x) => x.signingKey.toLowerCase() === me);
+  return mine === undefined || seatNotBelievedHere(here, mine) !== null ? null : mine;
+};
+
+type VaultRecordKind = 'pool' | 'deposit-journal' | 'payment-journal';
+
+/** The vault records this device's seat may file: none for a seat it cannot name, a retired one, or a role that files none. */
+async function filableHere(doors: RebuildDoors, said: string[]): Promise<ReadonlySet<VaultRecordKind>> {
+  let seat: { readonly role: Role | null; readonly retired: unknown } | null = null;
+  try {
+    seat = await doors.seatHere();
+  } catch (e) {
+    said.push(`this device's own seat was not read from the company's directory: ${failedSaying(e)}`);
+  }
+  if (seat === null || seat.retired !== null) return new Set();
+  const kinds = mayFile(seat);
+  return new Set((['pool', 'deposit-journal', 'payment-journal'] as const).filter((k) => kinds.includes(k)));
+}
+
+/**
+ * The vault's notes as this device rebuilt them. `as-filed`: the record already
+ * held every note the vault holds, and is what the vault's steps are planned
+ * from. `filed`: a new version was filed holding them. `not-filed`: the notes
+ * found are in `notes` and nothing was filed (this seat may not file, or the
+ * record could not be read or written); a step is never planned from them.
+ * `not-read`: the vault could not be read. `said` is every record withheld or
+ * not believed, every line not read and every note not named, in words.
+ * `leaver` is the part of it a leaving seat's filings left: what the chain
+ * contradicts in them, which a balance read shows as its answer.
+ */
+export type NotesHere = (
+  | { readonly of: 'as-filed' | 'filed' | 'not-filed'; readonly notes: readonly Note[]; readonly unexplained: number; readonly said: readonly string[] }
+  | { readonly of: 'not-read'; readonly said: readonly string[] }
+) & { readonly leaver?: readonly string[] };
+
+const REBUILD_ATTEMPTS = 5;
+/*
+ * A vault whose chain notes the slow path already left unnamed this page session, keyed by the vault and those
+ * notes, so a note nobody's records name (a stranger's deposit) does not send every open down the slow path again.
+ */
+const UNNAMED_THIS_SESSION = new Set<string>();
+
+const sameNote = (a: Note, b: Note): boolean =>
+  a.nonce.toLowerCase() === b.nonce.toLowerCase() && a.token.toLowerCase() === b.token.toLowerCase() && a.value === b.value;
+const noteText = (n: Note): string => `${n.nonce.toLowerCase()}:${n.token.toLowerCase()}:${n.value}:${n.createdIn ?? ''}`;
+const coinWire = (c: { readonly nonce: string; readonly token: string; readonly value: bigint | string }) =>
+  ({ nonce: String(c.nonce).toLowerCase(), token: c.token, value: String(c.value) });
+const failedSaying = (e: unknown): string => (e as Error)?.message ?? String(e);
+
+/**
+ * **THE ONE REBUILD OF A VAULT'S NOTES ON A SIGNER'S DEVICE: EVERY NOTE THE
+ * VAULT HOLDS, REACHED FROM THIS DEVICE AND FILED SO EVERY SIGNER'S DEVICE
+ * REACHES IT.**
+ *
+ * Read the vault at the wallet's indexer (or take `view`, read just before by
+ * the caller), file again what a leaving seat's versions the chain vouches for
+ * (`fileThePoolTheChainHolds`), and compare the record with the chain. When
+ * they agree and every signer can open the vault's records, that is the
+ * answer. Otherwise, in this order:
+ *
+ * 1. The newest pool, both journals' newest versions, the nonce secret (or this
+ *    signer's sealed copy of it on the chain) and the coins this device keeps
+ *    are reconciled with the chain and its split journal in the vault worker.
+ *    Every record is read through the one check; one withheld or not believed
+ *    is said and the rest are still read, and nothing withheld is read as empty.
+ * 2. Only when a chain note is still unnamed: every filed version of the three
+ *    records (never one a device passes over) and the walk over the company's
+ *    own amounts. A note the slow path cannot name is remembered for the page
+ *    session.
+ * 3. The notes are what the chain holds: every note of the record the chain
+ *    still holds, every note the rebuild names (with its creating transaction),
+ *    and a note the chain no longer holds only until a second read shows it made
+ *    and spent - a note held but not in the history yet is the indexer behind.
+ * 4. Filed as the next version only when that changes anything, the record
+ *    was believed and this device's seat may file it (`seatHere`, `mayFile`);
+ *    a lost race reads the chain and the records again. The newest pool and
+ *    journals are filed again, unchanged, sealed to every signer the directory
+ *    seats, when one of them cannot open them, by a seat that may file them. A
+ *    seat that may not file files nothing, the leaving seat's versions
+ *    included, and returns what it found in memory.
+ *
+ * It never throws: what it cannot do is returned and said, so a payment or a
+ * deposit it runs inside goes on from the record as filed.
+ */
+export async function vaultNotesHere(doors: RebuildDoors, vault: Hex, view?: VaultChainView): Promise<NotesHere> {
+  const said: string[] = [];
+  const leaver: string[] = [];
+  try {
+    for (let attempt = 1; ; attempt += 1) {
+      const done = await rebuiltOnce(doors, vault, attempt === 1 ? view : undefined, said, leaver);
+      if (done !== 'lost-a-race') return { ...done, leaver };
+      if (attempt === REBUILD_ATTEMPTS) {
+        said.push(`another device filed this vault's record first on all ${REBUILD_ATTEMPTS} attempts, so nothing was filed from here`);
+        return { of: 'not-read', said, leaver };
+      }
+    }
+  } catch (e) {
+    said.push(failedSaying(e));
+    return { of: 'not-read', said, leaver };
+  }
+}
+
+async function rebuiltOnce(
+  doors: RebuildDoors, vault: Hex, given: VaultChainView | undefined, said: string[], leaver: string[],
+): Promise<NotesHere | 'lost-a-race'> {
+  let view = given;
+  if (view === undefined) {
+    const standing = await vaultStandingHere(doors, vault);
+    if (!standing.onChain) return { of: 'not-read', said: [...said, standing.view.why ?? NO_VAULT_YET] };
+    if (standing.unread !== null) return { of: 'not-read', said: [...said, standing.unread.says] };
+    if (!standing.pinned) return { of: 'not-read', said: [...said, NOT_PINNED_WHY] };
+    view = standing.view;
+  }
+  if (view.onChain !== true || !Array.isArray(view.notes)) {
+    return { of: 'not-read', said: [...said, view.notesWhy ?? 'the chain was read and did not say which notes this vault holds'] };
+  }
+  const chainNotes = view.notes.map((n) => n.toLowerCase());
+  const onChain = new Set(chainNotes);
+  const heldOf = new Map<string, string>();
+  const held = async (n: { readonly nonce: string; readonly token: string; readonly value: bigint | string }): Promise<string> => {
+    const key = `${n.nonce.toLowerCase()}:${n.token.toLowerCase()}:${n.value}`;
+    if (!heldOf.has(key)) heldOf.set(key, (await doors.builder.commitments({ vault, coin: coinWire(n) })).held.toLowerCase());
+    return heldOf.get(key)!;
+  };
+
+  /* What this seat may file, asked once, before anything is filed: a seat that may not file files nothing. */
+  const filable = await filableHere(doors, said);
+  const notFiledBecause = 'this device\'s seat may not file this vault\'s records (its role files none, or this device does not believe '
+    + 'the seat), so what was found is not filed from this device';
+
+  /* A leaving seat's versions the chain vouches for are filed again first, as every read of this vault does, by a seat that may file them. */
+  if (filable.size < 3) said.push(`${notFiledBecause}; what a seat that left filed is not filed again from here`);
+  else try {
+    const filedAgain = await fileThePoolTheChainHolds({
+      vault, me: doors.me, records: doors.records, signers: doors.signers, held: async (n) => onChain.has(await held(n)),
+    });
+    said.push(...filedAgain.said);
+    leaver.push(...filedAgain.said);
+  } catch (e) {
+    said.push(`what a seat that left filed could not be checked against the chain: ${failedSaying(e)}`);
+  }
+
+  const pool = new SealedNotePool(doors.records('pool'), { signerId: doors.me.signerId, wrappingSecret: doors.me.wrappingSecret }, doors.signers);
+  let loaded: Awaited<ReturnType<SealedNotePool['load']>> | null = null;
+  try {
+    loaded = await pool.load(vault);
+  } catch (e) {
+    said.push(`this vault's record of its notes was not read: ${failedSaying(e)}`);
+  }
+  const poolNotes: readonly Note[] = loaded?.notes ?? [];
+  const recorded = new Set<string>();
+  for (const n of poolNotes) recorded.add(await held(n));
+  const unnamed = chainNotes.filter((c) => !recorded.has(c));
+  const notHeld = poolNotes.filter((n) => !onChain.has(heldOf.get(`${n.nonce.toLowerCase()}:${n.token.toLowerCase()}:${n.value}`)!));
+  const readers = await readersMissing(doors, vault, said);
+
+  if (loaded !== null && unnamed.length === 0 && notHeld.length === 0) {
+    if (readers.length > 0) await sealedToEverySigner(doors, vault, pool, loaded, readers, filable, said);
+    return { of: 'as-filed', notes: poolNotes, unexplained: 0, said };
+  }
+  if (doors.builder.vaultRebuilt === undefined) {
+    said.push('this page cannot rebuild the vault\'s notes; reload it to use the current build');
+    return { of: 'not-filed', notes: poolNotes, unexplained: unnamed.length, said };
+  }
+
+  if (view.nonceCommitment === undefined || view.splitJournal === undefined) {
+    said.push('the read of the chain did not give the vault\'s secret commitment and split journal, so its notes are not rebuilt; '
+      + 'a journal not read is not an empty one');
+    return { of: 'not-read', said };
+  }
+
+  /* ---- 1: the newest of each record, the secrets, the coins kept here ---- */
+  const opener = recordsKeypairFrom(doors.me.companyKey);
+  let secrets: string[] = [];
+  try {
+    const filed = await doors.records('nonce-secret').get(vault);
+    if (filed === null) said.push('the company\'s records hold no nonce secret for this vault');
+    else secrets = [...openNonceSecrets(filed, vault, opener).secrets];
+  } catch (e) {
+    said.push(`the vault's nonce secret was not read from the company's records: ${failedSaying(e)}`);
+  }
+  const newestOf = async (record: 'deposit-journal' | 'payment-journal'): Promise<FiledPoolVersion[]> => {
+    try {
+      const rec = await doors.records(record).get(vault);
+      return rec === null ? [] : [{ version: rec.version, sealed: rec }];
+    } catch (e) {
+      said.push(`this vault's ${record === 'deposit-journal' ? 'deposit' : 'payment'} journal was not read: ${failedSaying(e)}`);
+      return [];
+    }
+  };
+  const journals = async (deposits: readonly (FiledPoolVersion | PassedOverVersion)[], payments: readonly (FiledPoolVersion | PassedOverVersion)[]) => {
+    const read = attemptsFromJournalVersions({
+      deposits, payments, opener: { id: doors.me.signerId, wrappingSecret: doors.me.wrappingSecret },
+    });
+    for (const u of read.unread) said.push(`version ${u.version} of this vault's ${u.record === 'deposit-journal' ? 'deposit' : 'payment'} journal: ${u.why}`);
+    if (read.deposits.length > 0 && doors.kept !== undefined) {
+      try {
+        /* Kept on this device only where the chain made the coin, as a coin handed over is. */
+        const made = new Set((view!.everCreated ?? []).map((c) => c.toLowerCase().replace(/^0x/u, '')));
+        const chainMade: typeof read.deposits[number][] = [];
+        for (const c of read.deposits) {
+          if (made.has((await doors.builder.commitments({ vault, coin: coinWire(c) })).output.toLowerCase().replace(/^0x/u, ''))) chainMade.push(c);
+        }
+        await doors.kept.keep(vault, chainMade);
+      } catch (e) {
+        said.push(failedSaying(e));
+      }
+    }
+    return read;
+  };
+  let kept: readonly CoinKept[] = [];
+  try {
+    kept = (await doors.kept?.coins(vault)) ?? [];
+  } catch (e) {
+    said.push(`the coins this device keeps for this vault were not read: ${failedSaying(e)}`);
+  }
+  const newest = await journals(await newestOf('deposit-journal'), await newestOf('payment-journal'));
+  const stepWire = (a: { spent: Note | { nonce: string; token: string; value: bigint }; further?: readonly { nonce: string; token: string; value: bigint }[]; amount: bigint; merge?: boolean }) => ({
+    spent: coinWire(a.spent), amount: a.amount.toString(),
+    ...(a.further === undefined || a.further.length === 0 ? {} : { further: a.further.map(coinWire) }),
+    ...(a.merge === true ? { merge: true } : {}),
+  });
+  const asked = {
+    vault, ...(view.state === undefined ? {} : { state: view.state }),
+    chain: {
+      notes: chainNotes, everCreated: view.everCreated ?? [],
+      ...(view.nonceCommitment === undefined ? {} : { nonceCommitment: view.nonceCommitment }),
+      ...(view.splitJournal === undefined ? {} : { splitJournal: view.splitJournal }),
+    },
+    secrets,
+    versions: loaded === null ? [] : [{ version: loaded.readAt.version, notes: poolNotes.map(coinWire) }],
+    attempted: { deposits: newest.deposits.map(coinWire), payments: newest.payments.map(stepWire) },
+    named: kept,
+  };
+  let rebuilt = await doors.builder.vaultRebuilt({ ...asked, ...(secrets.length === 0 ? { copyFor: opener.publicKey } : {}) });
+  if (secrets.length === 0 && rebuilt.copy !== null) {
+    /* No secret from the records: this signer's own sealed copy of it on the chain, opened only here. */
+    try {
+      secrets = [openSecretCopy({ vault, parts: rebuilt.copy.map((p) => fromHex(p)), reader: opener })];
+      rebuilt = await doors.builder.vaultRebuilt({ ...asked, secrets });
+    } catch (e) {
+      said.push(`this signer's sealed copy of the vault's secret on the chain does not open: ${failedSaying(e)}`);
+    }
+  }
+
+  /* ---- 2: every version and the walk, only for a note still unnamed ---- */
+  const unnamedKey = `${vault}:${[...rebuilt.unexplained].sort().join(',')}`;
+  if (rebuilt.unexplained.length > 0 && !UNNAMED_THIS_SESSION.has(unnamedKey)) {
+    const every = async (record: 'pool' | 'deposit-journal' | 'payment-journal'): Promise<FiledPoolVersion[]> => {
+      try {
+        return (await doors.records(record).versions(vault)).filter((v): v is FiledPoolVersion => v.neverEntered !== true);
+      } catch (e) {
+        said.push(`every version of this vault's ${record} was not read: ${failedSaying(e)}`);
+        return [];
+      }
+    };
+    const versions: Array<{ version: number; notes: ReturnType<typeof coinWire>[] }> = [];
+    for (const v of await every('pool')) {
+      try {
+        const page = openPool(v.sealed, doors.me.signerId, doors.me.wrappingSecret, { record: 'pool' }) as { notes?: unknown };
+        if (Array.isArray(page.notes)) versions.push({ version: v.version, notes: (page.notes as Note[]).map(coinWire) });
+      } catch (e) {
+        said.push(`version ${v.version} of this vault's pool does not open for this signer: ${failedSaying(e)}`);
+      }
+    }
+    if (loaded !== null && !versions.some((v) => v.version === loaded!.readAt.version)) versions.push(asked.versions[0]!);
+    const all = await journals(await every('deposit-journal'), await every('payment-journal'));
+    const amounts = new Map<string, { token: string; value: string }>();
+    for (const c of [...all.deposits.map(coinWire), ...versions.flatMap((v) => v.notes), ...kept]) amounts.set(`${c.token}:${c.value}`, { token: c.token, value: c.value });
+    rebuilt = await doors.builder.vaultRebuilt({
+      ...asked, secrets, versions,
+      attempted: { deposits: all.deposits.map(coinWire), payments: all.payments.map(stepWire) },
+      walk: { deposited: [...amounts.values()], paid: all.payments.filter((p) => p.merge !== true).map((p) => ({ token: p.spent.token, amount: p.amount.toString() })) },
+    });
+    /* Remembered under the key it is checked by: the notes the fast pass left unnamed. */
+    if (rebuilt.unexplained.length > 0) UNNAMED_THIS_SESSION.add(unnamedKey);
+  }
+  said.push(...rebuilt.said);
+  if (rebuilt.unexplained.length > 0) {
+    said.push(`the chain holds ${rebuilt.unexplained.length} note(s) for this vault that no record this device can read names. They are `
+      + 'the vault\'s and stay on the chain; they are named once a record that names them can be read here');
+  }
+
+  /* ---- 3: the notes the chain holds ---- */
+  const rebuiltHeld = new Map(rebuilt.held.map((h) => [h.nonce.toLowerCase(), h]));
+  const next: Note[] = [];
+  let again: Set<string> | 'keep-every-note' | null = null;
+  for (const n of poolNotes) {
+    const h = rebuiltHeld.get(n.nonce.toLowerCase());
+    if (h !== undefined && sameNote(n, { nonce: h.nonce, token: h.token, value: BigInt(h.value) } as Note)) {
+      next.push(n);
+      continue;
+    }
+    if (onChain.has(await held(n))) { next.push(n); continue; }
+    /* Made and spent only when the history shows it made and a second read, after that history, still shows it gone. */
+    const { output } = await doors.builder.commitments({ vault, coin: coinWire(n) });
+    const made = (view.everCreated ?? []).some((c) => c.toLowerCase().replace(/^0x/u, '') === output.toLowerCase().replace(/^0x/u, ''));
+    if (made && again === null) {
+      /* A second read that fails or holds no notes confirms nothing: every pool note is then kept. */
+      try {
+        const read = await readHere(doors, vault);
+        again = read.onChain && Array.isArray(read.notes) ? new Set(read.notes.map((x) => x.toLowerCase())) : 'keep-every-note';
+      } catch {
+        again = 'keep-every-note';
+      }
+    }
+    if (!made || again === 'keep-every-note' || again!.has(await held(n))) next.push(n);
+  }
+  for (const h of rebuilt.held) {
+    if (next.some((n) => n.nonce.toLowerCase() === h.nonce.toLowerCase())) continue;
+    const found = await creatingTransactionOfOutput(doors, vault, h.output, null, 'a note this vault holds');
+    next.push({
+      nonce: h.nonce, token: h.token, value: BigInt(h.value),
+      ...(found.state === 'found' ? { createdIn: found.createdIn } : {}),
+    } as Note);
+  }
+
+  /* ---- 4: filed only when it changes anything ---- */
+  const before = new Set(poolNotes.map(noteText));
+  const changed = next.length !== poolNotes.length || next.some((n) => !before.has(noteText(n)));
+  if (!changed) {
+    if (loaded !== null && readers.length > 0) await sealedToEverySigner(doors, vault, pool, loaded, readers, filable, said);
+    return { of: loaded === null ? 'not-filed' : 'as-filed', notes: poolNotes, unexplained: rebuilt.unexplained.length, said };
+  }
+  if (loaded === null) {
+    said.push('the notes found are not filed, because this vault\'s record of its notes could not be read to build on');
+    return { of: 'not-filed', notes: next, unexplained: rebuilt.unexplained.length, said };
+  }
+  if (!filable.has('pool')) {
+    said.push(notFiledBecause);
+    return { of: 'not-filed', notes: next, unexplained: rebuilt.unexplained.length, said };
+  }
+  try {
+    await pool.save(vault, { notes: next }, loaded.readAt);
+  } catch (e) {
+    if (isALostPoolRace(e)) return 'lost-a-race';
+    said.push(`the notes found were not filed: ${failedSaying(e)}`);
+    return { of: 'not-filed', notes: next, unexplained: rebuilt.unexplained.length, said };
+  }
+  if (readers.length > 0) await sealedToEverySigner(doors, vault, null, null, readers, filable, said);
+  return { of: 'filed', notes: next, unexplained: rebuilt.unexplained.length, said };
+}
+
+/**
+ * Which of the vault's records - the pool and the two journals, each as the
+ * one check gives its newest version - a signer the directory seats cannot
+ * open, because it was last filed before they were seated.
+ */
+async function readersMissing(doors: RebuildDoors, vault: Hex, said: string[]): Promise<Array<'pool' | 'deposit-journal' | 'payment-journal'>> {
+  let ids: string[];
+  try {
+    ids = (await doors.signers()).map((x) => x.id);
+  } catch (e) {
+    said.push(`who the company's signers are was not read, so no record was sealed to more of them: ${failedSaying(e)}`);
+    return [];
+  }
+  const out: Array<'pool' | 'deposit-journal' | 'payment-journal'> = [];
+  for (const record of ['pool', 'deposit-journal', 'payment-journal'] as const) {
+    try {
+      const rec = await doors.records(record).get(vault);
+      if (rec !== null && ids.some((id) => !rec.wrapped.some((w) => w.signerId === id))) out.push(record);
+    } catch {
+      /* A record not read is said where it is read for its notes. */
+    }
+  }
+  return out;
+}
+
+/**
+ * **THE NEWEST POOL AND JOURNALS, FILED AGAIN UNCHANGED, SEALED TO EVERY SIGNER
+ * THE DIRECTORY SEATS**, so a signer seated after their last version opens
+ * them. Only a seat that reads them and may file does it; a refusal is said.
+ * `pool` and `loaded` are given only when the pool itself still needs it.
+ */
+async function sealedToEverySigner(
+  doors: RebuildDoors, vault: Hex, pool: SealedNotePool | null, loaded: Awaited<ReturnType<SealedNotePool['load']>> | null,
+  records: ReadonlyArray<VaultRecordKind>, filable: ReadonlySet<VaultRecordKind>, said: string[],
+): Promise<void> {
+  for (const record of records) {
+    if (!filable.has(record)) {
+      said.push(`this vault's ${record} is not filed again for a signer who cannot open it yet: this device's seat may not file it`);
+      continue;
+    }
+    try {
+      if (record === 'pool') {
+        if (pool !== null && loaded !== null) await pool.save(vault, { notes: loaded.notes }, loaded.readAt);
+        continue;
+      }
+      const store = doors.records(record);
+      const rec = await store.get(vault);
+      if (rec === null) continue;
+      const page = openPool(rec, doors.me.signerId, doors.me.wrappingSecret, {
+        record, unlabelled: store.unlabelledRecordsFiled === true ? 'accept' : 'refuse',
+      });
+      const to = await doors.signers();
+      assertNoSignerWouldLoseAccess(rec.wrapped.map((w) => w.signerId), to.map((x) => x.id), `this vault's ${record}`);
+      passedOverAbove(store, vault, record, rec.version);
+      await store.put(vault, sealPool(vault, page, to, rec.version + 1, record));
+    } catch (e) {
+      if (isALostPoolRace(e)) continue;
+      said.push(`this vault's ${record} was not filed again for a signer who cannot open it yet: ${failedSaying(e)}`);
+    }
+  }
+}
+
+/**
+ * **THE COINS THIS DEVICE KEEPS FOR A VAULT, AS A FILE FOR ANOTHER SIGNER**
+ * (`coinsFileText`), sealed for the company's signers: the signer saves it and
+ * hands it over themselves; nothing is sent to the company's service.
+ */
+export async function coinsToHandOverHere(doors: Pick<RebuildDoors, 'kept'>, vault: Hex, company: CoinsFileCompany): Promise<string> {
+  return coinsFileText(vault, (await doors.kept?.coins(vault)) ?? [], company);
+}
+
+/**
+ * **COINS ANOTHER SIGNER HANDED OVER AS A FILE**, opened with the company's
+ * key (a file sealed for another company opens nothing), kept on this device only
+ * where the chain, read at the wallet's indexer, made each one for this vault:
+ * a coin the chain never made - a forged or mistyped one - is refused and kept
+ * nowhere. Kept coins are then read by every rebuild of the vault's notes.
+ */
+export async function coinsHandedOverHere(
+  doors: RebuildDoors, vault: Hex, text: string, company: CoinsFileCompany,
+): Promise<{ readonly kept: number; readonly refused: number }> {
+  const coins = coinsFileRead(text, vault, company);
+  if (doors.kept === undefined) throw new Error('this device keeps no coins, so the file was not taken. Nothing was kept.');
+  const read = await readHere(doors, vault);
+  if (!read.onChain) throw new Error(`the chain, as this device read it, does not show this vault, so no coin was kept. ${NO_VAULT_YET}`);
+  const made = new Set(read.everCreated.map((c) => c.toLowerCase().replace(/^0x/u, '')));
+  const taken: CoinKept[] = [];
+  for (const c of coins) {
+    const { output } = await doors.builder.commitments({ vault, coin: c });
+    if (made.has(output.toLowerCase().replace(/^0x/u, ''))) taken.push(c);
+  }
+  await doors.kept.keep(vault, taken);
+  return { kept: taken.length, refused: coins.length - taken.length };
+}
+
+/**
  * **THE VAULT OPENED FOR A STEP OUT OF IT, ON THIS DEVICE**: pinned to the
  * company's account as the chain shows it, money allowed out, any earlier step
- * from this browser settled first, and its pool as the company's records hold
+ * from this browser settled first, then every note the vault holds brought into
+ * its record (`vaultNotesHere`), and its pool as the company's records then hold
  * it. Who holds the vault is not asked: no payment waits on the super admins.
  */
 async function openedForAStepOut(
   doors: PayoutDoors, vault: Hex,
 ): Promise<{ readonly view: VaultChainView; readonly pool: Awaited<ReturnType<SealedNotePool['load']>> }> {
   doors.progress?.('opening the pool');
-  const view = await vaultAsThisDeviceReadsIt(doors, vault);
-  if (!view.onChain) {
+  const answer = await fundableOrThrow(doors, vault);
+  if (answer.of === 'not-on-chain') {
     throw new Error('the chain, as this device read it, does not show this vault, so its record is not opened here and '
-      + `nothing is paid out of it. Nothing was sent.${view.why ? ` Reason: ${view.why}` : ''}`);
+      + `nothing is paid out of it. Nothing was sent. Reason: ${answer.why}`);
   }
   /*
    * **WHETHER MONEY MAY GO OUT NOW, ASKED BEFORE ANYTHING ELSE.** The vault
@@ -2296,16 +3200,25 @@ async function openedForAStepOut(
    * opened, a line is written or two minutes are spent proving a payment that
    * could not be sent.
    */
-  if (view.fundable !== true) {
+  if (answer.of !== 'fundable') {
     throw new Error('No payment can be made out of this vault yet, so none was prepared or recorded. Nothing was '
-      + `sent.${view.why ? ` Reason: ${view.why}` : ''}`);
+      + `sent. Reason: ${answer.why}`);
   }
+  const view = answer.view;
   /*
    * **AN EARLIER STEP FROM THIS BROWSER IS SETTLED FIRST.** Recorded if it has
    * landed, forgotten if it never can; while it still can, no note is chosen,
    * because the record does not yet say which notes are left.
    */
   await settlePaymentInFlight(doors, vault, view);
+  /*
+   * **THEN EVERY NOTE THE VAULT HOLDS IS BROUGHT INTO ITS RECORD**, a note
+   * another signer's device deposited or a step that took a note left behind,
+   * filed as the next version when it changes anything. It is advisory here:
+   * whatever it cannot do it says and returns, and the step is planned only from
+   * the record as filed.
+   */
+  await vaultNotesHere(doors, vault, view);
   const pool = await new SealedNotePool(doors.records('pool'),
     { signerId: doors.me.signerId, wrappingSecret: doors.me.wrappingSecret }, doors.signers).load(vault);
   return { view, pool };
@@ -2746,14 +3659,14 @@ export async function payPubliclyFromCompanyVault(
       + 'Nothing was sent.');
   }
   doors.progress?.('reading the chain');
-  const view = await vaultAsThisDeviceReadsIt(doors, vault);
-  if (!view.onChain) {
+  const answer = await fundableOrThrow(doors, vault);
+  if (answer.of === 'not-on-chain') {
     throw new Error('the chain, as this device read it, does not show this vault, so nothing is paid out of it. Nothing was '
-      + `sent.${view.why ? ` Reason: ${view.why}` : ''}`);
+      + `sent. Reason: ${answer.why}`);
   }
-  if (view.fundable !== true) {
+  if (answer.of !== 'fundable') {
     throw new Error('No payment can be made out of this vault yet, so none was prepared or recorded. Nothing was '
-      + `sent.${view.why ? ` Reason: ${view.why}` : ''}`);
+      + `sent. Reason: ${answer.why}`);
   }
   const chain = await chainAtOneBlockHere(doors, vault);
 
@@ -2837,7 +3750,8 @@ export async function checkWhatThisBrowserSent(
   let payment: WhatThisBrowserSent['payment'];
   try {
     payment = await settlePaymentInFlight({
-      ...doors, inFlight: doors.payments,
+      /* Settling rebuilds nothing, so it names no seat to file a rebuild under. */
+      ...doors, inFlight: doors.payments, seatHere: async () => null,
       ...(doors.clock === undefined ? {} : { now: () => new Date(doors.clock!()) }),
     }, vault, view);
   } catch (e) {

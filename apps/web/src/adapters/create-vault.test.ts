@@ -58,6 +58,10 @@ const kr = vi.hoisted(() => ({
   /* Where the vault's start stands on the stand-in chain, and the approvals each round needs. */
   start: { adopted: false, open: false, approvals: 0, set: false, run: false, runApprovals: 0, written: false, needed: 1 },
   records: new Map<string, unknown>(),
+  /* Each version of the new vault's name this device filed. */
+  info: [] as unknown[],
+  /* Whether the service refuses the vault's name. */
+  infoRefused: false,
   /* The seat this device's own key material makes, as the vault worker works it out. */
   ownSeat: '5a'.repeat(32),
   /* What the vault worker reads in a vault's deploy: born held, or the sentence that says it was not. */
@@ -159,6 +163,18 @@ vi.mock('vaults-web-shared/vault-page-doors.js', async (real) => ({
     forget: async (vault: string) => { kr.log.push(`key forgotten ${vault}`); kr.kept.delete(vault); },
   }),
 }));
+/* The company's records a vault's name is filed in: every version this device filed, kept for the length of one test. */
+vi.mock('vaults-web-shared/vault-info-here.js', async (real) => ({
+  ...(await real<typeof import('vaults-web-shared/vault-info-here.js')>()),
+  vaultInfoRecordsFor: () => ({
+    get: async () => kr.info[kr.info.length - 1] ?? null,
+    served: async () => kr.info[kr.info.length - 1] ?? null,
+    put: async (rec: { version: number }) => {
+      if (kr.infoRefused) throw new Error('the service refused it');
+      kr.info.push(rec);
+    },
+  }),
+}));
 vi.mock('vaults-web-shared/vault-worker-client.js', () => ({
   startVaultBuilder: async () => ({
     ownSeat: async (material: { blinding: string }) => { kr.log.push(`own seat from ${material.blinding}`); return kr.ownSeat; },
@@ -256,15 +272,27 @@ const startRoutes = () => {
   kr.answers[`POST ${ROUTE(`/vaults/${VAULT}/start/account`)}`] = (body: { step: string; call: string }) => {
     const st = kr.start;
     if (body.step === 'adoption') {
-      if (body.call === 'propose') st.open = true;
       if (body.call === 'approve') st.approvals += 1;
       if (body.call === 'adopt') st.adopted = true;
-    } else {
-      if (body.call === 'propose') st.run = true;
-      if (body.call === 'approve') st.runApprovals += 1;
-    }
+    } else if (body.call === 'approve') st.runApprovals += 1;
     return { txRef: `${body.step} ${body.call}` };
   };
+  /*
+   * The company's proposals: the adoption and the first secret run are each written down there, raised with it, and
+   * entered in the company's records. A raise names the vault only for the run, which pays nobody.
+   */
+  const proposals: Array<Record<string, unknown>> = [];
+  kr.answers[`GET ${ROUTE('/proposals')}`] = () => proposals;
+  kr.answers[`POST ${ROUTE('/proposals')}`] = (body: { proposal: { id: string; chainId: string }; tx?: string; vault?: string }) => {
+    const rec = { ...body.proposal, accountId: 'c1', status: 'open', approvalCount: 0 };
+    proposals.push(rec);
+    if (body.tx !== undefined) {
+      if (body.vault === undefined) kr.start.open = true;
+      else kr.start.run = true;
+    }
+    return { id: rec.id, chainId: rec.chainId, status: 'open', approvalCount: 0 };
+  };
+  kr.answers[`POST ${ROUTE('/manifest/entries')}`] = {};
   kr.answers[`POST ${ROUTE(`/vaults/${VAULT}/start/secret`)}`] = () => { kr.start.set = true; return { txRef: 'secret' }; };
   kr.answers[`POST ${ROUTE(`/vaults/${VAULT}/start/copy`)}`] = () => { kr.start.written = true; return { txRef: 'copy' }; };
 };
@@ -301,6 +329,24 @@ describe('creating a vault', () => {
    * it was born; the operation ends before the vault is started; or its stages
    * are not told.
    */
+  it('files the name and description the press gives right after the deploy, through the shared operation', async () => {
+    const m = await load();
+    kr.info.length = 0;
+    kr.answers[`POST ${ROUTE('/vaults')}`] = { vault: VAULT, txRef: 'r1', state: 'deploy-sent' };
+    kr.chain = onChain(true);
+    /* RED WHEN: the adapter drops the name, or files it anywhere but the company's records, under the new vault. */
+    expect(await m.createVault('u1', 'c1', () => {}, { name: 'Payroll UK', description: 'London.' })).toEqual({ of: 'done', vault: VAULT });
+    expect(kr.info).toHaveLength(1);
+    expect(kr.info[0]).toMatchObject({ kind: 'vault-info', id: VAULT, version: 1 });
+    kr.info.length = 0;
+    kr.infoRefused = true;
+    kr.answers[`POST ${ROUTE('/vaults')}`] = { vault: VAULT, txRef: 'r2', state: 'deploy-sent' };
+    /* RED WHEN: a name the service refuses stops the vault, or the sentence that says so does not reach the page. */
+    expect(await m.createVault('u1', 'c1', () => {}, { name: 'Payroll UK', description: '' }))
+      .toEqual({ of: 'done', vault: VAULT, said: [expect.stringMatching(/without its name and description/u)] });
+    kr.infoRefused = false;
+  });
+
   it('runs the shared operation in its order, and ends only when the vault, born held, is started', async () => {
     const m = await load();
     kr.answers[`POST ${ROUTE('/vaults')}`] = { vault: VAULT, txRef: 'r1', state: 'deploy-sent' };
@@ -321,14 +367,17 @@ describe('creating a vault', () => {
       'own seat from cc', 'account asked', `records key signed for ${SEAT.slice(0, 4)}`, 'keys offered', 'offers folded',
       `built held for ${COMPANY} by 1 at 1`, `POST ${ROUTE('/vaults')}`,
       HERE, `read as born ${VAULT} at ${WALLET_INDEXER}`,
-      /* The start, each step sent only once the stand-in chain showed the one before. */
-      'account propose proved', `POST ${ROUTE(`/vaults/${VAULT}/start/account`)}`,
+      /*
+       * The start, each step sent only once the stand-in chain showed the one before; each proposal raised with its
+       * record, written down by this seat and entered in the company's records.
+       */
+      'account propose proved', `POST ${ROUTE('/proposals')}`, `POST ${ROUTE('/manifest/entries')}`,
       'account approve proved', `POST ${ROUTE(`/vaults/${VAULT}/start/account`)}`,
       'account adopt proved', `POST ${ROUTE(`/vaults/${VAULT}/start/account`)}`,
       HERE,
       /* Who holds the company and this vault, read by the account afresh: before the secret is filed, and before its run. */
       `records key signed for ${SEAT.slice(0, 4)} with vault ${VAULT.slice(0, 4)}`, `records key signed for ${SEAT.slice(0, 4)} with vault ${VAULT.slice(0, 4)}`,
-      'account propose proved', `POST ${ROUTE(`/vaults/${VAULT}/start/account`)}`,
+      'account propose proved', `POST ${ROUTE('/proposals')}`, `POST ${ROUTE('/manifest/entries')}`,
       'account approve proved', `POST ${ROUTE(`/vaults/${VAULT}/start/account`)}`,
       /* And afresh again right before the secret is set, so a signer who left during the approvals is caught. */
       `records key signed for ${SEAT.slice(0, 4)} with vault ${VAULT.slice(0, 4)}`,

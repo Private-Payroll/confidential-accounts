@@ -306,6 +306,21 @@ export const attemptKey = (a: AttemptedStep): string =>
   `${[a.spent, ...(a.further ?? [])].map((c) => `${c.nonce}:${c.token}:${c.value}`).join('+')}`
   + `:${a.merge === true ? 'merge' : 'pays'}:${a.amount}`;
 
+/** A journal version or line a read skipped, and why: said to the person, never taken as nothing. */
+export interface JournalLineUnread {
+  readonly record: 'deposit-journal' | 'payment-journal';
+  readonly version: number;
+  readonly why: string;
+}
+
+const lineText = (line: unknown): string => {
+  try {
+    return JSON.stringify(line, (_k, v) => (typeof v === 'bigint' ? `${v}n` : v));
+  } catch {
+    return String(line);
+  }
+};
+
 /**
  * **EVERYTHING THE JOURNALS SAY WAS ATTEMPTED AGAINST ONE VAULT**, from their
  * filed versions, in the shape the rebuild takes.
@@ -320,6 +335,15 @@ export const attemptKey = (a: AttemptedStep): string =>
  * device passes over carries no bytes and is not read: no device believes its
  * lines. Each is counted in `passedOver`, so a caller is told the journal held
  * lines it did not read.
+ *
+ * **ONE VERSION OR LINE THIS DEVICE CANNOT READ STOPS NOTHING ELSE.** A version
+ * that does not open for this signer (sealed before they were a reader, or as
+ * another record), or holds no list of lines, is skipped; so is a line that is
+ * not a coin or an attempt. Each is said in `unread`, once, at the version that
+ * first held it, and every other line is still read. A bad line is never read
+ * as something smaller than it says, such as a one-note payment of its first
+ * note. Skipping costs no money: the rebuild proposes only what the chain holds,
+ * so a line not read can leave a note unnamed, and can never invent or spend one.
  */
 export const attemptsFromJournalVersions = (input: {
   deposits: readonly (FiledPoolVersion | PassedOverVersion)[];
@@ -327,32 +351,60 @@ export const attemptsFromJournalVersions = (input: {
   opener: JournalOpener;
   /** `accept` only for versions read from a store that kept records before they were labelled. */
   unlabelled?: 'accept' | 'refuse';
-}): AttemptedVaultCalls & { versionsRead: { deposits: number; payments: number }; passedOver: { deposits: number; payments: number } } => {
-  const open = (filed: readonly (FiledPoolVersion | PassedOverVersion)[], record: 'deposit-journal' | 'payment-journal'): unknown[] =>
-    filed.filter((v): v is FiledPoolVersion => v.neverEntered !== true).map((v) => openPool(v.sealed, input.opener.id, input.opener.wrappingSecret, {
-      record, unlabelled: input.unlabelled ?? 'refuse',
-    }));
+}): AttemptedVaultCalls & {
+  versionsRead: { deposits: number; payments: number };
+  passedOver: { deposits: number; payments: number };
+  unread: readonly JournalLineUnread[];
+} => {
+  const unread: JournalLineUnread[] = [];
+  const saidAlready = new Set<string>();
+  const say = (record: JournalLineUnread['record'], version: number, why: string, line?: unknown): void => {
+    const key = line === undefined ? `${record}:${version}:${why}` : `${record}:${lineText(line)}`;
+    if (saidAlready.has(key)) return;
+    saidAlready.add(key);
+    unread.push({ record, version, why });
+  };
+  const open = (
+    filed: readonly (FiledPoolVersion | PassedOverVersion)[], record: 'deposit-journal' | 'payment-journal', field: 'notes' | 'attempts',
+  ): Array<{ version: number; lines: unknown[] }> => {
+    const pages: Array<{ version: number; lines: unknown[] }> = [];
+    for (const v of filed) {
+      if (v.neverEntered === true) continue;
+      let page: unknown;
+      try {
+        page = openPool(v.sealed, input.opener.id, input.opener.wrappingSecret, { record, unlabelled: input.unlabelled ?? 'refuse' });
+      } catch (e) {
+        say(record, v.version, (e as Error)?.message ?? String(e));
+        continue;
+      }
+      const lines = (page as Record<string, unknown>)[field];
+      if (!Array.isArray(lines)) {
+        say(record, v.version, record === 'deposit-journal'
+          ? 'a version of this vault\x27s deposit journal opened but holds no list of lines. It is not empty; it is a record '
+            + 'this reader does not understand, so none of it is read'
+          : 'a version of this vault\x27s payment journal opened but holds no list of attempts. It is not empty; it is a '
+            + 'record this reader does not understand, so none of it is read');
+        continue;
+      }
+      pages.push({ version: v.version, lines });
+    }
+    return pages;
+  };
 
-  const depositPages = open(input.deposits, 'deposit-journal');
+  const depositPages = open(input.deposits, 'deposit-journal', 'notes');
   const deposits = new Map<string, VaultCoin>();
   for (const page of depositPages) {
-    const lines = (page as { notes?: unknown }).notes;
-    if (!Array.isArray(lines)) {
-      throw new Error(
-        'a version of this vault\x27s deposit journal opened but holds no list of lines. It is '
-        + 'not empty; it is a record this reader does not understand, and a rebuild built on a '
-        + 'guess about it would propose the wrong notes.');
-    }
-    for (const line of lines) {
-      const { nonce, token, value } = line as VaultCoin;
+    for (const line of page.lines) {
+      const { nonce, token, value } = (line ?? {}) as VaultCoin;
       if (typeof nonce !== 'string' || typeof token !== 'string' || typeof value !== 'bigint') {
-        throw new Error('a deposit journal line is not a coin (nonce, token, value). Nothing is proposed from it.');
+        say('deposit-journal', page.version, 'a deposit journal line is not a coin (nonce, token, value), so it is not read', line);
+        continue;
       }
       deposits.set(`${nonce}:${token}:${value}`, { nonce, token, value });
     }
   }
 
-  const paymentPages = open(input.payments, 'payment-journal');
+  const paymentPages = open(input.payments, 'payment-journal', 'attempts');
   const payments = new Map<string, AttemptedStep>();
   const coinOf = (c: unknown): VaultCoin | undefined => {
     const x = c as { nonce?: unknown; token?: unknown; value?: unknown } | null | undefined;
@@ -361,26 +413,16 @@ export const attemptsFromJournalVersions = (input: {
     return { nonce: read.nonce, token: read.token, value: read.value };
   };
   for (const page of paymentPages) {
-    const lines = (page as { attempts?: unknown }).attempts;
-    if (!Array.isArray(lines)) {
-      throw new Error(
-        'a version of this vault\x27s payment journal opened but holds no list of attempts. It is '
-        + 'not empty; it is a record this reader does not understand.');
-    }
-    for (const line of lines) {
+    for (const line of page.lines) {
       const a = line as PaymentAttempt;
       const spent = coinOf(a?.spent);
-      /*
-       * **EVERY NOTE THE LINE NAMES, OR NONE OF IT.** A line whose further notes
-       * cannot be read describes a coin worth an amount nobody can now state, so
-       * it is refused whole rather than read as a one-note payment.
-       */
       const furtherRaw = (a as { further?: unknown })?.further;
       const further = furtherRaw === undefined ? [] : Array.isArray(furtherRaw) ? furtherRaw.map(coinOf) : [undefined];
       const step = (a as { step?: unknown })?.step;
       if (!spent || typeof a.amount !== 'bigint' || further.some((c) => c === undefined)
         || (step !== undefined && step !== 'payment' && step !== 'batch' && step !== 'merge')) {
-        throw new Error('a payment journal line is not an attempt (the notes it spends and the amount). Nothing is proposed from it.');
+        say('payment-journal', page.version, 'a payment journal line is not an attempt (the notes it spends and the amount), so it is not read', line);
+        continue;
       }
       const attempt: AttemptedStep = {
         spent, amount: a.amount,
@@ -399,5 +441,6 @@ export const attemptsFromJournalVersions = (input: {
       deposits: input.deposits.filter((v) => v.neverEntered === true).length,
       payments: input.payments.filter((v) => v.neverEntered === true).length,
     },
+    unread,
   };
 };

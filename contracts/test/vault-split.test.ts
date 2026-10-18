@@ -204,6 +204,40 @@ describe('a vault splits one of its own notes', () => {
     expect(after.notes.member(heldBy(vaultBytes(), changeCoin))).toBe(true);
   });
 
+  it('A SPLIT NOBODY JOURNALLED, MADE UNDER AN APPROVED RUN BY A HOLDER OF THE SECRET: A DEVICE\'S REBUILD NAMES BOTH PIECES FROM THE CHAIN\'S SPLIT JOURNAL, AND ONE IS SPENT', async () => {
+    /*
+     * The device's record holds the 1,000 the split took; no journal line names the split. The device's rebuild - the
+     * vault worker's own task, over this build's compiled vault - is handed only that record, the vault's secret and the
+     * chain as it stands, and names what the chain holds.
+     */
+    await split(TOKEN_BYTES, 300n, 0xb3);
+    const { answerVaultAsk } = await import('../../packages/web-shared/src/vault-worker-entry.js');
+    const ledger = vaultLedger(vaultState as never);
+    const rebuilt = await answerVaultAsk(async () => ({ vault: await import('../managed-vault/contract/index.js') }) as never, {
+      id: 1, network: 'undeployed', ask: 'vault-rebuilt', vault: toHex(vaultBytes()),
+      chain: {
+        notes: [...pool()].map(hex), everCreated: [], nonceCommitment: hex(ledger.nonceCommitment),
+        splitJournal: [...ledger.splitJournal].map(([k, v]: [Uint8Array, Uint8Array]) => [hex(k), hex(v)]),
+      },
+      secrets: [hex(TEST_VAULT_SECRET)],
+      versions: [{ version: 1, notes: [{ nonce: hex(bytes(0x77)), token: hex(TOKEN_BYTES), value: '1000' }] }],
+      attempted: { deposits: [], payments: [] },
+    } as never) as unknown as { held: Array<{ nonce: string; token: string; value: string }>; unexplained: string[] };
+    /* RED WHEN: the rebuild does not read the chain's split journal, so both pieces stay unnamed. */
+    expect(rebuilt.unexplained).toEqual([]);
+    expect(rebuilt.held.map((n) => n.value).sort()).toEqual(['300', '700']);
+    const piece = rebuilt.held.find((n) => n.value === '300')!;
+    priv = { coin: { nonce: fromHex(piece.nonce as Hex), color: TOKEN_BYTES, value: 300n, mt_index: 0n } };
+    const runOf = await approved([{
+      details: toHex(vaultCircuits.payoutDetails(ALICE, TOKEN_BYTES, 120n, bytes(0x42))),
+      nonce: toHex(bytes(0xc3)),
+    }], [120n], 73);
+    /* RED WHEN: the piece the rebuild named is not the vault's to spend. */
+    const paid = await vault.impureCircuits.payout(ctx('payout'), runOf(0), ALICE, TOKEN_BYTES, 120n, bytes(0x42), noFurtherNote());
+    vaultState = paid.context.callContext.currentQueryContext.state;
+    expect(vaultLedger(vaultState as never).payments).toBe(1n);
+  });
+
   it('THE OTHER HALF SPENDS TOO: the rest a split leaves is paid out in full, leaving the piece', async () => {
     const { r, spent } = await split(TOKEN_BYTES, 300n, 0xb2);
     const back = coinsBackTo(r.context.callContext.currentZswapLocalState, toHex(vaultBytes()));

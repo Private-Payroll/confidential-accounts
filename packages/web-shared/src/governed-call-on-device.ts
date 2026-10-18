@@ -16,8 +16,8 @@
  * sent and not yet seen, which is said as exactly that, and the person is told
  * not to send it again. The service sends a proposal again only when the chain
  * says it does not hold it, and the chain refuses a second approval from one
- * signer; **the screen does not yet say the first of the three any differently
- * from any other failure.**
+ * signer. A refusal before anything was sent is, on the screen, said like any
+ * other failure.
  */
 import { openedWithAnyKey, sealingWith, type KeysHeld } from '../../../src/core/company-key.js';
 import { boundaryKeyOfEntry, proposalEntry, type ManifestEntryBody } from '../../../src/midnight/record-manifest.js';
@@ -130,11 +130,16 @@ export interface GovernedCallService {
   standing(proposalId: string): Promise<RoundOnThePage>;
   /** A withdrawal: the call this device proved when the chain holds the proposal, none when it was only written down. */
   cancel?(proposalId: string, body: { tx?: string; filer: string }): Promise<RoundOnThePage>;
-  /** A governance proposal this device sealed and signed, written down, and its raise sent with it. */
+  /**
+   * A proposal this device sealed and signed, written down, and its raise sent with it; with no `tx`, written down
+   * only, for a proposal the chain already holds.
+   */
   file?(accountId: string, body: {
-    proposal: SignedProposalFiling; tx: string; version: typeof DEVICE_RAISE_VERSION;
+    proposal: SignedProposalFiling; tx?: string; version?: typeof DEVICE_RAISE_VERSION;
     /** The proposal's salt, so the service can hold its identity on the chain to the vault it names, or to none. */
     salt: string;
+    /** A new vault's first secret run, whose one leaf pays a zero amount of no asset: the vault its identity on the chain is made for. */
+    vault?: string;
     /** A payroll run's leg: the run re-filed as raised, and what the raise pays, a kind, a token and an amount each. */
     run?: SignedRunFiling;
     pays?: { vault: string; asset: string; payments: ReadonlyArray<{ kind: 'shielded' | 'unshielded'; token: string; amount: string }> };
@@ -877,7 +882,13 @@ async function liveRoundHere(
     let enteredNow = false;
     try {
       opened = await opensFor(doors)(p.id, viewingKey, false);
-    } catch {
+    } catch (e) {
+      /*
+       * One that opened as a kind this page does not act on - a new vault's adoption or first secret run, set up
+       * from the vault itself - can never be the change asked for, so it is passed over. One that did not open
+       * at all still says so below.
+       */
+      if (e instanceof NotOpenedOnThisDevice && e.kind !== undefined) continue;
       /*
        * A proposal this seat wrote down is not opened while no entry names it, so one whose entry was not kept is
        * entered here, by its filer, and opened again. Another seat's is its own filer's to enter.

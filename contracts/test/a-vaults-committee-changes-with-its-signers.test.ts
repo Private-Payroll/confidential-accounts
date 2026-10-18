@@ -51,7 +51,7 @@ import { MidnightCommitments } from '../../src/midnight/commitments.js';
 import { rosterVaultKeys, signVaultKeys, vaultKeyIndexOf } from '../../src/core/vault-keys.js';
 import { seatsInAccountState, vaultInState } from '../../apps/wallet/src/chain/company-label-on-chain.js';
 import {
-  directoryBelievedOver, directoryChainOver, fileOwnEntry, judgeOver, madeForTheWallet, mayFileUnderOver, walletReadsOver,
+  directoryBelievedOver, directoryChainOver, directoryHereOver, fileOwnEntry, judgeOver, madeForTheWallet, mayFileUnderOver, walletReadsOver,
 } from './the-chain-as-a-wallet-reads-it.js';
 import type { SeatOpening } from '../../src/core/seat-opening.js';
 import { directoryOf, seatDirectoryRoutes } from '../../src/server/seat-directory-route.js';
@@ -85,7 +85,9 @@ import { openAccount } from '../../src/core/account.js';
 import { DEPLOYED_CIRCUITS } from '../../src/midnight/deferral.js';
 import { fileURLToPath } from 'node:url';
 import { readProvenTransaction } from '../../src/wiring/proven-submission.js';
-import { startingLedgerFrom } from '../../src/wiring/vault-submission.js';
+import { refusalForStartAccountCall, startingLedgerFrom } from '../../src/wiring/vault-submission.js';
+import { proposalRelayRoutes } from '../../src/server/proposal-relays.js';
+import { governedCallServiceFor } from 'vaults-web-shared/governed-call-on-device.js';
 import { anAccountBornHeld } from './an-account-born-held.js';
 import { buildRun } from '../../src/midnight/payout-tree.js';
 import { vaultDetails } from '../../src/testing/vault-details.js';
@@ -413,6 +415,14 @@ describe.skipIf(!KEYS_ON_DISK)('A VAULT\'S COMMITTEE STAYS THE SUPER ADMINS\' WH
           ...(e.content.mtIndex === undefined ? {} : { mtIndex: String(e.content.mtIndex) }),
         },
       })),
+      /* The account alone at the same moment: what a raise of the company's proposals is built on. */
+      accountCallState: async (account) => {
+        const as = chain.contract(account);
+        if (as === null) return null;
+        return {
+          blockHash: 'b1'.repeat(32), accountState: base64FromBytes(as.serialize()), parameters: base64FromBytes(chain.state.parameters.serialize()),
+        };
+      },
       /* As an indexer would answer it: the one applied transaction whose events carry this output, made for this vault. */
       createdBy: async (v, commitment) => {
         for (const [name, events] of chain.events) {
@@ -454,6 +464,25 @@ describe.skipIf(!KEYS_ON_DISK)('A VAULT\'S COMMITTEE STAYS THE SUPER ADMINS\' WH
       },
     };
     app.use(seatDirectoryRoutes({ signedIn, member, store, chain: directoryChainOver(() => chain.contract(company)) }));
+    /* The company's proposals as the service lists them, where a vault's start finds its own. */
+    app.get('/api/accounts/:id/proposals', signedIn, member, (req, res) => { res.json(store.listProposals(String(req.params.id))); });
+    /*
+     * A vault's adoption and first secret run are written down here and their raise relayed with them, through the
+     * same sending the service's ledger does for a vault's start.
+     */
+    app.use(proposalRelayRoutes({
+      signedIn, member, store, refuseSigningSecret: (_q, _r, next) => next(),
+      ownsProposal: (req, res, next) => (store.getProposal(String(req.params.id)) === null ? res.status(404).json({ error: 'not found' }) : next()),
+      directoryOf: (id) => directoryOf(store, directoryChainOver(() => chain.contract(company)), id),
+      ledger: {
+        wiring: 'simulated',
+        status: async () => { throw new Error('this watch reads the chain on the device'); },
+        submitProvenCall: (accountId, bytes, circuit) => ledger.sendVault(accountId, `relaying ${circuit}`, 'proven-moving-nothing', bytes,
+          (tx) => refusalForStartAccountCall(tx, { account: company, circuit: circuit as 'propose' }), readers.proven),
+      },
+      recordRefusal: () => undefined,
+      proposalIdOf: (h, salt, v) => MidnightCommitments.proposalId(h as Hex, salt as Hex, v as Hex | undefined),
+    }));
     app.use(companyVaultRoutes({
       signedIn, member, store,
       company: async () => ({
@@ -580,6 +609,16 @@ describe.skipIf(!KEYS_ON_DISK)('A VAULT\'S COMMITTEE STAYS THE SUPER ADMINS\' WH
     const press = (resume?: Hex) => createCompanyVault({
       ...poolDoors, account: readAccountAddress(company)!, builder: builder(), keys,
       material: { signingSecret: hex(founder.secretKey), blinding: hex(founder.blinding), scope: hex(founder.scope) },
+      /* Where the vault's adoption and first secret run are written down, by the founding seat under its own filing key. */
+      proposals: (({ callState, send, file, sealedProposals }) => ({
+        accountId: ACCOUNT_ID, companyKeys: viewingKey, signingSecret: signing.secret as Hex,
+        directory: directoryHereOver({ viewingKey,
+          api, accountId: ACCOUNT_ID, label: LABEL, account: company, accountState: () => chain.contract(company), deployed: () => deployed,
+          roster: async () => openAccount(store.getAccount(ACCOUNT_ID)!, viewingKey),
+        }),
+        entered: recordsEnteredFor(manifestServiceFor(api), ACCOUNT_ID, signing.secret as Hex),
+        service: { callState, send, file: file!, sealedProposals: sealedProposals! },
+      }))(governedCallServiceFor(api)),
       secretReaders: {
         company: LABEL,
         read: async (v: Hex) => ({
@@ -741,7 +780,7 @@ describe.skipIf(!KEYS_ON_DISK)('A VAULT\'S COMMITTEE STAYS THE SUPER ADMINS\' WH
   const paying = keptOnThisDevice<PaymentInFlight>('payment');
   const payDoors = () => ({
     ...pacing, service, me, myRecordsKey: recordsReaderOf(me.companyKey).publicKey, signers, records, account: readAccountAddress(company)!, onChain: walletReads, builder: builder(),
-    inFlight: paying,
+    inFlight: paying, seatHere: async () => ({ role: 'admin' as const, retired: null }),
   });
   /** One person paid out of the vault, by the page's own payment path. */
   const pay = async (vault: Hex, amount: bigint) => {

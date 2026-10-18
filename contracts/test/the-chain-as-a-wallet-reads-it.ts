@@ -15,7 +15,8 @@ import { directoryOf, filerSeatNow, type DirectoryChainRead, type DirectoryStore
 import type { MayFileUnder } from '../../src/server/vault-records-authority.js';
 import type { FreshJudge } from 'vaults-web-shared/http-sealed-pool-store.js';
 import {
-  attestedIn, directoryFilingsFrom, directoryHere, directoryJudge, fileTheOwedDirectoryEntry, type DirectoryHereDeps, type OwedDirectoryEntry,
+  attestedIn, directoryFilingsFrom, directoryHere, directoryJudge, fileTheOwedDirectoryEntry, type DirectoryHereDeps, type DirectoryRead,
+  type OwedDirectoryEntry,
 } from 'vaults-web-shared/vault-page-doors.js';
 import { anchoredOver } from '../../src/testing/record-tree-double.js';
 import { leavesOfTheContract } from '../../src/testing/directory-seats.js';
@@ -95,6 +96,9 @@ const directoryDepsOver = (deps: DeviceReads): DirectoryHereDeps => ({
 
 /** A device's judge of who filed a version: the directory read again, and the account read again off the chain. */
 export const judgeOver = (deps: DeviceReads): FreshJudge => directoryJudge(directoryDepsOver(deps));
+
+/** The company's directory as a device believes it, with the records each read asks for: where a vault's start finds its proposals. */
+export const directoryHereOver = (deps: DeviceReads): DirectoryRead => (asked) => directoryHere(directoryDepsOver(deps), asked);
 
 /** The company's directory as a device believes it, read afresh: where each reader of a vault's secret is read from. */
 export const directoryBelievedOver = (deps: DeviceReads) => async () => {

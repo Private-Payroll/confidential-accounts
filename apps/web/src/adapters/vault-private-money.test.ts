@@ -49,6 +49,10 @@ const kr = vi.hoisted(() => ({
   /* The indexer the person's own wallet names, and every read of the vault this device's worker made. */
   indexer: null as { indexerUri: string; indexerWsUri: string } | null,
   readHere: [] as string[],
+  /* Whether the account adopted the vault, as the wallet reads it, and the notes the vault worker's rebuild names. */
+  adopted: false,
+  refusePut: false,
+  rebuilt: null as Array<{ nonce: string; token: string; value: string; held: string; output: string }> | null,
 }));
 vi.mock('./filing-judge.js', async (real) => ({
   ...(await real<typeof import('./filing-judge.js')>()),
@@ -69,7 +73,7 @@ vi.mock('vaults-web-shared/keyring.js', async (real) => ({
   /* The company's viewing key, which opens every directory entry's proof here. */
   viewingKeyFor: () => '5e'.repeat(32),
   holdersFromTheWallet: async () => ({
-    holders: { committee: kr.committee, threshold: 1, seats: kr.seated, approvals: 1, adoptedVaults: [], founding: SEAT, foundingCommittee: [{ tag: 'schnorr', value: '11'.repeat(32) }], account: 'c0'.repeat(32) },
+    holders: { committee: kr.committee, threshold: 1, seats: kr.seated, approvals: 1, adoptedVaults: kr.adopted ? [VAULT] : [], founding: SEAT, foundingCommittee: [{ tag: 'schnorr', value: '11'.repeat(32) }], account: 'c0'.repeat(32) },
     vault: null,
     /* The indexer the wallet reads through: the vault is read there on this device, and nowhere else. */
     indexer: kr.indexer,
@@ -111,6 +115,11 @@ vi.mock('./vault-builder.js', () => ({
     /* A chain holding no anchor: no head landed, and who holds the account named for an anchor nobody here sends. */
     anchorsOnChain: async () => ({ landed: [], now: { approvals: 1, signerRoot: '00'.repeat(32), signers: ['00'.repeat(32)] }, seatsNow: ['00'.repeat(32)] }),
     /* The vault as this device's worker reads it, at the indexer it is handed: the stand-in chain. */
+    /* The vault worker's rebuild of the vault's notes, naming what a test says the records name. */
+    vaultRebuilt: async () => {
+      if (kr.rebuilt === null) throw new Error('no rebuild stood in here');
+      return { held: kr.rebuilt, unexplained: [], copy: null, said: [] };
+    },
     vaultOnChain: async (i: { vault: string; indexer: { indexerUri: string } }) => {
       kr.readHere.push(`${i.vault} at ${i.indexer.indexerUri}`);
       if (kr.view instanceof Error) throw kr.view;
@@ -134,6 +143,7 @@ const REGISTRY = registryOf([asset('TDUST', 6, TOKEN), asset('OTHER', 2, OTHER_T
 const stubRecords = () => vi.stubGlobal('fetch', async (path: string, init: { method: string; body?: string }) => {
   const body = (b: unknown, status = 200) => ({ status, json: async () => b });
   if (init.method === 'PUT') {
+    if (kr.refusePut) return body({ error: 'a viewer files no vault record' }, 403);
     const wire = JSON.parse(init.body!);
     kr.filed = wire;
     return body({ filed: true, record: 'pool', version: wire.version, digest: wire.digest }, 201);
@@ -181,7 +191,7 @@ async function load() {
   return import('./vault-private-money.js');
 }
 beforeEach(() => {
-  kr.signedIn = 'u1'; kr.filed = null; kr.asked = []; kr.companyKey = COMPANY_KEY; kr.ownSeat = SEAT; kr.readHere = [];
+  kr.signedIn = 'u1'; kr.filed = null; kr.asked = []; kr.companyKey = COMPANY_KEY; kr.ownSeat = SEAT; kr.readHere = []; kr.adopted = false; kr.rebuilt = null; kr.refusePut = false;
   kr.indexer = { indexerUri: 'https://indexer.wallet.example/api/v3/graphql', indexerWsUri: 'wss://indexer.wallet.example/api/v3/graphql/ws' };
   kr.filings = [{ company: 'c1', version: 1, change: { kind: 'claim', entry: ENTRY } }];
   kr.seated = [SEAT];
@@ -245,6 +255,27 @@ describe('a vault\'s private money, read on this device', () => {
     const { visibilityOf: _v, formatTokenAmount } = await import('vaults-ui/format/token-amount');
     const answer = await readVaultPrivateMoney('u1', 'c1', VAULT, REGISTRY);
     expect(answer?.amounts.map((a) => [a.symbol, formatTokenAmount(a, 'en')])).toEqual([['TDUST', '1.5'], ['OTHER', '123.45']]);
+  });
+
+  /* RED WHEN: a note the chain holds that the vault's records name, and this device's pool does not hold, is not counted: a deposit made from another signer's device is out of reach here. */
+  it('counts a note the vault\'s records name that this device\'s pool does not hold, and still counts nothing nothing names', async () => {
+    await filePool(NOTES);
+    const { readVaultPrivateMoney } = await load();
+    const other = { nonce: 'f1'.repeat(32), token: TOKEN, value: '500000' };
+    kr.adopted = true;
+    kr.rebuilt = [...NOTES, other].map((n) => ({ nonce: n.nonce, token: n.token, value: String(n.value), held: commitmentOf(n.nonce), output: '' }));
+    kr.view = { ...chainHolding(NOTES), notes: [...chainHolding(NOTES).notes, commitmentOf(other.nonce), 'hffff'], account: 'c0'.repeat(32), started: true, everCreated: [], nonceCommitment: '5c'.repeat(32), splitJournal: [] };
+    const { formatTokenAmount } = await import('vaults-ui/format/token-amount');
+    /* A seat that may not file the vault's record still counts what the rebuild found; nothing is filed. */
+    kr.refusePut = true;
+    const counted = await readVaultPrivateMoney('u1', 'c1', VAULT, REGISTRY);
+    expect(counted?.amounts.map((a) => [a.symbol, formatTokenAmount(a, 'en')])).toEqual([['TDUST', '2'], ['OTHER', '123.45']]);
+    expect((kr.filed as { version: number }).version).toBe(1);
+    /* A seat that may file files it for every signer's device. */
+    kr.refusePut = false;
+    const answer = await readVaultPrivateMoney('u1', 'c1', VAULT, REGISTRY);
+    expect(answer?.amounts.map((a) => [a.symbol, formatTokenAmount(a, 'en')])).toEqual([['TDUST', '2'], ['OTHER', '123.45']]);
+    expect((kr.filed as { version: number }).version).toBe(2);
   });
 
   /* RED WHEN: a vault with no pool filed is read as holding nothing. */

@@ -106,6 +106,7 @@ export type VaultAsk =
   | { id: number; network: string; ask: 'public-deposit'; vault: string; token: string; amount: string; state: string; parameters: string }
   | { id: number; network: string; ask: 'commitments'; vault: string; coin: CoinOnTheWire }
   | { id: number; network: string; ask: 'step-kept'; vault: string; secret: string; step: StepOnTheWire }
+  | ({ id: number; network: string; ask: 'vault-rebuilt' } & VaultRebuildAsked)
   | { id: number; network: string; ask: 'vault-on-chain'; vault: string; indexer: { indexerUri: string; indexerWsUri: string } }
   /* What a step out of the vault is built on, and the events it is judged by, read here at the indexer the wallet names. */
   | { id: number; network: string; ask: 'chain-at-one-block'; vault: string; account: string; indexer: { indexerUri: string; indexerWsUri: string } }
@@ -247,6 +248,7 @@ export type VaultAnswer =
   | Answered<'public-deposit', { tx: string }>
   | Answered<'commitments', { output: string; held: string }>
   | Answered<'step-kept', { kept: NoteOnTheWire | null }>
+  | Answered<'vault-rebuilt', VaultRebuilt>
   | Answered<'vault-on-chain', { read: VaultOnChainOnTheWire }>
   | Answered<'chain-at-one-block', { chain: PayoutChainOnTheWire | null }>
   | Answered<'events-of', { events: EventOnTheWire[] }>
@@ -295,7 +297,8 @@ export type VaultRequest = Without<VaultAsk>;
  * **A VAULT AS THE CHAIN HOLDS IT, AS THIS DEVICE READ IT.** `onChain: false`
  * when the indexer holds no state for the address. `notes` and `everCreated`
  * are commitments, 64 hex characters each; `notes` is absent when the state was
- * not laid out the way this build's vault is (`notesWhy` says why). `account`
+ * not laid out the way this build's vault is (`notesWhy` says why), and so are
+ * `nonceCommitment` and `splitJournal`, which are never read as empty. `account`
  * is the company account it is pinned to;
  * `started` whether its first secret is set and every sealed copy written.
  */
@@ -305,6 +308,9 @@ export type VaultOnChainOnTheWire =
     readonly onChain: true;
     readonly state: string;
     readonly notes?: readonly string[];
+    /** The secret's commitment the vault holds, and its split journal (nullifier, masked amount): read only with `notes`. */
+    readonly nonceCommitment?: string;
+    readonly splitJournal?: ReadonlyArray<readonly [string, string]>;
     readonly notesFromThisBuild: boolean;
     readonly notesWhy?: string;
     readonly everCreated: readonly string[];
@@ -314,6 +320,39 @@ export type VaultOnChainOnTheWire =
     readonly publicBalances?: ReadonlyArray<{ readonly token: string; readonly amount: string }>;
     readonly publicBalancesWhy?: string;
   };
+
+/**
+ * What a rebuild of a vault's notes is asked over: the chain as one read gave it, the secrets the records hold, the
+ * newest (or every) pool version, the journals' lines, the coins this device kept or was handed, and, for `walk`, the
+ * company's own amounts. Amounts and values are decimal digits.
+ */
+export interface VaultRebuildAsked {
+  readonly vault: string;
+  readonly state?: string;
+  readonly chain: {
+    readonly notes: readonly string[];
+    readonly everCreated: readonly string[];
+    readonly nonceCommitment?: string;
+    readonly splitJournal?: ReadonlyArray<readonly [string, string]>;
+  };
+  readonly secrets: readonly string[];
+  readonly copyFor?: string;
+  readonly versions: ReadonlyArray<{ readonly version: number; readonly notes: readonly CoinOnTheWire[] }>;
+  readonly attempted: { readonly deposits: readonly CoinOnTheWire[]; readonly payments: readonly StepOnTheWire[] };
+  readonly named?: readonly CoinOnTheWire[];
+  readonly walk?: {
+    readonly deposited: ReadonlyArray<{ readonly token: string; readonly value: string }>;
+    readonly paid: ReadonlyArray<{ readonly token: string; readonly amount: string }>;
+  };
+}
+
+/** A rebuild's answer: each held note with its held and output commitments, the chain notes nothing named, the sealed copy, and what was said. */
+export interface VaultRebuilt {
+  readonly held: ReadonlyArray<{ readonly nonce: string; readonly token: string; readonly value: string; readonly held: string; readonly output: string }>;
+  readonly unexplained: readonly string[];
+  readonly copy: readonly string[] | null;
+  readonly said: readonly string[];
+}
 
 /** One step of the vault's payment journal as it crosses to the worker: its notes in place order, what left, and whether it was a merge. */
 interface StepOnTheWire {
@@ -363,6 +402,12 @@ export interface VaultBuilderClient {
    * coin, or a payment's change; `null` when it kept none.
    */
   stepKept(input: { vault: string; secret: string; step: StepOnTheWire }): Promise<NoteOnTheWire | null>;
+  /**
+   * **THE VAULT'S NOTES, REBUILT**: every note the chain holds that the records handed in, the walk over the company's
+   * own amounts (when `walk` is given) and the chain's split journal name, each with both its commitments; the chain
+   * notes nothing names; and, with `copyFor`, this signer's sealed copy of the vault's secret read off `state`.
+   */
+  vaultRebuilt?(input: VaultRebuildAsked): Promise<VaultRebuilt>;
   /**
    * The vault as the chain holds it, read in this worker from the indexer the
    * person's own wallet names (`indexer`), and from nowhere else.
@@ -661,6 +706,10 @@ export function vaultBuilderOver(worker: WorkerLike, network: string): VaultBuil
       return { output: a.output, held: a.held };
     },
     stepKept: async (input) => (await ask({ ask: 'step-kept', ...input })).kept,
+    vaultRebuilt: async (input) => {
+      const { id: _id, ok: _ok, ask: _ask, ...answer } = await ask({ ask: 'vault-rebuilt', ...input });
+      return answer;
+    },
     vaultOnChain: async (input) => (await ask({ ask: 'vault-on-chain', ...input })).read,
     chainAtOneBlock: async (input) => (await ask({ ask: 'chain-at-one-block', ...input })).chain,
     eventsOf: async (input) => (await ask({ ask: 'events-of', ...input })).events,
