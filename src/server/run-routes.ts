@@ -20,7 +20,7 @@ import { CHAIN_UNREAD, filerSeatNow, type DirectoryNow } from './seat-directory-
 
 /** What this route needs of the store. */
 export interface RunRouteStore {
-  getAccount(accountId: string): { readonly keyEpoch: number } | null;
+  getAccount(accountId: string): object | null;
   getRun(id: string): SealedRun | null;
   putRun(r: SealedRun): void;
 }
@@ -37,8 +37,9 @@ export const runRoutes = (deps: {
   /*
    * **A RUN DRAWN ON A SIGNER'S DEVICE, KEPT.** Refused unless it is a run of
    * this company signed whole by the signed-in person's own seat, whose role
-   * may file a run; sealed under the key the company uses now; a run this
-   * company does not hold yet; and only drawn, with nothing raised from it.
+   * may file a run; a run this company does not hold yet; and only drawn,
+   * with nothing raised from it. This server judges no change of the
+   * company's key, so the key epoch a run names refuses nothing here.
    */
   router.post('/api/accounts/:id/runs', deps.signedIn, deps.member, express.json({ limit: '4mb' }), async (req, res) => {
     const b = z.object({ run: z.unknown() }).strict().safeParse(req.body ?? {});
@@ -66,8 +67,8 @@ export const runRoutes = (deps: {
       return;
     }
     const account = deps.store.getAccount(company);
-    if (account === null || run.keyEpoch !== account.keyEpoch) {
-      res.status(409).json({ refused: 'not-the-current-key', error: 'this run is sealed under a key the company no longer uses. Reload the page and draw it again. Nothing was kept.' });
+    if (account === null) {
+      res.status(404).json({ error: 'account not found' });
       return;
     }
     if (deps.store.getRun(run.id) !== null) {

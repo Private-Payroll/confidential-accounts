@@ -639,8 +639,8 @@ describe('onboarding', () => {
      * anything equivalent.
      *
      * What it guards: the viewing key arrives in a request body and was never
-     * checked. Seal one roster entry under a stale key — a client holding an old
-     * one after a rotation is the ordinary way — and `listPeople` opens EVERY
+     * checked. Seal one roster entry under a key that is not the company's and
+     * `listPeople` opens EVERY
      * entry, so the roster, and every run with it, is permanently unreadable.
      * Nothing deletes an employee, so there is no way back.
      */
@@ -655,11 +655,7 @@ describe('onboarding', () => {
     h.payroll.invite(a.account.id, {
       name: 'Real', email: 'r@a.co', title: 'Eng', asset: TEST_TOKEN, baseAmount: 100_00n,
     }, a.viewingKey, 'usr_operator');
-    const rotated = await h.accounts.rotate(a.account.id, a.viewingKey);
-    expect(() => h.payroll.invite(a.account.id, {
-      name: 'Late', email: 'l@a.co', title: 'Eng', asset: TEST_TOKEN, baseAmount: 100_00n,
-    }, a.viewingKey, 'usr_operator')).toThrow();
-    expect(h.payroll.listPeople(a.account.id, rotated.viewingKey)).toHaveLength(1);
+    expect(h.payroll.listPeople(a.account.id, a.viewingKey)).toHaveLength(1);
   });
 
   it('AN INVITEE CAN SEE WHAT THEY ARE BEING OFFERED BEFORE THEY HAND ANYTHING OVER', async () => {
@@ -1358,43 +1354,6 @@ describe('onboarding', () => {
     expect((view.payslip as any).paidTo).toBe(onRoster.address!.bech32);
     /* Read with their OWN secret and no account viewing key anywhere near it. */
     expect(onRoster.address!.bech32).toMatch(/^mn_shield-addr_undeployed1/);
-  });
-
-  it('A HANDOVER SURVIVES A KEY ROTATION, like a pending signer\'s does', async () => {
-    /*
-     * Rotation is what happens when a signer leaves; onboarding never stops. So
-     * a handover sitting unadmitted while the key rotates is the DEFAULT
-     * overlap, not bad luck.
-     *
-     * Before this was fixed the drop box was copied through untouched while
-     * everything around it moved to the new epoch — and then **no key could
-     * complete the admit**: the old one opens the box and not the roster entry,
-     * the new one opens the roster entry and not the box. The invite refuses a
-     * second handover as "already used", so the person was permanently
-     * unadmittable — and since a run refuses to build while anybody is pending,
-     * the whole company's payroll froze behind one new hire.
-     */
-    const { account, viewingKey } = await h.accounts.create('Acme', THREE_SIGNERS, 2, undefined, drawCompanyLabel());
-    const { employee, sentTo } = h.payroll.invite(account.id, {
-      name: 'Mid Onboarding', email: 'm@a.co', title: 'Eng', asset: TEST_TOKEN, baseAmount: 100_00n,
-    }, viewingKey, 'usr_operator');
-
-    const wk = newWrappingKeypair();
-    const address = payeeAddressFromKeys(
-      { coinPublicKey: '81'.repeat(32), encryptionPublicKey: '82'.repeat(32) }, 'undeployed');
-    h.payroll.acceptInvite(h.invites.tokenFor(sentTo), handedOver(h, h.invites.tokenFor(sentTo), { wrappingPublicKey: wk.publicKey, address }), signIn(h, sentTo));
-
-    /* A signer leaves. The key rotates. The handover is still in the box. */
-    const rotated = await h.accounts.rotate(account.id, viewingKey);
-
-    const admitted = h.payroll.admit(employee.id, rotated.viewingKey, 'usr_admin');
-    expect(admitted.status).toBe('active');
-    expect(admitted.address!.bech32).toBe(address.bech32);
-    expect(admitted.wrappingPublicKey).toBe(wk.publicKey);
-
-    /* And payroll is not frozen behind them. */
-    const { run } = await h.payroll.createRunFromRoster(account.id, '2026-07', rotated.viewingKey);
-    expect(h.payroll.paymentFactsFor(run.id, rotated.viewingKey)).toHaveLength(1);
   });
 
   it('ADMIT REFUSES AN ADDRESS FOR ANOTHER NETWORK, at onboarding rather than at payment', async () => {
@@ -2871,174 +2830,11 @@ describe('what the ACCOUNTS table leaves in the store', () => {
   });
 });
 
-describe('changing the locks', () => {
-  /*
-   * Removing a signer does not un-teach them a key they already hold, so
-   * removal means rotation: a new viewing key, everything re-sealed under it,
-   * re-wrapped to whoever is left.
-   *
-   * These assert the property against the STORE and against the ledger blob,
-   * not against a return value, because "the old key no longer opens current
-   * state" is a negative, and the lesson is that negatives have to be checked
-   * where the data actually sits.
-   */
-
-  /** A company with money, payroll, a settled run, a proposal and a pending signer. */
-  async function loaded() {
-    const h = harness();
-    /* A signer with a real user id, made the way a wallet sign-in
-     * makes one. See `company()` above. */
-    const blake = { id: signIn(h, 'blake@acme.co', 'Blake Ruiz') };
-    const c = await h.accounts.create('Northwind Ltd', THREE_SIGNERS, 2, undefined, drawCompanyLabel());
-    h.payroll.hireDirect(c.account.id,
-      { name: 'Dana Whitfield', email: 'dana@acme.co', title: 'Engineer', asset: TEST_TOKEN, baseAmount: 6_200_00n }, c.viewingKey);
-    const { run } = await h.payroll.createRunFromRoster(c.account.id, '2026-07', c.viewingKey);
-    const p = await h.accounts.propose({
-      accountId: c.account.id, viewingKey: c.viewingKey, kind: 'transfer',
-      summary: 'Pay Wilkinson Legal',
-      payload: { entries: [{ id: 'e1', kind: 'transfer', asset: TEST_TOKEN, amount: 9_000_00n, counterparty: 'y', memo: '', at: '' }] },
-      proposedBy: present(c.secrets[0]).signerId,
-    });
-
-    const invite = h.accounts.inviteSigner(c.account.id, 'Devi Raman', 'devi@acme.co', 'approver');
-    const sk = newSigningKeypair();
-    const wk = newWrappingKeypair();
-    const pendingLeaf = 'ef'.repeat(32);
-    const pending = h.accounts.acceptSignerInvite(
-      invite.token, blake.id, sk.publicKey, wk.publicKey, pendingLeaf,
-      provenBy(c.viewingKey, invite, sk.publicKey, wk.publicKey, pendingLeaf));
-
-    return { h, c, run, p, pending, pendingLeaf };
-  }
-
-  it('the old key opens nothing afterwards, and the new key opens everything', async () => {
-    const { h, c, run, p, pending, pendingLeaf } = await loaded();
-    const old = c.viewingKey;
-    const before = await h.accounts.readState(c.account.id, old);
-
-    const { viewingKey: next, keyEpoch } = await h.accounts.rotate(c.account.id, old);
-    expect(keyEpoch).toBe(1);
-    expect(next).not.toBe(old);
-
-    // THE PROPERTY. Every record, checked one by one rather than trusting that
-    // one of them standing in for the rest.
-    expect(() => h.accounts.open(c.account.id, old)).toThrow(/will not open/);
-    expect(() => h.payroll.listPeople(c.account.id, old)).toThrow(/will not open/);
-    expect(() => h.payroll.requireRun(run.id, old)).toThrow(/will not open/);
-    expect(() => h.accounts.requireProposal(p.id, old)).toThrow(/will not open/);
-    await expect(h.accounts.readState(c.account.id, old)).rejects.toThrow(/no sealed state|cannot open/);
-
-    // And all of it still reads under the new one.
-    const opened = h.accounts.open(c.account.id, next);
-    expect(opened.name).toBe('Northwind Ltd');
-    expect((await h.accounts.ledgerStatus(c.account.id))!.threshold).toBe(2);
-    expect(h.payroll.listPeople(c.account.id, next).map(e => e.baseAmount)).toEqual([6_200_00n]);
-    // `total` USED TO BE ONE NUMBER, replaced by a subtotal per
-    // asset, because one figure across mixed currencies means nothing.
-    expect(h.payroll.requireRun(run.id, next).totals).toEqual({ [TEST_TOKEN]: 6_200_00n });
-    expect(h.accounts.requireProposal(p.id, next).summary).toContain('Wilkinson');
-    expect(await h.accounts.readState(c.account.id, next)).toEqual(before);
-
-    // Including the pending signer, whose drop box was sealed to an inbox
-    // derived from a key that no longer exists.
-    const stillPending = opened.signers.find(s => s.id === pending.id)!;
-    expect(stillPending.status).toBe('pending');
-    expect(stillPending.name).toBe('Devi Raman');
-    expect(stillPending.leafCommitment).toBe(pendingLeaf);
-  });
-
-  it('every remaining signer can reach the new key from their own wrapping secret', async () => {
-    const { h, c } = await loaded();
-    const { viewingKey: next } = await h.accounts.rotate(c.account.id, c.viewingKey);
-    for (const s of c.secrets) {
-      expect(h.accounts.recoverViewingKey(c.account.id, s.signerId, s.wrappingSecret)).toBe(next);
-    }
-  });
-
-  it('an excluded signer loses their wrapped copy and their seat', async () => {
-    const { h, c } = await loaded();
-    const gone = c.secrets[2];
-    const { viewingKey: next } = await h.accounts.rotate(c.account.id, c.viewingKey, [present(gone).signerId]);
-
-    // No wrapped key, so there is no path from their secret to the new one.
-    expect(() => h.accounts.recoverViewingKey(c.account.id, present(gone).signerId, present(gone).wrappingSecret))
-      .toThrow(/no wrapped key/);
-    expect(h.accounts.open(c.account.id, next).signers.map(s => s.id)).not.toContain(present(gone).signerId);
-    // And the two who stayed are unaffected.
-    expect(h.accounts.recoverViewingKey(c.account.id, present(c.secrets[0]).signerId, present(c.secrets[0]).wrappingSecret))
-      .toBe(next);
-  });
-
-  it('refuses a rotation that would leave the account below its own threshold', async () => {
-    /*
-     * Not politeness. Below the threshold the account can never approve
-     * anything again — including a proposal to add somebody back — so it is
-     * finished, with the money still in it.
-     */
-    const { h, c } = await loaded();
-    await expect(
-      h.accounts.rotate(c.account.id, c.viewingKey, [present(c.secrets[1]).signerId, present(c.secrets[2]).signerId]),
-    ).rejects.toThrow(/could never approve anything again/);
-    // And nothing moved: the old key still works.
-    expect(h.accounts.open(c.account.id, c.viewingKey).name).toBe('Northwind Ltd');
-    expect(h.accounts.require(c.account.id).keyEpoch).toBe(0);
-  });
-
-  it('refuses a rotation driven by someone who does not hold the current key', async () => {
-    const { h, c } = await loaded();
-    const other = await h.accounts.create('Globex', THREE_SIGNERS, 2, undefined, drawCompanyLabel());
-    await expect(h.accounts.rotate(c.account.id, other.viewingKey)).rejects.toThrow(/will not open/);
-    expect(h.accounts.require(c.account.id).keyEpoch).toBe(0);
-  });
-
-  it('refuses to re-seal over an epoch that already exists', async () => {
-    const { h, c } = await loaded();
-    const { keyEpoch } = await h.accounts.rotate(c.account.id, c.viewingKey);
-    // Writing over an epoch destroys the only copy of the state under that key.
-    await expect(h.ledger.reseal(c.account.id, { keyEpoch, sealed: seal('{}', 'ee'.repeat(32)) }))
-      .rejects.toThrow(/already sealed at key epoch/);
-  });
-
-  it('stamps records created AFTER a rotation with the current epoch, so the next one works', async () => {
-    /*
-     * The trap this closes: a literal `keyEpoch: 0` at the call site. An
-     * employee hired after a rotation would be filed at epoch 0 while sealed
-     * under the epoch-1 key, and the NEXT rotation would re-seal it from the
-     * wrong key and destroy it. Two rotations, so the failure has somewhere to
-     * land.
-     */
-    const { h, c } = await loaded();
-    const r1 = await h.accounts.rotate(c.account.id, c.viewingKey);
-    h.payroll.hireDirect(c.account.id,
-      { name: 'Sam Ortega', email: 'sam@acme.co', title: 'Designer', asset: TEST_TOKEN, baseAmount: 4_800_00n }, r1.viewingKey);
-    expect(h.store.listEmployees(c.account.id).map(e => e.keyEpoch)).toEqual([1, 1]);
-
-    const r2 = await h.accounts.rotate(c.account.id, r1.viewingKey);
-    // `listPeople` sorts by name, which it can only do because it holds the key.
-    expect(h.payroll.listPeople(c.account.id, r2.viewingKey).map(e => e.baseAmount))
-      .toEqual([6_200_00n, 4_800_00n]);
-    expect(h.store.listEmployees(c.account.id).map(e => e.keyEpoch)).toEqual([2, 2]);
-  });
-
-  it('still holds no company name, no salary and no leafCommitment afterwards', async () => {
-    // Rotation must not quietly undo the sealing by writing something back
-    // in the clear.
-    const { h, c, pendingLeaf } = await loaded();
-    await h.accounts.rotate(c.account.id, c.viewingKey);
-    // Short strings against the blanked view; the 64-character leaf against the
-    // raw text, where it cannot collide by chance. See `readableStore`.
-    const readable = readableStore((h.store as any).data);
-    for (const text of ['Northwind', 'Dana Whitfield', '620000', 'Wilkinson']) {
-      expect(readable).not.toContain(text);
-    }
-    expect(JSON.stringify((h.store as any).data)).not.toContain(pendingLeaf);
-  });
-});
-
 describe('removing a signer', () => {
   /*
-   * Changing the locks stops a departing signer READING. This is the other
-   * half: stopping them ACTING.
+   * Stopping a departing signer ACTING, on the chain double. Stopping them
+   * reading what is filed after they leave is the devices' change of the
+   * company's key (packages/web-shared/src/company-key-here.test.ts).
    *
    * Each signer holds a SLOT in the tree, and removing somebody clears that one
    * slot. Nobody else is touched, nothing is recomputed, and nobody is ever
@@ -3055,7 +2851,8 @@ describe('removing a signer', () => {
   /**
    * What a removal leaves, with the removal itself made on the chain double. The service no longer carries a removal
    * out (it is the devices', pinned in packages/web-shared/src/a-signer-is-removed-from-the-devices.test.ts): the
-   * chain takes the leaf off the tree and the roster record drops the row, and nothing rotates the key.
+   * chain takes the leaf off the tree and the roster record drops the row; the company's key is changed on the devices,
+   * not here.
    */
   async function carryOut(h: ReturnType<typeof harness>, c: any, p: { chainId: string }, leaving: number) {
     const account = h.accounts.open(c.account.id, c.viewingKey);
@@ -3066,13 +2863,29 @@ describe('removing a signer', () => {
     return { account: left, viewingKey: c.viewingKey as string, keyEpoch: 0 };
   }
 
-  /** Runs the whole round: propose, reach the threshold, remove. */
+  /**
+   * Raises the removal of one signer on the chain double, from the first seat, and approves it from the seats named.
+   * The service raises no removal: a removal is raised on the devices.
+   */
+  async function raiseRemoval(h: ReturnType<typeof harness>, c: any, leaving: number, approvers: readonly number[]) {
+    const account = h.accounts.open(c.account.id, c.viewingKey);
+    const ref = (i: number) => {
+      const s = account.signers.find((x) => x.id === c.secrets[i].signerId)!;
+      return { signerId: s.id, leaf: s.leafCommitment! };
+    };
+    const before = new Set((await h.ledger.status(c.account.id))!.openProposals.map((p) => p.id));
+    await h.ledger.propose(
+      c.account.id, SimulatedCommitments.signerRemovePayload(ref(leaving).leaf),
+      { asset: NO_ASSET, amount: 0n, batchDigest: commit('', ''), salt: newProposalSalt() }, ref(0),
+      SimulatedCommitments.noVault());
+    const round = (await h.ledger.status(c.account.id))!.openProposals.find((p) => !before.has(p.id))!;
+    for (const i of approvers) await h.ledger.approve(c.account.id, round.id, ref(i));
+    return { chainId: round.id as string };
+  }
+
+  /** Runs the whole round: raise, reach the threshold, remove. */
   async function removeCleo(h: ReturnType<typeof harness>, c: any) {
-    const p = await h.accounts.proposeRemoval(
-      c.account.id, c.viewingKey, c.secrets[2].signerId, c.secrets[0].signerId);
-    await h.accounts.approve(p.id, c.secrets[0].signerId, sign(approvalMessage(p), c.secrets[0].signingSecret), c.viewingKey);
-    await h.accounts.approve(p.id, c.secrets[1].signerId, sign(approvalMessage(p), c.secrets[1].signingSecret), c.viewingKey);
-    return carryOut(h, c, p, 2);
+    return carryOut(h, c, await raiseRemoval(h, c, 2, [0, 1]), 2);
   }
 
   it('the removed signer can no longer act on chain, which changing the locks alone could not do', async () => {
@@ -3096,9 +2909,7 @@ describe('removing a signer', () => {
 
   it('the ledger refuses a removal that has not reached the threshold', async () => {
     const { h, c } = await threeSigners();
-    const p = await h.accounts.proposeRemoval(
-      c.account.id, c.viewingKey, present(c.secrets[2]).signerId, present(c.secrets[0]).signerId);
-    await h.accounts.approve(p.id, present(c.secrets[0]).signerId, sign(approvalMessage(p), present(c.secrets[0]).signingSecret), c.viewingKey);
+    const p = await raiseRemoval(h, c, 2, [0]);
 
     await expect(carryOut(h, c, p, 2)).rejects.toThrow(/approv/);
     // Nothing moved: they are still a signer on the chain and in the roster.
@@ -3112,29 +2923,6 @@ describe('removing a signer', () => {
     expect((await h.accounts.ledgerStatus(c.account.id))!.signerCount).toBe(3);
   });
 
-  it('refuses to strand the account below its own threshold, at the earliest point', async () => {
-    /*
-     * Refused when the proposal is PROPOSED, not when it is performed. A removal
-     * that can never legally settle should not be able to collect approvals
-     * first — three people would sign something that was always going to be
-     * refused, and the fee would be paid to find out.
-     *
-     * The chain refuses it too. That is the test below, and it is the one that
-     * matters: this one is a courtesy, and a courtesy is worth nothing against
-     * somebody who calls the contract directly.
-     */
-    const h = harness();
-    const c = await h.accounts.create('Northwind Ltd', THREE_SIGNERS, 3, undefined, drawCompanyLabel());
-
-    await expect(h.accounts.proposeRemoval(
-      c.account.id, c.viewingKey, present(c.secrets[2]).signerId, present(c.secrets[0]).signerId,
-    )).rejects.toThrow(/could never approve anything again/);
-
-    // Nothing moved: no round was opened and everyone is still a signer.
-    expect((await h.accounts.ledgerStatus(c.account.id))!.openProposals).toEqual([]);
-    expect(h.accounts.open(c.account.id, c.viewingKey).signers).toHaveLength(3);
-  });
-
   it('a signer arriving between the proposal and the removal does not invalidate it', async () => {
     /*
      * Under the generation design the proposal digest covered the whole
@@ -3145,10 +2933,7 @@ describe('removing a signer', () => {
      * thing that can invalidate it is a change to WHO is leaving.
      */
     const { h, c } = await threeSigners();
-    const p = await h.accounts.proposeRemoval(
-      c.account.id, c.viewingKey, present(c.secrets[2]).signerId, present(c.secrets[0]).signerId);
-    await h.accounts.approve(p.id, present(c.secrets[0]).signerId, sign(approvalMessage(p), present(c.secrets[0]).signingSecret), c.viewingKey);
-    await h.accounts.approve(p.id, present(c.secrets[1]).signerId, sign(approvalMessage(p), present(c.secrets[1]).signingSecret), c.viewingKey);
+    const p = await raiseRemoval(h, c, 2, [0, 1]);
 
     // Adding a signer between proposing and removing changes the survivor set,
     // so the approved digest no longer describes what would happen.
@@ -3300,8 +3085,8 @@ describe('removing a signer', () => {
       proposedBy: present(cleo).signerId,
     });
 
-    /* The removal rotates the viewing key and re-seals every record, so the
-     * round Cleo raised is read back under the NEW key from here on. */
+    /* The removal takes Cleo off the chain and the roster; the proposal
+     * Cleo raised is still read with the company's key. */
     const out = await removeCleo(h, c);
     expect(h.accounts.open(c.account.id, out.viewingKey).signers
       .some(sg => sg.id === present(cleo).signerId)).toBe(false);
@@ -3421,9 +3206,10 @@ describe('removing a signer', () => {
 
   it('the ledger itself refuses to strand the account, not just the layer above it', async () => {
     /*
-     * Added because a mutation survived. `rotate` also refuses this, so the
-     * service-level test passed with the ledger's own guard removed — and the
-     * ledger's guard is the one that models what the contract does.
+     * Added because a mutation survived: a guard in the service also refused
+     * this, so the service-level test passed with the ledger's own guard
+     * removed, and the ledger's guard is the one that models what the contract
+     * does.
      */
     /*
      * A 3-of-3 account, created that way rather than raised with
@@ -3444,11 +3230,9 @@ describe('removing a signer', () => {
     const by = { signerId: present(ada).signerId, leaf: present(account.signers[0]).leafCommitment! };
 
     /*
-     * The proposal is opened ON THE LEDGER DIRECTLY, deliberately going around
-     * `proposeRemoval`, which now refuses this at the door. That refusal is a
-     * courtesy in our own code; this test is about what the thing underneath
-     * does when our code is not in the way, which is the only guard that counts
-     * against a signer calling the contract themselves.
+     * The proposal is opened ON THE LEDGER DIRECTLY: this test is about what
+     * the thing underneath does when no code of ours is in the way, which is the
+     * only guard that counts against a signer calling the contract themselves.
      */
     await h.ledger.propose(
       c.account.id, SimulatedCommitments.signerRemovePayload(goneLeaf),
@@ -3465,24 +3249,20 @@ describe('removing a signer', () => {
 
   it('the LEDGER binds the removal to the leaf that was approved, not just our roster', async () => {
     /*
-     * The service-level version of this is above; this one goes around the
-     * service, because the roster is our own bookkeeping and worth nothing
-     * against somebody calling the chain directly.
+     * This one goes around the service, because the roster is our own
+     * bookkeeping and worth nothing against somebody calling the chain directly.
      *
      * Its predecessor asserted that the digest covered the SURVIVOR LIST as
      * well, which was a real guard against a removal that seated a set nobody
      * approved. The list was deleted rather than guarded: nothing is supplied,
      * so nothing can be swapped.
      */
-    const { h, c, ada, blake, cleo } = await threeSigners();
+    const { h, c, ada, blake } = await threeSigners();
     const account = h.accounts.open(c.account.id, c.viewingKey);
     const by = { signerId: present(ada).signerId, leaf: present(account.signers[0]).leafCommitment! };
     const blakeLeaf = account.signers.find(s => s.id === present(blake).signerId)!.leafCommitment!;
 
-    const p = await h.accounts.proposeRemoval(
-      c.account.id, c.viewingKey, present(cleo).signerId, present(ada).signerId);
-    await h.accounts.approve(p.id, present(ada).signerId, sign(approvalMessage(p), present(ada).signingSecret), c.viewingKey);
-    await h.accounts.approve(p.id, present(blake).signerId, sign(approvalMessage(p), present(blake).signingSecret), c.viewingKey);
+    const p = await raiseRemoval(h, c, 2, [0, 1]);
 
     // Approved to remove Cleo; the ledger is asked to remove Blake, naming the
     // very proposal that approved Cleo's removal.

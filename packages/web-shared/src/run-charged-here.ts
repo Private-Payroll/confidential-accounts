@@ -26,6 +26,7 @@
  * wallet's indexer lags waits for it rather than charging the run, or another
  * run of the vault, on a read that does not show it yet.
  */
+import type { KeysHeld } from '../../../src/core/company-key.js';
 import { vouchedFreshOf, vouchedRefusal, type Vouched } from '../../../src/midnight/record-tree.js';
 import { assetIdHex, type AssetId } from '../../../src/core/assets.js';
 import type { Hex } from '../../../src/core/crypto.js';
@@ -37,6 +38,7 @@ import type { RunToChargeOnTheWire, RunTreeOnTheWire } from './run-charge-builde
 import type { VaultBuilderClient } from './vault-worker-client.js';
 import { believedProposalIdsOnChainHere, believedRunsHere, signedStateHere, type CompanyRecordsHere } from './run-rebuilt-here.js';
 import { spendingPolicyHere } from './spending-policy-here.js';
+import { refuseARunALeaverRaisedHere } from './governed-call-on-device.js';
 import type { KeptOnThisDevice } from './in-flight-on-this-device.js';
 import {
   chainAtOneBlockHere, DEPOSIT_TIME_TO_LIVE_MS, until, type BuiltOnHereDoors, type Pacing,
@@ -54,7 +56,7 @@ export class RunNotChargedHere extends Error {
 interface RecordsHereDoors {
   readonly records: CompanyRecordsHere;
   readonly accountId: string;
-  readonly viewingKey: Hex;
+  readonly viewingKey: KeysHeld;
 }
 
 /**
@@ -254,7 +256,9 @@ type RunCharged =
  * state, and relayed. It answers `charged` only once the chain the person's
  * own wallet reads holds the run as charged. A charge this device relayed
  * earlier from the same vault and has not seen land is waited for first, and
- * while it does not show nothing is built or sent.
+ * while it does not show nothing is built or sent. A run its seat raised after
+ * its own removal was raised, or one whose raiser this device cannot say, is
+ * refused before anything is read or built (`refuseARunALeaverRaisedHere`).
  */
 export async function chargeTheRunHere(
   doors: RecordsHereDoors & ChargeDoors,
@@ -264,6 +268,7 @@ export async function chargeTheRunHere(
     readonly vouched?: Vouched;
   },
 ): Promise<RunCharged> {
+  await refuseARunALeaverRaisedHere(doors.records, doors.accountId, doors.viewingKey, run.proposalId);
   const { order } = run;
   const vault = order.vault.toLowerCase() as Hex;
   const asset = order.asset.toLowerCase();

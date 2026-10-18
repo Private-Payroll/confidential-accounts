@@ -5,7 +5,7 @@ import { rosterVaultKeys } from '../../../../src/core/vault-keys.js';
 import { approverRosterFrom } from '../../../../src/core/vault-approvers.js';
 import { READER_REFUSAL, type ReaderRefusalCode } from '../../../../src/midnight/secret-readers.js';
 import {
-  api, canOpenCompanies, currentUser, holdersFromTheWallet, openKeysWithWallet, recordsKeyFromTheWallet, viewingKeyFor,
+  api, canOpenCompanies, currentUser, holdersFromTheWallet, openKeysWithWallet, recordsKeyFromTheWallet,
 } from 'vaults-web-shared/keyring.js';
 import type { VaultAddress } from 'midnight-identity/profile/company-label';
 import { createCompanyVault, VaultHandoverOwed, VaultStartOwed, type VaultStage } from 'vaults-web-shared/vault-operation.js';
@@ -20,7 +20,8 @@ import { companyRoute } from './handover-state.js';
 import { keyringFor, keysOnTheWayIn } from './keyring-person.js';
 import { ACT_REFUSAL, ACTED, refusalOf, type ActRefusal } from './refusals.js';
 import { ACCOUNT_ORIGIN } from './session.js';
-import { directoryHereFor, filingJudgeFor, openedHere, walletIndexerFor } from './filing-judge.js';
+import { companyKeysFor, directoryHereFor, filingJudgeFor, openedHere, walletIndexerFor } from './filing-judge.js';
+import type { CompanyKeyHere } from 'vaults-web-shared/company-key-here.js';
 import { giveTheVaultKeys } from './vault-keys.js';
 import { theVaultBuilder } from './vault-builder.js';
 import { handoverOwed, readVaultRows } from './vault-rows.js';
@@ -159,7 +160,11 @@ const withTheStart = (companyId: string, service: VaultService): VaultService =>
   };
 };
 
-type Opened = { sealed: SealedAccount; keys: NonNullable<Awaited<ReturnType<typeof keysOnTheWayIn>>>; roster: () => Promise<BelievedAccount> };
+type Opened = {
+  sealed: SealedAccount; keys: NonNullable<Awaited<ReturnType<typeof keysOnTheWayIn>>>; roster: () => Promise<BelievedAccount>;
+  /** The company's keys as this device believes them (`companyKeysFor`). */
+  companyKeys: CompanyKeyHere;
+};
 
 /** Keys saved for the person that are not open in this tab, and a read that does not ask the account to open them. */
 const LOCKED = READY.locked;
@@ -186,7 +191,7 @@ async function opened(personId: string, companyId: string, open: boolean): Promi
     if (account === null) throw new Fault(FAULT.vaultCompanyDidNotOpen);
     return account;
   };
-  return { sealed, keys, roster };
+  return { sealed, keys, roster, companyKeys: await companyKeysFor(companyId, sealed, keys) };
 }
 
 /**
@@ -236,11 +241,11 @@ async function run(personId: string, companyId: string, onStage: (stage: Creatin
   try {
     const o = await opened(personId, companyId, true);
     if (typeof o === 'string') return { of: ACTED.refused, why: o === LOCKED ? ACT_REFUSAL.didNotFinish : o };
-    const released = await giveTheVaultKeys(companyId, o.keys, viewingKeyFor(o.sealed), o.roster);
+    const released = await giveTheVaultKeys(companyId, o.keys, o.companyKeys, o.roster);
     if (released.of === ACTED.refused) return released;
     const service = withTheStart(companyId, vaultServiceFor(api, companyId, o.roster));
     /* This signer's own pool, journals and records, over the records route, wrapped to the seats the directory names now. */
-    const directoryRead = directoryHereFor(companyId, released.company, released.account, viewingKeyFor(o.sealed), o.roster);
+    const directoryRead = directoryHereFor(companyId, released.company, released.account, o.companyKeys, o.roster);
     const readers = readersIn(directoryRead);
     const done = await createCompanyVault({
       ...pacing(onStage), account: released.account, service,
@@ -248,7 +253,7 @@ async function run(personId: string, companyId: string, onStage: (stage: Creatin
       me: deviceSignerFrom(released.signed.statement.seat, released.companyKey),
       myRecordsKey: recordsKeypairFrom(fromHex(released.companyKey)).publicKey as Hex,
       signers: readers.signers,
-      records: deviceRecordsFor(o.keys.signingSecret, filingJudgeFor(companyId, released.company, released.account, viewingKeyFor(o.sealed), o.roster),
+      records: deviceRecordsFor(o.keys.signingSecret, filingJudgeFor(companyId, released.company, released.account, o.companyKeys, o.roster),
         () => currentUser()?.id ?? null, recordsEnteredOver(api, companyId, o.keys.signingSecret)),
       material: { signingSecret: o.keys.signingSecret, blinding: o.keys.blinding, scope: (o.keys as { scope?: Hex }).scope },
       /* The vault's company account as this person's own wallet reads it for each step, with no press. */
@@ -365,7 +370,7 @@ export async function giveYourVaultKeys(personId: string, companyId: string): Pr
   try {
     const o = await opened(personId, companyId, true);
     if (typeof o === 'string') return { of: ACTED.refused, why: o === LOCKED ? ACT_REFUSAL.didNotFinish : o };
-    const given = await giveTheVaultKeys(companyId, o.keys, viewingKeyFor(o.sealed), o.roster);
+    const given = await giveTheVaultKeys(companyId, o.keys, o.companyKeys, o.roster);
     if (given.of === ACTED.refused) return given;
     return { of: ACTED.done };
   } catch (e) {

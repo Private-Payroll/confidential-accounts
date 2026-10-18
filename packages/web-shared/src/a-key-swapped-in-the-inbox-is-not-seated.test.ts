@@ -22,9 +22,13 @@ import { SimulatedLedger } from '../../../src/core/ledger.js';
 import { MidnightCommitments } from '../../../src/midnight/commitments.js';
 import { FileStore } from '../../../src/core/store-file.js';
 import { AccountService, approvalMessage } from '../../../src/core/account.js';
-import { newBlinding, newSigningKeypair, newWrappingKeypair, sign, signingPublicKeyOf, unwrapKey, type Hex } from '../../../src/core/crypto.js';
+import { newBlinding, newSigningKeypair, newSymmetricKey, newWrappingKeypair, sign, signingPublicKeyOf, unwrapKey, type Hex } from '../../../src/core/crypto.js';
+import { answerDigestOf, type SealedAnswer } from '../../../src/core/answer-opened.js';
+import type { CompanyKeys } from '../../../src/core/company-key.js';
+import { sealGovernanceProposal } from '../../../src/core/proposal-filing.js';
+import { openAccount } from '../../../src/core/account.js';
 import { NO_ASSET } from '../../../src/core/assets.js';
-import { sealToInbox } from '../../../src/core/sealed-records.js';
+import { inboxPublicKey, sealToInbox } from '../../../src/core/sealed-records.js';
 import { storedSignerLeaf } from '../../../src/core/signer-leaf.js';
 import { newSeatInvitation, proveSeatKeys, SeatKeyNotFromTheInvitee } from '../../../src/core/seat-invite-proof.js';
 import { seatBlinding, type SeatOpening } from '../../../src/core/seat-opening.js';
@@ -37,7 +41,7 @@ import type { GovernedCallOrder, OpenedRound } from './governed-call-builder.js'
 import {
   approveOnDevice, openTheRoundHere, seatSignerOnDevice, type GovernedCallDoors, type GovernedCallService,
 } from './governed-call-on-device.js';
-import { refuseASeatNotForTheInvited, rosterBelievedHere, type RosterDoors, type RosterReads } from './roster-here.js';
+import { refuseASeatNotForTheInvited, rosterBelievedHere, seatingOf, waitingHere, type RosterDoors, type RosterReads } from './roster-here.js';
 import type { DirectoryWitness } from '../../../src/core/roster-record.js';
 import { aRosterASeatFiled } from '../../../src/testing/a-roster-a-seat-filed.js';
 
@@ -60,7 +64,7 @@ const ledger = new SimulatedLedger(MidnightCommitments);
 const store = new FileStore(join(mkdtempSync(join(tmpdir(), 'mn-swapped-')), 'db.json'));
 const accounts = new AccountService(store, ledger, MidnightCommitments);
 /* Two signers, so two devices each read the seat for themselves. */
-const created = await accounts.create('Swapped', [{ name: 'Ada', role: 'admin' }, { name: 'Bo', role: 'approver' }], 1, undefined, drawCompanyLabel());
+const created = await accounts.create('Swapped', [{ name: 'Ada', role: 'admin', userId: 'ada' }, { name: 'Bo', role: 'approver', userId: 'bo' }], 1, undefined, drawCompanyLabel());
 const company = created.account.id;
 const viewingKey = created.viewingKey;
 const [ada, bo] = created.secrets as [typeof created.secrets[0], typeof created.secrets[0]];
@@ -649,6 +653,117 @@ describe('WHO MAY INVITE, AND ONE PERSON ONE SEAT, ON THE DEVICE THAT APPROVES T
       await expect(held([adaSeat(), danasSeat])).rejects.toThrow(/already holds a seat on this company/u);
       /* A person whose seat was retired is seated again under a new leaf. */
       await expect(held([adaSeat(), { ...danasSeat, retired: true }])).resolves.toBeUndefined();
+    } finally {
+      putBack();
+    }
+  });
+});
+
+
+describe('A PERSON WAITING FOR A SEAT, ACROSS A CHANGE OF THE COMPANY\'S KEY', () => {
+  /* After a signer left, the company's key changed to epoch 1; Dana's request was sealed to the inbox of epoch 0. */
+  const KEY1 = newSymmetricKey() as Hex;
+  const keysAfter = (named: readonly SealedAnswer[] = []): CompanyKeys => ({
+    epoch: 1, key: KEY1, newest: 1, keyAt: (e) => (e === 0 ? viewingKey as Hex : KEY1), sealing: () => ({ key: KEY1, epoch: 1 }),
+    answered: new Map([[0, new Set(named.map(answerDigestOf))]]),
+  });
+  const danasBox = (): SealedAnswer => store.getAccount(company)!.pendingSigners.find((p) => p.id === waiting.id)!.sealed as SealedAnswer;
+  const readsWithDanasSeat: RosterReads = {
+    filings: filed.reads.filings,
+    holders: async () => { const h = await filed.reads.holders(); return { ...h, seats: [...h.seats, dana.leafCommitment] }; },
+    anchored: filed.reads.anchored,
+    leaves: filed.reads.leaves,
+  };
+  /** The proposal that seated Dana's leaf, carrying the invitation Ada's seat signed for it. */
+  const seatingProposal = () => ({
+    accountId: company, keyEpoch: 0,
+    sealed: sealGovernanceProposal({
+      accountId: company, viewingKey: viewingKey as Hex, kind: 'add-signer', summary: 'Add Dana', noVault: '00'.repeat(32) as Hex,
+      body: { signerId: waiting.id, invited: signSeatInvitation({ ...DANAS_INVITATION, leaf: dana.leafCommitment as Hex }, ada.signingSecret as Hex) },
+      change: { asset: NO_ASSET, amount: 0n, batchDigest: '00'.repeat(32) as Hex, salt: newBlinding() as Hex }, proposedBy: ada.signerId,
+    }),
+  });
+  const readAfter = (keys: CompanyKeys, proposals: readonly ReturnType<typeof seatingProposal>[] = []) =>
+    rosterBelievedHere({ ...store.getAccount(company)!, roster: filed.roster }, keys, {
+      accountId: company, label: honestRecord.companyLabel as never, account: honestRecord.contractAddress as never,
+      reads: readsWithDanasSeat, proposals: async () => proposals,
+    });
+
+  it('a request the change of key named is still read, its proof checked under the key it was made with', async () => {
+    putBack();
+    const keys = keysAfter([danasBox()]);
+    const read = await readAfter(keys);
+    /* RED WHEN: a request sealed to the inbox before the change, and named by it, no longer counts as waiting. */
+    expect(read.account.notBelieved).toEqual([dana.leafCommitment.toLowerCase()]);
+    /* RED WHEN: the proof is checked under the key in force rather than the key whose inbox opened the request. */
+    const got = await waitingHere(store.getAccount(company)!, read.account, keys, waiting.id, seatRequestFingerprint(danasRequest()),
+      seatingOf(read, readsWithDanasSeat));
+    expect(got.payload.leafCommitment).toBe(dana.leafCommitment);
+  });
+
+  it('a request the change did not name seats nobody, and the roster is read through the proposal that seated it', async () => {
+    putBack();
+    /* RED WHEN: a request sealed to an old inbox and named by no change is believed: the service could hand it in after. */
+    await expect(readAfter(keysAfter())).rejects.toThrow(/has no entry for 1 seat\(s\) the company's account holds on the chain/u);
+    /* RED WHEN: an answer withheld from the seat that changed the key refuses the whole roster though the chain seated it on the company's approvals. */
+    const read = await readAfter(keysAfter(), [seatingProposal()]);
+    expect(read.account.notBelieved).toEqual([dana.leafCommitment.toLowerCase()]);
+    /* RED WHEN: the person is admitted from an answer the change did not name. */
+    await expect(waitingHere(store.getAccount(company)!, read.account, keysAfter(), waiting.id, seatRequestFingerprint(danasRequest()),
+      seatingOf(read, readsWithDanasSeat))).rejects.toThrow(/did not find it waiting/u);
+  });
+
+  it('an unnamed request does not stop the company being read, and is no pending signer', () => {
+    putBack();
+    /* RED WHEN: one request sealed to an old inbox makes the whole company unreadable on every device. */
+    const opened = openAccount({ ...store.getAccount(company)!, roster: filed.roster }, keysAfter());
+    expect(opened.signers.some((x) => x.id === waiting.id)).toBe(false);
+    expect(openAccount({ ...store.getAccount(company)!, roster: filed.roster }, keysAfter([danasBox()])).signers
+      .find((x) => x.id === waiting.id)?.status).toBe('pending');
+  });
+
+  it('an approving device opens the seat\'s proposal only for a request the change named', async () => {
+    putBack();
+    const named = await openTheRoundHere(service(), company, seatRound.id, keysAfter([danasBox()]), true, recordsHere, leaves);
+    /* RED WHEN: an approving device cannot open a seat whose request was sealed before the change and named by it. */
+    expect(named.governance).toEqual({ kind: 'add-signer', leaf: dana.leafCommitment });
+    /* RED WHEN: an approving device, and the company's own reading of who waits, both believe a request sealed to an old inbox that no change named. */
+    await expect(openTheRoundHere(service(), company, seatRound.id, keysAfter(), true, recordsHere, leaves)).rejects.toThrow();
+  });
+
+  it('another request for the same person counts against the seat only when this device believes it', async () => {
+    const other = { id: 'sgn_dana_again', userId: 'usr_dana', request: {
+      ...danasRequest(), ...keysOf(), invited: signSeatInvitation({ ...DANAS_INVITATION, invitation: invitationIdOf(newInvitationToken()) }, ada.signingSecret as Hex),
+    } };
+    try {
+      inTheInbox(danasRequest(), 'usr_dana', [other]);
+      const rec = store.getAccount(company)!;
+      const box = (id: string) => rec.pendingSigners.find((p) => p.id === id)!;
+      const adaSeat: DirectoryWitness = {
+        seat: '0a'.repeat(32), signingKey: signingPublicKeyOf(ada.signingSecret as Hex), committeeKey: { tag: 'schnorr', value: '0b'.repeat(32) },
+        retired: false, role: 'admin', person: 'usr_ada',
+      };
+      const held = (keys: CompanyKeys) => refuseASeatNotForTheInvited(rec, keys, box(waiting.id), danasRequest(), { seats: [adaSeat], onTheChain: [], leaves });
+      /* RED WHEN: a second request the change of key named, for the same person, is not seen once the key has changed. */
+      await expect(held(keysAfter([box(waiting.id).sealed as SealedAnswer, box(other.id).sealed as SealedAnswer]))).rejects.toThrow(/waiting for the same person/u);
+      /* RED WHEN: a request no change named, which anybody holding the old key could seal, blocks a seat. */
+      await expect(held(keysAfter([box(waiting.id).sealed as SealedAnswer]))).resolves.toBeUndefined();
+    } finally {
+      putBack();
+    }
+  });
+
+  it('a proof made with the old key on a request sealed to the new inbox seats nobody', async () => {
+    try {
+      /* What somebody holding only the old key makes: a proof under it, sealed to the inbox in force. */
+      const rec = structuredClone(honestRecord);
+      const box = rec.pendingSigners.find((p) => p.id === waiting.id)!;
+      box.sealed = sealToInbox(danasRequest(), inboxPublicKey(KEY1, company));
+      store.putAccount(rec);
+      const read = await readAfter(keysAfter(), [seatingProposal()]);
+      /* RED WHEN: a proof is checked under every key this device holds, so a removed signer's old key still makes one that passes. */
+      await expect(waitingHere(store.getAccount(company)!, read.account, keysAfter(), waiting.id, seatRequestFingerprint(danasRequest()),
+        seatingOf(read, readsWithDanasSeat))).rejects.toThrow(/could not be confirmed as coming from the person you invited/u);
     } finally {
       putBack();
     }

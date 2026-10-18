@@ -10,7 +10,9 @@
  *   · **admitting** (`admitHere`): the decision that makes somebody payable.
  *     Every check the service used to make with the company's key is made here,
  *     on what the payee handed over, before anything is filed: it is their code,
- *     signed by their own wallet for this company; the fingerprint they read
+ *     signed by their own wallet for this company, sealed to the company's
+ *     inbox in force or named waiting by the change of key that replaced an
+ *     older one (`answerOpenedWith`); the fingerprint they read
  *     out is the one of the address in it; their invitation was not taken back
  *     and somebody is recorded as raising it; nobody else on the payroll is
  *     payable as the same person - the same wallet or the same email; a record
@@ -23,8 +25,9 @@
  * here. The service checks who filed it and what the route is for, and opens
  * nothing.
  */
+import { keyOf, sealingWith } from '../../../src/core/company-key.js';
 import { randomBytes, toHex, type Hex } from '../../../src/core/crypto.js';
-import { openFromInbox } from '../../../src/core/sealed-records.js';
+import { AnswerToAnOldInvitation, answerOpenedWith } from '../../../src/core/answer-opened.js';
 import { openPerson, peopleOnTheWire, sealPerson, whyNotPayable } from '../../../src/core/person-record.js';
 import { assets as defaultAssets, whyTheMoneyCannotReach, type AssetRegistry } from '../../../src/core/assets.js';
 import type { Invite, RosterEmployee } from '../../../src/core/types.js';
@@ -112,11 +115,11 @@ export async function readPeopleHere(d: PeopleDevice): Promise<PeopleHere> {
   const given = new Set(served.map(({ rec }) => rec.id));
   for (const id of namedHere(here, 'company', 'person')) if (!given.has(id)) notBelieved.push(id);
   for (const { rec, handedOver } of served) {
-    if (judge(verifiedCompanyFiler(rec), 'person', companyRecordKey('person', rec.id), companyRecordEntry(rec), true) !== null) {
+    if (judge(verifiedCompanyFiler(rec), 'person', companyRecordKey('person', rec.id), companyRecordEntry(rec), true, rec.keyEpoch) !== null) {
       notBelieved.push(rec.id);
       continue;
     }
-    const here: PersonHere = { person: openPerson(rec, d.company.viewingKey), version: rec.version, handedOver };
+    const here: PersonHere = { person: openPerson(rec, keyOf(d.company.viewingKey, rec.keyEpoch)), version: rec.version, handedOver };
     const why = here.person.status === 'active' ? whyNotPayable(here.person, d.company.label) : null;
     if (why !== null) { notPayable.push({ here, why }); continue; }
     people.push(here);
@@ -130,7 +133,8 @@ export async function readPeopleHere(d: PeopleDevice): Promise<PeopleHere> {
  * service has kept it.
  */
 const filedAndEntered = async (d: PeopleDevice, path: string, person: RosterEmployee, version: number): Promise<void> => {
-  const rec = signCompanyFiling(sealPerson(person, version, d.company.keyEpoch, d.company.viewingKey), d.signingSecret);
+  const sealing = sealingWith(d.company.viewingKey, d.company.keyEpoch);
+  const rec = signCompanyFiling(sealPerson(person, version, sealing.epoch, sealing.key), d.signingSecret);
   answered(await d.send(path, { method: 'POST', body: JSON.stringify({ person: toCompanyWire(rec) }) }), 201);
   await d.entered.enter([companyRecordEntry(rec)]);
 };
@@ -209,7 +213,10 @@ export async function admitHere(d: PeopleDevice, here: PersonHere, readOut: stri
   const box = answered(await d.send(`/api/employees/${encodeURIComponent(id)}/handover`, { method: 'GET' }), 200).inbox as Invite['handover'];
   if (!box) throw new PersonNotChanged(`${here.person.name} has not handed anything over yet, so there is nothing to admit.`);
   let code: JoinCode;
-  try { code = openFromInbox<JoinCode>(box, d.company.id, d.company.viewingKey); } catch {
+  try { code = answerOpenedWith<JoinCode>(d.company.viewingKey, box, d.company.id).value; } catch (e) {
+    if (e instanceof AnswerToAnOldInvitation) {
+      throw new PersonNotChanged('what was handed over was sealed to the company\'s key from before it changed, and the signer who changed the key did not find it waiting, so it is not admitted. An invitation is accepted once: mark this person a leaver and invite them again.');
+    }
     throw new PersonNotChanged('what was handed over does not open with this company\'s key, so it was sealed for somebody else. An invitation is accepted once: mark this person a leaver and invite them again.');
   }
   if (code?.parts?.kind !== 'payee' || tidyFingerprint(readOut) !== payeeCodeFingerprint(code as JoinCode & { parts: PayeeParts })) {

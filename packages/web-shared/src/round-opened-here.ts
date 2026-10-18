@@ -1,4 +1,12 @@
 /**
+ * The company's records a proposal is read against: its directory and where its proposals stand on the chain always,
+ * and the rest only where a payroll run is made again from them.
+ */
+export type RecordsForTheRound = Pick<CompanyRecordsHere, 'directory'> & Partial<CompanyRecordsHere>;
+
+const wholeRecords = (records: RecordsForTheRound): records is CompanyRecordsHere => typeof records.runs === 'function';
+
+/**
  * **ONE PROPOSAL, READ ON THIS DEVICE FROM THE COMPANY'S OWN RECORDS, BEFORE
  * ANYTHING IS BUILT FROM IT.**
  *
@@ -7,22 +15,24 @@
  * here and from nowhere else, so nothing wired to raise or approve can hand a
  * device a proposal it did not open itself.
  */
+import { keyOf, type KeysHeld } from '../../../src/core/company-key.js';
 import { parseCanonical, unseal, type Hex, type Sealed } from '../../../src/core/crypto.js';
 import { paymentChecked } from '../../../src/core/device-raise.js';
-import { openFromInbox, openRecord } from '../../../src/core/sealed-records.js';
+import { openRecord } from '../../../src/core/sealed-records.js';
 import { openAccount } from '../../../src/core/account.js';
 import { refuseASeatKeyNotFromTheInvitee, SeatKeyNotFromTheInvitee } from '../../../src/core/seat-invite-proof.js';
+import { answerOpenedWith } from '../../../src/core/answer-opened.js';
 import { assetIdBytes, NO_ASSET } from '../../../src/core/assets.js';
 import type { PendingSignerPayload, SealedAccount } from '../../../src/core/types.js';
 import type { StateChange } from '../../../src/core/ledger.js';
 import { paysCommitmentOf, proposalFilingRefusal, type RetirementTerms } from '../../../src/core/proposal-filing.js';
-import { companyRecordKey } from '../../../src/midnight/seat-directory.js';
+import { companyRecordKey, FILING_REFUSAL, notOnTheChainNow } from '../../../src/midnight/seat-directory.js';
 import { proposalEntry } from '../../../src/midnight/record-manifest.js';
 import { vouchedRefusal } from '../../../src/midnight/record-tree.js';
 import type { SealedCompanyRecord } from '../../../src/midnight/sealed-record-wire.js';
 import type { GovernanceOnTheWire, OpenedRound } from './governed-call-builder.js';
 import type { GovernedCallService } from './governed-call-on-device.js';
-import { judgeIn, kindAsked, listedHere } from './vault-page-doors.js';
+import { judgeIn, kindAsked, listedHere, refusedForItsKey } from './vault-page-doors.js';
 import { NO_ROSTER_RECORD, provedSeatsOf, refuseASeatNotForTheInvited, type SeatingReads } from './roster-here.js';
 import { runRebuiltHere, type CompanyRecordsHere } from './run-rebuilt-here.js';
 import { RoundRefusedHere, refuseWhatNoRoundMay } from './raise-checks-here.js';
@@ -32,10 +42,47 @@ const hexOfBytes = (b: Uint8Array): string => Array.from(b, (x) => x.toString(16
 
 /** Why this device could not read the company's record of a proposal itself. Nothing is built without it. */
 export class NotOpenedOnThisDevice extends Error {
-  constructor(why: string, options?: { cause?: unknown }) {
+  /** The kind its sealed record names, where it was opened far enough to read one before it was refused. */
+  readonly kind?: string;
+  /**
+   * Set when the one thing refused is that the seat that filed it has left the company and filed it past what its
+   * retirement kept: no device will ever act on it, and the chain no longer seats the one who filed it.
+   */
+  readonly passedOver?: true;
+  constructor(why: string, options?: { cause?: unknown; kind?: string; passedOver?: true }) {
     super(`${why} Nothing was built or sent.`, options);
     this.name = 'NotOpenedOnThisDevice';
+    if (options?.kind !== undefined) this.kind = options.kind;
+    if (options?.passedOver === true) this.passedOver = true;
   }
+}
+
+/**
+ * **WHO FILED A PROPOSAL, AS THIS DEVICE BELIEVES IT**: the filing key of its
+ * signed filing, when the signature covers exactly it and the company's
+ * records anchor it under that seat (`judgeIn`); null for one that carries no
+ * signed filing. A filing that does not check is refused, saying so.
+ */
+export async function believedFilerHere(
+  records: RecordsForTheRound, accountId: string, rec: { readonly id: string; readonly keyEpoch: number; readonly filedBy?: { readonly publicKey: string } },
+): Promise<string | null> {
+  if (rec.filedBy === undefined) return null;
+  let here: Awaited<ReturnType<RecordsForTheRound['directory']>> | null = null;
+  let why = proposalFilingRefusal(accountId, rec);
+  if (why === null) {
+    here = await records.directory({ records: [{ store: 'proposal', kind: 'proposal', id: rec.id }] });
+    why = judgeIn(here)(
+      rec.filedBy.publicKey as Hex, 'proposal', companyRecordKey('proposal', rec.id), proposalEntry(accountId, rec as never), true, rec.keyEpoch);
+  }
+  if (why !== null) {
+    const filer = rec.filedBy.publicKey.toLowerCase();
+    const seat = here?.dir.seats.find((x) => x.signingKey === filer);
+    const passedOver = why === FILING_REFUSAL['past-its-boundary'] && seat !== undefined && seat.retired !== null
+      && notOnTheChainNow(seat, here!.holders) !== null;
+    throw new NotOpenedOnThisDevice(`This device does not believe the company's record of this proposal (${why}). Do not `
+      + 'act on it.', passedOver ? { passedOver: true } : undefined);
+  }
+  return rec.filedBy.publicKey.toLowerCase();
 }
 
 /** Kinds a device here acts on. Any other is refused before anything is read out of it. */
@@ -64,17 +111,18 @@ const retirementTermsOf = (x: unknown): RetirementTerms | null => {
 /**
  * **ONE PROPOSAL, READ ON THIS DEVICE FROM THE COMPANY'S OWN RECORDS.**
  *
- * The proposal's record is opened with the viewing key this device holds, and
- * the payload sealed inside it with the same key: that is where the salt its
+ * The proposal's record is opened with the company's key of the epoch it was
+ * sealed at, and the payload sealed inside it with the same key: that is where the salt its
  * identity was made with is kept, what a seat or a threshold change changes,
  * and, for a raise, the change the proposal commits to. The leaf of a person to
  * be seated is read from the company's roster, opened here too. What is
  * returned is what the call is checked against and proved with
  * (`refuseWhatThisDeviceDidNotOpen`).
  *
- * **THE LIMITS, SAID PLAINLY.** Every one of these records is sealed under the
- * viewing key, and the service is handed that key, so a service that rewrote a
- * record whole and sealed it again would be read here as written. The identity
+ * **THE LIMITS, SAID PLAINLY.** Every one of these records is sealed under a
+ * key every signer of its epoch holds, so a signer who rewrote a record whole
+ * and sealed it again would be read here as written; the service holds no such
+ * key and sees only sealed bytes. The identity
  * and the payload it is made from sit on the record beside the sealed part,
  * not inside it. A person waiting for a seat is read from what they left in
  * the company's inbox, which is sealed to a key anybody may seal to, so their
@@ -90,12 +138,11 @@ const retirementTermsOf = (x: unknown): RetirementTerms | null => {
  * each of them are still read from the run as the service stored it.
  */
 export async function openTheRoundHere(
-  service: GovernedCallService, accountId: string, proposalId: string, viewingKey: string, forARaise: boolean,
-  records?: CompanyRecordsHere,
+  service: GovernedCallService, accountId: string, proposalId: string, viewingKey: KeysHeld, forARaise: boolean,
+  records?: RecordsForTheRound,
   /** The leaf each opening makes, in this device's vault worker: a seat's leaf is approved here only as its opening makes it. */
   leaves?: SeatingReads['leaves'],
 ): Promise<OpenedRound> {
-  const key = viewingKey as Hex;
   if (!service.sealedProposals) {
     throw new NotOpenedOnThisDevice('This page cannot read the company\'s records, so it cannot check this proposal. Reload '
       + 'the page to get the current version.');
@@ -104,6 +151,7 @@ export async function openTheRoundHere(
   const served = await service.sealedProposals(accountId);
   const listed = records === undefined ? served : listedHere(await records.directory(kindAsked('proposal')), 'proposal', served, 'proposal');
   const rec = listed.find((r) => r.id === proposalId);
+  if (rec === undefined && records !== undefined) refusedForItsKey(listed as { leftOut?: ReadonlyMap<string, string> }, proposalId, 'proposal');
   if (!rec || rec.accountId !== accountId) {
     throw new NotOpenedOnThisDevice('This company\'s records hold no proposal by that name. It may have been withdrawn. '
       + 'Reload the page to see where it stands.');
@@ -114,12 +162,14 @@ export async function openTheRoundHere(
     leaf?: unknown; retirement?: unknown;
     __change?: StateChange;
   };
+  let key: Hex;
   try {
+    key = keyOf(viewingKey, rec.keyEpoch);
     envelope = openRecord('proposals', rec.accountId, rec.sealed, key);
     if (!KINDS_A_DEVICE_ACTS_ON.has(envelope.kind)) {
       throw new NotOpenedOnThisDevice('This page acts on payroll runs, access for new signers, removing a signer, changes to '
         + 'the approvals required by the company or by one of its vaults, and vaults\' spending policies, and this proposal is none of '
-        + 'those, so it cannot be approved from this device yet. Leave it unapproved.');
+        + 'those, so it cannot be approved from this device yet. Leave it unapproved.', { kind: envelope.kind });
     }
     body = parseCanonical(unseal(envelope.sealedPayload, key));
   } catch (e) {
@@ -140,7 +190,7 @@ export async function openTheRoundHere(
   if (envelope.kind === 'payroll' && String(change.asset).toLowerCase() === NO_ASSET) {
     throw new NotOpenedOnThisDevice('This proposal pays nothing: it sets up one of the company\'s vaults, and it is '
       + 'approved only from setting that vault up, where who it is sealed to is checked. Leave it unapproved here, and '
-      + 'open the vault to finish setting it up.');
+      + 'open the vault to finish setting it up.', { kind: envelope.kind });
   }
   let governance: GovernanceOnTheWire | undefined;
   let retirement: RetirementTerms | undefined;
@@ -168,7 +218,7 @@ export async function openTheRoundHere(
       const sealedAccount = await service.sealedAccount(accountId) as SealedAccount & { roster?: SealedCompanyRecord | null };
       /* The signers are read only from the company's roster record, never from a list on its account record. */
       if ((sealedAccount.roster ?? null) === null) throw new NotOpenedOnThisDevice(NO_ROSTER_RECORD);
-      const signers = openAccount(sealedAccount, key, sealedAccount.roster).signers;
+      const signers = openAccount(sealedAccount, viewingKey, sealedAccount.roster).signers;
       const named = signers.find((x) => x.id === body.signerId);
       /*
        * **ONLY A PERSON WAITING FOR A SEAT IS SEATED, AT THE LEAF THEIR OWN
@@ -180,7 +230,9 @@ export async function openTheRoundHere(
        * **A PERSON WAITING FOR A SEAT IS READ FROM THE INBOX, AND THE INBOX
        * TAKES ANYBODY'S WRITE.** So the keys found there are seated only if
        * they carry the invitee's proof, made with the secret in their link,
-       * which this device works out again from the viewing key, and only for
+       * which this device works out again from the key whose inbox opened the
+       * request (one sealed to an inbox from before the company's key changed
+       * is believed only when that change named it), and only for
        * the person a seat this device believes invited, at a leaf their
        * opening makes for their wallet. A key put there by somebody without
        * that key carries no proof that passes, and is refused here, before
@@ -192,15 +244,21 @@ export async function openTheRoundHere(
           throw new SeatKeyNotFromTheInvitee('This person\'s acceptance could not be found. Access was not granted and '
             + 'nothing was sent. Reload the page; if they are still shown as waiting, press Grant access again.');
         }
-        const waiting = openFromInbox<PendingSignerPayload>(box.sealed, accountId, key);
-        refuseASeatKeyNotFromTheInvitee(key, accountId, waiting);
+        let opened: { readonly value: PendingSignerPayload; readonly key: Hex };
+        try {
+          opened = answerOpenedWith<PendingSignerPayload>(viewingKey, box.sealed, accountId);
+        } catch (e) {
+          throw new SeatKeyNotFromTheInvitee((e as Error)?.message ?? String(e));
+        }
+        const waiting = opened.value;
+        refuseASeatKeyNotFromTheInvitee(opened.key, accountId, waiting);
         /* The person invited, by a seat this device believes, and a leaf made for their wallet: checked again on every open. */
         if (records === undefined || leaves === undefined) {
           throw new NotOpenedOnThisDevice('This page cannot check who this seat is for, or that its keys are made for their '
             + 'wallet, so it cannot act on it. Reload the page to get the current version.');
         }
         const believed = await records.directory();
-        await refuseASeatNotForTheInvited(sealedAccount, key, box, waiting, {
+        await refuseASeatNotForTheInvited(sealedAccount, viewingKey, box, waiting, {
           seats: provedSeatsOf(believed.dir.seats), onTheChain: believed.holders.seats, leaves,
         });
         /* The same keys as somebody already on the list is the same person twice, or a copy. */
@@ -250,20 +308,18 @@ export async function openTheRoundHere(
   /*
    * **A PROPOSAL A SEAT'S DEVICE WROTE DOWN IS BELIEVED ONLY AS THAT SEAT FILED
    * IT**: its filing signed by a key this device's own read of the company's
-   * directory holds for a seat whose role may raise proposals. One the service
-   * wrote down itself carries no filing, and is read as before.
+   * directory holds for a seat whose role may raise proposals, which the
+   * opened proposal names (`OpenedRound.filedBy`). One the service wrote down
+   * itself carries no filing, is read as before and names no filer, so it is
+   * refused wherever who raised it must be known (`refuseWhatALeaverFiledHere`).
    */
+  let filedBy: string | null = null;
   if (rec.filedBy !== undefined) {
     if (records === undefined) {
       throw new NotOpenedOnThisDevice('This page cannot read the company\'s directory, so it cannot check who wrote this '
         + 'proposal down. Reload the page to get the current version.');
     }
-    const why = proposalFilingRefusal(accountId, rec) ?? judgeIn(await records.directory({ records: [{ store: 'proposal', kind: 'proposal', id: rec.id }] }))(
-      rec.filedBy.publicKey, 'proposal', companyRecordKey('proposal', rec.id), proposalEntry(accountId, rec), true);
-    if (why !== null) {
-      throw new NotOpenedOnThisDevice(`This device does not believe the company's record of this proposal (${why}). Do not `
-        + 'act on it.');
-    }
+    filedBy = await believedFilerHere(records, accountId, rec);
   }
   /*
    * **A PAYROLL RUN IS APPROVED ONLY AS THIS DEVICE READS IT FROM THE
@@ -271,11 +327,11 @@ export async function openTheRoundHere(
    */
   let made: OpenedRound['made'];
   if (envelope.kind === 'payroll') {
-    if (records === undefined) {
+    if (records === undefined || !wholeRecords(records)) {
       throw new NotOpenedOnThisDevice('This page cannot read the company\'s records a payroll run is checked against, so it '
         + `cannot ${forARaise ? 'raise' : 'approve'} one. Reload the page to get the current version.`);
     }
-    const rebuilt = await runRebuiltHere(records, accountId, rec.id, key);
+    const rebuilt = await runRebuiltHere(records, accountId, rec.id, viewingKey);
     made = rebuilt.made;
     /*
      * **WHAT THE FILING SAID IT PAYS IS WHAT THIS DEVICE WOULD PAY**: the vault
@@ -298,7 +354,7 @@ export async function openTheRoundHere(
      * never refusing the proposal for being itself.
      */
     try {
-      await refuseWhatNoRoundMay(records, accountId, key, {
+      await refuseWhatNoRoundMay(records, accountId, viewingKey, {
         run: rebuilt.run, leg: rebuilt.leg, made: rebuilt.made, filedBy: rec.filedBy?.publicKey ?? '', proposal: rec.id,
         vault: envelope.vault,
       });
@@ -331,7 +387,7 @@ export async function openTheRoundHere(
     ...(vouched === undefined ? {} : { vouched }),
     ...(governance === undefined ? {} : { governance }), ...(half === undefined ? {} : { half }),
     ...(retirement === undefined ? {} : { retirement }),
-    ...(made === undefined ? {} : { made }),
+    ...(made === undefined ? {} : { made }), ...(filedBy === null ? {} : { filedBy }),
   };
 }
 

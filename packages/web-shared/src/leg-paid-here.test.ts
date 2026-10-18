@@ -3,8 +3,11 @@
  *
  * **WHAT IS A STAND-IN, SAID HERE:** what the device makes for the leg
  * (`legToPayHere`), the charge of the run to its vault's period
- * (`chargeTheRunHere`) and the three step functions are substituted as
- * modules, each recording what it was handed; the vault's record is a real
+ * (`chargeTheRunHere`), the ask of who raised the run
+ * (`refuseARunALeaverRaisedHere`, whose own work is
+ * `a-signer-is-removed-from-the-devices.test.ts`'s) and the three step
+ * functions are substituted as modules, each recording what it was handed;
+ * the vault's record is a real
  * sealed pool in memory, and the plan is the run planner's own. Each step
  * function's own work - written down first, read on this device, sent and
  * recorded - is `vault-operation.test.ts`'s, and a leg paid end to end is
@@ -75,6 +78,16 @@ vi.mock('./vault-operation.js', async (real) => {
     },
   };
 });
+/* Who raised the run's proposal, as a staying device asks before each payment: a seat whose removal is raised, where a test says so. */
+let raisedByALeaver = false;
+/* Whether each such ask is written into `calls`, where a test watches its place among the payments. */
+let askedInCalls = false;
+vi.mock('./governed-call-on-device.js', () => ({
+  refuseARunALeaverRaisedHere: async (_r: unknown, _a: string, _k: unknown, proposalId: string) => {
+    if (askedInCalls) calls.push(`who raised ${proposalId}`);
+    if (raisedByALeaver) throw new Error('This was raised by a signer whose removal is raised. Nothing was sent.');
+  },
+}));
 /* The run planner, the real one; a test may hand the plan it answers, and every input it was asked with is kept. */
 let planned: Array<{ units: Array<{ kind: string }> }> = [];
 let planAnswer: unknown = null;
@@ -116,7 +129,7 @@ const leg: Leg = { records: {} as never, accountId: 'acc_1', runId: 'run_1', vie
 beforeEach(() => {
   calls.length = 0; paidOnTheAccount = new Set(); moveOnce = null; planned = []; planAnswer = null;
   movedTo = null; movesEveryTime = 0; unnamed = new Set(); accountLags = false;
-  charging = 'no-policy'; charges.length = 0;
+  charging = 'no-policy'; charges.length = 0; raisedByALeaver = false; askedInCalls = false;
 });
 
 describe('PAYING AN APPROVED LEG', () => {
@@ -257,6 +270,26 @@ describe('PAYING AN APPROVED LEG', () => {
       expect(done.steps.map((x) => x.kind), state).toEqual(['payment']);
       expect(calls, state).toEqual([`charge ${state}`, 'pay 0 30 from a1:100']);
     }
+  });
+
+  it('WHO RAISED THE RUN IS ASKED BEFORE EACH PAYMENT, AND A RUN RAISED BY A SEAT WHOSE REMOVAL IS RAISED IS NOT PAID', async () => {
+    order = anOrder([aPayment(0, 30), aPayment(1, 40)]);
+    askedInCalls = true;
+    await payAnApprovedLeg(await aVault([{ nonce: 'a1'.repeat(32), value: 50n }, { nonce: 'a2'.repeat(32), value: 50n }]), leg);
+    /* RED WHEN: a payment is sent without this device first asking whether the run was raised by a seat whose removal is raised. */
+    expect(calls.filter((c) => c.startsWith('who raised') || c.startsWith('pay')))
+      .toEqual(['who raised prp_theLegAAAAAA', 'pay 0 30 from a1:50', 'who raised prp_theLegAAAAAA', 'pay 1 40 from a2:50']);
+    calls.length = 0; paidOnTheAccount = new Set();
+    raisedByALeaver = true;
+    /* RED WHEN: a staying device pays a run in private money that a seat whose removal is raised raised. */
+    await expect(payAnApprovedLeg(await aVault([{ nonce: 'a1'.repeat(32), value: 50n }, { nonce: 'a2'.repeat(32), value: 50n }]), leg))
+      .rejects.toThrow(/raised by a signer whose removal is raised/u);
+    expect(calls.filter((c) => c.startsWith('pay'))).toEqual([]);
+    calls.length = 0;
+    order = anOrder([aPayment(0, 30, 'unshielded')], 'unshielded');
+    /* RED WHEN: a staying device pays a run in public money that a seat whose removal is raised raised. */
+    await expect(payAnApprovedLeg(await aVault([]), leg)).rejects.toThrow(/raised by a signer whose removal is raised/u);
+    expect(calls.filter((c) => c.startsWith('pay'))).toEqual([]);
   });
 
   it('A CHARGE REFUSED STOPS THE LEG BEFORE ANY PAYMENT IS SENT', async () => {

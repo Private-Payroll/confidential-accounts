@@ -10,14 +10,16 @@
  * keeps them, and the test's chain.
  */
 import { describe, expect, it } from 'vitest';
-import { sign, type Hex } from '../core/crypto.js';
+import { IDBFactory } from 'fake-indexeddb';
+import { newSymmetricKey, randomBytes, sign, toHex, type Hex } from '../core/crypto.js';
+import { keyCheckOf, sealedPrevious, sealedSeed, wrapsFor } from '../core/company-key.js';
 import {
-  directoryChangeMessage, type QuorumChange,
+  directoryChangeMessage, type DirectoryFiling, type QuorumChange, type RotateChange,
 } from '../midnight/seat-directory.js';
 import { manifestServiceFor, treeServiceFor } from 'vaults-web-shared/record-entered-here.js';
 import { anchoredOnTheWayIn, anchorServiceFor, directoryChangeFiledHere, type AnchorDoors } from 'vaults-web-shared/records-anchored-here.js';
 import { anchorFunctions, anchorSentInATest } from '../testing/record-tree-double.js';
-import { treeKeptInMemory } from 'vaults-web-shared/tree-kept-here.js';
+import { treeKeptHere, treeKeptInMemory } from 'vaults-web-shared/tree-kept-here.js';
 import {
   aCompanyOfTwoSeats, acmeChain, acmeDirectory, acmeDirectoryWithItsFold, ADA, ADDRESS, apiAs, BO, CO, sendAs, store, type Seat,
 } from './a-company-of-two-seats.test-support.js';
@@ -132,6 +134,52 @@ describe('A SIGNED CHANGE FILED FROM A DEVICE', () => {
     await expect(directoryChangeFiledHere(doorsOf(ADA, kept), change, version - 1)).rejects.toThrow(/have it signed again/iu);
     expect(await kept.changes.all(CO)).toEqual([]);
     expect(store.directoryFilingsOf(CO).length).toBe(version - 1);
+  });
+});
+
+/** A change of the company's key, signed by Ada's filing key for the directory's next version. */
+const rotationNext = (): { change: RotateChange; version: number } => {
+  const version = store.directoryFilingsOf(CO).length + 1;
+  const key = newSymmetricKey();
+  const unsigned = {
+    kind: 'rotate', epoch: 1, keyCheck: keyCheckOf(CO, 1, key), after: 1,
+    wraps: wrapsFor(key, [ADA, BO].map((s) => ({ seat: s.seat, wrappingKey: s.statement.wrappingKey as Hex }))),
+    previous: sealedPrevious(key, newSymmetricKey()), seed: { epoch: 1, sealed: sealedSeed(key, toHex(randomBytes(32))) }, waiting: [],
+    signatures: [],
+  } as unknown as RotateChange;
+  const message = directoryChangeMessage(CO, version, unsigned);
+  return { version, change: { ...unsigned, signatures: [{ publicKey: ADA.statement.signingKey as Hex, signature: sign(message, ADA.signingSecret) }] } as RotateChange };
+};
+
+describe('A CHANGE OF THE COMPANY\'S KEY IS NEVER KEPT ON THE DEVICE OR FILED AGAIN FROM IT', () => {
+  it('a change of key filed from a device is not kept, even when the service drops it', async () => {
+    const kept = treeKeptInMemory();
+    const { change, version } = rotationNext();
+    await directoryChangeFiledHere(doorsOf(ADA, kept, async () => {}), change, version);
+    /* RED WHEN: a change of key is kept before it is filed, so a lost one is filed again under its old signatures. */
+    expect(await kept.changes.all(CO)).toEqual([]);
+    expect(store.directoryFilingsOf(CO).length).toBe(version - 1);
+  });
+
+  it('a change of key a device\'s store hands back is never filed again on the way in', async () => {
+    const kept = treeKeptInMemory();
+    const { change, version } = rotationNext();
+    /* A store that holds one anyway, at the directory's next version. */
+    await kept.changes.keep(CO, { signedAt: version, change });
+    const filed: DirectoryFiling[] = [];
+    await anchoredOnTheWayIn(doorsOf(ADA, kept, async (f) => { filed.push(f); }));
+    /* RED WHEN: a change of key kept on the device is offered to be filed again on the way in. */
+    expect(filed.filter((f) => f.change.kind === 'rotate')).toEqual([]);
+  });
+
+  it('a change of key written in the browser\'s own database is never read back as one to file again', async () => {
+    const db = new IDBFactory();
+    const { change, version } = rotationNext();
+    const role = signedNext({ kind: 'role', seat: BO.seat, role: 'approver', threshold: 1 }, [ADA]);
+    await treeKeptHere(db).changes.keep(CO, { signedAt: version, change });
+    await treeKeptHere(db).changes.keep(CO, { signedAt: version + 1, change: role.change });
+    /* RED WHEN: a change of key is read back from the database as a change to file again. */
+    expect((await treeKeptHere(db).changes.all(CO)).map((k) => [k.signedAt, k.change.kind])).toEqual([[version + 1, 'role']]);
   });
 });
 

@@ -19,7 +19,7 @@ import { mkdtempSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import {
-  buildGovernedCall, NotWhatThisDeviceOpened, RecordDoesNotAddUp, refuseWhatThisDeviceDidNotOpen,
+  buildGovernedCall, NotWhatThisDeviceOpened, RecordDoesNotAddUp, refuseARaiseThatIsNotTheRecordedOne, refuseWhatThisDeviceDidNotOpen,
   type GovernedCallDeps, type GovernedCallOrder, type GovernanceOnTheWire, type OpenedRound,
 } from './governed-call-builder.js';
 import {
@@ -37,6 +37,8 @@ import { newSeatInvitation, proveSeatKeys } from '../../../src/core/seat-invite-
 import { seatBlinding } from '../../../src/core/seat-opening.js';
 import { invitationIdOf, newInvitationToken, signSeatInvitation } from '../../../src/core/invitation.js';
 import { sealToInbox } from '../../../src/core/sealed-records.js';
+import type { CompanyKeys } from '../../../src/core/company-key.js';
+import { carryOrderHere } from './material-made-here.js';
 import type { PendingSignerPayload } from '../../../src/core/types.js';
 import { aRosterASeatFiled } from '../../../src/testing/a-roster-a-seat-filed.js';
 import { directoryHere } from './vault-page-doors.js';
@@ -274,7 +276,7 @@ describe('THE BUILDER PROVES ONLY WHAT THIS DEVICE READ', () => {
 const ledger = new SimulatedLedger(MidnightCommitments);
 const store = new FileStore(join(mkdtempSync(join(tmpdir(), 'mn-opened-')), 'db.json'));
 const accounts = new AccountService(store, ledger, MidnightCommitments);
-const created = await accounts.create('Opened', [{ name: 'Ada', role: 'admin' }, { name: 'Bo', role: 'approver' }], 1, undefined, drawCompanyLabel());
+const created = await accounts.create('Opened', [{ name: 'Ada', role: 'admin', userId: 'ada' }, { name: 'Bo', role: 'approver', userId: 'bo' }], 1, undefined, drawCompanyLabel());
 const company = created.account.id;
 const viewingKey = created.viewingKey;
 const ada = created.secrets[0]!;
@@ -302,7 +304,7 @@ const lateSeat = accounts.acceptSignerInvite(invite.token, 'usr_late', late.publ
   store.putAccount({ ...rec, pendingSigners: rec.pendingSigners.map((x) => (x.id === lateSeat.id ? { ...x, sealed: sealToInbox(request, rec.inboxPublicKey) } : x)) });
 }
 const seatRound = await accounts.seatRound(company, viewingKey, lateSeat.id, ada.signerId);
-const thresholdRound = await accounts.thresholdRound(company, viewingKey, 2, ada.signerId);
+const thresholdChange = await accounts.proposeThresholdChange(company, viewingKey, 2, ada.signerId, { onDevice: true });
 /* A device reads the signers only from a roster record a seat filed: Ada's seat files the company's, as it stands. */
 const roster = (() => {
   const { name, signers } = openAccount(accounts.require(company), viewingKey as Hex, null);
@@ -350,10 +352,35 @@ describe('THE PAGE READS THE COMPANY\'S OWN RECORDS WITH THE VIEWING KEY', () =>
   });
 
   it('a threshold change is read with the threshold it sets', async () => {
-    const opened = await openTheRoundHere(honest(), company, thresholdRound.id, viewingKey, false);
+    const opened = await openTheRoundHere(honest(), company, thresholdChange.id, viewingKey, false);
     /* RED WHEN: the threshold is read from anywhere but the proposal's own sealed payload. */
     expect(opened.governance).toEqual({ kind: 'threshold', threshold: '2' });
-    expect(opened.salt).toBe(accounts.governanceAsked(thresholdRound.id, viewingKey).proposalSalt);
+    expect(opened.salt).toBe(accounts.governanceAsked(thresholdChange.id, viewingKey).proposalSalt);
+  });
+
+  it('a proposal sealed before a change of the company\'s key opens with its own epoch\'s key, and the salt sealed in it is the one carried out', async () => {
+    const newer = 'a7'.repeat(32) as Hex;
+    /* This device after one change of the key: the new key in force, and the key the proposal was sealed under reached through it. */
+    const keys: CompanyKeys = {
+      epoch: 1, key: newer, newest: 1, keyAt: (e) => (e === 0 ? viewingKey as Hex : e === 1 ? newer : (() => { throw new Error(`no key at epoch ${e}`); })()),
+      sealing: () => ({ key: newer, epoch: 1 }),
+    };
+    const opened = await openTheRoundHere(honest(), company, thresholdChange.id, keys, false);
+    const sealedSalt = accounts.governanceAsked(thresholdChange.id, viewingKey).proposalSalt;
+    /* RED WHEN: a proposal sealed under an older key is opened with the key in force rather than its own epoch's, so it is never carried out after a change of the key. */
+    expect(opened.salt).toBe(sealedSalt);
+    expect(opened.governance).toEqual({ kind: 'threshold', threshold: '2' });
+    const order = carryOrderHere(opened);
+    /* RED WHEN: the carrying out takes its salt from anywhere but the payload it opened. */
+    expect((order as { proposalSalt: string }).proposalSalt).toBe(sealedSalt);
+    /* The order passes both checks with the account's own functions: its salt and its change make the proposal the chain holds. */
+    expect(() => refuseWhatThisDeviceDidNotOpen({ accountPure: pureCircuits as never }, order, opened)).not.toThrow();
+    expect(() => refuseARaiseThatIsNotTheRecordedOne({ accountPure: pureCircuits as never }, order)).not.toThrow();
+    /* RED WHEN: a salt other than the one sealed in the older payload is carried out after the change of the key. */
+    expect(() => refuseWhatThisDeviceDidNotOpen({ accountPure: pureCircuits as never }, { ...order, proposalSalt: 'ee'.repeat(32) } as GovernedCallOrder, opened))
+      .toThrow(NotWhatThisDeviceOpened);
+    /* RED WHEN: the key in force alone opens a proposal sealed under the key it replaced. */
+    await expect(openTheRoundHere(honest(), company, thresholdChange.id, newer, false)).rejects.toThrow(NotOpenedOnThisDevice);
   });
 
   it.each([
@@ -404,6 +431,16 @@ describe('THE PAGE READS THE COMPANY\'S OWN RECORDS WITH THE VIEWING KEY', () =>
       expect(refused.message).toMatch(says);
       expect(refused.message).toMatch(/Nothing was built or sent\.$/u);
     });
+
+  it('a proposal refused for its kind says which kind its sealed record names', async () => {
+    const setUp = await openTheRoundHere(honest([aRecord('prp_x', { asset: NO_ASSET })]), company, 'prp_x', viewingKey, false).catch((e) => e);
+    /* RED WHEN: a vault's set-up step, refused here, does not say it is a payroll record and no removal. */
+    expect(setUp).toBeInstanceOf(NotOpenedOnThisDevice);
+    expect(setUp.kind).toBe('payroll');
+    const other = await openTheRoundHere(honest([aRecord('prp_x', { kind: 'adopt-a-vault' })]), company, 'prp_x', viewingKey, false).catch((e) => e);
+    /* RED WHEN: a proposal of a kind this device does not act on is refused without saying which kind it is. */
+    expect(other.kind).toBe('adopt-a-vault');
+  });
 
   it('a removal is read with the leaf it takes off and the retirement it carries, exactly as sealed', async () => {
     const retirement = { filedUpTo: { 'roster:signers': 3 }, threshold: 2, statement: { recordsKey: 'b2'.repeat(32), seat: 'ab'.repeat(32), signature: '9b'.repeat(64) } };

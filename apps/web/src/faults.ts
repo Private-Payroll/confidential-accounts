@@ -16,6 +16,7 @@ export const FAULT = {
   noCompanyRecords: 'web-8-no-company-records',
   vaultCompanyDidNotOpen: 'web-9-vault-company-did-not-open',
   vaultPaymentsNotAsked: 'web-10-vault-payments-not-asked',
+  companyKeysWithNoAccount: 'web-11-company-keys-with-no-account',
 } as const;
 
 export type FaultCode = (typeof FAULT)[keyof typeof FAULT];

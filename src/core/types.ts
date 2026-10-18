@@ -1109,6 +1109,12 @@ export interface Invite {
    * the raw token, which only the invitee holds. A deadline nobody but the
    * invitee can read is a deadline only the invitee enforces.
    */
+  /**
+   * The epoch of the company key the invitation was made under, as its signed filing names it. The service keeps it
+   * and judges nothing by it: each member's device refuses an answer sealed to an older inbox than the key in force,
+   * unless the change of the key named it as waiting.
+   */
+  keyEpoch?: number;
   expiresAt?: string;
   /**
    * **WHEN IT WAS TAKEN BACK.** `docs/scope-invitations.md` §8.

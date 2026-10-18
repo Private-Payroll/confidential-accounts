@@ -53,11 +53,15 @@ export const KEY = newSymmetricKey();
 export const ORIGIN = 'https://payroll.example';
 
 export interface Seat extends InvitingSeat { person: string; seat: string; entry: DirectoryEntry; n: number }
+/** Every header a device asked a request to carry, with its address: the transport here sends fixed headers, so what a device asked for is read here. */
+export const headersAsked: Array<{ readonly path: string; readonly headers: string }> = [];
+
 /**
  * A device signed in as `person`, reading the service's answers as the page's
  * own `api` does: a refusal throws, with the service's words.
  */
 export const apiAs = (person: string) => async (path: string, init?: RequestInit): Promise<any> => {
+  if (init?.headers !== undefined) headersAsked.push({ path, headers: JSON.stringify(init.headers) });
   const r = await sendAs(person)(path, { method: (init?.method ?? 'GET') as never, ...(init?.body === undefined ? {} : { body: String(init.body) }) });
   if (r.status >= 300) throw Object.assign(new Error(String((r.body as { error?: string }).error ?? r.status)), { status: r.status, body: r.body });
   return r.body;
@@ -94,7 +98,9 @@ const accountOf = (id: string, members: string[], label: CompanyLabel, address: 
   companyLabel: label as never, contractAddress: address,
 } as SealedAccount);
 
-export const ACME: InvitingCompany = { id: CO, name: 'Acme', label: LABEL, account: ADDRESS, inboxPublicKey: inboxPublicKey(KEY, CO), keyEpoch: 0, viewingKey: KEY };
+export const ACME: InvitingCompany = { id: CO, name: 'Acme', label: LABEL, account: ADDRESS, keyEpoch: 0, viewingKey: KEY };
+/** The company's inbox under its only key: what an offer made here names, worked out on the device. */
+export const ACME_INBOX = inboxPublicKey(KEY, CO);
 
 export const store = new MemoryStore();
 /** The company's records other than its roster - its people among them - as the server keeps them. */

@@ -142,7 +142,7 @@ const why = (e: unknown): string => (e as Error)?.message ?? String(e);
 export const recordsEnteredFor = (
   manifest: ManifestService, accountId: string, signingSecret: Hex,
   /**
-   * Why this seat files nothing more, or null: a removal of its own seat is raised (`ownRemovalRaisedHere`), so what
+   * Why this seat files nothing more, or null: a removal of its own seat is approved (`ownRemovalApprovedHere`), so what
    * it would enter now falls past the boundary its retirement keeps. Absent, nothing stops it.
    */
   stops?: () => Promise<string | null>,

@@ -74,7 +74,7 @@ import { payKeyCommitmentIn, sealedPayKeyIn } from './pay-key-round.js';
 import type {
   Ledger, LedgerAddress, LedgerRecord, TxRef, ProofSystem, Circuit,
   StateChange, LedgerStatus, SignerRef, AccountOpening,
-  SealedStateAt, PaymentsAmong, RunProposal,
+  PaymentsAmong, RunProposal,
 } from '../core/ledger.js';
 import type { AssetId } from '../core/assets.js';
 import type { AccountPrivateState } from '../../contracts/src/witnesses.js';
@@ -380,17 +380,11 @@ export interface FeeSponsor {
  */
 export interface SealedStateStore {
   /**
-   * Filed under the commitment AND the key epoch. K-4.
+   * Filed under the commitment AND the key epoch.
    *
-   * The commitment alone does not identify a blob, and treating it as though it
-   * did is what makes rotation destructive. The commitment covered the balance,
-   * the entry digest and the salt — the plaintext — so the same state re-sealed
-   * under a rotated viewing key had the same commitment and entirely different
-   * bytes. `C292` only sharpened this: the value passed here is now
-   * `viewDigestOf([])`, one constant, so it separates nothing at all. Under a
-   * one-key-per-commitment store, writing the second either
-   * silently replaces the first or is silently ignored by the never-overwrite
-   * rule, and one of those ends the account.
+   * The commitment alone does not identify a blob: the value passed here is
+   * `viewDigestOf([])`, one constant, so it separates nothing at all. The key
+   * epoch names the key a blob opens with.
    */
   put(accountId: string, commitment: Hex, keyEpoch: number, sealed: Sealed): Promise<void>;
   get(accountId: string, commitment: Hex, keyEpoch: number): Promise<Sealed | null>;
@@ -2348,31 +2342,6 @@ export class MidnightLedger implements Ledger {
    * chain read third and compared rather than assumed.
    */
 
-  /**
-   * Rotation, and it touches no chain. K-4.
-   *
-   * The state is unchanged — only the key that opens it is — so there is
-   * nothing to submit. Nothing on chain describes the state to begin with since
-   * The blob is filed under `viewDigestOf([])`, one constant. The new
-   * ciphertext is filed alongside the old at a new epoch, which is what lets the
-   * account stay readable on both sides of the flip.
-   */
-  async reseal(accountId: string, next: SealedStateAt): Promise<void> {
-    const address = await this.addressOf(accountId);
-    if (!address) throw new Error('account not found on this ledger');
-    const state = await this.readContractState(address);
-    if (!state) throw new Error('account not found on this ledger');
-
-    const already = await this.blobs.get(accountId, viewDigestOf([]), next.keyEpoch);
-    if (already) {
-      throw new Error(
-        `the state for "${accountId}" is already sealed at key epoch ${next.keyEpoch}. ` +
-          'Re-sealing over an existing epoch would destroy the only copy under that key.',
-      );
-    }
-    await this.blobs.put(accountId, viewDigestOf([]), next.keyEpoch, next.sealed);
-  }
-
   async fetch(accountId: string, keyEpoch: number): Promise<LedgerRecord | null> {
     const address = await this.addressOf(accountId);
     if (!address) return null;
@@ -2386,9 +2355,8 @@ export class MidnightLedger implements Ledger {
     if (!sealed) {
       throw new Error(
         `committed state could not be retrieved for "${accountId}" at key epoch ${keyEpoch}. ` +
-          'Either the blob is missing (M-73), or the account record and the state store ' +
-          'disagree about which viewing key is current, which is what a half-finished ' +
-          'rotation looks like (K-4).',
+          'Either the blob is missing, or the account record names a key epoch the state ' +
+          'store holds nothing under.',
       );
     }
 

@@ -10,7 +10,6 @@ import { askWallet, type Openable, type WalletDialog } from './wallet-sign-in.js
 
 /**
  * **OPENING THE WALLET AND ASKING IT TO RELEASE ONE COMPANY'S KEY.**
- * `docs/NEXT.md` PI2a §1.
  *
  * ── THE ONE PLACE IN THIS PRODUCT THAT RECEIVES A SECRET ON THE WIRE ──────
  *
@@ -21,7 +20,7 @@ import { askWallet, type Openable, type WalletDialog } from './wallet-sign-in.js
  * to happen here.
  *
  * That is `readRelease`, and it is imported from the wallet's own package
- * rather than reimplemented, for the reason `PI1` imported `verify`: the thing
+ * rather than reimplemented, for the reason `verify` is imported: the thing
  * payroll runs should be the thing the wallet's round tested, not a description
  * of it. It reads **none of its three expectations out of the message** — the
  * origin is ours, the nonce is the one this function generated, and the company
@@ -41,8 +40,8 @@ import { askWallet, type Openable, type WalletDialog } from './wallet-sign-in.js
  * It returns thirty-two bytes and nothing else — not the message, not the
  * wallet's clock reading, not the origin it echoed. **Nothing here logs, stores
  * or transmits the key**, and the caller (`keyring.ts`) keeps it in a module
- * variable for the life of the tab, exactly where the password-derived key used
- * to sit. A reload asks the wallet again.
+ * variable for the life of the tab and nowhere else. A reload asks the wallet
+ * again.
  */
 
 export type UnlockFailure = ReleaseFailure | 'person-mismatch' | 'wallet-refused';

@@ -37,16 +37,17 @@ import type { Hex } from '../../../src/core/crypto.js';
 import { companyRecordKey, vaultRecordKey, type FiledKind } from '../../../src/midnight/seat-directory.js';
 import {
   companyWirePaths, fromCompanyWire, signCompanyFiling, toCompanyWire, verifiedCompanyFiler,
-  type CompanyRecordKind, type SealedCompanyRecord,
+  SEALED_UNDER_PURPOSE, type CompanyRecordKind, type SealedCompanyRecord,
 } from '../../../src/midnight/sealed-record-wire.js';
 
 /**
  * **WHETHER ONE VERSION IS BELIEVED**: null when it is, or the reason it is not.
  * `filer` is the key whose signature over exactly this version verifies, or
  * null; `read` is the record as its entry in the company's records names it;
- * `newest`, that it is read as the record's newest version.
+ * `newest`, that it is read as the record's newest version; `sealedAt`, the
+ * company key epoch a record sealed under the company's key names.
  */
-export type FilingJudge = ((filer: Hex | null, kind: FiledKind, recordKey: string, read: RecordRead, newest?: boolean) => string | null) & {
+export type FilingJudge = ((filer: Hex | null, kind: FiledKind, recordKey: string, read: RecordRead, newest?: boolean, sealedAt?: number) => string | null) & {
   /**
    * **WHY A RECORD THE SERVICE DID NOT GIVE AT ALL IS NOT READ AS ABSENT**:
    * the company's records name a version of it, or this device cannot read
@@ -378,7 +379,9 @@ export class HttpCompanyRecordStore {
   }
 
   private believed(rec: SealedCompanyRecord, judge: FilingJudge, newest: boolean): SealedCompanyRecord {
-    const why = judge(verifiedCompanyFiler(rec), rec.kind, companyRecordKey(rec.kind, rec.id), companyRecordEntry(rec), newest);
+    /* Only a record sealed under the company's key is held to the key in force at its batch; others name no such key. */
+    const sealedAt = SEALED_UNDER_PURPOSE[rec.kind] === undefined ? undefined : rec.keyEpoch;
+    const why = judge(verifiedCompanyFiler(rec), rec.kind, companyRecordKey(rec.kind, rec.id), companyRecordEntry(rec), newest, sealedAt);
     if (why !== null) throw new FilingNotBelieved(`company's ${rec.kind} record`, rec.version, why);
     return rec;
   }

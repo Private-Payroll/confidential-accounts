@@ -456,7 +456,10 @@ describe.skipIf(!KEYS_ON_DISK)('A VAULT\'S COMMITTEE STAYS THE SUPER ADMINS\' WH
     app.use(seatDirectoryRoutes({ signedIn, member, store, chain: directoryChainOver(() => chain.contract(company)) }));
     app.use(companyVaultRoutes({
       signedIn, member, store,
-      company: async () => ({ address: company, threshold: companyThreshold, vaultThresholds: [] }),
+      company: async () => ({
+        address: company, threshold: companyThreshold, vaultThresholds: [],
+        seats: Number(accountLedgerOf(chain.contract(company)).signerLeaves.size()),
+      }),
       ledger: watched, chain: vaultChain,
       verifierKeys: async () => new Map(await Promise.all(
         [...VAULT_CIRCUITS]

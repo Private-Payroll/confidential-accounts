@@ -439,7 +439,10 @@ describe.skipIf(!KEYS_ON_DISK)('A COMPANY VAULT, FROM THE SIGNER\'S DEVICE [need
     app.use(seatDirectoryRoutes({ signedIn, member, store, chain: directoryChainOver(() => chain.contract(company)) }));
     app.use(companyVaultRoutes({
       signedIn, member, store,
-      company: async () => ({ address: company, threshold: companyThreshold, vaultThresholds: [] }),
+      company: async () => ({
+        address: company, threshold: companyThreshold, vaultThresholds: [],
+        seats: Number((accountModule as any).ledger(asRuntime(chain.contract(company)).data).signerLeaves.size()),
+      }),
       ledger, chain: vaultChain,
       verifierKeys: async () => new Map(await Promise.all(
         [...VAULT_CIRCUITS]

@@ -49,6 +49,8 @@ vi.mock('./vault-builder.js', () => ({
 /* The one-a-day anchor as entering a company starts it: recorded, and never finished, so a read that waited on it would never answer. */
 vi.mock('./filing-judge.js', async (real) => ({
   ...(await real<typeof import('./filing-judge.js')>()),
+  /* The company's keys as its directory gives them (`companyKeysFor`), stood in for by the one key of a company never changed. */
+  companyKeysFor: async () => ({ epoch: 0, newest: 0, key: VK, keyAt: () => VK, sealing: () => ({ key: VK, epoch: 0 }) }),
   anchoredOnTheWayInFor: (sealed: { id: string }, keys: { signerId: string }) => {
     kr.anchoring.push({ company: sealed.id, signerId: keys.signerId });
     return new Promise(() => undefined);

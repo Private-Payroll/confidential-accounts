@@ -52,7 +52,7 @@ import {
   proposalEntry, recordKeyOf, signManifestEntry, supersededSaid, WITNESSED_AS,
   type BatchHolders, type DirectoryAsAnchored, type ManifestEntry, type ManifestEntryBody,
 } from '../../../src/midnight/record-manifest.js';
-import { filingRefusalOf, mayFile, type AccountHeld, type DirectoryFiling, type SignedChange } from '../../../src/midnight/seat-directory.js';
+import { filingRefusalOf, mayFile, type AccountHeld, type DirectoryFiling, type QuorumChange, type SignedChange } from '../../../src/midnight/seat-directory.js';
 import {
   directoryNotYetAnchored, pastTheRaisedBoundary, type DirectoryBelieved, type HeldAsAnchored, type LeavingBoundaries, type RecordsHeldHere,
 } from './vault-page-doors.js';
@@ -105,12 +105,12 @@ export interface AnchorDoors {
   /** The company's directory as this device believes it, read afresh. */
   readonly directory: () => Promise<DirectoryBelieved>;
   /**
-   * **THE SEATS UNDER A RAISED REMOVAL AND THE BOUNDARY EACH KEEPS**, read
-   * afresh for each read (`leavingBoundariesHere`, from a read of the company's
-   * records that is not given this door): no entry such a seat filed past its
-   * boundary is anchored from this device or believed by it. Absent, no
-   * removal raised is known to this read, and only a retirement anchored stops
-   * a seat's filings.
+   * **THE SEATS AN APPROVED REMOVAL IS ABOUT AND THE BOUNDARY EACH KEEPS**,
+   * read afresh for each read (`leavingBoundariesHere`, from a read of the
+   * company's records that is not given this door): no entry such a seat filed
+   * past its boundary is anchored from this device or believed by it. Absent,
+   * no removal is known to this read, and only a retirement anchored stops a
+   * seat's filings.
    */
   readonly leaving?: () => Promise<LeavingBoundaries>;
   /** Every filing of the company's directory, as the service serves them. */
@@ -567,9 +567,8 @@ async function heldFrom(
     };
     const then = here.at(dirVersion, asAnchoredHere);
     if (then === null) {
-      let v = 1;
-      while (here.at(v) !== null) v += 1;
-      servedShort ??= { version: v, without: true };
+      /* The first version not served: the directory served is replayed to one version per filing, so it is the one after its own. */
+      servedShort ??= { version: here.dir.version + 1, without: true };
       return undefined;
     }
     const other = [...digests].find(([v, d]) => then.digests[v - 1] !== d);
@@ -756,6 +755,22 @@ async function heldFrom(
       for (const [seq, checked] of headsBySeq) if (checked === asked) return seq;
       return null;
     },
+    newestLandedBy: (cutoff: number) => {
+      let at = -1;
+      for (let i = landed.length - 1; i >= 0 && at < 0; i -= 1) {
+        const t = landed[i]!.at;
+        if (Number.isSafeInteger(t) && t > 0 && t <= cutoff) at = i;
+      }
+      if (at < 0) return 'none';
+      const wanted = landed[at]!.head.toLowerCase();
+      for (const [seq, checked] of headsBySeq) if (checked === wanted) return { seq };
+      /*
+       * Not checked here. This device checked every head from where it started (`base`) to the one it reached, so a head
+       * that landed before the start is older than any head a raise it can judge names; any other is past its check.
+       */
+      const started = landedFrom(base);
+      return started !== null && at < landed.indexOf(started) ? 'none' : 'unread';
+    },
     ...(stop !== null && servedShort !== undefined ? { directoryServed: servedShort } : {}),
   };
   return { landed, now, here, records, pending: new Set(pending.map(entryIdOf)) };
@@ -765,7 +780,7 @@ async function heldFrom(
  * **WHAT IS NOT YET ANCHORED**, of the entries a service lists as waiting: each
  * of a record the read asked, newer than its leaf (`history`), entered by a seat
  * `seatNow` says may file it now, naming no older version's bytes - the first
- * at each version. An entry a seat under a raised removal filed past the
+ * at each version. An entry a seat under an approved removal filed past the
  * boundary the raise names (`leaving`) is never one: no device anchors it. A
  * directory version is judged by its own replay, never by a boundary.
  */
@@ -1073,15 +1088,17 @@ async function ownEntryFiledAgain(doors: AnchorDoors, here: DirectoryBelieved): 
 
 /**
  * **A SIGNED CHANGE TO THE COMPANY'S DIRECTORY, FILED FROM THIS DEVICE AND
- * ANCHORED AT ONCE** - a quorum's role or retirement - carrying its
- * signatures over `signedFor`, the version it was signed for. It is kept in this device's database before it is
+ * ANCHORED AT ONCE** - a quorum's role or retirement, or one seat's change of
+ * the company's key - carrying its signatures over `signedFor`, the version it
+ * was signed for. A quorum's change is kept in this device's database before it is
  * filed, and let go of only once a version carrying it is anchored, so a
  * change the service drops, passes over or stops serving is filed again from
  * here on a later way in (`quorumChangesFiledAgain`) without being signed
- * again. Refused, with nothing filed or kept, when the directory already holds
+ * again. A change of key is never kept: one lost or passed over is made again
+ * on the key the directory holds. Refused, with nothing filed or kept, when the directory already holds
  * that version: the signatures bind it, so the change is signed again as the
  * directory stands. The anchor is said, not thrown: a change filed and not yet
- * anchored is anchored by the next anchor, and is kept until it is.
+ * anchored is anchored by the next anchor, and a quorum's is kept until it is.
  */
 export async function directoryChangeFiledHere(
   doors: AnchorDoors, change: SignedChange, signedFor: number,
@@ -1096,8 +1113,8 @@ export async function directoryChangeFiledHere(
       + `${filings.length} version${filings.length === 1 ? '' : 's'} now, so its signatures do not fit the next one. Nothing was filed. `
       + 'Have it signed again as the directory stands now');
   }
-  /* Kept before it is filed, so a filing that fails, or that the service later drops, is filed again from here. */
-  await doors.changes?.keep(doors.accountId, { signedAt: signedFor, change });
+  /* A quorum's change is kept before it is filed, so a filing that fails, or that the service later drops, is filed again from here. */
+  if (change.kind !== 'rotate') await doors.changes?.keep(doors.accountId, { signedAt: signedFor, change });
   await doors.fileDirectory({ company: doors.accountId, version: signedFor, change });
   try {
     return { version: signedFor, anchor: await anchorTheRecordsHere(doors) };
@@ -1108,8 +1125,8 @@ export async function directoryChangeFiledHere(
 }
 
 /**
- * **EVERY SIGNED CHANGE TO THE DIRECTORY NOT APPLIED, FILED AGAIN UNDER ITS
- * OWN SIGNATURES**, by a device whose seat may anchor: each change the company's
+ * **EVERY QUORUM'S CHANGE TO THE DIRECTORY NOT APPLIED, FILED AGAIN UNDER
+ * ITS OWN SIGNATURES**, by a device whose seat may anchor: each change the company's
  * records passed over - or that rests on a seat one passed over - and each this
  * device kept from filing it again before, oldest version signed for first, as
  * the directory's next versions, each only when the replay would believe it
@@ -1120,7 +1137,9 @@ export async function directoryChangeFiledHere(
  */
 async function quorumChangesFiledAgain(doors: AnchorDoors, here: DirectoryBelieved): Promise<number> {
   if (doors.fileDirectory === undefined || here.refiled === undefined) return 0;
-  const all = await doors.changes?.all(doors.accountId) ?? [];
+  /* Only a quorum's change is filed again: a change of key a store hands back is never a candidate. */
+  const all = (await doors.changes?.all(doors.accountId) ?? [])
+    .filter((k): k is { readonly signedAt: number; readonly change: QuorumChange } => k.change.kind === 'role' || k.change.kind === 'retire');
   for (const k of all) if (here.anchoredAgain?.has(k.signedAt) === true) await doors.changes!.letGo(doors.accountId, k.signedAt);
   const kept = all.filter((k) => here.anchoredAgain?.has(k.signedAt) !== true);
   /* One kept before its first filing reached the service: its version is still the next, so it is filed as that version. */
@@ -1129,7 +1148,7 @@ async function quorumChangesFiledAgain(doors: AnchorDoors, here: DirectoryBeliev
     try { await doors.fileDirectory({ company: doors.accountId, version: next.signedAt, change: next.change }); } catch { return 0; }
     return 1;
   }
-  const waiting = new Map<number, KeptDirectoryChange>((here.notApplied ?? []).map((n) => [n.signedAt, n]));
+  const waiting = new Map<number, { readonly signedAt: number; readonly change: QuorumChange }>((here.notApplied ?? []).map((n) => [n.signedAt, n]));
   /* A change this device kept is a candidate too - one the service no longer serves included; the replay refuses one already applied. */
   for (const k of kept) if (!waiting.has(k.signedAt)) waiting.set(k.signedAt, k);
   const { filed } = here.refiled([...waiting.values()].sort((a, b) => a.signedAt - b.signedAt));

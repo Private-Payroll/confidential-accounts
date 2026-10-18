@@ -18,7 +18,7 @@ import { identityFromSecret } from 'midnight-identity';
 import { signDirectoryEntry, signRecordsKey } from 'midnight-identity/profile/records-key';
 import { toHex, type Hex } from '../core/crypto.js';
 import { openAccount, sealAccount } from '../core/account.js';
-import { rosterVaultKeys, signVaultKeys, vaultKeyIndexOf } from '../core/vault-keys.js';
+import { openVaultKeysOffer, rosterVaultKeys, signVaultKeys, vaultKeyIndexOf } from '../core/vault-keys.js';
 import type { Account, SealedAccount } from '../core/types.js';
 import type { VaultKeysOffer } from '../core/vault-keys.js';
 import { directoryEntryMade, type ChainHolders } from '../midnight/seat-directory.js';
@@ -407,5 +407,53 @@ describe('VAULT KEYS ARE KEPT FOR ANY ENTRY THE PERSON FILED FOR THE SEAT, NEVER
     } finally {
       chains.set(CO, seated([ADA, BO]));
     }
+  });
+});
+
+describe('AN OFFER ACROSS A CHANGE OF THE COMPANY\'S KEY', () => {
+  it('NO OFFER IS SEALED AND NONE IS FOLDED WHILE THE COMPANY\'S KEY IS BEING CHANGED', async () => {
+    const { CompanyKeyBeingChanged } = await import('vaults-web-shared/company-key-here.js');
+    /* The company's keys after a signer's removal is carried out on the chain, before the key they held is replaced. */
+    const paused = {
+      epoch: 0, key: KEY as Hex, newest: 0, keyAt: (): Hex => KEY as Hex,
+      sealing: () => { throw new CompanyKeyBeingChanged('the company\'s key is being changed'); },
+    };
+    chains.set(CO, seated([ADA, BO]));
+    await offer(BO);
+    const kept = JSON.stringify(store.vaultKeysOffersOf(CO));
+    /* RED WHEN: an offer is sealed without asking whether sealing is paused, so the signer who left reads it. */
+    await expect(offerVaultKeysHere(api('bo'), CO, {
+      signerId: ID.bo!, signingSecret: BO.signingSecret as Hex, committeeKey: BO.committeeKey as never, ...walletOf(BO),
+      companyKey: walletOf(BO).companyKey as Hex, entry: BO.statement, viewingKey: paused,
+    })).rejects.toThrow(CompanyKeyBeingChanged);
+    expect(JSON.stringify(store.vaultKeysOffersOf(CO))).toBe(kept);
+    const version = store.newestRoster(CO)!.version;
+    /* RED WHEN: a fold files the roster's next version while sealing is paused. */
+    await expect(foldOffersHere({ ...deviceOf(ADA), viewingKey: paused })).rejects.toThrow(CompanyKeyBeingChanged);
+    expect(store.newestRoster(CO)!.version).toBe(version);
+  });
+
+  it('ONE MADE BEFORE THE CHANGE IS STILL FOLDED AFTER IT, AND ONE MADE AFTER IS SEALED UNDER THE KEY IN FORCE', async () => {
+    const key1 = toHex(new Uint8Array(32).fill(0x6d)) as Hex;
+    /* A staying seat's keys after one change of the key: the new one in force, the founding key reached through it. */
+    const after = {
+      epoch: 1, key: key1, newest: 1,
+      keyAt: (e: number): Hex => { if (e === 0) return KEY as Hex; if (e === 1) return key1; throw new Error(`no key at epoch ${e}`); },
+      sealing: () => ({ key: key1, epoch: 1 }),
+    };
+    chains.set(CO, seated([ADA, BO]));
+    await offer(BO);
+    /* RED WHEN: an offer made before the change, sealed under the founding key, is refused once the key changes. */
+    expect((await foldOffersHere({ ...deviceOf(ADA), viewingKey: after })).folded).toEqual([BO.seat]);
+    /* RED WHEN: the roster version a fold files after the change is sealed at the epoch of a key the signer who left holds. */
+    expect(store.newestRoster(CO)!.keyEpoch).toBe(1);
+    await offerVaultKeysHere(api('bo'), CO, {
+      signerId: ID.bo!, signingSecret: BO.signingSecret as Hex, committeeKey: BO.committeeKey as never, ...walletOf(BO),
+      companyKey: walletOf(BO).companyKey as Hex, entry: BO.statement, viewingKey: after,
+    });
+    const kept = store.vaultKeysOffersOf(CO).find((o) => o.seat === BO.seat)! as VaultKeysOffer;
+    /* RED WHEN: an offer made after the change is sealed under the founding key, which the signer who left still holds. */
+    expect(typeof openVaultKeysOffer(CO, kept, key1)).toBe('object');
+    expect(typeof openVaultKeysOffer(CO, kept, KEY as Hex)).toBe('string');
   });
 });

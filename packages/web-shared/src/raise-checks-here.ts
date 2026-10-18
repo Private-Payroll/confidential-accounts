@@ -15,10 +15,10 @@
  * - is still refused there; these refuse first, so no approval is collected
  * and no fee is spent on a round the chain or the company would refuse.
  */
+import { keyOf, type KeysHeld } from '../../../src/core/company-key.js';
 import type { PayrollRound } from '../../../src/core/account.js';
 import type { AssetRegistry } from '../../../src/core/assets.js';
 import { assets as theAssets, type AssetId } from '../../../src/core/assets.js';
-import type { Hex } from '../../../src/core/crypto.js';
 import { evaluatePolicy } from '../../../src/core/company-policy.js';
 import { confirmationCovers, unaccountedOnChain } from '../../../src/core/already-paid.js';
 import { isLiveRound } from '../../../src/core/retry-cover.js';
@@ -324,7 +324,7 @@ export const RAISE_CHECKS: readonly RaiseCheck[] = [
 
 /** The proposal's vault's spending policy, read for the proposal's vault, currency, total and window. */
 const policyOfTheRound = (
-  records: CompanyRecordsHere, accountId: string, viewingKey: Hex, round: Pick<RoundToCheck, 'vault' | 'leg' | 'made'> | undefined,
+  records: CompanyRecordsHere, accountId: string, viewingKey: KeysHeld, round: Pick<RoundToCheck, 'vault' | 'leg' | 'made'> | undefined,
 ): Promise<PolicyForARun> => {
   if (round === undefined) return Promise.resolve({ state: 'unread', why: 'this device was not told which round to read it for' });
   const { opensAt, closesAt } = round.made;
@@ -344,7 +344,7 @@ const policyOfTheRound = (
  * with the spending policy of `round`'s vault when a round is named.
  */
 export async function factsHere(
-  records: CompanyRecordsHere, accountId: string, run: PayrollRun, viewingKey: Hex, now: Date = new Date(),
+  records: CompanyRecordsHere, accountId: string, run: PayrollRun, viewingKey: KeysHeld, now: Date = new Date(),
   round?: Pick<RoundToCheck, 'vault' | 'leg' | 'made'>, read: ReadForTheRound = {},
 ): Promise<FactsHere> {
   const readProposals = records.proposals;
@@ -359,7 +359,7 @@ export async function factsHere(
   const nowInSeconds = BigInt(Math.floor(now.getTime() / 1000));
   const rounds = payrollRoundsHere(proposals, accountId, viewingKey, { identity: records.roundIdentity, nowInSeconds });
   const live = new Set(rounds.filter(isLiveRound).map((r) => r.runId));
-  const others = runs.filter((r) => r.accountId === accountId && r.id !== run.id && live.has(r.id)).map((r) => openSealedRun(r, viewingKey));
+  const others = runs.filter((r) => r.accountId === accountId && r.id !== run.id && live.has(r.id)).map((r) => openSealedRun(r, keyOf(viewingKey, r.keyEpoch)));
   return {
     people, directory, policy, others, live, circuits: records.payments, registry: records.registry ?? theAssets, rounds,
     standingOf: (id) => proposals.find((p) => p.id === id && p.accountId === accountId),
@@ -373,7 +373,7 @@ export async function factsHere(
  * written down; every approving device runs it before an approval is built.
  */
 export async function refuseWhatNoRoundMay(
-  records: CompanyRecordsHere, accountId: string, viewingKey: Hex, round: RoundToCheck, now?: Date, read?: ReadForTheRound,
+  records: CompanyRecordsHere, accountId: string, viewingKey: KeysHeld, round: RoundToCheck, now?: Date, read?: ReadForTheRound,
 ): Promise<void> {
   const facts = await factsHere(records, accountId, round.run, viewingKey, now, round, read);
   for (const c of RAISE_CHECKS) {

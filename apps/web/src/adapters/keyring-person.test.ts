@@ -14,6 +14,8 @@ const kr = vi.hoisted(() => ({
   finishes: null as null | { signerId: string },
   user: null as null | { id: string },
   resumedWith: [] as unknown[],
+  /* Whether the company's key is changed on the way in, and how that fails when it does. */
+  rotation: null as null | 'changes' | 'doors fail' | 'change throws',
 }));
 vi.mock('vaults-web-shared/keyring.js', () => ({
   currentUser: () => kr.user,
@@ -36,12 +38,31 @@ vi.mock('vaults-web-shared/keyring.js', () => ({
 }));
 /* The roster followed on the way in, stood in for: what it was handed is written down. */
 vi.mock('vaults-web-shared/roster-here.js', () => ({
-  fileTheRosterFollowedHere: async (d: { accountId: string; viewingKey: string; signingSecret: string; label: string; account: string }) => {
-    kr.asked.push(`follow the roster of ${d.accountId} as ${d.signingSecret} with ${d.viewingKey}, ${d.label}, ${d.account}`);
+  fileTheRosterFollowedHere: async (d: { accountId: string; viewingKey: { key: string }; signingSecret: string; label: string; account: string }) => {
+    kr.asked.push(`follow the roster of ${d.accountId} as ${d.signingSecret} with ${d.viewingKey.key}, ${d.label}, ${d.account}`);
     return null;
   },
 }));
-vi.mock('./filing-judge.js', () => ({ rosterReadsFor: () => ({}) }));
+vi.mock('./filing-judge.js', () => ({
+  rosterReadsFor: () => ({}),
+  /* The company's keys as its directory gives them, stood in for: named for the company, so a case can see they were used. */
+  companyKeysFor: async (id: string) => ({ epoch: 0, newest: 0, key: `the company keys of ${id}`, keyAt: () => `the company keys of ${id}`, sealing: () => ({ key: `the company keys of ${id}`, epoch: 0 }) }),
+  /* The doors the company's key is changed through, stood in for: null, as for a company with nothing to change, unless a case says. */
+  rotationDoorsFor: async (id: string) => {
+    if (kr.rotation === null) return null;
+    kr.asked.push(`rotation doors for ${id}`);
+    if (kr.rotation === 'doors fail') throw new Error('the directory could not be read');
+    return { accountId: id };
+  },
+}));
+/* The company's key changed on the way in, stood in for: what it was handed is written down, and it throws when told to. */
+vi.mock('vaults-web-shared/company-key-here.js', () => ({
+  rotateTheCompanyKeyHere: async (d: { accountId: string }) => {
+    kr.asked.push(`change the key of ${d.accountId}`);
+    if (kr.rotation === 'change throws') throw new Error('the anchor was refused');
+    return { state: 'rotated', epoch: 1, version: 9 };
+  },
+}));
 /* The policies sealed on the way in, stood in for: what it was handed is written down, and it fails when told to. */
 vi.mock('vaults-web-shared/spending-policy-here.js', () => ({
   sealPoliciesToNewSignersHere: async (d: { filingKey: string }) => {
@@ -54,7 +75,7 @@ vi.mock('vaults-web-shared/record-entered-here.js', () => ({ recordsEnteredOver:
 const { keyringFor, keysOnTheWayIn } = await import('./keyring-person.js');
 
 beforeEach(() => {
-  kr.asked = []; kr.keys = null; kr.canOpen = true; kr.seats = []; kr.finishes = null; kr.user = null; kr.resumedWith = [];
+  kr.asked = []; kr.keys = null; kr.canOpen = true; kr.seats = []; kr.finishes = null; kr.user = null; kr.resumedWith = []; kr.rotation = null;
   window.sessionStorage.clear();
 });
 
@@ -85,7 +106,8 @@ describe('keys found on the way into a company', () => {
     const sealed = { id: 'c1', wrappedKeys: [], companyLabel: 'co_label', contractAddress: 'ac' };
     expect(await keysOnTheWayIn('c1', async () => { kr.asked.push('sealed'); return sealed as never; })).toEqual(kr.keys);
     /* RED WHEN: a company whose newest roster every device refuses is not followed on the way in, so it stays frozen with no door out. */
-    expect(kr.asked).toEqual(['keys c1', 'seats c1', 'keys c1', 'sealed', 'follow the roster of c1 as ss1 with viewing key of c1, co_label, ac']);
+    /* RED WHEN: the roster is followed with this seat's served copy of the key, not the company's keys its directory gives. */
+    expect(kr.asked).toEqual(['keys c1', 'seats c1', 'keys c1', 'sealed', 'follow the roster of c1 as ss1 with the company keys of c1, co_label, ac']);
     kr.asked = [];
     expect(await keysOnTheWayIn('c1', async () => { throw new Error('the record could not be read'); })).toEqual(kr.keys);
     expect(kr.asked).toEqual(['keys c1', 'seats c1', 'keys c1']);
@@ -99,6 +121,27 @@ describe('keys found on the way into a company', () => {
   });
 });
 
+describe('the company\'s key changed on the way into a company', () => {
+  it('a staying seat entering a company whose signer left changes the key before the roster is followed, and a failure stops nothing', async () => {
+    kr.keys = { signerId: 's1', signingSecret: 'ss1' } as never;
+    const sealed = { id: 'c1', wrappedKeys: [], companyLabel: 'co_label', contractAddress: 'ac' };
+    kr.rotation = 'changes';
+    expect(await keysOnTheWayIn('c1', async () => { kr.asked.push('sealed'); return sealed as never; })).toEqual(kr.keys);
+    /* RED WHEN: the way in no longer changes the company's key, or changes it after the roster is followed. */
+    expect(kr.asked).toEqual([
+      'keys c1', 'seats c1', 'keys c1', 'rotation doors for c1', 'change the key of c1', 'sealed',
+      'follow the roster of c1 as ss1 with the company keys of c1, co_label, ac',
+    ]);
+    for (const fails of ['doors fail', 'change throws'] as const) {
+      kr.asked = [];
+      kr.rotation = fails;
+      /* RED WHEN: a change of the key that fails is thrown to the page, or stops the roster being followed. */
+      expect(await keysOnTheWayIn('c1', async () => sealed as never), fails).toEqual(kr.keys);
+      expect(kr.asked.at(-1), fails).toBe('follow the roster of c1 as ss1 with the company keys of c1, co_label, ac');
+    }
+  });
+});
+
 describe('spending policies sealed on the way into a company', () => {
   /* RED WHEN: a signer seated after a policy was set is never sealed into it on the way in, so they can never raise or approve a run from its vault. */
   it('seals every policy in force to the signers seated since, after the roster, and a failure stops nothing', async () => {
@@ -106,7 +149,7 @@ describe('spending policies sealed on the way into a company', () => {
     const sealed = { id: 'c1', wrappedKeys: [], companyLabel: 'co_label', contractAddress: 'ac' };
     const policies = async (keys: { signerId: string }) => ({ filingKey: `filing key of ${keys.signerId}` }) as never;
     expect(await keysOnTheWayIn('c1', async () => sealed as never, policies)).toEqual(kr.keys);
-    expect(kr.asked.slice(-2)).toEqual(['follow the roster of c1 as ss1 with viewing key of c1, co_label, ac', 'seal the policies as filing key of s1']);
+    expect(kr.asked.slice(-2)).toEqual(['follow the roster of c1 as ss1 with the company keys of c1, co_label, ac', 'seal the policies as filing key of s1']);
     kr.asked = [];
     expect(await keysOnTheWayIn('c1', async () => sealed as never, async () => ({ filingKey: 'fails' }) as never)).toEqual(kr.keys);
     expect(kr.asked.at(-1)).toBe('seal the policies as fails');

@@ -26,6 +26,7 @@ import {
 } from './spending-policy-here.js';
 import { heldFiledBy } from '../../../src/testing/record-tree-double.js';
 import type { OpenedRound } from './governed-call-builder.js';
+import * as onDevice from './governed-call-on-device.js';
 
 /* What each proposal opens as on this device: what this file says it raised. Opening real proposals is not this file's subject. */
 const seams = vi.hoisted(() => ({ opens: undefined as unknown as (proposalId: string) => Promise<OpenedRound> }));
@@ -369,7 +370,7 @@ describe('A VAULT\'S SPENDING POLICY AS SIGNERS LEAVE AND JOIN', () => {
   });
 });
 
-describe('A SPENDING POLICY WHILE A SIGNER\'S REMOVAL IS RAISED', () => {
+describe('A SPENDING POLICY WHILE A SIGNER\'S REMOVAL IS RAISED OR APPROVED', () => {
   /* The same bands as the policy in force, but for the last: what a change asks of the approvals a change of who is seated needs. */
   const lastBandAt = (approvals: string) => ({ ...TERMS, bands: [...TERMS.bands.slice(0, 3), { ceiling: '40', approvals }], periodLimit: `9${approvals}` });
   const ABOVE = lastBandAt('3');
@@ -378,22 +379,23 @@ describe('A SPENDING POLICY WHILE A SIGNER\'S REMOVAL IS RAISED', () => {
   const ASSET_KEY = made('asset', assetIdHex(TEST_TOKEN));
 
   /**
-   * Ada, Bo and Cy seated at a seat bar of two, the policy in force readable by all three, Cy's removal raised with one
-   * approval and `policy` (a proposal for a change of policy, at its approvals so far) raised beside it where given.
-   * Ada's device; everything it would send is written down, and the chain is never reached.
+   * Ada, Bo and Cy seated at a seat bar of two, the policy in force readable by all three, Cy's removal raised with
+   * `removal` approvals (two, the seat bar, by default) and `policy` (a proposal for a change of policy, at its
+   * approvals so far) raised beside it where given. Ada's device; everything it would send is written down, and the
+   * chain is never reached.
    */
-  const aCompany = (filed: SealedCompanyRecord[], policy?: { commitment: string; approvals: number }) => {
+  const aCompany = (filed: SealedCompanyRecord[], policy?: { commitment: string; approvals: number }, removal = 2) => {
     const w: World = {
       seats: [{ who: ADA }, { who: BO }, { who: CY }], onChain: [ADA, BO, CY], chain: chainHolding(TERMS, B1), filed, seatBar: 2,
     };
     const served = [
-      { id: 'prp_removal', accountId: COMPANY, status: 'open', chainId: '0a'.repeat(32), approvalCount: 1, raisedAt: 'now', createdAt: '2026-10-16' },
+      { id: 'prp_removal', accountId: COMPANY, status: 'open', chainId: '0a'.repeat(32), approvalCount: removal, raisedAt: 'now', createdAt: '2026-10-16' },
       ...(policy === undefined ? [] : [{
         id: 'prp_policy', accountId: COMPANY, status: 'open', chainId: '0b'.repeat(32), approvalCount: policy.approvals, raisedAt: 'now', createdAt: '2026-10-16',
       }]),
     ];
     const opened = (chainId: string, governance: OpenedRound['governance']): OpenedRound =>
-      ({ chainId, digest: 'dd'.repeat(32), vault: '00'.repeat(32), salt: '11'.repeat(32), summary: '', governance } as OpenedRound);
+      ({ chainId, digest: 'dd'.repeat(32), vault: '00'.repeat(32), salt: '11'.repeat(32), summary: '', governance, filedBy: ADA.filing.publicKey } as OpenedRound);
     seams.opens = async (id) => (id === 'prp_removal' ? opened('0a'.repeat(32), { kind: 'remove-signer', leaf: CY.seat })
       : opened('0b'.repeat(32), { kind: 'spending-policy', vault: VAULT, assetKey: ASSET_KEY, commitment: policy!.commitment }));
     const sent: string[] = [];
@@ -401,7 +403,7 @@ describe('A SPENDING POLICY WHILE A SIGNER\'S REMOVAL IS RAISED', () => {
       ...recordsOf(w),
       roundsOnChain: async (ids: readonly string[]) => Object.fromEntries(ids.map((id) => {
         const p = served.find((x) => x.chainId === id)!;
-        return [id, { held: 'open', approvals: p.approvalCount, raisedAt: 1, txRef: id }];
+        return [id, { held: 'open' as const, approvals: p.approvalCount, raisedAt: 1, txRef: id }];
       })),
     };
     const doors = {
@@ -423,28 +425,52 @@ describe('A SPENDING POLICY WHILE A SIGNER\'S REMOVAL IS RAISED', () => {
         governedCall: async () => { sent.push('build'); throw new Error('nothing is built here'); },
       },
     } as unknown as PolicyGovernanceDoors;
-    return { doors, sent, set: (terms: typeof TERMS) => setSpendingPolicyOnDevice(doors, { viewingKey: VIEWING, vault: VAULT, asset: TEST_TOKEN, terms }) };
+    return { doors, records, sent, set: (terms: typeof TERMS) => setSpendingPolicyOnDevice(doors, { viewingKey: VIEWING, vault: VAULT, asset: TEST_TOKEN, terms }) };
   };
 
-  it('A POLICY WHOSE HIGHEST BAND IS ABOVE THE SEAT BAR IS NOT RAISED, APPROVED OR CARRIED OUT UNTIL THE REMOVAL IS CARRIED OUT OR WITHDRAWN', async () => {
+  it('A POLICY WHOSE HIGHEST BAND IS ABOVE THE SEAT BAR IS NOT RAISED, APPROVED OR CARRIED OUT WHILE A REMOVAL IS APPROVED, UNTIL IT IS CARRIED OUT OR WITHDRAWN', async () => {
     const v1 = versionOf(1, B1, [ADA, BO, CY], ADA);
     const raising = aCompany([v1]);
-    /* RED WHEN: a policy needing three approvals is raised while a removal is open at a bar of two - once carried out, the removal never can be. */
-    await expect(raising.set(ABOVE)).rejects.toThrow(/would raise the approvals a change of who is seated needs while a removal of a signer is raised/u);
+    /* RED WHEN: a policy needing three approvals is raised while a removal is approved at a bar of two - once carried out, the removal never can be. */
+    await expect(raising.set(ABOVE)).rejects.toThrow(/would raise the approvals a change of who is seated needs while a removal of a signer is approved/u);
     expect(raising.sent).toEqual([]);
     /* The same change raised beside the removal before this device saw it, one approval short. */
     const filed = [v1, versionOf(2, B3, [ADA, BO, CY], ADA, ABOVE)];
     const approving = aCompany(filed, { commitment: commitmentOf(ABOVE, B3), approvals: 1 });
-    /* RED WHEN: a policy needing three approvals is approved while a removal is open at a bar of two. */
-    await expect(approving.set(ABOVE)).rejects.toThrow(/would raise the approvals a change of who is seated needs while a removal of a signer is raised/u);
+    /* RED WHEN: a policy needing three approvals is approved while a removal is approved at a bar of two. */
+    await expect(approving.set(ABOVE)).rejects.toThrow(/would raise the approvals a change of who is seated needs while a removal of a signer is approved/u);
     expect(approving.sent).toEqual([]);
-    /* RED WHEN: a policy needing three approvals is carried out while a removal is open at a bar of two. */
+    /* RED WHEN: a policy needing three approvals is carried out while a removal is approved at a bar of two. */
     const carrying = aCompany(filed, { commitment: commitmentOf(ABOVE, B3), approvals: 2 });
-    await expect(carrying.set(ABOVE)).rejects.toThrow(/would raise the approvals a change of who is seated needs while a removal of a signer is raised/u);
+    await expect(carrying.set(ABOVE)).rejects.toThrow(/would raise the approvals a change of who is seated needs while a removal of a signer is approved/u);
     expect(carrying.sent).toEqual([]);
   });
 
-  it('A POLICY WHOSE HIGHEST BAND IS AT THE SEAT BAR IS RAISED AND APPROVED WHILE A REMOVAL IS RAISED', async () => {
+  it('A POLICY WHOSE HIGHEST BAND IS ABOVE THE SEAT BAR IS RAISED WHILE A REMOVAL WAITS FOR ITS APPROVALS', async () => {
+    const v1 = versionOf(1, B1, [ADA, BO, CY], ADA);
+    const raising = aCompany([v1], undefined, 1);
+    /* RED WHEN: a removal raised with one approval, short of the seat bar of two, holds a rise of the bar up. */
+    await expect(raising.set(ABOVE)).rejects.toThrow(/nothing is built here/u);
+    expect(raising.sent).toEqual(['build']);
+  });
+
+  it('A POLICY VERSION THE LEAVER FILED AFTER THE RAISE IS OPENED BY THE SIGNERS WHO STAY WHILE THE REMOVAL WAITS, AND A CHANGE TO IT IS NOT APPROVED', async () => {
+    const v1 = versionOf(1, B1, [ADA, BO, CY], ADA);
+    const cys = versionOf(2, B3, [ADA, BO, CY], CY, ABOVE);
+    const c = aCompany([v1, cys], { commitment: commitmentOf(ABOVE, B3), approvals: 1 }, 1);
+    const keys = keysOf({ vault: VAULT, asset: TEST_TOKEN, assetBlinding: '' });
+    const doors = { records: c.records, accountId: COMPANY, viewingKey: VIEWING };
+    /* RED WHEN: a removal still waiting for its approvals counts its seat as leaving. */
+    expect([...await onDevice.seatsLeavingHere(c.doors as never, VIEWING as never)]).toEqual([]);
+    /* RED WHEN: the signers who stay cannot open the version the leaver filed while the removal waits for its approvals. */
+    await expect(refusePolicyChangeHere(doors, VAULT, TEST_TOKEN, keys as never, { commitment: commitmentOf(ABOVE, B3) })).resolves.toBeUndefined();
+    /* RED WHEN: a change to a version filed by a seat whose removal is raised is approved because the removal is not yet approved. */
+    await expect(refusePolicyChangeHere(doors, VAULT, TEST_TOKEN, keys as never, {
+      commitment: commitmentOf(ABOVE, B3), leaving: () => onDevice.seatsUnderARaisedRemovalHere(c.doors as never, VIEWING as never),
+    })).rejects.toThrow(/filed by a signer whose removal is raised/u);
+  });
+
+  it('A POLICY WHOSE HIGHEST BAND IS AT THE SEAT BAR IS RAISED AND APPROVED WHILE A REMOVAL IS APPROVED', async () => {
     const v1 = versionOf(1, B1, [ADA, BO, CY], ADA);
     const raising = aCompany([v1]);
     /* Past every check: the raise is built and handed to the builder. */

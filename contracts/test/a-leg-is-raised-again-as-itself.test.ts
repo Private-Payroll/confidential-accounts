@@ -247,27 +247,6 @@ describe('a raise that threw after the network had it', () => {
     expect(r.control.raises).toBe(1);
   });
 
-  it('is raised again under the seed generation it was raised under, after a rotation', async () => {
-    const r = await aDraftedRun();
-    r.control.fault = 'land-then-throw';
-    const first = await r.materialFor(r.run.id);
-    await expect(r.payroll.proposeRun(r.run.id, r.viewingKey, r.by, first)).rejects.toThrow();
-    const [written] = r.roundsOf(r.run.id);
-
-    const rotated = await r.accounts.rotate(r.account, r.viewingKey);
-    const inputs = await r.payroll.runMaterialInputs(r.run.id, rotated.viewingKey);
-    expect(inputs.seeds).toHaveLength(2);
-    const again = await runMaterialFor({
-      accountId: inputs.accountId, runId: inputs.runId, seeds: inputs.seeds, facts: inputs.facts, pay: inputs.pay, asset: inputs.asset,
-      opensAt: OPENS, closesAt: CLOSES, vault: VAULT, detailsOf: vaultDetails, epoch: inputs.epoch,
-    });
-    /* RED WHEN material for a raise again is built under the current seed generation. */
-    expect(again.leaves).toEqual(first.leaves);
-    const raised = await r.payroll.proposeRun(r.run.id, rotated.viewingKey, r.by, again);
-    expect(raised.id).toBe(written!.id);
-    expect(r.control.raises).toBe(1);
-  });
-
   it('a leg on chain is raised again from its record after a payee became a leaver, and the order check takes the record', async () => {
     const r = await aDraftedRun();
     r.control.fault = 'land-then-throw';

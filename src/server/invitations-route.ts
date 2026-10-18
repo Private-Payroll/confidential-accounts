@@ -12,7 +12,9 @@
  *     seat in the company's directory, held now (`filerSeatOf`); whether its
  *     role may invite is each member's device's to judge;
  *     a payee's first person record goes through the same filing as every
- *     company record (`fileCompanyRecord`), signed by the same seat;
+ *     company record (`fileCompanyRecord`), signed by the same seat; which
+ *     company key it was made under is the devices' to judge, never this
+ *     service's;
  *   · **reading one**: only by its lookup id, metered by who is asking, and
  *     answered with the ciphertext; the company it was made for is named only
  *     to whoever holds the proof the link gives, so an invitee's device can
@@ -20,7 +22,9 @@
  *   · **accepting one**: only with the proof the link's token gives, whose
  *     hash is all this service holds, and only while it is open. What is
  *     handed over is sealed on the invitee's own device to the company's inbox
- *     key, and kept unopened;
+ *     key, and kept unopened; every member's device refuses an answer sealed to
+ *     an inbox older than the company's key in force unless that change of the
+ *     key named it as waiting, whatever this service passes on;
  *   · **withdrawing somebody waiting for a seat**: only on a withdrawal signed
  *     by the filing key of a seat the chain holds now (`signerSeatNow`); the
  *     request is let go and its invitation's link reads as withdrawn, so the
@@ -120,7 +124,7 @@ export const invitationRoutes = (deps: {
       createdAt: new Date(now).toISOString(), createdBy: person, createdByKey: verifiedInvitationFiler(invitation),
       expiresAt: new Date(now + INVITATION_LIFETIME_MS).toISOString(),
       ...(invitation.person === undefined ? {} : { subjectId: invitation.person }),
-      offer: invitation.offer, acceptanceHash: invitation.acceptanceHash, handover: null,
+      offer: invitation.offer, acceptanceHash: invitation.acceptanceHash, handover: null, keyEpoch: invitation.keyEpoch,
     });
   };
 

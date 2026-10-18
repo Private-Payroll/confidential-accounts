@@ -687,6 +687,7 @@ app.use(cors());
       return {
         address: address.value as Hex,
         threshold: status.threshold,
+        seats: status.signerCount,
         vaultThresholds: status.vaultThresholds.map((v) => ({ vault: v.vault as Hex, threshold: v.threshold })),
       };
     },

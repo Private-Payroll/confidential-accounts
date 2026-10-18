@@ -68,16 +68,9 @@ async function aCompany(people = 3) {
 }
 
 describe('the pay-record key', () => {
-  it('is generated with the company and KEPT when the viewing key rotates, so a month paid before a removal stays paid after it', async () => {
+  it('is generated with the company', async () => {
     const c = await aCompany(1);
-    const key = await c.accounts.payRecordKeyOf(c.account, c.viewingKey);
-    expect(key).toMatch(/^[0-9a-f]{64}$/);
-    const seedsBefore = await c.accounts.payoutSeedsOf(c.account, c.viewingKey);
-    const rotated = await c.accounts.rotate(c.account, c.viewingKey);
-    /* RED WHEN a rotation regenerates the key: every month already paid would get a new nonce. */
-    expect(await c.accounts.payRecordKeyOf(c.account, rotated.viewingKey)).toBe(key);
-    /* Its control: the payout seed IS appended at the same rotation. */
-    expect((await c.accounts.payoutSeedsOf(c.account, rotated.viewingKey)).length).toBe(seedsBefore.length + 1);
+    expect(await c.accounts.payRecordKeyOf(c.account, c.viewingKey)).toMatch(/^[0-9a-f]{64}$/);
   });
 
   it('is two companies\' own: two companies never share one', async () => {

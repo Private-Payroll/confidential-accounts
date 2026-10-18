@@ -105,6 +105,7 @@ export const ROSTER_ENTRY_REFUSAL = Object.freeze({
     + 'the one their seat was made for',
   'rights-not-the-chains': 'it gives rights the chain did not seat it with: every seat the company makes is seated with '
     + 'every right',
+  'not-their-person': 'the person it names as the seat\'s holder is not the person the company\'s directory holds that seat for',
   'seat-named-twice': 'another entry of this roster already stands for the seat it names, and a seat has one entry',
   'seat-retired': 'the seat it names has been retired from the company, as the company\'s records anchor it, so it is no longer '
     + 'one of its signers',
@@ -161,6 +162,8 @@ const seatedWithEveryRight = (rights: Signer['rights']): boolean =>
  * An entry is believed only when:
  *   · the seat it names is not one an anchored retirement retired, and is one
  *     the company's account holds now;
+ *   · the person it names is the one the believed directory's entry for that
+ *     seat names;
  *   · the signing key it gives is the one the believed directory's entry for
  *     that seat names, and its wallet is the one that entry's opening proves
  *     the seat's leaf was made for (else, for this device's own entry only,
@@ -186,6 +189,7 @@ export function rosterEntryRefusal(s: Signer, w: RosterWitnesses): RosterEntryRe
   let wallet: string | null = null;
   if (inDirectory !== null) {
     if (low(inDirectory.signingKey) !== key) return no('not-their-signing-key');
+    if (typeof s.userId !== 'string' || s.userId !== inDirectory.person) return no('not-their-person');
     wallet = walletOf(inDirectory.committeeKey);
   }
   if (kept !== null) {
@@ -210,16 +214,12 @@ export function rosterEntryRefusal(s: Signer, w: RosterWitnesses): RosterEntryRe
 /**
  * **ONE ENTRY PER SEAT**: of the seated entries of one roster that name the
  * same seat, the one that stands for it, every other left out. An entry this
- * device believes stands before one it does not, and then the one whose
- * sign-in is the person the seat's own directory entry names; else the first.
- * Entries waiting for a seat, and seated entries naming no seat, are kept as
- * they are. The order of `signers` is kept.
+ * device believes stands before one it does not; else the first. Entries
+ * waiting for a seat, and seated entries naming no seat, are kept as they
+ * are. The order of `signers` is kept.
  */
 export function oneEntryPerSeat(signers: readonly Signer[], w: RosterWitnesses): Signer[] {
-  const rank = (s: Signer): number => {
-    const person = w.directory.find((d) => low(d.seat) === low(s.leafCommitment))?.person;
-    return (rosterEntryRefusal(s, w) === null ? 2 : 0) + (person !== undefined && s.userId === person ? 1 : 0);
-  };
+  const rank = (s: Signer): number => (rosterEntryRefusal(s, w) === null ? 1 : 0);
   const standing = new Map<string, Signer>();
   for (const s of signers) {
     if (s.status !== 'active' || typeof s.leafCommitment !== 'string') continue;

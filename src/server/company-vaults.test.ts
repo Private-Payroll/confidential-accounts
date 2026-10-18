@@ -45,6 +45,8 @@ let vaultReads = 0;
 let vaultReadFails: (n: number) => boolean = () => false;
 let serviceKey: { tag: string; value: string } | undefined;
 let acc1Threshold = 2;
+/** How many seats the chain holds on the first company's account. */
+let acc1Seats: number | null = 2;
 let acc1VaultThresholds: Array<{ vault: string; threshold: number }> = [];
 let payoutShape: unknown;
 /* What a step of a vault's start reads as, and the vault's secret and start as its ledger shows them. */
@@ -111,6 +113,7 @@ beforeEach(async () => {
   vaultReadFails = () => false;
   serviceKey = undefined;
   acc1Threshold = 2;
+  acc1Seats = 2;
   acc1VaultThresholds = [];
   payoutShape = {};
   startShape = {};
@@ -152,9 +155,9 @@ beforeEach(async () => {
       next();
     },
     store,
-    company: async (id) => (id === 'acc_1'
-      ? { address: hex(0xc0), threshold: acc1Threshold, vaultThresholds: acc1VaultThresholds }
-      : { address: hex(0xc1), threshold: 1, vaultThresholds: [] }),
+    company: async (id) => (id === 'acc_1' && acc1Seats === null ? null : id === 'acc_1'
+      ? { address: hex(0xc0), threshold: acc1Threshold, seats: acc1Seats!, vaultThresholds: acc1VaultThresholds }
+      : { address: hex(0xc1), threshold: 1, seats: 1, vaultThresholds: [] }),
     ledger: { get sendVault() { return sendVault; } },
     chain: {
       contractState: async (address) => {
@@ -257,6 +260,21 @@ describe('A SIGNER\'S VAULT KEYS', () => {
     k = await call('/api/accounts/acc_1/vault-keys', 'ada');
     expect(k.body.committee).toBeNull();
     expect(k.body.why).toMatch(/could not be asked who holds this company's account/);
+  });
+
+  it('the readers are given only while the key index counts the seats the chain holds, whatever the service\'s own count says', async () => {
+    await give('ada', 1); await give('bo', 2);
+    /* RED WHEN: the route compares the index with the service's own count of signers: it would give readers here. */
+    store.putAccount(account({ signerCount: 2 }));
+    acc1Seats = 3;
+    expect((await call('/api/accounts/acc_1/vault-keys', 'ada')).body.readers).toEqual([]);
+    /* RED WHEN: the route reads the service's own count, which says 3 here while the chain holds 2: it would hold the readers back. */
+    store.putAccount(account({ signerCount: 3 }));
+    acc1Seats = 2;
+    expect((await call('/api/accounts/acc_1/vault-keys', 'ada')).body.readers.sort()).toEqual([hex(0x11), hex(0x12)]);
+    /* RED WHEN: the readers are given where the chain could not be asked how many seats the company holds. */
+    acc1Seats = null;
+    expect((await call('/api/accounts/acc_1/vault-keys', 'ada')).body.readers).toEqual([]);
   });
 
   it('an account still held by this service\'s temporary key has no committee', async () => {

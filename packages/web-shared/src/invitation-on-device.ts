@@ -6,12 +6,16 @@
  *     the token, seals the offer under the key only the link carries, signs it
  *     with this seat's filing key and the directory entry its wallet signed,
  *     and files what the service keeps: the lookup id, the hash of what
- *     accepts it, the sealed offer. A payee's first person record is sealed
- *     here and filed with it. The service is sent no token, no offer key and
- *     nothing it can open.
+ *     accepts it, the sealed offer, and the epoch of the company key it was
+ *     made under. The offer names the company's inbox as this device works it
+ *     out from the key in force, and an expiry, both signed; nothing is made
+ *     while the company's key is being changed. A payee's first person record
+ *     is sealed here and filed with it. The service is sent no token, no offer
+ *     key and nothing it can open.
  *   · **opening** (`openInvitationHere`): the invitee's device asks for the
  *     invitation by its lookup id, opens the offer with the key in the link's
- *     fragment, and believes it only when the seat that invited signed it.
+ *     fragment, and believes it only when the seat that invited signed it and
+ *     its signed expiry has not passed on this device's clock.
  *   · **accepting** (`acceptAsPayeeHere`, `acceptAsSignerHere`): what the
  *     invitee hands over is sealed here to the company's inbox key the offer
  *     names, and sent with the proof only the token gives. A signer accepts
@@ -19,12 +23,13 @@
  *     (`acceptSeatOnThisDevice`), so the request that ends in a seat is the
  *     same whichever way they came.
  */
+import { openedWithAnyKey, sealingWith, type KeysHeld } from '../../../src/core/company-key.js';
 import { canonical, randomBytes, toHex, type Hex, type Sealed } from '../../../src/core/crypto.js';
-import { openFromInbox, sealToInbox } from '../../../src/core/sealed-records.js';
+import { inboxPublicKey as inboxOf, openFromInbox, sealToInbox } from '../../../src/core/sealed-records.js';
 import { sealPerson } from '../../../src/core/person-record.js';
 import { newSeatInvitation, proveSeatKeys, type SeatInvitation } from '../../../src/core/seat-invite-proof.js';
 import {
-  acceptanceHashOf, acceptanceProofOf, invitationIdOf, invitationLink, InvitationNotOpened, newInvitationToken, openOffer,
+  acceptanceHashOf, acceptanceProofOf, INVITATION_LIFETIME_MS, invitationIdOf, invitationLink, InvitationNotOpened, newInvitationToken, offerExpiredRefusal, openOffer,
   replacedBy, sealOffer, seatInvitationRefusal, signInvitationFiling, signOffer, signSeatInvitation, signWithdrawal, tokenOfLink,
   type EmployeeOffer, type InvitationFiling, type InvitationOffer, type Inviter, type SignedOffer, type SignedSeatInvitation,
 } from '../../../src/core/invitation.js';
@@ -54,9 +59,10 @@ export interface InvitingCompany {
   readonly name: string;
   readonly label: CompanyLabel;
   readonly account: AccountAddress;
-  readonly inboxPublicKey: Hex;
+  /** The key epoch a bare key seals at; the company's keys seal at the epoch in force. */
   readonly keyEpoch: number;
-  readonly viewingKey: Hex;
+  /** The company's keys as this device holds them (`companyKeyHere`); a bare key is the one key of a company never changed. */
+  readonly viewingKey: KeysHeld;
 }
 
 /** This device's seat: the filing key it signs with, the directory entry its wallet signed for it, and its own seat's opening. */
@@ -117,17 +123,26 @@ const refuseASeatThatMayNotInvite = (seat: Pick<InvitingSeat, 'held'>): void => 
   }
 };
 
-const offered = (company: InvitingCompany, seat: InvitingSeat, forWhom: InvitationOffer['for']): InvitationOffer => ({
+/** The company's key an invitation is made under: one sealing, refused while the company's key is being changed. */
+type Sealing = { readonly key: Hex; readonly epoch: number };
+
+/**
+ * The offer an invitation carries. Its inbox is worked out here from the key in force, never copied from the service,
+ * and it says when it stops being answered, signed with the rest of the offer.
+ */
+const offered = (company: InvitingCompany, seat: InvitingSeat, forWhom: InvitationOffer['for'], sealing: Sealing): InvitationOffer => ({
   company: company.id, companyName: company.name, label: company.label, account: company.account,
-  inboxPublicKey: company.inboxPublicKey, for: forWhom,
+  inboxPublicKey: inboxOf(sealing.key, company.id), expiresAt: Date.now() + INVITATION_LIFETIME_MS, for: forWhom,
   /* The inviter's own seat's opening, so the invitee's wallet can tell the seat was made for its key; nothing of any other seat. */
   inviter: { committeeKey: seat.committeeKey, statement: seat.statement, opening: seat.opening },
 });
 
-const filed = (company: InvitingCompany, seat: InvitingSeat, kind: 'employee' | 'signer', token: Hex, signed: SignedOffer, person?: string): InvitationFiling =>
+const filed = (
+  company: InvitingCompany, seat: InvitingSeat, kind: 'employee' | 'signer', token: Hex, signed: SignedOffer, keyEpoch: number, person?: string,
+): InvitationFiling =>
   signInvitationFiling({
     company: company.id, kind, id: invitationIdOf(token), acceptanceHash: acceptanceHashOf(acceptanceProofOf(token)),
-    offer: sealOffer(signed, token), ...(person === undefined ? {} : { person }),
+    offer: sealOffer(signed, token), keyEpoch, ...(person === undefined ? {} : { person }),
   }, seat.signingSecret);
 
 /** Who a payee is and what they are paid, as the person inviting them enters it. */
@@ -143,26 +158,27 @@ interface PayeeSpec {
 /** A payee's invitation and first record, made here and filed; the token stays on this device. */
 async function filePayeeInvitation(
   company: InvitingCompany, seat: InvitingSeat, spec: PayeeSpec, send: InvitationSend,
-): Promise<{ token: Hex; id: Hex; person: string }> {
+): Promise<{ token: Hex; id: Hex; person: string; sealing: Sealing }> {
   if (typeof spec.baseAmount !== 'bigint' || spec.baseAmount <= 0n) throw new Error('a payee is invited with a pay above nothing, in the token\'s smallest unit.');
   const person: RosterEmployee = {
     id: `emp_${toHex(randomBytes(10))}`, accountId: company.id, name: spec.name, email: spec.email, title: spec.title,
     asset: spec.asset, baseAmount: spec.baseAmount, startDate: spec.startDate, status: 'pending', wrappingPublicKey: null,
     handedOverBy: null, admittedBy: null, admittedAt: null, selfRaised: false, address: null,
   };
-  const record = sealPerson(person, 1, company.keyEpoch, company.viewingKey);
+  const sealing = sealingWith(company.viewingKey, company.keyEpoch);
+  const record = sealPerson(person, 1, sealing.epoch, sealing.key);
   const offer: EmployeeOffer = {
     kind: 'employee', person: person.id, name: spec.name, title: spec.title, email: spec.email,
     asset: spec.asset, baseAmount: spec.baseAmount, startDate: spec.startDate,
   };
   const token = newInvitationToken();
-  const invitation = filed(company, seat, 'employee', token, signOffer(offered(company, seat, offer), seat.signingSecret), person.id);
+  const invitation = filed(company, seat, 'employee', token, signOffer(offered(company, seat, offer, sealing), seat.signingSecret), sealing.epoch, person.id);
   const signed = signCompanyFiling(record, seat.signingSecret);
   answered(await send(`/api/accounts/${encodeURIComponent(company.id)}/people`, {
     method: 'POST', body: JSON.stringify({ person: toCompanyWire(signed), invitation }),
   }), 201);
   await seat.entered.enter([companyRecordEntry(signed)]);
-  return { token, id: invitation.id, person: person.id };
+  return { token, id: invitation.id, person: person.id, sealing };
 }
 
 /**
@@ -191,9 +207,10 @@ interface SignerSpec {
  */
 async function fileSignerInvitation(
   company: InvitingCompany, seat: InvitingSeat, signer: SignerSpec, send: InvitationSend, leaf?: Hex,
-): Promise<{ token: Hex; id: Hex; proved: SeatInvitation; invited: SignedSeatInvitation }> {
+): Promise<{ token: Hex; id: Hex; proved: SeatInvitation; invited: SignedSeatInvitation; sealing: Sealing }> {
   refuseASeatThatMayNotInvite(seat);
-  const proved = newSeatInvitation(company.viewingKey, company.id, signer.name, signer.role);
+  const sealing = sealingWith(company.viewingKey, company.keyEpoch);
+  const proved = newSeatInvitation(sealing.key, company.id, signer.name, signer.role);
   const token = newInvitationToken();
   const invited = signSeatInvitation({
     company: company.id, invitation: invitationIdOf(token), person: signer.person, name: signer.name, role: signer.role,
@@ -201,11 +218,11 @@ async function fileSignerInvitation(
   }, seat.signingSecret);
   const invitation = filed(company, seat, 'signer', token, signOffer(offered(company, seat, {
     kind: 'signer', name: signer.name, role: signer.role, seat: { nonce: proved.nonce, secret: proved.secret }, invited,
-  }), seat.signingSecret));
+  }, sealing), seat.signingSecret), sealing.epoch);
   answered(await send(`/api/accounts/${encodeURIComponent(company.id)}/invites/signer`, {
     method: 'POST', body: JSON.stringify({ invitation }),
   }), 201);
-  return { token, id: invitation.id, proved, invited };
+  return { token, id: invitation.id, proved, invited, sealing };
 }
 
 /**
@@ -226,6 +243,12 @@ interface OpenedInvitation {
   readonly expiresAt: string;
 }
 
+/** Refuses an offer past the expiry its inviter signed, on this device's clock, whatever the service says. */
+const refuseAnExpiredOffer = (offer: InvitationOffer): void => {
+  const why = offerExpiredRefusal(offer, Date.now());
+  if (why !== null) throw new InvitationNotOpened(why);
+};
+
 /**
  * **AN INVITATION OPENED ON THE INVITEE'S DEVICE.** Believed only when the seat
  * that invited signed the offer, for the company's label and account it names.
@@ -240,6 +263,7 @@ export async function openInvitationHere(link: string, send: InvitationSend): Pr
   const offer = b.offer as Sealed | undefined;
   if (offer === undefined || typeof b.expiresAt !== 'string') throw new InvitationNotOpened('the service sent no sealed offer');
   const signed = openOffer(offer, token);
+  refuseAnExpiredOffer(signed.offer);
   /* A re-issue is kept by the service as a signer's invitation: it opens nothing on its own and names a seat already held. */
   const kind = signed.offer.for.kind === 'reissue' ? 'signer' : signed.offer.for.kind;
   if (kind !== b.kind) throw new InvitationNotOpened('it is not the kind of invitation the service says it is');
@@ -256,6 +280,7 @@ export async function openInvitationHere(link: string, send: InvitationSend): Pr
 export async function acceptAsPayeeHere(opened: OpenedInvitation, code: JoinCode, send: InvitationSend): Promise<{ readonly fingerprint: string }> {
   const o = opened.signed.offer;
   if (o.for.kind !== 'employee') throw new Error('that invitation offers a seat, not pay, so it is not accepted as a payee.');
+  refuseAnExpiredOffer(o);
   if (code.parts.kind !== 'payee' || code.company !== o.label) {
     throw new Error('that code is not a payee\'s code for the company this invitation is from, so nothing was sent.');
   }
@@ -315,6 +340,7 @@ export async function acceptAsSignerHere(
 ): Promise<AcceptedSeat & { readonly fingerprint: string }> {
   const o = opened.signed.offer;
   if (o.for.kind !== 'signer') throw new Error('that invitation offers pay, not a seat, so it is not accepted as a signer.');
+  refuseAnExpiredOffer(o);
   /* A seat goes to the person invited: a link opened under another sign-in makes no seat and sends nothing. */
   if (o.for.invited.terms.person !== person) {
     throw new Error('this invitation is for somebody else, so no seat was made and nothing was sent. Sign in as the person it '
@@ -444,7 +470,7 @@ export async function addSignerFromCodeHere(
   };
   const b = answered(await send(`/api/invites/${made.id}/accept-signer`, {
     method: 'POST',
-    body: JSON.stringify({ acceptance: acceptanceProofOf(made.token), waiting: sealToInbox(waiting, company.inboxPublicKey), for: code.person }),
+    body: JSON.stringify({ acceptance: acceptanceProofOf(made.token), waiting: sealToInbox(waiting, inboxOf(made.sealing.key, company.id)), for: code.person }),
   }), 201);
   if (typeof b.id !== 'string') throw new Error('the service did not say which seat request it filed.');
   return { id: b.id, fingerprint: seatKeyFingerprint(keys) };
@@ -462,7 +488,7 @@ export async function addPayeeFromCodeHere(
   const code = codeFor(text, company, 'payee');
   const made = await filePayeeInvitation(company, seat, spec, send);
   answered(await send(`/api/invites/${made.id}/accept-employee`, {
-    method: 'POST', body: JSON.stringify({ acceptance: acceptanceProofOf(made.token), handover: payeeHandoverOf(code, company.inboxPublicKey) }),
+    method: 'POST', body: JSON.stringify({ acceptance: acceptanceProofOf(made.token), handover: payeeHandoverOf(code, inboxOf(made.sealing.key, company.id)) }),
   }), 201);
   return { person: made.person, fingerprint: payeeCodeFingerprint(code as JoinCode & { parts: PayeeParts }) };
 }
@@ -513,13 +539,13 @@ interface Reissued {
   /** The seat the chain holds that the invitation is re-issued for. */
   readonly leaf: Hex;
   /** The company's proposals: the one that seated the leaf carries the invitation it replaces, read by that leaf. */
-  readonly proposals: readonly Pick<SealedProposal, 'accountId' | 'sealed'>[];
+  readonly proposals: readonly (Pick<SealedProposal, 'accountId' | 'sealed'> & Partial<Pick<SealedProposal, 'keyEpoch'>>)[];
   /** Every seat the company's account holds now, as this person's own wallet read it. */
   readonly onTheChain: readonly string[];
 }
 
 /** The invitation the proposal seating `leaf` carried - one, read by the leaf - unless it is itself a re-issue. */
-const replacedFor = (proposals: Reissued['proposals'], accountId: string, viewingKey: Hex, leaf: string): SignedSeatInvitation | null => {
+const replacedFor = (proposals: Reissued['proposals'], accountId: string, viewingKey: KeysHeld, leaf: string): SignedSeatInvitation | null => {
   const original = seatInvitationIn(proposals, accountId, viewingKey, leaf);
   return original === null || original.terms.replaces !== undefined ? null : original;
 };
@@ -551,13 +577,14 @@ export async function reissueInvitationHere(
     throw new SeatMayNotInvite('The seat that invitation names is not one the company\'s account holds now, so it is not re-issued: '
       + 'somebody waiting for a seat is withdrawn and invited again instead.');
   }
+  const sealing = sealingWith(company.viewingKey, company.keyEpoch);
   const token = newInvitationToken();
   /* Exactly the person, name, role and seat the signers approved, and the invitation it replaces, for every member's device to hold it to. */
   const invited = signSeatInvitation({
     company: company.id, invitation: invitationIdOf(token), person: t.person, name: t.name, role: t.role, leaf,
     replaces: { invitation: t.invitation, signedBy: original.signedBy, signature: original.signature },
   }, seat.signingSecret);
-  const invitation = filed(company, seat, 'signer', token, signOffer(offered(company, seat, { kind: 'reissue', name: t.name, role: t.role, invited }), seat.signingSecret));
+  const invitation = filed(company, seat, 'signer', token, signOffer(offered(company, seat, { kind: 'reissue', name: t.name, role: t.role, invited }, sealing), seat.signingSecret), sealing.epoch);
   answered(await send(`/api/accounts/${encodeURIComponent(company.id)}/invites/signer`, {
     method: 'POST', body: JSON.stringify({ invitation }),
   }), 201);
@@ -572,7 +599,7 @@ export async function reissueInvitationHere(
  * their own directory entry. Nothing is sent.
  */
 export async function takeTheReissueHere(
-  opened: OpenedInvitation, mine: { readonly accountId: string; readonly person: string; readonly seat: string; readonly viewingKey: Hex },
+  opened: OpenedInvitation, mine: { readonly accountId: string; readonly person: string; readonly seat: string; readonly viewingKey: KeysHeld },
   /** The company's proposals: the one that seated this device's seat carries the invitation the re-issue must replace. */
   proposals: Reissued['proposals'],
   keep: (reissued: { readonly inviter: Inviter; readonly invited: SignedSeatInvitation }) => Promise<void>,
@@ -610,8 +637,9 @@ interface WaitingReads {
 
 /**
  * **SOMEBODY WAITING FOR A SEAT, WITHDRAWN FROM THIS DEVICE**, so the same
- * person can accept a new invitation. The request is opened here with the
- * company's key, and refused - before anything is signed - while the chain
+ * person can accept a new invitation. The request is opened here with any
+ * key of the company this device holds, so one sealed before the key changed
+ * is withdrawn too, and refused - before anything is signed - while the chain
  * holds its leaf, or holds a proposal to seat it open (as this device's own
  * read of the chain says, never the service), since either may still seat it:
  * that proposal is withdrawn first. The withdrawal names the request, the
@@ -629,7 +657,8 @@ export async function withdrawWaitingSignerHere(
   }
   const box = reads.sealed.pendingSigners.find((p) => p.id === signerId);
   if (box === undefined) throw new Error('That person is no longer waiting for a seat. Reload the page. Nothing was signed or sent.');
-  const waiting = openFromInbox<PendingSignerPayload>(box.sealed, company.id, company.viewingKey);
+  /* Any key this device holds reads which invitation a request answers: withdrawing one believes nothing in it. */
+  const waiting = openedWithAnyKey(company.viewingKey, (key) => openFromInbox<PendingSignerPayload>(box.sealed, company.id, key));
   const invitation = waiting.invited?.terms.invitation;
   if (invitation === undefined) {
     throw new Error('This seat request names no invitation, so it cannot be withdrawn by its invitation. Nothing was signed or sent.');

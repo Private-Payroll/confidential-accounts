@@ -80,7 +80,6 @@ const recorder = (capability?: WriteCapability) => {
       if (prop === 'address') return Promise.resolve({ value: 'bcb61fef', source: 'chain' });
       if (prop === 'paidAmong') return Promise.resolve({ known: true, paid: [] });
       if (prop === 'fetch') return Promise.resolve(null);
-      if (prop === 'reseal') return Promise.resolve(undefined);
       return Promise.resolve({ txRef: 'SHOULD-NOT-HAPPEN', args });
     },
   });
@@ -145,8 +144,7 @@ describe('the chain wiring refuses a write above the ledger', () => {
     await ledger.address('a');
     await ledger.paidAmong('a', []);
     await ledger.fetch('a', 0);
-    await ledger.reseal('a', {} as never);
-    expect(calls).toEqual(['status', 'address', 'paidAmong', 'fetch', 'reseal']);
+    expect(calls).toEqual(['status', 'address', 'paidAmong', 'fetch']);
   });
 
   /*

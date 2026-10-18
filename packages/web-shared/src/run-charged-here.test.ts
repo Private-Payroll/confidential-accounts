@@ -4,8 +4,10 @@
  *
  * **WHAT IS A STAND-IN, SAID HERE:** where the vault stands under its policy
  * (`spendingPolicyHere`), the company's believed runs and signed state
- * (`believedRunsHere`, `signedStateHere`) and the account's state at one block
- * (`chainAtOneBlockHere`) are substituted as modules; the worker, the
+ * (`believedRunsHere`, `signedStateHere`), the account's state at one block
+ * (`chainAtOneBlockHere`) and the ask of who raised the run
+ * (`refuseARunALeaverRaisedHere`, whose own work is
+ * `a-signer-is-removed-from-the-devices.test.ts`'s) are substituted as modules; the worker, the
  * service's route and the chain's answer to whether a run is charged are
  * objects recording what they were handed, the chain's answer lagging the
  * relay by as many reads as a test sets. Where a charge on its way is kept
@@ -53,6 +55,8 @@ let onChain = new Map<string, string>();
 vi.mock('./spending-policy-here.js', () => ({
   spendingPolicyHere: async () => (standing.state === 'set' ? { state: 'set', policy: POLICY, opening: OPENING, keys: {}, commitment: '', version: 1 } : standing),
 }));
+/* Who raised the run holds nothing up here: a seat under no removal raised every run this file charges. */
+vi.mock('./governed-call-on-device.js', () => ({ refuseARunALeaverRaisedHere: async () => undefined }));
 vi.mock('./run-rebuilt-here.js', () => ({
   believedRunsHere: async () => runs,
   believedProposalIdsOnChainHere: async () => onChain,

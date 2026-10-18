@@ -11,6 +11,8 @@
  * the anchor holds them. Then every
  * store the company keeps is read as a device reads it: the directory, the
  * roster, the company's records from their first header, the policy, the chain.
+ * Last, Bo's device changes the company's key, and what the service stores
+ * holds neither the new key nor anything it seals in the clear.
  *
  * Over real HTTP: the page's own device functions (`removeSignerOnDevice`) and
  * the service's own directory, records, roster and proposal routes, with the
@@ -22,13 +24,14 @@ import { removeSignerOnDevice, seatsLeavingHere } from 'vaults-web-shared/govern
 import { rosterHere } from 'vaults-web-shared/roster-here.js';
 import { attestedIn } from 'vaults-web-shared/vault-page-doors.js';
 import { anchorTheRecordsHere } from 'vaults-web-shared/records-anchored-here.js';
+import { companyKeyHere, rotateTheCompanyKeyHere } from 'vaults-web-shared/company-key-here.js';
 import { sign, type Hex } from '../core/crypto.js';
 import type { Role } from '../core/types.js';
 import { directoryChangeMessage, type DirectoryChange } from '../midnight/seat-directory.js';
 import { aRecordFiledBy } from './a-company-of-two-seats.test-support.js';
 import {
-  aCompanyWhoseSignersChange, anchorDoorsOf, aPolicyFiledBy, ADA, BO, CO, CY, deviceOf, directoryOf, events, KEY, policyReadBy, recordsReadBy, rosterDoorsOf,
-  seatsOnTheChain, sendAs, store, walletOf, type Seat,
+  aCompanyWhoseSignersChange, anchorDoorsOf, aPolicyFiledBy, ADA, BO, CO, companyKeyDoorsOf, CY, deviceOf, directoryOf, events, KEY, policyReadBy,
+  recordsReadBy, rosterDoorsOf, seatsOnTheChain, sendAs, store, walletOf, type Seat,
 } from './a-company-whose-signers-change-on-the-chain.test-support.js';
 
 aCompanyWhoseSignersChange();
@@ -48,7 +51,7 @@ const aRoleChangeSignedBy = async (by: readonly Seat[], change: { seat: string; 
 };
 
 describe('A SIGNER REMOVED FROM THE SIGNERS\' OWN DEVICES, TRACED TO THE CHAIN', () => {
-  it('CY IS RETIRED IN THE DIRECTORY, ANCHORED, TAKEN OFF THE CHAIN AND LEFT OUT OF THE ROSTER, AND THE POLICY CY FILED STILL OPENS FOR ADA AND BO', async () => {
+  it('CY IS RETIRED IN THE DIRECTORY, ANCHORED, TAKEN OFF THE CHAIN AND LEFT OUT OF THE ROSTER, AND THE POLICY CY FILED STILL OPENS FOR ADA AND BO; BO\'S DEVICE THEN CHANGES THE KEY, AND THE SERVICE STORES NONE OF IT IN THE CLEAR', async () => {
     /* Before: Cy files a policy record and anchors it from Cy's own seat. */
     await CY.entered.enter([await aRecordFiledBy(CY, 'pol_filed_by_cy')]);
     expect((await anchorTheRecordsHere(anchorDoorsOf(CY))).anchored).toBeGreaterThan(0);
@@ -72,7 +75,8 @@ describe('A SIGNER REMOVED FROM THE SIGNERS\' OWN DEVICES, TRACED TO THE CHAIN',
     const raisedOver = await directoryOf(BO)(EVERY_POLICY);
     expect(raisedOver.records.directory.has(pending)).toBe(true);
     expect(raisedOver.records.notYetAnchored).toEqual([]);
-    expect(await seatsLeavingHere(deviceOf(BO), KEY)).toEqual(new Set([CY.statement.signingKey.toLowerCase()]));
+    /* RED WHEN: a removal raised with one approval, short of the seat bar of two, already counts Cy as leaving. */
+    expect(await seatsLeavingHere(deviceOf(BO), KEY)).toEqual(new Set());
 
     /* Bo's device approves it, which reaches the seat bar of two, and carries it out. */
     const carried = await removeSignerOnDevice(deviceOf(BO), remove).catch((e: unknown) => e);
@@ -128,5 +132,21 @@ describe('A SIGNER REMOVED FROM THE SIGNERS\' OWN DEVICES, TRACED TO THE CHAIN',
       /* RED WHEN: a version sealed to a seat retired after it was anchored stops being believed. */
       expect(await policyReadBy(s).catch((e: unknown) => e), s.person).toMatchObject({ state: 'set', version: 1 });
     }
+
+    /* Bo's device changes the company's key once the removal is done, and reads it back. */
+    const doors = {
+      ...companyKeyDoorsOf(BO), accountId: CO, material: { signingSecret: BO.signingSecret }, records: deviceOf(BO).records!,
+      leaving: async () => new Set<string>(),
+    };
+    expect(await rotateTheCompanyKeyHere(doors, { leaf: CY.seat })).toMatchObject({ state: 'rotated', epoch: 1 });
+    const keys = await companyKeyHere(doors);
+    expect(keys.epoch).toBe(1);
+    const held = JSON.stringify(store.snapshot()).toLowerCase();
+    /* RED WHEN: the change of the company's key leaves the new key, or the payout seed it carries, readable in what the service stores. */
+    expect(held).not.toContain(keys.key.toLowerCase().replace(/^0x/u, ''));
+    expect(keys.seeds.map((x) => x.epoch)).toEqual([1]);
+    for (const x of keys.seeds) expect(held).not.toContain(String(x.seed).toLowerCase().replace(/^0x/u, ''));
+    /* RED WHEN: the company's name is stored in the clear. */
+    expect(held).not.toContain('acme');
   }, 170_000);
 });

@@ -51,7 +51,8 @@
  *                         blinding, the salt and the change the proposal commits
  *                         to. The service hands them over. All but the blinding
  *                         are also opened on the page from the proposal's own
- *                         sealed record, with the viewing key; the record is
+ *                         sealed record, with the company's key at the epoch
+ *                         the record was sealed under; the record is
  *                         composed from what was opened, and a value the
  *                         service handed that is not the opened one is refused
  *                         by name before anything is built. The blinding is the
@@ -61,8 +62,11 @@
  *                         is read back by no circuit. An approval reads none of
  *                         them, and a record for an approval refuses by name if
  *                         a circuit ever asks for one.
- *   the salt              for a seat or a threshold change, the one sealed
- *                         inside the proposal, from the same opening.
+ *   the salt              for every proposal carried out, the one its record
+ *                         names: sealed inside the proposal for a change of
+ *                         the company, made from public data for a vault's
+ *                         adoption and the pay-record key, and in the file the
+ *                         signers approved for a recovery of the record anchor.
  *   the chain             the account's contract state and the ledger
  *                         parameters, both as one block saw them.
  *
@@ -284,6 +288,11 @@ export interface OpenedRound {
   /** For a signer's removal: the retirement of its seat the proposal carries, which each approving device signs. */
   readonly retirement?: RetirementTerms;
   /**
+   * The filing key of the seat whose signed filing of this proposal this device believed when it opened it, as the
+   * company's records anchor it; absent for one that carries no signed filing.
+   */
+  readonly filedBy?: string;
+  /**
    * For an approval that changes no seat or setting: what the proposal pays, as
    * this device made it again from the company's records (`refuseWhatThisDeviceDidNotMake`).
    */
@@ -502,9 +511,12 @@ const ACCOUNT_FIELDS = ['assetBlinding', 'assetId', 'proposalSalt', 'changeAmoun
  * The signer's three come first and are refused by name if any is missing or
  * the wrong width - the scope included. For a raise the account's half is the
  * one this device read from the proposal's own record, and the asset blinding
- * is the order's. Seating a signer, changing the threshold and adopting a vault
- * read one account field, the salt the approved round's identity was made with, and it is the one
- * sealed in the proposal. Given no record read here - which `buildGovernedCall`
+ * is the order's. Each carrying out this device builds - a seat, a removal, a
+ * threshold, a vault's threshold, an adoption, the pay-record key, a spending
+ * policy and its bar - is handed the salt the approved round's identity was made
+ * with (a spending policy also its currency and blinding), and it is the one
+ * the record this device opened names. A seat's circuit reads it only when the
+ * seat needs a proposal, and the pay-record key's only before a key is committed. Given no record read here - which `buildGovernedCall`
  * never builds without - each is read off the order. Every other account field
  * is a refusal rather than a value. The two membership-path fields are set here and from
  * nowhere else, so nothing handed in can put a path into the record.
@@ -845,9 +857,10 @@ const theWitnessSaid = (circuit: string, e: unknown): unknown => {
  * identity the service recorded. A mismatch - a salt, a window, a vault, a leaf
  * or a threshold that is not the recorded proposal's - is refused before
  * anything is built, because the chain would otherwise hold, or act on, a
- * proposal the service's record does not describe. Seating a signer and changing
- * the threshold are checked the same way: the leaf seated and the threshold set
- * must be the ones the approved round was raised for.
+ * proposal the service's record does not describe. Each carrying out this device
+ * builds (the circuits of `GovernedCallOrder`) is checked the same way: its change
+ * and its salt must make the approved round's identity. A recovery of the record
+ * anchor is checked where it is built (`buildRecoverAnchorCall`).
  */
 export function refuseARaiseThatIsNotTheRecordedOne(deps: Pick<GovernedCallDeps, 'accountPure'>, order: GovernedCallOrder): void {
   if ((order.circuit === 'approve' && order.of === undefined) || order.circuit === 'cancel') return;
@@ -1514,7 +1527,10 @@ export function anchorsLandedIn(
  *     raised - a call in its transaction's fallible section that the account
  *     refused, its fee paid and nothing of it written. A state names no
  *     proposal a call was for, so a failed call is any proposal's of those
- *     blocks.
+ *     blocks;
+ *   - `needed`: while it is held, the approvals the account recorded it as
+ *     needing when it was raised (its hold) - for a change to the company, the
+ *     account's threshold then. Absent where the state holds no hold for it.
  */
 export interface RoundOnChain {
   readonly held: 'open' | 'cleared' | 'closed' | 'never';
@@ -1523,6 +1539,8 @@ export interface RoundOnChain {
   readonly txRef?: string;
   readonly closedBy?: readonly string[];
   readonly failedCalls?: readonly string[];
+  /** The approvals its hold says it needed when it was raised; the account carries it out only at least at this many. */
+  readonly needed?: number;
   /**
    * Open, and a signer was removed or replaced since it was raised: the account's count of removals is no longer the
    * one its hold took at the raise, so the account will never carry it out (`requireApproved`). It is raised again.
@@ -1550,7 +1568,7 @@ export function roundsOnChainIn(
   type View = {
     openProposals: { member(id: Uint8Array): boolean; lookup(id: Uint8Array): Uint8Array };
     approvalCounts: { member(id: Uint8Array): boolean; lookup(id: Uint8Array): bigint };
-    proposalHolds?: { member(id: Uint8Array): boolean; lookup(id: Uint8Array): { readonly removals: bigint } };
+    proposalHolds?: { member(id: Uint8Array): boolean; lookup(id: Uint8Array): { readonly removals: bigint; readonly needed?: bigint } };
   };
   /* The account's own count of signers removed, where this device was given where it keeps it. */
   const removalKey = deps.accountPure.removalCountKey?.();
@@ -1592,9 +1610,12 @@ export function roundsOnChainIn(
     const failedCalls = blocks.slice(first).flatMap(callsIn).filter((x) => !x.succeeded).map((x) => x.entryPoint ?? '');
     const atRaise = removalKey === undefined ? null : removalsIn(now, id);
     const outrun = atRaise !== null && removalKey !== undefined && atRaise !== (removalsIn(now, removalKey) ?? 0n);
+    const held = now.proposalHolds !== undefined && now.proposalHolds.member(id) ? now.proposalHolds.lookup(id).needed : undefined;
+    const needed = held === undefined || held === null ? undefined : Number(held);
     out.set(hex, {
       held: hexOf(now.openProposals.lookup(id)) === hexOf(cleared()) ? 'cleared' : 'open', approvals, ...base,
-      ...(failedCalls.length === 0 ? {} : { failedCalls }), ...(outrun ? { outrun: true as const } : {}),
+      ...(failedCalls.length === 0 ? {} : { failedCalls }), ...(needed === undefined || !Number.isSafeInteger(needed) ? {} : { needed }),
+      ...(outrun ? { outrun: true as const } : {}),
     });
   }
   return out;
@@ -1761,7 +1782,11 @@ export async function buildAnchorCall(
  * time `latest` names, while the head the latest recovery carried out wrote
  * is still `lastRecovery`, under the approved proposal `proposal` raised with
  * `proposalSalt` - the one thing of the account's half its record answers.
- * Built in whichever section of its
+ * Refused with its own reason before the account's circuit is run when the three
+ * values and the salt do not make `proposal` with the account's own functions.
+ * The circuit's own check would refuse it too, as the call is built and before
+ * anything is proved or sent, so no fee is at stake; this says why in the
+ * recovery's words rather than the circuit's. Built in whichever section of its
  * transaction it lands in (`ANCHOR_CALL_MAY_LAND_IN`), which is handed back: in
  * the fallible one, a carrying out another anchor beats pays its fee.
  */
@@ -1778,7 +1803,22 @@ export async function buildRecoverAnchorCall(
   const latest = digitsOf('recovery\'s last time', input.latest);
   const lastRecovery = bytesOf('latest recovery\'s head', String(input.lastRecovery).toLowerCase());
   const proposal = bytesOf('proposal', String(input.proposal).toLowerCase());
-  return buildAnAnchorCall(deps, input, 'recoverAnchor', [resumesFrom, latest, lastRecovery, proposal], { proposalSalt: bytesOf('proposal\'s salt', String(input.proposalSalt).toLowerCase()) });
+  const salt = bytesOf('proposal\'s salt', String(input.proposalSalt).toLowerCase());
+  let made: Uint8Array;
+  try {
+    made = deps.accountPure.proposalIdOf(governancePayloadOf(deps, {
+      kind: 'recover-anchor', resumesFrom: String(input.resumesFrom).toLowerCase(), latest: String(input.latest),
+      lastRecovery: String(input.lastRecovery).toLowerCase(),
+    }), deps.accountPure.noVault(), salt);
+  } catch (e) {
+    throw new AnchorNotBuilt((e as Error)?.message?.replace(/\.$/u, '') ?? String(e), { cause: e, recovery: true });
+  }
+  if (hexOf(made) !== hexOf(proposal)) {
+    throw new AnchorNotBuilt('the recovery this device was asked to carry out is not the proposal the signers approved: the head it '
+      + 'resumes from, its last time, the latest recovery and its salt make another identity. Reload the page and carry it out again '
+      + 'from the proposal\'s own file', { recovery: true });
+  }
+  return buildAnAnchorCall(deps, input, 'recoverAnchor', [resumesFrom, latest, lastRecovery, proposal], { proposalSalt: salt });
 }
 
 /** An anchor call or a recovery, as the two builders above take them: the anchor's arguments first, then `more`. */

@@ -130,10 +130,14 @@ describe('ONE ANCHOR CALL', () => {
 
 describe('ONE RECOVERY OF THE RECORD ANCHOR', () => {
   const RESUMES = '1a'.repeat(32);
-  const PROPOSAL = '2b'.repeat(32);
   const SALT = '3c'.repeat(32);
   const LATEST = '1800003600';
   const LAST = '4d'.repeat(32);
+  const bytes = (h: string) => Uint8Array.from(Buffer.from(h, 'hex'));
+  /* The approved proposal, as the account's own functions make its identity from the recovery's three values and its salt. */
+  const idOf = (resumes: string, latest: string, last: string, salt: string) => hex(pureCircuits.proposalIdOf(
+    pureCircuits.recoverAnchorPayload(bytes(resumes), BigInt(latest), bytes(last)), pureCircuits.noVault(), bytes(salt)));
+  const PROPOSAL = idOf(RESUMES, LATEST, LAST, SALT);
   it('is built as an anchor call is, naming the head it resumes from, its last time, the latest recovery\'s head and its approved proposal, with the proposal\'s salt the one thing answered', async () => {
     const log: string[] = [];
     const handed: any[] = [];
@@ -182,6 +186,24 @@ describe('ONE RECOVERY OF THE RECORD ANCHOR', () => {
     await expect(buildRecoverAnchorCall(depsWith(log, txOf({ entryPoint: 'recoverAnchor' })), { ...input, latest: 'soon' }))
       .rejects.toThrow(/the recovery's last time this proposal was handed is not a whole number/u);
     expect(log).toEqual(['built recoverAnchor']);
+  });
+  it('is not built when its salt, the head it resumes from, its last time or the latest recovery does not make the approved proposal', async () => {
+    const input = {
+      account: ACCOUNT, material, chain, previous: PREVIOUS, batch: BATCH, held: HELD, resumesFrom: RESUMES, latest: LATEST, lastRecovery: LAST, proposal: PROPOSAL, proposalSalt: SALT,
+    };
+    for (const other of [
+      { proposalSalt: '5e'.repeat(32) },
+      { resumesFrom: '6f'.repeat(32) },
+      { latest: '1800003601' },
+      { lastRecovery: '70'.repeat(32) },
+      { proposal: idOf(RESUMES, LATEST, LAST, '5e'.repeat(32)) },
+    ]) {
+      const log: string[] = [];
+      /* RED WHEN: a recovery whose values and salt do not make the approved proposal reaches the account's circuit, instead of being refused first with its own reason. */
+      await expect(buildRecoverAnchorCall(depsWith(log, txOf({ entryPoint: 'recoverAnchor' })), { ...input, ...other }), JSON.stringify(other))
+        .rejects.toThrow(/the recovery of the company's records was not carried out: the recovery this device was asked to carry out is not the proposal the signers approved/u);
+      expect(log).toEqual([]);
+    }
   });
 });
 

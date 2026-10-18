@@ -15,14 +15,17 @@ import { enteredHere } from '../testing/records-entered.js';
 import { describe, it, expect } from 'vitest';
 import { identityFromSecret } from 'midnight-identity';
 import type { CompanyLabel } from 'midnight-identity/profile/company-label';
-import { canonical, newSigningKeypair } from '../core/crypto.js';
+import { canonical, newSigningKeypair, newSymmetricKey } from '../core/crypto.js';
+import type { CompanyKeys } from '../core/company-key.js';
+import { CompanyKeyBeingChanged } from 'vaults-web-shared/company-key-here.js';
+import { answerDigestOf, answerOpenedWith, AnswerToAnOldInvitation } from '../core/answer-opened.js';
 import { SimulatedCommitments } from '../core/ledger.js';
-import { openFromInbox, sealToInbox } from '../core/sealed-records.js';
-import { refuseASeatKeyNotFromTheInvitee } from '../core/seat-invite-proof.js';
+import { inboxPublicKey, openFromInbox, sealToInbox } from '../core/sealed-records.js';
+import { invitationSecret, refuseASeatKeyNotFromTheInvitee } from '../core/seat-invite-proof.js';
 import { openPerson } from '../core/person-record.js';
 import type { PendingSignerPayload } from '../core/types.js';
 import {
-  acceptanceHashOf, acceptanceProofOf, invitationIdOf, InvitationNotOpened, newInvitationToken, offerKeyOf, openOffer, sealOffer, signInvitationFiling, signOffer,
+  acceptanceHashOf, acceptanceProofOf, invitationIdOf, invitationLink, InvitationNotOpened, newInvitationToken, offerKeyOf, openOffer, sealOffer, signInvitationFiling, signOffer,
   signSeatInvitation, tokenOfLink,
   type InvitationFiling,
 } from '../core/invitation.js';
@@ -34,7 +37,7 @@ import {
 import { newSeatKeys, type NewSeatKeys } from 'vaults-web-shared/accept-seat.js';
 import { readJoinCode, signJoinCode, writeJoinCode, type JoinCode, type SignerParts } from 'midnight-identity/profile/join-code';
 import {
-  aCompanyOfTwoSeats, ACME, ADA, ADDRESS, BO, chains, CO, DANA, danasCode, EVE, fromAda, KEY, LABEL, metered, ORIGIN, OTHER, OTHER_ADDRESS, OTHER_LABEL, refusals,
+  aCompanyOfTwoSeats, ACME, ACME_INBOX, ADA, ADDRESS, BO, chains, CO, DANA, danasCode, EVE, fromAda, KEY, LABEL, metered, ORIGIN, OTHER, OTHER_ADDRESS, OTHER_LABEL, refusals,
   type Seat,
   newestPerson, peopleRecords, personVersions, sendAs, store, wire,
 } from './a-company-of-two-seats.test-support.js';
@@ -155,7 +158,7 @@ describe('THE INVITEE OPENS THE OFFER WITH THE LINK, AND ACCEPTS WITH WHAT ONLY 
 
   it('AN OFFER ITS INVITER DID NOT SIGN, OR SIGNED FOR ANOTHER ACCOUNT, IS NOT OPENED', () => {
     const token = '5'.repeat(64);
-    const offer = { company: CO, companyName: 'Acme', label: LABEL, account: ADDRESS, inboxPublicKey: ACME.inboxPublicKey,
+    const offer = { company: CO, companyName: 'Acme', label: LABEL, account: ADDRESS, inboxPublicKey: ACME_INBOX, expiresAt: Date.now() + 3_600_000,
       for: { kind: 'employee' as const, person: 'emp_x', name: 'X', title: 'T', email: null, asset: 'TEST', baseAmount: 1n, startDate: '2026-10-01' },
       inviter: { committeeKey: ADA.committeeKey, statement: ADA.statement, opening: ADA.opening } };
     expect(openOffer(sealOffer(signOffer(offer, ADA.signingSecret), token), token).offer.for.name).toBe('X');
@@ -179,7 +182,7 @@ describe('THE INVITEE OPENS THE OFFER WITH THE LINK, AND ACCEPTS WITH WHAT ONLY 
     const token = newInvitationToken();
     const invited = { company: CO, invitation: invitationIdOf(token), person: 'usr_kit', name: 'Kit', role: 'approver' as const };
     const offerFor = (signedInvitation: ReturnType<typeof signSeatInvitation>) => ({
-      company: CO, companyName: 'Acme', label: LABEL, account: ADDRESS, inboxPublicKey: ACME.inboxPublicKey,
+      company: CO, companyName: 'Acme', label: LABEL, account: ADDRESS, inboxPublicKey: ACME_INBOX, expiresAt: Date.now() + 3_600_000,
       for: { kind: 'signer' as const, name: 'Kit', role: 'approver' as const, seat: { nonce: '01'.repeat(32), secret: '02'.repeat(32) }, invited: signedInvitation },
       inviter: { committeeKey: ADA.committeeKey, statement: ADA.statement, opening: ADA.opening } });
     const opens = (signedInvitation: ReturnType<typeof signSeatInvitation>) => () => openOffer(sealOffer(signOffer(offerFor(signedInvitation), ADA.signingSecret), token), token);
@@ -313,7 +316,7 @@ describe('A SIGNER IS INVITED AND ACCEPTS THROUGH THE ONE SEAT PATH', () => {
       newKeys: newSeatKeys, seal: async () => {}, promote: async () => {},
     }, sendAs('zed'), 'zed', async () => CLEOS_KEY)).rejects.toThrow(/offers pay, not a seat/);
     /* RED WHEN: the service accepts a seat request against a payee's invitation. */
-    expect((await sendAs('zed')(`/api/invites/${payee.id}/accept-signer`, { method: 'POST', body: JSON.stringify({ acceptance: acceptanceProofOf(tokenOfLink(payee.link)!), waiting: sealToInbox({}, ACME.inboxPublicKey) }) })).status).toBe(404);
+    expect((await sendAs('zed')(`/api/invites/${payee.id}/accept-signer`, { method: 'POST', body: JSON.stringify({ acceptance: acceptanceProofOf(tokenOfLink(payee.link)!), waiting: sealToInbox({}, ACME_INBOX) }) })).status).toBe(404);
   });
 
   it('A LINK OPENED UNDER ANOTHER SIGN-IN THAN THE PERSON INVITED MAKES NO SEAT AND SENDS NOTHING', async () => {
@@ -450,7 +453,7 @@ describe('A CODE ENDS WHERE A LINK DOES: THE SAME PACKAGE, THE SAME SEAT REQUEST
   it('ONLY THE SEAT THAT MADE THE INVITATION FILES A SEAT REQUEST FOR SOMEBODY ELSE', async () => {
     const made = await inviteSignerHere(ACME, ADA, { name: 'Ivy', role: 'approver', person: 'ivy' }, ORIGIN, fromAda);
     const token = tokenOfLink(made.link)!;
-    const body = (forWhom: string) => JSON.stringify({ acceptance: acceptanceProofOf(token), waiting: sealToInbox({}, ACME.inboxPublicKey), for: forWhom });
+    const body = (forWhom: string) => JSON.stringify({ acceptance: acceptanceProofOf(token), waiting: sealToInbox({}, ACME_INBOX), for: forWhom });
     /* RED WHEN: somebody who holds a link files a seat request under another person's sign-in. */
     expect((await sendAs('ivy')(`/api/invites/${made.id}/accept-signer`, { method: 'POST', body: body('victim') })).body).toMatchObject({ refused: 'not-yours-to-accept-for' });
     /* RED WHEN: a seat that did not make the invitation files a seat request for somebody else on it. */
@@ -492,5 +495,86 @@ describe('A CODE ENDS WHERE A LINK DOES: THE SAME PACKAGE, THE SAME SEAT REQUEST
     /* RED WHEN: a payee added from a code is not on the payroll as a person record, waiting to be admitted. */
     expect(await peopleRecords.companyOfPerson(added.person)).toBe(CO);
     expect((await newestPerson(added.person))!.facts!.status).toBe('pending');
+  });
+});
+
+describe('AN INVITATION ACROSS A CHANGE OF THE COMPANY\'S KEY', () => {
+  /* The company's keys on Ada's device once its key has changed to epoch 1. */
+  const KEY1 = newSymmetricKey() as Hex;
+  const keysAt1: CompanyKeys = {
+    epoch: 1, key: KEY1, newest: 1, keyAt: (e) => (e === 0 ? KEY : KEY1), sealing: () => ({ key: KEY1, epoch: 1 }), answered: new Map(),
+  };
+  const paused: CompanyKeys = { ...keysAt1, sealing: () => { throw new CompanyKeyBeingChanged('the company\'s key is being changed'); } };
+  /** The service holding a change of the company's key a seated signer filed at a huge epoch, for as long as `run` takes. */
+  const withAHugeChangeOfKey = async (run: () => Promise<void>) => {
+    const real = store.directoryFilingsOf.bind(store);
+    store.directoryFilingsOf = (id: string) => [...real(id), { company: id, version: real(id).length + 1, change: { kind: 'rotate', epoch: Number.MAX_SAFE_INTEGER } } as never];
+    try { await run(); } finally { store.directoryFilingsOf = real; }
+  };
+
+  it('an invitation names the inbox and key epoch of the key in force on this device, and none while that key is being changed', async () => {
+    const made = await inviteSignerHere({ ...ACME, viewingKey: keysAt1 }, ADA, { name: 'Ivy', role: 'approver', person: 'ivy' }, ORIGIN, fromAda);
+    const opened = await openInvitationHere(made.link, sendAs(null));
+    /* RED WHEN: the offer names an inbox other than the one the key in force makes, so a removed signer could read the answer. */
+    expect(opened.signed.offer.inboxPublicKey).toBe(inboxPublicKey(KEY1, CO));
+    /* RED WHEN: the seat's secret is made under an older key than the inbox the answer is sealed to. */
+    const seat = (opened.signed.offer.for as { seat: { nonce: Hex; secret: Hex } }).seat;
+    expect(seat.secret).toBe(invitationSecret(KEY1, CO, seat.nonce, 'Ivy', 'approver'));
+    /* RED WHEN: the invitation's key epoch is not signed into its filing and kept with it. */
+    expect(store.invitationById(made.id)!.keyEpoch).toBe(1);
+    /* RED WHEN: an invitation is made while the company's key is being changed, naming an inbox the leaver holds. */
+    await expect(inviteSignerHere({ ...ACME, viewingKey: paused }, ADA, { name: 'Jo', role: 'approver', person: 'jo' }, ORIGIN, fromAda)).rejects.toThrow(CompanyKeyBeingChanged);
+    await expect(invitePayeeHere({ ...ACME, viewingKey: paused }, ADA, DANA, ORIGIN, fromAda)).rejects.toThrow(CompanyKeyBeingChanged);
+  });
+
+  it('a huge-epoch change filed by a seated signer refuses no invitation or answer at the service; the device still refuses an answer to an old invitation', async () => {
+    const payee = await invitePayeeHere(ACME, ADA, { ...DANA, email: 'kai@acme.co', name: 'Kai' }, ORIGIN, fromAda);
+    const payeeOpened = await openInvitationHere(payee.link, sendAs(null));
+    const signer = await inviteSignerHere(ACME, ADA, { name: 'Lu', role: 'approver', person: 'lu' }, ORIGIN, fromAda);
+    const waiting = sealToInbox({}, ACME_INBOX);
+    await withAHugeChangeOfKey(async () => {
+      /* RED WHEN: the service reads the company's key from a filing no device believes, so one signer stops every invitation. */
+      await expect(invitePayeeHere(ACME, ADA, { ...DANA, email: 'mo@acme.co', name: 'Mo' }, ORIGIN, fromAda)).resolves.toMatchObject({ id: expect.any(String) });
+      await expect(inviteSignerHere(ACME, ADA, { name: 'Nia', role: 'approver', person: 'nia' }, ORIGIN, fromAda)).resolves.toMatchObject({ id: expect.any(String) });
+      /* RED WHEN: the service refuses a payee's answer or a seat request because of that filing. */
+      await expect(acceptAsPayeeHere(payeeOpened, danasCode(), sendAs('kai'))).resolves.toBeDefined();
+      expect(store.handoverFor(payee.person!) ?? null).not.toBeNull();
+      const r = await sendAs('lu')(`/api/invites/${signer.id}/accept-signer`, { method: 'POST', body: JSON.stringify({
+        acceptance: acceptanceProofOf(tokenOfLink(signer.link)!), waiting }) });
+      expect(r.status).toBe(201);
+    });
+    /* RED WHEN: a device that holds a newer key takes an answer sealed to the older inbox that no change of the key named as waiting. */
+    expect(() => answerOpenedWith(keysAt1, waiting, CO)).toThrow(AnswerToAnOldInvitation);
+    /* The control: the same answer, named as waiting by the change of the key, is taken. */
+    const named: CompanyKeys = { ...keysAt1, answered: new Map([[0, new Set([answerDigestOf(waiting)])]]) };
+    expect(answerOpenedWith(named, waiting, CO).epoch).toBe(0);
+  });
+
+  it('an offer past the expiry its inviter signed is refused on the invitee\'s device, whatever the service says', async () => {
+    const token = newInvitationToken();
+    const offer = (expiresAt: number) => ({
+      company: CO, companyName: 'Acme', label: LABEL, account: ADDRESS, inboxPublicKey: ACME_INBOX, expiresAt,
+      for: { kind: 'employee' as const, person: 'emp_y', name: 'Y', title: 'T', email: null, asset: 'TEST', baseAmount: 1n, startDate: '2026-10-01' },
+      inviter: { committeeKey: ADA.committeeKey, statement: ADA.statement, opening: ADA.opening },
+    });
+    const served = (expiresAt: number): InvitationSend => async () => ({ status: 200, body: {
+      kind: 'employee', offer: sealOffer(signOffer(offer(expiresAt), ADA.signingSecret), token), expiresAt: new Date(Date.now() + 86_400_000).toISOString(),
+    } });
+    const link = invitationLink(ORIGIN, token);
+    await expect(openInvitationHere(link, served(Date.now() + 60_000))).resolves.toMatchObject({ token });
+    /* RED WHEN: an offer past the expiry its inviter signed is opened because the service says it is still open. */
+    await expect(openInvitationHere(link, served(Date.now() - 1))).rejects.toThrow(/has expired/u);
+    /* RED WHEN: an offer that says nothing of when it expires is opened. */
+    expect(() => openOffer(sealOffer(signOffer({ ...offer(0) }, ADA.signingSecret), token), token)).toThrow(/until when it may be answered/u);
+    /* RED WHEN: an offer opened before its expiry is still answered after it. */
+    const opened = { token, signed: signOffer(offer(Date.now() - 1), ADA.signingSecret), expiresAt: '' };
+    let sent = 0;
+    await expect(acceptAsPayeeHere(opened, danasCode(), async () => { sent += 1; return { status: 201, body: {} }; })).rejects.toThrow(/has expired/u);
+    const invited = signSeatInvitation({ company: CO, invitation: invitationIdOf(token), person: 'ivy', name: 'Ivy', role: 'approver' }, ADA.signingSecret as Hex);
+    const seatOffer = { ...offer(Date.now() - 1), for: { kind: 'signer' as const, name: 'Ivy', role: 'approver' as const, seat: { nonce: '01'.repeat(32), secret: '02'.repeat(32) }, invited } };
+    /* RED WHEN: a seat offer opened before its expiry is still answered after it. */
+    await expect(acceptAsSignerHere({ token, signed: signOffer(seatOffer as never, ADA.signingSecret), expiresAt: '' }, {} as never, {} as never,
+      async () => { sent += 1; return { status: 200, body: {} }; }, 'ivy', async () => { throw new Error('the wallet was asked'); })).rejects.toThrow(/has expired/u);
+    expect(sent).toBe(0);
   });
 });

@@ -3,7 +3,7 @@
  * THE SEAT THAT RAISED IT.**
  *
  * What a proposal changes, who raised it and the salt its identity is made
- * with are sealed on the raising device under the company's viewing key, the
+ * with are sealed on the raising device under the company's key in force, the
  * way every signer's device opens them. Beside the envelope go only the facts
  * the chain shows anyway: its identity there, the payload that identity is
  * made from, and the key epoch it was sealed at. The whole filing is signed by
@@ -12,6 +12,7 @@
  *
  * Pure: the page and the service both import it, and it loads nothing else.
  */
+import { keyOf, type KeysHeld } from './company-key.js';
 import type { Vouched } from '../midnight/record-tree.js';
 import { canonical, commit, parseCanonical, seal, sign, signingPublicKeyOf, unseal, verify, type Hex, type Sealed } from './crypto.js';
 import { openRecord, sealRecord } from './sealed-records.js';
@@ -176,14 +177,14 @@ export const sealGovernanceProposal = (input: {
 
 /**
  * **THE INVITATION BEHIND A SEAT, AS THE COMPANY'S PROPOSAL TO ADD IT CARRIES
- * IT**: the one whose seat is `seat`, opened from the company's proposals with
- * its viewing key; null when none carries one for that seat. The proposal
+ * IT**: the one whose seat is `seat`, opened from the company's proposals, each
+ * with the company's key of the epoch it was sealed at; null when none carries one for that seat. The proposal
  * carries the invitation naming the seat's leaf, which the person's own
  * directory entry must carry, on every way in. Nothing here is believed: a
  * member's device judges the invitation where it judges the entry.
  */
 export const seatInvitationIn = (
-  proposals: readonly Pick<SealedProposal, 'accountId' | 'sealed'>[], accountId: string, viewingKey: Hex, seat: string,
+  proposals: readonly ProposalOpened[], accountId: string, viewingKey: KeysHeld, seat: string,
 ): SignedSeatInvitation | null => seatAddedIn(proposals, accountId, viewingKey, seat)?.invited ?? null;
 
 /**
@@ -195,30 +196,34 @@ export const seatInvitationIn = (
  * proves that key for it; nothing here is believed.
  */
 export const seatInviterIn = (
-  proposals: readonly Pick<SealedProposal, 'accountId' | 'sealed'>[], accountId: string, viewingKey: Hex, seat: string,
+  proposals: readonly ProposalOpened[], accountId: string, viewingKey: KeysHeld, seat: string,
 ): Inviter | null => seatAddedIn(proposals, accountId, viewingKey, seat)?.inviter ?? null;
 
 /** What one opened proposal to add a seat carries: its request id, its invitation, and the seat that raised it. */
+/** A proposal as an add-signer one is read from: its company, its sealed body, and the key epoch it was sealed at. */
+type ProposalOpened = Pick<SealedProposal, 'accountId' | 'sealed'> & Partial<Pick<SealedProposal, 'keyEpoch'>>;
+
 interface AddSignerOpened {
-  readonly rec: Pick<SealedProposal, 'accountId' | 'sealed'> & Partial<Pick<SealedProposal, 'chainId'>>;
+  readonly rec: ProposalOpened & Partial<Pick<SealedProposal, 'chainId'>>;
   readonly signerId: unknown;
   readonly invited?: SignedSeatInvitation;
   readonly inviter?: Inviter;
 }
 
-/** Every proposal to add a seat this key opens, with what it carries; one this key does not open names nothing. */
+/** Every proposal to add a seat the key of its own epoch opens, with what it carries; one that key does not open names nothing. */
 const addSignersOpened = (
-  proposals: readonly (Pick<SealedProposal, 'accountId' | 'sealed'> & Partial<Pick<SealedProposal, 'chainId'>>)[], accountId: string, viewingKey: Hex,
+  proposals: readonly (ProposalOpened & Partial<Pick<SealedProposal, 'chainId'>>)[], accountId: string, viewingKey: KeysHeld,
 ): AddSignerOpened[] => proposals.flatMap((rec) => {
   try {
-    const envelope = openRecord<{ kind: string; sealedPayload: Sealed }>('proposals', accountId, rec.sealed, viewingKey);
+    const key = keyOf(viewingKey, rec.keyEpoch);
+    const envelope = openRecord<{ kind: string; sealedPayload: Sealed }>('proposals', accountId, rec.sealed, key);
     if (envelope.kind !== 'add-signer') return [];
-    const body = parseCanonical<{ signerId?: unknown; invited?: unknown; inviter?: unknown }>(unseal(envelope.sealedPayload, viewingKey));
+    const body = parseCanonical<{ signerId?: unknown; invited?: unknown; inviter?: unknown }>(unseal(envelope.sealedPayload, key));
     const invited = seatInvitationRefusal(body.invited) === null ? body.invited as SignedSeatInvitation : undefined;
     const inviter = body.inviter as Inviter | undefined;
     return [{ rec, signerId: body.signerId, ...(invited === undefined ? {} : { invited }), ...(typeof inviter === 'object' && inviter !== null ? { inviter } : {}) }];
   } catch {
-    /* A record this key does not open names no seat of this company's. */
+    /* A record its epoch's key does not open, or whose epoch this device cannot reach, names no seat of this company's. */
     return [];
   }
 });
@@ -230,7 +235,7 @@ const addSignersOpened = (
  * signers approved is not this list's to say.
  */
 const seatAddedIn = (
-  proposals: readonly Pick<SealedProposal, 'accountId' | 'sealed'>[], accountId: string, viewingKey: Hex, seat: string,
+  proposals: readonly ProposalOpened[], accountId: string, viewingKey: KeysHeld, seat: string,
 ): AddSignerOpened | null => {
   const named = addSignersOpened(proposals, accountId, viewingKey).filter((x) => x.invited?.terms.leaf?.toLowerCase() === seat.toLowerCase());
   return new Set(named.map((x) => x.invited!.signature.toLowerCase())).size === 1 ? named[0]! : null;
@@ -246,7 +251,7 @@ const seatAddedIn = (
  * is never asked.
  */
 export const seatStillProposedFor = (
-  proposals: readonly SealedProposal[], accountId: string, viewingKey: Hex, signerId: string, openOnTheChain: readonly string[],
+  proposals: readonly SealedProposal[], accountId: string, viewingKey: KeysHeld, signerId: string, openOnTheChain: readonly string[],
 ): boolean => addSignersOpened(proposals, accountId, viewingKey).some((x) => {
   if (x.signerId !== signerId) return false;
   /* Its id on the chain counts only as the seat that raised it signed it; one nobody signed could be any proposal. */

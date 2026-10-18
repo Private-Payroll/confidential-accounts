@@ -251,17 +251,12 @@ describe('every way a person can start a failed run again', () => {
       const [written] = r.roundsOf(r.run.id);
 
       /*
-       * **THE ACCOUNT MOVES ON WHILE THE PERSON IS DECIDING WHAT TO DO, AND THAT IS
-       * WHAT MAKES THE ASSERTIONS BELOW CAPABLE OF FAILING AT ALL.** A signer is
-       * removed, so the account's payout seed rotates and a new generation becomes
-       * the current one. Everything that composes a run's identity from whatever is
-       * live NOW therefore composes a DIFFERENT one from the recorded one - which
-       * derives different leaves, which are different payments. Without a mover here
-       * both the recorded value and a recomposed one are identical and neither
-       * assertion can tell a reused identity from a rebuilt one.
+       * This service never moves the company's payout seed on, so a recomposed
+       * identity and the recorded one name the same seed here; a leg built again
+       * after a change of the company's key, under the seed it was raised under, is
+       * pinned on the devices (src/server/a-leg-is-raised-on-the-device.test.ts).
        */
-      const rotated = await r.accounts.rotate(r.account, r.viewingKey);
-      const again = await r.materialFor(r.run.id, rotated.viewingKey);
+      const again = await r.materialFor(r.run.id);
 
       /* RED WHEN the identity is composed from what is live now rather than read off
          the leg's own record. */
@@ -270,7 +265,7 @@ describe('every way a person can start a failed run again', () => {
          identity. This is the assertion the whole file exists for. */
       expect(again.leaves).toEqual(r.first.leaves);
 
-      const raised = await r.payroll.proposeRun(r.run.id, rotated.viewingKey, r.by, again);
+      const raised = await r.payroll.proposeRun(r.run.id, r.viewingKey, r.by, again);
       /* RED WHEN a raise again mints a second round rather than re-raising the one written down. */
       expect(raised.id).toBe(written!.id);
       expect(await r.openRounds()).toBe(1);
@@ -282,11 +277,9 @@ describe('every way a person can start a failed run again', () => {
     const r = await aRaiseThatThrewAfterTheNetworkHadIt();
     await r.payroll.proposeRun(r.run.id, r.viewingKey, r.by, await r.materialFor(r.run.id));
 
-    /* THE MOVER, FOR THE REASON THE RAISE-AGAIN CASE ABOVE NEEDS ONE: without it an
-       identity RECOMPOSED from what is live now is byte-identical to the recorded one,
-       and nothing below could tell a value that was read back from one that was rebuilt. */
-    const rotated = await r.accounts.rotate(r.account, r.viewingKey);
-    const rebuild = (await r.payroll.payoutRebuildOf(r.run.id, rotated.viewingKey))!;
+    /* A retry after a change of the company's key, under the leg's own seed, is pinned on
+       the devices (src/server/a-leg-is-raised-on-the-device.test.ts). */
+    const rebuild = (await r.payroll.payoutRebuildOf(r.run.id, r.viewingKey))!;
     /* RED WHEN the record stops carrying the identity a failed leg was raised under, so
        that there is nothing to reuse and a retry has to compose one. */
     expect(rebuild.identity).toEqual(r.first.identity);
@@ -351,11 +344,7 @@ describe('against the compiled circuits: what the chain refuses, and what it doe
     const legId = fromHex(leg.chainId);
     await sim.as(legDevice).approve(legId);
 
-    /* The same mover as above: the account's seed generation moves on between the raise and
-       the payment, so a rebuild that reads the record and one that recomposes from what is
-       live now derive DIFFERENT leaves, and the assertions below can tell them apart. */
-    const rotated = await r.accounts.rotate(r.account, r.viewingKey);
-    const rebuild = (await r.payroll.payoutRebuildOf(r.run.id, rotated.viewingKey))!;
+    const rebuild = (await r.payroll.payoutRebuildOf(r.run.id, r.viewingKey))!;
     /* Rebuilt from the record the way a paying device rebuilds it, on another machine. */
     const whole = buildRun(rebuild.seeds, rebuild.identity, rebuild.facts, vaultDetails, rebuild.pay, rebuild.asset);
     const payUnderTheLeg = (at: number) => {

@@ -19,10 +19,11 @@ function present<T>(value: T | undefined): T {
  * **THE GUARDS AGAINST STRANDING AN ACCOUNT DECIDE FROM THE CHAIN'S NUMBERS,
  * AND A GUARD THAT CANNOT READ THE CHAIN REFUSES.**
  *
- * Three sites, one class. `departing()` and the multi-removal guard refuse a
- * removal that would leave too few signers; `proposeThresholdChange` refuses a
- * threshold above the seats. All three measure against the threshold and the
- * seated count the ledger holds, never against the stored record.
+ * One site in this service: `proposeThresholdChange` refuses a threshold above
+ * the seats, measured against the threshold and the seated count the ledger
+ * holds, never against the stored record. A removal and the change of the
+ * company's key that follows it are the devices'; the chain refuses a removal
+ * that would leave too few signers when it is carried out.
  *
  * **THE DANGEROUS DIRECTION IS A NUMBER BELOW THE CONTRACT'S.** A threshold
  * written into the stored record by anyone who holds the key is not read: were
@@ -43,14 +44,14 @@ function present<T>(value: T | undefined): T {
  * 2. **"We do not know" must not become "go ahead".** A status we cannot read
  *    is a third outcome; in an approval, not knowing means not proceeding.
  *    **In a guard the conservative direction is the opposite one** — a guard
- *    that permits a removal because it could not reach the chain has failed in
- *    exactly the direction that strands the account. All three refuse, each
- *    naming which silence it hit, and none of those refusals is phrased like
- *    the one that says the account WOULD be stranded.
+ *    that permits a change because it could not reach the chain has failed in
+ *    exactly the direction that strands the account. The guard refuses, naming
+ *    which silence it hit, and that refusal is not phrased like the one that
+ *    says the account WOULD be stranded.
  *
  * **These tests can only be as good as `SimulatedLedger`,** which runs in this
- * process. They do not show that a chain refused anything. They show that these
- * three guards ask, that they ask once per decision, and that no local number is
+ * process. They do not show that a chain refused anything. They show that the
+ * guard asks, that it asks once per decision, and that no local number is
  * left that could answer instead.
  */
 
@@ -118,73 +119,11 @@ function editAccount(
 }
 
 describe('the bar and the seats are the ledger\'s, whatever the stored record says', () => {
-  it('refuses a removal that leaves fewer signers than the ledger\'s threshold, with a lower threshold written into the stored record', async () => {
-    /*
-     * **SITE 1 — `departing()`.** The ledger is opened at 3 of 3 and stays
-     * there. Our sealed copy is edited to 2, which is drift in the dangerous
-     * direction.
-     *
-     * Removing Cleo leaves two signers. Against the contract's 3 that is a
-     * stranded account; against our 2 it reads as exactly enough. The refusal
-     * has to follow the contract, and it has to name both numbers, because a
-     * refusal quoting only "3" will be read against a screen rendering our 2.
-     */
-    const h = harness();
-    const c = await h.accounts.create('Northwind Ltd', THREE, 3, undefined, drawCompanyLabel());
-    editAccount(h, c.account.id, c.viewingKey, a => { (a.policy as unknown as { threshold: number }).threshold = 2; });
-
-    /*
-     * THE REFUSAL ITSELF IS THE FIRST ASSERTION, and that is not stylistic. A
-     * guard that stops refusing does not produce a wrong message, it produces
-     * no message at all, so an assertion reading the message of an error that
-     * was never thrown fails with a type complaint about `undefined` rather
-     * than with the sentence "this resolved instead of rejecting". The
-     * mutation's own death is easier to read this way.
-     */
-    const attempt = h.accounts.proposeRemoval(
-      c.account.id, c.viewingKey, present(c.secrets[2]).signerId, present(c.secrets[0]).signerId);
-    await expect(attempt).rejects.toThrow(/would leave 2 signers against a threshold of 3/);
-
-    const err = await attempt.catch((e: Error) => e) as Error;
-    expect(err.message).toMatch(/could never approve anything again/);
-    /* A threshold written into the stored record is not read, so the refusal does not name it. */
-    expect(err.message).not.toMatch(/our stored copy/);
-
-    /* And nothing was opened: a round that can never settle collects no signatures. */
-    expect((await h.accounts.ledgerStatus(c.account.id))!.openProposals).toEqual([]);
-    expect(h.accounts.open(c.account.id, c.viewingKey).signers).toHaveLength(3);
-  });
-
-  it('refuses a rotation that leaves fewer signers than the ledger\'s threshold, with a lower threshold written into the stored record', async () => {
-    /*
-     * **SITE 2 — the multi-removal guard, whose own comment already said this
-     * plainly.** Same drift, one layer over: excluding Cleo from a rotation
-     * leaves two people holding the new key against the contract's 3.
-     *
-     * The excluded signer's SEAT is not freed — a rotation changes the locks
-     * and touches no leaf — so the chain's seat count cannot rescue the roster
-     * here, and the smaller of the two counts is the one that decides.
-     */
-    const h = harness();
-    const c = await h.accounts.create('Northwind Ltd', THREE, 3, undefined, drawCompanyLabel());
-    editAccount(h, c.account.id, c.viewingKey, a => { (a.policy as unknown as { threshold: number }).threshold = 2; });
-
-    const attempt = h.accounts.rotate(c.account.id, c.viewingKey, [present(c.secrets[2]).signerId]);
-    await expect(attempt).rejects.toThrow(/would leave 2 active of a threshold of 3/);
-
-    const err = await attempt.catch((e: Error) => e) as Error;
-    /* A threshold written into the stored record is not read, so the refusal does not name it. */
-    expect(err.message).not.toMatch(/our stored copy/);
-    /* Nothing moved: the old key still opens the account at the old epoch. */
-    expect(h.accounts.require(c.account.id).keyEpoch).toBe(0);
-    expect(h.accounts.open(c.account.id, c.viewingKey).name).toBe('Northwind Ltd');
-  });
-
   it('refuses a threshold above the seats the LEDGER holds, not the rows we hold', async () => {
     /*
-     * **SITE 3 — the mirror image, and the one that gets forgotten.** It guards
-     * the other side of the same invariant: the threshold may not exceed the
-     * seated count. Its `seated` figure was ours too.
+     * **The threshold may not exceed the seated count**, the other side of the
+     * invariant a removal is held to on the chain. Its `seated` figure was ours
+     * too.
      *
      * A fourth row is put in the roster whose seat the tree does not hold —
      * which is the drift this direction produces, and is survivable in exactly
@@ -233,114 +172,21 @@ describe('the bar and the seats are the ledger\'s, whatever the stored record sa
     /*
      * The negative control. Without it every test above passes against a guard
      * that refuses everything, and "conservative" would have become "broken".
-     * One account, all three sites, nothing bent and nothing edited.
+     * One account, nothing bent and nothing edited.
      */
     const h = harness();
     const c = await h.accounts.create('Northwind Ltd', THREE, 2, undefined, drawCompanyLabel());
 
-    const removal = await h.accounts.proposeRemoval(
-      c.account.id, c.viewingKey, present(c.secrets[2]).signerId, present(c.secrets[0]).signerId);
-    expect(removal.status).toBe('open');
-
     const raise = await h.accounts.proposeThresholdChange(
       c.account.id, c.viewingKey, 3, present(c.secrets[0]).signerId);
     expect(raise.kind).toBe('set-threshold');
-
-    const rotated = await h.accounts.rotate(c.account.id, c.viewingKey);
-    expect(rotated.keyEpoch).toBe(1);
   });
 });
 
 describe('a guard that cannot read the chain refuses, and says which silence it hit', () => {
-  it('refuses a removal when the boundary throws, without saying the account would be stranded', async () => {
-    /*
-     * **SITE 1, AND THE REASON THE MESSAGES ARE DIFFERENT.** The ledger here
-     * holds three signers and a threshold of 2, so the removal is perfectly
-     * safe — and we cannot see that, which is not the same fact as the removal
-     * being unsafe. Merging them gives a person a refusal saying the account
-     * would be stranded when the truth is that the indexer is down: they would
-     * go and lower the threshold, which is the one action that makes the real
-     * risk worse.
-     */
-    let broken = true;
-    const h = harness(real => {
-      if (broken) throw new Error('indexer unreachable');
-      return real;
-    });
-    const c = await h.accounts.create('Northwind Ltd', THREE, 2, undefined, drawCompanyLabel());
-
-    const attempt = h.accounts.proposeRemoval(
-      c.account.id, c.viewingKey, present(c.secrets[2]).signerId, present(c.secrets[0]).signerId);
-    await expect(attempt).rejects.toThrow(/refusing to remove Cleo as a signer/);
-
-    const err = await attempt.catch((e: Error) => e) as Error;
-    expect(err.message)
-      .toMatch(/cannot read the account's threshold and seat count from the ledger \(unreadable\)/);
-    /* The two refusals are told apart by this line, and only by this line. */
-    expect(err.message).not.toMatch(/could never approve anything again/);
-
-    broken = false;
-    expect((await h.accounts.ledgerStatus(c.account.id))!.openProposals).toEqual([]);
-    expect(h.accounts.open(c.account.id, c.viewingKey).signers).toHaveLength(3);
-  });
-
-  it('refuses a rotation when the boundary has never heard of the account', async () => {
-    /*
-     * **SITE 2, AND A DIFFERENT SILENCE.** `null` is not "no signers": an
-     * account the boundary cannot find and an account with nobody in it are
-     * different facts, and the first is our ignorance. That line was drawn for
-     * approvals; this is the same line drawn for the guard.
-     */
-    let broken = true;
-    const h = harness(real => (broken ? null : real));
-    const c = await h.accounts.create('Northwind Ltd', THREE, 2, undefined, drawCompanyLabel());
-
-    const attempt = h.accounts.rotate(c.account.id, c.viewingKey, [present(c.secrets[2]).signerId]);
-    await expect(attempt)
-      .rejects.toThrow(/refusing to change the locks on this account without 1 of its signers/);
-
-    const err = await attempt.catch((e: Error) => e) as Error;
-    expect(err.message)
-      .toMatch(/cannot read the account's threshold and seat count from the ledger \(no-status\)/);
-    expect(err.message).not.toMatch(/could never approve anything again/);
-
-    broken = false;
-    expect(h.accounts.require(c.account.id).keyEpoch).toBe(0);
-  });
-
-  it('still changes the locks when nobody is dropped and the ledger is unreachable', async () => {
-    /*
-     * **THE EXEMPTION, PINNED, BECAUSE IT IS THE ONE PLACE WHERE REFUSING WOULD
-     * HAVE BEEN THE UNSAFE ANSWER.**
-     *
-     * `removeSigner` performs the removal on chain, drops the roster row, and
-     * then rotates with `exclude` empty — and that rotation is what takes the
-     * departing signer's ability to READ. A guard on it would let an
-     * unreachable indexer refuse the second half of a removal whose first half
-     * has settled, leaving somebody out of the tree and still holding a working
-     * viewing key. Dropping nobody changes no survivor count and no rule, so
-     * there is nothing there to be conservative about.
-     *
-     * The same harness refuses the removal above, at the site that does guard
-     * something. Both facts stand together, and they are only consistent
-     * because "guard" means the operation that removes somebody.
-     */
-    const h = harness(() => { throw new Error('indexer unreachable'); });
-    const c = await h.accounts.create('Northwind Ltd', THREE, 2, undefined, drawCompanyLabel());
-
-    const rotated = await h.accounts.rotate(c.account.id, c.viewingKey);
-
-    expect(rotated.keyEpoch).toBe(1);
-    /* Every signer can still reach the new key from their own wrapping secret. */
-    for (const s of c.secrets) {
-      expect(h.accounts.recoverViewingKey(c.account.id, s.signerId, s.wrappingSecret))
-        .toBe(rotated.viewingKey);
-    }
-  });
-
   it('refuses a threshold round when the boundary answers without the numbers in it', async () => {
     /*
-     * **SITE 3, AND THE SILENCE THAT DOES NOT LOOK LIKE ONE.** A status object
+     * **THE SILENCE THAT DOES NOT LOOK LIKE ONE.** A status object
      * arrives, and the field the guard needs is not in it. `LedgerStatus.threshold`
      * is typed `number` so this cannot happen inside this repository; it is what
      * a real indexer response missing a field decodes to, and `undefined` in the

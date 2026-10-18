@@ -272,7 +272,7 @@ const GLOBAL_SCOPES = new Set(['window', 'globalThis', 'self', 'top', 'parent', 
 const unwrapped = (n: unknown): Node | undefined => {
   let x = n as Node | undefined;
   for (;;) {
-    if (x !== undefined && ['TSAsExpression', 'TSSatisfiesExpression', 'TSNonNullExpression', 'TSTypeAssertion', 'ParenthesizedExpression'].includes(x.type)) x = x.expression as Node;
+    if (x !== undefined && x !== null && ['TSAsExpression', 'TSSatisfiesExpression', 'TSNonNullExpression', 'TSTypeAssertion', 'ParenthesizedExpression'].includes(x.type)) x = x.expression as Node;
     else if (x?.type === 'SequenceExpression') x = (x.expressions as Node[]).at(-1);
     else return x;
   }

@@ -24,6 +24,7 @@
  * is filed, sealed to the signers, so every approving device opens the policy
  * it approves, and refuses one it cannot.
  */
+import { epochInForce, type KeysHeld } from '../../../src/core/company-key.js';
 import { assetIdHex, type AssetId } from '../../../src/core/assets.js';
 import { newBlinding, type Hex } from '../../../src/core/crypto.js';
 import {
@@ -48,7 +49,7 @@ export { PolicyNotOpenedHere };
 interface SpendingPolicyDoors {
   readonly records: CompanyRecordsHere;
   readonly accountId: string;
-  readonly viewingKey: string;
+  readonly viewingKey: KeysHeld;
 }
 
 /** Where a vault stands for one currency, as this device read it. */
@@ -72,7 +73,7 @@ const policiesOf = (records: CompanyRecordsHere): SpendingPoliciesHere => {
 
 /** The account's blinding a currency's key is made with, from the state the founding seat signed. */
 const blindingHere = async (doors: SpendingPolicyDoors): Promise<string> =>
-  (await signedStateHere(doors.records, doors.accountId, doors.viewingKey as Hex)).assetBlinding;
+  (await signedStateHere(doors.records, doors.accountId, doors.viewingKey)).assetBlinding;
 
 /** The contract's own keys for this vault and currency, with `opening` the commitment it makes, and with `total` too the approvals its band needs. */
 const keysHere = async (
@@ -332,7 +333,7 @@ async function openingToRaise(
   /* The next version after every one the store holds, believed or not: a version number is never filed twice. */
   const newest = served.reduce((n, r) => Math.max(n, r.version), 0);
   await policies.file(sealSpendingPolicy({
-    company: doors.accountId, id: keys.policyKey, version: newest + 1, keyEpoch: doors.keyEpoch,
+    company: doors.accountId, id: keys.policyKey, version: newest + 1, keyEpoch: epochInForce(doors.viewingKey, doors.keyEpoch),
     secrets: { vault: vault.toLowerCase(), asset, opening }, signers,
   }));
   return opening;
@@ -342,9 +343,9 @@ async function openingToRaise(
 export type PolicyGovernanceDoors = GovernanceDoors & {
   readonly builder: GovernanceDoors['builder'] & Pick<VaultBuilderClient, 'policyBarKey'>;
   /**
-   * The filing keys of the seats a removal raised and not yet carried out is
-   * about, as this device read the company's proposals. Without it, no seat is
-   * read as leaving.
+   * The filing keys of the seats a removal is raised for, approved or not, and
+   * not yet carried out (`seatsUnderARaisedRemovalHere`), as this device read
+   * the company's proposals. Without it, no seat is read as leaving.
    */
   readonly leaving?: () => Promise<ReadonlySet<string>>;
 };
@@ -360,9 +361,11 @@ export type PolicyGovernanceDoors = GovernanceDoors & {
  *   commitment, for the same reason;
  * - the version the change names was filed by a seat a raised removal is
  *   about: the terms the company keeps after a signer leaves are set by a
- *   signer who stays, from their own device. (A version filed after the raise
- *   is never believed at all; one filed before it stays readable after the
- *   removal.)
+ *   signer who stays, from their own device. This holds from the raise, not
+ *   from the approval: a version filed between the two is believed and opened
+ *   by the signers who stay until the removal is approved, and passed over
+ *   after, so it never becomes a vault's policy. One filed before the raise
+ *   stays readable after the removal.
  * Without `proposed`, only the first is checked, before anything is filed.
  */
 export async function refusePolicyChangeHere(
@@ -421,7 +424,7 @@ const policyBarFrom = (held: AccountGovernance): number => held.seatBar;
  */
 export async function setSpendingPolicyOnDevice(
   doors: PolicyGovernanceDoors,
-  input: { viewingKey: string; vault: string; asset: AssetId; terms: PolicyTermsOnTheWire },
+  input: { viewingKey: KeysHeld; vault: string; asset: AssetId; terms: PolicyTermsOnTheWire },
 ): Promise<GovernedOutcome> {
   if (doors.records === undefined) {
     throw new PolicyNotOpenedHere('This page cannot read the company\'s records, so it cannot set a spending policy. Reload the page.');
@@ -462,7 +465,7 @@ export async function setSpendingPolicyOnDevice(
  * a vault's own approvals; a policy set later raises it again to its highest band.
  */
 export function setPolicyBarOnDevice(
-  doors: PolicyGovernanceDoors, input: { viewingKey: string; newBar: number; seated: number },
+  doors: PolicyGovernanceDoors, input: { viewingKey: KeysHeld; newBar: number; seated: number },
 ): Promise<GovernedOutcome> {
   if (!Number.isInteger(input.newBar) || input.newBar < 1) {
     return Promise.reject(new Error('a change to a spending policy needs at least one approval. Nothing was sent.'));
@@ -490,7 +493,7 @@ export function setPolicyBarOnDevice(
  * version could never pay again. `here` must have been read asking for every
  * spending policy (`kindAsked`). Given `anchoredAtTheHead`, once the
  * removal is raised, only the versions anchored at the head its raise names
- * are judged (the batch each was anchored in is asked): the boundary signed at the raise is final: what the leaving seat files after it counts toward no approval, is not anchored by a device told of the raise (`AnchorDoors.leaving`), and is believed by no device once the retirement is anchored. Null when the boundary holds every version; the reason, in words
+ * are judged (the batch each was anchored in is asked): the boundary signed at the raise is final: what the leaving seat files after it counts toward no approval, is not anchored by a device told the removal is approved (`AnchorDoors.leaving`), and is believed by no device once the retirement is anchored. Null when the boundary holds every version; the reason, in words
  * that say what resolves it, when it does not.
  */
 export function removalBoundaryRefusal(
@@ -517,7 +520,7 @@ export function removalBoundaryRefusal(
   return null;
 }
 
-/** What sealing the policies in force to the signers seated since needs of this device: its own filing key, and the company's key epoch. */
+/** What sealing the policies in force to the signers seated since needs of this device: its own filing key, and the key epoch a bare key names. */
 export type PolicyResealDoors = SpendingPolicyDoors & { readonly keyEpoch: number; readonly filingKey: string };
 
 /** What `sealPoliciesToNewSignersHere` did: the policies it sealed again, and each it could not, with why. */
@@ -572,7 +575,7 @@ export async function sealPoliciesToNewSignersHere(doors: PolicyResealDoors): Pr
       if (believed.includes(inForce.rec) && staying.every((x) => readers.has(x))) continue;
       const newest = (await policies.versions(id)).reduce((n, r) => Math.max(n, r.version), 0);
       await policies.file(sealSpendingPolicy({
-        company: doors.accountId, id: id as Hex, version: newest + 1, keyEpoch: doors.keyEpoch,
+        company: doors.accountId, id: id as Hex, version: newest + 1, keyEpoch: epochInForce(doors.viewingKey, doors.keyEpoch),
         secrets: { vault: inForce.secrets.vault, asset: inForce.secrets.asset, opening: inForce.secrets.opening }, signers,
       }));
       sealed.push(id);

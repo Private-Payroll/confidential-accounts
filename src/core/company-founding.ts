@@ -16,9 +16,8 @@
  *
  * The viewing key and the state's secrets are made, used to seal, and dropped
  * here. The seat's own secrets are the caller's to keep, durably, before
- * anything is sent. This is about creation only: once the company exists, the
- * service's existing read routes are still handed the viewing key by the page
- * that reads them, and with it the service can open what is sealed here.
+ * anything is sent. The service reads no viewing key from any request, so it
+ * opens nothing sealed here: each signer's device opens it with its own copy.
  *
  * **A COMPANY IS FOUNDED WITH ITS FOUNDING SIGNER ONLY.** Every other signer
  * joins later, their seat made on their own device.

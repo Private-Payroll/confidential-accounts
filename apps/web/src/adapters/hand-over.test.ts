@@ -38,6 +38,11 @@ vi.mock('vaults-web-shared/committee-change-on-device.js', async (real) => {
   const shared = await real<typeof import('vaults-web-shared/committee-change-on-device.js')>();
   return { ...shared, committeeChangeRefusal: (...a: Parameters<typeof shared.committeeChangeRefusal>) => (kr.check === undefined ? shared.committeeChangeRefusal(...a) : kr.check) };
 });
+vi.mock('./filing-judge.js', async (real) => ({
+  ...(await real<typeof import('./filing-judge.js')>()),
+  /* The company's keys as its directory gives them (`companyKeysFor`), stood in for by the one key of a company never changed. */
+  companyKeysFor: async () => ({ epoch: 0, newest: 0, key: 'vk', keyAt: () => 'vk', sealing: () => ({ key: 'vk', epoch: 0 }) }),
+}));
 vi.mock('vaults-web-shared/keyring.js', async (real) => ({
   ...(await real<typeof import('vaults-web-shared/keyring.js')>()),
   currentUser: () => ({ id: kr.user }),
@@ -251,8 +256,8 @@ describe('handing it over', () => {
       { path: 'offer c1', method: 'PUT', body: {
         signerId: 's1', signingSecret: 'aa'.repeat(32), companyKey: '11'.repeat(32), committeeKey: K(1),
         recordsKey: { recordsKey: '33'.repeat(32), seat: '5a'.repeat(32), signature: '44'.repeat(64) }, entry,
-        /* RED WHEN: the offer is not sealed under the company's roster key, so the service would hold this person's wallet key. */
-        viewingKey: 'vk',
+        /* RED WHEN: the offer is not sealed under the company's keys its directory gives, so the service would hold this person's wallet key. */
+        viewingKey: expect.objectContaining({ key: 'vk', epoch: 0 }),
       } },
       /* RED WHEN: the open offers are not folded from this device once its entry is filed, so its own keys wait for another seat. */
       { path: 'fold c1', method: 'FOLD', body: undefined },

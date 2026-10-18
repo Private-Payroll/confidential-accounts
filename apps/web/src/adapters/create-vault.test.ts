@@ -69,6 +69,11 @@ const kr = vi.hoisted(() => ({
   /* Each vault's own approvals needed, as the wallet reads the account's map of thresholds: none set unless a test says. */
   vaultThresholds: [] as { vault: string; threshold: number }[],
 }));
+vi.mock('./filing-judge.js', async (real) => ({
+  ...(await real<typeof import('./filing-judge.js')>()),
+  /* The company's keys as its directory gives them (`companyKeysFor`), stood in for by the one key of a company never changed. */
+  companyKeysFor: async () => ({ epoch: 0, newest: 0, key: '5e'.repeat(32), keyAt: () => '5e'.repeat(32), sealing: () => ({ key: '5e'.repeat(32), epoch: 0 }) }),
+}));
 vi.mock('vaults-web-shared/keyring.js', async (real) => ({
   ...(await real<typeof import('vaults-web-shared/keyring.js')>()),
   /* This signer's signed directory entry, kept until it is filed; what becomes of it is `hand-over`'s own test's. */

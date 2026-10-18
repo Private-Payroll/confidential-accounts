@@ -57,6 +57,9 @@ const THREE: GovernanceOnTheWire = { kind: 'threshold', threshold: '3' };
  * bar stored. Every call asked of the service or the builder is written down
  * in `log`.
  */
+/** The filing key of a seat of the company's, under no removal, that raised what this file holds as already raised. */
+const ANOTHER_SEAT = 'a7'.repeat(32);
+
 const aDevice = (o: {
   /** `served` is the status the service writes for it, whatever the chain holds. */
   held?: Array<{ id: string; opened: OpenedRound; raised?: boolean; count?: number; served?: 'cancelled' }>;
@@ -94,7 +97,8 @@ const aDevice = (o: {
    */
   seams.opens = async (id) => {
     if (filings.has(id) && !entered.has(id)) throw new Error('no entry in the company\'s records names it');
-    return rounds.get(id)!.opened;
+    /* Who raised it, as the opener believes it: the seat that signed its filing, or another seat of the company's. */
+    return { filedBy: filings.get(id)?.filedBy.publicKey ?? ANOTHER_SEAT, ...rounds.get(id)!.opened };
   };
   const doors: GovernanceDoors = {
     service: {

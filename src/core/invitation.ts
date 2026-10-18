@@ -244,6 +244,12 @@ export interface InvitationOffer {
   readonly account: AccountAddress;
   /** The key the invitee seals what they hand over to. */
   readonly inboxPublicKey: Hex;
+  /**
+   * When the offer stops being answered, in milliseconds since 1970, signed with the rest of it: the invitee's own
+   * device refuses it after that, whatever the service says, which bounds how long an inbox from before a change of
+   * the company's key can be answered.
+   */
+  readonly expiresAt: number;
   readonly for: EmployeeOffer | SignerOffer | ReissueOffer;
   readonly inviter: Inviter;
 }
@@ -281,6 +287,7 @@ export const whyThisOfferIsNotSigned = (signed: SignedOffer): string | null => {
   if (readCompanyLabel(o.label) === null || readAccountAddress(o.account) === null || !HEX64.test(String(o.inboxPublicKey))) {
     return 'it does not name a company\'s label, account and key';
   }
+  if (!Number.isSafeInteger(o.expiresAt) || o.expiresAt <= 0) return 'it does not say until when it may be answered';
   const s = o.inviter?.statement;
   if (typeof s !== 'object' || s === null || s.account !== o.account) return 'the seat that invited is not on the account it names';
   if (!directoryEntrySignedBy(o.label, o.account, o.inviter.committeeKey, s)) return 'the seat that invited did not sign its entry for this company';
@@ -303,6 +310,11 @@ export const whyThisOfferIsNotSigned = (signed: SignedOffer): string | null => {
   }
   return null;
 };
+
+/** Why an offer may no longer be answered at `now`, by the expiry its inviter signed, or null. */
+export const offerExpiredRefusal = (offer: Pick<InvitationOffer, 'expiresAt'>, now: number): string | null =>
+  now < offer.expiresAt ? null
+    : `it has expired: the seat that invited signed it to be answered only until ${new Date(offer.expiresAt).toISOString()}`;
 
 /** Thrown for a link that opens no offer, or one its inviter did not sign. */
 export class InvitationNotOpened extends Error {
@@ -352,6 +364,12 @@ export interface InvitationFiling {
   readonly offer: Sealed;
   /** A payee's invitation: the person record it is for. */
   readonly person?: string;
+  /**
+   * The epoch of the company key the offer's inbox and seat secret were made under. The service keeps it and judges
+   * nothing by it; each member's device refuses an answer sealed to an older inbox than the key in force, unless the
+   * change of the key named it as waiting.
+   */
+  readonly keyEpoch: number;
   readonly filedBy?: { readonly publicKey: Hex; readonly signature: Hex };
 }
 
@@ -377,11 +395,12 @@ export const verifiedInvitationFiler = (f: InvitationFiling): Hex | null => {
 export const whyThisIsNotAnInvitation = (x: unknown, company: string): string | null => {
   if (x === null || typeof x !== 'object') return 'it is not an invitation';
   const f = x as Record<string, unknown>;
-  const allowed = ['company', 'kind', 'id', 'acceptanceHash', 'offer', 'person', 'filedBy'];
+  const allowed = ['company', 'kind', 'id', 'acceptanceHash', 'offer', 'person', 'keyEpoch', 'filedBy'];
   if (Object.keys(f).some((k) => !allowed.includes(k))) return 'it carries something an invitation does not, and nothing unread is kept';
   if (f.company !== company) return 'it is for another company';
   if (f.kind !== 'employee' && f.kind !== 'signer') return 'it is neither a payee\'s nor a signer\'s';
   if (!HEX64.test(String(f.id)) || !HEX64.test(String(f.acceptanceHash))) return 'it is not named by a lookup id and an acceptance hash';
+  if (!Number.isSafeInteger(f.keyEpoch) || (f.keyEpoch as number) < 0) return 'it does not name the epoch of the company key it was made under';
   const o = f.offer as Record<string, unknown> | null;
   if (o === null || typeof o !== 'object' || ['iv', 'tag', 'body'].some((k) => typeof o[k] !== 'string')) return 'it carries no sealed offer';
   if (f.kind === 'employee' ? typeof f.person !== 'string' || f.person === '' : f.person !== undefined) {

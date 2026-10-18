@@ -598,6 +598,38 @@ describe('THE ONE-A-DAY ANCHOR, ON THE WAY INTO THE COMPANY', { timeout: 120_000
     expect(log).toEqual(['ada kept a batch', 'ada sent', 'ada anchored']);
     expect(both[0]).toBe(both[1]);
   });
+
+  it('THE NEWEST HEAD LANDED BY A TIME IS READ FROM THE BLOCKS AT THE WALLET\'S INDEXER: ONE WHOSE BLOCK THE INDEXER GIVES NO TIME FOR IS NEVER IT, AND ONE THIS DEVICE DID NOT CHECK IS SAID SO', async () => {
+    const X = T + 3000 * 24 * HOUR;
+    await enter(ADA, 'emp_landed_by_l1');
+    await anchorTheRecordsHere(at(X));
+    const first = headers().at(-1)!.seq;
+    await enter(ADA, 'emp_landed_by_l2');
+    await anchorTheRecordsHere(at(X + HOUR));
+    const second = headers().at(-1)!.seq;
+    const held = await heldNow(at(X + HOUR));
+    /* RED WHEN: the newest head landed by a time is not the one whose block was set at or before it. */
+    expect([held.newestLandedBy?.(X + HOUR - 1), held.newestLandedBy?.(X + HOUR)]).toEqual([{ seq: first }, { seq: second }]);
+    /* RED WHEN: the directory a removal is judged with does not carry the records' own door, so every removal is refused unjudged. */
+    expect((await acmeDirectoryWithItsFold()).records.newestLandedBy?.(X + HOUR)).toEqual({ seq: second });
+    expect(held.newestLandedBy?.(0)).toBe('none');
+    /* A batch anchored in a block the wallet's indexer gives no time for. */
+    await enter(ADA, 'emp_landed_by_l3');
+    acmeClock.now = () => 0;
+    await anchorTheRecordsHere({ ...doorsOf(ADA), now: () => new Date(X + 2 * HOUR) });
+    expect(headers().at(-1)!.seq).toBe(second + 1);
+    /* RED WHEN: a head whose block the indexer gives no time for counts as landed, so it can be the head a removal's raise is held to. */
+    expect((await heldNow(at(X + 2 * HOUR))).newestLandedBy?.(X + 5 * HOUR)).toEqual({ seq: second });
+    /* A head on chain no batch the service gave reaches, landed at X plus three hours: this device's check stops short of it. */
+    const back = head();
+    acmeClock.now = () => X + 3 * HOUR;
+    acmeChain.landAt(headAfter(head(), 'ee'.repeat(32), holdersOf(acmeHeldNow()), tagInATest(EVE.signingSecret as Hex)));
+    const short = await heldNow(at(X + 3 * HOUR));
+    expect(short.stopped).toMatchObject({ stop: 'not-given' });
+    /* RED WHEN: a device whose check stopped short of the newest head landed by a time answers an older head it checked. */
+    expect([short.newestLandedBy?.(X + 4 * HOUR), short.newestLandedBy?.(X + 2 * HOUR)]).toEqual(['unread', { seq: second }]);
+    acmeChain.landAt(back);
+  });
 });
 
 describe('A COMPANY\'S FIRST ANCHOR HOLDS THE RECORDS IT WAS FOUNDED WITH, ENTERED BY ITS FOUNDING SIGNER\'S DEVICE', () => {

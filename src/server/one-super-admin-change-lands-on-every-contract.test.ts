@@ -277,7 +277,7 @@ beforeEach(async () => {
       putCommitteeSignatures: (c: Parameters<CompanyVaultDeps['store']['putCommitteeSignatures']>[0]) => { kept.set(`${c.accountId}/${c.address}`, c); },
       listCommitteeSignatures: (accountId: string) => [...kept.values()].filter((c) => c.accountId === accountId),
     }),
-    company: async (id: string) => (id === COMPANY_ID ? only('the company on the chain', { address: ACCOUNT }) : null),
+    company: async (id: string) => (id === COMPANY_ID ? only('the company on the chain', { address: ACCOUNT, seats: 1 }) : null),
     ledger: only('the chain\'s door', {
       sendVault: async (_id: string, _what: string, _arrival: unknown, proven: Uint8Array,
         check: (tx: unknown) => string | null | Promise<string | null>, read: (b: Uint8Array) => Promise<unknown>) => {

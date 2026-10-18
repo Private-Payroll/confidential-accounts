@@ -150,9 +150,10 @@ export const proposalEntry = (company: string, f: ProposalFiling): ManifestEntry
 const DIRECTORY_DOMAIN = 'confidential-accounts/directory-filing/v1';
 
 /**
- * A directory version's entry: the digest of the whole filing, the wallet's or
- * the quorum's signatures inside it included, since a directory filing is not
- * signed by a filing key.
+ * A directory version's entry: the digest of the whole filing, of any kind,
+ * with the signatures inside it - the wallet's on an entry, the quorum's on a
+ * role or retirement, the one filing seat's on a change of the company's key -
+ * since none of them is a record filing's own signature.
  */
 export const directoryEntry = (filing: DirectoryFiling): ManifestEntryBody => ({
   store: 'directory', kind: DIRECTORY_RECORD, id: DIRECTORY_RECORD, version: filing.version,
@@ -162,9 +163,10 @@ export const directoryEntry = (filing: DirectoryFiling): ManifestEntryBody => ({
 /**
  * **WHAT A SEAT'S ROLE MUST LET IT FILE TO ANCHOR A BATCH, OR TO WITNESS A
  * DIRECTORY VERSION.** Anchoring files no record of its own, and a directory
- * version is signed by a wallet or a quorum, not by a filing key, so it is
- * entered by the device that anchors it. Both are what any seat that may raise
- * or approve does: every role but a viewer's may file a proposal.
+ * version - an entry signed by a wallet, a quorum's change, or one seat's
+ * change of the company's key - is no record filing, so it is entered by the
+ * device that anchors it. Both are what any seat that may raise or approve
+ * does: every role but a viewer's may file a proposal.
  */
 export const WITNESSED_AS: FiledKind = 'proposal';
 

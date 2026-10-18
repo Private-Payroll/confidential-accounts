@@ -1,3 +1,4 @@
+import { kindKeyOf } from '../../../src/midnight/records-held.js';
 import { describe, it, expect, vi } from 'vitest';
 import {
   approveOnDevice, changeThresholdOnDevice, governOnDevice, governedCallServiceFor, nothingWasSentBy, raiseRetryOnDevice, raiseRunOnDevice,
@@ -42,10 +43,19 @@ vi.mock('./run-raised-here.js', async (importOriginal) => ({
   raiseLegHere: () => seams.raiseLeg(),
   raiseRetryHere: () => seams.raiseRetry(),
 }));
+/**
+ * The company's directory and records as a read that names no seat and no proposal of the company's records gives
+ * them: nobody is under a removal, so who raised a run holds nothing up here.
+ */
+const NOBODY_LEAVING = {
+  dir: { seats: [] }, holders: { seats: [], seatBar: 1 },
+  records: { history: new Map(), notYetAnchored: [], asked: { records: new Set(), kinds: new Set([kindKeyOf({ store: 'proposal', kind: 'proposal' })]) } },
+};
+/* Who raised each proposal, as the opener believes it, where a test does not say: a seat of the company's under no removal. */
 vi.mock('./round-opened-here.js', async (importOriginal) => ({
   ...(await importOriginal<typeof import('./round-opened-here.js')>()),
-  openTheRoundHere: (_s: unknown, _a: string, proposalId: string, viewingKey: string, forARaise: boolean) =>
-    seams.opens(proposalId, viewingKey, forARaise),
+  openTheRoundHere: async (_s: unknown, _a: string, proposalId: string, viewingKey: string, forARaise: boolean) =>
+    ({ filedBy: 'a7'.repeat(32), ...(await seams.opens(proposalId, viewingKey, forARaise)) }),
 }));
 /** What a raise or a retry is made from on this device, as the page's modules make it. */
 interface MadeHereDoors {
@@ -220,6 +230,8 @@ const aDevice = (over: Partial<GovernedCallService> & MadeOver & {
     return r;
   });
   const service: GovernedCallService = {
+    /* The company's proposals, as a read of who is leaving asks for them: none is a removal here. */
+    sealedProposals: async () => [],
     ...served,
     send: kept(landing(served.send, 'propose', (id) => onChain.raised(id)))!,
     approve: kept(landing(served.approve, 'approve', (id) => onChain.approved(id)))!,
@@ -250,6 +262,7 @@ const aDevice = (over: Partial<GovernedCallService> & MadeOver & {
         const r = lastServed.get(id.toLowerCase());
         return [id.toLowerCase(), r === undefined ? { held: 'never', approvals: 0 } : chainSays(r)];
       })),
+      directory: async () => NOBODY_LEAVING,
     } as unknown as CompanyRecordsHere,
     builder: {
       governedCall: async (input) => {
@@ -928,5 +941,20 @@ describe('THE BAR A PROPOSAL IS CARRIED OUT AT IS READ FROM THE PERSON\'S OWN WA
     /* RED WHEN: a wallet read with no seat bar is taken as a bar met, and a signer is seated short of it. */
     await expect(governOnDevice(blind.doors, seatAdded)).rejects.toThrow(/did not say how many approvals a change of who is seated needs/u);
     expect(blind.log.filter((l) => /^carry/u.test(l))).toEqual([]);
+  });
+});
+
+describe('NOTHING IS WRITTEN DOWN FROM THIS DEVICE WHILE THE COMPANY\'S KEY IS BEING CHANGED', () => {
+  it('a governance proposal is not sealed or filed while sealing is paused, and every record still opens', async () => {
+    const { CompanyKeyBeingChanged } = await import('./company-key-here.js');
+    /* The company's keys while a signer's removal is carried out and the key they held is not yet replaced. */
+    const paused = {
+      epoch: 0, key: GOVERNED_KEY, newest: 0, keyAt: () => GOVERNED_KEY,
+      sealing: () => { throw new CompanyKeyBeingChanged('the company\'s key is being changed'); },
+    };
+    const d = aGovernedDevice({ filed: { raisedAt: 'now' }, chain: () => ({ held: 'never', approvals: 0 }) });
+    /* RED WHEN: the governance proposal is sealed under the key in force without asking whether sealing is paused. */
+    await expect(changeThresholdOnDevice(d.doors, { viewingKey: paused, newThreshold: 3, seated: 4 })).rejects.toThrow(CompanyKeyBeingChanged);
+    expect(d.log).not.toContain('file');
   });
 });
