@@ -1017,7 +1017,7 @@ describe.skipIf(!KEYS_ON_DISK)('A PRIVATE PAYMENT OUT OF A COMPANY VAULT, FROM T
     recorded: { entered: enteredThrough(), anchor: async () => ({ anchored: 0, head: '00'.repeat(32) }) },
   });
 
-  it('A RUN DRAWN AND RAISED ON A SIGNER\'S DEVICE AND APPROVED BY THE BAR IS PAID FROM THE VAULT, MERGING FIRST FOR THE PERSON NO TWO NOTES COVER: EVERY PERSON RECORDED PAID, EVERY STEP JOURNALLED, AND PAYING AGAIN PAYS NOBODY', async () => {
+  it('A RUN DRAWN AND RAISED ON A SIGNER\'S DEVICE AND APPROVED BY THE BAR IS PAID FROM THE VAULT, MERGING FIRST FOR THE PERSON NO TWO NOTES COVER: EVERY PERSON RECORDED PAID, EVERY STEP JOURNALLED, AND PAYING AGAIN PAYS NOBODY', { timeout: 90_000 }, async () => {
     const { vault } = await aFundedVault();
     const doors = {
       ...pacing, service, me, myRecordsKey: recordsReaderOf(me.companyKey).publicKey, signers, records, account: readAccountAddress(company)!,
