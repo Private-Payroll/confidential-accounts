@@ -15,9 +15,9 @@
  *   · **a deposit** writes the whole coin it is about to make.
  *     `VaultLedger.deposit` records it through the `DepositJournal` interface,
  *     and `SealedDepositJournal` below is the implementation the deposit door
- *     hands it. The door used to write this line in its own code, so the
- *     guarantee lasted as long as every caller remembered; the file and its
- *     shape are unchanged, so every line already on disk still reads.
+ *     hands it. The line is written here and not in each door, so the
+ *     guarantee does not depend on every caller remembering it. A journal on
+ *     disk keeps its shape, so lines written earlier still read.
  *   · **a payment** writes the note it is about to spend, whole, and the amount
  *     leaving it. `VaultLedger.payPrivately` records it through the
  *     `PaymentJournal` interface, and `SealedPaymentJournal` below is the
@@ -61,7 +61,6 @@ import type { PoolSigner } from '../src/midnight/vault-pool.js';
 import {
   PaymentJournalInStore, DepositJournalInStore, attemptsFromJournalVersions, type JournalOpener,
 } from '../src/midnight/vault-journal.js';
-import type { AttemptedVaultCalls } from '../src/midnight/vault-recovery.js';
 import type { DepositNonceKey } from '../src/midnight/deposit-nonce.js';
 import { assertVaultName } from '../src/midnight/vault-record.js';
 import { FileSealedPoolStore, everyVersionFiled } from './vault-pool-file.js';
@@ -120,14 +119,15 @@ export class SealedDepositJournal extends DepositJournalInStore {
  * file is read; what is done with them is `attemptsFromJournalVersions`, the
  * same reader the product's store is read with, in the same shape. A file on
  * this machine is not read against the company's records, so it passes no
- * version over and `passedOver` is always zero here.
+ * version over and `passedOver` is always zero here. A version or line it
+ * cannot read is skipped and said in `unread`.
  */
 export const journalledAttempts = (input: {
   depositJournalFile: string;
   paymentJournalFile: string;
   vault: string;
   opener: JournalOpener;
-}): AttemptedVaultCalls & { versionsRead: { deposits: number; payments: number }; passedOver: { deposits: number; payments: number } } =>
+}): ReturnType<typeof attemptsFromJournalVersions> =>
   attemptsFromJournalVersions({
     deposits: everyVersionFiled(input.depositJournalFile, input.vault),
     payments: everyVersionFiled(input.paymentJournalFile, input.vault),

@@ -4,9 +4,14 @@
  * A vault's pool and its journals are opened only where a signer's key is: on
  * the person's own device. The server keeps the sealed bytes and can never open
  * them. This file is the one statement of what crosses the wire, used by both
- * ends, and it carries everything a version is:
+ * ends.
  *
- *   · **which record** - the pool, the deposit journal or the payment journal;
+ * It carries two families: a vault's own records (the pool, the two journals,
+ * the nonce secret), and the company's records (its state, roster, policy,
+ * people, runs, proposals, offers, spending policies and each vault's name and
+ * description). Each version carries everything it is:
+ *
+ *   · **which record** - its kind, and the vault or the record's id;
  *   · **which version** - in the path AND in the message AND inside the record,
  *     and all three must agree;
  *   · **the exact bytes**, as one JSON string, with their SHA-256 beside them,
@@ -39,22 +44,24 @@ export const WIRE_RECORDS: readonly WireRecord[] = ['pool', 'deposit-journal', '
 /**
  * A company's own records, as the signed company-record store files them.
  * `policy` is the company's own ceilings; `spending-policy` is one vault's
- * spending policy for one currency, sealed to the signers.
+ * spending policy for one currency, sealed to the signers; `vault-info` is one
+ * vault's name and description (`vault-info-record.ts`).
  */
-export const COMPANY_RECORD_KINDS = ['state', 'roster', 'policy', 'person', 'run', 'proposal', 'offer', 'spending-policy'] as const;
+export const COMPANY_RECORD_KINDS = ['state', 'roster', 'policy', 'person', 'run', 'proposal', 'offer', 'spending-policy', 'vault-info'] as const;
 export type CompanyRecordKind = (typeof COMPANY_RECORD_KINDS)[number];
 
 /**
  * **THE KINDS SEALED UNDER ONE OF THE COMPANY'S OWN KEYS**, and which one: a
  * person under the payroll purpose key, the company's signers under the
- * roster purpose key, and the company's state under the viewing key of the
- * epoch the record names, exactly as the founding signer's device sealed it. Such a record is opened by whoever holds that key, so it
- * carries no per-reader wraps: a wrap beside it would be a second, drifting
- * answer to who may read it. Every other kind is sealed under a fresh key
- * wrapped to each reader.
+ * roster purpose key, a vault's name and description under the vaults purpose
+ * key, and the company's state under the viewing key of the epoch the record
+ * names, exactly as the founding signer's device sealed it. Such a record is
+ * opened by whoever holds that key, so it carries no per-reader wraps: a wrap
+ * beside it would be a second, drifting answer to who may read it. Every other
+ * kind is sealed under a fresh key wrapped to each reader.
  */
-export const SEALED_UNDER_PURPOSE: Readonly<Partial<Record<CompanyRecordKind, 'payroll' | 'roster' | 'viewing'>>> = Object.freeze({
-  person: 'payroll', roster: 'roster', state: 'viewing',
+export const SEALED_UNDER_PURPOSE: Readonly<Partial<Record<CompanyRecordKind, 'payroll' | 'roster' | 'vaults' | 'viewing'>>> = Object.freeze({
+  person: 'payroll', roster: 'roster', 'vault-info': 'vaults', state: 'viewing',
 });
 
 /** Where a person on a company's payroll stands. */

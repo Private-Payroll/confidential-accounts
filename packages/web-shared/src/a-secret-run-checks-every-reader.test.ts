@@ -4,7 +4,7 @@ import { identityFromSecret } from 'midnight-identity';
 import { committeeKeyFor } from 'midnight-identity/profile/committee-key';
 import { seatBarOf, signRecordsKey } from 'midnight-identity/profile/records-key';
 import type { AccountAddress, CompanyLabel } from 'midnight-identity/profile/company-label';
-import { createCompanyVault, VaultStartOwed, type VaultChainView, type VaultService } from './vault-operation.js';
+import { createCompanyVault, VaultStartOwed, type VaultChainView, type ServedVaultChain, type VaultService } from './vault-operation.js';
 import type { VaultBuilderClient } from './vault-worker-client.js';
 import { MemorySealedPoolStore } from '../../../src/midnight/vault-pool.js';
 import type { WireRecord } from '../../../src/midnight/sealed-record-wire.js';
@@ -13,6 +13,9 @@ import { openNonceSecrets, recordsKeypairFrom } from '../../../src/midnight/comp
 import { sealSecretCopy } from '../../../src/midnight/sealed-secret-copy.js';
 import type { RosterVaultKeys } from '../../../src/core/vault-keys.js';
 import { leafOfTheContract, seatOpenedFor } from '../../../src/testing/directory-seats.js';
+import { proposalsKeptInATest } from './a-vaults-start-proposals.test-support.js';
+/** A test stand-in for what a chain read says: the device's view, the service's answer and the one knob the worker stand-in turns into `started`. */
+type TestView = VaultChainView & ServedVaultChain & { readonly started?: boolean };
 
 /*
  * **THE PRESS THAT STARTS A VAULT CHECKS EVERY READER OF ITS FIRST SECRET
@@ -75,8 +78,8 @@ const press = async (o: {
   let reads = 0;
   const asked: string[] = [];
   const committee = [ada.committeeKey, bo.committeeKey];
-  const view: VaultChainView = {
-    vault: VAULT, onChain: true, heldByCommittee: true, why: null, notes: [], everCreated: [],
+  const view: TestView = {
+    vault: VAULT, onChain: true, heldByCommittee: true, notes: [], everCreated: [],
     committee: { committee, threshold: 2 } as never,
     authority: { committee, threshold: 2, counter: '1', shape: 'committee' },
     /* What the service would say of the vault; nothing in a start asks it - the vault is read on the device (`vaultOnChain` below). */
@@ -140,6 +143,8 @@ const press = async (o: {
     me, myRecordsKey: ada.recordsKey as never, records,
     signers: async () => [{ id: 'ada', wrappingPublicKey: wrapping.publicKey }],
     material: { signingSecret: '11'.repeat(32), blinding: '22'.repeat(32), scope: '33'.repeat(32) },
+    /* Where the run would be written down: Ada's seat may raise it. */
+    proposals: proposalsKeptInATest({ signingSecret: '11'.repeat(32) as never }).doors,
     secretReaders: {
       company: CO,
       /* Who holds the account and the vault, as Ada's own wallet read them for this check: the vault read off the vault itself. */

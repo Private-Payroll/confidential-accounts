@@ -1,6 +1,8 @@
 /**
  * **A DEPOSIT, A PAYMENT OR A CHARGE THIS DEVICE SENT AND HAS NOT YET SEEN
- * LAND, KEPT ON THIS DEVICE AND SEALED UNDER THE SIGNER'S OWN KEY.**
+ * LAND, KEPT ON THIS DEVICE AND SEALED UNDER THE SIGNER'S OWN KEY.** The same
+ * sealed store keeps, under its own kind, the deposit coins this device has
+ * believed for a vault (`vault-coins-kept-here.ts`).
  *
  * What is kept names a coin: its nonce, its token and its amount. Anybody who
  * learns a coin's nonce and reads the chain can confirm a guessed amount, so
@@ -37,9 +39,11 @@ export interface InFlightOpener {
 
 /**
  * What is kept: a deposit this device sent, a payment, or a charge of a run to
- * its vault's period. Each kind has its own record per vault.
+ * its vault's period; or, under `coins`, the deposit coins this device has
+ * believed for a vault (`vault-coins-kept-here.ts`). Each kind has its own
+ * record per vault.
  */
-export type InFlightKind = 'deposit' | 'payment' | 'charge';
+export type InFlightKind = 'deposit' | 'payment' | 'charge' | 'coins';
 
 /** One record as the store keeps it. Only the claim is outside the seal, and it is random. */
 export interface SealedInFlight {

@@ -10,8 +10,9 @@
  *
  *   - **held**, only when every note the pool records is one the chain holds.
  *     A note the chain holds that the pool does not is counted when a record
- *     on this device names it as the vault's (a payment's change or a deposit
- *     on its way), and otherwise ignored: anyone may deposit into a vault, and
+ *     on this device names it as the vault's (a payment's change, a deposit
+ *     on its way, or a note the rebuild before the read found in the vault's
+ *     records), and otherwise ignored: anyone may deposit into a vault, and
  *     a note nothing here names is not money the vault can spend;
  *   - **unreadable**, when the chain did not answer or shows no vault here;
  *   - **contradicted**, when the pool and the chain disagree. A pool that
@@ -75,9 +76,13 @@ export interface DeviceHoldingsDoors {
    * is built on top of such a version until this has run. `held` says whether
    * the chain holds a note. When it filed the pool, the pool is read again;
    * anything it could not take is said as the read's answer. Absent, such a
-   * pool stays contradicted.
+   * pool stays contradicted. A door that also rebuilds the vault's notes
+   * (`vaultNotesHere`) returns them as `notes`: each is a note the chain holds
+   * that the vault's records name, and is counted as `accountedFor`'s are.
    */
-  readonly fileAgain?: (vault: Hex, held: (note: PoolNote) => Promise<boolean>) => Promise<Pick<PoolTheChainHolds, 'answer' | 'said'>>;
+  readonly fileAgain?: (vault: Hex, held: (note: PoolNote) => Promise<boolean>) => Promise<
+    Pick<PoolTheChainHolds, 'answer' | 'said'> & { readonly notes?: readonly PoolNote[] }
+  >;
 }
 
 /** The parts of a read of a vault this reader reads: this device's own, in its vault worker. */
@@ -127,16 +132,18 @@ async function reconciled(doors: DeviceHoldingsDoors, vault: Hex): Promise<Recon
   const filed = await doors.fileAgain(vault, async (note) => onChain.has((await doors.heldCommitmentOf(vault, note)).toLowerCase()));
   /* What a seat that left filed and this device could not take is said, never summed past. */
   if (filed.said.length > 0) return { of: 'contradicted', why: `${filed.said.join('. ')}.` };
-  return againstTheChain(doors, vault, onChain);
+  return againstTheChain(doors, vault, onChain, filed.notes);
 }
 
 /** The pool this device believes against the notes the chain holds for the vault (`onChain`), once. */
-async function againstTheChain(doors: DeviceHoldingsDoors, vault: Hex, onChain: ReadonlySet<string>): Promise<Reconciled> {
+async function againstTheChain(
+  doors: DeviceHoldingsDoors, vault: Hex, onChain: ReadonlySet<string>, rebuilt: readonly PoolNote[] = [],
+): Promise<Reconciled> {
   const notes = await doors.pool(vault);
   const held: Array<{ note: PoolNote; commitment: string }> = [];
   for (const note of notes) held.push({ note, commitment: (await doors.heldCommitmentOf(vault, note)).toLowerCase() });
   const named: Array<{ note: PoolNote; commitment: string }> = [];
-  for (const note of await doors.accountedFor?.(vault) ?? []) {
+  for (const note of [...(await doors.accountedFor?.(vault) ?? []), ...rebuilt]) {
     named.push({ note, commitment: (await doors.heldCommitmentOf(vault, note)).toLowerCase() });
   }
   const verdict = poolAgainstChain(held, { has: (c) => onChain.has(c), size: BigInt(onChain.size) }, named);

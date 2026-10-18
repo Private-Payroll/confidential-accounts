@@ -159,7 +159,7 @@ describe('the reader takes every filed version of both journals, as the rebuild 
       paymentJournalFile: paymentJournalFile(d, 'stagenet', 'payroll-test-1'),
       vault: VAULT, opener: opener(s),
     });
-    expect(r).toEqual({ deposits: [], payments: [], versionsRead: { deposits: 0, payments: 0 }, passedOver: { deposits: 0, payments: 0 } });
+    expect(r).toEqual({ deposits: [], payments: [], versionsRead: { deposits: 0, payments: 0 }, passedOver: { deposits: 0, payments: 0 }, unread: [] });
   });
 
   it('reads the deposit journal the deposit door writes -- coins under `notes` -- and the payment journal', async () => {
@@ -209,15 +209,18 @@ describe('the reader takes every filed version of both journals, as the rebuild 
     ).toEqual([100n, 200n]);
   });
 
-  it('REFUSES a journal version whose lines are not the shape it claims, rather than proposing from a guess', async () => {
+  it('SKIPS AND SAYS a journal line that is not the shape it claims, rather than proposing from a guess', async () => {
     const d = dir(); const s = signers();
     const file = paymentJournalFile(d, 'stagenet', 'payroll-test-1');
     const store = new FileSealedPoolStore(file, VAULT);
     await store.put(VAULT, sealPool(VAULT, { attempts: [{ spent: { nonce: '01'.repeat(32), token: TOKEN, value: 1n }, amount: 'ten' }] } as never, s.signers, 1, 'payment-journal'));
-    expect(() => journalledAttempts({
+    const r = journalledAttempts({
       depositJournalFile: depositJournalFileOf(d, 'stagenet', 'payroll-test-1'),
       paymentJournalFile: file, vault: VAULT, opener: opener(s),
-    })).toThrow(/not an attempt/);
+    });
+    /* RED WHEN: a line that is not an attempt is proposed from, or skipped without saying so. */
+    expect(r.payments).toEqual([]);
+    expect(r.unread.map((u) => u.why)).toEqual([expect.stringMatching(/not an attempt/)]);
   });
 
   it('what the reader hands back is what the writer sealed: opening a version directly agrees', async () => {

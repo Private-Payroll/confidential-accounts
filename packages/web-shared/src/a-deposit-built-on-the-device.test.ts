@@ -48,7 +48,7 @@ import * as vaultModule from '../../../contracts/managed-vault/contract/index.js
 import { buildVaultDeploy, type VaultBuilderDeps } from './vault-builder.js';
 import { answerVaultAsk } from './vault-worker-entry.js';
 import { vaultBuilderOver, type VaultAnswer } from './vault-worker-client.js';
-import { openCompanyVaultPool, type VaultChainView, type VaultService, type DepositInFlight, type DepositsInFlight, } from './vault-operation.js';
+import { openCompanyVaultPool, type VaultChainView, type ServedVaultChain, type VaultService, type DepositInFlight, type DepositsInFlight, } from './vault-operation.js';
 import { inFlightInMemory, sealedOnThisDevice, type InFlightRecords } from './in-flight-on-this-device.js';
 import { refusalForDeposit } from '../../../src/wiring/vault-submission.js';
 import { MemorySealedPoolStore } from '../../../src/midnight/vault-pool.js';
@@ -61,6 +61,8 @@ import * as ShieldedV1 from '@midnightntwrk/wallet-sdk-shielded/v1';
 import { chooseCoin } from '@midnightntwrk/wallet-sdk-capabilities';
 import { Either } from 'effect';
 import { keysOnDisk } from '../../../contracts/test/keys-on-disk.js';
+/** A test stand-in for what a chain read says: the device's view, the service's answer and the one knob the worker stand-in turns into `started`. */
+type TestView = VaultChainView & ServedVaultChain & { readonly started?: boolean };
 
 /** The value, or a failure that says one was missing: an index that finds nothing is a broken test, not a value to carry on with. */
 function present<T>(value: T | undefined): T {
@@ -348,8 +350,8 @@ describe.skipIf(!KEYS_ON_DISK)('A DEPOSIT FROM THE PAGE, BUILT ON THE DEVICE [ne
 
     /* The product's service, which answers what the chain holds. */
     const notes: string[] = [];
-    const view = (): VaultChainView => ({
-      vault, onChain: true, committee: null, heldByCommittee: true, fundable: true, state, notes: [...notes], everCreated: [],
+    const view = (): TestView => ({
+      vault, onChain: true, committee: null, heldByCommittee: true, started: true, state, notes: [...notes], everCreated: [],
     });
     const service: VaultService = {
       keys: async () => { catching('service keys', []); return { committee: null, why: null, readers: [] }; },

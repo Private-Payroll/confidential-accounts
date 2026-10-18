@@ -1,13 +1,18 @@
 /**
  * **A VAULT AS THE CHAIN HOLDS IT, READ ON THIS DEVICE FROM THE INDEXER THE
- * PERSON'S OWN WALLET NAMES** - its state, the notes it holds, every coin ever
- * made for it, whether it is started, what it holds in public money, and
- * the state its deploy left - never who holds it, since money going in or out
- * waits on no committee; and what a step into or out of it is
- * built on and judged by: one block's view of the vault, the commitment tree,
- * the ledger's parameters and the company's account, each transaction's
- * events, and which of its transactions created an output. Nothing of it
- * passes through the company's service.
+ * PERSON'S OWN WALLET NAMES.**
+ *
+ * What it reads: the vault's state, the notes it holds, every coin ever made
+ * for it, whether it is started, what it holds in public money, and the state
+ * its deploy left.
+ *
+ * What it does not read: who holds the vault. Money going in or out waits on
+ * no committee, so no read here asks.
+ *
+ * What a step into or out of the vault is built on and judged by: one block's
+ * view of the vault, the commitment tree, the ledger's parameters and the
+ * company's account, each transaction's events, and which of its transactions
+ * created an output. Nothing of it passes through the company's service.
  *
  * Runs in the vault worker, never in the page: the indexer reader reaches the
  * ledger's WebAssembly (see `public-data.ts`). The endpoints are the wallet's
@@ -143,7 +148,9 @@ export async function readVaultOnChain(
   if (served === null || served === undefined) return { onChain: false };
   const bytes = served.serialize();
   const state = d.runtimeState.deserialize(bytes) as { data: unknown };
-  const ledger = d.vault.ledger(state.data) as Parameters<typeof startingLedgerFrom>[0] & { notes: Iterable<Uint8Array> };
+  const ledger = d.vault.ledger(state.data) as Parameters<typeof startingLedgerFrom>[0] & {
+    notes: Iterable<Uint8Array>; nonceCommitment: Uint8Array; splitJournal: Iterable<[Uint8Array, Uint8Array]>;
+  };
   let notesFromThisBuild = true;
   let notesWhy: string | undefined;
   try {
@@ -158,7 +165,7 @@ export async function readVaultOnChain(
     const start = startingLedgerFrom(ledger, d.vault.pureCircuits.copiesWrittenKey());
     started = start.started;
     account = String(start.account).toLowerCase();
-  } catch { /* a state that is not a vault's is not started, and pinned to nothing */ }
+  } catch { /* a state that is not a vault's cannot be read for its account or start: `account` stays null, which the reader of this answer takes as unreadable, never as pinned elsewhere */ }
   const everCreated = [...await vaultOutputHistoryFrom({ transactions: source.transactions, events: source.events })
     .everCreated(vault as Hex)];
   /* The one reader of a contract's public balance, over the state the indexer served now. */
@@ -173,7 +180,11 @@ export async function readVaultOnChain(
     onChain: true,
     state: toBase64(bytes),
     /* Notes read off a ledger of another shape are about whatever field sits in that place: not handed on at all. */
-    ...(notesFromThisBuild ? { notes: [...ledger.notes].map(hexOf) } : {}),
+    ...(notesFromThisBuild ? {
+      notes: [...ledger.notes].map(hexOf),
+      nonceCommitment: hexOf(ledger.nonceCommitment),
+      splitJournal: [...ledger.splitJournal].map(([spent, masked]) => [hexOf(spent), hexOf(masked)] as const),
+    } : {}),
     notesFromThisBuild,
     ...(notesWhy === undefined ? {} : { notesWhy }),
     everCreated,

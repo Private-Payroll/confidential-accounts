@@ -16,7 +16,7 @@ import type { WireRecord } from '../../../src/midnight/sealed-record-wire.js';
 import { MemorySealedPoolStore } from '../../../src/midnight/vault-pool.js';
 import { newWrappingKeypair, type Hex } from '../../../src/core/crypto.js';
 import {
-  DEPOSIT_TIME_TO_LIVE_MS, PublicDepositNotYetSeen, type DepositInFlight, type DepositsInFlight, type VaultChainView, type VaultService,
+  DEPOSIT_TIME_TO_LIVE_MS, PublicDepositNotYetSeen, type DepositInFlight, type DepositsInFlight, type VaultChainView, type ServedVaultChain, type VaultService,
 } from './vault-operation.js';
 import type { VaultBuilderClient } from './vault-worker-client.js';
 import { inFlightInMemory, sealedOnThisDevice, type SealedInFlight } from './in-flight-on-this-device.js';
@@ -25,6 +25,8 @@ import { vaultServiceFor } from './vault-page-doors.js';
 import {
   depositFromSource, depositKindFor, privateTokenFromTheWallet, publicTokenFromTheWallet, sourceFor, type DepositAsk, type PaidIn,
 } from './deposit-source.js';
+/** A test stand-in for what a chain read says: the device's view, the service's answer and the one knob the worker stand-in turns into `started`. */
+type TestView = VaultChainView & ServedVaultChain & { readonly started?: boolean };
 
 const VAULT = 'ab'.repeat(32) as VaultAddress;
 /* The company's account, and the label it carries. */
@@ -58,13 +60,13 @@ const paid = (amount: string, token = PUBLIC_TOKEN) => async (ask: DepositAsk): 
 
 /** A stood-in service and worker, the page's doors, and every call to them written down. */
 const setUp = (over: {
-  view?: Partial<VaultChainView>; send?: VaultService['depositPublicly']; noBuilder?: boolean;
+  view?: Partial<TestView>; send?: VaultService['depositPublicly']; noBuilder?: boolean;
   /* The keys and threshold the vault's own state names, in place of the account's committee. */
   authority?: { committee: { tag: string; value: string }[]; threshold: number } | null;
 } = {}) => {
   const log: string[] = [];
-  const view = (): VaultChainView => ({
-    vault: VAULT, onChain: true, committee: null, heldByCommittee: true, fundable: true, state: 'AAAA', notes: [], everCreated: [],
+  const view = (): TestView => ({
+    vault: VAULT, onChain: true, committee: null, heldByCommittee: true, started: true, state: 'AAAA', notes: [], everCreated: [],
     ...over.view,
   });
   const refuse = async () => { log.push('a private step was asked'); throw new Error('a public deposit never asks this'); };
@@ -92,7 +94,7 @@ const setUp = (over: {
         authority: over.authority !== undefined ? over.authority
           : v.heldByCommittee === true ? { committee: COMMITTEE_KEYS.map((k) => ({ ...k })), threshold: COMMITTEE_THRESHOLD }
             : { committee: [{ tag: 'schnorr', value: '99'.repeat(32) }], threshold: 1 },
-        account: ACCOUNT, started: v.fundable === true,
+        account: ACCOUNT, started: v.started === true,
       };
     },
     /* The block the deposit is built on, read here at the wallet's indexer. */
@@ -184,7 +186,7 @@ describe('A PUBLIC DEPOSIT FROM THE PAGE', () => {
 
   it('A VAULT THAT TAKES NO MONEY, OR A PAGE THAT CANNOT BUILD OR SEND A PUBLIC DEPOSIT, BUILDS NOTHING AND ASKS THE WALLET FOR NOTHING', async () => {
     for (const [why, over, says] of [
-      ['not started', { view: { fundable: false } }, /^this vault has not been started/],
+      ['not started', { view: { started: false } }, /^this vault has not been started/],
       ['no public build in the worker', { noBuilder: true }, /cannot build a public deposit/],
     ] as const) {
       const { log, doors } = setUp(over as never);

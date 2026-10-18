@@ -122,16 +122,11 @@ export interface Note {
  * never was. **Nothing in `src/core/` has ever mentioned a note seed** — the
  * claim described an arrangement that did not exist, in the file that calls
  * itself the money, which is where a round goes to find out how the seed is
- * handled. Worse, the home it named is the wrong one twice over: the payout
- * seed is minted in our process (`src/core/account.ts`, and that is `C162`),
- * and it lives under a key derived from the account viewing key, **which
- * crosses the wire to our server on the vault-threshold routes** — so anything
- * sealed that way hands us the vault's balance the first time a signer changes
- * a threshold. `docs/scope-the-vault-system.md` §3.3 reverses it: a vault's
- * secrets are **wrapped per signer**, and `Purpose` stays at six.
+ * handled. A vault's secrets are **wrapped per signer**, and are not sealed
+ * under a purpose key of the company's: a purpose key is held by every seat of
+ * the company, and a vault's money is read only by the signers it is sealed to.
  *
- * **The seed itself is gone, so it needs no home.** `S6d` was scheduled to give
- * it one; `S6a` had already removed the thing. A secret that does not exist
+ * **The seed itself is gone, so it needs no home.** A secret that does not exist
  * cannot be minted in the wrong process, cannot be sealed under the wrong key,
  * and cannot be lost with a device — which is a better answer than the one the
  * scope asked for, and the reason it is recorded here rather than silently

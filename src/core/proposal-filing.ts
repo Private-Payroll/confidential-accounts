@@ -126,7 +126,9 @@ export type GovernancePayloadBody =
    * A signer removed: the leaf the chain takes off, and the retirement of its seat in the company's directory that
    * every approving device signs with its approval. None for a leaf the company's directory holds no entry for.
    */
-  | { readonly leaf: Hex; readonly retirement?: RetirementTerms };
+  | { readonly leaf: Hex; readonly retirement?: RetirementTerms }
+  /** A new vault taken into the company's account, by its address. */
+  | { readonly vault: Hex };
 
 /**
  * **WHAT A REMOVAL'S RETIREMENT SAYS, AS ITS PROPOSAL CARRIES IT**: the last
@@ -148,12 +150,26 @@ export interface RetirementTerms {
 }
 
 /**
- * The governance kinds a device seals. A vault's spending policy and the
- * approvals a policy change needs are named here and not yet among the kinds
- * the company's proposal list says in words, which reads either as a change to
- * the company.
+ * The governance kinds a device seals. A vault's spending policy, the
+ * approvals a policy change needs and a new vault's adoption are named here and
+ * not yet among the kinds the company's proposal list says in words, which
+ * reads each as a change to the company.
  */
-type GovernanceKind = Extract<ProposalKind, 'add-signer' | 'remove-signer' | 'set-threshold' | 'set-vault-threshold'> | 'set-spending-policy' | 'set-policy-bar';
+type GovernanceKind = Extract<ProposalKind, 'add-signer' | 'remove-signer' | 'set-threshold' | 'set-vault-threshold'> | 'set-spending-policy'
+  | 'set-policy-bar' | typeof ADOPT_VAULT;
+
+/** A new vault's adoption into the company's account: a governance proposal, raised by the device setting the vault up. */
+export const ADOPT_VAULT = 'adopt-vault';
+
+/**
+ * A new vault's first secret run: the run its signers approve the vault's
+ * first secret under. It moves no money and is approved only from setting the
+ * vault up, never from the proposals list.
+ */
+export const VAULT_SECRET = 'vault-secret';
+
+/** The two proposals setting up a new vault raises, which a device acts on only from setting that vault up. */
+export const VAULT_START_KINDS: readonly string[] = Object.freeze([ADOPT_VAULT, VAULT_SECRET]);
 
 /**
  * **A GOVERNANCE PROPOSAL'S ENVELOPE, SEALED ON THE DEVICE RAISING IT**, in the
@@ -262,7 +278,7 @@ export const seatStillProposedFor = (
 /** Whether a value names a proposal kind this file seals. */
 export const isGovernanceKind = (kind: unknown): kind is GovernanceKind =>
   kind === 'add-signer' || kind === 'remove-signer' || kind === 'set-threshold' || kind === 'set-vault-threshold'
-  || kind === 'set-spending-policy' || kind === 'set-policy-bar';
+  || kind === 'set-spending-policy' || kind === 'set-policy-bar' || kind === ADOPT_VAULT;
 
 /** What a round's entries commit to, folded into the change its proposal seals. */
 export const batchDigestOf = (entries: readonly ShieldedEntry[]): Hex => commit(canonical(entries), '');
@@ -299,4 +315,30 @@ export const sealPayrollProposal = (input: {
   }), input.viewingKey),
   proposedBy: input.proposedBy, ...(input.proposerRole === undefined ? {} : { proposerRole: input.proposerRole }),
   approvals: [],
+}, input.viewingKey);
+
+/**
+ * **A NEW VAULT'S FIRST SECRET RUN, SEALED AS A PROPOSAL OF THE COMPANY'S** on
+ * the device raising it: the vault, and the run's root, payee count and window
+ * with the salt in its change, which together make its identity on the chain
+ * again (`proposalIdOf` over the run's payload, the vault and the salt), so any
+ * signer's device can check the record is the run the chain holds. It is
+ * sealed to every reader of the company's proposals, so it is given nothing
+ * the run was made from: never the vault's secret, the run's nonce or a sealed
+ * copy of the secret, none of which its input can carry.
+ */
+export const sealVaultSecretProposal = (input: {
+  readonly accountId: string; readonly viewingKey: Hex; readonly summary: string;
+  readonly run: {
+    readonly vault: Hex; readonly root: Hex; readonly payees: string; readonly opensAt: string; readonly closesAt: string;
+  };
+  readonly change: { readonly asset: string; readonly amount: bigint; readonly batchDigest: Hex; readonly salt: Hex };
+  readonly proposedBy: string;
+}): Sealed => sealRecord('proposals', input.accountId, {
+  vault: input.run.vault, kind: VAULT_SECRET, summary: input.summary,
+  sealedPayload: seal(canonical({
+    vault: input.run.vault, root: input.run.root, payees: input.run.payees, opensAt: input.run.opensAt, closesAt: input.run.closesAt,
+    __change: input.change,
+  }), input.viewingKey),
+  proposedBy: input.proposedBy, approvals: [],
 }, input.viewingKey);

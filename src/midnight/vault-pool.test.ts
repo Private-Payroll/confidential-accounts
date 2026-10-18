@@ -51,16 +51,16 @@ describe('a vault pool wrapped per signer', () => {
     expect(openPool(rec, 'sgn_a', a.secret)).toEqual(POOL);
     expect(openPool(rec, 'sgn_b', b.secret)).toEqual(POOL);
     /* Bigints, not objects that look like them. */
-    expect(openPool(rec, 'sgn_a', a.secret).notes[0].value).toBe(1_000n);
+    expect(openPool(rec, 'sgn_a', a.secret).notes[0]!.value).toBe(1_000n);
   });
 
   it('THE POOL NEVER TOUCHES THE ACCOUNT VIEWING KEY, and the source says so', () => {
     /*
      * **This is the decision the whole file exists for, and it is the one a
-     * later round would undo without noticing.** A purpose key is derived from
-     * the account viewing key, and the viewing key crosses the wire to our
-     * server on the vault-threshold routes — so a pool sealed that way hands us
-     * the vault's balance the first time a signer changes a threshold.
+     * later change would undo without noticing.** A purpose key is derived from
+     * the company's key, which every seat of the company holds - so a pool
+     * sealed that way would be read by every seat, not only by the signers it
+     * is sealed to, and the pool is the vault's money.
      *
      * A grep-style check rather than a behavioural one, because the failure is
      * somebody ADDING a parameter to make a signature tidier. There is no
@@ -72,7 +72,8 @@ describe('a vault pool wrapped per signer', () => {
     expect(code).not.toMatch(/viewingKey/);
     expect(code).not.toMatch(/purposeKey|sealRecord|openRecord/);
     /* And the reasoning is kept where it will be read, not only here. */
-    expect(source).toMatch(/crosses the wire to our\s*\*?\s*server/i);
+    /* RED WHEN: the header no longer says why the pool is not sealed under a purpose key. */
+    expect(source).toMatch(/read only by the signers it is sealed to/i);
   });
 
   it('a fresh key on every write, so no key outlives one version of the pool', () => {
@@ -81,7 +82,7 @@ describe('a vault pool wrapped per signer', () => {
     const two = sealPool(VAULT, POOL, [a.who], 2);
     /* Same plaintext, different ciphertext and different wrapped keys. */
     expect(two.sealed.body).not.toBe(one.sealed.body);
-    expect(two.wrapped[0].wrapped.body).not.toBe(one.wrapped[0].wrapped.body);
+    expect(two.wrapped[0]!.wrapped.body).not.toBe(one.wrapped[0]!.wrapped.body);
     expect(openPool(two, 'sgn_a', a.secret)).toEqual(POOL);
   });
 
@@ -158,7 +159,7 @@ describe('a vault pool wrapped per signer', () => {
       const before = sealPool(VAULT, POOL, [a.who, leaver.who], 1);
       expect(openPool(before, 'sgn_b', leaver.secret)).toEqual(POOL);
 
-      const moved: VaultNotes = { notes: [POOL.notes[0]] };
+      const moved: VaultNotes = { notes: [POOL.notes[0]!] };
       const after = sealPool(VAULT, moved, [a.who], 2);
 
       expect(openPool(after, 'sgn_a', a.secret)).toEqual(moved);
@@ -273,7 +274,7 @@ describe('the pool VaultLedger actually uses', () => {
     const first = await pool.load(VAULT);
     expect(first).toEqual({ ...POOL, readAt: { vault: VAULT, version: 1 } });
 
-    const moved: VaultNotes = { notes: [POOL.notes[1]] };
+    const moved: VaultNotes = { notes: [POOL.notes[1]!] };
     await pool.save(VAULT, moved, first.readAt);
     expect(await pool.load(VAULT)).toEqual({ ...moved, readAt: { vault: VAULT, version: 2 } });
 
@@ -282,7 +283,7 @@ describe('the pool VaultLedger actually uses', () => {
   it('every save stays readable by the OTHER signer too', async () => {
     const { pool, store, b } = build();
     await pool.create(VAULT, POOL);
-    const moved: VaultNotes = { notes: [POOL.notes[0]] };
+    const moved: VaultNotes = { notes: [POOL.notes[0]!] };
     await pool.save(VAULT, moved, (await pool.load(VAULT)).readAt);
 
     const rec = (await store.get(VAULT))!;
@@ -299,10 +300,10 @@ describe('the pool VaultLedger actually uses', () => {
     await pool.create(VAULT, POOL);
     const early = await pool.load(VAULT);
     const late = await pool.load(VAULT);
-    const newer: VaultNotes = { notes: [POOL.notes[0]] };
+    const newer: VaultNotes = { notes: [POOL.notes[0]!] };
     await pool.save(VAULT, newer, late.readAt);
 
-    const stale = pool.save(VAULT, { notes: [POOL.notes[1]] }, early.readAt);
+    const stale = pool.save(VAULT, { notes: [POOL.notes[1]!] }, early.readAt);
     await expect(stale).rejects.toThrow(VaultPoolAdvancedSinceRead);
     await expect(pool.save(VAULT, { notes: [] }, early.readAt)).rejects.toThrow(/Nothing has been written/);
     expect((await pool.load(VAULT)).notes).toEqual(newer.notes);
@@ -343,8 +344,8 @@ describe('the pool VaultLedger actually uses', () => {
     await pool.create(VAULT, POOL);
     const { readAt } = await pool.load(VAULT);
     const results = await Promise.allSettled([
-      pool.save(VAULT, { notes: [POOL.notes[0]] }, readAt),
-      pool.save(VAULT, { notes: [POOL.notes[1]] }, readAt),
+      pool.save(VAULT, { notes: [POOL.notes[0]!] }, readAt),
+      pool.save(VAULT, { notes: [POOL.notes[1]!] }, readAt),
     ]);
     expect(results.filter((r) => r.status === 'fulfilled')).toHaveLength(1);
     expect((await store.get(VAULT))!.version).toBe(2);
@@ -401,7 +402,7 @@ describe('the pool VaultLedger actually uses', () => {
     const rec = sealPool(VAULT, POOL, [a.who], 1);
     const readable = JSON.stringify({ vault: rec.vault, version: rec.version });
     expect(readable).not.toMatch(/1000|400/);
-    expect(readable).not.toContain(POOL.notes[0].nonce);
+    expect(readable).not.toContain(POOL.notes[0]!.nonce);
 
     /*
      * And the whole record, ciphertext included, carries no note in the clear.

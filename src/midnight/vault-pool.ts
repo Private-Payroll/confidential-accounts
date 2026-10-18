@@ -12,16 +12,13 @@
  * WRAPPED PER SIGNER, AND **NOT** SEALED UNDER A PURPOSE KEY. This is the whole
  * design decision and it reverses an earlier one on purpose.
  *
- * Every other confidential record this product holds is sealed under a key
- * derived from the account's viewing key (`src/core/sealed-records.ts`), and the
- * obvious thing to do here was add a seventh `Purpose` and follow suit.
+ * The company's other sealed records - its people, its roster, each vault's
+ * name - are sealed under a key derived from the company's key and a purpose
+ * (`src/core/sealed-records.ts`), which every seat of the company holds.
  *
- * **It would hand our server the vault's balance.** A purpose key is derived
- * from the account viewing key, and the viewing key crosses the wire to our
- * server on the vault-threshold routes. The pool is not metadata — it is
- * nonces, tokens and **values**. So a purpose-key-sealed pool makes the
- * product's central claim false the first time a signer changes a threshold.
- * `Purpose` therefore stays at six and the pool gets its own envelope:
+ * **The pool is not.** It is nonces, tokens and **values** - the vault's
+ * money - so it is read only by the signers it is sealed to, never by every
+ * holder of the company's key. It gets its own envelope:
  *
  *   · a **fresh symmetric key on every write**, which seals the pool;
  *   · that key **wrapped to each signer's own wrapping public key**, which is

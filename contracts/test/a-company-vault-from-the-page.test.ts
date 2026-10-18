@@ -60,7 +60,7 @@ import { MidnightCommitments } from '../../src/midnight/commitments.js';
 import { rosterVaultKeys, signVaultKeys } from '../../src/core/vault-keys.js';
 import { seatsInAccountState, vaultInState } from '../../apps/wallet/src/chain/company-label-on-chain.js';
 import {
-  directoryBelievedOver, directoryChainOver, fileOwnEntry, judgeOver, madeForTheWallet, mayFileUnderOver, walletReadsOver,
+  directoryBelievedOver, directoryChainOver, directoryHereOver, fileOwnEntry, judgeOver, madeForTheWallet, mayFileUnderOver, walletReadsOver,
 } from './the-chain-as-a-wallet-reads-it.js';
 import type { SeatOpening } from '../../src/core/seat-opening.js';
 import { directoryOf, seatDirectoryRoutes } from '../../src/server/seat-directory-route.js';
@@ -89,7 +89,13 @@ import { accountVerifierKeysIn } from '../../src/server/vault-chain.js';
 import { DEPLOYED_CIRCUITS } from '../../src/midnight/deferral.js';
 import { fileURLToPath } from 'node:url';
 import { readProvenTransaction } from '../../src/wiring/proven-submission.js';
-import { startingLedgerFrom } from '../../src/wiring/vault-submission.js';
+import { refusalForStartAccountCall, startingLedgerFrom } from '../../src/wiring/vault-submission.js';
+import { proposalRelayRoutes } from '../../src/server/proposal-relays.js';
+import { governedCallServiceFor } from 'vaults-web-shared/governed-call-on-device.js';
+import { believedFilerHere } from 'vaults-web-shared/round-opened-here.js';
+import { kindAsked, listedHere } from 'vaults-web-shared/vault-page-doors.js';
+import { openRecord } from '../../src/core/sealed-records.js';
+import { parseCanonical, unseal } from '../../src/core/crypto.js';
 import { approverRosterFrom } from '../../src/core/vault-approvers.js';
 import { keysFoldedIntoTheRoster } from './keys-folded-into-the-roster.js';
 import { keysOnDisk } from './keys-on-disk.js';
@@ -403,6 +409,14 @@ describe.skipIf(!KEYS_ON_DISK)('A COMPANY VAULT, FROM THE SIGNER\'S DEVICE [need
           parameters: b64(chain.state.parameters), accountState: b64(as),
         };
       },
+      /* The account alone at the same moment: what a raise of the company's proposals is built on. */
+      accountCallState: async (account) => {
+        const as = chain.contract(account);
+        if (as === null) return null;
+        return {
+          blockHash: 'b1'.repeat(32), accountState: base64FromBytes(as.serialize()), parameters: base64FromBytes(chain.state.parameters.serialize()),
+        };
+      },
       /* As an indexer would answer it: the one applied transaction whose events carry this output, made for this vault. */
       createdBy: async (v, commitment) => {
         for (const [name, events] of chain.events) {
@@ -437,6 +451,24 @@ describe.skipIf(!KEYS_ON_DISK)('A COMPANY VAULT, FROM THE SIGNER\'S DEVICE [need
       sponsor: payer, storagePassword: async () => 'x',
     } as never);
     app.use(seatDirectoryRoutes({ signedIn, member, store, chain: directoryChainOver(() => chain.contract(company)) }));
+    /*
+     * The company's proposals: a vault's adoption and first secret run are written down here and their raise relayed
+     * with them, through the same sending the service's ledger does for a vault's start, read by the same reader.
+     */
+    app.get('/api/accounts/:id/proposals', signedIn, member, (req, res) => { res.json(store.listProposals(String(req.params.id))); });
+    app.use(proposalRelayRoutes({
+      signedIn, member, store, refuseSigningSecret: (_q, _r, next) => next(),
+      ownsProposal: (req, res, next) => (store.getProposal(String(req.params.id)) === null ? res.status(404).json({ error: 'not found' }) : next()),
+      directoryOf: (id) => directoryOf(store, directoryChainOver(() => chain.contract(company)), id),
+      ledger: {
+        wiring: 'simulated',
+        status: async () => { throw new Error('this watch reads the chain on the device'); },
+        submitProvenCall: (accountId, bytes, circuit) => ledger.sendVault(accountId, `relaying ${circuit}`, 'proven-moving-nothing', bytes,
+          (tx) => refusalForStartAccountCall(tx, { account: company, circuit: circuit as 'propose' }), readers.proven),
+      },
+      recordRefusal: () => undefined,
+      proposalIdOf: (h, salt, v) => MidnightCommitments.proposalId(h as Hex, salt as Hex, v as Hex | undefined),
+    }));
     app.use(companyVaultRoutes({
       signedIn, member, store,
       company: async () => ({
@@ -548,11 +580,22 @@ describe.skipIf(!KEYS_ON_DISK)('A COMPANY VAULT, FROM THE SIGNER\'S DEVICE [need
   const signers = async () => [{ id: 'ada', wrappingPublicKey: wrapping.publicKey }];
   /** The founding signer's three, as their keyring hands them to the page. */
   const material = () => ({ signingSecret: hex(founder.secretKey), blinding: hex(founder.blinding), scope: hex(founder.scope) });
+  /** The company's directory as the founding signer's device believes it, read afresh for each read. */
+  const directoryHereNow = () => directoryHereOver({ viewingKey,
+    api: apiAs(), accountId: ACCOUNT_ID, label, account: company, accountState: () => chain.contract(company), deployed: () => deployed,
+    roster: async () => openAccount(store.getAccount(ACCOUNT_ID)!, viewingKey),
+  });
   /** Everything the page hands the press that creates a vault. */
   const createDoors = () => ({
     ...pacing, account: readAccountAddress(company)!, service: service(), builder: builder(), keys,
     me, myRecordsKey: recordsReaderOf(me.companyKey).publicKey, signers, records: records(), material: material(),
     onChain: walletReads,
+    /* Where the vault's adoption and first secret run are written down, by the founding seat under its own filing key. */
+    proposals: (({ callState, send, file, sealedProposals }) => ({
+      accountId: ACCOUNT_ID, directory: directoryHereNow(), companyKeys: viewingKey, signingSecret: signing.secret,
+      entered: recordsEnteredFor(manifestServiceFor(apiAs()), ACCOUNT_ID, signing.secret),
+      service: { callState, send, file: file!, sealedProposals: sealedProposals! },
+    }))(governedCallServiceFor(apiAs())),
     /* What the founding signer's wallet gave, and reads off the chain afresh for each check: who holds the account and the vault. */
     secretReaders: {
       company: label,
@@ -588,16 +631,18 @@ describe.skipIf(!KEYS_ON_DISK)('A COMPANY VAULT, FROM THE SIGNER\'S DEVICE [need
   /* Every body the service answered with, so what it holds can be looked for in what it said. */
   const answered: string[] = [];
 
-  it('A VAULT IS BORN HELD BY THE COMMITTEE HOLDING THE ACCOUNT, WHOEVER HAS GIVEN VAULT KEYS, AND NO SECRET IS SET UNTIL EVERY SIGNER HAS', async () => {
+  it('A SEAT WHOSE OWN WALLET HAS NOT ATTESTED ITS RECORDS KEY BUILDS NO VAULT, SINCE NO DEVICE WOULD BELIEVE THE PROPOSALS IT RAISES', async () => {
     const doors = createDoors();
+    /* The founding seat's own entry is filed; its wallet has not yet given the records key that entry names. */
+    expect(await fileEntry()).toBe('filed');
+    const appliedBefore = chain.applied.length;
+    const unprovenBefore = readAsUnproven.length;
     const stopped = await createCompanyVault(doors).catch((e: unknown) => e as Error);
-    /* RED WHEN: the vault's secret is set, or sealed, before every signer has given the records key it is sealed to. */
+    /* RED WHEN: a seat every device would refuse the records of deploys a vault, or raises a proposal for one. */
     expect(stopped).toBeInstanceOf(Error);
-    expect((stopped as Error).message).toMatch(/has not set up their vault keys from their own wallet yet, so no secret can be sealed to them/);
-    expect(readAsUnproven).toEqual(['propose', 'approve', 'adopt']);
-    /* RED WHEN: the committee a vault is born held by is made from the signers' vault keys again, so a signer who has not
-     * given theirs stops the vault being deployed and adopted. */
-    expect(chain.applied.map((a) => a.ok)).toEqual([true, true, true, true]);
+    expect((stopped as Error).message).toMatch(/^No vault was built: your seat is not one this device believes: its own wallet has not attested the records key/);
+    expect(chain.applied.length).toBe(appliedBefore);
+    expect(readAsUnproven.length).toBe(unprovenBefore);
   });
 
   it('CREATED BORN HELD, STARTED, POOLED AND FUNDED - AND NOTHING IS REPORTED DONE UNTIL THE CHAIN SAYS SO', async () => {
@@ -644,6 +689,27 @@ describe.skipIf(!KEYS_ON_DISK)('A COMPANY VAULT, FROM THE SIGNER\'S DEVICE [need
       (c, r, place, part) => (vaultModule as any).pureCircuits.copyKeyOf(c, r, place, part),
       { commitment: hex(startedLedger.nonceCommitment), reader: fromWords.publicKey, count: 1n });
     expect(openSecretCopy({ vault, parts: onChainCopy!, reader: fromWords })).toBe(filed.secrets[0]);
+    /*
+     * RED WHEN: either of the vault's two proposals is on the chain with no record behind it, or a record is not one the
+     * one proposals reader believes from the founding seat: the adoption, and the first secret run, carrying none of the
+     * secret the vault holds.
+     */
+    const listed = listedHere(await directoryHereNow()(kindAsked('proposal')), 'proposal', store.listProposals(ACCOUNT_ID), 'proposal');
+    const kinds = listed.map((p) => {
+      const envelope = openRecord<{ kind: string; vault: string; sealedPayload: never }>('proposals', ACCOUNT_ID, p.sealed, viewingKey);
+      return { kind: envelope.kind, body: parseCanonical<Record<string, unknown>>(unseal(envelope.sealedPayload, viewingKey)) };
+    });
+    expect(kinds.map((k) => k.kind)).toEqual(['adopt-vault', 'vault-secret']);
+    expect(kinds.map((k) => k.body.vault)).toEqual([vault, vault]);
+    /* Each record is the proposal the chain holds: its identity made again from what it carries and its salt. */
+    const [adoptionRec, secretRec] = listed;
+    const [adoptionBody, secretBody] = kinds.map((k) => k.body as { root: Hex; payees: string; opensAt: string; closesAt: string; __change: { salt: Hex } });
+    expect(MidnightCommitments.proposalId(adoptionRec!.digest as Hex, adoptionBody!.__change.salt)).toBe(adoptionRec!.chainId.toLowerCase());
+    const runPayload = MidnightCommitments.runPayload(secretBody!.root, BigInt(secretBody!.payees), BigInt(secretBody!.opensAt), BigInt(secretBody!.closesAt));
+    expect(runPayload).toBe(secretRec!.digest.toLowerCase());
+    expect(MidnightCommitments.proposalId(runPayload, secretBody!.__change.salt, vault as Hex)).toBe(secretRec!.chainId.toLowerCase());
+    expect(JSON.stringify(kinds, (_k, v) => (typeof v === 'bigint' ? String(v) : v))).not.toContain(filed.secrets[0]!.slice(0, 16));
+    for (const p of listed) expect(await believedFilerHere({ directory: directoryHereNow() }, ACCOUNT_ID, p)).toBe(signing.publicKey.toLowerCase());
     /* RED WHEN: a press for a vault already started sends anything at all. */
     await expect(createCompanyVault(doors, vault)).resolves.toEqual({ vault, state: 'started' });
     expect(chain.applied).toHaveLength(startedAt);

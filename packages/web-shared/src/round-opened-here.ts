@@ -1,12 +1,4 @@
 /**
- * The company's records a proposal is read against: its directory and where its proposals stand on the chain always,
- * and the rest only where a payroll run is made again from them.
- */
-export type RecordsForTheRound = Pick<CompanyRecordsHere, 'directory'> & Partial<CompanyRecordsHere>;
-
-const wholeRecords = (records: RecordsForTheRound): records is CompanyRecordsHere => typeof records.runs === 'function';
-
-/**
  * **ONE PROPOSAL, READ ON THIS DEVICE FROM THE COMPANY'S OWN RECORDS, BEFORE
  * ANYTHING IS BUILT FROM IT.**
  *
@@ -25,7 +17,7 @@ import { answerOpenedWith } from '../../../src/core/answer-opened.js';
 import { assetIdBytes, NO_ASSET } from '../../../src/core/assets.js';
 import type { PendingSignerPayload, SealedAccount } from '../../../src/core/types.js';
 import type { StateChange } from '../../../src/core/ledger.js';
-import { paysCommitmentOf, proposalFilingRefusal, type RetirementTerms } from '../../../src/core/proposal-filing.js';
+import { paysCommitmentOf, proposalFilingRefusal, VAULT_START_KINDS, type RetirementTerms } from '../../../src/core/proposal-filing.js';
 import { companyRecordKey, FILING_REFUSAL, notOnTheChainNow } from '../../../src/midnight/seat-directory.js';
 import { proposalEntry } from '../../../src/midnight/record-manifest.js';
 import { vouchedRefusal } from '../../../src/midnight/record-tree.js';
@@ -36,6 +28,14 @@ import { judgeIn, kindAsked, listedHere, refusedForItsKey } from './vault-page-d
 import { NO_ROSTER_RECORD, provedSeatsOf, refuseASeatNotForTheInvited, type SeatingReads } from './roster-here.js';
 import { runRebuiltHere, type CompanyRecordsHere } from './run-rebuilt-here.js';
 import { RoundRefusedHere, refuseWhatNoRoundMay } from './raise-checks-here.js';
+
+/**
+ * The company's records a proposal is read against: its directory and where its proposals stand on the chain always,
+ * and the rest only where a payroll run is made again from them.
+ */
+export type RecordsForTheRound = Pick<CompanyRecordsHere, 'directory'> & Partial<CompanyRecordsHere>;
+
+const wholeRecords = (records: RecordsForTheRound): records is CompanyRecordsHere => typeof records.runs === 'function';
 
 const HEX64 = /^[0-9a-f]{64}$/u;
 const hexOfBytes = (b: Uint8Array): string => Array.from(b, (x) => x.toString(16).padStart(2, '0')).join('');
@@ -166,6 +166,11 @@ export async function openTheRoundHere(
   try {
     key = keyOf(viewingKey, rec.keyEpoch);
     envelope = openRecord('proposals', rec.accountId, rec.sealed, key);
+    if (VAULT_START_KINDS.includes(envelope.kind)) {
+      throw new NotOpenedOnThisDevice('This proposal sets up one of the company\'s vaults, and it is raised and approved only '
+        + 'from setting that vault up, where who its secret is sealed to is checked. Leave it unapproved here, and open the '
+        + 'vault to finish setting it up.', { kind: envelope.kind });
+    }
     if (!KINDS_A_DEVICE_ACTS_ON.has(envelope.kind)) {
       throw new NotOpenedOnThisDevice('This page acts on payroll runs, access for new signers, removing a signer, changes to '
         + 'the approvals required by the company or by one of its vaults, and vaults\' spending policies, and this proposal is none of '

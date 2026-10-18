@@ -303,13 +303,11 @@ const notesOf = (pool: VaultNotes): VaultNotes => ({ notes: pool.notes });
  * so two processes cannot both work from a copy taken at start-up.
  *
  * **THE IMPLEMENTATION IS `SealedNotePool` IN `src/midnight/vault-pool.ts`.**
- * `S6d`, and until it existed this interface had exactly one implementation and
- * it was inside a test — so the pool, which is the money, had no home at all.
  * It is sealed under a fresh key per write and that key is **wrapped per
- * signer**, never derived from the account viewing key: a purpose key comes
- * from the viewing key, the viewing key crosses the wire to our server on the
- * vault-threshold routes, and the pool is nonces, tokens and **values**. Read
- * the header of that file before adding a seventh `Purpose`.
+ * signer**, never derived from the company's key: a purpose key of the
+ * company's is held by every seat, and the pool is nonces, tokens and
+ * **values**. Read the header of that file before sealing the pool under a
+ * purpose key.
  */
 export interface NotePool {
   /**

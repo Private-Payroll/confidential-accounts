@@ -650,7 +650,28 @@ describe('A COMPANY SEATS ITS SIGNERS FROM THEIR OWN DEVICES, ON THE PRODUCT\'S 
     sent.length = 0;
     const VAULT = 'a1'.repeat(32);
     const adaDevice = aDevice('ada', ada.signerId);
-    /* RED WHEN: a vault's own threshold cannot be changed from a device. */
+    /*
+     * Ada's device first wrote down another vault's first secret run, still open: a proposal no page approves from the
+     * company's proposals, which her device must pass over when it looks for a change of its own.
+     */
+    const { sealVaultSecretProposal, signProposalFiling } = await import('../core/proposal-filing.js');
+    const starting = 'a5'.repeat(32) as Hex;
+    const [digest, salt] = ['a6'.repeat(32) as Hex, 'a7'.repeat(32) as Hex];
+    const firstSecret = signProposalFiling(company, {
+      id: newProposalId(), digest, chainId: MidnightCommitments.proposalId(digest, salt, starting), keyEpoch: 0,
+      createdAt: new Date().toISOString(),
+      sealed: sealVaultSecretProposal({
+        accountId: company, viewingKey, summary: 'Finish setting up a new vault', proposedBy: ada.signerId,
+        run: { vault: starting, root: 'a8'.repeat(32) as Hex, payees: '1', opensAt: '1', closesAt: '2' },
+        change: { asset: NO_ASSET, amount: 0n, batchDigest: '00'.repeat(32) as Hex, salt },
+      }),
+    }, wallets.ada.signing.secret as Hex);
+    const written = await call('POST', `/api/accounts/${company}/proposals`, { token: tokens.ada, body: { proposal: firstSecret, salt, vault: starting } });
+    expect(written.status, JSON.stringify(written.body)).toBe(200);
+    /*
+     * RED WHEN: a vault's own threshold cannot be changed from a device - or an open record of a kind this page does
+     * not act on, written down by this very seat, stops it raising one.
+     */
     expect((await device.changeVaultThresholdOnDevice(adaDevice, { viewingKey, vault: VAULT, newThreshold: 2, seated: 2 })).state).toBe('done');
     expect(circuits()).toEqual(['propose', 'approve', 'setVaultThreshold']);
     expect((await ledger.status(company))!.vaultThresholds).toEqual([{ vault: VAULT, threshold: 2 }]);
@@ -922,5 +943,24 @@ describe('A COMPANY SEATS ITS SIGNERS FROM THEIR OWN DEVICES, ON THE PRODUCT\'S 
     expect(await gilsClaims()).toHaveLength(2);
     const here = await recordsOf('ada').directory();
     expect(here.dir.seats.find((x) => x.seat === w.seat)?.person).toBe(USERS.gil);
+  });
+
+  it('A RECORD A SEAT FILED THAT ITS OWN DEVICE CANNOT OPEN STOPS THAT DEVICE RAISING A CHANGE, AND IS NEVER PASSED OVER', async () => {
+    sent.length = 0;
+    const { sealGovernanceProposal, signProposalFiling } = await import('../core/proposal-filing.js');
+    /* Sealed under a key no device of this company holds: it opens as no kind at all, so nothing can say it is not this change. */
+    const [digest, salt] = ['b6'.repeat(32) as Hex, 'b7'.repeat(32) as Hex];
+    const unread = signProposalFiling(company, {
+      id: newProposalId(), digest, chainId: MidnightCommitments.proposalId(digest, salt), keyEpoch: 0, createdAt: new Date().toISOString(),
+      sealed: sealGovernanceProposal({
+        accountId: company, viewingKey: '9e'.repeat(32) as Hex, kind: 'set-threshold', summary: 'Change the approvals', noVault: 'b8'.repeat(32) as Hex,
+        body: { newThreshold: 2 }, change: { asset: NO_ASSET, amount: 0n, batchDigest: '00'.repeat(32) as Hex, salt }, proposedBy: ada.signerId,
+      }),
+    }, wallets.ada.signing.secret as Hex);
+    expect((await call('POST', `/api/accounts/${company}/proposals`, { token: tokens.ada, body: { proposal: unread, salt } })).status).toBe(200);
+    /* RED WHEN: a record this seat filed that its device cannot open is passed over, and a change is raised beside it. */
+    await expect(device.changeVaultThresholdOnDevice(aDevice('ada', ada.signerId), { viewingKey, vault: 'a1'.repeat(32), newThreshold: 1, seated: 3 }))
+      .rejects.toThrow(/cannot read the company's record of this proposal/u);
+    expect(sent).toEqual([]);
   });
 });

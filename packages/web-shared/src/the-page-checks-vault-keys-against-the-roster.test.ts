@@ -38,7 +38,7 @@ describe('A COMMITTEE THE SERVICE REPORTS', () => {
 
   it('A VAULT HELD BY A COMMITTEE WITH A KEY NO ROSTER ENTRY NAMES IS READ AS IT IS SERVED, AND ITS SET-UP FINISHES', async () => {
     const held = {
-      vault: VAULT, onChain: true, heldByCommittee: true, fundable: true, why: null,
+      vault: VAULT, onChain: true, heldByCommittee: true,
       committee: { committee: [k(1), k(9)], threshold: 2 },
       authority: { committee: [k(1), k(9)], threshold: 2, counter: '1', shape: 'committee' },
     };
@@ -50,7 +50,7 @@ describe('A COMMITTEE THE SERVICE REPORTS', () => {
 describe('THE COMMITTEE A NEW VAULT IS HANDED TO', () => {
   it('IS THE ONE OFFERED, A KEY NO ROSTER ENTRY NAMES AMONG ITS KEYS', async () => {
     const owed = {
-      vault: VAULT, onChain: true, heldByCommittee: false, fundable: false, why: null,
+      vault: VAULT, onChain: true, heldByCommittee: false,
       committee: { committee: [k(1), k(9)], threshold: 2 },
       authority: { committee: [k(5)], threshold: 1, counter: '0', shape: 'one-key' },
     };

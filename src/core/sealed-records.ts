@@ -46,12 +46,7 @@ import {
  * a failure that looks like corruption and is impossible to diagnose from the
  * data. The compiler is a better place to catch that than a support ticket.
  */
-export type Purpose = 'roster' | 'policy' | 'payroll' | 'inbox' | 'proposals';
-/*
- * `'audit'` WAS ON THIS LIST AND IS GONE. Nothing was ever
- * sealed for it, so the key it named opened nothing; a purpose with no record
- * behind it reads as one more kind of secret than the company keeps.
- */
+export type Purpose = 'roster' | 'policy' | 'payroll' | 'inbox' | 'proposals' | 'vaults';
 
 /**
  * One key per purpose, derived from the account's viewing key.
@@ -68,12 +63,9 @@ export const purposeKey = (viewingKey: Hex, accountId: string, purpose: Purpose)
   toHex(hkdf(sha256, fromHex(viewingKey), utf8(accountId), utf8(purpose), 32));
 
 /*
- * `canonical` comes from crypto.ts. It used to be written out a second time
- * here, which is the ninth-and-tenth instance of this project's recurring
- * failure — one rule in two places, and this pair had genuinely drifted: the
- * crypto.ts copy mis-serialises an absent optional field. Stable serialisation
- * is load-bearing for anything signed or committed, so a private near-copy was
- * the worst possible thing to duplicate.
+ * `canonical` comes from crypto.ts and is not written out again here; a second
+ * copy would mis-serialise an absent optional field, and stable serialisation
+ * is load-bearing for anything signed or committed.
  */
 
 export const sealRecord = <T>(

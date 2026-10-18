@@ -44,7 +44,7 @@ const made = await new V.Contract(noCircuit).initialState(
  * This build's vault as the chain would hold it: held by `KEY` alone, holding `notes`, and - when `started` - its first
  * secret's commitment set and the mark the last sealed copy leaves written.
  */
-const aVault = (o: { notes: string[]; started: boolean; fewer?: boolean }): { serialize(): Uint8Array } => {
+const aVault = (o: { notes: string[]; started: boolean; fewer?: boolean; split?: [string, string] }): { serialize(): Uint8Array } => {
   const state = R.ContractState.deserialize(made.currentContractState.serialize());
   state.maintenanceAuthority = new R.ContractMaintenanceAuthority([KEY], 1, 0n);
   const fields: any[] = state.data.state.asArray();
@@ -56,6 +56,7 @@ const aVault = (o: { notes: string[]; started: boolean; fewer?: boolean }): { se
   const next = fields.map((f, i) => {
     if (i === 1) return R.StateValue.newMap(notes);
     if (o.started && i === 5) return R.StateValue.newCell({ value: [held], alignment: f.asCell().alignment });
+    if (o.split !== undefined && i === 6) return R.StateValue.newMap(f.asMap().insert(aligned(bytes(o.split[0])), R.StateValue.newCell(aligned(bytes(o.split[1])))));
     if (o.started && i === 7) return R.StateValue.newMap(f.asMap().insert(aligned(V.pureCircuits.copiesWrittenKey()), R.StateValue.newCell(aligned(held))));
     return f;
   });
@@ -144,6 +145,19 @@ describe('THE VAULT, READ ON THIS DEVICE', () => {
     /* RED WHEN: a state the vault's ledger cannot be read from reads as started, or as pinned to an account. */
     expect(read).toMatchObject({ onChain: true, started: false, account: null, notesFromThisBuild: false });
     expect(read).not.toHaveProperty('notes');
+  });
+
+  it('THE READ CARRIES THE SECRET\'S COMMITMENT AND THE SPLIT JOURNAL THE VAULT HOLDS, AND NEITHER FROM A LEDGER OF ANOTHER SHAPE', async () => {
+    const read = await readVaultOnChain(d, anIndexer(aVault({ notes: [NOTE], started: true, split: ['5e'.repeat(32), '3a'.repeat(32)] })), VAULT);
+    /* RED WHEN: the commitment or the split journal is read off another field, or not read: a split's pieces are then named by nothing. */
+    expect(read).toMatchObject({
+      nonceCommitment: Buffer.from(V.pureCircuits.secretCommitmentOf(bytes(VAULT), bytes('51'.repeat(32)))).toString('hex'),
+      splitJournal: [['5e'.repeat(32), '3a'.repeat(32)]],
+    });
+    const other = await readVaultOnChain(d, anIndexer(aVault({ notes: [NOTE], started: true, fewer: true })), VAULT);
+    /* RED WHEN: a ledger of another shape hands on a commitment or a split journal, which would be whatever field sits there, or an empty one. */
+    expect(other).not.toHaveProperty('nonceCommitment');
+    expect(other).not.toHaveProperty('splitJournal');
   });
 
   it('A HISTORY THAT CANNOT BE READ IN FULL REFUSES THE READ', async () => {

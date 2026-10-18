@@ -464,6 +464,25 @@ describe('a deposit whose record is made on the device', () => {
     expect(rebuiltChange.nonce, 'RED WHEN: the change of a change is rebuilt under any nonce but the one the chain made').toBe(toThree.kept!.nonce);
     expect(byCarol.ms, 'the whole rebuild, words to held notes, took well under a minute here').toBeLessThan(60_000);
 
+    /* ------------- THE SAME REBUILD AS CAROL'S DEVICE RUNS IT: THE VAULT WORKER'S OWN TASK ------------- */
+    const { answerVaultAsk } = await import('../../packages/web-shared/src/vault-worker-entry.js');
+    const onHerDevice = await answerVaultAsk(async () => ({ vault: await import('../managed-vault/contract/index.js') }) as never, {
+      id: 1, network: 'undeployed', ask: 'vault-rebuilt', vault: vaultAddr,
+      chain: {
+        notes: chainNotes(), everCreated: [...await vaultOutputHistoryFrom(theChain()).everCreated(vaultAddr)],
+        nonceCommitment: toHex(vaultLedger(charged() as never).nonceCommitment),
+        splitJournal: [...vaultLedger(charged() as never).splitJournal].map(([k, v]: [Uint8Array, Uint8Array]) => [toHex(k), toHex(v)]),
+      },
+      secrets: byCarol.opened.secrets, versions: [], attempted: { deposits: [], payments: [] },
+      walk: {
+        deposited: books.deposited.map((x) => ({ token: x.token, value: x.value.toString() })),
+        paid: books.paid.map((x) => ({ token: x.token, amount: x.amount.toString() })),
+      },
+    } as never) as unknown as { held: Array<{ nonce: string; value: string }>; unexplained: string[] };
+    /* RED WHEN: the device's rebuild in the vault worker names anything but what the walk and the rebuild above named. */
+    expect(onHerDevice.unexplained).toEqual([]);
+    expect(onHerDevice.held.map((n) => `${n.nonce}:${n.value}`).sort()).toEqual(byCarol.rebuilt.held.map((n) => `${n.nonce}:${n.value}`).sort());
+
     /* ------------- AND A REBUILT NOTE COMES BACK SPENT ------------- */
     priv = { notes: byCarol.rebuilt.held.map((n) => ({ nonce: n.nonce, token: n.token, value: n.value, index: NO_INDEX_YET })) };
     const paymentsBefore = vaultLedger(charged() as never).payments;

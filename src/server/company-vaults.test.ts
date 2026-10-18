@@ -348,7 +348,11 @@ describe('A VAULT\'S ROUTES', () => {
     /* And one leaving. */
     store.putAccount(account({ signerCount: 1 }));
     expect((await call(`/api/accounts/acc_1/vaults/${VAULT}/merge`, 'ada', 'POST', { tx: '3Q==' })).status).toBe(200);
-    expect((await call(`/api/accounts/acc_1/vaults/${VAULT}/chain`, 'ada')).body).toMatchObject({ fundable: true, why: null });
+    /* RED WHEN: the chain view of a vault carries a verdict on money, which only a device's own read answers. */
+    const view = (await call(`/api/accounts/acc_1/vaults/${VAULT}/chain`, 'ada')).body;
+    expect(view).toMatchObject({ onChain: true, started: true });
+    expect(view).not.toHaveProperty('fundable');
+    expect(view).not.toHaveProperty('why');
   });
 
   it('A CHANGE OF THE SUPER ADMINS LANDED ON THE ACCOUNT AND NOT YET ON THE VAULT STOPS NO PAYMENT', async () => {
@@ -360,7 +364,9 @@ describe('A VAULT\'S ROUTES', () => {
       expect((await call(`/api/accounts/acc_1/vaults/${VAULT}/${path}`, 'ada', 'POST', { tx })).status, path).toBe(200);
     }
     const view = (await call(`/api/accounts/acc_1/vaults/${VAULT}/chain`, 'ada')).body;
-    expect(view).toMatchObject({ fundable: true, why: null });
+    expect(view).toMatchObject({ onChain: true, started: true });
+    expect(view).not.toHaveProperty('fundable');
+    expect(view).not.toHaveProperty('why');
     /* RED WHEN: the view a device reads before a deposit, a payment out or a vault's start reads who holds the vault or
      * the account. */
     expect(Object.keys(view).filter((k) => ['authority', 'committee', 'committeeWhy', 'heldByCommittee'].includes(k))).toEqual([]);
@@ -376,8 +382,13 @@ describe('A VAULT\'S ROUTES', () => {
     expect(refused).toMatchObject({ status: 409, body: { nothingWasSent: true } });
     expect(refused.body.error).toMatch(/'payout' circuit is not the one this service's build compiled/);
     const view = await call(`/api/accounts/acc_1/vaults/${VAULT}/chain`, 'ada');
-    expect(view.body).toMatchObject({ fundable: false });
-    expect(view.body.why).toMatch(/'payout' circuit/);
+    /* RED WHEN: the chain view says why money is refused, so a page could read the service's verdict in place of its own. */
+    expect(view.body).toMatchObject({ onChain: true });
+    expect(view.body).not.toHaveProperty('fundable');
+    expect(view.body).not.toHaveProperty('why');
+    expect((await call('/api/accounts/acc_1/vaults', 'ada')).body.rows).toEqual([
+      expect.objectContaining({ vault: VAULT, state: 'not-fundable', why: expect.stringMatching(/'payout' circuit/) }),
+    ]);
     expect(sent).toEqual([]);
   });
 
@@ -389,8 +400,8 @@ describe('A VAULT\'S ROUTES', () => {
       expect(refused).toMatchObject({ status: 409, body: { nothingWasSent: true } });
       expect(refused.body.error).toMatch(pattern);
       const view = await call(`/api/accounts/acc_1/vaults/${VAULT}/chain`, 'ada');
-      expect(view.body).toMatchObject({ fundable: false });
-      expect(view.body.why).toMatch(pattern);
+      expect(view.body).not.toHaveProperty('fundable');
+      expect(view.body).not.toHaveProperty('why');
       expect((await call('/api/accounts/acc_1/vaults', 'ada')).body.rows).toEqual([
         expect.objectContaining({ vault: VAULT, state: 'not-fundable', why: expect.stringMatching(pattern) }),
       ]);
@@ -447,20 +458,32 @@ describe('A VAULT\'S ROUTES', () => {
    * payment out on the same gate. RED WHEN: the view's reason is worded for
    * money going in alone.
    */
-  it('THE CHAIN VIEW\'S REASON IS TRUE OF A PAYMENT OUT AS WELL AS A DEPOSIT', async () => {
+  it('A VAULT NOT STARTED, OR WHOSE ACCOUNT IS NOT VOUCHED, IS REFUSED A DEPOSIT AND A PAYMENT OUT IN THE SERVICE\'S OWN WORDS, AND ITS CHAIN VIEW GIVES NO REASON', async () => {
     await give('ada', 1); await give('bo', 2);
     store.putCompanyVault({ accountId: 'acc_1', vault: VAULT, deployedAt: '', deployRef: 'r', intended: { committee: [key(1), key(2)], threshold: 2 }, bornHeld: true });
     startedNow = false;
     const notStarted = await call(`/api/accounts/acc_1/vaults/${VAULT}/chain`, 'ada');
-    expect(notStarted.body).toMatchObject({ fundable: false });
-    expect(notStarted.body.why).toMatch(/^no money goes into or out of this vault: /);
+    /* RED WHEN: the chain view carries a reason or a verdict again, or stops saying the vault is not started. */
+    expect(notStarted.body).toMatchObject({ onChain: true, started: false });
+    expect(notStarted.body).not.toHaveProperty('fundable');
+    expect(notStarted.body).not.toHaveProperty('why');
+    /* RED WHEN: the service sends a deposit or a payment out of a vault that is not started. */
+    const deposit = await call(`/api/accounts/acc_1/vaults/${VAULT}/deposit`, 'ada', 'POST', { tx: 'AAAA' });
+    expect(deposit).toMatchObject({ status: 409, body: { nothingWasSent: true } });
+    expect(deposit.body.error).toMatch(/^no money goes into this vault: /);
+    const payout = await call(`/api/accounts/acc_1/vaults/${VAULT}/payout`, 'ada', 'POST', { tx: '3Q==' });
+    expect(payout).toMatchObject({ status: 409, body: { nothingWasSent: true } });
+    expect(payout.body.error).toMatch(/^this service pays no fee for a payment out of this vault: /);
     startedNow = true;
     authority = { committee: [key(1), key(2)], threshold: 2, counter: 1n };
     /* The vault is the committee's; the account it pays out on is not one the record holds as born held. */
     accountNotBornHeld();
     const unvouched = await call(`/api/accounts/acc_1/vaults/${VAULT}/chain`, 'ada');
-    expect(unvouched.body).toMatchObject({ fundable: false });
-    expect(unvouched.body.why).toMatch(/^no money goes into or out of this vault: /);
+    expect(unvouched.body).not.toHaveProperty('fundable');
+    expect(unvouched.body).not.toHaveProperty('why');
+    expect((await call(`/api/accounts/acc_1/vaults/${VAULT}/deposit`, 'ada', 'POST', { tx: 'AAAA' })).status).toBe(409);
+    expect((await call(`/api/accounts/acc_1/vaults/${VAULT}/payout`, 'ada', 'POST', { tx: '3Q==' })).status).toBe(409);
+    expect(sent).toEqual([]);
   });
 
   it('a deployment that cannot send says so, and a send that may have landed is not marked as nothing sent', async () => {
@@ -546,7 +569,7 @@ describe('THE COMPANY ACCOUNT STANDS BEHIND EVERY VAULT', () => {
     ]);
     /* No committee holds the account, so the vault is held by none the account has, and no money moves. */
     const view = await call(`/api/accounts/acc_1/vaults/${VAULT}/chain`, 'ada');
-    expect(view.body).toMatchObject({ fundable: false });
+    expect(view.body).not.toHaveProperty('fundable');
     expect(sent).toEqual([]);
   });
 
@@ -1381,15 +1404,20 @@ describe('A VAULT\'S START', () => {
     await heldVault();
     /* RED WHEN: the route pays for another circuit, or a call on another account, than the step it was sent as. */
     startShape = oneCall(hex(0xc0), 'adopt');
-    expect(await call(at('account'), 'ada', 'POST', { tx: START, step: 'adoption', call: 'propose' }))
+    expect(await call(at('account'), 'ada', 'POST', { tx: START, step: 'adoption', call: 'approve' }))
       .toMatchObject({ status: 422, body: { nothingWasSent: true } });
-    startShape = oneCall(hex(0xc1), 'propose');
-    expect(await call(at('account'), 'ada', 'POST', { tx: START, step: 'adoption', call: 'propose' }))
+    startShape = oneCall(hex(0xc1), 'approve');
+    expect(await call(at('account'), 'ada', 'POST', { tx: START, step: 'adoption', call: 'approve' }))
       .toMatchObject({ status: 422, body: { nothingWasSent: true } });
-    startShape = oneCall(hex(0xc0), 'propose');
-    expect((await call(at('account'), 'ada', 'POST', { tx: START, step: 'adoption', call: 'propose' })).status).toBe(200);
+    startShape = oneCall(hex(0xc0), 'approve');
+    expect((await call(at('account'), 'ada', 'POST', { tx: START, step: 'adoption', call: 'approve' })).status).toBe(200);
     expect((await call(at('account'), 'ada', 'POST', { tx: START, step: 'secret-run', call: 'adopt' })).status).toBe(400);
-    expect(sent).toEqual(['raising the adoption of this vault']);
+    /* RED WHEN: a start's proposal is raised here, with no record of it written down; it is raised with its record instead. */
+    startShape = oneCall(hex(0xc0), 'propose');
+    for (const step of ['adoption', 'secret-run']) {
+      expect(await call(at('account'), 'bo', 'POST', { tx: START, step, call: 'propose' })).toMatchObject({ status: 400, body: { nothingWasSent: true } });
+    }
+    expect(sent).toEqual(['approving the adoption of this vault']);
   });
 
   it('SETS A FIRST SECRET ONLY WHILE THE VAULT HOLDS NONE, AND WRITES A COPY ONLY WHILE ONE IS STILL OWED', async () => {
@@ -1415,7 +1443,8 @@ describe('A VAULT\'S START', () => {
     await heldVault();
     const view = await call(`/api/accounts/acc_1/vaults/${VAULT}/chain`, 'ada');
     /* RED WHEN: a vault not started is read as not held, so its handover would be sent again. */
-    expect(view.body).toMatchObject({ started: false, fundable: false });
+    expect(view.body).toMatchObject({ started: false });
+    expect(view.body).not.toHaveProperty('fundable');
     expect((await call('/api/accounts/acc_1/vaults', 'ada')).body.rows).toEqual([expect.objectContaining({ vault: VAULT, state: 'start-owed' })]);
     expect(await call(`/api/accounts/acc_1/vaults/${VAULT}/deposit`, 'ada', 'POST', { tx: 'AAAA' }))
       .toMatchObject({ status: 409, body: { nothingWasSent: true } });

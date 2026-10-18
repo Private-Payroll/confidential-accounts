@@ -566,6 +566,7 @@ export const proposalRelayRoutes = (deps: ProposalRelayDeps): express.Router => 
       salt: z.string().regex(HEX64),
       /* A payroll run's raise: the run re-filed with the raise, and what the raise pays, for the public money check. */
       run: z.unknown().optional(),
+      vault: z.string().regex(HEX64).optional(),
       pays: z.object({
         vault: z.string().regex(HEX64), asset: z.string().regex(HEX64),
         payments: z.array(z.object({ kind: z.enum(['shielded', 'unshielded']), token: z.string().regex(HEX64), amount: z.string().regex(/^[0-9]+$/u) }).strict()).min(1),
@@ -596,13 +597,26 @@ export const proposalRelayRoutes = (deps: ProposalRelayDeps): express.Router => 
         }
         /*
          * **A PROPOSAL FILED WITH NO RUN IS A CHANGE TO THE COMPANY**, raised for
-         * no vault; one whose identity names a vault is a payroll proposal, filed
-         * only with the run it raises.
+         * no vault, or a new vault's first secret run, raised for the vault
+         * `vault` names: a run of one payee whose one leaf pays a zero amount of
+         * no asset, so nothing is ever paid out under it, and which this route
+         * keeps no run record for. That vault is not signed: it is
+         * held only to the identity the filing signs, so it shows the filing is
+         * consistent, never that the vault is this company's, and the kind inside
+         * the sealed envelope is the devices' to judge. Any other proposal whose
+         * identity names a vault is a payroll proposal, filed only with the run it
+         * raises.
          */
+        if (b.run !== undefined && b.vault !== undefined) {
+          throw new NothingWasSent('a payroll proposal names its vault in what it pays, never beside it. Nothing was written down or sent.');
+        }
         if (b.run === undefined && (filing.pays !== undefined || b.pays !== undefined
-          || deps.proposalIdOf(filing.digest, b.salt).toLowerCase() !== filing.chainId.toLowerCase())) {
-          throw new NothingWasSent('a payroll proposal is written down only with the run it raises, and this one comes with none. '
-            + 'Raise it from the run. Nothing was written down or sent.');
+          || deps.proposalIdOf(filing.digest, b.salt, b.vault).toLowerCase() !== filing.chainId.toLowerCase())) {
+          throw new NothingWasSent(b.vault === undefined
+            ? 'a payroll proposal is written down only with the run it raises, and this one comes with none. Raise it from the '
+              + 'run. Nothing was written down or sent.'
+            : 'the vault this proposal is written down for is not the vault its identity on the chain names, or it says it '
+              + 'pays someone. Reload the page and set the vault up again. Nothing was written down or sent.');
         }
         const raised = b.run === undefined ? undefined : runRaisedWith(company, filing, b.run, b.pays, b.salt);
         const proposal: SealedProposal = {

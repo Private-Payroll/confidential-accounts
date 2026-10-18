@@ -77,22 +77,31 @@ describe('a journal over any store', () => {
     ]);
   });
 
-  it('REFUSES a line whose further notes cannot be read, rather than reading it as a one-note payment', async () => {
+  it('ONE UNREADABLE LINE OR VERSION IS SKIPPED AND SAID, EVERY OTHER LINE IS STILL READ, AND A BAD LINE IS NEVER READ AS A ONE-NOTE PAYMENT', async () => {
     const a = signer('ada');
     const store = new MemorySealedPoolStore();
     const j = new PaymentJournalInStore(store, VAULT, { id: 'ada', wrappingSecret: a.secret }, async () => [a.who]);
     await j.record(VAULT, { ...attempt('01'.repeat(32), 60n, 100n), further: [{ nonce: '02'.repeat(32), token: GBP, value: '50' }] } as never);
-    /* RED WHEN an unreadable further note is skipped: the line would describe a change the chain never made. */
-    const versions = await store.versions(VAULT);
-    expect(() => attemptsFromJournalVersions({ deposits: [], payments: versions, opener: { id: 'ada', wrappingSecret: a.secret } }))
-      .toThrow(/is not an attempt \(the notes it spends and the amount\)/);
-    /* RED WHEN a line naming a step no vault makes is read as a payment. */
+    await j.record(VAULT, { ...attempt('03'.repeat(32), 60n, 10n), step: 'swap' } as never);
+    await j.record(VAULT, attempt('04'.repeat(32), 90n, 30n));
+    const read = attemptsFromJournalVersions({ deposits: [], payments: await store.versions(VAULT), opener: { id: 'ada', wrappingSecret: a.secret } });
+    /* RED WHEN: one bad line stops the read of the whole vault (the reader throws), or a line whose further notes cannot be
+     * read is taken as a one-note payment of its first note. */
+    expect(read.payments).toEqual([{ spent: { nonce: '04'.repeat(32), token: GBP, value: 90n }, amount: 30n }]);
+    /* RED WHEN: a skipped line is not said, so a rebuild cannot tell the person a journal line was not read. */
+    /* A line kept in every later version is said once, at the version that first held it. */
+    expect(read.unread.map((u) => [u.record, u.version])).toEqual([['payment-journal', 1], ['payment-journal', 2]]);
+    expect(read.unread[0]!.why).toMatch(/is not an attempt/);
+    /* A version this signer holds no key for is skipped and said too; the other versions are still read. */
+    const b = signer('bo');
     const other = new MemorySealedPoolStore();
-    await new PaymentJournalInStore(other, VAULT, { id: 'ada', wrappingSecret: a.secret }, async () => [a.who])
-      .record(VAULT, { ...attempt('01'.repeat(32), 60n, 10n), step: 'swap' } as never);
-    const otherVersions = await other.versions(VAULT);
-    expect(() => attemptsFromJournalVersions({ deposits: [], payments: otherVersions, opener: { id: 'ada', wrappingSecret: a.secret } }))
-      .toThrow(/is not an attempt/);
+    await other.put(VAULT, sealPool(VAULT, { attempts: [attempt('05'.repeat(32), 70n, 20n)] } as never, [b.who], 1, 'payment-journal'));
+    await other.put(VAULT, sealPool(VAULT, { attempts: [attempt('06'.repeat(32), 80n, 20n)] } as never, [a.who], 2, 'payment-journal'));
+    const mixed = attemptsFromJournalVersions({ deposits: [], payments: await other.versions(VAULT), opener: { id: 'ada', wrappingSecret: a.secret } });
+    /* RED WHEN: a version that does not open for this signer stops the read of every other version. */
+    expect(mixed.payments.map((p) => p.spent.nonce)).toEqual(['06'.repeat(32)]);
+    expect(mixed.unread.map((u) => [u.record, u.version])).toEqual([['payment-journal', 1]]);
+    expect(mixed.versionsRead.payments).toBe(1);
   });
 
   it('a deposit line is the coin, under the page every deposit line has always had', async () => {
@@ -197,9 +206,12 @@ describe('a journal over any store', () => {
     const p = new PaymentJournalInStore(relabelled, VAULT, { id: 'ada', wrappingSecret: a.secret }, async () => [a.who]);
     await expect(p.open(), 'RED WHEN: a store can hand one record back as another').rejects.toThrow(/payment-journal was asked for/);
     const filedAsDeposits = await deposits.versions(VAULT);
-    expect(() => attemptsFromJournalVersions({
+    const asPayments = attemptsFromJournalVersions({
       deposits: [], payments: filedAsDeposits, opener: { id: 'ada', wrappingSecret: a.secret },
-    }), 'RED WHEN: the rebuild reads a deposit journal\'s versions as payments').toThrow(/payment-journal was asked for/);
+    });
+    /* RED WHEN: the rebuild reads a deposit journal\'s versions as payments. */
+    expect(asPayments.payments).toEqual([]);
+    expect(asPayments.unread[0]?.why, 'RED WHEN: a version sealed as another record is skipped without saying so').toMatch(/payment-journal was asked for/);
   });
 
   it('AN UNLABELLED RECORD IS REFUSED unless the store it came from kept records before labels', async () => {

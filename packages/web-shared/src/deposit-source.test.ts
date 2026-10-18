@@ -13,7 +13,7 @@ import type { WireRecord } from '../../../src/midnight/sealed-record-wire.js';
 import { MemorySealedPoolStore } from '../../../src/midnight/vault-pool.js';
 import { newWrappingKeypair, type Hex } from '../../../src/core/crypto.js';
 import {
-  openCompanyVaultPool, type DepositInFlight, type DepositsInFlight, type VaultChainView, type VaultService,
+  openCompanyVaultPool, type DepositInFlight, type DepositsInFlight, type VaultChainView, type ServedVaultChain, type VaultService,
 } from './vault-operation.js';
 import type { VaultBuilderClient } from './vault-worker-client.js';
 import { inFlightInMemory, sealedOnThisDevice, type SealedInFlight } from './in-flight-on-this-device.js';
@@ -21,6 +21,8 @@ import { creatingTransactionOfNote } from './vault-worker-entry.js';
 import {
   depositFromSource, privateTokenFromTheWallet, type DepositAsk, type DepositSource, type PaidIn,
 } from './deposit-source.js';
+/** A test stand-in for what a chain read says: the device's view, the service's answer and the one knob the worker stand-in turns into `started`. */
+type TestView = VaultChainView & ServedVaultChain & { readonly started?: boolean };
 
 const VAULT = 'ab'.repeat(32) as VaultAddress;
 /* The company's account, and the label it carries. */
@@ -44,8 +46,8 @@ const setUp = async () => {
   const log: string[] = [];
   const notes: string[] = [];
   const held = (c: { nonce: string; token: string; value: string }) => `held:${c.nonce}:${c.token}:${c.value}`;
-  const view = (): VaultChainView => ({
-    vault: VAULT, onChain: true, committee: null, heldByCommittee: true, fundable: true, state: 'AAAA', notes: [...notes], everCreated: [],
+  const view = (): TestView => ({
+    vault: VAULT, onChain: true, committee: null, heldByCommittee: true, started: true, state: 'AAAA', notes: [...notes], everCreated: [],
   });
   let lastBuilt: { nonce: string; token: string; value: string } | null = null;
   const service: VaultService = {
