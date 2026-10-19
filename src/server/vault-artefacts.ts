@@ -8,8 +8,8 @@ import { genuineParameterFiles, publishedByMidnight, type PublishedDigest } from
 /**
  * **THE PUBLIC MATERIAL A DEVICE PROVES A VAULT'S TRANSACTIONS WITH**, served
  * from this deployment's own build: each vault circuit's proving key,
- * verifying key and circuit; the network's own shielded-output circuit, which a
- * deposit also proves; and the public parameters those need.
+ * verifying key and circuit; the network's own shielded circuits, which a
+ * private deposit or payment also proves; and the public parameters those need.
  *
  * All of it is public by construction - it is what anybody proving these
  * circuits must hold - so it is served without a sign-in. What is refused is
@@ -17,14 +17,14 @@ import { genuineParameterFiles, publishedByMidnight, type PublishedDigest } from
  * here can be reached, whatever is asked for.
  *
  * **THE COMPANY ACCOUNT'S CIRCUITS A DEVICE PROVES ARE SERVED TOO**
- * (`ACCOUNT_CIRCUITS_SERVED_TO_A_DEVICE`). A vault's payment out asks the
- * account's `recordPaymentFromVault`, and a change that moves no money asks its
- * `approveVaultChange`, inside the same transaction, so each is proved beside
- * the vault's own. And a signer's device proves the rounds it raises, approves
- * and carries out (`propose`, `approve`, `amendSigner`, `setThreshold`,
- * `adopt`), which open with the signer check and so can only be proved where
- * the signer's secret is. Those circuits, and no other of the account's, are
- * served.
+ * (`ACCOUNT_CIRCUITS_SERVED_TO_A_DEVICE`): those a vault's own calls prove beside
+ * it (`recordPaymentFromVault`, `recordBatchFromVault`, `approveVaultChange`);
+ * the proposals and approvals a signer's device makes, which open with the
+ * signer check and so can only be proved where the signer's secret is
+ * (`propose`, `approve`, `setPolicy` and the rest of that list); the charge of a
+ * run to its period (`clearRun`); and the company's record anchor and its
+ * recovery (`anchor`, `recoverAnchor`). Of the account's other circuits only the
+ * verifying keys are served, for the founding signer's device to deploy with.
  *
  *   /artefacts/vault/keys/<circuit>.prover|verifier
  *   /artefacts/vault/zkir/<circuit>.bzkir
@@ -132,9 +132,9 @@ const refuse = (res: express.Response, body: { error: string } = NOTHING_HERE): 
  * **THE FILE IS HANDED TO THE SENDER AS A PATH BELOW ITS OWN FOLDER, NOT AS A
  * WHOLE PATH ON DISK.** Express's file sender treats any path with a part that
  * starts with a dot as hidden and answers 404 for it unless told otherwise, and
- * given a whole path it looks at every part - so every file under
- * `.midnight/params` was found here and then refused, and a checkout placed
- * anywhere under a dot-named folder would have had every file refused. Given
+ * given a whole path it looks at every part; the default parameters folder is
+ * dot-named, so every file in it would be refused, and so would every file of
+ * a checkout placed anywhere under a dot-named folder. Given
  * the folder as its root, the sender looks only at the part below it, which the
  * patterns above fix, and it still refuses anything that would climb out.
  *
@@ -166,9 +166,9 @@ export function vaultArtefactRoutes(places: VaultArtefactPlaces, published: Publ
      * **A REFUSAL IS NEVER LEFT CARRYING THE HOUR.** The header rides on the
      * send, so a file that cannot be found or read never gets it, and whatever
      * refusal a failed send turns into says it must not be kept. Set on the
-     * response before the send, as it once was, it stayed on the refusal, and
-     * a browser went on replaying that refusal from its own cache for the hour
-     * the header allowed, without asking here again - after the file was being
+     * response before the send, it would stay on a refusal, and a browser
+     * would replay that refusal from its own cache for the hour the header
+     * allows, without asking here again, even once the file is being
      * served.
      */
     res.sendFile(at.below, { root: at.root, headers: { 'cache-control': 'public, max-age=3600' } }, (err) => {

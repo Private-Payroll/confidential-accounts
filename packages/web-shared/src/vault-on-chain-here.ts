@@ -3,8 +3,9 @@
  * PERSON'S OWN WALLET NAMES.**
  *
  * What it reads: the vault's state, the notes it holds, every coin ever made
- * for it, whether it is started, what it holds in public money, and the state
- * its deploy left.
+ * for it, whether it is started, what it holds in public money, the state its
+ * deploy left, and whether every circuit of the vault and of the company's
+ * account is the one this app was built with.
  *
  * What it does not read: who holds the vault. Money going in or out waits on
  * no committee, so no read here asks.
@@ -26,7 +27,8 @@ import {
 } from '../../../src/midnight/note-index.js';
 import { vaultOutputHistoryFrom } from '../../../src/midnight/deposit-nonce.js';
 import { assertVaultLedgerIsThisBuilds } from '../../../src/midnight/vault-ledger-shape.js';
-import { startingLedgerFrom } from '../../../src/midnight/vault-circuits.js';
+import { circuitsNotThisBuilds, startingLedgerFrom } from '../../../src/midnight/vault-circuits.js';
+import { sha256 } from '@noble/hashes/sha2.js';
 import type { Hex } from '../../../src/core/crypto.js';
 import { publicHoldingsOf } from '../../../src/midnight/public-balance.js';
 import type { AccountCallChainOnTheWire, PayoutChainOnTheWire, VaultOnChainOnTheWire } from './vault-worker-client.js';
@@ -112,10 +114,10 @@ export const vaultChainSourceAt = (indexer: IndexerEndpoints): VaultChainSource 
     transactions: indexerVaultTransactions(indexer.indexerUri, indexer.indexerWsUri),
     events: indexerNoteEvents(indexer.indexerUri),
     /*
-     * **ONE BLOCK, NAMED FIRST, AND BOTH CONTRACTS READ AS OF IT.** The vault's
-     * call reads the account's state inside the same circuit, so the two must
-     * be the same moment; the commitment tree comes from that block too, because
-     * the chain keeps only a window of past roots a spend may prove against.
+     * Read as `atOneBlockOver` says: one block named first, and both
+     * contracts as of it. The indexer's reader is made once, when this
+     * source is, and every read here waits on that same reader rather
+     * than opening one of its own.
      */
     atOneBlock: async (vault, account) => atOneBlockOver(await reader, vault, account),
     accountAtOneBlock: async (account) => accountAtOneBlockOver(await reader, account),
@@ -135,19 +137,35 @@ const toBase64 = (bytes: Uint8Array): string => {
  * reader takes. A vault the indexer holds no state for is `onChain: false`,
  * never an empty vault. A history that cannot be read in full refuses: a list of
  * coins with a hole in it is not a list of coins.
+ *
+ * `circuits` says whether every circuit of the vault is the one this app was
+ * built with, held against the digests the compiled vault carries
+ * (`expectedVk`); with `accountAddress`, `accountCircuits` says the same of that
+ * account's current state, held against the compiled account's digests
+ * (`accountExpectedVk`). An account the chain holds no state for is refused,
+ * never passed: a vault pays out on its account's approvals, so an account
+ * whose circuits are not this app's could let money out on approvals nobody
+ * gave.
  */
 export async function readVaultOnChain(
   d: {
-    readonly vault: { ledger(data: unknown): unknown; pureCircuits: { copiesWrittenKey(): Uint8Array } };
+    readonly vault: {
+      ledger(data: unknown): unknown; pureCircuits: { copiesWrittenKey(): Uint8Array };
+      readonly expectedVk?: Readonly<Record<string, string>>;
+    };
+    readonly accountExpectedVk?: Readonly<Record<string, string>>;
     readonly runtimeState: { deserialize(bytes: Uint8Array): unknown };
   },
   source: VaultChainSource,
   vault: string,
+  accountAddress?: string,
 ): Promise<VaultOnChainOnTheWire> {
   const served = await source.contractState(vault);
   if (served === null || served === undefined) return { onChain: false };
   const bytes = served.serialize();
   const state = d.runtimeState.deserialize(bytes) as { data: unknown };
+  const circuits = circuitsNotThisBuilds(state, d.vault.expectedVk, sha256, NO_MONEY, 'the vault\'s');
+  const accountCircuits = accountAddress === undefined ? undefined : await accountCircuitsOf(d, source, accountAddress);
   const ledger = d.vault.ledger(state.data) as Parameters<typeof startingLedgerFrom>[0] & {
     notes: Iterable<Uint8Array>; nonceCommitment: Uint8Array; splitJournal: Iterable<[Uint8Array, Uint8Array]>;
   };
@@ -191,7 +209,29 @@ export async function readVaultOnChain(
     account,
     started,
     ...(publicBalances === undefined ? { publicBalancesWhy: publicBalancesWhy! } : { publicBalances }),
+    circuits,
+    ...(accountCircuits === undefined ? {} : { accountCircuits }),
   };
+}
+
+const NO_MONEY = 'no money goes in or out of this vault';
+
+/** The company account's circuits as the chain holds them now, or why they are not this app's or not there. */
+async function accountCircuitsOf(
+  d: Pick<Parameters<typeof readVaultOnChain>[0], 'accountExpectedVk' | 'runtimeState'>,
+  source: VaultChainSource,
+  account: string,
+): Promise<{ readonly why: string; readonly circuit: string | null } | null> {
+  const served = await source.contractState(account);
+  if (served === null || served === undefined) {
+    return {
+      why: `${NO_MONEY}: the chain shows no company account at the address it pays out on, so whose approvals it `
+        + 'pays out on cannot be checked. Nothing was sent.',
+      circuit: null,
+    };
+  }
+  return circuitsNotThisBuilds(d.runtimeState.deserialize(served.serialize()), d.accountExpectedVk, sha256,
+    `${NO_MONEY}, because the company's account it pays out on is not the one this app was built for`, 'the account\'s');
 }
 
 /**

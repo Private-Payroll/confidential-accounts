@@ -2,7 +2,7 @@ import { describe, it, expect } from 'vitest';
 import type { Hex } from '../../../src/core/crypto.js';
 import {
   vaultFundableHere, depositIntoCompanyVault, depositPubliclyIntoCompanyVault, mergeNotesInCompanyVault,
-  payPubliclyFromCompanyVault, openCompanyVaultPool, checkWhatThisBrowserSent, createCompanyVaultByHandover,
+  payPubliclyFromCompanyVault, payPrivatelyFromCompanyVault, vaultNotesHere, openCompanyVaultPool, checkWhatThisBrowserSent, createCompanyVaultByHandover,
   VaultNotReadHere, VaultNotTheCompanys, VaultStartOwed, VaultHandoverOwed,
 } from './vault-operation.js';
 import type { VaultOnChainOnTheWire } from './vault-worker-client.js';
@@ -18,9 +18,10 @@ const OTHER_ACCOUNT = 'ad'.repeat(32);
 const INDEXER = { indexerUri: 'https://indexer.example/api/v3/graphql', indexerWsUri: 'wss://indexer.example/api/v3/graphql/ws' };
 
 type Chain = Extract<VaultOnChainOnTheWire, { onChain: true }>;
-/** The vault as this device's worker reads it: this build's layout, pinned to the company's account, started, empty. */
+/** The vault as this device's worker reads it: this build's layout and circuits, and its account's, pinned to the company's account, started, empty. */
 const startedVault = (over: Partial<Chain> = {}): VaultOnChainOnTheWire => ({
-  onChain: true, state: 'AAAA', notes: [], notesFromThisBuild: true, everCreated: [], account: ACCOUNT, started: true, ...over,
+  onChain: true, state: 'AAAA', notes: [], notesFromThisBuild: true, everCreated: [], account: ACCOUNT, started: true,
+  circuits: null, accountCircuits: null, ...over,
 });
 
 interface Stand {
@@ -37,6 +38,7 @@ interface Stand {
 /** The doors every reader of the answer has, and a count of how often the service was asked. */
 const doorsFor = (stand: Stand = {}) => {
   const asked = { service: 0, reads: 0 };
+  const inputs: unknown[] = [];
   const doors = {
     account: ACCOUNT,
     indexer: async () => (stand.noIndexer === true ? null : INDEXER),
@@ -45,8 +47,9 @@ const doorsFor = (stand: Stand = {}) => {
       return { holders: { adoptedVaults: stand.adopted ?? [VAULT] } };
     },
     builder: {
-      vaultOnChain: async () => {
+      vaultOnChain: async (input: unknown) => {
         asked.reads += 1;
+        inputs.push(input);
         const chain = stand.chain ?? startedVault();
         if (chain instanceof Error) throw chain;
         return chain;
@@ -57,7 +60,7 @@ const doorsFor = (stand: Stand = {}) => {
     },
     sleep: async () => {}, waitMs: 3, everyMs: 1,
   };
-  return { doors: doors as never, asked };
+  return { doors: doors as never, asked, inputs };
 };
 
 const NOT_PINNED = /^this vault is not pinned to your company's account, or its state is not a vault's, as the chain shows it, so money in it would be paid out on somebody else's approvals; no money goes in or out of it\.$/;
@@ -162,6 +165,12 @@ const gates: ReadonlyArray<readonly [string, (doors: never) => Promise<unknown>,
   ['a private payment step', (doors) => mergeNotesInCompanyVault(doors, { vault: VAULT, notes: [NOTE, { ...NOTE, nonce: 'cc'.repeat(32) }] } as never),
     (reason) => new RegExp(`^the chain, as this device read it, does not show this vault, so its record is not opened here and nothing is paid out of it\\. Nothing was sent\\. Reason: ${reason}$`, 'u'),
     (reason) => new RegExp(`^No payment can be made out of this vault yet, so none was prepared or recorded\\. Nothing was sent\\. Reason: ${reason}$`, 'u')],
+  ['a private payment', (doors) => payPrivatelyFromCompanyVault(doors, {
+    order: { vault: VAULT, opensAt: '0', closesAt: '99999999999' } as never,
+    payment: { kind: 'shielded', paid: false } as never,
+  }),
+  (reason) => new RegExp(`^the chain, as this device read it, does not show this vault, so its record is not opened here and nothing is paid out of it\\. Nothing was sent\\. Reason: ${reason}$`, 'u'),
+  (reason) => new RegExp(`^No payment can be made out of this vault yet, so none was prepared or recorded\\. Nothing was sent\\. Reason: ${reason}$`, 'u')],
   ['a public payment', (doors) => payPubliclyFromCompanyVault(doors, {
     order: { vault: VAULT, opensAt: '0', closesAt: '99999999999' } as never,
     payment: { kind: 'unshielded', paid: false } as never,
@@ -258,4 +267,66 @@ describe('THE READS THAT SHARE THE ONE READ KEEP THEIR CLASSES AND WORDS', () =>
     expect((e as Error).message).toMatch(/: the chain shows an authority this device cannot hand over\. No money can be put into it until it is\./);
     expect((e as Error).message).not.toMatch(/older service/);
   });
+});
+
+describe('A VAULT OR AN ACCOUNT WHOSE CIRCUITS ARE NOT THIS APP\'S TAKES AND PAYS OUT NO MONEY', () => {
+  const vaultNot = { why: "no money goes in or out of this vault: its 'deposit' circuit is not the one this app's build compiled, so it would accept proofs this product never made. Nothing was sent.", circuit: 'deposit' };
+  const accountNot = { why: "no money goes in or out of this vault, because the company's account it pays out on is not the one this app was built for: its 'setPolicy' circuit is not the one this app's build compiled, so it would accept proofs this product never made. Nothing was sent.", circuit: 'setPolicy' };
+  const CHANGED = / If the company's super admins moved it to a newer build, it stays refused on this device until this device runs that build\.$/;
+
+  it('THE ANSWER IS NOT-THIS-BUILD, NAMING THE CONTRACT AND THE CIRCUIT, FOR THE VAULT AND FOR ITS ACCOUNT', async () => {
+    const vault = await vaultFundableHere(doorsFor({ chain: startedVault({ circuits: vaultNot }) }).doors, VAULT);
+    /* RED WHEN: a vault whose deposit circuit is not this app's is answered fundable, or as anything a screen cannot tell from an unreadable one. */
+    expect(vault).toMatchObject({ of: 'not-this-build', contract: 'vault', circuit: 'deposit', view: { vault: VAULT } });
+    expect((vault as { why: string }).why.startsWith(vaultNot.why)).toBe(true);
+    expect((vault as { why: string }).why).toMatch(CHANGED);
+    const account = await vaultFundableHere(doorsFor({ chain: startedVault({ accountCircuits: accountNot }) }).doors, VAULT);
+    /* RED WHEN: the account's circuits are not part of the answer - its vault then pays out on approvals its own circuits never asked for. */
+    expect(account).toMatchObject({ of: 'not-this-build', contract: 'account', circuit: 'setPolicy' });
+  });
+
+  it('A VAULT NOT OF THIS BUILD THAT IS ALSO PINNED ELSEWHERE AND NOT STARTED IS ANSWERED NOT-THIS-BUILD, WITH THE NEWER-BUILD SENTENCE', async () => {
+    for (const over of [{ circuits: vaultNot }, { accountCircuits: accountNot }]) {
+      const answer = await vaultFundableHere(doorsFor({ chain: startedVault({ ...over, account: OTHER_ACCOUNT, started: false }) }).doors, VAULT);
+      /* RED WHEN: a vault whose circuits are not this app's is answered pinned elsewhere or not started, which tell a screen nothing about updating the app. */
+      expect(answer.of).toBe('not-this-build');
+      /* RED WHEN: the refusal does not say that a vault moved to a newer build stays refused until this device runs it. */
+      expect((answer as { why: string }).why).toMatch(CHANGED);
+    }
+  });
+
+  it('A READ THAT DOES NOT SAY WHETHER THE CIRCUITS ARE THIS APP\'S IS REFUSED, NEVER PASSED', async () => {
+    const { circuits: _v, ...noVaultWord } = startedVault() as Chain;
+    const { accountCircuits: _a, ...noAccountWord } = startedVault() as Chain;
+    /* RED WHEN: a read with no word on the vault's circuits is taken as this build's. */
+    expect(await vaultFundableHere(doorsFor({ chain: noVaultWord as never }).doors, VAULT)).toMatchObject({ of: 'not-this-build', contract: 'vault', circuit: null });
+    /* RED WHEN: a read with no word on the account's circuits is taken as this build's. */
+    expect(await vaultFundableHere(doorsFor({ chain: noAccountWord as never }).doors, VAULT)).toMatchObject({ of: 'not-this-build', contract: 'account', circuit: null });
+  });
+
+  it('THE READ FOR MONEY NAMES THE COMPANY\'S ACCOUNT; THE READ A START IS CARRIED ON FROM NAMES NONE AND IS NOT REFUSED FOR CIRCUITS', async () => {
+    const money = doorsFor();
+    await vaultFundableHere(money.doors, VAULT);
+    /* RED WHEN: the read money waits on does not ask the worker to check the company's account. */
+    expect(money.inputs).toEqual([{ vault: VAULT, account: ACCOUNT, indexer: INDEXER }]);
+    const start = doorsFor({ chain: startedVault({ circuits: vaultNot }) });
+    const e = await openCompanyVaultPool(start.doors, VAULT, async () => {}).catch((x: unknown) => x);
+    /* RED WHEN: a start reads the account, or is refused on the circuits, which only the money doors judge. */
+    expect(start.inputs[0]).toEqual({ vault: VAULT, indexer: INDEXER });
+    expect(String((e as Error)?.message ?? '')).not.toMatch(/circuit is not the one this app's build compiled/);
+    const rebuild = doorsFor({ chain: startedVault({ circuits: vaultNot }) });
+    const notes = await vaultNotesHere(rebuild.doors, VAULT);
+    /* RED WHEN: a rebuild of the vault's notes reads the account, or is refused on the circuits, which only the money doors judge. */
+    expect(rebuild.inputs[0]).toEqual({ vault: VAULT, indexer: INDEXER });
+    expect(JSON.stringify(notes)).not.toMatch(/circuit is not the one this app's build compiled|whether the vault's circuits/);
+  });
+
+  for (const [name, door, , refused] of gates) {
+    it(`${name.toUpperCase()} IS REFUSED FOR A VAULT OR AN ACCOUNT NOT OF THIS BUILD, BEFORE ANYTHING IS BUILT OR ASKED`, async () => {
+      const escapedWhy = (w: string) => w.replace(/[.*+?^${}()|[\]\\]/gu, '\\$&');
+      /* RED WHEN: this door moves money into or out of a vault whose circuits, or whose account's, are not this app's. */
+      await expect(door(doorsFor({ chain: startedVault({ circuits: vaultNot }) }).doors)).rejects.toThrow(refused(`${escapedWhy(vaultNot.why)}.*`));
+      await expect(door(doorsFor({ chain: startedVault({ accountCircuits: accountNot }) }).doors)).rejects.toThrow(refused(`${escapedWhy(accountNot.why)}.*`));
+    });
+  }
 });

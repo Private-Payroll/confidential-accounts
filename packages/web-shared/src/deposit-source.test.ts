@@ -70,7 +70,7 @@ const setUp = async () => {
       const v = view();
       return {
         onChain: true, state: v.state!, notes: v.notes, notesFromThisBuild: true, everCreated: v.everCreated ?? [],
-        authority: { committee: [], threshold: 1 }, account: ACCOUNT, started: true,
+        authority: { committee: [], threshold: 1 }, account: ACCOUNT, started: true, circuits: null, accountCircuits: null,
       };
     },
     /* The block, a transaction's events and the vault's history, read here at the wallet's indexer. */

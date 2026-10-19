@@ -28,7 +28,7 @@ import { vaultNoteCommitment } from '../../../src/midnight/note-index.js';
 import { SealedNotePool } from '../../../src/midnight/vault-pool.js';
 import { PaymentJournalInStore } from '../../../src/midnight/vault-journal.js';
 import type { PrivatePaymentOnTheWire, PrivatePaymentOrderOnTheWire } from '../../../src/midnight/private-payment-wire.js';
-import { vaultBuilderOver, type VaultBuilderClient, type VaultOnChainOnTheWire } from './vault-worker-client.js';
+import { vaultBuilderOver, VaultAskFailed, type VaultBuilderClient, type VaultOnChainOnTheWire } from './vault-worker-client.js';
 import type { EventOnTheWire } from './vault-builder.js';
 import { MemorySealedPoolStore } from '../../../src/midnight/vault-pool.js';
 import type { WireRecord } from '../../../src/midnight/sealed-record-wire.js';
@@ -160,6 +160,7 @@ const wireOf = (v: TestView): VaultOnChainOnTheWire => (!v.onChain ? { onChain: 
   everCreated: v.everCreated ?? [],
   account: ACCOUNT,
   started: v.started === true,
+  circuits: null, accountCircuits: null,
 });
 const readOnTheDevice = async (i: { vault: string; indexer: { indexerUri: string } }): Promise<VaultOnChainOnTheWire> => {
   const chain = chains.get(i.indexer.indexerUri);
@@ -757,6 +758,33 @@ describe('THE POOL AND A DEPOSIT', () => {
     /* RED WHEN: a deposit reads who holds the vault - a committee change the service leaves half done would then stop every deposit. */
     expect(e).toBeInstanceOf(DepositNotYetSeen);
     expect(log).toEqual(['read the block here', `build deposit with ${PARAMS}`, 'paid', 'sent deposit']);
+  });
+
+  it('A DEPOSIT WHOSE COIN\'S COMMITMENTS CANNOT BE WORKED OUT AFTER ITS BUILD STOPS BEFORE THE WALLET IS ASKED, HOLDING NOTHING', async () => {
+    /* RED WHEN: the coin's commitments are worked out after the send - a vault worker that stops then reads as a failure, not as a deposit that may have been sent. */
+    const log: string[] = [];
+    const records = stores();
+    const ready = view({ heldByCommittee: true, started: true, state: 'AAAA', notes: [], everCreated: [] });
+    await openCompanyVaultPool(poolDoors(serviceFrom([ready], log), records), VAULT, nothingToCheck);
+    const base = builder(log);
+    let built = false;
+    const stopsAfterTheBuild: VaultBuilderClient = {
+      ...base,
+      deposit: async (input) => { const done = await base.deposit(input); built = true; return done; },
+      commitments: async (input) => {
+        if (built) throw new VaultAskFailed('commitments', 'stopped', 'the part of this page that builds and proves vault transactions stopped before it answered.');
+        return base.commitments(input);
+      },
+    };
+    const inFlight = inFlightInMemory<never>();
+    const e = await depositIntoCompanyVault({
+      ...poolDoors(serviceFrom([ready], log), records), company: LABEL, account: ACCOUNT, inFlight, builder: stopsAfterTheBuild,
+      pay: async () => { log.push('paid'); return { transaction: 'X', leaves: [] }; },
+    }, VAULT, { token: 'ab'.repeat(32), value: 7n }).catch((x) => x);
+    expect(e).toBeInstanceOf(VaultAskFailed);
+    expect(log).not.toContain('paid');
+    expect(log).not.toContain('sent deposit');
+    expect(await inFlight.get(VAULT)).toBeNull();
   });
 
   it('A DEPOSIT INTO A VAULT THE ACCOUNT HAS NOT ADOPTED, AS THE SIGNER\'S OWN WALLET READS IT, IS REFUSED BEFORE A COIN IS CHOSEN', async () => {
@@ -1992,6 +2020,42 @@ describe('A PRIVATE PAYMENT OUT', () => {
     expect(e2).toBeInstanceOf(PaymentLandedUnrecorded);
     expect(e2.message).toMatch(/the pool refused the write/);
     expect(e2.message).toMatch(/The person is paid/);
+  });
+
+  it('A PAYMENT SENT IS STILL CONFIRMED WHEN ONE CHECK OF IT FAILS, AND A PAYMENT NOT YET SEEN NEVER SAYS TRY AGAIN', async () => {
+    /* RED WHEN: a failed check of the payment's events ends the wait - a payment that landed is reported as not seen. */
+    const once = await setUp();
+    const d = once.doors(landsWhenSent());
+    const confirm = d.builder.confirmPayment;
+    let failed = 0;
+    d.builder.confirmPayment = async (input) => {
+      if (failed === 0) { failed += 1; throw new VaultAskFailed('confirm-payment', 'stopped', 'the part of this page that builds and proves vault transactions stopped before it answered. Try again; if it happens again, reload the page.'); }
+      return confirm(input);
+    };
+    const done = await payPrivatelyFromCompanyVault(d, order());
+    expect(failed).toBe(1);
+    expect(done.transactionHash).toBe(PAID_IN);
+    /* RED WHEN: the worker's own sentence is put inside the notice - a notice whose job is to stop a second payment tells the person to try again. */
+    const never = await setUp();
+    const n = never.doors(landsWhenSent());
+    n.builder.confirmPayment = async () => {
+      throw new VaultAskFailed('confirm-payment', 'took-too-long', 'the part of this page that builds and proves vault transactions said nothing for 10 minutes, so this page stopped it. Try again with this page open in front and other heavy work closed.');
+    };
+    const e = await payPrivatelyFromCompanyVault(n, order()).catch((x) => x);
+    expect(e).toBeInstanceOf(PaymentNotYetSeen);
+    expect(e.message).toMatch(/took-too-long/);
+    expect(e.message).not.toMatch(/try again/i);
+    expect(await never.notesNow()).toEqual([NOTE]);
+    /* RED WHEN: a refusal the worker answered with is not named in the notice - the person cannot tell which check could not be made. */
+    const refusing = await setUp();
+    const r = refusing.doors(landsWhenSent());
+    r.builder.confirmPayment = async () => {
+      throw new VaultAskFailed('confirm-payment', 'answered', 'the indexer could not be read. Try again.', { name: 'NoteIndexUnreadable' });
+    };
+    const refused = await payPrivatelyFromCompanyVault(r, order()).catch((x) => x);
+    expect(refused).toBeInstanceOf(PaymentNotYetSeen);
+    expect(refused.message).toMatch(/answered, NoteIndexUnreadable/);
+    expect(refused.message).not.toMatch(/try again/i);
   });
 
   /** A builder whose output commitments are the ledger's own, so the vault's history can be searched by them. */

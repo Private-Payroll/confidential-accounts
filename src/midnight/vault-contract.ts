@@ -1,10 +1,10 @@
 /**
  * THE VAULT'S DEPLOY, AND THE FIND THAT SERVES IT.
  *
- * The account is deployed through the PARTIAL path — eleven of the eleven it
- * compiles today, eleven of thirteen before two were shed and the deferred
- * list was emptied,
- * and `src/midnight/partial-contract.ts` exists, in every line, for that. **The
+ * The account is deployed through the PARTIAL path, which builds the
+ * contract's state by hand so its operations map holds exactly the circuits
+ * the account deploys; `src/midnight/partial-contract.ts` exists, in every
+ * line, for that. **The
  * vault is a FULL one.** Every circuit `Vault.compact` compiles is deployed —
  * `VAULT_CIRCUITS` below is the list, and it is read off the compiler's own
  * answer rather than transcribed. So nothing here defers,
@@ -17,7 +17,7 @@
  * WHICH FIND THE VAULT USES, AND WHY IT IS NEITHER OF THE TWO THAT EXIST
  *
  * **NOT `findDeployedPartialContract`.** It refuses a FULL deployment on
- * purpose (`C231`): a contract carrying a name in `DEFERRED_CIRCUITS` is not
+ * purpose: a contract carrying a name in `DEFERRED_CIRCUITS` is not
  * the deployment that client serves. Correct for the account. Pointed at a
  * vault it would be wrong in the most confusing possible way — the vault's
  * circuits are not in either of the account's lists, so the failure would be a
@@ -32,13 +32,13 @@
  * authority was fixed by the deploy, and this one was invented afterwards on
  * a device that merely READ the contract. A later `replaceAuthority` reads
  * exactly that slot (`:547`) and would build an update the chain refuses. So
- * the find that a mere reader runs must not write a key at all. `M-155`.
+ * the find that a mere reader runs must not write a key at all.
  *
  * **What the vault's find does instead**, and it keeps every property the
  * account's find keeps: read the state, refuse when there is none, check the
  * operations map is EXACTLY this contract's own circuits in both directions,
  * compare the deployed verifier keys byte-for-byte against the compiled ones
- * through the SDK's OWN `verifyContractState` (`M-9`), and build the call
+ * through the SDK's OWN `verifyContractState`, and build the call
  * interface. It stores nothing and it samples nothing.
  *
  * ------------------------------------------------------------------------
@@ -51,9 +51,9 @@
  * deployment nobody asked to be partial, and would put the contract that holds
  * the money on the path with the most hand-written steps in this repository.
  *
- * **AND THAT PARAGRAPH IS STILL TRUE AND IS NO LONGER THE WHOLE ANSWER.** It
- * weighs hand-written steps against nothing, because when it was written the only
- * alternative was the SDK. The thing on the other side of the scale is the
+ * **AND THAT IS TRUE AND IS NOT THE WHOLE ANSWER.** It weighs hand-written
+ * steps against the SDK alone, and the SDK is not all that is on the scale.
+ * The thing on the other side of the scale is the
  * product's own non-negotiable: *"we can never custody any funds or hold the
  * wallet key anywhere with us."* The SDK's path cannot
  * satisfy it at all, at any level of care, because `submitDeployTx` stores the
@@ -67,12 +67,12 @@
  * decision and `vaultDeployCustody` is what states its cost.**
  *
  * ------------------------------------------------------------------------
- * C228, ANSWERED TWICE OVER
+ * ONE PRIVATE-STATE STORE, TWO CONTRACTS, ANSWERED TWICE OVER
  *
  * Private state is filed under `${contractAddress}:${privateStateId}` and the
  * address half is a mutable closure variable
- * (`midnight-js-level-private-state-provider/dist/index.mjs:767-778`). `C228`'s
- * row says it worked only because exactly one contract had ever been addressed.
+ * (`midnight-js-level-private-state-provider/dist/index.mjs:767-778`), so a
+ * store addressed that way is safe only while one contract is ever addressed.
  * **This module addresses the second.**
  *
  *   1. **THE VAULT HAS NO SDK PRIVATE STATE, DELIBERATELY.** Nothing here
@@ -90,13 +90,13 @@
  *      of the find and immediately after the deploy, so no vault operation ever
  *      inherits whichever address an account entry point happened to leave
  *      behind, and no account operation inherits a vault's. It costs one call
- *      and it is the rule `C228`'s row states; property (1) is what makes the
- *      rule cheap to keep, not a reason to skip it.
+ *      and it is the rule a store addressed this way needs; property (1) is
+ *      what makes the rule cheap to keep, not a reason to skip it.
  *
  * `src/midnight/vault-contract.test.ts` proves both against a fake provider
  * that MIRRORS the level store's addressing semantics — the closure variable,
- * the composed key, the throw when no address was ever set — per `T-34`,
- * because a stub without the semantics could not fail the way the product
+ * the composed key, the throw when no address was ever set — because a stub
+ * without the semantics could not fail the way the product
  * would.
  */
 import {
@@ -117,10 +117,10 @@ export type {
 /**
  * The circuits `contracts/src/Vault.compact` compiles, and all of them deploy.
  *
- * **SEVEN**, since `depositUnshielded`, `payoutUnshielded`
- * and `forgetUnshielded` so the vault could hold the token the product launches
- * with (`C245`). Nothing that reads this list may hard-code a count: every
- * consumer derives it, and the two tests that had typed *four* now do.
+ * `depositUnshielded`, `payoutUnshielded` and `forgetUnshielded` are among
+ * them so the vault can hold the token the product launches with. Nothing
+ * that reads this list may hard-code a count: every consumer derives it from
+ * the list itself.
  *
  * **THIS IS NOT `deferral.ts` AND MUST NOT BECOME IT.** `DEPLOYED_CIRCUITS` and
  * `DEFERRED_CIRCUITS` describe the ACCOUNT's deployment and the split between
@@ -129,7 +129,7 @@ export type {
  * than for a second list under the same names. `assertKnownCircuitSet` and
  * `src/midnight/deferral.ts` are the account's; widening either to cover both
  * contracts would make one list describe two deployments, which is how a client
- * ends up accepting a deployment nobody chose (`C231`'s money direction).
+ * ends up accepting a deployment nobody chose, and sending money to it.
  *
  * Sorted, and kept sorted, so a diff of this list is a diff of the deployment.
  * Read off `contracts/managed-vault/contract/index.d.ts`'s `ProvableCircuits`,
@@ -185,9 +185,20 @@ export const ACCOUNT_CIRCUITS_A_DEVICE_GOVERNS: readonly string[] = Object.freez
  */
 export const ACCOUNT_CIRCUITS_A_DEVICE_CHARGES: readonly string[] = Object.freeze(['clearRun']);
 
+/**
+ * **THE ACCOUNT'S CIRCUITS A SIGNER'S DEVICE PROVES TO ANCHOR THE COMPANY'S
+ * RECORDS**: the anchor itself, and the recovery that replaces a head the
+ * signers approved replacing. Each is proved on the device that built it, like
+ * a governed call, but opens no proposal of its own, so it is kept apart from
+ * the governed list that decides which calls carry one. No vault circuit shares
+ * a name with either.
+ */
+export const ACCOUNT_CIRCUITS_A_DEVICE_ANCHORS: readonly string[] = Object.freeze(['anchor', 'recoverAnchor']);
+
 /** Every one of the account's circuits whose proving material is served to a device, for any reason above. */
 export const ACCOUNT_CIRCUITS_SERVED_TO_A_DEVICE: readonly string[] = Object.freeze([
   ...ACCOUNT_CIRCUITS_A_VAULT_CALLS, ...ACCOUNT_CIRCUITS_A_DEVICE_GOVERNS, ...ACCOUNT_CIRCUITS_A_DEVICE_CHARGES,
+  ...ACCOUNT_CIRCUITS_A_DEVICE_ANCHORS,
 ]);
 
 /**
@@ -213,9 +224,9 @@ const opNames = (state: { operations(): Array<string | Uint8Array> }): string[] 
  *
  * BOTH DIRECTIONS, exactly as the account's own assertion works: a missing
  * circuit means this is not a whole vault, and an extra one means it is not a
- * vault at all. The alternative is `C224`'s: a deployment smaller than anyone
- * decided, or a client happily building calls against a contract it has never
- * seen the shape of.
+ * vault at all. Without both, a deployment is smaller than anyone decided, or
+ * a client happily builds calls against a contract it has never seen the shape
+ * of.
  *
  * `where` names the thing being described — "the compiled vault", "the contract
  * at this address" — because the same refusal fires at two very different
@@ -256,7 +267,7 @@ export function assertVaultCircuitSet(names: string[], where: string): void {
  * ------------------------------------------------------------------ */
 
 /**
- * The vault's authority choice, validated — and never sampled. `C225`.
+ * The vault's authority choice, validated and never sampled: no key nobody chose may hold it.
  *
  * **THE TYPE AND THE VALIDATOR ARE THE ACCOUNT'S, IMPORTED RATHER THAN
  * COPIED, AND THAT IS A DELIBERATE EXCEPTION TO "DO NOT REUSE
@@ -264,8 +275,8 @@ export function assertVaultCircuitSet(names: string[], where: string): void {
  * operations map. `MaintenanceAuthorityChoice` is not: it is the answer to
  * `deployContract`'s `options.signingKey ?? sampleSigningKey()`
  * (`midnight-js-contracts/dist/index.mjs:1907`), which is the FULL deploy path,
- * which is this one. Two validators of a rule the money depends on is `M-104`,
- * and it is the more expensive mistake of the two available here.
+ * which is this one. Two validators of a rule the money depends on would drift
+ * apart, and that is the more expensive mistake of the two available here.
  *
  * **WHAT IS THE VAULT'S OWN IS THE NARROWING BELOW, AND IT IS A REAL LOSS OF
  * CHOICE.** Read from source, not assumed:
@@ -285,7 +296,7 @@ export function assertVaultCircuitSet(names: string[], where: string): void {
  * expressible, and this refuses them by name rather than accepting a choice it
  * would then quietly not honour — which is the failure that would matter,
  * because the deploy report would record a committee that the chain does not
- * have. `M-156` carries what it would take.
+ * have. Carrying a committee needs the hand-built deploy below.
  *
  * The account escapes this only because its deploy rebuilds the contract state
  * by hand to prune the operations map, and can set the authority while it is
@@ -337,7 +348,7 @@ export { describeMaintenanceAuthority };
  * ------------------------------------------------------------------ */
 
 /**
- * Points the private-state store at the vault this operation is for. `C228`.
+ * Points the private-state store at the vault this operation is for, and at no other contract.
  *
  * A function rather than a bare call at four sites, so the rule has a name a
  * later round can grep for and a test can drive. It refuses an empty address
@@ -375,7 +386,7 @@ export interface VaultDeployOptions {
    * hand over a half-built reference object.
    */
   accountAddress: string;
-  /** The deliberate choice. There is no default and nothing is sampled. C225. */
+  /** The deliberate choice. There is no default and nothing is sampled. */
   maintenanceAuthority: MaintenanceAuthorityChoice | undefined;
 }
 
@@ -383,7 +394,7 @@ export interface VaultDeployResult {
   /**
    * The deployed vault's address.
    *
-   * **`C236`: THIS MUST NOT REACH A SCREEN.** A shielded output addressed to a
+   * **THIS MUST NOT REACH A SCREEN.** A shielded output addressed to a
    * vault without a `deposit` call is money on chain that nobody can spend,
    * permanently, and no contract can refuse it. The address is recorded, and it
    * is passed to the client that calls the vault; it is never printed, never
@@ -410,8 +421,8 @@ export interface VaultDeployResult {
  * is money nobody can reach, which is the same rule `MidnightLedger.open`
  * follows for the account.
  *
- * **NO `privateStateId`, and it is not an omission.** See the `C228` note in
- * this file's header: the vault's witness reads the note pool, not the SDK's
+ * **NO `privateStateId`, and it is not an omission.** See the private-state
+ * note in this file's header: the vault's witness reads the note pool, not the SDK's
  * private state, so the SDK writes nothing for a vault and there is no vault
  * view for a second vault to read.
  */
@@ -436,7 +447,7 @@ export async function deployVaultContract(
   const { deployContract } = await import('@midnight-ntwrk/midnight-js-contracts');
 
   /*
-   * EVERY CIRCUIT HAS A KEY ON DISK, ASKED BEFORE A FEE IS SPENT. `C226`.
+   * EVERY CIRCUIT HAS A KEY ON DISK, ASKED BEFORE A FEE IS SPENT.
    *
    * `contracts/managed-vault/` has held no `keys/` since the vault was written,
    * and `COMPILE-VAULT.command` is the only thing that builds them. The SDK
@@ -471,7 +482,7 @@ export async function deployVaultContract(
      * THE CHOSEN KEY, PASSED. Without it `createDeployTxOptions` substitutes
      * `sampleSigningKey()` (`index.mjs:1907`) and the contract holding the
      * money acquires a single random unrecorded authority over which proofs it
-     * will accept. That is C225, and this argument is the whole of the fix.
+     * will accept. This argument is what prevents it.
      */
     signingKey: authority.signingKey,
   } as any);
@@ -483,7 +494,7 @@ export async function deployVaultContract(
    * (`index.mjs:1180`) — this is not redundant, it is the rule: the vault path
    * does not depend on the SDK having left the store pointing anywhere in
    * particular, because the day it stops doing so the failure is a proof built
-   * from another contract's view. C228.
+   * from another contract's view.
    */
   addressVaultPrivateState(providers, contractAddress);
 
@@ -509,7 +520,7 @@ export async function deployVaultContract(
  * The vault's own find. See this file's header for why it is neither of the
  * other two.
  *
- * Keeps `M-9`'s property — the deployed verifier keys compared byte-for-byte
+ * Keeps the account's find's property — the deployed verifier keys compared byte-for-byte
  * against the compiled ones, through the SDK's own `verifyContractState` — and
  * adds the check the SDK cannot express: the operations map must be EXACTLY the
  * vault's own. It writes nothing to the private-state store and samples no
@@ -521,7 +532,7 @@ export async function findDeployedVaultContract(
 ): Promise<{ callTx: any; circuits: string[] }> {
   const { contractAddress } = options;
 
-  /* C228, before the first read of anything. */
+  /* The store addressed to this vault, before the first read of anything. */
   addressVaultPrivateState(providers, contractAddress);
 
   const { verifyContractState, createCircuitCallTxInterface } =
@@ -530,8 +541,8 @@ export async function findDeployedVaultContract(
   const state: any = await providers.publicDataProvider.queryContractState(contractAddress);
   if (!state) {
     /*
-     * NOT "an empty vault". `C110`: a state the node had finalised read as
-     * absent to the indexer 168ms later, and the two readings need opposite
+     * NOT "an empty vault": a state the node has finalised can read as absent
+     * to the indexer a moment later, and the two readings need opposite
      * responses.
      */
     throw new Error(
@@ -572,7 +583,7 @@ export async function findDeployedVaultContract(
    * `createCircuitCallTxInterface` sets the provider's contract address itself
    * (`index.mjs:1876`). It is called with NO `privateStateId`, so
    * `createCallTxOptions` carries none (`:1862`) and no call this interface
-   * builds reads or writes the private-state store. C228, property (1).
+   * builds reads or writes the private-state store (property (1) of the header).
    */
   return {
     callTx: createCircuitCallTxInterface(

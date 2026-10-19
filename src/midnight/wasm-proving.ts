@@ -1,7 +1,7 @@
 /**
- * Proving in this process, with no proof server. M-77, decision 0007.
+ * Proving in this process, with no proof server.
  *
- * Decision 0007 says proving never leaves the customer's control, because the
+ * Proving never leaves the customer's control, because the
  * proof preimage IS the private input — the balance, the amount, the signer's
  * secret key. That rules out a hosted proving pool and raises the obvious
  * question: can the customer's own machine do it, and can that machine be a
@@ -40,9 +40,9 @@ export interface KeyMaterialSource {
   /**
    * The structured reference string covering 2^k rows.
    *
-   * Our largest circuit is k=15, measured from the compiled IR — small. The
-   * proof server downloads these itself, which is why there is no copy on disk
-   * until something extracts one.
+   * The sizes a build needs are read from its compiled circuits
+   * (`parametersNeeded` on the service); the file for k holds about 2^k rows
+   * of public parameters, and none is on disk until something fetches it.
    */
   getParams(k: number): Promise<Uint8Array>;
 }
@@ -103,10 +103,10 @@ export async function wasmProofProvider(source: KeyMaterialSource): Promise<Proo
    * rather than to pass through: zkir does the proving, and `lookupKey` comes
    * straight from the key material provider, which is where it was all along.
    *
-   * Worth noticing that TypeScript could not catch this. Both packages export a
-   * type of the same name, the call site had an `as any` on it, and structural
-   * typing would have accepted the narrower object anyway if the extra method
-   * were optional. It had to be run.
+   * TypeScript does not catch the difference: both packages export a type of
+   * that name, the call is made through `as any`, and structural typing would
+   * accept the narrower object were the extra method optional, so only a
+   * circuit call that runs shows it.
    */
   const proving = zkir.provingProvider(km);
 
@@ -117,6 +117,29 @@ export async function wasmProofProvider(source: KeyMaterialSource): Promise<Proo
     lookupKey: (keyLocation: string) => km.lookupKey(keyLocation),
   } as any);
 }
+
+/**
+ * The circuit id inside a key location, for a source that names its files by
+ * circuit.
+ *
+ * A key location is not a circuit id. The prover asks for keys by a structured
+ * reference:
+ *
+ *     contract:90a19bf2…d484/credit?vk=5ac4195f…4f84
+ *     └── the deployed address ──┘ └circuit┘ └ verifier key hash ┘
+ *
+ * and a builtin of the network's by its path (`midnight/zswap/spend`). Only the
+ * circuit names a file; the address and the hash say which deployment and which
+ * compiled version the key must be, and a source that checks what it hands over
+ * reads them for that.
+ */
+export const circuitOf = (keyLocation: string): string => {
+  const afterPath = keyLocation.includes('/')
+    ? keyLocation.slice(keyLocation.lastIndexOf('/') + 1)
+    : keyLocation;
+  const query = afterPath.indexOf('?');
+  return query === -1 ? afterPath : afterPath.slice(0, query);
+};
 
 /**
  * A source backed by the compiled artefacts on disk.
@@ -130,32 +153,6 @@ export async function fileKeyMaterialSource(
 ): Promise<KeyMaterialSource> {
   const { readFile } = await import('node:fs/promises');
   const { join } = await import('node:path');
-
-  /**
-   * The circuit id inside a key location.
-   *
-   * `keyLocation` is NOT a circuit id, which is what the first version assumed.
-   * The SDK asks for keys by a structured reference:
-   *
-   *     contract:90a19bf2…d484/credit?vk=5ac4195f…4f84
-   *     └── the deployed address ──┘ └circuit┘ └ verifier key hash ┘
-   *
-   * Treating that as a filename produced a genuinely absurd path and an ENOENT
-   * naming it in full, which at least made the shape obvious the moment it ran.
-   *
-   * The two extra parts are not noise: the address scopes the key to a
-   * deployment and the `vk` hash identifies exactly which compiled version it
-   * belongs to. That is precisely what a browser needs in order to cache keys
-   * safely — a key fetched for one contract version must never be reused for
-   * another, and this string is what makes that checkable.
-   */
-  const circuitOf = (keyLocation: string): string => {
-    const afterPath = keyLocation.includes('/')
-      ? keyLocation.slice(keyLocation.lastIndexOf('/') + 1)
-      : keyLocation;
-    const query = afterPath.indexOf('?');
-    return query === -1 ? afterPath : afterPath.slice(0, query);
-  };
 
   return {
     async lookupKey(keyLocation: string) {
@@ -180,18 +177,18 @@ export async function fileKeyMaterialSource(
 
     async getParams(k: number) {
       /*
-       * `bls_midnight_2p{k}`, NOT `bls_filecoin_2p{k}`.
+       * `bls_midnight_2p{k}` FIRST, THEN `bls_filecoin_2p{k}`.
        *
-       * The proof server's own fetch script downloads `bls_filecoin_*` from S3,
-       * and that is what the first version of this looked for. What is actually
-       * in the running container's cache is `bls_midnight_*` — the Foundation
-       * renamed them, and the download script is behind. Both names are tried
-       * because a machine populated from S3 will have the other one.
+       * `bls_midnight_2p{k}` is what Midnight publishes. The older
+       * `bls_filecoin_2p{k}` name is tried second because a machine filled
+       * from the older download script holds only that one, and this source
+       * reads the operator's own disk, never a service.
        *
-       * Sizes, from the container: k=13 is 1.5 MB, k=14 is 3.1 MB, k=15 is
-       * 6.3 MB. That last one is the number that matters for a browser, and it
-       * is four times my earlier estimate — still fine, but measured now
-       * rather than guessed.
+       * For scale: k=13 is 1.5 MB, k=14 is 3.1 MB, k=15 is 6.3 MB, and each
+       * size up doubles it.
+       *
+       * A size missing under both names is refused naming the folder and both
+       * names looked for, so the reason says what to put where.
        */
       for (const name of [`bls_midnight_2p${k}`, `bls_filecoin_2p${k}`]) {
         try {

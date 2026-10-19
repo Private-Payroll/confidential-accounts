@@ -17,6 +17,9 @@ import type { CompanyLabel } from 'midnight-identity/profile/company-label';
 import { accountAtOneBlockOver, atOneBlockOver, readAccountCallChain, readVaultOnChain, vaultChainSourceAt, type BlockReader, type VaultChainSource } from './vault-on-chain-here.js';
 import { answerVaultAsk, vaultAsDeployed } from './vault-worker-entry.js';
 import { vaultBuilderOver, type VaultAnswer } from './vault-worker-client.js';
+import { existsSync, readFileSync } from 'node:fs';
+import * as accountModule from '../../../contracts/managed/contract/index.js';
+import { DEPLOYED_CIRCUITS } from '../../../src/midnight/deferral.js';
 
 const VAULT = 'ab'.repeat(32);
 const ACCOUNT = 'c0'.repeat(32);
@@ -298,5 +301,146 @@ describe('THE VAULT, READ ON THIS DEVICE', () => {
     /* RED WHEN: the endpoints are taken as they come - a wallet's misreport is then read from, or fails somewhere less plain. */
     expect(() => vaultChainSourceAt({ indexerUri: 'ftp://indexer.example', indexerWsUri: INDEXER.indexerWsUri })).toThrow(/not an address this can read from over HTTP/);
     expect(() => vaultChainSourceAt({ indexerUri: '', indexerWsUri: '' })).toThrow(/did not say which indexer/);
+  });
+});
+
+/* Every circuit's verifying key exactly as this build compiled it, read off the key files beside each compiled contract. */
+const keyOf = (folder: 'managed-vault' | 'managed', circuit: string): Uint8Array =>
+  new Uint8Array(readFileSync(new URL(`../../../contracts/${folder}/keys/${circuit}.verifier`, import.meta.url)));
+const VAULT_VK = (vaultModule as unknown as { expectedVk: Record<string, string> }).expectedVk;
+const ACCOUNT_VK = (accountModule as unknown as { expectedVk: Record<string, string> }).expectedVk;
+/* These checks need this build's compiled keys: a build without them (CI's test job) runs them in its keys job. */
+const HAS_KEYS = Object.keys(VAULT_VK).length > 0 && Object.keys(ACCOUNT_VK).length > 0
+  && existsSync(new URL('../../../contracts/managed-vault/keys/payout.verifier', import.meta.url))
+  && existsSync(new URL('../../../contracts/managed/keys/setPolicy.verifier', import.meta.url));
+const Rt = runtime as unknown as { ContractOperation: new () => { verifierKey: Uint8Array } };
+
+/** A state whose circuits carry the given keys: `keys` maps a circuit name to its key, or to null for a circuit with no key. */
+const withKeys = (state: any, keys: Record<string, Uint8Array | null>): any => {
+  for (const [name, key] of Object.entries(keys)) {
+    const op = new Rt.ContractOperation();
+    if (key !== null) op.verifierKey = key;
+    state.setOperation(name, op);
+  }
+  return R.ContractState.deserialize(state.serialize());
+};
+const thisBuilds = (folder: 'managed-vault' | 'managed', vk: Record<string, string>) =>
+  Object.fromEntries(Object.keys(vk).map((c) => [c, keyOf(folder, c)]));
+const aVaultOfThisBuild = (keys: Record<string, Uint8Array | null> = {}) =>
+  withKeys(aVault({ notes: [NOTE], started: true }), { ...thisBuilds('managed-vault', VAULT_VK), ...keys });
+const anAccountOfThisBuild = (keys: Record<string, Uint8Array | null> = {}) =>
+  withKeys(new (runtime as any).ContractState(), { ...thisBuilds('managed', ACCOUNT_VK), ...keys });
+/** An indexer that serves the vault's state at the vault and the account's at the account, and says what it was asked. */
+const vaultAndAccount = (vault: unknown, account: unknown, asked: string[] = []): VaultChainSource => {
+  const plain = anIndexer(vault as never, asked);
+  return {
+    ...plain,
+    contractState: async (address) => {
+      asked.push(`state of ${address.slice(0, 4)}`);
+      return (address === VAULT ? vault : address === ACCOUNT ? account : null) as never;
+    },
+  };
+};
+const withAccount = { ...d, accountExpectedVk: ACCOUNT_VK };
+const flipped = (b: Uint8Array) => { const c = b.slice(); c[c.length - 1] = c.at(-1)! ^ 1; return c; };
+
+describe.skipIf(!HAS_KEYS)('MONEY GOES IN OR OUT ONLY WHERE EVERY CIRCUIT OF THE VAULT AND ITS ACCOUNT IS THIS APP\'S [needs contracts/managed-vault/keys and contracts/managed/keys; `npm run compact` then `npm run compact:vault -- --full` build them]', () => {
+  it('A VAULT AND AN ACCOUNT WHOSE EVERY CIRCUIT IS THIS BUILD\'S READ AS THIS BUILD\'S', async () => {
+    const asked: string[] = [];
+    const read = await readVaultOnChain(withAccount, vaultAndAccount(aVaultOfThisBuild(), anAccountOfThisBuild(), asked), VAULT, ACCOUNT);
+    /* RED WHEN: a vault or an account of this very build is refused, so no money could ever go in. */
+    expect(read).toMatchObject({ onChain: true, circuits: null, accountCircuits: null });
+    /* RED WHEN: the account is read anywhere but at the account the ask named. */
+    expect(asked).toContain(`state of ${ACCOUNT.slice(0, 4)}`);
+  });
+
+  it('A VAULT ONE OF WHOSE CIRCUITS CARRIES ANOTHER KEY IS NOT THIS BUILD\'S, AND THE CIRCUIT IS NAMED', async () => {
+    const read = await readVaultOnChain(withAccount,
+      vaultAndAccount(aVaultOfThisBuild({ deposit: keyOf('managed-vault', 'payout') }), anAccountOfThisBuild()), VAULT, ACCOUNT);
+    /* RED WHEN: only the circuits' names are compared - a vault whose deposit accepts other proofs then takes money. */
+    expect(read).toMatchObject({ circuits: { circuit: 'deposit' } });
+    expect((read as { circuits: { why: string } }).circuits.why).toMatch(/'deposit' circuit is not the one this app's build compiled/);
+  });
+
+  it('A VAULT WITH A CIRCUIT THIS BUILD DOES NOT HAVE, OR A CIRCUIT WITH NO KEY, IS NOT THIS BUILD\'S', async () => {
+    const extra = await readVaultOnChain(d, vaultAndAccount(aVaultOfThisBuild({ sweep: keyOf('managed-vault', 'payout') }), null), VAULT);
+    /* RED WHEN: the set of circuits is not compared - a vault with an added way out of it then takes money. */
+    expect(extra).toMatchObject({ circuits: { circuit: null } });
+    expect((extra as { circuits: { why: string } }).circuits.why).toMatch(/circuits other than the vault's own/);
+    const keyless = await readVaultOnChain(d, vaultAndAccount(aVaultOfThisBuild({ payout: null }), null), VAULT);
+    /* RED WHEN: a circuit with no key on the chain counts as this build's. */
+    expect(keyless).toMatchObject({ circuits: { circuit: 'payout' } });
+  });
+
+  it('A VAULT OR AN ACCOUNT WITH ONE OF THIS BUILD\'S CIRCUITS REMOVED IS NOT THIS BUILD\'S', async () => {
+    /* The same vault, and an account, holding every circuit this build has but one: every one left carries its own key. */
+    const without = (data: unknown, folder: 'managed-vault' | 'managed', vk: Record<string, string>, gone: string) => {
+      const state = new (runtime as any).ContractState();
+      if (data !== undefined) state.data = data;
+      const { [gone]: _gone, ...left } = thisBuilds(folder, vk);
+      return withKeys(state, left);
+    };
+    const vault = without((aVault({ notes: [NOTE], started: true }) as unknown as { data: unknown }).data, 'managed-vault', VAULT_VK, 'payout');
+    const account = without(undefined, 'managed', ACCOUNT_VK, 'recordPaymentFromVault');
+    const noPayout = await readVaultOnChain(withAccount, vaultAndAccount(vault, anAccountOfThisBuild()), VAULT, ACCOUNT);
+    /* RED WHEN: a circuit this build has but the vault lacks is skipped - money then goes into a vault no payment can leave. */
+    expect((noPayout as { circuits: { why: string } }).circuits.why).toMatch(/circuits other than the vault's own/);
+    const noRecord = await readVaultOnChain(withAccount, vaultAndAccount(aVaultOfThisBuild(), account), VAULT, ACCOUNT);
+    /* RED WHEN: an account missing one of this build's circuits passes, so the vault's payments have no account step to record them. */
+    expect((noRecord as { accountCircuits: { why: string } }).accountCircuits.why).toMatch(/circuits other than the account's own/);
+  });
+
+  it('THE VAULT IS HELD AGAINST THE DIGESTS THE COMPILED VAULT ITSELF CARRIES, AND A BUILD WITH NONE REFUSES', async () => {
+    const otherDigest = { ...d, vault: { ...(vaultModule as object), expectedVk: { ...VAULT_VK, payout: '00'.repeat(32) } } as never };
+    /* RED WHEN: the vault is held against any copy of the digests but the compiled vault's own. */
+    expect(await readVaultOnChain(otherDigest, vaultAndAccount(aVaultOfThisBuild(), null), VAULT)).toMatchObject({ circuits: { circuit: 'payout' } });
+    const none = { ...d, vault: { ...(vaultModule as object), expectedVk: {} } as never };
+    const read = await readVaultOnChain(none, vaultAndAccount(aVaultOfThisBuild(), null), VAULT);
+    /* RED WHEN: a build that carries no digests checks nothing and passes every vault. */
+    expect((read as { circuits: { why: string } }).circuits.why).toMatch(/built without the digests of the vault's circuits/);
+  });
+
+  it('AN ACCOUNT ONE OF WHOSE CIRCUITS IS NOT THIS BUILD\'S, ONE THE CHAIN DOES NOT HOLD, OR ONE NOT CHECKABLE HERE IS REFUSED', async () => {
+    const other = await readVaultOnChain(withAccount,
+      vaultAndAccount(aVaultOfThisBuild(), anAccountOfThisBuild({ setPolicy: flipped(keyOf('managed', 'setPolicy')) })), VAULT, ACCOUNT);
+    /* RED WHEN: the account's circuits are not checked - its vault then pays out on approvals its own circuits never asked for. */
+    expect(other).toMatchObject({ circuits: null, accountCircuits: { circuit: 'setPolicy' } });
+    const absent = await readVaultOnChain(withAccount, vaultAndAccount(aVaultOfThisBuild(), null), VAULT, ACCOUNT);
+    /* RED WHEN: an account the chain holds no state for is passed as if its circuits were this build's. */
+    expect((absent as { accountCircuits: { why: string } }).accountCircuits.why).toMatch(/the chain shows no company account/);
+    const unchecked = await readVaultOnChain(d, vaultAndAccount(aVaultOfThisBuild(), anAccountOfThisBuild()), VAULT, ACCOUNT);
+    /* RED WHEN: a worker that was not given the account's digests passes the account. */
+    expect((unchecked as { accountCircuits: { why: string } }).accountCircuits.why).toMatch(/built without the digests of the account's circuits/);
+  });
+
+  it('THE ACCOUNT\'S CIRCUITS THIS DEVICE HOLDS AN ACCOUNT TO ARE THE ONES THE SERVICE DEPLOYS IT WITH', () => {
+    /* RED WHEN: a circuit is deployed with the account but this build carries no digest for it, or the other way round - every account is then refused. */
+    expect(Object.keys(ACCOUNT_VK).sort()).toEqual([...DEPLOYED_CIRCUITS].sort());
+  });
+
+  it('A READ THAT NAMES NO ACCOUNT DOES NOT ASK FOR ONE, AND SAYS NOTHING OF ONE', async () => {
+    const asked: string[] = [];
+    const read = await readVaultOnChain(withAccount, vaultAndAccount(aVaultOfThisBuild(), anAccountOfThisBuild(), asked), VAULT);
+    /* RED WHEN: a start or a rebuild, which name no account, reads one anyway. */
+    expect(asked).not.toContain(`state of ${ACCOUNT.slice(0, 4)}`);
+    expect('accountCircuits' in read).toBe(false);
+  });
+
+  it('THE PAGE\'S ASK NAMES THE ACCOUNT AND THE WORKER CHECKS IT', async () => {
+    const listeners: Array<(e: { data: unknown }) => void> = [];
+    const asked: string[] = [];
+    const deps = async () => ({ ...withAccount, chainSourceAt: () => vaultAndAccount(aVaultOfThisBuild(), anAccountOfThisBuild(), asked) });
+    const client = vaultBuilderOver({
+      addEventListener: (_t, l) => { listeners.push(l); },
+      postMessage: (message) => {
+        void answerVaultAsk(deps as never, message as never).then(
+          (a: VaultAnswer) => listeners.forEach((l) => l({ data: a })),
+          (e: Error) => listeners.forEach((l) => l({ data: { id: (message as { id: number }).id, ok: false, error: e.message } })));
+      },
+    }, 'undeployed');
+    const read = await client.vaultOnChain({ vault: VAULT, account: ACCOUNT, indexer: INDEXER });
+    /* RED WHEN: the worker drops the account the page named, so the account is never checked. */
+    expect(read).toMatchObject({ circuits: null, accountCircuits: null });
+    expect(asked).toContain(`state of ${ACCOUNT.slice(0, 4)}`);
   });
 });

@@ -115,6 +115,7 @@ import type {
   CreatingTransactionAnswer, PayoutChainOnTheWire, SecretRunOnTheWire, SigningKeyOnTheWire, StartStandingOnTheWire,
   VaultBuilderClient,
 } from './vault-worker-client.js';
+import { VaultAskFailed } from './vault-worker-client.js';
 import type { Kept, KeptOnThisDevice } from './in-flight-on-this-device.js';
 import type { AccountHolders } from 'midnight-identity/profile/records-key';
 
@@ -188,17 +189,21 @@ export class VaultNotReadHere extends Error {
  * **THE VAULT AS THE CHAIN HOLDS IT, READ ON THIS DEVICE**: its state, its
  * notes, every coin ever made for it, the account it is pinned to and whether
  * it is started, read by this device's vault worker at the indexer the
- * person's own wallet names. Nothing of it is the service's answer, and when
- * the wallet names no indexer nothing is read at all.
+ * person's own wallet names. With `account`, the worker also says whether that
+ * account's circuits are this app's.
+ *
+ * Nothing of it is the service's answer; when the wallet names no indexer
+ * nothing is read, and a read that fails is a `VaultNotReadHere`.
+ *
  */
-/** One read of the vault by this device's vault worker, at the indexer the person's own wallet names, or a refusal. */
 async function readHere(
-  doors: Pick<ChainHereDoors, 'builder' | 'indexer'>, vault: Hex,
+  doors: Pick<ChainHereDoors, 'builder' | 'indexer'>, vault: Hex, account?: AccountAddress,
 ): Promise<Awaited<ReturnType<VaultBuilderClient['vaultOnChain']>>> {
   const indexer = await theWalletsIndexer(doors, vault);
   let read: Awaited<ReturnType<VaultBuilderClient['vaultOnChain']>>;
   try {
-    read = await doors.builder.vaultOnChain({ vault, indexer });
+    read = await doors.builder.vaultOnChain(
+      account === undefined ? { vault, indexer } : { vault, account: String(account).toLowerCase(), indexer });
   } catch (e) {
     throw new VaultNotReadHere(vault, `this device could not read the vault from the chain (${(e as Error)?.message ?? e}).`);
   }
@@ -326,7 +331,35 @@ type VaultStandingHere =
     readonly unread: { readonly says: string; readonly refuses: string } | null;
     readonly pinned: boolean;
     readonly started: boolean;
+    /**
+     * Read only for money: the first circuit of the vault or of the company's account that is not the one this app
+     * was built with, or null when every one is. A read that did not say counts as not this app's.
+     */
+    readonly circuits?: CircuitNotThisBuilds | null;
   };
+
+/** Which contract's circuit is not this app's, the circuit when one is named, and why. */
+interface CircuitNotThisBuilds {
+  readonly contract: 'vault' | 'account';
+  readonly circuit: string | null;
+  readonly why: string;
+}
+
+const CIRCUITS_UNSAID = (whose: string) => `this device's read did not say whether ${whose} circuits are the ones this app was `
+  + 'built with, so no money goes in or out of this vault.';
+const CIRCUITS_CHANGED = ' If the company\'s super admins moved it to a newer build, it stays refused on this device until this '
+  + 'device runs that build.';
+
+/** The first contract whose circuits are not this app's, the vault before the account, or null. */
+function circuitsOfARead(read: Extract<Awaited<ReturnType<VaultBuilderClient['vaultOnChain']>>, { onChain: true }>): CircuitNotThisBuilds | null {
+  if (read.circuits === undefined) return { contract: 'vault', circuit: null, why: CIRCUITS_UNSAID('the vault\'s') };
+  if (read.circuits !== null) return { contract: 'vault', circuit: read.circuits.circuit, why: read.circuits.why + CIRCUITS_CHANGED };
+  if (read.accountCircuits === undefined) return { contract: 'account', circuit: null, why: CIRCUITS_UNSAID('the company\'s account\'s') };
+  if (read.accountCircuits !== null) {
+    return { contract: 'account', circuit: read.accountCircuits.circuit, why: read.accountCircuits.why + CIRCUITS_CHANGED };
+  }
+  return null;
+}
 
 /**
  * **THE ONE READ OF A VAULT ON THIS DEVICE**: its notes, whether it is pinned to
@@ -335,10 +368,12 @@ type VaultStandingHere =
  * here: which keys hold each contract is the super admins' own choice, and a
  * change of them left half done stops no payment and no deposit. The wallet is
  * asked only whether the account adopted the vault. A read that fails, or a
- * wallet that cannot say, throws as it always has.
+ * wallet that cannot say, throws `VaultNotReadHere` or `VaultNotTheCompanys`. `forMoney` also reads the
+ * company's account and whether the circuits of both are this app's; a start
+ * and a rebuild read neither.
  */
-async function vaultStandingHere(doors: ChainHereDoors, vault: Hex): Promise<VaultStandingHere> {
-  const read = await readHere(doors, vault);
+async function vaultStandingHere(doors: ChainHereDoors, vault: Hex, forMoney = false): Promise<VaultStandingHere> {
+  const read = await readHere(doors, vault, forMoney ? doors.account : undefined);
   if (!read.onChain) return { onChain: false, view: notesOfARead(vault, read) };
   /* The worker reports no account when the vault's state could not be read as a vault's; that is not a vault pinned elsewhere. */
   const layout = 'this vault is not laid out the way this version of the product reads one, so what it holds and whether it is started '
@@ -350,26 +385,38 @@ async function vaultStandingHere(doors: ChainHereDoors, vault: Hex): Promise<Vau
   if (unread === null) await theVaultAsItsSignersHoldIt(doors, vault);
   /* A vault pays out on the approvals of the account it is pinned to; a state that names none is not a vault's. */
   const pinned = read.account !== null && read.account.toLowerCase() === String(doors.account).toLowerCase();
-  return { onChain: true, view: notesOfARead(vault, read), unread, pinned, started: read.started };
+  return {
+    onChain: true, view: notesOfARead(vault, read), unread, pinned, started: read.started,
+    ...(forMoney ? { circuits: circuitsOfARead(read) } : {}),
+  };
 }
 
 /**
  * **WHETHER MONEY MAY GO IN OR OUT OF A VAULT, AS THIS DEVICE READS IT.** One
  * answer, every state a page can show, each with its sentence. `fundable`:
- * adopted by the company's account as the person's own wallet reads it, pinned
- * to that account and started, all of it from the chain at the wallet's
- * indexer and never from the company's service. `not-on-chain`: that indexer
+ * adopted by the company's account as the person's own wallet reads it, every
+ * circuit of it and of that account the one this app was built with, pinned to
+ * that account and started, all of it from the chain at the wallet's indexer
+ * and never from the company's service. `not-on-chain`: that indexer
  * holds no state for the address. `not-adopted`: the account has not adopted
  * it. `unreadable`: the wallet or the indexer could not be read, or the read
  * of the vault cannot be relied on (its ledger is not this build's, or its
- * state could not be read as a vault's). `pinned-elsewhere`: pinned to another
- * account. `not-started`: its first secret or a signer's sealed copy is missing.
+ * state could not be read as a vault's). `not-this-build`: a circuit of the
+ * vault, or of the company's account it pays out on, is not the one this app
+ * was built with (`contract` says which, `circuit` names it when one could be
+ * named), so it could accept proofs this app never made. `pinned-elsewhere`:
+ * pinned to another account. `not-started`: its first secret or a signer's
+ * sealed copy is missing.
  */
 export type VaultFundableHere =
   | { readonly of: 'fundable'; readonly view: VaultChainView }
   | { readonly of: 'not-on-chain'; readonly why: string }
   | { readonly of: 'not-adopted'; readonly why: string }
   | { readonly of: 'unreadable'; readonly why: string }
+  | {
+    readonly of: 'not-this-build'; readonly why: string; readonly contract: 'vault' | 'account';
+    readonly circuit: string | null; readonly view: VaultChainView;
+  }
   | { readonly of: 'pinned-elsewhere'; readonly why: string; readonly view: VaultChainView }
   | { readonly of: 'not-started'; readonly why: string; readonly view: VaultChainView };
 
@@ -377,6 +424,11 @@ export type VaultFundableHere =
 function fundableFrom(standing: VaultStandingHere, forADoor = false): VaultFundableHere {
   if (!standing.onChain) return { of: 'not-on-chain', why: standing.view.why ?? NO_VAULT_YET };
   if (standing.unread !== null) return { of: 'unreadable', why: forADoor ? standing.unread.refuses : standing.unread.says };
+  const circuits = standing.circuits === undefined
+    ? { contract: 'vault' as const, circuit: null, why: CIRCUITS_UNSAID('the vault\'s') } : standing.circuits;
+  if (circuits !== null) {
+    return { of: 'not-this-build', why: circuits.why, contract: circuits.contract, circuit: circuits.circuit, view: standing.view };
+  }
   if (!standing.pinned) return { of: 'pinned-elsewhere', why: NOT_PINNED_WHY, view: standing.view };
   if (!standing.started) return { of: 'not-started', why: NOT_STARTED_WHY, view: standing.view };
   return { of: 'fundable', view: standing.view };
@@ -388,7 +440,7 @@ function fundableFrom(standing: VaultStandingHere, forADoor = false): VaultFunda
  * wallet that cannot say, throws `VaultNotReadHere` or `VaultNotTheCompanys`.
  */
 async function fundableOrThrow(doors: ChainHereDoors, vault: Hex, forADoor = true): Promise<VaultFundableHere> {
-  return fundableFrom(await vaultStandingHere(doors, vault), forADoor);
+  return fundableFrom(await vaultStandingHere(doors, vault, true), forADoor);
 }
 
 /** Why a start goes no further from this read: the same read as the answer, judged for the start, which does not ask whether it is started. */
@@ -401,8 +453,8 @@ function startRefusalFrom(standing: VaultStandingHere): string | null {
 /**
  * **THE ONE ANSWER A SCREEN CALLS** for whether money may go in or out of a
  * vault (`VaultFundableHere`). It does not throw for a vault that is not on the
- * chain, not adopted, unreadable, pinned elsewhere or not started; each is a
- * state. Read on this device from the chain at the wallet's indexer and the
+ * chain, not adopted, unreadable, not this build's, pinned elsewhere or not
+ * started; each is a state. Read on this device from the chain at the wallet's indexer and the
  * person's own wallet; the company's service is not asked.
  */
 export async function vaultFundableHere(doors: ChainHereDoors, vault: Hex): Promise<VaultFundableHere> {
@@ -2003,7 +2055,7 @@ async function chainParametersForADeposit(doors: BuiltOnHereDoors, vault: Hex): 
   }
   return at.parameters;
 }
-
+/** Puts a private deposit into the vault: refuses unless the vault is fundable, settles an earlier deposit from this device first, keeps the coin before the wallet is asked, and from the send on every failure says the deposit may have landed. */
 export async function depositIntoCompanyVault(
   doors: DepositDoors, vault: Hex, money: DepositMoney,
 ): Promise<{
@@ -2011,7 +2063,7 @@ export async function depositIntoCompanyVault(
   /** What became of an earlier deposit from this browser, settled before this one chose its coin. */
   earlier?: Awaited<ReturnType<typeof settleDepositInFlight>>;
 } & DepositRecorded> {
-  /* Read on this device, with the vault one the company's account adopted as this signer's own wallet reads the chain. */
+  /* Read on this device: the vault must be one the company's account adopted, as this signer's own wallet reads the chain. */
   const answer = await fundableOrThrow(doors, vault);
   /* Asked before a coin is chosen or the wallet is asked, so a deposit into a vault not yet started books nothing. */
   if (answer.of !== 'fundable') throw new Error(answer.why);
@@ -2060,6 +2112,13 @@ export async function depositIntoCompanyVault(
     vault, coin: { nonce: coin.nonce, token: coin.token, value: coin.value.toString() }, state: view.state, parameters,
   });
   /*
+   * **WORKED OUT BEFORE THE WALLET IS ASKED, AND THIS MAY NOT MOVE BELOW THE
+   * SEND.** What the chain will show for this coin is read off the vault worker
+   * now, while a failure means nothing was paid; after the send, a worker that
+   * stopped would read as a failure of a deposit that may have been sent.
+   */
+  const { output, held } = await commitments(coin);
+  /*
    * **KEPT ON THIS DEVICE BEFORE THE WALLET IS ASKED, AND THIS MAY NOT MOVE
    * BELOW THE SEND.** From the send on, the money may move whatever happens to
    * this page, and this is what the next deposit from here looks for first.
@@ -2091,7 +2150,6 @@ export async function depositIntoCompanyVault(
   await doors.inFlight.update(vault, claim, { coin: inFlight.coin, recordedAt: inFlight.recordedAt, txRef: sent.txRef, transactionHash: sent.transactionHash })
     .catch(() => { /* the record kept before still names the coin, and the chain is asked by its commitment */ });
   doors.progress?.('recording the deposit');
-  const { output, held } = await commitments(coin);
   const seen = await until(doors, async () => {
     /* The deposit is sent: a read that fails now is asked again, and never reported as nothing sent. */
     const v = await notesAsThisDeviceReadsThem(doors, vault).catch(() => null);
@@ -2149,9 +2207,9 @@ const HEX32_TOKEN = /^[0-9a-f]{64}$/u;
  * coin, no nonce, no journal line and no note, and a vault that holds only
  * public money needs no record of its own to be paid out of.
  *
- *   1. the vault, read on this device, must be held by the keys that hold the
- *      company's account, pinned to it and started, as for a private deposit,
- *      and the chain's parameters are read the same way;
+ *   1. the vault, read on this device, must be adopted by the company's account,
+ *      pinned to it and started, with every circuit of it and of the account this
+ *      app's, as for a private deposit; the chain's parameters are read the same way;
  *   2. the deposit is built and proved in the vault worker, which refuses one
  *      that would ask for anything but this token and this amount;
  *   3. the signer's own wallet pays the public amount and signs, after showing
@@ -3395,6 +3453,7 @@ async function sendAStepOut(doors: PayoutDoors, vault: Hex, s: {
     const heldFurther = heldSpent === null ? [] : await Promise.all(s.notes.slice(1).map((n) => heldOfANote(doors, vault, n)));
     const keptOutput = hash === null && s.kept !== null
       ? (await doors.builder.commitments({ vault, coin: s.kept })).output : null;
+    let unchecked: string | undefined;
     const confirmed = await until(doors, async () => {
       if (hash === null && heldSpent !== null) {
         /* Only a view that read the vault's notes can say the note has left: an unreadable one says nothing. */
@@ -3426,15 +3485,22 @@ async function sendAStepOut(doors: PayoutDoors, vault: Hex, s: {
         return null;
       }
       if (own === null) return null;
-      const answer = await doors.builder.confirmPayment({
-        vault, transactionHash: String(own.transactionHash).toLowerCase(), change: s.kept, events: own.events,
-        ...(s.merge ? { merge: true as const } : {}),
-      });
+      let answer: Awaited<ReturnType<typeof doors.builder.confirmPayment>>;
+      try {
+        answer = await doors.builder.confirmPayment({
+          vault, transactionHash: String(own.transactionHash).toLowerCase(), change: s.kept, events: own.events,
+          ...(s.merge ? { merge: true as const } : {}),
+        });
+      } catch (e) {
+        /* The check could not be made this time; the next look asks again, of a new worker if this one stopped. */
+        unchecked = whyAfterTheSend(e);
+        return null;
+      }
       return answer.state === 'not-yet' ? null : answer;
     });
     if (confirmed === null) {
       throw s.words.notYetSeen(vault, sent.txRef,
-        sendFailed ?? (hash === null ? 'the service could not name the transaction it sent' : undefined));
+        sendFailed ?? (hash === null ? 'the service could not name the transaction it sent' : unchecked));
     }
     if (confirmed.state === 'overtaken') {
       await doors.inFlight.forget(vault, claim).catch(() => { /* the next look finds its note gone from the record and forgets it */ });
@@ -3456,9 +3522,19 @@ async function sendAStepOut(doors: PayoutDoors, vault: Hex, s: {
     if (e instanceof PaymentNotYetSeen || e instanceof PaymentNotAsBuilt || e instanceof PaymentLandedUnrecorded
       || e instanceof MergeNotYetSeen || e instanceof MergeNotAsBuilt || e instanceof MergeLandedUnrecorded
       || e instanceof StepOvertaken) throw e;
-    throw s.words.notYetSeen(vault, sent.txRef, (e as Error)?.message ?? String(e));
+    throw s.words.notYetSeen(vault, sent.txRef, whyAfterTheSend(e));
   }
 }
+
+/**
+ * What a failure after a step was sent is called in the notice that the step
+ * may have been sent. A failed ask of the vault worker is named by its reason
+ * alone: its own sentence tells the person to try again, which a notice that
+ * must stop a second payment may never say.
+ */
+const whyAfterTheSend = (e: unknown): string => (e instanceof VaultAskFailed
+  ? `this page's check of it did not finish (${e.reason}${e.reason === 'answered' && e.workerName !== undefined ? `, ${e.workerName}` : ''})`
+  : (e as Error)?.message ?? String(e));
 
 /**
  * **ONE PERSON PAID PRIVATELY OUT OF THE COMPANY'S VAULT, AGAINST A ROUND THE

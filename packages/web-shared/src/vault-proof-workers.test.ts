@@ -2,12 +2,14 @@ import { afterEach, describe, expect, it, vi } from 'vitest';
 import {
   KEPT_IDLE_MS, PROOF_CEILING_MS, oneThreadWhenAThreadDoesNotLoad, proofProviderOnWorkers, provingOnWorkers,
 } from './vault-proof-workers.js';
+import { ProvingMaterialRefused } from './key-material.js';
 import { whyItFailed } from './why-it-failed.js';
 import type { ProofWorkerLike } from './vault-proof-workers.js';
 
 /*
  * **THE DEPOSIT'S PROOFS SIDE BY SIDE, AND THE SAME PROOFS.** Each call the
- * ledger makes gets a thread; the thread is handed exactly the bytes the call
+ * ledger makes gets a thread, up to the device's cores, and waits for one past
+ * that; the thread is handed exactly the bytes the call
  * carried; each answer goes back to the call that asked; the material comes
  * from the vault worker's own source. A thread that has checked a circuit is
  * the one that proves it next.
@@ -46,18 +48,43 @@ const handTimers = () => {
     get count() { return pending.size; },
   };
 };
+
+const clockTimers = () => {
+  let now = 0;
+  let next = 1;
+  const live = new Map<number, { run: () => void; at: number }>();
+  return {
+    set: (run: () => void, ms: number) => { const id = next++; live.set(id, { run, at: now + ms }); return id; },
+    clear: (id: unknown) => { live.delete(id as number); },
+    advance: (ms: number) => {
+      const target = now + ms;
+      for (;;) {
+        const due = [...live].filter(([, t]) => t.at <= target).sort((x, y) => x[1].at - y[1].at)[0];
+        if (due === undefined) break;
+        now = due[1].at;
+        live.delete(due[0]);
+        due[1].run();
+      }
+      now = target;
+    },
+  };
+};
+const spawnThread = () => new AThread() as unknown as ProofWorkerLike;
+const bytes = (n: number) => new Uint8Array([n]);
+const circuit = (n: number) => `midnight/zswap/circuit${n}`;
+const finishes = (t: AThread, value: unknown = bytes(0)): void => { t.says({ op: 'ready' }); t.says({ op: 'result', value }); };
 const settle = async (): Promise<void> => { for (let i = 0; i < 6; i += 1) await Promise.resolve(); };
 const DEPOSIT = 'contract:54ef/deposit?vk=aa';
 const OUTPUT = 'midnight/zswap/output';
 
-afterEach(() => { AThread.made = []; });
+afterEach(() => { AThread.made = []; vi.useRealTimers(); vi.unstubAllGlobals(); });
 
 describe('THE PAGE PROVES A DEPOSIT\'S PROOFS ON THREADS OF THEIR OWN', () => {
   it('the ledger\'s calls asked together run together, each on its own thread, each answered with its own proof', async () => {
     const p = provingOnWorkers(source(), () => new AThread() as unknown as ProofWorkerLike, handTimers());
     const check = p.check(new Uint8Array([1]), DEPOSIT);
     const output = p.prove(new Uint8Array([2]), OUTPUT, undefined);
-    /* RED WHEN: the two are put on one thread again, and their times add up. */
+    /* RED WHEN: the two are put on one thread, and their times add up. */
     expect(AThread.made).toHaveLength(2);
     const [a, b] = AThread.made as [AThread, AThread];
     /* Nothing is posted before a thread says it is listening. */
@@ -153,7 +180,7 @@ describe('THE PAGE PROVES A DEPOSIT\'S PROOFS ON THREADS OF THEIR OWN', () => {
     expect(AThread.made[2]!.terminated).toBe(true);
   });
 
-  it('where the vault worker cannot start a thread, it proves on its own thread as before', async () => {
+  it('where the vault worker cannot start a thread, it proves on the vault worker\'s own thread', async () => {
     const oneThread = { proveTx: async () => 'proved on one thread' };
     /* RED WHEN: a browser without threads in a worker is handed a provider that can never answer. */
     expect(await proofProviderOnWorkers(source(), {}, async () => oneThread)).toBe(oneThread);
@@ -196,5 +223,359 @@ describe('THE PAGE PROVES A DEPOSIT\'S PROOFS ON THREADS OF THEIR OWN', () => {
     expect(proved).toEqual(['workers:a', 'workers:b', 'one:b', 'one:c']);
     expect(onOneThreadMade).toBe(1);
     expect(onWorkers.stopped).toBe(1);
+  });
+});
+
+describe('THE PAGE HOLDS THE PROOF THREADS TO THE DEVICE\'S CORES', () => {
+  /* RED WHEN: more proofs than the device has cores run at once, or a finished proof's thread stays alive beside the new one. */
+  it('a proof asked beyond the cores waits, and the thread a finished proof leaves is let go for it', async () => {
+    const timers = handTimers();
+    const p = provingOnWorkers(source(), spawnThread, timers, 2);
+    const first = p.prove(bytes(1), circuit(1));
+    const second = p.prove(bytes(2), circuit(2));
+    const third = p.prove(bytes(3), circuit(3));
+
+    expect(AThread.made).toHaveLength(2);
+    const [a, b] = AThread.made as [AThread, AThread];
+    a.says({ op: 'ready' }); b.says({ op: 'ready' });
+    expect(timers.count).toBe(2);
+    a.says({ op: 'result', value: bytes(11) });
+    expect(await first).toEqual(bytes(11));
+
+    expect(AThread.made).toHaveLength(3);
+    const c = AThread.made[2]!;
+    expect(a.terminated).toBe(true);
+    expect(AThread.made.filter((t) => !t.terminated)).toHaveLength(2);
+    c.says({ op: 'ready' });
+    expect(c.orders).toEqual([{ op: 'prove', preimage: bytes(3), overwriteBindingInput: undefined }]);
+    b.says({ op: 'result', value: bytes(22) }); c.says({ op: 'result', value: bytes(33) });
+    expect(await second).toEqual(bytes(22));
+    expect(await third).toEqual(bytes(33));
+    expect(AThread.made.filter((t) => !t.terminated).length).toBeLessThanOrEqual(2);
+  });
+
+  /* RED WHEN: a proof's ten minutes start when it is asked for and not when it starts running. */
+  it('a proof that waits for a place is not timed until it starts', async () => {
+    const timers = handTimers();
+    const p = provingOnWorkers(source(), spawnThread, timers, 1);
+    void p.prove(bytes(1), circuit(1)).catch(() => {});
+    const waits = p.prove(bytes(2), circuit(2));
+    void waits.catch(() => {});
+
+    expect(timers.count).toBe(1);
+    AThread.made[0]!.says({ op: 'ready' });
+    AThread.made[0]!.says({ op: 'failure', error: 'no proof' });
+    expect(AThread.made).toHaveLength(2);
+    expect(timers.count).toBe(1);
+    AThread.made[1]!.says({ op: 'ready' });
+    timers.fire(PROOF_CEILING_MS);
+    await expect(waits).rejects.toThrow(/took more than ten minutes/u);
+  });
+
+  /* RED WHEN: a proof that ran past its time leaves the proofs behind it waiting for ever. */
+  it('a proof that runs past its time makes room for the one waiting behind it', async () => {
+    const timers = handTimers();
+    const p = provingOnWorkers(source(), spawnThread, timers, 1);
+    const slow = p.prove(bytes(1), circuit(1));
+    const next = p.prove(bytes(2), circuit(2));
+    AThread.made[0]!.says({ op: 'ready' });
+    timers.fire(PROOF_CEILING_MS);
+    await expect(slow).rejects.toThrow(/took more than ten minutes/u);
+
+    expect(AThread.made).toHaveLength(2);
+    finishes(AThread.made[1]!, bytes(8));
+    expect(await next).toEqual(bytes(8));
+  });
+
+  /* RED WHEN: a kept thread keeps its place and the next proof waits behind it, or both stay alive. */
+  it('a thread kept for another circuit never holds the place a new proof needs', async () => {
+    const p = provingOnWorkers(source(), spawnThread, handTimers(), 1);
+    const first = p.prove(bytes(1), circuit(1));
+    finishes(AThread.made[0]!);
+    await first;
+    expect(p.idle).toBe(1);
+
+    const second = p.prove(bytes(2), circuit(2));
+
+    expect(AThread.made).toHaveLength(2);
+    expect(AThread.made[0]!.terminated).toBe(true);
+    expect(p.idle).toBe(0);
+    finishes(AThread.made[1]!, bytes(7));
+    expect(await second).toEqual(bytes(7));
+  });
+
+  /* RED WHEN: the device's reported cores are not read, or the number taken when it says nothing is not two. */
+  it('the threads are held to the cores the worker\'s scope reports, and to two where it does not say', async () => {
+    vi.useFakeTimers();
+    vi.stubGlobal('Worker', AThread);
+    const tx = (n: number) => ({ prove: (provider: { prove(p: Uint8Array, k: string): Promise<unknown> }) => provider.prove(bytes(n), circuit(n)) });
+    const asks = async (navigator: unknown, proofs: number): Promise<number> => {
+      AThread.made = [];
+      const prover = await proofProviderOnWorkers(source(), { Worker: AThread, navigator } as never, async () => ({ proveTx: async () => 'one thread' }));
+      for (let n = 1; n <= proofs; n += 1) void prover.proveTx(tx(n) as never).catch(() => {});
+      return AThread.made.length;
+    };
+
+    expect(await asks({ hardwareConcurrency: 3 }, 5)).toBe(3);
+    expect(await asks({ hardwareConcurrency: 1 }, 5)).toBe(1);
+    expect(await asks({ hardwareConcurrency: 16 }, 5)).toBe(5);
+    for (const unsaid of [undefined, {}, { hardwareConcurrency: 0 }, { hardwareConcurrency: Number.NaN }, { hardwareConcurrency: -4 }, { hardwareConcurrency: 1.5 }, { hardwareConcurrency: '8' }]) {
+      expect(await asks(unsaid, 5)).toBe(2);
+    }
+  });
+
+  /* RED WHEN: the failure to load is not seen by the provider, or the kept threads stay alive after the one-thread fallback. */
+  it('a thread that fails to load sends the whole transaction to one thread, as every one after it, and lets the kept threads go', async () => {
+    vi.useFakeTimers();
+    vi.stubGlobal('Worker', AThread);
+    const oneThread = { proveTx: vi.fn(async () => 'proved on one thread') };
+    const inThread = vi.fn(async () => oneThread);
+    const prover = await proofProviderOnWorkers(source(), { Worker: AThread }, inThread);
+    const pair = {
+      prove: (provider: { prove(p: Uint8Array, k: string): Promise<unknown> }) =>
+        Promise.all([provider.prove(bytes(1), circuit(1)), provider.prove(bytes(2), circuit(2))]),
+    };
+
+    const proved = prover.proveTx(pair as never);
+    const [kept, broken] = AThread.made as [AThread, AThread];
+    finishes(kept);
+    broken.breaks('failed to fetch the worker script');
+
+    expect(await proved).toBe('proved on one thread');
+    expect(inThread).toHaveBeenCalledTimes(1);
+    expect(kept.terminated).toBe(true);
+    expect(await prover.proveTx(pair as never)).toBe('proved on one thread');
+    expect(AThread.made).toHaveLength(2);
+    expect(oneThread.proveTx).toHaveBeenCalledTimes(2);
+  });
+});
+
+describe('EACH ANSWER REACHES THE THREAD THAT ASKED, AND EVERY KEPT THREAD AND TIMER IS ACCOUNTED FOR', () => {
+  /* RED WHEN: an answer goes to a thread other than the one that asked. */
+  it('two threads asking under the same number at once are each answered for their own circuit and size', async () => {
+    const p = provingOnWorkers(source(), spawnThread, handTimers(), 2);
+    void p.prove(bytes(1), circuit(1)).catch(() => {});
+    void p.prove(bytes(2), circuit(2)).catch(() => {});
+    const [a, b] = AThread.made as [AThread, AThread];
+    a.says({ op: 'ready' }); b.says({ op: 'ready' });
+    a.says({ op: 'lookupKey', askId: 0, keyLocation: circuit(1) });
+    b.says({ op: 'lookupKey', askId: 0, keyLocation: circuit(2) });
+    a.says({ op: 'getParams', askId: 1, k: 9 });
+    b.says({ op: 'getParams', askId: 1, k: 15 });
+    await settle();
+
+    const answered = (t: AThread, askId: number) => t.sent.filter((m) => (m as { op: string; askId?: number }).op === 'answer' && (m as { askId: number }).askId === askId) as { ok: boolean; value: { loc?: string } | Uint8Array }[];
+    expect(answered(a, 0)).toHaveLength(1);
+    expect(answered(b, 0)).toHaveLength(1);
+    expect((answered(a, 0)[0]!.value as { loc: string }).loc).toBe(circuit(1));
+    expect((answered(b, 0)[0]!.value as { loc: string }).loc).toBe(circuit(2));
+    expect(answered(a, 1)[0]!.value).toEqual(bytes(9));
+    expect(answered(b, 1)[0]!.value).toEqual(bytes(15));
+  });
+
+  /* RED WHEN: a kept thread that broke while it waited is handed the next proof of its circuit, and that proof hangs until its time limit. */
+  it('a kept thread that broke while it waited is never given a proof, and a new thread takes it', async () => {
+    const p = provingOnWorkers(source(), spawnThread, handTimers(), 2);
+    const first = p.prove(bytes(1), circuit(1));
+    finishes(AThread.made[0]!);
+    await first;
+    expect(p.idle).toBe(1);
+    AThread.made[0]!.breaks('the thread stopped while it waited');
+
+    const next = p.prove(bytes(2), circuit(1));
+
+    expect(AThread.made).toHaveLength(2);
+    expect(p.didNotLoad).toBe(false);
+    AThread.made[1]!.says({ op: 'ready' });
+    expect(AThread.made[0]!.orders).toHaveLength(1);
+    expect(AThread.made[1]!.orders).toEqual([{ op: 'prove', preimage: bytes(2), overwriteBindingInput: undefined }]);
+    AThread.made[1]!.says({ op: 'result', value: bytes(6) });
+    expect(await next).toEqual(bytes(6));
+  });
+
+  /* RED WHEN: a refusal of one thread's key is sent to another thread, and the thread that asked waits for ever. */
+  it('a refusal of a key reaches the thread that asked and no other', async () => {
+    const s = source();
+    s.lookupKey.mockRejectedValueOnce(new Error('this key is not served'));
+    const p = provingOnWorkers(s, spawnThread, handTimers(), 2);
+    void p.prove(bytes(1), circuit(1)).catch(() => {});
+    void p.prove(bytes(2), circuit(2)).catch(() => {});
+    const [a, b] = AThread.made as [AThread, AThread];
+    a.says({ op: 'ready' }); b.says({ op: 'ready' });
+    a.says({ op: 'lookupKey', askId: 0, keyLocation: circuit(1) });
+    b.says({ op: 'lookupKey', askId: 0, keyLocation: circuit(2) });
+    await settle();
+
+    expect(a.sent).toContainEqual({ op: 'answer', askId: 0, ok: false, error: 'this key is not served' });
+    expect(b.sent.filter((m) => (m as { ok?: boolean }).ok === false)).toEqual([]);
+    expect(b.sent.filter((m) => (m as { ok?: boolean }).ok === true)).toHaveLength(1);
+  });
+
+  /* RED WHEN: a second circuit's kept thread replaces or refuses the first's. */
+  it('one thread is kept for each circuit at once, and each is the one its circuit\'s next proof uses', async () => {
+    const p = provingOnWorkers(source(), spawnThread, handTimers(), 2);
+    const first = p.prove(bytes(1), circuit(1));
+    const second = p.prove(bytes(2), circuit(2));
+    for (const t of AThread.made) finishes(t);
+    await first; await second;
+
+    expect(p.idle).toBe(2);
+    const [a, b] = AThread.made as [AThread, AThread];
+    void p.prove(bytes(3), circuit(1)).catch(() => {});
+    void p.prove(bytes(4), circuit(2)).catch(() => {});
+
+    expect(AThread.made).toHaveLength(2);
+    expect(a.orders.at(-1)).toEqual({ op: 'prove', preimage: bytes(3), overwriteBindingInput: undefined });
+    expect(b.orders.at(-1)).toEqual({ op: 'prove', preimage: bytes(4), overwriteBindingInput: undefined });
+  });
+
+  /* RED WHEN: a time limit or a kept thread's timer is left running after the proof ended or the page stopped. */
+  it('a proof\'s time limit is cleared when it ends either way, and a kept thread\'s time is cleared when it is let go', async () => {
+    const timers = handTimers();
+    const p = provingOnWorkers(source(), spawnThread, timers, 2);
+    const done = p.prove(bytes(1), circuit(1));
+    const failed = p.prove(bytes(2), circuit(2));
+    void failed.catch(() => {});
+    AThread.made[0]!.says({ op: 'ready' });
+    AThread.made[1]!.says({ op: 'ready' });
+    expect(timers.count).toBe(2);
+    AThread.made[1]!.says({ op: 'failure', error: 'no proof' });
+    expect(timers.count).toBe(1);
+    AThread.made[0]!.says({ op: 'result', value: bytes(5) });
+    await done;
+    expect(timers.count).toBe(1);
+
+    const other = p.prove(bytes(3), circuit(3));
+    finishes(AThread.made[2]!);
+    await other;
+    expect(p.idle).toBe(2);
+    expect(timers.count).toBe(2);
+    p.stop();
+
+    expect(p.idle).toBe(0);
+    expect(timers.count).toBe(0);
+    expect(AThread.made.every((t) => t.terminated)).toBe(true);
+  });
+
+  /* RED WHEN: a thread is kept after the page stopped. */
+  it('a proof that ends after the page stopped lets its thread go and keeps nothing', async () => {
+    const timers = handTimers();
+    const p = provingOnWorkers(source(), spawnThread, timers, 2);
+    const proof = p.prove(bytes(1), circuit(1));
+    AThread.made[0]!.says({ op: 'ready' });
+    p.stop();
+    AThread.made[0]!.says({ op: 'result', value: bytes(5) });
+    await proof;
+
+    expect(AThread.made[0]!.terminated).toBe(true);
+    expect(p.idle).toBe(0);
+    expect(timers.count).toBe(0);
+  });
+});
+
+describe('A PROOF IS GIVEN TEN MINUTES OF SILENCE, AND A REFUSED KEY IS SAID AS IT WAS REFUSED', () => {
+  const MINUTE = 60_000;
+  const outcome = (proof: Promise<unknown>) => proof.then(() => 'proved', (e: unknown) => e);
+
+  /* RED WHEN: ten minutes run from the start of the proof while its thread waits for a key. */
+  it('a thread that asks the page for its key is given ten more minutes from the ask', async () => {
+    const clock = clockTimers();
+    const s = source();
+    s.lookupKey.mockImplementation(() => new Promise<never>(() => {}));
+    const proof = outcome(new Promise((resolve) => { resolve(provingOnWorkers(s, spawnThread, clock, 1).prove(bytes(1), circuit(1))); }));
+    const t = AThread.made[0]!;
+    t.says({ op: 'ready' });
+    clock.advance(9 * MINUTE);
+    t.says({ op: 'lookupKey', askId: 0, keyLocation: circuit(1) });
+    clock.advance(9 * MINUTE);
+
+    expect(t.terminated).toBe(false);
+    clock.advance(MINUTE + 1);
+    expect(t.terminated).toBe(true);
+    expect(((await proof) as Error).message).toMatch(/took more than ten minutes/u);
+  });
+
+  /* RED WHEN: the arrival of a key does not give the proof ten more minutes. */
+  it('a thread whose key arrives after nine minutes is given ten more minutes from the answer', async () => {
+    const clock = clockTimers();
+    const s = source();
+    let arrive: (v: never) => void = () => {};
+    s.lookupKey.mockImplementation(() => new Promise<never>((resolve) => { arrive = resolve; }));
+    const p = provingOnWorkers(s, spawnThread, clock, 1);
+    const proof = outcome(p.prove(bytes(1), circuit(1)));
+    const t = AThread.made[0]!;
+    t.says({ op: 'ready' });
+    t.says({ op: 'lookupKey', askId: 0, keyLocation: circuit(1) });
+    clock.advance(9 * MINUTE);
+    arrive({ loc: circuit(1) } as never);
+    await settle();
+    clock.advance(9 * MINUTE);
+
+    expect(t.terminated).toBe(false);
+    clock.advance(MINUTE + 1);
+    expect(t.terminated).toBe(true);
+    expect(((await proof) as Error).message).toMatch(/took more than ten minutes/u);
+  });
+
+  /* RED WHEN: ten minutes run from the start of the proof while its thread waits for a size. */
+  it('a thread that asks for its size is given ten more minutes from the ask', async () => {
+    const clock = clockTimers();
+    const p = provingOnWorkers(source(), spawnThread, clock, 1);
+    const proof = outcome(p.prove(bytes(1), circuit(1)));
+    const t = AThread.made[0]!;
+    t.says({ op: 'ready' });
+    clock.advance(9 * MINUTE);
+    t.says({ op: 'getParams', askId: 0, k: 15 });
+    clock.advance(9 * MINUTE);
+
+    expect(t.terminated).toBe(false);
+    clock.advance(MINUTE + 1);
+    expect(t.terminated).toBe(true);
+    expect(((await proof) as Error).message).toMatch(/took more than ten minutes/u);
+  });
+
+  /* RED WHEN: a refused key gives the proof no more time, though its thread was heard from. */
+  it('a thread whose key is refused after nine minutes is given ten more minutes from the refusal', async () => {
+    const clock = clockTimers();
+    const s = source();
+    let refuse: (e: Error) => void = () => {};
+    s.lookupKey.mockImplementation(() => new Promise<never>((_resolve, reject) => { refuse = reject; }));
+    const p = provingOnWorkers(s, spawnThread, clock, 1);
+    const proof = outcome(p.prove(bytes(1), circuit(1)));
+    const t = AThread.made[0]!;
+    t.says({ op: 'ready' });
+    t.says({ op: 'lookupKey', askId: 0, keyLocation: circuit(1) });
+    clock.advance(9 * MINUTE);
+    refuse(new Error('this key is not served'));
+    await settle();
+    clock.advance(9 * MINUTE);
+
+    expect(t.terminated).toBe(false);
+    clock.advance(MINUTE + 1);
+    expect(t.terminated).toBe(true);
+    expect(((await proof) as Error).message).toMatch(/took more than ten minutes/u);
+  });
+
+  /* RED WHEN: a refusal of a key reaches the screen as a failure to work out the proof, or another failure is shown as a refusal. */
+  it('a proof that failed because the device refused its key is rejected with that refusal, and any other failure is not', async () => {
+    const s = source();
+    const refusal = new ProvingMaterialRefused('other-bytes-served', circuit(1), 'The key served for this circuit is not this build\'s.');
+    s.lookupKey.mockRejectedValueOnce(refusal).mockRejectedValueOnce(new Error('the network dropped'));
+    const p = provingOnWorkers(s, spawnThread, handTimers(), 2);
+    const refused = outcome(p.prove(bytes(1), circuit(1)));
+    const dropped = outcome(p.prove(bytes(2), circuit(2)));
+    const [a, b] = AThread.made as [AThread, AThread];
+    a.says({ op: 'ready' }); b.says({ op: 'ready' });
+    a.says({ op: 'lookupKey', askId: 0, keyLocation: circuit(1) });
+    await settle();
+    a.says({ op: 'failure', error: refusal.message });
+    b.says({ op: 'lookupKey', askId: 0, keyLocation: circuit(2) });
+    await settle();
+    b.says({ op: 'failure', error: 'the network dropped' });
+
+    expect(await refused).toBe(refusal);
+    const other = (await dropped) as Error;
+    expect(other).not.toBe(refusal);
+    expect(other.message).toMatch(/^This device could not work out the proof/u);
   });
 });
