@@ -290,6 +290,8 @@ describe.skipIf(!KEYS_ON_DISK)('A COMPANY VAULT, FROM THE SIGNER\'S DEVICE [need
       /* The company account beside the vault, as the worker loads it: its compiled contract, its functions and its ledger. */
       accountCompiled, accountZkConfig: accountZk, accountPure: (accountModule as any).pureCircuits,
       accountLedger: (accountModule as any).ledger,
+      /* What a vault's account is held against before money goes in or out: the compiled account's own digests. */
+      accountExpectedVk: (accountModule as any).expectedVk,
       /* What a vault's first secret run is made again with, where its approval is built. */
       vaultPure: (vaultModule as any).pureCircuits,
       /* The vault's keys as the worker checks them before reading a vault as it was born. */

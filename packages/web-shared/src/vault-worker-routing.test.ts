@@ -2,7 +2,7 @@ import { describe, it, expect } from 'vitest';
 import { accountCircuitsBeside, networkCircuitsBeside } from './vault-worker-entry.js';
 import type { ArtefactSource } from './key-material.js';
 import {
-  ACCOUNT_CIRCUITS_A_DEVICE_CHARGES, ACCOUNT_CIRCUITS_A_DEVICE_GOVERNS, ACCOUNT_CIRCUITS_A_VAULT_CALLS, ACCOUNT_CIRCUITS_SERVED_TO_A_DEVICE, VAULT_CIRCUITS,
+  ACCOUNT_CIRCUITS_A_DEVICE_ANCHORS, ACCOUNT_CIRCUITS_A_DEVICE_CHARGES, ACCOUNT_CIRCUITS_A_DEVICE_GOVERNS, ACCOUNT_CIRCUITS_A_VAULT_CALLS, ACCOUNT_CIRCUITS_SERVED_TO_A_DEVICE, VAULT_CIRCUITS,
 } from '../../../src/midnight/vault-contract.js';
 
 /*
@@ -18,7 +18,7 @@ const source = (name: string, log: string[]): ArtefactSource => ({
 const at = (circuit: string, address = 'ab'.repeat(32)) => `contract:${address}/${circuit}?vk=${'0f'.repeat(32)}`;
 
 describe('WHERE A PAYMENT OUT\'S PROVING MATERIAL IS FETCHED FROM', () => {
-  it('the account\'s receipt step from the account\'s folder, the vault\'s own and the network\'s where they always were', async () => {
+  it('the account\'s receipt step from the account\'s folder, the vault\'s own and the network\'s from their own folders', async () => {
     /* RED WHEN: the account's circuits are not routed apart - recordPaymentFromVault is then asked of the vault's folder, which has none. */
     const log: string[] = [];
     const routed = networkCircuitsBeside(accountCircuitsBeside(source('vault', log), source('account', log)), source('network', log));
@@ -45,14 +45,25 @@ describe('WHERE A PAYMENT OUT\'S PROVING MATERIAL IS FETCHED FROM', () => {
     ]);
   });
 
+  it('an anchor and its recovery are the account\'s own circuits and are fetched from the account\'s folder', async () => {
+    /* RED WHEN: anchor or recoverAnchor is asked of the vault's folder, which has neither, so no record is ever anchored from a device. */
+    const log: string[] = [];
+    const routed = networkCircuitsBeside(accountCircuitsBeside(source('vault', log), source('account', log)), source('network', log));
+    await routed.lookupKey(at('anchor', 'c0'.repeat(32)));
+    await routed.lookupKey(at('recoverAnchor', 'c0'.repeat(32)));
+    expect(log.map((l) => l.split(' ').slice(0, 2).join(' '))).toEqual(['account key', 'account key']);
+  });
+
   it('NO VAULT CIRCUIT SHARES A NAME WITH AN ACCOUNT CIRCUIT SERVED TO A DEVICE, which is what routing by name rests on', () => {
-    /* RED WHEN: the served list is not exactly these fourteen, or a vault circuit is named like one of them. */
+    /* RED WHEN: the served list is not exactly the lists above, or a vault circuit is named like one of them. */
     /* A vault's creation adopts it on the account from the device that made it; a company's creation seals its pay-record key from its founding signer's. */
     /* A withdrawal, a change of one vault's own approvals needed, a vault's spending policy and the approvals a policy change needs are proved on a signer's device too. */
     expect(ACCOUNT_CIRCUITS_A_DEVICE_GOVERNS).toEqual(['propose', 'approve', 'amendSigner', 'setThreshold', 'adopt', 'sealPayKey', 'cancel', 'setVaultThreshold', 'setPolicy', 'setPolicyBar']);
     /* Charging an approved run to its vault's period is proved on the paying signer's device. */
     expect(ACCOUNT_CIRCUITS_A_DEVICE_CHARGES).toEqual(['clearRun']);
-    expect([...ACCOUNT_CIRCUITS_SERVED_TO_A_DEVICE].sort()).toEqual(['adopt', 'amendSigner', 'approve', 'approveVaultChange', 'cancel', 'clearRun', 'propose', 'recordBatchFromVault', 'recordPaymentFromVault', 'sealPayKey', 'setPolicy', 'setPolicyBar', 'setThreshold', 'setVaultThreshold']);
+    /* The company's record anchor and its recovery are proved on a signer's device. */
+    expect(ACCOUNT_CIRCUITS_A_DEVICE_ANCHORS).toEqual(['anchor', 'recoverAnchor']);
+    expect([...ACCOUNT_CIRCUITS_SERVED_TO_A_DEVICE].sort()).toEqual(['adopt', 'amendSigner', 'anchor', 'approve', 'approveVaultChange', 'cancel', 'clearRun', 'propose', 'recordBatchFromVault', 'recordPaymentFromVault', 'recoverAnchor', 'sealPayKey', 'setPolicy', 'setPolicyBar', 'setThreshold', 'setVaultThreshold']);
     expect((VAULT_CIRCUITS as readonly string[]).filter((c) => ACCOUNT_CIRCUITS_SERVED_TO_A_DEVICE.includes(c))).toEqual([]);
   });
 

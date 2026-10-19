@@ -2,8 +2,9 @@
  * **WHAT A VAULT'S STATE HOLDS, WHETHER ITS CIRCUITS ARE THIS BUILD'S, AND
  * WHETHER IT WAS BORN HELD** - pure, so the service reading a deploy before it
  * pays for one, the service reading the chain's state before money is carried
- * in, and a signer's device reading a vault's deploy before it is adopted, make
- * the one check, in one place.
+ * in, a signer's device reading a vault's deploy before it is adopted, and a
+ * device reading a vault and its account before money goes in or out, make the
+ * one check, in one place.
  */
 import { VAULT_CIRCUITS } from './vault-contract.js';
 import { sameCommittee, type Committee } from './vault-committee.js';
@@ -71,6 +72,45 @@ export const startingLedgerFrom = (l: {
 });
 
 /**
+ * Which circuit of a contract's state is not the one wanted, or null when every
+ * one is. The names must be exactly the wanted set, and each circuit's verifying
+ * key on the chain must pass `isThisBuilds`; a state whose circuits cannot be
+ * read, or a circuit with no key, is refused. `builtBy` names whose build the
+ * keys are held against, in the refusal's own words.
+ */
+function circuitThatIsNotWanted(
+  state: unknown, wanted: readonly string[], isThisBuilds: (name: string, onChain: Uint8Array) => boolean,
+  what: string, whose: string, builtBy: string,
+): { readonly why: string; readonly circuit: string | null } | null {
+  const s = state as {
+    operations?: () => unknown[];
+    operation?: (name: string) => { verifierKey?: Uint8Array } | undefined;
+  } | null;
+  let names: string[];
+  try {
+    names = (s?.operations?.() ?? []).map(nameOf).sort();
+  } catch {
+    return { why: `${what}: its circuits cannot be read. Nothing was sent.`, circuit: null };
+  }
+  const sorted = [...wanted].sort();
+  if (names.length !== sorted.length || names.some((n, i) => n !== sorted[i])) {
+    return { why: `${what}: it has circuits other than ${whose} own. Nothing was sent.`, circuit: null };
+  }
+  for (const name of sorted) {
+    let onChain: unknown;
+    try { onChain = s?.operation?.(name)?.verifierKey; } catch { onChain = undefined; }
+    if (!(onChain instanceof Uint8Array) || !isThisBuilds(name, onChain)) {
+      return {
+        why: `${what}: its '${name}' circuit is not the one ${builtBy} compiled, `
+          + 'so it would accept proofs this product never made. Nothing was sent.',
+        circuit: name,
+      };
+    }
+  }
+  return null;
+}
+
+/**
  * **THE VAULT'S CIRCUITS ARE THIS BUILD'S, BYTE FOR BYTE**, or the sentence
  * that says they are not. Read on a deploy before it is paid for, and on the
  * chain's state before any money is carried in: a key that held the vault's
@@ -80,30 +120,35 @@ export function circuitsRefusal(
   state: unknown, verifierKeys: ReadonlyMap<string, Uint8Array>, what: string,
   circuits: readonly string[] = VAULT_CIRCUITS, whose = 'the vault\'s',
 ): string | null {
-  const s = state as {
-    operations?: () => unknown[];
-    operation?: (name: string) => { verifierKey?: Uint8Array } | undefined;
-  } | null;
-  let names: string[];
-  try {
-    names = (s?.operations?.() ?? []).map(nameOf).sort();
-  } catch {
-    return `${what}: its circuits cannot be read. Nothing was sent.`;
-  }
-  const wanted = [...circuits].sort();
-  if (names.length !== wanted.length || names.some((n, i) => n !== wanted[i])) {
-    return `${what}: it has circuits other than ${whose} own. Nothing was sent.`;
-  }
-  for (const name of wanted) {
-    let onChain: unknown;
-    try { onChain = s?.operation?.(name)?.verifierKey; } catch { onChain = undefined; }
+  return circuitThatIsNotWanted(state, circuits, (name, onChain) => {
     const compiled = verifierKeys.get(name);
-    if (!(onChain instanceof Uint8Array) || compiled === undefined || !sameBytes(onChain, compiled)) {
-      return `${what}: its '${name}' circuit is not the one this service's build compiled, `
-        + 'so it would accept proofs this product never made. Nothing was sent.';
-    }
+    return compiled !== undefined && sameBytes(onChain, compiled);
+  }, what, whose, 'this service\'s build')?.why ?? null;
+}
+
+/**
+ * **EVERY CIRCUIT OF A CONTRACT'S STATE IS THE ONE THIS APP WAS BUILT WITH**,
+ * or which one is not and why. Held against the digests the compiled contract
+ * itself carries (`expectedVk`, circuit name to the SHA-256 of its verifying
+ * key): the names must be exactly that set and each key on the chain must hash
+ * to its digest. A build that carries no digests checks nothing, so it refuses
+ * every state. Trusts only the state as read and the compiled contract.
+ */
+export function circuitsNotThisBuilds(
+  state: unknown, expectedVk: Readonly<Record<string, string>> | undefined,
+  digest: (bytes: Uint8Array) => Uint8Array, what: string, whose: string,
+): { readonly why: string; readonly circuit: string | null } | null {
+  const wanted = expectedVk === undefined ? [] : Object.keys(expectedVk);
+  if (wanted.length === 0) {
+    return {
+      why: `${what}: this app was built without the digests of ${whose} circuits, so none of them can be checked. Nothing was sent.`,
+      circuit: null,
+    };
   }
-  return null;
+  const hex = (b: Uint8Array) => Array.from(b, (x) => x.toString(16).padStart(2, '0')).join('');
+  return circuitThatIsNotWanted(state, wanted,
+    (name, onChain) => hex(digest(onChain)) === String(expectedVk![name]).toLowerCase(),
+    what, whose, 'this app\'s build');
 }
 
 /**

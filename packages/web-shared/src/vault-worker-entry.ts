@@ -4,12 +4,16 @@
  *
  * The ledger, the contract runtime and the prover are WebAssembly and are not
  * allowed on the page; this thread is where they load, and only once something
- * asks. The page talks to it through `vault-worker-client.ts`, one request and
- * one answer at a time, each carrying the id it answers.
+ * asks. The page talks to it through `vault-worker-client.ts`: each request
+ * gets one answer carrying the id it answers, several may be in hand at once,
+ * and the worker tells the page as each proof and each fetch of proving
+ * material starts and ends, so the page can time it and show it.
  *
- * Nothing this worker is asked for leaves it except the answer to the page: it
- * fetches the vault's public proving material from this application's own
- * origin and sends nothing anywhere.
+ * Nothing this worker is asked for leaves it except the answer and those words
+ * to the page: it fetches the vault's public proving material from this application's own
+ * origin and sends nothing anywhere. It proves only with material that hashes to
+ * what this build was compiled with (`thisBuildsSources`): the service serves the
+ * files, and is never trusted to say which ones are right.
  */
 import {
   buildAccountDeploy, buildVaultBornHeld, buildCommitteeHandover, buildDeposit, buildPayout, creationCarriedAgain, finishedCreation, buildPublicDeposit, buildPublicPayout, buildSetNonceSecret, buildVaultDeploy,
@@ -26,7 +30,11 @@ import {
 } from './governed-call-builder.js';
 import { buildClearRun, periodTotalOf, runChargeStandingOf } from './run-charge-builder.js';
 import { detailsOfKind } from '../../../src/midnight/vault-details.js';
-import { circuitOf, httpKeyMaterialSource, IndexedDbArtefactCache, type ArtefactSource } from './key-material.js';
+import {
+  circuitOf, contractPins, httpKeyMaterialSource, IndexedDbArtefactCache, networkPins, ProvingMaterialRefused,
+  type ArtefactSource, type CompiledManifest, type HttpKeyMaterialOptions, type NetworkKeyPins,
+} from './key-material.js';
+import { publishedByMidnight } from '../../../src/midnight/proving-parameter-digests.js';
 import { ACCOUNT_CIRCUITS_SERVED_TO_A_DEVICE } from '../../../src/midnight/vault-contract.js';
 import { zkConfigOver, byCircuitName } from './zk-config.js';
 import type {
@@ -59,10 +67,13 @@ const toBase64 = (bytes: Uint8Array): string => {
   return btoa(binary);
 };
 
+/** The folder the network's own shielded circuits are served from and pinned under, the same name in both. */
+const NETWORK_KEYS_FOLDER = 'zswap/9';
+
 /**
- * **A DEPOSIT ALSO PROVES THE NETWORK'S OWN SHIELDED-OUTPUT CIRCUIT**, which the
- * prover asks for as `midnight/zswap/output`. Those three are served beside the
- * vault's own, and every other name goes to the vault's.
+ * **A PRIVATE DEPOSIT OR PAYMENT ALSO PROVES THE NETWORK'S OWN SHIELDED CIRCUITS**
+ * (`spend`, `output`, `sign`), asked for as `midnight/zswap/<circuit>`. They are
+ * served beside the vault's own, and every other name goes to the vault's.
  */
 export const networkCircuitsBeside = (vault: ArtefactSource, network: ArtefactSource): ArtefactSource => {
   const which = (keyLocation: string) => (keyLocation.startsWith('midnight/zswap/') ? network : vault);
@@ -136,6 +147,12 @@ export type WorkerDeps = Omit<VaultBuilderDeps, 'network'> & { vault: any; accou
      * provider asks.
      */
     accountKeys: { getVerifierKey(c: string): Promise<Uint8Array>; getVerifierKeys(cs: readonly string[]): Promise<Array<[string, Uint8Array]>> };
+    /**
+     * The compiled account's own digest of each of its circuits' verifying keys:
+     * what a vault's account is held against before money goes in or out. Absent,
+     * every such read refuses.
+     */
+    accountExpectedVk?: Readonly<Record<string, string>>;
     /** Every vault circuit's verifying key, checked the same way against the compiled vault's own digests. */
     vaultKeys: { getVerifierKey(c: string): Promise<Uint8Array>; getVerifierKeys(cs: readonly string[]): Promise<Array<[string, Uint8Array]>> };
     /** Where a vault is read from, at the indexer the wallet names; absent, the indexer itself. A test hands its own. */
@@ -221,6 +238,34 @@ async function roundsOnChainHere(
   const { steps } = await historyHere(d, ask, 'where the company\'s proposals stand on the chain was');
   return Object.fromEntries(roundsOnChainIn(d, steps, ask.chainIds));
 }
+/** What this copy of the app was compiled with, read from its own files and never from the service. */
+export interface ThisBuild {
+  readonly vault: { readonly expectedVk: Readonly<Record<string, string>>; readonly manifest: CompiledManifest };
+  readonly account: { readonly expectedVk: Readonly<Record<string, string>>; readonly manifest: CompiledManifest };
+  readonly network: NetworkKeyPins;
+}
+
+/**
+ * **THE ONE SOURCE EVERY PROOF, DEPLOY AND KEY CHECK IN THIS WORKER READS ITS
+ * MATERIAL FROM**, each folder checked against this build: the vault's and the
+ * company account's against their compiled digests, the network's shielded
+ * circuits against their pins, and the public parameters against Midnight's
+ * published digests. `source` is what the prover and the deploys read; `vault`
+ * and `account` are the same checked sources, for the verifying keys a creation
+ * reads on its own.
+ */
+export const thisBuildsSources = (options: Omit<HttpKeyMaterialOptions, 'pins'>, build: ThisBuild) => {
+  const vault = httpKeyMaterialSource(VAULT_ARTEFACT_BASE, {
+    ...options, pins: contractPins('the vault', build.vault.expectedVk, build.vault.manifest, publishedByMidnight),
+  });
+  const account = httpKeyMaterialSource(`${VAULT_ARTEFACT_BASE}/account`, {
+    ...options, pins: contractPins('the company account', build.account.expectedVk, build.account.manifest),
+  });
+  const network = httpKeyMaterialSource(`${VAULT_ARTEFACT_BASE}/builtin/${NETWORK_KEYS_FOLDER}`, {
+    ...options, pins: networkPins('the network\'s shielded transfers', build.network, NETWORK_KEYS_FOLDER),
+  });
+  return { source: networkCircuitsBeside(accountCircuitsBeside(vault, account), network), vault, account };
+};
 
 /**
  * **A CONTRACT'S VERIFYING KEYS, EACH CHECKED AGAINST THE DIGEST ITS COMPILED
@@ -302,12 +347,118 @@ const standingToWire = (s: StartStanding): StartStandingOnTheWire => {
   };
 };
 
+/** Posts a word to the page; a word that cannot be posted is dropped, since a word is never an answer. */
+const toldThePage = (scope: { postMessage(m: unknown): void }, word: unknown): void => {
+  try { scope.postMessage(word); } catch { /* the next word or the answer still reaches the page */ }
+};
+
+/**
+ * **THE REFUSALS OF PROVING MATERIAL THIS WORKER SAW**, newest last, each with
+ * the number it was seen at. The prover runs its key fetches inside the
+ * WebAssembly, which hands a refusal back to the proof as text only, so a proof
+ * that failed is matched to the refusal it carries by that refusal's whole
+ * message (`provingToldOf`). Only the most recent are kept.
+ */
+const refusals: Array<{ readonly seen: number; readonly refusal: ProvingMaterialRefused }> = [];
+let refusalsSeen = 0;
+const KEPT_REFUSALS = 32;
+const refusedLately = (refusal: ProvingMaterialRefused): void => {
+  refusalsSeen += 1;
+  refusals.push({ seen: refusalsSeen, refusal });
+  if (refusals.length > KEPT_REFUSALS) refusals.shift();
+};
+/** The refusal seen since `since` whose whole message, its final full stop aside, is in the text of `e`, or null. */
+const refusalCarriedBy = (e: unknown, since: number): ProvingMaterialRefused | null => {
+  if (e instanceof ProvingMaterialRefused) return null;
+  const text = `${typeof e === 'string' ? e : ''} ${whyItFailed(e)}`;
+  for (let i = refusals.length - 1; i >= 0; i -= 1) {
+    const { seen, refusal } = refusals[i]!;
+    /* The prover's own check passes a refusal on without its final full stop; the rest of the sentence must be there whole. */
+    const whole = refusal.message.trim().replace(/\.$/u, '').trimEnd();
+    if (seen > since && whole.length > 0 && text.includes(whole)) return refusal;
+  }
+  return null;
+};
+
+/**
+ * **A SOURCE OF PROVING MATERIAL THAT SAYS WHEN IT IS WORKING**: `word` is
+ * called once as each fetch of a key, a file or the parameters starts and once
+ * as it ends, refused or not. The page's time limit restarts at each word.
+ */
+export const toldOfEachCall = (source: ArtefactSource, word: () => void): ArtefactSource => {
+  const told = async <T>(work: () => Promise<T>): Promise<T> => {
+    word();
+    try {
+      return await work();
+    } catch (e) {
+      if (e instanceof ProvingMaterialRefused) refusedLately(e);
+      throw e;
+    } finally { word(); }
+  };
+  return {
+    lookupKey: (keyLocation) => told(() => source.lookupKey(keyLocation)),
+    getParams: (k) => told(() => source.getParams(k)),
+    artefact: (kind, keyLocation) => told(() => source.artefact(kind, keyLocation)),
+  };
+};
+
+/**
+ * What one ask is built with: `deps`, with each proof told to the page as it
+ * starts and as it ends, under the ask's own id. Asks run at the same time in
+ * this worker, so each ask carries its own. A proof that fails carrying the
+ * whole message of a refusal of proving material seen while it ran fails as
+ * that refusal.
+ */
+export const provingToldOf = (
+  deps: () => Promise<WorkerDeps>, ask: Pick<VaultAsk, 'id' | 'ask'>, say: (word: unknown) => void,
+): (() => Promise<WorkerDeps>) => () => deps().then((d) => ({
+  ...d,
+  prove: async (unproven: any, circuit?: string) => {
+    const word = (state: 'started' | 'ended') => say({ kind: 'vault-proof', id: ask.id, ask: ask.ask, circuit: circuit ?? null, state });
+    const since = refusalsSeen;
+    word('started');
+    try {
+      return await d.prove(unproven, circuit);
+    } catch (e) {
+      /* A refusal the prover passed on as text is answered as that refusal, with its kind, and what the prover said beneath it. */
+      const refused = refusalCarriedBy(e, since);
+      if (refused === null) throw e;
+      const again = new ProvingMaterialRefused(refused.kind, refused.keyLocation, refused.message);
+      Object.defineProperty(again, 'cause', { value: e, enumerable: false, writable: true, configurable: true });
+      throw again;
+    } finally { word('ended'); }
+  },
+}));
+
+/**
+ * A failure as it crosses to the page: its whole chain of reasons, the name of
+ * the error when it has one of its own, and how proving material was refused
+ * when anything in the chain was such a refusal.
+ */
+const failureFor = (id: number, e: unknown): { id: number; ok: false; error: string; name?: string; kind?: string } => {
+  const name = (e as { name?: unknown } | null)?.name;
+  let kind: string | undefined;
+  const seen = new Set<unknown>();
+  for (let at: unknown = e; at !== null && typeof at === 'object' && !seen.has(at) && kind === undefined; at = (at as { cause?: unknown }).cause) {
+    seen.add(at);
+    const k = (at as { name?: unknown; kind?: unknown });
+    if (k.name === 'ProvingMaterialRefused' && typeof k.kind === 'string') kind = k.kind;
+  }
+  return {
+    id, ok: false, error: whyItFailed(e),
+    ...(typeof name === 'string' && name !== 'Error' ? { name } : {}),
+    ...(kind === undefined ? {} : { kind }),
+  };
+};
+
 /** Everything heavy, loaded the first time it is needed and kept. */
-const loadDeps = (scope: any) => {
+export const loadDeps = (scope: any) => {
   let loaded: Promise<WorkerDeps> | null = null;
   return (): Promise<WorkerDeps> => {
     loaded ??= (async () => {
-      const [ledger, runtime, contracts, compactJs, vault, proving, account, accountWitnesses] = await Promise.all([
+      const [
+        ledger, runtime, contracts, compactJs, vault, proving, account, accountWitnesses, vaultManifest, accountManifest, networkKeys,
+      ] = await Promise.all([
         import('@midnightntwrk/ledger-v9'),
         import('@midnight-ntwrk/compact-runtime'),
         import('@midnight-ntwrk/midnight-js-contracts'),
@@ -316,17 +467,25 @@ const loadDeps = (scope: any) => {
         import('../../../src/midnight/wasm-proving.js'),
         import('../../../contracts/managed/contract/index.js'),
         import('../../../contracts/src/witnesses.js'),
+        import('../../../contracts/managed-vault/compiler/contract-manifest.json'),
+        import('../../../contracts/managed/compiler/contract-manifest.json'),
+        import('../../../apps/wallet/public/keys/manifest.json'),
       ]);
       const options = {
         /* A store that will not keep a file costs a download; it is said in this thread's console. */
         cache: new IndexedDbArtefactCache(scope.indexedDB, undefined, (why: string) => scope.console?.warn?.(why)),
         fetchImpl: scope.fetch.bind(scope),
       };
-      const source = networkCircuitsBeside(
-        accountCircuitsBeside(
-          httpKeyMaterialSource(VAULT_ARTEFACT_BASE, options),
-          httpKeyMaterialSource(`${VAULT_ARTEFACT_BASE}/account`, options)),
-        httpKeyMaterialSource(`${VAULT_ARTEFACT_BASE}/builtin/zswap/9`, options));
+      const built = thisBuildsSources(options, {
+        vault: { expectedVk: (vault as any).expectedVk, manifest: (vaultManifest as any).default ?? vaultManifest },
+        account: { expectedVk: (account as any).expectedVk, manifest: (accountManifest as any).default ?? accountManifest },
+        network: (networkKeys as any).default ?? networkKeys,
+      });
+      /* Every fetch of proving material is told to the page as it starts and ends, so a long download is not taken for a worker gone quiet. */
+      const busy = () => toldThePage(scope, { kind: 'vault-worker-busy' });
+      const source = toldOfEachCall(built.source, busy);
+      const vaultFolder = toldOfEachCall(built.vault, busy);
+      const accountFolder = toldOfEachCall(built.account, busy);
       /* Each proof on a thread of its own where this thread can start one (`vault-proof-workers.ts`); on this thread where it cannot. */
       const prover = await proofProviderOnWorkers(source, scope, () => proving.wasmProofProvider(source));
       const CompiledContract = (compactJs as any).CompiledContract;
@@ -364,11 +523,10 @@ const loadDeps = (scope: any) => {
         accountZkConfig: zkConfig,
         accountPure: (account as any).pureCircuits,
         accountKeys: checkedAccountKeys(
-          (c) => httpKeyMaterialSource(`${VAULT_ARTEFACT_BASE}/account`, options).artefact('verifier', c),
-          (account as any).expectedVk, sha256),
+          (c) => accountFolder.artefact('verifier', c), (account as any).expectedVk, sha256),
+        accountExpectedVk: (account as any).expectedVk,
         vaultKeys: checkedAccountKeys(
-          (c) => httpKeyMaterialSource(VAULT_ARTEFACT_BASE, options).artefact('verifier', c),
-          (vault as any).expectedVk, sha256, 'the vault'),
+          (c) => vaultFolder.artefact('verifier', c), (vault as any).expectedVk, sha256, 'the vault'),
         accountLedger: (account as any).ledger,
         /* The vault's two details circuits, paired once: what a payee's leaf is made with when a run is rebuilt here. */
         vaultDetails: detailsOfKind((vault as any).pureCircuits),
@@ -386,15 +544,15 @@ const loadDeps = (scope: any) => {
  * **THE CONTRACT RUNTIME REACHES FOR NODE'S `Buffer`, WHICH A BROWSER DOES NOT
  * HAVE.** Every coin a vault circuit makes - the vault's note in a private
  * deposit, the payee's coin and any change in a private payment out, both
- * halves of a split - has its commitment turned into hex with `Buffer`, and in
- * a browser's worker that stopped the deposit circuit with `Buffer is not
- * defined` before the wallet was asked. So every
- * ask puts one where the runtime looks first. Nothing is replaced where one is
- * already there, as in Node.
+ * halves of a split - has its commitment turned into hex with `Buffer`. A
+ * browser's worker has none, so a deposit circuit would stop with `Buffer is
+ * not defined` before the wallet was asked; every ask puts one where the
+ * runtime looks first, and nothing is replaced where one is already there, as
+ * in Node.
  */
 const giveTheRuntimeABuffer = (): void => ensureBuffer();
 
-/** One answer for one ask. Exported so it can be driven without a Worker. */
+
 
 type RebuildAsk = Extract<VaultAsk, { ask: 'vault-rebuilt' }> & VaultRebuildAsked;
 const HEX64_ASKED = /^[0-9a-f]{64}$/u;
@@ -520,7 +678,7 @@ async function vaultRebuiltHere(d: WorkerDeps, ask: RebuildAsk): Promise<VaultRe
     said,
   };
 }
-
+/** One answer for one ask, built with `deps`; `startVaultWorker` turns a throw into a failure carrying its whole chain of reasons. Exported so it can be driven without a Worker. */
 export const answerVaultAsk = async (
   deps: () => Promise<WorkerDeps>,
   ask: VaultAsk,
@@ -858,10 +1016,13 @@ export const answerVaultAsk = async (
       return { id: ask.id, ok: true, ask: 'secret-is-the-vaults', matches };
     }
     case 'vault-on-chain': {
-      /* The vault as the chain holds it, from the indexer the wallet names, read here and never by the page or the service. */
+      /*
+       * The vault as the chain holds it, and with `account` that account's circuits, from the indexer the wallet names,
+       * read here and never by the page or the service.
+       */
       const { readVaultOnChain, vaultChainSourceAt } = await import('./vault-on-chain-here.js');
       const source = (d.chainSourceAt ?? vaultChainSourceAt)(ask.indexer);
-      return { id: ask.id, ok: true, ask: 'vault-on-chain', read: await readVaultOnChain(d, source, ask.vault) };
+      return { id: ask.id, ok: true, ask: 'vault-on-chain', read: await readVaultOnChain(d, source, ask.vault, ask.account) };
     }
     case 'chain-at-one-block': {
       /* What a step out of the vault is built on, at one block, from the indexer the wallet names: never the service's. */
@@ -925,20 +1086,26 @@ export const answerVaultAsk = async (
 
 /**
  * Starts answering the page. `deps` is what every ask is built with, and is
- * the worker's own loader unless a test hands in another.
+ * the worker's own loader unless a test hands in another. Each proof is told to
+ * the page as it starts and ends (`provingToldOf`).
  *
- * **A FAILURE GOES BACK AS ITS WHOLE CHAIN OF REASONS, NOT ITS OUTER MESSAGE.**
- * Only text crosses to the page, so what is not said here is lost for good:
- * the contract runtime's own failure arrives as "Error executing circuit
- * 'deposit'" with the reason that matters kept only underneath it.
+ * **A FAILURE GOES BACK AS ITS WHOLE CHAIN OF REASONS, NOT ITS OUTER MESSAGE**,
+ * with its name and its kind (`failureFor`). Only text crosses to the page, so
+ * what is not said here is lost for good: the contract runtime's own failure
+ * arrives as "Error executing circuit 'deposit'" with the reason that matters
+ * kept only underneath it. An answer that cannot be copied to the page goes
+ * back as a failure, so no ask is left unanswered.
  */
-const startVaultWorker = (scope: any, deps: () => Promise<WorkerDeps> = loadDeps(scope)): void => {
+export const startVaultWorker = (scope: any, deps: () => Promise<WorkerDeps> = loadDeps(scope)): void => {
+  const say = (word: unknown) => toldThePage(scope, word);
   scope.addEventListener('message', (event: MessageEvent) => {
     const ask = event.data as VaultAsk;
     if (typeof ask !== 'object' || ask === null || typeof ask.id !== 'number') return;
-    void answerVaultAsk(deps, ask).then(
-      (answer) => scope.postMessage(answer),
-      (e: unknown) => scope.postMessage({ id: ask.id, ok: false, error: whyItFailed(e) }),
+    void answerVaultAsk(provingToldOf(deps, ask, say), ask).then(
+      (answer) => {
+        try { scope.postMessage(answer); } catch (e) { say(failureFor(ask.id, e)); }
+      },
+      (e: unknown) => say(failureFor(ask.id, e)),
     );
   });
   scope.postMessage({ kind: 'vault-worker-ready' });

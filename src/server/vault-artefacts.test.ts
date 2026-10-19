@@ -20,16 +20,24 @@ describe('THE PROVING MATERIAL A DEVICE MAY FETCH', () => {
     expect(vaultArtefactFile(places, '/params/bls_midnight_2p13')).toBe('/repo/.midnight/params/bls_midnight_2p13');
     expect(vaultArtefactFile(places, '/builtin/zswap/9/keys/output.prover')).toBe('/repo/.midnight/params/zswap/9/output.prover');
     expect(vaultArtefactFile(places, '/builtin/zswap/9/zkir/output.bzkir')).toBe('/repo/.midnight/params/zswap/9/output.bzkir');
+    /* RED WHEN: the network's spend or sign circuit is not served, so a private payment cannot be proved on a device. */
+    for (const name of ['spend', 'sign']) {
+      expect(vaultArtefactFile(places, `/builtin/zswap/9/keys/${name}.prover`)).toBe(`/repo/.midnight/params/zswap/9/${name}.prover`);
+      expect(vaultArtefactFile(places, `/builtin/zswap/9/zkir/${name}.bzkir`)).toBe(`/repo/.midnight/params/zswap/9/${name}.bzkir`);
+    }
+    /* RED WHEN: a circuit of the network's that no device proves here is served beside the three that are. */
+    expect(vaultArtefactFile(places, '/builtin/zswap/9/keys/dust.prover')).toBeNull();
     expect(vaultArtefactFile(vaultArtefactPlaces('/repo', { MIDNIGHT_PARAMS_DIR: '/params' }), '/params/bls_midnight_2p9'))
       .toBe('/params/bls_midnight_2p9');
   });
 
-  it('A VAULT CALL ALSO PROVES THE ACCOUNT\'S recordPaymentFromVault OR approveVaultChange, AND A SIGNER\'S DEVICE PROVES propose, approve, cancel, amendSigner, setThreshold, setVaultThreshold, adopt, setPolicy, setPolicyBar AND clearRun ARE SERVED, AND THE ACCOUNT\'S CIRCUITS NO DEVICE PROVES ARE NOT (THE WHOLE SERVED LIST IS PINNED IN vault-worker-routing.test.ts)', () => {
+  it('A VAULT CALL ALSO PROVES THE ACCOUNT\'S recordPaymentFromVault OR approveVaultChange, AND A SIGNER\'S DEVICE PROVES propose, approve, cancel, amendSigner, setThreshold, setVaultThreshold, adopt, setPolicy, setPolicyBar, clearRun, anchor AND recoverAnchor ARE SERVED, AND THE ACCOUNT\'S CIRCUITS NO DEVICE PROVES ARE NOT (THE WHOLE SERVED LIST IS PINNED IN vault-worker-routing.test.ts)', () => {
     /* RED WHEN: the account's folder is not served (a payment out, a raise, an approval, a seat or a threshold change then cannot be
      * proved on a device, nor a vault's adoption when it is created), or it serves any other circuit of the account's, or a vault name reaches it. */
     /* A withdrawal, a vault's own approvals needed, a vault's spending policy and the approvals a policy change needs are proved on a signer's device too: RED WHEN any is not served. */
     /* Charging an approved run to its vault's period is proved on the paying signer's device: RED WHEN clearRun is not served. */
-    for (const circuit of ['recordPaymentFromVault', 'approveVaultChange', 'propose', 'approve', 'cancel', 'amendSigner', 'setThreshold', 'setVaultThreshold', 'adopt', 'setPolicy', 'setPolicyBar', 'clearRun']) {
+    /* The company's record anchor and its recovery are proved on a signer's device: RED WHEN anchor or recoverAnchor is not served. */
+    for (const circuit of ['recordPaymentFromVault', 'approveVaultChange', 'propose', 'approve', 'cancel', 'amendSigner', 'setThreshold', 'setVaultThreshold', 'adopt', 'setPolicy', 'setPolicyBar', 'clearRun', 'anchor', 'recoverAnchor']) {
       expect(vaultArtefactFile(places, `/account/keys/${circuit}.prover`)).toBe(`/repo/contracts/managed/keys/${circuit}.prover`);
       expect(vaultArtefactFile(places, `/account/keys/${circuit}.verifier`)).toBe(`/repo/contracts/managed/keys/${circuit}.verifier`);
       expect(vaultArtefactFile(places, `/account/zkir/${circuit}.bzkir`)).toBe(`/repo/contracts/managed/zkir/${circuit}.bzkir`);
@@ -40,6 +48,8 @@ describe('THE PROVING MATERIAL A DEVICE MAY FETCH', () => {
       '/account/zkir/recordPayment.prover', '/account/keys/recordPayment.bzkir', '/account/keys/../keys/recordPayment.prover',
       '/keys/recordPayment.prover', '/keys/propose.prover', '/keys/approve.prover',
       '/account/params/bls_midnight_2p13', '/account/keys/recordpayment.prover', '/account/keys/Propose.prover',
+      /* A circuit that is served, asked for under the wrong kind of file. */
+      '/account/keys/propose.bzkir', '/account/zkir/propose.prover',
     ]) {
       expect(vaultArtefactFile(places, path), path).toBeNull();
     }
@@ -72,7 +82,7 @@ describe('THE PROVING MATERIAL A DEVICE MAY FETCH', () => {
 /*
  * THE ROUTE ITSELF, OVER REAL FILES AND REAL HTTP. The assertions above say which file a name maps to;
  * these say the file actually arrives. The public parameters live in a folder whose name starts with a
- * dot, and a file that is found but never sent is exactly what a browser saw as "404".
+ * dot, and a file that is found but never sent reaches a browser as a "404".
  */
 const sha256 = (b: Uint8Array): string => createHash('sha256').update(b).digest('hex');
 const bytes = (label: string): Buffer => Buffer.from(`${label}:${'x'.repeat(64)}`);
@@ -138,7 +148,7 @@ describe('THE ROUTE HANDS THE FILE OVER, NOT ONLY FINDS IT', () => {
   });
   afterAll(() => { plain?.close(); dotted?.close(); });
 
-  it('A PUBLIC PARAMETER FILE KEPT UNDER .midnight/params ARRIVES, BYTE FOR BYTE', async () => {
+  it('a public parameter file kept in a dot-named folder arrives, byte for byte', async () => {
     /* RED WHEN: the file is handed to the sender as a path with a dot-named folder in it and the sender's
      * default for such paths is left in place - it answers 404 although the file is there. */
     const got = await get(plain, '/artefacts/vault/params/bls_midnight_2p0');

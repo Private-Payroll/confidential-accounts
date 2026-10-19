@@ -94,7 +94,7 @@ const setUp = (over: {
         authority: over.authority !== undefined ? over.authority
           : v.heldByCommittee === true ? { committee: COMMITTEE_KEYS.map((k) => ({ ...k })), threshold: COMMITTEE_THRESHOLD }
             : { committee: [{ tag: 'schnorr', value: '99'.repeat(32) }], threshold: 1 },
-        account: ACCOUNT, started: v.started === true,
+        account: ACCOUNT, started: v.started === true, circuits: null, accountCircuits: null,
       };
     },
     /* The block the deposit is built on, read here at the wallet's indexer. */

@@ -567,8 +567,10 @@ describe('the guard is WIRED IN, and is pointed at the artifacts the tests impor
       'contracts/test/a-spending-policy-is-set-from-a-device.test.ts',
       'contracts/test/a-vaults-committee-changes-with-its-signers.test.ts',
       'contracts/test/the-record-anchor-from-the-page.test.ts',
+      'packages/web-shared/src/a-public-deposit-is-proved-on-the-device.test.ts',
       'packages/web-shared/src/a-deposit-built-on-the-device.test.ts',
       'packages/web-shared/src/a-vault-is-read-as-it-was-born.test.ts',
+      'packages/web-shared/src/the-device-proves-only-with-this-builds-keys.test.ts',
       'packages/web-shared/src/the-worker-builds-an-account-only-with-this-builds-keys.test.ts',
       'src/midnight/a-company-is-created-in-two-steps.test.ts',
       'src/midnight/deferred-set.test.ts',
@@ -587,6 +589,8 @@ describe('the guard is WIRED IN, and is pointed at the artifacts the tests impor
     expect(gated.length, 'the walk found no gated tests, so nothing below means anything')
       .toBeGreaterThan(0);
     const VAULT_NAMED = [
+      'packages/web-shared/src/a-public-deposit-is-proved-on-the-device.test.ts',
+      'packages/web-shared/src/the-device-proves-only-with-this-builds-keys.test.ts',
       'contracts/test/a-company-vault-from-the-page.test.ts',
       'contracts/test/a-private-payment-from-the-page.test.ts',
       'contracts/test/a-vaults-committee-changes-with-its-signers.test.ts',

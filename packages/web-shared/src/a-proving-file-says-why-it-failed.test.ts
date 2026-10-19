@@ -4,7 +4,7 @@
  * A proof on this device needs files the application serves: proving keys,
  * circuits and the public parameters. When one does not arrive, the person sees
  * one sentence, and that sentence is the only evidence anybody gets. So it
- * names every name that was tried and why each failed, a download that ended
+ * names the file that was asked for and why it failed, a download that ended
  * early, a server that could not be reached, and the browser's own store
  * refusing to keep what arrived.
  *
@@ -40,16 +40,16 @@ const answer = (a: Answer): Response => {
 };
 
 describe('WHAT A FAILED PROVING FILE SAYS', () => {
-  it('A PARAMETER FILE THAT FAILS UNDER ONE NAME AND THEN ANOTHER SAYS WHY FOR BOTH, THE FIRST NAME FIRST', async () => {
-    /* RED WHEN: only the last name's reason is kept - the sentence then names only the older spelling's
-     * refusal, which is the one that never matters, and hides why the file that should have arrived did not. */
+  it('A PARAMETER FILE THAT FAILS SAYS WHY UNDER ITS OWN NAME, AND NO NAME MIDNIGHT DOES NOT PUBLISH IS TRIED', async () => {
+    /* RED WHEN: the reason the file did not arrive is lost, or an older spelling nothing publishes a digest for is
+     * asked for as well - the service never hands one out, so it is only ever a second refusal. */
+    const asked: string[] = [];
     const src = httpKeyMaterialSource('/a', {
-      fetchImpl: (async (url: string) => answer({ status: url.includes('midnight') ? 503 : 404 })) as never,
+      fetchImpl: (async (url: string) => { asked.push(url); return answer({ status: 503 }); }) as never,
     });
     const said = await src.getParams(15).then(() => '', (e: Error) => e.message);
     expect(said).toContain('bls_midnight_2p15: 503 for /a/params/bls_midnight_2p15');
-    expect(said).toContain('bls_filecoin_2p15: 404 for /a/params/bls_filecoin_2p15');
-    expect(said.indexOf('bls_midnight_2p15:')).toBeLessThan(said.indexOf('bls_filecoin_2p15:'));
+    expect(asked).toEqual(['/a/params/bls_midnight_2p15']);
     expect(said).toContain('(k=15)');
     /* RED WHEN: the sentence stops saying what resolves it. */
     expect(said).toMatch(/the service fetches and checks these when it starts/i);
@@ -117,14 +117,14 @@ describe('EVERY PROVING FILE THAT IS FETCHED IS CHECKED WITH THE SERVER', () => 
     const src = httpKeyMaterialSource('/a', {
       fetchImpl: (async (url: string, init?: RequestInit) => {
         asked.push({ url, cache: init?.cache });
-        return url.includes('filecoin') || url.includes('midnight_2p9') ? answer({ status: 404 }) : answer({ length: '1', chunks: [[7]] });
+        return url.includes('midnight_2p9') ? answer({ status: 404 }) : answer({ length: '1', chunks: [[7]] });
       }) as never,
     });
     await src.lookupKey('x/deposit');
     await src.artefact('verifier', 'x/payout');
     await src.getParams(15);
     await src.getParams(9).catch(() => undefined);
-    expect(asked.length).toBe(7);
+    expect(asked.length).toBe(6);
     expect(asked.filter((a) => a.cache !== 'no-cache')).toEqual([]);
   });
 });

@@ -144,14 +144,87 @@ describe('THE WALLET\'S PROVERS, KEPT BETWEEN PROOFS', () => {
     expect(AWorker.made[2]!.terminated).toBe(true);
   });
 
-  it('the proving service says each proof starting and ending, and passes the circuit the ledger names', async () => {
+  it('a proof that has not finished after ten minutes is refused, its worker is ended, nothing is kept, and the next proof gets a new worker', async () => {
+    // RED WHEN: a proof that never answers is waited on for ever, its worker is left running, or the stuck worker is kept for the next proof
+    vi.useFakeTimers();
+    const provers = keptProvers(() => new AWorker() as unknown as ProvingWorkerLike);
+    const proof = provers.run('prove', SPEND, new Uint8Array([1]), km('a'));
+    let over = false;
+    const outcome = proof.then(() => 'answered', (e: unknown) => e as Error).finally(() => { over = true; });
+    const stuck = AWorker.made[0]!;
+    stuck.says({ op: 'ready' });
+
+    await vi.advanceTimersByTimeAsync(599_999);
+    expect(over).toBe(false);
+    expect(stuck.terminated).toBe(false);
+    await vi.advanceTimersByTimeAsync(1);
+    const refusal = await outcome;
+
+    expect(refusal).toBeInstanceOf(Error);
+    expect((refusal as Error).message).toMatch(/did not finish within ten minutes/);
+    expect(stuck.terminated).toBe(true);
+    expect(provers.idle).toBe(0);
+    stuck.says({ op: 'result', value: 'too late' });
+    expect(provers.idle).toBe(0);
+    const next = provers.run('prove', SPEND, new Uint8Array([2]), km('a'));
+    expect(AWorker.made).toHaveLength(2);
+    const fresh = AWorker.made[1]!;
+    expect(fresh.terminated).toBe(false);
+    fresh.says({ op: 'ready' });
+    fresh.says({ op: 'result', value: 'fine' });
+    expect(await next).toBe('fine');
+  });
+
+  it('a proof that finishes one tick before the ten minutes is answered and its worker is kept', async () => {
+    // RED WHEN: a proof is refused before the full ten minutes are over, or a proof that finished in time ends its worker
+    vi.useFakeTimers();
+    const provers = keptProvers(() => new AWorker() as unknown as ProvingWorkerLike);
+    const proof = provers.run('prove', SPEND, new Uint8Array([1]), km('a'));
+    const w = AWorker.made[0]!;
+    w.says({ op: 'ready' });
+    await vi.advanceTimersByTimeAsync(599_999);
+    w.says({ op: 'result', value: 'in time' });
+
+    expect(await proof).toBe('in time');
+    expect(w.terminated).toBe(false);
+    expect(provers.idle).toBe(1);
+  });
+
+  it('hands the circuit the ledger names to the prover, for a proof and for a check, and asks the key of that same circuit', async () => {
+    // RED WHEN: a proof or a check is run under another circuit than the one the ledger asked for, or the key lookup ignores the circuit
+    const run = vi.fn(async (..._args: unknown[]) => 'done' as unknown);
+    const recording = { run, stop: () => undefined, idle: 0 } as unknown as ReturnType<typeof keptProvers>;
+    const keys = km('a');
+    const service = makeBrowserProvingService(keys as never, { provers: recording });
+    let provider: {
+      prove(p: Uint8Array, k: string, b?: bigint): Promise<unknown>;
+      check(p: Uint8Array, k: string): Promise<unknown>;
+      lookupKey(k: string): Promise<unknown>;
+    } | null = null;
+    await service.prove({ prove: (p: never) => { provider = p; return Promise.resolve('proved'); } } as never);
+    await provider!.prove(new Uint8Array([5]), OUTPUT, 3n);
+    await provider!.check(new Uint8Array([6]), SPEND);
+    await provider!.prove(new Uint8Array([7]), SPEND);
+
+    expect(run.mock.calls).toEqual([
+      ['prove', OUTPUT, new Uint8Array([5]), keys, 3n],
+      ['check', SPEND, new Uint8Array([6]), keys, undefined],
+      ['prove', SPEND, new Uint8Array([7]), keys, undefined],
+    ]);
+    await provider!.lookupKey(OUTPUT);
+    await provider!.lookupKey(SPEND);
+    expect(keys.lookupKey.mock.calls).toEqual([[OUTPUT], [SPEND]]);
+  });
+
+  it('the proving service says each proof starting and ending, and a failed check ends too', async () => {
+    // RED WHEN: a proof or a check that starts is never reported as ended, or a failure is not passed on
     const provers = keptProvers(() => new AWorker() as unknown as ProvingWorkerLike);
     const events: ProofEvent[] = [];
     const service = makeBrowserProvingService(km('a') as never, { provers, onProof: (e) => events.push(e) });
     let provider: { prove(p: Uint8Array, k: string, b?: bigint): Promise<unknown>; check(p: Uint8Array, k: string): Promise<unknown> } | null = null;
     await service.prove({ prove: (p: never) => { provider = p; return Promise.resolve('proved'); } } as never);
     const proof = provider!.prove(new Uint8Array([5]), OUTPUT, 3n);
-    /* RED WHEN: a proof starting is not said, so a wallet proving for ninety seconds looks like one that has gone. */
+
     expect(events).toEqual([{ op: 'prove', at: 'start' }]);
     AWorker.made[0]!.says({ op: 'ready' });
     expect(AWorker.made[0]!.orders).toEqual([{ op: 'prove', preimage: new Uint8Array([5]), overwriteBindingInput: 3n }]);
@@ -161,7 +234,114 @@ describe('THE WALLET\'S PROVERS, KEPT BETWEEN PROOFS', () => {
     const failing = provider!.check(new Uint8Array([7]), OUTPUT);
     AWorker.made[0]!.says({ op: 'failure', error: 'no' });
     await expect(failing).rejects.toThrow('no');
-    /* RED WHEN: a proof that failed is never said to have ended, and the stage stays "proving" for a wallet that has stopped. */
+
     expect(events.slice(2)).toEqual([{ op: 'check', at: 'start' }, { op: 'check', at: 'end' }]);
   });
+
+  it('stopping ends every kept worker and clears the idle timers, and a proof still running when it stops keeps nothing', async () => {
+    // RED WHEN: stopping leaves a kept worker running, a let-go timer pending, or lets a proof that finishes afterwards keep its worker
+    vi.useFakeTimers();
+    const provers = keptProvers(() => new AWorker() as unknown as ProvingWorkerLike);
+    const done = provers.run('prove', SPEND, new Uint8Array([1]), km('a'));
+    const running = provers.run('prove', OUTPUT, new Uint8Array([2]), km('a'));
+    const [kept, busy] = AWorker.made as [AWorker, AWorker];
+    kept.says({ op: 'ready' }); kept.says({ op: 'result', value: 'x' });
+    busy.says({ op: 'ready' });
+    await done;
+    expect(provers.idle).toBe(1);
+
+    provers.stop();
+
+    expect(kept.terminated).toBe(true);
+    expect(provers.idle).toBe(0);
+    expect(vi.getTimerCount()).toBe(1);
+    busy.says({ op: 'result', value: 'y' });
+    expect(await running).toBe('y');
+    expect(busy.terminated).toBe(true);
+    expect(provers.idle).toBe(0);
+    expect(vi.getTimerCount()).toBe(0);
+  });
+
+  it('a finished or failed proof leaves no ten-minute timer behind', async () => {
+    // RED WHEN: every proof that ends leaves its ten-minute timer pending
+    vi.useFakeTimers();
+    const provers = keptProvers(() => new AWorker() as unknown as ProvingWorkerLike);
+    const ok = provers.run('prove', SPEND, new Uint8Array([1]), km('a'));
+    expect(vi.getTimerCount()).toBe(1);
+    AWorker.made[0]!.says({ op: 'ready' }); AWorker.made[0]!.says({ op: 'result', value: 'x' });
+    await ok;
+    expect(vi.getTimerCount()).toBe(1);
+    provers.stop();
+    expect(vi.getTimerCount()).toBe(0);
+
+    const bad = provers.run('prove', OUTPUT, new Uint8Array([2]), km('a'));
+    AWorker.made[1]!.says({ op: 'ready' }); AWorker.made[1]!.says({ op: 'failure', error: 'no' });
+    await expect(bad).rejects.toThrow('no');
+    expect(vi.getTimerCount()).toBe(0);
+  });
+
+  it('a kept worker that dies while idle is never given another proof', async () => {
+    // RED WHEN: a proof is handed to a worker that has already died
+    const provers = keptProvers(() => new AWorker() as unknown as ProvingWorkerLike);
+    const first = provers.run('prove', SPEND, new Uint8Array([1]), km('a'));
+    const old = AWorker.made[0]!;
+    old.says({ op: 'ready' }); old.says({ op: 'result', value: 'one' });
+    await first;
+    expect(provers.idle).toBe(1);
+    old.breaks('out of memory');
+
+    const second = provers.run('prove', SPEND, new Uint8Array([2]), km('a'));
+    expect(AWorker.made).toHaveLength(2);
+    expect(old.terminated).toBe(true);
+    AWorker.made[1]!.says({ op: 'ready' }); AWorker.made[1]!.says({ op: 'result', value: 'two' });
+    expect(await second).toBe('two');
+    provers.stop();
+  });
+
+  for (const kind of ['lookupKey', 'getParams'] as const) {
+    it(`two workers asking for ${kind} under the same ask number each get their own answer, in any order`, async () => {
+      // RED WHEN: an answer reaches the newest worker or the wrong proof's key material instead of the worker that asked
+      const slow = (name: string) => {
+        const asked: unknown[] = [];
+        const gates: { ok: (v: unknown) => void; no: (e: Error) => void }[] = [];
+        const ask = (what: unknown) => new Promise<unknown>((ok, no) => { asked.push(what); gates.push({ ok, no }); });
+        return { name, asked, gates, lookupKey: vi.fn((loc: string) => ask(loc)), getParams: vi.fn((k: number) => ask(k)) };
+      };
+      const older = slow('older'); const newer = slow('newer');
+      const provers = keptProvers(() => new AWorker() as unknown as ProvingWorkerLike);
+      const first = provers.run('prove', SPEND, new Uint8Array([1]), older as never);
+      const second = provers.run('prove', OUTPUT, new Uint8Array([2]), newer as never);
+      const [w1, w2] = AWorker.made as [AWorker, AWorker];
+      w1.says({ op: 'ready' }); w2.says({ op: 'ready' });
+      const askFor = (askId: number, n: number) => kind === 'lookupKey'
+        ? { op: 'lookupKey', askId, keyLocation: `place-${n}` }
+        : { op: 'getParams', askId, k: 10 + n };
+      const what = (n: number) => (kind === 'lookupKey' ? `place-${n}` : 10 + n);
+
+      w2.says(askFor(0, 2));
+      w1.says(askFor(0, 1));
+      await settle();
+      expect(older.asked).toEqual([what(1)]);
+      expect(newer.asked).toEqual([what(2)]);
+      older.gates[0]!.ok('answer for the older');
+      newer.gates[0]!.ok('answer for the newer');
+      await settle();
+
+      expect(w1.sent.filter((m) => (m as { op: string }).op === 'answer')).toEqual([{ op: 'answer', askId: 0, ok: true, value: 'answer for the older' }]);
+      expect(w2.sent.filter((m) => (m as { op: string }).op === 'answer')).toEqual([{ op: 'answer', askId: 0, ok: true, value: 'answer for the newer' }]);
+
+      w1.says(askFor(1, 1));
+      w2.says(askFor(1, 2));
+      await settle();
+      older.gates[1]!.no(new Error('the older was refused'));
+      newer.gates[1]!.ok('second for the newer');
+      await settle();
+
+      expect(w1.sent.at(-1)).toEqual({ op: 'answer', askId: 1, ok: false, error: expect.stringContaining('the older was refused') });
+      expect(w2.sent.at(-1)).toEqual({ op: 'answer', askId: 1, ok: true, value: 'second for the newer' });
+      w1.says({ op: 'result', value: 'one' }); w2.says({ op: 'result', value: 'two' });
+      expect(await first).toBe('one');
+      expect(await second).toBe('two');
+    });
+  }
 });

@@ -1,13 +1,17 @@
 /**
  * **THE PAGE'S SIDE OF THE VAULT WORKER.** One request, one answer, matched by
  * id. The page never loads what the worker loads; it only sends what to build
- * and receives proven bytes back.
+ * and receives proven bytes back. Every ask answers or fails with a reason
+ * (`VaultAskFailed`) inside the proof time limit, a worker that stops is
+ * replaced on the next ask, and the page can read how long each proof in
+ * progress has run (`proofsInProgress`).
  */
 import type { Committee } from '../../../src/midnight/vault-committee.js';
 import type { PrivatePaymentOnTheWire, PrivatePaymentOrderOnTheWire } from '../../../src/midnight/private-payment-wire.js';
 import type { PaymentsFitAnswer } from '../../../src/midnight/vault-notes.js';
 import type { EventOnTheWire, NoteOnTheWire, PaymentConfirmation, SecretRunOnTheWire } from './vault-builder.js';
 import type { RoundMadeOf, RoundStanding } from '../../../src/midnight/vault-start.js';
+import { PROOF_CEILING_MS } from './proof-ceiling.js';
 
 export type { SecretRunOnTheWire } from './vault-builder.js';
 
@@ -107,7 +111,7 @@ export type VaultAsk =
   | { id: number; network: string; ask: 'commitments'; vault: string; coin: CoinOnTheWire }
   | { id: number; network: string; ask: 'step-kept'; vault: string; secret: string; step: StepOnTheWire }
   | ({ id: number; network: string; ask: 'vault-rebuilt' } & VaultRebuildAsked)
-  | { id: number; network: string; ask: 'vault-on-chain'; vault: string; indexer: { indexerUri: string; indexerWsUri: string } }
+  | { id: number; network: string; ask: 'vault-on-chain'; vault: string; account?: string; indexer: { indexerUri: string; indexerWsUri: string } }
   /* What a step out of the vault is built on, and the events it is judged by, read here at the indexer the wallet names. */
   | { id: number; network: string; ask: 'chain-at-one-block'; vault: string; account: string; indexer: { indexerUri: string; indexerWsUri: string } }
   | { id: number; network: string; ask: 'events-of'; transactionHash: string; indexer: { indexerUri: string; indexerWsUri: string } }
@@ -287,7 +291,7 @@ export type VaultAnswer =
   | Answered<'start-standing', { standing: StartStandingOnTheWire; run?: SecretRunOnTheWire }>
   | Answered<'set-nonce-secret', { tx: string }>
   | Answered<'write-secret-copy', { tx: string }>
-  | { id: number; ok: false; error: string };
+  | { id: number; ok: false; error: string; name?: string; kind?: string };
 
 type Without<T> = T extends unknown ? Omit<T, 'id' | 'network'> : never;
 export type VaultRequest = Without<VaultAsk>;
@@ -301,6 +305,10 @@ export type VaultRequest = Without<VaultAsk>;
  * `nonceCommitment` and `splitJournal`, which are never read as empty. `account`
  * is the company account it is pinned to;
  * `started` whether its first secret is set and every sealed copy written.
+ * `circuits` is null when every circuit of the vault is the one this app was
+ * built with, or says which is not; `accountCircuits` says the same of the
+ * company account named in the ask, and is absent when no account was named.
+ * Money goes in or out only when both are present and null.
  */
 export type VaultOnChainOnTheWire =
   | { readonly onChain: false }
@@ -319,6 +327,8 @@ export type VaultOnChainOnTheWire =
     /** What it holds in public money, read off its state; absent, with why, when that could not be read. */
     readonly publicBalances?: ReadonlyArray<{ readonly token: string; readonly amount: string }>;
     readonly publicBalancesWhy?: string;
+    readonly circuits?: { readonly why: string; readonly circuit: string | null } | null;
+    readonly accountCircuits?: { readonly why: string; readonly circuit: string | null } | null;
   };
 
 /**
@@ -363,6 +373,12 @@ interface StepOnTheWire {
 }
 
 export interface VaultBuilderClient {
+  /**
+   * The proofs the worker is working out now, each with how long it has run,
+   * read off the worker's own word as each starts and ends. Every client this
+   * file makes has it.
+   */
+  readonly proofsInProgress?: () => readonly ProofInProgress[];
   deploy(account: string): Promise<{ vault: string; temporaryKey: SigningKeyOnTheWire; tx: string }>;
   /**
    * The company's account, deployed held by the founding signer's committee key
@@ -410,9 +426,10 @@ export interface VaultBuilderClient {
   vaultRebuilt?(input: VaultRebuildAsked): Promise<VaultRebuilt>;
   /**
    * The vault as the chain holds it, read in this worker from the indexer the
-   * person's own wallet names (`indexer`), and from nowhere else.
+   * person's own wallet names (`indexer`), and from nowhere else; with
+   * `account`, whether that account's circuits are this app's too.
    */
-  vaultOnChain(input: { vault: string; indexer: { indexerUri: string; indexerWsUri: string } }): Promise<VaultOnChainOnTheWire>;
+  vaultOnChain(input: { vault: string; account?: string; indexer: { indexerUri: string; indexerWsUri: string } }): Promise<VaultOnChainOnTheWire>;
   /**
    * **WHAT A STEP OUT OF THE VAULT IS BUILT ON**, read in this worker at the
    * indexer the person's own wallet names: one block, named first, and as of it
@@ -652,29 +669,258 @@ interface WorkerLike {
   addEventListener(type: 'message', listener: (event: { data: unknown }) => void): void;
 }
 
-/** A client over a started worker. `network` is the deployment's own network name. */
-export function vaultBuilderOver(worker: WorkerLike, network: string): VaultBuilderClient {
+/** A worker the page started itself, which it can hear stop and can stop. */
+interface VaultWorkerLike {
+  postMessage(message: unknown): void;
+  addEventListener(type: 'message', listener: (event: { data: unknown }) => void): void;
+  addEventListener(type: 'error' | 'messageerror', listener: (event: { message?: string }) => void): void;
+  removeEventListener(type: 'message', listener: (event: { data: unknown }) => void): void;
+  terminate(): void;
+}
+
+/** One proof the worker is working out now: the ask it belongs to, its circuit when it names one, and how long it has run. */
+interface ProofInProgress {
+  readonly ask: string;
+  readonly circuit: string | null;
+  readonly startedAt: number;
+  readonly elapsedMs: number;
+}
+
+/**
+ * Why an ask of the vault worker failed: the worker said nothing for the time
+ * limit, it stopped, it sent an answer the page could not read, a new worker did
+ * not start, or the worker answered with a refusal of its own.
+ */
+type VaultAskFailure = 'took-too-long' | 'stopped' | 'unreadable-answer' | 'did-not-start' | 'answered';
+
+/**
+ * **EVERY FAILED ASK OF THE VAULT WORKER, ONE CLASS.** `reason` says which kind
+ * of failure it was. When the worker answered with a refusal, the message is the
+ * worker's own, `name` and `workerName` are the name of the worker's error, and
+ * `kind` is how proving material was refused when that was the refusal. The
+ * message never says whether anything was sent: that is for the step that
+ * asked, which alone knows whether it sent anything before.
+ */
+export class VaultAskFailed extends Error {
+  readonly ask: string;
+  readonly reason: VaultAskFailure;
+  readonly workerName?: string;
+  readonly kind?: string;
+  constructor(ask: string, reason: VaultAskFailure, message: string, said: { name?: string; kind?: string } = {}) {
+    super(message);
+    this.ask = ask;
+    this.reason = reason;
+    this.name = said.name ?? 'VaultAskFailed';
+    if (said.name !== undefined) this.workerName = said.name;
+    if (said.kind !== undefined) this.kind = said.kind;
+  }
+}
+
+const MINUTES = Math.round(PROOF_CEILING_MS / 60_000);
+const WORKER = 'the part of this page that builds and proves vault transactions';
+const FAILED_BECAUSE: Record<Exclude<VaultAskFailure, 'answered'>, string> = {
+  'took-too-long': `${WORKER} said nothing for ${MINUTES} minutes, so this page stopped it. Try again with this page open `
+    + 'in front and other heavy work closed.',
+  stopped: `${WORKER} stopped before it answered. Try again; if it happens again, reload the page.`,
+  'unreadable-answer': `${WORKER} sent an answer this page could not read, so this page stopped it. Try again; if it `
+    + 'happens again, reload the page.',
+  'did-not-start': 'the part of this page that builds vault transactions did not start.',
+};
+const START_MS = 30_000;
+
+/** What `askOver` is handed to reach a worker: one that is ready, posting what it is given and stopped on a failure. */
+interface Reached {
+  post(message: unknown): void;
+  stop(): void;
+}
+type Reach = (hear: (data: unknown) => void, stopped: (reason: 'stopped' | 'unreadable-answer') => void) => Promise<Reached>;
+
+/**
+ * **EVERY ASK ANSWERS OR FAILS WITH A REASON INSIDE THE TIME LIMIT.** An ask
+ * fails when `PROOF_CEILING_MS` passes since the later of its own posting and
+ * the worker's last word about work in progress: a proof starting or ending, or
+ * a fetch of proving material starting or ending. An answer to another ask is
+ * not such a word, so an ask whose work never finishes is not held open by the
+ * asks answered around it. A proof on this device's one
+ * thread blocks the worker, so its silence is what this hears. A failure stops
+ * the worker and fails every ask waiting on it, since the page cannot tell which
+ * ask held it up; the next ask reaches a new one. Nothing a stopped worker still
+ * says is heard.
+ */
+function askOver(reach: Reach, network: string, now: () => number) {
   let next = 1;
-  const waiting = new Map<number, { resolve: (a: VaultAnswer) => void }>();
-  worker.addEventListener('message', (event) => {
-    const a = event.data as VaultAnswer;
-    if (typeof a !== 'object' || a === null || typeof (a as { id?: unknown }).id !== 'number') return;
-    const w = waiting.get(a.id);
+  let generation = 0;
+  let current: { readonly at: number; readonly reached: Reached } | null = null;
+  let reaching: Promise<{ readonly at: number; readonly reached: Reached }> | null = null;
+  let lastWord = now();
+  let timer: ReturnType<typeof setTimeout> | null = null;
+  const waiting = new Map<number, { ask: string; postedAt: number; resolve: (a: VaultAnswer) => void; reject: (e: Error) => void }>();
+  const proofs = new Map<number, { ask: string; circuit: string | null; startedAt: number }>();
+
+  const failAll = (at: number, reason: Exclude<VaultAskFailure, 'answered'>): void => {
+    if (at !== generation) return;
+    generation += 1;
+    const was = current;
+    current = null;
+    if (timer !== null) { clearTimeout(timer); timer = null; }
+    const failed = [...waiting.values()];
+    waiting.clear();
+    proofs.clear();
+    try { was?.reached.stop(); } catch { /* a worker that cannot be stopped is not heard again either way */ }
+    for (const w of failed) w.reject(new VaultAskFailed(w.ask, reason, FAILED_BECAUSE[reason]));
+  };
+  const arm = (): void => {
+    if (timer !== null) { clearTimeout(timer); timer = null; }
+    if (waiting.size === 0) return;
+    let earliest = Infinity;
+    for (const w of waiting.values()) earliest = Math.min(earliest, Math.max(w.postedAt, lastWord));
+    const at = generation;
+    timer = setTimeout(() => {
+      timer = null;
+      const t = now();
+      const late = [...waiting.values()].some((w) => t - Math.max(w.postedAt, lastWord) >= PROOF_CEILING_MS);
+      if (late) failAll(at, 'took-too-long'); else arm();
+    }, Math.max(0, earliest + PROOF_CEILING_MS - now()));
+  };
+  const hearFor = (at: number) => (data: unknown): void => {
+    if (at !== generation || typeof data !== 'object' || data === null) return;
+    const m = data as { kind?: unknown; id?: unknown; ok?: unknown; ask?: unknown; circuit?: unknown; state?: unknown };
+    if (m.ok === undefined) {
+      lastWord = now();
+      if (m.kind === 'vault-proof' && typeof m.id === 'number') {
+        if (m.state === 'started') {
+          proofs.set(m.id, { ask: String(m.ask), circuit: typeof m.circuit === 'string' ? m.circuit : null, startedAt: lastWord });
+        } else proofs.delete(m.id);
+      }
+      arm();
+      return;
+    }
+    if (typeof m.id !== 'number') return;
+    const w = waiting.get(m.id);
     if (w === undefined) return;
-    waiting.delete(a.id);
-    w.resolve(a);
-  });
+    waiting.delete(m.id);
+    proofs.delete(m.id);
+    w.resolve(data as VaultAnswer);
+    arm();
+  };
+  const reached = (): Promise<{ readonly at: number; readonly reached: Reached }> => {
+    if (current !== null) return Promise.resolve(current);
+    if (reaching !== null) return reaching;
+    const at = generation;
+    reaching = reach(hearFor(at), (reason) => failAll(at, reason)).then(
+      (r) => {
+        reaching = null;
+        if (at !== generation) { r.stop(); throw new Error('the worker stopped while it started.'); }
+        lastWord = now();
+        current = { at, reached: r };
+        return current;
+      },
+      (e: unknown) => { reaching = null; throw e; },
+    );
+    return reaching;
+  };
   const ask = async <A extends VaultAsk['ask']>(request: VaultRequest & { ask: A }) => {
+    let live: { readonly at: number; readonly reached: Reached };
+    try {
+      live = await reached();
+    } catch (e) {
+      throw new VaultAskFailed(request.ask, 'did-not-start', (e as Error)?.message ?? FAILED_BECAUSE['did-not-start']);
+    }
     const id = next;
     next += 1;
-    const answered = new Promise<VaultAnswer>((resolve) => waiting.set(id, { resolve }));
-    worker.postMessage({ ...request, id, network });
+    const answered = new Promise<VaultAnswer>((resolve, reject) => {
+      waiting.set(id, { ask: request.ask, postedAt: now(), resolve, reject });
+    });
+    try {
+      live.reached.post({ ...request, id, network });
+    } catch (e) {
+      waiting.delete(id);
+      throw e;
+    }
+    arm();
     const a = await answered;
-    if (a.ok !== true) throw new Error((a as { error: string }).error);
+    if (a.ok !== true) {
+      const refused = a as { error: string; name?: string; kind?: string };
+      throw new VaultAskFailed(request.ask, 'answered', refused.error, {
+        ...(typeof refused.name === 'string' ? { name: refused.name } : {}),
+        ...(typeof refused.kind === 'string' ? { kind: refused.kind } : {}),
+      });
+    }
     if (a.ask !== request.ask) throw new Error('the vault worker answered a different question.');
     return a as Extract<VaultAnswer, { ask: A }>;
   };
+  const proofsInProgress = (): readonly ProofInProgress[] => {
+    const t = now();
+    return [...proofs.values()].map((p) => ({ ...p, elapsedMs: t - p.startedAt }));
+  };
+  return { ask, proofsInProgress, opened: () => reached().then(() => undefined) };
+}
+
+/**
+ * A client over a worker that is already running and listened to for its
+ * messages only. `network` is the deployment's own network name. It has the
+ * time limit; a failure cannot stop this worker, so the next ask goes to it
+ * again.
+ */
+export function vaultBuilderOver(worker: WorkerLike, network: string, now: () => number = Date.now): VaultBuilderClient {
+  let hearNow: (data: unknown) => void = () => {};
+  worker.addEventListener('message', (event) => hearNow(event.data));
+  const reached: Reached = { post: (m) => worker.postMessage(m), stop: () => {} };
+  const { ask, proofsInProgress } = askOver(async (hear) => { hearNow = hear; return reached; }, network, now);
+  return clientFrom(ask, proofsInProgress);
+}
+
+/**
+ * **THE WORKER STARTED ONLY WHEN AN ASK NEEDS ONE.** Each worker `start` makes
+ * is waited for until it says it is ready, for thirty seconds; its error after
+ * that fails every ask waiting on it, and the next ask starts another.
+ */
+const reachOver = (start: () => VaultWorkerLike): Reach => (hear, stopped) => new Promise<Reached>((resolve, reject) => {
+  const worker = start();
+  let ready = false;
+  const timer = setTimeout(() => {
+    try { worker.terminate(); } catch { /* it is not heard again either way */ }
+    reject(new Error(FAILED_BECAUSE['did-not-start']));
+  }, START_MS);
+  worker.addEventListener('message', (event) => {
+    if (!ready) {
+      if ((event.data as { kind?: unknown } | null)?.kind !== 'vault-worker-ready') return;
+      ready = true;
+      clearTimeout(timer);
+      resolve({ post: (m) => worker.postMessage(m), stop: () => worker.terminate() });
+      return;
+    }
+    hear(event.data);
+  });
+  const ended = (reason: 'stopped' | 'unreadable-answer') => () => {
+    if (ready) { stopped(reason); return; }
+    clearTimeout(timer);
+    try { worker.terminate(); } catch { /* it is not heard again either way */ }
+    reject(new Error('the part of this page that builds vault transactions stopped before it started.'));
+  };
+  worker.addEventListener('error', ended('stopped'));
+  worker.addEventListener('messageerror', ended('unreadable-answer'));
+});
+
+/** A client that starts its own workers with `start`, and starts a new one after a worker fails. */
+export function vaultBuilderOnWorkers(start: () => VaultWorkerLike, network: string, now: () => number = Date.now): VaultBuilderClient {
+  const { ask, proofsInProgress } = askOver(reachOver(start), network, now);
+  return clientFrom(ask, proofsInProgress);
+}
+
+/** The page's client, once its first worker has said it is ready; a later worker is started when an ask needs one. */
+export function startVaultBuilder(network: string): Promise<VaultBuilderClient> {
+  const start = () => new Worker(new URL('./vault-worker-entry.js', import.meta.url), { type: 'module', name: 'vault-builder' }) as unknown as VaultWorkerLike;
+  const { ask, proofsInProgress, opened } = askOver(reachOver(start), network, Date.now);
+  return opened().then(() => clientFrom(ask, proofsInProgress));
+}
+
+type Ask = ReturnType<typeof askOver>['ask'];
+
+/** Every ask of the client, each through the one `ask`. */
+function clientFrom(ask: Ask, proofsInProgress: () => readonly ProofInProgress[]): VaultBuilderClient {
   return {
+    proofsInProgress,
     deploy: async (account) => {
       const a = await ask({ ask: 'deploy', account });
       return { vault: a.vault, temporaryKey: a.temporaryKey, tx: a.tx };
@@ -779,22 +1025,4 @@ export function vaultBuilderOver(worker: WorkerLike, network: string): VaultBuil
     setNonceSecret: async (input) => ({ tx: (await ask({ ask: 'set-nonce-secret', ...input })).tx }),
     writeSecretCopy: async (input) => ({ tx: (await ask({ ask: 'write-secret-copy', ...input })).tx }),
   };
-}
-
-/** The worker, started the way the page starts it, and a client over it once it says it is ready. */
-export function startVaultBuilder(network: string): Promise<VaultBuilderClient> {
-  const worker = new Worker(new URL('./vault-worker-entry.js', import.meta.url), { type: 'module', name: 'vault-builder' });
-  return new Promise((resolve, reject) => {
-    const timer = setTimeout(() => reject(new Error('the part of this page that builds vault transactions did not start.')), 30_000);
-    worker.addEventListener('message', function ready(event: MessageEvent) {
-      if ((event.data as { kind?: unknown } | null)?.kind !== 'vault-worker-ready') return;
-      clearTimeout(timer);
-      worker.removeEventListener('message', ready);
-      resolve(vaultBuilderOver(worker as unknown as WorkerLike, network));
-    });
-    worker.addEventListener('error', () => {
-      clearTimeout(timer);
-      reject(new Error('the part of this page that builds vault transactions stopped before it started.'));
-    });
-  });
 }

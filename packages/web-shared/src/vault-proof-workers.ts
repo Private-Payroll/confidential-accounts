@@ -5,22 +5,25 @@
  * proof at a time on the thread it is called on. A private deposit needs two
  * proofs - the coin going into the vault and the vault's own `deposit` call -
  * and the ledger asks for them together, so on one thread their times add up:
- * 124.2 s and 126.7 s for the pair on a four-core machine on 29 Sep, where the
- * `deposit` proof alone took 78.8 s. Here each proof is handed to a thread of
- * its own (`vault-proof-worker-entry.ts`), so the pair takes about as long as
- * the longer of the two.
+ * about two minutes for the pair on a four-core machine, of which the
+ * `deposit` proof alone is about eighty seconds. Here each proof is handed to a thread of
+ * its own (`vault-proof-worker-entry.ts`), up to the device's cores, so the
+ * pair takes about as long as the longer of the two; a proof asked beyond the
+ * cores waits for a thread to finish, because each thread holds about 330 MB.
  *
  * **WHAT IS PROVED DOES NOT CHANGE.** The ledger decides every proof and every
- * input to it, exactly as before; each one reaches the same two calls of
+ * input to it, exactly as on one thread; each one reaches the same two calls of
  * `@midnight-ntwrk/zkir-v2` with the same bytes, and each answer goes back to
  * the call that asked for it and to no other. Only the thread it runs on moves.
  *
  * **AND A THREAD IS KEPT FOR THE NEXT PROOF OF THE SAME CIRCUIT.** A contract
- * call is checked and then proved; the thread that checked it has its prover
- * already started, so the proof does not start another. At most one idle
- * thread is kept per circuit, and for `KEPT_IDLE_MS`.
+ * call is checked and then proved; the thread that checked it is already
+ * running, so the proof does not start another. At most one idle thread is kept
+ * per key location (a circuit of one contract), for `KEPT_IDLE_MS`; one is let go as soon as
+ * a proof needs its place.
  */
 import type { KeyMaterialSource } from '../../../src/midnight/wasm-proving.js';
+import { PROOF_CEILING_MS } from './proof-ceiling.js';
 
 type FromAProofWorker =
   | { readonly op: 'ready' }
@@ -44,8 +47,8 @@ interface LedgerProvingProvider {
   lookupKey(keyLocation: string): ReturnType<KeyMaterialSource['lookupKey']>;
 }
 
-/** The ceiling on one proof, the same ten minutes the wallet's own SDK keeps. */
-export const PROOF_CEILING_MS = 10 * 60_000;
+/** The ceiling on one proof, ten minutes of silence from its thread, counted from when the proof starts running. */
+export { PROOF_CEILING_MS };
 
 /** How long a thread that has finished a proof is kept for the next proof of its circuit. */
 export const KEPT_IDLE_MS = 2 * 60_000;
@@ -69,10 +72,17 @@ const proofTookTooLong = (op: 'prove' | 'check'): string =>
 const plainly = (says: string, underneath: string): Error => new Error(says, { cause: new Error(underneath) });
 
 /**
- * **A `ProvingProvider` WHOSE PROOFS RUN ON THREADS OF THEIR OWN.** Every call
- * gets a thread: an idle one kept from an earlier proof of the same circuit,
- * or a new one. A thread whose proof failed, that reported an error, or that
- * ran past the ceiling is never used again.
+ * **A `ProvingProvider` WHOSE PROOFS RUN ON THREADS OF THEIR OWN, AT MOST `cap`
+ * AT ONCE.** A call gets a thread when fewer than `cap` proofs are running: an
+ * idle one kept from an earlier proof of the same circuit, or a new one, after
+ * the oldest kept threads are let go so that running and kept threads together
+ * stay within `cap`. A call asked beyond that waits, with no ceiling running,
+ * until a proof ends. A thread whose proof failed, that reported an error, or
+ * that ran past the ceiling is never used again. The ceiling restarts each
+ * time the thread asks for material and each time the answer arrives, so a
+ * long download is not mistaken for a stopped thread. A proof that failed after
+ * this device refused the key material it asked for is rejected with that
+ * refusal itself, so its name and kind reach the person's screen.
  */
 export function provingOnWorkers(
   source: KeyMaterialSource,
@@ -81,6 +91,7 @@ export function provingOnWorkers(
     set(run: () => void, ms: number): unknown;
     clear(handle: unknown): void;
   } = { set: (run, ms) => setTimeout(run, ms), clear: (h) => { clearTimeout(h as ReturnType<typeof setTimeout>); } },
+  cap = 2,
 ): LedgerProvingProvider & { stop(): void; readonly idle: number; readonly didNotLoad: boolean } {
   interface Job {
     readonly op: 'prove' | 'check';
@@ -88,6 +99,10 @@ export function provingOnWorkers(
     readonly overwriteBindingInput?: bigint;
     readonly resolve: (value: unknown) => void;
     readonly reject: (e: Error) => void;
+    /** Gives the proof ten more minutes, counted from now. */
+    readonly again: () => void;
+    /** The first refusal of the proving material that this proof's own asks met. */
+    refused?: Error;
   }
   interface Thread {
     readonly worker: ProofWorkerLike;
@@ -97,18 +112,29 @@ export function provingOnWorkers(
     letGo: unknown;
   }
   const idle = new Map<string, Thread>();
+  const waiting: (() => void)[] = [];
+  let working = 0;
   let stopped = false;
-  /* A thread that failed before it said `ready` never loaded: this device cannot start the prover on a thread of its own. */
+
   let didNotLoad = false;
 
   const post = (t: Thread): void => {
     if (t.job === null || !t.ready) return;
     t.worker.postMessage({ op: t.job.op, preimage: t.job.preimage, overwriteBindingInput: t.job.overwriteBindingInput });
   };
-  const answer = (t: Thread, askId: number, work: Promise<unknown>): void => {
+  const answer = (t: Thread, job: Job, askId: number, work: Promise<unknown>): void => {
     work.then(
-      (value) => t.worker.postMessage({ op: 'answer', askId, ok: true, value }),
-      (e: unknown) => t.worker.postMessage({ op: 'answer', askId, ok: false, error: failureOf(e) }),
+      (value) => {
+        if (t.job === job) job.again();
+        t.worker.postMessage({ op: 'answer', askId, ok: true, value });
+      },
+      (e: unknown) => {
+        if (t.job === job) {
+          job.again();
+          if (e instanceof Error && e.name === 'ProvingMaterialRefused') job.refused ??= e;
+        }
+        t.worker.postMessage({ op: 'answer', askId, ok: false, error: failureOf(e) });
+      },
     );
   };
   const make = (): Thread => {
@@ -125,14 +151,18 @@ export function provingOnWorkers(
       const job = t.job;
       switch (data.op) {
         case 'ready': t.ready = true; post(t); return;
-        case 'lookupKey': if (job !== null) answer(t, data.askId, source.lookupKey(data.keyLocation)); return;
-        case 'getParams': if (job !== null) answer(t, data.askId, source.getParams(data.k)); return;
+        case 'lookupKey':
+          if (job !== null) { job.again(); answer(t, job, data.askId, source.lookupKey(data.keyLocation)); }
+          return;
+        case 'getParams':
+          if (job !== null) { job.again(); answer(t, job, data.askId, source.getParams(data.k)); }
+          return;
         case 'result': t.job = null; job?.resolve(data.value); return;
         case 'failure':
           t.job = null;
           t.dead = true;
           t.worker.terminate();
-          job?.reject(plainly(PROOF_FAILED, data.error));
+          job?.reject(job.refused ?? plainly(PROOF_FAILED, data.error));
       }
     });
     return t;
@@ -146,48 +176,86 @@ export function provingOnWorkers(
     }, KEPT_IDLE_MS);
     idle.set(keyLocation, t);
   };
+  const letGoOfTheOldestKept = (): void => {
+    const [keyLocation, t] = idle.entries().next().value as [string, Thread];
+    idle.delete(keyLocation);
+    if (t.letGo !== null) timers.clear(t.letGo);
+    t.letGo = null;
+    t.worker.terminate();
+  };
+  const startWaiting = (): void => {
+    while (working < cap && waiting.length > 0) waiting.shift()!();
+  };
   const run = (op: 'prove' | 'check', keyLocation: string, preimage: Uint8Array, overwriteBindingInput?: bigint) =>
     new Promise<unknown>((resolve, reject) => {
-      const waiting = idle.get(keyLocation);
-      if (waiting !== undefined) {
-        idle.delete(keyLocation);
-        if (waiting.letGo !== null) timers.clear(waiting.letGo);
-        waiting.letGo = null;
-      }
-      const t = waiting !== undefined && !waiting.dead ? waiting : make();
-      let settled = false;
-      const ceiling = timers.set(() => {
-        if (settled) return;
-        settled = true;
-        t.job = null;
-        t.dead = true;
-        t.worker.terminate();
-        reject(plainly(proofTookTooLong(op), `the ${op} did not finish within ten minutes`));
-      }, PROOF_CEILING_MS);
-      t.job = {
-        op, preimage, overwriteBindingInput,
-        resolve: (value) => {
-          if (settled) return;
-          settled = true;
-          timers.clear(ceiling);
-          keep(keyLocation, t);
-          resolve(value);
-        },
-        reject: (e) => {
-          if (settled) return;
-          settled = true;
-          timers.clear(ceiling);
+      const start = (): void => {
+        let t: Thread;
+        try {
+          const kept = idle.get(keyLocation);
+          if (kept !== undefined) {
+            idle.delete(keyLocation);
+            if (kept.letGo !== null) timers.clear(kept.letGo);
+            kept.letGo = null;
+          }
+          if (kept !== undefined && !kept.dead) t = kept;
+          else {
+            while (working + idle.size >= cap && idle.size > 0) letGoOfTheOldestKept();
+            t = make();
+          }
+        } catch (e) {
           reject(e);
-        },
+          return;
+        }
+        working += 1;
+        let settled = false;
+        let ceiling: unknown = null;
+        const over = (): void => {
+          if (settled) return;
+          t.job = null;
+          t.dead = true;
+          t.worker.terminate();
+          end();
+          startWaiting();
+          reject(plainly(proofTookTooLong(op), `the ${op} did not finish within ten minutes`));
+        };
+        const again = (): void => {
+          if (settled) return;
+          timers.clear(ceiling);
+          ceiling = timers.set(over, PROOF_CEILING_MS);
+        };
+        const end = (): void => {
+          settled = true;
+          timers.clear(ceiling);
+          working -= 1;
+        };
+        again();
+        t.job = {
+          op, preimage, overwriteBindingInput, again,
+          resolve: (value) => {
+            if (settled) return;
+            end();
+            keep(keyLocation, t);
+            startWaiting();
+            resolve(value);
+          },
+          reject: (e) => {
+            if (settled) return;
+            end();
+            startWaiting();
+            reject(e);
+          },
+        };
+        post(t);
       };
-      post(t);
+      waiting.push(start);
+      startWaiting();
     });
 
   return {
     check: (preimage, keyLocation) => run('check', keyLocation, preimage) as Promise<(bigint | undefined)[]>,
     prove: (preimage, keyLocation, overwriteBindingInput) =>
       run('prove', keyLocation, preimage, overwriteBindingInput) as Promise<Uint8Array>,
-    /* Straight from the source, as the in-thread prover does: the ledger reads the verifier key through it. */
+
     lookupKey: (keyLocation) => source.lookupKey(keyLocation),
     stop: () => {
       stopped = true;
@@ -202,7 +270,7 @@ export function provingOnWorkers(
   };
 }
 
-/** A proof provider as a transaction is proved through it. */
+
 interface TransactionProver {
   proveTx(tx: unknown, config?: unknown): Promise<unknown>;
 }
@@ -237,20 +305,23 @@ export function oneThreadWhenAThreadDoesNotLoad(
 
 /**
  * **THE VAULT WORKER'S PROOF PROVIDER**: each proof on a thread of its own
- * where this thread can start one, and on this thread (`inThread`) where it
+ * where this thread can start one, as many at once as the device reports
+ * cores (two where it does not say), and on this thread (`inThread`) where it
  * cannot - because `Worker` does not exist here, or because a thread failed to
  * load. Both ways to one thread are this function's, and only this function's.
  */
 export async function proofProviderOnWorkers(
   source: KeyMaterialSource,
-  scope: { readonly Worker?: unknown },
+  scope: { readonly Worker?: unknown; readonly navigator?: { readonly hardwareConcurrency?: unknown } },
   inThread: () => Promise<TransactionProver>,
 ): Promise<TransactionProver> {
   if (typeof scope.Worker !== 'function') return inThread();
   const { createProofProvider } = await import('@midnight-ntwrk/midnight-js-types');
+  const cores = scope.navigator?.hardwareConcurrency;
+  const cap = typeof cores === 'number' && Number.isInteger(cores) && cores >= 1 ? cores : 2;
   const provider = provingOnWorkers(source, () => new Worker(new URL('./vault-proof-worker-entry.js', import.meta.url), {
     type: 'module', name: 'vault-proof',
-  }) as unknown as ProofWorkerLike);
+  }) as unknown as ProofWorkerLike, undefined, cap);
   const onWorkers = createProofProvider(provider as never) as unknown as TransactionProver;
   return oneThreadWhenAThreadDoesNotLoad({
     proveTx: (tx, config) => onWorkers.proveTx(tx, config),
