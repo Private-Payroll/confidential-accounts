@@ -17,7 +17,7 @@ import type { CompanyLabel } from 'midnight-identity/profile/company-label';
 import { accountAtOneBlockOver, atOneBlockOver, readAccountCallChain, readVaultOnChain, vaultChainSourceAt, type BlockReader, type VaultChainSource } from './vault-on-chain-here.js';
 import { answerVaultAsk, vaultAsDeployed } from './vault-worker-entry.js';
 import { vaultBuilderOver, type VaultAnswer } from './vault-worker-client.js';
-import { readFileSync } from 'node:fs';
+import { existsSync, readFileSync } from 'node:fs';
 import * as accountModule from '../../../contracts/managed/contract/index.js';
 import { DEPLOYED_CIRCUITS } from '../../../src/midnight/deferral.js';
 
@@ -309,6 +309,10 @@ const keyOf = (folder: 'managed-vault' | 'managed', circuit: string): Uint8Array
   new Uint8Array(readFileSync(new URL(`../../../contracts/${folder}/keys/${circuit}.verifier`, import.meta.url)));
 const VAULT_VK = (vaultModule as unknown as { expectedVk: Record<string, string> }).expectedVk;
 const ACCOUNT_VK = (accountModule as unknown as { expectedVk: Record<string, string> }).expectedVk;
+/* These checks need this build's compiled keys: a build without them (CI's test job) runs them in its keys job. */
+const HAS_KEYS = Object.keys(VAULT_VK).length > 0 && Object.keys(ACCOUNT_VK).length > 0
+  && existsSync(new URL('../../../contracts/managed-vault/keys/payout.verifier', import.meta.url))
+  && existsSync(new URL('../../../contracts/managed/keys/setPolicy.verifier', import.meta.url));
 const Rt = runtime as unknown as { ContractOperation: new () => { verifierKey: Uint8Array } };
 
 /** A state whose circuits carry the given keys: `keys` maps a circuit name to its key, or to null for a circuit with no key. */
@@ -340,7 +344,7 @@ const vaultAndAccount = (vault: unknown, account: unknown, asked: string[] = [])
 const withAccount = { ...d, accountExpectedVk: ACCOUNT_VK };
 const flipped = (b: Uint8Array) => { const c = b.slice(); c[c.length - 1] = c.at(-1)! ^ 1; return c; };
 
-describe('MONEY GOES IN OR OUT ONLY WHERE EVERY CIRCUIT OF THE VAULT AND ITS ACCOUNT IS THIS APP\'S', () => {
+describe.skipIf(!HAS_KEYS)('MONEY GOES IN OR OUT ONLY WHERE EVERY CIRCUIT OF THE VAULT AND ITS ACCOUNT IS THIS APP\'S [needs contracts/managed-vault/keys and contracts/managed/keys; `npm run compact` then `npm run compact:vault -- --full` build them]', () => {
   it('A VAULT AND AN ACCOUNT WHOSE EVERY CIRCUIT IS THIS BUILD\'S READ AS THIS BUILD\'S', async () => {
     const asked: string[] = [];
     const read = await readVaultOnChain(withAccount, vaultAndAccount(aVaultOfThisBuild(), anAccountOfThisBuild(), asked), VAULT, ACCOUNT);

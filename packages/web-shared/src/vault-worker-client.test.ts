@@ -3,6 +3,10 @@ import { vaultBuilderOver, vaultBuilderOnWorkers, VaultAskFailed } from './vault
 import { startVaultWorker, toldOfEachCall, provingToldOf, loadDeps } from './vault-worker-entry.js';
 import { ProvingMaterialRefused, type ArtefactSource } from './key-material.js';
 import { PROOF_CEILING_MS } from './vault-proof-workers.js';
+import { existsSync } from 'node:fs';
+/* The loader fetches a key only for a circuit this build has digests for: a build without its compiled keys (CI's test job) runs this in its keys job. */
+const HAS_KEYS = existsSync(new URL('../../../contracts/managed-vault/keys/retire.verifier', import.meta.url))
+  && existsSync(new URL('../../../contracts/managed/keys/adopt.verifier', import.meta.url));
 
 /*
  * The page's side of the vault worker, over a worker that does nothing on its
@@ -433,7 +437,7 @@ describe('THE WORKER TELLS THE PAGE WHAT IT IS DOING', () => {
 
 /* The worker's own loader, over an origin that serves nothing: a fetch refused is told to the page all the same. */
 describe('THE WORKER\'S OWN LOADER TELLS THE PAGE OF EVERY FETCH', () => {
-  it('a verifying key fetched by the worker\'s loader is told to the page as it starts and ends, even when it is refused', async () => {
+  it.skipIf(!HAS_KEYS)('a verifying key fetched by the worker\'s loader is told to the page as it starts and ends, even when it is refused [needs contracts/managed-vault/keys and contracts/managed/keys; `npm run compact` then `npm run compact:vault -- --full` build them]', async () => {
     /* RED WHEN: the loader hands out its sources untold - every download on the device is silent, and a slow one fails at the time limit. */
     vi.useRealTimers();
     const posted: unknown[] = [];
