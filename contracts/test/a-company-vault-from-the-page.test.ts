@@ -78,7 +78,7 @@ import { answerVaultAsk, checkedAccountKeys } from 'vaults-web-shared/vault-work
 import { vaultBuilderOver, type VaultAnswer } from 'vaults-web-shared/vault-worker-client.js';
 import {
   createCompanyVault, depositIntoCompanyVault, openCompanyVaultPool,
-  type TemporaryKeys, type VaultService, type DepositInFlight, type DepositsInFlight,
+  type VaultService, type DepositInFlight, type DepositsInFlight,
 } from 'vaults-web-shared/vault-operation.js';
 import { inFlightInMemory as inFlightRecordsInMemory, sealedOnThisDevice, type KeptOnThisDevice } from 'vaults-web-shared/in-flight-on-this-device.js';
 import { readWhatThePageAsks, base64FromBytes, bytesFromBase64 } from '../../apps/wallet/src/chain/balance-for-page.js';
@@ -218,7 +218,6 @@ describe.skipIf(!KEYS_ON_DISK)('A COMPANY VAULT, FROM THE SIGNER\'S DEVICE [need
   let signing: ReturnType<typeof newSigningKeypair>;
   let wrapping: ReturnType<typeof newWrappingKeypair>;
   let sent: string[];
-  let temporaryKeys: Map<string, { tag: string; value: string }>;
   let serverStores: Map<WireRecord, MemorySealedPoolStore>;
   let companyThreshold: number;
   /* The founding signer's own three, as their keyring holds them: what the account's rounds are proved with. */
@@ -361,7 +360,6 @@ describe.skipIf(!KEYS_ON_DISK)('A COMPANY VAULT, FROM THE SIGNER\'S DEVICE [need
     wrapping = newWrappingKeypair();
     me = { signerId: 'ada', wrappingSecret: wrapping.secret, companyKey: releasedCompanyKey(words, label, company) };
     sent = [];
-    temporaryKeys = new Map();
     /* A company of one, with its roster sealed under a viewing key the page holds, as the product keeps it. */
     viewingKey = toHex(new Uint8Array(32).fill(0x5e));
     store.putAccount(sealAccount({
@@ -538,11 +536,6 @@ describe.skipIf(!KEYS_ON_DISK)('A COMPANY VAULT, FROM THE SIGNER\'S DEVICE [need
     startSecret: (vault, tx) => http(`/api/accounts/${ACCOUNT_ID}/vaults/${vault}/start/secret`, { method: 'POST', body: { tx } }, as),
     startCopy: (vault, tx, place) => http(`/api/accounts/${ACCOUNT_ID}/vaults/${vault}/start/copy`, { method: 'POST', body: { tx, place } }, as),
   });
-  const keys: TemporaryKeys = {
-    put: async (v, k) => { temporaryKeys.set(v, k); },
-    get: async (v) => temporaryKeys.get(v) ?? null,
-    forget: async (v) => { temporaryKeys.delete(v); },
-  };
   /*
    * The pacing every operation takes, and the company as a device counts it for the vault check: three seats with every
    * right and one approval needed, a stand-in, so no vault here is left short. The check is driven in
@@ -589,7 +582,7 @@ describe.skipIf(!KEYS_ON_DISK)('A COMPANY VAULT, FROM THE SIGNER\'S DEVICE [need
   });
   /** Everything the page hands the press that creates a vault. */
   const createDoors = () => ({
-    ...pacing, account: readAccountAddress(company)!, service: service(), builder: builder(), keys,
+    ...pacing, account: readAccountAddress(company)!, service: service(), builder: builder(),
     me, myRecordsKey: recordsReaderOf(me.companyKey).publicKey, signers, records: records(), material: material(),
     onChain: walletReads,
     /* Where the vault's adoption and first secret run are written down, by the founding seat under its own filing key. */
@@ -674,7 +667,6 @@ describe.skipIf(!KEYS_ON_DISK)('A COMPANY VAULT, FROM THE SIGNER\'S DEVICE [need
     expect(held.committee.map((k: { value: string }) => k.value)).toEqual([committee.value]);
     expect(held.threshold).toBe(1);
     expect(held.counter).toBe(0n);
-    expect(temporaryKeys.size).toBe(0);
     expect(store.getCompanyVault(vault)).toMatchObject({ bornHeld: true, intended: { committee: [committee], threshold: 1 } });
     /* RED WHEN: the press ends without the company's account adopting the vault. */
     expect((accountModule as any).ledger(asRuntime(chain.contract(company)).data).vaults.member(Buffer.from(vault, 'hex'))).toBe(true);

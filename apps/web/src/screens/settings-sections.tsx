@@ -1,4 +1,5 @@
 import { useText } from 'vaults-ui';
+import { CommitteeChange } from '../actions/committee-change.js';
 import { useDay } from '../records/parts.js';
 import { useSession } from '../session.js';
 
@@ -19,9 +20,16 @@ export function CompanyCreated() {
 /**
  * SETTINGS > SIGNERS AND APPROVALS, THE PART BUILT SO FAR: what anyone can
  * look up about a company's signers, said where signers are added and
- * removed. The rest of the section is not built yet and says so below.
+ * removed, and who holds the company, with the change of the super admins a
+ * vault may be owed (the one component the vault panel shows too). The rest of
+ * the section is not built yet and says so below.
  */
-export function SignersPublicFacts() {
+export function SignersBuilt() {
   const t = useText();
-  return <p className="text-sm text-muted-foreground" data-public-facts>{t('settingsSigners.publicFacts')}</p>;
+  return (
+    <>
+      <p className="text-sm text-muted-foreground" data-public-facts>{t('settingsSigners.publicFacts')}</p>
+      <CommitteeChange />
+    </>
+  );
 }

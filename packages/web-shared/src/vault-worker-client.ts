@@ -117,6 +117,7 @@ export type VaultAsk =
   | { id: number; network: string; ask: 'events-of'; transactionHash: string; indexer: { indexerUri: string; indexerWsUri: string } }
   | { id: number; network: string; ask: 'created-by'; vault: string; commitment: string; indexer: { indexerUri: string; indexerWsUri: string } }
   | { id: number; network: string; ask: 'own-seat'; material: SignerMaterial }
+  | { id: number; network: string; ask: 'warm-proving' }
   /* The founding signer's seat in a company made on this device: its leaf, and the scope it was made under. */
   | { id: number; network: string; ask: 'founding-seat'; material: { signingSecret: string; blinding: string } }
   /* A company's deploy and its signed second step, carried in fresh transactions: the same account, the same signature. */
@@ -258,6 +259,7 @@ export type VaultAnswer =
   | Answered<'events-of', { events: EventOnTheWire[] }>
   | Answered<'created-by', { found: { transactionHash: string; events: EventOnTheWire[] } | null }>
   | Answered<'own-seat', { seat: string }>
+  | Answered<'warm-proving', unknown>
   | Answered<'founding-seat', { seat: string; scope: string; publicKey: string }>
   | Answered<'creation-again', { account: string; deploy: string; insert: string }>
   | Answered<'pay-key-standing', { standing: PayKeyStandingOnTheWire }>
@@ -294,7 +296,7 @@ export type VaultAnswer =
   | { id: number; ok: false; error: string; name?: string; kind?: string };
 
 type Without<T> = T extends unknown ? Omit<T, 'id' | 'network'> : never;
-export type VaultRequest = Without<VaultAsk>;
+type VaultRequest = Without<VaultAsk>;
 
 /** What the page needs from wherever vault transactions are built. */
 /**
@@ -662,6 +664,13 @@ export interface VaultBuilderClient {
   }): Promise<{ tx: string }>;
   /** One sealed copy of the run's secret written into the vault, by its place in the approved tree. */
   writeSecretCopy(input: { vault: string; run: SecretRunOnTheWire; place: number; state: string; parameters: string }): Promise<{ tx: string }>;
+  /**
+   * Has the worker fetch and check, ahead of any proof, the public parameters the
+   * circuits this app proves need, through the same checked source a proof reads.
+   * Resolves once they are held on this device; refuses with the worker's own
+   * words when one could not be fetched or is not the published file.
+   */
+  provingWarmed?(): Promise<void>;
 }
 
 interface WorkerLike {
@@ -1024,5 +1033,6 @@ function clientFrom(ask: Ask, proofsInProgress: () => readonly ProofInProgress[]
     },
     setNonceSecret: async (input) => ({ tx: (await ask({ ask: 'set-nonce-secret', ...input })).tx }),
     writeSecretCopy: async (input) => ({ tx: (await ask({ ask: 'write-secret-copy', ...input })).tx }),
+    provingWarmed: async () => { await ask({ ask: 'warm-proving' }); },
   };
 }

@@ -31,7 +31,7 @@ vi.mock('vaults-web-shared/keyring.js', () => ({
     kr.keys = kr.finishes;
     return true;
   },
-  /* No directory entry is owed here; one that is, is `hand-over`'s own test's. */
+  /* No directory entry is owed here; one that is, kept and filed on the way in, is `vault-keys.test.ts`'s. */
   directoryEntryOwed: () => ({ read: () => null, settle: async () => {} }),
   viewingKeyFor: (rec: { id: string }) => `viewing key of ${rec.id}`,
   api: async () => { throw new Error('nothing is asked of the service on the way in when no entry is owed'); },

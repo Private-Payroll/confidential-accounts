@@ -304,8 +304,11 @@ describe('THE PAGE HOLDS THE PROOF THREADS TO THE DEVICE\'S CORES', () => {
     expect(await second).toEqual(bytes(7));
   });
 
-  /* RED WHEN: the device's reported cores are not read, or the number taken when it says nothing is not two. */
-  it('the threads are held to the cores the worker\'s scope reports, and to two where it does not say', async () => {
+  /*
+   * RED WHEN: a device reporting many cores starts more than four proof threads, each holding about 330 MB,
+   * or the cores it reports below four are not read, or the number taken when it says nothing is not two.
+   */
+  it('the threads are held to the cores the worker\'s scope reports, to four however many it reports, and to two where it does not say', async () => {
     vi.useFakeTimers();
     vi.stubGlobal('Worker', AThread);
     const tx = (n: number) => ({ prove: (provider: { prove(p: Uint8Array, k: string): Promise<unknown> }) => provider.prove(bytes(n), circuit(n)) });
@@ -318,7 +321,9 @@ describe('THE PAGE HOLDS THE PROOF THREADS TO THE DEVICE\'S CORES', () => {
 
     expect(await asks({ hardwareConcurrency: 3 }, 5)).toBe(3);
     expect(await asks({ hardwareConcurrency: 1 }, 5)).toBe(1);
-    expect(await asks({ hardwareConcurrency: 16 }, 5)).toBe(5);
+    expect(await asks({ hardwareConcurrency: 4 }, 6)).toBe(4);
+    expect(await asks({ hardwareConcurrency: 16 }, 5)).toBe(4);
+    expect(await asks({ hardwareConcurrency: 32 }, 12)).toBe(4);
     for (const unsaid of [undefined, {}, { hardwareConcurrency: 0 }, { hardwareConcurrency: Number.NaN }, { hardwareConcurrency: -4 }, { hardwareConcurrency: 1.5 }, { hardwareConcurrency: '8' }]) {
       expect(await asks(unsaid, 5)).toBe(2);
     }

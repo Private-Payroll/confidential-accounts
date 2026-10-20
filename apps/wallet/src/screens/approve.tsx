@@ -29,6 +29,7 @@ import { sealToInbox } from 'midnight-identity/profile/inbox';
  * screen is about to disclose, for the person to carry back to the page that
  * asked. The same file, the same width, the same argument. */
 import { addressFingerprint, companyFingerprint } from 'midnight-identity/profile/fingerprint';
+import type { AccountAddress, CompanyLabel } from 'midnight-identity/profile/company-label';
 import { EMBEDDER, INDEXER_HTTP_URL, INDEXER_WS_URL } from '../config.js';
 import { quietConsentFor, useConsent } from '../framing.js';
 import { ApproveBalance } from './approve-balance.js';
@@ -373,6 +374,9 @@ export function Approve({
   const [typed, setTyped] = useState<Record<string, string>>({});
   const [problem, setProblem] = useState<string | null>(null);
   const [sentAt, setSentAt] = useState<number | null>(null);
+  /* The company the keyring answer carried, as that answer carried it: the label is the wallet's own draw when the
+   * page is setting a company up, so this is the only place the person can read it. */
+  const [givenCompany, setGivenCompany] = useState<{ readonly company: CompanyLabel; readonly account: AccountAddress | null } | null>(null);
   /** This wallet, by the fingerprint of the secret that is answering - not by the slot it sits in. */
   const thisWallet = useMemo(() => toBase64Url(fingerprintOf(secret)), [secret]);
 
@@ -786,6 +790,7 @@ export function Approve({
     }
     channel.answer(answer);
     setSentAt(at);
+    setGivenCompany(answer.company === null ? null : { company: answer.company, account: answer.account });
     /* A company's key given in the same answer is written down as any company's
      * key is, so a later ask for it from a different host is shown as such -
      * including the key for a company this wallet has just drawn the label of.
@@ -967,6 +972,31 @@ export function Approve({
             {request.company !== null ? ', and the key to the records one company keeps for you.'
               : request.drawLabel ? ', and your keys for the new company it is setting up.' : '.'}
           </p>
+          {givenCompany !== null && (
+            <>
+              {givenCompany.account !== null && (
+                <>
+                  <p className="m-0 text-sm text-muted-foreground" style={{ marginTop: '0.5rem' }}>
+                    The company&rsquo;s fingerprint
+                  </p>
+                  <p className="m-0 font-mono tracking-wide" data-given-fingerprint>
+                    {companyFingerprint(givenCompany.company, givenCompany.account)}
+                  </p>
+                </>
+              )}
+              <p className="m-0 text-sm text-muted-foreground" style={{ marginTop: '0.5rem' }}>
+                {request.drawLabel ? 'The label this wallet made up for it' : 'Its label'}
+              </p>
+              <p className="m-0 font-mono break-all text-sm text-muted-foreground" data-keyring-label>
+                {givenCompany.company}
+              </p>
+              {givenCompany.account === null && (
+                <p className="m-0 text-sm text-muted-foreground">
+                  The company has no account on the chain yet, so there is no fingerprint yet.
+                </p>
+              )}
+            </>
+          )}
         </div>
         <StatusAlert tone="info" role={null} title="What they can do now">
           <p className="m-0">

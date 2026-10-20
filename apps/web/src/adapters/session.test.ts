@@ -1,10 +1,5 @@
 // @vitest-environment jsdom
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import { TEST_MNEMONIC } from '@midnight-ntwrk/testkit-js';
-import { identityFromWords } from 'midnight-identity';
-import { READY_PING } from 'midnight-identity/profile/channel';
-import { parseAsk, type KeyringRequest } from 'midnight-identity/profile/request';
-import { keyringReleaseFor } from 'midnight-identity/profile/unlock';
 
 /*
  * SIGNING IN, WHO IS SIGNED IN, AND SIGNING OUT, THROUGH THE ADAPTER, WITH
@@ -12,6 +7,9 @@ import { keyringReleaseFor } from 'midnight-identity/profile/unlock';
  * account's frame and the service are stood in for; the conversation between
  * them is the shared code's own.
  */
+const warm = vi.hoisted(() => ({ calls: 0, throws: false }));
+vi.mock('./proving-warmed.js', () => ({ warmTheProving: () => { warm.calls += 1; if (warm.throws) throw new Error('the builder fell over'); } }));
+
 const ACCOUNT = 'http://wallet.localhost:5180';
 const READY = 'midnight-identity/wallet-ready/v1';
 
@@ -43,7 +41,7 @@ const stringsIn = (v: unknown): string[] => (typeof v === 'string' ? [v] : Array
   : v !== null && typeof v === 'object' ? Object.values(v).flatMap(stringsIn) : []);
 
 beforeEach(() => {
-  calls = []; answers = {}; posted.length = 0;
+  calls = []; answers = {}; posted.length = 0; warm.calls = 0; warm.throws = false;
   vi.stubGlobal('fetch', vi.fn(async (path: string, init: RequestInit = {}) => {
     calls.push({ path, method: init.method ?? 'GET', headers: { ...(init.headers as Record<string, string>) }, body: init.body === undefined ? undefined : JSON.parse(String(init.body)) });
     const a = answers[path];
@@ -134,8 +132,8 @@ describe('signing in', () => {
     expect(stringsIn(refused).filter((s) => !codes.has(s))).toEqual([]);
   });
 
-  /* RED WHEN: a signature refused only because it is late is said as refused, when trying again is the answer. */
-  it('says a late signature is late', async () => {
+  /* RED WHEN: a signature the service refuses only because it is late is said as refused, or as an ask that expired before it reached the account, when the account did answer. */
+  it('says a late signature is late, and that the account did answer', async () => {
     const m = await load();
     answers['/api/auth/wallet/challenge'] = reply(200, CHALLENGE);
     answers['/api/auth/wallet'] = reply(401, { error: 'x', code: 'stale-challenge' });
@@ -143,7 +141,47 @@ describe('signing in', () => {
     await settle();
     fromTheAccount({ schema: READY });
     fromTheAccount(SIGNED);
-    expect(await signing).toMatchObject({ of: m.OF.refused, why: m.REFUSAL.expired });
+    expect(await signing).toMatchObject({ of: m.OF.refused, why: m.REFUSAL.answeredTooLate });
+  });
+
+  /* RED WHEN: an ask that ran out while the account was open is told as one that had expired before it arrived, or as the account not answering; or one the account says had expired on arrival is told as ran out. */
+  it('tells an ask that ran out while open apart from one that expired on arrival', async () => {
+    const m = await load();
+    answers['/api/auth/wallet/challenge'] = reply(200, { ...CHALLENGE, expiresAt: new Date(Date.now() + 30).toISOString() });
+    const ranOut = m.signIn({ name: 'n', purpose: 'p' });
+    await settle();
+    fromTheAccount({ schema: READY });
+    expect(await ranOut).toMatchObject({ of: m.OF.refused, why: m.REFUSAL.ranOut });
+
+    answers['/api/auth/wallet/challenge'] = reply(200, CHALLENGE);
+    const arrived = m.signIn({ name: 'n', purpose: 'p' });
+    await settle();
+    fromTheAccount({ schema: READY });
+    fromTheAccount({ schema: 'midnight-identity/disclosure-refused/v1', reason: 'expired' });
+    expect(await arrived).toMatchObject({ of: m.OF.refused, why: m.REFUSAL.expired });
+  });
+
+  /* RED WHEN: an account that opened and never answered is told signing in "did not finish", without saying the account did not answer. */
+  it('says an account that never answered as silent', async () => {
+    vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout'] });
+    try {
+      const m = await load();
+      answers['/api/auth/wallet/challenge'] = reply(200, CHALLENGE);
+      const signing = m.signIn({ name: 'n', purpose: 'p' });
+      await vi.advanceTimersByTimeAsync(25_000);
+      expect(await signing).toMatchObject({ of: m.OF.refused, why: m.REFUSAL.silent });
+    } finally { vi.useRealTimers(); }
+  });
+
+  /* RED WHEN: a request the account would not take is told as signing in not finishing. */
+  it('says a request the account would not take as that', async () => {
+    const m = await load();
+    answers['/api/auth/wallet/challenge'] = reply(200, CHALLENGE);
+    const signing = m.signIn({ name: 'n', purpose: 'p' });
+    await settle();
+    fromTheAccount({ schema: READY });
+    fromTheAccount({ schema: 'midnight-identity/disclosure-refused/v1', reason: 'unreadable' });
+    expect(await signing).toMatchObject({ of: m.OF.refused, why: m.REFUSAL.unreadable });
   });
 
   /* RED WHEN: too many tries loses the wait the service asked for, the service out of reach is said as a refusal, or signing in without the account's address asks the service anything. */
@@ -371,64 +409,6 @@ describe('the address a sign-in was for, across a reload of the tab', () => {
   });
 });
 
-describe('a company one person left unfinished is never handed to the next', () => {
-  const ADDRESS = 'mn_addr_test1qqqqqqqqqqqqqqqqqqqq';
-  /** Where this page is served, as the account is told. */
-  const US = 'https://payroll.example';
-  const identity = identityFromWords(TEST_MNEMONIC);
-  /** The person's account, answering the keyring's ask for the key their keys are saved under, as the account's own code does. */
-  class AccountStandIn {
-    private handler: ((event: MessageEvent) => void) | null = null;
-    private readonly tab = { postMessage: (m: unknown) => this.onAsk(m) };
-    open(): Window | null { return this.tab as unknown as Window; }
-    addEventListener(_t: 'message', h: (e: MessageEvent) => void): void { this.handler = h; queueMicrotask(() => this.deliver({ schema: READY_PING })); }
-    removeEventListener(): void { this.handler = null; }
-    setTimeout(): number { return 0; }
-    clearTimeout(): void { /* nothing to clear */ }
-    private deliver(data: unknown): void { this.handler?.({ origin: ACCOUNT, source: this.tab, data } as unknown as MessageEvent); }
-    private onAsk(message: unknown): void {
-      let answer: unknown;
-      try { answer = keyringReleaseFor(identity, parseAsk(message, US, Date.now()) as KeyringRequest, Date.now(), (a) => a === ADDRESS); } catch { answer = { schema: 'nothing-given' }; }
-      queueMicrotask(() => this.deliver(answer));
-    }
-  }
-
-  /** Person u1 has created a company whose keys the service refused to save, so it waits in this tab. */
-  async function aCompanyLeftUnfinished() {
-    const m = await load();
-    const keyring = await import('vaults-web-shared/keyring.js');
-    keyring.signedInByAnotherScreen({ user: { id: 'u1', email: null, name: 'Priya' }, address: ADDRESS, created: true });
-    answers['/api/me/keys'] = (init?: RequestInit) => (init?.method === 'PUT' ? reply(500, { error: 'x' }) : reply(200, { keyBundle: null, version: 0 }))();
-    answers['/api/accounts'] = reply(200, { account: { id: 'acc_1' }, secrets: [{ signerId: 's1', signingSecret: 'dd'.repeat(32), wrappingSecret: 'ee'.repeat(32), blinding: 'ff'.repeat(32), scope: 'ab'.repeat(32) }] });
-    await expect(keyring.createCompanyWithWallet({ name: 'Acme', signers: [{ name: 'Priya', role: 'admin' }], threshold: 1 }, ACCOUNT, new AccountStandIn(), US)).rejects.toThrow();
-    expect(keyring.companyAwaitingSetup()).toBe('acc_1');
-    return { m, keyring };
-  }
-
-  /* RED WHEN: a sign-out the service did not confirm leaves the person's keys, or a company they left unfinished, open in the tab. */
-  it('forgets them when the person signs out, whether or not the service confirms it', async () => {
-    const { m, keyring } = await aCompanyLeftUnfinished();
-    answers['/api/auth/logout'] = reply(500, { error: 'x' });
-    expect(await m.signOut()).toEqual({ of: m.OF.notConfirmed });
-    expect(keyring.companyAwaitingSetup()).toBeNull();
-    expect(keyring.currentUser()).toBeNull();
-  });
-
-  /* RED WHEN: somebody else signing in in the same tab is handed a company another person left unfinished, and could save its keys as their own. */
-  it('forgets them when somebody else signs in in the same tab', async () => {
-    const { m, keyring } = await aCompanyLeftUnfinished();
-    answers['/api/auth/wallet/challenge'] = reply(200, CHALLENGE);
-    answers['/api/auth/wallet'] = reply(200, { user: { id: 'u2', email: null, name: 'Sam' }, address: 'mn_addr_other', created: true });
-    const signing = m.signIn({ name: 'n', purpose: 'p' });
-    await settle();
-    fromTheAccount({ schema: READY });
-    fromTheAccount(SIGNED);
-    expect((await signing).of).toBe(m.OF.signedIn);
-    expect(keyring.currentUser()?.id).toBe('u2');
-    expect(keyring.companyAwaitingSetup()).toBeNull();
-  });
-});
-
 describe('who holds a company, asked of the account with nothing shown', () => {
   /*
    * RED WHEN: a holders ask shows the person's account, says the page is waiting
@@ -470,5 +450,77 @@ describe('who holds a company, asked of the account with nothing shown', () => {
     expect(seen).toEqual([]);
     expect(m.accountFrame.shown()).toBe(false);
     stop();
+  });
+});
+
+describe('the proving files, fetched quietly once somebody is signed in', () => {
+  const signedIn = async (m: Awaited<ReturnType<typeof load>>) => {
+    answers['/api/auth/wallet/challenge'] = reply(200, CHALLENGE);
+    answers['/api/auth/wallet'] = reply(200, { user: { id: 'u1', name: 'Priya' }, address: 'a', created: true });
+    const signing = m.signIn({ name: 'n', purpose: 'p' });
+    await settle();
+    fromTheAccount({ schema: READY });
+    fromTheAccount(SIGNED);
+    return signing;
+  };
+
+  /*
+   * RED WHEN: a sign-in that succeeded does not start the builder fetching the
+   * proving files, so a first deposit still waits on them.
+   */
+  it('is started by a sign-in that succeeded', async () => {
+    const m = await load();
+    expect((await signedIn(m)).of).toBe(m.OF.signedIn);
+    await vi.waitFor(() => expect(warm.calls).toBe(1), { timeout: 5000 });
+  });
+
+  /*
+   * RED WHEN: a sign-in that was declined, or that the service refused, starts
+   * the builder for somebody who is not signed in.
+   */
+  it('is not started by a sign-in that did not succeed', async () => {
+    const m = await load();
+    answers['/api/auth/wallet/challenge'] = reply(200, CHALLENGE);
+    const declined = m.signIn({ name: 'n', purpose: 'p' });
+    await settle();
+    fromTheAccount({ schema: READY });
+    fromTheAccount({ schema: 'midnight-identity/disclosure-refused/v1', reason: 'declined' });
+    expect((await declined).of).toBe(m.OF.refused);
+    answers['/api/auth/wallet'] = reply(401, { error: 'no', code: 'not-a-response' });
+    const refused = m.signIn({ name: 'n', purpose: 'p' });
+    await settle();
+    fromTheAccount({ schema: READY });
+    fromTheAccount(SIGNED);
+    expect((await refused).of).toBe(m.OF.refused);
+    await settle();
+    expect(warm.calls).toBe(0);
+  });
+
+  /*
+   * RED WHEN: a person who comes back with a sign-in still standing has a first
+   * deposit that waits, or somebody nobody signed in for starts the builder.
+   */
+  it('is started for a person already signed in, and not for nobody', async () => {
+    const m = await load();
+    answers['/api/me'] = reply(401, { error: 'not signed in' });
+    await m.whoIsSignedIn();
+    await settle();
+    expect(warm.calls).toBe(0);
+    answers['/api/me'] = reply(200, { user: { id: 'u1', name: 'Priya' }, accounts: [] });
+    expect((await m.whoIsSignedIn()).of).toBe(m.OF.signedIn);
+    await vi.waitFor(() => expect(warm.calls).toBe(1), { timeout: 5000 });
+  });
+
+  /*
+   * RED WHEN: a builder that falls over when it is started turns a sign-in that
+   * worked into one that failed, or leaves an error nobody handles.
+   */
+  it('never changes what the sign-in answered, whatever the builder does', async () => {
+    warm.throws = true;
+    const m = await load();
+    const r = await signedIn(m);
+    expect(r).toEqual({ of: m.OF.signedIn, person: { id: 'u1', name: 'Priya' }, firstTime: true });
+    await vi.waitFor(() => expect(warm.calls).toBe(1), { timeout: 5000 });
+    await settle();
   });
 });

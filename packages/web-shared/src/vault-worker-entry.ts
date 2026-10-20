@@ -70,6 +70,9 @@ const toBase64 = (bytes: Uint8Array): string => {
 /** The folder the network's own shielded circuits are served from and pinned under, the same name in both. */
 const NETWORK_KEYS_FOLDER = 'zswap/9';
 
+/** The network's own shielded circuits a device proves, as the network's folder names them. */
+const NETWORK_SHIELDED_CIRCUITS = ['output', 'spend', 'sign'] as const;
+
 /**
  * **A PRIVATE DEPOSIT OR PAYMENT ALSO PROVES THE NETWORK'S OWN SHIELDED CIRCUITS**
  * (`spend`, `output`, `sign`), asked for as `midnight/zswap/<circuit>`. They are
@@ -156,6 +159,9 @@ export type WorkerDeps = Omit<VaultBuilderDeps, 'network'> & { vault: any; accou
     /** Every vault circuit's verifying key, checked the same way against the compiled vault's own digests. */
     vaultKeys: { getVerifierKey(c: string): Promise<Uint8Array>; getVerifierKeys(cs: readonly string[]): Promise<Array<[string, Uint8Array]>> };
     /** Where a vault is read from, at the indexer the wallet names; absent, the indexer itself. A test hands its own. */
+    /** Fetches and checks the public parameters every circuit this app proves needs, ahead of any proof. */
+    provingWarmed: () => Promise<void>;
+
     chainSourceAt?: (indexer: { indexerUri: string; indexerWsUri: string }) => import('./vault-on-chain-here.js').VaultChainSource;
     /** Where an account's history is read from, at the indexer the wallet names; absent, the indexer itself. A test hands its own. */
     historyAt?: (indexer: { indexerUri: string; indexerWsUri: string }) => import('../../../src/midnight/contract-history.js').ContractHistory;
@@ -266,6 +272,35 @@ export const thisBuildsSources = (options: Omit<HttpKeyMaterialOptions, 'pins'>,
   });
   return { source: networkCircuitsBeside(accountCircuitsBeside(vault, account), network), vault, account };
 };
+
+/**
+ * **THE PUBLIC PARAMETERS EVERY CIRCUIT THIS APP PROVES NEEDS, FETCHED AND CHECKED
+ * BEFORE ANY PROOF ASKS FOR THEM.** Reads the size of each circuit of the vault,
+ * of the company account and of the network's shielded transfers off the circuit
+ * itself, then asks `source` once for each size, smallest first, so what a proof
+ * reads later is already held. `source` is the prover's own checked source, so a
+ * file the service sends that is not the published one is refused by name and
+ * not kept. Every circuit and size is tried even when one fails; it then refuses
+ * with the first failure.
+ */
+export const provingWarmed = async (
+  source: ArtefactSource, sizeOf: (circuit: Uint8Array) => number | Promise<number>,
+): Promise<void> => {
+  const sizes = new Set<number>();
+  const failures: unknown[] = [];
+  await Promise.all([
+    ...VAULT_CIRCUITS, ...ACCOUNT_CIRCUITS_SERVED_TO_A_DEVICE, ...NETWORK_SHIELDED_CIRCUITS.map((c) => `midnight/zswap/${c}`),
+  ].map(async (location) => {
+    try {
+      sizes.add(await sizeOf(await source.artefact('ir', location)));
+    } catch (e) { failures.push(e); }
+  }));
+  for (const k of [...sizes].sort((a, b) => a - b)) {
+    try { await source.getParams(k); } catch (e) { failures.push(e); }
+  }
+  if (failures.length > 0) throw failures[0];
+};
+
 
 /**
  * **A CONTRACT'S VERIFYING KEYS, EACH CHECKED AGAINST THE DIGEST ITS COMPILED
@@ -525,6 +560,8 @@ export const loadDeps = (scope: any) => {
         accountKeys: checkedAccountKeys(
           (c) => accountFolder.artefact('verifier', c), (account as any).expectedVk, sha256),
         accountExpectedVk: (account as any).expectedVk,
+        provingWarmed: () => provingWarmed(source, async (circuit) =>
+          Number(((await import('@midnight-ntwrk/zkir-v2')) as any).Zkir.deserialize(circuit).getK())),
         vaultKeys: checkedAccountKeys(
           (c) => vaultFolder.artefact('verifier', c), (vault as any).expectedVk, sha256, 'the vault'),
         accountLedger: (account as any).ledger,
@@ -943,6 +980,10 @@ export const answerVaultAsk = async (
         parameters: typeof ask.parameters === 'string' ? fromBase64(ask.parameters) : new Uint8Array(0),
       });
       return { id: ask.id, ok: true, ask: 'write-secret-copy', tx: toBase64(built.proven) };
+    }
+    case 'warm-proving': {
+      await d.provingWarmed();
+      return { id: ask.id, ok: true, ask: 'warm-proving' };
     }
     case 'own-seat': {
       /* The one definition of a signer's leaf, the one every writer of a seat calls, over this signer's own material. */

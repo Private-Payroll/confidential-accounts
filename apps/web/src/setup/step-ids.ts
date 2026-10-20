@@ -5,8 +5,8 @@
  */
 export const STEP = {
   createCompany: 'createCompany',
+  finishCompany: 'finishCompany',
   signers: 'signers',
-  handOver: 'handOver',
   vault: 'vault',
   people: 'people',
 } as const;
@@ -19,4 +19,6 @@ export interface StepProps {
   leadTo: (step: StepId) => void;
   /** Called when the step has changed something, so what shows its progress reads it again. */
   onChanged: () => void;
+  /** Starts the wizard again at creating a new company, shown as if no company were. Absent where a step is shown outside the wizard. */
+  startNewCompany?: () => void;
 }

@@ -1,17 +1,16 @@
-import { useEffect, useState, type ReactNode } from 'react';
+import { useEffect, useId, useState, type ReactNode } from 'react';
 import { HugeiconsIcon } from '@hugeicons/react';
 import { Activity01Icon, Add01Icon, ArrowDown01Icon, ArrowUp01Icon, CheckListIcon, Invoice01Icon, SafeIcon, UserAdd01Icon } from '@hugeicons/core-free-icons';
 import { Badge, Button, ComingSoon, EmptyState, PageHeader, Progress, Section, SectionRow, StatTiles, useText } from 'vaults-ui';
 import { DataTable, type DataTableColumn, type DataTableFilter } from 'vaults-ui/data-table';
 import { READ, STANDING as PERSON, type CompanyRecords, type ProposalRow, type Read } from '../adapters/company-records.js';
-import { readHandover, type Handover } from '../adapters/handover-state.js';
 import { browserKeep, keepFold, readFolds } from '../adapters/kept-folds.js';
 import { HOME, PAGE } from '../pages.js';
 import { go, PageLink } from '../router.js';
-import { useSession } from '../session.js';
-import { skippedFor, STANDING, standingOf, stepsLeft } from '../setup/standing.js';
+import { blockedBy, skippedFor, STANDING, standingOf, stepsLeft, useCreationFact } from '../setup/standing.js';
 import { startSetupAt } from '../setup/asked.js';
-import { EVERY_STEP } from '../setup/steps.js';
+import { EVERY_STEP, type SetupFacts } from '../setup/steps.js';
+import type { StepId } from '../setup/step-ids.js';
 import { Approvals, Day, ProposalStatus, ProposalWhat, ReadOf, RunMoney, RunStatus, UnbuiltAction, useMonth, VaultTile, WithRecords } from '../records/parts.js';
 
 /** How many rows of a list Home shows before "View all". */
@@ -80,21 +79,19 @@ function Part<T>({ read, title, children, ...marks }: { read: Read<T>; title: Re
  * step not done yet, each opening the wizard at it. A step skipped is not
  * done, so it is here, marked Skipped. The card can be folded to its title and
  * bar, and stays as the person left it for this company, in this browser. It
- * goes when every step is done.
+ * goes when every step is done, and is not drawn until the company's creation has
+ * been read, so a finished company is never shown as unfinished for a moment. A
+ * step that an unfinished step blocks cannot be opened from here: its reason is
+ * shown and a button leads to the step that blocks it.
  */
 function SetupCard({ company, vaults }: { company: string; vaults: CompanyRecords['vaults'] }) {
   const t = useText();
-  const { person } = useSession();
-  const [handover, setHandover] = useState<Handover | null>(null);
   const [folded, fold] = useState(() => readFolds(browserKeep()).has(company));
-  useEffect(() => {
-    let alive = true;
-    void readHandover(person.id, company).then((h) => { if (alive) setHandover(h); });
-    return () => { alive = false; };
-  }, [person.id, company]);
+  const { creation } = useCreationFact(company);
   useEffect(() => { fold(readFolds(browserKeep()).has(company)); }, [company]);
   /* Vaults that could not be read are read as none created, so the step is never shown done on a guess. */
-  const facts = { company, handover, vaults: vaults.of === READ.read ? vaults.value : [] };
+  if (creation === null) return null;
+  const facts = { company, vaults: vaults.of === READ.read ? vaults.value : [], creation };
   const left = stepsLeft(facts);
   if (left.length === 0) return null;
   const skipped = skippedFor(company);
@@ -119,19 +116,42 @@ function SetupCard({ company, vaults }: { company: string; vaults: CompanyRecord
   if (folded) return <Section {...header} list={false} data-part="setup-card" data-folded>{null}</Section>;
   return (
     <Section {...header} empty={null} data-part="setup-card">
-      {left.map((s) => (
-        <SectionRow
-          key={s.id}
-          data-step={s.id}
-          data-standing={standingOf(s, facts, skipped)}
-          actions={<Button variant="outline" size="sm" onClick={() => { startSetupAt(s.id); go(HOME.setup); }} data-action="open-step">{t('home.setup.open')}</Button>}
-        >
-          <HugeiconsIcon icon={s.icon} strokeWidth={2} className="size-4 text-muted-foreground" />
-          <span>{s.name(t)}</span>
-          {standingOf(s, facts, skipped) === STANDING.skipped ? <Badge variant="outline" data-skipped>{t('setup.skipped')}</Badge> : null}
-        </SectionRow>
-      ))}
+      {left.map((s) => <SetupRow key={s.id} step={s} facts={facts} skipped={skipped} />)}
     </Section>
+  );
+}
+
+
+/**
+ * One step still to do. A step that an unfinished step blocks has its Open shut, with the reason beside it tied to
+ * it and a button that leads to the step that blocks it, as the wizard does.
+ */
+function SetupRow({ step, facts, skipped }: { step: (typeof EVERY_STEP)[number]; facts: SetupFacts; skipped: ReadonlySet<StepId> }) {
+  const t = useText();
+  const whyId = useId();
+  const blocker = blockedBy(EVERY_STEP.indexOf(step), facts);
+  const blockedStep = blocker === null ? null : EVERY_STEP.find((s) => s.id === blocker)!;
+  const open = (id: StepId): void => { startSetupAt(id); go(HOME.setup); };
+  return (
+    <SectionRow
+      data-step={step.id}
+      data-standing={standingOf(step, facts, skipped)}
+      actions={blockedStep === null
+        ? <Button variant="outline" size="sm" onClick={() => open(step.id)} data-action="open-step">{t('home.setup.open')}</Button>
+        : (
+          <>
+            <Button variant="outline" size="sm" disabled aria-describedby={whyId} data-action="open-step">{t('home.setup.open')}</Button>
+            <Button variant="outline" size="sm" onClick={() => open(blockedStep.id)} data-lead-to={blockedStep.id}>
+              {t('setup.blocked.go', { step: blockedStep.name(t) })}
+            </Button>
+          </>
+        )}
+    >
+      <HugeiconsIcon icon={step.icon} strokeWidth={2} className="size-4 text-muted-foreground" />
+      <span>{step.name(t)}</span>
+      {standingOf(step, facts, skipped) === STANDING.skipped ? <Badge variant="outline" data-skipped>{t('setup.skipped')}</Badge> : null}
+      {blockedStep === null ? null : <span id={whyId} className="basis-full text-xs text-muted-foreground" data-why-disabled>{t('setup.blocked', { step: blockedStep.name(t) })}</span>}
+    </SectionRow>
   );
 }
 

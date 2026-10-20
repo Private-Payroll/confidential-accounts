@@ -7,7 +7,7 @@ import { HOME, VIEWS } from '../pages.js';
 import { go } from '../router.js';
 import { useSessionIfAny, type Session } from '../session.js';
 import { STEP } from '../setup/step-ids.js';
-import { startSetupAt } from '../setup/asked.js';
+import { openCompany, startSetupAt } from '../setup/asked.js';
 import { CompanyFacts } from '../shell/company-facts.js';
 import { useVisitor } from '../visitor.js';
 
@@ -16,7 +16,7 @@ import { useVisitor } from '../visitor.js';
  * For a visitor, the way in is signing in: "Get started" and "Log in" both
  * sign in with the person's own account. Once they have, the same page, at the
  * same address, shows in the same place every company they sign for, each
- * opening that company, and "Create a company", which starts the setup
+ * opening that company (at "Finish creating the company" when its creation is not finished), and "Create a company", which starts the setup
  * wizard. With no company yet it shows only "Create a company".
  */
 export function Landing() {
@@ -43,7 +43,7 @@ export function Landing() {
  */
 function ChooseACompany({ session }: { session: Session }) {
   const t = useText();
-  const open = (id: string): void => { session.chooseCompany(id); session.chooseView(VIEWS.company); };
+  const open = (id: string): void => openCompany(id, () => { session.chooseCompany(id); session.chooseView(VIEWS.company); });
   const create = (): void => { startSetupAt(STEP.createCompany, true); go(HOME.setup); };
   return (
     <div className="flex max-w-sm flex-col gap-3" data-choose-a-company>
@@ -119,6 +119,9 @@ function SignInRefused({ why, retryAfterSeconds }: { why: SignInRefusal; retryAf
     [REFUSAL.windowGone]: t('signIn.refused.windowGone'),
     [REFUSAL.declined]: t('signIn.refused.declined'),
     [REFUSAL.expired]: t('signIn.refused.expired'),
+    [REFUSAL.ranOut]: t('signIn.refused.ranOut'),
+    [REFUSAL.answeredTooLate]: t('signIn.refused.answeredTooLate'),
+    [REFUSAL.unreadable]: t('signIn.refused.unreadable'),
     [REFUSAL.silent]: t('signIn.refused.silent'),
     [REFUSAL.gaveUp]: t('signIn.refused.gaveUp'),
     [REFUSAL.didNotFinish]: t('signIn.refused.didNotFinish'),

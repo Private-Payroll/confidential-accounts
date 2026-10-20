@@ -50,10 +50,22 @@ vi.mock('./vault-builder.js', () => ({
 vi.mock('./filing-judge.js', async (real) => ({
   ...(await real<typeof import('./filing-judge.js')>()),
   /* The company's keys as its directory gives them (`companyKeysFor`), stood in for by the one key of a company never changed. */
+  filingJudgeFor: () => async () => null,
   companyKeysFor: async () => ({ epoch: 0, newest: 0, key: VK, keyAt: () => VK, sealing: () => ({ key: VK, epoch: 0 }) }),
   anchoredOnTheWayInFor: (sealed: { id: string }, keys: { signerId: string }) => {
     kr.anchoring.push({ company: sealed.id, signerId: keys.signerId });
     return new Promise(() => undefined);
+  },
+}));
+/* The name a vault was filed under, as this device reads it: what the read answers, and what it was asked with. */
+const info = vi.hoisted(() => ({ answer: { state: 'none' } as unknown, asked: [] as Array<{ vault: string; keys: unknown; account: string }>, fails: false }));
+vi.mock('vaults-web-shared/vault-info-here.js', async (real) => ({
+  ...(await real<typeof import('vaults-web-shared/vault-info-here.js')>()),
+  vaultInfoRecordsFor: (account: string) => ({ account }),
+  vaultInfoHere: async (doors: { companyKeys: unknown; records: { account: string } }, vault: string) => {
+    info.asked.push({ vault, keys: doors.companyKeys, account: doors.records.account });
+    if (info.fails) throw new Error('the records could not be read');
+    return info.answer;
   },
 }));
 vi.mock('vaults-web-shared/keyring.js', async (real) => ({
@@ -166,7 +178,7 @@ function strings(value: unknown, at = 'answer'): string[] {
   return [];
 }
 
-beforeEach(() => { kr.anchoring = []; kr.answers = {}; kr.asked = []; kr.keys = true; kr.canOpen = true; kr.user = 'u1'; kr.opened = 0; everything(); });
+beforeEach(() => { info.answer = { state: 'none' }; info.asked = []; info.fails = false; kr.anchoring = []; kr.answers = {}; kr.asked = []; kr.keys = true; kr.canOpen = true; kr.user = 'u1'; kr.opened = 0; everything(); });
 afterEach(() => { vi.unstubAllEnvs(); });
 
 describe('opening a company', () => {
@@ -399,15 +411,15 @@ describe('proposals, vaults and invitations', () => {
     const c = await readCompany('u1', 'c1');
     if (c.of !== 'open' || c.vaults.of !== 'read') throw new Error('not read');
     expect(c.vaults.value).toEqual([
-      { vault: 'ab'.repeat(32), createdAt: '2026-09-01T00:00:00.000Z', standing: 'held-by-committee' },
-      { vault: 'cd'.repeat(32), createdAt: '2026-09-02T00:00:00.000Z', standing: 'unknown' },
+      { vault: 'ab'.repeat(32), createdAt: '2026-09-01T00:00:00.000Z', standing: 'held-by-committee', adopted: true },
+      { vault: 'cd'.repeat(32), createdAt: '2026-09-02T00:00:00.000Z', standing: 'unknown', adopted: true },
     ]);
   });
 
   /*
    * RED WHEN: the vault list is the service's rather than the vaults the account adopted as the person's own wallet reads
    * the chain: a vault the service leaves out goes unnoticed, or a vault it lists that the account never adopted is shown
-   * as the company's.
+   * as the company's; or a vault the service names with a standing no service gives any more is listed as the company's.
    */
   it('lists the vaults the account adopted on the chain, notices one the service leaves out, and shows no vault the account never adopted', async () => {
     const { readCompany } = await load();
@@ -415,15 +427,42 @@ describe('proposals, vaults and invitations', () => {
     kr.answers[ROUTE('/vaults')] = { rows: [...rows,
       { vault: 'ee'.repeat(32), deployedAt: '2026-09-03T00:00:00.000Z', state: 'held-by-committee' },
       { vault: 'ef'.repeat(32), deployedAt: '2026-09-04T00:00:00.000Z', state: 'start-owed' },
+      { vault: 'e1'.repeat(32), deployedAt: '2026-09-05T00:00:00.000Z', state: 'handover-owed' },
     ] };
     const listed = await readCompany('u1', 'c1');
     if (listed.of !== 'open' || listed.vaults.of !== 'read') throw new Error('not read');
     /* A vault the service calls the company's that the account never adopted is not listed; one whose set-up is not finished is, as not finished. */
     expect(listed.vaults.value.map((v) => [v.vault.slice(0, 2), v.standing])).toEqual([['ab', 'held-by-committee'], ['cd', 'unknown'], ['ef', 'start-owed']]);
+    /* Only a vault the account adopted is marked so: the one waiting to be set up is listed, not marked. */
+    expect(listed.vaults.value.map((v) => v.adopted === true)).toEqual([true, true, false]);
     /* The service leaves out a vault the account holds: the list is unreadable, never shown one short. */
     kr.adopted = ['ab'.repeat(32), 'cd'.repeat(32), 'aa'.repeat(32)];
     const short = await readCompany('u1', 'c1');
     expect(short.of === 'open' && short.vaults.of).toBe('unreadable');
+  });
+
+  /*
+   * RED WHEN: a vault's name is read from anywhere but the company's own filed record of it, opened on this device; a
+   * vault with no name, an unreadable one or a blank one is handed on as a name; a read that fails is thrown at the
+   * page; or a name is read for a person who is not signed in.
+   */
+  it('reads a vault\'s name from its filed record on this device, and gives none when there is none to give', async () => {
+    const { readVaultName } = await load();
+    const vault = 'ab'.repeat(32);
+    info.answer = { state: 'named', name: 'Treasury', description: 'The reserve', version: 2 };
+    expect(await readVaultName('u1', 'c1', vault)).toBe('Treasury');
+    expect(info.asked).toEqual([{ vault, keys: expect.objectContaining({ key: VK }), account: 'c1' }]);
+    for (const answer of [{ state: 'none' }, { state: 'unread', why: 'not believed', version: 3 }, { state: 'named', name: '  ', description: '', version: 1 }]) {
+      info.answer = answer;
+      expect(await readVaultName('u1', 'c1', vault), JSON.stringify(answer)).toBeNull();
+    }
+    info.fails = true;
+    expect(await readVaultName('u1', 'c1', vault)).toBeNull();
+    info.fails = false;
+    info.answer = { state: 'named', name: 'Treasury', description: '', version: 1 };
+    info.asked = [];
+    expect(await readVaultName('u2', 'c1', vault)).toBeNull();
+    expect(info.asked).toEqual([]);
   });
 
   /* RED WHEN: a link used, withdrawn or expired is listed as waiting to be used, or one that names nobody is given a name. */

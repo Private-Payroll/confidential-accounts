@@ -1,5 +1,7 @@
+import { useCallback, useEffect, useState } from 'react';
 import { EVERY_STEP, type SetupFacts } from './steps.js';
 import type { StepId } from './step-ids.js';
+import { creationChanged, creationOf, type CompanyCreation } from '../adapters/creation-standing.js';
 import { keepSkips, readSkips, tabStorage } from '../adapters/kept-skips.js';
 
 export { readSkips };
@@ -25,16 +27,29 @@ export const skippedFor = (company: string | null): Set<StepId> => {
   return s;
 };
 
-/** Skip `step` for `company`, and keep it so a reload of this tab still shows it skipped. */
-export function skipStep(company: string | null, step: StepId): void {
+/**
+ * Skip `step` for `company`, and keep it so a reload of this tab still shows it skipped.
+ * A step that cannot be skipped is refused: nothing is kept and false comes back.
+ */
+export function skipStep(company: string | null, step: StepId): boolean {
+  if (EVERY_STEP.find((s) => s.id === step)?.skippable !== true) return false;
   skippedFor(company).add(step);
   keepSkips(tabStorage(), skips());
+  return true;
 }
 
-/** Where `step` stands: done when the application knows it is, skipped when the person skipped it and it is not done, open otherwise. Skipping a step never makes it done. */
+/**
+ * Where `step` stands: done when the application knows it is, skipped when the person skipped it and it is not done, open otherwise.
+ * Skipping a step never makes it done, and a step that cannot be skipped is never skipped, whatever the tab kept.
+ */
 export function standingOf(step: (typeof EVERY_STEP)[number], facts: SetupFacts, skipped: ReadonlySet<StepId>): Standing {
   if (step.done(facts)) return STANDING.done;
-  return skipped.has(step.id) ? STANDING.skipped : STANDING.open;
+  return step.skippable && skipped.has(step.id) ? STANDING.skipped : STANDING.open;
+}
+
+/** The step that holds back the step at `index`: the first step before it that holds later steps back and is not done; null when none does. */
+export function blockedBy(index: number, facts: SetupFacts): StepId | null {
+  return EVERY_STEP.slice(0, index).find((s) => s.blocksLater === true && !s.done(facts))?.id ?? null;
 }
 
 /** Whether `step` is done for good: done, and a step that cannot be undone. The wizard shows it as done and never opens it again. */
@@ -55,4 +70,24 @@ export function firstOpen(facts: SetupFacts, skipped: ReadonlySet<StepId>): Step
 /** The steps not done yet, in the list's order: what the setup card on Home lists. A skipped step is not done, so it is among them. */
 export function stepsLeft(facts: SetupFacts): (typeof EVERY_STEP)[number][] {
   return EVERY_STEP.filter((s) => !s.done(facts));
+}
+
+/**
+ * Where the shown company stands in being created, for every screen that builds the setup facts: null until it is read,
+ * and never another company's reading. `reread` puts the old reading away and reads again, for a step that changed the creation.
+ */
+export function useCreationFact(company: string | null): { creation: CompanyCreation | null; reread: () => Promise<void> } {
+  const [read, setRead] = useState<{ of: string | null; creation: CompanyCreation } | null>(null);
+  const load = useCallback(async (fresh: boolean): Promise<void> => {
+    if (fresh) creationChanged(company);
+    const creation = await creationOf(company);
+    setRead({ of: company, creation });
+  }, [company]);
+  useEffect(() => {
+    let alive = true;
+    void creationOf(company).then((creation) => { if (alive) setRead({ of: company, creation }); });
+    return () => { alive = false; };
+  }, [company]);
+  const reread = useCallback(() => load(true), [load]);
+  return { creation: read !== null && read.of === company ? read.creation : null, reread };
 }

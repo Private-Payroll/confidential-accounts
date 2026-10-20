@@ -11,22 +11,17 @@ import * as keyring from './keyring.js';
 import type { Openable } from './wallet-sign-in.js';
 
 /**
- * **A COMPANY STARTED IN A TAB IS SAVED ONLY INTO THE KEYS OF WHOEVER STARTED
- * IT, AND A SIGN-IN PICKED UP AFTER A RELOAD CAN CARRY ITS ADDRESS BACK.**
+ * **A SIGN-IN PICKED UP AFTER A RELOAD CAN CARRY ITS ADDRESS BACK.**
  *
- * The first half: a company whose keys could not be saved waits in the tab. If
- * somebody else signs in in that tab before it is finished, finishing it is
- * refused for them, nothing of it is written into their saved keys, and it is
- * still there for the person who started it.
- *
- * The second half: a reloaded tab knows who is signed in but not the address
- * the sign-in was for. A screen that kept it hands it back, and the keyring
- * takes it only for the person the service says is signed in, so that person's
- * first keys are saved under the account holding that address with no second
- * sign-in. Handed nothing, the keyring is as it always was.
+ * A reloaded tab knows who is signed in but not the address the sign-in was
+ * for. A screen that kept it hands it back, and the keyring takes it only for
+ * the person the service says is signed in, so that person's first keys are
+ * saved under the account holding that address with no second sign-in. Handed
+ * nothing, the keyring is as it always was.
  *
  * The wallet at the other end is the wallet's own code answering over the real
- * conversation.
+ * conversation; the company is made by the first press, with a builder that
+ * stands in for the worker.
  */
 const US = 'https://payroll.example';
 const WALLET = 'https://wallet.example';
@@ -74,18 +69,23 @@ const keyringHexFor = (person: string) => toHex(keyringKeyFor(identity, parseAsk
   person, signedInAs: null, company: null, account: null,
 }), US, Date.now()) as KeyringRequest));
 
+const LEAF = 'ab'.repeat(32);
+const ACCOUNT = 'c0'.repeat(32);
+
+/** What builds the account's deploy, standing in for the worker: the first press needs only the seat and the deploy. */
+const aBuilder = (): keyring.AccountCreationBuilder => ({
+  foundingSeat: async () => ({ seat: LEAF, scope: 'cd'.repeat(32), publicKey: 'ef'.repeat(32) }),
+  accountDeploy: async () => ({ account: ACCOUNT, tx: 'REVQTE9Z', insert: [{ circuit: 'payout', key: 'S0VZ' }] }),
+} as unknown as keyring.AccountCreationBuilder);
+
 const A_COMPANY = { name: 'Acme Ltd', signers: [{ name: 'Priya', role: 'admin' as const }], threshold: 1 };
 const answerFor = (user: typeof A, address: string) => ({ user, address, created: true, session: {} });
 
 const realFetch = globalThis.fetch;
 afterEach(() => { globalThis.fetch = realFetch; keyring.forgetLocally(); });
 
-/**
- * A service keeping each person's saved keys apart, by who the request says it
- * is for. `refuseSavesFor` names a person every save of theirs is refused for,
- * as if another device saved first each time.
- */
-function aService(opts: { signedIn: () => typeof A; refuseSavesFor?: string | null }) {
+/** A service keeping each person's saved keys apart, by who the request says it is for. */
+function aService(opts: { signedIn: () => typeof A }) {
   const posted: { route: string; as: string | null; body: any }[] = [];
   const saved = new Map<string, { bundle: unknown; version: number }>();
   globalThis.fetch = (async (url: string, init?: RequestInit) => {
@@ -100,13 +100,9 @@ function aService(opts: { signedIn: () => typeof A; refuseSavesFor?: string | nu
       case 'GET /api/me': return json(200, { user: opts.signedIn(), accounts: [] });
       case 'GET /api/me/keys': return json(200, { keyBundle: mine.bundle, version: mine.version });
       case 'PUT /api/me/keys':
-        if (who === opts.refuseSavesFor) return json(409, { error: 'saved from somewhere else since' });
         saved.set(who, { bundle: body.keyBundle, version: mine.version + 1 });
         return json(200, { version: mine.version + 1 });
-      case 'POST /api/accounts': return json(200, {
-        account: { id: 'acc_new' },
-        secrets: [{ signerId: 'sgn_new', signingSecret: 'dd'.repeat(32), wrappingSecret: 'ee'.repeat(32), blinding: 'ff'.repeat(32), scope: 'ab'.repeat(32) }],
-      });
+      case 'POST /api/accounts': return json(201, { account: { id: body.founding.account.id }, state: 'made' });
       default: return json(404, { error: `no route for ${route}` });
     }
   }) as typeof fetch;
@@ -122,122 +118,6 @@ function aService(opts: { signedIn: () => typeof A; refuseSavesFor?: string | nu
 const companiesIn = (bundle: unknown, person: string): string[] =>
   Object.keys(JSON.parse(unseal(bundle as never, keyringHexFor(person))).accounts);
 
-describe('a company waiting to be finished in a tab', () => {
-  /*
-   * RED WHEN: the company waiting is not bound to whoever started it, so
-   * finishing it after somebody else signed in in the tab saves its keys into
-   * theirs; or it is offered to them as theirs to finish; or it is dropped
-   * rather than left for the person who started it.
-   */
-  it('is finished only for whoever started it, and saved into nobody else\'s keys', async () => {
-    let now = A;
-    const service = aService({ signedIn: () => now, refuseSavesFor: A.id });
-    keyring.signedInByAnotherScreen(answerFor(A, ADDRESS_A));
-    await expect(keyring.createCompanyWithWallet(A_COMPANY, WALLET, new WalletAtTheOtherEnd(ADDRESS_A), US)).rejects.toThrow();
-    expect(keyring.companyAwaitingSetup()).toBe('acc_new');
-
-    /* Somebody else signs in in the same tab, and opens their own saved keys. */
-    now = B;
-    keyring.signedInByAnotherScreen(answerFor(B, ADDRESS_B));
-    await keyring.openKeysWithWallet(WALLET, new WalletAtTheOtherEnd(ADDRESS_B), US);
-    expect(keyring.canOpenCompanies()).toBe(true);
-    expect(keyring.companyAwaitingSetup()).toBeNull();
-    expect(keyring.companyAwaitingSetupProblem()).toBeNull();
-    const asked = service.all().length;
-    await expect(keyring.finishCompanyCreation()).rejects.toBeInstanceOf(keyring.CompanyStartedBySomebodyElse);
-    /* Refused before anything is read or written: nothing of theirs is even read for it. */
-    expect(service.all().length).toBe(asked);
-    expect(service.savedFor(B.id)).toBeNull();
-    expect(keyring.keysFor('acc_new')).toBeNull();
-
-    /* Starting a company of their own is refused as someone else's unfinished company, never as theirs to finish. */
-    const posts = service.sent('POST /api/accounts').length;
-    await expect(keyring.createCompanyWithWallet(A_COMPANY, WALLET, new WalletAtTheOtherEnd(ADDRESS_B), US)).rejects.toBeInstanceOf(keyring.CompanyStartedBySomebodyElse);
-    expect(service.sent('POST /api/accounts')).toHaveLength(posts);
-
-    /* The person who started it signs in again in the tab: it is theirs to finish, and it is saved into their keys. */
-    now = A;
-    keyring.signedInByAnotherScreen(answerFor(A, ADDRESS_A));
-    expect(keyring.companyAwaitingSetup()).toBe('acc_new');
-  });
-
-  /* RED WHEN: a new company's first save is made after somebody else signed in while the company was being made, so its keys are written under them. */
-  it('saves nothing when somebody else signs in while the company is being made', async () => {
-    let now = A;
-    const service = aService({ signedIn: () => now });
-    keyring.signedInByAnotherScreen(answerFor(A, ADDRESS_A));
-    await keyring.openKeysWithWallet(WALLET, new WalletAtTheOtherEnd(ADDRESS_A), US);
-    const made = globalThis.fetch;
-    globalThis.fetch = (async (url: string, init?: RequestInit) => {
-      const answer = await made(url, init);
-      if (`${String(init?.method ?? 'GET')} ${url}` === 'POST /api/accounts') {
-        /* The answer arrives after somebody else has signed in here and opened their keys. */
-        now = B;
-        keyring.signedInByAnotherScreen(answerFor(B, ADDRESS_B));
-        await keyring.openKeysWithWallet(WALLET, new WalletAtTheOtherEnd(ADDRESS_B), US);
-      }
-      return answer;
-    }) as typeof fetch;
-    await expect(keyring.createCompanyWithWallet(A_COMPANY, WALLET, new WalletAtTheOtherEnd(ADDRESS_A), US))
-      .rejects.toBeInstanceOf(keyring.CompanyStartedBySomebodyElse);
-    expect(service.sent('PUT /api/me/keys').filter((w) => w.as === B.id)).toEqual([]);
-    expect(service.savedFor(B.id)).toBeNull();
-  });
-
-  /* RED WHEN: a sign-in as somebody else that arrives while finishing reads the saved keys lets the company's keys be written under them. */
-  it('saves nothing when somebody else signs in while it is being finished', async () => {
-    let now = A;
-    let refuse: string | null = A.id;
-    const service = aService({ signedIn: () => now, get refuseSavesFor() { return refuse; } });
-    keyring.signedInByAnotherScreen(answerFor(A, ADDRESS_A));
-    await expect(keyring.createCompanyWithWallet(A_COMPANY, WALLET, new WalletAtTheOtherEnd(ADDRESS_A), US)).rejects.toThrow();
-    refuse = null;
-    const made = globalThis.fetch;
-    let switched = false;
-    globalThis.fetch = (async (url: string, init?: RequestInit) => {
-      const answer = await made(url, init);
-      if (!switched && `${String(init?.method ?? 'GET')} ${url}` === 'GET /api/me/keys') {
-        switched = true;
-        now = B;
-        keyring.signedInByAnotherScreen(answerFor(B, ADDRESS_B));
-        await keyring.openKeysWithWallet(WALLET, new WalletAtTheOtherEnd(ADDRESS_B), US);
-      }
-      return answer;
-    }) as typeof fetch;
-    await expect(keyring.finishCompanyCreation()).rejects.toBeInstanceOf(keyring.CompanyStartedBySomebodyElse);
-    expect(switched).toBe(true);
-    expect(service.sent('PUT /api/me/keys').filter((w) => w.as === B.id)).toEqual([]);
-    expect(service.savedFor(B.id)).toBeNull();
-  });
-
-  /* RED WHEN: why a company cannot be finished is said to somebody who did not start it. */
-  it('says nothing of a company that can never be finished to anybody but whoever started it', async () => {
-    let now = A;
-    const service = aService({ signedIn: () => now, refuseSavesFor: A.id });
-    keyring.signedInByAnotherScreen(answerFor(A, ADDRESS_A));
-    await expect(keyring.createCompanyWithWallet(A_COMPANY, WALLET, new WalletAtTheOtherEnd(ADDRESS_A), US)).rejects.toThrow();
-    /* What is saved now does not open with the key this tab holds, so it can never be finished. */
-    service.replaceSaved(A.id, { v: 1, box: 'not sealed under this key' });
-    await expect(keyring.finishCompanyCreation()).rejects.toBeInstanceOf(keyring.SavedKeysDidNotOpen);
-    expect(keyring.companyAwaitingSetupProblem()?.canFinish).toBe(false);
-    now = B;
-    keyring.signedInByAnotherScreen(answerFor(B, ADDRESS_B));
-    expect(keyring.companyAwaitingSetupProblem()).toBeNull();
-  });
-
-  /* RED WHEN: binding the company to its creator stops the ordinary finish, so the person who started it cannot save it. */
-  it('is still finished, into their own keys, by whoever started it', async () => {
-    let refuse: string | null = A.id;
-    const service = aService({ signedIn: () => A, get refuseSavesFor() { return refuse; } });
-    keyring.signedInByAnotherScreen(answerFor(A, ADDRESS_A));
-    await expect(keyring.createCompanyWithWallet(A_COMPANY, WALLET, new WalletAtTheOtherEnd(ADDRESS_A), US)).rejects.toThrow();
-    refuse = null;
-    expect(await keyring.finishCompanyCreation()).toEqual({ accountId: 'acc_new' });
-    expect(companiesIn(service.savedFor(A.id), A.id)).toEqual(['acc_new']);
-    expect(keyring.companyAwaitingSetup()).toBeNull();
-  });
-});
-
 describe('a sign-in picked up after a reload', () => {
   /* RED WHEN: the address handed back is not taken, so a person with nothing saved must sign in again to create their first company; or it is taken from anywhere but what was handed back. */
   it('carries the address handed back, so a first company needs no second sign-in', async () => {
@@ -245,9 +125,9 @@ describe('a sign-in picked up after a reload', () => {
     expect(await keyring.resumeSession({ personId: A.id, address: ADDRESS_A })).toEqual(A);
     expect(keyring.signedInWallet()).toBe(ADDRESS_A);
     const wallet = new WalletAtTheOtherEnd(ADDRESS_A);
-    expect(await keyring.createCompanyWithWallet(A_COMPANY, WALLET, wallet, US)).toEqual({ accountId: 'acc_new' });
+    const started = await keyring.startCompanyHeldFromTheStart(A_COMPANY, WALLET, aBuilder(), wallet, US);
     expect(wallet.askedFor).toEqual([ADDRESS_A]);
-    expect(companiesIn(service.savedFor(A.id), A.id)).toEqual(['acc_new']);
+    expect(companiesIn(service.savedFor(A.id), A.id)).toEqual([started.accountId]);
   });
 
   /* RED WHEN: an address kept for somebody else is taken for the person signed in now, so their first keys could be saved under an account they did not sign in with. */
@@ -255,7 +135,7 @@ describe('a sign-in picked up after a reload', () => {
     const service = aService({ signedIn: () => A });
     expect(await keyring.resumeSession({ personId: B.id, address: ADDRESS_B })).toEqual(A);
     expect(keyring.signedInWallet()).toBeNull();
-    await expect(keyring.createCompanyWithWallet(A_COMPANY, WALLET, new WalletAtTheOtherEnd(ADDRESS_B), US))
+    await expect(keyring.startCompanyHeldFromTheStart(A_COMPANY, WALLET, aBuilder(), new WalletAtTheOtherEnd(ADDRESS_B), US))
       .rejects.toBeInstanceOf(keyring.FirstKeysNeedTheSignIn);
     expect(service.sent('POST /api/accounts')).toEqual([]);
   });
@@ -265,7 +145,7 @@ describe('a sign-in picked up after a reload', () => {
     const service = aService({ signedIn: () => A });
     await keyring.resumeSession({ personId: A.id, address: ADDRESS_A });
     const elsewhere = new WalletAtTheOtherEnd(ADDRESS_B);
-    await expect(keyring.createCompanyWithWallet(A_COMPANY, WALLET, elsewhere, US)).rejects.toThrow();
+    await expect(keyring.startCompanyHeldFromTheStart(A_COMPANY, WALLET, aBuilder(), elsewhere, US)).rejects.toThrow();
     expect(elsewhere.askedFor).toEqual([ADDRESS_A]);
     expect(service.sent('POST /api/accounts')).toEqual([]);
     expect(service.sent('PUT /api/me/keys')).toEqual([]);
@@ -293,9 +173,9 @@ describe('what a person\'s devices once kept of each company\'s roster', () => {
     }), keyringHexFor(A.id) as never));
     keyring.signedInByAnotherScreen(answerFor(A, ADDRESS_A));
     await keyring.openKeysWithWallet(WALLET, new WalletAtTheOtherEnd(ADDRESS_A), US);
-    expect(await keyring.createCompanyWithWallet(A_COMPANY, WALLET, new WalletAtTheOtherEnd(ADDRESS_A), US)).toEqual({ accountId: 'acc_new' });
+    const started = await keyring.startCompanyHeldFromTheStart(A_COMPANY, WALLET, aBuilder(), new WalletAtTheOtherEnd(ADDRESS_A), US);
     const written = JSON.parse(unseal(service.savedFor(A.id) as never, keyringHexFor(A.id)));
-    expect(Object.keys(written.accounts)).toEqual(['acc_new']);
+    expect(Object.keys(written.accounts)).toEqual([started.accountId]);
     expect(written).not.toHaveProperty('rostersBelieved');
   });
 });

@@ -101,6 +101,15 @@ describe('THE WAIT IS A SILENCE, NOT A TOTAL, AND IT ENDS AT THE ASK\'S OWN DEAD
     expect((asked.error as WalletClosed).message).toBe(WENT_QUIET_SAYS.proving);
   });
 
+  it('a wallet that went quiet while preparing the transaction is told so in plain words, with what to do', () => {
+    /* RED WHEN: the sentence says "proving" or "in your browser" again, or drops that nothing was sent or what to do next. */
+    expect(WENT_QUIET_SAYS.proving).not.toMatch(/prov/iu);
+    expect(WENT_QUIET_SAYS.proving).not.toContain('in your browser');
+    expect(WENT_QUIET_SAYS.proving).toBe(
+      'your wallet stopped answering while it was preparing the transaction, so this page stopped waiting. '
+      + 'It handed this page nothing, so nothing has been sent. Try again.');
+  });
+
   it('a wallet at work for ever is still stopped at the deadline this page wrote into its ask', async () => {
     const page = new APage();
     const asked = outcome(askWallet(page, WALLET, { ask: 1, expiresAt: START + 12 * 60_000 }));
@@ -114,7 +123,7 @@ describe('THE WAIT IS A SILENCE, NOT A TOTAL, AND IT ENDS AT THE ASK\'S OWN DEAD
     expect(page.armedFor).toEqual([2 * 60_000]);
     page.pass(2 * 60_000);
     await settle();
-    expect((asked.error as WalletClosed).refusal).toEqual({ of: 'expired' });
+    expect((asked.error as WalletClosed).refusal).toEqual({ of: 'expired', while: 'open' });
     expect((asked.error as WalletClosed).message).toBe(OUT_OF_TIME_SAYS);
   });
 
@@ -125,7 +134,7 @@ describe('THE WAIT IS A SILENCE, NOT A TOTAL, AND IT ENDS AT THE ASK\'S OWN DEAD
     page.pass(0);
     await settle();
     /* RED WHEN: a deadline in the past is treated as no deadline. */
-    expect((asked.error as WalletClosed).refusal).toEqual({ of: 'expired' });
+    expect((asked.error as WalletClosed).refusal).toEqual({ of: 'expired', while: 'open' });
     /* RED WHEN: a wallet that never said it was at work is said to have been "still working". */
     expect((asked.error as WalletClosed).message).toBe(RAN_OUT_SAYS);
   });

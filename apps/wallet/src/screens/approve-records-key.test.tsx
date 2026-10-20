@@ -169,6 +169,33 @@ describe('THE SCREEN FOR SIGNING A RECORDS KEY FOR A SEAT', () => {
     expect(unread).toEqual([]);
   });
 
+  it('BEFORE A VAULT\'S FIRST SECRET, SHOWS THE VAULT AND EVERYONE WHO WILL HOLD ITS SECRET, AND SAYS THIS LOCKS NOTHING ON THE CHAIN', async () => {
+    const readers = [{ key: 'a1'.repeat(32), name: 'Ada' }, { key: 'b2'.repeat(32) }];
+    const answers: unknown[] = [];
+    const { container } = render(
+      <ApproveRecordsKey request={ask({ vault: VAULT, firstSecret: { readers } })} identity={identity} channel={channelFor(answers)}
+        consent={consented} whoIsAsking={<p>asker</p>} onDecline={() => {}} now={() => NOW} readLabel={chain()} pinned={ACCOUNT}
+        readVault={vaultChain()} />);
+    await settle();
+    /* RED WHEN: the vault whose secret this is for is not shown to the person. */
+    expect(container.querySelector('[data-first-secret-vault]')?.textContent).toBe(VAULT);
+    /* RED WHEN: a reader is left off the screen, or shown by another name or key than the page sent. */
+    const shown = [...container.querySelectorAll('[data-first-secret-reader]')];
+    expect(shown.map((r) => r.querySelector('[data-first-secret-reader-name]')?.textContent)).toEqual(['Ada', 'A key the page names no one for']);
+    expect(shown.map((r) => r.querySelector('[data-first-secret-reader-key]')?.textContent)).toEqual(readers.map((r) => r.key));
+    /* RED WHEN: the screen lets the person believe that confirming here stops the secret on the chain. */
+    expect(container.querySelector('[data-first-secret-not-a-lock]')?.textContent).toBe(
+      'Signing here does not lock anything on the chain: the page that asked holds what it needs to approve this secret '
+      + 'without your wallet. This is shown so you can see who will hold the vault\u2019s secret, and say no if it is wrong.');
+    /* Signing still answers as it always has. */
+    await act(async () => { fireEvent.click(button(container)); });
+    expect((answers[0] as RecordsKeyAnswer).vault).toEqual(HOLDERS);
+    cleanup();
+    /* RED WHEN: an ask that is not for a first secret shows who would hold one. */
+    const plain = await draw([], chain(), consented, { readVault: vaultChain() });
+    expect(plain.container.querySelector('[data-first-secret]')).toBeNull();
+  });
+
   it('A VAULT PINNED TO ANOTHER COMPANY\'S ACCOUNT IS NOT SIGNED FOR, and the screen says why', async () => {
     const answers: unknown[] = [];
     const { container } = await draw(answers, chain(), consented, { readVault: vaultChain({ account: 'ad'.repeat(32) }) });

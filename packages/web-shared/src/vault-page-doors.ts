@@ -1,8 +1,8 @@
 /**
  * **WHAT THE VAULT SCREEN HANDS THE VAULT OPERATIONS**, assembled from this
  * page's own session: the company's routes over this page's own sign-in, the
- * company's records over the mounted records route, the roster this device
- * opened, and a place in this browser for a vault's temporary key.
+ * company's records over the mounted records route, and the roster this device
+ * opened.
  */
 import { directoryReplaysInMemory, type DirectoryReplaysKept, type KeptReplay, type StartedFrom } from './tree-kept-here.js';
 import type { Hex } from '../../../src/core/crypto.js';
@@ -25,10 +25,9 @@ import { seatInvitationIn } from '../../../src/core/proposal-filing.js';
 import type { AccountAddress, CompanyLabel } from 'midnight-identity/profile/company-label';
 import type { DeviceRecords, DeviceSigner } from './deposit-on-device.js';
 import type {
-  DepositInFlight, DepositsInFlight, PaymentInFlight, PaymentsInFlight, TemporaryKeys, VaultService,
+  DepositInFlight, DepositsInFlight, PaymentInFlight, PaymentsInFlight, VaultService,
 } from './vault-operation.js';
 import { sealedOnThisDevice, type InFlightOpener, type InFlightRecords, type SealedInFlight } from './in-flight-on-this-device.js';
-import type { SigningKeyOnTheWire } from './vault-worker-client.js';
 import type { AccountDeployed } from './governed-call-builder.js';
 import type { ChargeInFlight, ChargesInFlight } from './run-charged-here.js';
 import type { RecordsEntered } from './record-entered-here.js';
@@ -1242,6 +1241,8 @@ export const WAITING_FOR_ITS_INVITATION = 'your seat\'s entry in the company\'s 
  * company's proposal that seated it, which names the leaf on every path; while it cannot be read the entry stays owed and the answer
  * says so (`waitingForItsInvitation`). The founding seat is the one the
  * account's deploy seated, as the person's own wallet reads it (`founding`).
+ * An entry the directory already holds is `already-there` before anything else is asked, so a device whose keys hold no opening
+ * of the seat is not told it is not filed.
  * A refusal is not an error here: it leaves the entry owed, and says why.
  */
 export const fileTheOwedDirectoryEntry = async (
@@ -1256,66 +1257,41 @@ export const fileTheOwedDirectoryEntry = async (
   let done: 'filed' | 'already-there';
   try {
     if (now.opening === undefined) {
-      return { notYet: 'this device holds no opening of its seat, so its entry cannot be filed. Take the seat again on this device' };
+      /* An entry the directory already holds needs no opening to be filed: it is there, whatever the keys on this device hold. */
+      const entry = now.signed.entry;
+      const there = (await directoryFilingsFrom(api, accountId)).some((f) => f?.change?.kind === 'claim' && f.change.entry?.statement?.seat === entry.seat
+        && f.change.entry.statement.signingKey === entry.signingKey && f.change.entry.statement.wrappingKey === entry.wrappingKey);
+      if (!there) {
+        return { notYet: 'this device holds no opening of its seat, so its entry cannot be filed. Take the seat again on this device' };
+      }
+      done = 'already-there';
+    } else {
+      const held = await keys();
+      if (held === null) {
+        return { notYet: 'this device cannot open the company\'s key yet, so its entry cannot be sealed for the company\'s members. It is filed once you are admitted' };
+      }
+      /* An invitation kept from a link names no leaf; the one an entry carries names it, and is read from the proposal that seated it. */
+      const seat = now.signed.entry.seat.toLowerCase();
+      let invited = now.invited?.terms.leaf?.toLowerCase() === seat ? now.invited : null;
+      if (invited === null) {
+        /* A list the service will not give is a wait, never a reason to file the entry without its invitation. */
+        let listed: unknown = [];
+        try { listed = await api(`/api/accounts/${encodeURIComponent(accountId)}/proposals`); } catch { listed = []; }
+        invited = seatInvitationIn(Array.isArray(listed) ? listed as SealedProposal[] : [], accountId, held.viewingKey, seat);
+      }
+      if (invited === null) {
+        let first: string | null = null;
+        try { first = await founding(); } catch { first = null; }
+        if (first === null || first.toLowerCase() !== seat) return { waitingForItsInvitation: WAITING_FOR_ITS_INVITATION };
+      }
+      done = await fileOwnDirectoryEntry(api, accountId, now.person, now.signed, now.opening, held, invited);
     }
-    const held = await keys();
-    if (held === null) {
-      return { notYet: 'this device cannot open the company\'s key yet, so its entry cannot be sealed for the company\'s members. It is filed once you are admitted' };
-    }
-    /* An invitation kept from a link names no leaf; the one an entry carries names it, and is read from the proposal that seated it. */
-    const seat = now.signed.entry.seat.toLowerCase();
-    let invited = now.invited?.terms.leaf?.toLowerCase() === seat ? now.invited : null;
-    if (invited === null) {
-      /* A list the service will not give is a wait, never a reason to file the entry without its invitation. */
-      let listed: unknown = [];
-      try { listed = await api(`/api/accounts/${encodeURIComponent(accountId)}/proposals`); } catch { listed = []; }
-      invited = seatInvitationIn(Array.isArray(listed) ? listed as SealedProposal[] : [], accountId, held.viewingKey, seat);
-    }
-    if (invited === null) {
-      let first: string | null = null;
-      try { first = await founding(); } catch { first = null; }
-      if (first === null || first.toLowerCase() !== seat) return { waitingForItsInvitation: WAITING_FOR_ITS_INVITATION };
-    }
-    done = await fileOwnDirectoryEntry(api, accountId, now.person, now.signed, now.opening, held, invited);
   } catch (e) {
     return { notYet: (e as Error)?.message ?? String(e) };
   }
   await owed.settle();
   return done;
 };
-
-/**
- * **A VAULT'S TEMPORARY KEY, KEPT IN THIS BROWSER UNTIL ITS HANDOVER HAS LANDED.**
- * It is written before the deploy is sent, so an answer lost on the way does
- * not lose it, and it goes nowhere but the handover this device signs.
- */
-export function browserTemporaryKeys(factory: IDBFactory = indexedDB): TemporaryKeys {
-  const STORE = 'temporary-keys';
-  const open = () => new Promise<IDBDatabase>((resolve, reject) => {
-    const req = factory.open('vault-handover', 1);
-    req.onupgradeneeded = () => { req.result.createObjectStore(STORE); };
-    req.onsuccess = () => resolve(req.result);
-    req.onerror = () => reject(req.error ?? new Error('this browser would not keep the vault\'s temporary key.'));
-  });
-  const run = async <T>(mode: IDBTransactionMode, act: (s: IDBObjectStore) => IDBRequest<T>): Promise<T> => {
-    const db = await open();
-    try {
-      return await new Promise<T>((resolve, reject) => {
-        const tx = db.transaction(STORE, mode);
-        const req = act(tx.objectStore(STORE));
-        tx.oncomplete = () => resolve(req.result);
-        tx.onerror = () => reject(tx.error ?? new Error('this browser did not keep the vault\'s temporary key.'));
-      });
-    } finally {
-      db.close();
-    }
-  };
-  return {
-    put: async (vault, key) => { await run('readwrite', (s) => s.put({ tag: key.tag, value: key.value }, vault)); },
-    get: async (vault) => ((await run('readonly', (s) => s.get(vault))) as SigningKeyOnTheWire | undefined) ?? null,
-    forget: async (vault) => { await run('readwrite', (s) => s.delete(vault)); },
-  };
-}
 
 /**
  * **WHERE THIS BROWSER KEEPS A DEPOSIT OR A PAYMENT ON ITS WAY: SEALED RECORDS

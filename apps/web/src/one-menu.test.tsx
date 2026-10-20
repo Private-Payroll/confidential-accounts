@@ -26,7 +26,7 @@ vi.mock('./adapters/company-records.js', async (real) => ({
 }));
 vi.mock('./adapters/handover-state.js', async (real) => ({
   ...(await real<typeof import('./adapters/handover-state.js')>()),
-  readHandover: async () => ({ of: 'vault-keys-missing', signers: 1 }),
+  readHandover: async () => ({ of: 'held' }),
 }));
 vi.mock('./adapters/session.js', async (real) => ({
   ...(await real<typeof import('./adapters/session.js')>()),
@@ -217,12 +217,14 @@ describe('one menu, in every file', () => {
    * goes to one page for one reason: the router and the frame, the landing
    * page's Create a company, Home's setup card, Settings' tabs, the way out
    * of a focused page, and the way from an action opened in the right-hand
-   * panel on the vault pages to the setup step that makes it possible.
+   * panel on the vault pages to the setup step that makes it possible, and
+   * the way from a company whose creation is not finished, opened from any
+   * list of companies, to the step that finishes it.
    */
   it('goes to a page from code only where it is named', () => {
     expect(APP_CODE.filter((f) => GOES.test(f.text) && f.path !== 'apps/web/src/router.tsx').map((f) => f.path).sort()).toEqual([
       'apps/web/src/app.tsx', 'apps/web/src/records/vault-pending.tsx', 'apps/web/src/screens/home.tsx', 'apps/web/src/screens/landing.tsx',
-      'apps/web/src/screens/settings.tsx', 'apps/web/src/shell/account-menu.tsx', 'apps/web/src/shell/command-bar.tsx', 'apps/web/src/shell/company-switcher.tsx', 'apps/web/src/shell/focused-frame.tsx',
+      'apps/web/src/screens/settings.tsx', 'apps/web/src/setup/asked.ts', 'apps/web/src/shell/account-menu.tsx', 'apps/web/src/shell/command-bar.tsx', 'apps/web/src/shell/company-switcher.tsx', 'apps/web/src/shell/focused-frame.tsx',
       'apps/web/src/shell/shell.tsx',
     ]);
   });

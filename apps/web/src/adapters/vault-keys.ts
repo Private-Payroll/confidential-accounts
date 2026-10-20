@@ -9,6 +9,9 @@ import {
 import { fileTheOwedDirectoryEntry } from 'vaults-web-shared/vault-page-doors.js';
 import { foldOffersHere, offerVaultKeysHere } from 'vaults-web-shared/roster-here.js';
 import type { Inviter } from '../../../../src/core/invitation.js';
+import { keyInForce, keysHeld } from '../../../../src/core/company-key.js';
+import { openVaultKeysOffer, vaultKeysOfferRefusal, type OpenedVaultKeysOffer, type VaultKeysOffer } from '../../../../src/core/vault-keys.js';
+import type { AccountAddress, CompanyLabel } from 'midnight-identity/profile/company-label';
 import { rosterReadsFor } from './filing-judge.js';
 import type { CompanyKeys } from '../../../../src/core/company-key.js';
 import { SERVICE } from './company-records.js';
@@ -47,7 +50,9 @@ interface SignerKeys {
  * it read it, are handed back for what follows. Refused before the account is
  * asked for anything - before the company's keys are released - when the
  * company's records name no seat for this signer (`noSeat`), or a seat their
- * own key does not make (`notYourSeat`).
+ * own key does not make (`notYourSeat`); and, once the account has been asked, when the directory has not taken this
+ * signer's entry (`entryNotFiled`, or `entryWaitsForItsInvitation` while the invitation behind it is not read): then
+ * no keys are offered, and the entry stays kept for the next way in.
  */
 export async function giveTheVaultKeys(
   companyId: string, signer: SignerKeys, viewingKey: CompanyKeys, roster: () => Promise<Pick<Account, 'signers'>>,
@@ -92,11 +97,16 @@ export async function giveTheVaultKeys(
    * holds its seat's opening and can open the company's key, which may be after this press, so it is kept with this
    * person's keys and filed now and on every way into the company until the directory holds it
    * (`fileTheOwedDirectoryEntry`): seating files it, with no later press needed.
+   * While it is not filed the press is refused, by which wait it is, and nothing is offered.
    */
   await oweDirectoryEntry(companyId, { person, company: released.company, signed: { committeeKey: signed.committeeKey, entry: signed.entry! } });
-  await fileTheOwedDirectoryEntry(api, companyId, directoryEntryOwed(companyId), async () => ({ signingSecret: signer.signingSecret, viewingKey }),
+  const filed = await fileTheOwedDirectoryEntry(api, companyId, directoryEntryOwed(companyId), async () => ({ signingSecret: signer.signingSecret, viewingKey }),
     /* The founding seat, as the person's own wallet reads the account: the only entry filed without an invitation. */
     async () => (await rosterReadsFor(companyId, released.company, released.account).holders()).founding ?? null);
+  /* An entry the directory has not taken stays owed and is tried at every way in; no keys are offered on a seat with no entry filed. */
+  if (typeof filed === 'object') {
+    return { of: ACTED.refused, why: (filed as { notYet?: string }).notYet === undefined ? ACT_REFUSAL.entryWaitsForItsInvitation : ACT_REFUSAL.entryNotFiled };
+  }
   await offerVaultKeysHere(api, companyId, {
     signerId: signer.signerId, signingSecret: signer.signingSecret, companyKey: released.companyKey,
     committeeKey: released.committeeKey, recordsKey: signed.statement, entry: signed.entry!, viewingKey,
@@ -115,4 +125,31 @@ export async function giveTheVaultKeys(
     /* Not believed yet, or the roster moved meanwhile: the offer stays open for the next press or another seat. */
   }
   return { of: ACTED.done, ...released, signed };
+}
+
+/**
+ * THE VAULT-KEY OFFERS OPEN ON THE SERVICE THIS DEVICE CAN OPEN, by the seat each is for: `served` is the service's answer
+ * for the company's open offers. An offer counts only when it opens under a key the company holds, is the shape of an offer,
+ * and carries a directory entry and vault keys the signer's own wallet and key signed for this company
+ * (`vaultKeysOfferRefusal`): the same opening and checks the fold makes before it files one into the roster. Whose offer it
+ * is, and whether its seat is believed, are for the reader to check.
+ */
+export function offersOpenHere(
+  companyId: string, served: unknown, viewingKey: CompanyKeys, label: CompanyLabel, account: AccountAddress,
+): ReadonlyMap<string, OpenedVaultKeysOffer> {
+  const offers = (served as { offers?: unknown } | null)?.offers;
+  const kept = Array.isArray(offers) ? offers as VaultKeysOffer[] : [];
+  const open = new Map<string, OpenedVaultKeysOffer>();
+  for (const offer of kept) {
+    const seat = (offer?.seat ?? '').toLowerCase();
+    try {
+      const opened = keysHeld(viewingKey).map((k) => openVaultKeysOffer(companyId, offer, k)).find((o) => typeof o !== 'string')
+        ?? openVaultKeysOffer(companyId, offer, keyInForce(viewingKey));
+      if (typeof opened === 'string' || vaultKeysOfferRefusal(label, account, companyId, opened) !== null) continue;
+      open.set(seat, opened);
+    } catch {
+      /* An offer this device cannot read is not counted. */
+    }
+  }
+  return open;
 }

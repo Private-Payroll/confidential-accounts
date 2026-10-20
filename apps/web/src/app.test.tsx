@@ -15,11 +15,27 @@ import { Root } from './root.js';
  * shows them.
  */
 (globalThis as { ResizeObserver?: unknown }).ResizeObserver ??= class { observe() {} unobserve() {} disconnect() {} };
-vi.mock('./adapters/session.js', async (real) => ({
-  ...(await real<typeof import('./adapters/session.js')>()),
+/* A sign-in refusal the test hands the landing page, in place of the real sign-in. */
+const signing = vi.hoisted(() => ({ refuse: null as string | null }));
+vi.mock('./adapters/session.js', async (real) => {
+  const actual = await real<typeof import('./adapters/session.js')>();
+  return ({
+  ...actual,
+  signIn: async (asking: { name: string; purpose: string }) => (signing.refuse === null
+    ? actual.signIn(asking)
+    : { of: 'refused', why: signing.refuse, retryAfterSeconds: null }),
   /* What the person's own wallet reads off the chain for the companies listed below. */
   approvalsNeededFor: async () => new Map([['c-2', 2], ['c-3', 1], ['c-1', 3]]),
+  });
+});
+/* The mark the creation adapter gives each company; a company not in it is given none. */
+const creations = vi.hoisted(() => ({ mark: new Map<string, 'not-finished'>() }));
+vi.mock('./adapters/creation-standing.js', async (real) => ({
+  ...(await real<typeof import('./adapters/creation-standing.js')>()),
+  creationOf: async (id: string | null) => ({ company: id, standing: null, awaitingSecondPress: false, kept: false, confirmedFinished: false, mark: id === null ? null : creations.mark.get(id) ?? null }),
 }));
+/* The creation adapter loads when a list first needs it; loaded here, once, so no test waits on that load. */
+await import('./adapters/creation-standing.js');
 const EN = JSON.parse(readFileSync(resolve(dirname(fileURLToPath(import.meta.url)), 'locales/en.json'), 'utf8')) as Record<string, string>;
 
 let me: () => Response;
@@ -37,6 +53,7 @@ async function open(at: string) {
 }
 
 beforeEach(() => {
+  creations.mark.clear();
   vi.spyOn(console, 'error').mockImplementation(() => {});
   vi.stubGlobal('fetch', vi.fn(async (path: string) => {
     if (path === '/api/me') return me();
@@ -116,6 +133,33 @@ describe('signing in from the landing page', () => {
   });
 });
 
+describe('a sign-in the account did not finish', () => {
+  afterEach(() => { signing.refuse = null; });
+
+  /* RED WHEN: an ask that ran out while the account was open, an answer that came too late, or a request the account would not take is said in the words of an ask that expired before it arrived, or of signing in not finishing, or in another's words, or in none. */
+  it('says each in its own words, and what resolves it', async () => {
+    const seen: string[] = [];
+    for (const [why, key, says] of [
+      ['ran-out', 'signIn.refused.ranOut', /ran out of time while your account was open.*nothing was signed.*Press the button again/u],
+      ['answered-too-late', 'signIn.refused.answeredTooLate', /account did answer.*too late.*not signed in.*Press the button again/u],
+      ['unreadable', 'signIn.refused.unreadable', /would not take this request.*nothing was signed.*Reload this page and press the button again/u],
+      ['expired', 'signIn.refused.expired', /had expired by the time it reached your account.*nothing was signed/u],
+    ] as const) {
+      signing.refuse = why;
+      me = json(401, {});
+      const { container } = await open(PAGES.landing.path);
+      await act(async () => { fireEvent.click(container.querySelector('[data-action=log-in]')!); await settle(); });
+      const alert = container.querySelector('[data-refusal]') as HTMLElement;
+      expect(alert.getAttribute('data-refusal')).toBe(why);
+      expect(alert.textContent).toContain(EN[key]);
+      expect(EN[key]).toMatch(says);
+      seen.push(EN[key]!);
+      cleanup();
+    }
+    expect(new Set(seen).size).toBe(seen.length);
+  });
+});
+
 describe('the landing page, once signed in', () => {
   /* In an order no natural key gives, so a list sorted any way shows it. */
   const THREE = [
@@ -171,9 +215,28 @@ describe('the landing page, once signed in', () => {
   });
 
   /*
+   * RED WHEN: the landing page lists a company that is not finished without saying so, or says so of another company; or
+   * pressing it opens the company's home instead of the wizard at "Finish creating the company".
+   */
+  it('marks a company that is not finished, and opens it at step 2 of the wizard', async () => {
+    me = json(200, { user: PERSON, accounts: THREE });
+    creations.mark.set('c-3', 'not-finished');
+    const { container } = await open(PAGES.landing.path);
+    await untilShown(() => container.querySelector('[data-choose-a-company] [data-company=c-3] [data-not-finished]'), 'the mark on the company not finished');
+    expect([...container.querySelectorAll('[data-choose-a-company] [data-company]')].map((e) => e.querySelector('[data-not-finished]')?.textContent ?? null))
+      .toEqual([null, EN['company.notFinished'], null]);
+    await act(async () => { fireEvent.click(container.querySelector('[data-choose-a-company] [data-company=c-3]')!); await settle(); });
+    expect(window.location.pathname).toBe(PAGES.setup.path);
+    await untilShown(() => container.querySelector('[data-screen=setup]'), 'the setup wizard');
+    await untilPageShown(container);
+    expect(container.querySelector('[data-screen=setup] [data-current-step]')!.getAttribute('data-current-step')).toBe('finishCompany');
+  });
+
+  /*
    * RED WHEN: Create a company does not start the setup wizard at its first
    * step, or the wizard sets up a company the person already signs for: shows
-   * it created, counts it, or offers to hand it over.
+   * it created, counts it, or offers to hand it over; or a step after
+   * finishing the company is offered before there is a company to finish.
    */
   it('starts the wizard from Create a company, for a new company', async () => {
     me = json(200, { user: PERSON, accounts: THREE });
@@ -190,8 +253,9 @@ describe('the landing page, once signed in', () => {
     expect(container.querySelector('[data-menu]')).toBeNull();
     expect(container.querySelector('[data-slot=focused-layout] [data-action=exit-focused]')!.textContent).toBe(EN['page.setup.exit']);
     expect(container.querySelector('[data-progress]')!.getAttribute('aria-valuenow')).toBe('0');
-    await act(async () => { fireEvent.mouseDown(container.querySelector('[data-setup-steps] [data-step=handOver]')!, { button: 0 }); await settle(); });
-    expect(container.querySelector('[data-action=hand-over] [data-why]')!.getAttribute('data-why')).toBe('no-company');
+    await act(async () => { fireEvent.mouseDown(container.querySelector('[data-setup-steps] [data-step=vault]')!, { button: 0 }); await settle(); });
+    expect(container.querySelector('[data-step-blocked]')!.getAttribute('data-step-blocked')).toBe('finishCompany');
+    expect(container.querySelector('[data-action=create-vault]')).toBeNull();
   });
 
   /*

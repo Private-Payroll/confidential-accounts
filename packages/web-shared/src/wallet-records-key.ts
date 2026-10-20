@@ -16,7 +16,7 @@
  * is, the nonce it chose, the company, the account, the seat and the vault it
  * asked about.
  */
-import { REQUEST_SCHEMA, type InvitedBy } from 'midnight-identity/profile/request';
+import { REQUEST_SCHEMA, type FirstSecretShown, type InvitedBy } from 'midnight-identity/profile/request';
 import {
   readHoldersAnswer, readRecordsKeyAnswer, type AccountHoldersRead, type AccountPaymentFacts, type AccountRoleEntry, type AccountSeats, type DirectoryEntryStatement,
   type RecordsKeyStatement, type VaultHolders,
@@ -58,6 +58,14 @@ export interface RecordsKeyAsked {
    * nothing.
    */
   readonly invitedBy?: InvitedBy;
+  /**
+   * Who will hold `vault`'s secret, given only when this ask is made before
+   * that vault's first secret is raised or approved: each records key the
+   * secret will be sealed to, with the name this page holds for it. The wallet
+   * shows them to the person. A confirmation, not a lock: this page holds the
+   * seat's own key and the chain accepts the approval on that alone.
+   */
+  readonly firstSecret?: FirstSecretShown;
   readonly atOrigin: string;
   readonly name: string;
   readonly rdns: string;
@@ -69,6 +77,7 @@ export interface RecordsKeyAsked {
 const recordsKeyAsk = (parts: {
   name: string; rdns: string; purpose: string; nonce: string; expiresAt: number;
   company: CompanyLabel; account: AccountAddress; seat: string; vault?: VaultAddress; signingKey?: string; invitedBy?: InvitedBy;
+  firstSecret?: FirstSecretShown;
 }) => Object.freeze({
   schema: REQUEST_SCHEMA,
   kind: 'records-key' as const,
@@ -82,6 +91,11 @@ const recordsKeyAsk = (parts: {
   ...(parts.vault === undefined ? {} : { vault: parts.vault.toLowerCase() }),
   ...(parts.signingKey === undefined ? {} : { signingKey: parts.signingKey.toLowerCase() }),
   ...(parts.invitedBy === undefined ? {} : { invitedBy: parts.invitedBy }),
+  ...(parts.firstSecret === undefined ? {} : {
+    firstSecret: {
+      readers: parts.firstSecret.readers.map((r) => ({ key: r.key.toLowerCase(), ...(r.name === undefined ? {} : { name: r.name }) })),
+    },
+  }),
 });
 
 /** What comes back, checked: the statement, the committee key it verifies against, and who holds the account. */
@@ -105,6 +119,7 @@ export async function askWalletToSignRecordsKey(
     company: ask.company, account: ask.account, seat: ask.seat, ...(ask.vault === undefined ? {} : { vault: ask.vault }),
     ...(ask.signingKey === undefined ? {} : { signingKey: ask.signingKey }),
     ...(ask.invitedBy === undefined ? {} : { invitedBy: ask.invitedBy }),
+    ...(ask.firstSecret === undefined ? {} : { firstSecret: ask.firstSecret }),
   }), dialog);
   const read = readRecordsKeyAnswer(answer, {
     atOrigin: ask.atOrigin, expectingNonce: nonce, company: ask.company, account: ask.account, seat: ask.seat.toLowerCase(),

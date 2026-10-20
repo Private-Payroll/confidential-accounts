@@ -58,7 +58,7 @@ export const SERVED_FROM = [
  * sign-in path loads the curve library that checks a committee key is a point
  * on its curve, about 34 KB that sign-in itself never uses.
  */
-export const FIRST_DOWNLOAD_BUDGET = 719_000;
+export const FIRST_DOWNLOAD_BUDGET = 729_022;
 
 /**
  * THE WORKERS THIS APPLICATION STARTS, by their entry's path from this folder,

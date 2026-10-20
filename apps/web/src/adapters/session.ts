@@ -11,7 +11,6 @@ import { tabStorage } from './kept-skips.js';
  */
 const keyring = () => import('vaults-web-shared/keyring.js');
 
-
 /*
  * WHO IS SIGNED IN, SIGNING IN WITH THE PERSON'S ACCOUNT, AND SIGNING OUT.
  *
@@ -40,6 +39,11 @@ const keyring = () => import('vaults-web-shared/keyring.js');
  * None of the service's or the shared code's words are handed on: a screen is
  * handed a reason, one of a fixed set, and says it in its own phrases.
  */
+
+/** Loads `warmTheProving` only once somebody is signed in, so the first download does not carry it; never fails the sign-in it follows. */
+const startWarmingTheProving = (): void => {
+  void import('./proving-warmed.js').then((m) => { m.warmTheProving(); }).catch(() => {});
+};
 
 /** The service's addresses and the words of its protocol, never shown. */
 const SERVICE = {
@@ -81,13 +85,14 @@ export interface Company {
 /**
  * WHY SIGNING IN DID NOT HAPPEN, one of a fixed set a screen says in its own
  * words: the page was built without the account's address; no account window
- * could be shown, or it went; the person declined, or the request expired; the
- * account did not answer; the person stopped waiting; the account could not
- * finish; the service refused the signature; too many tries; the service
+ * could be shown, or it went; the person declined, or the request expired on
+ * arrival, or ran out while the account was open, or the answer came too late;
+ * the account would not take the request; the account did not answer; the
+ * person stopped waiting; the account could not finish; the service refused the signature; too many tries; the service
  * cannot sign anyone in; the service could not be reached.
  */
 export const REFUSAL = {
-  notSetUp: 'not-set-up', noWindow: 'no-window', windowGone: 'window-gone', declined: 'declined', expired: 'expired',
+  notSetUp: 'not-set-up', noWindow: 'no-window', windowGone: 'window-gone', declined: 'declined', expired: 'expired', ranOut: 'ran-out', answeredTooLate: 'answered-too-late', unreadable: 'unreadable',
   silent: 'silent', gaveUp: 'gave-up', didNotFinish: 'did-not-finish', refused: 'refused', tooMany: 'too-many',
   unavailable: 'unavailable', unreachable: 'unreachable',
 } as const;
@@ -167,6 +172,7 @@ export async function whoIsSignedIn(): Promise<WhoIsSignedIn> {
   if (currentUser()?.id !== person.id) forgetLocally();
   listed = { person: person.id, rows: Array.isArray(r.body.accounts) ? r.body.accounts as unknown[] : [] };
   approvalsRead = null;
+  startWarmingTheProving();
   return { of: OF.signedIn, person, companies: companiesFrom(r.body.accounts) };
 }
 
@@ -259,7 +265,8 @@ const refusalOf = (e: unknown): SignInRefusal => {
   if (!(e instanceof WalletClosed)) return REFUSAL.didNotFinish;
   switch (e.refusal.of) {
     case 'declined': return REFUSAL.declined;
-    case 'expired': return REFUSAL.expired;
+    case 'expired': return e.refusal.while === 'open' ? REFUSAL.ranOut : REFUSAL.expired;
+    case 'unreadable': return REFUSAL.unreadable;
     case 'no-wallet-tab': return REFUSAL.noWindow;
     case 'window-gone': return REFUSAL.windowGone;
     case 'gave-up': return REFUSAL.gaveUp;
@@ -304,7 +311,7 @@ export async function signIn(asking: Asking): Promise<SignedIn> {
     const answer = await ask(SERVICE.signIn, SERVICE.post, { handle, nonce, response });
     if (answer === null) return refused(REFUSAL.unreachable);
     if (answer.status === 429) return refused(REFUSAL.tooMany, retryAfter(answer.body));
-    if (answer.status === 401) return refused(answer.body.code === SERVICE.staleChallenge || answer.body.code === SERVICE.expiredClaim ? REFUSAL.expired : REFUSAL.refused);
+    if (answer.status === 401) return refused(answer.body.code === SERVICE.staleChallenge || answer.body.code === SERVICE.expiredClaim ? REFUSAL.answeredTooLate : REFUSAL.refused);
     const person = answer.status === 200 ? personFrom(answer.body.user) : null;
     if (person === null) return refused(REFUSAL.unavailable);
     prepared = person.id;
@@ -324,6 +331,7 @@ export async function signIn(asking: Asking): Promise<SignedIn> {
       /* Kept only once the keyring has taken it, so what is kept is what the keyring holds. */
       keepSignIn(tabStorage(), { personId: person.id, address: answer.body.address as string });
     } catch { forgetLocally(); }
+    startWarmingTheProving();
     return { of: OF.signedIn, person, firstTime: answer.body.created === true };
   } finally {
     /* However it ended, the account is put away: an ask that finished has closed it already, and a second close is not a second event. */

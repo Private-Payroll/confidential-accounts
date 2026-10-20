@@ -27,7 +27,7 @@ vi.mock('./adapters/company-records.js', async (real) => ({
 }));
 vi.mock('./adapters/handover-state.js', async (real) => ({
   ...(await real<typeof import('./adapters/handover-state.js')>()),
-  readHandover: async () => ({ of: 'vault-keys-missing', signers: 1 }),
+  readHandover: async () => ({ of: 'held' }),
 }));
 vi.mock('./adapters/session.js', async (real) => ({
   ...(await real<typeof import('./adapters/session.js')>()),
@@ -193,8 +193,6 @@ const NOT_MOVED_YET: Readonly<Record<string, Readonly<Record<string, string>>>> 
     'apps/web/src/screens/landing.tsx': 'the landing page, redrawn on the kit\'s layouts with the app\'s polish',
     'apps/web/src/screens/appearance.tsx': 'moved to the kit\'s sections with the rest of Settings',
     'apps/web/src/screens/language.tsx': 'moved to the kit\'s sections with the rest of Settings',
-    'apps/web/src/actions/create-company.tsx': 'the setup steps\' own forms, moved to the kit\'s sections with the setup wizard',
-    'apps/web/src/actions/hand-over.tsx': 'the setup steps\' own forms, moved to the kit\'s sections with the setup wizard',
   },
   empty: {
     'apps/web/src/screens/landing.tsx': 'the landing page, redrawn on the kit\'s layouts with the app\'s polish',
@@ -216,7 +214,7 @@ describe('no page draws what the kit draws', () => {
   /* RED WHEN: the files a page is drawn from are not read, so every rule below passes over nothing. */
   it('reads every file a page is drawn from', () => {
     const paths = PAGE_CODE.map((f) => f.path);
-    expect(paths).toEqual(expect.arrayContaining(['apps/web/src/screens/home.tsx', 'apps/web/src/screens/setup.tsx', 'apps/web/src/records/parts.tsx', 'apps/web/src/actions/hand-over.tsx', 'apps/web/src/shell/no-page.tsx']));
+    expect(paths).toEqual(expect.arrayContaining(['apps/web/src/screens/home.tsx', 'apps/web/src/screens/setup.tsx', 'apps/web/src/records/parts.tsx', 'apps/web/src/actions/committee-change.tsx', 'apps/web/src/shell/no-page.tsx']));
     expect(paths.length).toBeGreaterThan(20);
   });
 

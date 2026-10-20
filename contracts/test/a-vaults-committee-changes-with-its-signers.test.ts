@@ -69,7 +69,7 @@ import { answerVaultAsk, checkedAccountKeys } from 'vaults-web-shared/vault-work
 import { vaultBuilderOver, type VaultAnswer } from 'vaults-web-shared/vault-worker-client.js';
 import {
   createCompanyVault, depositIntoCompanyVault, openCompanyVaultPool, payPrivatelyFromCompanyVault,
-  type TemporaryKeys, type VaultService, type DepositInFlight, type DepositsInFlight, type PaymentInFlight,
+  type VaultService, type DepositInFlight, type DepositsInFlight, type PaymentInFlight,
 } from 'vaults-web-shared/vault-operation.js';
 import { inFlightInMemory as inFlightRecordsInMemory, sealedOnThisDevice, type KeptOnThisDevice } from 'vaults-web-shared/in-flight-on-this-device.js';
 import { readWhatThePageAsks, base64FromBytes } from '../../apps/wallet/src/chain/balance-for-page.js';
@@ -225,7 +225,6 @@ describe.skipIf(!KEYS_ON_DISK)('A VAULT\'S COMMITTEE STAYS THE SUPER ADMINS\' WH
   let wrapping: ReturnType<typeof newWrappingKeypair>;
   let sent: string[];
   let arrivals: string[];
-  let temporaryKeys: Map<string, { tag: string; value: string }>;
   let serverStores: Map<WireRecord, MemorySealedPoolStore>;
   let companyThreshold: number;
   let people: Map<string, { words: string; signing: ReturnType<typeof newSigningKeypair>; wrapping: ReturnType<typeof newWrappingKeypair> }>;
@@ -357,7 +356,6 @@ describe.skipIf(!KEYS_ON_DISK)('A VAULT\'S COMMITTEE STAYS THE SUPER ADMINS\' WH
     me = { signerId: 'ada', wrappingSecret: wrapping.secret, companyKey: releasedCompanyKey(words, company) };
     sent = [];
     arrivals = [];
-    temporaryKeys = new Map();
     /* A company of one, with its roster sealed under a viewing key the page holds, as the product keeps it. */
     viewingKey = toHex(new Uint8Array(32).fill(0x5e));
     store.putAccount(sealAccount({
@@ -552,11 +550,6 @@ describe.skipIf(!KEYS_ON_DISK)('A VAULT\'S COMMITTEE STAYS THE SUPER ADMINS\' WH
     startSecret: (vault, tx) => http(`${at}/vaults/${vault}/start/secret`, { method: 'POST', body: { tx } }),
     startCopy: (vault, tx, place) => http(`${at}/vaults/${vault}/start/copy`, { method: 'POST', body: { tx, place } }),
   };
-  const keys: TemporaryKeys = {
-    put: async (v, k) => { temporaryKeys.set(v, k); },
-    get: async (v) => temporaryKeys.get(v) ?? null,
-    forget: async (v) => { temporaryKeys.delete(v); },
-  };
   /*
    * The pacing every operation takes, and the company as a device counts it for the vault check: three seats with every
    * right and one approval needed, a stand-in, so no vault here is left short. The check is driven in
@@ -609,7 +602,7 @@ describe.skipIf(!KEYS_ON_DISK)('A VAULT\'S COMMITTEE STAYS THE SUPER ADMINS\' WH
     };
     /* The founding signer's press, with who holds the account as their wallet read it off the chain just then. */
     const press = (resume?: Hex) => createCompanyVault({
-      ...poolDoors, account: readAccountAddress(company)!, builder: builder(), keys,
+      ...poolDoors, account: readAccountAddress(company)!, builder: builder(),
       material: { signingSecret: hex(founder.secretKey), blinding: hex(founder.blinding), scope: hex(founder.scope) },
       /* Where the vault's adoption and first secret run are written down, by the founding seat under its own filing key. */
       proposals: (({ callState, send, file, sealedProposals }) => ({

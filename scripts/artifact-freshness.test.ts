@@ -13,8 +13,7 @@
  * repository owns: a test that moved `contracts/src/Vault.compact`'s mtime
  * would be a test that makes the thing it is testing true.
  *
- * THE WIRING IS EXECUTED, NOT GREPPED, AND THAT IS AN AUDITOR'S CORRECTION.
- * `C263`'s lesson was that an array nobody writes to is invisible to a
+ * THE WIRING IS EXECUTED, NOT GREPPED: an array nobody writes to is invisible to a
  * typechecker and to a unit test of the function that reads it. The same shape
  * here is a guard nobody wired in. The first version of this file asserted the
  * wiring by reading `vitest.config.ts` as TEXT and matching a regex — and a
@@ -28,7 +27,7 @@
  * THE LIVE DEFAULT IS EXERCISED TOO. Every early test passed `pairs`
  * explicitly, so `assertArtifactsFresh`'s default binding to
  * `CONTRACT_ARTIFACTS` — the only binding production uses — was never run, and
- * the auditor dropped the vault from it with this file fully green.
+ * a reviewer dropped the vault from it with this file fully green.
  *
  * THIS FILE MUST STAY SEQUENTIAL. `root` below is one module-level variable
  * shared by every test, which holds because vitest runs a file's tests in
@@ -128,7 +127,7 @@ describe('THE REFUSAL FIRES — the whole reason this file exists', () => {
     expect(refusals).toHaveLength(1);
     expect(refusals[0].kind).toBe('stale');
     expect(refusals[0].pair).toBe(PAIR);
-    // The times are read off the filesystem, not computed. Rule 9.
+    // The times are read off the filesystem, not computed.
     expect(refusals[0].sourceMs).toBe(1_000_061_000);
     expect(refusals[0].artifactMs).toBe(1_000_060_000);
   });
@@ -138,23 +137,23 @@ describe('THE REFUSAL FIRES — the whole reason this file exists', () => {
     expect(() => assertArtifactsFresh(root, [PAIR])).toThrow(/THE SUITE DID NOT RUN/);
   });
 
-  it('names the file and the DOOR, which is what rule 19 asks a refusal for', () => {
+  it('names the file and the DOOR, which is what a refusal owes the person', () => {
     setMtime(sourcePath(), 1_000_061);
     const text = refusalText(findRefusals(root, [PAIR]));
     expect(text).toContain(PAIR.source);
     expect(text).toContain(PAIR.artifact);
     expect(text).toContain(`Run ${PAIR.door}, then run this again.`);
-    // Not a file to write, not a variable to set. Rule 19.
+    // Not a file to write, not a variable to set.
     expect(text).not.toMatch(/export |environment variable|SKIP|set [A-Z_]+=/);
   });
 
   it('SHOWS ITS WORKING — BOTH stamps it compared, distinguishable, in IST', () => {
     // The refusal's whole justification is that it shows the two times it
     // compared. A first version of this test asserted one stamp, and a second
-    // auditor pass showed two mutations that survived it green: printing the
+    // review showed two mutations that survived it green: printing the
     // SOURCE's time on both lines, and an `ist()` that ignores its argument and
     // returns a constant — a number no instrument read off anything, which is
-    // rule 9, surviving inside the test written to enforce rule 9. Both got
+    // a time read from nothing, surviving inside the test written to forbid it. Both got
     // through because the default fixture's two stamps are one second apart and
     // render to the same MINUTE, so either line satisfied the assertion.
     
@@ -177,7 +176,7 @@ describe('THE REFUSAL FIRES — the whole reason this file exists', () => {
     // somewhere in the message.
     expect(text).toMatch(new RegExp(`source\\s+\\S*${PAIR.source}\\s+${source}`));
     expect(text).toMatch(new RegExp(`artifact\\s+\\S*${PAIR.artifact}\\s+${artifact}`));
-    // Rule 22: the timezone is a claim about what the number is.
+    // The timezone is a claim about what the number is.
     expect(text).not.toContain('08:47');
   });
 
@@ -246,7 +245,7 @@ describe('THE REFUSAL FIRES — the whole reason this file exists', () => {
 describe('the guard is WIRED IN, and is pointed at the artifacts the tests import', () => {
   it('vitest.config.ts really HOLDS the globalSetup value — read, not grepped', async () => {
     // Imported as a module, so a commented-out key is `undefined` rather than a
-    // regex match. This is the assertion the auditor's first disarm walked past.
+    // regex match. This is the assertion the first way of disarming the guard walked past.
     const config = (await import('../vitest.config.ts')).default as {
       test?: { globalSetup?: string | string[]; include?: string[] };
     };
@@ -256,7 +255,7 @@ describe('the guard is WIRED IN, and is pointed at the artifacts the tests impor
       './scripts/artifact-freshness.globalSetup.ts',
     );
 
-    // AND THE GLOB THAT COLLECTS THIS FILE. `C67`, which this config's own
+    // AND THE GLOB THAT COLLECTS THIS FILE. the earlier break, which this config's own
     // comment records for the wallet: narrowing `include` switches tests off
     // without a word. Narrow it past `scripts/` and the guard still runs, but
     // every test proving the guard works disappears under a green summary line.
@@ -307,11 +306,11 @@ describe('the guard is WIRED IN, and is pointed at the artifacts the tests impor
 
   it('THE LIVE DEFAULT is bound to the real table — no pairs argument, real paths', () => {
     // Every other test passes `pairs` explicitly, so the default binding to
-    // CONTRACT_ARTIFACTS was never exercised. An auditor changed that default
+    // CONTRACT_ARTIFACTS was never exercised. A reviewer changed that default
     // to the account alone, and to a self-referential dummy that can never be
     // stale, with this file fully green both times.
     
-    // WHAT THIS TEST DOES NOT DO, because a second auditor pass caught the
+    // WHAT THIS TEST DOES NOT DO, because a second review caught the
     // first version of this comment claiming it: it cannot see the table
     // SHRINKING, because the fixture and the loop below both iterate
     // CONTRACT_ARTIFACTS — drop a pair and there is simply less to iterate.
@@ -336,9 +335,9 @@ describe('the guard is WIRED IN, and is pointed at the artifacts the tests impor
   });
 
   it('pairs each source with the door that rebuilds THAT artifact, not just a door', () => {
-    // Existence is not correctness: an auditor swapped the two doors and this
+    // Existence is not correctness: a reviewer swapped the two doors and this
     // file stayed green, which sends a person editing the account off to
-    // recompile the vault. Rule 19 asks for the door that RESOLVES it.
+    // recompile the vault. A refusal owes the person the door that RESOLVES it.
     expect(CONTRACT_ARTIFACTS.map((p) => [p.source, p.artifact, p.door])).toEqual([
       [
         'contracts/src/ConfidentialAccount.compact',
@@ -648,14 +647,14 @@ describe('the guard is WIRED IN, and is pointed at the artifacts the tests impor
     refuses('the run passes when it collects nothing',
       real.replace(/- run: npx vitest run /, '- run: npx vitest run --passWithNoTests '), /collects nothing/);
     refuses('THE CHEAP ONE: the keys are built AFTER the tests that read them',
-      real.replace(/      - name: build the proving and verifier keys\n        run: npm run compact\n((?:      #[^\n]*\n|      - name: build the vault[^\n]*\n        run: [^\n]*\n)*)(      - run: npx vitest run [^\n]*\n)/,
+      real.replace(/      - name: build the proving and verifier keys\n        run: npm run compact\n((?:      #[^\n]*\n|      - name: (?:build the vault|fetch Midnight)[^\n]*\n(?:        timeout-minutes: \d+\n)?        run: [^\n]*\n)*)(      - run: npx vitest run [^\n]*\n)/,
         '$1$2      - name: build the proving and verifier keys\n        run: npm run compact\n'), /runs the suite after/);
     refuses('the vault\'s keys are never built',
       real.replace(/      - name: build the vault's proving and verifier keys\n        run: npm run compact:vault -- --full\n/, ''),
       /nothing in keys builds the vault's keys/);
     refuses('the vault\'s keys are built AFTER the tests that read them',
-      real.replace(/(      - name: build the vault's proving and verifier keys\n        run: npm run compact:vault -- --full\n)(      - run: npx vitest run [^\n]*\n)/,
-        '$2$1'), /reads the vault's keys and is run by no step after they are built/);
+      real.replace(/(      - name: build the vault's proving and verifier keys\n        run: npm run compact:vault -- --full\n)((?:      #[^\n]*\n|      - name: fetch Midnight[^\n]*\n(?:        timeout-minutes: \d+\n)?        run: [^\n]*\n)*)(      - run: npx vitest run [^\n]*\n)/,
+        '$2$3$1'), /reads the vault's keys and is run by no step after they are built/);
     refuses('the vault\'s build is made conditional',
       real.replace(/\n(\s+)run: npm run compact:vault -- --full\n/, '\n$1if: false\n$1run: npm run compact:vault -- --full\n'), /vault's keys .* conditional/);
     refuses('the vault\'s build tolerates its own failure',

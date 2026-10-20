@@ -58,6 +58,7 @@ const BARE: Record<string, Record<string, unknown>> = {
   'step-kept': { vault: 'ab'.repeat(32), secret: 'cd'.repeat(32), step: { spent: { nonce: '00', token: '00', value: '1' }, amount: '1' } },
   'vault-rebuilt': { vault: 'ab'.repeat(32), chain: { notes: [], everCreated: [] }, secrets: [], versions: [], attempted: { deposits: [], payments: [] } },
   'own-seat': { material: {} },
+  'warm-proving': {},
   'founding-seat': { material: {} },
   'creation-again': { deploy: '', insert: '' },
   'pay-key-standing': { account: 'ab'.repeat(32), accountState: '', key: 'cd'.repeat(32), signingSecret: 'ef'.repeat(32), wrappingPublicKey: '01'.repeat(32) },
