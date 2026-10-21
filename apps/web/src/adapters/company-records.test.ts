@@ -33,6 +33,8 @@ const kr = vi.hoisted(() => ({
   adopted: [] as string[],
   /* The approvals the company's account asks for, as the wallet reads the chain; undefined when the wallet cannot say. */
   approvals: 2 as number | undefined,
+  /* The name the person gave each company this device holds a creation of (kept or set aside), by company. */
+  kept: {} as Record<string, string>,
   /* Each company this page entered and started the one-a-day anchor for, with the keys it was handed. */
   anchoring: [] as Array<{ company: string; signerId: string }>,
 }));
@@ -71,6 +73,8 @@ vi.mock('vaults-web-shared/vault-info-here.js', async (real) => ({
 vi.mock('vaults-web-shared/keyring.js', async (real) => ({
   ...(await real<typeof import('vaults-web-shared/keyring.js')>()),
   currentUser: () => ({ id: kr.user }),
+  companyNameKeptHere: (id: string) => kr.kept[id] ?? null,
+  companiesBeingCreated: () => Object.keys(kr.kept),
   forgetLocally: () => {},
   resumeSession: async () => null,
   keysFor: () => (kr.keys ? { signerId: 's1' } : null),
@@ -515,6 +519,59 @@ describe('how many must approve, in the one list of companies', () => {
 });
 
 describe('the names in the one list of companies', () => {
+  /*
+   * RED WHEN: a company not finished, which has no sealed record to open, is listed with no name though this device kept its
+   * creation; or it is given the name in the service's plain field; or a company this device can neither open nor has a
+   * creation of is given any name; or a name the device opened is replaced by the kept creation's.
+   */
+  it('names a company that is not finished by the creation this device kept, never by the service\'s own field', async () => {
+    vi.resetModules();
+    const accounts = [
+      { id: 'c2', createdAt: 'x', signerCount: 1, name: 'Service name 2' },
+      { id: 'c3', createdAt: 'x', signerCount: 1, name: 'Service name 3' },
+      { id: 'c1', createdAt: 'x', signerCount: 1, name: 'Service name 1' },
+    ];
+    vi.stubGlobal('fetch', vi.fn(async () => new Response(JSON.stringify({ user: { id: 'u1', name: 'Priya' }, accounts }), { status: 200 })));
+    const was = kr.account;
+    kr.account = null;
+    kr.kept = { c2: 'Test-001', c1: 'Kept name 1' };
+    try {
+      const session = await import('./session.js');
+      await session.whoIsSignedIn();
+      expect([...(await session.companyNamesFor('u1')).entries()].sort()).toEqual([['c1', 'Kept name 1'], ['c2', 'Test-001']]);
+      kr.account = was;
+      expect((await session.companyNamesFor('u1')).get('c1')).toBe('Northwind');
+    } finally {
+      kr.account = was; kr.kept = {};
+      vi.unstubAllGlobals();
+    }
+  });
+
+  /*
+   * RED WHEN: a creation this device keeps and the service does not list (its first post never arrived) is left out of the
+   * list of companies and of the names, so after a reload it is reachable from nowhere; or it is listed twice when the
+   * service lists it too; or another person's creation is listed.
+   */
+  it('lists a creation kept here that the service does not list, once, by its name', async () => {
+    vi.resetModules();
+    const accounts = [{ id: 'c1', createdAt: 'x', signerCount: 1 }];
+    vi.stubGlobal('fetch', vi.fn(async () => new Response(JSON.stringify({ user: { id: 'u1', name: 'Priya' }, accounts }), { status: 200 })));
+    kr.kept = { c1: 'Kept name 1', acc_unposted: 'Unposted Ltd' };
+    try {
+      const session = await import('./session.js');
+      const who = await session.whoIsSignedIn();
+      expect(who.of).toBe('signed-in');
+      const ids = (who as unknown as { companies: { id: string }[] }).companies.map((c) => c.id);
+      expect(ids).toEqual(['c1', 'acc_unposted']);
+      expect((await session.companyNamesFor('u1')).get('acc_unposted')).toBe('Unposted Ltd');
+      kr.user = 'someone-else';
+      expect(((await session.whoIsSignedIn()) as unknown as { companies: { id: string }[] }).companies.map((c) => c.id)).toEqual(['c1']);
+    } finally {
+      kr.kept = {}; kr.user = 'u1';
+      vi.unstubAllGlobals();
+    }
+  });
+
   /* RED WHEN: names are read from a second list of companies asked of the service, or handed on for a list read for somebody else. */
   it('opens the names of the one list read when the person signed in, and asks the service nothing more', async () => {
     vi.resetModules();

@@ -583,7 +583,7 @@ export interface VaultService {
 export type VaultStage =
   | 'checking the committee' | 'building the vault' | 'sending the vault'
   | 'waiting for the chain'
-  | 'adopting the vault' | 'reading the secret back' | 'setting the secret' | 'writing the sealed copies'
+  | 'filing the name' | 'adopting the vault' | 'reading the secret back' | 'setting the secret' | 'writing the sealed copies'
   | 'waiting for approvals'
   | 'opening the pool' | 'choosing the coin' | 'building the deposit'
   | 'asking your wallet' | 'sending the deposit' | 'recording the deposit'
@@ -904,6 +904,7 @@ export async function createCompanyVault(
   const sentVault: Hex = vault;
   try {
     await readBornHeld(doors, sentVault);
+    if (tidied !== undefined) doors.progress?.('filing the name');
     const notNamed = tidied === undefined ? null : await vaultInfoFiledOnceItIsTheCompanys(doors, sentVault, tidied);
     const done = await startCompanyVault(doors, sentVault);
     if (notNamed === null) return done;

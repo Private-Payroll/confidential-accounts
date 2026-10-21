@@ -1,8 +1,11 @@
 import { useEffect, useState } from 'react';
-import { Badge, useText } from 'vaults-ui';
+import { Badge, formatDate, useLanguage, useText } from 'vaults-ui';
 import { creationOfCompany } from '../setup/creation-on-demand.js';
 import { approvalsNeededFor, type Company } from '../adapters/session.js';
 import { useSessionIfAny } from '../session.js';
+
+/** How the day a company started is written: in the person's language. */
+const STARTED_ON = { dateStyle: 'medium' } as const;
 
 /**
  * HOW MANY OF A COMPANY'S SIGNERS MUST APPROVE, as the person's own wallet reads it off the chain, by company. Empty
@@ -22,11 +25,28 @@ function useApprovalsNeeded(): ReadonlyMap<string, number> {
 }
 
 /** A company's words, in the person's language: what it is called while its name is not open, and how many of its signers must approve of how many there are, once the chain says. */
-export function useCompanyWords(): { unnamed: string; approvals: (c: Company) => string } {
+/**
+ * THE ONE WAY A COMPANY IS NAMED IN A LIST: by the name this device holds for it, or, where it holds none, as "A company
+ * you started on <day>", the day being the one the service lists the company's account as made (a day, never a name).
+ * Without a readable day it is "A company you started". The result is never empty, so no screen shows a blank.
+ */
+export function useCompanyName(): (company: { createdAt?: string }, name?: string | null) => string {
+  const t = useText();
+  const language = useLanguage();
+  return (company, name = null) => {
+    if (typeof name === 'string' && name.trim() !== '') return name;
+    const made = new Date(company.createdAt ?? '');
+    return Number.isNaN(made.getTime())
+      ? t('company.started')
+      : t('company.startedOn', { date: formatDate(made, language, STARTED_ON) });
+  };
+}
+
+
+export function useCompanyWords(): { approvals: (c: Company) => string } {
   const t = useText();
   const needed = useApprovalsNeeded();
   return {
-    unnamed: t('switcher.company'),
     approvals: (c) => (needed.has(c.id) ? t('switcher.approvals', { needed: needed.get(c.id), signers: c.signers }) : ''),
   };
 }
@@ -58,11 +78,12 @@ function useNotFinished(company: string): boolean {
  */
 export function CompanyFacts({ company, name = null }: { company: Company; name?: string | null }) {
   const words = useCompanyWords();
+  const nameOf = useCompanyName();
   const t = useText();
   const notFinished = useNotFinished(company.id);
   return (
     <span className="grid flex-1 text-start leading-tight">
-      {name === null ? <span>{words.unnamed}</span> : <span className="font-medium" data-company-name>{name}</span>}
+      {name === null || name.trim() === '' ? <span data-company-unnamed>{nameOf(company)}</span> : <span className="font-medium" data-company-name>{name}</span>}
       <span className="text-xs text-muted-foreground" data-approvals>{words.approvals(company)}</span>
       {notFinished ? <Badge variant="outline" className="mt-1 justify-self-start" data-not-finished>{t('company.notFinished')}</Badge> : null}
     </span>

@@ -41,10 +41,12 @@ const ACTS_FOR: Record<string, string> = {
   'finish-company.tsx': 'adapters/finish-company.js',
   'committee-change.tsx': 'adapters/committee-change.js',
   'create-vault.tsx': 'adapters/create-vault.js',
+  'start-again.tsx': 'adapters/start-again.js',
 };
 /** The components in actions/ that are no step's: each with the only files that may show it, one component called from each, never a copy. */
 const NO_STEP: Record<string, string[]> = {
   'committee-change.tsx': ['records/vault-pending', 'screens/settings-sections'],
+  'start-again.tsx': ['actions/finish-company'],
 };
 
 describe('every step is in the list, and every entry is a step', () => {

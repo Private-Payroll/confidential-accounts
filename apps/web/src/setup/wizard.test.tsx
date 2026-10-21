@@ -28,6 +28,8 @@ const state = vi.hoisted(() => ({
   looks: 0,
   /** Held back while a look is not resolved, so a test can leave the step while a look is under way. */
   carryGate: null as Promise<void> | null,
+  /** What a look at one company comes to, held while its `gate` is not resolved; a company not in it comes to what `carried` says. */
+  carriedBy: {} as Record<string, { gate?: Promise<void>; result: Record<string, unknown> }>,
   pressed: { of: 'done' } as Record<string, unknown>,
   startedAgainHere: { of: 'done' } as Record<string, unknown>,
   /** The company's vaults as the service lists them, and whether one can be created, and what creating one comes to. */
@@ -50,10 +52,14 @@ vi.mock('../adapters/creation-standing.js', async (real) => ({
   ...(await real<typeof import('../adapters/creation-standing.js')>()),
   creationOf: vi.fn(async (company: string | null) => {
     if (state.gate !== null) await state.gate;
-    /* With no company shown, only a creation this tab keeps is anything to read. */
-    if (company === null && state.creation.kept !== true) return { company: null, standing: null, awaitingSecondPress: false, kept: false, confirmedFinished: false, mark: null };
+    /* With no company shown there is no creation to read: each kept creation is read by its own company. */
+    if (company === null) return { company: null, standing: null, awaitingSecondPress: false, kept: false, confirmedFinished: false, mark: null };
     return { company, ...state.creation };
   }),
+  creationHere: vi.fn((company: string | null) => ({
+    company, ...(company === null ? { kept: false, awaitingSecondPress: false } : { kept: state.creation.kept === true, awaitingSecondPress: state.creation.awaitingSecondPress === true }),
+    standing: null, confirmedFinished: false, mark: null,
+  })),
   creationChanged: vi.fn((company: string | null) => { state.changed.push(company); }),
   keptCreationLabel: () => state.label,
 }));
@@ -87,15 +93,20 @@ vi.mock('../adapters/handover-state.js', async (real) => ({
 vi.mock('../adapters/create-company.js', () => ({
   createCompany: vi.fn(async (...args: unknown[]) => { state.acted.push(JSON.stringify(['create', ...args])); state.onCreate?.(); return state.created; }),
 }));
+vi.mock('../adapters/start-again.js', () => ({
+  startAgain: vi.fn(async (...args: unknown[]) => { state.acted.push(JSON.stringify(['start-again-here', ...args])); return state.startedAgainHere; }),
+  AGAIN: { landed: 'landed', wait: 'wait', unsure: 'unsure' },
+}));
 vi.mock('../adapters/finish-company.js', () => ({
   carryOn: vi.fn(async (...args: unknown[]) => {
     state.acted.push(JSON.stringify(['carry', ...args]));
     state.looks += 1;
+    const own = state.carriedBy[String(args[1])];
+    if (own !== undefined) { if (own.gate !== undefined) await own.gate; return own.result; }
     if (state.carryGate !== null) await state.carryGate;
     return state.carried[Math.min(state.looks - 1, state.carried.length - 1)];
   }),
   openYourWallet: vi.fn(async (...args: unknown[]) => { state.acted.push(JSON.stringify(['open-wallet', ...args])); return state.pressed; }),
-  startAgain: vi.fn(async (...args: unknown[]) => { state.acted.push(JSON.stringify(['start-again-here', ...args])); return state.startedAgainHere; }),
   FINISH: { waiting: 'waiting', press: 'press', locked: 'locked', cannot: 'cannot', none: 'none', noDeploy: 'no-deploy' },
   STAGE: { deploy: 'deploy', finish: 'finish', key: 'key', shown: 'shown', read: 'read' },
   CARRY_ON_EVERY_MS: 10_000,
@@ -104,9 +115,10 @@ vi.mock('../adapters/finish-company.js', () => ({
 const { Setup } = await import('../screens/setup.js');
 const { CreateCompany } = await import('../actions/create-company.js');
 const { FinishCompany } = await import('../actions/finish-company.js');
+const { forgetWhatStartAgainSaid } = await import('../actions/start-again.js');
 const { CreateVault } = await import('../actions/create-vault.js');
 const { EVERY_STEP, isBuiltStep, startSetupAt, takeAsked } = await import('./steps.js');
-const { isDoneForGood, skippedFor } = await import('./standing.js');
+const { isDoneForGood, skippedFor, useCreationFact } = await import('./standing.js');
 const { HANDOVER } = await import('../adapters/handover-state.js');
 const { STEP } = await import('./step-ids.js');
 
@@ -151,8 +163,9 @@ const pick = async (c: HTMLElement, step: string) => { await act(async () => { f
 beforeEach(() => {
   vi.spyOn(console, 'error').mockImplementation(() => {});
   state.handover = { of: 'held-by-other-keys' }; state.acted = []; state.gaveKeys = { of: 'done' }; state.created = { of: 'done', companyId: 'c-new', label: 'co_drawn' };
-  state.carried = [{ of: 'waiting', companyId: 'c-1', stage: 'deploy' }]; state.looks = 0; state.carryGate = null;
+  state.carried = [{ of: 'waiting', companyId: 'c-1', stage: 'deploy' }]; state.looks = 0; state.carryGate = null; state.carriedBy = {};
   state.pressed = { of: 'done' }; state.startedAgainHere = { of: 'done' };
+  forgetWhatStartAgainSaid();
   state.vaults = []; state.ready = { of: 'ready' }; state.vaultCreated = { of: 'done', vault: 'v-new' }; state.opened = [];
   state.creation = { standing: 'finished', awaitingSecondPress: false, kept: false, confirmedFinished: true, mark: null }; state.gate = null; state.vaultsGate = null; state.changed = []; state.onCreate = null; state.label = null;
   /* What a tab remembers between showings of the wizard starts empty for every test. */
@@ -413,7 +426,8 @@ describe('the wizard chooses where to open when what it needs arrives', () => {
     expect(state.changed).toEqual([]);
     fireEvent.change(container.querySelector('[data-action=create-company] input')!, { target: { value: 'Acme' } });
     await act(async () => { fireEvent.click(q(container, '[data-action=create]')!); await settle(); });
-    expect(state.changed).toEqual([null]);
+    /* The reading put away is the company just created: each creation is read by its own company. */
+    expect(state.changed).toEqual(['c-new']);
     expect(vi.mocked(creationOf).mock.calls.length).toBeGreaterThan(before);
   });
 });
@@ -461,13 +475,77 @@ describe('a step that cannot be undone', () => {
     expect(q(container, '[data-action=create-company]')).toBeNull();
   });
 
-  /* RED WHEN: a creation this tab keeps, for a company the person is not shown yet, does not close creating the company. */
-  it('counts creating the company done while this tab keeps its creation, before any company is shown', async () => {
+  /*
+   * RED WHEN: after Create succeeds the wizard stays on creating the company
+   * until the network's read of the new company comes back, so the person has
+   * to press to reach finishing it; or it moves them off a step they chose
+   * themselves afterwards.
+   */
+  it('moves to finishing the company as soon as it is started, with no press, and leaves a later choice alone', async () => {
+    state.creation = { standing: null, awaitingSecondPress: false, kept: false, confirmedFinished: false, mark: null };
+    let release!: () => void;
+    state.onCreate = () => {
+      state.label = 'co_drawn';
+      state.creation = { standing: 'not-created', awaitingSecondPress: true, kept: true, confirmedFinished: false, mark: 'not-finished' };
+      state.gate = new Promise<void>((r) => { release = r; });
+    };
+    const { container } = await drawWizard(sessionWith());
+    expect(q(container, '[data-current-step]')!.getAttribute('data-current-step')).toBe(STEP.createCompany);
+    fireEvent.change(container.querySelector('[data-action=create-company] input')!, { target: { value: 'Acme' } });
+    await act(async () => { fireEvent.click(q(container, '[data-action=create]')!); await settle(); });
+    /* The network's read is still out: nothing but this tab's own keeping says the company was started. */
+    expect(q(container, '[data-current-step]')!.getAttribute('data-current-step')).toBe(STEP.finishCompany);
+    expect(q(container, '[data-drawn-label]')!.textContent).toBe(EN['setup.finishCompany.named']!.replace('{label}', 'co_drawn'));
+    await act(async () => { release(); await settle(); });
+    await untilPageShown(container);
+    expect(q(container, '[data-current-step]')!.getAttribute('data-current-step')).toBe(STEP.finishCompany);
+    await pick(container, STEP.people);
+    expect(q(container, '[data-current-step]')!.getAttribute('data-current-step')).toBe(STEP.people);
+  });
+
+  /* RED WHEN: reading a company's creation again takes back what the network already said, so a finished company shows unfinished while the new reading is out. */
+  it('keeps what the network said of a company while its creation is read again', async () => {
+    function Probe() {
+      const { creation, reread } = useCreationFact('c-1');
+      return <button data-probe={String(creation?.confirmedFinished)} onClick={() => { void reread(); }} />;
+    }
+    const { container } = render(framed(<Probe />, sessionWith({ company: 'c-1' })));
+    await act(settle);
+    expect(q(container, '[data-probe]')!.getAttribute('data-probe')).toBe('true');
+    let release!: () => void;
+    state.gate = new Promise<void>((r) => { release = r; });
+    await act(async () => { fireEvent.click(q(container, '[data-probe]')!); await settle(); });
+    expect(q(container, '[data-probe]')!.getAttribute('data-probe')).toBe('true');
+    await act(async () => { release(); await settle(); });
+    expect(q(container, '[data-probe]')!.getAttribute('data-probe')).toBe('true');
+  });
+
+  /* RED WHEN: a creation this tab keeps for some other company closes creating a new company, so a person with a company not finished cannot start another. */
+  it('keeps creating a company open while another company is kept, with no company shown: the new one starts at step 1', async () => {
     state.creation = { standing: 'not-created', awaitingSecondPress: true, kept: true, confirmedFinished: false, mark: 'not-finished' };
     const { container } = await drawWizard(sessionWith());
-    expect(q(container, `[data-setup-steps] [data-step=${STEP.createCompany}]`)!.getAttribute('data-standing')).toBe('done');
+    expect(q(container, `[data-setup-steps] [data-step=${STEP.createCompany}]`)!.getAttribute('data-standing')).toBe('open');
+    expect(q(container, '[data-current-step]')!.getAttribute('data-current-step')).toBe(STEP.createCompany);
+    expect(q(container, '[data-action=create-company]')).not.toBeNull();
+  });
+
+  /* RED WHEN: finishing the company just created reads another kept company, or asking for a new company from one not finished does not go to step 1, or the new company is not finished by its own id. */
+  it('starts a new company from one not finished at step 1, and finishes the new one by its own id', async () => {
+    state.creation = { standing: 'not-created', awaitingSecondPress: false, kept: false, confirmedFinished: false, mark: null };
+    state.carried = [{ of: 'cannot', companyId: 'c-1' }];
+    const { container } = await drawWizard(sessionWith({ company: 'c-1' }));
+    await pick(container, STEP.signers);
+    await pick(container, STEP.finishCompany);
+    await act(async () => { fireEvent.click(q(container, '[data-action=new-company]')!); await settle(); });
+    expect(q(container, '[data-current-step]')!.getAttribute('data-current-step')).toBe(STEP.createCompany);
+    state.carried = [{ of: 'waiting', companyId: 'c-new', stage: 'deploy' }];
+    state.onCreate = () => { state.label = 'co_drawn'; state.creation = { standing: 'not-created', awaitingSecondPress: true, kept: true, confirmedFinished: false, mark: 'not-finished' }; };
+    state.acted = [];
+    fireEvent.change(container.querySelector('[data-action=create-company] input')!, { target: { value: 'Acme' } });
+    await act(async () => { fireEvent.click(q(container, '[data-action=create]')!); await settle(); });
     expect(q(container, '[data-current-step]')!.getAttribute('data-current-step')).toBe(STEP.finishCompany);
-    expect(q(container, '[data-action=create-company]')).toBeNull();
+    expect(state.acted).toContain(JSON.stringify(['carry', 'u1', 'c-new']));
+    expect(state.acted.filter((a) => a.startsWith('["carry"') && a.includes('"c-1"'))).toEqual([]);
   });
 
   /* RED WHEN: a step done for good, asked for by name (from the setup card), is opened with its action again rather than the step after it. */
@@ -1098,20 +1176,23 @@ describe('creating the company', () => {
     expect(state.acted).toHaveLength(1);
   });
 
-  /* RED WHEN: a company started while this browser keeps an unfinished one says only that it did not finish, with no way to the step that finishes it. */
-  it('leads to finishing the company already being created', async () => {
-    state.created = { of: 'refused', why: 'company-kept' };
-    const leadTo = vi.fn();
-    const { container } = await draw(<CreateCompany leadTo={leadTo} onChanged={() => {}} />, sessionWith());
+  /* RED WHEN: creating a company while another is kept still shows a refusal about it, or does not say which company it made, so the wizard cannot finish that one. */
+  it('shows no refusal because another company is not finished: it creates, and tells the wizard which company it made', async () => {
+    state.creation = { standing: 'not-created', awaitingSecondPress: true, kept: true, confirmedFinished: false, mark: 'not-finished' };
+    const onChanged = vi.fn();
+    const { container } = await draw(<CreateCompany leadTo={() => {}} onChanged={onChanged} />, sessionWith());
     await create(container);
-    expect(q(container, '[data-refusal]')!.textContent).toContain(EN['act.refused.companyKept']);
-    fireEvent.click(q(container, `[data-lead-to=${STEP.finishCompany}]`)!);
-    expect(leadTo).toHaveBeenCalledWith(STEP.finishCompany);
-    /* RED WHEN: any other refusal grows the same lead. */
+    expect(q(container, '[data-refusal]')).toBeNull();
+    expect(q(container, '[data-action=start-again]')).toBeNull();
+    expect(q(container, '[data-created]')!.getAttribute('data-created')).toBe('c-new');
+    expect(onChanged).toHaveBeenCalledWith('c-new');
+    expect(EN).not.toHaveProperty(['act.refused.companyKept']);
+    /* Any other refusal is still shown, with nothing to start again. */
     cleanup();
     state.created = { of: 'refused', why: 'sign-in-again' };
-    const other = await draw(<CreateCompany leadTo={leadTo} onChanged={() => {}} />, sessionWith());
+    const other = await draw(<CreateCompany leadTo={() => {}} onChanged={() => {}} />, sessionWith());
     await create(other.container);
+    expect(q(other.container, '[data-refusal]')).not.toBeNull();
     expect(q(other.container, `[data-lead-to=${STEP.finishCompany}]`)).toBeNull();
   });
 
@@ -1220,11 +1301,44 @@ describe('finishing the company', () => {
   /* RED WHEN: once the company is finished and the app lists it, the step looks at the company again, so a step the wizard is closing sends or signs once more. */
   it('does not look again after it is finished when the company shown changes', async () => {
     state.carried = [{ of: 'done', companyId: 'c-1' }];
-    const view = await drawStep({ company: null });
+    /* The company just created is shown by its id before the app lists it. */
+    const view = render(framed(<FinishCompany leadTo={() => {}} onChanged={() => {}} creation="c-1" />, sessionWith({ company: null })));
+    await act(async () => { await vi.advanceTimersByTimeAsync(0); });
     expect(carries()).toBe(1);
-    view.rerender(framed(<FinishCompany leadTo={() => {}} onChanged={() => {}} />, sessionWith({ company: 'c-1' })));
+    view.rerender(framed(<FinishCompany leadTo={() => {}} onChanged={() => {}} creation="c-1" />, sessionWith({ company: 'c-1' })));
     await wait(30_000);
     expect(carries()).toBe(1);
+  });
+
+  /*
+   * RED WHEN: switching from one company to another shows the first company's stage or its Start it again for the second;
+   * the first company finishing marks the second finished, or stops the second from being looked at; or Start it again
+   * acts on a company other than the one shown.
+   */
+  it('shows its own company\'s stage after a switch, is not finished by the one left, and starts again the one shown', async () => {
+    let releaseA!: () => void;
+    state.carriedBy = {
+      'c-1': { gate: new Promise<void>((r) => { releaseA = r; }), result: { of: 'done', companyId: 'c-1' } },
+      'c-2': { result: { of: 'waiting', companyId: 'c-2', stage: 'key' } },
+    };
+    const companiesChanged = vi.fn(async () => {});
+    const onChanged = vi.fn();
+    const at = (company: string) => framed(<FinishCompany leadTo={() => {}} onChanged={onChanged} />, sessionWith({ company, companiesChanged }));
+    const view = render(at('c-1'));
+    await act(async () => { await vi.advanceTimersByTimeAsync(0); });
+    view.rerender(at('c-2'));
+    await act(async () => { await vi.advanceTimersByTimeAsync(0); });
+    expect(q(view.container, '[data-stage]')!.getAttribute('data-stage')).toBe('key');
+    await act(async () => { releaseA(); await vi.advanceTimersByTimeAsync(0); });
+    expect(companiesChanged).not.toHaveBeenCalled();
+    expect(onChanged).not.toHaveBeenCalled();
+    expect(q(view.container, '[data-stage]')!.getAttribute('data-stage')).toBe('key');
+    const looksAtB = () => state.acted.filter((a) => a === JSON.stringify(['carry', 'u1', 'c-2'])).length;
+    const before = looksAtB();
+    await wait(10_000);
+    expect(looksAtB()).toBeGreaterThan(before);
+    await startAgainConfirmed(view.container);
+    expect(state.acted.filter((a) => a.startsWith('["start-again-here"'))).toEqual([JSON.stringify(['start-again-here', 'u1', 'c-2'])]);
   });
 
   /* RED WHEN: a creation waiting for the wallet is looked at again by itself instead of waiting for the press, the press opens nothing, or the look is not taken again after it. */
@@ -1239,6 +1353,28 @@ describe('finishing the company', () => {
     expect(carries()).toBe(2);
     expect(q(container, '[data-stage]')).not.toBeNull();
     expect(q(container, '[data-action=open-wallet]')).toBeNull();
+  });
+
+  /* RED WHEN: a press that built a ran-out step again does not say so, or says so when nothing was built again. */
+  it('says a step that ran out of time was built again, after the press, and keeps saying so while the step is open', async () => {
+    state.carried = [{ of: 'press', companyId: 'c-1' }, { of: 'waiting', companyId: 'c-1', stage: 'deploy' }];
+    state.pressed = { of: 'done', builtAgain: true };
+    const { container } = await drawStep();
+    expect(q(container, '[data-built-again]')).toBeNull();
+    await act(async () => { fireEvent.click(q(container, '[data-action=open-wallet]')!); await vi.advanceTimersByTimeAsync(0); });
+    expect(q(container, '[data-built-again]')!.textContent).toBe(EN['setup.finishCompany.builtAgain']);
+    await wait(30_000);
+    expect(q(container, '[data-built-again]')!.textContent).toBe(EN['setup.finishCompany.builtAgain']);
+  });
+
+  /* RED WHEN: a look that built a step again for a company left to run on its own does not say so, or forgets it at the next look. */
+  it('says so also when a look, not a press, built the step again', async () => {
+    state.carried = [{ of: 'waiting', companyId: 'c-1', stage: 'finish', builtAgain: true }, { of: 'waiting', companyId: 'c-1', stage: 'finish' }];
+    const { container } = await drawStep();
+    expect(q(container, '[data-built-again]')!.textContent).toBe(EN['setup.finishCompany.builtAgain']);
+    await wait(10_000);
+    expect(carries()).toBe(2);
+    expect(q(container, '[data-built-again]')!.textContent).toBe(EN['setup.finishCompany.builtAgain']);
   });
 
   /* RED WHEN: shut saved keys are not said, or the press that opens them is not the same one. */
@@ -1286,15 +1422,55 @@ describe('finishing the company', () => {
     expect(startNewCompany).toHaveBeenCalledTimes(1);
   });
 
-  /* RED WHEN: a kept creation that built no deploy is not offered to be started again here, starting again forgets another company, or the person is left on the company that cannot be finished. */
-  it('offers to start again when the kept creation built no deploy, then leads to creating a new company', async () => {
+  const startAgainConfirmed = async (container: HTMLElement) => {
+    await act(async () => { fireEvent.click(q(container, '[data-action=start-again]')!); await vi.advanceTimersByTimeAsync(0); });
+    const sure = [...container.querySelectorAll('[data-slot=confirm-in-your-account] button')].find((b) => b.textContent === EN['kit.confirm.confirm'])!;
+    expect(state.acted.filter((a) => a.startsWith('["start-again-here"'))).toEqual([]);
+    await act(async () => { fireEvent.click(sure); await vi.advanceTimersByTimeAsync(0); });
+  };
+
+  /* RED WHEN: a kept creation that built no deploy is not offered to be started again here, starting again acts before the person confirms, forgets another company, or the person is left on the company that cannot be finished. */
+  it('offers to start again when the kept creation built no deploy, asks first, then leads to creating a new company', async () => {
     state.carried = [{ of: 'no-deploy', companyId: 'c-1' }];
     const startNewCompany = vi.fn();
     const { container } = await drawStep({}, { startNewCompany });
     expect(q(container, '[data-no-deploy]')!.textContent).toContain(EN['setup.createCompany.noDeploy']);
-    await act(async () => { fireEvent.click(q(container, '[data-action=start-again]')!); await vi.advanceTimersByTimeAsync(0); });
+    await startAgainConfirmed(container);
     expect(state.acted.filter((a) => a.startsWith('["start-again-here"'))).toEqual([JSON.stringify(['start-again-here', 'u1', 'c-1'])]);
+    expect(q(container, '[data-start-again-kept]')!.textContent).toContain(EN['setup.again.dropped']);
+    expect(startNewCompany).not.toHaveBeenCalled();
+    fireEvent.click(q(container, '[data-action=start-new-company]')!);
     expect(startNewCompany).toHaveBeenCalledTimes(1);
+  });
+
+  /* RED WHEN: a creation that cannot be finished and was sent offers no way out, or no way to start it again. */
+  it('offers starting again to a creation waiting for the chain, and to one that is stuck', async () => {
+    for (const carried of [{ of: 'waiting', companyId: 'c-1', stage: 'deploy' }, { of: 'cannot', companyId: 'c-1' }, { of: 'refused', why: 'did-not-finish', companyId: 'c-1' }]) {
+      state.carried = [carried];
+      state.acted = [];
+      const { container } = await drawStep({}, {});
+      expect(q(container, '[data-action=start-again]'), String(carried.of)).not.toBeNull();
+      cleanup();
+    }
+  });
+
+  /* RED WHEN: a creation kept because its deploy landed or may still land is led on as dropped, or says nothing of why it was kept. */
+  it('says why a creation was kept, and does not lead on', async () => {
+    for (const [again, words] of [
+      [{ of: 'landed' }, EN['setup.again.landed']],
+      [{ of: 'wait', minutes: 7 }, (EN['setup.again.wait'] ?? '').replace('{minutes}', '7')],
+      [{ of: 'unsure' }, EN['setup.again.unsure']],
+    ] as [Record<string, unknown>, string][]) {
+      state.carried = [{ of: 'no-deploy', companyId: 'c-1' }];
+      state.acted = [];
+      state.startedAgainHere = again;
+      const startNewCompany = vi.fn();
+      const { container } = await drawStep({}, { startNewCompany });
+      await startAgainConfirmed(container);
+      expect(q(container, '[data-start-again-kept]')!.textContent).toContain(words);
+      expect(startNewCompany).not.toHaveBeenCalled();
+      cleanup();
+    }
   });
 
   /* RED WHEN: a refusal to start again is lost and the person is led on as if it had been forgotten. */
@@ -1303,7 +1479,7 @@ describe('finishing the company', () => {
     state.startedAgainHere = { of: 'refused', why: 'did-not-finish' };
     const startNewCompany = vi.fn();
     const { container } = await drawStep({}, { startNewCompany });
-    await act(async () => { fireEvent.click(q(container, '[data-action=start-again]')!); await vi.advanceTimersByTimeAsync(0); });
+    await startAgainConfirmed(container);
     expect(q(container, '[data-refusal]')!.getAttribute('data-refusal')).toBe('did-not-finish');
     expect(startNewCompany).not.toHaveBeenCalled();
   });

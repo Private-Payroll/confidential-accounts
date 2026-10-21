@@ -371,7 +371,7 @@ export const BROWSER_BUILDS: BrowserBuild[] = [
   },
   {
     name: 'wallet', config: 'apps/wallet/vite.config.ts', root: 'apps/wallet',
-    pages: ['apps/wallet/index.html', 'apps/wallet/probe.html'],
+    pages: ['apps/wallet/creation-screen.html', 'apps/wallet/index.html', 'apps/wallet/probe.html'],
     alias: [
       { find: 'assert', replacement: 'packages/identity/src/browser/assert-shim.ts' },
       { find: '@', replacement: 'apps/wallet/src' },

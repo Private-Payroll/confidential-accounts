@@ -64,6 +64,9 @@ const COMPANIES: Company[] = [
   { id: 'c-1', createdAt: '2026-08-01T10:00:00.000Z', signers: 5 },
 ];
 
+/* How an unnamed company is listed: by the day its account was made, written the way the app writes a day. */
+const STARTED = (iso: string): string => EN['company.startedOn']!.replace('{date}', new Intl.DateTimeFormat('en', { dateStyle: 'medium' }).format(new Date(iso)));
+
 const signer: Viewer = { signedIn: true, view: VIEWS.company, signs: true };
 const employee: Viewer = { signedIn: true, view: VIEWS.employee, signs: false };
 
@@ -275,9 +278,9 @@ describe('the company switcher', () => {
     expect(menu.querySelector('[data-action=create-company]')).not.toBeNull();
     expect(menu.querySelector('[data-action=create-company] [data-slot=coming-soon]')).toBeNull();
     expect(menu.querySelector('[data-public-facts]')).toBeNull();
-    expect([...menu.querySelectorAll('[data-company]')].map((c) => c.textContent)).toEqual(['Company2/3 Approval', 'Company1/1 Approval', 'Company3/5 Approval']);
-    expect(document.querySelector('[data-action=company-switcher]')!.textContent).toBe('Company2/3 Approval');
-    expect(document.body.textContent).not.toMatch(/2026|created/i);
+    expect([...menu.querySelectorAll('[data-company]')].map((c) => c.textContent)).toEqual([
+      `${STARTED(COMPANIES[0]!.createdAt)}2/3 Approval`, `${STARTED(COMPANIES[1]!.createdAt)}1/1 Approval`, `${STARTED(COMPANIES[2]!.createdAt)}3/5 Approval`]);
+    expect(document.querySelector('[data-action=company-switcher]')!.textContent).toBe(`${STARTED(COMPANIES[0]!.createdAt)}2/3 Approval`);
   });
 
   it('shows no approvals for a company until the chain has said, and never the list\'s own number', async () => {
@@ -286,7 +289,27 @@ describe('the company switcher', () => {
     await draw(sessionFor(signer), 'settingsAppearance');
     await press({ key: '.', code: 'Period', metaKey: true });
     const menu = document.querySelector('[data-company-switcher]') as HTMLElement;
-    expect([...menu.querySelectorAll('[data-company]')].map((c) => c.textContent)).toEqual(['Company', 'Company1/1 Approval', 'Company']);
+    expect([...menu.querySelectorAll('[data-company]')].map((c) => c.textContent)).toEqual([
+      STARTED(COMPANIES[0]!.createdAt), `${STARTED(COMPANIES[1]!.createdAt)}1/1 Approval`, STARTED(COMPANIES[2]!.createdAt)]);
+  });
+
+  /*
+   * RED WHEN: a company the device holds no name for is listed or shown at the top of the switcher as anything but "A company you
+   * started on <day>" (or "A company you started" when no day is known), or any company in the list or at the top is shown empty,
+   * whether its name is missing, blank, or only spaces.
+   */
+  it('never lists a company with an empty name: a missing, blank or spaces-only name reads as the day it was started', async () => {
+    names.opened = new Map([['c-2', ''], ['c-3', '   '], ['c-1', 'Acme']]);
+    names.approvals = new Map();
+    const noDay = { id: 'c-4', createdAt: 'not a day', signers: 1 } as Company;
+    await draw(sessionFor(signer, { companies: [...COMPANIES, noDay] }), 'settingsAppearance');
+    await act(async () => { await new Promise((r) => setTimeout(r, 0)); });
+    expect(document.querySelector('[data-action=company-switcher]')!.textContent).toBe(STARTED(COMPANIES[0]!.createdAt));
+    await press({ key: '.', code: 'Period', metaKey: true });
+    const menu = document.querySelector('[data-company-switcher]') as HTMLElement;
+    const listed = [...menu.querySelectorAll('[data-company]')].map((c) => c.textContent);
+    expect(listed).toEqual([STARTED(COMPANIES[0]!.createdAt), STARTED(COMPANIES[1]!.createdAt), 'Acme', EN['company.started']]);
+    expect(listed.every((l) => l !== null && l.trim() !== '')).toBe(true);
   });
 
   /*
@@ -316,7 +339,7 @@ describe('the company switcher', () => {
    * another company carries it; or a company whose read is unknown or failed shows any mark; or a company is read more than once.
    */
   it('marks the company that is not finished, once, and no company whose read is unknown or failed', async () => {
-    names.opened = new Map();
+    names.opened = new Map([['c-3', 'Test-001']]);
     names.approvals = new Map([['c-2', 2], ['c-3', 1], ['c-1', 3]]);
     creations.mark.set('c-3', 'not-finished');
     creations.throwing.add('c-1');
@@ -328,6 +351,8 @@ describe('the company switcher', () => {
     const marks = [...menu.querySelectorAll('[data-company]')].map((c) => c.querySelector('[data-not-finished]')?.textContent ?? null);
     expect(marks).toEqual([null, EN['company.notFinished'], null]);
     expect(menu.querySelector('[data-company=c-3] [data-not-finished]')!.getAttribute('data-slot')).toBe('badge');
+    /* RED WHEN: a company not finished is listed in the switcher with no name, or without its name beside the mark. */
+    expect(menu.querySelector('[data-company=c-3]')!.textContent).toBe(`Test-0011/1 Approval${EN['company.notFinished']}`);
     expect(creations.reads.filter((id) => id === 'c-3')).toHaveLength(1);
   });
 

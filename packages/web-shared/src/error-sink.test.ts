@@ -11,10 +11,10 @@
  * plain object and `post` is a function that keeps what it was given.
  *
  * The half this cannot see is that a real browser fires these events at all.
- * That is `WEB-CHECK.command`'s job, and it is why the round has both.
+ * That is `WEB-CHECK.command`'s job, and it is why both checks exist.
  */
 import { describe, it, expect, vi } from 'vitest';
-import { installErrorSink, type SinkPost, type SinkWindow } from './error-sink.js';
+import { installErrorSink, sinkUrlFor, type SinkPost, type SinkWindow } from './error-sink.js';
 
 type Listener = (event: any) => void;
 
@@ -118,8 +118,8 @@ describe('the browser error sink', () => {
    * morning on 24 Aug. These three are the sink half of the row.
    *
    * `settled` is a macrotask boundary, not a poll: the body's promise is
-   * already resolved, and there is no condition to wait FOR. `X9`'s discipline
-   * — await the thing, never poll for it — is what this is.
+   * already resolved, and there is no condition to wait FOR. the discipline
+   * here is to await the thing, never poll for it.
    */
   const settled = () => new Promise(resolve => { setTimeout(resolve, 0); });
 
@@ -149,7 +149,7 @@ describe('the browser error sink', () => {
   });
 
   it('C157: and the caller still gets the body, because the sink read a CLONE', async () => {
-    // Rule 3. Reading `response.text()` here would drain the stream the screen
+    // Reading `response.text()` here would drain the stream the screen
     // is about to read, and every refusal would render as an empty one.
     const r = rig();
     const response = answering(400, JSON.stringify({ error: 'that signer already has access' }));
@@ -234,5 +234,14 @@ describe('the browser error sink', () => {
     const kept = r.posted.reduce((n, p) => n + p.entries.length, 0);
     expect(kept).toBeLessThanOrEqual(500);
     expect(kept).toBeGreaterThan(0);
+  });
+});
+
+describe('where a page posts what it kept', () => {
+  /* RED WHEN: the wallet's page posts to its own address, which serves no report route, or the web application's page stops using the proxied path. */
+  it('is the service itself from the wallet and the proxied path from the web application', () => {
+    expect(sinkUrlFor('http://localhost:5180/accounts')).toBe('http://localhost:8787/api/dev/web-console');
+    expect(sinkUrlFor('http://localhost:5173/')).toBe('/api/dev/web-console');
+    expect(sinkUrlFor('not an address')).toBe('/api/dev/web-console');
   });
 });

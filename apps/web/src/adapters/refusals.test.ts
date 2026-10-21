@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import { WalletClosed, type WalletRefusal } from 'vaults-web-shared/wallet-sign-in.js';
-import { ACompanyIsBeingCreated } from 'vaults-web-shared/keyring.js';
+import * as keyring from 'vaults-web-shared/keyring.js';
+import { ReadRanOutOfTime } from 'vaults-web-shared/read-bound.js';
 import { ACT_REFUSAL, refusalOf } from './refusals.js';
 
 /*
@@ -9,10 +10,11 @@ import { ACT_REFUSAL, refusalOf } from './refusals.js';
  */
 const closed = (refusal: WalletRefusal, message = 'x') => new WalletClosed(refusal, message);
 
-describe('a company already being created', () => {
-  /* RED WHEN: starting a company while this browser keeps an unfinished one is told as "it did not finish", which no retry can fix. */
-  it('is told by its own kind, so the page can lead to finishing it', () => {
-    expect(refusalOf(new ACompanyIsBeingCreated('a company you started is not finished yet'))).toBe(ACT_REFUSAL.companyKept);
+describe('a company not finished', () => {
+  /* RED WHEN: a person is told they cannot create a company because another is not finished: the refusal, its class or its code is still there. */
+  it('is never a reason to refuse: there is no kind, code or words for it', () => {
+    expect(keyring).not.toHaveProperty('ACompanyIsBeingCreated');
+    expect(Object.values(ACT_REFUSAL)).not.toContain('company-kept');
     expect(refusalOf(new Error('a company you started is not finished yet'))).toBe(ACT_REFUSAL.didNotFinish);
   });
 });
@@ -45,5 +47,12 @@ describe('a wallet that did not answer, ran out, or could not read', () => {
       .map((why) => refusalOf(closed({ of: 'failed', why })));
     expect(new Set(kinds).size).toBe(4);
     expect(kinds).not.toContain(ACT_REFUSAL.didNotFinish);
+  });
+});
+
+describe('a read that ran out of time', () => {
+  /* RED WHEN: a read that did not answer within twenty seconds is told as an unfinished action, or as a service that could not be reached. */
+  it('is told by its own kind, apart from an action that did not finish', () => {
+    expect(refusalOf(new ReadRanOutOfTime('The service'))).toBe(ACT_REFUSAL.readRanOut);
   });
 });

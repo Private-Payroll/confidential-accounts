@@ -89,10 +89,29 @@ export interface SessionStore {
 
   /** Housekeeping. Nothing depends on it: an expired row is refused on read. */
   sweep(now?: Date): Promise<number>;
+
+  /**
+   * Gives a live session a fresh lifetime when less than `RENEW_WHEN_LEFT_HOURS` of it is left, and
+   * says the new expiry; null when nothing was extended (plenty left, no such live session, or it
+   * already reached `MAX_LIFETIME_HOURS` from its issue). A person who is working is not signed out
+   * by the clock in the middle of it, and a sign-in never lives longer than the maximum.
+   */
+  renew(token: string, now?: Date): Promise<string | null>;
 }
 
 const TOKEN_BYTES = 32;
 export const DEFAULT_TTL_HOURS = 12;
+export const RENEW_WHEN_LEFT_HOURS = 6;
+export const MAX_LIFETIME_HOURS = 24 * 7;
+
+const renewedExpiry = (issuedAt: Date, expiresAt: Date, now: Date): Date | null => {
+  if (expiresAt.getTime() - now.getTime() >= RENEW_WHEN_LEFT_HOURS * 3600_000) return null;
+  const to = Math.min(
+    now.getTime() + DEFAULT_TTL_HOURS * 3600_000,
+    issuedAt.getTime() + MAX_LIFETIME_HOURS * 3600_000,
+  );
+  return to > expiresAt.getTime() ? new Date(to) : null;
+};
 
 /**
  * The lookup key. A hash, so the stored value is useless if the table leaks.
@@ -148,6 +167,16 @@ export class MemorySessionStore implements SessionStore {
     if (!row || row.revokedAt) return null;
     if (new Date(row.expiresAt) <= now) return null;
     return row.userId;
+  }
+
+  async renew(token: string, now = new Date()) {
+    const key = toHex(tokenHash(token));
+    const row = this.rows.get(key);
+    if (!row || row.revokedAt || new Date(row.expiresAt) <= now) return null;
+    const to = renewedExpiry(new Date(row.issuedAt), new Date(row.expiresAt), now);
+    if (to === null) return null;
+    this.rows.set(key, { ...row, expiresAt: to.toISOString() });
+    return to.toISOString();
   }
 
   async revoke(token: string, now = new Date()) {
@@ -242,6 +271,23 @@ export class PostgresSessionStore implements SessionStore {
         AND expires_at > ${now}
     `;
     return rows[0]?.user_id ?? null;
+  }
+
+  async renew(token: string, now = new Date()) {
+    const hash = Buffer.from(tokenHash(token));
+    const rows = await this.sql<{ issued_at: Date; expires_at: Date }>`
+      SELECT issued_at, expires_at FROM sessions
+      WHERE token_hash = ${hash} AND revoked_at IS NULL AND expires_at > ${now}
+    `;
+    if (!rows[0]) return null;
+    const to = renewedExpiry(new Date(rows[0].issued_at), new Date(rows[0].expires_at), now);
+    if (to === null) return null;
+    const done = await this.sql<{ expires_at: Date }>`
+      UPDATE sessions SET expires_at = ${to}
+      WHERE token_hash = ${hash} AND revoked_at IS NULL AND expires_at > ${now} AND expires_at < ${to}
+      RETURNING expires_at
+    `;
+    return done[0] ? to.toISOString() : null;
   }
 
   async revoke(token: string, now = new Date()) {

@@ -1020,8 +1020,10 @@ export const CODES: Readonly<Record<string, string>> = {
   'apps/web/src/adapters/handover-state.ts#SERVICE': 'the service\'s addresses and the words of its answer, sent and compared, never shown',
   'apps/web/src/adapters/create-company.ts#FIRST_SIGNER': 'the role of the person creating a company, on its roster, a word of the service\'s protocol',
   'apps/web/src/adapters/finish-company.ts#FINISH': 'what a look at a company being finished comes to, compared by the code and never shown',
+  'apps/web/src/adapters/start-again.ts#AGAIN': 'why a kept creation was not started again, compared by the code and never shown',
   'apps/web/src/adapters/creation-standing.ts#STAGE': 'which stage a company being finished waits on, compared by the code and set as a mark tests find it by; each is shown by its key',
   'apps/web/src/adapters/creation-standing.ts#SERVICE': 'the service\'s address for a company\'s account, sent and never shown',
+  'apps/web/src/adapters/creation-standing.ts#READ_FAILURE': 'why the service could not be read for a company, signed out or failed, compared by the code and turned into words by a screen',
   'apps/web/src/adapters/creation-standing.ts#CREATION_MARK': 'the mark a company carries in a list, compared by the code and turned into words by a screen',
   'apps/web/src/adapters/creation-standing.ts#CREATION_STANDINGS': 'the keyring\'s own words for where creating a company stands, each with whether it owes the chain a step, needs the saved keys and which stage it waits on; compared and never shown',
   'apps/web/src/adapters/filing-judge.ts#NOT_ANCHORED': 'why the one-a-day anchor did not run where the page decides it, a code whose words are in the language file',
@@ -1033,6 +1035,7 @@ export const CODES: Readonly<Record<string, string>> = {
   'apps/web/src/adapters/company-records.ts#INVITED': 'who an invitation is for, the service\'s words compared, and a screen\'s phrase chosen by them',
   'apps/web/src/adapters/reads.ts#READ': 'what a read is, compared by the code',
   'apps/web/src/adapters/kept-skips.ts#KEPT': 'where the skipped setup steps are kept in the tab\'s storage',
+  'apps/web/src/shell/company-facts.tsx#STARTED_ON': 'the style the day a company started is written in, which the browser\'s date format turns into the person\'s language',
   'apps/web/src/records/parts.tsx#DAY': 'the style a day is written in, which the browser\'s date format turns into the person\'s language',
   'apps/web/src/records/parts.tsx#MONTH': 'the style a run\'s month is written in, and the time zone it is read in, which the browser\'s date format turns into the person\'s language',
   'apps/web/src/records/parts.tsx#KIND_SAYS': 'each kind of proposal by the word the service\'s record names it by; what it does is asked for by key',
@@ -1054,6 +1057,9 @@ export const CODES: Readonly<Record<string, string>> = {
   'apps/web/src/adapters/create-vault.ts#SERVICE': 'the service\'s addresses, sent and never shown',
   'apps/web/src/adapters/kept-sign-in.ts#KEPT': 'where the sign-in is kept in the tab\'s storage',
   'apps/web/src/actions/create-vault.tsx#ASKING': 'which confirmation is being asked for, compared by the code',
+  'apps/web/src/actions/start-again.tsx#NOW': 'what the last press of Start it again came to, kept and compared by the code; each is turned into its own phrase by a key',
+  'apps/web/src/adapters/usual-times.ts#COMPANY_PHASE': 'which part of finishing a company is running, compared by the code and never shown; each is turned into its own phrase by a key',
+  'apps/web/src/adapters/usual-times.ts#VAULT_USUAL_SECONDS': 'the name of each stage of creating a vault, the key of how long it usually takes, compared by the code and never shown',
 };
 
 /** The part of `CODES` naming declarations in files under `dir`. Each package's check holds its own entries to declarations it has. */

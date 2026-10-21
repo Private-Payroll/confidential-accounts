@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useState } from 'react';
 import { EVERY_STEP, type SetupFacts } from './steps.js';
 import type { StepId } from './step-ids.js';
-import { creationChanged, creationOf, type CompanyCreation } from '../adapters/creation-standing.js';
+import { creationChanged, creationHere, creationOf, type CompanyCreation } from '../adapters/creation-standing.js';
 import { keepSkips, readSkips, tabStorage } from '../adapters/kept-skips.js';
 
 export { readSkips };
@@ -74,20 +74,27 @@ export function stepsLeft(facts: SetupFacts): (typeof EVERY_STEP)[number][] {
 
 /**
  * Where the shown company stands in being created, for every screen that builds the setup facts: null until it is read,
- * and never another company's reading. `reread` puts the old reading away and reads again, for a step that changed the creation.
+ * and never another company's reading. `reread` puts the old reading away and reads again, for a step that changed the creation;
+ * what this tab keeps shows at once, and what the network said before stays until the new reading comes.
  */
-export function useCreationFact(company: string | null): { creation: CompanyCreation | null; reread: () => Promise<void> } {
+export function useCreationFact(company: string | null): { creation: CompanyCreation | null; reread: (startedCompany?: string) => Promise<void> } {
   const [read, setRead] = useState<{ of: string | null; creation: CompanyCreation } | null>(null);
-  const load = useCallback(async (fresh: boolean): Promise<void> => {
-    if (fresh) creationChanged(company);
-    const creation = await creationOf(company);
-    setRead({ of: company, creation });
+  const load = useCallback(async (fresh: boolean, startedCompany?: string): Promise<void> => {
+    const id = startedCompany ?? company;
+    if (fresh) {
+      creationChanged(id);
+      /* What this tab keeps is known now: a creation just started shows as started before the network is asked, and what was read before is kept until the new reading comes. */
+      const here = creationHere(id);
+      setRead((was) => ({ of: id, creation: was !== null && was.of === id ? { ...was.creation, company: here.company, kept: here.kept, awaitingSecondPress: here.awaitingSecondPress } : here }));
+    }
+    const creation = await creationOf(id);
+    setRead({ of: id, creation });
   }, [company]);
   useEffect(() => {
     let alive = true;
     void creationOf(company).then((creation) => { if (alive) setRead({ of: company, creation }); });
     return () => { alive = false; };
   }, [company]);
-  const reread = useCallback(() => load(true), [load]);
+  const reread = useCallback((startedCompany?: string) => load(true, startedCompany), [load]);
   return { creation: read !== null && read.of === company ? read.creation : null, reread };
 }

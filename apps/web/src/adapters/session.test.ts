@@ -245,7 +245,7 @@ describe('who is signed in', () => {
     answers['/api/me'] = reply(409, { error: 'x', code: 'records-from-more-than-one-ledger' });
     expect(await m.whoIsSignedIn()).toEqual({ of: m.OF.recordsApart });
     delete answers['/api/me'];
-    expect(await m.whoIsSignedIn()).toEqual({ of: m.OF.unreachable });
+    expect(await m.whoIsSignedIn(async () => {})).toEqual({ of: m.OF.unreachable });
     answers['/api/me'] = reply(200, {
       user: { id: 'u1', email: null, name: 'Priya' },
       accounts: [
@@ -257,6 +257,54 @@ describe('who is signed in', () => {
       of: m.OF.signedIn, person: { id: 'u1', name: 'Priya' },
       companies: [{ id: 'c1', createdAt: '2026-09-01T00:00:00.000Z', signers: 3 }],
     });
+  });
+});
+
+describe('a service that could not check the sign-in', () => {
+  /*
+   * RED WHEN: a 503 could-not-check (or a service that cannot be reached) forgets the kept sign-in or says nobody is signed in;
+   * it is not asked again after waiting 0.6, 1.5 and 4 seconds; a later good answer is not taken; or a real 401 stops forgetting.
+   */
+  const kept = { personId: 'u1', address: 'mn_addr_test1abc' };
+  const stillKept = async () => (await import('./kept-sign-in.js')).readSignIn(window.sessionStorage);
+  const couldNotCheck = reply(503, { error: 'the service could not check your sign-in', code: 'could-not-check' });
+
+  it('keeps the person signed in, asks again after 0.6, 1.5 and 4 seconds, and takes the answer when it comes', async () => {
+    const m = await load();
+    const { keepSignIn } = await import('./kept-sign-in.js');
+    keepSignIn(window.sessionStorage, kept);
+    const waited: number[] = [];
+    let asked = 0;
+    answers['/api/me'] = () => {
+      asked += 1;
+      return asked < 3 ? couldNotCheck() : reply(200, { user: { id: 'u1', email: null, name: 'Priya' }, accounts: [] })();
+    };
+    expect(await m.whoIsSignedIn(async (ms) => { waited.push(ms); })).toMatchObject({ of: m.OF.signedIn, person: { id: 'u1' } });
+    expect(waited).toEqual([600, 1500]);
+    expect(await stillKept()).toEqual(kept);
+  });
+
+  it('after the last ask it says the service is out of reach, not that nobody is signed in, and forgets nothing', async () => {
+    const m = await load();
+    const { keepSignIn } = await import('./kept-sign-in.js');
+    keepSignIn(window.sessionStorage, kept);
+    const waited: number[] = [];
+    answers['/api/me'] = couldNotCheck;
+    expect(await m.whoIsSignedIn(async (ms) => { waited.push(ms); })).toEqual({ of: m.OF.unreachable });
+    expect(waited).toEqual([600, 1500, 4000]);
+    expect(await stillKept()).toEqual(kept);
+    delete answers['/api/me'];
+    expect(await m.whoIsSignedIn(async () => {})).toEqual({ of: m.OF.unreachable });
+    expect(await stillKept()).toEqual(kept);
+  });
+
+  it('a real 401 still signs the person out', async () => {
+    const m = await load();
+    const { keepSignIn } = await import('./kept-sign-in.js');
+    keepSignIn(window.sessionStorage, kept);
+    answers['/api/me'] = reply(401, { error: 'not signed in' });
+    expect(await m.whoIsSignedIn(async () => {})).toEqual({ of: m.OF.nobody });
+    expect(await stillKept()).toBeNull();
   });
 });
 

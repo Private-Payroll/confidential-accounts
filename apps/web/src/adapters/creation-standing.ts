@@ -1,8 +1,9 @@
 import {
-  api, canOpenCompanies, companyAwaitingItsSecondPress, companyBeingCreated, companyBeingCreatedLabel, companyCreationStanding, currentUser,
+  api, AuthError, canOpenCompanies, companyAwaitingItsSecondPress, companyBeingCreated, companyBeingCreatedLabel, companyCreationStanding, currentUser,
   keptCreationShowsItsKeyCommitted, walletShowsPayKeyCommitted, type CompanyCreationState,
 } from 'vaults-web-shared/keyring.js';
 import type { AccountAddress, CompanyLabel } from 'midnight-identity/profile/company-label';
+import { SERVICE_READ_BOUND_MS, SERVICE_READ_BOUND_SECONDS } from 'vaults-web-shared/read-bound.js';
 import { ACCOUNT_ORIGIN } from './session.js';
 
 /*
@@ -41,6 +42,14 @@ export const CREATION_STANDINGS: Readonly<Record<CompanyCreationState, { owesThe
   unknown: { owesTheChain: false, needsTheKeys: false, stage: STAGE.read },
 };
 
+/** Why the service could not be read for a company: the person is signed out (the service answered 401), or the read failed or ran out of time. */
+export const READ_FAILURE = { signedOut: 'signed-out', failed: 'failed' } as const;
+type ReadFailure = (typeof READ_FAILURE)[keyof typeof READ_FAILURE];
+
+/** The longest the service is waited for on a company's creation before the read counts as failed. */
+export { SERVICE_READ_BOUND_MS, SERVICE_READ_BOUND_SECONDS };
+/** The same bound in whole seconds, as the screen says it (a test holds the two together). */
+
 export interface CompanyCreation {
   /** The company this answer is about, or null when there is none to ask about. */
   company: string | null;
@@ -54,6 +63,8 @@ export interface CompanyCreation {
   confirmedFinished: boolean;
   /** The mark the company carries in a list, or null for none. */
   mark: CreationMark | null;
+  /** Present only when the service could not be read for this company, and says why. */
+  failure?: ReadFailure;
 }
 
 interface Read {
@@ -63,25 +74,30 @@ interface Read {
   settled: boolean;
 }
 
-let reads: { signIn: object | null; byCompany: Map<string, Promise<Read | null>> } = { signIn: null, byCompany: new Map() };
+interface Unread {
+  failure: ReadFailure;
+}
+
+const wasUnread = (r: Read | Unread): r is Unread => (r as Unread).failure !== undefined;
+
+let reads: { signIn: object | null; byCompany: Map<string, Promise<Read | Unread>> } = { signIn: null, byCompany: new Map() };
 
 /** What was read since this sign-in; signing out, signing in again, or another person signing in, starts from nothing. */
-const readsForThisSignIn = (): Map<string, Promise<Read | null>> => {
+const readsForThisSignIn = (): Map<string, Promise<Read | Unread>> => {
   const signIn = currentUser();
   if (reads.signIn !== signIn) reads = { signIn, byCompany: new Map() };
   return reads.byCompany;
 };
 
-/** Puts one company's reading away, for a creation step that moved it on; with no id, the creation this browser keeps. */
+/** Puts one company's reading away, for a creation step that moved it on; with no id, nothing: no creation is read as another's. */
 export function creationChanged(companyId: string | null): void {
-  const id = companyId ?? companyBeingCreated();
-  if (id !== null) readsForThisSignIn().delete(id);
+  if (companyId !== null) readsForThisSignIn().delete(companyId);
 }
 
 /** True only when the wallet's own read shows the pay-record key committed on the company's account (the kept one for a kept creation); null when the wallet could not be asked. */
 async function walletShowsTheKeyCommitted(companyId: string): Promise<boolean | null> {
   try {
-    if (companyBeingCreated() === companyId) return await keptCreationShowsItsKeyCommitted(companyId, ACCOUNT_ORIGIN);
+    if (companyBeingCreated(companyId)) return await keptCreationShowsItsKeyCommitted(companyId, ACCOUNT_ORIGIN);
     const sealed = (await api(SERVICE.company + companyId)) as { companyLabel?: unknown; contractAddress?: unknown } | null;
     if (typeof sealed?.companyLabel !== 'string' || typeof sealed.contractAddress !== 'string') return null;
     return await walletShowsPayKeyCommitted(ACCOUNT_ORIGIN, sealed.companyLabel as CompanyLabel, sealed.contractAddress as AccountAddress);
@@ -90,12 +106,22 @@ async function walletShowsTheKeyCommitted(companyId: string): Promise<boolean | 
   }
 }
 
-async function readOnce(companyId: string): Promise<Read | null> {
+class ServiceRanOutOfTime extends Error {}
+
+/** The service's answer, or a refusal once SERVICE_READ_BOUND_MS has passed without one. */
+function withinTheBound<T>(work: Promise<T>): Promise<T> {
+  return new Promise<T>((answer, refuse) => {
+    const timer = setTimeout(() => { refuse(new ServiceRanOutOfTime()); }, SERVICE_READ_BOUND_MS);
+    work.then((v) => { clearTimeout(timer); answer(v); }, (e: unknown) => { clearTimeout(timer); refuse(e); });
+  });
+}
+
+async function readOnce(companyId: string): Promise<Read | Unread> {
   let standing: CompanyCreationState;
   try {
-    ({ state: standing } = await companyCreationStanding(companyId));
-  } catch {
-    return null;
+    ({ state: standing } = await withinTheBound(companyCreationStanding(companyId)));
+  } catch (e) {
+    return { failure: e instanceof AuthError ? READ_FAILURE.signedOut : READ_FAILURE.failed };
   }
   if (standing !== 'finished') return { standing, confirmed: false, settled: true };
   /* With the saved keys shut a kept creation cannot be seen, so nothing is confirmed on the service's pair; read again once they are open. */
@@ -104,37 +130,52 @@ async function readOnce(companyId: string): Promise<Read | null> {
   return { standing, confirmed: committed === true, settled: committed !== null };
 }
 
-function readOf(companyId: string): Promise<Read | null> {
-  if (currentUser() === null) return Promise.resolve(null);
+function readOf(companyId: string): Promise<Read | Unread> {
+  if (currentUser() === null) return Promise.resolve({ failure: READ_FAILURE.signedOut });
   const held = readsForThisSignIn();
   const had = held.get(companyId);
   if (had !== undefined) return had;
   const read = readOnce(companyId);
   held.set(companyId, read);
-  void read.then((r) => { if (r === null || !r.settled) { if (held.get(companyId) === read) held.delete(companyId); } });
+  void read.then((r) => { if (wasUnread(r) || !r.settled) { if (held.get(companyId) === read) held.delete(companyId); } });
   return read;
 }
 
-/** The label the wallet drew for the creation this browser keeps (for that company, or whichever is kept with null): the keyring's own, read when shown. */
-export const keptCreationLabel = (companyId: string | null): string | null => companyBeingCreatedLabel(companyId);
+/** The label the wallet drew for the creation this browser keeps for that company: the keyring's own, read when shown. Null for no company. */
+export const keptCreationLabel = (companyId: string | null): string | null => (companyId === null ? null : companyBeingCreatedLabel(companyId));
 
 /**
- * Where a company's creation stands: with no id, the creation this browser keeps.
+ * What this tab keeps of a company's creation, known at once and without the
+ * service: whether it is kept and whether it waits for its second press. The
+ * standing, a finished company and a mark are not known here and are left
+ * empty. A screen shows a creation that was just started from this, and
+ * `creationOf` fills in the rest.
+ */
+export function creationHere(companyId: string | null): CompanyCreation {
+  const id = companyId;
+  const kept = id !== null && companyBeingCreated(id);
+  return { company: id, standing: null, awaitingSecondPress: kept && companyAwaitingItsSecondPress(id) !== null, kept, confirmedFinished: false, mark: null };
+}
+
+/**
+ * Where a company's creation stands, by its company id; with no id, there is no creation to read.
  * The service and the wallet are each read once for a company while the person
  * stays signed in (a new sign-in starts again), until `creationChanged` puts that reading away; what this
  * tab keeps is read fresh every time. A read that failed gives no mark and
- * confirms nothing. Never moves money and never sends anything.
+ * confirms nothing, and says why in `failure`: signed out, or failed (an error,
+ * or no answer within SERVICE_READ_BOUND_MS). Never moves money and never sends anything.
  */
 export async function creationOf(companyId: string | null): Promise<CompanyCreation> {
-  const id = companyId ?? companyBeingCreated();
+  const id = companyId;
   if (id === null) return { company: null, standing: null, awaitingSecondPress: false, kept: false, confirmedFinished: false, mark: null };
   const read = await readOf(id);
-  const kept = companyBeingCreated() === id;
-  const awaitingSecondPress = kept && companyAwaitingItsSecondPress()?.accountId === id;
-  const standing = read?.standing ?? null;
+  const kept = companyBeingCreated(id);
+  const awaitingSecondPress = kept && companyAwaitingItsSecondPress(id) !== null;
+  const standing = wasUnread(read) ? null : read.standing;
   const owed = standing !== null && (CREATION_STANDINGS[standing].owesTheChain || (standing === 'not-created' && kept));
   return {
     company: id, standing, awaitingSecondPress, kept,
-    confirmedFinished: read?.confirmed === true, mark: owed ? CREATION_MARK.notFinished : null,
+    confirmedFinished: !wasUnread(read) && read.confirmed, mark: owed ? CREATION_MARK.notFinished : null,
+    ...(wasUnread(read) ? { failure: read.failure } : {}),
   };
 }

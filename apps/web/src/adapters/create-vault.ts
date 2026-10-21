@@ -62,7 +62,7 @@ import { theVaultBuilder } from './vault-builder.js';
  */
 export const CREATING = {
   checking: 'checking', building: 'building', sending: 'sending', waitingForChain: 'waiting-for-chain',
-  adopting: 'adopting', openingThePool: 'opening-the-pool', readingTheSecretBack: 'reading-the-secret-back',
+  filingTheName: 'filing-the-name', adopting: 'adopting', openingThePool: 'opening-the-pool', readingTheSecretBack: 'reading-the-secret-back',
   settingTheSecret: 'setting-the-secret', writingTheCopies: 'writing-the-copies', waitingForApprovals: 'waiting-for-approvals',
   done: 'done',
 } as const;
@@ -74,6 +74,7 @@ const STAGE: Partial<Record<VaultStage, Creating>> = {
   'building the vault': CREATING.building,
   'sending the vault': CREATING.sending,
   'waiting for the chain': CREATING.waitingForChain,
+  'filing the name': CREATING.filingTheName,
   'adopting the vault': CREATING.adopting,
   'opening the pool': CREATING.openingThePool,
   'reading the secret back': CREATING.readingTheSecretBack,

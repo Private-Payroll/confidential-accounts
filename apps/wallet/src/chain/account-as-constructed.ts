@@ -5,6 +5,7 @@ import { heldStateFromTheStart, type HeldStateDeps } from '../../../../src/midni
 import { CREATION_STEPS } from '../../../../src/midnight/deferral.js';
 import { zkConfigOver } from '../../../../packages/web-shared/src/zk-config.js';
 import { seatsInAccountState } from './company-label-on-chain.js';
+import { walletNetworkIsSet } from './network-id.js';
 import { operationsFromContractState } from 'midnight-identity/profile/contract-keys';
 import type { ThisBuildsAccountKeys } from 'midnight-identity/profile/creation-sign';
 
@@ -106,8 +107,9 @@ export async function startingStateRefusal(
   return 'refusal' in verdict ? 'The account the deploy creates does not start as its own constructor makes it for you and this label.' : null;
 }
 
-/** What the constructor is run with in this wallet, loaded when the creation screen first needs it. */
+/** What the constructor is run with in this wallet, loaded when the creation screen first needs it, after this wallet's network is given to the contract libraries (they build nothing until it is). */
 export const liveConstruction = async (): Promise<ConstructionDeps> => {
+  await walletNetworkIsSet();
   const [L, runtime, contracts, compactJs, account, accountWitnesses] = await Promise.all([
     import('@midnightntwrk/ledger-v9'),
     import('@midnight-ntwrk/compact-runtime'),

@@ -651,7 +651,7 @@ describe('§5 - WHAT IS REFUSED, AND BEFORE WHAT', () => {
     expect(server.createdCount()).toBe(0);
     expect(server.wrote(), 'nothing was saved over them').toHaveLength(0);
     expect(server.bundle().keyBundle).toEqual(theirs);
-    expect(keyring.companyBeingCreated()).toBeNull();
+    expect(keyring.companiesBeingCreated()).toEqual([]);
     expect(keyring.canOpenCompanies()).toBe(false);
   });
 
@@ -677,7 +677,7 @@ describe('§5 - WHAT IS REFUSED, AND BEFORE WHAT', () => {
       expect(journey, 'no company was created').not.toContain('POST /api/accounts');
       expect(server.createdCount()).toBe(0);
       expect(server.wrote()).toHaveLength(0);
-      expect(keyring.companyBeingCreated()).toBeNull();
+      expect(keyring.companiesBeingCreated()).toEqual([]);
     });
 
   /* RED WHEN: a save refused because the person was signed out is tried again, or the company is sent without its keys saved. */

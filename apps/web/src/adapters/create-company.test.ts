@@ -52,6 +52,17 @@ describe('creating a company on this device', () => {
     expect(kr.builders[0]).toBe(kr.builder);
   });
 
+  /* RED WHEN: a company is refused, or the adapter reads the keyring for another creation first, because another company is not finished. */
+  it('creates one company after another, each handed back by its own id, whatever is kept', async () => {
+    const { m } = await load();
+    kr.who = { id: 'u1' };
+    let n = 0;
+    kr.started = async () => { n += 1; return { accountId: `acc_${n}`, account: 'ab'.repeat(32), label: `co_${n}` }; };
+    expect(await m.createCompany('u1', { name: 'Acme', firstSigner: 'Priya' })).toEqual({ of: 'done', companyId: 'acc_1', label: 'co_1' });
+    expect(await m.createCompany('u1', { name: 'Other', firstSigner: 'Priya' })).toEqual({ of: 'done', companyId: 'acc_2', label: 'co_2' });
+    expect(kr.calls).toEqual(['start', 'start']);
+  });
+
   /* RED WHEN: a keyring holding somebody else is used, or is not brought to the person signed in before anything is created. */
   it('brings the keyring to the person signed in first, and creates nothing for anybody else', async () => {
     const { m } = await load();

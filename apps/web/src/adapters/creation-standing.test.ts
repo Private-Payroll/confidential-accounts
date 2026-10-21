@@ -10,6 +10,9 @@ const kr = vi.hoisted(() => ({
   who: { id: 'u1' } as { id: string } | null,
   standing: 'finished' as string,
   standingFails: false,
+  /** What a failed read throws when set, and a read that is never answered when `standingNever`. */
+  standingError: null as Error | null,
+  standingNever: false,
   sealed: { companyLabel: 'label-c1', contractAddress: 'ab'.repeat(32) } as Record<string, unknown>,
   committed: 'cd'.repeat(32) as string | null,
   payments: true,
@@ -31,7 +34,8 @@ vi.mock('vaults-web-shared/keyring.js', async (real) => ({
   api: async (path: string) => { kr.asked.push(path); return kr.sealed; },
   companyCreationStanding: async (id: string) => {
     kr.standings.push(id);
-    if (kr.standingFails) throw new Error('the service did not answer');
+    if (kr.standingNever) return new Promise<never>(() => {});
+    if (kr.standingFails) throw kr.standingError ?? new Error('the service did not answer');
     return { account: null, state: kr.standing };
   },
   walletShowsPayKeyCommitted: async (origin: string, company: string, account: string) => {
@@ -40,14 +44,14 @@ vi.mock('vaults-web-shared/keyring.js', async (real) => ({
     return kr.payments && kr.committed !== null;
   },
   canOpenCompanies: () => kr.open,
-  companyBeingCreatedLabel: (id: string | null) => { kr.labelAsked.push(id); return kr.label; },
+  companyBeingCreatedLabel: (id: string) => { kr.labelAsked.push(id); return kr.label; },
   keptCreationShowsItsKeyCommitted: async (id: string, origin: string) => {
     kr.keptAsked.push({ id, origin });
     if (kr.holdersFail) throw new Error('the wallet did not answer');
     return kr.keptCommitted;
   },
-  companyBeingCreated: () => kr.being,
-  companyAwaitingItsSecondPress: () => (kr.being !== null && kr.second ? { accountId: kr.being, account: 'ab'.repeat(32) } : null),
+  companyBeingCreated: (id: string) => kr.being === id,
+  companyAwaitingItsSecondPress: (id: string) => (kr.being === id && kr.second ? { accountId: id, account: 'ab'.repeat(32) } : null),
 }));
 
 async function load() {
@@ -58,7 +62,7 @@ async function load() {
 
 beforeEach(() => {
   Object.assign(kr, {
-    who: { id: 'u1' }, standing: 'finished', standingFails: false, sealed: { companyLabel: 'label-c1', contractAddress: 'ab'.repeat(32) },
+    who: { id: 'u1' }, standing: 'finished', standingFails: false, standingError: null, standingNever: false, sealed: { companyLabel: 'label-c1', contractAddress: 'ab'.repeat(32) },
     committed: 'cd'.repeat(32), payments: true, holdersFail: false, being: null, second: false, asked: [], holders: [], standings: [],
     open: true, keptCommitted: true, keptAsked: [], label: null, labelAsked: [],
   });
@@ -178,8 +182,9 @@ describe('the label the wallet drew', () => {
     const { keptCreationLabel } = await load();
     kr.label = 'co_drawn';
     expect(keptCreationLabel('c-1')).toBe('co_drawn');
-    expect(keptCreationLabel(null)).toBe('co_drawn');
-    expect(kr.labelAsked).toEqual(['c-1', null]);
+    /* RED WHEN: no company shown is given the label of whichever creation is kept. */
+    expect(keptCreationLabel(null)).toBeNull();
+    expect(kr.labelAsked).toEqual(['c-1']);
     kr.label = null;
     expect(keptCreationLabel('c-1')).toBeNull();
   });
@@ -249,7 +254,52 @@ describe('which companies are marked not finished', () => {
     kr.standingFails = true;
     kr.being = 'c-1';
     kr.second = true;
-    expect(await creationOf('c-1')).toEqual({ company: 'c-1', standing: null, awaitingSecondPress: true, kept: true, confirmedFinished: false, mark: null });
+    expect(await creationOf('c-1')).toEqual({ company: 'c-1', standing: null, awaitingSecondPress: true, kept: true, confirmedFinished: false, mark: null, failure: 'failed' });
+  });
+});
+
+describe('why a company\'s creation could not be read', () => {
+  /* RED WHEN: a service that refuses the read as signed out is told apart from one that failed by nothing, so a signed-out person is shown a read that merely failed, or no failure at all. */
+  it('says signed out when the service refuses the read as signed out, and failed for any other error', async () => {
+    const { creationOf, creationChanged } = await load();
+    const { AuthError } = await import('vaults-web-shared/keyring.js');
+    kr.standingFails = true;
+    kr.standingError = new AuthError('not signed in');
+    expect(await creationOf('c-1')).toMatchObject({ standing: null, failure: 'signed-out' });
+    creationChanged('c-1');
+    kr.standingError = new Error('request failed: 502');
+    expect(await creationOf('c-1')).toMatchObject({ standing: null, failure: 'failed' });
+  });
+
+  /* RED WHEN: a service that could not check the sign-in (503 could-not-check) is read as the person being signed out. */
+  it('says failed, never signed out, when the service could not check the sign-in', async () => {
+    const { creationOf } = await load();
+    const { CouldNotCheckError } = await import('vaults-web-shared/keyring.js');
+    kr.standingFails = true;
+    kr.standingError = new CouldNotCheckError('the service could not check your sign-in');
+    expect(await creationOf('c-1')).toMatchObject({ standing: null, failure: 'failed' });
+  });
+
+  /* RED WHEN: a person the keyring has no sign-in for is read as if the service had simply not said, so nothing tells them to sign in. */
+  it('says signed out, without asking the service, when this tab has no sign-in', async () => {
+    const { creationOf } = await load();
+    kr.who = null;
+    expect(await creationOf('c-1')).toMatchObject({ standing: null, failure: 'signed-out' });
+    expect(kr.standings).toEqual([]);
+  });
+
+  /* RED WHEN: a service that never answers is waited for for ever, or a read that was answered is marked failed. */
+  it('says failed once the bound has passed with no answer, and gives no failure when the service answers', async () => {
+    vi.useFakeTimers();
+    try {
+      const { creationOf, SERVICE_READ_BOUND_MS } = await load();
+      kr.standingNever = true;
+      const waiting = creationOf('c-1');
+      await vi.advanceTimersByTimeAsync(SERVICE_READ_BOUND_MS);
+      expect(await waiting).toMatchObject({ standing: null, failure: 'failed' });
+      kr.standingNever = false;
+      expect((await creationOf('c-1')).failure).toBeUndefined();
+    } finally { vi.useRealTimers(); }
   });
 });
 
@@ -266,15 +316,18 @@ describe('what this tab keeps of a creation', () => {
     expect(await creationOf('c-1')).toMatchObject({ kept: true, awaitingSecondPress: false });
   });
 
-  /* RED WHEN: no company shown reads nothing of the creation this tab keeps, or reads the service when this tab keeps nothing. */
-  it('answers for the creation this tab keeps when no company is shown, and reads nothing when it keeps none', async () => {
+  /* RED WHEN: no company shown is answered with some kept creation, though each is kept for its own company and several can be kept at once. */
+  it('answers for no creation when no company is shown, however many this tab keeps, and for each kept one by its own company', async () => {
     const { creationOf } = await load();
     expect(await creationOf(null)).toEqual({ company: null, standing: null, awaitingSecondPress: false, kept: false, confirmedFinished: false, mark: null });
     expect(kr.standings).toEqual([]);
     kr.being = 'c-new';
     kr.standing = 'not-created';
-    expect(await creationOf(null)).toMatchObject({ company: 'c-new', kept: true, mark: 'not-finished' });
-    expect(kr.standings).toEqual(['c-new']);
+    expect(await creationOf(null)).toEqual({ company: null, standing: null, awaitingSecondPress: false, kept: false, confirmedFinished: false, mark: null });
+    expect(kr.standings).toEqual([]);
+    expect(await creationOf('c-new')).toMatchObject({ company: 'c-new', kept: true, mark: 'not-finished' });
+    expect(await creationOf('c-other')).toMatchObject({ company: 'c-other', kept: false });
+    expect(kr.standings).toEqual(['c-new', 'c-other']);
   });
 });
 
@@ -298,15 +351,19 @@ describe('one read for each company', () => {
     expect(await creationOf('c-1')).toMatchObject({ standing: 'finished', mark: null, confirmedFinished: true });
   });
 
-  /* RED WHEN: a step that changed the creation this tab keeps, named by no company, leaves that creation's old reading in place. */
-  it('reads the creation this tab keeps again after a step changed it, when no company is named', async () => {
+  /* RED WHEN: a step that changed one creation clears the reading of another, or one named by no company clears the reading of some kept creation. */
+  it('reads again only the creation a step changed, and none when no company is named', async () => {
     const { creationOf, creationChanged } = await load();
     kr.being = 'c-new';
     kr.standing = 'not-created';
-    await creationOf(null);
+    await creationOf('c-new');
+    await creationOf('c-2');
     kr.standing = 'deploy-sent';
     creationChanged(null);
-    expect((await creationOf(null)).standing).toBe('deploy-sent');
+    expect((await creationOf('c-new')).standing).toBe('not-created');
+    creationChanged('c-new');
+    expect((await creationOf('c-new')).standing).toBe('deploy-sent');
+    expect((await creationOf('c-2')).standing).toBe('not-created');
   });
 
   /* RED WHEN: what was read for one person is served to the next person to sign in on this tab, or to nobody. */
@@ -339,5 +396,26 @@ describe('one read for each company', () => {
     await creationOf('c-1');
     kr.standingFails = false;
     expect((await creationOf('c-1')).standing).toBe('finished');
+  });
+});
+
+describe('what this tab keeps, known at once', () => {
+  /*
+   * RED WHEN: what this tab keeps of a creation waits for the service, so the
+   * wizard cannot move to finishing the company the moment it is started; or
+   * it claims a standing or a finished company the service was never asked
+   * about; or it says kept for a company this tab does not keep.
+   */
+  it('says at once, without asking the service, whether a company is kept and waits for its second press', async () => {
+    const { creationHere } = await load();
+    expect(creationHere('c-1')).toEqual({ company: 'c-1', standing: null, awaitingSecondPress: false, kept: false, confirmedFinished: false, mark: null });
+    expect(creationHere(null)).toEqual({ company: null, standing: null, awaitingSecondPress: false, kept: false, confirmedFinished: false, mark: null });
+    kr.being = 'c-new';
+    kr.second = true;
+    /* RED WHEN: no company shown reads as whichever creation is kept. */
+    expect(creationHere(null)).toEqual({ company: null, standing: null, awaitingSecondPress: false, kept: false, confirmedFinished: false, mark: null });
+    expect(creationHere('c-new')).toMatchObject({ kept: true, awaitingSecondPress: true });
+    expect(creationHere('c-1')).toMatchObject({ kept: false, awaitingSecondPress: false });
+    expect(kr.standings).toEqual([]);
   });
 });

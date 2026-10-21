@@ -23,6 +23,14 @@ import { ErrorBoundary } from './error-boundary.js';
 import { LANGUAGES } from './languages.js';
 import { SessionProvider } from './session.js';
 
+/*
+ * In development only, the page's errors, rejections, console errors and failed
+ * requests are posted to the service. The condition is a build-time constant, so a
+ * production build holds none of the sink; the import is awaited so the sink is
+ * watching before the wallet is drawn.
+ */
+if (import.meta.env.DEV) await import('../../../packages/web-shared/src/error-sink.js');
+
 const mount = document.getElementById('app');
 if (!mount) throw new Error('index.html has no #app element.');
 

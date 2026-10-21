@@ -1,8 +1,8 @@
-import { useState } from 'react';
+import { useEffect, useState } from 'react';
 import { HugeiconsIcon } from '@hugeicons/react';
 import { Add01Icon, Building03Icon } from '@hugeicons/core-free-icons';
 import { Alert, AlertDescription, AlertTitle, Button, Card, CardContent, CardDescription, CardHeader, CardTitle, useText } from 'vaults-ui';
-import { OF, REFUSAL, signIn, type SignInRefusal } from '../adapters/session.js';
+import { companyNamesFor, OF, REFUSAL, signIn, type SignInRefusal } from '../adapters/session.js';
 import { HOME, VIEWS } from '../pages.js';
 import { go } from '../router.js';
 import { useSessionIfAny, type Session } from '../session.js';
@@ -38,11 +38,19 @@ export function Landing() {
 
 /**
  * THE PERSON'S COMPANIES, from the application's one list, in the order the
- * service gave them, and "Create a company". Each company is shown by what
- * the service lists of it, as the company switcher shows it.
+ * service gave them, and "Create a company". Each company is shown as the
+ * company switcher shows it, by the name this device holds for it (opened with
+ * the person's keys, or kept with a creation not finished) and never by a name
+ * the service gives.
  */
 function ChooseACompany({ session }: { session: Session }) {
   const t = useText();
+  const [names, setNames] = useState<ReadonlyMap<string, string>>(new Map());
+  useEffect(() => {
+    let alive = true;
+    void companyNamesFor(session.person.id).then((n) => { if (alive) setNames(n); });
+    return () => { alive = false; };
+  }, [session.person.id, session.companies]);
   const open = (id: string): void => openCompany(id, () => { session.chooseCompany(id); session.chooseView(VIEWS.company); });
   const create = (): void => { startSetupAt(STEP.createCompany, true); go(HOME.setup); };
   return (
@@ -54,7 +62,7 @@ function ChooseACompany({ session }: { session: Session }) {
             <li key={c.id}>
               <Button variant="outline" className="h-auto w-full justify-start gap-3 py-2" onClick={() => open(c.id)} data-company={c.id}>
                 <HugeiconsIcon icon={Building03Icon} strokeWidth={2} className="size-4" />
-                <CompanyFacts company={c} />
+                <CompanyFacts company={c} name={names.get(c.id) ?? null} />
               </Button>
             </li>
           ))}

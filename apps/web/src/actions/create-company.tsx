@@ -1,6 +1,6 @@
 import { useId, useState } from 'react';
 import { Button, Input, Label, useText } from 'vaults-ui';
-import { ACT_REFUSAL, ACTED } from '../adapters/refusals.js';
+import { ACTED } from '../adapters/refusals.js';
 import { createCompany, type Created } from '../adapters/create-company.js';
 import { ActRefused } from '../act-refused.js';
 import { useSession } from '../session.js';
@@ -27,7 +27,7 @@ export function CreateCompany({ leadTo, onChanged }: StepProps) {
     setBusy(true);
     const r = await createCompany(person.id, { name: name.trim(), firstSigner: person.name === '' ? t('setup.createCompany.you') : person.name });
     setResult(r);
-    if (r.of === ACTED.done) onChanged();
+    if (r.of === ACTED.done) onChanged(r.companyId);
     setBusy(false);
   };
 
@@ -59,16 +59,7 @@ export function CreateCompany({ leadTo, onChanged }: StepProps) {
         </div>
       ) : null}
       {result?.of === ACTED.refused ? (
-        <div className="flex flex-col gap-2">
-          <ActRefused why={result.why} />
-          {result.why === ACT_REFUSAL.companyKept ? (
-            <div>
-              <Button variant="outline" onClick={() => leadTo(STEP.finishCompany)} data-lead-to={STEP.finishCompany}>
-                {t('setup.blocked.go', { step: t('setup.step.finishCompany.name') })}
-              </Button>
-            </div>
-          ) : null}
-        </div>
+        <ActRefused why={result.why} />
       ) : null}
     </div>
   );

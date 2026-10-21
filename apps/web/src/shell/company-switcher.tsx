@@ -10,7 +10,7 @@ import { useSession } from '../session.js';
 import { STEP } from '../setup/step-ids.js';
 import { openCompany, startSetupAt } from '../setup/asked.js';
 import { useCompanyRecords } from '../records/company-records.js';
-import { CompanyFacts, useCompanyWords } from './company-facts.js';
+import { CompanyFacts, useCompanyName, useCompanyWords } from './company-facts.js';
 import { SHORTCUT } from '../shortcuts.js';
 import { ShortcutKeys } from './shortcut-keys.js';
 
@@ -30,6 +30,7 @@ import { ShortcutKeys } from './shortcut-keys.js';
 export function CompanySwitcher({ open, onOpenChange }: { open: boolean; onOpenChange: (open: boolean) => void }) {
   const t = useText();
   const words = useCompanyWords();
+  const nameOf = useCompanyName();
   const { companies, company, chooseCompany, viewer } = useSession();
   const { names } = useCompanyRecords();
   const { isMobile } = useSidebar();
@@ -46,7 +47,7 @@ export function CompanySwitcher({ open, onOpenChange }: { open: boolean; onOpenC
                 <HugeiconsIcon icon={Building03Icon} strokeWidth={2} className="size-4" />
               </span>
               <span className="grid flex-1 text-start text-sm leading-tight">
-                <span className="truncate font-medium" data-shown-name={shown !== null && names.has(shown.id) ? true : undefined}>{shown === null ? t('app.title') : names.get(shown.id) ?? words.unnamed}</span>
+                <span className="truncate font-medium" data-shown-name={shown !== null && names.has(shown.id) ? true : undefined}>{shown === null ? t('app.title') : nameOf(shown, names.get(shown.id))}</span>
                 <span className="truncate text-xs text-muted-foreground">
                   {employee ? t('switcher.yourPay') : shown === null ? t('switcher.noCompany') : words.approvals(shown)}
                 </span>

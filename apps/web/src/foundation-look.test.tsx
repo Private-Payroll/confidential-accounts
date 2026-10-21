@@ -29,6 +29,11 @@ vi.mock('./adapters/handover-state.js', async (real) => ({
   ...(await real<typeof import('./adapters/handover-state.js')>()),
   readHandover: async () => ({ of: 'held' }),
 }));
+/* The waits between asks after a service could not check the sign-in are not waited for here; their lengths are pinned in the keyring's own tests. */
+vi.mock('vaults-web-shared/keyring.js', async (real) => {
+  const actual = await real<typeof import('vaults-web-shared/keyring.js')>();
+  return { ...actual, resumeSession: (carried?: Parameters<typeof actual.resumeSession>[0]) => actual.resumeSession(carried ?? null, async () => {}) };
+});
 vi.mock('./adapters/session.js', async (real) => ({
   ...(await real<typeof import('./adapters/session.js')>()),
   companyNamesFor: async () => new Map<string, string>(),

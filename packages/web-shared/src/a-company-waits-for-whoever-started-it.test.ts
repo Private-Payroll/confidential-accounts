@@ -179,3 +179,70 @@ describe('what a person\'s devices once kept of each company\'s roster', () => {
     expect(written).not.toHaveProperty('rostersBelieved');
   });
 });
+
+describe('what a person\'s devices kept of each company they have not finished', () => {
+  const kept = (accountId: string, name: string) => ({
+    accountId, person: A.id, label: `co_${accountId.slice(-2).repeat(32)}`, foundingKey: { tag: 'schnorr', value: 'ab'.repeat(32) },
+    request: { name, signers: [], threshold: 1, companyLabel: 'x', foundingKey: { tag: 'schnorr', value: 'ab'.repeat(32) }, founding: {} },
+    made: true, deploy: null, signed: null, recorded: false,
+  });
+  const IN_KEYS = (creations: unknown, setAside?: unknown) =>
+    seal(JSON.stringify({ accounts: {}, creations, ...(setAside === undefined ? {} : { creationsSetAside: setAside }) }), keyringHexFor(A.id) as never);
+
+  /* RED WHEN: a kept creation whose request holds no readable name (kept by older code) is listed with no name although the creation's own sealed roster, opened with the person's own seat key, still holds it; or a blank name is given back as a name; or the name is taken from anywhere but the device. */
+  it('reads the name of a kept creation whose request holds none from its own sealed roster, and gives back no blank', async () => {
+    const service = aService({ signedIn: () => A });
+    keyring.signedInByAnotherScreen(answerFor(A, ADDRESS_A));
+    const wallet = new WalletAtTheOtherEnd(ADDRESS_A);
+    const started = await keyring.startCompanyHeldFromTheStart(A_COMPANY, WALLET, aBuilder(), wallet, US);
+    const mine = JSON.parse(unseal(service.savedFor(A.id) as never, keyringHexFor(A.id)));
+    for (const request of [{ ...mine.creations[started.accountId].request, name: undefined }, { ...mine.creations[started.accountId].request, name: '   ' }]) {
+      const older = { ...mine, creations: { [started.accountId]: { ...mine.creations[started.accountId], request } } };
+      service.replaceSaved(A.id, seal(JSON.stringify(older), keyringHexFor(A.id) as never));
+      keyring.forgetLocally();
+      keyring.signedInByAnotherScreen(answerFor(A, ADDRESS_A));
+      await keyring.openKeysWithWallet(WALLET, new WalletAtTheOtherEnd(ADDRESS_A), US);
+      expect(keyring.companyNameKeptHere(started.accountId)).toBe(A_COMPANY.name);
+    }
+    expect(keyring.companyNameKeptHere('acc_NOTKEPTHERE')).toBeNull();
+  });
+
+  /* RED WHEN: a creation kept apart as set aside is lost, or read as one being finished, when saved keys written before every creation was kept in one record are read; or the older field is written again. */
+  it('reads the one kept and the one set aside of an older save into one record, losing neither, and writes it so', async () => {
+    const service = aService({ signedIn: () => A });
+    service.replaceSaved(A.id, IN_KEYS({ acc_AAAAAAAAAAAA: kept('acc_AAAAAAAAAAAA', 'Acme Ltd') }, { acc_BBBBBBBBBBBB: kept('acc_BBBBBBBBBBBB', 'Brick Ltd') }));
+    keyring.signedInByAnotherScreen(answerFor(A, ADDRESS_A));
+    await keyring.openKeysWithWallet(WALLET, new WalletAtTheOtherEnd(ADDRESS_A), US);
+    expect(keyring.companiesBeingCreated()).toEqual(['acc_AAAAAAAAAAAA']);
+    expect(keyring.companyNameKeptHere('acc_AAAAAAAAAAAA')).toBe('Acme Ltd');
+    expect(keyring.companyNameKeptHere('acc_BBBBBBBBBBBB')).toBe('Brick Ltd');
+    const started = await keyring.startCompanyHeldFromTheStart({ ...A_COMPANY, name: 'Third Ltd' }, WALLET, aBuilder(), new WalletAtTheOtherEnd(ADDRESS_A), US);
+    const written = JSON.parse(unseal(service.savedFor(A.id) as never, keyringHexFor(A.id)));
+    expect(Object.keys(written.creations).sort()).toEqual(['acc_AAAAAAAAAAAA', 'acc_BBBBBBBBBBBB', started.accountId].sort());
+    expect(written.creations.acc_BBBBBBBBBBBB.setAside).toBe(true);
+    expect(written.creations.acc_AAAAAAAAAAAA.setAside).toBeUndefined();
+    expect(written).not.toHaveProperty('creationsSetAside');
+  });
+
+  /* RED WHEN: the same company in both fields of an older save loses the one that is further on. */
+  it('keeps the one further on when the same company is in both fields of an older save', () => {
+    const further = { ...kept('acc_AAAAAAAAAAAA', 'Acme Ltd'), recorded: true, signed: { tx: 'x', signature: { tag: 'schnorr', value: 'y' } }, deploy: { account: 'a', tx: 't', insert: [] } };
+    const both = keyring.creationsInOneRecord({ accounts: {}, creations: { acc_AAAAAAAAAAAA: kept('acc_AAAAAAAAAAAA', 'Acme Ltd') } as never, creationsSetAside: { acc_AAAAAAAAAAAA: further } as never });
+    expect(both.creations!.acc_AAAAAAAAAAAA).toEqual(further);
+    expect(both).not.toHaveProperty('creationsSetAside');
+  });
+
+  /* RED WHEN: a company started in this tab replaces one another tab kept meanwhile, because the saved keys are not read again before the write. */
+  it('reads the saved keys again before a new company is written, so a creation another tab kept is not lost', async () => {
+    const service = aService({ signedIn: () => A });
+    keyring.signedInByAnotherScreen(answerFor(A, ADDRESS_A));
+    const wallet = new WalletAtTheOtherEnd(ADDRESS_A);
+    const first = await keyring.startCompanyHeldFromTheStart(A_COMPANY, WALLET, aBuilder(), wallet, US);
+    const mine = JSON.parse(unseal(service.savedFor(A.id) as never, keyringHexFor(A.id)));
+    const otherTabs = { ...mine, creations: { ...mine.creations, acc_CCCCCCCCCCCC: kept('acc_CCCCCCCCCCCC', 'Kept by another tab') } };
+    service.replaceSaved(A.id, seal(JSON.stringify(otherTabs), keyringHexFor(A.id) as never));
+    const second = await keyring.startCompanyHeldFromTheStart({ ...A_COMPANY, name: 'Second Ltd' }, WALLET, aBuilder(), wallet, US);
+    const written = JSON.parse(unseal(service.savedFor(A.id) as never, keyringHexFor(A.id)));
+    expect(Object.keys(written.creations).sort()).toEqual([first.accountId, 'acc_CCCCCCCCCCCC', second.accountId].sort());
+  });
+});

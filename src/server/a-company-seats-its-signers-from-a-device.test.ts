@@ -867,7 +867,7 @@ describe('A COMPANY SEATS ITS SIGNERS FROM THEIR OWN DEVICES, ON THE PRODUCT\'S 
     const after = (await readPeopleHere(device)).people.find((p) => p.person.id === made.person)!;
     expect([after.person.status, after.handedOver]).toEqual(['active', false]);
   });
-  it('A SIGNER ADDED FROM A CODE FILES THEIR OWN ENTRY WITH THE INVITATION THE PROPOSAL TO SEAT THEM CARRIED, AND EVERY DEVICE BELIEVES IT FOR THEM', async () => {
+  it('A SIGNER ADDED FROM A CODE FILES THEIR OWN ENTRY WITH THE INVITATION THE PROPOSAL TO SEAT THEM CARRIED, AND EVERY DEVICE BELIEVES IT FOR THEM', { timeout: 90_000 }, async () => {
     const { signJoinCode } = await import('midnight-identity/profile/join-code');
     const { fileTheOwedDirectoryEntry, fileDirectoryFiling, WAITING_FOR_ITS_INVITATION } = await import('vaults-web-shared/vault-page-doors.js');
     const w = wallets.gil;

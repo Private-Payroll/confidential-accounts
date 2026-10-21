@@ -1,0 +1,28 @@
+<!doctype html>
+<html lang="en">
+<!--
+  THE CREATION SCREEN ON ITS OWN — a dev-only page.
+
+  The wallet's screen for the second press of creating a company runs the
+  account contract's code in the page the first time anything does, and a
+  test that draws it in Node cannot tell whether that code starts in a real
+  browser. This page draws the real screen, with the wallet's own parts, over
+  a request the test hands it, so a browser can be asked: does the screen read
+  the deploy, make the account's starting state itself, and offer to sign?
+
+  The person here is a fixed test identity, from words printed in the repository
+  for tests; nothing about any real account is used.
+
+  Dev-only: `vite build` bundles only index.html, so this page never ships.
+-->
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Creation screen</title>
+  <link rel="stylesheet" href="./src/app.css" />
+</head>
+<body>
+  <div id="app"></div>
+  <script type="module" src="./src/creation-screen.tsx"></script>
+</body>
+</html>

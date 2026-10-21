@@ -9,6 +9,8 @@ import { HOME, PAGE } from '../pages.js';
 import { go, PageLink } from '../router.js';
 import { blockedBy, skippedFor, STANDING, standingOf, stepsLeft, useCreationFact } from '../setup/standing.js';
 import { startSetupAt } from '../setup/asked.js';
+import { useSession } from '../session.js';
+import { useCompanyName } from '../shell/company-facts.js';
 import { EVERY_STEP, type SetupFacts } from '../setup/steps.js';
 import type { StepId } from '../setup/step-ids.js';
 import { Approvals, Day, ProposalStatus, ProposalWhat, ReadOf, RunMoney, RunStatus, UnbuiltAction, useMonth, VaultTile, WithRecords } from '../records/parts.js';
@@ -32,12 +34,14 @@ const PASSED = { what: 'what', approvals: 'approvals', status: 'status', raised:
  */
 export function Home() {
   const t = useText();
+  const nameOf = useCompanyName();
+  const { companies } = useSession();
   return (
     <div className="flex flex-col gap-6" data-screen="home">
       <WithRecords>
         {(records) => (
           <>
-            <PageHeader title={<span data-company-name>{records.name}</span>} />
+            <PageHeader title={<span data-company-name>{nameOf(companies.find((c) => c.id === records.id) ?? {}, records.name)}</span>} />
             <SetupCard company={records.id} vaults={records.vaults} />
             <div className="flex flex-col gap-3" data-part="pending-approval">
               <h2 className="text-sm font-medium text-muted-foreground">{t('home.pendingApproval')}</h2>

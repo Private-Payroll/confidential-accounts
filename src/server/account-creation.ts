@@ -8,6 +8,10 @@
  *   POST /api/accounts/:id/creation/pay-key  a step of committing the account to its pay-record key, built on the device
  *   GET  /api/accounts/:id/creation          where the creation stands, read from the record and the chain
  *
+ * The three sends above are one at a time for a company. The standing also says what time it is here and whether the
+ * step it holds for where the company stands may be replaced (its own time to live, not a device's guess), and a
+ * refusal for a step's time left says so and what the time is, so a device with a wrong clock can build by this one.
+ *
  * **THIS SERVICE BUILDS NOTHING HERE AND HOLDS NO KEY.** The founding signer's
  * device built the deploy, held by their own committee key from its first
  * transaction, and their wallet signed the second step for it before anything
@@ -22,6 +26,15 @@
  * and one that ran out before it landed is carried again by the device - the same
  * deploy, so the same address, and the same signature - and recorded in the
  * place of the one that can never land, because nothing of it reached the chain.
+ *
+ * **NOTHING IS RECORDED OR SENT WITH LESS THAN HALF ITS LIFE LEFT.** The node
+ * refuses a transaction past its time to live with `Custom error: 228`, after
+ * the service has recorded it and paid for the wait. A deploy built at the first
+ * press and sent at the second, hours later, is such a transaction. So a deploy
+ * or a second step with less than `A_STEP_NEEDS_LEFT_MS` left is refused before
+ * it is recorded (and a recorded one is not sent), with the sentence that the
+ * device builds it again; a recorded one in that state may be replaced like one
+ * that ran out.
  *
  * **NOTHING IS ADOPTED OR PAID INTO UNTIL THE SECOND STEP LANDS**: until then the
  * account does not run this build's circuits, and the money gate refuses it. The
@@ -43,6 +56,7 @@ import { CREATION_STEPS, DEPLOYED_CIRCUITS } from '../midnight/deferral.js';
 import { circuitsRefusal, readAccountDeploy, refusalForCreationInsert, refusalForPayKeyCall } from '../wiring/vault-submission.js';
 import type { CompanyCreationState } from '../core/company-founding.js';
 import { foundingStateRefusal } from '../core/founding-state.js';
+import { A_STEP_MAY_BE_REPLACED_BELOW_MS, A_STEP_NEEDS_LEFT_MS } from '../midnight/intent-lifetime.js';
 import { foundingRosterRefusal, ROSTER_ID } from '../core/roster-record.js';
 import type { CompanyRecordStore, SealedCompanyRecord } from '../midnight/sealed-record-wire.js';
 
@@ -368,6 +382,31 @@ export function accountCreationRoutes(deps: AccountCreationDeps): express.Router
     const ttl = await expiresAt(base64);
     return ttl !== null && now().getTime() > ttl.getTime() + EXPIRY_MARGIN_MS;
   };
+  /**
+   * **TOO LITTLE LIFE LEFT TO BE SENT**, which is more than having run out. The node refuses a transaction whose time
+   * to live has passed with `Custom error: 228`, and this service waits for its one-at-a-time lane and for the fee
+   * payer's wallet before the node sees it. So nothing is recorded or sent that has less than `A_STEP_NEEDS_LEFT_MS`
+   * left; the device builds it again, with the same signature, and sends that.
+   */
+  const lifeLeftIsBelow = async (base64: string, ms: number): Promise<boolean> => {
+    const ttl = await expiresAt(base64);
+    return ttl !== null && now().getTime() + ms > ttl.getTime();
+  };
+  const cannotBeSent = (base64: string): Promise<boolean> => lifeLeftIsBelow(base64, A_STEP_NEEDS_LEFT_MS);
+  /** Where a step built again may take the place of the one recorded: a little further out than where that one is refused. */
+  const mayBeReplaced = (base64: string): Promise<boolean> => lifeLeftIsBelow(base64, A_STEP_MAY_BE_REPLACED_BELOW_MS);
+  /**
+   * What the device is told with a refusal for a step's time left, so it can build the step again whatever its own clock
+   * says: that the refusal was for time, and when it is here. A device whose clock is slow builds with a time to live
+   * that is short by the amount it is slow; it learns the amount from this and builds again by this service's clock.
+   */
+  const forTime = (extra: Record<string, unknown>) => ({ nothingWasSent: true, runsOutSoon: true, now: now().toISOString(), ...extra });
+  /** Whether the step recorded for where the company stands may be replaced: it ran out, or has too little life left. */
+  const replaceableAt = async (record: AccountDeploy, state: CompanyCreationState): Promise<boolean> =>
+    state === 'deploy-expired' || state === 'finish-expired' ? true
+      : state === 'deploy-sent' ? mayBeReplaced(record.deploy)
+        : state === 'finish-owed' ? mayBeReplaced(record.insert) : false;
+  const RUN_OUT_SOON = 'has run out already, or is about to, so it was not recorded or sent. Build it again: the same signature, in a fresh transaction. Nothing was sent.';
 
   /**
    * **WHERE A COMPANY'S CREATION STANDS, FROM ITS RECORD AND THE CHAIN.**
@@ -437,13 +476,44 @@ export function accountCreationRoutes(deps: AccountCreationDeps): express.Router
     }
   };
 
+  /*
+   * **ONE SEND AT A TIME FOR A COMPANY'S CREATION.** The step-2 carry and the wallet press can ask for the same send
+   * together; both read the same standing, both would send, and the second one's fee is spent for a transaction the
+   * first has already landed. A second request while one is being answered is told where the company stands and sends
+   * nothing; the page asks again at its next look. Released when the response ends, whichever way it ends.
+   */
+  const creationSending = new Set<string>();
+  const oneSendAtATime: express.RequestHandler = async (req, res, next) => {
+    const key = String(req.params.id);
+    if (creationSending.has(key)) {
+      const record = deps.store.getAccountDeploy(key);
+      let state: CompanyCreationState = 'unknown';
+      try { state = await standingOf(record); } catch { /* the chain could not be asked: unknown says so */ }
+      res.status(409).json({
+        nothingWasSent: true, state, account: record?.address ?? null,
+        error: 'another request is sending a step for this company right now. Nothing was sent; look again in a moment.',
+      });
+      return;
+    }
+    creationSending.add(key);
+    /* `finish` is before the caller can read the answer, `close` covers a connection that dropped first. */
+    res.once('finish', () => { creationSending.delete(key); });
+    res.once('close', () => { creationSending.delete(key); });
+    next();
+  };
+
   r.get('/api/accounts/:id/creation', ...guard, async (req, res) => {
     const account = accountOf(req);
     const record = deps.store.getAccountDeploy(account.id);
-    res.json({ state: await standingOf(record), account: record?.address ?? null });
+    const state = await standingOf(record);
+    /* `replaceable` is the service's own reading of the recorded step's time to live; `now` is its clock, for a device whose own is wrong. */
+    res.json({
+      state, account: record?.address ?? null, now: now().toISOString(),
+      replaceable: record === null ? false : await replaceableAt(record, state),
+    });
   });
 
-  r.post('/api/accounts/:id/creation', ...guard, async (req, res) => {
+  r.post('/api/accounts/:id/creation', ...guard, oneSendAtATime, async (req, res) => {
     const body = z.object({
       deploy: z.string().min(1).max(TX_LIMIT),
       insert: z.string().min(1).max(TX_LIMIT),
@@ -476,6 +546,13 @@ export function accountCreationRoutes(deps: AccountCreationDeps): express.Router
         res.json({ account: recorded.address, state: await standingOf(recorded) });
         return;
       }
+      if (await cannotBeSent(recorded.deploy)) {
+        res.status(409).json(forTime({
+          state: 'deploy-expired', account: recorded.address,
+          error: `the deploy recorded for this company ${RUN_OUT_SOON}`,
+        }));
+        return;
+      }
       const again = await send(res, account.id, 'creating the company\'s account, again', new Uint8Array(Buffer.from(recorded.deploy, 'base64')), deployCheck(opening));
       if (again === null) return;
       res.json({ account: recorded.address, state: 'deploy-sent', txRef: again.ref });
@@ -485,6 +562,14 @@ export function accountCreationRoutes(deps: AccountCreationDeps): express.Router
     const read = await readBoth(opening, body.data.deploy, body.data.insert);
     if ('refusal' in read) {
       res.status(422).json({ nothingWasSent: true, error: read.refusal });
+      return;
+    }
+    if (await cannotBeSent(body.data.deploy)) {
+      res.status(422).json(forTime({ error: `this deploy ${RUN_OUT_SOON}` }));
+      return;
+    }
+    if (await cannotBeSent(body.data.insert)) {
+      res.status(422).json(forTime({ error: `this second step ${RUN_OUT_SOON}` }));
       return;
     }
     const address = read.address;
@@ -511,7 +596,7 @@ export function accountCreationRoutes(deps: AccountCreationDeps): express.Router
    * signed by the founding signer's recorded key. Read before it is recorded,
    * recorded before it is sent.
    */
-  r.post('/api/accounts/:id/creation/again', ...guard, async (req, res) => {
+  r.post('/api/accounts/:id/creation/again', ...guard, oneSendAtATime, async (req, res) => {
     const body = z.object({ deploy: z.string().min(1).max(TX_LIMIT), insert: z.string().min(1).max(TX_LIMIT) }).strict().safeParse(req.body);
     if (!body.success) {
       res.status(400).json({ nothingWasSent: true, error: 'this request does not carry the account\'s deploy and its signed second step. Nothing was sent.' });
@@ -525,7 +610,8 @@ export function accountCreationRoutes(deps: AccountCreationDeps): express.Router
       return;
     }
     const standing = await standingOf(recorded);
-    if (standing !== 'deploy-expired') {
+    /* Replaced once it has run out, and once it has too little life left to be sent: nobody sends it from here. */
+    if (standing !== 'deploy-expired' && !(standing === 'deploy-sent' && await mayBeReplaced(recorded.deploy))) {
       res.status(409).json({
         nothingWasSent: true, state: standing,
         error: 'the deploy recorded for this company can still land, or already has, so it is not replaced. Nothing was sent.',
@@ -544,8 +630,12 @@ export function accountCreationRoutes(deps: AccountCreationDeps): express.Router
       });
       return;
     }
-    if (await ranOut(body.data.deploy)) {
-      res.status(422).json({ nothingWasSent: true, error: 'this deploy has run out already, so it was not recorded. Carry it again. Nothing was sent.' });
+    if (await cannotBeSent(body.data.deploy)) {
+      res.status(422).json(forTime({ error: `this deploy ${RUN_OUT_SOON}` }));
+      return;
+    }
+    if (await cannotBeSent(body.data.insert)) {
+      res.status(422).json(forTime({ error: `this second step ${RUN_OUT_SOON}` }));
       return;
     }
     if (!deps.store.replaceAccountDeploy({ ...recorded, deploy: body.data.deploy, insert: body.data.insert, recordedAt: now().toISOString() })) {
@@ -557,7 +647,7 @@ export function accountCreationRoutes(deps: AccountCreationDeps): express.Router
     res.json({ account: recorded.address, state: 'deploy-sent', txRef: sent.ref });
   });
 
-  r.post('/api/accounts/:id/creation/finish', ...guard, async (req, res) => {
+  r.post('/api/accounts/:id/creation/finish', ...guard, oneSendAtATime, async (req, res) => {
     const body = z.object({ insert: z.string().min(1).max(TX_LIMIT).optional() }).strict().safeParse(req.body ?? {});
     if (!body.success) {
       res.status(400).json({ nothingWasSent: true, error: 'this request carries something other than the account\'s second step. Nothing was sent.' });
@@ -570,16 +660,19 @@ export function accountCreationRoutes(deps: AccountCreationDeps): express.Router
       res.status(409).json({ nothingWasSent: true, error: 'this company\'s account has not been created from its founding signer\'s browser, so there is nothing to finish. Nothing was sent.' });
       return;
     }
-    const standing = await standingOf(recorded);
+    let standing = await standingOf(recorded);
     if (standing === 'finished' || standing === 'pay-key-owed') {
       res.json({ account: recorded.address, state: standing });
       return;
     }
+    /* A second step with too little life left is one that ran out, for sending: it is carried again, never sent. */
+    const owedButShort = standing === 'finish-owed' && await mayBeReplaced(recorded.insert);
+    if (standing === 'finish-owed' && await cannotBeSent(recorded.insert)) standing = 'finish-expired';
     if (standing === 'finish-expired' && body.data.insert === undefined) {
-      res.status(409).json({
-        nothingWasSent: true, state: standing,
+      res.status(409).json(forTime({
+        state: standing,
         error: 'the second step recorded for this company ran out before it was sent. Carry it again: the same signature, in a fresh transaction. Nothing was sent.',
-      });
+      }));
       return;
     }
     if (standing !== 'finish-owed' && standing !== 'finish-expired') {
@@ -593,7 +686,7 @@ export function accountCreationRoutes(deps: AccountCreationDeps): express.Router
     }
     if (body.data.insert !== undefined && body.data.insert !== recorded.insert) {
       /* The same signed step, carried again: read as the first was, and recorded in its place before it is sent. */
-      if (standing !== 'finish-expired') {
+      if (standing !== 'finish-expired' && !owedButShort) {
         res.status(409).json({ nothingWasSent: true, state: standing, error: 'the second step recorded for this company can still land, so it is not replaced. Nothing was sent.' });
         return;
       }
@@ -603,9 +696,10 @@ export function accountCreationRoutes(deps: AccountCreationDeps): express.Router
       } catch (e) {
         refused = `what was sent could not be read as a transaction: ${(e as Error)?.message ?? String(e)}. Nothing was sent.`;
       }
-      if (refused === null && await ranOut(body.data.insert)) refused = 'this second step has run out already, so it was not recorded. Carry it again. Nothing was sent.';
+      const forItsTime = refused === null && await cannotBeSent(body.data.insert);
+      if (forItsTime) refused = `this second step ${RUN_OUT_SOON}`;
       if (refused !== null) {
-        res.status(422).json({ nothingWasSent: true, error: refused });
+        res.status(422).json(forItsTime ? forTime({ error: refused }) : { nothingWasSent: true, error: refused });
         return;
       }
       const replaced = { ...recorded, insert: body.data.insert, recordedAt: now().toISOString() };

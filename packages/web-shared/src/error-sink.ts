@@ -11,16 +11,16 @@
  * same way.** This module is what survives that walk.
  *
  * It observes four things and posts them to the service, which appends them to
- * `logs/REPORT-WEB-CONSOLE.txt`:
+ * its web-console report on disk:
  *
  *   · uncaught errors            · unhandled promise rejections
  *   · `console.error` / `.warn`  · fetches that failed, by status and path
  *
- * **IT IS THE FIRST LINE OF `main.tsx` AND THAT IS LOAD-BEARING.** ES module
+ * **IT IS THE FIRST IMPORT OF EACH APPLICATION'S ENTRY (THE WEB APPLICATION'S AND THE WALLET'S) AND THAT IS LOAD-BEARING.** ES module
  * imports are evaluated in source order, so importing this one first means it
  * is installed before React, before `App`, before the stylesheet — and
  * therefore before anything that could throw while a module is still being
- * evaluated. Calling an `install()` from the body of `main.tsx` would not do
+ * evaluated. Calling an `install()` from the body of an entry would not do
  * it: every import is hoisted above every statement, so the app would already
  * have been evaluated by the time the call ran.
  *
@@ -30,16 +30,14 @@
  * below is a build-time constant. `import.meta.env.DEV` is replaced by `false`
  * in a production build, so the whole of `install` becomes unreachable and the
  * bundler removes it — **a production build does not contain this code at
- * all**, which is a stronger claim than "it does not run"; the build check that
- * held it went with the earlier application, and no build of `apps/web` checks
- * it yet. The second half of
- * the guard is the `C140` shape: the relaxation is declared in the `dev` script
- * in `package.json` and nowhere a person types.
+ * all**, which is a stronger claim than "it does not run". The second half of the
+ * guard is that the relaxation is declared in the `dev` script in
+ * `package.json` and nowhere a person types.
  *
  * **2. IT NEVER WRITES A SECRET.** Every message goes through
  * `redactSecrets` HERE, before it crosses the wire, and again in the service
  * before it reaches the disk. An error message can carry anything — a key, a
- * seed, a session token, a password typed into the wrong field.
+ * seed, a sign-in token, a password typed into the wrong field.
  *
  * **3. IT NEVER CHANGES WHAT THE APP DOES.** It observes and re-throws. A sink
  * that swallows an error is worse than no sink, because the screen then fails
@@ -62,8 +60,25 @@
  */
 import { redactSecrets } from '../../../src/core/redact-secrets.js';
 
-/** Where the service takes them. Proxied to :8787 by the dev server. */
+/** Where the service takes them. The web application's dev server proxies it to :8787. */
 export const SINK_PATH = '/api/dev/web-console';
+
+/**
+ * The wallet's dev server proxies nothing, so a page on its port posts to the
+ * service itself; the service answers any origin (`cors()`), and the route
+ * still exists only when the service was started with the sink allowed.
+ */
+const SERVICE_ORIGIN = 'http://localhost:8787';
+const WALLET_PAGE_PORT = '5180';
+
+/** The address a page posts to: the path alone, or the service's own address from the wallet. */
+export const sinkUrlFor = (pageHref: string): string => {
+  try {
+    return new URL(pageHref).port === WALLET_PAGE_PORT ? `${SERVICE_ORIGIN}${SINK_PATH}` : SINK_PATH;
+  } catch {
+    return SINK_PATH;
+  }
+};
 
 /** One thing the browser said. */
 export type SinkEntry = {
@@ -167,7 +182,7 @@ export const installErrorSink = (
      * an error in the page, and must not be recorded — see the loop above.
      */
     try {
-      void originalFetch(SINK_PATH, {
+      void originalFetch(sinkUrlFor(w.location.href), {
         method: 'POST',
         headers: { 'content-type': 'application/json' },
         body: JSON.stringify(body),
@@ -197,7 +212,7 @@ export const installErrorSink = (
       });
       if (queue.length >= FLUSH_AT) { flush(); return; }
       if (!scheduled) { scheduled = true; w.setTimeout(flush, FLUSH_AFTER_MS); }
-    } catch { /* rule 3: recording may never change what the app does */ }
+    } catch { /* recording may never change what the app does */ }
   };
 
   /*
@@ -246,7 +261,7 @@ export const installErrorSink = (
    * A body can be read once. Calling `response.text()` here would drain the
    * stream the CALLER is about to read, so every screen that shows a refusal
    * would show an empty one — **the sink changing what the app does, which is
-   * rule 3 and the reason this file exists in the shape it does.** The clone
+   * the reason this file exists in the shape it does.** The clone
    * carries its own copy of the stream; the response handed back is untouched.
    *
    * ── AND NOTHING IS AWAITED BEFORE THE RESPONSE GOES BACK ─────────────────
@@ -281,15 +296,15 @@ export const installErrorSink = (
       record('fetch', `${asText(failure)} — ${url}`);
       /*
        * RE-THROWN, NOT RETURNED. Whatever the caller would have caught, it
-       * still catches. Rule 3, and the mutation that takes this line out is in
-       * the round's mutation set.
+       * still catches. The mutation that takes this line out is in
+       * the mutation set.
        */
       throw failure;
     }
     if (response && response.ok === false) keepTheReason(response, `${response.status} ${url}`);
     /*
      * RETURNED IMMEDIATELY, WITH ITS BODY UNREAD. `keepTheReason` never
-     * awaits anything on this path — see rule 3 at the top of the file.
+     * awaits anything on this path — see the third rule at the top of the file.
      */
     return response;
   };
@@ -300,7 +315,7 @@ export const installErrorSink = (
  *
  * `import.meta.env.DEV` is `false` in a production build whatever else is set,
  * so no production build can be talked into shipping this — not by a stale
- * `.env`, not by a name on a command line. `VITE_DEV_ERROR_SINK` is the `C140`
+ * `.env`, not by a name on a command line. `VITE_DEV_ERROR_SINK` is the other
  * half: declared by the `dev` script in `package.json`, so a development build
  * that did not ask for the sink does not get one either.
  */

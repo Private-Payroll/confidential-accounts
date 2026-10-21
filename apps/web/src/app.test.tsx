@@ -17,15 +17,20 @@ import { Root } from './root.js';
 (globalThis as { ResizeObserver?: unknown }).ResizeObserver ??= class { observe() {} unobserve() {} disconnect() {} };
 /* A sign-in refusal the test hands the landing page, in place of the real sign-in. */
 const signing = vi.hoisted(() => ({ refuse: null as string | null }));
+/* The names this device holds for the companies listed (opened, or kept with a creation not finished), by company; a company not in it has none. */
+const names = vi.hoisted(() => new Map<string, string>());
 vi.mock('./adapters/session.js', async (real) => {
   const actual = await real<typeof import('./adapters/session.js')>();
   return ({
   ...actual,
+  /* The waits between asks after a service could not check the sign-in are not waited for here; their lengths are pinned in adapters/session.test.ts. */
+  whoIsSignedIn: () => actual.whoIsSignedIn(async () => {}),
   signIn: async (asking: { name: string; purpose: string }) => (signing.refuse === null
     ? actual.signIn(asking)
     : { of: 'refused', why: signing.refuse, retryAfterSeconds: null }),
   /* What the person's own wallet reads off the chain for the companies listed below. */
   approvalsNeededFor: async () => new Map([['c-2', 2], ['c-3', 1], ['c-1', 3]]),
+  companyNamesFor: async () => new Map(names),
   });
 });
 /* The mark the creation adapter gives each company; a company not in it is given none. */
@@ -37,6 +42,8 @@ vi.mock('./adapters/creation-standing.js', async (real) => ({
 /* The creation adapter loads when a list first needs it; loaded here, once, so no test waits on that load. */
 await import('./adapters/creation-standing.js');
 const EN = JSON.parse(readFileSync(resolve(dirname(fileURLToPath(import.meta.url)), 'locales/en.json'), 'utf8')) as Record<string, string>;
+/* How a company with no name on the device is listed: by the day its account was made, written the way the app writes a day. */
+const STARTED = (iso: string): string => EN['company.startedOn']!.replace('{date}', new Intl.DateTimeFormat('en', { dateStyle: 'medium' }).format(new Date(iso)));
 
 let me: () => Response;
 const json = (status: number, body: unknown) => () => new Response(JSON.stringify(body), { status });
@@ -53,7 +60,7 @@ async function open(at: string) {
 }
 
 beforeEach(() => {
-  creations.mark.clear();
+  creations.mark.clear(); names.clear();
   vi.spyOn(console, 'error').mockImplementation(() => {});
   vi.stubGlobal('fetch', vi.fn(async (path: string) => {
     if (path === '/api/me') return me();
@@ -196,13 +203,24 @@ describe('the landing page, once signed in', () => {
     expect(chooser.querySelector('[data-action=create-company]')).not.toBeNull();
   });
 
+  /* RED WHEN: the landing page lists a company with an empty name, or a company the device holds no name for as anything but "A company you started on <day>", or a company the device does name as anything but that name. */
+  it('lists a named company by its name and every other by the day it was started, never empty', async () => {
+    me = json(200, { user: PERSON, accounts: THREE });
+    names.set('c-3', 'Northwind');
+    names.set('c-1', '  ');
+    const { container } = await open(PAGES.landing.path);
+    const listed = [...container.querySelectorAll('[data-choose-a-company] [data-company]')].map((e) => e.querySelector('span > span')?.textContent ?? '');
+    expect(listed).toEqual([STARTED('2026-09-01T12:00:00.000Z'), 'Northwind', STARTED('2026-08-01T12:00:00.000Z')]);
+    expect(listed.every((l) => l.trim() !== '')).toBe(true);
+  });
+
   /* RED WHEN: pressing a company does not open that company in the company view, or the switcher then lists other companies than the landing page did. */
   it('opens the company pressed, and the switcher lists the same companies', async () => {
     me = json(200, { user: PERSON, accounts: THREE });
     const { container } = await open(PAGES.landing.path);
-    /* Each company is shown by the word for a company and its approvals as M/N Approval, never by the day it was created. */
+    /* A company this device holds no name for is shown as a company the person started on the day it was made, with its approvals as M/N Approval. */
     expect([...container.querySelectorAll('[data-choose-a-company] [data-company]')].map((e) => e.textContent))
-      .toEqual([`${EN['switcher.company']}2/3 Approval`, `${EN['switcher.company']}1/1 Approval`, `${EN['switcher.company']}3/5 Approval`]);
+      .toEqual([`${STARTED('2026-09-01T12:00:00.000Z')}2/3 Approval`, `${STARTED('2026-09-20T12:00:00.000Z')}1/1 Approval`, `${STARTED('2026-08-01T12:00:00.000Z')}3/5 Approval`]);
     await act(async () => { fireEvent.click(container.querySelector('[data-choose-a-company] [data-company=c-3]')!); await settle(); });
     expect(window.location.pathname).toBe(PAGES.home.path);
     await untilPageShown(container);
@@ -210,7 +228,7 @@ describe('the landing page, once signed in', () => {
     const switcher = document.querySelector('[data-company-switcher]')!;
     expect([...switcher.querySelectorAll('[data-company]')].map((e) => e.getAttribute('data-company'))).toEqual(['c-2', 'c-3', 'c-1']);
     /* The company shown is the one pressed, not the first on the list: its approvals, which no other company shares, are on the switcher, and it alone is ticked. */
-    expect(document.querySelector('[data-action=company-switcher]')!.textContent).toBe(`${EN['switcher.company']}1/1 Approval`);
+    expect(document.querySelector('[data-action=company-switcher]')!.textContent).toBe(`${STARTED('2026-09-20T12:00:00.000Z')}1/1 Approval`);
     expect([...switcher.querySelectorAll('[data-company]')].map((e) => e.querySelectorAll('svg').length)).toEqual([1, 2, 1]);
   });
 
@@ -221,10 +239,14 @@ describe('the landing page, once signed in', () => {
   it('marks a company that is not finished, and opens it at step 2 of the wizard', async () => {
     me = json(200, { user: PERSON, accounts: THREE });
     creations.mark.set('c-3', 'not-finished');
+    names.set('c-3', 'Test-001');
     const { container } = await open(PAGES.landing.path);
     await untilShown(() => container.querySelector('[data-choose-a-company] [data-company=c-3] [data-not-finished]'), 'the mark on the company not finished');
     expect([...container.querySelectorAll('[data-choose-a-company] [data-company]')].map((e) => e.querySelector('[data-not-finished]')?.textContent ?? null))
       .toEqual([null, EN['company.notFinished'], null]);
+    /* RED WHEN: a company not finished is listed on the landing page with no name, though this device holds the name the person gave it; or another company is given it. */
+    await untilShown(() => container.querySelector('[data-choose-a-company] [data-company=c-3] [data-company-name]'), 'the name of the company not finished');
+    expect([...container.querySelectorAll('[data-choose-a-company] [data-company]')].map((e) => e.querySelector('[data-company-name]')?.textContent ?? null)).toEqual([null, 'Test-001', null]);
     await act(async () => { fireEvent.click(container.querySelector('[data-choose-a-company] [data-company=c-3]')!); await settle(); });
     expect(window.location.pathname).toBe(PAGES.setup.path);
     await untilShown(() => container.querySelector('[data-screen=setup]'), 'the setup wizard');

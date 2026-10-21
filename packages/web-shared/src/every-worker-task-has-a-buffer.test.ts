@@ -53,6 +53,7 @@ const BARE: Record<string, Record<string, unknown>> = {
   commitments: { vault: 'ab'.repeat(32), coin: { nonce: '00', token: '00', value: '1' } },
   'vault-on-chain': { vault: 'ab'.repeat(32), indexer: { indexerUri: 'https://indexer.invalid/api', indexerWsUri: 'wss://indexer.invalid/ws' } },
   'chain-at-one-block': { vault: 'ab'.repeat(32), account: 'cd'.repeat(32), indexer: { indexerUri: 'https://indexer.invalid/api', indexerWsUri: 'wss://indexer.invalid/ws' } },
+  'account-presence': { account: 'ab'.repeat(32), transactions: [], indexer: { indexerUri: 'https://indexer.invalid/api', indexerWsUri: 'wss://indexer.invalid/ws' } },
   'events-of': { transactionHash: 'ef'.repeat(32), indexer: { indexerUri: 'https://indexer.invalid/api', indexerWsUri: 'wss://indexer.invalid/ws' } },
   'created-by': { vault: 'ab'.repeat(32), commitment: 'ef'.repeat(32), indexer: { indexerUri: 'https://indexer.invalid/api', indexerWsUri: 'wss://indexer.invalid/ws' } },
   'step-kept': { vault: 'ab'.repeat(32), secret: 'cd'.repeat(32), step: { spent: { nonce: '00', token: '00', value: '1' }, amount: '1' } },

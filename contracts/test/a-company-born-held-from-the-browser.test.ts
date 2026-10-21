@@ -9,14 +9,20 @@
  * Nothing is proved against a circuit (a deploy and a maintenance update have
  * none) and nothing is sent anywhere.
  */
-import { describe, expect, it } from 'vitest';
+import { afterEach, describe, expect, it, vi } from 'vitest';
 import * as L from '@midnightntwrk/ledger-v9';
 import { TEST_MNEMONIC } from '@midnight-ntwrk/testkit-js';
 import { identityFromWords } from 'midnight-identity';
 import { committeeKeyFor } from 'midnight-identity/profile/committee-key';
-import { creationShown } from 'midnight-identity/profile/creation-sign';
+import { creationShown, creationSignatureFor } from 'midnight-identity/profile/creation-sign';
+import { READY_PING } from 'midnight-identity/profile/channel';
+import { parseAsk, type CreationRequest, type KeyringRequest } from 'midnight-identity/profile/request';
+import { keyringReleaseFor } from 'midnight-identity/profile/unlock';
 import type { CompanyLabel } from 'midnight-identity/profile/company-label';
 import { buildAccountDeploy, finishedCreation } from '../../packages/web-shared/src/vault-builder.js';
+import * as keyring from '../../packages/web-shared/src/keyring.js';
+import { answerVaultAsk } from '../../packages/web-shared/src/vault-worker-entry.js';
+import type { Openable } from '../../packages/web-shared/src/wallet-sign-in.js';
 import { labelInAccountState } from '../../apps/wallet/src/chain/company-label-on-chain.js';
 import { CREATION_STEPS, DEPLOYED_CIRCUITS, PER_TRANSACTION_CEILING } from '../../src/midnight/deferral.js';
 import { keysOnDisk, ACCOUNT_KEYS } from './keys-on-disk.js';
@@ -125,5 +131,156 @@ describe.skipIf(!ON_DISK)('A COMPANY BORN HELD [needs contracts/managed/keys; `n
     expect(refused(good.proven, good.address, { insert: honest.slice(1) })).toMatch(/keys the page asks to add are not this build's/);
     expect(refused(good.proven, good.address, { insert: [...honest, { circuit: 'adopt', key: b64(keyFile('adopt')) }] }))
       .toMatch(/keys the page asks to add are not this build's/);
+  });
+});
+
+/*
+ * **A COMPANY BUILT AT THE FIRST PRESS AND SIGNED HOURS LATER, WITH THE DEVICE'S OWN BUILDER AND THE LEDGER'S OWN CHECKS.**
+ *
+ * The keyring is driven for real against the vault worker's own answers (`answerVaultAsk`, the code the page's worker
+ * runs, with the account's keys read from disk), a wallet that signs with the real creation signature, and a chain
+ * that applies what is sent with the ledger's own well-formedness and time-to-live checks and with every signature
+ * checked. The tab's clock is the only thing moved. This is the fault a person met: the deploy built at the first
+ * press and sent at the second, two hours on, which the node answers with `Custom error: 228`.
+ */
+const US = 'https://payroll.example';
+const WALLET = 'https://wallet.example';
+const ADDRESS = 'mn_addr_test1qqqqqqqqqqqqqqqqqqqq';
+const A_COMPANY = { name: 'Acme Ltd', signers: [{ name: 'Priya', role: 'admin' as const }], threshold: 1 };
+const fromB64 = (b: string) => new Uint8Array(Buffer.from(b, 'base64'));
+
+/** The wallet: the keyring ask answered as the real wallet answers it, the creation ask signed with the real signature. */
+class Wallet implements Openable {
+  readonly asks: string[] = [];
+  private handler: ((event: MessageEvent) => void) | null = null;
+  private readonly tab = { postMessage: (m: unknown) => this.onAsk(m) };
+  open(): Window | null { return this.tab as unknown as Window; }
+  addEventListener(_t: 'message', h: (e: MessageEvent) => void): void {
+    this.handler = h;
+    queueMicrotask(() => this.deliver({ schema: READY_PING }));
+  }
+  removeEventListener(): void { this.handler = null; }
+  setTimeout(): number { return 0; }
+  clearTimeout(): void { /* nothing to clear */ }
+  private deliver(data: unknown): void { this.handler?.({ origin: WALLET, source: this.tab, data } as unknown as MessageEvent); }
+  private onAsk(message: unknown): void {
+    const ask = parseAsk(message, US, Date.now());
+    this.asks.push(ask.kind);
+    const answer = ask.kind === 'keyring'
+      ? keyringReleaseFor(founder, ask as KeyringRequest, Date.now(), (a) => a === ADDRESS)
+      : creationSignatureFor(L as never, founder, ask as CreationRequest, Date.now(), thisBuilds(), digest, labelInAccountState);
+    queueMicrotask(() => this.deliver(answer));
+  }
+}
+
+/** The builder the keyring is given: the worker's own answers to the worker's own asks. */
+const theWorker = () => {
+  const built: { deploy: string[]; insert: string[]; again: Array<{ deploy: string; insert: string }> } = { deploy: [], insert: [], again: [] };
+  const deps = async () => accountBuilderDeps(NET) as never;
+  let id = 0;
+  const ask = async (a: Record<string, unknown>): Promise<any> => {
+    const r = await answerVaultAsk(deps, { id: ++id, network: NET, ...a } as never) as { ok: boolean; error?: string };
+    if (!r.ok) throw new Error(String(r.error));
+    return r;
+  };
+  const builder: keyring.AccountCreationBuilder = {
+    foundingSeat: async (material) => { const a = await ask({ ask: 'founding-seat', material }); return { seat: a.seat, scope: a.scope, publicKey: a.publicKey }; },
+    accountDeploy: async (input) => { const a = await ask({ ask: 'account-deploy', ...input }); built.deploy.push(a.tx); return { account: a.account, tx: a.tx, insert: a.insert }; },
+    finishedCreation: async (input) => { const a = await ask({ ask: 'finished-creation', ...input }); built.insert.push(a.tx); return { tx: a.tx }; },
+    creationAgain: async (input) => {
+      built.again.push(input);
+      const a = await ask({ ask: 'creation-again', ...input });
+      return { account: a.account, deploy: a.deploy, insert: a.insert };
+    },
+    payKeyStanding: async () => { throw new Error('not asked'); },
+    governedCall: async () => { throw new Error('not asked'); },
+  };
+  return { builder, built };
+};
+
+/** The chain: an empty ledger, each transaction applied at the tab's clock with the ledger's own checks and its signatures verified. */
+class Chain {
+  state: any = L.LedgerState.blank(NET);
+  apply(b64: string): void {
+    const now = new Date(Date.now());
+    const t = BigInt(Math.floor(now.getTime() / 1000));
+    const tx = (L.Transaction.deserialize('signature', 'proof', 'pre-binding', fromB64(b64)) as any).bind();
+    const [next, r] = this.state.apply(tx.wellFormed(this.state, strictness(), now),
+      new L.TransactionContext(this.state, { secondsSinceEpoch: t, secondsSinceEpochErr: 30, parentBlockHash: '00'.repeat(32), lastBlockTime: t - 6n }));
+    if (r.type !== 'success') throw new Error(`the chain refused it: ${String(r.error ?? r.type)}`);
+    this.state = next;
+  }
+}
+
+/** The moment a transaction stops being accepted, read from the transaction itself. */
+const diesAt = (b64: string): number => {
+  const tx = L.Transaction.deserialize('signature', 'proof', 'pre-binding', fromB64(b64)) as any;
+  const intents = [...(tx.intents as Map<unknown, { ttl: Date }>).values()];
+  expect(intents).toHaveLength(1);
+  return intents[0]!.ttl.getTime();
+};
+
+/** The service's routes the two presses meet, answering as it does when it holds nothing for the company. */
+function aService() {
+  const posted: Array<{ route: string; body: any }> = [];
+  let saved: { bundle: unknown; version: number } = { bundle: null, version: 0 };
+  globalThis.fetch = (async (url: string, init?: RequestInit) => {
+    const route = `${String(init?.method ?? 'GET')} ${url}`.replace(/acc_[A-Za-z0-9_-]{12}/u, 'acc_X');
+    const body = init?.body === undefined ? undefined : JSON.parse(String(init.body));
+    posted.push({ route, body });
+    const json = (status: number, b: unknown) => ({ ok: status < 400, status, json: async () => b }) as Response;
+    switch (route) {
+      case 'GET /api/me/keys': return json(200, { keyBundle: saved.bundle, version: saved.version });
+      case 'PUT /api/me/keys': saved = { bundle: body.keyBundle, version: saved.version + 1 }; return json(200, { version: saved.version });
+      case 'POST /api/accounts': return json(201, { account: { id: body.founding.account.id }, state: 'made' });
+      case 'POST /api/accounts/acc_X/creation': return json(201, { account: null, state: 'deploy-sent', txRef: 'tx' });
+      default: return json(404, { error: `no route for ${route}` });
+    }
+  }) as typeof fetch;
+  return { sent: (route: string) => posted.filter((p) => p.route === route) };
+}
+
+const realFetch = globalThis.fetch;
+afterEach(() => { globalThis.fetch = realFetch; keyring.forgetLocally(); vi.restoreAllMocks(); });
+
+describe.skipIf(!ON_DISK)('A DEPLOY BUILT AT THE FIRST PRESS AND SENT TWO HOURS LATER [needs contracts/managed/keys; `npm run compact` builds them]', () => {
+  it('IS BUILT AGAIN BEFORE IT IS SENT: THE CHAIN REFUSES THE OLD ONE FOR ITS TIME TO LIVE AND TAKES THE NEW ONE WITH THE SAME SIGNATURE', async () => {
+    const service = aService();
+    keyring.signedInByAnotherScreen({ user: { id: 'usr_a', email: null, name: 'Priya' }, address: ADDRESS, created: true, session: {} });
+    const wallet = new Wallet();
+    const { builder, built } = theWorker();
+    const pressOneAt = Date.now();
+    const { accountId, account } = await keyring.startCompanyHeldFromTheStart(A_COMPANY, WALLET, builder, wallet, US);
+    const old = built.deploy[0]!;
+    /* The deploy built at the first press lives thirty minutes from there (the ledger keeps the time to the second). */
+    expect(diesAt(old)).toBeGreaterThanOrEqual(pressOneAt + 30 * 60_000 - 1_000);
+    expect(diesAt(old)).toBeLessThan(pressOneAt + 31 * 60_000);
+
+    /* Two hours on, the second press. */
+    const twoHoursOn = pressOneAt + 2 * 60 * 60_000;
+    vi.spyOn(Date, 'now').mockReturnValue(twoHoursOn);
+    /* The control: the chain itself refuses what was built at the first press, with the ledger's own words. */
+    expect(() => new Chain().apply(old)).toThrow(/TTL has expired/);
+
+    const done = await keyring.signCompanyCreationFromTheWallet(accountId, WALLET, builder, wallet, US);
+    expect(done).toEqual({ accountId, account, state: 'deploy-sent', builtAgain: true });
+    /* RED WHEN: the wallet is asked a second time for a ran-out step. */
+    expect(wallet.asks.filter((k) => k === 'creation')).toHaveLength(1);
+    /* RED WHEN: the step is not built again from the very deploy and the very second step that were kept. */
+    expect(built.again).toEqual([{ deploy: old, insert: built.insert[0] }]);
+
+    const sent = service.sent('POST /api/accounts/acc_X/creation');
+    /* RED WHEN: the deploy built at the first press is what goes to the service. */
+    expect(sent).toHaveLength(1);
+    expect(sent[0]!.body.deploy).not.toBe(old);
+    /* What goes has fifteen minutes of life at the very least, and more: thirty from the moment it was built again. */
+    expect(diesAt(sent[0]!.body.deploy)).toBeGreaterThan(twoHoursOn + 15 * 60_000);
+    expect(diesAt(sent[0]!.body.insert)).toBeGreaterThan(twoHoursOn + 15 * 60_000);
+
+    /* The chain takes the deploy, then the second step: the wallet's signature, made over the old bytes, still verifies over the new. */
+    const chain = new Chain();
+    chain.apply(sent[0]!.body.deploy);
+    chain.apply(sent[0]!.body.insert);
+    expect(chain.state.index(account)).toBeTruthy();
   });
 });

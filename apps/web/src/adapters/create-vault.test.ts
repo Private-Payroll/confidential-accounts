@@ -361,7 +361,13 @@ describe('creating a vault', () => {
     kr.answers[`POST ${ROUTE('/vaults')}`] = { vault: VAULT, txRef: 'r1', state: 'deploy-sent' };
     kr.chain = onChain(true);
     /* RED WHEN: the adapter drops the name, or files it anywhere but the company's records, under the new vault. */
-    expect(await m.createVault('u1', 'c1', () => {}, { name: 'Payroll UK', description: 'London.' })).toEqual({ of: 'done', vault: VAULT });
+    const named: string[] = [];
+    expect(await m.createVault('u1', 'c1', (s) => named.push(s), { name: 'Payroll UK', description: 'London.' })).toEqual({ of: 'done', vault: VAULT });
+    /* RED WHEN: filing the name is not told to the page before the vault is adopted, or is told when no name was given. */
+    expect(named).toEqual([
+      'checking', 'building', 'sending', 'waiting-for-chain', 'filing-the-name',
+      'adopting', 'opening-the-pool', 'setting-the-secret', 'writing-the-copies', 'done',
+    ]);
     expect(kr.info).toHaveLength(1);
     expect(kr.info[0]).toMatchObject({ kind: 'vault-info', id: VAULT, version: 1 });
     kr.info.length = 0;

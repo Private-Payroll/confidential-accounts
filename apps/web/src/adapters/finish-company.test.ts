@@ -12,8 +12,14 @@ type Read = {
 };
 const kr = vi.hoisted(() => ({
   who: null as { id: string } | null, open: true, calls: [] as string[], builders: [] as unknown[], worker: {} as Record<string, unknown> | null,
+  /** What carrying a creation on past its first press comes to: whether it did, and what then waits for the second press. */
+  firstPress: false as boolean | Error, afterFirstPress: null as { accountId: string } | null,
   awaiting: null as { accountId: string } | null, afterOpen: null as { accountId: string } | null, noDeploy: null as string | null, being: null as string | null,
   fails: null as Error | null, sealFails: null as Error | null, forgetFails: null as Error | null,
+  /** The kept step is short of life, and a step carried or signed is built again. */
+  short: false, builds: false,
+  /** While set, a step sent (the carry's finish, the press's sign) is held in flight on it. */
+  gate: null as Promise<void> | null,
   /** What the creation read says, one entry per read; the last one stays. */
   reads: [] as Read[], read: 0, changed: [] as (string | null)[],
 }));
@@ -26,12 +32,23 @@ vi.mock('vaults-web-shared/keyring.js', async (real) => ({
   openKeysWithWallet: async () => { kr.calls.push('open-keys'); kr.open = true; kr.awaiting = kr.afterOpen; },
   companyAwaitingItsSecondPress: () => kr.awaiting,
   companyKeptWithNoDeploy: () => kr.noDeploy,
-  companyBeingCreated: () => kr.being,
-  signCompanyCreationFromTheWallet: async (_o: string, builder: unknown) => { kr.calls.push('sign'); kr.builders.push(builder); kr.awaiting = null; return { state: 'deploy-sent' }; },
+  carryTheFirstPressOn: async (id: string) => {
+    kr.calls.push(`first-press ${id}`);
+    if (kr.firstPress instanceof Error) throw kr.firstPress;
+    if (kr.firstPress) kr.awaiting = kr.afterFirstPress;
+    return kr.firstPress;
+  },
+  keptCreationRunsOutSoon: () => kr.short,
+  signCompanyCreationFromTheWallet: async (id: string, _o: string, builder: unknown) => {
+    kr.calls.push(`sign ${id}`); kr.builders.push(builder); kr.awaiting = null;
+    if (kr.gate !== null) await kr.gate;
+    return { state: 'deploy-sent', ...(kr.builds ? { builtAgain: true } : {}) };
+  },
   finishCompanyOnTheChain: async (id: string, builder?: unknown) => {
     kr.calls.push(builder === undefined ? `finish ${id}` : `finish-again ${id}`); kr.builders.push(builder);
+    if (kr.gate !== null) await kr.gate;
     if (kr.fails !== null) throw kr.fails;
-    return { state: 'finish-sent' };
+    return { state: 'finish-sent', ...(builder !== undefined && kr.builds ? { builtAgain: true } : {}) };
   },
   sealThePayRecordKey: async (id: string, builder: unknown) => {
     kr.calls.push(`seal ${id}`); kr.builders.push(builder);
@@ -44,7 +61,6 @@ vi.mock('vaults-web-shared/keyring.js', async (real) => ({
     kr.being = null;
     return true;
   },
-  forgetAnUnsentCreation: async (id: string) => { kr.calls.push(`forget-no-deploy ${id}`); kr.being = null; kr.noDeploy = null; },
 }));
 vi.mock('./creation-standing.js', async (real) => ({
   ...(await real<typeof import('./creation-standing.js')>()),
@@ -74,8 +90,8 @@ async function load(origin = 'http://wallet.localhost:5180') {
 }
 
 beforeEach(() => {
-  Object.assign(kr, { who: { id: 'u1' }, open: true, calls: [], builders: [], worker: aWorker(), awaiting: null, afterOpen: null, noDeploy: null, being: null,
-    fails: null, sealFails: null, forgetFails: null, reads: [standing('finish-owed')], read: 0, changed: [] });
+  Object.assign(kr, { who: { id: 'u1' }, open: true, calls: [], builders: [], worker: aWorker(), awaiting: null, afterOpen: null, noDeploy: null, being: null, firstPress: false, afterFirstPress: null,
+    fails: null, sealFails: null, forgetFails: null, short: false, builds: false, gate: null, reads: [standing('finish-owed')], read: 0, changed: [] });
 });
 afterEach(() => { vi.unstubAllEnvs(); });
 
@@ -155,6 +171,38 @@ describe('carrying a company to finished', () => {
     expect(acts()).toEqual(['finish-again c1', 'finish c1']);
   });
 
+  /* RED WHEN: a finishing step this browser kept with too little life left is sent as the service recorded it, and the node answers "Custom error: 228". */
+  it('builds a finishing step that is short of life again, though the service still reads it owed, and says so', async () => {
+    const { m } = await load();
+    kr.short = true;
+    kr.builds = true;
+    kr.reads = [standing('finish-owed')];
+    expect(await m.carryOn('u1', 'c1')).toEqual({ of: 'waiting', companyId: 'c1', stage: 'finish', builtAgain: true });
+    expect(acts()).toEqual(['finish-again c1']);
+    expect(kr.builders[0]).toMatchObject({ creationAgain: kr.worker!.creationAgain });
+    /* RED WHEN: a step with life left is built again at every look, or the builder is asked for when none is needed. */
+    kr.short = false;
+    kr.builds = false;
+    kr.reads = [standing('finish-expired')];
+    expect(await m.carryOn('u1', 'c1')).toEqual({ of: 'waiting', companyId: 'c1', stage: 'finish' });
+  });
+
+  /* RED WHEN: a deploy sent and not landed, short of life, is waited for until it runs out for good, and the person waits with it. */
+  it('builds a deploy that was sent and has not landed again once it is short of life, and does not count that as the finishing step sent', async () => {
+    const { m } = await load();
+    kr.short = true;
+    kr.reads = [standing('deploy-sent')];
+    await m.carryOn('u1', 'c1');
+    expect(acts()).toEqual(['finish-again c1']);
+    kr.short = false;
+    kr.reads = [standing('deploy-sent')];
+    await m.carryOn('u1', 'c1');
+    expect(acts()).toEqual(['finish-again c1']);
+    kr.reads = [standing('finish-owed')];
+    await m.carryOn('u1', 'c1');
+    expect(acts()).toEqual(['finish-again c1', 'finish c1']);
+  });
+
   /* RED WHEN: a pay-record key owed is not sealed with the page's worker, or the step is called done on the sealing alone without the wallet's read. */
   it('seals the pay-record key when it is owed, and ends only when the wallet confirms', async () => {
     const { m } = await load();
@@ -214,7 +262,41 @@ describe('carrying a company to finished', () => {
     expect(await m.carryOn('u1', 'c1')).toEqual({ of: 'cannot', companyId: 'c1' });
     kr.reads = [standing(null, { company: null })];
     expect(await m.carryOn('u1', null)).toEqual({ of: 'none' });
-    expect(acts()).toEqual([]);
+    /* the only thing tried was carrying the kept creation on, which had nothing to carry */
+    expect(acts()).toEqual(['first-press c1']);
+  });
+
+  /* RED WHEN: a creation whose first post or deploy never got made is only offered to be started again, so a person who reloaded cannot carry it on. */
+  it('carries a creation with no deploy on from its first press, and offers starting again only when that cannot be done', async () => {
+    const { m } = await load();
+    kr.reads = [standing('not-created', { kept: true })];
+    kr.noDeploy = 'c1';
+    kr.firstPress = true;
+    kr.afterFirstPress = { accountId: 'c1' };
+    expect(await m.carryOn('u1', 'c1')).toEqual({ of: 'press', companyId: 'c1' });
+    expect(acts()).toEqual(['first-press c1']);
+    kr.calls = []; kr.awaiting = null; kr.firstPress = new Error('the service did not answer');
+    expect(await m.carryOn('u1', 'c1')).toEqual({ of: 'no-deploy', companyId: 'c1' });
+    expect(acts()).toEqual(['first-press c1']);
+  });
+
+  /* RED WHEN: a carry for one company is answered with another company's, the other's wait holds this one off, or both are not kept in flight at once. */
+  it('keeps one carry for each company: nobody gets another company\'s answer, and the same company shares one', async () => {
+    const { m } = await load();
+    const { lane } = await import('./sends.js');
+    kr.reads = [standing('finish-owed', { company: undefined }), standing('deploy-sent', { company: undefined })];
+    let release!: () => void;
+    kr.gate = new Promise<void>((r) => { release = r; });
+    const a = m.carryOn('u1', 'c1');
+    await vi.waitFor(() => expect(acts()).toEqual(['finish c1']));
+    expect(m.carryOn('u1', 'c1')).toBe(a);
+    /* RED WHEN: a second company is handed the first one's carry. */
+    expect(await m.carryOn('u1', 'c2')).toEqual({ of: 'waiting', companyId: 'c2', stage: 'deploy' });
+    expect(lane.carrying).not.toBeNull();
+    release();
+    expect(await a).toEqual({ of: 'waiting', companyId: 'c1', stage: 'finish' });
+    await Promise.resolve();
+    expect(lane.carrying).toBeNull();
   });
 
   /* RED WHEN: with the saved keys shut, a company this tab may keep is said unfinishable, or a step that needs the keys is tried without them. */
@@ -297,12 +379,10 @@ describe('carrying a company to finished', () => {
     let { m } = await load('');
     expect(await m.carryOn('u1', 'c1')).toMatchObject({ of: 'refused', why: 'not-set-up' });
     expect(await m.openYourWallet('u1', 'c1')).toMatchObject({ of: 'refused', why: 'not-set-up' });
-    expect(await m.startAgain('u1', 'c1')).toMatchObject({ of: 'refused', why: 'not-set-up' });
     ({ m } = await load());
     kr.who = { id: 'u9' };
     expect(await m.carryOn('u2', 'c1')).toMatchObject({ of: 'refused', why: 'not-signed-in' });
     expect(await m.openYourWallet('u2', 'c1')).toMatchObject({ of: 'refused', why: 'not-signed-in' });
-    expect(await m.startAgain('u2', 'c1')).toMatchObject({ of: 'refused', why: 'not-signed-in' });
     expect(acts()).toEqual([]);
   });
 });
@@ -313,13 +393,93 @@ describe('the wallet press that signs the company', () => {
     const { m } = await load();
     kr.awaiting = { accountId: 'c1' };
     kr.being = 'c1';
+    /* RED WHEN: with no company named, the press signs some creation this browser keeps, though several can be kept and each is signed on its own. */
     expect(await m.openYourWallet('u1', null)).toEqual({ of: 'done' });
-    expect(acts()).toEqual(['sign']);
+    expect(acts()).toEqual([]);
+    expect(await m.openYourWallet('u1', 'c1')).toEqual({ of: 'done' });
+    expect(acts()).toEqual(['sign c1']);
     expect(kr.builders[0]).toMatchObject({ foundingSeat: kr.worker!.foundingSeat });
     expect(kr.changed).toContain('c1');
     kr.calls = [];
-    expect(await m.openYourWallet('u1', null)).toEqual({ of: 'done' });
+    expect(await m.openYourWallet('u1', 'c1')).toEqual({ of: 'done' });
     expect(acts()).toEqual([]);
+  });
+
+  /* RED WHEN: the screen is not told that the press built a ran-out step again, so it cannot say so. */
+  it('hands on that the press built a ran-out step again', async () => {
+    const { m } = await load();
+    kr.awaiting = { accountId: 'c1' };
+    kr.builds = true;
+    expect(await m.openYourWallet('u1', 'c1')).toEqual({ of: 'done', builtAgain: true });
+  });
+
+  /* RED WHEN: the press signs and sends while the carry is still sending the step it owes, so the service is asked for the same deploy twice. */
+  it('waits for a carry that is sending before it signs and sends', async () => {
+    const { m } = await load();
+    kr.awaiting = { accountId: 'c1' };
+    kr.being = 'c1';
+    let release!: () => void;
+    kr.gate = new Promise<void>((r) => { release = r; });
+    const carrying = m.carryOn('u1', 'c1');
+    await vi.waitFor(() => expect(acts()).toEqual(['finish c1']));
+    const pressing = m.openYourWallet('u1', 'c1');
+    await new Promise((r) => setTimeout(r, 50));
+    expect(acts()).toEqual(['finish c1']);
+    release();
+    await carrying;
+    expect(await pressing).toEqual({ of: 'done' });
+    expect(acts()).toEqual(['finish c1', 'sign c1']);
+  });
+
+  /* RED WHEN: a carry sends a step while the press is signing and sending, so the service is asked for the same deploy twice. */
+  it('takes no step in a carry that starts while the press is running, and is one press when pressed twice', async () => {
+    const { m } = await load();
+    kr.awaiting = { accountId: 'c1' };
+    kr.being = 'c1';
+    let release!: () => void;
+    kr.gate = new Promise<void>((r) => { release = r; });
+    const first = m.openYourWallet('u1', 'c1');
+    const second = m.openYourWallet('u1', 'c1');
+    await vi.waitFor(() => expect(acts()).toEqual(['sign c1']));
+    expect(await m.carryOn('u1', 'c1')).toEqual({ of: 'waiting', companyId: 'c1', stage: 'finish' });
+    expect(acts()).toEqual(['sign c1']);
+    release();
+    expect(await Promise.all([first, second])).toEqual([{ of: 'done' }, { of: 'done' }]);
+    expect(acts()).toEqual(['sign c1']);
+    /* The press over, the carry sends the step owed as before. */
+    kr.gate = null;
+    await m.carryOn('u1', 'c1');
+    expect(acts()).toEqual(['sign c1', 'finish c1']);
+  });
+
+  /* RED WHEN: starting a creation again runs while a carry is still sending, so the rebuild puts back the creation just set aside. */
+  it('starts again only after a carry that is sending has ended, and lets nothing be sent meanwhile', async () => {
+    const { m } = await load();
+    kr.being = 'c1';
+    let release!: () => void;
+    kr.gate = new Promise<void>((r) => { release = r; });
+    const carrying = m.carryOn('u1', 'c1');
+    await vi.waitFor(() => expect(acts()).toEqual(['finish c1']));
+    const { whileNothingIsSent } = await import('./sends.js');
+    const ran: string[] = [];
+    let endWork!: () => void;
+    const working = whileNothingIsSent(async () => { ran.push('start-again'); await new Promise<void>((r) => { endWork = r; }); return 'again'; });
+    await new Promise((r) => setTimeout(r, 50));
+    expect(ran).toEqual([]);
+    release();
+    await carrying;
+    await vi.waitFor(() => expect(ran).toEqual(['start-again']));
+    /* RED WHEN: a carry or a press that begins while a creation is being started again takes a step. */
+    kr.gate = null;
+    kr.reads = [standing('pay-key-owed')];
+    expect(await m.carryOn('u1', 'c1')).toMatchObject({ of: 'waiting', companyId: 'c1' });
+    const pressing = m.openYourWallet('u1', 'c1');
+    kr.awaiting = { accountId: 'c1' };
+    await new Promise((r) => setTimeout(r, 50));
+    expect(acts()).toEqual(['finish c1']);
+    endWork();
+    expect(await working).toBe('again');
+    await pressing;
   });
 
   /* RED WHEN: saved keys that are shut are not opened before the creation kept in them is looked for, so a reloaded tab cannot finish its company. */
@@ -328,7 +488,7 @@ describe('the wallet press that signs the company', () => {
     kr.open = false;
     kr.afterOpen = { accountId: 'c1' };
     expect(await m.openYourWallet('u1', 'c1')).toEqual({ of: 'done' });
-    expect(acts()).toEqual(['open-keys', 'sign']);
+    expect(acts()).toEqual(['open-keys', 'sign c1']);
     /* RED WHEN: keys already open are opened again, which asks the wallet for nothing. */
     kr.calls = [];
     expect(await m.openYourWallet('u1', 'c1')).toEqual({ of: 'done' });
@@ -342,16 +502,5 @@ describe('the wallet press that signs the company', () => {
     const wallet = await import('vaults-web-shared/wallet-sign-in.js');
     vi.spyOn(keyring, 'signCompanyCreationFromTheWallet').mockRejectedValueOnce(new wallet.WalletClosed({ of: 'declined' }, 'x'));
     expect(await m.openYourWallet('u1', 'c1')).toEqual({ of: 'refused', why: 'declined' });
-  });
-});
-
-describe('starting again from the finishing step', () => {
-  /* RED WHEN: starting again forgets nothing, forgets another company, or leaves the read as it was. */
-  it('forgets the kept creation that built no deploy, and drops the cached read', async () => {
-    const { m } = await load();
-    kr.being = 'c1';
-    expect(await m.startAgain('u1', 'c1')).toEqual({ of: 'done' });
-    expect(acts()).toEqual(['forget-no-deploy c1']);
-    expect(kr.changed).toEqual(['c1']);
   });
 });

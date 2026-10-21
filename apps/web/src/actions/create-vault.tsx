@@ -5,11 +5,14 @@ import {
   STOPPED, type Creating, type Readiness, type SaidCode, type StartStopped, type VaultCreated,
 } from '../adapters/create-vault.js';
 import { HANDOVER, readHandover, type Handover } from '../adapters/handover-state.js';
+import { proofsRunning } from '../adapters/proofs-running.js';
+import { VAULT_USUAL_SECONDS } from '../adapters/usual-times.js';
 import { ACTED, type ActRefusal } from '../adapters/refusals.js';
 import { ActRefused } from '../act-refused.js';
 import { PAGE } from '../pages.js';
 import { PageLink } from '../router.js';
 import { useSession } from '../session.js';
+import { secondsSince, StageProgress, useStageSince, useTicker } from '../stage-progress.js';
 import { usePanel } from '../shell/right-panel.js';
 import { useCreationFact } from '../setup/standing.js';
 import { STEP, type StepProps } from '../setup/step-ids.js';
@@ -33,6 +36,8 @@ function useStoppedSays(): (stopped: StartStopped) => string {
 }
 
 /** What the person is being asked to confirm, if anything: creating a vault, or carrying on setting up the one named. */
+VAULT_USUAL_SECONDS satisfies Record<Creating, number | null>;
+
 const ASKING = { create: 'create', start: 'start' } as const;
 type Asking = { of: typeof ASKING.create } | { of: typeof ASKING.start; vault: string };
 
@@ -217,11 +222,14 @@ export function CreateVault({ leadTo, onChanged, starting }: StepProps & { start
     : ready.of === READY.locked ? t('createVault.why.locked')
     : !named ? t('createVault.why.nameFirst')
     : null;
+  const { now, proofStartedAt } = useTicker(proofsRunning);
+  const stageSince = useStageSince(stage ?? null);
   const STAGE_SAYS: Record<Creating, string> = {
     [CREATING.checking]: t('createVault.stage.checking'),
     [CREATING.building]: t('createVault.stage.building'),
     [CREATING.sending]: t('createVault.stage.sending'),
     [CREATING.waitingForChain]: t('createVault.stage.waitingForChain'),
+    [CREATING.filingTheName]: t('createVault.stage.filingTheName'),
     [CREATING.adopting]: t('createVault.stage.adopting'),
     [CREATING.openingThePool]: t('createVault.stage.openingThePool'),
     [CREATING.readingTheSecretBack]: t('createVault.stage.readingTheSecretBack'),
@@ -277,6 +285,9 @@ export function CreateVault({ leadTo, onChanged, starting }: StepProps & { start
         />
       )}
       {stage === null ? null : <p className="text-sm" role="status" data-stage={stage}>{STAGE_SAYS[stage]}</p>}
+      {stage === null || stage === CREATING.done ? null : (
+        <StageProgress stage={stage} elapsedSeconds={secondsSince(now, proofStartedAt ?? stageSince)} usualSeconds={VAULT_USUAL_SECONDS[stage]} />
+      )}
       <div className="flex flex-col gap-4" role="status" data-outcome>
       {result?.of === ACTED.done ? (
         <>

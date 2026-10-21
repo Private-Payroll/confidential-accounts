@@ -16,7 +16,7 @@
  * files, and is never trusted to say which ones are right.
  */
 import {
-  buildAccountDeploy, buildVaultBornHeld, buildCommitteeHandover, buildDeposit, buildPayout, creationCarriedAgain, finishedCreation, buildPublicDeposit, buildPublicPayout, buildSetNonceSecret, buildVaultDeploy,
+  buildAccountDeploy, buildVaultBornHeld, buildCommitteeHandover, buildDeposit, buildPayout, creationCarriedAgain, finishedCreation, newestTimeToLive, buildPublicDeposit, buildPublicPayout, buildSetNonceSecret, buildVaultDeploy,
   buildWriteSecretCopy, notesForPayment, confirmPayment, paymentsFitNotes, poolAfterPayment, buildMerge,
   type SecretRunOnTheWire, type VaultBuilderDeps,
 } from './vault-builder.js';
@@ -722,7 +722,14 @@ export const answerVaultAsk = async (
 ): Promise<VaultAnswer> => {
   giveTheRuntimeABuffer();
   const d = await deps();
-  const withNetwork = { ...d, network: ask.network } as VaultBuilderDeps;
+  /*
+   * A time to live is stamped from the builder's clock and judged by the node's. An ask that carries the difference the
+   * service measured between this device's clock and its own is built by the service's: a device whose clock is slow
+   * does not build steps that are short of life from the moment they are made.
+   */
+  const offset = (ask as { clockOffsetMs?: unknown }).clockOffsetMs;
+  const byTheirClock = typeof offset === 'number' && Number.isFinite(offset) && offset !== 0 ? { now: () => Date.now() + offset } : {};
+  const withNetwork = { ...d, network: ask.network, ...byTheirClock } as VaultBuilderDeps;
   const { setNetworkId } = await import('@midnight-ntwrk/midnight-js-network-id');
   setNetworkId(ask.network as never);
   switch (ask.ask) {
@@ -927,6 +934,14 @@ export const answerVaultAsk = async (
       const { readAccountCallChain, vaultChainSourceAt } = await import('./vault-on-chain-here.js');
       const source = (d.chainSourceAt ?? vaultChainSourceAt)(ask.indexer);
       return { id: ask.id, ok: true, ask: 'account-call-chain', chain: await readAccountCallChain(source, ask.account) };
+    }
+    case 'account-presence': {
+      /* Read from the indexer the wallet names; the time to live comes from the bytes kept, the time from the chain. */
+      const { readAccountPresence, vaultChainSourceAt } = await import('./vault-on-chain-here.js');
+      const source = (d.chainSourceAt ?? vaultChainSourceAt)(ask.indexer);
+      const seen = await readAccountPresence(source, ask.account);
+      const ttl = newestTimeToLive(withNetwork, ask.transactions.map(fromBase64));
+      return { id: ask.id, ok: true, ask: 'account-presence', presence: { held: seen.held, blockHeight: seen.blockHeight, blockTime: seen.blockTime, ttl } };
     }
     case 'last-recovery':
       return { id: ask.id, ok: true, ask: 'last-recovery', head: lastRecoveryIn(d, fromBase64(ask.accountState)) };

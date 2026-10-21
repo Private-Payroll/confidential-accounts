@@ -48,13 +48,15 @@ export function Setup() {
   const [vaults, setVaults] = useState<SetupFacts['vaults']>(null);
   const [, setSkips] = useState(0);
   const skipped = skippedFor(company);
-  const { creation, reread } = useCreationFact(company);
+  const [started, setStarted] = useState<string | null>(null);
+  const creationCompany = company ?? started;
+  const { creation, reread } = useCreationFact(creationCompany);
   const facts: SetupFacts = { company, vaults, creation };
   const [chosen, setCurrent] = useState<StepId>(() => asked?.step ?? firstOpen(facts, skipped));
   /* Whether the step shown was chosen, by the person or by whoever opened the wizard, rather than picked from what was known at the start. */
   const [moved, setMoved] = useState(asked !== null);
   const choose = (id: StepId): void => { setMoved(true); setCurrent(id); };
-  const startNewCompany = (): void => { setShownWhenAsked(session.company); choose(STEP.createCompany); };
+  const startNewCompany = (): void => { setStarted(null); setShownWhenAsked(session.company); choose(STEP.createCompany); };
   const skipWhyId = useId();
   const continueWhyId = useId();
 
@@ -147,7 +149,7 @@ export function Setup() {
               ? <p className="max-w-prose text-sm text-muted-foreground" data-coming-soon-step>{soon}</p>
               : Action === null
                 ? <SectionLoading rows={2} data-step-reading="" />
-                : <SessionProvider session={{ ...session, company }}><Action leadTo={choose} onChanged={() => { void read(); void reread(); }} startNewCompany={startNewCompany} /></SessionProvider>}
+                : <SessionProvider session={{ ...session, company }}><Action leadTo={choose} onChanged={(startedCompany) => { if (startedCompany !== undefined) setStarted(startedCompany); void read(); void reread(startedCompany); }} creation={creationCompany} startNewCompany={startNewCompany} /></SessionProvider>}
         </TabsContent>
       </Tabs>
       <footer className="mt-auto flex flex-col gap-3 border-t pt-4" data-setup-bar>
