@@ -148,6 +148,20 @@ describe('the browser error sink', () => {
       .toBe('400 /api/accounts — you are already on this account');
   });
 
+  /* RED WHEN: a refusal that names its cause with a `code` is recorded without it, with the code after a cut text, or a refusal with no code gets a bracket. */
+  it('the CODE the service names beside its text is kept in front of the text', async () => {
+    const r = rig();
+    r.willAnswer(answering(401, JSON.stringify({ error: 'not signed in', code: 'session-not-valid' })));
+    r.willAnswer(answering(400, JSON.stringify({ error: 'no', code: 7 })));
+    await r.w.fetch('/api/me');
+    await r.w.fetch('/api/accounts');
+    await settled();
+    expect(r.posted.flatMap((p) => p.entries.map((e) => e.message))).toEqual([
+      '401 /api/me — [session-not-valid] not signed in',
+      '400 /api/accounts — no',
+    ]);
+  });
+
   it('C157: and the caller still gets the body, because the sink read a CLONE', async () => {
     // Reading `response.text()` here would drain the stream the screen
     // is about to read, and every refusal would render as an empty one.

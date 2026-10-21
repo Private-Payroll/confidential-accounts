@@ -8,7 +8,7 @@ import { join } from 'node:path';
 import { runInNewContext } from 'node:vm';
 import {
   CLEARED_TABLES, DELETE_GUARDS, KEPT_TABLES, emptyTheTables, moveCreatedCompanies, portsOfTheRun,
-  refuseWhileRunning, stamp, type Disk,
+  refuseUnlessResettableStore, refuseWhileRunning, stamp, type Disk,
 } from './reset-stagenet-store-rules.js';
 
 const ROOT = join(import.meta.dirname, '..');
@@ -182,5 +182,38 @@ describe('the console snippet clears http://localhost:5173 and nothing else', ()
     expect(r.after).toEqual({ indexedDB: [], localStorage: [], sessionStorage: [] });
     expect(p.deleted.sort()).toEqual(['keys', 'payroll']);
     expect(p.logs.join('\n')).toMatch(/NOTHING REMAINS on http:\/\/localhost:5173/);
+  });
+});
+
+describe('the clean start runs only on a store named as one that may be emptied', () => {
+  /*
+   * RED WHEN: a store .env does not name, or names as anything but dev or stagenet, is emptied.
+   * RED WHEN: a nearly right name (another case) is taken as one that may be emptied.
+   */
+  it('refuses a store kind that is missing, empty, another store, or another case, and says what to set and why', () => {
+    for (const kind of [undefined, '', 'production', 'Stagenet']) {
+      const said = refuseUnlessResettableStore(kind);
+      expect(said, String(kind)).toMatch(/^THE STORE CANNOT BE CLEARED/);
+      expect(said).toContain('STORE_KIND=stagenet');
+      expect(said).toMatch(/sealed-record tables/);
+      expect(said).toMatch(/Nothing was moved or removed\.$/);
+    }
+    expect(refuseUnlessResettableStore(undefined)).toContain('is not set');
+    expect(refuseUnlessResettableStore('production')).toContain('is "production"');
+  });
+
+  /* RED WHEN: a store named dev or stagenet is refused, so a clean start can never run. */
+  it('lets a store named dev or stagenet be cleared', () => {
+    expect(refuseUnlessResettableStore('dev')).toBeNull();
+    expect(refuseUnlessResettableStore('stagenet')).toBeNull();
+  });
+
+  /* RED WHEN: the clean start opens a connection, or counts rows, before it has read what the store is. */
+  it('decides on the store before any connection is opened', () => {
+    const script = readFileSync(join(ROOT, 'scripts', 'reset-stagenet-store.ts'), 'utf8').replace(/\/\*[\s\S]*?\*\//g, '');
+    const decided = script.indexOf('refuseUnlessResettableStore(process.env.STORE_KIND)');
+    expect(decided).toBeGreaterThan(-1);
+    expect(decided).toBeLessThan(script.indexOf('postgres(url'));
+    expect(script.slice(decided, decided + 160)).toMatch(/if \(notThisStore\) \{ say\('  ' \+ notThisStore\); return 1; \}/);
   });
 });

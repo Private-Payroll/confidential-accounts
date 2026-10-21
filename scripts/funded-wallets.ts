@@ -32,7 +32,8 @@
  * product's.
  */
 import { SponsoredCustomerWallet, type BalancingWallet } from '../src/midnight/wallet.js';
-import { WalletFeeSponsor, type SponsorWallet } from '../src/midnight/sponsor.js';
+import { WalletFeeSponsor, type FeePayerView, type SponsorWallet } from '../src/midnight/sponsor.js';
+import { dustAppliedOf, dustIndexerWsOf, dustNumbers, dustProgressOf, dustTipAt } from './dust-wallet.js';
 import type { SponsoredFeeSink } from '../src/midnight/sponsored-fees.js';
 import type { FeeCeiling } from '../src/midnight/fee-ceiling.js';
 import type { FundedParties } from '../src/wiring/write-capability-for-deployment.js';
@@ -87,6 +88,51 @@ export function paidFeeFrom(
   };
 }
 
+const views = new WeakMap<object, FeePayerView>();
+
+/**
+ * **THE FEE PAYER'S VIEW OF THE NETWORK'S DUST, ONE PER WALLET.**
+ *
+ * Every fee payer built over the same wallet shares it, because the last
+ * payment the network accepted belongs to the wallet: a service that builds a
+ * fee payer per request must still wait for the payment the previous one made.
+ * Its facts come from the wallet's own state (how far its view has got, its
+ * coins), from the wallet's own history (whether its view shows a payment), and
+ * from the indexer the wallet syncs from (how far the network has got). Answers
+ * nothing for an object that is not a running wallet, which then pays without
+ * waiting.
+ */
+export function feePayerViewOf(
+  facade: any,
+  tipAt: (wsUrl: string, from: bigint | null) => Promise<bigint> = (url, from) => dustTipAt(url, from),
+  note: (line: string) => void = (line) => console.log(`      fee payer: ${line}`),
+): FeePayerView | undefined {
+  if (!facade || typeof facade !== 'object' || typeof facade.state !== 'function') return undefined;
+  const kept = views.get(facade);
+  if (kept) return kept;
+  let latest: any = null;
+  facade.state().subscribe({ next: (s: any) => { latest = s; } });
+  let lastTip: bigint | null = null;
+  const view: FeePayerView = {
+    lastAccepted: null,
+    applied: () => dustAppliedOf(dustProgressOf(latest)),
+    tip: async () => {
+      const ws = dustIndexerWsOf(facade.dust);
+      if (ws === null) throw new Error('the wallet names no indexer to read the network\'s DUST from');
+      lastTip = await tipAt(ws, view.applied());
+      return lastTip;
+    },
+    shows: async (transactionHash: string) => {
+      const entry = await facade.queryTxHistoryByHash(transactionHash);
+      return entry?.dust !== undefined && entry?.dust !== null;
+    },
+    numbers: () => dustNumbers(latest, lastTip),
+    note,
+  };
+  views.set(facade, view);
+  return view;
+}
+
 /**
  * The fee payer's wallet.
  *
@@ -122,6 +168,7 @@ export function sponsorWalletOver(
       facade.estimateTransactionFee(tx as never, w.provider.dustSecretKey, { ttl }),
     paidFee,
     balances: async () => ({ dust: w.dust(), night: w.night() }),
+    view: feePayerViewOf(facade),
   };
 }
 

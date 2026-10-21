@@ -310,6 +310,13 @@ const startRoutes = () => {
   kr.answers[`POST ${ROUTE('/proposals')}`] = (body: { proposal: { id: string; chainId: string }; tx?: string; vault?: string }) => {
     const rec = { ...body.proposal, accountId: 'c1', status: 'open', approvalCount: 0 };
     proposals.push(rec);
+    /* The service writes a proposal down as carried out once its own read of the chain no longer holds it open. */
+    kr.answers[`POST /api/proposals/${rec.id}/carried`] = (asked: { vault?: string; filer?: string }) => {
+      if (asked.vault !== VAULT || typeof asked.filer !== 'string') throw new Error('this request does not name the vault and this seat\'s filing key');
+      if (body.vault === undefined ? kr.start.open && !kr.start.adopted : !kr.start.set) throw new Error('the chain still holds this proposal open');
+      rec.status = 'executed';
+      return { id: rec.id, status: 'executed' };
+    };
     if (body.tx !== undefined) {
       if (body.vault === undefined) kr.start.open = true;
       else kr.start.run = true;
@@ -414,6 +421,8 @@ describe('creating a vault', () => {
       'account propose proved', `POST ${ROUTE('/proposals')}`, `POST ${ROUTE('/manifest/entries')}`,
       'account approve proved', `POST ${ROUTE(`/vaults/${VAULT}/start/account`)}`,
       'account adopt proved', `POST ${ROUTE(`/vaults/${VAULT}/start/account`)}`,
+      /* The adoption the chain carried out, written down as carried out. */
+      expect.stringMatching(/^POST \/api\/proposals\/prp_.*\/carried$/u),
       HERE,
       /*
        * Who holds the company and this vault, read by the account afresh: before the secret is filed, and before its run.
@@ -441,6 +450,25 @@ describe('creating a vault', () => {
    * RED WHEN: a signer whose device did not create the vault cannot carry its set up on - approving its adoption and
    * its first secret with their own keys - or does so by building or handing over anything.
    */
+  /*
+   * RED WHEN: a vault created without its name is carried on with no way to name it, or a name given on the way is filed
+   * anywhere but the company's records under that vault; or its adoption, carried out on the chain, stays open.
+   */
+  it('files the name given when a vault is carried on, and writes its adoption down as carried out', async () => {
+    const m = await load();
+    kr.info.length = 0;
+    kr.chain = onChain(true);
+    expect(await m.finishStarting('u1', 'c1', VAULT, () => {}, { name: 'Payroll', description: 'Founding vault.' })).toEqual({ of: 'done', vault: VAULT });
+    expect(kr.info).toHaveLength(1);
+    expect(kr.info[0]).toMatchObject({ kind: 'vault-info', id: VAULT, version: 1 });
+    const adoption = (await (kr.answers[`GET ${ROUTE('/proposals')}`] as () => Array<{ id: string; status: string; vault?: string }>)())[0]!;
+    expect(kr.log).toContain(`POST /api/proposals/${adoption.id}/carried`);
+    expect(adoption.status).toBe('executed');
+    /* RED WHEN: a vault already named is named again on the way. */
+    expect(await m.finishStarting('u1', 'c1', VAULT, () => {}, { name: 'Another', description: '' })).toEqual({ of: 'done', vault: VAULT, said: ['vault-name-given-before'] });
+    expect(kr.info).toHaveLength(1);
+  });
+
   it('carries a held vault\'s set up on from a device that did not create it, approving with this signer\'s own keys', async () => {
     const m = await load();
     kr.chain = onChain(true);

@@ -1,4 +1,7 @@
-import { afterEach, describe, expect, it } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it } from 'vitest';
+import { existsSync, mkdtempSync, readFileSync, writeFileSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
 import express from 'express';
 import type { Server } from 'node:http';
 import { authedBy } from './authed.js';
@@ -31,7 +34,7 @@ async function serve(sessions: SessionStore, store = new MemoryStore(), boundMs?
   const port = (server.address() as { port: number }).port;
   return {
     identity,
-    ask: (headers: Record<string, string>) => fetch(`http://127.0.0.1:${port}/api/me`, { headers }),
+    ask: (headers: Record<string, string>, search = '') => fetch(`http://127.0.0.1:${port}/api/me${search}`, { headers }),
   };
 }
 
@@ -75,7 +78,6 @@ describe('a failure to check is 503, a definite no is 401', () => {
     const { ask } = await serve(new MemorySessionStore());
     const r = await ask({ authorization: 'Bearer never-issued' });
     expect(r.status).toBe(401);
-    expect((await r.json()).code).toBeUndefined();
   });
 
   it('a live session of a person this service does not hold is 401, and its stale cookie is cleared', async () => {
@@ -96,6 +98,127 @@ describe('a failure to check is 503, a definite no is 401', () => {
     const r = await ask({ authorization: `Bearer ${token}` });
     expect(r.status).toBe(200);
     expect((await r.json()).id).toBe('usr_1');
+  });
+});
+
+/**
+ * **A 401 TELLS THE CALLER ONLY WHAT THE CALLER ALREADY KNOWS, AND THE SERVICE KEEPS THE CAUSE.**
+ *
+ * A request with no credential, or with two ca_session cookies, is told so: the caller sent it. Every cause that
+ * depends on the token's state (revoked, never issued or run out, a person this service does not hold) is the one
+ * answer `session-not-valid`, so a token holder cannot learn which. The service writes the real cause to its refusal
+ * log (the route, the time, the cause, and the start of the person's id where it is known), never the token.
+ *
+ * RED WHEN: the three token-state causes are answered with different codes or text; the text is anything but
+ * "not signed in"; no credential or two cookies are not told apart; any of the five causes is missing from the refusal
+ * log or named wrongly there; the token or the cookie value reaches the log; a cause that cannot be read turns the 401
+ * into a 503 or a 200.
+ */
+describe('a 401 says one thing for every state of a token, and the log says which', () => {
+  const PEOPLE = 'usr_1';
+  const dir = mkdtempSync(join(process.env.TMPDIR ?? tmpdir(), 'authed-refusals-'));
+  let log = '';
+  const kept = process.env.REFUSAL_LOG;
+  beforeEach(() => { log = join(dir, `${Math.random().toString(36).slice(2)}.txt`); process.env.REFUSAL_LOG = log; });
+  afterEach(() => { if (kept === undefined) delete process.env.REFUSAL_LOG; else process.env.REFUSAL_LOG = kept; });
+  const logged = () => (existsSync(log) ? readFileSync(log, 'utf8') : '');
+  const said = async (r: Response) => ({ status: r.status, ...(await r.json()) });
+  const NOT_VALID = { status: 401, error: 'not signed in', code: 'session-not-valid' };
+
+  it('no credential at all, and a cleared cookie: no-credential', async () => {
+    const { ask } = await serve(new MemorySessionStore());
+    expect(await said(await ask({}))).toEqual({ status: 401, error: 'not signed in', code: 'no-credential' });
+    expect((await said(await ask({ cookie: 'ca_session=' }))).code).toBe('no-credential');
+    expect(logged()).toMatch(/401 GET\s+\/api\/me\n\s+no-credential: not signed in/);
+  });
+
+  it('two ca_session cookies, one of them live: two-session-cookies, signed in on neither', async () => {
+    const sessions = new MemorySessionStore();
+    const store = new MemoryStore();
+    person(store, PEOPLE);
+    const { token } = await sessions.issue(PEOPLE);
+    const { ask } = await serve(sessions, store);
+    expect(await said(await ask({ cookie: `ca_session=${token}; ca_session=extra` })))
+      .toEqual({ status: 401, error: 'not signed in', code: 'two-session-cookies' });
+    expect(logged()).toMatch(/two-session-cookies: not signed in/);
+    expect(logged()).not.toContain(token);
+  });
+
+  it('a sign-in nobody issued, one that ran out, one revoked and a person this service does not hold are ONE answer', async () => {
+    const sessions = new MemorySessionStore();
+    const store = new MemoryStore();
+    const ran = await sessions.issue(PEOPLE, { now: new Date(Date.now() - 48 * 3600_000) });
+    const revoked = await sessions.issue(PEOPLE);
+    await sessions.revoke(revoked.token);
+    const elsewhere = await sessions.issue('usr_elsewhereXYZ');
+    const { ask } = await serve(sessions, store);
+    const answers = [
+      await ask({ authorization: 'Bearer never-issued' }),
+      await ask({ authorization: `Bearer ${ran.token}` }),
+      await ask({ authorization: `Bearer ${revoked.token}` }),
+      await ask({ authorization: `Bearer ${elsewhere.token}` }),
+    ];
+    const bodies = await Promise.all(answers.map(said));
+    for (const b of bodies) expect(b).toEqual(NOT_VALID);
+  });
+
+  it('the log keeps each cause, the route, and the start of a known person\'s id, and never a token', async () => {
+    const sessions = new MemorySessionStore();
+    const ran = await sessions.issue(PEOPLE, { now: new Date(Date.now() - 48 * 3600_000) });
+    const revoked = await sessions.issue(PEOPLE);
+    await sessions.revoke(revoked.token);
+    const elsewhere = await sessions.issue('usr_elsewhereXYZ');
+    const { ask } = await serve(sessions);
+    await ask({ authorization: 'Bearer never-issued' });
+    await ask({ authorization: `Bearer ${ran.token}` });
+    await ask({ authorization: `Bearer ${revoked.token}` });
+    await ask({ authorization: `Bearer ${elsewhere.token}` });
+    const causes = [...logged().matchAll(/^\s+(session-[a-z-]+|no-such-user): not signed in(.*)$/gm)].map((m) => [m[1], m[2]]);
+    expect(causes).toEqual([
+      ['session-unknown-or-expired', ''],
+      ['session-unknown-or-expired', ''],
+      ['session-revoked', ''],
+      ['no-such-user', ' (person usr_else)'],
+    ]);
+    expect(logged().match(/401 GET\s+\/api\/me/g)).toHaveLength(4);
+    for (const t of [ran.token, revoked.token, elsewhere.token, 'never-issued']) expect(logged()).not.toContain(t);
+    expect(logged()).not.toContain('usr_elsewhereXYZ');
+  });
+
+  it('a cause that cannot be read leaves the 401 the same answer, logged as no live sign-in found', async () => {
+    const real = new MemorySessionStore();
+    const sessions = Object.assign(Object.create(real), { whyNot: () => Promise.reject(new Error('db gone')) }) as SessionStore;
+    const { ask } = await serve(sessions);
+    expect(await said(await ask({ authorization: 'Bearer x' }))).toEqual(NOT_VALID);
+    expect(logged()).toMatch(/session-unknown-or-expired: not signed in/);
+  });
+
+  /* RED WHEN: the refusal log line carries the query string of the request (it can hold anything a client sent), or loses the route. */
+  it('the log line carries the route without its query string', async () => {
+    const { ask } = await serve(new MemorySessionStore());
+    await ask({ authorization: 'Bearer never-issued' }, '?company=co_1&viewingKey=abc');
+    expect(logged()).toMatch(/401 GET\s+\/api\/me\n/);
+    expect(logged()).not.toContain('company=');
+    expect(logged()).not.toContain('abc');
+  });
+
+  /* RED WHEN: the header the log opens with still says it holds only 400s, leaves out the cause of a 401, or carries a work id of this project. */
+  it('the log opens with a header that says what it now holds', async () => {
+    const { ask } = await serve(new MemorySessionStore());
+    await ask({});
+    const header = logged().split('\n\n\n')[0]!;
+    expect(header).toContain('REPORT-REFUSALS');
+    expect(header).toContain('401');
+    expect(header).toMatch(/cause/);
+    expect(header).not.toMatch(/answered with a 400/);
+    expect(header).not.toMatch(/\b(?:[STCMNR]-?[0-9]{2,4}[a-z]?)\b/);
+  });
+
+  it('a log that cannot be written does not change the answer', async () => {
+    process.env.REFUSAL_LOG = join(dir, 'a-file', 'x', 'no-log');
+    writeFileSync(join(dir, 'a-file'), 'x');
+    const { ask } = await serve(new MemorySessionStore());
+    expect(await said(await ask({ authorization: 'Bearer x' }))).toEqual(NOT_VALID);
   });
 });
 

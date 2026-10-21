@@ -27,5 +27,29 @@ export function boundedRead<T>(what: string, work: (signal: AbortSignal) => Prom
   });
 }
 
+const ofTheService = new Set<Promise<unknown>>();
+
+/** A bounded read of the service, remembered until it has answered, been refused or run out of time, so a sign-out can wait for it. */
+export function serviceRead<T>(what: string, work: (signal: AbortSignal) => Promise<T>): Promise<T> {
+  const read = boundedRead(what, work);
+  ofTheService.add(read);
+  const ended = (): void => { ofTheService.delete(read); };
+  read.then(ended, ended);
+  return read;
+}
+
+/** How long a sign-out waits for the reads of the service that were in flight when it was pressed. */
+export const SIGN_OUT_WAITS_MS = 5_000;
+
+/** Settles once every read of the service in flight now has ended, or after `boundMs`, whichever is first. Reads started later are not waited for. */
+export function readsAnswered(boundMs: number): Promise<void> {
+  const inFlight = [...ofTheService];
+  if (inFlight.length === 0) return Promise.resolve();
+  return new Promise<void>((done) => {
+    const timer = setTimeout(done, boundMs);
+    void Promise.allSettled(inFlight).then(() => { clearTimeout(timer); done(); });
+  });
+}
+
 /** A request with no method, or GET, is a read. */
 export const isReadMethod = (method: string | undefined): boolean => method === undefined || method.toUpperCase() === 'GET';

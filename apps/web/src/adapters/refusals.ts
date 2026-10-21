@@ -1,4 +1,4 @@
-import { AnotherPersonError, AuthError, CompanyStartedBySomebodyElse, FirstKeysNeedTheSignIn, SavedKeysDidNotOpen, SavedKeysWentBack } from 'vaults-web-shared/keyring.js';
+import { AnotherPersonError, AuthError, CompanyStartedBySomebodyElse, FirstKeysNeedTheSignIn, SavedKeysDidNotOpen, ServiceRefused, SavedKeysWentBack } from 'vaults-web-shared/keyring.js';
 import { ReadRanOutOfTime } from 'vaults-web-shared/read-bound.js';
 import { WalletClosed, type WalletPaymentFailure } from 'vaults-web-shared/wallet-sign-in.js';
 
@@ -17,6 +17,7 @@ export const ACT_REFUSAL = {
   committeeUnread: 'committee-unread', committeeNotInstallable: 'committee-not-installable', pageOutOfDate: 'page-out-of-date',
   vaultNotTheCompanys: 'vault-not-the-companys', vaultInfoRefused: 'vault-info-refused',
   readRanOut: 'read-ran-out', payChainUnreadable: 'pay-chain-unreadable', payNotEnough: 'pay-not-enough', payNotAsApproved: 'pay-not-as-approved', payDidNotFinish: 'pay-did-not-finish',
+  feeNotPaid: 'fee-not-paid', networkRefused: 'network-refused', rosterNotBelieved: 'roster-not-believed',
 } as const;
 
 export type ActRefusal = (typeof ACT_REFUSAL)[keyof typeof ACT_REFUSAL];
@@ -35,7 +36,7 @@ function paymentFailure(why: WalletPaymentFailure): ActRefusal {
 }
 
 
-/** The refusal a failure from the keyring, the account or the network is, told apart by its kind and never by its words (an ask that ran out while the account was open, by the refusal's `while`). */
+/** The refusal a failure from the keyring, the service, the account or the network is, told apart by its kind and never by its words (an ask that ran out while the account was open, by the refusal's `while`). */
 export function refusalOf(e: unknown): ActRefusal {
   if (e instanceof AnotherPersonError || e instanceof CompanyStartedBySomebodyElse) return ACT_REFUSAL.anotherPerson;
   if (e instanceof AuthError) return ACT_REFUSAL.notSignedIn;
@@ -43,7 +44,11 @@ export function refusalOf(e: unknown): ActRefusal {
   if (e instanceof SavedKeysDidNotOpen) return ACT_REFUSAL.keysDidNotOpen;
   if (e instanceof SavedKeysWentBack) return ACT_REFUSAL.keysWentBack;
   if (e instanceof ReadRanOutOfTime) return ACT_REFUSAL.readRanOut;
+  /* By the kind's name, which the roster's refusal sets: the code that throws it is loaded only where a company is opened. */
+  if (e instanceof Error && e.name === 'RosterNotBelieved') return ACT_REFUSAL.rosterNotBelieved;
   if (e instanceof TypeError) return ACT_REFUSAL.unreachable;
+  if (e instanceof ServiceRefused && e.code === 'fee-not-paid') return ACT_REFUSAL.feeNotPaid;
+  if (e instanceof ServiceRefused && e.code === 'network-refused') return ACT_REFUSAL.networkRefused;
   if (e instanceof WalletClosed) {
     switch (e.refusal.of) {
       case 'declined': return ACT_REFUSAL.declined;

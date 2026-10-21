@@ -280,6 +280,10 @@ export interface MountedBeside {
 export interface AcmeFounding {
   readonly roster?: () => SealedCompanyRecord;
   readonly state?: () => SealedCompanyRecord;
+  /** What a file does with Acme's first roster and state kept and not yet anchored, as a device may before its first anchor. */
+  readonly beforeTheAnchor?: () => Promise<void>;
+  /** Given, Acme's first anchor is attempted and what came of it handed here, instead of failing the file's setup when it is refused. */
+  readonly anchored?: (outcome: { readonly anchored: number } | Error) => void;
 }
 
 /** Acme's first state, as Ada's founding device made and signed it. */
@@ -298,7 +302,8 @@ const foundAcme = async (founding: AcmeFounding): Promise<void> => {
   }, 1, 0, KEY), ADA.signingSecret as Hex);
   expect(store.fileRoster(roster)).toBeNull();
   await peopleRecords.put(founding.state?.() ?? ACME_STATE);
-  await anchorTheRecordsHere({
+  await founding.beforeTheAnchor?.();
+  const anchoring = anchorTheRecordsHere({
     accountId: CO,
     material: { signingSecret: ADA.signingSecret as Hex, blinding: '22'.repeat(32) as Hex, scope: '33'.repeat(32) as Hex } as never,
     manifest: manifestServiceFor(apiAs('ada')),
@@ -317,6 +322,11 @@ const foundAcme = async (founding: AcmeFounding): Promise<void> => {
     },
     builder: { ...anchorFunctions, anchor: anchorSentInATest },
   });
+  if (founding.anchored === undefined) {
+    await anchoring;
+    return;
+  }
+  founding.anchored(await anchoring.catch((e: unknown) => (e instanceof Error ? e : new Error(String(e)))));
 };
 
 /**

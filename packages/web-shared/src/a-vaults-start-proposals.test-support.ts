@@ -23,7 +23,7 @@ export interface ProposalsKeptInATest {
   readonly doors: VaultStartProposals;
   /** The company's proposals as the service keeps them, in filing order. */
   readonly kept: SealedProposal[];
-  /** Each call, in order: `file`, `file and raise`, `send <id>`, `entered <id>`, `not entered <id>`. */
+  /** Each call, in order: `file`, `file and raise`, `send <id>`, `entered <id>`, `not entered <id>`, `carried <id>`, `not carried <id>`. */
   readonly log: string[];
   /** What a raise sent with each filing or send carried, by proposal. */
   readonly raised: Map<string, string>;
@@ -42,6 +42,8 @@ export const proposalsKeptInATest = (over: {
   readonly signingSecret: Hex; readonly role?: Role | null; readonly accountId?: string; readonly viewingKey?: Hex;
   readonly failSend?: boolean; readonly failEnter?: boolean | number; readonly kept?: SealedProposal[];
   readonly onRaise?: (chainId: string) => void;
+  /** The service refuses to write a carried-out proposal down. */
+  readonly failCarried?: boolean;
   /** Why this device does not believe the seat: its wallet never attested its records key, or the chain does not hold it. */
   readonly notBelieved?: 'unattested' | 'not-on-the-chain';
 }): ProposalsKeptInATest => {
@@ -115,6 +117,19 @@ export const proposalsKeptInATest = (over: {
         over.onRaise?.(rec.chainId);
         return round(rec);
       },
+    },
+    carried: async (id, body) => {
+      if (body.filer !== signingPublicKeyOf(over.signingSecret).toLowerCase() || !/^[0-9a-f]{64}$/u.test(body.vault)) {
+        log.push(`not carried ${id}`);
+        throw new Error('this request does not carry this seat\'s filing key and the vault');
+      }
+      const i = kept.findIndex((p) => p.id === id);
+      if (over.failCarried === true || i < 0) {
+        log.push(`not carried ${id}`);
+        throw new Error('the chain did not answer, so whether it carried this proposal out is not known');
+      }
+      kept[i] = { ...kept[i]!, status: 'executed' };
+      log.push(`carried ${id}`);
     },
   };
   return { doors, kept, log, raised, bodies };

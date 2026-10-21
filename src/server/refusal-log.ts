@@ -17,8 +17,8 @@
  *
  * ── WHAT A LINE CARRIES, AND WHY THE CLASS NAME IS ON IT ─────────────────
  *
- * The method, the path, the status, **the error's constructor name**, and the
- * reason. The class name is the half that would have answered 24 Aug on its
+ * The method, the path, the status, **the error's constructor name** (or, for a
+ * 401, the cause), and the reason. The class name is the half that would have answered 24 Aug on its
  * own: `NoCompanyAddress` and `ZodError` and a bare `Error` from a policy check
  * are three different mornings, and `400` is none of them. Nothing here is a
  * new refusal — every one of these messages was already being thrown and
@@ -83,22 +83,26 @@ export const refusalLogPath = (): string =>
 const HEADER = [
   'REPORT-REFUSALS  —  what the service refused, and why',
   '',
-  'One line per request this service answered with a 400: the method, the path, the',
-  'kind of error that was thrown, and the sentence the person was given. Appended',
-  'to, not overwritten, because a walk that hits thirteen refusals needs all',
+  'One entry for each request the service refused and wrote down: a 400 for a request it',
+  'could not do, a 422 or a 502 for a call it relayed that was refused or failed, and a',
+  '401 for a request from somebody who is not signed in. Each entry has the time, the',
+  'status, the method and the path, then the kind of error and the sentence the person',
+  'was given. For a 401 the sentence is always "not signed in" and the kind is the cause:',
+  'no credential, two session cookies, a sign-in that is revoked, unknown or expired, or',
+  'a person this service does not hold. That cause is kept only here and is never sent',
+  'back to the caller. A known person is named by the first characters of their id.',
+  'Appended to, not overwritten, because a walk that hits thirteen refusals needs all',
   'thirteen and not the last one.',
   '',
-  'Reason and path are REDACTED HERE, and the browser received them unredacted: the',
-  'page has its own redactor on the way to the wire, and this file has this one on the',
-  'way to disk. Anything shaped like a key, a seed, a token or a password is removed',
-  'before it reaches this file. So a line here and the sentence a person saw are the',
-  'same message and NOT the same string, and where they differ this one is the safe',
-  'one. (This header claimed they were identical until S58 — T-326.)',
+  'Reason and path are redacted here, and the browser received them unredacted: the page',
+  'has its own redactor on the way to the wire, and this file has this one on the way to',
+  'disk. Anything shaped like a key, a seed, a token or a password is removed before it',
+  'reaches this file, so a line here and the sentence a person saw are the same message',
+  'and not the same string, and where they differ this one is the safe one.',
   '',
-  'THE LINE ABOVE IS WORDED THE WAY IT IS ON PURPOSE. C148 made the seed-phrase',
-  'shape case-insensitive, and twelve consecutive short words are that shape — so',
-  'a header written in short words is a header every grep of this file trips over.',
-  'That is the over-redaction the redactor says it accepts, met on the first day.',
+  'This header is worded in long sentences on purpose: twelve short words in a row have',
+  'the shape of a seed phrase, and a header written in short words is one every search',
+  'of this file trips over.',
   '',
   '',
 ].join('\n');
@@ -119,9 +123,9 @@ export const renderRefusal = (
 /**
  * Appends one refusal, creating the file and its folder if needed.
  *
- * **Never throws.** It is called from the one place that answers every error
- * this service produces, and a service that cannot write its own report must
- * still be a service that answers. The same reasoning, and the same shape, as
+ * **Never throws.** It is called where the service answers a refusal (its one
+ * error answer, the relays, the invitations and the sign-in check), and a service
+ * that cannot write its own report must still be a service that answers. The same reasoning, and the same shape, as
  * `appendWebConsole`.
  */
 export const appendRefusal = (

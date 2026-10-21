@@ -49,6 +49,7 @@ import express from 'express';
 import { randomUUID, timingSafeEqual, createHash } from 'node:crypto';
 import type { FeeSponsor } from '../midnight/ledger.js';
 import { saysNothingWasSent } from '../core/jobs.js';
+import { feeAnswerCodeOf } from '../midnight/sponsor.js';
 
 /** How a transaction crosses the wire, in both directions. */
 export interface TransactionCodec {
@@ -278,9 +279,14 @@ export function feePayerApp(deps: FeePayerDeps): express.Express {
     held.cancel();
     try {
       const ref = await held.payer.submit(held.finalised);
-      res.json({ ref: ref.ref, at: ref.at });
+      res.json({ ref: ref.ref, at: ref.at, ...(ref.transactionHash ? { transactionHash: ref.transactionHash } : {}) });
     } catch (e) {
-      /* The outcome of a submission that threw is not known, and it is not reported as nothing sent. */
+      /* A refusal the fee payer established came at the node's door is nothing sent, with its code; the outcome of any other is not known. */
+      const code = feeAnswerCodeOf(e);
+      if (code !== null) {
+        res.status(422).json({ nothingWasSent: true, code, error: message(e) });
+        return;
+      }
       res.status(502).json({ nothingWasSent: false, error: message(e) });
     } finally {
       /* Only now may the next transaction be balanced. */

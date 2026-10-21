@@ -439,6 +439,20 @@ describe('proposals', () => {
    * Declined is hidden or offered as if it worked, or a row's panel offers
    * Approve or Decline as if they worked.
    */
+  /* RED WHEN: a proposal whose raiser's roster entry this device does not believe is shown as raised by a signer no longer listed, or with no word of why. */
+  it('names a raiser this device does not believe, with why, apart from one no longer listed', async () => {
+    state.company = records({ proposals: { of: 'read', value: [{ ...PROPOSALS[1]!, raiserNotBelieved: 'seat-not-on-the-chain' }, PROPOSALS[2]!] } });
+    const c = await draw('proposals');
+    expect(q(c, '[data-row=p1] [data-raiser-not-believed]')?.textContent).toBe(EN['proposals.raisedBy.notSeated']!.replace('{name}', 'Sam'));
+    expect(q(c, '[data-row=p2]')?.textContent).toContain(EN['proposals.raisedBy.unknown']);
+    expect(q(c, '[data-row=p2] [data-raiser-not-believed]')).toBeNull();
+    cleanup();
+    state.company = records({ proposals: { of: 'read', value: [{ ...PROPOSALS[1]!, raisedBy: null, raiserNotBelieved: 'not-their-signing-key' }] } });
+    const refused = await draw('proposals');
+    /* RED WHEN: a raiser whose entry did not check out is said as a signer no longer listed, or by a name nothing vouches for. */
+    expect(q(refused, '[data-row=p1] [data-raiser-not-believed]')?.textContent).toBe(EN['proposals.raisedBy.notAsSigned']);
+  });
+
   it('filters by the kit\'s table\'s tabs, with Declined shown disabled and Coming soon, and opens a proposal\'s panel', async () => {
     const c = await draw('proposals');
     const rowsShown = () => all(c, '[data-screen=proposals] [data-slot=data-table] tbody tr').map((e) => e.dataset.row);
@@ -823,6 +837,8 @@ describe('vaults and a vault', () => {
    * list is drawn when nothing is pending.
    */
   it('marks a pending vault with the Pending pill, lists it on top, and opens what finishes it', async () => {
+    /* The vault carried on has its name filed, so carrying it on asks only to confirm. */
+    state.vaultName = 'Treasury';
     const OTHER = 'cd'.repeat(32);
     state.company = records({ vaults: { of: 'read', value: [vaultOf('start-owed'), vaultOf('account-not-handed-over', OTHER), vaultOf('held-by-other-keys', 'ef'.repeat(32))] } });
     const c = await draw('vaults');
@@ -897,6 +913,8 @@ describe('vaults and a vault', () => {
    * its pill and its row do not open carrying its set up on in the panel - which any signer does from their own device.
    */
   it('marks a vault held and not set up as pending, says so, and opens carrying its set up on', async () => {
+    /* The vault carried on has its name filed, so carrying it on asks only to confirm. */
+    state.vaultName = 'Treasury';
     state.company = records({ vaults: { of: 'read', value: [vaultOf('start-owed')] } });
     const c = await draw('vaults');
     await settle();

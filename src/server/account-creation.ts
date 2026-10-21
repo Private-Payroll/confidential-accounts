@@ -26,6 +26,12 @@
  * and one that ran out before it landed is carried again by the device - the same
  * deploy, so the same address, and the same signature - and recorded in the
  * place of the one that can never land, because nothing of it reached the chain.
+ * Once the account is finished nothing is sent from those bytes again, so only
+ * their sha256 is kept, and a resuming device's repeat is compared by digest.
+ *
+ * **A FEE THAT WAS NOT PAID SAYS SO WITH A CODE** (`fee-not-paid`, or
+ * `network-refused` for a transaction the node refused before its pool), on a
+ * nothing-sent answer only: an answer that may have landed carries no code.
  *
  * **NOTHING IS RECORDED OR SENT WITH LESS THAN HALF ITS LIFE LEFT.** The node
  * refuses a transaction past its time to live with `Custom error: 228`, after
@@ -46,10 +52,12 @@ import { z } from 'zod';
 import { readCompanyLabel } from 'midnight-identity/profile/company-label';
 import { canonical, type Hex } from '../core/crypto.js';
 import type { AccountDeploy, AccountOpeningRecord, SealedAccount } from '../core/types.js';
+import { accountDeployDigest } from '../core/store.js';
 import type { Ledger } from '../core/ledger.js';
 import { isAccountId, isSignerId } from '../core/account.js';
 import type { CompanyFounded } from '../core/company-founding.js';
 import { saysNothingWasSent } from '../core/jobs.js';
+import { feeAnswerCodeOf } from '../midnight/sponsor.js';
 import { readContractAuthority } from '../midnight/ledger.js';
 import type { CommitteeKey } from '../midnight/vault-committee.js';
 import { CREATION_STEPS, DEPLOYED_CIRCUITS } from '../midnight/deferral.js';
@@ -80,6 +88,7 @@ export interface AccountCreationDeps {
     getAccountDeploy(accountId: string): AccountDeploy | null;
     recordAccountDeploy(d: AccountDeploy): boolean;
     replaceAccountDeploy(d: AccountDeploy): boolean;
+    keepOnlyAccountDeployDigests(accountId: string): boolean;
   };
   readonly ledger: Pick<Ledger, 'sendVault'>;
   /** The account's contract state as the indexer serves it, or null when there is none. */
@@ -422,16 +431,31 @@ export function accountCreationRoutes(deps: AccountCreationDeps): express.Router
     } catch {
       return 'unknown';
     }
-    if (state === null || state === undefined) return (await ranOut(record.deploy)) ? 'deploy-expired' : 'deploy-sent';
+    if (state === null || state === undefined) {
+      /* A company that reached finished keeps only digests: a chain that shows nothing for it now is not one to send to. */
+      if (record.deployDigest !== undefined) return 'unknown';
+      return (await ranOut(record.deploy)) ? 'deploy-expired' : 'deploy-sent';
+    }
     if (circuitsRefusal(state, await deps.expected.allKeys(), 'this company\'s account', DEPLOYED_CIRCUITS, 'the account\'s') !== null) {
       return (await ranOut(record.insert)) ? 'finish-expired' : 'finish-owed';
     }
+    let finished: boolean;
     try {
-      return (await deps.expected.payKeyCommitment(state)) === null ? 'pay-key-owed' : 'finished';
+      finished = (await deps.expected.payKeyCommitment(state)) !== null;
     } catch {
       return 'unknown';
     }
+    if (!finished) return 'pay-key-owed';
+    /* Nothing is sent from a finished account's bytes again: only their digests are kept. */
+    if (record.deployDigest === undefined) deps.store.keepOnlyAccountDeployDigests(record.accountId);
+    return 'finished';
   };
+
+  /** Whether a device's deploy and second step are the ones recorded, by their bytes or, once finished, their digests. */
+  const sameAsRecorded = (record: AccountDeploy, deploy: string, insert: string): boolean =>
+    record.deployDigest !== undefined && record.insertDigest !== undefined
+      ? record.deployDigest === accountDeployDigest(deploy) && record.insertDigest === accountDeployDigest(insert)
+      : record.deploy === deploy && record.insert === insert;
 
   const send = async (res: express.Response, accountId: string, what: string, bytes: Uint8Array, check: (tx: unknown) => string | null | Promise<string | null>) => {
     if (typeof deps.ledger.sendVault !== 'function') {
@@ -442,7 +466,11 @@ export function accountCreationRoutes(deps: AccountCreationDeps): express.Router
       return await deps.ledger.sendVault(accountId, what, 'proven-moving-nothing', bytes, check, deps.readers.proven);
     } catch (e: unknown) {
       const nothing = saysNothingWasSent(e);
-      res.status(nothing ? 422 : 502).json({ nothingWasSent: nothing, error: (e as { message?: string })?.message ?? 'unknown error' });
+      /* A code rides only on a nothing-sent answer: a 502 may have landed, and no page may say otherwise. */
+      const code = nothing ? feeAnswerCodeOf(e) : null;
+      res.status(nothing ? 422 : 502).json({
+        nothingWasSent: nothing, error: (e as { message?: string })?.message ?? 'unknown error', ...(code ? { code } : {}),
+      });
       return null;
     }
   };
@@ -534,7 +562,7 @@ export function accountCreationRoutes(deps: AccountCreationDeps): express.Router
     const recorded = deps.store.getAccountDeploy(account.id);
     /* A retry sends what was recorded the first time, whatever it carries now. */
     if (recorded !== null) {
-      if (recorded.deploy !== body.data.deploy || recorded.insert !== body.data.insert) {
+      if (!sameAsRecorded(recorded, body.data.deploy, body.data.insert)) {
         res.status(409).json({
           nothingWasSent: true,
           error: 'this company\'s account was already created from another deploy, and a company has one account. Nothing was sent.',

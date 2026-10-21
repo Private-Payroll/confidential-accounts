@@ -4,6 +4,7 @@ import { assets, type AssetRegistry } from '../../../../src/core/assets.js';
 import { openRecord } from '../../../../src/core/sealed-records.js';
 import { onlyPayableWhenActive, openPerson, peopleOnTheWire } from '../../../../src/core/person-record.js';
 import type { Account, PayrollRun, Proposal, ProposalKind, ProposalStatus, SealedAccount, SealedProposal, SealedRun } from '../../../../src/core/types.js';
+import type { RefusedEntry, RosterEntryRefusal } from '../../../../src/core/roster-record.js';
 import { api, canOpenCompanies, currentUser, holdersFromTheWallet, openKeysWithWallet } from 'vaults-web-shared/keyring.js';
 import { anchoredOnTheWayInFor, companyKeysFor, filingJudgeFor, openedHere, walletIndexerFor } from './filing-judge.js';
 import { keyOf, type CompanyKeys } from '../../../../src/core/company-key.js';
@@ -77,8 +78,13 @@ export interface ProposalRow {
   /** What it does, by kind. */
   kind: ProposalKind;
   status: ProposalStatus;
-  /** The signer who raised it, by the name the company's record gives them; null when the record names nobody by that seat. */
+  /**
+   * The signer who raised it, by the name the company's record gives them; null when the record names nobody by that
+   * seat, or names them only in an entry this device refused as not what its own wallet signed.
+   */
   raisedBy: string | null;
+  /** Why this device does not believe the roster entry of the signer who raised it; null when it does, or names nobody. */
+  raiserNotBelieved?: RosterEntryRefusal | null;
   /** How many have approved. */
   approvals: number;
   /** How many must, when the company's record says; null when it does not, and then no "of" is shown. */
@@ -287,13 +293,24 @@ function paysOf(run: PayrollRun, leg: string, registry: AssetRegistry): RunPays 
 }
 
 /** A proposal for a screen. */
-function proposalRow(p: Proposal, signers: readonly SignerRow[], runs: readonly PayrollRun[], registry: AssetRegistry = assets): ProposalRow {
+/**
+ * The refusals of a roster entry whose name is still shown: the seat is no longer held, or retired, or its holder has
+ * not opened the company yet. An entry not as its own wallet signed it is vouched for by nothing, its name included.
+ */
+const namedThoughNotBelieved = (why: RosterEntryRefusal): boolean =>
+  why === 'seat-not-on-the-chain' || why === 'seat-retired' || why === 'no-entry-of-their-own';
+
+function proposalRow(
+  p: Proposal, signers: readonly SignerRow[], runs: readonly PayrollRun[], registry: AssetRegistry = assets, refused: readonly RefusedEntry[] = [],
+): ProposalRow {
   const round = p.approvalRound;
   const run = runs.find((r) => Object.values(r.proposalIds ?? {}).includes(p.id));
+  const notBelieved = refused.find((r) => r.signerId === p.proposedBy);
   const leg = run === undefined ? undefined : Object.entries(run.proposalIds).find(([, id]) => id === p.id)?.[0];
   return {
     id: p.id, kind: p.kind, status: p.status,
-    raisedBy: signers.find((s) => s.id === p.proposedBy)?.name ?? null,
+    raisedBy: signers.find((s) => s.id === p.proposedBy)?.name ?? (notBelieved !== undefined && namedThoughNotBelieved(notBelieved.why) ? notBelieved.name : null),
+    raiserNotBelieved: notBelieved === undefined || signers.some((s) => s.id === p.proposedBy) ? null : notBelieved.why,
     approvals: (p.approvals ?? []).length,
     needed: round !== undefined && round.state !== 'unknown' ? round.threshold : null,
     raisedAt: p.createdAt,
@@ -398,7 +415,7 @@ export async function vaultListOf(
  */
 export async function readCompany(personId: string, companyId: string): Promise<Company> {
   let sealed: SealedAccount;
-  let account: Account;
+  let account: Account & { readonly refused?: readonly RefusedEntry[] };
   let viewingKey: CompanyKeys;
   try {
     if (!(await keyringFor(personId))) return { of: OPENED.refused, why: ACT_REFUSAL.notSignedIn };
@@ -427,7 +444,7 @@ export async function readCompany(personId: string, companyId: string): Promise<
     alone(async () => {
       const read = await opened;
       const all = (await ask(route(SERVICE.proposals)) as SealedProposal[]).map((p) => openProposal(p, viewingKey));
-      return all.map((p) => proposalRow(p, signers, read.of === READ.read ? read.value : []));
+      return all.map((p) => proposalRow(p, signers, read.of === READ.read ? read.value : [], assets, account.refused ?? []));
     }),
     alone(async () => [...onlyPayableWhenActive(peopleOnTheWire(await ask(route(SERVICE.people)), companyId)
       .map(({ rec, handedOver }) => ({ ...openPerson(rec, keyOf(viewingKey, rec.keyEpoch)), handedOver })), sealed.companyLabel ?? '')]
@@ -481,30 +498,39 @@ export async function readVaultPublicMoney(personId: string, companyId: string, 
   }
 }
 
+/** What `readVaultName` answers, when asked to, for a name it could not read, apart from none filed. */
+export const NAME_NOT_READ: unique symbol = Symbol();
+
 /**
  * THE NAME THE COMPANY FILED FOR THE VAULT `vault`, opened on this device with the company's key and believed only
  * as far as the company's directory, read by the person's own wallet, believes the filer. Null when there is no name
- * to show: none was filed, it could not be read or believed, it is blank, nobody or somebody else is signed in, or the
- * company names no account. A screen then says the vault by its number. The record code is loaded when a name is asked
- * for, so a page that shows no name does not carry it.
+ * to show: none was filed, it is blank, or - unless `unread` is given, which is answered instead - it could not be
+ * read or believed, nobody or somebody else is signed in, or the company names no account. A screen then says the
+ * vault by its number. The record code is loaded when a name is asked for, so a page that shows no name does not carry it.
  */
-export async function readVaultName(personId: string, companyId: string, vault: string): Promise<string | null> {
+export async function readVaultName(personId: string, companyId: string, vault: string): Promise<string | null>;
+export async function readVaultName(personId: string, companyId: string, vault: string, unread: typeof NAME_NOT_READ): Promise<string | null | typeof NAME_NOT_READ>;
+export async function readVaultName(
+  personId: string, companyId: string, vault: string, unread?: typeof NAME_NOT_READ,
+): Promise<string | null | typeof NAME_NOT_READ> {
+  const notRead = unread ?? null;
   try {
-    if (!(await keyringFor(personId))) return null;
+    if (!(await keyringFor(personId))) return notRead;
     const sealed = await api(SERVICE.company + companyId) as SealedAccount;
     const label = sealed.companyLabel ?? null;
     const address = sealed.contractAddress ?? null;
-    if (label === null || address === null) return null;
+    if (label === null || address === null) return notRead;
     const keys = await keysOnTheWayIn(companyId, async () => sealed);
-    if (keys === null) return null;
+    if (keys === null) return notRead;
     const account = await openedHere(sealed);
-    if (account === null) return null;
+    if (account === null) return notRead;
     const companyKeys: CompanyKeys = await companyKeysFor(companyId, sealed, keys);
     const judge = filingJudgeFor(companyId, label as CompanyLabel, address as AccountAddress, companyKeys, async () => account);
     const { vaultInfoHere, vaultInfoRecordsFor } = await import('vaults-web-shared/vault-info-here.js');
     const filed = await vaultInfoHere({ companyKeys, records: vaultInfoRecordsFor(companyId, keys.signingSecret, judge, () => currentUser()?.id ?? null) }, vault);
+    if (filed.state === 'unread') return notRead;
     return filed.state === 'named' && filed.name.trim() !== '' ? filed.name : null;
   } catch {
-    return null;
+    return notRead;
   }
 }

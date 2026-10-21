@@ -4,6 +4,12 @@ import {
   sessionCookie, type CookieScope,
 } from './session-cookie.js';
 import { CouldNotCheck, NoSuchUser } from '../core/identity.js';
+import { appendRefusal } from './refusal-log.js';
+
+/** The one code a 401 carries for every state of a token. Which state it was goes to the refusal log only. */
+export const SESSION_NOT_VALID = 'session-not-valid';
+
+const USER_ID_LOGGED_CHARS = 8;
 
 /** What a 503 from the sign-in check says: a failure to look, never an answer about the person. */
 export const COULD_NOT_CHECK = {
@@ -14,7 +20,11 @@ export const COULD_NOT_CHECK = {
 
 /**
  * The gate every signed-in route goes through. Only a definite "no such live session" or "no such
- * person" answers 401, which is what makes a page sign the person out. A failure to look (the
+ * person" answers 401, which is what makes a page sign the person out. Every 401 says "not signed in".
+ * Its `code` names a cause only where the caller already knows it from its own request (`no-credential`,
+ * `two-session-cookies`); every state of a token (revoked, never issued or run out, a person this service
+ * does not hold) is the one code `session-not-valid`, so a token holder learns nothing about the token.
+ * The service writes the real cause (never the token) to its refusal log. A failure to look (the
  * database unreachable, slow, dropped, out of connections) answers 503 `could-not-check`.
  * A session that is running low is renewed here, and a cookie-borne one gets its cookie renewed too.
  */
@@ -37,6 +47,15 @@ export const authedBy = (deps: {
     res.status(403).json({ error: refusal });
     return;
   }
+  const refused = (cause: string, person?: string): void => {
+    appendRefusal(req.method, req.baseUrl + req.path, 401, cause,
+      person === undefined ? 'not signed in' : `not signed in (person ${person.slice(0, USER_ID_LOGGED_CHARS)})`);
+  };
+  if (credential.via === 'none') {
+    refused(credential.why);
+    res.status(401).json({ error: 'not signed in', code: credential.why });
+    return;
+  }
   let userId: string;
   try {
     userId = await deps.identity.verify(credential.token);
@@ -51,7 +70,8 @@ export const authedBy = (deps: {
     if (e instanceof NoSuchUser && credential.via === 'cookie') {
       res.setHeader('Set-Cookie', clearedSessionCookie(deps.cookieScope));
     }
-    res.status(401).json({ error: e?.message ?? 'not signed in' });
+    refused(e?.code ?? 'session-unknown-or-expired', e instanceof NoSuchUser ? e.userId : undefined);
+    res.status(401).json({ error: e?.message ?? 'not signed in', code: SESSION_NOT_VALID });
     return;
   }
 

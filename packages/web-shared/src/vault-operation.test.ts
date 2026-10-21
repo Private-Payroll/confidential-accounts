@@ -3356,7 +3356,7 @@ describe('THE VAULT\'S COMMITTEE AND ITS SECRET, FROM THE CHAIN', () => {
      * A chain that holds what reaches it: the adoption opens once its raise is relayed, takes one approval and is
      * adopted. Ada's wallet then reads nothing, so each press stops right after the adoption.
      */
-    const adoptionPress = (over: { open?: boolean; adopted?: boolean; failSend?: boolean; failEnter?: number; kept?: SealedProposal[]; role?: 'viewer'; needed?: number; notBelieved?: 'unattested' | 'not-on-the-chain' } = {}) => {
+    const adoptionPress = (over: { open?: boolean; adopted?: boolean; failSend?: boolean; failEnter?: number; failCarried?: boolean; kept?: SealedProposal[]; role?: 'viewer'; needed?: number; notBelieved?: 'unattested' | 'not-on-the-chain' } = {}) => {
       const log: string[] = [];
       const chain = { open: over.open ?? false, approvals: 0, adopted: over.adopted ?? false };
       const kept = proposalsKeptInATest({
@@ -3364,6 +3364,7 @@ describe('THE VAULT\'S COMMITTEE AND ITS SECRET, FROM THE CHAIN', () => {
         ...(over.failEnter === undefined ? {} : { failEnter: over.failEnter }), ...(over.kept === undefined ? {} : { kept: over.kept }),
         ...(over.role === undefined ? {} : { role: over.role }),
         ...(over.notBelieved === undefined ? {} : { notBelieved: over.notBelieved }),
+        ...(over.failCarried === undefined ? {} : { failCarried: over.failCarried }),
         onRaise: (id) => { if (id === ADOPTION.proposal) chain.open = true; },
       });
       const a = { ...ada([null], log), proposals: kept.doors };
@@ -3397,7 +3398,9 @@ describe('THE VAULT\'S COMMITTEE AND ITS SECRET, FROM THE CHAIN', () => {
       const t = adoptionPress();
       await t.press();
       /* RED WHEN: the adoption is raised with nothing written down. */
-      expect(t.kept.log).toEqual(['file and raise', `entered ${t.kept.kept[0]!.id}`]);
+      /* RED WHEN: the adoption the chain carried out is left open in the company's proposals, with no approvals, on every screen. */
+      expect(t.kept.log).toEqual(['file and raise', `entered ${t.kept.kept[0]!.id}`, `carried ${t.kept.kept[0]!.id}`]);
+      expect(t.kept.kept[0]!.status).toBe('executed');
       expect(t.kept.raised.get(t.kept.kept[0]!.id)).toBe('T-propose');
       expect(t.kept.kept[0]).toMatchObject({ chainId: ADOPTION.proposal, digest: ADOPTION.payload, filedBy: { publicKey: signingPublicKeyOf('11'.repeat(32) as Hex) } });
       expect(t.kept.bodies[0]).toMatchObject({ salt: ADOPTION.salt });
@@ -3408,6 +3411,22 @@ describe('THE VAULT\'S COMMITTEE AND ITS SECRET, FROM THE CHAIN', () => {
       /* Approved and carried out as before, on the start's own route; the raise never went there. */
       expect(t.log.filter((l) => l.startsWith('sent '))).toEqual(['sent approve', 'sent adopt']);
       expect(t.chain.adopted).toBe(true);
+    });
+
+    it('an adoption the service will not write down as carried out does not stop the start, and a later press writes it down', async () => {
+      const first = adoptionPress({ failCarried: true });
+      const e = await first.press();
+      const id = first.kept.kept[0]!.id;
+      /* RED WHEN: a service that will not write the adoption down stops the vault's start, though the chain carried it out. */
+      expect(first.kept.log).toEqual(['file and raise', `entered ${id}`, `not carried ${id}`]);
+      expect(e.message).not.toMatch(/carried out on the chain/);
+      expect(first.chain.adopted).toBe(true);
+      const again = adoptionPress({ kept: first.kept.kept, adopted: true });
+      await again.press();
+      /* RED WHEN: the resume of a vault already adopted leaves its adoption open in the company's proposals. */
+      expect(again.kept.log).toEqual([`entered ${id}`, `carried ${id}`]);
+      expect(again.kept.kept[0]!.status).toBe('executed');
+      expect(again.log.filter((l) => l.startsWith('sent '))).toEqual([]);
     });
 
     it('a viewer seat sets up no vault and raises no proposal for one', async () => {
@@ -3450,7 +3469,7 @@ describe('THE VAULT\'S COMMITTEE AND ITS SECRET, FROM THE CHAIN', () => {
       await again.press();
       /* RED WHEN: the next press writes a second record of the same proposal instead of sending the one there. */
       expect(again.kept.kept).toHaveLength(1);
-      expect(again.kept.log).toEqual([`send ${first.kept.kept[0]!.id}`, `entered ${first.kept.kept[0]!.id}`]);
+      expect(again.kept.log).toEqual([`send ${first.kept.kept[0]!.id}`, `entered ${first.kept.kept[0]!.id}`, `carried ${first.kept.kept[0]!.id}`]);
       expect(again.chain.adopted).toBe(true);
     });
 
@@ -3459,7 +3478,7 @@ describe('THE VAULT\'S COMMITTEE AND ITS SECRET, FROM THE CHAIN', () => {
       await first.press();
       const id = first.kept.kept[0]!.id;
       /* RED WHEN: a record written down and raised whose entry is refused stops the vault's start. */
-      expect(first.kept.log).toEqual(['file and raise', `not entered ${id}`]);
+      expect(first.kept.log).toEqual(['file and raise', `not entered ${id}`, `carried ${id}`]);
       expect(first.chain.adopted).toBe(true);
       const again = adoptionPress({ kept: first.kept.kept, adopted: true });
       await again.press();
@@ -3481,7 +3500,7 @@ describe('THE VAULT\'S COMMITTEE AND ITS SECRET, FROM THE CHAIN', () => {
       const t = adoptionPress({ kept: theirs.kept });
       await t.press();
       /* RED WHEN: a device enters a record another seat filed, or writes its own beside it. */
-      expect(t.kept.log).toEqual([`send ${sealedBy.id}`]);
+      expect(t.kept.log).toEqual([`send ${sealedBy.id}`, `carried ${sealedBy.id}`]);
       expect(t.kept.kept).toHaveLength(1);
     });
 
@@ -3601,7 +3620,7 @@ describe('THE VAULT\'S COMMITTEE AND ITS SECRET, FROM THE CHAIN', () => {
       /* RED WHEN: a first secret run is written down only when this device raises it, so one the chain holds stays unrecorded. */
       expect(kept.kept.map((r) => r.chainId)).toEqual(['a1'.repeat(32), 'b1'.repeat(32)]);
       expect(kept.bodies[1]).toMatchObject({ salt: 'b4'.repeat(32), vault: 'b3'.repeat(32) });
-      expect(kept.log).toEqual(['file', `entered ${kept.kept[0]!.id}`, 'file', `entered ${kept.kept[1]!.id}`]);
+      expect(kept.log).toEqual(['file', `entered ${kept.kept[0]!.id}`, `carried ${kept.kept[0]!.id}`, 'file', `entered ${kept.kept[1]!.id}`]);
       expect(log).not.toContain('built propose');
     });
   });

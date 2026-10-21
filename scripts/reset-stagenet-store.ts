@@ -3,9 +3,10 @@
  *
  * Moves `.midnight/created-companies.json` into `_to_delete/` under a dated
  * name and empties the sealed-record and session rows in the database named by
- * DATABASE_URL (never TEST_DATABASE_URL, never `ca_test`). Refuses while the run
- * is up, says what it will remove before it removes anything, and wants the word
- * `yes` typed.
+ * DATABASE_URL (never TEST_DATABASE_URL, never `ca_test`). Refuses unless `.env`
+ * names the store as `STORE_KIND=dev` or `STORE_KIND=stagenet`, before any
+ * connection is opened. Refuses while the run is up, says what it will remove
+ * before it removes anything, and wants the word `yes` typed.
  *
  *   tsx scripts/reset-stagenet-store.ts                run it
  *   tsx scripts/reset-stagenet-store.ts --device-steps print how to clear the web app's records on this device
@@ -20,8 +21,8 @@ import { pathToFileURL } from 'node:url';
 import postgres from 'postgres';
 import { loadEnvFile, describeDb } from '../src/db/connect.js';
 import {
-  CLEARED_TABLES, CREATED_COMPANIES, emptyTheTables, moveCreatedCompanies, portsOfTheRun, refuseWhileRunning,
-  type Database,
+  CLEARED_TABLES, CREATED_COMPANIES, emptyTheTables, moveCreatedCompanies, portsOfTheRun, refuseUnlessResettableStore,
+  refuseWhileRunning, type Database,
 } from './reset-stagenet-store-rules.js';
 
 const ROOT = join(import.meta.dirname, '..');
@@ -60,6 +61,8 @@ async function main(): Promise<number> {
 
   say('  THE STAGENET RUN\'S STORE  (.midnight/created-companies.json and the database)');
   say();
+  const notThisStore = refuseUnlessResettableStore(process.env.STORE_KIND);
+  if (notThisStore) { say('  ' + notThisStore); return 1; }
   const refusal = await refuseWhileRunning(portsOfTheRun(process.env, devScript), listens);
   if (refusal) { say('  ' + refusal); return 1; }
   say('  The run is not up: its ports are free.');

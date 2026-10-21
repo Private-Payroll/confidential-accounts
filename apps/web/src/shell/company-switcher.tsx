@@ -72,7 +72,7 @@ export function CompanySwitcher({ open, onOpenChange }: { open: boolean; onOpenC
                     <span className="flex size-6 items-center justify-center rounded-md border">
                       <HugeiconsIcon icon={Building03Icon} strokeWidth={2} className="size-3.5" />
                     </span>
-                    <CompanyFacts company={c} name={names.get(c.id) ?? null} />
+                    <CompanyFacts company={c} name={names.get(c.id) ?? null} whyUnnamed={names.whyNot?.get(c.id) ?? null} />
                     {c.id === company ? <HugeiconsIcon icon={Tick02Icon} strokeWidth={2} className="size-4" /> : null}
                   </DropdownMenuItem>
                 ))}

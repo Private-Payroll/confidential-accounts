@@ -49,6 +49,8 @@ import { MidnightCommitments } from '../midnight/commitments.js';
 import { FileSealedStateStore } from '../midnight/sealed-store.js';
 import { midnightProviders, sponsoredProviders, type CustomerWallet } from '../midnight/providers.js';
 import { NothingWasSent, saysNothingWasSent } from '../core/jobs.js';
+import { FeeNotPaid, feeAnswerCodeOf } from '../midnight/sponsor.js';
+import { FeeRefused } from '../midnight/fee-ceiling.js';
 import {
   refusalForProven, refusalUnlessOnlyACallTo, readProvenTransaction, readFinishedTransaction,
 } from './proven-submission.js';
@@ -524,21 +526,6 @@ export class ChainLedger implements Ledger {
   }
 
   /**
-   * **A TRANSACTION A SIGNER'S DEVICE ALREADY PROVED, BALANCED, PAID FOR AND
-   * SENT.**
-   *
-   * Nothing is proved here. The company's side balances what it owns, the fee
-   * payer adds the capped fee, and the fee payer submits - the same two parties,
-   * in the same order, through the same one-write-at-a-time lane as every other
-   * write. Before anything is booked the transaction is read and refused unless
-   * it only calls this company's own contract.
-   *
-   * **EVERY FAILURE BEFORE THE SUBMISSION CARRIES THE MARK THAT NOTHING WAS
-   * SENT**, including a refusal to start because an earlier write is overdue,
-   * so the device can say so. A failure of the submission itself does not: it
-   * may have landed.
-   */
-  /**
    * **A VAULT TRANSACTION A SIGNER'S DEVICE BUILT, PAID FOR AND SENT, WITH NO
    * COMPANY WALLET ANYWHERE ON THE WAY.**
    *
@@ -550,7 +537,11 @@ export class ChainLedger implements Ledger {
    * two parties balance never overlap.
    *
    * Through the same one-write-at-a-time lane as every other write, and every
-   * failure before the submission carries the mark that nothing was sent.
+   * failure before the submission carries the mark that nothing was sent; a
+   * fee that was not paid carries the code that says so. A submission the node
+   * refused at admission carries the mark too, with its own code, because the
+   * fee payer has established that it never entered the pool. Any other
+   * failure of the submission does not: it may have landed.
    */
   sendVault(
     accountId: string,
@@ -576,20 +567,49 @@ export class ChainLedger implements Ledger {
         : (tx as { bind(): unknown }).bind();
       const deadline = new Date(Date.now() + 20 * 60_000);
       const payer = this.payer!;
-      const finalised = await payer.addFeeAndFinalise(bound, deadline);
+      let finalised: unknown;
+      try {
+        finalised = await payer.addFeeAndFinalise(bound, deadline);
+      } catch (e) {
+        /*
+         * Whatever stopped the fee, nothing was booked and nothing was sent. A fee over the ceiling keeps its own
+         * words and no code: trying again would be refused again. Anything else says the fee was not paid.
+         */
+        throw feeAnswerCodeOf(e) !== null || e instanceof FeeRefused
+          ? e : new FeeNotPaid(String((e as { message?: unknown })?.message ?? e));
+      }
       let transactionHash: string | null = null;
       try {
         transactionHash = String((finalised as { transactionHash(): unknown }).transactionHash());
       } catch { /* the reference below still names it */ }
       submitting = true;
       const ref = await payer.submit(finalised);
-      return { ref: String(ref.ref), at: ref.at, transactionHash };
+      /* The fee payer answers the hash of what it sent when that is not what it was given. */
+      return { ref: String(ref.ref), at: ref.at, transactionHash: ref.transactionHash ?? transactionHash };
     }).catch((e: unknown) => {
       if (submitting || saysNothingWasSent(e)) throw e;
       throw new NothingWasSent(String((e as { message?: unknown })?.message ?? e));
     });
   }
 
+  /**
+   * **A TRANSACTION A SIGNER'S DEVICE ALREADY PROVED, BALANCED, PAID FOR AND
+   * SENT.**
+   *
+   * Nothing is proved here. The company's side balances what it owns, the fee
+   * payer adds the capped fee, and the fee payer submits - the same two parties,
+   * in the same order, through the same one-write-at-a-time lane as every other
+   * write. Before anything is booked the transaction is read and refused unless
+   * it only calls this company's own contract.
+   *
+   * **EVERY FAILURE BEFORE THE SUBMISSION CARRIES THE MARK THAT NOTHING WAS
+   * SENT**, including a refusal to start because an earlier write is overdue,
+   * so the device can say so. A failure of the submission itself does not: it
+   * may have landed. The one exception is a refusal the fee payer established
+   * came at the node's door, before its pool. A fee that could not be paid
+   * carries the code that says so; one over the ceiling keeps its own words
+   * and no code.
+   */
   submitProven(
     accountId: string,
     proven: Uint8Array,
@@ -641,9 +661,16 @@ export class ChainLedger implements Ledger {
        * submission takes both over from the moment it starts.
        */
       const providers = sponsoredProviders(this.company!, this.payer!);
-      const finalised = await providers.walletProvider.balanceTx(tx as never);
+      let finalised: unknown;
+      try {
+        finalised = await providers.walletProvider.balanceTx(tx as never);
+      } catch (e) {
+        /* As for a vault's step: nothing was sent; a fee over the ceiling keeps its own words, anything else says the fee was not paid. */
+        throw feeAnswerCodeOf(e) !== null || e instanceof FeeRefused
+          ? e : new FeeNotPaid(String((e as { message?: unknown })?.message ?? e));
+      }
       submitting = true;
-      const ref = await providers.midnightProvider.submitTx(finalised);
+      const ref = await providers.midnightProvider.submitTx(finalised as never);
       return { ref: String(ref), at: new Date().toISOString() };
     }).catch((e: unknown) => {
       if (submitting || saysNothingWasSent(e)) throw e;

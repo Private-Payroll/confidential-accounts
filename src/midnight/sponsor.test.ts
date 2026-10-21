@@ -1,5 +1,5 @@
 /**
- * The fee sponsor. M-4, decision 0001.
+ * The fee payer.
  *
  * These run offline against a recording stand-in for the wallet facade, because
  * the property that matters is not "does it work on chain" — it is "does it
@@ -11,7 +11,11 @@
  * be checked in thirty milliseconds instead of four minutes.
  */
 import { describe, it, expect } from 'vitest';
-import { WalletFeeSponsor, CUSTOMER_BALANCES, SPONSOR_BALANCES, type SponsorWallet } from './sponsor.js';
+import {
+  WalletFeeSponsor, CUSTOMER_BALANCES, SPONSOR_BALANCES, FeeNotPaid, NetworkRefused, feeAnswerCodeOf, poolRefusalOf,
+  VIEW_TIMING, type FeePayerView, type SponsorWallet, type ViewTiming,
+} from './sponsor.js';
+import { FeeRefused } from './fee-ceiling.js';
 import { CUSTOMER_TOKEN_KINDS, SPONSOR_TOKEN_KINDS } from './wallet.js';
 import { saysNothingWasSent } from '../core/jobs.js';
 
@@ -132,7 +136,7 @@ describe('WalletFeeSponsor', () => {
      */
     const { wallet, calls } = fakeWallet();
     await new WalletFeeSponsor(wallet, CEILING).addFeeAndFinalise({ tx: 1 }, new Date());
-    expect(calls[0].method,
+    expect(calls[0]?.method,
       'the fee was estimated after the coins were already booked, or not at all')
       .toBe('estimateFee');
   });
@@ -154,7 +158,7 @@ describe('WalletFeeSponsor', () => {
     const sponsor = new WalletFeeSponsor(wallet, CEILING, undefined, { record: (e) => recorded.push(e) });
     await expect(sponsor.addFeeAndFinalise({ tx: 1 }, new Date())).resolves.toBeTruthy();
     await sponsor.submit({ done: true });
-    expect(recorded[0].estimated,
+    expect(recorded[0]?.estimated,
       'a reading nobody took was written down as a number').toBeNull();
   });
 
@@ -177,10 +181,10 @@ describe('WalletFeeSponsor', () => {
     await sponsor.submit({ done: true });
 
     expect(recorded).toHaveLength(1);
-    expect(recorded[0].company).toBe('acc_the_company');
-    expect(recorded[0].estimated, 'the estimate was not the one taken before balancing').toBe(7n);
-    expect(recorded[0].actual, 'the charged fee was not read off the chain').toBe(9n);
-    expect(recorded[0].ref).toBe('tx_sponsored');
+    expect(recorded[0]?.company).toBe('acc_the_company');
+    expect(recorded[0]?.estimated, 'the estimate was not the one taken before balancing').toBe(7n);
+    expect(recorded[0]?.actual, 'the charged fee was not read off the chain').toBe(9n);
+    expect(recorded[0]?.ref).toBe('tx_sponsored');
   });
 
   it('does not file one transaction\'s estimate against the next one', async () => {
@@ -202,8 +206,8 @@ describe('WalletFeeSponsor', () => {
     sponsor.payingFor('acc_two');
     await sponsor.submit({ done: true });
 
-    expect(recorded[1].company).toBe('acc_two');
-    expect(recorded[1].estimated,
+    expect(recorded[1]?.company).toBe('acc_two');
+    expect(recorded[1]?.estimated,
       'the previous transaction\'s estimate was filed against this one').toBeNull();
   });
 
@@ -235,7 +239,7 @@ describe('WalletFeeSponsor', () => {
     });
     const sponsor = new WalletFeeSponsor(wallet, CEILING, undefined, { record: (e) => recorded.push(e) });
     await expect(sponsor.submit({ done: true })).resolves.toBeTruthy();
-    expect(recorded[0].actual, 'a reading nobody took was written down as a number').toBeNull();
+    expect(recorded[0]?.actual, 'a reading nobody took was written down as a number').toBeNull();
   });
 
   it('uses the SPONSOR\'s keys, not the customer\'s', async () => {
@@ -263,8 +267,8 @@ describe('WalletFeeSponsor', () => {
   });
 
   it('submits exactly once', async () => {
-    // M-28 was this class of bug one layer up: `callTx` already submits, and a
-    // second submission was handed the wrong type entirely.
+    // `callTx` already submits one layer up, and a second submission would be
+    // handed the wrong type entirely.
     const { wallet, calls } = fakeWallet();
     const ref = await new WalletFeeSponsor(wallet, CEILING).submit({ done: true });
     expect(calls.filter(c => c.method === 'submitTransaction')).toHaveLength(1);
@@ -402,15 +406,7 @@ describe('a sponsor releases what it booked and did not spend', () => {
 
   it('and it survives on the OTHER failure path too, which nothing covered', async () => {
     /*
-     * **TWO CALL SITES, ONE PROPERTY, AND ONLY ONE OF THEM WAS WATCHED.** The
-     * case above drives the submit path; the finalise path had the same guard
-     * and no case, so breaking it turned nothing red. That was invisible while
-     * the guard lived inside `release` and covered both by construction - and
-     * it became reachable the moment the guard moved to the call sites, which
-     * is exactly the kind of hole a move like that leaves.
-     *
-     * RED WHEN: the `try` around the release in `addFeeAndFinalise`'s catch is
-     * removed.
+     * RED WHEN: a release that fails while proving the fee leg replaces the error that says why the proof failed.
      */
     const { wallet } = fakeWallet({
       async finalizeRecipe() { throw new Error('the prover refused'); },
@@ -451,8 +447,7 @@ describe('a sponsor releases what it booked and did not spend', () => {
  */
 describe('a sponsor refuses to pay more than its ceiling', () => {
   /*
-   * RED WHEN: the `refusalForExpected` check in `addFeeAndFinalise` is removed,
-   * so an estimate already over the ceiling goes on to book coins.
+   * RED WHEN: a fee whose estimate is over the ceiling is booked before it is refused.
    */
   it('refuses on the estimate before anything is booked', async () => {
     const { wallet, calls } = fakeWallet({ estimateFee: async () => 1_001n });
@@ -547,5 +542,373 @@ describe('a sponsor refuses to pay more than its ceiling', () => {
       .toThrow(/no ceiling on what one transaction may spend/);
     expect(() => new WalletFeeSponsor(wallet, { perTransaction: 0n }))
       .toThrow(/no ceiling on what one transaction may spend/);
+  });
+});
+
+/* ------------------------------------------------------------------ *
+ * One fee at a time, from a view that is current
+ * ------------------------------------------------------------------ */
+
+/** A view the test moves by hand: where it has got, where the network is, which payments its history shows. */
+function fakeView(start: { applied: bigint | null; tip: bigint }) {
+  const notes: string[] = [];
+  const shown = new Set<string>();
+  const state = { applied: start.applied, tip: start.tip, tipFails: false };
+  const view: FeePayerView & { notes: string[]; shown: Set<string>; state: typeof state } = {
+    notes, shown, state,
+    lastAccepted: null,
+    applied: () => state.applied,
+    tip: async () => { if (state.tipFails) throw new Error('the indexer is away'); return state.tip; },
+    shows: async (h: string) => shown.has(h),
+    numbers: () => `dust applied ${state.applied ?? 0n} of ${state.tip}; 3 coins free to spend`,
+    note: (line: string) => { notes.push(line); },
+  };
+  return view;
+}
+
+/** A clock that only moves when the fee payer sleeps, and a hook run at every sleep. */
+function fakeTiming(onSleep: (sleptMs: number) => void = () => {}) {
+  let t = 0;
+  const timing: ViewTiming = {
+    waitMs: 45_000, pollMs: 1_000, writeLimitMs: 1e12, sendReserveMs: 0,
+    now: () => t,
+    sleep: async (ms) => { t += ms; onSleep(t); },
+  };
+  return timing;
+}
+
+/** A finalised transaction the fake wallet hands back, carrying its hash. */
+const withHash = (hash: string, extra: Record<string, unknown> = {}) => ({ submittable: true, intents: spending(5n), transactionHash: () => hash, ...extra });
+
+/** The error a submission throws when the node refuses at its door, as the real wallet library and node client build it. */
+async function refusedAtTheDoor(code: number, data?: string): Promise<unknown> {
+  const { Effect } = await import('effect');
+  const { SubmissionError } = await import('@midnightntwrk/wallet-sdk-capabilities');
+  const { NodeClientError } = await import('@midnightntwrk/wallet-sdk-node-client/effect');
+  const { default: RpcError } = await import('@polkadot/rpc-provider/coder/error');
+  const rpc = new RpcError(`${code}: refused${data ? `: ${data}` : ''}`, code, data);
+  const inner = new NodeClientError.SubmissionError({ message: 'Transaction submission failed', txData: new Uint8Array(1) as never, cause: rpc });
+  return Effect.runPromise(Effect.fail(new SubmissionError({ message: 'Transaction submission error', cause: inner })))
+    .then(() => { throw new Error('the stand-in did not fail'); }, (e: unknown) => e);
+}
+
+describe('the fee payer pays one fee at a time, from a view that is current', () => {
+  /*
+   * RED WHEN: a fee is balanced from a view that has not applied every DUST event the network holds.
+   */
+  it('waits until its view reaches the network before it balances', async () => {
+    const view = fakeView({ applied: 10n, tip: 13n });
+    let appliedWhenBalanced: bigint | null = null;
+    const { wallet } = fakeWallet({
+      view, async balanceFinalizedTransaction(tx) { appliedWhenBalanced = view.state.applied; return { from: tx }; },
+    });
+    const timing = fakeTiming((t) => { if (t >= 3_000) view.state.applied = 13n; });
+    await new WalletFeeSponsor(wallet, CEILING, undefined, undefined, timing).addFeeAndFinalise({ tx: 1 }, new Date());
+    expect(appliedWhenBalanced, 'balanced before the view was current').toBe(13n);
+  });
+
+  /*
+   * RED WHEN: a view one event short of the network counts as current.
+   */
+  it('a view one event short of the network is behind, with no tolerance', async () => {
+    const view = fakeView({ applied: 12n, tip: 13n });
+    const { wallet, calls } = fakeWallet({ view });
+    const e: any = await new WalletFeeSponsor(wallet, CEILING, undefined, undefined, fakeTiming())
+      .addFeeAndFinalise({ tx: 1 }, new Date()).catch((x) => x);
+    expect(feeAnswerCodeOf(e)).toBe('fee-not-paid');
+    expect(calls.map(c => c.method)).not.toContain('balanceFinalizedTransaction');
+  });
+
+  /*
+   * RED WHEN: a fee payer whose view never gets there waits for ever, or pays anyway.
+   * RED WHEN: a refusal is not written down with the view's numbers.
+   */
+  it('refuses at the bound with nothing booked and nothing sent, and writes the numbers down', async () => {
+    const view = fakeView({ applied: 10n, tip: 20n });
+    const { wallet, calls } = fakeWallet({ view });
+    const timing = fakeTiming();
+    const e: any = await new WalletFeeSponsor(wallet, CEILING, undefined, undefined, timing)
+      .addFeeAndFinalise({ tx: 1 }, new Date()).catch((x) => x);
+    expect(e).toBeInstanceOf(FeeNotPaid);
+    expect(saysNothingWasSent(e)).toBe(true);
+    expect(timing.now()).toBe(45_000);
+    expect(e.message).toMatch(/behind/);
+    expect(e.message).toMatch(/nothing was lost/);
+    expect(e.message).toContain('dust applied 10 of 20');
+    expect(calls.map(c => c.method)).not.toContain('balanceFinalizedTransaction');
+    expect(view.notes.join('\n')).toContain('dust applied 10 of 20');
+  });
+
+  /*
+   * RED WHEN: a tip the indexer did not give is taken as reached.
+   */
+  it('refuses when the indexer cannot say how far the network has got', async () => {
+    const view = fakeView({ applied: 10n, tip: 10n });
+    view.state.tipFails = true;
+    const { wallet, calls } = fakeWallet({ view });
+    const e: any = await new WalletFeeSponsor(wallet, CEILING, undefined, undefined, fakeTiming())
+      .addFeeAndFinalise({ tx: 1 }, new Date()).catch((x) => x);
+    expect(feeAnswerCodeOf(e)).toBe('fee-not-paid');
+    expect(e.message).toMatch(/the indexer is away/);
+    expect(calls.map(c => c.method)).not.toContain('balanceFinalizedTransaction');
+  });
+
+  /*
+   * RED WHEN: the next fee is balanced before the view shows the last payment the network accepted.
+   * RED WHEN: the last accepted payment is remembered per fee payer, so a fee payer built per request forgets it.
+   */
+  it('the next fee waits until the view shows the last payment the network accepted, across fee payers', async () => {
+    const view = fakeView({ applied: 30n, tip: 30n });
+    const { wallet } = fakeWallet({ view, async finalizeRecipe() { return withHash('h-paid'); } });
+    const first = new WalletFeeSponsor(wallet, CEILING, undefined, undefined, fakeTiming());
+    await first.submit(await first.addFeeAndFinalise({ tx: 1 }, new Date()));
+    expect(view.lastAccepted).toBe('h-paid');
+
+    let shownWhenBalanced: boolean | null = null;
+    const { wallet: same } = fakeWallet({
+      view, async balanceFinalizedTransaction(tx) { shownWhenBalanced = view.shown.has('h-paid'); return { from: tx }; },
+    });
+    const timing = fakeTiming((t) => { if (t >= 2_000) view.shown.add('h-paid'); });
+    await new WalletFeeSponsor(same, CEILING, undefined, undefined, timing).addFeeAndFinalise({ tx: 2 }, new Date());
+    expect(shownWhenBalanced, 'balanced before the last payment was shown').toBe(true);
+    expect(view.lastAccepted).toBeNull();
+  });
+
+  /*
+   * RED WHEN: a payment whose submission failed is waited for, so one dropped payment stops every fee after it.
+   */
+  it('a payment whose submission failed is never waited for', async () => {
+    const view = fakeView({ applied: 30n, tip: 30n });
+    const { wallet } = fakeWallet({
+      view, async finalizeRecipe() { return withHash('h-lost'); },
+      async submitTransaction() { throw new Error('the socket closed'); },
+    });
+    const sponsor = new WalletFeeSponsor(wallet, CEILING, undefined, undefined, fakeTiming());
+    await expect(sponsor.submit(await sponsor.addFeeAndFinalise({ tx: 1 }, new Date()))).rejects.toThrow('the socket closed');
+    expect(view.lastAccepted).toBeNull();
+  });
+});
+
+describe('a refusal at the node\'s door is nothing sent, and a refused spend proof is answered once', () => {
+  /*
+   * RED WHEN: the node's code is no longer found through the wallet library's failure cause, so every refusal reads as unknown.
+   */
+  it('reads the node\'s code from the error the real wallet library throws, never from its words', async () => {
+    const e = await refusedAtTheDoor(1010, 'Custom error: 170');
+    expect(String((e as Error).message)).not.toMatch(/1010|170/);
+    expect(poolRefusalOf(e)).toEqual(expect.objectContaining({ rpcCode: 1010, custom: 170 }));
+    expect(poolRefusalOf(await refusedAtTheDoor(1002, 'Runtime error'))).toEqual(expect.objectContaining({ rpcCode: 1002 }));
+  });
+
+  /*
+   * RED WHEN: a code that means the transaction is, or may be, in the pool or already landed reads as refused at the door.
+   */
+  it('reads no other code as refused at the door, nor an intent the network already holds, nor plain words', async () => {
+    for (const code of [1012, 1013, 1014, 1016]) expect(poolRefusalOf(await refusedAtTheDoor(code)), String(code)).toBeNull();
+    expect(poolRefusalOf(await refusedAtTheDoor(1010, 'Custom error: 230'))).toBeNull();
+    expect(poolRefusalOf(new Error('1010: Invalid Transaction: Custom error: 170'))).toBeNull();
+  });
+
+  /*
+   * RED WHEN: a transaction the node refused at its door is reported as one that may have landed.
+   */
+  it('a refusal at the door that is not a spend proof is network-refused, released, and not sent again', async () => {
+    const refusal = await refusedAtTheDoor(1002, 'Runtime error');
+    const { wallet, calls } = fakeWallet({ async submitTransaction() { calls.push({ method: 'submitTransaction', args: [] }); throw refusal; } });
+    const sponsor = new WalletFeeSponsor(wallet, CEILING);
+    const e: any = await sponsor.submit(await sponsor.addFeeAndFinalise({ tx: 1 }, new Date())).catch((x) => x);
+    expect(e).toBeInstanceOf(NetworkRefused);
+    expect(feeAnswerCodeOf(e)).toBe('network-refused');
+    expect(e.message).toMatch(/nothing was lost/);
+    expect(calls.filter(c => c.method === 'submitTransaction')).toHaveLength(1);
+    expect(calls.map(c => c.method)).toContain('revert');
+  });
+
+  /*
+   * RED WHEN: a refused spend proof is not paid again with a fresh proof.
+   * RED WHEN: the page is given the hash of the refused transaction rather than the one that was sent.
+   */
+  it('a refused spend proof is balanced again from the same transaction and sent once more', async () => {
+    const refusal = await refusedAtTheDoor(1010, 'Custom error: 170');
+    let made = 0;
+    let sent = 0;
+    const { wallet, calls } = fakeWallet({
+      async finalizeRecipe() { made += 1; return withHash(`h${made}`); },
+      async submitTransaction(tx: any) { sent += 1; calls.push({ method: 'submitTransaction', args: [tx] }); if (sent === 1) throw refusal; return 'ref-again'; },
+    });
+    const sponsor = new WalletFeeSponsor(wallet, CEILING);
+    const ref = await sponsor.submit(await sponsor.addFeeAndFinalise({ tx: 'the same' }, new Date()));
+    expect(ref).toEqual(expect.objectContaining({ ref: 'ref-again', transactionHash: 'h2' }));
+    const balanced = calls.filter(c => c.method === 'balanceFinalizedTransaction');
+    expect(balanced).toHaveLength(2);
+    expect(balanced[1]!.args[0]).toEqual({ tx: 'the same' });
+    expect(calls.filter(c => c.method === 'submitTransaction').map(c => (c.args[0] as any).transactionHash())).toEqual(['h1', 'h2']);
+  });
+
+  /*
+   * RED WHEN: a second refused spend proof is answered with a third attempt.
+   */
+  it('a second refused spend proof is network-refused and not sent a third time', async () => {
+    const refusal = await refusedAtTheDoor(1010, 'Custom error: 170');
+    let made = 0;
+    const { wallet, calls } = fakeWallet({
+      async finalizeRecipe() { made += 1; return withHash(`h${made}`); },
+      async submitTransaction() { calls.push({ method: 'submitTransaction', args: [] }); throw refusal; },
+    });
+    const sponsor = new WalletFeeSponsor(wallet, CEILING);
+    const e: any = await sponsor.submit(await sponsor.addFeeAndFinalise({ tx: 1 }, new Date())).catch((x) => x);
+    expect(feeAnswerCodeOf(e)).toBe('network-refused');
+    expect(e.message).toMatch(/again after the fee was paid with a fresh proof/);
+    expect(calls.filter(c => c.method === 'submitTransaction')).toHaveLength(2);
+  });
+
+  /*
+   * RED WHEN: a refusal of a second copy of a transaction already handed in is read as nothing sent, when the first may have landed.
+   */
+  it('a copy handed in a second time is never read as refused at the door', async () => {
+    const refusal = await refusedAtTheDoor(1010, 'Custom error: 170');
+    let sent = 0;
+    const { wallet } = fakeWallet({
+      async finalizeRecipe() { return withHash('h-once'); },
+      async submitTransaction() { sent += 1; if (sent === 1) throw new Error('the socket closed'); throw refusal; },
+    });
+    const sponsor = new WalletFeeSponsor(wallet, CEILING);
+    const tx = await sponsor.addFeeAndFinalise({ tx: 1 }, new Date());
+    await expect(sponsor.submit(tx)).rejects.toThrow('the socket closed');
+    const e: any = await sponsor.submit(tx).catch((x) => x);
+    expect(saysNothingWasSent(e)).toBe(false);
+  });
+
+  /*
+   * RED WHEN: a failure after the door (or a dropped connection) is reported as nothing sent.
+   */
+  it('any other failure of the submission is raised as it came, because it may have landed', async () => {
+    const { wallet } = fakeWallet({ async submitTransaction() { throw await refusedAtTheDoor(1013); } });
+    const sponsor = new WalletFeeSponsor(wallet, CEILING);
+    const e: any = await sponsor.submit(await sponsor.addFeeAndFinalise({ tx: 1 }, new Date())).catch((x) => x);
+    expect(saysNothingWasSent(e)).toBe(false);
+    expect(feeAnswerCodeOf(e)).toBeNull();
+  });
+});
+
+describe('after a refused spend proof, paying again never reads as possibly landed', () => {
+  /** A wallet whose first hand-in is refused for its spend proof, and whose second balance does what the test says. */
+  const refusedThen = async (secondBalance: () => Promise<unknown>) => {
+    const refusal = await refusedAtTheDoor(1010, 'Custom error: 170');
+    let balanced = 0;
+    let made = 0;
+    return fakeWallet({
+      async balanceFinalizedTransaction(tx) { balanced += 1; return balanced === 1 ? { from: tx } : secondBalance(); },
+      async finalizeRecipe() { made += 1; return withHash(`h${made}`); },
+      async submitTransaction() { throw refusal; },
+    });
+  };
+
+  /*
+   * RED WHEN: a second balance that fails after a refused spend proof is raised as it came, so the step reads as
+   * possibly landed though nothing reached the pool.
+   */
+  it('a second balance that cannot be made is a fee not paid, and nothing sent', async () => {
+    const { wallet } = await refusedThen(async () => { throw new Error('could not balance dust'); });
+    const sponsor = new WalletFeeSponsor(wallet, CEILING);
+    const e: any = await sponsor.submit(await sponsor.addFeeAndFinalise({ tx: 1 }, new Date())).catch((x) => x);
+    expect(saysNothingWasSent(e)).toBe(true);
+    expect(feeAnswerCodeOf(e)).toBe('fee-not-paid');
+    expect(e.message).toMatch(/could not balance dust/);
+  });
+
+  /*
+   * RED WHEN: a ceiling refusal on the second balance is given a code that tells the person to try again.
+   */
+  it('a second balance over the ceiling keeps its own words and no code', async () => {
+    const { wallet } = await refusedThen(async () => ({ from: 'dear' }));
+    const sponsor = new WalletFeeSponsor(wallet, CEILING);
+    const first = await sponsor.addFeeAndFinalise({ tx: 1 }, new Date());
+    (wallet as any).estimateFee = async () => 5_000n;
+    const e: any = await sponsor.submit(first).catch((x) => x);
+    expect(e).toBeInstanceOf(FeeRefused);
+    expect(saysNothingWasSent(e)).toBe(true);
+    expect(feeAnswerCodeOf(e)).toBeNull();
+  });
+
+  /*
+   * RED WHEN: the second wait for the view is given its full bound however long the write has already run, so one
+   * write outlasts the time a write is given and every company's queued fee is refused.
+   */
+  it('the second wait is bounded by the time left in the write, keeping room to send', async () => {
+    const view = fakeView({ applied: 10n, tip: 10n });
+    const refusal = await refusedAtTheDoor(1010, 'Custom error: 170');
+    let made = 0;
+    const { wallet, calls } = fakeWallet({
+      view,
+      async finalizeRecipe() { made += 1; return withHash(`h${made}`); },
+      async submitTransaction() { view.state.tip = 99n; throw refusal; },
+    });
+    const timing: ViewTiming = { ...fakeTiming(), writeLimitMs: 100_000, sendReserveMs: 35_000 };
+    const sponsor = new WalletFeeSponsor(wallet, CEILING, undefined, undefined, timing);
+    sponsor.payingFor('acc_1');
+    await timing.sleep(40_000);
+    const e: any = await sponsor.submit(await sponsor.addFeeAndFinalise({ tx: 1 }, new Date())).catch((x) => x);
+    expect(feeAnswerCodeOf(e)).toBe('fee-not-paid');
+    expect(timing.now(), 'waited past the time left in the write').toBe(65_000);
+    expect(calls.filter(c => c.method === 'balanceFinalizedTransaction')).toHaveLength(1);
+  });
+
+  /* RED WHEN: a write with no time left still pays again, past the time a write is given. */
+  it('with no time left in the write, it does not pay again', async () => {
+    const view = fakeView({ applied: 10n, tip: 10n });
+    const refusal = await refusedAtTheDoor(1010, 'Custom error: 170');
+    const { wallet, calls } = fakeWallet({ view, async finalizeRecipe() { return withHash('h'); }, async submitTransaction() { throw refusal; } });
+    const timing: ViewTiming = { ...fakeTiming(), writeLimitMs: 100_000, sendReserveMs: 35_000 };
+    const sponsor = new WalletFeeSponsor(wallet, CEILING, undefined, undefined, timing);
+    sponsor.payingFor('acc_1');
+    await timing.sleep(70_000);
+    const e: any = await sponsor.submit(await sponsor.addFeeAndFinalise({ tx: 1 }, new Date())).catch((x) => x);
+    expect(feeAnswerCodeOf(e)).toBe('fee-not-paid');
+    expect(e.message).toMatch(/no time is left/);
+    expect(calls.filter(c => c.method === 'balanceFinalizedTransaction')).toHaveLength(1);
+  });
+
+  /* RED WHEN: the bound a write is given drifts from the limit after which the lane counts a write as overdue. */
+  it('uses the same limit as the lane', async () => {
+    const { WRITE_OVERDUE_AFTER_MS } = await import('../wiring/chain.js');
+    expect(VIEW_TIMING.writeLimitMs).toBe(WRITE_OVERDUE_AFTER_MS);
+  });
+});
+
+describe('a step that may already be on the chain, and a history that never shows a payment', () => {
+  /*
+   * RED WHEN: the node's refusal of an intent the chain already holds is read as nothing sent, so a step that
+   * landed is answered as one to try again and its lock is freed.
+   */
+  it('a refusal naming an intent the chain already holds is raised as it came, never as nothing sent', async () => {
+    const already = await refusedAtTheDoor(1010, 'Custom error: 244');
+    expect(poolRefusalOf(already)).toBeNull();
+    const { wallet } = fakeWallet({ async submitTransaction() { throw already; } });
+    const sponsor = new WalletFeeSponsor(wallet, CEILING);
+    const e: any = await sponsor.submit(await sponsor.addFeeAndFinalise({ tx: 1 }, new Date())).catch((x) => x);
+    expect(e).toBe(already);
+    expect(saysNothingWasSent(e)).toBe(false);
+  });
+
+  /*
+   * RED WHEN: a history that never shows the last payment (its write failed) refuses every fee after it, not one.
+   * RED WHEN: forgetting the last payment is not written down for the operator.
+   */
+  it('refuses one fee when the view is at the tip but its history never shows the last payment, then forgets it', async () => {
+    const view = fakeView({ applied: 30n, tip: 30n });
+    view.lastAccepted = 'h-never-shown';
+    const { wallet, calls } = fakeWallet({ view });
+    const timing = fakeTiming();
+    const sponsor = new WalletFeeSponsor(wallet, CEILING, undefined, undefined, timing);
+    const e: any = await sponsor.addFeeAndFinalise({ tx: 1 }, new Date()).catch((x) => x);
+    expect(feeAnswerCodeOf(e)).toBe('fee-not-paid');
+    expect(calls.map(c => c.method)).not.toContain('balanceFinalizedTransaction');
+    expect(view.lastAccepted).toBeNull();
+    expect(view.notes.join('\n')).toMatch(/h-never-shown/);
+    const before = timing.now();
+    await sponsor.addFeeAndFinalise({ tx: 2 }, new Date());
+    expect(calls.map(c => c.method)).toContain('balanceFinalizedTransaction');
+    expect(timing.now(), 'the next fee waited for the forgotten payment').toBe(before);
   });
 });

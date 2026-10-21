@@ -66,10 +66,20 @@ function ProposalsTable({ rows }: { rows: readonly ProposalRow[] }) {
   );
 }
 
-/** Who raised a proposal, by the name the company's record gives them, or that the record no longer lists them. */
+/**
+ * Who raised a proposal, by the name the company's record gives them: with why this device does not believe their entry
+ * when it does not, with no name when their entry did not check out, or that the record no longer lists them.
+ */
 function RaisedBy({ row }: { row: ProposalRow }) {
   const t = useText();
-  return <>{row.raisedBy ?? t('proposals.raisedBy.unknown')}</>;
+  const why = row.raiserNotBelieved ?? null;
+  /* An entry not as its own wallet signed it is said with no name: nothing vouches for the one it gives. */
+  if (why !== null && row.raisedBy === null) return <span data-raiser-not-believed={why}>{t('proposals.raisedBy.notAsSigned')}</span>;
+  if (row.raisedBy === null) return <>{t('proposals.raisedBy.unknown')}</>;
+  if (why === null) return <>{row.raisedBy}</>;
+  /* A seat not held now, or a holder who has not opened the company yet. */
+  const says = why === 'no-entry-of-their-own' ? t('proposals.raisedBy.notOpened', { name: row.raisedBy }) : t('proposals.raisedBy.notSeated', { name: row.raisedBy });
+  return <span data-raiser-not-believed={why}>{says}</span>;
 }
 
 /** A proposal's panel: what it does, who raised it, how many have approved, and Approve and Decline, both not built yet and shown disabled. */

@@ -105,9 +105,9 @@ for (const [name, make, run] of implementations) {
 
     it('gives the same answer — null — for unknown, expired and revoked', async () => {
       /*
-       * Three facts an attacker would like told apart, and the caller does the
-       * same thing in all three cases. The reason belongs in a log, not a
-       * response.
+       * `resolve` is asked whether a token is live and answers only that. Which
+       * of the three it is comes from `whyNot`, asked once `resolve` has said
+       * no, so a live session is never looked up twice.
        */
       const s = make();
       const t0 = new Date('2026-08-14T10:00:00Z');
@@ -119,6 +119,22 @@ for (const [name, make, run] of implementations) {
       expect(await s.resolve(newToken(), later)).toBeNull();
       expect(await s.resolve(expired.token, later)).toBeNull();
       expect(await s.resolve(revoked.token, later)).toBeNull();
+    });
+
+    /* RED WHEN: a revoked session is named unknown-or-expired, an unknown or expired one is named revoked, or a revoked sign-in past its time is not named revoked. */
+    it('says why a token is not live: revoked, or unknown-or-expired', async () => {
+      const s = make();
+      const t0 = new Date('2026-08-14T10:00:00Z');
+      const expired = await s.issue('usr_1', { ttlHours: 1, now: t0 });
+      const revoked = await s.issue('usr_1');
+      await s.revoke(revoked.token);
+      const both = await s.issue('usr_1', { ttlHours: 1, now: t0 });
+      await s.revoke(both.token, t0);
+      expect(await s.whyNot(revoked.token)).toBe('revoked');
+      expect(await s.whyNot(both.token)).toBe('revoked');
+      expect(await s.whyNot(expired.token)).toBe('unknown-or-expired');
+      expect(await s.whyNot(newToken())).toBe('unknown-or-expired');
+      expect(await s.whyNot('')).toBe('unknown-or-expired');
     });
 
     it('lists live sessions, marks the current one, and never returns a token', async () => {
@@ -201,6 +217,29 @@ for (const [name, make, run] of implementations) {
     });
   });
 }
+
+/* RED WHEN: the Postgres store names a sign-in revoked without reading revoked_at, or reads any other row than the token's own hash. */
+describe('postgres sessions say why a token is not live, from the row\'s own revoked_at', () => {
+  const asking = (rows: unknown[]) => {
+    const seen: { text: string; values: unknown[] }[] = [];
+    const run = (async (strings: TemplateStringsArray, ...values: unknown[]) => { seen.push({ text: strings.join('?'), values }); return rows; }) as never;
+    return { store: new PostgresSessionStore(run), seen };
+  };
+
+  it('a row with a revoked_at is revoked; a row without one, and no row, are unknown-or-expired', async () => {
+    expect(await asking([{ revoked_at: new Date() }]).store.whyNot('t')).toBe('revoked');
+    expect(await asking([{ revoked_at: null }]).store.whyNot('t')).toBe('unknown-or-expired');
+    expect(await asking([]).store.whyNot('t')).toBe('unknown-or-expired');
+  });
+
+  it('asks for the one row of the token\'s hash, and writes nothing', async () => {
+    const { store, seen } = asking([]);
+    await store.whyNot('t');
+    expect(seen).toHaveLength(1);
+    expect(seen[0]!.text).toMatch(/^\s*SELECT revoked_at FROM sessions\s+WHERE token_hash = \?\s*$/);
+    expect(Buffer.from(seen[0]!.values[0] as Uint8Array)).toEqual(Buffer.from(tokenHash('t')));
+  });
+});
 
 describe('what is stored is not what is handed out', () => {
   it('the token never appears in the store; only its sha256 does', async () => {

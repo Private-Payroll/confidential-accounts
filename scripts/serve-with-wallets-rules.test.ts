@@ -133,6 +133,23 @@ describe('the launcher hands the pair over before the server exists', () => {
   });
 
   /*
+   * RED WHEN: the launcher says it is ready without reading the wallet that pays against the network once more, or
+   * says so when that reading did not reach it.
+   */
+  it('reads the wallet that pays against the network just before it says it is ready, and stops if it is behind', () => {
+    const check = launcher.indexOf('await dustViewAtTip(payerLive');
+    const pages = launcher.indexOf('await waitForThePages(');
+    const ready = launcher.indexOf('READY.');
+    expect(check, 'no last reading before READY').toBeGreaterThan(-1);
+    expect(pages).toBeLessThan(check);
+    expect(check).toBeLessThan(ready);
+    expect(launcher.slice(check, ready)).toMatch(/if \('why' in atReady\) \{\s*throw new Error\(/);
+    /* RED WHEN: the refusal says what happened without saying what resolves it. */
+    expect(launcher.slice(check, ready)).toMatch(/Start again\. If it stops here again, look at the indexer/);
+    expect(launcher.slice(check, ready)).toMatch(/the server and the pages are stopped/);
+  });
+
+  /*
    * RED WHEN: the launcher builds its fee payer by hand instead of through the
    * one construction that requires a fee record and uses the dust-only payer.
    */

@@ -9,7 +9,11 @@ import type { CompanyVaultKeyIndex, VaultKeysOffer } from './vault-keys.js';
 import { provenanceOf, type Marked, type WiringName } from './provenance.js';
 import { ROSTER_ID } from './roster-record.js';
 import { entryIdOf, recordKeyOf, type ManifestEntry } from '../midnight/record-manifest.js';
+import { FOUNDING_RECORDS } from '../midnight/records-held.js';
 import { treeHeaderFilingRefusal, treeKeyOf, TreeKept, type TreeHeader } from '../midnight/record-tree.js';
+
+/** The sha256, as hex, of a deploy or second step as its base64 text was sent. */
+export const accountDeployDigest = (base64: string): string => bytesToHex(sha256(utf8(base64)));
 
 export interface Shape {
   accounts: Record<string, SealedAccount>;
@@ -216,6 +220,9 @@ export const inviteKeyOf = (token: string): string =>
 export const walletKeyOf = (address: string): string =>
   bytesToHex(sha256(utf8(address.trim())));
 
+/** The names of the records a company is founded with, as its entries name them. */
+const FOUNDING_KEYS: ReadonlySet<string> = new Set(FOUNDING_RECORDS.map(recordKeyOf));
+
 /** One company's entries, looked up by id and by record, for the data they were built from (`MemoryStore.entriesOf`). */
 class EntriesKept {
   readonly byId = new Map<string, ManifestEntry>();
@@ -225,6 +232,8 @@ class EntriesKept {
   readonly held = new Set<string>();
   /** Every record and digest entered: bytes a newer version may not name again. */
   readonly named = new Set<string>();
+  /** Every `record@version` held, whatever its bytes. */
+  readonly versionsHeld = new Set<string>();
   /** Each record's entries, by its key in the tree, each with the place it was entered at. */
   private readonly byKey = new Map<Hex, { readonly e: ManifestEntry; readonly at: number }[]>();
   private count = 0;
@@ -237,6 +246,7 @@ class EntriesKept {
     this.newest.set(key, Math.max(this.newest.get(key) ?? 0, e.version));
     this.held.add(`${key}@${e.version}@${e.digest}`);
     this.named.add(`${key}@${e.digest}`);
+    this.versionsHeld.add(`${key}@${e.version}`);
     const tk = treeKeyOf(e);
     const all = this.byKey.get(tk) ?? [];
     all.push({ e, at: this.count++ });
@@ -796,6 +806,26 @@ export class MemoryStore {
   }
   getAccountDeploy(accountId: string): AccountDeploy | null { return this.data.accountDeploys?.[accountId] ?? null; }
   /**
+   * **ONCE A COMPANY'S ACCOUNT IS FINISHED, ONLY THE DIGESTS OF ITS DEPLOY AND
+   * SECOND STEP ARE KEPT.** Nothing is sent from those bytes again, and a
+   * resuming device's repeat of them is compared by digest. Answers false when
+   * nothing is recorded for the company; a second call changes nothing.
+   */
+  keepOnlyAccountDeployDigests(accountId: string): boolean {
+    const was = this.data.accountDeploys?.[accountId];
+    if (was === undefined) return false;
+    if (was.deployDigest !== undefined && was.insertDigest !== undefined) return true;
+    this.data.accountDeploys = {
+      ...this.data.accountDeploys,
+      [accountId]: {
+        ...was, deploy: '', insert: '',
+        deployDigest: accountDeployDigest(was.deploy), insertDigest: accountDeployDigest(was.insert),
+      },
+    };
+    this.flush();
+    return true;
+  }
+  /**
    * **REPLACES A COMPANY ACCOUNT'S RECORDED DEPLOY OR SECOND STEP WITH THE SAME
    * ONE CARRIED AGAIN**, for a transaction that ran out before it landed. Only
    * the transactions' bytes and when they were recorded change: answers false
@@ -875,13 +905,17 @@ export class MemoryStore {
    * roster among them - goes on from where it is. An entry already held - the
    * same record, version and digest - is entered already, so a filer that sends
    * it again is answered as before. One below a version already entered was
-   * superseded, and its filer is told so. **An entry naming the bytes an earlier
+   * superseded, and its filer is told so - except a company's first state and
+   * first roster while no header of its records is kept: its first anchor must
+   * hold them, so they are entered below later versions until it is made, and
+   * the later version stays the newest. **An entry naming the bytes an earlier
    * version of its record already names is a record rolled back**, and is not
    * entered. Null when they are entered; otherwise the first that is not, why,
    * and nothing is kept.
    */
   enterInManifest(accountId: string, entries: readonly ManifestEntry[]): { readonly entry: ManifestEntry; readonly why: 'not-newer' | 'superseded' | 'rolled-back'; readonly newest: number } | null {
     const kept = this.entriesOf(accountId);
+    const beforeTheFirstHeader = (this.data.trees?.[accountId]?.headers ?? []).length === 0;
     /* This request's own entries, over what is kept, so none of it is kept unless all of it is. */
     const newest = new Map<string, number>();
     const named = new Set<string>();
@@ -890,10 +924,12 @@ export class MemoryStore {
       const key = recordKeyOf(e);
       if (kept.held.has(`${key}@${e.version}@${e.digest}`)) continue;
       const above = newest.get(key) ?? kept.newest.get(key) ?? 0;
-      if (e.version < above) return { entry: e, why: 'superseded', newest: above };
+      const foundingLate = beforeTheFirstHeader && e.version === 1 && FOUNDING_KEYS.has(key) && !named.has(`${key}@1`) && !kept.versionsHeld.has(`${key}@1`);
+      if (e.version < above && !foundingLate) return { entry: e, why: 'superseded', newest: above };
       if (e.version === above) return { entry: e, why: 'not-newer', newest: above };
       if (named.has(`${key}@${e.digest}`) || kept.named.has(`${key}@${e.digest}`)) return { entry: e, why: 'rolled-back', newest: above };
-      newest.set(key, e.version);
+      if (foundingLate) named.add(`${key}@1`);
+      newest.set(key, Math.max(above, e.version));
       named.add(`${key}@${e.digest}`);
       fresh.push(e);
     }

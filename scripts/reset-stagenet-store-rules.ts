@@ -6,6 +6,10 @@
  * `.midnight/created-companies.json` and its sealed records and sessions in the
  * database. Everything here takes what it touches as an argument, so the tests
  * run it with a faked database and a faked disk and never connect to anything.
+ *
+ * It clears only a store `.env` names as one that may be emptied: nothing a
+ * database's address says tells a dev or stagenet store from any other, so the
+ * person who set the store up says which it is, once, as `STORE_KIND`.
  */
 import { join } from 'node:path';
 import { leadingAssignments, servableOrigin } from './serve-rules.js';
@@ -38,6 +42,26 @@ export const DELETE_GUARDS: Readonly<Record<string, string>> = {
 };
 
 export const CREATED_COMPANIES = join('.midnight', 'created-companies.json');
+
+/** The stores the clean start may empty, as `STORE_KIND` in `.env` names them, exactly. */
+export const RESETTABLE_STORES = ['dev', 'stagenet'] as const;
+
+/**
+ * **THE CLEAN START RUNS ONLY ON A STORE NAMED AS ONE THAT MAY BE EMPTIED.**
+ * Answers null when `STORE_KIND` is exactly `dev` or `stagenet`, and otherwise
+ * the refusal, which says what to set and why. It is decided before any
+ * connection is opened, and a value that is nearly right (another case, a
+ * space) is refused rather than guessed at.
+ */
+export function refuseUnlessResettableStore(storeKind: string | undefined): string | null {
+  if ((RESETTABLE_STORES as readonly string[]).includes(storeKind ?? '')) return null;
+  const said = storeKind === undefined || storeKind === '' ? 'is not set' : `is ${JSON.stringify(storeKind)}`;
+  return `THE STORE CANNOT BE CLEARED: STORE_KIND in .env ${said}, so nothing says the database DATABASE_URL names `
+    + 'is a dev or stagenet store. Clearing empties the sealed-record tables, which hold every company\'s records '
+    + 'and cannot be filed again, so it only runs on a store named as one that may be emptied. If DATABASE_URL in '
+    + '.env names the stagenet store, add the line STORE_KIND=stagenet to .env (STORE_KIND=dev for a development '
+    + 'store) and run this again. Nothing was moved or removed.';
+}
 
 /** Minimal shape of the database handle: what postgres.js gives. */
 export interface Tx {

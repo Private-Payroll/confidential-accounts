@@ -5,6 +5,37 @@ import type { AddressInfo } from 'node:net';
 import { MemoryStore } from '../core/store.js';
 import type { SealedAccount } from '../core/types.js';
 import { NothingWasSent } from '../core/jobs.js';
+import { FeeNotPaid, NetworkRefused, WalletFeeSponsor } from '../midnight/sponsor.js';
+import { ChainLedger } from '../wiring/chain.js';
+
+/**
+ * The real lane and the real fee payer over a wallet whose first hand-in the node refuses for its spend proof and
+ * whose second balance cannot be made, as `sendVault` for a route. Each read transaction is taken as finished, so
+ * the stand-in shapes the routes read are handed to the fee payer as they are.
+ */
+const aRefusedSpendProofThatCannotBePaidAgain = (): CompanyVaultDeps['ledger']['sendVault'] => {
+  const refusal = Object.assign(new Error('Transaction submission error'), {
+    cause: { code: 1010, message: '1010: Invalid Transaction: Custom error: 170', data: 'Custom error: 170' },
+  });
+  let balanced = 0;
+  const payer = new WalletFeeSponsor({
+    shieldedSecretKeys: 's', dustSecretKey: 'd',
+    balanceFinalizedTransaction: async (tx: unknown) => { balanced += 1; if (balanced > 1) throw new Error('could not balance dust'); return { tx }; },
+    finalizeRecipe: async () => ({ intents: new Map(), transactionHash: () => 'h1' }),
+    submitTransaction: async () => { throw refusal; },
+    revert: async () => {},
+    estimateFee: async () => 1n,
+    paidFee: async () => null,
+    balances: async () => ({ dust: 1n, night: 1n }),
+  }, { perTransaction: 1_000n });
+  const ledger = new ChainLedger({} as never, { network: 'stagenet', indexerUrl: 'x', indexerWsUrl: 'x' } as never, {
+    maintenanceAuthority: { kind: 'unmaintainable' } as never, compiled: {},
+    customer: { coinPublicKey: () => '', encryptionPublicKey: () => '', release: async () => {}, balanceOwnLegs: async () => null },
+    sponsor: payer as never, storagePassword: async () => 'x',
+  });
+  return (accountId, what, _arrival, bytes, check, read) =>
+    ledger.sendVault(accountId, what, 'finished-by-the-depositor', bytes, check, read);
+};
 import { companyVaultRoutes, vaultState, type CompanyVaultDeps } from './company-vaults.js';
 import type { VaultKey } from '../core/vault-keys.js';
 
@@ -501,7 +532,8 @@ describe('A VAULT\'S ROUTES', () => {
       .toMatchObject({ status: 422, body: { nothingWasSent: true } });
   });
 
-  it('A DEPLOY THAT MAY HAVE LANDED IS STILL RECORDED, BORN HELD AND WITH ITS BYTES, SO IT IS NEVER LOST; ONE REFUSED IS NOT', async () => {
+  /* RED WHEN: a vault's deploy is kept as bytes nothing reads, or served back. */
+  it('A DEPLOY THAT MAY HAVE LANDED IS STILL RECORDED, BORN HELD, SO IT IS NEVER LOST, WITHOUT ITS BYTES; ONE REFUSED IS NOT', async () => {
     await give('ada', 1); await give('bo', 2);
     sendVault = async (_a, what, _arr, bytes, check, read) => {
       const refusal = await check(await read(bytes));
@@ -513,8 +545,9 @@ describe('A VAULT\'S ROUTES', () => {
     const r = await call('/api/accounts/acc_1/vaults', 'ada', 'POST', { tx: 'AAAA' });
     expect(r).toMatchObject({ status: 502, body: { nothingWasSent: false } });
     expect(store.listCompanyVaults('acc_1')).toEqual([
-      expect.objectContaining({ vault: VAULT, deployRef: 'unknown', intended: { committee: [key(1), key(2)], threshold: 2 }, bornHeld: true, deploy: 'AAAA' }),
+      expect.objectContaining({ vault: VAULT, deployRef: 'unknown', intended: { committee: [key(1), key(2)], threshold: 2 }, bornHeld: true }),
     ]);
+    expect(store.listCompanyVaults('acc_1')[0]).not.toHaveProperty('deploy');
     /* The same vault again is refused before anything is sent. */
     const again = await call('/api/accounts/acc_1/vaults', 'ada', 'POST', { tx: 'AAAA' });
     expect(again).toMatchObject({ status: 422, body: { nothingWasSent: true } });
@@ -523,6 +556,19 @@ describe('A VAULT\'S ROUTES', () => {
     /* A deploy the check refuses records nothing. */
     deployShape = false;
     store = new MemoryStore();
+  });
+
+  /*
+   * RED WHEN: a deploy whose fee could not be paid again after a refused spend proof is recorded as a vault that may
+   * have landed, so the company lists a vault the chain never held and its bytes can never be sent again.
+   */
+  it('A DEPLOY WHOSE FEE COULD NOT BE PAID AGAIN AFTER A REFUSED SPEND PROOF IS NOTHING SENT, AND NOTHING IS RECORDED', async () => {
+    await give('ada', 1); await give('bo', 2);
+    deployShape = true;
+    sendVault = aRefusedSpendProofThatCannotBePaidAgain();
+    const r = await call('/api/accounts/acc_1/vaults', 'ada', 'POST', { tx: 'AAAA' });
+    expect(r).toMatchObject({ status: 422, body: { nothingWasSent: true, code: 'fee-not-paid' } });
+    expect(store.listCompanyVaults('acc_1')).toEqual([]);
   });
 });
 
@@ -1437,6 +1483,51 @@ describe('A VAULT\'S START', () => {
     /* RED WHEN: a copy is paid for once every copy is written. */
     expect((await call(at('copy'), 'ada', 'POST', { tx: START, place: 2 })).body.error).toMatch(/already written/);
     expect(sent).toEqual(['setting this vault\'s first secret', 'writing a sealed copy of this vault\'s secret', 'writing a sealed copy of this vault\'s secret']);
+  });
+
+  /*
+   * RED WHEN: a step the node refused at its door keeps the step held for half an hour, though it can never land.
+   * RED WHEN: a step whose outcome is not known is freed, so a second copy is paid for.
+   * RED WHEN: a fee that was not paid reaches the page without its code, or a step that may have landed carries one.
+   */
+  it('A STEP THE NODE REFUSED AT ITS DOOR IS FREED AT ONCE, WITH ITS CODE; ONE THAT MAY HAVE LANDED STAYS HELD', async () => {
+    await heldVault();
+    startShape = oneCall(hex(0xc0), 'adopt');
+    sendVault = async () => { throw new NetworkRefused('refused at the door. Nothing was sent.'); };
+    expect(await call(at('account'), 'ada', 'POST', { tx: START, step: 'adoption', call: 'adopt' }))
+      .toMatchObject({ status: 422, body: { nothingWasSent: true, code: 'network-refused' } });
+    sendVault = async () => { throw new FeeNotPaid('the fee payer did not pay this fee. Nothing was sent.'); };
+    expect(await call(at('account'), 'ada', 'POST', { tx: START, step: 'adoption', call: 'adopt' }))
+      .toMatchObject({ status: 422, body: { nothingWasSent: true, code: 'fee-not-paid' } });
+    sendVault = async () => { throw Object.assign(new Error('the node did not answer'), { code: 'network-refused' }); };
+    const unknown = await call(at('account'), 'ada', 'POST', { tx: START, step: 'adoption', call: 'adopt' });
+    expect(unknown).toMatchObject({ status: 502, body: { nothingWasSent: false } });
+    expect(unknown.body.code).toBeUndefined();
+    checked();
+    expect(await call(at('account'), 'ada', 'POST', { tx: START, step: 'adoption', call: 'adopt' }))
+      .toMatchObject({ status: 409, body: { nothingWasSent: true, error: expect.stringMatching(/has not shown it yet/) } });
+    expect(sent).toEqual([]);
+  });
+
+  /*
+   * RED WHEN: a step whose fee could not be paid again after a refused spend proof is held for half an hour as one
+   * that may have landed.
+   */
+  it('A STEP WHOSE FEE COULD NOT BE PAID AGAIN AFTER A REFUSED SPEND PROOF IS FREED AT ONCE', async () => {
+    await heldVault();
+    startShape = oneCall(hex(0xc0), 'adopt');
+    sendVault = aRefusedSpendProofThatCannotBePaidAgain();
+    expect(await call(at('account'), 'ada', 'POST', { tx: START, step: 'adoption', call: 'adopt' }))
+      .toMatchObject({ status: 422, body: { nothingWasSent: true, code: 'fee-not-paid' } });
+    checked();
+    expect((await call(at('account'), 'ada', 'POST', { tx: START, step: 'adoption', call: 'adopt' })).status).toBe(200);
+  });
+
+  /* RED WHEN: a deploy kept on an older record is served back, though nothing reads it. */
+  it('THE CHAIN VIEW OF A VAULT DOES NOT SERVE ITS DEPLOY', async () => {
+    await heldVault();
+    store.putCompanyVault({ ...store.getCompanyVault(VAULT)!, deploy: 'AAAA' });
+    expect((await call(`/api/accounts/acc_1/vaults/${VAULT}/chain`, 'ada')).body).not.toHaveProperty('deployed');
   });
 
   it('A VAULT HELD BY THE COMMITTEE AND NOT STARTED IS SAID AS ITS START OWED, AND TAKES NO DEPOSIT', async () => {

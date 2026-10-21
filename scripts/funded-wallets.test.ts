@@ -6,7 +6,7 @@
  * fee payer asked the wallet for and what it filed.
  */
 import { describe, it, expect } from 'vitest';
-import { fundedPartiesOver, type LiveWalletParts } from './funded-wallets.js';
+import { fundedPartiesOver, feePayerViewOf, sponsorWalletOver, type LiveWalletParts } from './funded-wallets.js';
 import type { SponsoredFee } from '../src/midnight/sponsored-fees.js';
 
 type Call = { method: string; args: unknown[] };
@@ -122,5 +122,50 @@ describe('the fee payer handed to the server', () => {
     expect(() => fundedPartiesOver(
       live([], 'payer'), live([], 'company'), async () => null, sink([]), () => {}, undefined as never))
       .toThrow(/no ceiling/);
+  });
+});
+
+describe('the fee payer\'s view of the network\'s DUST', () => {
+  /** A running wallet as the fee payer's view reads it: its state, its history, and its DUST wallet's indexer. */
+  const running = (history: Record<string, unknown>) => ({
+    state: () => ({ subscribe: ({ next }: { next: (s: unknown) => void }) => { next({ dust: { progress: { appliedIndex: 41n } } }); return { unsubscribe() {} }; } }),
+    queryTxHistoryByHash: async (h: string) => history[h],
+    dust: { constructor: { configuration: { indexerClientConnection: { indexerWsUrl: 'wss://indexer/ws' } } } },
+  });
+
+  /*
+   * RED WHEN: each fee payer built over a wallet has its own view, so a service that builds one per request forgets
+   * the last payment the network accepted.
+   */
+  it('is one per wallet, shared by every fee payer built over it', () => {
+    const facade = running({});
+    const parts = { ...live([], 'payer'), facade: { ...live([], 'payer').facade } };
+    Object.assign(parts.facade, facade);
+    const first = sponsorWalletOver(parts, async () => null).view;
+    expect(first).toBeDefined();
+    expect(sponsorWalletOver(parts, async () => null).view).toBe(first);
+  });
+
+  /*
+   * RED WHEN: the view says it shows a payment its own history holds without its DUST side.
+   * RED WHEN: the network's newest event is asked of anything but the installed DUST wallet's indexer, from the view's applied event.
+   */
+  it('shows a payment only when the wallet\'s history holds its DUST side, and asks the wallet\'s own indexer', async () => {
+    const asked: Array<[string, bigint | null]> = [];
+    const view = feePayerViewOf(running({ shown: { dust: { spentUtxos: [] } }, partly: { unshielded: {} } }),
+      async (url, from) => { asked.push([url, from]); return 50n; }, () => {})!;
+    expect(await view.shows('shown')).toBe(true);
+    expect(await view.shows('partly')).toBe(false);
+    expect(await view.shows('unknown')).toBe(false);
+    expect(view.applied()).toBe(41n);
+    expect(await view.tip()).toBe(50n);
+    expect(asked).toEqual([['wss://indexer/ws', 41n]]);
+    expect(view.numbers()).toMatch(/^dust applied 41 of 50;/);
+  });
+
+  /* RED WHEN: an object that is not a running wallet is given a view that waits on nothing it can read. */
+  it('gives no view for an object that is not a running wallet', () => {
+    expect(feePayerViewOf({})).toBeUndefined();
+    expect(feePayerViewOf(null)).toBeUndefined();
   });
 });

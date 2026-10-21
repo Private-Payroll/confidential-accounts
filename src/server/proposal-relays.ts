@@ -19,13 +19,17 @@
  * The chain then makes its own checks - the signer, the proposal's identity,
  * one approval per signer - and decides. What is written here afterwards is
  * only what the chain was read to say: that it holds the proposal, how many
- * approvals it counts for it, that it withdrew it. Whether that count meets
+ * approvals it counts for it, that it withdrew it, or, for a vault's adoption
+ * that the vault's own start step carried out, that the chain no longer holds
+ * it open and lists the vault adopted. Whether that count meets
  * the bar of the vault the proposal names is worked out on a signer's device,
  * which opens the record; the vault is sealed and this server never knows it.
  *
  * **EVERY ANSWER SAYS WHETHER ANYTHING WAS SENT.** `nothingWasSent: true` is a
- * refusal before the chain was handed anything, final and safe to say so;
- * `false` is a failure from the send onwards, which may have landed.
+ * refusal before the chain was handed anything, final and safe to say so, with
+ * the fee's own code when the fee for the call could not be paid or the network
+ * refused it (`feeAnswerCodeOf`); `false` is a failure from the send onwards,
+ * which may have landed.
  */
 import express from 'express';
 import { z } from 'zod';
@@ -35,6 +39,7 @@ import { runFilingRefusal, type SignedRunFiling } from '../core/run-filing.js';
 import type { PaymentChecked } from '../core/device-raise.js';
 import { paysCommitmentOf, proposalFilingRefusal, type SignedProposalFiling } from '../core/proposal-filing.js';
 import { NothingWasSent, saysNothingWasSent } from '../core/jobs.js';
+import { feeAnswerCodeOf } from '../midnight/sponsor.js';
 import { DEVICE_RAISE_VERSION, reloadThePage } from '../core/device-raise.js';
 import {
   CANNOT_ASK_THE_CHAIN, chainHoldsIt, notSentBecauseItIs, RAISE_ON_ITS_WAY, standingOf, THE_CHAIN_ALREADY_HOLDS_IT,
@@ -96,6 +101,10 @@ export interface ProposalRelayDeps {
    * company is raised for.
    */
   readonly proposalIdOf: (payloadHash: string, salt: string, vault?: string) => string;
+  /** A vault's adoption proposal, its identity and payload, as the account's own functions make it (`adoptionRoundOf`). */
+  readonly adoptionOf?: (vault: Hex) => { readonly proposal: string; readonly payload: string };
+  /** The vaults the company's account lists on the chain now: the ones it adopted. Null when the chain did not answer. */
+  readonly vaultsAdopted?: (accountId: string) => Promise<readonly string[] | null>;
 }
 
 /** A vault, an asset or a token: thirty-two bytes as sixty-four lower-case hexadecimal characters. */
@@ -130,8 +139,9 @@ export async function answerASend(
   } catch (e: any) {
     const nothing = saysNothingWasSent(e);
     const reason = e?.message ?? 'unknown error';
+    const code = nothing ? feeAnswerCodeOf(e) : null;
     recordRefusal(req.method, req.originalUrl, nothing ? 422 : 502, e?.name ?? 'Error', reason);
-    res.status(nothing ? 422 : 502).json({ nothingWasSent: nothing, error: reason });
+    res.status(nothing ? 422 : 502).json({ nothingWasSent: nothing, error: reason, ...(code === null ? {} : { code }) });
   }
 }
 
@@ -467,6 +477,64 @@ export const proposalRelayRoutes = (deps: ProposalRelayDeps): express.Router => 
    * on the chain - it is charged, to be paid - so what is written here is only
    * where the chain was read to hold it.
    */
+  /*
+   * **A VAULT'S ADOPTION THE CHAIN CARRIED OUT IS WRITTEN DOWN AS CARRIED OUT**,
+   * the one proposal another call - the vault's own start step - carries out.
+   * Kept only for a seat that may act, for the adoption of the vault named, as
+   * the account's own functions make its identity and payload (`adoptionOf`),
+   * once this server's own read of the chain no longer holds it open and lists
+   * that vault adopted by the company's account. A proposal the chain no longer
+   * holds may have been carried out, withdrawn, or left to run out, so absence
+   * alone writes nothing down: the vault must also be listed as adopted. Nothing
+   * is sent. A device asks it once its own read shows the vault adopted, so each
+   * refusal says the vault is not affected and what resolves it.
+   */
+  router.post('/api/proposals/:id/carried', deps.signedIn, json, deps.ownsProposal, async (req, res) => {
+    const b = parsed(res, z.object({ vault: z.string().regex(HEX64), filer: FILER }).strict(), req.body, 'a vault\'s adoption carried out on the chain');
+    if (b === null) return;
+    const p = deps.store.getProposal(String(req.params.id))!;
+    const refuse = (status: number, error: string) => { res.status(status).json({ nothingWasSent: true, error }); };
+    try {
+      await actingSeat(p.accountId, (req as { userId?: unknown }).userId, b.filer);
+    } catch (e) {
+      refuse(403, (e as Error).message);
+      return;
+    }
+    if (p.status === 'executed') { res.json(standingOf(p)); return; }
+    if (deps.adoptionOf === undefined || deps.vaultsAdopted === undefined) {
+      refuse(409, 'this service cannot check which vaults the company adopted, so it does not mark the adoption done. The vault is not affected. '
+        + 'Tell whoever runs this service');
+      return;
+    }
+    const round = deps.adoptionOf(b.vault.toLowerCase() as Hex);
+    if (round.proposal.toLowerCase() !== p.chainId.toLowerCase() || round.payload.toLowerCase() !== p.digest.toLowerCase()) {
+      refuse(409, 'this proposal is not the adoption of that vault, so it is not marked done here. The vault is not affected');
+      return;
+    }
+    if ((p.status !== 'open' && p.status !== 'approved') || !p.raisedAt) {
+      refuse(409, p.raisedAt ? `this adoption is ${p.status} in the company's proposals, so it is not marked done. The vault is not affected`
+        : 'the service has no record of this adoption being raised, so it does not mark it done. The vault is not affected. Tell whoever runs this service');
+      return;
+    }
+    const [status, adopted] = await Promise.all([readTheChain(p.accountId), deps.vaultsAdopted(p.accountId).catch(() => null)]);
+    if (status === null || adopted === null) {
+      refuse(503, 'the service could not read the chain, so it does not mark the adoption done yet. The vault is not affected. Press again in a minute');
+      return;
+    }
+    if (chainHoldsIt({ chainId: p.chainId }, status) !== 'absent') {
+      refuse(409, 'the service\'s read of the chain still shows this adoption open, so it does not mark it done yet. The vault is not affected. Press again in a minute');
+      return;
+    }
+    if (!adopted.some((v) => v.toLowerCase() === b.vault.toLowerCase())) {
+      refuse(409, 'the service\'s read of the chain does not show this vault adopted yet, so it does not mark the adoption done. The vault is not affected. '
+        + 'Press again in a minute');
+      return;
+    }
+    const carried: SealedProposal = { ...p, status: 'executed', executedAt: now() };
+    deps.store.putProposal(carried);
+    res.json(standingOf(carried));
+  });
+
   router.post('/api/proposals/:id/charge', deps.signedIn, json, deps.ownsProposal, async (req, res) => {
     const b = parsed(res, z.object({ tx: TX, filer: FILER }).strict(), req.body, 'a run to charge to its period');
     if (b === null) return;

@@ -11,7 +11,7 @@
  *
  *   GET  /api/accounts/:id/vault-keys                   the committee holding the account on the chain, and who can read the records
  *   GET  /api/accounts/:id/vaults                       the company's vaults, and who holds each on chain
- *   POST /api/accounts/:id/vaults                       a vault deployed with a temporary key
+ *   POST /api/accounts/:id/vaults                       a vault deployed held by the company's committee from its first transaction
  *   POST /api/accounts/:id/vaults/:vault/handover       that vault handed to the company's committee
  *   POST /api/accounts/:id/vaults/:vault/start/account  a step of its start on the account: the adoption round or the
  *                                                       first secret run approved, or the adoption carried out (each is
@@ -55,6 +55,7 @@ import type { SealedAccount, CompanyVault, AccountDeploy } from '../core/types.j
 import type { CompanyVaultKeyIndex } from '../core/vault-keys.js';
 import type { Ledger, VaultTxArrival } from '../core/ledger.js';
 import { saysNothingWasSent } from '../core/jobs.js';
+import { feeAnswerCodeOf } from '../midnight/sponsor.js';
 import { readContractAuthority, type AuthorityRead } from '../midnight/ledger.js';
 import { sameCommittee, type Committee } from '../midnight/vault-committee.js';
 import { publicHoldingsOf, PublicBalanceUnreadable } from '../midnight/public-balance.js';
@@ -421,8 +422,10 @@ export function companyVaultRoutes(deps: CompanyVaultDeps): express.Router {
         arrival === 'finished-by-the-depositor' ? deps.readers.finished : deps.readers.proven);
     } catch (e: unknown) {
       const nothing = saysNothingWasSent(e);
+      /* A code rides only on a nothing-sent answer: a 502 may have landed, and no page may say otherwise. */
+      const code = nothing ? feeAnswerCodeOf(e) : null;
       res.status(nothing ? 422 : 502).json({
-        nothingWasSent: nothing, error: (e as { message?: string })?.message ?? 'unknown error',
+        nothingWasSent: nothing, error: (e as { message?: string })?.message ?? 'unknown error', ...(code ? { code } : {}),
       });
       return null;
     }
@@ -518,12 +521,11 @@ export function companyVaultRoutes(deps: CompanyVaultDeps): express.Router {
      * because a vault nobody recorded is one nobody would ever hand over. */
     if (vault !== null && (sent !== null || res.statusCode === 502)) {
       /* Born held: the reader above read the deploy as held from its first transaction by exactly the committee holding the
-       * company's account on the chain. The
-       * deploy itself is kept, so a signer's device can read the vault as it was deployed before it is adopted. */
+       * company's account on the chain. The deploy's bytes are not kept: nothing reads them, and the chain holds the vault. */
       deps.store.putCompanyVault({
         accountId: account.id, vault, deployedAt: now().toISOString(),
         deployRef: sent?.ref ?? 'unknown', intended: { committee: committee.committee.map((k) => ({ ...k })), threshold: committee.threshold },
-        bornHeld: true, deploy: Buffer.from(bytes).toString('base64'),
+        bornHeld: true,
       });
     }
     if (sent === null) return;
@@ -632,8 +634,6 @@ export function companyVaultRoutes(deps: CompanyVaultDeps): express.Router {
       notesFromThisBuild,
       ...(notesWhy === undefined ? {} : { notesWhy }),
       everCreated,
-      /* The deploy the vault's address was made from, for a signer's device to read the vault as it was born. */
-      deployed: record.deploy ?? null,
       started,
     });
   });
@@ -721,7 +721,9 @@ export function companyVaultRoutes(deps: CompanyVaultDeps): express.Router {
    * **NOTHING IS SENT TWICE.** A step sent and not yet shown by the chain is
    * held here, by the vault, the step and, for an approval, the person, for as
    * long as it could still land; only a refusal that says nothing was sent
-   * frees it. In this process only: the chain's own refusals stand behind it.
+   * frees it, including the node's refusal before its pool, which the fee payer
+   * answers as nothing sent. In this process only: the chain's own refusals
+   * stand behind it.
    */
   const startSent = new Map<string, number>();
   const startStillPending = (key: string): boolean => {

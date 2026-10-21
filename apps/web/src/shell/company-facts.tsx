@@ -2,6 +2,7 @@ import { useEffect, useState } from 'react';
 import { Badge, formatDate, useLanguage, useText } from 'vaults-ui';
 import { creationOfCompany } from '../setup/creation-on-demand.js';
 import { approvalsNeededFor, type Company } from '../adapters/session.js';
+import type { ActRefusal } from '../adapters/refusals.js';
 import { useSessionIfAny } from '../session.js';
 
 /** How the day a company started is written: in the person's language. */
@@ -75,15 +76,22 @@ function useNotFinished(company: string): boolean {
  * of how many there are, once the person's own wallet has read that off the
  * chain; and, when the company's creation is not finished, a badge saying so.
  * The company switcher and the landing page both show a company this way.
+ * Where its name did not open on this device, why is said under the word for it, wrapping within the row.
  */
-export function CompanyFacts({ company, name = null }: { company: Company; name?: string | null }) {
+export function CompanyFacts({ company, name = null, whyUnnamed = null }: { company: Company; name?: string | null; whyUnnamed?: ActRefusal | null }) {
   const words = useCompanyWords();
   const nameOf = useCompanyName();
   const t = useText();
   const notFinished = useNotFinished(company.id);
+  /* Why the name did not open on this device, in the person's words; any other reason is said as an action that did not finish. */
+  const unnamedBecause = whyUnnamed === null ? undefined : whyUnnamed === 'roster-not-believed' ? t('act.refused.rosterNotBelieved')
+    : whyUnnamed === 'no-keys-here' ? t('act.refused.noKeysHere') : t('act.refused.didNotFinish');
   return (
-    <span className="grid flex-1 text-start leading-tight">
-      {name === null || name.trim() === '' ? <span data-company-unnamed>{nameOf(company)}</span> : <span className="font-medium" data-company-name>{name}</span>}
+    <span className="grid min-w-0 flex-1 text-start leading-tight">
+      {name === null || name.trim() === ''
+        ? <span data-company-unnamed data-why={whyUnnamed ?? undefined}>{nameOf(company)}</span>
+        : <span className="font-medium" data-company-name>{name}</span>}
+      {unnamedBecause === undefined ? null : <span className="whitespace-normal text-xs text-muted-foreground" data-unnamed-why>{unnamedBecause}</span>}
       <span className="text-xs text-muted-foreground" data-approvals>{words.approvals(company)}</span>
       {notFinished ? <Badge variant="outline" className="mt-1 justify-self-start" data-not-finished>{t('company.notFinished')}</Badge> : null}
     </span>

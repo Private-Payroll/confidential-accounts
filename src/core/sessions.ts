@@ -1,35 +1,19 @@
 /**
- * Sessions that can actually be revoked.
+ * Sessions that can be revoked: a random token, and a row that is the authority.
  *
- * WHAT WAS WRONG. A session was a signed blob: `base64url({uid, exp}).hmac`.
- * The server verified the tag, read the user id out of the payload, and held no
- * record of the session at all. That is a legitimate design — it is what a
- * stateless JWT is — and it has one property this product cannot accept:
+ * A session is a random token. The service keeps a row for it, and the row decides:
+ * if it is gone, revoked or expired, the token is worthless however well formed it
+ * is. Revoking one is an UPDATE, so signing out on one device ends that session and
+ * a stolen token can be stopped.
  *
- *   **Signing out did nothing.** The client dropped the token; the token stayed
- *   valid until it expired. There was no list to remove it from.
+ * Only the sha256 of the token is stored, never the token, so a database backup is
+ * not a stack of working sessions. The token is 32 random bytes, so the hash needs no
+ * salt, and the lookup is one indexed read per request. The Postgres store's rows survive
+ * a restart, and nothing about the process is needed to check one.
  *
- * So "sign out on the laptop I left at the office" was a button that did
- * nothing, and a stolen token could not be stopped. For a product whose whole
- * claim is that a signer's device is the boundary, a session nobody can end is
- * the wrong shape.
- *
- * WHAT REPLACES IT. A random token, and a row. The row is the authority: if it
- * is gone, revoked or expired, the token is worthless no matter how well
- * formed. Revocation becomes an UPDATE.
- *
- * WHAT IS STORED IS THE HASH, NEVER THE TOKEN. A database backup must not be a
- * stack of working sessions. Same reason a password is never stored, and it
- * costs one sha256 per request.
- *
- * WHY THE RESTART PROBLEM IS RETIRED, NOT WORKED AROUND. The old secret
- * defaulted to a fresh random value on boot, which silently invalidated every
- * session on every restart — a stateless token cannot be verified without the
- * key that signed it, and a signed-out user looks exactly like an expired one,
- * so nobody noticed. A random token checked against a row does not care what
- * the process knows: restart it and the sessions are still there.
- * `SESSION_SECRET` is now unused by sessions and the constructor no longer
- * takes one.
+ * `SessionStore` has a memory store for tests and development and a Postgres store.
+ * `resolve` answers only whether a token is live; `whyNot` says, for the service's own
+ * log, whether a token that is not live was revoked.
  */
 import { sha256 } from '@noble/hashes/sha2.js';
 import { randomBytes, toHex } from './crypto.js';
@@ -57,14 +41,24 @@ export interface SessionSummary {
   current: boolean;
 }
 
+
+export type WhyNotLive = 'revoked' | 'unknown-or-expired';
+
 export interface SessionStore {
   issue(
     userId: string,
     opts?: { ttlHours?: number; userAgent?: string | null; now?: Date },
   ): Promise<IssuedSession>;
 
-  /** The user id, or null. Null covers unknown, expired and revoked alike — see below. */
+  /** The user id, or null. Null covers unknown, expired and revoked alike; `whyNot` tells the revoked apart. */
   resolve(token: string, now?: Date): Promise<string | null>;
+
+  /**
+   * Why `resolve` said null: the sign-in was revoked, or it is not a live row (never issued, run out, or
+   * swept). Read from the row's own `revoked_at`, so it needs no schema change. Asked only after `resolve`
+   * has answered null, and only so the service can log the cause of a 401. Never sent to the caller.
+   */
+  whyNot(token: string): Promise<WhyNotLive>;
 
   /** Ends one session. Idempotent: revoking a dead session is not an error. */
   revoke(token: string, now?: Date): Promise<void>;
@@ -135,9 +129,11 @@ export const newToken = (): string => toHex(randomBytes(TOKEN_BYTES));
 
 /*
  * `resolve` returns null rather than a distinguishing error, and that is
- * deliberate. "Expired", "revoked" and "never existed" are three facts an
- * attacker would like told apart, and the caller does the same thing in all
- * three cases: refuse. The reason belongs in a log, not in a response.
+ * deliberate: the caller does the same thing in every case, which is refuse,
+ * and an attacker would like revoked, expired and never-existed told apart.
+ * The reason belongs in the service's own log, not in a response: `whyNot`
+ * names it for that log only. A sign-in that ran out and one that was never issued stay one
+ * answer: the sweep deletes the first, so the store cannot tell them apart.
  */
 
 export class MemorySessionStore implements SessionStore {
@@ -167,6 +163,10 @@ export class MemorySessionStore implements SessionStore {
     if (!row || row.revokedAt) return null;
     if (new Date(row.expiresAt) <= now) return null;
     return row.userId;
+  }
+
+  async whyNot(token: string): Promise<WhyNotLive> {
+    return this.rows.get(toHex(tokenHash(token)))?.revokedAt ? 'revoked' : 'unknown-or-expired';
   }
 
   async renew(token: string, now = new Date()) {
@@ -271,6 +271,14 @@ export class PostgresSessionStore implements SessionStore {
         AND expires_at > ${now}
     `;
     return rows[0]?.user_id ?? null;
+  }
+
+  async whyNot(token: string): Promise<WhyNotLive> {
+    const rows = await this.sql<{ revoked_at: Date | null }>`
+      SELECT revoked_at FROM sessions
+      WHERE token_hash = ${Buffer.from(tokenHash(token))}
+    `;
+    return rows[0]?.revoked_at ? 'revoked' : 'unknown-or-expired';
   }
 
   async renew(token: string, now = new Date()) {

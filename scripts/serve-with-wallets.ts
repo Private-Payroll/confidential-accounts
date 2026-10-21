@@ -49,7 +49,8 @@ import { fileFeeSink } from '../src/midnight/sponsored-fees.js';
 import { feeCeilingFrom } from '../src/midnight/fee-ceiling.js';
 import { applyNetworkId, theNetwork, ENDPOINTS, type NetworkName } from '../src/midnight/network.js';
 import { handInFundedParties } from '../src/wiring/handed-in-wallets.js';
-import { bringUpWallet } from './wallet-bringup.js';
+import { bringUpWallet, dustViewAtTip } from './wallet-bringup.js';
+import { describeDustView } from './dust-wallet.js';
 import { feePayerOver, paidFeeFrom } from './funded-wallets.js';
 import { coinlessCustomer } from '../src/midnight/coinless-customer.js';
 import { testEnvironmentFor, startEnvironment } from './test-environment.js';
@@ -265,6 +266,19 @@ async function main() {
   good('waiting for the page and the wallet to answer');
   await waitForThePages({ starts: plan.starts, started, answersAt });
   good(`${plan.starts.map((s) => `${s.label} answers at ${s.origin}`).join('; ')}`);
+  /*
+   * Ready only with the wallet that pays caught up: the server and the pages
+   * took a while to start, and a fee paid from a view behind the network can
+   * be refused. So the view is read against the indexer once more here.
+   */
+  good('checking once more that the wallet that pays has every DUST event the network holds');
+  const atReady = await dustViewAtTip(payerLive, (m) => good(m));
+  if ('why' in atReady) {
+    throw new Error(`${atReady.why}. The run is not ready, and the server and the pages are stopped: a fee paid from `
+      + 'a view behind the network can be refused. Start again. If it stops here again, look at the indexer or this '
+      + 'machine\'s connection to it.');
+  }
+  good(`the wallet that pays is caught up: ${describeDustView(atReady.applied, atReady.tip)}`);
   line();
   line(`  READY. Open ${posture.APP_ORIGIN}, sign in with your wallet, and create a company.`);
   if (!parametersInPlace) line('  NOT EVERYTHING THE PAGE PROVES WITH IS IN PLACE: step 1 above says what, and what fixes it.');

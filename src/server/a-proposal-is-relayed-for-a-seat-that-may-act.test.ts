@@ -19,17 +19,24 @@ import { signingPublicKeyOf } from '../core/crypto.js';
 import { proposalRelayRoutes } from './proposal-relays.js';
 import { signProposalFiling, type ProposalFiling } from '../core/proposal-filing.js';
 import { NothingWasSent } from '../core/jobs.js';
+import { FeeNotPaid } from '../midnight/sponsor.js';
 import { DEVICE_RAISE_VERSION } from '../core/device-raise.js';
 import type { LedgerStatus } from '../core/ledger.js';
 import type { SealedProposal } from '../core/types.js';
 import type { Hex } from '../core/crypto.js';
 import { MidnightCommitments } from '../midnight/commitments.js';
+import { adoptionRoundOf, type AccountStartPure } from '../midnight/vault-start.js';
+import { pureCircuits } from '../../contracts/managed/contract/index.js';
 
 /* ── the chain, stood in ─────────────────────────────────────────────────── */
 
 const open = new Map<string, number>();
+/* The vaults the company's account lists on the stand-in chain: those it adopted. */
+const adopted = new Set<string>();
 let unreadable = false;
 let refuseAtTheDoor: string | null = null;
+/* A fee the fee payer could not pay, refused before anything reached the chain. */
+let feeNotPaid = false;
 const sent: Array<{ accountId: string; circuit: string; proposal: string }> = [];
 const tx = (circuit: string, proposal: string): string => Buffer.from(JSON.stringify({ circuit, proposal })).toString('base64');
 
@@ -42,6 +49,7 @@ const ledger = {
   submitProvenCall: async (accountId: string, bytes: Uint8Array, circuit: string) => {
     const o = JSON.parse(Buffer.from(bytes).toString('utf8')) as { circuit: string; proposal: string };
     if (refuseAtTheDoor !== null) throw new NothingWasSent(refuseAtTheDoor);
+    if (feeNotPaid) throw new FeeNotPaid('the fee for this call could not be paid just now. Nothing was sent.');
     if (o.circuit !== circuit) throw new NothingWasSent(`the door was told ${circuit} and handed ${o.circuit}. Nothing was sent.`);
     sent.push({ accountId, circuit, proposal: o.proposal });
     if (circuit === 'propose') open.set(o.proposal, 0);
@@ -63,6 +71,8 @@ aCompanyOfTwoSeats((app, deps) => {
     signedIn: deps.signedIn, member: deps.member, ownsProposal, refuseSigningSecret,
     store, ledger, directoryOf: deps.directoryOf, recordRefusal: () => undefined,
     proposalIdOf: (h, salt, vault) => MidnightCommitments.proposalId(h as Hex, salt as Hex, vault as Hex | undefined),
+    adoptionOf: (vault) => adoptionRoundOf(pureCircuits as unknown as AccountStartPure, vault),
+    vaultsAdopted: async () => (unreadable ? null : [...adopted]),
   }));
 });
 
@@ -80,13 +90,13 @@ const proposal = (over: Partial<SealedProposal> = {}): SealedProposal => ({
 });
 
 beforeEach(() => {
-  open.clear(); sent.length = 0; unreadable = false; refuseAtTheDoor = null;
+  open.clear(); adopted.clear(); sent.length = 0; unreadable = false; refuseAtTheDoor = null; feeNotPaid = false;
   store.putProposal(proposal());
 });
 
 /** The filing key each person's device sends with a relay: its own seat's, or, for one with no seat here, a key no entry names. */
 const FILER: Readonly<Record<string, string>> = { ada: ADA.statement.signingKey, bo: BO.statement.signingKey, eve: EVE.statement.signingKey };
-const RELAYS = /\/(approve|cancel|send|carry|charge|retirement)$/u;
+const RELAYS = /\/(approve|cancel|send|carry|charge|retirement|carried)$/u;
 /** A request as the person's device sends it: a relay carries the device's filing key unless the body names its own. */
 const post = (who: string | null, path: string, body: unknown) => {
   const carried = RELAYS.test(path) && typeof body === 'object' && body !== null && !('filer' in body)
@@ -105,6 +115,18 @@ describe('A PROPOSAL IS RELAYED WITH NO KEY, FOR A SEAT THAT MAY ACT', () => {
     expect(r.body).toMatchObject({ id: P, chainId: CHAIN, approvalCount: 1, status: 'open' });
     expect(typeof r.body.raisedAt).toBe('string');
     expect(store.getProposal(P)!.approvalCount).toBe(1);
+  });
+
+  it('AN APPROVAL WHOSE FEE COULD NOT BE PAID IS REFUSED AS NOTHING SENT, WITH THE CODE A PAGE SAYS IT BY', async () => {
+    open.set(CHAIN, 0);
+    feeNotPaid = true;
+    const r = await post('ada', `/api/proposals/${P}/approve`, { tx: tx('approve', CHAIN) });
+    /* RED WHEN: a fee that could not be paid reaches the page with no code, so it can only say the step did not finish. */
+    expect(r).toMatchObject({ status: 422, body: { nothingWasSent: true, code: 'fee-not-paid' } });
+    feeNotPaid = false;
+    refuseAtTheDoor = 'the chain refused it. Nothing was sent.';
+    /* RED WHEN: a refusal that is not about the fee is given the fee's code. */
+    expect((await post('ada', `/api/proposals/${P}/approve`, { tx: tx('approve', CHAIN) })).body.code).toBeUndefined();
   });
 
   it('NO ROUTE TAKES A KEY: A BODY THAT CARRIES ONE IS REFUSED, AND NOTHING IS SENT', async () => {
@@ -235,6 +257,82 @@ describe('A PROPOSAL IS RELAYED WITH NO KEY, FOR A SEAT THAT MAY ACT', () => {
     expect(r.body).toMatchObject({ status: 'executed' });
     /* RED WHEN a circuit the route does not carry is relayed. */
     expect((await post('ada', `/api/proposals/${P}/carry`, { tx: tx('approve', CHAIN), circuit: 'approve' })).status).toBe(400);
+  });
+
+  describe('A VAULT\'S ADOPTION THE CHAIN CARRIED OUT IS WRITTEN DOWN AS CARRIED OUT, AND NOTHING ELSE IS', () => {
+    const V = 'ab'.repeat(32) as Hex;
+    const A = 'prp_adoptionAAAA';
+    const round = adoptionRoundOf(pureCircuits as unknown as AccountStartPure, V);
+    const raisedAt = '2026-10-20T18:03:50.963Z';
+    const adoption = (over: Partial<SealedProposal> = {}) => proposal({ id: A, chainId: round.proposal, digest: round.payload, raisedAt, ...over });
+    const carried = (who: string, id = A, body: Record<string, unknown> = { vault: V }) => post(who, `/api/proposals/${id}/carried`, body);
+
+    it('writes it down once the chain no longer holds it open and shows the vault adopted by the company\'s account, sending nothing', async () => {
+      store.putProposal(adoption());
+      open.set(round.proposal, 1);
+      adopted.add(V);
+      /* RED WHEN: an adoption the chain still holds open is written down as carried out - its approvals would be refused. */
+      const stillOpen = await carried('ada');
+      expect(stillOpen.status).toBe(409);
+      expect(stillOpen.body.error).toMatch(/still shows this adoption open, so it does not mark it done yet\. The vault is not affected\. Press again in a minute$/u);
+      open.delete(round.proposal);
+      adopted.clear();
+      /* RED WHEN: an adoption closed on the chain without the vault adopted - withdrawn - is written down as carried out. */
+      const notAdopted = await carried('ada');
+      expect(notAdopted.body.error).toMatch(/does not show this vault adopted yet/u);
+      /*
+       * RED WHEN: a refusal the page says after "the adoption is carried out on the chain" tells the person to approve,
+       * raise or withdraw it again, or to change the service; or does not say the vault is not affected and nothing was sent.
+       */
+      expect(notAdopted.body).toMatchObject({ nothingWasSent: true });
+      expect(notAdopted.body.error).toMatch(/The vault is not affected\. Press again in a minute$/u);
+      expect(notAdopted.body.error).not.toMatch(/withdrawn|Approve|raise|turns that read on/u);
+      expect(store.getProposal(A)!.status).toBe('open');
+      adopted.add(V);
+      unreadable = true;
+      /* RED WHEN: a chain that did not answer is read as one that closed it. */
+      expect((await carried('ada')).status).toBe(503);
+      unreadable = false;
+      /* RED WHEN: the vault's adoption, carried out on the chain, stays open with no approvals on every screen. */
+      expect((await carried('ada')).body).toMatchObject({ status: 'executed' });
+      expect(sent).toEqual([]);
+    });
+
+    it('refuses a run that closed unpaid, any proposal that is not that vault\'s adoption, and one withdrawn', async () => {
+      adopted.add(V);
+      /* A run raised, approved and never paid, closed on the chain once its window passed: no longer open there. */
+      store.putProposal(proposal({ raisedAt, approvalCount: 2 }));
+      /* RED WHEN: a run the chain closed unpaid is written down as carried out, and every screen shows it paid. */
+      expect((await carried('ada', P)).body.error).toMatch(/not the adoption of that vault/u);
+      expect(store.getProposal(P)!.status).toBe('open');
+      /* RED WHEN: a proposal is taken for an adoption because the vault named is adopted, whatever the proposal is. */
+      store.putProposal(adoption({ digest: '33'.repeat(32) as Hex }));
+      expect((await carried('ada')).status).toBe(409);
+      /* RED WHEN: an adoption is written down for a vault it is not the adoption of. */
+      store.putProposal(adoption());
+      adopted.add('cd'.repeat(32));
+      expect((await carried('ada', A, { vault: 'cd'.repeat(32) })).status).toBe(409);
+      /* RED WHEN: a proposal withdrawn is written down again as carried out. */
+      store.putProposal(adoption({ status: 'cancelled' }));
+      expect((await carried('ada')).status).toBe(409);
+      expect(store.getProposal(A)!.status).toBe('cancelled');
+      /* RED WHEN: a proposal the chain never showed raised is written down as carried out. */
+      store.putProposal(adoption({ raisedAt: undefined }));
+      expect((await carried('ada')).status).toBe(409);
+    });
+
+    it('is asked only from a seat that may act, of a company the person is a member of', async () => {
+      store.putProposal(adoption());
+      adopted.add(V);
+      /* RED WHEN: a member who holds no seat writes a proposal down as carried out. */
+      expect((await carried('cy')).status).toBe(403);
+      expect(store.getProposal(A)!.status).toBe('open');
+      /* RED WHEN: a person not a member of the company reaches it. */
+      expect((await carried('eve')).status).toBe(404);
+      /* RED WHEN: a request that names no vault is taken. */
+      expect((await carried('ada', A, {})).status).toBe(400);
+      expect((await carried('ada')).body).toMatchObject({ status: 'executed' });
+    });
   });
 
   it('A RETIREMENT SIGNATURE IS KEPT BESIDE ITS PROPOSAL AS THE SEAT HANDED IT IN, WITH ITS APPROVAL OR SIGNED AGAIN, AND SERVED UNJUDGED', async () => {

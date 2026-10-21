@@ -6,7 +6,7 @@ import { CARRY_ON_EVERY_MS, carryOn, FINISH, openYourWallet, STAGE, type Carried
 import { ActRefused } from '../act-refused.js';
 import { proofsRunning } from '../adapters/proofs-running.js';
 import { lane } from '../adapters/sends.js';
-import { COMPANY_PHASE, COMPANY_USUAL_SECONDS, type CompanyPhase } from '../adapters/usual-times.js';
+import { COMPANY_PHASE, COMPANY_USUAL_SECONDS, stageTimeNoter, type CompanyPhase } from '../adapters/usual-times.js';
 import { secondsSince, StageProgress, useStageSince, useTicker } from '../stage-progress.js';
 import { StartAgain, StartAgainWords } from './start-again.js';
 import { useSession } from '../session.js';
@@ -94,6 +94,12 @@ export function FinishCompany({ leadTo, onChanged, startNewCompany, creation }: 
   const { now, proofStartedAt } = useTicker(proofsRunning);
   const phase: CompanyPhase = proofStartedAt !== null ? COMPANY_PHASE.proving : lane.sending === true ? COMPANY_PHASE.sending : COMPANY_PHASE.waiting;
   const phaseSince = useStageSince(stage, phase);
+  const noteStageTime = useRef(stageTimeNoter());
+  const timedStage = stage === STAGE.read ? null : [stage, phase];
+  useEffect(() => {
+    noteStageTime.current(timedStage, proofStartedAt ?? phaseSince, COMPANY_USUAL_SECONDS[phase]);
+  }, [stage, phase]);
+  useEffect(() => () => { noteStageTime.current(null, 0, null); }, []);
   const phaseSays: Record<CompanyPhase, string> = {
     [COMPANY_PHASE.proving]: t('setup.finishCompany.phase.proving'),
     [COMPANY_PHASE.sending]: t('setup.finishCompany.phase.sending'),

@@ -235,14 +235,14 @@ describe('a refusal, read the way a walk reads one', () => {
        * answer for missing and not-yours, so the route cannot be used to
        * enumerate account ids.
        *
-       * So the sink now carries a reason for these too, because it reads the
-       * BODY and does not care which handler wrote it — while the service's
-       * refusal report holds what `wrap` and the routes that write their own refusals down answered. **That asymmetry is real and
-       * is named here** so nobody reads a missing line in `REPORT-REFUSALS.txt`
-       * as a refusal that went unrecorded.
+       * So the sink carries a reason for these too, because it reads the
+       * BODY and does not care which handler wrote it. `authed` also writes
+       * its own line to the refusal report, with the cause of the 401 (which
+       * the response itself does not carry for a token's state), so that
+       * report holds this refusal as well.
        */
       expect(second).toContain('401');
       expect(second).toContain('not signed in');
-      expect(readFileSync(REPORT, 'utf8')).not.toContain('a1/people');
+      expect(readFileSync(REPORT, 'utf8')).toMatch(/401 GET\s+\/api\/accounts\/a1\/people\n\s+no-credential: not signed in/);
     });
 });

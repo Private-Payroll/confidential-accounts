@@ -97,22 +97,59 @@ export async function pendingMigrations(sql: SqlRunner, dir = MIGRATIONS_DIR): P
   return readMigrations(dir).filter(m => !seen.has(m.version));
 }
 
+/** Whether an error came from the database itself, which names it with a five-character SQLSTATE code. */
+const answeredWithAnError = (e: any): boolean => typeof e?.code === 'string' && /^[0-9A-Z]{5}$/u.test(e.code);
+
+/** How often, and how far apart, a start asks a database that does not answer before it gives up. */
+export interface DatabaseWake {
+  readonly tries: number;
+  readonly pauseMs: number;
+  sleep(ms: number): Promise<void>;
+}
+
+/**
+ * Three tries, ten seconds apart: a hosted database that was asleep answers its
+ * first connection only once it has woken, which takes seconds.
+ */
+export const DATABASE_WAKE: DatabaseWake = {
+  tries: 3,
+  pauseMs: 10_000,
+  sleep: (ms) => new Promise((r) => setTimeout(r, ms)),
+};
+
 /**
  * What to tell the person when the service must not start on this database, or null when it may. It refuses
- * while any migration file is unrecorded, naming each one, and it refuses when the database cannot be read at
- * all, because a start that cannot tell whether the database is current would fail later, in the middle of
- * filing something. It reads only; it never applies a migration.
+ * while any migration file is unrecorded, naming each one, and it refuses when the database does not answer
+ * after it was asked again, because a start that cannot tell whether the database is current would fail later,
+ * in the middle of filing something. It reads only; it never applies a migration, and a database that did not
+ * answer is never sent to the setup, which would not wake it either.
  */
 export async function refuseWhileMigrationsPending(
-  sql: SqlRunner, dir = MIGRATIONS_DIR,
+  sql: SqlRunner, dir = MIGRATIONS_DIR, wake: DatabaseWake = DATABASE_WAKE,
 ): Promise<string | null> {
-  let pending: Migration[];
-  try {
-    pending = await pendingMigrations(sql, dir);
-  } catch (e: any) {
-    return 'THE DATABASE COULD NOT BE CHECKED FOR UNAPPLIED MIGRATIONS.\n\n' +
-      `  ${String(e?.message ?? e)}\n\n` +
-      '  Nothing was started. Run the database setup, which says what is wrong with the database, then start again.';
+  let pending: Migration[] | null = null;
+  let last: any;
+  for (let attempt = 1; attempt <= wake.tries && pending === null; attempt++) {
+    try {
+      pending = await pendingMigrations(sql, dir);
+    } catch (e: any) {
+      last = e;
+      /* A database that answered with an error of its own is awake: asking again changes nothing. */
+      if (answeredWithAnError(e)) {
+        return 'THE DATABASE COULD NOT BE CHECKED FOR UNAPPLIED MIGRATIONS.\n\n' +
+          `  ${String(e?.message ?? e)}\n\n` +
+          '  Nothing was started. Run the database setup, which says what is wrong with the database, then start again.';
+      }
+      if (attempt < wake.tries) await wake.sleep(wake.pauseMs);
+    }
+  }
+  if (pending === null) {
+    const seconds = Math.round(((wake.tries - 1) * wake.pauseMs) / 1000);
+    return 'THE DATABASE DID NOT ANSWER.\n\n' +
+      `  ${String(last?.message ?? last)}\n\n` +
+      `  It was asked ${wake.tries} times over about ${seconds} s. Nothing was started.\n` +
+      '  A database that was asleep can take a moment to wake: start again in a minute.\n' +
+      '  If it still does not answer, check DATABASE_URL in .env.';
   }
   if (pending.length === 0) return null;
   return 'THE DATABASE IS OUT OF DATE.\n\n' +

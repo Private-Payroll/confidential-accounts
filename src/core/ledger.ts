@@ -71,7 +71,13 @@ import type { Sealed, Hex } from './crypto.js';
 import { canonical, toHex, randomBytes, utf8, fromHex as fromHexKey } from './crypto.js';
 import type { AssetId } from './assets.js';
 
-export interface TxRef { ref: string; at: string; }
+/**
+ * A transaction handed to the chain: its reference and when. `transactionHash`
+ * is set only when the transaction that was sent is not the one the caller
+ * handed over (the fee was paid again with a fresh proof after the node
+ * refused the first), so the caller watches the hash that can land.
+ */
+export interface TxRef { ref: string; at: string; transactionHash?: string | null; }
 
 /*
  * `GENESIS_SIGNER_GENERATION` USED TO BE HERE.

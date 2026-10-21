@@ -79,6 +79,34 @@ describe('the vault step while the vault is made', () => {
     expect(q(view.container, '[data-elapsed]')?.textContent).toBe('Running for 0:12.');
   });
 
+  /* RED WHEN: a stage of the vault that has ended leaves no record in the development console with its name, measured seconds and the usual figure shown, one is written for the stage still running, or the stage running when the screen goes away is left unwritten. */
+  it('writes one console record per stage when it ends, none for the stage that runs, and the last one when the screen goes', async () => {
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
+    const view = await startCreating();
+    await settle(3000);
+    expect(warn).not.toHaveBeenCalled();
+    await act(async () => { stages.show!(CREATING.waitingForChain); });
+    await settle(2000);
+    expect(warn.mock.calls.map((c) => c[0])).toEqual([{ stageTime: ['checking'], measuredSeconds: expect.closeTo(3, 0), usualShownSeconds: 5 }]);
+    view.unmount();
+    expect(warn.mock.calls.map((c) => c[0])).toEqual([
+      { stageTime: ['checking'], measuredSeconds: expect.closeTo(3, 0), usualShownSeconds: 5 },
+      { stageTime: ['waiting-for-chain'], measuredSeconds: expect.closeTo(2, 0), usualShownSeconds: 60 },
+    ]);
+  });
+
+  /* RED WHEN: the finished vault is timed as a stage of its own. */
+  it('writes no record for done', async () => {
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
+    const view = await startCreating();
+    await settle(3000);
+    await act(async () => { stages.show!(CREATING.done); });
+    await settle(1000);
+    expect(warn.mock.calls.map((c) => c[0])).toEqual([{ stageTime: ['checking'], measuredSeconds: expect.closeTo(3, 0), usualShownSeconds: 5 }]);
+    view.unmount();
+    expect(warn).toHaveBeenCalledTimes(1);
+  });
+
   /* RED WHEN: the vault step does not read the builder's proofs in progress, or shows a proof's running time as the stage's own. */
   it('reads the builder\'s proofs in progress and shows how long the proof has run', async () => {
     const startedAt = Date.now() - 100_000;

@@ -1,7 +1,8 @@
 import { askWalletToSignIn, openWalletDialog, WalletClosed, type WalletDialog } from 'vaults-web-shared/wallet-sign-in.js';
 import { closeWalletFrame, mountWalletFrame, onWalletFrame, walletFrameShown, walletInThisPage, WALLET_FRAME_ALLOW } from 'vaults-web-shared/wallet-frame.js';
 import type { SealedAccount } from '../../../../src/core/types.js';
-import { boundedRead, isReadMethod } from 'vaults-web-shared/read-bound.js';
+import type { ActRefusal } from './refusals.js';
+import { isReadMethod, readsAnswered, serviceRead, SIGN_OUT_WAITS_MS } from 'vaults-web-shared/read-bound.js';
 import { keepSignIn } from './kept-sign-in.js';
 import { tabStorage } from './kept-skips.js';
 
@@ -137,7 +138,7 @@ async function ask(path: string, method?: string, body?: unknown): Promise<{ sta
     return { status: r.status, body: (answer !== null && typeof answer === 'object' ? answer : {}) as Record<string, unknown> };
   };
   try {
-    return await (isReadMethod(method) ? boundedRead(path, once) : once());
+    return await (isReadMethod(method) ? serviceRead(path, once) : once());
   } catch {
     return null;
   }
@@ -209,39 +210,67 @@ async function withCreationsKeptHere(personId: string, rows: Company[]): Promise
 /** The service's rows of the one list of companies, as last asked for, and whom they were listed for. Each row's name is sealed. */
 let listed: { person: string; rows: readonly unknown[] } = { person: '', rows: [] };
 
+/** Each company's name by id, and, for each company in the list whose name did not open here, why. */
+export type CompanyNames = ReadonlyMap<string, string> & { readonly whyNot: ReadonlyMap<string, ActRefusal> };
+
+/** No names, and no reasons: what a list shows before its names are read. */
+export const NO_NAMES: CompanyNames = Object.assign(new Map<string, string>(), { whyNot: new Map<string, ActRefusal>() });
+
 /**
  * THE NAME OF EACH COMPANY IN THE ONE LIST, by id, the one source of a name for
  * every list: opened with the keys saved for the person, or, for a company not
  * finished, the name the person gave it, as this device kept it with the
  * company's creation. The service's own field is never a name. A company this
- * tab can neither open nor holds a creation of has none, and so does every
- * company when the list was asked for somebody else. The list is not asked
- * for again: it is the one `whoIsSignedIn` read. The keyring may ask the
- * service who is signed in, when it does not know yet.
+ * tab can neither open nor holds a creation of has none, with why it did not
+ * open (`whyNot`), and so does every company when the list was asked for
+ * somebody else. The list is not asked for again: it is the one
+ * `whoIsSignedIn` read, whose rows carry each company's roster. The keyring may
+ * ask the service who is signed in, when it does not know yet.
  */
-export async function companyNamesFor(personId: string): Promise<ReadonlyMap<string, string>> {
+export async function companyNamesFor(personId: string): Promise<CompanyNames> {
   const out = new Map<string, string>();
+  const whyNot = new Map<string, ActRefusal>();
+  const names = (): CompanyNames => Object.assign(out, { whyNot });
+  if (listed.person !== personId) return names();
+  const ids = listed.rows.map((row) => (row as { id?: unknown } | null)?.id).filter((id): id is string => typeof id === 'string');
+  let modules: [typeof import('./keyring-person.js'), typeof import('./filing-judge.js')];
   try {
-    if (listed.person !== personId) return out;
-    const [{ keyringFor }, { openedHere }] = await Promise.all([import('./keyring-person.js'), import('./filing-judge.js')]);
-    if (!(await keyringFor(personId))) return out;
+    modules = await Promise.all([import('./keyring-person.js'), import('./filing-judge.js')]);
+  } catch {
+    return names();
+  }
+  const [{ keyringFor }, { openedHere, ACT_REFUSAL, refusalOf }] = modules;
+  try {
+    if (!(await keyringFor(personId))) {
+      for (const id of ids) whyNot.set(id, ACT_REFUSAL.notSignedIn);
+      return names();
+    }
     const { companyNameKeptHere, companiesBeingCreated } = await keyring();
     for (const kept of companiesBeingCreated()) {
       const name = companyNameKeptHere(kept);
       if (name !== null) out.set(kept, name);
     }
     for (const row of listed.rows) {
-      /* A company whose roster this device does not believe has no name shown, and the others are still read. */
+      const id = (row as { id?: unknown } | null)?.id;
+      if (typeof id !== 'string') continue;
+      /* A company whose roster this device does not believe has no name shown, with why, and the others are still read. */
       let opened: Awaited<ReturnType<typeof openedHere>> = null;
-      try { opened = await openedHere(row as SealedAccount); } catch { opened = null; }
+      try {
+        opened = await openedHere(row as SealedAccount);
+        if (opened === null) whyNot.set(id, ACT_REFUSAL.noKeysHere);
+      } catch (e) {
+        whyNot.set(id, refusalOf(e));
+      }
       if (opened !== null && typeof opened.name === 'string' && opened.name.trim() !== '') { out.set(opened.id, opened.name); continue; }
       /* A company not finished has no sealed record to open yet: it is named by the creation this device kept, never by the service's own field. */
-      const id = (row as { id?: unknown } | null)?.id;
-      const kept = typeof id === 'string' ? companyNameKeptHere(id) : null;
-      if (typeof id === 'string' && kept !== null) out.set(id, kept);
+      const kept = companyNameKeptHere(id);
+      if (kept !== null) out.set(id, kept);
     }
-  } catch { /* a name not opened is not shown */ }
-  return out;
+  } catch (e) {
+    for (const id of ids) if (!whyNot.has(id)) whyNot.set(id, refusalOf(e));
+  }
+  for (const id of out.keys()) whyNot.delete(id);
+  return names();
 }
 
 /** The one read of the approvals each company needs, for the list as last asked for; dropped when the list is asked for again. */
@@ -389,12 +418,16 @@ const retryAfter = (body: Record<string, unknown>): number | null =>
 export type SignedOut = { of: typeof OF.signedOut } | { of: typeof OF.notConfirmed };
 
 /**
- * SIGN OUT: the service ends the sign-in and clears its cookie. This tab
+ * SIGN OUT: the service ends the sign-in and clears its cookie, once the reads of the
+ * service in flight have answered (up to SIGN_OUT_WAITS_MS; never skipped): a read
+ * that comes back on a sign-in just ended is a 401, which signed the person out of the
+ * finishing step. The account menu's sign-out is this same function. This tab
  * forgets the person and the keyring forgets their keys however the service
  * answers, so a screen that goes on to show nobody signed in is never showing
  * it over keys still open.
  */
 export async function signOut(): Promise<SignedOut> {
+  await readsAnswered(SIGN_OUT_WAITS_MS);
   const r = await ask(SERVICE.signOut, SERVICE.post);
   prepared = null;
   keepSignIn(tabStorage(), null);
