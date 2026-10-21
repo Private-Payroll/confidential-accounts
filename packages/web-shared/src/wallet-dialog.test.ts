@@ -12,7 +12,7 @@ import type { Openable, WalletWindow } from './wallet-sign-in.js';
 
 /**
  * **THE WALLET OPENS AS A DIALOG, AND IT OPENS AT ALL.**
- * `docs/how-money-can-be-lost.md` `C154`, `docs/NEXT.md` X9 §1.
+ * A page that opens the wallet in a tab the browser blocked tells the person so, in its own words.
  *
  * ── THE ONE FACT THIS FILE EXISTS FOR ─────────────────────────────────────
  *
@@ -395,7 +395,7 @@ describe('§1 — THE PERSON CAN STOP WAITING, AND THE REFUSAL IS NOT BLAME', ()
   it('WATCHED FAILING: A WINDOW THAT DID NOT OPEN DOES NOT BLAME THE PERSON’S BROWSER',
     async () => {
       /*
-       * `C154`'s second half. It read *"your browser stopped this page opening
+       * The second half of that rule. The page once said *"your browser stopped this page opening
        * your wallet. Allow pop-ups for this site"* — advice for a problem the
        * person does not have, because the usual reason is that the page spent
        * the permission before it used it.
@@ -753,6 +753,11 @@ describe('§3 — A JOURNEY WHOSE SERVER CALL FAILS PUTS ITS WALLET AWAY', () =>
     keyring.forgetLocally();
   });
 
+  /** What works out the founding seat, standing in for the worker: the first press fails at the service before any deploy is built. */
+  const aBuilderThatMakesTheSeat = {
+    foundingSeat: async () => ({ seat: 'ab'.repeat(32), scope: 'cd'.repeat(32), publicKey: 'ef'.repeat(32) }),
+  } as unknown as import('./keyring.js').AccountCreationBuilder;
+
   /** A server that answers everything, except the one path it falls over on. */
   const aServerThatFails = (failsOn: (method: string, url: string) => boolean) =>
     (async (url: string, init?: RequestInit) => {
@@ -799,8 +804,8 @@ describe('§3 — A JOURNEY WHOSE SERVER CALL FAILS PUTS ITS WALLET AWAY', () =>
     const keyring = await signedIn(view);
     view.answers = givesTheKeys;
     globalThis.fetch = aServerThatFails((method, url) => method === 'POST' && url === '/api/accounts');
-    await expect(keyring.createCompanyWithWallet(
-      { name: 'Acme', signers: [{ name: 'Ada', role: 'admin' }], threshold: 1 }, WALLET, view, US,
+    await expect(keyring.startCompanyHeldFromTheStart(
+      { name: 'Acme', signers: [{ name: 'Ada', role: 'admin' }], threshold: 1 }, WALLET, aBuilderThatMakesTheSeat, view, US,
     )).rejects.toThrow('the server fell over');
     expect(view.stillOpen()).toEqual([]);
   });
@@ -825,8 +830,8 @@ describe('§3 — A JOURNEY WHOSE SERVER CALL FAILS PUTS ITS WALLET AWAY', () =>
     const said: Array<unknown> = [];
     const stop = keyring.onWalletWaiting((d) => said.push(d === null ? 'done' : 'waiting'));
     globalThis.fetch = aServerThatFails((method, url) => method === 'POST' && url === '/api/accounts');
-    await keyring.createCompanyWithWallet(
-      { name: 'Acme', signers: [{ name: 'Ada', role: 'admin' }], threshold: 1 }, WALLET, view, US,
+    await keyring.startCompanyHeldFromTheStart(
+      { name: 'Acme', signers: [{ name: 'Ada', role: 'admin' }], threshold: 1 }, WALLET, aBuilderThatMakesTheSeat, view, US,
     ).catch(() => {});
     stop();
     expect(said).toEqual(['waiting', 'done']);

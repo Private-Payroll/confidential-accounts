@@ -15,7 +15,9 @@
  * contract proof, and the last tests here pin exactly that), the wallet's balancing of the deposit, or any chain.
  *
  * Needs every verifier key on disk (`npm run compact:vault -- --full` builds them), the `depositUnshielded` proving
- * key and circuit, and the public parameters for size 9, whose digest is Midnight's published one. The transaction
+ * key and circuit, and the public parameters for size 9, whose digest is Midnight's published one
+ * (`npx tsx scripts/fetch-proving-parameters.ts` fetches and checks them). Where the checks have built the keys
+ * (`KEYS_MUST_BE_BUILT`), a missing input is a failure and never a stand-down. The transaction
  * checked here is the page's own unproven deposit, which holds one proof; the person's wallet adds its own later.
  */
 import { describe, it, expect, beforeAll, afterAll, vi } from 'vitest';
@@ -97,7 +99,7 @@ import(${entry});`, { eval: true });
 
 type Posted = { id?: number; ok?: boolean; kind?: string; state?: string; tx?: string; error?: string; name?: string; ask?: string };
 
-describe.skipIf(!CAN_PROVE_HERE)('A PUBLIC DEPOSIT IS PROVED FOR REAL ON THE DEVICE [needs contracts/managed-vault/keys and the size 9 public parameters; `npm run compact` then `npm run compact:vault -- --full` build the keys]', () => {
+describe.skipIf(!CAN_PROVE_HERE)('A PUBLIC DEPOSIT IS PROVED FOR REAL ON THE DEVICE [needs contracts/managed-vault/keys and the bls_midnight_2p9 public parameter file; `npm run compact` then `npm run compact:vault -- --full` build the keys, `npx tsx scripts/fetch-proving-parameters.ts` fetches the file]', () => {
   const zk = new NodeZkConfigProvider(PLACES.compiled);
   const compiled = CompiledContract.make('Vault', (vaultModule as any).Contract).pipe(
     CompiledContract.withWitnesses({ noteToSpend: () => { throw new Error('a deposit spends no note'); }, nonceSecret: () => { throw new Error('a deposit spends no note'); } } as never));
@@ -388,5 +390,20 @@ describe.skipIf(!CAN_PROVE_HERE)('A PUBLIC DEPOSIT IS PROVED FOR REAL ON THE DEV
         expect(run.threads.flatMap((t) => t.told.map((m) => m.op))).not.toContain('prove');
       }, 120_000);
     }
+  });
+});
+
+/*
+ * **WHERE THE CHECKS HAVE BUILT THE KEYS, THE REAL PROVER MUST RUN.** The deposit above stands down, and passes, when
+ * a key or the size 9 parameter file is missing, so a job that failed to put either in place would pass with nothing
+ * proved. The job that builds the keys sets KEYS_MUST_BE_BUILT, and there a stand-down is a failure naming what is
+ * missing.
+ */
+const KEYS_MUST_BE_BUILT = (process.env.KEYS_MUST_BE_BUILT ?? '') !== '';
+
+describe.skipIf(!KEYS_MUST_BE_BUILT)('where the checks built the keys, a public deposit is proved for real [needs KEYS_MUST_BE_BUILT, which the job that builds the keys sets; the bls_midnight_2p9 public parameter file comes from `npx tsx scripts/fetch-proving-parameters.ts`]', () => {
+  /* RED WHEN: the keys or the size 9 parameter file are missing or not the published ones, which would stand the real prover down green. */
+  it('the keys and the size 9 public parameter file are in place', () => {
+    expect(WHY_NOT, `the real prover cannot run here: ${WHY_NOT}`).toBeNull();
   });
 });

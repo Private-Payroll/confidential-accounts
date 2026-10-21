@@ -1,10 +1,10 @@
 import type { ComponentType } from 'react';
 import type { IconSvgElement } from '@hugeicons/react';
-import { Building03Icon, SafeIcon, ShieldUserIcon, UserAdd01Icon, UserGroupIcon } from '@hugeicons/core-free-icons';
-import { HandOver } from '../actions/hand-over.js';
+import { Building03Icon, CheckmarkCircle02Icon, SafeIcon, UserAdd01Icon, UserGroupIcon } from '@hugeicons/core-free-icons';
 import { CreateCompany } from '../actions/create-company.js';
+import { FinishCompany } from '../actions/finish-company.js';
 import { CreateVault } from '../actions/create-vault.js';
-import { HANDOVER, type Handover } from '../adapters/handover-state.js';
+import type { CompanyCreation } from '../adapters/creation-standing.js';
 import type { VaultRow } from '../adapters/company-records.js';
 import { wasHandedOver } from '../adapters/vault-rows.js';
 import type { PageId, Text } from '../pages.js';
@@ -14,8 +14,9 @@ import { STEP, type StepId, type StepProps } from './step-ids.js';
  * EVERY SETUP STEP, IN ONE LIST.
  *
  * Each step is one entry: its words, its icon, how the application knows it
- * is done, whether it can be skipped, whether it can be undone once done, and
- * either its component or what it will be while it is not built yet. The
+ * is done, whether it can be skipped, whether it holds the later steps back
+ * until it is done, whether it can be undone once done, and either its
+ * component or what it will be while it is not built yet. The
  * setup wizard, its tabs and its progress bar read this list and nothing
  * else, so adding a step is one entry here, its phrases in the language
  * files, and its component.
@@ -31,10 +32,10 @@ import { STEP, type StepId, type StepProps } from './step-ids.js';
 export interface SetupFacts {
   /** The company being set up, by id; null before one is created. */
   company: string | null;
-  /** Where it stands on being held by its committee; null while that is not known. */
-  handover: Handover | null;
   /** Its vaults and where each stands; null while they are not known. */
   vaults: readonly Pick<VaultRow, 'standing'>[] | null;
+  /** Where the company stands in being created, and what this tab keeps of it; null while that is not known. */
+  creation: CompanyCreation | null;
 }
 
 export interface SetupStep {
@@ -45,11 +46,13 @@ export interface SetupStep {
   icon: IconSvgElement;
   /** How the application knows the step is done. A step skipped is not done. */
   done: (facts: SetupFacts) => boolean;
-  /** Whether it can be skipped for now and returned to. */
+  /** Whether it can be skipped for now and returned to. A step that cannot be skipped has to be finished. */
   skippable: boolean;
+  /** Whether every step after it is held back, shown with the reason, until it is done. */
+  blocksLater?: boolean;
   /**
-   * Whether, once done, it can never be undone: a company created, or handed
-   * to its signers, stays so. Such a step, once done, shows as done and is
+   * Whether, once done, it can never be undone: a company created or finished,
+   * or a vault made, stays so. Such a step, once done, shows as done and is
    * never opened again, so its action is never offered a second time.
    */
   cannotBeUndone: boolean;
@@ -65,15 +68,16 @@ const never = (): boolean => false;
 export const SETUP_STEPS = {
   [STEP.createCompany]: {
     name: (t) => t('setup.step.createCompany.name'), line: (t) => t('setup.step.createCompany.line'), icon: Building03Icon,
-    done: (f) => f.company !== null, skippable: true, cannotBeUndone: true, shows: { action: CreateCompany },
+    done: (f) => f.company !== null || f.creation?.kept === true, skippable: true, cannotBeUndone: true, shows: { action: CreateCompany },
+  },
+  [STEP.finishCompany]: {
+    name: (t) => t('setup.step.finishCompany.name'), line: (t) => t('setup.step.finishCompany.line'), icon: CheckmarkCircle02Icon,
+    done: (f) => f.creation?.confirmedFinished === true, skippable: false, blocksLater: true, cannotBeUndone: true,
+    shows: { action: FinishCompany },
   },
   [STEP.signers]: {
     name: (t) => t('setup.step.signers.name'), line: (t) => t('setup.step.signers.line'), icon: UserAdd01Icon,
     done: never, skippable: true, cannotBeUndone: false, shows: { comingSoon: (t) => t('setup.step.signers.soon') }, page: 'settingsSigners',
-  },
-  [STEP.handOver]: {
-    name: (t) => t('setup.step.handOver.name'), line: (t) => t('setup.step.handOver.line'), icon: ShieldUserIcon,
-    done: (f) => f.handover?.of === HANDOVER.held, skippable: true, cannotBeUndone: true, shows: { action: HandOver }, page: 'settingsSigners',
   },
   [STEP.vault]: {
     name: (t) => t('setup.step.vault.name'), line: (t) => t('setup.step.vault.line'), icon: SafeIcon,

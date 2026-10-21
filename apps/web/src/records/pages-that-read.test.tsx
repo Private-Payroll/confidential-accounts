@@ -15,14 +15,24 @@ import { untilPageShown, untilShown } from '../page-shown.test-support.js';
  * not built yet is shown, disabled, with nothing beside it or on hover.
  */
 const state = vi.hoisted(() => ({
-  company: null as unknown, handover: { of: 'vault-keys-missing', signers: 1 } as unknown, publicMoney: null as unknown, privateMoney: null as unknown,
-  opened: 0, names: new Map<string, string>(), ready: { of: 'ready' } as unknown, owed: [] as unknown[],
+  company: null as unknown, handover: { of: 'held' } as unknown, publicMoney: null as unknown, privateMoney: null as unknown,
+  opened: 0, names: new Map<string, string>(), ready: { of: 'ready' } as unknown,
+  /* The name the company filed for a vault, and each vault a name was asked for. */
+  vaultName: null as string | null, namesAsked: [] as string[],
+  /* What the creation adapter says of the company: nothing known, so not confirmed finished; and a gate a test holds the read at. */
+  creation: { company: 'c-1', standing: null, awaitingSecondPress: false, kept: false, confirmedFinished: false, mark: null } as unknown,
+  creationGate: null as Promise<void> | null,
+}));
+vi.mock('../adapters/creation-standing.js', async (real) => ({
+  ...(await real<typeof import('../adapters/creation-standing.js')>()),
+  creationOf: async () => { if (state.creationGate !== null) await state.creationGate; return state.creation; },
 }));
 vi.mock('../adapters/company-records.js', async (real) => ({
   ...(await real<typeof import('../adapters/company-records.js')>()),
   readCompany: async () => state.company,
   openWithYourAccount: async () => { state.opened += 1; return { of: 'done' }; },
   readVaultPublicMoney: async () => state.publicMoney,
+  readVaultName: async (_person: string, _company: string, vault: string) => { state.namesAsked.push(vault); return state.vaultName; },
 }));
 vi.mock('../adapters/handover-state.js', async (real) => ({
   ...(await real<typeof import('../adapters/handover-state.js')>()),
@@ -31,7 +41,6 @@ vi.mock('../adapters/handover-state.js', async (real) => ({
 vi.mock('../adapters/create-vault.js', async (real) => ({
   ...(await real<typeof import('../adapters/create-vault.js')>()),
   readVaultReadiness: async () => state.ready,
-  readOwedVaults: async () => state.owed,
 }));
 vi.mock('../adapters/vault-private-money.js', async (real) => ({
   ...(await real<typeof import('../adapters/vault-private-money.js')>()),
@@ -125,8 +134,9 @@ const all = (c: ParentNode, sel: string) => [...c.querySelectorAll(sel)] as HTML
 
 beforeEach(() => {
   vi.spyOn(console, 'error').mockImplementation(() => {});
-  state.company = records(); state.handover = { of: 'vault-keys-missing', signers: 1 }; state.publicMoney = null; state.privateMoney = null; state.owed = []; state.opened = 0; state.names = new Map(); state.ready = { of: 'ready' };
+  state.company = records(); state.handover = { of: 'held' }; state.publicMoney = null; state.privateMoney = null; state.opened = 0; state.names = new Map(); state.ready = { of: 'ready' }; state.vaultName = null; state.namesAsked = [];
   skippedFor('c-1').clear(); window.sessionStorage.clear(); takeAsked();
+  state.creation = { company: 'c-1', standing: null, awaitingSecondPress: false, kept: false, confirmedFinished: false, mark: null }; state.creationGate = null;
 });
 afterEach(() => { cleanup(); vi.restoreAllMocks(); });
 
@@ -182,7 +192,11 @@ describe('every page that reads is built, at its own address', () => {
     expect([...seen].sort()).toEqual(['approve', 'check-fingerprint', 'check-last-deposit', 'create-proposal', 'decline', 'deposit', 'export-run', 'invite', 'new-run', 'pay-out', 'payslips', 'withdraw']);
     const vaults = await draw('vaults');
     expect(all(vaults, '[data-soon]')).toEqual([]);
+    state.creation = { company: 'c-1', standing: 'finished', awaitingSecondPress: false, kept: false, confirmedFinished: true, mark: null };
     await act(async () => { fireEvent.click(q(vaults, '[data-action=create-vault]')!); await new Promise((r) => setTimeout(r, 5)); });
+    /* A company confirmed finished, a name typed: only then can Create be pressed. */
+    expect((document.querySelector('[data-panel] [data-action=create-vault-now]') as HTMLButtonElement).disabled).toBe(true);
+    await act(async () => { fireEvent.change(document.querySelector('[data-panel] [data-field=vault-name]')!, { target: { value: 'Payroll UK' } }); await new Promise((r) => setTimeout(r, 5)); });
     expect((document.querySelector('[data-panel] [data-action=create-vault-now]') as HTMLButtonElement).disabled).toBe(false);
   });
 });
@@ -191,19 +205,60 @@ describe('home', () => {
   /*
    * RED WHEN: the setup card leaves out a step not done, lists one that is
    * done, shows a skipped step as done or not as skipped, or its button does
-   * not open the wizard at that step; or the card shows when every step is done.
+   * not open the wizard at that step (or, for a step the company's unfinished
+   * creation blocks, is not shown shut with its reason and a lead to the step that blocks it); or the card shows when every
+   * step is done.
    */
   it('shows the setup card with the steps left, a skipped one marked, each opening the wizard at it', async () => {
     skipStep('c-1', 'signers');
     state.company = records({ vaults: { of: 'read', value: [] } });
     const c = await draw('home');
     expect(all(c, '[data-part=setup-card] [data-step]').map((e) => [e.dataset.step, e.dataset.standing])).toEqual([
-      ['signers', 'skipped'], ['handOver', 'open'], ['vault', 'open'], ['people', 'open'],
+      ['finishCompany', 'open'], ['signers', 'skipped'], ['vault', 'open'], ['people', 'open'],
     ]);
     expect(q(c, '[data-part=setup-card] [data-step=signers] [data-skipped]')?.textContent).toBe(EN['setup.skipped']);
     expect(q(c, '[data-steps-left]')!.dataset.stepsLeft).toBe('4');
-    fireEvent.click(q(c, '[data-part=setup-card] [data-step=vault] [data-action=open-step]')!);
+    /* RED WHEN: a step the unfinished creation blocks has a live Open that silently opens another step, or no reason, or no lead to the blocking step. */
+    for (const blocked of ['vault', 'signers']) {
+      const row = `[data-part=setup-card] [data-step=${blocked}]`;
+      const open = q(c, `${row} [data-action=open-step]`) as HTMLButtonElement;
+      expect(open.disabled).toBe(true);
+      expect(open.getAttribute('aria-describedby')).toBe(q(c, `${row} [data-why-disabled]`)!.id);
+      expect(q(c, `${row} [data-why-disabled]`)!.textContent).toBe(EN['setup.blocked']!.replace('{step}', EN['setup.step.finishCompany.name']!));
+    }
+    fireEvent.click(q(c, '[data-part=setup-card] [data-step=vault] [data-lead-to=finishCompany]')!);
     expect(window.location.pathname).toBe(PAGES.setup.path);
+    expect(takeAsked()).toEqual({ step: 'finishCompany', newCompany: false });
+    fireEvent.click(q(c, '[data-part=setup-card] [data-step=signers] [data-lead-to=finishCompany]')!);
+    expect(takeAsked()).toEqual({ step: 'finishCompany', newCompany: false });
+    /* The step that blocks is not itself blocked: its Open is live. */
+    expect(q(c, '[data-part=setup-card] [data-step=finishCompany] [data-lead-to]')).toBeNull();
+    fireEvent.click(q(c, '[data-part=setup-card] [data-step=finishCompany] [data-action=open-step]')!);
+    expect(takeAsked()).toEqual({ step: 'finishCompany', newCompany: false });
+  });
+
+  /*
+   * RED WHEN: "Finish creating the company" stays on the card once the creation adapter confirms the company finished, or is
+   * missing from it before; or a step it blocked still opens the blocking step after; or the card is drawn, saying the company
+   * is unfinished, before the adapter has said which.
+   */
+  it('lists "Finish creating the company" only while the company is unfinished, and opens each step at itself once it is done', async () => {
+    state.company = records({ vaults: { of: 'read', value: [] } });
+    let release = (): void => {};
+    state.creationGate = new Promise<void>((r) => { release = r; });
+    const reading = drawNow('home');
+    await settle();
+    expect(q(reading, '[data-part=setup-card]')).toBeNull();
+    release();
+    await untilShown(() => q(reading, '[data-part=setup-card]'), 'the setup card');
+    expect(all(reading, '[data-part=setup-card] [data-step]').map((e) => e.dataset.step)).toEqual(['finishCompany', 'signers', 'vault', 'people']);
+    cleanup();
+    state.creationGate = null;
+    state.creation = { company: 'c-1', standing: 'finished', awaitingSecondPress: false, kept: false, confirmedFinished: true, mark: null };
+    const c = await draw('home');
+    await untilShown(() => q(c, '[data-part=setup-card]'), 'the setup card');
+    expect(all(c, '[data-part=setup-card] [data-step]').map((e) => e.dataset.step)).toEqual(['signers', 'vault', 'people']);
+    fireEvent.click(q(c, '[data-part=setup-card] [data-step=vault] [data-action=open-step]')!);
     expect(takeAsked()).toEqual({ step: 'vault', newCompany: false });
   });
 
@@ -295,14 +350,13 @@ describe('home', () => {
 
   /* RED WHEN: a step the application knows is done stays on the card; or a vault not yet held by the super admins, or vaults that could not be read, take the vault step off it. */
   it('leaves a done step off the card', async () => {
-    state.handover = { of: 'held' };
     const c = await draw('home');
-    expect(all(c, '[data-part=setup-card] [data-step]').map((e) => e.dataset.step)).toEqual(['signers', 'people']);
-    for (const vaults of [{ of: 'read', value: [{ vault: VAULT, createdAt: '2026-09-01T00:00:00.000Z', standing: 'handover-owed' }] }, { of: 'unreadable' }] as const) {
+    expect(all(c, '[data-part=setup-card] [data-step]').map((e) => e.dataset.step)).toEqual(['finishCompany', 'signers', 'people']);
+    for (const vaults of [{ of: 'read', value: [{ vault: VAULT, createdAt: '2026-09-01T00:00:00.000Z', standing: 'start-owed' }] }, { of: 'unreadable' }] as const) {
       cleanup();
       state.company = records({ vaults: vaults as CompanyRecords['vaults'] });
       const again = await draw('home');
-      expect(all(again, '[data-part=setup-card] [data-step]').map((e) => e.dataset.step), vaults.of).toEqual(['signers', 'vault', 'people']);
+      expect(all(again, '[data-part=setup-card] [data-step]').map((e) => e.dataset.step), vaults.of).toEqual(['finishCompany', 'signers', 'vault', 'people']);
     }
   });
 
@@ -762,25 +816,24 @@ describe('vaults and a vault', () => {
    * RED WHEN: a pending vault shows no Pending pill on
    * its tile or its page, the pill is the colour of Coming soon, its hover
    * text is not the standing's phrase, or the long text stays on the tile;
-   * pressing it on a vault not finished does not open finishing it in the
+   * pressing it on a vault not set up does not open carrying its set up on in the
    * panel, or follows the tile's link; pressing it on a company not handed
-   * over does not open handing it over; the Vaults page does not list each
+   * over does not open who holds the company in the panel; the Vaults page does not list each
    * pending vault as a row of its own at the top with its action; or that
    * list is drawn when nothing is pending.
    */
   it('marks a pending vault with the Pending pill, lists it on top, and opens what finishes it', async () => {
     const OTHER = 'cd'.repeat(32);
-    state.company = records({ vaults: { of: 'read', value: [vaultOf('handover-owed'), vaultOf('account-not-handed-over', OTHER), vaultOf('held-by-other-keys', 'ef'.repeat(32))] } });
-    state.owed = [{ vault: VAULT, number: 1, here: true }];
+    state.company = records({ vaults: { of: 'read', value: [vaultOf('start-owed'), vaultOf('account-not-handed-over', OTHER), vaultOf('held-by-other-keys', 'ef'.repeat(32))] } });
     const c = await draw('vaults');
     await settle();
     const pill = q(c, `[data-slot=stat-tile][data-vault="${VAULT}"] [data-pending]`)!;
     expect(pill.textContent).toBe(EN['vaults.pending']);
     expect(pill.dataset.variant).toBe('destructive');
-    expect(q(c, `[data-slot=stat-tile][data-vault="${VAULT}"]`)!.textContent).not.toContain(EN['vaults.standing.handoverOwed']);
+    expect(q(c, `[data-slot=stat-tile][data-vault="${VAULT}"]`)!.textContent).not.toContain(EN['vaults.standing.startOwed']);
     expect(all(c, '[data-part=vaults-pending] [data-pending-vault]').map((r) => [r.dataset.pendingVault, r.textContent])).toEqual([
-      [VAULT, `Vault 1${EN['vaults.standing.handoverOwed']}${EN['createVault.finish']}`],
-      [OTHER, `Vault 2${EN['vaults.standing.accountNotHandedOver']}${EN['setup.handOver.button']}`],
+      [VAULT, `Vault 1${EN['vaults.standing.startOwed']}${EN['createVault.finishStart']}`],
+      [OTHER, `Vault 2${EN['vaults.standing.accountNotHandedOver']}${EN['committeeChange.button']}`],
       ['ef'.repeat(32), `Vault 3${EN['vaults.standing.heldByOtherKeys']}`],
     ]);
     expect(q(c, '[data-part=vaults-pending]')!.compareDocumentPosition(q(c, '[data-part=vaults]')!) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
@@ -792,7 +845,7 @@ describe('vaults and a vault', () => {
     const again = await draw('vaults');
     await settle();
     await act(async () => { fireEvent.click(q(again, `[data-vault="${OTHER}"] [data-pending]`)!); await new Promise((r) => setTimeout(r, 5)); });
-    expect(document.querySelector('[data-panel] [data-action=hand-over]')).not.toBeNull();
+    expect(document.querySelector('[data-panel] [data-action=committee-change]')).not.toBeNull();
     cleanup();
     const explain = await draw('vaults');
     await settle();
@@ -802,13 +855,13 @@ describe('vaults and a vault', () => {
     cleanup();
     const rowsPress = await draw('vaults');
     await settle();
-    await act(async () => { fireEvent.click(q(rowsPress, `[data-pending-vault="${VAULT}"] [data-action=finish-handover]`)!); await new Promise((r) => setTimeout(r, 5)); });
+    await act(async () => { fireEvent.click(q(rowsPress, `[data-pending-vault="${VAULT}"] [data-action=finish-start]`)!); await new Promise((r) => setTimeout(r, 5)); });
     expect(document.querySelector('[data-panel] [data-action=create-vault] [data-slot=confirm-in-your-account]')).not.toBeNull();
     cleanup();
     const rowsHand = await draw('vaults');
     await settle();
-    await act(async () => { fireEvent.click(q(rowsHand, `[data-pending-vault="${OTHER}"] [data-action=hand-over]`)!); await new Promise((r) => setTimeout(r, 5)); });
-    expect(document.querySelector('[data-panel] section[data-action=hand-over]')).not.toBeNull();
+    await act(async () => { fireEvent.click(q(rowsHand, `[data-pending-vault="${OTHER}"] [data-action=committee-change]`)!); await new Promise((r) => setTimeout(r, 5)); });
+    expect(document.querySelector('[data-panel] [data-action=committee-change]')).not.toBeNull();
     cleanup();
     const page = await draw('vault', { vault: VAULT });
     await settle();
@@ -822,6 +875,21 @@ describe('vaults and a vault', () => {
     await settle();
     expect(q(quiet, '[data-part=vaults-pending]')).toBeNull();
     expect(q(quiet, '[data-pending]')).toBeNull();
+  });
+
+  /*
+   * RED WHEN: the signers page does not show the committee change - what holds the company, and for a change owed the
+   * signatures it has and needs - or shows it twice; or the page stops saying the rest of it is Coming soon.
+   */
+  it('shows the committee change on the signers page, once, with the page still Coming soon', async () => {
+    state.handover = { of: 'change-owed', signed: [{ have: 1, required: 2 }] };
+    const c = await draw('settingsSigners');
+    await settle();
+    expect(all(c, '[data-action=committee-change]')).toHaveLength(1);
+    expect(q(c, '[data-public-facts]')!.textContent).toBe(EN['settingsSigners.publicFacts']);
+    expect(all(c, '[data-change-owed] li').map((li) => li.textContent)).toEqual(['1 of 2 signed']);
+    expect(q(c, '[data-action=sign-change]')).not.toBeNull();
+    expect(q(c, '[data-screen=coming-soon] [data-slot=page-header] [data-slot=coming-soon]')).not.toBeNull();
   });
 
   /*
@@ -848,22 +916,71 @@ describe('vaults and a vault', () => {
   });
 
   /*
+   * RED WHEN: a vault the account adopted shows its number instead of the name the company filed for it, or a vault it
+   * did not adopt shows a name or has one asked for; or a vault with no readable name shows anything but its number.
+   */
+  it('names an adopted vault by the name filed for it, and any other vault, or one with no readable name, by its number', async () => {
+    const OTHER = 'cd'.repeat(32);
+    state.company = records({ vaults: { of: 'read', value: [{ ...vaultOf('held-by-committee'), adopted: true }, vaultOf('start-owed', OTHER)] } });
+    state.vaultName = 'Treasury';
+    const c = await draw('vaults');
+    await settle();
+    const title = (vault: string) => q(c, `[data-slot=stat-tile][data-vault="${vault}"] [data-slot=stat-tile-title]`)!.textContent;
+    expect([title(VAULT), title(OTHER)]).toEqual(['Treasury', `Vault 2${EN['vaults.pending']}`]);
+    expect(state.namesAsked).toEqual([VAULT]);
+    cleanup();
+    state.vaultName = null;
+    const unnamed = await draw('vaults');
+    await settle();
+    expect(q(unnamed, `[data-slot=stat-tile][data-vault="${VAULT}"] [data-slot=stat-tile-title]`)!.textContent).toBe('Vault 1');
+  });
+
+  /* RED WHEN: a vault's page names it by its number while its tile, or the list of what is pending, shows the name filed for it. */
+  it('names a vault on its own page as its tile does', async () => {
+    state.company = records({ vaults: { of: 'read', value: [{ ...vaultOf('held-by-committee'), adopted: true }] } });
+    state.vaultName = 'Treasury';
+    const tiles = await draw('vaults');
+    await settle();
+    const onTile = q(tiles, `[data-slot=stat-tile][data-vault="${VAULT}"] [data-slot=stat-tile-title]`)!.textContent;
+    cleanup();
+    const page = await draw('vault', { vault: VAULT });
+    await settle();
+    expect(q(page, `[data-screen=vault] [data-vault="${VAULT}"]`)!.textContent).toBe(onTile);
+    expect(onTile).toBe('Treasury');
+  });
+
+  /* RED WHEN: a vault the account adopted whose set-up is not finished is named on its tile and by its number in the list of what is pending. */
+  it('names an adopted vault the same on its tile and in the list of what is pending', async () => {
+    state.company = records({ vaults: { of: 'read', value: [{ ...vaultOf('start-owed'), adopted: true }] } });
+    state.vaultName = 'Treasury';
+    const c = await draw('vaults');
+    await settle();
+    expect(q(c, `[data-slot=stat-tile][data-vault="${VAULT}"] [data-slot=stat-tile-title]`)!.textContent).toContain('Treasury');
+    expect(q(c, `[data-pending-vault="${VAULT}"]`)!.textContent).toBe(`Treasury${EN['vaults.standing.startOwed']}${EN['createVault.finishStart']}`);
+  });
+
+  /* RED WHEN: a standing no service gives any more, or a way to finish it, is still in the words the page says. */
+  it('keeps no words for a hand-over that is owed on a vault, which no vault stands in any more', () => {
+    expect(Object.keys(EN).filter((k) => /handoverOwed|^createVault\.finish$/.test(k))).toEqual([]);
+  });
+
+  /*
    * RED WHEN: a standing phrase says as a fact about the vault that no money can go in; a standing a gate of this
    * app refuses money for stops saying this app puts none in; a standing no gate stands behind - who holds the
    * account or the vault, which no payment reads - says anything about money, as does the vault-created line on
    * the account; or any string says the signers hold the company or a vault, which its super admins hold.
    */
   it('says this app puts no money in only where a gate refuses it, and never that the signers hold anything', () => {
-    for (const k of ['notFundable', 'accountNotFundable', 'startOwed', 'handoverOwed']) {
+    for (const k of ['notFundable', 'accountNotFundable', 'startOwed']) {
       expect(EN[`vaults.standing.${k}`], k).not.toMatch(/no money can go/i);
       expect(EN[`vaults.standing.${k}`], k).toMatch(/this app puts no money|it puts no money/i);
     }
-    for (const k of ['vaults.standing.accountNotHandedOver', 'vaults.standing.heldByOtherKeys', 'createVault.done.notHandedOver']) {
+    for (const k of ['vaults.standing.accountNotHandedOver', 'vaults.standing.heldByOtherKeys', 'createVault.held.byOtherKeys']) {
       expect(EN[k], k).not.toMatch(/money/i);
       expect(EN[k], k).toMatch(/super admins/);
     }
     expect(Object.entries(EN).filter(([, v]) => /(held by|handed to|hand(ed)? over to) (your|its|the) signers|signers (hold|do not hold)/i.test(String(v)))).toEqual([]);
-    expect(EN['setup.handOver.what']).toMatch(/without the signers, they can change any of those rules, and so take money out of any vault/i);
+    expect(EN['committeeChange.what']).toMatch(/without the signers, they can change any of those rules, and so take money out of any vault/i);
   });
 
   /* RED WHEN: a vault's payouts are not the runs that pay out of it, or the tiles lead anywhere but the vault's own page. */

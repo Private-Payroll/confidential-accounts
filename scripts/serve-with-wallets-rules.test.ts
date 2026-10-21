@@ -6,7 +6,7 @@ import { describe, it, expect } from 'vitest';
 import { readFileSync } from 'node:fs';
 import { EventEmitter } from 'node:events';
 import { join } from 'node:path';
-import { PAGES_START_WITHIN_MS, pagesVerdict, somethingAlreadyServes, waitForThePages, parametersBeforeServing, postureFrom, refuseToServe, seedsAreOneParty, POSTURE_REQUIRED } from './serve-with-wallets-rules.js';
+import { PAGES_START_WITHIN_MS, pagesVerdict, somethingAlreadyServes, waitForThePages, parametersBeforeServing, postureFrom, refuseToServe, seedsAreOneParty, POSTURE_NOT_CARRIED, POSTURE_REQUIRED } from './serve-with-wallets-rules.js';
 import { refuseIncompleteSetup } from './create-company-rules.js';
 import { servedCircuits } from '../src/server/proving-parameters.js';
 
@@ -28,6 +28,24 @@ describe('the posture is read off the development script', () => {
     expect(p).not.toHaveProperty('ALLOW_SIMULATED_COMPANY_ADDRESS');
     expect(postureFrom('ALLOW_SIMULATED_COMPANY_ADDRESS=1 A=b sh -c x'))
       .toEqual({ A: 'b' });
+  });
+
+  /*
+   * RED WHEN: the page's error report is left out of what the launcher serves with -
+   * the development script stops declaring the sink for the page and the report
+   * route for the server, or the launcher stops carrying them.
+   */
+  it('carries the page error sink and the report route into what it starts', () => {
+    const p = postureFrom(DEV);
+    expect(p['VITE_DEV_ERROR_SINK']).toBe('1');
+    expect(p['ALLOW_WEB_CONSOLE_SINK']).toBe('1');
+    const launcher = readFileSync(join(ROOT, 'scripts', 'serve-with-wallets.ts'), 'utf8').replace(/\/\*[\s\S]*?\*\//g, '');
+    const setForServer = launcher.indexOf('for (const [k, v] of Object.entries(posture)) process.env[k] = v;');
+    expect(setForServer, 'the server does not get them').toBeGreaterThan(-1);
+    expect(setForServer).toBeLessThan(launcher.indexOf('await startTheServer(ROOT)'));
+    expect(launcher).toMatch(/startThePages\(ROOT, plan\.starts, \{ \.\.\.process\.env, \.\.\.posture \}\)/);
+    expect(POSTURE_NOT_CARRIED).not.toContain('VITE_DEV_ERROR_SINK');
+    expect(POSTURE_NOT_CARRIED).not.toContain('ALLOW_WEB_CONSOLE_SINK');
   });
 
   /* RED WHEN: an empty assignment is carried as a value, or the command is read as posture. */

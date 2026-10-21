@@ -2,8 +2,8 @@ import { describe, it, expect } from 'vitest';
 import type { Hex } from '../../../src/core/crypto.js';
 import {
   vaultFundableHere, depositIntoCompanyVault, depositPubliclyIntoCompanyVault, mergeNotesInCompanyVault,
-  payPubliclyFromCompanyVault, payPrivatelyFromCompanyVault, vaultNotesHere, openCompanyVaultPool, checkWhatThisBrowserSent, createCompanyVaultByHandover,
-  VaultNotReadHere, VaultNotTheCompanys, VaultStartOwed, VaultHandoverOwed,
+  payPubliclyFromCompanyVault, payPrivatelyFromCompanyVault, vaultNotesHere, openCompanyVaultPool, checkWhatThisBrowserSent,
+  VaultNotReadHere, VaultNotTheCompanys, VaultStartOwed,
 } from './vault-operation.js';
 import type { VaultOnChainOnTheWire } from './vault-worker-client.js';
 
@@ -257,16 +257,6 @@ describe('THE READS THAT SHARE THE ONE READ KEEP THEIR CLASSES AND WORDS', () =>
     expect((e as Error).message).toBe(NOT_ON_CHAIN);
     expect(e).not.toBeInstanceOf(VaultNotTheCompanys);
   });
-
-  it('THE OLD HAND-OVER FAILS IN ITS OWN WORDS WHATEVER THE SERVICE SAYS, AS A HAND-OVER NOT YET HELD', async () => {
-    /* The service's chain answer no longer carries a verdict; an older service that still sends one is not believed. */
-    const { doors } = doorsFor({ served: { why: 'a sentence from an older service', fundable: false, authority: { committee: [], threshold: 1, counter: '0', shape: 'committee' } } });
-    const e = await createCompanyVaultByHandover(doors, VAULT).catch((x: unknown) => x);
-    /* RED WHEN: a hand-over the page cannot carry out is refused as anything but `VaultHandoverOwed`, or in the service's sentence. */
-    expect(e).toBeInstanceOf(VaultHandoverOwed);
-    expect((e as Error).message).toMatch(/: the chain shows an authority this device cannot hand over\. No money can be put into it until it is\./);
-    expect((e as Error).message).not.toMatch(/older service/);
-  });
 });
 
 describe('A VAULT OR AN ACCOUNT WHOSE CIRCUITS ARE NOT THIS APP\'S TAKES AND PAYS OUT NO MONEY', () => {
@@ -304,16 +294,20 @@ describe('A VAULT OR AN ACCOUNT WHOSE CIRCUITS ARE NOT THIS APP\'S TAKES AND PAY
     expect(await vaultFundableHere(doorsFor({ chain: noAccountWord as never }).doors, VAULT)).toMatchObject({ of: 'not-this-build', contract: 'account', circuit: null });
   });
 
-  it('THE READ FOR MONEY NAMES THE COMPANY\'S ACCOUNT; THE READ A START IS CARRIED ON FROM NAMES NONE AND IS NOT REFUSED FOR CIRCUITS', async () => {
+  it('THE READ FOR MONEY AND THE READ A START IS CARRIED ON FROM NAME THE COMPANY\'S ACCOUNT AND REFUSE A CIRCUIT NOT THIS APP\'S; A REBUILD DOES NEITHER', async () => {
     const money = doorsFor();
     await vaultFundableHere(money.doors, VAULT);
     /* RED WHEN: the read money waits on does not ask the worker to check the company's account. */
     expect(money.inputs).toEqual([{ vault: VAULT, account: ACCOUNT, indexer: INDEXER }]);
     const start = doorsFor({ chain: startedVault({ circuits: vaultNot }) });
     const e = await openCompanyVaultPool(start.doors, VAULT, async () => {}).catch((x: unknown) => x);
-    /* RED WHEN: a start reads the account, or is refused on the circuits, which only the money doors judge. */
-    expect(start.inputs[0]).toEqual({ vault: VAULT, indexer: INDEXER });
-    expect(String((e as Error)?.message ?? '')).not.toMatch(/circuit is not the one this app's build compiled/);
+    /* RED WHEN: a start reads the vault without the company's account, or goes on with a vault this app cannot prove for. */
+    expect(start.inputs[0]).toEqual({ vault: VAULT, account: ACCOUNT, indexer: INDEXER });
+    expect(String((e as Error)?.message ?? '')).toContain(vaultNot.why);
+    const account = doorsFor({ chain: startedVault({ accountCircuits: accountNot }) });
+    const onAccount = await openCompanyVaultPool(account.doors, VAULT, async () => {}).catch((x: unknown) => x);
+    /* RED WHEN: a start goes on with a company account this app cannot prove for. */
+    expect(String((onAccount as Error)?.message ?? '')).toContain(accountNot.why);
     const rebuild = doorsFor({ chain: startedVault({ circuits: vaultNot }) });
     const notes = await vaultNotesHere(rebuild.doors, VAULT);
     /* RED WHEN: a rebuild of the vault's notes reads the account, or is refused on the circuits, which only the money doors judge. */

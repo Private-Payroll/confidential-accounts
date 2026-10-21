@@ -129,8 +129,8 @@ for (const [name, make, run] of implementations) {
 
       const live = await s.list('usr_1', { current: b.token });
       expect(live).toHaveLength(1);
-      expect(live[0].current).toBe(true);
-      expect(live[0].userAgent).toBe('a phone');
+      expect(live[0]!.current).toBe(true);
+      expect(live[0]!.userAgent).toBe('a phone');
       expect(JSON.stringify(live)).not.toContain(b.token);
     });
 
@@ -162,7 +162,7 @@ for (const [name, make, run] of implementations) {
        */
       const s = make();
       const victim = await s.issue('usr_victim', { userAgent: 'the target' });
-      const theirs = (await s.list('usr_victim'))[0];
+      const theirs = (await s.list('usr_victim'))[0]!;
 
       expect(await s.revokeSession('usr_attacker', theirs.id)).toBe(false);
       expect(await s.resolve(victim.token)).toBe('usr_victim');
@@ -171,11 +171,24 @@ for (const [name, make, run] of implementations) {
     it('revoking an unknown id, or the same one twice, is a false rather than a throw', async () => {
       const s = make();
       const { token } = await s.issue('usr_1');
-      const only = (await s.list('usr_1'))[0];
+      const only = (await s.list('usr_1'))[0]!;
       expect(await s.revokeSession('usr_1', 'ffffffffffff')).toBe(false);
       expect(await s.revokeSession('usr_1', only.id)).toBe(true);
       expect(await s.revokeSession('usr_1', only.id)).toBe(false);
       expect(await s.resolve(token)).toBeNull();
+    });
+
+    it('a sign-in used while it runs low is renewed, and one with plenty left or already over is not', async () => {
+      const s = make();
+      const t0 = new Date('2026-10-20T05:47:00Z');
+      const at = (h: number) => new Date(t0.getTime() + h * 3600_000);
+      const { token } = await s.issue('usr_1', { now: t0 });
+      expect(await s.renew(token, at(2))).toBeNull();
+      expect(await s.renew(token, at(7))).toBe(at(19).toISOString());
+      expect(await s.resolve(token, at(13))).toBe('usr_1');
+      expect(await s.renew('never-issued', at(7))).toBeNull();
+      const gone = await s.issue('usr_2', { now: t0 });
+      expect(await s.renew(gone.token, at(13))).toBeNull();
     });
 
     it('sweeping removes expired rows and leaves live ones', async () => {

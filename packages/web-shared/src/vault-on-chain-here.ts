@@ -31,6 +31,7 @@ import { circuitsNotThisBuilds, startingLedgerFrom } from '../../../src/midnight
 import { sha256 } from '@noble/hashes/sha2.js';
 import type { Hex } from '../../../src/core/crypto.js';
 import { publicHoldingsOf } from '../../../src/midnight/public-balance.js';
+import { boundedRead } from './read-bound.js';
 import type { AccountCallChainOnTheWire, PayoutChainOnTheWire, VaultOnChainOnTheWire } from './vault-worker-client.js';
 
 /** Where the chain is read from: one contract's state now, a vault's transactions, and each transaction's events. */
@@ -62,6 +63,46 @@ export interface VaultChainSource {
     readonly account: { serialize(): Uint8Array };
     readonly parameters: { serialize(): Uint8Array };
   } | null>;
+  /** Whether the indexer holds a contract at `account`, with the time of the newest block it names in the same answer. */
+  accountPresence?(account: string): Promise<AccountPresence>;
+}
+
+/** What one read of the indexer says of an address: held or not, and the newest block's height and time (ms) as it names them. */
+interface AccountPresence {
+  readonly held: boolean;
+  readonly blockHeight: number;
+  readonly blockTime: number;
+}
+
+/**
+ * **WHETHER THE INDEXER HOLDS A CONTRACT AT AN ADDRESS, WITH THE CHAIN'S OWN TIME.** One request names the newest block
+ * and reads the address. `held: false` is only an answer from an indexer that replied cleanly with a block and a
+ * null contract; a refusal, an error, a missing block or a reply of another shape is a throw, never "not held".
+ */
+export async function accountPresenceAt(
+  indexerUri: string, account: string, fetcher: typeof fetch = fetch,
+): Promise<AccountPresence> {
+  const { response, body } = await boundedRead('The network indexer', async (signal) => {
+    const answered = await fetcher(indexerUri, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({
+        query: 'query ($a: HexEncoded!) { block { height timestamp } contractAction(address: $a) { __typename } }',
+        variables: { a: account },
+      }),
+      signal,
+    });
+    if (!answered.ok) return { response: answered, body: null };
+    return { response: answered, body: await answered.json() as { errors?: unknown; data?: { block?: { height?: unknown; timestamp?: unknown } | null; contractAction?: unknown } } };
+  });
+  if (!response.ok || body === null) throw new Error(`the indexer answered ${response.status}.`);
+  if (body.errors !== undefined) throw new Error('the indexer refused the read.');
+  const block = body.data?.block;
+  const height = block?.height;
+  const time = block?.timestamp;
+  if (!Number.isSafeInteger(height) || !Number.isSafeInteger(time) || (time as number) <= 0) throw new Error('the indexer named no newest block.');
+  if (body.data === undefined || !('contractAction' in body.data)) throw new Error('the indexer did not answer for the address.');
+  return { held: body.data.contractAction !== null, blockHeight: height as number, blockTime: time as number };
 }
 
 /** The part of the indexer's reader that names a block and reads contracts as of it, as the package declares it. */
@@ -121,6 +162,7 @@ export const vaultChainSourceAt = (indexer: IndexerEndpoints): VaultChainSource 
      */
     atOneBlock: async (vault, account) => atOneBlockOver(await reader, vault, account),
     accountAtOneBlock: async (account) => accountAtOneBlockOver(await reader, account),
+    accountPresence: (account) => accountPresenceAt(indexer.indexerUri, account),
   };
 };
 
@@ -267,6 +309,12 @@ export async function readAccountCallChain(source: VaultChainSource, account: st
   const at = await source.accountAtOneBlock(account);
   if (at === null) return null;
   return { blockHash: at.blockHash, accountState: toBase64(at.account.serialize()), parameters: toBase64(at.parameters.serialize()) };
+}
+
+/** Whether the indexer the person's wallet names holds a contract at `account`, with the newest block's time. Throws when it cannot say. */
+export async function readAccountPresence(source: VaultChainSource, account: string): Promise<AccountPresence> {
+  if (source.accountPresence === undefined) throw new Error('this page cannot read whether the company\'s account is on the chain. Reload the page to use the current build');
+  return source.accountPresence(account);
 }
 
 /** Every zswap event the chain holds for one transaction, as it crosses back to the page. */

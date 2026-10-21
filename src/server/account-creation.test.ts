@@ -181,18 +181,18 @@ describe('THE SERVICE CREATES NO COMPANY\'S ACCOUNT ON A CHAIN', () => {
 describe.skipIf(!ON_DISK)('A COMPANY\'S ACCOUNT FROM ITS FOUNDING SIGNER\'S BROWSER [needs contracts/managed/keys; `npm run compact` builds them]', () => {
   it('IS READ, RECORDED BEFORE IT IS SENT, SENT, AND FINISHED BY ITS SECOND STEP, THE SAME BYTES AS RECORDED', async () => {
     const made = await createdOnTheDevice();
-    expect((await call('/api/accounts/acc_1/creation')).body).toEqual({ state: 'not-created', account: null });
+    expect((await call('/api/accounts/acc_1/creation')).body).toMatchObject({ state: 'not-created', account: null });
     const r = await create(made);
     expect(r).toMatchObject({ status: 201, body: { account: made.address, state: 'deploy-sent' } });
     /* RED WHEN the attempt is not recorded before it is sent, or the address is not the company's from then on. */
     expect(store.getAccountDeploy('acc_1')).toMatchObject({ address: made.address, deploy: made.deploy, insert: made.insert, foundingKey });
     expect(store.getAccount('acc_1')).toMatchObject({ contractAddress: made.address, addressSource: 'chain' });
     expect(registered).toEqual([['acc_1', made.address]]);
-    expect((await call('/api/accounts/acc_1/creation')).body).toEqual({ state: 'finish-owed', account: made.address });
+    expect((await call('/api/accounts/acc_1/creation')).body).toMatchObject({ state: 'finish-owed', account: made.address });
     const done = await call('/api/accounts/acc_1/creation/finish', 'POST');
     expect(done).toMatchObject({ status: 200, body: { state: 'finish-sent' } });
     /* RED WHEN: the account reads finished before it is committed to the company's pay-record key. */
-    expect((await call('/api/accounts/acc_1/creation')).body).toEqual({ state: 'pay-key-owed', account: made.address });
+    expect((await call('/api/accounts/acc_1/creation')).body).toMatchObject({ state: 'pay-key-owed', account: made.address });
     expect(sent).toEqual(['creating the company\'s account', 'finishing the company\'s account']);
     /* Finishing again sends nothing. */
     expect((await call('/api/accounts/acc_1/creation/finish', 'POST')).body).toMatchObject({ state: 'pay-key-owed' });
@@ -328,7 +328,7 @@ describe.skipIf(!ON_DISK)('A CREATION CARRIED ON PAST WHAT RUNS OUT, JUDGED BY I
       .toMatchObject({ status: 409, body: { nothingWasSent: true, state: 'deploy-sent' } });
     later(36);
     /* RED WHEN: a deploy past its time to live, with nothing at its address, is still read as on its way. */
-    expect(await standing()).toEqual({ state: 'deploy-expired', account: made.address });
+    expect(await standing()).toMatchObject({ state: 'deploy-expired', account: made.address });
     /* The control: the deploy that ran out can never land. */
     expect(() => chain.apply(new Uint8Array(Buffer.from(made.deploy, 'base64')))).toThrow();
     /* RED WHEN: another deploy, which is another account, takes the place of the one the wallet signed for. */
@@ -349,7 +349,7 @@ describe.skipIf(!ON_DISK)('A CREATION CARRIED ON PAST WHAT RUNS OUT, JUDGED BY I
     expect(store.replaceAccountDeploy({ ...kept, foundingKey: { tag: 'schnorr', value: 'ab'.repeat(32) } })).toBe(false);
     expect(store.replaceAccountDeploy({ ...kept, accountId: 'acc_9' })).toBe(false);
     expect(store.getAccountDeploy('acc_1')).toEqual(kept);
-    expect(await standing()).toEqual({ state: 'finish-owed', account: made.address });
+    expect(await standing()).toMatchObject({ state: 'finish-owed', account: made.address });
     expect((await call('/api/accounts/acc_1/creation/finish', 'POST')).body).toMatchObject({ state: 'finish-sent' });
     expect((await standing()).state).toBe('pay-key-owed');
   });
@@ -359,7 +359,7 @@ describe.skipIf(!ON_DISK)('A CREATION CARRIED ON PAST WHAT RUNS OUT, JUDGED BY I
     await create(made);
     later(36);
     /* RED WHEN: a second step past its time to live is read as one that can still be sent. */
-    expect(await standing()).toEqual({ state: 'finish-expired', account: made.address });
+    expect(await standing()).toMatchObject({ state: 'finish-expired', account: made.address });
     /* RED WHEN: the recorded step that ran out is sent: it would be paid for and never land. */
     expect(await call('/api/accounts/acc_1/creation/finish', 'POST')).toMatchObject({ status: 409, body: { nothingWasSent: true, state: 'finish-expired' } });
     expect(sent).toEqual(['creating the company\'s account']);
@@ -403,6 +403,232 @@ describe.skipIf(!ON_DISK)('A CREATION CARRIED ON PAST WHAT RUNS OUT, JUDGED BY I
       .toMatchObject({ status: 422, body: { nothingWasSent: true, error: expect.stringMatching(/run out already/) } });
     expect(store.getAccountDeploy('acc_1')!.insert).toBe(now.insert);
     expect(sent.filter((w) => w.startsWith('finishing'))).toEqual([]);
+  });
+
+  it('A CREATION BUILT LONG BEFORE IT IS SENT IS NEITHER RECORDED NOR SENT: THE NODE WOULD ANSWER "CUSTOM ERROR: 228" AND THE COMPANY WOULD NEVER FINISH', async () => {
+    const made = await createdOnTheDevice();
+    later(120);
+    /* The control, with the ledger's own checks: a real deploy past its time to live is refused by the chain this test applies it to. */
+    expect(() => chain.apply(new Uint8Array(Buffer.from(made.deploy, 'base64')))).toThrow(/ttl|time to live|expired/i);
+    /* RED WHEN: the service records and sends a deploy or a second step that has run out, and answers 502 for what the node refuses. */
+    const r = await create(made);
+    expect(r).toMatchObject({ status: 422, body: { nothingWasSent: true, error: expect.stringMatching(/run out already, or is about to/) } });
+    expect(store.getAccountDeploy('acc_1')).toBeNull();
+    expect(store.getAccount('acc_1')).toMatchObject({ contractAddress: null });
+    expect(registered).toEqual([]);
+    expect(sent).toEqual([]);
+    /* The same creation, built again now, is recorded and sent. */
+    const again = await carriedAgain(made);
+    expect(await create(again)).toMatchObject({ status: 201, body: { account: made.address, state: 'deploy-sent' } });
+    expect(sent).toEqual(['creating the company\'s account']);
+  });
+
+  it('A CREATION WITH LESS THAN HALF ITS LIFE LEFT IS NOT RECORDED OR SENT EITHER, WHICHEVER OF THE TWO STEPS IT IS', async () => {
+    const made = await createdOnTheDevice();
+    later(20);
+    /* RED WHEN: a deploy that will run out in ten minutes is sent: the service may wait that long for the fee payer. */
+    expect(await create(made)).toMatchObject({ status: 422, body: { nothingWasSent: true } });
+    /* A fresh deploy with a second step that is about to run out: also refused, before either is recorded. */
+    const fresh = await carriedAgain(made);
+    const old = await createdOnTheDevice();
+    later(22);
+    const rebuilt = await carriedAgain(old);
+    const mixed = { deploy: rebuilt.deploy, insert: old.insert };
+    expect(await create(mixed)).toMatchObject({ status: 422, body: { nothingWasSent: true, error: expect.stringMatching(/^this second step has run out already, or is about to/) } });
+    /* RED WHEN: a second step with life left carries a deploy that is about to run out through. */
+    const other = { deploy: old.deploy, insert: rebuilt.insert };
+    expect(await create(other)).toMatchObject({ status: 422, body: { nothingWasSent: true, error: expect.stringMatching(/^this deploy has run out already, or is about to/) } });
+    expect(fresh.address).toBe(made.address);
+    expect(store.getAccountDeploy('acc_1')).toBeNull();
+    expect(sent).toEqual([]);
+  });
+
+  it('A RECORDED DEPLOY THAT IS ABOUT TO RUN OUT IS NOT SENT AGAIN, AND IS CARRIED AGAIN BEFORE IT HAS', async () => {
+    const made = await createdOnTheDevice();
+    landing = false;
+    await create(made);
+    later(20);
+    /* The standing still says it may land, because it was sent with time to spare. */
+    expect(await standing()).toMatchObject({ state: 'deploy-sent', account: made.address });
+    /* RED WHEN: a retry sends the recorded deploy with ten minutes of life left, or answers that it was sent. */
+    expect(await create(made)).toMatchObject({ status: 409, body: { nothingWasSent: true, state: 'deploy-expired' } });
+    expect(sent).toEqual(['creating the company\'s account']);
+    /* RED WHEN: it cannot be replaced until it has run out for good, so the company waits for it. */
+    const again = await carriedAgain(made);
+    /* RED WHEN: a deploy built again is recorded with the second step it was recorded with, which is about to run out. */
+    expect(await call('/api/accounts/acc_1/creation/again', 'POST', { deploy: again.deploy, insert: made.insert }))
+      .toMatchObject({ status: 422, body: { nothingWasSent: true, error: expect.stringMatching(/second step has run out already, or is about to/) } });
+    /* RED WHEN: the deploy recorded, about to run out, is handed back in as its own replacement. */
+    expect(await call('/api/accounts/acc_1/creation/again', 'POST', { deploy: made.deploy, insert: again.insert }))
+      .toMatchObject({ status: 422, body: { nothingWasSent: true, error: expect.stringMatching(/^this deploy has run out already, or is about to/) } });
+    landing = true;
+    expect(await call('/api/accounts/acc_1/creation/again', 'POST', { deploy: again.deploy, insert: again.insert }))
+      .toMatchObject({ status: 200, body: { account: made.address, state: 'deploy-sent' } });
+    expect(store.getAccountDeploy('acc_1')).toMatchObject({ deploy: again.deploy, insert: again.insert });
+    expect((await standing()).state).toBe('finish-owed');
+  });
+
+  it('A RECORDED SECOND STEP THAT IS ABOUT TO RUN OUT IS NOT SENT, AND IS CARRIED AGAIN WITH THE SAME SIGNATURE', async () => {
+    const made = await createdOnTheDevice();
+    await create(made);
+    later(5);
+    const soon = await carriedAgain(made);
+    later(21);
+    expect(await standing()).toMatchObject({ state: 'finish-owed', account: made.address });
+    /* RED WHEN: the recorded second step is sent with nine minutes of life left. */
+    expect(await call('/api/accounts/acc_1/creation/finish', 'POST')).toMatchObject({ status: 409, body: { nothingWasSent: true, state: 'finish-expired' } });
+    expect(sent).toEqual(['creating the company\'s account']);
+    /* RED WHEN: a second step built again that has fourteen minutes left, which will not be sent, is recorded in the place of the one that ran short. */
+    expect(await call('/api/accounts/acc_1/creation/finish', 'POST', { insert: soon.insert }))
+      .toMatchObject({ status: 422, body: { nothingWasSent: true, error: expect.stringMatching(/second step has run out already, or is about to/) } });
+    expect(store.getAccountDeploy('acc_1')!.insert).toBe(made.insert);
+    const again = await carriedAgain(made);
+    expect(await call('/api/accounts/acc_1/creation/finish', 'POST', { insert: again.insert })).toMatchObject({ status: 200, body: { state: 'finish-sent' } });
+    expect(store.getAccountDeploy('acc_1')).toMatchObject({ deploy: made.deploy, insert: again.insert });
+    expect((await standing()).state).toBe('pay-key-owed');
+  });
+
+  it('THE STANDING SAYS WHAT THE RECORDED STEP\'S OWN TIME TO LIVE ALLOWS, AND WHAT THE TIME IS HERE, FOR A DEVICE WHOSE CLOCK IS WRONG', async () => {
+    const made = await createdOnTheDevice();
+    landing = false;
+    later(0);
+    /* Before anything is recorded there is nothing to replace. */
+    expect(await standing()).toMatchObject({ state: 'not-created', replaceable: false, now: clock().toISOString() });
+    await create(made);
+    /* RED WHEN: a deploy with thirty minutes left is offered for replacement, so a device builds another beside it. */
+    expect(await standing()).toMatchObject({ state: 'deploy-sent', replaceable: false });
+    later(10);
+    expect(await standing()).toMatchObject({ state: 'deploy-sent', replaceable: false, now: clock().toISOString() });
+    later(12);
+    /* RED WHEN: the recorded deploy is judged by when the device built it and not by its own time to live: eighteen minutes left may be replaced. */
+    expect(await standing()).toMatchObject({ state: 'deploy-sent', replaceable: true, now: clock().toISOString() });
+    later(36);
+    expect(await standing()).toMatchObject({ state: 'deploy-expired', replaceable: true });
+    landing = true;
+    const again = await carriedAgain(made);
+    await call('/api/accounts/acc_1/creation/again', 'POST', { deploy: again.deploy, insert: again.insert });
+    /* The second step is judged on its own: owed, with the life it was built with. */
+    expect(await standing()).toMatchObject({ state: 'finish-owed', replaceable: false });
+    later(36 + 12);
+    expect(await standing()).toMatchObject({ state: 'finish-owed', replaceable: true });
+  });
+
+  it('A REFUSAL FOR A STEP\'S TIME LEFT SAYS SO, AND WHAT THE TIME IS HERE; A REFUSAL FOR ANYTHING ELSE DOES NOT', async () => {
+    const made = await createdOnTheDevice();
+    /* A device whose clock is twenty minutes slow builds a deploy with ten minutes of life, by this service's clock. */
+    const slow = await carriedAgain(made);
+    later(20);
+    const refused = await create(slow);
+    /* RED WHEN: the refusal does not name its cause, so the device cannot tell a slow clock from any other refusal. */
+    expect(refused).toMatchObject({ status: 422, body: { nothingWasSent: true, runsOutSoon: true, now: clock().toISOString() } });
+    expect(await create({ deploy: 'AAAA', insert: 'AAAA' })).toMatchObject({ status: 422 });
+    expect((await create({ deploy: 'AAAA', insert: 'AAAA' })).body.runsOutSoon).toBeUndefined();
+  });
+
+  /** The first request held in flight at the node while the second arrives: both answered once the first is let go. */
+  const twoAtOnce = async <T>(first: () => Promise<T>, second: () => Promise<T>): Promise<T[]> => {
+    let release!: () => void;
+    holding = new Promise<void>((resolve) => { release = resolve; });
+    const a = first();
+    await new Promise((r) => setTimeout(r, 250));
+    const b = second();
+    await new Promise((r) => setTimeout(r, 250));
+    release();
+    return Promise.all([a, b]);
+  };
+
+  it('TWO REQUESTS AT ONCE FOR ONE COMPANY SEND ONE STEP, AND THE OTHER IS TOLD WHERE THE COMPANY STANDS', async () => {
+    const made = await createdOnTheDevice();
+    landing = false;
+    await create(made);
+    later(36);
+    const one = await carriedAgain(made);
+    const other = await carriedAgain(made);
+    landing = true;
+    /* The step-2 carry and the wallet press, both asking to carry the deploy again at the same moment. */
+    const both = await twoAtOnce(
+      () => call('/api/accounts/acc_1/creation/again', 'POST', { deploy: one.deploy, insert: one.insert }),
+      () => call('/api/accounts/acc_1/creation/again', 'POST', { deploy: other.deploy, insert: other.insert }),
+    );
+    /* RED WHEN: both are sent, and the second one's fee is spent on a deploy the chain already holds. */
+    expect(sent.filter((w) => w === 'creating the company\'s account, carried again')).toHaveLength(1);
+    expect(both.map((r) => r.status).sort()).toEqual([200, 409]);
+    const refused = both.find((r) => r.status === 409)!;
+    expect(refused.body).toMatchObject({ nothingWasSent: true, account: made.address });
+    expect(refused.body.state).toEqual(expect.any(String));
+    /* Released with the answer: a request after both is answered on its own merits, not as one at once. */
+    expect(await call('/api/accounts/acc_1/creation/finish', 'POST')).toMatchObject({ status: 200, body: { state: 'finish-sent' } });
+  });
+
+  it('TWO FINISHING SENDS AT ONCE SEND THE SECOND STEP ONCE, AND A SEND THAT HAS ENDED LEAVES THE NEXT FREE', async () => {
+    const made = await createdOnTheDevice();
+    await create(made);
+    const both = await twoAtOnce(
+      () => call('/api/accounts/acc_1/creation/finish', 'POST'),
+      () => call('/api/accounts/acc_1/creation/finish', 'POST'),
+    );
+    /* RED WHEN: the second step is sent twice, the second landing nowhere and costing a fee. */
+    expect(sent.filter((w) => w === 'finishing the company\'s account')).toHaveLength(1);
+    expect(both.map((r) => r.status).sort()).toEqual([200, 409]);
+    /* RED WHEN: a send that failed leaves the company locked, so that nothing can ever be sent for it again. */
+    expect((await call('/api/accounts/acc_1/creation/finish', 'POST')).status).toBe(200);
+  });
+
+  it('THE DEVICE\'S WORKER BUILDS BY THE CLOCK IT IS TOLD OF: A STEP FOR A TAB WHOSE CLOCK IS SLOW LIVES THE FULL THIRTY MINUTES BY THE SERVICE\'S', async () => {
+    const made = await createdOnTheDevice();
+    const lifeOf = async (over: { clockOffsetMs?: number }) => {
+      const a = await answerVaultAsk(workerDeps, { id: 3, network: NET, ask: 'creation-again', deploy: made.deploy, insert: made.insert, ...over });
+      if (!a.ok || a.ask !== 'creation-again') throw new Error(a.ok ? 'another answer' : a.error);
+      const tx = deviceCallOrProven(new Uint8Array(Buffer.from(a.deploy, 'base64'))) as { intents: Map<unknown, { ttl: Date }> };
+      return ([...tx.intents.values()][0]!.ttl.getTime() - Date.now()) / 60_000;
+    };
+    /* A tab whose clock is twenty-five minutes behind builds by the service's: its offset is what the service measured. */
+    const slow = await lifeOf({ clockOffsetMs: 25 * 60_000 });
+    /* RED WHEN: the worker builds by its own clock whatever it is told, so a slow tab builds steps with five minutes of life. */
+    expect(slow).toBeGreaterThan(54);
+    expect(slow).toBeLessThan(56);
+    expect(await lifeOf({})).toBeGreaterThan(29);
+    expect(await lifeOf({})).toBeLessThan(31);
+    /* RED WHEN: an offset that is not a number moves the clock. */
+    expect(await lifeOf({ clockOffsetMs: 'soon' as unknown as number })).toBeLessThan(31);
+  });
+
+  it('THE MARGINS: A RECORDED DEPLOY IS SENT AGAIN WITH SEVENTEEN MINUTES LEFT AND NOT WITH FOURTEEN, AND IS REPLACED ONLY FROM EIGHTEEN', async () => {
+    const made = await createdOnTheDevice();
+    landing = false;
+    await create(made);
+    later(10);
+    /* RED WHEN: a deploy with twenty minutes left is replaced, so two are on their way. */
+    const early = await carriedAgain(made);
+    expect(await call('/api/accounts/acc_1/creation/again', 'POST', { deploy: early.deploy, insert: early.insert }))
+      .toMatchObject({ status: 409, body: { nothingWasSent: true, state: 'deploy-sent' } });
+    later(13);
+    /* RED WHEN: a deploy with seventeen minutes left is refused: the device and the service would not agree on when to build it again. */
+    expect(await create(made)).toMatchObject({ status: 200, body: { state: 'deploy-sent' } });
+    expect(sent).toHaveLength(2);
+    later(16);
+    /* RED WHEN: a deploy with fourteen minutes left is sent. */
+    expect(await create(made)).toMatchObject({ status: 409, body: { nothingWasSent: true, state: 'deploy-expired' } });
+    expect(sent).toHaveLength(2);
+    /* The device builds it again below seventeen, and the service lets it be replaced from eighteen. */
+    later(12);
+    const again = await carriedAgain(made);
+    expect(await call('/api/accounts/acc_1/creation/again', 'POST', { deploy: again.deploy, insert: again.insert })).toMatchObject({ status: 200 });
+  });
+
+  it('THE MARGINS FOR THE SECOND STEP: IT IS REPLACED ONLY FROM EIGHTEEN MINUTES LEFT, AND SENT AS RECORDED TO THE LAST', async () => {
+    const made = await createdOnTheDevice();
+    await create(made);
+    later(10);
+    /* RED WHEN: a second step with twenty minutes left is replaced, so two signed steps for one account are on their way. */
+    const early = await carriedAgain(made);
+    expect(await call('/api/accounts/acc_1/creation/finish', 'POST', { insert: early.insert }))
+      .toMatchObject({ status: 409, body: { nothingWasSent: true, error: expect.stringMatching(/can still land, so it is not replaced/) } });
+    later(12);
+    /* RED WHEN: a second step with eighteen minutes left, which the device builds again, is refused when it is handed in. */
+    const again = await carriedAgain(made);
+    expect(await call('/api/accounts/acc_1/creation/finish', 'POST', { insert: again.insert })).toMatchObject({ status: 200, body: { state: 'finish-sent' } });
+    expect(store.getAccountDeploy('acc_1')!.insert).toBe(again.insert);
   });
 
   it('FINISHED IS JUDGED BY THE KEYS THE CHAIN HOLDS AND THE PAY-RECORD KEY, NEVER BY THE CIRCUITS\' NAMES', async () => {

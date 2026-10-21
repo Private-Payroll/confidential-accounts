@@ -6,7 +6,7 @@ import {
   useLanguage, useText, type PrivateAmount, type PublicAmount,
 } from 'vaults-ui';
 import { COLUMN_SIZE, DataTable, type DataTableColumn, type DataTableFilter } from 'vaults-ui/data-table';
-import { isPending, PendingPill, useStandingSays } from '../records/vault-pending.js';
+import { isPending, PendingPill, useStandingSays, VaultName } from '../records/vault-pending.js';
 import type { CompanyRecords } from '../adapters/company-records.js';
 import { PAGE } from '../pages.js';
 import { PageLink, useCurrentPage } from '../router.js';
@@ -41,7 +41,7 @@ export function Vault() {
               return (
                 <>
                   <PageHeader
-                    title={<span className="flex flex-wrap items-center gap-2" data-vault={vault.vault}><span>{t('vaults.tile.name', { number: index + 1 })}</span><PendingPill vault={vault} /></span>}
+                    title={<span className="flex flex-wrap items-center gap-2" data-vault={vault.vault}><span><VaultName company={records.id} vault={vault} number={index + 1} /></span><PendingPill vault={vault} /></span>}
                     description={t('vaults.tile.created', { date: day(vault.createdAt) })}
                     actions={(
                       <>

@@ -95,7 +95,7 @@ const press = async (o: {
     handover: async () => { throw new Error('not handed over here'); },
     chain: async () => view,
     deposit: async () => { throw new Error('no deposit'); },
-    payoutState: async (v) => ({ vault: v, account: ACCOUNT, blockHash: 'B', vaultState: 'V', zswapState: 'Z', parameters: 'P', accountState: 'A' }),
+    payoutState: async () => { throw new Error('a start never asks the service for its block'); },
     payout: async () => { throw new Error('no payout'); },
     merge: async () => { throw new Error('no merge'); },
     payoutPublicly: async () => { throw new Error('no payout'); },
@@ -124,11 +124,16 @@ const press = async (o: {
       ...(i.secret === undefined ? {} : { run: { root: 'r', payees: '0', asset: '00'.repeat(32), copies: o.copies(await filedSecret()) } as never }),
     }),
     vaultAsDeployed: async () => ({ refusal: null }),
-    /* The vault as this device's worker reads it at the wallet's indexer: held by the account's committee, pinned to the account, empty. */
+    /*
+     * The vault as this device's worker reads it at the wallet's indexer: held by the account's committee, pinned to the
+     * account, empty, and with the circuits of both this app's.
+     */
     vaultOnChain: async () => ({
       onChain: true, state: 'QUJD', notes: [], notesFromThisBuild: true, everCreated: [],
-      authority: { committee, threshold: 2 }, account: ACCOUNT, started: false,
+      authority: { committee, threshold: 2 }, account: ACCOUNT, started: false, circuits: null, accountCircuits: null,
     }),
+    /* One block's view of the vault and the account, read here at the wallet's indexer. */
+    chainAtOneBlock: async () => ({ blockHash: 'B', vaultState: 'V', zswapState: 'Z', parameters: 'P', accountState: 'A' }),
     governedCall: async () => { asked.push('asked to raise or approve'); throw new Error('stop here'); },
     setNonceSecret: async () => { asked.push('built the set'); throw new Error('stop here'); },
   } as unknown as VaultBuilderClient;
@@ -139,7 +144,6 @@ const press = async (o: {
       /* The account held by the company's committee, which the vault was born held by. */
       holders: { committee, threshold: 2, seats: [], approvals: 1, vaultThresholds: [], policyBar: null, seatBar: seatBarOf(1, null), adoptedVaults: [v], founding: '4a'.repeat(32), foundingCommittee: [{ tag: 'schnorr', value: '11'.repeat(32) }] },
     }),
-    keys: { put: async () => {}, get: async () => null, forget: async () => {} },
     me, myRecordsKey: ada.recordsKey as never, records,
     signers: async () => [{ id: 'ada', wrappingPublicKey: wrapping.publicKey }],
     material: { signingSecret: '11'.repeat(32), blinding: '22'.repeat(32), scope: '33'.repeat(32) },

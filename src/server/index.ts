@@ -38,9 +38,9 @@ import { bigintJsonReplacer, wrapKey } from '../core/crypto.js';
 import { payslipProofSubject } from '../core/payslip-open.js';
 import { PAGE_OUT_OF_DATE, PAYSLIP_PAGE_HEADER, isCurrentPayslipPage } from '../core/payslip-page.js';
 import {
-  SIGNED_IN_AS_HEADER, anotherPersonRefusal, answerCarriesToken, clearedSessionCookie,
-  cookieScopeFor, credentialOf, crossSiteWriteRefusal, sessionCookie,
+  answerCarriesToken, clearedSessionCookie, cookieScopeFor, credentialOf, sessionCookie,
 } from './session-cookie.js';
+import { authedBy } from './authed.js';
 import type { Hex } from '../core/crypto.js';
 import { theNetwork } from '../midnight/network.js';
 import { NothingWasSent, saysNothingWasSent } from '../core/jobs.js';
@@ -327,6 +327,12 @@ if (DATABASE_URL && process.env.ALLOW_MEMORY_SESSIONS === '1') {
 if (DATABASE_URL) {
   const { default: postgres } = await import('postgres');
   const sql = postgres(DATABASE_URL, { onnotice: () => {} });
+  const { refuseWhileMigrationsPending } = await import('../db/migrate.js');
+  const outOfDate = await refuseWhileMigrationsPending(sql as never);
+  if (outOfDate) {
+    console.error(`\n  ${outOfDate}\n`);
+    process.exit(1);
+  }
   sessions = new PostgresSessionStore(sql);
   limiter = new PostgresRateLimiter(sql);
   recordsSql = sql as never;
@@ -883,34 +889,9 @@ const meteredOfferLookup = async (req: express.Request, res: express.Response): 
   return false;
 };
 
-const authed: express.RequestHandler = async (req, res, next) => {
-  const credential = credentialOf(req.headers);
-  const refusal = crossSiteWriteRefusal({
-    method: req.method,
-    via: credential.via,
-    origin: req.headers.origin,
-    fetchSite: req.headers['sec-fetch-site'] as string | undefined,
-  }, process.env.APP_ORIGIN);
-  if (refusal !== null) {
-    res.status(403).json({ error: refusal });
-    return;
-  }
-  let userId: string;
-  try {
-    userId = await identity.verify(credential.token);
-  } catch (e: any) {
-    res.status(401).json({ error: e?.message ?? 'not signed in' });
-    return;
-  }
-  /* The sign-in is live; is it the person this tab was prepared for? */
-  const another = anotherPersonRefusal(req.headers[SIGNED_IN_AS_HEADER], userId);
-  if (another !== null) {
-    res.status(409).json({ error: another, code: 'another-person' });
-    return;
-  }
-  req.userId = userId;
-  next();
-};
+const authed: express.RequestHandler = authedBy({
+  identity, cookieScope, appOrigin: () => process.env.APP_ORIGIN,
+});
 
 /**
  * Membership gate. Every account-scoped route goes through this, so authorisation

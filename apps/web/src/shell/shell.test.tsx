@@ -5,18 +5,31 @@ import { fileURLToPath } from 'node:url';
 import { act, cleanup, fireEvent, render, within } from '@testing-library/react';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { KitProvider, languagesFrom } from 'vaults-ui';
-import { untilPageShown } from '../page-shown.test-support.js';
+import { untilPageShown, untilShown } from '../page-shown.test-support.js';
 const names = vi.hoisted(() => ({ opened: new Map<string, string>(), approvals: new Map<string, number>() }));
 vi.mock('../adapters/session.js', async (real) => ({
   ...(await real<typeof import('../adapters/session.js')>()),
   companyNamesFor: async () => names.opened,
   approvalsNeededFor: async () => names.approvals,
 }));
+/* What the creation adapter says of each company: the mark it gives (null for a company it knows nothing of or could not read), and every read asked of it. */
+const creations = vi.hoisted(() => ({ mark: new Map<string, 'not-finished'>(), reads: [] as (string | null)[], throwing: new Set<string>() }));
+vi.mock('../adapters/creation-standing.js', async (real) => ({
+  ...(await real<typeof import('../adapters/creation-standing.js')>()),
+  creationOf: async (id: string | null) => {
+    creations.reads.push(id);
+    if (id !== null && creations.throwing.has(id)) throw new Error('read failed');
+    return { company: id, standing: null, awaitingSecondPress: false, kept: false, confirmedFinished: false, mark: id === null ? null : creations.mark.get(id) ?? null };
+  },
+}));
 vi.mock('../adapters/company-records.js', async (real) => ({
   ...(await real<typeof import('../adapters/company-records.js')>()),
   readCompany: async () => ({ of: 'locked' }),
 }));
 const { PageView } = await import('../app.js');
+const { takeAsked } = await import('../setup/asked.js');
+/* The creation adapter loads when a list first needs it; loaded here, once, so no test waits on that load. */
+await import('../adapters/creation-standing.js');
 /* The records are read lazily by the page; loaded here, once, so no test ends with that read still arriving (it did, 29 Sep, as 25 errors after the run). */
 await import('../adapters/company-records.js');
 import type { Company } from '../adapters/session.js';
@@ -51,6 +64,9 @@ const COMPANIES: Company[] = [
   { id: 'c-1', createdAt: '2026-08-01T10:00:00.000Z', signers: 5 },
 ];
 
+/* How an unnamed company is listed: by the day its account was made, written the way the app writes a day. */
+const STARTED = (iso: string): string => EN['company.startedOn']!.replace('{date}', new Intl.DateTimeFormat('en', { dateStyle: 'medium' }).format(new Date(iso)));
+
 const signer: Viewer = { signedIn: true, view: VIEWS.company, signs: true };
 const employee: Viewer = { signedIn: true, view: VIEWS.employee, signs: false };
 
@@ -78,7 +94,10 @@ async function draw(session: Session, current: PageId, language = 'en') {
 /** A key pressed on the page, as the browser sends it. */
 const press = (init: KeyboardEventInit) => act(() => { document.dispatchEvent(new KeyboardEvent('keydown', { bubbles: true, cancelable: true, ...init })); });
 
-beforeEach(() => { vi.spyOn(console, 'error').mockImplementation(() => {}); });
+beforeEach(() => {
+  vi.spyOn(console, 'error').mockImplementation(() => {});
+  creations.mark.clear(); creations.reads.length = 0; creations.throwing.clear(); takeAsked();
+});
 afterEach(() => { cleanup(); vi.restoreAllMocks(); });
 
 describe('the left menu', () => {
@@ -259,9 +278,9 @@ describe('the company switcher', () => {
     expect(menu.querySelector('[data-action=create-company]')).not.toBeNull();
     expect(menu.querySelector('[data-action=create-company] [data-slot=coming-soon]')).toBeNull();
     expect(menu.querySelector('[data-public-facts]')).toBeNull();
-    expect([...menu.querySelectorAll('[data-company]')].map((c) => c.textContent)).toEqual(['Company2/3 Approval', 'Company1/1 Approval', 'Company3/5 Approval']);
-    expect(document.querySelector('[data-action=company-switcher]')!.textContent).toBe('Company2/3 Approval');
-    expect(document.body.textContent).not.toMatch(/2026|created/i);
+    expect([...menu.querySelectorAll('[data-company]')].map((c) => c.textContent)).toEqual([
+      `${STARTED(COMPANIES[0]!.createdAt)}2/3 Approval`, `${STARTED(COMPANIES[1]!.createdAt)}1/1 Approval`, `${STARTED(COMPANIES[2]!.createdAt)}3/5 Approval`]);
+    expect(document.querySelector('[data-action=company-switcher]')!.textContent).toBe(`${STARTED(COMPANIES[0]!.createdAt)}2/3 Approval`);
   });
 
   it('shows no approvals for a company until the chain has said, and never the list\'s own number', async () => {
@@ -270,7 +289,27 @@ describe('the company switcher', () => {
     await draw(sessionFor(signer), 'settingsAppearance');
     await press({ key: '.', code: 'Period', metaKey: true });
     const menu = document.querySelector('[data-company-switcher]') as HTMLElement;
-    expect([...menu.querySelectorAll('[data-company]')].map((c) => c.textContent)).toEqual(['Company', 'Company1/1 Approval', 'Company']);
+    expect([...menu.querySelectorAll('[data-company]')].map((c) => c.textContent)).toEqual([
+      STARTED(COMPANIES[0]!.createdAt), `${STARTED(COMPANIES[1]!.createdAt)}1/1 Approval`, STARTED(COMPANIES[2]!.createdAt)]);
+  });
+
+  /*
+   * RED WHEN: a company the device holds no name for is listed or shown at the top of the switcher as anything but "A company you
+   * started on <day>" (or "A company you started" when no day is known), or any company in the list or at the top is shown empty,
+   * whether its name is missing, blank, or only spaces.
+   */
+  it('never lists a company with an empty name: a missing, blank or spaces-only name reads as the day it was started', async () => {
+    names.opened = new Map([['c-2', ''], ['c-3', '   '], ['c-1', 'Acme']]);
+    names.approvals = new Map();
+    const noDay = { id: 'c-4', createdAt: 'not a day', signers: 1 } as Company;
+    await draw(sessionFor(signer, { companies: [...COMPANIES, noDay] }), 'settingsAppearance');
+    await act(async () => { await new Promise((r) => setTimeout(r, 0)); });
+    expect(document.querySelector('[data-action=company-switcher]')!.textContent).toBe(STARTED(COMPANIES[0]!.createdAt));
+    await press({ key: '.', code: 'Period', metaKey: true });
+    const menu = document.querySelector('[data-company-switcher]') as HTMLElement;
+    const listed = [...menu.querySelectorAll('[data-company]')].map((c) => c.textContent);
+    expect(listed).toEqual([STARTED(COMPANIES[0]!.createdAt), STARTED(COMPANIES[1]!.createdAt), 'Acme', EN['company.started']]);
+    expect(listed.every((l) => l !== null && l.trim() !== '')).toBe(true);
   });
 
   /*
@@ -293,6 +332,48 @@ describe('the company switcher', () => {
     await act(async () => { await new Promise((r) => setTimeout(r, 0)); });
     await press({ key: '.', code: 'Period', metaKey: true });
     expect(document.querySelector('[data-company-switcher] [data-company-names]')).toBeNull();
+  });
+
+  /*
+   * RED WHEN: a company the creation adapter marks not finished is listed in the switcher without the kit's badge saying so, or
+   * another company carries it; or a company whose read is unknown or failed shows any mark; or a company is read more than once.
+   */
+  it('marks the company that is not finished, once, and no company whose read is unknown or failed', async () => {
+    names.opened = new Map([['c-3', 'Test-001']]);
+    names.approvals = new Map([['c-2', 2], ['c-3', 1], ['c-1', 3]]);
+    creations.mark.set('c-3', 'not-finished');
+    creations.throwing.add('c-1');
+    await draw(sessionFor(signer), 'settingsAppearance');
+    await press({ key: '.', code: 'Period', metaKey: true });
+    await untilShown(() => document.querySelector('[data-company-switcher] [data-company=c-3] [data-not-finished]'), 'the mark on the company not finished');
+    await act(async () => { await new Promise((r) => setTimeout(r, 20)); });
+    const menu = document.querySelector('[data-company-switcher]') as HTMLElement;
+    const marks = [...menu.querySelectorAll('[data-company]')].map((c) => c.querySelector('[data-not-finished]')?.textContent ?? null);
+    expect(marks).toEqual([null, EN['company.notFinished'], null]);
+    expect(menu.querySelector('[data-company=c-3] [data-not-finished]')!.getAttribute('data-slot')).toBe('badge');
+    /* RED WHEN: a company not finished is listed in the switcher with no name, or without its name beside the mark. */
+    expect(menu.querySelector('[data-company=c-3]')!.textContent).toBe(`Test-0011/1 Approval${EN['company.notFinished']}`);
+    expect(creations.reads.filter((id) => id === 'c-3')).toHaveLength(1);
+  });
+
+  /*
+   * RED WHEN: opening a company that carries the mark does not choose it and then open the wizard at "Finish creating the
+   * company" (step 2, for the company already there); or opening one that does not takes the person to the wizard.
+   */
+  it('opens a company that is not finished at step 2 of the wizard, and any other as before', async () => {
+    creations.mark.set('c-3', 'not-finished');
+    const chooseCompany = vi.fn();
+    await draw(sessionFor(signer, { chooseCompany }), 'settingsAppearance');
+    await press({ key: '.', code: 'Period', metaKey: true });
+    await act(async () => { fireEvent.click(document.querySelector('[data-company=c-1]')!); await new Promise((r) => setTimeout(r, 20)); });
+    expect(chooseCompany).toHaveBeenLastCalledWith('c-1');
+    expect(takeAsked()).toBeNull();
+    expect(window.location.pathname).not.toBe(PAGES.setup.path);
+    await press({ key: '.', code: 'Period', metaKey: true });
+    await act(async () => { fireEvent.click(document.querySelector('[data-company=c-3]')!); await new Promise((r) => setTimeout(r, 20)); });
+    expect(chooseCompany).toHaveBeenLastCalledWith('c-3');
+    expect(takeAsked()).toEqual({ step: 'finishCompany', newCompany: false });
+    expect(window.location.pathname).toBe(PAGES.setup.path);
   });
 
   /* RED WHEN: choosing a company does not make it the one shown. */

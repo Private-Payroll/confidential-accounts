@@ -26,7 +26,7 @@ import {
 } from '../../../src/midnight/record-manifest.js';
 import type { HeadersPage, ProofsAsk, ProofsGiven, RecordName, TreeHeader } from '../../../src/midnight/record-tree.js';
 
-type Api = (path: string, init?: RequestInit) => Promise<any>;
+type Api = (path: string, init?: RequestInit & { read?: boolean }) => Promise<any>;
 
 /**
  * The company's manifest, as the service takes entries and says the newest
@@ -43,7 +43,7 @@ export interface ManifestService {
 export const manifestServiceFor = (api: Api): ManifestService => ({
   newest: async (accountId, records) => {
     if (records.length === 0) return [];
-    const m = await api(manifestPaths.newest(accountId), { method: 'POST', body: JSON.stringify({ records }) });
+    const m = await api(manifestPaths.newest(accountId), { method: 'POST', body: JSON.stringify({ records }), read: true });
     if (m === null || typeof m !== 'object' || !Array.isArray(m.versions) || m.versions.length !== records.length
       || m.versions.some((v: unknown) => !Number.isSafeInteger(v) || (v as number) < 0)) {
       throw new Error('the service did not answer with the newest version entered of each record asked');
@@ -83,7 +83,7 @@ export const treeServiceFor = (api: Api): TreeService => ({
     await api(manifestPaths.treeHeaders(accountId), { method: 'POST', body: JSON.stringify(entries === undefined ? { header } : { header, entries }) });
   },
   proofs: async (accountId, ask) => {
-    const p = await api(manifestPaths.treeProofs(accountId), { method: 'POST', body: JSON.stringify(ask) });
+    const p = await api(manifestPaths.treeProofs(accountId), { method: 'POST', body: JSON.stringify(ask), read: true });
     if (p?.refused === 'root-not-kept') return null;
     if (p === null || typeof p !== 'object' || !Array.isArray(p.records) || !Array.isArray(p.kinds) || !Array.isArray(p.older)
       || !Array.isArray(p.proof?.siblings)) throw new Error('the service did not answer with the proofs asked for');

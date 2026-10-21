@@ -12,6 +12,7 @@ import type { PaymentsFitAnswer } from '../../../src/midnight/vault-notes.js';
 import type { EventOnTheWire, NoteOnTheWire, PaymentConfirmation, SecretRunOnTheWire } from './vault-builder.js';
 import type { RoundMadeOf, RoundStanding } from '../../../src/midnight/vault-start.js';
 import { PROOF_CEILING_MS } from './proof-ceiling.js';
+import { ReadRanOutOfTime, SERVICE_READ_BOUND_MS } from './read-bound.js';
 
 export type { SecretRunOnTheWire } from './vault-builder.js';
 
@@ -62,6 +63,9 @@ export type CreatingTransactionAnswer =
   | { readonly state: 'refused' }
   | { readonly state: 'unreadable' };
 /** One block's view of the company account, for a raise or an approval to be built on. Base64 of the bytes. */
+/** Whether the chain holds an account, the newest block's time (ms) as the indexer names it, and the newest time to live (ms) of the transactions asked about, or null when one could not be read. */
+export interface AccountPresenceOnTheWire { held: boolean; blockHeight: number; blockTime: number; ttl: number | null }
+
 export interface AccountCallChainOnTheWire {
   readonly blockHash: string;
   readonly accountState: string;
@@ -96,8 +100,8 @@ export type VaultAsk =
    * by that key in the founding signer's wallet. Nothing secret crosses: a
    * seat, a label, a public key and a signature.
    */
-  | { id: number; network: string; ask: 'account-deploy'; foundingLeaf: string; label: string; foundingKey: SigningKeyOnTheWire }
-  | { id: number; network: string; ask: 'finished-creation'; account: string; signature: SigningKeyOnTheWire }
+  | { id: number; network: string; ask: 'account-deploy'; foundingLeaf: string; label: string; foundingKey: SigningKeyOnTheWire; clockOffsetMs?: number }
+  | { id: number; network: string; ask: 'finished-creation'; account: string; signature: SigningKeyOnTheWire; clockOffsetMs?: number }
   /*
    * **A VAULT HELD BY THE COMPANY'S COMMITTEE FROM ITS FIRST TRANSACTION**, and
    * the reading of a vault's deploy, as sent, before it is adopted: held by
@@ -117,10 +121,11 @@ export type VaultAsk =
   | { id: number; network: string; ask: 'events-of'; transactionHash: string; indexer: { indexerUri: string; indexerWsUri: string } }
   | { id: number; network: string; ask: 'created-by'; vault: string; commitment: string; indexer: { indexerUri: string; indexerWsUri: string } }
   | { id: number; network: string; ask: 'own-seat'; material: SignerMaterial }
+  | { id: number; network: string; ask: 'warm-proving' }
   /* The founding signer's seat in a company made on this device: its leaf, and the scope it was made under. */
   | { id: number; network: string; ask: 'founding-seat'; material: { signingSecret: string; blinding: string } }
   /* A company's deploy and its signed second step, carried in fresh transactions: the same account, the same signature. */
-  | { id: number; network: string; ask: 'creation-again'; deploy: string; insert: string }
+  | { id: number; network: string; ask: 'creation-again'; deploy: string; insert: string; clockOffsetMs?: number }
   /* Where the pay-record key stands on the account for one signer, and their copy sealed. The key stays on this device. */
   | {
     id: number; network: string; ask: 'pay-key-standing'; account: string; accountState: string; key: string;
@@ -231,7 +236,9 @@ export type VaultAsk =
     resumesFrom: string; latest: string; lastRecovery: string; proposal: string; proposalSalt: string;
   }
   /* What a call to the account alone is built on, at one block, read in the worker at the indexer the wallet names. */
-  | { id: number; network: string; ask: 'account-call-chain'; account: string; indexer: { indexerUri: string; indexerWsUri: string } };
+  | { id: number; network: string; ask: 'account-call-chain'; account: string; indexer: { indexerUri: string; indexerWsUri: string } }
+  /* Whether the indexer the wallet names holds a contract at the account, the chain's newest block time with it, and the newest time to live of the kept transactions. */
+  | { id: number; network: string; ask: 'account-presence'; account: string; indexer: { indexerUri: string; indexerWsUri: string }; transactions: string[] };
 
 type Answered<A extends VaultAsk['ask'], T> = { id: number; ok: true; ask: A } & T;
 
@@ -258,6 +265,7 @@ export type VaultAnswer =
   | Answered<'events-of', { events: EventOnTheWire[] }>
   | Answered<'created-by', { found: { transactionHash: string; events: EventOnTheWire[] } | null }>
   | Answered<'own-seat', { seat: string }>
+  | Answered<'warm-proving', unknown>
   | Answered<'founding-seat', { seat: string; scope: string; publicKey: string }>
   | Answered<'creation-again', { account: string; deploy: string; insert: string }>
   | Answered<'pay-key-standing', { standing: PayKeyStandingOnTheWire }>
@@ -283,6 +291,7 @@ export type VaultAnswer =
   | Answered<'anchor', { tx: string }>
   | Answered<'recover-anchor', { tx: string; placement: AnchorPlacement }>
   | Answered<'account-call-chain', { chain: AccountCallChainOnTheWire | null }>
+  | Answered<'account-presence', { presence: AccountPresenceOnTheWire }>
   | Answered<'proposal-identity', { identity: ProposalIdentity }>
   | Answered<'vouched-run-identity', { chainId: string | null }>
   | Answered<'company-wide', { value: string }>
@@ -294,7 +303,7 @@ export type VaultAnswer =
   | { id: number; ok: false; error: string; name?: string; kind?: string };
 
 type Without<T> = T extends unknown ? Omit<T, 'id' | 'network'> : never;
-export type VaultRequest = Without<VaultAsk>;
+type VaultRequest = Without<VaultAsk>;
 
 /** What the page needs from wherever vault transactions are built. */
 /**
@@ -386,11 +395,11 @@ export interface VaultBuilderClient {
    * step inserts, each checked against the compiled account's own digest, as
    * base64 of their files, for the founding signer's wallet to check again.
    */
-  accountDeploy?(input: { foundingLeaf: string; label: string; foundingKey: SigningKeyOnTheWire }): Promise<{
+  accountDeploy?(input: { foundingLeaf: string; label: string; foundingKey: SigningKeyOnTheWire; clockOffsetMs?: number }): Promise<{
     account: string; tx: string; insert: ReadonlyArray<{ circuit: string; key: string }>;
   }>;
   /** The second step of the account's creation, with the founding signer's wallet's signature on it, proved. */
-  finishedCreation?(input: { account: string; signature: SigningKeyOnTheWire }): Promise<{ tx: string }>;
+  finishedCreation?(input: { account: string; signature: SigningKeyOnTheWire; clockOffsetMs?: number }): Promise<{ tx: string }>;
   /** A vault deployed held by the company's committee at its threshold from its first transaction, proved. */
   bornHeldVault?(input: { account: string; holders: Committee }): Promise<{ vault: string; tx: string }>;
   /**
@@ -457,7 +466,7 @@ export interface VaultBuilderClient {
    */
   foundingSeat?(material: { signingSecret: string; blinding: string }): Promise<{ seat: string; scope: string; publicKey: string }>;
   /** A company's deploy and its signed second step carried again in fresh transactions, as base64. */
-  creationAgain?(input: { deploy: string; insert: string }): Promise<{ account: string; deploy: string; insert: string }>;
+  creationAgain?(input: { deploy: string; insert: string; clockOffsetMs?: number }): Promise<{ account: string; deploy: string; insert: string }>;
   /** Where the pay-record key stands on the account (its state as base64) for the signer whose secret is given. */
   payKeyStanding?(input: {
     account: string; accountState: string; key: string; signingSecret: string; wrappingPublicKey: string;
@@ -645,6 +654,13 @@ export interface VaultBuilderClient {
    */
   accountCallChain(input: { account: string; indexer: { indexerUri: string; indexerWsUri: string } }): Promise<AccountCallChainOnTheWire | null>;
   /**
+   * **WHETHER THE COMPANY'S ACCOUNT IS ON THE CHAIN, BY THE CHAIN'S OWN TIME**, read in this worker at the indexer the
+   * person's own wallet names and never from the service: whether a contract is held at the address, the time of the
+   * newest block named in the same answer, and the newest time to live of the kept transactions (`transactions`, base64),
+   * null when one of them cannot be read. It throws when the indexer cannot say.
+   */
+  accountPresence?(input: { account: string; indexer: { indexerUri: string; indexerWsUri: string }; transactions: string[] }): Promise<AccountPresenceOnTheWire>;
+  /**
    * Where a vault's start stands, read off both contracts' states at one block
    * (base64), and with `secret` the first secret run made from it. `now` is
    * this device's clock in seconds, as digits.
@@ -662,6 +678,13 @@ export interface VaultBuilderClient {
   }): Promise<{ tx: string }>;
   /** One sealed copy of the run's secret written into the vault, by its place in the approved tree. */
   writeSecretCopy(input: { vault: string; run: SecretRunOnTheWire; place: number; state: string; parameters: string }): Promise<{ tx: string }>;
+  /**
+   * Has the worker fetch and check, ahead of any proof, the public parameters the
+   * circuits this app proves need, through the same checked source a proof reads.
+   * Resolves once they are held on this device; refuses with the worker's own
+   * words when one could not be fetched or is not the published file.
+   */
+  provingWarmed?(): Promise<void>;
 }
 
 interface WorkerLike {
@@ -679,7 +702,7 @@ interface VaultWorkerLike {
 }
 
 /** One proof the worker is working out now: the ask it belongs to, its circuit when it names one, and how long it has run. */
-interface ProofInProgress {
+export interface ProofInProgress {
   readonly ask: string;
   readonly circuit: string | null;
   readonly startedAt: number;
@@ -727,6 +750,12 @@ const FAILED_BECAUSE: Record<Exclude<VaultAskFailure, 'answered'>, string> = {
   'did-not-start': 'the part of this page that builds vault transactions did not start.',
 };
 const START_MS = 30_000;
+
+/** The asks that only read the network and send nothing: each is held to SERVICE_READ_BOUND_MS. Every other ask may be a send or a proof and is never cut short. */
+const CHAIN_READS: ReadonlySet<string> = new Set([
+  'vault-as-deployed', 'vault-on-chain', 'chain-at-one-block', 'events-of', 'created-by', 'anchors-on-chain', 'rounds-on-chain',
+  'account-call-chain', 'account-presence',
+]);
 
 /** What `askOver` is handed to reach a worker: one that is ready, posting what it is given and stopped on a failure. */
 interface Reached {
@@ -838,7 +867,21 @@ function askOver(reach: Reach, network: string, now: () => number) {
       throw e;
     }
     arm();
-    const a = await answered;
+    let a: VaultAnswer;
+    if (CHAIN_READS.has(request.ask)) {
+      let timer: ReturnType<typeof setTimeout> | undefined;
+      const outOfTime = new Promise<never>((_, refuse) => {
+        timer = setTimeout(() => {
+          waiting.delete(id);
+          proofs.delete(id);
+          arm();
+          refuse(new ReadRanOutOfTime(`The network (${request.ask})`));
+        }, SERVICE_READ_BOUND_MS);
+      });
+      try { a = await Promise.race([answered, outOfTime]); } finally { clearTimeout(timer); }
+    } else {
+      a = await answered;
+    }
     if (a.ok !== true) {
       const refused = a as { error: string; name?: string; kind?: string };
       throw new VaultAskFailed(request.ask, 'answered', refused.error, {
@@ -1008,6 +1051,7 @@ function clientFrom(ask: Ask, proofsInProgress: () => readonly ProofInProgress[]
       return { tx: a.tx, placement: a.placement };
     },
     accountCallChain: async (input) => (await ask({ ask: 'account-call-chain', ...input })).chain,
+    accountPresence: async (input) => (await ask({ ask: 'account-presence', ...input })).presence,
     anchorTag: async (input) => (await ask({ ask: 'anchor-tag', ...input })).tag,
     seatOpenings: async (input) => {
       const a = await ask({ ask: 'seat-openings', ...input });
@@ -1024,5 +1068,6 @@ function clientFrom(ask: Ask, proofsInProgress: () => readonly ProofInProgress[]
     },
     setNonceSecret: async (input) => ({ tx: (await ask({ ask: 'set-nonce-secret', ...input })).tx }),
     writeSecretCopy: async (input) => ({ tx: (await ask({ ask: 'write-secret-copy', ...input })).tx }),
+    provingWarmed: async () => { await ask({ ask: 'warm-proving' }); },
   };
 }

@@ -1,73 +1,66 @@
 import { useId, useState } from 'react';
-import { Alert, AlertDescription, AlertTitle, Button, Input, Label, useText } from 'vaults-ui';
+import { Button, Input, Label, useText } from 'vaults-ui';
 import { ACTED } from '../adapters/refusals.js';
-import { CREATION, CREATION_WAITS, createCompany, finishCreating, waitingToBeFinished, type Created } from '../adapters/create-company.js';
+import { createCompany, type Created } from '../adapters/create-company.js';
 import { ActRefused } from '../act-refused.js';
 import { useSession } from '../session.js';
-import type { StepProps } from '../setup/step-ids.js';
+import { STEP, type StepProps } from '../setup/step-ids.js';
 
 /**
  * CREATE A COMPANY: its name, then the company and its keys are made on this
- * device, held by the person's own wallet key from its first transaction, with
- * them as its one signer. The step's one component, shown by the setup wizard.
- *
- * A company started here and not finished is shown first, with Finish, which
- * carries it on as far as the chain allows each time it is pressed; nothing
- * else can be started until it is finished.
+ * device, held by the person's own wallet key, with them as its one signer.
+ * This is the first press only: nothing is sent to the network, and the label
+ * the wallet drew is shown, with the way to the step that finishes the company.
+ * The step's one component, shown by the setup wizard, which closes this step
+ * once this tab keeps the company.
  */
-export function CreateCompany({ onChanged }: StepProps) {
+export function CreateCompany({ leadTo, onChanged }: StepProps) {
   const t = useText();
-  const { person, companiesChanged } = useSession();
+  const { person } = useSession();
   const nameId = useId();
+  const whyId = useId();
   const [name, setName] = useState('');
   const [busy, setBusy] = useState(false);
   const [result, setResult] = useState<Created | null>(null);
-  const waiting = waitingToBeFinished();
 
-  const after = async (r: Created): Promise<void> => {
-    setResult(r);
-    if (r.of === ACTED.done) { await companiesChanged(r.companyId); onChanged(); }
-  };
   const create = async (): Promise<void> => {
     setBusy(true);
-    await after(await createCompany(person.id, { name: name.trim(), firstSigner: person.name === '' ? t('setup.createCompany.you') : person.name }));
-    setBusy(false);
-  };
-  const finish = async (): Promise<void> => {
-    setBusy(true);
-    await after(await finishCreating(person.id));
+    const r = await createCompany(person.id, { name: name.trim(), firstSigner: person.name === '' ? t('setup.createCompany.you') : person.name });
+    setResult(r);
+    if (r.of === ACTED.done) onChanged(r.companyId);
     setBusy(false);
   };
 
+  const made = result?.of === ACTED.done;
+  const why = made ? t('setup.createCompany.made') : name.trim() === '' ? t('setup.createCompany.nameFirst') : null;
+
   return (
-    <section className="flex max-w-md flex-col gap-4" data-action="create-company">
-      {waiting === null ? null : (
-        <Alert data-waiting-to-finish>
-          <AlertTitle>{t('setup.createCompany.waitingTitle')}</AlertTitle>
-          <AlertDescription>{t('setup.createCompany.waitingBody')}</AlertDescription>
-          <div><Button disabled={busy} onClick={() => { void finish(); }} data-action="finish-company">{t('setup.createCompany.finish')}</Button></div>
-        </Alert>
-      )}
+    <div className="flex max-w-md flex-col gap-4" data-action="create-company">
       <div className="flex flex-col gap-2">
         <Label htmlFor={nameId}>{t('setup.createCompany.nameLabel')}</Label>
         <Input id={nameId} value={name} onChange={(e) => setName(e.target.value)} disabled={busy} />
         <p className="text-xs text-muted-foreground">{t('setup.createCompany.nameHint')}</p>
       </div>
       <div className="flex flex-wrap items-center gap-3">
-        <Button disabled={busy || waiting !== null || name.trim() === ''} onClick={() => { void create(); }} data-action="create">
+        <Button disabled={busy || why !== null} aria-describedby={why === null ? undefined : whyId} onClick={() => { void create(); }} data-action="create">
           {t('setup.createCompany.create')}
         </Button>
-        {waiting !== null ? <span className="text-sm text-muted-foreground" data-why-disabled>{t('setup.createCompany.finishFirst')}</span>
-          : name.trim() === '' ? <span className="text-sm text-muted-foreground" data-why-disabled>{t('setup.createCompany.nameFirst')}</span> : null}
+        {why === null ? null : <span id={whyId} className="text-sm text-muted-foreground" data-why-disabled>{why}</span>}
       </div>
       <p className="text-xs text-muted-foreground">{t('setup.createCompany.how')}</p>
-      {result?.of === ACTED.done ? <p className="text-sm" data-created={result.companyId}>{t('setup.createCompany.created')}</p> : null}
-      {result?.of === CREATION_WAITS ? (
-        <p className="text-sm" data-creation-waits={result.state}>
-          {result.state === CREATION.notSent ? t('setup.createCompany.started') : t('setup.createCompany.chainWaits')}
-        </p>
+      {made ? (
+        <div className="flex flex-col gap-2">
+          <p className="text-sm" data-created={result.companyId}>{t('setup.createCompany.started', { label: result.label })}</p>
+          <div>
+            <Button variant="outline" onClick={() => leadTo(STEP.finishCompany)} data-lead-to={STEP.finishCompany}>
+              {t('setup.blocked.go', { step: t('setup.step.finishCompany.name') })}
+            </Button>
+          </div>
+        </div>
       ) : null}
-      {result?.of === ACTED.refused ? <ActRefused why={result.why} /> : null}
-    </section>
+      {result?.of === ACTED.refused ? (
+        <ActRefused why={result.why} />
+      ) : null}
+    </div>
   );
 }

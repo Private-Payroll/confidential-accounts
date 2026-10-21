@@ -7,9 +7,10 @@
  * and the ledger asks for them together, so on one thread their times add up:
  * about two minutes for the pair on a four-core machine, of which the
  * `deposit` proof alone is about eighty seconds. Here each proof is handed to a thread of
- * its own (`vault-proof-worker-entry.ts`), up to the device's cores, so the
- * pair takes about as long as the longer of the two; a proof asked beyond the
- * cores waits for a thread to finish, because each thread holds about 330 MB.
+ * its own (`vault-proof-worker-entry.ts`), up to the device's cores and never
+ * more than `MOST_PROOF_THREADS`, so the pair takes about as long as the longer
+ * of the two; a proof asked beyond that waits for a thread to finish, because
+ * each thread holds about 330 MB.
  *
  * **WHAT IS PROVED DOES NOT CHANGE.** The ledger decides every proof and every
  * input to it, exactly as on one thread; each one reaches the same two calls of
@@ -303,10 +304,13 @@ export function oneThreadWhenAThreadDoesNotLoad(
   };
 }
 
+/** The most proof threads a device starts at once, however many cores it reports: each holds about 330 MB. */
+const MOST_PROOF_THREADS = 4;
+
 /**
  * **THE VAULT WORKER'S PROOF PROVIDER**: each proof on a thread of its own
  * where this thread can start one, as many at once as the device reports
- * cores (two where it does not say), and on this thread (`inThread`) where it
+ * cores, and no more than `MOST_PROOF_THREADS` (two where it does not say), and on this thread (`inThread`) where it
  * cannot - because `Worker` does not exist here, or because a thread failed to
  * load. Both ways to one thread are this function's, and only this function's.
  */
@@ -318,7 +322,7 @@ export async function proofProviderOnWorkers(
   if (typeof scope.Worker !== 'function') return inThread();
   const { createProofProvider } = await import('@midnight-ntwrk/midnight-js-types');
   const cores = scope.navigator?.hardwareConcurrency;
-  const cap = typeof cores === 'number' && Number.isInteger(cores) && cores >= 1 ? cores : 2;
+  const cap = typeof cores === 'number' && Number.isInteger(cores) && cores >= 1 ? Math.min(cores, MOST_PROOF_THREADS) : 2;
   const provider = provingOnWorkers(source, () => new Worker(new URL('./vault-proof-worker-entry.js', import.meta.url), {
     type: 'module', name: 'vault-proof',
   }) as unknown as ProofWorkerLike, undefined, cap);

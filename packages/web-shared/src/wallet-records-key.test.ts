@@ -68,6 +68,18 @@ describe('ASKING THE PERSON\'S WALLET TO SIGN THEIR RECORDS KEY, AND TO SAY WHO 
     expect((parseAsk(withVault.asked[0], US, 1_000) as RecordsKeyRequest).vault).toBe(VAULT);
     expect(both.vault).toEqual(HELD);
     expect(both.seats).toEqual(SEATS);
+    /* RED WHEN: an ask not made for a vault's first secret tells the wallet who would hold one. */
+    expect('firstSecret' in (withVault.asked[0] as Record<string, unknown>)).toBe(false);
+  });
+
+  it('sends the vault\'s readers, each key with the name this page holds, only when it is given them for a first secret', async () => {
+    const READERS = [{ key: 'A1'.repeat(32), name: 'Ada' }, { key: 'b2'.repeat(32) }];
+    const asking = walletAnswering(honestly);
+    await askWalletToSignRecordsKey(asking.view, WALLET, { ...input, vault: VAULT, firstSecret: { readers: READERS } });
+    const sent = asking.asked[0] as Record<string, unknown>;
+    /* RED WHEN: the readers this page will seal the secret to do not reach the wallet, or reach it in a spelling the wallet refuses. */
+    expect(sent['firstSecret']).toEqual({ readers: [{ key: 'a1'.repeat(32), name: 'Ada' }, { key: 'b2'.repeat(32) }] });
+    expect((parseAsk(sent, US, 1_000) as RecordsKeyRequest).firstSecret).toEqual(sent['firstSecret']);
   });
 
   it('HANDS THE WALLET THE INVITATION IT IS GIVEN, WHOLE, SO A WALLET THAT KEPT NO ACCOUNT CAN KEEP THE ONE IT NAMES', async () => {

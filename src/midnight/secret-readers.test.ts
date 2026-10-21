@@ -5,7 +5,7 @@ import { signRecordsKey } from 'midnight-identity/profile/records-key';
 import type { CompanyLabel } from 'midnight-identity/profile/company-label';
 import type { RosterVaultKeys } from '../core/vault-keys.js';
 import { recordsKeypairFrom } from './company-nonce-secret.js';
-import { readerRefusalOf, whyNotTheseReaders, type SecretReadersToCheck } from './secret-readers.js';
+import { READER_REFUSAL, readerRefusalOf, type SecretReadersToCheck } from './secret-readers.js';
 import { leafOfTheContract, seatOpenedFor } from '../testing/directory-seats.js';
 
 /*
@@ -14,6 +14,7 @@ import { leafOfTheContract, seatOpenedFor } from '../testing/directory-seats.js'
  * service stands in for nothing here, because the check reads only what it is
  * handed.
  */
+const whyNot = (input: SecretReadersToCheck): string | null => readerRefusalOf(input)?.says ?? null;
 const CO = `co_${'c1'.repeat(32)}` as CompanyLabel;
 const ACCOUNT = 'ac'.repeat(32);
 const leaf = (n: number): string => n.toString(16).padStart(2, '0').repeat(32);
@@ -62,9 +63,9 @@ const withVault = (vault: ReturnType<typeof vaultRead> | null): SecretReadersToC
 
 describe('A SECRET RUN\'S READERS, CHECKED BEFORE THIS DEVICE APPROVES IT', () => {
   it('passes a run sealed to exactly the seated signers, each key signed by their own wallet for their seat', () => {
-    expect(whyNotTheseReaders(good())).toBeNull();
+    expect(whyNot(good())).toBeNull();
     /* The order the run holds them in is the run's own. */
-    expect(whyNotTheseReaders({ ...good(), readers: [...good().readers].reverse() })).toBeNull();
+    expect(whyNot({ ...good(), readers: [...good().readers].reverse() })).toBeNull();
     /* The key signed for is the key the company's records are sealed to. */
     expect(ada.statement.recordsKey).toBe(recordsKeypairFrom(ada.companyKey).publicKey);
   });
@@ -74,12 +75,12 @@ describe('A SECRET RUN\'S READERS, CHECKED BEFORE THIS DEVICE APPROVES IT', () =
     const theirs = recordsKeypairFrom(new Uint8Array(32).fill(0x5e)).publicKey;
     const readers = [ada.statement.recordsKey, theirs, cy.statement.recordsKey];
     /* RED WHEN: a reader that no signer's wallet signed for passes. */
-    expect(whyNotTheseReaders({ ...good(), readers })).toMatch(/no signer of this company signed for/);
+    expect(whyNot({ ...good(), readers })).toMatch(/no signer of this company signed for/);
     /* And Bo is named as the one left out when the run simply drops them. */
-    expect(whyNotTheseReaders({ ...good(), readers: [ada.statement.recordsKey, cy.statement.recordsKey] }))
+    expect(whyNot({ ...good(), readers: [ada.statement.recordsKey, cy.statement.recordsKey] }))
       .toMatch(/would not be sealed to Bo/);
     /* RED WHEN: one reader listed twice stands in for another. */
-    expect(whyNotTheseReaders({ ...good(), readers: [ada.statement.recordsKey, ada.statement.recordsKey, cy.statement.recordsKey] }))
+    expect(whyNot({ ...good(), readers: [ada.statement.recordsKey, ada.statement.recordsKey, cy.statement.recordsKey] }))
       .toMatch(/sealed twice to the same signer/);
   });
 
@@ -88,22 +89,22 @@ describe('A SECRET RUN\'S READERS, CHECKED BEFORE THIS DEVICE APPROVES IT', () =
     /* The service rewrote Bo's roster entry with its own records key and kept Bo's signature beside it. */
     const roster = [ada.entry, { ...bo.entry, keys: { ...bo.entry.keys!, recordsKey: swapped as never } }, cy.entry];
     /* RED WHEN: the statement is not checked against the records key it sits beside. */
-    expect(whyNotTheseReaders({ ...good(), roster, readers: [ada.statement.recordsKey, swapped, cy.statement.recordsKey] }))
+    expect(whyNot({ ...good(), roster, readers: [ada.statement.recordsKey, swapped, cy.statement.recordsKey] }))
       .toMatch(/was not signed by Bo's own wallet/);
     /* RED WHEN: the statement is not checked against the seat it sits beside. */
     const moved = [ada.entry, { ...bo.entry, keys: { ...bo.entry.keys!, recordsKeySeat: cy.seat as never } }, cy.entry];
-    expect(whyNotTheseReaders({ ...good(), roster: moved })).toMatch(/was not signed by Bo's own wallet/);
+    expect(whyNot({ ...good(), roster: moved })).toMatch(/was not signed by Bo's own wallet/);
     /* RED WHEN: an entry with no statement, or no seat for it, passes. */
     for (const keys of [{ ...bo.entry.keys!, recordsKeyStatement: null }, { ...bo.entry.keys!, recordsKeySeat: null }]) {
-      expect(whyNotTheseReaders({ ...good(), roster: [ada.entry, { ...bo.entry, keys }, cy.entry] }))
+      expect(whyNot({ ...good(), roster: [ada.entry, { ...bo.entry, keys }, cy.entry] }))
         .toMatch(/Bo has not signed their records key for their seat/);
     }
     /* RED WHEN: a statement signed by a key the service made, with that key put in as Bo's wallet key, passes - Bo's seat was not made for it. */
     const impostor = signer(9, 'Bo', bo.seat);
-    expect(whyNotTheseReaders({ ...good(), roster: [ada.entry, impostor.entry, cy.entry], readers: [ada.statement.recordsKey, impostor.statement.recordsKey, cy.statement.recordsKey] }))
+    expect(whyNot({ ...good(), roster: [ada.entry, impostor.entry, cy.entry], readers: [ada.statement.recordsKey, impostor.statement.recordsKey, cy.statement.recordsKey] }))
       .toMatch(/the wallet key that signed Bo's records key is not the one their seat on the company's account was made for/);
     /* RED WHEN: a signer who never gave keys is passed over. */
-    expect(whyNotTheseReaders({ ...good(), roster: [ada.entry, { ...bo.entry, keys: null }, cy.entry] }))
+    expect(whyNot({ ...good(), roster: [ada.entry, { ...bo.entry, keys: null }, cy.entry] }))
       .toMatch(/Bo has not set up their vault keys/);
   });
 
@@ -111,14 +112,14 @@ describe('A SECRET RUN\'S READERS, CHECKED BEFORE THIS DEVICE APPROVES IT', () =
     /* Cy has left: the account seats two. */
     const seats = seatsOf([ada.seat, bo.seat]);
     /* RED WHEN: the two who remain are refused. */
-    expect(whyNotTheseReaders({ ...good(), seats, roster: [ada.entry, bo.entry], readers: [ada.statement.recordsKey, bo.statement.recordsKey] })).toBeNull();
+    expect(whyNot({ ...good(), seats, roster: [ada.entry, bo.entry], readers: [ada.statement.recordsKey, bo.statement.recordsKey] })).toBeNull();
     /* RED WHEN: a signer who has left is still a reader. */
     expect(readerRefusalOf({ ...good(), seats })?.code).toBe('seat-not-held');
     const updated = seats;
-    expect(whyNotTheseReaders({ ...good(), seats: updated }))
+    expect(whyNot({ ...good(), seats: updated }))
       .toMatch(/the seat Cy's wallet signed their records key for is not one the company's account holds now/);
     /* RED WHEN: the roster's count is not held to the chain's - one signer dropped from the roster, the run sealed to the rest. */
-    expect(whyNotTheseReaders({ ...good(), seats: updated, roster: [ada.entry], readers: [ada.statement.recordsKey] }))
+    expect(whyNot({ ...good(), seats: updated, roster: [ada.entry], readers: [ada.statement.recordsKey] }))
       .toMatch(/names 1 signer and its account on the chain seats 2/);
   });
 
@@ -143,7 +144,7 @@ describe('A SECRET RUN\'S READERS, CHECKED BEFORE THIS DEVICE APPROVES IT', () =
     expect(readerRefusalOf({ ...good(), seats: reseated })?.code).toBe('seat-not-held');
     /* RED WHEN: two entries signed for one seat both count. */
     const twice = signer(2, 'Bo', ada.seat);
-    expect(whyNotTheseReaders({ ...good(), roster: [ada.entry, twice.entry, cy.entry], readers: [ada.statement.recordsKey, twice.statement.recordsKey, cy.statement.recordsKey] }))
+    expect(whyNot({ ...good(), roster: [ada.entry, twice.entry, cy.entry], readers: [ada.statement.recordsKey, twice.statement.recordsKey, cy.statement.recordsKey] }))
       .toMatch(/signed for the same seat/);
   });
 
@@ -162,7 +163,7 @@ describe('A SECRET RUN\'S READERS, CHECKED BEFORE THIS DEVICE APPROVES IT', () =
       expect(readerRefusalOf({ ...good(), seats: { ...good().seats!, ...committees } as never })).toBeNull();
     }
     /* RED WHEN: a device whose wallet read nothing approves anyway. */
-    expect(whyNotTheseReaders({ ...good(), seats: null })).toMatch(/wallet has not read who holds this company's account/);
+    expect(whyNot({ ...good(), seats: null })).toMatch(/wallet has not read who holds this company's account/);
   });
 
   it('THE VAULT IS THE ONE THE SIGNER\'S OWN WALLET READ: none read, another vault read, or one pinned to another account, is refused', () => {
@@ -206,7 +207,7 @@ describe('A SECRET RUN\'S READERS, CHECKED BEFORE THIS DEVICE APPROVES IT', () =
 
   it('two seated signers giving one wallet key is refused', () => {
     /* RED WHEN: one wallet key holding two seats counts as two readers. */
-    expect(whyNotTheseReaders({ ...good(), seats: boTwice.seats, directory: boTwice.directory, roster: [ada.entry, bo.entry, boTwice.twin] }))
+    expect(whyNot({ ...good(), seats: boTwice.seats, directory: boTwice.directory, roster: [ada.entry, bo.entry, boTwice.twin] }))
       .toMatch(/two seated signers give the same wallet key/);
   });
 
@@ -214,9 +215,9 @@ describe('A SECRET RUN\'S READERS, CHECKED BEFORE THIS DEVICE APPROVES IT', () =
     const code = (over: Partial<SecretReadersToCheck>) => readerRefusalOf({ ...good(), ...over })?.code ?? null;
     /* RED WHEN: a refusal is filed under a kind whose remedy is not its own. */
     expect(code({})).toBeNull();
-    expect(code({ seats: null })).toBe('wallet-read-nothing');
+    expect(code({ seats: null })).toBe(READER_REFUSAL.walletReadNothing);
     expect(code({ seats: { ...good().seats!, vault: vaultRead({ account: 'ad'.repeat(32) }) } })).toBe('vault-not-the-companys');
-    expect(code({ directory: null })).toBe('wallet-read-nothing');
+    expect(code({ directory: null })).toBe(READER_REFUSAL.directoryUnread);
     expect(code({ roster: [ada.entry, { ...bo.entry, keys: null }, cy.entry] })).toBe('keys-not-given');
     expect(code({ roster: [ada.entry, { ...bo.entry, keys: { ...bo.entry.keys!, recordsKeyStatement: null } }, cy.entry] })).toBe('keys-not-given');
     expect(code({ roster: [ada.entry, { ...bo.entry, keys: { ...bo.entry.keys!, recordsKeySeat: cy.seat as never } }, cy.entry] })).toBe('not-signed');

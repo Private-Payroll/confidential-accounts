@@ -81,7 +81,44 @@ export class TooManyAttempts extends Error {
   }
 }
 
+/**
+ * The service could not find out whether this sign-in is live: its database could not be reached,
+ * was too slow, dropped the connection or had no free connection. That is not an answer about the
+ * person, so it is never "not signed in" (401): a page that is told 401 signs the person out.
+ */
+export class CouldNotCheck extends Error {
+  readonly code = 'could-not-check';
+  constructor(readonly reason: unknown) {
+    super('the service could not check your sign-in');
+    this.name = 'CouldNotCheck';
+  }
+}
+
+/**
+ * A live sign-in whose person this service does not hold: the sign-in was issued by another service
+ * that shares the sessions database but keeps its people in another data file. Answered "not signed
+ * in" like any other no, and told apart so the stale cookie is cleared rather than kept.
+ */
+export class NoSuchUser extends Error {
+  constructor() { super('not signed in'); this.name = 'NoSuchUser'; }
+}
+
+/** How long a look-up of a sign-in may take before it is a failure to check, not an answer. */
+export const CHECK_BOUND_MS = 10_000;
+
+const withinTheCheckBound = <T>(work: Promise<T>, ms: number): Promise<T> =>
+  new Promise<T>((answer, refuse) => {
+    const timer = setTimeout(() => refuse(new Error(`no answer within ${ms} ms`)), ms);
+    work.then((v) => { clearTimeout(timer); answer(v); }, (e: unknown) => { clearTimeout(timer); refuse(e); });
+  });
+
+/** A sign-in is asked to renew itself at most once a minute: renewal is a write, and most requests need none. */
+const RENEW_EVERY_MS = 60_000;
+
 export class IdentityService {
+  private renewedAt = new Map<string, number>();
+  checkBoundMs = CHECK_BOUND_MS;
+
   constructor(
     private store: DataStore,
     private sessions: SessionStore,
@@ -144,18 +181,48 @@ export class IdentityService {
   /**
    * Returns the user id, or throws.
    *
-   * ONE ERROR FOR EVERY WAY OF FAILING. The old version distinguished "not
+   * ONE ERROR FOR EVERY WAY OF ANSWERING NO (a failure to look is `CouldNotCheck`, never this
+   * error: it says nothing about the person). The old version distinguished "not
    * signed in", "not valid" and "expired", which told a caller holding a stolen
    * token whether it was ever real and whether it had been revoked. The store
    * returns null for unknown, expired and revoked alike, and so does this.
    */
   async verify(token: string): Promise<string> {
-    const userId = await this.sessions.resolve(token ?? '');
+    let userId: string | null;
+    try {
+      userId = await withinTheCheckBound(this.sessions.resolve(token ?? ''), this.checkBoundMs);
+    } catch (e) {
+      throw new CouldNotCheck(e);
+    }
     if (!userId) throw new Error('not signed in');
     // The session can outlive the user it belongs to; the row is authority for
     // the session, not for the account.
-    if (!this.store.getUser(userId)) throw new Error('not signed in');
+    let user: unknown;
+    try {
+      user = this.store.getUser(userId);
+    } catch (e) {
+      throw new CouldNotCheck(e);
+    }
+    if (!user) throw new NoSuchUser();
     return userId;
+  }
+
+  /**
+   * A live session that is running low is given a fresh lifetime; the new expiry, or null when
+   * nothing was extended. It never fails a request: a renewal that could not be made leaves the
+   * session as it was, and the next request tries again.
+   */
+  async renew(token: string, now = new Date()): Promise<string | null> {
+    const last = this.renewedAt.get(token);
+    if (last !== undefined && now.getTime() - last < RENEW_EVERY_MS) return null;
+    if (this.renewedAt.size > 1000) this.renewedAt.clear();
+    this.renewedAt.set(token, now.getTime());
+    try {
+      return await withinTheCheckBound(this.sessions.renew(token, now), this.checkBoundMs);
+    } catch {
+      this.renewedAt.delete(token);
+      return null;
+    }
   }
 
   /** The whole point: this actually ends the session. */

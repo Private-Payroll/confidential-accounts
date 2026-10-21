@@ -98,7 +98,7 @@ const plural = (n: number, one: string, many: string): string => `${n} ${n === 1
 export const READER_REFUSAL = {
   walletReadNothing: 'wallet-read-nothing', keysNotGiven: 'keys-not-given', notSigned: 'not-signed',
   seatNotHeld: 'seat-not-held', rosterNotTheChains: 'roster-not-the-chains', readerNotASigner: 'reader-not-a-signer',
-  signerLeftOut: 'signer-left-out', vaultNotTheCompanys: 'vault-not-the-companys',
+  signerLeftOut: 'signer-left-out', vaultNotTheCompanys: 'vault-not-the-companys', directoryUnread: 'directory-unread',
 } as const;
 export type ReaderRefusalCode = (typeof READER_REFUSAL)[keyof typeof READER_REFUSAL];
 
@@ -109,24 +109,24 @@ export interface ReaderRefusal {
 
 const refused = (code: ReaderRefusalCode, says: string): ReaderRefusal => ({ code, says });
 
-/**
- * **WHY THIS DEVICE MUST NOT APPROVE A SECRET SEALED TO THESE READERS**, or
- * null when every reader checks out. The first reason found is the one given.
- */
-export function whyNotTheseReaders(input: SecretReadersToCheck): string | null {
-  return readerRefusalOf(input)?.says ?? null;
-}
+/** What the roster check reads: the vault-free half of what the first secret's readers are checked against. */
+export type RosterToCheck = Pick<SecretReadersToCheck, 'company' | 'roster' | 'directory' | 'account'> & { readonly seats: Pick<SeatsAsTheWalletRead, 'seats'> | null };
 
-/** The same check, with the kind of refusal beside its sentence. */
-export function readerRefusalOf(input: SecretReadersToCheck): ReaderRefusal | null {
+/**
+ * THE SIGNERS OF A COMPANY AGAINST ITS ACCOUNT, the half of the first secret's check that names no vault: each signer's vault
+ * keys given, their records key signed by their own wallet for a seat the account holds now and for the wallet their
+ * seat's entry proves, no seat or wallet twice, and as many signers as the account seats. It is one check with two callers:
+ * the first secret's readers run it, and so does whatever says a vault can be created, so the two say yes together.
+ */
+export function rosterRefusalOf(input: RosterToCheck): ReaderRefusal | null {
   const { seats } = input;
   if (seats === null) {
-    return refused('wallet-read-nothing', 'your wallet has not read who holds this company\'s account on the chain, so the people this vault\'s '
+    return refused(READER_REFUSAL.walletReadNothing, 'your wallet has not read who holds this company\'s account on the chain, so the people this vault\'s '
       + 'secret is sealed to cannot be checked. Open the company with your wallet again, then try again.');
   }
   const directory = input.directory;
   if (directory === null) {
-    return refused('wallet-read-nothing', 'the company\'s directory could not be read, so whose seat each of the people this vault\'s secret is '
+    return refused(READER_REFUSAL.directoryUnread, 'the company\'s directory could not be read, so whose seat each of the people this vault\'s secret is '
       + 'sealed to holds cannot be checked. Reload the page, then try again.');
   }
   /* The wallet key each seat's opening proves for it, by seat: the one place a reader's wallet key is read from. */
@@ -135,15 +135,6 @@ export function readerRefusalOf(input: SecretReadersToCheck): ReaderRefusal | nu
     if (x.retired !== null || x.opening === undefined) continue;
     const proved = walletKeyProvedBy(x.opening, x.seat, directory.leafOf);
     if (proved !== null) provedBySeat.set(fold(x.seat), idOf(proved));
-  }
-  const held = seats.vault ?? null;
-  if (held === null || fold(held.vault) !== fold(input.vault)) {
-    return refused('wallet-read-nothing', 'your wallet has not read who holds this vault on the chain, so the people its secret is '
-      + 'sealed to cannot be checked. Open the company with your wallet again, then try again.');
-  }
-  if (fold(held.account) !== fold(input.account)) {
-    return refused('vault-not-the-companys', 'this vault, as your wallet read it on the chain, belongs to a different company account '
-      + 'from this one, so its secret is not approved from here. Nothing is approved; contact support.');
   }
   const seated = new Set(seats.seats.map(fold));
 
@@ -195,11 +186,25 @@ export function readerRefusalOf(input: SecretReadersToCheck): ReaderRefusal | nu
       + `on the chain seats ${seated.size}, so the list is out of date or has been changed. Nothing is approved; `
       + 'reload the page, and if it happens again, contact support.');
   }
+  return null;
+}
 
-  /* Now the run's own readers: exactly one per seated signer, and nothing else. */
+/** The same check, with the kind of refusal beside its sentence. */
+export function readerRefusalOf(input: SecretReadersToCheck): ReaderRefusal | null {
+  const rosterRefused = rosterRefusalOf(input);
+  if (rosterRefused !== null) return rosterRefused;
+  const held = input.seats?.vault ?? null;
+  if (held === null || fold(held.vault) !== fold(input.vault)) {
+    return refused('wallet-read-nothing', 'your wallet has not read who holds this vault on the chain, so the people its secret is '
+      + 'sealed to cannot be checked. Open the company with your wallet again, then try again.');
+  }
+  if (fold(held.account) !== fold(input.account)) {
+    return refused('vault-not-the-companys', 'this vault, as your wallet read it on the chain, belongs to a different company account '
+      + 'from this one, so its secret is not approved from here. Nothing is approved; contact support.');
+  }
   const readers = input.readers.map(fold);
-  const expected = new Map([...byCommittee.values()].map((v) => [v.recordsKey, v.name]));
-  if (expected.size !== byCommittee.size) {
+  const expected = new Map(input.roster.map((e) => [fold(e.keys!.recordsKey), e.name]));
+  if (expected.size !== input.roster.length) {
     return refused('roster-not-the-chains', 'two signers give the same records key, so one copy of the secret would stand '
       + 'for two people. Nothing is approved; contact support.');
   }

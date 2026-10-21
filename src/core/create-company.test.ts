@@ -7,6 +7,7 @@ import type { Ask, KeyringRequest } from 'midnight-identity/profile/request';
 import { READY_PING } from 'midnight-identity/profile/channel';
 import { keyringKeyFor, keyringReleaseFor, unlockKeyFor } from 'midnight-identity/profile/unlock';
 import type { Openable } from 'vaults-web-shared/wallet-sign-in.js';
+import type { AccountCreationBuilder, CompanyToFound } from 'vaults-web-shared/keyring.js';
 import type { CompanyLabel } from 'midnight-identity/profile/company-label';
 import type { Sealed } from './crypto.js';
 import { fromHex, seal, toHex, unseal, unwrapKey, wrapKey } from './crypto.js';
@@ -26,28 +27,30 @@ const thisBrowsersWindow = () => (globalThis as { window?: unknown }).window as 
 const x25519PublicOf = (secret: string) => toHex(x25519.getPublicKey(fromHex(secret)));
 
 /**
- * **SOMEBODY WITH A WALLET STARTS A COMPANY - AND THEN ANOTHER.**
+ * **SOMEBODY WITH A WALLET STARTS A COMPANY, AND WHAT IS SAVED FOR THEM OPENS ON ANOTHER DEVICE.**
  *
  * ── WHAT IS BEING PROVED, AND WHY IT IS PROVED BY WATCHING ────────────────
  *
  * Starting a company is an ORDER OF OPERATIONS, and an order is a property of a
- * journey rather than of any one function. So the whole journey runs here
+ * journey rather than of any one function. So the whole first press runs here
  * against a recording transport and a real wallet at the other end of a real
  * channel: every URL, method and body this tab sends is kept, every question the
  * wallet is asked is kept, and the assertions are about what happened, in what
  * order, and what never happened at all.
  *
  * The order is: **open the keys saved for this person** (one question to the
- * wallet, for the key it derives for this person on this site), **create the
- * company**, **save its keys beside everything already saved**, under that same
- * key. A person's saved keys belong to the person and not to any one company, so
- * a second company's keys are saved beside the first's - and nothing about
- * saving them waits on a company's address.
+ * wallet, for the key it derives for this person on this site, which also draws
+ * the new company's label), **save the founding seat's keys beside everything
+ * already saved**, under that same key, and only then **send the company**. A
+ * person's saved keys belong to the person and not to any one company, so
+ * nothing about saving them waits on a company's address.
  *
  * **THE WALLET SIDE IS THE WALLET'S OWN CODE.** `identityFromWords`, `parseAsk`,
  * `keyringReleaseFor` and `keyringKeyFor` ship from `midnight-identity`, resolved
  * through its `exports`. Nothing here is a fixture shaped like a key, and the key
- * a bundle is checked against is derived here independently of the tab.
+ * a bundle is checked against is derived here independently of the tab. The
+ * builder stands in for the worker, which
+ * `contracts/test/a-company-born-held-from-the-browser.test.ts` drives for real.
  *
  * ── AND THE SECOND DEVICE IS A SECOND DEVICE ──────────────────────────────
  *
@@ -60,8 +63,10 @@ const US = 'https://payroll.example';
 const ELSEWHERE = 'https://payroll.self-hosted.example';
 const WALLET = 'https://wallet.example';
 
-/** A company address, in the spelling the chain's own serialisation produces. */
+/** The company's account on the chain, as the deploy this device builds names it. */
 const DEPLOYED = 'a1'.repeat(32);
+/** The founding seat's leaf, scope and public key, as the builder works them out. */
+const LEAF = 'ab'.repeat(32);
 /** Every label a wallet on this journey made up, in order, so a test can say which one the page used. */
 const drawn: CompanyLabel[] = [];
 const draw = (): CompanyLabel => {
@@ -84,39 +89,14 @@ const FOUNDER_ADDRESS = 'mn_addr_test1qqqqqqqqqqqqqqqqqqqq';
 const SOMEBODY_ELSE_WORDS = newWords();
 const SOMEBODY_ELSE_ADDRESS = 'mn_addr_test1pppppppppppppppppppp';
 
-const ACCOUNT_ID = 'acc_founded';
-const SECOND_ID = 'acc_second';
-/** A company whose keys another device saved while this tab was busy. */
-const OTHER_DEVICE_ID = 'acc_saved_elsewhere';
+const NORTHWIND: CompanyToFound = { name: 'Northwind', signers: [{ name: 'Ada', role: 'admin' }], threshold: 1 };
+const SOUTHWIND: CompanyToFound = { name: 'Southwind', signers: [{ name: 'Ada', role: 'admin' }], threshold: 1 };
 
-const FIRST_SECRETS = {
-  signerId: 'sgn_founder',
-  name: 'Ada',
-  signingSecret: 'aa'.repeat(32),
-  wrappingSecret: 'bb'.repeat(32),
-  blinding: 'cc'.repeat(32),
-  /* As the service answers: every seat's secrets carry the scope it was seated under. */
-  scope: 'dd'.repeat(32),
-};
-const SECOND_SECRETS = {
-  signerId: 'sgn_second',
-  name: 'Ada',
-  signingSecret: 'a2'.repeat(32),
-  wrappingSecret: 'b2'.repeat(32),
-  blinding: 'c2'.repeat(32),
-  scope: 'd2'.repeat(32),
-};
-const OTHER_DEVICE_KEYS = {
-  signerId: 'sgn_elsewhere',
-  signingSecret: 'a3'.repeat(32),
-  wrappingSecret: 'b3'.repeat(32),
-  blinding: 'c3'.repeat(32),
-  scope: 'd3'.repeat(32),
-};
-
-const NORTHWIND = { name: 'Northwind', signers: [{ name: 'Ada', role: 'admin' as const }], threshold: 1 };
-const SOUTHWIND = { name: 'Southwind', signers: [{ name: 'Ada', role: 'admin' as const }], threshold: 1 };
-const WESTWIND = { name: 'Westwind', signers: [{ name: 'Ada', role: 'admin' as const }], threshold: 1 };
+/** What builds the account's deploy, standing in for the worker: the first press needs only the seat and the deploy. */
+const aBuilder = (): AccountCreationBuilder => ({
+  foundingSeat: async () => ({ seat: LEAF, scope: 'cd'.repeat(32), publicKey: 'ef'.repeat(32) }),
+  accountDeploy: async () => ({ account: DEPLOYED, tx: 'REVQTE9Z', insert: [{ circuit: 'payout', key: 'S0VZ' }] }),
+} as unknown as AccountCreationBuilder);
 
 /**
  * **ONE TIMELINE FOR BOTH ENDS.** The server and the wallet write into the same
@@ -238,10 +218,6 @@ const opened = (bundle: Sealed | null, key: string): Opened | null => {
 interface Recorded { url: string; method: string; body: string }
 
 function aServer(opts: {
-  /** The address the server has on the record for a new company. */
-  companyAddress?: string;
-  /** The refusal `POST /api/accounts/:id/unlock` makes, if any. */
-  refuseCompany?: { status: number; error: string; code: string };
   /** Keys already saved for this person before the journey starts. */
   saved?: Sealed;
 } = {}) {
@@ -250,6 +226,7 @@ function aServer(opts: {
   let held: { keyBundle: Sealed | null; version: number } =
     opts.saved ? { keyBundle: opts.saved, version: 1 } : { keyBundle: null, version: 0 };
   let created = 0;
+  let lastMade = '';
 
   const answer = (method: string, url: string, body: string): { status: number; json: any } => {
     if (method === 'POST' && url === '/api/auth/wallet/challenge') {
@@ -268,29 +245,16 @@ function aServer(opts: {
     }
     if (method === 'POST' && url === '/api/accounts') {
       created += 1;
-      const [id, secrets] = created === 1 ? [ACCOUNT_ID, FIRST_SECRETS] : [SECOND_ID, SECOND_SECRETS];
-      return { status: 200, json: {
-        account: {
-          id, contractAddress: opts.companyAddress ?? DEPLOYED,
-          addressSource: opts.companyAddress ? 'invented' : 'chain',
-          wrappedKeys: [], signers: [], name: JSON.parse(body || '{}').name,
-        },
-        viewingKey: 'ff'.repeat(32),
-        secrets: [secrets],
-      } };
-    }
-    if (method === 'POST' && url.startsWith('/api/accounts/') && url.endsWith('/unlock')) {
-      if (opts.refuseCompany) {
-        return { status: opts.refuseCompany.status, json: opts.refuseCompany };
-      }
-      return { status: 200, json: { company: drawn[drawn.length - 1] ?? null, account: opts.companyAddress ?? DEPLOYED } };
+      lastMade = String(JSON.parse(body).founding.account.id);
+      return { status: 201, json: { account: { id: lastMade }, state: 'made' } };
     }
     if (method === 'GET' && url === '/api/me/keys') {
       return { status: 200, json: { keyBundle: held.keyBundle, version: held.version } };
     }
     if (method === 'PUT' && url === '/api/me/keys') {
       const b = JSON.parse(body);
-      if (b.ifVersion !== held.version) {
+      /* As the real service: a save that names no version is an overwrite, and one that names a stale version is refused. */
+      if (b.ifVersion !== undefined && b.ifVersion !== held.version) {
         return { status: 409, json: { error: 'the keys changed on another device since this tab read them' } };
       }
       held = { keyBundle: b.keyBundle, version: held.version + 1 };
@@ -311,6 +275,8 @@ function aServer(opts: {
   return {
     seen, fetchImpl,
     createdCount: () => created,
+    /** The id of the company the last request to create one made. */
+    madeId: () => lastMade,
     bundle: () => held,
     /** Another device saving keys for this person, under whatever key it holds. */
     savedElsewhere: (keyBundle: Sealed) => { held = { keyBundle, version: held.version + 1 }; },
@@ -319,7 +285,6 @@ function aServer(opts: {
     /** Every bundle write this tab attempted, taken or refused. */
     wrote: () => seen.filter(r => r.method === 'PUT' && r.url === '/api/me/keys'),
     reads: () => seen.filter(r => r.method === 'GET' && r.url === '/api/me/keys').length,
-    askedWhichCompany: () => seen.filter(r => r.url.endsWith('/unlock')),
     everything: () => JSON.stringify(seen),
   };
 }
@@ -344,7 +309,7 @@ afterEach(async () => {
   keyring.forgetLocally();
 });
 
-/** The founder's own wallet, signed in, in a tab at `origin`. */
+/** The founding signer's own wallet, signed in, in a tab at `origin`. */
 async function signedInWith(
   server: ReturnType<typeof aServer>,
   words: readonly string[] | string = FOUNDER_WORDS,
@@ -360,72 +325,70 @@ async function signedInWith(
   return { view, keyring };
 }
 
-/**
- * **WHAT HAPPENS TO EACH SAVE THIS TAB SENDS, IN ORDER.** The server falls over;
- * the sign-in has ended; or another device saves keys for this person just
- * before the save arrives, which the server then refuses because the save did
- * not see it. A save past the last step is left to the server.
- */
-type SaveStep =
-  | { readonly fallsOver: true }
-  | { readonly signedOut: true }
-  | { readonly anotherDeviceSaves: () => Sealed };
-const FALLS_OVER: SaveStep = { fallsOver: true };
-const SIGNED_OUT: SaveStep = { signedOut: true };
-
-const savesGo = (server: ReturnType<typeof aServer>, ...steps: SaveStep[]) => {
-  let n = 0;
+/** A transport on which the first save of this tab's keys is refused because the sign-in has ended. */
+/** A transport on which another device saves keys for this person just before this tab's first save arrives. */
+const anotherDeviceSavesBeforeTheFirstSave = (server: ReturnType<typeof aServer>, view: () => WalletAtTheOtherEnd) => {
+  let done = false;
   return (async (url: string, init?: RequestInit) => {
-    const method = String(init?.method ?? 'GET');
-    if (method === 'PUT' && url === '/api/me/keys' && n < steps.length) {
-      const step = steps[n++]!;
-      if ('anotherDeviceSaves' in step) {
-        server.savedElsewhere(step.anotherDeviceSaves());
-      } else {
-        server.seen.push({ url, method, body: String(init?.body ?? '') });
-        journey.push(`${method} ${url}`);
-        return ('signedOut' in step
-          ? { ok: false, status: 401, json: async () => ({ error: 'not signed in' }) }
-          : { ok: false, status: 500, json: async () => ({ error: 'the server fell over' }) }) as Response;
-      }
+    if (String(init?.method ?? 'GET') === 'PUT' && url === '/api/me/keys' && !done) {
+      done = true;
+      server.savedElsewhere(seal(JSON.stringify({ accounts: { acc_elsewhere: { signerId: 'sgn_elsewhere' } } }), theKeyringKey(FOUNDER_WORDS, view().keyringAsks[0]!)));
     }
     return server.fetchImpl(url, init);
   }) as typeof fetch;
 };
 
-/** Keys another device saved for this person, under the same person's key. */
-const aCompanySavedElsewhere = (view: WalletAtTheOtherEnd) => () => seal(
-  JSON.stringify({ accounts: { [OTHER_DEVICE_ID]: OTHER_DEVICE_KEYS } }),
-  theKeyringKey(FOUNDER_WORDS, view.keyringAsks[0]!));
+const theSignInEndsOnTheFirstSave = (server: ReturnType<typeof aServer>) => {
+  let sent = false;
+  return (async (url: string, init?: RequestInit) => {
+    const method = String(init?.method ?? 'GET');
+    if (method === 'PUT' && url === '/api/me/keys' && !sent) {
+      sent = true;
+      server.seen.push({ url, method, body: String(init?.body ?? '') });
+      journey.push(`${method} ${url}`);
+      return { ok: false, status: 401, json: async () => ({ error: 'not signed in' }) } as Response;
+    }
+    return server.fetchImpl(url, init);
+  }) as typeof fetch;
+};
 
 /* ======================================================================== */
 
-describe('§1 - OPEN YOUR KEYS, CREATE, SAVE - IN THAT ORDER', () => {
+/** The first press for `NORTHWIND`, and the id of the company it made. */
+const startedBy = async (view: WalletAtTheOtherEnd, keyring: typeof import('vaults-web-shared/keyring.js'), company = NORTHWIND) => {
+  const started = await keyring.startCompanyHeldFromTheStart(company, WALLET, aBuilder(), view, US);
+  return started.accountId;
+};
+
+describe('§1 - OPEN YOUR KEYS, SAVE THE SEAT, THEN SEND THE COMPANY - IN THAT ORDER', () => {
+  /* RED WHEN: a person signed in with their wallet and nothing saved cannot start a company, or starts one and is left without its keys, so the company's records cannot be opened. */
   it('A SIGNED-IN WALLET PERSON WITH NOTHING SAVED STARTS A COMPANY AND ENDS UP HOLDING ITS KEYS', async () => {
     const server = aServer();
     const { view, keyring } = await signedInWith(server);
     /* Signed in, and able to open nothing: a signature is not a key. */
     expect(keyring.canOpenCompanies()).toBe(false);
 
-    const { accountId } = await keyring.createCompanyWithWallet(NORTHWIND, WALLET, view, US);
+    const accountId = await startedBy(view, keyring);
 
-    expect(accountId).toBe(ACCOUNT_ID);
+    expect(accountId).toBe(server.madeId());
     expect(keyring.canOpenCompanies()).toBe(true);
-    expect(keyring.keysFor(ACCOUNT_ID)?.signingSecret).toBe(FIRST_SECRETS.signingSecret);
-    expect(keyring.companyAwaitingSetup()).toBeNull();
+    const held = keyring.keysFor(accountId);
+    expect(held?.signingSecret).toMatch(/^[0-9a-f]{64}$/u);
+    const inside = opened(server.bundle().keyBundle, theKeyringKey(FOUNDER_WORDS, view.keyringAsks[0]!));
+    expect(inside?.accounts[accountId]?.signingSecret).toBe(held?.signingSecret);
   });
 
-  it('THE WALLET IS ASKED ONCE, FOR THIS PERSON AND THE ADDRESS THEY SIGNED IN AS, BEFORE THE COMPANY IS CREATED',
+  it('THE WALLET IS ASKED ONCE, FOR THIS PERSON AND THE ADDRESS THEY SIGNED IN AS, AND THE KEYS ARE SAVED BEFORE THE COMPANY IS SENT',
     async () => {
       /*
-       * **THE JOURNEY EXPRESSED AS A SEQUENCE.** The key the founder's secrets
+       * **THE JOURNEY EXPRESSED AS A SEQUENCE.** The key the founding signer's secrets
        * are saved under is open before the company exists, so a wallet that
        * refuses, or saved keys that do not open, cost nothing: no company has
        * been made whose keys would have nowhere to go.
        */
       const server = aServer();
       const { view, keyring } = await signedInWith(server);
-      await keyring.createCompanyWithWallet(NORTHWIND, WALLET, view, US);
+      await startedBy(view, keyring);
 
       expect(journey.filter(step => step.startsWith('wallet ')), 'a sign-in, then one keyring question')
         .toEqual(['wallet sign-in', 'wallet keyring']);
@@ -442,23 +405,21 @@ describe('§1 - OPEN YOUR KEYS, CREATE, SAVE - IN THAT ORDER', () => {
       expect(JSON.parse(posted.body).companyLabel).toBe(drawn[drawn.length - 1]);
 
       const opens = journey.indexOf('wallet keyring');
-      const create = journey.indexOf('POST /api/accounts');
       const save = journey.indexOf('PUT /api/me/keys');
+      const create = journey.indexOf('POST /api/accounts');
       expect(opens).toBeGreaterThanOrEqual(0);
-      expect(create).toBeGreaterThan(opens);
-      expect(save).toBeGreaterThan(create);
-
-      /* And nothing asks the server which company it is: saving keys does not need to know. */
-      expect(server.askedWhichCompany()).toHaveLength(0);
+      expect(save).toBeGreaterThan(opens);
+      expect(create).toBeGreaterThan(save);
     });
 
+  /* RED WHEN: what is saved opens only with one company's key, so a second company's keys would have nowhere to go, or the saved keys are not the ones the company was made with. */
   it('WHAT IS SAVED OPENS WITH THE KEY THE WALLET DERIVES FOR THIS PERSON, AND NOT WITH THE COMPANY\'S KEY',
     async () => {
       const server = aServer();
       const { view, keyring } = await signedInWith(server);
-      await keyring.createCompanyWithWallet(NORTHWIND, WALLET, view, US);
+      const accountId = await startedBy(view, keyring);
 
-      expect(server.wrote()).toHaveLength(1);
+      expect(server.wrote().length).toBeGreaterThan(0);
       const bundle = server.bundle().keyBundle;
       const ask = view.keyringAsks[0]!;
       /* A bundle sealed under one company's key could never take a second company's keys. */
@@ -466,93 +427,33 @@ describe('§1 - OPEN YOUR KEYS, CREATE, SAVE - IN THAT ORDER', () => {
         .toBeNull();
       const inside = opened(bundle, theKeyringKey(FOUNDER_WORDS, ask));
       expect(inside, 'it opens with this person\'s keyring key').not.toBeNull();
-      expect(inside?.accounts[ACCOUNT_ID]?.signingSecret).toBe(FIRST_SECRETS.signingSecret);
-      expect(inside?.accounts[ACCOUNT_ID]?.blinding).toBe(FIRST_SECRETS.blinding);
+      expect(inside?.accounts[accountId]?.signingSecret).toBe(keyring.keysFor(accountId)?.signingSecret);
+      expect(inside?.accounts[accountId]?.blinding).toBe(keyring.keysFor(accountId)?.blinding);
     });
 });
 
-describe('§2 - A SECOND COMPANY, SAVED BESIDE THE FIRST', () => {
-  it('THE SAME TAB ASKS THE WALLET ONLY FOR A SECOND COMPANY\'S LABEL, AND BOTH COMPANIES\' KEYS ARE SAVED TOGETHER',
-    async () => {
-      /*
-       * **WHAT A PERSON WHO BELONGS TO TWO COMPANIES NEEDS.** The keys saved for
-       * them are theirs and not any one company's, so the second company's keys
-       * go into the same bundle, under the same key, beside the first's.
-       */
-      const server = aServer();
-      const { view, keyring } = await signedInWith(server);
-      await keyring.createCompanyWithWallet(NORTHWIND, WALLET, view, US);
-      const asksAfterTheFirst = view.asked.length;
-
-      const { accountId } = await keyring.createCompanyWithWallet(SOUTHWIND, WALLET, view, US);
-
-      expect(accountId).toBe(SECOND_ID);
-      /* RED WHEN a tab that holds the key makes up the second company's label itself. */
-      expect(view.asked.length, 'the wallet is asked once more, for the new label').toBe(asksAfterTheFirst + 1);
-      expect(view.keyringAsks[1]?.drawLabel).toBe(true);
-      const posts = server.seen.filter(r => r.method === 'POST' && r.url === '/api/accounts').map(r => JSON.parse(r.body).companyLabel);
-      expect(posts).toEqual(drawn.slice(-2));
-      expect(posts[0]).not.toBe(posts[1]);
-      expect(server.createdCount()).toBe(2);
-      expect(server.wrote()).toHaveLength(2);
-
-      const inside = opened(server.bundle().keyBundle, theKeyringKey(FOUNDER_WORDS, view.keyringAsks[0]!));
-      expect(inside?.accounts[ACCOUNT_ID]?.signingSecret).toBe(FIRST_SECRETS.signingSecret);
-      expect(inside?.accounts[SECOND_ID]?.signingSecret).toBe(SECOND_SECRETS.signingSecret);
-      expect(keyring.keysFor(ACCOUNT_ID)?.blinding).toBe(FIRST_SECRETS.blinding);
-      expect(keyring.keysFor(SECOND_ID)?.blinding).toBe(SECOND_SECRETS.blinding);
-      expect(keyring.companyAwaitingSetup()).toBeNull();
-    });
-
-  it('A FRESH TAB, SIGNED IN WITH THE SAME WALLET, OPENS BOTH', async () => {
+describe('§2 - A FRESH TAB OPENS WHAT WAS SAVED', () => {
+  /* RED WHEN: a person who opens a new tab and signs in with the same wallet cannot open the company's keys. */
+  it('A FRESH TAB, SIGNED IN WITH THE SAME WALLET, OPENS THE COMPANY\'S KEYS', async () => {
     const server = aServer();
     const { view, keyring } = await signedInWith(server);
-    await keyring.createCompanyWithWallet(NORTHWIND, WALLET, view, US);
-    await keyring.createCompanyWithWallet(SOUTHWIND, WALLET, view, US);
+    const accountId = await startedBy(view, keyring);
+    const secret = keyring.keysFor(accountId)!.signingSecret;
 
     keyring.forgetLocally();
     expect(keyring.canOpenCompanies()).toBe(false);
-    expect(keyring.keysFor(ACCOUNT_ID)).toBeNull();
+    expect(keyring.keysFor(accountId)).toBeNull();
 
     await keyring.signInWithWallet(WALLET, undefined, thisBrowsersWindow());
     await keyring.openKeysWithWallet(WALLET, view, US);
 
     expect(keyring.canOpenCompanies()).toBe(true);
-    expect(keyring.keysFor(ACCOUNT_ID)?.signingSecret).toBe(FIRST_SECRETS.signingSecret);
-    expect(keyring.keysFor(SECOND_ID)?.signingSecret).toBe(SECOND_SECRETS.signingSecret);
-  });
-
-  it('A COMPANY WHOSE ADDRESS NO CHAIN ASSIGNED STILL HAS ITS KEYS SAVED', async () => {
-    /*
-     * **THIS USED TO BE REFUSED, AND NOT ONE BYTE SAVED.** Keys were then sealed
-     * under a key worked out from the company's address, so an address no chain
-     * assigned would have produced a key that changes the day the company is
-     * really deployed. Keys are no longer sealed under anything a company's
-     * address reaches: they are sealed under the person's own key, so there is
-     * nothing to refuse here. The payslip key, which IS worked out from the
-     * company's address, is a separate journey and keeps that refusal.
-     */
-    const server = aServer({
-      companyAddress: 'dd'.repeat(32),
-      refuseCompany: {
-        status: 409,
-        code: 'company-address-not-from-a-chain',
-        error: 'this company has an address, but no chain gave it one',
-      },
-    });
-    const { view, keyring } = await signedInWith(server);
-
-    await expect(keyring.createCompanyWithWallet(NORTHWIND, WALLET, view, US))
-      .resolves.toEqual({ accountId: ACCOUNT_ID });
-
-    expect(server.askedWhichCompany(), 'the address was never asked about').toHaveLength(0);
-    expect(keyring.companyAwaitingSetup()).toBeNull();
-    const inside = opened(server.bundle().keyBundle, theKeyringKey(FOUNDER_WORDS, view.keyringAsks[0]!));
-    expect(inside?.accounts[ACCOUNT_ID]?.blinding).toBe(FIRST_SECRETS.blinding);
+    expect(keyring.keysFor(accountId)?.signingSecret).toBe(secret);
   });
 });
 
 describe('§3 - NO PASSWORD, ANYWHERE ON THIS JOURNEY', () => {
+  /* RED WHEN: anything the person could sign in with by password, or a derived password key, is sent to the service while a company is made. */
   it('NOT ONE REQUEST CARRIES AUTH MATERIAL', async () => {
     /*
      * **WHY THE PASSWORD COULD NOT BE DELETED UNTIL THIS PASSED.** While
@@ -569,7 +470,7 @@ describe('§3 - NO PASSWORD, ANYWHERE ON THIS JOURNEY', () => {
      */
     const server = aServer();
     const { view, keyring } = await signedInWith(server);
-    await keyring.createCompanyWithWallet(NORTHWIND, WALLET, view, US);
+    await startedBy(view, keyring);
 
     const everything = server.everything();
     for (const word of ['authKey', 'authSalt', 'password', 'argon']) {
@@ -577,16 +478,18 @@ describe('§3 - NO PASSWORD, ANYWHERE ON THIS JOURNEY', () => {
     }
     /* It really did run: an absence test passes just as well when nothing
      * happened at all. */
-    expect(server.wrote()).toHaveLength(1);
+    expect(server.wrote().length).toBeGreaterThan(0);
+    expect(server.createdCount()).toBe(1);
   });
 
+  /* RED WHEN: someone adds a password or password-derived sign-in to the code that creates a company. */
   it('AND THE CREATION PATH HAS NOWHERE TO PUT ONE', () => {
     /*
      * The rule expressed where it cannot be forgotten.
      *
      * **THE SLICE IS NO LONGER NECESSARY AND IS KEPT ON PURPOSE.** It read:
      * *`keyring.ts` as a whole still derived auth material when this was
-     * written, so the assertion is about THIS function's own source.*
+     * written, so the assertion is about THIS section's own source.*
      * `register`, `signIn` and `derive` have since been deleted, so the whole
      * file would now pass this. **Widening it to the file would be a different
      * test with the same name**: this one says the CREATION PATH has nowhere to
@@ -605,19 +508,19 @@ describe('§3 - NO PASSWORD, ANYWHERE ON THIS JOURNEY', () => {
     const path = src.slice(opens, closes);
 
     /* It really is the creation path and not an empty slice. */
-    expect(path).toContain('export async function createCompanyWithWallet');
-    expect(path).toContain('export async function finishCompanyCreation');
+    expect(path).toContain('export async function startCompanyHeldFromTheStart');
+    expect(path).toContain('export async function finishCompanyOnTheChain');
 
     /*
      * **COMMENTS MAY SAY THE WORDS; CODE MAY NOT.** `wallet-unlock.test.ts`'s
-     * rule, and it is not a loophole — the header above this function explains
-     * at length what a password used to be able to do here and why this path
-     * never had a fallback to one, and a test that forbade the WORD would
-     * forbid saying so. It matters more now that the password path is gone, not
-     * less: the history is the only place the reason survives.
+     * rule, and it is not a loophole — a header may explain what a password
+     * used to be able to do here and why this path never had a fallback to
+     * one, and a test that forbade the WORD would forbid saying so. It matters
+     * more now that the password path is gone, not less: the history is the
+     * only place the reason survives.
      */
     const code = path.replace(/\/\*[\s\S]*?\*\//g, '').replace(/^\s*\/\/.*$/gm, '');
-    expect(code).toContain('export async function createCompanyWithWallet');
+    expect(code).toContain('export async function startCompanyHeldFromTheStart');
 
     for (const word of ['password', 'authKey', 'authSalt', 'derive(', 'deriveAuthMaterial']) {
       expect(code, word).not.toContain(word);
@@ -625,10 +528,11 @@ describe('§3 - NO PASSWORD, ANYWHERE ON THIS JOURNEY', () => {
   });
 });
 
-describe('§4 - THE FOUNDER\'S FIRST DEVICE IS NOT SPECIAL', () => {
-  it('A SECOND DEVICE, FROM THE WORDS ALONE, AT ANOTHER ADDRESS, OPENS BOTH COMPANIES\' KEYS', async () => {
+describe('§4 - THE FOUNDING SIGNER\'S FIRST DEVICE IS NOT SPECIAL', () => {
+  /* RED WHEN: a person on a new laptop, with only their wallet's words and a different address, cannot open the company's keys, or opening them changes what is saved. */
+  it('A SECOND DEVICE, FROM THE WORDS ALONE, AT ANOTHER ADDRESS, OPENS THE COMPANY\'S KEYS', async () => {
     /*
-     * Device one creates two companies and saves their keys. Device two is a
+     * Device one creates a company and saves its keys. Device two is a
      * wallet REBUILT FROM THE SAME WORDS, at a DIFFERENT HOST, with nothing
      * carried across but what the server is holding - no keyring, no key, no
      * copy of device one. The key is the person's on this site, worked out from
@@ -637,50 +541,50 @@ describe('§4 - THE FOUNDER\'S FIRST DEVICE IS NOT SPECIAL', () => {
      */
     const server = aServer();
     const { view: deviceOne, keyring } = await signedInWith(server);
-    await keyring.createCompanyWithWallet(NORTHWIND, WALLET, deviceOne, US);
-    await keyring.createCompanyWithWallet(SOUTHWIND, WALLET, deviceOne, US);
+    const accountId = await startedBy(deviceOne, keyring);
+    const first = keyring.keysFor(accountId)!;
     expect(server.bundle().keyBundle).toBeTruthy();
 
     /* Everything device one held is gone. This is the new laptop. */
     keyring.forgetLocally();
     expect(keyring.canOpenCompanies()).toBe(false);
-    expect(keyring.keysFor(ACCOUNT_ID)).toBeNull();
+    expect(keyring.keysFor(accountId)).toBeNull();
 
     const { view: deviceTwo } = await signedInWith(server, FOUNDER_WORDS, FOUNDER_ADDRESS, ELSEWHERE);
+    const writes = server.wrote().length;
     await keyring.openKeysWithWallet(WALLET, deviceTwo, ELSEWHERE);
 
     expect(keyring.canOpenCompanies()).toBe(true);
-    expect(keyring.keysFor(ACCOUNT_ID)?.signingSecret).toBe(FIRST_SECRETS.signingSecret);
-    expect(keyring.keysFor(ACCOUNT_ID)?.blinding).toBe(FIRST_SECRETS.blinding);
-    expect(keyring.keysFor(SECOND_ID)?.signingSecret).toBe(SECOND_SECRETS.signingSecret);
-    expect(keyring.keysFor(SECOND_ID)?.blinding).toBe(SECOND_SECRETS.blinding);
+    expect(keyring.keysFor(accountId)?.signingSecret).toBe(first.signingSecret);
+    expect(keyring.keysFor(accountId)?.blinding).toBe(first.blinding);
     /* Opening wrote nothing. */
-    expect(server.wrote()).toHaveLength(2);
+    expect(server.wrote()).toHaveLength(writes);
 
     /*
      * **AND THEY REALLY DO OPEN THE COMPANY, not merely match a fixture.** The
-     * viewing key is wrapped to the founder's wrapping key on the account
+     * viewing key is wrapped to the founding signer's wrapping key on the account
      * record, so unwrapping it here is the last link in a chain that starts at
      * twenty-four words: words to the person's key, that key to the saved keys,
      * saved keys to the wrapping secret, wrapping secret to the key that reads
      * the company.
      */
-    const keys = keyring.keysFor(ACCOUNT_ID)!;
+    const keys = keyring.keysFor(accountId)!;
     const viewingKey = 'ff'.repeat(32);
     const forTheFounder = wrapKey(viewingKey, x25519PublicOf(keys.wrappingSecret));
     expect(unwrapKey(forTheFounder, keys.wrappingSecret)).toBe(viewingKey);
   });
 
+  /* RED WHEN: another wallet in the same browser is handed the person's keys, or the page reads or writes anything because of it. */
   it('A DIFFERENT WALLET, ASKED FOR THE ADDRESS THIS TAB SIGNED IN AS, GIVES NOTHING', async () => {
     /*
-     * A browser can hold more than one wallet. The founder signs in with theirs,
+     * A browser can hold more than one wallet. The founding signer signs in with theirs,
      * and a different wallet answers the question about their keys. That wallet
      * holds no account with the address this tab signed in as, so it builds no
      * answer at all - and nothing is read or written here.
      */
     const server = aServer();
     const { view, keyring } = await signedInWith(server);
-    await keyring.createCompanyWithWallet(NORTHWIND, WALLET, view, US);
+    await startedBy(view, keyring);
     keyring.forgetLocally();
     await keyring.signInWithWallet(WALLET, undefined, thisBrowsersWindow());
 
@@ -696,6 +600,7 @@ describe('§4 - THE FOUNDER\'S FIRST DEVICE IS NOT SPECIAL', () => {
     expect(server.seen.slice(requestsBefore), 'nothing was read or written').toEqual([]);
   });
 
+  /* RED WHEN: another wallet's key opens the person's keys, or starting a company from that tab saves over what the person had saved. */
   it('AND IN A TAB THAT DID NOT SIGN IN, A DIFFERENT WALLET\'S KEY OPENS NOTHING AND SAVES NOTHING', async () => {
     /*
      * After a reload the tab does not know which address it signed in as, so it
@@ -705,7 +610,7 @@ describe('§4 - THE FOUNDER\'S FIRST DEVICE IS NOT SPECIAL', () => {
      */
     const server = aServer();
     const { view, keyring } = await signedInWith(server);
-    await keyring.createCompanyWithWallet(NORTHWIND, WALLET, view, US);
+    const accountId = await startedBy(view, keyring);
     keyring.forgetLocally();
     const savedBefore = JSON.stringify(server.bundle());
     const writesBefore = server.wrote().length;
@@ -721,10 +626,10 @@ describe('§4 - THE FOUNDER\'S FIRST DEVICE IS NOT SPECIAL', () => {
     expect(somebodyElse.refused).toEqual([]);
     expect(somebodyElse.released, 'the wallet did give its own key').toHaveLength(1);
     expect(keyring.canOpenCompanies()).toBe(false);
-    expect(keyring.keysFor(ACCOUNT_ID)).toBeNull();
+    expect(keyring.keysFor(accountId)).toBeNull();
 
     /* And starting a company here does not save over what could not be opened. */
-    await expect(keyring.createCompanyWithWallet(SOUTHWIND, WALLET, somebodyElse, US))
+    await expect(keyring.startCompanyHeldFromTheStart(SOUTHWIND, WALLET, aBuilder(), somebodyElse, US))
       .rejects.toBeInstanceOf(keyring.SavedKeysDidNotOpen);
     expect(server.wrote()).toHaveLength(writesBefore);
     expect(server.createdCount()).toBe(1);
@@ -733,22 +638,24 @@ describe('§4 - THE FOUNDER\'S FIRST DEVICE IS NOT SPECIAL', () => {
 });
 
 describe('§5 - WHAT IS REFUSED, AND BEFORE WHAT', () => {
+  /* RED WHEN: a person whose saved keys do not open with their wallet's key is let create a company anyway, or their saved keys are written over. */
   it('SAVED KEYS THAT DO NOT OPEN ARE REFUSED BEFORE ANY COMPANY IS CREATED', async () => {
     const theirs = seal(JSON.stringify({ accounts: {} }), 'ab'.repeat(32));
     const server = aServer({ saved: theirs });
     const { view, keyring } = await signedInWith(server);
 
-    const failure = await keyring.createCompanyWithWallet(NORTHWIND, WALLET, view, US).catch((e: unknown) => e);
+    const failure = await keyring.startCompanyHeldFromTheStart(NORTHWIND, WALLET, aBuilder(), view, US).catch((e: unknown) => e);
     expect(failure).toBeInstanceOf(keyring.SavedKeysDidNotOpen);
 
     expect(journey, 'no company was created').not.toContain('POST /api/accounts');
     expect(server.createdCount()).toBe(0);
     expect(server.wrote(), 'nothing was saved over them').toHaveLength(0);
     expect(server.bundle().keyBundle).toEqual(theirs);
-    expect(keyring.companyAwaitingSetup()).toBeNull();
+    expect(keyring.companiesBeingCreated()).toEqual([]);
     expect(keyring.canOpenCompanies()).toBe(false);
   });
 
+  /* RED WHEN: a tab that never saw the sign-in saves a person's first keys under a key it could not check, or creates a company before saying so. */
   it('A TAB THAT DID NOT SIGN IN MAY NOT SAVE A PERSON\'S FIRST KEYS, AND SAYS SO BEFORE ANY COMPANY IS CREATED',
     async () => {
       /*
@@ -763,227 +670,79 @@ describe('§5 - WHAT IS REFUSED, AND BEFORE WHAT', () => {
       expect(await keyring.resumeSession()).toMatchObject({ id: PERSON });
       expect(keyring.signedInWallet()).toBeNull();
 
-      await expect(keyring.createCompanyWithWallet(NORTHWIND, WALLET, view, US))
+      await expect(keyring.startCompanyHeldFromTheStart(NORTHWIND, WALLET, aBuilder(), view, US))
         .rejects.toThrow(/nothing is saved for you here yet, and this tab did not sign you in/);
 
       expect(view.keyringAsks[0]?.signedInAs).toBeNull();
       expect(journey, 'no company was created').not.toContain('POST /api/accounts');
       expect(server.createdCount()).toBe(0);
       expect(server.wrote()).toHaveLength(0);
-      expect(keyring.companyAwaitingSetup()).toBeNull();
+      expect(keyring.companiesBeingCreated()).toEqual([]);
     });
 
-  it('THE SAME KIND OF TAB, FOR A PERSON WHOSE SAVED KEYS OPEN, MAY START A COMPANY', async () => {
-    const server = aServer();
-    const { view, keyring } = await signedInWith(server);
-    await keyring.createCompanyWithWallet(NORTHWIND, WALLET, view, US);
-    keyring.forgetLocally();
-    expect(await keyring.resumeSession()).toMatchObject({ id: PERSON });
-
-    await expect(keyring.createCompanyWithWallet(SOUTHWIND, WALLET, view, US))
-      .resolves.toEqual({ accountId: SECOND_ID });
-
-    const ask = view.keyringAsks.at(-1)!;
-    expect(ask.signedInAs).toBeNull();
-    const inside = opened(server.bundle().keyBundle, theKeyringKey(FOUNDER_WORDS, ask));
-    expect(inside?.accounts[ACCOUNT_ID]?.signingSecret).toBe(FIRST_SECRETS.signingSecret);
-    expect(inside?.accounts[SECOND_ID]?.signingSecret).toBe(SECOND_SECRETS.signingSecret);
-  });
-
-  it('A TAB WAITING TO FINISH A COMPANY DOES NOT START ANOTHER', async () => {
-    const server = aServer();
-    const view = new WalletAtTheOtherEnd(honestly(FOUNDER_WORDS, FOUNDER_ADDRESS));
-    inABrowser(view, savesGo(server, FALLS_OVER, FALLS_OVER));
-    const keyring = await import('vaults-web-shared/keyring.js');
-    await keyring.signInWithWallet(WALLET, undefined, thisBrowsersWindow());
-    await expect(keyring.createCompanyWithWallet(NORTHWIND, WALLET, view, US)).rejects.toThrow(/fell over/);
-    expect(server.wrote(), 'the save was tried once more before the company was left waiting').toHaveLength(2);
-    expect(keyring.companyAwaitingSetup()).toBe(ACCOUNT_ID);
-    const asks = view.asked.length;
-
-    /* Starting another would replace the only copy of the first one's keys. */
-    await expect(keyring.createCompanyWithWallet(SOUTHWIND, WALLET, view, US))
-      .rejects.toThrow(/is not finished yet/);
-    expect(server.createdCount()).toBe(1);
-    expect(view.asked.length).toBe(asks);
-    expect(keyring.companyAwaitingSetup()).toBe(ACCOUNT_ID);
-  });
-
-  it('ONE PRESS: WHEN ANOTHER DEVICE SAVES A COMPANY\'S KEYS BETWEEN THIS TAB\'S READ AND ITS SAVE, BOTH ARE SAVED AND NOTHING IS LEFT WAITING',
-    async () => {
-      /*
-       * The ordinary race. What the other device saved opens with this person's
-       * key, so the refused save is read again and tried once more at once,
-       * rather than leaving the founder's keys in a tab that may close first.
-       */
-      const server = aServer();
-      const { view, keyring } = await signedInWith(server, FOUNDER_WORDS, FOUNDER_ADDRESS, US,
-        v => savesGo(server, { anotherDeviceSaves: aCompanySavedElsewhere(v) }));
-
-      await expect(keyring.createCompanyWithWallet(NORTHWIND, WALLET, view, US))
-        .resolves.toEqual({ accountId: ACCOUNT_ID });
-
-      expect(journey.filter(step => step.startsWith('wallet ')), 'the wallet was asked once')
-        .toEqual(['wallet sign-in', 'wallet keyring']);
-      expect(journey.filter(step => step.endsWith(' /api/me/keys')), 'read, refused, read again, saved')
-        .toEqual(['GET /api/me/keys', 'PUT /api/me/keys', 'GET /api/me/keys', 'PUT /api/me/keys']);
-      expect(server.createdCount()).toBe(1);
-      const inside = opened(server.bundle().keyBundle, theKeyringKey(FOUNDER_WORDS, view.keyringAsks[0]!));
-      expect(inside?.accounts[OTHER_DEVICE_ID]?.signingSecret).toBe(OTHER_DEVICE_KEYS.signingSecret);
-      expect(inside?.accounts[ACCOUNT_ID]?.blinding).toBe(FIRST_SECRETS.blinding);
-      expect(keyring.companyAwaitingSetup()).toBeNull();
-      expect(keyring.keysFor(OTHER_DEVICE_ID)?.signingSecret).toBe(OTHER_DEVICE_KEYS.signingSecret);
-      expect(keyring.keysFor(ACCOUNT_ID)?.blinding).toBe(FIRST_SECRETS.blinding);
-    });
-
-  it('A SAVE REFUSED BECAUSE THE SIGN-IN ENDED IS NOT TRIED AGAIN, AND THE UNSAVED COMPANY GOES WITH THE SIGN-IN',
+  /* RED WHEN: a save refused because the person was signed out is tried again, or the company is sent without its keys saved. */
+  it('A SAVE REFUSED BECAUSE THE SIGN-IN ENDED IS NOT TRIED AGAIN, AND NOTHING IS SENT',
     async () => {
       const server = aServer();
       const { view, keyring } = await signedInWith(server, FOUNDER_WORDS, FOUNDER_ADDRESS, US,
-        () => savesGo(server, SIGNED_OUT));
+        () => theSignInEndsOnTheFirstSave(server));
 
-      const failure = await keyring.createCompanyWithWallet(NORTHWIND, WALLET, view, US).catch((e: unknown) => e);
+      const failure = await keyring.startCompanyHeldFromTheStart(NORTHWIND, WALLET, aBuilder(), view, US).catch((e: unknown) => e);
       expect(failure).toBeInstanceOf(keyring.AuthError);
       expect(server.wrote(), 'exactly one save').toHaveLength(1);
       expect(server.reads(), 'nothing was read again').toBe(1);
-      expect(keyring.companyAwaitingSetup()).toBeNull();
+      expect(server.createdCount(), 'and the company was never sent').toBe(0);
       expect(keyring.isSignedIn()).toBe(false);
     });
 
-  it('A TAB ALREADY HOLDING THE KEY, WHOSE SAVED KEYS WERE REPLACED BY ONES IT CANNOT OPEN, IS REFUSED BEFORE ANY COMPANY IS CREATED',
+  it('A SAVE THAT DID NOT SEE WHAT ANOTHER DEVICE SAVED SINCE IS REFUSED, AND NOTHING IS SENT OR OVERWRITTEN',
     async () => {
       const server = aServer();
-      const { view, keyring } = await signedInWith(server);
-      await keyring.createCompanyWithWallet(NORTHWIND, WALLET, view, US);
-      server.savedElsewhere(seal(JSON.stringify({ accounts: {} }), 'ab'.repeat(32)));
-      const asks = view.asked.length;
-      const writes = server.wrote().length;
+      let theView: WalletAtTheOtherEnd | null = null;
+      const { view, keyring } = await signedInWith(server, FOUNDER_WORDS, FOUNDER_ADDRESS, US, (v) => {
+        theView = v;
+        return anotherDeviceSavesBeforeTheFirstSave(server, () => theView!);
+      });
 
-      const failure = await keyring.createCompanyWithWallet(SOUTHWIND, WALLET, view, US).catch((e: unknown) => e);
-      expect(failure).toBeInstanceOf(keyring.SavedKeysDidNotOpen);
-      expect(view.asked.length, 'the wallet is asked for the label, and nothing follows').toBe(asks + 1);
-      expect(server.createdCount(), 'no second company was created').toBe(1);
-      expect(server.wrote(), 'nothing was saved over them').toHaveLength(writes);
-      expect(keyring.companyAwaitingSetup()).toBeNull();
+      /* RED WHEN: the save of the keys does not carry the version it read, so it overwrites what another device saved in between. */
+      await expect(keyring.startCompanyHeldFromTheStart(NORTHWIND, WALLET, aBuilder(), view, US))
+        .rejects.toThrow(/changed on another device/);
+
+      expect(server.createdCount(), 'the company was never sent').toBe(0);
+      const inside = opened(server.bundle().keyBundle, theKeyringKey(FOUNDER_WORDS, view.keyringAsks[0]!));
+      expect(Object.keys(inside?.accounts ?? {}), 'what the other device saved is kept').toEqual(['acc_elsewhere']);
     });
 
-  it('THE SAME TAB, WHEN WHAT IS SAVED IS OLDER THAN WHAT IT ALREADY READ, IS REFUSED BEFORE ANY COMPANY IS CREATED AND KEEPS THE KEYS IT HOLDS',
+  /* RED WHEN: a tab that already holds the person's keys loses them, or writes over what is saved, when the saved keys are replaced by ones it cannot open. */
+  it('A TAB ALREADY HOLDING THE KEY, WHOSE SAVED KEYS WERE REPLACED BY ONES IT CANNOT OPEN, REFUSES THEM AND KEEPS WHAT IT HOLDS',
     async () => {
       const server = aServer();
       const { view, keyring } = await signedInWith(server);
-      await keyring.createCompanyWithWallet(NORTHWIND, WALLET, view, US);
-      const earlier = { ...server.bundle() };
-      await keyring.createCompanyWithWallet(SOUTHWIND, WALLET, view, US);
-      /* The server now answers from before the second company's keys were saved. */
-      server.goesBackTo(earlier);
+      const accountId = await startedBy(view, keyring);
+      const held = keyring.keysFor(accountId)!.signingSecret;
+      server.savedElsewhere(seal(JSON.stringify({ accounts: {} }), 'ab'.repeat(32)));
+      const writes = server.wrote().length;
 
-      const failure = await keyring.createCompanyWithWallet(WESTWIND, WALLET, view, US).catch((e: unknown) => e);
+      const failure = await keyring.reopenSavedKeys().catch((e: unknown) => e);
+      expect(failure).toBeInstanceOf(keyring.SavedKeysDidNotOpen);
+      expect(server.wrote(), 'nothing was saved over them').toHaveLength(writes);
+      expect(keyring.keysFor(accountId)?.signingSecret, 'the keys this tab holds are kept').toBe(held);
+    });
+
+  /* RED WHEN: a tab accepts saved keys older than what it already read, and so loses the keys of a company it holds. */
+  it('THE SAME TAB, WHEN WHAT IS SAVED IS OLDER THAN WHAT IT ALREADY READ, REFUSES IT AND KEEPS THE KEYS IT HOLDS',
+    async () => {
+      const server = aServer();
+      const { view, keyring } = await signedInWith(server);
+      const nothingYet = { ...server.bundle() };
+      const accountId = await startedBy(view, keyring);
+      const held = keyring.keysFor(accountId)!.signingSecret;
+      /* The server now answers from before the company's keys were saved. */
+      server.goesBackTo(nothingYet);
+
+      const failure = await keyring.reopenSavedKeys().catch((e: unknown) => e);
       expect(failure).toBeInstanceOf(keyring.SavedKeysWentBack);
       expect((failure as Error).message).toMatch(/older than what this tab already read/);
-      expect(server.createdCount(), 'no third company was created').toBe(2);
-      expect(server.wrote()).toHaveLength(2);
-      expect(keyring.keysFor(SECOND_ID)?.signingSecret, 'the keys this tab holds are kept')
-        .toBe(SECOND_SECRETS.signingSecret);
-      expect(keyring.keysFor(ACCOUNT_ID)?.signingSecret).toBe(FIRST_SECRETS.signingSecret);
-      expect(keyring.companyAwaitingSetup()).toBeNull();
+      expect(keyring.keysFor(accountId)?.signingSecret, 'the keys this tab holds are kept').toBe(held);
     });
-
-  it('A SAVE REFUSED TWICE BECAUSE ANOTHER DEVICE KEPT SAVING KEEPS THE COMPANY, AND FINISH SAVES IT BESIDE WHAT WAS SAVED, WITHOUT THE WALLET',
-    async () => {
-      const server = aServer();
-      const view = new WalletAtTheOtherEnd(honestly(FOUNDER_WORDS, FOUNDER_ADDRESS));
-      /* The other device holds the same person's key, so what it saved opens here. */
-      const theirs = aCompanySavedElsewhere(view);
-      inABrowser(view, savesGo(server, { anotherDeviceSaves: theirs }, { anotherDeviceSaves: theirs }));
-      const keyring = await import('vaults-web-shared/keyring.js');
-      await keyring.signInWithWallet(WALLET, undefined, thisBrowsersWindow());
-
-      await expect(keyring.createCompanyWithWallet(NORTHWIND, WALLET, view, US))
-        .rejects.toThrow(/changed on another device/);
-      expect(server.wrote(), 'saved, read again, and tried once more').toHaveLength(2);
-      expect(keyring.companyAwaitingSetup(), 'the founder\'s keys are still held').toBe(ACCOUNT_ID);
-      expect(keyring.companyAwaitingSetupProblem(), 'it can still be finished').toBeNull();
-      /* The refused write left no keys behind in a tab that would believe them saved. */
-      expect(keyring.keysFor(ACCOUNT_ID)).toBeNull();
-
-      const asks = view.asked.length;
-      const readsBefore = server.reads();
-      await expect(keyring.finishCompanyCreation()).resolves.toEqual({ accountId: ACCOUNT_ID });
-
-      expect(view.asked.length, 'Finish asked the wallet nothing').toBe(asks);
-      expect(server.reads(), 'Finish read what is saved again').toBe(readsBefore + 1);
-      expect(server.createdCount(), 'and made no second company').toBe(1);
-      const inside = opened(server.bundle().keyBundle, theKeyringKey(FOUNDER_WORDS, view.keyringAsks[0]!));
-      expect(inside?.accounts[OTHER_DEVICE_ID]?.signingSecret, 'what the other device saved is kept')
-        .toBe(OTHER_DEVICE_KEYS.signingSecret);
-      expect(inside?.accounts[ACCOUNT_ID]?.blinding).toBe(FIRST_SECRETS.blinding);
-      expect(keyring.companyAwaitingSetup()).toBeNull();
-      expect(keyring.keysFor(OTHER_DEVICE_ID)?.signingSecret).toBe(OTHER_DEVICE_KEYS.signingSecret);
-      expect(keyring.keysFor(ACCOUNT_ID)?.blinding).toBe(FIRST_SECRETS.blinding);
-    });
-
-  it('WHEN WHAT WAS SAVED MEANWHILE DOES NOT OPEN WITH THIS TAB\'S KEY, FINISH SAYS IT CANNOT BE SAVED AND WRITES NOTHING',
-    async () => {
-      const server = aServer();
-      const view = new WalletAtTheOtherEnd(honestly(FOUNDER_WORDS, FOUNDER_ADDRESS));
-      /* The first save falls over; before the second, a bundle under another key is saved. */
-      inABrowser(view, savesGo(server, FALLS_OVER, {
-        anotherDeviceSaves: () =>
-          seal(JSON.stringify({ accounts: { [OTHER_DEVICE_ID]: OTHER_DEVICE_KEYS } }), 'ab'.repeat(32)),
-      }));
-      const keyring = await import('vaults-web-shared/keyring.js');
-      await keyring.signInWithWallet(WALLET, undefined, thisBrowsersWindow());
-
-      await expect(keyring.createCompanyWithWallet(NORTHWIND, WALLET, view, US))
-        .rejects.toThrow(/changed on another device/);
-      expect(keyring.companyAwaitingSetup()).toBe(ACCOUNT_ID);
-      expect(keyring.companyAwaitingSetupProblem()).toBeNull();
-
-      const asks = view.asked.length;
-      const writes = server.wrote().length;
-      const theirs = JSON.stringify(server.bundle());
-
-      const failure = await keyring.finishCompanyCreation().catch((e: unknown) => e);
-      expect(failure).toBeInstanceOf(keyring.SavedKeysDidNotOpen);
-      expect((failure as Error).message).toMatch(/this company's keys cannot be saved/);
-      const problem = keyring.companyAwaitingSetupProblem();
-      expect(problem?.canFinish).toBe(false);
-      expect(problem?.why).toMatch(/closing this tab or signing out loses this company for good/);
-      expect(server.wrote(), 'nothing was saved over keys this tab cannot open').toHaveLength(writes);
-      expect(JSON.stringify(server.bundle())).toBe(theirs);
-      expect(keyring.companyAwaitingSetup(), 'the keys are still held in this tab').toBe(ACCOUNT_ID);
-
-      /* And a second Finish stops at once: nothing is read, and the wallet is not asked. */
-      const reads = server.reads();
-      await expect(keyring.finishCompanyCreation()).rejects.toThrow(/this company's keys cannot be saved/);
-      expect(server.reads()).toBe(reads);
-      expect(server.wrote()).toHaveLength(writes);
-      expect(view.asked.length).toBe(asks);
-    });
-
-  it('a save refused for any other reason is still offered as finishable', async () => {
-    const server = aServer();
-    const view = new WalletAtTheOtherEnd(honestly(FOUNDER_WORDS, FOUNDER_ADDRESS));
-    inABrowser(view, savesGo(server, FALLS_OVER, FALLS_OVER));
-    const keyring = await import('vaults-web-shared/keyring.js');
-    await keyring.signInWithWallet(WALLET, undefined, thisBrowsersWindow());
-    await expect(keyring.createCompanyWithWallet(NORTHWIND, WALLET, view, US)).rejects.toThrow(/fell over/);
-    expect(keyring.companyAwaitingSetupProblem()).toBeNull();
-    await keyring.finishCompanyCreation();
-    expect(keyring.companyAwaitingSetup()).toBeNull();
-    expect(keyring.keysFor(ACCOUNT_ID)?.blinding).toBe(FIRST_SECRETS.blinding);
-  });
-
-  it('signing out drops the founder\'s unsaved secrets', async () => {
-    const server = aServer();
-    const view = new WalletAtTheOtherEnd(honestly(FOUNDER_WORDS, FOUNDER_ADDRESS));
-    inABrowser(view, savesGo(server, FALLS_OVER, FALLS_OVER));
-    const keyring = await import('vaults-web-shared/keyring.js');
-    await keyring.signInWithWallet(WALLET, undefined, thisBrowsersWindow());
-    await expect(keyring.createCompanyWithWallet(NORTHWIND, WALLET, view, US)).rejects.toThrow(/fell over/);
-
-    expect(keyring.companyAwaitingSetup()).toBe(ACCOUNT_ID);
-    keyring.forgetLocally();
-    expect(keyring.companyAwaitingSetup()).toBeNull();
-  });
 });

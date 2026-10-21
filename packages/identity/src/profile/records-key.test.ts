@@ -6,7 +6,7 @@ import { x25519 } from '@noble/curves/ed25519.js';
 import { identityFromSecret } from '../keys/derivation.js';
 import { committeeKeyFor, committeeSigningKeyFor } from './committee-key.js';
 import type { AccountAddress, CompanyLabel } from './company-label.js';
-import { MOST_ENTRIES_ASKED, MOST_ROLES_ASKED, parseAsk, type HoldersRequest, type RecordsKeyRequest } from './request.js';
+import { MOST_ENTRIES_ASKED, MOST_READER_NAME, MOST_ROLES_ASKED, MOST_SECRET_READERS, parseAsk, type HoldersRequest, type RecordsKeyRequest } from './request.js';
 import { unlockKeyFor } from './unlock.js';
 import type { UnlockRequest } from './request.js';
 import {
@@ -336,6 +336,47 @@ describe('THE RECORDS-KEY ASK: SIGNED ONLY FOR A SEAT THE ACCOUNT HOLDS NOW, AND
       /* A page that asked about no vault reads none, whatever the answer carries. */
       const none = readRecordsKeyAnswer(answer, expecting);
       expect(none.ok && none.vault).toBeNull();
+    });
+
+    describe('WHEN THE ASK IS MADE FOR THE VAULT\'S FIRST SECRET', () => {
+      const ADA = { key: 'a1'.repeat(32), name: 'Ada' };
+      const UNNAMED = { key: 'b2'.repeat(32) };
+      const forFirst = (firstSecret: unknown, over: Record<string, unknown> = {}) => ask({ vault: VAULT, firstSecret, ...over });
+
+      it('carries the vault\'s readers, each by the key its copy is sealed to and the name the page holds, and an ask without them is unchanged', () => {
+        const read = forFirst({ readers: [{ key: ADA.key.toUpperCase(), name: 'Ada' }, UNNAMED] });
+        /* RED WHEN: the readers the page sends are dropped, renamed, or their keys are kept in another spelling. */
+        expect(read.firstSecret).toEqual({ readers: [ADA, UNNAMED] });
+        expect(read.vault).toBe(VAULT);
+        /* RED WHEN: an ask that says nothing about a first secret is read as one. */
+        expect('firstSecret' in ask({ vault: VAULT })).toBe(false);
+        expect('firstSecret' in ask()).toBe(false);
+      });
+
+      it('refuses readers that are malformed, repeated, or not about a vault, and refuses them on any other kind', () => {
+        const malformed = /says who will hold the secret of the vault it names by something that is not a list of keys/;
+        /* RED WHEN: a reader whose key is not one, or whose name is not a short text, is shown as if it were. */
+        expect(() => forFirst({ readers: [{ key: 'not-a-key', name: 'Ada' }] })).toThrow(malformed);
+        expect(() => forFirst({ readers: [{ key: ADA.key, name: '' }] })).toThrow(malformed);
+        expect(() => forFirst({ readers: [{ key: ADA.key, name: 7 }] })).toThrow(malformed);
+        expect(() => forFirst({ readers: [{ key: ADA.key, name: 'x'.repeat(MOST_READER_NAME + 1) }] })).toThrow(malformed);
+        expect(forFirst({ readers: [{ key: ADA.key, name: 'x'.repeat(MOST_READER_NAME) }] }).firstSecret?.readers[0]?.name).toHaveLength(MOST_READER_NAME);
+        /* RED WHEN: an empty list, or not a list, is read as nobody holding the secret. */
+        expect(() => forFirst({ readers: [] })).toThrow(malformed);
+        expect(() => forFirst({ readers: 'Ada' })).toThrow(malformed);
+        expect(() => forFirst(null)).toThrow(malformed);
+        expect(() => forFirst({ readers: Array.from({ length: MOST_SECRET_READERS + 1 }, (_, i) => ({ key: i.toString(16).padStart(64, '0') })) })).toThrow(malformed);
+        /* RED WHEN: one key is listed twice, so the screen would show one person as two. */
+        expect(() => forFirst({ readers: [ADA, { key: ADA.key.toUpperCase(), name: 'Ada again' }] })).toThrow(malformed);
+        /* RED WHEN: readers arrive with no vault to say whose secret they will hold. */
+        expect(() => ask({ firstSecret: { readers: [ADA] } })).toThrow(/names who will hold a vault's secret but no vault/);
+        /* RED WHEN: readers are let through on an ask that does not show them. */
+        expect(() => parseAsk({
+          schema: 'midnight-identity/disclosure-request/v1', kind: 'sign-in',
+          requester: { name: 'Payroll', rdns: 'example.payroll' }, purpose: 'Sign in.', nonce: 'n', expiresAt: NOW + 60_000,
+          firstSecret: { readers: [ADA] },
+        }, PAGE, NOW)).toThrow(/who will hold a vault's secret, or a filing key/);
+      });
     });
   });
 });

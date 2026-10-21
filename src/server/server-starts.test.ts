@@ -27,14 +27,18 @@
  *
  * ── WHAT IT ASSERTS ──────────────────────────────────────────────────────
  *
- * The boot banner, not a database connection. `postgres()` does not dial until
- * somebody queries, so a well-formed connection string pointing nowhere is
- * enough to prove the server got past the refusal and listened — and it keeps
- * this file free of any database at all, live or test.
+ * The boot banner, not a real database. Before it listens the server asks its
+ * database whether every migration has been applied, and does not start if it
+ * cannot be told, so each case that expects it to listen gives it a database
+ * that can be asked: one that answers that question and no other, on a port
+ * of its own (`a-database-with-every-migration-applied.test-support.ts`). The
+ * case at the foot that gives it an address reaching nothing holds the other
+ * half: a database that cannot be asked is a server that does not start.
  */
-import { describe, it, expect, afterEach } from 'vitest';
+import { describe, it, expect, afterEach, beforeAll, afterAll } from 'vitest';
 import { startInItsOwnGroup, stopEverythingStarted, stopTheWholeGroup } from './a-started-server.test-support.js';
-import { mkdtempSync, mkdirSync, writeFileSync } from 'node:fs';
+import { aDatabaseWithEveryMigrationApplied } from './a-database-with-every-migration-applied.test-support.js';
+import { mkdtempSync, mkdirSync, symlinkSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { fileURLToPath } from 'node:url';
 import { join } from 'node:path';
@@ -52,6 +56,10 @@ const ENTRY = join(REPO, 'src', 'server', 'index.ts');
  * actually connecting, it fails here rather than somewhere real.
  */
 const NOWHERE = 'postgres://u:p@127.0.0.1:1/nowhere';  // not-a-secret: a port nothing listens on
+
+/** The address of the database every case but one gives the server; set before the first case runs. */
+let database = '';
+let stopDatabase: () => Promise<void> = async () => {};
 
 /**
  * **THE NETWORK THIS PAIR IS COMPILED FOR, READ RATHER THAN SPELLED OUT.**
@@ -109,6 +117,9 @@ async function start(
   const dir = mkdtempSync(join(tmpdir(), 'mn-start-'));
   if (envFile !== null) writeFileSync(join(dir, '.env'), envFile);
   if (deployment === 'configured') withADeployment(dir);
+  /* The folder of migrations is read from the directory the server is started in, which is this one. */
+  mkdirSync(join(dir, 'db'));
+  symlinkSync(join(REPO, 'db', 'migrations'), join(dir, 'db', 'migrations'));
 
   /*
    * BUILT, NOT INHERITED. Whatever ran this may itself have a `DATABASE_URL`,
@@ -156,6 +167,13 @@ async function start(
 const leftRunning: number[] = [];
 
 describe('starting the payroll server', () => {
+  beforeAll(async () => {
+    const started = await aDatabaseWithEveryMigrationApplied(join(REPO, 'db', 'migrations'));
+    database = started.url;
+    stopDatabase = started.stop;
+  });
+  afterAll(async () => { await stopDatabase(); });
+
   /*
    * **NOTHING A CASE STARTED IS STILL RUNNING WHEN IT ENDS.** The service runs
    * under `tsx` as a process of its own, and a stop that reaches only `tsx`
@@ -168,7 +186,7 @@ describe('starting the payroll server', () => {
   }, 30_000);
 
   it('THE ONE THAT WOULD HAVE CAUGHT IT: DATABASE_URL only in .env, and the server starts', async () => {
-    const r = await start(`DATABASE_URL=${NOWHERE}\n`, { DATABASE_URL: undefined });
+    const r = await start(`DATABASE_URL=${database}\n`, { DATABASE_URL: undefined });
     expect(r.out).not.toContain('DATABASE_URL is not set');
     expect(r.listened, r.out).toBe(true);
   });
@@ -193,7 +211,7 @@ describe('starting the payroll server', () => {
      * claim about a process that actually booted.
      */
     const r = await start(
-      `DATABASE_URL=${NOWHERE}\nALLOW_SIMULATED_COMPANY_ADDRESS=0\n`,
+      `DATABASE_URL=${database}\nALLOW_SIMULATED_COMPANY_ADDRESS=0\n`,
       { DATABASE_URL: undefined, ALLOW_SIMULATED_COMPANY_ADDRESS: '1' },
     );
     expect(r.listened, r.out).toBe(true);
@@ -202,7 +220,7 @@ describe('starting the payroll server', () => {
 
   it('and the file is still read for a name the command line did not set', async () => {
     const r = await start(
-      `DATABASE_URL=${NOWHERE}\nALLOW_SIMULATED_COMPANY_ADDRESS=1\n`,
+      `DATABASE_URL=${database}\nALLOW_SIMULATED_COMPANY_ADDRESS=1\n`,
       { DATABASE_URL: undefined, ALLOW_SIMULATED_COMPANY_ADDRESS: undefined },
     );
     expect(r.listened, r.out).toBe(true);
@@ -222,7 +240,7 @@ describe('starting the payroll server', () => {
      * this reason; a FOURTH one, written later by somebody who did not know,
      * gets this refusal instead of a live connection.
      */
-    const r = await start(`DATABASE_URL=${NOWHERE}\n`, {
+    const r = await start(`DATABASE_URL=${database}\n`, {
       DATABASE_URL: undefined, ALLOW_MEMORY_SESSIONS: '1',
     });
     expect(r.listened).toBe(false);
@@ -254,7 +272,7 @@ describe('starting the payroll server', () => {
    * for the same thing.
    */
   it('THE CASE THIS FILE EXISTS FOR: no deployment, so it says what is missing and exits', async () => {
-    const r = await start(`DATABASE_URL=${NOWHERE}\n`, { DATABASE_URL: undefined }, 'none');
+    const r = await start(`DATABASE_URL=${database}\n`, { DATABASE_URL: undefined }, 'none');
 
     expect(r.listened, r.out).toBe(false);
     expect(r.code).toBe(1);
@@ -282,7 +300,7 @@ describe('starting the payroll server', () => {
    * so. This one changes exactly one thing: the record and the prover.
    */
   it('and the same start with the deployment in place does listen', async () => {
-    const r = await start(`DATABASE_URL=${NOWHERE}\n`, { DATABASE_URL: undefined }, 'configured');
+    const r = await start(`DATABASE_URL=${database}\n`, { DATABASE_URL: undefined }, 'configured');
     expect(r.listened, r.out).toBe(true);
     expect(r.out).not.toContain('cannot start');
   });
@@ -298,7 +316,7 @@ describe('starting the payroll server', () => {
    */
   it('a deployment record without a proof server is still refused, by name', async () => {
     const r = await start(
-      `DATABASE_URL=${NOWHERE}\n`,
+      `DATABASE_URL=${database}\n`,
       { DATABASE_URL: undefined, MIDNIGHT_PROVER_URL: undefined },
       'configured',
     );
@@ -308,5 +326,21 @@ describe('starting the payroll server', () => {
     expect(r.out,
       'the refusal is still talking about the deployment record, which is present')
       .not.toContain('nothing for the product to talk to');
+  });
+
+  /**
+   * **A DATABASE THAT CANNOT BE ASKED IS A SERVER THAT DOES NOT START.**
+   *
+   * Every other case gives the server a database that says its migrations are
+   * applied. This one gives it an address that reaches nothing, and reads that
+   * it stopped, said it could not check, and said what to run - rather than
+   * listening on a database it knows nothing about.
+   */
+  it('a database that cannot be asked about its migrations is refused, and does not listen', async () => {
+    const r = await start(`DATABASE_URL=${NOWHERE}\n`, { DATABASE_URL: undefined }, 'configured');
+    expect(r.listened, r.out).toBe(false);
+    expect(r.code).toBe(1);
+    expect(r.out).toContain('COULD NOT BE CHECKED FOR UNAPPLIED MIGRATIONS');
+    expect(r.out).toContain('the database setup');
   });
 });

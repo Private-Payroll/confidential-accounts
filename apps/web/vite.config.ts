@@ -1,6 +1,8 @@
+import { existsSync, realpathSync } from 'node:fs';
+import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import tailwindcss from '@tailwindcss/vite';
-import { defineConfig, searchForWorkspaceRoot, type Plugin } from 'vite';
+import { defineConfig, type Plugin } from 'vite';
 import wasm from 'vite-plugin-wasm';
 import { framingHeadersFor } from '../../packages/identity/src/profile/origin.js';
 import { SERVICE_PROXY } from '../../scripts/serve-rules.js';
@@ -17,27 +19,15 @@ import { SERVICE_PROXY } from '../../scripts/serve-rules.js';
  * measures what was built. JSX needs no plugin, because the bundler compiles
  * it for React itself.
  *
- * ONE WORKER, THE VAULT'S. Creating a vault builds and proves its transactions
- * in the shared package's vault worker, where the ledger and the prover load;
- * they are WebAssembly, and never load on the page. The worker is built with
- * its own plugin list, which is the WebAssembly plugin alone, as the legacy
+ * TWO WORKERS, THE VAULT'S. Creating a vault builds and proves its transactions
+ * in the shared package's vault worker, where the ledger and the prover load,
+ * and that worker starts a second to prove one part beside the others; they
+ * are WebAssembly, and never load on the page. The workers are built with
+ * their own plugin list, which is the WebAssembly plugin alone, as the legacy
  * application builds it: a worker renders nothing, so it takes neither
  * Tailwind nor the budget.
  */
 const ROOT = fileURLToPath(new URL('.', import.meta.url));
-
-/*
- * THE FOLDERS THE DEVELOPMENT SERVER MAY SERVE A FILE FROM BY ITS PATH: this
- * application's own, as the server would choose by itself, and the one font
- * package the kit's stylesheet names, which is installed at the top of the
- * repository, outside this folder. Without it the server refuses the font and
- * the page falls back to another. Nothing else of the repository's packages
- * is opened; the build bundles the font and needs none of this.
- */
-export const SERVED_FROM = [
-  searchForWorkspaceRoot(ROOT),
-  fileURLToPath(new URL('../../node_modules/@fontsource-variable/inter', import.meta.url)),
-];
 
 /*
  * THE FIRST DOWNLOAD HAS A BUDGET. It rises only when a change deliberately
@@ -58,7 +48,7 @@ export const SERVED_FROM = [
  * sign-in path loads the curve library that checks a committee key is a point
  * on its curve, about 34 KB that sign-in itself never uses.
  */
-export const FIRST_DOWNLOAD_BUDGET = 719_000;
+export const FIRST_DOWNLOAD_BUDGET = 734_166;
 
 /**
  * THE WORKERS THIS APPLICATION STARTS, by their entry's path from this folder,
@@ -71,6 +61,65 @@ export const WORKERS: Readonly<Record<string, string>> = {
   '../../packages/web-shared/src/vault-worker-entry.ts': 'builds and proves a vault\'s transactions, with the ledger and the prover, which are WebAssembly',
   '../../packages/web-shared/src/vault-proof-worker-entry.ts': 'proves one part of a private deposit beside the others, started by the vault worker and never by the page; carries the prover, which is WebAssembly',
 };
+
+/**
+ * THE PACKAGES THE WORKERS LOAD THAT CARRY WEBASSEMBLY: the ledger, the
+ * on-chain runtime and the prover's circuit checker. Each ships a loader that
+ * starts its WebAssembly as the loader's own file is read. The development
+ * server's preparation of dependencies rewrites that loader, and the loader
+ * then reads the WebAssembly before it exists: the worker stops with "Cannot
+ * access before initialization" or "undefined", and creating a vault never
+ * gets past its first press. Left as shipped, with the WebAssembly plugin
+ * serving the WebAssembly, each starts. The build is not affected: it
+ * bundles them whole.
+ */
+export const WASM_PACKAGES = ['@midnight-ntwrk/zkir-v2', '@midnightntwrk/ledger-v9', '@midnightntwrk/onchain-runtime-v4'] as const;
+
+/**
+ * Where a package really is: the nearest modules folder above this one that holds it, with any link followed, so
+ * that a modules folder shared or hoisted from elsewhere is listed by the place the files are served from.
+ */
+function packageFolder(name: string): string {
+  for (let dir = ROOT; ; dir = dirname(dir)) {
+    const candidate = join(dir, 'node_modules', name);
+    if (existsSync(join(candidate, 'package.json'))) return realpathSync(candidate);
+    if (dirname(dir) === dir) throw new Error(`${name} is not installed, so the development server cannot be allowed to serve its WebAssembly. Install the packages.`);
+  }
+}
+
+/*
+ * THE FOLDERS THE DEVELOPMENT SERVER MAY SERVE A FILE FROM BY ITS PATH: this
+ * application's own, the folder of each worker's entry, and the one font
+ * package the kit's stylesheet names, which is installed at the top of the
+ * repository, outside this folder, and the folder of each of the three
+ * packages that carry WebAssembly (WASM_PACKAGES), which the worker fetches
+ * from the modules folder by its address, and no other package beside them. A page's script names the files it
+ * imports, and the server serves those wherever they are; a worker's entry
+ * is the one file the browser asks for by its path, so the folder it is in
+ * must be listed, or the worker never starts and creating a vault stops
+ * before it begins. The font is the same: without it the server refuses the
+ * font and the page falls back to another. Nothing else of the repository is
+ * opened, and the repository's top folder never is; the build bundles the
+ * workers and the font and needs none of this.
+ */
+export const SERVED_FROM = [
+  ROOT.replace(/\/$/, ''),
+  ...new Set(Object.keys(WORKERS).map((entry) => dirname(fileURLToPath(new URL(entry, import.meta.url))))),
+  fileURLToPath(new URL('../../node_modules/@fontsource-variable/inter', import.meta.url)),
+  ...WASM_PACKAGES.map(packageFolder),
+];
+
+/*
+ * WHAT THE DEVELOPMENT SERVER REFUSES EVEN INSIDE A FOLDER IT MAY SERVE: the
+ * server's own list (environment files, certificates and keys, the version
+ * history) and every place this repository keeps something secret or private
+ * to a machine: the seeds, the key backups, the wallet's state, the data
+ * folders, the logs, the chain's local database, and the safe. Each name is
+ * refused as a file and as a folder with everything in it.
+ */
+export const REFUSED_NAMES = ['.env', '.env.*', '*.seed', '.keys-backup', '.midnight', 'logs', 'SAFE', '.data', '.wallet-state', '.pre-reset-*', 'midnight-level-db', 'db', '.git'];
+export const REFUSED = ['**/*.{crt,pem}', ...REFUSED_NAMES.flatMap((name) => [`**/${name}`, `**/${name}/**`])];
+
 
 /** One file of a build's output, as the bundler hands it to a plugin: a script, with what it imports, or anything else. */
 export type BuiltFile =
@@ -136,8 +185,12 @@ export default defineConfig({
    * starts, and the server would then reload the page, losing whatever the
    * person had done on it. Listing entries replaces the default of every page
    * in this folder, so the page is named, and each worker's entry beside it.
+   *
+   * The packages that carry WebAssembly are left as they are shipped, never
+   * rewritten by that preparation: it breaks the loader each of them ships,
+   * and the worker that loads one stops before it answers (see WASM_PACKAGES).
    */
-  optimizeDeps: { entries: ['index.html', ...Object.keys(WORKERS)] },
+  optimizeDeps: { entries: ['index.html', ...Object.keys(WORKERS)], exclude: [...WASM_PACKAGES] },
   /* The worker's own plugins: WebAssembly alone. */
   worker: { format: 'es', plugins: () => [wasm()] },
   /*
@@ -149,7 +202,17 @@ export default defineConfig({
    */
   server: {
     host: 'localhost',
-    fs: { allow: SERVED_FROM },
+    /*
+     * The page is never reloaded by the server. With the connection for file
+     * changes on, the server tells the browser to reload the page whenever a
+     * file the page or a worker loads is saved (the page has no refresh plugin,
+     * so there is nothing that takes a change without a reload), and a company
+     * is made over many minutes in a page that holds its progress only in
+     * memory. A person who changes a file reloads the page themselves; the
+     * server still reads the changed file when they do.
+     */
+    hmr: false,
+    fs: { allow: SERVED_FROM, deny: REFUSED },
     proxy: { ...SERVICE_PROXY },
     headers: { ...framingHeadersFor(null) },
   },

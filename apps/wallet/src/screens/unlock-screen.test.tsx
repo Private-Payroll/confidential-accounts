@@ -672,7 +672,7 @@ describe('§3 — THE WALLET REMEMBERS WHICH HOST ASKED FOR WHICH COMPANY, AND W
   it('THE REMEMBERED LIST IS NEVER AN INPUT: the second host gets the SAME key',
     async () => {
       /*
-       * **RULE 5, AT THE SCREEN, AND IT IS THE CHANGE'S QUIETEST DANGER.** If a
+       * **AT THE SCREEN, AND IT IS THE QUIETEST DANGER.** If a
        * remembered pair ever reached the derivation, a recovered wallet — or a
        * second device, or one whose history was cleared — would stop opening a
        * company's records with nothing broken and nothing to fix. The defect by a
@@ -1175,6 +1175,38 @@ describe('THE KEYS SAVED FOR YOU AT A SITE - given only by the wallet that signe
     const ordinary = releaseFor(
       identity, parseAsk(unlock({ company: release.company, account: undefined, nonce: 'k1' }), ORIGIN, NOW) as UnlockRequest, NOW);
     expect(release.companyKey).toBe(ordinary.key);
+  });
+
+  it('STARTING A COMPANY: afterwards the screen shows the label the wallet drew, and says there is no fingerprint yet', async () => {
+    /*
+     * RED WHEN: the screen after the answer does not show the label the wallet drew, shows a label other than the one
+     * in the answer, or offers a fingerprint for a company that has no account.
+     */
+    await someone();
+    const channel = open(keyring({ signedInAs: mine(), drawLabel: true }));
+    await saying('Who is asking');
+    await settle();
+    await press(channel);
+    await saying('They have the key');
+    const release = channel.sent[1]!.message as KeyringRelease;
+    expect(document.querySelector('[data-keyring-label]')?.textContent).toBe(release.company);
+    expect(document.querySelector('[data-given-fingerprint]')).toBeNull();
+    expect(document.querySelector('[data-keyring-given]')?.textContent ?? '').toContain('no fingerprint yet');
+  });
+
+  it('WITH A COMPANY: afterwards the screen shows the company\u2019s fingerprint and label, as the records key screen does', async () => {
+    /*
+     * RED WHEN: the screen after the answer shows no fingerprint for a company that has an account, or one other
+     * than the fingerprint of the company and account the answer carries, or no label.
+     */
+    await someone();
+    const channel = open(keyring({ signedInAs: mine(), company: CO_A, account: ACCOUNT_A }));
+    await saying('Who is asking');
+    await settle();
+    await press(channel);
+    await saying('They have the key');
+    expect(document.querySelector('[data-given-fingerprint]')?.textContent).toBe(companyFingerprint(CO_A, ACCOUNT_A));
+    expect(document.querySelector('[data-keyring-label]')?.textContent).toBe(CO_A);
   });
 
   it('a keyring answer is never written down as a disclosure or a sign-in', async () => {

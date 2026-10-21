@@ -117,6 +117,10 @@ jobs:
       # The runner rather than the manifest's `test` script, which compiles and
       # typechecks first. Both have already happened above, as marks of their
       # own, and doing them again here would hide them behind this one.
+      # Chromium, for the test that starts the web application's workers in a
+      # browser (apps/web/src/dev-server.test.ts); without it that test stands
+      # down, and the suite would pass without ever having started them.
+      - run: npx playwright install chromium
       - run: npx vitest run
 
   keys:
@@ -140,6 +144,9 @@ jobs:
         with:
           persist-credentials: false
       - uses: ./.github/actions/build
+      # Chromium, for the test that draws the wallet's creation screen over a deploy the
+      # web application's worker built (apps/wallet/src/chain/creation-screen-in-a-browser.test.ts).
+      - run: npx playwright install chromium
       - name: build the proving and verifier keys
         run: npm run compact
       # The vault is a second contract with keys of its own, which the account's
@@ -147,7 +154,14 @@ jobs:
       # vault's generated caller reaches the account's generated module.
       - name: build the vault's proving and verifier keys
         run: npm run compact:vault -- --full
-      - run: npx vitest run src/midnight/ledger.test.ts src/midnight/deferred-set.test.ts src/midnight/the-key-reaches-the-circuit.test.ts src/midnight/the-secret-comes-from-the-keyring.test.ts src/wiring/vault-submission.test.ts packages/web-shared/src/a-deposit-built-on-the-device.test.ts contracts/test/a-company-vault-from-the-page.test.ts contracts/test/a-private-payment-from-the-page.test.ts contracts/test/a-spending-policy-is-set-from-a-device.test.ts contracts/test/a-run-raised-and-approved-from-the-page.test.ts contracts/test/a-run-is-raised-approved-and-paid-on-the-signers-devices.test.ts contracts/test/the-record-anchor-from-the-page.test.ts contracts/test/a-recovery-is-carried-out-on-the-chain.test.ts contracts/test/a-company-seats-its-signers-from-the-page.test.ts contracts/test/a-vaults-committee-changes-with-its-signers.test.ts contracts/test/a-payment-needs-a-vaults-receipt.test.ts src/midnight/a-company-is-created-in-two-steps.test.ts contracts/test/a-company-born-held-from-the-browser.test.ts src/server/account-creation.test.ts packages/web-shared/src/a-vault-is-read-as-it-was-born.test.ts packages/web-shared/src/the-worker-builds-an-account-only-with-this-builds-keys.test.ts apps/wallet/src/chain/this-builds-account-keys.test.ts apps/wallet/src/screens/approve-creation.test.tsx contracts/test/keys-on-disk.test.ts contracts/test/the-compiled-keys-are-the-keys-on-disk.test.ts packages/web-shared/src/the-device-proves-only-with-this-builds-keys.test.ts packages/web-shared/src/a-public-deposit-is-proved-on-the-device.test.ts packages/web-shared/src/vault-on-chain-here.test.ts packages/web-shared/src/vault-worker-client.test.ts
+      # The real prover checks a proof against Midnight's public parameters,
+      # which are not in the checkout. They are fetched and checked against the
+      # digests Midnight publishes, so the deposit test proves here rather than
+      # standing down.
+      - name: fetch Midnight's public proving parameters
+        timeout-minutes: 10
+        run: npx tsx scripts/fetch-proving-parameters.ts
+      - run: npx vitest run src/midnight/ledger.test.ts src/midnight/deferred-set.test.ts src/midnight/the-key-reaches-the-circuit.test.ts src/midnight/the-secret-comes-from-the-keyring.test.ts src/wiring/vault-submission.test.ts packages/web-shared/src/a-deposit-built-on-the-device.test.ts contracts/test/a-company-vault-from-the-page.test.ts contracts/test/a-private-payment-from-the-page.test.ts contracts/test/a-spending-policy-is-set-from-a-device.test.ts contracts/test/a-run-raised-and-approved-from-the-page.test.ts contracts/test/a-run-is-raised-approved-and-paid-on-the-signers-devices.test.ts contracts/test/the-record-anchor-from-the-page.test.ts contracts/test/a-recovery-is-carried-out-on-the-chain.test.ts contracts/test/a-company-seats-its-signers-from-the-page.test.ts contracts/test/a-vaults-committee-changes-with-its-signers.test.ts contracts/test/a-payment-needs-a-vaults-receipt.test.ts src/midnight/a-company-is-created-in-two-steps.test.ts contracts/test/a-company-born-held-from-the-browser.test.ts src/server/account-creation.test.ts packages/web-shared/src/a-vault-is-read-as-it-was-born.test.ts packages/web-shared/src/the-worker-builds-an-account-only-with-this-builds-keys.test.ts apps/wallet/src/chain/this-builds-account-keys.test.ts apps/wallet/src/screens/approve-creation.test.tsx contracts/test/keys-on-disk.test.ts contracts/test/the-compiled-keys-are-the-keys-on-disk.test.ts packages/web-shared/src/the-device-proves-only-with-this-builds-keys.test.ts packages/web-shared/src/a-public-deposit-is-proved-on-the-device.test.ts packages/web-shared/src/vault-on-chain-here.test.ts packages/web-shared/src/vault-worker-client.test.ts apps/wallet/src/chain/creation-screen-in-a-browser.test.ts
         env:
           KEYS_MUST_BE_BUILT: '1'
 

@@ -14,8 +14,9 @@ import * as vaultModule from '../../../contracts/managed-vault/contract/index.js
 import { identityFromSecret } from 'midnight-identity';
 import { committeeKeyFor } from 'midnight-identity/profile/committee-key';
 import type { CompanyLabel } from 'midnight-identity/profile/company-label';
-import { accountAtOneBlockOver, atOneBlockOver, readAccountCallChain, readVaultOnChain, vaultChainSourceAt, type BlockReader, type VaultChainSource } from './vault-on-chain-here.js';
+import { accountPresenceAt, accountAtOneBlockOver, atOneBlockOver, readAccountCallChain, readVaultOnChain, vaultChainSourceAt, type BlockReader, type VaultChainSource } from './vault-on-chain-here.js';
 import { answerVaultAsk, vaultAsDeployed } from './vault-worker-entry.js';
+import { newestTimeToLive } from './vault-builder.js';
 import { vaultBuilderOver, type VaultAnswer } from './vault-worker-client.js';
 import { existsSync, readFileSync } from 'node:fs';
 import * as accountModule from '../../../contracts/managed/contract/index.js';
@@ -442,5 +443,72 @@ describe.skipIf(!HAS_KEYS)('MONEY GOES IN OR OUT ONLY WHERE EVERY CIRCUIT OF THE
     /* RED WHEN: the worker drops the account the page named, so the account is never checked. */
     expect(read).toMatchObject({ circuits: null, accountCircuits: null });
     expect(asked).toContain(`state of ${ACCOUNT.slice(0, 4)}`);
+  });
+});
+
+
+describe('WHETHER THE COMPANY\'S ACCOUNT IS ON THE CHAIN, READ ON THIS DEVICE BY THE CHAIN\'S OWN TIME', () => {
+  const INDEXER = 'https://indexer.example/api/v4/graphql';
+  const answering = (status: number, body: unknown): typeof fetch =>
+    (async () => ({ ok: status < 400, status, json: async () => body }) as Response) as typeof fetch;
+  const BLOCK = { height: 950444, timestamp: 1_792_492_326_000 };
+
+  it('SAYS NOT HELD ONLY ON A CLEAN ANSWER THAT NAMES THE NEWEST BLOCK AND HOLDS NO CONTRACT, AND HELD WHEN IT HOLDS ONE', async () => {
+    /* RED WHEN: an indexer that holds no contract at the address is read as held, or its block time is lost. */
+    expect(await accountPresenceAt(INDEXER, 'ab'.repeat(32), answering(200, { data: { block: BLOCK, contractAction: null } })))
+      .toEqual({ held: false, blockHeight: BLOCK.height, blockTime: BLOCK.timestamp });
+    expect(await accountPresenceAt(INDEXER, 'ab'.repeat(32), answering(200, { data: { block: BLOCK, contractAction: { __typename: 'ContractCall' } } })))
+      .toEqual({ held: true, blockHeight: BLOCK.height, blockTime: BLOCK.timestamp });
+  });
+
+  it('THROWS, NEVER SAYS NOT HELD, WHEN THE INDEXER IS DOWN, REFUSES, NAMES NO BLOCK OR DOES NOT ANSWER FOR THE ADDRESS', async () => {
+    const cases: Array<[string, typeof fetch]> = [
+      ['a server error', answering(503, { data: { block: BLOCK, contractAction: null } })],
+      ['an error in the reply', answering(200, { errors: [{ message: 'x' }], data: null })],
+      ['no data', answering(200, {})],
+      ['no block', answering(200, { data: { block: null, contractAction: null } })],
+      ['a block with no time', answering(200, { data: { block: { height: 1 }, contractAction: null } })],
+      ['no answer for the address', answering(200, { data: { block: BLOCK } })],
+      ['a network failure', (async () => { throw new Error('offline'); }) as typeof fetch],
+    ];
+    /* RED WHEN: any failure of the read is taken for "no contract here", which sets a landed creation aside. */
+    for (const [what, f] of cases) await expect(accountPresenceAt(INDEXER, 'ab'.repeat(32), f), what).rejects.toThrow();
+  });
+
+  it('READS THE NEWEST TIME TO LIVE OF THE KEPT TRANSACTIONS FROM THEIR BYTES, AND NULL WHEN ANY CANNOT BE READ', () => {
+    const at = (d: Date | undefined | 'bad') => d;
+    const ttls: Record<string, Date | undefined | 'bad'> = { a: at(new Date(1_000)), b: at(new Date(5_000)), c: at('bad'), d: at(undefined) };
+    const ledger = { Transaction: { deserialize: (_a: string, _b: string, _c: string, bytes: Uint8Array) => {
+      const v = ttls[Buffer.from(bytes).toString()];
+      if (v === 'bad') throw new Error('not a transaction');
+      return { intents: new Map([[1, { ttl: v }]]) };
+    } } };
+    const bytes = (...k: string[]) => k.map((x) => new Uint8Array(Buffer.from(x)));
+    /* RED WHEN: the earlier of the two times is taken, so a step still live is counted as run out. */
+    expect(newestTimeToLive({ ledger } as never, bytes('a', 'b'))).toBe(5_000);
+    expect(newestTimeToLive({ ledger } as never, bytes('a', 'c'))).toBeNull();
+    expect(newestTimeToLive({ ledger } as never, bytes('b', 'd'))).toBeNull();
+    expect(newestTimeToLive({ ledger } as never, [])).toBeNull();
+  });
+
+  it('IS ANSWERED BY THE WORKER FROM THE INDEXER THE ASK NAMES, WITH THE TIME TO LIVE OF THE TRANSACTIONS ASKED ABOUT', async () => {
+    const at: unknown[] = [];
+    const ledger = { Transaction: { deserialize: () => ({ intents: new Map([[1, { ttl: new Date(42_000) }]]) }) } };
+    const source = { accountPresence: async () => ({ held: false, blockHeight: 7, blockTime: 99_000 }) } as unknown as VaultChainSource;
+    const listeners: Array<(e: { data: unknown }) => void> = [];
+    const deps = async () => ({ ...d, ledger, chainSourceAt: (i: unknown) => { at.push(i); return source; } });
+    const client = vaultBuilderOver({
+      addEventListener: (_t, l) => { listeners.push(l); },
+      postMessage: (message) => {
+        void answerVaultAsk(deps as never, message as never).then(
+          (answer) => listeners.forEach((l) => l({ data: answer })),
+          (e: Error) => listeners.forEach((l) => l({ data: { id: (message as { id: number }).id, ok: false, error: e.message } })));
+      },
+    }, 'undeployed');
+    const indexer = { indexerUri: 'https://wallet-named.example/api', indexerWsUri: 'wss://wallet-named.example/ws' };
+    /* RED WHEN: the worker reads the chain at another indexer than the one the ask names, or drops the time to live. */
+    expect(await client.accountPresence!({ account: 'ab'.repeat(32), indexer, transactions: [Buffer.from('x').toString('base64')] }))
+      .toEqual({ held: false, blockHeight: 7, blockTime: 99_000, ttl: 42_000 });
+    expect(at).toEqual([indexer]);
   });
 });

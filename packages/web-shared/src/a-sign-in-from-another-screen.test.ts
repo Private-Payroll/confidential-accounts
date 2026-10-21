@@ -23,7 +23,8 @@ import type { Openable } from './wallet-sign-in.js';
  * or saved.
  *
  * The wallet at the other end is the wallet's own code answering over the real
- * conversation, as in the legacy application's test of the same rule.
+ * conversation; the company is made by the first press, with a builder that
+ * stands in for the worker.
  */
 const US = 'https://payroll.example';
 const WALLET = 'https://wallet.example';
@@ -71,6 +72,14 @@ const keyringHex = () => toHex(keyringKeyFor(identity, parseAsk(keyringAsk({
   person: PERSON, signedInAs: null, company: null, account: null,
 }), US, Date.now()) as KeyringRequest));
 
+const LEAF = 'ab'.repeat(32);
+
+/** What builds the account's deploy, standing in for the worker: the first press needs only the seat and the deploy. */
+const aBuilder = (): keyring.AccountCreationBuilder => ({
+  foundingSeat: async () => ({ seat: LEAF, scope: 'cd'.repeat(32), publicKey: 'ef'.repeat(32) }),
+  accountDeploy: async () => ({ account: 'c0'.repeat(32), tx: 'REVQTE9Z', insert: [{ circuit: 'payout', key: 'S0VZ' }] }),
+} as unknown as keyring.AccountCreationBuilder);
+
 const A_COMPANY = { name: 'Acme Ltd', signers: [{ name: 'Priya', role: 'admin' as const }], threshold: 1 };
 const USER = { id: PERSON, email: null, name: 'Priya' };
 /** The service's answer to a sign-in, as the other screen received it. */
@@ -93,10 +102,7 @@ function nothingSavedYet() {
       case 'GET /api/me': return json(200, { user: USER, accounts: [] });
       case 'GET /api/me/keys': return json(200, { keyBundle: saved, version });
       case 'PUT /api/me/keys': saved = body.keyBundle; version += 1; return json(200, { version });
-      case 'POST /api/accounts': return json(200, {
-        account: { id: 'acc_new' },
-        secrets: [{ signerId: 'sgn_new', signingSecret: 'dd'.repeat(32), wrappingSecret: 'ee'.repeat(32), blinding: 'ff'.repeat(32), scope: 'ab'.repeat(32) }],
-      });
+      case 'POST /api/accounts': return json(201, { account: { id: body.founding.account.id }, state: 'made' });
       default: return json(404, { error: `no route for ${route}` });
     }
   }) as typeof fetch;
@@ -110,14 +116,15 @@ describe('a sign-in handed over by another screen', () => {
     expect(keyring.signedInByAnotherScreen(answerFor(SIGNED_IN))).toEqual(USER);
     expect(keyring.signedInWallet()).toBe(SIGNED_IN);
     const wallet = new WalletAtTheOtherEnd();
-    expect(await keyring.createCompanyWithWallet(A_COMPANY, WALLET, wallet, US)).toEqual({ accountId: 'acc_new' });
+    const { accountId } = await keyring.startCompanyHeldFromTheStart(A_COMPANY, WALLET, aBuilder(), wallet, US);
     expect(wallet.askedFor).toEqual([SIGNED_IN]);
     expect(sent('POST /api/accounts')).toHaveLength(1);
     const writes = sent('PUT /api/me/keys');
-    expect(writes).toHaveLength(1);
+    /* The first write keeps the company and its seat's keys; the next two keep that the service took it and the deploy built for it. */
+    expect(writes).toHaveLength(3);
     /* Sealed under the key of the wallet that holds the address signed in as, and nothing else opens it. */
-    expect(Object.keys(JSON.parse(unseal(writes[0]!.body.keyBundle, keyringHex())).accounts)).toEqual(['acc_new']);
-    expect(keyring.keysFor('acc_new')).not.toBeNull();
+    expect(Object.keys(JSON.parse(unseal(writes[0]!.body.keyBundle, keyringHex())).accounts)).toEqual([accountId]);
+    expect(keyring.keysFor(accountId)).not.toBeNull();
   });
 
   /* RED WHEN: a wallet that does not hold the address signed in as is still asked without it, or its key is taken, so a person's first keys are saved under a wallet they did not sign in with. */
@@ -125,7 +132,7 @@ describe('a sign-in handed over by another screen', () => {
     const { sent } = nothingSavedYet();
     keyring.signedInByAnotherScreen(answerFor(SIGNED_IN));
     const elsewhere = new WalletAtTheOtherEnd((address) => address === ANOTHER);
-    await expect(keyring.createCompanyWithWallet(A_COMPANY, WALLET, elsewhere, US)).rejects.toThrow();
+    await expect(keyring.startCompanyHeldFromTheStart(A_COMPANY, WALLET, aBuilder(), elsewhere, US)).rejects.toThrow();
     expect(elsewhere.askedFor).toEqual([SIGNED_IN]);
     expect(sent('POST /api/accounts')).toEqual([]);
     expect(sent('PUT /api/me/keys')).toEqual([]);
@@ -138,7 +145,7 @@ describe('a sign-in handed over by another screen', () => {
     keyring.signedInByAnotherScreen(answerFor(ANOTHER));
     keyring.signedInByAnotherScreen(answerFor(SIGNED_IN));
     const wallet = new WalletAtTheOtherEnd();
-    await keyring.createCompanyWithWallet(A_COMPANY, WALLET, wallet, US);
+    await keyring.startCompanyHeldFromTheStart(A_COMPANY, WALLET, aBuilder(), wallet, US);
     expect(wallet.askedFor).toEqual([SIGNED_IN]);
   });
 
@@ -161,7 +168,7 @@ describe('a sign-in handed over by another screen', () => {
   it('still refuses a person\'s first keys in a tab that was handed no sign-in, by a refusal a screen can name', async () => {
     const { sent } = nothingSavedYet();
     expect(await keyring.resumeSession()).toEqual(USER);
-    await expect(keyring.createCompanyWithWallet(A_COMPANY, WALLET, new WalletAtTheOtherEnd(), US)).rejects.toBeInstanceOf(keyring.FirstKeysNeedTheSignIn);
+    await expect(keyring.startCompanyHeldFromTheStart(A_COMPANY, WALLET, aBuilder(), new WalletAtTheOtherEnd(), US)).rejects.toBeInstanceOf(keyring.FirstKeysNeedTheSignIn);
     expect(sent('POST /api/accounts')).toEqual([]);
   });
 });

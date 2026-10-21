@@ -1,6 +1,7 @@
 import { askWalletToSignIn, openWalletDialog, WalletClosed, type WalletDialog } from 'vaults-web-shared/wallet-sign-in.js';
 import { closeWalletFrame, mountWalletFrame, onWalletFrame, walletFrameShown, walletInThisPage, WALLET_FRAME_ALLOW } from 'vaults-web-shared/wallet-frame.js';
 import type { SealedAccount } from '../../../../src/core/types.js';
+import { boundedRead, isReadMethod } from 'vaults-web-shared/read-bound.js';
 import { keepSignIn } from './kept-sign-in.js';
 import { tabStorage } from './kept-skips.js';
 
@@ -10,7 +11,6 @@ import { tabStorage } from './kept-skips.js';
  * company.
  */
 const keyring = () => import('vaults-web-shared/keyring.js');
-
 
 /*
  * WHO IS SIGNED IN, SIGNING IN WITH THE PERSON'S ACCOUNT, AND SIGNING OUT.
@@ -40,6 +40,11 @@ const keyring = () => import('vaults-web-shared/keyring.js');
  * None of the service's or the shared code's words are handed on: a screen is
  * handed a reason, one of a fixed set, and says it in its own phrases.
  */
+
+/** Loads `warmTheProving` only once somebody is signed in, so the first download does not carry it; never fails the sign-in it follows. */
+const startWarmingTheProving = (): void => {
+  void import('./proving-warmed.js').then((m) => { m.warmTheProving(); }).catch(() => {});
+};
 
 /** The service's addresses and the words of its protocol, never shown. */
 const SERVICE = {
@@ -81,13 +86,14 @@ export interface Company {
 /**
  * WHY SIGNING IN DID NOT HAPPEN, one of a fixed set a screen says in its own
  * words: the page was built without the account's address; no account window
- * could be shown, or it went; the person declined, or the request expired; the
- * account did not answer; the person stopped waiting; the account could not
- * finish; the service refused the signature; too many tries; the service
+ * could be shown, or it went; the person declined, or the request expired on
+ * arrival, or ran out while the account was open, or the answer came too late;
+ * the account would not take the request; the account did not answer; the
+ * person stopped waiting; the account could not finish; the service refused the signature; too many tries; the service
  * cannot sign anyone in; the service could not be reached.
  */
 export const REFUSAL = {
-  notSetUp: 'not-set-up', noWindow: 'no-window', windowGone: 'window-gone', declined: 'declined', expired: 'expired',
+  notSetUp: 'not-set-up', noWindow: 'no-window', windowGone: 'window-gone', declined: 'declined', expired: 'expired', ranOut: 'ran-out', answeredTooLate: 'answered-too-late', unreadable: 'unreadable',
   silent: 'silent', gaveUp: 'gave-up', didNotFinish: 'did-not-finish', refused: 'refused', tooMany: 'too-many',
   unavailable: 'unavailable', unreachable: 'unreachable',
 } as const;
@@ -115,18 +121,26 @@ export type WhoIsSignedIn =
 /** The one person this tab was prepared for, sent with every request. */
 let prepared: string | null = null;
 
+/** How long to wait before each new ask when the service could not check the sign-in (or could not be reached), then give up. */
+const CHECK_AGAIN_AFTER_MS: readonly number[] = [600, 1500, 4000];
+
+const notChecked = (r: { status: number; body: Record<string, unknown> } | null): boolean =>
+  r === null || (r.status === 503 && r.body.code === 'could-not-check');
+
 /** Ask the service; a failure to reach it is `null`. */
 async function ask(path: string, method?: string, body?: unknown): Promise<{ status: number; body: Record<string, unknown> } | null> {
   const headers: Record<string, string> = { [SERVICE.contentType]: SERVICE.json };
   if (prepared !== null) headers[SERVICE.signedInAs] = prepared;
-  let r: Response;
+  const once = async (signal?: AbortSignal): Promise<{ status: number; body: Record<string, unknown> }> => {
+    const r = await fetch(path, { method, credentials: SERVICE.sameOrigin, headers, body: body === undefined ? undefined : JSON.stringify(body), ...(signal === undefined ? {} : { signal }) });
+    const answer = await r.json().catch(() => ({})) as unknown;
+    return { status: r.status, body: (answer !== null && typeof answer === 'object' ? answer : {}) as Record<string, unknown> };
+  };
   try {
-    r = await fetch(path, { method, credentials: SERVICE.sameOrigin, headers, body: body === undefined ? undefined : JSON.stringify(body) });
+    return await (isReadMethod(method) ? boundedRead(path, once) : once());
   } catch {
     return null;
   }
-  const answer = await r.json().catch(() => ({})) as unknown;
-  return { status: r.status, body: (answer !== null && typeof answer === 'object' ? answer : {}) as Record<string, unknown> };
 }
 
 const personFrom = (user: unknown): Person | null => {
@@ -153,8 +167,15 @@ export function companiesFrom(rows: unknown): Company[] {
  * person this tab was prepared for; the tab then asks again for whoever is
  * signed in now, and is prepared for them.
  */
-export async function whoIsSignedIn(): Promise<WhoIsSignedIn> {
+export async function whoIsSignedIn(
+  wait: (ms: number) => Promise<void> = (ms) => new Promise((done) => { setTimeout(done, ms); }),
+): Promise<WhoIsSignedIn> {
   let r = await ask(SERVICE.me);
+  for (const ms of CHECK_AGAIN_AFTER_MS) {
+    if (!notChecked(r)) break;
+    await wait(ms);
+    r = await ask(SERVICE.me);
+  }
   if (r !== null && r.status === 409 && r.body.code === SERVICE.anotherPerson) { prepared = null; r = await ask(SERVICE.me); }
   if (r === null) return { of: OF.unreachable };
   if (r.status === 401) { prepared = null; keepSignIn(tabStorage(), null); (await keyring()).forgetLocally(); return { of: OF.nobody }; }
@@ -167,15 +188,33 @@ export async function whoIsSignedIn(): Promise<WhoIsSignedIn> {
   if (currentUser()?.id !== person.id) forgetLocally();
   listed = { person: person.id, rows: Array.isArray(r.body.accounts) ? r.body.accounts as unknown[] : [] };
   approvalsRead = null;
-  return { of: OF.signedIn, person, companies: companiesFrom(r.body.accounts) };
+  startWarmingTheProving();
+  return { of: OF.signedIn, person, companies: await withCreationsKeptHere(person.id, companiesFrom(r.body.accounts)) };
+}
+
+/**
+ * Every creation this device keeps and the service does not list (one whose first post never arrived) joins the list by
+ * its id, once: the service's own row wins. Only creations of the person signed in, and only while their saved keys are open.
+ */
+async function withCreationsKeptHere(personId: string, rows: Company[]): Promise<Company[]> {
+  try {
+    const { companiesBeingCreated, currentUser } = await keyring();
+    if (currentUser()?.id !== personId) return rows;
+    const have = new Set(rows.map((c) => c.id));
+    const unlisted = companiesBeingCreated().filter((id) => !have.has(id)).map((id): Company => ({ id, createdAt: '', signers: 1 }));
+    return unlisted.length === 0 ? rows : [...rows, ...unlisted];
+  } catch { return rows; }
 }
 
 /** The service's rows of the one list of companies, as last asked for, and whom they were listed for. Each row's name is sealed. */
 let listed: { person: string; rows: readonly unknown[] } = { person: '', rows: [] };
 
 /**
- * THE NAME OF EACH COMPANY IN THE ONE LIST, by id, opened with the keys saved
- * for the person. A company this tab cannot open has none, and so does every
+ * THE NAME OF EACH COMPANY IN THE ONE LIST, by id, the one source of a name for
+ * every list: opened with the keys saved for the person, or, for a company not
+ * finished, the name the person gave it, as this device kept it with the
+ * company's creation. The service's own field is never a name. A company this
+ * tab can neither open nor holds a creation of has none, and so does every
  * company when the list was asked for somebody else. The list is not asked
  * for again: it is the one `whoIsSignedIn` read. The keyring may ask the
  * service who is signed in, when it does not know yet.
@@ -186,11 +225,20 @@ export async function companyNamesFor(personId: string): Promise<ReadonlyMap<str
     if (listed.person !== personId) return out;
     const [{ keyringFor }, { openedHere }] = await Promise.all([import('./keyring-person.js'), import('./filing-judge.js')]);
     if (!(await keyringFor(personId))) return out;
+    const { companyNameKeptHere, companiesBeingCreated } = await keyring();
+    for (const kept of companiesBeingCreated()) {
+      const name = companyNameKeptHere(kept);
+      if (name !== null) out.set(kept, name);
+    }
     for (const row of listed.rows) {
       /* A company whose roster this device does not believe has no name shown, and the others are still read. */
       let opened: Awaited<ReturnType<typeof openedHere>> = null;
       try { opened = await openedHere(row as SealedAccount); } catch { opened = null; }
-      if (opened !== null && typeof opened.name === 'string') out.set(opened.id, opened.name);
+      if (opened !== null && typeof opened.name === 'string' && opened.name.trim() !== '') { out.set(opened.id, opened.name); continue; }
+      /* A company not finished has no sealed record to open yet: it is named by the creation this device kept, never by the service's own field. */
+      const id = (row as { id?: unknown } | null)?.id;
+      const kept = typeof id === 'string' ? companyNameKeptHere(id) : null;
+      if (typeof id === 'string' && kept !== null) out.set(id, kept);
     }
   } catch { /* a name not opened is not shown */ }
   return out;
@@ -259,7 +307,8 @@ const refusalOf = (e: unknown): SignInRefusal => {
   if (!(e instanceof WalletClosed)) return REFUSAL.didNotFinish;
   switch (e.refusal.of) {
     case 'declined': return REFUSAL.declined;
-    case 'expired': return REFUSAL.expired;
+    case 'expired': return e.refusal.while === 'open' ? REFUSAL.ranOut : REFUSAL.expired;
+    case 'unreadable': return REFUSAL.unreadable;
     case 'no-wallet-tab': return REFUSAL.noWindow;
     case 'window-gone': return REFUSAL.windowGone;
     case 'gave-up': return REFUSAL.gaveUp;
@@ -304,7 +353,7 @@ export async function signIn(asking: Asking): Promise<SignedIn> {
     const answer = await ask(SERVICE.signIn, SERVICE.post, { handle, nonce, response });
     if (answer === null) return refused(REFUSAL.unreachable);
     if (answer.status === 429) return refused(REFUSAL.tooMany, retryAfter(answer.body));
-    if (answer.status === 401) return refused(answer.body.code === SERVICE.staleChallenge || answer.body.code === SERVICE.expiredClaim ? REFUSAL.expired : REFUSAL.refused);
+    if (answer.status === 401) return refused(answer.body.code === SERVICE.staleChallenge || answer.body.code === SERVICE.expiredClaim ? REFUSAL.answeredTooLate : REFUSAL.refused);
     const person = answer.status === 200 ? personFrom(answer.body.user) : null;
     if (person === null) return refused(REFUSAL.unavailable);
     prepared = person.id;
@@ -324,6 +373,7 @@ export async function signIn(asking: Asking): Promise<SignedIn> {
       /* Kept only once the keyring has taken it, so what is kept is what the keyring holds. */
       keepSignIn(tabStorage(), { personId: person.id, address: answer.body.address as string });
     } catch { forgetLocally(); }
+    startWarmingTheProving();
     return { of: OF.signedIn, person, firstTime: answer.body.created === true };
   } finally {
     /* However it ended, the account is put away: an ask that finished has closed it already, and a second close is not a second event. */

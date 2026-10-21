@@ -534,6 +534,15 @@ export interface RecordsKeyRequest extends Asking {
    */
   readonly vault?: VaultAddress;
   /**
+   * Who will hold the secret of `vault`, when the page asks before that
+   * vault's first secret is raised or approved: shown to the person so they
+   * see the vault and its readers before they sign. A confirmation, not a
+   * lock: the chain accepts the approval on the seat's own proof, which the
+   * page holds, and nothing on the chain requires this ask to have been made.
+   * Claimed: every name and key is the page's word.
+   */
+  readonly firstSecret?: FirstSecretShown;
+  /**
    * The filing key this person's filings for the company are signed with, when
    * the page also asks for their directory entry: the wallet signs the entry
    * (this key, the records key it works out, and the seat) in the same press.
@@ -551,6 +560,33 @@ export interface RecordsKeyRequest extends Asking {
    */
   readonly invitedBy?: InvitedBy;
 }
+
+/**
+ * One person a vault's first secret will be sealed to, as the page names them:
+ * the records key their copy of the secret is sealed to, 64 lower-case hex
+ * characters, and the name the page holds for that key, absent when the page
+ * holds none.
+ */
+export interface SecretReaderShown {
+  readonly key: string;
+  readonly name?: string;
+}
+
+/**
+ * What a records-key ask is for when it is made before a vault's first secret:
+ * every reader of that secret, one entry per key, in the page's order. The
+ * wallet shows them; it cannot read them off the chain, where a proposal names
+ * no reader before the secret is set.
+ */
+export interface FirstSecretShown {
+  readonly readers: readonly SecretReaderShown[];
+}
+
+/** The most readers a first secret's ask may name: as many copies as one secret run can seal. */
+export const MOST_SECRET_READERS = 1024;
+
+/** The longest name a reader is shown by; a page cuts a longer one to this. */
+export const MOST_READER_NAME = 300;
 
 /**
  * The inviting signer, as a signed invitation names them: their committee key,
@@ -1480,6 +1516,33 @@ function invitedByIn(value: unknown, asks: string, nothing: string): InvitedBy {
 }
 
 /** A records-key ask, read whole: a label, the account that carries it, and one seat. */
+/**
+ * The readers of a vault's first secret, read whole: a list of one to
+ * `MOST_SECRET_READERS` entries, each a records key and at most a short name,
+ * no key twice. Anything else refuses the whole ask, so the person is never
+ * shown a list the page did not mean.
+ */
+function firstSecretIn(value: unknown, asks: string, nothing: string): FirstSecretShown {
+  const malformed = (): RequestError => new RequestError(
+    'malformed-field',
+    `${asks} and says who will hold the secret of the vault it names by something that is not a list of keys, each with `
+    + `at most a name. ${nothing}`);
+  const readers = (value as { readers?: unknown } | null)?.readers;
+  if (typeof value !== 'object' || value === null || Array.isArray(value) || !Array.isArray(readers)
+    || readers.length === 0 || readers.length > MOST_SECRET_READERS) throw malformed();
+  const seen = new Set<string>();
+  const shown: SecretReaderShown[] = [];
+  for (let i = 0; i < readers.length; i += 1) {
+    const r = readers[i] as { key?: unknown; name?: unknown } | null | undefined;
+    if (typeof r !== 'object' || r === null || typeof r.key !== 'string') throw malformed();
+    const key = r.key.toLowerCase();
+    if (!SEAT.test(key) || seen.has(key) || ('name' in r && !isText(r.name, MOST_READER_NAME))) throw malformed();
+    seen.add(key);
+    shown.push(Object.freeze({ key, ...('name' in r ? { name: r.name as string } : {}) }));
+  }
+  return Object.freeze({ readers: Object.freeze(shown) });
+}
+
 function recordsKeyAskOf(body: Record<string, unknown>, asking: Asking): RecordsKeyRequest {
   if ('wants' in body) {
     throw new RequestError(
@@ -1519,14 +1582,20 @@ function recordsKeyAskOf(body: Record<string, unknown>, asking: Asking): Records
     ...(signingKey === undefined ? {} : { signingKey }),
     ...('invitedBy' in body ? { invitedBy: invitedByIn(body['invitedBy'], asks, nothing) } : {}),
   };
-  if (!('vault' in body)) return Object.freeze({ ...asking, kind: 'records-key' as const, company, account, seat, ...withKey });
+  if (!('vault' in body)) {
+    if ('firstSecret' in body) {
+      throw new RequestError('malformed-field', `${asks}, and names who will hold a vault's secret but no vault. ${nothing}`);
+    }
+    return Object.freeze({ ...asking, kind: 'records-key' as const, company, account, seat, ...withKey });
+  }
   const vault = readVaultAddress(body['vault']);
   if (vault === null || String(vault) === String(account)) {
     throw new RequestError(
       'not-a-vault-address',
       `${asks} and names one of its vaults by something that is not a vault's address on the chain. ${nothing}`);
   }
-  return Object.freeze({ ...asking, kind: 'records-key' as const, company, account, seat, vault, ...withKey });
+  const forFirstSecret = 'firstSecret' in body ? { firstSecret: firstSecretIn(body['firstSecret'], asks, nothing) } : {};
+  return Object.freeze({ ...asking, kind: 'records-key' as const, company, account, seat, vault, ...withKey, ...forFirstSecret });
 }
 
 /** The most keys one creation inserts, and the most characters one of them may take. */
@@ -1739,13 +1808,14 @@ export function parseAsk(raw: unknown, observedOrigin: string, now: number): Ask
   }
 
   /*
-   * **A SEAT BELONGS TO A RECORDS-KEY ASK AND TO NOTHING ELSE**, refused by
+   * **A SEAT BELONGS TO A RECORDS-KEY ASK AND TO NOTHING ELSE**, and so do a
+   * filing key, an invitation and a first secret's readers: each is refused by
    * presence on every other kind for the keyring fields' reason.
    */
-  if (kind !== 'records-key' && ('seat' in body || 'signingKey' in body || 'invitedBy' in body)) {
+  if (kind !== 'records-key' && ('seat' in body || 'signingKey' in body || 'invitedBy' in body || 'firstSecret' in body)) {
     throw new RequestError(
       'records-key-fields-on-another-kind',
-      `this is a '${kind}' and it names a seat on a company's account, an invitation, or a filing key. Those belong only to a `
+      `this is a '${kind}' and it names a seat on a company's account, an invitation, who will hold a vault's secret, or a filing key. Those belong only to a `
       + 'request to sign your records key for your seat, so they are refused rather than ignored. Nothing has been shown to them.');
   }
 

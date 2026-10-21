@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useMemo, useState } from 'react';
 import type { ReactNode } from 'react';
 import type { Identity } from 'midnight-identity/keys/derivation';
-import type { RecordsKeyRequest } from 'midnight-identity/profile/request';
+import type { FirstSecretShown, RecordsKeyRequest } from 'midnight-identity/profile/request';
 import type { Channel } from 'midnight-identity/profile/channel';
 import {
   INVITATION_REFUSAL, RecordsKeyRefused, recordsKeyAnswerFor, recordsKeyFor, whyTheInvitationDoesNotNameIt,
@@ -46,6 +46,12 @@ import type { Consent } from '../framing.js';
  * checks that the vault is held by the account's own committee against this
  * read, never against what a service says. Nothing is signed until the vault
  * is read, or when it is pinned to another account.
+ *
+ * **BEFORE A VAULT'S FIRST SECRET, IT SHOWS WHO WILL HOLD THAT SECRET**
+ * (`FirstSecretToConfirm`): the vault and every key its secret will be sealed
+ * to, each by the name the page gives. That is a confirmation shown to the
+ * person, not a lock: the page proves the approval with the seat's own key it
+ * holds, and the chain asks nothing of this wallet. The screen says so.
  *
  * **THE STATEMENT CANNOT CHANGE ANY OF THE COMPANY'S RULES.** It names only
  * the company, the records key and the seat, under a tag of its own.
@@ -123,6 +129,42 @@ function useVaultCheck(vault: VaultAddress | undefined, read: VaultReader): Vaul
 const COMPARE_WITH_THE_INVITER = 'the person who invited you gave you themselves, by a call, a message or in person, and not through this page';
 
 const short = (hex: string): string => `${hex.slice(0, 12)}…${hex.slice(-8)}`;
+
+/**
+ * The vault whose first secret is about to be raised or approved, and every
+ * person it will be sealed to, as the page names them. Every name and key here
+ * is the page's word: before the secret is set the chain names no reader, so
+ * this wallet has nothing of its own to compare them with. It says plainly that
+ * signing locks nothing on the chain, so the person never takes it for a check
+ * the chain enforces.
+ */
+export function FirstSecretToConfirm({ vault, firstSecret }: {
+  readonly vault: VaultAddress;
+  readonly firstSecret: FirstSecretShown;
+}): ReactNode {
+  return (
+    <Section
+      list={false} box={false} aria-label="Who will hold this vault's secret" title="Who will hold this vault's secret"
+      description="The page is about to set up this vault's first secret. A copy is sealed to each key below, as the page names them."
+      data-first-secret
+    >
+      <p className="m-0 text-sm text-muted-foreground">The vault</p>
+      <p className="m-0 font-mono break-all text-sm" data-first-secret-vault>{vault}</p>
+      <ul className="m-0 flex list-none flex-col gap-2 p-0">
+        {firstSecret.readers.map((r) => (
+          <li key={r.key} data-first-secret-reader>
+            <p className="m-0 text-sm text-foreground" data-first-secret-reader-name>{r.name ?? 'A key the page names no one for'}</p>
+            <p className="m-0 font-mono break-all text-sm text-muted-foreground" data-first-secret-reader-key>{r.key}</p>
+          </li>
+        ))}
+      </ul>
+      <p className="m-0 text-sm" data-first-secret-not-a-lock>
+        Signing here does not lock anything on the chain: the page that asked holds what it needs to approve this secret
+        without your wallet. This is shown so you can see who will hold the vault&rsquo;s secret, and say no if it is wrong.
+      </p>
+    </Section>
+  );
+}
 
 export function ApproveRecordsKey({
   request, identity, channel, consent, whoIsAsking, onDecline, now = Date.now, readLabel = liveLabelReader,
@@ -271,6 +313,9 @@ export function ApproveRecordsKey({
           </p>
         ))}
       </Section>
+      {request.vault !== undefined && request.firstSecret !== undefined && (
+        <FirstSecretToConfirm vault={request.vault} firstSecret={request.firstSecret} />
+      )}
       <Section list={false} box={false} aria-label="The company, as the page names it" title="The company, as the page names it" description="This wallet signs with the key it holds for this company and no other.">
         <CompanyOnChain label={request.company} account={request.account} check={check} doing="signed" compareWith={COMPARE_WITH_THE_INVITER} />
       </Section>

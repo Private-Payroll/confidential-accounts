@@ -14,6 +14,7 @@ import { Balance } from './balance.js';
 import { ComingSoon } from './coming-soon.js';
 import { ConfirmInYourAccount } from './confirm-in-your-account.js';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from './tabs.js';
+import { Alert, AlertDescription } from './alert.js';
 
 afterEach(cleanup);
 
@@ -24,6 +25,16 @@ afterEach(cleanup);
 const EN = JSON.parse(readFileSync(resolve(dirname(fileURLToPath(import.meta.url)), '../../../../apps/web/src/locales/en.json'), 'utf8')) as Record<string, string>;
 const LANGUAGES = languagesFrom({ './locales/en.json': EN, './locales/de.json': {} });
 const inKit = (ui: React.ReactNode, pick = 'en') => render(<KitProvider languages={LANGUAGES} pick={pick}>{ui}</KitProvider>);
+
+describe('an alert\'s text', () => {
+  /* RED WHEN: the text is balanced, which at phone width wraps it near 60% of the box and leaves the rest empty. */
+  it('uses the full width of the box', () => {
+    inKit(<Alert><AlertDescription>One line of text.</AlertDescription></Alert>);
+    const text = screen.getByText('One line of text.');
+    expect(text.className).toContain('text-pretty');
+    expect(text.className).not.toContain('text-balance');
+  });
+});
 
 describe('an amount', () => {
   /* RED WHEN: the figure loses a digit, is not written left to right, or a private amount carries the Public pill. */

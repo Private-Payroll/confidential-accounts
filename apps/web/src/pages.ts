@@ -196,7 +196,7 @@ export const PAGES = {
   },
   settingsSigners: {
     path: '/settings/signers', name: (t) => t('page.settingsSigners.name'), icon: ShieldUserIcon, group: null, inside: 'settings', audience: 'company',
-    shows: { comingSoon: (t) => t('page.settingsSigners.soon'), already: onDemand(() => import('./screens/settings-sections.js'), 'SignersPublicFacts') },
+    shows: { comingSoon: (t) => t('page.settingsSigners.soon'), already: onDemand(() => import('./screens/settings-sections.js'), 'SignersBuilt') },
   },
   settingsRoles: {
     path: '/settings/roles', name: (t) => t('page.settingsRoles.name'), icon: Key01Icon, group: null, inside: 'settings', audience: 'company',

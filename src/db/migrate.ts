@@ -51,7 +51,7 @@ export function readMigrations(dir = MIGRATIONS_DIR): Migration[] {
     .sort()
     .map(f => {
       const sql = readFileSync(join(dir, f), 'utf8');
-      const version = f.split('_')[0];
+      const version = f.split('_')[0] ?? '';
       if (!/^\d+$/.test(version)) {
         throw new Error(`migration "${f}" does not start with a number, so its order is undefined`);
       }
@@ -71,6 +71,55 @@ export interface SqlRunner {
   <T = any>(strings: TemplateStringsArray, ...values: any[]): Promise<T[]>;
   unsafe<T = any>(query: string): Promise<T[]>;
   begin<T>(fn: (tx: any) => Promise<T>): Promise<T>;
+}
+
+/**
+ * The migrations this database has recorded as applied. The runner and the start-up check both read "applied"
+ * through here, so they cannot disagree. A database that has never been migrated has no record table yet and
+ * answers an empty list; it is not created here, so asking never changes the database.
+ */
+export async function appliedMigrations(
+  sql: SqlRunner,
+): Promise<{ version: string; name: string; checksum: string }[]> {
+  try {
+    return await sql<{ version: string; name: string; checksum: string }>`
+      SELECT version, name, checksum FROM schema_migrations
+    `;
+  } catch (e: any) {
+    if (e?.code === '42P01') return [];
+    throw e;
+  }
+}
+
+/** The migration files this database has not recorded, in the order they would be applied. */
+export async function pendingMigrations(sql: SqlRunner, dir = MIGRATIONS_DIR): Promise<Migration[]> {
+  const seen = new Set((await appliedMigrations(sql)).map(r => r.version));
+  return readMigrations(dir).filter(m => !seen.has(m.version));
+}
+
+/**
+ * What to tell the person when the service must not start on this database, or null when it may. It refuses
+ * while any migration file is unrecorded, naming each one, and it refuses when the database cannot be read at
+ * all, because a start that cannot tell whether the database is current would fail later, in the middle of
+ * filing something. It reads only; it never applies a migration.
+ */
+export async function refuseWhileMigrationsPending(
+  sql: SqlRunner, dir = MIGRATIONS_DIR,
+): Promise<string | null> {
+  let pending: Migration[];
+  try {
+    pending = await pendingMigrations(sql, dir);
+  } catch (e: any) {
+    return 'THE DATABASE COULD NOT BE CHECKED FOR UNAPPLIED MIGRATIONS.\n\n' +
+      `  ${String(e?.message ?? e)}\n\n` +
+      '  Nothing was started. Run the database setup, which says what is wrong with the database, then start again.';
+  }
+  if (pending.length === 0) return null;
+  return 'THE DATABASE IS OUT OF DATE.\n\n' +
+    `  ${pending.length === 1 ? 'This migration has' : `These ${pending.length} migrations have`} not been applied to it:\n` +
+    pending.map(m => `    ${m.name}`).join('\n') + '\n\n' +
+    '  Filing a record on it would fail. Nothing was started.\n' +
+    '  Run the database setup first, which applies them, then start again.';
 }
 
 export interface MigrateResult { applied: string[]; alreadyApplied: string[]; }
@@ -94,10 +143,7 @@ export async function migrate(
   // Session-level lock, held across the transactions below.
   await sql`SELECT pg_advisory_lock(${LOCK_ID})`;
   try {
-    const rows = await sql<{ version: string; name: string; checksum: string }>`
-      SELECT version, name, checksum FROM schema_migrations
-    `;
-    const seen = new Map(rows.map(r => [r.version, r]));
+    const seen = new Map((await appliedMigrations(sql)).map(r => [r.version, r]));
 
     const applied: string[] = [];
     const alreadyApplied: string[] = [];

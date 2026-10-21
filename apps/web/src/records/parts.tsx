@@ -1,7 +1,7 @@
 import { useEffect, useState, type ReactNode } from 'react';
 import { SquareLock02Icon } from '@hugeicons/core-free-icons';
 import { Alert, AlertDescription, AlertTitle, Amount, AMOUNT_KIND, AmountLoading, Badge, Button, EmptyState, formatDate, PageLoading, PrivatePill, StatTile, useLanguage, useText, type AmountKind } from 'vaults-ui';
-import { isPending, PendingPill, useStandingSays } from './vault-pending.js';
+import { isPending, PendingPill, useStandingSays, VaultName } from './vault-pending.js';
 import { OPENED, PAID, READ, readVaultPublicMoney, type CompanyRecords, type Paid, type ProposalRow, type Read, type RunRow, type VaultRow } from '../adapters/company-records.js';
 import { readVaultPrivateMoney, type VaultPrivateMoney as VaultPrivateMoneyHeld } from '../adapters/vault-private-money.js';
 import type { VaultPublicMoney as VaultPublicMoneyHeld } from '../adapters/vault-public-money.js';
@@ -287,7 +287,7 @@ export function VaultTile({ company, vault, index }: { company: string; vault: V
   return (
     <StatTile
       link={<PageLink to={PAGE.vault} params={{ vault: vault.vault }} data-vault={vault.vault} />}
-      title={<span className="flex flex-wrap items-center gap-2"><span>{t('vaults.tile.name', { number: index + 1 })}</span><PendingPill vault={vault} /></span>}
+      title={<span className="flex flex-wrap items-center gap-2"><span><VaultName company={company} vault={vault} number={index + 1} /></span><PendingPill vault={vault} /></span>}
       tagline={isPending(vault.standing) ? undefined : <span data-standing={vault.standing}>{says(vault.standing)}</span>}
       subtext={t('vaults.tile.created', { date: day(vault.createdAt) })}
     >

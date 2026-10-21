@@ -4,8 +4,8 @@ import { assets, type AssetRegistry } from '../../../../src/core/assets.js';
 import { openRecord } from '../../../../src/core/sealed-records.js';
 import { onlyPayableWhenActive, openPerson, peopleOnTheWire } from '../../../../src/core/person-record.js';
 import type { Account, PayrollRun, Proposal, ProposalKind, ProposalStatus, SealedAccount, SealedProposal, SealedRun } from '../../../../src/core/types.js';
-import { api, canOpenCompanies, holdersFromTheWallet, openKeysWithWallet } from 'vaults-web-shared/keyring.js';
-import { anchoredOnTheWayInFor, companyKeysFor, openedHere, walletIndexerFor } from './filing-judge.js';
+import { api, canOpenCompanies, currentUser, holdersFromTheWallet, openKeysWithWallet } from 'vaults-web-shared/keyring.js';
+import { anchoredOnTheWayInFor, companyKeysFor, filingJudgeFor, openedHere, walletIndexerFor } from './filing-judge.js';
 import { keyOf, type CompanyKeys } from '../../../../src/core/company-key.js';
 import { theVaultBuilder } from './vault-builder.js';
 import type { AccountAddress, CompanyLabel } from 'midnight-identity/profile/company-label';
@@ -153,14 +153,17 @@ export interface PersonRow {
 
 /** Where a vault stands, one of a fixed set a screen says in its own words. */
 export const VAULT = {
-  held: 'held-by-committee', handoverOwed: 'handover-owed', startOwed: 'start-owed', notOnChain: 'not-on-chain-yet', notFundable: 'not-fundable',
+  held: 'held-by-committee', startOwed: 'start-owed', notOnChain: 'not-on-chain-yet', notFundable: 'not-fundable',
   accountNotHandedOver: 'account-not-handed-over', accountNotFundable: 'account-not-fundable', heldByOtherKeys: 'held-by-other-keys', unknown: 'unknown',
 } as const;
 export type VaultStanding = (typeof VAULT)[keyof typeof VAULT];
 const VAULT_STANDINGS: readonly string[] = Object.values(VAULT);
 
-/** A vault, as the vault tiles and its own page show it. */
-export interface VaultRow { vault: string; createdAt: string; standing: VaultStanding }
+/**
+ * A vault, as the vault tiles and its own page show it. `adopted` is set only on a vault the company's account adopted,
+ * as the person's own wallet read the chain: the one kind of vault whose filed name is read and shown.
+ */
+export interface VaultRow { vault: string; createdAt: string; standing: VaultStanding; adopted?: true }
 
 /** Who an invitation is for: somebody to sign, or somebody to be paid. */
 export const INVITED = { signer: 'signer', employee: 'employee' } as const;
@@ -322,13 +325,14 @@ export function invitationRows(rows: readonly InviteRow[], now: number): Invitat
     .map((i) => ({ kind: i.kind as InvitationRow['kind'], name: typeof i.name === 'string' && i.name !== '' ? i.name : null, sentAt: i.createdAt, expiresAt: i.expiresAt ?? null }));
 }
 
-/** A vault for a screen; a standing the service names that is not one of the set is unknown. */
-export const vaultRow = (v: { vault: string; deployedAt: string; state: string }): VaultRow => ({
+/** A vault for a screen; a standing the service names that is not one of the set is unknown. `adopted` when the account adopted it. */
+export const vaultRow = (v: { vault: string; deployedAt: string; state: string }, adopted = false): VaultRow => ({
   vault: v.vault, createdAt: v.deployedAt, standing: (VAULT_STANDINGS.includes(v.state) ? v.state : VAULT.unknown) as VaultStanding,
+  ...(adopted ? { adopted: true as const } : {}),
 });
 
 /** A vault sent and not yet adopted: its set-up is not finished, so it is not yet one of the company's vaults. */
-const NOT_YET_ADOPTED: ReadonlySet<string> = new Set([VAULT.handoverOwed, VAULT.startOwed, VAULT.notOnChain]);
+const NOT_YET_ADOPTED: ReadonlySet<string> = new Set([VAULT.startOwed, VAULT.notOnChain]);
 
 /** A row of the service's list of a company's vaults, as it answers it. */
 type ServedVault = { vault: string; deployedAt: string; state: string };
@@ -340,13 +344,17 @@ type ServedVault = { vault: string; deployedAt: string; state: string };
  * adopted that the service's list leaves out makes the whole list unreadable,
  * so a list cut short is noticed rather than shown short; a vault the service
  * lists that the account has not adopted is shown only as a set-up not
- * finished, never as one of the company's vaults.
+ * finished, never as one of the company's vaults. Each row of a vault the
+ * account adopted says so, so a screen reads a name only for those.
  */
 export const vaultsAsTheChainHoldsThem = (served: readonly ServedVault[], adopted: readonly string[]): Read<readonly VaultRow[]> => {
   const held = new Set(adopted.map((v) => v.toLowerCase()));
   const listed = new Set(served.map((r) => r.vault.toLowerCase()));
   if ([...held].some((v) => !listed.has(v))) return { of: READ.unreadable };
-  return { of: READ.read, value: served.filter((r) => held.has(r.vault.toLowerCase()) || NOT_YET_ADOPTED.has(r.state)).map(vaultRow) };
+  return {
+    of: READ.read,
+    value: served.filter((r) => held.has(r.vault.toLowerCase()) || NOT_YET_ADOPTED.has(r.state)).map((r) => vaultRow(r, held.has(r.vault.toLowerCase()))),
+  };
 };
 
 /**
@@ -468,6 +476,34 @@ export async function readVaultPublicMoney(personId: string, companyId: string, 
     if (indexer === null) return null;
     const builder = await theVaultBuilder();
     return await vaultPublicMoney(() => builder.vaultOnChain({ vault, indexer }));
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * THE NAME THE COMPANY FILED FOR THE VAULT `vault`, opened on this device with the company's key and believed only
+ * as far as the company's directory, read by the person's own wallet, believes the filer. Null when there is no name
+ * to show: none was filed, it could not be read or believed, it is blank, nobody or somebody else is signed in, or the
+ * company names no account. A screen then says the vault by its number. The record code is loaded when a name is asked
+ * for, so a page that shows no name does not carry it.
+ */
+export async function readVaultName(personId: string, companyId: string, vault: string): Promise<string | null> {
+  try {
+    if (!(await keyringFor(personId))) return null;
+    const sealed = await api(SERVICE.company + companyId) as SealedAccount;
+    const label = sealed.companyLabel ?? null;
+    const address = sealed.contractAddress ?? null;
+    if (label === null || address === null) return null;
+    const keys = await keysOnTheWayIn(companyId, async () => sealed);
+    if (keys === null) return null;
+    const account = await openedHere(sealed);
+    if (account === null) return null;
+    const companyKeys: CompanyKeys = await companyKeysFor(companyId, sealed, keys);
+    const judge = filingJudgeFor(companyId, label as CompanyLabel, address as AccountAddress, companyKeys, async () => account);
+    const { vaultInfoHere, vaultInfoRecordsFor } = await import('vaults-web-shared/vault-info-here.js');
+    const filed = await vaultInfoHere({ companyKeys, records: vaultInfoRecordsFor(companyId, keys.signingSecret, judge, () => currentUser()?.id ?? null) }, vault);
+    return filed.state === 'named' && filed.name.trim() !== '' ? filed.name : null;
   } catch {
     return null;
   }

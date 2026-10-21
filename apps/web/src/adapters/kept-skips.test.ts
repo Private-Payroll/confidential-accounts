@@ -15,11 +15,11 @@ describe('the skipped steps kept in the tab', () => {
     expect([...readSkips(s).entries()].map(([c, v]) => [c, [...v]])).toEqual([[null, ['createCompany']], ['c-1', ['signers', 'vault']]]);
   });
 
-  /* RED WHEN: anything kept that is not a step id (words, a removed step, a number) is handed on, or what cannot be read is taken for a skip. */
+  /* RED WHEN: anything kept that is not a step id (words, a removed step, a number) is handed on, a step that is in the list is dropped, or what cannot be read is taken for a skip. */
   it('hands on step ids and nothing else', () => {
     const s = storage();
-    s.setItem('private-vaults.setup-skipped', JSON.stringify({ 'c-1': ['deposit', 'Run payroll', 7, 'people'], 'c-2': 'signers' }));
-    expect([...readSkips(s).entries()].map(([c, v]) => [c, [...v]])).toEqual([['c-1', ['people']]]);
+    s.setItem('private-vaults.setup-skipped', JSON.stringify({ 'c-1': ['deposit', 'Run payroll', 7, 'finishCompany', 'people'], 'c-2': 'signers' }));
+    expect([...readSkips(s).entries()].map(([c, v]) => [c, [...v]])).toEqual([['c-1', ['finishCompany', 'people']]]);
     s.setItem('private-vaults.setup-skipped', 'not json');
     expect(readSkips(s).size).toBe(0);
     expect(readSkips(null).size).toBe(0);

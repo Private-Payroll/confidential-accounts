@@ -5,7 +5,6 @@ import { signInAsk } from '../../../src/core/wallet-sign-in-ask.js';
 
 /**
  * OPENING THE WALLET AND ASKING WHO YOU ARE — the browser half.
- * `docs/scope-payroll-identity.md` §4, `docs/NEXT.md` PI1 §2.
  *
  * ── WHY THIS IS NOT THE CONNECTOR ─────────────────────────────────────────
  *
@@ -70,7 +69,8 @@ export type WalletPaymentFailure = 'chain-unreadable' | 'not-enough' | 'not-as-a
 
 export type WalletRefusal =
   | { readonly of: 'declined' }
-  | { readonly of: 'expired' }
+  /** `while: 'open'` is an ask that ran out while the wallet was open; without it, one the wallet refused as expired on arrival. */
+  | { readonly of: 'expired'; readonly while?: 'open' }
   /**
    * The wallet refused what this page sent before the person could approve
    * it: it could not read it, or it would not pay for what it read. The
@@ -114,8 +114,8 @@ export interface AskedFor {
  * WHAT THIS SIDE NEEDS OF THE WINDOW IT OPENED, and nothing more.
  *
  * `Window` satisfies it. It is written out rather than borrowed so a test can
- * drive the whole conversation with an object, and so the three things `C154`
- * added — bring it forward, close it, notice it has gone — are named here
+ * drive the whole conversation with an object, and so the three things a
+ * dialog adds — bring it forward, close it, notice it has gone — are named here
  * rather than assumed of a global.
  */
 export interface WalletWindow {
@@ -275,8 +275,8 @@ export interface WalletDialog {
   onGiveUp(run: () => void): void;
   /**
    * **WHAT THE WALLET LAST SAID IT WAS DOING**, for a screen that shows the
-   * wait: `reading` the network to find the person's money, or `proving` in
-   * their browser, or `null` before it has said anything and after the ask
+   * wait: `reading` the network to find the person's money, or `proving` while
+   * it prepares the transaction, or `null` before it has said anything and after the ask
    * ends. Only ever what the wallet reported; this page never guesses a stage.
    */
   readonly stage?: ProgressStage | null;
@@ -470,7 +470,7 @@ const NOTHING_CAME_BACK_SAYS = 'your wallet was opened but nothing came back. No
 export const WENT_QUIET_SAYS: Readonly<Record<ProgressStage, string>> = Object.freeze({
   reading: 'your wallet stopped answering while it was reading the network to find your money, so this page '
     + 'stopped waiting. It handed this page nothing, so nothing has been sent. Try again.',
-  proving: 'your wallet stopped answering while it was proving in your browser, so this page stopped '
+  proving: 'your wallet stopped answering while it was preparing the transaction, so this page stopped '
     + 'waiting. It handed this page nothing, so nothing has been sent. Try again.',
 });
 
@@ -516,8 +516,8 @@ export function askWalletToSignIn(
  * **ONE PLUMBING, TWO ASKS.**
  *
  * Everything below is what `askWalletToSignIn` was, with the ask it sends
- * passed in rather than built inside. `PI2a` needed the identical conversation
- * for an `unlock` — open the wallet, wait for it to say it is listening, send
+ * passed in rather than built inside. The unlock ask needs the identical conversation
+ * with an `unlock` — open the wallet, wait for it to say it is listening, send
  * one ask, take one answer — and a second copy of it is a second place for the
  * origin check to drift. **The one judgement it makes is still the origin**,
  * and still only in the narrow sense of refusing to listen to anybody else.
@@ -530,8 +530,8 @@ export function askWalletToSignIn(
  *
  * **`dialog` IS THE WINDOW THE CLICK OPENED**, and every path that a person
  * starts passes one. The default is here for a caller with no click to be in —
- * a test, or a retry that is already inside one — and it is the shape `C154`
- * is about, so anything reaching for it should be sure it is not simply the old
+ * a test, or a retry that is already inside one — and it is the shape the
+ * click rule is about, so anything reaching for it should be sure it is not simply the old
  * order wearing a new name.
  */
 export function askWallet(
@@ -576,7 +576,7 @@ export function askWallet(
       const byDeadline = left <= ANSWER_TIMEOUT_MS;
       const ms = byDeadline ? Math.max(0, left) : ANSWER_TIMEOUT_MS;
       timer = view.setTimeout(() => stop(byDeadline
-        ? new WalletClosed({ of: 'expired' }, lastStage === null ? RAN_OUT_SAYS : OUT_OF_TIME_SAYS)
+        ? new WalletClosed({ of: 'expired', while: 'open' }, lastStage === null ? RAN_OUT_SAYS : OUT_OF_TIME_SAYS)
         : new WalletClosed({ of: 'silent' }, lastStage === null ? NOTHING_CAME_BACK_SAYS : WENT_QUIET_SAYS[lastStage])),
       ms);
     };

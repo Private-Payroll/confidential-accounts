@@ -57,6 +57,8 @@ import {
   POSTURE_NOT_CARRIED, parametersBeforeServing, postureFrom, refuseToServe, somethingAlreadyServes, waitForThePages,
 } from './serve-with-wallets-rules.js';
 import { applicationPageFrom, pageStartsFor, refuseWhatTheServerSaid } from './serve-rules.js';
+import { loadEnvFile } from '../src/db/connect.js';
+import { refuseWhileMigrationsPending } from '../src/db/migrate.js';
 import { ensureProvingParameters, parameterSources } from '../src/server/proving-parameters.js';
 import { vaultArtefactPlaces } from '../src/server/vault-artefacts.js';
 import { startTheServer, startThePages, stopChildren, stopEverythingOnExit } from './serve-product.js';
@@ -131,6 +133,21 @@ async function main() {
     },
   });
   if (refusal) throw new Error(refusal);
+  /*
+   * **THE DATABASE IS CHECKED HERE, NOT WHEN THE SERVER STARTS**, because the
+   * server starts after the wallet sync, which takes minutes.
+   */
+  loadEnvFile();
+  if (process.env.DATABASE_URL) {
+    const { default: postgres } = await import('postgres');
+    const sql = postgres(process.env.DATABASE_URL, { onnotice: () => {} });
+    try {
+      const outOfDate = await refuseWhileMigrationsPending(sql as never);
+      if (outOfDate) throw new Error(outOfDate);
+    } finally {
+      await sql.end();
+    }
+  }
   /*
    * **READ BEFORE ANY WALLET IS BROUGHT UP**, so a missing ceiling stops this
    * here rather than after the slow part.

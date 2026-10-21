@@ -47,9 +47,8 @@ import type { NetworkName } from '../../../src/midnight/network.js';
 import { pathFromWire, type PrivatePaymentOnTheWire, type PrivatePaymentOrderOnTheWire } from '../../../src/midnight/private-payment-wire.js';
 import { notePlaces } from '../../../src/midnight/vault-step-notes.js';
 import { STEP_LIMITS } from '../../../src/midnight/payment-plan.js';
+import { INTENT_LIFETIME_MS } from '../../../src/midnight/intent-lifetime.js';
 
-/** How long an intent this builder makes may wait to land: thirty minutes from when it is built. */
-const INTENT_LIFETIME_MS = 30 * 60_000;
 
 export interface SigningKeyLike { readonly tag: string; readonly value: string }
 
@@ -232,6 +231,28 @@ export async function finishedCreation(
   if (tooBig !== null) throw new Error(tooBig);
   const proven = await deps.prove(tx);
   return { proven: proven.serialize(), bytesWritten };
+}
+
+/**
+ * **THE NEWEST TIME TO LIVE OF TRANSACTIONS KEPT, READ FROM THEIR BYTES** (milliseconds since the epoch): the moment
+ * after which the last of them can no longer land. Null unless every one is exactly one transaction with one intent
+ * that has a time to live, so a transaction this cannot read is never taken for one that has run out.
+ */
+export function newestTimeToLive(deps: Pick<VaultBuilderDeps, 'ledger'>, transactions: readonly Uint8Array[]): number | null {
+  let newest: number | null = null;
+  for (const bytes of transactions) {
+    let ttl: unknown;
+    try {
+      const tx = deps.ledger.Transaction.deserialize('signature', 'proof', 'pre-binding', bytes) as unknown as { intents?: Map<unknown, { ttl?: unknown }> };
+      const intents = tx.intents instanceof Map ? [...tx.intents.values()] : [];
+      ttl = intents.length === 1 ? intents[0]!.ttl : undefined;
+    } catch {
+      return null;
+    }
+    if (!(ttl instanceof Date) || !Number.isFinite(ttl.getTime())) return null;
+    newest = newest === null ? ttl.getTime() : Math.max(newest, ttl.getTime());
+  }
+  return newest;
 }
 
 /**

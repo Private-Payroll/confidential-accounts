@@ -25,11 +25,12 @@
  * Each case therefore gets its own directory, its own `.env`, and an
  * environment built from scratch.
  */
-import { describe, it, expect, afterEach } from 'vitest';
+import { describe, it, expect, afterEach, beforeAll, afterAll } from 'vitest';
 import type { ChildProcess } from 'node:child_process';
 import { startInItsOwnGroup, stopEverythingStarted, stopTheWholeGroup } from './a-started-server.test-support.js';
+import { aDatabaseWithEveryMigrationApplied } from './a-database-with-every-migration-applied.test-support.js';
 import { createServer } from 'node:net';
-import { mkdtempSync, readFileSync, writeFileSync, existsSync, mkdirSync } from 'node:fs';
+import { mkdtempSync, readFileSync, writeFileSync, existsSync, mkdirSync, symlinkSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { fileURLToPath } from 'node:url';
 import { join } from 'node:path';
@@ -39,7 +40,15 @@ import { theNetwork } from '../midnight/network.js';
 const REPO = fileURLToPath(new URL('../..', import.meta.url));
 const TSX = join(REPO, 'node_modules', '.bin', 'tsx');
 const ENTRY = join(REPO, 'src', 'server', 'index.ts');
-const NOWHERE = 'postgres://u:p@127.0.0.1:1/nowhere';  // not-a-secret: a port nothing listens on
+/** The address of the database the service is given: one that says every migration is applied, which the service asks before it listens. */
+let database = '';
+let stopDatabase: () => Promise<void> = async () => {};
+beforeAll(async () => {
+  const started = await aDatabaseWithEveryMigrationApplied(join(REPO, 'db', 'migrations'));
+  database = started.url;
+  stopDatabase = started.stop;
+});
+afterAll(async () => { await stopDatabase(); });
 
 /* ------------------------------------------------------------------ planted */
 
@@ -141,7 +150,10 @@ type Running = { port: number; report: string; out: string };
 /** Starts the service in its own directory and waits for the listening banner. */
 const start = async (overrides: Record<string, string>): Promise<Running> => {
   const dir = mkdtempSync(join(tmpdir(), 'mn-sink-'));
-  writeFileSync(join(dir, '.env'), `DATABASE_URL=${NOWHERE}\n`);
+  writeFileSync(join(dir, '.env'), `DATABASE_URL=${database}\n`);
+  /* The folder of migrations is read from the directory the service is started in, which is this one. */
+  mkdirSync(join(dir, 'db'));
+  symlinkSync(join(REPO, 'db', 'migrations'), join(dir, 'db', 'migrations'));
   /*
    * **THIS FILE STARTS THE REAL ENTRY POINT, SO IT NEEDS A REAL DEPLOYMENT.**
    *
@@ -152,9 +164,9 @@ const start = async (overrides: Record<string, string>): Promise<Running> => {
    * started in carries both.
    *
    * **NOTHING IS DIALLED.** The ledger's providers are built on first use, and
-   * the proof server address below is a closed port on loopback for the same
-   * reason the connection string is: if anything here ever starts actually
-   * connecting, it fails here rather than somewhere real.
+   * the proof server address below is a closed port on loopback: if anything
+   * here ever starts actually connecting to it, it fails here rather than
+   * somewhere real. The database is the one that answers one question.
    */
   const network = theNetwork({});
   mkdirSync(join(dir, '.midnight'), { recursive: true });
