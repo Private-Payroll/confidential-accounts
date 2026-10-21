@@ -671,6 +671,8 @@ export interface VaultStartProposals {
   /** This seat's filing key: what the company's directory names the seat by, and what signs each record and relay. */
   readonly signingSecret: Hex;
   readonly entered: RecordsEntered;
+  /** Asks the service to write the vault's adoption down as carried out, for this seat; it checks the adoption and the chain itself. */
+  readonly carried?: (proposalId: string, body: { readonly vault: string; readonly filer: string }) => Promise<unknown>;
 }
 
 /**
@@ -1139,6 +1141,30 @@ interface StartRound {
  * returned as a sentence for the press to say, and written down or entered on
  * a later press. Null when the record is written down and believed.
  */
+/**
+ * **THE VAULT'S ADOPTION THE CHAIN CARRIED OUT, WRITTEN DOWN AS CARRIED OUT**:
+ * each record of it the company's proposals still hold open, asked of the
+ * service by this seat once this device's own read of the chain shows the vault
+ * adopted (the service checks it is that vault's adoption and reads the chain
+ * again before it writes anything). Null when done or
+ * nothing is open; otherwise a sentence of why, and the start carries on.
+ */
+async function carriedOutWrittenDown(doors: CreateVaultDoors, vault: Hex, round: StartRound): Promise<string | null> {
+  const p = doors.proposals;
+  if (p.carried === undefined) return null;
+  const filer = signingPublicKeyOf(p.signingSecret).toLowerCase();
+  const chainId = round.chainId.toLowerCase();
+  try {
+    const open = (await p.service.sealedProposals(p.accountId))
+      .filter((r) => r.accountId === p.accountId && String(r.chainId).toLowerCase() === chainId && (r.status === 'open' || r.status === 'approved'));
+    for (const r of open) await p.carried(r.id, { vault, filer });
+    return null;
+  } catch (e) {
+    return `The vault's ${round.called} is carried out on the chain, and the company's proposals still show it open: `
+      + `${String((e as Error)?.message ?? e).replace(/\.$/u, '')}. Setting the vault up carries on; pressing again writes it down.`;
+  }
+}
+
 async function proposedAndWrittenDown(
   doors: CreateVaultDoors, vault: Hex, round: StartRound,
   raise?: { readonly order: GovernedCallOrder; readonly opened: OpenedRound },
@@ -1352,6 +1378,7 @@ async function startCompanyVault(doors: CreateVaultDoors, vault: Hex): Promise<V
       await untilTheChainShows(doors, vault, 'adopting it', (n) => n.standing.adopted);
     }
   }
+  sayIt(await carriedOutWrittenDown(doors, vault, adoption));
 
   /* ---- b. the pool and the nonce secret: made here, or read back and held to the chain ---- */
   /* From here on the vault must be one the account itself has adopted, as the wallet reads it: never the service's row. */

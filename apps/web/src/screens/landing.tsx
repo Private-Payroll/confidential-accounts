@@ -2,7 +2,7 @@ import { useEffect, useState } from 'react';
 import { HugeiconsIcon } from '@hugeicons/react';
 import { Add01Icon, Building03Icon } from '@hugeicons/core-free-icons';
 import { Alert, AlertDescription, AlertTitle, Button, Card, CardContent, CardDescription, CardHeader, CardTitle, useText } from 'vaults-ui';
-import { companyNamesFor, OF, REFUSAL, signIn, type SignInRefusal } from '../adapters/session.js';
+import { companyNamesFor, NO_NAMES, OF, REFUSAL, signIn, type CompanyNames, type SignInRefusal } from '../adapters/session.js';
 import { HOME, VIEWS } from '../pages.js';
 import { go } from '../router.js';
 import { useSessionIfAny, type Session } from '../session.js';
@@ -45,7 +45,7 @@ export function Landing() {
  */
 function ChooseACompany({ session }: { session: Session }) {
   const t = useText();
-  const [names, setNames] = useState<ReadonlyMap<string, string>>(new Map());
+  const [names, setNames] = useState<CompanyNames>(NO_NAMES);
   useEffect(() => {
     let alive = true;
     void companyNamesFor(session.person.id).then((n) => { if (alive) setNames(n); });
@@ -62,7 +62,7 @@ function ChooseACompany({ session }: { session: Session }) {
             <li key={c.id}>
               <Button variant="outline" className="h-auto w-full justify-start gap-3 py-2" onClick={() => open(c.id)} data-company={c.id}>
                 <HugeiconsIcon icon={Building03Icon} strokeWidth={2} className="size-4" />
-                <CompanyFacts company={c} name={names.get(c.id) ?? null} />
+                <CompanyFacts company={c} name={names.get(c.id) ?? null} whyUnnamed={names.whyNot?.get(c.id) ?? null} />
               </Button>
             </li>
           ))}

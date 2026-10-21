@@ -64,6 +64,16 @@ describe('§1 - THE RULES', () => {
     expect(credentialOf({ cookie: `${SESSION_COOKIE}=planted; ${SESSION_COOKIE}=real` }).via).toBe('none');
   });
 
+  /* RED WHEN: a request with no credential and one with two session cookies are told apart by nothing, a credential that is there carries a reason, or one cookie of the right name is counted as two. */
+  it('a request with no credential says why: none sent, or two cookies', () => {
+    expect(credentialOf({})).toEqual({ token: '', via: 'none', why: 'no-credential' });
+    expect(credentialOf({ cookie: `${SESSION_COOKIE}=; other=1` })).toEqual({ token: '', via: 'none', why: 'no-credential' });
+    expect(credentialOf({ cookie: `${SESSION_COOKIE}=a; ${SESSION_COOKIE}=b` })).toEqual({ token: '', via: 'none', why: 'two-session-cookies' });
+    expect(credentialOf({ cookie: `${SESSION_COOKIE}=a; x${SESSION_COOKIE}=b` })).toEqual({ token: 'a', via: 'cookie' });
+    expect(credentialOf({ authorization: 'Bearer b', cookie: `${SESSION_COOKIE}=a; ${SESSION_COOKIE}=c` })).toEqual({ token: 'b', via: 'bearer' });
+    expect(credentialOf({ authorization: 'Bearer ', cookie: `${SESSION_COOKIE}=a` })).toEqual({ token: 'a', via: 'cookie' });
+  });
+
   it('a trailing slash in the configured origin does not refuse the application\'s own writes', () => {
     expect(crossSiteWriteRefusal({ method: 'POST', via: 'cookie', origin: APP, fetchSite: undefined }, `${APP}/`))
       .toBeNull();
@@ -80,7 +90,7 @@ describe('§1 - THE RULES', () => {
     expect(credentialOf({ authorization: 'Bearer b', cookie: `${SESSION_COOKIE}=c` }))
       .toEqual({ token: 'b', via: 'bearer' });
     expect(credentialOf({ cookie: `${SESSION_COOKIE}=c` })).toEqual({ token: 'c', via: 'cookie' });
-    expect(credentialOf({})).toEqual({ token: '', via: 'none' });
+    expect(credentialOf({})).toMatchObject({ token: '', via: 'none' });
   });
 
   it('a WRITE on the cookie must come from the application; a read, and a bearer write, are not judged', () => {

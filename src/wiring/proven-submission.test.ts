@@ -13,6 +13,8 @@ import { ChainLedger } from './chain.js';
 import type { Deployment } from './deployment.js';
 import type { WriteCapability } from './write-capability.js';
 import { saysNothingWasSent } from '../core/jobs.js';
+import { feeAnswerCodeOf } from '../midnight/sponsor.js';
+import { FeeRefused } from '../midnight/fee-ceiling.js';
 
 const OURS = 'aa'.repeat(32);
 const THEIRS = 'bb'.repeat(32);
@@ -188,6 +190,23 @@ describe('sending a transaction a device proved', () => {
     expect(saysNothingWasSent(refused), 'a failure before the submission was called unknown').toBe(true);
     expect(r.steps).toContain('company releases');
     expect(r.steps).not.toContain('submitted');
+  });
+
+  /*
+   * RED WHEN: a fee that could not be balanced for a transaction a device proved reaches the page without the code
+   * that says the fee was not paid, as it does for a vault's or a creation's step.
+   * RED WHEN: a fee over the ceiling is given that code, though every try is refused.
+   */
+  it('a fee that could not be balanced says so with its code; one over the ceiling keeps its words and no code', async () => {
+    const r = rig({ addFee: async () => { throw new Error('could not balance dust'); } });
+    const unpaid: any = await r.ledger.submitProven('acc_1', BYTES, reads(tx([call(OURS)]))).catch((e) => e);
+    expect(saysNothingWasSent(unpaid)).toBe(true);
+    expect(feeAnswerCodeOf(unpaid)).toBe('fee-not-paid');
+    expect(unpaid.message).toMatch(/could not balance dust/);
+    const dear = rig({ addFee: async () => { throw new FeeRefused('this transaction would spend 9 SPECKs'); } });
+    const refused: any = await dear.ledger.submitProven('acc_1', BYTES, reads(tx([call(OURS)]))).catch((e) => e);
+    expect(refused).toBeInstanceOf(FeeRefused);
+    expect(feeAnswerCodeOf(refused)).toBeNull();
   });
 
   /* RED WHEN: a submission that threw is reported as nothing sent. It may have landed. */

@@ -36,6 +36,8 @@ const state = vi.hoisted(() => ({
   vaults: [] as { vault: string; createdAt: string; standing: string }[] | null,
   ready: { of: 'ready' } as Record<string, unknown>,
   vaultCreated: { of: 'done', vault: 'v-new' } as Record<string, unknown>,
+  /** The name the company filed for the vault being carried on, as this device reads it; null when none was filed. */
+  vaultName: 'Payroll' as string | null,
   opened: [] as string[],
   /** What the creation read says of the shown company, whichever company is asked about; held back while `gate` is not resolved. */
   creation: { standing: 'finished', awaitingSecondPress: false, kept: false, confirmedFinished: true, mark: null } as Record<string, unknown>,
@@ -67,6 +69,10 @@ vi.mock('../adapters/vault-rows.js', async (real) => ({
   ...(await real<typeof import('../adapters/vault-rows.js')>()),
   readVaultRows: vi.fn(async () => { if (state.vaultsGate !== null) await state.vaultsGate; return state.vaults; }),
 }));
+vi.mock('../adapters/company-records.js', async (real) => ({
+  ...(await real<typeof import('../adapters/company-records.js')>()),
+  readVaultName: vi.fn(async (_p: string, _c: string, _v: string, unread?: unknown) => (state.vaultName === 'unread' ? unread ?? null : state.vaultName)),
+}));
 vi.mock('../adapters/create-vault.js', async (real) => ({
   ...(await real<typeof import('../adapters/create-vault.js')>()),
   readVaultReadiness: vi.fn(async () => state.ready),
@@ -76,8 +82,8 @@ vi.mock('../adapters/create-vault.js', async (real) => ({
     state.acted.push(JSON.stringify(['create-vault', person, company]));
     return state.vaultCreated;
   }),
-  finishStarting: vi.fn(async (person: string, company: string, vault: string) => {
-    state.acted.push(JSON.stringify(['finish-vault', person, company, vault]));
+  finishStarting: vi.fn(async (person: string, company: string, vault: string, _stage: unknown, info?: unknown) => {
+    state.acted.push(JSON.stringify(['finish-vault', person, company, vault, ...(info === undefined ? [] : [info])]));
     return state.vaultCreated;
   }),
   giveYourVaultKeys: vi.fn(async (person: string, company: string) => {
@@ -166,7 +172,7 @@ beforeEach(() => {
   state.carried = [{ of: 'waiting', companyId: 'c-1', stage: 'deploy' }]; state.looks = 0; state.carryGate = null; state.carriedBy = {};
   state.pressed = { of: 'done' }; state.startedAgainHere = { of: 'done' };
   forgetWhatStartAgainSaid();
-  state.vaults = []; state.ready = { of: 'ready' }; state.vaultCreated = { of: 'done', vault: 'v-new' }; state.opened = [];
+  state.vaults = []; state.ready = { of: 'ready' }; state.vaultCreated = { of: 'done', vault: 'v-new' }; state.opened = []; state.vaultName = 'Payroll';
   state.creation = { standing: 'finished', awaitingSecondPress: false, kept: false, confirmedFinished: true, mark: null }; state.gate = null; state.vaultsGate = null; state.changed = []; state.onCreate = null; state.label = null;
   /* What a tab remembers between showings of the wizard starts empty for every test. */
   for (const c of [null, 'c-1']) skippedFor(c).clear();
@@ -1085,6 +1091,35 @@ describe('creating a vault: one component, on the step and on the Vaults page', 
     expect(q(container, '[data-slot=confirm-in-your-account]')).toBeNull();
     await act(async () => { release(); await settle(); });
     expect(q(container, '[data-slot=confirm-in-your-account]')!.textContent).toContain(EN['createVault.confirmStart']);
+  });
+
+  /*
+   * RED WHEN: a vault carried on that has no name filed is carried on without asking for one, its name and description
+   * cannot be typed while it is asked, or what is typed is not handed to the set up.
+   */
+  it('opened to carry on a vault with no name filed, asks its name and description first and hands them on', async () => {
+    state.vaultName = null;
+    const { container } = await draw(<CreateVault leadTo={() => {}} onChanged={() => {}} starting="v-6" />, sessionWith({ company: 'c-1' }));
+    await act(settle);
+    expect(q(container, '[data-name-again]')!.textContent).toBe(EN['createVault.resume.nameAgain']);
+    expect(q(container, '[data-slot=confirm-in-your-account]')).toBeNull();
+    expect((q(container, '[data-field=vault-name]') as HTMLInputElement).disabled).toBe(false);
+    await nameIt(container, 'Payroll');
+    await act(async () => { fireEvent.change(q(container, '[data-field=vault-description]')!, { target: { value: 'Founding vault.' } }); await settle(); });
+    state.acted.length = 0;
+    await act(async () => { fireEvent.click([...container.querySelectorAll('button')].find((b) => b.textContent === EN['kit.confirm.confirm'])!); await settle(); });
+    expect(state.acted).toEqual([JSON.stringify(['finish-vault', 'u1', 'c-1', 'v-6', { name: 'Payroll', description: 'Founding vault.' }])]);
+  });
+
+  /* RED WHEN: a vault whose name could not be read is said to have none, and a second name is asked for over the one filed. */
+  it('opened to carry on a vault whose name could not be read, says so and asks no name', async () => {
+    state.vaultName = 'unread';
+    const { container } = await draw(<CreateVault leadTo={() => {}} onChanged={() => {}} starting="v-6" />, sessionWith({ company: 'c-1' }));
+    await act(settle);
+    expect(q(container, '[data-name-unread]')!.textContent).toBe(EN['createVault.resume.nameUnread']);
+    expect(q(container, '[data-name-again]')).toBeNull();
+    expect(q(container, '[data-slot=confirm-in-your-account]')).toBeNull();
+    expect((q(container, '[data-field=vault-name]') as HTMLInputElement).disabled).toBe(true);
   });
 
   /* RED WHEN: asked to carry one vault's set up on, the component does not ask to confirm that, or carries another vault on. */

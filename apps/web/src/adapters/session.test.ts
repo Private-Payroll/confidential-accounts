@@ -341,6 +341,67 @@ describe('signing out', () => {
   });
 });
 
+describe('signing out while reads of the service are in flight', () => {
+  const inFlight = () => { const held: { release: () => void } = { release: () => {} }; const answer = () => new Promise<Response>((r) => { held.release = () => { r(reply(200, { ok: true })()); }; }); return { held, answer }; };
+
+  /*
+   * RED WHEN: the sign-out is posted while a read of the service is still unanswered (the read then comes
+   * back on a sign-in just ended, a 401), or it is not posted once the read has answered, or the person lookup
+   * that is out is not waited for.
+   */
+  it('posts the sign-out only once the read in flight has answered, then ends it as ever', async () => {
+    const m = await load();
+    const { held, answer } = inFlight();
+    answers['/api/slow'] = answer;
+    answers['/api/auth/logout'] = reply(200, { ok: true });
+    const k = await import('vaults-web-shared/keyring.js');
+    const read = k.api('/api/slow');
+    await settle();
+    const out = m.signOut();
+    await settle();
+    expect(calls.map((c) => c.path)).toEqual(['/api/slow']);
+    held.release();
+    await read;
+    expect(await out).toEqual({ of: m.OF.signedOut });
+    expect(calls.map((c) => [c.method, c.path])).toEqual([['GET', '/api/slow'], ['POST', '/api/auth/logout']]);
+  });
+
+  it('waits for a read of its own too: the person lookup that is still out', async () => {
+    const m = await load();
+    const { held, answer } = inFlight();
+    answers['/api/me'] = () => answer().then(() => reply(200, { user: { id: 'u1', name: 'Priya' }, accounts: [] })());
+    answers['/api/auth/logout'] = reply(200, { ok: true });
+    const who = m.whoIsSignedIn();
+    await settle();
+    const out = m.signOut();
+    await settle();
+    expect(calls.map((c) => c.path)).toEqual(['/api/me']);
+    held.release();
+    await who;
+    await out;
+    expect(calls.map((c) => c.path)).toEqual(['/api/me', '/api/auth/logout']);
+  });
+
+  /* RED WHEN: a read that never answers holds the sign-out for longer than 5 seconds, or the sign-out is skipped. */
+  it('goes ahead after 5 seconds if the read has still not answered, and never skips the sign-out', async () => {
+    const m = await load();
+    answers['/api/never'] = () => new Promise<Response>(() => {});
+    answers['/api/auth/logout'] = reply(200, { ok: true });
+    const k = await import('vaults-web-shared/keyring.js');
+    vi.useFakeTimers();
+    try {
+      void k.api('/api/never').catch(() => {});
+      await vi.advanceTimersByTimeAsync(0);
+      const out = m.signOut();
+      await vi.advanceTimersByTimeAsync(4_999);
+      expect(calls.map((c) => c.path)).toEqual(['/api/never']);
+      await vi.advanceTimersByTimeAsync(1);
+      expect(await out).toEqual({ of: m.OF.signedOut });
+      expect(calls.map((c) => c.path)).toEqual(['/api/never', '/api/auth/logout']);
+    } finally { vi.useRealTimers(); }
+  });
+});
+
 describe('the shared keyring is told who signed in', () => {
   /*
    * RED WHEN: the service's answer to the sign-in is not handed to the keyring,

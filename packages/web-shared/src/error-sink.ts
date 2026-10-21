@@ -140,15 +140,16 @@ const FLUSH_AFTER_MS = 250;
  * one below cannot save this: by the time it runs, the cut has happened.
  * The deliberate defect this answers swaps the order back.
  *
- * The body is JSON with an `error` in it for everything `wrap` answers, and
- * something else entirely for an error page a proxy wrote. Both are kept —
+ * The body is JSON with an `error` in it for everything `wrap` answers (and a `code`
+ * beside it when the service names the cause, kept in square brackets in front of the
+ * text), and something else entirely for an error page a proxy wrote. Both are kept —
  * *what the service said* is the useful thing either way.
  */
 const reasonOf = (body: string): string => {
   let text = body;
   try {
     const parsed = JSON.parse(body);
-    if (parsed && typeof parsed.error === 'string') text = parsed.error;
+    if (parsed && typeof parsed.error === 'string') text = typeof parsed.code === 'string' ? `[${parsed.code}] ${parsed.error}` : parsed.error;
   } catch { /* not JSON, so whatever arrived is what the service said */ }
   return redactSecrets(text).slice(0, BODY_CHARS);
 };

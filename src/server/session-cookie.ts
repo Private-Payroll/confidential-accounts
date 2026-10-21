@@ -74,28 +74,35 @@ export function clearedSessionCookie(scope: CookieScope): string {
  * signs in again.
  */
 export function sessionFromCookieHeader(header: string | undefined): string {
-  if (!header) return '';
+  const found = sessionCookiesIn(header);
+  return found.length === 1 ? found[0]! : '';
+}
+
+/** Every value a `Cookie` header carries under the sign-in cookie's name, in order. */
+export function sessionCookiesIn(header: string | undefined): string[] {
+  if (!header) return [];
   const found: string[] = [];
   for (const part of header.split(';')) {
     const at = part.indexOf('=');
     if (at < 0) continue;
     if (part.slice(0, at).trim() === SESSION_COOKIE) found.push(part.slice(at + 1).trim());
   }
-  return found.length === 1 ? found[0]! : '';
+  return found;
 }
 
-export interface Credential {
-  readonly token: string;
-  readonly via: 'bearer' | 'cookie' | 'none';
-}
+export type NoCredential = 'no-credential' | 'two-session-cookies';
 
-/** The bearer header if one was sent, otherwise the cookie. Never both. */
+export type Credential =
+  | { readonly token: string; readonly via: 'bearer' | 'cookie' }
+  | { readonly token: ''; readonly via: 'none'; readonly why: NoCredential };
+
+/** The bearer header if one was sent, otherwise the cookie. Never both. A request with neither says which of the two causes it is. */
 export function credentialOf(headers: { authorization?: string; cookie?: string }): Credential {
   const bearer = String(headers.authorization ?? '').replace(/^Bearer /, '');
   if (bearer !== '') return { token: bearer, via: 'bearer' };
-  const cookie = sessionFromCookieHeader(headers.cookie);
-  if (cookie !== '') return { token: cookie, via: 'cookie' };
-  return { token: '', via: 'none' };
+  const cookies = sessionCookiesIn(headers.cookie);
+  if (cookies.length === 1 && cookies[0] !== '') return { token: cookies[0]!, via: 'cookie' };
+  return { token: '', via: 'none', why: cookies.length > 1 ? 'two-session-cookies' : 'no-credential' };
 }
 
 const WRITES = new Set(['POST', 'PUT', 'PATCH', 'DELETE']);

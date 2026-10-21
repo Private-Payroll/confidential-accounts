@@ -1155,6 +1155,8 @@ describe('THE COMPANY\'S SIGNERS ARE READ ON THIS DEVICE FROM ITS ROSTER RECORD 
     /* RED WHEN: the founding signer cannot read their own company before their entry is filed - they could then never set up their vault keys. */
     expect(opened?.signers.map((x) => [x.id, x.leafCommitment])).toEqual([[made.founding.seat.signerId, LEAF]]);
     expect(opened?.name).toBe('Acme Ltd');
+    /* RED WHEN: the company opened is handed back without the entries this device refused and why, so no screen can say it. */
+    expect(opened?.refused).toEqual([]);
   });
 
   it('A COMPANY WITH NO ROSTER RECORD IS REFUSED WITH THE FIXED SENTENCE, AND THE LIST ON ITS ACCOUNT RECORD IS NEVER READ', async () => {

@@ -44,6 +44,7 @@ import { authedBy } from './authed.js';
 import type { Hex } from '../core/crypto.js';
 import { theNetwork } from '../midnight/network.js';
 import { NothingWasSent, saysNothingWasSent } from '../core/jobs.js';
+import { feeAnswerCodeOf } from '../midnight/sponsor.js';
 import { loadEnvFile } from '../db/connect.js';
 import { appendWebConsole, webConsoleLogPath } from './web-console-log.js';
 /* `C157` — every refusal this service makes, kept. See `wrap` below. */
@@ -67,7 +68,8 @@ import { companyVaultRoutes, type VaultChain } from './company-vaults.js';
 import {
   directoryChainFromTheContract, directoryOf, filerSeatNow, seatDirectoryRoutes, type AccountHolds, type DirectoryChainRead,
 } from './seat-directory-route.js';
-import { ledger as readAccountLedger } from '../../contracts/managed/contract/index.js';
+import { ledger as readAccountLedger, pureCircuits as accountPure } from '../../contracts/managed/contract/index.js';
+import { adoptionRoundOf, type AccountStartPure } from '../midnight/vault-start.js';
 import { vaultArtefactPlaces, vaultArtefactRoutes } from './vault-artefacts.js';
 import { parameterSources, startProvingParameters } from './proving-parameters.js';
 import {
@@ -625,6 +627,14 @@ app.use(cors());
     wiring: () => ledger.wiring ?? null,
     /* A proposal's identity is the contract's on every wiring, as the device that raised it made it. */
     proposalIdOf: (payloadHash, salt, vault) => MidnightCommitments.proposalId(payloadHash as Hex, salt as Hex, vault as Hex | undefined),
+    /* A vault's adoption, as the account's own functions make it, and the vaults its account lists on the chain now. */
+    adoptionOf: (vault) => adoptionRoundOf(accountPure as unknown as AccountStartPure, vault),
+    vaultsAdopted: async (accountId) => {
+      const address = (await ledger.address(accountId))?.value ?? null;
+      if (address === null) return null;
+      if (theChain.accountVaults === undefined) return null;
+      try { return await theChain.accountVaults(address as Hex); } catch { return null; }
+    },
     /* A raise is refused before it is written down when the vault's public money cannot pay what it says it pays. */
     publicMoney: async ({ vault, asset, payments }) => {
       const asked = payments.map((p) => ({ payee: { kind: p.kind as LedgerForm }, token: p.token, amount: BigInt(p.amount) }));
@@ -1147,7 +1157,9 @@ app.get('/api/me', authed, wrap(async (req, res) => {
    * sees what it has, which makes it the earliest moment a wrong belief can
    * form. It refuses the same way and with the same words as the list route
    * next to it rather than quietly serving what that route would withhold -
-   * two answers to one question is how a refusal gets routed around.
+   * two answers to one question is how a refusal gets routed around. Each row
+   * carries its newest roster as that route's rows do (`withRoster`), so a
+   * device names each company from the record its seats signed.
    */
   const verdict = decideList(chosen.name, store.accountsForUser(u.id));
   if (!verdict.listed) {
@@ -1156,7 +1168,7 @@ app.get('/api/me', authed, wrap(async (req, res) => {
   }
   res.json({
     user: { id: u.id, email: u.email, name: u.name },
-    accounts: verdict.rows,
+    accounts: verdict.rows.map(withRoster),
   });
 }));
 
@@ -1465,8 +1477,10 @@ app.post('/api/accounts/:id/proven', authed, member, async (req, res) => {
   } catch (e: any) {
     const nothing = saysNothingWasSent(e);
     const reason = e?.message ?? 'unknown error';
+    /* A fee payer's code rides only on a nothing-sent answer: a 502 may have landed. */
+    const code = nothing ? feeAnswerCodeOf(e) : null;
     appendRefusal(req.method, req.originalUrl, nothing ? 422 : 502, e?.name ?? 'Error', reason);
-    res.status(nothing ? 422 : 502).json({ nothingWasSent: nothing, error: reason });
+    res.status(nothing ? 422 : 502).json({ nothingWasSent: nothing, error: reason, ...(code ? { code } : {}) });
   }
 });
 

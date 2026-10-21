@@ -1,8 +1,9 @@
-import { describe, expect, it } from 'vitest';
+import { afterEach, describe, expect, it, vi } from 'vitest';
 import { WalletClosed, type WalletRefusal } from 'vaults-web-shared/wallet-sign-in.js';
 import * as keyring from 'vaults-web-shared/keyring.js';
 import { ReadRanOutOfTime } from 'vaults-web-shared/read-bound.js';
 import { ACT_REFUSAL, refusalOf } from './refusals.js';
+import { RosterNotBelieved } from 'vaults-web-shared/roster-here.js';
 
 /*
  * WHAT A WALLET'S REFUSAL BECOMES ON A SCREEN: each way a wallet can end an
@@ -54,5 +55,43 @@ describe('a read that ran out of time', () => {
   /* RED WHEN: a read that did not answer within twenty seconds is told as an unfinished action, or as a service that could not be reached. */
   it('is told by its own kind, apart from an action that did not finish', () => {
     expect(refusalOf(new ReadRanOutOfTime('The service'))).toBe(ACT_REFUSAL.readRanOut);
+  });
+});
+
+describe('a fee that could not be paid, told by the service with a code', () => {
+  afterEach(() => { vi.unstubAllGlobals(); });
+  const refusedWith = async (status: number, body: unknown): Promise<unknown> => {
+    vi.stubGlobal('fetch', vi.fn(async () => new Response(JSON.stringify(body), { status, headers: { 'content-type': 'application/json' } })));
+    return keyring.api('/api/accounts', { method: 'POST' }).catch((e: unknown) => e);
+  };
+
+  /* RED WHEN: a 422 that says the fee could not be paid, nothing sent, is told as "it did not finish", or as another refusal's kind. */
+  it('a fee that could not be paid, with nothing sent, is shown to the person as that and not as "it did not finish"', async () => {
+    const e = await refusedWith(422, { nothingWasSent: true, code: 'fee-not-paid', error: 'the fee payer is behind' });
+    expect(refusalOf(e)).toBe(ACT_REFUSAL.feeNotPaid);
+    expect(ACT_REFUSAL.feeNotPaid).not.toBe(ACT_REFUSAL.didNotFinish);
+  });
+
+  /* RED WHEN: a 422 that says the network refused the step, nothing sent, is told as "it did not finish", or as the fee refusal. */
+  it('a step the network refused, with nothing sent, is shown to the person as that and not as the fee message', async () => {
+    const e = await refusedWith(422, { nothingWasSent: true, code: 'network-refused', error: 'the node refused it' });
+    expect(refusalOf(e)).toBe(ACT_REFUSAL.networkRefused);
+    expect(ACT_REFUSAL.networkRefused).not.toBe(ACT_REFUSAL.feeNotPaid);
+  });
+
+  /* RED WHEN: a 502, where something may have been sent, is told as a fee that was not paid, or a 422 with no known code is told as anything but "it did not finish". */
+  it('keeps "it did not finish" for a 502 and for a 422 with no known code', async () => {
+    expect(refusalOf(await refusedWith(502, { nothingWasSent: false, code: 'fee-not-paid', error: 'x' }))).toBe(ACT_REFUSAL.didNotFinish);
+    expect(refusalOf(await refusedWith(502, { nothingWasSent: true, code: 'fee-not-paid', error: 'x' }))).toBe(ACT_REFUSAL.didNotFinish);
+    expect(refusalOf(await refusedWith(422, { nothingWasSent: true, error: 'x' }))).toBe(ACT_REFUSAL.didNotFinish);
+    expect(refusalOf(await refusedWith(422, { nothingWasSent: true, code: 'other', error: 'x' }))).toBe(ACT_REFUSAL.didNotFinish);
+  });
+});
+
+describe('a roster this device does not believe', () => {
+  /* RED WHEN: a company whose roster this device does not believe is told "it did not finish", which a retry never changes. */
+  it('is told by its own kind, apart from an action that did not finish', () => {
+    expect(refusalOf(new RosterNotBelieved('This device does not believe the company\'s roster it was given (x).'))).toBe(ACT_REFUSAL.rosterNotBelieved);
+    expect(ACT_REFUSAL.rosterNotBelieved).toBe('roster-not-believed');
   });
 });

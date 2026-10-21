@@ -28,8 +28,10 @@
  *     changed, so nothing else would ever enter it.
  *   · **the records a company is founded with** - its first state and its
  *     first roster, signed by its founding signer's seat - are entered by that
- *     seat's device before the company's first anchor, and no first anchor is
- *     made without them: the founding seat is read from that first anchor.
+ *     seat's device before the company's first anchor, by their version even
+ *     below later versions of them, and no first anchor is made without them,
+ *     its batch taking each record's versions in order: the founding seat is
+ *     read from that first anchor.
  *   · **another device anchoring first**, or the account's approvals or signers
  *     changing, moves what this device proved against, and the chain refuses
  *     the call - the whole transaction, fee and all, since the call is sent only
@@ -71,8 +73,8 @@ import {
   treeKeyOf, treeLeafRefusal, type CheckedHead, type HeadStep, type KindAsked, type RecordName, type TransitionInput, type TransitionStop, type TreeHeader, type TreeLeaf,
 } from '../../../src/midnight/record-tree.js';
 import {
-  DIRECTORY, directoryVersionsOf, FOUNDING_RECORDS, kindKeyOf, newestAnchored, recordsProvenFor, versionsOf,
-  type DirectoryVersionHeld, type HeldVersion, type RecordsAsked, type RecordsHeld,
+  DIRECTORY, directoryVersionsOf, kindKeyOf, newestAnchored, recordsProvenFor, versionsOf,
+  type DirectoryVersionHeld, type HeldVersion, type RecordsAsked,
 } from '../../../src/midnight/records-held.js';
 
 type Api = (path: string, init?: RequestInit) => Promise<any>;
@@ -885,40 +887,77 @@ async function ownProposalsEntered(doors: AnchorDoors): Promise<void> {
 /**
  * **THE RECORDS THIS SEAT FOUNDED THE COMPANY WITH, ENTERED BY THIS SEAT**: its
  * first state and its first roster, each only when this seat's own signature
- * covers it as the founding signer's, and only when the manifest does not name
- * it yet. A seat that did not found the company enters nothing here.
+ * covers it as the founding signer's. Offered each time, by version, whatever
+ * later versions are entered: the first anchor must hold them, and one entered
+ * already is answered as entered. A seat that did not found the company enters
+ * nothing here.
  */
 async function foundingRecordsEntered(doors: AnchorDoors): Promise<void> {
   const company = doors.accountId;
   const secret = doors.material.signingSecret as Hex;
   const mine = signingPublicKeyOf(secret);
-  const [founding, versions] = await Promise.all([doors.service.foundingRecords(company), doors.manifest.newest(company, FOUNDING_RECORDS)]);
-  const named = new Set(FOUNDING_RECORDS.filter((_, i) => (versions[i] ?? 0) > 0).map(recordKeyOf));
+  const founding = await doors.service.foundingRecords(company);
   const owed = [
     founding.state !== null && foundingStateRefusal(founding.state, company, mine) === null ? founding.state : null,
     founding.roster !== null && foundingRosterRefusal(founding.roster, company, mine) === null ? founding.roster : null,
   ].filter((r): r is SealedCompanyRecord => r !== null)
-    .map((r) => companyRecordEntry(r))
-    .filter((e) => !named.has(recordKeyOf(e)))
-    .map((e) => signManifestEntry(company, e, secret));
+    .map((r) => signManifestEntry(company, companyRecordEntry(r), secret));
   if (owed.length > 0) await doors.manifest.enter(company, owed);
 }
 
 /**
- * **WHY THIS DEVICE DOES NOT MAKE THE COMPANY'S FIRST ANCHOR FROM THIS BATCH**:
- * the first anchor is the founding seat's, so it must hold the company's first
- * state and first roster, each entered by the seat anchoring it. Null when it
- * does, or when something is anchored already.
+ * **WHY THIS DEVICE DOES NOT MAKE THE COMPANY'S FIRST ANCHOR FROM THESE
+ * RECORDS**: the first anchor is the founding seat's, so it must hold the
+ * company's first state and first roster, each entered by the seat anchoring
+ * it. Asked of the records waiting, and again of the batch made from them.
+ * Null when they hold both, or when something is anchored already.
  */
-const firstAnchorRefusal = (doors: AnchorDoors, records: RecordsHeld): string | null => {
-  if (records.head !== EMPTY_HEAD) return null;
+const firstAnchorRefusal = (
+  doors: AnchorDoors, head: Hex,
+  records: ReadonlyArray<{ readonly store: string; readonly kind: string; readonly id: string; readonly version: number; readonly filer: string }>,
+): string | null => {
+  if (head !== EMPTY_HEAD) return null;
   const mine = signingPublicKeyOf(doors.material.signingSecret as Hex);
-  const held = (kind: 'state' | 'roster', id: string) => records.notYetAnchored.some((e) => e.store === 'company' && e.kind === kind
-    && e.id === id && e.version === 1 && e.filedBy.publicKey.toLowerCase() === mine);
+  const held = (kind: 'state' | 'roster', id: string) => records.some((e) => e.store === 'company' && e.kind === kind
+    && e.id === id && e.version === 1 && e.filer.toLowerCase() === mine);
   if (held('state', stateRecordId(FOUNDING_KEY_EPOCH)) && held('roster', ROSTER_ID)) return null;
   return 'the company\'s first anchor holds the records it was founded with - its first state and its first roster - entered by '
     + 'its founding signer\'s device, and this device did not enter them. Nothing was sent. The company\'s founding signer '
     + 'opens the company on their own device to anchor them';
+};
+
+/**
+ * The entries a batch is cut from, with the company's directory and its first
+ * state and first roster entered by this seat put first while nothing is
+ * anchored: the first anchor must hold the founding records, however many
+ * entries were entered before them, and its header names the directory version
+ * the seat anchoring it is read from.
+ */
+const foundingFirstWhileNothingIsAnchored = (doors: AnchorDoors, head: Hex, entries: readonly ManifestEntry[]): readonly ManifestEntry[] => {
+  if (head !== EMPTY_HEAD) return entries;
+  const mine = signingPublicKeyOf(doors.material.signingSecret as Hex);
+  const founding = (e: ManifestEntry) => e.store === 'company' && e.version === 1 && e.filedBy.publicKey.toLowerCase() === mine
+    && ((e.kind === 'state' && e.id === stateRecordId(FOUNDING_KEY_EPOCH)) || (e.kind === 'roster' && e.id === ROSTER_ID));
+  const first = (e: ManifestEntry) => e.store === 'directory' || founding(e);
+  return [...entries.filter(first), ...entries.filter((e) => !first(e))];
+};
+
+/**
+ * Puts each record's versions in ascending order, in the places that record's entries already hold, so a batch never
+ * takes a later version of a record before an earlier one, even when the earlier one (a founding record entered late)
+ * was entered after it.
+ */
+const eachRecordInVersionOrder = (entries: readonly ManifestEntry[]): ManifestEntry[] => {
+  const byRecord = new Map<string, ManifestEntry[]>();
+  for (const e of entries) byRecord.set(recordKeyOf(e), [...(byRecord.get(recordKeyOf(e)) ?? []), e]);
+  for (const versions of byRecord.values()) versions.sort((a, b) => a.version - b.version);
+  const taken = new Map<string, number>();
+  return entries.map((e) => {
+    const key = recordKeyOf(e);
+    const i = taken.get(key) ?? 0;
+    taken.set(key, i + 1);
+    return byRecord.get(key)![i]!;
+  });
 };
 
 /**
@@ -991,7 +1030,7 @@ export async function anchorTheRecordsHere(doors: AnchorDoors): Promise<Anchored
     const leftOut = ownFilingsLeftOut(doors, read);
     if (leftOut !== null) throw new AnchorNotMade(leftOut);
     if (records.notYetAnchored.length === 0) return { anchored: 0, head: records.head, ...told };
-    const first = firstAnchorRefusal(doors, records);
+    const first = firstAnchorRefusal(doors, records.head, records.notYetAnchored.map((e) => ({ ...e, filer: e.filedBy.publicKey })));
     if (first !== null) throw new AnchorNotMade(first);
     /* Who holds the account as this device judges the batch: what the history shows now, which must be what the wallet read. */
     const judged = read.now.now;
@@ -1006,9 +1045,11 @@ export async function anchorTheRecordsHere(doors: AnchorDoors): Promise<Anchored
     const tag = await doors.builder.anchorTag({ account: String(read.here.holders.account), material: doors.material }) as Hex;
     const made = await treeHeaderHere({
       accountId: company, tree: doors.tree, signingSecret: secret, held: judged, tag, at: (doors.now ?? (() => new Date()))(),
-    }, records.reached, records.notYetAnchored.slice(0, ENTRIES_AT_ONCE));
+    }, records.reached, foundingFirstWhileNothingIsAnchored(doors, records.head, eachRecordInVersionOrder(records.notYetAnchored)).slice(0, ENTRIES_AT_ONCE));
     if (made === null) return { anchored: 0, head: records.head, ...told };
     const { header } = made;
+    const firstBatch = firstAnchorRefusal(doors, records.head, header.changes.map((c) => ({ ...c.leaf, filer: c.leaf.filedBy })));
+    if (firstBatch !== null) throw new AnchorNotMade(firstBatch);
     const batch = treeBatchOf(header);
     /* Kept on this device first, with what checking it needs, so a header the service loses is filed again from here. */
     const olderGiven = new Map(made.older.map((l) => [leafHashOf(l), l] as const));

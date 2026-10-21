@@ -1,6 +1,6 @@
 import type { Sealed } from './crypto.js';
 import type { DataStore } from './store.js';
-import type { SessionStore, SessionSummary } from './sessions.js';
+import type { SessionStore, SessionSummary, WhyNotLive } from './sessions.js';
 
 /**
  * Identity, built on the same assumption as the rest of the product: the server
@@ -100,7 +100,22 @@ export class CouldNotCheck extends Error {
  * in" like any other no, and told apart so the stale cookie is cleared rather than kept.
  */
 export class NoSuchUser extends Error {
-  constructor() { super('not signed in'); this.name = 'NoSuchUser'; }
+  readonly code = 'no-such-user';
+  constructor(readonly userId?: string) { super('not signed in'); this.name = 'NoSuchUser'; }
+}
+
+/**
+ * No live sign-in for the credential sent. The text is what a person reads and is the same for every
+ * cause. `code` names the cause for the service's own refusal log and is NEVER sent to the caller: a
+ * 401 gives one answer for every state of a token (revoked, never issued or run out, a person this service
+ * does not hold), so whoever holds a token cannot learn which it is. The two causes the caller already
+ * knows (no credential, two ca_session cookies) are answered before any sign-in is looked up.
+ */
+export class NotSignedIn extends Error {
+  constructor(readonly code: 'session-revoked' | 'session-unknown-or-expired') {
+    super('not signed in');
+    this.name = 'NotSignedIn';
+  }
 }
 
 /** How long a look-up of a sign-in may take before it is a failure to check, not an answer. */
@@ -181,11 +196,13 @@ export class IdentityService {
   /**
    * Returns the user id, or throws.
    *
-   * ONE ERROR FOR EVERY WAY OF ANSWERING NO (a failure to look is `CouldNotCheck`, never this
-   * error: it says nothing about the person). The old version distinguished "not
-   * signed in", "not valid" and "expired", which told a caller holding a stolen
-   * token whether it was ever real and whether it had been revoked. The store
-   * returns null for unknown, expired and revoked alike, and so does this.
+   * ONE ANSWER FOR EVERY WAY OF ANSWERING NO (a failure to look is `CouldNotCheck`, never this
+   * error: it says nothing about the person). A caller holding a stolen token must not learn whether
+   * it was ever real or whether it was revoked, so what goes back is the same whatever the cause. The
+   * service keeps the cause for its own refusal log: `session-revoked` when the store's own row says
+   * the sign-in was revoked, `session-unknown-or-expired` otherwise (also when the cause cannot be
+   * read: the answer is still no), and `no-such-user` for a live sign-in of a person this service does
+   * not hold. `authedBy` (in `server/authed.ts`) writes it there and never sends it.
    */
   async verify(token: string): Promise<string> {
     let userId: string | null;
@@ -194,7 +211,15 @@ export class IdentityService {
     } catch (e) {
       throw new CouldNotCheck(e);
     }
-    if (!userId) throw new Error('not signed in');
+    if (!userId) {
+      let why: WhyNotLive = 'unknown-or-expired';
+      try {
+        why = await withinTheCheckBound(this.sessions.whyNot(token ?? ''), this.checkBoundMs);
+      } catch {
+        why = 'unknown-or-expired';
+      }
+      throw new NotSignedIn(why === 'revoked' ? 'session-revoked' : 'session-unknown-or-expired');
+    }
     // The session can outlive the user it belongs to; the row is authority for
     // the session, not for the account.
     let user: unknown;
@@ -203,7 +228,7 @@ export class IdentityService {
     } catch (e) {
       throw new CouldNotCheck(e);
     }
-    if (!user) throw new NoSuchUser();
+    if (!user) throw new NoSuchUser(userId);
     return userId;
   }
 

@@ -35,6 +35,10 @@
  *    exists for exactly this, and the testkit simply defaults it to nothing.
  *
  * The overhead is paid, so it is deliberately small. It is a floor, not a tip.
+ *
+ * It also reads the view against the network: the indexer's newest DUST event,
+ * a strict wait for the view to reach it, and the numbers written down when a
+ * fee is not paid.
  */
 import { existsSync, mkdirSync, readFileSync, writeFileSync, unlinkSync, statSync } from 'node:fs';
 import { join } from 'node:path';
@@ -70,7 +74,7 @@ export type DustInstall = {
    * 'restored' saved the long sync; 'fresh' did not, but still has the fee
    * floor.
    *
-   * **'unchanged' IS THE SEVERE ONE AND THIS COMMENT USED TO SAY IT WAS NOT.**
+   * **'unchanged' IS THE SEVERE ONE.**
    * It means no wallet of ours is installed, so the library's own is, and its
    * fee overhead is nothing. That is the floor's absence known with certainty,
    * and callers stop on it.
@@ -97,9 +101,14 @@ export type DustInstall = {
  *
  * Call between `MidnightWalletProvider.build(...)` and `wallet.start(...)`.
  *
- * Never throws, but 'unchanged' is NOT a soft outcome and this comment used to
- * say it was. Leaving the SDK's own dust wallet in place leaves a wallet whose
- * fee overhead is nothing, and a fee that can come out at nothing produces a
+ * The installed wallet writes its history to the same store as the one it
+ * replaces, which is the store the wallet's own history is read from.
+ *
+ * It throws for one thing only: a wallet whose history store cannot be found,
+ * because a new wallet given a fresh, empty store instead would, as a fee
+ * payer, refuse every fee after its first. Otherwise it never throws, but
+ * 'unchanged' is NOT a soft outcome. Leaving the SDK's own dust wallet in
+ * place leaves a wallet whose fee overhead is nothing, and a fee that can come out at nothing produces a
  * transaction carrying no dust spend, which the node refuses as malformed. The
  * downside of being wrong is a run that fails at submission, not the slow sync
  * this function also avoids. Callers treat 'unchanged' as seriously as
@@ -112,6 +121,17 @@ export async function installDustWallet(
   network: string,
   root: string,
 ): Promise<DustInstall> {
+  // The history store the wallet was built with. The builder's configuration
+  // field makes a new, empty one each time it is read, so it is taken from the
+  // dust wallet being replaced, which shares the store the wallet reads from.
+  const historyStore = wallet?.wallet?.dust?.constructor?.configuration?.txHistoryStorage;
+  if (!historyStore) {
+    throw new Error(
+      'the wallet\'s history store could not be found on the DUST wallet it was built with, so no DUST wallet was\n'
+        + '  installed. A DUST wallet given a fresh, empty store would never show its own payments in the wallet\'s\n'
+        + '  history, and as a fee payer it would refuse every fee after its first. Nothing has been submitted. This is\n'
+        + '  a change in the wallet library\'s shape, not a chain or funding problem, and starting again will not clear it.');
+  }
   try {
     const tk: any = await import('@midnight-ntwrk/testkit-js');
     const sdk: any = await import('@midnightntwrk/wallet-sdk');
@@ -120,13 +140,14 @@ export async function installDustWallet(
 
     // The configuration the testkit derives from the environment, read off the
     // builder's own public field. Building one by hand would be a second source
-    // of truth for the wallet config, which is how M-19a happened.
+    // of truth for the wallet config.
     const baseConfig = tk.FluentWalletBuilder.forEnvironment(cfg).config;
     if (!baseConfig) throw new Error('could not read the wallet configuration off the builder');
 
-    // Mirrors WalletFactory.createDustWallet, with the one field changed.
+    // Mirrors WalletFactory.createDustWallet, with the fee floor changed and the history store kept.
     const dustConfig = {
       ...baseConfig,
+      txHistoryStorage: historyStore,
       costParameters: {
         ledgerParams: tk.DEFAULT_DUST_OPTIONS.ledgerParams,
         additionalFeeOverhead: DUST_FEE_FLOOR,
@@ -214,10 +235,10 @@ export async function installDustWallet(
        * proof the node rejects with error 170 — which costs a full run to
        * discover and reads like a wallet problem rather than a stale file.
        *
-       * The wait added alongside this cannot catch it. The dust wallet reports
-       * its progress as applied/highest, and highest comes back as 0 — unknown —
-       * so "have you caught up" cannot be answered honestly and any check on it
-       * says yes. An age limit needs no cooperation from the SDK.
+       * The age limit is kept beside the strict wait (`waitForDustAtTip`): a
+       * cache far behind the network would make that wait replay hours of
+       * events before a run could start, and an old file is cheaper to throw
+       * away than to catch up.
        *
        * Three hours is arbitrary but on the safe side of the observed failure:
        * a 17-hour-old cache failed three submissions in a row, and caches
@@ -228,14 +249,10 @@ export async function installDustWallet(
       /*
        * A STALE CACHE COSTS THE CACHE, NOT THE FEE FLOOR.
        *
-       * This branch used to RETURN here, which left the library's own dust
-       * sub-wallet in place — the one built from its defaults, where the
-       * overhead is nothing — while reporting the floor as though it had been
-       * installed. The floor is the reason this function exists: without it a
-       * fee can come out at zero, the balancer selects no dust coin, and the
-       * node refuses the transaction for carrying empty dust actions. So a
-       * cache too old to trust now falls through to the cold swap below, which
-       * is what the next comment already said the rule was.
+       * A cache too old to trust falls through to the cold swap below and keeps
+       * the fee floor: without it a fee can come out at zero, the balancer
+       * selects no dust coin, and the node refuses the transaction for carrying
+       * empty dust actions.
        */
       const stale = ageMs > maxAgeMs;
       if (stale) {
@@ -297,13 +314,6 @@ export async function saveDustState(
  * ------------------------------------------------------------------ */
 
 /**
- * Caught up, not identical to the tip.
- *
- * `isStrictlyComplete()` wants appliedIndex === highestIndex, which on a chain
- * that keeps producing blocks asks the wallet to outrun it. The SDK ships
- * `isCompleteWithin(gap)` for exactly this.
- */
-/**
  * Whether the wallet will even say how far behind it is.
  *
  * It reports applied/highest, and `highest` comes back as 0 on this network —
@@ -319,6 +329,12 @@ export const dustProgressKnown = (p: any): boolean => {
   return h != null && BigInt(h) > 0n;
 };
 
+/**
+ * Caught up within ten events of the last highest id the wallet was sent, for
+ * the probes that only need a view close enough to try with. It cannot see a
+ * stalled subscription, which reports itself complete; paying a fee waits on
+ * `waitForDustAtTip` instead, which reads the indexer.
+ */
 export const dustCaughtUp = (p: any): boolean => {
   if (!p) return false;
   try { if (typeof p.isCompleteWithin === 'function') return !!p.isCompleteWithin(10n); } catch { /* fall through */ }
@@ -331,9 +347,207 @@ export const dustCaughtUp = (p: any): boolean => {
 
 export const dustProgressOf = (s: any) => s?.dust?.state?.progress ?? s?.dust?.progress;
 
+/* ------------------------------------------------------------------ *
+ * The view against the network: strict, read from the indexer
+ * ------------------------------------------------------------------ */
+
 /**
- * BLOCKS UNTIL THE DUST WALLET HAS CAUGHT UP, and every script that submits a
- * transaction must call it.
+ * The last DUST event a view has applied, or null before the first.
+ *
+ * The wallet numbers DUST events as the indexer does, and its applied index is
+ * the id of the last one it applied, so it is compared directly with the
+ * indexer's highest id. Zero means none applied yet.
+ */
+export const dustAppliedOf = (p: any): bigint | null => {
+  try {
+    if (p?.appliedIndex === undefined || p?.appliedIndex === null) return null;
+    const a = BigInt(p.appliedIndex);
+    return a > 0n ? a : null;
+  } catch {
+    return null;
+  }
+};
+
+/** How a view stands against the network, for an operator: `dust applied A of H`. */
+export const describeDustView = (applied: bigint | null, tip: bigint | null): string =>
+  `dust applied ${applied ?? '?'} of ${tip ?? '?'}`;
+
+/** The indexer websocket address an installed DUST wallet syncs from, or null when it names none. */
+export const dustIndexerWsOf = (dust: any): string | null => {
+  const url = dust?.constructor?.configuration?.indexerClientConnection?.indexerWsUrl;
+  return typeof url === 'string' && url !== '' ? url : null;
+};
+
+/** The few members of a websocket the tip reader uses, so a test can stand in for the indexer. */
+export interface TipSocket {
+  onopen: ((ev?: unknown) => void) | null;
+  onmessage: ((ev: { data: unknown }) => void) | null;
+  onerror: ((ev?: unknown) => void) | null;
+  onclose: ((ev?: unknown) => void) | null;
+  send(data: string): void;
+  close(): void;
+}
+
+const TIP_QUESTION = 'subscription ($id: Int) { dustLedgerEvents(id: $id) { id maxId } }';
+
+/**
+ * **THE NEWEST DUST EVENT THE INDEXER HOLDS, READ NOW.**
+ *
+ * The indexer has no query for it; every DUST event it streams carries the
+ * highest id it holds at the moment it sends it. So this asks for the stream
+ * from the view's own applied event (from the start when it has applied none), takes the first answer's
+ * highest id and closes. Refuses when the indexer does not answer in time,
+ * refuses the question or closes first: a tip that was not read is never
+ * taken as reached.
+ */
+export function dustTipAt(
+  wsUrl: string,
+  from: bigint | null,
+  timeoutMs = 15_000,
+  open: (url: string) => TipSocket = (url) => new WebSocket(url, 'graphql-transport-ws') as unknown as TipSocket,
+): Promise<bigint> {
+  return new Promise<bigint>((resolve, reject) => {
+    let socket: TipSocket | null = null;
+    let done = false;
+    const finish = (error: Error | null, tip?: bigint) => {
+      if (done) return;
+      done = true;
+      clearTimeout(timer);
+      try { socket?.close(); } catch { /* the answer is already decided */ }
+      if (error) reject(error); else resolve(tip!);
+    };
+    const timer = setTimeout(() => finish(new Error(
+      `the indexer did not say how far the network's DUST has got within ${Math.round(timeoutMs / 1000)} s`)), timeoutMs);
+    try {
+      socket = open(wsUrl);
+    } catch (e) {
+      finish(new Error(`the indexer could not be reached: ${String((e as Error)?.message ?? e)}`));
+      return;
+    }
+    socket.onopen = () => socket!.send(JSON.stringify({ type: 'connection_init', payload: {} }));
+    socket.onmessage = (m) => {
+      let said: any;
+      try { said = JSON.parse(String(m.data)); } catch { return; }
+      if (said?.type === 'connection_ack') {
+        socket!.send(JSON.stringify({
+          id: '1', type: 'subscribe',
+          payload: { query: TIP_QUESTION, variables: { id: from === null ? null : Number(from) } },
+        }));
+      } else if (said?.type === 'next') {
+        const maxId = said?.payload?.data?.dustLedgerEvents?.maxId;
+        try {
+          finish(null, BigInt(maxId));
+        } catch {
+          finish(new Error('the indexer answered without its highest DUST event'));
+        }
+      } else if (said?.type === 'error' || said?.type === 'complete') {
+        finish(new Error(`the indexer refused the question: ${JSON.stringify(said?.payload ?? '').slice(0, 200)}`));
+      }
+    };
+    socket.onerror = (ev: any) => finish(new Error(`the indexer could not be reached: ${String(ev?.message ?? 'the connection failed')}`));
+    socket.onclose = () => finish(new Error('the indexer closed the connection before it answered'));
+  });
+}
+
+/** Where the view stood when a strict wait ended. */
+export type AtTipOutcome =
+  | { readonly ok: true; readonly applied: bigint; readonly tip: bigint }
+  | { readonly ok: false; readonly why: string };
+
+export interface AtTipOptions {
+  /** How long the applied index may stand still before the view counts as stalled. */
+  readonly stallMs?: number;
+  /** The most the whole wait may take. */
+  readonly totalMs?: number;
+  readonly pollMs?: number;
+  readonly printMs?: number;
+  readonly now?: () => number;
+  readonly sleep?: (ms: number) => Promise<void>;
+}
+
+/**
+ * **WAITS UNTIL THE VIEW HAS APPLIED EVERY DUST EVENT THE INDEXER HELD WHEN
+ * THE WAIT BEGAN, WITH NO TOLERANCE.**
+ *
+ * A spend proof is checked against the network's DUST trees, so a view even
+ * one event short can be refused. It keeps waiting while the applied index
+ * moves, and answers not ok when it has stood still for a minute (a stalled
+ * subscription reports itself complete, so only movement tells), after twenty
+ * minutes in all, or when the indexer cannot say where the network is. It
+ * never answers ok on a reading it did not make. Progress is printed as
+ * `dust applied A of H`.
+ */
+export async function waitForDustAtTip(
+  live: { state: () => any },
+  tipNow: (from: bigint | null) => Promise<bigint>,
+  note: (s: string) => void,
+  o: AtTipOptions = {},
+): Promise<AtTipOutcome> {
+  const stallMs = o.stallMs ?? 60_000;
+  const totalMs = o.totalMs ?? 20 * 60_000;
+  const pollMs = o.pollMs ?? 1_000;
+  const printMs = o.printMs ?? 10_000;
+  const now = o.now ?? (() => Date.now());
+  const sleep = o.sleep ?? ((ms: number) => new Promise<void>((r) => setTimeout(r, ms)));
+  const appliedNow = () => dustAppliedOf(dustProgressOf(live.state()));
+
+  const started = now();
+  let tip: bigint;
+  try {
+    tip = await tipNow(appliedNow());
+  } catch (e) {
+    return { ok: false, why: `the indexer could not say how far the network's DUST has got: ${String((e as Error)?.message ?? e)}` };
+  }
+  let last = appliedNow();
+  let movedAt = started;
+  let printed = started;
+  for (;;) {
+    const applied = appliedNow();
+    if (applied !== null && applied >= tip) return { ok: true, applied, tip };
+    const t = now();
+    if (applied !== last) { last = applied; movedAt = t; }
+    if (t - movedAt >= stallMs) {
+      return { ok: false, why: `the wallet's view of the network's DUST has not moved for ${Math.round(stallMs / 1000)} s (${describeDustView(applied, tip)})` };
+    }
+    if (t - started >= totalMs) {
+      return { ok: false, why: `the wallet's view of the network's DUST did not reach the network's within ${Math.round(totalMs / 60_000)} minutes (${describeDustView(applied, tip)})` };
+    }
+    if (t - printed >= printMs) {
+      printed = t;
+      note(`  ${String(Math.round((t - started) / 1000)).padStart(3)}s  ${describeDustView(applied, tip)}`);
+    }
+    await sleep(pollMs);
+  }
+}
+
+/**
+ * The numbers that explain a fee that could not be paid: how far the view has
+ * got, the coins free to spend, the coins the wallet library has booked, the
+ * coins the ledger state holds unbooked, and the balance. Each reads `?` when
+ * it cannot be read; nothing here throws.
+ */
+export function dustNumbers(state: any, tip: bigint | null): string {
+  const dust = state?.dust;
+  const count = (read: () => unknown): string => {
+    try {
+      const v = read();
+      return Array.isArray(v) ? String(v.length) : '?';
+    } catch {
+      return '?';
+    }
+  };
+  let balance = '?';
+  try { balance = String(dust.balance(new Date())); } catch { /* stays ? */ }
+  return `${describeDustView(dustAppliedOf(dustProgressOf(state)), tip)}; `
+    + `${count(() => dust.availableCoins)} coins free to spend, `
+    + `${count(() => dust.state.pendingDust)} booked by the wallet, `
+    + `${count(() => dust.state.state.utxos)} unbooked in the ledger state; balance ${balance}`;
+}
+
+/**
+ * The loose wait the probes use: a view within ten events of the last highest
+ * id the wallet was sent. A wallet that pays waits on `waitForDustAtTip`
+ * instead.
  *
  * A DUST BALANCE IS NOT A SYNCED DUST WALLET, and submitting on the difference
  * is what produces `1010: Invalid Transaction: Custom error: 170` —
@@ -342,15 +556,8 @@ export const dustProgressOf = (s: any) => s?.dust?.state?.progress ?? s?.dust?.p
  * up, the node rejects it. `balance > 0` goes true long before the wallet is
  * ready, so a balance gate alone passes and then fails at submission.
  *
- * THIS LIVED INSIDE `deploy-preview.ts` AS A COMMENT AND A LOOP, which is why
- * it is here now. `chain-probe.ts` was written fresh, copied the balance gate,
- * did not copy the wait, and failed on error 170 at its first submission — the
- * exact failure the comment in the other file describes, rediscovered at the
- * cost of a run. One rule, one place; the oldest lesson in this project.
- *
  * Bounded and non-fatal: if it does not converge it says so loudly and returns,
- * because a run that refuses to start is worse than one that fails with a known
- * cause.
+ * and the probe goes on with a known cause for any refusal.
  */
 export async function waitForDustCatchUp(
   live: { state: () => any },

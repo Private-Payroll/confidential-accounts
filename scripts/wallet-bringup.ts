@@ -13,22 +13,20 @@
  * three-minute sync gate that could never pass, and had its dust proof rejected
  * by the node as `170 InvalidDustSpendProof`.
  *
- * That is the same failure as M-50/M-55/M-58/M-61/M-65 wearing a different
- * hat: one procedure, written twice, and the second copy missing a line. The
+ * One procedure, written twice, and the second copy missing a line. The
  * answer is not to be more careful. It is for there to be one copy.
  *
- * `false` is load bearing, and the reason recorded here for four rounds was
- * wrong. `start(true)` uses the testkit's own sync gate, and that gate DOES
- * return: `syncWallet` is bounded at 90 seconds and throws. **The reason not to
- * call it is stronger than the one that was written.** It gates on
- * `isStrictlyComplete()`, which asks a wallet to outrun a live chain;
- * and it is reached through `waitForFunds`, which can hit the faucet and submit
- * a dust registration — a SPEND, taken by a bring-up on nobody's instruction
- * (`CLAUDE.md` rule 2). Corrected by `S17`'s platform fact-check, which
- * read the testkit rather than this comment.
+ * `false` is load bearing. `start(true)` uses the testkit's own sync gate,
+ * which gates on `isStrictlyComplete()` against the last highest id the wallet
+ * was sent, and it is reached through `waitForFunds`, which can hit the faucet
+ * and submit a dust registration — a SPEND, taken by a bring-up on nobody's
+ * instruction.
  */
 import type { NetworkName } from '../src/midnight/network.js';
-import { installDustWallet, dustCachePath, waitForDustCatchUp, dustCaughtUp, dustProgressOf } from './dust-wallet.js';
+import {
+  installDustWallet, dustCachePath, waitForDustAtTip, dustTipAt, dustIndexerWsOf, describeDustView,
+  type AtTipOptions, type AtTipOutcome,
+} from './dust-wallet.js';
 import { floorKnownAbsent } from './dust-fee-floor.js';
 import { waitForShieldedScan, type ShieldedWaitOutcome } from './shielded-wallet.js';
 import { rmSync } from 'node:fs';
@@ -90,7 +88,7 @@ export interface BringUpOptions {
    * **WAIT FOR THE SHIELDED SCAN TOO, AND IT IS OFF BY DEFAULT ON PURPOSE.**
    *
    * The dust catch-up below is unconditional because every door that SUBMITS
-   * needs it — `M-141`. This one is not: only a door that spends or
+   * needs it. This one is not: only a door that spends or
    * reads a SHIELDED coin needs the shielded scan, and there is no cache for it
    * here, so a scan runs from genesis every time it is asked for. Turning it on
    * for every caller would put a genesis replay in front of every deploy and
@@ -99,13 +97,31 @@ export interface BringUpOptions {
    * session may not re-run.
    *
    * So the DECISION is the caller's and the IMPLEMENTATION is not: there is one
-   * wait, in `shielded-wallet.ts`, and no door may write a second. That is the
-   * half of `M-104` that actually bites.
+   * wait, in `shielded-wallet.ts`, and no door may write a second.
    */
   withShielded?: boolean;
   /** Overrides the shielded deadline. See `SHIELDED_SCAN_TIMEOUT_MS` — it is not a measurement. */
   shieldedTimeoutMs?: number;
+  /** Overrides how long the DUST view may stand still, and wait in all, before it counts as behind. */
+  atTip?: AtTipOptions;
   onNote?: (message: string) => void;
+}
+
+/**
+ * **WAITS UNTIL A LIVE WALLET'S DUST VIEW HAS APPLIED EVERY EVENT THE INDEXER
+ * HOLDS NOW**, reading the indexer the installed DUST wallet syncs from.
+ * Answers where it stood; the caller decides whether a view short of the
+ * network may go on. Called by the bring-up, and again by a launcher just
+ * before it says it is ready.
+ */
+export async function dustViewAtTip(
+  live: Pick<LiveWallet, 'wallet' | 'state'>,
+  note: (s: string) => void,
+  options: AtTipOptions = {},
+): Promise<AtTipOutcome> {
+  const ws = dustIndexerWsOf(live.wallet?.wallet?.dust);
+  if (ws === null) return { ok: false, why: 'the installed DUST wallet names no indexer to read the network\'s DUST from' };
+  return waitForDustAtTip(live, (from) => dustTipAt(ws, from), note, options);
 }
 
 /**
@@ -221,8 +237,7 @@ export async function bringUpWallet(
 
     // THE LINE THAT WAS MISSING for four runs. Without it nothing syncs, ever.
     // `false` and never `true`: `start(true)` reaches `waitForFunds`, which can
-    // hit the faucet and SUBMIT. See the header — the older reason given here
-    // ("M-22, does not return") was refuted by reading the testkit.
+    // hit the faucet and SUBMIT. See the header.
     await wallet.start(false);
 
     latest = null;
@@ -283,33 +298,29 @@ export async function bringUpWallet(
    * CALLER CAN OMIT IT.
    *
    * The loop above waits for a BALANCE. A spend proof built from a dust view
-   * that has a balance and has not caught up is rejected by the node as
-   * `1010: Invalid Transaction: Custom error: 170` — InvalidDustSpendProof.
-   *
-   * `deploy-preview.ts` called `waitForDustCatchUp` itself, at its own call
-   * site, and worked. The vault deploy reused THIS function — correctly, per
-   * And did not know there was a second step afterwards, so the first
-   * vault deploy ever submitted was refused twice with 170: once from a
-   * 123-minute-old cache, and again from a wallet freshly synced from genesis
-   * in 22 seconds. Neither was stale data. Both were an uncaught-up view.
-   *
-   * This is `M-141`'s lesson a second time, one layer up: a rule that lives at
-   * a call site protects that call site and nothing else. The shared function
-   * LOOKED like the whole bring-up, so the next caller reasonably assumed it
-   * was. Now it is.
-   *
-   * `deploy-preview.ts`'s own call is left where it is and becomes a no-op —
-   * `waitForDustCatchUp` returns immediately when the view is already caught
-   * up — because removing it is a change to the account's live deploy
-   * instrument that nothing in a session can re-run.
+   * that has a balance and has not applied every DUST event the network holds
+   * can be rejected by the node as `1010: Invalid Transaction: Custom error:
+   * 170`. So the view is waited for against the indexer, strictly, while it
+   * moves. A wallet that will pay (`requireDust`) and does not get there is
+   * not handed back: the run stops here rather than say it is ready with a
+   * view behind the network. Any other wallet is handed back with a warning.
    */
   if (options.withDust) {
-    await waitForDustCatchUp(live, note, (st: any) => {
-      const p = dustProgressOf(st);
-      if (!p) return 'no dust progress reported yet';
-      return `dust ${String(p.synced ?? p.applyGap ?? '?')}/${String(p.total ?? p.sourceGap ?? '?')}`;
-    });
-    if (dustCaughtUp(dustProgressOf(live.state()))) note('dust wallet caught up');
+    const at = await dustViewAtTip(live, note, options.atTip);
+    if (!('why' in at)) {
+      note(`dust wallet caught up: ${describeDustView(at.applied, at.tip)}`);
+    } else if (options.requireDust) {
+      live.stop();
+      try { await wallet.stop?.(); } catch { /* the refusal below is what matters */ }
+      throw new Error(
+        `${at.why}.\n` +
+          '  A fee paid from a view behind the network can be refused by the node, so this wallet is not\n' +
+          '  handed on. Nothing has been submitted and nothing is at risk. Start again; if it stops at the\n' +
+          '  same place, the indexer or this machine\'s connection to it is where to look.',
+      );
+    } else {
+      note(`\x1b[33m${at.why}; anything this wallet pays may be refused (error 170)\x1b[0m`);
+    }
   }
 
   /*
@@ -322,9 +333,8 @@ export async function bringUpWallet(
    * wallet holds 0 of that colour`, two lines under `wallet ready after 1s`,
    * against a wallet that had held ten trillion of it minutes earlier.
    *
-   * `M-141` one layer further along: a rule that lives at a call site protects
-   * that call site and nothing else. The wait is one function and it is reached
-   * from here.
+   * A rule that lives at a call site protects that call site and nothing else.
+   * The wait is one function and it is reached from here.
    */
   if (options.withShielded) shieldedOutcome = await waitForShielded();
 

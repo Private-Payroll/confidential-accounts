@@ -29,18 +29,21 @@ useOnlyTheseSettings({
 
 const ORIGIN = 'https://payroll.example';
 
-type Mode = 'absent' | 'sends' | 'refuses' | 'fails';
+type Mode = 'absent' | 'sends' | 'refuses' | 'fails' | 'unpaid' | 'fails-with-a-code';
 let mode: Mode = 'sends';
 const sent: Array<{ accountId: string; bytes: number[] }> = [];
 
 const { SimulatedLedger, SimulatedProofSystem, SimulatedCommitments } = await import('../core/ledger.js');
 const { NothingWasSent } = await import('../core/jobs.js');
+const { FeeNotPaid } = await import('../midnight/sponsor.js');
 const { handInWiring } = await import('../wiring/handed-in.js');
 
 const submitProven = async (accountId: string, bytes: Uint8Array) => {
   sent.push({ accountId, bytes: [...bytes] });
   if (mode === 'refuses') throw new NothingWasSent('the fee payer refused: over the ceiling');
   if (mode === 'fails') throw new Error('the node closed the socket');
+  if (mode === 'unpaid') throw new FeeNotPaid('the fee payer did not pay this fee. Nothing was sent.');
+  if (mode === 'fails-with-a-code') throw Object.assign(new Error('the node closed the socket'), { code: 'fee-not-paid' });
   return { ref: 'ref-proven', at: '' };
 };
 
@@ -162,6 +165,24 @@ describe('POST /api/accounts/:id/proven', () => {
     const failed = await call('POST', `/api/accounts/${id}/proven`, { token, body: { tx: TX } });
     expect(failed.status).toBe(502);
     expect(failed.body.nothingWasSent, 'a submission that may have landed was called nothing sent').toBe(false);
+  });
+
+  /*
+   * RED WHEN: a fee that was not paid for a device's proven transaction (the first anchor among them) reaches the page
+   * without its code; or an answer that may have landed carries one.
+   */
+  it('says when the fee was not paid, with its code, and only when nothing was sent', async () => {
+    const token = await signedIn(26);
+    const id = await aCompany(token);
+    mode = 'unpaid';
+    const unpaid = await call('POST', `/api/accounts/${id}/proven`, { token, body: { tx: TX } });
+    expect(unpaid.status).toBe(422);
+    expect(unpaid.body).toMatchObject({ nothingWasSent: true, code: 'fee-not-paid' });
+    mode = 'fails-with-a-code';
+    const failed = await call('POST', `/api/accounts/${id}/proven`, { token, body: { tx: TX } });
+    expect(failed.status).toBe(502);
+    expect(failed.body.code).toBeUndefined();
+    mode = 'sends';
   });
 
   /* RED WHEN: a missing transaction, or a ledger that cannot send, is answered as anything but nothing sent. */

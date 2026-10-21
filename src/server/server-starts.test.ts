@@ -229,9 +229,9 @@ describe('starting the payroll server', () => {
 
   it('THE ONE THAT KEEPS A TEST RUN OFF A LIVE DATABASE: both answers at once is refused', async () => {
     /*
-     * `X2`, and it is the guard that makes reading `.env` safe.
+     * It is the guard that makes reading `.env` safe.
      *
-     * Before this round the server never read `.env`, so a test file could say
+     * Were the server not to read `.env`, a test file could say
      * `ALLOW_MEMORY_SESSIONS=1` and be certain of getting memory. Now the file
      * is read, and a developer's `.env` holds the LIVE connection string — so
      * the same test file would have opened the real database and written
@@ -333,14 +333,16 @@ describe('starting the payroll server', () => {
    *
    * Every other case gives the server a database that says its migrations are
    * applied. This one gives it an address that reaches nothing, and reads that
-   * it stopped, said it could not check, and said what to run - rather than
-   * listening on a database it knows nothing about.
+   * it stopped, said the database did not answer, and said to start again and
+   * then check where it points - rather than listening on a database it knows
+   * nothing about, or sending the person to run the setup again.
    */
   it('a database that cannot be asked about its migrations is refused, and does not listen', async () => {
     const r = await start(`DATABASE_URL=${NOWHERE}\n`, { DATABASE_URL: undefined }, 'configured');
     expect(r.listened, r.out).toBe(false);
     expect(r.code).toBe(1);
-    expect(r.out).toContain('COULD NOT BE CHECKED FOR UNAPPLIED MIGRATIONS');
-    expect(r.out).toContain('the database setup');
+    expect(r.out).toContain('THE DATABASE DID NOT ANSWER');
+    expect(r.out).toContain('check DATABASE_URL');
+    expect(r.out).not.toContain('the database setup');
   });
 });

@@ -3,7 +3,7 @@ import type { Hex } from '../../../../src/core/crypto.js';
 import type { AccountHoldersRead } from 'midnight-identity/profile/records-key';
 import type { Account, SealedAccount } from '../../../../src/core/types.js';
 import {
-  api, companyKeyReleasedFor, companyKeysForVaults, holdersFromTheWallet, keysFor, openAccount, seatsAdmittedFor, viewingKeyFor, type AccountKeys,
+  api, companyKeyReleasedFor, companyKeysForVaults, holdersFromTheWallet, keysFor, openAccount, seatsAdmittedFor, viewingKeyFor, type AccountKeys, type OpenedAccount,
 } from 'vaults-web-shared/keyring.js';
 import { governedCallServiceFor, seatsLeavingHere, type LeavingReads } from 'vaults-web-shared/governed-call-on-device.js';
 import {
@@ -12,7 +12,7 @@ import {
 import type { CompanyKeys } from '../../../../src/core/company-key.js';
 import { peopleOnTheWire } from '../../../../src/core/person-record.js';
 import { vouchedRunsHere } from 'vaults-web-shared/run-rebuilt-here.js';
-import type { BelievedAccount, RosterReads } from 'vaults-web-shared/roster-here.js';
+import type { RosterReads } from 'vaults-web-shared/roster-here.js';
 import {
   attestedIn, directoryFilingsFrom, directoryHere, directoryJudge, directoryWithItsRecordsHere, fileDirectoryFiling, type DirectoryHereDeps,
   type DirectoryRead,
@@ -30,6 +30,8 @@ import { Fault, FAULT } from '../faults.js';
 import { ACCOUNT_ORIGIN } from './session.js';
 import { theVaultBuilder } from './vault-builder.js';
 import { SERVICE as RECORDS } from './company-records.js';
+/* Why a company did not open here, as a code: handed on with the company read, so a list loads it with this file. */
+export { ACT_REFUSAL, refusalOf } from './refusals.js';
 
 /*
  * WHO THIS PAGE BELIEVES FILED A COMPANY'S RECORDS, the one way every screen
@@ -127,7 +129,7 @@ export const rosterReadsFor = (companyId: string, company: CompanyLabel, account
 });
 
 /** The company as this page believes it (`openAccount`), its signers read from its roster record only, under the keys its directory gives. */
-export const openedHere = (sealed: SealedAccount): Promise<BelievedAccount | null> =>
+export const openedHere = (sealed: SealedAccount): Promise<OpenedAccount | null> =>
   openAccount(sealed, holdersHere, anchoredHere, (_company, account) => leavesFor(account), (rec) => companyKeysFor(rec.id, rec, keysFor(rec.id)!));
 
 /**

@@ -18,7 +18,7 @@
  * wallet again**, because keeping it in storage would put it where any script
  * on the page can read it.
  */
-import { boundedRead, isReadMethod } from './read-bound.js';
+import { isReadMethod, serviceRead } from './read-bound.js';
 import type { KeysHeld } from '../../../src/core/company-key.js';
 import type { Inviter, SignedSeatInvitation } from '../../../src/core/invitation.js';
 import type { DirectoryHereDeps, OwedDirectoryEntry } from './vault-page-doors.js';
@@ -47,6 +47,10 @@ import {
 import { walletInThisPage, walletQuietlyInThisPage } from './wallet-frame.js';
 import { approvalMessage } from '../../../src/core/account.js';
 import { rosterBelievedHere, RosterNotBelieved, seatsAdmittedHere, type BelievedAccount } from './roster-here.js';
+import type { RefusedEntry } from '../../../src/core/roster-record.js';
+
+/** A company as this device opened it: the entries it believes, and each entry it refused with why, for a screen to say. */
+export type OpenedAccount = BelievedAccount & { readonly refused: readonly RefusedEntry[] };
 import { directoryFilingsFrom } from './vault-page-doors.js';
 import type { SealedCompanyRecord } from '../../../src/midnight/sealed-record-wire.js';
 import { openRoster } from '../../../src/core/roster-record.js';
@@ -559,9 +563,18 @@ export class NoCreationKeptHere extends Error {}
 /** The service holds no record at the address asked for (a 404). The message is the service's own. */
 export class NotOnTheService extends Error {}
 
-/** The service refused a request, and what its refusal carried besides the words: whether nothing was sent, and for what. */
-class ServiceRefused extends Error {
-  constructor(message: string, readonly body: Record<string, unknown>) { super(message); }
+/**
+ * The service refused a request, and what its refusal carried besides the words: whether nothing was sent, and for what.
+ * `code` is the reason a fee was not paid (`fee-not-paid`, `network-refused`), kept only from a 422 whose body says
+ * nothing was sent; any other answer, a 502 included, leaves it unset.
+ */
+export class ServiceRefused extends Error {
+  readonly code: 'fee-not-paid' | 'network-refused' | undefined;
+  constructor(message: string, readonly body: Record<string, unknown>, status?: number) {
+    super(message);
+    const named = body['code'];
+    this.code = status === 422 && body['nothingWasSent'] === true && (named === 'fee-not-paid' || named === 'network-refused') ? named : undefined;
+  }
 }
 
 const apiOnce = async (path: string, opts?: RequestInit) => {
@@ -592,14 +605,14 @@ const apiOnce = async (path: string, opts?: RequestInit) => {
   }
   if (r.status === 503 && body?.code === 'could-not-check') throw new CouldNotCheckError(body?.error ?? 'the service could not check your sign-in');
   if (r.status === 404) throw new NotOnTheService(body?.error ?? `request failed: ${r.status}`);
-  if (!r.ok) throw new ServiceRefused(body?.error ?? `request failed: ${r.status}`, typeof body === 'object' && body !== null ? body : {});
+  if (!r.ok) throw new ServiceRefused(body?.error ?? `request failed: ${r.status}`, typeof body === 'object' && body !== null ? body : {}, r.status);
   return body;
 };
 
 export const api = (path: string, opts?: RequestInit & { read?: boolean }) => {
   const { read, ...init } = opts ?? {};
   if (read !== true && !isReadMethod(init.method)) return apiOnce(path, init);
-  return boundedRead(`The service (${path.split('?')[0]})`, (signal) => apiOnce(path, { ...init, signal }));
+  return serviceRead(`The service (${path.split('?')[0]})`, (signal) => apiOnce(path, { ...init, signal }));
 };
 
 /* ---------------- sign in and out ---------------- */
@@ -2467,7 +2480,8 @@ export function viewingKeyFor(account: { id: string; wrappedKeys: any[] }): Hex 
  * it through the person's own wallet, and each entry held to its own signer's
  * witnesses, this device's own key among them for its own entry. A company with
  * no roster record is refused with `NO_ROSTER_RECORD`; the unsigned list on
- * its account record is never read. A refusal throws `RosterNotBelieved`.
+ * its account record is never read. A refusal throws `RosterNotBelieved`. Each
+ * entry refused on its own is handed back beside the company, with why.
  *
  * The roster opens under the company's key of the epoch it was sealed at,
  * from `companyKeys`.
@@ -2488,9 +2502,11 @@ export async function openAccount(
    * page always gives them. Without them, this seat's served copy is the one key, as for a company never changed.
    */
   companyKeys?: (rec: SealedAccount) => Promise<KeysHeld>,
-): Promise<BelievedAccount | null> {
+): Promise<OpenedAccount | null> {
   const read = await rosterReadFor(rec, holders, anchored, leaves, companyKeys);
-  return read === null ? null : (await rosterBelievedHere(...read)).account;
+  if (read === null) return null;
+  const believed = await rosterBelievedHere(...read);
+  return { ...believed.account, refused: believed.refused };
 }
 
 /**

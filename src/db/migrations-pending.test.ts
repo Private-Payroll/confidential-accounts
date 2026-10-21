@@ -6,7 +6,7 @@ import { describe, it, expect, beforeAll, afterAll } from 'vitest';
 import { mkdtempSync, writeFileSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { refuseWhileMigrationsPending, pendingMigrations, readMigrations } from './migrate.js';
+import { refuseWhileMigrationsPending, pendingMigrations, readMigrations, DATABASE_WAKE } from './migrate.js';
 
 let dir: string;
 beforeAll(() => {
@@ -53,13 +53,69 @@ describe('the service does not start on a database that is behind its migrations
     for (const f of ['0001_first.sql', '0002_second.sql', '0003_third.sql']) expect(said).toContain(f);
   });
 
+  /** A wake that never waits, recording each pause it was asked for. */
+  const wakeRecording = (tries = 3) => {
+    const paused: number[] = [];
+    return { paused, wake: { tries, pauseMs: 10_000, sleep: async (ms: number) => { paused.push(ms); } } };
+  };
+
   /*
-   * RED WHEN: a database that cannot be read is treated as current and the service starts blind.
+   * RED WHEN: a database that does not answer is treated as current and the service starts blind.
+   * RED WHEN: a database that does not answer is asked once only, so a sleeping database stops every start.
+   * RED WHEN: a database that does not answer sends the person to run the database setup again.
    */
-  it('refuses when the database cannot be read, and says to run the database setup', async () => {
-    const said = await refuseWhileMigrationsPending(databaseRecording(new Error('connection refused')), dir);
-    expect(said).toContain('COULD NOT BE CHECKED');
+  it('asks a database that does not answer three times, then says it did not answer and to start again', async () => {
+    const { paused, wake } = wakeRecording();
+    let asked = 0;
+    const silent: any = async () => { asked += 1; throw new Error('connection refused'); };
+    const said = await refuseWhileMigrationsPending(silent, dir, wake);
+    expect(asked).toBe(3);
+    expect(paused).toEqual([10_000, 10_000]);
+    expect(said).toContain('THE DATABASE DID NOT ANSWER');
     expect(said).toContain('connection refused');
+    expect(said).toContain('start again in a minute');
+    expect(said).toContain('DATABASE_URL');
+    expect(said).not.toContain('database setup');
+  });
+
+  /*
+   * RED WHEN: a start as shipped asks a database that does not answer fewer than three times, or not ten seconds apart.
+   */
+  it('as shipped, asks three times, ten seconds apart', async () => {
+    expect(DATABASE_WAKE).toMatchObject({ tries: 3, pauseMs: 10_000 });
+    const paused: number[] = [];
+    let asked = 0;
+    const silent: any = async () => { asked += 1; throw new Error('connection refused'); };
+    await refuseWhileMigrationsPending(silent, dir, { ...DATABASE_WAKE, sleep: async (ms: number) => { paused.push(ms); } });
+    expect(asked).toBe(3);
+    expect(paused).toEqual([10_000, 10_000]);
+  });
+
+  /*
+   * RED WHEN: a database that wakes on the second ask still stops the start.
+   */
+  it('starts on a database that answers on the second ask and is current', async () => {
+    const { wake } = wakeRecording();
+    let asked = 0;
+    const waking: any = async (strings: TemplateStringsArray) => {
+      asked += 1;
+      if (asked === 1) throw new Error('connect timeout');
+      return databaseRecording(['0001', '0002', '0003'])(strings);
+    };
+    expect(await refuseWhileMigrationsPending(waking, dir, wake)).toBeNull();
+    expect(asked).toBe(2);
+  });
+
+  /*
+   * RED WHEN: a database that answered with its own error is asked again, or is reported as not answering.
+   */
+  it('does not ask again when the database answered with an error of its own, and sends the person to the setup', async () => {
+    const { paused, wake } = wakeRecording();
+    const refusing: any = async () => { throw Object.assign(new Error('permission denied for table schema_migrations'), { code: '42501' }); };
+    const said = await refuseWhileMigrationsPending(refusing, dir, wake);
+    expect(paused).toEqual([]);
+    expect(said).toContain('COULD NOT BE CHECKED');
+    expect(said).toContain('permission denied');
     expect(said).toContain('the database setup');
   });
 

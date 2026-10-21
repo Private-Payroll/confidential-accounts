@@ -1775,9 +1775,8 @@ export interface CompanyVault {
    */
   bornHeld?: true;
   /**
-   * **THE VAULT'S DEPLOY, AS SENT**, base64: what its address was made from. A
-   * signer's device reads the vault as deployed from it before the vault is
-   * adopted or set up, and checks that it makes this address.
+   * The vault's deploy as sent, base64. Not written: nothing reads it, and the
+   * chain holds the vault. A record may still carry one.
    */
   deploy?: string;
 }
@@ -1799,9 +1798,12 @@ export interface AccountOpeningRecord {
 
 /**
  * **A COMPANY ACCOUNT CREATED FROM ITS FOUNDING SIGNER'S BROWSER, AS IT WAS
- * SENT.** Recorded before anything is sent and never written over, so a retry
- * sends these same bytes and never a second account: a rebuilt deploy draws a
- * new nonce, and with it a new address. Everything here is public once it lands.
+ * SENT.** Recorded before anything is sent, so a retry sends these same bytes
+ * and never a second account: a rebuilt deploy draws a new nonce, and with it
+ * a new address. Everything here is public once it lands. Once the account is
+ * finished the bytes are no longer needed to send anything, so they are
+ * replaced by their sha256, which is all a resuming device's repeat is
+ * compared against.
  */
 export interface AccountDeploy {
   accountId: string;
@@ -1809,9 +1811,13 @@ export interface AccountDeploy {
   address: Hex;
   /** The founding signer's committee key the deploy is held by, at threshold 1 and counter 0. */
   foundingKey: { tag: string; value: string };
-  /** The deploy, proven, as base64. */
+  /** The deploy, proven, as base64; empty once the account is finished and only its digest is kept. */
   deploy: string;
-  /** The second step, the insert of the rest of the account's circuits, signed by that key, as base64. */
+  /** The second step, the insert of the rest of the account's circuits, signed by that key, as base64; empty once finished. */
   insert: string;
+  /** The sha256 of the deploy's base64 text, as hex, kept in place of the bytes once the account is finished. */
+  deployDigest?: string;
+  /** The sha256 of the second step's base64 text, as hex, kept in place of the bytes once the account is finished. */
+  insertDigest?: string;
   recordedAt: string;
 }

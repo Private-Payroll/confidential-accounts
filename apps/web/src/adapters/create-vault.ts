@@ -161,6 +161,7 @@ export type Readiness = { of: Ready } | { of: typeof ACTED.refused; why: ActRefu
 const SERVICE = {
   vaultKeys: '/vault-keys', offers: '/offers', authority: '/authority', vaults: '/vaults', slash: '/',
   startAccount: '/start/account', startSecret: '/start/secret', startCopy: '/start/copy', post: 'POST',
+  proposals: '/api/proposals/', carried: '/carried',
 } as const;
 
 /** The company's routes a vault's start is sent through, beside the vault routes the page already calls. */
@@ -344,6 +345,7 @@ async function run(
       /* The vault's adoption and first secret run, written down as the company's proposals by this seat and raised with them. */
       proposals: {
         accountId: companyId, directory: directoryRead, companyKeys, signingSecret: o.keys.signingSecret, entered,
+        carried: (id, body) => api(SERVICE.proposals + id + SERVICE.carried, { method: SERVICE.post, body: JSON.stringify(body) }),
         service: {
           callState: proposalsService.callState, send: proposalsService.send,
           file: proposalsService.file!, sealedProposals: proposalsService.sealedProposals!,
@@ -435,10 +437,12 @@ export const createVault = (personId: string, companyId: string, onStage: (stage
 /**
  * CARRY ON SETTING UP the vault `vault`, which the committee has held since it was sent and which is not started: from
  * any signer's device, which approves its adoption and its first secret with this signer's own keys once every key that
- * secret is sealed to checks out.
+ * secret is sealed to checks out. `info`, when given, is the vault's name and description, filed before the set up
+ * carries on, for a vault none was filed for; one filed already is kept and said.
  */
-export const finishStarting = (personId: string, companyId: string, vault: string, onStage: (stage: Creating) => void): Promise<VaultCreated> =>
-  run(personId, companyId, onStage, vault);
+export const finishStarting = (
+  personId: string, companyId: string, vault: string, onStage: (stage: Creating) => void, info?: VaultInfoGiven,
+): Promise<VaultCreated> => run(personId, companyId, onStage, vault, info);
 
 /**
  * GIVE YOUR VAULT KEYS for the company `companyId`, where creating a vault

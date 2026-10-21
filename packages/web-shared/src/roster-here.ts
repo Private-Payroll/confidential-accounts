@@ -50,7 +50,8 @@ import {
   companyWirePaths, fromCompanyWire, signCompanyFiling, toCompanyWire, verifiedCompanyFiler, type SealedCompanyRecord,
 } from '../../../src/midnight/sealed-record-wire.js';
 import { heldStandingOf } from '../../../src/midnight/records-held.js';
-import { companyRecordEntry } from '../../../src/midnight/record-manifest.js';
+import { companyRecordEntry, type ManifestEntryBody } from '../../../src/midnight/record-manifest.js';
+import { FOUNDING_KEY_EPOCH, foundingStateRefusal, stateRecordId } from '../../../src/core/founding-state.js';
 import type { RecordsEntered } from './record-entered-here.js';
 import { companyRecordKey, filingRefusalOf, mayInvite, seatsWithAnotherRecordsKey, type DirectorySeat } from '../../../src/midnight/seat-directory.js';
 import { recordsKeypairFrom } from '../../../src/midnight/company-nonce-secret.js';
@@ -550,10 +551,51 @@ export async function fileTheRosterFollowedHere(d: RosterDoors): Promise<number 
   if (read.followed === null) return null;
   if (filerRefusedHere(read.held.here, signingPublicKeyOf(d.signingSecret), read.version + 1)) return null;
   const { filing, entry } = nextFiling(d, read.sealed.keyEpoch, seatedOf(read.carried), read.version);
+  const entries = await withTheFoundingFirst(d, nothingAnchoredIn(read.held), entry);
   await d.api(route(d.accountId, '/roster'), { method: 'POST', body: JSON.stringify({ ...filing, folded: [] }) });
-  await d.entered.enter([entry]);
+  await d.entered.enter(entries);
   return filing.roster.version;
 }
+
+/**
+ * **THE ENTRIES A ROSTER FILED FROM HERE GOES IN WITH.** While nothing of the
+ * company is anchored, the company's first state and first roster go in first,
+ * when this seat's own signature covers them as the founding seat's: the first
+ * anchor must hold them, and a later roster entered alone would leave them below
+ * it. One entered already is answered as entered. Read from the service, and
+ * kept only as this seat signed them; when they cannot be read, the roster
+ * goes in alone, and the founding seat's device enters them at its first anchor.
+ * Read before the roster is filed, so a version filed is always entered.
+ */
+export const withTheFoundingFirst = async (
+  d: Pick<RosterDoors, 'api' | 'accountId' | 'signingSecret'>, nothingAnchored: boolean, entry: ManifestEntryBody,
+): Promise<ManifestEntryBody[]> => {
+  if (!nothingAnchored) return [entry];
+  const mine = signingPublicKeyOf(d.signingSecret);
+  const first = async (kind: 'state' | 'roster', id: string): Promise<SealedCompanyRecord | null> => {
+    const b = await d.api(companyWirePaths.one(d.accountId, kind, id, 1)) as { filed?: unknown } | null;
+    return b?.filed == null ? null : fromCompanyWire(b.filed, { company: d.accountId, kind, id, version: 1 }).sealed;
+  };
+  let state: SealedCompanyRecord | null;
+  let roster: SealedCompanyRecord | null;
+  try {
+    [state, roster] = await Promise.all([first('state', stateRecordId(FOUNDING_KEY_EPOCH)), first('roster', ROSTER_ID)]);
+  } catch {
+    return [entry];
+  }
+  const founding = [
+    state !== null && foundingStateRefusal(state, d.accountId, mine) === null ? state : null,
+    roster !== null && foundingRosterRefusal(roster, d.accountId, mine) === null ? roster : null,
+  ].filter((r): r is SealedCompanyRecord => r !== null);
+  return [...founding.map(companyRecordEntry), entry];
+};
+
+/**
+ * Whether this read found nothing of the company anchored. A read that stopped at a header it could not check counts
+ * as anchored, so the roster goes in alone and the founding seat's device enters the founding records at its first
+ * anchor, which it makes only while the chain shows nothing anchored.
+ */
+const nothingAnchoredIn = (held: RosterReadHeld): boolean => held.here.records.reached.seq < 0 && held.here.records.stopped === null;
 
 /**
  * The roster's next version, sealed and signed here under the company's key in
@@ -764,11 +806,12 @@ export async function admitSignerHere(d: RosterDoors, input: { signerId: string;
   const sealing = sealingWith(d.viewingKey, sealed.keyEpoch);
   const wrap = wrapKey(sealing.key, payload.wrappingPublicKey);
   const { filing, entry } = nextFiling(d, sealed.keyEpoch, next, version, sealing);
+  const entries = await withTheFoundingFirst(d, nothingAnchoredIn(read.held), entry);
   await d.api(route(d.accountId, `/signers/${encodeURIComponent(input.signerId)}/admit`), {
     method: 'POST',
     body: JSON.stringify({ ...filing, leaf: payload.leafCommitment.toLowerCase(), wrap }),
   });
-  await d.entered.enter([entry]);
+  await d.entered.enter(entries);
 }
 
 /**
@@ -821,7 +864,7 @@ export interface Folded {
 export async function foldOffersHere(d: RosterDoors): Promise<Folded> {
   const { offers } = await d.api(route(d.accountId, '/vault-keys/offers')) as { offers: VaultKeysOffer[] };
   if (offers.length === 0) return { folded: [], refused: [] };
-  const { sealed, carried, version, witnesses } = await rosterHere(d);
+  const { sealed, carried, version, witnesses, held } = await rosterHere(d);
   /* The entries the next version carries (`carriedHere`): a fold changes only the entries of the offers it takes. */
   let roster = seatedOf(carried);
   const folded: string[] = [];
@@ -866,7 +909,8 @@ export async function foldOffersHere(d: RosterDoors): Promise<Folded> {
    */
   if (folded.length === 0) return { folded, refused };
   const { filing, entry } = nextFiling(d, sealed.keyEpoch, roster, version);
+  const entries = await withTheFoundingFirst(d, nothingAnchoredIn(held), entry);
   await d.api(route(d.accountId, '/roster'), { method: 'POST', body: JSON.stringify({ ...filing, folded }) });
-  await d.entered.enter([entry]);
+  await d.entered.enter(entries);
   return { folded, refused };
 }

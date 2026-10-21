@@ -89,6 +89,13 @@ describe('a refusal on the screen', () => {
     for (const [why, says] of resolvedBy) expect(said(why), why).toMatch(says);
   });
 
+  /* RED WHEN: a fee that could not be paid, or a step the network refused, is not said as such with nothing lost and the step to be tried again, or sends the person to support. */
+  it('says a fee not paid and a network refusal as that, nothing lost, to try again, never contact support', () => {
+    expect(said(ACT_REFUSAL.feeNotPaid)).toMatch(/fee for this step could not be paid just now.*nothing was lost.*try the step again/iu);
+    expect(said(ACT_REFUSAL.networkRefused)).toMatch(/network refused this step just now.*nothing was sent and nothing was lost.*try the step again/iu);
+    for (const why of [ACT_REFUSAL.feeNotPaid, ACT_REFUSAL.networkRefused]) expect(said(why), why).not.toMatch(/support/iu);
+  });
+
   /* RED WHEN: a person who cannot sign a committee change is told the other signers will sign the rest, when only the company's super admins sign it; or a change whose check disagrees with the chain is said as the company's records not matching, when no records are read. */
   it('names the super admins, not the signers, for a committee change', () => {
     expect(said(ACT_REFUSAL.nothingToSign)).toMatch(/other super admins sign the rest/u);

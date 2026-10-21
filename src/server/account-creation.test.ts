@@ -16,12 +16,13 @@ import { identityFromWords } from 'midnight-identity';
 import { committeeKeyFor, committeeSigningKeyFor } from 'midnight-identity/profile/committee-key';
 import { buildCreationInsert } from 'midnight-identity/profile/contract-keys';
 import type { CompanyLabel } from 'midnight-identity/profile/company-label';
-import { MemoryStore } from '../core/store.js';
+import { MemoryStore, accountDeployDigest } from '../core/store.js';
 import type { SealedAccount } from '../core/types.js';
 import { CREATION_STEPS, DEPLOYED_CIRCUITS } from '../midnight/deferral.js';
 import { circuitsRefusal } from '../wiring/vault-submission.js';
 import { readProvenTransaction } from '../wiring/proven-submission.js';
 import { NothingWasSent } from '../core/jobs.js';
+import { FeeNotPaid } from '../midnight/sponsor.js';
 import { accountCreationRoutes, serverCreationRefusal } from './account-creation.js';
 import { accountCreationExpectationsIn } from './vault-chain.js';
 import { buildAccountDeploy, finishedCreation } from '../../packages/web-shared/src/vault-builder.js';
@@ -123,6 +124,8 @@ let landing: boolean;
 let holding: Promise<void> | null;
 /** A state the chain is read as holding for an account in place of its own, for a test of what is read from it. */
 let readAs: unknown | undefined;
+/** While set, the fee payer's lane throws this instead of sending. */
+let refuseWith: Error | null;
 let server: ReturnType<express.Express['listen']>;
 let base: string;
 
@@ -137,6 +140,7 @@ beforeEach(async () => {
   holding = null;
   clock = () => new Date();
   readAs = undefined;
+  refuseWith = null;
   const app = express();
   app.use(accountCreationRoutes({
     signedIn: (req, res, next) => { if (req.headers['x-test-person'] === undefined) { res.status(401).end(); return; } (req as { userId?: string }).userId = String(req.headers['x-test-person']); next(); },
@@ -146,6 +150,7 @@ beforeEach(async () => {
       sendVault: async (_a: string, what: string, _arrival: unknown, bytes: Uint8Array, check: (tx: unknown) => unknown, read: (b: Uint8Array) => Promise<unknown>) => {
         const refused = await check(await read(bytes));
         if (refused !== null) throw new NothingWasSent(String(refused));
+        if (refuseWith !== null) throw refuseWith;
         if (holding !== null) await holding;
         sent.push(what);
         if (landing) chain.apply(bytes);
@@ -197,6 +202,21 @@ describe.skipIf(!ON_DISK)('A COMPANY\'S ACCOUNT FROM ITS FOUNDING SIGNER\'S BROW
     /* Finishing again sends nothing. */
     expect((await call('/api/accounts/acc_1/creation/finish', 'POST')).body).toMatchObject({ state: 'pay-key-owed' });
     expect(sent).toHaveLength(2);
+  });
+
+  /*
+   * RED WHEN: a fee that was not paid reaches the page without the code that says so.
+   * RED WHEN: a send whose outcome is not known carries a code a page would read as nothing lost.
+   */
+  it('A FEE THAT WAS NOT PAID SAYS SO WITH ITS CODE, AND ONLY WHEN NOTHING WAS SENT', async () => {
+    const made = await createdOnTheDevice();
+    refuseWith = new FeeNotPaid('the fee payer did not pay this fee. Nothing was sent.');
+    expect(await create(made)).toMatchObject({ status: 422, body: { nothingWasSent: true, code: 'fee-not-paid' } });
+    refuseWith = Object.assign(new Error('the node did not answer'), { code: 'fee-not-paid' });
+    const unknown = await create(made);
+    expect(unknown.status).toBe(502);
+    expect(unknown.body.nothingWasSent).toBe(false);
+    expect(unknown.body.code).toBeUndefined();
   });
 
   it('TAKES NO MONEY UNTIL ITS SECOND STEP HAS LANDED: UNTIL THEN IT DOES NOT RUN THIS BUILD\'S CIRCUITS', async () => {
@@ -311,6 +331,33 @@ describe.skipIf(!ON_DISK)('A CREATION CARRIED ON PAST WHAT RUNS OUT, JUDGED BY I
   /** Moves this service's and the chain's time on by `minutes`. */
   const later = (minutes: number) => { const at = Date.now() + minutes * 60_000; clock = () => new Date(at); };
   const standing = async () => (await call('/api/accounts/acc_1/creation')).body;
+
+  /*
+   * RED WHEN: a creation kept as digests compares the deploy only, so another second step is taken for it.
+   * RED WHEN: a creation kept as digests compares the second step only, so another deploy is taken for it.
+   * RED WHEN: a resuming device's repeat of the same bytes is refused once only the digests are kept.
+   * RED WHEN: a company kept as digests whose chain read comes back empty reads as a deploy sent, and the repeat
+   * sends the empty deploy that is all that is kept.
+   */
+  it('WHAT IS KEPT OF A CREATION ONCE FINISHED IS ITS DIGESTS: THE SAME BYTES ARE ANSWERED, OTHER BYTES REFUSED, AND NOTHING IS SENT FROM AN EMPTY READ', async () => {
+    const made = await createdOnTheDevice();
+    await create(made);
+    await call('/api/accounts/acc_1/creation/finish', 'POST');
+    expect(store.keepOnlyAccountDeployDigests('acc_1')).toBe(true);
+    expect(store.getAccountDeploy('acc_1')).toMatchObject({
+      deploy: '', insert: '', deployDigest: accountDeployDigest(made.deploy), insertDigest: accountDeployDigest(made.insert),
+    });
+    expect(await create(made)).toMatchObject({ status: 200, body: { account: made.address, state: 'pay-key-owed' } });
+    expect(await create({ deploy: made.deploy, insert: `${made.insert}AA` }))
+      .toMatchObject({ status: 409, body: { nothingWasSent: true, account: made.address } });
+    expect(await create({ deploy: `${made.deploy}AA`, insert: made.insert }))
+      .toMatchObject({ status: 409, body: { nothingWasSent: true, account: made.address } });
+    readAs = null;
+    const sentBefore = sent.length;
+    expect((await standing()).state).toBe('unknown');
+    expect((await create(made)).body.state).toBe('unknown');
+    expect(sent).toHaveLength(sentBefore);
+  });
   /** The same deploy and the same signed second step, carried in fresh transactions, as the founding signer's device carries them. */
   const carriedAgain = async (made: { deploy: string; insert: string }) => {
     const again = await creationCarriedAgain({ ...accountBuilderDeps(NET), now: () => clock().getTime() },
@@ -719,6 +766,12 @@ describe.skipIf(!ON_DISK)('A CREATION CARRIED ON PAST WHAT RUNS OUT, JUDGED BY I
     expect(openSealedPayKey(parts!, wrapping.secret, s3.committed!)).toBe(KEY);
     expect(sealedPayKeyIn((accountModule as any).pureCircuits, roles, made.address, '5e'.repeat(32))).toBeNull();
     expect((await standing()).state).toBe('finished');
+    /* RED WHEN: a finished account's deploy and second step are still kept as bytes. */
+    expect(store.getAccountDeploy('acc_1')).toMatchObject({
+      deploy: '', insert: '', deployDigest: accountDeployDigest(made.deploy), insertDigest: accountDeployDigest(made.insert),
+    });
+    /* RED WHEN: a resuming device's repeat of the same finished creation is refused once only the digests are kept. */
+    expect(await create(made)).toMatchObject({ status: 200, body: { account: made.address, state: 'finished' } });
     /* RED WHEN: a step is sent for an account already committed to its key. */
     expect(await call('/api/accounts/acc_1/creation/pay-key', 'POST', { call: 'sealPayKey', tx: seal })).toMatchObject({ status: 409, body: { state: 'finished' } });
   });

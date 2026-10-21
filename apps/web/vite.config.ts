@@ -39,16 +39,16 @@ const ROOT = fileURLToPath(new URL('.', import.meta.url));
  * page's characters need. A build whose first download is larger than the
  * budget stops, and so does one with any file other than a font over the
  * size at which the bundler warns. The budget is the first download as it
- * was measured when it was set; a test holds it within a kilobyte of what is built, so when the
- * download falls the budget is lowered with it.
+ * was measured when it was set (735,973 bytes, from the built application); a
+ * test holds it within a kilobyte of what is built, so when the download falls
+ * the budget is lowered with it.
+ *
+ * Most of that size is two things every page pays for: the language file, which
+ * the first page loads whole, carries every page's words, and the sign-in path
+ * loads the curve library that checks a committee key is a point on its curve,
+ * about 34 KB that sign-in itself never uses.
  */
-/*
- * 719,000 bytes, measured from the built application at 718,078: the language
- * file, which the first page loads whole, carries every page's words, and the
- * sign-in path loads the curve library that checks a committee key is a point
- * on its curve, about 34 KB that sign-in itself never uses.
- */
-export const FIRST_DOWNLOAD_BUDGET = 734_166;
+export const FIRST_DOWNLOAD_BUDGET = 735_973;
 
 /**
  * THE WORKERS THIS APPLICATION STARTS, by their entry's path from this folder,

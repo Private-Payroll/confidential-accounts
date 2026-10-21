@@ -19,6 +19,8 @@ import { Root } from './root.js';
 const signing = vi.hoisted(() => ({ refuse: null as string | null }));
 /* The names this device holds for the companies listed (opened, or kept with a creation not finished), by company; a company not in it has none. */
 const names = vi.hoisted(() => new Map<string, string>());
+/* Why each company's name did not open on this device, by company, as the names read keeps it. */
+const whyNot = vi.hoisted(() => new Map<string, string>());
 vi.mock('./adapters/session.js', async (real) => {
   const actual = await real<typeof import('./adapters/session.js')>();
   return ({
@@ -30,7 +32,7 @@ vi.mock('./adapters/session.js', async (real) => {
     : { of: 'refused', why: signing.refuse, retryAfterSeconds: null }),
   /* What the person's own wallet reads off the chain for the companies listed below. */
   approvalsNeededFor: async () => new Map([['c-2', 2], ['c-3', 1], ['c-1', 3]]),
-  companyNamesFor: async () => new Map(names),
+  companyNamesFor: async () => Object.assign(new Map(names), { whyNot: new Map(whyNot) }),
   });
 });
 /* The mark the creation adapter gives each company; a company not in it is given none. */
@@ -60,7 +62,7 @@ async function open(at: string) {
 }
 
 beforeEach(() => {
-  creations.mark.clear(); names.clear();
+  creations.mark.clear(); names.clear(); whyNot.clear();
   vi.spyOn(console, 'error').mockImplementation(() => {});
   vi.stubGlobal('fetch', vi.fn(async (path: string) => {
     if (path === '/api/me') return me();
@@ -236,6 +238,25 @@ describe('the landing page, once signed in', () => {
    * RED WHEN: the landing page lists a company that is not finished without saying so, or says so of another company; or
    * pressing it opens the company's home instead of the wizard at "Finish creating the company".
    */
+  /* RED WHEN: a company whose name did not open on this device is listed with no word of why, or another company is given the reason. */
+  it('says why a company\'s name did not open on this device', async () => {
+    me = json(200, { user: PERSON, accounts: THREE });
+    whyNot.set('c-1', 'roster-not-believed');
+    const { container } = await open(PAGES.landing.path);
+    const unnamed = await untilShown(() => container.querySelector<HTMLElement>('[data-choose-a-company] [data-company=c-1] [data-company-unnamed][data-why]'), 'why the name did not open');
+    expect(unnamed.dataset.why).toBe('roster-not-believed');
+    /* RED WHEN: why the name did not open is only a tooltip, which a touch screen and a keyboard never show. */
+    expect(container.querySelector('[data-choose-a-company] [data-company=c-1] [data-unnamed-why]')?.textContent).toBe(EN['act.refused.rosterNotBelieved']);
+    /*
+     * RED WHEN: the reason does not wrap inside the company's button, which never wraps, so a long reason runs off a narrow
+     * screen. A browser lays the row out; this checks the reason and its column are given the classes that let it wrap.
+     */
+    const why = container.querySelector<HTMLElement>('[data-choose-a-company] [data-company=c-1] [data-unnamed-why]')!;
+    expect(why.className).toMatch(/\bwhitespace-normal\b/u);
+    expect(why.parentElement!.className).toMatch(/\bmin-w-0\b/u);
+    expect(container.querySelectorAll('[data-choose-a-company] [data-why]').length).toBe(1);
+  });
+
   it('marks a company that is not finished, and opens it at step 2 of the wizard', async () => {
     me = json(200, { user: PERSON, accounts: THREE });
     creations.mark.set('c-3', 'not-finished');

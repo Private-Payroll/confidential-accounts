@@ -422,3 +422,55 @@ describe('A HEADER FILED AGAIN WITH ITS ENTRIES, WHERE THE SERVICE NO LONGER HOL
     }
   });
 });
+
+describe('A COMPANY\'S FOUNDING RECORDS ENTERED AFTER LATER VERSIONS OF THEM, BEFORE ITS FIRST HEADER', () => {
+  const KEY = newSigningKeypair();
+  const digestOf = (n: number) => n.toString(16).padStart(2, '0').repeat(32) as Hex;
+  const at = (company: string, kind: string, id: string, version: number, n: number) =>
+    signManifestEntry(company, { store: 'company', kind, id, version, digest: digestOf(n) }, KEY.secret);
+  const headerOver = (kept: MemoryStore, company: string, es: readonly ManifestEntry[]): TreeHeader => {
+    const records = es.map((e) => ({ store: e.store, kind: e.kind, id: e.id }));
+    const given = proofsOf(kept.keptTreeOf(company), { root: GENESIS.root, records, kinds: [] })!;
+    return nextTreeHeader({
+      company, before: GENESIS, entries: es, current: new Map(records.map((r, i) => [treeKeyOf(r), given.records[i]!])),
+      proof: given.proof, priorChain: (h) => kept.keptTreeOf(company).leaf(h), held: HELD_IN_A_TEST, at: '2026-10-21T00:00:00.000Z', tag: tagInATest(KEY.secret),
+    }, KEY.secret)!.header;
+  };
+
+  it('enters the first roster and the first state below their later versions while no header is kept, and the later version stays the newest', () => {
+    const kept = new MemoryStore();
+    const company = 'acct_founding_late';
+    expect(kept.enterInManifest(company, [at(company, 'roster', 'signers', 2, 0x12), at(company, 'roster', 'signers', 3, 0x13)])).toBeNull();
+    expect(kept.enterInManifest(company, [at(company, 'state', '0', 2, 0x22)])).toBeNull();
+    /* RED WHEN: a company whose roster was filed again before its first anchor can never enter the roster it was founded with. */
+    expect(kept.enterInManifest(company, [at(company, 'roster', 'signers', 1, 0x11), at(company, 'state', '0', 1, 0x21)])).toBeNull();
+    /* RED WHEN: entering the first roster late makes the service answer it as the newest - a device would be served version 1. */
+    expect(kept.newestEntered(company, 'company:roster:signers')).toBe(3);
+    expect(kept.newestEntered(company, 'company:state:0')).toBe(2);
+    /* RED WHEN: a first roster entered late is entered twice when its device offers it again. */
+    expect(kept.enterInManifest(company, [at(company, 'roster', 'signers', 1, 0x11)])).toBeNull();
+    /* RED WHEN: a second first roster with other bytes is entered late - two founding rosters for one anchor to choose from. */
+    expect(kept.enterInManifest(company, [at(company, 'roster', 'signers', 1, 0x19)])).toMatchObject({ why: 'superseded', newest: 3 });
+    expect(kept.manifestOf(company).entries.filter((e) => e.kind === 'roster').map((e) => e.version)).toEqual([2, 3, 1]);
+  });
+
+  it('refuses below a later version every record but a first roster or first state, and those too once a header is kept', () => {
+    const kept = new MemoryStore();
+    const company = 'acct_founding_closed';
+    expect(kept.enterInManifest(company, [at(company, 'person', 'emp_late', 3, 0x33), at(company, 'roster', 'signers', 3, 0x13)])).toBeNull();
+    /* RED WHEN: any record's first version is entered below a later one - a service could put a stale version in the next batch. */
+    expect(kept.enterInManifest(company, [at(company, 'person', 'emp_late', 1, 0x31)])).toMatchObject({ why: 'superseded', newest: 3 });
+    /* RED WHEN: a roster version other than the first is entered below a later one. */
+    expect(kept.enterInManifest(company, [at(company, 'roster', 'signers', 2, 0x12)])).toMatchObject({ why: 'superseded', newest: 3 });
+    /* RED WHEN: a state of another key epoch counts as the company's first state. */
+    expect(kept.enterInManifest(company, [at(company, 'state', '1', 2, 0x42)])).toBeNull();
+    expect(kept.enterInManifest(company, [at(company, 'state', '1', 1, 0x41)])).toMatchObject({ why: 'superseded', newest: 2 });
+    /* RED WHEN: a first roster naming the bytes of a later version is entered - a record rolled back. */
+    expect(kept.enterInManifest(company, [at(company, 'roster', 'signers', 1, 0x13)])).toMatchObject({ why: 'rolled-back' });
+    const first = headerOver(kept, company, [at(company, 'roster', 'signers', 3, 0x13)]);
+    expect(kept.fileTreeHeader(company, first)).toBeNull();
+    /* RED WHEN: the first roster is entered below a later version after a header is kept - the anchor already stands without it. */
+    expect(kept.enterInManifest(company, [at(company, 'roster', 'signers', 1, 0x11)])).toMatchObject({ why: 'superseded', newest: 3 });
+    expect(kept.manifestOf(company).entries.filter((e) => e.kind === 'roster').map((e) => e.version)).toEqual([3]);
+  });
+});

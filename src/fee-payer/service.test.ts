@@ -170,7 +170,7 @@ describe('the fee payer service', () => {
     expect(res.status).toBe(200);
     const submitted = r.calls.filter(c => c.method === 'submit');
     expect(submitted).toHaveLength(1);
-    expect(submitted[0].args[0], 'the service submitted what the caller sent').toBe(paid);
+    expect(submitted[0]?.args[0], 'the service submitted what the caller sent').toBe(paid);
   });
 
   /* RED WHEN: the service builds one fee payer and reuses it, so payments share a record. */
@@ -413,6 +413,25 @@ describe('the fee payer service', () => {
     const failed: any = await r.client.submit(paid).catch((e) => e);
     expect(failed.message).toMatch(/the node closed the socket/);
     expect(saysNothingWasSent(failed), 'a submission that may have landed was called nothing sent').toBe(false);
+  });
+
+  /*
+   * RED WHEN: a submission the node refused at its door is answered as an unknown outcome, or without its code.
+   */
+  it('a submission the node refused at its door is answered as nothing sent, with its code', async () => {
+    const door = Object.assign(new Error('Transaction submission error'), {
+      cause: { code: 1002, message: '1002: Verification Error: Runtime error', data: 'Runtime error' },
+    });
+    const r = await rig({ submitTransaction: async () => { throw door; } });
+    r.client.payingFor('acc_one');
+    await r.client.addFeeAndFinalise({ n: 1 }, soon());
+    const res = await fetch(`${r.base}submit`, {
+      method: 'POST',
+      headers: { authorization: `Bearer ${SECRET}`, 'content-type': 'application/json' },
+      body: JSON.stringify({ booking: r.lastBooking() }),
+    });
+    expect(res.status).toBe(422);
+    expect(await res.json()).toMatchObject({ nothingWasSent: true, code: 'network-refused' });
   });
 
   /* RED WHEN: `/release` stops releasing, or stops forgetting what it released. */

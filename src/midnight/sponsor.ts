@@ -1,5 +1,6 @@
 /**
- * The fee sponsor. Decision 0001, M-4.
+ * The fee payer: the one component that spends, paying the DUST fee of
+ * transactions other people built and signed.
  *
  * This is the whole SaaS story in one file. DUST is non-transferable, so it
  * cannot be topped up into a customer's account — which sounds like a problem
@@ -30,6 +31,16 @@
  * `balancingTransaction` comes back UNPROVEN. `finalizeRecipe` is what proves
  * it and merges it with the customer's, which is why this class calls both and
  * a caller cannot skip the second.
+ *
+ * **ONE FEE AT A TIME, FROM A VIEW THAT IS CURRENT.** The DUST spend is proved
+ * against this wallet's own copy of the network's DUST trees and checked by the
+ * node against the network's. So before it balances, the fee payer waits until
+ * its view has applied every DUST event the indexer holds, read fresh, and shows
+ * its own last accepted payment; a view that does not get there in time is a
+ * refusal with nothing sent. A spend proof the node refuses at admission (170)
+ * is answered once: the view is waited for again and the fee is balanced again
+ * with a fresh proof. Any other refusal at admission is answered as nothing
+ * sent, because a transaction the node refused there never entered its pool.
  */
 import type { FeeSponsor } from './ledger.js';
 import type { TxRef } from '../core/ledger.js';
@@ -37,10 +48,150 @@ import type { SponsoredFeeSink } from './sponsored-fees.js';
 import {
   FeeRefused, dustSpentBy, refusalForCommitted, refusalForExpected, type FeeCeiling,
 } from './fee-ceiling.js';
+import { NothingWasSent, saysNothingWasSent } from '../core/jobs.js';
+
+/** The codes a fee payer's refusal carries beside its words, so a page can say why in its own words. */
+export type FeeAnswerCode = 'fee-not-paid' | 'network-refused';
+
+/** No fee was paid and nothing was sent: the fee payer could not pay this one now. The step can be tried again. */
+export class FeeNotPaid extends NothingWasSent {
+  readonly code: FeeAnswerCode = 'fee-not-paid';
+  constructor(message: string) {
+    super(message);
+    this.name = 'FeeNotPaid';
+  }
+}
+
+/** The node refused the transaction at admission, so it never entered the pool and cannot land. */
+export class NetworkRefused extends NothingWasSent {
+  readonly code: FeeAnswerCode = 'network-refused';
+  constructor(message: string) {
+    super(message);
+    this.name = 'NetworkRefused';
+  }
+}
+
+/** The fee payer's code on an error that says nothing was sent, or null for any other error. */
+export const feeAnswerCodeOf = (e: unknown): FeeAnswerCode | null => {
+  if (!e || typeof e !== 'object' || (e as { nothingWasSent?: unknown }).nothingWasSent !== true) return null;
+  const code = (e as { code?: unknown }).code;
+  return code === 'fee-not-paid' || code === 'network-refused' ? code : null;
+};
+
+/** The node's code for a DUST spend proof that does not verify against the network's DUST state. */
+export const DUST_SPEND_PROOF_REFUSED = 170;
+/**
+ * The node's code, when it checks a transaction before its pool, for an intent
+ * the chain already holds: the same step may already have landed.
+ */
+export const INTENT_ALREADY_ON_CHAIN = 244;
+/** The code the same words carry when a transaction is malformed; never read as nothing sent either. */
+export const INTENT_ALREADY_EXISTS = 230;
+
+/** A refusal at the node's door: the JSON-RPC code (1010 invalid, 1002 could not be checked) and its custom code. */
+export interface PoolRefusal {
+  readonly rpcCode: 1010 | 1002;
+  readonly custom: number | null;
+  readonly text: string;
+}
+
+const FIBER_FAILURE_CAUSE = Symbol.for('effect/Runtime/FiberFailure/Cause');
+
+/**
+ * The node's refusal at admission, read from the error a submission threw, or null.
+ *
+ * The wallet library rethrows a submission error with only its own words, so
+ * the node's answer is found by walking the causes it keeps: its failure
+ * cause, then each error's own cause. Only the JSON-RPC codes the node returns
+ * when it validates a transaction before taking it into its pool count: 1010
+ * (invalid) and 1002 (it could not check it). Every other code, a failure after
+ * admission, and a dropped connection give null, because the transaction may
+ * then be in the pool. A 1010 naming an intent the chain already holds (244,
+ * or 230) gives null too: the same step may already have landed.
+ */
+export function poolRefusalOf(e: unknown): PoolRefusal | null {
+  const seen = new Set<unknown>();
+  const queue: unknown[] = [e];
+  while (queue.length > 0 && seen.size < 64) {
+    const x = queue.shift();
+    if (x === null || typeof x !== 'object' || seen.has(x)) continue;
+    seen.add(x);
+    const o = x as Record<PropertyKey, unknown>;
+    if ((o.code === 1010 || o.code === 1002) && typeof o.message === 'string') {
+      const data = typeof o.data === 'string' ? o.data.trim() : '';
+      const m = /^Custom error: (\d+)$/u.exec(data);
+      const custom = m ? Number(m[1]) : null;
+      if (o.code === 1010 && (custom === INTENT_ALREADY_ON_CHAIN || custom === INTENT_ALREADY_EXISTS)) return null;
+      return { rpcCode: o.code, custom, text: o.message.slice(0, 240) };
+    }
+    queue.push(o[FIBER_FAILURE_CAUSE], o.cause, o.error, o.defect, o.left, o.right);
+  }
+  return null;
+}
+
+/**
+ * **THE FEE PAYER'S OWN VIEW OF THE NETWORK'S DUST, READ BEFORE EVERY FEE.**
+ *
+ * One per wallet, shared by every fee payer built over it, because the last
+ * accepted payment belongs to the wallet and not to the object that sent it.
+ */
+export interface FeePayerView {
+  /** The last DUST event this wallet's view has applied, or null before the first. */
+  applied(): bigint | null;
+  /** The newest DUST event the indexer holds, read now. Throws when the indexer does not answer. */
+  tip(): Promise<bigint>;
+  /** Whether this wallet's own history shows its DUST side of the transaction with this hash. */
+  shows(transactionHash: string): Promise<boolean>;
+  /** What an operator needs to read a refusal: applied of tip, coins free and booked, the balance. */
+  numbers(): string;
+  /** Where a refusal and a refused spend proof are written down for the operator. */
+  note(line: string): void;
+  /** The hash of the last payment the network accepted from this wallet and the view has not shown yet. */
+  lastAccepted: string | null;
+}
+
+/** How long a fee waits for the view, how long one write may run, and the clock it waits by. */
+export interface ViewTiming {
+  readonly waitMs: number;
+  readonly pollMs: number;
+  /** How long one write may run before the lane counts it as overdue and refuses every write queued behind it. */
+  readonly writeLimitMs: number;
+  /** The time kept back, within that limit, for a second balance, proof and hand-in after a refused spend proof. */
+  readonly sendReserveMs: number;
+  now(): number;
+  sleep(ms: number): Promise<void>;
+}
+
+/**
+ * **45 SECONDS, UNDER THE LIMIT AFTER WHICH A WRITE COUNTS AS OVERDUE.** A
+ * payment answered once after a refused spend proof waits twice, so the second
+ * wait is cut to what is left of the write's limit once a second send's time
+ * is kept back. The limit is the lane's own (four of the slowest recorded
+ * writes and the waits between them), and a test holds the two equal.
+ */
+export const VIEW_TIMING: ViewTiming = {
+  waitMs: 45_000,
+  pollMs: 1_000,
+  writeLimitMs: 4 * 34_700 + 5_000 + 10_000 + 15_000,
+  sendReserveMs: 35_000,
+  now: () => Date.now(),
+  sleep: (ms) => new Promise((r) => setTimeout(r, ms)),
+};
+
+const hashOf = (tx: unknown): string | null => {
+  try {
+    const h = (tx as { transactionHash?: () => unknown })?.transactionHash?.();
+    return h === undefined || h === null ? null : String(h);
+  } catch {
+    return null;
+  }
+};
+
+const isObject = (x: unknown): x is object => x !== null && (typeof x === 'object' || typeof x === 'function');
 
 /**
  * **WHAT A SPONSOR NEEDS FROM A FUNDED WALLET, AND NOTHING MORE. THIS IS THE
- * SEAM, AND IT IS WIDER THAN ONE ROW ASKED FOR ON PURPOSE.**
+ * SEAM.**
  *
  * The party that pays is the only component in this system with spend
  * authority, so what it is allowed to ask a wallet for is worth deciding once
@@ -62,9 +213,8 @@ import {
  *                                  inside the vendor SDK naming none of this.
  *   `submitTransaction`            whoever pays the fee submits.
  *   `revert`                       **release coins this wallet booked and did
- *                                  not spend.** See below - it is the member
- *                                  this interface was missing, and its absence
- *                                  was not a gap in tidiness.
+ *                                  not spend.** See below for why it is
+ *                                  required.
  *   `estimateFee`                  what the transaction is about to cost,
  *                                  read BEFORE anything is booked. It is the
  *                                  vendor's own pre-spend control at this exact
@@ -86,8 +236,7 @@ import {
  * by a call that then threw stands for ever, and the next attempt balances onto
  * a fresh coin set because the first one is filtered out as pending.** The
  * balance quietly falls with each failure and nothing anywhere says why. An
- * optional member would mean a wallet could be wired in with no way to release,
- * which is the state this seam is in today.
+ * optional member would mean a wallet could be wired in with no way to release.
  *
  * **WHAT IS DELIBERATELY NOT HERE, SO THAT ADDING IT LATER IS A DECISION AND
  * NOT A DISCOVERY.** The vendor offers a sponsor two spend controls at exactly
@@ -164,6 +313,12 @@ export interface SponsorWallet {
    * contaminates it.
    */
   paidFee(ref: string): Promise<bigint | null>;
+  /**
+   * The wallet's own view of the network's DUST. A wallet that has none (a
+   * stand-in in a test, a script driving this seam by hand) pays without
+   * waiting; every wallet a deployment pays with has one.
+   */
+  view?: FeePayerView;
   shieldedSecretKeys: unknown;
   dustSecretKey: unknown;
   balances(): Promise<{ dust: bigint; night: bigint }>;
@@ -176,6 +331,11 @@ export interface SponsorWallet {
  */
 export const CUSTOMER_BALANCES = ['shielded', 'unshielded'] as const;
 export const SPONSOR_BALANCES = ['dust'] as const;
+
+/** What a person is told when the node refused the transaction at admission. */
+const refusedWords = (r: PoolRefusal, afterOneMore: boolean): string =>
+  `the network refused this transaction before taking it in (${r.text})${afterOneMore ? ', and refused it again after the fee was paid with a fresh proof' : ''}, `
+  + 'so it was not sent and cannot land. No fee was paid, so nothing was lost: try the step again.';
 
 export class WalletFeeSponsor implements FeeSponsor {
   /**
@@ -197,6 +357,15 @@ export class WalletFeeSponsor implements FeeSponsor {
    */
   private company: string | null = null;
   private estimated: bigint | null = null;
+  /**
+   * What each finalised transaction was made from, so a spend proof the node
+   * refuses can be balanced again from the same transaction with a fresh one.
+   */
+  private readonly madeFrom = new WeakMap<object, { customerFinalised: unknown; ttl: Date }>();
+  /** Every transaction already handed to the network: a refusal of a second copy says nothing about the first. */
+  private readonly handedIn = new WeakSet<object>();
+  /** When the write this fee payer is paying for began: the lane names the company at the start of every write. */
+  private writeStartedAt: number | null = null;
 
   constructor(
     private wallet: SponsorWallet,
@@ -224,6 +393,8 @@ export class WalletFeeSponsor implements FeeSponsor {
      * the fact.
      */
     private fees?: SponsoredFeeSink,
+    /** How long a fee waits for the view to be current, and the clock it waits by. */
+    private timing: ViewTiming = VIEW_TIMING,
   ) {
     if (!ceiling || typeof ceiling.perTransaction !== 'bigint' || ceiling.perTransaction <= 0n) {
       throw new Error(
@@ -243,15 +414,79 @@ export class WalletFeeSponsor implements FeeSponsor {
   payingFor(accountId: string): void {
     this.company = accountId;
     this.estimated = null;
+    this.writeStartedAt = this.timing.now();
+  }
+
+  /**
+   * Waits until the view has applied every DUST event the indexer holds, read
+   * now, and shows the last payment the network accepted from this wallet.
+   *
+   * Refuses with `FeeNotPaid` when it does not get there within the bound, or
+   * when the indexer cannot be asked, so nothing is booked and nothing is sent.
+   * The last payment is remembered only once its hand-in returned, which the
+   * wallet library does only when the transaction is final on the chain; a
+   * hand-in that failed (refused, dropped, timed out) is never waited for. A
+   * history that never shows a remembered payment (its write can fail and is
+   * only logged) refuses one fee: the payment is then forgotten, which is
+   * written down, and the next fee waits on the view alone.
+   */
+  private async waitForTheView(waitMs: number): Promise<void> {
+    const view = this.wallet.view;
+    if (!view) return;
+    const { now, sleep, pollMs } = this.timing;
+    const started = now();
+    let tip: bigint;
+    try {
+      tip = await view.tip();
+    } catch (e) {
+      throw this.notPaid(view, `the indexer could not say how far the network's DUST has got (${String((e as Error)?.message ?? e)})`);
+    }
+    for (;;) {
+      const applied = view.applied();
+      const atTheTip = applied !== null && applied >= tip;
+      const last = view.lastAccepted;
+      const shown = last === null || await view.shows(last).catch(() => false);
+      if (atTheTip && shown) {
+        if (last !== null && view.lastAccepted === last) view.lastAccepted = null;
+        return;
+      }
+      if (now() - started >= waitMs) {
+        if (atTheTip && last !== null) {
+          if (view.lastAccepted === last) view.lastAccepted = null;
+          view.note(`THE WALLET'S HISTORY NEVER SHOWED ITS LAST PAYMENT ${last}: it is no longer waited for, and the next fee waits on the view alone`);
+        }
+        throw this.notPaid(view, atTheTip
+          ? 'its view of the network\'s DUST does not show its own last payment yet'
+          : `its view of the network's DUST is behind the indexer's ${tip}`);
+      }
+      await sleep(pollMs);
+    }
+  }
+
+  /** The refusal for a fee not paid, written down for the operator with the view's numbers. */
+  private notPaid(view: FeePayerView, why: string): FeeNotPaid {
+    const numbers = view.numbers();
+    view.note(`a fee was not paid: ${why} (${numbers})`);
+    return new FeeNotPaid(
+      `the fee payer did not pay this fee: ${why} (${numbers}). No fee was paid and nothing was sent, `
+      + 'so nothing was lost: try the step again in a minute.');
   }
 
   /**
    * Phase 2: balance the dust leg only, then prove and merge.
    *
-   * The customer has already balanced their own legs and signed. This adds the
-   * fee and hands back something submittable.
+   * The customer has already balanced their own legs and signed. This waits
+   * for the view to be current, adds the fee and hands back something
+   * submittable.
    */
   async addFeeAndFinalise(customerFinalised: unknown, ttl: Date): Promise<unknown> {
+    this.writeStartedAt ??= this.timing.now();
+    return this.payFee(customerFinalised, ttl, this.timing.waitMs);
+  }
+
+  /** Waits for the view for at most `waitMs`, then balances, proves and checks the fee against the ceiling. */
+  private async payFee(customerFinalised: unknown, ttl: Date, waitMs: number): Promise<unknown> {
+    await this.waitForTheView(waitMs);
     /*
      * **READ BEFORE ANYTHING IS BOOKED.** This is the only moment the expected
      * cost exists: it is the fee the balance below is about to converge on,
@@ -281,7 +516,11 @@ export class WalletFeeSponsor implements FeeSponsor {
        * **A constant rather than an argument, so no caller can widen it.**
        */
       { ttl, tokenKindsToBalance: [...SPONSOR_BALANCES] },
-    );
+    ).catch((e: unknown) => {
+      /* A balance that could not be made is written down with the numbers that explain it, then raised as it came. */
+      this.wallet.view?.note(`a fee could not be balanced: ${String((e as Error)?.message ?? e).slice(0, 200)} (${this.wallet.view.numbers()})`);
+      throw e;
+    });
 
     /*
      * **FROM THIS LINE THE COINS ARE BOOKED**, so every way out of the rest of
@@ -317,7 +556,61 @@ export class WalletFeeSponsor implements FeeSponsor {
       try { await this.release(finalised); } catch { /* the refusal is the error that matters */ }
       throw new FeeRefused(overCeiling);
     }
+    if (isObject(finalised)) this.madeFrom.set(finalised, { customerFinalised, ttl });
     return finalised;
+  }
+
+  /**
+   * Balances a refused spend proof's transaction again, with a fresh proof.
+   *
+   * The wait for the view is cut to what is left of the write's limit once a
+   * second send's time is kept back, and with nothing left it does not pay
+   * again. Every way this can fail is nothing sent, because the first copy
+   * never entered the pool and the second has not been handed in: a refusal
+   * that already says so (a view still behind, a fee over the ceiling, which
+   * keeps its own words) is raised as it is, and anything else (a balance that
+   * cannot be made) as `FeeNotPaid`.
+   */
+  private async payAgain(made: { customerFinalised: unknown; ttl: Date }, refusal: PoolRefusal): Promise<unknown> {
+    const { now, writeLimitMs, sendReserveMs, waitMs } = this.timing;
+    const left = writeLimitMs - (now() - (this.writeStartedAt ?? now())) - sendReserveMs;
+    if (left <= 0) {
+      throw new FeeNotPaid(
+        `the network refused the fee's proof (${refusal.text}), and no time is left in this write to pay it again, `
+        + 'so it was not sent. No fee was paid, so nothing was lost: try the step again.');
+    }
+    try {
+      return await this.payFee(made.customerFinalised, made.ttl, Math.min(waitMs, left));
+    } catch (e) {
+      throw saysNothingWasSent(e) ? e : new FeeNotPaid(String((e as Error)?.message ?? e));
+    }
+  }
+
+  /**
+   * Hands one transaction to the network. Answers its reference, or the node's
+   * refusal at admission when that is what the error was; any other error is
+   * raised as it came, because the transaction may then be in the pool.
+   *
+   * The booking is released on every error. The wallet library usually has
+   * released it already, and a second release then frees nothing, so releasing
+   * is always safe. A copy
+   * already handed in before is never read as refused at admission, because a
+   * refusal of the second copy can mean the first one landed.
+   */
+  private async handIn(tx: unknown): Promise<{ ref: string } | { refusal: PoolRefusal }> {
+    const again = isObject(tx) && this.handedIn.has(tx);
+    if (isObject(tx)) this.handedIn.add(tx);
+    try {
+      return { ref: String(await this.wallet.submitTransaction(tx)) };
+    } catch (e) {
+      /* Swallowed here: `e` names what happened, and a failed release must not replace it. */
+      try { await this.release(tx); } catch { /* see above */ }
+      const refusal = again ? null : poolRefusalOf(e);
+      if (refusal === null) throw e;
+      const view = this.wallet.view;
+      view?.note(`the network refused a payment at admission: ${refusal.text} (${view.numbers()})`);
+      return { refusal };
+    }
   }
 
   /**
@@ -338,21 +631,43 @@ export class WalletFeeSponsor implements FeeSponsor {
    * device we do not operate**, so what is worth protecting there is the
    * self-healing path rather than the booking. Both decisions are written down
    * with what they cost.
+   *
+   * **A REFUSAL AT ADMISSION IS NOTHING SENT, AND A REFUSED SPEND PROOF IS
+   * ANSWERED ONCE.** The node validates a transaction before it takes it into
+   * its pool, so one it refused there cannot land. A refused DUST spend proof
+   * (170) is balanced again from the same transaction, after the view is waited
+   * for, with a fresh proof and both ceiling checks, and handed in once more;
+   * only one of the two can land, because the first never entered the pool.
+   * Any other refusal at admission, or a second 170, is `NetworkRefused`; a
+   * second fee that cannot be paid, or no time left in the write to pay it, is
+   * `FeeNotPaid`, because neither copy reached the pool.
+   * When the second copy is the one that landed, its hash comes back with the
+   * reference, because it is not the hash of the transaction this was given.
    */
   async submit(finalisedTransaction: unknown): Promise<TxRef> {
+    let landed = finalisedTransaction;
     let ref: string;
-    try {
-      ref = await this.wallet.submitTransaction(finalisedTransaction);
-    } catch (e) {
-      /* Swallowed here, for the reason above. */
-      try { await this.release(finalisedTransaction); } catch { /* see above */ }
-      throw e;
+    const first = await this.handIn(finalisedTransaction);
+    if ('ref' in first) {
+      ref = first.ref;
+    } else {
+      const made = isObject(finalisedTransaction) ? this.madeFrom.get(finalisedTransaction) : undefined;
+      if (first.refusal.custom !== DUST_SPEND_PROOF_REFUSED || made === undefined) {
+        throw new NetworkRefused(refusedWords(first.refusal, false));
+      }
+      const again = await this.payAgain(made, first.refusal);
+      const second = await this.handIn(again);
+      if (!('ref' in second)) throw new NetworkRefused(refusedWords(second.refusal, true));
+      ref = second.ref;
+      landed = again;
     }
+    const transactionHash = hashOf(landed);
+    if (this.wallet.view) this.wallet.view.lastAccepted = transactionHash;
     /*
      * **EVERYTHING FROM HERE IS AFTER THE MONEY HAS MOVED, SO NOTHING FROM HERE
      * MAY THROW.** A transaction that settled and then reported a failure is
      * the worst answer available on this path: whoever reads it raises the same
-     * round again, which is how a payroll gets paid twice.
+     * run again, which is how a payroll gets paid twice.
      */
     const at = new Date().toISOString();
     const actual = await this.wallet.paidFee(String(ref)).catch(() => null);
@@ -370,8 +685,7 @@ export class WalletFeeSponsor implements FeeSponsor {
     if (this.onPay) {
       const { dust } = await this.wallet.balances().catch(() => ({ dust: undefined as any }));
       /*
-       * **THE FEE HERE IS THE ONE THE CHAIN CHARGED, OR ABSENT.** It used to be
-       * absent always - the field existed and nothing ever filled it. What it
+       * **THE FEE HERE IS THE ONE THE CHAIN CHARGED, OR ABSENT.** What it
        * is NOT is a difference of the balance below against a previous one:
        * that figure lags its own spend, dust regenerates from held NIGHT while
        * nothing is happening, and a second sponsored transaction in the window
@@ -379,28 +693,17 @@ export class WalletFeeSponsor implements FeeSponsor {
        */
       this.onPay({ fee: actual ?? undefined, remaining: dust });
     }
-    return { ref: String(ref), at };
+    return landed === finalisedTransaction || transactionHash === null
+      ? { ref: String(ref), at }
+      : { ref: String(ref), at, transactionHash };
   }
 
   /**
-   * **IT REPORTS ITS OWN FAILURE, AND UNTIL IT DID THE COUNT ABOVE THIS SEAM
-   * WAS A COUNT OF ATTEMPTS WEARING THE WORD *RELEASED*.**
-   *
-   * This method swallowed. Every caller therefore saw success whatever the
-   * vendor did, the layer that keeps the record of what is outstanding deleted
-   * bookings it had not released, and the number it answered - which exists so
-   * a caller can assert that coins were let go rather than assert the absence
-   * of a complaint - could not be wrong. **A release that cannot fail is
-   * exactly the instrument every open row in this area is *done when* somebody
-   * asserts on.**
-   *
-   * **THE SWALLOW WAS RIGHT AND IT WAS IN THE WRONG PLACE.** A release that
-   * fails must never replace the failure that caused it: this runs on a path
-   * that has already gone wrong, and swapping the error naming what happened
-   * for a complaint about tidying up sends whoever reads it somewhere else
-   * entirely. That is a property of the two CALL SITES that have an original
-   * failure to protect, not of the release - so each of them swallows, by
-   * name, and a caller with nothing to protect gets the truth.
+   * **IT RAISES THE WALLET'S FAILURE.** A caller with an original failure to
+   * protect swallows it at its own call site, by name, so the error naming what
+   * happened is never replaced by a complaint about tidying up; any other
+   * caller learns the release did not happen, so a count of releases is a
+   * count of coins let go.
    *
    * **IT IS PUBLIC BECAUSE THE WINDOW IT GUARDS IS NOT INSIDE THIS CLASS.** The
    * two methods above are called by the SDK at two separate times, and what

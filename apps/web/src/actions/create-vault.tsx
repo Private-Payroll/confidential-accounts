@@ -6,7 +6,7 @@ import {
 } from '../adapters/create-vault.js';
 import { HANDOVER, readHandover, type Handover } from '../adapters/handover-state.js';
 import { proofsRunning } from '../adapters/proofs-running.js';
-import { VAULT_USUAL_SECONDS } from '../adapters/usual-times.js';
+import { stageTimeNoter, VAULT_USUAL_SECONDS } from '../adapters/usual-times.js';
 import { ACTED, type ActRefusal } from '../adapters/refusals.js';
 import { ActRefused } from '../act-refused.js';
 import { PAGE } from '../pages.js';
@@ -127,7 +127,8 @@ function StopResolvedBy({ result, disabled, ask }: {
  * them here; the step that makes creating possible is led to only for a
  * company not created or not finished. With `starting` the
  * component opens once, after the company is read, asking to carry that
- * vault's set up on.
+ * vault's set up on; a vault carried on whose name this device cannot read
+ * has its name and description asked first, and they are filed as it is.
  *
  * Once the super admins hold it, the vault is set up: it is added to the company's
  * account, its private records are made and its secret set, and each signer
@@ -163,6 +164,12 @@ export function CreateVault({ leadTo, onChanged, starting }: StepProps & { start
   const [held, setHeld] = useState<Handover['of'] | null>(null);
   /* Whether this person's vault keys were just given here, or why not. */
   const [gave, setGave] = useState<typeof ACTED.done | ActRefusal | null>(null);
+  /* The vault being carried on that has no name this device can read: its name and description are asked before it is. */
+  const [nameOwed, setNameOwed] = useState<string | null>(null);
+  /* The vault whose name has been read: the confirm to carry a vault on waits for it. */
+  const [nameReadFor, setNameReadFor] = useState<string | null>(null);
+  /* The vault being carried on whose name could not be read here. */
+  const [nameUnreadFor, setNameUnreadFor] = useState<string | null>(null);
 
   const read = useCallback(async () => {
     if (company === null) { setReady(null); return; }
@@ -177,13 +184,27 @@ export function CreateVault({ leadTo, onChanged, starting }: StepProps & { start
     setAsking({ of: ASKING.start, vault: starting });
   }, [starting, ready, asking]);
 
+  /*
+   * A vault asked to be carried on is read for its name; with none filed, the name is asked again and handed to the set
+   * up. A name that could not be read is said so, and no name is asked over one that may be filed.
+   */
+  useEffect(() => {
+    if (asking?.of !== ASKING.start || company === null) return undefined;
+    let alive = true;
+    const vault = asking.vault;
+    void import('../adapters/company-records.js').then(({ readVaultName, NAME_NOT_READ }) => readVaultName(person.id, company, vault, NAME_NOT_READ)
+      .then((filed) => { if (alive) { setNameOwed(filed === null ? vault : null); setNameUnreadFor(filed === NAME_NOT_READ ? vault : null); setNameReadFor(vault); } }));
+    return () => { alive = false; };
+  }, [asking, person.id, company]);
+
   const busy = stage !== null;
   const act = async (asked: Asking): Promise<void> => {
     if (company === null) return;
     setAsking(null); setResult(null); setStage(CREATING.checking);
     const r = asked.of === ASKING.create
       ? await createVault(person.id, company, setStage, { name: name.trim(), description: description.trim() })
-      : await finishStarting(person.id, company, asked.vault, setStage);
+      : await finishStarting(person.id, company, asked.vault, setStage,
+        nameOwed === asked.vault && name.trim() !== '' ? { name: name.trim(), description: description.trim() } : undefined);
     const handover = r.of === ACTED.done ? await readHandover(person.id, company) : null;
     /* Any read of who holds the company but "held" is said under the outcome: a vault created does not make the company's account held. */
     setHeld(handover === null ? null : handover.of);
@@ -212,6 +233,7 @@ export function CreateVault({ leadTo, onChanged, starting }: StepProps & { start
   /* Not finished: the creation read is in and does not confirm it. Keys not open on a company the service reads as finished are the keys' reason, not this one. */
   const unfinished = creation !== null && !creation.confirmedFinished && !(creation.standing === 'finished' && ready?.of === READY.locked);
   const named = name.trim() !== '';
+  const askingTheName = asking?.of === ASKING.start && nameOwed === asking.vault;
   const canCreate = company !== null && creation !== null && !unfinished && ready?.of === READY.ready && named && !busy;
   const why = company === null ? t('createVault.why.noCompany')
     : ready === null || creation === null ? t('createVault.why.reading')
@@ -224,6 +246,12 @@ export function CreateVault({ leadTo, onChanged, starting }: StepProps & { start
     : null;
   const { now, proofStartedAt } = useTicker(proofsRunning);
   const stageSince = useStageSince(stage ?? null);
+  const noteStageTime = useRef(stageTimeNoter());
+  const timedStage = stage === null || stage === CREATING.done ? null : stage;
+  useEffect(() => {
+    noteStageTime.current(timedStage === null ? null : [timedStage], proofStartedAt ?? stageSince, timedStage === null ? null : VAULT_USUAL_SECONDS[timedStage]);
+  }, [timedStage]);
+  useEffect(() => () => { noteStageTime.current(null, 0, null); }, []);
   const STAGE_SAYS: Record<Creating, string> = {
     [CREATING.checking]: t('createVault.stage.checking'),
     [CREATING.building]: t('createVault.stage.building'),
@@ -244,12 +272,12 @@ export function CreateVault({ leadTo, onChanged, starting }: StepProps & { start
       <p className="text-sm text-muted-foreground">{t('createVault.what')}</p>
       <div className="flex flex-col gap-2">
         <Label htmlFor={nameId}>{t('createVault.nameLabel')}</Label>
-        <Input id={nameId} data-field="vault-name" value={name} maxLength={64} onChange={(e) => setName(e.target.value)} disabled={busy || asking !== null} />
+        <Input id={nameId} data-field="vault-name" value={name} maxLength={64} onChange={(e) => setName(e.target.value)} disabled={busy || (asking !== null && !askingTheName)} />
         <p className="text-xs text-muted-foreground">{t('createVault.nameHint')}</p>
       </div>
       <div className="flex flex-col gap-2">
         <Label htmlFor={descriptionId}>{t('createVault.descriptionLabel')}</Label>
-        <Textarea id={descriptionId} data-field="vault-description" value={description} maxLength={1000} onChange={(e) => setDescription(e.target.value)} disabled={busy || asking !== null} />
+        <Textarea id={descriptionId} data-field="vault-description" value={description} maxLength={1000} onChange={(e) => setDescription(e.target.value)} disabled={busy || (asking !== null && !askingTheName)} />
         <p className="text-xs text-muted-foreground">{t('createVault.descriptionHint')}</p>
       </div>
       {why === null ? null : <p id={whyId} className="text-sm" data-why={ready?.of ?? 'no-company'}>{why}</p>}
@@ -275,6 +303,16 @@ export function CreateVault({ leadTo, onChanged, starting }: StepProps & { start
           {ready?.of === READY.othersMissing || ready?.of === READY.notOnChain || ready?.of === ACTED.refused ? (
             <Button variant="outline" disabled={busy} onClick={() => { void read(); }} data-action="read-again">{t('createVault.readAgain')}</Button>
           ) : null}
+        </div>
+      ) : asking.of === ASKING.start && nameReadFor !== asking.vault ? null : asking.of === ASKING.start && nameUnreadFor === asking.vault ? (
+        <div className="flex flex-wrap items-center gap-3">
+          <p className="text-sm" data-name-unread>{t('createVault.resume.nameUnread')}</p>
+          <Button variant="outline" onClick={() => setAsking(null)}>{t('kit.confirm.cancel')}</Button>
+        </div>
+      ) : askingTheName && !named ? (
+        <div className="flex flex-wrap items-center gap-3">
+          <p className="text-sm" data-name-again>{t('createVault.resume.nameAgain')}</p>
+          <Button variant="outline" onClick={() => setAsking(null)}>{t('kit.confirm.cancel')}</Button>
         </div>
       ) : (
         <ConfirmInYourAccount

@@ -20,6 +20,8 @@ export function ActRefused({ why }: { why: ActRefusal }) {
     [ACT_REFUSAL.payNotEnough]: t('act.refused.payNotEnough'),
     [ACT_REFUSAL.payNotAsApproved]: t('act.refused.payNotAsApproved'),
     [ACT_REFUSAL.payDidNotFinish]: t('act.refused.payDidNotFinish'),
+    [ACT_REFUSAL.feeNotPaid]: t('act.refused.feeNotPaid'),
+    [ACT_REFUSAL.networkRefused]: t('act.refused.networkRefused'),
     [ACT_REFUSAL.noWindow]: t('act.refused.noWindow'),
     [ACT_REFUSAL.windowGone]: t('act.refused.windowGone'),
     [ACT_REFUSAL.gaveUp]: t('act.refused.gaveUp'),
@@ -42,6 +44,7 @@ export function ActRefused({ why }: { why: ActRefusal }) {
     [ACT_REFUSAL.pageOutOfDate]: t('act.refused.pageOutOfDate'),
     [ACT_REFUSAL.vaultNotTheCompanys]: t('act.refused.vaultNotTheCompanys'),
     [ACT_REFUSAL.vaultInfoRefused]: t('act.refused.vaultInfoRefused'),
+    [ACT_REFUSAL.rosterNotBelieved]: t('act.refused.rosterNotBelieved'),
   };
   return (
     <Alert data-refusal={why}>

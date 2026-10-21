@@ -17,6 +17,9 @@ const installs: Array<{ how: string }> = [];
 let installHow: 'restored' | 'fresh' | 'unchanged' | 'refused' = 'fresh';
 /** The reason a 'refused' carries, which is what the gate switches on. */
 let installReason: 'not-a-floor' | 'disagrees' | 'not-applied' | 'unreadable' | undefined;
+/** Where the strict DUST wait ends, and what it was asked to read. */
+let atTip: { ok: true; applied: bigint; tip: bigint } | { ok: false; why: string } = { ok: true, applied: 5n, tip: 5n };
+let tipAskedOf: string[] = [];
 
 vi.mock('node:fs', async (orig) => ({
   ...(await orig<typeof import('node:fs')>()),
@@ -33,6 +36,14 @@ vi.mock('./dust-wallet.js', () => ({
     };
   },
   dustCachePath: () => '/tmp/stub-dust-cache.state',
+  dustIndexerWsOf: () => 'wss://indexer.example/ws',
+  dustTipAt: async (url: string) => { tipAskedOf.push(url); return 5n; },
+  describeDustView: (a: bigint | null, t: bigint | null) => `dust applied ${a} of ${t}`,
+  waitForDustAtTip: async (_live: unknown, tipNow: (from: bigint | null) => Promise<bigint>) => {
+    trace.push('wait for the DUST view');
+    await tipNow(null);
+    return atTip;
+  },
 }));
 
 /** Every call, in order, so a missing or misordered step is visible. */
@@ -88,6 +99,7 @@ beforeEach(() => {
   trace = []; builds = 0; dustPerBuild = []; removed.length = 0;
   installs.length = 0; installHow = 'fresh'; shieldedCaught = true;
   installReason = undefined;
+  atTip = { ok: true, applied: 5n, tip: 5n }; tipAskedOf = [];
 });
 
 describe('bringUpWallet', () => {
@@ -98,8 +110,8 @@ describe('bringUpWallet', () => {
   });
 
   it('starts with false, never the testkit sync gate', async () => {
-    // `start(true)` is M-22 and does not return. A run that hangs forever is
-    // worse than one that fails.
+    // `start(true)` runs the testkit's own sync gate and can reach the faucet,
+    // which submits.
     dustPerBuild = [7n];
     await bring();
     expect(trace).not.toContain('start(true)#0');
@@ -245,6 +257,33 @@ describe('bringUpWallet', () => {
     await expect(bring({ requireDust: true })).rejects.toThrow(/no DUST/i);
   });
 
+  /*
+   * RED WHEN: a wallet that will pay is handed on with its DUST view behind the network, so a launcher says it is ready.
+   */
+  it('stops a wallet that will pay when its DUST view does not reach the network, and stops the wallet', async () => {
+    dustPerBuild = [7n];
+    atTip = { ok: false, why: 'the wallet\'s view of the network\'s DUST has not moved for 60 s (dust applied 3 of 9)' };
+    await expect(bring({ withDust: true, requireDust: true })).rejects.toThrow(/has not moved for 60 s \(dust applied 3 of 9\)/);
+    expect(trace).toContain('wait for the DUST view');
+    expect(trace).toContain('stop#0');
+    /* RED WHEN: the network's DUST is read from anywhere but the indexer the installed DUST wallet syncs from. */
+    expect(tipAskedOf).toEqual(['wss://indexer.example/ws']);
+  });
+
+  /*
+   * RED WHEN: a wallet that will not pay is refused for a view behind the network, or one at the tip is not said to be.
+   */
+  it('hands back a wallet that will not pay with a warning, and says when the view is caught up', async () => {
+    dustPerBuild = [7n, 7n];
+    const notes: string[] = [];
+    atTip = { ok: false, why: 'behind' };
+    await expect(bring({ withDust: true, requireDust: false, onNote: (m: string) => notes.push(m) })).resolves.toBeTruthy();
+    expect(notes.join('\n')).toMatch(/behind; anything this wallet pays may be refused/);
+    atTip = { ok: true, applied: 9n, tip: 9n };
+    await bring({ withDust: true, requireDust: true, onNote: (m: string) => notes.push(m) });
+    expect(notes.join('\n')).toMatch(/dust wallet caught up: dust applied 9 of 9/);
+  });
+
   it('returns a usable wallet without DUST when the caller allows it', async () => {
     dustPerBuild = [0n];
     const live = await bring({ requireDust: false });
@@ -253,7 +292,7 @@ describe('bringUpWallet', () => {
   });
 
   /*
-   * **THE SHIELDED SCAN. `S17`.**
+   * **THE SHIELDED SCAN.**
    *
    * The dust catch-up above is unconditional because every submitting door
    * needs it. This one is not, and the asymmetry is the design rather than an
@@ -296,7 +335,7 @@ describe('bringUpWallet', () => {
 
   it('waits for the shielded scan even for a wallet that skips dust entirely', async () => {
     // `withDust: false` returns early. A shielded caller taking that path would
-    // otherwise get the un-waited read this round exists to remove.
+    // otherwise get the un-waited read the wait exists to remove.
     const live = await bring({ withDust: false, withShielded: true });
     expect(live.shieldedScan()?.reached).toBe('caught-up');
   });

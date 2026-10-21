@@ -81,6 +81,23 @@ describe('the finishing step during its long waits', () => {
     expect(view.container.querySelector('[data-usual]')?.textContent).toBe(EN['stageProgress.longer']);
   });
 
+  /* RED WHEN: a stage of the run that has ended leaves no line in the development console with its stage and phase, its measured seconds and the usual figure the screen showed, or leaves one for a stage still running. */
+  it('writes one console record per phase when it ends: its measured seconds and the usual figure shown', async () => {
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
+    const view = draw();
+    lane.sending = true;
+    await everySecond(2);
+    expect(warn).not.toHaveBeenCalled();
+    lane.sending = false;
+    await everySecond(4);
+    const lines = warn.mock.calls.map((c) => c[0]);
+    expect(lines).toEqual([{ stageTime: [expect.stringMatching(/^[a-z]+$/), 'sending'], measuredSeconds: expect.any(Number), usualShownSeconds: 30 }]);
+    expect(lines[0].measuredSeconds).toBeGreaterThanOrEqual(1);
+    view.unmount();
+    expect(warn.mock.calls.map((c) => c[0]).at(-1)).toEqual({ stageTime: [expect.stringMatching(/^[a-z]+$/), 'waiting'], measuredSeconds: expect.any(Number), usualShownSeconds: 60 });
+    expect(warn).toHaveBeenCalledTimes(2);
+  });
+
   /* RED WHEN: sending the account is not told from waiting for the network, or neither shows a running time and a usual duration. */
   it('says it is sending the account while a send is going out, and waiting for the network after', async () => {
     const view = draw();

@@ -1,7 +1,7 @@
 import { createContext, useCallback, useContext, useEffect, useMemo, useState, type ReactNode } from 'react';
 import type { Company } from '../adapters/company-records.js';
 import { OPENED } from '../adapters/reads.js';
-import { companyNamesFor } from '../adapters/session.js';
+import { companyNamesFor, NO_NAMES, type CompanyNames } from '../adapters/session.js';
 import type { ActRefusal } from '../adapters/refusals.js';
 import { Fault, FAULT } from '../faults.js';
 import { VIEWS } from '../pages.js';
@@ -21,8 +21,8 @@ const reader = () => import('../adapters/company-records.js');
 export interface Records {
   /** The shown company's records; null while they are read, or when no company is shown. */
   company: Company | null;
-  /** Each company's name that this tab can open, by id. */
-  names: ReadonlyMap<string, string>;
+  /** Each company's name that this tab can open, by id, and why each other company's did not open. */
+  names: CompanyNames;
   /** Read everything again. */
   reload: () => void;
   /** Open the keys saved for the person with their account, then read again; null when it worked, or why it did not. */
@@ -35,7 +35,7 @@ export function CompanyRecordsProvider({ children }: { children?: ReactNode }) {
   const { person, company: shown, viewer } = useSession();
   const reads = viewer.view === VIEWS.company && shown !== null;
   const [company, setCompany] = useState<Company | null>(null);
-  const [names, setNames] = useState<ReadonlyMap<string, string>>(new Map());
+  const [names, setNames] = useState<CompanyNames>(NO_NAMES);
   const [asked, setAsked] = useState(0);
   const reload = useCallback(() => setAsked((n) => n + 1), []);
 

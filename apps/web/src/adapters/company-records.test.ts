@@ -83,7 +83,10 @@ vi.mock('vaults-web-shared/keyring.js', async (real) => ({
   /* A seat this device left unfinished: finishing it is what gives this device the company's keys. */
   pendingSeatsFor: () => (kr.seat ? [{ accountId: 'c1' }] : []),
   finishPendingSeat: async () => { if (!kr.seat) return false; kr.seat = false; kr.keys = true; return true; },
-  openAccount: () => kr.account,
+  openAccount: () => {
+    if (kr.account instanceof Error) throw kr.account;
+    return kr.account;
+  },
   viewingKeyFor: () => VK,
   openKeysWithWallet: async () => { kr.opened += 1; },
   /* Who holds the company, as the person's own wallet reads it with no press: the vaults its account has adopted, and its indexer. */
@@ -224,6 +227,19 @@ describe('opening a company', () => {
    * company is elsewhere when one approval would open it; or a refusal is
    * handed on in the service's words.
    */
+  /* RED WHEN: a company whose roster this device does not believe is told "it did not finish", so nobody learns why it will not open. */
+  it('says a roster this device does not believe as that', async () => {
+    const { readCompany } = await load();
+    const { RosterNotBelieved } = await import('vaults-web-shared/roster-here.js');
+    const was = kr.account;
+    kr.account = new RosterNotBelieved('This device does not believe the company\'s roster it was given (x).');
+    try {
+      expect(await readCompany('u1', 'c1')).toEqual({ of: 'refused', why: 'roster-not-believed' });
+    } finally {
+      kr.account = was;
+    }
+  });
+
   it('says whether the keys are locked, not here, or refused, each apart', async () => {
     const { readCompany } = await load();
     kr.keys = false; kr.canOpen = false;
@@ -409,6 +425,50 @@ describe('proposals, vaults and invitations', () => {
     ]);
   });
 
+  /*
+   * RED WHEN: a proposal raised by a signer whose roster entry this device does not believe is said to be raised by a
+   * signer no longer listed, so the screen hides why; or a raiser the roster truly does not name is given a reason.
+   */
+  it('names a raiser whose entry this device does not believe, and why, apart from one the roster does not name', async () => {
+    const { readCompany } = await load();
+    const was = kr.account;
+    kr.account = { id: 'c1', name: 'Northwind', signers: [{ id: 's1', name: 'Priya' }], refused: [{ signerId: 's2', name: 'Sam', why: 'seat-not-on-the-chain' }] };
+    try {
+      const c = await readCompany('u1', 'c1');
+      if (c.of !== 'open' || c.proposals.of !== 'read') throw new Error('not read');
+      expect(c.proposals.value.map((p) => [p.id, p.raisedBy, p.raiserNotBelieved])).toEqual([['p1', 'Sam', 'seat-not-on-the-chain'], ['p2', null, null]]);
+      kr.account = { ...(kr.account as object), refused: [{ signerId: 's2', name: 'Sam', why: 'no-entry-of-their-own' }] };
+      const opened = await readCompany('u1', 'c1');
+      if (opened.of !== 'open' || opened.proposals.of !== 'read') throw new Error('not read');
+      expect(opened.proposals.value[0]!.raiserNotBelieved).toBe('no-entry-of-their-own');
+      kr.account = { ...(kr.account as object), refused: [{ signerId: 's2', name: 'Sam', why: 'not-their-signing-key' }] };
+      const signed = await readCompany('u1', 'c1');
+      if (signed.of !== 'open' || signed.proposals.of !== 'read') throw new Error('not read');
+      expect(signed.proposals.value[0]!.raiserNotBelieved).toBe('not-their-signing-key');
+      /* RED WHEN: the name in a roster entry this device refused as not what its wallet signed is shown as who raised it. */
+      expect(signed.proposals.value[0]!.raisedBy).toBeNull();
+    } finally {
+      kr.account = was;
+    }
+  });
+
+  /* RED WHEN: a vault's name that could not be read is told apart from none filed only when asked, or not at all. */
+  it('tells a vault name that could not be read apart from none filed, when asked to', async () => {
+    const m = await load();
+    const readVaultName = m.readVaultName;
+    info.answer = { state: 'none' };
+    expect(await readVaultName('u1', 'c1', 'v', m.NAME_NOT_READ)).toBeNull();
+    info.answer = { state: 'unread', why: 'the record could not be opened', version: 1 };
+    expect(await readVaultName('u1', 'c1', 'v', m.NAME_NOT_READ)).toBe(m.NAME_NOT_READ);
+    expect(await readVaultName('u1', 'c1', 'v')).toBeNull();
+    info.fails = true;
+    expect(await readVaultName('u1', 'c1', 'v', m.NAME_NOT_READ)).toBe(m.NAME_NOT_READ);
+    info.fails = false;
+    info.answer = { state: 'named', name: 'Payroll', description: '', version: 1 };
+    expect(await readVaultName('u1', 'c1', 'v', m.NAME_NOT_READ)).toBe('Payroll');
+    info.answer = { state: 'none' };
+  });
+
   /* RED WHEN: a vault standing the service names that is not in the set is handed on as it came, or the service's words about it are. */
   it('reads each vault, a standing not in the set as unknown', async () => {
     const { readCompany } = await load();
@@ -571,6 +631,32 @@ describe('the names in the one list of companies', () => {
       vi.unstubAllGlobals();
     }
   });
+
+  /* RED WHEN: why a company's name did not open on this device is thrown away, or a reason is kept beside a name that opened. */
+  it('keeps why a company\'s name did not open on this device, and no reason beside a name', async () => {
+    vi.resetModules();
+    vi.stubGlobal('fetch', vi.fn(async () => new Response(JSON.stringify({ user: { id: 'u1', name: 'Priya' }, accounts: [{ id: 'c1', createdAt: 'x', signerCount: 1 }] }), { status: 200 })));
+    const was = kr.account;
+    try {
+      const session = await import('./session.js');
+      const { RosterNotBelieved } = await import('vaults-web-shared/roster-here.js');
+      await session.whoIsSignedIn();
+      kr.account = new RosterNotBelieved('This device does not believe the company\'s roster it was given (x).');
+      const refused = await session.companyNamesFor('u1');
+      expect(refused.get('c1')).toBeUndefined();
+      expect(refused.whyNot.get('c1')).toBe('roster-not-believed');
+      kr.account = null;
+      expect((await session.companyNamesFor('u1')).whyNot.get('c1')).toBe('no-keys-here');
+      kr.account = was;
+      const named = await session.companyNamesFor('u1');
+      expect(named.get('c1')).toBe('Northwind');
+      expect(named.whyNot.size).toBe(0);
+    } finally {
+      kr.account = was;
+      vi.unstubAllGlobals();
+    }
+  /* Every module the names read loads is loaded afresh here, which takes some seconds the first time. */
+  }, 30_000);
 
   /* RED WHEN: names are read from a second list of companies asked of the service, or handed on for a list read for somebody else. */
   it('opens the names of the one list read when the person signed in, and asks the service nothing more', async () => {

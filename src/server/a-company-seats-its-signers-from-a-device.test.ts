@@ -342,6 +342,19 @@ const adaInJoined = (() => {
   return { committeeKey: w.committeeKey, statement, opening: w.opening, signingSecret: w.signing.secret, label, account, wallet: w, entered };
 })();
 
+/* A vault's adoption raised for the second company, and another proposal of it, written down before the server reads the store. */
+const WIRED_VAULT = 'ab'.repeat(32);
+{
+  const { adoptionRoundOf } = await import('../midnight/vault-start.js');
+  const round = adoptionRoundOf(pureCircuits as never, WIRED_VAULT as Hex);
+  const proposal = (id: string, chainId: string, digest: string) => ({
+    id, accountId: joined.account.id, status: 'open', createdAt: '2026-10-20T18:03:28.101Z', raisedAt: '2026-10-20T18:03:50.963Z',
+    chainId, digest, approvalCount: 0, keyEpoch: 0, sealed: { iv: '', tag: '', body: '' },
+  }) as never;
+  store.putProposal(proposal('prp_wiredAdoptn1', round.proposal, round.payload));
+  store.putProposal(proposal('prp_wiredOther01', '21'.repeat(32), '22'.repeat(32)));
+}
+
 handInWiring({
   name: 'simulated',
   commitments: MidnightCommitments,
@@ -572,6 +585,32 @@ const circuits = () => sent.map((x) => x.circuit);
 
 describe('A COMPANY SEATS ITS SIGNERS FROM THEIR OWN DEVICES, ON THE PRODUCT\'S ROUTES', () => {
   let blake: Awaited<ReturnType<typeof invited>>;
+
+  it('THE SERVICE AS IT IS STARTED CHECKS A VAULT\'S ADOPTION BY THE ACCOUNT\'S OWN FUNCTIONS AND ASKS THE CHAIN WHICH VAULTS IT ADOPTED', async () => {
+    const filer = signingPublicKeyOf(adaInJoined.signingSecret as Hex);
+    const carried = (id: string) => sendAs('ada')(`/api/proposals/${id}/carried`, { method: 'POST', body: JSON.stringify({ vault: WIRED_VAULT, filer }) });
+    /*
+     * RED WHEN: the service is started without the account's own functions for a vault's adoption, or without its read of
+     * which vaults the account adopted - every resume would then leave its adoption open, and say only that it cannot check.
+     */
+    const adoption = await carried('prp_wiredAdoptn1');
+    expect(adoption.body.error ?? '').not.toMatch(/cannot check which vaults/u);
+    /* This test's chain answers no read of the vaults an account lists, so the adoption waits for it, and nothing else is said. */
+    expect(adoption).toMatchObject({ status: 503, body: { nothingWasSent: true } });
+    /* RED WHEN: the service started takes any proposal for the adoption of the vault named. */
+    const other = await carried('prp_wiredOther01');
+    expect(other.status).toBe(409);
+    expect(other.body.error).toMatch(/not the adoption of that vault/u);
+  });
+
+  it('THE SIGN-IN ANSWER CARRIES EACH COMPANY\'S NEWEST ROSTER, AS THE LIST OF COMPANIES DOES, SO A DEVICE CAN NAME IT', async () => {
+    const me = await apiAs('ada')('/api/me') as { accounts: Array<{ id: string; roster?: { version: number } | null }> };
+    const listed = await apiAs('ada')('/api/accounts') as Array<{ id: string; roster?: { version: number } | null }>;
+    const row = me.accounts.find((a) => a.id === company)!;
+    /* RED WHEN: the companies a person signs in to come without their roster, so no device can open their names from them. */
+    expect(row.roster?.version).toBeGreaterThanOrEqual(1);
+    expect(row.roster).toEqual(listed.find((a) => a.id === company)!.roster);
+  });
 
   it('THE SERVICE CANNOT SEAT ANYBODY ITSELF: the routes that did are gone, and an admission the chain does not hold files nothing', async () => {
     blake = await invited('blake');

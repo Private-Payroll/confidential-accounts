@@ -1,7 +1,9 @@
 import { describe, it, expect } from 'vitest';
 import { ChainLedger, vaultTransactionReader } from './chain.js';
 import { readFinishedTransaction, readProvenTransaction } from './proven-submission.js';
-import { saysNothingWasSent } from '../core/jobs.js';
+import { saysNothingWasSent, NothingWasSent } from '../core/jobs.js';
+import { FeeNotPaid, NetworkRefused, WalletFeeSponsor, feeAnswerCodeOf } from '../midnight/sponsor.js';
+import { FeeRefused } from '../midnight/fee-ceiling.js';
 import type { Deployment } from './deployment.js';
 import type { WriteCapability } from './write-capability.js';
 
@@ -91,6 +93,89 @@ describe('A VAULT TRANSACTION A DEVICE SENT', () => {
       () => null, async () => unbound()).catch((err) => err);
     expect(e.message).toBe('the node did not answer');
     expect(saysNothingWasSent(e)).toBe(false);
+  });
+
+  /*
+   * RED WHEN: a fee the fee payer refused reaches the person without the code that says the fee was not paid.
+   */
+  it('a fee that was not paid says so with its code, whatever stopped it, and nothing is sent', async () => {
+    const ceiling = setUp({ addFeeAndFinalise: async () => { throw new NothingWasSent('over the ceiling'); } });
+    const e1 = await ceiling.ledger.sendVault('acc_1', 'x', 'proven-moving-nothing', new Uint8Array([1]),
+      () => null, async () => ceiling.unbound()).catch((e) => e);
+    expect(feeAnswerCodeOf(e1)).toBe('fee-not-paid');
+    expect(e1.message).toBe('over the ceiling');
+    expect(ceiling.log).not.toContain('submit');
+
+    const behind = setUp({ addFeeAndFinalise: async () => { throw new FeeNotPaid('the view is behind'); } });
+    const e2 = await behind.ledger.sendVault('acc_1', 'x', 'proven-moving-nothing', new Uint8Array([1]),
+      () => null, async () => behind.unbound()).catch((e) => e);
+    expect(feeAnswerCodeOf(e2)).toBe('fee-not-paid');
+    expect(e2.message).toBe('the view is behind');
+  });
+
+  /*
+   * RED WHEN: a transaction the node refused at its door is reported as one that may have landed.
+   */
+  it('a submission the node refused at its door is nothing sent, with its code', async () => {
+    const { ledger, unbound } = setUp({ submit: async () => { throw new NetworkRefused('refused at the door'); } });
+    const e = await ledger.sendVault('acc_1', 'x', 'proven-moving-nothing', new Uint8Array([1]),
+      () => null, async () => unbound()).catch((err) => err);
+    expect(saysNothingWasSent(e)).toBe(true);
+    expect(feeAnswerCodeOf(e)).toBe('network-refused');
+  });
+
+  /*
+   * RED WHEN: the page is handed the hash of a transaction that was refused, instead of the one the fee payer sent again.
+   */
+  it('when the fee payer sent the transaction again with a fresh proof, the hash returned is the one it sent', async () => {
+    const { ledger, unbound } = setUp({ submit: async () => ({ ref: 'ref-2', at: 'later', transactionHash: 'h-again' }) });
+    const sent = await ledger.sendVault('acc_1', 'x', 'proven-moving-nothing', new Uint8Array([1]),
+      () => null, async () => unbound());
+    expect(sent).toEqual({ ref: 'ref-2', at: 'later', transactionHash: 'h-again' });
+  });
+
+  /*
+   * RED WHEN: a fee over the ceiling is given the code that tells the person to try again, though every try is refused.
+   */
+  it('a fee over the ceiling keeps its own words and carries no code', async () => {
+    const dear = setUp({ addFeeAndFinalise: async () => { throw new FeeRefused('this transaction would spend more DUST than one may'); } });
+    const e = await dear.ledger.sendVault('acc_1', 'x', 'proven-moving-nothing', new Uint8Array([1]),
+      () => null, async () => dear.unbound()).catch((err) => err);
+    expect(saysNothingWasSent(e)).toBe(true);
+    expect(e).toBeInstanceOf(FeeRefused);
+    expect(feeAnswerCodeOf(e)).toBeNull();
+  });
+
+  /*
+   * RED WHEN: after the node refused the spend proof, a second balance that cannot be made reaches the route as a
+   * submission that may have landed.
+   */
+  it('a refused spend proof whose fee cannot be balanced again is nothing sent, through the real fee payer', async () => {
+    const refusal = Object.assign(new Error('Transaction submission error'), {
+      cause: { code: 1010, message: '1010: Invalid Transaction: Custom error: 170', data: 'Custom error: 170' },
+    });
+    let balanced = 0;
+    const payer = new WalletFeeSponsor({
+      shieldedSecretKeys: 's', dustSecretKey: 'd',
+      balanceFinalizedTransaction: async (tx: unknown) => { balanced += 1; if (balanced > 1) throw new Error('could not balance dust'); return { tx }; },
+      finalizeRecipe: async () => ({ intents: new Map(), transactionHash: () => 'h1' }),
+      submitTransaction: async () => { throw refusal; },
+      revert: async () => {},
+      estimateFee: async () => 1n,
+      paidFee: async () => null,
+      balances: async () => ({ dust: 1n, night: 1n }),
+    }, { perTransaction: 1_000n });
+    const { unbound } = setUp();
+    const ledger = new ChainLedger({} as never, DEPLOYMENT, {
+      maintenanceAuthority: { kind: 'unmaintainable' } as never, compiled: {},
+      customer: { coinPublicKey: () => '', encryptionPublicKey: () => '', release: async () => {}, balanceOwnLegs: async () => null },
+      sponsor: payer as never, storagePassword: async () => 'x',
+    });
+    const e = await ledger.sendVault('acc_1', 'x', 'proven-moving-nothing', new Uint8Array([1]),
+      () => null, async () => unbound()).catch((err) => err);
+    expect(balanced).toBe(2);
+    expect(saysNothingWasSent(e)).toBe(true);
+    expect(feeAnswerCodeOf(e)).toBe('fee-not-paid');
   });
 
   it('a transaction with no hash is still sent, and says it has none', async () => {
