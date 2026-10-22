@@ -3,7 +3,9 @@
  * Where each number came from:
  * - PROVING (2 minutes): a proof made in the browser took 98 to 112 seconds in the WASM proving report, and the
  *   founder's own run of each long step took over three minutes, most of it proving.
- * - Every other number is an estimate from the same run (the rest of the three minutes), not a measured time.
+ * - Every other number for a company or a vault is an estimate from the same run (the rest of the three minutes), not a
+ *   measured time.
+ * - A deposit's numbers are measured ones only (DEPOSIT_USUAL_SECONDS); a step not measured has none.
  */
 const USUAL_SECONDS_PROVING = 120;
 const USUAL_SECONDS_SENDING = 30;
@@ -36,6 +38,32 @@ export const VAULT_USUAL_SECONDS = {
   'waiting-for-approvals': null,
   done: null,
 } as const satisfies Readonly<Record<string, number | null>>;
+
+/**
+ * HOW LONG EACH STEP OF A DEPOSIT USUALLY TAKES, in seconds, for each way money goes in; null where it was not measured
+ * or waits on the person's own press in their wallet, so the screen shows the time that has run and no usual figure.
+ * Measured in the browser: proving a private deposit took 124 and 127 seconds (its two proofs share one thread), and
+ * proving a public one about 2 seconds. Keyed by the deposit adapter's step names without importing it; that adapter
+ * checks every step it lists has an entry here.
+ */
+export const DEPOSIT_USUAL_SECONDS = {
+  private: {
+    'opening-the-company-records': null,
+    'checking-the-vault': null,
+    'choosing-the-coin': null,
+    'proving-the-deposit': 125,
+    'paying-in-your-wallet': null,
+    sending: null,
+    'waiting-for-the-chain': null,
+  },
+  public: {
+    'checking-the-vault': null,
+    'proving-the-deposit': 2,
+    'paying-in-your-wallet': null,
+    sending: null,
+    'waiting-for-the-chain': null,
+  },
+} as const satisfies Readonly<Record<string, Readonly<Record<string, number | null>>>>;
 
 /** What one stage that ended leaves in the development console: which stage (its parts, such as the step and the phase), its measured seconds (to a tenth), and the usual figure the screen showed for it (null where it showed none). */
 export type StageTimeRecord = { readonly stageTime: readonly string[]; readonly measuredSeconds: number; readonly usualShownSeconds: number | null };

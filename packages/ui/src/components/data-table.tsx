@@ -44,6 +44,12 @@ export interface DataTableFilter<T> {
   /** The tab's name, already in the person's language. */
   label: ReactNode;
   keeps: (row: T) => boolean;
+  /**
+   * Whether its tab says how many rows it keeps. Shown unless this is false: false for a filter whose rows were not
+   * all read, because a count of the rows that were read would be said as the count of all of them, and not
+   * known is never shown as zero.
+   */
+  counted?: boolean;
   soon?: never;
 }
 
@@ -187,7 +193,7 @@ function LoadedTable<T extends RowData>({ label, rows, rowId, columns, filters: 
                   ? (
                     <TabsTrigger key={f.id} value={f.id} data-filter={f.id}>
                       {f.label}
-                      <CountPill count={rows.filter(f.keeps).length} />
+                      {f.counted === false ? null : <CountPill count={rows.filter(f.keeps).length} />}
                     </TabsTrigger>
                   )
                   /*

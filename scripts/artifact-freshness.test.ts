@@ -469,6 +469,9 @@ describe('the guard is WIRED IN, and is pointed at the artifacts the tests impor
   const KEY_DIR = ['contracts', 'managed', 'keys'].join('/');
   // The vault is a second contract, and its keys come from a build of its own.
   const VAULT_KEY_DIR = ['contracts', 'managed-vault', 'keys'].join('/');
+  // The network's shielded circuits are fetched by `npm run vendor-keys` into the
+  // wallet's own folder, which the job that builds the keys runs before its tests.
+  const NETWORK_KEY_DIR = ['apps', 'wallet', 'public', 'keys', 'zswap'].join('/');
   const GATE = `skip${'If'}(`;
 
   const gatedOnKeys = (dirs: readonly string[] = [KEY_DIR, VAULT_KEY_DIR]): string[] => {
@@ -610,6 +613,16 @@ describe('the guard is WIRED IN, and is pointed at the artifacts the tests impor
       'a test named here is still in this tree and is no longer gated on the vault keys')
       .toEqual([]);
     expect(keysCoverageProblem(WORKFLOW(), gated)).toBeNull();
+    /* RED WHEN: a test is skipped without the network's shielded circuits and this list does not name it, so it can stop running in every job unnoticed. */
+    const NETWORK_NAMED = [
+      'packages/web-shared/src/the-device-proves-only-with-this-builds-keys.test.ts',
+    ];
+    const networkGated = gatedOnKeys([NETWORK_KEY_DIR]);
+    expect(networkGated.filter((f) => !NETWORK_NAMED.includes(f)),
+      'a test is gated on the network\'s shielded circuits and this list does not name it').toEqual([]);
+    expect(NETWORK_NAMED.filter((f) => existsSync(join(ROOT, f)) && !networkGated.includes(f)),
+      'a test named here is still in this tree and is no longer gated on the network\'s shielded circuits')
+      .toEqual([]);
   });
 
   it('and the rule above refuses every way that coverage can be taken away', () => {
@@ -647,13 +660,13 @@ describe('the guard is WIRED IN, and is pointed at the artifacts the tests impor
     refuses('the run passes when it collects nothing',
       real.replace(/- run: npx vitest run /, '- run: npx vitest run --passWithNoTests '), /collects nothing/);
     refuses('THE CHEAP ONE: the keys are built AFTER the tests that read them',
-      real.replace(/      - name: build the proving and verifier keys\n        run: npm run compact\n((?:      #[^\n]*\n|      - name: (?:build the vault|fetch Midnight)[^\n]*\n(?:        timeout-minutes: \d+\n)?        run: [^\n]*\n)*)(      - run: npx vitest run [^\n]*\n)/,
+      real.replace(/      - name: build the proving and verifier keys\n        run: npm run compact\n((?:      #[^\n]*\n|      - name: (?:build the vault|fetch Midnight|fetch the network)[^\n]*\n(?:        timeout-minutes: \d+\n)?        run: [^\n]*\n)*)(      - run: npx vitest run [^\n]*\n)/,
         '$1$2      - name: build the proving and verifier keys\n        run: npm run compact\n'), /runs the suite after/);
     refuses('the vault\'s keys are never built',
       real.replace(/      - name: build the vault's proving and verifier keys\n        run: npm run compact:vault -- --full\n/, ''),
       /nothing in keys builds the vault's keys/);
     refuses('the vault\'s keys are built AFTER the tests that read them',
-      real.replace(/(      - name: build the vault's proving and verifier keys\n        run: npm run compact:vault -- --full\n)((?:      #[^\n]*\n|      - name: fetch Midnight[^\n]*\n(?:        timeout-minutes: \d+\n)?        run: [^\n]*\n)*)(      - run: npx vitest run [^\n]*\n)/,
+      real.replace(/(      - name: build the vault's proving and verifier keys\n        run: npm run compact:vault -- --full\n)((?:      #[^\n]*\n|      - name: fetch (?:Midnight|the network)[^\n]*\n(?:        timeout-minutes: \d+\n)?        run: [^\n]*\n)*)(      - run: npx vitest run [^\n]*\n)/,
         '$2$3$1'), /reads the vault's keys and is run by no step after they are built/);
     refuses('the vault\'s build is made conditional',
       real.replace(/\n(\s+)run: npm run compact:vault -- --full\n/, '\n$1if: false\n$1run: npm run compact:vault -- --full\n'), /vault's keys .* conditional/);

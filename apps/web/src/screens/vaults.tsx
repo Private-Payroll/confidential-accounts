@@ -11,7 +11,8 @@ import { ReadOf, VaultTile, WithRecords } from '../records/parts.js';
  * component in the right-hand panel; what is pending on the company's vaults
  * on top, when anything is; and a tile for each vault under the page's one
  * heading, each opening the vault's own page, which is shown here in place of
- * the tiles.
+ * the tiles. When the company's vaults cannot be loaded, the page says so in
+ * the words for that, with the details for support.
  */
 export function Vaults({ children }: { children?: ReactNode }) {
   const t = useText();
@@ -25,7 +26,7 @@ export function Vaults({ children }: { children?: ReactNode }) {
       />
       <WithRecords>
         {(records) => (
-          <ReadOf read={records.vaults}>
+          <ReadOf read={records.vaults} unreadable={t('vaults.unreadable', { reasons: t('vaults.unreadable.reason') })}>
             {(rows) => (
               <>
                 <VaultsPending rows={rows} />

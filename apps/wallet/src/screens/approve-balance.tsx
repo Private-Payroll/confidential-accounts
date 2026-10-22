@@ -96,7 +96,7 @@ type Stage =
   | { of: 'ready'; tx: UnboundTransactionLike; leaves: LeavesTheWallet[]; pays: PageAskPays }
   | { of: 'refused'; says: string }
   /** `reading`: the wallet is still reading the chain, nothing is booked, and the person may still say no. */
-  | { of: 'paying'; reading: boolean; leaves: LeavesTheWallet[]; pays: PageAskPays }
+  | { of: 'paying'; reading: boolean; proving: boolean; leaves: LeavesTheWallet[]; pays: PageAskPays }
   | { of: 'failed'; says: string; leaves: LeavesTheWallet[]; pays: PageAskPays }
   | { of: 'sent'; at: number; leaves: LeavesTheWallet[]; pays: PageAskPays };
 
@@ -214,9 +214,11 @@ export function ApproveBalance({
     let sentAt = 0;
     /*
      * **WHAT THE WALLET IS DOING, SAID TO THE PAGE AS IT HAPPENS**: each report
-     * of the read that moved, the moment before coins are added, and each proof
-     * starting or ending. Never from a clock. A stage already said is said again
-     * at most once a second, which is still only ever on an event.
+     * of the read that moved and the moment before coins are added are said as
+     * "reading" (the only stage the page has for work before a proof); "proving"
+     * is said only on a private deposit's proof starting or ending, never for a
+     * public deposit, which makes none. Never from a clock. A stage already said
+     * is said again at most once a second, which is still only ever on an event.
      */
     let said: { stage: ProgressStage; at: number } | null = null;
     const say = (next: ProgressStage): void => {
@@ -225,7 +227,11 @@ export function ApproveBalance({
       said = { stage: next, at };
       channel.progress(next);
     };
-    const unwatch = pressedWith.watchProofs?.(() => say('proving'));
+    const unwatch = pressedWith.watchProofs?.((event) => {
+      if (pays === 'public' || event.op !== 'prove') { say('reading'); return; }
+      say('proving');
+      if (stillThisWallet()) setStage((was) => (was.of === 'paying' ? { ...was, reading: false, proving: true } : was));
+    });
     pressing.current.add(pressedWith);
     setBusy(true);
     const over = (): void => {
@@ -235,16 +241,16 @@ export function ApproveBalance({
       if (mounted.current) { setBusy(pressing.current.size > 0); setHeld(booking.current > 0); }
       if (!mounted.current || !stillThisWallet()) void pressedWith.stop?.();
     };
-    setStage({ of: 'paying', reading: false, leaves, pays });
+    setStage({ of: 'paying', reading: false, proving: false, leaves, pays });
     void payForThePage(pressedWith, tx, { pays, leaves }, {
-      onReading: () => { if (!declined.current && stillThisWallet()) setStage({ of: 'paying', reading: true, leaves, pays }); },
+      onReading: () => { if (!declined.current && stillThisWallet()) setStage({ of: 'paying', reading: true, proving: false, leaves, pays }); },
       onRead: () => say('reading'),
       onBalancing: () => {
         booked = true;
         booking.current += 1;
         if (mounted.current) setHeld(true);
-        say('proving');
-        if (stillThisWallet()) setStage({ of: 'paying', reading: false, leaves, pays });
+        say('reading');
+        if (stillThisWallet()) setStage((was) => (was.of === 'paying' ? { ...was, reading: false } : was));
       },
       /* **ASKED LAST BEFORE ANY COIN IS SET ASIDE**: not if the person said no, left, or picked another wallet. */
       stillWanted: () => !declined.current && mounted.current && stillThisWallet(),
@@ -408,10 +414,15 @@ export function ApproveBalance({
             : 'Your wallet is reading the network to find your private coins before it adds them. This can take a few minutes. Nothing has been paid, and you can still choose not to pay.'}
         </p>
       )}
-      {stage.of === 'paying' && !stage.reading && !publicly && (
+      {stage.of === 'paying' && !stage.reading && !publicly && !stage.proving && (
         <p className="lede" data-paying>
-          Adding your coins and proving them in this browser. This can take a few minutes, and nothing is sent to the
-          network from here.
+          Adding your private coins and signing in this browser. Nothing is sent to the network from here.
+        </p>
+      )}
+      {stage.of === 'paying' && !stage.reading && !publicly && stage.proving && (
+        <p className="lede" data-paying data-proving>
+          Proving your coins in this browser. This can take a few minutes, and nothing is sent to the network from
+          here.
         </p>
       )}
       {stage.of === 'paying' && !stage.reading && publicly && (

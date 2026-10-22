@@ -2,16 +2,30 @@
 import { readFileSync } from 'node:fs';
 import { dirname, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { act, cleanup, fireEvent, render, within } from '@testing-library/react';
+import { act, cleanup, fireEvent, render, waitFor, within } from '@testing-library/react';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { KitProvider, languagesFrom } from 'vaults-ui';
 import { untilPageShown, untilShown } from '../page-shown.test-support.js';
 const names = vi.hoisted(() => ({ opened: new Map<string, string>(), approvals: new Map<string, number>() }));
-vi.mock('../adapters/session.js', async (real) => ({
-  ...(await real<typeof import('../adapters/session.js')>()),
-  companyNamesFor: async () => names.opened,
-  approvalsNeededFor: async () => names.approvals,
+/* The account's window, shown and put away by the test as the shared code would. */
+const wallet = vi.hoisted(() => ({
+  shown: false, watchers: new Set<(shown: boolean) => void>(),
+  set(shown: boolean) { this.shown = shown; for (const w of [...this.watchers]) w(shown); },
 }));
+vi.mock('../adapters/session.js', async (real) => {
+  const r = await real<typeof import('../adapters/session.js')>();
+  return {
+    ...r,
+    companyNamesFor: async () => names.opened,
+    approvalsNeededFor: async () => names.approvals,
+    accountFrame: {
+      ...r.accountFrame,
+      mount: () => {},
+      shown: () => wallet.shown,
+      onShown: (watch: (shown: boolean) => void) => { wallet.watchers.add(watch); return () => { wallet.watchers.delete(watch); }; },
+    },
+  };
+});
 /* What the creation adapter says of each company: the mark it gives (null for a company it knows nothing of or could not read), and every read asked of it. */
 const creations = vi.hoisted(() => ({ mark: new Map<string, 'not-finished'>(), reads: [] as (string | null)[], throwing: new Set<string>() }));
 vi.mock('../adapters/creation-standing.js', async (real) => ({
@@ -21,6 +35,12 @@ vi.mock('../adapters/creation-standing.js', async (real) => ({
     if (id !== null && creations.throwing.has(id)) throw new Error('read failed');
     return { company: id, standing: null, awaitingSecondPress: false, kept: false, confirmedFinished: false, mark: id === null ? null : creations.mark.get(id) ?? null };
   },
+}));
+/* The ask of the wallet for the account's tokens: every ask that reaches it is kept, and it answers with nothing a page could show. */
+const walletAsks = vi.hoisted(() => ({ asked: [] as unknown[][] }));
+vi.mock('../adapters/account-balances.js', async (real) => ({
+  ...(await real<typeof import('../adapters/account-balances.js')>()),
+  askForAccountBalances: async (...args: unknown[]) => { walletAsks.asked.push(args); return { of: 'refused', why: 'declined' }; },
 }));
 vi.mock('../adapters/company-records.js', async (real) => ({
   ...(await real<typeof import('../adapters/company-records.js')>()),
@@ -39,7 +59,8 @@ import { DEFAULT_PREFERENCES } from '../preferences.js';
 import { SessionProvider, type Session } from '../session.js';
 import { EVERY_SHORTCUT } from '../shortcuts.js';
 import { menuFor } from './menu.js';
-import { usePanel } from './right-panel.js';
+import { AccountFrame } from './account-frame.js';
+import { PanelProvider, RightPanel, usePanel } from './right-panel.js';
 import { Shell } from './shell.js';
 
 /*
@@ -96,7 +117,7 @@ const press = (init: KeyboardEventInit) => act(() => { document.dispatchEvent(ne
 
 beforeEach(() => {
   vi.spyOn(console, 'error').mockImplementation(() => {});
-  creations.mark.clear(); creations.reads.length = 0; creations.throwing.clear(); takeAsked();
+  creations.mark.clear(); creations.reads.length = 0; creations.throwing.clear(); takeAsked(); walletAsks.asked = [];
 });
 afterEach(() => { cleanup(); vi.restoreAllMocks(); });
 
@@ -394,19 +415,59 @@ describe('the account menu', () => {
   };
 
   /*
-   * RED WHEN: the account's addresses or balances are shown as if they were
-   * read, when no request for them exists; or the menu loses light and dark,
-   * the language, switching view or signing out.
+   * RED WHEN: the account's addresses are shown as if they were read, when no
+   * request for them exists; Balances is still said to be coming; or the menu
+   * loses light and dark, the language, switching view or signing out.
    */
-  it('shows the account\'s addresses and balances Coming soon, and has light and dark, language, switching view and signing out', async () => {
+  it('shows the account\'s addresses Coming soon, offers Balances, and has light and dark, language, switching view and signing out', async () => {
     const { container } = await draw(sessionFor(signer), 'settingsAppearance');
     const menu = await openMenu(container);
     expect(menu).not.toBeNull();
     const details = menu.querySelector('[data-account-details]') as HTMLElement;
-    expect(details.querySelectorAll('[data-slot=coming-soon]').length).toBe(3);
+    expect(details.querySelectorAll('[data-slot=coming-soon]').length).toBe(2);
+    expect(details.textContent).toContain(EN['account.privateAddress']);
+    expect(details.textContent).toContain(EN['account.publicAddress']);
+    expect(details.querySelector('[data-action=account-balances]')?.textContent).toBe(EN['account.balances']);
     expect(details.querySelector('[data-slot=amount]')).toBeNull();
+    expect(EN['account.detailsSoon']).not.toMatch(/balance/i);
     expect([...menu.querySelectorAll('[data-mode]')].map((m) => m.getAttribute('data-mode'))).toEqual(['light', 'dark', 'system']);
     for (const a of ['language', 'switch-view', 'sign-out']) expect(menu.querySelector(`[data-action=${a}]`), a).not.toBeNull();
+  });
+
+  /*
+   * RED WHEN: pressing Balances opens nothing, opens the account's tokens without the person's press asking the wallet for them,
+   * or asks the wallet before the person presses the button in the panel.
+   */
+  it('opens the account\'s tokens in the right-hand panel on Balances, and asks the wallet only on the panel\'s own button', async () => {
+    const { container } = await draw(sessionFor(signer), 'settingsAppearance');
+    const menu = await openMenu(container);
+    expect(document.querySelector('[data-panel]')).toBeNull();
+    await act(() => { fireEvent.click(menu.querySelector('[data-action=account-balances]')!); });
+    await waitFor(() => expect(document.querySelector('[data-panel] [data-account-tokens=not-asked]')).not.toBeNull());
+    const panel = document.querySelector('[data-panel]') as HTMLElement;
+    expect(panel.textContent).toContain(EN['account.balances']);
+    expect(panel.textContent).toContain(EN['accountTokens.opens']);
+    expect(walletAsks.asked).toHaveLength(0);
+    await act(async () => { fireEvent.click(panel.querySelector('[data-action=show-account-tokens]')!); await Promise.resolve(); });
+    expect(walletAsks.asked).toHaveLength(1);
+  });
+
+  /* RED WHEN: on a phone, the menu sheet stays open under the Balances panel, or stays open after the panel closes; or Balances has no icon like its neighbours. */
+  it('closes the phone\'s menu sheet when Balances opens the panel, and shows Balances with an icon', async () => {
+    const was = window.matchMedia;
+    window.matchMedia = ((q: string) => ({ matches: true, media: q, onchange: null, addEventListener() {}, removeEventListener() {}, addListener() {}, removeListener() {}, dispatchEvent: () => false })) as typeof window.matchMedia;
+    try {
+      const { container } = await draw(sessionFor(signer), 'settingsAppearance');
+      await act(() => { fireEvent.click(document.querySelector('[data-sidebar=trigger]')!); });
+      expect(document.querySelector('[data-mobile=true]')).not.toBeNull();
+      const menu = await openMenu(document.body);
+      const item = menu.querySelector('[data-action=account-balances]')!;
+      expect(item.querySelector('svg')).not.toBeNull();
+      await act(() => { fireEvent.click(item); });
+      await waitFor(() => expect(document.querySelector('[data-panel] [data-account-tokens]')).not.toBeNull());
+      expect(document.querySelector('[data-mobile=true]')).toBeNull();
+      expect(container).not.toBeNull();
+    } finally { window.matchMedia = was; }
   });
 
   /* RED WHEN: switching view is offered to a person who signs for no company, where there is no company view to switch to. */
@@ -448,6 +509,136 @@ describe('the right-hand panel', () => {
     expect(document.querySelector('[data-panel] [data-panel-body]')).not.toBeNull();
     expect(document.querySelector('[data-page-body] [data-open-panel]')).not.toBeNull();
     await act(() => { fireEvent.keyDown(document.querySelector('[data-panel]')!, { key: 'Escape' }); });
+    expect(document.querySelector('[data-panel]')).toBeNull();
+  });
+});
+
+describe('the account\'s window over the right-hand panel', () => {
+  function Opener() {
+    const { open } = usePanel();
+    return <button type="button" data-open-panel onClick={() => open({ title: 'x', body: <p data-panel-body /> })} />;
+  }
+  const layerOf = (el: Element | null): number => Number(/(?:^|\s)z-(?:\[(\d+)\]|(\d+))(?:\s|$)/u.exec(el?.getAttribute('class') ?? '')?.slice(1).find((n) => n !== undefined) ?? NaN);
+  async function drawOpen() {
+    render(
+      <KitProvider languages={TEST_LANGUAGES} pick="en">
+        <PanelProvider><Opener /><RightPanel /><AccountFrame /></PanelProvider>
+      </KitProvider>,
+    );
+    await act(() => { fireEvent.click(document.querySelector('[data-open-panel]')!); });
+    await act(async () => { await new Promise((r) => setTimeout(r, 5)); });
+  }
+
+  /* RED WHEN: the account's window, which a panel's button opens, is drawn at or below the panel or its dimmed backdrop, or does not take presses while the panel switches presses outside itself off. */
+  it('stacks above the panel and its backdrop, and takes the press', async () => {
+    await drawOpen();
+    const frame = document.querySelector('[data-account-frame]')!;
+    const panel = document.querySelector('[data-panel]')!;
+    const backdrop = document.querySelector('[data-slot=sheet-overlay]')!;
+    expect(layerOf(panel)).toBeGreaterThan(0);
+    expect(layerOf(frame)).toBeGreaterThan(layerOf(panel));
+    expect(layerOf(frame)).toBeGreaterThan(layerOf(backdrop));
+    expect(frame.className).toContain('pointer-events-auto');
+  });
+
+  /* RED WHEN: a press in the account's window closes the panel it was opened from, so the deposit it was opened for is lost; or a press elsewhere outside the panel no longer closes it. */
+  it('leaves the panel open for a press in the account\'s window, and still closes it for a press elsewhere', async () => {
+    await drawOpen();
+    const frame = document.querySelector('[data-account-frame]')!;
+    await act(async () => { fireEvent.pointerDown(frame); fireEvent.mouseDown(frame); fireEvent.click(frame); await new Promise((r) => setTimeout(r, 5)); });
+    expect(document.querySelector('[data-panel] [data-panel-body]')).not.toBeNull();
+    await act(async () => { fireEvent.pointerDown(document.body); fireEvent.click(document.body); await new Promise((r) => setTimeout(r, 5)); });
+    expect(document.querySelector('[data-panel]')).toBeNull();
+  });
+});
+
+describe('the account\'s window over the right-hand panel, by keyboard and to assistive tools', () => {
+  function Opener() {
+    const { open } = usePanel();
+    return <button type="button" data-open-panel onClick={() => open({ title: 'x', body: <button type="button" data-panel-button>Inside</button> })} />;
+  }
+  const ancestorsHidden = (el: Element): boolean => { for (let e: Element | null = el; e !== null; e = e.parentElement) if (e.getAttribute('aria-hidden') === 'true') return true; return false; };
+  const settleFocus = () => act(async () => { await new Promise((r) => setTimeout(r, 5)); });
+  async function drawPanel() {
+    wallet.shown = false;
+    const view = render(
+      <KitProvider languages={TEST_LANGUAGES} pick="en">
+        <PanelProvider><Opener /><RightPanel /><AccountFrame /></PanelProvider>
+      </KitProvider>,
+    );
+    const frame = () => document.querySelector<HTMLElement>('[data-account-frame]')!;
+    const openPanel = async () => { await act(() => { fireEvent.click(document.querySelector('[data-open-panel]')!); }); await settleFocus(); };
+    const show = async (shown: boolean) => { await act(async () => { wallet.set(shown); }); await settleFocus(); };
+    return { view, frame, openPanel, show };
+  }
+  afterEach(() => { wallet.set(false); wallet.watchers.clear(); });
+
+  /* RED WHEN: the account's window is drawn inside the application's root (so the panel's hiding of the rest of the page hides it from assistive tools too), or is still hidden from them once shown, whether the panel was opened before it or after. */
+  it('is drawn outside the root and is not hidden from assistive tools while shown, whichever opened first', async () => {
+    const { view, frame, openPanel, show } = await drawPanel();
+    expect(view.container.contains(frame())).toBe(false);
+    expect(frame().parentElement).toBe(document.body);
+    await openPanel();
+    expect(view.container.getAttribute('aria-hidden')).toBe('true');
+    await show(true);
+    expect(ancestorsHidden(frame())).toBe(false);
+    expect(frame().querySelector('[role=dialog]')!.getAttribute('aria-modal')).toBe('true');
+    expect(frame().querySelector('[role=dialog]')!.getAttribute('aria-labelledby')).toBe(frame().querySelector('strong')!.id);
+    await show(false);
+    await act(() => { fireEvent.keyDown(document.activeElement ?? document.body, { key: 'Escape' }); });
+    await settleFocus();
+    expect(document.querySelector('[data-panel]')).toBeNull();
+    await show(true);
+    await openPanel();
+    expect(ancestorsHidden(frame())).toBe(false);
+  });
+
+  /* RED WHEN: focus does not go into the account's window when it opens over a panel, or the panel's focus trap sends it straight back, or it does not go back to where it was when the window is put away. */
+  it('takes focus into the account when it opens over the panel, keeps it there, and gives it back when put away', async () => {
+    const { frame, openPanel, show } = await drawPanel();
+    await openPanel();
+    const inside = document.querySelector<HTMLElement>('[data-panel-button]')!;
+    await act(() => { inside.focus(); });
+    expect(document.activeElement).toBe(inside);
+    await show(true);
+    expect(document.activeElement).toBe(frame().querySelector('iframe'));
+    await act(() => { frame().querySelector<HTMLElement>('[data-action=stop-waiting]')!.focus(); });
+    await settleFocus();
+    expect(document.activeElement).toBe(frame().querySelector('[data-action=stop-waiting]'));
+    await show(false);
+    expect(document.activeElement).toBe(inside);
+    expect(document.querySelector('[data-panel]')).not.toBeNull();
+  });
+
+  /* RED WHEN: Tab can leave the account's window for the page behind it: past the account's last control, or back past the stop button, instead of going round inside the window. */
+  it('sends focus round inside the window at both ends, never on to the page behind it', async () => {
+    const { frame, openPanel, show } = await drawPanel();
+    await openPanel();
+    await show(true);
+    const guard = (end: string) => frame().querySelector<HTMLElement>(`[data-focus-guard=${end}]`)!;
+    await act(() => { guard('end').focus(); });
+    expect(document.activeElement).toBe(frame().querySelector('[data-action=stop-waiting]'));
+    await act(() => { guard('start').focus(); });
+    expect(document.activeElement).toBe(frame().querySelector('iframe'));
+    expect(guard('start').compareDocumentPosition(frame().querySelector('[data-action=stop-waiting]')!) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+    expect(guard('end').compareDocumentPosition(frame().querySelector('iframe')!) & Node.DOCUMENT_POSITION_PRECEDING).toBeTruthy();
+  });
+
+  /* RED WHEN: Esc pressed in the account's window closes the panel it was opened over, or the panel stops closing for Esc pressed in itself, or its focus trap stops sending focus that goes elsewhere (outside both) back into it. */
+  it('keeps the panel open for Esc in the account\'s window, and the panel still closes for Esc in itself and holds focus in', async () => {
+    const { frame, openPanel, show } = await drawPanel();
+    await openPanel();
+    await show(true);
+    await act(() => { fireEvent.keyDown(frame().querySelector('[data-action=stop-waiting]')!, { key: 'Escape' }); });
+    await settleFocus();
+    expect(document.querySelector('[data-panel]')).not.toBeNull();
+    await show(false);
+    const outside = document.querySelector<HTMLElement>('[data-open-panel]')!;
+    await act(() => { outside.focus(); });
+    await settleFocus();
+    expect(document.querySelector('[data-panel]')!.contains(document.activeElement)).toBe(true);
+    await act(() => { fireEvent.keyDown(document.activeElement!, { key: 'Escape' }); });
+    await settleFocus();
     expect(document.querySelector('[data-panel]')).toBeNull();
   });
 });

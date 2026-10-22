@@ -6,10 +6,11 @@ import {
 } from './addresses-and-balances.js';
 
 /*
- * A page asking one of this person's wallets where it receives and what it
- * holds: the ask carries nothing of its own, and the answer is what the screen
- * showed, every amount marked private or public, and a side the wallet could
- * not read said as not known rather than as nothing.
+ * A page asking one of this person's wallets where it receives privately and
+ * what it holds: the ask carries nothing of its own, and the answer is what
+ * the screen showed - the private address and never the public one, every
+ * amount marked private or public, and a side the wallet could not read said
+ * as not known rather than as nothing.
  */
 
 const NOW = 1_755_000_000_000;
@@ -29,7 +30,7 @@ const refusal = (raw: unknown): RequestError => {
   throw new Error('it was not refused');
 };
 const SHOWN: AddressesAndBalancesShown = {
-  addresses: { private: PRIVATE, public: PUBLIC },
+  addresses: { private: PRIVATE },
   balances: [
     { token: NIGHT, amount: '5000000', visibility: 'private' },
     { token: OTHER, amount: '7', visibility: 'private' },
@@ -78,9 +79,19 @@ describe('THE ANSWER IS WHAT THE SCREEN SHOWED, AND NOTHING ELSE', () => {
       .toThrow(AddressesAndBalancesRefused);
   });
 
-  it('refuses what is not whole: one address for both sides, a token twice, an amount that is not whole digits', () => {
+  it('NEVER HANDS OVER THE PUBLIC ADDRESS: BESIDE THE PRIVATE ONE, OR IN ITS PLACE', () => {
     for (const [why, bent] of [
-      ['one address for both', { ...SHOWN, addresses: { private: PUBLIC, public: PUBLIC } }],
+      ['beside the private one', { ...SHOWN, addresses: { private: PRIVATE, public: PUBLIC } }],
+      ['in the private one\'s place', { ...SHOWN, addresses: { private: PUBLIC } }],
+    ] as const) {
+      /* RED WHEN: the wallet can hand a page the account's public address. */
+      expect(() => addressesAndBalancesAnswerFor(ask(), bent as never, NOW), why).toThrow(AddressesAndBalancesRefused);
+    }
+  });
+
+  it('refuses what is not whole: no address, a token twice, an amount that is not whole digits', () => {
+    for (const [why, bent] of [
+      ['no address', { ...SHOWN, addresses: {} }],
       ['a token twice', { ...SHOWN, balances: [...SHOWN.balances, SHOWN.balances[0]!] }],
       ['not whole digits', { ...SHOWN, balances: [{ token: NIGHT, amount: '1.5', visibility: 'private' }] }],
       ['no side', { ...SHOWN, balances: [{ token: NIGHT, amount: '1', visibility: 'shielded' }] }],
@@ -97,6 +108,14 @@ describe('THE PAGE BELIEVES AN ANSWER TO ITS OWN QUESTION, AND NOTHING ELSE', ()
     const read = readAddressesAndBalancesAnswer(JSON.parse(JSON.stringify(addressesAndBalancesAnswerFor(ask(), SHOWN, NOW))), expecting);
     /* RED WHEN: the page reads back anything but what the wallet showed. */
     expect(read).toEqual({ ok: true, shown: SHOWN, at: NOW });
+  });
+  it('DOES NOT BELIEVE AN ANSWER THAT CARRIES THE PUBLIC ADDRESS', () => {
+    const good = JSON.parse(JSON.stringify(addressesAndBalancesAnswerFor(ask(), SHOWN, NOW)));
+    /* RED WHEN: a page believes a wallet that sent it the account's public address, beside the private one or in its place. */
+    expect(readAddressesAndBalancesAnswer({ ...good, addresses: { private: PRIVATE, public: PUBLIC } }, expecting))
+      .toMatchObject({ ok: false, code: 'not-an-answer' });
+    expect(readAddressesAndBalancesAnswer({ ...good, addresses: { private: PUBLIC } }, expecting))
+      .toMatchObject({ ok: false, code: 'not-an-answer' });
   });
   it('refuses another page\'s, another nonce\'s, and one that is not whole', () => {
     const good = JSON.parse(JSON.stringify(addressesAndBalancesAnswerFor(ask(), SHOWN, NOW)));

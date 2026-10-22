@@ -1,9 +1,10 @@
+import { lazy, Suspense } from 'react';
 import { HugeiconsIcon } from '@hugeicons/react';
-import { KeyboardIcon, LanguageSquareIcon, Logout01Icon, Settings01Icon, UnfoldMoreIcon, UserSwitchIcon } from '@hugeicons/core-free-icons';
+import { KeyboardIcon, LanguageSquareIcon, Logout01Icon, Settings01Icon, UnfoldMoreIcon, UserSwitchIcon, Wallet01Icon } from '@hugeicons/core-free-icons';
 import {
   Avatar, AvatarFallback, ComingSoon, DropdownMenu, DropdownMenuContent, DropdownMenuGroup, DropdownMenuItem, DropdownMenuLabel, DropdownMenuRadioGroup,
   DropdownMenuRadioItem, DropdownMenuSeparator, DropdownMenuShortcut, DropdownMenuSub, DropdownMenuSubContent, DropdownMenuSubTrigger, DropdownMenuTrigger,
-  SidebarMenu, SidebarMenuButton, SidebarMenuItem, usePopupSide, useSidebar, useText,
+  SidebarMenu, SidebarMenuButton, SidebarMenuItem, SectionLoading, usePopupSide, useSidebar, useText,
 } from 'vaults-ui';
 import { LANGUAGES, languageName } from '../languages.js';
 import { SETTINGS_OF, VIEWS } from '../pages.js';
@@ -11,26 +12,32 @@ import { FOLLOW_BROWSER, MODE_NAMES, MODES, type Mode } from '../preferences.js'
 import { go } from '../router.js';
 import { useSession } from '../session.js';
 import { SHORTCUT } from '../shortcuts.js';
+import { usePanel } from './right-panel.js';
 import { ShortcutKeys } from './shortcut-keys.js';
+
+
+/** The account's tokens are fetched when Balances is pressed, so they are not part of what every page loads first. */
+const AccountTokens = lazy(() => import('../actions/account-tokens.js').then((m) => ({ default: m.AccountTokens })));
 
 /** The first letter of a name, for the avatar when there is no picture. */
 const initial = (name: string): string => Array.from(name.trim())[0]?.toUpperCase() ?? '';
 
 /**
  * THE ACCOUNT MENU, AT THE FOOT OF THE LEFT MENU: who is signed in, what is
- * Coming soon of the account, light and dark, the language, switching between
- * the company view and the person's own pay, Settings, the shortcuts, and
- * signing out.
+ * Coming soon of the account, Balances, light and dark, the language,
+ * switching between the company view and the person's own pay, Settings, the
+ * shortcuts, and signing out.
  *
- * THE ACCOUNT'S ADDRESSES AND BALANCES ARE SHOWN COMING SOON. They will be read
- * through the person's account with their approval, and the account has no
- * request for them yet.
+ * THE ACCOUNT'S ADDRESSES ARE SHOWN COMING SOON. Balances opens the right-hand
+ * panel with the account's tokens, which the person's account shows only when
+ * the button in the panel is pressed.
  */
 export function AccountMenu({ showShortcuts }: { showShortcuts: () => void }) {
   const t = useText();
   const { person, viewer, chooseView, preferences, choose, signOut } = useSession();
-  const { isMobile } = useSidebar();
+  const { isMobile, setOpenMobile } = useSidebar();
   const { end } = usePopupSide();
+  const panel = usePanel();
   const other = viewer.view === VIEWS.company ? VIEWS.employee : VIEWS.company;
   return (
     <SidebarMenu>
@@ -53,12 +60,22 @@ export function AccountMenu({ showShortcuts }: { showShortcuts: () => void }) {
             </DropdownMenuLabel>
             <DropdownMenuSeparator />
             <div className="flex flex-col gap-1.5 px-2 py-1.5 text-sm" data-account-details>
-              {[t('account.privateAddress'), t('account.publicAddress'), t('account.balances')].map((name) => (
+              {[t('account.privateAddress'), t('account.publicAddress')].map((name) => (
                 <div key={name} className="flex items-center justify-between gap-3">
                   <span className="text-muted-foreground">{name}</span>
                   <ComingSoon explanation={t('account.detailsSoon')} />
                 </div>
               ))}
+              <DropdownMenuItem
+                onSelect={() => {
+                  setOpenMobile(false);
+                  panel.open({ title: t('account.balances'), body: <Suspense fallback={<SectionLoading box={false} rows={1} />}><AccountTokens /></Suspense> });
+                }}
+                data-action="account-balances"
+              >
+                <HugeiconsIcon icon={Wallet01Icon} strokeWidth={2} />
+                {t('account.balances')}
+              </DropdownMenuItem>
             </div>
             <DropdownMenuSeparator />
             <DropdownMenuLabel className="text-xs text-muted-foreground">{t('appearance.mode.title')}</DropdownMenuLabel>

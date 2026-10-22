@@ -3,7 +3,7 @@ import { SquareLock02Icon } from '@hugeicons/core-free-icons';
 import { Alert, AlertDescription, AlertTitle, Amount, AMOUNT_KIND, AmountLoading, Badge, Button, EmptyState, formatDate, PageLoading, PrivatePill, StatTile, useLanguage, useText, type AmountKind } from 'vaults-ui';
 import { isPending, PendingPill, useStandingSays, VaultName } from './vault-pending.js';
 import { OPENED, PAID, READ, readVaultPublicMoney, type CompanyRecords, type Paid, type ProposalRow, type Read, type RunRow, type VaultRow } from '../adapters/company-records.js';
-import { readVaultPrivateMoney, type VaultPrivateMoney as VaultPrivateMoneyHeld } from '../adapters/vault-private-money.js';
+import { COULD_NOT_READ, PRIVATE_MONEY, readVaultPrivateMoney, type VaultPrivateMoney as VaultPrivateMoneyHeld } from '../adapters/vault-private-money.js';
 import type { VaultPublicMoney as VaultPublicMoneyHeld } from '../adapters/vault-public-money.js';
 import type { ActRefusal } from '../adapters/refusals.js';
 import { ActRefused } from '../act-refused.js';
@@ -51,11 +51,12 @@ export function useMonth(): (period: string) => string {
 /**
  * ONE READ: its rows when it was read, and a line saying so when it could not
  * be. Each read on a page is shown this way on its own, so one that could not
- * be read hides nothing another read.
+ * be read hides nothing another read. `unreadable`, when given, is the words
+ * for the read that could not be read, in place of the general line.
  */
-export function ReadOf<T>({ read, children }: { read: Read<T>; children: (value: T) => ReactNode }) {
+export function ReadOf<T>({ read, unreadable, children }: { read: Read<T>; unreadable?: ReactNode; children: (value: T) => ReactNode }) {
   const t = useText();
-  if (read.of === READ.unreadable) return <p className="text-sm text-muted-foreground" data-unreadable>{t('records.unreadable')}</p>;
+  if (read.of === READ.unreadable) return <p className="text-sm text-muted-foreground" data-unreadable>{unreadable ?? t('records.unreadable')}</p>;
   return <>{children(read.value)}</>;
 }
 
@@ -212,13 +213,13 @@ export function RunMoney({ run }: { run: RunRow }) {
   );
 }
 
-/** Where one side of a vault's money is: being read, or not readable. */
+/** Where one side of a vault's money is: being read, or (the public side only) not readable. The private side says what it found itself. */
 export const MONEY = { reading: 'reading', unreadable: 'unreadable' } as const;
 type Side<T> = T | (typeof MONEY)[keyof typeof MONEY];
 
 /** A vault's money, each side read on its own: what it holds privately, read on this device, and publicly, read from the company's service. */
 export interface VaultMoney {
-  private: Side<VaultPrivateMoneyHeld>;
+  private: typeof MONEY.reading | VaultPrivateMoneyHeld;
   public: Side<VaultPublicMoneyHeld>;
 }
 
@@ -226,7 +227,9 @@ export interface VaultMoney {
  * WHAT A VAULT HOLDS, READ WHEN IT IS SHOWN AND EACH TIME `asked` CHANGES:
  * privately on this device, with this signer's own keys, and publicly from
  * the company's service. Each side is read on its own, and one that could not
- * be read is said as that, never as nothing held.
+ * be read is said as that, never as nothing held. The private side keeps
+ * what it found: amounts, nothing held yet, a record not believed, or why it
+ * could not be read.
  */
 export function useVaultMoney(company: string, vault: string, asked = 0): VaultMoney {
   const { person } = useSession();
@@ -234,7 +237,7 @@ export function useVaultMoney(company: string, vault: string, asked = 0): VaultM
   useEffect(() => {
     let alive = true;
     setMoney({ private: MONEY.reading, public: MONEY.reading });
-    void readVaultPrivateMoney(person.id, company, vault).then((h) => { if (alive) setMoney((m) => ({ ...m, private: h ?? MONEY.unreadable })); });
+    void readVaultPrivateMoney(person.id, company, vault).then((h) => { if (alive) setMoney((m) => ({ ...m, private: h })); });
     void readVaultPublicMoney(person.id, company, vault).then((h) => { if (alive) setMoney((m) => ({ ...m, public: h ?? MONEY.unreadable })); });
     return () => { alive = false; };
   }, [person.id, company, vault, asked]);
@@ -242,29 +245,61 @@ export function useVaultMoney(company: string, vault: string, asked = 0): VaultM
 }
 
 /**
+ * THE SENTENCE FOR A PRIVATE SIDE THAT HAS NO AMOUNT TO SHOW: nothing held
+ * yet, a record that was not believed, or why it could not be read. Each
+ * says only what is true of it: a pool never opened is not a failure, a
+ * record no seat signed is not a read that failed, and a read that failed
+ * names its reason and how to try again, which differs on a tile (open the
+ * vault) and on the vault's page, where a read that a refresh cannot clear (no
+ * keys open in this tab, no record on this device) names the step that clears
+ * it, and the others its refresh button. `tile` says it is on a tile.
+ */
+export function PrivateMoneyUnshown({ money, tile = false }: { money: Exclude<VaultPrivateMoneyHeld, { of: typeof PRIVATE_MONEY.held }>; tile?: boolean }) {
+  const t = useText();
+  if (money.of === PRIVATE_MONEY.nothingYet) return <span data-private-money={money.of}>{t('vault.privateMoney.nothingYet')}</span>;
+  if (money.of === PRIVATE_MONEY.notBelieved) {
+    return <span data-private-money={money.of}>{tile ? t('vaults.privateMoney.notBelieved') : t('vault.privateMoney.notBelieved')}</span>;
+  }
+  const why = {
+    [COULD_NOT_READ.noKeys]: t('vault.privateMoney.why.noKeys'),
+    [COULD_NOT_READ.walletRefused]: t('vault.privateMoney.why.walletRefused'),
+    [COULD_NOT_READ.chain]: t('vault.privateMoney.why.chain'),
+    [COULD_NOT_READ.layout]: t('vault.privateMoney.why.layout'),
+    [COULD_NOT_READ.record]: t('vault.privateMoney.why.record'),
+    [COULD_NOT_READ.other]: t('vault.privateMoney.why.other'),
+  }[money.why];
+  const next = money.why === COULD_NOT_READ.noKeys ? t('vault.privateMoney.next.noKeys')
+    : money.why === COULD_NOT_READ.record ? t('vault.privateMoney.next.record') : t('vault.privateMoney.next.again');
+  return <span data-unreadable="private" data-why={money.why}>{tile ? t('vaults.privateMoney.cannotRead', { why }) : t('vault.privateMoney.cannotRead', { why, next })}</span>;
+}
+
+/**
  * A VAULT'S MONEY ON ITS TILE: each token it holds on a line of its own,
  * with its Private or Public pill, never added together. A side being read is
- * a bar; a side that could not be read says so; a token the registry does
- * not know is counted.
+ * a bar; the private side says nothing is held yet, that its record was not
+ * believed, or why it could not be read, and the public side that it could not
+ * be read; a token the registry does not know is counted on either side.
  */
 function VaultMoneyLines({ money }: { money: VaultMoney }) {
   const t = useText();
   const priv = money.private;
   const pub = money.public;
-  const holdsNone = typeof priv !== 'string' && typeof pub !== 'string' && priv.amounts.length === 0 && pub.amounts.length === 0 && pub.unrecognised === 0;
+  const holdsNone = priv !== MONEY.reading && priv.of === PRIVATE_MONEY.held && typeof pub !== 'string'
+    && priv.amounts.length === 0 && priv.unrecognised === 0 && pub.amounts.length === 0 && pub.unrecognised === 0;
   return (
     <span className="flex flex-col gap-1" data-money-lines>
       {priv === MONEY.reading ? <AmountLoading /> : null}
-      {priv === MONEY.unreadable ? <span className="text-muted-foreground" data-unreadable="private">{t('vaults.privateMoney.unreadable')}</span> : null}
-      {typeof priv === 'string' ? null : priv.amounts.map((a) => (
+      {priv === MONEY.reading || priv.of === PRIVATE_MONEY.held ? null : <span className="text-muted-foreground"><PrivateMoneyUnshown money={priv} tile /></span>}
+      {priv === MONEY.reading || priv.of !== PRIVATE_MONEY.held ? null : priv.amounts.map((a) => (
         <span key={a.symbol} className="flex flex-wrap items-center gap-1.5" data-held={a.symbol} data-visibility="private"><Amount value={a} kind={AMOUNT_KIND.held} /><PrivatePill /></span>
       ))}
+      {priv === MONEY.reading || priv.of !== PRIVATE_MONEY.held || priv.unrecognised === 0 ? null : <span data-unrecognised={priv.unrecognised} data-side="private">{t('vault.privateMoney.unrecognised', { count: priv.unrecognised })}</span>}
       {pub === MONEY.reading ? <AmountLoading /> : null}
       {pub === MONEY.unreadable ? <span className="text-muted-foreground" data-unreadable="public">{t('vaults.publicMoney.unreadable')}</span> : null}
       {typeof pub === 'string' ? null : (
         <>
           {pub.amounts.map((a) => <span key={a.symbol} data-held={a.symbol} data-visibility="public"><Amount value={a} kind={AMOUNT_KIND.held} /></span>)}
-          {pub.unrecognised === 0 ? null : <span data-unrecognised={pub.unrecognised}>{t('vault.publicMoney.unrecognised', { count: pub.unrecognised })}</span>}
+          {pub.unrecognised === 0 ? null : <span data-unrecognised={pub.unrecognised} data-side="public">{t('vault.publicMoney.unrecognised', { count: pub.unrecognised })}</span>}
         </>
       )}
       {holdsNone ? <span className="text-muted-foreground" data-holds-none>{t('vaults.money.none')}</span> : null}

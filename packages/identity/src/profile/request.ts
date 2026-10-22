@@ -724,11 +724,12 @@ export interface JoinCodeRequest extends Asking {
 }
 
 /**
- * ASKING THIS WALLET FOR THE ADDRESSES ONE OF ITS WALLETS RECEIVES AT, AND
- * WHAT THAT WALLET HOLDS (`addresses-and-balances.ts`).
+ * ASKING THIS WALLET FOR THE ADDRESS ONE OF ITS WALLETS RECEIVES AT PRIVATELY,
+ * AND WHAT THAT WALLET HOLDS (`addresses-and-balances.ts`).
  *
- * The answer is the wallet's private and public receiving addresses and its
- * balance of every token on each side, as this wallet reads them for itself.
+ * The answer is the wallet's private receiving address, never its public one,
+ * and its balance of every token on each side, as this wallet reads them for
+ * itself.
  * **It is answered only after one press on its own screen, every time**: the
  * page is served by a service that is not trusted with a person's money, so
  * nothing about it leaves this wallet without the person seeing exactly what

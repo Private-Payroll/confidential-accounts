@@ -56,6 +56,7 @@ const BARE: Record<string, Record<string, unknown>> = {
   'account-presence': { account: 'ab'.repeat(32), transactions: [], indexer: { indexerUri: 'https://indexer.invalid/api', indexerWsUri: 'wss://indexer.invalid/ws' } },
   'events-of': { transactionHash: 'ef'.repeat(32), indexer: { indexerUri: 'https://indexer.invalid/api', indexerWsUri: 'wss://indexer.invalid/ws' } },
   'created-by': { vault: 'ab'.repeat(32), commitment: 'ef'.repeat(32), indexer: { indexerUri: 'https://indexer.invalid/api', indexerWsUri: 'wss://indexer.invalid/ws' } },
+  'public-deposit-landed': { vault: 'ab'.repeat(32), transaction: '', indexer: { indexerUri: 'https://indexer.invalid/api', indexerWsUri: 'wss://indexer.invalid/ws' } },
   'step-kept': { vault: 'ab'.repeat(32), secret: 'cd'.repeat(32), step: { spent: { nonce: '00', token: '00', value: '1' }, amount: '1' } },
   'vault-rebuilt': { vault: 'ab'.repeat(32), chain: { notes: [], everCreated: [] }, secrets: [], versions: [], attempted: { deposits: [], payments: [] } },
   'own-seat': { material: {} },

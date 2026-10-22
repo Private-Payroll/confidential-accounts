@@ -1,4 +1,4 @@
-import { askWalletToSignIn, openWalletDialog, WalletClosed, type WalletDialog } from 'vaults-web-shared/wallet-sign-in.js';
+import { askWalletToSignIn, openWalletDialog, US_TO_A_WALLET, WalletClosed, type WalletDialog } from 'vaults-web-shared/wallet-sign-in.js';
 import { closeWalletFrame, mountWalletFrame, onWalletFrame, walletFrameShown, walletInThisPage, WALLET_FRAME_ALLOW } from 'vaults-web-shared/wallet-frame.js';
 import type { SealedAccount } from '../../../../src/core/types.js';
 import type { ActRefusal } from './refusals.js';
@@ -62,7 +62,6 @@ const SERVICE = {
   mixedRecords: 'records-from-more-than-one-ledger',
   staleChallenge: 'stale-challenge',
   expiredClaim: 'expired-claim',
-  rdns: 'social.lemonade.confidential-accounts',
 } as const;
 
 /** Where the person's account is served, set when the page is built. Empty when it is not set. */
@@ -374,7 +373,7 @@ export async function signIn(asking: Asking): Promise<SignedIn> {
     let response: unknown;
     try {
       response = await askWalletToSignIn(view, ACCOUNT_ORIGIN, {
-        nonce, expiresAt: Date.parse(expiresAt), name: asking.name, rdns: SERVICE.rdns, purpose: asking.purpose,
+        nonce, expiresAt: Date.parse(expiresAt), name: asking.name, rdns: US_TO_A_WALLET.rdns, purpose: asking.purpose,
       }, dialog);
     } catch (e) {
       return refused(refusalOf(e));

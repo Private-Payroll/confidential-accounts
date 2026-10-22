@@ -79,7 +79,9 @@ describe('who is shown what', () => {
     expect(window.location.pathname).toBe(PAGES.landing.path);
     expect(container.querySelector('[data-screen=landing]')).not.toBeNull();
     expect(container.querySelector('[data-menu]')).toBeNull();
-    expect(container.querySelector('[data-account-frame]')).not.toBeNull();
+    /* The account's window is drawn in the page's body, outside the root, so an open panel does not hide it from assistive tools. */
+    expect(document.querySelector('[data-account-frame]')).not.toBeNull();
+    expect(container.querySelector('[data-account-frame]')).toBeNull();
   });
 
   /* RED WHEN: a person who signs for a company is not shown the company view at its home, or is shown the landing page there. */

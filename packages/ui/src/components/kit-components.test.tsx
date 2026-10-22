@@ -15,6 +15,8 @@ import { ComingSoon } from './coming-soon.js';
 import { ConfirmInYourAccount } from './confirm-in-your-account.js';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from './tabs.js';
 import { Alert, AlertDescription } from './alert.js';
+import { InputGroup, InputGroupAddon, InputGroupButton, InputGroupInput, InputGroupText, InputGroupTextarea } from './input-group.js';
+import { Spinner } from './spinner.js';
 
 afterEach(cleanup);
 
@@ -294,5 +296,45 @@ describe('the tabs across the top of a page', () => {
     b!.focus();
     await act(async () => { fireEvent.keyDown(b!, { key: 'ArrowLeft' }); await new Promise((r) => setTimeout(r, 0)); });
     expect(document.activeElement).toBe(a);
+  });
+});
+
+describe('a spinner', () => {
+  /* RED WHEN: the spinner says a word of its own instead of the one the application gives it, so it reads in English whatever language is shown. */
+  it('is announced by the words it is given, and by none of its own', () => {
+    const { container } = inKit(<Spinner aria-label={EN['accountTokens.waiting']!} />);
+    const spinner = container.querySelector('[data-slot=spinner]')!;
+    expect(spinner.getAttribute('role')).toBe('status');
+    expect(spinner.getAttribute('aria-label')).toBe(EN['accountTokens.waiting']);
+    const german = inKit(<Spinner aria-label="Warten" />, 'de');
+    expect(german.container.querySelector('[data-slot=spinner]')!.getAttribute('aria-label')).toBe('Warten');
+    expect(readFileSync(resolve(dirname(fileURLToPath(import.meta.url)), 'spinner.tsx'), 'utf8')).not.toMatch(/aria-label\s*=\s*["']/);
+  });
+});
+
+describe('an input group', () => {
+  /* RED WHEN: pressing the empty part of a group beside the field does not put the cursor in the field, or pressing a button in the group steals the focus for the field. */
+  it('puts the cursor in its field when its edge is pressed, but not when a button in it is', () => {
+    const pressed = vi.fn();
+    const { container } = inKit(
+      <InputGroup>
+        <InputGroupInput aria-label="amount" />
+        <InputGroupAddon align="inline-end"><InputGroupText>unit</InputGroupText><InputGroupButton onClick={pressed}>x</InputGroupButton></InputGroupAddon>
+      </InputGroup>,
+    );
+    const field = container.querySelector('input')!;
+    const addon = container.querySelector('[data-slot=input-group-addon]')!;
+    fireEvent.click(addon);
+    expect(document.activeElement).toBe(field);
+    field.blur();
+    fireEvent.click(container.querySelector('button')!);
+    expect(pressed).toHaveBeenCalledTimes(1);
+    expect(document.activeElement).not.toBe(field);
+  });
+
+  /* RED WHEN: a group around a text area is drawn without its field being the group's control. */
+  it('can hold a text area as its field', () => {
+    const { container } = inKit(<InputGroup><InputGroupTextarea aria-label="note" /></InputGroup>);
+    expect(container.querySelector('[data-slot=input-group] textarea[data-slot=input-group-control]')).not.toBeNull();
   });
 });

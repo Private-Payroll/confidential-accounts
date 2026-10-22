@@ -46,6 +46,22 @@ import { signInAsk } from '../../../src/core/wallet-sign-in-ask.js';
  */
 
 /**
+ * **WHAT WE CALL OURSELVES TO A WALLET, AND THE WALLET BELIEVES NONE OF IT.**
+ *
+ * Untrusted words, rendered as text on the wallet's screen beside the origin it
+ * OBSERVED. `rdns` is read by every ask this app sends a wallet. `name` is
+ * read by every ask the keyring sends (among them the company key's release,
+ * who holds the vault and the window to pay into a vault) and by the ask for
+ * the account's balances, so the windows of one deposit name the page alike;
+ * the web app's sign-in sends the page's own title as its name instead, so
+ * the sign-in window can name the page otherwise.
+ */
+export const US_TO_A_WALLET = {
+  name: 'Confidential Accounts',
+  rdns: 'social.lemonade.confidential-accounts',
+} as const;
+
+/**
  * How long to wait for the wallet to say it is listening, and then how long it
  * may be SILENT before this page stops waiting.
  *

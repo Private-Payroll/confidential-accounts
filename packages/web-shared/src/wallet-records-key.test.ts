@@ -116,9 +116,10 @@ describe('ASKING THE PERSON\'S WALLET TO SIGN THEIR RECORDS KEY, AND TO SAY WHO 
   });
 });
 
-describe('ASKING THE PERSON\'S WALLET WHERE IT RECEIVES AND WHAT IT HOLDS', () => {
+describe('ASKING THE PERSON\'S WALLET WHERE IT RECEIVES PRIVATELY AND WHAT IT HOLDS', () => {
+  const PUBLIC = `mn_addr_test1${'p'.repeat(60)}`;
   const SHOWN: AddressesAndBalancesShown = {
-    addresses: { private: `mn_shield-addr_test1${'q'.repeat(60)}`, public: `mn_addr_test1${'p'.repeat(60)}` },
+    addresses: { private: `mn_shield-addr_test1${'q'.repeat(60)}` },
     balances: [{ token: '00'.repeat(32), amount: '5', visibility: 'private' }, { token: '00'.repeat(32), amount: '9', visibility: 'public' }],
     read: { private: 900, public: 950 },
   };
@@ -139,10 +140,11 @@ describe('ASKING THE PERSON\'S WALLET WHERE IT RECEIVES AND WHAT IT HOLDS', () =
       ['another nonce', (a: any) => ({ ...a, nonce: 'n2' }), 'nonce-mismatch'],
       ['another page', (a: any) => ({ ...a, origin: 'https://elsewhere.example' }), 'origin-mismatch'],
       ['a figure for a side not read', (a: any) => ({ ...a, read: { private: null, public: 950 } }), 'not-an-answer'],
+      ['the public address beside the private one', (a: any) => ({ ...a, addresses: { ...a.addresses, public: PUBLIC } }), 'not-an-answer'],
     ] as const) {
       const bent = walletAnswering((ask) => bend(JSON.parse(JSON.stringify(showing(ask)))));
       const e = await askWalletForAddressesAndBalances(bent.view, WALLET, asked).catch((x: Error) => x);
-      /* RED WHEN: the named answer is believed. */
+      /* RED WHEN: the named answer is believed, so a page takes an answer that is not its own, not whole, or carries the public address. */
       expect((e as Error).name, why).toBe('WalletDidNotShowAddressesAndBalances');
       expect((e as { code?: string }).code, why).toBe(code);
     }

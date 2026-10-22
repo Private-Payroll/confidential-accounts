@@ -10,8 +10,9 @@
  * material starts and ends, so the page can time it and show it.
  *
  * Nothing this worker is asked for leaves it except the answer and those words
- * to the page: it fetches the vault's public proving material from this application's own
- * origin and sends nothing anywhere. It proves only with material that hashes to
+ * to the page: its only requests are for the vault's public proving material, from this
+ * application's own origin, and the reads of the chain it is asked for, at the indexer the
+ * person's own wallet names. It proves only with material that hashes to
  * what this build was compiled with (`thisBuildsSources`): the service serves the
  * files, and is never trusted to say which ones are right.
  */
@@ -41,7 +42,9 @@ import type {
   CreatingTransactionAnswer, StartStandingOnTheWire, VaultAsk, VaultAnswer, VaultRebuildAsked, VaultRebuilt,
 } from './vault-worker-client.js';
 import type { EventOnTheWire } from './vault-builder.js';
-import { establishCreatingTransaction, NoteIndexRefused, type ServedEvent } from '../../../src/midnight/note-index.js';
+import {
+  establishCreatingTransaction, indexerTransactionsByIdentifier, NoteIndexRefused, publicDepositLandedAmong, type ServedEvent,
+} from '../../../src/midnight/note-index.js';
 import type { Hex } from '../../../src/core/crypto.js';
 import { ensureBuffer } from 'midnight-identity/browser';
 import { whyItFailed } from './why-it-failed.js';
@@ -158,13 +161,14 @@ export type WorkerDeps = Omit<VaultBuilderDeps, 'network'> & { vault: any; accou
     accountExpectedVk?: Readonly<Record<string, string>>;
     /** Every vault circuit's verifying key, checked the same way against the compiled vault's own digests. */
     vaultKeys: { getVerifierKey(c: string): Promise<Uint8Array>; getVerifierKeys(cs: readonly string[]): Promise<Array<[string, Uint8Array]>> };
-    /** Where a vault is read from, at the indexer the wallet names; absent, the indexer itself. A test hands its own. */
-    /** Fetches and checks the public parameters every circuit this app proves needs, ahead of any proof. */
+    /** Fetches and checks the public parameters every circuit this app proves needs, and a deposit's keys, ahead of any proof. */
     provingWarmed: () => Promise<void>;
-
+    /** Where a vault is read from, at the indexer the wallet names; absent, the indexer itself. A test hands its own. */
     chainSourceAt?: (indexer: { indexerUri: string; indexerWsUri: string }) => import('./vault-on-chain-here.js').VaultChainSource;
     /** Where an account's history is read from, at the indexer the wallet names; absent, the indexer itself. A test hands its own. */
     historyAt?: (indexer: { indexerUri: string; indexerWsUri: string }) => import('../../../src/midnight/contract-history.js').ContractHistory;
+    /** Where transactions are looked up by identifier: the indexer the wallet names, unless a test stands one in. */
+    transactionsAt?: (indexer: { indexerUri: string; indexerWsUri: string }) => ReturnType<typeof indexerTransactionsByIdentifier>;
   };
 
 /*
@@ -274,30 +278,56 @@ export const thisBuildsSources = (options: Omit<HttpKeyMaterialOptions, 'pins'>,
 };
 
 /**
- * **THE PUBLIC PARAMETERS EVERY CIRCUIT THIS APP PROVES NEEDS, FETCHED AND CHECKED
- * BEFORE ANY PROOF ASKS FOR THEM.** Reads the size of each circuit of the vault,
- * of the company account and of the network's shielded transfers off the circuit
- * itself, then asks `source` once for each size, smallest first, so what a proof
- * reads later is already held. `source` is the prover's own checked source, so a
- * file the service sends that is not the published one is refused by name and
- * not kept. Every circuit and size is tried even when one fails; it then refuses
- * with the first failure.
+ * The circuits a deposit proves on this device: the vault's private and public
+ * deposit, and the network's shielded output that carries a private deposit's
+ * coin into the vault. They are warmed first, with their proving and verifying
+ * keys (about 11 MB together), so even a first deposit reads nothing from the
+ * network; the other circuits' proving keys run to hundreds of MB and are
+ * fetched when a proof first needs them.
+ */
+const CIRCUITS_A_DEPOSIT_PROVES = ['deposit', 'depositUnshielded', 'midnight/zswap/output'] as const;
+
+/**
+ * **THE PUBLIC PARAMETERS EVERY CIRCUIT THIS APP PROVES NEEDS, AND A DEPOSIT'S
+ * KEYS, FETCHED AND CHECKED BEFORE ANY PROOF ASKS FOR THEM.** Works in two
+ * stages. First a deposit's own circuits, whole: each one's circuit, its size
+ * read off it, its proving and verifying keys, then the parameters for those
+ * sizes. Only then every other circuit of the vault, of the company account and
+ * of the network's shielded transfers, and the parameters for the sizes not yet
+ * held. Reading a size means parsing the circuit on this worker's one thread,
+ * over a minute for every circuit together, so a deposit asked for right after
+ * sign-in finds its files held instead of queueing behind those parses. Each
+ * stage asks for its sizes smallest first, each once. `source` is the prover's
+ * own checked source, so a file the service sends that is not the published one
+ * is refused by name and not kept. Every file is tried even when one fails; it
+ * then refuses with the first failure.
  */
 export const provingWarmed = async (
   source: ArtefactSource, sizeOf: (circuit: Uint8Array) => number | Promise<number>,
 ): Promise<void> => {
-  const sizes = new Set<number>();
+  const fetchedSizes = new Set<number>();
   const failures: unknown[] = [];
-  await Promise.all([
+  const stage = async (circuits: readonly string[], keysToo: boolean): Promise<void> => {
+    const sizes = new Set<number>();
+    await Promise.all(circuits.flatMap((location) => [
+      (async () => {
+        try {
+          sizes.add(await sizeOf(await source.artefact('ir', location)));
+        } catch (e) { failures.push(e); }
+      })(),
+      ...(keysToo ? (['prover', 'verifier'] as const) : []).map(async (kind) => {
+        try { await source.artefact(kind, location); } catch (e) { failures.push(e); }
+      }),
+    ]));
+    for (const k of [...sizes].filter((k) => !fetchedSizes.has(k)).sort((a, b) => a - b)) {
+      fetchedSizes.add(k);
+      try { await source.getParams(k); } catch (e) { failures.push(e); }
+    }
+  };
+  await stage(CIRCUITS_A_DEPOSIT_PROVES, true);
+  await stage([
     ...VAULT_CIRCUITS, ...ACCOUNT_CIRCUITS_SERVED_TO_A_DEVICE, ...NETWORK_SHIELDED_CIRCUITS.map((c) => `midnight/zswap/${c}`),
-  ].map(async (location) => {
-    try {
-      sizes.add(await sizeOf(await source.artefact('ir', location)));
-    } catch (e) { failures.push(e); }
-  }));
-  for (const k of [...sizes].sort((a, b) => a - b)) {
-    try { await source.getParams(k); } catch (e) { failures.push(e); }
-  }
+  ].filter((location) => !(CIRCUITS_A_DEPOSIT_PROVES as readonly string[]).includes(location)), false);
   if (failures.length > 0) throw failures[0];
 };
 
@@ -1095,6 +1125,25 @@ export const answerVaultAsk = async (
       const { readCreatedBy, vaultChainSourceAt } = await import('./vault-on-chain-here.js');
       const source = (d.chainSourceAt ?? vaultChainSourceAt)(ask.indexer);
       return { id: ask.id, ok: true, ask: 'created-by', found: await readCreatedBy(source, ask.vault, ask.commitment) };
+    }
+    case 'public-deposit-landed': {
+      /*
+       * The deposit is looked for by the identifiers of the transaction the person's wallet signed, worked out here from
+       * its bytes. The wallet hands back a bound transaction; the service merges its fee in as a separate intent, which
+       * changes the hash and leaves every identifier as it was, so the service's hash is never needed and never believed.
+       */
+      if (!/^[0-9a-f]{64}$/iu.test(ask.vault)) throw new Error('that is not a vault, so no deposit into it was looked for.');
+      const { refuseEndpointsThatCannotWork } = await import('./public-data.js');
+      refuseEndpointsThatCannotWork(ask.indexer);
+      const signed = d.ledger.Transaction.deserialize('signature', 'proof', 'binding', fromBase64(ask.transaction));
+      const identifiers = (signed.identifiers() as unknown[]).map(String);
+      if (identifiers.length === 0) throw new Error('the deposit your wallet signed names no identifier, so it cannot be looked for on the chain.');
+      const reader = (d.transactionsAt ?? ((i) => indexerTransactionsByIdentifier(i.indexerUri)))(ask.indexer);
+      for (const identifier of identifiers) {
+        const transactionHash = publicDepositLandedAmong(ask.vault, await reader.byIdentifier(identifier));
+        if (transactionHash !== null) return { id: ask.id, ok: true, ask: 'public-deposit-landed', found: { transactionHash } };
+      }
+      return { id: ask.id, ok: true, ask: 'public-deposit-landed', found: null };
     }
     case 'step-kept': {
       /* The coin a journalled step kept, worked out with the vault's own functions: a merge's, or a payment's change. */

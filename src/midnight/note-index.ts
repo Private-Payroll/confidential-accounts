@@ -34,6 +34,14 @@
  * indexer will not take at all is `NoteIndexUnaskable`** - not the chain being
  * slow and not the chain saying no, but this client and that indexer out of
  * step, which no amount of reading again repairs.
+ *
+ * **ONE MORE READ LIVES HERE, FOR A PUBLIC DEPOSIT, WHICH MAKES NO NOTE.**
+ * `indexerTransactionsByIdentifier` asks the indexer for the transactions that
+ * carry an identifier the device worked out from what the wallet signed, with
+ * the result the ledger applied each with and its contract calls, and
+ * `publicDepositLandedAmong` says which of them, if any, is that deposit landed.
+ * An indexer that cannot be read, or will not take the question, is an error,
+ * never an empty list.
  */
 import type { Hex } from '../core/crypto.js';
 import type { NotePool } from './vault-ledger.js';
@@ -567,6 +575,94 @@ export function indexerNoteEvents(
       });
     },
   };
+}
+
+/**
+ * **ONE TRANSACTION AS THE INDEXER HOLDS IT, FOUND BY AN IDENTIFIER THIS DEVICE WORKED OUT ITSELF.**
+ *
+ * A transaction's identifiers are read off its own parts: each intent's binding commitment and each coin's value
+ * commitment. Binding a transaction and merging the service's fee into it leave every one of them as it was, so a page
+ * can look for the very transaction its person's wallet signed without being told its hash by anybody. Each entry
+ * carries the result the ledger applied it with and every contract it called; nothing is judged here.
+ */
+export interface TransactionByIdentifier {
+  /** The hash of the transaction as the chain finalised it, fee and all. */
+  readonly hash: string;
+  /** `SUCCESS`, `PARTIAL_SUCCESS` or `FAILURE` as the indexer reports it; null when it reports none. */
+  readonly status: string | null;
+  /** Every contract the transaction called or deployed, and the circuit it called (null for a deploy). */
+  readonly calls: ReadonlyArray<{ readonly address: string; readonly entryPoint: string | null }>;
+}
+
+/**
+ * Every transaction the indexer at `indexerUrl` lists under one identifier, with its result and its contract calls.
+ * Refuses, rather than answering "none", when the indexer cannot be reached or will not answer: a missing answer is not
+ * a transaction that never landed.
+ */
+export function indexerTransactionsByIdentifier(
+  indexerUrl: string,
+  post: typeof fetch = fetch,
+): { byIdentifier(identifier: string): Promise<TransactionByIdentifier[]> } {
+  return {
+    async byIdentifier(identifier) {
+      const where = named({ identifier: identifier as Hex });
+      let body: any;
+      try {
+        const res = await post(indexerUrl, {
+          method: 'POST',
+          headers: { 'content-type': 'application/json' },
+          body: JSON.stringify({
+            query: 'query ($offset: TransactionOffset!) { transactions(offset: $offset) { hash '
+              + '... on RegularTransaction { transactionResult { status } } '
+              + 'contractActions { address ... on ContractCall { entryPoint } } } }',
+            variables: { offset: { identifier: bare(identifier) } },
+          }),
+          signal: AbortSignal.timeout(30_000),
+        });
+        if (!res.ok) {
+          throw new Error(`the indexer answered HTTP ${res.status}`);
+        }
+        body = await res.json();
+      } catch (cause) {
+        throw new NoteIndexUnreadable(
+          `the indexer at ${indexerUrl} could not be asked about ${where} `
+          + `(${(cause as Error)?.message ?? String(cause)}). That is not an answer about whether it landed.`, { cause });
+      }
+      if (Array.isArray(body?.errors) && body.errors.length > 0) {
+        const said = everyThingSaid(body.errors);
+        if (theQuestionCannotBeAsked(body.errors)) {
+          throw new NoteIndexUnaskable(`the indexer will not take this question about ${where}: ${said}.`);
+        }
+        throw new NoteIndexUnreadable(`the indexer refused the question about ${where}: ${said}.`);
+      }
+      const txs = body?.data?.transactions;
+      if (!Array.isArray(txs)) {
+        throw new NoteIndexUnreadable(`the indexer's answer about ${where} is not a list of transactions.`);
+      }
+      return txs.map((tx: any): TransactionByIdentifier => ({
+        hash: bare(String(tx?.hash ?? '')),
+        status: typeof tx?.transactionResult?.status === 'string' ? tx.transactionResult.status : null,
+        calls: Array.isArray(tx?.contractActions)
+          ? tx.contractActions.map((a: any) => ({
+            address: bare(String(a?.address ?? '')),
+            entryPoint: typeof a?.entryPoint === 'string' ? a.entryPoint : null,
+          }))
+          : [],
+      }));
+    },
+  };
+}
+
+/**
+ * The hash of the one transaction among `found` that the ledger applied in full and that calls `vault`'s public
+ * deposit; null when none does. A partial success is not taken, because its failed part may be the very call to the
+ * vault, and the indexer lists a transaction the ledger applied with failure just as it lists one that landed.
+ */
+export function publicDepositLandedAmong(vault: string, found: readonly TransactionByIdentifier[]): string | null {
+  const into = bare(vault);
+  const landed = found.find((tx) => tx.status === 'SUCCESS' && /^[0-9a-f]{64}$/u.test(tx.hash)
+    && tx.calls.some((c) => c.address === into && c.entryPoint === 'depositUnshielded'));
+  return landed === undefined ? null : landed.hash;
 }
 
 /* ------------------------------------------------------------------ *

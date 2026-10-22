@@ -1333,7 +1333,7 @@ export function Approve({
         whoIsAsking={whoIsAsking}
         whichWallet={whichWallet(
           'Which of your wallets',
-          'The page sees this wallet\'s addresses and balances, and nothing about your other wallets.', walletLocked)}
+          'The page sees this wallet\'s private address and balances, and nothing about your other wallets.', walletLocked)}
         onDecline={() => { channel?.refuse('declined'); setChannelState({ of: 'waiting' }); }}
         onBusy={setWalletLocked}
         now={now}
