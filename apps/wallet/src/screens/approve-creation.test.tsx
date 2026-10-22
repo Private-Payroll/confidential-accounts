@@ -266,7 +266,7 @@ describe.skipIf(!ON_DISK)('THE APPROVAL SURFACE ROUTES A CREATION TO THIS SCREEN
       addEventListener: (_t, h) => { handlers.push(h); },
       removeEventListener: () => {},
     };
-    const r = render(<Approve identity={identity} secret={secretFromWords(TEST_MNEMONIC)} port={port} view={view} readLabel={async () => ({ of: 'no-account' })} />);
+    const r = render(<Approve identity={identity} secret={secretFromWords(TEST_MNEMONIC)} port={port} view={view} readLabel={async () => ({ of: 'no-account' })} embedder={ORIGIN} />);
     await settle();
     const wire = {
       schema: REQUEST_SCHEMA, kind: 'creation', requester: { name: 'Payroll', rdns: 'example.payroll' },
@@ -297,5 +297,31 @@ describe.skipIf(!ON_DISK)('THE APPROVAL SURFACE ROUTES A CREATION TO THIS SCREEN
     expect(container.querySelector('[data-creation-refused]')?.textContent).toContain('did not make up this company\'s label');
     expect(button(container).disabled).toBe(true);
     expect(opener.sent.filter((m) => (m.message as { schema?: string }).schema === CREATION_SIGNATURE_SCHEMA)).toEqual([]);
+  });
+});
+
+describe.skipIf(!ON_DISK)('a creation approved before the passkey [needs contracts/managed/keys; `npm run compact` builds them]', () => {
+  it('is signed with no press once the wallet has read and checked the deploy, pinning first', async () => {
+    const log: unknown[] = [];
+    render(
+      <ApproveCreation request={askOf()} identity={identity} channel={channelFor(log)} consent={{ ok: true } as never}
+        whoIsAsking={<p>asker</p>} onDecline={() => log.push(['declined'])}
+        onPin={async (a, at) => { log.push(['pin', a, at]); }}
+        drewTheLabel ledger={ledger} built={thisBuilds} answerAtOnce />);
+    await settle();
+    /* RED WHEN: a creation approved before the passkey waits for the screen's own press once the wallet is open. */
+    expect(log.map((e) => (e as unknown[])[0])).toEqual(['pin', 'answer']);
+  });
+
+  it('is not signed for a label this wallet never drew', async () => {
+    const log: unknown[] = [];
+    render(
+      <ApproveCreation request={askOf()} identity={identity} channel={channelFor(log)} consent={{ ok: true } as never}
+        whoIsAsking={<p>asker</p>} onDecline={() => log.push(['declined'])}
+        onPin={async (a, at) => { log.push(['pin', a, at]); }}
+        drewTheLabel={false} ledger={ledger} built={thisBuilds} answerAtOnce />);
+    await settle();
+    /* RED WHEN: the wallet's own refusal is passed over because the person approved before the passkey. */
+    expect(log).toEqual([]);
   });
 });

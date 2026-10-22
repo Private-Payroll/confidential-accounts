@@ -1,5 +1,6 @@
 // @vitest-environment jsdom
 import { afterEach, describe, expect, it, vi } from 'vitest';
+import { useState } from 'react';
 import { act, cleanup, fireEvent, render } from '../testing/render.js';
 import { Buffer as PolyfillBuffer } from 'buffer/';
 import { TEST_MNEMONIC } from '@midnight-ntwrk/testkit-js';
@@ -349,7 +350,7 @@ describe('THE SCREEN FOR SIGNING A RECORDS KEY FOR A SEAT', () => {
       };
       const port = watchedStore();
       const { container } = render(
-        <Approve identity={identity} secret={secretFromWords(TEST_MNEMONIC)} port={port} view={view} now={() => NOW} readLabel={joined} />);
+        <Approve identity={identity} secret={secretFromWords(TEST_MNEMONIC)} port={port} view={view} now={() => NOW} readLabel={joined} embedder={ORIGIN} />);
       const wire = {
         schema: 'midnight-identity/disclosure-request/v1', kind: 'records-key',
         requester: { name: 'Payroll A', rdns: 'example.payroll-a' }, purpose: 'To check your records key.',
@@ -389,7 +390,7 @@ describe('THE SCREEN FOR SIGNING A RECORDS KEY FOR A SEAT', () => {
       removeEventListener: () => {},
     };
     const { container } = render(
-      <Approve identity={identity} secret={secretFromWords(TEST_MNEMONIC)} port={watchedStore()} view={view} now={() => NOW} readLabel={chain()} />);
+      <Approve identity={identity} secret={secretFromWords(TEST_MNEMONIC)} port={watchedStore()} view={view} now={() => NOW} readLabel={chain()} embedder={ORIGIN} />);
     const wire = {
       schema: 'midnight-identity/disclosure-request/v1', kind: 'records-key',
       requester: { name: 'Payroll A', rdns: 'example.payroll-a' }, purpose: 'To check your records key.',
@@ -399,5 +400,57 @@ describe('THE SCREEN FOR SIGNING A RECORDS KEY FOR A SEAT', () => {
     await settle();
     expect(container.querySelector('[data-sign-records-key]')).not.toBeNull();
     expect(container.querySelector('[data-records-key-seat]')?.textContent).toBe(SEAT);
+  });
+});
+
+describe('a records key approved before the passkey', () => {
+  it('is signed with no press for the account this wallet kept', async () => {
+    const answers: unknown[] = [];
+    render(
+      <ApproveRecordsKey request={ask()} identity={identity} channel={channelFor(answers)} consent={consented}
+        whoIsAsking={<p>asker</p>} onDecline={() => answers.push('declined')} now={() => NOW} readLabel={chain()} pinned={ACCOUNT}
+        answerAtOnce />);
+    await settle();
+    /* RED WHEN: a records key approved before the passkey waits for the screen's own press once the wallet is open. */
+    expect(answers).toHaveLength(1);
+    expect((answers[0] as RecordsKeyAnswer).statement.seat).toBe(SEAT);
+  });
+
+  it('with no account kept yet, keeps the account the window showed and then signs, each once, with no press', async () => {
+    const SECOND = 'ad'.repeat(32) as AccountAddress;
+    const service = identityFromSecret(new Uint8Array(32).fill(11));
+    const serviceKey = committeeKeyFor(service, CO) as { tag: 'schnorr'; value: string };
+    const { seat: SERVICE_SEAT, opening: serviceOpening } = await seatMadeFor(serviceKey, '7d'.repeat(32));
+    const invitedBy = { committeeKey: serviceKey, opening: serviceOpening, statement: signDirectoryEntry(service, CO, SECOND, new Uint8Array(32).fill(6), '2b'.repeat(32), SERVICE_SEAT) };
+    const secondChain: LabelReader = async (account) => (account === SECOND
+      ? { of: 'carries', label: CO, seats: { committee: [mine, serviceKey], threshold: 1, seats: [SEAT, SERVICE_SEAT] } }
+      : { of: 'no-account' });
+    const answers: unknown[] = []; const kept: string[] = [];
+    function Kept() {
+      const [pinned, setPinned] = useState<AccountAddress | null>(null);
+      return (
+        <ApproveRecordsKey request={ask({ account: SECOND, invitedBy })} identity={identity} channel={channelFor(answers)} consent={consented}
+          whoIsAsking={<p>asker</p>} onDecline={() => answers.push('declined')} now={() => NOW} readLabel={secondChain} pinned={pinned}
+          onPin={async (a) => { kept.push(a); setPinned(a); }} answerAtOnce />
+      );
+    }
+    render(<Kept />);
+    await settle();
+    await settle();
+    /* RED WHEN: approving before the passkey does not keep the account it showed, or stops short of signing. */
+    expect(kept).toEqual([SECOND]);
+    expect(answers).toHaveLength(1);
+  });
+
+  it('keeps and signs nothing when the page handed over no invitation', async () => {
+    const answers: unknown[] = []; const kept: string[] = [];
+    render(
+      <ApproveRecordsKey request={ask()} identity={identity} channel={channelFor(answers)} consent={consented}
+        whoIsAsking={<p>asker</p>} onDecline={() => answers.push('declined')} now={() => NOW} readLabel={chain()} pinned={null}
+        onPin={async (a) => { kept.push(a); }} answerAtOnce />);
+    await settle();
+    /* RED WHEN: the wallet's own refusal is passed over because the person approved before the passkey. */
+    expect(kept).toEqual([]);
+    expect(answers).toEqual([]);
   });
 });

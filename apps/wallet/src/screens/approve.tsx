@@ -34,7 +34,7 @@ import { EMBEDDER, INDEXER_HTTP_URL, INDEXER_WS_URL } from '../config.js';
 import { quietConsentFor, useConsent } from '../framing.js';
 import { ApproveBalance } from './approve-balance.js';
 import { recordAsk, recordChannelState, recordedChannel } from '../lib/ask-record.js';
-import { ApproveCommittee } from './approve-committee.js';
+import { ApproveCommittee, type ChainReader } from './approve-committee.js';
 import { ApproveRecordsKey } from './approve-records-key.js';
 import { ApproveJoinCode } from './approve-join-code.js';
 import { payslipKeyOfThisWallet } from './join-code-payslip-key.js';
@@ -70,14 +70,16 @@ import { alsoUsedBy, chooseSlot } from '../accounts/slot-choice.js';
 import { WALLET_ACCOUNTS, displayNameOf } from '../accounts/subwallets.js';
 import { loadSubwallets } from '../accounts/storage.js';
 import { NETWORK } from 'midnight-identity/network';
-import { Button, Card, CardContent, CardHeader, CardTitle, Input, Label, Section } from 'vaults-ui';
+import { Button, Card, CardContent, CardHeader, CardTitle, Input, Label, Section, useText } from 'vaults-ui';
 import { StatusAlert } from '../components/status.js';
 /* The code is COPIED, never transcribed. By design, nobody
  * reads anything down a phone line in this design. */
 import { CopyButton } from '../components/ui.js';
 import { hrefOf } from '../routes.js';
 import { sayingForUnopenable } from '../lib/unopenable-details.js';
-import { rememberSignIn, whyNotThisWallet } from '../lib/signed-in-here.js';
+import { noteWalletId, rememberSignIn, whyNotThisWallet } from '../lib/signed-in-here.js';
+import { openWalletId } from '../accounts/wallets-held.js';
+import { takeApprovalBeforeThePasskey, useAnswerAtOnce } from '../framing.js';
 import { fingerprintOf } from 'midnight-identity/recovery/pieces';
 import { toBase64Url } from 'midnight-identity/passkey/bytes';
 
@@ -99,7 +101,12 @@ import { toBase64Url } from 'midnight-identity/passkey/bytes';
  *
  * **NO SILENT DISCLOSURE, EVER.** §6. A remembered grant pre-ticks the boxes;
  * it may never skip this screen, and there is no code path here that answers
- * without a press.
+ * without a press. A disclosure or a join is always answered by this screen's
+ * own press, because what is sent is chosen here, and so is a committee change,
+ * because the keys it adds and removes are read and shown here; a sign-in, an
+ * unlock or a keyring ask may instead be answered by the Approve the person
+ * pressed in the locked wallet's window for exactly the same ask
+ * (`takeApprovalBeforeThePasskey`).
  *
  * ── TWO KINDS OF ASK, ONE SURFACE, AND A DIFFERENT SENTENCE ───────────
  *
@@ -113,7 +120,8 @@ import { toBase64Url } from 'midnight-identity/passkey/bytes';
  * the requester cannot draw; the origin observed and shown beside the name it
  * calls itself; the signature bound to origin, nonce, address and time; and
  * **no silent path.** A remembered grant pre-ticks NOTHING here, because there
- * is nothing to tick — and it still may never skip the press. **A site that
+ * is nothing to tick — and it still may never skip the press, here or in the
+ * locked wallet's window. **A site that
  * could sign a person in without a press is a site that can act as them**,
  * which is a strictly larger power than reading one attribute.
  *
@@ -139,7 +147,8 @@ import { toBase64Url } from 'midnight-identity/passkey/bytes';
  *
  * **NO SILENT UNLOCK, AND THERE IS NOTHING TO PRE-TICK.** §6's rule is that a
  * remembered grant may pre-tick a box and may never skip the press. Here there
- * is no box: a release is one press or it does not happen. **A site that could
+ * is no box: a release is one press - here, or in the locked wallet's window -
+ * or it does not happen. **A site that could
  * obtain a key without a person present is a site that can read a company
  * whenever it likes**, which is strictly more than acting as somebody once.
  *
@@ -317,9 +326,19 @@ const rowsFor = (
   };
 });
 
+/**
+ * True when the wallet offered for `origin` is the one on screen and nothing about it warns: it has not been given to
+ * another site, and not every wallet here has been.
+ */
+const slotIsQuiet = (profile: Profile, origin: string, subwallet: number): boolean => {
+  const offered = chooseSlot(profile, origin);
+  return offered.account === subwallet && offered.because !== 'every-slot-used'
+    && alsoUsedBy(profile, subwallet, origin).length === 0;
+};
+
 export function Approve({
   identity, secret, registry = REGISTRY, port = browserPort(), view, now = Date.now,
-  embedder = EMBEDDER, readLabel = liveLabelReader,
+  embedder = EMBEDDER, readLabel = liveLabelReader, readChain,
 }: {
   readonly identity: Identity;
   readonly secret: Secret;
@@ -332,6 +351,8 @@ export function Approve({
   readonly embedder?: string | null;
   /** How a company's account is read off the chain. Injected so a test can answer. */
   readonly readLabel?: LabelReader;
+  /** How a committee change's contracts are read off the chain. Replaceable so a test can answer. */
+  readonly readChain?: ChainReader;
 }): ReactNode {
   /*
    * **EVERY PRESS THAT SENDS SOMETHING IS GATED ON WHAT CAN BE SEEN.** In a
@@ -522,22 +543,22 @@ export function Approve({
      * signs nothing. `releaseKeyring` below is its only door. */
     if (request.kind === 'keyring') return;
     /* **NOR A BALANCE ASK**: it pays and discloses nothing, and its one door is
-     * the press on its own screen (`approve-balance.tsx`). */
+     * its own screen (`approve-balance.tsx`). */
     if (request.kind === 'balance') return;
     /* **NOR A COMMITTEE CHANGE**: it signs a change to a company's rules and
-     * discloses nothing, and its one door is the press on its own screen
+     * discloses nothing, and its one door is its own screen
      * (`approve-committee.tsx`). */
     if (request.kind === 'committee') return;
-    /* **NOR A RECORDS-KEY ASK**: it signs one statement and discloses nothing, and its one door is the press on
-     * its own screen (`approve-records-key.tsx`). */
+    /* **NOR A RECORDS-KEY ASK**: it signs one statement and discloses nothing, and its one door is its own
+     * screen (`approve-records-key.tsx`). */
     if (request.kind === 'records-key') return;
     /* **NOR A HOLDERS ASK**: it hands back public chain facts and signs nothing, and its one door is its own
      * screen (`answer-holders.tsx`), which answers without a press. */
     if (request.kind === 'holders') return;
     /* **NOR A CREATION**: it signs the second step of a company's account and discloses nothing, and its one door is
-     * the press on its own screen (`approve-creation.tsx`). */
+     * its own screen (`approve-creation.tsx`). */
     if (request.kind === 'creation') return;
-    /* **NOR A JOIN CODE**: it signs one code and discloses nothing, and its one door is the press on its own screen
+    /* **NOR A JOIN CODE**: it signs one code and discloses nothing, and its one door is its own screen
      * (`approve-join-code.tsx`). */
     if (request.kind === 'join-code') return;
     const disclosed: Sent[] = [];
@@ -636,11 +657,12 @@ export function Approve({
     }
     channel.answer(outgoing);
     /* THIS WALLET ANSWERED THAT PAGE'S SIGN-IN, so a company's key it asks for
-     * next is given by this wallet and by no other held here. The answer has gone
-     * whether or not this can be written, so a failure is said, not thrown. */
+     * next is given by this wallet and by no other held here, and every later ask
+     * from that page opens this wallet, by its place in this browser. The answer
+     * has gone whether or not this can be written, so a failure is said, not thrown. */
     let noted = true;
     if (request.kind === 'sign-in') {
-      try { rememberSignIn(port, request.requester.origin, thisWallet); } catch { noted = false; }
+      try { rememberSignIn(port, request.requester.origin, thisWallet, openWalletId()); } catch { noted = false; }
     }
 
     const recipient: Recipient = {
@@ -811,6 +833,75 @@ export function Approve({
     void save(port, identity, next).catch(
       () => setProblem('The key was given, and this wallet could not write down that it was.'));
   }, [request, profile, channel, identity, port, now, addressesHeld, thisWallet, companyOnChain]);
+
+  /*
+   * **AN ASK APPROVED BEFORE THE PASSKEY IS ANSWERED HERE WITHOUT ANOTHER PRESS** - only the identical ask
+   * (`takeApprovalBeforeThePasskey`), and only once every check its own button waits for agrees and nothing warns
+   * that the window before the passkey could not show: a company's key given to another page before, or an address
+   * another site already has. Those need this wallet open to know, so when one appears the screen stays, with the
+   * warning above its button. **An ask that differs from the one approved** - the page swapped it in after the
+   * passkey - is refused at once and said to be so: it is never shown with its own button as if it were what the
+   * person approved.
+   */
+  const say = useText();
+  const [atOnce, setAtOnce] = useState(false);
+  const [swapped, setSwapped] = useState(false);
+  const channelNow = useRef(channel);
+  channelNow.current = channel;
+  useEffect(() => {
+    if (request === null) return;
+    const approval = takeApprovalBeforeThePasskey(request);
+    if (approval === 'approved') setAtOnce(true);
+    if (approval === 'other') {
+      channelNow.current?.refuse('declined');
+      setSwapped(true);
+    }
+    /* A page's last sign-in recorded before wallets' places were kept gains this wallet's place, when this is the
+     * wallet it names, so the next ask from that page opens it without the list. */
+    if (request.kind !== 'sign-in') {
+      try { noteWalletId(port, request.requester.origin, thisWallet, openWalletId()); } catch { /* the next ask shows the list again */ }
+    }
+  }, [request, port, thisWallet]);
+  const readable = opened !== null && opened.of !== 'unopenable' && profile !== null && channel !== null;
+  const slotQuiet = readable && profile !== null && request !== null
+    && slotIsQuiet(profile, request.requester.origin, subwallet);
+  const keyGivenElsewhere = readable && profile !== null && request !== null
+    && (request.kind === 'unlock' || request.kind === 'keyring')
+    && request.company !== null
+    && originsFor(profile, request.company, request.account).some((o) => o !== request.requester.origin);
+  const otherWalletSignedIn = request !== null && (request.kind === 'unlock' || (request.kind === 'keyring' && request.signedInAs === null))
+    && whyNotThisWallet(port, request.requester.origin, thisWallet) !== null;
+  useAnswerAtOnce(atOnce && request?.kind === 'sign-in', consent.ok && slotQuiet, approve);
+  useAnswerAtOnce(atOnce && request?.kind === 'unlock',
+    consent.ok && readable && companyOnChain && !otherWalletSignedIn && !keyGivenElsewhere, release);
+  useAnswerAtOnce(atOnce && request?.kind === 'keyring',
+    consent.ok && readable && !otherWalletSignedIn && !keyGivenElsewhere
+      && (request?.kind !== 'keyring' || request.signedInAs === null || addressesHeld.has(request.signedInAs))
+      && (request?.kind !== 'keyring' || request.company === null || companyOnChain), releaseKeyring);
+
+  /* WHAT HOLDS AN ASK APPROVED BEFORE THE PASSKEY IS BROUGHT INTO SIGHT, once: a refusal or a warning found after the
+   * passkey sits far down this screen, and the person is waiting for an answer, not reading from the top. */
+  const heldInSight = useRef(false);
+  useEffect(() => {
+    if (!atOnce || heldInSight.current) return;
+    const held = document.querySelector<HTMLElement>('[data-not-this-wallet], [data-not-signed-in-here], [data-seen-elsewhere], [data-wallet-shared], [data-you-leave]');
+    if (held === null) return;
+    heldInSight.current = true;
+    held.scrollIntoView?.({ block: 'center' });
+  });
+
+  /* An ask that differs from the one approved before the passkey has already been refused; it is said, never shown
+   * with a button. */
+  if (swapped && request !== null) {
+    return (
+      <>
+        <h1 data-not-what-was-approved>{say('ask.swapped-title')}</h1>
+        <StatusAlert tone="danger" title={say('ask.swapped-title')}>
+          <p className="m-0">{say('ask.swapped', { origin: request.requester.origin })}</p>
+        </StatusAlert>
+      </>
+    );
+  }
 
   /*
    * ── THE THREE STATES THAT DO NOT KNOW WHICH KIND OF ASK THIS IS ──────────
@@ -1243,6 +1334,7 @@ export function Approve({
         whoIsAsking={whoIsAsking}
         onDecline={() => { channel?.refuse('declined'); setChannelState({ of: 'waiting' }); }}
         readLabel={readLabel}
+        {...(readChain === undefined ? {} : { readChain })}
       />
     );
   }
@@ -1257,11 +1349,13 @@ export function Approve({
         whoIsAsking={whoIsAsking}
         onDecline={() => { channel?.refuse('declined'); setChannelState({ of: 'waiting' }); }}
         readLabel={readLabel}
+        answerAtOnce={atOnce && readable}
         pinned={profile === null ? null : pinnedAccountOf(profile, request.company)}
         onPin={async (account, at) => {
           if (profile === null) throw new Error('This wallet\'s record is not open, so nothing has been signed.');
           /* Called only by the person's press confirming the company's fingerprint matches the one their inviter gave
-           * them: the account is kept as the company's once, and nothing is signed until it has been. */
+           * them, here or in the locked wallet's window: the account is kept as the company's once, and nothing is
+           * signed until it has been. */
           const next = pinCompanyAccount(profile, { company: request.company, account, from: 'invited', at }, at);
           try {
             await save(port, identity, next);
@@ -1284,6 +1378,7 @@ export function Approve({
         whoIsAsking={whoIsAsking}
         onDecline={() => { channel?.refuse('declined'); setChannelState({ of: 'waiting' }); }}
         drewTheLabel={profile !== null && drewTheLabelFor(profile, request.company)}
+        answerAtOnce={atOnce && readable}
         onPin={async (account, at) => {
           if (profile === null) throw new Error('this wallet\'s record is not open, so nothing has been signed.');
           /* The account the deploy creates, as this wallet read it, is pinned as the company's: once, and here, and kept
@@ -1314,6 +1409,7 @@ export function Approve({
           ? payslipKeyOfThisWallet(identity, request) : null}
         fingerprintClass={FINGERPRINT_TEXT}
         readLabel={readLabel}
+        answerAtOnce={atOnce}
       />
     );
   }
@@ -1337,6 +1433,7 @@ export function Approve({
         onDecline={() => { channel?.refuse('declined'); setChannelState({ of: 'waiting' }); }}
         onBusy={setWalletLocked}
         now={now}
+        answerAtOnce={atOnce && slotQuiet}
       />
     );
   }
@@ -1357,6 +1454,7 @@ export function Approve({
         onStage={(shown) => recordAsk(portNow.current, 'shown', shown, now())}
         onBusy={setWalletLocked}
         readLabel={readLabel}
+        answerAtOnce={atOnce && slotQuiet}
       />
     );
   }

@@ -2,6 +2,7 @@ import {
   createContext, useCallback, useContext, useEffect, useMemo, useRef, useState,
 } from 'react';
 import type { ReactNode } from 'react';
+import { useText } from 'vaults-ui';
 import {
   MemoryChallengeStore, cancelRecovery, completeRecovery, fromBase64Url, identityFromSecret,
   newSecret, offerPiece, readPieceHeader, startRecovery, toBase64Url, verifyAssertion,
@@ -48,6 +49,13 @@ import { describeFailure } from './lib/failure-text.js';
  * runs against a real server in the payroll product.
  */
 
+export type PasskeyRefused = 'none-here' | 'other-wallet';
+
+/** A passkey refused because it cannot open the wallet the window named; `why` is what the window offers next on. */
+class NotThatWallet extends Error {
+  constructor(readonly why: PasskeyRefused, message: string) { super(message); }
+}
+
 export type Phase =
   /** The browser cannot do passkeys at all. */
   | { readonly name: 'unsupported' }
@@ -81,6 +89,12 @@ export interface Session {
   /** The last failure, verbatim. Cleared when a ceremony starts. */
   readonly error: string | null;
   /**
+   * Why the last passkey opened nothing, when the window that asked for it named the wallet: `none-here` when that
+   * wallet has no passkey kept in this browser, `other-wallet` when the passkey belongs to another wallet. Pressing
+   * again cannot help in either case, so the window offers the list instead. Null otherwise.
+   */
+  readonly passkeyRefused: PasskeyRefused | null;
+  /**
    * @param walletName An optional name for the WHOLE wallet — asked for by the
    * screen BEFORE this is called, because it is passed to `createPasskey` and
    * nothing can change it there afterwards. Omitted or empty behaves exactly
@@ -93,8 +107,12 @@ export interface Session {
    * it. The browser is then offered that wallet's passkeys and no others, so
    * its chooser does not ask the same question again. Absent, every passkey
    * for this site is offered and the one picked decides which wallet opens.
+   * @param options.onlyThatWallet An ask's window named the wallet that opens:
+   * a passkey of any other wallet that comes back is refused and opens
+   * nothing, and a wallet with no passkey on record is refused before
+   * anything is asked.
    */
-  unlock(options?: { onlyTheOpenWallet?: boolean }): Promise<void>;
+  unlock(options?: { onlyTheOpenWallet?: boolean; onlyThatWallet?: boolean }): Promise<void>;
   /**
    * account-no-passkey: register a fresh passkey and open the sealed account.
    *
@@ -183,7 +201,7 @@ export interface Session {
    * THE COMPARTMENT THIS WINDOW HAS OPEN — for the screens that read a record
    * while rendering.
    *
-   * it is on the session rather than each screen calling
+   * It is on the session rather than each screen calling
    * `openWalletId()` for itself, so that a screen and the session it renders
    * from cannot answer differently. Every reader in `storage.ts` now REQUIRES
    * a compartment; this is where a screen gets one.
@@ -195,8 +213,8 @@ export interface Session {
    * being `unlocked`, and the secret lived only there), and the chosen wallet
    * is then behind its own passkey like any other locked wallet.
    *
-   * That is the whole of the refusal: two
-   * wallets are never unlocked at once, and there is no path here that could
+   * That is the whole of the refusal: two wallets are never unlocked at once,
+   * and there is no path here that could
    * make it happen, because there is no code path that opens a wallet except
    * the one ceremony in `unlock`.
    *
@@ -247,21 +265,16 @@ export interface Session {
    * two names, which is exactly what was refused earlier.
    *
    * **SO THE GUARD REMAINS A PLACEMENT AND NOT A PROOF**, and what stands
-   * behind it is a test rather than a type:
-   * *"a wallet with no credential on record is SWITCHED to and NOT prompted
-   * for"* @ `apps/wallet/src/screens/wallets-here.test.tsx:215`, which mutation `04` of
-   * The wrong-wallet mutation kills by making every row prompt. That is
-   * a proof the guard is THERE; it is not a proof that a later caller cannot
-   * omit it. **The honest description of the state is that the row stays
-   * open**, against a future where the one ceremony is reachable from one
-   * place and can therefore demand its own evidence.
+   * behind it is the test *a wallet with no credential on record is SWITCHED to
+   * and NOT prompted for*, which fails if every row prompts. That shows the
+   * guard is there; it does not stop a later caller from leaving it out.
    */
   switchTo(walletId: string): Phase;
   /**
    * TAKES A WALLET OFF THIS BROWSER — the sealed copy, the passkeys, the
    * names, the piece map, the cached balances and the key that opened it.
    *
-   * **THE MOST DANGEROUS CONTROL IN THE CHANGE**, and the session's half of
+   * **THE MOST DANGEROUS CONTROL IN THE WALLET**, and the session's half of
    * making it safe is only that it is a named, separate function with no
    * default: the screen that offers it owns the confirmation, the sentence
    * about what is lost, and the rule that it is not reachable in the middle
@@ -500,6 +513,11 @@ export function SessionProvider({ children, challenges: injected }: {
   useEffect(() => { drawnFor.current = walletsHeldNow(); });
   const [busy, setBusy] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
+  const [passkeyRefused, setPasskeyRefused] = useState<PasskeyRefused | null>(null);
+  /* The wallet's words for the refusals said below, read through a ref so the callbacks below stay the same. */
+  const say = useText();
+  const sayNow = useRef(say);
+  sayNow.current = say;
 
   const createAccount = useCallback(async (walletName?: string) => {
     setBusy('Waiting for your passkey…');
@@ -619,17 +637,26 @@ export function SessionProvider({ children, challenges: injected }: {
     }
   }, [challenges]);
 
-  const unlock = useCallback(async (options?: { onlyTheOpenWallet?: boolean }) => {
+  const unlock = useCallback(async (options?: { onlyTheOpenWallet?: boolean; onlyThatWallet?: boolean }) => {
     setBusy('Waiting for your passkey…');
     setError(null);
+    setPasskeyRefused(null);
     try {
       /* Read before the first `await`, so the passkeys offered belong to the
        * wallet the press switched to, not whichever one another window has
        * turned to since. A damaged passkey record throws `StorageError` here,
        * which lands on the broken screen below like every other read. */
+      const opening = openWalletId();
       const allow = options?.onlyTheOpenWallet
-        ? allPasskeys(openWalletId()).map((p) => p.credentialId)
+        ? allPasskeys(opening).map((p) => p.credentialId)
         : undefined;
+      /* An empty list offered to the browser means ANY passkey for this site, which would open whichever wallet it
+       * belongs to - so an ask's window does not ask for a passkey for a wallet with none on record here. */
+      const wallet = walletNameOnRecord(opening) ?? sayNow.current('ask.wallet.this-one');
+      const named = options?.onlyThatWallet === true && allow !== undefined;
+      if (named && allow.length === 0) {
+        throw new NotThatWallet('none-here', sayNow.current('ask.passkey.none-here', { wallet }));
+      }
       const challenge = await challenges.issue('sign-in');
       const assertion = await usePasskey({ rpId: RP_ID, challenge, ...(allow ? { allow } : {}) });
       if (!(await challenges.take(challenge, 'sign-in'))) {
@@ -659,6 +686,12 @@ export function SessionProvider({ children, challenges: injected }: {
           + 'moved onto it first — from your recovery pieces, or from the device '
           + 'that has it.');
       }
+      /* THE WALLET AN ASK'S WINDOW NAMED IS THE ONE THAT OPENS. With `onlyThatWallet` the window named one wallet and
+       * offered only its passkeys; a passkey of another wallet coming back anyway (a browser that ignored the list)
+       * opens nothing, so an ask is never answered from a wallet the person did not choose. */
+      if (named && owner.walletId !== opening) {
+        throw new NotThatWallet('other-wallet', sayNow.current('ask.passkey.other-wallet', { wallet }));
+      }
       const result = await verifyAssertion(assertion, owner.passkey, {
         rpId: RP_ID, origin: ORIGIN, challenge, allowFramedBy: FRAMED_BY,
       });
@@ -682,6 +715,7 @@ export function SessionProvider({ children, challenges: injected }: {
       if (e instanceof StorageError) {
         setPhase({ name: 'broken', message: e.message });
       } else {
+        if (e instanceof NotThatWallet) setPasskeyRefused(e.why);
         setError(describeFailure(e));
       }
     } finally {
@@ -1204,6 +1238,7 @@ export function SessionProvider({ children, challenges: injected }: {
       phase,
       busy,
       error,
+      passkeyRefused,
       createAccount,
       unlock,
       adoptPasskey,
@@ -1223,7 +1258,7 @@ export function SessionProvider({ children, challenges: injected }: {
       switchTo,
       removeWallet,
     }),
-    [phase, busy, error, createAccount, unlock, adoptPasskey, startFresh, recovery,
+    [phase, busy, error, passkeyRefused, createAccount, unlock, adoptPasskey, startFresh, recovery,
       offerRecoveryPiece, withdrawRecoveryPiece, finishRecovery, abandonRecovery,
       resetRecovery, finishPairing, paired, lock, startOver, wallets, switchTo,
       removeWallet]);

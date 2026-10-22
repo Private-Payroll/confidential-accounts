@@ -206,7 +206,7 @@ describe('A PAGE ASKING WHERE A WALLET RECEIVES AND WHAT IT HOLDS', () => {
     const unshielded = engineWeSpeakFor();
     const { container } = render(
       <BalanceEnginesContext.Provider value={{ shielded: shielded.engine, unshielded: unshielded.engine, dust: engineWeSpeakFor().engine }}>
-        <Approve identity={identity} secret={secretFromWords(TEST_MNEMONIC)} port={watchedStore()} view={view} now={() => NOW} />
+        <Approve identity={identity} secret={secretFromWords(TEST_MNEMONIC)} port={watchedStore()} view={view} now={() => NOW} embedder={ORIGIN} />
       </BalanceEnginesContext.Provider>);
     await act(async () => { for (const h of handlers) h({ source: opener, origin: ORIGIN, data: wire } as unknown as MessageEvent); });
     await settle();
@@ -223,5 +223,28 @@ describe('A PAGE ASKING WHERE A WALLET RECEIVES AND WHAT IT HOLDS', () => {
     fireEvent.click(container.querySelector('[data-decline]')!);
     await settle();
     expect(opener.sent.length).toBe(before + 1);
+  });
+});
+
+describe('addresses and balances approved before the passkey', () => {
+  it('are handed over with no press once both sides are read, and not before', async () => {
+    const shielded = engineWeSpeakFor();
+    const unshielded = engineWeSpeakFor();
+    const engines: BalanceEngines = { shielded: shielded.engine, unshielded: unshielded.engine, dust: engineWeSpeakFor().engine };
+    const answers: unknown[] = [];
+    render(
+      <BalanceEnginesContext.Provider value={engines}>
+        <ApproveAddressesAndBalances request={ask} identity={identity} owned={owned} channel={recordingChannel(answers)}
+          consent={{ ok: true }} whoIsAsking={<p>asker</p>} whichWallet={<p>picker</p>} onDecline={() => {}}
+          now={() => NOW} answerAtOnce />
+      </BalanceEnginesContext.Provider>);
+    await settle();
+    await act(async () => { shielded.say({ name: 'synced', night: 5_000_000n, asOf: NOW + 1, others: {} }); });
+    /* RED WHEN: what is handed over without a press is not what this wallet read after the screen opened. */
+    expect(answers).toEqual([]);
+    await act(async () => { unshielded.say({ name: 'synced', night: 12n, asOf: NOW + 2, others: {} }); });
+    /* RED WHEN: an ask approved before the passkey waits for the screen's own press once both sides are read. */
+    expect(answers).toHaveLength(1);
+    expect(readAddressesAndBalancesAnswer(answers[0], { atOrigin: ORIGIN, expectingNonce: 'ab1' })).toBeTruthy();
   });
 });

@@ -24,6 +24,7 @@ import { loadWalletCheckpoint } from '../accounts/storage.js';
 import { openWalletId } from '../accounts/wallets-held.js';
 import { unshieldedKeystoreFor } from '../chain/unshielded.js';
 import { nightFromStars } from '../chain/amount.js';
+import { useAnswerAtOnce } from '../framing.js';
 import type { Consent } from '../framing.js';
 
 /**
@@ -32,8 +33,9 @@ import type { Consent } from '../framing.js';
  * **THE ONLY ASK THAT MOVES MONEY OUT OF THIS WALLET**, so it is written the
  * way the send screen is: what leaves, read from the transaction itself; where
  * it goes, as the page names it and whole; and a press that is the only way
- * anything is paid. The network fee is not on this screen because this wallet
- * does not pay it.
+ * anything is paid - this screen's Pay, or the Approve in the locked wallet's
+ * window, which showed what leaves from the same transaction. The network fee
+ * is not on this screen because this wallet does not pay it.
  */
 
 /**
@@ -85,8 +87,8 @@ export const liveBalanceDoors = (identity: Identity, account: number): BalanceDo
 };
 
 /** One figure, in words a person reads. NIGHT is named; any other token is shown by its identifier. */
-const NIGHT_TOKEN = '0'.repeat(64);
-const describeLeaving = (l: LeavesTheWallet): string =>
+export const NIGHT_TOKEN = '0'.repeat(64);
+export const describeLeaving = (l: LeavesTheWallet): string =>
   l.kind === 'unshielded' && l.token === NIGHT_TOKEN
     ? `${nightFromStars(BigInt(l.amount))} NIGHT, from your public balance`
     : `${l.amount} base units of the ${l.kind === 'shielded' ? 'private' : 'public'} token below`;
@@ -102,7 +104,7 @@ type Stage =
 
 export function ApproveBalance({
   request, identity, account, channel, consent, whoIsAsking, whichWallet, onDecline,
-  doorsFor = liveBalanceDoors, now = Date.now, onStage, onBusy, readLabel = liveLabelReader,
+  doorsFor = liveBalanceDoors, now = Date.now, onStage, onBusy, readLabel = liveLabelReader, answerAtOnce = false,
 }: {
   readonly request: BalanceRequest;
   readonly identity: Identity;
@@ -121,6 +123,8 @@ export function ApproveBalance({
   readonly onBusy?: (locked: boolean) => void;
   /** How the company's account is read off the chain. Replaceable so a test can answer. */
   readonly readLabel?: LabelReader;
+  /** True when the person approved this ask before the passkey: it is then answered without a press once the checks its button waits for agree and the wallet that pays is one no other site has. */
+  readonly answerAtOnce?: boolean;
 }): ReactNode {
   const doors = useMemo(() => doorsFor(identity, account), [doorsFor, identity, account]);
   /* **NOTHING IS PAID UNTIL THE COMPANY'S ACCOUNT IS READ OFF THE CHAIN AND
@@ -291,6 +295,7 @@ export function ApproveBalance({
       });
     });
   }, [stage, channel, doors, request, now, onChain]);
+  useAnswerAtOnce(answerAtOnce, consent.ok && stage.of === 'ready' && channel !== null && !busy && !channel.over() && onChain, pay);
 
   /* The wallet stays as it is while a press runs and once the page has been answered. */
   const locked = busy || stage.of === 'sent' || stage.of === 'failed';

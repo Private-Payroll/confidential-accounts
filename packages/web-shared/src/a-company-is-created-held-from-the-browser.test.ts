@@ -2,6 +2,18 @@ import { afterEach, describe, expect, it, vi } from 'vitest';
 
 /* Lets a test read the saved keys back in the shape an older build wrote them. Nothing is changed unless a test sets `rewrite`. */
 const unsealing = vi.hoisted(() => ({ rewrite: null as null | ((plain: string) => string) }));
+/* When set, the page is handed the wallet's answer as its reader checked it, with the seat's keys taken out. */
+const answered = vi.hoisted(() => ({ withoutSeat: false }));
+vi.mock('./wallet-unlock.js', async (original) => {
+  const real = await original<typeof import('./wallet-unlock.js')>();
+  return {
+    ...real,
+    askWalletForKeys: async (...a: Parameters<typeof real.askWalletForKeys>) => {
+      const read = await real.askWalletForKeys(...a);
+      return answered.withoutSeat ? { ...read, seat: null } : read;
+    },
+  };
+});
 vi.mock('../../../src/core/crypto.js', async (original) => {
   const real = await original<typeof import('../../../src/core/crypto.js')>();
   return { ...real, unseal: (...a: Parameters<typeof real.unseal>) => { const plain = real.unseal(...a); return unsealing.rewrite !== null && typeof plain === 'string' ? unsealing.rewrite(plain) : plain; } };
@@ -14,6 +26,8 @@ import { parseAsk, type CreationRequest, type HoldersRequest, type KeyringReques
 import { holdersAnswerFor, PAY_KEY_COMMITMENT_ENTRY, seatBarOf } from 'midnight-identity/profile/records-key';
 import { keyringReleaseFor } from 'midnight-identity/profile/unlock';
 import { committeeKeyFor } from 'midnight-identity/profile/committee-key';
+import { seatKeysFor } from 'midnight-identity/profile/seat-keys';
+import { x25519 } from '@noble/curves/ed25519.js';
 import { CREATION_SIGNATURE_SCHEMA } from 'midnight-identity/profile/creation-sign';
 import type { CompanyLabel } from 'midnight-identity/profile/company-label';
 import { unwrapKey, unseal, parseCanonical, signingPublicKeyOf } from '../../../src/core/crypto.js';
@@ -71,6 +85,8 @@ class Wallet implements Openable {
   refusesHolders: string | null = null;
   /** Whether the wallet's completed answers name the indexer it reads through. */
   namesIndexer = true;
+  /* A wallet that starts a company without the founding seat's keys in its answer. */
+  givesNoSeat = false;
   private handler: ((event: MessageEvent) => void) | null = null;
   private readonly tab = { postMessage: (m: unknown) => this.onAsk(m) };
   constructor(private readonly signAs: 'own-key' | 'another-key' = 'own-key') {}
@@ -91,7 +107,7 @@ class Wallet implements Openable {
       if (ask.kind === 'keyring') {
         const released = keyringReleaseFor(identity, ask as KeyringRequest, Date.now(), (a) => a === ADDRESS);
         this.drew = (released as { company: CompanyLabel | null }).company;
-        answer = released;
+        answer = this.givesNoSeat ? { ...released, seat: null } : released;
       } else if (ask.kind === 'creation') {
         const c = ask as CreationRequest;
         const signer = this.signAs === 'own-key' ? committeeKeyFor(identity, c.company)
@@ -148,7 +164,7 @@ const builder = (payKeySteps: PayKeyStandingOnTheWire[] = [payKeyAt()]): keyring
 };
 
 const realFetch = globalThis.fetch;
-afterEach(() => { globalThis.fetch = realFetch; keyring.forgetLocally(); unsealing.rewrite = null; });
+afterEach(() => { globalThis.fetch = realFetch; keyring.forgetLocally(); unsealing.rewrite = null; answered.withoutSeat = false; });
 
 function aService(opts: {
   creationFails?: () => boolean; companyFails?: () => boolean; noRecord?: () => boolean; states?: Record<string, unknown>;
@@ -269,6 +285,64 @@ describe('THE FIRST PRESS', () => {
     /* RED WHEN: the first state is not sealed under the same viewing key, or carries no asset blinding, payout seed or pay-record key. */
     const state = parseCanonical<{ blinding: Record<string, unknown> }>(unseal(made.founding.state.sealed, viewingKey));
     expect(Object.keys(state.blinding).sort()).toEqual(['assetBlinding', 'payRecordKey', 'payoutSeeds']);
+  });
+
+  it('THE FOUNDING SEAT IS THE ONE THE WALLET\'S WORDS MAKE FOR THE LABEL IT DREW, GIVEN IN THE ONE ASK THE PRESS ALREADY MAKES', async () => {
+    const service = aService();
+    signIn();
+    const wallet = new Wallet();
+    const b = builder();
+    const worked: Array<{ seat: string; scope: string; publicKey: string }> = [];
+    b.foundingSeat = async (material) => {
+      b.calls.push(['seat', material]);
+      const a = await answerVaultAsk(async () => ({}) as never, { id: 1, network: 'undeployed', ask: 'founding-seat', material });
+      if (!a.ok || a.ask !== 'founding-seat') throw new Error(a.ok ? 'another answer' : a.error);
+      worked.push(a);
+      return a;
+    };
+    await keyring.startCompanyHeldFromTheStart(A_COMPANY, WALLET, b, wallet, US);
+    /* RED WHEN: the first press asks the wallet anything more than the one keyring ask it made before seats came from the words. */
+    expect(wallet.asks.map((a) => a.kind)).toEqual(['keyring']);
+    const made = madeOf(service);
+    const words = seatKeysFor(identity, wallet.drew!, 0);
+    const [signingSecret, wrappingSecret, salt] = [words.signingSecret, words.wrappingSecret, words.salt].map((k) => Buffer.from(k).toString('hex'));
+    const mine = keyring.keysFor(made.founding.account.id as string)!;
+    /* RED WHEN: the founding seat's secrets are made on the page instead of taken from the wallet, so the words could not make the seat again. */
+    expect([mine.signingSecret, mine.wrappingSecret, mine.opening?.salt]).toEqual([signingSecret, wrappingSecret, salt]);
+    /* RED WHEN: the seat sent carries public keys of any other secrets than the wallet's. */
+    expect(made.founding.seat.signingPublicKey).toBe(signingPublicKeyOf(signingSecret!));
+    expect(made.founding.seat.wrappingPublicKey).toBe(Buffer.from(x25519.getPublicKey(words.wrappingSecret)).toString('hex'));
+    /* RED WHEN: the blinding is not the wallet's salt under the key the account is held by. */
+    expect(mine.blinding).toBe(seatBlinding(made.foundingKey, salt!));
+    /* RED WHEN: the leaf the worker works out is not made from the wallet's signing secret and that blinding, or another leaf is sent. */
+    expect(b.calls.find(([k]) => k === 'seat')).toEqual(['seat', { signingSecret, blinding: mine.blinding }]);
+    expect(made.founding.seat.leaf).toBe(storedSignerLeaf({ signingSecret: signingSecret!, blinding: mine.blinding, scope: worked[0]!.scope }, MidnightCommitments).toLowerCase());
+  });
+
+  it('A WALLET THAT STARTS A COMPANY WITHOUT THE FOUNDING SEAT\'S KEYS GETS NO COMPANY, AND THE PERSON IS TOLD TO START AGAIN', async () => {
+    const service = aService();
+    signIn();
+    const wallet = new Wallet();
+    wallet.givesNoSeat = true;
+    const b = builder();
+    /* RED WHEN: the wallet's answer with no seat keys is taken by the page's reader, so the page goes on without them. */
+    await expect(keyring.startCompanyHeldFromTheStart(A_COMPANY, WALLET, b, wallet, US))
+      .rejects.toThrow(/without usable keys for your seat in it, so nothing was created\. Close the wallet's window, reload this page and start the company again\./u);
+    expect(b.calls).toEqual([]);
+    expect(service.sent('POST /api/accounts')).toEqual([]);
+    expect(service.sent('PUT /api/me/keys')).toEqual([]);
+  });
+
+  it('A FOUNDING HANDED NO SEAT KEYS PAST THE READER IS REFUSED BY THE PAGE ITSELF, BEFORE ANY SEAT IS WORKED OUT OR ANYTHING SENT', async () => {
+    const service = aService();
+    signIn();
+    answered.withoutSeat = true;
+    const b = builder();
+    /* RED WHEN: the page makes the founding seat's keys itself, or fails with something other than its own sentence, when it holds no seat keys for a new company. */
+    await expect(keyring.startCompanyHeldFromTheStart(A_COMPANY, WALLET, b, new Wallet(), US))
+      .rejects.toThrow(/gave no keys for your seat in it, so nothing was created\. Close the wallet's window, reload this page and start the company again\./u);
+    expect(b.calls).toEqual([]);
+    expect(service.sent('POST /api/accounts')).toEqual([]);
   });
 
   it('A COMPANY THE SERVICE DID NOT TAKE LEAVES ITS SEAT\'S SECRETS KEPT, AND BUILDS NO DEPLOY', async () => {

@@ -23,6 +23,7 @@ import {
   readKeyringRelease, readRelease, releaseFor, unlockKeyFor,
 } from './unlock.js';
 import { committeeKeyFor, committeeSigningKeyFor } from './committee-key.js';
+import { seatKeysFor } from './seat-keys.js';
 import type { KeyringRequest } from './request.js';
 import { emptyProfile, grantTo, originsFor, recordRelease, releasesOf } from './model.js';
 import { WALLET_ACCOUNTS } from '../../../../apps/wallet/src/accounts/subwallets.js';
@@ -131,7 +132,7 @@ const independentUnlockKey = (company: string): Uint8Array => hkdf(
   sha256, independentAuthority('unlock', 0), UNLOCK_SALT,
   new TextEncoder().encode(company), 32);
 
-describe('§4 — AN UNLOCK IS ITS OWN KIND, AND NAMES EXACTLY ONE THING', () => {
+describe('AN UNLOCK IS ITS OWN KIND, AND NAMES EXACTLY ONE THING', () => {
   it('parses, carries the company it named and the origin the parser observed', () => {
     const ask = parseAsk(unlock(), A, NOW);
     expect(ask.kind).toBe('unlock');
@@ -214,7 +215,7 @@ describe('§4 — AN UNLOCK IS ITS OWN KIND, AND NAMES EXACTLY ONE THING', () =>
   });
 });
 
-describe('§2 — THE COMPANY IS CLAIMED, SO ITS SHAPE IS WHAT CAN BE CHECKED', () => {
+describe('THE COMPANY IS CLAIMED, SO ITS SHAPE IS WHAT CAN BE CHECKED', () => {
   it('A COMPANY IS NAMED BY ITS LABEL, AND AN ACCOUNT\'S ADDRESS IS REFUSED WHERE A LABEL IS ASKED', () => {
     /*
      * **THE ONE MISTAKE THE SPELLING EXISTS TO CATCH.** Until the label, a
@@ -293,7 +294,7 @@ describe('§2 — THE COMPANY IS CLAIMED, SO ITS SHAPE IS WHAT CAN BE CHECKED', 
   });
 });
 
-describe('RULE 1 — THE ORIGIN IS OBSERVED, AND IT GATES RATHER THAN DERIVES', () => {
+describe('THE ORIGIN IS OBSERVED, AND IT GATES RATHER THAN DERIVES', () => {
   it('two asks from one origin agree on the key, whatever else the message says', () => {
     const plain = askAt(A);
     const lying = askAt(A, CO_A, {
@@ -319,7 +320,7 @@ describe('RULE 1 — THE ORIGIN IS OBSERVED, AND IT GATES RATHER THAN DERIVES', 
       addEventListener: (_t, h) => { handler = h; },
       removeEventListener: () => {},
     };
-    listen(view, () => NOW, (s) => states.push(s));
+    listen(view, () => NOW, (s) => states.push(s), A);
     handler!({
       source: opener as unknown as MessageEventSource,
       origin: A,
@@ -372,7 +373,7 @@ describe('RULE 1 — THE ORIGIN IS OBSERVED, AND IT GATES RATHER THAN DERIVES', 
   });
 });
 
-describe('RULE 2 — THE SAME COMPANY FROM TWO DIFFERENT HOSTS GETS THE SAME KEY', () => {
+describe('THE SAME COMPANY FROM TWO DIFFERENT HOSTS GETS THE SAME KEY', () => {
   it('THE EXPORT, EXPRESSED AS CODE: two hosts, one company, identical bytes', () => {
     /*
      * **THIS IS THE WHOLE PURPOSE.** Anything sealed under a key
@@ -459,7 +460,7 @@ describe('RULE 2 — THE SAME COMPANY FROM TWO DIFFERENT HOSTS GETS THE SAME KEY
   });
 });
 
-describe('RULE 3 — TWO COMPANIES NEVER GET THE SAME KEY, AT FULL WIDTH', () => {
+describe('TWO COMPANIES NEVER GET THE SAME KEY, AT FULL WIDTH', () => {
   it('five hundred companies give five hundred different keys', () => {
     const seen = new Set<string>();
     for (let i = 0; i < 500; i += 1) {
@@ -556,7 +557,7 @@ describe('RULE 3 — TWO COMPANIES NEVER GET THE SAME KEY, AT FULL WIDTH', () =>
   });
 });
 
-describe('RULE 4 — IT IS NEVER A MONEY KEY', () => {
+describe('IT IS NEVER A MONEY KEY', () => {
   it('IS NONE OF THE KEYS ANY WALLET THIS INTERFACE OFFERS WOULD SPEND WITH', () => {
     /*
      * The standing instruction, unchanged: *walk every
@@ -612,7 +613,7 @@ describe('RULE 4 — IT IS NEVER A MONEY KEY', () => {
   });
 });
 
-describe('RULE 5 — THE REMEMBERED LIST IS NEVER AN INPUT', () => {
+describe('THE REMEMBERED LIST IS NEVER AN INPUT', () => {
   it('THE FUNCTION HAS NOWHERE TO PUT ONE: an identity and an ask, and no third thing', () => {
     /*
      * **THE CHANGE'S QUIETEST RULE AND ITS MOST DANGEROUS ONE.** The moment the
@@ -1007,8 +1008,9 @@ describe('THE KEYRING RELEASE: THE GATE IS INSIDE IT, AND THE READER TAKES ITS O
   it('a wallet holding the signed-in address gives the keyring key and nothing else', () => {
     const released = keyringReleaseFor(identity, keyringAt(A), NOW, holdsSignedIn);
     expect(Object.keys(released).sort()).toEqual(
-      ['account', 'at', 'committeeKey', 'company', 'companyKey', 'key', 'nonce', 'origin', 'person', 'schema', 'signedInAs']);
+      ['account', 'at', 'committeeKey', 'company', 'companyKey', 'key', 'nonce', 'origin', 'person', 'schema', 'seat', 'signedInAs']);
     expect(released.committeeKey).toBeNull();
+    expect(released.seat).toBeNull();
     expect(released.schema).toBe(KEYRING_RELEASE_SCHEMA);
     expect(released.origin).toBe(A);
     expect(hex(fromBase64Url(released.key))).toBe(hex(independentKeyringKey(PERSON)));
@@ -1086,6 +1088,41 @@ describe('THE KEYRING RELEASE: THE GATE IS INSIDE IT, AND THE READER TAKES ITS O
       atOrigin: A, expectingNonce: 'k1', person: PERSON, signedInAs: SIGNED_IN, forCompany: 'drawn', forAccount: null,
     });
     expect(none.ok ? 'accepted' : none.code).toBe('company-mismatch');
+  });
+
+  it('ASKED TO START A COMPANY, THE WALLET ANSWERS WITH THE FOUNDING SEAT\'S KEYS FOR THE LABEL IT DREW, AND ONLY THEN', () => {
+    const drawn = labelOf(sampleContractAddress());
+    const released = keyringReleaseFor(identity, keyringAt(A, { drawLabel: true }), NOW, holdsSignedIn, () => drawn);
+    const founding = seatKeysFor(identity, drawn, 0);
+    const given = released.seat!;
+    /* RED WHEN: the founding seat's keys are not seat 0 of the label the wallet drew, so the page makes a seat the words cannot make again. */
+    expect([given.signingSecret, given.wrappingSecret, given.salt].map((v) => hex(fromBase64Url(v))))
+      .toEqual([founding.signingSecret, founding.wrappingSecret, founding.salt].map(hex));
+    /* RED WHEN: a seat's keys travel with an answer that starts no company: the page is handed secrets for a seat nobody is making. */
+    expect(keyringReleaseFor(identity, keyringAt(A, { company: CO_A }), NOW, holdsSignedIn).seat).toBeNull();
+    expect(keyringReleaseFor(identity, keyringAt(A), NOW, holdsSignedIn).seat).toBeNull();
+
+    const drawnAt = { atOrigin: A, expectingNonce: 'k1', person: PERSON, signedInAs: SIGNED_IN, forCompany: 'drawn' as const, forAccount: null };
+    const read = readKeyringRelease(released, drawnAt);
+    /* RED WHEN: the page does not take the seat's keys the wallet gave, byte for byte. */
+    expect(read.ok && read.seat !== null ? [read.seat.signingSecret, read.seat.wrappingSecret, read.seat.salt].map(hex) : 'none')
+      .toEqual([founding.signingSecret, founding.wrappingSecret, founding.salt].map(hex));
+    /* RED WHEN: an answer that starts a company with no seat keys is used, so the page would have to make the founding seat's keys itself. */
+    for (const seat of [null, undefined]) {
+      const r = readKeyringRelease({ ...released, seat }, drawnAt);
+      expect(r.ok ? 'accepted' : `${r.code}: ${r.says}`).toMatch(/^unusable-key: .*nothing was created\. close the wallet's window, reload this page and start the company again\.$/iu);
+    }
+    /* RED WHEN: a seat key of the wrong size, or one seat key given as another, is used. */
+    const withSeat = (seat: unknown): string => {
+      const r = readKeyringRelease({ ...released, seat }, drawnAt);
+      return r.ok ? 'accepted' : r.code;
+    };
+    expect(withSeat({ ...given, salt: toBase64Url(new Uint8Array(31)) })).toBe('unusable-key');
+    expect(withSeat({ ...given, wrappingSecret: given.signingSecret })).toBe('unusable-key');
+    /* RED WHEN: seat keys nobody asked for are taken from an answer about a company that exists. */
+    const forA = keyringReleaseFor(identity, keyringAt(A, { company: CO_A }), NOW, holdsSignedIn);
+    const onA = readKeyringRelease({ ...forA, seat: given }, { ...drawnAt, forCompany: CO_A });
+    expect(onA.ok ? 'accepted' : onA.code).toBe('company-mismatch');
   });
 
   it('THE READER REFUSES AN ANSWER TO ANY OTHER QUESTION', () => {

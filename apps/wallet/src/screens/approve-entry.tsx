@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react';
+import { useEffect, useMemo, useState } from 'react';
 import type { ReactNode } from 'react';
 import { Button } from 'vaults-ui';
 import { framingOf, listen } from 'midnight-identity/profile/channel';
@@ -12,6 +12,11 @@ import { StatusAlert } from '../components/status.js';
 import { AskOver } from './ask-over.js';
 import { AnswerHolders, type HoldersReader } from './answer-holders.js';
 import { quietConsentFor } from '../framing.js';
+import { browserPort } from 'midnight-identity/profile/store';
+import type { Port } from 'midnight-identity/profile/store';
+import { ApproveWindow } from './approve-window.js';
+import type { LedgerReader } from './approve-window.js';
+import type { LabelReader } from './company-on-chain.js';
 
 /**
  * **A WINDOW OPENED FOR A REQUEST, WITH NO WALLET IN IT.**
@@ -42,20 +47,25 @@ import { quietConsentFor } from '../framing.js';
  * is why this component wraps the ordinary entry screens rather than replacing
  * only the welcome one.
  *
- * **NOTHING IS ANSWERED FROM HERE.** There is no key in this browser to answer
- * with, and there is no path in this file that could: it holds a channel open
- * and renders words. When a wallet arrives, `App` swaps this for `Approve`,
- * which opens its own channel — and the asking page re-sends the request when it
- * hears that second *I am here*, which is what makes *the ask carries on* true
- * rather than hopeful.
+ * **NOTHING IS GIVEN OR SIGNED FROM HERE.** No wallet is open, so there is no
+ * key to answer with. What is answered from here needs none: who holds a
+ * company (public chain facts), a Decline, and a payment this wallet cannot
+ * read. When a wallet is open, `App` swaps this for `Approve`, which opens its
+ * own channel — and the asking page re-sends the request when it hears that
+ * second *I am here*, which is what makes *the ask carries on* true rather than
+ * hopeful.
+ *
+ * **A LOCKED WALLET ASKED SOMETHING SHOWS ONE WINDOW** (`ApproveWindow`): what
+ * the ask does, with an Approve that asks for the passkey and a Decline, in
+ * place of the unlock screen.
  *
  * ── THERE IS NO "WAY BACK" HERE, BECAUSE THERE IS NOTHING TO GO BACK TO ───
  *
  * The wallet is a DIALOG. The page that asked never navigated anywhere:
- * it is still on screen, behind this window, with the offer still on it. A round
- * that built a return journey would be building a way back to a page nobody
- * left. This screen says so, because a person who has just been sent to make a
- * wallet reasonably wonders where their offer went.
+ * it is still on screen, behind this window, with the offer still on it. A
+ * return journey would be a way back to a page nobody left. This screen says
+ * so, because a person who has just been sent to make a wallet reasonably
+ * wonders where their offer went.
  */
 
 /** What `entryFor` would have rendered for this phase, when the words below
@@ -71,10 +81,14 @@ export interface ApproveEntryProps {
   readonly embedder?: string | null;
   /** How a holders ask reads the account. Injected so a test can answer it. */
   readonly readHolders?: HoldersReader;
+  /** Where this browser keeps which wallet answered a page's sign-in. */
+  readonly port?: Port;
+  readonly readLabel?: LabelReader;
+  readonly readLedger?: LedgerReader;
 }
 
 export function ApproveEntry({
-  phase, entry, view, now = Date.now, embedder = EMBEDDER, readHolders,
+  phase, entry, view, now = Date.now, embedder = EMBEDDER, readHolders, port, readLabel, readLedger,
 }: ApproveEntryProps): ReactNode {
   const { createAccount, busy, error } = useSession();
   const [channelState, setChannelState] = useState<ChannelState>({ of: 'waiting' });
@@ -109,7 +123,7 @@ export function ApproveEntry({
    * asker's origin is observed at all. So until a request has been accepted from
    * the allowed page, a framed entry is a waiting line and nothing else.
    */
-  const framing = framingOf(view ?? (window as unknown as ChannelWindow), embedder);
+  const framing = useMemo(() => framingOf(view ?? (window as unknown as ChannelWindow), embedder), [view, embedder]);
   const framed = framing.of === 'framed';
   /*
    * **A PAGE ASKING WHO HOLDS A COMPANY IS ANSWERED WITH NO WALLET OPEN.** The
@@ -145,6 +159,15 @@ export function ApproveEntry({
           sent and nothing has been signed.
         </p>
       </>
+    );
+  }
+
+  if (phase.name === 'locked' && channelState.of === 'request') {
+    return (
+      <ApproveWindow
+        request={channelState.request} channel={channel} framing={framing} port={port ?? browserPort()}
+        {...(readLabel === undefined ? {} : { readLabel })} {...(readLedger === undefined ? {} : { readLedger })}
+      />
     );
   }
 

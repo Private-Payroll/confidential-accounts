@@ -601,7 +601,7 @@ describe('THE APPROVAL SURFACE ROUTES A BALANCE ASK TO THIS SCREEN', () => {
       addEventListener: (_t, h) => { handlers.push(h); },
       removeEventListener: () => {},
     };
-    render(<Approve readLabel={carries} identity={identity} secret={SECRET} port={port} view={view} now={() => NOW} />);
+    render(<Approve readLabel={carries} identity={identity} secret={SECRET} port={port} view={view} now={() => NOW} embedder={ORIGIN} />);
     for (const h of handlers) h({ source: opener, origin: ORIGIN, data: wire() } as unknown as MessageEvent);
     expect(await screen.findByText(`Pay into a company vault for ${ORIGIN}`)).toBeTruthy();
     expect(await screen.findByText(/not a proven transaction this wallet can read/)).toBeTruthy();
@@ -616,5 +616,32 @@ describe('THE APPROVAL SURFACE ROUTES A BALANCE ASK TO THIS SCREEN', () => {
       'asked balance', 'shown refused', 'sent refused:unreadable',
     ]));
     void afterTheAnswer;
+  });
+});
+
+describe('a payment approved before the passkey', () => {
+  const renderAtOnce = (doors: () => BalanceDoors, answers: unknown[], readLabel: LabelReader = carries) => render(
+    <ApproveBalance readLabel={readLabel}
+      request={ask} identity={identity} account={0} channel={channelFor(answers)} consent={consented}
+      whoIsAsking={<p>asker</p>} whichWallet={<p>picker</p>} onDecline={() => {}}
+      doorsFor={doors} now={() => NOW} answerAtOnce />);
+
+  it('pays with no press once the transaction is read and the account carries the label', async () => {
+    const log: string[] = []; const answers: unknown[] = [];
+    renderAtOnce(doorsWith(log), answers);
+    /* RED WHEN: a payment approved before the passkey waits for the screen's own press once the wallet is open. */
+    await screen.findByText(`You paid for a deposit for ${ORIGIN}`);
+    expect(log).toEqual(['balance', 'sign', 'finish']);
+    expect(answers).toHaveLength(1);
+  });
+
+  it('pays nothing when the account the page names carries another company\'s label', async () => {
+    const log: string[] = []; const answers: unknown[] = [];
+    renderAtOnce(doorsWith(log), answers, async () => ({ of: 'carries', label: 'co_2222222222222222222222222222222222222222222222222222222222222222' as CompanyLabel }));
+    expect(await screen.findByText(`2500 base units of the private token below`)).toBeTruthy();
+    await settled(20);
+    /* RED WHEN: the wallet's own refusal is passed over because the person approved before the passkey. */
+    expect(log).toEqual([]);
+    expect(answers).toEqual([]);
   });
 });

@@ -62,7 +62,7 @@ const shown = (phase: Phase, framed: boolean) => {
   const r = render(
     <SessionProvider>
       <ApproveEntry phase={phase} entry={<p data-entry-screen>Unlock your wallet</p>} view={a.view} now={() => NOW}
-        embedder={framed ? ASKER : null} readHolders={reader} />
+        embedder={ASKER} readHolders={reader} />
     </SessionProvider>);
   a.send();
   return { ...a, r };

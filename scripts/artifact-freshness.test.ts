@@ -488,7 +488,7 @@ describe('the guard is WIRED IN, and is pointed at the artifacts the tests impor
         if (dirs.some((d) => text.includes(d)) && text.includes(GATE)) out.push(child);
       }
     };
-    for (const tree of ['src', 'scripts', 'contracts/test', 'packages/web-shared/src']) walk(tree);
+    for (const tree of ['src', 'scripts', 'contracts/test', 'packages/web-shared/src', 'apps/wallet/src', 'apps/web/src']) walk(tree);
     return out.sort();
   };
 
@@ -549,7 +549,7 @@ describe('the guard is WIRED IN, and is pointed at the artifacts the tests impor
     /*
      * **THE LIST IS DERIVED FROM A DIRECTORY WALK, SO A LITERAL `toEqual` OVER
      * IT IS A CLAIM ABOUT WHICH FILES A COPY HAS, NOT ABOUT KEY COVERAGE.** In
-     * any copy that does not carry one of these nine it went red with a message
+     * any copy that does not carry one of these it went red with a message
      * about proving keys, which is not what changed.
      *
      * The direction that is the guard: every file gated on keys is named here,
@@ -583,6 +583,9 @@ describe('the guard is WIRED IN, and is pointed at the artifacts the tests impor
       'src/midnight/the-secret-comes-from-the-keyring.test.ts',
       'src/server/account-creation.test.ts',
       'src/wiring/vault-submission.test.ts',
+      'apps/wallet/src/chain/creation-screen-in-a-browser.test.ts',
+      'apps/wallet/src/chain/this-builds-account-keys.test.ts',
+      'apps/wallet/src/screens/approve-creation.test.tsx',
     ];
     expect(gated.filter((f) => !NAMED.includes(f)),
       'a test is gated on proving keys and this list does not name it').toEqual([]);

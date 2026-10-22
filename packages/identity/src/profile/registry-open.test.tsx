@@ -221,6 +221,7 @@ describe('the APPROVAL SCREEN gets it right with no line changed in the approval
           port={port}
           view={view}
           now={() => NOW}
+          embedder="https://payroll-a.example"
         />);
       for (const h of handlers) {
         h({ source: opener, origin: 'https://payroll-a.example', data } as unknown as MessageEvent);

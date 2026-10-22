@@ -2,6 +2,8 @@ import { hkdf } from '@noble/hashes/hkdf.js';
 import { sha256 } from '@noble/hashes/sha2.js';
 import { Purposes } from '../keys/derivation.js';
 import { committeeKeyFor, readCommitteeKey } from './committee-key.js';
+import { seatKeysFor } from './seat-keys.js';
+import type { SeatKeys } from './seat-keys.js';
 import type { SignatureVerifyingKey } from '@midnightntwrk/ledger-v9';
 import type { Identity } from '../keys/derivation.js';
 import { fromBase64Url, toBase64Url } from '../passkey/bytes.js';
@@ -35,8 +37,8 @@ export type { HeldScope } from './held-address.js';
  * when we do. **Anything sealed under a key derived from our address can only
  * ever be opened at our address** — so the sealed export this project committed
  * an architecture to, a customer taking their copy to any client, arrives
- * somewhere else and does not open. That defect, reopened by the mechanism meant to
- * serve it.
+ * somewhere else and does not open: the mechanism meant to serve the export
+ * would break it.
  *
  * **SO THE KEY IS DERIVED FROM THE COMPANY'S LABEL** (`company-label.ts`):
  * thirty-two random bytes the founding signer's wallet drew before the company
@@ -74,10 +76,9 @@ export type { HeldScope } from './held-address.js';
  *
  * ══ THE FIVE RULES, AND WHERE EACH ONE LIVES ══════════════════════════════
  *
- * **1. AT FULL WIDTH, AS ITS OWN BYTES.** The finding stands and applies here
- * unchanged: **a selector narrower than the thing it selects can be ground.**
- * That round ground two origins onto one 31-bit index in 2,855,179,063 tries on
- * one core. So the label goes into the expansion
+ * **1. AT FULL WIDTH, AS ITS OWN BYTES.** **A selector narrower than the thing it
+ * selects can be ground**: two origins were ground onto one 31-bit index in
+ * 2,855,179,063 tries on one core. So the label goes into the expansion
  * WHOLE — all of it, not truncated, not hashed into an index.
  *
  * **2. THE SAME COMPANY REACHED FROM TWO DIFFERENT HOSTS GETS THE SAME KEY.**
@@ -97,7 +98,7 @@ export type { HeldScope } from './held-address.js';
  * origin asked for which company in order to WARN (`model.ts`, `originsFor`).
  * **It is a convenience and never a key input**: losing it costs a warning, not
  * access. The moment it became an input, a recovered wallet would stop opening a
- * company's records and we would be back at that defect by a different door. **This
+ * company's records. **This
  * function takes an identity and an ask, and there is no third argument.**
  *
  * ══ WHY THE KEY IS FIT TO BE A ROOT ═══════════════════════════════════════
@@ -111,23 +112,17 @@ export type { HeldScope } from './held-address.js';
  * which is the whole of what that key asks for. Nothing about it is random and
  * nothing about it depends on us existing.
  *
- * ══ WHY NOT `Purposes.Seat`, WHICH THE DESIGN NAMES ═══════════════════════
+ * ══ WHY THE COMPANY KEY HAS ITS OWN PARENT, AND NOT THE SEAT'S ═══════════
  *
- * The design this was built from says *"the wallet derives `Purposes.Seat` for
- * the requesting origin"*.
- * **Seat is the right IDEA and the wrong DOOR**, and the two reasons both
- * survive the change of ingredient:
+ * `authority(purpose, index)` selects with a NUMBER below 2^31. A company's
+ * label is 256 bits, and cut to 31 it is a selector that can be ground until
+ * two companies share a key. So the label goes into the expansion whole, under
+ * a parent whose one job is this key and which never leaves this wallet.
  *
- * `authority(purpose, index)` selects with a NUMBER below 2^31. Squeezing any
- * identifier — an origin then, a company's label now — into 31 bits is a
- * selector that can be ground, and rule 3 is that two companies never share a
- * key. A label is 256 bits; 31 of them is not the label.
- *
- * **AND SEAT IS MEANT TO BE GIVEN AWAY.** *"One per company, so no two
- * employers see the same key."* A key that is handed to a company must never be
- * the PARENT of keys that are not — the first employer handed its seat could
- * derive every other employer's. So the parent is a purpose with exactly one
- * job, which never leaves this wallet: only its per-company children do.
+ * **THE SEAT PARENT HAS ANOTHER JOB, AND ITS CHILDREN ARE GIVEN AWAY.** It makes
+ * each seat's keys (`seatKeysFor`), and those are handed to the page that holds
+ * the seat. A key handed to a page must never be the parent of keys that are
+ * not, so a company key and a seat's keys share no parent.
  *
  * ══ THE LABEL GOES IN AS ITS OWN TEXT, IN ITS ONE SPELLING ═════════════════
  *
@@ -414,8 +409,8 @@ export type ReleaseRead =
 /**
  * **THE REQUESTER'S SIDE, AND IT READS NO FIELD OUT OF THE MESSAGE.**
  *
- * It ships here for `disclosure.ts`'s reason: the thing the payroll product
- * runs should be the thing this change tested, rather than a description of it.
+ * It ships here for `disclosure.ts`'s reason: the code payroll runs should be
+ * the code the wallet's own tests check, not a description of it.
  *
  * `atOrigin` is the recipient's OWN origin, `expectingNonce` the nonce it
  * itself issued, and **`forCompany` the company it itself asked about** — this
@@ -585,9 +580,10 @@ export function keyringKeyFor(identity: Identity, ask: KeyringRequest): KeyringK
 /**
  * WHAT CROSSES BACK FOR A KEYRING ASK.
  *
- * **`key` AND `companyKey` ARE SECRETS ON THE WIRE**, with the rules `key` has
- * above: posted to the observed origin and nowhere else, never written to
- * storage, a history entry, a URL or a log, and rendered by no screen.
+ * **`key`, `companyKey` AND `seat` ARE SECRETS ON THE WIRE**, with the rules
+ * `key` has above: posted to the observed origin and nowhere else, never
+ * written to storage, a history entry, a URL or a log, and rendered by no
+ * screen.
  */
 export interface KeyringRelease {
   readonly schema: typeof KEYRING_RELEASE_SCHEMA;
@@ -616,7 +612,24 @@ export interface KeyringRelease {
    * half is not in this message and never leaves the wallet.
    */
   readonly committeeKey: SignatureVerifyingKey | null;
+  /**
+   * The founding seat's keys in the company this wallet drew, each base64url of
+   * 32 bytes (`seatKeysFor`, seat 0), or null when the ask started no company.
+   * The page makes the founding seat from these instead of making keys of its
+   * own, so the words alone make that seat again.
+   */
+  readonly seat: SeatKeysOnTheWire | null;
 }
+
+/** A seat's three keys as they cross to the page: base64url of 32 bytes each. */
+export interface SeatKeysOnTheWire {
+  readonly signingSecret: string;
+  readonly wrappingSecret: string;
+  readonly salt: string;
+}
+
+/* A new company's founding seat is the first seat this wallet makes in it. */
+const FOUNDING_SEAT = 0;
 
 /**
  * **THE MESSAGE A PERSON'S PRESS PRODUCES FOR A KEYRING ASK, AND THE GATE IS
@@ -631,7 +644,8 @@ export interface KeyringRelease {
  * press, by this wallet: the page asked for a new company and did not choose
  * its name, so neither the page nor the service behind it can choose which
  * company's keys come back. `draw` is replaceable only so a test can know the
- * label in advance.
+ * label in advance. The answer to that ask also carries the founding seat's
+ * keys for the drawn label, and no other answer carries seat keys.
  */
 export function keyringReleaseFor(
   identity: Identity, ask: KeyringRequest, at: number,
@@ -680,8 +694,15 @@ export function keyringReleaseFor(
     key: toBase64Url(key),
     companyKey,
     committeeKey: company === null ? null : committeeKeyFor(identity, company),
+    seat: ask.drawLabel && company !== null ? seatOnTheWire(seatKeysFor(identity, company, FOUNDING_SEAT)) : null,
   });
 }
+
+const seatOnTheWire = (keys: SeatKeys): SeatKeysOnTheWire => Object.freeze({
+  signingSecret: toBase64Url(keys.signingSecret),
+  wrappingSecret: toBase64Url(keys.wrappingSecret),
+  salt: toBase64Url(keys.salt),
+});
 
 export type KeyringRead =
   | {
@@ -693,6 +714,8 @@ export type KeyringRead =
     /** The company the keys are for: the one asked about, or the one the wallet drew. */
     readonly company: CompanyLabel | null;
     readonly at: number;
+    /** The founding seat's keys, present exactly when the ask started a company. */
+    readonly seat: SeatKeys | null;
   }
   | { readonly ok: false; readonly code: ReleaseFailure | 'person-mismatch'; readonly says: string };
 
@@ -819,8 +842,38 @@ export function readKeyringRelease(
       says: 'this answer carries a company key nobody asked for. It is refused rather than used.',
     };
   }
+  let seat: SeatKeys | null = null;
+  if (expecting.forCompany === 'drawn') {
+    seat = readSeatKeys(body.seat);
+    if (seat === null) {
+      return {
+        ok: false,
+        code: 'unusable-key',
+        says: 'your wallet started the company without usable keys for your seat in it, so nothing was created. '
+          + 'Close the wallet\'s window, reload this page and start the company again.',
+      };
+    }
+  } else if (body.seat !== null && body.seat !== undefined) {
+    return {
+      ok: false,
+      code: 'company-mismatch',
+      says: 'this answer carries a seat\'s keys nobody asked for, so it is refused and nothing was kept. Start again from the page.',
+    };
+  }
   if (typeof body.at !== 'number' || !Number.isSafeInteger(body.at)) {
     return { ok: false, code: 'not-a-release', says: 'that is not a released key.' };
   }
-  return { ok: true, key, companyKey, committeeKey, company: wanted, at: body.at };
+  return { ok: true, key, companyKey, committeeKey, company: wanted, at: body.at, seat };
 }
+
+/* A seat's three keys, each 32 bytes and no two the same; null for anything else. */
+const readSeatKeys = (value: unknown): SeatKeys | null => {
+  if (typeof value !== 'object' || value === null) return null;
+  const { signingSecret, wrappingSecret, salt } = value as Record<string, unknown>;
+  const parts = [readKeyBytes(signingSecret), readKeyBytes(wrappingSecret), readKeyBytes(salt)];
+  if (parts.some((p) => p === null)) return null;
+  const [s, w, n] = parts as [Uint8Array, Uint8Array, Uint8Array];
+  const same = (a: Uint8Array, b: Uint8Array): boolean => a.every((byte, i) => byte === b[i]);
+  if (same(s, w) || same(s, n) || same(w, n)) return null;
+  return Object.freeze({ signingSecret: s, wrappingSecret: w, salt: n });
+};

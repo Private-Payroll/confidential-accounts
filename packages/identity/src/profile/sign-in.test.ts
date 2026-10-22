@@ -227,7 +227,7 @@ describe('the channel carries a sign-in and reads no kind of its own', () => {
       addEventListener: (_t, h) => { handlers.push(h); },
       removeEventListener: () => { /* not exercised here */ },
     };
-    listen(view, () => NOW, (s) => states.push(s));
+    listen(view, () => NOW, (s) => states.push(s), ORIGIN);
     const deliver = (event: Partial<MessageEvent>): void => {
       for (const h of handlers) h(event as MessageEvent);
     };

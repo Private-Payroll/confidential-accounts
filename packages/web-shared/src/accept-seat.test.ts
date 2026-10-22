@@ -15,8 +15,8 @@
 import { describe, it, expect } from 'vitest';
 import { SimulatedCommitments } from '../../../src/core/ledger.js';
 import { ownLeafReading, storedSignerLeaf } from '../../../src/core/signer-leaf.js';
-import { newSigningKeypair, newWrappingKeypair, newBlinding, type Hex } from '../../../src/core/crypto.js';
-import { acceptSeatOnThisDevice, newSeatKeys, type NewSeatKeys, type SeatDoors } from './accept-seat.js';
+import { newSigningKeypair, newWrappingKeypair, newBlinding, signingPublicKeyOf, unwrapKey, wrapKey, type Hex } from '../../../src/core/crypto.js';
+import { acceptSeatOnThisDevice, newSeatKeys, seatKeysFrom, type NewSeatKeys, type SeatDoors } from './accept-seat.js';
 import { seatBlinding, walletKeyProvedBy } from '../../../src/core/seat-opening.js';
 import type { PendingSeat } from './keyring.js';
 
@@ -116,7 +116,7 @@ describe('The leaf this path publishes', () => {
         SimulatedCommitments));
   });
 
-  it('is NOT the leaf the old writer made over the ed25519 public key', async () => {
+  it('is not a leaf over the raw ed25519 public key, which its own device could never prove', async () => {
     /*
      * A leaf over the raw ed25519 public key is a seat its own device can never
      * prove, and nothing else executes this writer.
@@ -138,7 +138,7 @@ describe('The leaf this path publishes', () => {
     const theOldWay = SimulatedCommitments.signerLeaf(
       sk.publicKey, blinding, SimulatedCommitments.allVaults());
     expect(itemAt(d.published, 0).leafCommitment).not.toBe(theOldWay);
-    /* And the seat the old writer made is one this device would refuse. */
+    /* And a seat whose leaf is over the raw ed25519 public key is one this device would refuse. */
     expect(ownLeafReading(
       { id: 'sgn_new', leafCommitment: theOldWay }, itemAt(d.sealed, 0), SimulatedCommitments).verdict)
       .toBe('disagrees');
@@ -206,5 +206,30 @@ describe('a seat\'s leaf commits to the wallet key of the person taking it', () 
     expect(a.salt).not.toBe(b.salt);
     expect(a.blinding).not.toBe(b.blinding);
     expect(a.blinding).toBe(seatBlinding(WALLET, a.salt));
+  });
+});
+
+describe('THE FOUNDING SEAT\'S KEYS ARE THE ONES THE WALLET GAVE', () => {
+  const GIVEN = { signingSecret: '11'.repeat(32), wrappingSecret: '22'.repeat(32), salt: '33'.repeat(32) };
+
+  it('are the secrets and salt as given, with their own public keys and the blinding of that salt under the wallet key', () => {
+    const keys = seatKeysFrom(WALLET, GIVEN);
+    /* RED WHEN: the seat is made from any secret or salt but the ones the wallet gave, so the words could not make it again. */
+    expect([keys.signingSecret, keys.wrappingSecret, keys.salt]).toEqual([GIVEN.signingSecret, GIVEN.wrappingSecret, GIVEN.salt]);
+    /* RED WHEN: the seat's signing key is not the given secret's, so its signatures and its leaf belong to another key. */
+    expect(keys.signingPublicKey).toBe(signingPublicKeyOf(GIVEN.signingSecret));
+    /* RED WHEN: the seat's wrapping key is not the given secret's, so what is wrapped to the seat cannot be opened by it. */
+    expect(unwrapKey(wrapKey('the viewing key', keys.wrappingPublicKey), GIVEN.wrappingSecret)).toBe('the viewing key');
+    /* RED WHEN: the blinding does not commit to the key the account is held by under the given salt, so no device believes the seat's entry. */
+    expect(keys.blinding).toBe(seatBlinding(WALLET, GIVEN.salt));
+  });
+
+  it('refuse a secret or salt that is not thirty-two bytes of hex, and make nothing', () => {
+    /* RED WHEN: a short, long or unreadable secret or salt makes a seat. */
+    for (const bad of ['11'.repeat(31), '11'.repeat(33), 'zz'.repeat(32), '']) {
+      for (const part of ['signingSecret', 'wrappingSecret', 'salt'] as const) {
+        expect(() => seatKeysFrom(WALLET, { ...GIVEN, [part]: bad })).toThrow(/cannot be used, so nothing was created/u);
+      }
+    }
   });
 });

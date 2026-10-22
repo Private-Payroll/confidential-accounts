@@ -1,4 +1,5 @@
 // @vitest-environment jsdom
+// @vitest-environment-options {"url":"https://identity.payroll.example/"}
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { cleanup, render, screen, waitFor } from '../testing/render.js';
 import { IDBFactory } from 'fake-indexeddb';
@@ -18,6 +19,9 @@ import { IDBFactory } from 'fake-indexeddb';
  * reading a screen and making a passkey. `screens/approve-entry.tsx` carries
  * the argument.
  */
+
+/* The page this wallet is built to answer: a window opened by any other page is answered nothing. */
+vi.hoisted(() => { process.env['VITE_APP_ORIGIN'] = 'https://payroll.example'; });
 
 vi.mock('midnight-identity/browser', () => ({
   ensureBuffer: (): void => {},
@@ -112,12 +116,14 @@ describe('§1 — a window opened for a request, with no wallet in it', () => {
      * ready window expired while the person was reading — and a person who did
      * exactly what the screen asked came back to an offer that had given up.
      *
-     * The ping carries one constant string and nothing else, which is why it
-     * may go to `'*'` — `profile/channel.ts` is where that is argued — so this
-     * asserts both: that it was sent, and that it carried nothing.
+     * The ping carries one constant string and nothing else, and goes only to
+     * the page origin the wallet was built to answer, so this asserts all three:
+     * that it was sent, where it went, and that it carried nothing.
      */
     mount();
     expect(posted.map((p) => p.message)).toContainEqual({ schema: READY_PING });
+    /* RED WHEN: the ready ping goes to `*`, so any page that opened the wallet learns it is listening. */
+    expect(posted.map((p) => p.target)).toEqual(posted.map(() => ASKER));
     expect(posted.every((p) => Object.keys(p.message as object).length === 1)).toBe(true);
   });
 
@@ -160,6 +166,7 @@ describe('§1 — a window opened for a request, with no wallet in it', () => {
           entry={null}
           view={view}
           now={() => NOW}
+          embedder={ASKER}
         />
       </SessionProvider>);
     for (const h of handlers) {

@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { framingOf } from 'midnight-identity/profile/channel';
 import type { ChannelWindow, Framing } from 'midnight-identity/profile/channel';
 import { EMBEDDER } from './config.js';
@@ -13,6 +13,10 @@ import { EMBEDDER } from './config.js';
  * whether it is on screen at all. From inside the frame, three of those can be
  * observed and are: its size, whether its tab is showing, and how long the
  * request has been in front of the person. The rest cannot, and is said below.
+ *
+ * It also carries a press across the passkey: an Approve pressed in a locked
+ * wallet's window answers that same ask once the wallet is open
+ * (`useAnswerAtOnce`), and nothing else.
  */
 
 /** Decided once per document: a frame does not move between pages. */
@@ -142,4 +146,55 @@ export function useConsent(framing: Framing = FRAMING, request: unknown = null):
   }, [framing, request]);
 
   return consent;
+}
+
+/**
+ * **AN APPROVE PRESSED BEFORE THE PASSKEY.** A locked wallet shows one window for an ask, and its Approve opens the
+ * passkey; once the wallet is open the ask is answered without another press. What carries the press across the
+ * unlock is the whole ask the person was shown, kept here word for word: the opened wallet answers at once only an
+ * ask identical to it, so a page that sends something else after the passkey is shown that instead and waits for a
+ * press. It is kept for one ask, in this document only, and is gone when the wallet is loaded again.
+ */
+let approvedAsk: string | null = null;
+
+/** Called by the Approve of a locked wallet's window, just before the passkey is asked. */
+export function approveBeforeThePasskey(ask: unknown): void {
+  approvedAsk = JSON.stringify(ask);
+}
+
+/**
+ * What the opened wallet may do with `ask`: `approved` when it is the ask approved before the passkey, `other` when
+ * an approval was given for a different ask - which the page swapped in after the passkey, and which is refused -
+ * and `none` when nothing was approved. An approval is used once: after `approved` or `other` it is forgotten.
+ */
+export function takeApprovalBeforeThePasskey(ask: unknown): 'approved' | 'other' | 'none' {
+  if (approvedAsk === null) return 'none';
+  const same = approvedAsk === JSON.stringify(ask);
+  approvedAsk = null;
+  return same ? 'approved' : 'other';
+}
+
+/** Forgets an approval given before the passkey: called when the window is declined, so it can never answer later. */
+export function forgetApprovalBeforeThePasskey(): void {
+  approvedAsk = null;
+}
+
+/** True while an approval given before the passkey is waiting for the opened wallet. */
+export function anAskIsApproved(): boolean {
+  return approvedAsk !== null;
+}
+
+/**
+ * **ANSWERS AN ASK APPROVED BEFORE THE PASSKEY, ONCE, WHEN THE WALLET'S OWN CHECKS AGREE.** `ready` is everything the
+ * screen's own Approve waits for - the guard above, the chain reads, the wallet's rebuild of the ask - and no
+ * warning showing that the window before the passkey could not have shown. Until it is true nothing is answered, and a check
+ * that refuses is shown on the screen in place of the answer.
+ */
+export function useAnswerAtOnce(atOnce: boolean, ready: boolean, answer: () => void): void {
+  const fired = useRef(false);
+  useEffect(() => {
+    if (!atOnce || !ready || fired.current) return;
+    fired.current = true;
+    answer();
+  }, [atOnce, ready, answer]);
 }

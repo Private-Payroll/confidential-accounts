@@ -10,6 +10,7 @@ import { Button, Section } from 'vaults-ui';
 import { StatusAlert } from '../components/status.js';
 import { CopyButton } from '../components/ui.js';
 import { hrefOf } from '../routes.js';
+import { useAnswerAtOnce } from '../framing.js';
 import type { Consent } from '../framing.js';
 import { CompanyOnChain, accountCarriesTheLabel, liveLabelReader, useCompanyCheck } from './company-on-chain.js';
 import type { LabelReader } from './company-on-chain.js';
@@ -35,7 +36,7 @@ type Stage = { of: 'ready' } | { of: 'refused'; says: string } | { of: 'sent'; a
 
 export function ApproveJoinCode({
   request, identity, channel, consent, whoIsAsking, onDecline, receives, ownPayslipKey, fingerprintClass, now = Date.now,
-  readLabel = liveLabelReader,
+  readLabel = liveLabelReader, answerAtOnce = false,
 }: {
   readonly request: JoinCodeRequest;
   readonly identity: Identity;
@@ -52,6 +53,8 @@ export function ApproveJoinCode({
   readonly now?: () => number;
   /** How the company's account is read off the chain. Replaceable so a test can answer. */
   readonly readLabel?: LabelReader;
+  /** True when the person approved this ask before the passkey: it is then answered without a press once the checks its button waits for agree. */
+  readonly answerAtOnce?: boolean;
 }): ReactNode {
   const [stage, setStage] = useState<Stage>({ of: 'ready' });
   /* The account the page names, read off the chain: the company's fingerprint is shown from it, and nothing is signed
@@ -79,6 +82,7 @@ export function ApproveJoinCode({
       setStage({ of: 'refused', says: e instanceof JoinCodeRefused ? e.message : 'No code has been made.' });
     }
   }, [consent, stage, channel, onChain, now, identity, request, receives, ownPayslipKey]);
+  useAnswerAtOnce(answerAtOnce, consent.ok && stage.of === 'ready' && channel !== null && notOurs === null && onChain, sign);
 
   const fingerprintBox = (
     <div className="mt-1 rounded-md border border-border p-3" data-join-code-fingerprint-box>

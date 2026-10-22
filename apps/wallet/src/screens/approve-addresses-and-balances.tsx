@@ -16,6 +16,7 @@ import { otherTokenLines, shortColour, smallestUnits } from '../chain/shielded-t
 import type { OwnedAddress } from '../accounts/owned-address.js';
 import { StatusAlert } from '../components/status.js';
 import { hrefOf } from '../routes.js';
+import { useAnswerAtOnce } from '../framing.js';
 import type { Consent } from '../framing.js';
 
 /**
@@ -23,8 +24,9 @@ import type { Consent } from '../framing.js';
  * PRIVATELY, AND WHAT IT HOLDS.
  *
  * The page is served by a service that is not trusted with anybody's money, so
- * **nothing about it leaves this wallet without one press here, every time a
- * page asks.** The screen shows exactly what the press hands over: the wallet's
+ * **nothing about it leaves this wallet without one press, every time a page
+ * asks** - Show them here, or the Approve in the locked wallet's window. The
+ * screen shows exactly what is handed over: the wallet's
  * private receiving address, and every token it holds on each side, each
  * marked private or public, with the moment each side was read. **The public
  * address is never handed over here**: a page holding it could follow every
@@ -169,6 +171,7 @@ const sideSent = (shown: AddressesAndBalancesShown, visibility: Visibility): Sid
 
 export function ApproveAddressesAndBalances({
   request, identity, owned, channel, consent, whoIsAsking, whichWallet, onDecline, onBusy, now = Date.now,
+  answerAtOnce = false,
 }: {
   readonly request: AddressesAndBalancesRequest;
   readonly identity: Identity;
@@ -182,6 +185,8 @@ export function ApproveAddressesAndBalances({
   /** Told when the wallet may no longer be changed: once the page has its answer. */
   readonly onBusy?: (locked: boolean) => void;
   readonly now?: () => number;
+  /** True when the person approved this ask before the passkey: it is then answered without a press once the checks its button waits for agree and the wallet offered is one no other site has. */
+  readonly answerAtOnce?: boolean;
 }): ReactNode {
   const [stage, setStage] = useState<Stage>({ of: 'ready' });
   const sides = useBothSides(identity, owned.account, now);
@@ -211,6 +216,7 @@ export function ApproveAddressesAndBalances({
       });
     }
   }, [consent, stage, channel, shown, now, request, onBusy]);
+  useAnswerAtOnce(answerAtOnce, consent.ok && stage.of === 'ready' && channel !== null && shown !== null, show);
 
   if (stage.of === 'sent') {
     /* What went, as it went: the answer is kept with the stage, and a later reading never changes this screen. */
