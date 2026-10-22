@@ -14,24 +14,24 @@ import { askWallet, type Openable, type WalletDialog } from './wallet-sign-in.js
  * ── THE ONE PLACE IN THIS PRODUCT THAT RECEIVES A SECRET ON THE WIRE ──────
  *
  * A sign-in response is a signature: it proves something and gives nothing
- * away, so this side forwards it to the server unjudged and the server decides.
+ * away, so this side forwards it to the service unjudged and the service decides.
  * **A release is a key.** It arrives in this tab, it is used in this tab, and
- * it goes nowhere else — so there is no server to defer to and the checking has
+ * it goes nowhere else — so there is no service to defer to and the checking has
  * to happen here.
  *
  * That is `readRelease`, and it is imported from the wallet's own package
- * rather than reimplemented, for the reason `verify` is imported: the thing
- * payroll runs should be the thing the wallet's round tested, not a description
- * of it. It reads **none of its three expectations out of the message** — the
+ * rather than reimplemented, for the reason `verify` is imported: the code
+ * payroll runs should be the code the wallet's own tests check, not a
+ * description of it. It reads **none of its three expectations out of the message** — the
  * origin is ours, the nonce is the one this function generated, and the company
- * is the one the session told us — because a value that agrees with itself is
+ * is the one this page asked about — because a value that agrees with itself is
  * what a forged one looks like.
  *
- * ── THE NONCE IS THIS PAGE'S OWN, AND IT IS NOT THE SERVER'S ──────────────
+ * ── THE NONCE IS THIS PAGE'S OWN, AND IT IS NOT THE SERVICE'S ─────────────
  *
- * A sign-in nonce comes from our server, because the server is the party that
+ * A sign-in nonce comes from the service, because the service is the party that
  * has to be sure the answer is fresh. **Nothing about a release reaches the
- * server**, so a server-issued nonce here would be a round trip that proves
+ * service**, so a service-issued nonce here would be a round trip that proves
  * nothing to anybody, and would put a value belonging to one conversation into
  * another party's hands. It is generated here and compared here.
  *
@@ -121,7 +121,7 @@ export async function askWalletToUnlockAndWhereItReads(
   /*
    * **THREE EXPECTATIONS, ALL THREE OURS.** `atOrigin` is where this page is
    * running, `expectingNonce` is what we just generated, `forCompany` is what
-   * the session told us. A release that answers a different origin, a different
+   * this page asked about. A release that answers a different origin, a different
    * question or a DIFFERENT COMPANY is refused rather than used — the last of
    * those is the one only this side can catch, and using the wrong company's
    * key would seal records nobody can open again.
@@ -142,7 +142,7 @@ export async function askWalletToUnlockAndWhereItReads(
 }
 
 export interface KeyringAsked {
-  /** From this tab's own session: the id the server gave the signed-in person. */
+  /** From this tab's own sign-in: the id the service gave the signed-in person. */
   readonly person: string;
   /** From this tab's own sign-in answer, or null when this tab does not know it. */
   readonly signedInAs: string | null;
@@ -164,7 +164,9 @@ export interface KeyringAsked {
  * **ASK ONCE FOR THE KEY THE KEYS SAVED FOR THIS PERSON ARE SEALED UNDER**, and
  * a company's key with it when one is named. Every expectation the answer is
  * checked against is this page's own - `readKeyringRelease` says what those
- * comparisons prove and what they do not.
+ * comparisons prove and what they do not. When the ask starts a company, the
+ * answer also gives the founding seat's two secrets and its blinding salt, as
+ * hex, and an answer without them is refused; otherwise `seat` is null.
  */
 export async function askWalletForKeys(
   view: Openable, walletOrigin: string, ask: KeyringAsked, dialog?: WalletDialog,
@@ -175,6 +177,7 @@ export async function askWalletForKeys(
   committeeKey: { tag: string; value: string } | null;
   /** The company the keys are for: the one asked about, or the one the wallet drew. */
   company: CompanyLabel | null;
+  seat: { signingSecret: string; wrappingSecret: string; salt: string } | null;
 }> {
   const now = ask.now ?? (() => Date.now());
   const nonce = ask.nonce ?? toHex(randomBytes(16));
@@ -198,5 +201,10 @@ export async function askWalletForKeys(
     forAccount: company === 'new' ? null : ask.account,
   });
   if (checked.ok === false) throw new UnlockRefused(checked.code, checked.says);
-  return { key: checked.key, companyKey: checked.companyKey, committeeKey: checked.committeeKey, company: checked.company };
+  const seat = checked.seat === null ? null : {
+    signingSecret: toHex(checked.seat.signingSecret),
+    wrappingSecret: toHex(checked.seat.wrappingSecret),
+    salt: toHex(checked.seat.salt),
+  };
+  return { key: checked.key, companyKey: checked.companyKey, committeeKey: checked.committeeKey, company: checked.company, seat };
 }

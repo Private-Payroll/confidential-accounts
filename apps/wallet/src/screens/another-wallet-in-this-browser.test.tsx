@@ -93,7 +93,7 @@ async function asked(wallet: Wallet, kind: 'sign-in' | 'unlock') {
     addEventListener: (_t, h) => { handlers.push(h); },
     removeEventListener: () => { /* torn down by cleanup */ },
   };
-  render(<Approve readLabel={carries} identity={wallet.identity} secret={wallet.secret} port={port} view={view} now={() => NOW} />);
+  render(<Approve readLabel={carries} identity={wallet.identity} secret={wallet.secret} port={port} view={view} now={() => NOW} embedder={ORIGIN} />);
   for (const h of handlers) {
     h({ source: opener, origin: ORIGIN, data: ask(kind) } as unknown as MessageEvent);
   }

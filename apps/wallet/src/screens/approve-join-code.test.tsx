@@ -145,7 +145,7 @@ describe('THE SCREEN FOR MAKING A JOIN CODE', () => {
       removeEventListener: () => {},
     };
     const { container } = render(
-      <Approve identity={identity} secret={secretFromWords(TEST_MNEMONIC)} port={watchedStore()} view={view} now={() => NOW} readLabel={carries} />);
+      <Approve identity={identity} secret={secretFromWords(TEST_MNEMONIC)} port={watchedStore()} view={view} now={() => NOW} readLabel={carries} embedder={ORIGIN} />);
     const parts = payeeParts(OWN_PAYSLIP_KEY, receivingAddressesOf(identity, NETWORK)[0]!);
     const wire = {
       schema: 'midnight-identity/disclosure-request/v1', kind: 'join-code',
@@ -185,6 +185,32 @@ describe('THE SCREEN FOR MAKING A JOIN CODE', () => {
     const { container } = draw(answers, ask(), [], { ok: false } as never);
     expect(button(container).disabled).toBe(true);
     await act(async () => { fireEvent.click(button(container)); });
+    expect(answers).toEqual([]);
+  });
+});
+
+describe('a join code approved before the passkey', () => {
+  const drawAtOnce = (answers: unknown[], request: JoinCodeRequest, receives: string[] = []) => render(
+    <ApproveJoinCode request={request} identity={identity} channel={channelFor(answers)} consent={{ ok: true } as never}
+      whoIsAsking={<p>asker</p>} onDecline={() => answers.push('declined')} receives={receives} ownPayslipKey={OWN_PAYSLIP_KEY}
+      fingerprintClass="text-xl" now={() => NOW} readLabel={carries} answerAtOnce />);
+
+  it('is made with no press once the account is read and carries the label', async () => {
+    const answers: unknown[] = [];
+    const { container } = drawAtOnce(answers, ask());
+    await settle();
+    /* RED WHEN: a join code approved before the passkey waits for the screen's own press once the wallet is open. */
+    expect(answers).toHaveLength(1);
+    expect(joinCodeSignedBy(answers[0] as JoinCode)).toBe(true);
+    expect(container.querySelector('[data-join-code-fingerprint]')?.textContent).toBe(seatKeyFingerprint(SIGNER));
+  });
+
+  it('is not made for an address this wallet does not receive at', async () => {
+    const answers: unknown[] = [];
+    const { container } = drawAtOnce(answers, ask(payeeParts()), []);
+    await settle();
+    /* RED WHEN: the wallet's own refusal is passed over because the person approved before the passkey. */
+    expect(container.querySelector('[data-join-code-not-yours]')).not.toBeNull();
     expect(answers).toEqual([]);
   });
 });

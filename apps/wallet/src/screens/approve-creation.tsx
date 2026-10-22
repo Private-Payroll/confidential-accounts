@@ -13,6 +13,7 @@ import type { AccountAddress } from 'midnight-identity/profile/company-label';
 import { Button, Section } from 'vaults-ui';
 import { StatusAlert } from '../components/status.js';
 import { hrefOf } from '../routes.js';
+import { useAnswerAtOnce } from '../framing.js';
 import type { Consent } from '../framing.js';
 import { labelInAccountState } from '../chain/company-label-on-chain.js';
 import { builtAccountKeys, type BuiltAccountKeys } from '../chain/this-builds-account-keys.js';
@@ -49,6 +50,7 @@ type Stage =
 export function ApproveCreation({
   request, identity, channel, consent, whoIsAsking, onDecline, onPin, drewTheLabel,
   ledger = liveCreationLedger, now = Date.now, built = builtAccountKeys, construction = liveConstruction,
+  answerAtOnce = false,
 }: {
   readonly request: CreationRequest;
   readonly identity: Identity;
@@ -72,6 +74,8 @@ export function ApproveCreation({
   readonly built?: () => BuiltAccountKeys;
   /** What the account's constructor is run with here, to make the starting state the deploy is compared with. */
   readonly construction?: () => Promise<ConstructionDeps>;
+  /** True when the person approved this ask before the passkey: it is then answered without a press once the checks its button waits for agree. */
+  readonly answerAtOnce?: boolean;
 }): ReactNode {
   const [stage, setStage] = useState<Stage>({ of: 'reading' });
   const [drewAtOpen] = useState(drewTheLabel);
@@ -148,6 +152,8 @@ export function ApproveCreation({
     signed.current = true;
     setStage({ of: 'sent', at, shown: stage.shown });
   }, [stage, channel, identity, request, now, built, onPin, drewAtOpen, consent]);
+  const signAtOnce = useCallback(() => { void sign(); }, [sign]);
+  useAnswerAtOnce(answerAtOnce, consent.ok && stage.of === 'ready' && channel !== null, signAtOnce);
 
   if (stage.of === 'sent') {
     return (

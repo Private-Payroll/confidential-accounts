@@ -1,6 +1,6 @@
 // @vitest-environment jsdom
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
-import { cleanup, fireEvent, render, screen } from '../testing/render.js';
+import { cleanup, fireEvent, render, screen, waitFor } from '../testing/render.js';
 import { Buffer as PolyfillBuffer } from 'buffer/';
 import * as L from '@midnightntwrk/ledger-v9';
 import { TEST_MNEMONIC } from '@midnight-ntwrk/testkit-js';
@@ -21,6 +21,7 @@ import type { AccountAddress, CompanyLabel } from 'midnight-identity/profile/com
 import { companyFingerprint } from 'midnight-identity/profile/fingerprint';
 import type { LabelReader } from './company-on-chain.js';
 import { Approve } from './approve.js';
+import { approveBeforeThePasskey, forgetApprovalBeforeThePasskey } from '../framing.js';
 
 /*
  * The screen a person sees when a company's page asks this wallet to sign a
@@ -324,11 +325,39 @@ describe('THE APPROVAL SURFACE ROUTES A COMMITTEE CHANGE TO THIS SCREEN', () => 
       addEventListener: (_t, h) => { handlers.push(h); },
       removeEventListener: () => {},
     };
-    render(<Approve identity={identity} secret={SECRET} port={port} view={view} now={() => NOW} readLabel={carries} />);
+    render(<Approve identity={identity} secret={SECRET} port={port} view={view} now={() => NOW} readLabel={carries} embedder={ORIGIN} />);
     for (const h of handlers) h({ source: opener, origin: ORIGIN, data: wire() } as unknown as MessageEvent);
     /* RED WHEN: a committee ask is routed anywhere but its own screen. */
     expect(await screen.findByText(`Change who holds a company's rules, for ${ORIGIN}`)).toBeTruthy();
     await settled(20);
     expect(opener.sent.filter((m) => (m.message as { schema?: string }).schema === 'midnight-identity/committee-signatures/v1')).toEqual([]);
+  });
+});
+
+describe('a change approved in the locked wallet\'s window', () => {
+  let port: ReturnType<typeof watchedStore>;
+  beforeEach(() => { port = watchedStore(); forgetApprovalBeforeThePasskey(); });
+
+  it('is shown whole after the passkey and signed only by the press on Sign this change', async () => {
+    const opener = watchedOpener();
+    const handlers: ((event: MessageEvent) => void)[] = [];
+    const view: ChannelWindow = {
+      opener: opener as ChannelWindow['opener'],
+      addEventListener: (_t, h) => { handlers.push(h); },
+      removeEventListener: () => {},
+    };
+    approveBeforeThePasskey(parseAsk(wire(), ORIGIN, NOW));
+    render(<Approve identity={identity} secret={SECRET} port={port} view={view} now={() => NOW} readLabel={carries} readChain={chainOf()} embedder={ORIGIN} />);
+    for (const h of handlers) h({ source: opener, origin: ORIGIN, data: wire() } as unknown as MessageEvent);
+    const button = await screen.findByText('Sign this change');
+    await waitFor(() => expect((button as HTMLButtonElement).disabled).toBe(false));
+    await settled(20);
+    const signed = () => opener.sent.filter((m) => (m.message as { schema?: string }).schema === 'midnight-identity/committee-signatures/v1');
+    /* RED WHEN: a committee change approved before the passkey is signed before the person has seen who joins and who leaves. */
+    expect(signed()).toEqual([]);
+    expect(document.querySelector('[data-joins]')).not.toBeNull();
+    expect(document.querySelector('[data-leaves]')).not.toBeNull();
+    fireEvent.click(button);
+    await waitFor(() => expect(signed()).toHaveLength(1));
   });
 });

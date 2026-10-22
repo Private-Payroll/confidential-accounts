@@ -17,9 +17,10 @@
  * be finished later by `finishPendingSeat`, which proves the seat carries this
  * device's own public key before it binds anything.
  */
-import { newSigningKeypair, newWrappingKeypair, type Hex } from '../../../src/core/crypto.js';
+import { x25519 } from '@noble/curves/ed25519.js';
+import { fromHex, newSigningKeypair, newWrappingKeypair, signingPublicKeyOf, toHex, type Hex } from '../../../src/core/crypto.js';
 import { storedSignerLeaf, type LeafScheme } from '../../../src/core/signer-leaf.js';
-import { newSeatBlinding, type SeatOpening, type WalletKey } from '../../../src/core/seat-opening.js';
+import { newSeatBlinding, seatBlinding, type SeatOpening, type WalletKey } from '../../../src/core/seat-opening.js';
 import type { PendingSeat } from './keyring.js';
 import { proveSeatKeys, type SeatInvitation, type SeatProof } from '../../../src/core/seat-invite-proof.js';
 
@@ -31,7 +32,7 @@ export interface NewSeatKeys {
   wrappingPublicKey: Hex;
   /** The hash of the wallet key the seat is made for under `salt` (`seatBlinding`). */
   blinding: Hex;
-  /** Thirty-two fresh random bytes, made for this leaf alone. */
+  /** Thirty-two bytes made for this leaf alone: fresh random ones for a joiner, the wallet's own for the founding seat. */
   salt: Hex;
 }
 
@@ -48,6 +49,31 @@ export function newSeatKeys(walletKey: WalletKey): NewSeatKeys {
     signingSecret: sk.secret, signingPublicKey: sk.publicKey,
     wrappingSecret: wk.secret, wrappingPublicKey: wk.publicKey,
     blinding, salt,
+  };
+}
+
+const HEX32 = /^[0-9a-f]{64}$/u;
+
+/**
+ * The founding seat's keys, from the two secrets and the salt the person's
+ * wallet made for it (the wallet's answer to the ask that started the
+ * company): their public halves, and the blinding that commits the seat's
+ * leaf to `walletKey` under that salt. Nothing here is random, so the words
+ * make the same seat again. Refuses a secret or salt that is not thirty-two
+ * bytes of hex, and makes nothing then.
+ */
+export function seatKeysFrom(
+  walletKey: WalletKey, given: { readonly signingSecret: Hex; readonly wrappingSecret: Hex; readonly salt: Hex },
+): NewSeatKeys {
+  const [signingSecret, wrappingSecret, salt] = [given.signingSecret, given.wrappingSecret, given.salt]
+    .map((v) => (typeof v === 'string' ? v.toLowerCase() : ''));
+  if (![signingSecret, wrappingSecret, salt].every((v) => HEX32.test(v!))) {
+    throw new Error('Your wallet gave keys for your seat that cannot be used, so nothing was created. Close the wallet\'s window, reload this page and start again.');
+  }
+  return {
+    signingSecret: signingSecret!, signingPublicKey: signingPublicKeyOf(signingSecret!),
+    wrappingSecret: wrappingSecret!, wrappingPublicKey: toHex(x25519.getPublicKey(fromHex(wrappingSecret!))),
+    blinding: seatBlinding({ tag: walletKey.tag, value: walletKey.value.toLowerCase() }, salt!) as Hex, salt: salt!,
   };
 }
 
@@ -73,7 +99,7 @@ export interface SeatDoors {
     /** The nonce and the proof. The invitation's secret is not a field either. */
     seatProof?: SeatProof;
   }): Promise<{ id: string | null }>;
-  /** Binds the sealed material to the seat the server named. Step 5. */
+  /** Binds the sealed material to the seat the service named. Step 5. */
   promote(signingPublicKey: Hex, signerId: string): Promise<void>;
 }
 

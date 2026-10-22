@@ -55,7 +55,7 @@ const open = (data: unknown = wire(), origin = ORIGIN) => {
     removeEventListener: () => { /* torn down by cleanup */ },
   };
   render(
-    <Approve identity={identity} secret={SECRET} port={port} view={view} now={() => NOW} />);
+    <Approve identity={identity} secret={SECRET} port={port} view={view} now={() => NOW} embedder={origin} />);
   const deliver = (payload: unknown): void => {
     for (const h of handlers) {
       h({ source: opener, origin, data: payload } as unknown as MessageEvent);
@@ -402,7 +402,7 @@ describe('a window that was opened FOR an ask, before the ask arrives', () => {
       removeEventListener: () => { /* torn down by cleanup */ },
     };
     render(
-      <Approve identity={identity} secret={SECRET} port={port} view={view} now={() => NOW} />);
+      <Approve identity={identity} secret={SECRET} port={port} view={view} now={() => NOW} embedder={ORIGIN} />);
   };
 
   it('WATCHED FAILING: IT SAYS IT IS WAITING FOR THE REQUEST, not that nothing is asking',

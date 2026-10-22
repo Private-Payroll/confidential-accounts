@@ -187,7 +187,12 @@ describe('§3 - A FRAMED ENTRY SHOWS NO CONTROL UNTIL THE EMBEDDER HAS SPOKEN', 
     expect(document.querySelectorAll('button')).toHaveLength(0);
     from(EMBEDDER);
     await settled();
-    expect(screen.getByText('Unlock with your passkey')).toBeTruthy();
+    /* RED WHEN: once the allowed page asks, a locked wallet shows its unlock screen rather than the ask's one window. */
+    expect(screen.queryByText('Unlock with your passkey')).toBeNull();
+    expect(document.querySelector('[data-approve-window]')).not.toBeNull();
+    /* RED WHEN: the window's Approve, which asks for the passkey, can be pressed before the frame's own guard holds. */
+    expect(document.querySelector<HTMLButtonElement>('[data-approve-window]')!.disabled).toBe(true);
+    expect(document.querySelector('[data-consent-refused]')?.textContent).toContain('only just appeared');
   });
 
   it('no "Create your wallet" under a pointer before a request from the allowed page has arrived', async () => {

@@ -116,7 +116,7 @@ const open = (data: unknown = invitation(), origin = ORIGIN): Opened => {
     removeEventListener: () => { /* torn down by cleanup */ },
   };
   render(
-    <Approve identity={identity} secret={SECRET} port={port} view={view} now={() => NOW} />);
+    <Approve identity={identity} secret={SECRET} port={port} view={view} now={() => NOW} embedder={origin} />);
   for (const h of handlers) {
     h({ source: opener, origin, data } as unknown as MessageEvent);
   }

@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import {
-  FRAMED_BY_A_STRANGER, NOT_BUILT_TO_BE_FRAMED, PAYMENT_FAILURES, PROGRESS_SCHEMA, PROGRESS_STAGES, READY_PING,
+  FRAMED_BY_A_STRANGER, NOT_BUILT_TO_BE_FRAMED, NO_PAGE_TO_ANSWER, PAYMENT_FAILURES, PROGRESS_SCHEMA, PROGRESS_STAGES, READY_PING,
   framingOf, listen,
 } from './channel.js';
 import type { ChannelState, ChannelWindow } from './channel.js';
@@ -8,9 +8,10 @@ import type { ChannelState, ChannelWindow } from './channel.js';
 /**
  * **WHO A WALLET ANSWERS, IN A WINDOW OF ITS OWN AND INSIDE A PAGE.**
  *
- * In a window of its own the asker is `opener`, which the browser fills in. In
- * a frame `opener` is `null` - so a check written only for the window answers
- * nobody, and the obvious repair, answering `parent`, answers ANY page that
+ * In a window of its own the asker is `opener`, which the browser fills in, and
+ * only when the browser saw it at the one page origin the wallet was built for:
+ * any page can open the wallet. In a frame `opener` is `null` - so a check
+ * written only for the window answers nobody, and the obvious repair, answering `parent`, answers ANY page that
  * frames the wallet. The cases below hold both halves of the framed check at
  * once: the message has to come from the window directly above, AND the browser
  * has to have observed it coming from the one origin the wallet was built for.
@@ -64,23 +65,52 @@ const run = (view: ChannelWindow, embedder: string | null) => {
   return states;
 };
 
-describe('§1 - A WINDOW OF ITS OWN IS UNCHANGED BY FRAMING', () => {
-  it('answers the page that opened it and nobody else, with or without an embedder configured', () => {
-    for (const embedder of [null, EMBEDDER]) {
-      const opener = postable();
-      const view = walletView({ opener });
-      const states = run(view, embedder);
-      view.deliver({ source: postable() as never, origin: EMBEDDER, data: signIn() });
-      expect(states.map((s) => s.of), `a stranger, embedder ${embedder}`).toEqual(['waiting']);
-      view.deliver({ source: opener as never, origin: EMBEDDER, data: signIn() });
-      expect(states.map((s) => s.of)).toEqual(['waiting', 'request']);
-      /* the ping is the unchanged broadcast to the opener */
-      expect(opener.posted).toEqual([{ message: { schema: READY_PING }, target: '*' }]);
-    }
+describe('A WALLET IN A WINDOW OF ITS OWN ANSWERS ONLY THE PAGE IT WAS BUILT FOR', () => {
+  it('answers the page that opened it when the browser saw that page at the configured origin', () => {
+    const opener = postable();
+    const view = walletView({ opener });
+    const states = run(view, EMBEDDER);
+    view.deliver({ source: opener as never, origin: EMBEDDER, data: signIn() });
+    /* RED WHEN: the page the wallet was built for opens it and its ask is never shown. */
+    expect(states.map((s) => s.of)).toEqual(['waiting', 'request']);
+  });
+
+  it('answers no stranger page that opened it, and no other window at the configured origin', () => {
+    const opener = postable();
+    const view = walletView({ opener });
+    const states = run(view, EMBEDDER);
+    view.deliver({ source: opener as never, origin: STRANGER, data: signIn() });
+    /* RED WHEN: a stranger page that opens the wallet in a window of its own has its ask shown and answered. */
+    expect(states.map((s) => s.of)).toEqual(['waiting']);
+    view.deliver({ source: postable() as never, origin: EMBEDDER, data: signIn() });
+    /* RED WHEN: a window that did not open the wallet is answered because it sits at the configured origin. */
+    expect(states.map((s) => s.of)).toEqual(['waiting']);
+  });
+
+  it('tells only the configured origin that it is listening, never every page', () => {
+    const opener = postable();
+    run(walletView({ opener }), EMBEDDER);
+    /* RED WHEN: the ready ping goes to `*`, so a stranger page that opened the wallet learns it is listening. */
+    expect(opener.posted).toEqual([{ message: { schema: READY_PING }, target: EMBEDDER }]);
+  });
+
+  it('answers no page at all when built without a page origin, and names the setting that fixes it', () => {
+    const opener = postable();
+    const view = walletView({ opener });
+    const states = run(view, null);
+    view.deliver({ source: opener as never, origin: EMBEDDER, data: signIn() });
+    /* RED WHEN: a wallet built without a page origin falls back to answering whatever page opened it. */
+    expect(states.map((s) => s.of)).toEqual(['waiting', 'refused']);
+    const refused = states[1];
+    /* RED WHEN: the person is shown a refusal that does not name the build setting which resolves it. */
+    expect(refused?.of === 'refused' ? refused.error.message : null).toBe(NO_PAGE_TO_ANSWER);
+    expect(NO_PAGE_TO_ANSWER).toContain('VITE_APP_ORIGIN');
+    /* RED WHEN: a wallet that answers nobody still tells the page that opened it that it is listening. */
+    expect(opener.posted).toEqual([]);
   });
 });
 
-describe('§2 - A FRAMED WALLET ANSWERS ITS PARENT, AT THE ONE ORIGIN IT WAS BUILT FOR', () => {
+describe('A FRAMED WALLET ANSWERS ITS PARENT, AT THE ONE ORIGIN IT WAS BUILT FOR', () => {
   it('ANSWERS the parent when the browser observed the allowed origin', () => {
     const parent = postable();
     const view = walletView({ parent, ancestors: [EMBEDDER] });
@@ -122,7 +152,7 @@ describe('§2 - A FRAMED WALLET ANSWERS ITS PARENT, AT THE ONE ORIGIN IT WAS BUI
   });
 });
 
-describe('§3 - WHERE THE BROWSER NAMES THE ANCESTORS, EVERY ONE OF THEM MUST BE THE ALLOWED PAGE', () => {
+describe('WHERE THE BROWSER NAMES THE ANCESTORS, EVERY ONE OF THEM MUST BE THE ALLOWED PAGE', () => {
   it('is TOP-LEVEL when the window is its own parent', () => {
     const view = walletView({});
     expect(framingOf(view, EMBEDDER)).toEqual({ of: 'top' });
@@ -155,7 +185,7 @@ describe('§3 - WHERE THE BROWSER NAMES THE ANCESTORS, EVERY ONE OF THEM MUST BE
   });
 });
 
-describe('§4 - AN `undefined` OPENER IS NO OPENER', () => {
+describe('AN `undefined` OPENER IS NO OPENER', () => {
   it('a message with no source is not mistaken for one from an opener that is not there', () => {
     let handler: ((e: MessageEvent) => void) | null = null;
     const view = {
@@ -174,7 +204,7 @@ describe('A PAYMENT THAT FAILED AFTER THE PRESS IS NOT A DECLINE', () => {
   const opened = () => {
     const opener = postable();
     const view = walletView({ opener });
-    const channel = listen(view, () => NOW, () => {}, null);
+    const channel = listen(view, () => NOW, () => {}, EMBEDDER);
     view.deliver({ source: opener as never, origin: EMBEDDER, data: signIn() });
     opener.posted.length = 0;
     return { opener, channel };
@@ -209,7 +239,7 @@ describe('ONE TERMINAL MESSAGE PER REQUEST, AND EVERY END STATE ANSWERS', () => 
     const opener = postable();
     const view = walletView({ opener });
     const states: ChannelState[] = [];
-    const channel = listen(view, () => NOW, (st) => states.push(st), null);
+    const channel = listen(view, () => NOW, (st) => states.push(st), EMBEDDER);
     view.deliver({ source: opener as never, origin: EMBEDDER, data });
     return { opener, channel, states, sent: () => opener.posted.slice(1) };
   };
@@ -237,10 +267,10 @@ describe('ONE TERMINAL MESSAGE PER REQUEST, AND EVERY END STATE ANSWERS', () => 
     const sent = () => opener.posted.filter((p) => (p.message as { schema?: string }).schema !== READY_PING);
     /* Two screens on one window, each with its own channel, both handed the same ask before either answers. */
     const firstStates: ChannelState[] = [];
-    const first = listen(view, () => NOW, (st) => firstStates.push(st), null);
+    const first = listen(view, () => NOW, (st) => firstStates.push(st), EMBEDDER);
     view.deliver({ source: opener as never, origin: EMBEDDER, data: signIn() });
     const secondStates: ChannelState[] = [];
-    const second = listen(view, () => NOW, (st) => secondStates.push(st), null);
+    const second = listen(view, () => NOW, (st) => secondStates.push(st), EMBEDDER);
     view.deliver({ source: opener as never, origin: EMBEDDER, data: signIn() });
     expect(first.answer({ schema: 'paid' } as never)).toBe(true);
     /* RED WHEN: a screen on the second channel, asking whether it may still press, is told the ask is open after the first answered it. */
@@ -250,7 +280,7 @@ describe('ONE TERMINAL MESSAGE PER REQUEST, AND EVERY END STATE ANSWERS', () => 
     expect(second.over()).toBe(true);
     /* A third screen on the same window, after the ask has been answered, is not shown it again. */
     const thirdStates: ChannelState[] = [];
-    const third = listen(view, () => NOW, (st) => thirdStates.push(st), null);
+    const third = listen(view, () => NOW, (st) => thirdStates.push(st), EMBEDDER);
     view.deliver({ source: opener as never, origin: EMBEDDER, data: signIn() });
     /* RED WHEN: an ask already answered is put in front of the person again, as if it were still waiting. */
     expect(thirdStates.map((st) => st.of)).toEqual(['waiting', 'waiting']);
@@ -258,7 +288,7 @@ describe('ONE TERMINAL MESSAGE PER REQUEST, AND EVERY END STATE ANSWERS', () => 
     expect(third.answer({ schema: 'again' } as never)).toBe(false);
     expect(sent()).toEqual([{ message: { schema: 'paid' }, target: EMBEDDER }]);
     /* RED WHEN: another ask from the same page, with its own nonce, is refused because an earlier one was answered. */
-    const fourth = listen(view, () => NOW, () => {}, null);
+    const fourth = listen(view, () => NOW, () => {}, EMBEDDER);
     view.deliver({ source: opener as never, origin: EMBEDDER, data: { ...signIn(), nonce: 'n2' } });
     expect(fourth.answer({ schema: 'next' } as never)).toBe(true);
     first.stop(); second.stop(); third.stop(); fourth.stop();
@@ -266,11 +296,11 @@ describe('ONE TERMINAL MESSAGE PER REQUEST, AND EVERY END STATE ANSWERS', () => 
 
   it('sends nothing, and counts nothing as sent, before a request has arrived', () => {
     const opener = postable();
-    const channel = listen(walletView({ opener }), () => NOW, () => {}, null);
+    const channel = listen(walletView({ opener }), () => NOW, () => {}, EMBEDDER);
     /* RED WHEN: a terminal message with nowhere to go is taken as the one terminal message, and the real one is then dropped. */
     expect(channel.refuse('declined')).toBe(false);
     expect(channel.over()).toBe(false);
-    expect(opener.posted).toEqual([{ message: { schema: READY_PING }, target: '*' }]);
+    expect(opener.posted).toEqual([{ message: { schema: READY_PING }, target: EMBEDDER }]);
   });
 
   it('answers a request it refuses on arrival at once: `unreadable`, or `expired` for one that came too late', () => {

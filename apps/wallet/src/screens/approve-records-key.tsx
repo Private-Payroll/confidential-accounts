@@ -15,6 +15,7 @@ import { INDEXER_HTTP_URL } from '../config.js';
 import { Button, Section } from 'vaults-ui';
 import { StatusAlert } from '../components/status.js';
 import { hrefOf } from '../routes.js';
+import { useAnswerAtOnce } from '../framing.js';
 import type { Consent } from '../framing.js';
 
 /**
@@ -168,7 +169,7 @@ export function FirstSecretToConfirm({ vault, firstSecret }: {
 
 export function ApproveRecordsKey({
   request, identity, channel, consent, whoIsAsking, onDecline, now = Date.now, readLabel = liveLabelReader,
-  readVault = liveVaultReader, readLeaf = liveLeafReader, pinned = null, onPin,
+  readVault = liveVaultReader, readLeaf = liveLeafReader, pinned = null, onPin, answerAtOnce = false,
 }: {
   readonly request: RecordsKeyRequest;
   readonly identity: Identity;
@@ -185,9 +186,13 @@ export function ApproveRecordsKey({
   /**
    * Keeps the account the invitation names as the company's. Called only by
    * the person's press confirming that the company's fingerprint matches the
-   * one the inviter gave them, and by nothing else; a keep that fails throws.
+   * one the inviter gave them - It matches here, or the Approve in the locked
+   * wallet's window, which showed the same fingerprint and asked for exactly
+   * that - and by nothing else; a keep that fails throws.
    */
   readonly onPin?: (account: AccountAddress, at: number) => Promise<void>;
+  /** True when the person approved this ask before the passkey: it is then answered without a press once the checks its buttons wait for agree - approving before the passkey also said the fingerprint matches. */
+  readonly answerAtOnce?: boolean;
 }): ReactNode {
   const [stage, setStage] = useState<Stage>({ of: 'ready' });
   const check = useCompanyCheck(request.company, request.account, readLabel);
@@ -203,7 +208,7 @@ export function ApproveRecordsKey({
   const leafOf = inviterLeaf.of === 'read' ? inviterLeaf.leafOf : null;
   const inviterChecking = pinned === null && inviterLeaf.of === 'checking';
   const notInvited = pinned === null && seats !== null && !inviterChecking ? whyTheInvitationDoesNotNameIt(request, seats, leafOf) : null;
-  /* The joiner's own comparison with the inviter, on its own press: the only way the account is kept. */
+  /* The joiner's own comparison with the inviter, on its own press here or in the locked wallet's window: the only way the account is kept. */
   const [keeping, setKeeping] = useState<'idle' | 'keeping' | 'failed'>('idle');
   const confirm = useCallback((): void => {
     if (!consent.ok || pinned !== null || !onChain || seats === null || inviterChecking || notInvited !== null || onPin === undefined
@@ -226,6 +231,10 @@ export function ApproveRecordsKey({
       setStage({ of: 'refused', says: e instanceof RecordsKeyRefused ? e.message : 'Nothing has been signed. Close this window and try again from the page.' });
     }
   }, [consent, stage, channel, onChain, seats, seated, vaultOk, vaultRead, now, identity, request, pinned, leafOf]);
+  useAnswerAtOnce(answerAtOnce, consent.ok && pinned === null && onChain && seats !== null && !inviterChecking
+    && notInvited === null && onPin !== undefined && keeping === 'idle', confirm);
+  useAnswerAtOnce(answerAtOnce, consent.ok && stage.of === 'ready' && channel !== null && onChain && seated && vaultOk
+    && pinned !== null, sign);
 
   if (stage.of === 'sent') {
     return (

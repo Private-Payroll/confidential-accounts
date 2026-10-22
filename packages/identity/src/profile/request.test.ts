@@ -202,17 +202,18 @@ describe('the channel observes the origin and answers only there', () => {
       addEventListener: (_t, h) => { handlers.push(h); },
       removeEventListener: () => { /* not exercised here */ },
     };
-    const channel = listen(view, () => NOW, (s) => states.push(s));
+    const channel = listen(view, () => NOW, (s) => states.push(s), ORIGIN);
     const deliver = (event: Partial<MessageEvent>): void => {
       for (const h of handlers) h(event as MessageEvent);
     };
     return { channel, states, deliver };
   };
 
-  it('pings the opener with a constant and no data at all', () => {
+  it('pings the opener at the page origin only, with a constant and no data at all', () => {
     const opener = { postMessage: vi.fn() };
     channelFor(opener);
-    expect(opener.postMessage).toHaveBeenCalledWith({ schema: READY_PING }, '*');
+    /* RED WHEN: the ready ping goes to `*` instead of the one page origin the wallet answers. */
+    expect(opener.postMessage).toHaveBeenCalledWith({ schema: READY_PING }, ORIGIN);
     expect(Object.keys(opener.postMessage.mock.calls[0]![0] as object)).toEqual(['schema']);
   });
 

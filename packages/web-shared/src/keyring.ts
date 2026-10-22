@@ -62,7 +62,7 @@ import type { AccountCallChainOnTheWire, AccountPresenceOnTheWire, PayKeyStandin
 import type { GovernedCallOrder, OpenedRound, SignerMaterial } from './governed-call-builder.js';
 
 export type { CompanyCreationState } from '../../../src/core/company-founding.js';
-import { newSeatKeys } from './accept-seat.js';
+import { seatKeysFrom } from './accept-seat.js';
 import type { SeatOpening } from '../../../src/core/seat-opening.js';
 import { clobberRefusal, seatToPromote } from './seat-repair.js';
 import type { SealedAccount } from '../../../src/core/types.js';
@@ -894,8 +894,8 @@ export async function openKeysWithWallet(
 
   /*
    * **OPENED HERE, IN THE CLICK, BEFORE ANYTHING IS AWAITED.**
-   * A deliberate defect moves this line below the ask and a
-   * test dies by name.
+   * A test fails if this line moves below the ask: a dialog opened after an
+   * `await` is blocked as a pop-up.
    */
   const dialog = openTheWallet(view, walletOrigin, already);
   try {
@@ -918,10 +918,13 @@ async function openKeysOnceOpen(
    * starting a company and the wallet is to draw its label; or null.
    */
   company: { accountId: string; label: CompanyLabel; account: AccountAddress | null } | 'new' | null,
-): Promise<{ drawn: CompanyLabel | null; committeeKey: { tag: string; value: string } | null }> {
+): Promise<{
+  drawn: CompanyLabel | null; committeeKey: { tag: string; value: string } | null;
+  seat: { signingSecret: string; wrappingSecret: string; salt: string } | null;
+}> {
   const who = me;
   if (who === null) throw new Error('not signed in');
-  /* **THE ADDRESS THIS TAB SIGNED IN AS, FROM THE SERVER'S OWN ANSWER TO THAT
+  /* **THE ADDRESS THIS TAB SIGNED IN AS, FROM THE SERVICE'S OWN ANSWER TO THAT
    * SIGN-IN**, or null in a tab that did not sign anybody in. It gates and never
    * derives: the wallet will not give the key without holding it. */
   const signedInAs = walletAddress;
@@ -980,11 +983,12 @@ async function openKeysOnceOpen(
   /*
    * The key the person holds a seat on the company with: for a new company, given beside the label the wallet drew
    * for it; for a named company, the key the wallet works out from that company's label - asked on a first open too,
-   * so an invitee's device can make its seat's leaf for it.
+   * so an invitee's device can make its seat's leaf for it. A new company's answer also gives the founding seat's
+   * keys, made by the wallet from its words for the label it drew.
    */
   return company === 'new'
-    ? { drawn: released.company, committeeKey: released.committeeKey }
-    : { drawn: null, committeeKey: company === null ? null : released.committeeKey };
+    ? { drawn: released.company, committeeKey: released.committeeKey, seat: released.seat }
+    : { drawn: null, committeeKey: company === null ? null : released.committeeKey, seat: null };
 }
 
 /**
@@ -1608,6 +1612,8 @@ interface Founded {
  * service is sent, in the same request, the founding signer's committee key,
  * which their wallet gave beside the label it drew, and what this device made
  * and sealed - everything the account's deploy is built from in this browser.
+ * The founding seat's keys come in the same answer from the wallet, made from
+ * its words; without them nothing is created.
  */
 async function foundCompany(
   spec: CompanyToFound, walletOrigin: string, view: Openable, atOrigin: string, builder: AccountCreationBuilder,
@@ -1622,12 +1628,16 @@ async function foundCompany(
   const alreadyOpen = encKey !== null;
   const dialog = openTheWallet(view, walletOrigin);
   try {
-    const { drawn, committeeKey } = await openKeysOnceOpen(walletOrigin, view, atOrigin, dialog, 'new');
-    if (drawn === null) throw new Error('Your wallet did not make up a label for the new company, so nothing was created. Update your wallet and try again.');
+    const { drawn, committeeKey, seat } = await openKeysOnceOpen(walletOrigin, view, atOrigin, dialog, 'new');
+    if (drawn === null) throw new Error('Your wallet did not make up a label for the new company, so nothing was created. Close the wallet\'s window, reload this page and start the company again.');
     const foundingKey = schnorrKeyOf(committeeKey);
     if (foundingKey === null) {
       throw new Error('Your wallet drew a label for the new company but gave no key to hold it with, so nothing was created. '
-        + 'Update your wallet and try again.');
+        + 'Close the wallet\'s window, reload this page and start the company again.');
+    }
+    if (seat === null) {
+      throw new Error('Your wallet drew a label for the new company but gave no keys for your seat in it, so nothing was created. '
+        + 'Close the wallet\'s window, reload this page and start the company again.');
     }
     /* **A TAB THAT ALREADY HELD THE KEY READS WHAT IS SAVED NOW**, so keys saved
      * since - or keys that no longer open with this key - are known before a
@@ -1635,7 +1645,7 @@ async function foundCompany(
     if (alreadyOpen) await reopenSavedKeys();
     /* Asked before anything is created, so a refusal costs nothing. */
     if (savedKeys !== 'some' && !keyCheckedAgainstSignIn) throw new FirstKeysNeedTheSignIn(FIRST_KEYS_NEED_THE_SIGN_IN);
-    return await foundTheCompanyOnThisDevice(spec, drawn, foundingKey, builder, startedBy);
+    return await foundTheCompanyOnThisDevice(spec, drawn, foundingKey, seat, builder, startedBy);
   } catch (e) {
     putAway(dialog);
     throw e;
@@ -1816,9 +1826,9 @@ export async function takeUpACreationSetAside(accountId: string): Promise<boolea
 /**
  * **THE COMPANY MADE ON THIS DEVICE, AND KEPT BEFORE ANYTHING IS SENT.**
  *
- * The founding signer's seat is made here with the keys an invited seat is
- * made with, and its leaf worked out from them where the chain's own function
- * runs. Every secret of the company is made here beside it and sealed: the
+ * The founding signer's seat is made from the keys their wallet gave for it,
+ * from its words, and its leaf worked out from them where the chain's own
+ * function runs. Every secret of the company is made here beside it and sealed: the
  * service is sent the seat's public halves and leaf, the company's record with
  * its viewing key wrapped to this seat alone, and its first state, sealed.
  *
@@ -1830,10 +1840,11 @@ export async function takeUpACreationSetAside(accountId: string): Promise<boolea
  */
 async function foundTheCompanyOnThisDevice(
   spec: CompanyToFound, label: CompanyLabel, foundingKey: { tag: 'schnorr'; value: string },
+  seatGiven: { signingSecret: string; wrappingSecret: string; salt: string },
   builder: AccountCreationBuilder, person: string,
 ): Promise<Founded> {
   /* The founding seat's blinding commits to the key that holds the account from its deploy, as every seat's does to its holder's. */
-  const keys = newSeatKeys(foundingKey);
+  const keys = seatKeysFrom(foundingKey, seatGiven);
   const seat = await builder.foundingSeat({ signingSecret: keys.signingSecret, blinding: keys.blinding });
   const leaf = String(seat?.seat ?? '').toLowerCase();
   const scope = String(seat?.scope ?? '').toLowerCase();

@@ -82,7 +82,7 @@ export interface WalletProgress {
 export type ChannelState =
   | { readonly of: 'waiting' }
   | { readonly of: 'request'; readonly request: Ask }
-  | { readonly of: 'refused'; readonly error: RequestError };
+  | { readonly of: 'refused'; readonly error: RequestError | NoPageToAnswer };
 
 interface Postable { postMessage(message: unknown, targetOrigin: string): void }
 
@@ -109,8 +109,9 @@ export interface ChannelWindow {
 /**
  * **WHERE THIS WALLET DOCUMENT SITS, DECIDED ONCE.**
  *
- *   - `top` - a window of its own. A page that opened it is `opener`; nothing
- *     else can be the asker.
+ *   - `top` - a window of its own. The asker is the page that opened it
+ *     (`opener`), and only when the browser saw that page at the one origin the
+ *     wallet was built for; nothing else can be the asker.
  *   - `framed` - inside the ONE page it was built to sit inside. The asker is
  *     that frame's parent, at exactly that origin, and nothing else.
  *   - `refused` - inside a page it was not built for, or inside a page that is
@@ -128,6 +129,25 @@ export const NOT_BUILT_TO_BE_FRAMED =
 export const FRAMED_BY_A_STRANGER =
   'this wallet has been put inside a page it does not know, so it shows nothing and answers '
   + 'nothing here. Open your wallet in its own tab.';
+
+export const NO_PAGE_TO_ANSWER =
+  'This wallet was set up without the address of your company\'s page, so it answers no page '
+  + 'and nothing was sent. Close this window and tell whoever runs your company\'s page; once the '
+  + 'wallet is set up, open it again from that page. For whoever runs the wallet: build it with '
+  + 'VITE_APP_ORIGIN set to that page\'s address.';
+
+/**
+ * The refusal a wallet in a window of its own shows when it was built with no
+ * page origin: it will answer nobody. The person is told what they can do, and
+ * whoever runs the wallet which build setting fixes it.
+ */
+export class NoPageToAnswer extends Error {
+  readonly code = 'no-page-configured' as const;
+  constructor() {
+    super(NO_PAGE_TO_ANSWER);
+    this.name = 'NoPageToAnswer';
+  }
+}
 
 export function framingOf(view: ChannelWindow, embedder: string | null): Framing {
   const parent = view.parent ?? null;
@@ -148,15 +168,16 @@ export function framingOf(view: ChannelWindow, embedder: string | null): Framing
 }
 
 /**
- * WHAT MAY GO BACK. ONE CHANGE ADDS A MEMBER AND NOTHING ELSE. ANOTHER ADDS A THIRD.
+ * WHAT MAY GO BACK.
  *
  * **The channel still does not know what any of these are.** It posts what it
  * is given to the origin it observed, and a channel that branched on the kind
  * of answer would be a second place to keep in step with the first -- which is
  * the sentence written about requests, from the other end.
  *
- * One of these carries a secret and the other does not, which is precisely why
- * `send` below has only ever had one target: the observed origin, never `'*'`.
+ * Some of these carry a secret (a released company key, or the keyring key that
+ * opens the seat secrets) and the rest do not, which is why `send` below has
+ * only ever had one target: the observed origin, never `'*'`.
  *
  * **AND THE THIRD IS THE ONE THAT IS NOT FOR THE PAGE IT IS POSTED TO.** A
  * `SealedAcceptance` crosses to the requester exactly like the other two and is
@@ -232,8 +253,12 @@ const REFUSED_SCHEMA = 'midnight-identity/disclosure-refused/v1';
 /**
  * **WHO MAY ASK. THIS IS THE WHOLE ASKER CHECK, AND IT HAS TWO SHAPES.**
  *
- * **A window of its own answers only the page that opened it** - `opener`, which
- * the browser fills in and no page can set on a window it did not open.
+ * **A window of its own answers only the page that opened it, and only at the
+ * one origin it was built for** (`page`, the same origin a frame is checked
+ * against). `opener` is filled in by the browser and no page can set it on a
+ * window it did not open, but ANY page can open the wallet; without the origin
+ * a stranger's page that opens it would be shown its ask and answered. With no
+ * page origin configured, nobody is answered.
  *
  * **A framed wallet answers only its parent, and only at the one origin it was
  * built to sit inside.** In a frame `opener` is `null`, so the first shape
@@ -250,34 +275,29 @@ const REFUSED_SCHEMA = 'midnight-identity/disclosure-refused/v1';
  * a press until the frame is large enough, showing, and the request has been in
  * front of the person for a moment. Each alone leaves a way in.
  */
-export function askerIsAllowed(view: ChannelWindow, framing: Framing, event: MessageEvent): boolean {
+export function askerIsAllowed(
+  view: ChannelWindow, framing: Framing, event: MessageEvent, page: string | null,
+): boolean {
   /* `!= null` AND NOT `!== null`: a window with no opener reports `null`, and
    * some environments report `undefined`. Either is no opener - and an
    * `undefined` read as an opener would compare equal to a message whose
    * source is missing. */
   if (view.opener != null) {
     /*
-     * ONLY FROM THE PAGE THAT OPENED THIS TAB. Anything else on this window —
-     * an extension, another frame, a `postMessage` from a page that merely has
-     * a handle — is not the conversation the person opened the wallet for.
+     * ONLY FROM THE PAGE THAT OPENED THIS TAB, AND ONLY AT THE PAGE ORIGIN.
+     * Anything else on this window - an extension, another frame, a
+     * `postMessage` from a page that merely has a handle - is not the
+     * conversation the person opened the wallet for; and the opener itself is
+     * only the page the wallet was built for when the browser saw it there.
      */
-    return event.source === (view.opener as unknown as MessageEventSource);
+    return event.source === (view.opener as unknown as MessageEventSource)
+      && event.origin === page;
   }
   if (framing.of !== 'framed') return false;
   return event.source === (view.parent as unknown as MessageEventSource)
     && event.origin === framing.embedder;
 }
 
-/**
- * LISTEN FOR ONE REQUEST, ANSWER IT ONCE.
- *
- * **ONE REQUEST, AND THE SECOND IS IGNORED.** Trouble is where the side
- * holding the value refused nothing while the other side refused a second
- * conversation, and a relay ground a number in seventy-one tries through the
- * gap. The side holding a person's details refuses a second request here, for
- * the same reason: a page that can send a second request while the first is on
- * screen can change what the person is looking at while they are reading it.
- */
 /**
  * **EVERY ASK THIS WINDOW HAS ALREADY ANSWERED**, by the page that asked and the
  * nonce it chose. One terminal message per ask, not per channel: a screen that
@@ -293,13 +313,22 @@ const answeredIn = (view: ChannelWindow): Set<string> => {
   return answered;
 };
 
+/**
+ * LISTEN FOR ONE REQUEST, ANSWER IT ONCE.
+ *
+ * **ONE REQUEST, AND THE SECOND IS IGNORED.** A page that can send a second
+ * request while the first is on screen can change what the person is looking
+ * at while they read it, so a second request on this channel is ignored.
+ */
 export function listen(
   view: ChannelWindow,
   now: () => number,
   onState: (state: ChannelState) => void,
   /**
-   * The one page allowed to frame this wallet, from the build's configuration.
-   * `null` - the default - means no page may, and a framed wallet answers nobody.
+   * The one page origin this wallet answers, framed or in a window of its own,
+   * from the build's configuration. `null` - the default - means no page: a
+   * framed wallet answers nobody, and a wallet in a window of its own answers
+   * nobody and shows `NoPageToAnswer`.
    */
   embedder: string | null = null,
 ): Channel {
@@ -331,7 +360,7 @@ export function listen(
 
   const handler = (event: MessageEvent): void => {
     if (settled) return;
-    if (!askerIsAllowed(view, framing, event)) return;
+    if (!askerIsAllowed(view, framing, event, embedder)) return;
     const body = (event.data ?? null) as { schema?: unknown } | null;
     if (body === null || typeof body !== 'object') return;
     if (body.schema !== 'midnight-identity/disclosure-request/v1') return;
@@ -374,25 +403,18 @@ export function listen(
 
   view.addEventListener('message', handler);
   onState({ of: 'waiting' });
+  if (view.opener != null && embedder === null) onState({ of: 'refused', error: new NoPageToAnswer() });
 
   /*
-   * THE READY PING GOES TO `'*'` AND CARRIES NOTHING, WHICH IS WHY THAT IS SAFE.
-   *
-   * The wallet cannot target the requester's origin, because it does not know
-   * it yet — knowing it is the thing this whole module exists to arrange. So
-   * the ping is one constant string with no data of any kind: a page that
-   * receives it learns that a wallet tab it opened is listening, which it
-   * already knew because it opened it.
+   * **THE READY PING IS ADDRESSED, NEVER BROADCAST.** The one page origin the
+   * wallet answers is known from the build, so the ping is sent to it alone: a
+   * page at any other origin, whether it opened the wallet or framed it, is
+   * told nothing, not even that a wallet is listening. With no page origin
+   * configured nobody is answered, so nobody is pinged.
    */
   if (view.opener != null) {
-    view.opener.postMessage({ schema: READY_PING }, '*');
+    if (embedder !== null) view.opener.postMessage({ schema: READY_PING }, embedder);
   } else if (framing.of === 'framed') {
-    /*
-     * **IN A FRAME THE PING IS ADDRESSED, NOT BROADCAST.** The origin allowed to
-     * hold this wallet is already known from the build, so there is nothing to
-     * learn by sending to `'*'` - and a page that framed it without being that
-     * origin is told nothing, not even that a wallet is listening.
-     */
     (view.parent as Postable).postMessage({ schema: READY_PING }, framing.embedder);
   }
 
