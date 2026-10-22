@@ -29,9 +29,13 @@ export function useStageSince(...name: ReadonlyArray<string | null>): number {
 export const secondsSince = (now: number, startedAt: number): number => Math.max(0, Math.floor((now - startedAt) / 1000));
 
 
-/** What a stage is doing, how long it has run, and how long it usually takes. */
-export function StageProgress({ stage, words, elapsedSeconds, usualSeconds }: {
-  stage: string; words?: string; elapsedSeconds: number; usualSeconds: number | null;
+/**
+ * What a stage is doing, how long it has run, and how long it usually takes. A stage with no usual time says that it
+ * depends on the person's other signers, unless the caller says its stage does not (`usualLine` false), when only the
+ * running time shows.
+ */
+export function StageProgress({ stage, words, elapsedSeconds, usualSeconds, usualLine = true }: {
+  stage: string; words?: string; elapsedSeconds: number; usualSeconds: number | null; usualLine?: boolean;
 }) {
   const t = useText();
   const language = useLanguage();
@@ -48,7 +52,7 @@ export function StageProgress({ stage, words, elapsedSeconds, usualSeconds }: {
     <div className="flex flex-col gap-1" data-stage-clock={stage} data-elapsed-seconds={elapsedSeconds} data-usual-seconds={usualSeconds ?? undefined}>
       {words === undefined ? null : <p className="text-sm" data-phase-words>{words}</p>}
       <p className="text-xs text-muted-foreground tabular-nums" data-elapsed>{t('stageProgress.running', { time: clock })}</p>
-      <p className="text-xs text-muted-foreground" data-usual>{usual}</p>
+      {usualSeconds === null && !usualLine ? null : <p className="text-xs text-muted-foreground" data-usual>{usual}</p>}
     </div>
   );
 }

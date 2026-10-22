@@ -322,6 +322,7 @@ const trackedDoors = (log: string[], facade: Partial<FacadeForBalancing> = {}, e
   return {
     doors, stopped,
     proof: (at: 'start' | 'end') => { for (const w of proofs) w({ op: 'prove', at }); },
+    check: (at: 'start' | 'end') => { for (const w of proofs) w({ op: 'check', at }); },
     get watching() { return proofs.size; },
   };
 };
@@ -448,7 +449,7 @@ describe('ONE ANSWER PER REQUEST, AND A PRESS IN FLIGHT OWNS IT', () => {
 });
 
 describe('THE WALLET SAYS WHAT IT IS DOING, ON EVENTS ONLY', () => {
-  it('reading on each report that moved, proving from the moment coins are added and on each proof', async () => {
+  it('reading on each report that moved and as coins are added, proving only on each proof', async () => {
     const answers: unknown[] = []; const progress: string[] = [];
     const shielded = stillReading();
     const held = heldBalance();
@@ -476,21 +477,78 @@ describe('THE WALLET SAYS WHAT IT IS DOING, ON EVENTS ONLY', () => {
     /* The read finishes: that is movement too. */
     shielded.says(true, true);
     await settled(10);
-    /* RED WHEN: nothing is said between the read and the proof, which is the longest silence of a private deposit. */
-    expect(progress).toEqual(['reading', 'reading', 'reading', 'proving']);
+    /* RED WHEN: the page is told the wallet is proving before any proof has started, as the coins are only being added. */
+    expect(progress).toEqual(['reading', 'reading', 'reading']);
+    /* RED WHEN: the screen says it is proving your coins before a proof has started. */
+    expect(document.querySelector('[data-proving]')).toBeNull();
+    expect(document.querySelector('[data-paying]')?.textContent).toMatch(/^Adding your private coins and signing in this browser\./);
     clock += 5_000;
     t.proof('start');
+    /* RED WHEN: a proof starting is not said to the page, or the screen does not then say it is proving. */
+    expect(progress).toEqual(['reading', 'reading', 'reading', 'proving']);
+    await settled(5);
+    expect(document.querySelector('[data-proving]')?.textContent).toMatch(/^Proving your coins in this browser\./);
     clock += 90_000;
     t.proof('end');
-    /* RED WHEN: a proof starting and ending is not said, so a wallet proving for ninety seconds looks like one that has gone. */
-    expect(progress).toEqual(['reading', 'reading', 'reading', 'proving', 'proving', 'proving']);
+    /* RED WHEN: a proof ending is not said, so a wallet proving for ninety seconds looks like one that has gone. */
+    expect(progress).toEqual(['reading', 'reading', 'reading', 'proving', 'proving']);
     expect(t.watching).toBe(1);
     held.release();
     await screen.findByText(`You paid for a deposit for ${ORIGIN}`);
     /* RED WHEN: the screen keeps listening to the proofs after its press is over. */
     expect(t.watching).toBe(0);
     t.proof('end');
-    expect(progress).toHaveLength(6);
+    expect(progress).toHaveLength(5);
+  });
+
+  it('a check of the proof is only reading, on the page and on the screen', async () => {
+    const answers: unknown[] = []; const progress: string[] = [];
+    const shielded = stillReading();
+    const held = heldBalance();
+    let clock = NOW;
+    const t = trackedDoors([], { shielded, balanceUnboundTransaction: held.balanceUnboundTransaction as never });
+    render(
+      <ApproveBalance readLabel={carries}
+        request={ask} identity={identity} account={0} channel={recordingChannel(answers, progress as never)} consent={consented}
+        whoIsAsking={<p>asker</p>} whichWallet={<p>picker</p>} onDecline={() => {}}
+        doorsFor={t.doors} now={() => clock} />);
+    expect(await screen.findByText(/2500 base units/)).toBeTruthy();
+    fireEvent.click(screen.getByText('Pay into the vault'));
+    await screen.findByText(/Your wallet is reading the network/);
+    clock += 5_000;
+    t.check('start');
+    clock += 5_000;
+    t.check('end');
+    await settled(5);
+    /* RED WHEN: a private deposit's check of a proof tells the page the wallet is proving, so the page waits for a proof that never starts. */
+    expect(progress).toEqual(['reading', 'reading']);
+    /* RED WHEN: the screen says it is proving your coins while it only checks one. */
+    expect(document.querySelector('[data-proving]')).toBeNull();
+    shielded.says(true, true);
+    await settled(10);
+    held.release();
+    await screen.findByText(`You paid for a deposit for ${ORIGIN}`);
+  });
+
+  it('a wallet that is already up to date still tells the page it is at work as it adds the coins, and not that it is proving', async () => {
+    const answers: unknown[] = []; const progress: string[] = [];
+    const held = heldBalance();
+    let clock = NOW;
+    const t = trackedDoors([], { balanceUnboundTransaction: held.balanceUnboundTransaction as never });
+    render(
+      <ApproveBalance readLabel={carries}
+        request={ask} identity={identity} account={0} channel={recordingChannel(answers, progress as never)} consent={consented}
+        whoIsAsking={<p>asker</p>} whichWallet={<p>picker</p>} onDecline={() => {}}
+        doorsFor={t.doors} now={() => (clock += 5_000)} />);
+    expect(await screen.findByText(/2500 base units/)).toBeTruthy();
+    fireEvent.click(screen.getByText('Pay into the vault'));
+    await settled(10);
+    /* RED WHEN: the page hears nothing from the wallet as it starts adding the coins, after its read, so its silence clock runs out on a wallet at work. */
+    expect(progress).toEqual(['reading', 'reading']);
+    /* RED WHEN: the page is told the wallet is proving while it is only adding coins. */
+    expect(progress).not.toContain('proving');
+    held.release();
+    await screen.findByText(`You paid for a deposit for ${ORIGIN}`);
   });
 });
 

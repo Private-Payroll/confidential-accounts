@@ -191,6 +191,19 @@ const nameOf = (tx: any): string => {
   }
 };
 
+/**
+ * The ledger, except that a finished transaction the device reads as proven is read as the unproven one this watch
+ * makes when it is not proven: nothing here proves, and the device reads what the wallet signed as a proven one.
+ */
+const unprovenWhereProven = new Proxy(L, {
+  get: (ledger, key) => (key !== 'Transaction' ? Reflect.get(ledger, key) : new Proxy((ledger as any).Transaction, {
+    get: (tx, member) => (member !== 'deserialize' ? Reflect.get(tx, member)
+      : (s: string, p: string, b: string, bytes: Uint8Array) => {
+        try { return tx.deserialize(s, p, b, bytes); } catch { return tx.deserialize(s, p === 'proof' ? 'pre-proof' : p, b, bytes); }
+      }),
+  })),
+});
+
 /** The ledger's own state machine, one transaction per block, signatures checked, every block's events kept. */
 class Chain {
   state: any = L.LedgerState.blank(NET);
@@ -299,7 +312,7 @@ describe.skipIf(!KEYS_ON_DISK)('A PRIVATE PAYMENT OUT OF A COMPANY VAULT, FROM T
    */
   const builder = (over?: { createUnprovenCallTxFromInitialStates: (...args: any[]) => Promise<any> }) => {
     const deps = async () => ({
-      ledger: L, vault: vaultModule, runtimeState: (runtime as any).ContractState, contracts: { ...(contracts as any), ...over },
+      ledger: unprovenWhereProven, vault: vaultModule, runtimeState: (runtime as any).ContractState, contracts: { ...(contracts as any), ...over },
       /*
        * The indexer the wallet names, over this chain: the vault's state as the ledger holds it, every applied
        * transaction and its own events, and one moment of both contracts with the commitment tree. The worker reads
@@ -330,6 +343,19 @@ describe.skipIf(!KEYS_ON_DISK)('A PRIVATE PAYMENT OUT OF A COMPANY VAULT, FROM T
           if (v === null || a === null) return null;
           return { blockHash: 'b1'.repeat(32), zswap: chain.state.zswap, vault: v, parameters: chain.state.parameters, account: a };
         },
+      }),
+      /* The same indexer asked for transactions by identifier: every one this chain was handed, with how it applied and what it called. */
+      transactionsAt: () => ({
+        byIdentifier: async (identifier: string) => chain.applied
+          .filter((a) => (a.tx.identifiers() as string[]).map((i) => String(i).toLowerCase()).includes(identifier.toLowerCase()))
+          .map((a) => ({
+            hash: a.name, status: a.ok ? 'SUCCESS' : 'FAILURE',
+            calls: [...a.tx.intents.values()].flatMap((i: any) => [...(i.actions ?? [])].map((c: any) => ({
+              address: String(c.address).toLowerCase(),
+              entryPoint: c.entryPoint === undefined ? null
+                : c.entryPoint instanceof Uint8Array ? new TextDecoder().decode(c.entryPoint) : String(c.entryPoint),
+            }))),
+          })),
       }),
       compiled: vaultCompiled({ noteToSpend: () => { throw new Error('nothing here spends'); }, nonceSecret: () => { throw new Error('nothing here spends'); } }),
       compiledWith: (w: ReturnType<typeof witnessesOver>) => vaultCompiled(w),

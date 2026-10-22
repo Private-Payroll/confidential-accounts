@@ -209,14 +209,15 @@ export async function askWalletWhoHolds(
   };
 }
 
-/* ------------------------------------------------------------------ addresses and balances, after one press */
+/* ------------------------------------------------------------------ the private address and the balances, after one press */
 
 const ADDRESSES_AND_BALANCES_WINDOW_MS = 10 * 60_000;
 const ADDRESSES_AND_BALANCES_PURPOSE =
-  'So this page can show you where your wallet receives and what it holds: your wallet shows you exactly what it will '
-  + 'hand over, and hands it over only if you press. Nothing is signed.';
+  'So this page can show you where your wallet receives privately and what it holds: your wallet shows you exactly what '
+  + 'it will hand over, and hands it over only if you press. Nothing is signed.';
 
-class WalletDidNotShowAddressesAndBalances extends Error {
+/** The wallet's answer was not believed: `code` says why (`not-an-answer`, `origin-mismatch`, `nonce-mismatch`). */
+export class WalletDidNotShowAddressesAndBalances extends Error {
   constructor(readonly code: string, message: string) {
     super(message);
     this.name = 'WalletDidNotShowAddressesAndBalances';
@@ -232,16 +233,18 @@ interface AddressesAndBalancesAsked {
 }
 
 /**
- * **WHERE THE PERSON'S WALLET RECEIVES, AND WHAT IT HOLDS, AFTER THEIR PRESS.**
- * The wallet shows the person its private and public receiving addresses and
+ * **WHERE THE PERSON'S WALLET RECEIVES PRIVATELY, AND WHAT IT HOLDS, AFTER
+ * THEIR PRESS.** The wallet shows the person its private receiving address and
  * every token it holds on each side, and hands them over only on one press on
  * its own screen, every time this is asked. Which of their wallets answers is
  * theirs to choose there. What comes back is checked against this page's own
  * origin and nonce, and is `AddressesAndBalancesShown`
- * (`midnight-identity/profile/addresses-and-balances`): two addresses, the
- * amounts each marked `private` or `public`, and the moment each side was read,
- * or `null` for a side the wallet could not read - which is not known, never
- * zero. A refusal, a decline or a wallet that never answers throws, and
+ * (`midnight-identity/profile/addresses-and-balances`): the private address,
+ * the amounts each marked `private` or `public`, and the moment each side was
+ * read, or `null` for a side the wallet could not read - which is not known,
+ * never zero. An answer carrying the public address is not believed. A refusal,
+ * a decline or a wallet that never answers throws (`WalletClosed`, or
+ * `WalletDidNotShowAddressesAndBalances` for an answer not believed), and
  * nothing is handed over.
  */
 export async function askWalletForAddressesAndBalances(

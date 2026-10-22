@@ -29,7 +29,7 @@ import type { AccountHoldersRead } from 'midnight-identity/profile/records-key';
 import { PAY_KEY_COMMITMENT_ENTRY } from 'midnight-identity/profile/records-key';
 import { NO_ASSET } from '../../../src/core/assets.js';
 import {
-  askWalletToSignIn, openWalletDialog, WalletClosed, type Openable, type WalletDialog,
+  askWalletToSignIn, openWalletDialog, US_TO_A_WALLET, WalletClosed, type Openable, type WalletDialog,
 } from './wallet-sign-in.js';
 /* The screen that draws the waiting needs the type, and it should not have to
  * know which file below this one the wallet plumbing lives in. */
@@ -696,18 +696,6 @@ export function showWaitingFor(dialog: WalletDialog): () => void {
  * second event.
  */
 const putAway = (dialog: WalletDialog): void => { dialog.giveUp(); };
-
-/**
- * **WHAT WE CALL OURSELVES TO A WALLET, AND THE WALLET BELIEVES NONE OF IT.**
- *
- * Untrusted words, rendered as text on the wallet's screen beside the origin it
- * OBSERVED. One copy, because two asks now send it and a name that drifts
- * between them is a person seeing two different sites.
- */
-const US_TO_A_WALLET = {
-  name: 'Confidential Accounts',
-  rdns: 'social.lemonade.confidential-accounts',
-} as const;
 
 /**
  * SIGNING IN WITH THE WALLET. `docs/scope-payroll-identity.md` §10 step 1.

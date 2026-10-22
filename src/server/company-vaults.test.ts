@@ -36,6 +36,35 @@ const aRefusedSpendProofThatCannotBePaidAgain = (): CompanyVaultDeps['ledger']['
   return (accountId, what, _arrival, bytes, check, read) =>
     ledger.sendVault(accountId, what, 'finished-by-the-depositor', bytes, check, read);
 };
+
+/**
+ * The real lane and the real fee payer, with the fee payer's two steps counted, as `sendVault` for a route: the
+ * route's own check runs inside `sendVault` before the fee is added, so a refused transaction leaves both counts at
+ * nothing.
+ */
+const aFeePayerThatCountsWhatItIsAskedFor = (): { sendVault: CompanyVaultDeps['ledger']['sendVault']; asked: string[] } => {
+  const asked: string[] = [];
+  const payer = new WalletFeeSponsor({
+    shieldedSecretKeys: 's', dustSecretKey: 'd',
+    balanceFinalizedTransaction: async (tx: unknown) => ({ tx }),
+    finalizeRecipe: async () => ({ intents: new Map(), transactionHash: () => 'h1' }),
+    submitTransaction: async () => 'h1',
+    revert: async () => {},
+    estimateFee: async () => 1n,
+    paidFee: async () => null,
+    balances: async () => ({ dust: 1n, night: 1n }),
+  }, { perTransaction: 1_000n });
+  const addFee = payer.addFeeAndFinalise.bind(payer);
+  const submit = payer.submit.bind(payer);
+  payer.addFeeAndFinalise = async (tx, ttl) => { asked.push('addFeeAndFinalise'); return addFee(tx, ttl); };
+  payer.submit = async (tx) => { asked.push('submit'); return submit(tx); };
+  const ledger = new ChainLedger({} as never, { network: 'stagenet', indexerUrl: 'x', indexerWsUrl: 'x' } as never, {
+    maintenanceAuthority: { kind: 'unmaintainable' } as never, compiled: {},
+    customer: { coinPublicKey: () => '', encryptionPublicKey: () => '', release: async () => {}, balanceOwnLegs: async () => null },
+    sponsor: payer as never, storagePassword: async () => 'x',
+  });
+  return { sendVault: (accountId, what, arrival, bytes, check, read) => ledger.sendVault(accountId, what, arrival, bytes, check, read), asked };
+};
 import { companyVaultRoutes, vaultState, type CompanyVaultDeps } from './company-vaults.js';
 import type { VaultKey } from '../core/vault-keys.js';
 
@@ -96,6 +125,8 @@ let assembleDep: CompanyVaultDeps['committeeChange'];
 let routeDeps: CompanyVaultDeps;
 /* The vault's public balance as its state carries it; absent unless a test sets it. */
 let vaultBalance: unknown;
+/* What a transaction its depositor finished reads as; nothing but an empty shape unless a test sets it. */
+let finishedShape: unknown;
 /*
  * **THE ROSTER, STOOD IN.** What each member's own roster entry carries, and the
  * index a seat's device files with the roster, made from it - sorted, with no
@@ -172,6 +203,7 @@ beforeEach(async () => {
   ledgerIsThisBuilds = async () => {};
   assembleDep = undefined;
   vaultBalance = undefined;
+  finishedShape = {};
   sendVault = async (_a, what) => { sent.push(what); return { ref: 'r', at: 'now', transactionHash: 'h' }; };
   const app = express();
   app.use(companyVaultRoutes(routeDeps = {
@@ -232,7 +264,7 @@ beforeEach(async () => {
     },
     readers: {
       proven: async (b) => (b[0] === 0xdd ? payoutShape : b[0] === 0xcc ? startShape : deployShape ? aDeploy() : {}),
-      finished: async () => ({}),
+      finished: async () => finishedShape,
     },
     get committeeChange() { return assembleDep; },
   }));
@@ -569,6 +601,25 @@ describe('A VAULT\'S ROUTES', () => {
     const r = await call('/api/accounts/acc_1/vaults', 'ada', 'POST', { tx: 'AAAA' });
     expect(r).toMatchObject({ status: 422, body: { nothingWasSent: true, code: 'fee-not-paid' } });
     expect(store.listCompanyVaults('acc_1')).toEqual([]);
+  });
+
+  /*
+   * RED WHEN: a private deposit that shows which token it moves and how much is handed to the fee payer - the route
+   * stops checking what the deposit states, or the ledger stops running the route's check before the fee is added.
+   */
+  it('A PRIVATE DEPOSIT THAT SHOWS WHICH TOKEN IT MOVES AND HOW MUCH IS REFUSED BEFORE THE FEE PAYER SEES IT', async () => {
+    store.putCompanyVault({ accountId: 'acc_1', vault: VAULT, deployedAt: '', deployRef: 'r', intended: { committee: [key(1), key(2)], threshold: 2 }, bornHeld: true });
+    const payer = aFeePayerThatCountsWhatItIsAskedFor();
+    sendVault = payer.sendVault;
+    /* One call to this vault's deposit, nothing public and no fee of its own, whose offer states 500 of one token. */
+    finishedShape = {
+      intents: new Map([[1, { actions: [{ address: VAULT, entryPoint: 'deposit' }] }]]),
+      guaranteedOffer: { deltas: new Map([[hex(0x01), 500n]]) },
+    };
+    const r = await call(`/api/accounts/acc_1/vaults/${VAULT}/deposit`, 'ada', 'POST', { tx: 'AAAA' });
+    expect(r).toMatchObject({ status: 422, body: { nothingWasSent: true } });
+    expect(r.body.error).toMatch(/could have seen which token it moves and how much/);
+    expect(payer.asked).toEqual([]);
   });
 });
 

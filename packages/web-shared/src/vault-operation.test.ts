@@ -20,7 +20,7 @@ import {
   payPubliclyFromCompanyVault, PublicPaymentNotYetSeen,
   type VaultChainView, type ServedVaultChain, type VaultService, type DepositInFlight, type SecretReaderSources,
   type PaymentInFlight, type PaymentsInFlight, type VaultCreated,
-  checkWhatThisBrowserSent, sayWhatTheCheckFound, DepositStartedElsewhere, PaymentStillInFlight, PaymentStartedElsewhere,
+  checkWhatThisBrowserSent, checkWhatThisBrowserDeposited, sayWhatTheCheckFound, DepositStartedElsewhere, PaymentStillInFlight, PaymentStartedElsewhere,
   settlePaymentInFlight, VaultStartOwed, VaultNotTheCompanys, VaultNotReadHere, StepOvertaken, NotesMovedUnderAStep,
 } from './vault-operation.js';
 import { inFlightInMemory as inFlightInMemoryRecords, type Kept, type KeptOnThisDevice } from './in-flight-on-this-device.js';
@@ -1675,6 +1675,24 @@ describe('WHAT THIS BROWSER LAST SENT, CHECKED ON ITS OWN, AND TWO TABS OR TWO B
     expect(sayWhatTheCheckFound(found)).toBe('Your last deposit from this browser has reached the vault and is now in its record.');
     expect(sayWhatTheCheckFound(await checkWhatThisBrowserSent(c.first.doors, VAULT)))
       .toBe('This browser has no deposit into this vault waiting to be seen.');
+  });
+
+  it('a check of deposits alone records a deposit on its way once it lands, and reads no payment this browser kept', async () => {
+    const c = await company();
+    c.w.sendFails = new Error('the connection dropped');
+    await expect(depositIntoCompanyVault(c.first.doors, VAULT, MONEY)).rejects.toBeInstanceOf(DepositNotYetSeen);
+    c.w.sendFails = null;
+    c.lands(c.w.built[0]!);
+    const sent = c.w.sent;
+    /* Any payment this browser kept is out of reach: reading one fails the check. */
+    const payments = new Proxy({}, { get: () => { throw new Error('a payment kept on its way was read'); } });
+    const found = await checkWhatThisBrowserDeposited({ ...c.first.doors, payments } as never, VAULT);
+    /* RED WHEN: checking deposits alone does not record a deposit that landed, or reads or settles a payment. */
+    expect(found.deposit).toMatchObject({ state: 'recorded', note: { createdIn: LANDED_IN } });
+    expect(Object.keys(found).sort()).toEqual(['deposit', 'named', 'unnamed']);
+    expect(c.w.sent, 'RED WHEN: checking sends anything').toBe(sent);
+    /* RED WHEN: what a check of deposits alone found cannot be said, or is said with anything about a payment. */
+    expect(sayWhatTheCheckFound(found)).toBe('Your last deposit from this browser has reached the vault and is now in its record.');
   });
 
   it('CHECK MY LAST DEPOSIT READS THE VAULT ON THIS DEVICE, AND NEVER ASKS THE SERVICE WHAT IT HOLDS', async () => {

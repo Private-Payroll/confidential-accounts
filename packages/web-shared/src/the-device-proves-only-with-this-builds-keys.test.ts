@@ -32,11 +32,19 @@ const at = (circuit: string, which: 'vault' | 'account' = 'vault'): string => `c
 const fileFor = (url: string): string | null => {
   const m = /^\/artefacts\/vault(\/account)?\/(keys|zkir)\/(\w+\.(?:prover|verifier|bzkir))$/u.exec(url);
   if (m) return join(ROOT, 'contracts', m[1] ? 'managed' : 'managed-vault', m[2]!, m[3]!);
+  /* The network's shielded circuits, as this build's wallet carries them. */
+  const network = /^\/artefacts\/vault\/builtin\/zswap\/9\/(?:keys|zkir)\/(\w+\.(?:prover|verifier|bzkir))$/u.exec(url);
+  if (network) return join(ROOT, NETWORK_KEYS, network[1]!);
   return null;
 };
+/* Where this build's wallet carries the network's shielded circuits once they are fetched and checked against its pins. */
+const NETWORK_KEYS = 'apps/wallet/public/keys/zswap/9';
 const HAS_KEYS = Object.keys(BUILD.vault.expectedVk).length > 0
   && existsSync(join(ROOT, 'contracts', 'managed-vault', 'keys', 'payout.prover'))
   && existsSync(join(ROOT, 'contracts', 'managed', 'keys', 'anchor.prover'));
+/* A deposit's warm-up also fetches the keys of the network's output circuit, which a deposit's coin is made with. */
+const HAS_NETWORK_KEYS = existsSync(join(ROOT, NETWORK_KEYS, 'output.prover'))
+  && existsSync(join(ROOT, NETWORK_KEYS, 'output.verifier'));
 
 /** A pretend service: the real files, except those a test has changed. */
 const aService = () => {
@@ -117,5 +125,55 @@ describe.skipIf(!HAS_KEYS)('THE ONE SOURCE THE VAULT WORKER PROVES FROM [needs c
     await refused(deps.vaultKeys.getVerifierKey('payout'), 'other-bytes-served');
     await refused(deps.accountKeys.getVerifierKey('adopt'), 'other-bytes-served');
     expect((await deps.vaultKeys.getVerifierKey('retire')).length).toBeGreaterThan(0);
+  }, 60_000);
+
+  it.skipIf(!HAS_NETWORK_KEYS)('the worker\'s own loader warms a deposit\'s keys through the checked source, so another build\'s key is refused [needs apps/wallet/public/keys/zswap/9 as well; `npm run vendor-keys` fetches it]', async () => {
+    /* RED WHEN: the files fetched right after sign-in are read through a source that does not check them against this build. */
+    const s = aService();
+    s.changed.add('/artefacts/vault/keys/deposit.prover');
+    /*
+     * Reading a circuit's size means parsing it, over a minute in a browser, so every circuit answers here with
+     * nothing. It answers only once every key the warm-up asked for has been fetched and checked, so the changed
+     * key's refusal is the first failure on any machine, however slow. The worker says it is busy as each artefact
+     * is asked for and again as it settles: the asks are all made before the first fetch, and every key has settled
+     * when the words after them number the keys fetched.
+     */
+    let words = 0;
+    let asked: number | null = null;
+    let keysFetched = 0;
+    let released = false;
+    const held: Array<() => void> = [];
+    const releaseOnceTheKeysSettle = (): void => {
+      if (released || asked === null || keysFetched + held.length !== asked || words - asked !== keysFetched) return;
+      released = true;
+      setTimeout(() => { for (const answer of held.splice(0)) answer(); }, 0);
+    };
+    const scope = {
+      indexedDB: { open: () => { const r: any = {}; queueMicrotask(() => r.onerror?.()); return r; } },
+      console: { warn: () => {} },
+      postMessage: (word: { kind?: unknown }) => {
+        if (word?.kind !== 'vault-worker-busy') return;
+        words += 1;
+        releaseOnceTheKeysSettle();
+      },
+      fetch: async (url: string) => {
+        asked ??= words;
+        if (!url.includes('/zkir/')) {
+          keysFetched += 1;
+          return s.fetchImpl(url);
+        }
+        if (!released) {
+          await new Promise<void>((answer) => { held.push(answer); releaseOnceTheKeysSettle(); });
+        }
+        return { ok: false, status: 404 } as Response;
+      },
+    };
+    const deps = await loadDeps(scope)();
+    words = 0;
+    asked = null;
+    keysFetched = 0;
+    const e = await deps.provingWarmed().then(() => null, (x: unknown) => x);
+    expect(e).toBeInstanceOf(ProvingMaterialRefused);
+    expect([(e as ProvingMaterialRefused).kind, (e as ProvingMaterialRefused).keyLocation]).toEqual(['other-bytes-served', 'deposit']);
   }, 60_000);
 });

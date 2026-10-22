@@ -21,9 +21,10 @@ import { Approve } from './approve.js';
 
 /*
  * The screen a person sees when a page asks where one of their wallets
- * receives and what it holds: both addresses, every amount marked private or
- * public, read by the wallet's own balance engines after the screen opened,
- * and one press that hands over exactly what was listed.
+ * receives privately and what it holds: the private address and never the
+ * public one, every amount marked private or public, read by the wallet's own
+ * balance engines after the screen opened, and one press that hands over
+ * exactly what was listed.
  */
 (globalThis as { Buffer?: unknown }).Buffer = PolyfillBuffer;
 
@@ -87,7 +88,7 @@ describe('A PAGE ASKING WHERE A WALLET RECEIVES AND WHAT IT HOLDS', () => {
     expect(s.answers).toEqual([]);
   });
 
-  it('THE PRESS HANDS OVER EXACTLY WHAT WAS LISTED: BOTH ADDRESSES, EVERY TOKEN, EACH MARKED PRIVATE OR PUBLIC', async () => {
+  it('THE PRESS HANDS OVER EXACTLY WHAT WAS LISTED: THE PRIVATE ADDRESS, EVERY TOKEN, EACH MARKED PRIVATE OR PUBLIC', async () => {
     const s = draw();
     await settle();
     await act(async () => { s.shielded.say({ name: 'synced', night: 5_000_000n, asOf: NOW + 1, others: { [OTHER]: 7n } }); });
@@ -98,15 +99,22 @@ describe('A PAGE ASKING WHERE A WALLET RECEIVES AND WHAT IT HOLDS', () => {
     expect(listed('private')).toEqual([NIGHT_RAW, OTHER]);
     expect(listed('public')).toEqual([NIGHT_UNSHIELDED_RAW]);
     expect(s.container.querySelector('[data-side="private"] [data-side-address]')?.textContent).toBe(owned.address.bech32);
-    expect(s.container.querySelector('[data-side="public"] [data-side-address]')?.textContent).toBe(owned.unshieldedBech32);
+    /* RED WHEN: the screen lists the public address among what the page will see. */
+    expect(s.container.querySelector('[data-side="public"] [data-side-address]')).toBeNull();
+    expect(s.container.textContent).not.toContain(owned.unshieldedBech32);
+    /* RED WHEN: the screen says the page is never given the public address, which the sign-in already does, instead of saying this answer does not hand it over. */
+    expect(s.container.querySelector('[data-nothing-signed]')?.textContent).toContain('This answer does not hand the page your public address');
+    expect(s.container.querySelector('[data-nothing-signed]')?.textContent).not.toContain('is not shown to the page');
     await act(async () => { fireEvent.click(pressButton(s.container)); });
     expect(s.answers).toHaveLength(1);
+    /* RED WHEN: the account's public address crosses to the page, in any field. */
+    expect(JSON.stringify(s.answers[0])).not.toContain(owned.unshieldedBech32);
     const read = readAddressesAndBalancesAnswer(s.answers[0], { atOrigin: ORIGIN, expectingNonce: 'ab1' });
-    /* RED WHEN: what crosses is not the wallet's own addresses, or an amount, a token, a side or a moment differs from the screen. */
+    /* RED WHEN: what crosses is not the wallet's own private address, or an amount, a token, a side or a moment differs from the screen. */
     expect(read).toEqual({
       ok: true, at: NOW,
       shown: {
-        addresses: { private: owned.address.bech32, public: owned.unshieldedBech32 },
+        addresses: { private: owned.address.bech32 },
         balances: [
           { token: NIGHT_RAW, amount: '5000000', visibility: 'private' },
           { token: OTHER, amount: '7', visibility: 'private' },
@@ -186,7 +194,7 @@ describe('A PAGE ASKING WHERE A WALLET RECEIVES AND WHAT IT HOLDS', () => {
     expect(shut.answers).toEqual([]);
   });
 
-  it('THE WALLET ROUTES THIS ASK TO ITS OWN SCREEN, WITH THE CHOSEN WALLET\'S OWN ADDRESSES', async () => {
+  it('THE WALLET ROUTES THIS ASK TO ITS OWN SCREEN, WITH THE CHOSEN WALLET\'S OWN PRIVATE ADDRESS', async () => {
     const opener = watchedOpener();
     const handlers: ((event: MessageEvent) => void)[] = [];
     const view: ChannelWindow = {
@@ -202,11 +210,13 @@ describe('A PAGE ASKING WHERE A WALLET RECEIVES AND WHAT IT HOLDS', () => {
       </BalanceEnginesContext.Provider>);
     await act(async () => { for (const h of handlers) h({ source: opener, origin: ORIGIN, data: wire } as unknown as MessageEvent); });
     await settle();
-    /* RED WHEN: the approval screen does not route this kind here, or shows another wallet's addresses than the one in its picker. */
-    expect(container.querySelector('[data-headline]')?.textContent).toBe(`Show ${ORIGIN} your wallet’s addresses and balances`);
+    /* RED WHEN: the approval screen does not route this kind here, or shows another wallet's address than the one in its picker. */
+    expect(container.querySelector('[data-headline]')?.textContent).toBe(`Show ${ORIGIN} your wallet’s private address and balances`);
     const picked = Number((container.querySelector('#approve-subwallet') as HTMLSelectElement).value);
-    expect(container.querySelector('[data-side="public"] [data-side-address]')?.textContent)
-      .toBe(ownedAddressFor(identity, picked, {}, NETWORK).unshieldedBech32);
+    expect(container.querySelector('[data-side="private"] [data-side-address]')?.textContent)
+      .toBe(ownedAddressFor(identity, picked, {}, NETWORK).address.bech32);
+    /* RED WHEN: the screen or its picker says the page sees more than the private address and the balances. */
+    expect(container.textContent).not.toMatch(/addresses and balances/u);
     const before = opener.sent.length;
     /* RED WHEN: anything reaches the page before the press. */
     expect(opener.sent.filter((p) => (p.message as { schema?: string }).schema === 'midnight-identity/addresses-and-balances/v1')).toEqual([]);

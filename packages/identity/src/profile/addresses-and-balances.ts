@@ -3,13 +3,15 @@ import { usableOrigin } from './origin.js';
 
 /**
  * WHAT A WALLET HANDS BACK WHEN A PERSON AGREES TO SHOW A PAGE WHERE ONE OF
- * THEIR WALLETS RECEIVES, AND WHAT IT HOLDS.
+ * THEIR WALLETS RECEIVES PRIVATELY, AND WHAT IT HOLDS.
  *
- * Two addresses - the private one and the public one - and every token that
- * wallet holds on each side, each amount marked private or public. **Nothing
- * here is signed and nothing here moves money.** It is a reading, taken by the
- * wallet itself, at the moment each side says, and handed over only on the
- * person's press, exactly as the screen showed it.
+ * The wallet's private receiving address, and every token that wallet holds
+ * on each side, each amount marked private or public. **The public address is
+ * never in it**: a page that is handed it can follow every public payment to
+ * and from it on the network, so an answer that carries one is refused on
+ * both ends. **Nothing here is signed and nothing here moves money.** It is a
+ * reading, taken by the wallet itself, at the moment each side says, and
+ * handed over only on the person's press, exactly as the screen showed it.
  *
  * **A SIDE THE WALLET COULD NOT READ IS SAID, NEVER SHOWN AS NONE.** Its moment
  * is `null` and it carries no amounts; a page reads that as "not known", which
@@ -36,9 +38,14 @@ export interface HeldAmount {
 
 /** What the screen showed, and so exactly what is handed over. */
 export interface AddressesAndBalancesShown {
-  /** The wallet's private receiving address and its public one, each in its text form. */
-  readonly addresses: { readonly private: string; readonly public: string };
-  /** Every amount shown: NIGHT on each side that was read, and every other token held above zero. */
+  /** The wallet's private receiving address, in its text form. Only the private one: the public address is never handed over here. */
+  readonly addresses: { readonly private: string };
+  /**
+   * Every amount shown: on each side that was read, the token whose identifier
+   * is sixty-four zeros (NIGHT on the public side; on the private side a
+   * shielded token of that identifier, which is not NIGHT), even at zero, and
+   * every other token held above zero.
+   */
   readonly balances: readonly HeldAmount[];
   /** The moment each side's amounts were true of, or null when that side could not be read. */
   readonly read: { readonly private: number | null; readonly public: number | null };
@@ -62,6 +69,8 @@ export class AddressesAndBalancesRefused extends Error {
 const DIGITS = /^(0|[1-9][0-9]{0,38})$/u;
 const TOKEN = /^[0-9a-f]{64}$/u;
 const ADDRESS = /^[\x21-\x7e]{40,200}$/u;
+/** How every private receiving address begins; a public one begins otherwise. */
+const PRIVATE_ADDRESS = /^mn_shield-addr_/u;
 const VISIBILITIES: readonly Visibility[] = ['private', 'public'];
 
 const isMoment = (value: unknown): value is number | null =>
@@ -69,19 +78,20 @@ const isMoment = (value: unknown): value is number | null =>
 
 /**
  * **WHY WHAT IS ABOUT TO BE SHOWN OR READ IS NOT ONE WHOLE ANSWER**, or null
- * when it is: two different addresses; a moment, or none, for each side; and
- * amounts only for a side that was read, each a token, whole digits and its
- * side, with no token twice on one side. One rule for the wallet that builds an
- * answer and the page that reads one.
+ * when it is: the private address and nothing beside it, so a public address
+ * in any slot is refused; a moment, or none, for each side; and amounts only
+ * for a side that was read, each a token, whole digits and its side, with no
+ * token twice on one side. One rule for the wallet that builds an answer and
+ * the page that reads one.
  */
 export function whyNotAddressesAndBalances(shown: unknown): string | null {
   const s = shown as Partial<AddressesAndBalancesShown> | null;
   if (typeof s !== 'object' || s === null) return 'it is not an answer';
   const addresses = s.addresses as Partial<AddressesAndBalancesShown['addresses']> | undefined;
-  if (typeof addresses !== 'object' || addresses === null
-    || !ADDRESS.test(String(addresses.private)) || !ADDRESS.test(String(addresses.public))
-    || addresses.private === addresses.public) {
-    return 'it does not carry a private and a public address';
+  if (typeof addresses !== 'object' || addresses === null) return 'it does not carry a private address';
+  if (Object.keys(addresses).some((k) => k !== 'private')) return 'it carries an address beside the private one';
+  if (!ADDRESS.test(String(addresses.private)) || !PRIVATE_ADDRESS.test(String(addresses.private))) {
+    return 'its address is not a private one';
   }
   const read = s.read as Partial<AddressesAndBalancesShown['read']> | undefined;
   if (typeof read !== 'object' || read === null || !isMoment(read.private) || !isMoment(read.public)) {
@@ -123,7 +133,7 @@ export function addressesAndBalancesAnswerFor(
     origin: request.requester.origin,
     nonce: request.nonce,
     at,
-    addresses: Object.freeze({ private: shown.addresses.private, public: shown.addresses.public }),
+    addresses: Object.freeze({ private: shown.addresses.private }),
     balances: Object.freeze(shown.balances.map((b) => Object.freeze({ token: b.token, amount: b.amount, visibility: b.visibility }))),
     read: Object.freeze({ private: shown.read.private, public: shown.read.public }),
   });
@@ -139,7 +149,8 @@ export type AddressesAndBalancesRead =
 
 /**
  * THE PAGE'S SIDE. Every expectation is the page's own: where it is and the
- * nonce it chose. What it gets back is the wallet's reading, as shown.
+ * nonce it chose. What it gets back is the wallet's reading, as shown; an
+ * answer carrying a public address is not an answer.
  */
 export function readAddressesAndBalancesAnswer(
   message: unknown,
@@ -167,7 +178,7 @@ export function readAddressesAndBalancesAnswer(
     ok: true,
     at: body.at,
     shown: {
-      addresses: { private: shown.addresses.private, public: shown.addresses.public },
+      addresses: { private: shown.addresses.private },
       balances: shown.balances.map((b) => ({ token: b.token, amount: b.amount, visibility: b.visibility })),
       read: { private: shown.read.private, public: shown.read.public },
     },

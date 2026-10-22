@@ -19,16 +19,18 @@ import { hrefOf } from '../routes.js';
 import type { Consent } from '../framing.js';
 
 /**
- * THE SCREEN FOR A PAGE ASKING WHERE ONE OF THIS PERSON'S WALLETS RECEIVES,
- * AND WHAT IT HOLDS.
+ * THE SCREEN FOR A PAGE ASKING WHERE ONE OF THIS PERSON'S WALLETS RECEIVES
+ * PRIVATELY, AND WHAT IT HOLDS.
  *
  * The page is served by a service that is not trusted with anybody's money, so
  * **nothing about it leaves this wallet without one press here, every time a
  * page asks.** The screen shows exactly what the press hands over: the wallet's
- * private and public receiving addresses, and every token it holds on each
- * side, each marked private or public, with the moment each side was read.
+ * private receiving address, and every token it holds on each side, each
+ * marked private or public, with the moment each side was read. **The public
+ * address is never handed over here**: a page holding it could follow every
+ * public payment to and from it on the network.
  *
- * **WHAT IT READS IS THE WALLET'S OWN.** The addresses are the chosen wallet's
+ * **WHAT IT READS IS THE WALLET'S OWN.** The address is the chosen wallet's
  * own (`owned`, the one value every other screen here derives from), and the
  * amounts are read by the same balance engines the wallet's own balance screen
  * runs, from the network, when this screen opens. Only a figure read after the
@@ -106,7 +108,7 @@ export const shownFrom = (owned: OwnedAddress, sides: { private: Side; public: S
   const asOf = (side: Side): number | null => (side.of === 'read' ? side.asOf : null);
   const amounts = (side: Side): readonly HeldAmount[] => (side.of === 'read' ? side.amounts : []);
   return {
-    addresses: { private: owned.address.bech32, public: owned.unshieldedBech32 },
+    addresses: { private: owned.address.bech32 },
     balances: [...amounts(sides.private), ...amounts(sides.public)],
     read: { private: asOf(sides.private), public: asOf(sides.public) },
   };
@@ -119,8 +121,9 @@ const sayAmount = (a: HeldAmount): ReactNode => (a.token === (a.visibility === '
 
 const moment = (ms: number): string => new Date(ms).toLocaleString();
 
+/** One side as the page sees it: its address only where the page is handed it (the private side), then its balance. */
 function SideShown({ visibility, address, side, shown }: {
-  readonly visibility: Visibility; readonly address: string; readonly side: Side; readonly shown: AddressesAndBalancesShown | null;
+  readonly visibility: Visibility; readonly address: string | null; readonly side: Side; readonly shown: AddressesAndBalancesShown | null;
 }): ReactNode {
   const title = visibility === 'private' ? 'Private' : 'Public';
   /* What is listed is what the press sends: once both sides are read it is read from the very value the press hands over. */
@@ -129,8 +132,12 @@ function SideShown({ visibility, address, side, shown }: {
     : shown.balances.filter((b) => b.visibility === visibility);
   return (
     <div className="flex flex-col gap-1" data-side={visibility}>
-      <p className="m-0 text-sm text-muted-foreground">{`${title} address`}</p>
-      <p className="m-0 font-mono break-all text-sm" data-side-address>{address}</p>
+      {address !== null && (
+        <>
+          <p className="m-0 text-sm text-muted-foreground">{`${title} address`}</p>
+          <p className="m-0 font-mono break-all text-sm" data-side-address>{address}</p>
+        </>
+      )}
       <p className="m-0 text-sm text-muted-foreground">{`${title} balance`}</p>
       {side.of === 'reading' && (
         <p className="m-0 text-sm text-muted-foreground" data-side-reading>Reading this from the network.</p>
@@ -165,7 +172,7 @@ export function ApproveAddressesAndBalances({
 }: {
   readonly request: AddressesAndBalancesRequest;
   readonly identity: Identity;
-  /** The wallet chosen on screen: its addresses are the ones shown and sent. */
+  /** The wallet chosen on screen: its private address is the one shown and sent. */
   readonly owned: OwnedAddress;
   readonly channel: Channel | null;
   readonly consent: Consent;
@@ -209,12 +216,12 @@ export function ApproveAddressesAndBalances({
     /* What went, as it went: the answer is kept with the stage, and a later reading never changes this screen. */
     return (
       <>
-        <h1 ref={sentHeading} tabIndex={-1} data-shown-heading>{`You showed ${request.requester.origin} your wallet’s addresses and balances`}</h1>
+        <h1 ref={sentHeading} tabIndex={-1} data-shown-heading>{`You showed ${request.requester.origin} your wallet’s private address and balances`}</h1>
         <p className="lede" data-shown>
-          {`On ${moment(stage.at)} this wallet showed the page the addresses and balances below. Nothing was signed and nothing was paid.`}
+          {`On ${moment(stage.at)} this wallet showed the page the private address and balances below. Nothing was signed and nothing was paid.`}
         </p>
         <SideShown visibility="private" address={stage.shown.addresses.private} side={sideSent(stage.shown, 'private')} shown={stage.shown} />
-        <SideShown visibility="public" address={stage.shown.addresses.public} side={sideSent(stage.shown, 'public')} shown={stage.shown} />
+        <SideShown visibility="public" address={null} side={sideSent(stage.shown, 'public')} shown={stage.shown} />
         <p style={{ marginTop: '1.5rem' }}><a href={hrefOf('home')}>&larr; Your wallet</a></p>
       </>
     );
@@ -222,7 +229,7 @@ export function ApproveAddressesAndBalances({
 
   return (
     <>
-      <h1 data-headline>{`Show ${request.requester.origin} your wallet’s addresses and balances`}</h1>
+      <h1 data-headline>{`Show ${request.requester.origin} your wallet’s private address and balances`}</h1>
       {stage.of === 'refused' && (
         <StatusAlert tone="danger" title="Nothing was shown to the page">
           <p className="m-0" data-addresses-refused>{stage.says}</p>
@@ -234,10 +241,11 @@ export function ApproveAddressesAndBalances({
         description="Exactly this, and only after you press. The page can keep it."
       >
         <SideShown visibility="private" address={owned.address.bech32} side={sides.private} shown={shown} />
-        <SideShown visibility="public" address={owned.unshieldedBech32} side={sides.public} shown={shown} />
+        <SideShown visibility="public" address={null} side={sides.public} shown={shown} />
         <p className="m-0 text-sm text-muted-foreground" data-nothing-signed>
           Nothing is signed, and nothing can be paid with this. The page cannot see your private balance unless you press
-          Show them, and once it has both addresses it can tell they belong to the same person.
+          Show them. This answer does not hand the page your public address, but anyone can read public amounts on the
+          network, so an exact public amount can point to it.
         </p>
       </Section>
       {whoIsAsking}

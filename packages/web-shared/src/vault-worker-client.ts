@@ -120,6 +120,7 @@ export type VaultAsk =
   | { id: number; network: string; ask: 'chain-at-one-block'; vault: string; account: string; indexer: { indexerUri: string; indexerWsUri: string } }
   | { id: number; network: string; ask: 'events-of'; transactionHash: string; indexer: { indexerUri: string; indexerWsUri: string } }
   | { id: number; network: string; ask: 'created-by'; vault: string; commitment: string; indexer: { indexerUri: string; indexerWsUri: string } }
+  | { id: number; network: string; ask: 'public-deposit-landed'; vault: string; transaction: string; indexer: { indexerUri: string; indexerWsUri: string } }
   | { id: number; network: string; ask: 'own-seat'; material: SignerMaterial }
   | { id: number; network: string; ask: 'warm-proving' }
   /* The founding signer's seat in a company made on this device: its leaf, and the scope it was made under. */
@@ -264,6 +265,7 @@ export type VaultAnswer =
   | Answered<'chain-at-one-block', { chain: PayoutChainOnTheWire | null }>
   | Answered<'events-of', { events: EventOnTheWire[] }>
   | Answered<'created-by', { found: { transactionHash: string; events: EventOnTheWire[] } | null }>
+  | Answered<'public-deposit-landed', { found: { transactionHash: string } | null }>
   | Answered<'own-seat', { seat: string }>
   | Answered<'warm-proving', unknown>
   | Answered<'founding-seat', { seat: string; scope: string; publicKey: string }>
@@ -454,6 +456,13 @@ export interface VaultBuilderClient {
    * names; null while no transaction the chain lists for the vault does.
    */
   createdBy(input: { vault: string; commitment: string; indexer: { indexerUri: string; indexerWsUri: string } }): Promise<{ transactionHash: string; events: EventOnTheWire[] } | null>;
+  /**
+   * **WHETHER THE PUBLIC DEPOSIT THIS PERSON'S WALLET SIGNED HAS LANDED**, read in this worker at the indexer the wallet
+   * names: the transaction carrying an identifier of `transaction` (the finished deposit, base64, exactly as it was
+   * handed to the service), applied in full, calling `vault`'s public deposit. Null while the chain shows no such
+   * transaction. The hash the service answered with is never asked for: it is the service's word.
+   */
+  publicDepositLanded?(input: { vault: string; transaction: string; indexer: { indexerUri: string; indexerWsUri: string } }): Promise<{ transactionHash: string } | null>;
   /**
    * The seat this signer's own key material makes on the company's account: the
    * leaf the account holds for them, worked out here and not taken from any record.
@@ -753,7 +762,7 @@ const START_MS = 30_000;
 
 /** The asks that only read the network and send nothing: each is held to SERVICE_READ_BOUND_MS. Every other ask may be a send or a proof and is never cut short. */
 const CHAIN_READS: ReadonlySet<string> = new Set([
-  'vault-as-deployed', 'vault-on-chain', 'chain-at-one-block', 'events-of', 'created-by', 'anchors-on-chain', 'rounds-on-chain',
+  'vault-as-deployed', 'vault-on-chain', 'chain-at-one-block', 'events-of', 'created-by', 'public-deposit-landed', 'anchors-on-chain', 'rounds-on-chain',
   'account-call-chain', 'account-presence',
 ]);
 
@@ -1003,6 +1012,7 @@ function clientFrom(ask: Ask, proofsInProgress: () => readonly ProofInProgress[]
     chainAtOneBlock: async (input) => (await ask({ ask: 'chain-at-one-block', ...input })).chain,
     eventsOf: async (input) => (await ask({ ask: 'events-of', ...input })).events,
     createdBy: async (input) => (await ask({ ask: 'created-by', ...input })).found,
+    publicDepositLanded: async (input) => (await ask({ ask: 'public-deposit-landed', ...input })).found,
     ownSeat: async (material) => (await ask({ ask: 'own-seat', material })).seat,
     foundingSeat: async (material) => {
       const a = await ask({ ask: 'founding-seat', material });

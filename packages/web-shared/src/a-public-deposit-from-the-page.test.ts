@@ -1,10 +1,11 @@
 /**
  * **A PUBLIC TOKEN PUT INTO A VAULT FROM THE PAGE, AS IT IS.** The page's second
- * source ends in the vault's public deposit through the same dispatcher as the
- * private source, and the page's public step builds, asks the wallet and sends
- * exactly one public deposit of the token and amount asked, recording nothing
- * on this device. The service and the vault worker are stood in; the step and
- * the dispatcher are the page's own. The same deposit over the real ledger,
+ * source ends in the vault's public deposit, and the page's public step builds,
+ * asks the wallet and sends exactly one public deposit of the token and amount
+ * asked, recording nothing on this device, and says it is done only once the
+ * chain at the wallet's indexer shows it. The service and the vault worker are
+ * stood in; the step and the sources are the page's own, run through
+ * `depositFromSource`. The same deposit over the real ledger,
  * the real wallet balancing and the service's own routes is watched in
  * `contracts/test/a-private-payment-from-the-page.test.ts`.
  */
@@ -16,14 +17,15 @@ import type { WireRecord } from '../../../src/midnight/sealed-record-wire.js';
 import { MemorySealedPoolStore } from '../../../src/midnight/vault-pool.js';
 import { newWrappingKeypair, type Hex } from '../../../src/core/crypto.js';
 import {
-  DEPOSIT_TIME_TO_LIVE_MS, PublicDepositNotYetSeen, type DepositInFlight, type DepositsInFlight, type VaultChainView, type ServedVaultChain, type VaultService,
+  DEPOSIT_TIME_TO_LIVE_MS, PublicDepositNotYetSeen, depositIntoCompanyVault, depositPubliclyIntoCompanyVault, type DepositInFlight, type DepositsInFlight, type VaultChainView, type ServedVaultChain, type VaultService,
 } from './vault-operation.js';
-import type { VaultBuilderClient } from './vault-worker-client.js';
+import { VaultAskFailed, type VaultBuilderClient } from './vault-worker-client.js';
+import { ReadRanOutOfTime } from './read-bound.js';
 import { inFlightInMemory, sealedOnThisDevice, type SealedInFlight } from './in-flight-on-this-device.js';
 import { whyNotOnlyThisPublicDeposit } from './vault-builder.js';
 import { vaultServiceFor } from './vault-page-doors.js';
 import {
-  depositFromSource, depositKindFor, privateTokenFromTheWallet, publicTokenFromTheWallet, sourceFor, type DepositAsk, type PaidIn,
+  depositFromSource, privateTokenFromTheWallet, publicTokenFromTheWallet, type DepositAsk, type PaidIn,
 } from './deposit-source.js';
 /** A test stand-in for what a chain read says: the device's view, the service's answer and the one knob the worker stand-in turns into `started`. */
 type TestView = VaultChainView & ServedVaultChain & { readonly started?: boolean };
@@ -44,6 +46,9 @@ const COMMITTEE_KEYS = [
 ];
 const COMMITTEE_THRESHOLD = 2;
 const PARAMS = btoa('midnight:ledger-parameters[v8]:stand-in');
+/* The hash the chain at the wallet's indexer gives the deposit, and the one the service answers with: never the same. */
+const CHAIN_HASH = 'c4'.repeat(32);
+const WALLETS_INDEXER = { indexerUri: 'https://indexer.example/api/v3/graphql', indexerWsUri: 'wss://indexer.example/api/v3/graphql/ws' };
 
 /** A row for a token, named `symbol`, in the forms given: each form is the token itself or absent. */
 const asset = (symbol: string, shielded: string | null, unshielded: string | null): Asset => ({
@@ -61,10 +66,13 @@ const paid = (amount: string, token = PUBLIC_TOKEN) => async (ask: DepositAsk): 
 /** A stood-in service and worker, the page's doors, and every call to them written down. */
 const setUp = (over: {
   view?: Partial<TestView>; send?: VaultService['depositPublicly']; noBuilder?: boolean;
+  /* What the worker finds at the wallet's indexer on each look for the deposit, in turn; the last answer repeats. Absent: no way to look. */
+  landed?: ReadonlyArray<{ transactionHash: string } | null | Error> | 'cannot look';
   /* The keys and threshold the vault's own state names, in place of the account's committee. */
   authority?: { committee: { tag: string; value: string }[]; threshold: number } | null;
 } = {}) => {
   const log: string[] = [];
+  const looks: unknown[] = [];
   const view = (): TestView => ({
     vault: VAULT, onChain: true, committee: null, heldByCommittee: true, started: true, state: 'AAAA', notes: [], everCreated: [],
     ...over.view,
@@ -108,6 +116,17 @@ const setUp = (over: {
         return { tx: 'PROVEN' };
       },
     }),
+    ...(over.landed === 'cannot look' ? {} : {
+      /* The worker's look at the wallet's indexer for the transaction the wallet signed; the real one is `the-chain-shows-a-public-deposit.test.ts`'s. */
+      publicDepositLanded: async (i: { vault: string; transaction: string; indexer: unknown }) => {
+        looks.push(i);
+        log.push('looked');
+        const answers = over.landed ?? [{ transactionHash: CHAIN_HASH }];
+        const a = answers[Math.min(looks.length - 1, answers.length - 1)];
+        if (a instanceof Error) throw a;
+        return a ?? null;
+      },
+    }),
   } as unknown as VaultBuilderClient;
   const kept = new Map<WireRecord, MemorySealedPoolStore>();
   const records = (r: WireRecord) => {
@@ -130,7 +149,7 @@ const setUp = (over: {
     }),
     inFlight: sealedOnThisDevice<DepositInFlight>(inFlightInMemory(inFlight), { signerId: 'ada', wrappingSecret: wrapping.secret }, 'deposit') as DepositsInFlight,
   };
-  return { log, doors, inFlight };
+  return { log, doors, inFlight, looks };
 };
 
 describe('A PUBLIC DEPOSIT FROM THE PAGE', () => {
@@ -152,8 +171,8 @@ describe('A PUBLIC DEPOSIT FROM THE PAGE', () => {
     const source = publicTokenFromTheWallet(async (ask) => { asked.push(ask); log.push('wallet'); return paid('40')(ask); }, REGISTRY);
     const done = await depositFromSource(doors, VAULT, source, { code: PUBLIC_TOKEN, value: 40n });
     /* RED WHEN: the public source goes down the private step, is built with another token, amount or vault, or is sent anywhere but the public route. */
-    expect(log).toEqual(['read here', `built ab ${PUBLIC_TOKEN.slice(0, 2)} 40 true`, 'wallet', `sent PROVEN+public-coins ${PUBLIC_TOKEN.slice(0, 2)} 40`]);
-    expect(done).toEqual({ txRef: 'r1', transactionHash: 'h1', token: PUBLIC_TOKEN, value: 40n });
+    expect(log).toEqual(['read here', `built ab ${PUBLIC_TOKEN.slice(0, 2)} 40 true`, 'wallet', `sent PROVEN+public-coins ${PUBLIC_TOKEN.slice(0, 2)} 40`, 'looked']);
+    expect(done).toEqual({ txRef: 'r1', transactionHash: CHAIN_HASH, token: PUBLIC_TOKEN, value: 40n });
     /* RED WHEN: the wallet is handed anything beyond the company, its account, the vault and the proven deposit. */
     expect(asked).toEqual([{ company: LABEL, account: ACCOUNT, vault: VAULT, transaction: 'PROVEN' }]);
     /* RED WHEN: a public deposit keeps a record in this browser, as a private one must. */
@@ -184,10 +203,12 @@ describe('A PUBLIC DEPOSIT FROM THE PAGE', () => {
     }
   });
 
-  it('A VAULT THAT TAKES NO MONEY, OR A PAGE THAT CANNOT BUILD OR SEND A PUBLIC DEPOSIT, BUILDS NOTHING AND ASKS THE WALLET FOR NOTHING', async () => {
+  it('A VAULT THAT TAKES NO MONEY, OR A PAGE THAT CANNOT BUILD, SEND OR WATCH FOR A PUBLIC DEPOSIT, BUILDS NOTHING AND ASKS THE WALLET FOR NOTHING', async () => {
     for (const [why, over, says] of [
       ['not started', { view: { started: false } }, /^this vault has not been started/],
       ['no public build in the worker', { noBuilder: true }, /cannot build a public deposit/],
+      /* RED WHEN: a public deposit is started on a page that has no way to see it arrive on the chain. */
+      ['no way to watch the chain for it', { landed: 'cannot look' }, /^this page cannot watch the chain for a public deposit, so nothing was built or sent\. No money moved\./],
     ] as const) {
       const { log, doors } = setUp(over as never);
       const source = publicTokenFromTheWallet(async (ask) => { log.push('wallet'); return paid('40')(ask); }, REGISTRY);
@@ -335,26 +356,88 @@ describe('THE PAGE ASKS THE SERVICE FOR A PUBLIC DEPOSIT ON ITS OWN ROUTE', () =
   });
 });
 
-describe('THE WAY AN ASSET GOES IN, AS THE PAGE CHOOSES IT', () => {
-  it('AN ASSET WITH BOTH FORMS GOES IN THE WAY ASKED; AN ASSET WITH ONE GOES IN ONLY THAT WAY, AND SAYS WHY THE OTHER IS CLOSED', () => {
-    /* RED WHEN: the page's choice sends an asset another way than the one asked, while that way is open. */
-    expect(depositKindFor(BOTH_TOKEN, 'private', REGISTRY)).toEqual({ goesIn: 'private', whyNot: { private: null, public: null } });
-    expect(depositKindFor(BOTH_TOKEN, 'public', REGISTRY)).toEqual({ goesIn: 'public', whyNot: { private: null, public: null } });
-    /* RED WHEN: an asset with only a public form is put in privately, or a private-only one publicly, or the reason is lost. */
-    const onlyPublic = depositKindFor(PUBLIC_TOKEN, 'private', REGISTRY);
-    expect(onlyPublic.goesIn).toBe('public');
-    expect(onlyPublic.whyNot.private).toMatch(/^PUB has no private form on Midnight/);
-    expect(onlyPublic.whyNot.public).toBeNull();
-    const onlyPrivate = depositKindFor(PRIVATE_TOKEN, 'public', REGISTRY);
-    expect(onlyPrivate.goesIn).toBe('private');
-    expect(onlyPrivate.whyNot.public).toMatch(/^PRV has no public form on Midnight/);
+describe('A PUBLIC DEPOSIT IS DONE ONLY WHEN THE CHAIN AT THE WALLET\'S INDEXER SHOWS IT', () => {
+  const put = (doors: ReturnType<typeof setUp>['doors'], stages?: string[]) => depositPubliclyIntoCompanyVault({
+    ...doors,
+    pay: async (ask: unknown) => paid('40')(ask as DepositAsk),
+    ...(stages === undefined ? {} : { progress: (s: string) => { stages.push(s); } }),
+  } as never, VAULT, { token: PUBLIC_TOKEN as Hex, value: 40n });
+
+  it('WAITS FOR THE TRANSACTION THE WALLET SIGNED, LOOKED FOR AT THE WALLET\'S INDEXER, AND REPORTS THE CHAIN\'S HASH OF IT, NOT THE SERVICE\'S', async () => {
+    const { doors, looks } = setUp({ landed: [null, null, { transactionHash: CHAIN_HASH }] });
+    const done = await put(doors);
+    /* RED WHEN: the page says a public deposit is done on the service's answer alone, before the chain shows it. */
+    expect(looks).toHaveLength(3);
+    /* RED WHEN: the page looks for anything but the very transaction the wallet signed, or looks anywhere but the indexer the wallet names. */
+    for (const look of looks) expect(look).toEqual({ vault: VAULT, transaction: 'PROVEN+public-coins', indexer: WALLETS_INDEXER });
+    /* RED WHEN: the hash the service answered with is reported as the deposit's. */
+    expect(done.transactionHash).toBe(CHAIN_HASH);
   });
 
-  it('THE SOURCE FOR A WAY IS THAT WAY\'S SOURCE, AND NO OTHER', () => {
-    /* RED WHEN: choosing "Privately" builds the public source, or the reverse. */
-    expect(sourceFor('private', paid('1'), REGISTRY).endsIn).toBe('private-deposit');
-    expect(sourceFor('public', paid('1'), REGISTRY).endsIn).toBe('public-deposit');
-    expect(sourceFor('public', paid('1'), REGISTRY).money({ code: BOTH_TOKEN, value: 1n }).token).toBe(BOTH_PUBLIC);
-    expect(sourceFor('private', paid('1'), REGISTRY).money({ code: BOTH_TOKEN, value: 1n }).token).toBe(BOTH_PRIVATE);
+  it('A DEPOSIT THE CHAIN HAS NOT SHOWN BY THE END OF THE WAIT IS NOT DONE: IT SAYS IT MAY HAVE BEEN SENT, AND UNTIL WHEN', async () => {
+    for (const [why, landed, says] of [
+      ['the chain never shows it', [null], null],
+      ['every read runs out of time', [new ReadRanOutOfTime('The network (public-deposit-landed)')], /did not answer within/],
+      ['the worker is too slow every time', [new VaultAskFailed('public-deposit-landed', 'took-too-long', 'the worker said nothing')], /the worker said nothing/],
+      ['the worker stops every time', [new VaultAskFailed('public-deposit-landed', 'stopped', 'the worker stopped')], /the worker stopped/],
+      ['the indexer cannot be read every time', [new VaultAskFailed('public-deposit-landed', 'answered', 'the indexer answered HTTP 503', { name: 'NoteIndexUnreadable' })], /HTTP 503/],
+    ] as const) {
+      const { doors, looks } = setUp({ landed });
+      const stages: string[] = [];
+      const e = await put({ ...doors, clock: () => 5_000 } as never, stages).catch((x: unknown) => x);
+      /* RED WHEN: a public deposit the chain never showed is reported done, or ends in a failure that reads as nothing sent. */
+      expect(e, why).toBeInstanceOf(PublicDepositNotYetSeen);
+      expect((e as PublicDepositNotYetSeen).until, why).toBe(5_000 + DEPOSIT_TIME_TO_LIVE_MS);
+      expect(stages, why).not.toContain('done');
+      /* RED WHEN: a read that may come right if asked again ends the wait early instead of being asked until the wait is over. */
+      expect(looks.length, why).toBe(3);
+      /* RED WHEN: the last reason the page could not see the deposit is dropped, so support cannot tell a slow indexer from a page that could not look. */
+      if (says === null) expect((e as Error).message, why).not.toMatch(/Details for support/);
+      else expect((e as Error).message, why).toMatch(new RegExp(`Details for support: .*${says.source}`, 'u'));
+    }
+  });
+
+  it('A LOOK THAT CAN NEVER SUCCEED ENDS THE WAIT AT ONCE, NOT DONE, AND SAYS WHY', async () => {
+    const cases = [
+      ['the wallet names no indexer', [{ transactionHash: CHAIN_HASH }], true, 0, /your wallet did not say which indexer it reads the chain through/],
+      ['the indexer refuses the question', [new VaultAskFailed('public-deposit-landed', 'answered', 'the indexer will not take this question', { name: 'NoteIndexUnaskable' })], false, 1, /will not take this question/],
+      ['the signed deposit cannot be read, or names no identifier', [new VaultAskFailed('public-deposit-landed', 'answered', 'the deposit your wallet signed names no identifier')], false, 1, /names no identifier/],
+    ] as const;
+    for (const [why, landed, noIndexerOnceSent, looked, says] of cases) {
+      const { doors, looks, log } = setUp({ landed: [...landed] });
+      /* The wallet names its indexer while the vault is read and the deposit built, and names none once it is sent. */
+      const indexer = noIndexerOnceSent
+        ? async () => (log.some((l) => l.startsWith('sent')) ? null : doors.indexer())
+        : doors.indexer;
+      const stages: string[] = [];
+      const e = await put({ ...doors, indexer, clock: () => 5_000 } as never, stages).catch((x: unknown) => x);
+      /* RED WHEN: a deposit the page could not look for is reported done, or as one that was never sent. */
+      expect(e, why).toBeInstanceOf(PublicDepositNotYetSeen);
+      expect(stages, why).not.toContain('done');
+      /* RED WHEN: a look that answers the same way every time is asked again until the wait runs out. */
+      expect(looks.length, why).toBe(looked);
+      /* RED WHEN: the person and support are not told why the page could not look. */
+      expect((e as Error).message, why).toMatch(new RegExp(`Details for support: .*${says.source}`, 'u'));
+    }
+  });
+
+  it('SAYS EACH STEP AS IT STARTS, IN ORDER, CHECKING THE VAULT BEFORE IT IS READ', async () => {
+    const pub = setUp();
+    const stages: string[] = [];
+    const say = (s: string) => { stages.push(s); pub.log.push(`stage ${s}`); };
+    await depositPubliclyIntoCompanyVault({ ...pub.doors, pay: async (ask: unknown) => paid('40')(ask as DepositAsk), progress: say } as never,
+      VAULT, { token: PUBLIC_TOKEN as Hex, value: 40n });
+    /* RED WHEN: a public deposit's steps are said out of order, or one the page lists is never said. */
+    expect(stages).toEqual(['checking the vault', 'building the deposit', 'asking your wallet', 'sending the deposit', 'waiting for the chain', 'done']);
+    /* RED WHEN: the vault is read before the person is told it is being checked. */
+    expect(pub.log.slice(0, 2)).toEqual(['stage checking the vault', 'read here']);
+    expect(pub.log.indexOf('stage waiting for the chain')).toBeLessThan(pub.log.indexOf('looked'));
+
+    const priv = setUp();
+    /* The private deposit stops at its pool here, after the vault is checked; only its first step is watched. */
+    await depositIntoCompanyVault({ ...priv.doors, progress: (s: string) => { priv.log.push(`stage ${s}`); } } as never,
+      VAULT as never, { token: PRIVATE_TOKEN, value: 40n } as never).catch(() => null);
+    /* RED WHEN: a private deposit reads the vault before saying it is checking it. */
+    expect(priv.log.slice(0, 2)).toEqual(['stage checking the vault', 'read here']);
   });
 });

@@ -8,13 +8,17 @@
  *
  *   · `'private-deposit'` (`depositIntoCompanyVault`): checks the vault and the
  *     chain, chooses and records the coin on this device, builds and proves the
- *     deposit in the vault worker, sends it, and records it once the chain holds
- *     it;
+ *     deposit in the vault worker, has the source pay it in, sends it, waits
+ *     until the chain at the indexer the person's wallet names holds it, and
+ *     records it;
  *   · `'public-deposit'` (`depositPubliclyIntoCompanyVault`): checks the vault
  *     and the chain, builds and proves the vault's public deposit of one token
- *     and one amount in the vault worker, and sends it. No coin is chosen and
- *     nothing is recorded on this device: the chain's public balance of the
- *     vault is the only record of public money.
+ *     and one amount in the vault worker, has the source pay it in, checks the
+ *     wallet paid exactly that, sends it, and waits until the chain at the
+ *     indexer the person's wallet names shows it; one not seen in time is
+ *     reported as possibly sent, never as done. No coin is chosen and nothing
+ *     is recorded on this device: the chain's public balance of the vault is
+ *     the only record of public money.
  *
  * A source is given two things to do and nothing else:
  *
@@ -28,8 +32,10 @@
  * **TWO SOURCES ARE BUILT, BOTH PAID IN BY THE SIGNER'S OWN WALLET:** a private
  * token the company already holds (`privateTokenFromTheWallet`), and a public
  * token the company already holds, put in as it is (`publicTokenFromTheWallet`).
- * Another source is another value of this interface, passed to
- * `depositFromSource`; neither the sources nor the vault's steps change for it.
+ * The page's deposit (`putMoneyIn`) takes only a source's `money`, and runs the
+ * vault's step for the way the person picked, never the other.
+ * `depositFromSource` runs the step a source ends in; nothing on the page calls
+ * it, and the tests of the vault's two steps deposit through it.
  */
 import type { Hex } from '../../../src/core/crypto.js';
 import type { AccountAddress, CompanyLabel, VaultAddress } from 'midnight-identity/profile/company-label';
@@ -126,36 +132,6 @@ export function publicTokenFromTheWallet(
     },
     payIn: ({ company, account, vault, transaction }) => pay({ company, account, vault, transaction }),
   };
-}
-
-/** How money goes into a vault from the signer's wallet: privately, as a private token, or publicly, as a public one. */
-type DepositKind = 'private' | 'public';
-
-/**
- * **HOW AN ASSET GOES IN, GIVEN THE WAY A PERSON ASKED FOR.** An asset with only
- * one form on Midnight goes in only that way, whatever was asked; `whyNotOther`
- * says why the other way is closed, in the asset's own words, or is `null` when
- * both are open.
- */
-export function depositKindFor(
-  code: string, asked: DepositKind, registry: AssetRegistry = assets,
-): { goesIn: DepositKind; whyNot: Record<DepositKind, string | null> } {
-  const found = registry.enabled().find((a) => a.code === code);
-  const whyNot = (kind: DepositKind): string | null => {
-    if (found === undefined) return null;
-    const answer = ledgerFormOf(found, kind === 'private' ? 'shielded' : 'unshielded');
-    return answer.of === 'token' ? null : answer.why;
-  };
-  const both = { private: whyNot('private'), public: whyNot('public') };
-  const other: DepositKind = asked === 'private' ? 'public' : 'private';
-  return { goesIn: both[asked] === null ? asked : other, whyNot: both };
-}
-
-/** The page's source for the way an asset goes in, paid in by the signer's own wallet through `pay`. */
-export function sourceFor(
-  kind: DepositKind, pay: (ask: DepositAsk) => Promise<PaidIn>, registry: AssetRegistry = assets,
-): DepositSource {
-  return kind === 'public' ? publicTokenFromTheWallet(pay, registry) : privateTokenFromTheWallet(pay, registry);
 }
 
 /**

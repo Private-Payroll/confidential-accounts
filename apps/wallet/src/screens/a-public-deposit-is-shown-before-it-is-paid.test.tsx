@@ -130,6 +130,40 @@ describe('A PAGE ASKING THIS WALLET TO PAY FOR A PUBLIC DEPOSIT', () => {
     expect(answers).toEqual([]);
   });
 
+  it('A PUBLIC DEPOSIT NEVER SAYS IT IS PROVING, TO THE PAGE OR ON ITS OWN SCREEN, AND STILL TELLS THE PAGE IT IS AT WORK', async () => {
+    const log: string[] = []; const answers: unknown[] = []; const progress: string[] = [];
+    const watching: { to: ((e: { op: 'prove' | 'check'; at: 'start' | 'end' }) => void) | null } = { to: null };
+    let release: (v: unknown) => void = () => {};
+    const held = new Promise((res) => { release = res; });
+    const plain = doorsWith(log);
+    const make = doorsWith(log, { balanceUnboundTransaction: (async (...a: unknown[]) => {
+      await held;
+      return (await plain().facade()).balanceUnboundTransaction(...(a as [never, never, never]));
+    }) as never });
+    const doors = (): BalanceDoors => ({ ...make(), watchProofs: (w) => { watching.to = w; return () => { watching.to = null; }; } });
+    render(
+      <ApproveBalance readLabel={carries}
+        request={ask} identity={identity} account={0} channel={recordingChannel(answers, progress as never)} consent={{ ok: true } as never}
+        whoIsAsking={<p>asker</p>} whichWallet={<p>picker</p>} onDecline={() => {}}
+        doorsFor={doors} now={() => NOW} />);
+    await screen.findByText('2.5 NIGHT, from your public balance');
+    fireEvent.click(document.querySelector('[data-pay]')!);
+    await settled(10);
+    watching.to?.({ op: 'prove', at: 'start' });
+    watching.to?.({ op: 'prove', at: 'end' });
+    await settled(5);
+    /* RED WHEN: a public deposit, which makes no proof, tells the page the wallet is proving. */
+    expect(progress).not.toContain('proving');
+    /* RED WHEN: the page hears nothing from a wallet that is adding public coins, so its silence clock runs out. */
+    expect(progress.length).toBeGreaterThan(0);
+    /* RED WHEN: a public deposit's own screen says it is proving. */
+    expect(document.querySelector('[data-proving]')).toBeNull();
+    expect(document.querySelector('[data-paying]')?.textContent).toMatch(/^Adding your public coins and signing in this browser\./);
+    release(null);
+    await settled(20);
+    expect(answers.length).toBe(1);
+  });
+
   it('WHEN WHAT THE WALLET WOULD ADD IS NOT WHAT IT SHOWED, NOTHING IS SIGNED OR HANDED BACK', async () => {
     const log: string[] = []; const answers: unknown[] = [];
     renderWith(doorsWith(log, {

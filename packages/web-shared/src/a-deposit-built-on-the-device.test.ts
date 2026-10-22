@@ -2,8 +2,8 @@
  * **A PRIVATE DEPOSIT FROM THE PAGE IS BUILT ON THE DEVICE, AND NOTHING IT SENDS
  * CARRIES THE NONCE, THE SECRET IT COMES FROM, OR THE UNPROVEN TRANSACTION.**
  *
- * The page's own deposit (`depositFromSource`, with the page's source, ending
- * in `depositIntoCompanyVault`) runs with the worker's
+ * The page's own private step (`depositIntoCompanyVault`, reached through
+ * `depositFromSource` with the page's source) runs with the worker's
  * own handler (`answerVaultAsk`) behind the page's own client, the vault's real
  * compiled contract and verifier keys, and the ledger's own transaction
  * builder. Everything that leaves the page is caught: every call to the

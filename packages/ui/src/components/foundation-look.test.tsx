@@ -217,6 +217,13 @@ describe('the table', () => {
     expect(all(container, 'tbody tr').map((r) => r.dataset.row)).toEqual(['r1', 'r4', 'r7', 'r10']);
   });
 
+  /* RED WHEN: a filter marked as not counted still shows a count (a number of the rows that were read said as the number of all of them), or the others lose theirs. */
+  it('leaves the count off a filter marked as not counted, and keeps it on the others', () => {
+    const { container } = table({ filters: [{ id: 'all', label: 'All', keeps: () => true, counted: false }, { id: 'done', label: 'Done', keeps: (r) => r.done }] });
+    const tabs = all(container, '[data-slot=tabs-list] [data-filter]');
+    expect(tabs.map((t) => [t.dataset.filter, q(t, '[data-slot=count-pill]')?.textContent ?? null])).toEqual([['all', null], ['done', '4']]);
+  });
+
   /* RED WHEN: the table shows every row at once past a page, or its pages do not move forward and back. */
   it('shows its rows a page at a time', async () => {
     const { container } = table();
@@ -393,6 +400,7 @@ describe('loading states', () => {
     'dialog.tsx': 'an overlay; what it holds has its own loading state',
     'dropdown-menu.tsx': 'a menu of choices the page already has',
     'empty-state.tsx': 'shown once a read has finished with nothing in it',
+    'input-group.tsx': 'a field the person types into, with the buttons beside it',
     'input.tsx': 'a field the person types into',
     'item.tsx': 'one row of something the page already holds; a list still being read shows its section\'s loading state',
     'kbd.tsx': 'the keys of a shortcut, fixed',
@@ -406,6 +414,7 @@ describe('loading states', () => {
     'sheet.tsx': 'an overlay; what it holds has its own loading state',
     'sidebar.tsx': 'the menu, drawn from the list of pages the application holds before its first frame',
     'skeleton.tsx': 'the bar every loading state is made of',
+    'spinner.tsx': 'the mark inside a button that a press has been taken, drawn while the press waits',
     'soon-action.tsx': 'an action not built yet; nothing is read to draw it',
     'table.tsx': 'the rows of the kit\'s table, which has its own loading state',
     'tabs.tsx': 'a page\'s own tabs, from what the page already holds',

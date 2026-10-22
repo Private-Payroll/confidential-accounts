@@ -7,16 +7,19 @@ import {
 } from 'vaults-ui';
 import { COLUMN_SIZE, DataTable, type DataTableColumn, type DataTableFilter } from 'vaults-ui/data-table';
 import { isPending, PendingPill, useStandingSays, VaultName } from '../records/vault-pending.js';
-import type { CompanyRecords } from '../adapters/company-records.js';
+import type { CompanyRecords, VaultRow } from '../adapters/company-records.js';
+import { DepositActions, DepositStrip } from '../actions/deposit.js';
+import { PRIVATE_MONEY } from '../adapters/vault-private-money.js';
 import { PAGE } from '../pages.js';
 import { PageLink, useCurrentPage } from '../router.js';
-import { MONEY, PaidWords, ReadOf, UnbuiltAction, useDay, useMonth, useVaultMoney, WithRecords, type VaultMoney } from '../records/parts.js';
+import { MONEY, PaidWords, PrivateMoneyUnshown, ReadOf, UnbuiltAction, useDay, useMonth, useVaultMoney, WithRecords, type VaultMoney } from '../records/parts.js';
 
 /**
  * A VAULT'S OWN PAGE: its name, with the Pending pill when it waits on
  * something and where it stands when it does not; the money it holds, in the
  * kit's table; its payouts; and depositing and checking the last deposit,
- * both not built yet and shown disabled.
+ * which open the right-hand panel (paying a vault's money out is not built
+ * yet and is shown disabled).
  *
  * ITS MONEY IS READ WHEN THE PAGE IS SHOWN, and can be read again: privately
  * on this device, with this signer's own keys, and publicly from the
@@ -25,8 +28,6 @@ import { MONEY, PaidWords, ReadOf, UnbuiltAction, useDay, useMonth, useVaultMone
  */
 export function Vault() {
   const t = useText();
-  const day = useDay();
-  const says = useStandingSays();
   const { params } = useCurrentPage();
   return (
     <div className="flex flex-col gap-6" data-screen="vault">
@@ -38,23 +39,7 @@ export function Vault() {
               const index = rows.findIndex((v) => v.vault === params.vault);
               const vault = rows[index];
               if (vault === undefined) return <p className="text-sm text-muted-foreground" data-no-vault>{t('vault.notFound')}</p>;
-              return (
-                <>
-                  <PageHeader
-                    title={<span className="flex flex-wrap items-center gap-2" data-vault={vault.vault}><span><VaultName company={records.id} vault={vault} number={index + 1} /></span><PendingPill vault={vault} /></span>}
-                    description={t('vaults.tile.created', { date: day(vault.createdAt) })}
-                    actions={(
-                      <>
-                        <UnbuiltAction data-action="deposit">{t('vault.deposit')}</UnbuiltAction>
-                        <UnbuiltAction data-action="check-last-deposit">{t('vault.checkLastDeposit')}</UnbuiltAction>
-                      </>
-                    )}
-                  />
-                  {isPending(vault.standing) ? null : <p className="text-sm" data-standing={vault.standing}>{says(vault.standing)}</p>}
-                  <MoneyHeld company={records.id} vault={vault.vault} />
-                  <Payouts records={records} vault={vault.vault} />
-                </>
-              );
+              return <VaultBody records={records} vault={vault} number={index + 1} />;
             }}
           </ReadOf>
         )}
@@ -63,7 +48,33 @@ export function Vault() {
   );
 }
 
-/** The ids of the money table's columns and filters, compared by the code and never shown. */
+
+/**
+ * THE VAULT THE PAGE SHOWS: its name, its two actions, a deposit that runs or has ended, its money and its payouts. A
+ * deposit that finishes makes the money below be read again.
+ */
+function VaultBody({ records, vault, number }: { records: CompanyRecords; vault: VaultRow; number: number }) {
+  const t = useText();
+  const day = useDay();
+  const says = useStandingSays();
+  const [deposited, setDeposited] = useState(0);
+  const company = records.id;
+  return (
+    <>
+      <PageHeader
+        title={<span className="flex flex-wrap items-center gap-2" data-vault={vault.vault}><span><VaultName company={company} vault={vault} number={number} /></span><PendingPill vault={vault} /></span>}
+        description={t('vaults.tile.created', { date: day(vault.createdAt) })}
+        actions={<DepositActions company={company} vault={vault.vault} />}
+      />
+      <DepositStrip company={company} vault={vault.vault} onDone={() => setDeposited((n) => n + 1)} />
+      {isPending(vault.standing) ? null : <p className="text-sm" data-standing={vault.standing}>{says(vault.standing)}</p>}
+      <MoneyHeld company={company} vault={vault.vault} deposited={deposited} />
+      <Payouts records={records} vault={vault.vault} />
+    </>
+  );
+}
+
+
 const HELD = { asset: 'asset', amount: 'amount', state: 'state', actions: 'actions', all: 'all', private: 'private', public: 'public' } as const;
 
 /** How often the time since the money was read is said again. */
@@ -75,7 +86,7 @@ interface HeldRow { id: string; amount: PrivateAmount | PublicAmount; private: b
 /** What the vault holds, a row an asset and state: those held privately first, each side in the order read. */
 function heldRows(money: VaultMoney): HeldRow[] {
   return [
-    ...(typeof money.private === 'string' ? [] : money.private.amounts.map((a) => ({ id: a.symbol + HELD.private, amount: a, private: true }))),
+    ...(money.private === MONEY.reading || money.private.of !== PRIVATE_MONEY.held ? [] : money.private.amounts.map((a) => ({ id: a.symbol + HELD.private, amount: a, private: true }))),
     ...(typeof money.public === 'string' ? [] : money.public.amounts.map((a) => ({ id: a.symbol + HELD.public, amount: a, private: false }))),
   ];
 }
@@ -105,20 +116,23 @@ function IconAction({ icon, label, disabled = false, onPress, ...marks }: { icon
  * with its balance, whether it is private or public, and sending it and
  * shielding or unshielding it, both not built yet and so disabled. Tabs show
  * every row, those held privately or those held publicly. Checking again is
- * on the title line, with how long ago it was read. A side that could not be
- * read says so under the table; a currency the registry does not know is
- * counted.
+ * on the title line, with how long ago it was read. Under the table, a side
+ * that could not be read says so, and for the private side says why; a
+ * vault that holds nothing privately yet and a private record that was not
+ * believed each say that; a currency the registry does not know is counted.
  */
-function MoneyHeld({ company, vault }: { company: string; vault: string }) {
+function MoneyHeld({ company, vault, deposited }: { company: string; vault: string; deposited: number }) {
   const t = useText();
   const language = useLanguage();
   const [asked, setAsked] = useState(0);
-  const money = useVaultMoney(company, vault, asked);
+  const money = useVaultMoney(company, vault, asked + deposited);
   const reading = money.private === MONEY.reading || money.public === MONEY.reading;
   const [readAt, setReadAt] = useState<Date | null>(null);
   const [now, setNow] = useState(() => new Date());
-  /* How long ago is said of the last read that read both sides; a read that failed does not make the page look fresher. */
-  const bothRead = typeof money.private !== 'string' && typeof money.public !== 'string';
+  /* How long ago is said of the last read that read both sides, a vault with nothing held yet counting as read; a read that failed, or a record not believed, does not make the page look fresher. */
+  const privateRead = money.private !== MONEY.reading && (money.private.of === PRIVATE_MONEY.held || money.private.of === PRIVATE_MONEY.nothingYet);
+  const publicRead = typeof money.public !== 'string';
+  const bothRead = privateRead && publicRead;
   useEffect(() => { if (bothRead) { const at = new Date(); setReadAt(at); setNow(at); } }, [bothRead, money]);
   useEffect(() => {
     const timer = setInterval(() => setNow(new Date()), TICK_MS);
@@ -140,10 +154,11 @@ function MoneyHeld({ company, vault }: { company: string; vault: string }) {
       ),
     },
   ];
+  /* A tab counts only a side that was read: a side not believed or that could not be read has no rows because they were not known, and its tab says no number rather than 0. A vault with nothing held yet was read, and holds nothing. */
   const filters: DataTableFilter<HeldRow>[] = [
-    { id: HELD.all, label: t('vault.money.all'), keeps: () => true },
-    { id: HELD.private, label: t('vault.money.private'), keeps: (r) => r.private },
-    { id: HELD.public, label: t('vault.money.public'), keeps: (r) => !r.private },
+    { id: HELD.all, label: t('vault.money.all'), keeps: () => true, counted: bothRead },
+    { id: HELD.private, label: t('vault.money.private'), keeps: (r) => r.private, counted: privateRead },
+    { id: HELD.public, label: t('vault.money.public'), keeps: (r) => !r.private, counted: publicRead },
   ];
   const rows = heldRows(money);
   const again = (
@@ -164,9 +179,10 @@ function MoneyHeld({ company, vault }: { company: string; vault: string }) {
           loading={reading}
           empty={!bothRead ? null : <EmptyState icon={SafeIcon}>{rows.length === 0 ? t('vaults.money.none') : t('vault.money.noneThisWay')}</EmptyState>}
         />
-        {money.private === MONEY.unreadable ? <p className="text-sm text-muted-foreground" data-unreadable="private">{t('vault.privateMoney.unreadable')}</p> : null}
+        {money.private === MONEY.reading || money.private.of === PRIVATE_MONEY.held ? null : <p className="text-sm text-muted-foreground"><PrivateMoneyUnshown money={money.private} /></p>}
+        {money.private === MONEY.reading || money.private.of !== PRIVATE_MONEY.held || money.private.unrecognised === 0 ? null : <p className="text-sm" data-unrecognised={money.private.unrecognised} data-side="private">{t('vault.privateMoney.unrecognised', { count: money.private.unrecognised })}</p>}
         {money.public === MONEY.unreadable ? <p className="text-sm text-muted-foreground" data-unreadable="public">{t('vault.publicMoney.unreadable')}</p> : null}
-        {typeof money.public === 'string' || money.public.unrecognised === 0 ? null : <p className="text-sm" data-unrecognised={money.public.unrecognised}>{t('vault.publicMoney.unrecognised', { count: money.public.unrecognised })}</p>}
+        {typeof money.public === 'string' || money.public.unrecognised === 0 ? null : <p className="text-sm" data-unrecognised={money.public.unrecognised} data-side="public">{t('vault.publicMoney.unrecognised', { count: money.public.unrecognised })}</p>}
       </div>
     </Section>
   );
