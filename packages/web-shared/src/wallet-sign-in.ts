@@ -1,7 +1,11 @@
-import { PROGRESS_SCHEMA, PROGRESS_STAGES, READY_PING } from 'midnight-identity/profile/channel';
+import {
+  ACT_CALL_SCHEMA, ACT_KEEP_SCHEMA, ACT_RELAY_SCHEMA, PROGRESS_SCHEMA, PROGRESS_STAGES, READY_PING,
+} from 'midnight-identity/profile/channel';
 import type { ProgressStage } from 'midnight-identity/profile/channel';
 import type { DisclosureResponse } from 'midnight-identity/profile/disclosure';
 import { signInAsk } from '../../../src/core/wallet-sign-in-ask.js';
+
+export type { ActAsked, ActOutcome } from './wallet-act.js';
 
 /**
  * OPENING THE WALLET AND ASKING WHO YOU ARE — the browser half.
@@ -19,7 +23,10 @@ import { signInAsk } from '../../../src/core/wallet-sign-in-ask.js';
  * **IT VERIFIES NOTHING.** The signature is checked on the server, because the
  * server is what mints a session and a check made by the thing being persuaded
  * is not a check. What happens here is the plumbing: open the wallet, wait for
- * it to say it is listening, send one ask, and take one answer.
+ * it to say it is listening, send one ask, and take one answer. An action the
+ * wallet runs whole (`actInTheWallet`, in `wallet-act.ts`) is the same
+ * conversation, with each transaction the wallet built relayed in between and
+ * its fate told back.
  *
  * **AND SO IT MUST NOT IMPORT THE THING THAT DOES.** This line
  * read `from '../../../src/core/wallet-identity.js'` and that one word is what left the
@@ -549,10 +556,16 @@ export function askWalletToSignIn(
  * a test, or a retry that is already inside one — and it is the shape the
  * click rule is about, so anything reaching for it should be sure it is not simply the old
  * order wearing a new name.
+ *
+ * **`hears` IS FOR AN ACTION ONLY** (`actInTheWallet`, `wallet-act.ts`): it is handed every
+ * progress message, every transaction, every copy of saved keys and every
+ * call to the service the wallet hands over while the ask is open. None is
+ * ever the answer, with or without it.
  */
 export function askWallet(
   view: Openable, walletOrigin: string, message: unknown,
   dialog: WalletDialog = openWalletDialog(view, walletOrigin),
+  hears?: (body: Readonly<Record<string, unknown>>) => void,
 ): Promise<unknown> {
   return new Promise<unknown>((resolve, reject) => {
     const opened = dialog.take();
@@ -652,6 +665,20 @@ export function askWallet(
         if (known !== null) lastStage = known;
         waitForTheWallet();
         dialog.saw?.(lastStage);
+        hears?.(body as Readonly<Record<string, unknown>>);
+        return;
+      }
+
+      /*
+       * **A TRANSACTION AN ACTION HANDS OVER IS THE WALLET AT WORK TOO**, and
+       * never the answer, and so are saved keys it hands back sealed and a
+       * call to the service it asks for: each restarts the wait and goes to
+       * whoever relays, keeps or calls.
+       */
+      if (body.schema === ACT_RELAY_SCHEMA || body.schema === ACT_KEEP_SCHEMA || body.schema === ACT_CALL_SCHEMA) {
+        if (!asked) return;
+        waitForTheWallet();
+        hears?.(body as Readonly<Record<string, unknown>>);
         return;
       }
 

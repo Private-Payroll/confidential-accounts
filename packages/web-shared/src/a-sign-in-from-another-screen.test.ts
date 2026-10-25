@@ -5,10 +5,10 @@ import type { Identity } from 'midnight-identity';
 import { READY_PING } from 'midnight-identity/profile/channel';
 import { parseAsk } from 'midnight-identity/profile/request';
 import type { KeyringRequest } from 'midnight-identity/profile/request';
-import { keyringKeyFor, keyringReleaseFor } from 'midnight-identity/profile/unlock';
-import { toHex, unseal } from '../../../src/core/crypto.js';
+import { unseal } from '../../../src/core/crypto.js';
 import { keyringAsk, KEYRING_PURPOSE } from '../../../src/core/wallet-unlock.js';
 import * as keyring from './keyring.js';
+import { foundedAsTheWalletAnswers, keyringAsTheWalletAnswers, savedKeysSealKey } from '../../../src/testing/a-wallet-founds-a-company.js';
 import type { Openable } from './wallet-sign-in.js';
 
 /**
@@ -23,8 +23,8 @@ import type { Openable } from './wallet-sign-in.js';
  * or saved.
  *
  * The wallet at the other end is the wallet's own code answering over the real
- * conversation; the company is made by the first press, with a builder that
- * stands in for the worker.
+ * conversation; the company is founded by the first press, as the wallet
+ * founds it.
  */
 const US = 'https://payroll.example';
 const WALLET = 'https://wallet.example';
@@ -58,7 +58,9 @@ class WalletAtTheOtherEnd implements Openable {
     try {
       const ask = parseAsk(message, US, Date.now());
       if (ask.kind === 'keyring') this.askedFor.push((ask as KeyringRequest).signedInAs ?? null);
-      answer = ask.kind === 'keyring' ? keyringReleaseFor(this.who, ask as KeyringRequest, Date.now(), this.holds) : { schema: 'a-sign-in' };
+      answer = ask.kind !== 'keyring' ? { schema: 'a-sign-in' }
+        : (ask as KeyringRequest).drawLabel ? foundedAsTheWalletAnswers(this.who, ask as KeyringRequest, this.holds)
+          : keyringAsTheWalletAnswers(this.who, ask as KeyringRequest, this.holds, Date.now());
     } catch {
       answer = { schema: 'nothing-given' };
     }
@@ -67,18 +69,10 @@ class WalletAtTheOtherEnd implements Openable {
 }
 
 /** The keyring key the wallet above gives this person. */
-const keyringHex = () => toHex(keyringKeyFor(identity, parseAsk(keyringAsk({
+const keyringHex = () => (savedKeysSealKey(identity, parseAsk(keyringAsk({
   name: 'n', rdns: 'r', purpose: KEYRING_PURPOSE, nonce: 'n', expiresAt: Date.now() + 60_000,
   person: PERSON, signedInAs: null, company: null, account: null,
 }), US, Date.now()) as KeyringRequest));
-
-const LEAF = 'ab'.repeat(32);
-
-/** What builds the account's deploy, standing in for the worker: the first press needs only the seat and the deploy. */
-const aBuilder = (): keyring.AccountCreationBuilder => ({
-  foundingSeat: async () => ({ seat: LEAF, scope: 'cd'.repeat(32), publicKey: 'ef'.repeat(32) }),
-  accountDeploy: async () => ({ account: 'c0'.repeat(32), tx: 'REVQTE9Z', insert: [{ circuit: 'payout', key: 'S0VZ' }] }),
-} as unknown as keyring.AccountCreationBuilder);
 
 const A_COMPANY = { name: 'Acme Ltd', signers: [{ name: 'Priya', role: 'admin' as const }], threshold: 1 };
 const USER = { id: PERSON, email: null, name: 'Priya' };
@@ -116,15 +110,15 @@ describe('a sign-in handed over by another screen', () => {
     expect(keyring.signedInByAnotherScreen(answerFor(SIGNED_IN))).toEqual(USER);
     expect(keyring.signedInWallet()).toBe(SIGNED_IN);
     const wallet = new WalletAtTheOtherEnd();
-    const { accountId } = await keyring.startCompanyHeldFromTheStart(A_COMPANY, WALLET, aBuilder(), wallet, US);
+    const { accountId } = await keyring.startCompanyHeldFromTheStart(A_COMPANY, WALLET, wallet, US);
     expect(wallet.askedFor).toEqual([SIGNED_IN]);
     expect(sent('POST /api/accounts')).toHaveLength(1);
     const writes = sent('PUT /api/me/keys');
-    /* The first write keeps the company and its seat's keys; the next two keep that the service took it and the deploy built for it. */
-    expect(writes).toHaveLength(3);
+    /* The one write keeps the saved keys the wallet sealed with the company and its seat: this page writes no saved keys of its own. */
+    expect(writes).toHaveLength(1);
     /* Sealed under the key of the wallet that holds the address signed in as, and nothing else opens it. */
     expect(Object.keys(JSON.parse(unseal(writes[0]!.body.keyBundle, keyringHex())).accounts)).toEqual([accountId]);
-    expect(keyring.keysFor(accountId)).not.toBeNull();
+    expect(keyring.seatHeldHere(accountId)).not.toBeNull();
   });
 
   /* RED WHEN: a wallet that does not hold the address signed in as is still asked without it, or its key is taken, so a person's first keys are saved under a wallet they did not sign in with. */
@@ -132,7 +126,7 @@ describe('a sign-in handed over by another screen', () => {
     const { sent } = nothingSavedYet();
     keyring.signedInByAnotherScreen(answerFor(SIGNED_IN));
     const elsewhere = new WalletAtTheOtherEnd((address) => address === ANOTHER);
-    await expect(keyring.startCompanyHeldFromTheStart(A_COMPANY, WALLET, aBuilder(), elsewhere, US)).rejects.toThrow();
+    await expect(keyring.startCompanyHeldFromTheStart(A_COMPANY, WALLET, elsewhere, US)).rejects.toThrow();
     expect(elsewhere.askedFor).toEqual([SIGNED_IN]);
     expect(sent('POST /api/accounts')).toEqual([]);
     expect(sent('PUT /api/me/keys')).toEqual([]);
@@ -145,7 +139,7 @@ describe('a sign-in handed over by another screen', () => {
     keyring.signedInByAnotherScreen(answerFor(ANOTHER));
     keyring.signedInByAnotherScreen(answerFor(SIGNED_IN));
     const wallet = new WalletAtTheOtherEnd();
-    await keyring.startCompanyHeldFromTheStart(A_COMPANY, WALLET, aBuilder(), wallet, US);
+    await keyring.startCompanyHeldFromTheStart(A_COMPANY, WALLET, wallet, US);
     expect(wallet.askedFor).toEqual([SIGNED_IN]);
   });
 
@@ -168,7 +162,7 @@ describe('a sign-in handed over by another screen', () => {
   it('still refuses a person\'s first keys in a tab that was handed no sign-in, by a refusal a screen can name', async () => {
     const { sent } = nothingSavedYet();
     expect(await keyring.resumeSession()).toEqual(USER);
-    await expect(keyring.startCompanyHeldFromTheStart(A_COMPANY, WALLET, aBuilder(), new WalletAtTheOtherEnd(), US)).rejects.toBeInstanceOf(keyring.FirstKeysNeedTheSignIn);
+    await expect(keyring.startCompanyHeldFromTheStart(A_COMPANY, WALLET, new WalletAtTheOtherEnd(), US)).rejects.toBeInstanceOf(keyring.FirstKeysNeedTheSignIn);
     expect(sent('POST /api/accounts')).toEqual([]);
   });
 });

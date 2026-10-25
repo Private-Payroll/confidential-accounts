@@ -12,20 +12,20 @@ import { StartAgain, StartAgainWords } from './start-again.js';
 import { useSession } from '../session.js';
 import { STEP, type StepProps } from '../setup/step-ids.js';
 
-/** The stages a company passes, in order: its account on the network, the account finished, its pay-record key sealed. */
 /** How soon a company is looked at again when what came back was another company's. */
 const LOOK_AGAIN_MS = 1_000;
 
+/** The stages a company passes, in order: its account on the network, the account finished, its pay-record key sealed. */
 const STAGES: readonly Stage[] = [STAGE.deploy, STAGE.finish, STAGE.key];
 
 /**
- * FINISH CREATING THE COMPANY: one press of the person's wallet when this tab
- * keeps a company waiting for it, then the company is carried to finished with
- * no further press. While this step is shown it looks at where the company
- * stands every few seconds, takes the step that is owed, and says which stage
- * it waits on; it stops when the step is left and carries on when the person
- * comes back. A refusal stops it until the person tries again. It is finished
- * only when the person's own wallet confirms it, and then the wizard moves on.
+ * FINISH CREATING THE COMPANY: one press, and the person's wallet runs the
+ * whole of it in one window, showing each step there; this step shows which
+ * step the wallet is on. Nothing is sent without the press. An action that
+ * stopped before its end, here or before a reload, shows as "interrupted at
+ * step N of M" with a press that runs the same action again, in one window,
+ * and the wallet carries on from what the chain shows. It is finished only
+ * when the person's own wallet confirms it, and then the wizard moves on.
  */
 export function FinishCompany({ leadTo, onChanged, startNewCompany, creation }: StepProps) {
   const t = useText();
@@ -39,10 +39,8 @@ export function FinishCompany({ leadTo, onChanged, startNewCompany, creation }: 
   const [busy, setBusy] = useState(false);
   const [refused, setRefused] = useState<{ for: string | null; why: ActRefusal } | null>(null);
   const refusal: ActRefusal | null = refused !== null && refused.for === company ? refused.why : null;
-  /* Kept for as long as the step is open: the next look does not repeat it, and the person should still be able to read it. */
-  const [builtFor, setBuiltFor] = useState<string | null | undefined>(undefined);
-  const builtAgain = builtFor === company;
-  const setBuiltAgain = (_yes: true): void => { setBuiltFor(company); };
+  /* The step the wallet says its action is on, while the press runs. */
+  const [running, setRunning] = useState<{ step: number; steps: number } | null>(null);
   const latest = useRef({ companiesChanged, onChanged });
   latest.current = { companiesChanged, onChanged };
   const finished = useRef<string | null | undefined>(undefined);
@@ -60,7 +58,6 @@ export function FinishCompany({ leadTo, onChanged, startNewCompany, creation }: 
         return;
       }
       setCarried(r);
-      if (r.of === FINISH.waiting && r.builtAgain === true) setBuiltAgain(true);
       if (r.of === ACTED.done) {
         finished.current = company;
         await latest.current.companiesChanged(r.companyId);
@@ -76,10 +73,11 @@ export function FinishCompany({ leadTo, onChanged, startNewCompany, creation }: 
   const newCompany = (): void => { startNewCompany?.(); };
   const press = async (): Promise<void> => {
     setBusy(true);
-    const r = await openYourWallet(person.id, company);
+    const r = await openYourWallet(person.id, company, (step, steps) => { setRunning({ step, steps }); });
     setRefused(r.of === ACTED.refused ? { for: company, why: r.why } : null);
     setBusy(false);
-    if (r.of === ACTED.done && r.builtAgain === true) setBuiltAgain(true);
+    setRunning(null);
+    if (r.of === FINISH.interrupted && company !== null) setCarried({ of: FINISH.interrupted, companyId: company, step: r.step, steps: r.steps });
     if (r.of === ACTED.done) setRun((n) => n + 1);
   };
   const tryAgain = (): void => { setCarried(null); setRun((n) => n + 1); };
@@ -121,7 +119,7 @@ export function FinishCompany({ leadTo, onChanged, startNewCompany, creation }: 
   return (
     <div className="flex max-w-md flex-col gap-4" data-action="finish-company">
       {drawn === null ? null : <p className="text-sm" data-drawn-label={drawn}>{t('setup.finishCompany.named', { label: drawn })}</p>}
-      {builtAgain ? <p className="text-sm" data-built-again>{t('setup.finishCompany.builtAgain')}</p> : null}
+      {running !== null ? <p className="text-sm" data-wallet-step={running.step}>{t('setup.finishCompany.running', { step: running.step, steps: running.steps })}</p> : null}
       {carried === null || carried.of === FINISH.waiting ? (
         <div className="flex flex-col gap-2">
           <Progress
@@ -140,10 +138,10 @@ export function FinishCompany({ leadTo, onChanged, startNewCompany, creation }: 
       ) : null}
       {carried?.of === FINISH.press ? wallet(t('setup.finishCompany.press')) : null}
       {carried?.of === FINISH.locked ? wallet(t('setup.finishCompany.locked')) : null}
-      {carried?.of === FINISH.noDeploy ? (
-        <Alert data-no-deploy>
-          <AlertDescription>{t('setup.createCompany.noDeploy')}</AlertDescription>
-          <StartAgain companyId={company} />
+      {carried !== null && carried.of === FINISH.interrupted ? (
+        <Alert data-interrupted={carried.step}>
+          <AlertDescription>{t('setup.finishCompany.interrupted', { step: carried.step, steps: carried.steps })}</AlertDescription>
+          <div><Button disabled={busy} onClick={() => { void press(); }} data-action="continue">{t('setup.finishCompany.continue')}</Button></div>
         </Alert>
       ) : null}
       {carried?.of === FINISH.cannot ? (

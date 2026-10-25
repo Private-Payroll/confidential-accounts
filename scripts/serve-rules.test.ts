@@ -12,7 +12,7 @@ import { existsSync, readFileSync } from 'node:fs';
 import { dirname, join, relative, resolve } from 'node:path';
 import {
   APPLICATION_PAGES, LAUNCHER_COMMAND, PAGE_SETTING, applicationPageFrom, commandOf, leadingAssignments,
-  originsNotStarted, pageStartsFor, refuseWhatTheServerSaid, SERVICE_PROXY,
+  originsNotStarted, pageStartsFor, refuseWhatTheServerSaid, SERVICE_PROXY, theWalletsBuiltPageOrigin,
 } from './serve-rules.js';
 
 const ROOT = join(import.meta.dirname, '..');
@@ -124,8 +124,24 @@ describe('where each page is started', () => {
     const plan = pageStartsFor({
       APP_ORIGIN: 'http://app.pp.localhost:5173', WALLET_ORIGIN: 'http://identity.pp.localhost:5180',
       VITE_WALLET_ORIGIN: 'http://identity.pp.localhost:5180',
-    });
+    }, 'web', 'http://app.pp.localhost:5173');
     expect('starts' in plan && plan.starts[1].command).toContain('localhost');
+  });
+});
+
+describe('the application is started only where the wallet answers it', () => {
+  /* RED WHEN: the application can be started at an origin the wallet's own script does not build it to answer, so it
+   * asks a wallet that never answers and waits in silence until its deadline. */
+  it('refuses an application origin the wallet is not built to answer, and starts the one it is', () => {
+    const elsewhere = pageStartsFor({ ...devSettings(), APP_ORIGIN: 'http://localhost:5174' });
+    expect('refusals' in elsewhere && elsewhere.refusals.join('\n')).toMatch(/built to answer only the page at http:\/\/localhost:5173/);
+    expect('starts' in pageStartsFor(devSettings())).toBe(true);
+    expect(pageStartsFor(devSettings(), 'web', null)).toEqual({ refusals: [expect.stringMatching(/no origin/)] });
+  });
+
+  /* RED WHEN: the wallet's page origin is read from anywhere but its own script in package.json. */
+  it('reads the wallet\'s page origin from the wallet\'s own script', () => {
+    expect(theWalletsBuiltPageOrigin()).toBe('http://localhost:5173');
   });
 });
 

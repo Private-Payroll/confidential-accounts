@@ -17,6 +17,7 @@ import { readAskRecord } from '../lib/ask-record.js';
 import { ApproveBalance } from './approve-balance.js';
 import { Approve } from './approve.js';
 import type { BalanceDoors, FacadeForBalancing, WalletPartForBalancing } from '../chain/balance-for-page.js';
+import { A_PRIVATE_DEPOSIT_IS_ASKED_BY_INTENT, readWhatThePageAsks } from '../chain/balance-for-page.js';
 
 /*
  * The screen a person sees when a company's page asks this wallet to pay for a
@@ -101,12 +102,28 @@ const consented = { ok: true } as never;
 const renderWith = (
   doors: () => BalanceDoors, answers: unknown[], consent = consented, declined: string[] = [], readLabel: LabelReader = carries,
 ) => render(
-  <ApproveBalance readLabel={readLabel}
+  <ApproveBalance reads={readWhatThePageAsks} readLabel={readLabel}
     request={ask} identity={identity} account={0} channel={channelFor(answers)} consent={consent}
     whoIsAsking={<p>asker</p>} whichWallet={<p>picker</p>} onDecline={(why) => declined.push(why ?? 'declined')}
     doorsFor={doors} now={() => NOW} />);
 
 afterEach(() => { cleanup(); });
+
+describe('A PAGE ASKING THIS WALLET TO PAY FOR A PRIVATE DEPOSIT IT BUILT', () => {
+  it('IS REFUSED ON SIGHT: THE WALLET MAKES A PRIVATE DEPOSIT WHOLE, AND PAYS NOTHING FOR ONE A PAGE BUILT', async () => {
+    const log: string[] = []; const answers: unknown[] = [];
+    /* The screen as the wallet runs it, with its own reading of what the page sent. */
+    const { container } = render(
+      <ApproveBalance readLabel={carries}
+        request={ask} identity={identity} account={0} channel={channelFor(answers)} consent={consented}
+        whoIsAsking={<p>asker</p>} whichWallet={<p>picker</p>} onDecline={() => {}} doorsFor={doorsWith(log)} now={() => NOW} />);
+    await settled(5);
+    /* RED WHEN: a page-built private deposit is paid for, its coin chosen by the page and its records left for the page to sign. */
+    expect(container.querySelector('[data-balance-refused]')!.textContent).toBe(A_PRIVATE_DEPOSIT_IS_ASKED_BY_INTENT);
+    expect((screen.getByText('Pay into the vault') as HTMLButtonElement).disabled).toBe(true);
+    expect(log).toEqual([]);
+  });
+});
 
 describe('A PAGE ASKING THIS WALLET TO PAY FOR A DEPOSIT', () => {
   it('PAYS NOTHING UNTIL THE ACCOUNT IS READ AND CARRIES THE LABEL THE PAGE NAMES', async () => {
@@ -236,7 +253,7 @@ describe('A PAGE ASKING THIS WALLET TO PAY FOR A DEPOSIT', () => {
       const shielded = stillReading();
       const doors = doorsWith(log, { shielded });
       const view = render(
-        <ApproveBalance readLabel={carries}
+        <ApproveBalance reads={readWhatThePageAsks} readLabel={carries}
           request={ask} identity={identity} account={0} channel={channelFor(answers)} consent={consented}
           whoIsAsking={<p>asker</p>} whichWallet={<p>picker</p>} onDecline={() => {}}
           doorsFor={doors} now={() => NOW} />);
@@ -246,7 +263,7 @@ describe('A PAGE ASKING THIS WALLET TO PAY FOR A DEPOSIT', () => {
       if (how === 'leaves') view.unmount();
       else {
         view.rerender(
-          <ApproveBalance readLabel={carries}
+          <ApproveBalance reads={readWhatThePageAsks} readLabel={carries}
             request={ask} identity={identity} account={2} channel={channelFor(answers)} consent={consented}
             whoIsAsking={<p>asker</p>} whichWallet={<p>picker</p>} onDecline={() => {}}
             doorsFor={doors} now={() => NOW} />);
@@ -343,7 +360,7 @@ describe('ONE ANSWER PER REQUEST, AND A PRESS IN FLIGHT OWNS IT', () => {
     const b = trackedDoors(second);
     const byAccount = (_i: unknown, account: number) => (account === 0 ? a.doors() : b.doors());
     const ui = (account: number) => (
-      <ApproveBalance readLabel={carries}
+      <ApproveBalance reads={readWhatThePageAsks} readLabel={carries}
         request={ask} identity={identity} account={account} channel={channel} consent={consented}
         whoIsAsking={<p>asker</p>} whichWallet={<p>picker</p>} onDecline={() => {}}
         doorsFor={byAccount as never} now={() => NOW} onBusy={(locked) => locks.push(locked)} />);
@@ -386,7 +403,7 @@ describe('ONE ANSWER PER REQUEST, AND A PRESS IN FLIGHT OWNS IT', () => {
     const broken = trackedDoors([], {}, { ledger: () => Promise.reject(new Error('no ledger')) });
     const byAccount = (_i: unknown, account: number) => (account === 0 ? a.doors() : broken.doors());
     const ui = (account: number) => (
-      <ApproveBalance readLabel={carries}
+      <ApproveBalance reads={readWhatThePageAsks} readLabel={carries}
         request={ask} identity={identity} account={account} channel={channel} consent={consented}
         whoIsAsking={<p>asker</p>} whichWallet={<p>picker</p>} onDecline={() => {}}
         doorsFor={byAccount as never} now={() => NOW} />);
@@ -409,7 +426,7 @@ describe('ONE ANSWER PER REQUEST, AND A PRESS IN FLIGHT OWNS IT', () => {
     const hold = heldSign(log);
     const a = trackedDoors(log, { signRecipe: hold.signRecipe as never });
     const view = render(
-      <ApproveBalance readLabel={carries}
+      <ApproveBalance reads={readWhatThePageAsks} readLabel={carries}
         request={ask} identity={identity} account={0} channel={recordingChannel(answers)} consent={consented}
         whoIsAsking={<p>asker</p>} whichWallet={<p>picker</p>} onDecline={() => {}}
         doorsFor={a.doors} now={() => NOW} />);
@@ -431,7 +448,7 @@ describe('ONE ANSWER PER REQUEST, AND A PRESS IN FLIGHT OWNS IT', () => {
     const a = trackedDoors([]); const b = trackedDoors([]);
     const byAccount = (_i: unknown, account: number) => (account === 0 ? a.doors() : b.doors());
     const ui = (account: number) => (
-      <ApproveBalance readLabel={carries}
+      <ApproveBalance reads={readWhatThePageAsks} readLabel={carries}
         request={ask} identity={identity} account={account} channel={recordingChannel([])} consent={consented}
         whoIsAsking={<p>asker</p>} whichWallet={<p>picker</p>} onDecline={() => {}}
         doorsFor={byAccount as never} now={() => NOW} />);
@@ -456,7 +473,7 @@ describe('THE WALLET SAYS WHAT IT IS DOING, ON EVENTS ONLY', () => {
     let clock = NOW;
     const t = trackedDoors([], { shielded, balanceUnboundTransaction: held.balanceUnboundTransaction as never });
     render(
-      <ApproveBalance readLabel={carries}
+      <ApproveBalance reads={readWhatThePageAsks} readLabel={carries}
         request={ask} identity={identity} account={0} channel={recordingChannel(answers, progress as never)} consent={consented}
         whoIsAsking={<p>asker</p>} whichWallet={<p>picker</p>} onDecline={() => {}}
         doorsFor={t.doors} now={() => clock} />);
@@ -508,7 +525,7 @@ describe('THE WALLET SAYS WHAT IT IS DOING, ON EVENTS ONLY', () => {
     let clock = NOW;
     const t = trackedDoors([], { shielded, balanceUnboundTransaction: held.balanceUnboundTransaction as never });
     render(
-      <ApproveBalance readLabel={carries}
+      <ApproveBalance reads={readWhatThePageAsks} readLabel={carries}
         request={ask} identity={identity} account={0} channel={recordingChannel(answers, progress as never)} consent={consented}
         whoIsAsking={<p>asker</p>} whichWallet={<p>picker</p>} onDecline={() => {}}
         doorsFor={t.doors} now={() => clock} />);
@@ -536,7 +553,7 @@ describe('THE WALLET SAYS WHAT IT IS DOING, ON EVENTS ONLY', () => {
     let clock = NOW;
     const t = trackedDoors([], { balanceUnboundTransaction: held.balanceUnboundTransaction as never });
     render(
-      <ApproveBalance readLabel={carries}
+      <ApproveBalance reads={readWhatThePageAsks} readLabel={carries}
         request={ask} identity={identity} account={0} channel={recordingChannel(answers, progress as never)} consent={consented}
         whoIsAsking={<p>asker</p>} whichWallet={<p>picker</p>} onDecline={() => {}}
         doorsFor={t.doors} now={() => (clock += 5_000)} />);
@@ -563,7 +580,7 @@ describe('THE WALLET NEVER SAYS IT IS AT WORK BECAUSE A CLOCK TICKED', () => {
     let clock = NOW;
     const t = trackedDoors([], { shielded, balanceUnboundTransaction: held.balanceUnboundTransaction as never });
     render(
-      <ApproveBalance readLabel={carries}
+      <ApproveBalance reads={readWhatThePageAsks} readLabel={carries}
         request={ask} identity={identity} account={0} channel={recordingChannel(answers, progress as never)} consent={consented}
         whoIsAsking={<p>asker</p>} whichWallet={<p>picker</p>} onDecline={() => {}}
         doorsFor={t.doors} now={() => clock} />);
@@ -621,7 +638,7 @@ describe('THE APPROVAL SURFACE ROUTES A BALANCE ASK TO THIS SCREEN', () => {
 
 describe('a payment approved before the passkey', () => {
   const renderAtOnce = (doors: () => BalanceDoors, answers: unknown[], readLabel: LabelReader = carries) => render(
-    <ApproveBalance readLabel={readLabel}
+    <ApproveBalance reads={readWhatThePageAsks} readLabel={readLabel}
       request={ask} identity={identity} account={0} channel={channelFor(answers)} consent={consented}
       whoIsAsking={<p>asker</p>} whichWallet={<p>picker</p>} onDecline={() => {}}
       doorsFor={doors} now={() => NOW} answerAtOnce />);

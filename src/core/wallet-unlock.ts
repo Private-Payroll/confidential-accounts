@@ -1,9 +1,10 @@
 import { REQUEST_SCHEMA } from 'midnight-identity/profile/request';
+import type { FoundingAsked, ServedHandedIn, TidyAsked } from 'midnight-identity/profile/request';
+import type { KeyringHandedIn } from 'midnight-identity/profile/unlock';
 import type { AccountAddress, CompanyLabel } from 'midnight-identity/profile/company-label';
 
 /**
  * **ASKING THE WALLET FOR THE KEY THAT OPENS A COMPANY — this side's half.**
- * `docs/NEXT.md` PI2a §1, `docs/scope-payroll-identity.md` §9b.
  *
  * ── WHAT THIS FILE IS, IN ONE PARAGRAPH ───────────────────────────────────
  *
@@ -35,7 +36,7 @@ import type { AccountAddress, CompanyLabel } from 'midnight-identity/profile/com
  * It has to be: the wallet holds no companies, so the company can only arrive
  * from whoever is asking. **That is exactly why this side must not let the
  * ASKING PAGE choose it either.** The value handed to this builder comes from
- * `companyForSession` — the session, the membership check, and the address the
+ * `companyForSession` — the sign-in, the membership check, and the address the
  * ledger assigned — and never from anything a caller sent us. That rule lives
  * in `src/core/company-address.ts`; this builder is downstream of it and simply
  * has no way to fabricate one.
@@ -116,6 +117,10 @@ export const UNLOCK_WINDOW_MS = 5 * 60_000;
  *     so the two are known to come from one wallet. It is the company's label,
  *     and **`account`** beside it is the account that carries the label, which
  *     the wallet reads for itself before it gives anything.
+ *   · **`companyIfOnChain`** says that company is the one the person opened,
+ *     named beside opening the saved keys: the wallet gives its key only when its
+ *     own read confirms the account carries the label, and otherwise answers with
+ *     the saved keys opened alone, holding nothing up.
  *   · **`drawLabel`** asks the wallet to start a company: it draws the new
  *     company's label itself and answers with it and the founding signer's keys
  *     for it. Never together with `company`.
@@ -134,12 +139,28 @@ export interface KeyringAsk {
   readonly company?: CompanyLabel;
   readonly account?: AccountAddress;
   readonly drawLabel?: true;
+  /**
+   * With `company`, `account` and the saved keys handed in: the company is named beside opening the saved keys, so the
+   * wallet gives its key only when its own read of the chain shows that account carrying that label, and otherwise
+   * opens the saved keys alone.
+   */
+  readonly companyIfOnChain?: true;
+  /** With `drawLabel` only: the new company's name and founding signer. */
+  readonly founding?: FoundingAsked;
+  /** The saved keys as the service holds them, which the wallet opens itself; with a founding, the seat is written into them. */
+  readonly keyring?: KeyringHandedIn;
+  /** Each listed company's viewing key wrapped to its seats, with its inbox public key, for the wallet to open its own. */
+  readonly served?: readonly ServedHandedIn[];
+  /** Changes to kept creations the page asks for. */
+  readonly tidy?: readonly TidyAsked[];
 }
 
 export const keyringAsk = (parts: {
   name: string; rdns: string; purpose: string; nonce: string; expiresAt: number;
   person: string; signedInAs: string | null; company: CompanyLabel | null;
-  account: AccountAddress | null; drawLabel?: boolean;
+  account: AccountAddress | null; drawLabel?: boolean; companyIfOnChain?: boolean;
+  founding?: { readonly asked: FoundingAsked; readonly keyring: KeyringHandedIn };
+  keys?: { readonly keyring: KeyringHandedIn; readonly served: readonly ServedHandedIn[]; readonly tidy: readonly TidyAsked[] };
 }): KeyringAsk => Object.freeze({
   schema: REQUEST_SCHEMA,
   kind: KEYRING_KIND,
@@ -154,19 +175,28 @@ export const keyringAsk = (parts: {
   ...(parts.company !== null ? { company: parts.company } : {}),
   ...(parts.account !== null ? { account: parts.account } : {}),
   ...(parts.drawLabel === true ? { drawLabel: true as const } : {}),
+  ...(parts.companyIfOnChain === true && parts.company !== null && parts.drawLabel !== true ? { companyIfOnChain: true as const } : {}),
+  ...(parts.drawLabel === true && parts.founding !== undefined
+    ? { founding: parts.founding.asked, keyring: parts.founding.keyring } : {}),
+  ...(parts.drawLabel !== true && parts.keys !== undefined
+    ? { keyring: parts.keys.keyring, served: parts.keys.served, ...(parts.keys.tidy.length > 0 ? { tidy: parts.keys.tidy } : {}) } : {}),
 });
 
 /** What the person is being asked for, beside what the wallet itself says it gives. */
 export const KEYRING_PURPOSE =
-  'So this page can open the keys saved for you here - for every company you belong to on this '
-  + 'site - on this device. They are never sent to our servers, and the key is forgotten when you '
-  + 'close the tab.';
+  'So this page can read every company you belong to on this site: your wallet opens the keys saved for you and '
+  + 'gives this page the keys that read them. Your seats\' keys, and the key your saved keys open with, stay in your '
+  + 'wallet.';
 
 /** And when a company's key is asked for in the same answer. */
 export const KEYRING_AND_COMPANY_PURPOSE =
-  'So this page can open the keys saved for you here and work out your payslip key for this '
-  + 'company, on this device. Neither is sent to our servers, and both are forgotten when you '
-  + 'close the tab.';
+  'So this page can read your companies here and work out your payslip key for this company: your wallet opens the '
+  + 'keys saved for you and gives this page the keys that read them. Your seats\' keys stay in your wallet.';
+
+/** And when the company the person opened is named beside opening the saved keys, for its vault balances. */
+export const KEYRING_AND_OPENED_COMPANY_PURPOSE =
+  'So this page can read every company you belong to on this site and the vault balances of the company you opened: '
+  + 'your wallet opens the keys saved for you and gives this page the keys that read them. Your seats\' keys stay in your wallet.';
 
 /**
  * And when the page is starting a company with this person as its founding
@@ -174,6 +204,5 @@ export const KEYRING_AND_COMPANY_PURPOSE =
  * is created with, and what every other signer's wallet works its keys out from.
  */
 export const KEYRING_AND_NEW_COMPANY_PURPOSE =
-  'So this page can open your saved keys and start a new company with you as its founding signer. Your '
-  + 'wallet makes up its label, which goes to our servers. The key your saved keys open with does not, and is '
-  + 'forgotten when you close the tab. Your signing keys for the company are made on our servers.';
+  'So this page can start a new company with you as its founding signer. Your wallet makes up its label, which goes '
+  + 'to our servers, and writes your new seat into your saved keys itself. Your seat\'s keys stay in your wallet.';

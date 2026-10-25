@@ -167,7 +167,9 @@ describe('§4 — A REQUEST DECLARES WHAT IT IS', () => {
      * `screens/approve-join-code.tsx`. */
     /* **AND FOR `addresses-and-balances`**, appended twelfth, with its screen in
      * `screens/approve-addresses-and-balances.tsx`. */
-    expect([...ASK_KINDS]).toEqual(['disclosure', 'sign-in', 'unlock', 'join', 'keyring', 'balance', 'committee', 'records-key', 'holders', 'creation', 'join-code', 'addresses-and-balances']);
+    /* **AND FOR `act`**, appended thirteenth, with its window in `screens/approve-window.tsx` and the screen it runs
+     * on in `actions/runner-screen.tsx`. */
+    expect([...ASK_KINDS]).toEqual(['disclosure', 'sign-in', 'unlock', 'join', 'keyring', 'balance', 'committee', 'records-key', 'holders', 'creation', 'join-code', 'addresses-and-balances', 'act']);
   });
 });
 

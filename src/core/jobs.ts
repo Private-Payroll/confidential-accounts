@@ -31,7 +31,6 @@
  * web and native clients drift into disagreeing about what "approved" means.
  * Storage and clocks are injected for the same reason.
  */
-import type { Hex } from './crypto.js';
 
 /**
  * Where a job is.
@@ -492,9 +491,9 @@ export class JobQueue {
          * inside it would be taken and released around each transition, leaving
          * the gaps between them open to exactly the second worker this refuses.
          */
-        const next = await this.store.claim(queued[0].id, this.leaseNow(), this.now());
+        const next = await this.store.claim(queued[0]!.id, this.leaseNow(), this.now());
         if (!next) {
-          heldElsewhere.add(queued[0].id);
+          heldElsewhere.add(queued[0]!.id);
           continue;
         }
 
@@ -784,10 +783,10 @@ export class MemoryJobStore implements JobStore {
   async claim(id: string, lease: JobLease, now: Date): Promise<Job | null> {
     const i = this.jobs.findIndex((j) => j.id === id);
     if (i === -1) return null;
-    const held = this.jobs[i].lease;
+    const held = this.jobs[i]!.lease;
     if (!mayClaim(held, lease.owner, now)) return null;
-    this.jobs[i] = { ...clone(this.jobs[i]), lease };
-    return clone(this.jobs[i]);
+    this.jobs[i] = { ...clone(this.jobs[i]!), lease };
+    return clone(this.jobs[i]!);
   }
 }
 

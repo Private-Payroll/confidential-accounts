@@ -2,10 +2,11 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
 
 /*
  * THE PAGE'S CREATION BUILDER, over a vault worker stood in for: what the
- * keyring is handed to build a company with is the worker's own functions, and
- * a worker that cannot build an account hands nothing.
+ * keyring is handed for a kept creation is the worker's read of whether the
+ * account is on the chain, and nothing that builds, signs or proves: the
+ * company's account is built in the wallet.
  */
-const NAMES = ['foundingSeat', 'accountDeploy', 'finishedCreation', 'creationAgain', 'payKeyStanding', 'governedCall'] as const;
+const NAMES = ['accountDeploy', 'finishedCreation', 'creationAgain', 'governedCall', 'accountPresence'] as const;
 const w = vi.hoisted(() => ({ worker: {} as Record<string, unknown>, starts: 0 }));
 vi.mock('vaults-web-shared/vault-worker-client.js', () => ({ startVaultBuilder: async () => { w.starts += 1; return w.worker; } }));
 
@@ -17,22 +18,21 @@ async function load() {
 beforeEach(() => { w.worker = aWorker(); w.starts = 0; });
 
 describe('the creation builder', () => {
-  /* RED WHEN: the keyring is handed anything but the page's worker's own functions to build a company with, or the worker is started again for each company. */
-  it('is the page\'s worker\'s own functions, from the one worker the page started', async () => {
+  /* RED WHEN: the keyring is handed any of the worker's functions that builds, signs or proves a company's account, or the worker is started again. */
+  it('is the page\'s worker\'s read of the account alone, from the one worker the page started', async () => {
     const m = await load();
     const b = await m.theCreationBuilder();
-    for (const n of NAMES) expect((b as unknown as Record<string, unknown>)[n], n).toBe(w.worker[n]);
+    expect(Object.keys(b ?? {})).toEqual(['accountPresence']);
+    expect((b as Record<string, unknown>)['accountPresence']).toBe(w.worker['accountPresence']);
     await m.theCreationBuilder();
     expect(w.starts).toBe(1);
   });
 
-  /* RED WHEN: a worker that cannot build an account, or cannot read the pay-record key, is handed to the keyring as if it could. */
-  it('hands nothing when the worker lacks a function a company is built with', async () => {
-    for (const missing of NAMES.filter((n) => n !== 'governedCall')) {
-      const { [missing]: _gone, ...rest } = aWorker();
-      w.worker = rest;
-      const m = await load();
-      expect(await m.theCreationBuilder(), missing).toBeNull();
-    }
+  /* RED WHEN: a worker that cannot read the account is handed as one that can. */
+  it('hands no read when the worker has none', async () => {
+    const { accountPresence: _gone, ...rest } = aWorker();
+    w.worker = rest;
+    const m = await load();
+    expect(await m.theCreationBuilder()).toEqual({});
   });
 });

@@ -9,7 +9,8 @@ import { useSession } from '../session.js';
 import type { Phase } from '../session.js';
 import { ErrorNote, Moon, StatusNote } from '../components/ui.js';
 import { StatusAlert } from '../components/status.js';
-import { AskOver } from './ask-over.js';
+import { ActOver, AskOver } from './ask-over.js';
+import { forgetTheEnd, theEndHere } from '../actions/ended-here.js';
 import { AnswerHolders, type HoldersReader } from './answer-holders.js';
 import { quietConsentFor } from '../framing.js';
 import { browserPort } from 'midnight-identity/profile/store';
@@ -58,6 +59,11 @@ import type { LabelReader } from './company-on-chain.js';
  * **A LOCKED WALLET ASKED SOMETHING SHOWS ONE WINDOW** (`ApproveWindow`): what
  * the ask does, with an Approve that asks for the passkey and a Decline, in
  * place of the unlock screen.
+ *
+ * **AN ACTION THAT HAS JUST ENDED IS SAID HERE.** An action locks the wallet
+ * when it ends, so its outcome - done, or stopped at a step with how many
+ * transactions had already gone - is shown in this locked window until another
+ * request arrives.
  *
  * ── THERE IS NO "WAY BACK" HERE, BECAUSE THERE IS NOTHING TO GO BACK TO ───
  *
@@ -114,6 +120,13 @@ export function ApproveEntry({
   const askedBy = channelState.of === 'request'
     ? channelState.request.requester.origin : null;
 
+  /* An action's outcome is shown only until a different request comes in. */
+  const asked = channelState.of === 'request' ? channelState.request.nonce : null;
+  useEffect(() => {
+    const end = theEndHere();
+    if (asked !== null && end !== null && end.ended.nonce !== asked) forgetTheEnd();
+  }, [asked]);
+
   /*
    * **A FRAMED WALLET SHOWS NO CONTROL UNTIL THE PAGE IT WAS BUILT FOR HAS
    * SPOKEN.** The entry screens carry buttons that make a passkey, add a wallet
@@ -136,6 +149,10 @@ export function ApproveEntry({
       <AnswerHolders request={channelState.request} channel={channel} consent={quietConsentFor(framing)} now={now}
         {...(readHolders === undefined ? {} : { readHolders })} />
     );
+  }
+  const end = theEndHere();
+  if (end !== null && (channelState.of !== 'request' || channelState.request.nonce === end.ended.nonce)) {
+    return <ActOver end={end} framed={framed} />;
   }
   /* A request this wallet refused on arrival has been answered already: it is said, never waited for. */
   if (framed && channelState.of === 'refused') {

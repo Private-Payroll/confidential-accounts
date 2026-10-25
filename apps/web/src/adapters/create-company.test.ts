@@ -2,7 +2,7 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 /*
- * THE FIRST PRESS OF CREATING A COMPANY THROUGH THE ADAPTER, ON THIS DEVICE,
+ * THE FIRST PRESS OF CREATING A COMPANY THROUGH THE ADAPTER, FOUNDED IN THE WALLET,
  * WITH THE SHARED KEYRING STOOD IN FOR AT ITS FUNCTIONS AND ITS OWN REFUSALS
  * KEPT, so what the adapter hands the keyring and what it hands a screen back
  * are both read.
@@ -17,8 +17,8 @@ vi.mock('vaults-web-shared/keyring.js', async (real) => ({
   currentUser: () => kr.who,
   forgetLocally: () => { kr.forgot += 1; kr.who = null; },
   resumeSession: async () => { kr.resumed += 1; kr.who = { id: 'u1' }; return kr.who; },
-  startCompanyHeldFromTheStart: async (spec: unknown, _origin: string, builder: unknown) => {
-    kr.calls.push('start'); kr.specs.push(spec); kr.builders.push(builder); return kr.started();
+  startCompanyHeldFromTheStart: async (spec: unknown, _origin: string, ...rest: unknown[]) => {
+    kr.calls.push('start'); kr.specs.push(spec); kr.builders.push(...rest); return kr.started();
   },
 }));
 vi.mock('./vault-builder.js', () => ({ theCreationBuilder: async () => kr.builder }));
@@ -39,8 +39,8 @@ beforeEach(() => {
 afterEach(() => { vi.unstubAllEnvs(); });
 
 describe('creating a company on this device', () => {
-  /* RED WHEN: the button creates the company on the service's path, not this device's, or not with the person as its one signer at one approval, under the name typed. */
-  it('the first press makes it here, held by the person\'s own key, built with the page\'s creation builder, and sends nothing to the chain', async () => {
+  /* RED WHEN: the button creates the company on the service's path, not the wallet's, or not with the person as its one signer at one approval, under the name typed. */
+  it('the first press has the wallet found it, with the person as its one signer, handing the keyring no builder, and sends nothing to the chain', async () => {
     const { m } = await load();
     kr.who = { id: 'u1' };
     /* RED WHEN: the label the wallet drew is not handed to the screen, so the person is never shown what their wallet named the company. */
@@ -48,8 +48,8 @@ describe('creating a company on this device', () => {
     /* RED WHEN: the first press goes on to sign, send or finish the company, which is the second step's alone. */
     expect(kr.calls).toEqual(['start']);
     expect(kr.specs).toEqual([{ name: 'Acme', signers: [{ name: 'Priya', role: 'admin' }], threshold: 1 }]);
-    /* RED WHEN: the builder handed to the keyring is not the page's creation builder. */
-    expect(kr.builders[0]).toBe(kr.builder);
+    /* RED WHEN: the page hands the keyring anything that builds or proves: the company's account is built in the wallet. */
+    expect(kr.builders).toEqual([]);
   });
 
   /* RED WHEN: a company is refused, or the adapter reads the keyring for another creation first, because another company is not finished. */
@@ -94,15 +94,15 @@ describe('creating a company on this device', () => {
     }
   });
 
-  /* RED WHEN: a page whose worker cannot build an account, or that does not know where the account is, starts anything. */
-  it('refuses, starting nothing, when the page does not know where the account is or its worker cannot build one', async () => {
+  /* RED WHEN: a page that does not know where the wallet is starts anything, or the page's worker is asked for anything. */
+  it('refuses, starting nothing, when the page does not know where the wallet is, and never needs the page\'s worker', async () => {
     let { m } = await load('');
     expect(await m.createCompany('u1', { name: 'Acme', firstSigner: 'Priya' })).toEqual({ of: 'refused', why: 'not-set-up' });
     expect(kr.resumed).toBe(0);
+    expect(kr.calls).toEqual([]);
     ({ m } = await load());
     kr.who = { id: 'u1' };
     kr.builder = null;
-    expect(await m.createCompany('u1', { name: 'Acme', firstSigner: 'Priya' })).toEqual({ of: 'refused', why: 'did-not-finish' });
-    expect(kr.calls).toEqual([]);
+    expect((await m.createCompany('u1', { name: 'Acme', firstSigner: 'Priya' })).of).toBe('done');
   });
 });

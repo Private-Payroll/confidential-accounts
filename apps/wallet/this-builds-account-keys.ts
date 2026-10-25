@@ -25,6 +25,8 @@ export interface AccountKeyDigests {
   readonly second: ReadonlyArray<readonly [string, string]>;
   /** Why there are none, when the keys are not on disk; null when every one was read. */
   readonly missing: string | null;
+  /** Each circuit's verifier key itself, hex, both steps: what this wallet builds the account's deploy and second step with. */
+  readonly verifiers: ReadonlyArray<readonly [string, string]>;
 }
 
 /** The digests, read from `<root>/contracts/managed/keys`. */
@@ -32,10 +34,14 @@ export function accountKeyDigests(root: string): AccountKeyDigests {
   const dir = join(root, 'contracts', 'managed', 'keys');
   const absent = [...CREATION_STEPS.first, ...CREATION_STEPS.second].filter((c) => !existsSync(join(dir, `${c}.verifier`)));
   if (absent.length > 0) {
-    return { first: [], second: [], missing: `this wallet was built without the company account's compiled keys (${absent.join(', ')})` };
+    return { first: [], second: [], verifiers: [], missing: `this wallet was built without the company account's compiled keys (${absent.join(', ')})` };
   }
   const digest = (c: string) => [c, createHash('sha256').update(readFileSync(join(dir, `${c}.verifier`))).digest('hex')] as const;
-  return { first: CREATION_STEPS.first.map(digest), second: CREATION_STEPS.second.map(digest), missing: null };
+  const verifier = (c: string) => [c, readFileSync(join(dir, `${c}.verifier`)).toString('hex')] as const;
+  return {
+    first: CREATION_STEPS.first.map(digest), second: CREATION_STEPS.second.map(digest), missing: null,
+    verifiers: [...CREATION_STEPS.first, ...CREATION_STEPS.second].map(verifier),
+  };
 }
 
 /** The plugin that serves them. `root` is this repository's own directory. */
@@ -49,7 +55,8 @@ export function thisBuildsAccountKeys(root: string) {
       const d = accountKeyDigests(root);
       return `export const first = ${JSON.stringify(d.first)};\n`
         + `export const second = ${JSON.stringify(d.second)};\n`
-        + `export const missing = ${JSON.stringify(d.missing)};\n`;
+        + `export const missing = ${JSON.stringify(d.missing)};\n`
+        + `export const verifiers = ${JSON.stringify(d.verifiers)};\n`;
     },
   };
 }

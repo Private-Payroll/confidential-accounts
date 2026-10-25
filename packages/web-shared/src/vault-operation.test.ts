@@ -704,6 +704,29 @@ describe('CREATING A VAULT', () => {
     expect([newest.version, newestSecretIn(newest, doors.me.companyKey)]).toEqual([3, theVaults]);
   });
 
+  it('A START OVER A VAULT WHOSE SECRET IS SET FILES THE ONE THIS WALLET KEPT, WHEN THE CHAIN SHOWS IT, AND MAKES NONE AFRESH', async () => {
+    const log: string[] = [];
+    const setOnChain = view({ heldByCommittee: true, nonceCommitment: '5c'.repeat(32) });
+    const keptMap = new Map<string, unknown>();
+    const kept = { keep: async (v: string, p: unknown) => { keptMap.set(v, p); }, held: async (v: string) => (keptMap.get(v) ?? null) as never, drop: async (v: string) => { keptMap.delete(v); } };
+    const made = startNonceSecret(VAULT, [recordsReaderOf(new Uint8Array(32).fill(4))]);
+    await kept.keep(VAULT, made);
+    const theVaults = newestSecretIn(made, new Uint8Array(32).fill(4));
+    /* The filing was withheld: the records hold nothing; the chain shows the kept secret. */
+    const doors = startDoors();
+    const b = { ...builder(log), secretIsTheVaults: async (i: { secret: string }) => i.secret === theVaults };
+    /* RED WHEN: the start does not ask the chain about the kept secret, so a vault whose secret is set is stranded before its copies. */
+    await expect(createCompanyVault({ ...pacing, ...walletReadsTheVault, ...doors, account: ACCOUNT, service: serviceFrom([setOnChain], log), builder: b, secretKeptHere: kept as never }, VAULT))
+      .resolves.toEqual({ vault: VAULT, state: 'started' });
+    expect(newestSecretIn((await doors.records('nonce-secret').get(VAULT))!, doors.me.companyKey)).toBe(theVaults);
+    /* RED WHEN: a second device, which kept nothing, makes a fresh secret over it. */
+    const second = startDoors();
+    const e = await createCompanyVault({ ...pacing, ...walletReadsTheVault, ...second, account: ACCOUNT, service: serviceFrom([setOnChain], log), builder: b }, VAULT).catch((x) => x);
+    expect(e).toBeInstanceOf(VaultStartOwed);
+    expect((e as Error).message).toMatch(/already holds a secret[^]*on the device whose wallet made it/);
+    expect(await second.records('nonce-secret').get(VAULT)).toBeNull();
+  });
+
   /* RED WHEN: a start goes on with a signer the vault's filed secret is not wrapped to - their sealed copy would be missing. */
   it('a start stops, naming the vault, when a signer cannot open the filed secret', async () => {
     const log: string[] = [];
@@ -895,6 +918,62 @@ describe('THE POOL AND A DEPOSIT', () => {
     await openCompanyVaultPool(poolDoors(serviceFrom([ready], [], { keys: async () => ({ committee, why: null, readers: ['5c'.repeat(32)] }) }), records), VAULT,
       async (readers) => { seen.push([...readers]); });
     expect(seen).toEqual([['5c'.repeat(32)]]);
+  });
+
+  it('A NEW VAULT\'S SECRET KEPT ON THIS DEVICE IS FILED AGAIN WHEN THE RECORDS HOLD NONE, AND IS KNOWN AS MADE HERE WHEN READ BACK', async () => {
+    const ready = view({ heldByCommittee: true, state: 'AAAA', notes: [], everCreated: [] });
+    const keptMap = new Map<string, unknown>();
+    const kept = { keep: async (v: string, p: unknown) => { keptMap.set(v, p); }, held: async (v: string) => (keptMap.get(v) ?? null) as never, drop: async (v: string) => { keptMap.delete(v); } };
+    const first = stores();
+    const made = await openCompanyVaultPool({ ...poolDoors(serviceFrom([ready], []), first), secretKeptHere: kept as never }, VAULT, nothingToCheck);
+    expect(made.madeHere).toBe(true);
+    const filed = await first('nonce-secret').get(VAULT);
+    await kept.keep(VAULT, filed);
+    /* RED WHEN: a secret this device kept, which the service did not file, is replaced by a new one, so a vault whose commitment names it can never be finished. */
+    const lost = stores();
+    let readersAsked = 0;
+    const again = await openCompanyVaultPool({ ...poolDoors(serviceFrom([ready], [], { keys: async () => { readersAsked += 1; return { committee, why: null, readers: [] }; } }), lost), secretKeptHere: kept as never }, VAULT, nothingToCheck);
+    expect([again.secret, again.madeHere]).toEqual([made.secret, true]);
+    expect(await lost('nonce-secret').get(VAULT)).toEqual(filed);
+    expect(readersAsked).toBe(0);
+    /* RED WHEN: a secret read back from the records that this device kept is taken as one it only read back, so its first secret run cannot be raised from here. */
+    const back = await openCompanyVaultPool({ ...poolDoors(serviceFrom([ready], []), lost), secretKeptHere: kept as never }, VAULT, nothingToCheck);
+    expect([back.secret, back.madeHere]).toEqual([made.secret, true]);
+    const elsewhere = await openCompanyVaultPool(poolDoors(serviceFrom([ready], []), lost), VAULT, nothingToCheck);
+    expect(elsewhere.madeHere).toBe(false);
+  });
+
+  it('A SECRET THE CHAIN ALREADY HOLDS IS NEVER MADE AFRESH, AND THE ONE THIS WALLET KEPT IS FILED AGAIN AS THE NEWEST WHEN THE CHAIN SHOWS IT', async () => {
+    /* Device A made the secret and kept it; its page withheld the filing; the secret was set on the chain. */
+    const ready = view({ heldByCommittee: true, state: 'AAAA', notes: [], everCreated: [] });
+    const set = view({ heldByCommittee: true, state: 'AAAA', notes: [], everCreated: [], nonceCommitment: '5c'.repeat(32) });
+    const keptMap = new Map<string, unknown>();
+    const kept = { keep: async (v: string, p: unknown) => { keptMap.set(v, p); }, held: async (v: string) => (keptMap.get(v) ?? null) as never, drop: async (v: string) => { keptMap.delete(v); } };
+    const onA = stores();
+    const made = await openCompanyVaultPool({ ...poolDoors(serviceFrom([ready], []), onA), secretKeptHere: kept as never }, VAULT, nothingToCheck);
+    await kept.keep(VAULT, await onA('nonce-secret').get(VAULT));
+    const theChains = async (secret: string) => secret.toLowerCase() === made.secret.toLowerCase();
+    /* Device B, same seat, an honest service that holds nothing, no secret kept on B. */
+    const service = stores();
+    const onB = openCompanyVaultPool(poolDoors(serviceFrom([set], []), service), VAULT, nothingToCheck, theChains);
+    /* RED WHEN: a device makes a fresh secret over a vault whose secret the chain already holds, so the service's records name one the chain never will. */
+    await expect(onB).rejects.toThrow(/already holds a secret[^]*on the device whose wallet made it/);
+    expect(await service('nonce-secret').get(VAULT)).toBeNull();
+    /* Another secret reached the records meanwhile (filed before the chain held one). */
+    await openCompanyVaultPool(poolDoors(serviceFrom([ready], []), service), VAULT, nothingToCheck);
+    const before = await openCompanyVaultPool(poolDoors(serviceFrom([ready], []), service), VAULT, nothingToCheck);
+    expect(before.secret).not.toBe(made.secret);
+    /* Back on device A with an honest page. */
+    const back = await openCompanyVaultPool({ ...poolDoors(serviceFrom([set], []), service), secretKeptHere: kept as never }, VAULT, nothingToCheck, theChains);
+    /* RED WHEN: the secret this wallet kept, which the chain shows, is passed over for the records' other one, so the vault's copies are never written. */
+    expect([back.secret, back.madeHere]).toEqual([made.secret, true]);
+    /* RED WHEN: the kept secret is used but not filed again as the newest, so every other device still reads the one the chain does not hold. */
+    expect((await openCompanyVaultPool(poolDoors(serviceFrom([set], []), service), VAULT, nothingToCheck, theChains)).secret).toBe(made.secret);
+    /* RED WHEN: a kept secret the chain does not show is filed over a vault whose secret is set. */
+    const none = stores();
+    await expect(openCompanyVaultPool({ ...poolDoors(serviceFrom([set], []), none), secretKeptHere: kept as never }, VAULT, nothingToCheck, async () => false))
+      .rejects.toThrow(/already holds a secret/);
+    expect(await none('nonce-secret').get(VAULT)).toBeNull();
   });
 
   it('A POOL IS OPENED FOR A VAULT PINNED TO THE ACCOUNT WHATEVER KEYS HOLD IT, AND NO EMPTY ONE FOR A VAULT WITH MONEY', async () => {
@@ -1689,10 +1768,107 @@ describe('WHAT THIS BROWSER LAST SENT, CHECKED ON ITS OWN, AND TWO TABS OR TWO B
     const found = await checkWhatThisBrowserDeposited({ ...c.first.doors, payments } as never, VAULT);
     /* RED WHEN: checking deposits alone does not record a deposit that landed, or reads or settles a payment. */
     expect(found.deposit).toMatchObject({ state: 'recorded', note: { createdIn: LANDED_IN } });
-    expect(Object.keys(found).sort()).toEqual(['deposit', 'named', 'unnamed']);
+    expect(Object.keys(found).sort()).toEqual(['checked', 'deposit', 'named', 'unnamed']);
+    /* RED WHEN: the check does not say which deposit it judged, or says another token or amount than the one this browser kept. */
+    expect(found.checked).toEqual({ from: 'this-browser', token: MONEY.token, value: MONEY.value });
     expect(c.w.sent, 'RED WHEN: checking sends anything').toBe(sent);
     /* RED WHEN: what a check of deposits alone found cannot be said, or is said with anything about a payment. */
     expect(sayWhatTheCheckFound(found)).toBe('Your last deposit from this browser has reached the vault and is now in its record.');
+  });
+
+  it('a claim whose coin landed and has since left the vault is let go, and the next deposit is built', async () => {
+    const c = await company();
+    c.w.sendFails = new Error('the connection dropped');
+    await expect(depositIntoCompanyVault(c.first.doors, VAULT, MONEY)).rejects.toBeInstanceOf(DepositNotYetSeen);
+    c.w.sendFails = null;
+    const coin = c.w.built[0]!;
+    c.lands(coin);
+    /* Another signer recorded it and a payment then spent it: the chain made it and no longer holds it, and the pool no longer lists it. */
+    const before = await c.pool.load(VAULT);
+    await c.pool.save(VAULT, { notes: [...before.notes, { nonce: coin.nonce as never, token: coin.token as never, value: BigInt(coin.value), createdIn: LANDED_IN as never }] }, before.readAt);
+    const recorded = await c.pool.load(VAULT);
+    await c.pool.save(VAULT, { notes: recorded.notes.filter((n) => n.nonce !== coin.nonce) }, recorded.readAt);
+    c.w.notes = c.w.notes.filter((n) => n !== heldOf(coin));
+    /* RED WHEN: a claim whose coin the chain made and no longer holds is kept for ever, so this wallet never deposits into the vault again. */
+    expect(await settleDepositInFlight(c.first.doors, VAULT)).toEqual({ state: 'landed-and-since-spent' });
+    expect(c.first.kept.size).toBe(0);
+    await depositIntoCompanyVault(c.first.doors, VAULT, MONEY).catch(() => undefined);
+    expect(c.w.built).toHaveLength(2);
+  });
+
+  it('a pool page naming the claim\'s coin, with the chain showing no such coin made, never lets the claim go', async () => {
+    const c = await company();
+    c.w.sendFails = new Error('the connection dropped');
+    await expect(depositIntoCompanyVault(c.first.doors, VAULT, MONEY)).rejects.toBeInstanceOf(DepositNotYetSeen);
+    c.w.sendFails = null;
+    const coin = c.w.built[0]!;
+    const now = await c.pool.load(VAULT);
+    await c.pool.save(VAULT, { notes: [...now.notes, { nonce: coin.nonce as never, token: coin.token as never, value: BigInt(coin.value) }] }, now.readAt);
+    /* RED WHEN: a pool record alone, which the page can file, releases a deposit the page may still hold and send (a second deposit is built). */
+    await expect(depositIntoCompanyVault(c.first.doors, VAULT, MONEY)).rejects.toBeInstanceOf(DepositStillInFlight);
+    expect(c.first.kept.size).toBe(1);
+    expect(c.w.built).toHaveLength(1);
+  });
+
+  it('a check that files nothing reports a deposit kept in this browser once, owed its record, files no version, and lets it go', async () => {
+    const c = await company();
+    c.w.sendFails = new Error('the connection dropped');
+    await expect(depositIntoCompanyVault(c.first.doors, VAULT, MONEY)).rejects.toBeInstanceOf(DepositNotYetSeen);
+    c.w.sendFails = null;
+    c.lands(c.w.built[0]!);
+    const versions = (await c.records('pool').versions(VAULT)).length;
+    const found = await checkWhatThisBrowserDeposited(c.first.doors, VAULT, { files: false });
+    /* RED WHEN: a check that files nothing records the landed deposit in the pool, signed on the page. */
+    expect((await c.records('pool').versions(VAULT)).length).toBe(versions);
+    expect(found.deposit.state).toBe('landed-owed-its-record');
+    /* RED WHEN: a deposit this browser kept from before deposits moved into the wallet is reported owed on every check, for ever. */
+    expect(c.first.kept.size).toBe(0);
+    expect(sayWhatTheCheckFound(found)).toMatch(/is in the vault, and not yet in its record/);
+  });
+
+  it('a check that files nothing judges the newest deposit filed for the vault from its journal and the chain, wherever it was kept', async () => {
+    const c = await company();
+    /* The deposit is made where its claim is kept (the wallet); the page that checks keeps nothing of it. */
+    c.w.sendFails = new Error('the connection dropped');
+    await expect(depositIntoCompanyVault(c.first.doors, VAULT, MONEY)).rejects.toBeInstanceOf(DepositNotYetSeen);
+    c.w.sendFails = null;
+    const page = c.browser();
+    const versions = (await c.records('pool').versions(VAULT)).length;
+    /* RED WHEN: a check with nothing kept in this browser says no deposit is waiting while the newest one filed has not reached the vault. */
+    expect((await checkWhatThisBrowserDeposited(page.doors, VAULT, { files: false })).deposit.state).toBe('journalled-not-seen');
+    c.lands(c.w.built[0]!);
+    expect((await checkWhatThisBrowserDeposited(page.doors, VAULT, { files: false })).deposit.state).toBe('landed-owed-its-record');
+    expect((await c.records('pool').versions(VAULT)).length, 'RED WHEN: the page\'s check files a version').toBe(versions);
+    expect(page.kept.size).toBe(0);
+    /* Recorded where it was made, the check says so. */
+    expect((await settleDepositInFlight(c.first.doors, VAULT)).state).toBe('recorded');
+    const recorded = await checkWhatThisBrowserDeposited(page.doors, VAULT, { files: false });
+    expect(recorded.deposit.state).toBe('already-recorded');
+    /* RED WHEN: a check that judged the vault's newest journalled deposit does not say what it was, or says it is this browser's. */
+    expect(recorded.checked).toEqual({ from: 'the-vaults-journal', token: MONEY.token, value: MONEY.value });
+    expect(sayWhatTheCheckFound(recorded)).toBe('The newest deposit filed for this vault is in the vault\'s record.');
+    /* Spent after it was recorded, it is said to have landed and left. */
+    c.w.notes = c.w.notes.filter((n) => n !== heldOf(c.w.built[0]!));
+    const now = await c.pool.load(VAULT);
+    await c.pool.save(VAULT, { notes: now.notes.filter((n) => n.nonce !== c.w.built[0]!.nonce) }, now.readAt);
+    const spent = await checkWhatThisBrowserDeposited(page.doors, VAULT, { files: false });
+    expect(spent.deposit.state).toBe('landed-and-since-spent');
+    expect(sayWhatTheCheckFound(spent)).toMatch(/reached the vault/);
+    expect(sayWhatTheCheckFound(await checkWhatThisBrowserDeposited(c.browser().doors, VAULT, { files: false }))).not.toMatch(/no deposit into this vault waiting/);
+  });
+
+  it('a check that files nothing counts a note it could name and names none', async () => {
+    const c = await company();
+    const coin = { nonce: 'a1'.repeat(32), token: MONEY.token as string, value: '9' };
+    const now = await c.pool.load(VAULT);
+    await c.pool.save(VAULT, { notes: [...now.notes, { nonce: coin.nonce as never, token: coin.token as never, value: 9n }] }, now.readAt);
+    c.lands(coin);
+    const versions = (await c.records('pool').versions(VAULT)).length;
+    const found = await checkWhatThisBrowserDeposited(c.first.doors, VAULT, { files: false });
+    /* RED WHEN: a check that files nothing names a note's transaction in a new pool version. */
+    expect((await c.records('pool').versions(VAULT)).length).toBe(versions);
+    expect([found.named, found.unnamed, found.toName]).toEqual([0, 0, 1]);
+    expect(sayWhatTheCheckFound(found)).toMatch(/can be used for payments once a signer's wallet next files this vault's records/);
   });
 
   it('CHECK MY LAST DEPOSIT READS THE VAULT ON THIS DEVICE, AND NEVER ASKS THE SERVICE WHAT IT HOLDS', async () => {

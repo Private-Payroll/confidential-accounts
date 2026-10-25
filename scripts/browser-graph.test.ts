@@ -199,15 +199,19 @@ describe('EVERY BROWSER BUILD IN THIS REPOSITORY', () => {
     /* A dynamic import is not refused - it runs only if the line that asks for it runs. These two sit inside
      * `fileKeyMaterialSource`, which nothing a browser loads calls. Pinned so a new one is looked at.
      * RED WHEN: a new dynamic import of a Node built-in enters a browser graph, or these two move. */
-    /* The new app joined these two when it started the shared vault worker to create a vault (29 Sep): the same
-     * worker entry, so the same two lines behind the same disk-backed source, which nothing in a browser calls. */
-    for (const name of ['web']) {
+    /* The new app joined these two when it started the shared vault worker to create a vault: the same
+     * worker entry, so the same two lines behind the same disk-backed source, which nothing in a browser calls.
+     * The wallet reaches them the same way and no other: it starts the shared vault worker entry only under the
+     * wallet builder's name, which hands the builder the wallet's own pinned key provider, so the disk-backed key
+     * source never runs in the wallet.
+     * RED WHEN: the wallet reaches any dynamic import of a Node built-in besides these two. */
+    for (const name of ['web', 'wallet']) {
       expect(byName(name).dynamicNode.map((n) => `${n.file} ${n.specifier}`)).toEqual([
         'src/midnight/wasm-proving.ts node:fs/promises',
         'src/midnight/wasm-proving.ts node:path',
       ]);
     }
-    for (const name of ['proving-probe', 'wallet']) expect(byName(name).dynamicNode).toEqual([]);
+    for (const name of ['proving-probe']) expect(byName(name).dynamicNode).toEqual([]);
   });
 
   it('THE LIST OF BUILDS IS EVERY VITE CONFIG, AND EACH LISTS EVERY PAGE IN ITS ROOT', () => {

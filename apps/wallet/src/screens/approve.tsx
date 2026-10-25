@@ -15,9 +15,15 @@ import type { Opened } from 'midnight-identity/profile/seal';
 import { asked } from 'midnight-identity/profile/request';
 import type { Ask, Wanting } from 'midnight-identity/profile/request';
 import { framingOf, listen } from 'midnight-identity/profile/channel';
-import type { Channel, ChannelState, ChannelWindow } from 'midnight-identity/profile/channel';
+import type { ActingChannel, ChannelState, ChannelWindow } from 'midnight-identity/profile/channel';
 import { mint } from 'midnight-identity/profile/disclosure';
-import { keyringReleaseFor, releaseFor } from 'midnight-identity/profile/unlock';
+import { keyringReleaseFor, releaseFor, withTheFounding, withTheKeysRead } from 'midnight-identity/profile/unlock';
+import { drawCompanyLabel, readAccountAddress, readCompanyLabel } from 'midnight-identity/profile/company-label';
+import { foundTheCompanyInTheWallet } from '../keyring/found-company.js';
+import { keyringMarksFor } from '../keyring/held-keyring.js';
+import { keysReadForThePage } from '../keyring/read-for-the-page.js';
+import { checkedChannel, refuseIfItCarriesASecret } from '../keyring/nothing-secret-crosses.js';
+import type { WalletRecord } from '../actions/definition.js';
 import { CompanyOnChain, accountCarriesTheLabel, liveLabelReader, useCompanyCheck } from './company-on-chain.js';
 import type { LabelReader } from './company-on-chain.js';
 /* The envelope an acceptance travels in, and the wire contract that
@@ -38,10 +44,11 @@ import { ApproveCommittee, type ChainReader } from './approve-committee.js';
 import { ApproveRecordsKey } from './approve-records-key.js';
 import { ApproveJoinCode } from './approve-join-code.js';
 import { payslipKeyOfThisWallet } from './join-code-payslip-key.js';
-import { ApproveCreation } from './approve-creation.js';
 import { AnswerHolders } from './answer-holders.js';
 import { AskOver } from './ask-over.js';
 import { ApproveAddressesAndBalances } from './approve-addresses-and-balances.js';
+import { actionFor } from '../actions/registry.js';
+import { ActionRunner } from '../actions/runner-screen.js';
 import type { Consent } from '../framing.js';
 
 /**
@@ -330,6 +337,9 @@ const rowsFor = (
  * True when the wallet offered for `origin` is the one on screen and nothing about it warns: it has not been given to
  * another site, and not every wallet here has been.
  */
+/** The actions that pay from one of the person's accounts: the window lets them choose which, as a payment's window does. */
+const PAYING_ACTIONS: ReadonlySet<string> = new Set(['private-deposit']);
+
 const slotIsQuiet = (profile: Profile, origin: string, subwallet: number): boolean => {
   const offered = chooseSlot(profile, origin);
   return offered.account === subwallet && offered.because !== 'every-slot-used'
@@ -367,7 +377,7 @@ export function Approve({
   const framing = useMemo(
     () => framingOf(view ?? (window as unknown as ChannelWindow), embedder), [view, embedder]);
   const [channelState, setChannelState] = useState<ChannelState>({ of: 'waiting' });
-  const [channel, setChannel] = useState<Channel | null>(null);
+  const [channel, setChannel] = useState<ActingChannel | null>(null);
   const [profile, setProfile] = useState<Profile | null>(null);
   const [opened, setOpened] = useState<Opened | null>(null);
   const [subwallet, setSubwallet] = useState<number>(() => loadSubwallets(secret).lastUsed);
@@ -411,7 +421,8 @@ export function Approve({
       recordChannelState(portNow.current, state, now());
       setChannelState(state);
     }, embedder);
-    setChannel(opened2);
+    /* Every message this window sends the page is checked first for a secret of the saved keys it opened. */
+    setChannel(checkedChannel(opened2));
     return () => opened2.stop();
   }, [view, now, embedder]);
   /* A request to pay, and only that, has every message it sends written down too. */
@@ -443,6 +454,9 @@ export function Approve({
     ? request.account : null;
   const companyCheck = useCompanyCheck(labelAsked, accountAsked, readLabel);
   const companyOnChain = accountCarriesTheLabel(companyCheck, labelAsked);
+  /* A company named beside opening the saved keys: once the check has read, the keys open, with its key only if it carries. */
+  const openedCompanyRead = request !== null && request.kind === 'keyring' && request.companyIfOnChain === true
+    && companyCheck.of !== 'checking';
   /* The dwell is timed from the moment THIS request is on screen, not from when
    * the screen mounted: a page that holds its request back until the wait has
    * run out would otherwise put a pressable button up the instant it arrives. */
@@ -555,12 +569,14 @@ export function Approve({
     /* **NOR A HOLDERS ASK**: it hands back public chain facts and signs nothing, and its one door is its own
      * screen (`answer-holders.tsx`), which answers without a press. */
     if (request.kind === 'holders') return;
-    /* **NOR A CREATION**: it signs the second step of a company's account and discloses nothing, and its one door is
-     * its own screen (`approve-creation.tsx`). */
+    /* **NOR A CREATION**: this wallet no longer signs a deploy a page built, and refuses it on its own screen. */
     if (request.kind === 'creation') return;
     /* **NOR A JOIN CODE**: it signs one code and discloses nothing, and its one door is its own screen
      * (`approve-join-code.tsx`). */
     if (request.kind === 'join-code') return;
+    /* **NOR AN ACTION**: it runs whole on its own screen (`actions/runner-screen.tsx`), which hands back what it
+     * builds and discloses nothing. */
+    if (request.kind === 'act') return;
     const disclosed: Sent[] = [];
     const declined: AttributeName[] = [];
     for (const row of rows) {
@@ -788,37 +804,92 @@ export function Approve({
    *
    * The gate is inside `keyringReleaseFor`: when the ask names the address the
    * page signed in as and no account of this wallet has it, nothing is built
-   * and nothing is sent, whatever state the button is in.
+   * and nothing is sent, whatever state the button is in. When the ask hands
+   * the saved keys in, this wallet opens them and answers with what they hold
+   * that is not secret (`keyring/read-for-the-page.ts`).
    */
+  /*
+   * THIS WALLET'S OWN RECORD OF THE COMPANIES IT STARTED, for an action: read
+   * from the record as it stands when asked, and a pin written down before it
+   * is reported done, so an action never relays for an account this wallet has
+   * not kept as the company's.
+   */
+  const profileNow = useRef(profile);
+  profileNow.current = profile;
+  const walletRecord = useMemo((): WalletRecord => ({
+    drewTheLabel: (label) => {
+      const p = profileNow.current;
+      const company = readCompanyLabel(label);
+      return p !== null && company !== null && drewTheLabelFor(p, company);
+    },
+    pinnedFor: (label) => {
+      const pin = (profileNow.current?.pinned ?? []).find((p) => p.company === label);
+      return pin === undefined ? null : { account: pin.account, created: pin.from === 'created' };
+    },
+    pin: async (label, account, from = 'created') => {
+      const p = profileNow.current;
+      const company = readCompanyLabel(label);
+      const address = readAccountAddress(account);
+      if (p === null || company === null || address === null) throw new Error('this wallet\'s record is not open, so the account was not kept.');
+      const at = now();
+      const next = pinCompanyAccount(p, { company, account: address, from, at }, at);
+      if (next === p) return;
+      await save(port, identity, next);
+      profileNow.current = next;
+      setProfile(next);
+    },
+  }), [port, identity, now]);
+
+  /* One release per ask: founding a company takes a moment, and a second press in it must not found a second one. */
+  const releasing = useRef<unknown>(null);
   const releaseKeyring = useCallback((): void => {
     if (request === null || request.kind !== 'keyring' || profile === null
-      || channel === null) return;
+      || channel === null || releasing.current === request) return;
     /* A company's key goes only once its account has been read and carries its label. */
-    if (request.company !== null && !companyOnChain) return;
+    if (request.company !== null && !companyOnChain && !openedCompanyRead) return;
+    const { companyIfOnChain: _opened, ...alone } = request;
+    const asked = request.companyIfOnChain === true && !companyOnChain ? { ...alone, company: null, account: null } : request;
     const at = now();
     /* With no address named, this browser's note of which wallet answered that
      * page's last sign-in is the only gate there is, and it is checked here as
      * well as on the button. */
     if (request.signedInAs === null) {
       const refused = whyNotThisWallet(port, request.requester.origin, thisWallet);
-      if (refused !== null) { setProblem(`${refused} No key has been given.`); return; }
+      if (refused !== null) { setProblem(`${refused} Nothing has been given.`); return; }
     }
+    releasing.current = request;
+    void (async () => {
     let answer;
+    let handedOver: (() => void) | undefined;
     try {
-      answer = keyringReleaseFor(identity, request, at, (address) => addressesHeld.has(address));
+      if (request.drawLabel) {
+        /* A new company is founded here, before anything is answered: the label
+         * drawn, the seat made from this wallet's words, the founding signed and
+         * the seat kept in the saved keys sealed again. Only then is the
+         * release made, for that label. */
+        const label = drawCompanyLabel();
+        const founded = await foundTheCompanyInTheWallet({ identity, request, label, marks: keyringMarksFor(secret) });
+        answer = withTheKeysRead(withTheFounding(
+          keyringReleaseFor(identity, request, at, (address) => addressesHeld.has(address), () => label),
+          { founded: founded.founded, sealed: founded.sealed, ifVersion: founded.ifVersion },
+        ), founded.read);
+      } else {
+        const released = keyringReleaseFor(identity, asked, at, (address) => addressesHeld.has(address));
+        const here = keysReadForThePage({ identity, request, marks: keyringMarksFor(secret) });
+        answer = here === null ? released : withTheKeysRead(released, here.read);
+        handedOver = here?.handedOver;
+      }
+      refuseIfItCarriesASecret(answer);
     } catch (e) {
+      releasing.current = null;
       setProblem(e instanceof Error ? e.message : 'Nothing has been given.');
       return;
     }
-    channel.answer(answer);
-    setSentAt(at);
-    setGivenCompany(answer.company === null ? null : { company: answer.company, account: answer.account });
     /* A company's key given in the same answer is written down as any company's
      * key is, so a later ask for it from a different host is shown as such -
      * including the key for a company this wallet has just drawn the label of.
      * The keyring key has no company, and nothing about it is written down. */
-    if (answer.company === null) return;
-    const next = recordRelease(profile, {
+    const next = answer.company === null ? null : recordRelease(profile, {
       at,
       nonce: request.nonce,
       recipient: {
@@ -829,10 +900,30 @@ export function Approve({
       company: answer.company,
       account: answer.account,
     }, at);
+    /* A FOUNDING IS WRITTEN DOWN BEFORE IT IS ANSWERED. Finishing the company
+     * here is allowed only for a label this record says the wallet drew, so a
+     * founding answered and then not written down could never be finished from
+     * this wallet. A founding that cannot be written down is not answered. */
+    if (request.drawLabel && next !== null) {
+      try {
+        await save(port, identity, next);
+      } catch {
+        releasing.current = null;
+        setProblem('This wallet could not write down the company it was starting, so nothing was created and nothing was given. '
+          + 'Check that this browser keeps this site\'s data (not a private window, and with room left), then press again.');
+        return;
+      }
+    }
+    if (channel.answer(answer)) handedOver?.();
+    setSentAt(at);
+    setGivenCompany(answer.company === null ? null : { company: answer.company, account: answer.account });
+    if (next === null) return;
     setProfile(next);
+    if (request.drawLabel) return;
     void save(port, identity, next).catch(
       () => setProblem('The key was given, and this wallet could not write down that it was.'));
-  }, [request, profile, channel, identity, port, now, addressesHeld, thisWallet, companyOnChain]);
+    })();
+  }, [request, profile, channel, identity, secret, port, now, addressesHeld, thisWallet, companyOnChain, openedCompanyRead]);
 
   /*
    * **AN ASK APPROVED BEFORE THE PASSKEY IS ANSWERED HERE WITHOUT ANOTHER PRESS** - only the identical ask
@@ -862,6 +953,9 @@ export function Approve({
       try { noteWalletId(port, request.requester.origin, thisWallet, openWalletId()); } catch { /* the next ask shows the list again */ }
     }
   }, [request, port, thisWallet]);
+  /* An action this wallet has no definition for is refused at once, as the window before the passkey refuses it. */
+  const actNotRun = request !== null && request.kind === 'act' && actionFor(request.intent.name) === null;
+  useEffect(() => { if (actNotRun) channelNow.current?.refuse('unreadable'); }, [actNotRun]);
   const readable = opened !== null && opened.of !== 'unopenable' && profile !== null && channel !== null;
   const slotQuiet = readable && profile !== null && request !== null
     && slotIsQuiet(profile, request.requester.origin, subwallet);
@@ -877,7 +971,7 @@ export function Approve({
   useAnswerAtOnce(atOnce && request?.kind === 'keyring',
     consent.ok && readable && !otherWalletSignedIn && !keyGivenElsewhere
       && (request?.kind !== 'keyring' || request.signedInAs === null || addressesHeld.has(request.signedInAs))
-      && (request?.kind !== 'keyring' || request.company === null || companyOnChain), releaseKeyring);
+      && (request?.kind !== 'keyring' || request.company === null || companyOnChain || openedCompanyRead), releaseKeyring);
 
   /* WHAT HOLDS AN ASK APPROVED BEFORE THE PASSKEY IS BROUGHT INTO SIGHT, once: a refusal or a warning found after the
    * passkey sits far down this screen, and the person is waiting for an answer, not reading from the top. */
@@ -1324,6 +1418,27 @@ export function Approve({
     </Section>
   );
 
+  if (request.kind === 'act') {
+    const action = actionFor(request.intent.name);
+    if (action === null) {
+      return (
+        <StatusAlert tone="danger" title={say('ask.act.not-run-title')}>
+          <p className="m-0" data-act-not-run>{say('ask.act.not-run')}</p>
+        </StatusAlert>
+      );
+    }
+    return (
+      <ActionRunner
+        request={request} action={action} channel={channel} identity={identity} secret={secret} consent={consent}
+        atOnce={atOnce && (!PAYING_ACTIONS.has(request.intent.name) || slotQuiet)} now={now} wallet={walletRecord} account={subwallet}
+        {...(PAYING_ACTIONS.has(request.intent.name) ? {
+          payingFrom: whichWallet('Which of your wallets pays', 'The coins come from this wallet, and only from it.', walletLocked),
+        } : {})}
+        onDecline={() => { channel?.refuse('declined'); setChannelState({ of: 'waiting' }); }}
+      />
+    );
+  }
+
   if (request.kind === 'committee') {
     return (
       <ApproveCommittee
@@ -1369,29 +1484,13 @@ export function Approve({
   }
 
   if (request.kind === 'creation') {
+    /* **A PAGE-BUILT DEPLOY IS NOT SIGNED HERE ANY MORE.** Finishing a company is one action this wallet runs whole,
+     * building the deploy and its second step itself (`actions/finish-company.ts`); an old page that still sends the
+     * deploy it built is refused, and nothing is signed. */
     return (
-      <ApproveCreation
-        request={request}
-        identity={identity}
-        channel={channel}
-        consent={consent}
-        whoIsAsking={whoIsAsking}
-        onDecline={() => { channel?.refuse('declined'); setChannelState({ of: 'waiting' }); }}
-        drewTheLabel={profile !== null && drewTheLabelFor(profile, request.company)}
-        answerAtOnce={atOnce && readable}
-        onPin={async (account, at) => {
-          if (profile === null) throw new Error('this wallet\'s record is not open, so nothing has been signed.');
-          /* The account the deploy creates, as this wallet read it, is pinned as the company's: once, and here, and kept
-           * before the signature is handed back. A pin this wallet could not keep is no pin, so nothing is signed. */
-          const next = pinCompanyAccount(profile, { company: request.company, account, from: 'created', at }, at);
-          try {
-            await save(port, identity, next);
-          } catch {
-            throw new Error('This wallet could not keep the company\'s account, so nothing has been signed. Try again.');
-          }
-          setProfile(next);
-        }}
-      />
+      <StatusAlert tone="danger" title={say('ask.creation.retired-title')}>
+        <p className="m-0" data-creation-retired>{say('ask.creation.retired')}</p>
+      </StatusAlert>
     );
   }
 
@@ -1668,7 +1767,7 @@ export function Approve({
     return (
       <>
         {/* **THE HEADLINE IS BUILT FROM THE OBSERVED ORIGIN**, for the unlock's reason. */}
-        <h1 data-headline>{`Let ${request.requester.origin} use the keys saved under the account name it gives`}</h1>
+        <h1 data-headline>{`Let ${request.requester.origin} read your companies with the keys saved under the account name it gives`}</h1>
 
         <Section
           list={false} box={false} aria-label="Who is asking, and who they say you are"
@@ -1719,10 +1818,16 @@ export function Approve({
             description="The page is setting up a company, and you are its founding signer."
           >
             <p className="m-0 text-sm text-foreground" data-new-company>
-              This wallet makes up the new company&rsquo;s label itself, when you press the button, and gives the page
-              that label with your keys for it. The page does not choose it. Every other signer&rsquo;s wallet works
-              out their own keys from the same label later.
+              This wallet makes up the new company&rsquo;s label itself, when you press the button, makes your seat
+              in it, signs the company&rsquo;s first roster and state with that seat and keeps the seat in your saved
+              keys. The page gets the label and the signed records, never your seat&rsquo;s keys, and does not choose
+              the label. Every other signer&rsquo;s wallet works out their own keys from the same label later.
             </p>
+            {request.founding !== undefined && (
+              <p className="m-0 text-sm text-foreground" data-shown-from="page" data-founding>
+                {say('ask.keyring.founding', { name: request.founding.name, signer: request.founding.signer.name, role: request.founding.signer.role })}
+              </p>
+            )}
             <p className="m-0 text-sm text-muted-foreground" data-new-company-no-fingerprint>
               The company has no account on the chain yet, so there is no fingerprint to compare. Give the keys only
               if you are setting this company up yourself, on this page, now.
@@ -1734,6 +1839,7 @@ export function Approve({
           </Section>
         )}
 
+        {request.companyIfOnChain === true && <p className="m-0 text-sm" data-also-company>{say('ask.keyring.also-company')}</p>}
         {request.company !== null && (
           <Section
             list={false} box={false} aria-label="And the key to one company's records"
@@ -1781,16 +1887,17 @@ export function Approve({
         <Section
           list={false} box={false} aria-label="What you are agreeing to"
           title="What you are agreeing to"
-          description="This is more than reading. It is your vote on payments, for every company there."
+          description="Reading, for every company there. Your vote on payments stays in this wallet."
         >
           <p className="m-0 text-base text-foreground" data-keyring-question>
-            {`Do you want ${request.requester.origin} to be able to use the keys this wallet saved under that account name?`}
+            {`Do you want ${request.requester.origin} to read the companies the keys this wallet saved under that account name hold?`}
           </p>
           <p className="m-0 text-sm text-muted-foreground" data-keyring-power>
-            Those keys are how you open the records of, and approve payments for, every company you
-            belong to on that site - not only one. From the moment you press the button, whoever runs
-            that page can use them whenever it is open. This wallet cannot watch it happen and cannot
-            tell you afterwards what was done.
+            This wallet opens those keys itself and tells that page which companies you hold a seat on,
+            with the keys that read each one's records - every company you belong to on that site, not
+            only one. The keys that approve payments, and the key your saved keys open with, stay in this
+            wallet. From the moment you press the button, whoever runs that page can read those records
+            whenever it is open. This wallet cannot watch it happen and cannot tell you afterwards what was read.
           </p>
         </Section>
 
@@ -1800,21 +1907,21 @@ export function Approve({
           description="The honest answer, which is not “until you say stop”."
         >
           <p className="m-0 text-sm text-muted-foreground">
-            Their page holds the key while it is open, and this wallet never stores it. But nothing
-            stops them keeping their own copy, and nothing here could tell. Treat this as given for good.
+            Their page holds what it is given while it is open. But nothing stops them keeping their own
+            copy, and nothing here could tell. Treat what can be read as given for good.
           </p>
         </Section>
 
         <Section
-          list={false} box={false} aria-label="Which keys this opens"
-          title="Which keys this opens"
-          description="Made from this wallet and the account name above, not from the web address."
+          list={false} box={false} aria-label="Which keys this reads"
+          title="Which keys this reads"
+          description="Opened with this wallet and the account name above, not with the web address."
         >
           <p className="m-0 text-sm text-muted-foreground" data-keyring-whose>
-            It opens whatever is saved under that account name by this wallet, wherever that is kept -
-            which is why the page asking matters as much as the name. It is the same key on every
-            device and again if you rebuild this wallet from its recovery pieces. Another wallet gives
-            a different key, which opens nothing this one saved.
+            It reads whatever is saved under that account name by this wallet, wherever that is kept -
+            which is why the page asking matters as much as the name. It reads the same on every device
+            and again if you rebuild this wallet from its recovery pieces. Another wallet opens nothing
+            this one saved.
           </p>
         </Section>
 
@@ -1822,18 +1929,18 @@ export function Approve({
           <StatusAlert tone="danger" title="None of this wallet's addresses is the one that page signed in with">
             <p className="m-0" data-not-signed-in-here>
               {`The page at ${request.requester.origin} says you signed in to it as an address no account in `}
-              this wallet has, so this is not the wallet you signed in with. A key from this wallet would
-              not open what the wallet you signed in with saved there, and anything saved under it could
-              only ever be opened with this one. Open the wallet you signed in with.
+              this wallet has, so this is not the wallet you signed in with. This wallet would not open
+              what the wallet you signed in with saved there, and anything it saved there could only ever
+              be opened by this one. Open the wallet you signed in with.
             </p>
-            <p className="m-0">No key has been given.</p>
+            <p className="m-0">Nothing has been given.</p>
           </StatusAlert>
         )}
 
         {notThisWallet !== null && (
           <StatusAlert tone="danger" title="Another wallet answered this page's last sign-in">
             <p className="m-0" data-not-this-wallet>{notThisWallet}</p>
-            <p className="m-0">No key has been given.</p>
+            <p className="m-0">Nothing has been given.</p>
           </StatusAlert>
         )}
 
@@ -1847,7 +1954,7 @@ export function Approve({
           <p className="m-0">
             You can refuse the next time they ask. That is the whole of what stopping means: whoever is
             behind that page keeps everything they have already opened and anything they copied while it
-            was open, and nothing can take back a key.
+            was open, and nothing can take back what was read.
           </p>
         </StatusAlert>
 
@@ -1857,11 +1964,11 @@ export function Approve({
             type="button"
             variant="default"
             onClick={releaseKeyring}
-            disabled={!consent.ok || notHeld || notThisWallet !== null || (request.company !== null && !companyOnChain)}
+            disabled={!consent.ok || notHeld || notThisWallet !== null || (request.company !== null && !companyOnChain && !openedCompanyRead)}
             data-approve
             data-keyring
           >
-            {`Give ${request.requester.origin} the key`}
+            {`Let ${request.requester.origin} read them`}
           </Button>
           <Button
             size="lg"

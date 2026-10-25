@@ -1,5 +1,5 @@
 // @vitest-environment jsdom
-import { afterEach, beforeEach, describe, expect, it } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { act, cleanup, fireEvent, render, screen } from '../testing/render.js';
 import { Buffer as PolyfillBuffer } from 'buffer/';
 import { TEST_MNEMONIC } from '@midnight-ntwrk/testkit-js';
@@ -35,6 +35,22 @@ import { Approve } from './approve.js';
 import { INDEXER_HTTP_URL, INDEXER_WS_URL } from '../config.js';
 import type { AccountAddress, CompanyLabel } from 'midnight-identity/profile/company-label';
 import type { LabelReader } from './company-on-chain.js';
+import { sealKeyring } from '../../../../packages/web-shared/src/keyring-blob.js';
+import { keyringSealKeyFor } from '../keyring/seal-key.js';
+
+/* A keyring read that carries a whole seat, by value, when a test plants one: the answer built with it is not given. */
+const plant = vi.hoisted(() => ({ seat: null as Record<string, string> | null }));
+vi.mock('../keyring/read-for-the-page.js', async (importOriginal) => {
+  const real = await importOriginal<typeof import('../keyring/read-for-the-page.js')>();
+  return {
+    ...real,
+    keysReadForThePage: (...args: Parameters<typeof real.keysReadForThePage>) => {
+      const here = real.keysReadForThePage(...args);
+      if (plant.seat === null || here === null) return here;
+      return { ...here, read: { ...here.read, seats: { ...here.read.seats, acc_P: plant.seat as never } } };
+    },
+  };
+});
 
 /**
  * **THE SCREEN THAT GIVES SOMETHING AWAY RATHER THAN SAYING SOMETHING.**
@@ -269,7 +285,9 @@ const press = async (channel: Opened, origin = ORIGIN) => {
    * it waits for the WRITE rather than for what the write said.
    */
   const written = afterWrites(port);
-  fireEvent.click(screen.getByText(giveTo(origin)));
+  /* The keyring's button says what the page is let do with what it reads; an unlock's says it gives the key. */
+  const keyringButton = document.querySelector('[data-approve][data-keyring]');
+  fireEvent.click(keyringButton ?? screen.getByText(giveTo(origin)));
   /*
    * **THE ANSWER IS AWAITED, NOT POLLED FOR**, and this is the wait
    * that lost the race on a real machine at 5,014ms in its old shape,
@@ -1003,7 +1021,7 @@ describe('THE KEYS SAVED FOR YOU AT A SITE - given only by the wallet that signe
       await settle();
 
       const headline = document.querySelector('h1[data-headline]')?.textContent ?? '';
-      expect(headline).toBe(`Let ${OTHER} use the keys saved under the account name it gives`);
+      expect(headline).toBe(`Let ${OTHER} read your companies with the keys saved under the account name it gives`);
       /* Nothing on the screen places the keys at the page that is asking. */
       expect(document.body.textContent).not.toContain('saved for you there');
       expect(headline).not.toContain('Payroll A');
@@ -1020,11 +1038,11 @@ describe('THE KEYS SAVED FOR YOU AT A SITE - given only by the wallet that signe
       expect(document.querySelector('[data-not-signed-in-here]')).toBeNull();
 
       const power = document.querySelector('[data-keyring-power]')?.textContent ?? '';
-      expect(power).toContain('approve payments for');
+      /* RED WHEN: the window says the page can approve payments with what it is given, or hides that it reads every company. */
+      expect(power).toContain('The keys that approve payments, and the key your saved keys open with, stay in this');
       expect(power).toContain('every company you belong to on that site');
-      expect(document.body.textContent).not.toContain('It is the ability to read');
 
-      expect(giveButton().textContent).toBe(giveTo(OTHER));
+      expect(giveButton().textContent).toBe(`Let ${OTHER} read them`);
       expect(giveButton().disabled).toBe(false);
     });
 
@@ -1044,20 +1062,23 @@ describe('THE KEYS SAVED FOR YOU AT A SITE - given only by the wallet that signe
       const release = answers[0]!.message as KeyringRelease;
       expect(release.schema).toBe('midnight-identity/keyring-release/v1');
       expect(release.origin).toBe(ORIGIN);
-      expect(release.key).toBe(keyringKeyOf(ask));
+      /* RED WHEN: the answer carries the key the saved keys open with. */
+      expect('key' in release).toBe(false);
       expect(release.companyKey).toBeNull();
       expect(release.signedInAs).toBe(address);
       expect(document.querySelector('[data-keyring-given]')).not.toBeNull();
       /* And afterwards nothing places the keys at the page that asked, either. */
       expect(document.body.textContent).not.toContain('saved for you there');
 
-      const raw = hex(fromBase64Url(release.key));
+      const key = keyringKeyOf(ask);
+      const raw = hex(fromBase64Url(key));
       for (const [where, text] of [
         ['localStorage', everythingInLocalStorage()],
         ['the wallet store', port.all()],
         ['the screen', document.body.outerHTML],
+        ['the answer', JSON.stringify(release)],
       ] as const) {
-        expect(text.includes(release.key), `the key is in ${where}`).toBe(false);
+        expect(text.includes(key), `the key is in ${where}`).toBe(false);
         expect(text.includes(raw), `the key's bytes are in ${where}`).toBe(false);
       }
     });
@@ -1104,7 +1125,7 @@ describe('THE KEYS SAVED FOR YOU AT A SITE - given only by the wallet that signe
       await press(channel);
       const release = channel.sent[1]!.message as KeyringRelease;
       expect(release.signedInAs).toBeNull();
-      expect(release.key).toBe(keyringKeyOf(ask));
+      expect('key' in release).toBe(false);
     });
 
   it('NO ADDRESS NAMED, AND ANOTHER WALLET HERE ANSWERED THAT PAGE\'S SIGN-IN: the reason is shown and Give is disabled',
@@ -1124,7 +1145,7 @@ describe('THE KEYS SAVED FOR YOU AT A SITE - given only by the wallet that signe
       await settle();
       expect(channel.sent).toHaveLength(1);
       expect(document.querySelector('[data-keyring-problem]')?.textContent ?? '')
-        .toContain('No key has been given.');
+        .toContain('Nothing has been given.');
     });
 
   it('WITH A COMPANY: the company is shown, the answer carries the same company key an ordinary unlock gives, and the wallet remembers where it went',
@@ -1143,7 +1164,7 @@ describe('THE KEYS SAVED FOR YOU AT A SITE - given only by the wallet that signe
       const ordinary = releaseFor(
         identity, parseAsk(unlock({ company: CO_A, nonce: 'k1' }), ORIGIN, NOW) as UnlockRequest, NOW);
       expect(release.companyKey).toBe(ordinary.key);
-      expect(release.companyKey).not.toBe(release.key);
+      expect('key' in release).toBe(false);
 
       await remembered(pressed);
       const opened = await load(port, identity);
@@ -1156,6 +1177,12 @@ describe('THE KEYS SAVED FOR YOU AT A SITE - given only by the wallet that signe
       expect(originsFor(opened.profile, CO_A, ACCOUNT_A)).toEqual([ORIGIN]);
     });
 
+  /* What a page starts a company with: its name and founding signer, and no saved keys yet. */
+  const FOUNDING = {
+    founding: { name: 'Acme', signer: { name: 'Priya', role: 'admin' } },
+    keyring: { sealed: null, version: 0 },
+  };
+
   it('STARTING A COMPANY: the wallet draws the label itself, and answers with it and its keys', async () => {
     /*
      * RED WHEN: the screen offers a fingerprint for a company that has no
@@ -1163,10 +1190,12 @@ describe('THE KEYS SAVED FOR YOU AT A SITE - given only by the wallet that signe
      * the company key in it is not that label's.
      */
     await someone();
-    const channel = open(keyring({ signedInAs: mine(), drawLabel: true }));
+    const channel = open(keyring({ signedInAs: mine(), drawLabel: true, ...FOUNDING }));
     await saying('Who is asking');
     await settle();
     expect(document.querySelector('[data-new-company]')).not.toBeNull();
+    /* RED WHEN: the names the page gives the company and its founding signer are not shown, as the page's, before the press. */
+    expect(document.querySelector('[data-founding][data-shown-from=page]')?.textContent).toContain('Acme');
     expect(document.querySelector('[data-company-fingerprint]')).toBeNull();
     await press(channel);
     const release = channel.sent[1]!.message as KeyringRelease;
@@ -1175,6 +1204,76 @@ describe('THE KEYS SAVED FOR YOU AT A SITE - given only by the wallet that signe
     const ordinary = releaseFor(
       identity, parseAsk(unlock({ company: release.company, account: undefined, nonce: 'k1' }), ORIGIN, NOW) as UnlockRequest, NOW);
     expect(release.companyKey).toBe(ordinary.key);
+    /* RED WHEN: the founding seat's keys reach the page, or the answer carries no founding and no saved keys sealed again. */
+    expect('seat' in release).toBe(false);
+    expect((release.founded as { account: { id: string } }).account.id).toMatch(/^acc_/u);
+    expect(release.sealed).toEqual(expect.objectContaining({ iv: expect.any(String), tag: expect.any(String), body: expect.any(String) }));
+    expect(release.ifVersion).toBe(0);
+  });
+
+  it('STARTING A COMPANY: the founding is written down before it is answered', async () => {
+    /* RED WHEN: the wallet answers the page with a founding before it has written down that it drew the label. */
+    await someone();
+    const channel = open(keyring({ signedInAs: mine(), drawLabel: true, ...FOUNDING }));
+    await saying('Who is asking');
+    await settle();
+    const answeredAtEachWrite: number[] = [];
+    const write = port.setItem;
+    port.setItem = (k, v) => { answeredAtEachWrite.push(channel.sent.length); write(k, v); };
+    const pressed = await press(channel);
+    await pressed.written();
+    const release = channel.sent[1]!.message as KeyringRelease;
+    expect(answeredAtEachWrite.length).toBeGreaterThan(0);
+    expect(answeredAtEachWrite[0]).toBe(1);
+    const opened = await load(port, identity);
+    if (opened.of !== 'profile') throw new Error('the sealed profile did not open');
+    expect(releasesOf(opened.profile).map((r) => r.company)).toContain(release.company);
+  });
+
+  it('STARTING A COMPANY: a founding this wallet cannot write down is not answered, and the screen says what to do', async () => {
+    /* RED WHEN: a failed write still hands the page a founding, or the screen does not say what resolves it. */
+    await someone();
+    const channel = open(keyring({ signedInAs: mine(), drawLabel: true, ...FOUNDING }));
+    await saying('Who is asking');
+    await settle();
+    const before = channel.sent.length;
+    port.setItem = () => { throw new Error('the storage is full'); };
+    fireEvent.click(giveButton());
+    let said: HTMLElement | null = null;
+    for (let i = 0; i < 200 && said === null; i += 1) {
+      await settle();
+      said = screen.queryByText(/could not write down the company it was starting/u);
+    }
+    expect(said?.textContent).toMatch(/nothing was created and nothing was given.*press again/u);
+    expect(channel.sent.length).toBe(before);
+  });
+
+  it('A KEYRING ANSWER BUILT WITH A SEAT IN IT IS NOT GIVEN, and the screen says nothing was handed over', async () => {
+    /* RED WHEN: the window hands the page an answer holding a secret of the saved keys it opened. */
+    const SEAT = { signerId: 'sig_P', signingSecret: '5a'.repeat(32), wrappingSecret: '6b'.repeat(32), blinding: '7c'.repeat(32), scope: '44'.repeat(32) };
+    await someone();
+    /* Another person, so the mark this device raises for these saved keys is not one a later test meets. */
+    const ask = keyring({ signedInAs: mine(), person: 'usr_Planted000001' });
+    const key = keyringSealKeyFor(identity, parseAsk(ask, ORIGIN, NOW) as KeyringRequest);
+    const handed = { sealed: sealKeyring({ accounts: { acc_P: SEAT } }, hex(key)).sealed, version: 3 };
+    plant.seat = SEAT;
+    try {
+      const channel = open({ ...ask, keyring: handed });
+      await saying('Who is asking');
+      await settle();
+      const before = channel.sent.length;
+      fireEvent.click(giveButton());
+      let said: HTMLElement | null = null;
+      for (let i = 0; i < 200 && said === null; i += 1) {
+        await settle();
+        said = screen.queryByText(/about to hand the page a secret of your saved keys/u);
+      }
+      expect(said).not.toBeNull();
+      expect(channel.sent.length).toBe(before);
+      for (const m of channel.sent) expect(JSON.stringify(m.message)).not.toContain(SEAT.signingSecret);
+    } finally {
+      plant.seat = null;
+    }
   });
 
   it('STARTING A COMPANY: afterwards the screen shows the label the wallet drew, and says there is no fingerprint yet', async () => {
@@ -1183,7 +1282,7 @@ describe('THE KEYS SAVED FOR YOU AT A SITE - given only by the wallet that signe
      * in the answer, or offers a fingerprint for a company that has no account.
      */
     await someone();
-    const channel = open(keyring({ signedInAs: mine(), drawLabel: true }));
+    const channel = open(keyring({ signedInAs: mine(), drawLabel: true, ...FOUNDING }));
     await saying('Who is asking');
     await settle();
     await press(channel);

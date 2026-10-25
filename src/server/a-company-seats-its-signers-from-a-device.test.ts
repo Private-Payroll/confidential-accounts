@@ -965,6 +965,8 @@ describe('A COMPANY SEATS ITS SIGNERS FROM THEIR OWN DEVICES, ON THE PRODUCT\'S 
     const waiting = await fileTheOwedDirectoryEntry(listsNothing, company, gilsOwed, gilsKeys, adaFounded);
     /* RED WHEN: a seat's entry is filed without its invitation, so no device ever believes it, or the device says it was filed. */
     expect(waiting).toEqual({ waitingForItsInvitation: WAITING_FOR_ITS_INVITATION });
+    /* RED WHEN: the waiting entry is said to be tried again on opening the company, which files nothing now. */
+    expect(WAITING_FOR_ITS_INVITATION).toMatch(/tried again in your next action in your wallet/u);
     expect(await gilsClaims()).toEqual([]);
     /* RED WHEN: an entry not filed is let go, so it is never tried again. */
     expect(owed).not.toBeNull();

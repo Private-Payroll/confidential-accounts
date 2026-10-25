@@ -43,6 +43,8 @@ import { NO_LEG } from '../../src/midnight/spending-policy-record.js';
 import { vouchedFreshOf } from '../../src/midnight/record-tree.js';
 import type { Hex } from '../../src/core/crypto.js';
 import { newWrappingKeypair } from '../../src/core/crypto.js';
+import { payKeyStandingOf } from '../../src/midnight/pay-key-round.js';
+import { sealPayKeyTo } from '../../src/midnight/run-keys.js';
 import { NO_ASSET } from '../../src/core/assets.js';
 import { buildRun, type PaymentFacts } from '../../src/midnight/payout-tree.js';
 import { payeeFor, payFor } from '../../src/testing/payees.js';
@@ -174,10 +176,14 @@ describe.skipIf(!KEYS_ON_DISK)('A PAYROLL RUN RAISED AND APPROVED FROM THE SIGNE
    * pay-record key against this commitment.
    */
   const commitThePayKey = async (b: ReturnType<typeof builder>, key: string) => {
-    const standing = () => b.client.payKeyStanding!({
-      account: company, accountState: callState().accountState, key, signingSecret: hex(founder.secretKey),
-      wrappingPublicKey: newWrappingKeypair().publicKey,
-    });
+    /* The standing the wallet's own builder reads (`apps/wallet/src/chain/account-builder.ts`, `pay-key-standing`). */
+    const wrapping = newWrappingKeypair().publicKey;
+    const standing = async () => {
+      const P = (accountModule as any).pureCircuits;
+      const ledger = (accountModule as any).ledger((runtime as any).ContractState.deserialize(Buffer.from(callState().accountState, 'base64')).data);
+      const at = payKeyStandingOf(P, { address: company.toLowerCase(), account: ledger, key: key.toLowerCase() as never, secretKey: hex(founder.secretKey) as never });
+      return { ...at, noVault: Buffer.from(P.noVault()).toString('hex'), wrap: sealPayKeyTo(key.toLowerCase() as never, wrapping as never) };
+    };
     const s = await standing();
     const r = s.round;
     const payKey = { kind: 'pay-key', commitment: r.commitment } as const;

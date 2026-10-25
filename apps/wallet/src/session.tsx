@@ -188,7 +188,10 @@ export interface Session {
   finishPairing(secret: Secret, walletName?: string): Promise<boolean>;
   /** True once a pairing has landed an account in this session. */
   readonly paired: boolean;
-  /** Drops the keys from memory. The sealed copy stays; a passkey reopens it. */
+  /**
+   * Drops the keys from memory. The sealed copy stays; a passkey reopens it. An action calls it when it ends, is
+   * stopped or fails, so the keys its one passkey opened are held no longer than the action.
+   */
   lock(): void;
   /** Forgets everything in this browser. Only offered where recovery cannot help. */
   startOver(): void;

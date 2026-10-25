@@ -232,6 +232,8 @@ describe('the company\'s key on this device', () => {
     /* RED WHEN: sealing goes on under a key the leaver held once their removal is carried out and anchored. */
     expect(() => key.sealing()).toThrow(CompanyKeyBeingChanged);
     expect(key.notSealing).toMatch(/being changed/u);
+    /* RED WHEN: the pause says opening the company changes the key, when it is the next action a staying signer makes in their wallet that does. */
+    expect(key.notSealing).toMatch(/next action a signer who stays makes in their wallet changes it first/u);
     /* RED WHEN: the pause stops reading as well as sealing. */
     expect([key.epoch, key.keyAt(0)]).toEqual([1, KEY0]);
     await deviceOn(w, BO).rotate();
@@ -567,6 +569,20 @@ describe('the company\'s key on this device', () => {
     const source = readFileSync(new URL('./company-key-here.ts', import.meta.url), 'utf8');
     /* RED WHEN: finding or changing the company's key reads the account's committee or the super admin role. */
     expect(source.match(/committee|super.?admin/giu) ?? []).toEqual([]);
+  });
+});
+
+describe('the company\'s key read from the seat\'s public key alone', () => {
+  it('opens every key the seat\'s secret would, so a read of a vault needs no secret', async () => {
+    const w = aWorld([ADA, BO, CY]);
+    w.retire(CY);
+    expect((await deviceOn(w, BO).rotate()).state).toBe('rotated');
+    const withSecret = await deviceOn(w, ADA).key();
+    const { doors } = deviceOn(w, ADA);
+    const reading = { ...doors, material: { signingPublicKey: ADA.signing.publicKey } };
+    const read = await companyKeyHere(reading);
+    /* RED WHEN: this seat's own copies are found only by its signing secret, so a read must hold the secret to open the company's keys. */
+    expect([read.epoch, read.newest, read.key, read.keyAt(0)]).toEqual([withSecret.epoch, withSecret.newest, withSecret.key, withSecret.keyAt(0)]);
   });
 });
 

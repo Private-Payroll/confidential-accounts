@@ -1,6 +1,7 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import { vaultBuilderOver, vaultBuilderOnWorkers, VaultAskFailed } from './vault-worker-client.js';
-import { startVaultWorker, toldOfEachCall, provingToldOf, loadDeps } from './vault-worker-entry.js';
+import { startVaultWorker, toldOfEachCall, provingToldOf, loadDeps, provingWarmed, type WorkerDeps } from './vault-worker-entry.js';
+import { SERVICE_READ_BOUND_MS } from './read-bound.js';
 import { ProvingMaterialRefused, type ArtefactSource } from './key-material.js';
 import { PROOF_CEILING_MS } from './vault-proof-workers.js';
 import { existsSync } from 'node:fs';
@@ -453,4 +454,109 @@ describe('THE WORKER\'S OWN LOADER TELLS THE PAGE OF EVERY FETCH', () => {
     await expect(deps.accountKeys.getVerifierKey('adopt')).rejects.toThrow();
     expect(busy()).toBe(6);
   }, 60_000);
+});
+
+/*
+ * The page's client over the worker's own ask handling, as a page reaches it: what one side posts the other hears a
+ * turn later, and the worker's code loads when its first ask arrives, as the page's worker's does. Time is the fake
+ * clock's; the worker's code takes LOAD_MS to load.
+ */
+describe('A READ IS TIMED FROM WHEN THE WORKER STARTS IT, NOT FROM WHEN THE WORKER STARTS LOADING', () => {
+  const LOAD_MS = 25_000;
+  const indexer = { indexerUri: 'https://i.example/graphql', indexerWsUri: 'wss://i.example/ws' };
+  const later = <T>(ms: number, value: T) => new Promise<T>((resolve) => { setTimeout(() => resolve(value), ms); });
+  const overTheWorker = (made: Partial<WorkerDeps>) => {
+    let loading: Promise<WorkerDeps> | null = null;
+    const deps = () => (loading ??= later(LOAD_MS, made as WorkerDeps));
+    return vaultBuilderOnWorkers(() => {
+      const page = aWorker();
+      const inside: Listener[] = [];
+      const scope = {
+        addEventListener: (_t: string, l: Listener) => { inside.push(l); },
+        postMessage: (m: unknown) => { queueMicrotask(() => page.says(m)); },
+      };
+      page.postMessage = (m: unknown) => { queueMicrotask(() => { for (const l of inside) l({ data: m }); }); };
+      queueMicrotask(() => startVaultWorker(scope, deps));
+      return page;
+    }, NET);
+  };
+  const outcomeOf = <T>(p: Promise<T>) => {
+    const o: { done: boolean; value?: T; error?: unknown } = { done: false };
+    p.then((v) => { o.done = true; o.value = v; }, (e: unknown) => { o.done = true; o.error = e; });
+    return o;
+  };
+  /* What the worker loads for an ask, loaded once here so the fake clock alone decides when the ask goes on. */
+  beforeEach(async () => {
+    vi.useRealTimers();
+    await import('./vault-on-chain-here.js');
+    await import('@midnight-ntwrk/midnight-js-network-id');
+    vi.useFakeTimers();
+  });
+
+  it('a read the worker answers in three seconds is answered, though the worker took longer than the read\'s twenty seconds to load', async () => {
+    /* RED WHEN: the read's twenty seconds start when it is posted - the worker's loading uses them up and an account
+     * that is on the chain cannot be opened after a refresh. */
+    const client = overTheWorker({ chainSourceAt: () => ({ events: { eventsOf: () => later(3_000, []) } }) as never });
+    const read = outcomeOf(client.eventsOf({ transactionHash: 'cc', indexer }));
+    await vi.advanceTimersByTimeAsync(LOAD_MS + 2_999);
+    expect(read.done).toBe(false);
+    await vi.advanceTimersByTimeAsync(2);
+    expect(read.error).toBeUndefined();
+    expect(read).toEqual({ done: true, value: [] });
+  });
+
+  it('a read that itself takes longer than twenty seconds still ends at twenty seconds, with the same words', async () => {
+    /* RED WHEN: a read the worker has started is no longer held to twenty seconds, or ends without saying what did not answer. */
+    const client = overTheWorker({ chainSourceAt: () => ({ events: { eventsOf: () => new Promise(() => {}) } }) as never });
+    const read = outcomeOf(client.eventsOf({ transactionHash: 'cc', indexer }));
+    await vi.advanceTimersByTimeAsync(LOAD_MS + SERVICE_READ_BOUND_MS - 1);
+    expect(read.done).toBe(false);
+    await vi.advanceTimersByTimeAsync(2);
+    expect(read.done).toBe(true);
+    expect((read.error as Error).message).toMatch(/^The network \(events-of\) did not answer within 20 seconds/);
+  });
+
+  const warming = (eventsOf: () => Promise<unknown>) => {
+    const fetchedAt: number[] = [];
+    const fetched = async () => { fetchedAt.push(Date.now()); return new Uint8Array(1); };
+    const source = { lookupKey: async () => undefined, getParams: fetched, artefact: fetched };
+    const client = overTheWorker({
+      chainSourceAt: () => ({ events: { eventsOf } }) as never,
+      provingWarmed: () => provingWarmed(source, () => 10),
+    });
+    return { client, fetchedAt };
+  };
+
+  it('the proving warm-up started at sign-in waits while a read is under way, and goes on once it has answered', async () => {
+    /* RED WHEN: the warm-up's downloads run beside the first read in the worker and slow it past its twenty seconds. */
+    const t0 = Date.now();
+    const { client, fetchedAt } = warming(() => later(3_000, []));
+    const warm = outcomeOf(client.provingWarmed!());
+    await settle();
+    const read = outcomeOf(client.eventsOf({ transactionHash: 'cc', indexer }));
+    await vi.advanceTimersByTimeAsync(LOAD_MS + 2_999);
+    expect(fetchedAt).toEqual([]);
+    await vi.advanceTimersByTimeAsync(2);
+    expect(read).toEqual({ done: true, value: [] });
+    expect(fetchedAt.length).toBeGreaterThan(0);
+    expect(Math.min(...fetchedAt) - t0).toBeGreaterThanOrEqual(LOAD_MS + 3_000);
+    await vi.advanceTimersByTimeAsync(0);
+    expect(warm).toEqual({ done: true, value: undefined });
+  });
+
+  it('a read that never ends holds the warm-up back for twenty seconds and no longer', async () => {
+    /* RED WHEN: the warm-up waits on a read with no end, and proving is never made ready. */
+    const t0 = Date.now();
+    const { client, fetchedAt } = warming(() => new Promise(() => {}));
+    const warm = outcomeOf(client.provingWarmed!());
+    await settle();
+    void client.eventsOf({ transactionHash: 'cc', indexer }).catch(() => {});
+    await vi.advanceTimersByTimeAsync(LOAD_MS + SERVICE_READ_BOUND_MS - 1);
+    expect(fetchedAt).toEqual([]);
+    await vi.advanceTimersByTimeAsync(2);
+    expect(fetchedAt.length).toBeGreaterThan(0);
+    expect(Math.min(...fetchedAt) - t0).toBeLessThanOrEqual(LOAD_MS + SERVICE_READ_BOUND_MS + 1);
+    await vi.advanceTimersByTimeAsync(0);
+    expect(warm.done).toBe(true);
+  });
 });

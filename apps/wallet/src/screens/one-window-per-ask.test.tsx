@@ -1,5 +1,6 @@
 // @vitest-environment jsdom
 // @vitest-environment-options {"url":"https://identity.payroll.example/"}
+import { A_PRIVATE_DEPOSIT_IS_ASKED_BY_INTENT } from '../chain/balance-for-page.js';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { cleanup, fireEvent, render, waitFor } from '../testing/render.js';
 import { IDBFactory } from 'fake-indexeddb';
@@ -354,7 +355,7 @@ describe('a payment this wallet cannot read', () => {
 });
 
 describe('what the window shows, and what the opened wallet still refuses', () => {
-  it('a payment\'s window shows what leaves this wallet, read from the transaction, before any passkey', async () => {
+  it('a window asked to pay for a private deposit the page built refuses it before any passkey, and offers no passkey', async () => {
     const handlers: ((event: MessageEvent) => void)[] = [];
     const asker = { postMessage: () => {} };
     const view = {
@@ -384,14 +385,11 @@ describe('what the window shows, and what the opened wallet still refuses', () =
       company: CO, account: 'dbe119a304f8e7ea882353435c1d536cf2faf4298236a9aae77670e750af65c8', vault: VAULT, transaction: 'AAAA',
     });
     for (const h of handlers) h({ source: asker, origin: ASKER, data: payment } as unknown as MessageEvent);
-    /* RED WHEN: the window asks for the passkey before it says, from the transaction, what leaves the wallet. */
-    await waitFor(() => expect(document.querySelector('[data-leaving-amount]')?.textContent).toBe('2500 base units of the private token below'));
-    expect(document.querySelector('[data-leaving-token]')?.textContent).toBe(`shielded token ${TOKEN}`);
-    expect(document.querySelector('[data-company-fingerprint]')).not.toBeNull();
-    expect(document.body.textContent).toContain('nothing in this wallet can take it back');
-    /* RED WHEN: the payment's window does not say which of the wallet's accounts pays, or when that is named. */
-    expect(document.querySelector('[data-which-account-pays]')?.textContent).toContain('named once your passkey opens the wallet');
-    await waitFor(() => expect((document.querySelector('[data-approve-window]') as HTMLButtonElement).disabled).toBe(false));
+    /* RED WHEN: a private deposit the page built, its coin chosen by the page, can be approved and paid: this wallet makes a private deposit whole, asked by intent. */
+    await waitFor(() => expect(document.body.textContent).toContain(A_PRIVATE_DEPOSIT_IS_ASKED_BY_INTENT));
+    expect(document.querySelector('[data-leaving-amount]')).toBeNull();
+    expect(document.querySelector('[data-leaving-token]')?.textContent ?? '').not.toContain(TOKEN);
+    expect((document.querySelector('[data-approve-window]') as HTMLButtonElement | null)?.disabled ?? true).toBe(true);
   });
 
   it('a wallet chosen from the list that did not sign in to the page gives nothing after the passkey, and says why there', async () => {

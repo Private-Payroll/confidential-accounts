@@ -113,7 +113,7 @@ vi.mock('../adapters/finish-company.js', () => ({
     return state.carried[Math.min(state.looks - 1, state.carried.length - 1)];
   }),
   openYourWallet: vi.fn(async (...args: unknown[]) => { state.acted.push(JSON.stringify(['open-wallet', ...args])); return state.pressed; }),
-  FINISH: { waiting: 'waiting', press: 'press', locked: 'locked', cannot: 'cannot', none: 'none', noDeploy: 'no-deploy' },
+  FINISH: { waiting: 'waiting', press: 'press', interrupted: 'interrupted', locked: 'locked', cannot: 'cannot', none: 'none' },
   STAGE: { deploy: 'deploy', finish: 'finish', key: 'key', shown: 'shown', read: 'read' },
   CARRY_ON_EVERY_MS: 10_000,
 }));
@@ -716,6 +716,25 @@ describe('creating a vault: one component, on the step and on the Vaults page', 
     expect((q(container, '[data-action=create-vault-now]') as HTMLButtonElement).disabled).toBe(false);
   });
 
+  /* RED WHEN: with the keys not open, Create a vault cannot be pressed once the vault is named, so creating it costs a
+   * window to open the keys first: the action in the wallet reads them itself (the moved action's own button). */
+  it('with the keys not open, Create a vault can be pressed once the vault is named, without opening them first', async () => {
+    state.ready = { of: 'locked' };
+    const { container } = await draw(<CreateVault leadTo={() => {}} onChanged={() => {}} />, sessionWith({ company: 'c-1' }));
+    await nameIt(container);
+    expect((q(container, '[data-action=create-vault-now]') as HTMLButtonElement).disabled).toBe(false);
+    expect(q(container, '[data-why]')).toBeNull();
+    expect(state.opened).toEqual([]);
+  });
+
+  /* RED WHEN: a person whose own vault keys are still to give cannot press Create a vault, though the action gives them first. */
+  it('with only your own vault keys still to give, Create a vault can be pressed once the vault is named', async () => {
+    state.ready = { of: 'yours-missing' };
+    const { container } = await draw(<CreateVault leadTo={() => {}} onChanged={() => {}} />, sessionWith({ company: 'c-1' }));
+    await nameIt(container);
+    expect((q(container, '[data-action=create-vault-now]') as HTMLButtonElement).disabled).toBe(false);
+  });
+
   /* RED WHEN: Create a vault is hidden, enabled, or says no reason while it cannot be used, or does not lead to the step that makes it possible. */
   it('is always shown, and disabled with why and the way on while it cannot be used', async () => {
     const cases: [Record<string, unknown>, string][] = [
@@ -1135,11 +1154,7 @@ describe('creating a vault: one component, on the step and on the Vaults page', 
   /* RED WHEN: a stage of the vault's set up is not said while it happens, or is said in words other than its own. */
   it('says each stage of setting the vault up while it happens', async () => {
     const { createVault } = await import('../adapters/create-vault.js');
-    const STAGES = [
-      ['adopting', 'createVault.stage.adopting'], ['opening-the-pool', 'createVault.stage.openingThePool'],
-      ['reading-the-secret-back', 'createVault.stage.readingTheSecretBack'], ['setting-the-secret', 'createVault.stage.settingTheSecret'],
-      ['writing-the-copies', 'createVault.stage.writingTheCopies'], ['waiting-for-approvals', 'createVault.stage.waitingForApprovals'],
-    ] as const;
+    const STAGES = [['checking', 'createVault.stage.checking'], ['building', 'createVault.stage.building']] as const;
     const { container } = await draw(<CreateVault leadTo={() => {}} onChanged={() => {}} />, sessionWith({ company: 'c-1' }));
     await nameIt(container);
     for (const [stage, key] of STAGES) {
@@ -1384,32 +1399,36 @@ describe('finishing the company', () => {
     await wait(60_000);
     expect(carries()).toBe(1);
     await act(async () => { fireEvent.click(q(container, '[data-action=open-wallet]')!); await vi.advanceTimersByTimeAsync(0); });
-    expect(state.acted.filter((a) => a.startsWith('["open-wallet"'))).toEqual([JSON.stringify(['open-wallet', 'u1', 'c-1'])]);
+    /* The third argument is the step the wallet reports, a function, which a JSON record writes as null. */
+    expect(state.acted.filter((a) => a.startsWith('["open-wallet"'))).toEqual([JSON.stringify(['open-wallet', 'u1', 'c-1', null])]);
     expect(carries()).toBe(2);
     expect(q(container, '[data-stage]')).not.toBeNull();
     expect(q(container, '[data-action=open-wallet]')).toBeNull();
   });
 
-  /* RED WHEN: a press that built a ran-out step again does not say so, or says so when nothing was built again. */
-  it('says a step that ran out of time was built again, after the press, and keeps saying so while the step is open', async () => {
-    state.carried = [{ of: 'press', companyId: 'c-1' }, { of: 'waiting', companyId: 'c-1', stage: 'deploy' }];
-    state.pressed = { of: 'done', builtAgain: true };
+  /* RED WHEN: an action the wallet stopped before its end does not show where it stopped, or offers no press that carries it on. */
+  it('says where the wallet stopped after the press, and carries on from there with one more press', async () => {
+    state.carried = [{ of: 'press', companyId: 'c-1' }];
+    state.pressed = { of: 'interrupted', step: 3, steps: 5 };
     const { container } = await drawStep();
-    expect(q(container, '[data-built-again]')).toBeNull();
+    expect(q(container, '[data-interrupted]')).toBeNull();
     await act(async () => { fireEvent.click(q(container, '[data-action=open-wallet]')!); await vi.advanceTimersByTimeAsync(0); });
-    expect(q(container, '[data-built-again]')!.textContent).toBe(EN['setup.finishCompany.builtAgain']);
-    await wait(30_000);
-    expect(q(container, '[data-built-again]')!.textContent).toBe(EN['setup.finishCompany.builtAgain']);
+    expect(q(container, '[data-interrupted]')!.getAttribute('data-interrupted')).toBe('3');
+    expect(q(container, '[data-interrupted]')!.textContent).toContain(
+      (EN['setup.finishCompany.interrupted'] ?? '').replace('{step}', '3').replace('{steps}', '5'));
+    state.pressed = { of: 'done' };
+    await act(async () => { fireEvent.click(q(container, '[data-action=continue]')!); await vi.advanceTimersByTimeAsync(0); });
+    expect(state.acted.filter((a) => a.startsWith('["open-wallet"')).length).toBe(2);
   });
 
-  /* RED WHEN: a look that built a step again for a company left to run on its own does not say so, or forgets it at the next look. */
-  it('says so also when a look, not a press, built the step again', async () => {
-    state.carried = [{ of: 'waiting', companyId: 'c-1', stage: 'finish', builtAgain: true }, { of: 'waiting', companyId: 'c-1', stage: 'finish' }];
+  /* RED WHEN: a company whose action stopped before a reload shows as waiting for nothing instead of interrupted at its step. */
+  it('shows a company interrupted before a reload at its step, with the press that carries it on', async () => {
+    state.carried = [{ of: 'interrupted', companyId: 'c-1', step: 2, steps: 5 }];
     const { container } = await drawStep();
-    expect(q(container, '[data-built-again]')!.textContent).toBe(EN['setup.finishCompany.builtAgain']);
-    await wait(10_000);
-    expect(carries()).toBe(2);
-    expect(q(container, '[data-built-again]')!.textContent).toBe(EN['setup.finishCompany.builtAgain']);
+    expect(q(container, '[data-interrupted]')!.getAttribute('data-interrupted')).toBe('2');
+    expect(q(container, '[data-action=continue]')!.textContent).toBe(EN['setup.finishCompany.continue']);
+    await wait(60_000);
+    expect(carries()).toBe(1);
   });
 
   /* RED WHEN: shut saved keys are not said, or the press that opens them is not the same one. */
@@ -1464,12 +1483,11 @@ describe('finishing the company', () => {
     await act(async () => { fireEvent.click(sure); await vi.advanceTimersByTimeAsync(0); });
   };
 
-  /* RED WHEN: a kept creation that built no deploy is not offered to be started again here, starting again acts before the person confirms, forgets another company, or the person is left on the company that cannot be finished. */
-  it('offers to start again when the kept creation built no deploy, asks first, then leads to creating a new company', async () => {
-    state.carried = [{ of: 'no-deploy', companyId: 'c-1' }];
+  /* RED WHEN: a kept creation waiting for its press is not offered to be started again here, starting again acts before the person confirms, forgets another company, or the person is left on the company that cannot be finished. */
+  it('offers to start again a kept creation waiting for its press, asks first, then leads to creating a new company', async () => {
+    state.carried = [{ of: 'press', companyId: 'c-1' }];
     const startNewCompany = vi.fn();
     const { container } = await drawStep({}, { startNewCompany });
-    expect(q(container, '[data-no-deploy]')!.textContent).toContain(EN['setup.createCompany.noDeploy']);
     await startAgainConfirmed(container);
     expect(state.acted.filter((a) => a.startsWith('["start-again-here"'))).toEqual([JSON.stringify(['start-again-here', 'u1', 'c-1'])]);
     expect(q(container, '[data-start-again-kept]')!.textContent).toContain(EN['setup.again.dropped']);
@@ -1496,7 +1514,7 @@ describe('finishing the company', () => {
       [{ of: 'wait', minutes: 7 }, (EN['setup.again.wait'] ?? '').replace('{minutes}', '7')],
       [{ of: 'unsure' }, EN['setup.again.unsure']],
     ] as [Record<string, unknown>, string][]) {
-      state.carried = [{ of: 'no-deploy', companyId: 'c-1' }];
+      state.carried = [{ of: 'press', companyId: 'c-1' }];
       state.acted = [];
       state.startedAgainHere = again;
       const startNewCompany = vi.fn();
@@ -1510,7 +1528,7 @@ describe('finishing the company', () => {
 
   /* RED WHEN: a refusal to start again is lost and the person is led on as if it had been forgotten. */
   it('does not lead on when starting again was refused', async () => {
-    state.carried = [{ of: 'no-deploy', companyId: 'c-1' }];
+    state.carried = [{ of: 'press', companyId: 'c-1' }];
     state.startedAgainHere = { of: 'refused', why: 'did-not-finish' };
     const startNewCompany = vi.fn();
     const { container } = await drawStep({}, { startNewCompany });

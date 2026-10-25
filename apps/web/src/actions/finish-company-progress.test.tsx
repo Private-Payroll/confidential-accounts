@@ -29,6 +29,11 @@ vi.mock('vaults-web-shared/keyring.js', async (real) => {
   };
 });
 vi.mock('../adapters/vault-builder.js', () => ({ theCreationBuilder: async () => null }));
+/* The step drawn while the wallet's action runs: each look says it waits on the account's deploy. */
+vi.mock('../adapters/finish-company.js', async (real) => ({
+  ...(await real<typeof import('../adapters/finish-company.js')>()),
+  carryOn: async () => ({ of: 'waiting', companyId: 'c-1', stage: 'deploy' }),
+}));
 
 const { FinishCompany } = await import('./finish-company.js');
 const { builderIsUp } = await import('../adapters/proofs-running.js');

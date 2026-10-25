@@ -18,11 +18,12 @@ export const theVaultBuilder = (): Promise<VaultBuilderClient> => {
   return started;
 };
 
-/** The page's vault worker as the keyring builds a company with it, or null when this build's worker cannot. */
+/**
+ * The page's vault worker as the keyring reads a kept creation with it: whether its account is on the chain, for
+ * starting a creation again. A company's account is built, signed and proved in the wallet, never by this worker.
+ */
 export async function theCreationBuilder(): Promise<AccountCreationBuilder | null> {
   const w: VaultBuilderClient = await theVaultBuilder();
-  const { foundingSeat, accountDeploy, finishedCreation, creationAgain, payKeyStanding, governedCall, accountPresence } = w;
-  if (foundingSeat === undefined || accountDeploy === undefined || finishedCreation === undefined || creationAgain === undefined
-    || payKeyStanding === undefined) return null;
-  return { foundingSeat, accountDeploy, finishedCreation, creationAgain, payKeyStanding, governedCall, ...(accountPresence === undefined ? {} : { accountPresence }) };
+  const { accountPresence } = w;
+  return accountPresence === undefined ? {} : { accountPresence };
 }

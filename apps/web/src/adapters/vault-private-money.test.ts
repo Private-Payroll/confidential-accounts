@@ -56,6 +56,9 @@ const kr = vi.hoisted(() => ({
   adopted: false,
   refusePut: false,
   rebuilt: null as Array<{ nonce: string; token: string; value: string; held: string; output: string }> | null,
+  /* How often the seat's public half, and the seat's own leaf from its secrets, were asked for. */
+  shown: 0,
+  ownSeatAsked: 0,
 }));
 vi.mock('./filing-judge.js', async (real) => ({
   ...(await real<typeof import('./filing-judge.js')>()),
@@ -71,6 +74,12 @@ vi.mock('vaults-web-shared/keyring.js', async (real) => ({
   reopenSavedKeys: async () => {},
   pendingSeatsFor: () => [],
   keysFor: () => kr.keys,
+  /* The public half of the seat this tab holds keys for: all a read is given of the seat. */
+  seatShownHere: async () => {
+    kr.shown += 1;
+    const { signingPublicKeyOf } = await import('../../../../src/core/crypto.js');
+    return kr.keys === null ? null : { signingPublicKey: signingPublicKeyOf(kr.keys['signingSecret'] as never).toLowerCase() };
+  },
   openAccount: () => kr.roster,
   companyKeyReleasedFor: () => kr.companyKey,
   /* The wallet window that releases the company key: counted, and it releases the key when opened. */
@@ -112,7 +121,7 @@ vi.mock('./vault-builder.js', () => ({
     /* A note's commitment, worked out from the note alone, as the worker does. */
     commitments: async (i: { vault: string; coin: { nonce: string; token: string; value: string } }) => ({ output: '', held: `h${i.vault.slice(0, 2)}${i.coin.nonce.slice(2)}` }),
     paymentsFit: async () => ({ of: 'fits' }),
-    ownSeat: async () => kr.ownSeat,
+    ownSeat: async () => { kr.ownSeatAsked += 1; return kr.ownSeat; },
     /* The leaf each directory entry's opening makes, as the worker works it out with the account's own compiled `signerLeaf`. */
     seatOpenings: async (input: { openings: readonly { publicKey: string; scope: string; blinding: string }[] }) => {
       const { leafOfTheContract } = await import('../../../../src/testing/directory-seats.js');
@@ -206,7 +215,7 @@ async function load() {
   return import('./vault-private-money.js');
 }
 beforeEach(() => {
-  kr.signedIn = 'u1'; kr.released = 0; kr.filed = null; kr.asked = []; kr.companyKey = COMPANY_KEY; kr.ownSeat = SEAT; kr.readHere = []; kr.adopted = false; kr.rebuilt = null; kr.refusePut = false; kr.holdersFail = null;
+  kr.signedIn = 'u1'; kr.released = 0; kr.filed = null; kr.asked = []; kr.companyKey = COMPANY_KEY; kr.ownSeat = SEAT; kr.readHere = []; kr.adopted = false; kr.rebuilt = null; kr.refusePut = false; kr.holdersFail = null; kr.shown = 0; kr.ownSeatAsked = 0;
   kr.indexer = { indexerUri: 'https://indexer.wallet.example/api/v3/graphql', indexerWsUri: 'wss://indexer.wallet.example/api/v3/graphql/ws' };
   kr.filings = [{ company: 'c1', version: 1, change: { kind: 'claim', entry: ENTRY } }];
   kr.seated = [SEAT];
@@ -312,16 +321,11 @@ describe('a vault\'s private money, read on this device', () => {
     kr.rebuilt = [...NOTES, other].map((n) => ({ nonce: n.nonce, token: n.token, value: String(n.value), held: commitmentOf(n.nonce), output: '' }));
     kr.view = { ...chainHolding(NOTES), notes: [...chainHolding(NOTES).notes, commitmentOf(other.nonce), 'hffff'], account: 'c0'.repeat(32), started: true, everCreated: [], nonceCommitment: '5c'.repeat(32), splitJournal: [] };
     const { formatTokenAmount } = await import('vaults-ui/format/token-amount');
-    /* A seat that may not file the vault's record still counts what the rebuild found; nothing is filed. */
-    kr.refusePut = true;
-    const counted = await readVaultPrivateMoney('u1', 'c1', VAULT, REGISTRY);
-    expect(heldOf(counted).amounts.map((a) => [a.symbol, formatTokenAmount(a, 'en')])).toEqual([['TDUST', '2'], ['OTHER', '123.45']]);
-    expect((kr.filed as { version: number }).version).toBe(1);
-    /* A seat that may file files it for every signer's device. */
-    kr.refusePut = false;
+    /* The read counts what the rebuild found, and files nothing: the filing is owed to a seat action in the wallet. */
     const answer = await readVaultPrivateMoney('u1', 'c1', VAULT, REGISTRY);
     expect(heldOf(answer).amounts.map((a) => [a.symbol, formatTokenAmount(a, 'en')])).toEqual([['TDUST', '2'], ['OTHER', '123.45']]);
-    expect((kr.filed as { version: number }).version).toBe(2);
+    /* RED WHEN: a read of a vault's private money files the rebuilt pool, signed on the page with the seat's secret. */
+    expect((kr.filed as { version: number }).version).toBe(1);
   });
 
   /* RED WHEN: a vault whose pool was never opened and whose chain holds no note is shown as a failed read, or as holding an amount of zero in each token. */
@@ -360,9 +364,10 @@ describe('a vault\'s private money, read on this device', () => {
     /* RED WHEN: reading a vault's money opens a wallet window to release the company key. */
     expect(kr.released, 'a read opened a wallet window').toBe(0);
     kr.companyKey = COMPANY_KEY;
-    kr.ownSeat = '6b'.repeat(32);
+    /* RED WHEN: a seat whose signing key no believed directory entry names reads the pool under some other seat. */
+    kr.keys = { signerId: 's1', signingSecret: newSigningKeypair().secret, wrappingSecret: WRAPPING.secret, blinding: 'cc'.repeat(32) };
     expect(await readVaultPrivateMoney('u1', 'c1', VAULT, REGISTRY), 'another seat').toEqual(COULD_NOT('other'));
-    kr.ownSeat = SEAT;
+    kr.keys = { signerId: 's1', signingSecret: SIGNING.secret, wrappingSecret: WRAPPING.secret, blinding: 'cc'.repeat(32) };
     expect(await readVaultPrivateMoney('u1', 'c1', VAULT, REGISTRY), 'the same pool, with this signer\'s own records key').toMatchObject({ of: 'held' });
     /* A pool wrapped to the roster's key, as before this change, does not open. */
     kr.filed = null;
@@ -384,6 +389,26 @@ describe('a vault\'s private money, read on this device', () => {
     kr.signedIn = 'u2';
     expect(await seatAndRecordsHere('u1', 'c1', async () => { asked += 1; }), 'another person').toBe('not-signed-in');
     expect(asked).toBe(1);
+  });
+
+  it('gives a read the seat\'s public half and records that file nothing, and never the seat\'s secrets', async () => {
+    await filePool(NOTES);
+    const { seatAndRecordsHere } = await load();
+    const here = await seatAndRecordsHere('u1', 'c1');
+    if (typeof here === 'string') throw new Error(`no seat: ${here}`);
+    /* RED WHEN: the seat's signing secret or blinding reaches what a read is given, or its leaf is worked out from them. */
+    const given = JSON.stringify(here, (_k, v) => (v instanceof Uint8Array ? Buffer.from(v).toString('hex') : v));
+    expect(given).not.toContain(SIGNING.secret);
+    expect(given).not.toContain('cc'.repeat(32));
+    expect(Object.keys(here)).not.toContain('signingSecret');
+    expect(kr.ownSeatAsked).toBe(0);
+    expect(kr.shown).toBe(1);
+    /* The seat is the one the believed directory names for this signer's public key. */
+    expect(here.mine.signerId).toBe(SEAT.toLowerCase());
+    /* RED WHEN: the records a read is given can file a version. */
+    const pool = await here.records('pool').get(VAULT);
+    await expect(here.records('pool').put(VAULT, { ...pool!, version: pool!.version + 1 })).rejects.toThrow(/a read files nothing/);
+    expect((kr.filed as { version: number }).version).toBe(1);
   });
 
   /* RED WHEN: somebody else signed in, or no keys for the company on this device, reads anything, or no keys is shown as a record not believed; or two assets naming one private token are read as either. */

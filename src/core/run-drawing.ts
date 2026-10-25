@@ -102,7 +102,7 @@ export const recordSkips = (
   runId: string, people: RunSkip[], ack: SkipAcknowledgement, at: string,
 ): RunSkips => {
   let decisions = emptyRegister(runId, people.length);
-  people.forEach((person, index) => {
+  people.forEach((_person, index) => {
     decisions = decide(decisions, {
       index,
       skip: true,

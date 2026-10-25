@@ -37,7 +37,8 @@ import { newWrappingKeypair } from '../core/crypto.js';
 import { NO_ASSET } from '../core/assets.js';
 import { readAccountDeploy } from '../wiring/vault-submission.js';
 import { openSealedPayKey, payKeyCommitmentOf, payKeyPayloadOf } from '../midnight/pay-key-commitment.js';
-import { sealedPayKeyIn } from '../midnight/pay-key-round.js';
+import { payKeyStandingOf, sealedPayKeyIn } from '../midnight/pay-key-round.js';
+import { sealPayKeyTo } from '../midnight/run-keys.js';
 import { creationCarriedAgain } from '../../packages/web-shared/src/vault-builder.js';
 import { answerVaultAsk } from '../../packages/web-shared/src/vault-worker-entry.js';
 import type { GovernedCallOrder, OpenedRound } from '../../packages/web-shared/src/governed-call-builder.js';
@@ -698,13 +699,12 @@ describe.skipIf(!ON_DISK)('A CREATION CARRIED ON PAST WHAT RUNS OUT, JUDGED BY I
     await create(made);
     const KEY = '9a'.repeat(32);
     const wrapping = newWrappingKeypair();
+    /* Where the pay-record key stands, read as the founding signer's wallet reads it: the account's own functions over its state. */
     const standingOnTheDevice = async () => {
-      const a = await answerVaultAsk(workerDeps, {
-        id: 1, network: NET, ask: 'pay-key-standing', account: made.address, accountState: b64((chain.contract(made.address) as any).serialize()),
-        key: KEY, signingSecret: MATERIAL.signingSecret, wrappingPublicKey: wrapping.publicKey,
-      });
-      if (!a.ok || a.ask !== 'pay-key-standing') throw new Error(a.ok ? 'another answer' : a.error);
-      return a.standing;
+      const P = (accountModule as any).pureCircuits;
+      const ledger = (accountModule as any).ledger((runtime as any).ContractState.deserialize((chain.contract(made.address) as any).serialize()).data);
+      const s = payKeyStandingOf(P, { address: made.address.toLowerCase(), account: ledger, key: KEY as never, secretKey: MATERIAL.signingSecret as never });
+      return { ...s, noVault: Buffer.from(P.noVault()).toString('hex'), wrap: sealPayKeyTo(KEY as never, wrapping.publicKey as never) };
     };
     /* RED WHEN: a step is taken before the account is finished. */
     const s0 = await standingOnTheDevice();

@@ -27,7 +27,17 @@
  * The application in `apps/web` is served on the application's origin. Which
  * application is a setting read here, never an argument, so a later one can be
  * added beside it; when nothing sets it, `apps/web` is served.
+ *
+ * -- THE WALLET ANSWERS ONLY THE PAGE IT WAS BUILT FOR ---------------------
+ *
+ * The wallet is started by its own script, which names the one page origin it
+ * answers (`VITE_APP_ORIGIN` in the `wallet` script of `package.json`). An
+ * application started anywhere else is opened, asks the wallet, and waits in
+ * silence until its deadline; so a plan whose application origin is not that
+ * one is refused before anything starts.
  */
+import { readFileSync } from 'node:fs';
+import { fileURLToPath } from 'node:url';
 
 /**
  * WHAT THE PAGE SERVER PASSES ON TO THE SERVICE, WHICHEVER APPLICATION IT SERVES.
@@ -142,10 +152,22 @@ export function servableOrigin(setting: string, value: string | undefined):
  * for the server, once for the page - so they must agree, or the page opens a
  * wallet where nothing is listening.
  */
-export function pageStartsFor(settings: Record<string, string | undefined>, page: ApplicationPage = 'web'):
+export function pageStartsFor(
+  settings: Record<string, string | undefined>, page: ApplicationPage = 'web',
+  walletAnswers: string | null = theWalletsBuiltPageOrigin(),
+):
   { starts: PageStart[] } | { refusals: string[] } {
   const refusals: string[] = [];
   const app = servableOrigin('APP_ORIGIN', settings.APP_ORIGIN);
+  if ('origin' in app) {
+    let answered: string | null = null;
+    try { answered = walletAnswers === null ? null : new URL(walletAnswers).origin; } catch { answered = null; }
+    if (answered !== app.origin) {
+      refusals.push(
+        `the application would be started at ${app.origin} (APP_ORIGIN), and the wallet is built to answer only the page at `
+        + `${walletAnswers ?? 'no origin'} (VITE_APP_ORIGIN in the "wallet" script), so the application would ask a wallet that never answers it`);
+    }
+  }
   const wallet = servableOrigin('WALLET_ORIGIN', settings.WALLET_ORIGIN);
   const opened = servableOrigin('VITE_WALLET_ORIGIN', settings.VITE_WALLET_ORIGIN);
   for (const r of [app, wallet, opened]) if ('refusal' in r) refusals.push(r.refusal);
@@ -233,4 +255,20 @@ export function refuseWhatTheServerSaid(
     ? `the server says it can write: "${said}". This command starts the product read-only, `
       + 'so nothing was started beside it and it has been stopped. Nothing has been spent.'
     : null;
+}
+
+/**
+ * The one page origin the wallet's own script builds it to answer: `VITE_APP_ORIGIN` among the leading settings of the
+ * `wallet` script in `package.json`, or null when the script names none.
+ */
+export function theWalletsBuiltPageOrigin(
+  packageJson: string = fileURLToPath(new URL('../package.json', import.meta.url)),
+): string | null {
+  let scripts: Record<string, string>;
+  try {
+    scripts = (JSON.parse(readFileSync(packageJson, 'utf8')) as { scripts?: Record<string, string> }).scripts ?? {};
+  } catch {
+    return null;
+  }
+  return leadingAssignments(scripts.wallet ?? '').find((a) => a.name === 'VITE_APP_ORIGIN')?.value ?? null;
 }

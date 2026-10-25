@@ -2,21 +2,19 @@ import { afterEach, describe, expect, it } from 'vitest';
 import { TEST_MNEMONIC } from '@midnight-ntwrk/testkit-js';
 import { identityFromWords } from 'midnight-identity';
 import { READY_PING } from 'midnight-identity/profile/channel';
-import { parseAsk, type CreationRequest, type KeyringRequest } from 'midnight-identity/profile/request';
-import { keyringReleaseFor } from 'midnight-identity/profile/unlock';
-import { committeeKeyFor } from 'midnight-identity/profile/committee-key';
-import { CREATION_SIGNATURE_SCHEMA } from 'midnight-identity/profile/creation-sign';
+import { parseAsk, type KeyringRequest } from 'midnight-identity/profile/request';
+import { openKeyring } from './keyring-blob.js';
+import { foundedAsTheWalletAnswers, keyringAsTheWalletAnswers, savedKeysSealKey } from '../../../src/testing/a-wallet-founds-a-company.js';
 import { unwrapKey, unseal, parseCanonical, toHex } from '../../../src/core/crypto.js';
 import { purposeKey, type Purpose } from '../../../src/core/sealed-records.js';
 import * as keyring from './keyring.js';
-import type { PayKeyStandingOnTheWire } from './vault-worker-client.js';
 import type { Openable } from './wallet-sign-in.js';
 
 /**
  * **A COMPANY'S FOUNDING SENDS THE SERVICE NONE OF ITS KEYS, BY VALUE.**
  *
- * The founding signer's browser makes the company's key, its purpose keys, the seat's secrets and the company's first
- * state here. This file sends the founding through the page's own transport (`api` in the keyring) with the fetch
+ * The founding signer's wallet makes the company's key, its purpose keys, the seat's secrets and the company's first
+ * state, and the page keeps the saved keys the wallet sealed and sends the founding on. This file sends the founding through the page's own transport (`api` in the keyring) with the fetch
  * replaced by a recorder, and reads every address, header and body that left for the plaintext of each of those
  * secrets. The service refuses a founding that carries a secret under a secret's name; this reads the values, so a key
  * sent under any other name is found too.
@@ -27,12 +25,11 @@ const WALLET = 'https://wallet.example';
 const ADDRESS = 'mn_addr_test1qqqqqqqqqqqqqqqqqqqq';
 const A = { id: 'usr_a', email: null, name: 'Priya' };
 const identity = identityFromWords(TEST_MNEMONIC);
-const LEAF = 'ab'.repeat(32);
 const ACCOUNT = 'c0'.repeat(32);
 const A_COMPANY = { name: 'Acme Ltd', signers: [{ name: 'Priya', role: 'admin' as const }], threshold: 1 };
 const PURPOSES: readonly Purpose[] = ['roster', 'policy', 'payroll', 'inbox', 'proposals'];
 
-/** The wallet, answering the keyring ask and the creation ask with its own code. */
+/** The wallet, answering the keyring ask with its own code, and founding a company as it does. */
 class Wallet implements Openable {
   private handler: ((event: MessageEvent) => void) | null = null;
   private readonly tab = { postMessage: (m: unknown) => this.onAsk(m) };
@@ -49,37 +46,15 @@ class Wallet implements Openable {
     let answer: unknown;
     try {
       const ask = parseAsk(message, US, Date.now());
-      if (ask.kind === 'keyring') answer = keyringReleaseFor(identity, ask as KeyringRequest, Date.now(), (a) => a === ADDRESS);
-      else if (ask.kind === 'creation') {
-        const c = ask as CreationRequest;
-        answer = {
-          schema: CREATION_SIGNATURE_SCHEMA, origin: US, company: c.company, account: c.account, nonce: c.nonce,
-          at: Date.now(), signer: { tag: 'schnorr', value: committeeKeyFor(identity, c.company).value },
-          signature: { tag: 'schnorr', value: '5a'.repeat(64) },
-        };
-      } else answer = { schema: 'nothing-given' };
+      if (ask.kind === 'keyring' && (ask as KeyringRequest).drawLabel) answer = foundedAsTheWalletAnswers(identity, ask as KeyringRequest, (a) => a === ADDRESS);
+      else if (ask.kind === 'keyring') answer = keyringAsTheWalletAnswers(identity, ask as KeyringRequest, (a) => a === ADDRESS);
+      else answer = { schema: 'nothing-given' };
     } catch {
       answer = { schema: 'nothing-given' };
     }
     queueMicrotask(() => this.deliver(answer));
   }
 }
-
-const PAY_KEY = { commitment: 'c1'.repeat(32), payload: 'c2'.repeat(32), salt: 'c3'.repeat(32), proposal: 'c4'.repeat(32) };
-const payKeyAt = (): PayKeyStandingOnTheWire => ({
-  committed: null, isThisKey: false, sealedMine: false,
-  round: { ...PAY_KEY, open: false, approvals: 0, needed: 1, stale: false },
-  noVault: 'fe'.repeat(32), wrap: ['d1', 'd2', 'd3', 'd4'].map((b) => b.repeat(32)),
-});
-
-const builder = (): keyring.AccountCreationBuilder => ({
-  creationAgain: async () => ({ account: ACCOUNT, deploy: 'QUdBSU4=', insert: 'SU5BR0FJTg==' }),
-  payKeyStanding: async () => payKeyAt(),
-  governedCall: async (input: any) => ({ tx: `TX-${String(input.order.circuit)}` }),
-  foundingSeat: async () => ({ seat: LEAF.toUpperCase(), scope: 'cd'.repeat(32), publicKey: 'EF'.repeat(32) }),
-  accountDeploy: async () => ({ account: ACCOUNT, tx: 'REVQTE9Z', insert: [{ circuit: 'payout', key: 'S0VZ' }] }),
-  finishedCreation: async () => ({ tx: 'SU5TRVJU' }),
-});
 
 /** Everything the page sent: the address, every header and the body of each request, in order. */
 interface Sent { readonly route: string; readonly url: string; readonly headers: Readonly<Record<string, string>>; readonly body: string }
@@ -121,10 +96,12 @@ describe('A COMPANY\'S FOUNDING SENDS THE SERVICE NONE OF ITS KEYS', () => {
   it('NO ADDRESS, HEADER OR BODY OF THE FOUNDING CARRIES THE COMPANY\'S KEY, A KEY MADE FROM IT, THE SEAT\'S SECRETS OR THE FIRST STATE\'S SECRETS', async () => {
     const sent = recordingService();
     keyring.signedInByAnotherScreen({ user: A, address: ADDRESS, created: true, session: {} });
-    await keyring.startCompanyHeldFromTheStart(A_COMPANY, WALLET, builder(), new Wallet(), US);
+    await keyring.startCompanyHeldFromTheStart(A_COMPANY, WALLET, new Wallet(), US);
     const made = JSON.parse(sent.find((s) => s.route === 'POST /api/accounts')!.body) as { founding: any };
     const id = made.founding.account.id as string;
-    const mine = keyring.keysFor(id)!;
+    /* The seat as the saved keys the wallet sealed hold it, opened here with the wallet's key: this page never holds it. */
+    const put = JSON.parse(sent.find((s) => s.route === 'PUT /api/me/keys')!.body) as { keyBundle: never };
+    const mine = openKeyring(put.keyBundle, (savedKeysSealKey(identity, { requester: { origin: US, name: 'x', rdns: 'x' }, person: A.id } as never)) as never).accounts[id]!;
     const viewingKey = unwrapKey(made.founding.account.wrappedKeys[0], mine.wrappingSecret);
     const state = parseCanonical<{ blinding: { assetBlinding: string; payRecordKey: string; payoutSeeds: Array<{ seed: string }> } }>(unseal(made.founding.state.sealed, viewingKey));
 

@@ -1789,7 +1789,7 @@ const directoryAnchoredFirst = async (doors: RemovalDoors): Promise<void> => {
  * What reading who is leaving needs: the service's proposals, the company's records and who the chain seats. Only the
  * records' directory and the chain's standing of each proposal are read.
  */
-export type LeavingReads = Pick<GovernedCallDoors, 'service' | 'accountId' | 'leaves'> & { readonly records?: RecordsForTheRound };
+type LeavingReads = Pick<GovernedCallDoors, 'service' | 'accountId' | 'leaves'> & { readonly records?: RecordsForTheRound };
 
 /** Why who is leaving could not be read in full, so nothing that must exclude them goes ahead. */
 export class LeavingNotRead extends Error {

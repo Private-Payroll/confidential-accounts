@@ -376,3 +376,23 @@ describe('EVERY SIGNER\'S DEVICE REACHES EVERY NOTE ITS VAULT HOLDS', () => {
     expect(here.of).toBe('filed');
   });
 });
+
+describe('A READ OF A VAULT\'S NOTES FILES NOTHING', () => {
+  it('A READ GIVEN NO SEAT FINDS THE SAME NOTES A FILING DEVICE WOULD, FILES NO VERSION OF ANY RECORD, AND SAYS THE FILING IS OWED', async () => {
+    const c = await aCompany({ signers: [{ id: 'ada', wrappingPublicKey: ada.publicKey }] });
+    await c.poolOf(ADA).create(VAULT, { notes: [] });
+    const coin = await c.deposited(1_000n);
+    const { seatHere: _seat, ...reading } = c.doors(ADA);
+    const before = (await c.stores('pool').versions(VAULT)).length;
+    const read = await vaultNotesHere({ ...reading, signers: async () => BOTH }, VAULT);
+    /* RED WHEN: a read with no seat files the rebuilt pool, or the pool again for a signer who cannot open it yet (the re-file a newly seated signer waits on). */
+    expect((await c.stores('pool').versions(VAULT)).length).toBe(before);
+    expect((await c.stores('deposit-journal').versions(VAULT)).length).toBe(1);
+    /* RED WHEN: a read that files nothing also finds nothing: the note it would have filed is still shown. */
+    expect(read.of).toBe('not-filed');
+    expect(read.of !== 'not-read' && read.notes).toEqual([{ ...coin, createdIn: TX }]);
+    /* RED WHEN: the read says the seat may not file, as though the person's role were the reason, not that a read files nothing. */
+    expect(read.said.join(' ')).toMatch(/a read files nothing/);
+    expect(read.said.join(' ')).not.toMatch(/its role files none/);
+  });
+});

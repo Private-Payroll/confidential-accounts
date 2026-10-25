@@ -72,26 +72,6 @@ export interface AccountCallChainOnTheWire {
   readonly parameters: string;
 }
 
-/**
- * **WHERE THE COMPANY'S PAY-RECORD KEY STANDS ON ITS ACCOUNT, FOR ONE SIGNER**,
- * read off the account's state with its own functions, and a copy of the key
- * sealed to that signer, ready to write.
- */
-export interface PayKeyStandingOnTheWire {
-  /** The commitment the account holds, or null when none is written yet. */
-  readonly committed: string | null;
-  readonly isThisKey: boolean;
-  readonly sealedMine: boolean;
-  readonly round: {
-    readonly commitment: string; readonly payload: string; readonly salt: string; readonly proposal: string;
-    readonly open: boolean; readonly approvals: number; readonly needed: number; readonly stale: boolean;
-  };
-  /** The value a governance round names in place of a vault. */
-  readonly noVault: string;
-  /** The key sealed to the signer's wrapping key, as the four entries the account stores. */
-  readonly wrap: string[];
-}
-
 export type VaultAsk =
   | { id: number; network: string; ask: 'deploy'; account: string }
   /*
@@ -123,15 +103,8 @@ export type VaultAsk =
   | { id: number; network: string; ask: 'public-deposit-landed'; vault: string; transaction: string; indexer: { indexerUri: string; indexerWsUri: string } }
   | { id: number; network: string; ask: 'own-seat'; material: SignerMaterial }
   | { id: number; network: string; ask: 'warm-proving' }
-  /* The founding signer's seat in a company made on this device: its leaf, and the scope it was made under. */
-  | { id: number; network: string; ask: 'founding-seat'; material: { signingSecret: string; blinding: string } }
   /* A company's deploy and its signed second step, carried in fresh transactions: the same account, the same signature. */
   | { id: number; network: string; ask: 'creation-again'; deploy: string; insert: string; clockOffsetMs?: number }
-  /* Where the pay-record key stands on the account for one signer, and their copy sealed. The key stays on this device. */
-  | {
-    id: number; network: string; ask: 'pay-key-standing'; account: string; accountState: string; key: string;
-    signingSecret: string; wrappingPublicKey: string;
-  }
   | { id: number; network: string; ask: 'secret-is-the-vaults'; vault: string; state: string; secret: string }
   | { id: number; network: string; ask: 'notes-for-payment'; notes: readonly NoteOnTheWire[]; token: string; amount: string }
   | {
@@ -268,9 +241,7 @@ export type VaultAnswer =
   | Answered<'public-deposit-landed', { found: { transactionHash: string } | null }>
   | Answered<'own-seat', { seat: string }>
   | Answered<'warm-proving', unknown>
-  | Answered<'founding-seat', { seat: string; scope: string; publicKey: string }>
   | Answered<'creation-again', { account: string; deploy: string; insert: string }>
-  | Answered<'pay-key-standing', { standing: PayKeyStandingOnTheWire }>
   | Answered<'secret-is-the-vaults', { matches: boolean }>
   | Answered<'notes-for-payment', { notes: NoteOnTheWire[] }>
   | Answered<'payments-fit', { answer: PaymentsFitAnswer }>
@@ -468,18 +439,8 @@ export interface VaultBuilderClient {
    * leaf the account holds for them, worked out here and not taken from any record.
    */
   ownSeat(material: SignerMaterial): Promise<string>;
-  /**
-   * The seat keys made on this device make on a company founded here: the leaf
-   * the account seats, and the scope it was made under, both worked out with
-   * the chain's own function.
-   */
-  foundingSeat?(material: { signingSecret: string; blinding: string }): Promise<{ seat: string; scope: string; publicKey: string }>;
   /** A company's deploy and its signed second step carried again in fresh transactions, as base64. */
   creationAgain?(input: { deploy: string; insert: string; clockOffsetMs?: number }): Promise<{ account: string; deploy: string; insert: string }>;
-  /** Where the pay-record key stands on the account (its state as base64) for the signer whose secret is given. */
-  payKeyStanding?(input: {
-    account: string; accountState: string; key: string; signingSecret: string; wrappingPublicKey: string;
-  }): Promise<PayKeyStandingOnTheWire>;
   /**
    * Whether `secret` is the one the vault's commitment names in `state` (base64
    * of the vault's state): its commitment, worked out with the vault's own
@@ -760,11 +721,17 @@ const FAILED_BECAUSE: Record<Exclude<VaultAskFailure, 'answered'>, string> = {
 };
 const START_MS = 30_000;
 
-/** The asks that only read the network and send nothing: each is held to SERVICE_READ_BOUND_MS. Every other ask may be a send or a proof and is never cut short. */
-const CHAIN_READS: ReadonlySet<string> = new Set([
+/**
+ * The asks that only read the network and send nothing: each is held to SERVICE_READ_BOUND_MS from when the worker
+ * says it has started it, its code loaded. Every other ask may be a send or a proof and is never cut short.
+ */
+export const CHAIN_READS: ReadonlySet<string> = new Set([
   'vault-as-deployed', 'vault-on-chain', 'chain-at-one-block', 'events-of', 'created-by', 'public-deposit-landed', 'anchors-on-chain', 'rounds-on-chain',
   'account-call-chain', 'account-presence',
 ]);
+
+/** What the worker says when its code is loaded and it starts on an ask: a read's time limit starts here. */
+export const ASK_STARTED = 'vault-ask-started';
 
 /** What `askOver` is handed to reach a worker: one that is ready, posting what it is given and stopped on a failure. */
 interface Reached {
@@ -784,6 +751,11 @@ type Reach = (hear: (data: unknown) => void, stopped: (reason: 'stopped' | 'unre
  * the worker and fails every ask waiting on it, since the page cannot tell which
  * ask held it up; the next ask reaches a new one. Nothing a stopped worker still
  * says is heard.
+ *
+ * A read of the network is also held to SERVICE_READ_BOUND_MS, from when the
+ * worker says it has started it: the worker loads its code on its first ask,
+ * and that load is bounded by the time limit above, not by the read's. The
+ * worker saying it started an ask is not a word about work in progress.
  */
 function askOver(reach: Reach, network: string, now: () => number) {
   let next = 1;
@@ -794,6 +766,7 @@ function askOver(reach: Reach, network: string, now: () => number) {
   let timer: ReturnType<typeof setTimeout> | null = null;
   const waiting = new Map<number, { ask: string; postedAt: number; resolve: (a: VaultAnswer) => void; reject: (e: Error) => void }>();
   const proofs = new Map<number, { ask: string; circuit: string | null; startedAt: number }>();
+  const readStarts = new Map<number, () => void>();
 
   const failAll = (at: number, reason: Exclude<VaultAskFailure, 'answered'>): void => {
     if (at !== generation) return;
@@ -803,6 +776,7 @@ function askOver(reach: Reach, network: string, now: () => number) {
     if (timer !== null) { clearTimeout(timer); timer = null; }
     const failed = [...waiting.values()];
     waiting.clear();
+    readStarts.clear();
     proofs.clear();
     try { was?.reached.stop(); } catch { /* a worker that cannot be stopped is not heard again either way */ }
     for (const w of failed) w.reject(new VaultAskFailed(w.ask, reason, FAILED_BECAUSE[reason]));
@@ -822,7 +796,11 @@ function askOver(reach: Reach, network: string, now: () => number) {
   };
   const hearFor = (at: number) => (data: unknown): void => {
     if (at !== generation || typeof data !== 'object' || data === null) return;
-    const m = data as { kind?: unknown; id?: unknown; ok?: unknown; ask?: unknown; circuit?: unknown; state?: unknown };
+    const m = data as { kind?: unknown; id?: unknown; ok?: unknown; ask?: unknown; circuit?: unknown; state?: unknown; started?: unknown };
+    if (m.ok === undefined && m.kind === ASK_STARTED) {
+      if (typeof m.started === 'number') { readStarts.get(m.started)?.(); readStarts.delete(m.started); }
+      return;
+    }
     if (m.ok === undefined) {
       lastWord = now();
       if (m.kind === 'vault-proof' && typeof m.id === 'number') {
@@ -869,17 +847,11 @@ function askOver(reach: Reach, network: string, now: () => number) {
     const answered = new Promise<VaultAnswer>((resolve, reject) => {
       waiting.set(id, { ask: request.ask, postedAt: now(), resolve, reject });
     });
-    try {
-      live.reached.post({ ...request, id, network });
-    } catch (e) {
-      waiting.delete(id);
-      throw e;
-    }
-    arm();
-    let a: VaultAnswer;
-    if (CHAIN_READS.has(request.ask)) {
-      let timer: ReturnType<typeof setTimeout> | undefined;
-      const outOfTime = new Promise<never>((_, refuse) => {
+    const read = CHAIN_READS.has(request.ask);
+    let timer: ReturnType<typeof setTimeout> | undefined;
+    const outOfTime = new Promise<never>((_, refuse) => {
+      if (!read) return;
+      readStarts.set(id, () => {
         timer = setTimeout(() => {
           waiting.delete(id);
           proofs.delete(id);
@@ -887,7 +859,18 @@ function askOver(reach: Reach, network: string, now: () => number) {
           refuse(new ReadRanOutOfTime(`The network (${request.ask})`));
         }, SERVICE_READ_BOUND_MS);
       });
-      try { a = await Promise.race([answered, outOfTime]); } finally { clearTimeout(timer); }
+    });
+    try {
+      live.reached.post({ ...request, id, network });
+    } catch (e) {
+      waiting.delete(id);
+      readStarts.delete(id);
+      throw e;
+    }
+    arm();
+    let a: VaultAnswer;
+    if (read) {
+      try { a = await Promise.race([answered, outOfTime]); } finally { clearTimeout(timer); readStarts.delete(id); }
     } else {
       a = await answered;
     }
@@ -961,6 +944,13 @@ export function vaultBuilderOnWorkers(start: () => VaultWorkerLike, network: str
 }
 
 /** The page's client, once its first worker has said it is ready; a later worker is started when an ask needs one. */
+/**
+ * The name the person's wallet gives its own vault builder's worker: a worker
+ * of that name is started by the wallet, with the wallet's own keys and
+ * prover, and the builder does not start itself again in it with the page's.
+ */
+export const WALLET_VAULT_BUILDER = 'wallet-vault-builder';
+
 export function startVaultBuilder(network: string): Promise<VaultBuilderClient> {
   const start = () => new Worker(new URL('./vault-worker-entry.js', import.meta.url), { type: 'module', name: 'vault-builder' }) as unknown as VaultWorkerLike;
   const { ask, proofsInProgress, opened } = askOver(reachOver(start), network, Date.now);
@@ -1014,15 +1004,10 @@ function clientFrom(ask: Ask, proofsInProgress: () => readonly ProofInProgress[]
     createdBy: async (input) => (await ask({ ask: 'created-by', ...input })).found,
     publicDepositLanded: async (input) => (await ask({ ask: 'public-deposit-landed', ...input })).found,
     ownSeat: async (material) => (await ask({ ask: 'own-seat', material })).seat,
-    foundingSeat: async (material) => {
-      const a = await ask({ ask: 'founding-seat', material });
-      return { seat: a.seat, scope: a.scope, publicKey: a.publicKey };
-    },
     creationAgain: async (input) => {
       const a = await ask({ ask: 'creation-again', ...input });
       return { account: a.account, deploy: a.deploy, insert: a.insert };
     },
-    payKeyStanding: async (input) => (await ask({ ask: 'pay-key-standing', ...input })).standing,
     secretIsTheVaults: async (input) => (await ask({ ask: 'secret-is-the-vaults', ...input })).matches,
     notesForPayment: async (input) => (await ask({ ask: 'notes-for-payment', ...input })).notes,
     paymentsFit: async (input) => (await ask({ ask: 'payments-fit', ...input })).answer,

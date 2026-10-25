@@ -21,6 +21,7 @@ import type { ChannelState, ChannelWindow } from './channel.js';
 import {
   KEYRING_RELEASE_SCHEMA, RELEASE_SCHEMA, UnlockError, keyringKeyFor, keyringReleaseFor,
   readKeyringRelease, readRelease, releaseFor, unlockKeyFor,
+  withTheFounding, withTheKeysRead, keyringHolderFor,
 } from './unlock.js';
 import { committeeKeyFor, committeeSigningKeyFor } from './committee-key.js';
 import { seatKeysFor } from './seat-keys.js';
@@ -1004,16 +1005,31 @@ describe('THE KEYRING KEY IS THE PERSON\'S AT THE SITE, AND NEVER A COMPANY\'S',
   });
 });
 
+/* What a wallet hands back when it founds a company: the founding, and the saved keys sealed again over version 3. */
+const FOUNDED = {
+  founded: { account: { id: 'acc_aaaaaaaaaaaa' } },
+  sealed: { iv: '0'.repeat(24), tag: '1'.repeat(32), body: '2'.repeat(64) },
+  ifVersion: 3,
+};
+/** What a wallet read from saved keys for the page: a seat's public halves, its company's viewing key, no secret. */
+const READ = {
+  seats: { acc_aaaaaaaaaaaa: { signerId: 'sgn_aaaaaaaaaa', signingPublicKey: 'a1'.repeat(32), wrappingPublicKey: 'a2'.repeat(32), scope: 'a3'.repeat(32) } },
+  viewing: { acc_aaaaaaaaaaaa: 'a4'.repeat(32) },
+  metadata: { counter: 1 },
+  holder: 'a5'.repeat(32),
+  resealed: null,
+};
+
 describe('THE KEYRING RELEASE: THE GATE IS INSIDE IT, AND THE READER TAKES ITS OWN VALUES', () => {
-  it('a wallet holding the signed-in address gives the keyring key and nothing else', () => {
+  it('a wallet holding the signed-in address answers, and gives no key the saved keys open with', () => {
     const released = keyringReleaseFor(identity, keyringAt(A), NOW, holdsSignedIn);
+    /* RED WHEN: the answer carries the keyring key, or anything a page could open the saved keys with. */
     expect(Object.keys(released).sort()).toEqual(
-      ['account', 'at', 'committeeKey', 'company', 'companyKey', 'key', 'nonce', 'origin', 'person', 'schema', 'seat', 'signedInAs']);
+      ['account', 'at', 'committeeKey', 'company', 'companyKey', 'nonce', 'origin', 'person', 'schema', 'signedInAs']);
+    expect(JSON.stringify(released)).not.toContain(toBase64Url(independentKeyringKey(PERSON)));
     expect(released.committeeKey).toBeNull();
-    expect(released.seat).toBeNull();
     expect(released.schema).toBe(KEYRING_RELEASE_SCHEMA);
     expect(released.origin).toBe(A);
-    expect(hex(fromBase64Url(released.key))).toBe(hex(independentKeyringKey(PERSON)));
     expect(released.companyKey).toBeNull();
     expect('signature' in (released as unknown as Record<string, unknown>)).toBe(false);
   });
@@ -1030,11 +1046,11 @@ describe('THE KEYRING RELEASE: THE GATE IS INSIDE IT, AND THE READER TAKES ITS O
       .toBe('address-not-held');
   });
 
-  it('with no signed-in address named there is nothing to gate on, and the key is given', () => {
+  it('with no signed-in address named there is nothing to gate on, and the answer is given', () => {
     const released = keyringReleaseFor(
       identity, keyringAt(A, { signedInAs: undefined }), NOW, () => false);
     expect(released.signedInAs).toBeNull();
-    expect(hex(fromBase64Url(released.key))).toBe(hex(independentKeyringKey(PERSON)));
+    expect('key' in released).toBe(false);
   });
 
   it('WITH A COMPANY, THE ANSWER CARRIES THAT COMPANY\'S KEY, DERIVED EXACTLY AS AN UNLOCK DERIVES IT', () => {
@@ -1042,7 +1058,7 @@ describe('THE KEYRING RELEASE: THE GATE IS INSIDE IT, AND THE READER TAKES ITS O
     expect(released.company).toBe(CO_B);
     expect(hex(fromBase64Url(released.companyKey!))).toBe(hex(independentUnlockKey(CO_B)));
     expect(released.companyKey).toBe(releaseFor(identity, askAt(A, CO_B), NOW).key);
-    expect(released.companyKey).not.toBe(released.key);
+    expect(released.companyKey).not.toBe(toBase64Url(independentKeyringKey(PERSON)));
   });
 
   it('WITH A COMPANY, THE ANSWER ALSO CARRIES THE PUBLIC COMMITTEE KEY FOR THAT COMPANY, AND NO SECRET BESIDE IT', () => {
@@ -1075,54 +1091,79 @@ describe('THE KEYRING RELEASE: THE GATE IS INSIDE IT, AND THE READER TAKES ITS O
     expect(codeOf(() => keyringReleaseFor(identity, both, NOW, holdsSignedIn, () => { draws += 1; return drawn; })))
       .toBe('company-not-usable');
     expect(draws).toBe(1);
-    /* The page reads which label was drawn, and only a label. */
-    const read = readKeyringRelease(released, {
+    /* The page reads which label was drawn, and only a label, from an answer carrying what the wallet founded it with. */
+    const founded = withTheKeysRead(withTheFounding(released, FOUNDED), READ);
+    const read = readKeyringRelease(founded, {
       atOrigin: A, expectingNonce: 'k1', person: PERSON, signedInAs: SIGNED_IN, forCompany: 'drawn', forAccount: null,
     });
     expect(read.ok && read.company).toBe(drawn);
-    const notALabel = readKeyringRelease({ ...released, company: ACCOUNT_A }, {
+    const notALabel = readKeyringRelease({ ...founded, company: ACCOUNT_A }, {
       atOrigin: A, expectingNonce: 'k1', person: PERSON, signedInAs: SIGNED_IN, forCompany: 'drawn', forAccount: null,
     });
     expect(notALabel.ok ? 'accepted' : notALabel.code).toBe('company-mismatch');
-    const none = readKeyringRelease({ ...released, company: null, companyKey: null, committeeKey: null }, {
+    const none = readKeyringRelease({ ...founded, company: null, companyKey: null, committeeKey: null }, {
       atOrigin: A, expectingNonce: 'k1', person: PERSON, signedInAs: SIGNED_IN, forCompany: 'drawn', forAccount: null,
     });
     expect(none.ok ? 'accepted' : none.code).toBe('company-mismatch');
   });
 
-  it('ASKED TO START A COMPANY, THE WALLET ANSWERS WITH THE FOUNDING SEAT\'S KEYS FOR THE LABEL IT DREW, AND ONLY THEN', () => {
+  it('NO ANSWER CARRIES A SEAT\'S KEYS: A STARTED COMPANY\'S ANSWER CARRIES WHAT THE WALLET FOUNDED IT WITH, AND ONLY THEN', () => {
     const drawn = labelOf(sampleContractAddress());
     const released = keyringReleaseFor(identity, keyringAt(A, { drawLabel: true }), NOW, holdsSignedIn, () => drawn);
     const founding = seatKeysFor(identity, drawn, 0);
-    const given = released.seat!;
-    /* RED WHEN: the founding seat's keys are not seat 0 of the label the wallet drew, so the page makes a seat the words cannot make again. */
-    expect([given.signingSecret, given.wrappingSecret, given.salt].map((v) => hex(fromBase64Url(v))))
-      .toEqual([founding.signingSecret, founding.wrappingSecret, founding.salt].map(hex));
-    /* RED WHEN: a seat's keys travel with an answer that starts no company: the page is handed secrets for a seat nobody is making. */
-    expect(keyringReleaseFor(identity, keyringAt(A, { company: CO_A }), NOW, holdsSignedIn).seat).toBeNull();
-    expect(keyringReleaseFor(identity, keyringAt(A), NOW, holdsSignedIn).seat).toBeNull();
+    /* RED WHEN: any part of the founding seat's keys travels in the answer: the page would hold the seat's secrets. */
+    const wire = JSON.stringify(withTheKeysRead(withTheFounding(released, FOUNDED), READ));
+    for (const part of [founding.signingSecret, founding.wrappingSecret, founding.salt]) {
+      expect(wire).not.toContain(hex(part));
+      expect(wire).not.toContain(toBase64Url(part));
+    }
+    expect('seat' in released).toBe(false);
 
     const drawnAt = { atOrigin: A, expectingNonce: 'k1', person: PERSON, signedInAs: SIGNED_IN, forCompany: 'drawn' as const, forAccount: null };
-    const read = readKeyringRelease(released, drawnAt);
-    /* RED WHEN: the page does not take the seat's keys the wallet gave, byte for byte. */
-    expect(read.ok && read.seat !== null ? [read.seat.signingSecret, read.seat.wrappingSecret, read.seat.salt].map(hex) : 'none')
-      .toEqual([founding.signingSecret, founding.wrappingSecret, founding.salt].map(hex));
-    /* RED WHEN: an answer that starts a company with no seat keys is used, so the page would have to make the founding seat's keys itself. */
-    for (const seat of [null, undefined]) {
-      const r = readKeyringRelease({ ...released, seat }, drawnAt);
+    /* RED WHEN: the page does not take what the wallet founded the company with, and the saved keys it sealed, as given. */
+    const read = readKeyringRelease(withTheKeysRead(withTheFounding(released, FOUNDED), READ), drawnAt);
+    expect(read.ok ? read.founding : 'refused').toEqual(FOUNDED);
+    /* RED WHEN: an answer that starts a company without its founding, or without the saved keys sealed again, is used. */
+    for (const broken of [{ ...withTheKeysRead(withTheFounding(released, FOUNDED), READ), founded: undefined }, { ...withTheKeysRead(withTheFounding(released, FOUNDED), READ), sealed: { iv: 'x' } }, released]) {
+      const r = readKeyringRelease(broken, drawnAt);
       expect(r.ok ? 'accepted' : `${r.code}: ${r.says}`).toMatch(/^unusable-key: .*nothing was created\. close the wallet's window, reload this page and start the company again\.$/iu);
     }
-    /* RED WHEN: a seat key of the wrong size, or one seat key given as another, is used. */
-    const withSeat = (seat: unknown): string => {
-      const r = readKeyringRelease({ ...released, seat }, drawnAt);
-      return r.ok ? 'accepted' : r.code;
-    };
-    expect(withSeat({ ...given, salt: toBase64Url(new Uint8Array(31)) })).toBe('unusable-key');
-    expect(withSeat({ ...given, wrappingSecret: given.signingSecret })).toBe('unusable-key');
-    /* RED WHEN: seat keys nobody asked for are taken from an answer about a company that exists. */
+    /* RED WHEN: a founding, or a seat, nobody asked for is taken from an answer about a company that exists. */
     const forA = keyringReleaseFor(identity, keyringAt(A, { company: CO_A }), NOW, holdsSignedIn);
-    const onA = readKeyringRelease({ ...forA, seat: given }, { ...drawnAt, forCompany: CO_A });
-    expect(onA.ok ? 'accepted' : onA.code).toBe('company-mismatch');
+    for (const extra of [{ seat: { signingSecret: 'x' } }, { founded: FOUNDED.founded }, { sealed: FOUNDED.sealed }]) {
+      const onA = readKeyringRelease({ ...forA, ...extra }, { ...drawnAt, forCompany: CO_A });
+      expect(onA.ok ? 'accepted' : onA.code).toBe('company-mismatch');
+    }
+  });
+
+  it('WHAT THE WALLET READ FROM THE SAVED KEYS CROSSES ONLY IN ITS CLOSED SHAPE, AND ONLY WHEN THE PAGE HANDED THEM IN', () => {
+    const released = keyringReleaseFor(identity, keyringAt(A, { company: CO_A }), NOW, holdsSignedIn);
+    const handedIn = { atOrigin: A, expectingNonce: 'k1', person: PERSON, signedInAs: SIGNED_IN, forCompany: CO_A, forAccount: null, handedIn: true };
+    const read = readKeyringRelease(withTheKeysRead(released, READ), handedIn);
+    expect(read.ok ? read.read : 'refused').toEqual(READ);
+    /* RED WHEN: a seat's secret, given a field the shape does not name, reaches the page. */
+    const withASecret = { ...READ, seats: { acc_aaaaaaaaaaaa: { ...READ.seats.acc_aaaaaaaaaaaa, signingSecret: 'b1'.repeat(32) } } };
+    const r1 = readKeyringRelease(withTheKeysRead(released, withASecret), handedIn);
+    expect(r1.ok ? 'accepted' : r1.code).toBe('unusable-key');
+    /* RED WHEN: a viewing key for a company the read holds no seat on is taken. */
+    const r2 = readKeyringRelease(withTheKeysRead(released, { ...READ, viewing: { acc_bbbbbbbbbbbb: 'b2'.repeat(32) } }), handedIn);
+    expect(r2.ok ? 'accepted' : r2.code).toBe('unusable-key');
+    /* RED WHEN: an answer to an ask that handed the saved keys in is used without saying what the wallet read. */
+    const r3 = readKeyringRelease(released, handedIn);
+    expect(r3.ok ? 'accepted' : r3.code).toBe('unusable-key');
+    /* RED WHEN: a read nobody handed saved keys in for is taken. */
+    const r4 = readKeyringRelease(withTheKeysRead(released, READ), { ...handedIn, handedIn: false });
+    expect(r4.ok ? 'accepted' : r4.code).toBe('company-mismatch');
+  });
+
+  it('THE WALLET\'S PUBLIC NAME FOR A PERSON IS ITS OWN, IS NOT THE KEYRING KEY, AND IS THE SAME EACH TIME', () => {
+    const ask = keyringAt(A);
+    const holder = keyringHolderFor(identity, ask);
+    expect(holder).toMatch(/^[0-9a-f]{64}$/u);
+    /* RED WHEN: the public name is the key the saved keys are sealed under, or anything a page could open them with. */
+    expect(holder).not.toBe(hex(keyringKeyFor(identity, ask)));
+    expect(keyringHolderFor(identity, keyringAt(B))).toBe(holder);
+    expect(keyringHolderFor(identity, keyringAt(A, { person: OTHER_PERSON }))).not.toBe(holder);
   });
 
   it('THE READER REFUSES AN ANSWER TO ANY OTHER QUESTION', () => {
@@ -1136,7 +1177,7 @@ describe('THE KEYRING RELEASE: THE GATE IS INSIDE IT, AND THE READER TAKES ITS O
     const read = readKeyringRelease(released, expecting);
     expect(read.ok).toBe(true);
     if (read.ok) {
-      expect(hex(read.key)).toBe(hex(independentKeyringKey(PERSON)));
+      expect('key' in read).toBe(false);
       expect(read.companyKey).toBeNull();
     }
     const refused = (over: Record<string, unknown>, exp = expecting): string => {
@@ -1149,9 +1190,11 @@ describe('THE KEYRING RELEASE: THE GATE IS INSIDE IT, AND THE READER TAKES ITS O
     expect(refused({ signedInAs: SOMEBODY_ELSES })).toBe('person-mismatch');
     expect(refused({ signedInAs: null })).toBe('person-mismatch');
     expect(refused({ nonce: 'k2' })).toBe('nonce-mismatch');
+    /* RED WHEN: an answer carrying a key for the saved keys is taken, whatever its length. */
     expect(refused({ key: toBase64Url(new Uint8Array(31)) })).toBe('unusable-key');
-    expect(refused({ company: CO_A, companyKey: released.key })).toBe('company-mismatch');
-    expect(refused({ companyKey: released.key })).toBe('company-mismatch');
+    expect(refused({ key: toBase64Url(independentKeyringKey(PERSON)) })).toBe('unusable-key');
+    expect(refused({ company: CO_A, companyKey: toBase64Url(independentUnlockKey(CO_A)) })).toBe('company-mismatch');
+    expect(refused({ companyKey: toBase64Url(independentUnlockKey(CO_A)) })).toBe('company-mismatch');
     /* A committee key nobody asked for is an answer to another question. */
     expect(refused({ committeeKey: committeeKeyFor(identity, CO_A) })).toBe('company-mismatch');
     expect(refused({ at: 1.5 })).toBe('not-a-release');
@@ -1171,8 +1214,6 @@ describe('THE KEYRING RELEASE: THE GATE IS INSIDE IT, AND THE READER TAKES ITS O
     const committee = { company: CO_A, committeeKey: committeeKeyFor(identity, CO_A) };
     expect(refused({ ...committee, companyKey: toBase64Url(new Uint8Array(8)) }, withCompany))
       .toBe('unusable-key');
-    /* A company key that is the keyring key itself has been put in the wrong place. */
-    expect(refused({ ...committee, companyKey: released.key }, withCompany)).toBe('unusable-key');
     /* A company key with no committee key beside it, or with something else there. */
     expect(refused({ company: CO_A, companyKey: forA.companyKey, committeeKey: null }, withCompany))
       .toBe('unusable-key');

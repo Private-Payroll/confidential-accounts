@@ -174,8 +174,18 @@ export default defineConfig({
    * resolves to the real proof-worker.js, and vite transforms the worker's
    * own imports like any other module. The probe never noticed because a DUST
    * registration has no proof obligations and the worker never spawned.
+   *
+   * The prover's circuit checker and the on-chain runtime are left as shipped
+   * for the reason the ledger is: each loader starts its WebAssembly as its own
+   * file is read, and the development server's preparation rewrites the loader
+   * so that it reads the WebAssembly before it exists. The wallet's proving
+   * worker and its account builder load both; prepared, the worker stops before
+   * its first proof. The build is not affected: it bundles them whole.
    */
   optimizeDeps: {
-    exclude: ['@midnightntwrk/ledger-v9', '@midnightntwrk/wallet-sdk-prover-client'],
+    exclude: [
+      '@midnightntwrk/ledger-v9', '@midnightntwrk/wallet-sdk-prover-client',
+      '@midnight-ntwrk/zkir-v2', '@midnightntwrk/onchain-runtime-v4',
+    ],
   },
 });

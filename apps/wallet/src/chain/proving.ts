@@ -36,10 +36,11 @@ import { describeFailure } from '../lib/failure-text.js';
  * mirrors the SDK except one thing: each proof gets a worker of its own, but
  * a worker that finished is kept for the next proof of the same circuit
  * rather than terminated, because a kept worker does not read its key again
- * (`keptProvers`). Key material is fetched on the PAGE side (so the
- * provider's in-memory cache survives across proofs); the SDK's own
- * ten-minute ceiling is kept: a proof that long is a fact the report should
- * carry, not a hang.
+ * (`keptProvers`). Key material is fetched by the thread that owns the
+ * workers (the page, or the wallet's account builder) and MOVED to the worker
+ * that asked, not copied: the owner keeps nothing once it is sent, so a
+ * proving key leaves memory with the proof. The SDK's own ten-minute ceiling
+ * is kept: a proof that long is a fact the report should carry, not a hang.
  *
  * WHERE KEY MATERIAL COMES FROM — it changed, and the change closed two
  * defects. An earlier build reused the SDK's own default provider, which downloads
@@ -73,7 +74,7 @@ type FromWorker =
 
 /** What a proving worker needs of a `Worker`, so the keeping can be driven in a test with none. */
 export interface ProvingWorkerLike {
-  postMessage(message: unknown): void;
+  postMessage(message: unknown, transfer?: Transferable[]): void;
   addEventListener(type: 'message', listener: (event: { data: FromWorker }) => void): void;
   addEventListener(type: 'error', listener: (event: { message?: string }) => void): void;
   terminate(): void;
@@ -95,6 +96,18 @@ export interface ProofEvent {
  * after this long.
  */
 export const KEPT_IDLE_MS = 2 * 60_000;
+
+/**
+ * The buffers a key-material answer can be moved in rather than copied: each
+ * key, circuit or parameter file's own bytes, once each. The provider hands
+ * out a fresh copy per ask and keeps none, so moving it takes it from nobody.
+ */
+export const buffersOf = (value: unknown): ArrayBuffer[] => {
+  const parts = value instanceof Uint8Array ? [value]
+    : value !== null && typeof value === 'object' ? Object.values(value).filter((v): v is Uint8Array => v instanceof Uint8Array)
+      : [];
+  return [...new Set(parts.map((p) => p.buffer).filter((b): b is ArrayBuffer => b instanceof ArrayBuffer))];
+};
 
 interface Job {
   readonly op: 'prove' | 'check';
@@ -156,13 +169,13 @@ export function keptProvers(spawn: () => ProvingWorkerLike, idleMs: number = KEP
         case 'lookupKey':
           if (job === null) return;
           job.km.lookupKey(data.keyLocation)
-            .then((value) => kept.worker.postMessage({ op: 'answer', askId: data.askId, ok: true, value }))
+            .then((value) => kept.worker.postMessage({ op: 'answer', askId: data.askId, ok: true, value }, buffersOf(value)))
             .catch((e: unknown) => kept.worker.postMessage({ op: 'answer', askId: data.askId, ok: false, error: describeFailure(e) }));
           return;
         case 'getParams':
           if (job === null) return;
           job.km.getParams(data.k)
-            .then((value) => kept.worker.postMessage({ op: 'answer', askId: data.askId, ok: true, value }))
+            .then((value) => kept.worker.postMessage({ op: 'answer', askId: data.askId, ok: true, value }, buffersOf(value)))
             .catch((e: unknown) => kept.worker.postMessage({ op: 'answer', askId: data.askId, ok: false, error: describeFailure(e) }));
           return;
         case 'result':

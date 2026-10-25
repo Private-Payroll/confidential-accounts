@@ -710,6 +710,8 @@ describe('A COMPANY\'S FIRST ANCHOR HOLDS THE RECORDS IT WAS FOUNDED WITH, ENTER
     });
     /* RED WHEN: a first anchor is made from a first state and roster, both of version 1, that another seat of the directory entered - the founding signer's device did not enter them. */
     await expect(anchorTheRecordsHere(serving(fay.signingSecret))).rejects.toThrow(/first anchor holds the records it was founded with/u);
+    /* RED WHEN: the refusal sends the founding signer to open the company, which anchors nothing now, instead of to their next action in their wallet. */
+    await expect(anchorTheRecordsHere(serving(fay.signingSecret))).rejects.toThrow(/founding signer's next action in their wallet anchors them/u);
     expect(otherChain.landed).toEqual([]);
   });
 

@@ -30,9 +30,10 @@ vi.mock('vaults-web-shared/keyring.js', async (real) => {
     forgetLocally: () => { kr.who = null; },
     resumeSession: async () => kr.who,
     canOpenCompanies: () => true,
-    companyBeingCreated: () => null,
+    /* A company these saved keys keep, so a standing read shows where its action stands. */
+    companyBeingCreated: () => true,
     companyBeingCreatedLabel: () => null,
-    companyAwaitingItsSecondPress: () => null,
+    companyAwaitingItsSecondPress: (id: string) => ({ accountId: id, account: null }),
     companyCreationStanding: async () => { kr.asked += 1; return kr.answer(); },
   };
 });
@@ -119,7 +120,7 @@ describe('the finishing step when the service cannot be read', () => {
   });
 
   /* RED WHEN: Try again after a failed read does not read the service again, or a service that has come back is still shown as unread. */
-  it('reads the service again on Try again, and carries on once it answers', async () => {
+  it('reads the service again on Try again, and shows where the company stands once it answers', async () => {
     kr.answer = async () => { throw new Error('request failed: 502'); };
     const view = draw(sessionWith());
     await settle();
@@ -129,6 +130,6 @@ describe('the finishing step when the service cannot be read', () => {
     await settle();
     expect(kr.asked).toBe(2);
     expect(view.container.querySelector('[data-unread]')).toBeNull();
-    expect(view.container.querySelector('[data-stage]')?.getAttribute('data-stage')).toBe('deploy');
+    expect(view.container.querySelector('[data-interrupted]')?.getAttribute('data-interrupted')).toBe('2');
   });
 });

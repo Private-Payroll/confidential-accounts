@@ -249,7 +249,7 @@ describe.skipIf(!ON_DISK)('THE SCREEN FOR FINISHING A COMPANY\'S ACCOUNT [needs 
   });
 });
 
-describe.skipIf(!ON_DISK)('THE APPROVAL SURFACE ROUTES A CREATION TO THIS SCREEN, AND READS WHETHER THIS WALLET DREW THE LABEL FROM ITS OWN RECORD [needs contracts/managed/keys; `npm run compact` builds them]', () => {
+describe.skipIf(!ON_DISK)('THE APPROVAL SURFACE NO LONGER SIGNS A DEPLOY A PAGE BUILT: FINISHING A COMPANY IS ONE ACTION THE WALLET RUNS WHOLE [needs contracts/managed/keys; `npm run compact` builds them]', () => {
   const surface = async (drawn: boolean) => {
     const port = watchedStore();
     const at = Date.now();
@@ -279,24 +279,18 @@ describe.skipIf(!ON_DISK)('THE APPROVAL SURFACE ROUTES A CREATION TO THIS SCREEN
     return { ...r, port, opener };
   };
 
-  it('A LABEL THIS WALLET DREW IS SIGNED FOR, AND ITS ACCOUNT IS KEPT IN THE WALLET\'S RECORD BEFORE THE SIGNATURE GOES', async () => {
-    const { container, port, opener } = await surface(true);
-    expect(button(container).disabled).toBe(false);
-    await act(async () => { fireEvent.click(button(container)); });
-    await settle();
-    /* RED WHEN: the account is not written into the wallet's own record, or the signature does not go back. */
-    const kept = await load(port, identity);
-    if (kept.of !== 'profile') throw new Error(`the wallet's record did not open: ${kept.of}`);
-    expect(pinnedAccountOf(kept.profile, LABEL)).toBe(deploy.address);
-    expect(opener.sent.filter((m) => (m.message as { schema?: string }).schema === CREATION_SIGNATURE_SCHEMA)).toHaveLength(1);
-  });
-
-  it('A LABEL THIS WALLET NEVER DREW IS NOT SIGNED FOR', async () => {
-    const { container, opener } = await surface(false);
-    /* RED WHEN: the surface decides the label was drawn from anything but this wallet's own record of releases. */
-    expect(container.querySelector('[data-creation-refused]')?.textContent).toContain('did not make up this company\'s label');
-    expect(button(container).disabled).toBe(true);
-    expect(opener.sent.filter((m) => (m.message as { schema?: string }).schema === CREATION_SIGNATURE_SCHEMA)).toEqual([]);
+  /* RED WHEN: a creation ask still reaches a screen that signs the deploy the page built, or anything is pinned or signed for it. */
+  it('A CREATION ASK IS REFUSED, WHETHER OR NOT THIS WALLET DREW THE LABEL: NOTHING IS SIGNED AND NOTHING IS PINNED', async () => {
+    for (const drawn of [true, false]) {
+      const { container, port, opener } = await surface(drawn);
+      expect(container.querySelector('[data-creation-retired]')).not.toBeNull();
+      expect(container.querySelector('[data-creation-refused]')).toBeNull();
+      const kept = await load(port, identity);
+      if (kept.of !== 'profile') throw new Error(`the wallet's record did not open: ${kept.of}`);
+      expect(pinnedAccountOf(kept.profile, LABEL)).toBeNull();
+      expect(opener.sent.filter((m) => (m.message as { schema?: string }).schema === CREATION_SIGNATURE_SCHEMA)).toEqual([]);
+      cleanup();
+    }
   });
 });
 

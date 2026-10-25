@@ -1,9 +1,10 @@
 import { readKeyringRelease, readRelease } from 'midnight-identity/profile/unlock';
-import type { HeldScope, ReleaseFailure, WalletIndexer } from 'midnight-identity/profile/unlock';
+import type { HeldScope, KeyringHandedIn, KeysRead, ReleaseFailure, SealedKeyring, WalletIndexer } from 'midnight-identity/profile/unlock';
+import type { FoundingAsked, ServedHandedIn, TidyAsked } from 'midnight-identity/profile/request';
 import type { AccountAddress, CompanyLabel } from 'midnight-identity/profile/company-label';
 import { toHex, randomBytes } from '../../../src/core/crypto.js';
 import {
-  KEYRING_AND_COMPANY_PURPOSE, KEYRING_AND_NEW_COMPANY_PURPOSE, KEYRING_PURPOSE, UNLOCK_PURPOSE, UNLOCK_WINDOW_MS,
+  KEYRING_AND_COMPANY_PURPOSE, KEYRING_AND_NEW_COMPANY_PURPOSE, KEYRING_AND_OPENED_COMPANY_PURPOSE, KEYRING_PURPOSE, UNLOCK_PURPOSE, UNLOCK_WINDOW_MS,
   keyringAsk, unlockAsk,
 } from '../../../src/core/wallet-unlock.js';
 import { askWallet, type Openable, type WalletDialog } from './wallet-sign-in.js';
@@ -158,34 +159,58 @@ export interface KeyringAsked {
   readonly rdns: string;
   readonly now?: () => number;
   readonly nonce?: string;
+  /** With `company: 'new'`: what the new company is founded with, and the saved keys the wallet writes its seat into. */
+  readonly founding?: { readonly asked: FoundingAsked; readonly keyring: KeyringHandedIn };
+  /**
+   * The saved keys as the service holds them, each listed company's viewing key wrapped to its seats, and the
+   * creation changes this page asks for: the wallet opens the saved keys itself and answers with what they hold that
+   * is not secret (`read`). With a founding, the founding's saved keys are these.
+   */
+  readonly keys?: { readonly keyring: KeyringHandedIn; readonly served: readonly ServedHandedIn[]; readonly tidy: readonly TidyAsked[] };
+  /**
+   * With a named company and `keys`: the company is the one the person opened, named beside opening the saved keys.
+   * The wallet gives its key only when its own read of the chain confirms it; an answer giving none is then the saved
+   * keys opened alone, with no company key.
+   */
+  readonly companyIfOnChain?: boolean;
 }
 
 /**
- * **ASK ONCE FOR THE KEY THE KEYS SAVED FOR THIS PERSON ARE SEALED UNDER**, and
- * a company's key with it when one is named. Every expectation the answer is
+ * **ASK THE WALLET ONCE TO READ THE KEYS SAVED FOR THIS PERSON**, and for a
+ * company's key with it when one is named. No key the saved keys open with
+ * comes back: an answer carrying one is refused. Every expectation the answer is
  * checked against is this page's own - `readKeyringRelease` says what those
  * comparisons prove and what they do not. When the ask starts a company, the
- * answer also gives the founding seat's two secrets and its blinding salt, as
- * hex, and an answer without them is refused; otherwise `seat` is null.
+ * answer also gives what the wallet founded it with and the saved keys it sealed
+ * again with the founding seat in them, and an answer without them is refused;
+ * otherwise `founding` is null. The founding seat's keys never cross. When the
+ * ask hands the saved keys in (`keys`, or a founding), the answer must also say
+ * what the wallet read from them (`read`: no secret), or it is refused. The
+ * page uses that read, and never the key, to know the seats it holds.
  */
 export async function askWalletForKeys(
   view: Openable, walletOrigin: string, ask: KeyringAsked, dialog?: WalletDialog,
 ): Promise<{
-  key: Uint8Array;
   companyKey: Uint8Array | null;
   /** Public: the key the person sits on this company's vault committee with. */
   committeeKey: { tag: string; value: string } | null;
   /** The company the keys are for: the one asked about, or the one the wallet drew. */
   company: CompanyLabel | null;
-  seat: { signingSecret: string; wrappingSecret: string; salt: string } | null;
+  /** What the wallet founded a new company with, and the saved keys it sealed again with the seat in them; null for any other ask. */
+  founding: { founded: Readonly<Record<string, unknown>>; sealed: SealedKeyring; ifVersion: number } | null;
+  /** What the wallet read from the saved keys this page handed in: nothing secret. */
+  read: KeysRead | null;
 }> {
   const now = ask.now ?? (() => Date.now());
   const nonce = ask.nonce ?? toHex(randomBytes(16));
+  const opened = ask.companyIfOnChain === true && ask.company !== null && ask.company !== 'new' && ask.account !== null
+    && ask.keys !== undefined;
   const answer = await askWallet(view, walletOrigin, keyringAsk({
     name: ask.name,
     rdns: ask.rdns,
     purpose: ask.company === null ? KEYRING_PURPOSE
-      : ask.company === 'new' ? KEYRING_AND_NEW_COMPANY_PURPOSE : KEYRING_AND_COMPANY_PURPOSE,
+      : ask.company === 'new' ? KEYRING_AND_NEW_COMPANY_PURPOSE
+        : opened ? KEYRING_AND_OPENED_COMPANY_PURPOSE : KEYRING_AND_COMPANY_PURPOSE,
     nonce,
     expiresAt: now() + UNLOCK_WINDOW_MS,
     person: ask.person,
@@ -193,18 +218,21 @@ export async function askWalletForKeys(
     company: ask.company === 'new' ? null : ask.company,
     account: ask.company === 'new' ? null : ask.account,
     drawLabel: ask.company === 'new',
+    ...(opened ? { companyIfOnChain: true } : {}),
+    ...(ask.company === 'new' && ask.founding !== undefined ? { founding: ask.founding } : {}),
+    ...(ask.company !== 'new' && ask.keys !== undefined ? { keys: ask.keys } : {}),
   }), dialog);
   const { atOrigin, person, signedInAs, company } = ask;
   const checked = readKeyringRelease(answer, {
     atOrigin, expectingNonce: nonce, person, signedInAs,
     forCompany: company === 'new' ? 'drawn' : company,
     forAccount: company === 'new' ? null : ask.account,
+    handedIn: ask.keys !== undefined || ask.founding !== undefined,
+    companyIfOnChain: opened,
   });
   if (checked.ok === false) throw new UnlockRefused(checked.code, checked.says);
-  const seat = checked.seat === null ? null : {
-    signingSecret: toHex(checked.seat.signingSecret),
-    wrappingSecret: toHex(checked.seat.wrappingSecret),
-    salt: toHex(checked.seat.salt),
+  return {
+    companyKey: checked.companyKey, committeeKey: checked.committeeKey, company: checked.company,
+    founding: checked.founding, read: checked.read,
   };
-  return { key: checked.key, companyKey: checked.companyKey, committeeKey: checked.committeeKey, company: checked.company, seat };
 }
